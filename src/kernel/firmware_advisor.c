@@ -141,13 +141,22 @@ static void fa_compose_path(char out[ADV_PATH_CAP], const char *subkey)
 
 /* ---- Cache loader ------------------------------------------------------- */
 
-/* Reads X:\Diag\lvfs-metadata.json into a kmalloc'd NUL-terminated buffer.
+/* Reads X:\Diag\lvfs-metadata.json into a PMM-backed NUL-terminated buffer.
  * Returns NULL if the file is absent or larger than ADV_CACHE_MAX_BYTES.
- * Caller takes ownership and must kfree() the result.  *out_state captures
- * the load disposition for the cache_state oracle. */
-static char *fa_read_cache_text(enum firmware_advisor_cache_state *out_state)
+ * Caller takes ownership and must release via fa_release_cache_text().
+ *
+ * Uses pmm_alloc_contiguous() instead of kmalloc(): the cache cap is
+ * 256 KiB which is far above kmalloc's 4 KiB ceiling per CLAUDE.md
+ * "Freestanding Kernel" rules.  pmm_alloc_contiguous() also gives us a
+ * physically contiguous span that vfs_read can satisfy in one walk.
+ *
+ * *out_pages records the page count so the caller can release without
+ * re-tracking it.  *out_state captures the load disposition. */
+static char *fa_read_cache_text(enum firmware_advisor_cache_state *out_state,
+                                uint32_t *out_pages)
 {
     *out_state = FW_ADVISOR_CACHE_MISSING;
+    *out_pages = 0;
 
     struct vfs_node *f = vfs_open(ADV_CACHE_PATH, VFS_O_READ);
     if (!f)
@@ -160,36 +169,56 @@ static char *fa_read_cache_text(enum firmware_advisor_cache_state *out_state)
         return (char *)0;
     }
 
-    /* +1 for NUL terminator the JSON parser expects. */
-    char *buf = (char *)kmalloc(size + 1);
-    if (!buf) {
+    /* +1 for NUL terminator the JSON parser expects -- round up to whole
+     * pages since pmm_alloc_contiguous works in 4 KiB units. */
+    uint32_t pages = (size + 1u + 4095u) / 4096u;
+    uintptr_t phys = pmm_alloc_contiguous(pages);
+    if (!phys) {
         vfs_close(f);
         *out_state = FW_ADVISOR_CACHE_MALFORMED;
         return (char *)0;
     }
 
+    char *buf = (char *)phys;
     int n = vfs_read(f, 0, size, (uint8_t *)buf);
     vfs_close(f);
     if (n <= 0 || (uint32_t)n != size) {
-        kfree(buf);
+        for (uint32_t p = 0; p < pages; p++)
+            pmm_free_frame(phys + p * 4096u);
         *out_state = FW_ADVISOR_CACHE_MALFORMED;
         return (char *)0;
     }
     buf[size] = '\0';
+    *out_pages = pages;
     return buf;
+}
+
+static void fa_release_cache_text(char *buf, uint32_t pages)
+{
+    if (!buf || pages == 0)
+        return;
+    uintptr_t phys = (uintptr_t)buf;
+    for (uint32_t p = 0; p < pages; p++)
+        pmm_free_frame(phys + p * 4096u);
 }
 
 /* ---- ESRT × cache join + registry mirror -------------------------------- */
 
 /* Look up the cache component whose fw_class GUID matches `guid_str` (the
  * canonical brace form of an ESRT entry's FwClass).  Returns the matching
- * cJSON object (still owned by the parser tree) or NULL. */
+ * cJSON object (still owned by the parser tree) or NULL.
+ *
+ * Walks the cJSON child/next linked list once.  Using
+ * `for (i; i<size; i++) json_array_get(arr, i)` would force cJSON to walk
+ * the linked list from the head N times -- O(N^2) on cache-controlled
+ * input, with N bounded only by ADV_CACHE_MAX_BYTES (256 KiB cache could
+ * hold thousands of components).  Linear walk via child/next is O(N). */
 static struct cJSON *fa_match_component(struct cJSON *components,
                                         const char *guid_str)
 {
-    uint32_t n = json_array_size(components);
-    for (uint32_t i = 0; i < n; i++) {
-        struct cJSON *row = json_array_get(components, i);
+    for (struct cJSON *row = json_array_first(components);
+         row != (struct cJSON *)0;
+         row = json_array_next(row)) {
         const char *row_guid = json_str(json_get(row, "fw_class"));
         if (row_guid && fa_strcaseeq(row_guid, guid_str))
             return row;
@@ -516,7 +545,8 @@ void firmware_advisor_init(void)
      *   file present, schema_version!=1 -> CACHE_MALFORMED, all UNKNOWN
      *   file present, valid             -> CACHE_LOADED,    classify each
      */
-    char *text = fa_read_cache_text(&s_cache_state);
+    uint32_t text_pages = 0;
+    char *text = fa_read_cache_text(&s_cache_state, &text_pages);
     struct cJSON *root = (struct cJSON *)0;
     struct cJSON *components = (struct cJSON *)0;
     uint64_t fetched_unix_time = 0;
@@ -528,18 +558,30 @@ void firmware_advisor_init(void)
         } else {
             int schema = json_int(json_get(root, "schema_version"));
             components = json_get(root, "components");
-            if (schema != 1 || !components) {
+            /* Reject malformed shape: missing components OR present-but-not-
+             * an-array.  json_get(root,"components") == NULL means the key
+             * is absent; json_is_array() == 0 means the key is present but
+             * the value is the wrong shape (object / number / string).
+             * Without the explicit type check the cache reports LOADED while
+             * every component classifies as unknown -- a false positive that
+             * would suppress a real CVE advisory. */
+            if (schema != 1 || !components || !json_is_array(components)) {
                 s_cache_state = FW_ADVISOR_CACHE_MALFORMED;
                 json_free(root);
                 root = (struct cJSON *)0;
                 components = (struct cJSON *)0;
             } else {
                 s_cache_state = FW_ADVISOR_CACHE_LOADED;
-                /* fetched_unix_time is informational only; absent or non-numeric
-                 * is fine.  Treat as u64 so a 2038-safe timestamp survives. */
-                struct cJSON *fts = json_get(root, "fetched_unix_time");
-                if (fts)
-                    fetched_unix_time = (uint64_t)(int64_t)json_int(fts);
+                /* fetched_unix_time is informational; route through json_u64
+                 * for u64 safety -- json_int saturates at INT_MAX so a unix
+                 * timestamp past 2038 would corrupt before reaching the
+                 * registry.  Out-of-range / negative / non-integral fall
+                 * through to 0. */
+                int fts_valid = 0;
+                fetched_unix_time = json_u64(json_get(root, "fetched_unix_time"),
+                                             &fts_valid);
+                if (!fts_valid)
+                    fetched_unix_time = 0;
             }
         }
     }
@@ -564,7 +606,7 @@ void firmware_advisor_init(void)
          * special-casing the missing-file path. */
         fa_publish_json(components, fetched_unix_time);
         if (root) json_free(root);
-        if (text) kfree(text);
+        if (text) fa_release_cache_text(text, text_pages);
         return;
     }
 
@@ -613,7 +655,7 @@ void firmware_advisor_init(void)
     fa_publish_json(components, fetched_unix_time);
 
     if (root) json_free(root);
-    if (text) kfree(text);
+    if (text) fa_release_cache_text(text, text_pages);
 }
 
 enum firmware_advisor_cache_state firmware_advisor_cache_state(void)

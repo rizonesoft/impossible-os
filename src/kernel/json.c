@@ -85,6 +85,32 @@ int json_bool(struct cJSON *item)
     return (c && cJSON_IsTrue(c)) ? 1 : 0;
 }
 
+uint64_t json_u64(struct cJSON *item, int *valid)
+{
+    cJSON *c = (cJSON *)item;
+    if (valid) *valid = 0;
+    if (!c || !cJSON_IsNumber(c))
+        return 0;
+    /* Same valuedouble discipline as json_u32. Cap at 2^53 (double's
+     * exact-integer mantissa range) -- a JSON literal larger than that
+     * already lost precision in cJSON's parser, so trusting it would
+     * publish a corrupted timestamp. */
+    double d = c->valuedouble;
+    if (!(d >= 0.0 && d <= 9007199254740992.0))   /* 2^53 */
+        return 0;
+    double truncated = (double)(uint64_t)d;
+    if (truncated != d)
+        return 0;
+    if (valid) *valid = 1;
+    return (uint64_t)d;
+}
+
+int json_is_array(struct cJSON *item)
+{
+    cJSON *c = (cJSON *)item;
+    return (c && cJSON_IsArray(c)) ? 1 : 0;
+}
+
 uint32_t json_array_size(struct cJSON *arr)
 {
     cJSON *c = (cJSON *)arr;
@@ -104,6 +130,22 @@ struct cJSON *json_array_get(struct cJSON *arr, uint32_t index)
     if (index > 0x7FFFFFFFu)
         return (struct cJSON *)0;
     return (struct cJSON *)cJSON_GetArrayItem(c, (int)index);
+}
+
+struct cJSON *json_array_first(struct cJSON *arr)
+{
+    cJSON *c = (cJSON *)arr;
+    if (!c || !cJSON_IsArray(c))
+        return (struct cJSON *)0;
+    return (struct cJSON *)c->child;
+}
+
+struct cJSON *json_array_next(struct cJSON *item)
+{
+    cJSON *c = (cJSON *)item;
+    if (!c)
+        return (struct cJSON *)0;
+    return (struct cJSON *)c->next;
 }
 
 char *json_print(struct cJSON *obj)

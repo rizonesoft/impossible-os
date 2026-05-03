@@ -37,9 +37,11 @@ struct component_view {
     char     vendor_update_url[160];
     char     release_notes_url[160];
     char     cve_id[24];
+    char     vulnerability_summary[200];
     char     last_attempt_status_name[40];
     uint32_t last_attempt_status;
     uint32_t rollback_floor_ok;
+    uint32_t lowest_supported_fw_version;
 };
 
 struct top_view {
@@ -182,9 +184,11 @@ static const char *parse_component(const char *p, const char *end,
     cv->vendor_update_url[0] = '\0';
     cv->release_notes_url[0] = '\0';
     cv->cve_id[0] = '\0';
+    cv->vulnerability_summary[0] = '\0';
     cv->last_attempt_status_name[0] = '\0';
     cv->last_attempt_status = 0;
     cv->rollback_floor_ok = 0;
+    cv->lowest_supported_fw_version = 0;
 
     p = skip_ws(p, end);
     while (p < end && *p != '}') {
@@ -209,6 +213,8 @@ static const char *parse_component(const char *p, const char *end,
             p = read_string(p, end, cv->release_notes_url, sizeof(cv->release_notes_url));
         else if (strcmp(key, "cve_id") == 0)
             p = read_string(p, end, cv->cve_id, sizeof(cv->cve_id));
+        else if (strcmp(key, "vulnerability_summary") == 0)
+            p = read_string(p, end, cv->vulnerability_summary, sizeof(cv->vulnerability_summary));
         else if (strcmp(key, "last_attempt_status_name") == 0)
             p = read_string(p, end, cv->last_attempt_status_name, sizeof(cv->last_attempt_status_name));
         else if (strcmp(key, "current") == 0) {
@@ -219,6 +225,8 @@ static const char *parse_component(const char *p, const char *end,
             uint64_t v; p = read_uint(p, end, &v); cv->last_attempt_status = (uint32_t)v;
         } else if (strcmp(key, "rollback_floor_ok") == 0) {
             uint64_t v; p = read_uint(p, end, &v); cv->rollback_floor_ok = (uint32_t)v;
+        } else if (strcmp(key, "lowest_supported_fw_version") == 0) {
+            uint64_t v; p = read_uint(p, end, &v); cv->lowest_supported_fw_version = (uint32_t)v;
         } else {
             p = skip_value(p, end);
         }
@@ -325,6 +333,10 @@ static void render_firmware_updates(const struct top_view *tv)
                c->severity[0] ? c->severity : "");
         if (c->cve_id[0])
             printf("    CVE:      %s\n", c->cve_id);
+        if (c->vulnerability_summary[0])
+            printf("    Detail:   %s\n", c->vulnerability_summary);
+        if (c->lowest_supported_fw_version)
+            printf("    Floor:    0x%x (vendor LSV)\n", c->lowest_supported_fw_version);
         if (c->last_attempt_status_name[0] && c->last_attempt_status != 0)
             printf("    Last attempt: %s (code %u)\n",
                    c->last_attempt_status_name, c->last_attempt_status);

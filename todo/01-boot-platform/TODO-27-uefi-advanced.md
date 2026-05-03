@@ -97,6 +97,9 @@ Surface what firmware updates exist for the host and tell the operator how to ap
 > - **Canonical doc** -- [`include/kernel/firmware_advisor.h`](../../include/kernel/firmware_advisor.h).
 > - **Scope boundary** -- §2 owns offline cache reader + ESRT join + registry + JSON publish + sysinfo CLI + refusal sentinel; live HTTPS fetch + GPG/PKCS7 verify + gzip + XML parse owned by §8.
 
+> **Verified:** 2026-05-03 | this commit | 9/9 items | build OK | smoke PASS (KVM 2.55s) + 187-byte advisor JSON + sentinel symbols present
+> **Quality reviewed:** 2026-05-03 | Codex 7x (design + adversarial x2 + consistency x2 + perf + re-adversarial) | 1H+5M+1L fixed | scope: kernel-code-quality + userland-code-quality
+
 ## 3. UEFI Memory Attributes (W^X)
 
 Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEMORY_ATTRIBUTES_TABLE`.
