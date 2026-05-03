@@ -423,6 +423,19 @@ void boot_phase3(void)
      * is logged but does not block userland entry. */
     boot_history_kernel_mark_phase3();
 
+    /* Consolidated boot-health audit JSON: writes X:\Diag\boot-health.json
+     * with degraded caps / subsystems / missing capabilities / perf
+     * breaches / MAT W^X violations / firmware quirks / recent boot times /
+     * Secure Boot state.  Runs LAST among Phase-3 publishers (after
+     * firmware-tables, advisor, and the kernel Phase-3 history sentinel)
+     * so recent_boot_times reflects the current-boot mark and per-artifact
+     * health is not self-incomplete.  Failure is LOG_WARN only -- never
+     * blocks userland entry. */
+    {
+        extern void boot_health_publish_json(void);
+        boot_health_publish_json();
+    }
+
     /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
     {
         extern void shell_loader_func(void);

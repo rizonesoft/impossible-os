@@ -40,6 +40,7 @@ void jb_putesc(struct json_builder *j, unsigned char c);
 void jb_str(struct json_builder *j, const char *s);
 void jb_hex64(struct json_builder *j, uint64_t v);
 void jb_u32_dec(struct json_builder *j, uint32_t v);
+void jb_u64_dec(struct json_builder *j, uint64_t v);
 
 static inline int    jb_truncated(const struct json_builder *j) { return j->truncated; }
 static inline size_t jb_pos(const struct json_builder *j)       { return j->pos; }

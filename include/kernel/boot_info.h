@@ -1553,6 +1553,12 @@ _Static_assert(BOOT_HIST_BIN_SIZE ==
  * same boot.  Silently no-ops when RT services are unavailable. */
 void boot_history_kernel_mark_phase3(void);
 
+/* Return the boot_seq successfully committed to NVRAM by mark_phase3, or 0
+ * if not yet called or NVRAM writes failed. Consumers use this to
+ * distinguish "this boot's seq" from "highest seq in ring (may be older)"
+ * when the Phase-3 mark could not be persisted. */
+uint32_t boot_history_kernel_phase3_committed_seq(void);
+
 /* Consumer-side reader.  Reads the 8-entry NVRAM ring + cookie via
  * uefi_var_get / uefi_var_get_u32, validates size + attrs (mismatch
  * triggers the same delete-then-warn repair as the writer side), and

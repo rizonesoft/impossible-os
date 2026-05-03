@@ -62,14 +62,14 @@ implements_after: TODO-04
 | ⭐ | Order | Deliverable                                         | Depends On                                | Status |
 | -- | :---: | --------------------------------------------------- | ----------------------------------------- | :----: |
 | 💎 |   1   | Per-phase boot perf budgets + threshold alarms      | --                                        |  [x]   |
-| 💎 |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                     |  [ ]   |
+| 💎 |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                     |  [x]   |
 | ⭐ |   3   | Boot perf trend file + regression detection         | §1, §2                                    |  [ ]   |
 | 💎 |   4   | SMBIOS init profiling + optimization                | §1                                        |  [ ]   |
 | 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [ ]   |
 | 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [ ]   |
 | ⭐ |   7   | Async font/icon loader (post-desktop-ready)         | §1                                        |  [ ]   |
 | ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T14 §6 (alive-blink), T23 (watchdog)  |  [ ]   |
-| 💎 |   9   | EXEC step latency profile (1210ms FAIL on smoke)    | §1                                        |  [ ]   |
+| 💎 |   9   | EXEC step latency profile (13834ms FAIL; 11x regression) | §1                                   |  [ ]   |
 | ⭐ |  10   | UEFI RT SetVariable latency (>50ms threshold)       | §1, T04 §11                               |  [ ]   |
 | ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T27 §2 (advisor)                  |  [ ]   |
 | ⭐ |  12   | AVX-512 throttle policy when APERF/MPERF absent     | T19 §3                                    |  [ ]   |
@@ -77,6 +77,7 @@ implements_after: TODO-04
 | ⭐ |  14   | FAT32 dirty-mount fsck cost in VFS step             | D05 T04                                   |  [ ]   |
 | ⭐ |  15   | User-mode binary spawn latency (~1s task_create→ELF)| T22 (sched / exec)                        |  [ ]   |
 | ⭐ |  16   | TSC frequency variability under hypervisor          | --                                        |  [ ]   |
+| ⭐ |  17   | PAT WC -> WT hypervisor trap quirk                  | §2 (consumer)                             |  [ ]   |
 
 ---
 
@@ -119,13 +120,23 @@ A single operator-facing dashboard collapsing every "what's wrong on this boot" 
 > - **Secure Boot UNKNOWN handling:** `uefi_secureboot_enabled()` returns 0 on BOTH `DISABLED` and `UNREADABLE`. Add `uefi_secureboot_state_valid()` accessor (or gate on `BOOT_CAP_SECURE_BOOT_STATE` degraded bit) and emit `UNKNOWN` when the state is invalid. Reporting `DISABLED` for an unreadable Secure Boot state is a security-facing false statement.
 > - **mat_wx_violations[] final shape:** schema_version=1 must lock per-entry violation shape now, not count-only. Iterate `mat_get_count()` / `mat_get_entry()` filtering `MAT_CLASS_WX_VIOLATION`; emit per-entry `{phys_addr, num_pages, attr_bits, class_name}` plus a sibling `mat_overflowed` boolean. §5 (TODO-29) extends per-entry detail with root-cause attribution; the v1 shape must accommodate it.
 
-- [ ] Define `schema_version=1` wire format in `docs/boot/boot-health-schema.md` mirroring `firmware-tables-schema.md` style: `schema_version`, `generated_at_utc`, `boot_seq`, `degraded_caps[]` (from `boot_caps`), `degraded_subsystems[]` (from `kernel_subsystem_ready` oracle), `missing_capabilities[]` (TPM, USB, NVMe, network -- queried from each subsystem's accessor), `perf_breaches[]` (from §1), `mat_wx_violations[]` (from §5), `firmware_quirks_active[]` (from `firmware_quirks_iter_next`), `recent_boot_times_s[]` (last 3 from `boot_history`), `secureboot_state` (UNKNOWN/ENABLED/DISABLED/SETUP).
-- [ ] Implement `boot_health_publish_json()` in NEW `src/kernel/main/boot_health.c` (~250 LOC). Single-shot call from `boot_phase3()` AFTER `boot_progress_dump_summary()` and the §1 budget check, BEFORE the firmware-tables JSON publish (so a single Phase-3 file-write batch covers all artifacts).
-- [ ] Use the same single-open `vfs_open(VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC)` shape that `klog_disk` uses (TODO-04 §11 fix lands first). 8 KiB pmm buffer, RFC 8259 escapes, civil-from-days ISO-8601.
-- [ ] Use stable accessor functions from each owning subsystem so the writer reads from canonical sources (no copy-paste of subsystem state).
-- [ ] Commit: `"boot: publish consolidated boot-health.json"`
+- [x] Define `schema_version=1` wire format in `docs/boot/boot-health-schema.md` (top-level keys + per-entry shapes; epoch unit deviation documented).
+- [x] Implement `boot_health_publish_json()` in `src/kernel/main/boot_health.c` (~330 LOC, BSP-only, 8 KiB pmm buffer, fail-closed on truncation; called from `boot_desktop.c` after `boot_history_kernel_mark_phase3()`).
+- [x] Single-open `vfs_open(VFS_O_WRITE|VFS_O_CREATE|VFS_O_TRUNC)`; on short write re-truncate to 0 bytes so consumers never see a partial JSON prefix (Codex M1 fix).
+- [x] Subsystem accessors only (caps/subsys/perf/MAT/quirks/history/secureboot); no state copy-paste; new `uefi_secureboot_state_valid()` accessor distinguishes UNREADABLE from DISABLED.
+- [x] Pure classifier `boot_health_classify_secureboot()` priority `UNKNOWN > SETUP > ENABLED > DISABLED` -- backed by `test_boot_health.c` (5 tests / 13 asserts, 8-row truth table).
+- [x] Commit: `"boot: publish consolidated boot-health.json"`
 
 **Test checkpoint:** Post-boot, `X:\Diag\boot-health.json` exists, parses through `cJSON_Parse`, contains every required top-level key, and reflects the live boot's actual degraded state (e.g. on this current OVMF run: `degraded_caps` lists 6 entries, `missing_capabilities` lists `TPM` + `USB` + `NVMe`, `mat_wx_violations` count is 1).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 suites, 0 failures
+>
+> **Notes:**
+> - Schema doc + writer + classifier + tests shipped together; epoch-seconds time encoding documented as a deliberate deviation from `firmware-tables.json` ISO-8601 (consumers diff timestamps, not format them).
+> - Short-write recovery re-truncates the on-disk file to 0 bytes; "no data this run" is the recoverable signal, "partial JSON" is not.
+> - `uefi_secureboot_state_valid()` added so an UNREADABLE Secure Boot state is never aliased to DISABLED (security-facing false statement).
+> - `mat_wx_violations[]` capped at 16 with sibling `mat_overflowed` boolean to bound JSON; full inventory still available via the MAT oracle.
+> - Smoke verified: `boot_health: JSON: wrote X:\Diag\boot-health.json (932 bytes)` at 3.880s on KVM.
 
 ---
 
@@ -214,10 +225,11 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 
 ## 9. EXEC Step Latency Profile
 
-Smoke (KVM, 2026-05-03) records `EXEC took 1210ms (target 100ms)` -- a HARD-budget breach 12.1x over target. The EXEC step covers SSDT registration (470 main slots + ~1300 shadow stubs), syscall handler wire-up, NT subsystem registration, ETW init, and exec format dispatch (ELF + EIF + PE32+). Without per-substep timing the slow path is invisible.
+Smoke (KVM, 2026-05-03 latest) records `EXEC took 13834ms (target 100ms)` -- a HARD-budget breach 138x over target, ~11x worse than the 1210ms originally observed when this section was filed. The EXEC step covers SSDT registration (470 main slots + ~1300 shadow stubs), syscall handler wire-up, NT subsystem registration, ETW init, and exec format dispatch (ELF + EIF + PE32+). Without per-substep timing the slow path is invisible. The 11x growth is itself a regression signal -- find when EXEC went from ~1.2s to ~13.8s and bisect the responsible commit before optimizing.
 
 **Files:** `src/kernel/exec.c`, `src/kernel/nt/ssdt.c`, `src/kernel/main/boot_desktop.c`, `include/kernel/boot_init.h`
 
+- [ ] Bisect the 1210ms -> 13834ms regression first: walk recent commits to `src/kernel/exec.c` and `src/kernel/nt/ssdt.c`; identify the responsible change before adding profiling.
 - [ ] Add finer-grained `boot_progress` substeps inside EXEC: SSDT_MAIN, SSDT_SHADOW, NT_SUBSYS_BATCH, SYSCALL_REG, EXEC_FORMAT_REG.
 - [ ] Define per-substep budgets in `boot_perf_budgets[]`: SSDT_MAIN <50ms, SSDT_SHADOW <100ms, NT batch <30ms, format register <5ms each.
 - [ ] Profile SSDT registration hot path; pick a fix path: bulk-register via static const array, lazy shadow-stub registration, or accept current cost with a justified budget.
@@ -332,18 +344,35 @@ Smoke logs across boots show TSC frequency reported as 7056 MHz, 4939 MHz, 5000 
 
 ---
 
+## 17. PAT WC -> WT Hypervisor Trap Quirk
+
+Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x01); hypervisor may trap PAT writes. Framebuffer mapped WT instead of WC (functional, slower)`. The kernel writes IA32_PAT to set entry 1 = WC for framebuffer mapping; under KVM (and possibly other hypervisors) the write is silently dropped or coerced and entry 1 stays WT. Functional but ~2-4x slower for framebuffer bulk-blit because Write-Through forces every write through the FSB instead of coalescing in the WC buffer. Currently a one-shot WARN with no programmatic surface, so consumers (sysinfo, boot-health.json, CI gate) cannot tell whether a slow boot ran on a PAT-honest or PAT-trapping hypervisor.
+
+**Files:** `src/kernel/cpu_security.c` (PAT programming), `src/kernel/firmware_quirks_table.inc`, `include/kernel/firmware_quirks.h`, `src/kernel/firmware_quirks.c`, `src/kernel/main/boot_health.c` (auto-picked up via `firmware_quirks_iter_next`)
+
+- [ ] Add `FW_QUIRK_PAT_WC_TRAPPED` to `firmware_quirks_table.inc` with bit assignment + canonical name `"pat_wc_trapped"`.
+- [ ] In `cpu_configure_pat()`, register the quirk via `firmware_quirks_register(FW_QUIRK_PAT_WC_TRAPPED)` when the post-write readback shows entry 1 != WC; downgrade the WARN to INFO once the quirk fires.
+- [ ] Update `vmm_map_mmio_wc()` to log a single INFO line when the quirk is active, instead of every caller silently getting WT.
+- [ ] Verify `firmware_quirks_active[]` in `boot-health.json` lists `"pat_wc_trapped"` on KVM/WHPX hosts that exhibit the trap; absent on bare metal.
+- [ ] Commit: `"firmware: register pat_wc_trapped quirk for PAT-trapping hypervisors"`
+
+**Test checkpoint:** On KVM smoke, post-boot `boot-health.json` shows `"firmware_quirks_active": [..., "pat_wc_trapped", ...]`. On bare metal Intel where PAT writes succeed, the quirk is absent. The original WARN downgrades to a single INFO line. Test on: QEMU KVM, QEMU TCG, QEMU WHPX, VirtualBox, bare metal i5-4210U.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                            | 🪟 Win11                          | 🐧 Linux                          | 🚀 Impossible OS                   |
 | -- | ---------------------------------- | --------------------------------- | --------------------------------- | ---------------------------------- |
 | 💎 | Per-phase boot perf budgets        | ⚠️ ETW boot trace (post-hoc)     | ⚠️ systemd-analyze (post-hoc)    | ⬜ §1 boot-time alarms             |
-| ⭐ | Consolidated boot health JSON      | ⚠️ msinfo32 + Event Viewer       | ⚠️ journalctl + scattered tools   | ⬜ §2 single boot-health.json      |
+| ⭐ | Consolidated boot health JSON      | ⚠️ msinfo32 + Event Viewer       | ⚠️ journalctl + scattered tools   | ✅ §2 single boot-health.json      |
 | ⭐ | Boot perf trend regression alarm   | ❌ no built-in                    | ❌ no built-in                    | ⬜ §3 boot-trend.json + 15% gate   |
 | 💎 | SMBIOS init speed                  | ⚠️ NT HAL parses lazily          | ⚠️ dmidecode-driven, scattered    | ⬜ §4 <100ms target                |
 | ⭐ | MAT W^X root-cause attribution     | ❌ unsupported                    | ⚠️ /sys/firmware/efi/* raw       | ⬜ §5 per-violation phys+attr      |
 | 💎 | PS/2 mouse init speed              | ⚠️ HAL probes serially            | ⚠️ atkbd serial probe             | ⬜ §6 <100ms target                |
 | ⭐ | Async font / icon load             | ✅ Win11 SystemAssets fade-in     | ⚠️ DE-dependent (KDE/GNOME async)| ⬜ §7 minimal face + swap          |
 | 💎 | Boot heartbeat telemetry           | ✅ ETW Microsoft-Windows-Boot     | ⚠️ printk timestamps only         | ⬜ §8 250ms HB + LAPIC ISR         |
+| ⭐ | PAT WC-trap hypervisor surfacing   | ❌ silent WT fallback             | ❌ silent WT fallback             | ⬜ §17 firmware_quirks_active[]   |
 
 ---
 
@@ -352,7 +381,7 @@ Smoke logs across boots show TSC frequency reported as 7056 MHz, 4939 MHz, 5000 
 Tests live under `src/kernel/test/test_boot_health.c` (NEW). Registered via `test_register_boot_health()` in `TEST_CAT_BOOT`. Pure helpers only -- no calls to live `boot_progress`, `boot_health_publish_json`, or any subsystem `_init`. Per Test Code Policy.
 
 - [ ] §1: `boot_perf_budget_check_pure(steps[], budgets[])` walks a fixed-array fixture and returns the breach list. Tests cover: zero breaches, one soft breach, one hard breach, missing-budget step (passes), out-of-order steps.
-- [ ] §2: `boot_health_serialize_pure(state, buf, cap)` writes JSON into a caller-provided buffer; tests assert byte-for-byte schema conformance for each field, RFC 8259 escapes, ISO-8601 timestamps, truncation behavior.
+- [ ] §2: `boot_health_serialize_pure(state, buf, cap)` writes JSON into caller buffer; tests assert byte-for-byte schema conformance, RFC 8259 escapes, u32 unix-epoch time encoding (per schema), truncation behavior.
 - [ ] §3: `boot_trend_compute_median_growth(samples[])` returns a percentage delta; tests cover stable runs, monotonic growth, noise band, ring-wrap.
 - [ ] §5: `mat_violation_classify(attr_bits)` returns the WX-violation reason string; tests cover all 8 attr-bit combinations.
 - [ ] §8: `boot_heartbeat_should_emit(elapsed_ms, last_emit_ms)` returns 1 every 250ms; tests cover edge cases (elapsed=0, last=0, wraparound).

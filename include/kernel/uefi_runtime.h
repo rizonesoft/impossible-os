@@ -244,6 +244,22 @@ void uefi_runtime_populate_vars_registry(void);
 /* Returns 1 if Secure Boot is enabled by firmware. */
 int uefi_secureboot_enabled(void);
 
+/* Returns 1 iff the Secure Boot state was readable during boot.
+ *
+ * `uefi_secureboot_enabled()` collapses three distinct firmware states
+ * into a single 0/1 result:
+ *   - state readable AND disabled   -> returns 0
+ *   - state readable AND enabled    -> returns 1
+ *   - state UNREADABLE (var GP/NF)  -> returns 0  (security false statement)
+ *
+ * The third case is a security-facing concern: telling an operator
+ * "Secure Boot is disabled" when we actually could not read the
+ * variable is the wrong answer.  `BOOT_CAP_SECURE_BOOT_STATE` rides
+ * in `caps_degraded` exactly for this case.  This accessor lets
+ * consumers (boot-health.json, sysinfo, desktop notifications)
+ * distinguish "DISABLED" from "UNKNOWN" before rendering. */
+int uefi_secureboot_state_valid(void);
+
 /* Returns 1 if firmware is in Setup Mode (no Platform Key enrolled). */
 int uefi_secureboot_setup_mode(void);
 

@@ -76,3 +76,12 @@ void jb_u32_dec(struct json_builder *j, uint32_t v)
     while (v) { tmp[n++] = (char)('0' + (v % 10u)); v /= 10u; }
     while (n) jb_putc(j, tmp[--n]);
 }
+
+void jb_u64_dec(struct json_builder *j, uint64_t v)
+{
+    char tmp[21];
+    int n = 0;
+    if (v == 0) { jb_putc(j, '0'); return; }
+    while (v) { tmp[n++] = (char)('0' + (v % 10u)); v /= 10u; }
+    while (n) jb_putc(j, tmp[--n]);
+}

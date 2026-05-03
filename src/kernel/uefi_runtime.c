@@ -1292,6 +1292,19 @@ void uefi_secureboot_populate_registry(void)
 }
 
 int uefi_secureboot_enabled(void)  { return s_sb_enabled; }
+
+int uefi_secureboot_state_valid(void)
+{
+    /* The Secure Boot variable read either succeeded (cap promoted from
+     * degraded to present at boot) or failed (cap stays in caps_degraded).
+     * Reading caps_degraded gives the authoritative answer without us
+     * having to track a second `s_sb_state_valid` flag.  Centralizing the
+     * predicate here means consumers never accidentally read s_sb_enabled
+     * (which is 0 for both DISABLED and UNREADABLE) without first checking
+     * validity. */
+    return (g_boot_info.caps_degraded & BOOT_CAP_SECURE_BOOT_STATE) ? 0 : 1;
+}
+
 int uefi_secureboot_setup_mode(void) { return s_sb_setup_mode; }
 int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
 int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }

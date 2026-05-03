@@ -28,7 +28,15 @@
 #include "kernel/uefi_runtime.h"
 #include "kernel/nt/ntstatus.h"
 
-static int s_phase3_marked;   /* 1 = boot_history_kernel_mark_phase3 has run */
+static int      s_phase3_marked;        /* 1 = mark_phase3 ran */
+static uint32_t s_phase3_committed_seq; /* boot_seq successfully committed
+                                         * to NVRAM; 0 = not committed (mark
+                                         * skipped, ring write failed, or
+                                         * cookie write failed).  Consumers
+                                         * use this to distinguish "this
+                                         * boot's seq" from "highest seq in
+                                         * the ring (might be a prior boot)"
+                                         * when the Phase-3 mark fails. */
 
 /* Variable names as UCS-2 / uint16_t arrays.  Match the bootloader's
  * names exactly (include/kernel/boot_info.h header comment is the
@@ -192,10 +200,21 @@ void boot_history_kernel_mark_phase3(void)
         return;
     }
 
-    s_phase3_marked = 1;
+    s_phase3_marked        = 1;
+    s_phase3_committed_seq = new_seq;
     klog(LOG_INFO, "boot_history",
          "Phase-3 mark: append seq=%u src=0xFFFF err=0x0000",
          (unsigned)new_seq);
+}
+
+/* Return the boot_seq successfully committed to NVRAM by
+ * boot_history_kernel_mark_phase3(), or 0 if that mark has not run yet
+ * or its NVRAM writes failed.  Consumers (boot_health publisher) use this
+ * to avoid mis-attributing the current JSON to an older ring entry when
+ * the Phase-3 mark could not be persisted. */
+uint32_t boot_history_kernel_phase3_committed_seq(void)
+{
+    return s_phase3_committed_seq;
 }
 
 /* ============================================================================
