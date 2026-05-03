@@ -875,6 +875,13 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $(BB_OFFSET) / 512 )) $@ 131072
 	mmd -i $@@@$(BB_OFFSET) ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
 	mmd -i $@@@$(BB_OFFSET) ::Crash/WER ::Logs/Serial
+	@# Round-trip marker for test_fileio.exe. Static content built into the
+	@# FAT32 image; user-mode reads it back via X:\Diag\blackbox-marker.txt
+	@# to prove BPB validate + mount + dir-cache + file-open + read all
+	@# work end-to-end. 11 bytes, no NUL, no newline.
+	@printf "BlackBox-v1" > $(BUILD_DIR)/blackbox-marker.txt
+	mcopy -i $@@@$(BB_OFFSET) $(BUILD_DIR)/blackbox-marker.txt ::Diag/blackbox-marker.txt
+	@rm -f $(BUILD_DIR)/blackbox-marker.txt
 	@# Step 3: Format IXFS partition and populate with system files
 	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs/Serial
 	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym

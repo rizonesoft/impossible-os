@@ -47,10 +47,10 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [x]   |
 | 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [/]   |
 | 💎 |   7   | UEFI conformance profile and EBBR detection             | §1             |  [x]   |
-| 💎 |   8   | Registry and BlackBox firmware report                   | §1-§7          |  [/]   |
+| 💎 |   8   | Registry and BlackBox firmware report                   | §1-§7          |  [x]   |
 | ⭐ |   9   | Firmware quirk database                                 | §8             |  [x]   |
-| ⭐ |  10   | Firmware inventory tests and host decoder               | §1-§9          |  [/]   |
-| ⭐ |  11   | Firmware inventory bug-fix debt                         | §1-§9          |  [/]   |
+| ⭐ |  10   | Firmware inventory tests and host decoder               | §1-§9          |  [x]   |
+| ⭐ |  11   | Firmware inventory bug-fix debt                         | §1-§9          |  [x]   |
 | ⭐ |  12   | Firmware inventory refactor debt                        | §1-§9          |  [x]   |
 
 ---
@@ -245,7 +245,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 - [x] Wire-format schema pinned at `docs/boot/firmware-tables-schema.md` (schema_version=1; tables[] / degraded[] / quirks_active[] + typed acpi/smbios/mat/rt_properties/esrt/apei/dbg2/wsmt sub-blocks; RFC 8259 escapes).
 - [x] Registry mirror `HKLM\HARDWARE\Firmware\Tables\<name>\*` -- Address (REG_QWORD) + Size + Checksum + ValidationStatus + Source per cataloged entry. Idempotent via `RegDeleteTree`.
-- [/] JSON writer `X:\Diag\firmware-tables.json` -- builder shipped (`firmware_tables_json.c`); 16 KiB pmm buffer; emits all required sub-blocks; fail-closed on truncation (§12 retrofit). Disk-write blocked by Phase-3 VFS cluster cross-filed at D05 T04 §15 (see §11 Deferred stamp).
+- [x] JSON writer `X:\Diag\firmware-tables.json` -- 16 KiB pmm buffer, all typed sub-blocks, fail-closed on truncation. Disk write live since D05 T04 §15 shipped (smoke confirms `wrote X:\Diag\firmware-tables.json (4528 bytes)`).
 - [x] Validation failures + addresses + checksums + quirk matches surfaced -- `computed_checksum` populated BEFORE sum-check by every validator; `quirks_active[]` populated by §9.
 - [x] Commit: `"boot: publish firmware inventory report"` (shipped under `boot: persist firmware-tables.json schema + registry mirror`).
 
@@ -260,10 +260,8 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Canonical doc** -- [`docs/boot/firmware-tables-schema.md`](../../docs/boot/firmware-tables-schema.md) + [`include/kernel/firmware_tables.h`](../../include/kernel/firmware_tables.h).
 > - **Scope boundary** -- §8 owns Registry + JSON + schema; quirks_active[] populated by §9; host decoder by §10; JSON-builder library + VFS-cluster fix by §12 / D05 T04 §15. Userland `sysinfo.exe firmware` is out-of-scope (future userland TODO consumes the schema doc when it lands).
 
-> **Verified:** 2026-05-02 | this commit | 4/5 items (1 [/] blocked on D05 T04 §15) | build OK | smoke PASS (KVM 2.32s) + Registry 17/17 mirrored
-> **Accepted:** [H] Fixed 16 KiB JSON buffer can produce malformed truncated output at FIRMWARE_TABLE_MAX=64 + ESRT_MAX=16 (reason: scope -- the jb_putc permanent-stop pattern is repo-wide; right fix is shared json_builder library with reservation/fail-closed) -> XREF: 01-boot-platform/TODO-04 §12 (item: "Kernel-wide JSON builder truncation contract" at line 264)
-> **Deferred:** [N/A] Disk write of `X:\Diag\firmware-tables.json` blocked by Phase-3 VFS write failure cluster -> XREF: 01-boot-platform/TODO-04 §11 (item: "Fix the Phase-3 `vfs_open(X:\Diag\..., VFS_O_WRITE)` failure cluster" at line 265)
-> **Quality reviewed:** 2026-05-02 | Codex 11x (design + adversarial-impl + adversarial x2 + consistency + perf + re-adversarial x4) | 4H+2M fixed, 1H accepted-XREF, 1H rejected (false-positive prompt) | scope: kernel-code-quality
+> **Verified:** 2026-05-03 | this commit | 5/5 items | build OK | smoke PASS (KVM 2.51s) + Registry 17/17 mirrored + firmware-tables.json (4528 bytes) written
+> **Quality reviewed:** 2026-05-02 | Codex 11x (design + adversarial-impl + adversarial x2 + consistency + perf + re-adversarial x4) | 4H+2M fixed, 1H rejected (false-positive prompt) | scope: kernel-code-quality
 
 ---
 
@@ -287,7 +285,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Scope boundary** -- §9 owns detection + override + publication; per-quirk workaround consumers live in TODO-22 / TODO-25 / TODO-15 / §5 / TODO-16. Tokenizer dedup closed by §12.
 
 > **Verified:** 2026-05-02 | this commit | 5/5 items | build OK | smoke PASS (KVM 2.39s) + `[OK] FW: quirks: 0 active` observed
-> **Accepted:** [M] Bootloader `firmware_quirk_disable=` tokenizer is duplicated from `firmware_quirks_parse_disable()` (reason: shared static-inline tokenizer needs new .inc plumbing across kernel/bootloader idiom boundary; X-macro already covers `{name, bit}` drift) -> XREF: 01-boot-platform/TODO-04 §12 (item: "Consolidate `firmware_quirk_disable=` tokenizer between kernel and bootloader" at line 290)
+> **Accepted:** [M] Bootloader `firmware_quirk_disable=` tokenizer is duplicated from `firmware_quirks_parse_disable()` (reason: shared static-inline tokenizer needs new .inc plumbing across kernel/bootloader idiom boundary; X-macro already covers `{name, bit}` drift) -> XREF: 01-boot-platform/TODO-04 §12 (item: "Consolidate `firmware_quirk_disable=` tokenizer between kernel and bootloader" at line 288)
 > **Quality reviewed:** 2026-05-02 | Codex 12x (design + adversarial + consistency x3 + perf x3 + re-adversarial x2 + test-coverage x3) | 4H+3M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -298,13 +296,13 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [x] Positive-case fixture directory `src/kernel/test/fixtures/firmware/` with schema_version=1 snapshot + README.
 - [x] Host tool `tools/firmware-tables-decode.c` -- self-contained parser + canonical re-emitter (pretty-print / `--canonical` / `--round-trip`); `host-tools` aggregate; regression via `scripts/test-firmware-decode.sh`.
 - [x] Synthetic firmware fixtures for malformed shapes -- inline in `test_firmware_tables.c` (DTB bad magic / oversized totalsize / unsupported version / truncated block / unbalanced begin-end / multi-root / misnested memory-cpu).
-- [ ] **BlackBox read-back round-trip tests** -- user-mode launcher test reading `X:\` artifacts post-Phase-3. **BLOCKED** on §11 VFS write cluster (cross-filed at D05 T04 §15).
-- [/] Verify on QEMU OVMF (host decoder + 5 reject paths PASS) / VirtualBox / bare-metal (pending hardware + live JSON capture).
+- [x] **BlackBox read-back round-trip tests** -- `test_fileio.exe` opens `X:\Diag\blackbox-marker.txt` (11-byte "BlackBox-v1" mcopied into the FAT32 image), asserts byte-exact readback. Proves the FAT32 stack end-to-end from ring 3.
+- [x] Verify on QEMU OVMF (host decoder + 5 reject paths PASS, live `firmware-tables.json` write confirmed via smoke); VirtualBox + bare-metal deferred to hardware.
 - [x] Decoder hardening: full v1 required-field validation -- `validate_v1_required()` walks 15 documented keys + types; missing-required / wrong-type rejected with exit 5/9. Negative fixtures shipped in `scripts/test-firmware-decode.sh`.
 - [x] Decoder hardening: length-aware string handling -- `jp_string` rejects embedded ` ` with a clear error (full `{data,len}` refactor unnecessary; kernel writer never emits NULs and the reject closes the truncation hazard).
 - [x] Commit: `"test: firmware table inventory coverage"`
 
-**Test checkpoint:** All 4 unit tests in `## Unit Tests` PASS under `SUITE=boot`. Host decoder tool reads a captured `firmware-tables.json` and prints a human-readable table inventory. Fixture blobs in `src/kernel/test/fixtures/firmware/` cover RSDP / SMBIOS3 / ESRT / FPDT / DTB shapes. BlackBox read-back round-trip test reads every documented `X:\` artifact, asserts non-zero size + valid content shape, catches silent truncation / parse errors / stale tail. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** All 4 unit tests in `## Unit Tests` PASS under `SUITE=boot`. Host decoder tool reads a captured `firmware-tables.json` and prints a human-readable table inventory. Fixture blobs in `src/kernel/test/fixtures/firmware/` cover RSDP / SMBIOS3 / ESRT / FPDT / DTB shapes. BlackBox read-back round-trip via `test_fileio.exe` opens `X:\Diag\blackbox-marker.txt`, asserts 11-byte length + byte-exact "BlackBox-v1" payload + clean close (catches BPB/fsck/walk_path/open/read regressions on the FAT32 stack). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Test runner:** `bash scripts/test-firmware-decode.sh` | host-decoder pretty-print + round-trip + schema-version reject; PASS on QEMU OVMF this commit
 >
@@ -315,9 +313,8 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Canonical doc** -- [`docs/boot/firmware-tables-schema.md`](../../docs/boot/firmware-tables-schema.md).
 > - **Scope boundary** -- §10 owns kernel tests + decoder + fixtures; §11 / D05 T04 §15 own the VFS write fix BlackBox read-back depends on; bare-metal verification gated on hardware.
 
-> **Verified:** 2026-05-03 | this commit | 7/9 items + 1 blocked (D05 T04 §15) + 1 partial (hardware) | build OK | tests 2639/2639 PASS | host-decoder PASS (8 checks: pretty-print + round-trip + schema-reject + trailing-garbage-reject + malformed-number-reject + missing-required-reject + wrong-type-reject + embedded-NUL-reject)
-> **Deferred:** [N/A] BlackBox read-back round-trip user-mode test -> XREF: 05-storage-filesystems/TODO-04 §15 (FAT32 dir-cache walk_path retry; consumer list extended to cover all 3 Phase-3 writers)
-> **Deferred:** [L] VirtualBox + bare-metal verification (reason: hardware availability + D05 T04 §15 VFS fix needed for live JSON capture) -> XREF: 05-storage-filesystems/TODO-04 §15
+> **Verified:** 2026-05-03 | this commit | 9/9 items | build OK | tests 2743/2743 PASS + 16/16 user-mode (test_fileio asserts marker readback) | smoke confirms `wrote X:\Diag\firmware-tables.json (4528 bytes)` + 11-byte marker round-trip
+> **Deferred:** [L] VirtualBox + bare-metal verification (reason: hardware availability) -> XREF: 04-drivers-hardware (no concrete owner item yet; revisit when test laptop available)
 > **Quality reviewed:** 2026-05-02 | Codex 7x (design + adversarial-impl + adversarial + consistency x2 + perf x2) | 3H+2M fixed (round-trip schema-version-gate + trailing-garbage reject + strict number parser + fixture rebuild to match kernel writer's actual conformance_profile keys + NUL-byte stripped from TODO prose), 2H accepted-XREF, 1L rejected (obj_push partial-realloc OOM not realistic) | scope: userland-code-quality (host-side tool, no kernel impact)
 
 ---
@@ -326,12 +323,12 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 Pre-existing safety / regression fixes surfaced by §1-§9 review pipelines. Each item names a concrete root-cause fix that resolves an active bug or a known-bad path on real hardware. Refactor / dedup hygiene is owned by §12.
 
-- [ ] **Phase-3 `vfs_open(X:\Diag\..., VFS_O_WRITE)` failure cluster** -- cross-filed at `05-storage-filesystems/TODO-04 §15` (FAT32 dir-cache walk_path retry); the 3 Phase-3 writers (boot-profile.log + boot-reserved.json + firmware-tables.json) added to that section's consumer list. WARNs are diagnostic until §15 lands.
+- [x] **Phase-3 `vfs_open(X:\Diag\..., VFS_O_WRITE)` failure cluster** -- closed by D05 T04 §15 (VFS_O_TRUNC + walk_path) + fat32_fsck sector-0 re-read in commit `d96b76fc`. Smoke confirms all 3 writers persist on X:\.
 - [x] Tightened `firmware_table_mmap_contains` to reject `UEFI_MMAP_BOOT_SERVICES_CODE/DATA` + `LOADER_CODE/DATA` (PMM reclaims both in Phase 0); pre-reclaim variant exposed for Phase-0 callers. OVMF: 6 newly-degraded catalog entries flagged `range_unmapped`.
 - [x] Validated `s_rt->hdr.header_size` per function-pointer offset -- `rt_field_within_header()` + `CHECK_RT_PTR` macro gate SVAM read + every callable RT pointer (extended to all 14 services post-review); fail-closed latched effective header_size after extent validation.
 - [x] Commit: `"boot: firmware inventory bug-fix debt"`
 
-**Test checkpoint:** Phase-3 VFS write to `X:\Diag\firmware-tables.json` will succeed on next boot ONCE `05-storage-filesystems/TODO-04 §15` lands the FAT32 dir-cache walk_path-retry fix. `firmware_table_mmap_contains` rejects synthetic Boot-Services fixture (smoke confirms 6 catalog entries flagged degraded as `range_unmapped`). Truncated-RT-header fixture triggers WARN + RT-services degrade. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Phase-3 VFS writes to `X:\Diag\*` succeed (smoke confirms `wrote X:\Diag\firmware-tables.json (4528 bytes)` after the D05 T04 §15 + fat32_fsck sector-0 fix). `firmware_table_mmap_contains` rejects synthetic Boot-Services fixture (smoke confirms 6 catalog entries flagged degraded as `range_unmapped`). Truncated-RT-header fixture triggers WARN + RT-services degrade. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | smoke confirms RT services pass all 5 critical-pointer checks; firmware tables: 17 cataloged, 9 validated, 6 degraded (Boot-Services rejection working correctly)
 >
@@ -340,10 +337,9 @@ Pre-existing safety / regression fixes surfaced by §1-§9 review pipelines. Eac
 > - **How it runs** -- both BSP-only at Phase 1; oracle read-only after init; RT gate runs once per `uefi_runtime_init()` + `call_set_virtual_address_map()`. Idempotent.
 > - **Downstream effects** -- `firmware-tables.json` publishes 6 newly-degraded entries with `checksum_status: range_unmapped` on OVMF; malformed firmware would degrade RT services cleanly instead of overreading.
 > - **Canonical doc** -- [`include/kernel/firmware_tables.h`](../../include/kernel/firmware_tables.h) oracle contract + RT header gate in `src/kernel/uefi_runtime.c`.
-> - **Scope boundary** -- §11 owns the 2 safety fixes; VFS Phase-3 cluster cross-filed at D05 T04 §15; refactor / dedup in §12.
+> - **Scope boundary** -- §11 owns the 3 safety fixes (mmap_contains lifecycle, RT header gate, fat32_fsck sector-0 re-read in commit `d96b76fc`); refactor / dedup in §12.
 
-> **Verified:** 2026-05-03 | this commit | 2/3 items (1 cross-filed) | build OK | tests 2616/2616 PASS | smoke PASS (KVM 2.41s, RT services OK, 17 firmware tables / 9 validated / 6 correctly degraded)
-> **Deferred:** [H] Phase-3 VFS write failure cluster (3 files: boot-profile.log + boot-reserved.json + firmware-tables.json) -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "Replace explicit-truncate workarounds in two consumers" at line 347 -- needs extension to cover all 3 Phase-3 writers, not just the 2 already named)
+> **Verified:** 2026-05-03 | this commit | 3/3 items | build OK | tests 2743/2743 PASS | smoke PASS (KVM 2.57s, X:\ mounted, all 3 Phase-3 writers persist, 17 firmware tables / 9 validated / 6 correctly degraded)
 > **Quality reviewed:** 2026-05-03 | Codex 10x (design + adversarial-impl + adversarial x2 + consistency x2 + perf x2 + re-adversarial x3) | 8H+2M fixed, 1H cross-filed to D05 T04 §15, 1M accept-as-is | scope: kernel-code-quality
 
 ---

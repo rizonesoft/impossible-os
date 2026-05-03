@@ -217,6 +217,52 @@ int main(void)
     UTEST_ASSERT(missing == INVALID_HANDLE_VALUE,
                  "sys_openfile(nonexistent) returns INVALID_HANDLE_VALUE");
 
+    /* ---- 3b. BlackBox round-trip: read X:\Diag\blackbox-marker.txt --- *
+     * Proves the full FAT32 BlackBox stack works end-to-end from
+     * user-mode: BPB validate (after dirty-mount fsck), partition
+     * mount as X:\, walk_path through dir-cache, sys_openfile + read
+     * across the VFS handle layer. Marker file is built into the
+     * FAT32 image at make-system-disk time (Makefile mcopy line);
+     * if any kernel layer regresses (the 0xF8 BPB validator bug
+     * pattern fixed in commit d96b76fc, fat32 dir-cache walk_path
+     * lookups, drive-letter routing, vfs_o_read on FAT32), this
+     * probe fails first.
+     *
+     * Marker payload: literal 11 bytes "BlackBox-v1", no trailing
+     * NUL or newline. Update both this constant AND the Makefile
+     * `printf "BlackBox-v1"` line in lockstep -- the printf does
+     * not emit a trailing newline, so the on-disk size is exactly
+     * sizeof(MARKER_EXPECTED)-1. */
+    #define MARKER_EXPECTED     "BlackBox-v1"
+    #define MARKER_EXPECTED_LEN (sizeof(MARKER_EXPECTED) - 1)
+
+    HANDLE mh = sys_openfile("X:\\Diag\\blackbox-marker.txt", U_OPEN_READ);
+    UTEST_ASSERT(mh != INVALID_HANDLE_VALUE,
+                 "sys_openfile(\"X:\\\\Diag\\\\blackbox-marker.txt\") returns valid HANDLE");
+
+    if (mh != INVALID_HANDLE_VALUE) {
+        char mbuf[32];
+        long mread = sys_readhandle(mh, mbuf, sizeof(mbuf));
+        UTEST_ASSERT(mread == (long)MARKER_EXPECTED_LEN,
+                     "sys_readhandle returns 11 bytes (marker length)");
+
+        if (mread == (long)MARKER_EXPECTED_LEN) {
+            int match = 1;
+            size_t i;
+            for (i = 0; i < MARKER_EXPECTED_LEN; i++) {
+                if (mbuf[i] != MARKER_EXPECTED[i]) {
+                    match = 0;
+                    break;
+                }
+            }
+            UTEST_ASSERT(match == 1,
+                         "marker content matches 'BlackBox-v1' (round-trip OK)");
+        }
+
+        UTEST_ASSERT(sys_closehandle(mh) == 0,
+                     "sys_closehandle(marker) returns 0");
+    }
+
     /* ---- 4. Directory-object enumeration --------------------------- *
      * "\\" is the OB namespace root. At boot-time the kernel populates
      * Device / KernelObjects / BaseNamedObjects / RPC Control, so a
