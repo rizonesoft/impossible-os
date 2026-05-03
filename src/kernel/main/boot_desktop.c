@@ -404,6 +404,18 @@ void boot_phase3(void)
         firmware_tables_publish_json();
     }
 
+    /* Firmware-update advisor: load X:\Diag\lvfs-metadata.json (offline
+     * cache), join with ESRT, populate HKLM\SOFTWARE\Impossible\
+     * FirmwareAdvisor for the desktop notification UX + sysinfo CLI.
+     * Read-only -- no UpdateCapsule, no OsIndications, no ESP staging
+     * (refusal enforced by firmware_capsule_refused.c sentinel).  Runs
+     * here so the registry surface is populated before cmd.exe loads
+     * sysinfo.exe.  Cache absent -> degrades to status=unknown. */
+    {
+        extern void firmware_advisor_init(void);
+        firmware_advisor_init();
+    }
+
     /* Boot-error history ring: append the kernel-Phase-3 sentinel.
      * Subsystem _init calls have all returned successfully and userland
      * threads are not yet running; this is the canonical "kernel

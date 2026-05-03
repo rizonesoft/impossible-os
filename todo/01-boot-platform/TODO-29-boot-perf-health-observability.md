@@ -69,6 +69,11 @@ implements_after: TODO-04
 | 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [ ]   |
 | ⭐ |   7   | Async font/icon loader (post-desktop-ready)         | §1                                        |  [ ]   |
 | ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T14 §6 (alive-blink), T23 (watchdog)  |  [ ]   |
+| 💎 |   9   | EXEC step latency profile (1210ms FAIL on smoke)    | §1                                        |  [ ]   |
+| ⭐ |  10   | UEFI RT SetVariable latency (>50ms threshold)       | §1, T04 §11                               |  [ ]   |
+| ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T29 §2 (advisor)                  |  [ ]   |
+| ⭐ |  12   | AVX-512 throttle policy when APERF/MPERF absent     | T19 §3                                    |  [ ]   |
+| ⭐ |  13   | Boot history ring depth + format (8 → 32+ entries)  | T01 §11                                   |  [ ]   |
 
 ---
 
@@ -201,6 +206,80 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 - [ ] Commit: `"boot: heartbeat telemetry during long phases"`
 
 **Test checkpoint:** A 1342ms SMBIOS init with target 100ms emits 4-5 `[BOOT-HB] phase=SMBIOS elapsed=Xms target=100` lines. A <250ms phase emits zero heartbeats. Heartbeat ISR is harmless when LAPIC timer is the active scheduler tick (no double-fire, no priority inversion).
+
+---
+
+## 9. EXEC Step Latency Profile
+
+Smoke (KVM, 2026-05-03) records `EXEC took 1210ms (target 100ms)` -- a HARD-budget breach 12.1x over target. The EXEC step covers SSDT registration (470 main slots + ~1300 shadow stubs), syscall handler wire-up, NT subsystem registration, ETW init, and exec format dispatch (ELF + EIF + PE32+). Without per-substep timing the slow path is invisible.
+
+**Files:** `src/kernel/main/boot_exec.c`, `src/kernel/ssdt.c`, `include/kernel/boot_init.h`
+
+- [ ] Add finer-grained `boot_progress` substeps inside EXEC: SSDT_MAIN, SSDT_SHADOW, NT_SUBSYS_BATCH, SYSCALL_REG, EXEC_FORMAT_REG.
+- [ ] Define per-substep budgets in `boot_perf_budgets[]`: SSDT_MAIN <50ms, SSDT_SHADOW <100ms, NT batch <30ms, format register <5ms each.
+- [ ] Profile SSDT registration hot path; pick a fix path: bulk-register via static const array, lazy shadow-stub registration, or accept current cost with a justified budget.
+- [ ] Commit: `"boot: EXEC step substep timing + SSDT registration profile"`
+
+**Test checkpoint:** Boot serial shows ~5 EXEC sub-step lines with ms deltas; the largest contributor is named in the perf summary; total EXEC drops below 500ms or the budget is justified in `boot_perf_budgets[]`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 10. UEFI RT SetVariable Latency
+
+Smoke (KVM, 2026-05-03) records `UEFI: RT SetVariable took 109 ms (threshold 50 ms)`. NVRAM writes during boot perf save are the suspect path. 109ms is a soft breach but consistently above threshold suggests OVMF flash-emulation latency or a serialization bug in our caller.
+
+**Files:** `src/kernel/uefi_runtime.c`, `src/kernel/main/boot_perf.c`
+
+- [ ] Capture the variable name + size in every >50ms RT-SetVariable WARN line.
+- [ ] Verify boot perf save (`bootperf` step) batches its writes; fix to a single-blob write if the 31-step bin currently fragments into 31 calls.
+- [ ] If OVMF flash-emulation latency is the root cause, exempt OVMF via `firmware_quirks_is_active(QUIRK_SLOW_NVRAM)` instead of leaving the WARN spam.
+- [ ] Commit: `"boot: per-call RT SetVariable latency tracking + bootperf write batching"`
+
+**Test checkpoint:** Serial shows the variable name on every >50ms RT SetVariable WARN. Bare-metal RT SetVariable consistently <50ms (real flash). OVMF still warns but with the variable name + size for triage.
+
+---
+
+## 11. Phase-3 X:\Diag JSON Writer Batching
+
+Boot writes 5 small JSON files to `X:\Diag` serially during late Phase 3: `firmware-tables.json` (4528 B), `firmware-advisor.json` (187 B), `boot-reserved.json`, `postcode.log`, `hwdump.txt`. Each one performs an independent FAT32 directory walk + cluster allocation + sector-cache write + close. ~10ms per write on KVM (~50ms cumulative); scales linearly as new diagnostic JSONs land.
+
+**Files:** new `src/kernel/fs/fat32/fat32_batch.c`, plus the 5 Phase-3 writer call sites
+
+- [ ] Profile the 5-write Phase-3 sequence with `boot_progress` substeps; capture per-write ms.
+- [ ] Design `fat32_batch_begin()` / `fat32_batch_write_file()` / `fat32_batch_commit()` API: open parent dir once, all files in one cluster-bitmap pass, single dir + FAT flush.
+- [ ] Retrofit the 5 writers; keep per-file API for one-off writers (boot-error history, klog Serial_*.log).
+- [ ] Commit: `"fs: fat32 batched Phase-3 X:\Diag JSON writer (5 files in one transaction)"`
+
+**Test checkpoint:** Boot serial shows ~5x reduction in cumulative `boot_progress` delta for the X:\Diag write block. All 5 files persist with byte-identical content vs the per-file path. Smoke confirms no FAT32 cache regressions.
+
+---
+
+## 12. AVX-512 Throttle Policy When APERF/MPERF Unavailable
+
+Smoke records `simd: MPERF/APERF unavailable; enabling AVX-512 without throttle check`. APERF/MPERF gate throttle-detection on real hardware; Hyper-V hides them. Today we proceed regardless -- a correctness gap on bare-metal Intel where the MSRs exist but a hypervisor hides them, and AVX-512-heavy code can hit thermal/power throttling unobserved.
+
+**Files:** `src/kernel/cpu_security.c`, `src/kernel/simd.c`, `src/kernel/cpuid.c`
+
+- [ ] Hypervisor-bit aware logging: hypervisor present = LOG_INFO (expected); bare metal + AVX-512 + no MPERF = LOG_WARN (real regression).
+- [ ] `boot.conf simd_max_avx_level=avx2` override pins the SIMD ceiling to AVX2 on systems with observed throttling.
+- [ ] Commit: `"simd: AVX-512 throttle policy when APERF/MPERF unavailable"`
+
+**Test checkpoint:** Hyper-V smoke shows LOG_INFO (no WARN). Synthetic bare-metal-no-MPERF fixture or real bare-metal Haswell test laptop shows LOG_WARN. `boot.conf simd_max_avx_level=avx2` clamps the runtime ceiling.
+
+---
+
+## 13. Boot History Ring Depth + Format
+
+Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; an operator debugging an intermittent failure across 12-15 boots loses early evidence. Bumping to 32 costs ~512 bytes NVRAM (16 B × 32) and matches Win11 + Linux defaults.
+
+**Files:** `include/kernel/boot_history.h`, `src/kernel/main/boot_history.c`, registry mirror
+
+- [ ] Bump `BOOT_HIST_RING_LEN` from 8 to 32; update size-pin static asserts + tests + JSON schema docs in lockstep.
+- [ ] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape).
+- [ ] Decide: grow NVRAM variable in-place with tail-append schema, or version-bump and migrate.
+- [ ] Commit: `"boot: boot_history ring depth 8 -> 32 entries (operator UX)"`
+
+**Test checkpoint:** Existing unit tests pass at the 32-entry size. Smoke shows no regression in `boot_history: Recent boot history (N attempts)` output. NVRAM bin file is 512 bytes (32 × 16); RegSetBinary handles the larger blob.
 
 ---
 

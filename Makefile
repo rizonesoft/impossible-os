@@ -657,9 +657,9 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe &: sysroot user/hello.c user/cmd.c \
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_harness_smoke.exe $(SYSROOT)/test_syscall.exe $(SYSROOT)/test_faultinject.exe $(SYSROOT)/test_smoke_boot.exe $(SYSROOT)/test_stress_libc.exe $(SYSROOT)/test_perf_syscall.exe $(SYSROOT)/test_libc.exe $(SYSROOT)/test_ipc.exe $(SYSROOT)/test_process.exe $(SYSROOT)/test_fileio.exe $(SYSROOT)/test_win32.exe $(SYSROOT)/test_loader_elf.exe $(SYSROOT)/test_loader_pe.exe $(SYSROOT)/test_loader_eif.exe $(SYSROOT)/test_fastpath.exe $(SYSROOT)/test_fastpath_fuzz.exe &: sysroot user/hello.c user/cmd.c user/sysinfo/sysinfo.c \
                                                                               user/test/test_harness_smoke.c \
                                                                               user/test/test_syscall.c \
                                                                               user/test/test_faultinject.c \
@@ -712,6 +712,10 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 	$(CC) $(USER_CFLAGS) -Iuser/include -Iinclude -c user/cmd.c -o $(BUILD_DIR)/user/cmd.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/cmd.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/cmd.o $(BUILD_DIR)/user/libc.a
+	@mkdir -p $(BUILD_DIR)/user/sysinfo
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/sysinfo/sysinfo.c -o $(BUILD_DIR)/user/sysinfo/sysinfo.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/sysinfo/sysinfo.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/sysinfo/sysinfo.o $(BUILD_DIR)/user/libc.a
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/test/test_harness_smoke.c -o $(BUILD_DIR)/user/test/test_harness_smoke.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/test/test_harness_smoke.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_harness_smoke.o $(BUILD_DIR)/user/libc.a
@@ -778,6 +782,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/test_harness_smoke.exe $(SYSR
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/test/test_fastpath_fuzz.o $(BUILD_DIR)/user/libc.a
 	@cp -f $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
 	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
+	@cp -f $(BUILD_DIR)/user/sysinfo/sysinfo.exe $(SYSROOT)/sysinfo.exe
 	@cp -f $(BUILD_DIR)/user/test/test_harness_smoke.exe $(SYSROOT)/test_harness_smoke.exe
 	@cp -f $(BUILD_DIR)/user/test/test_syscall.exe $(SYSROOT)/test_syscall.exe
 	@cp -f $(BUILD_DIR)/user/test/test_faultinject.exe $(SYSROOT)/test_faultinject.exe

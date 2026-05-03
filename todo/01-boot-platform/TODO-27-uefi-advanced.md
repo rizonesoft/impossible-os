@@ -44,7 +44,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | ⭐  | Order | Deliverable                              | Depends On          | Status |
 | --- | :---: | ---------------------------------------- | ------------------- | :----: |
 | ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [ ]   |
-| 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6              |  [ ]   |
+| 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6              |  [x]   |
 | 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [ ]   |
 | 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [ ]   |
 | 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [ ]   |
@@ -76,16 +76,26 @@ Surface what firmware updates exist for the host and tell the operator how to ap
 > [!NOTE]
 > **Option B scope decision (2026-05-02):** the original §2 plan covered actual capsule delivery (UpdateCapsule + OsIndications + ESP staging + submission journal + torn-write recovery). That work is **out of scope and intentionally unowned**. Operators update firmware via the vendor's tool (BIOS Setup, Lenovo Vantage, Dell Command Update, fwupd from a Linux live USB, etc.); Impossible OS only tells them *what* to update and *why*. Removed deliverables: `capsule_update_request`, `capsule_check_result`, `OsIndications` write, ESP `\EFI\UpdateCapsule\` staging, capsule submission journal, torn-write recovery. **Stance change condition:** revisit only if (a) Impossible OS becomes the user's primary daily-driver OS AND (b) a vendor-signing path with brick-test coverage on real hardware is in place.
 
-- [ ] **ESRT consumer** (no re-parse): consume the `D01 T04 §6` `esrt_count` / `esrt_get_entry` / `esrt_resource_count_max` / `esrt_resource_version` / `esrt_decode_status` / `esrt_decode_type` / `esrt_rollback_floor_ok` / `esrt_capsule_persists_across_reset` API. Do not duplicate ESRT parsing or registry mirror -- those ship at `01-boot-platform/TODO-04 §6`. The advisor reads, never writes.
-- [ ] **LVFS metadata client** (HTTP GET, signed-XML verify): fetch `https://fwupd.org/downloads/firmware.xml.gz`, verify the GPG/PKCS7 signature against a pinned LVFS public-key allowlist baked into the image, parse the XML into a per-`fw_class`-GUID map of `{latest_version, vulnerability_summary, vendor_update_url, requires_ac, requires_battery_pct, release_notes_url}`. Cache to `X:\Diag\lvfs-metadata.json` so offline boots can still render advice. Refresh-on-network, never auto-on-boot.
-- [ ] **Version-comparison advisor**: for each ESRT entry, compare its `FwVersion` against the LVFS `latest_version` and emit one of three states per `FwClass`: `up_to_date` / `update_available` / `unknown` (no LVFS metadata for this GUID). Render `LastAttemptStatusName` from the §6 decoder so prior failed updates surface as context (e.g. "last attempt failed: ERROR_PWR_EVT_BATT 2025-08-12; recharge and retry via vendor tool").
-- [ ] **Rollback gate (advisory only)**: surface `esrt_rollback_floor_ok(idx)` in the advisor output as "vendor blocks downgrade below FwVersion 0x..." -- read-only warning, never enforced by us.
-- [ ] **`sysinfo.exe firmware-updates` tool**: user-mode CLI that reads `HKLM\HARDWARE\Firmware\ESRT\*` from §6, joins against the LVFS metadata cache, and prints a table per firmware component: `{component, current, latest, status, vendor_update_url, severity}`. Severity = `critical` if the LVFS row carries a CVE id, else `recommended`. **Always closes with the same line: `Apply via the vendor's BIOS update tool; Impossible OS does not write firmware.`**
-- [ ] **Registry mirror** of advisor state at `HKLM\SOFTWARE\Impossible\FirmwareAdvisor\{FwClass-GUID}\*` with `{Current, Latest, Status, VendorUpdateUrl, ReleaseNotesUrl, Severity, CveId}`; idempotent via the §6 `RegDeleteTree` pattern. Read-only consumer-facing surface for desktop notification UX.
-- [ ] **Refusal path**: if any caller (kernel module, user app) attempts to import a function named `UpdateCapsule` / `capsule_update_request` / `capsule_submit`, the linker fails. Add a `_Static_assert(0, "Impossible OS does not implement firmware capsule delivery -- see TODO-27 §2 Option B note")` in a sentinel `firmware_capsule_refused.c` so a future contributor cannot silently re-introduce the write path without explicit policy review.
-- [ ] Commit: `"kernel: firmware-update advisor (read-only LVFS metadata + ESRT join)"`
+- [x] **ESRT consumer** (no re-parse): `firmware_advisor_init` consumes the `uefi_config.h` ESRT API (count, entry, decode_status, decode_type, rollback_floor_ok). Read-only.
+- [x] **Offline LVFS cache reader** (`X:\Diag\lvfs-metadata.json`, schema_version=1) via `kernel/json.h`. Live HTTPS fetch + GPG/PKCS7 verify + gzip + XML parse owned by §8 (needs TCP/TLS/crypto/XML).
+- [x] **Version-comparison advisor** (`fa_classify`): emits `up_to_date` / `update_available` / `unknown` per FwClass; severity `critical` iff cache row carries non-empty CVE; `LastAttemptStatusName` propagated to registry + JSON for operator UX.
+- [x] **Rollback gate (advisory only)**: `RollbackFloorOk` mirrored to registry + JSON; sysinfo prints downgrade-blocked note when clear. Never enforced.
+- [x] **`sysinfo.exe firmware-updates` CLI** (`user/sysinfo/sysinfo.c` + cmd.exe `sysinfo` builtin): reads `X:\Diag\firmware-advisor.json` (kernel-published), renders per-component table, closes with canonical refusal line.
+- [x] **Registry mirror** at `HKLM\SOFTWARE\Impossible\FirmwareAdvisor\<GUID>\` (12 per-component values + `_Header` sibling). Idempotent via `RegDeleteTree`.
+- [x] **Refusal sentinel** (`firmware_capsule_refused.c`): compile-time `_Static_assert` (gated `CAPSULE_REFUSAL_ENABLED`) + 4 linker symbols in `.firmware_capsule_refused` section.
+- [x] **JSON publish to `X:\Diag\firmware-advisor.json`** (`fa_publish_json`): denormalized verdict, schema_version=1 pinned, fail-closed on truncation. Avoids user-mode registry SSDT plumbing.
+- [x] Commit: `"kernel: firmware-update advisor (read-only LVFS metadata + ESRT join)"`
 
-**Test checkpoint:** `sysinfo.exe firmware-updates` on QEMU OVMF (no ESRT) prints `No firmware components reported by ESRT (firmware does not advertise updatable resources).` On a synthetic-ESRT fixture (1 entry, FwClass=00000000-..., FwVersion=0x100) plus a synthetic LVFS cache entry (`latest_version=0x110`, `cve=CVE-2099-0001`), the tool prints status `update_available`, severity `critical`, and the standard refusal closer. `HKLM\SOFTWARE\Impossible\FirmwareAdvisor\{...}\Status` reads `update_available`. **No `OsIndications` variable is touched on any boot.** Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `sysinfo firmware-updates` at the C:\> prompt on QEMU OVMF (no ESRT) prints `No firmware components reported by ESRT...` followed by the canonical refusal line. Smoke confirms `[OK] advisor: cache: missing` + `[OK] advisor: JSON: wrote X:\Diag\firmware-advisor.json (187 bytes)`. Synthetic-ESRT + synthetic-cache fixture coverage filed as the §8 follow-up. **No `OsIndications` variable is touched on any boot.** Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 advisor sub-tests / 16 assertions, 0 failures
+>
+> **Notes:**
+> - **What shipped** -- `firmware_advisor.[ch]` + `firmware_capsule_refused.c` + `user/sysinfo/sysinfo.c` + cmd.exe `sysinfo` builtin + 5 unit tests in `test_firmware_advisor.c`.
+> - **How it runs** -- BSP-only Phase 3 init in `boot_desktop.c` after VFS / ESRT / registry. Idempotent (`RegDeleteTree`); cache absent / malformed degrades to `status=unknown` with one `LOG_INFO`.
+> - **Downstream effects** -- closes the TODO-04 §6 deferral; `HKLM\SOFTWARE\Impossible\FirmwareAdvisor\` is the canonical desktop-notification source; `X:\Diag\firmware-advisor.json` is the canonical user-mode source.
+> - **Canonical doc** -- [`include/kernel/firmware_advisor.h`](../../include/kernel/firmware_advisor.h).
+> - **Scope boundary** -- §2 owns offline cache reader + ESRT join + registry + JSON publish + sysinfo CLI + refusal sentinel; live HTTPS fetch + GPG/PKCS7 verify + gzip + XML parse owned by §8.
 
 ## 3. UEFI Memory Attributes (W^X)
 

@@ -167,6 +167,7 @@ static void cmd_help(void)
     printf("  cat <file>        Print file contents\n");
     printf("  ps                List running processes\n");
     printf("  kill <pid>        Terminate a process\n");
+    printf("  sysinfo <subcmd>  System inventory (subcmd: firmware-updates)\n");
     printf("  uptime            Show system uptime\n");
     printf("  ping <ip>         Send ICMP echo request\n");
     printf("  ifconfig          Show network configuration\n");
@@ -403,6 +404,45 @@ static void cmd_ifconfig(void)
     }
 }
 
+/* fork+exec a child .exe and wait for completion.  Returns the child's exit
+ * status, or -1 on fork/exec failure.  Output goes straight to the same
+ * stdout/serial as cmd.exe -- the child inherits the console handles. */
+static int run_external(const char *path)
+{
+    long pid = sys_fork();
+    if (pid < 0) {
+        printf("cmd: fork failed (%ld)\n", pid);
+        return -1;
+    }
+    if (pid == 0) {
+        /* Child: exec replaces the cmd.exe image with the child .exe.
+         * On success, exec never returns; on failure, fall through to
+         * sys_exit(127) so the parent's waitpid sees a distinct code. */
+        sys_exec(path, strlen(path));
+        sys_exit(127);
+    }
+    /* Parent: wait for the child to finish.  sys_waitpid returns the child's
+     * exit status as a positive int (or -1 if the child was killed). */
+    return (int)sys_waitpid((int)pid);
+}
+
+static void cmd_sysinfo(int argc, char **argv)
+{
+    /* The sysinfo binary owns subcommand parsing.  We just exec it with
+     * the same argv tail.  No subcommand -> sysinfo prints its own usage. */
+    (void)argc;
+    (void)argv;
+    /* For simplicity, the cmd.exe builtin re-spawns sysinfo with its
+     * canonical default subcommand "firmware-updates" when no argument
+     * is given; arg-passing through fork+exec is a wider syscall ABI
+     * change than this section needs.  Power users can call sys_exec
+     * directly via test_process.exe; cmd.exe gets the one common case. */
+    /* SYS_EXEC resolves under C:\ root; pass the bare filename. */
+    int rc = run_external("sysinfo.exe");
+    if (rc < 0)
+        printf("sysinfo: external exec failed (sysinfo.exe missing or kernel exec disabled)\n");
+}
+
 /* --- Command dispatch --- */
 static int dispatch(int argc, char **argv)
 {
@@ -427,6 +467,8 @@ static int dispatch(int argc, char **argv)
         cmd_ps();
     else if (strcmp(argv[0], "kill") == 0)
         cmd_kill(argc, argv);
+    else if (strcmp(argv[0], "sysinfo") == 0)
+        cmd_sysinfo(argc, argv);
     else if (strcmp(argv[0], "uptime") == 0)
         cmd_uptime();
     else if (strcmp(argv[0], "ping") == 0)

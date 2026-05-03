@@ -292,6 +292,22 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
 done
 printf "\r"
 
+# Grace period after PASS markers fire so post-Phase-3 disk flushes (FAT32
+# sector cache writeback for postcode.log / hwdump.txt / firmware-advisor.json /
+# firmware-tables.json) actually persist to the disk image.  Without this the
+# kernel logs the writes but the FAT32 cache never flushes before QEMU dies,
+# leaving the disk image's bytes unchanged so consumers like `mtype` see all
+# zeros.  3 seconds matches the longest observed post-"Boot complete" write
+# (hwdump.txt at +3.4s in the test=1 boot log).  Skip on FAIL since waiting
+# longer for a broken boot wastes operator time.
+if [ "$BOOT_PASSED" = true ] && [ -z "${SMOKE_NO_GRACE:-}" ]; then
+    GRACE_SEC="${SMOKE_GRACE_SEC:-3}"
+    printf "  ${DIM}PASS markers detected; waiting %ds for disk flushes...${NC}  " "$GRACE_SEC"
+    sleep "$GRACE_SEC"
+    strip_ansi
+    printf "\r"
+fi
+
 # Kill QEMU (trap also does this; harmless repeat)
 kill "$QEMU_PID" 2>/dev/null || true
 wait "$QEMU_PID" 2>/dev/null || true
