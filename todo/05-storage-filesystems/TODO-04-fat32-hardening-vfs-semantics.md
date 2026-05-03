@@ -62,6 +62,7 @@ title: "TODO-04 -- FAT32 Hardening & VFS Win32 Semantics"
 | 💎  |  13   | §13 FAT32 4 GiB write guard -- reject writes that would exceed 0xFFFFFFFF bytes       | §5 (write path stable)                                   |  [x]   |
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [x]   |
 | 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13)       |  [/]   |
+| 💎  |  16   | §16 VFS rename replace-existing -- atomic temp-file durable-write primitive          | §4 (LFN write), §15 (truncate path)                      |  [ ]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -368,6 +369,35 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > **Accepted:** [H] TRUNC runs while handle invisible to share enforcement -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "VFS per-vnode share-mode locking" at line 354 -- dormant on BSP-only Phase-3)
 > **Accepted:** [H] FAT32 truncate invalidates cache slot backing returned handle -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 355 -- dormant on sequential writers)
 > **Quality reviewed:** 2026-05-03 | Codex 5x (design + adversarial x2 + consistency + perf) | 2H+1M fixed, 2H accepted-XREF | scope: kernel-code-quality
+
+---
+
+## 16. VFS Rename Replace-Existing -- Atomic Temp-File Durable-Write Primitive
+
+`vfs_rename(src, dst)` today returns `-1` when `dst` exists -- the dispatch in [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) lands in `fat32_rename_vol()` ([`src/kernel/fs/fat32/fat32_write.c`](../../src/kernel/fs/fat32/fat32_write.c)) which only rewrites the matched directory entry's name field; the prospective destination is never inspected. This blocks the canonical durable-write idiom (`open(.tmp) -> write -> rename(.tmp, target)`) that every history-preserving RMW writer needs (boot-trend rolling JSON, registry hive saves, ETW log rotation, BlackBox crash dumps, future Linux-compat ports). Without this primitive every caller has to ship a bespoke two-slot scheme.
+
+**Files:** [`src/kernel/fs/vfs.c`](../../src/kernel/fs/vfs.c) (dispatch), [`src/kernel/fs/fat32/fat32_write.c`](../../src/kernel/fs/fat32/fat32_write.c) (rename impl), [`include/kernel/fs/vfs.h`](../../include/kernel/fs/vfs.h) (replace-existing flag), [`src/kernel/fs/fat32/fat32_ops.c`](../../src/kernel/fs/fat32/fat32_ops.c) (ops table glue), `src/kernel/test/test_fat32_rename.c` (NEW or extension).
+
+> [!IMPORTANT]
+> **Atomicity contract.** "Replace existing" means: if `dst` exists, free its cluster chain + remove its dirent FIRST, then re-target the `src` dirent to the destination name. On any failure mid-sequence, the FAT must remain consistent -- no half-freed chains, no orphaned dirents. The §6 fsck path is the safety net but must never see a state it has to repair on the happy path.
+
+- [ ] Add `VFS_RENAME_REPLACE_EXISTING` flag to `include/kernel/fs/vfs.h`; extend `vfs_rename()` to take a `flags` arg (or add `vfs_rename_ex` keeping the 2-arg shape).
+- [ ] Extend `vfs_node_ops::rename` signature to include `uint32_t flags`; touch every FS driver vtable (FAT32, IXFS, NTFS-stub, devfs).
+- [ ] In `fat32_rename_vol`: when `flags & REPLACE_EXISTING` AND dst SFN matches existing dirent, free dst chain + zero dirent + walk LFN slots back + scache flush BEFORE renaming src dirent. Cache invalidation between every step.
+- [ ] Refuse replace when src and dst are the same dirent (no-op vs error -- match POSIX `rename` same-file semantics).
+- [ ] Refuse replace when dst is a directory (would orphan its tree); return `-1` with klog WARN.
+- [ ] Open-handle check: if dst is currently open (`ref_count > 0`), refuse with `STATUS_SHARING_VIOLATION`-class error (mirrors §9 mark-for-delete pattern).
+- [ ] FAT32 dirent + scache invalidation around the replace step (mirrors §15 create/unlink invalidation).
+- [ ] IXFS rename op must accept the flag (implement replace-existing OR refuse cleanly with explicit error; FAT32 is primary consumer).
+- [ ] Unit test: rename A->B with flag; B's content == A's content; A's dirent gone; B's old chain freed (free-cluster count delta).
+- [ ] Unit test: replace fails cleanly when dst is open (refcount > 0); src + dst both still readable post-fail.
+- [ ] Unit test: same-dirent rename returns 0 (no-op, no FAT mutation).
+- [ ] Smoke: synthetic `boot-trend.json.tmp -> boot-trend.json` rename succeeds; prior file's clusters returned to free pool; `fat32_fsck` clean exit.
+- [ ] Commit: `"fs: VFS rename replace-existing -- atomic temp-file durable-write primitive (FAT32)"`
+
+**Test checkpoint:** Two regression scenarios pass. (1) `vfs_rename("\X:\Perf\boot-trend.json.tmp", "\X:\Perf\boot-trend.json", VFS_RENAME_REPLACE_EXISTING)` returns 0 when dst pre-exists; the .tmp dirent is gone, the destination has the .tmp's content, and `fat32_fsck` reports zero cross-linked or orphaned clusters. (2) Same call returns -1 when dst is open; no on-disk mutation observed. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-fs-tests.bat` (SUITE=fs) | 3 new replace-existing sub-tests | 0 failures
 
 ---
 
