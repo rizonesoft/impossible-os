@@ -349,6 +349,8 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [x] Cross-FS regression tests -- 3 IXFS variants pin TRUNC shrinks / no-WRITE rejected / dir silently masked. FAT32 variant TEST_PENDING.
 - [x] 4 consumer retrofits to single-open `VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC`. Smoke: all 4 Phase-3 writers persist.
 - [ ] **FAT32 zero-cluster cache coherency** -- scache write-back vs `fat32_read_sectors_multi` direct read; reused-cluster reads see stale on-disk bytes. Flip FAT32 TEST_PENDING when fixed.
+- [ ] **VFS per-vnode share-mode locking** -- unlocked window between `vfs_add_handle` and `ref_count++` lets concurrent opens skip the share check; TRUNC dispatch lengthens it. Dormant on BSP-only Phase-3.
+- [ ] **FAT32 cache-slot stability for live handles** -- `fat32_finddir` returns `vol->dir_files` pointers; cache invalidation can overwrite a slot a live handle aims at. Per-open alloc or pinning. Dormant on sequential writers.
 - [x] Commit: `"fs: VFS_O_TRUNC end-to-end -- FAT32 cached refresh + exact-slot handle cleanup + cross-FS policy"`
 
 **Test checkpoint:** Long file written, reopened with `VFS_O_TRUNC | VFS_O_WRITE`, shorter payload reads back at exact size with no stale tail (IXFS via unit test; FAT32 via smoke -- 4 Phase-3 writers persist). TRUNC without WRITE returns NULL. Directory + TRUNC silently masked at VFS layer. Smoke PASSes with no Phase-3 WARN cluster. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -362,8 +364,10 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > - **Canonical doc** -- [`include/kernel/fs/vfs.h`](../../include/kernel/fs/vfs.h) + [`include/kernel/fs/fat32/fat32_internal.h`](../../include/kernel/fs/fat32/fat32_internal.h) `fat32_file::sfn`.
 > - **Scope boundary** -- §15 owns VFS TRUNC + FAT32 SFN/cache + 4 retrofits; FAT32 zero-cluster scache vs disk-direct read coherency tracked as in-section follow-up.
 
-> **Verified:** 2026-05-03 | this commit | 10/11 items + 1 follow-up | build OK | tests 2740/2740 PASS | smoke PASS (KVM 2.57s)
-> **Quality reviewed:** 2026-05-03 | Codex 2x (design + adversarial) | 1H fixed, 1H rejected (design-mode mismatch) | scope: kernel-code-quality
+> **Verified:** 2026-05-03 | this commit | 10/13 items + 3 follow-ups | build OK | tests 2743/2743 PASS | smoke PASS (KVM 2.51s)
+> **Accepted:** [H] TRUNC runs while handle invisible to share enforcement -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "VFS per-vnode share-mode locking" at line 354 -- dormant on BSP-only Phase-3)
+> **Accepted:** [H] FAT32 truncate invalidates cache slot backing returned handle -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 355 -- dormant on sequential writers)
+> **Quality reviewed:** 2026-05-03 | Codex 5x (design + adversarial x2 + consistency + perf) | 2H+1M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
 

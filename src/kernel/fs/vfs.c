@@ -409,11 +409,6 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
     if (share == 0)
         share = VFS_SHARE_READ | VFS_SHARE_WRITE | VFS_SHARE_DELETE;
 
-    /* VFS_O_TRUNC requires VFS_O_WRITE. Truncating a read-only handle
-     * is contradictory; reject early before any FS dispatch. */
-    if ((flags & VFS_O_TRUNC) && !(flags & VFS_O_WRITE))
-        return (struct vfs_node *)0;
-
     idx = parse_drive(path, &rest);
     if (idx < 0 || !mounts[idx].mounted)
         return (struct vfs_node *)0;
@@ -437,6 +432,14 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
      * and IXFS no-op on directory opens. */
     if (!(node->type & VFS_FILE) && (flags & VFS_O_TRUNC))
         flags &= ~VFS_O_TRUNC;
+
+    /* VFS_O_TRUNC requires VFS_O_WRITE on FILES (truncating a read-only
+     * file handle is contradictory). Run AFTER the directory mask so a
+     * read-only directory open with a stray TRUNC bit is normalized
+     * (TRUNC stripped) rather than rejected. */
+    if ((node->type & VFS_FILE) &&
+        (flags & VFS_O_TRUNC) && !(flags & VFS_O_WRITE))
+        return (struct vfs_node *)0;
 
     /* Oplock break: break existing oplock before share-mode check */
     if (node->type & VFS_FILE)

@@ -137,7 +137,7 @@ static void test_vfs_o_trunc_ixfs_shrinks(void)
     vfs_unlink(path);
 }
 
-/* VFS_O_TRUNC without VFS_O_WRITE returns NULL. */
+/* VFS_O_TRUNC without VFS_O_WRITE returns NULL on FILES. */
 static void test_vfs_o_trunc_no_write_rejected(void)
 {
     const char *path = "C:\\Impossible\\test_trunc_no_write.tmp";
@@ -154,6 +154,26 @@ static void test_vfs_o_trunc_no_write_rejected(void)
         vfs_close(r);
     }
     vfs_unlink(path);
+}
+
+/* Read-only directory open with stray TRUNC bit -- TRUNC is masked at
+ * the VFS layer (directory mask runs before the WRITE-required check),
+ * so the open succeeds and the directory is preserved. */
+static void test_vfs_o_trunc_directory_read_only_masked(void)
+{
+    const char *dir_path = "C:\\Impossible\\test_trunc_ro_dir";
+    int rc = vfs_create(dir_path, VFS_DIRECTORY);
+    TEST_ASSERT(rc == 0, "create test directory");
+
+    struct vfs_node *d = vfs_open(dir_path, VFS_O_READ | VFS_O_TRUNC);
+    TEST_ASSERT(d != NULL, "READ + TRUNC on directory returns non-NULL");
+    if (d) vfs_close(d);
+
+    struct vfs_node *d2 = vfs_open(dir_path, VFS_O_READ);
+    TEST_ASSERT(d2 != NULL, "directory survives masked TRUNC");
+    if (d2) vfs_close(d2);
+
+    vfs_unlink(dir_path);
 }
 
 /* VFS_O_TRUNC on a directory is silently masked at the VFS layer. */
@@ -204,6 +224,8 @@ void test_register_vfs(void)
         test_vfs_o_trunc_no_write_rejected, TEST_CAT_FS);
     test_suite_register_cat("VFS: O_TRUNC on directory silently masked",
         test_vfs_o_trunc_directory_silently_masked, TEST_CAT_FS);
+    test_suite_register_cat("VFS: READ + O_TRUNC on directory preserves dir",
+        test_vfs_o_trunc_directory_read_only_masked, TEST_CAT_FS);
     test_suite_register_cat("VFS: O_TRUNC + write on FAT32 lowercase-LFN name",
         test_vfs_o_trunc_fat32_lowercase_lfn, TEST_CAT_FS);
 }
