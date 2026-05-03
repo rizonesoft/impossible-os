@@ -24,11 +24,11 @@ implements_after: TODO-04
 > - VFS Phase-3 write failure cluster (TODO-04 §11)
 > - JSON builder truncation contract (TODO-04 §12)
 > - SMEP/SMAP via CR4 (needs KPTI per-process page tables, D03 T02 §memory-security)
-> - TSC_AUX MSR per-CPU (TODO-02-kernel-core/TODO-09 §x86-64)
-> - PAT WC retry on Hyper-V (TODO-03-memory-concurrency/TODO-01 §VMM)
-> - AT_PHDR derivation in ELF loader (TODO-10-platform-services/TODO-10 §linux-compat)
-> - ExitBootServices retry hardening (TODO-03 §bootloader-error-recovery)
-> - Capsule update write path (TODO-27 §uefi-advanced)
+> - TSC_AUX MSR per-CPU (D02 T09 §x86-64)
+> - PAT WC retry on Hyper-V (D03 T01 §VMM)
+> - AT_PHDR derivation in ELF loader (D10 T10 §linux-compat)
+> - ExitBootServices retry hardening (T03 §bootloader-error-recovery)
+> - Capsule update write path (T27 §uefi-advanced)
 >
 > Each XREF below names the concrete `[ ]` item that owns the relevant gap; this section consumes their data, never re-implements it.
 
@@ -71,7 +71,7 @@ implements_after: TODO-04
 | ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T14 §6 (alive-blink), T23 (watchdog)  |  [ ]   |
 | 💎 |   9   | EXEC step latency profile (1210ms FAIL on smoke)    | §1                                        |  [ ]   |
 | ⭐ |  10   | UEFI RT SetVariable latency (>50ms threshold)       | §1, T04 §11                               |  [ ]   |
-| ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T29 §2 (advisor)                  |  [ ]   |
+| ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T27 §2 (advisor)                  |  [ ]   |
 | ⭐ |  12   | AVX-512 throttle policy when APERF/MPERF absent     | T19 §3                                    |  [ ]   |
 | ⭐ |  13   | Boot history ring depth + format (8 → 32+ entries)  | T01 §11                                   |  [ ]   |
 | ⭐ |  14   | FAT32 dirty-mount fsck cost in VFS step             | D05 T04                                   |  [ ]   |
@@ -216,7 +216,7 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 
 Smoke (KVM, 2026-05-03) records `EXEC took 1210ms (target 100ms)` -- a HARD-budget breach 12.1x over target. The EXEC step covers SSDT registration (470 main slots + ~1300 shadow stubs), syscall handler wire-up, NT subsystem registration, ETW init, and exec format dispatch (ELF + EIF + PE32+). Without per-substep timing the slow path is invisible.
 
-**Files:** `src/kernel/main/boot_exec.c`, `src/kernel/ssdt.c`, `include/kernel/boot_init.h`
+**Files:** `src/kernel/exec.c`, `src/kernel/nt/ssdt.c`, `src/kernel/main/boot_desktop.c`, `include/kernel/boot_init.h`
 
 - [ ] Add finer-grained `boot_progress` substeps inside EXEC: SSDT_MAIN, SSDT_SHADOW, NT_SUBSYS_BATCH, SYSCALL_REG, EXEC_FORMAT_REG.
 - [ ] Define per-substep budgets in `boot_perf_budgets[]`: SSDT_MAIN <50ms, SSDT_SHADOW <100ms, NT batch <30ms, format register <5ms each.
@@ -231,7 +231,7 @@ Smoke (KVM, 2026-05-03) records `EXEC took 1210ms (target 100ms)` -- a HARD-budg
 
 Smoke (KVM, 2026-05-03) records `UEFI: RT SetVariable took 109 ms (threshold 50 ms)`. NVRAM writes during boot perf save are the suspect path. 109ms is a soft breach but consistently above threshold suggests OVMF flash-emulation latency or a serialization bug in our caller.
 
-**Files:** `src/kernel/uefi_runtime.c`, `src/kernel/main/boot_perf.c`
+**Files:** `src/kernel/uefi_runtime.c`, `src/kernel/boot_perf_budget.c`, `src/kernel/main/boot_progress.c`
 
 - [ ] Capture the variable name + size in every >50ms RT-SetVariable WARN line.
 - [ ] Verify boot perf save (`bootperf` step) batches its writes; fix to a single-blob write if the 31-step bin currently fragments into 31 calls.
@@ -261,7 +261,7 @@ Boot writes 5 small JSON files to `X:\Diag` serially during late Phase 3: `firmw
 
 Smoke records `simd: MPERF/APERF unavailable; enabling AVX-512 without throttle check`. APERF/MPERF gate throttle-detection on real hardware; Hyper-V hides them. Today we proceed regardless -- a correctness gap on bare-metal Intel where the MSRs exist but a hypervisor hides them, and AVX-512-heavy code can hit thermal/power throttling unobserved.
 
-**Files:** `src/kernel/cpu_security.c`, `src/kernel/simd.c`, `src/kernel/cpuid.c`
+**Files:** `src/kernel/cpu_security.c`, `src/kernel/gfx/gfx_simd.c`, `src/kernel/gfx/gfx_simd_avx512.c`, `src/kernel/cpuid.c`
 
 - [ ] Hypervisor-bit aware logging: hypervisor present = LOG_INFO (expected); bare metal + AVX-512 + no MPERF = LOG_WARN (real regression).
 - [ ] `boot.conf simd_max_avx_level=avx2` override pins the SIMD ceiling to AVX2 on systems with observed throttling.
@@ -275,7 +275,7 @@ Smoke records `simd: MPERF/APERF unavailable; enabling AVX-512 without throttle 
 
 Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; an operator debugging an intermittent failure across 12-15 boots loses early evidence. Bumping to 32 costs ~512 bytes NVRAM (16 B × 32) and matches Win11 + Linux defaults.
 
-**Files:** `include/kernel/boot_history.h`, `src/kernel/main/boot_history.c`, registry mirror
+**Files:** `src/kernel/main/boot_history.c` (+ matching public header to add), registry mirror
 
 - [ ] Bump `BOOT_HIST_RING_LEN` from 8 to 32; update size-pin static asserts + tests + JSON schema docs in lockstep.
 - [ ] Verify ring-wrap behavior remains correct at the larger size (existing wrap tests just need re-tuning to 32-entry shape).
@@ -320,7 +320,7 @@ Smoke (KVM, 2026-05-03) shows a consistent ~1s gap between `sched: Task N ("cmd.
 
 Smoke logs across boots show TSC frequency reported as 7056 MHz, 4939 MHz, 5000 MHz on the same physical i5-11600K host. Hyper-V re-derives the TSC scale on each VM start; Linux 6.x logs a single canonical value because it pins TSC freq from CPUID 0x15/0x16 once at boot. Impossible OS uses `lapic: Tier 1: Hyper-V MSR 0x40000023` which returns the runtime-current scale, not a CPUID-pinned value. Downstream consumers (sys_uptime, KUSD QpcFreq, perf counters) cache whatever they got first; if a future TSC-freq refresh pulls a different value mid-boot, time-since-boot would jump.
 
-**Files:** `src/kernel/drivers/lapic.c`, `src/kernel/cpuid.c`, `src/kernel/time.c`, `src/kernel/nt/kusd.c`
+**Files:** `src/kernel/drivers/lapic.c`, `src/kernel/cpuid.c`, `src/kernel/time/mono_clock.c`, `src/kernel/time/kusd_time.c`
 
 - [ ] Verify all TSC-freq consumers (KUSD QpcFreq, time_get_tsc_ns_per_tick, perf_record timestamps) read from a single latched value computed once at LAPIC init, not re-queried.
 - [ ] Add a one-time post-init self-check: re-read MSR 0x40000023 and compare against the latched value; if it drifted by > 1%, log LOG_WARN with both values for triage.
