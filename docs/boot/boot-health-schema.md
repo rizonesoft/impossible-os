@@ -32,8 +32,11 @@ epoch seconds** (UTC), unquoted JSON numbers. This deviates from
 - `sysinfo.exe` formats epoch seconds for human display at print time.
 - The valid range (1970..2106) covers every realistic boot of this OS.
 
-The unit is appended to every key name (`*_unix`) so downstream readers
-cannot misread the type.
+The unit is appended to most time-key names (`*_unix`) so downstream
+readers cannot misread the type. One exception: `generated_at_utc`
+retains its canonical name (matches the firmware-tables.json convention
+for "when this file was generated"), with the unit documented in its
+row of the table below.
 
 ## Top-level keys
 

@@ -132,11 +132,14 @@ A single operator-facing dashboard collapsing every "what's wrong on this boot" 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 5 suites, 0 failures
 >
 > **Notes:**
-> - Schema doc + writer + classifier + tests shipped together; epoch-seconds time encoding documented as a deliberate deviation from `firmware-tables.json` ISO-8601 (consumers diff timestamps, not format them).
-> - Short-write recovery re-truncates the on-disk file to 0 bytes; "no data this run" is the recoverable signal, "partial JSON" is not.
-> - `uefi_secureboot_state_valid()` added so an UNREADABLE Secure Boot state is never aliased to DISABLED (security-facing false statement).
-> - `mat_wx_violations[]` capped at 16 with sibling `mat_overflowed` boolean to bound JSON; full inventory still available via the MAT oracle.
-> - Smoke verified: `boot_health: JSON: wrote X:\Diag\boot-health.json (932 bytes)` at 3.880s on KVM.
+> - Single-shot Phase-3 publisher writes `X:\Diag\boot-health.json`; schema spec lives at `docs/boot/boot-health-schema.md`.
+> - Time fields anchored on `boot_history_kernel_phase3_committed_seq()`; emits 0/0 on mark-failure rather than picking older ring entries. Encoding is u32 unix epoch.
+> - Security distinctions preserved: UNREADABLE != DISABLED for Secure Boot; `degraded_subsystems[]` reads `degraded_mask` so ready-but-degraded subsystems surface.
+> - Short-write recovery re-truncates to 0 bytes; `mat_wx_violations[]` capped at 16 with sibling `mat_overflowed` boolean.
+> - Smoke: 574 bytes at 3.660s on KVM, Phase-3 mark seq=2.
+>
+> **Verified:** 2026-05-03 | commit `1edae27f` | 6/6 items | build OK | smoke PASS (KVM 2.580s)
+> **Quality reviewed:** 2026-05-03 | Codex 9x (design + adversarial + adversarial-impl + 5x re-adversarial + consistency + perf) | 3H+5M+1L fixed | scope: kernel-code-quality
 
 ---
 
