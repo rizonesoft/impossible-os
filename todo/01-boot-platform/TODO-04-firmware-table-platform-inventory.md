@@ -45,7 +45,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 | 💎 |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [x]   |
 | 💎 |   4   | FPDT and boot timing normalization                      | §1             |  [x]   |
 | 💎 |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [x]   |
-| 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [/]   |
+| 💎 |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [x]   |
 | 💎 |   7   | UEFI conformance profile and EBBR detection             | §1             |  [x]   |
 | 💎 |   8   | Registry and BlackBox firmware report                   | §1-§7          |  [x]   |
 | ⭐ |   9   | Firmware quirk database                                 | §8             |  [x]   |
@@ -190,7 +190,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - [x] Registry mirror `HKLM\HARDWARE\Firmware\ESRT\{<FwClass-GUID>}` -- 7 entry fields + decoded `TypeName` / `LastAttemptStatusName` + `_Header` sibling subkey. Idempotent via `RegDeleteTree`.
 - [x] Smoke OVMF confirms ESRT-absent path leaves parent key empty without errors.
 - [x] ESRT block in `firmware-tables.json` consumes these accessors -- shipped in §8 (`firmware_tables_json.c:423-432`).
-- [ ] **Deferred to TODO-27 §2 (read-only firmware-update advisor)**: advisory composition + LastAttemptStatusName operator UX.
+- [x] **Advisory composition + `LastAttemptStatusName` operator UX** -- shipped at TODO-27 §2 (commit `3f15268a`). `firmware_advisor_init` consumes `esrt_decode_status` + `esrt_rollback_floor_ok`; `sysinfo firmware-updates` renders the decoded label.
 - [x] Commit: `"boot: mirror ESRT firmware inventory"`
 
 **Test checkpoint:** ESRT-bearing firmware (modern bare-metal laptop, OVMF with ESRT) populates `HKLM\HARDWARE\Firmware\ESRT\<FwClass-GUID>\*` with all 7 entry fields + 3 header fields; ESRT-absent firmware (VirtualBox EFI) leaves the registry key empty without errors. TODO-27 §2 capsule policy reads `LowestSupportedFwVersion` to enforce a rollback floor and renders `LastAttemptStatus` as a decoded label (e.g. `INSUFFICIENT_RESOURCES`, `INCORRECT_VERSION`). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -204,8 +204,8 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Canonical doc** -- [`include/kernel/uefi_config.h`](../../include/kernel/uefi_config.h) ESRT API contract.
 > - **Scope boundary** -- §6 owns kernel-side inventory + Registry + decoders + primitives; authoritative capsule eligibility owned by TODO-27 advanced UEFI work.
 
-> **Verified:** 2026-05-02 | this commit | 7/9 items + 2 deferred-to-owner | build OK | smoke PASS (KVM 2.39s) + ESRT-absent path observed
-> **Quality reviewed:** 2026-05-02 | Codex 4x (design + adversarial + consistency + perf) | 1H+1M+1H+1M fixed, 0 open | scope: kernel-code-quality
+> **Verified:** 2026-05-02 | this commit | 9/9 items | build OK | smoke PASS (KVM 2.39s) + ESRT-absent path observed; advisor consumer landed 2026-05-03 at TODO-27 §2 (`3f15268a`)
+> **Quality reviewed:** 2026-05-02 | Codex 4x (design + adversarial + consistency + perf) | 2H+2M fixed | scope: kernel-code-quality
 
 ---
 
