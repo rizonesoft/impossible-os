@@ -399,7 +399,19 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 
 > **Test runner:** `scripts\debug\kernel\run-fs-tests.bat` (SUITE=fs) | 3 new replace-existing sub-tests | 0 failures
 >
-> **Notes:** _(stamps land in the review-todo-section pass)_
+> **Notes:**
+> - `vfs_rename_ex(old, new, flags)` + `VFS_RENAME_REPLACE_EXISTING` flag; legacy 2-arg `vfs_rename` wraps with `flags=0` so every existing caller stays untouched.
+> - FAT32 replace ordering REMOVE -> flush -> FREE -> flush -> RENAME -> flush; mid-sequence write fail leaves dst missing rather than a live dirent pointing at clusters in the free pool.
+> - FAT walk bound derived from BPB data region, capped at FAT32 spec max `0x0FFFFFEF`; corrupted-FAT cycles + reserved-marker traps cannot hang rename under `vol->lock`.
+> - Cross-cluster LFN tails not yet handled; replace-existing refuses any `dst_cluster != dir_cluster` -- bulletproof for the typical X:\Perf and X:\Diag layouts that fit in the directory's first cluster.
+> - IXFS explicitly refuses `VFS_RENAME_REPLACE_EXISTING` until `ixfs_rename` grows destination-collision handling; signature plumbed through so the future fix is local.
+> - Unblocks history-preserving RMW writers: TODO-29 §3 boot-trend.json + future registry hive saves, ETW log rotation, BlackBox crash dumps.
+>
+> **Verified:** 2026-05-03 | commit `847d9a1e` | 12/13 items + 1 follow-up | build OK | smoke PASS (KVM 2.530s)
+> **Accepted:** [H] open-handle gate runs outside FAT32 vol->lock (TOCTOU window) -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "VFS per-vnode share-mode locking" at line 354 -- inherited from existing `vfs_unlink` race; dormant on BSP-only Phase-3)
+> **Accepted:** [H] FAT32 dir-cache eviction can detach the node tracked by VFS gate -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 355 -- dormant on sequential writers)
+> **Accepted:** [H] scache_flush swallows blkdev_write failures -> XREF: 05-storage-filesystems/TODO-04 §6 (durable repair-write item -- replace-existing inherits the §6 cluster)
+> **Quality reviewed:** 2026-05-03 | Codex 7x (design + adversarial + 3x re-adversarial + consistency + perf) | 5H+2M+1L fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 ---
 
