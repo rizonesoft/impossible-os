@@ -205,7 +205,16 @@ int fat32_fsck(struct fat32_volume *vol, int fix)
     klog(LOG_INFO, "fsck", "FAT32 fsck starting (%s mode)",
          fix ? "repair" : "read-only");
 
-    /* Step 1: Validate BPB */
+    /* Step 1: Validate BPB. Re-read sector 0 first -- callers reach fsck
+     * via fat32_init's dirty-mount path, which calls fat32_read_dirty_marker
+     * BEFORE invoking fsck. That read clobbers vol->sector_buf with FAT[1]
+     * sector contents, so the validator (which reads sector_buf[0] for
+     * jmpBoot) would otherwise see FAT[0]'s media descriptor byte (0xF8 on
+     * fixed disks) and reject every dirty volume regardless of BPB validity. */
+    if (fat32_read_sector(vol, 0, vol->sector_buf) != 0) {
+        klog(LOG_ERROR, "fsck", "cannot re-read boot sector for BPB validation");
+        return -1;
+    }
     if (fat32_validate_bpb(vol) != 0) {
         klog(LOG_ERROR, "fsck", "BPB validation failed");
         return -1;
