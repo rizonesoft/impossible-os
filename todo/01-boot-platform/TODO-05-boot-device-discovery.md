@@ -11,7 +11,7 @@ title: "TODO-05 -- Boot Device Discovery & Fallback Chain"
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across local SATA, NVMe, and USB devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any local hardware configuration and exposes complete boot provenance to the kernel. Network/PXE/HTTP boot is owned by [TODO-25](TODO-25-network-pxe-http-boot.md).
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12; gap-audit 2026-05-03):** §1--§12 shipped. Gap audit (Codex 1x, 8 findings) added §13 (boot variable capability surface: `EFI_LOAD_OPTION.Attributes`, `BootOptionSupport`, `OsIndicationsSupported`, Boot#### Description in registry) and §14 (NVMe NSID + EUI-64, PCI device/function, SD/eMMC classification) -- both `[ ]`. `BOOT_INFO_VERSION=5` today; bumps to 6 when §13 lands.
+> **Current state (code-truth 2026-05-04):** §1--§12 shipped. Gap audit 2026-05-03 (Codex 1x, 8 findings) added §13 (boot variable capability surface: `EFI_LOAD_OPTION.Attributes`, `BootOptionSupport`, `OsIndicationsSupported`, Boot#### Description in registry) and §14 (NVMe NSID + EUI-64, PCI device/function, SD/eMMC classification) -- both `[ ]`. `BOOT_INFO_VERSION=14` (boot_info.h:123 / boot_info_mirror.h:262); bump on the next field-add for §13 or §14, no fixed target version pre-allocated.
 
 ---
 
@@ -201,7 +201,7 @@ If the boot device's kernel is missing or corrupt, try other devices in priority
 
 Read UEFI global boot variables so the bootloader knows which firmware boot entry was selected and whether a one-shot boot was requested. Windows reads these via BCD abstractions; Linux reads them via efibootmgr/efivarfs. Every production bootloader must honor BootNext for firmware update reboot flows.
 
-- [x] Add `EFI_GLOBAL_VARIABLE` GUID to `efi.h`: `EFI_GLOBAL_VARIABLE_GUID {8BE4DF61-93CA-11D2-AA0D-00E098032B8C}` at `efi.h:762`
+- [x] Add `EFI_GLOBAL_VARIABLE` GUID to `efi.h`: `EFI_GLOBAL_VARIABLE_GUID {8BE4DF61-93CA-11D2-AA0D-00E098032B8C}` at `efi.h:785`
 - [x] Read `BootCurrent` (UINT16): `rt->GetVariable(u"BootCurrent", ...)` -> `boot_info.uefi_boot_current` -- `bootx64.c` efi_main §6 block
 - [x] Read `BootOrder` (UINT16 array, up to 16): `rt->GetVariable(u"BootOrder", ...)` -> `boot_info.uefi_boot_order[16]` with count -- capped at 16 entries
 - [x] Read `BootNext` (UINT16, optional): `rt->GetVariable(u"BootNext", ...)` -> `boot_info.uefi_boot_next` with `uefi_boot_next_valid=1` if present
@@ -216,8 +216,8 @@ Read UEFI global boot variables so the bootloader knows which firmware boot entr
 > - Defaults: 0xFFFF for current/next, valid=0, order_count=0; gates whole block on `(rt && rt->GetVariable)`.
 > - Re-reviewed 2026-05-04 (Codex 4x, 1H fixed): added per-field offset pins for uefi_boot_next (22058), uefi_boot_next_valid (22060), uefi_boot_order_count (22061), uefi_boot_order (22064) in both kernel header and bootloader mirror.
 
-> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commit `77a4823c` (ship) + this commit (re-review) | 7/7 items | build OK
-> **Quality reviewed:** 2026-05-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H fixed | scope: boot-code-quality
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 (×2) | commits `77a4823c` (ship) + `f6965288` (re-review 1) + this commit (re-review 2) | 7/7 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-04 | Codex 3x (adversarial, consistency, perf) | 2M fixed (re-adversarial skipped: doc-only fixes) | scope: boot-code-quality
 
 ---
 
