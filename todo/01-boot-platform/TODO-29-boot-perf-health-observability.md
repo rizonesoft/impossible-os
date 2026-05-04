@@ -188,9 +188,12 @@ Observed: `SMBIOS 852ms 1342ms P1` -- 1.3s for SMBIOS parsing on a QEMU OVMF boo
 > **Notes:**
 > - `walk_structures` copies the firmware SMBIOS table into pmm-backed kernel RAM once at init; parsing runs from RAM at L1 latency.
 > - Per-structure TSC profile (sparse 128-bucket array) emits "top-3 slowest types" summary; tracks future regressions when bottleneck shifts.
-> - Truncation safety: refuse to mark `s_info.valid` when no type=127 terminator was seen; `s_table_size` reflects bytes actually consumed.
+> - Truncation safety: type=127 terminator must have its post-structure double-NUL within the parse window before being accepted; otherwise refuse the parse.
 > - `s_table_base` keeps firmware addr for the firmware-tables inventory validator; `parse_base` + `s_table_end` point at RAM copy.
-> - Smoke (KVM): SMBIOS 51ms (was 1342ms, 26x faster), 8 structures parsed from 405-byte table.
+> - Smoke (KVM): SMBIOS 46ms (was 1342ms, 29x faster), 8 structures parsed from 405-byte table.
+>
+> **Verified:** 2026-05-04 | commit `ff23afc7` | 5/5 items | build OK | smoke PASS (KVM 2.51s; SMBIOS 46ms)
+> **Quality reviewed:** 2026-05-04 | Codex 5x (design x2 + adversarial + consistency + perf) | 2H+3M fixed | scope: kernel-code-quality
 
 ---
 

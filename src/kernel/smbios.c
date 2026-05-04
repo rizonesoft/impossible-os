@@ -438,9 +438,24 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
     while (p + 4 <= end) {
         const struct smbios_header *hdr = (const struct smbios_header *)p;
 
-        if (hdr->type == 127) { saw_terminator = 1; break; }
-        if (hdr->length < 4) break;   /* Corrupt */
-        if (hdr->length > (uint32_t)(end - p)) break;  /* Truncated */
+        /* Validate header length BEFORE special-casing type=127 so a
+         * truncated terminator (header alone, no trailing double-NUL)
+         * cannot signal "saw terminator" and bypass the truncation
+         * refusal below. */
+        if (hdr->length < 4) break;
+        if (hdr->length > (uint32_t)(end - p)) break;
+        if (hdr->type == 127) {
+            /* Spec: type 127 terminator must be followed by the
+             * post-structure double-NUL.  Compute remaining bytes via
+             * subtraction (post <= end is guaranteed by the
+             * hdr->length bound above); never form post+2 which would
+             * be UB when post == end - 1. */
+            const uint8_t *post = p + hdr->length;
+            if ((uint32_t)(end - post) < 2) break;   /* truncated post region */
+            if (post[0] != 0 || post[1] != 0) break; /* missing double-NUL */
+            saw_terminator = 1;
+            break;
+        }
 
         uint64_t t0 = smbios_rdtsc();
         switch (hdr->type) {
