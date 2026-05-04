@@ -4345,7 +4345,8 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
                 } else {
                     UINTN hi;
                     for (hi = 0; hi < fs_count && !found; hi++) {
-                        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fb_fs;
+                        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fb_fs =
+                            (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
                         EFI_FILE_PROTOCOL *fb_root;
 
                         /* Skip the boot device -- already tried */
@@ -4355,7 +4356,13 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
                         fb_s = gBS->HandleProtocol(fs_handles[hi],
                                                     &fs_fb_guid,
                                                     (VOID **)&fb_fs);
-                        if (EFI_ERROR(fb_s)) continue;
+                        /* Defend against firmware returning EFI_SUCCESS
+                         * with a NULL interface pointer -- mirrors the
+                         * locate_boot_fs postcondition (boot filesystem
+                         * scoping). The fallback path is the recovery
+                         * chain users depend on when the boot device
+                         * kernel search fails; do not crash here. */
+                        if (EFI_ERROR(fb_s) || !fb_fs) continue;
 
                         fb_s = fb_fs->OpenVolume(fb_fs, &fb_root);
                         if (EFI_ERROR(fb_s)) continue;

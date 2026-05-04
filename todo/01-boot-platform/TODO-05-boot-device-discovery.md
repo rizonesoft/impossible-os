@@ -187,8 +187,13 @@ If the boot device's kernel is missing or corrupt, try other devices in priority
 
 **Regression risk:** MEDIUM -- iterates all filesystem handles. If enumeration is slow on firmware, adds boot time.
 
-> **Verified:** 2026-04-12 -- all 7 items confirmed. LocateHandleBuffer enumeration at `bootx64.c:2559`. 3-path search per handle. Boot device skipped. fb_root closed on failure, fs_handles freed. LocateHandleBuffer failure logged. POST16 0xB094/0xB095 (success-only). Codex adversarial: corrupt-kernel fallback accepted as out-of-scope (→ XREF TODO-03 §5 error recovery). Handle leak on later failure rejected (shared cleanup paths + UEFI reclaims at EBS). Accepted: corrupt-kernel fallback (TODO-03 §5 scope).
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. Priority-sorted fallback accepted as documented limitation (firmware enumeration order, boot device always first; matches Windows BCD/GRUB behavior). No dead code. POST16 naming consistent with §1-§4 convention. O(n) handle iteration, no performance concern. Accepted: none.
+> **Notes:**
+> - Fallback chain at `bootx64.c:4325-4443` runs only when boot-device kernel search fails: LocateHandleBuffer + 3-path search per non-boot handle, security-violation halts whole search, media errors skip volume.
+> - POST16 0xB094 fallback-entry / 0xB095 fallback-success in `bootx64.c` (sole owner of 0xB0xx range).
+> - Re-reviewed 2026-05-04 (Codex 4x, 1H fixed): added EFI_SUCCESS+NULL postcondition guard on the fallback HandleProtocol call -- mirrors the boot-FS-scoping `locate_boot_fs` defense. Recovery path no longer crashes on misbehaving firmware.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commit `c5eacf9f` (ship) + this commit (re-review) | 7/7 items | build OK
+> **Quality reviewed:** 2026-05-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H fixed | scope: boot-code-quality
 
 ---
 
