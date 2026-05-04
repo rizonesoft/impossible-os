@@ -671,6 +671,10 @@ _Static_assert(__builtin_offsetof(struct boot_info, boot_partition_guid) == 2209
     "boot_info.boot_partition_guid offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, boot_partition_style) == 22112,
     "boot_info.boot_partition_style offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_device_removable) == 22113,
+    "boot_info.boot_device_removable offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_media_present) == 22114,
+    "boot_info.boot_media_present offset drift -- kernel + bootloader mirror out of sync");
 
 /* v14: UKI-embedded payload offset asserts -- per-field, mirroring
  * the kernel header. Catch same-size reorders that escape total-size

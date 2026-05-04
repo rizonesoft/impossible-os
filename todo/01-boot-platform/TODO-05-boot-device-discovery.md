@@ -258,8 +258,14 @@ Determine whether the boot device is removable (USB stick, external drive) or fi
 
 **Test checkpoint:** USB boot on QEMU (`-device usb-storage`): `boot_device_removable == 1`. SATA boot: `boot_device_removable == 0`. Both: `boot_media_present == 1`. Verify on bare metal USB stick.
 
-> **Verified:** 2026-04-12 -- all 6 items confirmed. HandleProtocol(BlockIO) with NULL checks on bio and bio->Media at `bootx64.c:4835-4847`. BOOLEAN->0/1 via ternary. USB default removable when BlockIO unavailable. Fields carved from _part_pad (same struct size). BOOT_INFO_VERSION=5 both sides. Codex adversarial: approved, no findings. Codex quality: approved.
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. G13 spec compliance: UEFI BOOLEAN handled per spec (non-zero=TRUE). No dead _part_pad references. O(1) single HandleProtocol call. Parity: matches Windows DriveType + Linux sysfs removable. Accepted: none.
+> **Notes:**
+> - HandleProtocol(BLOCK_IO) at `bootx64.c:7971-8062`; reads RemovableMedia + MediaPresent (BOOLEAN -> 0/1 ternary), BlockSize + LastBlock (capacity), ReadOnly + LogicalPartition (diagnostics).
+> - Defaults: media_present=1, removable=(type==USB) when BlockIO unavailable; matches Windows DriveType + Linux sysfs/removable.
+> - Capacity narrowed to UINT32 MiB with saturation (`mib64 > UINT32_MAX -> 0xFFFFFFFFU`); prevents 4+ PiB partition wrap-bypass of the FAT16-only-on-tiny-ESPs gate at `esp_check_fat_bpb()`.
+> - Re-reviewed 2026-05-04 (Codex 3x, 1H+1M fixed): added 4 `_Static_assert` offset pins (`boot_device_removable==22113`, `boot_media_present==22114` in both kernel + mirror) + saturating UINT32 narrow.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commits `e4bd76be` (ship) + this commit (re-review) | 6/6 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-04 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed (re-adversarial skipped: ~17 LOC, no locking/ISR/lifecycle) | scope: boot-code-quality
 
 ---
 

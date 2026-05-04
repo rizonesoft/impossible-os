@@ -8002,7 +8002,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                         UINT64 blocks = m->LastBlock + 1;
                         if (blocks <= 0xFFFFFFFFFFFFFFFFULL / (UINT64)m->BlockSize)
                             total_bytes = blocks * (UINT64)m->BlockSize;
-                        mib = (UINT32)(total_bytes / (1024 * 1024));
+                        /* Saturate to UINT32_MAX rather than wrap: a 4+ PiB
+                         * partition would wrap to 1..15 MiB and bypass the
+                         * "FAT16 only on tiny ESPs" gate in esp_check_fat_bpb. */
+                        UINT64 mib64 = total_bytes / (1024 * 1024);
+                        mib = (mib64 > 0xFFFFFFFFULL)
+                              ? 0xFFFFFFFFU
+                              : (UINT32)mib64;
                     }
                     esp_partition_mib = mib;
                     serial_early_print("[BOOT] Boot disk: ");
