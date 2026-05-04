@@ -8,7 +8,23 @@
 #include "kernel/smbios.h"
 #include "kernel/uefi_config.h"
 #include "kernel/klog.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/boot_timing.h"
 #include "registry.h"
+
+static inline uint64_t smbios_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* Maximum SMBIOS table size copied into kernel RAM at smbios_init.
+ * Workstations top out around 8 KiB, servers with 50-100 DIMM slots
+ * around 16-32 KiB; 64 KiB is generous and page-aligned.  Copy lifts
+ * the 50-100 us per-byte cost of UEFI runtime-services memory access
+ * into a one-time pass so subsequent string scans run from RAM. */
+#define SMBIOS_COPY_MAX_BYTES   (16u * 4096u)
 
 /* ---- Internal types ---- */
 
@@ -61,9 +77,10 @@ static const uint8_t *s_table_end;
 
 /* Captured table base + length, exposed via smbios_get_raw_table() so
  * the Win32 GetSystemFirmwareTable('RSMB',...) path can return raw
- * bytes without re-parsing. Set in walk_structures() ONLY when bounds
- * are accepted -- a rejected table leaves both zero so the public
- * accessor returns 0. Single-writer at boot, read-only after. */
+ * bytes without re-parsing.  Points at the FIRMWARE-mapped table so
+ * the firmware-tables inventory validator sees a real EfiRuntimeServices
+ * address.  Set in walk_structures() ONLY when bounds are accepted.
+ * Single-writer at boot, read-only after. */
 static const uint8_t *s_table_base;
 static uint32_t       s_table_size;
 
@@ -291,6 +308,74 @@ static void parse_type17(const struct smbios_header *hdr)
  * rejected (max_len==0, table_addr==0, or table_addr+max_len overflow).
  * Caller must gate s_info.valid on this return so a rejected table
  * cannot pose as successfully parsed. */
+/* Copy bytes from firmware-mapped src to RAM dst, byte-at-a-time, up to
+ * the lower of cap or where we observe the SMBIOS end-of-table sentinel
+ * (type=127 followed by double-NUL).  This is the ONLY function that
+ * reads from EfiRuntimeServicesData memory; one pass amortizes the
+ * 50-100 us per-byte cost.  Returns the number of bytes actually copied
+ * (always <= cap), or 0 on a degenerate input.  When walking detects
+ * a terminator we still copy the type=127 header + its 2-byte
+ * post-string NUL so the kernel's parser can confirm termination. */
+static uint32_t smbios_copy_firmware_table(uint8_t *dst, uint32_t cap,
+                                           const uint8_t *src,
+                                           uint32_t src_max)
+{
+    if (!dst || !src || cap == 0 || src_max == 0)
+        return 0;
+    uint32_t limit = cap < src_max ? cap : src_max;
+    /* Single pass: copy every byte to RAM. We do NOT short-circuit on
+     * type=127 here -- the parser walk re-uses the same wire-format
+     * scan on the RAM copy and stops naturally at the terminator.
+     * Stopping early would make any followon byte read from firmware
+     * memory, defeating the optimization. */
+    for (uint32_t i = 0; i < limit; i++)
+        dst[i] = src[i];
+    return limit;
+}
+
+/* Per-type cumulative profile.  TYPE_BUCKET_COUNT covers SMBIOS standard
+ * types 0-127; sparse table acceptable -- only types we parse get
+ * non-zero entries, but the indexing is direct (constant-time). */
+#define TYPE_BUCKET_COUNT  128u
+
+struct smbios_type_profile {
+    uint64_t total_ticks;
+    uint32_t count;
+};
+
+static void smbios_dump_top3(const struct smbios_type_profile *prof,
+                              uint64_t total_ticks)
+{
+    uint32_t top_idx[3] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+    uint64_t top_ticks[3] = { 0, 0, 0 };
+    for (uint32_t t = 0; t < TYPE_BUCKET_COUNT; t++) {
+        uint64_t v = prof[t].total_ticks;
+        if (v == 0) continue;
+        if (v > top_ticks[0]) {
+            top_ticks[2] = top_ticks[1]; top_idx[2] = top_idx[1];
+            top_ticks[1] = top_ticks[0]; top_idx[1] = top_idx[0];
+            top_ticks[0] = v;             top_idx[0] = t;
+        } else if (v > top_ticks[1]) {
+            top_ticks[2] = top_ticks[1]; top_idx[2] = top_idx[1];
+            top_ticks[1] = v;             top_idx[1] = t;
+        } else if (v > top_ticks[2]) {
+            top_ticks[2] = v;             top_idx[2] = t;
+        }
+    }
+    klog(LOG_INFO, "SMBIOS",
+         "profile: total %u ms across all parsed structures",
+         (uint64_t)boot_timing_tsc_delta_ms(total_ticks));
+    for (int i = 0; i < 3; i++) {
+        if (top_idx[i] == 0xFFFFFFFFu) break;
+        klog(LOG_INFO, "SMBIOS",
+             "profile: top%d type=%u count=%u total=%u ms",
+             (uint64_t)(i + 1),
+             (uint64_t)top_idx[i],
+             (uint64_t)prof[top_idx[i]].count,
+             (uint64_t)boot_timing_tsc_delta_ms(top_ticks[i]));
+    }
+}
+
 static int walk_structures(uintptr_t table_addr, uint32_t max_len)
 {
     /* Pointer arithmetic on firmware-supplied table_addr + max_len can
@@ -301,25 +386,63 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
     uintptr_t end_addr;
     if (__builtin_add_overflow(table_addr, (uintptr_t)max_len, &end_addr))
         return 0;
-    const uint8_t *p = (const uint8_t *)table_addr;
-    const uint8_t *end = (const uint8_t *)end_addr;
 
-    /* Set file-scope end pointer for bounded string extraction.
-     * Capture the validated base + length too so smbios_get_raw_table()
-     * can hand them to the Win32 GetSystemFirmwareTable('RSMB',...) path
-     * without re-parsing. */
-    s_table_end = end;
+    /* COPY the firmware table into kernel RAM ONCE.  Subsequent reads
+     * (string-table scans, parse_type* field reads) hit DRAM at L1/L2
+     * latency instead of trapping through hypervisor on every byte. */
+    uint32_t copy_cap = max_len < SMBIOS_COPY_MAX_BYTES
+                      ? max_len : SMBIOS_COPY_MAX_BYTES;
+    uint32_t copy_pages = (copy_cap + 4095u) / 4096u;
+    uintptr_t copy_phys = pmm_alloc_contiguous(copy_pages);
+    /* s_table_base points at FIRMWARE memory so the firmware-tables
+     * inventory validator sees a real EfiRuntimeServicesData address.
+     * Parsing uses the RAM copy via s_table_end / parse_base below.
+     * s_table_size = bytes actually validated (set after the walk
+     * confirms the type=127 terminator). */
     s_table_base = (const uint8_t *)table_addr;
-    s_table_size = max_len;
+    s_table_size = 0;
+
+    const uint8_t *parse_base;
+    uint32_t parsed_bytes_cap;
+    if (!copy_phys) {
+        klog(LOG_WARN, "SMBIOS",
+             "PMM alloc %u pages failed; parsing direct from firmware",
+             (uint64_t)copy_pages);
+        parse_base  = (const uint8_t *)table_addr;
+        s_table_end = (const uint8_t *)end_addr;
+        parsed_bytes_cap = max_len;
+    } else {
+        uint8_t *ram = (uint8_t *)copy_phys;
+        uint32_t copied = smbios_copy_firmware_table(
+            ram, copy_pages * 4096u,
+            (const uint8_t *)table_addr, copy_cap);
+        parse_base   = ram;
+        s_table_end  = ram + copied;
+        parsed_bytes_cap = copied;
+    }
+
+    const uint8_t *p = parse_base;
+    const uint8_t *end = s_table_end;
+    int saw_terminator = 0;
+
+    /* Per-structure TSC profiling: tick deltas across each parse_type*
+     * call so a future regression can be attributed to a specific type. */
+    struct smbios_type_profile prof[TYPE_BUCKET_COUNT];
+    for (uint32_t t = 0; t < TYPE_BUCKET_COUNT; t++) {
+        prof[t].total_ticks = 0;
+        prof[t].count = 0;
+    }
+    uint64_t total_ticks = 0;
+    uint32_t parsed_count = 0;
 
     while (p + 4 <= end) {
         const struct smbios_header *hdr = (const struct smbios_header *)p;
 
-        if (hdr->type == 127) break;  /* End of table */
+        if (hdr->type == 127) { saw_terminator = 1; break; }
         if (hdr->length < 4) break;   /* Corrupt */
         if (hdr->length > (uint32_t)(end - p)) break;  /* Truncated */
 
-        /* Parse known types */
+        uint64_t t0 = smbios_rdtsc();
         switch (hdr->type) {
         case 0:  parse_type0(hdr);  break;
         case 1:  parse_type1(hdr);  break;
@@ -328,6 +451,13 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
         case 17: parse_type17(hdr); break;
         default: break;
         }
+        uint64_t dt = smbios_rdtsc() - t0;
+        if (hdr->type < TYPE_BUCKET_COUNT) {
+            prof[hdr->type].total_ticks += dt;
+            prof[hdr->type].count++;
+        }
+        total_ticks += dt;
+        parsed_count++;
 
         /* Advance past structure data */
         p += hdr->length;
@@ -337,6 +467,29 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
             p++;
         p += 2;  /* skip the double NUL */
     }
+
+    if (!saw_terminator) {
+        klog(LOG_WARN, "SMBIOS",
+             "no type=127 terminator within %u-byte parse window "
+             "(firmware advertised %u bytes); rejecting partial parse",
+             (uint64_t)parsed_bytes_cap, (uint64_t)max_len);
+        s_table_base = (const uint8_t *)0;
+        s_table_size = 0;
+        s_table_end  = (const uint8_t *)0;
+        return 0;
+    }
+
+    /* Cap s_table_size at bytes actually parsed so smbios_get_raw_table
+     * exports only the validated range -- never the firmware-advertised
+     * length when the cap truncated us. */
+    uint32_t consumed = (uint32_t)(p - parse_base);
+    if (consumed > parsed_bytes_cap) consumed = parsed_bytes_cap;
+    s_table_size = consumed < max_len ? consumed : max_len;
+
+    klog(LOG_INFO, "SMBIOS",
+         "parsed %u structures from %u-byte table (RAM copy)",
+         (uint64_t)parsed_count, (uint64_t)s_table_size);
+    smbios_dump_top3(prof, total_ticks);
     return 1;
 }
 

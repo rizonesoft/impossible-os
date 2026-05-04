@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-05-03T20:53:28+02:00",
-  "total_suites": 898,
-  "total_assertions": 2438,
+  "timestamp": "2026-05-03T21:55:35+02:00",
+  "total_suites": 902,
+  "total_assertions": 2451,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -44,6 +44,7 @@
     {"file": "test_registry.c", "suites": 14, "assertions": 38},
     {"file": "test_sched.c", "suites": 8, "assertions": 18},
     {"file": "test_security.c", "suites": 18, "assertions": 72},
+    {"file": "test_smbios.c", "suites": 4, "assertions": 13},
     {"file": "test_storage.c", "suites": 2, "assertions": 2},
     {"file": "test_swap.c", "suites": 1, "assertions": 3},
     {"file": "test_uefi_boot.c", "suites": 40, "assertions": 94},
