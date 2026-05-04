@@ -7814,8 +7814,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             if (g_boot_info_ptr->boot_device_path[0] != '\0' &&
                 g_boot_info_ptr->boot_device_type == 0) {
                 const char *p = g_boot_info_ptr->boot_device_path;
+                /* sizeof yields the array byte count (128); subtract 5
+                 * so p[pi+4] never crosses the buffer end. The trailing
+                 * NUL termination from the device-path-text sanitizer
+                 * also stops the loop early on shorter paths. */
+                UINTN cap = sizeof(g_boot_info_ptr->boot_device_path);
                 UINTN pi;
-                for (pi = 0; p[pi]; pi++) {
+                for (pi = 0; pi + 5 <= cap && p[pi]; pi++) {
                     if (p[pi] == 'S' && p[pi+1] == 'a' && p[pi+2] == 't' &&
                         p[pi+3] == 'a' && p[pi+4] == '(') {
                         g_boot_info_ptr->boot_device_type = 1; break;

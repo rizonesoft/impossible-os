@@ -148,16 +148,23 @@ Pass boot device information to the kernel so it knows which device it booted fr
 
 Classify the boot device as SATA, NVMe, USB, or network based on the device path.
 
-- [x] Add device path node type/subtype constants to `efi.h`: `EFI_DP_TYPE_MESSAGING` (0x03), `EFI_DP_MSG_SATA` (0x12), `EFI_DP_MSG_NVME` (0x17), `EFI_DP_MSG_USB` (0x05), `EFI_DP_MSG_IPV4` (0x0C), `EFI_DP_MSG_IPV6` (0x0D), `EFI_DP_TYPE_MEDIA` (0x04), `EFI_DP_MEDIA_HARDDRIVE` (0x01), `EFI_DP_TYPE_END` (0x7F); `EFI_DEVICE_PATH_PROTOCOL` struct already added in §3
-- [x] Parse UEFI device path nodes: walk nodes until end marker, match Messaging subtypes to SATA/NVMe/USB/network -- `bootx64.c` efi_main §4 block with `node_len < 4` malformed-node guard
-- [x] If device path parsing unavailable: type stays 0 (unknown) -- PciIo fallback not implemented (device path Messaging nodes are present on all real UEFI firmware; PciIo adds complexity for a path that never fires)
-- [x] Store result in `boot_info.boot_device_type` -- written directly in the walk loop
+- [x] Add DP node constants to `efi.h`: `EFI_DP_TYPE_MESSAGING/MEDIA/END` + Messaging subtypes (`SATA 0x12`, `NVME 0x17`, `USB 0x05`, `IPV4 0x0C`, `IPV6 0x0D`) + `MEDIA_HARDDRIVE 0x01`
+- [x] Classify type by substring scan of `DevicePathToText` ASCII output for `Sata(` / `NVMe(` / `USB(` / `IPv4(` / `IPv6(` -- `bootx64.c:7809-7836`
+- [x] Why text not nodes: `HandleProtocol` returns a partition-rooted path that omits parent Messaging nodes; `DevicePathToText` walks to root and emits them
+- [x] Bounded scan `pi + 5 <= sizeof(boot_device_path)` so the 4-byte lookahead never over-reads the 128-byte buffer
+- [x] If `DevicePathToText` unavailable or path empty: type stays 0; Messaging-node constants are forward-reserved for §14 (NSID / PCI BDF / SD / eMMC)
+- [x] Store result in `boot_info.boot_device_type` -- written directly in the substring loop
 - [x] Commit: `"boot: detect boot device type from UEFI device path"` (50049dd7)
 
 **Test checkpoint:** USB boot → `boot_device_type=3`, SATA boot → `boot_device_type=1`. Verify on bare metal USB and SATA -- device path node structure varies by firmware vendor.
 
-> **Verified:** 2026-04-12 -- all 5 items confirmed. Device path node constants in `efi.h:769-781`. Bounded walk (1024 bytes, header-safe `walked+4<=cap`) in `bootx64.c:4618-4656`. Type stored in `boot_info.boot_device_type`. Serial log: `"[BOOT] Boot device type: SATA"`. Codex adversarial: walk cap tightened from `walked<1024` to `walked+4<=1024`. Multi-instance END rejected (HandleProtocol returns single-instance paths per UEFI 10.3.1). Accepted: none.
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. Codex quality: `EFI_DP_TYPE_MEDIA`/`EFI_DP_MEDIA_HARDDRIVE`/`EFI_DP_SUBTYPE_END_ENTIRE` forward-reserved for §7 (partition GUID). Constants match UEFI spec Table 10-1/10-47. O(n) bounded walk, one-time at boot. Accepted: none.
+> **Notes:**
+> - Classifier is text-substring on `DevicePathToText` ASCII output (`bootx64.c:7809-7836`); raw-node walk would miss parent Messaging nodes that `HandleProtocol` strips on partition handles.
+> - Constants in `efi.h:790-800` are forward-reserved for §14 node-walk classifier (NSID / PCI BDF / SD / eMMC).
+> - Re-reviewed 2026-05-04 (Codex 4x, 1H+1M fixed): bounded the 5-byte lookahead, rewrote stamp/checklist to match actual implementation.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commit `50049dd7` (ship) + this commit (re-review) | 6/6 items | build OK
+> **Quality reviewed:** 2026-05-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed | scope: boot-code-quality
 
 ---
 
