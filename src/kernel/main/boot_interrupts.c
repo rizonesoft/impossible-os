@@ -258,13 +258,16 @@ void boot_phase1(void)
     smbios_init();
     POST16(POST16_SMBIOS_OK);
     boot_progress(1, "SMBIOS", POST16_SMBIOS_OK);
-    esrt_init();
-    mat_init();
-    uefi_conformance_init();
+    /* Initialize firmware quirks immediately after SMBIOS so MAT and
+     * ESRT init can consult them for severity-downgrade decisions
+     * (firmware_quirks_is_active(FW_QUIRK_BOGUS_MAT) etc.). */
     {
         extern void firmware_quirks_init(void);
         firmware_quirks_init();
     }
+    esrt_init();
+    mat_init();
+    uefi_conformance_init();
     {
         extern void firmware_tables_init(void);
         firmware_tables_init();

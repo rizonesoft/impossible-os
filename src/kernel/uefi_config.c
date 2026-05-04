@@ -8,6 +8,7 @@
 #include "kernel/uefi_config.h"
 #include "kernel/boot_info.h"
 #include "kernel/firmware_tables.h"
+#include "kernel/firmware_quirks.h"
 #include "kernel/klog.h"
 
 /* Compare two boot_uefi_guid structs byte-by-byte */
@@ -499,6 +500,7 @@ static uint64_t    s_mat_guard_pages;
  * vendor firmware that exposes a large MAT. The aggregate summary
  * still reflects every entry; only individual lines are clipped. */
 #define MAT_PER_ENTRY_LOG_CAP 32
+#define MAT_VIOLATION_LOG_CAP 8u
 
 /* Sane upper bound on per-descriptor stride. EFI_MEMORY_DESCRIPTOR is
  * currently 48 bytes (UEFI 2.10); 256 leaves headroom for vendor
@@ -821,8 +823,48 @@ mat_walk_done:
         klog(LOG_INFO, "UEFI", "MAT: W^X verified -- "
              "no writable+executable regions");
     } else {
-        klog(LOG_WARN, "UEFI", "MAT: W^X VIOLATION -- "
-             "%u regions are writable+executable", wxn_violations);
+        /* Quirk-aware severity: known-bad firmware demotes to INFO.
+         * Bare-metal Coreboot/Tianocore builds with bogus MAT layouts
+         * are listed in firmware_quirks_table.inc. */
+        int known_bad = firmware_quirks_is_active(FW_QUIRK_BOGUS_MAT);
+        const char *prefix = known_bad ? "[known-bad firmware] " : "";
+
+        if (known_bad)
+            klog(LOG_INFO, "UEFI",
+                 "%sMAT: W^X count -- %u regions writable+executable",
+                 prefix, wxn_violations);
+        else
+            klog(LOG_WARN, "UEFI",
+                 "MAT: W^X VIOLATION -- %u regions are writable+executable",
+                 wxn_violations);
+
+        /* Per-violation root-cause attribution: emit phys/pages/attr +
+         * RO/XP/RP decode for each violating descriptor, capped at
+         * MAT_VIOLATION_LOG_CAP to bound serial floods on broken
+         * firmware. boot-health.json mat_wx_violations[] still emits
+         * every entry; this WARN block is for serial-log triage. */
+        uint32_t logged_v = 0;
+        for (uint32_t i = 0; i < s_mat_count
+                              && logged_v < MAT_VIOLATION_LOG_CAP; i++) {
+            if (s_mat_entries[i].cls != MAT_CLASS_WX_VIOLATION)
+                continue;
+            uint64_t a = s_mat_entries[i].attribute;
+            int ro = (a & EFI_MEMORY_RO) != 0;
+            int xp = (a & EFI_MEMORY_XP) != 0;
+            int rp = (a & EFI_MEMORY_RP) != 0;
+            klog(known_bad ? LOG_INFO : LOG_WARN, "UEFI",
+                 "%sMAT[%u] WX VIOLATION at phys=0x%lx pages=%lu "
+                 "attr=0x%lx (RO=%d XP=%d RP=%d)",
+                 prefix, i, (uint64_t)s_mat_entries[i].phys_addr,
+                 (uint64_t)s_mat_entries[i].num_pages,
+                 (uint64_t)a, (uint64_t)ro, (uint64_t)xp, (uint64_t)rp);
+            logged_v++;
+        }
+        if (wxn_violations > logged_v) {
+            klog(known_bad ? LOG_INFO : LOG_WARN, "UEFI",
+                 "%sMAT: ... +%u more violations (per-violation log capped)",
+                 prefix, (uint64_t)(wxn_violations - logged_v));
+        }
     }
 }
 

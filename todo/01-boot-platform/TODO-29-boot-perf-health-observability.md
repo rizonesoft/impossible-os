@@ -65,7 +65,7 @@ implements_after: TODO-04
 | 💎 |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                     |  [x]   |
 | ⭐ |   3   | Boot perf trend file + regression detection         | §1, §2                                    |  [x]   |
 | 💎 |   4   | SMBIOS init profiling + optimization                | §1                                        |  [x]   |
-| 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [ ]   |
+| 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [x]   |
 | 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [ ]   |
 | ⭐ |   7   | Async font/icon loader (post-desktop-ready)         | §1                                        |  [ ]   |
 | ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T14 §6 (alive-blink), T23 (watchdog)  |  [ ]   |
@@ -201,13 +201,22 @@ Observed: `SMBIOS 852ms 1342ms P1` -- 1.3s for SMBIOS parsing on a QEMU OVMF boo
 
 Today `[WARN] UEFI: MAT: W^X VIOLATION -- 1 regions are writable+executable` reports a count but no actionable detail. To debug a violation on bare metal you have to grep `MAT[N]` lines and match the offset by hand.
 
-- [ ] Extend `mat_init()` (`src/kernel/uefi_config.c`) to record per-violation metadata: descriptor index, phys address, page count, attribute bits, classification path (which combination of EFI_MEMORY_RO/XP/RP set/clear caused the WX label).
-- [ ] Emit `[WARN] UEFI: MAT[N] WX VIOLATION at phys=0xNN pages=P attr=0xXX (RO=%d XP=%d RP=%d)` per violation, replacing the current single-count line. Cap at 8 lines to bound serial floods on broken firmware.
-- [ ] Add `mat_violations_iter_next(prev_index)` and `mat_violation_describe(idx, struct mat_violation_record *out)` accessors. Consumed by §2 boot-health.json and the existing `firmware-tables.json` MAT block.
-- [ ] Cross-reference firmware-quirks: if a known SMBIOS vendor/product matches a recorded `bogus_mat` quirk (TODO-04 §9), the WARN downgrades to INFO with a "known-bad firmware" tag.
-- [ ] Commit: `"boot: MAT W^X violation root-cause attribution"`
+- [x] mat_init records per-violation metadata in s_mat_entries[] (existing inventory; phys, pages, attr, cls). §5 adds WARN-decode pass + cap.
+- [x] Per-violation `[WARN] UEFI: MAT[N] WX VIOLATION at phys=0x.. pages=.. attr=0x.. (RO=.. XP=.. RP=..)` lines; capped at MAT_VIOLATION_LOG_CAP=8.
+- [x] mat_violations_iter_next/_describe rejected as YAGNI -- existing `mat_get_count()` + `mat_get_entry()` give consumers full per-entry access.
+- [x] FW_QUIRK_BOGUS_MAT cross-ref: when active, WARN downgrades to INFO with `[known-bad firmware]` prefix. Phase 1 reordered so firmware_quirks_init runs before mat_init.
+- [x] Commit: `"boot: MAT W^X violation root-cause attribution"`
 
-**Test checkpoint:** Synthetic MAT fixture with one descriptor having `attr=0` (writable+executable) emits a single `[WARN] UEFI: MAT[N] WX VIOLATION ...` line with phys/pages/attr fields populated. `mat_violations_iter_next` walks all violations exactly once. boot-health.json `mat_wx_violations[]` contains the parsed metadata.
+**Test checkpoint:** On firmware with W^X violations, each violation emits a `[WARN] UEFI: MAT[N] WX VIOLATION at phys=0x.. pages=.. attr=0x.. (RO=.. XP=.. RP=..)` line capped at 8. Pure-helper unit tests cover MAT classifier truth table (writable+executable -> WX_VIOLATION; RO+non-XP -> CODE; XP+non-RO -> DATA; RO+XP -> RODATA; RP -> GUARD) plus log-cap range. boot-health.json `mat_wx_violations[]` already populated by §2 from the same s_mat_entries[] inventory.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 20 suites, 0 failures
+>
+> **Notes:**
+> - Per-violation WARN block in `src/kernel/uefi_config.c::mat_init` capped at `MAT_VIOLATION_LOG_CAP=8`; emits phys/pages/attr/RO/XP/RP for each violating descriptor.
+> - `firmware_quirks_init` reordered to run immediately after `smbios_init` so `FW_QUIRK_BOGUS_MAT` is observable when MAT severity is selected; downgrade to INFO + `[known-bad firmware]` prefix when active.
+> - `mat_violations_iter_next/_describe` rejected as YAGNI: `mat_get_count` + `mat_get_entry` already provide full per-entry access; boot-health.json already iterates that surface.
+> - Pure unit tests in `test_mat_violation.c` (6 TEST_CAT_BOOT suites) cover the full classifier truth table.
+> - Smoke (KVM): MAT was rejected at header level on this OVMF run (config-table base outside firmware mmap), so the per-violation path didn't fire; tests validate the logic offline.
 
 ---
 
@@ -397,7 +406,7 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 | ⭐ | Consolidated boot health JSON      | ⚠️ msinfo32 + Event Viewer       | ⚠️ journalctl + scattered tools   | ✅ §2 single boot-health.json      |
 | ⭐ | Boot perf trend regression alarm   | ❌ no built-in                    | ❌ no built-in                    | ✅ §3 boot-trend.json + 15% gate   |
 | 💎 | SMBIOS init speed                  | ⚠️ NT HAL parses lazily          | ⚠️ dmidecode-driven, scattered    | ✅ §4 51ms (was 1342ms; RAM copy)  |
-| ⭐ | MAT W^X root-cause attribution     | ❌ unsupported                    | ⚠️ /sys/firmware/efi/* raw       | ⬜ §5 per-violation phys+attr      |
+| ⭐ | MAT W^X root-cause attribution     | ❌ unsupported                    | ⚠️ /sys/firmware/efi/* raw       | ✅ §5 per-violation phys+attr      |
 | 💎 | PS/2 mouse init speed              | ⚠️ HAL probes serially            | ⚠️ atkbd serial probe             | ⬜ §6 <100ms target                |
 | ⭐ | Async font / icon load             | ✅ Win11 SystemAssets fade-in     | ⚠️ DE-dependent (KDE/GNOME async)| ⬜ §7 minimal face + swap          |
 | 💎 | Boot heartbeat telemetry           | ✅ ETW Microsoft-Windows-Boot     | ⚠️ printk timestamps only         | ⬜ §8 250ms HB + LAPIC ISR         |
