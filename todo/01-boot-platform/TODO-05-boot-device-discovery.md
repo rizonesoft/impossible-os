@@ -211,8 +211,13 @@ Read UEFI global boot variables so the bootloader knows which firmware boot entr
 
 **Test checkpoint:** Serial shows `"BootCurrent=0x0000"` (or valid entry number) on all UEFI platforms. `boot_info.uefi_boot_order_count > 0` on real firmware. On QEMU OVMF: BootOrder may be empty (acceptable).
 
-> **Verified:** 2026-04-12 -- all 7 items confirmed. EFI_GLOBAL_VARIABLE_GUID at `efi.h:769`. GetVariable for BootCurrent/BootOrder/BootNext with size validation. 128-entry BootOrder buffer (handles large firmware), odd-size rejection (`sz%2==0`). BOOT_INFO_VERSION=3 both sides. Offset assert 22056 for `uefi_boot_current` in both files. Codex adversarial: BootOrder buffer fixed, odd-size rejected, offset assert added. Accepted: none.
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. Kernel consuming boot_info variables instead of runtime reads accepted as future optimization (fields are forward infrastructure for §9/§12). GUID correct per UEFI 2.10 Section 3.3. 3 GetVariable calls O(1) each. Accepted: kernel runtime read dedup (-> XREF TODO-02 §2 tracked item).
+> **Notes:**
+> - 3 GetVariable calls (BootCurrent/BootOrder/BootNext) at `bootx64.c:8046-8113` with size validation (`sz==sizeof(...)`) and 128-entry BootOrder stack buffer; truncates to first 16 in boot_info storage.
+> - Defaults: 0xFFFF for current/next, valid=0, order_count=0; gates whole block on `(rt && rt->GetVariable)`.
+> - Re-reviewed 2026-05-04 (Codex 4x, 1H fixed): added per-field offset pins for uefi_boot_next (22058), uefi_boot_next_valid (22060), uefi_boot_order_count (22061), uefi_boot_order (22064) in both kernel header and bootloader mirror.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commit `77a4823c` (ship) + this commit (re-review) | 7/7 items | build OK
+> **Quality reviewed:** 2026-05-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H fixed | scope: boot-code-quality
 
 ---
 

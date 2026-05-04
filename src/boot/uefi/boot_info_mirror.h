@@ -659,6 +659,14 @@ _Static_assert(__builtin_offsetof(struct boot_info, boot_device_path) == 21928,
     "boot_info.boot_device_path offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
     "boot_info.uefi_boot_current offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_next) == 22058,
+    "boot_info.uefi_boot_next offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_next_valid) == 22060,
+    "boot_info.uefi_boot_next_valid offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_order_count) == 22061,
+    "boot_info.uefi_boot_order_count offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_order) == 22064,
+    "boot_info.uefi_boot_order offset drift -- kernel + bootloader mirror out of sync");
 
 /* v14: UKI-embedded payload offset asserts -- per-field, mirroring
  * the kernel header. Catch same-size reorders that escape total-size
