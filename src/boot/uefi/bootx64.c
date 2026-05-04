@@ -7782,9 +7782,19 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             if (!EFI_ERROR(dp_s) && dptt) {
                 CHAR16 *text = dptt->ConvertDevicePathToText(dp, 0, 0);
                 if (text) {
+                    /* Sanitize CHAR16 -> ASCII: copy printable ASCII
+                     * (0x20..0x7E) unchanged, replace anything else
+                     * (control chars, non-ASCII codepoints, NUL) with
+                     * '?'. The previous (char)(text[j] & 0x7F) mask
+                     * could turn U+0100 into an embedded NUL and
+                     * truncate the path mid-string before any vendor
+                     * Unicode segment. */
                     UINTN j;
-                    for (j = 0; j < 127 && text[j]; j++)
-                        g_boot_info_ptr->boot_device_path[j] = (char)(text[j] & 0x7F);
+                    for (j = 0; j < 127 && text[j]; j++) {
+                        CHAR16 c = text[j];
+                        g_boot_info_ptr->boot_device_path[j] =
+                            (c >= 0x20 && c <= 0x7E) ? (char)c : '?';
+                    }
                     g_boot_info_ptr->boot_device_path[j] = '\0';
                     gBS->FreePool(text);
 

@@ -1461,6 +1461,10 @@ _Static_assert(__builtin_offsetof(struct boot_info, rt_mmap_count) == 20352,
     "boot_info.rt_mmap_count offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, usb_device_count) == 21504,
     "boot_info.usb_device_count offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_device_type) == 21924,
+    "boot_info.boot_device_type offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_device_path) == 21928,
+    "boot_info.boot_device_path offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_current) == 22056,
     "boot_info.uefi_boot_current offset drift -- update kernel + bootloader mirror");
 

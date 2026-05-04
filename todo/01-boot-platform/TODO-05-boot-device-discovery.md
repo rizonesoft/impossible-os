@@ -134,8 +134,13 @@ Pass boot device information to the kernel so it knows which device it booted fr
 
 **Test checkpoint:** Kernel serial output shows `"Booted from: PciRoot(0x0)/Pci(0x2,0x0)/Sata(0x0,0xFFFF,0x0)"` or similar. Path format varies by firmware. Verify on bare metal -- real firmware produces longer device paths than QEMU.
 
-> **Verified:** 2026-04-12 -- all 5 items confirmed. `boot_device_type` (uint8_t) + `boot_device_path[128]` added to both boot_info structs atomically. BOOT_INFO_VERSION bumped to 2 in both `boot_info.h:46` and `bootx64.c:197`. DevicePathToText chain: HandleProtocol(DevicePath) -> LocateProtocol(DevicePathToText) -> ConvertDevicePathToText -> UCS-2 to ASCII (127-cap) -> FreePool. Kernel klog "Booted from: %s (type=%u)" in `boot_hw.c:148`. Offset asserts unaffected (new fields after pinned fields). Codex adversarial: approved, no findings. Accepted: none.
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality 12 gates walked (all applicable pass). Codex quality: approved. Struct mirrors confirmed identical. `EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID` unused but forward-reserved for §4. No dead code. Parity: matches Windows BCD device path extraction + Linux PARTUUID. Accepted: none.
+> **Notes:**
+> - `boot_device_type` (uint8) at offset 21924, `boot_device_path[128]` at 21928 -- pinned via `_Static_assert` in both kernel header and bootloader mirror.
+> - DevicePathToText chain: `HandleProtocol(DevicePath)` -> `LocateProtocol(DevicePathToText)` -> `ConvertDevicePathToText` -> printable-ASCII sanitizer (127-cap) -> `FreePool`.
+> - Re-reviewed 2026-05-04 (Codex 4x: adv+cons+perf+re-adv, 1H+1M fixed): H added missing offset pins; M replaced lossy `(text[j] & 0x7F)` mask with explicit ASCII sanitizer (printable 0x20-0x7E unchanged, everything else -> '?').
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commit `6c3e723f` (ship) + this commit (re-review) | 5/5 items | build OK
+> **Quality reviewed:** 2026-05-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed | scope: boot-code-quality
 
 ---
 
