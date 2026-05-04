@@ -91,10 +91,13 @@ static void test_registry_boot_device_type(void)
     HKEY hKey = (HKEY)0;
     long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Boot\\Device", 0,
                            KEY_READ, &hKey);
-    if (rc != 0) {
-        TEST_SKIP("HKLM\\SYSTEM\\Boot\\Device key not found");
-        return;
-    }
+    /* Phase 2 contract: registry_populate_defaults() unconditionally
+     * calls boot_device_populate_registry(), which MUST create this
+     * key. Absence is a regression, not an unsupported platform. */
+    TEST_ASSERT(rc == 0,
+                "HKLM\\SYSTEM\\Boot\\Device key exists "
+                "(populated in Phase 2)");
+    if (rc != 0) return;
 
     uint32_t reg_type = 0;
     rc = RegGetDword(hKey, "Type", &reg_type);

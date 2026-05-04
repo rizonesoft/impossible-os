@@ -286,8 +286,14 @@ Populate `HKLM\SYSTEM\Boot\Device\` Registry keys with boot device information s
 
 **Test checkpoint:** After boot, Registry query for `HKLM\SYSTEM\Boot\Device\Type` returns 1 (SATA) on QEMU default. `Path` is non-empty. `PartitionGUID` is formatted as `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX`. Shell `reg query HKLM\SYSTEM\Boot\Device` (when shell reg command exists) shows all keys. Verify on bare metal -- all values should reflect real hardware.
 
-> **Verified:** 2026-04-12 -- all 10 items confirmed. `boot_device_populate_registry()` at `boot_hw.c:426`, called from `registry.c:1722` after registry_init(). 8 values: Type, Path, PartitionGUID (GPT/MBR/empty), PartitionStyle, Removable, BootCurrent, BootNext. RegCreateKeyEx failure returns early. GUID mixed-endian matches §7. Codex adversarial: unchecked RegSet returns rejected (matches smbios pattern, pool has capacity). Accepted: test_boot_device.c registry assertion (Unit Tests section scope).
-> **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. No dead code. GUID byte order consistent with §7 bootloader. 8 RegSet calls O(1) each. Parity: matches Windows HKLM\\Enum + Linux /sys/firmware/efi. Accepted: none.
+> **Notes:**
+> - `boot_device_populate_registry()` at `boot_hw.c:601`; called from `registry_populate_defaults()` (Phase 2) after `registry_init()`.
+> - Writes 8 values under `HKLM\SYSTEM\Boot\Device\` (Type, Path, PartitionGUID, PartitionStyle, Removable, BootCurrent, BootNext) plus 4 under `HKLM\HARDWARE\BOOT\ESP` (SizeMB, FilesystemType, TypeGuidValid, Uuid).
+> - GUID/MBR-sig formatting uses UEFI mixed-endian byte order matching §7's serial format; empty string written when style==unknown so the value always exists.
+> - Re-reviewed 2026-05-04 (Codex 3x, 1M fixed): hardened `test_registry_boot_device_type` to `TEST_ASSERT` the Phase 2 contract instead of `TEST_SKIP` on missing key.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commits `8522c805` (ship) + this commit (re-review) | 9/9 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-04 | Codex 3x (adversarial, consistency, perf) | 1M fixed (re-adversarial skipped: ~4 LOC test-only) | scope: kernel-code-quality
 
 ---
 
