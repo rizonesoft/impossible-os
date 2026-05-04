@@ -101,10 +101,10 @@ Use UEFI `EFI_LOADED_IMAGE_PROTOCOL` to find which device the bootloader was loa
 
 Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, SIMPLE_FILE_SYSTEM)` everywhere boot configuration and kernel loads must stay on the same volume.
 
-- [x] In `parse_boot_conf()`: open filesystem from boot `DeviceHandle`, not global `LocateProtocol` -- `bootx64.c:2327-2345` uses `g_boot_device_handle` with HandleProtocol, fallback to LocateProtocol
-- [x] In `load_kernel()`: same change -- already done in §1 (`bootx64.c:2450-2465`)
-- [x] If `DeviceHandle` doesn't have `SIMPLE_FILE_SYSTEM_PROTOCOL`: fall back to `LocateProtocol` with warning -- both `parse_boot_conf()` and `load_kernel()` have the same fallback pattern
-- [x] Log: `"[BOOT] Using boot device filesystem"` or `"[WARN] Boot device has no filesystem, using fallback"` -- both messages present
+- [x] `parse_boot_conf()` opens FS via `HandleProtocol(g_boot_device_handle, SimpleFS)`; **no** LocateProtocol fallback (intentional cross-volume safety)
+- [x] `load_kernel()` and `load_staged_payloads()` use the `locate_boot_fs()` helper (HandleProtocol + LocateProtocol fallback) -- §5 kernel-search chain accepts cross-volume kernel discovery
+- [x] On boot device SimpleFS miss: `parse_boot_conf` fails closed with `boot_config` defaults (no random-disk read); `load_kernel` / staged payloads continue via fallback
+- [x] Logs: `"[BOOT] Using boot device filesystem"` (parse success) or `"[WARN] Boot device has no SimpleFS for boot.conf -- skipping parse, using boot_config defaults"` (fail-closed)
 - [x] `POST16(0xB092)` before filesystem open, `POST16(0xB093)` after success -- `POST16_BL_BOOT_FS` / `POST16_BL_BOOT_FS_OK` in `bootx64.c` (source of truth for 0xB0xx range; `boot_init.h` mirror removed in TODO-01 §10)
 - [x] Commit: `"boot: scope filesystem access to boot device -- no more random disk"` (d7ee0bcc)
 
@@ -112,8 +112,13 @@ Replace `LocateProtocol(SIMPLE_FILE_SYSTEM)` with `HandleProtocol(DeviceHandle, 
 
 **Regression risk:** MEDIUM -- changes how filesystem is located. If `DeviceHandle` is wrong, falls back to old behavior.
 
-> **Verified:** 2026-04-12 -- all 6 items confirmed. `parse_boot_conf()` uses `g_boot_device_handle` via HandleProtocol with LocateProtocol fallback; `load_kernel()` same (done in §1). POST16 0xB092 entry / 0xB093 after OpenVolume succeeds. Smoke test pattern `"Using boot device filesystem"`. Codex adversarial: fallback-to-LocateProtocol cross-device risk rejected (intentional per checklist, PXE/network compatibility, documented `[WARN]`). Accepted: none.
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality 12 gates walked (all applicable pass). POST16 ordering confirmed correct (success POST after OpenVolume, not before). Forward declarations valid gnu11. No dead code, no orphaned defines. Parity: matches Windows BCD + GRUB device scoping. Accepted: none.
+> **Notes:**
+> - Two distinct fallback policies: `parse_boot_conf` fails closed (no LocateProtocol -- cross-volume safety); `load_kernel` / `load_staged_payloads` fall back via `locate_boot_fs()`.
+> - POST16 0xB092 entry / 0xB093 success-after-OpenVolume in `bootx64.c` (sole owner of 0xB0xx range).
+> - Re-reviewed 2026-05-04 (Codex 4x: adv+cons+perf+re-adv, 1H+1M+1L fixed): NULL-fs guard, doc/code drift corrected, vpd.c mirror extended.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commit `d7ee0bcc` (ship) + this commit (re-review) | 6/6 items | build OK
+> **Quality reviewed:** 2026-05-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M+1L fixed | scope: boot-code-quality
 
 ---
 
@@ -323,7 +328,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 - [ ] Add `boot_info` fields and bump `BOOT_INFO_VERSION` 5 -> 6 in kernel header + bootloader mirror; refresh manifest dump-fields.inc; offset pin via `_Static_assert`
 - [ ] Persist in `boot_device_populate_registry()`: `BootCurrentAttributes` + `BootOptionSupport` + `OsIndicationsSupportedLo/Hi` + `Description` (REG_SZ <=64) under `HKLM\SYSTEM\Boot\Device\`
 - [ ] Serial log: `attrs=0x%08x (active=%u hidden=%u cat=%s)` plus `BootOptionSupport / OsIndicationsSupported` line
-- [ ] `POST16(0xB096)` entry / `POST16(0xB097)` ok -- `POST16_BL_BOOT_VAR_EXT` / `_OK` in 0xB0xx range
+- [ ] `POST16(0xB0A0)` entry / `POST16(0xB0A1)` ok -- `POST16_BL_BOOT_VAR_EXT` / `_OK` (0xB096-0xB09C reserved by TODO-02 §13 ESP-integrity + rollback)
 - [ ] Unit tests in `test_boot_device.c`: reserved-bit-zero on `boot_option_support`, NUL-termination of `boot_description`, ACTIVE bit consistency (TEST_SKIP if firmware NVRAM empty)
 - [ ] Commit: `"boot: extended boot variable capability surface (Attributes + BootOptionSupport + OsIndicationsSupported + Description)"`
 

@@ -2845,7 +2845,11 @@ static void parse_boot_conf(void)
     if (g_boot_device_handle) {
         status = gBS->HandleProtocol(g_boot_device_handle,
                                       &fs_guid, (VOID **)&fs);
-        if (!EFI_ERROR(status)) {
+        /* Treat EFI_SUCCESS + NULL interface as failure -- nearby
+         * code (esp_check_required_files, load_kernel) already gates
+         * on (status && fs); match the postcondition here so a
+         * misbehaving firmware cannot crash OpenVolume below. */
+        if (!EFI_ERROR(status) && fs) {
             serial_early_print("[BOOT] Using boot device filesystem\n");
         } else {
             serial_early_print("[WARN] Boot device has no SimpleFS for "
@@ -2857,10 +2861,6 @@ static void parse_boot_conf(void)
         serial_early_print("[WARN] No boot device handle for boot.conf "
                            "-- skipping parse, using boot_config "
                            "defaults\n");
-        return;
-    }
-    if (EFI_ERROR(status)) {
-        serial_early_print("[BOOT] boot.conf - no filesystem\n");
         return;
     }
     status = fs->OpenVolume(fs, &root_dir);
@@ -3151,6 +3151,11 @@ static EFI_STATUS locate_boot_fs(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL **out_fs)
     } else {
         status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)out_fs);
     }
+    /* Defend callers against firmware returning EFI_SUCCESS with a NULL
+     * interface pointer -- load_staged_payloads / load_kernel call
+     * (*out_fs)->OpenVolume directly on the success path. */
+    if (!EFI_ERROR(status) && *out_fs == (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0)
+        status = EFI_NOT_FOUND;
     return status;
 }
 
