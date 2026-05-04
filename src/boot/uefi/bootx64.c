@@ -6339,8 +6339,7 @@ found_xhci:
         serial_early_print("[BOOT] xHCI DMA: ");
         serial_early_print_uint(sp_count);
         serial_early_print(" scratchpad pages at 0x");
-        serial_early_print_hex16((UINT16)(sp_base_addr >> 16));
-        serial_early_print_hex16((UINT16)sp_base_addr);
+        serial_early_print_hex64(sp_base_addr);
         serial_early_print("\n");
     }
 
@@ -6361,11 +6360,9 @@ found_xhci:
     serial_early_print("[BOOT] xHCI DMA: allocated ");
     serial_early_print_uint(ctrl->dma_page_count);
     serial_early_print(" pages (DCBAA=0x");
-    serial_early_print_hex16((UINT16)(ctrl->dcbaa_phys >> 16));
-    serial_early_print_hex16((UINT16)(ctrl->dcbaa_phys));
+    serial_early_print_hex64(ctrl->dcbaa_phys);
     serial_early_print(", CmdRing=0x");
-    serial_early_print_hex16((UINT16)(ctrl->cmd_ring_phys >> 16));
-    serial_early_print_hex16((UINT16)(ctrl->cmd_ring_phys));
+    serial_early_print_hex64(ctrl->cmd_ring_phys);
     serial_early_print(")\n");
 }
 
