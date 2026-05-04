@@ -212,11 +212,14 @@ Today `[WARN] UEFI: MAT: W^X VIOLATION -- 1 regions are writable+executable` rep
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 20 suites, 0 failures
 >
 > **Notes:**
-> - Per-violation WARN block in `src/kernel/uefi_config.c::mat_init` capped at `MAT_VIOLATION_LOG_CAP=8`; emits phys/pages/attr/RO/XP/RP for each violating descriptor.
-> - `firmware_quirks_init` reordered to run immediately after `smbios_init` so `FW_QUIRK_BOGUS_MAT` is observable when MAT severity is selected; downgrade to INFO + `[known-bad firmware]` prefix when active.
-> - `mat_violations_iter_next/_describe` rejected as YAGNI: `mat_get_count` + `mat_get_entry` already provide full per-entry access; boot-health.json already iterates that surface.
-> - Pure unit tests in `test_mat_violation.c` (6 TEST_CAT_BOOT suites) cover the full classifier truth table.
-> - Smoke (KVM): MAT was rejected at header level on this OVMF run (config-table base outside firmware mmap), so the per-violation path didn't fire; tests validate the logic offline.
+> - Per-violation WARN block in `src/kernel/uefi_config.c::mat_init` capped at `MAT_VIOLATION_LOG_CAP=8`; emits phys/pages/attr/RO/XP/RP per violating descriptor.
+> - `firmware_quirks_init` reordered to run after `smbios_init` so `FW_QUIRK_BOGUS_MAT` is observable when MAT severity is selected; downgrade to INFO + `[known-bad firmware]` prefix when active.
+> - `mat_violations_iter_next/_describe` rejected as YAGNI: `mat_get_count` + `mat_get_entry` already provide full per-entry access (used by §2 boot-health).
+> - 6 pure-helper TEST_CAT_BOOT suites in `test_mat_violation.c` cover the classifier truth table.
+> - Smoke (KVM): MAT rejected at header level on this OVMF run; per-violation path validated by offline tests.
+>
+> **Verified:** 2026-05-04 | commit `b6654a85` | 5/5 items | build OK | smoke PASS (KVM 2.43s)
+> **Quality reviewed:** 2026-05-04 | Codex 4x (design + adversarial + consistency + perf) | 1M fixed | scope: kernel-code-quality
 
 ---
 
