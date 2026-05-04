@@ -234,8 +234,14 @@ Extract the GPT partition GUID from the boot device's media device path node. Th
 
 **Test checkpoint:** QEMU SATA boot: serial shows GPT partition GUID matching the EFI system partition GUID in the disk image. `boot_info.boot_partition_style == 2` (GPT) on all modern hardware. MBR systems (if any) show `boot_partition_style == 1`.
 
-> **Verified:** 2026-04-12 -- all 6 items confirmed. HardDrive DP node extraction in shared walk at `bootx64.c:4740-4760`. Both MBRType and SignatureType validated (GPT: mbr_type==0x02 && sig_type==0x02; MBR: mbr_type==0x01 && sig_type==0x01). node_len>=42 guard. `walked+node_len<=1024` cap prevents reading past walk boundary. GUID formatted in UEFI mixed-endian. All-zero GUID warned. Codex adversarial: walk-cap overread fixed, SignatureType check added. Accepted: none.
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality gates walked. EFI_DP_SUBTYPE_END_ENTIRE kept as forward-reserve for §4's single-instance rationale. No dead code. Shared walk is single O(n) pass. UEFI spec Table 10-58 compliance. Accepted: none.
+> **Notes:**
+> - HardDrive DP walk at `bootx64.c:7850-7949`; UEFI Table 10-58 compliant -- offset 24 PartitionSignature, 40 MBRType, 41 SignatureType.
+> - GPT: mbr=0x02 && sig=0x02 -> 16-byte GUID; MBR: mbr=0x01 && sig=0x01 -> 4-byte signature in low bytes; mismatched firmware (e.g. mbr=0x02 + sig=0x01) emits `[WARN] HD() inconsistent` and leaves `boot_partition_style=0`.
+> - Walk cap `DP_MAX_WALK=4096` (bumped from 1024 to cover long PCIe/NVMe + GPT paths); `node_len < 4` and `walked + node_len > cap` defenses bound buffer reads.
+> - Re-reviewed 2026-05-04 (Codex 3x, 1H+1L fixed, 1M rejected): bumped cap, added inconsistency [WARN], 2-digit hex format, and 2 `_Static_assert` offset pins (`boot_partition_guid==22096`, `boot_partition_style==22112`).
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commits `d125a47c` (ship) + this commit (re-review) | 6/6 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-04 | Codex 3x (adversarial, consistency, perf) | 1H+1L fixed, 1M rejected (firmware-trust axis) (re-adversarial skipped: ~33 LOC, no locking/ISR/lifecycle) | scope: boot-code-quality
 
 ---
 

@@ -7855,7 +7855,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 const UINT8 *base = (const UINT8 *)dp;
                 UINT16 node_len;
                 UINTN walked = 0;
-                #define DP_MAX_WALK 1024
+                /* 4096 covers realistic vendor + NVMe namespace + GPT
+                 * paths; 1024 was tight enough to silently drop GPT
+                 * identity on a benign-but-long firmware path. */
+                #define DP_MAX_WALK 4096
 
                 while (walked + 4 <= DP_MAX_WALK &&
                        !(node->Type == EFI_DP_TYPE_END &&
@@ -7889,6 +7892,21 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                             g_boot_info_ptr->boot_partition_style = 1;
                             for (gi = 0; gi < 4; gi++)
                                 g_boot_info_ptr->boot_partition_guid[gi] = nd[24 + gi];
+                        } else if (mbr_type == 0x02 || mbr_type == 0x01) {
+                            /* Spec-violating firmware: MBRType says GPT/MBR
+                             * but SignatureType disagrees. Refuse to trust
+                             * partial data; log so firmware bugs are visible. */
+                            static const char hex_lut[] = "0123456789ABCDEF";
+                            char nb[3] = { 0, 0, 0 };
+                            serial_early_print("[WARN] HD() inconsistent: mbr_type=0x");
+                            nb[0] = hex_lut[(mbr_type >> 4) & 0xF];
+                            nb[1] = hex_lut[mbr_type & 0xF];
+                            serial_early_print(nb);
+                            serial_early_print(" sig_type=0x");
+                            nb[0] = hex_lut[(sig_type >> 4) & 0xF];
+                            nb[1] = hex_lut[sig_type & 0xF];
+                            serial_early_print(nb);
+                            serial_early_print(" -- partition style left unknown\n");
                         }
                     }
 

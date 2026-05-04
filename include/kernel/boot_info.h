@@ -1475,6 +1475,10 @@ _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_order_count) == 22
     "boot_info.uefi_boot_order_count offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, uefi_boot_order) == 22064,
     "boot_info.uefi_boot_order offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_partition_guid) == 22096,
+    "boot_info.boot_partition_guid offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_partition_style) == 22112,
+    "boot_info.boot_partition_style offset drift -- update kernel + bootloader mirror");
 
 /* v14: UKI-embedded payload offset asserts. The six fields are
  * appended after struct boot_loader_identity (offset 23760, size
