@@ -219,7 +219,9 @@ static void test_vfs_rename_replace_ixfs_rejects(void)
     vfs_test_write_n(dst, 0xBB, 16);
 
     int rc = vfs_rename_ex(src, dst, VFS_RENAME_REPLACE_EXISTING);
-    TEST_ASSERT_EQ((uint64_t)rc, (uint64_t)(uint32_t)-1,
+    /* Cast int->uint32_t first to avoid sign-extending -1 to a 64-bit
+     * 0xFFFFFFFFFFFFFFFF; the assert helper takes uint64_t. */
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)rc, (uint64_t)(uint32_t)-1,
                    "IXFS rejects REPLACE_EXISTING with -1");
 
     struct vfs_node *a = vfs_open(src, VFS_O_READ);
