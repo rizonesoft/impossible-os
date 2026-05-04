@@ -152,6 +152,14 @@ void ixfs_free_block(struct ixfs_volume *vol, uint32_t block)
     bitmap_clear(vol->block_bitmap, block);
     vol->sb.s_free_blocks++;
 
+    /* Clear the stored block checksum so a future read of this block --
+     * before it is re-allocated and re-written -- does not warn with
+     * a stale checksum. ixfs_checksum_verify() short-circuits on
+     * stored == 0 (treat as uninitialized), which matches the
+     * post-format and never-written cases too. */
+    if (vol->checksum_table && block < vol->checksum_count)
+        vol->checksum_table[block] = 0;
+
     /* Update the owning group */
     gi = block / IXFS_BLOCKS_PER_GROUP;
     if (gi < vol->group_count) {

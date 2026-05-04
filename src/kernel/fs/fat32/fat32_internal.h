@@ -170,6 +170,7 @@ uint32_t cluster_to_sector(struct fat32_volume *vol, uint32_t cluster);
 
 /* BPB validation */
 int      fat32_validate_bpb(struct fat32_volume *vol);
+void     fat32_validate_set_quiet(int q);  /* test code wraps to silence klog */
 
 /* Dual-FAT compare and repair */
 void     fat32_compare_repair_fats(struct fat32_volume *vol);

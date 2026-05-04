@@ -80,6 +80,20 @@ void lfn_extract_chars(const struct fat32_lfn_entry *lfn,
 
 /* ---- BPB strict validation (Microsoft FAT spec S3) ---- */
 
+/* Suppresses LOG_ERROR diagnostics inside fat32_validate_bpb when set.
+ * Negative-test code in test_ixfs.c constructs deliberately-malformed
+ * BPBs and verifies the validator rejects them; the validator's klog
+ * was rendering as [FAIL] in the boot log even though the test was
+ * passing. Test code wraps validate calls with set(1) / set(0). */
+static int s_validate_quiet = 0;
+
+void fat32_validate_set_quiet(int q) { s_validate_quiet = q ? 1 : 0; }
+
+#define FAT32_BPB_FAIL(fmt, ...) do { \
+    if (!s_validate_quiet) \
+        klog(LOG_ERROR, "fat32", fmt, ##__VA_ARGS__); \
+} while (0)
+
 int fat32_validate_bpb(struct fat32_volume *vol)
 {
     uint8_t jmp  = vol->sector_buf[0];
@@ -92,49 +106,49 @@ int fat32_validate_bpb(struct fat32_volume *vol)
 
     /* jmpBoot[0] must be 0xEB (short jump) or 0xE9 (near jump) */
     if (jmp != 0xEB && jmp != 0xE9) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: bad jmpBoot 0x%02X",
+        FAT32_BPB_FAIL("BPB validation failed: bad jmpBoot 0x%02X",
              (uint64_t)jmp);
         return -1;
     }
 
     /* BytsPerSec must be 512, 1024, 2048, or 4096 */
     if (bps != 512 && bps != 1024 && bps != 2048 && bps != 4096) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: bad BytsPerSec %u",
+        FAT32_BPB_FAIL("BPB validation failed: bad BytsPerSec %u",
              (uint64_t)bps);
         return -1;
     }
 
     /* SecPerClus must be a power of two, 1-128 */
     if (spc == 0 || (spc & (spc - 1)) != 0 || spc > 128) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: bad SecPerClus %u",
+        FAT32_BPB_FAIL("BPB validation failed: bad SecPerClus %u",
              (uint64_t)spc);
         return -1;
     }
 
     /* NumFATs must be 1 or 2 */
     if (nf != 1 && nf != 2) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: bad NumFATs %u",
+        FAT32_BPB_FAIL("BPB validation failed: bad NumFATs %u",
              (uint64_t)nf);
         return -1;
     }
 
     /* RootEntCnt must be 0 for FAT32 */
     if (rec != 0) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: RootEntCnt %u (must be 0)",
+        FAT32_BPB_FAIL("BPB validation failed: RootEntCnt %u (must be 0)",
              (uint64_t)rec);
         return -1;
     }
 
     /* RootClus must be >= 2 */
     if (rc < 2) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: RootClus %u (must be >= 2)",
+        FAT32_BPB_FAIL("BPB validation failed: RootClus %u (must be >= 2)",
              (uint64_t)rc);
         return -1;
     }
 
     /* TotSec32 must be > 0 */
     if (ts == 0) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: TotSec32 is 0");
+        FAT32_BPB_FAIL("BPB validation failed: TotSec32 is 0");
         return -1;
     }
 
@@ -149,24 +163,24 @@ int fat32_validate_bpb(struct fat32_volume *vol)
     uint32_t fsz  = vol->bpb.fat_size_sectors;
 
     if (resv == 0) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: reserved_sectors is 0");
+        FAT32_BPB_FAIL("BPB validation failed: reserved_sectors is 0");
         return -1;
     }
     if (fsz == 0) {
-        klog(LOG_ERROR, "fat32", "BPB validation failed: fat_size_sectors is 0");
+        FAT32_BPB_FAIL("BPB validation failed: fat_size_sectors is 0");
         return -1;
     }
 
     /* Compute first_data_sector in u64 to detect u32 wrap. */
     uint64_t fds = (uint64_t)resv + ((uint64_t)nf * (uint64_t)fsz);
     if (fds > (uint64_t)0xFFFFFFFFu) {
-        klog(LOG_ERROR, "fat32",
+        FAT32_BPB_FAIL(
              "BPB validation failed: first_data_sector wraps u32 (resv=%u num_fats=%u fat_sz=%u)",
              (uint64_t)resv, (uint64_t)nf, (uint64_t)fsz);
         return -1;
     }
     if ((uint32_t)fds >= ts) {
-        klog(LOG_ERROR, "fat32",
+        FAT32_BPB_FAIL(
              "BPB validation failed: first_data_sector %u >= total_sectors %u",
              (uint64_t)(uint32_t)fds, (uint64_t)ts);
         return -1;
@@ -180,7 +194,7 @@ int fat32_validate_bpb(struct fat32_volume *vol)
     if (max_cluster > 0x0FFFFFEFu)
         max_cluster = 0x0FFFFFEFu;
     if (rc > max_cluster) {
-        klog(LOG_ERROR, "fat32",
+        FAT32_BPB_FAIL(
              "BPB validation failed: RootClus %u > max_cluster %u",
              (uint64_t)rc, (uint64_t)max_cluster);
         return -1;

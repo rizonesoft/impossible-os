@@ -19,6 +19,19 @@
 #include "../fs/fat32/fat32_internal.h"
 
 extern int fat32_validate_bpb(struct fat32_volume *vol);
+extern void fat32_validate_set_quiet(int q);
+
+/* Silent wrapper for negative-test cases. The validator's LOG_ERROR
+ * klog renders as [FAIL] in the boot log even when the test is
+ * passing (we deliberately feed it malformed BPBs). Wrap to suppress
+ * the klog so only the [ OK ] TEST line surfaces. */
+static int fat32_validate_bpb_q(struct fat32_volume *vol)
+{
+    fat32_validate_set_quiet(1);
+    int r = fat32_validate_bpb(vol);
+    fat32_validate_set_quiet(0);
+    return r;
+}
 
 /* FSInfo signature constants are file-scope private to fat32_internal.h;
  * the test file mirrors the values per FAT32 spec to cover the constants
@@ -124,7 +137,7 @@ static void test_fat32_bpb_rejects_bad_jmp(void)
     struct fat32_volume vol;
     test_fat32_bpb_make_valid(&vol);
     vol.sector_buf[0] = 0x90;  /* not 0xEB or 0xE9 */
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects bad jmpBoot[0]=0x90");
 }
 
@@ -133,7 +146,7 @@ static void test_fat32_bpb_rejects_bad_bps(void)
     struct fat32_volume vol;
     test_fat32_bpb_make_valid(&vol);
     vol.bpb.bytes_per_sector = 513;  /* not in {512,1024,2048,4096} */
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects bytes_per_sector=513");
 }
 
@@ -142,7 +155,7 @@ static void test_fat32_bpb_rejects_non_pow2_spc(void)
     struct fat32_volume vol;
     test_fat32_bpb_make_valid(&vol);
     vol.bpb.sectors_per_cluster = 3;  /* not a power of two */
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects sectors_per_cluster=3 (non-power-of-two)");
 }
 
@@ -151,7 +164,7 @@ static void test_fat32_bpb_rejects_zero_reserved(void)
     struct fat32_volume vol;
     test_fat32_bpb_make_valid(&vol);
     vol.bpb.reserved_sectors = 0;
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects reserved_sectors=0");
 }
 
@@ -160,7 +173,7 @@ static void test_fat32_bpb_rejects_zero_fat_size(void)
     struct fat32_volume vol;
     test_fat32_bpb_make_valid(&vol);
     vol.bpb.fat_size_sectors = 0;
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects fat_size_sectors=0");
 }
 
@@ -172,7 +185,7 @@ static void test_fat32_bpb_rejects_first_data_overflow(void)
      * past the volume end. With total_sectors=1M, set fat_size=600K so
      * reserved (32) + 2*600K = 1200K + 32 > 1024K total. */
     vol.bpb.fat_size_sectors = 600u * 1024u;
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects first_data_sector >= total_sectors");
 }
 
@@ -186,7 +199,7 @@ static void test_fat32_bpb_rejects_first_data_u32_wrap(void)
     vol.bpb.reserved_sectors = 0xFFFFu;            /* max u16 */
     vol.bpb.fat_size_sectors = 0x80000001u;        /* 2*fsz wraps u32 */
     vol.bpb.num_fats         = 2;
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects u32-wrapping first_data_sector");
 }
 
@@ -195,7 +208,7 @@ static void test_fat32_bpb_rejects_huge_root_cluster(void)
     struct fat32_volume vol;
     test_fat32_bpb_make_valid(&vol);
     vol.bpb.root_cluster = 0x0FFFFFF0u;  /* > FAT32 max valid 0x0FFFFFEF */
-    TEST_ASSERT(fat32_validate_bpb(&vol) == -1,
+    TEST_ASSERT(fat32_validate_bpb_q(&vol) == -1,
                 "validate_bpb rejects root_cluster above max FAT32 entry");
 }
 

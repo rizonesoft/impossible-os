@@ -3,7 +3,29 @@
 
 #include "kernel/boot_perf_budget.h"
 #include "kernel/boot_timing.h"
+#include "kernel/boot_info.h"
 #include "kernel/klog.h"
+
+/* Test-mode demotion: when boot.conf set test=1, every TEST_CAT_*
+ * suite runs inside the boot phase between `record_step` calls and
+ * inflates per-step deltas by 100ms-15s. Those deltas are not real
+ * boot regressions; demote LOG_ERROR/LOG_WARN to LOG_INFO so the
+ * advisory still surfaces but does not spam the boot log with
+ * [FAIL]/[WARN] lines that the operator must mentally filter. The
+ * boot-trend writer tags test-run entries separately so the
+ * regression detector does not compare test runs against
+ * production runs. */
+static int boot_perf_budget_log_level(int prod_level)
+{
+    return g_boot_info.config.test ? LOG_INFO : prod_level;
+}
+
+static const char *boot_perf_budget_suffix(void)
+{
+    return g_boot_info.config.test
+        ? " (test=1 active; budget advisory)"
+        : "";
+}
 
 /* Total-boot-time budget. DESKTOP_READY is the last recorded step so
  * its per-step delta is always 0; the wall-clock total is the right
@@ -103,10 +125,11 @@ void boot_perf_budget_check(void)
             boot_perf_budget_classify(observed_ms, b->target_ms);
         if (cls == BUDGET_OK) continue;
 
-        int log_level = (cls == BUDGET_HARD) ? LOG_ERROR : LOG_WARN;
-        klog(log_level, "BOOT-BUDGET",
-             "%s took %ums (target %ums): %s",
-             b->step, observed_ms, b->target_ms, b->reason);
+        int prod_level = (cls == BUDGET_HARD) ? LOG_ERROR : LOG_WARN;
+        klog(boot_perf_budget_log_level(prod_level), "BOOT-BUDGET",
+             "%s took %ums (target %ums): %s%s",
+             b->step, observed_ms, b->target_ms, b->reason,
+             boot_perf_budget_suffix());
     }
 }
 
@@ -126,9 +149,10 @@ void boot_perf_total_check(void)
         boot_perf_budget_classify(total_ms, BOOT_PERF_TOTAL_TARGET_MS);
     if (cls == BUDGET_OK) return;
 
-    int log_level = (cls == BUDGET_HARD) ? LOG_ERROR : LOG_WARN;
-    klog(log_level, "BOOT-BUDGET",
+    int prod_level = (cls == BUDGET_HARD) ? LOG_ERROR : LOG_WARN;
+    klog(boot_perf_budget_log_level(prod_level), "BOOT-BUDGET",
          "TOTAL boot took %ums (target %ums): "
-         "first-step to DESKTOP_READY wall clock",
-         total_ms, (uint32_t)BOOT_PERF_TOTAL_TARGET_MS);
+         "first-step to DESKTOP_READY wall clock%s",
+         total_ms, (uint32_t)BOOT_PERF_TOTAL_TARGET_MS,
+         boot_perf_budget_suffix());
 }
