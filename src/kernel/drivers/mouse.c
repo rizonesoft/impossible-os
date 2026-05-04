@@ -19,6 +19,16 @@
 #include "kernel/acpi.h"
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
+#include "kernel/boot_timing.h"
+
+/* TSC sample helper for per-step profiling. */
+static inline uint64_t mouse_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
 /* ---- Port I/O ---- */
 
 #define PS2_DATA_PORT    0x60
@@ -39,24 +49,59 @@ static inline void outb(uint16_t port, uint8_t val)
 
 /* ---- PS/2 controller helpers ---- */
 
-static void ps2_wait_input(void)
+/* Two timeout budgets:
+ *  - PS2_WAIT_SHORT (~10ms on trapped I/O) for input/output buffer state
+ *    polls.  These complete in microseconds on healthy controllers; a
+ *    100ms+ wait here means the controller is wedged.
+ *  - PS2_WAIT_LONG  (~500ms) for the BAT/reset response read where real
+ *    PS/2 hardware can legitimately take 300ms-2s to respond.
+ *
+ * s_timeout_hits counts iterations where the loop ran to exhaustion --
+ * exposed for the post-init profiling summary so a wedged controller is
+ * attributable per-call rather than just visible as wall-clock cost. */
+/* Real PS/2 hardware: BAT/self-test can take 300ms-2s.  Sized to cover
+ * the documented worst case so a slow-but-valid device is not skipped. */
+#define PS2_WAIT_SHORT    10000u
+#define PS2_WAIT_LONG  2000000u
+
+static uint32_t s_timeout_hits;
+
+static int ps2_wait_input(void)
 {
-    uint32_t timeout = 100000;  /* ~100ms on trapped I/O */
+    uint32_t timeout = PS2_WAIT_SHORT;
     while (--timeout) {
         uint8_t s = inb(PS2_STATUS_PORT);
-        if (s == 0xFF) break;       /* controller absent */
-        if (!(s & 0x02)) break;     /* input buffer empty */
+        if (s == 0xFF) return 0;       /* controller absent */
+        if (!(s & 0x02)) return 1;     /* input buffer empty */
     }
+    s_timeout_hits++;
+    return 0;
 }
 
-static void ps2_wait_output(void)
+static int ps2_wait_output(void)
 {
-    uint32_t timeout = 100000;  /* ~100ms on trapped I/O */
+    uint32_t timeout = PS2_WAIT_SHORT;
     while (--timeout) {
         uint8_t s = inb(PS2_STATUS_PORT);
-        if (s == 0xFF) break;       /* controller absent */
-        if (s & 0x01) break;        /* output buffer full */
+        if (s == 0xFF) return 0;       /* controller absent */
+        if (s & 0x01) return 1;        /* output buffer full */
     }
+    s_timeout_hits++;
+    return 0;
+}
+
+/* Long-deadline output wait for BAT/reset responses.  Returns 1 when
+ * data arrives within PS2_WAIT_LONG iterations; 0 on timeout. */
+static int ps2_wait_output_long(void)
+{
+    uint32_t timeout = PS2_WAIT_LONG;
+    while (--timeout) {
+        uint8_t s = inb(PS2_STATUS_PORT);
+        if (s == 0xFF) return 0;
+        if (s & 0x01) return 1;
+    }
+    s_timeout_hits++;
+    return 0;
 }
 
 static void ps2_send_cmd(uint8_t cmd)
@@ -77,6 +122,31 @@ static uint8_t mouse_read(void)
 {
     ps2_wait_output();
     return inb(PS2_DATA_PORT);
+}
+
+/* Read + validate that the device returned 0xFA (ACK).  Returns 1 on
+ * ACK, 0 on timeout/NACK so the caller can abort init rather than
+ * proceed with a desynchronized command stream. */
+static int mouse_expect_ack(void)
+{
+    if (!ps2_wait_output()) return 0;
+    return inb(PS2_DATA_PORT) == 0xFA;
+}
+
+/* Long-deadline read for BAT/reset response sequences.  Returns 1 on
+ * success (data byte stored in *out), 0 on timeout.  Real PS/2 hardware
+ * can take 300ms-2s for self-test; the normal short-deadline
+ * mouse_read() would skip valid devices, and the prior void-return
+ * shape silently masked timeouts as "successful read of garbage". */
+static int mouse_read_long(uint8_t *out)
+{
+    if (!ps2_wait_output_long()) {
+        if (out) *out = 0xFF;
+        return 0;
+    }
+    if (out) *out = inb(PS2_DATA_PORT);
+    else (void)inb(PS2_DATA_PORT);
+    return 1;
 }
 
 /* ---- Mouse state ---- */
@@ -174,6 +244,9 @@ static void mouse_irq_callback(uint8_t vector, void *ctx)
 void mouse_init(void)
 {
     uint8_t status_byte;
+    const char *exit_reason = "ok";
+    uint64_t t_start = mouse_rdtsc();
+    s_timeout_hits = 0;
 
     POST16(0xD503);
 
@@ -182,8 +255,8 @@ void mouse_init(void)
     if (!acpi_has_8042()) {
         uint8_t probe = inb(0x64);
         if (probe == 0xFF) {
-            klog(LOG_INFO, "input", "PS/2 mouse: skipped (no i8042 -- port 0x64 reads 0xFF)");
-            return;
+            exit_reason = "no i8042 (port 0x64 reads 0xFF)";
+            goto report;
         }
         klog(LOG_INFO, "input", "PS/2 mouse: FADT says no i8042 but port probe OK (0x%x)",
              (uint32_t)probe);
@@ -206,8 +279,8 @@ void mouse_init(void)
     /* If status reads 0xFF, the PS/2 controller has no auxiliary port
      * (common on laptops with USB/I2C touchpads).  Bail out. */
     if (status_byte == 0xFF) {
-        klog(LOG_INFO, "input", "PS/2 mouse: no auxiliary port (touchpad/USB?)");
-        return;
+        exit_reason = "no auxiliary port (touchpad/USB?)";
+        goto report;
     }
     status_byte |= 0x02;       /* Bit 1 = enable IRQ 12 */
     status_byte &= ~0x20;      /* Bit 5 = 0 = enable mouse clock */
@@ -215,9 +288,13 @@ void mouse_init(void)
     ps2_wait_input();
     outb(PS2_DATA_PORT, status_byte);
 
-    /* Probe: reset mouse and check for ACK (0xFA).  If the auxiliary
-     * port has no device (laptop touchpad via USB/I2C), the read
-     * returns garbage after timeout -- skip full init. */
+    /* Probe: reset mouse and check for ACK (0xFA).
+     * - ACK is immediate from the controller (microseconds): short
+     *   deadline. A no-mouse port times out after ~10ms, not 2s.
+     * - The subsequent self-test (BAT) + device-ID reads can take
+     *   300ms-2s on real hardware: long deadline. BAT must be 0xAA
+     *   before proceeding -- a wrong/missing BAT means the bus state
+     *   is desynchronized and follow-on commands cannot be trusted. */
     mouse_write(0xFF);  /* reset */
     {
         uint8_t ack = mouse_read();
@@ -225,31 +302,45 @@ void mouse_init(void)
             klog(LOG_INFO, "input",
                  "PS/2 mouse: no ACK on reset (0x%x) -- skipping",
                  (uint64_t)ack);
-            return;
+            exit_reason = "reset NACK";
+            goto report;
         }
-        mouse_read();  /* self-test result (0xAA) */
-        mouse_read();  /* device ID (0x00) */
+        uint8_t bat = 0;
+        if (!mouse_read_long(&bat) || bat != 0xAA) {
+            klog(LOG_WARN, "input",
+                 "PS/2 mouse: BAT failed (got 0x%x, expected 0xAA) -- skipping",
+                 (uint64_t)bat);
+            exit_reason = "BAT fail";
+            goto report;
+        }
+        uint8_t dev_id = 0;
+        if (!mouse_read_long(&dev_id)) {
+            klog(LOG_WARN, "input",
+                 "PS/2 mouse: device-ID read timed out -- skipping");
+            exit_reason = "device-ID timeout";
+            goto report;
+        }
     }
 
-    /* Set defaults */
+    /* Set defaults (F6) */
     mouse_write(0xF6);
-    mouse_read();
+    if (!mouse_expect_ack()) { exit_reason = "F6 NACK"; goto report; }
 
-    /* Set sample rate to 100 */
+    /* Set sample rate to 100 (F3 + 100) */
     mouse_write(0xF3);
-    mouse_read();
+    if (!mouse_expect_ack()) { exit_reason = "F3 NACK"; goto report; }
     mouse_write(100);
-    mouse_read();
+    if (!mouse_expect_ack()) { exit_reason = "F3 data NACK"; goto report; }
 
-    /* Set resolution to 4 counts/mm */
+    /* Set resolution to 4 counts/mm (E8 + 0x02) */
     mouse_write(0xE8);
-    mouse_read();
+    if (!mouse_expect_ack()) { exit_reason = "E8 NACK"; goto report; }
     mouse_write(0x02);
-    mouse_read();
+    if (!mouse_expect_ack()) { exit_reason = "E8 data NACK"; goto report; }
 
-    /* Enable data reporting */
+    /* Enable data reporting (F4) */
     mouse_write(0xF4);
-    mouse_read();
+    if (!mouse_expect_ack()) { exit_reason = "F4 NACK"; goto report; }
 
     /* Flush -- timeout prevents hang on platforms without i8042 */
     {
@@ -271,6 +362,17 @@ void mouse_init(void)
     klog(LOG_INFO, "input", "PS/2 mouse initialized (IRQ %u, 100 samples/sec, 4 counts/mm)",
          ioapic_available() ? (uint32_t)ioapic_isa_to_gsi(IRQ_MOUSE)
                             : (uint32_t)IRQ_MOUSE);
+
+report:
+    /* Per-init profile + skip-reason summary.  Funneled here so every
+     * exit path -- success and the three early-return cases -- emits
+     * the same TSC/timeout-hit data and a structured reason string. */
+    {
+        uint64_t elapsed_ms = boot_timing_tsc_delta_ms(mouse_rdtsc() - t_start);
+        klog(LOG_INFO, "input",
+             "PS/2 mouse: init %ums, timeouts=%u, exit=%s",
+             elapsed_ms, (uint64_t)s_timeout_hits, exit_reason);
+    }
 }
 
 /* ============================================================================
