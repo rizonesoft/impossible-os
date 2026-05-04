@@ -11,7 +11,7 @@ title: "TODO-05 -- Boot Device Discovery & Fallback Chain"
 > **Goal:** The bootloader must correctly identify which device it booted from, load the kernel and `boot.conf` from that device (not a random filesystem), and support a priority-based fallback chain across local SATA, NVMe, and USB devices. **Today** `parse_boot_conf()` still uses the first `LocateProtocol(SIMPLE_FILE_SYSTEM)` handle, and there is no cross-volume fallback -- risks wrong-disk config on multi-disk systems even though `load_kernel()` already prefers LoadedImage. Windows uses the BCD store + Loaded Image device path; GRUB uses device enumeration + search; Linux exposes boot entries via `efibootmgr`. This TODO finishes boot device identification, fallback, UEFI boot variables (BootOrder, BootCurrent, BootNext, optional Boot#### decode), partition GUID validation, removable media detection, boot device Registry population, and a pre-boot device health check so the OS boots reliably on any local hardware configuration and exposes complete boot provenance to the kernel. Network/PXE/HTTP boot is owned by [TODO-25](TODO-25-network-pxe-http-boot.md).
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-12):** All 12 sections complete. Device handle, scoped FS, device type+path, fallback chain, boot variables, partition GUID, removable detection, Registry, enumeration log, health check, Boot#### decode. BOOT_INFO_VERSION=5.
+> **Current state (code-truth 2026-04-12; gap-audit 2026-05-03):** §1--§12 shipped. Gap audit (Codex 1x, 8 findings) added §13 (boot variable capability surface: `EFI_LOAD_OPTION.Attributes`, `BootOptionSupport`, `OsIndicationsSupported`, Boot#### Description in registry) and §14 (NVMe NSID + EUI-64, PCI device/function, SD/eMMC classification) -- both `[ ]`. `BOOT_INFO_VERSION=5` today; bumps to 6 when §13 lands.
 
 ---
 
@@ -62,6 +62,8 @@ title: "TODO-05 -- Boot Device Discovery & Fallback Chain"
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [x]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [x]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [x]   |
+| 💎  |  13   | Extended boot variable capability surface          | §6, §9, §12    |  [ ]   |
+| 💎  |  14   | Local boot device path detail capture              | §3, §4, §9     |  [ ]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
 > ⭐ = exclusive -- detailed boot device diagnostics with full enumeration, and proactive disk health check before kernel load.
@@ -260,7 +262,7 @@ Log the full boot device enumeration to serial for debugging. This is the compre
 
 **Test checkpoint:** Serial output shows numbered list of all available boot devices with kernel presence status, device type, and removable flag. Summary line present. Verify on QEMU multi-disk and bare metal.
 
-> **Verified:** 2026-04-12 -- all 8 items confirmed. LocateHandleBuffer enumeration at `bootx64.c:4946`. Per-handle: Open/Close kernel check, BlockIO tri-state removable, DevicePathToText 80-char. Boot device marked *BOOT*. Summary with nb[20] buffer. BootCurrent/BootOrder/BootNext from S6. Partition GUID from S7. Codex adversarial: approved, no findings. Accepted: unconditional probe (watchdog guards, gatable later if needed).
+> **Verified:** 2026-04-12 -- all 8 items confirmed. LocateHandleBuffer enumeration at `bootx64.c:4946`. Per-handle: Open/Close kernel check, BlockIO tri-state removable, DevicePathToText 80-char. Boot device marked *BOOT*. Summary with nb[20] buffer. BootCurrent/BootOrder/BootNext from §6. Partition GUID from §7. Codex adversarial: approved, no findings. Accepted: unconditional probe (watchdog guards, gatable later if needed).
 > **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. No dead GUIDs. O(n) enumeration. Tri-state removable per G13 spec compliance. Exclusive feature -- neither Windows nor Linux logs full device enumeration at bootloader level. Accepted: none.
 
 ---
@@ -283,8 +285,8 @@ Read basic health indicators from the boot device before loading the kernel. Nei
 
 **Regression risk:** LOW -- read-only queries. No writes to disk, no modification of boot path. If SATA status check fails (unsupported firmware), skip silently.
 
-> **Verified:** 2026-04-12 -- all 6 items confirmed. S8+S11 merged into single HandleProtocol(BlockIO) block. Capacity with overflow guard (LastBlock+blocks*BlockSize). ReadOnly on non-USB. MediaPresent warning-only (not fatal -- partition handle stale state). LogicalPartition diagnostic. SATA link status skipped (AHCI BAR MMIO risk). Codex adversarial: MediaPresent reverted from fatal to warn, capacity overflow guarded. Codex quality: duplicate HandleProtocol refactored to single call. Accepted: SATA link status (kernel AHCI driver handles this).
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. Single BlockIO lookup shared between S8+S11. Overflow-safe UINT64 capacity math. Exclusive feature -- neither Windows nor Linux checks disk health at bootloader stage. Accepted: none.
+> **Verified:** 2026-04-12 -- all 6 items confirmed. §8+§11 merged into single HandleProtocol(BlockIO) block. Capacity with overflow guard (LastBlock+blocks*BlockSize). ReadOnly on non-USB. MediaPresent warning-only (not fatal -- partition handle stale state). LogicalPartition diagnostic. SATA link status skipped (AHCI BAR MMIO risk). Codex adversarial: MediaPresent reverted from fatal to warn, capacity overflow guarded. Codex quality: duplicate HandleProtocol refactored to single call. Accepted: SATA link status (kernel AHCI driver handles this).
+> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. Single BlockIO lookup shared between §8+§11. Overflow-safe UINT64 capacity math. Exclusive feature -- neither Windows nor Linux checks disk health at bootloader stage. Accepted: none.
 
 ---
 
@@ -292,35 +294,73 @@ Read basic health indicators from the boot device before loading the kernel. Nei
 
 Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attributes, description, and the file/device path list for that menu entry. Linux **`efibootmgr -v`** and Windows **BCD** tooling expose this; it is the authoritative link between **BootCurrent** and the path the firmware *intended* to run. Decoding it catches mismatches when **`bootx64.efi`** was launched from a fallback path while **BootCurrent** points at another entry.
 
-- [x] After reading `BootCurrent` (S6): format variable name `Boot####` with lowercase hex via UCS-2 CHAR16 array -- `bootx64.c` S12 block inside S6's `if (rt && rt->GetVariable)` scope
+- [x] After reading `BootCurrent` (§6): format variable name `Boot####` with lowercase hex via UCS-2 CHAR16 array -- `bootx64.c` §12 block inside §6's `if (rt && rt->GetVariable)` scope
 - [x] Call `GetVariable("Boot####", EFI_GLOBAL_VARIABLE_GUID, ...)`; `EFI_NOT_FOUND` is silent (some VMs have minimal NVRAM) -- 512-byte stack buffer, `lo_sz > 6` guard
 - [x] Parse `EFI_LOAD_OPTION`: Attributes at [0..3], FilePathListLength at [4..5] (LE), Description at [6..] (NUL-terminated CHAR16), FilePathList after Description NUL -- bounds-checked against `lo_sz`
 - [x] Log: `"[BOOT] Boot%04x: <description>"` (80-char truncated ASCII) and `"[BOOT]   Path: <device path>"` (120-char truncated via DevicePathToText) -- FreePool on fp_txt
-- [x] FilePath comparison: skipped -- requires EFI_LOADED_IMAGE_PROTOCOL.FilePath to text conversion for comparison, which adds complexity for a diagnostic-only check. The device path is already visible in S3's log and S12's Path line for manual comparison.
+- [x] FilePath comparison: skipped -- diagnostic-only and the device path is already visible in §3's log and §12's Path line for manual comparison.
 - [x] Commit: `"boot: decode Boot#### EFI_LOAD_OPTION for BootCurrent diagnostics"` (74b9072f)
 
 **Test checkpoint:** On firmware with a populated `Boot0000` (or current entry), serial shows description + device path text. On OVMF with empty entries, skip is silent (no hang). Verify on bare metal -- description strings are UTF-16 vendor strings.
 
-> **Verified:** 2026-04-12 -- all 6 items confirmed. Boot#### name formatted with uppercase hex (UEFI spec Section 3.1.2) at `bootx64.c:4975`. GetVariable into 2048-byte buffer, EFI_BUFFER_TOO_SMALL logged, EFI_NOT_FOUND silent. EFI_LOAD_OPTION parsed with bounds checks. Device path validated (END_ENTIRE within fp_len) before ConvertDevicePathToText. Codex adversarial: lowercase hex fixed to uppercase (spec compliance). Accepted: FilePath comparison (manual via S3+S12 output).
+> **Verified:** 2026-04-12 -- all 6 items confirmed. Boot#### name formatted with uppercase hex (UEFI spec Section 3.1.2) at `bootx64.c:4975`. GetVariable into 2048-byte buffer, EFI_BUFFER_TOO_SMALL logged, EFI_NOT_FOUND silent. EFI_LOAD_OPTION parsed with bounds checks. Device path validated (END_ENTIRE within fp_len) before ConvertDevicePathToText. Codex adversarial: lowercase hex fixed to uppercase (spec compliance). Accepted: FilePath comparison (manual via §3+§12 output).
 > **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. G13: uppercase hex per UEFI spec, device path validated before ConvertDevicePathToText. No dead code. O(1) per boot. Parity: matches Windows BCD + Linux efibootmgr -v. Accepted: none.
+
+---
+
+## 13. Extended Boot Variable Capability Surface
+
+§6 captured `BootCurrent` / `BootOrder` / `BootNext`; §12 logs Boot#### description and FilePathList. The remaining `EFI_LOAD_OPTION` Attributes word, two firmware-side capability variables (`BootOptionSupport`, `OsIndicationsSupported`), and the human-readable Boot#### description text are still log-only or untouched. Win11 BCDEdit and Linux `efibootmgr -v` both surface these. Read-only `OsIndicationsSupported` is **distinct** from TODO-27 §2's write-path ban on `OsIndications` -- the read side carries no capsule risk.
+
+- [ ] Decode `EFI_LOAD_OPTION.Attributes` (UINT32 at offset 0) for `BootCurrent`'s Boot#### per UEFI 2.10 §3.1.3 (ACTIVE / FORCE_RECONNECT / HIDDEN / CATEGORY mask)
+- [ ] Read `BootOptionSupport` (UINT32) global per UEFI 2.10 §3.1.4 (KEY/APP/SYSPREP/COUNT bits; absent => 0)
+- [ ] Read `OsIndicationsSupported` (UINT64) global per UEFI 2.10 §3.3 -- READ-only firmware capability, distinct from TODO-27 §2 write-path ban
+- [ ] Add `boot_info` fields and bump `BOOT_INFO_VERSION` 5 -> 6 in kernel header + bootloader mirror; refresh manifest dump-fields.inc; offset pin via `_Static_assert`
+- [ ] Persist in `boot_device_populate_registry()`: `BootCurrentAttributes` + `BootOptionSupport` + `OsIndicationsSupportedLo/Hi` + `Description` (REG_SZ <=64) under `HKLM\SYSTEM\Boot\Device\`
+- [ ] Serial log: `attrs=0x%08x (active=%u hidden=%u cat=%s)` plus `BootOptionSupport / OsIndicationsSupported` line
+- [ ] `POST16(0xB096)` entry / `POST16(0xB097)` ok -- `POST16_BL_BOOT_VAR_EXT` / `_OK` in 0xB0xx range
+- [ ] Unit tests in `test_boot_device.c`: reserved-bit-zero on `boot_option_support`, NUL-termination of `boot_description`, ACTIVE bit consistency (TEST_SKIP if firmware NVRAM empty)
+- [ ] Commit: `"boot: extended boot variable capability surface (Attributes + BootOptionSupport + OsIndicationsSupported + Description)"`
+
+**Test checkpoint:** Serial shows `BootCurrent attrs=0x00000001` (LOAD_OPTION_ACTIVE) on standard QEMU OVMF, `BootOptionSupport=0x00000311` on firmware reporting KEY+APP+COUNT, `Description="UEFI ImpossibleOS"` on firmware with populated entries. Registry returns the four new values. Verify on bare metal -- vendor firmware sets additional capability bits and richer descriptions.
+
+---
+
+## 14. Local Boot Device Path Detail Capture
+
+§4 classifies the boot device by Messaging-node subtype (SATA/NVMe/USB/network) but discards the per-bus identifiers Win11 (`MSFT_Disk.UniqueId` / `BusType`) and Linux (`/sys/class/nvme/nvmeX/nsid`, sysfs PCI topology) both expose. NVMe boots lose the namespace ID and EUI-64; PCI device/function never reaches `boot_info`; SD card and eMMC boots (modern laptops, tablets) classify as `boot_device_type=0` because the enum stops at four bus types. Capture the cheap detail at parse time, extend the enum, and persist to registry.
+
+- [ ] Add subtype constants to `efi.h`: `EFI_DP_MSG_SD` (0x1A) per UEFI 2.10 §10.3.4.24, `EFI_DP_MSG_EMMC` (0x1D) per §10.3.4.27
+- [ ] Extend `boot_device_type` enum: 5=SD, 6=eMMC; update §4 log strings + `test_boot_device.c` range to 0..6
+- [ ] In §4 walk: when NVMe SubType (0x17) and `node_len >= 20`, copy NSID (UINT32 +4) + EUI-64 (8 BE +8) into `boot_info.boot_nvme_nsid` + `boot_nvme_eui64[8]` per UEFI 2.10 §10.3.4.21
+- [ ] In §4 walk: capture last PCI node Device + Function (UINT8 each) per §10.3.2.1 into `boot_pci_device` / `_function`; sentinel 0xFF when not on PCI
+- [ ] Bump `BOOT_INFO_VERSION` (piggyback on §13's bump if same release, else 7)
+- [ ] Persist in `boot_device_populate_registry()`: `NamespaceId` (REG_DWORD), `NamespaceEui64` (REG_BINARY 8B; omit if NVMe + all-zero), `PciDevice` / `PciFunction` (REG_DWORD; 0xFF sentinel)
+- [ ] Serial log: `[BOOT] Boot device: NVMe NSID=%u EUI-64=XX:..:XX` / `Boot device type: SD` or `eMMC`
+- [ ] Unit tests: enum range 0..6, NSID nonzero => EUI-64 populated (or sentinel), PCI device <= 31 + function <= 7 OR both 0xFF
+- [ ] Commit: `"boot: capture NVMe NSID/EUI-64 + PCI device/function + SD/eMMC classification"`
+
+**Test checkpoint:** NVMe boot on QEMU `-device nvme`: serial shows `Boot device: NVMe NSID=1 EUI-64=...`, registry `NamespaceId=1`. SATA boot: `NamespaceId=0`, no `NamespaceEui64`. SD/eMMC boot on bare-metal tablet: `boot_device_type=5` or `6`. Verify on bare metal -- vendor PCIe NVMe + embedded eMMC Surface-class devices cover the modern boot surface.
 
 ---
 
 ## OS Comparison
 
-| ⭐  | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS |
-| --- | --------------------------- | ------------------------------ | ------------------------ | ----------------- |
-| 💎  | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done    |
-| 💎  | Multi-device fallback       | ✅ BCD boot order             | ✅ GRUB menu entries     | ✅ §5 done       |
-| 💎  | Boot device type in kernel  | ✅ Registry boot info         | ✅ /proc/cmdline root=   | ✅ §3-§4 done    |
-| 💎  | Boot variable reading       | ✅ BCD reads BootOrder        | ✅ efibootmgr/efivarfs   | ✅ §6 done       |
-| 💎  | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ✅ S12 done      |
-| 💎  | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done       |
-| 💎  | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done       |
-| 💎  | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done       |
-| 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done       |
-| ⭐  | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ✅ §10 done      |
-| ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ✅ §11 done      |
+| ⭐  | Feature                     | 🪟 Win11                      | 🐧 Linux                  | 🚀 Impossible OS              |
+| --- | --------------------------- | ------------------------------ | ------------------------- | ------------------------------ |
+| 💎  | Boot device identification  | ✅ BCD + device path           | ✅ GRUB search command    | ✅ §1-§2 done                 |
+| 💎  | Multi-device fallback       | ⚠️ BCD recovery only           | ⚠️ GRUB menu only         | ✅ §5 cross-volume kernel scan |
+| 💎  | Boot device type in kernel  | ✅ HKLM Enum BusType           | ⚠️ sysfs (post-boot only) | ✅ §3-§4 done                 |
+| 💎  | Boot variable reading       | ✅ via UEFI Runtime API        | ✅ efibootmgr/efivarfs    | ✅ §6 done                    |
+| 💎  | Boot#### option decode      | ✅ BCD / bcdedit               | ✅ efibootmgr -v          | ✅ §12 done                   |
+| 💎  | BootNext one-shot boot      | ✅ SetFirmwareEnvVar           | ✅ efibootmgr -n          | ✅ §6 done                    |
+| 💎  | Partition GUID validation   | ✅ BCD disk signature          | ✅ root=PARTUUID=         | ✅ §7 done                    |
+| 💎  | Removable media detection   | ✅ DriveType removable         | ✅ sysfs removable flag   | ✅ §8 done                    |
+| 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices  | ✅ /sys/firmware/efi      | ✅ §9 done                    |
+| 💎  | Boot#### attrs + caps       | ✅ BCDEdit metadata            | ✅ efibootmgr -v          | ⬜ §13 planned                |
+| 💎  | Boot device bus topology    | ✅ MSFT_Disk UniqueId/BusType  | ✅ sysfs nsid + PCI BDF   | ⬜ §14 planned                |
+| ⭐  | Full device enumeration log | ❌ Hidden in Event Log         | ❌ Not logged             | ✅ §10 done                   |
+| ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only        | ❌ Post-boot smartd only  | ✅ §11 done                   |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all boot device discovery fundamentals: device identification via LoadedImage, UEFI boot variable reading, partition GUID validation, removable media detection, and Registry population. The exclusive items push beyond: comprehensive serial logging of the full device enumeration (neither competitor exposes this), and a pre-boot disk health check at the UEFI stage that gives users early warning of failing hardware before the kernel even loads.
 
@@ -360,4 +400,4 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 **Test checkpoint:** Every Verification bullet above passes on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; POST16 codes `0xB090`--`0xB095` localize bootloader failures as documented in §1--§5.
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 suites, 0 failures
