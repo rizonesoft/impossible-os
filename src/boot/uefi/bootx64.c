@@ -8273,20 +8273,45 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                           (VOID *)0, &enum_count, &enum_handles);
         if (!EFI_ERROR(enum_s) && enum_handles && enum_count > 0) {
             serial_early_print("[BOOT] --- Device Enumeration (verbose=1) ---\n");
+            /* Cap diagnostic enumeration; large multi-disk / SAN / USB
+             * topologies can otherwise stall the firmware watchdog while
+             * we burn ~10 ms per handle on Open/Close probes. */
+            #define DIAG_ENUM_MAX 64
+            UINTN logged = enum_count > DIAG_ENUM_MAX ? DIAG_ENUM_MAX : enum_count;
+            /* Pre-scan ALL enum entries (cheap identity compare, no firmware
+             * calls) to find the boot handle's index. Distinguishes
+             * "boot in skipped tail" from "boot not in SimpleFS enum at
+             * all" (e.g. block-device boot without a SimpleFS handle). */
+            int boot_found_in_enum = 0;
+            UINTN boot_enum_index = 0;
             UINTN ei;
-            for (ei = 0; ei < enum_count; ei++) {
+            if (g_boot_device_handle) {
+                for (ei = 0; ei < enum_count; ei++) {
+                    if (enum_handles[ei] == g_boot_device_handle) {
+                        boot_found_in_enum = 1;
+                        boot_enum_index = ei;
+                        break;
+                    }
+                }
+            }
+            for (ei = 0; ei < logged; ei++) {
+                /* Refresh firmware watchdog every 8 handles -- per-handle
+                 * Open/Close can take ~10 ms on real firmware. */
+                if ((ei & 0x7) == 0) watchdog_reset();
+
                 int is_boot = (enum_handles[ei] == g_boot_device_handle);
                 int has_kernel = 0;
                 int removable = -1;
 
                 /* Check kernel presence */
                 {
-                    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *efs;
+                    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *efs =
+                        (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
                     EFI_FILE_PROTOCOL *eroot;
                     EFI_FILE_PROTOCOL *efile;
                     EFI_STATUS es = gBS->HandleProtocol(enum_handles[ei],
                                         &fs_enum_guid, (VOID **)&efs);
-                    if (!EFI_ERROR(es)) {
+                    if (!EFI_ERROR(es) && efs) {
                         es = efs->OpenVolume(efs, &eroot);
                         if (!EFI_ERROR(es)) {
                             es = eroot->Open(eroot, &efile,
@@ -8344,6 +8369,35 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 }
             }
 
+            /* If the boot device IS in the SimpleFS enum but landed
+             * outside the capped range, emit a minimal *BOOT* line so
+             * the diagnostic always names it. (If boot is not in the
+             * enum at all -- e.g. block-device boot without SimpleFS
+             * -- partition-GUID and boot-variable logging already
+             * cover it.) */
+            if (boot_found_in_enum && boot_enum_index >= logged) {
+                EFI_DEVICE_PATH_PROTOCOL *bdp =
+                    (EFI_DEVICE_PATH_PROTOCOL *)0;
+                EFI_STATUS bes = gBS->HandleProtocol(g_boot_device_handle,
+                                    &dp_enum_guid, (VOID **)&bdp);
+                serial_early_print("[BOOT]  [..] *BOOT* ");
+                if (!EFI_ERROR(bes) && bdp && enum_dptt) {
+                    CHAR16 *btxt = enum_dptt->ConvertDevicePathToText(bdp, 0, 0);
+                    if (btxt) {
+                        UINTN bj;
+                        for (bj = 0; bj < 80 && btxt[bj]; bj++)
+                            serial_early_putchar((char)(btxt[bj] & 0x7F));
+                        if (btxt[bj]) serial_early_print("...");
+                        gBS->FreePool(btxt);
+                    } else {
+                        serial_early_print("(no path text)");
+                    }
+                } else {
+                    serial_early_print("(no device path)");
+                }
+                serial_early_print(" (outside capped range)\n");
+            }
+
             /* Summary line */
             serial_early_print("[BOOT] Device summary: ");
             {
@@ -8354,6 +8408,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 else { while (v > 0 && n < 20) { nb[n++] = '0' + (char)(v % 10); v /= 10; } }
                 while (n > 0) serial_early_putchar(nb[--n]);
             }
+            if (enum_count > DIAG_ENUM_MAX) {
+                serial_early_print(" (logged first ");
+                {
+                    char nb[8];
+                    UINTN v = DIAG_ENUM_MAX;
+                    int n = 0;
+                    while (v > 0 && n < 8) { nb[n++] = '0' + (char)(v % 10); v /= 10; }
+                    while (n > 0) serial_early_putchar(nb[--n]);
+                }
+                serial_early_print(")");
+            }
+            #undef DIAG_ENUM_MAX
             serial_early_print(" devices found, boot=");
             {
                 static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};

@@ -312,8 +312,14 @@ Log the full boot device enumeration to serial for debugging. This is the compre
 
 **Test checkpoint:** Serial output shows numbered list of all available boot devices with kernel presence status, device type, and removable flag. Summary line present. Verify on QEMU multi-disk and bare metal.
 
-> **Verified:** 2026-04-12 -- all 8 items confirmed. LocateHandleBuffer enumeration at `bootx64.c:4946`. Per-handle: Open/Close kernel check, BlockIO tri-state removable, DevicePathToText 80-char. Boot device marked *BOOT*. Summary with nb[20] buffer. BootCurrent/BootOrder/BootNext from §6. Partition GUID from §7. Codex adversarial: approved, no findings. Accepted: unconditional probe (watchdog guards, gatable later if needed).
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. No dead GUIDs. O(n) enumeration. Tri-state removable per G13 spec compliance. Exclusive feature -- neither Windows nor Linux logs full device enumeration at bootloader level. Accepted: none.
+> **Notes:**
+> - Enumeration at `bootx64.c:8255-8395`; gated behind `verbose=1` in boot.conf to skip per-handle Open/Close on multi-disk firmware.
+> - Per handle: HandleProtocol(SIMPLE_FILE_SYSTEM) + OpenVolume + Open(`\boot\kernel.exe`) for kernel check; HandleProtocol(BLOCK_IO) for tri-state removable; DevicePathToText 80-char trunc to ASCII.
+> - Cap `DIAG_ENUM_MAX=64` plus `watchdog_reset()` every 8 handles bound the firmware-watchdog risk on large topologies; boot device emitted as separate `*BOOT* ... (outside capped range)` line when its enum index >= 64.
+> - Re-reviewed 2026-05-04 (Codex 4x, 1H+2M fixed, 2M rejected): NULL-init `efs` + `&& efs` guard, 64-handle cap with watchdog refresh, boot-handle membership distinguishes "in skipped tail" from "not in SimpleFS enum at all".
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-04 | commits `93005d23` (ship) + this commit (re-review) | 8/8 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+2M fixed, 2M rejected (firmware-API + verbose-opt-in axes) | scope: boot-code-quality
 
 ---
 
