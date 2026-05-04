@@ -241,10 +241,13 @@ Observed: `MOUSE 2213ms 1149ms P1` -- 1.1s for PS/2 mouse init even though FADT 
 >
 > **Notes:**
 > - `src/kernel/drivers/mouse.c` split-timeout: PS2_WAIT_SHORT (~10ms) for controller polls, PS2_WAIT_LONG (~2s) for BAT/device-ID; BAT validated == 0xAA before proceeding.
-> - `mouse_expect_ack` helper validates 0xFA after every setup command (F6/F3+100/E8+02/F4); ACK timeout aborts init -> exit_reason field, no IRQ12 registration on desynchronized bus.
-> - All exits funnel through `report:` label that emits per-step diagnostic line so wedged-controller cases are attributable, not silent.
+> - `mouse_expect_ack` helper validates 0xFA after every setup command; ACK timeout aborts init via exit_reason, no IRQ12 registration on desynchronized bus.
+> - All exits funnel through `report:` label emitting per-step diagnostic line so wedged-controller cases are attributable.
 > - Smoke (KVM): mouse_init 100ms (was 1149ms; 11.5x faster), single timeout hit on no-mouse QEMU port = expected.
-> - Bare-metal envelope preserved: PS2_WAIT_LONG=2s covers documented 300ms-2s BAT spec; ACK validation prevents false-success on slow controllers.
+> - Bare-metal envelope preserved: PS2_WAIT_LONG=2s covers documented 300ms-2s BAT spec.
+>
+> **Verified:** 2026-05-04 | commit `a50de875` | 7/7 items | build OK | smoke PASS (KVM 2.57s; mouse_init 100ms)
+> **Quality reviewed:** 2026-05-04 | Codex 4x (design + adversarial + consistency + perf) | 4M fixed | scope: kernel-code-quality
 
 ---
 
