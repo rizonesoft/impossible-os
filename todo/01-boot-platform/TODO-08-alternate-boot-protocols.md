@@ -9,7 +9,9 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 # TODO-08 -- Alternate Boot Protocols & Compatibility Boundary
 
 > **Goal:** Decide and enforce how non-primary boot protocols work. The tree still contains Multiboot2 structures and parser code, while the product documentation says UEFI/GPT/ESP is required. This TODO either brings alternate boot protocols to a defined compatibility level or fences them off so they cannot silently rot.
-> **Current state:** `src/boot/multiboot2_header.asm`, `include/kernel/multiboot2.h`, and `src/kernel/multiboot2_parse.c` exist. UEFI `BOOTX64.EFI` is the real boot path. There is no parity matrix, no CI boot for Multiboot2, no feature-complete fallback contract, and no explicit deprecation policy.
+
+> [!IMPORTANT]
+> **Current state:** `src/boot/multiboot2_header.asm`, `include/kernel/multiboot2.h`, `src/kernel/multiboot2_parse.c`, and `src/boot/grub.cfg` exist on disk. UEFI `BOOTX64.EFI` is the real boot path. There is no parity matrix, no CI boot for Multiboot2, no feature-complete fallback contract, and no explicit deprecation policy. Win11 ships UEFI-only on x86_64 (legacy BIOS deprecated as of 24H2); Linux distros routinely ship dual-protocol images with GRUB Multiboot2 + UEFI El Torito. The decision in §1 -- unsupported / diagnostic-only / compatible -- determines whether §2-§6 ship with code or whether §7 deletes the parser.
 
 ## Inputs
 
@@ -17,100 +19,165 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [`include/kernel/multiboot2.h`](../../include/kernel/multiboot2.h)
 - [`src/kernel/multiboot2_parse.c`](../../src/kernel/multiboot2_parse.c)
 - [`src/boot/grub.cfg`](../../src/boot/grub.cfg)
-- -> XREF: `TODO-01-boot-protocol-abi-handoff.md` -- UEFI boot_info is the canonical handoff
+- -> XREF: `TODO-01-boot-protocol-abi-handoff.md §8` -- canonical boot protocol documentation + schema changelog
+- -> XREF: `TODO-01-boot-protocol-abi-handoff.md §11` -- capability negotiation flags for missing UEFI features
+- -> XREF: `TODO-01-boot-protocol-abi-handoff.md §12` -- boot-path provenance + reason codes for alt-boot attribution
 - -> XREF: `TODO-06-boot-media-image-installer-handoff.md §4` -- ISO may expose only UEFI unless this TODO expands support
+- -> XREF: `TODO-28-boot-validation-certification-matrix.md` -- if §1 promotes Multiboot2 to compatible, the matrix must add a Multiboot2 row
+- -> XREF: `TODO-02-uefi-hardening-secureboot.md §16` -- UKI signed-payload chain (UEFI-only; alt-boot loses module signature coverage per §3 / §4)
+- -> XREF: `TODO-21-ab-boot-rollback.md` -- A/B selection (UEFI-only; alt-boot defaults to slot A per §4)
+- -> XREF: `TODO-22-recovery-partition.md` -- recovery trigger (alt-boot lacks BootNext; boot.conf-only path per §4)
+- -> XREF: `TODO-23-boot-watchdog.md` -- UEFI watchdog (alt-boot replaces or disables per §4)
+- -> XREF: `TODO-26-hibernation-resume-fast-startup-handoff.md` -- hibernation resume refused on alt-boot (no UEFI variable for state) per §4
 
 ## Outcome
 
 - Alternate boot protocols have explicit support level: unsupported, diagnostic-only, or compatible.
-- If retained, Multiboot2 maps into canonical `boot_info` semantics with clear missing-feature behavior.
+- If retained, Multiboot2 maps into canonical `boot_info` semantics with clear missing-feature behavior surfaced via TODO-01 §11 capability bits.
 - If deprecated, build/docs/tests make unsupported paths impossible to mistake for product boot.
-- Legacy BIOS, Limine, GRUB, and future protocols have a policy.
+- Legacy BIOS, Limine/stivale, GRUB, and future protocols have a documented policy.
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| 💎 | 1 | Alternate boot protocol policy | TODO-01 §8 | [ ] |
-| 💎 | 2 | Multiboot2 feature parity audit | §1 | [ ] |
-| 💎 | 3 | Multiboot2-to-boot_info adapter | §2 | [ ] |
-| 💎 | 4 | Unsupported-feature degradation matrix | §2, §3 | [ ] |
-| 💎 | 5 | GRUB/Limine/legacy BIOS documentation | §1 | [ ] |
-| ⭐ | 6 | Compatibility test images | §3 | [ ] |
-| ⭐ | 7 | Deprecation or promotion gate | §1-§6 | [ ] |
+| ⭐  | Order | Deliverable                                        | Depends On                | Status |
+| --- | :---: | -------------------------------------------------- | ------------------------- | :----: |
+| 💎  |   1   | Alternate boot protocol policy                     | T01 §8                    |  [ ]   |
+| 💎  |   2   | Multiboot2 feature parity audit                    | §1                        |  [ ]   |
+| 💎  |   3   | Multiboot2-to-boot_info adapter                    | §2, T01 §11, T01 §12      |  [ ]   |
+| 💎  |   4   | Unsupported-feature degradation matrix             | §2, §3                    |  [ ]   |
+| 💎  |   5   | GRUB/Limine/legacy BIOS documentation              | §1                        |  [ ]   |
+| ⭐  |   6   | Compatibility test images                          | §3                        |  [ ]   |
+| ⭐  |   7   | Deprecation or promotion gate                      | §1--§6                    |  [ ]   |
+
+> 💎 = parity -- Linux distros ship Multiboot2 + UEFI dual-boot; Win11 is UEFI-only since 24H2 (no Multiboot equivalent).
+> ⭐ = exclusive -- §6 + §7 explicit policy gate (neither OS publishes a structured "supported / diagnostic / unsupported" taxonomy for alternate boot protocols).
+
+---
 
 ## 1. Alternate Boot Protocol Policy
 
-- [ ] Decide supported states: UEFI only, Multiboot2 diagnostic, or Multiboot2 compatible.
-- [ ] Document what features require UEFI: runtime services, Secure Boot, TPM event log, BootOrder, GOP mode list, USB handoff.
-- [ ] Add build flag to include/exclude alternate boot artifacts.
-- [ ] Update getting-started docs.
+- [ ] Decide supported state for Multiboot2: `unsupported` (delete parser), `diagnostic` (gate behind `ALLOW_ALT_BOOT=1`), or `compatible` (full feature parity).
+- [ ] Decide supported state for Limine / stivale: default `rejected` (UEFI + Multiboot2 cover dual-boot). Override only on concrete user scenario; documented in §5.
+- [ ] Document UEFI-only features in `docs/boot/alt-boot.md`: runtime services, Secure Boot, TPM, BootOrder, GOP, USB handoff, ESP integrity, UKI sig chain, A/B, recovery, hibernation, watchdog.
+- [ ] Add build flag `BUILD_ALT_BOOT={off,diagnostic,compatible}` to include/exclude alternate boot artifacts.
+- [ ] Update `docs/getting-started/` to state the policy decision and the platforms it applies to.
 - [ ] Commit: `"boot: alternate boot protocol policy"`
+
+**Test checkpoint:** Build with `BUILD_ALT_BOOT=off` produces no `multiboot2_*` symbols in the kernel image (`nm build/kernel.exe | grep multiboot2` returns empty); `=diagnostic` includes them but `objcopy --extract-section .multiboot2_header` reports zero size; `=compatible` ships the GRUB-bootable artifact in `build/release/`. Docs state the chosen policy verbatim with a single canonical phrase.
+
+---
 
 ## 2. Multiboot2 Feature Parity Audit
 
-- [ ] Compare Multiboot2 tags against `boot_info` fields.
-- [ ] Identify unavailable fields and whether kernel can degrade.
-- [ ] Audit framebuffer, memory map, ACPI, module, command line, and boot device identity.
-- [ ] Record parity table in this TODO and docs.
+- [ ] Compare every Multiboot2 information tag against `boot_info` fields; produce a parity table mapping each tag to its `boot_info` equivalent or marking it absent.
+- [ ] Identify unavailable fields and whether the kernel can degrade gracefully (memory map, framebuffer, ACPI RSDP, modules, command line, boot device).
+- [ ] Audit: framebuffer mode (Multiboot2 lacks GOP mode list), memory map (Multiboot2 type taxonomy vs UEFI), ACPI RSDP table, module list, command line, boot device identity.
+- [ ] Record parity table in this TODO and in `docs/boot/boot-protocol.md` (the canonical living contract per T01 §8).
 - [ ] Commit: `"boot: audit Multiboot2 parity"`
+
+**Test checkpoint:** `docs/boot/boot-protocol.md` contains a "Multiboot2 parity" section with one row per `boot_info` field, listing tag-or-absent for each. Per-row coverage check: every `boot_info` field referenced in `boot-info-fields.md` appears with a Multiboot2 status in the parity table. Audit produces a list of N fields that have no Multiboot2 equivalent; this list feeds §3 + §4.
+
+---
 
 ## 3. Multiboot2-to-boot_info Adapter
 
-- [ ] Populate `boot_info.header` even on Multiboot2 path.
-- [ ] Map memory, framebuffer, ACPI, module, and cmdline into canonical fields.
-- [ ] Set TODO-01 §11 capability bits and TODO-01 §12 boot-path reason codes for missing UEFI-only data.
-- [ ] Reuse `boot_info_validate_*()` where possible.
+- [ ] Populate `boot_info.header` (magic, version, size) on the Multiboot2 path; same `boot_info_validate_header()` semantics apply.
+- [ ] Map memory tags into `boot_info.mmap[]`, framebuffer tag into `boot_info.fb`, ACPI RSDP into `boot_info.acpi`, modules into `boot_info.modules`, cmdline into `boot_info.config.cmdline`.
+- [ ] Modules security gap: Multiboot2 `module` tag has no signature chain (UKI coverage in T02 §16 is UEFI-only). Reject modules on alt-boot unless `allow_unsigned_modules=1`; surface `BOOT_CAP_UKI_SIGNED_MODULES` in `caps_degraded`.
+- [ ] Set T01 §11 `caps_present` bits to mark UEFI-only features absent (no runtime services, no Secure Boot, no TPM, no BootOrder, no USB handoff, no UKI sig chain); set `caps_degraded` accordingly.
+- [ ] Set T01 §12 `boot_path = ALT_BOOT`, `boot_reason = ALT_BOOT_PROTOCOL`, `boot_source_flags = MULTIBOOT2_HEADER`; populate `boot_fallback_depth = 0`.
+- [ ] Reuse `boot_info_validate_addr()` and `boot_info_validate_header()` so the kernel-side checks stay path-agnostic.
 - [ ] Commit: `"boot: adapt Multiboot2 into boot_info"`
+
+**Test checkpoint:** Booting a GRUB Multiboot2 ISO produces a populated `boot_info` that passes `boot_info_validate_header()` AND `boot_info_validate_addr()`. `caps_present & BOOT_CAP_UEFI_RUNTIME == 0` AND `caps_degraded & BOOT_CAP_UEFI_RUNTIME != 0`. `boot_path == ALT_BOOT` reaches kernel. Memory map field count matches GRUB-reported tag.
+
+---
 
 ## 4. Unsupported-Feature Degradation Matrix
 
-- [ ] Define behavior for no UEFI variables, no runtime services, no Secure Boot, no TPM log, no BootOrder, no USB handoff.
-- [ ] Mark affected subsystems degraded through readiness oracle.
-- [ ] Show warning in VPD/serial.
-- [ ] Prevent release mode from booting unsupported protocol unless explicitly allowed.
+- [ ] Define behavior for each missing UEFI feature: no UEFI variables, no runtime services, no Secure Boot, no TPM event log, no BootOrder, no USB pre-EBS handoff, no ESP integrity gate.
+- [ ] Higher-level alt-boot losses (UKI sig chain / A/B / recovery / hibernation / watchdog): modules untrusted; A/B defaults to slot A; recovery via boot.conf only; hibernation refused; UEFI watchdog replaced or disabled.
+- [ ] Reciprocal XREFs: T02 §16 (UKI), T21 (A/B), T22 (recovery), T26 (hibernation), T23 (watchdog) -- back-link "alt-boot path loses this feature; degraded via T08 §4".
+- [ ] Mark affected subsystems degraded through the readiness oracle (`kernel_subsystem_set_ready` set with degraded flag); the oracle dump must show which subsystems are degraded due to alt-boot path.
+- [ ] Show structured warning in VPD/serial: `[WARN] Alt-boot: <feature> unavailable -- <subsystem> degraded` once per missing feature.
+- [ ] Prevent release-mode boot from continuing on unsupported protocol unless `boot.conf` has `allow_alt_boot=1` (default 0); halt with `boot_fatal()` otherwise.
 - [ ] Commit: `"boot: alternate protocol degradation matrix"`
 
-## 5. GRUB/Limine/Legacy BIOS Documentation
+**Test checkpoint:** Multiboot2 boot with `BUILD_ALT_BOOT=diagnostic` AND `boot.conf:allow_alt_boot=0` produces `boot_fatal()` with reason `BOOT_ERR_ALT_BOOT_REFUSED`. With `allow_alt_boot=1`, boot continues; serial shows N `[WARN] Alt-boot: <feature> unavailable` lines matching the §2 audit's "absent" list. Readiness oracle dump shows degraded subsystems with `degraded_reason = ALT_BOOT_PROTOCOL`.
 
-- [ ] Document GRUB Multiboot2 usage if retained.
-- [ ] Document Limine/stivale policy if future adoption is allowed.
-- [ ] Document that legacy BIOS is unsupported unless a future TODO adds it.
-- [ ] Update VM boot testing guide.
+---
+
+## 5. GRUB / Limine / Legacy BIOS Documentation
+
+- [ ] Document GRUB Multiboot2 usage with the chosen §1 policy state -- include `grub.cfg` template, `grub-mkrescue` invocation, and supported kernel + module load paths.
+- [ ] Document Limine / stivale policy: default `rejected` per §1 (niche, UEFI+Multiboot2 cover dual-boot). Re-evaluation gate filed in §7 alongside Multiboot2 promotion.
+- [ ] Document that legacy BIOS is unsupported on x86_64 unless a future TODO adds it; cite Win11 24H2's UEFI-only stance as the parity baseline.
+- [ ] Update `docs/development/vm-boot-testing.md` (or create) with the alt-boot QEMU command lines and what to expect on serial.
 - [ ] Commit: `"docs: alternate boot protocol boundary"`
+
+**Test checkpoint:** `docs/boot/alt-boot.md` (or equivalent) exists with: §1 policy state quoted, GRUB Multiboot2 invocation working from copy-paste, Limine policy stance stated, legacy BIOS unsupported statement with future-TODO XREF. Every documented command runs without error on a clean dev machine.
+
+---
 
 ## 6. Compatibility Test Images
 
-- [ ] Build GRUB Multiboot2 test ISO.
-- [ ] Boot QEMU legacy/UEFI GRUB path depending on policy.
-- [ ] Assert missing UEFI-only features degrade cleanly.
-- [ ] Add CI skip gate if policy is unsupported.
+- [ ] Build GRUB Multiboot2 test ISO via `grub-mkrescue` if §1 policy is `diagnostic` or `compatible`; skip if `unsupported`.
+- [ ] Boot QEMU with the GRUB ISO; assert kernel reaches `Boot complete in` + `C:\>` on serial under the §3 adapter path.
+- [ ] Assert missing UEFI-only features degrade per §4 matrix (warnings on serial, oracle reports degraded).
+- [ ] Add CI skip gate keyed on `BUILD_ALT_BOOT` -- when policy is `unsupported`, the test SKIPs with a recorded reason; when `diagnostic` or `compatible`, the test must PASS.
 - [ ] Commit: `"test: alternate boot protocol image"`
+
+**Test checkpoint:** `bash scripts/test-alt-boot.sh` builds the GRUB ISO (when applicable) and runs it under QEMU. Output matches policy: `unsupported` -> `[SKIP] alt-boot disabled by policy`; `diagnostic`/`compatible` -> serial shows `[BOOT] Multiboot2 path` + `Boot complete in` + the §4 degradation warnings + final `C:\>` prompt. Test exits 0 on success.
+
+---
 
 ## 7. Deprecation or Promotion Gate
 
-- [ ] If unsupported: remove stale parser from release builds and keep docs only.
-- [ ] If diagnostic: keep parser but gate with `ALLOW_ALT_BOOT=1`.
-- [ ] If compatible: add it to certification matrix in TODO-28.
-- [ ] Update `GAP-ANALYSIS.md` closure status.
+- [ ] If §1 chose `unsupported`: remove the parser source files, delete the multiboot2 header asm, delete `grub.cfg`, keep only the policy doc; update INDEX.md to mark TODO-08 as "decision-only" or close.
+- [ ] If §1 chose `diagnostic`: keep parser code but compile-gate all references behind `BUILD_ALT_BOOT=diagnostic`; never ship in release artifacts (D15 T01 §2 raw image excludes alt-boot when policy is diagnostic).
+- [ ] If §1 chose `compatible`: add the alt-boot path as a row in `TODO-28-boot-validation-certification-matrix.md` certification matrix; update D15 T01 to ship the GRUB ISO as a release artifact.
+- [ ] Update `docs/boot/alt-boot.md` to reflect closure status; do NOT reference `GAP-ANALYSIS.md` (deprecated artifact -- gap analysis lives per-TODO via `/gap-audit-todo`).
 - [ ] Commit: `"boot: settle alternate boot support level"`
+
+**Test checkpoint:** Repository state matches the §1 decision: `unsupported` -> `find src/boot/ src/kernel/ -name "multiboot2*"` returns empty (post-deletion); `diagnostic` -> the files exist but `nm build/kernel.exe | grep multiboot2` returns empty in default release builds; `compatible` -> TODO-28 certification matrix has a Multiboot2 row AND `bash scripts/test-alt-boot.sh` PASSes in CI. INDEX.md TODO-08 line reflects closure.
+
+---
 
 ## OS Comparison
 
-| ⭐ | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | UEFI primary boot | yes | yes | existing |
-| 💎 | Multiboot/GRUB style | no | common | TODO-08 decision |
-| ⭐ | Explicit unsupported-path fence | bootmgr-specific | distro-specific | TODO-08 §2 |
+| ⭐  | Feature                              | 🪟 Win11                      | 🐧 Linux                       | 🚀 Impossible OS                 |
+| --- | ------------------------------------ | ----------------------------- | ------------------------------ | -------------------------------- |
+| 💎  | UEFI primary boot                    | ✅ UEFI/GPT only since 24H2   | ✅ UEFI is default             | ✅ UEFI is the canonical path    |
+| 💎  | Legacy BIOS / CSM                    | ❌ removed in 24H2            | ⚠️ deprecated; distro-specific | ❌ unsupported -- §5 doc stance  |
+| 💎  | Multiboot2 / GRUB protocol           | ❌ no equivalent              | ✅ widely shipped              | ⬜ §1 decides -- §3 adapter      |
+| 💎  | Limine / stivale protocol            | ❌ no equivalent              | ⚠️ niche distros               | ⬜ §5 documents stance           |
+| ⭐  | Explicit unsupported-path fence      | ⚠️ bootmgr-specific halts     | ⚠️ distro-specific            | ⬜ §1 + §4 + §7 structured gate  |
+| ⭐  | Capability-bit degradation surfacing | ❌ silent feature absence     | ❌ silent feature absence      | ⬜ §3 via T01 §11 caps_degraded  |
+| ⭐  | Higher-level alt-boot loss matrix    | ❌ undefined                  | ❌ distro-specific             | ⬜ §4 -- UKI/A-B/recovery/hib   |
+
+> **After parity items:** Impossible OS will match the Linux + Win11 floor on UEFI/GPT once §1 decides the alt-boot policy. The exclusive items push beyond: a structured "supported / diagnostic / unsupported" taxonomy with a build-flag gate (§1 + §7) and capability-bit-driven degradation surfacing (§3 via T01 §11) that surfaces missing features through the readiness oracle rather than silently degrading.
+
+---
 
 ## Unit Tests
 
-- [ ] `test_multiboot2_mmap_to_boot_info`
-- [ ] `test_multiboot2_missing_uefi_degraded`
-- [ ] `test_alt_boot_policy_release_rejects`
+> Multiboot2 adapter is kernel-side parser code; tests under `TEST_CAT_BOOT`. Policy decisions in §1 and §7 produce no kernel-testable surface (build flags + docs); validation is via build outputs + boot smoke test.
+
+- [ ] `test_multiboot2_mmap_to_boot_info` -- feed a synthetic Multiboot2 mmap tag, assert `boot_info.mmap_count` matches input AND every entry preserves `phys_addr`, `length`, `type` after type-taxonomy translation.
+- [ ] `test_multiboot2_missing_uefi_degraded` -- run adapter without UEFI-only tags, assert `boot_info.caps_present & BOOT_CAP_UEFI_RUNTIME == 0` AND `caps_degraded & BOOT_CAP_UEFI_RUNTIME != 0`.
+- [ ] `test_multiboot2_boot_path_attribution` -- assert `boot_info.boot_path == ALT_BOOT` AND `boot_reason == ALT_BOOT_PROTOCOL` AND `boot_source_flags & MULTIBOOT2_HEADER != 0`.
+- [ ] `test_alt_boot_policy_release_rejects` -- with `BUILD_ALT_BOOT=diagnostic` AND `boot.conf:allow_alt_boot=0`, simulated alt-boot path triggers `boot_fatal()` with `BOOT_ERR_ALT_BOOT_REFUSED`.
+- [ ] `test_alt_boot_policy_allow_continues` -- with `allow_alt_boot=1`, boot continues; readiness oracle reports degraded subsystems with `ALT_BOOT_PROTOCOL` reason.
+- [ ] Commit: `"test: alternate boot protocol adapter + policy"`
+
+---
 
 ## Verification
 
-- [ ] QEMU UEFI remains primary path
-- [ ] QEMU GRUB path according to selected policy
-- [ ] Documentation clearly states support status
+- [ ] QEMU UEFI remains the primary boot path (no regression).
+- [ ] QEMU GRUB Multiboot2 path works per §1 selected policy (skipped if `unsupported`).
+- [ ] Documentation clearly states support status under `docs/boot/alt-boot.md`.
+- [ ] `BUILD_ALT_BOOT={off,diagnostic,compatible}` produces the documented build outputs (symbol presence, image size delta).
+- [ ] No `GAP-ANALYSIS.md` references remain in the codebase or docs.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | host-side `bash scripts/test-alt-boot.sh` for integration | N suites, 0 failures

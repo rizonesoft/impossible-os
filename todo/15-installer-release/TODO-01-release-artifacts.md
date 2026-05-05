@@ -230,6 +230,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
     ```
   - `download_url` uses `https://github.com/rizonetech/impossible-os/releases/download/v{VER}/` prefix
 - [ ] **Consumed by `TODO-03` update check**: `update_check()` fetches `https://sdk.impossible-os.dev/releases/latest.json` (which redirects to or mirrors the GitHub Release manifest); parses `version` field; compares to `HKLM\SYSTEM\Version`
+- [ ] **Boot-platform schema XREF** -- run `bash scripts/release/build-manifest.sh build` per image; include each emitted `manifest.json` in `release-{version}.json` as `type: "boot_manifest"`. Schema owner: `D01 T06 §1`.
 - [ ] **`make manifest`** target: runs `scripts/make-manifest.sh`; depends on `make release-image`, `make iso`, `make vm-images`
 
 ---

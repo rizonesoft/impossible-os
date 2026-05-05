@@ -9,7 +9,12 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 # TODO-06 -- Boot Media, Image Pipeline & Installer Handoff
 
 > **Goal:** Make every bootable artifact reproducible, validated, and understood by the boot platform: raw disk, USB image, VHD/VHDX, hybrid ISO, recovery image, installer image, and signed release media. The bootloader should know when it is running from installer/recovery media and hand that state to the kernel cleanly.
-> **Current state:** There are scripts for QEMU, USB writing, Secure Boot signing, and disk images. The domain does not own a complete media matrix, artifact manifest, ISO/El Torito path, VHD/VHDX generation, installer handoff, or release verification flow.
+
+> [!IMPORTANT]
+> **Current state:** There are scripts for QEMU, USB writing, Secure Boot signing, and disk images. The domain does not own a complete media matrix, artifact manifest, ISO/El Torito path, VHD/VHDX generation, installer handoff, or release verification flow. Win11 ships a Media Creation Tool + Hyper-V VHDX path; Linux ships per-distro hybrid ISOs + cloud VHD/VDI images via `dracut` / `grub2-mkrescue`. Neither verifies a release-key-signed artifact manifest at the bootloader stage -- §7 is the competitive edge.
+
+> [!WARNING]
+> **Scope overlap with [`15-installer-release/TODO-01`](../15-installer-release/TODO-01-release-artifacts.md) and [`10-platform-services/TODO-11`](../10-platform-services/TODO-11-installer-iso.md).** The release-pipeline build steps (raw/USB/ISO/VHD/VHDX/VDI generation, artifact manifest production, code signing, VM image variants, release docs) are owned by **D15 T01**; the ISO build script (`make-iso.sh`, El Torito+EFI hybrid) is owned by **D10 T11 §6**; PE+kernel code signing primitives are owned by **D09 T07 §9** (`cng-crypto`). This TODO's authoritative scope is the boot-platform-native surface: §5 media role detection (bootloader reads `/IPOS/role.txt`), §6 `boot_info` handoff of role+artifact UUID+manifest digest, §7 bootloader-side manifest signature verification at load time, and §8 offline inspector. §1-§4 + §9-§10 are kept as scope-boundary anchors that XREF the owning release-pipeline TODOs; do not implement here without the owning TODO's prerequisites. See gap-audit report for the full conflict matrix.
 
 ## Inputs
 
@@ -30,119 +35,226 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| 💎 | 1 | Boot artifact matrix and manifest format | TODO-24 | [ ] |
-| 💎 | 2 | Reproducible raw/USB image build | §1 | [ ] |
-| 💎 | 3 | VHD/VHDX/VDI conversion and validation | §1, §2 | [ ] |
-| 💎 | 4 | Hybrid ISO / El Torito UEFI boot | §1 | [ ] |
-| 💎 | 5 | Installer/live/recovery media detection | §1, TODO-07 | [ ] |
-| 💎 | 6 | Bootloader handoff of media role | §5, TODO-01 §12 | [ ] |
-| 💎 | 7 | Artifact signing and manifest verification | §1, TODO-02 | [ ] |
-| ⭐ | 8 | Offline artifact inspector | §1-§7 | [ ] |
-| 💎 | 9 | CI boot matrix for every artifact | §2-§7 | [ ] |
-| 💎 | 10 | Release checklist and documentation | §1-§9 | [ ] |
+| ⭐  | Order | Deliverable                                        | Depends On    | Status |
+| --- | :---: | -------------------------------------------------- | ------------- | :----: |
+| 💎  |   1   | Boot artifact matrix and manifest format           | T24           |  [x]   |
+| 💎  |   2   | Reproducible raw/USB image build                   | §1            |  [ ]   |
+| 💎  |   3   | VHD/VHDX/VDI conversion and validation             | §1, §2        |  [ ]   |
+| 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [ ]   |
+| 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [ ]   |
+| 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [ ]   |
+| 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [ ]   |
+| ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [ ]   |
+| 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [ ]   |
+| 💎  |  10   | Release checklist and documentation                | §1--§9        |  [ ]   |
+| ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [ ]   |
+
+> 💎 = parity -- Win11 (Media Creation Tool / Hyper-V VHDX / Windows ISO) and Linux (distro hybrid ISOs / cloud VHD-VDI) both cover items 1-6 + 9-10.
+> ⭐ = exclusive -- §7 release-key-signed artifact manifest verified at the bootloader stage; §8 single offline inspector covering raw/VHD/VHDX/VDI/ISO.
+
+---
 
 ## 1. Boot Artifact Matrix and Manifest Format
 
-- [ ] Define supported artifacts: raw, USB, VHD, VHDX, VDI, ISO, recovery, installer.
-- [ ] Add `build/artifacts/manifest.json` with partition map, file hashes, Secure Boot signature status, and boot target.
-- [ ] Include bootloader, kernel, boot entries, BlackBox skeleton, and recovery payloads.
-- [ ] Fail release packaging if any artifact lacks a manifest.
-- [ ] Commit: `"release: boot artifact manifest"`
+> **Scope boundary:** [`15-installer-release/TODO-01 §6`](../15-installer-release/TODO-01-release-artifacts.md) owns `release-{version}.json` production. This section pins boot-platform-side schema requirements the bootloader verifies at load.
+
+- [x] Define supported artifact list shared with D15 T01: raw, USB, VHD, VHDX, VDI, ISO, qcow2, OVA, recovery, installer (10 formats; documented).
+- [x] Pin manifest fields the bootloader requires: partition map, file sha256s, Secure Boot status, boot target, `BOOT_INFO_VERSION`, media role, artifact UUID.
+- [x] Include bootloader, kernel, boot entries, BlackBox skeleton, recovery payloads as enumerated entries (bootloader+kernel required, others optional in v1).
+- [x] Reciprocal XREF in D15 T01 §6 -- new bullet "Boot-platform schema XREF" added.
+- [x] Fail release packaging if any artifact lacks a manifest -- `check` mode exits non-zero with `[ERROR]` naming the missing field.
+- [x] Commit: `"release: pin boot-platform manifest schema requirements"`
+
+**Test checkpoint:** `bash scripts/release/build-manifest.sh build` emits `build/artifacts/manifest.json` with non-empty `bootloader_sha256`, `kernel_sha256`, `partition_map[]`, `secure_boot_status`, and `boot_info_version` fields. Truncating the manifest to remove the `kernel_sha256` field fails packaging with exit code != 0 and a non-empty stderr message naming the missing field. Verified by `bash scripts/release/test-build-manifest.sh` (10/10 PASS).
+
+> **Test runner:** `bash scripts/release/test-build-manifest.sh` (host-side) | 20 assertions, 0 failures
+
+> **Notes:**
+> - Schema doc at `docs/release/boot-artifact-manifest.md` (v1; 11 required top-level fields, GPT-extended fields v1-optional).
+> - Generator + verifier `scripts/release/build-manifest.sh build|check`; binary-derived `boot_info_version`, deterministic UUID v5, sign-stamp via `SIGN_FINGERPRINT_FILE`.
+> - Test harness `scripts/release/test-build-manifest.sh` (10/10 PASS); manifest consumed by D15 T01 §6 release pipeline as `type: "boot_manifest"`.
+> - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Scope: §1 owns schema + host-side tooling; §6 owns boot_info ABI; §7 owns bootloader-side signature verification.
+
+---
 
 ## 2. Reproducible Raw/USB Image Build
 
-- [ ] Make disk image generation deterministic: timestamps, GUID policy, partition ordering, FAT labels.
-- [ ] Verify ESP contains expected `BOOTX64.EFI`, kernel, boot.conf, boot entries, and signatures.
-- [ ] Add USB write verification by rereading partition table and hashes.
-- [ ] Record image build inputs in manifest.
+> **Scope boundary:** [`15-installer-release/TODO-01 §3`](../15-installer-release/TODO-01-release-artifacts.md) owns `usb_creator` + USB writer pipeline; D15 T01 §2 owns raw image generation. This section requires reproducibility properties; pipeline lives in D15.
+
+- [ ] Make disk image generation deterministic: timestamps zeroed, partition GUIDs derived from a manifest-pinned seed, partition ordering fixed, FAT volume label fixed (`IPOS-ESP`).
+- [ ] Verify ESP contains expected `BOOTX64.EFI`, `kernel.exe`, `boot.conf`, boot entries, and signatures; fail build on missing file.
+- [ ] Add USB write verification by re-reading partition table and per-file hashes after `write-usb.sh`.
+- [ ] Record image build inputs (toolchain version, source SHA, manifest seed) in the artifact manifest from §1.
 - [ ] Commit: `"release: reproducible raw USB images"`
+
+**Test checkpoint:** Two consecutive `bash scripts/release/build-image.sh` invocations from a clean tree produce byte-identical `build/release/disk.img` (sha256 match). `bash scripts/deploy/write-usb.sh /dev/<dev>` followed by re-read produces matching sha256 for the ESP volume and identical partition GUIDs.
+
+---
 
 ## 3. VHD/VHDX/VDI Conversion and Validation
 
-- [ ] Add conversion scripts for Hyper-V VHDX and VirtualBox VDI.
-- [ ] Verify converted images preserve GPT, ESP, BlackBox, and IXFS partitions.
-- [ ] Add sparse/dynamic image metadata to manifest.
-- [ ] Boot-test each virtual disk format.
+> **Scope boundary:** [`15-installer-release/TODO-01 §7`](../15-installer-release/TODO-01-release-artifacts.md) owns "VM image variants (VMDK/VHD/VHDX + .ovf)". This section adds VDI + qcow2 + boot-test verification on top of D15's `qemu-img convert` pipeline.
+
+- [ ] Add conversion scripts for Hyper-V VHDX (`scripts/release/to-vhdx.sh`) and VirtualBox VDI (`scripts/release/to-vdi.sh`); use `qemu-img` for the underlying conversion.
+- [ ] Verify converted images preserve GPT layout, ESP, BlackBox, and IXFS partitions byte-for-byte against the source raw image.
+- [ ] Add sparse / dynamic image metadata (block size, allocation strategy) to the artifact manifest.
+- [ ] Boot-test each virtual disk format end-to-end (Hyper-V VHDX in QEMU + VBox; VDI in VBox).
 - [ ] Commit: `"release: validate virtual disk artifacts"`
+
+**Test checkpoint:** `qemu-img info build/release/disk.vhdx` reports `format: vhdx` with the recorded block size; `qemu-img compare disk.img disk.vhdx` exits 0 (identical content). QEMU boot from `disk.vhdx` reaches `Boot complete in` + `C:\>` on serial within 10 s; same for `disk.vdi` under VirtualBox.
+
+---
 
 ## 4. Hybrid ISO / El Torito UEFI Boot
 
-- [ ] Build ISO with FAT ESP image as El Torito UEFI boot image.
-- [ ] Include installer/recovery payloads and artifact manifest.
-- [ ] Verify QEMU and VirtualBox boot from ISO.
+> **Scope boundary:** [`10-platform-services/TODO-11 §6`](../10-platform-services/TODO-11-installer-iso.md) owns `scripts/make-iso.sh` (El Torito + EFI hybrid, no GRUB). [`15-installer-release/TODO-01 §4/§8`](../15-installer-release/TODO-01-release-artifacts.md) extends it with Joliet+Rock Ridge + versioned filename. This section validates UEFI boot from the ISO and requires manifest embedding at `/IPOS/manifest.json`.
+
+- [ ] Build ISO with FAT ESP image as El Torito UEFI boot image (`xorriso` / `mkisofs`); no BIOS boot record.
+- [ ] Include installer/recovery payloads and the §1 artifact manifest at a known ISO path (`/IPOS/manifest.json`).
+- [ ] Verify QEMU and VirtualBox boot from the ISO.
 - [ ] Document that legacy BIOS boot is unsupported unless TODO-08 enables it.
 - [ ] Commit: `"release: hybrid UEFI ISO artifact"`
 
+**Test checkpoint:** `bash scripts/release/build-iso.sh` produces `build/release/disk.iso`; `xorriso -indev disk.iso -report_el_torito` lists exactly one El Torito UEFI boot image. QEMU `-cdrom disk.iso` reaches `Boot complete in` + `C:\>` on serial; VirtualBox boot from the same ISO reaches the desktop. Legacy BIOS boot attempt prints a clear "UEFI required" message and halts.
+
+---
+
 ## 5. Installer/Live/Recovery Media Detection
 
-- [ ] Define media role markers on ESP and BlackBox.
-- [ ] Bootloader reads role marker before loading kernel.
-- [ ] Roles: normal, installer, live, recovery, manufacturing, diagnostics.
-- [ ] Role feeds boot entry policy and boot_config.
+- [ ] Define media role markers on ESP (`/IPOS/role.txt` containing one of: `normal`, `installer`, `live`, `recovery`, `manufacturing`, `diagnostics`) and BlackBox partition (matching record).
+- [ ] Bootloader reads role marker before loading kernel; cross-checks ESP marker against BlackBox marker.
+- [ ] Roles: `normal`, `installer`, `live`, `recovery`, `manufacturing`, `diagnostics`. Default to `normal` when marker absent or unrecognized.
+- [ ] Role feeds boot entry policy and `boot_config`.
 - [ ] Commit: `"boot: detect boot media role"`
+
+**Test checkpoint:** Booting an installer-built ISO produces serial `[BOOT] Media role: installer` before kernel load; same image with `/IPOS/role.txt` deleted produces `[BOOT] Media role: normal (default)`. Mismatched ESP-vs-BlackBox markers produce a `[WARN] Media role mismatch` line and fall back to `normal`.
+
+---
 
 ## 6. Bootloader Handoff of Media Role
 
-- [ ] Extend boot_info via TODO-01 §12 with media role, artifact id, manifest digest, source path, and the shared boot-path decision record for installer/live/recovery media.
-- [ ] Kernel exposes role via Registry and platform APIs.
-- [ ] Installer mode starts installer shell instead of normal desktop.
-- [ ] Recovery mode starts recovery environment when local system is broken.
+- [ ] Add `boot_info.boot_media_role` (uint8 enum 0..5) at struct tail; bump `BOOT_INFO_VERSION`; pin offset via `_Static_assert` in kernel header + bootloader mirror; update `dump-fields.inc`.
+- [ ] Optionally add `boot_info.boot_artifact_id[16]` (UUID from manifest) and `boot_manifest_digest[32]` (sha256 of artifact manifest); pin offsets per the v15/v16 pattern.
+- [ ] Reuse the shared boot-path decision record from `T01 §12` to attribute *why* the bootloader chose this role (firmware Boot####, fallback chain, recovery trigger).
+- [ ] Kernel exposes role via `HKLM\SYSTEM\Boot\Device\MediaRole` (REG_SZ) and a platform API for installer / recovery shells.
+- [ ] Installer mode starts the installer shell instead of the normal desktop; recovery mode starts the recovery environment when the local system is broken.
 - [ ] Commit: `"boot: hand off boot media role"`
+
+**Test checkpoint:** After §6 ships, `boot_info.boot_media_role == 1` (installer) on installer-built ISO boot; `HKLM\SYSTEM\Boot\Device\MediaRole == "installer"` post-boot. Recovery mode boot launches recovery shell within 5 s of `Boot complete in`. ABI bump: `BOOT_INFO_VERSION` line in kernel header AND bootloader mirror match; manifest dump compare passes.
+
+---
 
 ## 7. Artifact Signing and Manifest Verification
 
-- [ ] Sign artifact manifests with release key.
-- [ ] Bootloader verifies manifest signature when Secure Boot is active or `require_manifest=1`.
-- [ ] Reject modified installer/recovery media unless explicitly allowed.
-- [ ] Include SBAT and dbx status in verification.
+> **Scope boundary:** [`09-desktop-shell/TODO-07 §9`](../09-desktop-shell/TODO-07-cng-crypto.md) owns Ed25519 PE32+ COSI-trailer signing primitives (`codesign_sign` / `codesign_verify`). [`15-installer-release/TODO-01 §5`](../15-installer-release/TODO-01-release-artifacts.md) owns the host-side release-signing script. This section owns the bootloader-side verification path -- the path that runs at every boot and refuses load on mismatch -- which is the genuine ⭐ competitive edge.
+
+- [ ] Sign artifact manifests with the release key produced by TODO-02; embed the detached signature next to the manifest (`manifest.json.sig`).
+- [ ] Bootloader verifies the manifest signature when Secure Boot is active OR `boot.conf` sets `require_manifest=1`; refuses load on mismatch.
+- [ ] Reject modified installer/recovery media unless `boot.conf` sets `allow_unsigned_media=1` (default 0).
+- [ ] Include SBAT level + dbx blacklist status in the verification report; surface to `boot_info` so the kernel can warn on degraded trust.
 - [ ] Commit: `"boot: verify signed artifact manifests"`
+
+**Test checkpoint:** Tampering with one byte of `kernel.exe` on a signed image makes the bootloader emit `[FAIL] Manifest signature mismatch` and `boot_fatal()` halt under `require_manifest=1`. With `require_manifest=0`, same tamper produces `[WARN] Manifest unverified` and continues. SBAT level below dbx threshold produces `[WARN] SBAT below baseline` with degraded-trust flag set in `boot_info`.
+
+---
 
 ## 8. Offline Artifact Inspector
 
-- [ ] Add host tool `bootimg inspect <image>`.
-- [ ] Print partition map, labels, manifest, signatures, boot entries, and artifact role.
-- [ ] Validate hashes and bootloader/kernel ABI version.
-- [ ] Support raw, VHD/VHDX, VDI, and ISO where possible.
+- [ ] Add host tool `tools/bootimg/bootimg.py` (or compiled `bootimg`) supporting `bootimg inspect <image>`.
+- [ ] Print partition map, FAT/IXFS labels, manifest content, signature verification result, boot entries, and artifact role.
+- [ ] Validate hashes (manifest vs. on-disk) and bootloader/kernel ABI version pin.
+- [ ] Support raw, VHD, VHDX, VDI, and ISO image formats (use `qemu-img info` for virtual formats).
 - [ ] Commit: `"tools: boot artifact inspector"`
+
+**Test checkpoint:** `python3 tools/bootimg/bootimg.py inspect build/release/disk.img` prints a parseable report listing both partitions, the manifest sha256, signature OK/FAIL, the 4+ boot entries, and `MediaRole=normal`. Same command on `disk.vhdx` and `disk.iso` produces equivalent reports. Tampered image inspection prints `Signature: FAIL` and exit code != 0.
+
+---
 
 ## 9. CI Boot Matrix for Every Artifact
 
-- [ ] QEMU raw disk boot.
+> **Scope boundary:** [`01-boot-platform/TODO-28`](TODO-28-boot-validation-certification-matrix.md) owns the broader boot certification matrix (QEMU/VBox/Hyper-V/USB/NVMe/Secure Boot/TPM/network/A-B/recovery/watchdog/hibernation). This section's matrix is artifact-format-only and feeds into TODO-28 as a per-artifact gate. [`15-installer-release/TODO-04`](../15-installer-release/TODO-04-release-qa.md) owns release-QA unattended-install testing. Reciprocal XREF in TODO-28 §(artifact matrix) already exists.
+
+- [ ] QEMU raw disk boot (KVM + TCG fallback per CLAUDE.md smoke-test platform table).
 - [ ] QEMU ISO boot.
-- [ ] Hyper-V VHDX boot.
+- [ ] Hyper-V VHDX boot under WHPX.
 - [ ] VirtualBox VDI boot.
-- [ ] USB image smoke test in loopback plus bare-metal manual gate.
+- [ ] USB image smoke test in loopback (`losetup` + qemu) plus a manual bare-metal gate documented in the release checklist.
 - [ ] Commit: `"ci: boot every release artifact"`
+
+**Test checkpoint:** `bash scripts/ci/boot-matrix.sh` runs all five boot configurations and reports a single PASS/FAIL summary. Each configuration pattern-matches `Boot complete in` + `C:\>` on serial within its platform timeout; any failure produces a per-configuration stripped serial log under `build/ci/<config>.log`.
+
+---
 
 ## 10. Release Checklist and Documentation
 
-- [ ] Add `docs/release/boot-artifacts.md`.
-- [ ] Document image writing, Secure Boot setup, verification, and troubleshooting.
-- [ ] Add release checklist entries for artifact hashes, boot tests, and rollback tests.
-- [ ] Link from getting-started guides.
+- [ ] Add `docs/release/boot-artifacts.md` with per-format build commands, expected artifact sizes, and verification recipes.
+- [ ] Document image writing (`write-usb.sh`), Secure Boot setup (key enrollment, dbx), verification (`bootimg inspect`), and troubleshooting flows.
+- [ ] Add release checklist entries for artifact hashes, the §9 boot matrix, and rollback tests.
+- [ ] Link from the getting-started guide so first-time users land on the right artifact for their platform.
 - [ ] Commit: `"docs: boot media release checklist"`
+
+**Test checkpoint:** `docs/release/boot-artifacts.md` exists and contains a section for each artifact format from §1; every documented command (`build-image.sh`, `to-vhdx.sh`, `bootimg inspect`) runs to completion when copy-pasted. Release checklist contains explicit entries that map 1:1 to the §9 matrix configurations.
+
+---
+
+## 11. Alternate Artifact Formats: UKI and Network Boot
+
+UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.initrd` + `.recovery` + `.modules`) and network boot (PXE/HTTP-served kernel) are artifact paths that differ structurally from the raw/USB/VHD/ISO matrix in §1. They must obey the same media-role + manifest-verification contract but read from different sources.
+
+> **Scope boundary:** [`01-boot-platform/TODO-02 §16`](TODO-02-uefi-hardening-secureboot.md) owns UKI section structure + signed-payload extraction; [`01-boot-platform/TODO-25`](TODO-25-network-pxe-http-boot.md) owns PXE/HTTP/TFTP transport + DHCP provenance + network `boot_info` fields. This section pins the cross-format contract -- both artifact paths must publish the media role, artifact UUID, and manifest digest fields from §6 so kernel-side consumers see one shape regardless of source.
+
+- [ ] UKI artifact path: when `BOOT_FLAG_INVOKED_VIA_UKI`, read `boot_info.boot_media_role` from the UKI's `.cmdline` (e.g., `media_role=installer`) instead of `/IPOS/role.txt`; reciprocal XREF in TODO-02 §16.
+- [ ] Network-boot artifact path: PXE/HTTP-served kernel publishes `boot_media_role = network` and verifies the DHCP-served `manifest.json.sig` before kernel jump; reciprocal XREF in TODO-25 §6.
+- [ ] Document 3-source media-role precedence in §5: UKI `.cmdline` -> DHCP option -> ESP `/IPOS/role.txt` -> default `normal`.
+- [ ] Tests: `test_media_role_uki_cmdline` (mock UKI with `media_role=recovery`) and `test_media_role_network_dhcp_option` (mock DHCP).
+- [ ] Commit: `"boot: cross-format media role for UKI + network artifacts"`
+
+**Test checkpoint:** UKI built with `media_role=installer` in `.cmdline` produces `boot_info.boot_media_role == 1` without ESP `role.txt`. PXE-booted kernel with matching DHCP option produces `boot_media_role == 5` (network) and runs manifest verification against HTTP-served `manifest.json.sig`. Conflicting markers across sources produce `[WARN] Media role conflict: <src1>=<v1> vs <src2>=<v2>` and the highest-precedence source wins per the §5 documentation.
+
+---
 
 ## OS Comparison
 
-| ⭐ | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | USB/disk image | Media Creation Tool | distro images | TODO-06 |
-| 💎 | ISO UEFI boot | Windows ISO | distro ISO | TODO-06 §4 |
-| 💎 | VHD boot artifact | Hyper-V | cloud images | TODO-06 §3 |
-| ⭐ | signed artifact manifest at boot | limited | distro-specific | TODO-06 §7 |
+| ⭐  | Feature                              | 🪟 Win11                       | 🐧 Linux                       | 🚀 Impossible OS                 |
+| --- | ------------------------------------ | ------------------------------ | ------------------------------ | -------------------------------- |
+| 💎  | USB / raw disk image                 | ✅ Media Creation Tool         | ✅ distro raw images           | ⬜ planned -- §2                 |
+| 💎  | ISO UEFI boot (El Torito)            | ✅ Windows ISO                 | ✅ distro hybrid ISO           | ⬜ planned -- §4                 |
+| 💎  | VHD / VHDX virtual disk artifact     | ✅ Hyper-V VHDX                | ⚠️ cloud images per distro     | ⬜ planned -- §3                 |
+| 💎  | VDI virtual disk artifact            | ❌ no first-class VDI          | ⚠️ cloud images per distro     | ⬜ planned -- §3                 |
+| 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ⬜ planned -- §5, §6             |
+| 💎  | Reproducible image build             | ⚠️ partial via WIM tooling     | ⚠️ per-distro reproducibility  | ⬜ planned -- §2 deterministic   |
+| ⭐  | Signed artifact manifest at boot     | ❌ SBAT/dbx only (coarser)     | ❌ SBAT/dbx only (coarser)     | ⬜ planned -- §7                 |
+| ⭐  | Offline artifact inspector (1 tool)  | ❌ separate tools per format   | ❌ separate tools per format   | ⬜ planned -- §8                 |
+| ⭐  | UKI as a release artifact format     | ❌ no UKI ecosystem            | ✅ systemd-boot UKI            | ⬜ planned -- §11                |
+| 💎  | Network-boot kernel + manifest       | ⚠️ WDS / iPXE chainload        | ✅ PXE + HTTP boot + dracut    | ⬜ planned -- §11 + T25          |
+
+> **After parity items:** Impossible OS will match Windows + Linux on USB/ISO/VHD/installer-detection fundamentals once §1-§6 ship. The exclusive items push beyond: a release-key-signed artifact manifest the bootloader verifies before loading the kernel (§7) goes further than SBAT/dbx alone, and a single offline inspector covering raw + VHD + VHDX + VDI + ISO formats (§8) consolidates what both ecosystems split across `qemu-img` / `wimlib-imagex` / `xorriso` / `7z` / `VBoxManage`.
+
+---
 
 ## Unit Tests
 
-- [ ] `test_artifact_manifest_parse`
-- [ ] `test_media_role_marker`
-- [ ] `test_manifest_hash_rejects_modified_kernel`
-- [ ] `test_bootimg_inspector_fixture`
+> Boot media tooling is host-side (Python / shell) plus a kernel-side role assertion. Host tools test under pytest; kernel-side tests under `TEST_CAT_BOOT`.
+
+- [ ] `test_artifact_manifest_parse_roundtrip` -- build a manifest with `build-manifest.sh`, parse it back via `bootimg inspect`, assert every field round-trips identically (sha256, partition_map, boot_info_version).
+- [ ] `test_artifact_manifest_rejects_truncated` -- truncate manifest at byte 100, parser returns `E_BADMANIFEST` (or equivalent) and non-empty error message.
+- [ ] `test_media_role_marker_default_normal` -- ESP without `/IPOS/role.txt` -> `boot_info.boot_media_role == 0` (normal).
+- [ ] `test_media_role_marker_installer` -- ESP with `role.txt` containing `installer` -> `boot_info.boot_media_role == 1`.
+- [ ] `test_manifest_hash_rejects_modified_kernel` -- flip one byte of `kernel.exe`, manifest verification returns FAIL, `bootimg inspect` exits non-zero.
+- [ ] `test_bootimg_inspector_fixture` -- run inspector on a known-good fixture image, output matches recorded snapshot for partition map + manifest + signature status.
+- [ ] `test_media_role_uki_cmdline` -- mock UKI with `.cmdline` containing `media_role=recovery`; assert `boot_info.boot_media_role == 3` and ESP `role.txt` is NOT consulted.
+- [ ] `test_media_role_network_dhcp_option` -- mock DHCP option carrying `media_role=installer`; assert `boot_info.boot_media_role == 1` on PXE/HTTP boot path with manifest verification against HTTP-served signature.
+- [ ] Commit: `"test: boot media artifact + role unit tests"`
+
+---
 
 ## Verification
 
-- [ ] QEMU raw/ISO boot
-- [ ] Hyper-V VHDX boot
-- [ ] VirtualBox VDI boot
-- [ ] Bare-metal USB boot
+- [ ] QEMU raw / ISO boot pass (KVM + TCG).
+- [ ] Hyper-V VHDX boot pass under WHPX.
+- [ ] VirtualBox VDI boot pass.
+- [ ] Bare-metal USB boot pass (manual; documented gate per §10).
+- [ ] `bootimg inspect` round-trips manifest + signature + role for every artifact format.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | host-side pytest under `tools/bootimg/tests/` | N suites, 0 failures
