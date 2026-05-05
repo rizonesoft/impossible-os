@@ -394,14 +394,16 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 **Test checkpoint:** Serial shows `[BOOT] Boot var caps: attrs=0x00000001 (active) BootOptionSupport=0x00000311 OsIndicationsSupported=0x0000000000000000` on standard QEMU OVMF. Registry under `HKLM\SYSTEM\Boot\Device\` returns the five new values. On bare metal, vendor firmware sets richer capability bits and descriptions; reserved-bit test SKIPs if firmware reports unknown bits.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 12 boot-suite tests, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 13 boot-suite tests, 0 failures
 
 > **Notes:**
 > - 4 new boot_info fields appended at struct tail (23872 / 23876 / 23880 / 23888); BOOT_INFO_VERSION 14 -> 15 in kernel header + bootloader mirror.
 > - Bootloader captures attrs + 63-char ASCII description in the §12 block; two new GetVariable calls sit after §12 inside the existing RuntimeServices scope.
 > - Registry persistence: BootCurrentAttributes / BootOptionSupport / OsIndicationsSupportedLo / OsIndicationsSupportedHi (split for REG_DWORD) / Description (REG_SZ).
-> - Shipped 2026-05-05 (Codex 4x: design 2H fixed pre-code, adversarial 1H fixed, re-adversarial 0). Full evidence trail in commit message.
 > - Read-only `OsIndicationsSupported` per UEFI 2.10 §8.5.4; the `OsIndications` write-path is owned by the UEFI hardening TODO and remains banned.
+
+> **Verified:** 2026-05-05 ship | commit `e7280b12` | 9/9 items | build OK | smoke PASS (KVM 2.850s) | lint clean
+> **Quality reviewed:** 2026-05-05 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+1H+1M fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 
