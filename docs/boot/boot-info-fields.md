@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 14`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 16`.
 
 ## Top-level `struct boot_info` fields
 
@@ -157,7 +157,7 @@ See **Legacy / Multiboot2-only** block below for the full retain/deprecate break
 
 | Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
 | --- | --- | --- | --- | --- | --- | --- |
-| `boot_device_type`        | bootx64 | P0 | HKLM\SYSTEM\Boot\Device populator | runtime | boot-device-discovery | `0` unknown, `1` SATA, `2` NVMe, `3` USB, `4` network. |
+| `boot_device_type`        | bootx64 | P0 | HKLM\SYSTEM\Boot\Device populator | runtime | boot-device-discovery | `0` unknown, `1` SATA, `2` NVMe, `3` USB, `4` network, `5` SD, `6` eMMC. |
 | `_boot_dev_pad[3]`        | bootx64 | P0 | none (alignment) | -- | -- | Reserved. |
 | `boot_device_path[128]`   | bootx64 | P0 | same | runtime | boot-device-discovery | Null-terminated UEFI device-path text. |
 

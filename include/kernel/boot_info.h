@@ -1335,7 +1335,7 @@ struct boot_info {
     uint32_t last_boot_error;
 
     /* Boot device info (populated by bootloader from LoadedImage) */
-    uint8_t  boot_device_type;      /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network */
+    uint8_t  boot_device_type;      /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network, 5=SD, 6=eMMC */
     uint8_t  _boot_dev_pad[3];      /* alignment */
     char     boot_device_path[128]; /* UEFI device path text (DevicePathToText) */
 

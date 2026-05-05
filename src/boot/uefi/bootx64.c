@@ -7878,6 +7878,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 const UINT8 *base = (const UINT8 *)dp;
                 UINT16 node_len;
                 UINTN walked = 0;
+                UINTN pci_oor_count = 0;  /* v16: count of out-of-spec PCI
+                                           * nodes seen during walk;
+                                           * single summary warn after */
                 /* 4096 covers realistic vendor + NVMe namespace + GPT
                  * paths; 1024 was tight enough to silently drop GPT
                  * identity on a benign-but-long firmware path. */
@@ -7900,8 +7903,20 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                         node->SubType == EFI_DP_HW_PCI &&
                         node_len >= 6) {
                         const UINT8 *nd = (const UINT8 *)node;
-                        g_boot_info_ptr->boot_pci_function = nd[4];
-                        g_boot_info_ptr->boot_pci_device = nd[5];
+                        UINT8 pci_func = nd[4];
+                        UINT8 pci_dev = nd[5];
+                        /* Enforce the public 0..31 / 0..7 contract per
+                         * UEFI 2.10 spec 10.3.2.1 + PCI Local Bus 3.0:
+                         * Device is 5-bit, Function is 3-bit. Out-of-spec
+                         * values are firmware corruption -- count them
+                         * and emit ONE summary warn after the loop, not
+                         * a per-node spam line (slow pre-EBS serial). */
+                        if (pci_dev <= 31 && pci_func <= 7) {
+                            g_boot_info_ptr->boot_pci_function = pci_func;
+                            g_boot_info_ptr->boot_pci_device = pci_dev;
+                        } else {
+                            pci_oor_count++;
+                        }
                     }
 
                     /*: v16: Messaging/NVMe -> NSID + EUI-64.
@@ -7977,6 +7992,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     walked = (UINTN)((const UINT8 *)node - base);
                 }
                 #undef DP_MAX_WALK
+
+                /* v16: post-walk summary warn for out-of-spec PCI nodes
+                 * (rate-limited to one log line regardless of count). */
+                if (pci_oor_count > 0) {
+                    serial_early_print("[WARN] PCI DP node(s) out of spec "
+                        "range -- skipped\n");
+                }
             }
 
             /* Log detected type */

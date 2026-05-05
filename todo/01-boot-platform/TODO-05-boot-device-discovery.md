@@ -427,10 +427,13 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 > **Notes:**
 > - 4 new boot_info fields at struct tail (23952/23956/23964/23965) + 2-byte pad; BOOT_INFO_VERSION 15 -> 16 in kernel header + bootloader mirror.
-> - Bootloader extends §7 raw-node walker for NVMe NSID/EUI-64 + LAST PCI Device/Function; inherits §4's source-of-truth scope on vendor firmware.
-> - Raw NVMe hit backfills `boot_device_type=2` when text classifier missed it (long-vendor-prefix truncation case from adversarial M1).
+> - Bootloader extends §7 raw-node walker for NVMe NSID/EUI-64 + LAST PCI Device/Function; PCI 0..31/0..7 contract enforced at the source with rate-limited summary warn.
+> - Raw NVMe hit backfills `boot_device_type=2` when text classifier missed it (long-vendor-prefix truncation case).
 > - Registry: NamespaceId / NamespaceEui64 (REG_BINARY, omit-when-zero) / PciDevice / PciFunction; sentinel 0xFF preserved for "not on PCI".
 > - Read-only path detail; runtime PCI / NVMe driver subsystems own the hardware enumeration this section's identifiers correlate to.
+
+> **Verified:** 2026-05-05 ship | commit `4f0b5eb9` | 9/9 items | build OK | smoke PASS (KVM 3.020s) | lint clean
+> **Quality reviewed:** 2026-05-05 | Codex 6x (design, adversarial, re-adversarial, post-commit adversarial, consistency, perf) | 1H+2M+2M fixed, 1H rejected (firmware-trust scope) | scope: boot-code-quality + kernel-code-quality
 
 ---
 

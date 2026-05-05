@@ -512,7 +512,7 @@ struct boot_info {
     UINT32 last_boot_error;
 
     /* Boot device info */
-    UINT8   boot_device_type;       /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network */
+    UINT8   boot_device_type;       /* 0=unknown, 1=SATA, 2=NVMe, 3=USB, 4=network, 5=SD, 6=eMMC */
     UINT8   _boot_dev_pad[3];
     char    boot_device_path[128];  /* UEFI device path text */
 
