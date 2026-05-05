@@ -62,7 +62,7 @@ title: "TODO-05 -- Boot Device Discovery & Fallback Chain"
 | ⭐  |  10   | Boot device logging and diagnostics                | §1--§9, §12    |  [x]   |
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [x]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [x]   |
-| 💎  |  13   | Extended boot variable capability surface          | §6, §9, §12    |  [ ]   |
+| 💎  |  13   | Extended boot variable capability surface          | §6, §9, §12    |  [x]   |
 | 💎  |  14   | Local boot device path detail capture              | §3, §4, §9     |  [ ]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
@@ -382,17 +382,26 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 §6 captured `BootCurrent` / `BootOrder` / `BootNext`; §12 logs Boot#### description and FilePathList. The remaining `EFI_LOAD_OPTION` Attributes word, two firmware-side capability variables (`BootOptionSupport`, `OsIndicationsSupported`), and the human-readable Boot#### description text are still log-only or untouched. Win11 BCDEdit and Linux `efibootmgr -v` both surface these. Read-only `OsIndicationsSupported` is **distinct** from TODO-27 §2's write-path ban on `OsIndications` -- the read side carries no capsule risk.
 
-- [ ] Decode `EFI_LOAD_OPTION.Attributes` (UINT32 at offset 0) for `BootCurrent`'s Boot#### per UEFI 2.10 §3.1.3 (ACTIVE / FORCE_RECONNECT / HIDDEN / CATEGORY mask)
-- [ ] Read `BootOptionSupport` (UINT32) global per UEFI 2.10 §3.1.4 (KEY/APP/SYSPREP/COUNT bits; absent => 0)
-- [ ] Read `OsIndicationsSupported` (UINT64) global per UEFI 2.10 §3.3 -- READ-only firmware capability, distinct from TODO-27 §2 write-path ban
-- [ ] Add `boot_info` fields and bump `BOOT_INFO_VERSION` 5 -> 6 in kernel header + bootloader mirror; refresh manifest dump-fields.inc; offset pin via `_Static_assert`
-- [ ] Persist in `boot_device_populate_registry()`: `BootCurrentAttributes` + `BootOptionSupport` + `OsIndicationsSupportedLo/Hi` + `Description` (REG_SZ <=64) under `HKLM\SYSTEM\Boot\Device\`
-- [ ] Serial log: `attrs=0x%08x (active=%u hidden=%u cat=%s)` plus `BootOptionSupport / OsIndicationsSupported` line
-- [ ] `POST16(0xB0A0)` entry / `POST16(0xB0A1)` ok -- `POST16_BL_BOOT_VAR_EXT` / `_OK` (0xB096-0xB09C reserved by TODO-02 §13 ESP-integrity + rollback)
-- [ ] Unit tests in `test_boot_device.c`: reserved-bit-zero on `boot_option_support`, NUL-termination of `boot_description`, ACTIVE bit consistency (TEST_SKIP if firmware NVRAM empty)
-- [ ] Commit: `"boot: extended boot variable capability surface (Attributes + BootOptionSupport + OsIndicationsSupported + Description)"`
+- [x] Decode `EFI_LOAD_OPTION.Attributes` (UINT32 at offset 0) for `BootCurrent`'s Boot#### per UEFI 2.10 §3.1.3 -- captured at `bootx64.c:8170-8174`, stored in `boot_info.boot_current_attrs`.
+- [x] Read `BootOptionSupport` (UINT32) global per UEFI 2.10 §3.1.4 -- post-§12 GetVariable, sz==sizeof gate; absent => 0.
+- [x] Read `OsIndicationsSupported` (UINT64) global per UEFI 2.10 §8.5.4 -- READ-only firmware capability, distinct from the UEFI hardening TODO's write-path ban.
+- [x] Add 4 `boot_info` fields, bump `BOOT_INFO_VERSION` 14 -> 15, refresh `dump-fields.inc`, offset pins at 23872/23876/23880/23888 in both header + mirror.
+- [x] Persist in `boot_device_populate_registry()`: `BootCurrentAttributes` + `BootOptionSupport` + `OsIndicationsSupportedLo/Hi` + `Description` under `HKLM\SYSTEM\Boot\Device\`.
+- [x] Combined serial log: `[BOOT] Boot var caps: attrs=0xNNNNNNNN (active|inactive [hidden]) BootOptionSupport=0xNNNNNNNN OsIndicationsSupported=0xNN..`.
+- [x] `POST16(0xB0A2)` entry / `POST16(0xB0A3)` ok -- design-review fix: 0xB0A0/0xB0A1 collide with `POST16_BL_UKI_DETECT*`. Registered in `POST16_REQUIRED_NAMES`.
+- [x] Unit tests in `test_boot_device.c`: BootOptionSupport reserved-bit-zero (mask 0xFFFFFCEC per UEFI 2.10 §3.1.4), `boot_description[63]==0` NUL-term, ACTIVE-bit consistency (SKIP on empty NVRAM).
+- [x] Commit: `"boot: extended boot variable capability surface (Attributes + BootOptionSupport + OsIndicationsSupported + Description)"`
 
-**Test checkpoint:** Serial shows `BootCurrent attrs=0x00000001` (LOAD_OPTION_ACTIVE) on standard QEMU OVMF, `BootOptionSupport=0x00000311` on firmware reporting KEY+APP+COUNT, `Description="UEFI ImpossibleOS"` on firmware with populated entries. Registry returns the four new values. Verify on bare metal -- vendor firmware sets additional capability bits and richer descriptions.
+**Test checkpoint:** Serial shows `[BOOT] Boot var caps: attrs=0x00000001 (active) BootOptionSupport=0x00000311 OsIndicationsSupported=0x0000000000000000` on standard QEMU OVMF. Registry under `HKLM\SYSTEM\Boot\Device\` returns the five new values. On bare metal, vendor firmware sets richer capability bits and descriptions; reserved-bit test SKIPs if firmware reports unknown bits.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 12 boot-suite tests, 0 failures
+
+> **Notes:**
+> - 4 new boot_info fields appended at struct tail (23872 / 23876 / 23880 / 23888); BOOT_INFO_VERSION 14 -> 15 in kernel header + bootloader mirror.
+> - Bootloader captures attrs + 63-char ASCII description in the §12 block; two new GetVariable calls sit after §12 inside the existing RuntimeServices scope.
+> - Registry persistence: BootCurrentAttributes / BootOptionSupport / OsIndicationsSupportedLo / OsIndicationsSupportedHi (split for REG_DWORD) / Description (REG_SZ).
+> - Shipped 2026-05-05 (Codex 4x: design 2H fixed pre-code, adversarial 1H fixed, re-adversarial 0). Full evidence trail in commit message.
+> - Read-only `OsIndicationsSupported` per UEFI 2.10 §8.5.4; the `OsIndications` write-path is owned by the UEFI hardening TODO and remains banned.
 
 ---
 
@@ -427,7 +436,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | 💎  | Partition GUID validation   | ✅ BCD disk signature          | ✅ root=PARTUUID=         | ✅ §7 done                    |
 | 💎  | Removable media detection   | ✅ DriveType removable         | ✅ sysfs removable flag   | ✅ §8 done                    |
 | 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices  | ✅ /sys/firmware/efi      | ✅ §9 done                    |
-| 💎  | Boot#### attrs + caps       | ✅ BCDEdit metadata            | ✅ efibootmgr -v          | ⬜ §13 planned                |
+| 💎  | Boot#### attrs + caps       | ✅ BCDEdit metadata            | ✅ efibootmgr -v          | ✅ §13 done                   |
 | 💎  | Boot device bus topology    | ✅ MSFT_Disk UniqueId/BusType  | ✅ sysfs nsid + PCI BDF   | ⬜ §14 planned                |
 | ⭐  | Full device enumeration log | ❌ Hidden in Event Log         | ❌ Not logged             | ✅ §10 done                   |
 | ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only        | ❌ Post-boot smartd only  | ✅ §11 done                   |

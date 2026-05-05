@@ -130,6 +130,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "EFI System Partition integrity",
     "Bootloader build identity",
     "UKI signed-payload addresses (v14)",
+    "Extended UEFI boot-variable capability surface (v15)",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

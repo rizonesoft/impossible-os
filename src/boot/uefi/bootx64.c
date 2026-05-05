@@ -6648,6 +6648,10 @@ static inline void post_code16(UINT16 code)
 #define POST16_BL_KERNEL_JUMP   0xB070
 #define POST16_BL_UKI_DETECT    0xB0A0  /* UKI .linux section probe */
 #define POST16_BL_UKI_DETECT_OK 0xB0A1  /* UKI sections found and pinned */
+/* Extended boot vars: BootCurrent attrs + BootOptionSupport
+ * + OsIndicationsSupported (UEFI 2.10 spec 3.1.3 / 3.1.4 / 8.5.4). */
+#define POST16_BL_BOOT_VAR_EXT    0xB0A2
+#define POST16_BL_BOOT_VAR_EXT_OK 0xB0A3
 
 /* PE/COFF structures for UKI section walk.
  * Reference: Microsoft PE/COFF Specification, MS-DOS stub at offset 0,
@@ -8079,6 +8083,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         g_boot_info_ptr->uefi_boot_next = 0xFFFF;
         g_boot_info_ptr->uefi_boot_next_valid = 0;
         g_boot_info_ptr->uefi_boot_order_count = 0;
+        /* v15: Extended boot-var capability surface defaults. */
+        g_boot_info_ptr->boot_current_attrs = 0;
+        g_boot_info_ptr->boot_option_support = 0;
+        g_boot_info_ptr->os_indications_supported = 0;
+        g_boot_info_ptr->boot_description[0] = '\0';
 
         if (rt && rt->GetVariable) {
             /* BootCurrent (UINT16) */
@@ -8162,9 +8171,27 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                      * [4..5]  FilePathListLength (UINT16)
                      * [6..]   Description  (NUL-terminated CHAR16)
                      * [after NUL] FilePathList (FilePathListLength bytes) */
+                    UINT32 lo_attrs = (UINT32)lo_buf[0]
+                                    | ((UINT32)lo_buf[1] << 8)
+                                    | ((UINT32)lo_buf[2] << 16)
+                                    | ((UINT32)lo_buf[3] << 24);
                     UINT16 fp_len = (UINT16)(lo_buf[4] | ((UINT16)lo_buf[5] << 8));
                     const CHAR16 *desc = (const CHAR16 *)&lo_buf[6];
                     UINTN max_desc_bytes = lo_sz - 6;
+
+                    /* v15: Capture Attributes for boot_info / registry. */
+                    g_boot_info_ptr->boot_current_attrs = lo_attrs;
+
+                    /* v15: Capture Description ASCII into boot_info (63 chars + NUL).
+                     * Same trunc rule as the serial log below. */
+                    {
+                        UINTN ci;
+                        for (ci = 0; ci < 63 && (ci * 2 + 1) < max_desc_bytes; ci++) {
+                            if (desc[ci] == 0) break;
+                            g_boot_info_ptr->boot_description[ci] = (char)(desc[ci] & 0x7F);
+                        }
+                        g_boot_info_ptr->boot_description[ci] = '\0';
+                    }
 
                     /* Print description as ASCII (truncate at 80 chars) */
                     serial_early_print("[BOOT] Boot");
@@ -8240,6 +8267,63 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 }
                 /* EFI_NOT_FOUND is silent (some VMs have minimal NVRAM) */
             }
+
+            /* v15: Extended boot-variable capability surface -- read the two
+             * firmware-side capability globals. EFI_NOT_FOUND is silent
+             * (defaults stay 0); only successful exact-size reads populate. */
+            post_code16(POST16_BL_BOOT_VAR_EXT);
+
+            /* BootOptionSupport (UINT32) -- UEFI 2.10 spec 3.1.4 */
+            {
+                UINT32 bos = 0;
+                UINTN sz = sizeof(bos);
+                EFI_STATUS vs = rt->GetVariable(
+                    u"BootOptionSupport", &global_guid, &attrs, &sz, &bos);
+                if (!EFI_ERROR(vs) && sz == sizeof(bos))
+                    g_boot_info_ptr->boot_option_support = bos;
+            }
+
+            /* OsIndicationsSupported (UINT64) -- UEFI 2.10 spec 8.5.4.
+             * READ-ONLY firmware capability variable, distinct from the
+             * OsIndications write-path capsule trigger banned by the UEFI
+             * hardening TODO. The read carries no capsule risk. */
+            {
+                UINT64 ois = 0;
+                UINTN sz = sizeof(ois);
+                EFI_STATUS vs = rt->GetVariable(
+                    u"OsIndicationsSupported", &global_guid, &attrs, &sz, &ois);
+                if (!EFI_ERROR(vs) && sz == sizeof(ois))
+                    g_boot_info_ptr->os_indications_supported = ois;
+            }
+
+            /* Combined diagnostic log: BootCurrent attrs + capability bits */
+            serial_early_print("[BOOT] Boot var caps: attrs=0x");
+            serial_early_print_hex16(
+                (UINT16)(g_boot_info_ptr->boot_current_attrs >> 16));
+            serial_early_print_hex16(
+                (UINT16)g_boot_info_ptr->boot_current_attrs);
+            serial_early_print(
+                (g_boot_info_ptr->boot_current_attrs & 0x1)
+                    ? " (active" : " (inactive");
+            if (g_boot_info_ptr->boot_current_attrs & 0x8)
+                serial_early_print(" hidden");
+            serial_early_print(") BootOptionSupport=0x");
+            serial_early_print_hex16(
+                (UINT16)(g_boot_info_ptr->boot_option_support >> 16));
+            serial_early_print_hex16(
+                (UINT16)g_boot_info_ptr->boot_option_support);
+            serial_early_print(" OsIndicationsSupported=0x");
+            serial_early_print_hex16(
+                (UINT16)(g_boot_info_ptr->os_indications_supported >> 48));
+            serial_early_print_hex16(
+                (UINT16)(g_boot_info_ptr->os_indications_supported >> 32));
+            serial_early_print_hex16(
+                (UINT16)(g_boot_info_ptr->os_indications_supported >> 16));
+            serial_early_print_hex16(
+                (UINT16)g_boot_info_ptr->os_indications_supported);
+            serial_early_print("\n");
+
+            post_code16(POST16_BL_BOOT_VAR_EXT_OK);
         }
     }
 

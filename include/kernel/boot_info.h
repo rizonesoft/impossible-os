@@ -108,7 +108,13 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  * sanity gate;
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v14 adds UKI-embedded payload addresses (uki_initrd_addr/_size,
+/* v15 adds extended UEFI boot-variable capability surface (boot_current_attrs,
+ *     boot_option_support, os_indications_supported, boot_description[64])
+ *     populated by the UEFI bootloader from BootCurrent's Boot####.Attributes,
+ *     the BootOptionSupport / OsIndicationsSupported globals, and the Boot####
+ *     Description string. Read-only firmware capabilities for diagnostics +
+ *     registry persistence under HKLM\SYSTEM\Boot\Device\.
+ * v14 adds UKI-embedded payload addresses (uki_initrd_addr/_size,
  *     uki_recovery_addr/_size, uki_modules_addr/_size) populated by
  *     the UEFI bootloader after walking the LoadedImage's PE section
  *     table for .initrd / .recovery / .modules. Zero addr = section
@@ -120,7 +126,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  14
+#define BOOT_INFO_VERSION  15
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -1422,6 +1428,18 @@ struct boot_info {
     uint64_t uki_recovery_size;
     uint64_t uki_modules_addr;       /* kernel-physical pointer to copied .modules cpio payload, 0 if absent */
     uint64_t uki_modules_size;
+
+    /* v15: Extended UEFI boot-variable capability surface (TODO-05 extended-boot-vars feature).
+     * BootCurrent's Boot####.Attributes word, two firmware-side capability
+     * variables, and the Boot#### Description string. Defaults to 0 / empty
+     * when the firmware variable is absent. Read-only; OsIndicationsSupported
+     * is the read-only capability variable (UEFI 2.10 spec 8.5.4), distinct
+     * from the OsIndications write-path capsule trigger banned by the UEFI
+     * hardening TODO. */
+    uint32_t boot_current_attrs;          /* EFI_LOAD_OPTION.Attributes for BootCurrent (UEFI 2.10 spec 3.1.3) */
+    uint32_t boot_option_support;         /* BootOptionSupport global (UEFI 2.10 spec 3.1.4) */
+    uint64_t os_indications_supported;    /* OsIndicationsSupported global (UEFI 2.10 spec 8.5.4) */
+    char     boot_description[64];        /* Boot#### Description ASCII-truncated, NUL-terminated */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -1500,6 +1518,17 @@ _Static_assert(__builtin_offsetof(struct boot_info, uki_modules_addr) == 23856,
     "boot_info.uki_modules_addr offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, uki_modules_size) == 23864,
     "boot_info.uki_modules_size offset drift -- update kernel + bootloader mirror");
+
+/* v15: Extended UEFI boot-variable capability surface offset asserts.
+ * Appended at struct tail after the v14 UKI cluster (which ends at 23872). */
+_Static_assert(__builtin_offsetof(struct boot_info, boot_current_attrs) == 23872,
+    "boot_info.boot_current_attrs offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_option_support) == 23876,
+    "boot_info.boot_option_support offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, os_indications_supported) == 23880,
+    "boot_info.os_indications_supported offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_description) == 23888,
+    "boot_info.boot_description offset drift -- update kernel + bootloader mirror");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

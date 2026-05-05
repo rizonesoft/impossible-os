@@ -141,6 +141,8 @@ POST16_REQUIRED_NAMES=(
     POST16_BL_BOOT_DEV_OK
     POST16_BL_BOOT_FS
     POST16_BL_BOOT_FS_OK
+    POST16_BL_BOOT_VAR_EXT
+    POST16_BL_BOOT_VAR_EXT_OK
 )
 
 # Optional set: POST16 codes that ARE emitted by the bootloader but are

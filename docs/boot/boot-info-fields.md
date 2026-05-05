@@ -346,6 +346,17 @@ Six `uint64` fields appended after `loader_identity`. Populated by `detect_uki_s
 | `uki_modules_addr` | bootx64 (`uki_copy_payload .modules`) | P0 | kernel module loader (when wired) | handoff | uefi-hardening-secureboot UKI signed payloads | kernel-physical pointer to `EfiLoaderData` copy of the `.modules` cpio archive, or 0 if absent. |
 | `uki_modules_size` | bootx64 | P0 | kernel module loader | handoff | uefi-hardening-secureboot UKI signed payloads | size in bytes; 0 if absent. |
 
+## Extended UEFI boot-variable capability surface (v15)
+
+Four read-only firmware capability fields appended after the v14 UKI cluster. Populated by the UEFI bootloader pre-EBS from `BootCurrent`'s Boot####.Attributes (UEFI 2.10 spec 3.1.3), the `BootOptionSupport` and `OsIndicationsSupported` globals (UEFI 2.10 spec 3.1.4 + 8.5.4), and the Boot#### Description string. Persisted in the registry under `HKLM\SYSTEM\Boot\Device\` for diagnostics / `BCDEdit`-equivalent surfacing. Read-only; `OsIndicationsSupported` is the firmware capability variable, distinct from the `OsIndications` write-path capsule trigger banned by the UEFI hardening TODO.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `boot_current_attrs` | bootx64 (extended boot vars) | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery extended-boot-vars | EFI_LOAD_OPTION.Attributes for the firmware-selected Boot#### entry; 0 if BootCurrent absent. |
+| `boot_option_support` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery extended-boot-vars | BootOptionSupport global capability bits (KEY/APP/SYSPREP/COUNT); 0 if absent. |
+| `os_indications_supported` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery extended-boot-vars | OsIndicationsSupported global capability bitmap; 0 if absent. Read-only -- distinct from the OsIndications write-path. |
+| `boot_description` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery extended-boot-vars | Boot#### Description ASCII-truncated to 63 chars + NUL terminator; empty if BootCurrent absent. |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).

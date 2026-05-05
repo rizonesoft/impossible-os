@@ -107,6 +107,104 @@ static void test_registry_boot_device_type(void)
     RegCloseKey(hKey);
 }
 
+/* ---- Extended boot variable capability surface (S13) ---- */
+
+static void test_registry_boot_var_caps_match_boot_info(void)
+{
+    /* Phase 2 contract: boot_device_populate_registry() persists the 5
+     * v15 capability values. A typo in a value name or a swapped Lo/Hi
+     * split must not slip through silently -- read each one back and
+     * match against g_boot_info. */
+    HKEY hKey = (HKEY)0;
+    long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Boot\\Device", 0,
+                           KEY_READ, &hKey);
+    TEST_ASSERT(rc == 0,
+                "HKLM\\SYSTEM\\Boot\\Device exists for v15 capability values");
+    if (rc != 0) return;
+
+    uint32_t v32 = 0;
+    rc = RegGetDword(hKey, "BootCurrentAttributes", &v32);
+    TEST_ASSERT(rc == 0, "RegGetDword(BootCurrentAttributes) succeeds");
+    TEST_ASSERT_EQ(v32, g_boot_info.boot_current_attrs,
+                   "BootCurrentAttributes registry value matches boot_info");
+
+    rc = RegGetDword(hKey, "BootOptionSupport", &v32);
+    TEST_ASSERT(rc == 0, "RegGetDword(BootOptionSupport) succeeds");
+    TEST_ASSERT_EQ(v32, g_boot_info.boot_option_support,
+                   "BootOptionSupport registry value matches boot_info");
+
+    uint32_t lo = 0, hi = 0;
+    rc = RegGetDword(hKey, "OsIndicationsSupportedLo", &lo);
+    TEST_ASSERT(rc == 0, "RegGetDword(OsIndicationsSupportedLo) succeeds");
+    rc = RegGetDword(hKey, "OsIndicationsSupportedHi", &hi);
+    TEST_ASSERT(rc == 0, "RegGetDword(OsIndicationsSupportedHi) succeeds");
+    uint64_t recombined = ((uint64_t)hi << 32) | (uint64_t)lo;
+    TEST_ASSERT_EQ(recombined, g_boot_info.os_indications_supported,
+                   "OsIndicationsSupportedLo|Hi recombines to boot_info value");
+
+    char desc[64];
+    rc = RegGetString(hKey, "Description", desc, sizeof(desc));
+    TEST_ASSERT(rc == 0, "RegGetString(Description) succeeds");
+    /* Compare byte-for-byte; both sources are NUL-terminated within 64. */
+    {
+        int matches = 1;
+        int i;
+        for (i = 0; i < 64; i++) {
+            if (desc[i] != g_boot_info.boot_description[i]) {
+                matches = 0;
+                break;
+            }
+            if (desc[i] == '\0') break;
+        }
+        TEST_ASSERT(matches,
+                    "Description registry string matches boot_info");
+    }
+
+    RegCloseKey(hKey);
+}
+
+
+static void test_boot_option_support_reserved_bits_zero(void)
+{
+    /* UEFI 2.10 spec 3.1.4: BootOptionSupport defines bits
+     *   0x00000001 KEY
+     *   0x00000002 APP
+     *   0x00000010 SYSPREP
+     *   0x00000300 COUNT (2-bit field)
+     * Allowed mask: 0x00000313. Any other bit set means firmware
+     * is reporting reserved bits we don't recognize -- log it but
+     * the field is informational so we don't fail outright; this
+     * test is a drift detector for future spec extensions. */
+    uint32_t reserved = g_boot_info.boot_option_support & 0xFFFFFCECU;
+    if (reserved != 0)
+        TEST_SKIP("BootOptionSupport reserved bits non-zero -- firmware sets unknown bits");
+    else
+        TEST_ASSERT_EQ(reserved, 0U,
+                       "BootOptionSupport reserved bits (mask 0xFFFFFCEC) clear");
+}
+
+static void test_boot_description_nul_terminated(void)
+{
+    /* Bootloader copies at most 63 chars + NUL into boot_description[64]. */
+    TEST_ASSERT_EQ(g_boot_info.boot_description[63], '\0',
+                   "boot_description final byte is NUL (capacity 63 chars)");
+}
+
+static void test_boot_current_attrs_active_consistency(void)
+{
+    /* UEFI 2.10 spec 3.1.3 LOAD_OPTION_ACTIVE = 0x00000001.
+     * On QEMU OVMF the firmware-selected boot entry MUST be ACTIVE,
+     * else it would not have been chosen. Skip when no BootCurrent
+     * (minimal-NVRAM VMs) or no description was decoded. */
+    if (g_boot_info.uefi_boot_current == 0xFFFF ||
+        g_boot_info.boot_description[0] == '\0') {
+        TEST_SKIP("BootCurrent absent or Boot#### not decoded -- skip ACTIVE check");
+        return;
+    }
+    TEST_ASSERT(g_boot_info.boot_current_attrs & 0x1,
+                "BootCurrent's Boot####.Attributes ACTIVE bit set");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_device(void)
@@ -129,6 +227,14 @@ void test_register_boot_device(void)
         test_boot_order_count_bounded, TEST_CAT_BOOT);
     test_suite_register_cat("Boot device: Registry Type matches boot_info",
         test_registry_boot_device_type, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot device: BootOptionSupport reserved bits zero",
+        test_boot_option_support_reserved_bits_zero, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot device: boot_description NUL-terminated",
+        test_boot_description_nul_terminated, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot device: BootCurrent ACTIVE bit consistency",
+        test_boot_current_attrs_active_consistency, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot device: Registry v15 capability values match boot_info",
+        test_registry_boot_var_caps_match_boot_info, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

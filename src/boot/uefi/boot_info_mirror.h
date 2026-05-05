@@ -259,7 +259,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  14
+#define BOOT_INFO_VERSION  15
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -626,6 +626,13 @@ struct boot_info {
     UINT64  uki_recovery_size;
     UINT64  uki_modules_addr;
     UINT64  uki_modules_size;
+
+    /* v15: Extended UEFI boot-variable capability surface (TODO-05 extended-boot-vars).
+     * Bootloader-populated mirror of the kernel-side fields. */
+    UINT32  boot_current_attrs;          /* EFI_LOAD_OPTION.Attributes for BootCurrent */
+    UINT32  boot_option_support;         /* BootOptionSupport global */
+    UINT64  os_indications_supported;    /* OsIndicationsSupported global */
+    char    boot_description[64];        /* Boot#### Description ASCII NUL-term */
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
@@ -691,6 +698,16 @@ _Static_assert(__builtin_offsetof(struct boot_info, uki_modules_addr) == 23856,
     "boot_info.uki_modules_addr offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, uki_modules_size) == 23864,
     "boot_info.uki_modules_size offset drift -- kernel + bootloader mirror out of sync");
+
+/* v15: Extended UEFI boot-variable capability surface offset asserts. */
+_Static_assert(__builtin_offsetof(struct boot_info, boot_current_attrs) == 23872,
+    "boot_info.boot_current_attrs offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_option_support) == 23876,
+    "boot_info.boot_option_support offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, os_indications_supported) == 23880,
+    "boot_info.os_indications_supported offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_description) == 23888,
+    "boot_info.boot_description offset drift -- kernel + bootloader mirror out of sync");
 
 /* ============================================================================
  * Boot Error History Ring -- producer mirror

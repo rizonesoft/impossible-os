@@ -619,6 +619,16 @@ void boot_device_populate_registry(void)
                 g_boot_info.uefi_boot_next_valid
                     ? (uint32_t)g_boot_info.uefi_boot_next : 0xFFFF);
 
+    /* v15: Extended boot-variable capability surface. UEFI 2.10 spec 3.1.3
+     * (Attributes), 3.1.4 (BootOptionSupport), 8.5.4 (OsIndicationsSupported). */
+    RegSetDword(hKey, "BootCurrentAttributes", g_boot_info.boot_current_attrs);
+    RegSetDword(hKey, "BootOptionSupport", g_boot_info.boot_option_support);
+    RegSetDword(hKey, "OsIndicationsSupportedLo",
+                (uint32_t)(g_boot_info.os_indications_supported & 0xFFFFFFFFU));
+    RegSetDword(hKey, "OsIndicationsSupportedHi",
+                (uint32_t)(g_boot_info.os_indications_supported >> 32));
+    RegSetString(hKey, "Description", g_boot_info.boot_description);
+
     /* Format partition GUID as string for REG_SZ */
     if (g_boot_info.boot_partition_style == 2) {
         const uint8_t *g = g_boot_info.boot_partition_guid;

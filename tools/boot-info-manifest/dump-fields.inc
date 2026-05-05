@@ -364,3 +364,10 @@ F(uki_recovery_addr);
 F(uki_recovery_size);
 F(uki_modules_addr);
 F(uki_modules_size);
+
+/* v15: Extended UEFI boot-variable capability surface */
+F(boot_current_attrs);
+F(boot_option_support);
+F(os_indications_supported);
+F(boot_description);
+F(boot_description[0]);
