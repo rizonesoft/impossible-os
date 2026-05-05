@@ -7778,6 +7778,15 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /*: Populate boot device path from DevicePathToText protocol.
      * Type stays 0 (unknown) until parses the device path nodes. */
     g_boot_info_ptr->boot_device_type = 0;
+    /* v16: defaults for boot device path detail (TODO-05 boot-device-detail). */
+    g_boot_info_ptr->boot_nvme_nsid = 0;
+    {
+        UINTN ei;
+        for (ei = 0; ei < 8; ei++)
+            g_boot_info_ptr->boot_nvme_eui64[ei] = 0;
+    }
+    g_boot_info_ptr->boot_pci_device = 0xFF;
+    g_boot_info_ptr->boot_pci_function = 0xFF;
     g_boot_info_ptr->boot_device_path[0] = '\0';
     if (g_boot_device_handle) {
         EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
@@ -7848,6 +7857,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                         (p[pi+3] == '4' || p[pi+3] == '6') && p[pi+4] == '(') {
                         g_boot_info_ptr->boot_device_type = 4; break;
                     }
+                    /* SD / eMMC -- modern laptops + tablets per UEFI 2.10 spec
+                     * 10.3.4.24 / 10.3.4.27. SD before eMMC because "SD(" is
+                     * a strict prefix of "SDmmc(" in some firmware variants. */
+                    if (p[pi] == 'S' && p[pi+1] == 'D' && p[pi+2] == '(') {
+                        g_boot_info_ptr->boot_device_type = 5; break;
+                    }
+                    if (p[pi] == 'e' && p[pi+1] == 'M' && p[pi+2] == 'M' &&
+                        p[pi+3] == 'C' && p[pi+4] == '(') {
+                        g_boot_info_ptr->boot_device_type = 6; break;
+                    }
                 }
             }
 
@@ -7871,6 +7890,45 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                                ((UINT16)node->Length[1] << 8);
                     if (node_len < 4) break;
                     if (walked + node_len > DP_MAX_WALK) break;
+
+                    /*: v16: Hardware/PCI -> leaf PCI Device + Function.
+                     * UEFI 2.10 spec 10.3.2.1: Type=0x01 SubType=0x01,
+                     * Length=6, Function at offset 4 (UINT8), Device at
+                     * offset 5 (UINT8). Walk all PCI nodes; LAST one wins
+                     * (paths can have PciRoot/PciBridge/.../Pci(leaf)). */
+                    if (node->Type == EFI_DP_TYPE_HW &&
+                        node->SubType == EFI_DP_HW_PCI &&
+                        node_len >= 6) {
+                        const UINT8 *nd = (const UINT8 *)node;
+                        g_boot_info_ptr->boot_pci_function = nd[4];
+                        g_boot_info_ptr->boot_pci_device = nd[5];
+                    }
+
+                    /*: v16: Messaging/NVMe -> NSID + EUI-64.
+                     * UEFI 2.10 spec 10.3.4.21: Type=0x03 SubType=0x17,
+                     * Length=16, NamespaceId UINT32 LE at offset 4,
+                     * NamespaceUuid 8 bytes at offset 8 (EUI-64 byte order).
+                     * Raw-node evidence is more trustworthy than the
+                     * truncated text classifier: if we found an NVMe DP
+                     * node here but the text classifier missed it (long
+                     * vendor prefix truncated boot_device_path), set
+                     * boot_device_type=2 from the raw node so registry
+                     * provenance stays self-consistent. */
+                    if (node->Type == EFI_DP_TYPE_MESSAGING &&
+                        node->SubType == EFI_DP_MSG_NVME &&
+                        node_len >= 16) {
+                        const UINT8 *nd = (const UINT8 *)node;
+                        g_boot_info_ptr->boot_nvme_nsid =
+                            (UINT32)nd[4]
+                            | ((UINT32)nd[5] << 8)
+                            | ((UINT32)nd[6] << 16)
+                            | ((UINT32)nd[7] << 24);
+                        UINTN ei;
+                        for (ei = 0; ei < 8; ei++)
+                            g_boot_info_ptr->boot_nvme_eui64[ei] = nd[8 + ei];
+                        if (g_boot_info_ptr->boot_device_type == 0)
+                            g_boot_info_ptr->boot_device_type = 2;
+                    }
 
                     /*: Media/HardDrive -> partition GUID + style.
                      * UEFI spec Table 10-58: HardDrive DP node is 42 bytes.
@@ -7924,11 +7982,52 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             /* Log detected type */
             {
                 static const char *type_names[] = {
-                    "unknown", "SATA", "NVMe", "USB", "network"
+                    "unknown", "SATA", "NVMe", "USB", "network", "SD", "eMMC"
                 };
                 UINT8 t = g_boot_info_ptr->boot_device_type;
                 serial_early_print("[BOOT] Boot device type: ");
-                serial_early_print(t <= 4 ? type_names[t] : "invalid");
+                serial_early_print(t <= 6 ? type_names[t] : "invalid");
+                serial_early_print("\n");
+            }
+
+            /*: v16: Log NVMe NSID + EUI-64 when boot device is NVMe.
+             * UEFI 2.10 spec 10.3.4.21. NSID=0 = no NVMe DP node found. */
+            if (g_boot_info_ptr->boot_nvme_nsid != 0) {
+                static const char nvme_hex[] = "0123456789ABCDEF";
+                serial_early_print("[BOOT] NVMe NSID=0x");
+                {
+                    UINT32 ns = g_boot_info_ptr->boot_nvme_nsid;
+                    serial_early_print_hex16((UINT16)(ns >> 16));
+                    serial_early_print_hex16((UINT16)ns);
+                }
+                serial_early_print(" EUI-64=");
+                {
+                    UINTN ei;
+                    char nb[3] = { 0, 0, 0 };
+                    const UINT8 *eu = g_boot_info_ptr->boot_nvme_eui64;
+                    for (ei = 0; ei < 8; ei++) {
+                        if (ei > 0) serial_early_print(":");
+                        nb[0] = nvme_hex[(eu[ei] >> 4) & 0xF];
+                        nb[1] = nvme_hex[eu[ei] & 0xF];
+                        serial_early_print(nb);
+                    }
+                }
+                serial_early_print("\n");
+            }
+
+            /*: v16: Log leaf PCI device + function when on PCI.
+             * UEFI 2.10 spec 10.3.2.1. 0xFF sentinel = not on PCI bus. */
+            if (g_boot_info_ptr->boot_pci_device != 0xFF) {
+                static const char pci_hex[] = "0123456789ABCDEF";
+                char nb[3] = { 0, 0, 0 };
+                serial_early_print("[BOOT] Boot device PCI: dev=0x");
+                nb[0] = pci_hex[(g_boot_info_ptr->boot_pci_device >> 4) & 0xF];
+                nb[1] = pci_hex[g_boot_info_ptr->boot_pci_device & 0xF];
+                serial_early_print(nb);
+                serial_early_print(" func=0x");
+                nb[0] = pci_hex[(g_boot_info_ptr->boot_pci_function >> 4) & 0xF];
+                nb[1] = pci_hex[g_boot_info_ptr->boot_pci_function & 0xF];
+                serial_early_print(nb);
                 serial_early_print("\n");
             }
 
@@ -8026,9 +8125,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                     }
                     serial_early_print(" MiB (");
                     {
-                        static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
+                        static const char *tn[] = {"unknown","SATA","NVMe","USB","network","SD","eMMC"};
                         UINT8 t = g_boot_info_ptr->boot_device_type;
-                        serial_early_print(t <= 4 ? tn[t] : "?");
+                        serial_early_print(t <= 6 ? tn[t] : "?");
                     }
                     serial_early_print(")\n");
                 }
@@ -8506,9 +8605,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             #undef DIAG_ENUM_MAX
             serial_early_print(" devices found, boot=");
             {
-                static const char *tn[] = {"unknown","SATA","NVMe","USB","network"};
+                static const char *tn[] = {"unknown","SATA","NVMe","USB","network","SD","eMMC"};
                 UINT8 t = g_boot_info_ptr->boot_device_type;
-                serial_early_print(t <= 4 ? tn[t] : "?");
+                serial_early_print(t <= 6 ? tn[t] : "?");
             }
             serial_early_print(g_boot_info_ptr->boot_device_removable
                                ? " (removable)" : " (fixed)");

@@ -259,7 +259,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  15
+#define BOOT_INFO_VERSION  16
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -633,6 +633,13 @@ struct boot_info {
     UINT32  boot_option_support;         /* BootOptionSupport global */
     UINT64  os_indications_supported;    /* OsIndicationsSupported global */
     char    boot_description[64];        /* Boot#### Description ASCII NUL-term */
+
+    /* v16: Local boot device path detail (TODO-05 boot-device-detail). */
+    UINT32  boot_nvme_nsid;              /* NVMe NamespaceId (0 = not NVMe) */
+    UINT8   boot_nvme_eui64[8];          /* NVMe NamespaceUuid bytes (EUI-64) */
+    UINT8   boot_pci_device;             /* leaf PCI Device (0..31, 0xFF=absent) */
+    UINT8   boot_pci_function;           /* leaf PCI Function (0..7, 0xFF=absent) */
+    UINT8   _v16_pad[2];
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
@@ -708,6 +715,16 @@ _Static_assert(__builtin_offsetof(struct boot_info, os_indications_supported) ==
     "boot_info.os_indications_supported offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, boot_description) == 23888,
     "boot_info.boot_description offset drift -- kernel + bootloader mirror out of sync");
+
+/* v16: Local boot device path detail offset asserts. */
+_Static_assert(__builtin_offsetof(struct boot_info, boot_nvme_nsid) == 23952,
+    "boot_info.boot_nvme_nsid offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_nvme_eui64) == 23956,
+    "boot_info.boot_nvme_eui64 offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_pci_device) == 23964,
+    "boot_info.boot_pci_device offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_pci_function) == 23965,
+    "boot_info.boot_pci_function offset drift -- kernel + bootloader mirror out of sync");
 
 /* ============================================================================
  * Boot Error History Ring -- producer mirror

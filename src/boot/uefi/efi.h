@@ -796,6 +796,12 @@ typedef struct {
 #define EFI_DP_MSG_USB           0x05
 #define EFI_DP_MSG_IPV4          0x0C
 #define EFI_DP_MSG_IPV6          0x0D
+#define EFI_DP_MSG_SD            0x1A  /* UEFI 2.10 spec 10.3.4.24 -- Secure Digital */
+#define EFI_DP_MSG_EMMC          0x1D  /* UEFI 2.10 spec 10.3.4.27 -- eMMC */
+
+/* Hardware path subtypes (UEFI 2.10 spec 10.3.2) */
+#define EFI_DP_TYPE_HW           0x01
+#define EFI_DP_HW_PCI            0x01
 
 #define EFI_DP_MEDIA_HARDDRIVE   0x01
 

@@ -357,6 +357,18 @@ Four read-only firmware capability fields appended after the v14 UKI cluster. Po
 | `os_indications_supported` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery extended-boot-vars | OsIndicationsSupported global capability bitmap; 0 if absent. Read-only -- distinct from the OsIndications write-path. |
 | `boot_description` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery extended-boot-vars | Boot#### Description ASCII-truncated to 63 chars + NUL terminator; empty if BootCurrent absent. |
 
+## Local boot device path detail (v16)
+
+Per-bus identifiers extracted from the boot device's UEFI device path: NVMe NamespaceId + NamespaceUuid (EUI-64) per UEFI 2.10 spec 10.3.4.21, leaf PCI Device + Function per UEFI 2.10 spec 10.3.2.1. Win11 surfaces these via `MSFT_Disk.UniqueId` + `BusType`; Linux exposes them via `/sys/class/nvme/nvmeX/nsid` + sysfs PCI BDF. Persisted in `HKLM\SYSTEM\Boot\Device\` as `NamespaceId`, `NamespaceEui64`, `PciDevice`, `PciFunction` for diagnostics + storage-stack provenance. Sentinels: `boot_nvme_nsid=0` and `boot_nvme_eui64` all-zero when not NVMe; `boot_pci_device=0xFF` and `boot_pci_function=0xFF` when not on PCI.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `boot_nvme_nsid` | bootx64 (DP node walk) | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery boot-device-detail | NVMe NamespaceId from Messaging-NVMe DP node (UEFI 2.10 spec 10.3.4.21); 0 if not NVMe. |
+| `boot_nvme_eui64` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery boot-device-detail | 8-byte NamespaceUuid (EUI-64 byte order); all-zero if not NVMe or firmware reports zero. |
+| `boot_pci_device` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery boot-device-detail | leaf PCI Device number (0..31); 0xFF if not on PCI. |
+| `boot_pci_function` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery boot-device-detail | leaf PCI Function number (0..7); 0xFF if not on PCI. |
+| `_v16_pad` | bootx64 | P0 | -- | handoff | boot-device-discovery boot-device-detail | 2-byte alignment padding after `boot_pci_function`. |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).

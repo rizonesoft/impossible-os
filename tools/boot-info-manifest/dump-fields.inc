@@ -371,3 +371,12 @@ F(boot_option_support);
 F(os_indications_supported);
 F(boot_description);
 F(boot_description[0]);
+
+/* v16: Local boot device path detail */
+F(boot_nvme_nsid);
+F(boot_nvme_eui64);
+F(boot_nvme_eui64[0]);
+F(boot_pci_device);
+F(boot_pci_function);
+F(_v16_pad);
+F(_v16_pad[0]);

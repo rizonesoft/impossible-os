@@ -63,7 +63,7 @@ title: "TODO-05 -- Boot Device Discovery & Fallback Chain"
 | ⭐  |  11   | Pre-boot device health check                       | §1, §7         |  [x]   |
 | 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)    | §6             |  [x]   |
 | 💎  |  13   | Extended boot variable capability surface          | §6, §9, §12    |  [x]   |
-| 💎  |  14   | Local boot device path detail capture              | §3, §4, §9     |  [ ]   |
+| 💎  |  14   | Local boot device path detail capture              | §3, §4, §9     |  [x]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
 > ⭐ = exclusive -- detailed boot device diagnostics with full enumeration, and proactive disk health check before kernel load.
@@ -411,17 +411,26 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 §4 classifies the boot device by Messaging-node subtype (SATA/NVMe/USB/network) but discards the per-bus identifiers Win11 (`MSFT_Disk.UniqueId` / `BusType`) and Linux (`/sys/class/nvme/nvmeX/nsid`, sysfs PCI topology) both expose. NVMe boots lose the namespace ID and EUI-64; PCI device/function never reaches `boot_info`; SD card and eMMC boots (modern laptops, tablets) classify as `boot_device_type=0` because the enum stops at four bus types. Capture the cheap detail at parse time, extend the enum, and persist to registry.
 
-- [ ] Add subtype constants to `efi.h`: `EFI_DP_MSG_SD` (0x1A) per UEFI 2.10 §10.3.4.24, `EFI_DP_MSG_EMMC` (0x1D) per §10.3.4.27
-- [ ] Extend `boot_device_type` enum: 5=SD, 6=eMMC; update §4 log strings + `test_boot_device.c` range to 0..6
-- [ ] In §4 walk: when NVMe SubType (0x17) and `node_len >= 20`, copy NSID (UINT32 +4) + EUI-64 (8 BE +8) into `boot_info.boot_nvme_nsid` + `boot_nvme_eui64[8]` per UEFI 2.10 §10.3.4.21
-- [ ] In §4 walk: capture last PCI node Device + Function (UINT8 each) per §10.3.2.1 into `boot_pci_device` / `_function`; sentinel 0xFF when not on PCI
-- [ ] Bump `BOOT_INFO_VERSION` (piggyback on §13's bump if same release, else 7)
-- [ ] Persist in `boot_device_populate_registry()`: `NamespaceId` (REG_DWORD), `NamespaceEui64` (REG_BINARY 8B; omit if NVMe + all-zero), `PciDevice` / `PciFunction` (REG_DWORD; 0xFF sentinel)
-- [ ] Serial log: `[BOOT] Boot device: NVMe NSID=%u EUI-64=XX:..:XX` / `Boot device type: SD` or `eMMC`
-- [ ] Unit tests: enum range 0..6, NSID nonzero => EUI-64 populated (or sentinel), PCI device <= 31 + function <= 7 OR both 0xFF
-- [ ] Commit: `"boot: capture NVMe NSID/EUI-64 + PCI device/function + SD/eMMC classification"`
+- [x] Add subtype constants to `efi.h`: `EFI_DP_MSG_SD` (0x1A), `EFI_DP_MSG_EMMC` (0x1D), `EFI_DP_TYPE_HW`/`EFI_DP_HW_PCI` per UEFI 2.10 spec 10.3.2.1 + 10.3.4.24-27.
+- [x] Extend `boot_device_type` enum: 5=SD, 6=eMMC; classifier matches "SD("/"eMMC(", three `tn[]`/`type_names[]` arrays bumped to size 7.
+- [x] §4 walker: NVMe SubType (0x17) with `node_len >= 16` per UEFI 2.10 §10.3.4.21 (corrected from draft >=20); NSID UINT32 LE at +4, EUI-64 8 bytes at +8; raw hit also backfills `boot_device_type=2`.
+- [x] §4 walker: PCI Hardware (Type=0x01, SubType=0x01, `node_len >= 6`) per UEFI 2.10 §10.3.2.1; LAST PCI node wins; sentinel 0xFF when not on PCI.
+- [x] Bump `BOOT_INFO_VERSION` 15 -> 16 in both mirrors; per-field `_Static_assert` pins at 23952/23956/23964/23965; manifest + docs + changelog updated.
+- [x] Registry: `NamespaceId` (DWORD), `NamespaceEui64` (BINARY 8B, omitted when all-zero), `PciDevice`/`PciFunction` (DWORD, 0xFF sentinel preserved).
+- [x] Serial log: `[BOOT] NVMe NSID=0xNNNNNNNN EUI-64=...` (NSID-gated) and `[BOOT] Boot device PCI: dev=0xNN func=0xNN` (sentinel-gated).
+- [x] Unit tests in `test_boot_device.c`: PCI sentinel-or-range, NVMe consistency (NSID != 0 implies type==2), registry readback; v15_tail -> v16_tail in `test_boot_info.c`.
+- [x] Commit: `"boot: capture NVMe NSID/EUI-64 + PCI device/function + SD/eMMC classification"`
 
-**Test checkpoint:** NVMe boot on QEMU `-device nvme`: serial shows `Boot device: NVMe NSID=1 EUI-64=...`, registry `NamespaceId=1`. SATA boot: `NamespaceId=0`, no `NamespaceEui64`. SD/eMMC boot on bare-metal tablet: `boot_device_type=5` or `6`. Verify on bare metal -- vendor PCIe NVMe + embedded eMMC Surface-class devices cover the modern boot surface.
+**Test checkpoint:** NVMe boot on QEMU `-device nvme`: serial shows `[BOOT] NVMe NSID=0x00000001 EUI-64=...` and `[BOOT] Boot device PCI: dev=0xNN func=0xNN`; registry `NamespaceId=1`, `PciDevice` populated. SATA boot: `NamespaceId=0`, no `NamespaceEui64`, `PciDevice` populated for the AHCI controller. SD/eMMC boot on bare-metal tablet: `boot_device_type=5` or `6`. Verify on bare metal -- vendor PCIe NVMe + embedded eMMC Surface-class devices cover the modern boot surface.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 16 boot-suite tests, 0 failures
+
+> **Notes:**
+> - 4 new boot_info fields at struct tail (23952/23956/23964/23965) + 2-byte pad; BOOT_INFO_VERSION 15 -> 16 in kernel header + bootloader mirror.
+> - Bootloader extends §7 raw-node walker for NVMe NSID/EUI-64 + LAST PCI Device/Function; inherits §4's source-of-truth scope on vendor firmware.
+> - Raw NVMe hit backfills `boot_device_type=2` when text classifier missed it (long-vendor-prefix truncation case from adversarial M1).
+> - Registry: NamespaceId / NamespaceEui64 (REG_BINARY, omit-when-zero) / PciDevice / PciFunction; sentinel 0xFF preserved for "not on PCI".
+> - Read-only path detail; runtime PCI / NVMe driver subsystems own the hardware enumeration this section's identifiers correlate to.
 
 ---
 
@@ -439,7 +448,7 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 | 💎  | Removable media detection   | ✅ DriveType removable         | ✅ sysfs removable flag   | ✅ §8 done                    |
 | 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices  | ✅ /sys/firmware/efi      | ✅ §9 done                    |
 | 💎  | Boot#### attrs + caps       | ✅ BCDEdit metadata            | ✅ efibootmgr -v          | ✅ §13 done                   |
-| 💎  | Boot device bus topology    | ✅ MSFT_Disk UniqueId/BusType  | ✅ sysfs nsid + PCI BDF   | ⬜ §14 planned                |
+| 💎  | Boot device bus topology    | ✅ MSFT_Disk UniqueId/BusType  | ✅ sysfs nsid + PCI BDF   | ✅ §14 done                   |
 | ⭐  | Full device enumeration log | ❌ Hidden in Event Log         | ❌ Not logged             | ✅ §10 done                   |
 | ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only        | ❌ Post-boot smartd only  | ✅ §11 done                   |
 

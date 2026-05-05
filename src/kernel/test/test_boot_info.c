@@ -1401,19 +1401,21 @@ static void test_boot_loader_identity_layout_pinned(void)
 /* Tail-field pin: the LAST appended field group must end at
  * sizeof(struct boot_info) -- inserting a field in the middle would
  * shift all subsequent offsets and silently break ABI back-compat.
- * v15 (extended boot-variable capability surface) is the current
- * tail; v14 (UKI signed-payload addresses) was the prior tail; before
- * v14, loader_identity was. When the next ABI bump appends new
- * fields, update both the offset and the field name here so the
- * tail-pin test continues to enforce the end-of-struct invariant. */
-static void test_boot_info_v15_tail(void)
+ * v16 (local boot device path detail) is the current tail; v15
+ * (extended boot-variable capability surface) was the prior tail;
+ * v14 (UKI signed-payload addresses) before that; before v14,
+ * loader_identity was. When the next ABI bump appends new fields,
+ * update both the offset and the field name here so the tail-pin
+ * test continues to enforce the end-of-struct invariant. */
+static void test_boot_info_v16_tail(void)
 {
-    /* boot_description[64] is the last field in the v15 tail block. */
+    /* _v16_pad[2] is the last field in the v16 tail block, immediately
+     * after boot_pci_function. */
     uint64_t off = (uint64_t)__builtin_offsetof(
-        struct boot_info, boot_description);
-    uint64_t end = off + (uint64_t)sizeof(((struct boot_info *)0)->boot_description);
+        struct boot_info, _v16_pad);
+    uint64_t end = off + (uint64_t)sizeof(((struct boot_info *)0)->_v16_pad);
     TEST_ASSERT_EQ(end, (uint64_t)sizeof(struct boot_info),
-                   "boot_description must be the tail field "
+                   "_v16_pad must be the tail field "
                    "(end-of-struct invariant for back-compat)");
 }
 
@@ -1570,8 +1572,8 @@ void test_register_boot_info(void)
     /* Bootloader build identity. */
     test_suite_register_cat("boot_loader_identity: layout pinned (64B, packed)",
                             test_boot_loader_identity_layout_pinned, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_info: v15 tail field pin (boot_description)",
-                            test_boot_info_v15_tail, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: v16 tail field pin (_v16_pad)",
+                            test_boot_info_v16_tail, TEST_CAT_BOOT);
     test_suite_register_cat("boot_info: loader_identity offset stable (v13 layout)",
                             test_boot_info_loader_identity_offset_stable, TEST_CAT_BOOT);
     test_suite_register_cat("boot_loader_identity: zero is loader-did-not-populate",

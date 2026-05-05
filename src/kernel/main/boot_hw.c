@@ -629,6 +629,30 @@ void boot_device_populate_registry(void)
                 (uint32_t)(g_boot_info.os_indications_supported >> 32));
     RegSetString(hKey, "Description", g_boot_info.boot_description);
 
+    /* v16: Local boot device path detail. UEFI 2.10 spec 10.3.2.1 (PCI
+     * Hardware DP) + 10.3.4.21 (NVMe Messaging DP). NSID always written;
+     * EUI-64 written only when at least one byte is non-zero (some NVMe
+     * firmware reports zero EUI-64 -- skipping the value matches Win11
+     * MSFT_Disk.UniqueId behavior of omitting absent identifiers). PCI
+     * sentinel 0xFF preserved verbatim. */
+    RegSetDword(hKey, "NamespaceId", g_boot_info.boot_nvme_nsid);
+    {
+        int eui_nonzero = 0;
+        int i;
+        for (i = 0; i < 8; i++) {
+            if (g_boot_info.boot_nvme_eui64[i] != 0) {
+                eui_nonzero = 1;
+                break;
+            }
+        }
+        if (eui_nonzero) {
+            RegSetValueEx(hKey, "NamespaceEui64", 0, REG_BINARY,
+                          g_boot_info.boot_nvme_eui64, 8);
+        }
+    }
+    RegSetDword(hKey, "PciDevice", (uint32_t)g_boot_info.boot_pci_device);
+    RegSetDword(hKey, "PciFunction", (uint32_t)g_boot_info.boot_pci_function);
+
     /* Format partition GUID as string for REG_SZ */
     if (g_boot_info.boot_partition_style == 2) {
         const uint8_t *g = g_boot_info.boot_partition_guid;

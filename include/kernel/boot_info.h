@@ -108,7 +108,15 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  * sanity gate;
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v15 adds extended UEFI boot-variable capability surface (boot_current_attrs,
+/* v16 adds local boot device path detail (boot_nvme_nsid, boot_nvme_eui64,
+ *     boot_pci_device, boot_pci_function) populated by walking the boot
+ *     device's UEFI device path for NVMe Messaging nodes (UEFI 2.10 spec
+ *     10.3.4.21) and PCI Hardware nodes (UEFI 2.10 spec 10.3.2.1).
+ *     Persisted in HKLM\SYSTEM\Boot\Device\ (NamespaceId, NamespaceEui64,
+ *     PciDevice, PciFunction). Win11 surfaces this via MSFT_Disk.UniqueId
+ *     + BusType; Linux surfaces it via /sys/class/nvme/nvmeX/nsid + sysfs
+ *     PCI BDF.
+ * v15 adds extended UEFI boot-variable capability surface (boot_current_attrs,
  *     boot_option_support, os_indications_supported, boot_description[64])
  *     populated by the UEFI bootloader from BootCurrent's Boot####.Attributes,
  *     the BootOptionSupport / OsIndicationsSupported globals, and the Boot####
@@ -126,7 +134,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  15
+#define BOOT_INFO_VERSION  16
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -1440,6 +1448,17 @@ struct boot_info {
     uint32_t boot_option_support;         /* BootOptionSupport global (UEFI 2.10 spec 3.1.4) */
     uint64_t os_indications_supported;    /* OsIndicationsSupported global (UEFI 2.10 spec 8.5.4) */
     char     boot_description[64];        /* Boot#### Description ASCII-truncated, NUL-terminated */
+
+    /* v16: Local boot device path detail (TODO-05 boot-device-detail).
+     * Per-bus identifiers extracted from the boot device's full UEFI
+     * device path: NVMe NSID + EUI-64 (UEFI 2.10 spec 10.3.4.21),
+     * leaf PCI device + function (UEFI 2.10 spec 10.3.2.1).
+     * Sentinels: nsid=0, eui64=all-zero, pci_*=0xFF when not on that bus. */
+    uint32_t boot_nvme_nsid;              /* NVMe NamespaceId; 0 = not NVMe or absent */
+    uint8_t  boot_nvme_eui64[8];          /* NVMe NamespaceUuid byte order (EUI-64); all-zero if absent */
+    uint8_t  boot_pci_device;             /* leaf PCI Device number (0..31), 0xFF if not on PCI */
+    uint8_t  boot_pci_function;           /* leaf PCI Function number (0..7), 0xFF if not on PCI */
+    uint8_t  _v16_pad[2];                 /* alignment to 4-byte boundary */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -1529,6 +1548,17 @@ _Static_assert(__builtin_offsetof(struct boot_info, os_indications_supported) ==
     "boot_info.os_indications_supported offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, boot_description) == 23888,
     "boot_info.boot_description offset drift -- update kernel + bootloader mirror");
+
+/* v16: Local boot device path detail offset asserts. Appended after v15
+ * boot_description (which ends at 23888 + 64 = 23952). */
+_Static_assert(__builtin_offsetof(struct boot_info, boot_nvme_nsid) == 23952,
+    "boot_info.boot_nvme_nsid offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_nvme_eui64) == 23956,
+    "boot_info.boot_nvme_eui64 offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_pci_device) == 23964,
+    "boot_info.boot_pci_device offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_pci_function) == 23965,
+    "boot_info.boot_pci_function offset drift -- update kernel + bootloader mirror");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

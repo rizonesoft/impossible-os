@@ -18,8 +18,8 @@
 
 static void test_boot_device_type_valid(void)
 {
-    TEST_ASSERT(g_boot_info.boot_device_type <= 4,
-                "boot_device_type is a valid enum value (0--4)");
+    TEST_ASSERT(g_boot_info.boot_device_type <= 6,
+                "boot_device_type is a valid enum value (0--6: unknown/SATA/NVMe/USB/network/SD/eMMC)");
 }
 
 static void test_boot_device_path_nonempty(void)
@@ -205,6 +205,74 @@ static void test_boot_current_attrs_active_consistency(void)
                 "BootCurrent's Boot####.Attributes ACTIVE bit set");
 }
 
+/* ---- Local boot device path detail (S14) ---- */
+
+static void test_boot_pci_sentinel_or_valid(void)
+{
+    /* PCI device: 0..31 (5-bit field), Function: 0..7 (3-bit field) per
+     * UEFI 2.10 spec 10.3.2.1. Either both 0xFF (not on PCI) OR both in
+     * valid ranges. Mixed sentinel/valid would mean partial population. */
+    uint8_t d = g_boot_info.boot_pci_device;
+    uint8_t f = g_boot_info.boot_pci_function;
+    if (d == 0xFF && f == 0xFF) {
+        /* Not on PCI bus -- valid sentinel pair, no further check. */
+        TEST_SKIP("Not on PCI -- 0xFF/0xFF sentinel pair");
+        return;
+    }
+    /* Reject mixed sentinel/valid (partial population is a bug). */
+    TEST_ASSERT(d != 0xFF && f != 0xFF,
+                "boot_pci_device/function are both populated (no mixed sentinel)");
+    TEST_ASSERT(d <= 31, "boot_pci_device <= 31 (PCI 5-bit field)");
+    TEST_ASSERT(f <= 7, "boot_pci_function <= 7 (PCI 3-bit field)");
+}
+
+static void test_boot_nvme_consistency(void)
+{
+    /* If NSID is non-zero, the boot was NVMe; the EUI-64 array exists
+     * but may be all-zero (some firmware doesn't fill it). Either case
+     * is legitimate per UEFI spec -- the assertion is just that the
+     * field exists and is bounded. NSID == 0 means non-NVMe boot. */
+    if (g_boot_info.boot_nvme_nsid == 0) {
+        TEST_SKIP("Not an NVMe boot -- skip NSID/EUI-64 consistency");
+        return;
+    }
+    /* On NVMe: device type should be 2 (NVMe). */
+    TEST_ASSERT_EQ(g_boot_info.boot_device_type, 2,
+                   "NSID != 0 implies boot_device_type == 2 (NVMe)");
+}
+
+static void test_registry_boot_path_detail(void)
+{
+    /* Phase 2 contract: boot_device_populate_registry() persists the
+     * v16 detail values. NamespaceId / PciDevice / PciFunction are
+     * always written (sentinels included); NamespaceEui64 only if
+     * at least one byte non-zero. */
+    HKEY hKey = (HKEY)0;
+    long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Boot\\Device", 0,
+                           KEY_READ, &hKey);
+    TEST_ASSERT(rc == 0,
+                "HKLM\\SYSTEM\\Boot\\Device exists for v16 detail values");
+    if (rc != 0) return;
+
+    uint32_t v32 = 0;
+    rc = RegGetDword(hKey, "NamespaceId", &v32);
+    TEST_ASSERT(rc == 0, "RegGetDword(NamespaceId) succeeds");
+    TEST_ASSERT_EQ(v32, g_boot_info.boot_nvme_nsid,
+                   "NamespaceId registry value matches boot_info");
+
+    rc = RegGetDword(hKey, "PciDevice", &v32);
+    TEST_ASSERT(rc == 0, "RegGetDword(PciDevice) succeeds");
+    TEST_ASSERT_EQ(v32, (uint32_t)g_boot_info.boot_pci_device,
+                   "PciDevice registry value matches boot_info");
+
+    rc = RegGetDword(hKey, "PciFunction", &v32);
+    TEST_ASSERT(rc == 0, "RegGetDword(PciFunction) succeeds");
+    TEST_ASSERT_EQ(v32, (uint32_t)g_boot_info.boot_pci_function,
+                   "PciFunction registry value matches boot_info");
+
+    RegCloseKey(hKey);
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_device(void)
@@ -235,6 +303,12 @@ void test_register_boot_device(void)
         test_boot_current_attrs_active_consistency, TEST_CAT_BOOT);
     test_suite_register_cat("Boot device: Registry v15 capability values match boot_info",
         test_registry_boot_var_caps_match_boot_info, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot device: PCI device/function in valid range or sentinel",
+        test_boot_pci_sentinel_or_valid, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot device: NVMe NSID consistent with device type",
+        test_boot_nvme_consistency, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot device: Registry v16 path detail matches boot_info",
+        test_registry_boot_path_detail, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */
