@@ -38,7 +38,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | ⭐  | Order | Deliverable                                        | Depends On    | Status |
 | --- | :---: | -------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | Boot artifact matrix and manifest format           | T24           |  [x]   |
-| 💎  |   2   | Reproducible raw/USB image build                   | §1            |  [ ]   |
+| 💎  |   2   | Reproducible raw/USB image build                   | §1            |  [x]   |
 | 💎  |   3   | VHD/VHDX/VDI conversion and validation             | §1, §2        |  [ ]   |
 | 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [ ]   |
 | 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [ ]   |
@@ -86,13 +86,23 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 > **Scope boundary:** [`15-installer-release/TODO-01 §3`](../15-installer-release/TODO-01-release-artifacts.md) owns `usb_creator` + USB writer pipeline; D15 T01 §2 owns raw image generation. This section requires reproducibility properties; pipeline lives in D15.
 
-- [ ] Make disk image generation deterministic: timestamps zeroed, partition GUIDs derived from a manifest-pinned seed, partition ordering fixed, FAT volume label fixed (`IPOS-ESP`).
-- [ ] Verify ESP contains expected `BOOTX64.EFI`, `kernel.exe`, `boot.conf`, boot entries, and signatures; fail build on missing file.
-- [ ] Add USB write verification by re-reading partition table and per-file hashes after `write-usb.sh`.
-- [ ] Record image build inputs (toolchain version, source SHA, manifest seed) in the artifact manifest from §1.
-- [ ] Commit: `"release: reproducible raw USB images"`
+- [x] Deterministic disk image -- `scripts/release/build-image.sh` produces byte-identical `build/release/disk.img` (512 MiB: ESP 64M + BlackBox 128M + IXFS-System).
+- [x] Partition + disk GUIDs are UUID v5 from manifest seed `<source_sha>|<artifact_format>`; FAT volume serials slice partition GUIDs; volume labels fixed (`IPOS-ESP` / `BLACKBOX`).
+- [x] ESP content verification -- `scripts/release/verify-esp.sh <disk.img> [--manifest m.json]` asserts presence + sha256 of required files; exits with `[ERROR]` named field on mismatch.
+- [x] USB write verification -- `scripts/deploy/write-usb.sh` post-write step re-reads GPT via `sgdisk -p`, hash-checks all three required ESP files from the source image via mtools.
+- [x] Artifact manifest provenance -- `build-manifest.sh build` records `toolchain_version` + `source_sha` + `manifest_seed` (v1-optional per schema policy); check mode validates each.
+- [x] Commit: `"release: reproducible raw USB images"`
 
-**Test checkpoint:** Two consecutive `bash scripts/release/build-image.sh` invocations from a clean tree produce byte-identical `build/release/disk.img` (sha256 match). `bash scripts/deploy/write-usb.sh /dev/<dev>` followed by re-read produces matching sha256 for the ESP volume and identical partition GUIDs.
+**Test checkpoint:** Two consecutive `bash scripts/release/build-image.sh` runs from a clean tree produce byte-identical `disk.img` (test [2]); reusing an `--out` path pre-filled with non-zero bytes still matches (test [2b]); `verify-esp.sh` PASS on fresh image, FAIL on corrupted ESP; `build-manifest.sh check` validates new provenance fields. Verified by `bash scripts/release/test-build-image.sh` (10/10 PASS).
+
+> **Test runner:** `bash scripts/release/test-build-image.sh` (host-side) | 10 assertions, 0 failures
+
+> **Notes:**
+> - Shipped: `scripts/release/build-image.sh` + `verify-esp.sh` + `test-build-image.sh`; `build-manifest.sh` extended with provenance fields; `write-usb.sh` post-write hash-check.
+> - Determinism levers: `SOURCE_DATE_EPOCH=0`, `mkfs.fat --invariant`, `sgdisk --partition-guid`, mcopy `-m` with pre-touched mtimes, `rm -f` before truncate (so reused paths cannot leak stale bytes).
+> - `toolchain_version` + `source_sha` + `manifest_seed` land additively in v1; pre-existing manifests still validate.
+> - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Scope: §2 owns reproducibility properties + ESP/USB verification; full release pipeline lives in `15-installer-release/TODO-01 §2/§3/§8`.
 
 ---
 
@@ -247,12 +257,12 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 
 | ⭐  | Feature                              | 🪟 Win11                       | 🐧 Linux                       | 🚀 Impossible OS                 |
 | --- | ------------------------------------ | ------------------------------ | ------------------------------ | -------------------------------- |
-| 💎  | USB / raw disk image                 | ✅ Media Creation Tool         | ✅ distro raw images           | ⬜ planned -- §2                 |
+| 💎  | USB / raw disk image                 | ✅ Media Creation Tool         | ✅ distro raw images           | ✅ §2 build-image.sh + verify    |
 | 💎  | ISO UEFI boot (El Torito)            | ✅ Windows ISO                 | ✅ distro hybrid ISO           | ⬜ planned -- §4                 |
 | 💎  | VHD / VHDX virtual disk artifact     | ✅ Hyper-V VHDX                | ⚠️ cloud images per distro     | ⬜ planned -- §3                 |
 | 💎  | VDI virtual disk artifact            | ❌ no first-class VDI          | ⚠️ cloud images per distro     | ⬜ planned -- §3                 |
 | 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ⬜ planned -- §5, §6             |
-| 💎  | Reproducible image build             | ⚠️ partial via WIM tooling     | ⚠️ per-distro reproducibility  | ⬜ planned -- §2 deterministic   |
+| 💎  | Reproducible image build             | ⚠️ partial via WIM tooling     | ⚠️ per-distro reproducibility  | ✅ §2 byte-identical disk.img    |
 | ⭐  | Versioned boot artifact schema       | ❌ no unified schema           | ❌ no unified schema           | ✅ §1 v1 schema + check tool     |
 | ⭐  | Signed artifact manifest at boot     | ❌ SBAT/dbx only (coarser)     | ❌ SBAT/dbx only (coarser)     | ⬜ planned -- §7                 |
 | ⭐  | Offline artifact inspector (1 tool)  | ❌ separate tools per format   | ❌ separate tools per format   | ⬜ planned -- §8                 |

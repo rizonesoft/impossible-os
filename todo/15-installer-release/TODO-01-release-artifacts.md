@@ -112,6 +112,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
   6. Print: `Release image: impossible-os-{ver}.img.zst ({size} bytes, SHA-256: {hash})`
 - [ ] **`make release-image`** target: calls `scripts/release-image.sh`; depends on `make` (build) completing first
 - [ ] **Decompression instructions** in `docs/infrastructure/install-from-image.md`: `zstd -d impossible-os-{ver}.img.zst -o impossible-os.img && dd if=impossible-os.img of=/dev/sdX bs=4M status=progress`
+- [ ] **Deterministic-image XREF** -- `release-image.sh` calls `scripts/release/build-image.sh` (owner: `D01 T06 §2`) and runs `verify-esp.sh` as the pre-compress gate.
 
 ---
 
@@ -132,6 +133,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
   - Write button: `CreateFile(\\.\\PhysicalDriveN, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL)`; `DeviceIoControl(IOCTL_DISK_SET_DRIVE_LAYOUT_EX, ...)` to clear partition table first; `WriteFile` in 4 MiB chunks; progress bar
   - Requires running as Administrator (manifest `requireAdministrator`); show UAC prompt on launch
   - Compiled from host: `gcc -O2 -mwindows -o usb_creator.exe usb_creator.c -lsetupapi`
+- [ ] **Post-write verify XREF** -- `make-usb.sh` runs the `D01 T06 §2` post-write hash-check (sgdisk -p re-read + per-file sha256 of all required ESP files) before declaring success.
 
 ---
 
@@ -302,6 +304,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
   - How to verify: `make verify-reproducible` instructions
   - Known non-reproducible elements (if any): document and track as issues
   - Reference: `https://reproducible-builds.org/`
+- [ ] **Disk-image reproducibility XREF** -- `D01 T06 §2` already ships byte-identical `disk.img` via `build-image.sh`; this section's `make verify-reproducible` target invokes it twice and compares.
 
 ---
 

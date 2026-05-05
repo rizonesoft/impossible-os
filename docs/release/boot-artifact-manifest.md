@@ -39,6 +39,9 @@ The bootloader verifier and packaging gate REJECT manifests missing any of the f
 | `entries[]`            | array of objects      | Enumerated artifact entries (bootloader, kernel, boot_entries, blackbox, recovery_payloads); see Entries. |
 | `bootloader_sha256`    | string (64-hex)       | Convenience denormalized sha256 of the bootloader entry. MUST match `entries[name=bootloader].sha256`. |
 | `kernel_sha256`        | string (64-hex)       | Convenience denormalized sha256 of the kernel entry. MUST match `entries[name=kernel].sha256`.        |
+| `toolchain_version`    | string (opt.)         | One-line concatenation of `clang --version | ld.lld --version | nasm -v` first lines. Captures the toolchain identity that produced the binaries. Optional in v1; consumers use it to verify the building host matches an audited toolchain. |
+| `source_sha`           | string (40-hex, opt.) | `git rev-parse HEAD` of the source tree at build time, or the literal string `unknown` when git metadata is unavailable. |
+| `manifest_seed`        | string (opt.)         | `<source_sha>\|<artifact_format>`. Same string the deterministic-disk-image producer feeds into UUID v5 partition GUID derivation; binding it into the manifest lets a verifier reconstruct the GUID values without re-running the producer. |
 
 The `bootloader_sha256` and `kernel_sha256` fields are denormalized so the verifier does not need to walk `entries[]` for the two most-common-checked artifacts. The packaging gate enforces that they match the corresponding `entries[]` row before producing the manifest.
 

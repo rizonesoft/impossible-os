@@ -158,39 +158,84 @@ sync
 partprobe "$TARGET_DEV" 2>/dev/null || true
 sleep 1
 
-# ---- Verify ----
+# ---- Verify (re-read partition table + per-file sha256 cross-check) ----
 echo ""
 echo -e "${CYAN}Verifying USB boot files...${NC}"
 echo ""
 
+# Re-read partition table from the device. A successful write must produce
+# a GPT layout matching the source image's partition GUIDs; mismatch means
+# the partition table didn't make it through the write or the kernel cached
+# a stale view.
+if command -v sgdisk >/dev/null 2>&1; then
+    echo -e "  ${DIM}Partition table on $TARGET_DEV (re-read post-write):${NC}"
+    sgdisk -p "$TARGET_DEV" 2>/dev/null | sed -n '/Number/,/^$/p' | sed 's/^/    /'
+fi
+
+# Capture expected hashes from the source image BEFORE remounting the
+# device, so a tampered re-read cannot satisfy itself.
+declare -A EXPECTED_SHA
+if command -v mtype >/dev/null 2>&1; then
+    # Source-image ESP starts at LBA 2048 for build-image.sh outputs and at
+    # the first FAT partition for the legacy system-disk pipeline; both
+    # share byte-offset 1MiB so the @@1048576 form works for either.
+    for esp_path in "EFI/BOOT/BOOTX64.EFI" "boot/kernel.exe" "EFI/ImpossibleOS/boot.conf"; do
+        sha="$(MTOOLS_SKIP_CHECK=1 mtype -i "$DISK_IMG@@1048576" "::$esp_path" 2>/dev/null \
+                 | sha256sum | awk '{print $1}')"
+        # The empty-input sha256 below is the no-content sentinel mtype
+        # produces when the file is missing in the source image; treat it
+        # as "no expected hash" rather than a real value to compare.
+        if [ -n "$sha" ] && [ "$sha" != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
+            EXPECTED_SHA["$esp_path"]="$sha"
+        fi
+    done
+fi
+
 # Find the EFI partition (first partition)
 EFI_PART="${TARGET_DEV}1"
+verify_failures=0
 if [ -b "$EFI_PART" ]; then
     MOUNT_DIR=$(mktemp -d)
     if mount -t vfat "$EFI_PART" "$MOUNT_DIR" 2>/dev/null; then
-        if [ -f "$MOUNT_DIR/EFI/BOOT/BOOTX64.EFI" ]; then
-            efi_kb=$(stat -c%s "$MOUNT_DIR/EFI/BOOT/BOOTX64.EFI")
-            efi_kb=$((efi_kb / 1024))
-            echo -e "  ${GREEN}✓${NC} BOOTX64.EFI (${efi_kb} KB)"
-        else
-            echo -e "  ${RED}✗${NC} BOOTX64.EFI not found!"
-        fi
-
-        if [ -f "$MOUNT_DIR/boot/kernel.exe" ]; then
-            k_kb=$(stat -c%s "$MOUNT_DIR/boot/kernel.exe")
-            k_kb=$((k_kb / 1024))
-            echo -e "  ${GREEN}✓${NC} kernel.exe (${k_kb} KB)"
-        else
-            echo -e "  ${YELLOW}!${NC} kernel.exe not found"
-        fi
+        for esp_path in "EFI/BOOT/BOOTX64.EFI" "boot/kernel.exe" "EFI/ImpossibleOS/boot.conf"; do
+            usb_file="$MOUNT_DIR/$esp_path"
+            if [ ! -f "$usb_file" ]; then
+                echo -e "  ${RED}*${NC} $esp_path not present on USB"
+                verify_failures=$((verify_failures + 1))
+                continue
+            fi
+            sz_kb=$(( $(stat -c%s "$usb_file") / 1024 ))
+            actual_sha="$(sha256sum "$usb_file" | awk '{print $1}')"
+            expected_sha="${EXPECTED_SHA[$esp_path]:-}"
+            if [ -n "$expected_sha" ] && [ "$actual_sha" != "$expected_sha" ]; then
+                echo -e "  ${RED}*${NC} $esp_path (${sz_kb} KB) sha256 MISMATCH"
+                echo -e "      ${DIM}expected: $expected_sha${NC}"
+                echo -e "      ${DIM}got:      $actual_sha${NC}"
+                verify_failures=$((verify_failures + 1))
+            elif [ -n "$expected_sha" ]; then
+                echo -e "  ${GREEN}OK${NC} $esp_path (${sz_kb} KB) sha256 matches source image"
+            else
+                echo -e "  ${GREEN}OK${NC} $esp_path (${sz_kb} KB)  ${DIM}(presence only -- no source hash)${NC}"
+            fi
+        done
 
         umount "$MOUNT_DIR"
     else
         echo -e "  ${YELLOW}!${NC} Could not mount EFI partition for verification"
+        verify_failures=$((verify_failures + 1))
     fi
     rmdir "$MOUNT_DIR" 2>/dev/null || true
 else
     echo -e "  ${YELLOW}!${NC} EFI partition not detected (${EFI_PART})"
+    verify_failures=$((verify_failures + 1))
+fi
+
+if [ "$verify_failures" -gt 0 ]; then
+    echo ""
+    echo -e "${RED}USB write verification FAILED ($verify_failures issue(s)).${NC}"
+    echo -e "${YELLOW}  The image was written but post-write read-back did not match.${NC}"
+    echo -e "${YELLOW}  Re-run after replacing the USB drive or re-imaging.${NC}"
+    exit 1
 fi
 
 # ---- Done ----

@@ -71,6 +71,19 @@ size_of() {
     stat -c '%s' "$f"
 }
 
+toolchain_fingerprint() {
+    # One-line concatenation of the three toolchain version strings used by
+    # scripts/build.sh: clang (compiler), lld (linker), nasm (assembler).
+    # Each command is invoked with --version and the first non-empty line is
+    # taken; missing tools collapse to "missing-<tool>" so a partial dev
+    # host produces a self-describing rather than empty fingerprint.
+    local clang_v lld_v nasm_v
+    clang_v="$(clang-19 --version 2>/dev/null | head -1)"; clang_v="${clang_v:-missing-clang}"
+    lld_v="$(ld.lld-19 --version 2>/dev/null | head -1)"; lld_v="${lld_v:-missing-lld}"
+    nasm_v="$(nasm -v 2>/dev/null | head -1)"; nasm_v="${nasm_v:-missing-nasm}"
+    printf '%s | %s | %s' "$clang_v" "$lld_v" "$nasm_v"
+}
+
 read_boot_info_version_from_binary() {
     # Stale-binding guard: refuse to publish a manifest if the ABI JSON is
     # older than either artifact we are about to hash. Otherwise a release
@@ -183,6 +196,15 @@ cmd_build() {
         *)         media_role="normal"    ;;
     esac
 
+    # Provenance fields (additive, optional in v1 schema): record the
+    # toolchain identity, source commit, and the seed used by deterministic
+    # partition GUID derivation in build-image.sh, so a release manifest
+    # carries everything needed to reproduce the artifact byte-for-byte.
+    local toolchain_version source_sha manifest_seed
+    toolchain_version="$(toolchain_fingerprint)"
+    source_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    manifest_seed="${source_sha}|${format}"
+
     BOOTLOADER_SHA="$bl_sha" \
     BOOTLOADER_SIZE="$bl_size" \
     KERNEL_SHA="$kernel_sha" \
@@ -191,6 +213,9 @@ cmd_build() {
     ARTIFACT_FORMAT="$format" \
     MEDIA_ROLE="$media_role" \
     SECURE_BOOT_STATUS="$secure_boot_status" \
+    TOOLCHAIN_VERSION="$toolchain_version" \
+    SOURCE_SHA="$source_sha" \
+    MANIFEST_SEED="$manifest_seed" \
     OUT_PATH="$out" \
     python3 - <<'PY'
 import json, os, uuid
@@ -234,6 +259,9 @@ m = {
     ],
     "bootloader_sha256": os.environ["BOOTLOADER_SHA"],
     "kernel_sha256":     os.environ["KERNEL_SHA"],
+    "toolchain_version": os.environ["TOOLCHAIN_VERSION"],
+    "source_sha":        os.environ["SOURCE_SHA"],
+    "manifest_seed":     os.environ["MANIFEST_SEED"],
 }
 
 with open(os.environ["OUT_PATH"], "w") as f:
@@ -491,6 +519,26 @@ if fmt == "installer" and mr != "installer":
     errors.append(f"artifact_format=installer requires media_role=installer (got: {mr!r})")
 if fmt == "recovery" and mr != "recovery":
     errors.append(f"artifact_format=recovery requires media_role=recovery (got: {mr!r})")
+
+# Provenance fields: optional in v1, but if present they must be the right
+# shape so a downstream consumer can rely on them without extra parsing.
+hex40 = re.compile(r"^[0-9a-fA-F]{40}$")
+if "source_sha" in m:
+    v = m["source_sha"]
+    if not isinstance(v, str) or (v != "unknown" and not hex40.match(v)):
+        errors.append(f"source_sha must be 40-hex git SHA or 'unknown' (got: {v!r})")
+if "toolchain_version" in m:
+    v = m["toolchain_version"]
+    if not isinstance(v, str) or not v:
+        errors.append(f"toolchain_version must be a non-empty string (got: {v!r})")
+if "manifest_seed" in m:
+    v = m["manifest_seed"]
+    if not isinstance(v, str) or "|" not in v:
+        errors.append(f"manifest_seed must be '<source_sha>|<artifact_format>' (got: {v!r})")
+    elif "source_sha" in m and "artifact_format" in m:
+        expected = f"{m['source_sha']}|{m['artifact_format']}"
+        if v != expected:
+            errors.append(f"manifest_seed must equal '{expected}' (got: {v!r})")
 
 if errors:
     for e in errors:
