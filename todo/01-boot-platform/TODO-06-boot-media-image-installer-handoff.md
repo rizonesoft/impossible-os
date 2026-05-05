@@ -65,16 +65,19 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] Fail release packaging if any artifact lacks a manifest -- `check` mode exits non-zero with `[ERROR]` naming the missing field.
 - [x] Commit: `"release: pin boot-platform manifest schema requirements"`
 
-**Test checkpoint:** `bash scripts/release/build-manifest.sh build` emits `build/artifacts/manifest.json` with non-empty `bootloader_sha256`, `kernel_sha256`, `partition_map[]`, `secure_boot_status`, and `boot_info_version` fields. Truncating the manifest to remove the `kernel_sha256` field fails packaging with exit code != 0 and a non-empty stderr message naming the missing field. Verified by `bash scripts/release/test-build-manifest.sh` (10/10 PASS).
+**Test checkpoint:** `bash scripts/release/build-manifest.sh build` emits `build/artifacts/manifest.json` with non-empty `bootloader_sha256`, `kernel_sha256`, `partition_map[]`, `secure_boot_status`, and `boot_info_version` fields. Truncating the manifest to remove the `kernel_sha256` field fails packaging with exit code != 0 and a non-empty stderr message naming the missing field. Verified by `bash scripts/release/test-build-manifest.sh` (23/23 PASS).
 
-> **Test runner:** `bash scripts/release/test-build-manifest.sh` (host-side) | 20 assertions, 0 failures
+> **Test runner:** `bash scripts/release/test-build-manifest.sh` (host-side) | 23 assertions, 0 failures
 
 > **Notes:**
 > - Schema doc at `docs/release/boot-artifact-manifest.md` (v1; 11 required top-level fields, GPT-extended fields v1-optional).
-> - Generator + verifier `scripts/release/build-manifest.sh build|check`; binary-derived `boot_info_version`, deterministic UUID v5, sign-stamp via `SIGN_FINGERPRINT_FILE`.
-> - Test harness `scripts/release/test-build-manifest.sh` (10/10 PASS); manifest consumed by D15 T01 §6 release pipeline as `type: "boot_manifest"`.
-> - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Generator + verifier `scripts/release/build-manifest.sh build|check`; binary-derived `boot_info_version` with stale-ABI-JSON refusal, deterministic UUID v5, sign-stamp via `SIGN_FINGERPRINT_FILE`.
+> - Check mode is structural-only; the kernel/bootloader-vs-`boot_info_version` semantic binding is enforced by build mode (mtime guard) and re-verified at load time by the bootloader (§7).
+> - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md); manifest consumed by D15 T01 §6 release pipeline as `type: "boot_manifest"`.
 > - Scope: §1 owns schema + host-side tooling; §6 owns boot_info ABI; §7 owns bootloader-side signature verification.
+
+> **Verified:** 2026-05-05 ship | commit `2460cbe3` | 6/6 items | build OK | tests 23/23 PASS | lint clean
+> **Quality reviewed:** 2026-05-05 | Codex 3x (adversarial, consistency, perf) | 2H+2M+1L fixed, 0 open | scope: N/A (host-side bash + docs)
 
 ---
 
@@ -224,6 +227,7 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | 💎  | VDI virtual disk artifact            | ❌ no first-class VDI          | ⚠️ cloud images per distro     | ⬜ planned -- §3                 |
 | 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ⬜ planned -- §5, §6             |
 | 💎  | Reproducible image build             | ⚠️ partial via WIM tooling     | ⚠️ per-distro reproducibility  | ⬜ planned -- §2 deterministic   |
+| ⭐  | Versioned boot artifact schema       | ❌ no unified schema           | ❌ no unified schema           | ✅ §1 v1 schema + check tool     |
 | ⭐  | Signed artifact manifest at boot     | ❌ SBAT/dbx only (coarser)     | ❌ SBAT/dbx only (coarser)     | ⬜ planned -- §7                 |
 | ⭐  | Offline artifact inspector (1 tool)  | ❌ separate tools per format   | ❌ separate tools per format   | ⬜ planned -- §8                 |
 | ⭐  | UKI as a release artifact format     | ❌ no UKI ecosystem            | ✅ systemd-boot UKI            | ⬜ planned -- §11                |

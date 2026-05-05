@@ -74,15 +74,20 @@ Each `entries[i]` object describes one boot-platform-relevant file inside the ar
 
 ## Failure modes
 
-The packaging gate (`scripts/release/build-manifest.sh check <manifest>`) exits non-zero on any of:
+The packaging gate (`scripts/release/build-manifest.sh check <manifest>`) is **structural-only** -- it validates the JSON shape against this schema without access to the build tree. It exits non-zero on any of:
 
 - A required field above is missing from the JSON.
 - `bootloader_sha256` or `kernel_sha256` is empty or not 64 hex chars.
 - `partition_map[]` is empty.
-- `entries[]` is missing the required `bootloader` or `kernel` row.
-- `boot_info_version` does not match the kernel + bootloader pair the manifest claims to describe (when invoked in build mode against a tree).
+- `entries[]` is missing the required `bootloader` or `kernel` row, or a non-optional row carries an unknown `name`.
+- An enum field (`artifact_format`, `secure_boot_status`, `media_role`, `filesystem`) carries a value outside its allowed set.
+- An integer field falls outside its documented range, or a UUID/GUID field violates its 8-4-4-4-12 form.
+- `artifact_uuid` does not equal the deterministic UUID v5 reconstructed from the on-disk seed (`format|bootloader_sha256|kernel_sha256|boot_info_version`).
+- A cross-field invariant is violated (e.g. `artifact_format=installer` with `media_role!=installer`).
 
 Stderr message names the failed field by name, prefixed with `[ERROR]`.
+
+The kernel/bootloader-vs-`boot_info_version` semantic binding is enforced upstream by **build mode**, not by check: `build` refuses to emit a manifest when `build/boot-info-abi.kernel.json` (the binary-derived ABI mirror produced by `tools/boot-info-manifest/dump-kernel`) is older than either `BOOTX64.EFI` or `kernel.exe`. That staleness assertion ties `boot_info_version` to the exact artifact pair being hashed at build time. The bootloader-side verifier closes the loop at load time by re-checking the manifest against the running ABI version in `boot_info`.
 
 ## Bootloader-side verification
 

@@ -72,18 +72,29 @@ size_of() {
 }
 
 read_boot_info_version_from_binary() {
-    # Read from the build-time-generated manifest file rather than the source
-    # header. The mirror dumper builds this JSON from the ACTUALLY COMPILED
-    # bootloader and kernel; its `version` field is the value embedded in the
-    # binaries, immune to stale-build / -DBOOT_INFO_VERSION override drift.
-    local abi="build/boot-info-abi.kernel.json"
+    # Stale-binding guard: refuse to publish a manifest if the ABI JSON is
+    # older than either artifact we are about to hash. Otherwise a release
+    # step that rebuilt kernel.exe / BOOTX64.EFI without regenerating
+    # boot-info-abi.kernel.json would bind current artifact hashes to a
+    # stale boot_info_version field, defeating the binary-derived contract.
+    local abi="${BOOT_INFO_ABI_FILE:-build/boot-info-abi.kernel.json}"
     if [ ! -f "$abi" ]; then
         err "missing $abi -- run scripts/build.sh first to generate the binary-derived ABI manifest"
         return 1
     fi
-    python3 -c '
-import json, sys
-with open("'"$abi"'") as f:
+    local bl="build/tools/BOOTX64.EFI"
+    local kr="build/kernel.exe"
+    local abi_mt bl_mt kr_mt
+    abi_mt="$(stat -c '%Y' "$abi" 2>/dev/null || echo 0)"
+    bl_mt="$(stat -c '%Y' "$bl" 2>/dev/null || echo 0)"
+    kr_mt="$(stat -c '%Y' "$kr" 2>/dev/null || echo 0)"
+    if [ "$bl_mt" -gt "$abi_mt" ] || [ "$kr_mt" -gt "$abi_mt" ]; then
+        err "$abi is older than build artifacts; rebuild via scripts/build.sh to regenerate the binary-derived ABI manifest"
+        return 1
+    fi
+    BOOT_INFO_ABI_FILE="$abi" python3 -c '
+import json, os
+with open(os.environ["BOOT_INFO_ABI_FILE"]) as f:
     print(json.load(f)["version"])
 '
 }
@@ -386,7 +397,13 @@ hex64 = re.compile(r"^[0-9a-fA-F]{64}$")
 ALLOWED_ENTRY_NAMES = {"bootloader", "kernel", "boot_entries", "blackbox_skeleton", "recovery_payloads"}
 
 def validate_entry_row(e, required):
-    """Validate one entries[] row. `required` toggles strict-required-row checks."""
+    """Validate one entries[] row. `required` toggles strict-required-row checks.
+
+    Schema-version policy (manifest_version=1) allows additive optional entry
+    names without bumping the version: the verifier skips unknown optional
+    entries shape-wise, but still enforces path/sha256/size_bytes/optional
+    so a malformed row cannot hide behind an unknown name.
+    """
     if not isinstance(e, dict):
         return [f"entries[] item is not an object: {e!r}"]
     row_errs = []
@@ -395,8 +412,10 @@ def validate_entry_row(e, required):
         row_errs.append(f"entries[] item missing string name (got: {name!r})")
         return row_errs
     if name not in ALLOWED_ENTRY_NAMES:
-        row_errs.append(f"entries[].name must be one of {sorted(ALLOWED_ENTRY_NAMES)} (got: {name!r})")
-        return row_errs
+        if required or e.get("optional") is not True:
+            row_errs.append(f"entries[].name must be one of {sorted(ALLOWED_ENTRY_NAMES)} when not optional (got: {name!r})")
+            return row_errs
+        # Additive optional row: validate shape only, name is forward-compatible.
     label = f"entries[name={name}]"
     if "path" not in e or not isinstance(e["path"], str) or not e["path"]:
         row_errs.append(f"{label}.path missing or not a non-empty string")

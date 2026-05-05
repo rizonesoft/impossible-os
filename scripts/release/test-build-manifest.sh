@@ -223,6 +223,64 @@ else
     bad "stale stamp should produce unsigned"
 fi
 
+note "[4j] build refuses stale boot-info-abi.kernel.json (older than artifacts)"
+abi_tmp="$TMPDIR/abi.json"
+cp build/boot-info-abi.kernel.json "$abi_tmp"
+touch -d "1 hour ago" "$abi_tmp"
+set +e
+err_out="$(BOOT_INFO_ABI_FILE="$abi_tmp" bash scripts/release/build-manifest.sh build --out "$TMPDIR/m_stale_abi.json" 2>&1 >/dev/null)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s' "$err_out" | grep -q 'older than build artifacts'; then
+    ok "stale ABI JSON refuses build"
+else
+    bad "stale ABI JSON should fail; got rc=$rc, err: $err_out"
+fi
+
+note "[4k] check accepts additive optional entry name (v1 forward-compat)"
+python3 -c '
+import json, sys
+p = sys.argv[1]
+with open(p) as f: m = json.load(f)
+m["entries"].append({
+    "name": "future_payload",
+    "path": "\\\\IPOS\\\\future.bin",
+    "sha256": "0"*64,
+    "size_bytes": 4096,
+    "optional": True,
+})
+with open(p + ".additive", "w") as f: json.dump(m, f)
+' "$TMPDIR/m.json"
+if bash scripts/release/build-manifest.sh check "$TMPDIR/m.json.additive" >/dev/null 2>&1; then
+    ok "additive optional entry passes check"
+else
+    bad "additive optional entry should pass; check rejected it"
+fi
+
+note "[4l] check rejects unknown entry name when optional=false"
+python3 -c '
+import json, sys
+p = sys.argv[1]
+with open(p) as f: m = json.load(f)
+m["entries"].append({
+    "name": "future_payload",
+    "path": "\\\\IPOS\\\\future.bin",
+    "sha256": "0"*64,
+    "size_bytes": 4096,
+    "optional": False,
+})
+with open(p + ".bad_additive", "w") as f: json.dump(m, f)
+' "$TMPDIR/m.json"
+set +e
+err_out="$(bash scripts/release/build-manifest.sh check "$TMPDIR/m.json.bad_additive" 2>&1 >/dev/null)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s' "$err_out" | grep -q 'must be one of'; then
+    ok "rejects unknown non-optional entry name"
+else
+    bad "should have rejected; got rc=$rc, err: $err_out"
+fi
+
 note "[5] deterministic build (artifact_uuid is reproducibility-friendly)"
 bash scripts/release/build-manifest.sh build --out "$TMPDIR/m2.json" >/dev/null
 if cmp -s "$TMPDIR/m.json" "$TMPDIR/m2.json"; then
