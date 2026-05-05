@@ -65,7 +65,7 @@ from typing import Optional
 
 # --- Constants -----------------------------------------------------------
 
-VALID_TEST_LAYERS = ("kernel", "usermode", "desktop")
+VALID_TEST_LAYERS = ("kernel", "usermode", "desktop", "release")
 
 # `**Test runner:**` line variants. We accept both the canonical
 # `> **Test runner:** ` blockquote form and the un-blockquoted form, with
@@ -611,7 +611,9 @@ def check_bat_alignment(nodes: list, snapshot: dict, repo_root: Path) -> list:
     runners (`bash scripts/test.sh`, `make test-X`, `bash scripts/build.sh`,
     "build-time check" prose, etc.) are out of scope for this check;
     bat-alignment is specifically about the Windows-side per-category bat
-    files split into kernel/usermode/desktop subdirs on 2026-04-20."""
+    files split into kernel/usermode/desktop subdirs on 2026-04-20, with
+    `release` reserved for native-Windows release-pipeline tooling
+    (build-manifest, write-usb, to-vhdx, to-iso PowerShell shims)."""
     findings: list = []
     for n in nodes:
         rel = n["file_path"]

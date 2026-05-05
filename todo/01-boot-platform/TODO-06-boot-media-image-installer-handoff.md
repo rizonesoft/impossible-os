@@ -48,6 +48,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [ ]   |
 | 💎  |  10   | Release checklist and documentation                | §1--§9        |  [ ]   |
 | ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [ ]   |
+| 💎  |  12   | Windows host parity for build + test tooling       | §1--§4, §8    |  [ ]   |
 
 > 💎 = parity -- Win11 (Media Creation Tool / Hyper-V VHDX / Windows ISO) and Linux (distro hybrid ISOs / cloud VHD-VDI) both cover items 1-6 + 9-10.
 > ⭐ = exclusive -- §7 release-key-signed artifact manifest verified at the bootloader stage; §8 single offline inspector covering raw/VHD/VHDX/VDI/ISO.
@@ -213,6 +214,31 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 - [ ] Tests: `test_media_role_uki_cmdline` (mock UKI with `media_role=recovery`) and `test_media_role_network_dhcp_option` (mock DHCP).
 - [ ] Commit: `"boot: cross-format media role for UKI + network artifacts"`
 
+**Test checkpoint:** UKI artifact boots with `media_role=recovery` parsed from `.cmdline`; PXE/HTTP boot reports `boot_media_role = network` and rejects unsigned manifest. `test_media_role_uki_cmdline` and `test_media_role_network_dhcp_option` both PASS.
+
+---
+
+## 12. Windows Host Parity for Build + Test Tooling
+
+> **Scope boundary:** Bash on Linux / WSL is the canonical host path; this section adds native Windows PowerShell scripts + `.bat` shims so a developer on a Windows test laptop can build, write, and verify release artifacts without WSL. Each PS1 is a peer of the existing `.sh`, not a wrapper around WSL. Detailed recipes per script live in `docs/release/windows-host-tooling.md`.
+
+- [ ] `scripts/release/build-manifest.ps1` -- peer of `build-manifest.sh build|check`; same arg surface, exit codes, stderr grammar; UUID v5 + JSON byte-identical to bash output.
+- [ ] `scripts/release/test-build-manifest.ps1` -- peer of `test-build-manifest.sh` (23 assertions); honors the same `BOOT_INFO_ABI_FILE` / `SIGN_FINGERPRINT_FILE` / `SIGN_STAMP_FILE` env contract.
+- [ ] `scripts/deploy/write-usb.ps1` -- USB writer via `Get-Disk` / `Initialize-Disk` / `New-Partition`; refuses any disk where `BusType -ne 'USB'`; post-write per-file sha256 cross-check.
+- [ ] `scripts/release/to-vhdx.ps1` -- VHDX conversion via `New-VHD` (Hyper-V module) with `qemu-img.exe` fallback; preserves GPT layout + per-partition sha256.
+- [ ] `scripts/release/to-iso.ps1` -- hybrid UEFI ISO via `oscdimg.exe` (Windows ADK) with `xorriso.exe` fallback; matches §4 bash output byte-for-byte.
+- [ ] `tools/bootimg/bootimg.bat` -- Windows-native shim wrapping `python bootimg.py` (tries `py -3` first, then `python.exe`); enables `bootimg inspect` on a clean WSL-less host.
+- [ ] `scripts/debug/release/run-build-manifest-tests.bat` -- new `release/` subdir aggregate runner for §1 harness on Windows; mirrors `scripts/debug/kernel/run-*.bat` shape.
+- [ ] `scripts/debug/release/run-write-usb.bat`, `run-to-vhdx.bat`, `run-to-iso.bat` -- one-line per-artifact bat shims invoking the matching PS1.
+- [ ] `scripts/debug/release/run-all-release-tests.bat` -- aggregate that chains every per-artifact `run-*.bat` for a one-button Windows release-tooling smoke; mirrors `run-all-kernel-tests.bat`.
+- [ ] Cross-host parity test under `tools/bootimg/tests/cross_host/`: PS1 + bash pair produce byte-identical manifests + identical exit codes for identical inputs; runs on both hosts in CI (§9).
+- [ ] `docs/release/windows-host-tooling.md` -- per-script Windows-host recipe (Hyper-V module, ADK, qemu-tools, ExecutionPolicy, UAC elevation, signtool path) and the no-WSL guarantee.
+- [ ] Commit: `"release: windows-host parity for build + test tooling"`
+
+**Test checkpoint:** On a clean Windows host (PowerShell 5.1+, no WSL), `scripts\debug\release\run-build-manifest-tests.bat` exits 0 with `23 pass, 0 fail`. `build-manifest.ps1 build` and `build-manifest.sh build` produce byte-identical `manifest.json`. `write-usb.ps1` refuses non-USB disks with `[ERROR] disk N is BusType=<x>; only BusType=USB is allowed`.
+
+> **Planned runner:** `scripts\debug\release\run-build-manifest-tests.bat` (Windows host) | 23 assertions, 0 failures (cross-host parity with bash harness). When §12 ships, `scripts/todo-graph/validate.py` `VALID_TEST_LAYERS` extends to `("kernel", "usermode", "desktop", "release")` and the bat-alignment check accepts the new subdir.
+
 **Test checkpoint:** UKI built with `media_role=installer` in `.cmdline` produces `boot_info.boot_media_role == 1` without ESP `role.txt`. PXE-booted kernel with matching DHCP option produces `boot_media_role == 5` (network) and runs manifest verification against HTTP-served `manifest.json.sig`. Conflicting markers across sources produce `[WARN] Media role conflict: <src1>=<v1> vs <src2>=<v2>` and the highest-precedence source wins per the §5 documentation.
 
 ---
@@ -232,8 +258,9 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | ⭐  | Offline artifact inspector (1 tool)  | ❌ separate tools per format   | ❌ separate tools per format   | ⬜ planned -- §8                 |
 | ⭐  | UKI as a release artifact format     | ❌ no UKI ecosystem            | ✅ systemd-boot UKI            | ⬜ planned -- §11                |
 | 💎  | Network-boot kernel + manifest       | ⚠️ WDS / iPXE chainload        | ✅ PXE + HTTP boot + dracut    | ⬜ planned -- §11 + T25          |
+| ⭐  | Native Windows + Linux build hosts   | ✅ MSBuild / WDK / ADK only    | ✅ shell tooling only          | ⬜ planned -- §12 PS1 + bat parity |
 
-> **After parity items:** Impossible OS will match Windows + Linux on USB/ISO/VHD/installer-detection fundamentals once §1-§6 ship. The exclusive items push beyond: a release-key-signed artifact manifest the bootloader verifies before loading the kernel (§7) goes further than SBAT/dbx alone, and a single offline inspector covering raw + VHD + VHDX + VDI + ISO formats (§8) consolidates what both ecosystems split across `qemu-img` / `wimlib-imagex` / `xorriso` / `7z` / `VBoxManage`.
+> **After parity items:** Impossible OS will match Windows + Linux on USB/ISO/VHD/installer-detection fundamentals once §1-§6 ship. The exclusive items push beyond: a release-key-signed artifact manifest the bootloader verifies before loading the kernel (§7) goes further than SBAT/dbx alone, a single offline inspector covering raw + VHD + VHDX + VDI + ISO formats (§8) consolidates what both ecosystems split across `qemu-img` / `wimlib-imagex` / `xorriso` / `7z` / `VBoxManage`, and §12 dual-host build tooling means a developer can produce a release artifact on either Windows (no WSL) or Linux without losing byte-identical reproducibility.
 
 ---
 
@@ -260,5 +287,8 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 - [ ] VirtualBox VDI boot pass.
 - [ ] Bare-metal USB boot pass (manual; documented gate per §10).
 - [ ] `bootimg inspect` round-trips manifest + signature + role for every artifact format.
+- [ ] `scripts\debug\release\run-all-release-tests.bat` exits 0 on a clean Windows host without WSL (per §12 cross-host parity).
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | host-side pytest under `tools/bootimg/tests/` | N suites, 0 failures
+>
+> **Windows host parity (planned, §12):** the new `scripts/debug/release/` subdir lands with `§12` -- `run-all-release-tests.bat` aggregate + per-artifact `run-*.bat` shims for the §12 PowerShell scripts. Tracked at §12 above.
