@@ -341,8 +341,15 @@ Read basic health indicators from the boot device before loading the kernel. Nei
 
 **Regression risk:** LOW -- read-only queries. No writes to disk, no modification of boot path. If SATA status check fails (unsupported firmware), skip silently.
 
-> **Verified:** 2026-04-12 -- all 6 items confirmed. §8+§11 merged into single HandleProtocol(BlockIO) block. Capacity with overflow guard (LastBlock+blocks*BlockSize). ReadOnly on non-USB. MediaPresent warning-only (not fatal -- partition handle stale state). LogicalPartition diagnostic. SATA link status skipped (AHCI BAR MMIO risk). Codex adversarial: MediaPresent reverted from fatal to warn, capacity overflow guarded. Codex quality: duplicate HandleProtocol refactored to single call. Accepted: SATA link status (kernel AHCI driver handles this).
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. Single BlockIO lookup shared between §8+§11. Overflow-safe UINT64 capacity math. Exclusive feature -- neither Windows nor Linux checks disk health at bootloader stage. Accepted: none.
+> **Notes:**
+> - Health-check block at `bootx64.c:7997-8046`; merged with §8 into one HandleProtocol(BlockIO) call. Reads BlockSize/LastBlock (capacity), ReadOnly, LogicalPartition.
+> - Capacity narrowed UINT64->UINT32 MiB with saturation (post-§8 fix at lines 8005-8011) -- 4+ PiB partitions saturate to UINT32_MAX rather than wrap into the FAT16-only-tiny-ESP gate range.
+> - ReadOnly warns only on non-USB (`boot_device_type != 3`); USB sticks with WP switch are normal. MediaPresent on the partition handle is warning-only (boot_fatal would false-trigger after we already loaded the kernel from this device).
+> - SATA link status via PCI BAR MMIO is intentionally skipped -- BAR may not be mapped in UEFI bootloader context, MMIO crash risk on real firmware. Kernel AHCI driver covers post-boot link-error reporting.
+> - Re-reviewed 2026-05-05 (Codex 3x, zero findings): adversarial / consistency / perf all approved; §8 saturation fix from 6d544874 already addressed the only outstanding overflow concern.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-05 | commits `a9a6e5c3` (ship) + this commit (re-review) | 6/6 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-05 | Codex 3x (adversarial, consistency, perf) | zero findings (re-adversarial skipped: zero diff this pass) | scope: boot-code-quality
 
 ---
 
