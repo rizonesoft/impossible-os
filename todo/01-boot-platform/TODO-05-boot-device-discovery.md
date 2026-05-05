@@ -357,7 +357,7 @@ Read basic health indicators from the boot device before loading the kernel. Nei
 
 Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attributes, description, and the file/device path list for that menu entry. Linux **`efibootmgr -v`** and Windows **BCD** tooling expose this; it is the authoritative link between **BootCurrent** and the path the firmware *intended* to run. Decoding it catches mismatches when **`bootx64.efi`** was launched from a fallback path while **BootCurrent** points at another entry.
 
-- [x] After reading `BootCurrent` (§6): format variable name `Boot####` with lowercase hex via UCS-2 CHAR16 array -- `bootx64.c` §12 block inside §6's `if (rt && rt->GetVariable)` scope
+- [x] After reading `BootCurrent` (§6): format variable name `Boot####` with uppercase hex (UEFI 2.10 Section 3.1.2) via UCS-2 CHAR16 array -- `bootx64.c` §12 block inside §6's `if (rt && rt->GetVariable)` scope
 - [x] Call `GetVariable("Boot####", EFI_GLOBAL_VARIABLE_GUID, ...)`; `EFI_NOT_FOUND` is silent (some VMs have minimal NVRAM) -- 512-byte stack buffer, `lo_sz > 6` guard
 - [x] Parse `EFI_LOAD_OPTION`: Attributes at [0..3], FilePathListLength at [4..5] (LE), Description at [6..] (NUL-terminated CHAR16), FilePathList after Description NUL -- bounds-checked against `lo_sz`
 - [x] Log: `"[BOOT] Boot%04x: <description>"` (80-char truncated ASCII) and `"[BOOT]   Path: <device path>"` (120-char truncated via DevicePathToText) -- FreePool on fp_txt
@@ -366,8 +366,15 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 **Test checkpoint:** On firmware with a populated `Boot0000` (or current entry), serial shows description + device path text. On OVMF with empty entries, skip is silent (no hang). Verify on bare metal -- description strings are UTF-16 vendor strings.
 
-> **Verified:** 2026-04-12 -- all 6 items confirmed. Boot#### name formatted with uppercase hex (UEFI spec Section 3.1.2) at `bootx64.c:4975`. GetVariable into 2048-byte buffer, EFI_BUFFER_TOO_SMALL logged, EFI_NOT_FOUND silent. EFI_LOAD_OPTION parsed with bounds checks. Device path validated (END_ENTIRE within fp_len) before ConvertDevicePathToText. Codex adversarial: lowercase hex fixed to uppercase (spec compliance). Accepted: FilePath comparison (manual via §3+§12 output).
-> **Quality reviewed:** 2026-04-12 -- boot-code-quality 13 gates walked. G13: uppercase hex per UEFI spec, device path validated before ConvertDevicePathToText. No dead code. O(1) per boot. Parity: matches Windows BCD + Linux efibootmgr -v. Accepted: none.
+> **Notes:**
+> - §12 decode at `bootx64.c:8139-8242`, gated on `uefi_boot_current != 0xFFFF` inside the §6 RuntimeServices scope.
+> - 2048-byte stack `lo_buf`; `EFI_BUFFER_TOO_SMALL` logged + skip; `EFI_NOT_FOUND` silent (minimal-NVRAM VMs).
+> - EFI_LOAD_OPTION parsed with byte-bounds against `lo_sz`; FilePathList walked to find `END_ENTIRE` within `fp_len` BEFORE `ConvertDevicePathToText` (which takes no length).
+> - Description ASCII-truncated to 80 chars; Path ASCII-truncated to 120 chars. Boot#### name uses uppercase hex per UEFI 2.10 Section 3.1.2.
+> - Re-reviewed 2026-05-05 (Codex 3x, 1L fixed): updated checklist text to say "uppercase hex" matching code; adversarial / consistency on code / perf all approved.
+
+> **Verified:** 2026-04-12 ship | re-verified 2026-05-05 | commits `74b9072f` (ship) + this commit (re-review) | 6/6 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-05 | Codex 3x (adversarial, consistency, perf) | 1L fixed (re-adversarial skipped: 1 LOC doc-only) | scope: boot-code-quality
 
 ---
 
