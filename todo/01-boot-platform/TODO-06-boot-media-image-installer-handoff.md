@@ -316,6 +316,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Canonical doc: this section IS the doc. Manifest schema sibling at [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
 > - Scope boundary: §11 (UKI + network-boot) and §12 (Windows host parity) doc updates land in their own sections; this doc covers the artifact formats already shipped through §1-§9.
 
+> **Verified:** 2026-05-06 | commit pending | 4/4 items | build OK | 1 doc + 1 routing-table addition
+> **Quality reviewed:** 2026-05-06 | Codex 4x (adversarial, consistency, perf) | 4H+4M fixed | scope: N/A (docs-only)
+
 ---
 
 ## 11. Alternate Artifact Formats: UKI and Network Boot

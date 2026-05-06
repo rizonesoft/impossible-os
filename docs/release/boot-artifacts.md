@@ -48,19 +48,21 @@ Test: `bash scripts/release/test-build-image.sh` (host-side, ~5 s).
 
 The raw image IS the USB image. The bootloader handles BlockIO regardless of medium type (NVMe / SATA / USB).
 
-Linux / WSL:
+Linux / WSL (writes the release image when present, else the dev image):
 
 ```bash
-sudo bash scripts/deploy/write-usb.sh         # interactive: lists removable drives, double-confirms
+sudo bash scripts/deploy/write-usb.sh         # interactive; lists removable drives only; double-confirms
 ```
 
-Windows:
+The Linux writer prefers `build/release/disk.img` over `build/system-disk.img` when both exist; override via `DISK_IMG=path bash scripts/deploy/write-usb.sh`. It lists ONLY removable drives, refuses fixed/internal disks, and requires explicit confirmation before invoking `dd`.
+
+Windows (writes the dev image; release-image support is open work):
 
 ```bat
-scripts\deploy\write-usb.bat                  :: PowerShell wrapper; same safety prompts
+scripts\deploy\write-usb.bat                  :: PowerShell wrapper; hardcodes build\system-disk.img
 ```
 
-The deploy scripts list ONLY removable drives, refuse fixed/internal disks, and require explicit confirmation before invoking `dd` / Win32 raw-disk write.
+> **Caveat for the Windows writer:** it hardcodes `build\system-disk.img` and the safety filter is "non-system / non-boot / under 256 GB", not removable-only. For a release media write on Windows, copy `build\release\disk.img` over `build\system-disk.img` (or use a Linux/WSL host) until the writer gains explicit release-image support and stricter removable-only filtering. Tracked under release-pipeline tooling.
 
 ### VHD / VHDX (Hyper-V)
 
@@ -136,30 +138,38 @@ Use this list when cutting a release. Every line maps either to an automated gat
 
 - [ ] Clean build: `bash scripts/build.sh clean && bash scripts/build.sh` -> `=== BUILD OK ===`.
 - [ ] All artifacts built: `bash scripts/release/build-image.sh && bash scripts/release/to-vhdx.sh && bash scripts/release/to-vdi.sh && bash scripts/release/build-iso.sh`.
-- [ ] Manifest present + valid: `bash scripts/release/build-manifest.sh build --out build/artifacts/manifest.json && bash scripts/release/build-manifest.sh check build/artifacts/manifest.json`.
+- [ ] Per-format manifests present + valid (each `--format` produces its own `artifact_uuid` + per-format VM metadata where applicable; check-mode rejects malformed):
+    ```bash
+    for fmt in raw iso vhdx vdi; do
+      bash scripts/release/build-manifest.sh build --format "$fmt" --out "build/artifacts/manifest-${fmt}.json"
+      bash scripts/release/build-manifest.sh check "build/artifacts/manifest-${fmt}.json"
+    done
+    ```
 - [ ] Per-artifact SHA-256 computed: `for f in build/release/disk.{img,vhdx,vdi,iso}; do sha256sum "$f"; done`.
 - [ ] Boot matrix run: `bash scripts/ci/boot-matrix.sh` -> `BOOT MATRIX: PASS` with the configurations the host can run (raw, vhdx always; iso, vdi, whpx, usb-loop SKIP cleanly when their tool/host requirement is unmet).
 - [ ] Per-config logs reviewed under `build/ci/<config>.log` (no unexpected `[FAIL]` or `[ERROR]` lines, even on PASS).
-- [ ] Offline inspector clean against each release artifact (one command per format; expect exit 0 on all):
+- [ ] Offline inspector clean against each release artifact (each artifact paired with its per-format manifest; expect exit 0 on all):
     ```bash
-    python3 tools/bootimg/bootimg.py inspect build/release/disk.img  --manifest build/artifacts/manifest.json
-    python3 tools/bootimg/bootimg.py inspect build/release/disk.iso  --manifest build/artifacts/manifest.json
-    python3 tools/bootimg/bootimg.py inspect build/release/disk.vhdx --manifest build/artifacts/manifest.json
-    python3 tools/bootimg/bootimg.py inspect build/release/disk.vdi  --manifest build/artifacts/manifest.json
+    python3 tools/bootimg/bootimg.py inspect build/release/disk.img  --manifest build/artifacts/manifest-raw.json
+    python3 tools/bootimg/bootimg.py inspect build/release/disk.iso  --manifest build/artifacts/manifest-iso.json
+    python3 tools/bootimg/bootimg.py inspect build/release/disk.vhdx --manifest build/artifacts/manifest-vhdx.json
+    python3 tools/bootimg/bootimg.py inspect build/release/disk.vdi  --manifest build/artifacts/manifest-vdi.json
     ```
 - [ ] Rollback test: previous-release `disk.img` still inspects clean against its own historical manifest; on a host with Secure Boot enabled, the kernel's degraded-trust klog surfaces the same posture as the current release.
 - [ ] Release notes mention every blocker still tracked in TODO files (host Ed25519 in [crypto primitives](../../todo/09-desktop-shell/TODO-07-cng-crypto.md); Windows VHDX-WHPX runner in [CI Boot Matrix](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#9-ci-boot-matrix-for-every-artifact)).
 
 The boot matrix configurations map 1:1 to release-checklist artifact-format coverage:
 
-| Boot-matrix config | Artifact validated                  | Required for release? |
-| ------------------ | ----------------------------------- | --------------------- |
-| `raw`              | `build/release/disk.img`            | yes                   |
-| `iso`              | `build/release/disk.iso`            | yes                   |
-| `vhdx`             | `build/release/disk.vhdx`           | yes                   |
-| `vdi`              | `build/release/disk.vdi`            | best-effort (SKIP OK) |
-| `whpx`             | `build/release/disk.vhdx` on WHPX   | best-effort (SKIP OK) |
-| `usb-loop`         | `build/release/disk.img` via loop   | best-effort (SKIP OK) |
+| Boot-matrix config | Artifact actually validated by the matrix | Release-image coverage path                                             |
+| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------- |
+| `raw`              | `build/system-disk.img` (dev image)       | release `build/release/disk.img` is validated offline via `bootimg inspect` + the `vhdx` leg below (same content via `qemu-img convert`). Direct release-raw boot coverage is open work; see [CI Boot Matrix](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#9-ci-boot-matrix-for-every-artifact). |
+| `iso`              | `build/release/disk.iso`                  | direct                                                                  |
+| `vhdx`             | `build/release/disk.vhdx`                 | direct (sibling of release `disk.img`; produced by `to-vhdx.sh` from it) |
+| `vdi`              | `build/release/disk.vdi`                  | direct (best-effort -- SKIPs when VBoxManage absent)                    |
+| `whpx`             | `build/release/disk.vhdx` on Windows      | always SKIP today; pending Windows runner                               |
+| `usb-loop`         | `build/system-disk.img` via loop device   | dev image again; release-image USB validation is the bare-metal manual gate at the bottom of this checklist. |
+
+> **Coverage caveat:** the matrix `raw` and `usb-loop` legs both boot the dev image (`build/system-disk.img`), NOT the release image. The release image is exercised by the matrix only indirectly via the `vhdx` leg (which `to-vhdx.sh` derives from `build/release/disk.img`) and the `iso` / `vdi` legs (which derive from it via `build-iso.sh` / `to-vdi.sh`). Direct release-raw boot coverage in the matrix is tracked as open work in the same TODO section that owns the matrix.
 
 ## Troubleshooting
 

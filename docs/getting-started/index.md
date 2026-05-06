@@ -27,4 +27,4 @@ Full per-format recipes, verification flows (`bootimg inspect`), Secure Boot set
 
 - [Boot Artifacts: Build, Verify, Write](../release/boot-artifacts.md) -- per-format build, write, verify, troubleshoot
 - [Infrastructure → Development Tooling](../infrastructure/development-tooling.md) -- build system and `build.sh run`
-- [TODO-008 Hyper-V Runner](../../todo/000-Infrastructure/TODO-008-Hyper-V-Runner.md) -- Hyper-V Gen 2 support (planned)
+- [CI Boot Matrix for Every Artifact](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#9-ci-boot-matrix-for-every-artifact) -- owns the Hyper-V/WHPX VHDX boot-test runner blocker
