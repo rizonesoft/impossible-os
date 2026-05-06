@@ -1407,18 +1407,30 @@ static void test_boot_loader_identity_layout_pinned(void)
  * loader_identity was. When the next ABI bump appends new fields,
  * update both the offset and the field name here so the tail-pin
  * test continues to enforce the end-of-struct invariant. */
-static void test_boot_info_v17_tail(void)
+static void test_boot_info_v18_tail(void)
 {
-    /* _v17_pad[3] is the last field in the v17 tail block, immediately
-     * after boot_media_role_mismatch. v16 _v16_pad[2] used to be the
-     * tail; v17 appended boot_media_role + boot_media_role_mismatch +
-     * _v17_pad[3] as the new end-of-struct fields. */
+    /* degraded_trust_flags is the last field in the v18 tail block,
+     * after sbat_level_size + sbat_level[64] + dbx_size. Compiler
+     * adds 4 bytes of trailing padding to round the struct to an
+     * 8-byte alignment boundary (uint64 members elsewhere force the
+     * struct alignment to 8). The tail invariant is therefore
+     * end-of-degraded_trust_flags + 4-byte tail-pad == struct size.
+     *
+     * v18 appended SBAT/dbx/degraded_trust trio after v17's
+     * _v17_pad[3]; v17 had appended boot_media_role +
+     * boot_media_role_mismatch + _v17_pad[3] after v16. The pinned
+     * struct size catches accidental drift in either direction. */
     uint64_t off = (uint64_t)__builtin_offsetof(
-        struct boot_info, _v17_pad);
-    uint64_t end = off + (uint64_t)sizeof(((struct boot_info *)0)->_v17_pad);
-    TEST_ASSERT_EQ(end, (uint64_t)sizeof(struct boot_info),
-                   "_v17_pad must be the tail field "
-                   "(end-of-struct invariant for back-compat)");
+        struct boot_info, degraded_trust_flags);
+    uint64_t end = off + (uint64_t)sizeof(((struct boot_info *)0)->degraded_trust_flags);
+    /* End-of-last-field plus up-to-7-byte trailing alignment pad must
+     * equal the total struct size. */
+    TEST_ASSERT_EQ((uint64_t)(sizeof(struct boot_info) - end < 8u), 1u,
+                   "degraded_trust_flags must be the v18 tail field "
+                   "(<= 7-byte alignment pad to next struct boundary)");
+    TEST_ASSERT_EQ((uint64_t)sizeof(struct boot_info), (uint64_t)24056u,
+                   "v18 struct size pinned at 24056 bytes "
+                   "(degraded_trust_flags @ 24048 + 4-byte tail-pad)");
 }
 
 /* loader_identity is no longer the tail (v14 appended UKI payload
@@ -1574,8 +1586,8 @@ void test_register_boot_info(void)
     /* Bootloader build identity. */
     test_suite_register_cat("boot_loader_identity: layout pinned (64B, packed)",
                             test_boot_loader_identity_layout_pinned, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_info: v17 tail field pin (_v17_pad)",
-                            test_boot_info_v17_tail, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: v18 tail field pin (degraded_trust_flags)",
+                            test_boot_info_v18_tail, TEST_CAT_BOOT);
     test_suite_register_cat("boot_info: loader_identity offset stable (v13 layout)",
                             test_boot_info_loader_identity_offset_stable, TEST_CAT_BOOT);
     test_suite_register_cat("boot_loader_identity: zero is loader-did-not-populate",
