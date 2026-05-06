@@ -375,7 +375,7 @@ Media role detected from `/IPOS/role.txt` on the ESP and on the BlackBox service
 
 | Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `boot_media_role` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | `enum boot_media_role` (UNSET=0, normal=1, installer=2, live=3, recovery=4, manufacturing=5, diagnostics=6). UNSET means no role.txt on either partition. |
+| `boot_media_role` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | `enum boot_media_role` (UNSET=0, normal=1, installer=2, live=3, recovery=4, manufacturing=5, diagnostics=6). UNSET is the producer-must-overwrite sentinel: the validator (`boot_decision_validate` Rule 3.5) hard-rejects UNSET on every boot, matching the existing Rule 1+2 BSS-zero doctrine for `boot_path` / `boot_reason`. Absent / unrecognized markers are published as `BOOT_MEDIA_ROLE_NORMAL` by the bootloader (and cross-check disagreement is tracked separately via `boot_media_role_mismatch`); UNSET reaching the kernel means an alternate firmware adapter or partial v17 wiring left BSS zero. |
 | `boot_media_role_mismatch` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | 1 = ESP and BlackBox markers disagreed; loader fell back to `NORMAL`. 0 = agreed or BlackBox absent. |
 | `_v17_pad` | bootx64 | P0 | -- | handoff | boot-media role-detection | 3-byte alignment padding after `boot_media_role_mismatch`. |
 

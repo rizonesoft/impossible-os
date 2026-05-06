@@ -211,6 +211,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md).
 > - Scope: §6 owns the kernel-side handoff (Registry + platform API + log line); shell launch policy and signed artifact metadata are owned elsewhere.
 
+> **Verified:** 2026-05-06 | commit `bcf3aca7` | 4/6 items | build OK | tests 1221/1221 PASS + smoke PASS (KVM 2.5s)
+> **Quality reviewed:** 2026-05-06 | Codex 6x (design, adversarial, re-adversarial, re-adversarial, consistency, perf) | 2M+1M fixed, 0 open | scope: kernel-code-quality
+
 ---
 
 ## 7. Artifact Signing and Manifest Verification
