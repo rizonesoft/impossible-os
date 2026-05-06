@@ -346,6 +346,9 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 > - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) "Source precedence (3-source contract)" subsection in the v17 media-role table.
 > - Scope boundary: network-boot infrastructure (PXE/SNP/DHCP/TFTP/HTTP) is owned by 01-boot-platform/TODO-25; this section pins the cross-format contract that whatever network-boot ships will satisfy.
 
+> **Verified:** 2026-05-07 | commit pending | 3/5 items (UKI shipped; network half blocked) | build OK | smoke PASS (KVM 2.57s) + 16 new test assertions
+> **Quality reviewed:** 2026-05-07 | Codex 4x (design, adversarial, consistency, perf) | 1M fixed, 0 open | scope: boot-code-quality
+
 ---
 
 ## 12. Windows Host Parity for Build + Test Tooling
