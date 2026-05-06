@@ -373,6 +373,14 @@ Per-bus identifiers extracted from the boot device's UEFI device path: NVMe Name
 
 Media role detected from `/IPOS/role.txt` on the ESP and on the BlackBox service partition before kernel load (boot-media role-detection feature, owning TODO `01-boot-platform/TODO-06`). The bootloader reads role.txt from both partitions on the same physical disk as the booted ESP and cross-checks the contents; mismatch falls back to `BOOT_MEDIA_ROLE_NORMAL` and sets `boot_media_role_mismatch=1`. Absent BlackBox marker is NOT a mismatch (single-partition media is legal). When the role is `INSTALLER`, `RECOVERY`, or `DIAGNOSTICS`, the bootloader also sets `boot_path` to the matching enum and `boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER` so Registry / recovery / attestation consumers see a coherent decision record.
 
+**Source precedence (3-source contract):** The bootloader resolves `boot_media_role` from at most three sources in order. The first source that returns a non-UNSET value wins; later sources are not consulted.
+
+1. **UKI `.cmdline` token** -- when `boot_info.flags & BOOT_FLAG_INVOKED_VIA_UKI`, parse the `media_role=NAME` token from the signed `.cmdline` PE section via `uki_cmdline_extract_media_role()`. UKI cmdline is covered by the firmware-Secure-Boot whole-chain signature, so this is the most authoritative source. A UKI legitimately staged on top of an existing on-disk role marker (recovery UKI on a normal install) is the EXPECTED case; UKI override is CLEAN, no `boot_media_role_mismatch` flag is set.
+2. **DHCP option** (network boot, planned) -- PXE/HTTP-served kernel will read a vendor DHCP option carrying the role. Currently blocked on `01-boot-platform/TODO-25` (network boot infrastructure).
+3. **ESP `/IPOS/role.txt`** -- the disk-side fallback documented above. Cross-checked against `BlackBox/role.txt` on the same disk.
+
+Default `BOOT_MEDIA_ROLE_NORMAL` when all three sources report UNSET.
+
 | Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `boot_media_role` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | `enum boot_media_role` (UNSET=0, normal=1, installer=2, live=3, recovery=4, manufacturing=5, diagnostics=6). UNSET is the producer-must-overwrite sentinel: the validator (`boot_decision_validate` Rule 3.5) hard-rejects UNSET on every boot, matching the existing Rule 1+2 BSS-zero doctrine for `boot_path` / `boot_reason`. Absent / unrecognized markers are published as `BOOT_MEDIA_ROLE_NORMAL` by the bootloader (and cross-check disagreement is tracked separately via `boot_media_role_mismatch`); UNSET reaching the kernel means an alternate firmware adapter or partial v17 wiring left BSS zero. |

@@ -47,7 +47,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [/]   |
 | 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [/]   |
 | 💎  |  10   | Release checklist and documentation                | §1--§9        |  [x]   |
-| ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [ ]   |
+| ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [/]   |
 | 💎  |  12   | Windows host parity for build + test tooling       | §1--§4, §8    |  [ ]   |
 
 > 💎 = parity -- Win11 (Media Creation Tool / Hyper-V VHDX / Windows ISO) and Linux (distro hybrid ISOs / cloud VHD-VDI) both cover items 1-6 + 9-10.
@@ -327,13 +327,24 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 
 > **Scope boundary:** [`01-boot-platform/TODO-02 §16`](TODO-02-uefi-hardening-secureboot.md) owns UKI section structure + signed-payload extraction; [`01-boot-platform/TODO-25`](TODO-25-network-pxe-http-boot.md) owns PXE/HTTP/TFTP transport + DHCP provenance + network `boot_info` fields. This section pins the cross-format contract -- both artifact paths must publish the media role, artifact UUID, and manifest digest fields from §6 so kernel-side consumers see one shape regardless of source.
 
-- [ ] UKI artifact path: when `BOOT_FLAG_INVOKED_VIA_UKI`, read `boot_info.boot_media_role` from the UKI's `.cmdline` (e.g., `media_role=installer`) instead of `/IPOS/role.txt`; reciprocal XREF in TODO-02 §16.
-- [ ] Network-boot artifact path: PXE/HTTP-served kernel publishes `boot_media_role = network` and verifies the DHCP-served `manifest.json.sig` before kernel jump; reciprocal XREF in TODO-25 §6.
-- [ ] Document 3-source media-role precedence in §5: UKI `.cmdline` -> DHCP option -> ESP `/IPOS/role.txt` -> default `normal`.
-- [ ] Tests: `test_media_role_uki_cmdline` (mock UKI with `media_role=recovery`) and `test_media_role_network_dhcp_option` (mock DHCP).
-- [ ] Commit: `"boot: cross-format media role for UKI + network artifacts"`
+> **Status (2026-05-07):** [/] partial-ship. UKI artifact path shipped (item 1, UKI test, docs). Network-boot path blocked on TODO-25 (network bootloader infrastructure all `[ ]`); item 2 + network test stay `[ ]` with reciprocal items now filed in TODO-25 §6.
 
-**Test checkpoint:** UKI artifact boots with `media_role=recovery` parsed from `.cmdline`; PXE/HTTP boot reports `boot_media_role = network` and rejects unsigned manifest. `test_media_role_uki_cmdline` and `test_media_role_network_dhcp_option` both PASS.
+- [x] UKI artifact path: `include/boot/uki_cmdline_media_role.h` static-inline parser + `bootx64.c` UKI override; UKI `.cmdline` `media_role=NAME` cleanly overrides disk `/IPOS/role.txt` (signed by firmware Secure Boot chain).
+- [ ] Network-boot artifact path: publish `boot_media_role=network` and verify DHCP-served `manifest.json.sig`. Blocked on TODO-25 §1-§6; reciprocal item filed in TODO-25 §6.
+- [x] Document 3-source media-role precedence in `docs/boot/boot-info-fields.md`: UKI cmdline > DHCP option (planned) > ESP `/IPOS/role.txt` > default `normal`.
+- [/] Tests: `test_media_role_uki_cmdline` + `test_media_role_uki_cmdline_rejections` shipped (16 assertions). `test_media_role_network_dhcp_option` filed in TODO-25 §6.
+- [ ] Commit: `"boot: cross-format media role for UKI + network artifacts"` (commit pending)
+
+**Test checkpoint:** UKI artifact with `media_role=recovery` in its `.cmdline` parses to `BOOT_MEDIA_ROLE_RECOVERY` and overrides any disk `/IPOS/role.txt` value. The `test_media_role_uki_cmdline` test (16 assertions covering canonical roles, whitespace boundaries, case-insensitivity, substring rejection, oversized values, and the producer-sentinel guard against `media_role=unset`) all PASS. PXE/HTTP boot reports `boot_media_role = network` once the network-boot infrastructure ships in TODO-25; `test_media_role_network_dhcp_option` and the manifest signature rejection are blocked on that work.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 16 new media-role parser assertions across 2 test functions | 0 failures
+
+> **Notes:**
+> - Shipped: `include/boot/uki_cmdline_media_role.h` static-inline parser; `media_role_detect_and_record` UKI override in `bootx64.c`; 2 new tests in `test_uefi_boot.c` (16 assertions); 3-source precedence note in `docs/boot/boot-info-fields.md`.
+> - How it integrates: bootloader walks UKI .cmdline AFTER the disk role.txt cross-check, so the UKI value cleanly overrides without raising the mismatch flag (signed UKI is the authoritative declaration). Disk-only path unchanged.
+> - Downstream effects: closes the cross-format media-role contract for UKI artifacts; the network half is filed as 2 concrete `[ ]` items in TODO-25 §6 with reciprocal XREFs back to this section.
+> - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) "Source precedence (3-source contract)" subsection in the v17 media-role table.
+> - Scope boundary: network-boot infrastructure (PXE/SNP/DHCP/TFTP/HTTP) is owned by 01-boot-platform/TODO-25; this section pins the cross-format contract that whatever network-boot ships will satisfy.
 
 ---
 

@@ -18,6 +18,7 @@
 #include "kernel/nt/ntstatus.h"
 #include "registry.h"
 #include "boot/uki_cmdline_check.h"
+#include "boot/uki_cmdline_media_role.h"
 
 /* ---- UEFI Runtime Services ---- */
 
@@ -804,6 +805,106 @@ static void test_esrt_capsule_helpers_oor_idx_returns_zero(void)
  * lives in the live capsule-policy consumer (TODO-27 advanced UEFI
  * work) where a real ESRT entry's capsule_flags drives the helper. */
 
+/* ---- UKI cmdline media_role parser (artifact-format media-role
+ * cross-format contract; UKI cmdline takes precedence over disk
+ * /IPOS/role.txt in media_role_detect_and_record). */
+
+static void test_media_role_uki_cmdline(void)
+{
+    /* Each canonical role at offset 0. */
+    const unsigned char b1[] = "media_role=normal";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b1, sizeof(b1) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_NORMAL,
+                   "media_role=normal -> NORMAL");
+    const unsigned char b2[] = "media_role=installer";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b2, sizeof(b2) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_INSTALLER,
+                   "media_role=installer -> INSTALLER");
+    const unsigned char b3[] = "media_role=live";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b3, sizeof(b3) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_LIVE,
+                   "media_role=live -> LIVE");
+    const unsigned char b4[] = "media_role=recovery";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b4, sizeof(b4) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_RECOVERY,
+                   "media_role=recovery -> RECOVERY");
+    const unsigned char b5[] = "media_role=manufacturing";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b5, sizeof(b5) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_MANUFACTURING,
+                   "media_role=manufacturing -> MANUFACTURING");
+    const unsigned char b6[] = "media_role=diagnostics";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b6, sizeof(b6) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_DIAGNOSTICS,
+                   "media_role=diagnostics -> DIAGNOSTICS");
+
+    /* Whitespace-bounded recognition: token after space, tab, newline. */
+    const unsigned char b7[] = "console=ttyS0 media_role=recovery quiet";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b7, sizeof(b7) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_RECOVERY,
+                   "media_role= recognized after space");
+    const unsigned char b8[] = "k=v\tmedia_role=installer\n";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b8, sizeof(b8) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_INSTALLER,
+                   "media_role= recognized after tab; trailing newline trimmed");
+
+    /* Case-insensitive value match. */
+    const unsigned char b9[] = "media_role=RECOVERY";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b9, sizeof(b9) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_RECOVERY,
+                   "media_role=RECOVERY upper-case accepted");
+    const unsigned char b10[] = "media_role=ReCoVeRy";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b10, sizeof(b10) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_RECOVERY,
+                   "media_role=ReCoVeRy mixed-case accepted");
+}
+
+static void test_media_role_uki_cmdline_rejections(void)
+{
+    /* NULL / empty buffer. */
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role((const unsigned char *)0, 0),
+                   (uint64_t)BOOT_MEDIA_ROLE_UNSET,
+                   "NULL/0 -> UNSET");
+
+    /* Substring at non-token-start position must NOT match (no
+     * leading whitespace before "media_role="). */
+    const unsigned char b1[] = "noprefixmedia_role=recovery";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b1, sizeof(b1) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_UNSET,
+                   "non-token-start substring rejected");
+
+    /* Unrecognized name -> UNSET (not NORMAL fallback; caller
+     * decides fallback policy). */
+    const unsigned char b2[] = "media_role=hostile";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b2, sizeof(b2) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_UNSET,
+                   "unrecognized value -> UNSET");
+
+    /* Empty value. */
+    const unsigned char b3[] = "media_role=";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b3, sizeof(b3) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_UNSET,
+                   "empty value -> UNSET");
+
+    /* Oversized value (>14 bytes) -> UNSET. */
+    const unsigned char b4[] = "media_role=verylongstring";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b4, sizeof(b4) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_UNSET,
+                   "oversized value -> UNSET");
+
+    /* Explicit `media_role=unset` is rejected: UNSET is the
+     * producer-must-overwrite sentinel, never a legal payload. */
+    const unsigned char b5[] = "media_role=unset";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b5, sizeof(b5) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_UNSET,
+                   "explicit 'unset' value -> UNSET (producer-sentinel guard)");
+
+    /* Token appears mid-line, take the FIRST occurrence. */
+    const unsigned char b6[] = "media_role=installer media_role=recovery";
+    TEST_ASSERT_EQ((uint64_t)uki_cmdline_extract_media_role(b6, sizeof(b6) - 1),
+                   (uint64_t)BOOT_MEDIA_ROLE_INSTALLER,
+                   "first media_role= occurrence wins");
+}
+
 /* Registration */
 
 void test_register_uefi_boot(void)
@@ -889,6 +990,10 @@ void test_register_uefi_boot(void)
                             test_rt_property_mismatches_nonneg, TEST_CAT_BOOT);
     test_suite_register_cat("UEFI: supported bits imply callable",
                             test_rt_supported_implies_pointer_callable, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI cmdline media_role parser",
+                            test_media_role_uki_cmdline, TEST_CAT_BOOT);
+    test_suite_register_cat("UEFI: UKI cmdline media_role rejects garbage",
+                            test_media_role_uki_cmdline_rejections, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -88,6 +88,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Include MAC, IP, server URI, protocol, manifest digest, and insecure flag.
 - [ ] Expose `HKLM\SYSTEM\Boot\Network`.
 - [ ] Add `boot_device_type=network` test coverage.
+- [ ] Network media-role: publish `boot_media_role=network` and parse vendor DHCP `media_role=NAME` option; slots as source #2 in the UKI > DHCP > role.txt precedence. Consumer: 01-boot-platform/TODO-06 §11.
+- [ ] Test `test_media_role_network_dhcp_option` (mock DHCP option, pure data parser) wired under TEST_CAT_BOOT. Consumer: 01-boot-platform/TODO-06 §11.
 - [ ] Commit: `"boot: hand off network boot provenance"`
 
 ## 7. Fallback Ordering with Local Media

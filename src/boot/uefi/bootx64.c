@@ -28,6 +28,7 @@
 #include "boot_proto_sha.h"   /* generated; provides KERNEL_ABI_SHA256 */
 #include "boot_loader_identity.h" /* generated; provides BOOT_LOADER_GIT_SHA + ..._BUILD_TIME + ..._BUILD_LABEL */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
+#include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/kernel/firmware_quirks_parse.inc" /* shared firmware_quirk_disable= tokenizer */
 
 /* Inline rdtsc for boot timing */
@@ -7780,6 +7781,53 @@ static void media_role_detect_and_record(EFI_HANDLE boot_part_handle)
         serial_early_print("[BOOT] Media role: ");
         serial_early_print(media_role_name(final_role));
         serial_early_print("\n");
+    }
+
+    /* UKI .cmdline override (3-source media-role precedence: UKI
+     * cmdline > DHCP option > ESP /IPOS/role.txt > default normal).
+     * When the UKI fast path supplied a signed .cmdline carrying
+     * `media_role=NAME`, it wins over the disk-side answer because
+     * the UKI cmdline is covered by the firmware-Secure-Boot
+     * signature (whole-chain) while role.txt is staged at image-
+     * build time and not part of the signature. We override CLEANLY
+     * (no mismatch flag) -- a UKI legitimately staged on top of an
+     * existing on-disk media-role marker (e.g., recovery UKI on a
+     * normal install) is the EXPECTED case, not a producer error.
+     * UNSET from the parser means "no media_role= token in cmdline";
+     * fall through to the disk answer in that case. */
+    if (g_uki_kernel_ptr && g_uki_cmdline_ptr && g_uki_cmdline_size > 0) {
+        /* Cap the cmdline scan at the same 1 MiB sanity limit that
+         * parse_boot_conf() applies in BOOT_CONF_SANITY_CAP. parse_
+         * boot_conf runs LATER in efi_main, so without this cap a
+         * malformed-but-signed UKI with a multi-GiB .cmdline section
+         * would force the parser to scan unbounded bytes before the
+         * boot.conf path's hard-fail can fire. Realistic UKI cmdlines
+         * are <1 KiB; 1 MiB matches the existing producer sanity
+         * contract. */
+        #ifndef BOOT_CONF_SANITY_CAP
+        #define BOOT_CONF_SANITY_CAP (1024u * 1024u)
+        #endif
+        UINTN scan_size = g_uki_cmdline_size;
+        if (scan_size > BOOT_CONF_SANITY_CAP)
+            scan_size = BOOT_CONF_SANITY_CAP;
+        UINT32 uki_role = (UINT32)uki_cmdline_extract_media_role(
+            (const unsigned char *)g_uki_cmdline_ptr,
+            (__SIZE_TYPE__)scan_size);
+        if (uki_role != BOOT_MEDIA_ROLE_UNSET) {
+            if (uki_role != final_role) {
+                serial_early_print("[BOOT] Media role: UKI cmdline override "
+                                   "(disk=");
+                serial_early_print(media_role_name(final_role));
+                serial_early_print(" -> uki=");
+                serial_early_print(media_role_name(uki_role));
+                serial_early_print(")\n");
+            } else {
+                serial_early_print("[BOOT] Media role: UKI cmdline confirms "
+                                   "disk value\n");
+            }
+            final_role = uki_role;
+            mismatch = 0;  /* UKI override resets cross-check flag. */
+        }
     }
 
     g_boot_info_ptr->boot_media_role = final_role;
