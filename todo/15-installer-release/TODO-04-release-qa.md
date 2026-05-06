@@ -118,6 +118,7 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   6. **Network throughput**: loopback `ping-pong` socket pair (UDP send/recv 1000 × 64 KiB datagrams); measure total time; assert throughput > 500 MB/s (in-kernel loopback)
   7. **Hibernation (stretch)**: if hibernate is implemented (`02-kernel-core/TODO-26`): save state, resume, verify `[READY]` again + session intact
   8. **30-minute soak**: boot + idle 30 minutes in QEMU; verify no panic, no memory leak (PMM free page count stable ±2%)
+  9. **Media-role boot matrix** (filed from `01-boot-platform/TODO-06 §5` boot-media role-detection): build images with `--role installer` / `--role recovery` / `--role diagnostics` via `scripts/release/build-image.sh`, boot each in QEMU, assert serial shows `[BOOT] Media role: <role>` before kernel load AND `boot_path` in HKLM matches the role coupling (installer/recovery/diagnostic). Plus two negative-path fixtures: ESP role.txt = installer + BlackBox role.txt mutated to recovery -> assert `[WARN] Media role mismatch` + fall-back to NORMAL; oversize role.txt (>64 bytes) on ESP -> assert `[BOOT] Media role: normal (default)` (oversize rejected by parser).
 - [ ] **Output**: all scenarios log to `build/qemu-test-{timestamp}.log`; summary line `"QEMU Validation: N/M scenarios PASS"` at the end
 - [ ] **Must all pass before release tag**: `scripts/qemu-test.sh` is a required step in `scripts/promote-release.sh` before `stable` promotion
 

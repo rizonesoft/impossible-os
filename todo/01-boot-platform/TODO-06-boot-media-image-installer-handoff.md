@@ -172,7 +172,6 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] Bootloader `media_role_detect_and_record()` in `bootx64.c` reads both markers; BlackBox bound to the same physical disk as ESP via `esp_find_parent_disk()`.
 - [x] `enum boot_media_role` (6 roles + UNSET) in `boot_info.h`; default `normal`; `[BOOT] Media role: <role>` + `[WARN] Media role mismatch` on disagreement.
 - [x] Coupling: installer/recovery/diagnostics override `boot_path` + set `boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER`; live/manufacturing keep `boot_path=NORMAL`.
-- [ ] Bootloader smoke fixtures for installer/recovery/diagnostics roles + ESP/BlackBox mismatch + oversize role.txt -- exercise the parser and cross-check paths beyond the default-normal happy path.
 - [x] Commit: `"boot: detect boot media role"`
 
 **Test checkpoint:** Smoke test on system-disk.img produces `[BOOT] Media role: normal (default)` before kernel load; QEMU + KVM boot reaches `Boot complete in` + `C:\>` in ~2.4 s. Unit tests cover the policy table and v17 layout pin.
@@ -186,8 +185,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md).
 > - Scope: §5 owns marker producers + bootloader detection + boot_path coupling; per-role policy enforcement lives in separate domain TODOs.
 
-> **Verified:** 2026-05-06 | commit `1318e314` | 5/6 items | build OK | tests 1207/1207 PASS + smoke PASS (KVM 2.4s)
-> **Quality reviewed:** 2026-05-06 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 3H+4M+0L fixed, 1M deferred | scope: kernel-code-quality + boot-code-quality
+> **Verified:** 2026-05-06 | commit `1318e314` | 5/5 items | build OK | tests 1207/1207 PASS + smoke PASS (KVM 2.4s)
+> **Accepted:** [M] Bootloader smoke fixtures for installer/recovery/diagnostics + ESP/BlackBox mismatch + oversize role.txt -> XREF: 15-installer-release/TODO-04 §2 (item: "Media-role boot matrix" at line 121)
+> **Quality reviewed:** 2026-05-06 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 3H+4M+0L fixed, 1M accepted-XREF | scope: kernel-code-quality + boot-code-quality
 
 ---
 
