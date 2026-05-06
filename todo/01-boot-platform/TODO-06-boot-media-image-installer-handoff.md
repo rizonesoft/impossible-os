@@ -45,7 +45,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [x]   |
 | 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [/]   |
 | ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [/]   |
-| 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [ ]   |
+| 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [/]   |
 | 💎  |  10   | Release checklist and documentation                | §1--§9        |  [ ]   |
 | ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [ ]   |
 | 💎  |  12   | Windows host parity for build + test tooling       | §1--§4, §8    |  [ ]   |
@@ -274,14 +274,24 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 > **Scope boundary:** [`01-boot-platform/TODO-28`](TODO-28-boot-validation-certification-matrix.md) owns the broader boot certification matrix (QEMU/VBox/Hyper-V/USB/NVMe/Secure Boot/TPM/network/A-B/recovery/watchdog/hibernation). This section's matrix is artifact-format-only and feeds into TODO-28 as a per-artifact gate. [`15-installer-release/TODO-04`](../15-installer-release/TODO-04-release-qa.md) owns release-QA unattended-install testing. Reciprocal XREF in TODO-28 §(artifact matrix) already exists.
 
-- [ ] QEMU raw disk boot (KVM + TCG fallback per CLAUDE.md smoke-test platform table).
-- [ ] QEMU ISO boot.
-- [ ] Hyper-V VHDX boot under WHPX.
-- [ ] VirtualBox VDI boot.
-- [ ] USB image smoke test in loopback (`losetup` + qemu) plus a manual bare-metal gate documented in the release checklist.
-- [ ] Commit: `"ci: boot every release artifact"`
+- [x] QEMU raw disk boot (KVM + TCG fallback): inline driver in `scripts/ci/boot-matrix.sh` boots `build/system-disk.img`; PASS = `Boot complete in` + `C:\>`.
+- [x] QEMU ISO boot: delegates to `scripts/release/boot-test-iso.sh`; PASS = `Boot complete in` only (no IXFS9660 driver yet).
+- [x] QEMU VHDX boot (KVM/TCG): delegates to `scripts/release/boot-test-vhdx.sh`; validates VHDX-driver path independent of host accelerator.
+- [/] Hyper-V VHDX boot under WHPX: separate `whpx` config delegates to `scripts/machines/run-qemu.ps1 -Accel whpx`; SKIPs on non-Windows hosts. KVM/TCG VHDX is NOT a substitute (CLAUDE.md WHPX gotchas).
+- [x] VirtualBox VDI boot: delegates to `scripts/release/boot-test-vbox.sh`; SKIPs when VBoxManage absent.
+- [x] USB image loopback smoke (`losetup` + qemu): inline driver; PASS = `Boot complete in` + `C:\>`; SKIPs when not-root or losetup absent. Manual bare-metal gate stays a release-checklist item.
+- [x] Commit: `"ci: boot every release artifact"` (commit pending)
 
-**Test checkpoint:** `bash scripts/ci/boot-matrix.sh` runs all five boot configurations and reports a single PASS/FAIL summary. Each configuration pattern-matches `Boot complete in` + `C:\>` on serial within its platform timeout; any failure produces a per-configuration stripped serial log under `build/ci/<config>.log`.
+**Test checkpoint:** `bash scripts/ci/boot-matrix.sh` runs six boot configurations and reports a unified PASS/SKIP/FAIL summary table. Per-configuration PASS contracts: raw, vhdx, vdi, usb-loop require both `Boot complete in` and `C:\>`; iso requires `Boot complete in` only (architectural: no IXFS9660 driver yet); whpx delegates to the Windows-side runner. Any failure produces a per-configuration stripped serial log under `build/ci/<config>.log`. Final exit 0 iff no FAIL (SKIPs do not fail). On the dev container with KVM + OVMF + prebuilt artifacts: raw + vhdx PASS; iso, vdi, whpx, usb-loop SKIP cleanly with reasons.
+
+> **Test runner:** `bash scripts/ci/test-boot-matrix.sh` (host-side) | 13 assertions, 0 failures | covers help text, unknown-arg exit, custom --out, summary table, all-skip-or-pass exit code
+
+> **Notes:**
+> - Shipped: `scripts/ci/boot-matrix.sh` (~270 LOC bash) chains 6 boot configs (raw, iso, vhdx, vdi, whpx, usb-loop) into a unified PASS/SKIP/FAIL summary; `scripts/ci/test-boot-matrix.sh` 13-assertion structural harness.
+> - How it runs: `bash scripts/ci/boot-matrix.sh [--out DIR]`; expects pre-built artifacts in `build/release/`; per-config logs under `build/ci/<config>.log`. Skipped configs do NOT fail the matrix.
+> - Downstream effects: feeds the broader certification matrix in 01-boot-platform/TODO-28; usable today by post-commit hook + release-pipeline runs. Codex 1x review adoptions in commit message.
+> - Canonical doc: header comment in [`scripts/ci/boot-matrix.sh`](../../scripts/ci/boot-matrix.sh).
+> - Scope boundary: TODO-28 owns the broader QEMU/VBox/Hyper-V/USB/NVMe/SecureBoot/TPM/network/A-B/recovery/watchdog/hibernation matrix; this is the artifact-format-only feeder.
 
 ---
 
