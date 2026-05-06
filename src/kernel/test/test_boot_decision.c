@@ -645,6 +645,127 @@ static void test_boot_media_role_layout(void)
                    "BOOT_MEDIA_ROLE_MAX = DIAGNOSTICS = 6");
 }
 
+/* v18: trust-landscape layout pin. */
+static void test_boot_trust_layout(void)
+{
+    TEST_ASSERT_EQ((uint64_t)__builtin_offsetof(struct boot_info, sbat_level_size),
+                   (uint64_t)23976, "sbat_level_size @ 23976");
+    TEST_ASSERT_EQ((uint64_t)__builtin_offsetof(struct boot_info, sbat_level),
+                   (uint64_t)23980, "sbat_level @ 23980");
+    TEST_ASSERT_EQ((uint64_t)__builtin_offsetof(struct boot_info, dbx_size),
+                   (uint64_t)24044, "dbx_size @ 24044");
+    TEST_ASSERT_EQ((uint64_t)__builtin_offsetof(struct boot_info, degraded_trust_flags),
+                   (uint64_t)24048, "degraded_trust_flags @ 24048");
+}
+
+static void test_boot_trust_bit_names(void)
+{
+    struct row { uint32_t bit; const char *want; const char *msg; };
+    struct row rows[] = {
+        { BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF,        "secure-boot-off",        "off" },
+        { BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE, "secure-boot-unreadable", "unreadable" },
+        { BOOT_DEGRADED_TRUST_SETUP_MODE,             "setup-mode",             "setup" },
+        { BOOT_DEGRADED_TRUST_SBAT_ABSENT,            "sbat-absent",            "sbat" },
+        { BOOT_DEGRADED_TRUST_DBX_ABSENT,             "dbx-absent",             "dbx" },
+        { 0u,                                         "unknown",                "zero" },
+        { 1u << 31,                                   "unknown",                "high-bit" },
+        { 0xDEADBEEFu,                                "unknown",                "garbage" },
+    };
+    uint32_t i;
+    for (i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        TEST_ASSERT_EQ((uint64_t)role_name_eq(boot_degraded_trust_bit_name(rows[i].bit),
+                                              rows[i].want),
+                       1u, rows[i].msg);
+    }
+}
+
+/* MASK_KNOWN must enumerate exactly the five bits the validator and
+ * the registry populator iterate over. Drift here would silently
+ * break the per-bit warning loop. */
+static void test_boot_trust_mask_known_stable(void)
+{
+    uint32_t expected =
+        BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF |
+        BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE |
+        BOOT_DEGRADED_TRUST_SETUP_MODE |
+        BOOT_DEGRADED_TRUST_SBAT_ABSENT |
+        BOOT_DEGRADED_TRUST_DBX_ABSENT;
+    TEST_ASSERT_EQ((uint64_t)BOOT_DEGRADED_TRUST_MASK_KNOWN,
+                   (uint64_t)expected,
+                   "MASK_KNOWN = exactly the five v18 trust bits");
+}
+
+/* Validator closed-mask gate: any bit inside MASK_KNOWN passes (the
+ * advisory per-bit warning fires from uefi_secureboot_init() at
+ * producer time, not from validate); a bit OUTSIDE MASK_KNOWN trips
+ * BOOT_DECISION_ERR_UNKNOWN_FLAG and is FATAL. */
+static void test_boot_decision_trust_flags_in_mask_accepted(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = (uint32_t)BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = (uint32_t)BOOT_REASON_NORMAL;
+    s_dec_buf.degraded_trust_flags =
+        BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF |
+        BOOT_DEGRADED_TRUST_SBAT_ABSENT |
+        BOOT_DEGRADED_TRUST_DBX_ABSENT;
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,                  "in-mask bits -> OK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK,     "no err on in-mask bits");
+}
+
+static void test_boot_decision_trust_flags_unknown_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
+    s_dec_buf.degraded_trust_flags =
+        BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF | (1u << 31);
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                    "OOR trust bit -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_UNKNOWN_FLAG,"err=UNKNOWN_FLAG");
+}
+
+/* The "runtime unavailable" early-return in uefi_secureboot_init() must
+ * publish a degraded posture, not BSS-zero. The exact trio the producer
+ * sets is SECURE_BOOT_UNREADABLE | SBAT_ABSENT | DBX_ABSENT (we cannot
+ * tell any of them without GetVariable). Validate the trio passes the
+ * closed-mask gate so the Registry populator does not refuse it. */
+static void test_boot_decision_trust_unreadable_trio(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
+    uint32_t trio =
+        BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE |
+        BOOT_DEGRADED_TRUST_SBAT_ABSENT |
+        BOOT_DEGRADED_TRUST_DBX_ABSENT;
+    s_dec_buf.degraded_trust_flags = trio;
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,                  "unreadable-trio -> OK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK,     "no err");
+    TEST_ASSERT_EQ((uint64_t)((trio & ~(uint32_t)BOOT_DEGRADED_TRUST_MASK_KNOWN) == 0u),
+                   1u, "trio is fully inside MASK_KNOWN");
+}
+
+static void test_boot_decision_trust_flags_zero_accepted(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path   = (uint32_t)BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason = (uint32_t)BOOT_REASON_NORMAL;
+    s_dec_buf.degraded_trust_flags = 0u;
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "clean trust -> OK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "no err");
+}
+
 void test_register_boot_decision(void)
 {
     test_suite_register_cat("boot_decision: NULL info rejected",
@@ -711,4 +832,18 @@ void test_register_boot_decision(void)
                             test_boot_decision_names, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: BOOT_SOURCE_FLAG_MASK_KNOWN coverage",
                             test_boot_decision_mask_known_stable, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v18 trust-landscape layout offsets",
+                            test_boot_trust_layout, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: boot_degraded_trust_bit_name canonical",
+                            test_boot_trust_bit_names, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: BOOT_DEGRADED_TRUST_MASK_KNOWN coverage",
+                            test_boot_trust_mask_known_stable, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: trust flags in MASK_KNOWN accepted (advisory)",
+                            test_boot_decision_trust_flags_in_mask_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: trust flags zero accepted",
+                            test_boot_decision_trust_flags_zero_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: trust flags outside MASK_KNOWN rejected (FATAL)",
+                            test_boot_decision_trust_flags_unknown_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: trust unreadable-trio (runtime-unavailable) accepted",
+                            test_boot_decision_trust_unreadable_trio, TEST_CAT_BOOT);
 }

@@ -91,6 +91,23 @@ const char *boot_media_role_name(uint32_t role)
     }
 }
 
+const char *boot_degraded_trust_bit_name(uint32_t bit)
+{
+    /* Lower-case ASCII names matching HKLM\SYSTEM\Boot\Trust\* value
+     * names and serial output. Returns "unknown" for any value
+     * outside BOOT_DEGRADED_TRUST_MASK_KNOWN; the validator and
+     * registry populator iterate the closed mask, so callers should
+     * never hit "unknown" in production. */
+    switch (bit) {
+    case BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF:        return "secure-boot-off";
+    case BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE: return "secure-boot-unreadable";
+    case BOOT_DEGRADED_TRUST_SETUP_MODE:             return "setup-mode";
+    case BOOT_DEGRADED_TRUST_SBAT_ABSENT:            return "sbat-absent";
+    case BOOT_DEGRADED_TRUST_DBX_ABSENT:             return "dbx-absent";
+    default:                                         return "unknown";
+    }
+}
+
 boot_result_t boot_decision_validate(const struct boot_info *info,
                                      enum boot_decision_error *out_error)
 {
@@ -408,6 +425,27 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
                  (uint64_t)role, (uint64_t)path);
             if (out_error != (enum boot_decision_error *)0)
                 *out_error = BOOT_DECISION_ERR_REASON_PATH;
+            return BOOT_FATAL;
+        }
+    }
+
+    /* Trust-landscape closed-mask gate (v18). Per-bit advisory klog
+     * fires from uefi_secureboot_init() at producer time (the field
+     * is populated AFTER this validator runs, so a per-bit loop here
+     * would be dead-code in current init order; the closed-mask
+     * FATAL-on-unknown-bit gate IS still load-bearing for any future
+     * producer that fills the field earlier in boot). The closed-
+     * mask invariant matches BOOT_DEGRADED_TRUST_MASK_KNOWN: any bit
+     * outside it is a producer bug. */
+    {
+        uint32_t tflags = info->degraded_trust_flags;
+        if ((tflags & ~(uint32_t)BOOT_DEGRADED_TRUST_MASK_KNOWN) != 0u) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: degraded_trust_flags 0x%x has bits outside MASK_KNOWN 0x%x",
+                 (uint64_t)tflags,
+                 (uint64_t)(uint32_t)BOOT_DEGRADED_TRUST_MASK_KNOWN);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_UNKNOWN_FLAG;
             return BOOT_FATAL;
         }
     }

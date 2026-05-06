@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 17`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 18`.
 
 ## Top-level `struct boot_info` fields
 
@@ -378,6 +378,17 @@ Media role detected from `/IPOS/role.txt` on the ESP and on the BlackBox service
 | `boot_media_role` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | `enum boot_media_role` (UNSET=0, normal=1, installer=2, live=3, recovery=4, manufacturing=5, diagnostics=6). UNSET is the producer-must-overwrite sentinel: the validator (`boot_decision_validate` Rule 3.5) hard-rejects UNSET on every boot, matching the existing Rule 1+2 BSS-zero doctrine for `boot_path` / `boot_reason`. Absent / unrecognized markers are published as `BOOT_MEDIA_ROLE_NORMAL` by the bootloader (and cross-check disagreement is tracked separately via `boot_media_role_mismatch`); UNSET reaching the kernel means an alternate firmware adapter or partial v17 wiring left BSS zero. |
 | `boot_media_role_mismatch` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | 1 = ESP and BlackBox markers disagreed; loader fell back to `NORMAL`. 0 = agreed or BlackBox absent. |
 | `_v17_pad` | bootx64 | P0 | -- | handoff | boot-media role-detection | 3-byte alignment padding after `boot_media_role_mismatch`. |
+
+## Firmware trust landscape (v18)
+
+Trust signals read by the kernel from UEFI runtime services after `ExitBootServices`. Populated by `uefi_secureboot_init()` in [`src/kernel/uefi_runtime.c`](../../src/kernel/uefi_runtime.c) alongside the existing `secure_boot_enabled` / setup-mode reads. v18 is the partial-ship subset of the artifact-signing / manifest-verification feature (owning TODO `01-boot-platform/TODO-06`); the bootloader-side manifest signature path is blocked on crypto vendor work tracked in `09-desktop-shell/TODO-07-cng-crypto.md` (primitives) and `15-installer-release/TODO-01-release-artifacts.md` (release-side signing). The boot_decision degraded-trust rule emits one `[WARN]` klog line per set bit (advisory, non-fatal); `boot_device_populate_registry` surfaces these to `HKLM\SYSTEM\Boot\Trust\*`.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `sbat_level_size` | kernel `uefi_secureboot_init` | P2 | boot_decision, registry populator | persistent | trust-landscape surface | firmware-reported byte count of the `SbatLevel` UEFI variable (Microsoft Secure Boot Advanced Targeting). 0 = absent / unreadable / empty / oversized (>1 KiB pathological cap); 1..63 = full payload fits in `sbat_level[]`; >=64 = payload truncated to first 63 bytes (consumers detect truncation by comparing against `sizeof(sbat_level)-1`). |
+| `sbat_level` | kernel `uefi_secureboot_init` | P2 | boot_decision, registry populator | persistent | trust-landscape surface | first up-to-63 bytes of the raw `SbatLevel` payload, always NUL-terminated. Empty string = SBAT absent. To read the full payload size, use `sbat_level_size`. |
+| `dbx_size` | kernel `uefi_secureboot_init` | P2 | boot_decision, registry populator | persistent | trust-landscape surface | bytes in the `dbx` variable under `EFI_IMAGE_SECURITY_DATABASE_GUID` (forbidden signature DB). 0 = absent or unreadable. Contents are NOT mirrored into `boot_info` (dbx can be tens of KiB); only presence and size are surfaced. |
+| `degraded_trust_flags` | kernel `uefi_secureboot_init` | P2 | boot_decision, registry populator | persistent | trust-landscape surface | `BOOT_DEGRADED_TRUST_*` bitmask. SECURE_BOOT_OFF / SECURE_BOOT_UNREADABLE / SETUP_MODE / SBAT_ABSENT / DBX_ABSENT. Closed mask: any bit outside `BOOT_DEGRADED_TRUST_MASK_KNOWN` is a producer bug. |
 
 ## Nested struct: `boot_payload_desc`
 

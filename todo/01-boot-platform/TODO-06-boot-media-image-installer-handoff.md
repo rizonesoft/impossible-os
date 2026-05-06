@@ -43,7 +43,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [x]   |
 | 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [x]   |
 | 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [x]   |
-| 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [ ]   |
+| 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [/]   |
 | ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [ ]   |
 | 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [ ]   |
 | 💎  |  10   | Release checklist and documentation                | §1--§9        |  [ ]   |
@@ -220,13 +220,24 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 > **Scope boundary:** [`09-desktop-shell/TODO-07 §9`](../09-desktop-shell/TODO-07-cng-crypto.md) owns Ed25519 PE32+ COSI-trailer signing primitives (`codesign_sign` / `codesign_verify`). [`15-installer-release/TODO-01 §5`](../15-installer-release/TODO-01-release-artifacts.md) owns the host-side release-signing script. This section owns the bootloader-side verification path -- the path that runs at every boot and refuses load on mismatch -- which is the genuine ⭐ competitive edge.
 
-- [ ] Sign artifact manifests with the release key produced by TODO-02; embed the detached signature next to the manifest (`manifest.json.sig`).
-- [ ] Bootloader verifies the manifest signature when Secure Boot is active OR `boot.conf` sets `require_manifest=1`; refuses load on mismatch.
-- [ ] Reject modified installer/recovery media unless `boot.conf` sets `allow_unsigned_media=1` (default 0).
-- [ ] Include SBAT level + dbx blacklist status in the verification report; surface to `boot_info` so the kernel can warn on degraded trust.
-- [ ] Commit: `"boot: verify signed artifact manifests"`
+> **Status (2026-05-06):** [/] partial-ship. Item 4 shipped (boot_info v18 SBAT/dbx/trust-landscape). Items 1-3 blocked on absent crypto: bootloader is freestanding UEFI and cannot call kernel `cng_*`; needs vendored Ed25519+SHA-256 verify subset tracked in [`09-desktop-shell/TODO-07 §1`](../09-desktop-shell/TODO-07-cng-crypto.md) plus host-side signing in [`15-installer-release/TODO-01 §5`](../15-installer-release/TODO-01-release-artifacts.md).
 
-**Test checkpoint:** Tampering with one byte of `kernel.exe` on a signed image makes the bootloader emit `[FAIL] Manifest signature mismatch` and `boot_fatal()` halt under `require_manifest=1`. With `require_manifest=0`, same tamper produces `[WARN] Manifest unverified` and continues. SBAT level below dbx threshold produces `[WARN] SBAT below baseline` with degraded-trust flag set in `boot_info`.
+- [ ] Sign artifact manifests with the release key; emit detached `manifest.json.sig` on the ESP. Blocked on 15-installer-release/TODO-01 §5 host signing + bootloader crypto vendor below.
+- [ ] Bootloader verifies manifest signature when Secure Boot is active or `require_manifest=1`; refuses load on mismatch. Blocked on 09-desktop-shell/TODO-07 §1 bootloader-side Ed25519+SHA-256 vendor.
+- [ ] Reject modified installer/recovery media unless `boot.conf` sets `allow_unsigned_media=1` (default 0). Blocked on bootloader crypto vendor above.
+- [x] SBAT level + dbx blacklist status surfaced to `boot_info` v18 (`sbat_level`, `dbx_size`, `degraded_trust_flags`); kernel emits per-bit advisory klog and Registry under `HKLM\SYSTEM\Boot\Trust\*`. Details: see Notes block below.
+- [ ] Commit: `"boot: verify signed artifact manifests"` (full-section ship; the partial-scope item-4 trust-landscape ship lands under a separate commit message in the same section once items 1-3 unblock)
+
+**Test checkpoint:** Tampering with one byte of `kernel.exe` on a signed image makes the bootloader emit `[FAIL] Manifest signature mismatch` and `boot_fatal()` halt under `require_manifest=1`. With `require_manifest=0`, same tamper produces `[WARN] Manifest unverified` and continues. SBAT level below dbx threshold produces `[WARN] SBAT below baseline` with degraded-trust flag set in `boot_info`. **Item 4 fixture (shipped):** smoke test on KVM (no SBAT/dbx in OVMF) emits per-bit advisory klog and registers `HKLM\SYSTEM\Boot\Trust\DegradedTrustFlags = 0x1a` (secure-boot-unreadable + sbat-absent + dbx-absent).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | covers boot_decision validator + v18 trust-landscape closed-mask gate + bit-name helper (6 new boot_decision tests + 4 offset pins)
+
+> **Notes:**
+> - Shipped: boot_info v18 trust-landscape fields populated by `uefi_secureboot_init`; closed BOOT_DEGRADED_TRUST_* mask gated FATAL by `boot_decision_validate`; per-bit advisory klog; Registry surface; 6 new tests + 4 offset pins.
+> - How it integrates: kernel-side `uefi_secureboot_init` reads SbatLevel + dbx size via gRT->GetVariable post-EBS; populates v18 `boot_info` fields alongside existing `secure_boot_enabled`.
+> - Downstream effects: `HKLM\SYSTEM\Boot\Trust\*` Registry is a stable surface for attestation/inventory; v18 ABI bump pinned via static asserts on both kernel + bootloader mirror.
+> - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) "Firmware trust landscape (v18)" section.
+> - Scope boundary: items 1-3 (manifest signature path) blocked on prereqs in 09-desktop-shell/TODO-07 §1 + 15-installer-release/TODO-01 §5 with reciprocal `[ ]` items.
 
 ---
 
@@ -321,7 +332,8 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ✅ §5 role.txt marker + bootloader |
 | 💎  | Reproducible image build             | ⚠️ partial via WIM tooling     | ⚠️ per-distro reproducibility  | ✅ §2 byte-identical disk.img    |
 | ⭐  | Versioned boot artifact schema       | ❌ no unified schema           | ❌ no unified schema           | ✅ §1 v1 schema + check tool     |
-| ⭐  | Signed artifact manifest at boot     | ❌ SBAT/dbx only (coarser)     | ❌ SBAT/dbx only (coarser)     | ⬜ planned -- §7                 |
+| ⭐  | Signed artifact manifest at boot     | ❌ SBAT/dbx only (coarser)     | ❌ SBAT/dbx only (coarser)     | 🟡 §7 partial -- v18 trust surface |
+| ⭐  | Trust-landscape exposed to attestation | ⚠️ split across MSFT_SecureBootSettings | ⚠️ scattered (mokutil, dmesg) | ✅ §7 boot_info v18 + HKLM Trust\* |
 | ⭐  | Offline artifact inspector (1 tool)  | ❌ separate tools per format   | ❌ separate tools per format   | ⬜ planned -- §8                 |
 | ⭐  | UKI as a release artifact format     | ❌ no UKI ecosystem            | ✅ systemd-boot UKI            | ⬜ planned -- §11                |
 | 💎  | Network-boot kernel + manifest       | ⚠️ WDS / iPXE chainload        | ✅ PXE + HTTP boot + dracut    | ⬜ planned -- §11 + T25          |

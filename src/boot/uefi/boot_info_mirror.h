@@ -259,7 +259,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  17
+#define BOOT_INFO_VERSION  18
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -361,6 +361,23 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 2
 #define BOOT_MEDIA_ROLE_MANUFACTURING   5u
 #define BOOT_MEDIA_ROLE_DIAGNOSTICS     6u
 #define BOOT_MEDIA_ROLE_MAX             BOOT_MEDIA_ROLE_DIAGNOSTICS
+
+/* v18 -- BOOT_DEGRADED_TRUST_* mirror. Bootloader does not populate
+ * these fields directly today (they are kernel-populated via
+ * uefi_secureboot_init), but the mirror defines the bit values so the
+ * struct layout matches and so the bootloader can adopt the
+ * publication path later if a pre-EBS verifier ever needs it. */
+#define BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF        (1u << 0)
+#define BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE (1u << 1)
+#define BOOT_DEGRADED_TRUST_SETUP_MODE             (1u << 2)
+#define BOOT_DEGRADED_TRUST_SBAT_ABSENT            (1u << 3)
+#define BOOT_DEGRADED_TRUST_DBX_ABSENT             (1u << 4)
+#define BOOT_DEGRADED_TRUST_MASK_KNOWN                  \
+    (BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF        |       \
+     BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE |       \
+     BOOT_DEGRADED_TRUST_SETUP_MODE             |       \
+     BOOT_DEGRADED_TRUST_SBAT_ABSENT            |       \
+     BOOT_DEGRADED_TRUST_DBX_ABSENT)
 
 #define BOOT_SOURCE_FLAG_BOOT_NEXT_SET            (1u << 0)
 #define BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH    (1u << 1)
@@ -660,6 +677,15 @@ struct boot_info {
     UINT32  boot_media_role;             /* enum boot_media_role */
     UINT8   boot_media_role_mismatch;    /* 1 = ESP/BlackBox markers disagreed */
     UINT8   _v17_pad[3];
+
+    /* v18: Firmware trust-landscape surface (artifact-signing
+     * partial-ship subset). Populated by uefi_secureboot_init() in
+     * the kernel; the bootloader mirror exists only so the struct
+     * layout matches byte-for-byte. */
+    UINT32  sbat_level_size;
+    char    sbat_level[64];
+    UINT32  dbx_size;
+    UINT32  degraded_trust_flags;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
@@ -751,6 +777,16 @@ _Static_assert(__builtin_offsetof(struct boot_info, boot_media_role) == 23968,
     "boot_info.boot_media_role offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, boot_media_role_mismatch) == 23972,
     "boot_info.boot_media_role_mismatch offset drift -- kernel + bootloader mirror out of sync");
+
+/* v18: Trust-landscape offset asserts. */
+_Static_assert(__builtin_offsetof(struct boot_info, sbat_level_size) == 23976,
+    "boot_info.sbat_level_size offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, sbat_level) == 23980,
+    "boot_info.sbat_level offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, dbx_size) == 24044,
+    "boot_info.dbx_size offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, degraded_trust_flags) == 24048,
+    "boot_info.degraded_trust_flags offset drift -- kernel + bootloader mirror out of sync");
 
 /* ============================================================================
  * Boot Error History Ring -- producer mirror

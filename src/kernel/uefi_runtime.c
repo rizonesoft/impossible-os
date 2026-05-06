@@ -1077,6 +1077,88 @@ static int read_global_byte(const uint16_t *name)
     return (int)val;
 }
 
+/* Read a UEFI global-namespace string variable into a fixed-size buffer.
+ * Returns the FIRMWARE-REPORTED byte count (truncation-detection
+ * signal -- a value greater than `out_buf_bytes - 1` means the
+ * payload was truncated to fit `out`), or 0 if the variable is absent
+ * / unreadable / empty / oversized. `out` is always NUL-terminated
+ * within `[0, out_buf_bytes)`, even on failure (out[0] = '\0'); the
+ * first up-to-`out_buf_bytes - 1` bytes of the payload are copied.
+ *
+ * Caller publishes the return value as a size field (e.g. boot_info
+ * v18 sbat_level_size) so attestation tooling can detect truncation
+ * by comparing against `sizeof(boot_info.sbat_level) - 1`. Without
+ * this convention an exact `out_buf_bytes - 1`-byte payload and a
+ * much-larger truncated payload would both publish with the same
+ * stored size, hiding a load-bearing trust signal.
+ *
+ * Two-stage read: probe size with NULL data, then read into a fixed
+ * stack scratch (READ_GLOBAL_STRING_SCRATCH) sized comfortably above
+ * any realistic SbatLevel string, then copy a capped prefix into
+ * `out`. Variables larger than the scratch buffer are treated as
+ * absent (size beyond practical SBAT level expectations is a
+ * firmware quirk or hostile input). */
+#define READ_GLOBAL_STRING_SCRATCH 1024u
+static uint64_t read_global_string(const uint16_t *name,
+                                   char *out, uint64_t out_buf_bytes)
+{
+    if (out_buf_bytes == 0) return 0;
+    out[0] = '\0';
+
+    struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
+    uint64_t sz = 0;
+    uint32_t attrs = 0;
+
+    /* Probe size with NULL data; firmware returns BUFFER_TOO_SMALL with
+     * the real size, OR SUCCESS with sz=0 if the variable is empty. */
+    efi_status_t s = uefi_get_variable(&global, name, &attrs, &sz, (void *)0);
+    if ((s != UEFI_BUFFER_TOO_SMALL && s != UEFI_SUCCESS) || sz == 0)
+        return 0;
+
+    if (sz > READ_GLOBAL_STRING_SCRATCH) {
+        /* Pathological / hostile size; treat as absent. SBAT levels
+         * realistically stay under 256 bytes; a multi-KiB payload
+         * under SbatLevel is a firmware quirk we should not propagate
+         * into boot_info. Caller treats size=0 as ABSENT. */
+        return 0;
+    }
+
+    uint8_t scratch[READ_GLOBAL_STRING_SCRATCH];
+    uint64_t read_sz = sz;
+    s = uefi_get_variable(&global, name, &attrs, &read_sz, scratch);
+    if (s != UEFI_SUCCESS || read_sz == 0)
+        return 0;
+    if (read_sz > READ_GLOBAL_STRING_SCRATCH)
+        read_sz = READ_GLOBAL_STRING_SCRATCH;
+
+    uint64_t copy_sz = read_sz;
+    if (copy_sz > out_buf_bytes - 1) copy_sz = out_buf_bytes - 1;
+    uint64_t i;
+    for (i = 0; i < copy_sz; i++)
+        out[i] = (char)scratch[i];
+    out[copy_sz] = '\0';
+    /* Return the firmware-reported size, NOT copy_sz, so the caller
+     * can publish a truncation-detectable signal. */
+    return read_sz;
+}
+
+/* Probe the byte size of a variable under EFI_IMAGE_SECURITY_DATABASE_
+ * GUID (dbx / db / dbt) without reading contents. Returns the firmware-
+ * reported payload size, or 0 if absent / unreadable / empty. The size
+ * alone is the v18 trust-landscape signal -- the per-entry parse for
+ * Registry inventory lives in secureboot_keys_init() above. Cheap call:
+ * one GetVariable with NULL data. */
+static uint64_t imgsec_var_size(const uint16_t *name)
+{
+    struct boot_uefi_guid imgsec = EFI_IMAGE_SECURITY_DATABASE_GUID;
+    uint64_t sz = 0;
+    uint32_t attrs = 0;
+    efi_status_t s = uefi_get_variable(&imgsec, name, &attrs, &sz, (void *)0);
+    if (s == UEFI_BUFFER_TOO_SMALL && sz > 0) return sz;
+    if (s == UEFI_SUCCESS && sz > 0) return sz;
+    return 0;
+}
+
 /* Helper: check if a UEFI global variable exists with non-zero size.
  *
  * SUCCESS-with-sz=0 must NOT count as "exists" for PK/KEK enrollment
@@ -1115,6 +1197,21 @@ boot_result_t uefi_secureboot_init(void)
 
     if (!s_available) {
         klog(LOG_INFO, "UEFI", "Secure Boot: unknown (runtime unavailable)");
+        /* v18: explicitly publish a degraded trust posture when the
+         * runtime is unavailable. Otherwise the BSS-zero g_boot_info
+         * leaves degraded_trust_flags=0 (false-clean), which the
+         * Registry populator then surfaces as DegradedTrustNames=
+         * "clean" -- exactly the false-attestation surface the v18
+         * trust-landscape plumbing exists to prevent. We cannot tell
+         * SecureBoot/SBAT/dbx state without runtime services, so set
+         * the three "we cannot tell" bits. */
+        g_boot_info.sbat_level[0] = '\0';
+        g_boot_info.sbat_level_size = 0;
+        g_boot_info.dbx_size = 0;
+        g_boot_info.degraded_trust_flags =
+            BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE |
+            BOOT_DEGRADED_TRUST_SBAT_ABSENT |
+            BOOT_DEGRADED_TRUST_DBX_ABSENT;
         return BOOT_DEGRADED;
     }
 
@@ -1213,6 +1310,63 @@ boot_result_t uefi_secureboot_init(void)
         klog(LOG_INFO, "SecureBoot", "state=ENABLED");
     } else {
         klog(LOG_INFO, "SecureBoot", "state=DISABLED (firmware or user override)");
+    }
+
+    /* v18: trust-landscape surface (artifact-signing partial-ship
+     * subset). Populate sbat_level + dbx_size + degraded_trust_flags
+     * into boot_info now that the SecureBoot/SetupMode reads above
+     * have settled. The bootloader-side manifest signature path
+     * remains blocked on crypto vendor work; this is the
+     * non-cryptographic subset that surfaces firmware trust signals
+     * to consumers. */
+    static const uint16_t sbat_name[] = {
+        'S','b','a','t','L','e','v','e','l', 0
+    };
+    uint64_t sbat_bytes = read_global_string(sbat_name,
+                                             g_boot_info.sbat_level,
+                                             sizeof(g_boot_info.sbat_level));
+    g_boot_info.sbat_level_size = (uint32_t)sbat_bytes;
+
+    static const uint16_t dbx_size_name[] = { 'd','b','x', 0 };
+    uint64_t dbx_bytes = imgsec_var_size(dbx_size_name);
+    if (dbx_bytes > 0xFFFFFFFFu) dbx_bytes = 0xFFFFFFFFu;
+    g_boot_info.dbx_size = (uint32_t)dbx_bytes;
+
+    uint32_t trust_flags = 0;
+    if (!sb_val_valid)
+        trust_flags |= BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE;
+    else if (!s_sb_enabled)
+        trust_flags |= BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF;
+    if (s_sb_setup_mode)
+        trust_flags |= BOOT_DEGRADED_TRUST_SETUP_MODE;
+    if (sbat_bytes == 0)
+        trust_flags |= BOOT_DEGRADED_TRUST_SBAT_ABSENT;
+    if (dbx_bytes == 0)
+        trust_flags |= BOOT_DEGRADED_TRUST_DBX_ABSENT;
+    g_boot_info.degraded_trust_flags = trust_flags;
+
+    if (sbat_bytes > 0)
+        klog(LOG_INFO, "UEFI", "SbatLevel: %u bytes (level=%s)",
+             (uint32_t)sbat_bytes, g_boot_info.sbat_level);
+    else
+        klog(LOG_INFO, "UEFI", "SbatLevel: absent");
+    if (dbx_bytes > 0)
+        klog(LOG_INFO, "UEFI", "dbx: present (%u bytes)",
+             (uint32_t)dbx_bytes);
+    else
+        klog(LOG_INFO, "UEFI", "dbx: absent");
+    if (trust_flags) {
+        klog(LOG_WARN, "UEFI",
+             "trust-landscape degraded: 0x%x", (uint64_t)trust_flags);
+        uint32_t bit;
+        for (bit = 1u;
+             bit != 0u && bit <= (uint32_t)BOOT_DEGRADED_TRUST_MASK_KNOWN;
+             bit <<= 1) {
+            if ((trust_flags & bit) == 0u) continue;
+            klog(LOG_WARN, "UEFI",
+                 "  trust-landscape: %s (advisory; non-fatal)",
+                 (uint64_t)(uintptr_t)boot_degraded_trust_bit_name(bit));
+        }
     }
 
     /* Freeze the boot-time state vector so future revalidation passes

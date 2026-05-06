@@ -199,6 +199,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
   - If magic absent and `Enforce=0`: log warning + continue (dev mode)
   - Public key baked into `BOOTX64.EFI` at build time via `tools/bake_pubkey.sh` that generates `include/boot/codesign_pubkey.h`
 - [ ] **`HKLM\SYSTEM\SecureBoot\Enforce`** Registry DWORD: 0 by default in all release images; set to 1 only in production/OEM builds; document in `docs/infrastructure/code-signing.md`
+- [ ] Sign per-image `manifest.json` with release key; emit detached `manifest.json.sig` next to it on ESP/BlackBox under `/IPOS/`. Consumer: 01-boot-platform/TODO-06 §7 items 1-3.
 
 ---
 

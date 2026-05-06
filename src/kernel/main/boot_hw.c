@@ -824,6 +824,56 @@ void boot_device_populate_registry(void)
                  "Failed to create HKLM\\HARDWARE\\BOOT\\ESP key");
         }
     }
+
+    /* HKLM\SYSTEM\Boot\Trust -- firmware trust-landscape surface (v18,
+     * artifact-signing partial-ship subset). Populated from the v18
+     * boot_info fields written by uefi_secureboot_init(). Operators
+     * and attestation tooling read these to see SecureBoot/SBAT/dbx
+     * posture without re-querying UEFI. SbatLevel is empty when the
+     * variable was absent; DbxSize=0 means dbx absent or unreadable.
+     * DegradedTrustFlags is the BOOT_DEGRADED_TRUST_* bitmask, and
+     * DegradedTrustNames is a space-separated list of bit names from
+     * boot_degraded_trust_bit_name() for direct human reading. */
+    {
+        HKEY hTrust = (HKEY)0;
+        uint32_t tdisp = 0;
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Boot\\Trust", 0,
+                           (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                           &hTrust, &tdisp) == ERROR_SUCCESS) {
+            RegSetString(hTrust, "SbatLevel", g_boot_info.sbat_level);
+            RegSetDword(hTrust, "SbatLevelSize",       g_boot_info.sbat_level_size);
+            RegSetDword(hTrust, "DbxSize",             g_boot_info.dbx_size);
+            RegSetDword(hTrust, "DegradedTrustFlags",  g_boot_info.degraded_trust_flags);
+
+            char names_buf[160];
+            int p = 0;
+            uint32_t tflags = g_boot_info.degraded_trust_flags;
+            uint32_t bit;
+            for (bit = 1u;
+                 bit != 0u && bit <= (uint32_t)BOOT_DEGRADED_TRUST_MASK_KNOWN;
+                 bit <<= 1) {
+                if ((tflags & bit) == 0u) continue;
+                const char *n = boot_degraded_trust_bit_name(bit);
+                if (p > 0 && p < (int)sizeof(names_buf) - 1)
+                    names_buf[p++] = ' ';
+                while (*n && p < (int)sizeof(names_buf) - 1)
+                    names_buf[p++] = *n++;
+            }
+            names_buf[p] = '\0';
+            RegSetString(hTrust, "DegradedTrustNames", names_buf);
+            RegCloseKey(hTrust);
+
+            klog(LOG_INFO, "boot",
+                 "Trust Registry populated: sbat_size=%u dbx_size=%u flags=0x%x (%s)",
+                 g_boot_info.sbat_level_size,
+                 g_boot_info.dbx_size,
+                 g_boot_info.degraded_trust_flags,
+                 (uint64_t)(uintptr_t)(p > 0 ? names_buf : "clean"));
+        } else {
+            klog(LOG_WARN, "boot",
+                 "Failed to create HKLM\\SYSTEM\\Boot\\Trust key");
+        }
+    }
 }
 
 /* ---- Boot decision Registry population ----------------------------------

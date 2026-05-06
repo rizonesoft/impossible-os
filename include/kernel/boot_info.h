@@ -108,7 +108,24 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  * sanity gate;
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v16 adds local boot device path detail (boot_nvme_nsid, boot_nvme_eui64,
+/* v18 adds firmware trust-landscape surface (sbat_level, dbx_size,
+ *     degraded_trust_flags) populated by uefi_secureboot_init() in the
+ *     kernel-populated section. SBAT (Secure Boot Advanced Targeting,
+ *     Microsoft revocation infrastructure) level string and dbx
+ *     (forbidden signature database, UEFI 2.10 specification 32.4.2)
+ *     presence are read post-EBS via gRT->GetVariable.
+ *     degraded_trust_flags is a BOOT_DEGRADED_TRUST_* bitmask combining
+ *     secure-boot state + SBAT/dbx absence + setup-mode signal.
+ *     boot_decision degraded-trust rule warns (non-fatal) on each set
+ *     bit; boot_device_populate_registry surfaces to
+ *     HKLM\SYSTEM\Boot\Trust\*. v18 is the partial-ship subset of the
+ *     boot-media artifact-signing/manifest-verification feature;
+ *     manifest signature verification itself remains blocked on
+ *     bootloader-side crypto vendor work tracked in
+ *     todo/09-desktop-shell/TODO-07-cng-crypto.md (crypto primitives)
+ *     and todo/15-installer-release/TODO-01-release-artifacts.md
+ *     (release-side signing).
+ * v16 adds local boot device path detail (boot_nvme_nsid, boot_nvme_eui64,
  *     boot_pci_device, boot_pci_function) populated by walking the boot
  *     device's UEFI device path for NVMe Messaging nodes (UEFI 2.10 spec
  *     10.3.4.21) and PCI Hardware nodes (UEFI 2.10 spec 10.3.2.1).
@@ -134,7 +151,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  17
+#define BOOT_INFO_VERSION  18
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -586,6 +603,52 @@ enum boot_media_role {
     BOOT_MEDIA_ROLE_DIAGNOSTICS   = 6,  /* operator-triggered diagnostics medium */
 };
 #define BOOT_MEDIA_ROLE_MAX  BOOT_MEDIA_ROLE_DIAGNOSTICS
+
+/* Firmware trust-landscape signals (v18). Computed by
+ * uefi_secureboot_init() and surfaced via g_boot_info.degraded_trust
+ * _flags. boot_decision degraded-trust rule emits one [WARN] klog
+ * line per set bit; non-fatal -- the signals are advisory. Each bit
+ * means the firmware view of trust is degraded relative to a
+ * production deployment, NOT that the boot is unsafe.
+ *
+ * SECURE_BOOT_OFF: SecureBoot variable read returned 0 (firmware
+ *   reports Secure Boot disabled). User-disabled or system did not
+ *   enroll PK/KEK.
+ * SECURE_BOOT_UNREADABLE: SecureBoot variable read failed (firmware
+ *   does not expose the variable, or RT services unavailable).
+ *   Distinct from OFF because it reflects "we cannot tell" rather
+ *   than "user disabled".
+ * SETUP_MODE: SetupMode variable == 1, meaning PK is not enrolled
+ *   and the firmware will accept any new PK/KEK without
+ *   verification. Implies a manufacturing/factory state.
+ * SBAT_ABSENT: SbatLevel global variable not present. Microsoft
+ *   shim-derived bootloaders publish this for revocation tracking;
+ *   absence means we cannot assert a SBAT level baseline.
+ * DBX_ABSENT: dbx (forbidden signature DB) variable not present
+ *   under EFI_IMAGE_SECURITY_DATABASE_GUID. Most production firmware
+ *   ships a non-empty dbx; absence means revocation infrastructure
+ *   is unconfigured.
+ *
+ * BOOT_DEGRADED_TRUST_MASK_KNOWN is a CLOSED mask -- adding a bit
+ * requires a BOOT_INFO_VERSION bump. */
+#define BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF        (1u << 0)
+#define BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE (1u << 1)
+#define BOOT_DEGRADED_TRUST_SETUP_MODE             (1u << 2)
+#define BOOT_DEGRADED_TRUST_SBAT_ABSENT            (1u << 3)
+#define BOOT_DEGRADED_TRUST_DBX_ABSENT             (1u << 4)
+
+#define BOOT_DEGRADED_TRUST_MASK_KNOWN                  \
+    (BOOT_DEGRADED_TRUST_SECURE_BOOT_OFF        |       \
+     BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE |       \
+     BOOT_DEGRADED_TRUST_SETUP_MODE             |       \
+     BOOT_DEGRADED_TRUST_SBAT_ABSENT            |       \
+     BOOT_DEGRADED_TRUST_DBX_ABSENT)
+
+/* Pretty-printer for one BOOT_DEGRADED_TRUST_* bit value. Returns a
+ * pointer to a static lower-case ASCII string; "unknown" for any
+ * value outside MASK_KNOWN. Used by boot_decision degraded-trust
+ * rule and Registry populator. */
+const char *boot_degraded_trust_bit_name(uint32_t bit);
 
 /* BOOT_SOURCE_FLAG_* bitmask bits -- inputs that drove the decision.
  * BOOT_SOURCE_FLAG_MASK_KNOWN is a CLOSED mask: validator hard-rejects
@@ -1499,6 +1562,23 @@ struct boot_info {
     uint32_t boot_media_role;             /* enum boot_media_role */
     uint8_t  boot_media_role_mismatch;    /* 1 = ESP/BlackBox markers disagreed */
     uint8_t  _v17_pad[3];                 /* alignment to 4-byte boundary */
+
+    /* v18: Firmware trust-landscape surface (artifact-signing /
+     * manifest-verification feature). Populated by uefi_secureboot
+     * _init() in src/kernel/uefi_runtime.c after the SecureBoot /
+     * SetupMode reads complete; relies on RuntimeServices->
+     * GetVariable so it runs post-EBS in the kernel-populated section
+     * (NOT the bootloader). Read by boot_decision_validate() (advisory
+     * warning) and boot_device_populate_registry() (HKLM\SYSTEM\Boot
+     * \Trust\*). Manifest signature verification itself is blocked on
+     * bootloader-side crypto and lives in a separate ABI bump when
+     * those primitives ship; v18 carries only the SBAT/dbx/trust-flags
+     * subset. See BOOT_DEGRADED_TRUST_* above for bitmask semantics
+     * and the no-bit-outside-MASK_KNOWN closed-mask invariant. */
+    uint32_t sbat_level_size;             /* bytes of SbatLevel read; 0 = absent/unreadable */
+    char     sbat_level[64];              /* SbatLevel string truncated to 63 bytes + NUL */
+    uint32_t dbx_size;                    /* bytes in dbx variable; 0 = absent/unreadable */
+    uint32_t degraded_trust_flags;        /* BOOT_DEGRADED_TRUST_* bitmask */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -1607,6 +1687,19 @@ _Static_assert(__builtin_offsetof(struct boot_info, boot_media_role) == 23968,
     "boot_info.boot_media_role offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, boot_media_role_mismatch) == 23972,
     "boot_info.boot_media_role_mismatch offset drift -- update kernel + bootloader mirror");
+
+/* v18: trust-landscape offsets. After v17's _v17_pad[3] the next
+ * uint32 lands at 23976 (the boot_media_role_mismatch byte at 23972
+ * plus the 3-byte pad). sbat_level[64] then runs to 24044; dbx_size
+ * + degraded_trust_flags pin the tail. */
+_Static_assert(__builtin_offsetof(struct boot_info, sbat_level_size) == 23976,
+    "boot_info.sbat_level_size offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, sbat_level) == 23980,
+    "boot_info.sbat_level offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, dbx_size) == 24044,
+    "boot_info.dbx_size offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, degraded_trust_flags) == 24048,
+    "boot_info.degraded_trust_flags offset drift -- update kernel + bootloader mirror");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

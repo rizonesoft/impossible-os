@@ -386,3 +386,10 @@ F(boot_media_role);
 F(boot_media_role_mismatch);
 F(_v17_pad);
 F(_v17_pad[0]);
+
+/* v18: trust-landscape surface (artifact-signing partial-ship subset). */
+F(sbat_level_size);
+F(sbat_level);
+F(sbat_level[0]);
+F(dbx_size);
+F(degraded_trust_flags);
