@@ -277,12 +277,12 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] QEMU raw disk boot (KVM + TCG fallback): inline driver in `scripts/ci/boot-matrix.sh` boots `build/system-disk.img`; PASS = `Boot complete in` + `C:\>`.
 - [x] QEMU ISO boot: delegates to `scripts/release/boot-test-iso.sh`; PASS = `Boot complete in` only (no IXFS9660 driver yet).
 - [x] QEMU VHDX boot (KVM/TCG): delegates to `scripts/release/boot-test-vhdx.sh`; validates VHDX-driver path independent of host accelerator.
-- [/] Hyper-V VHDX boot under WHPX: separate `whpx` config delegates to `scripts/machines/run-qemu.ps1 -Accel whpx`; SKIPs on non-Windows hosts. KVM/TCG VHDX is NOT a substitute (CLAUDE.md WHPX gotchas).
+- [ ] Hyper-V VHDX boot under WHPX: blocked on new `scripts/machines/boot-test-whpx.ps1` (`--disk` + timeout + serial polling). Matrix `whpx` slot always SKIPs today; KVM/TCG VHDX is NOT a substitute.
 - [x] VirtualBox VDI boot: delegates to `scripts/release/boot-test-vbox.sh`; SKIPs when VBoxManage absent.
 - [x] USB image loopback smoke (`losetup` + qemu): inline driver; PASS = `Boot complete in` + `C:\>`; SKIPs when not-root or losetup absent. Manual bare-metal gate stays a release-checklist item.
 - [x] Commit: `"ci: boot every release artifact"` (commit pending)
 
-**Test checkpoint:** `bash scripts/ci/boot-matrix.sh` runs six boot configurations and reports a unified PASS/SKIP/FAIL summary table. Per-configuration PASS contracts: raw, vhdx, vdi, usb-loop require both `Boot complete in` and `C:\>`; iso requires `Boot complete in` only (architectural: no IXFS9660 driver yet); whpx delegates to the Windows-side runner. Any failure produces a per-configuration stripped serial log under `build/ci/<config>.log`. Final exit 0 iff no FAIL (SKIPs do not fail). On the dev container with KVM + OVMF + prebuilt artifacts: raw + vhdx PASS; iso, vdi, whpx, usb-loop SKIP cleanly with reasons.
+**Test checkpoint:** `bash scripts/ci/boot-matrix.sh` runs six boot configurations and reports a unified PASS/SKIP/FAIL summary table. Per-configuration PASS contracts: raw, vhdx, vdi, usb-loop require both `Boot complete in` and `C:\>`; iso requires `Boot complete in` only (architectural: no IXFS9660 driver yet); whpx is an always-SKIP placeholder pending a Windows non-interactive runner with `--disk` + timeout + serial-polling contract (see open checklist item above). Any failure produces a per-configuration stripped serial log under `build/ci/<config>.log`. Final exit 0 iff no FAIL (SKIPs do not fail). On the dev container with KVM + OVMF + prebuilt artifacts: raw + vhdx PASS; iso, vdi, whpx, usb-loop SKIP cleanly with reasons.
 
 > **Test runner:** `bash scripts/ci/test-boot-matrix.sh` (host-side) | 13 assertions, 0 failures | covers help text, unknown-arg exit, custom --out, summary table, all-skip-or-pass exit code
 
@@ -292,6 +292,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Downstream effects: feeds the broader certification matrix in 01-boot-platform/TODO-28; usable today by post-commit hook + release-pipeline runs. Codex 1x review adoptions in commit message.
 > - Canonical doc: header comment in [`scripts/ci/boot-matrix.sh`](../../scripts/ci/boot-matrix.sh).
 > - Scope boundary: TODO-28 owns the broader QEMU/VBox/Hyper-V/USB/NVMe/SecureBoot/TPM/network/A-B/recovery/watchdog/hibernation matrix; this is the artifact-format-only feeder.
+
+> **Verified:** 2026-05-06 | commit pending | 6/7 items (whpx leg blocked on Windows runner) | build OK | tests 13/13 PASS
+> **Quality reviewed:** 2026-05-06 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+2M fixed | scope: N/A (host-side bash orchestrator)
 
 ---
 

@@ -22,13 +22,18 @@
 # of FAIL, not the presence of all-PASS.
 #
 # Cross-platform:
-#   Linux dev host / WSL2: raw (KVM-or-TCG), iso, vhdx all run; vbox
-#     and usb-loopback skip when their tools are absent. The "Hyper-V
-#     VHDX boot under WHPX" checklist item is satisfied by
-#     boot-test-vhdx.sh because that script reads the same VHDX
-#     through QEMU's vhdx driver and KVM/TCG -- the WHPX accel path
-#     is QEMU-host-provided when run on Windows; the artifact-
-#     correctness contract is identical.
+#   Linux dev host / WSL2: raw (KVM-or-TCG), iso, vhdx all run; vdi
+#     and usb-loop SKIP when their tools (VBoxManage, losetup+root)
+#     are absent.
+#   WHPX leg: ALWAYS SKIPs today. The Hyper-V/WHPX VHDX boot is a
+#     placeholder pending a Windows-side non-interactive runner
+#     (scripts/machines/boot-test-whpx.ps1, not yet written) with
+#     --disk + timeout + serial-marker contract matching the Linux
+#     per-format scripts. KVM/TCG VHDX coverage is NOT a substitute
+#     for WHPX coverage given CLAUDE.md WHPX gotchas (PAT/MSR resets
+#     on CR3 reload, MSR read traps, INIT-de-assert IPI hang). The
+#     blocker is filed as an open checklist item in the same TODO
+#     section.
 #
 # Scope boundary: TODO-28 (boot validation certification matrix) owns
 # the broader QEMU/VBox/Hyper-V/USB/NVMe/SecureBoot/TPM/network/A-B
@@ -58,7 +63,7 @@ Configurations (run sequentially):
   2. iso          QEMU ISO boot                          -> scripts/release/boot-test-iso.sh
   3. vhdx         QEMU VHDX boot (KVM/TCG)               -> scripts/release/boot-test-vhdx.sh
   4. vdi          VirtualBox VDI boot                    -> scripts/release/boot-test-vbox.sh
-  5. whpx         Hyper-V/WHPX VHDX boot (Windows-only)  -> scripts/machines/run-qemu.ps1
+  5. whpx         Hyper-V/WHPX VHDX boot (always SKIP)   -> blocked: needs scripts/machines/boot-test-whpx.ps1
   6. usb-loop     USB image loopback boot (losetup+qemu) -> inline driver
 
 Exit 0 if all run configurations PASS; 1 if any FAIL. SKIP results
@@ -97,15 +102,19 @@ strip_ansi() {
 }
 
 # run_config -- execute a sub-script, capture stdout+stderr to a log,
-# classify the exit code as PASS / SKIP / FAIL.
+# classify the exit code as PASS / FAIL. SKIP is decided at the CALL
+# SITE (artifact-missing or tool-absent) BEFORE invocation; once the
+# delegate runs, ANY non-zero exit is a FAIL. Without this rule,
+# treating exit 2 (unknown-arg / contract drift) as SKIP would let
+# delegate-interface breakage masquerade as "host lacks tool" and
+# the matrix would silently lose coverage. This is the
+# consistency-review-driven shape from skip-code-conflation.
 #
 # $1 = config name (used as log filename)
 # $2 = command to run
-# $3 = SKIP exit codes (space-separated; default "3")
 run_config() {
     local name="$1"
     local cmd="$2"
-    local skip_codes="${3:-3}"
     local log="$OUT_DIR/${name}.log"
     # Capture into /tmp because the raw config (test-smoke.sh) calls
     # `build.sh clean` which wipes build/ wholesale -- a raw_log under
@@ -119,23 +128,12 @@ run_config() {
     eval "$cmd" >"$raw_log" 2>&1
     local rc=$?
     set -e
-    # Recreate OUT_DIR after each run: build.sh clean may have wiped it.
     mkdir -p "$OUT_DIR"
     strip_ansi <"$raw_log" >"$log"
     rm -f "$raw_log"
-    local is_skip=0
-    for sc in $skip_codes; do
-        if [ "$rc" -eq "$sc" ]; then is_skip=1; break; fi
-    done
     if [ "$rc" -eq 0 ]; then
         RESULTS+=("$name|PASS|exit=0")
         note "[$name] PASS"
-    elif [ "$is_skip" -eq 1 ]; then
-        local reason
-        reason="$(grep -m1 -E 'SKIP[: ]|skip:' "$log" 2>/dev/null | head -c 160 || true)"
-        [ -z "$reason" ] && reason="exit=$rc"
-        RESULTS+=("$name|SKIP|$reason")
-        note "[$name] SKIP ($reason)"
     else
         RESULTS+=("$name|FAIL|exit=$rc")
         note "[$name] FAIL (exit=$rc; see $log)"
@@ -202,7 +200,7 @@ fi
 # ---- 2. QEMU ISO boot -----------------------------------------------------
 ISO_PATH="build/release/disk.iso"
 if [ -f "$ISO_PATH" ]; then
-    run_config "iso" "bash scripts/release/boot-test-iso.sh --iso $ISO_PATH" "2 3"
+    run_config "iso" "bash scripts/release/boot-test-iso.sh --iso $ISO_PATH"
 else
     RESULTS+=("iso|SKIP|missing $ISO_PATH (run scripts/release/build-iso.sh)")
     note "[iso] SKIP (missing $ISO_PATH)"
@@ -211,7 +209,7 @@ fi
 # ---- 3. QEMU VHDX boot ----------------------------------------------------
 VHDX_PATH="build/release/disk.vhdx"
 if [ -f "$VHDX_PATH" ]; then
-    run_config "vhdx" "bash scripts/release/boot-test-vhdx.sh --disk $VHDX_PATH" "2 3"
+    run_config "vhdx" "bash scripts/release/boot-test-vhdx.sh --disk $VHDX_PATH"
 else
     RESULTS+=("vhdx|SKIP|missing $VHDX_PATH (run scripts/release/to-vhdx.sh)")
     note "[vhdx] SKIP (missing $VHDX_PATH)"
@@ -220,7 +218,7 @@ fi
 # ---- 4. VirtualBox VDI boot ----------------------------------------------
 VDI_PATH="build/release/disk.vdi"
 if [ -f "$VDI_PATH" ] && command -v VBoxManage >/dev/null 2>&1; then
-    run_config "vdi" "bash scripts/release/boot-test-vbox.sh --disk $VDI_PATH" "2 3"
+    run_config "vdi" "bash scripts/release/boot-test-vbox.sh --disk $VDI_PATH"
 elif [ ! -f "$VDI_PATH" ]; then
     RESULTS+=("vdi|SKIP|missing $VDI_PATH (run scripts/release/to-vdi.sh)")
     note "[vdi] SKIP (missing $VDI_PATH)"
@@ -235,18 +233,24 @@ fi
 # accelerator, and CLAUDE.md documents WHPX-specific behavior (PAT/MSR
 # resets on CR3 reload, MSR read traps, INIT-de-assert IPI hang) that
 # does NOT reproduce on KVM/TCG -- so VHDX-via-KVM coverage is NOT a
-# substitute for WHPX coverage. This script SKIPs the WHPX leg with an
-# explicit pointer at the Windows-side runner; the contract is that a
-# Windows CI runner (or a user with QEMU+WHPX or Hyper-V on a Windows
-# host) executes the PowerShell path and reports its own PASS/FAIL
-# into the matrix.
-WHPX_RUNNER="scripts/machines/run-qemu.ps1"
-if [ -f "$WHPX_RUNNER" ] && [ -n "${OS:-}" ] && [ "${OS:-}" = "Windows_NT" ]; then
-    run_config "whpx" "powershell.exe -ExecutionPolicy Bypass -File $WHPX_RUNNER -Accel whpx -Image build/release/disk.vhdx -BootOnly" "2 3"
-else
-    RESULTS+=("whpx|SKIP|Windows host required (run scripts/machines/run-qemu.ps1 -Accel whpx -Image build/release/disk.vhdx)")
-    note "[whpx] SKIP (Windows-only)"
-fi
+# substitute for WHPX coverage.
+#
+# Today there is no Windows-side non-interactive runner with VHDX
+# argument support, serial-marker polling, and a per-config timeout.
+# scripts/machines/run-qemu.ps1 is an interactive launcher that
+# hardcodes build/system-disk.img and has no -Image / -BootOnly
+# parameters; calling it from this matrix would (a) fail at
+# PowerShell parameter binding on Windows, and (b) lack the timeout
+# that bounds the other configs' wall-clock cost.
+#
+# Always SKIP with a documented blocker. The gap is filed as a
+# follow-up item in this same section pointing at a future
+# scripts/machines/boot-test-whpx.ps1 that will accept the same
+# --disk PATH + timeout contract as the Linux per-format scripts.
+# Until that lands, the matrix never CLAIMS WHPX coverage on any
+# host.
+RESULTS+=("whpx|SKIP|no Windows VHDX-WHPX runner yet (see TODO follow-up: scripts/machines/boot-test-whpx.ps1)")
+note "[whpx] SKIP (Windows runner not yet wired)"
 
 # ---- 6. USB-loopback boot -------------------------------------------------
 # losetup needs CAP_SYS_ADMIN (typically root). When it's not available
