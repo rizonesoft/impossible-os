@@ -64,6 +64,11 @@ Options:
   --role NAME      Media role written to /IPOS/role.txt on ESP and
                    BlackBox (default: normal). One of: normal, installer,
                    live, recovery, manufacturing, diagnostics.
+  --manifest PATH  Stage the boot artifact manifest at /IPOS/manifest.json
+                   on the ESP. Lets tools/bootimg/bootimg.py inspect the
+                   image without a sidecar. The manifest must already
+                   exist (produce via scripts/release/build-manifest.sh
+                   build).
   --keep-work      Keep $WORK_DIR after success (debugging)
   -h, --help       Show this message
 EOF
@@ -72,11 +77,13 @@ EOF
 FORMAT="raw"
 KEEP_WORK=0
 ROLE="normal"
+MANIFEST_PATH=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --out)        OUT_IMG="$2"; shift 2 ;;
         --format)     FORMAT="$2"; shift 2 ;;
         --role)       ROLE="$2"; shift 2 ;;
+        --manifest)   MANIFEST_PATH="$2"; shift 2 ;;
         --keep-work)  KEEP_WORK=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) err "unknown arg: $1"; usage >&2; exit 2 ;;
@@ -234,6 +241,18 @@ cp "$BOOT_CONF" "$ESP_STAGE/EFI/ImpossibleOS/boot.conf"
 # bootloader reads this file from both ESP and BlackBox before kernel
 # load and feeds the decision into boot_info->boot_media_role.
 printf '%s\n' "$ROLE" > "$ESP_STAGE/IPOS/role.txt"
+
+# Optional /IPOS/manifest.json staging: when --manifest is passed the
+# offline-artifact-inspector feature (tools/bootimg/bootimg.py) can
+# verify the image without a sidecar. Schema produced by
+# scripts/release/build-manifest.sh; this script does not regenerate
+# it (the caller picks which manifest to embed).
+if [ -n "$MANIFEST_PATH" ]; then
+    [ -f "$MANIFEST_PATH" ] || { err "missing --manifest input: $MANIFEST_PATH"; exit 1; }
+    cp "$MANIFEST_PATH" "$ESP_STAGE/IPOS/manifest.json"
+    note "staged manifest -> /IPOS/manifest.json from $MANIFEST_PATH"
+fi
+
 find "$ESP_STAGE" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 
 # 5. Populate ESP. mtools' mcopy preserves source mtimes (since we just

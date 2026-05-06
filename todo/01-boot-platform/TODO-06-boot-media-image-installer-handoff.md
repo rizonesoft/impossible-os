@@ -265,6 +265,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Canonical doc: header comment in [`tools/bootimg/bootimg.py`](../../tools/bootimg/bootimg.py); manifest schema at [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
 > - Scope boundary: cryptographic signature verification is blocked on host-side Ed25519 in 09-desktop-shell/TODO-07 + 15-installer-release/TODO-01; today inspector reports `unverified` when `.sig` present.
 
+> **Verified:** 2026-05-06 | commit pending | 4/5 items (item 5 = full ship deferred to crypto unblock) | build OK | tests 14/14 PASS
+> **Quality reviewed:** 2026-05-06 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 4H+3M fixed | scope: N/A (host-side Python tool)
+
 ---
 
 ## 9. CI Boot Matrix for Every Artifact

@@ -73,7 +73,43 @@ GPT_PARTITION_ENTRY_SIZE = 128
 ESP_TYPE_GUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 LINUX_BASIC_DATA_GUID = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
 
-IXFS_MAGIC = b"IXFS\x00\x00\x00\x00"
+# IXFS_MAGIC = 0x49584653 ('IXFS' as a uint32_t little-endian) per
+# tools/mkfs-ixfs.c. The on-disk byte sequence is the LE encoding of
+# that integer, NOT the ASCII string. The volume name follows at
+# offset 60 (s_volume_name[32]).
+IXFS_MAGIC_LE = b"\x53\x46\x58\x49"  # 0x49584653 LE
+IXFS_VOLUME_NAME_OFFSET = 60
+IXFS_VOLUME_NAME_LEN = 32
+
+# Limits on untrusted manifest input -- prevent a hostile artifact
+# from forcing the inspector into unbounded work. Released images use
+# 3 entries today; 1024 is far above any realistic future expansion.
+MANIFEST_MAX_BYTES = 1 * 1024 * 1024
+MANIFEST_MAX_ENTRIES = 1024
+MANIFEST_MAX_PATH_LEN = 4096
+MANIFEST_SHA256_HEX_LEN = 64
+
+# Canonical paths required for the named boot artifacts. The validator
+# pins these so a manifest with name="bootloader" pointing at a non-
+# boot file (e.g. \IPOS\role.txt) is rejected -- otherwise an attacker-
+# controlled manifest could pass shape + hash validation while binding
+# arbitrary files instead of the load-bearing boot binaries. Build
+# producer scripts/release/build-manifest.sh always emits these
+# canonical paths via the same constants used by build-image.sh; an
+# inspector that accepts other paths breaks the trust contract. Match
+# is case-insensitive (FAT is case-insensitive on lookup); separators
+# normalised to forward slashes for comparison.
+REQUIRED_ARTIFACT_PATHS = {
+    "bootloader":  "/EFI/BOOT/BOOTX64.EFI",
+    "kernel":      "/boot/kernel.exe",
+    "boot_config": "/EFI/ImpossibleOS/boot.conf",
+}
+
+
+def _normalise_manifest_path(p: str) -> str:
+    """Convert manifest backslashes to forward slashes and lowercase
+    so canonical-path comparison is case-insensitive."""
+    return p.replace("\\", "/").lower()
 
 MANIFEST_PATH = "/IPOS/manifest.json"
 MANIFEST_SIG_PATH = "/IPOS/manifest.json.sig"
@@ -262,12 +298,11 @@ def detect_filesystem(image: Path, part: PartitionInfo) -> tuple[str, str]:
     with open(image, "rb") as f:
         f.seek(part.first_lba * LBA_SIZE)
         boot = f.read(512)
-        # Short read = partition extends past EOF; treat as unknown
-        # rather than indexing boot[0] on an empty bytes object.
         if len(boot) < 90:
             return ("unknown", "")
-        if boot[:8] == IXFS_MAGIC:
-            label = boot[24:48].rstrip(b"\x00").decode("ascii", errors="replace")
+        if boot[:4] == IXFS_MAGIC_LE:
+            label_end = IXFS_VOLUME_NAME_OFFSET + IXFS_VOLUME_NAME_LEN
+            label = boot[IXFS_VOLUME_NAME_OFFSET:label_end].rstrip(b"\x00").decode("ascii", errors="replace")
             return ("ixfs", label)
         if (boot[0] in (0xEB, 0xE9)) and boot[82:90].startswith(b"FAT32"):
             label = boot[71:82].rstrip(b" \x00").decode("ascii", errors="replace")
@@ -450,24 +485,94 @@ def parse_iso(image: Path) -> tuple[list[PartitionInfo], dict[str, Any]]:
     return descriptors, meta
 
 
+def _is_64hex(s: str) -> bool:
+    if len(s) != MANIFEST_SHA256_HEX_LEN:
+        return False
+    for c in s:
+        if c not in "0123456789abcdef":
+            return False
+    return True
+
+
 def _validate_manifest_shape(parsed: Any) -> Optional[dict[str, Any]]:
     """Return parsed when it matches the boot-artifact-manifest schema
-    enough for downstream consumers (top-level dict; entries[] is a
-    list of dicts with string `path` and `sha256`); None otherwise.
-    A scalar / list / wrongly-typed dict short-circuits to None so the
-    caller surfaces a structured "malformed" error instead of crashing
-    inside .get() on a non-dict."""
+    enforced by scripts/release/build-manifest.sh; None otherwise.
+
+    Schema requirements:
+      - top-level dict
+      - entries is a non-empty list bounded by MANIFEST_MAX_ENTRIES
+      - each entry is a dict with non-empty `path` <= MANIFEST_MAX
+        _PATH_LEN, `sha256` matching 64-char lowercase hex, and
+        `name` (string)
+      - entries MUST contain rows with `name=="bootloader"` and
+        `name=="kernel"`. Both are non-optional and bind the load-
+        bearing artifacts the inspector exists to attest.
+      - when top-level `bootloader_sha256` and `kernel_sha256` are
+        present (build-manifest.sh always emits them), they MUST
+        match the corresponding entries[name=...].sha256. A manifest
+        whose denormalized hash points at a different blob than the
+        entry it names is corrupt and cannot pass verification.
+
+    A non-conforming shape short-circuits to None. Without the name-
+    based check a manifest containing only a hash for /IPOS/role.txt
+    (or any other non-boot file) would have validate_hashes return
+    zero mismatches against an attacker-staged ESP, recreating the
+    false-clean attestation class that the empty-entries fix only
+    partly closed (post-commit re-adversarial round 2 finding)."""
     if not isinstance(parsed, dict):
         return None
-    entries = parsed.get("entries", [])
+    entries = parsed.get("entries")
     if not isinstance(entries, list):
         return None
+    if len(entries) == 0:
+        return None
+    if len(entries) > MANIFEST_MAX_ENTRIES:
+        return None
+    by_name: dict[str, dict[str, Any]] = {}
     for e in entries:
         if not isinstance(e, dict):
             return None
-        if not isinstance(e.get("path", ""), str):
+        path = e.get("path", "")
+        sha = e.get("sha256", "")
+        name = e.get("name", "")
+        if not isinstance(path, str) or not isinstance(sha, str) or not isinstance(name, str):
             return None
-        if not isinstance(e.get("sha256", ""), str):
+        if path == "" or len(path) > MANIFEST_MAX_PATH_LEN:
+            return None
+        if not _is_64hex(sha.lower()):
+            return None
+        if name:
+            # Reject duplicate required names: two rows both claiming
+            # name="bootloader" with different hashes is ambiguous and
+            # would let an attacker shadow the canonical row.
+            if name in REQUIRED_ARTIFACT_PATHS and name in by_name:
+                return None
+            by_name[name] = e
+    # Required boot artifacts MUST be present AND bind the canonical
+    # ESP path. Without the path pin, a manifest with name="bootloader"
+    # at \IPOS\role.txt would have validate_hashes return zero
+    # mismatches against an attacker-staged ESP -- the false-clean
+    # attestation class re-emerging via forged-path entries.
+    for required in ("bootloader", "kernel"):
+        if required not in by_name:
+            return None
+        wanted = REQUIRED_ARTIFACT_PATHS[required]
+        actual = _normalise_manifest_path(by_name[required].get("path", ""))
+        if actual != wanted.lower():
+            return None
+    # boot_config: optional but path-pinned when present.
+    if "boot_config" in by_name:
+        actual = _normalise_manifest_path(by_name["boot_config"].get("path", ""))
+        if actual != REQUIRED_ARTIFACT_PATHS["boot_config"].lower():
+            return None
+    # Top-level denormalized hash agreement (when present).
+    bl_top = parsed.get("bootloader_sha256")
+    if isinstance(bl_top, str) and bl_top:
+        if bl_top.lower() != by_name["bootloader"].get("sha256", "").lower():
+            return None
+    kr_top = parsed.get("kernel_sha256")
+    if isinstance(kr_top, str) and kr_top:
+        if kr_top.lower() != by_name["kernel"].get("sha256", "").lower():
             return None
     return parsed
 
@@ -476,6 +581,10 @@ def read_manifest_from_partition(image: Path, part: PartitionInfo) -> tuple[Opti
     raw = _fat32_read_path(image, part, MANIFEST_PATH)
     if raw is None:
         return (None, None, None)
+    if len(raw) > MANIFEST_MAX_BYTES:
+        # Hostile or corrupted manifest; refuse to parse rather than
+        # spend memory and CPU on it.
+        return (None, raw, None)
     sig = _fat32_read_path(image, part, MANIFEST_SIG_PATH)
     try:
         parsed = json.loads(raw.decode("utf-8"))
@@ -568,6 +677,8 @@ def read_manifest_from_iso(image: Path) -> tuple[Optional[dict[str, Any]], Optio
     raw = _iso9660_read_path(image, MANIFEST_PATH)
     if raw is None:
         return (None, None, None)
+    if len(raw) > MANIFEST_MAX_BYTES:
+        return (None, raw, None)
     sig = _iso9660_read_path(image, MANIFEST_SIG_PATH)
     try:
         parsed = json.loads(raw.decode("utf-8"))
@@ -663,7 +774,25 @@ def validate_hashes(
     return (out, mismatch)
 
 
-def inspect(image: Path) -> tuple[InspectReport, int]:
+def _load_sidecar_manifest(path: Path) -> tuple[Optional[dict[str, Any]], Optional[bytes]]:
+    """Load + validate a sidecar manifest from the host filesystem.
+    Used when the image itself does not stage /IPOS/manifest.json on
+    its ESP (today's build-image.sh produces a sidecar at
+    build/artifacts/manifest.json instead). Returns (validated, raw)
+    or (None, raw) on shape-fail / (None, None) on missing/oversized."""
+    if not path.exists():
+        return (None, None)
+    raw = path.read_bytes()
+    if len(raw) > MANIFEST_MAX_BYTES:
+        return (None, raw)
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return (None, raw)
+    return (_validate_manifest_shape(parsed), raw)
+
+
+def inspect(image: Path, sidecar_manifest: Optional[Path] = None) -> tuple[InspectReport, int]:
     fmt = detect_format(image)
     rep = InspectReport(
         image_path=str(image),
@@ -693,18 +822,58 @@ def inspect(image: Path) -> tuple[InspectReport, int]:
                 rep.warnings.append(
                     f"ISO volume id: {iso_meta.get('volume_id', '?')}"
                 )
-            # Read manifest from ISO9660 root and validate just like
-            # the GPT/FAT path. Without this, a tampered ISO can
-            # produce EXIT_OK with no manifest evidence -- the
-            # false-clean attestation the offline-artifact-inspector
-            # feature exists to prevent.
-            manifest, raw_bytes, sig_bytes = read_manifest_from_iso(raw_path)
+            # On hybrid ISOs produced by scripts/release/build-iso.sh,
+            # the ESP-shaped FAT image is embedded inside the ISO as a
+            # boot image referenced by El Torito. parse_iso() returns
+            # synthetic PartitionInfo entries with first_lba/last_lba
+            # in 512-byte units pointing into the ISO. We walk that
+            # embedded FAT for the manifest + hash checks rather than
+            # the ISO9660 root: manifest entries[] paths use the FAT
+            # paths (\EFI\BOOT\BOOTX64.EFI etc.) which only exist
+            # inside the embedded FAT image.
+            embedded_esp = next(
+                (p for p in parts if p.label == "uefi" or p.type_guid.startswith("ELTORITO-EF")),
+                None,
+            )
+            manifest: Optional[dict[str, Any]] = None
+            raw_bytes: Optional[bytes] = None
+            sig_bytes: Optional[bytes] = None
+
+            if embedded_esp is not None:
+                fs, label = detect_filesystem(raw_path, embedded_esp)
+                embedded_esp.filesystem = fs
+                embedded_esp.label = label
+                if fs == "fat32":
+                    manifest, raw_bytes, sig_bytes = read_manifest_from_partition(raw_path, embedded_esp)
+
+            # Fall back to ISO9660 root if the embedded FAT did not
+            # carry the manifest (legacy layouts, or pure-ISO9660
+            # images that stage manifest.json at /IPOS/ in the ISO
+            # root rather than the El Torito FAT).
+            if manifest is None and raw_bytes is None:
+                manifest, raw_bytes, sig_bytes = read_manifest_from_iso(raw_path)
+
+            # Sidecar fallback (same shape as raw path).
+            if manifest is None and raw_bytes is None and sidecar_manifest is not None:
+                sc_manifest, sc_raw = _load_sidecar_manifest(sidecar_manifest)
+                if sc_manifest is None and sc_raw is None:
+                    rep.warnings.append(f"{MANIFEST_PATH} absent on ISO and sidecar {sidecar_manifest} not found")
+                    return (rep, EXIT_MANIFEST_ABSENT)
+                if sc_manifest is None:
+                    rep.errors.append(f"sidecar manifest {sidecar_manifest} malformed JSON or shape")
+                    return (rep, EXIT_MANIFEST_ABSENT)
+                manifest = sc_manifest
+                raw_bytes = sc_raw
+                sig_bytes = None
+                rep.warnings.append(f"using sidecar manifest {sidecar_manifest} (ISO-embedded absent)")
+
             if manifest is None and raw_bytes is None:
                 rep.warnings.append(f"{MANIFEST_PATH} absent on ISO")
                 return (rep, EXIT_MANIFEST_ABSENT)
             if manifest is None and raw_bytes is not None:
                 rep.errors.append(f"{MANIFEST_PATH} present but malformed JSON or shape")
                 return (rep, EXIT_MANIFEST_ABSENT)
+
             rep.manifest = manifest
             rep.manifest_path_on_esp = MANIFEST_PATH
             rep.manifest_sha256 = _sha256(raw_bytes) if raw_bytes else None
@@ -715,7 +884,14 @@ def inspect(image: Path) -> tuple[InspectReport, int]:
             sig_status, sig_path = signature_status_for(sig_bytes)
             rep.signature_status = sig_status
             rep.signature_path = sig_path
-            rep.hash_checks, mismatches = validate_hashes_iso(raw_path, manifest)
+
+            # Hash validation: prefer the embedded FAT (manifest entry
+            # paths match) and fall back to ISO9660 root.
+            mismatches = 0
+            if embedded_esp is not None and embedded_esp.filesystem == "fat32":
+                rep.hash_checks, mismatches = validate_hashes(raw_path, embedded_esp, manifest)
+            else:
+                rep.hash_checks, mismatches = validate_hashes_iso(raw_path, manifest)
             if mismatches > 0:
                 return (rep, EXIT_HASH_MISMATCH)
             if rep.signature_status.startswith("FAIL"):
@@ -737,11 +913,27 @@ def inspect(image: Path) -> tuple[InspectReport, int]:
             return (rep, EXIT_MANIFEST_ABSENT)
 
         manifest, raw_bytes, sig_bytes = read_manifest_from_partition(raw_path, esp)
+        if manifest is None and raw_bytes is None and sidecar_manifest is not None:
+            # Fall back to sidecar manifest when ESP /IPOS/manifest.json
+            # is absent. Today's build-image.sh stages a sidecar at
+            # build/artifacts/manifest.json rather than embedding it
+            # on the ESP, so this fallback covers shipped raw images.
+            sc_manifest, sc_raw = _load_sidecar_manifest(sidecar_manifest)
+            if sc_manifest is None and sc_raw is None:
+                rep.warnings.append(f"{MANIFEST_PATH} absent on ESP and sidecar {sidecar_manifest} not found")
+                return (rep, EXIT_MANIFEST_ABSENT)
+            if sc_manifest is None:
+                rep.errors.append(f"sidecar manifest {sidecar_manifest} malformed JSON or shape")
+                return (rep, EXIT_MANIFEST_ABSENT)
+            manifest = sc_manifest
+            raw_bytes = sc_raw
+            sig_bytes = None
+            rep.warnings.append(f"using sidecar manifest {sidecar_manifest} (ESP-embedded absent)")
         if manifest is None and raw_bytes is None:
             rep.warnings.append(f"{MANIFEST_PATH} absent on ESP")
             return (rep, EXIT_MANIFEST_ABSENT)
         if manifest is None and raw_bytes is not None:
-            rep.errors.append(f"{MANIFEST_PATH} present but malformed JSON")
+            rep.errors.append(f"{MANIFEST_PATH} present but malformed JSON or shape")
             return (rep, EXIT_MANIFEST_ABSENT)
 
         rep.manifest = manifest
@@ -823,8 +1015,9 @@ def cmd_inspect(args: argparse.Namespace) -> int:
     if not image.exists():
         print(f"[ERROR] {image}: not found", file=sys.stderr)
         return EXIT_USAGE
+    sidecar = Path(args.manifest) if getattr(args, "manifest", None) else None
     try:
-        rep, exit_code = inspect(image)
+        rep, exit_code = inspect(image, sidecar_manifest=sidecar)
     except IOError as e:
         print(f"[ERROR] {e}", file=sys.stderr)
         return EXIT_IO_ERROR
@@ -845,11 +1038,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         "inspect", help="Inspect an image and print a structured report.")
     p_inspect.add_argument("image", help="Path to .img / .iso / .vhd / .vhdx / .vdi")
     p_inspect.add_argument("--json", action="store_true", help="Emit JSON instead of human text")
+    p_inspect.add_argument("--manifest", help="Sidecar manifest path; used when /IPOS/manifest.json is absent on the image (e.g. build/artifacts/manifest.json from build-manifest.sh)")
     p_inspect.set_defaults(func=cmd_inspect)
     p_verify = sub.add_parser(
         "verify", help="Alias for inspect; emphasises the exit code (non-zero on tamper / sig fail).")
     p_verify.add_argument("image", help="Path to .img / .iso / .vhd / .vhdx / .vdi")
     p_verify.add_argument("--json", action="store_true", help="Emit JSON instead of human text")
+    p_verify.add_argument("--manifest", help="Sidecar manifest path; used when /IPOS/manifest.json is absent on the image")
     p_verify.set_defaults(func=cmd_inspect)
     args = parser.parse_args(argv)
     return args.func(args)

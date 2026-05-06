@@ -120,9 +120,27 @@ from bootimg import _validate_manifest_shape
 assert _validate_manifest_shape([]) is None, 'list must reject'
 assert _validate_manifest_shape({'entries': 'not-a-list'}) is None, 'non-list entries must reject'
 assert _validate_manifest_shape({'entries': ['scalar']}) is None, 'scalar entry must reject'
+BL='\\\\EFI\\\\BOOT\\\\BOOTX64.EFI'
+KR='\\\\boot\\\\kernel.exe'
+H64A='a' * 64
+H64B='b' * 64
+H64C='c' * 64
 assert _validate_manifest_shape({'entries': [{'path': 1, 'sha256': 'x'}]}) is None, 'non-string path must reject'
-ok = _validate_manifest_shape({'entries': [{'path': '\\\\boot\\\\kernel.exe', 'sha256': 'abc'}]})
-assert ok is not None, 'valid shape must accept'
+assert _validate_manifest_shape({'entries': []}) is None, 'empty entries must reject'
+assert _validate_manifest_shape({'entries': [{'path': KR, 'sha256': 'abc', 'name': 'kernel'}]}) is None, 'short sha256 must reject'
+# False-clean attempt: manifest binds a non-boot file only.
+assert _validate_manifest_shape({'entries': [{'name': 'role', 'path': '\\\\IPOS\\\\role.txt', 'sha256': H64A}]}) is None, 'manifest without bootloader+kernel must reject'
+# Forged-path attack: name=bootloader but path is non-canonical.
+assert _validate_manifest_shape({'entries': [{'name': 'bootloader', 'path': '\\\\IPOS\\\\role.txt', 'sha256': H64A}, {'name': 'kernel', 'path': KR, 'sha256': H64B}]}) is None, 'forged bootloader path must reject'
+# Forged-path attack: name=kernel but path is wrong.
+assert _validate_manifest_shape({'entries': [{'name': 'bootloader', 'path': BL, 'sha256': H64A}, {'name': 'kernel', 'path': '\\\\IPOS\\\\role.txt', 'sha256': H64B}]}) is None, 'forged kernel path must reject'
+# Duplicate required name with different hashes.
+assert _validate_manifest_shape({'entries': [{'name': 'bootloader', 'path': BL, 'sha256': H64A}, {'name': 'bootloader', 'path': BL, 'sha256': H64C}, {'name': 'kernel', 'path': KR, 'sha256': H64B}]}) is None, 'duplicate bootloader name must reject'
+# Denormalized hash mismatch: entry says one hash, top-level says another.
+assert _validate_manifest_shape({'entries': [{'name': 'bootloader', 'path': BL, 'sha256': H64A}, {'name': 'kernel', 'path': KR, 'sha256': H64B}], 'bootloader_sha256': H64C}) is None, 'denormalized bootloader_sha256 mismatch must reject'
+# Valid canonical manifest.
+ok = _validate_manifest_shape({'entries': [{'name': 'bootloader', 'path': BL, 'sha256': H64A}, {'name': 'kernel', 'path': KR, 'sha256': H64B}]})
+assert ok is not None, 'valid canonical bootloader+kernel manifest must accept'
 print('OK')
 " >"$tmp_out" 2>"$tmp_err"
 rc=$?
