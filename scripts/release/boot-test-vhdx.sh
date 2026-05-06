@@ -11,7 +11,7 @@
 # proves the conversion-pipeline VHDX is bootable end-to-end.
 #
 # Exit codes:
-#   0 -- VHDX booted to "Boot complete in" + "C:\>"
+#   0 -- VHDX booted to userspace ("Boot complete in" on serial)
 #   1 -- boot timed out, QEMU crashed, or fail pattern matched
 #   2 -- usage / preflight (missing tool / missing image / missing OVMF)
 
@@ -24,9 +24,11 @@ BUILD="$REPO_ROOT/build"
 DISK="$BUILD/release/disk.vhdx"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS_SRC="/usr/share/OVMF/OVMF_VARS_4M.fd"
-OVMF_VARS_CP="$BUILD/OVMF_VARS_4M.boot-test-vhdx.fd"
-SERIAL_LOG="$BUILD/boot-test-vhdx.log"
 TIMEOUT_SEC="${TIMEOUT_SEC:-30}"
+# Per-invocation run directory holds the OVMF VARS copy + serial log so two
+# concurrent runs cannot copy/write the same vars file or truncate/read each
+# other's log -- the same race the VBox harness avoids with mktemp -d.
+RUN_DIR=""
 
 err()  { printf '[ERROR] %s\n' "$*" >&2; }
 note() { printf '[boot-test-vhdx] %s\n' "$*" >&2; }
@@ -53,8 +55,31 @@ done
 
 [ -f "$DISK" ] || { err "missing disk: $DISK (run scripts/release/to-vhdx.sh)"; exit 2; }
 [ -f "$OVMF_CODE" ] || { err "missing OVMF: $OVMF_CODE (apt install ovmf)"; exit 2; }
+[ -f "$OVMF_VARS_SRC" ] || { err "missing OVMF VARS template: $OVMF_VARS_SRC (apt install ovmf)"; exit 2; }
 command -v qemu-system-x86_64 >/dev/null || { err "missing qemu-system-x86_64"; exit 2; }
 
+mkdir -p "$BUILD"
+RUN_DIR="$(mktemp -d "$BUILD/boot-test-vhdx.run.XXXXXX")"
+# Arm cleanup BEFORE any further work so a failure between mktemp and
+# QEMU launch (e.g. cp OVMF VARS hits ENOSPC, set -e fires) still removes
+# RUN_DIR. Defining cleanup inline so the trap can reference QEMU_PID
+# even before it is set (kill -0 on empty pid is a no-op).
+cleanup() {
+    local ec=$?
+    if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+    if [ "$ec" -ne 0 ] && [ -f "${SERIAL_LOG:-/dev/null}" ]; then
+        printf '\n[boot-test-vhdx] last 20 serial lines:\n' >&2
+        tail -20 "$SERIAL_LOG" >&2 2>/dev/null || true
+    fi
+    [ -n "$RUN_DIR" ] && rm -rf "$RUN_DIR"
+    exit "$ec"
+}
+trap cleanup EXIT INT TERM
+OVMF_VARS_CP="$RUN_DIR/OVMF_VARS_4M.fd"
+SERIAL_LOG="$RUN_DIR/serial.log"
 cp "$OVMF_VARS_SRC" "$OVMF_VARS_CP"
 
 # Declare the VHDX format explicitly. Auto-detect can be brittle on
@@ -83,17 +108,6 @@ fi
 note "starting QEMU (timeout ${TIMEOUT_SEC}s)..."
 qemu-system-x86_64 "${QEMU_FLAGS[@]}" &
 QEMU_PID=$!
-
-cleanup() {
-    local ec=$?
-    if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
-        kill "$QEMU_PID" 2>/dev/null || true
-        wait "$QEMU_PID" 2>/dev/null || true
-    fi
-    rm -f "$OVMF_VARS_CP"
-    exit "$ec"
-}
-trap cleanup EXIT INT TERM
 
 # PASS = the kernel reached userspace ("Boot complete in"). The reproducible
 # raw image producer currently zero-fills the IXFS partition (full mkfs-ixfs
@@ -132,6 +146,6 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
     fi
 done
 
-err "timeout: did not reach 'Boot complete in' + 'C:\\>' within ${TIMEOUT_SEC}s"
+err "timeout: did not reach 'Boot complete in' within ${TIMEOUT_SEC}s"
 tail -20 "$SERIAL_LOG" >&2 || true
 exit 1

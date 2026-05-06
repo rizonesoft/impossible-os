@@ -13,7 +13,7 @@
 # tears the VM down on exit.
 #
 # Exit codes:
-#   0 -- VDI booted and reached "Boot complete in" + "C:\>"  (PASS)
+#   0 -- VDI booted to userspace ("Boot complete in" on serial)  (PASS)
 #   1 -- boot timed out, VBox crashed, or fail pattern matched  (FAIL)
 #   2 -- usage / preflight (missing image only; VBoxManage absent is SKIP)
 #   3 -- VBoxManage absent on host (SKIP, not a regression)
@@ -176,6 +176,6 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
     fi
 done
 
-err "timeout: did not reach 'Boot complete in' + 'C:\\>' within ${TIMEOUT_SEC}s"
+err "timeout: did not reach 'Boot complete in' within ${TIMEOUT_SEC}s"
 tail -20 "$SERIAL_LOG" >&2 || true
 exit 1

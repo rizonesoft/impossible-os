@@ -240,41 +240,29 @@ cmd_build() {
             err "vm_image_metadata derivation needs qemu-img (install qemu-utils)"
             exit 1
         fi
-        local vm_info_json
+        # Single python invocation parses the qemu-img JSON once and emits
+        # all four fields tab-separated (was four serialized python startups
+        # at ~50ms each = 200ms wasted on identical JSON parses).
+        local vm_info_json vm_fields
         vm_info_json="$(qemu-img info --output=json "$vm_image_path")"
-        vm_format="$(printf '%s' "$vm_info_json" | python3 -c '
+        vm_fields="$(printf '%s' "$vm_info_json" | python3 -c '
 import json, sys
 m = json.load(sys.stdin)
-fmt = m["format"]
 # qemu-img reports legacy Microsoft VHD (Connectix Virtual PC) under the
-# name "vpc"; the manifest schema standardizes on "vhd". Normalize at
-# extraction so the producer/check round-trip always agrees.
-print({"vpc": "vhd"}.get(fmt, fmt))
-')"
-        vm_virtual_size_bytes="$(printf '%s' "$vm_info_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("virtual-size", 0))')"
-        # subformat + block_size live in format-specific-information for VHDX/VDI;
-        # both qemu-img versions and underlying formats vary in what they expose,
-        # so we extract defensively and emit an empty subfield when absent.
-        vm_subformat="$(printf '%s' "$vm_info_json" | python3 -c '
-import json,sys
-m = json.load(sys.stdin)
+# name "vpc"; manifest schema standardizes on "vhd". Normalize at
+# extraction so producer and check always round-trip on the same name.
+fmt = {"vpc": "vhd"}.get(m["format"], m["format"])
+vsz = m.get("virtual-size", 0)
 fsi = m.get("format-specific", {}).get("data", {})
-print(fsi.get("subformat", "dynamic" if m["format"] in ("vhdx","vdi","qcow2") else ""))
-')"
-        vm_block_size_bytes="$(printf '%s' "$vm_info_json" | python3 -c '
-import json,sys
-m = json.load(sys.stdin)
-# qemu-img exposes container block size as top-level cluster-size for VHDX
-# and qcow2; VDI does not surface it in qemu-img info, so we default to the
-# 1 MiB block VDI ships with.
-bs = m.get("cluster-size")
-if not bs:
-    fsi = m.get("format-specific", {}).get("data", {})
-    bs = fsi.get("block-size") or fsi.get("cluster_size")
-if not bs and m["format"] == "vdi":
+sub = fsi.get("subformat", "dynamic" if fmt in ("vhdx", "vdi", "qcow2") else "")
+# VHDX + qcow2 expose container block size as top-level cluster-size; VDI
+# does not surface it, so we default to the 1 MiB block VDI ships with.
+bs = m.get("cluster-size") or fsi.get("block-size") or fsi.get("cluster_size")
+if not bs and fmt == "vdi":
     bs = 1048576
-print(bs or 0)
+print("\t".join((fmt, sub, str(bs or 0), str(vsz))))
 ')"
+        IFS=$'\t' read -r vm_format vm_subformat vm_block_size_bytes vm_virtual_size_bytes <<< "$vm_fields"
     elif [ -n "$vm_image_path" ]; then
         err "missing --vm-image / conventional VM image: $vm_image_path"
         exit 1

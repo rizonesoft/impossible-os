@@ -119,6 +119,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] Byte-preservation enforced by inline `qemu-img compare -f raw -F <fmt>` on every conversion; regression test [1]/[3] in `scripts/release/test-vm-conversion.sh`.
 - [x] Manifest schema: optional top-level `vm_image_metadata` (`format`, `subformat`, `block_size_bytes`, `virtual_size_bytes`); `build` populates via `qemu-img info`, `check` validates positive sizes + cross-field consistency.
 - [x] Boot-test: `scripts/release/boot-test-vhdx.sh` (QEMU OVMF AHCI) + `scripts/release/boot-test-vbox.sh` (VBoxManage auto-detect, exit 3 = SKIP). PASS = "Boot complete in"; C:\\> gated by IXFS mount (kernel-fs).
+- [ ] `boot-test-vbox.sh` deadline-driven loop: replace iteration-count timeout with elapsed-time deadline so showvminfo overhead does not overshoot 60s on slow hosts (~12s slop today).
 - [x] Commit: `"release: validate virtual disk artifacts"`
 
 **Test checkpoint:** `qemu-img info build/release/disk.vhdx` reports `format: vhdx` + `cluster_size: 4194304`; `qemu-img compare -f raw -F vhdx disk.img disk.vhdx` exits 0 (byte-identical content). `bash scripts/release/boot-test-vhdx.sh` reaches `Boot complete in` on serial in <=30s under QEMU OVMF (KVM accel: ~7s). `bash scripts/release/boot-test-vbox.sh` exits 3 (SKIP) on hosts without VBoxManage and exits 0 (PASS) with `Boot complete in` on hosts that have it. Verified by `bash scripts/release/test-vm-conversion.sh` (9/9 PASS).
@@ -132,6 +133,10 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - VBox boot-test is opt-in by host install: VBoxManage absent -> exit 3 (SKIP); listener-first socat avoids the server-mode race.
 > - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
 > - Scope: §3 owns conversion + boot-test; pipeline in D15 T01 §7; IXFS-mount owned by kernel-fs.
+
+> **Verified:** 2026-05-06 | commit `a88494b5` | 4/5 items | build OK | tests 9/9 PASS + boot-test PASS (KVM 6s)
+> **Deferred:** [L] boot-test-vbox.sh iteration-count timeout overshoots 60s by ~12s on slow hosts -> XREF: 01-boot-platform/TODO-06-boot-media-image-installer-handoff.md §3 (item: "boot-test-vbox.sh deadline-driven loop" at line 138) (reason: low-impact perf only on hosts with VBox installed)
+> **Quality reviewed:** 2026-05-06 | Codex 6x (design, adversarial, re-adversarial, consistency, perf, re-adversarial) | 3H+5M+3L fixed, 1L deferred | scope: N/A (host-side bash + manifest schema)
 
 ---
 

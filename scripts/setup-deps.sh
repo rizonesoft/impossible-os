@@ -48,7 +48,7 @@ if [ "$DISTRO" = "unknown" ]; then
     echo "  Supported: Ubuntu/Debian, Fedora/RHEL, Arch/Manjaro"
     echo "  Install these packages manually:"
     echo "    nasm clang-19 lld-19 llvm-19 clangd-19 bear"
-    echo "    xorriso mtools qemu-system-x86 ovmf"
+    echo "    xorriso mtools qemu-system-x86 qemu-utils ovmf"
     echo "    python3 python3-pil dosfstools parted cppcheck"
     exit 1
 fi
@@ -73,6 +73,7 @@ case "$DISTRO" in
             "xorriso:xorriso"
             "mtools:mtools"
             "qemu-system-x86_64:qemu-system-x86"
+            "qemu-img:qemu-utils"
             # OVMF is a data package -- check for file instead
             "/usr/share/OVMF/OVMF_CODE_4M.fd:ovmf"
             "python3:python3"
@@ -97,6 +98,7 @@ case "$DISTRO" in
             "xorriso:xorriso"
             "mtools:mtools"
             "qemu-system-x86_64:qemu-system-x86"
+            "qemu-img:qemu-img"
             "/usr/share/OVMF/OVMF_CODE.fd:edk2-ovmf"
             "python3:python3"
             "pip3:python3-pip"
@@ -120,6 +122,7 @@ case "$DISTRO" in
             "xorriso:libisoburn"
             "mtools:mtools"
             "qemu-system-x86_64:qemu-system-x86"
+            "qemu-img:qemu-img"
             "/usr/share/OVMF/OVMF_CODE.fd:edk2-ovmf"
             "python3:python3"
             "pip3:python-pip"
