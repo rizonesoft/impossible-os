@@ -653,6 +653,7 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
  * "invalid". */
 const char *boot_path_name(uint32_t path);
 const char *boot_reason_name(uint32_t reason);
+const char *boot_media_role_name(uint32_t role);
 
 /* Capability negotiation and degraded-feature flags.
  *

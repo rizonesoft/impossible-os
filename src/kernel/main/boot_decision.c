@@ -74,6 +74,23 @@ const char *boot_reason_name(uint32_t reason)
     }
 }
 
+const char *boot_media_role_name(uint32_t role)
+{
+    /* Lower-case canonical names matching the on-disk /IPOS/role.txt
+     * source-of-truth content (boot-media role-detection feature).
+     * Used by HKLM\SYSTEM\Boot\Device\MediaRole and serial output. */
+    switch (role) {
+    case BOOT_MEDIA_ROLE_UNSET:         return "unset";
+    case BOOT_MEDIA_ROLE_NORMAL:        return "normal";
+    case BOOT_MEDIA_ROLE_INSTALLER:     return "installer";
+    case BOOT_MEDIA_ROLE_LIVE:          return "live";
+    case BOOT_MEDIA_ROLE_RECOVERY:      return "recovery";
+    case BOOT_MEDIA_ROLE_MANUFACTURING: return "manufacturing";
+    case BOOT_MEDIA_ROLE_DIAGNOSTICS:   return "diagnostics";
+    default:                            return "invalid";
+    }
+}
+
 boot_result_t boot_decision_validate(const struct boot_info *info,
                                      enum boot_decision_error *out_error)
 {
@@ -134,6 +151,44 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
         if (out_error != (enum boot_decision_error *)0)
             *out_error = BOOT_DECISION_ERR_UNKNOWN_FLAG;
         return BOOT_FATAL;
+    }
+
+    /* Rule 3.5: boot_media_role + mismatch range check. Always-on, runs
+     * before the per-reason policy table so a stale producer cannot ship
+     * boot_media_role > BOOT_MEDIA_ROLE_MAX or a non-boolean mismatch
+     * value through to HKLM\SYSTEM\Boot\Device. The MEDIA_ROLE_MARKER
+     * Rule 8 below adds the path/role consistency check on top of this
+     * baseline range gate; non-marker boots still need the range gate
+     * because boot_device_populate_registry() reads the field
+     * unconditionally. */
+    {
+        uint32_t role = info->boot_media_role;
+        uint8_t  mm   = info->boot_media_role_mismatch;
+        if (role == (uint32_t)BOOT_MEDIA_ROLE_UNSET ||
+            role > (uint32_t)BOOT_MEDIA_ROLE_MAX) {
+            /* UNSET is the documented producer-must-overwrite sentinel:
+             * a producer that left BSS zero (alternate firmware, partial
+             * v17 wiring) must NOT pass through to consumers as if it
+             * had certified the role. Same doctrine as Rules 1/2 for
+             * boot_path/boot_reason. Out-of-range catches stale
+             * producers writing values past MAX. */
+            klog(LOG_ERROR, "boot",
+                 (role == (uint32_t)BOOT_MEDIA_ROLE_UNSET)
+                     ? "boot_decision: boot_media_role is UNSET (producer left BSS zero; populate before handoff)"
+                     : "boot_decision: boot_media_role %u out of range (max %u); stale producer",
+                 (uint64_t)role, (uint64_t)BOOT_MEDIA_ROLE_MAX);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_BAD_REASON;
+            return BOOT_FATAL;
+        }
+        if (mm > 1u) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: boot_media_role_mismatch %u not boolean (0/1)",
+                 (uint64_t)mm);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_BAD_REASON;
+            return BOOT_FATAL;
+        }
     }
 
     /* Rule 4: boot_fallback_depth cap. Runaway fallback depths suggest

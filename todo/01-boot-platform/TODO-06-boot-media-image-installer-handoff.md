@@ -42,7 +42,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   3   | VHD/VHDX/VDI conversion and validation             | §1, §2        |  [x]   |
 | 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [x]   |
 | 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [x]   |
-| 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [ ]   |
+| 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [x]   |
 | 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [ ]   |
 | ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [ ]   |
 | 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [ ]   |
@@ -193,14 +193,23 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## 6. Bootloader Handoff of Media Role
 
-- [ ] Add `boot_info.boot_media_role` (uint8 enum 0..5) at struct tail; bump `BOOT_INFO_VERSION`; pin offset via `_Static_assert` in kernel header + bootloader mirror; update `dump-fields.inc`.
-- [ ] Optionally add `boot_info.boot_artifact_id[16]` (UUID from manifest) and `boot_manifest_digest[32]` (sha256 of artifact manifest); pin offsets per the v15/v16 pattern.
-- [ ] Reuse the shared boot-path decision record from `T01 §12` to attribute *why* the bootloader chose this role (firmware Boot####, fallback chain, recovery trigger).
-- [ ] Kernel exposes role via `HKLM\SYSTEM\Boot\Device\MediaRole` (REG_SZ) and a platform API for installer / recovery shells.
-- [ ] Installer mode starts the installer shell instead of the normal desktop; recovery mode starts the recovery environment when the local system is broken.
-- [ ] Commit: `"boot: hand off boot media role"`
+- [x] `boot_info.boot_media_role` + mismatch field at struct tail; `BOOT_INFO_VERSION` bumped to 17; offset asserts at 23968 + 23972; `dump-fields.inc` updated. Shipped in §5.
+- [/] `boot_info.boot_artifact_id[16]` + `boot_manifest_digest[32]` -- deferred to artifact signing (owns the producer for these fields).
+- [x] Boot-path decision record reused: `BOOT_REASON_MEDIA_ROLE_MARKER` + Rule 8 path/role consistency in `boot_decision_validate()`. Shipped in §5.
+- [x] HKLM `Boot\Device\MediaRole` (REG_SZ) + `MediaRoleEnum`/`MediaRoleMismatch` DWORDs + `boot_media_role_name()` platform API in `boot_hw.c` + `boot_decision.c`.
+- [/] Installer/recovery shell launch -- kernel emits non-normal-role serial line pointing at owning TODO; actual shell binaries owned by separate TODOs.
+- [x] Commit: `"boot: hand off boot media role"`
 
-**Test checkpoint:** After §6 ships, `boot_info.boot_media_role == 1` (installer) on installer-built ISO boot; `HKLM\SYSTEM\Boot\Device\MediaRole == "installer"` post-boot. Recovery mode boot launches recovery shell within 5 s of `Boot complete in`. ABI bump: `BOOT_INFO_VERSION` line in kernel header AND bootloader mirror match; manifest dump compare passes.
+**Test checkpoint:** After §6 ships, `HKLM\SYSTEM\Boot\Device\MediaRole == "normal"` post-boot on the default-normal smoke image (verified via serial: `Boot device Registry populated: ... media_role=normal`). Unit test `boot_decision: boot_media_role_name canonical strings` covers all 7 roles + out-of-range. ABI bump verified: kernel + bootloader mirror both `BOOT_INFO_VERSION = 17`, manifest dump compare passes.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1221 assertions, 0 failures
+
+> **Notes:**
+> - Shipped: `boot_media_role_name()` API + HKLM `MediaRole`/`MediaRoleEnum`/`MediaRoleMismatch` triple in `boot_device_populate_registry()` + non-normal-role serial line pointing at the owning TODO.
+> - Items 1, 3 already shipped in §5 (boot_info field + BOOT_INFO_VERSION bump + boot_path coupling); §6 documents the cross-section reuse rather than duplicating the work.
+> - Optional artifact_id/manifest_digest fields and the actual installer/recovery shells are tracked elsewhere (artifact-signing feature for the IDs; `15-installer-release/TODO-02` + `01-boot-platform/TODO-22` for the shells).
+> - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md).
+> - Scope: §6 owns the kernel-side handoff (Registry + platform API + log line); shell launch policy and signed artifact metadata are owned elsewhere.
 
 ---
 

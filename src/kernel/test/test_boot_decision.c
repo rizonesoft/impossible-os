@@ -27,6 +27,11 @@ static void dec_zero(void)
     uint32_t i;
     for (i = 0u; i < sizeof(s_dec_buf) / sizeof(uint64_t); i++)
         p[i] = 0u;
+    /* boot_media_role: Rule 3.5 (always-on range gate) rejects UNSET as
+     * a producer-must-overwrite sentinel. Default to NORMAL so existing
+     * happy-path fixtures don't trip the gate; tests exercising the
+     * UNSET sentinel set the field explicitly after dec_zero(). */
+    s_dec_buf.boot_media_role = BOOT_MEDIA_ROLE_NORMAL;
 }
 
 static void test_boot_decision_null_info(void)
@@ -508,14 +513,17 @@ static void test_boot_decision_media_role_table_driven(void)
         { BOOT_PATH_INSTALLER,  BOOT_MEDIA_ROLE_INSTALLER,     0u, BOOT_OK,    BOOT_DECISION_ERR_OK },
         { BOOT_PATH_RECOVERY,   BOOT_MEDIA_ROLE_RECOVERY,      0u, BOOT_OK,    BOOT_DECISION_ERR_OK },
         { BOOT_PATH_DIAGNOSTIC, BOOT_MEDIA_ROLE_DIAGNOSTICS,   0u, BOOT_OK,    BOOT_DECISION_ERR_OK },
-        /* Reject: UNSET role with otherwise-allowed path. */
-        { BOOT_PATH_INSTALLER,  BOOT_MEDIA_ROLE_UNSET,         0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+        /* Reject: UNSET role with otherwise-allowed path -- caught by
+         * Rule 3.5 (always-on UNSET sentinel reject), surfaces as
+         * BAD_REASON before Rule 8 sees it. */
+        { BOOT_PATH_INSTALLER,  BOOT_MEDIA_ROLE_UNSET,         0u, BOOT_FATAL, BOOT_DECISION_ERR_BAD_REASON },
         /* Reject: NORMAL/LIVE/MANUFACTURING role -- never paired with MARKER. */
         { BOOT_PATH_INSTALLER,  BOOT_MEDIA_ROLE_NORMAL,        0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
         { BOOT_PATH_RECOVERY,   BOOT_MEDIA_ROLE_LIVE,          0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
         { BOOT_PATH_DIAGNOSTIC, BOOT_MEDIA_ROLE_MANUFACTURING, 0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
-        /* Reject: out-of-range role (MAX + 1). */
-        { BOOT_PATH_INSTALLER,  (BOOT_MEDIA_ROLE_MAX + 1u),    0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+        /* Reject: out-of-range role (MAX + 1) -- caught by Rule 3.5
+         * (always-on range gate) before Rule 8 sees it; err=BAD_REASON. */
+        { BOOT_PATH_INSTALLER,  (BOOT_MEDIA_ROLE_MAX + 1u),    0u, BOOT_FATAL, BOOT_DECISION_ERR_BAD_REASON },
         /* Reject: mismatch=1 with otherwise-valid pair. */
         { BOOT_PATH_RECOVERY,   BOOT_MEDIA_ROLE_RECOVERY,      1u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
     };
@@ -533,6 +541,96 @@ static void test_boot_decision_media_role_table_driven(void)
         boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
         TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)rows[i].want_r,   "row.r");
         TEST_ASSERT_EQ((uint64_t)err, (uint64_t)rows[i].want_err, "row.err");
+    }
+}
+
+/* Rule 3.5 (always-on): out-of-range boot_media_role on a normal boot
+ * must be rejected -- not just MEDIA_ROLE_MARKER boots. Otherwise a
+ * stale producer can ship garbage through to HKLM\SYSTEM\Boot\Device. */
+static void test_boot_decision_media_role_range_normal_boot(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path                = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason              = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth      = 0u;
+    s_dec_buf.boot_media_role          = (uint32_t)BOOT_MEDIA_ROLE_MAX + 1u;
+    s_dec_buf.boot_media_role_mismatch = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                "OOR role on NORMAL boot -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_REASON, "err=BAD_REASON");
+}
+
+/* Rule 3.5: UNSET sentinel on a normal boot must be rejected -- same
+ * doctrine as Rules 1 + 2 for boot_path and boot_reason. A producer
+ * that left boot_media_role at BSS zero (alternate firmware, partial
+ * v17 wiring) must NOT pass through to consumers as if the role had
+ * been certified. */
+static void test_boot_decision_media_role_unset_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path                = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason              = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth      = 0u;
+    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_UNSET;
+    s_dec_buf.boot_media_role_mismatch = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                "UNSET role on NORMAL boot -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_REASON, "err=BAD_REASON");
+}
+
+static void test_boot_decision_media_role_mismatch_nonboolean(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path                = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason              = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth      = 0u;
+    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_NORMAL;
+    s_dec_buf.boot_media_role_mismatch = 255u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                "non-boolean mismatch -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_BAD_REASON, "err=BAD_REASON");
+}
+
+/* boot_media_role_name() returns canonical lower-case strings matching
+ * the on-disk /IPOS/role.txt content -- consumed by HKLM\SYSTEM\Boot\
+ * Device\MediaRole and serial output. */
+static int role_name_eq(const char *a, const char *b)
+{
+    uint32_t i = 0;
+    while (a[i] != '\0' && a[i] == b[i]) i++;
+    return a[i] == '\0' && b[i] == '\0';
+}
+
+static void test_boot_media_role_name_canonical(void)
+{
+    struct row { uint32_t role; const char *want; const char *msg; };
+    struct row rows[] = {
+        { BOOT_MEDIA_ROLE_UNSET,         "unset",         "unset" },
+        { BOOT_MEDIA_ROLE_NORMAL,        "normal",        "normal" },
+        { BOOT_MEDIA_ROLE_INSTALLER,     "installer",     "installer" },
+        { BOOT_MEDIA_ROLE_LIVE,          "live",          "live" },
+        { BOOT_MEDIA_ROLE_RECOVERY,      "recovery",      "recovery" },
+        { BOOT_MEDIA_ROLE_MANUFACTURING, "manufacturing", "manufacturing" },
+        { BOOT_MEDIA_ROLE_DIAGNOSTICS,   "diagnostics",   "diagnostics" },
+        { BOOT_MEDIA_ROLE_MAX + 1u,      "invalid",       "out-of-range" },
+    };
+    uint32_t i;
+    for (i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        TEST_ASSERT_EQ((uint64_t)role_name_eq(boot_media_role_name(rows[i].role),
+                                              rows[i].want),
+                       1u, rows[i].msg);
     }
 }
 
@@ -587,6 +685,14 @@ void test_register_boot_decision(void)
                             test_boot_decision_media_role_normal_path_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: media-role layout offsets",
                             test_boot_media_role_layout, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: boot_media_role_name canonical strings",
+                            test_boot_media_role_name_canonical, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: OOR boot_media_role rejected on NORMAL boot (R3.5)",
+                            test_boot_decision_media_role_range_normal_boot, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: UNSET boot_media_role rejected on NORMAL boot (R3.5)",
+                            test_boot_decision_media_role_unset_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: non-boolean mismatch flag rejected (R3.5)",
+                            test_boot_decision_media_role_mismatch_nonboolean, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: media-role path/role disagreement rejected (R8)",
                             test_boot_decision_media_role_mismatch_path_role_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: media-role mismatch=1 with MARKER reason rejected (R8)",

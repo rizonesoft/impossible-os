@@ -701,13 +701,62 @@ void boot_device_populate_registry(void)
         RegSetString(hKey, "PartitionGUID", "");
     }
 
+    /* MediaRole: the boot-media role-detection feature wrote
+     * boot_info.boot_media_role from /IPOS/role.txt on the ESP
+     * (cross-checked against BlackBox). Surfacing the name here under
+     * HKLM\SYSTEM\Boot\Device gives installer / recovery / diagnostics
+     * shell launchers a single read path. Mismatch is published as a
+     * DWORD so attestation tooling can detect "media role is normal
+     * because the markers disagreed" vs "media role is normal because
+     * the markers said so". */
+    RegSetString(hKey, "MediaRole",
+                 boot_media_role_name(g_boot_info.boot_media_role));
+    RegSetDword(hKey, "MediaRoleEnum",     g_boot_info.boot_media_role);
+    RegSetDword(hKey, "MediaRoleMismatch",
+                (uint32_t)g_boot_info.boot_media_role_mismatch);
+
     RegCloseKey(hKey);
 
+    /* Non-normal roles imply a downstream shell-launch handler that
+     * lives outside this section; emit a single line that names the
+     * owning TODO so an operator reading the serial log can see the
+     * handoff plan. The handler itself is not a media-role-handoff
+     * deliverable: the installer shell is owned by the unattended-
+     * install feature (todo/15-installer-release/TODO-02), the
+     * recovery shell by the recovery-partition feature (todo/01-
+     * boot-platform/TODO-22); this kernel never assumes those shells
+     * exist. */
+    if (g_boot_info.boot_media_role != BOOT_MEDIA_ROLE_UNSET &&
+        g_boot_info.boot_media_role != BOOT_MEDIA_ROLE_NORMAL) {
+        const char *who = "(no owner registered)";
+        switch (g_boot_info.boot_media_role) {
+            case BOOT_MEDIA_ROLE_INSTALLER:
+                who = "todo/15-installer-release/TODO-02 (unattended install mode)";
+                break;
+            case BOOT_MEDIA_ROLE_RECOVERY:
+                who = "todo/01-boot-platform/TODO-22 (recovery partition)";
+                break;
+            case BOOT_MEDIA_ROLE_DIAGNOSTICS:
+                who = "todo/01-boot-platform/TODO-22 (diagnostics shell)";
+                break;
+            case BOOT_MEDIA_ROLE_LIVE:
+            case BOOT_MEDIA_ROLE_MANUFACTURING:
+                who = "(no override -- run as normal cold boot)";
+                break;
+            default: break;
+        }
+        klog(LOG_INFO, "boot",
+             "Media role %s requested -- shell launch handler in %s",
+             (uint64_t)(uintptr_t)boot_media_role_name(g_boot_info.boot_media_role),
+             (uint64_t)(uintptr_t)who);
+    }
+
     klog(LOG_INFO, "boot",
-         "Boot device Registry populated: %s type=%u removable=%u",
+         "Boot device Registry populated: %s type=%u removable=%u media_role=%s",
          g_boot_info.boot_device_path,
          (uint64_t)g_boot_info.boot_device_type,
-         (uint64_t)g_boot_info.boot_device_removable);
+         (uint64_t)g_boot_info.boot_device_removable,
+         (uint64_t)(uintptr_t)boot_media_role_name(g_boot_info.boot_media_role));
 
     /* HKLM\HARDWARE\BOOT\ESP -- ESP identity surfaced from the
      * bootloader's pre-load integrity check (esp_integrity_check in
