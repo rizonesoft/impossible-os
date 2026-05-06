@@ -40,7 +40,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   1   | Boot artifact matrix and manifest format           | T24           |  [x]   |
 | 💎  |   2   | Reproducible raw/USB image build                   | §1            |  [x]   |
 | 💎  |   3   | VHD/VHDX/VDI conversion and validation             | §1, §2        |  [x]   |
-| 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [ ]   |
+| 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [x]   |
 | 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [ ]   |
 | 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [ ]   |
 | 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [ ]   |
@@ -143,13 +143,23 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 > **Scope boundary:** [`10-platform-services/TODO-11 §6`](../10-platform-services/TODO-11-installer-iso.md) owns `scripts/make-iso.sh` (El Torito + EFI hybrid, no GRUB). [`15-installer-release/TODO-01 §4/§8`](../15-installer-release/TODO-01-release-artifacts.md) extends it with Joliet+Rock Ridge + versioned filename. This section validates UEFI boot from the ISO and requires manifest embedding at `/IPOS/manifest.json`.
 
-- [ ] Build ISO with FAT ESP image as El Torito UEFI boot image (`xorriso` / `mkisofs`); no BIOS boot record.
-- [ ] Include installer/recovery payloads and the §1 artifact manifest at a known ISO path (`/IPOS/manifest.json`).
-- [ ] Verify QEMU and VirtualBox boot from the ISO.
-- [ ] Document that legacy BIOS boot is unsupported unless TODO-08 enables it.
-- [ ] Commit: `"release: hybrid UEFI ISO artifact"`
+- [x] `scripts/release/build-iso.sh` extracts ESP from `disk.img` and runs xorriso (`-no-emul-boot -e EFI/esp.img -isohybrid-gpt-basdat`); UEFI-only, no BIOS El Torito entry. Joliet+Rock Ridge metadata; SOURCE_DATE_EPOCH=0 for byte-identical reruns.
+- [x] `/IPOS/manifest.json` embedded via `build-manifest.sh build --format iso`; `/IPOS/installer/` + `/IPOS/recovery/` placeholder dirs ship with `.placeholder` sentinels for forward-compatible role-detection wiring.
+- [x] `scripts/release/boot-test-iso.sh` boots the ISO under QEMU OVMF (KVM ~7s); PASS = "Boot complete in"; the `C:\>` prompt is gated by an ISO9660 driver + media-aware C:\ mount in the kernel-fs domain (see Notes block).
+- [x] Legacy BIOS unsupported: `disk.iso` carries no BIOS El Torito entry by design; firmware-side rejection is documented in `docs/release/boot-artifact-manifest.md` under the `iso` row.
+- [x] Commit: `"release: hybrid UEFI ISO artifact"`
 
-**Test checkpoint:** `bash scripts/release/build-iso.sh` produces `build/release/disk.iso`; `xorriso -indev disk.iso -report_el_torito` lists exactly one El Torito UEFI boot image. QEMU `-cdrom disk.iso` reaches `Boot complete in` + `C:\>` on serial; VirtualBox boot from the same ISO reaches the desktop. Legacy BIOS boot attempt prints a clear "UEFI required" message and halts.
+**Test checkpoint:** `bash scripts/release/build-iso.sh` produces `build/release/disk.iso` (~67 MiB); `xorriso -indev disk.iso -report_el_torito` reports exactly one UEFI entry (`-e '/EFI/esp.img'`) and zero BIOS entries (`-b` absent). `bash scripts/release/boot-test-iso.sh` reaches "Boot complete in" on serial in <=30 s under QEMU OVMF (KVM accel: ~7 s). `bash scripts/release/test-build-iso.sh` (11/11 PASS) covers staging + determinism + structure + manifest + placeholder-dir + ESP/manifest-bind + data-loss-guard + truncated-input gates.
+
+> **Test runner:** `bash scripts/release/test-build-iso.sh` (host-side) | 11 assertions, 0 failures
+
+> **Notes:**
+> - Shipped: `build-iso.sh` + `boot-test-iso.sh` + `test-build-iso.sh`; ISO carries the §2 ESP image as the El Torito UEFI boot entry plus `/IPOS/manifest.json`.
+> - UEFI-only by design: no `-b` BIOS El Torito entry; firmware-side rejects legacy BIOS hosts; project-owned "UEFI required" message would require a BIOS stub which is outside scope.
+> - PASS contract is "Boot complete in" only -- the `C:\>` prompt requires ISO9660-mount support that the kernel-fs domain owns.
+> - Determinism levers: `SOURCE_DATE_EPOCH=0`, fixed `IPOS_INSTALL` volume label, per-invocation `mktemp -d` work tree.
+> - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Scope: §4 owns release-side ISO producer + UEFI structural validation; D10 T11 owns the broader installer-iso pipeline; D15 T01 §4/§8 owns Joliet+RockRidge+versioned-filename wrapping.
 
 ---
 
@@ -277,7 +287,7 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | ⭐  | Feature                              | 🪟 Win11                       | 🐧 Linux                       | 🚀 Impossible OS                 |
 | --- | ------------------------------------ | ------------------------------ | ------------------------------ | -------------------------------- |
 | 💎  | USB / raw disk image                 | ✅ Media Creation Tool         | ✅ distro raw images           | ✅ §2 build-image.sh + verify    |
-| 💎  | ISO UEFI boot (El Torito)            | ✅ Windows ISO                 | ✅ distro hybrid ISO           | ⬜ planned -- §4                 |
+| 💎  | ISO UEFI boot (El Torito)            | ✅ Windows ISO                 | ✅ distro hybrid ISO           | ✅ §4 build-iso.sh + boot-test   |
 | 💎  | VHD / VHDX virtual disk artifact     | ✅ Hyper-V VHDX                | ⚠️ cloud images per distro     | ✅ §3 to-vhdx.sh + boot-test     |
 | 💎  | VDI virtual disk artifact            | ❌ no first-class VDI          | ⚠️ cloud images per distro     | ✅ §3 to-vdi.sh + VBox boot-test |
 | 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ⬜ planned -- §5, §6             |

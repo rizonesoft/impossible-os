@@ -13,7 +13,7 @@ This document is the canonical schema for the **boot artifact manifest** -- a JS
 | `vhd`     | `.vhd`        | Hyper-V legacy fixed-size virtual hard disk.                      |
 | `vhdx`    | `.vhdx`       | Hyper-V modern virtual hard disk.                                 |
 | `vdi`     | `.vdi`        | VirtualBox virtual disk image.                                    |
-| `iso`     | `.iso`        | Hybrid UEFI El Torito ISO (no BIOS boot record).                  |
+| `iso`     | `.iso`        | Hybrid UEFI El Torito ISO (no BIOS boot record). Legacy BIOS boot is **unsupported**: the ISO carries no BIOS El Torito entry, so a BIOS-only host's firmware refuses to boot the medium. Adding BIOS boot support would belong to a future TODO under `01-boot-platform/`. |
 | `qcow2`   | `.qcow2`      | QEMU native sparse format.                                        |
 | `ova`     | `.ova`        | OVF appliance bundle (tar of OVF descriptor + virtual disks).     |
 | `recovery`| `.img`        | Recovery image variant (boot media role marker = `recovery`).     |
