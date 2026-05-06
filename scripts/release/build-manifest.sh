@@ -324,15 +324,34 @@ m = {
     "boot_info_version": int(os.environ["BIV"]),
     "secure_boot_status": os.environ["SECURE_BOOT_STATUS"],
     "media_role":        os.environ["MEDIA_ROLE"],
-    # Layout matches scripts/release/build-image.sh: ESP 64 MiB at LBA 2048,
-    # BlackBox 128 MiB at LBA 133120, IXFS-System fills LBA 395264..1048542
-    # (sectors 653279, ~318 MiB) of a 512 MiB total image. The exact LBA
-    # fields are emitted in v2 once the GPT-backed layout becomes mandatory.
-    "partition_map": [
-        {"index": 1, "name": "ESP",         "type_guid": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B", "size_mib": 64,  "filesystem": "fat32"},
-        {"index": 2, "name": "BlackBox",    "type_guid": "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "size_mib": 128, "filesystem": "fat32"},
-        {"index": 3, "name": "IXFS-System", "type_guid": "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "size_mib": 318, "filesystem": "ixfs"},
-    ],
+}
+
+# partition_map: format-aware. Disk artifacts (raw / usb / vhd / vhdx /
+# vdi / qcow2 / ova / installer / recovery) carry a full GPT layout
+# (ESP + BlackBox + IXFS); ISO artifacts only carry the El Torito ESP
+# image inside ISO9660 -- no GPT, no BlackBox, no IXFS. Emitting the
+# full disk partition_map for an iso would tell downstream consumers
+# (verify-esp, the bootloader's GPT cross-check at load time, the
+# offline inspector) to expect a layout that does not exist on the
+# medium, leading to false-negative validation failures.
+# Layout for disk formats matches scripts/release/build-image.sh:
+# ESP 64 MiB at LBA 2048, BlackBox 128 MiB at LBA 133120,
+# IXFS-System fills LBA 395264..1048542 (sectors 653279, ~318 MiB)
+# of a 512 MiB total image. Exact LBA fields land in v2 once the
+# GPT-backed layout becomes mandatory.
+ESP_TYPE_GUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+MSBASIC_TYPE_GUID = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+if os.environ["ARTIFACT_FORMAT"] == "iso":
+    m["partition_map"] = [
+        {"index": 1, "name": "ESP", "type_guid": ESP_TYPE_GUID, "size_mib": 64, "filesystem": "fat32"},
+    ]
+else:
+    m["partition_map"] = [
+        {"index": 1, "name": "ESP",         "type_guid": ESP_TYPE_GUID,    "size_mib": 64,  "filesystem": "fat32"},
+        {"index": 2, "name": "BlackBox",    "type_guid": MSBASIC_TYPE_GUID, "size_mib": 128, "filesystem": "fat32"},
+        {"index": 3, "name": "IXFS-System", "type_guid": MSBASIC_TYPE_GUID, "size_mib": 318, "filesystem": "ixfs"},
+    ]
+m.update({
     "entries": [
         {"name": "bootloader",
          "path": "\\EFI\\BOOT\\BOOTX64.EFI",
@@ -350,7 +369,7 @@ m = {
     "toolchain_version": os.environ["TOOLCHAIN_VERSION"],
     "source_sha":        os.environ["SOURCE_SHA"],
     "manifest_seed":     os.environ["MANIFEST_SEED"],
-}
+})
 
 # boot_config is required ESP content (build mode aborted earlier if the
 # source file was missing), so unconditionally append it to entries[].

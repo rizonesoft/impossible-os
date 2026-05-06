@@ -161,6 +161,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
 > - Scope: §4 owns release-side ISO producer + UEFI structural validation; D10 T11 owns the broader installer-iso pipeline; D15 T01 §4/§8 owns Joliet+RockRidge+versioned-filename wrapping.
 
+> **Verified:** 2026-05-06 | commit `a485812f` | 5/5 items | build OK | tests 11/11 PASS + boot-test PASS (KVM 7s)
+> **Quality reviewed:** 2026-05-06 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 0 open | scope: N/A (host-side bash + manifest schema + docs)
+
 ---
 
 ## 5. Installer/Live/Recovery Media Detection

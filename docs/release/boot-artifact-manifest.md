@@ -48,7 +48,10 @@ The `bootloader_sha256` and `kernel_sha256` fields are denormalized so the verif
 
 ## Partition Map
 
-Each `partition_map[i]` object pins the GPT layout the bootloader expects. Mismatch against the on-disk GPT triggers `boot_fatal()` under `require_manifest=1`. The bootloader-side verifier owns the cross-check against the on-disk GPT (it is the only consumer with access to the raw disk at load time); the packaging gate validates structural shape only.
+Each `partition_map[i]` object describes one logical partition the bootloader expects. The map's semantics depend on `artifact_format`:
+
+- **GPT-backed disk formats** (`raw`, `usb`, `vhd`, `vhdx`, `vdi`, `qcow2`, `ova`, `installer`, `recovery`): `partition_map[]` carries the full ESP + BlackBox + IXFS layout (3 entries today). Mismatch against the on-disk GPT triggers `boot_fatal()` under `require_manifest=1`. The bootloader-side verifier owns the cross-check against the on-disk GPT (it is the only consumer with access to the raw disk at load time); the packaging gate validates structural shape only.
+- **`iso` format**: `partition_map[]` carries a single `ESP` row describing the El Torito UEFI boot image embedded in the ISO9660 volume (the ISO has no GPT at the medium level). Bootloader-side GPT cross-check is **skipped** for ISO; the verifier instead reads the El Torito boot image's FAT directly. The packaging gate still validates the row's structural shape.
 
 | Field                    | Type                | Description                                                       |
 | ------------------------ | ------------------- | ----------------------------------------------------------------- |
@@ -106,7 +109,7 @@ Owned by [Artifact Signing and Manifest Verification](../../todo/01-boot-platfor
 1. Reads `\IPOS\manifest.json` from the ESP (or `/IPOS/manifest.json` from an ISO).
 2. Verifies the detached signature `manifest.json.sig` against the release public key.
 3. Cross-checks every `entries[]` sha256 against the on-disk file.
-4. Cross-checks `partition_map[]` against the GPT.
+4. Cross-checks `partition_map[]` against the GPT (GPT-backed formats only; skipped for `iso`).
 5. Populates `boot_info.boot_artifact_id` and `boot_info.boot_manifest_digest` from the manifest before kernel jump.
 
 ## Schema version policy
