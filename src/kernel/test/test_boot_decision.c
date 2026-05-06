@@ -400,6 +400,153 @@ static void test_boot_decision_mask_known_stable(void)
                    "BOOT_SOURCE_FLAG_MASK_KNOWN coverage");
 }
 
+/* Media-role marker reason (boot-media role-detection feature, v17). */
+static void test_boot_decision_media_role_installer_happy(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path                = BOOT_PATH_INSTALLER;
+    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth      = 0u;
+    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_INSTALLER;
+    s_dec_buf.boot_media_role_mismatch = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "installer media-role -> OK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
+}
+
+static void test_boot_decision_media_role_recovery_happy(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path                = BOOT_PATH_RECOVERY;
+    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth      = 0u;
+    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_RECOVERY;
+    s_dec_buf.boot_media_role_mismatch = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_OK,              "recovery media-role -> OK");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
+}
+
+static void test_boot_decision_media_role_normal_path_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    /* MEDIA_ROLE_MARKER reason MUST NOT pair with NORMAL path. */
+    s_dec_buf.boot_path           = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason         = BOOT_REASON_MEDIA_ROLE_MARKER;
+    s_dec_buf.boot_source_flags   = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "media-role NORMAL path -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH (forbidden)");
+}
+
+/* Rule 8 (v17): MEDIA_ROLE_MARKER reason requires consistent role+path. */
+static void test_boot_decision_media_role_mismatch_path_role_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    /* INSTALLER path with RECOVERY role -- path/role disagree, validator must reject. */
+    s_dec_buf.boot_path                = BOOT_PATH_INSTALLER;
+    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth      = 0u;
+    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_RECOVERY;
+    s_dec_buf.boot_media_role_mismatch = 0u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "path/role disagree -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH");
+}
+
+static void test_boot_decision_media_role_mismatch_flag_rejected(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    /* mismatch=1 with reason=MEDIA_ROLE_MARKER is contradictory: a
+     * mismatch causes fallback to NORMAL, so the marker reason should
+     * NOT be set on a mismatched boot. */
+    s_dec_buf.boot_path                = BOOT_PATH_INSTALLER;
+    s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+    s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.boot_fallback_depth      = 0u;
+    s_dec_buf.boot_media_role          = BOOT_MEDIA_ROLE_INSTALLER;
+    s_dec_buf.boot_media_role_mismatch = 1u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)BOOT_FATAL,                  "mismatch=1 with MARKER -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_REASON_PATH, "err=REASON_PATH");
+}
+
+/* Rule 8 table-driven coverage: every valid pair accepts; every other
+ * combination is rejected with REASON_PATH. */
+static void test_boot_decision_media_role_table_driven(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    struct row {
+        uint32_t path;
+        uint32_t role;
+        uint8_t  mismatch;
+        boot_result_t want_r;
+        enum boot_decision_error want_err;
+    };
+    /* Three valid pairs; everything else rejected. */
+    struct row rows[] = {
+        /* Accept: installer/installer, recovery/recovery, diagnostics/diagnostic. */
+        { BOOT_PATH_INSTALLER,  BOOT_MEDIA_ROLE_INSTALLER,     0u, BOOT_OK,    BOOT_DECISION_ERR_OK },
+        { BOOT_PATH_RECOVERY,   BOOT_MEDIA_ROLE_RECOVERY,      0u, BOOT_OK,    BOOT_DECISION_ERR_OK },
+        { BOOT_PATH_DIAGNOSTIC, BOOT_MEDIA_ROLE_DIAGNOSTICS,   0u, BOOT_OK,    BOOT_DECISION_ERR_OK },
+        /* Reject: UNSET role with otherwise-allowed path. */
+        { BOOT_PATH_INSTALLER,  BOOT_MEDIA_ROLE_UNSET,         0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+        /* Reject: NORMAL/LIVE/MANUFACTURING role -- never paired with MARKER. */
+        { BOOT_PATH_INSTALLER,  BOOT_MEDIA_ROLE_NORMAL,        0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+        { BOOT_PATH_RECOVERY,   BOOT_MEDIA_ROLE_LIVE,          0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+        { BOOT_PATH_DIAGNOSTIC, BOOT_MEDIA_ROLE_MANUFACTURING, 0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+        /* Reject: out-of-range role (MAX + 1). */
+        { BOOT_PATH_INSTALLER,  (BOOT_MEDIA_ROLE_MAX + 1u),    0u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+        /* Reject: mismatch=1 with otherwise-valid pair. */
+        { BOOT_PATH_RECOVERY,   BOOT_MEDIA_ROLE_RECOVERY,      1u, BOOT_FATAL, BOOT_DECISION_ERR_REASON_PATH },
+    };
+    uint32_t i;
+    for (i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        dec_zero();
+        s_dec_buf.boot_path                = rows[i].path;
+        s_dec_buf.boot_reason              = BOOT_REASON_MEDIA_ROLE_MARKER;
+        s_dec_buf.boot_source_flags        = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+        s_dec_buf.boot_fallback_depth      = 0u;
+        s_dec_buf.boot_media_role          = rows[i].role;
+        s_dec_buf.boot_media_role_mismatch = rows[i].mismatch;
+
+        enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+        boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+        TEST_ASSERT_EQ((uint64_t)r,   (uint64_t)rows[i].want_r,   "row.r");
+        TEST_ASSERT_EQ((uint64_t)err, (uint64_t)rows[i].want_err, "row.err");
+    }
+}
+
+/* Layout pin: boot_media_role + mismatch land at the v17 offsets. */
+static void test_boot_media_role_layout(void)
+{
+    TEST_ASSERT_EQ((uint64_t)__builtin_offsetof(struct boot_info, boot_media_role),
+                   (uint64_t)23968, "boot_media_role @ 23968");
+    TEST_ASSERT_EQ((uint64_t)__builtin_offsetof(struct boot_info, boot_media_role_mismatch),
+                   (uint64_t)23972, "boot_media_role_mismatch @ 23972");
+    TEST_ASSERT_EQ((uint64_t)BOOT_MEDIA_ROLE_MAX, (uint64_t)6,
+                   "BOOT_MEDIA_ROLE_MAX = DIAGNOSTICS = 6");
+}
+
 void test_register_boot_decision(void)
 {
     test_suite_register_cat("boot_decision: NULL info rejected",
@@ -432,6 +579,20 @@ void test_register_boot_decision(void)
                             test_boot_decision_reason_requires_path, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: reason forbids originating path (R5)",
                             test_boot_decision_reason_forbids_path, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: media-role installer fixture",
+                            test_boot_decision_media_role_installer_happy, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: media-role recovery fixture",
+                            test_boot_decision_media_role_recovery_happy, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: media-role NORMAL path rejected",
+                            test_boot_decision_media_role_normal_path_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: media-role layout offsets",
+                            test_boot_media_role_layout, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: media-role path/role disagreement rejected (R8)",
+                            test_boot_decision_media_role_mismatch_path_role_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: media-role mismatch=1 with MARKER reason rejected (R8)",
+                            test_boot_decision_media_role_mismatch_flag_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: media-role R8 table (9 rows: 3 accept + 6 reject)",
+                            test_boot_decision_media_role_table_driven, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: fallback_depth requires fallback reason (R6)",
                             test_boot_decision_fallback_requires_fallback_reason, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: reason requires matching flag (R7)",

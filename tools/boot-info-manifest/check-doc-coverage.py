@@ -132,6 +132,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "UKI signed-payload addresses (v14)",
     "Extended UEFI boot-variable capability surface (v15)",
     "Local boot device path detail (v16)",
+    "Local boot device path detail (v17)",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

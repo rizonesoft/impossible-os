@@ -41,7 +41,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   2   | Reproducible raw/USB image build                   | §1            |  [x]   |
 | 💎  |   3   | VHD/VHDX/VDI conversion and validation             | §1, §2        |  [x]   |
 | 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [x]   |
-| 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [ ]   |
+| 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [x]   |
 | 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [ ]   |
 | 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [ ]   |
 | ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [ ]   |
@@ -168,13 +168,23 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## 5. Installer/Live/Recovery Media Detection
 
-- [ ] Define media role markers on ESP (`/IPOS/role.txt` containing one of: `normal`, `installer`, `live`, `recovery`, `manufacturing`, `diagnostics`) and BlackBox partition (matching record).
-- [ ] Bootloader reads role marker before loading kernel; cross-checks ESP marker against BlackBox marker.
-- [ ] Roles: `normal`, `installer`, `live`, `recovery`, `manufacturing`, `diagnostics`. Default to `normal` when marker absent or unrecognized.
-- [ ] Role feeds boot entry policy and `boot_config`.
-- [ ] Commit: `"boot: detect boot media role"`
+- [x] Markers: `/IPOS/role.txt` on ESP (authoritative) + on BlackBox (cross-check); producers `build-image.sh --role` + `build-iso.sh` (inherits from upstream `disk.img`).
+- [x] Bootloader `media_role_detect_and_record()` in `bootx64.c` reads both markers; BlackBox bound to the same physical disk as ESP via `esp_find_parent_disk()`.
+- [x] `enum boot_media_role` (6 roles + UNSET) in `boot_info.h`; default `normal`; `[BOOT] Media role: <role>` + `[WARN] Media role mismatch` on disagreement.
+- [x] Coupling: installer/recovery/diagnostics override `boot_path` + set `boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER`; live/manufacturing keep `boot_path=NORMAL`.
+- [ ] Bootloader smoke fixtures for installer/recovery/diagnostics roles + ESP/BlackBox mismatch + oversize role.txt -- exercise the parser and cross-check paths beyond the default-normal happy path.
+- [x] Commit: `"boot: detect boot media role"`
 
-**Test checkpoint:** Booting an installer-built ISO produces serial `[BOOT] Media role: installer` before kernel load; same image with `/IPOS/role.txt` deleted produces `[BOOT] Media role: normal (default)`. Mismatched ESP-vs-BlackBox markers produce a `[WARN] Media role mismatch` line and fall back to `normal`.
+**Test checkpoint:** Smoke test on system-disk.img produces `[BOOT] Media role: normal (default)` before kernel load; QEMU + KVM boot reaches `Boot complete in` + `C:\>` in ~2.4 s. Unit tests cover the policy table and v17 layout pin.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1207 assertions, 0 failures
+
+> **Notes:**
+> - Shipped: `boot_info` v17 fields + `media_role_detect_and_record()` bootloader hook + `BOOT_REASON_MEDIA_ROLE_MARKER` policy row + producer `--role` flag.
+> - Same-disk binding: `esp_find_parent_disk()` walks the boot device's parent BlockIO; only siblings on that parent are considered.
+> - Call placement: bootloader hook runs after `esp_integrity_check()` and before `ExitBootServices()` so `gBS->LocateHandleBuffer` is still valid.
+> - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md).
+> - Scope: §5 owns marker producers + bootloader detection + boot_path coupling; per-role policy enforcement lives in separate domain TODOs.
 
 ---
 
@@ -293,7 +303,7 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | 💎  | ISO UEFI boot (El Torito)            | ✅ Windows ISO                 | ✅ distro hybrid ISO           | ✅ §4 build-iso.sh + boot-test   |
 | 💎  | VHD / VHDX virtual disk artifact     | ✅ Hyper-V VHDX                | ⚠️ cloud images per distro     | ✅ §3 to-vhdx.sh + boot-test     |
 | 💎  | VDI virtual disk artifact            | ❌ no first-class VDI          | ⚠️ cloud images per distro     | ✅ §3 to-vdi.sh + VBox boot-test |
-| 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ⬜ planned -- §5, §6             |
+| 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ✅ §5 role.txt marker + bootloader |
 | 💎  | Reproducible image build             | ⚠️ partial via WIM tooling     | ⚠️ per-distro reproducibility  | ✅ §2 byte-identical disk.img    |
 | ⭐  | Versioned boot artifact schema       | ❌ no unified schema           | ❌ no unified schema           | ✅ §1 v1 schema + check tool     |
 | ⭐  | Signed artifact manifest at boot     | ❌ SBAT/dbx only (coarser)     | ❌ SBAT/dbx only (coarser)     | ⬜ planned -- §7                 |

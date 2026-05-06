@@ -7510,6 +7510,276 @@ static void esp_check_required_files(EFI_HANDLE part_handle)
     }
 }
 
+/* ---- Media role detection (boot-media role-detection feature) -------------
+ *
+ * Reads /IPOS/role.txt from the ESP and from the BlackBox service partition
+ * on the SAME physical disk as the ESP. Cross-checks: mismatch falls back to
+ * BOOT_MEDIA_ROLE_NORMAL with mismatch=1. BlackBox absent is not a mismatch.
+ * Updates boot_info->boot_media_role + (for installer/recovery/diagnostics)
+ * the boot_path/boot_reason decision record so consumers see a coherent
+ * answer.
+ *
+ * Same-disk BlackBox identity: a label-only "BLACKBOX" lookup is unsafe --
+ * on a host with both an internal Impossible OS disk and an installer USB,
+ * label-only lookup might hit the internal disk's stale role marker. Same-
+ * disk binding pins BlackBox to the partition that shares a parent BlockIO
+ * handle with the ESP. */
+
+#define MEDIA_ROLE_FILE_PATH        L"\\IPOS\\role.txt"
+#define MEDIA_ROLE_MAX_BYTES        64u   /* role names <= 14 chars + slack */
+
+static UINT32 media_role_parse(const char *buf, UINTN len)
+{
+    /* Trim leading/trailing ASCII whitespace + \r\n. The on-disk file is
+     * operator-friendly (text editor output often has trailing newline). */
+    UINTN start = 0, end = len;
+    while (start < end &&
+           (buf[start] == ' '  || buf[start] == '\t' ||
+            buf[start] == '\r' || buf[start] == '\n')) {
+        start++;
+    }
+    while (end > start &&
+           (buf[end - 1] == ' '  || buf[end - 1] == '\t' ||
+            buf[end - 1] == '\r' || buf[end - 1] == '\n')) {
+        end--;
+    }
+    UINTN n = end - start;
+    if (n == 0 || n > 14)
+        return BOOT_MEDIA_ROLE_NORMAL;
+
+    /* Lower-case + literal compare. ASCII only by spec; non-ASCII bytes
+     * fall through to NORMAL. */
+    char lc[16];
+    UINTN i;
+    for (i = 0; i < n; i++) {
+        char c = buf[start + i];
+        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+        lc[i] = c;
+    }
+    lc[n] = '\0';
+
+    if (n == 6  && lc[0]=='n' && lc[1]=='o' && lc[2]=='r' && lc[3]=='m' &&
+                   lc[4]=='a' && lc[5]=='l')
+        return BOOT_MEDIA_ROLE_NORMAL;
+    if (n == 9  && lc[0]=='i' && lc[1]=='n' && lc[2]=='s' && lc[3]=='t' &&
+                   lc[4]=='a' && lc[5]=='l' && lc[6]=='l' && lc[7]=='e' &&
+                   lc[8]=='r')
+        return BOOT_MEDIA_ROLE_INSTALLER;
+    if (n == 4  && lc[0]=='l' && lc[1]=='i' && lc[2]=='v' && lc[3]=='e')
+        return BOOT_MEDIA_ROLE_LIVE;
+    if (n == 8  && lc[0]=='r' && lc[1]=='e' && lc[2]=='c' && lc[3]=='o' &&
+                   lc[4]=='v' && lc[5]=='e' && lc[6]=='r' && lc[7]=='y')
+        return BOOT_MEDIA_ROLE_RECOVERY;
+    if (n == 13 && lc[0]=='m' && lc[1]=='a' && lc[2]=='n' && lc[3]=='u' &&
+                   lc[4]=='f' && lc[5]=='a' && lc[6]=='c' && lc[7]=='t' &&
+                   lc[8]=='u' && lc[9]=='r' && lc[10]=='i'&& lc[11]=='n'&&
+                   lc[12]=='g')
+        return BOOT_MEDIA_ROLE_MANUFACTURING;
+    if (n == 11 && lc[0]=='d' && lc[1]=='i' && lc[2]=='a' && lc[3]=='g' &&
+                   lc[4]=='n' && lc[5]=='o' && lc[6]=='s' && lc[7]=='t' &&
+                   lc[8]=='i' && lc[9]=='c' && lc[10]=='s')
+        return BOOT_MEDIA_ROLE_DIAGNOSTICS;
+    return BOOT_MEDIA_ROLE_NORMAL;
+}
+
+static const char *media_role_name(UINT32 role)
+{
+    switch (role) {
+        case BOOT_MEDIA_ROLE_NORMAL:        return "normal";
+        case BOOT_MEDIA_ROLE_INSTALLER:     return "installer";
+        case BOOT_MEDIA_ROLE_LIVE:          return "live";
+        case BOOT_MEDIA_ROLE_RECOVERY:      return "recovery";
+        case BOOT_MEDIA_ROLE_MANUFACTURING: return "manufacturing";
+        case BOOT_MEDIA_ROLE_DIAGNOSTICS:   return "diagnostics";
+        default:                            return "unset";
+    }
+}
+
+/* Read \IPOS\role.txt from a SimpleFileSystem volume. Returns the parsed
+ * role enum value, or BOOT_MEDIA_ROLE_UNSET if the file is absent /
+ * unreadable / over-sized. Does NOT fall back to NORMAL on absent --
+ * caller distinguishes absent (UNSET) from unrecognized (NORMAL). */
+static UINT32 media_role_read_from_fs(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs)
+{
+    if (!fs) return BOOT_MEDIA_ROLE_UNSET;
+
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS status = fs->OpenVolume(fs, &root);
+    if (EFI_ERROR(status) || !root) return BOOT_MEDIA_ROLE_UNSET;
+
+    EFI_FILE_PROTOCOL *file = (EFI_FILE_PROTOCOL *)0;
+    status = root->Open(root, &file, (CHAR16 *)MEDIA_ROLE_FILE_PATH,
+                        EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !file) {
+        root->Close(root);
+        return BOOT_MEDIA_ROLE_UNSET;
+    }
+
+    /* Hard cap at MEDIA_ROLE_MAX_BYTES per the parse-buffers gate (gate
+     * 14): role.txt must be tiny; refuse oversize inputs rather than
+     * truncate. */
+    char buf[MEDIA_ROLE_MAX_BYTES + 1];
+    UINTN read_size = MEDIA_ROLE_MAX_BYTES;
+    status = file->Read(file, &read_size, (VOID *)buf);
+    file->Close(file);
+    root->Close(root);
+    if (EFI_ERROR(status))
+        return BOOT_MEDIA_ROLE_UNSET;
+    /* If the read filled the entire buffer, the file is over-sized
+     * (pathological / wrong). Don't accept it. */
+    if (read_size >= MEDIA_ROLE_MAX_BYTES)
+        return BOOT_MEDIA_ROLE_UNSET;
+    return media_role_parse(buf, read_size);
+}
+
+/* Find a SimpleFileSystem volume that lives on the same parent BlockIO as
+ * `boot_part_handle` AND has volume label "BLACKBOX". On failure returns
+ * NULL (BlackBox absent or not on same disk -- treated as "no marker",
+ * not mismatch). */
+static EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *
+media_role_locate_blackbox_fs(EFI_HANDLE boot_part_handle)
+{
+    if (!boot_part_handle) return (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+
+    EFI_HANDLE boot_parent = (EFI_HANDLE)0;
+    if (EFI_ERROR(esp_find_parent_disk(boot_part_handle, &boot_parent))
+        || !boot_parent)
+        return (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_HANDLE *handles = (EFI_HANDLE *)0;
+    UINTN nh = 0;
+    EFI_STATUS status = gBS->LocateHandleBuffer(ByProtocol, &fs_guid, (VOID *)0,
+                                                &nh, &handles);
+    if (EFI_ERROR(status) || !handles || nh == 0)
+        return (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *match = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    UINTN hi;
+    for (hi = 0; hi < nh; hi++) {
+        EFI_HANDLE h = handles[hi];
+        if (h == boot_part_handle) continue;  /* ESP itself */
+
+        /* Pin candidate to same parent disk as ESP. */
+        EFI_HANDLE parent = (EFI_HANDLE)0;
+        if (EFI_ERROR(esp_find_parent_disk(h, &parent)) || parent != boot_parent)
+            continue;
+
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+        status = gBS->HandleProtocol(h, &fs_guid, (VOID **)&fs);
+        if (EFI_ERROR(status) || !fs) continue;
+
+        EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+        if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) continue;
+
+        /* EFI_FILE_SYSTEM_INFO GUID per UEFI 2.10 Table 13.4 -- defined
+         * inline here because the shared efi.h does not surface it. */
+        EFI_GUID fsi_guid = { 0x09576e93, 0x6d3f, 0x11d2,
+                              { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } };
+        UINTN info_size = 0;
+        status = root->GetInfo(root, &fsi_guid, &info_size, (VOID *)0);
+        if (status != EFI_BUFFER_TOO_SMALL || info_size == 0 ||
+            info_size > 4096) {
+            root->Close(root);
+            continue;
+        }
+        VOID *info = (VOID *)0;
+        if (EFI_ERROR(gBS->AllocatePool(EfiLoaderData, info_size, &info)) || !info) {
+            root->Close(root);
+            continue;
+        }
+        status = root->GetInfo(root, &fsi_guid, &info_size, info);
+        root->Close(root);
+        if (EFI_ERROR(status)) {
+            gBS->FreePool(info);
+            continue;
+        }
+        /* EFI_FILE_SYSTEM_INFO.VolumeLabel is at offset 36 (8+8+8+8+1+3 pad)
+         * per UEFI 2.10 Table 13.4. The CHAR16 label is variable-length and
+         * NUL-terminated. Bounds-check info_size before reading 9 CHAR16
+         * slots ("BLACKBOX" + terminator) so a same-disk volume with a
+         * short label cannot drag the label compare past the AllocatePool
+         * buffer. 9 * sizeof(CHAR16) = 18 bytes minimum from offset 36. */
+        UINTN label_off = 36;
+        UINTN min_label_bytes = 9u * sizeof(CHAR16);
+        if (info_size < label_off + min_label_bytes) {
+            gBS->FreePool(info);
+            continue;
+        }
+        const CHAR16 *label = (const CHAR16 *)((UINT8 *)info + label_off);
+        const CHAR16 want[] = L"BLACKBOX";
+        UINTN li = 0;
+        BOOLEAN ok = 1;
+        for (li = 0; li < 8; li++) {
+            CHAR16 ch = label[li];
+            if (ch >= L'a' && ch <= L'z') ch = (CHAR16)(ch - L'a' + L'A');
+            if (ch != want[li]) { ok = 0; break; }
+        }
+        if (ok && (label[8] == 0 || label[8] == L' '))
+            match = fs;
+        gBS->FreePool(info);
+        if (match) break;
+    }
+    gBS->FreePool(handles);
+    return match;
+}
+
+/* Top-level: read role.txt from ESP + BlackBox (same disk), cross-check,
+ * populate boot_info media-role fields, and (for installer/recovery/
+ * diagnostics) update boot_path / boot_reason. Emits one [BOOT] Media
+ * role: ... line on serial; mismatch emits an extra [WARN] line. */
+static void media_role_detect_and_record(EFI_HANDLE boot_part_handle)
+{
+    UINT32 esp_role = BOOT_MEDIA_ROLE_UNSET;
+    UINT32 bb_role  = BOOT_MEDIA_ROLE_UNSET;
+
+    /* ESP read via the existing locate_boot_fs helper: same handle the
+     * boot.conf / kernel.exe loaders use, so the role marker comes from
+     * the same FAT volume the kernel image was loaded from. */
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *esp_fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    if (!EFI_ERROR(locate_boot_fs(&esp_fs)) && esp_fs)
+        esp_role = media_role_read_from_fs(esp_fs);
+
+    /* BlackBox read: same-disk binding via parent-BlockIO match. */
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *bb_fs =
+        media_role_locate_blackbox_fs(boot_part_handle);
+    if (bb_fs)
+        bb_role = media_role_read_from_fs(bb_fs);
+
+    /* Resolve final role with the cross-check rules: ESP authoritative,
+     * BlackBox cross-checks, mismatch -> NORMAL + warn, both UNSET ->
+     * NORMAL (default). */
+    UINT32 final_role = BOOT_MEDIA_ROLE_NORMAL;
+    UINT8  mismatch   = 0;
+    if (esp_role == BOOT_MEDIA_ROLE_UNSET && bb_role == BOOT_MEDIA_ROLE_UNSET) {
+        serial_early_print("[BOOT] Media role: normal (default)\n");
+    } else if (esp_role != BOOT_MEDIA_ROLE_UNSET &&
+               bb_role  != BOOT_MEDIA_ROLE_UNSET &&
+               esp_role != bb_role) {
+        mismatch = 1;
+        serial_early_print("[WARN] Media role mismatch (esp=");
+        serial_early_print(media_role_name(esp_role));
+        serial_early_print(" blackbox=");
+        serial_early_print(media_role_name(bb_role));
+        serial_early_print("); falling back to normal\n");
+        serial_early_print("[BOOT] Media role: normal (default)\n");
+    } else {
+        final_role = (esp_role != BOOT_MEDIA_ROLE_UNSET) ? esp_role : bb_role;
+        serial_early_print("[BOOT] Media role: ");
+        serial_early_print(media_role_name(final_role));
+        serial_early_print("\n");
+    }
+
+    g_boot_info_ptr->boot_media_role = final_role;
+    g_boot_info_ptr->boot_media_role_mismatch = mismatch;
+    /* boot_path / boot_reason coupling lives in the populate block
+     * later in efi_main: that block reads g_boot_info_ptr->
+     * boot_media_role to decide whether to override its NORMAL +
+     * USER_SELECTED/NORMAL defaults with INSTALLER / RECOVERY /
+     * DIAGNOSTIC + MEDIA_ROLE_MARKER. Doing the override here would
+     * be silently undone when the populate block writes its defaults. */
+}
+
 /* Top-level ESP integrity check entry. Runs after the BlockIO probe
  * in efi_main and BEFORE parse_boot_conf. UKI mode skips identity
  * validation (the trust anchor is the signed PE) but still surfaces
@@ -8179,6 +8449,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
          * split-path-only gates. */
         esp_integrity_check(g_boot_device_handle, esp_bio_for_integrity,
                              esp_partition_mib);
+
+        /* Media role detection: read /IPOS/role.txt from ESP and from
+         * the BlackBox service partition on the SAME physical disk,
+         * cross-check, and (for installer/recovery/diagnostics) update
+         * boot_info->boot_path + boot_reason. Runs HERE (post-ESP-
+         * integrity, pre-parse_boot_conf, pre-ExitBootServices) so
+         * gBS->LocateHandleBuffer / AllocatePool used by the BlackBox
+         * sibling lookup are still valid. The boot-decision populate
+         * block farther down only sets defaults; this call provides the
+         * marker-derived overrides BEFORE the populate block runs, then
+         * the populate block reads back the values we wrote. */
+        media_role_detect_and_record(g_boot_device_handle);
     }
 
     /* logging */
@@ -9009,6 +9291,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
          * implemented yet. When they land, the producer adds the flag
          * here and picks the matching boot_reason. */
 
+        /* Default boot decision: NORMAL + USER_SELECTED-or-NORMAL.
+         * Overridden below when the media role marker selected the
+         * path -- installer / recovery / diagnostics media types
+         * imply a non-normal flow even on a cold boot. */
         g_boot_info_ptr->boot_path = BOOT_PATH_NORMAL;
         /* If BootNext was populated, the operator picked this entry
          * explicitly -- record USER_SELECTED so the decision log
@@ -9018,12 +9304,45 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             (src_flags & BOOT_SOURCE_FLAG_BOOT_NEXT_SET)
                 ? BOOT_REASON_USER_SELECTED
                 : BOOT_REASON_NORMAL;
+        /* Media role coupling: media_role_detect_and_record() ran
+         * earlier and populated boot_media_role + mismatch flag. For
+         * installer / recovery / diagnostics roles the media itself
+         * selected the boot flow -- override boot_path + boot_reason
+         * so Registry / recovery / attestation consumers see a
+         * coherent decision record. live + manufacturing keep
+         * boot_path = NORMAL: their handoff IS a normal cold boot,
+         * just flagged by the medium type for post-boot policy. */
+        switch (g_boot_info_ptr->boot_media_role) {
+            case BOOT_MEDIA_ROLE_INSTALLER:
+                g_boot_info_ptr->boot_path = BOOT_PATH_INSTALLER;
+                g_boot_info_ptr->boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER;
+                break;
+            case BOOT_MEDIA_ROLE_RECOVERY:
+                g_boot_info_ptr->boot_path = BOOT_PATH_RECOVERY;
+                g_boot_info_ptr->boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER;
+                break;
+            case BOOT_MEDIA_ROLE_DIAGNOSTICS:
+                g_boot_info_ptr->boot_path = BOOT_PATH_DIAGNOSTIC;
+                g_boot_info_ptr->boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER;
+                break;
+            default:
+                break;
+        }
         g_boot_info_ptr->boot_source_flags = src_flags;
         /* Fallback depth: 0 on the primary path. The current loader
          * has a fallback chain for boot-device detection but does not
          * count rungs; future work threads a counter through the
          * fallback path and writes the final value here. */
         g_boot_info_ptr->boot_fallback_depth = 0u;
+
+        /* Media role: NOTE -- the actual media_role_detect_and_record()
+         * call lives EARLIER in efi_main, before ExitBootServices, so
+         * gBS->LocateHandleBuffer/AllocatePool used by the BlackBox
+         * sibling lookup are still valid. The default boot_media_role =
+         * BOOT_MEDIA_ROLE_NORMAL was already set there; if the marker
+         * was non-normal, boot_path/boot_reason were also overwritten
+         * with the marker-derived decision. We document the path here
+         * for the reader following the populate block top-to-bottom. */
     }
 
     /* Anti-rollback and security-version binding. Reads UEFI NVRAM

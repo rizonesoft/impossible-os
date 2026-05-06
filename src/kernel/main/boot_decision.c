@@ -69,6 +69,7 @@ const char *boot_reason_name(uint32_t reason)
     case BOOT_REASON_FAST_STARTUP_HIT:    return "fast_startup_hit";
     case BOOT_REASON_DIAGNOSTIC_REQUEST:  return "diagnostic_request";
     case BOOT_REASON_FALLBACK:            return "fallback";
+    case BOOT_REASON_MEDIA_ROLE_MARKER:   return "media_role_marker";
     default:                              return "invalid";
     }
 }
@@ -195,6 +196,23 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
         [BOOT_REASON_FAST_STARTUP_HIT]    = { 1u, BOOT_PATH_FAST_STARTUP, 0u, 0u, 0u },
         [BOOT_REASON_DIAGNOSTIC_REQUEST]  = { 1u, BOOT_PATH_DIAGNOSTIC, 0u, 0u, 0u },
         [BOOT_REASON_FALLBACK]            = { 1u, 0u, 0u, 1u, 0u },
+        /* Media-role marker (boot-media role-detection feature, v17):
+         * the bootloader read /IPOS/role.txt from ESP and BlackBox and
+         * the marker selected the boot path. INSTALLER / RECOVERY /
+         * DIAGNOSTIC are the only paths the bootloader will write
+         * alongside this reason; required_path stays 0 (any) because
+         * the per-path coupling logic in bootx64.c already pairs the
+         * reason with one of those three paths, and asserting one
+         * required_path here would block the others. forbidden mask
+         * blocks paths the marker should never select (NORMAL,
+         * NETWORK, RESUME, FAST_STARTUP). No fallback class, no
+         * trigger flag (the marker itself is the trigger). */
+        [BOOT_REASON_MEDIA_ROLE_MARKER]   = { 1u, 0u,
+                                              ((1u << BOOT_PATH_NORMAL) |
+                                               (1u << BOOT_PATH_NETWORK) |
+                                               (1u << BOOT_PATH_RESUME) |
+                                               (1u << BOOT_PATH_FAST_STARTUP)),
+                                              0u, 0u },
     };
     _Static_assert(sizeof(reason_policy) / sizeof(reason_policy[0])
                    == (uint32_t)BOOT_REASON_CODE_MAX + 1u,
@@ -295,6 +313,49 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
          (uint64_t)(uintptr_t)boot_path_name(path),
          (uint64_t)(uintptr_t)boot_reason_name(reason),
          (uint64_t)flags, (uint64_t)depth);
+
+    /* Rule 8: MEDIA_ROLE_MARKER reason must be backed by a coherent
+     * boot_media_role + non-mismatch flag. Without this gate, a stale or
+     * corrupt producer can pass validation with reason=MEDIA_ROLE_MARKER
+     * + path=INSTALLER while boot_media_role says NORMAL/UNSET/RECOVERY,
+     * defeating the validator's purpose for media-role-aware consumers
+     * (Registry, recovery flow, attestation). The path<->role pairs are
+     * the only ones the bootloader writes alongside this reason:
+     *   INSTALLER path  <-> INSTALLER role
+     *   RECOVERY  path  <-> RECOVERY  role
+     *   DIAGNOSTIC path <-> DIAGNOSTICS role
+     * mismatch=1 means the bootloader observed disagreement between ESP
+     * and BlackBox markers and fell back to NORMAL -- in that case the
+     * bootloader will NOT have written reason=MEDIA_ROLE_MARKER, so
+     * encountering reason=MARKER + mismatch=1 is contradictory state. */
+    if (reason == (uint32_t)BOOT_REASON_MEDIA_ROLE_MARKER) {
+        uint32_t role = info->boot_media_role;
+        uint8_t mm   = info->boot_media_role_mismatch;
+        if (role > (uint32_t)BOOT_MEDIA_ROLE_MAX || mm != 0u) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: reason=media_role_marker but role=%u mismatch=%u (out of range or mismatched)",
+                 (uint64_t)role, (uint64_t)mm);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_REASON_PATH;
+            return BOOT_FATAL;
+        }
+        uint32_t expected_path = 0u;
+        switch (role) {
+            case BOOT_MEDIA_ROLE_INSTALLER:   expected_path = (uint32_t)BOOT_PATH_INSTALLER;  break;
+            case BOOT_MEDIA_ROLE_RECOVERY:    expected_path = (uint32_t)BOOT_PATH_RECOVERY;   break;
+            case BOOT_MEDIA_ROLE_DIAGNOSTICS: expected_path = (uint32_t)BOOT_PATH_DIAGNOSTIC; break;
+            default: break;  /* normal/live/manufacturing/UNSET: must NOT pair */
+        }
+        if (expected_path == 0u || path != expected_path) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: reason=media_role_marker requires role/path pair "
+                 "(installer/installer, recovery/recovery, diagnostics/diagnostic); got role=%u path=%u",
+                 (uint64_t)role, (uint64_t)path);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_REASON_PATH;
+            return BOOT_FATAL;
+        }
+    }
 
     return BOOT_OK;
 }

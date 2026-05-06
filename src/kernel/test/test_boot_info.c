@@ -1407,15 +1407,17 @@ static void test_boot_loader_identity_layout_pinned(void)
  * loader_identity was. When the next ABI bump appends new fields,
  * update both the offset and the field name here so the tail-pin
  * test continues to enforce the end-of-struct invariant. */
-static void test_boot_info_v16_tail(void)
+static void test_boot_info_v17_tail(void)
 {
-    /* _v16_pad[2] is the last field in the v16 tail block, immediately
-     * after boot_pci_function. */
+    /* _v17_pad[3] is the last field in the v17 tail block, immediately
+     * after boot_media_role_mismatch. v16 _v16_pad[2] used to be the
+     * tail; v17 appended boot_media_role + boot_media_role_mismatch +
+     * _v17_pad[3] as the new end-of-struct fields. */
     uint64_t off = (uint64_t)__builtin_offsetof(
-        struct boot_info, _v16_pad);
-    uint64_t end = off + (uint64_t)sizeof(((struct boot_info *)0)->_v16_pad);
+        struct boot_info, _v17_pad);
+    uint64_t end = off + (uint64_t)sizeof(((struct boot_info *)0)->_v17_pad);
     TEST_ASSERT_EQ(end, (uint64_t)sizeof(struct boot_info),
-                   "_v16_pad must be the tail field "
+                   "_v17_pad must be the tail field "
                    "(end-of-struct invariant for back-compat)");
 }
 
@@ -1572,8 +1574,8 @@ void test_register_boot_info(void)
     /* Bootloader build identity. */
     test_suite_register_cat("boot_loader_identity: layout pinned (64B, packed)",
                             test_boot_loader_identity_layout_pinned, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_info: v16 tail field pin (_v16_pad)",
-                            test_boot_info_v16_tail, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: v17 tail field pin (_v17_pad)",
+                            test_boot_info_v17_tail, TEST_CAT_BOOT);
     test_suite_register_cat("boot_info: loader_identity offset stable (v13 layout)",
                             test_boot_info_loader_identity_offset_stable, TEST_CAT_BOOT);
     test_suite_register_cat("boot_loader_identity: zero is loader-did-not-populate",

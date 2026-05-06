@@ -380,3 +380,9 @@ F(boot_pci_device);
 F(boot_pci_function);
 F(_v16_pad);
 F(_v16_pad[0]);
+
+/* v17: media-role detection. */
+F(boot_media_role);
+F(boot_media_role_mismatch);
+F(_v17_pad);
+F(_v17_pad[0]);

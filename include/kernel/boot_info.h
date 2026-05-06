@@ -134,7 +134,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  16
+#define BOOT_INFO_VERSION  17
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -558,8 +558,34 @@ enum boot_reason_code {
     BOOT_REASON_FAST_STARTUP_HIT    = 10, /* fast-startup image present + valid */
     BOOT_REASON_DIAGNOSTIC_REQUEST  = 11, /* operator requested diagnostic flow */
     BOOT_REASON_FALLBACK            = 12, /* loader exhausted primary + chose fallback */
+    BOOT_REASON_MEDIA_ROLE_MARKER   = 13, /* media-role marker on ESP / BlackBox selected this path (v17) */
 };
-#define BOOT_REASON_CODE_MAX  BOOT_REASON_FALLBACK
+#define BOOT_REASON_CODE_MAX  BOOT_REASON_MEDIA_ROLE_MARKER
+
+/* Media role detected from /IPOS/role.txt on the ESP and on the BlackBox
+ * service partition (v17). Read by the UEFI bootloader BEFORE kernel
+ * load: ESP marker is authoritative; BlackBox marker is cross-checked
+ * against ESP. Mismatch -> fall back to BOOT_MEDIA_ROLE_NORMAL with
+ * boot_media_role_mismatch=1. Absent BlackBox marker is NOT a mismatch
+ * (single-partition media is legal -- e.g. an ISO with only the ESP).
+ *
+ * Coupling to boot_path/boot_reason: when media role is installer /
+ * recovery / diagnostics, the bootloader sets boot_path to the
+ * matching enum and boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER so
+ * Registry/recovery/attestation consumers see a coherent decision
+ * record. live and manufacturing roles run as boot_path=NORMAL since
+ * their handoff is a normal cold boot, just flagged by the medium
+ * type for post-boot policy. */
+enum boot_media_role {
+    BOOT_MEDIA_ROLE_UNSET         = 0,  /* sentinel: producer must overwrite */
+    BOOT_MEDIA_ROLE_NORMAL        = 1,  /* default; role.txt absent or unrecognized */
+    BOOT_MEDIA_ROLE_INSTALLER     = 2,  /* installer media (Windows-style setup-on-USB) */
+    BOOT_MEDIA_ROLE_LIVE          = 3,  /* live boot media (no install, run from medium) */
+    BOOT_MEDIA_ROLE_RECOVERY      = 4,  /* recovery media (Windows RE / dracut rescue equivalent) */
+    BOOT_MEDIA_ROLE_MANUFACTURING = 5,  /* factory provisioning / pre-imaging tooling */
+    BOOT_MEDIA_ROLE_DIAGNOSTICS   = 6,  /* operator-triggered diagnostics medium */
+};
+#define BOOT_MEDIA_ROLE_MAX  BOOT_MEDIA_ROLE_DIAGNOSTICS
 
 /* BOOT_SOURCE_FLAG_* bitmask bits -- inputs that drove the decision.
  * BOOT_SOURCE_FLAG_MASK_KNOWN is a CLOSED mask: validator hard-rejects
@@ -1459,6 +1485,19 @@ struct boot_info {
     uint8_t  boot_pci_device;             /* leaf PCI Device number (0..31), 0xFF if not on PCI */
     uint8_t  boot_pci_function;           /* leaf PCI Function number (0..7), 0xFF if not on PCI */
     uint8_t  _v16_pad[2];                 /* alignment to 4-byte boundary */
+
+    /* v17: Media role detected from /IPOS/role.txt on the ESP and on
+     * the BlackBox service partition (boot-media role-detection
+     * feature). See enum boot_media_role above for the role values,
+     * semantics, and the boot_path/boot_reason coupling rule. ESP
+     * marker is authoritative; BlackBox marker is cross-checked.
+     * mismatch=1 means both partitions had a marker but disagreed --
+     * the loader fell back to BOOT_MEDIA_ROLE_NORMAL and emitted a
+     * serial [WARN] line. mismatch=0 covers both "agreed" and
+     * "BlackBox absent" -- absent is not a mismatch. */
+    uint32_t boot_media_role;             /* enum boot_media_role */
+    uint8_t  boot_media_role_mismatch;    /* 1 = ESP/BlackBox markers disagreed */
+    uint8_t  _v17_pad[3];                 /* alignment to 4-byte boundary */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -1559,6 +1598,14 @@ _Static_assert(__builtin_offsetof(struct boot_info, boot_pci_device) == 23964,
     "boot_info.boot_pci_device offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, boot_pci_function) == 23965,
     "boot_info.boot_pci_function offset drift -- update kernel + bootloader mirror");
+
+/* v17: media-role offsets. boot_media_role is uint32 so it lands on the
+ * next 4-byte boundary after the v16 _v16_pad[2] tail; mismatch is the
+ * single byte after, _v17_pad[3] aligns the next addition to 4 bytes. */
+_Static_assert(__builtin_offsetof(struct boot_info, boot_media_role) == 23968,
+    "boot_info.boot_media_role offset drift -- update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_media_role_mismatch) == 23972,
+    "boot_info.boot_media_role_mismatch offset drift -- update kernel + bootloader mirror");
 
 /* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

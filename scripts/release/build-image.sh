@@ -61,6 +61,9 @@ Options:
   --format FMT     Artifact format identifier seeded into UUID derivation
                    (default: raw). Must be a schema-legal format from
                    docs/release/boot-artifact-manifest.md.
+  --role NAME      Media role written to /IPOS/role.txt on ESP and
+                   BlackBox (default: normal). One of: normal, installer,
+                   live, recovery, manufacturing, diagnostics.
   --keep-work      Keep $WORK_DIR after success (debugging)
   -h, --help       Show this message
 EOF
@@ -68,15 +71,25 @@ EOF
 
 FORMAT="raw"
 KEEP_WORK=0
+ROLE="normal"
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --out)        OUT_IMG="$2"; shift 2 ;;
         --format)     FORMAT="$2"; shift 2 ;;
+        --role)       ROLE="$2"; shift 2 ;;
         --keep-work)  KEEP_WORK=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) err "unknown arg: $1"; usage >&2; exit 2 ;;
     esac
 done
+
+# Validate --role against the boot-media role-detection feature's enum.
+# The bootloader parses role.txt case-insensitively but we keep the
+# producer's on-disk content lower-case for byte-identical determinism.
+case "$ROLE" in
+    normal|installer|live|recovery|manufacturing|diagnostics) ;;
+    *) err "invalid --role: $ROLE (must be one of: normal, installer, live, recovery, manufacturing, diagnostics)"; exit 2 ;;
+esac
 
 # Validate --format against the same enum that build-manifest.sh and the
 # schema doc enforce. Without this, a typo (e.g. --format raaw) seeds the
@@ -212,10 +225,15 @@ mkfs.fat --invariant -F 32 -s 1 -i "$ESP_VOLID" -n "IPOS-ESP" \
 
 # 4. Stage ESP files with deterministic mtimes.
 ESP_STAGE="$WORK_DIR/esp_stage"
-mkdir -p "$ESP_STAGE/EFI/BOOT" "$ESP_STAGE/EFI/ImpossibleOS" "$ESP_STAGE/boot"
+mkdir -p "$ESP_STAGE/EFI/BOOT" "$ESP_STAGE/EFI/ImpossibleOS" "$ESP_STAGE/boot" \
+         "$ESP_STAGE/IPOS"
 cp "$BL_PATH" "$ESP_STAGE/EFI/BOOT/BOOTX64.EFI"
 cp "$KR_PATH" "$ESP_STAGE/boot/kernel.exe"
 cp "$BOOT_CONF" "$ESP_STAGE/EFI/ImpossibleOS/boot.conf"
+# /IPOS/role.txt drives the boot-media role-detection feature: the
+# bootloader reads this file from both ESP and BlackBox before kernel
+# load and feeds the decision into boot_info->boot_media_role.
+printf '%s\n' "$ROLE" > "$ESP_STAGE/IPOS/role.txt"
 find "$ESP_STAGE" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 
 # 5. Populate ESP. mtools' mcopy preserves source mtimes (since we just
@@ -225,6 +243,7 @@ find "$ESP_STAGE" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
 export MTOOLS_SKIP_CHECK=1
 mcopy -i "$OUT_IMG@@$((ESP_LBA_FIRST * SECTOR))" -s -m "$ESP_STAGE/EFI" "::"
 mcopy -i "$OUT_IMG@@$((ESP_LBA_FIRST * SECTOR))" -s -m "$ESP_STAGE/boot" "::"
+mcopy -i "$OUT_IMG@@$((ESP_LBA_FIRST * SECTOR))" -s -m "$ESP_STAGE/IPOS" "::"
 
 # 6. Format BlackBox as FAT32.
 mkfs.fat --invariant -F 32 -i "$BB_VOLID" -n "BLACKBOX" \
@@ -235,15 +254,21 @@ mkfs.fat --invariant -F 32 -i "$BB_VOLID" -n "BLACKBOX" \
 #    SOURCE_DATE_EPOCH-driven mtime; the marker file is stage-touched
 #    before mcopy.
 mmd -i "$OUT_IMG@@$((BB_LBA_FIRST * SECTOR))" \
-    "::Logs" "::Boot" "::Crash" "::Perf" "::Diag" "::Tools" \
+    "::Logs" "::Boot" "::Crash" "::Perf" "::Diag" "::Tools" "::IPOS" \
     "::Crash/WER" "::Logs/Serial"
 
 BB_STAGE="$WORK_DIR/blackbox_stage"
 mkdir -p "$BB_STAGE"
 printf 'BlackBox-v1' > "$BB_STAGE/blackbox-marker.txt"
-touch -h -d "@$SOURCE_DATE_EPOCH" "$BB_STAGE/blackbox-marker.txt"
+# /IPOS/role.txt mirror on BlackBox: the bootloader cross-checks this
+# against the ESP marker; both files must agree or the loader emits a
+# [WARN] line and falls back to NORMAL.
+printf '%s\n' "$ROLE" > "$BB_STAGE/role.txt"
+touch -h -d "@$SOURCE_DATE_EPOCH" "$BB_STAGE/blackbox-marker.txt" "$BB_STAGE/role.txt"
 mcopy -i "$OUT_IMG@@$((BB_LBA_FIRST * SECTOR))" -m \
     "$BB_STAGE/blackbox-marker.txt" "::Diag/blackbox-marker.txt"
+mcopy -i "$OUT_IMG@@$((BB_LBA_FIRST * SECTOR))" -m \
+    "$BB_STAGE/role.txt" "::IPOS/role.txt"
 
 # 8. IXFS partition: format + populate with the system sysroot so the
 #    kernel mounts C:\ at boot. Mirrors the Makefile system-disk recipe:

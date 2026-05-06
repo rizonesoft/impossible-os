@@ -259,7 +259,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  16
+#define BOOT_INFO_VERSION  17
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -350,6 +350,17 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 2
 #define BOOT_REASON_FAST_STARTUP_HIT    10u
 #define BOOT_REASON_DIAGNOSTIC_REQUEST  11u
 #define BOOT_REASON_FALLBACK            12u
+#define BOOT_REASON_MEDIA_ROLE_MARKER   13u   /* v17 -- boot-media role-detection feature */
+
+/* v17 -- enum boot_media_role mirror. UNSET=0 sentinel. */
+#define BOOT_MEDIA_ROLE_UNSET           0u
+#define BOOT_MEDIA_ROLE_NORMAL          1u
+#define BOOT_MEDIA_ROLE_INSTALLER       2u
+#define BOOT_MEDIA_ROLE_LIVE            3u
+#define BOOT_MEDIA_ROLE_RECOVERY        4u
+#define BOOT_MEDIA_ROLE_MANUFACTURING   5u
+#define BOOT_MEDIA_ROLE_DIAGNOSTICS     6u
+#define BOOT_MEDIA_ROLE_MAX             BOOT_MEDIA_ROLE_DIAGNOSTICS
 
 #define BOOT_SOURCE_FLAG_BOOT_NEXT_SET            (1u << 0)
 #define BOOT_SOURCE_FLAG_BOOT_CURRENT_MISMATCH    (1u << 1)
@@ -640,6 +651,15 @@ struct boot_info {
     UINT8   boot_pci_device;             /* leaf PCI Device (0..31, 0xFF=absent) */
     UINT8   boot_pci_function;           /* leaf PCI Function (0..7, 0xFF=absent) */
     UINT8   _v16_pad[2];
+
+    /* v17: Media role detected from /IPOS/role.txt on the ESP and on
+     * the BlackBox service partition (boot-media role-detection
+     * feature). enum boot_media_role above; mismatch=1 means both
+     * partitions had a marker but disagreed -- loader fell back to
+     * BOOT_MEDIA_ROLE_NORMAL. */
+    UINT32  boot_media_role;             /* enum boot_media_role */
+    UINT8   boot_media_role_mismatch;    /* 1 = ESP/BlackBox markers disagreed */
+    UINT8   _v17_pad[3];
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
@@ -725,6 +745,12 @@ _Static_assert(__builtin_offsetof(struct boot_info, boot_pci_device) == 23964,
     "boot_info.boot_pci_device offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, boot_pci_function) == 23965,
     "boot_info.boot_pci_function offset drift -- kernel + bootloader mirror out of sync");
+
+/* v17: Media-role offset asserts. */
+_Static_assert(__builtin_offsetof(struct boot_info, boot_media_role) == 23968,
+    "boot_info.boot_media_role offset drift -- kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, boot_media_role_mismatch) == 23972,
+    "boot_info.boot_media_role_mismatch offset drift -- kernel + bootloader mirror out of sync");
 
 /* ============================================================================
  * Boot Error History Ring -- producer mirror

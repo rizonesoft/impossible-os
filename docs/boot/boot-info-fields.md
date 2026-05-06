@@ -369,6 +369,16 @@ Per-bus identifiers extracted from the boot device's UEFI device path: NVMe Name
 | `boot_pci_function` | bootx64 | P0 | `boot_device_populate_registry()` | handoff | boot-device-discovery boot-device-detail | leaf PCI Function number (0..7); 0xFF if not on PCI. |
 | `_v16_pad` | bootx64 | P0 | -- | handoff | boot-device-discovery boot-device-detail | 2-byte alignment padding after `boot_pci_function`. |
 
+## Local boot device path detail (v17)
+
+Media role detected from `/IPOS/role.txt` on the ESP and on the BlackBox service partition before kernel load (boot-media role-detection feature, owning TODO `01-boot-platform/TODO-06`). The bootloader reads role.txt from both partitions on the same physical disk as the booted ESP and cross-checks the contents; mismatch falls back to `BOOT_MEDIA_ROLE_NORMAL` and sets `boot_media_role_mismatch=1`. Absent BlackBox marker is NOT a mismatch (single-partition media is legal). When the role is `INSTALLER`, `RECOVERY`, or `DIAGNOSTICS`, the bootloader also sets `boot_path` to the matching enum and `boot_reason = BOOT_REASON_MEDIA_ROLE_MARKER` so Registry / recovery / attestation consumers see a coherent decision record.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `boot_media_role` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | `enum boot_media_role` (UNSET=0, normal=1, installer=2, live=3, recovery=4, manufacturing=5, diagnostics=6). UNSET means no role.txt on either partition. |
+| `boot_media_role_mismatch` | bootx64 | P0 | kernel media-role consumer | handoff | boot-media role-detection | 1 = ESP and BlackBox markers disagreed; loader fell back to `NORMAL`. 0 = agreed or BlackBox absent. |
+| `_v17_pad` | bootx64 | P0 | -- | handoff | boot-media role-detection | 3-byte alignment padding after `boot_media_role_mismatch`. |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
