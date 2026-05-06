@@ -226,7 +226,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [ ] Bootloader verifies manifest signature when Secure Boot is active or `require_manifest=1`; refuses load on mismatch. Blocked on 09-desktop-shell/TODO-07 §1 bootloader-side Ed25519+SHA-256 vendor.
 - [ ] Reject modified installer/recovery media unless `boot.conf` sets `allow_unsigned_media=1` (default 0). Blocked on bootloader crypto vendor above.
 - [x] SBAT level + dbx blacklist status surfaced to `boot_info` v18 (`sbat_level`, `dbx_size`, `degraded_trust_flags`); kernel emits per-bit advisory klog and Registry under `HKLM\SYSTEM\Boot\Trust\*`. Details: see Notes block below.
-- [ ] Commit: `"boot: verify signed artifact manifests"` (full-section ship; the partial-scope item-4 trust-landscape ship lands under a separate commit message in the same section once items 1-3 unblock)
+- [x] Commit (item 4 trust-landscape ship): `"boot: TODO-06 §7 partial -- v18 trust-landscape surface (item 4)"` (commit 5707412e). Full-section commit `"boot: verify signed artifact manifests"` will land when items 1-3 unblock.
 
 **Test checkpoint:** Tampering with one byte of `kernel.exe` on a signed image makes the bootloader emit `[FAIL] Manifest signature mismatch` and `boot_fatal()` halt under `require_manifest=1`. With `require_manifest=0`, same tamper produces `[WARN] Manifest unverified` and continues. SBAT level below dbx threshold produces `[WARN] SBAT below baseline` with degraded-trust flag set in `boot_info`. **Item 4 fixture (shipped):** smoke test on KVM (no SBAT/dbx in OVMF) emits per-bit advisory klog and registers `HKLM\SYSTEM\Boot\Trust\DegradedTrustFlags = 0x1a` (secure-boot-unreadable + sbat-absent + dbx-absent).
 
@@ -252,7 +252,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] Prints partition map, FAT/IXFS labels, manifest content, boot entries, MediaRole. Signature reports `unverified` or `unsigned`; crypto OK/FAIL inherits §7 blocker.
 - [x] SHA-256 of each manifest entry computed from on-disk ESP and compared; mismatch -> `EXIT_HASH_MISMATCH=2`. ABI pin via `boot_info_version` / `bootloader_sha256` / `kernel_sha256`.
 - [x] Format support: raw, VHD, VHDX, VDI (via `qemu-img convert`), ISO 9660 (sector reads + El Torito + ISO9660 directory walker). Content-first detection with extension fallback.
-- [ ] Commit: `"tools: boot artifact inspector"`
+- [x] Commit: `"tools: boot artifact inspector"` (commit 71209934)
 
 **Test checkpoint:** `python3 tools/bootimg/bootimg.py inspect build/system-disk.img` prints `Format: raw`, three partitions (ESP, BlackBox, IXFS-System), FAT32 labels, and exits 0 (or 4 = manifest absent if `build-image.sh` did not stage `/IPOS/manifest.json`). `bash tools/bootimg/test_bootimg.sh` runs 14 assertions on host. Once `disk.iso` and `disk.vhdx` artifacts ship with manifests, the same command on them produces equivalent reports. Tampered manifest -> `EXIT_HASH_MISMATCH=2`. Tampered signature -> `EXIT_SIGNATURE_FAIL=3` (blocked on host Ed25519).
 
