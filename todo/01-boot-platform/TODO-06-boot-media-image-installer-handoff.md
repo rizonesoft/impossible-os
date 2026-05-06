@@ -44,7 +44,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [x]   |
 | 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [x]   |
 | 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [/]   |
-| ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [ ]   |
+| ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [/]   |
 | 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [ ]   |
 | 💎  |  10   | Release checklist and documentation                | §1--§9        |  [ ]   |
 | ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [ ]   |
@@ -246,13 +246,24 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## 8. Offline Artifact Inspector
 
-- [ ] Add host tool `tools/bootimg/bootimg.py` (or compiled `bootimg`) supporting `bootimg inspect <image>`.
-- [ ] Print partition map, FAT/IXFS labels, manifest content, signature verification result, boot entries, and artifact role.
-- [ ] Validate hashes (manifest vs. on-disk) and bootloader/kernel ABI version pin.
-- [ ] Support raw, VHD, VHDX, VDI, and ISO image formats (use `qemu-img info` for virtual formats).
+> **Status (2026-05-06):** [/] partial-ship. Inspector implemented for raw / VHD / VHDX / VDI / ISO with partition map, FAT32 / IXFS label detection, manifest read + shape validation, on-disk SHA-256 vs manifest entries[] check, ISO9660 file lookup for `/IPOS/manifest.json`, and `Signature: unverified` reporting. Cryptographic signature verification (`Signature: OK` / `FAIL`) inherits the §7 blocker on host-side Ed25519.
+
+- [x] Host tool `tools/bootimg/bootimg.py` (Python 3 stdlib + qemu-img); subcommands `inspect`, `verify`; `--json` flag.
+- [x] Prints partition map, FAT/IXFS labels, manifest content, boot entries, MediaRole. Signature reports `unverified` or `unsigned`; crypto OK/FAIL inherits §7 blocker.
+- [x] SHA-256 of each manifest entry computed from on-disk ESP and compared; mismatch -> `EXIT_HASH_MISMATCH=2`. ABI pin via `boot_info_version` / `bootloader_sha256` / `kernel_sha256`.
+- [x] Format support: raw, VHD, VHDX, VDI (via `qemu-img convert`), ISO 9660 (sector reads + El Torito + ISO9660 directory walker). Content-first detection with extension fallback.
 - [ ] Commit: `"tools: boot artifact inspector"`
 
-**Test checkpoint:** `python3 tools/bootimg/bootimg.py inspect build/release/disk.img` prints a parseable report listing both partitions, the manifest sha256, signature OK/FAIL, the 4+ boot entries, and `MediaRole=normal`. Same command on `disk.vhdx` and `disk.iso` produces equivalent reports. Tampered image inspection prints `Signature: FAIL` and exit code != 0.
+**Test checkpoint:** `python3 tools/bootimg/bootimg.py inspect build/system-disk.img` prints `Format: raw`, three partitions (ESP, BlackBox, IXFS-System), FAT32 labels, and exits 0 (or 4 = manifest absent if `build-image.sh` did not stage `/IPOS/manifest.json`). `bash tools/bootimg/test_bootimg.sh` runs 14 assertions on host. Once `disk.iso` and `disk.vhdx` artifacts ship with manifests, the same command on them produces equivalent reports. Tampered manifest -> `EXIT_HASH_MISMATCH=2`. Tampered signature -> `EXIT_SIGNATURE_FAIL=3` (blocked on host Ed25519).
+
+> **Test runner:** `bash tools/bootimg/test_bootimg.sh` (host-side) | 14 assertions, 0 failures | covers raw inspection, JSON output, edge cases (empty file, truncated GPT, malformed manifest shape)
+
+> **Notes:**
+> - Shipped: `tools/bootimg/bootimg.py` (~700 LOC, stdlib + qemu-img); GPT/FAT32/IXFS/ISO9660 walkers; manifest shape validator; ISO manifest + hash check; 14-assertion test harness.
+> - How it runs: `python3 tools/bootimg/bootimg.py inspect <image>`; defensive parsing rejects malformed images with structured exit codes; virtual disks unwrapped to a TemporaryDirectory.
+> - Downstream effects: usable today for §9 CI boot matrix tooling and bare-metal debug; consumes the same manifest schema as `scripts/release/build-manifest.sh`. Codex 1x review adoptions in commit message.
+> - Canonical doc: header comment in [`tools/bootimg/bootimg.py`](../../tools/bootimg/bootimg.py); manifest schema at [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Scope boundary: cryptographic signature verification is blocked on host-side Ed25519 in 09-desktop-shell/TODO-07 + 15-installer-release/TODO-01; today inspector reports `unverified` when `.sig` present.
 
 ---
 
@@ -337,7 +348,7 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | ⭐  | Versioned boot artifact schema       | ❌ no unified schema           | ❌ no unified schema           | ✅ §1 v1 schema + check tool     |
 | ⭐  | Signed artifact manifest at boot     | ❌ SBAT/dbx only (coarser)     | ❌ SBAT/dbx only (coarser)     | 🟡 §7 partial -- v18 trust surface |
 | ⭐  | Trust-landscape exposed to attestation | ⚠️ split across MSFT_SecureBootSettings | ⚠️ scattered (mokutil, dmesg) | ✅ §7 boot_info v18 + HKLM Trust\* |
-| ⭐  | Offline artifact inspector (1 tool)  | ❌ separate tools per format   | ❌ separate tools per format   | ⬜ planned -- §8                 |
+| ⭐  | Offline artifact inspector (1 tool)  | ❌ separate tools per format   | ❌ separate tools per format   | 🟡 §8 partial -- raw/VHD/VHDX/VDI/ISO inspect+JSON; sig blocked on §7 |
 | ⭐  | UKI as a release artifact format     | ❌ no UKI ecosystem            | ✅ systemd-boot UKI            | ⬜ planned -- §11                |
 | 💎  | Network-boot kernel + manifest       | ⚠️ WDS / iPXE chainload        | ✅ PXE + HTTP boot + dracut    | ⬜ planned -- §11 + T25          |
 | ⭐  | Native Windows + Linux build hosts   | ✅ MSBuild / WDK / ADK only    | ✅ shell tooling only          | ⬜ planned -- §12 PS1 + bat parity |
