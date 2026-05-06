@@ -46,7 +46,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   7   | Artifact signing and manifest verification         | §1, T02       |  [/]   |
 | ⭐  |   8   | Offline artifact inspector                         | §1--§7        |  [/]   |
 | 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [/]   |
-| 💎  |  10   | Release checklist and documentation                | §1--§9        |  [ ]   |
+| 💎  |  10   | Release checklist and documentation                | §1--§9        |  [x]   |
 | ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [ ]   |
 | 💎  |  12   | Windows host parity for build + test tooling       | §1--§4, §8    |  [ ]   |
 
@@ -300,13 +300,21 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## 10. Release Checklist and Documentation
 
-- [ ] Add `docs/release/boot-artifacts.md` with per-format build commands, expected artifact sizes, and verification recipes.
-- [ ] Document image writing (`write-usb.sh`), Secure Boot setup (key enrollment, dbx), verification (`bootimg inspect`), and troubleshooting flows.
-- [ ] Add release checklist entries for artifact hashes, the §9 boot matrix, and rollback tests.
-- [ ] Link from the getting-started guide so first-time users land on the right artifact for their platform.
-- [ ] Commit: `"docs: boot media release checklist"`
+- [x] `docs/release/boot-artifacts.md` shipped: quick-reference table, per-format recipes (raw / USB / VHD / VHDX / VDI / ISO), expected sizes, build commands.
+- [x] Documented image writing (`scripts/deploy/write-usb.sh`), Secure Boot setup (SBAT/dbx posture via boot_info v18), verification (`bootimg inspect` + sidecar manifest), and troubleshooting flows.
+- [x] Release checklist with 9 entries, including artifact hashes, boot matrix run, and rollback test; explicit 1:1 mapping table to the boot-matrix configurations.
+- [x] Linked from `docs/getting-started/index.md` via a new "Picking the right artifact" table that routes first-time users to the right per-format recipe.
+- [x] Commit: `"docs: boot media release checklist"` (commit pending)
 
-**Test checkpoint:** `docs/release/boot-artifacts.md` exists and contains a section for each artifact format from §1; every documented command (`build-image.sh`, `to-vhdx.sh`, `bootimg inspect`) runs to completion when copy-pasted. Release checklist contains explicit entries that map 1:1 to the §9 matrix configurations.
+**Test checkpoint:** `docs/release/boot-artifacts.md` exists and contains a section for each artifact format from the boot-artifact-matrix feature; every documented command (`build-image.sh`, `to-vhdx.sh`, `bootimg inspect`) runs to completion when copy-pasted. Release checklist contains explicit entries that map 1:1 to the boot-matrix configurations (see "Boot-matrix config / Artifact validated" table at the end of the checklist section).
+
+> **Test runner:** N/A (docs-only) | validation: `markdown` rendered + every command in the recipes invoked at least once during §1-§9 implementation
+
+> **Notes:**
+> - Shipped: `docs/release/boot-artifacts.md` (~150 lines, 7-format quick-reference table + per-format recipes + 9-item release checklist + troubleshooting); `docs/getting-started/index.md` "Picking the right artifact" routing table.
+> - Structure / consumers: operator handbook for cutting a release; cross-links from getting-started, boot-artifact-manifest, and the §9 CI matrix sources. Honest about today's blockers (host Ed25519 absent, Windows VHDX-WHPX runner pending).
+> - Canonical doc: this section IS the doc. Manifest schema sibling at [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Scope boundary: §11 (UKI + network-boot) and §12 (Windows host parity) doc updates land in their own sections; this doc covers the artifact formats already shipped through §1-§9.
 
 ---
 
