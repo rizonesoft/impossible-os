@@ -7733,12 +7733,24 @@ static void media_role_detect_and_record(EFI_HANDLE boot_part_handle)
     UINT32 esp_role = BOOT_MEDIA_ROLE_UNSET;
     UINT32 bb_role  = BOOT_MEDIA_ROLE_UNSET;
 
-    /* ESP read via the existing locate_boot_fs helper: same handle the
-     * boot.conf / kernel.exe loaders use, so the role marker comes from
-     * the same FAT volume the kernel image was loaded from. */
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *esp_fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
-    if (!EFI_ERROR(locate_boot_fs(&esp_fs)) && esp_fs)
-        esp_role = media_role_read_from_fs(esp_fs);
+    /* ESP read: HandleProtocol on the boot partition directly -- NO
+     * LocateProtocol fallback. locate_boot_fs() falls back to a global
+     * LocateProtocol scan when HandleProtocol on g_boot_device_handle
+     * fails, which can return any SimpleFS volume in the system. For
+     * media-role detection that fallback is a trust-boundary leak: the
+     * loader could read /IPOS/role.txt from an unrelated disk and treat
+     * it as authoritative. Trust only the explicit boot-device handle.
+     * Failure -> esp_role stays UNSET, caller emits the default-normal
+     * line and (if BlackBox is also UNSET) takes the same path as a
+     * marker-absent boot. */
+    if (boot_part_handle) {
+        EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *esp_fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+        EFI_STATUS s = gBS->HandleProtocol(boot_part_handle, &fs_guid,
+                                           (VOID **)&esp_fs);
+        if (!EFI_ERROR(s) && esp_fs)
+            esp_role = media_role_read_from_fs(esp_fs);
+    }
 
     /* BlackBox read: same-disk binding via parent-BlockIO match. */
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *bb_fs =

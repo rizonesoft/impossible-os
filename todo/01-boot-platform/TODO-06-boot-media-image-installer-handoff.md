@@ -186,6 +186,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md).
 > - Scope: §5 owns marker producers + bootloader detection + boot_path coupling; per-role policy enforcement lives in separate domain TODOs.
 
+> **Verified:** 2026-05-06 | commit `1318e314` | 5/6 items | build OK | tests 1207/1207 PASS + smoke PASS (KVM 2.4s)
+> **Quality reviewed:** 2026-05-06 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 3H+4M+0L fixed, 1M deferred | scope: kernel-code-quality + boot-code-quality
+
 ---
 
 ## 6. Bootloader Handoff of Media Role
