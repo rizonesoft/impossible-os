@@ -65,11 +65,17 @@ Each `partition_map[i]` object pins the GPT layout the bootloader expects. Misma
 
 ## Entries
 
-Each `entries[i]` object describes one boot-platform-relevant file inside the artifact. Required entries (must each be present): `bootloader`, `kernel`. Optional entries (included when subsystem is shipped): `boot_entries`, `blackbox_skeleton`, `recovery_payloads`.
+Each `entries[i]` object describes one boot-platform-relevant file inside the artifact. Required entries vary by `artifact_format`:
+
+- All formats: `bootloader`, `kernel` (each appears exactly once with `optional: false`).
+- ESP-bearing disk formats (`raw`, `usb`, `vhd`, `vhdx`, `vdi`, `qcow2`, `ova`, `installer`, `recovery`): also `boot_config` (the ESP `boot.conf`; both `verify-esp.sh --manifest` and `build-manifest.sh check` fail closed when this row is absent for these formats).
+- `iso`: `boot_config` is recommended but not required at the manifest level (the El Torito UEFI image inside the ISO carries its own boot.conf path; cross-check is owned by [`§4 Hybrid ISO / El Torito UEFI Boot`](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#4-hybrid-iso--el-torito-uefi-boot)).
+
+Optional entries (included when the subsystem is shipped): `boot_entries`, `blackbox_skeleton`, `recovery_payloads`.
 
 | Field          | Type                | Description                                                       |
 | -------------- | ------------------- | ----------------------------------------------------------------- |
-| `name`         | string enum         | One of: `bootloader`, `kernel`, `boot_entries`, `blackbox_skeleton`, `recovery_payloads`. |
+| `name`         | string enum         | One of: `bootloader`, `kernel`, `boot_config`, `boot_entries`, `blackbox_skeleton`, `recovery_payloads`. |
 | `path`         | string              | Path of the file inside the artifact (e.g. `\EFI\BOOT\BOOTX64.EFI`). |
 | `sha256`       | string (64-hex)     | sha256 of the file contents.                                       |
 | `size_bytes`   | unsigned integer    | File size in bytes.                                               |
@@ -82,7 +88,7 @@ The packaging gate (`scripts/release/build-manifest.sh check <manifest>`) is **s
 - A required field above is missing from the JSON.
 - `bootloader_sha256` or `kernel_sha256` is empty or not 64 hex chars.
 - `partition_map[]` is empty.
-- `entries[]` is missing the required `bootloader` or `kernel` row, or a non-optional row carries an unknown `name`.
+- `entries[]` is missing the required `bootloader` or `kernel` row, or (for ESP-bearing formats) the required `boot_config` row, or a non-optional row carries an unknown `name`.
 - An enum field (`artifact_format`, `secure_boot_status`, `media_role`, `filesystem`) carries a value outside its allowed set.
 - An integer field falls outside its documented range, or a UUID/GUID field violates its 8-4-4-4-12 form.
 - `artifact_uuid` does not equal the deterministic UUID v5 reconstructed from the on-disk seed (`format|bootloader_sha256|kernel_sha256|boot_info_version`).
@@ -134,8 +140,9 @@ The bootloader verifier handles `manifest_version > 1` by refusing the boot unde
     { "index": 3, "name": "IXFS-System", "type_guid": "00000000-0000-0000-0000-000000000000", "size_mib": 4096, "filesystem": "ixfs" }
   ],
   "entries": [
-    { "name": "bootloader", "path": "\\EFI\\BOOT\\BOOTX64.EFI", "sha256": "<64-hex>", "size_bytes": 124928, "optional": false },
-    { "name": "kernel",     "path": "\\boot\\kernel.exe",       "sha256": "<64-hex>", "size_bytes": 5242880, "optional": false }
+    { "name": "bootloader",  "path": "\\EFI\\BOOT\\BOOTX64.EFI",            "sha256": "<64-hex>", "size_bytes": 124928,  "optional": false },
+    { "name": "kernel",      "path": "\\boot\\kernel.exe",                  "sha256": "<64-hex>", "size_bytes": 5242880, "optional": false },
+    { "name": "boot_config", "path": "\\EFI\\ImpossibleOS\\boot.conf",      "sha256": "<64-hex>", "size_bytes": 512,     "optional": false }
   ],
   "bootloader_sha256": "<64-hex>",
   "kernel_sha256": "<64-hex>"

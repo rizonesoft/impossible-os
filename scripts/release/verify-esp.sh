@@ -72,22 +72,60 @@ REQUIRED["EFI/BOOT/BOOTX64.EFI"]="build/tools/BOOTX64.EFI"
 REQUIRED["boot/kernel.exe"]="build/kernel.exe"
 REQUIRED["EFI/ImpossibleOS/boot.conf"]="resources/boot/boot.conf"
 
-# Optional manifest hash override (key = path-on-ESP, value = sha256).
+# Manifest hash expectations -- keyed by ESP path-on-disk, populated ONLY from
+# required-named entries (bootloader / kernel / boot_config). Pulling shas by
+# path alone would let a hand-crafted manifest satisfy verify-esp by stuffing
+# a matching hash into an unrelated optional entry name (e.g. blackbox_skeleton)
+# at the canonical ESP path -- the schema's named-slot contract would then be
+# bypassed at the verifier. Required-name-driven extraction also asserts the
+# expected ESP path on each row, so a manifest claiming bootloader at the
+# wrong path fails closed instead of silently mis-binding.
 declare -A MANIFEST_SHA
 if [ -n "$MANIFEST" ]; then
     [ -f "$MANIFEST" ] || { err "missing manifest: $MANIFEST"; exit 2; }
-    while IFS=$'\t' read -r path sha; do
-        # path comes through with backslash separators in the manifest;
-        # normalize to forward-slash for matching against ESP paths.
-        path="${path#\\}"
-        path="${path//\\/\/}"
-        MANIFEST_SHA["$path"]="$sha"
-    done < <(python3 -c '
+    # Map: required-name -> expected ESP path (forward-slash, no leading /).
+    declare -A REQUIRED_NAME_PATH=(
+        [bootloader]="EFI/BOOT/BOOTX64.EFI"
+        [kernel]="boot/kernel.exe"
+        [boot_config]="EFI/ImpossibleOS/boot.conf"
+    )
+    # Extract required-named entries from the manifest. Capture to a file so a
+    # python-side error is observable (process substitution swallows non-zero
+    # exits).
+    MANIFEST_NAMED="$(mktemp)"
+    if ! python3 -c '
 import json, sys
 m = json.load(open(sys.argv[1]))
+required = {"bootloader", "kernel", "boot_config"}
+seen = set()
 for e in m.get("entries", []):
-    print(e["path"] + "\t" + e["sha256"])
-' "$MANIFEST")
+    n = e.get("name")
+    if n in required:
+        if n in seen:
+            sys.stderr.write("manifest has duplicate required entry name=" + n + "\n")
+            sys.exit(2)
+        seen.add(n)
+        print(n + "\t" + e["path"] + "\t" + e["sha256"])
+' "$MANIFEST" > "$MANIFEST_NAMED" 2>/dev/null; then
+        rm -f "$MANIFEST_NAMED"
+        err "manifest extraction failed (duplicate or malformed required entries)"
+        exit 1
+    fi
+    while IFS=$'\t' read -r name path sha; do
+        path="${path#\\}"
+        path="${path//\\/\/}"
+        expected_path="${REQUIRED_NAME_PATH[$name]:-}"
+        if [ -z "$expected_path" ]; then
+            fail "manifest entry name=$name is not a required ESP slot"
+            continue
+        fi
+        if [ "$path" != "$expected_path" ]; then
+            fail "manifest entry name=$name has path '$path', expected '$expected_path'"
+            continue
+        fi
+        MANIFEST_SHA["$expected_path"]="$sha"
+    done < "$MANIFEST_NAMED"
+    rm -f "$MANIFEST_NAMED"
 fi
 
 TMPDIR="$(mktemp -d)"
@@ -104,14 +142,22 @@ for esp_path in "${!REQUIRED[@]}"; do
 
     expected_sha=""
     expected_src=""
-    if [ -n "${MANIFEST_SHA[$esp_path]:-}" ]; then
+    # --manifest mode is the release-gate trust boundary: every required
+    # ESP file MUST have a manifest entry. A path-mismatch fallback to
+    # build-tree hashes would let a developer's local binaries certify
+    # an artifact the supplied manifest never described.
+    if [ -n "$MANIFEST" ]; then
+        if [ -z "${MANIFEST_SHA[$esp_path]:-}" ]; then
+            fail "ESP $esp_path has no matching entry in --manifest $MANIFEST (path drift?)"
+            continue
+        fi
         expected_sha="${MANIFEST_SHA[$esp_path]}"
         expected_src="manifest"
     elif [ -f "$src_path" ]; then
         expected_sha="$(sha256sum "$src_path" | awk '{print $1}')"
         expected_src="build-tree"
     else
-        info "no expected sha for $esp_path (no manifest, no build source); presence-only check"
+        fail "no expected sha for $esp_path (no manifest, no build source)"
         continue
     fi
 

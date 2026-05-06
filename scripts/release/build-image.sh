@@ -47,7 +47,7 @@ KR_PATH="build/kernel.exe"
 BOOT_CONF="resources/boot/boot.conf"
 OUT_DIR="build/release"
 OUT_IMG="$OUT_DIR/disk.img"
-WORK_DIR="$OUT_DIR/build-image-work"
+WORK_DIR=""  # per-invocation mktemp dir; populated below after $OUT_DIR exists
 
 err() { printf '[ERROR] %s\n' "$*" >&2; }
 note() { printf '[build-image] %s\n' "$*" >&2; }
@@ -77,6 +77,15 @@ while [ "$#" -gt 0 ]; do
         *) err "unknown arg: $1"; usage >&2; exit 2 ;;
     esac
 done
+
+# Validate --format against the same enum that build-manifest.sh and the
+# schema doc enforce. Without this, a typo (e.g. --format raaw) seeds the
+# UUID derivation with a value that no manifest can describe with the same
+# seed, producing a deterministic-but-orphan disk image.
+case "$FORMAT" in
+    raw|usb|vhd|vhdx|vdi|iso|qcow2|ova|recovery|installer) ;;
+    *) err "invalid --format: $FORMAT (must be one of: raw, usb, vhd, vhdx, vdi, iso, qcow2, ova, recovery, installer)"; exit 2 ;;
+esac
 
 for f in "$BL_PATH" "$KR_PATH" "$BOOT_CONF"; do
     [ -f "$f" ] || { err "missing input: $f (run scripts/build.sh first)"; exit 1; }
@@ -151,7 +160,13 @@ ESP_TYPE_GUID="C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 MSBASIC_TYPE_GUID="EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
 
 # ---- Build ------------------------------------------------------------------
-mkdir -p "$OUT_DIR" "$WORK_DIR"
+mkdir -p "$OUT_DIR"
+# Per-invocation work directory so parallel build-image.sh runs (different
+# --out paths under CI or developer workflows) cannot race on a shared
+# stage tree. Old fixed path (build/release/build-image-work) was reentrant-
+# unsafe: two invocations would clobber each other's mcopy stages and the
+# first to exit would rm -rf the other's working state.
+WORK_DIR="$(mktemp -d "$OUT_DIR/build-image-work.XXXXXX")"
 trap '[ "$KEEP_WORK" -eq 1 ] || rm -rf "$WORK_DIR"' EXIT
 
 # 1. Allocate the empty image. We rm -f first so a pre-existing $OUT_IMG

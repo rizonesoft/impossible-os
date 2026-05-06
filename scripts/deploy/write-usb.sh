@@ -16,7 +16,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD="$REPO_ROOT/build"
-DISK_IMG="$BUILD/system-disk.img"
+
+# Image source: the reproducible release path takes precedence over the
+# legacy Makefile system-disk image when both exist, since a user who has
+# run scripts/release/build-image.sh expects to write that artifact, not a
+# stale system-disk.img from a prior `make` cycle. Override with $DISK_IMG
+# in the environment to pin one explicitly.
+RELEASE_IMG="$BUILD/release/disk.img"
+LEGACY_IMG="$BUILD/system-disk.img"
+if [ -n "${DISK_IMG:-}" ]; then
+    : # respect explicit override
+elif [ -f "$RELEASE_IMG" ] && [ -f "$LEGACY_IMG" ]; then
+    if [ "$RELEASE_IMG" -nt "$LEGACY_IMG" ]; then
+        DISK_IMG="$RELEASE_IMG"
+    else
+        DISK_IMG="$LEGACY_IMG"
+    fi
+elif [ -f "$RELEASE_IMG" ]; then
+    DISK_IMG="$RELEASE_IMG"
+else
+    DISK_IMG="$LEGACY_IMG"
+fi
 
 # ---- Colors ----
 RED='\033[0;31m'
@@ -36,9 +56,33 @@ fi
 # ---- Preflight ----
 if [ ! -f "$DISK_IMG" ]; then
     echo -e "${RED}✗ Missing: $DISK_IMG${NC}"
-    echo -e "${YELLOW}  Run 'bash scripts/build.sh clean' first.${NC}"
+    echo -e "${YELLOW}  Build a release image:    bash scripts/release/build-image.sh${NC}"
+    echo -e "${YELLOW}  Or the legacy system img: bash scripts/build.sh clean${NC}"
     exit 1
 fi
+echo -e "${DIM}Image source: $DISK_IMG${NC}"
+
+# Pin the source image inode for the duration of this script. A concurrent
+# rebuild or symlink swap of $DISK_IMG between the pre-write hash capture
+# and the dd write would otherwise cause the verifier to compare against a
+# different image than was actually written. We hardlink into a fresh
+# temp directory so the link target does NOT pre-exist (mktemp on a file
+# would always make ln fail, silently dropping to cp and reopening the
+# race). The hardlink shares the inode atomically; if the source is later
+# replaced via rename(2), our link still points at the original inode.
+# cp is a cross-filesystem fallback only -- it is strictly weaker because
+# it captures content at copy time rather than pinning the live inode.
+DISK_IMG_PIN_DIR="$(mktemp -d -p "$(dirname "$DISK_IMG")" .write-usb-pin.XXXXXX)"
+trap 'rm -rf "$DISK_IMG_PIN_DIR"' EXIT
+DISK_IMG_PINNED="$DISK_IMG_PIN_DIR/source.img"
+if ! ln "$DISK_IMG" "$DISK_IMG_PINNED" 2>/dev/null; then
+    echo -e "${YELLOW}! hardlink pin failed (cross-filesystem?); falling back to cp${NC}"
+    if ! cp -- "$DISK_IMG" "$DISK_IMG_PINNED"; then
+        echo -e "${RED}* failed to pin source image $DISK_IMG${NC}"
+        exit 1
+    fi
+fi
+DISK_IMG="$DISK_IMG_PINNED"
 
 IMG_SIZE=$(stat -c%s "$DISK_IMG")
 IMG_SIZE_MB=$((IMG_SIZE / 1048576))
@@ -133,6 +177,32 @@ if [ "$confirm2" != "$dev_basename" ]; then
     exit 0
 fi
 
+# ---- Pre-flight: capture source ESP hashes BEFORE destruction ----
+# Capture must succeed, otherwise abort. A post-dd capture would already
+# have destroyed the USB by the time mtype-missing or extraction-failure
+# is detected -- that defeats the verification gate entirely.
+declare -A EXPECTED_SHA
+EMPTY_SHA="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+if ! command -v mtype >/dev/null 2>&1; then
+    echo -e "${RED}* mtype not available -- cannot derive source-image hashes for verification${NC}"
+    echo -e "${YELLOW}  Install mtools and re-run: sudo apt install mtools${NC}"
+    exit 1
+fi
+# Source-image ESP starts at LBA 2048 (1 MiB) for build-image.sh outputs
+# and the legacy Makefile system-disk pipeline; both share byte-offset
+# 1048576 so @@1048576 works for either layout.
+for esp_path in "EFI/BOOT/BOOTX64.EFI" "boot/kernel.exe" "EFI/ImpossibleOS/boot.conf"; do
+    sha="$(MTOOLS_SKIP_CHECK=1 mtype -i "$DISK_IMG@@1048576" "::$esp_path" 2>/dev/null \
+             | sha256sum | awk '{print $1}')"
+    if [ -z "$sha" ] || [ "$sha" = "$EMPTY_SHA" ]; then
+        echo -e "${RED}* could not derive source-image sha256 for $esp_path${NC}"
+        echo -e "${YELLOW}  The source image at $DISK_IMG is missing a required ESP file or${NC}"
+        echo -e "${YELLOW}  uses a different layout. Refusing to write without verifiable hashes.${NC}"
+        exit 1
+    fi
+    EXPECTED_SHA["$esp_path"]="$sha"
+done
+
 # ---- Unmount any mounted partitions ----
 echo ""
 echo -e "${CYAN}Writing Impossible OS to USB...${NC}"
@@ -155,8 +225,22 @@ echo -e "  ${GREEN}[3/4] Write complete.${NC}"
 # ---- Sync and refresh ----
 echo -e "  ${DIM}[4/4] Syncing and refreshing partition table...${NC}"
 sync
-partprobe "$TARGET_DEV" 2>/dev/null || true
-sleep 1
+# Force the kernel to drop cached buffers + reread the partition table
+# before we mount any partition for verification. partprobe failing
+# silently here would let stale partition nodes mask a corrupted write.
+if ! blockdev --flushbufs "$TARGET_DEV" 2>/dev/null; then
+    echo -e "  ${RED}* blockdev --flushbufs failed for $TARGET_DEV${NC}"
+    exit 1
+fi
+if ! partprobe "$TARGET_DEV" 2>/dev/null; then
+    if command -v blockdev >/dev/null 2>&1 && ! blockdev --rereadpt "$TARGET_DEV" 2>/dev/null; then
+        echo -e "  ${RED}* partition table re-read failed for $TARGET_DEV${NC}"
+        echo -e "  ${YELLOW}  Unmount any partitions on $TARGET_DEV and re-run.${NC}"
+        exit 1
+    fi
+fi
+# Settle udev before mounting (created/changed partition nodes appear async).
+udevadm settle 2>/dev/null || sleep 1
 
 # ---- Verify (re-read partition table + per-file sha256 cross-check) ----
 echo ""
@@ -172,24 +256,8 @@ if command -v sgdisk >/dev/null 2>&1; then
     sgdisk -p "$TARGET_DEV" 2>/dev/null | sed -n '/Number/,/^$/p' | sed 's/^/    /'
 fi
 
-# Capture expected hashes from the source image BEFORE remounting the
-# device, so a tampered re-read cannot satisfy itself.
-declare -A EXPECTED_SHA
-if command -v mtype >/dev/null 2>&1; then
-    # Source-image ESP starts at LBA 2048 for build-image.sh outputs and at
-    # the first FAT partition for the legacy system-disk pipeline; both
-    # share byte-offset 1MiB so the @@1048576 form works for either.
-    for esp_path in "EFI/BOOT/BOOTX64.EFI" "boot/kernel.exe" "EFI/ImpossibleOS/boot.conf"; do
-        sha="$(MTOOLS_SKIP_CHECK=1 mtype -i "$DISK_IMG@@1048576" "::$esp_path" 2>/dev/null \
-                 | sha256sum | awk '{print $1}')"
-        # The empty-input sha256 below is the no-content sentinel mtype
-        # produces when the file is missing in the source image; treat it
-        # as "no expected hash" rather than a real value to compare.
-        if [ -n "$sha" ] && [ "$sha" != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]; then
-            EXPECTED_SHA["$esp_path"]="$sha"
-        fi
-    done
-fi
+# EXPECTED_SHA was populated pre-write above (before dd) so a tampered
+# device read or stale partition cache cannot satisfy itself.
 
 # Find the EFI partition (first partition)
 EFI_PART="${TARGET_DEV}1"
@@ -206,16 +274,14 @@ if [ -b "$EFI_PART" ]; then
             fi
             sz_kb=$(( $(stat -c%s "$usb_file") / 1024 ))
             actual_sha="$(sha256sum "$usb_file" | awk '{print $1}')"
-            expected_sha="${EXPECTED_SHA[$esp_path]:-}"
-            if [ -n "$expected_sha" ] && [ "$actual_sha" != "$expected_sha" ]; then
+            expected_sha="${EXPECTED_SHA[$esp_path]}"
+            if [ "$actual_sha" != "$expected_sha" ]; then
                 echo -e "  ${RED}*${NC} $esp_path (${sz_kb} KB) sha256 MISMATCH"
                 echo -e "      ${DIM}expected: $expected_sha${NC}"
                 echo -e "      ${DIM}got:      $actual_sha${NC}"
                 verify_failures=$((verify_failures + 1))
-            elif [ -n "$expected_sha" ]; then
-                echo -e "  ${GREEN}OK${NC} $esp_path (${sz_kb} KB) sha256 matches source image"
             else
-                echo -e "  ${GREEN}OK${NC} $esp_path (${sz_kb} KB)  ${DIM}(presence only -- no source hash)${NC}"
+                echo -e "  ${GREEN}OK${NC} $esp_path (${sz_kb} KB) sha256 matches source image"
             fi
         done
 

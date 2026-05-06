@@ -55,12 +55,30 @@ else
 fi
 
 note "[2b] reusing an --out path with stale non-zero bytes still produces byte-identical output"
-# Pre-fill the output path with non-zero bytes (covering the IXFS zero-fill
-# zone), run build-image.sh against the same path, and assert the result
-# matches the fresh-tempfile output from [2]. This catches the truncate-
-# on-existing-file leakage case where pre-existing bytes survive in
-# regions the producer never explicitly writes.
-dd if=/dev/urandom of="$TMPDIR/stale_reuse.img" bs=1M count=512 status=none
+# Pre-fill the output path with stale non-zero sentinel bytes inside the
+# IXFS zero-fill region (where build-image.sh leaves zeros), then re-run
+# the producer against the same path and assert the result matches the
+# fresh-tempfile output from [2]. We use a sparse file plus a few sentinel
+# bytes rather than 512 MiB of /dev/urandom because the invariant only
+# needs unwritten regions to NOT survive; full-image random fills paid
+# 512 MiB of I/O per harness run for no extra coverage.
+truncate -s "$((512 * 1024 * 1024))" "$TMPDIR/stale_reuse.img"
+# IXFS zero-fill region starts at LBA 395264 (byte 202375168) per
+# build-image.sh layout. Drop sentinel bytes near the start, middle, and
+# end of that region so a producer that left ANY of them intact would
+# differ from a fresh run.
+python3 -c "
+import sys
+p = sys.argv[1]
+sentinels = [
+    (202375168, b'\\xDE\\xAD\\xBE\\xEF'),  # IXFS region start
+    (370000000, b'\\xCA\\xFE\\xBA\\xBE'),  # IXFS middle
+    (536000000, b'\\xFE\\xED\\xFA\\xCE'),  # near image end
+]
+with open(p, 'r+b') as f:
+    for off, b in sentinels:
+        f.seek(off); f.write(b)
+" "$TMPDIR/stale_reuse.img"
 bash scripts/release/build-image.sh --out "$TMPDIR/stale_reuse.img" >/dev/null 2>&1
 if cmp -s "$TMPDIR/run1.img" "$TMPDIR/stale_reuse.img"; then
     ok "reused-path output equals fresh-path output (no stale-byte leakage)"
@@ -101,6 +119,33 @@ if bash scripts/release/verify-esp.sh "$TMPDIR/run1.img" --manifest "$TMPDIR/m.j
     ok "verify-esp PASSes against manifest"
 else
     bad "verify-esp should pass with manifest; it failed"
+fi
+
+note "[5b] verify-esp.sh --manifest fails when boot_config entry is missing (no fallback)"
+# Strip the boot_config entry from the manifest. verify-esp must FAIL in
+# --manifest mode rather than silently fall back to build-tree hashes.
+python3 -c '
+import json, sys
+p = sys.argv[1]
+with open(p) as f: m = json.load(f)
+m["entries"] = [e for e in m["entries"] if e.get("name") != "boot_config"]
+with open(p + ".no_boot_config", "w") as f: json.dump(m, f)
+' "$TMPDIR/m.json"
+set +e
+err_out="$(bash scripts/release/verify-esp.sh "$TMPDIR/run1.img" --manifest "$TMPDIR/m.json.no_boot_config" 2>&1 >/dev/null)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s' "$err_out" | grep -q 'no matching entry in --manifest'; then
+    ok "verify-esp --manifest fails closed on missing boot.conf entry"
+else
+    bad "verify-esp should have failed; got rc=$rc, err: $err_out"
+fi
+
+note "[5c] manifest entries[] includes boot_config when boot.conf source exists"
+if grep -q '"name": "boot_config"' "$TMPDIR/m.json"; then
+    ok "manifest entries[] includes boot_config row"
+else
+    bad "manifest entries[] missing boot_config row"
 fi
 
 note "[6] build-manifest.sh build emits toolchain_version + source_sha + manifest_seed"
@@ -154,6 +199,77 @@ if [ "$rc" -ne 0 ] && printf '%s' "$err_out" | grep -q 'manifest_seed'; then
     ok "rejects mismatched manifest_seed"
 else
     bad "should have rejected; got rc=$rc, err: $err_out"
+fi
+
+note "[9] verify-esp.sh --manifest rejects path-only forgery (bootloader entry renamed)"
+# Hand-craft a manifest where the required name=bootloader row is renamed to an
+# optional/forward-compatible name with the bootloader's hash at the canonical
+# ESP path. Pre-fix verify-esp matched by path alone and would have certified
+# the artifact; post-fix it must fail closed because the named-slot contract
+# is broken.
+python3 -c '
+import json, sys
+p = sys.argv[1]
+with open(p) as f: m = json.load(f)
+# Rename the bootloader entry to a non-required allowed name; keep its path
+# and sha256 intact so a path-keyed verifier would still happily match.
+for e in m["entries"]:
+    if e.get("name") == "bootloader":
+        e["name"] = "blackbox_skeleton"
+        e["optional"] = True
+with open(p + ".forged_path", "w") as f: json.dump(m, f)
+' "$TMPDIR/m.json"
+set +e
+err_out="$(bash scripts/release/verify-esp.sh "$TMPDIR/run1.img" --manifest "$TMPDIR/m.json.forged_path" 2>&1 >/dev/null)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s' "$err_out" | grep -q 'no matching entry in --manifest'; then
+    ok "verify-esp --manifest rejects path-keyed forgery (bootloader renamed)"
+else
+    bad "verify-esp should have rejected; got rc=$rc, err: $err_out"
+fi
+
+note "[10] build-manifest.sh check rejects raw-format manifest missing boot_config"
+# verify-esp.sh fails closed on missing boot_config (test [5b]); the packaging
+# checker must agree, otherwise the two release gates disagree about what a
+# valid manifest looks like.
+python3 -c '
+import json, sys
+p = sys.argv[1]
+with open(p) as f: m = json.load(f)
+m["entries"] = [e for e in m["entries"] if e.get("name") != "boot_config"]
+with open(p + ".no_bc_check", "w") as f: json.dump(m, f)
+' "$TMPDIR/m.json"
+set +e
+err_out="$(bash scripts/release/build-manifest.sh check "$TMPDIR/m.json.no_bc_check" 2>&1 >/dev/null)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ] && printf '%s' "$err_out" | grep -q 'name=boot_config'; then
+    ok "build-manifest check rejects raw manifest missing boot_config"
+else
+    bad "should have rejected; got rc=$rc, err: $err_out"
+fi
+
+note "[11] parallel build-image.sh runs to different --out paths do not race"
+# Pre-fix WORK_DIR was a fixed path so two parallel invocations would clobber
+# each other's stage tree and the first to exit would rm -rf the other's
+# working state. Post-fix uses mktemp -d for a per-invocation work dir.
+# Free TMPDIR before spawning two more 512 MiB images: tests [1]/[2]/[2b]/[4]
+# leave four prior images behind that would push peak TMPDIR usage past 3 GiB
+# on tmpfs-backed CI runners. We only need run1.img beyond this point if
+# later tests reference it; they do not.
+rm -f "$TMPDIR/run2.img" "$TMPDIR/stale_reuse.img" "$TMPDIR/run1_bad.img" "$TMPDIR/run1.img"
+bash scripts/release/build-image.sh --out "$TMPDIR/par_a.img" >/dev/null 2>&1 &
+pid_a=$!
+bash scripts/release/build-image.sh --out "$TMPDIR/par_b.img" >/dev/null 2>&1 &
+pid_b=$!
+wait_rc=0
+wait $pid_a || wait_rc=$?
+wait $pid_b || wait_rc=$?
+if [ "$wait_rc" -eq 0 ] && cmp -s "$TMPDIR/par_a.img" "$TMPDIR/par_b.img"; then
+    ok "parallel runs both produced byte-identical output"
+else
+    bad "parallel runs failed or diverged (rc=$wait_rc)"
 fi
 
 printf '\n[summary] %d pass, %d fail\n' "$PASS" "$FAIL"

@@ -205,10 +205,26 @@ cmd_build() {
     source_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
     manifest_seed="${source_sha}|${format}"
 
+    # boot.conf is required ESP content per the deterministic image producer
+    # and both ESP/USB verifiers, so it has to land in entries[] for
+    # manifest-based bootloader verification to cover it. The source file
+    # MUST exist; emitting a manifest without boot_config would let it pass
+    # `check` and then fail `verify-esp --manifest` -- internally inconsistent.
+    local boot_conf_path="resources/boot/boot.conf"
+    if [ ! -f "$boot_conf_path" ]; then
+        err "missing required ESP source file: $boot_conf_path -- cannot emit boot_config entry"
+        exit 1
+    fi
+    local boot_conf_sha boot_conf_size
+    boot_conf_sha="$(sha256_of "$boot_conf_path")"
+    boot_conf_size="$(size_of "$boot_conf_path")"
+
     BOOTLOADER_SHA="$bl_sha" \
     BOOTLOADER_SIZE="$bl_size" \
     KERNEL_SHA="$kernel_sha" \
     KERNEL_SIZE="$kernel_size" \
+    BOOT_CONF_SHA="$boot_conf_sha" \
+    BOOT_CONF_SIZE="$boot_conf_size" \
     BIV="$biv" \
     ARTIFACT_FORMAT="$format" \
     MEDIA_ROLE="$media_role" \
@@ -240,10 +256,14 @@ m = {
     "boot_info_version": int(os.environ["BIV"]),
     "secure_boot_status": os.environ["SECURE_BOOT_STATUS"],
     "media_role":        os.environ["MEDIA_ROLE"],
+    # Layout matches scripts/release/build-image.sh: ESP 64 MiB at LBA 2048,
+    # BlackBox 128 MiB at LBA 133120, IXFS-System fills LBA 395264..1048542
+    # (sectors 653279, ~318 MiB) of a 512 MiB total image. The exact LBA
+    # fields are emitted in v2 once the GPT-backed layout becomes mandatory.
     "partition_map": [
-        {"index": 1, "name": "ESP",         "type_guid": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B", "size_mib": 64,   "filesystem": "fat32"},
-        {"index": 2, "name": "BlackBox",    "type_guid": "00000000-0000-0000-0000-000000000000", "size_mib": 128,  "filesystem": "fat32"},
-        {"index": 3, "name": "IXFS-System", "type_guid": "00000000-0000-0000-0000-000000000000", "size_mib": 4096, "filesystem": "ixfs"},
+        {"index": 1, "name": "ESP",         "type_guid": "C12A7328-F81F-11D2-BA4B-00A0C93EC93B", "size_mib": 64,  "filesystem": "fat32"},
+        {"index": 2, "name": "BlackBox",    "type_guid": "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "size_mib": 128, "filesystem": "fat32"},
+        {"index": 3, "name": "IXFS-System", "type_guid": "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "size_mib": 318, "filesystem": "ixfs"},
     ],
     "entries": [
         {"name": "bootloader",
@@ -263,6 +283,16 @@ m = {
     "source_sha":        os.environ["SOURCE_SHA"],
     "manifest_seed":     os.environ["MANIFEST_SEED"],
 }
+
+# boot_config is required ESP content (build mode aborted earlier if the
+# source file was missing), so unconditionally append it to entries[].
+m["entries"].append({
+    "name":       "boot_config",
+    "path":       "\\EFI\\ImpossibleOS\\boot.conf",
+    "sha256":     os.environ["BOOT_CONF_SHA"],
+    "size_bytes": int(os.environ["BOOT_CONF_SIZE"]),
+    "optional":   False,
+})
 
 with open(os.environ["OUT_PATH"], "w") as f:
     json.dump(m, f, indent=2, sort_keys=False)
@@ -422,7 +452,7 @@ else:
                     errors.append(f"{label}.{opt_int} must be a non-negative integer <= 2^64-1 when present (got: {v!r})")
 
 hex64 = re.compile(r"^[0-9a-fA-F]{64}$")
-ALLOWED_ENTRY_NAMES = {"bootloader", "kernel", "boot_entries", "blackbox_skeleton", "recovery_payloads"}
+ALLOWED_ENTRY_NAMES = {"bootloader", "kernel", "boot_config", "boot_entries", "blackbox_skeleton", "recovery_payloads"}
 
 def validate_entry_row(e, required):
     """Validate one entries[] row. `required` toggles strict-required-row checks.
@@ -465,8 +495,16 @@ else:
     seen_names = []
     for e in m["entries"]:
         seen_names.append(e.get("name") if isinstance(e, dict) else None)
-    # Required rows must each appear exactly once and pass validation.
-    for required_entry in ("bootloader", "kernel"):
+    # ESP-bearing disk formats embed boot.conf; the manifest verifier
+    # (verify-esp.sh --manifest) fails closed when boot_config is absent,
+    # so check mode must enforce the same required-entry set or a hand-
+    # crafted manifest could pass `check` and fail `verify-esp` -- two
+    # official gates disagreeing about what a valid manifest looks like.
+    ESP_FORMATS = {"raw", "usb", "vhd", "vhdx", "vdi", "qcow2", "ova", "installer", "recovery"}
+    required_names = ["bootloader", "kernel"]
+    if m.get("artifact_format") in ESP_FORMATS:
+        required_names.append("boot_config")
+    for required_entry in required_names:
         count = seen_names.count(required_entry)
         if count == 0:
             errors.append(f"entries[] missing required name={required_entry}")

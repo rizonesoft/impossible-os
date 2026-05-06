@@ -93,16 +93,20 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] Artifact manifest provenance -- `build-manifest.sh build` records `toolchain_version` + `source_sha` + `manifest_seed` (v1-optional per schema policy); check mode validates each.
 - [x] Commit: `"release: reproducible raw USB images"`
 
-**Test checkpoint:** Two consecutive `bash scripts/release/build-image.sh` runs from a clean tree produce byte-identical `disk.img` (test [2]); reusing an `--out` path pre-filled with non-zero bytes still matches (test [2b]); `verify-esp.sh` PASS on fresh image, FAIL on corrupted ESP; `build-manifest.sh check` validates new provenance fields. Verified by `bash scripts/release/test-build-image.sh` (10/10 PASS).
+**Test checkpoint:** Two consecutive `bash scripts/release/build-image.sh` runs from a clean tree produce byte-identical `disk.img` (test [2]); reusing an `--out` path pre-filled with non-zero bytes still matches (test [2b]); `verify-esp.sh` PASS on fresh image, FAIL on corrupted ESP; `verify-esp.sh --manifest` rejects path-keyed forgery (test [9]); `build-manifest.sh check` rejects raw-format manifest missing `boot_config` (test [10]); parallel `build-image.sh` runs do not race (test [11]). Verified by `bash scripts/release/test-build-image.sh` (15/15 PASS).
 
-> **Test runner:** `bash scripts/release/test-build-image.sh` (host-side) | 10 assertions, 0 failures
+> **Test runner:** `bash scripts/release/test-build-image.sh` (host-side) | 15 assertions, 0 failures
 
 > **Notes:**
-> - Shipped: `scripts/release/build-image.sh` + `verify-esp.sh` + `test-build-image.sh`; `build-manifest.sh` extended with provenance fields; `write-usb.sh` post-write hash-check.
-> - Determinism levers: `SOURCE_DATE_EPOCH=0`, `mkfs.fat --invariant`, `sgdisk --partition-guid`, mcopy `-m` with pre-touched mtimes, `rm -f` before truncate (so reused paths cannot leak stale bytes).
+> - Shipped: deterministic `build-image.sh`, ESP/USB verifiers, manifest provenance fields, parallel-safe `mktemp -d` work tree.
+> - Determinism levers: `SOURCE_DATE_EPOCH=0`, `mkfs.fat --invariant`, `sgdisk --partition-guid`, mcopy `-m`, `rm -f` before truncate.
+> - Trust boundary: manifest hashes extracted by required-name slot, not path; `boot_config` required for ESP-bearing formats.
 > - `toolchain_version` + `source_sha` + `manifest_seed` land additively in v1; pre-existing manifests still validate.
 > - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
-> - Scope: §2 owns reproducibility properties + ESP/USB verification; full release pipeline lives in `15-installer-release/TODO-01 §2/§3/§8`.
+> - Scope: §2 owns reproducibility properties + ESP/USB verification; pipeline lives in `15-installer-release/TODO-01 §2/§3/§8`.
+
+> **Verified:** 2026-05-06 | commit `65d4fd39` | 6/6 items | build OK | tests 15/15 PASS | lint clean
+> **Quality reviewed:** 2026-05-06 | Codex 3x (adversarial, consistency, perf) | 1H+5M fixed, 0 open | scope: N/A (host-side bash + docs)
 
 ---
 
