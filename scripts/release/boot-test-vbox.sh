@@ -149,14 +149,30 @@ VBoxManage startvm "$VM_NAME" --type headless >/dev/null
 PASS_ALL=("Boot complete in" 'C:\>')
 FAIL_PAT=("KERNEL PANIC" "BUG_CHECK" "TRIPLE_FAULT")
 
-for i in $(seq 1 "$TIMEOUT_SEC"); do
-    sleep 1
-    state="$(VBoxManage showvminfo "$VM_NAME" --machinereadable 2>/dev/null | sed -n 's/^VMState="\(.*\)"/\1/p')"
-    if [ "$state" = "aborted" ] || [ "$state" = "poweroff" ]; then
-        err "VM ended in state=$state at ${i}s"
-        tail -20 "$SERIAL_LOG" >&2 || true
-        exit 1
+# Elapsed-time deadline loop (was iteration-count). On slow hosts where
+# `VBoxManage showvminfo` takes ~200ms the iteration-count loop overshot a
+# 60s nominal timeout to ~72s; this elapsed-deadline form caps wall-clock
+# at exactly TIMEOUT_SEC even when poll commands are slow. Serial-grep is
+# cheap and runs every iteration; showvminfo runs every SHOWVMINFO_INTERVAL
+# seconds (5 by default) since VM-state transitions are coarse-grained.
+START_TIME=$(date +%s)
+DEADLINE=$(( START_TIME + TIMEOUT_SEC ))
+SHOWVMINFO_INTERVAL=5
+NEXT_VMSTATE_CHECK=$START_TIME
+while :; do
+    NOW=$(date +%s)
+
+    if [ "$NOW" -ge "$NEXT_VMSTATE_CHECK" ]; then
+        state="$(VBoxManage showvminfo "$VM_NAME" --machinereadable 2>/dev/null | sed -n 's/^VMState="\(.*\)"/\1/p')"
+        if [ "$state" = "aborted" ] || [ "$state" = "poweroff" ]; then
+            elapsed=$(( NOW - START_TIME ))
+            err "VM ended in state=$state at ${elapsed}s"
+            tail -20 "$SERIAL_LOG" >&2 || true
+            exit 1
+        fi
+        NEXT_VMSTATE_CHECK=$(( NOW + SHOWVMINFO_INTERVAL ))
     fi
+
     for p in "${FAIL_PAT[@]}"; do
         if grep -qF -- "$p" "$SERIAL_LOG" 2>/dev/null; then
             err "fail pattern matched: $p"
@@ -171,10 +187,20 @@ for i in $(seq 1 "$TIMEOUT_SEC"); do
         fi
     done
     if [ "$all" = 1 ]; then
-        note "boot reached userspace at ${i}s"
-        printf 'BOOT_TEST_VBOX=PASS time_to_userspace_s=%d\n' "$i"
+        elapsed=$(( $(date +%s) - START_TIME ))
+        note "boot reached userspace at ${elapsed}s"
+        printf 'BOOT_TEST_VBOX=PASS time_to_userspace_s=%d\n' "$elapsed"
         exit 0
     fi
+
+    # Deadline check AFTER the serial-grep so a boot that crosses the PASS
+    # markers during the final sleep window still gets observed before we
+    # report timeout. Pre-fix the deadline-break ran first and could turn a
+    # successful late boot into a false timeout.
+    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+        break
+    fi
+    sleep 1
 done
 
 err "timeout: did not reach 'Boot complete in' within ${TIMEOUT_SEC}s"
