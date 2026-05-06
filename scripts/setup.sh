@@ -44,6 +44,7 @@ REQUIRED_SENTINELS=(
     "gcc:gcc (Makefile HOST_CC, builds irespack/jpg2raw/mkfs-ixfs host tools)"
     "python3:python3 (asset pipeline + convert_symmap.py)"
     "qemu-system-x86_64:qemu-system-x86_64 (Makefile QEMU)"
+    "qemu-img:qemu-img (release VM-format conversions: VHDX/VDI/qcow2; ships in qemu-utils)"
     "mcopy:mtools mcopy (FAT image population)"
     "mmd:mtools mmd (BlackBox FAT directory creation)"
     "mkfs.fat:dosfstools (FAT32 partition formatting)"

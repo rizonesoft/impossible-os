@@ -42,6 +42,7 @@ The bootloader verifier and packaging gate REJECT manifests missing any of the f
 | `toolchain_version`    | string (opt.)         | One-line concatenation of `clang --version | ld.lld --version | nasm -v` first lines. Captures the toolchain identity that produced the binaries. Optional in v1; consumers use it to verify the building host matches an audited toolchain. |
 | `source_sha`           | string (40-hex, opt.) | `git rev-parse HEAD` of the source tree at build time, or the literal string `unknown` when git metadata is unavailable. |
 | `manifest_seed`        | string (opt.)         | `<source_sha>\|<artifact_format>`. Same string the deterministic-disk-image producer feeds into UUID v5 partition GUID derivation; binding it into the manifest lets a verifier reconstruct the GUID values without re-running the producer. |
+| `vm_image_metadata`    | object (opt.)         | VM-container layer description (VHD/VHDX/VDI/qcow2). Subfields: `format` (one of `vhd`, `vhdx`, `vdi`, `qcow2`), `subformat` (`dynamic` or `fixed`), `block_size_bytes` (uint64), `virtual_size_bytes` (uint64). Absent on raw / usb / iso manifests. When `artifact_format` is a VM-container format, `vm_image_metadata.format` MUST match it. |
 
 The `bootloader_sha256` and `kernel_sha256` fields are denormalized so the verifier does not need to walk `entries[]` for the two most-common-checked artifacts. The packaging gate enforces that they match the corresponding `entries[]` row before producing the manifest.
 
@@ -119,6 +120,7 @@ Owned by [Artifact Signing and Manifest Verification](../../todo/01-boot-platfor
 `manifest_version` is **not** bumped when:
 
 - A new optional `entries[]` row name is added (the verifier skips unknown optional entries).
+- A new **optional top-level field** is added with documented ignore semantics (older v1 consumers that don't recognize the field MUST skip it without erroring; the field carries no required-by-default consumer contract). Examples: `toolchain_version`, `source_sha`, `manifest_seed`, `vm_image_metadata`. Adding such a field becomes a `manifest_version` bump only when the new field gains a required-by-default consumer contract.
 - Documentation prose is rewritten without changing the on-disk shape.
 
 The bootloader verifier handles `manifest_version > 1` by refusing the boot under `require_manifest=1` (forward-incompatible). Backward-compatible reads of `manifest_version=1` from a `manifest_version=2`-aware bootloader land via explicit migration code at the bump time.

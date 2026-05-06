@@ -96,15 +96,17 @@ fi
 note "[4] verify-esp.sh fails when kernel.exe is corrupted in-place"
 cp "$TMPDIR/run1.img" "$TMPDIR/run1_bad.img"
 # Flip a single byte inside the ESP kernel.exe payload area. The kernel
-# file body lives well past the FAT/root/dirent area; byte 1500000 is
-# inside cluster data for a 64 MiB ESP starting at LBA 2048.
+# binary is the largest ESP file and spans tens of MiB; byte 5000000 of the
+# disk image is inside the FAT data region of the 64 MiB ESP regardless of
+# cluster size (1 vs 8 sectors per cluster), so this corruption test stays
+# robust across mkfs.fat sizing changes.
 python3 -c "
 import sys
 p = sys.argv[1]
 with open(p, 'r+b') as f:
-    f.seek(1500000)
+    f.seek(5000000)
     b = f.read(1)
-    f.seek(1500000)
+    f.seek(5000000)
     f.write(bytes([b[0] ^ 0xFF]))
 " "$TMPDIR/run1_bad.img"
 if ! bash scripts/release/verify-esp.sh "$TMPDIR/run1_bad.img" >/dev/null 2>&1; then

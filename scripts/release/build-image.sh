@@ -195,7 +195,18 @@ sgdisk \
     "$OUT_IMG" >/dev/null
 
 # 3. Format ESP as FAT32 with the derived volume serial.
-mkfs.fat --invariant -F 32 -i "$ESP_VOLID" -n "IPOS-ESP" \
+# `-s 1` (one 512 B sector per cluster) gives 131072 clusters in the 64 MiB
+# ESP, which is above the FAT32 minimum cluster count (65525) per the
+# Microsoft FAT specification. With the default mkfs.fat cluster size of 8
+# sectors (4 KiB), 64 MiB only yields 16384 clusters -- below the FAT32
+# spec minimum. mkfs.fat warns but creates the volume anyway; OVMF's FAT
+# driver then rejects it as malformed and falls through to PXE boot. Bug
+# discovered while wiring boot-test-vhdx.sh (the raw image was sha-stable
+# but not bootable on OVMF until this flag landed). FAT32 is the only
+# filesystem the UEFI specification mandates the firmware support on the
+# ESP, so specification compliance is the gate, not "what mkfs.fat will
+# silently accept".
+mkfs.fat --invariant -F 32 -s 1 -i "$ESP_VOLID" -n "IPOS-ESP" \
     --offset "$ESP_LBA_FIRST" \
     "$OUT_IMG" "$((ESP_SECTORS / 2))" >/dev/null   # size in 1 KiB blocks
 

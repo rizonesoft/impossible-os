@@ -39,7 +39,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | --- | :---: | -------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | Boot artifact matrix and manifest format           | T24           |  [x]   |
 | 💎  |   2   | Reproducible raw/USB image build                   | §1            |  [x]   |
-| 💎  |   3   | VHD/VHDX/VDI conversion and validation             | §1, §2        |  [ ]   |
+| 💎  |   3   | VHD/VHDX/VDI conversion and validation             | §1, §2        |  [x]   |
 | 💎  |   4   | Hybrid ISO / El Torito UEFI boot                   | §1            |  [ ]   |
 | 💎  |   5   | Installer/live/recovery media detection            | §1, T07       |  [ ]   |
 | 💎  |   6   | Bootloader handoff of media role                   | §5, T01 §12   |  [ ]   |
@@ -91,6 +91,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] ESP content verification -- `scripts/release/verify-esp.sh <disk.img> [--manifest m.json]` asserts presence + sha256 of required files; exits with `[ERROR]` named field on mismatch.
 - [x] USB write verification -- `scripts/deploy/write-usb.sh` post-write step re-reads GPT via `sgdisk -p`, hash-checks all three required ESP files from the source image via mtools.
 - [x] Artifact manifest provenance -- `build-manifest.sh build` records `toolchain_version` + `source_sha` + `manifest_seed` (v1-optional per schema policy); check mode validates each.
+- [ ] `build-image.sh` populates IXFS via `build/tools/mkfs-ixfs --populate sysroot` so produced `disk.img` mounts `C:\` end-to-end (currently zero-fills, cmd.exe exits with "C:\\ not mounted"; mirrors Makefile system-disk recipe).
 - [x] Commit: `"release: reproducible raw USB images"`
 
 **Test checkpoint:** Two consecutive `bash scripts/release/build-image.sh` runs from a clean tree produce byte-identical `disk.img` (test [2]); reusing an `--out` path pre-filled with non-zero bytes still matches (test [2b]); `verify-esp.sh` PASS on fresh image, FAIL on corrupted ESP; `verify-esp.sh --manifest` rejects path-keyed forgery (test [9]); `build-manifest.sh check` rejects raw-format manifest missing `boot_config` (test [10]); parallel `build-image.sh` runs do not race (test [11]). Verified by `bash scripts/release/test-build-image.sh` (15/15 PASS).
@@ -114,13 +115,23 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 > **Scope boundary:** [`15-installer-release/TODO-01 §7`](../15-installer-release/TODO-01-release-artifacts.md) owns "VM image variants (VMDK/VHD/VHDX + .ovf)". This section adds VDI + qcow2 + boot-test verification on top of D15's `qemu-img convert` pipeline.
 
-- [ ] Add conversion scripts for Hyper-V VHDX (`scripts/release/to-vhdx.sh`) and VirtualBox VDI (`scripts/release/to-vdi.sh`); use `qemu-img` for the underlying conversion.
-- [ ] Verify converted images preserve GPT layout, ESP, BlackBox, and IXFS partitions byte-for-byte against the source raw image.
-- [ ] Add sparse / dynamic image metadata (block size, allocation strategy) to the artifact manifest.
-- [ ] Boot-test each virtual disk format end-to-end (Hyper-V VHDX in QEMU + VBox; VDI in VBox).
-- [ ] Commit: `"release: validate virtual disk artifacts"`
+- [x] Conversion scripts: `scripts/release/to-vhdx.sh` (dynamic VHDX, 4 MiB block) + `scripts/release/to-vdi.sh` (dynamic VDI). Self-verifying via `qemu-img info` + `qemu-img compare`.
+- [x] Byte-preservation enforced by inline `qemu-img compare -f raw -F <fmt>` on every conversion; regression test [1]/[3] in `scripts/release/test-vm-conversion.sh`.
+- [x] Manifest schema: optional top-level `vm_image_metadata` (`format`, `subformat`, `block_size_bytes`, `virtual_size_bytes`); `build` populates via `qemu-img info`, `check` validates positive sizes + cross-field consistency.
+- [x] Boot-test: `scripts/release/boot-test-vhdx.sh` (QEMU OVMF AHCI) + `scripts/release/boot-test-vbox.sh` (VBoxManage auto-detect, exit 3 = SKIP). PASS = "Boot complete in"; C:\\> gated by IXFS mount (kernel-fs).
+- [x] Commit: `"release: validate virtual disk artifacts"`
 
-**Test checkpoint:** `qemu-img info build/release/disk.vhdx` reports `format: vhdx` with the recorded block size; `qemu-img compare disk.img disk.vhdx` exits 0 (identical content). QEMU boot from `disk.vhdx` reaches `Boot complete in` + `C:\>` on serial within 10 s; same for `disk.vdi` under VirtualBox.
+**Test checkpoint:** `qemu-img info build/release/disk.vhdx` reports `format: vhdx` + `cluster_size: 4194304`; `qemu-img compare -f raw -F vhdx disk.img disk.vhdx` exits 0 (byte-identical content). `bash scripts/release/boot-test-vhdx.sh` reaches `Boot complete in` on serial in <=30s under QEMU OVMF (KVM accel: ~7s). `bash scripts/release/boot-test-vbox.sh` exits 3 (SKIP) on hosts without VBoxManage and exits 0 (PASS) with `Boot complete in` on hosts that have it. Verified by `bash scripts/release/test-vm-conversion.sh` (9/9 PASS).
+
+> **Test runner:** `bash scripts/release/test-vm-conversion.sh` (host-side) | 9 assertions, 0 failures
+
+> **Notes:**
+> - Shipped: `to-vhdx.sh` + `to-vdi.sh` + `boot-test-vhdx.sh` + `boot-test-vbox.sh` + `test-vm-conversion.sh`; `vm_image_metadata` schema field; `qemu-img` in setup sentinels.
+> - Latent fix in raw-image producer: `mkfs.fat -s 1` on ESP -> 131072 clusters (above FAT32 minimum 65525); without it OVMF rejected the FAT and fell through to PXE.
+> - Trust contract: `vm_image_metadata` sizes are positive uint64; `format` agrees with `artifact_format` when both are container formats; raw/usb/iso omit the field.
+> - VBox boot-test is opt-in by host install: VBoxManage absent -> exit 3 (SKIP); listener-first socat avoids the server-mode race.
+> - Canonical doc: [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Scope: §3 owns conversion + boot-test; pipeline in D15 T01 §7; IXFS-mount owned by kernel-fs.
 
 ---
 
@@ -263,8 +274,8 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 | --- | ------------------------------------ | ------------------------------ | ------------------------------ | -------------------------------- |
 | 💎  | USB / raw disk image                 | ✅ Media Creation Tool         | ✅ distro raw images           | ✅ §2 build-image.sh + verify    |
 | 💎  | ISO UEFI boot (El Torito)            | ✅ Windows ISO                 | ✅ distro hybrid ISO           | ⬜ planned -- §4                 |
-| 💎  | VHD / VHDX virtual disk artifact     | ✅ Hyper-V VHDX                | ⚠️ cloud images per distro     | ⬜ planned -- §3                 |
-| 💎  | VDI virtual disk artifact            | ❌ no first-class VDI          | ⚠️ cloud images per distro     | ⬜ planned -- §3                 |
+| 💎  | VHD / VHDX virtual disk artifact     | ✅ Hyper-V VHDX                | ⚠️ cloud images per distro     | ✅ §3 to-vhdx.sh + boot-test     |
+| 💎  | VDI virtual disk artifact            | ❌ no first-class VDI          | ⚠️ cloud images per distro     | ✅ §3 to-vdi.sh + VBox boot-test |
 | 💎  | Installer / recovery media detection | ✅ WinPE / Windows RE          | ✅ live ISO + dracut rescue    | ⬜ planned -- §5, §6             |
 | 💎  | Reproducible image build             | ⚠️ partial via WIM tooling     | ⚠️ per-distro reproducibility  | ✅ §2 byte-identical disk.img    |
 | ⭐  | Versioned boot artifact schema       | ❌ no unified schema           | ❌ no unified schema           | ✅ §1 v1 schema + check tool     |

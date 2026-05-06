@@ -144,11 +144,13 @@ detect_secure_boot_status() {
 cmd_build() {
     local out="build/artifacts/manifest.json"
     local format="raw"
+    local vm_image_path=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --out) out="$2"; shift 2 ;;
             --format) format="$2"; shift 2 ;;
+            --vm-image) vm_image_path="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *) err "unknown build flag: $1"; usage; exit 2 ;;
         esac
@@ -219,6 +221,80 @@ cmd_build() {
     boot_conf_sha="$(sha256_of "$boot_conf_path")"
     boot_conf_size="$(size_of "$boot_conf_path")"
 
+    # vm_image_metadata: derive from --vm-image PATH when supplied OR from
+    # the conventional build/release/disk.<ext> location when --format names
+    # a VM-container format (vhd / vhdx / vdi / qcow2 / ova). The field is
+    # OPTIONAL in v1 (additive top-level field per schema policy) -- a
+    # raw/usb/iso manifest skips it entirely.
+    local vm_format="" vm_subformat="" vm_block_size_bytes="" vm_virtual_size_bytes=""
+    if [ -z "$vm_image_path" ]; then
+        case "$format" in
+            vhd)   vm_image_path="build/release/disk.vhd"   ;;
+            vhdx)  vm_image_path="build/release/disk.vhdx"  ;;
+            vdi)   vm_image_path="build/release/disk.vdi"   ;;
+            qcow2) vm_image_path="build/release/disk.qcow2" ;;
+        esac
+    fi
+    if [ -n "$vm_image_path" ] && [ -f "$vm_image_path" ]; then
+        if ! command -v qemu-img >/dev/null; then
+            err "vm_image_metadata derivation needs qemu-img (install qemu-utils)"
+            exit 1
+        fi
+        local vm_info_json
+        vm_info_json="$(qemu-img info --output=json "$vm_image_path")"
+        vm_format="$(printf '%s' "$vm_info_json" | python3 -c '
+import json, sys
+m = json.load(sys.stdin)
+fmt = m["format"]
+# qemu-img reports legacy Microsoft VHD (Connectix Virtual PC) under the
+# name "vpc"; the manifest schema standardizes on "vhd". Normalize at
+# extraction so the producer/check round-trip always agrees.
+print({"vpc": "vhd"}.get(fmt, fmt))
+')"
+        vm_virtual_size_bytes="$(printf '%s' "$vm_info_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("virtual-size", 0))')"
+        # subformat + block_size live in format-specific-information for VHDX/VDI;
+        # both qemu-img versions and underlying formats vary in what they expose,
+        # so we extract defensively and emit an empty subfield when absent.
+        vm_subformat="$(printf '%s' "$vm_info_json" | python3 -c '
+import json,sys
+m = json.load(sys.stdin)
+fsi = m.get("format-specific", {}).get("data", {})
+print(fsi.get("subformat", "dynamic" if m["format"] in ("vhdx","vdi","qcow2") else ""))
+')"
+        vm_block_size_bytes="$(printf '%s' "$vm_info_json" | python3 -c '
+import json,sys
+m = json.load(sys.stdin)
+# qemu-img exposes container block size as top-level cluster-size for VHDX
+# and qcow2; VDI does not surface it in qemu-img info, so we default to the
+# 1 MiB block VDI ships with.
+bs = m.get("cluster-size")
+if not bs:
+    fsi = m.get("format-specific", {}).get("data", {})
+    bs = fsi.get("block-size") or fsi.get("cluster_size")
+if not bs and m["format"] == "vdi":
+    bs = 1048576
+print(bs or 0)
+')"
+    elif [ -n "$vm_image_path" ]; then
+        err "missing --vm-image / conventional VM image: $vm_image_path"
+        exit 1
+    fi
+
+    # Fail closed when vm_image_metadata extraction could not produce real
+    # sizes: emitting zeros would silently mask qemu-img schema drift, and
+    # check mode rejects zero anyway -- failing here is the same answer
+    # but with a clearer error pointing at the producer's parser.
+    if [ -n "$vm_format" ]; then
+        if [ -z "$vm_virtual_size_bytes" ] || [ "$vm_virtual_size_bytes" = "0" ]; then
+            err "qemu-img info did not report a positive virtual-size for $vm_image_path"
+            exit 1
+        fi
+        if [ -z "$vm_block_size_bytes" ] || [ "$vm_block_size_bytes" = "0" ]; then
+            err "qemu-img info did not report a positive container block size for $vm_image_path (format=$vm_format)"
+            exit 1
+        fi
+    fi
+
     BOOTLOADER_SHA="$bl_sha" \
     BOOTLOADER_SIZE="$bl_size" \
     KERNEL_SHA="$kernel_sha" \
@@ -232,6 +308,10 @@ cmd_build() {
     TOOLCHAIN_VERSION="$toolchain_version" \
     SOURCE_SHA="$source_sha" \
     MANIFEST_SEED="$manifest_seed" \
+    VM_IMAGE_FORMAT="$vm_format" \
+    VM_IMAGE_SUBFORMAT="$vm_subformat" \
+    VM_IMAGE_BLOCK_SIZE_BYTES="$vm_block_size_bytes" \
+    VM_IMAGE_VIRTUAL_SIZE_BYTES="$vm_virtual_size_bytes" \
     OUT_PATH="$out" \
     python3 - <<'PY'
 import json, os, uuid
@@ -293,6 +373,18 @@ m["entries"].append({
     "size_bytes": int(os.environ["BOOT_CONF_SIZE"]),
     "optional":   False,
 })
+
+# vm_image_metadata: top-level optional v1 field; populated when --format
+# is a VM-container format AND the converted artifact exists. Absent on
+# raw / usb / iso manifests by design (no container layer to describe).
+vm_fmt = os.environ.get("VM_IMAGE_FORMAT", "")
+if vm_fmt:
+    m["vm_image_metadata"] = {
+        "format":              vm_fmt,
+        "subformat":           os.environ.get("VM_IMAGE_SUBFORMAT", ""),
+        "block_size_bytes":    int(os.environ.get("VM_IMAGE_BLOCK_SIZE_BYTES") or 0),
+        "virtual_size_bytes":  int(os.environ.get("VM_IMAGE_VIRTUAL_SIZE_BYTES") or 0),
+    }
 
 with open(os.environ["OUT_PATH"], "w") as f:
     json.dump(m, f, indent=2, sort_keys=False)
@@ -577,6 +669,49 @@ if "manifest_seed" in m:
         expected = f"{m['source_sha']}|{m['artifact_format']}"
         if v != expected:
             errors.append(f"manifest_seed must equal '{expected}' (got: {v!r})")
+
+# vm_image_metadata: optional top-level v1 field describing the VM-container
+# layer. When present, every subfield is structurally validated; consumers
+# unaware of the field MUST skip it (per schema policy "additive optional
+# top-level field with documented ignore semantics").
+VM_IMAGE_FORMATS = {"vhd", "vhdx", "vdi", "qcow2"}
+VM_IMAGE_SUBFORMATS = {"dynamic", "fixed", ""}  # "" allowed for forward compat
+if "vm_image_metadata" in m:
+    v = m["vm_image_metadata"]
+    if not isinstance(v, dict):
+        errors.append(f"vm_image_metadata must be an object when present (got: {v!r})")
+    else:
+        fmt = v.get("format")
+        if fmt not in VM_IMAGE_FORMATS:
+            errors.append(f"vm_image_metadata.format must be one of {sorted(VM_IMAGE_FORMATS)} (got: {fmt!r})")
+        sub = v.get("subformat")
+        if not isinstance(sub, str) or sub not in VM_IMAGE_SUBFORMATS:
+            errors.append(f"vm_image_metadata.subformat must be one of {sorted(s for s in VM_IMAGE_SUBFORMATS if s)} or '' (got: {sub!r})")
+        # block_size_bytes and virtual_size_bytes MUST be positive when
+        # vm_image_metadata is present: a manifest claiming "this is a VHDX"
+        # with virtual_size_bytes=0 or block_size_bytes=0 describes an
+        # impossible artifact and signals broken metadata extraction (e.g.
+        # a qemu-img info schema change the parser does not recognize).
+        # Failing closed here forces the producer to emit real numbers
+        # instead of silently emitting zeros.
+        bs = v.get("block_size_bytes")
+        if not isinstance(bs, int) or isinstance(bs, bool) or bs <= 0 or bs > 0xFFFFFFFFFFFFFFFF:
+            errors.append(f"vm_image_metadata.block_size_bytes must be a positive integer <= 2^64-1 (got: {bs!r})")
+        vs = v.get("virtual_size_bytes")
+        if not isinstance(vs, int) or isinstance(vs, bool) or vs <= 0 or vs > 0xFFFFFFFFFFFFFFFF:
+            errors.append(f"vm_image_metadata.virtual_size_bytes must be a positive integer <= 2^64-1 (got: {vs!r})")
+        # Cross-field consistency: vm_image_metadata.format SHOULD match
+        # the top-level artifact_format when both are container formats.
+        # raw/usb/iso/installer/recovery + vm_image_metadata together is
+        # legal (a release pipeline may attach VM metadata to a raw image
+        # for downstream wrapping), so we only warn-via-error when they
+        # are both container formats and disagree.
+        if (fmt in VM_IMAGE_FORMATS
+            and m.get("artifact_format") in VM_IMAGE_FORMATS
+            and fmt != m.get("artifact_format")):
+            errors.append(
+                f"vm_image_metadata.format={fmt!r} disagrees with artifact_format={m.get('artifact_format')!r}"
+            )
 
 if errors:
     for e in errors:
