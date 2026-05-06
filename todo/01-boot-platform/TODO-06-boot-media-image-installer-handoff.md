@@ -91,7 +91,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] ESP content verification -- `scripts/release/verify-esp.sh <disk.img> [--manifest m.json]` asserts presence + sha256 of required files; exits with `[ERROR]` named field on mismatch.
 - [x] USB write verification -- `scripts/deploy/write-usb.sh` post-write step re-reads GPT via `sgdisk -p`, hash-checks all three required ESP files from the source image via mtools.
 - [x] Artifact manifest provenance -- `build-manifest.sh build` records `toolchain_version` + `source_sha` + `manifest_seed` (v1-optional per schema policy); check mode validates each.
-- [ ] `build-image.sh` populates IXFS via `build/tools/mkfs-ixfs --populate sysroot` so produced `disk.img` mounts `C:\` end-to-end (currently zero-fills, cmd.exe exits with "C:\\ not mounted"; mirrors Makefile system-disk recipe).
+- [x] `build-image.sh` populates IXFS via `mkfs-ixfs --populate` against a SOURCE_DATE_EPOCH-pinned sysroot stage so `disk.img` mounts `C:\` end-to-end and cmd.exe reaches the prompt.
 - [x] Commit: `"release: reproducible raw USB images"`
 
 **Test checkpoint:** Two consecutive `bash scripts/release/build-image.sh` runs from a clean tree produce byte-identical `disk.img` (test [2]); reusing an `--out` path pre-filled with non-zero bytes still matches (test [2b]); `verify-esp.sh` PASS on fresh image, FAIL on corrupted ESP; `verify-esp.sh --manifest` rejects path-keyed forgery (test [9]); `build-manifest.sh check` rejects raw-format manifest missing `boot_config` (test [10]); parallel `build-image.sh` runs do not race (test [11]). Verified by `bash scripts/release/test-build-image.sh` (15/15 PASS).
@@ -118,7 +118,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] Conversion scripts: `scripts/release/to-vhdx.sh` (dynamic VHDX, 4 MiB block) + `scripts/release/to-vdi.sh` (dynamic VDI). Self-verifying via `qemu-img info` + `qemu-img compare`.
 - [x] Byte-preservation enforced by inline `qemu-img compare -f raw -F <fmt>` on every conversion; regression test [1]/[3] in `scripts/release/test-vm-conversion.sh`.
 - [x] Manifest schema: optional top-level `vm_image_metadata` (`format`, `subformat`, `block_size_bytes`, `virtual_size_bytes`); `build` populates via `qemu-img info`, `check` validates positive sizes + cross-field consistency.
-- [x] Boot-test: `scripts/release/boot-test-vhdx.sh` (QEMU OVMF AHCI) + `scripts/release/boot-test-vbox.sh` (VBoxManage auto-detect, exit 3 = SKIP). PASS = "Boot complete in"; C:\\> gated by IXFS mount (kernel-fs).
+- [x] Boot-test: `scripts/release/boot-test-vhdx.sh` (QEMU OVMF AHCI) + `scripts/release/boot-test-vbox.sh` (VBoxManage auto-detect, exit 3 = SKIP). PASS = "Boot complete in" + "C:\\>" (IXFS mount + cmd.exe prompt).
 - [ ] `boot-test-vbox.sh` deadline-driven loop: replace iteration-count timeout with elapsed-time deadline so showvminfo overhead does not overshoot 60s on slow hosts (~12s slop today).
 - [x] Commit: `"release: validate virtual disk artifacts"`
 

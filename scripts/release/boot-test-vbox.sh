@@ -143,9 +143,10 @@ VBoxManage storageattach "$VM_NAME" \
 note "starting VM (timeout ${TIMEOUT_SEC}s)..."
 VBoxManage startvm "$VM_NAME" --type headless >/dev/null
 
-# Match the boot-test-vhdx.sh PASS contract: kernel reached userspace.
-# IXFS-mount-to-cmd.exe-prompt is owned by the kernel-fs domain.
-PASS_ALL=("Boot complete in")
+# Match the boot-test-vhdx.sh PASS contract: kernel reached userspace AND
+# cmd.exe printed its prompt (mounting C:\ via IXFS now happens in the
+# raw-image producer's mkfs-ixfs --populate step).
+PASS_ALL=("Boot complete in" 'C:\>')
 FAIL_PAT=("KERNEL PANIC" "BUG_CHECK" "TRIPLE_FAULT")
 
 for i in $(seq 1 "$TIMEOUT_SEC"); do

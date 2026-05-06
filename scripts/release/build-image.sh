@@ -245,12 +245,51 @@ touch -h -d "@$SOURCE_DATE_EPOCH" "$BB_STAGE/blackbox-marker.txt"
 mcopy -i "$OUT_IMG@@$((BB_LBA_FIRST * SECTOR))" -m \
     "$BB_STAGE/blackbox-marker.txt" "::Diag/blackbox-marker.txt"
 
-# 8. IXFS partition: zero-filled placeholder. The kernel does not yet
-#    mount IXFS on bare metal (see CLAUDE.md "Bare Metal No C: Mount" note);
-#    a proper deterministic mkfs-ixfs is owned by the IXFS subsystem TODO.
-#    truncate already zero-filled the image, so we do nothing here, but
-#    the sgdisk partition record is in place so the bootloader sees the
-#    layout it expects.
+# 8. IXFS partition: format + populate with the system sysroot so the
+#    kernel mounts C:\ at boot. Mirrors the Makefile system-disk recipe:
+#    mkfs-ixfs --populate writes inode mtime fields as zero, so the IXFS
+#    bytes are deterministic for byte-identical reproducibility (the
+#    test-build-image.sh byte-identity gate stays green).
+IXFS_TOOL="build/tools/mkfs-ixfs"
+if [ ! -x "$IXFS_TOOL" ]; then
+    err "missing tool: $IXFS_TOOL (run scripts/build.sh first)"
+    exit 1
+fi
+SYSROOT_SRC="build/sysroot"
+if [ ! -d "$SYSROOT_SRC" ]; then
+    err "missing sysroot: $SYSROOT_SRC (run scripts/build.sh first)"
+    exit 1
+fi
+# Minimum bootable-payload contract: cmd.exe MUST exist at the C:\ root or
+# the kernel boots to "C:\ not mounted" (or "cmd.exe not found"); this
+# preflight catches a stale or partial sysroot before we waste time
+# producing an unbootable disk.img. A full sysroot-manifest validation is
+# tracked separately by the user-platform SDK packaging work.
+if [ ! -f "$SYSROOT_SRC/cmd.exe" ]; then
+    err "sysroot missing required boot payload: $SYSROOT_SRC/cmd.exe"
+    exit 1
+fi
+
+# Stage a kernel.sym mirror at C:\Impossible\System\kernel.sym so the
+# kernel's symbol-table loader has a consistent path; the Makefile recipe
+# does the same. SOURCE_DATE_EPOCH-pinned mtime keeps the staged tree
+# byte-stable across runs.
+SYSROOT_STAGE="$WORK_DIR/sysroot_stage"
+cp -a "$SYSROOT_SRC" "$SYSROOT_STAGE"
+mkdir -p "$SYSROOT_STAGE/Impossible/System/Logs/Serial"
+if [ -f build/kernel.sym ]; then
+    cp build/kernel.sym "$SYSROOT_STAGE/Impossible/System/kernel.sym"
+fi
+find "$SYSROOT_STAGE" -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
+
+# IXFS_PART_SIZE: bytes from IXFS_LBA_FIRST through IXFS_LBA_LAST inclusive.
+IXFS_PART_BYTES=$(( (IXFS_LBA_LAST - IXFS_LBA_FIRST + 1) * SECTOR ))
+"$IXFS_TOOL" \
+    -o "$OUT_IMG" \
+    -s "$IXFS_PART_BYTES" \
+    -l "Impossible OS" \
+    --offset $(( IXFS_LBA_FIRST * SECTOR )) \
+    --populate "$SYSROOT_STAGE" >/dev/null
 
 # 9. Final sha256 + size report.
 SHA="$(sha256sum "$OUT_IMG" | awk '{print $1}')"

@@ -109,14 +109,11 @@ note "starting QEMU (timeout ${TIMEOUT_SEC}s)..."
 qemu-system-x86_64 "${QEMU_FLAGS[@]}" &
 QEMU_PID=$!
 
-# PASS = the kernel reached userspace ("Boot complete in"). The reproducible
-# raw image producer currently zero-fills the IXFS partition (full mkfs-ixfs
-# is owned by the kernel-fs domain), so C:\ does not mount on
-# build/release/disk.img and cmd.exe exits before printing "C:\>". The boot-
-# test's job is to prove the converted artifact boots; userspace mount-state
-# is owned elsewhere. When build-image.sh starts populating IXFS, tighten
-# this back to ('Boot complete in', 'C:\\>').
-PASS_ALL=("Boot complete in")
+# PASS = kernel reached userspace AND cmd.exe printed its prompt. The
+# raw-image producer populates IXFS via mkfs-ixfs --populate, so C:\ mounts
+# at boot and cmd.exe reaches the prompt; both markers must appear before
+# the test calls PASS.
+PASS_ALL=("Boot complete in" 'C:\>')
 FAIL_PAT=("KERNEL PANIC" "BUG_CHECK" "TRIPLE_FAULT")
 
 for i in $(seq 1 "$TIMEOUT_SEC"); do
