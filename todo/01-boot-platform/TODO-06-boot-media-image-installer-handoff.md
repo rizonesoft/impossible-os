@@ -239,6 +239,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Canonical doc: [`docs/boot/boot-info-fields.md`](../../docs/boot/boot-info-fields.md) "Firmware trust landscape (v18)" section.
 > - Scope boundary: items 1-3 (manifest signature path) blocked on prereqs in 09-desktop-shell/TODO-07 §1 + 15-installer-release/TODO-01 §5 with reciprocal `[ ]` items.
 
+> **Verified:** 2026-05-06 | commit pending | 1/4 items (item 4 shipped; items 1-3 blocked) | build OK | smoke PASS (KVM 2.32s)
+> **Quality reviewed:** 2026-05-06 | Codex 5x (adversarial, re-adversarial, consistency, perf, post-commit-adversarial) | 2H+4M fixed | scope: kernel-code-quality
+
 ---
 
 ## 8. Offline Artifact Inspector
