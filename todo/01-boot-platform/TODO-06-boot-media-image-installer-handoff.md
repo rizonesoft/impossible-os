@@ -48,7 +48,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |   9   | CI boot matrix for every artifact                  | §2--§7        |  [/]   |
 | 💎  |  10   | Release checklist and documentation                | §1--§9        |  [x]   |
 | ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [/]   |
-| 💎  |  12   | Windows host parity for build + test tooling       | §1--§4, §8    |  [ ]   |
+| 💎  |  12   | Windows host parity: manifest tooling              | §1, §8        |  [ ]   |
+| 💎  |  13   | Windows host parity: disk artifact converters      | §3, §4        |  [ ]   |
+| 💎  |  14   | Windows host parity: release test subdir + runner  | §1, T08       |  [ ]   |
 
 > 💎 = parity -- Win11 (Media Creation Tool / Hyper-V VHDX / Windows ISO) and Linux (distro hybrid ISOs / cloud VHD-VDI) both cover items 1-6 + 9-10.
 > ⭐ = exclusive -- §7 release-key-signed artifact manifest verified at the bootloader stage; §8 single offline inspector covering raw/VHD/VHDX/VDI/ISO.
@@ -351,28 +353,47 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 
 ---
 
-## 12. Windows Host Parity for Build + Test Tooling
+## 12. Windows Host Parity: Manifest Tooling
 
-> **Scope boundary:** Bash on Linux / WSL is the canonical host path; this section adds native Windows PowerShell scripts + `.bat` shims so a developer on a Windows test laptop can build, write, and verify release artifacts without WSL. Each PS1 is a peer of the existing `.sh`, not a wrapper around WSL. Detailed recipes per script live in `docs/release/windows-host-tooling.md`.
+> **Scope boundary:** Bash on Linux / WSL is the canonical host path; this section adds native Windows PowerShell peers for the manifest-tooling subset that has deterministic, cross-host-comparable output (UUID v5, sha256, JSON). Disk converters live in §13; release-test subdir + aggregate runner + validate.py extension live in §14. Each PS1 is a peer of the existing `.sh`, not a WSL wrapper.
 
-- [ ] `scripts/release/build-manifest.ps1` -- peer of `build-manifest.sh build|check`; same arg surface, exit codes, stderr grammar; UUID v5 + JSON byte-identical to bash output.
-- [ ] `scripts/release/test-build-manifest.ps1` -- peer of `test-build-manifest.sh` (23 assertions); honors the same `BOOT_INFO_ABI_FILE` / `SIGN_FINGERPRINT_FILE` / `SIGN_STAMP_FILE` env contract.
-- [ ] `scripts/deploy/write-usb.ps1` -- USB writer via `Get-Disk` / `Initialize-Disk` / `New-Partition`; refuses any disk where `BusType -ne 'USB'`; post-write per-file sha256 cross-check.
-- [ ] `scripts/release/to-vhdx.ps1` -- VHDX conversion via `New-VHD` (Hyper-V module) with `qemu-img.exe` fallback; preserves GPT layout + per-partition sha256.
-- [ ] `scripts/release/to-iso.ps1` -- hybrid UEFI ISO via `oscdimg.exe` (Windows ADK) with `xorriso.exe` fallback; matches §4 bash output byte-for-byte.
-- [ ] `tools/bootimg/bootimg.bat` -- Windows-native shim wrapping `python bootimg.py` (tries `py -3` first, then `python.exe`); enables `bootimg inspect` on a clean WSL-less host.
-- [ ] `scripts/debug/release/run-build-manifest-tests.bat` -- new `release/` subdir aggregate runner for §1 harness on Windows; mirrors `scripts/debug/kernel/run-*.bat` shape.
-- [ ] `scripts/debug/release/run-write-usb.bat`, `run-to-vhdx.bat`, `run-to-iso.bat` -- one-line per-artifact bat shims invoking the matching PS1.
-- [ ] `scripts/debug/release/run-all-release-tests.bat` -- aggregate that chains every per-artifact `run-*.bat` for a one-button Windows release-tooling smoke; mirrors `run-all-kernel-tests.bat`.
-- [ ] Cross-host parity test under `tools/bootimg/tests/cross_host/`: PS1 + bash pair produce byte-identical manifests + identical exit codes for identical inputs; runs on both hosts in CI (§9).
-- [ ] `docs/release/windows-host-tooling.md` -- per-script Windows-host recipe (Hyper-V module, ADK, qemu-tools, ExecutionPolicy, UAC elevation, signtool path) and the no-WSL guarantee.
-- [ ] Commit: `"release: windows-host parity for build + test tooling"`
+- [ ] `scripts/release/build-manifest.ps1` -- peer of `build-manifest.sh build|check`; UUID v5 + JSON byte-identical output; same arg surface and exit codes.
+- [ ] `scripts/release/test-build-manifest.ps1` -- peer of `test-build-manifest.sh` (23 assertions); same `BOOT_INFO_ABI_FILE` / `SIGN_FINGERPRINT_FILE` / `SIGN_STAMP_FILE` env contract.
+- [ ] `tools/bootimg/bootimg.bat` -- Windows-native shim wrapping `python bootimg.py` (tries `py -3` first, then `python.exe`).
+- [ ] Cross-host parity test under `tools/bootimg/tests/cross_host/`: PS1 + bash pair produce byte-identical manifests + identical exit codes; PS1 leg skips when `pwsh` absent.
+- [ ] `docs/release/windows-host-tooling.md` "Manifest tooling" subsection: PS1 invocation, ExecutionPolicy, byte-parity contract.
+- [ ] Commit: `"release: windows-host manifest tooling (build-manifest.ps1 + test + bootimg shim)"`
 
-**Test checkpoint:** On a clean Windows host (PowerShell 5.1+, no WSL), `scripts\debug\release\run-build-manifest-tests.bat` exits 0 with `23 pass, 0 fail`. `build-manifest.ps1 build` and `build-manifest.sh build` produce byte-identical `manifest.json`. `write-usb.ps1` refuses non-USB disks with `[ERROR] disk N is BusType=<x>; only BusType=USB is allowed`.
+**Test checkpoint:** On a Windows host with PowerShell 5.1+, `scripts\release\test-build-manifest.ps1` exits 0 with `23 pass, 0 fail`. On any host with `pwsh` available, `tools/bootimg/tests/cross_host/test_manifest_parity.sh` runs both `build-manifest.sh build` and `build-manifest.ps1 build` against the same input and asserts `sha256sum` of the two `manifest.json` outputs match. Tampering with one byte of the PS1 output makes the parity test fail with the diff between the two JSON blobs.
 
-> **Planned runner:** `scripts\debug\release\run-build-manifest-tests.bat` (Windows host) | 23 assertions, 0 failures (cross-host parity with bash harness). When §12 ships, `scripts/todo-graph/validate.py` `VALID_TEST_LAYERS` extends to `("kernel", "usermode", "desktop", "release")` and the bat-alignment check accepts the new subdir.
+---
 
-**Test checkpoint:** UKI built with `media_role=installer` in `.cmdline` produces `boot_info.boot_media_role == 1` without ESP `role.txt`. PXE-booted kernel with matching DHCP option produces `boot_media_role == 5` (network) and runs manifest verification against HTTP-served `manifest.json.sig`. Conflicting markers across sources produce `[WARN] Media role conflict: <src1>=<v1> vs <src2>=<v2>` and the highest-precedence source wins per the §5 documentation.
+## 13. Windows Host Parity: Disk Artifact Converters
+
+> **Scope boundary:** Windows-native peers for the disk-image conversion path. Each PS1 calls a Windows-native API (Hyper-V `New-VHD`, ADK `oscdimg`, `Get-Disk` / `New-Partition`) with `qemu-img.exe` / `xorriso.exe` host-side fallback when the Windows tool is absent. Validation requires a Windows test laptop with the relevant feature installed.
+
+- [ ] `scripts/deploy/write-usb.ps1` -- USB writer via `Get-Disk` / `Initialize-Disk` / `New-Partition`; refuses non-USB disks; UAC elevation; reads `build/release/disk.img` (preferred) or `build/system-disk.img`.
+- [ ] `scripts/release/to-vhdx.ps1` -- VHDX via `New-VHD` (Hyper-V module) with `qemu-img.exe` fallback; same `--in` / `--out` / `--block-size` / `--no-verify` arg surface as bash.
+- [ ] `scripts/release/to-iso.ps1` -- hybrid UEFI ISO via `oscdimg.exe` (Windows ADK) with `xorriso.exe` fallback; matches bash output byte-for-byte.
+- [ ] `docs/release/windows-host-tooling.md` "Disk converters" subsection: per-tool prerequisites (Hyper-V Windows feature, ADK, qemu-tools), UAC requirements, fallback matrix.
+- [ ] Commit: `"release: windows-host disk artifact converters (write-usb + to-vhdx + to-iso)"`
+
+**Test checkpoint:** On a Windows host with the Hyper-V module + ADK installed, `scripts\release\to-vhdx.ps1` produces a `disk.vhdx` whose `qemu-img info` matches the Linux `to-vhdx.sh` output (same virtual size, same block size, same disk identifier). `scripts\release\to-iso.ps1` produces a `disk.iso` whose sha256 equals the Linux peer when run with the same `SOURCE_DATE_EPOCH=0`. `scripts\deploy\write-usb.ps1` enumerates `Get-Disk` and refuses non-USB disks with `[ERROR] disk N is BusType=<x>; only BusType=USB is allowed`. Without Hyper-V module, `to-vhdx.ps1` falls back to `qemu-img.exe convert -O vhdx` and emits `[INFO] Hyper-V module unavailable; using qemu-img.exe fallback`.
+
+---
+
+## 14. Windows Host Parity: Release Test Subdir + Aggregate Runner
+
+> **Scope boundary:** Cross-platform plumbing. The new `scripts/debug/release/` test subdir is the Windows-side answer to the existing `kernel/`, `usermode/`, `desktop/` test layers; the `validate.py` extension teaches the bat-alignment check to recognise it. Test bodies live in §12 (manifest) + §13 (disk converters). This section can ship BEFORE §12 / §13 land because it builds the home for them.
+
+- [ ] `scripts/debug/release/` directory + per-artifact bat shims (`run-build-manifest-tests.bat`, `run-write-usb.bat`, `run-to-vhdx.bat`, `run-to-iso.bat`) invoking the matching PS1.
+- [ ] `scripts/debug/release/run-all-release-tests.bat` -- aggregate chaining the per-artifact bats; mirrors `run-all-kernel-tests.bat` shape.
+- [ ] `scripts/debug/run-all-tests.bat` -- extend cross-layer aggregate to chain `release/run-all-release-tests.bat` with `if exist`.
+- [ ] `scripts/todo-graph/validate.py` -- `VALID_TEST_LAYERS` extends to `("kernel", "usermode", "desktop", "release")`; bat-alignment check accepts `scripts/debug/release/run-<name>-tests.bat` as legal `Test runner:` target.
+- [ ] `docs/release/windows-host-tooling.md` "Aggregate runner" subsection: chaining model, how to add a new bat.
+- [ ] Commit: `"release: scripts/debug/release/ test subdir + validate.py 4-layer extension"`
+
+**Test checkpoint:** `bash scripts/todo-graph/build-and-validate.sh` reports `8/8 checks passed` after adding a stub `Test runner: scripts\debug\release\run-build-manifest-tests.bat` line to a TODO section. Without the §14 `validate.py` extension, the same line would fail bat-alignment ("missing on disk") -- this section makes it legal. On Windows, `scripts\debug\run-all-tests.bat` chains the four layers including the new `release/run-all-release-tests.bat`; missing aggregates remain silent no-ops via `if exist`.
 
 ---
 
