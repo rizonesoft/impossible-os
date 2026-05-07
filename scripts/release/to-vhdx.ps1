@@ -39,7 +39,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $PSCommandPath
-$RepoRoot  = Resolve-Path (Join-Path $ScriptDir '..\..')
+$RepoRoot  = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir '..\..'))
 Set-Location $RepoRoot
 
 function Write-Err  { param([string] $M) [Console]::Error.WriteLine("[ERROR] $M") }
@@ -112,13 +112,13 @@ if ($legalBlockSizes -notcontains $BlockSize) {
     exit 2
 }
 
-$inCanon = (Resolve-Path -LiteralPath $InImg).Path
+$inCanon = (Resolve-Path -LiteralPath $InImg).ProviderPath
 $outDir  = Split-Path -Parent $OutImg
 if (-not $outDir) { $outDir = '.' }
 if (-not (Test-Path -LiteralPath $outDir -PathType Container)) {
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 }
-$outDirCanon = (Resolve-Path -LiteralPath $outDir).Path
+$outDirCanon = (Resolve-Path -LiteralPath $outDir).ProviderPath
 $outCanon    = Join-Path $outDirCanon (Split-Path -Leaf $OutImg)
 if ($inCanon -eq $outCanon) {
     Write-Err "--In and --Out resolve to the same canonical path ($inCanon); refusing to overwrite the source"

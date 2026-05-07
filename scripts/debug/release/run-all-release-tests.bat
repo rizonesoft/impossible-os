@@ -11,6 +11,11 @@
 
 setlocal
 set FAILS=0
+:: pushd auto-maps UNC working dirs to a drive letter so the spawned
+:: PS1s see a real local CWD (\\wsl.localhost\... is unsupported as a
+:: CMD CWD). Without this every relative path in the chained PS1s
+:: fails because CMD silently falls back to C:\Windows.
+pushd "%~dp0"
 set ROOT=%~dp0..\..\..
 
 echo === build-manifest.ps1 (26 assertions) ===
@@ -53,5 +58,6 @@ if %FAILS% GTR 0 (
     echo [release] all chained steps passed
     set RC=0
 )
+popd
 if not defined NO_PAUSE pause
 exit /b %RC%

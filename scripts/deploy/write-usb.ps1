@@ -57,7 +57,7 @@ $ErrorActionPreference = 'Stop'
 # ---- repo root + source image ---------------------------------------------
 
 $ScriptDir = Split-Path -Parent $PSCommandPath
-$RepoRoot  = Resolve-Path (Join-Path $ScriptDir '..\..')
+$RepoRoot  = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir '..\..'))
 $BuildDir  = Join-Path $RepoRoot 'build'
 $ReleaseImg = Join-Path $BuildDir 'release\disk.img'
 $LegacyImg  = Join-Path $BuildDir 'system-disk.img'

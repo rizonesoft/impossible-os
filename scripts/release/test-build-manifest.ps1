@@ -24,7 +24,7 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $PSCommandPath
-$RepoRoot  = Resolve-Path (Join-Path $ScriptDir '..\..')
+$RepoRoot  = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir '..\..'))
 Set-Location $RepoRoot
 
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("build-manifest-ps-test-" + [guid]::NewGuid().ToString('N'))

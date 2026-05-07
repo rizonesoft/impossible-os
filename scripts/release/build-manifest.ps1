@@ -42,7 +42,7 @@ $ErrorActionPreference = 'Stop'
 # ---- repo root + helpers ----------------------------------------------------
 
 $ScriptDir = Split-Path -Parent $PSCommandPath
-$RepoRoot  = Resolve-Path (Join-Path $ScriptDir '..\..')
+$RepoRoot  = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir '..\..'))
 Set-Location $RepoRoot
 
 function Write-Err {

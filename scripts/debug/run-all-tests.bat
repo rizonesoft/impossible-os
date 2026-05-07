@@ -26,6 +26,11 @@ set OVERALL=0
 :: PowerShell exit code via `exit /b %RC%` instead of the pause result.
 :: Each layer aggregate honors `if not defined NO_PAUSE pause`.
 set NO_PAUSE=1
+:: pushd auto-maps a UNC working dir (\\wsl.localhost\...) to a temp
+:: drive letter so chained bats see a real local CWD; without this
+:: CMD falls back to C:\Windows when launched from a UNC path and
+:: every relative path resolution downstream fails.
+pushd "%~dp0"
 
 if exist "%~dp0kernel\run-all-kernel-tests.bat" (
     echo === KERNEL LAYER ===
@@ -54,6 +59,7 @@ if exist "%~dp0release\run-all-release-tests.bat" (
     if errorlevel 1 set OVERALL=1
 )
 
+popd
 echo.
 if %OVERALL% GTR 0 (
     echo [run-all-tests] one or more layers reported failures

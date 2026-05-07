@@ -9,4 +9,10 @@
 :: Use this bat for hand-driven USB imaging from File Explorer; the
 :: -Verb RunAs relaunch elevates without requiring a separate admin
 :: PowerShell window.
+:: pushd auto-maps UNC working dirs to a drive letter so the elevated
+:: pwsh.exe Start-Process can resolve %~dp0 (without it CMD falls back
+:: to C:\Windows when launched from \\wsl.localhost\... and the elevated
+:: child cannot find write-usb.ps1).
+pushd "%~dp0"
 powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "Start-Process pwsh -ArgumentList '-NoProfile','-File','%~dp0..\..\deploy\write-usb.ps1' -Verb RunAs"
+popd

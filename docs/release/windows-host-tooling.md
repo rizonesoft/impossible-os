@@ -279,3 +279,25 @@ When a new test layer joins (e.g. `firmware/`):
 Only `run-all-tests.bat` is permitted at the `scripts\debug\` root;
 all per-category bats live under the layer subdirs (enforced by the
 bat-alignment check and `scripts/lint.sh`).
+
+### UNC path support (`\\wsl.localhost\...`)
+
+A common Windows-host workflow is to navigate to the repo via the
+WSL UNC mount (`\\wsl.localhost\Ubuntu\home\<user>\impossible-os`) and
+double-click a bat directly. CMD.EXE does NOT support UNC paths as a
+working directory and silently falls back to `C:\Windows`, which
+breaks every relative path the bat assumes. The release-layer bats
+therefore prefix `pushd "%~dp0"` (CMD auto-maps the UNC dir to a
+temporary drive letter) and the PowerShell scripts compute their
+repo root via `[System.IO.Path]::GetFullPath()` (handles UNC and
+normalizes `..\..\` segments correctly, unlike `Resolve-Path` which
+can return provider-prefixed PSPath strings that downstream
+`pwsh -File` rejects).
+
+Effect: launching `run-all-release-tests.bat` from
+`\\wsl.localhost\...\scripts\debug\release\` works exactly as it would
+from a real local clone (e.g. `C:\impossible-os\scripts\debug\release\`).
+Other layer aggregates that don't yet have the `pushd` prefix may still
+require the user to first map the UNC path to a drive letter manually
+or clone the repo to a local path; that's tracked under the layer's
+owning TODO.
