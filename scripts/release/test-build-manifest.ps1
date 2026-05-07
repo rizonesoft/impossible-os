@@ -30,6 +30,22 @@ Set-Location $RepoRoot
 $TmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("build-manifest-ps-test-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $TmpDir -Force | Out-Null
 
+# Touch build/boot-info-abi.kernel.json so its mtime is newer than the
+# build artifacts. The stale-binding guard in build-manifest.ps1 exists
+# to catch a release-pipeline scenario (ABI extracted from stale binary,
+# fresh build, manifest emitted against stale ABI -> wrong
+# boot_info_version shipped). In a TEST run we want to exercise the
+# script's logic, not re-test the release-time stale-detection (which
+# is meaningful only when ABI extraction has actually run more recently
+# than the build). Without this touch, the WSL UNC mount can show ABI
+# mtime older than artifacts due to mtime-translation skew across the
+# \\wsl.localhost\ boundary, and every test fails with "ABI is older
+# than build artifacts" before any assertion runs.
+$abiPath = Join-Path $RepoRoot 'build\boot-info-abi.kernel.json'
+if (Test-Path -LiteralPath $abiPath) {
+    (Get-Item -LiteralPath $abiPath).LastWriteTimeUtc = [datetime]::UtcNow
+}
+
 $Script:Pass = 0
 $Script:Fail = 0
 

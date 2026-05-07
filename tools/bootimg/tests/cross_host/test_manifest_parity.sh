@@ -43,6 +43,13 @@ trap 'rm -rf "$TMPDIR"' EXIT
 BASH_OUT="$TMPDIR/bash.json"
 PS_OUT="$TMPDIR/ps.json"
 
+# Bump the ABI manifest's mtime so the build-manifest stale-binding
+# guard does not fire. Same rationale as the touch in
+# scripts/release/test-build-manifest.ps1: this is a test harness, not
+# a release-time pipeline, so we want to exercise build-manifest's
+# logic rather than re-test the release-time stale-detection.
+touch build/boot-info-abi.kernel.json
+
 bash scripts/release/build-manifest.sh build --out "$BASH_OUT" >/dev/null
 pwsh -NoProfile -File scripts/release/build-manifest.ps1 build --Out "$PS_OUT" >/dev/null
 
