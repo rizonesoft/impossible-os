@@ -39,6 +39,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 - → XREF: `TODO-11-interrupt-timer-arch.md §1` -- boot timing and TSC frequency (VPD reads elapsed ms)
 - → XREF: `TODO-14-boot-diagnostics.md` §2 §3 §4 -- POST16 on I/O `0x80`, framebuffer corner digits, named-stage serial; VPD consumes the §3 API
 - → XREF: `TODO-10-bare-metal-hardening.md` §3 -- bare-metal interrupt and framebuffer page-flip constraints that affect Tier 1 VPD
+- → XREF: `TODO-07-boot-entry-store-menu-policy.md §4` -- boot menu §4 reuses §3 micro-font and §4 pre-splash renderer for its GOP+serial fallback
 
 ## Outcome
 

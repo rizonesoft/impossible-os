@@ -18,6 +18,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - -> XREF: `../02-kernel-core/TODO-26-power-management.md §4,§11` -- hibernation image writer and fast startup
 - -> XREF: `TODO-01-boot-protocol-abi-handoff.md §4` -- typed hibernation payload descriptor
 - -> XREF: `TODO-21-ab-boot-rollback.md` -- resume failure participates in rollback
+- -> XREF: `TODO-07-boot-entry-store-menu-policy.md §10` -- resume targets are a first-class `kind: resume` entry kind
 
 ## Outcome
 

@@ -24,6 +24,7 @@ title: "TODO-22 -- Recovery Partition & Self-Repair"
 - → XREF: `TODO-03-bootloader-error-recovery.md §2` -- boot failure error screen
 - -> XREF: `TODO-03-bootloader-error-recovery.md` -- pre-kernel hardening (ELF, EBS, mmap, watchdog) surfaces failures before recovery shell
 - → XREF: `TODO-27-uefi-advanced.md §1` -- multi-OS boot menu (TODO-02 §8 is serial klog)
+- → XREF: `TODO-07-boot-entry-store-menu-policy.md §6` -- recovery partition layout from §1 here feeds the boot menu's recovery entry; §9 audit consumes recovery-trigger reasons
 
 ---
 

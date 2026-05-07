@@ -19,6 +19,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - -> XREF: `TODO-05-boot-device-discovery.md §5` -- fallback chain
 - -> XREF: `TODO-01-boot-protocol-abi-handoff.md §4` -- network config payload descriptors
 - -> XREF: `../07-networking/INDEX.md` -- post-boot network stack
+- -> XREF: `TODO-07-boot-entry-store-menu-policy.md §10` -- §7 fallback ordering is consumed as a `kind: network` entry
 
 ## Outcome
 

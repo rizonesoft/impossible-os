@@ -1,0 +1,333 @@
+# Boot Entry Store Schema
+
+> Canonical specification for `\EFI\ImpossibleOS\bootentries.json`. Authoritative for envelope
+> layout, kind enum, flag bits, CRC-32 algorithm, schema-version policy, forward-compat rules,
+> and the in-firmware fallback contract. Owned by the
+> [Boot Entry File Format](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#1-boot-entry-file-format)
+> section of the boot entry store TODO.
+>
+> C header (single source of truth for kind values + flag bits + size caps):
+> [`include/boot/boot_entries.h`](../../include/boot/boot_entries.h).
+>
+> Host validator: [`tools/boot-entry-validate/validate.py`](../../tools/boot-entry-validate/validate.py).
+> Sample store: [`resources/boot/bootentries-example.json`](../../resources/boot/bootentries-example.json).
+
+## 1. Overview
+
+The boot entry store is the OS-owned counterpart to UEFI `Boot####` variables. Where firmware
+`Boot####` controls "which Impossible OS boot loader runs", this store controls "which internal
+entry the loader picks once running" -- a separate layer documented in the
+[Boot Policy Merge Order](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#3-boot-policy-merge-order)
+section.
+
+The store is a single JSON file at `\EFI\ImpossibleOS\bootentries.json` on the EFI System
+Partition. The on-disk format is JSON; there is no INI alternative (dropped during design
+review for YAGNI / parser-surface reasons).
+
+## 2. Trust Model (two-tier)
+
+The store's authority varies by boot mode:
+
+| Boot mode                            | Store role          | Trust anchor                                  |
+| ------------------------------------ | ------------------- | --------------------------------------------- |
+| UKI + Secure Boot (UKI flag set)     | **Advisory only**   | Signed UKI image (kind / path / cmdline embedded) |
+| Split-path with Secure Boot          | **Load-bearing**    | `BOOTX64.EFI` Secure Boot signature           |
+| Split-path without Secure Boot       | **Load-bearing**    | None (existing project reality)               |
+
+Under UKI mode, the bootloader uses the store for menu labels, ordering, and `hide_when_alone`,
+but **never** for kind / path / cmdline selection -- those come from the signed UKI's embedded
+sections. Disk-side path overrides under UKI are already rejected by
+[`include/boot/uki_cmdline_check.h`](../../include/boot/uki_cmdline_check.h); this schema does
+not relax that contract.
+
+Under split-path, the CRC-32 in the envelope detects **corruption**, not adversary substitution.
+An attacker with ESP write access can produce a valid-CRC store. Authentication of the store
+proper (Ed25519 from the
+[CNG crypto TODO](../../todo/09-desktop-shell/TODO-07-cng-crypto.md)) is tracked as a Branch B
+follow-up; until then, the split-path threat model accepts the store as configuration, not
+authority.
+
+## 3. Envelope Structure
+
+The store is a JSON object with three top-level keys:
+
+```json
+{
+  "schema_version": 1,
+  "crc32": "0xXXXXXXXX",
+  "entries": [ /* array of entry objects */ ]
+}
+```
+
+| Field            | Type    | Required | Notes                                                   |
+| ---------------- | ------- | -------- | ------------------------------------------------------- |
+| `schema_version` | integer | yes      | Must equal `1` for v1 readers; otherwise hard reject.   |
+| `crc32`          | string  | yes      | `"0x"` + exactly 8 hex digits; covers `entries` payload |
+| `entries`        | array   | yes      | 1..64 entry objects; total file <=16 KiB                |
+
+Each entry object carries an envelope plus a per-kind payload:
+
+```json
+{
+  "id":        "slot-a-normal",
+  "title":     "Impossible OS (Slot A)",
+  "kind":      "split",
+  "flags":     ["active"],
+  "timeout_override": 5,
+  "sort_key":  "00-impossible-os-a",
+  "machine_id": "11111111-2222-3333-4444-555555555555",
+  "policy_tags": [],
+  "payload":   { /* kind-specific fields */ }
+}
+```
+
+### 3.1 Envelope fields
+
+| Field              | Type            | Required | Constraints                                                 |
+| ------------------ | --------------- | -------- | ----------------------------------------------------------- |
+| `id`               | string          | yes      | kebab-case, 1..47 chars, unique within store                |
+| `title`            | string          | yes      | 1..63 chars, UTF-8, ASCII recommended                       |
+| `kind`             | string          | yes      | one of the kind names below; unknown -> skip-with-warn      |
+| `flags`            | array of string | yes      | subset of {active, hidden, trusted_chainload, hide_when_alone, allow_editor} |
+| `timeout_override` | integer         | no       | 0..600; if absent, use loader default                       |
+| `sort_key`         | string          | yes      | sort string (BLS-style); shorter sorts earlier              |
+| `machine_id`       | string          | yes      | RFC 4122 UUID textual form                                  |
+| `policy_tags`      | array of string | yes      | reserved for future policy filtering; may be empty          |
+| `payload`          | object          | yes      | per-kind fields (see "Per-Kind Fields" below)               |
+
+The `flags` array uses string names mapped to the bit values defined in
+[`include/boot/boot_entries.h`](../../include/boot/boot_entries.h). Unknown flag names produce a
+parse warning and are dropped (forward-compat -- newer flag names land without breaking older
+loaders). Reserved bits 5..31 must be zero in v1.
+
+### 3.2 Kind names and numeric values
+
+| Kind name     | Numeric | Stable | Description                                              |
+| ------------- | ------: | ------ | -------------------------------------------------------- |
+| `split`       |       0 | yes    | kernel + initrd[] + cmdline + root                       |
+| `uki`         |       1 | yes    | unified PE under `\EFI\Linux` or `\EFI\ImpossibleOS`     |
+| `chainload`   |       2 | yes    | non-IPOS UEFI app (`LoadImage` / `StartImage`)           |
+| `network`     |       3 | yes    | HTTP / TFTP target with sha256 digest                    |
+| `resume`      |       4 | yes    | hibernation snapshot                                     |
+| `recovery`    |       5 | yes    | recovery partition target                                |
+| `installer`   |       6 | yes    | installer media role                                     |
+| `safe`        |       7 | yes    | safe-mode entry                                          |
+| `diagnostics` |       8 | yes    | verbose POST + extended boot logging                     |
+| `test`        |       9 | yes    | `TEST_CAT_*` runner                                      |
+| reserved      |  10..99 | future | reserved for future stable kinds                         |
+| vendor        | 100..199| no     | vendor / experimental; skip-with-warn for unknown values |
+| reserved      |   >=200 | no     | reserved future use; skip-with-warn                      |
+
+Both string and numeric forms are accepted; the parser canonicalizes to the numeric value before
+hashing into the per-kind handler table. For maximum forward-compat, producers SHOULD emit string
+form (a value the producer doesn't know cannot be a name the parser does know).
+
+## 4. Per-Kind Fields
+
+The `payload` object's required + optional fields by kind:
+
+### 4.1 `kind: split`
+
+| Field      | Type            | Required | Notes                                                  |
+| ---------- | --------------- | -------- | ------------------------------------------------------ |
+| `kernel`   | string          | yes      | ESP-relative path, ASCII, <=255 chars                  |
+| `initrd`   | array of string | no       | 0..8 ESP-relative paths                                |
+| `cmdline`  | string          | yes      | ASCII, <=4096 chars                                    |
+| `root`     | string          | yes      | slot id (`A` / `B`) or partition GUID                  |
+
+### 4.2 `kind: uki`
+
+| Field       | Type    | Required | Notes                                                  |
+| ----------- | ------- | -------- | ------------------------------------------------------ |
+| `uki_path`  | string  | yes      | ESP-relative PE path under `\EFI\Linux` or `\EFI\ImpossibleOS` |
+| `profile`   | integer | no       | 0..15 multi-profile UKI selector (per UAPI UKI spec)   |
+
+NOTE: under UKI mode the store is advisory; selecting a `kind: uki` entry simply updates menu
+labeling. The UKI image's embedded `.cmdline` / `.linux` / `.initrd` are the load-bearing
+inputs.
+
+### 4.3 `kind: chainload`
+
+| Field          | Type    | Required | Notes                                                  |
+| -------------- | ------- | -------- | ------------------------------------------------------ |
+| `efi_path`     | string  | yes      | path on the named device (target firmware syntax)      |
+| `device_guid`  | string  | yes      | partition GUID hosting `efi_path`                      |
+
+REQUIRED: entry's `flags` MUST include `trusted_chainload` AND firmware Secure Boot must be on.
+Otherwise the parser rejects the entry with a logged reason.
+
+### 4.4 `kind: network`
+
+| Field          | Type    | Required | Notes                                                  |
+| -------------- | ------- | -------- | ------------------------------------------------------ |
+| `url`          | string  | yes      | http(s)://... or tftp://...                            |
+| `uri_scheme`   | string  | yes      | `http` / `https` / `tftp`                              |
+| `asset_digest` | string  | yes      | sha256 hex (64 chars) of the fetched payload           |
+
+### 4.5 `kind: resume`
+
+| Field            | Type   | Required | Notes                                                  |
+| ---------------- | ------ | -------- | ------------------------------------------------------ |
+| `snapshot_path`  | string | yes      | ESP-relative or partition-anchored path                |
+| `snapshot_digest`| string | yes      | sha256 hex; must match hibernation metadata            |
+
+### 4.6 `kind: recovery`
+
+| Field                  | Type   | Required | Notes                                              |
+| ---------------------- | ------ | -------- | -------------------------------------------------- |
+| `recovery_partition_guid` | string | yes  | partition GUID hosting recovery image              |
+
+### 4.7 `kind: installer`
+
+| Field                  | Type   | Required | Notes                                              |
+| ---------------------- | ------ | -------- | -------------------------------------------------- |
+| `installer_image_guid` | string | yes      | partition GUID hosting installer image             |
+| `media_role`           | string | yes      | `live` / `install` / `recovery-install`            |
+
+### 4.8 `kind: safe`
+
+| Field             | Type   | Required | Notes                                              |
+| ----------------- | ------ | -------- | -------------------------------------------------- |
+| `safe_mode_subset` | string | yes     | `minimal` / `network` / `cmd`                      |
+| `kernel`           | string | yes     | ESP-relative path (typically same as default split)|
+
+### 4.9 `kind: diagnostics`
+
+| Field             | Type   | Required | Notes                                              |
+| ----------------- | ------ | -------- | -------------------------------------------------- |
+| `kernel`          | string | yes      | ESP-relative path                                  |
+| `verbose_log`     | bool   | yes      | enable extended boot logging                       |
+
+### 4.10 `kind: test`
+
+| Field        | Type   | Required | Notes                                                   |
+| ------------ | ------ | -------- | ------------------------------------------------------- |
+| `kernel`     | string | yes      | ESP-relative path                                       |
+| `test_suite` | string | yes      | `mm` / `fs` / `boot` / `ob` / `security` / `ipc` / `sched` / `abi` / `storage` / `exec` |
+
+## 5. CRC-32 Canonicalization Algorithm
+
+The header's `crc32` field MUST equal the IEEE 802.3 CRC-32 (polynomial `0xEDB88320`, initial
+`0xFFFFFFFF`, final XOR `0xFFFFFFFF`) of the canonical-form serialization of the `entries`
+value, encoded as UTF-8.
+
+### Canonical form
+
+A subset of RFC 8785 (JSON Canonicalization Scheme) sufficient for this schema:
+
+1. UTF-8 encoded bytes.
+2. No insignificant whitespace -- only `","` between elements, `":"` between key and value.
+3. All object keys sorted in lexicographic UTF-8 byte order.
+4. Numbers in canonical form: integers with no decimal point or exponent; floats are not used.
+5. Strings: quote with `"`, minimal escaping per RFC 8259.
+6. Arrays: order preserved.
+
+### Reference algorithm (Python)
+
+```python
+import json, zlib
+canonical = json.dumps(
+    data["entries"],
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=False,
+).encode("utf-8")
+crc = zlib.crc32(canonical) & 0xFFFFFFFF
+```
+
+`zlib.crc32` uses IEEE 802.3 / 0xEDB88320 by default; the bootloader's parser ships its own
+copy at [`src/kernel/fs/gpt.c`](../../src/kernel/fs/gpt.c) (`gpt_crc32`).
+
+The bootloader-side canonicalizer is owned by the parser TODO; this section pins the algorithm.
+
+## 6. Schema Version Policy
+
+`schema_version` is a hard-reject ONLY on **envelope-incompatible** bumps:
+
+- Adding / removing / reordering envelope fields.
+- Changing a field's type or semantics.
+- Changing the CRC algorithm or its canonicalization.
+
+The following changes do **not** bump `schema_version`:
+
+- Adding a new stable kind in the `0..99` range.
+- Adding a new optional payload field.
+- Adding a new flag bit name.
+
+When a parser sees `schema_version > BOOT_ENTRIES_SCHEMA_VERSION`, it rejects the store and
+synthesizes the in-firmware fallback (see "Fallback Contract"). When it sees
+`schema_version < BOOT_ENTRIES_SCHEMA_VERSION`, behavior is reserved for future minor-version
+work; v1 readers reject `< 1` as malformed and accept `== 1`.
+
+## 7. Forward-Compat Policy
+
+The kind enum reserves three ranges:
+
+| Range    | Class                  | Numeric-form unknown behavior  | String-form unknown behavior |
+| -------- | ---------------------- | ------------------------------ | ---------------------------- |
+| `0..99`  | stable named           | reject as malformed            | skip-with-warn               |
+| `100..199` | vendor / experimental | skip-with-warn                | skip-with-warn               |
+| `>=200`  | reserved future        | skip-with-warn                 | skip-with-warn               |
+
+### Asymmetry rationale
+
+The numeric and string forms intentionally differ for unknown values in the stable `0..99`
+range. The numeric form `kind: 10` says **"this is a stable kind I expected you to know"** --
+if the reader does not, that is a producer-side mistake (compile-time mismatch between writer
+and reader, or a corrupted store) and the entry is rejected. The string form `kind: "future-stable"`
+says **"this is a name I might know"** -- the reader cannot tell from the syntax whether it
+refers to a future stable kind (>=10 in the canonical numbering) or a vendor extension whose
+producer chose a string label, so the safe forward-compat behavior is to skip-with-warn.
+
+This asymmetry is the reason producers SHOULD emit string form (paired with a pinned numeric
+mapping in the C header for known values). New stable kinds that ship as a name in old tooling
+become "skipped on old, recognized on new"; emitting them as numbers would brick old tooling.
+
+Skip-with-warn produces a serial log line `boot-entries: skipped entry <id> (kind=<value> unknown, vendor/reserved range)` and continues parsing; the store as a whole remains valid.
+
+If the **selected** entry (by precedence) is a skipped entry, the parser falls through to the next
+priority entry per the policy merge precedence rules.
+
+## 8. Fallback Contract
+
+When the store is missing, oversize, CRC-mismatched, has unrecognized envelope schema_version,
+or fails parser validation entirely, the bootloader synthesizes ONE in-firmware fallback entry
+matching whatever path it currently loads:
+
+| Bootloader state      | Synthesized entry                                                  |
+| --------------------- | ------------------------------------------------------------------ |
+| UKI fast path active  | `kind: uki`, `uki_path` = loaded UKI image path                    |
+| Split-path active     | `kind: split`, `kernel` = `\EFI\ImpossibleOS\kernel.exe`, `cmdline` from `boot.conf` |
+
+The synthesized entry has `id = "fallback"`, `title = "Impossible OS (fallback)"`,
+`flags = ["active"]`, no per-entry `tries_left` counter (no rollback semantics in fallback mode).
+
+`boot_info.selection_reason` is set to `ENTRY_STORE_INVALID` (or a more specific code per the
+audit trail TODO) so user-mode tooling can surface the fallback condition.
+
+No A/B reference today -- the slot-metadata TODO is not yet shipped. Once it lands, the A/B
+integration TODO will widen the fallback to honor the active slot.
+
+## 9. Sample Store
+
+See [`resources/boot/bootentries-example.json`](../../resources/boot/bootentries-example.json).
+
+## 10. Validator Usage
+
+```bash
+python3 tools/boot-entry-validate/validate.py resources/boot/bootentries-example.json
+```
+
+Exits 0 on success; non-zero on validation failure with a `[FAIL]` line on stderr naming the
+failed check. See [`tools/boot-entry-validate/README.md`](../../tools/boot-entry-validate/README.md)
+for the full list of checks.
+
+## 11. Producer / Consumer Reference
+
+| Producer / Consumer              | Role                                                       |
+| -------------------------------- | ---------------------------------------------------------- |
+| `tools/boot-entry-validate/`     | Host-side validator (Python), CI gate                      |
+| `tools/boot-entry-validate/`     | Idempotent offline seed for installer + image build (later) |
+| `bootcfg.exe`                    | Online + offline editor; consumes validator (later)        |
+| `src/boot/uefi/bootx64.c`        | Bootloader parser; CRC verify; per-kind dispatch (later)   |
+| `src/kernel/...`                 | Boot policy merge consumer of `boot_info.selected_entry_id` (later) |

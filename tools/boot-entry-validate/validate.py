@@ -1,0 +1,584 @@
+#!/usr/bin/env python3
+"""Boot Entry Store host validator.
+
+Validates `\\EFI\\ImpossibleOS\\bootentries.json` (or an offline copy) against the schema
+defined in docs/boot/boot-entry-schema.md. Constants here mirror include/boot/boot_entries.h;
+they MUST stay in sync. A drift detector is filed as a follow-up under tools/ + tests CI.
+
+Exit codes:
+  0 -- store is valid
+  1 -- store fails validation (reason printed to stderr with [FAIL] prefix)
+  2 -- usage error (missing argument, file not readable)
+
+Usage:
+  python3 tools/boot-entry-validate/validate.py <path-to-bootentries.json>
+  python3 tools/boot-entry-validate/validate.py --emit-crc <path-to-bootentries.json>
+      (recompute the store's crc32 field in-place; useful for editing the sample)
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+import sys
+import zlib
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+# ---- Mirror constants from include/boot/boot_entries.h ----
+
+SCHEMA_VERSION = 1
+
+MAX_ENTRIES = 64
+MAX_TOTAL_BYTES = 16 * 1024
+MAX_TITLE_LEN = 63
+MAX_ID_LEN = 47
+MAX_PATH_LEN = 255
+
+KNOWN_FLAGS = frozenset({
+    "active",
+    "hidden",
+    "trusted_chainload",
+    "hide_when_alone",
+    "allow_editor",
+})
+
+# Stable kind names (numeric 0..9). Kinds with numeric value 100..199 are vendor / experimental
+# and skipped-with-warn for unknown values. >=200 is reserved-future (also skipped).
+KIND_NAMES = {
+    "split": 0,
+    "uki": 1,
+    "chainload": 2,
+    "network": 3,
+    "resume": 4,
+    "recovery": 5,
+    "installer": 6,
+    "safe": 7,
+    "diagnostics": 8,
+    "test": 9,
+}
+
+VENDOR_KIND_FIRST = 100
+VENDOR_KIND_LAST = 199
+
+# Per-kind required fields. Optional fields are not exhaustively listed here -- the schema doc
+# (docs/boot/boot-entry-schema.md "Per-Kind Fields") is authoritative; this validator checks the
+# load-bearing required set.
+PER_KIND_REQUIRED = {
+    "split":       {"kernel", "cmdline", "root"},
+    "uki":         {"uki_path"},
+    "chainload":   {"efi_path", "device_guid"},
+    "network":     {"url", "uri_scheme", "asset_digest"},
+    "resume":      {"snapshot_path", "snapshot_digest"},
+    "recovery":    {"recovery_partition_guid"},
+    "installer":   {"installer_image_guid", "media_role"},
+    "safe":        {"safe_mode_subset", "kernel"},
+    "diagnostics": {"kernel", "verbose_log"},
+    "test":        {"kernel", "test_suite"},
+}
+
+VALID_INSTALLER_ROLES = frozenset({"live", "install", "recovery-install"})
+VALID_SAFE_SUBSETS = frozenset({"minimal", "network", "cmd"})
+VALID_TEST_SUITES = frozenset({
+    "mm", "fs", "boot", "ob", "security", "ipc", "sched", "abi", "storage", "exec",
+})
+VALID_NETWORK_SCHEMES = frozenset({"http", "https", "tftp"})
+
+# UKI path prefix policy (per docs/boot/boot-entry-schema.md kind: uki).
+UKI_PATH_PREFIXES = ("\\EFI\\Linux\\", "\\EFI\\ImpossibleOS\\")
+
+# RFC 4122 UUID textual form (8-4-4-4-12 hex).
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+# Kebab-case id: lowercase letters/digits, dash-separated, no leading/trailing dash.
+_KEBAB_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def fail(msg: str) -> None:
+    """Print [FAIL] line to stderr and exit 1."""
+    print(f"[FAIL] {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def warn(msg: str) -> None:
+    print(f"[WARN] {msg}", file=sys.stderr)
+
+
+def _is_int(x: Any) -> bool:
+    """Strict integer check (excludes bool). Python's `isinstance(True, int)` is True; here it isn't."""
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def _is_bool(x: Any) -> bool:
+    return isinstance(x, bool)
+
+
+def _expect_str(idx: int, eid: str, kind: str, payload: dict, key: str, *, max_len: int | None = None) -> None:
+    if key not in payload:
+        return  # missing-required is checked elsewhere
+    val = payload[key]
+    if not isinstance(val, str):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be string, got {type(val).__name__}")
+    if max_len is not None and len(val) > max_len:
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} length {len(val)} > max {max_len}")
+
+
+def _expect_ascii_clean(idx: int, eid: str, kind: str, payload: dict, key: str, *, max_len: int) -> None:
+    """ASCII-printable (0x20..0x7E only), NUL- and control-byte free, length-bounded.
+
+    Applied to path / cmdline / URL fields per the schema's "ASCII" contract for paths. The
+    bootloader will eventually consume these as NUL-terminated C strings; non-ASCII or embedded
+    control bytes are rejected to prevent the host validator from blessing a store the firmware
+    would mis-interpret or truncate.
+    """
+    if key not in payload:
+        return
+    val = payload[key]
+    if not isinstance(val, str):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be string, got {type(val).__name__}")
+    if len(val) > max_len:
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} length {len(val)} > max {max_len}")
+    for i, ch in enumerate(val):
+        cp = ord(ch)
+        if cp == 0:
+            fail(f"entry[{idx}] {eid} (kind={kind}): {key} contains NUL byte at offset {i}")
+        if cp < 0x20 or cp == 0x7F:
+            fail(f"entry[{idx}] {eid} (kind={kind}): {key} contains control byte 0x{cp:02X} at offset {i}")
+        if cp > 0x7F:
+            fail(f"entry[{idx}] {eid} (kind={kind}): {key} contains non-ASCII byte 0x{cp:02X} at offset {i}")
+
+
+def _expect_uuid(idx: int, eid: str, kind: str, payload: dict, key: str) -> None:
+    if key not in payload:
+        return
+    val = payload[key]
+    if not isinstance(val, str) or not _UUID_RE.match(val):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be RFC 4122 UUID format, got {val!r}")
+
+
+def _check_esp_path_grammar(idx: int, eid: str, kind: str, key: str, val: str, *, label: str = None) -> None:
+    """ESP-path grammar gate: non-empty, leading backslash, no '.' or '..' segments.
+
+    Layered on top of _expect_ascii_clean (byte safety). Catches empty/relative/drive-form/
+    traversal paths the host validator would otherwise bless. The bootloader runtime parser
+    is the authoritative validator; this is host-side defense in depth so a producer's mistake
+    fails loud at CI time rather than at first boot.
+
+    `label` is used in the error message when key alone doesn't disambiguate (e.g. initrd[i]).
+    """
+    descriptor = label or key
+    if val == "":
+        fail(f"entry[{idx}] {eid} (kind={kind}): {descriptor} must be non-empty ESP-relative path")
+    if not val.startswith("\\"):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {descriptor} must start with '\\\\' (ESP-relative absolute), got {val!r}")
+    # Split on backslash; reject any '.' or '..' segment.
+    for seg in val.split("\\"):
+        if seg == "..":
+            fail(f"entry[{idx}] {eid} (kind={kind}): {descriptor} contains '..' traversal segment")
+        if seg == ".":
+            fail(f"entry[{idx}] {eid} (kind={kind}): {descriptor} contains '.' segment")
+
+
+def _expect_esp_path(idx: int, eid: str, kind: str, payload: dict, key: str, *, max_len: int) -> None:
+    """ESP-relative path: ASCII-clean (byte safety) + non-empty + leading-backslash + no traversal."""
+    if key not in payload:
+        return
+    _expect_ascii_clean(idx, eid, kind, payload, key, max_len=max_len)
+    val = payload[key]
+    if isinstance(val, str):  # _expect_ascii_clean already failed on non-string
+        _check_esp_path_grammar(idx, eid, kind, key, val)
+
+
+def _expect_ascii_path_list(idx: int, eid: str, kind: str, payload: dict, key: str, *, max_items: int, max_len: int) -> None:
+    """Array of ESP-relative path strings (per-item byte + grammar validation).
+
+    Each element must pass: type=str, length<=max_len, byte-clean (no NUL/control/non-ASCII),
+    and ESP-path grammar (non-empty, leading backslash, no '.' or '..' segments).
+    """
+    if key not in payload:
+        return
+    val = payload[key]
+    if not isinstance(val, list):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be array, got {type(val).__name__}")
+    if len(val) > max_items:
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} length {len(val)} > max {max_items}")
+    for i, item in enumerate(val):
+        if not isinstance(item, str):
+            fail(f"entry[{idx}] {eid} (kind={kind}): {key}[{i}] must be string, got {type(item).__name__}")
+        if len(item) > max_len:
+            fail(f"entry[{idx}] {eid} (kind={kind}): {key}[{i}] length {len(item)} > max {max_len}")
+        for j, ch in enumerate(item):
+            cp = ord(ch)
+            if cp == 0:
+                fail(f"entry[{idx}] {eid} (kind={kind}): {key}[{i}] contains NUL byte at offset {j}")
+            if cp < 0x20 or cp == 0x7F:
+                fail(f"entry[{idx}] {eid} (kind={kind}): {key}[{i}] contains control byte 0x{cp:02X} at offset {j}")
+            if cp > 0x7F:
+                fail(f"entry[{idx}] {eid} (kind={kind}): {key}[{i}] contains non-ASCII byte 0x{cp:02X} at offset {j}")
+        _check_esp_path_grammar(idx, eid, kind, key, item, label=f"{key}[{i}]")
+
+
+def _expect_split_root(idx: int, eid: str, payload: dict) -> None:
+    """split's `root` must be slot id 'A', 'B', or RFC 4122 UUID per schema."""
+    if "root" not in payload:
+        return
+    val = payload["root"]
+    if not isinstance(val, str):
+        fail(f"entry[{idx}] {eid} (kind=split): root must be string, got {type(val).__name__}")
+    if val in ("A", "B"):
+        return
+    if _UUID_RE.match(val):
+        return
+    fail(f"entry[{idx}] {eid} (kind=split): root must be 'A', 'B', or RFC 4122 UUID, got {val!r}")
+
+
+def _expect_int(idx: int, eid: str, kind: str, payload: dict, key: str, *, lo: int, hi: int) -> None:
+    if key not in payload:
+        return
+    val = payload[key]
+    if not _is_int(val) or not (lo <= val <= hi):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be int in {lo}..{hi}, got {val!r}")
+
+
+def _expect_bool(idx: int, eid: str, kind: str, payload: dict, key: str) -> None:
+    if key not in payload:
+        return
+    val = payload[key]
+    if not _is_bool(val):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be bool, got {type(val).__name__}")
+
+
+def _expect_hex(idx: int, eid: str, kind: str, payload: dict, key: str, *, length: int) -> None:
+    if key not in payload:
+        return
+    val = payload[key]
+    if not isinstance(val, str) or len(val) != length:
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be {length}-char hex string")
+    if not all(c in "0123456789abcdefABCDEF" for c in val):
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be hex digits only")
+
+
+def _expect_enum(idx: int, eid: str, kind: str, payload: dict, key: str, *, allowed: frozenset[str]) -> None:
+    if key not in payload:
+        return
+    val = payload[key]
+    if not isinstance(val, str) or val not in allowed:
+        fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be one of {sorted(allowed)}, got {val!r}")
+
+
+def canonical_entries_bytes(entries: list[Any]) -> bytes:
+    """Canonicalize the entries array per docs/boot/boot-entry-schema.md.
+
+    Subset of RFC 8785 sufficient for this schema:
+      - UTF-8 encoding (ensure_ascii=False)
+      - lexicographically sorted object keys
+      - no insignificant whitespace
+      - integers with no decimal point / exponent (json.dumps default for ints)
+      - no NaN / Infinity (allow_nan=False); floats are rejected during validate_store anyway,
+        but allow_nan=False is a defense-in-depth for any path that bypasses the recursive check
+    """
+    try:
+        return json.dumps(
+            entries,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except ValueError as e:
+        # allow_nan=False raises ValueError on NaN / Infinity. Convert to fail() so callers see
+        # a [FAIL] line rather than an uncaught exception trace.
+        fail(f"non-finite float in entries (NaN/Infinity not allowed): {e}")
+        raise  # unreachable; satisfies type checker
+
+
+def compute_crc(entries: list[Any]) -> int:
+    """IEEE 802.3 CRC-32 over canonical-form entries bytes."""
+    return zlib.crc32(canonical_entries_bytes(entries)) & 0xFFFFFFFF
+
+
+def validate_envelope(entry: dict, idx: int) -> None:
+    """Validate a single entry's envelope fields. Calls fail() on any violation."""
+
+    required = {"id", "title", "kind", "flags", "sort_key", "machine_id", "policy_tags", "payload"}
+    missing = required - set(entry.keys())
+    if missing:
+        fail(f"entry[{idx}]: missing required envelope fields: {sorted(missing)}")
+
+    if not isinstance(entry["id"], str) or not (1 <= len(entry["id"]) <= MAX_ID_LEN):
+        fail(f"entry[{idx}]: id must be a string of length 1..{MAX_ID_LEN}")
+    if not _KEBAB_ID_RE.match(entry["id"]):
+        fail(f"entry[{idx}]: id must be kebab-case (lowercase a-z 0-9 dash-separated, no leading/trailing dash), got {entry['id']!r}")
+    if not isinstance(entry["title"], str) or not (1 <= len(entry["title"]) <= MAX_TITLE_LEN):
+        fail(f"entry[{idx}]: title must be a string of length 1..{MAX_TITLE_LEN}")
+
+    if not isinstance(entry["flags"], list):
+        fail(f"entry[{idx}]: flags must be an array")
+    for flag in entry["flags"]:
+        if not isinstance(flag, str):
+            fail(f"entry[{idx}]: flags entry not a string: {flag!r}")
+        if flag not in KNOWN_FLAGS:
+            warn(f"entry[{idx}] {entry['id']}: unknown flag {flag!r} -- dropped (forward-compat)")
+
+    if "timeout_override" in entry:
+        t = entry["timeout_override"]
+        if not _is_int(t) or not (0 <= t <= 600):
+            fail(f"entry[{idx}]: timeout_override must be int in 0..600, got {t!r}")
+
+    if not isinstance(entry["sort_key"], str):
+        fail(f"entry[{idx}]: sort_key must be a string")
+    if not isinstance(entry["machine_id"], str) or not _UUID_RE.match(entry["machine_id"]):
+        fail(f"entry[{idx}]: machine_id must be RFC 4122 UUID format, got {entry['machine_id']!r}")
+    if not isinstance(entry["policy_tags"], list):
+        fail(f"entry[{idx}]: policy_tags must be an array")
+    for i, tag in enumerate(entry["policy_tags"]):
+        if not isinstance(tag, str):
+            fail(f"entry[{idx}]: policy_tags[{i}] must be a string, got {type(tag).__name__}")
+    if not isinstance(entry["payload"], dict):
+        fail(f"entry[{idx}]: payload must be an object")
+
+
+def validate_kind(entry: dict, idx: int) -> str | None:
+    """Return the canonical kind name (string) if known/parseable, else None for skip-with-warn."""
+
+    kind = entry["kind"]
+    if isinstance(kind, str):
+        if kind in KIND_NAMES:
+            return kind
+        warn(f"entry[{idx}] {entry['id']}: unknown kind {kind!r} -- skipped (forward-compat)")
+        return None
+    if _is_int(kind):
+        for name, num in KIND_NAMES.items():
+            if num == kind:
+                return name
+        if 0 <= kind <= 99:
+            fail(f"entry[{idx}]: kind={kind} in stable range 0..99 but not a known name")
+        if VENDOR_KIND_FIRST <= kind <= VENDOR_KIND_LAST or kind >= 200:
+            warn(f"entry[{idx}] {entry['id']}: kind={kind} (vendor/reserved) -- skipped")
+            return None
+        fail(f"entry[{idx}]: kind={kind} out of valid range")
+    fail(f"entry[{idx}]: kind must be string or integer, got {type(kind).__name__}")
+    return None
+
+
+def validate_payload(entry: dict, idx: int, kind_name: str) -> None:
+    payload = entry["payload"]
+    eid = entry["id"]
+
+    required = PER_KIND_REQUIRED[kind_name]
+    missing = required - set(payload.keys())
+    if missing:
+        fail(f"entry[{idx}] {eid} (kind={kind_name}): missing payload fields {sorted(missing)}")
+
+    # Per-kind type / value validation. Path / cmdline / URL fields use _expect_ascii_clean
+    # (rejects NUL, control bytes, non-ASCII) since the bootloader will consume them as
+    # NUL-terminated C strings. GUID fields use _expect_uuid for RFC 4122 textual form.
+    if kind_name == "split":
+        _expect_esp_path(idx, eid, kind_name, payload, "kernel", max_len=MAX_PATH_LEN)
+        _expect_ascii_clean(idx, eid, kind_name, payload, "cmdline", max_len=4096)
+        _expect_split_root(idx, eid, payload)
+        _expect_ascii_path_list(idx, eid, kind_name, payload, "initrd", max_items=8, max_len=MAX_PATH_LEN)
+    elif kind_name == "uki":
+        _expect_esp_path(idx, eid, kind_name, payload, "uki_path", max_len=MAX_PATH_LEN)
+        if "uki_path" in payload and isinstance(payload["uki_path"], str):
+            if not any(payload["uki_path"].startswith(p) for p in UKI_PATH_PREFIXES):
+                fail(
+                    f"entry[{idx}] {eid} (kind=uki): uki_path must start with "
+                    f"{' or '.join(UKI_PATH_PREFIXES)}"
+                )
+        _expect_int(idx, eid, kind_name, payload, "profile", lo=0, hi=15)
+    elif kind_name == "chainload":
+        _expect_ascii_clean(idx, eid, kind_name, payload, "efi_path", max_len=MAX_PATH_LEN)
+        _expect_uuid(idx, eid, kind_name, payload, "device_guid")
+        flag_set = set(entry["flags"])
+        if "trusted_chainload" not in flag_set:
+            fail(f"entry[{idx}] {eid}: kind=chainload requires flags include trusted_chainload")
+    elif kind_name == "network":
+        _expect_ascii_clean(idx, eid, kind_name, payload, "url", max_len=512)
+        _expect_enum(idx, eid, kind_name, payload, "uri_scheme", allowed=VALID_NETWORK_SCHEMES)
+        _expect_hex(idx, eid, kind_name, payload, "asset_digest", length=64)
+        # Cross-validate via urlsplit: scheme must match uri_scheme, hostname must be non-empty,
+        # and userinfo (user/password) is rejected outright. Boot URLs are unauthenticated
+        # fetch targets; a userinfo-only authority like "https://@/k" has empty hostname but
+        # non-empty netloc, which the netloc-only check would have missed.
+        if "url" in payload and "uri_scheme" in payload:
+            url = payload["url"]
+            scheme = payload["uri_scheme"]
+            if isinstance(url, str) and isinstance(scheme, str) and scheme in VALID_NETWORK_SCHEMES:
+                parsed = urlsplit(url)
+                if parsed.scheme != scheme:
+                    fail(f"entry[{idx}] {eid} (kind=network): url scheme {parsed.scheme!r} does not match uri_scheme {scheme!r}")
+                if not parsed.hostname:
+                    fail(f"entry[{idx}] {eid} (kind=network): url has empty host (got {url!r})")
+                if parsed.username is not None or parsed.password is not None:
+                    fail(f"entry[{idx}] {eid} (kind=network): url must not contain userinfo (got {url!r})")
+    elif kind_name == "resume":
+        _expect_esp_path(idx, eid, kind_name, payload, "snapshot_path", max_len=MAX_PATH_LEN)
+        _expect_hex(idx, eid, kind_name, payload, "snapshot_digest", length=64)
+    elif kind_name == "recovery":
+        _expect_uuid(idx, eid, kind_name, payload, "recovery_partition_guid")
+    elif kind_name == "installer":
+        _expect_uuid(idx, eid, kind_name, payload, "installer_image_guid")
+        _expect_enum(idx, eid, kind_name, payload, "media_role", allowed=VALID_INSTALLER_ROLES)
+    elif kind_name == "safe":
+        _expect_enum(idx, eid, kind_name, payload, "safe_mode_subset", allowed=VALID_SAFE_SUBSETS)
+        _expect_esp_path(idx, eid, kind_name, payload, "kernel", max_len=MAX_PATH_LEN)
+    elif kind_name == "diagnostics":
+        _expect_esp_path(idx, eid, kind_name, payload, "kernel", max_len=MAX_PATH_LEN)
+        _expect_bool(idx, eid, kind_name, payload, "verbose_log")
+    elif kind_name == "test":
+        _expect_esp_path(idx, eid, kind_name, payload, "kernel", max_len=MAX_PATH_LEN)
+        _expect_enum(idx, eid, kind_name, payload, "test_suite", allowed=VALID_TEST_SUITES)
+
+
+def _reject_non_finite(node: Any, path: str = "") -> None:
+    """Iteratively reject NaN / Infinity / -Infinity floats anywhere under the parsed JSON.
+
+    Defense-in-depth: parse_constant catches the JSON tokens NaN / Infinity directly, but a value
+    like 1e500 parses to float('inf') without firing parse_constant. This walks the tree and
+    rejects any non-finite float so canonical_entries_bytes never sees one (it would also fail
+    via allow_nan=False, but failing earlier produces a clearer error site).
+
+    Iterative stack walk -- a recursive form would hit Python's default recursion limit on a
+    deeply-nested-but-small adversarial JSON (e.g. 1000 nested arrays in <16 KiB)."""
+    stack: list[tuple[Any, str]] = [(node, path)]
+    while stack:
+        cur, cur_path = stack.pop()
+        if isinstance(cur, float):
+            if math.isnan(cur) or math.isinf(cur):
+                fail(f"non-finite float at {cur_path or '<root>'} (NaN/Infinity not allowed)")
+        elif isinstance(cur, dict):
+            for k, v in cur.items():
+                stack.append((v, f"{cur_path}.{k}" if cur_path else str(k)))
+        elif isinstance(cur, list):
+            for i, v in enumerate(cur):
+                stack.append((v, f"{cur_path}[{i}]"))
+
+
+def validate_store(data: dict, raw_size: int, *, recompute_crc: bool) -> int:
+    """Validate the parsed store. Returns the computed CRC. Calls fail() on any violation.
+
+    When recompute_crc=True, do not check crc32 equality -- caller is in --emit-crc mode."""
+
+    if not isinstance(data, dict):
+        fail("top-level value must be a JSON object")
+
+    required = {"schema_version", "crc32", "entries"}
+    missing = required - set(data.keys())
+    if missing:
+        fail(f"missing top-level fields: {sorted(missing)}")
+
+    _reject_non_finite(data, "<store>")
+
+    sv = data["schema_version"]
+    if not _is_int(sv) or sv != SCHEMA_VERSION:
+        fail(f"schema_version must be {SCHEMA_VERSION} (got {sv!r})")
+
+    crc_text = data["crc32"]
+    if not isinstance(crc_text, str) or len(crc_text) != 10 or not crc_text.startswith("0x"):
+        fail(f'crc32 must be "0x" + 8 hex digits (got {crc_text!r})')
+    if not all(c in "0123456789abcdefABCDEF" for c in crc_text[2:]):
+        fail(f"crc32 must be hex digits only (got {crc_text!r})")
+
+    entries = data["entries"]
+    if not isinstance(entries, list):
+        fail("entries must be an array")
+    if not (1 <= len(entries) <= MAX_ENTRIES):
+        fail(f"entries length must be 1..{MAX_ENTRIES} (got {len(entries)})")
+
+    if raw_size > MAX_TOTAL_BYTES:
+        fail(f"file size {raw_size} > MAX_TOTAL_BYTES {MAX_TOTAL_BYTES}")
+
+    seen_ids: set[str] = set()
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            fail(f"entry[{idx}] must be an object")
+        validate_envelope(entry, idx)
+        if entry["id"] in seen_ids:
+            fail(f"entry[{idx}]: duplicate id {entry['id']!r}")
+        seen_ids.add(entry["id"])
+        kind_name = validate_kind(entry, idx)
+        if kind_name is None:
+            continue  # skip-with-warn already logged
+        validate_payload(entry, idx, kind_name)
+
+    computed = compute_crc(entries)
+    if not recompute_crc:
+        try:
+            expected = int(crc_text, 16)
+        except ValueError:
+            fail(f"crc32 not parseable as hex: {crc_text!r}")
+        if computed != expected:
+            fail(
+                f"CRC mismatch: header={crc_text} computed=0x{computed:08X} "
+                f"(canonical entries bytes differ from what produced the header CRC)"
+            )
+
+    return computed
+
+
+def main(argv: list[str]) -> int:
+    emit_crc = False
+    args = list(argv[1:])
+    if args and args[0] == "--emit-crc":
+        emit_crc = True
+        args.pop(0)
+
+    if len(args) != 1:
+        print("usage: validate.py [--emit-crc] <bootentries.json>", file=sys.stderr)
+        return 2
+
+    path = Path(args[0])
+    if not path.is_file():
+        print(f"[FAIL] file not found: {path}", file=sys.stderr)
+        return 2
+
+    # Size cap is enforced BEFORE read so a hostile / malformed multi-megabyte file does not
+    # consume host memory before the validator gets a chance to reject it. The canonical
+    # MAX_TOTAL_BYTES bound applies to the on-disk size; raw_size is rechecked in validate_store
+    # against the same constant for the post-decode path (defense in depth).
+    file_size = path.stat().st_size
+    if file_size > MAX_TOTAL_BYTES:
+        print(
+            f"[FAIL] file size {file_size} > MAX_TOTAL_BYTES {MAX_TOTAL_BYTES} (rejected pre-read)",
+            file=sys.stderr,
+        )
+        return 1
+
+    raw = path.read_bytes()
+    try:
+        data = json.loads(
+            raw.decode("utf-8"),
+            parse_constant=lambda c: fail(f"non-finite JSON token {c!r} not allowed"),
+        )
+    except json.JSONDecodeError as e:
+        print(f"[FAIL] JSON parse error at line {e.lineno} col {e.colno}: {e.msg}", file=sys.stderr)
+        return 1
+    except UnicodeDecodeError as e:
+        print(f"[FAIL] file is not valid UTF-8: {e}", file=sys.stderr)
+        return 1
+    except RecursionError:
+        print(f"[FAIL] JSON nesting exceeds parser depth limit (DoS shape rejected)", file=sys.stderr)
+        return 1
+
+    crc = validate_store(data, len(raw), recompute_crc=emit_crc)
+
+    if emit_crc:
+        data["crc32"] = f"0x{crc:08X}"
+        # Pretty-print with 2-space indent, preserve key order from the input file by re-reading.
+        # We use sort_keys=False here to match the human-friendly source layout; the stored CRC
+        # is over the canonical entries bytes, not the file bytes, so layout is independent.
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        print(f"[OK] {path}: crc32 -> 0x{crc:08X}")
+        return 0
+
+    print(f"[OK] {path}: {len(data['entries'])} entries, crc32=0x{crc:08X}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

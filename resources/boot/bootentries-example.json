@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "crc32": "0x62275CFE",
+  "entries": [
+    {
+      "id": "slot-a-normal",
+      "title": "Impossible OS (Slot A)",
+      "kind": "split",
+      "flags": [
+        "active"
+      ],
+      "sort_key": "00-impossible-os-a",
+      "machine_id": "11111111-2222-3333-4444-555555555555",
+      "policy_tags": [],
+      "payload": {
+        "kernel": "\\EFI\\ImpossibleOS\\kernel.exe",
+        "cmdline": "console=serial debug=0",
+        "root": "A"
+      }
+    },
+    {
+      "id": "slot-b-normal",
+      "title": "Impossible OS (Slot B)",
+      "kind": "split",
+      "flags": [
+        "active"
+      ],
+      "sort_key": "01-impossible-os-b",
+      "machine_id": "11111111-2222-3333-4444-555555555555",
+      "policy_tags": [],
+      "payload": {
+        "kernel": "\\EFI\\ImpossibleOS\\kernel.exe",
+        "cmdline": "console=serial debug=0",
+        "root": "B"
+      }
+    },
+    {
+      "id": "recovery",
+      "title": "Recovery Environment",
+      "kind": "recovery",
+      "flags": [
+        "active"
+      ],
+      "sort_key": "99-recovery",
+      "machine_id": "11111111-2222-3333-4444-555555555555",
+      "policy_tags": [
+        "recovery"
+      ],
+      "payload": {
+        "recovery_partition_guid": "deaddead-dead-dead-dead-deaddeaddead"
+      }
+    }
+  ]
+}

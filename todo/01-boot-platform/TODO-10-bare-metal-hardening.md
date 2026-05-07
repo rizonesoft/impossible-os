@@ -58,6 +58,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` -- boot_progress() infrastructure (this TODO consumes it)
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- full `vmm_map_mmio()` / UC MMIO; this TODO §1 keeps minimal `vmm_map_mmio_uc()` only
 - → XREF: `TODO-03-bootloader-error-recovery.md §6` -- serial port probe and COM2 fallback; §8 here provides graceful degradation when serial is absent, §6 there detects serial presence in the bootloader
+- → XREF: `TODO-07-boot-entry-store-menu-policy.md §5` -- graceful-degradation flags from §7 here map to safe-mode entry flags in the boot entry store
 
 ## Outcome
 

@@ -29,7 +29,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 - → XREF: [`T15 §8`](./TODO-15-security-reference-monitor.md) -- privilege gate for runtime writes
 - → XREF: [`T30 §5, §7`](./TODO-30-system-health-recovery-orchestrator.md) -- degraded-mode transitions and repeated-failure escalation consume boot-status policy
 - → XREF: [`T31 §2`](./TODO-31-kernel-bulletproofing.md) -- fixed-layout defense pattern to reuse for `kernel_config_t`
-- → XREF: [`D01 T07 §3, §5, §7`](../01-boot-platform/TODO-07-boot-entry-store-menu-policy.md) -- boot-entry precedence, safe/test entry flags, and previous-kernel handoff
+- → XREF: [`D01 T07 §3, §5, §7, §11`](../01-boot-platform/TODO-07-boot-entry-store-menu-policy.md) -- boot-entry precedence, safe/test entry flags, previous-kernel handoff, and per-entry health gate (T07 §11 layers entry-level mark-good above the §10 acceptance ledger here)
 - → XREF: [`D01 T21 §4, §5`](../01-boot-platform/TODO-21-ab-boot-rollback.md) -- boot rollback counters consume LastKnownGood, acceptance, and success/failure decisions
 - → XREF: [`D04 T05 §5`](../04-drivers-hardware/TODO-05-kernel-module-system.md) -- module autoload consumes Safe Mode gating rules
 - → XREF: [`D09 T03 §6, §8`](../09-desktop-shell/TODO-03-service-manager.md) -- built-in service startup and autostart honor Safe Mode and recovery policy
