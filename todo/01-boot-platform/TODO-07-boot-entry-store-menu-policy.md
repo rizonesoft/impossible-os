@@ -114,12 +114,12 @@ Bootloader-side parser. Must be heap-free (UEFI pre-EBS), bounded, and reject ho
 - [x] Build integration: `boot_entries_parser.o` added to UEFI Makefile OBJS + root Makefile `$(UEFI_EFI)` prerequisites.
 - [x] Commit: `"boot: parse boot entry store"`
 
-**Test checkpoint:** 16-case kernel-side mutator harness in `src/kernel/test/test_boot_entry_parser.c` covers valid minimal, bad schema_version, empty entries, missing payload, bad CRC, unknown string-kind skipped, stable-numeric-kind unknown rejected, duplicate id, non-kebab id, malformed payload value, chainload Secure Boot gate, depth-bomb (no crash), trailing garbage after root, bad string escape (`\q`), flags trailing comma, fallback UKI/split synth. Build OK; smoke test passes (boot complete in 2.42s); lint clean. Test on: kernel test runner via `scripts\debug\kernel\run-boot-tests.bat` + QEMU TCG smoke.
+**Test checkpoint:** 19-case kernel-side mutator harness in `src/kernel/test/test_boot_entry_parser.c` covers valid minimal, bad schema_version, empty entries, missing payload, bad CRC, unknown string-kind skipped, stable-numeric-kind unknown rejected, duplicate id, non-kebab id, malformed payload value, chainload Secure Boot gate, depth-bomb (no crash), trailing garbage after root, bad string escape (`\q`), flags trailing comma, entry-object trailing comma, top-level trailing comma, fallback UKI/split synth. Build OK; smoke test passes (boot complete in 2.48s); lint clean. Test on: kernel test runner via `scripts\debug\kernel\run-boot-tests.bat` + QEMU TCG smoke.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 16 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 19 suites, 0 failures
 
 > **Notes:**
-> - What shipped: `include/boot/boot_entries_parser.h` (API), `src/boot/uefi/boot_entries_parser.c` (~640 lines: CRC + tokenizer + state-machine walker + validator + fallback), `src/kernel/test/test_boot_entry_parser.c` (13 cases via #include).
+> - What shipped: `include/boot/boot_entries_parser.h` (API), `src/boot/uefi/boot_entries_parser.c` (~640 lines: CRC + tokenizer + state-machine walker + validator + fallback), `src/kernel/test/test_boot_entry_parser.c` (19 cases via #include).
 > - How it integrates: pure-C / freestanding / no UEFI types / no allocs. Linkable from bootloader (efi_main call deferred to §3) and kernel test binary (#include of source).
 > - Downstream effects: §3 consumes `boot_entries_parse_result_t` for boot_info plumbing; §10 consumes payload byte slices for per-kind validation. Codex 2-pass adoptions (7 findings) in commit message.
 > - Canonical doc: [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md).
