@@ -87,8 +87,19 @@ try {
 
 Note "[1] build mode produces required fields"
 $mPath = Join-Path $TmpDir 'm.json'
-$rc = Invoke-Manifest @('build', '--Out', $mPath) | Out-Null; $rc = $LASTEXITCODE
-if ($rc -ne 0) { Bad "build invocation failed (rc=$rc)" }
+$buildResult = Invoke-ManifestCapture @('build', '--Out', $mPath)
+if ($buildResult.rc -ne 0) {
+    Bad ("build invocation failed (rc=" + $buildResult.rc + ")")
+    Note "  --- captured build-manifest.ps1 output ---"
+    foreach ($line in ($buildResult.out -split "`n")) {
+        if ($line) { Note ("  | " + $line) }
+    }
+    Note "  --- end captured output ---"
+    Note "  Bailing on remaining assertions; m.json was not produced."
+    Write-Output ""
+    Write-Output ("[summary] {0} pass, {1} fail" -f $Script:Pass, $Script:Fail)
+    exit 1
+}
 $raw = Get-Content -LiteralPath $mPath -Raw
 foreach ($f in @('bootloader_sha256', 'kernel_sha256', 'partition_map', 'secure_boot_status', 'boot_info_version', 'artifact_uuid')) {
     if ($raw -match ('"' + [regex]::Escape($f) + '"')) {
