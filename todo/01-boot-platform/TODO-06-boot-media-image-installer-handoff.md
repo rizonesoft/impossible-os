@@ -369,7 +369,7 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 > **Test runner:** `scripts\release\test-build-manifest.ps1` (PS1 peer, 26 assertions) | bash peer at `scripts/release/test-build-manifest.sh` (23 assertions) for Linux dev hosts | 0 failures expected.
 
 > **Notes:**
-> - Shipped: `build-manifest.ps1` + `test-build-manifest.ps1` (24 assertions) + `bootimg.bat` shim + `tests/cross_host/test_manifest_parity.sh` + `docs/release/windows-host-tooling.md`.
+> - Shipped: `build-manifest.ps1` + `test-build-manifest.ps1` (26 assertions) + `bootimg.bat` shim + `tests/cross_host/test_manifest_parity.sh` + `docs/release/windows-host-tooling.md`.
 > - How it runs: PS1 peers consume the same `boot-info-abi.kernel.json` + signing-stamp pair; parity test asserts `sha256sum` equality of both outputs.
 > - Downstream effects: unblocks §13 disk converters and §14 test-subdir without host-specific manifest drift.
 > - Canonical doc: [`docs/release/windows-host-tooling.md`](../../docs/release/windows-host-tooling.md); schema in [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
