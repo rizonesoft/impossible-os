@@ -459,6 +459,31 @@ static int skip_value_post_token(lexer_t *L)
 
 /* ---- Validation helpers ---------------------------------------------- */
 
+/* RFC 4122 UUID textual form: 8-4-4-4-12 hex digits with dashes. Total 36 chars. */
+static int is_uuid_text(const u8 *s, u32 n)
+{
+    static const u8 GROUPS[5] = { 8u, 4u, 4u, 4u, 12u };
+    if (n != 36u) return 0;
+    u32 i, off = 0;
+    for (i = 0; i < 5u; i++) {
+        u32 g = GROUPS[i];
+        u32 j;
+        for (j = 0; j < g; j++) {
+            u8 c = s[off + j];
+            int hex = (c >= '0' && c <= '9') ||
+                      (c >= 'a' && c <= 'f') ||
+                      (c >= 'A' && c <= 'F');
+            if (!hex) return 0;
+        }
+        off += g;
+        if (i < 4u) {
+            if (s[off] != '-') return 0;
+            off++;
+        }
+    }
+    return 1;
+}
+
 static int is_kebab_id(const u8 *s, u32 n)
 {
     /* ^[a-z0-9]+(-[a-z0-9]+)*$ */
@@ -572,13 +597,22 @@ static int parse_entry_object(lexer_t *L, u32 idx,
 
     /* Need a reusable buffer to compare entry IDs across iterations */
     (void)idx;   /* unused -- caller tracks index */
+    (void)log;   /* per-entry skip-log moved to summary in boot_entries_parse() */
 
+    /* Track separator state so trailing commas (`{..., "x":1, }`) are rejected
+     * to match the host validator's strict json.loads grammar (RFC 8259 §5). */
+    int after_comma = 0;
     while (1) {
         if (!lex_next(L)) {
             set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected entry field or '}'");
             return 0;
         }
         if (L->kind == TOK_RBRACE) {
+            if (after_comma) {
+                set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                           "trailing comma in entry object");
+                return 0;
+            }
             break;
         }
         if (L->kind != TOK_STRING) {
@@ -735,6 +769,12 @@ static int parse_entry_object(lexer_t *L, u32 idx,
                 set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "machine_id must be a string");
                 return 0;
             }
+            u32 vlen = L->content_end - L->content_start;
+            if (!is_uuid_text(L->raw + L->content_start, vlen)) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                           "machine_id must be RFC 4122 UUID textual form");
+                return 0;
+            }
             saw_machine_id = 1;
         }
         else if (key_len == 11u && bytes_eq(key_ptr, (const u8 *)"policy_tags", 11u)) {
@@ -742,9 +782,39 @@ static int parse_entry_object(lexer_t *L, u32 idx,
                 set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "policy_tags must be an array");
                 return 0;
             }
-            if (!skip_value_post_token(L)) {
-                set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "policy_tags array malformed");
-                return 0;
+            /* Strict element walk: each element must be a string; alternating
+             * expect_value / expect_comma states catch [a,], [a,,b], [a b]. */
+            int expect_value = 1;
+            int saw_any = 0;
+            while (1) {
+                if (!lex_next(L)) {
+                    set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "policy_tags array malformed");
+                    return 0;
+                }
+                if (L->kind == TOK_RBRACKET) {
+                    if (saw_any && expect_value) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "trailing comma in policy_tags");
+                        return 0;
+                    }
+                    break;
+                }
+                if (expect_value) {
+                    if (L->kind != TOK_STRING) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "policy_tags element must be a string");
+                        return 0;
+                    }
+                    expect_value = 0;
+                    saw_any = 1;
+                } else {
+                    if (L->kind != TOK_COMMA) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "expected ',' or ']' in policy_tags");
+                        return 0;
+                    }
+                    expect_value = 1;
+                }
             }
             saw_policy_tags = 1;
         }
@@ -787,6 +857,7 @@ static int parse_entry_object(lexer_t *L, u32 idx,
             set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ',' between entry fields");
             return 0;
         }
+        after_comma = 1;
     }
 
     /* Required fields. payload is mandatory in the schema even though per-entry-kind
@@ -806,11 +877,10 @@ static int parse_entry_object(lexer_t *L, u32 idx,
         return 0;
     }
 
-    if (out->kind_skipped && log) {
-        log("[BOOT] boot-entries: skipped entry ");
-        log(out->id);
-        log(" (kind unknown / vendor-reserved)\n");
-    }
+    /* Per-skipped-entry logging is deferred to a summary line in
+     * boot_entries_parse() so a hostile 64-skipped store cannot dominate
+     * the boot serial path with thousands of bytes (perf review finding).
+     */
     return 1;
 }
 
@@ -867,13 +937,24 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
     }
 
     int saw_sv = 0, saw_crc = 0, saw_entries = 0;
+    /* Reject trailing comma at root (`{..., "entries":[...], }`) for parity
+     * with the host validator's strict json.loads grammar (RFC 8259 §5). */
+    int top_after_comma = 0;
     while (1) {
         if (!lex_next(&L)) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field or '}'");
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
-        if (L.kind == TOK_RBRACE) break;
+        if (L.kind == TOK_RBRACE) {
+            if (top_after_comma) {
+                set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                           "trailing comma at top-level object");
+                log_reject(log, out->reject_msg);
+                return out->reject_code;
+            }
+            break;
+        }
         if (L.kind != TOK_STRING) {
             set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field name");
             log_reject(log, out->reject_msg);
@@ -916,53 +997,90 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
                 log_reject(log, out->reject_msg);
                 return out->reject_code;
             }
-            /* Walk entries */
+            /* Strict alternating state machine for entries-array separators:
+             * after `[`, expect object or `]` (empty array OK); after object,
+             * expect `,` or `]`; after `,`, expect object. Catches `[,]`,
+             * `[a,,b]`, missing commas, trailing commas. */
+            int entries_expect_value = 1;
+            int entries_saw_any = 0;
             u32 idx = 0;
+            /* Track ALL parsed IDs (retained + skipped) so duplicate detection
+             * matches the host validator's seen_ids semantics. Width is the
+             * id-grammar cap + NUL; cached lengths avoid an O(n) rescan per
+             * compare. Frame stays under one 4 KiB page including the live
+             * envelope, lexer, and parser locals. */
+            char all_ids[BOOT_ENTRIES_MAX_ENTRIES][BOOT_ENTRIES_MAX_ID_LEN + 1u];
+            u8 all_id_lens[BOOT_ENTRIES_MAX_ENTRIES];
+            u32 all_ids_count = 0;
             while (1) {
                 if (!lex_next(&L)) {
                     set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "entries array malformed");
                     log_reject(log, out->reject_msg);
                     return out->reject_code;
                 }
-                if (L.kind == TOK_RBRACKET) break;
-                if (L.kind == TOK_COMMA) continue;
-                if (L.kind != TOK_LBRACE) {
-                    set_reject(out, BOOT_ENTRIES_REJECT_NOT_OBJECT, "entries element not an object");
-                    log_reject(log, out->reject_msg);
-                    return out->reject_code;
+                if (L.kind == TOK_RBRACKET) {
+                    if (entries_saw_any && entries_expect_value) {
+                        set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                                   "trailing comma in entries");
+                        log_reject(log, out->reject_msg);
+                        return out->reject_code;
+                    }
+                    break;
                 }
-                if (idx >= BOOT_ENTRIES_MAX_ENTRIES) {
-                    set_reject(out, BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES,
-                               "entries array exceeds 64-entry cap");
-                    log_reject(log, out->reject_msg);
-                    return out->reject_code;
-                }
-                boot_entry_envelope_t tmp;
-                if (!parse_entry_object(&L, idx, &tmp, out, secure_boot_active, log)) {
-                    log_reject(log, out->reject_msg);
-                    return out->reject_code;
-                }
-                /* Duplicate-id check */
-                u32 j;
-                for (j = 0; j < out->entry_count; j++) {
-                    if (out->entries[j].id[0] && tmp.id[0]) {
-                        u32 a = s_len(out->entries[j].id);
-                        u32 b = s_len(tmp.id);
-                        if (a == b && bytes_eq((const u8 *)out->entries[j].id, (const u8 *)tmp.id, a)) {
+                if (entries_expect_value) {
+                    if (L.kind != TOK_LBRACE) {
+                        set_reject(out, BOOT_ENTRIES_REJECT_NOT_OBJECT,
+                                   "entries element not an object");
+                        log_reject(log, out->reject_msg);
+                        return out->reject_code;
+                    }
+                    if (idx >= BOOT_ENTRIES_MAX_ENTRIES) {
+                        set_reject(out, BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES,
+                                   "entries array exceeds 64-entry cap");
+                        log_reject(log, out->reject_msg);
+                        return out->reject_code;
+                    }
+                    boot_entry_envelope_t tmp;
+                    if (!parse_entry_object(&L, idx, &tmp, out, secure_boot_active, log)) {
+                        log_reject(log, out->reject_msg);
+                        return out->reject_code;
+                    }
+                    /* Duplicate-id check covers BOTH retained and skipped entries. */
+                    u32 j, tlen = s_len(tmp.id);
+                    for (j = 0; j < all_ids_count; j++) {
+                        if ((u32)all_id_lens[j] == tlen &&
+                            bytes_eq((const u8 *)all_ids[j], (const u8 *)tmp.id, tlen)) {
                             set_reject(out, BOOT_ENTRIES_REJECT_DUPLICATE_ID,
                                        "duplicate entry id");
                             log_reject(log, out->reject_msg);
                             return out->reject_code;
                         }
                     }
-                }
-                if (tmp.kind_skipped) {
-                    out->skipped_count++;
+                    if (all_ids_count < BOOT_ENTRIES_MAX_ENTRIES) {
+                        u32 k, n = tlen < BOOT_ENTRIES_MAX_ID_LEN ? tlen : BOOT_ENTRIES_MAX_ID_LEN;
+                        for (k = 0; k < n; k++) all_ids[all_ids_count][k] = tmp.id[k];
+                        all_ids[all_ids_count][n] = '\0';
+                        all_id_lens[all_ids_count] = (u8)n;
+                        all_ids_count++;
+                    }
+                    if (tmp.kind_skipped) {
+                        out->skipped_count++;
+                    } else {
+                        out->entries[out->entry_count] = tmp;
+                        out->entry_count++;
+                    }
+                    idx++;
+                    entries_expect_value = 0;
+                    entries_saw_any = 1;
                 } else {
-                    out->entries[out->entry_count] = tmp;
-                    out->entry_count++;
+                    if (L.kind != TOK_COMMA) {
+                        set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                                   "expected ',' or ']' in entries");
+                        log_reject(log, out->reject_msg);
+                        return out->reject_code;
+                    }
+                    entries_expect_value = 1;
                 }
-                idx++;
             }
             saw_entries = 1;
         }
@@ -987,6 +1105,7 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
             log_reject(log, out->reject_msg);
             return out->reject_code;
         }
+        top_after_comma = 1;
     }
 
     if (!(saw_sv && saw_crc && saw_entries)) {
@@ -1012,15 +1131,22 @@ int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
     }
 
     if (log) {
-        char buf[64];
-        u32 i, n;
+        /* One bounded summary line: "[BOOT] boot-entries: parsed N entries (M skipped)\n"
+         * where N <= 64 and M <= 64. Replaces the prior per-skipped log to keep
+         * boot serial output bounded under hostile input (perf-review fix). */
+        char buf[80];
+        u32 i, n = 0;
         const char *prefix = "[BOOT] boot-entries: parsed ";
-        for (n = 0; prefix[n]; n++) buf[n] = prefix[n];
-        /* Format entry_count (decimal, max 2 digits since cap is 64) */
+        for (i = 0; prefix[i]; i++) buf[n++] = prefix[i];
         u32 ec = out->entry_count;
-        if (ec >= 10u) { buf[n++] = (char)('0' + ec/10u); ec %= 10u; }
+        if (ec >= 10u) { buf[n++] = (char)('0' + ec / 10u); ec %= 10u; }
         buf[n++] = (char)('0' + ec);
-        const char *suffix = " entries\n";
+        const char *mid = " entries (";
+        for (i = 0; mid[i]; i++) buf[n++] = mid[i];
+        u32 sc = out->skipped_count;
+        if (sc >= 10u) { buf[n++] = (char)('0' + sc / 10u); sc %= 10u; }
+        buf[n++] = (char)('0' + sc);
+        const char *suffix = " skipped)\n";
         for (i = 0; suffix[i]; i++) buf[n++] = suffix[i];
         buf[n] = '\0';
         log(buf);

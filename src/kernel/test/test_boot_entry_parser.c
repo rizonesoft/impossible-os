@@ -319,6 +319,37 @@ static void test_parser_flags_trailing_comma_rejected(void)
                    "trailing comma in flags rejected");
 }
 
+static void test_parser_entry_object_trailing_comma_rejected(void)
+{
+    /* Trailing comma after the last entry-object field must be rejected for
+     * parity with the host validator's json.loads (RFC 8259 §5). */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"x\",\"title\":\"X\",\"kind\":\"split\",\"flags\":[],"
+        "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],\"payload\":{},}]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                   "trailing comma in entry object rejected");
+}
+
+static void test_parser_top_level_trailing_comma_rejected(void)
+{
+    /* Trailing comma after the last top-level field must be rejected. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"x\",\"title\":\"X\",\"kind\":\"split\",\"flags\":[],"
+        "\"sort_key\":\"00\",\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],\"payload\":{}}],}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                   "trailing comma in top-level object rejected");
+}
+
 static void test_parser_fallback_uki(void)
 {
     boot_entry_envelope_t e;
@@ -369,6 +400,10 @@ void test_register_boot_entry_parser(void)
                             test_parser_bad_string_escape_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: flags trailing comma rejected",
                             test_parser_flags_trailing_comma_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: entry-object trailing comma rejected",
+                            test_parser_entry_object_trailing_comma_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: top-level trailing comma rejected",
+                            test_parser_top_level_trailing_comma_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: fallback UKI synth",
                             test_parser_fallback_uki, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: fallback split synth",

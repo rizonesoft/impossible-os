@@ -125,6 +125,9 @@ Bootloader-side parser. Must be heap-free (UEFI pre-EBS), bounded, and reject ho
 > - Canonical doc: [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md).
 > - Scope boundary: §2 owns envelope walk + CRC + path-escape + fallback synth. §3 owns boot_info plumbing. §10 owns per-kind validators. Signed stores remain Branch B.
 
+> **Verified:** 2026-05-08 | commit `3cbeaf55` | 7/7 items | build OK | smoke PASS (KVM 2.48s)
+> **Quality reviewed:** 2026-05-08 | Codex 7x (design + adversarial 2x + re-adversarial + consistency + perf) | 6H+8M fixed, 0 open | scope: boot-code-quality
+
 ---
 
 ## 3. Boot Policy Merge Order
