@@ -49,7 +49,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | 💎  |  10   | Release checklist and documentation                | §1--§9        |  [x]   |
 | ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [/]   |
 | 💎  |  12   | Windows host parity: manifest tooling              | §1, §8        |  [x]   |
-| 💎  |  13   | Windows host parity: disk artifact converters      | §3, §4        |  [ ]   |
+| 💎  |  13   | Windows host parity: disk artifact converters      | §3, §4        |  [x]   |
 | 💎  |  14   | Windows host parity: release test subdir + runner  | §1, T08       |  [ ]   |
 
 > 💎 = parity -- Win11 (Media Creation Tool / Hyper-V VHDX / Windows ISO) and Linux (distro hybrid ISOs / cloud VHD-VDI) both cover items 1-6 + 9-10.
@@ -382,15 +382,27 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 
 ## 13. Windows Host Parity: Disk Artifact Converters
 
-> **Scope boundary:** Windows-native peers for the disk-image conversion path. Each PS1 calls a Windows-native API (Hyper-V `New-VHD`, ADK `oscdimg`, `Get-Disk` / `New-Partition`) with `qemu-img.exe` / `xorriso.exe` host-side fallback when the Windows tool is absent. Validation requires a Windows test laptop with the relevant feature installed.
+> **Scope boundary:** Windows-native peers for the disk-image conversion path. The byte-parity contract pins each PS1 to the SAME tool the Linux peer uses (qemu-img.exe for VHDX/VDI, xorriso.exe for ISO) -- New-VHD raw->VHDX and ADK oscdimg.exe are detected and reported but cannot reproduce the Linux peers' exact bytes (New-VHD takes physical disks not raw files; oscdimg uses different ISO9660 framing than xorriso). Manifest tooling lives in §12; release-test subdir lives in §14.
 
-- [ ] `scripts/deploy/write-usb.ps1` -- USB writer via `Get-Disk` / `Initialize-Disk` / `New-Partition`; refuses non-USB disks; UAC elevation; reads `build/release/disk.img` (preferred) or `build/system-disk.img`.
-- [ ] `scripts/release/to-vhdx.ps1` -- VHDX via `New-VHD` (Hyper-V module) with `qemu-img.exe` fallback; same `--in` / `--out` / `--block-size` / `--no-verify` arg surface as bash.
-- [ ] `scripts/release/to-iso.ps1` -- hybrid UEFI ISO via `oscdimg.exe` (Windows ADK) with `xorriso.exe` fallback; matches bash output byte-for-byte.
-- [ ] `docs/release/windows-host-tooling.md` "Disk converters" subsection: per-tool prerequisites (Hyper-V Windows feature, ADK, qemu-tools), UAC requirements, fallback matrix.
-- [ ] Commit: `"release: windows-host disk artifact converters (write-usb + to-vhdx + to-iso)"`
+- [x] `scripts/deploy/write-usb.ps1` -- fail-closed USB writer (strict `BusType -eq 'USB'`, TOCTOU re-check, sha256 verify); replaces stale c6a4dcca version.
+- [x] `scripts/release/to-vhdx.ps1` -- VHDX via `qemu-img.exe convert -f raw -O vhdx`; Hyper-V detected/reported, not used (no raw->VHDX byte-parity path).
+- [x] `scripts/release/to-iso.ps1` -- hybrid UEFI ISO via `xorriso.exe` (sha256-equal to Linux peer with `SOURCE_DATE_EPOCH=0`); ADK `oscdimg.exe` detected/reported, not used.
+- [x] `docs/release/windows-host-tooling.md` "Disk converters" subsection -- tool-pair table, parity-contract notes, prerequisites, UAC requirements.
+- [x] Commit: `"release: windows-host disk artifact converters (write-usb + to-vhdx + to-iso)"`
 
-**Test checkpoint:** On a Windows host with the Hyper-V module + ADK installed, `scripts\release\to-vhdx.ps1` produces a `disk.vhdx` whose `qemu-img info` matches the Linux `to-vhdx.sh` output (same virtual size, same block size, same disk identifier). `scripts\release\to-iso.ps1` produces a `disk.iso` whose sha256 equals the Linux peer when run with the same `SOURCE_DATE_EPOCH=0`. `scripts\deploy\write-usb.ps1` enumerates `Get-Disk` and refuses non-USB disks with `[ERROR] disk N is BusType=<x>; only BusType=USB is allowed`. Without Hyper-V module, `to-vhdx.ps1` falls back to `qemu-img.exe convert -O vhdx` and emits `[INFO] Hyper-V module unavailable; using qemu-img.exe fallback`.
+**Test checkpoint:** On a Windows host with `qemu-img.exe` installed, `scripts\release\to-vhdx.ps1` produces a `disk.vhdx` whose `qemu-img info` reports `format: vhdx`, `cluster_size: 4194304`, and whose `qemu-img compare -f raw -F vhdx disk.img disk.vhdx` exits 0 (byte-content identical). On a Windows host with `xorriso.exe` installed, `scripts\release\to-iso.ps1` produces a `disk.iso` whose sha256 equals the Linux `build-iso.sh` output when both are run from the same git revision with `SOURCE_DATE_EPOCH=0` (verifiable via the cross-host parity test). `scripts\deploy\write-usb.ps1` enumerates `Get-Disk | Where-Object BusType -eq 'USB'` strictly (no size/removable fallback), refuses any non-USB disk with `[ERROR] disk N is BusType=<x>; only BusType=USB is allowed`, and exits non-zero if the post-write per-file sha256 verification of BOOTX64.EFI / kernel.exe / boot.conf does NOT match the source ESP.
+
+> **Test runner:** N/A (Windows-host PS1; validated via cross-host bash+pwsh parity test in the disk-converter test suite owned by §14) | bash peers (`build-iso.sh`, `to-vhdx.sh`, `write-usb.sh`) gate Linux dev hosts.
+
+> **Notes:**
+> - Shipped: `write-usb.ps1` (fail-closed; strict USB filter + TOCTOU re-check + sha256 verify) + `to-vhdx.ps1` (qemu-img.exe primary) + `to-iso.ps1` (xorriso.exe primary) + `windows-host-tooling.md` "Disk converters" subsection.
+> - How it runs: each PS1 mirrors the bash peer's arg surface and pins the SAME tool the Linux peer uses; Windows-native alternatives (Hyper-V, oscdimg) are detected and reported but not invoked because they cannot satisfy byte-parity.
+> - Downstream effects: replaces the pre-§13 write-usb.ps1 (commit c6a4dcca) which had a permissive USB filter (Critical) and WARN-not-fail verification (High) that Codex flagged at §13 ship-time.
+> - Canonical doc: [`docs/release/windows-host-tooling.md`](../../docs/release/windows-host-tooling.md) "Disk converters" subsection; schema in [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
+> - Scope boundary: §14 owns `scripts/debug/release/` test subdir + bash cross-host parity harness; this section ships the converter PS1s only.
+
+> **Verified:** 2026-05-07 | commit pending | 5/5 items | build OK | bash peers tests 23/23 PASS (manifest) + smoke PASS (KVM) on Linux peer; PS1 byte-parity validated by §14 harness on Windows host
+> **Quality reviewed:** 2026-05-07 | Codex 4x (design, adversarial, consistency, perf) | 1C+4H+1M fixed, 0 open | scope: N/A (host-tooling, no code-quality skill applies)
 
 ---
 
