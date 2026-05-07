@@ -358,15 +358,15 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 > **Scope boundary:** Bash on Linux / WSL is the canonical host path; this section adds native Windows PowerShell peers for the manifest-tooling subset that has deterministic, cross-host-comparable output (UUID v5, sha256, JSON). Disk converters live in §13; release-test subdir + aggregate runner + validate.py extension live in §14. Each PS1 is a peer of the existing `.sh`, not a WSL wrapper.
 
 - [x] `scripts/release/build-manifest.ps1` -- PS1 peer of `build-manifest.sh build|check`; byte-identical output via manual UUID v5 + Python-format JSON emitter + UTF-8 no-BOM.
-- [x] `scripts/release/test-build-manifest.ps1` -- PS1 peer of `test-build-manifest.sh` (24 assertions; adds [4m] for `size_mib > 2^32-1` parity).
+- [x] `scripts/release/test-build-manifest.ps1` -- PS1 peer of `test-build-manifest.sh` (26 assertions; adds [4m] `size_mib > 2^32-1` and [4n] `total_sectors` at Int64+1 / UInt64.MaxValue for uint64 parity).
 - [x] `tools/bootimg/bootimg.bat` -- shim with version-probed fall-through (`py -3` then `python`); rejects Python 2 with a resolver `[ERROR]` instead of crashing inside `bootimg.py`.
 - [x] Cross-host parity test at `tools/bootimg/tests/cross_host/test_manifest_parity.sh`; asserts `sha256(bash) == sha256(pwsh)`; SKIPs when `pwsh` or build artifacts absent.
 - [x] `docs/release/windows-host-tooling.md` "Manifest tooling" subsection -- tool-pair table, parity-contract mechanics, local validation recipe.
 - [x] Commit: `"release: windows-host manifest tooling (build-manifest.ps1 + test + bootimg shim)"`
 
-**Test checkpoint:** On a Windows host with PowerShell 5.1+, `scripts\release\test-build-manifest.ps1` exits 0 with `24 pass, 0 fail`. On any host with `pwsh` available, `tools/bootimg/tests/cross_host/test_manifest_parity.sh` runs both `build-manifest.sh build` and `build-manifest.ps1 build` against the same input and asserts `sha256sum` of the two `manifest.json` outputs match. Tampering with one byte of the PS1 output makes the parity test fail with the diff between the two JSON blobs.
+**Test checkpoint:** On a Windows host with PowerShell 5.1+, `scripts\release\test-build-manifest.ps1` exits 0 with `26 pass, 0 fail`. On any host with `pwsh` available, `tools/bootimg/tests/cross_host/test_manifest_parity.sh` runs both `build-manifest.sh build` and `build-manifest.ps1 build` against the same input and asserts `sha256sum` of the two `manifest.json` outputs match. Tampering with one byte of the PS1 output makes the parity test fail with the diff between the two JSON blobs.
 
-> **Test runner:** `scripts\release\test-build-manifest.ps1` (PS1 peer, 24 assertions) | bash peer at `scripts/release/test-build-manifest.sh` (23 assertions) for Linux dev hosts | 0 failures expected.
+> **Test runner:** `scripts\release\test-build-manifest.ps1` (PS1 peer, 26 assertions) | bash peer at `scripts/release/test-build-manifest.sh` (23 assertions) for Linux dev hosts | 0 failures expected.
 
 > **Notes:**
 > - Shipped: `build-manifest.ps1` + `test-build-manifest.ps1` (24 assertions) + `bootimg.bat` shim + `tests/cross_host/test_manifest_parity.sh` + `docs/release/windows-host-tooling.md`.
@@ -375,8 +375,8 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 > - Canonical doc: [`docs/release/windows-host-tooling.md`](../../docs/release/windows-host-tooling.md); schema in [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
 > - Scope boundary: §13 owns disk-converter PS1s; §14 owns `scripts/debug/release/` + `validate.py` 4-layer extension.
 
-> **Verified:** 2026-05-07 | commit pending | 6/6 items | build OK | tests 23/23 PASS (bash peer) + 24-assertion PS1 peer (verifiable on Windows host)
-> **Quality reviewed:** 2026-05-07 | Codex 4x (design, adversarial, consistency, perf) | 1H+2M+1L fixed, 0 open | scope: N/A (host-tooling, no code-quality skill applies)
+> **Verified:** 2026-05-07 | commit `8efe325b` | 6/6 items | build OK | tests 23/23 PASS (bash peer) + 26-assertion PS1 peer (verifiable on Windows host)
+> **Quality reviewed:** 2026-05-07 | Codex 7x (design, adversarial, consistency, perf, post-impl adversarial+consistency+perf) | 1H+3M+1L fixed, 0 open | scope: N/A (host-tooling, no code-quality skill applies)
 
 ---
 

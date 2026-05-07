@@ -262,6 +262,18 @@ Save-MutatedManifest -Obj $m -Path $bszPath
 $r = Invoke-ManifestCapture @('check', $bszPath)
 if ($r.rc -ne 0 -and $r.out -match 'size_mib') { Ok "rejects size_mib=4294967296" } else { Bad ("should have rejected; rc=" + $r.rc + ", err: " + $r.out) }
 
+# ---- [4n] accept uint64-sized total_sectors (parity with Python int) -----
+
+Note "[4n] check accepts total_sectors at and above Int64.MaxValue (uint64 parity)"
+foreach ($val in @('9223372036854775808', '18446744073709551615')) {
+    $m = Get-ManifestObject $mPath
+    $m | Add-Member -NotePropertyName total_sectors -NotePropertyValue $val -Force
+    $bigPath = "$mPath.big_$val"
+    Save-MutatedManifest -Obj $m -Path $bigPath
+    $r = Invoke-ManifestCapture @('check', $bigPath)
+    if ($r.rc -eq 0) { Ok ("accepts total_sectors=$val") } else { Bad ("should have accepted total_sectors=$val; rc=" + $r.rc + ", err: " + $r.out) }
+}
+
 # ---- [5] deterministic build (byte-identical across runs) ----------------
 
 Note "[5] deterministic build (artifact_uuid is reproducibility-friendly)"

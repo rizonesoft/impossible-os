@@ -76,12 +76,15 @@ On a Windows host with PowerShell 5.1 or later:
 pwsh -File scripts\release\test-build-manifest.ps1
 ```
 
-Expected last line on a clean run: `[summary] 24 pass, 0 fail`. Exit
+Expected last line on a clean run: `[summary] 26 pass, 0 fail`. Exit
 code 0. The test produces and validates manifest fixtures in a temp
 directory which is removed on completion. (The bash peer at
 `scripts/release/test-build-manifest.sh` runs 23 assertions; the PS1
-peer adds one extra fixture for the `size_mib > 2^32-1` upper-bound
-parity check.)
+peer adds three extra fixtures: one for the `size_mib > 2^32-1` upper-
+bound parity check, and two for `total_sectors` at the
+`Int64.MaxValue+1` and `UInt64.MaxValue` boundaries (validates that the
+`Test-IsUInt64Range` helper bridges PowerShell's `ConvertFrom-Json`
+upper-bound behavior to Python's unbounded-precision int parity).
 
 ### Running the offline inspector
 

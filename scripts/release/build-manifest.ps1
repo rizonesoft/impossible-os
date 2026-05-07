@@ -654,6 +654,24 @@ function Test-IsInt {
     $false
 }
 
+function Test-IsUInt64Range {
+    # Accept any value whose textual representation is a non-negative
+    # integer that fits in [0, 2^64-1]. Bridges the parity gap between
+    # PowerShell's ConvertFrom-Json (which surfaces JSON integers above
+    # Int64.MaxValue as Decimal/Double/BigInteger depending on host PS
+    # version) and Python's unbounded-precision int. Without this, a
+    # legal manifest with total_sectors=18446744073709551615 would be
+    # rejected by the PS validator while the bash peer accepts it.
+    param([object] $V)
+    if ($null -eq $V -or $V -is [bool]) { return $false }
+    if ((Test-IsInt $V) -and $V -ge 0) { return $true }
+    $s = [string] $V
+    if ([string]::IsNullOrEmpty($s)) { return $false }
+    if ($s -notmatch '^\d+$') { return $false }
+    $u = [uint64] 0
+    return [uint64]::TryParse($s, [ref] $u)
+}
+
 function Test-IsBool {
     param([object] $V)
     $V -is [bool]
@@ -689,7 +707,7 @@ function Validate-EntryRow {
         [void] $rowErrs.Add("$label.sha256 missing or not a 64-character hex string")
     }
     $sz = Get-MapValue $E 'size_bytes'
-    if (-not (Test-IsInt $sz) -or $sz -lt 0 -or $sz -gt [uint64]::MaxValue) {
+    if (-not (Test-IsUInt64Range $sz)) {
         [void] $rowErrs.Add("$label.size_bytes must be a non-negative integer <= 2^64-1 (got: $sz)")
     }
     $opt = Get-MapValue $E 'optional'
@@ -778,7 +796,7 @@ function Invoke-CmdCheck {
     }
     if (Test-MapHas $m 'total_sectors') {
         $ts = Get-MapValue $m 'total_sectors'
-        if ($null -ne $ts -and (-not (Test-IsInt $ts) -or $ts -lt 0 -or $ts -gt [uint64]::MaxValue)) {
+        if ($null -ne $ts -and -not (Test-IsUInt64Range $ts)) {
             Add-CheckError "total_sectors must be a non-negative integer <= 2^64-1 when present (got: $ts)"
         }
     }
@@ -837,7 +855,7 @@ function Invoke-CmdCheck {
             foreach ($optInt in @('first_lba', 'last_lba', 'attributes')) {
                 if (Test-MapHas $p $optInt) {
                     $v = Get-MapValue $p $optInt
-                    if ($null -ne $v -and (-not (Test-IsInt $v) -or $v -lt 0 -or $v -gt [uint64]::MaxValue)) {
+                    if ($null -ne $v -and -not (Test-IsUInt64Range $v)) {
                         Add-CheckError "$label.$optInt must be a non-negative integer <= 2^64-1 when present (got: $v)"
                     }
                 }
@@ -965,11 +983,11 @@ function Invoke-CmdCheck {
                 Add-CheckError "vm_image_metadata.subformat must be one of dynamic, fixed or '' (got: $sub)"
             }
             $bs = Get-MapValue $vm 'block_size_bytes'
-            if (-not (Test-IsInt $bs) -or $bs -le 0 -or $bs -gt [uint64]::MaxValue) {
+            if (-not (Test-IsUInt64Range $bs) -or [string]$bs -eq '0') {
                 Add-CheckError "vm_image_metadata.block_size_bytes must be a positive integer <= 2^64-1 (got: $bs)"
             }
             $vs = Get-MapValue $vm 'virtual_size_bytes'
-            if (-not (Test-IsInt $vs) -or $vs -le 0 -or $vs -gt [uint64]::MaxValue) {
+            if (-not (Test-IsUInt64Range $vs) -or [string]$vs -eq '0') {
                 Add-CheckError "vm_image_metadata.virtual_size_bytes must be a positive integer <= 2^64-1 (got: $vs)"
             }
             if (($vmFmts -contains $f) -and ($vmFmts -contains $artifactFormat) -and ($f -ne $artifactFormat)) {
