@@ -97,6 +97,12 @@ _UUID_RE = re.compile(
 # Kebab-case id: lowercase letters/digits, dash-separated, no leading/trailing dash.
 _KEBAB_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
+# Locates the crc32 field's 8 hex digits in raw file bytes. Producer / consumer must emit
+# the field as `"crc32": "0xHHHHHHHH"` (whitespace between the key, colon, and value
+# permitted). Group 1 is the 8 hex chars; .span(1) gives the byte range to zero out
+# during CRC computation.
+_CRC_FIELD_RE = re.compile(rb'"crc32"\s*:\s*"0x([0-9a-fA-F]{8})"')
+
 
 def fail(msg: str) -> None:
     """Print [FAIL] line to stderr and exit 1."""
@@ -270,35 +276,36 @@ def _expect_enum(idx: int, eid: str, kind: str, payload: dict, key: str, *, allo
         fail(f"entry[{idx}] {eid} (kind={kind}): {key} must be one of {sorted(allowed)}, got {val!r}")
 
 
-def canonical_entries_bytes(entries: list[Any]) -> bytes:
-    """Canonicalize the entries array per docs/boot/boot-entry-schema.md.
+def find_crc_field(raw: bytes) -> tuple[int, int]:
+    """Locate the crc32 field's 8 hex digit byte range in raw file bytes.
 
-    Subset of RFC 8785 sufficient for this schema:
-      - UTF-8 encoding (ensure_ascii=False)
-      - lexicographically sorted object keys
-      - no insignificant whitespace
-      - integers with no decimal point / exponent (json.dumps default for ints)
-      - no NaN / Infinity (allow_nan=False); floats are rejected during validate_store anyway,
-        but allow_nan=False is a defense-in-depth for any path that bypasses the recursive check
+    Returns (offset, expected_value) where offset is the byte index of the first hex digit
+    and expected_value is the parsed uint32. Raises a fail() if the field is absent or
+    mis-shaped.
+
+    Producer requirement: emit the crc32 field as `"crc32": "0xHHHHHHHH"`. Whitespace
+    between the key, colon, and quoted value is permitted (matches `\\s*` in regex).
     """
-    try:
-        return json.dumps(
-            entries,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            allow_nan=False,
-        ).encode("utf-8")
-    except ValueError as e:
-        # allow_nan=False raises ValueError on NaN / Infinity. Convert to fail() so callers see
-        # a [FAIL] line rather than an uncaught exception trace.
-        fail(f"non-finite float in entries (NaN/Infinity not allowed): {e}")
-        raise  # unreachable; satisfies type checker
+    m = _CRC_FIELD_RE.search(raw)
+    if not m:
+        fail('crc32 field not found in expected shape: "crc32": "0xHHHHHHHH"')
+        return 0, 0  # unreachable
+    offset = m.start(1)
+    expected = int(m.group(1).decode("ascii"), 16)
+    return offset, expected
 
 
-def compute_crc(entries: list[Any]) -> int:
-    """IEEE 802.3 CRC-32 over canonical-form entries bytes."""
-    return zlib.crc32(canonical_entries_bytes(entries)) & 0xFFFFFFFF
+def compute_crc_from_file(raw: bytes) -> int:
+    """IEEE 802.3 CRC-32 over file bytes with the crc32 field's 8 hex digits zeroed.
+
+    GPT-style: locate the crc32 field, replace the 8 hex chars with `00000000` in a
+    scratch copy, CRC the result. Independent of JSON canonicalization -- producers
+    just need stable bytes (the bootloader, validate.py --emit-crc, and bootcfg.exe
+    all emit deterministic output).
+    """
+    offset, _ = find_crc_field(raw)
+    zeroed = raw[:offset] + b"00000000" + raw[offset + 8:]
+    return zlib.crc32(zeroed) & 0xFFFFFFFF
 
 
 def validate_envelope(entry: dict, idx: int) -> None:
@@ -459,10 +466,11 @@ def _reject_non_finite(node: Any, path: str = "") -> None:
                 stack.append((v, f"{cur_path}[{i}]"))
 
 
-def validate_store(data: dict, raw_size: int, *, recompute_crc: bool) -> int:
+def validate_store(data: dict, raw: bytes, *, recompute_crc: bool) -> int:
     """Validate the parsed store. Returns the computed CRC. Calls fail() on any violation.
 
-    When recompute_crc=True, do not check crc32 equality -- caller is in --emit-crc mode."""
+    `raw` is the file bytes (used for CRC verification). When recompute_crc=True, do not check
+    crc32 equality -- caller is in --emit-crc mode."""
 
     if not isinstance(data, dict):
         fail("top-level value must be a JSON object")
@@ -490,8 +498,8 @@ def validate_store(data: dict, raw_size: int, *, recompute_crc: bool) -> int:
     if not (1 <= len(entries) <= MAX_ENTRIES):
         fail(f"entries length must be 1..{MAX_ENTRIES} (got {len(entries)})")
 
-    if raw_size > MAX_TOTAL_BYTES:
-        fail(f"file size {raw_size} > MAX_TOTAL_BYTES {MAX_TOTAL_BYTES}")
+    if len(raw) > MAX_TOTAL_BYTES:
+        fail(f"file size {len(raw)} > MAX_TOTAL_BYTES {MAX_TOTAL_BYTES}")
 
     seen_ids: set[str] = set()
     for idx, entry in enumerate(entries):
@@ -506,16 +514,13 @@ def validate_store(data: dict, raw_size: int, *, recompute_crc: bool) -> int:
             continue  # skip-with-warn already logged
         validate_payload(entry, idx, kind_name)
 
-    computed = compute_crc(entries)
+    computed = compute_crc_from_file(raw)
     if not recompute_crc:
-        try:
-            expected = int(crc_text, 16)
-        except ValueError:
-            fail(f"crc32 not parseable as hex: {crc_text!r}")
+        _, expected = find_crc_field(raw)
         if computed != expected:
             fail(
-                f"CRC mismatch: header={crc_text} computed=0x{computed:08X} "
-                f"(canonical entries bytes differ from what produced the header CRC)"
+                f"CRC mismatch: header=0x{expected:08X} computed=0x{computed:08X} "
+                f"(file bytes differ from what produced the header CRC)"
             )
 
     return computed
@@ -565,17 +570,23 @@ def main(argv: list[str]) -> int:
         print(f"[FAIL] JSON nesting exceeds parser depth limit (DoS shape rejected)", file=sys.stderr)
         return 1
 
-    crc = validate_store(data, len(raw), recompute_crc=emit_crc)
-
     if emit_crc:
-        data["crc32"] = f"0x{crc:08X}"
-        # Pretty-print with 2-space indent, preserve key order from the input file by re-reading.
-        # We use sort_keys=False here to match the human-friendly source layout; the stored CRC
-        # is over the canonical entries bytes, not the file bytes, so layout is independent.
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        # --emit-crc mode: write the file with `"0x00000000"` placeholder so the CRC has a
+        # stable basis, then patch the 8 hex digits in place with the real CRC. The on-disk
+        # bytes used for verification are the SAME bytes the producer just wrote, so the
+        # placeholder + patch flow guarantees the CRC matches.
+        data["crc32"] = "0x00000000"
+        placeholder_text = json.dumps(data, indent=2) + "\n"
+        path.write_text(placeholder_text, encoding="utf-8")
+        raw_with_placeholder = path.read_bytes()
+        crc = validate_store(data, raw_with_placeholder, recompute_crc=True)
+        offset, _ = find_crc_field(raw_with_placeholder)
+        final = raw_with_placeholder[:offset] + f"{crc:08X}".encode("ascii") + raw_with_placeholder[offset + 8:]
+        path.write_bytes(final)
         print(f"[OK] {path}: crc32 -> 0x{crc:08X}")
         return 0
 
+    crc = validate_store(data, raw, recompute_crc=False)
     print(f"[OK] {path}: {len(data['entries'])} entries, crc32=0x{crc:08X}")
     return 0
 

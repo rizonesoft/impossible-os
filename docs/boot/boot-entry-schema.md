@@ -205,40 +205,62 @@ Otherwise the parser rejects the entry with a logged reason.
 | `kernel`     | string | yes      | ESP-relative path                                       |
 | `test_suite` | string | yes      | `mm` / `fs` / `boot` / `ob` / `security` / `ipc` / `sched` / `abi` / `storage` / `exec` |
 
-## 5. CRC-32 Canonicalization Algorithm
+## 5. CRC-32 Algorithm
 
 The header's `crc32` field MUST equal the IEEE 802.3 CRC-32 (polynomial `0xEDB88320`, initial
-`0xFFFFFFFF`, final XOR `0xFFFFFFFF`) of the canonical-form serialization of the `entries`
-value, encoded as UTF-8.
+`0xFFFFFFFF`, final XOR `0xFFFFFFFF`) of the file bytes with the 8 hex digits inside the
+`crc32` value zeroed.
 
-### Canonical form
+### Algorithm
 
-A subset of RFC 8785 (JSON Canonicalization Scheme) sufficient for this schema:
+1. Locate the `crc32` field. The producer MUST emit it with the exact shape
+   `"crc32": "0xHHHHHHHH"` where `HHHHHHHH` is 8 lowercase or uppercase hex digits.
+   Whitespace between `"crc32"`, `:`, and the value is permitted (matches the regex
+   `"crc32"\s*:\s*"0x[0-9a-fA-F]{8}"`).
+2. Construct a temporary buffer equal to the file bytes, with the 8 hex digits replaced by
+   `00000000` (no `0x` prefix change; only the 8 hex chars change).
+3. Compute IEEE 802.3 CRC-32 over the temporary buffer.
+4. Compare to the saved 8 hex digits, parsed as a hex-encoded uint32.
 
-1. UTF-8 encoded bytes.
-2. No insignificant whitespace -- only `","` between elements, `":"` between key and value.
-3. All object keys sorted in lexicographic UTF-8 byte order.
-4. Numbers in canonical form: integers with no decimal point or exponent; floats are not used.
-5. Strings: quote with `"`, minimal escaping per RFC 8259.
-6. Arrays: order preserved.
+### Producer flow (validate.py --emit-crc, future bootcfg.exe)
 
-### Reference algorithm (Python)
+1. Write the file with `"crc32": "0x00000000"` placeholder (no whitespace difference between
+   placeholder and final).
+2. Read the bytes back.
+3. Compute CRC per the algorithm above.
+4. Patch the 8 hex digits in place with the actual CRC, MSB-first uppercase hex. The bytes
+   already contain `00000000`, so the in-place patch makes the file's stored CRC match the
+   CRC of the file with that field zeroed -- the file is self-verifying.
+
+### Reference (Python)
 
 ```python
-import json, zlib
-canonical = json.dumps(
-    data["entries"],
-    sort_keys=True,
-    separators=(",", ":"),
-    ensure_ascii=False,
-).encode("utf-8")
-crc = zlib.crc32(canonical) & 0xFFFFFFFF
+import re, zlib
+
+_CRC_FIELD_RE = re.compile(rb'"crc32"\s*:\s*"0x([0-9a-fA-F]{8})"')
+
+
+def compute_crc_from_file(raw: bytes) -> int:
+    m = _CRC_FIELD_RE.search(raw)
+    if m is None:
+        raise ValueError('crc32 field not found in expected shape')
+    offset = m.start(1)  # offset of the 8 hex chars
+    zeroed = raw[:offset] + b"00000000" + raw[offset + 8:]
+    return zlib.crc32(zeroed) & 0xFFFFFFFF
 ```
 
 `zlib.crc32` uses IEEE 802.3 / 0xEDB88320 by default; the bootloader's parser ships its own
 copy at [`src/kernel/fs/gpt.c`](../../src/kernel/fs/gpt.c) (`gpt_crc32`).
 
-The bootloader-side canonicalizer is owned by the parser TODO; this section pins the algorithm.
+### Why byte-level, not canonical-form
+
+This scheme is corruption-only integrity (per the two-tier trust model in Section 2: under
+UKI Secure Boot the store is advisory only; under split-path the bootloader signature is the
+trust anchor + CRC for corruption detection). Byte-level CRC is ~6x simpler in freestanding
+C than canonical-form re-emission (no JSON re-emitter, no key sort, no string-escape
+canonicalization). Producers (`validate.py --emit-crc`, future `bootcfg.exe`, future
+bootloader-side writer if any) emit deterministic bytes; tampering or reformatting changes
+the CRC. Authenticated stores (Ed25519 over file bytes) are tracked as a Branch B follow-up.
 
 ## 6. Schema Version Policy
 

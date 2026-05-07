@@ -117,17 +117,17 @@ typedef enum {
 #define BOOT_ENTRY_FLAG_MASK_KNOWN_V1       0x0000001Fu
 
 /* Header carried at the top of bootentries.json. The parser and host validator both
- * compute CRC-32 over the canonical-form entries array (see
- * docs/boot/boot-entry-schema.md "CRC-32 canonicalization") and compare to
- * header.crc32. Mismatch is a hard parse error; the bootloader then synthesizes the
- * fallback entry per FALLBACK CONTRACT above.
+ * compute CRC-32 over the file bytes with the crc32 field's 8 hex digits zeroed (see
+ * docs/boot/boot-entry-schema.md Section 5 "CRC-32 Algorithm") and compare to the
+ * stored crc32 value. Mismatch is a hard parse error; the bootloader then
+ * synthesizes the fallback entry per FALLBACK CONTRACT above.
  *
  * The struct layout here is informational -- the on-disk format is JSON. The
  * bootloader's parser reads the JSON header and populates a runtime equivalent.
  */
 typedef struct {
     unsigned int schema_version;    /* must equal BOOT_ENTRIES_SCHEMA_VERSION for a v1 reader */
-    unsigned int crc32;             /* IEEE 802.3 over canonical-form entries payload */
+    unsigned int crc32;             /* IEEE 802.3 over file bytes with crc32 field zeroed */
     unsigned int entry_count;       /* informational; parser still bounds-checks against MAX_ENTRIES */
     unsigned int reserved;          /* must be 0 */
 } boot_entries_header_t;

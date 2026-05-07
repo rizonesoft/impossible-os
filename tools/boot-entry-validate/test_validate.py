@@ -23,13 +23,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = REPO_ROOT / "tools" / "boot-entry-validate" / "validate.py"
 SAMPLE = REPO_ROOT / "resources" / "boot" / "bootentries-example.json"
 
-# Import compute_crc() from the validator so fixtures that intentionally violate validation can
+# Import the validator's CRC helpers so fixtures that intentionally violate validation can
 # still produce a CRC-correct envelope. Using --emit-crc as a subprocess fails on invalid input
 # because that mode runs full validation first.
 _spec = importlib.util.spec_from_file_location("_validator_mod", VALIDATOR)
 _validator_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_validator_mod)
-_compute_crc = _validator_mod.compute_crc
+_compute_crc_from_file = _validator_mod.compute_crc_from_file
+_find_crc_field = _validator_mod.find_crc_field
 
 
 def run_validator(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -59,11 +60,25 @@ def write_tmp(payload: Any, *, recompute_crc: bool = False) -> Path:
     All fixtures live under one TemporaryDirectory that gets cleaned up at the end of main();
     no per-test unlink needed. Replaces the prior NamedTemporaryFile(delete=False) pattern that
     leaked one file per case (~78 leaks per run on every machine).
+
+    With recompute_crc=True (and the payload is a store dict with `crc32` + `entries`):
+    forces crc32 to "0x00000000" placeholder, dumps to file, computes the new file-byte CRC,
+    and patches the 8 hex digits in place. Matches the producer flow in validate.py --emit-crc.
     """
-    if recompute_crc and isinstance(payload, dict) and isinstance(payload.get("entries"), list):
-        payload["crc32"] = f"0x{_compute_crc(payload['entries']):08X}"
     base = _ensure_tmpdir()
     fd = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, dir=str(base))
+    if recompute_crc and isinstance(payload, dict) and "crc32" in payload:
+        payload = dict(payload)
+        payload["crc32"] = "0x00000000"
+        json.dump(payload, fd)
+        fd.close()
+        path = Path(fd.name)
+        raw = path.read_bytes()
+        crc = _compute_crc_from_file(raw)
+        offset, _ = _find_crc_field(raw)
+        patched = raw[:offset] + f"{crc:08X}".encode("ascii") + raw[offset + 8:]
+        path.write_bytes(patched)
+        return path
     json.dump(payload, fd)
     fd.close()
     return Path(fd.name)

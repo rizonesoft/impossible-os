@@ -41,7 +41,7 @@ Exit codes:
 11. `kind: network` requires `uri_scheme` in {http, https, tftp} and `asset_digest` is 64 lowercase hex.
 12. `kind: safe` requires `safe_mode_subset` in {minimal, network, cmd}.
 13. `kind: test` requires `test_suite` to be a known TEST_CAT_* category.
-14. CRC-32 of canonical-form `entries` payload matches `crc32` field.
+14. CRC-32 of file bytes (with the `crc32` field's 8 hex digits zeroed) matches the stored `crc32` value. See `docs/boot/boot-entry-schema.md` Section 5.
 
 Unknown flag names produce a `[WARN]` line and are dropped (forward-compat). Unknown vendor-range
 kinds skip the entry with a `[WARN]` line; the store as a whole remains valid.
