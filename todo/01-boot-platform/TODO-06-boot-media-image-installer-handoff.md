@@ -401,8 +401,8 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 > - Canonical doc: [`docs/release/windows-host-tooling.md`](../../docs/release/windows-host-tooling.md) "Disk converters" subsection; schema in [`docs/release/boot-artifact-manifest.md`](../../docs/release/boot-artifact-manifest.md).
 > - Scope boundary: §14 owns `scripts/debug/release/` test subdir + bash cross-host parity harness; this section ships the converter PS1s only.
 
-> **Verified:** 2026-05-07 | commit pending | 5/5 items | build OK | bash peers tests 23/23 PASS (manifest) + smoke PASS (KVM) on Linux peer; PS1 byte-parity validated by §14 harness on Windows host
-> **Quality reviewed:** 2026-05-07 | Codex 4x (design, adversarial, consistency, perf) | 1C+4H+1M fixed, 0 open | scope: N/A (host-tooling, no code-quality skill applies)
+> **Verified:** 2026-05-07 | commit `65696179` | 5/5 items | build OK | bash peers tests 23/23 PASS (manifest) + smoke PASS (KVM) on Linux peer; PS1 byte-parity validated by §14 harness on Windows host
+> **Quality reviewed:** 2026-05-07 | Codex 7x (design, adversarial, consistency, perf, post-impl adversarial+consistency+perf) | 1C+4H+3M+2L fixed, 0 open | scope: N/A (host-tooling, no code-quality skill applies)
 
 ---
 

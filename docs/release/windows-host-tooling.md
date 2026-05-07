@@ -221,9 +221,10 @@ sha256-comparing this peer's output against the Linux peer's.
 
 | Tool | Where to get it | Required by |
 |---|---|---|
-| `mtype.exe` | mtools (Cygwin or MSYS2 package) | write-usb.ps1 |
+| `mtype.exe` | mtools (Cygwin or MSYS2 package) | write-usb.ps1; to-iso.ps1 (when bash absent, for native manifest-to-ESP cross-check) |
 | `qemu-img.exe` | qemu-tools or `choco install qemu-img` | to-vhdx.ps1 |
 | `xorriso.exe` | Cygwin/MSYS2 xorriso package, or a standalone Windows xorriso build | to-iso.ps1 |
+| `bash.exe` (optional) | Git for Windows / WSL | to-iso.ps1 (preferred manifest-to-ESP path; falls back to mtype.exe if absent) |
 | `pwsh` (PowerShell 7+) | `winget install Microsoft.PowerShell` | all PS1 peers |
 | Administrator elevation | `Run as administrator` | write-usb.ps1 only |
 

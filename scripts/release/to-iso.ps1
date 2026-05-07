@@ -242,7 +242,13 @@ try {
             $ms = New-Object System.IO.MemoryStream
             try {
                 $proc.StandardOutput.BaseStream.CopyTo($ms)
-                $proc.WaitForExit()
+                # Bounded wait: 30s cap turns a hung mtype into a clean
+                # failure instead of an indefinite ISO build hang.
+                if (-not $proc.WaitForExit(30000)) {
+                    try { $proc.Kill() } catch { }
+                    Write-Err ("mtype timed out reading /{0} from ESP for entry name={1}" -f $espRel, $name)
+                    exit 1
+                }
                 if ($proc.ExitCode -ne 0) {
                     Write-Err ("mtype could not read /{0} from ESP for entry name={1}" -f $espRel, $name)
                     exit 1
@@ -264,6 +270,7 @@ try {
                 $checked++
             } finally {
                 $ms.Dispose()
+                $proc.Dispose()
             }
         }
         Write-Note ("manifest-to-ESP cross-check OK ({0} entries verified)" -f $checked)

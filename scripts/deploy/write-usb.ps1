@@ -49,7 +49,7 @@
 
 [CmdletBinding()]
 param(
-    [string] $DiskImg
+    [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Rest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +64,25 @@ $LegacyImg  = Join-Path $BuildDir 'system-disk.img'
 
 function Write-Err  { param([string] $M) [Console]::Error.WriteLine("[ERROR] $M") }
 function Write-Note { param([string] $M) [Console]::Error.WriteLine("[write-usb] $M") }
+
+# Arg surface mirrors to-vhdx.ps1 / to-iso.ps1: --In/--in (image
+# override, optional), --DiskImg/--disk-img (alias for parity with the
+# old positional form). No --Out -- USB writers don't take an output
+# argument; the user picks the target disk interactively.
+$DiskImg = $null
+$ai = 0
+while ($ai -lt $Rest.Count) {
+    $a = $Rest[$ai]
+    switch -Exact ($a) {
+        '--In'        { $DiskImg = $Rest[$ai + 1]; $ai += 2; continue }
+        '--in'        { $DiskImg = $Rest[$ai + 1]; $ai += 2; continue }
+        '--DiskImg'   { $DiskImg = $Rest[$ai + 1]; $ai += 2; continue }
+        '--disk-img'  { $DiskImg = $Rest[$ai + 1]; $ai += 2; continue }
+        '-h'          { [Console]::Error.WriteLine("Usage: write-usb.ps1 [--In PATH]`n  Default: build/release/disk.img (preferred) or build/system-disk.img"); exit 0 }
+        '--help'      { [Console]::Error.WriteLine("Usage: write-usb.ps1 [--In PATH]`n  Default: build/release/disk.img (preferred) or build/system-disk.img"); exit 0 }
+        default       { Write-Err "unknown arg: $a"; exit 2 }
+    }
+}
 
 if (-not $DiskImg) {
     if ((Test-Path -LiteralPath $ReleaseImg) -and (Test-Path -LiteralPath $LegacyImg)) {
@@ -81,7 +100,7 @@ if (-not (Test-Path -LiteralPath $DiskImg -PathType Leaf)) {
     Write-Err "missing source image: $DiskImg"
     Write-Err "Build a release image: bash scripts/release/build-image.sh (in WSL)"
     Write-Err "Or the legacy system img: bash scripts/build.sh clean (in WSL)"
-    exit 2
+    exit 1
 }
 
 $ImgSize  = (Get-Item -LiteralPath $DiskImg).Length
@@ -112,7 +131,7 @@ if (-not $mtype) { $mtype = Get-Command mtype -ErrorAction SilentlyContinue }
 if (-not $mtype) {
     Write-Err 'mtype not found on PATH. Install mtools for Windows (the Cygwin or MSYS2 mtools package ships mtype.exe).'
     Write-Err 'Without mtype the source ESP cannot be hashed pre-write; refusing to write without verifiable hashes.'
-    exit 2
+    exit 1
 }
 
 # Binary-safe mtype extraction. Native command stdout through the
@@ -145,7 +164,14 @@ function Get-MtypeFileHash {
     $ms = New-Object System.IO.MemoryStream
     try {
         $proc.StandardOutput.BaseStream.CopyTo($ms)
-        $proc.WaitForExit()
+        # Bounded wait: mtype on a single ESP file is fast; a 30s cap
+        # converts a hung mtype (degraded image, broken pipe) into a
+        # clean failure instead of an indefinite hang. Codex flagged the
+        # unbounded WaitForExit in post-commit review.
+        if (-not $proc.WaitForExit(30000)) {
+            try { $proc.Kill() } catch { }
+            return $null
+        }
         if ($proc.ExitCode -ne 0) {
             return $null
         }
@@ -160,6 +186,7 @@ function Get-MtypeFileHash {
         return (($hash | ForEach-Object { $_.ToString('x2') }) -join '')
     } finally {
         $ms.Dispose()
+        $proc.Dispose()
     }
 }
 
