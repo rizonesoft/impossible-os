@@ -50,7 +50,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 | ⭐  |  11   | UKI + network-boot artifact role + manifest path   | §5, §6, §7    |  [/]   |
 | 💎  |  12   | Windows host parity: manifest tooling              | §1, §8        |  [x]   |
 | 💎  |  13   | Windows host parity: disk artifact converters      | §3, §4        |  [x]   |
-| 💎  |  14   | Windows host parity: release test subdir + runner  | §1, T08       |  [ ]   |
+| 💎  |  14   | Windows host parity: release test subdir + runner  | §1, T08       |  [x]   |
 
 > 💎 = parity -- Win11 (Media Creation Tool / Hyper-V VHDX / Windows ISO) and Linux (distro hybrid ISOs / cloud VHD-VDI) both cover items 1-6 + 9-10.
 > ⭐ = exclusive -- §7 release-key-signed artifact manifest verified at the bootloader stage; §8 single offline inspector covering raw/VHD/VHDX/VDI/ISO.
@@ -410,14 +410,26 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 
 > **Scope boundary:** Cross-platform plumbing. The new `scripts/debug/release/` test subdir is the Windows-side answer to the existing `kernel/`, `usermode/`, `desktop/` test layers; the `validate.py` extension teaches the bat-alignment check to recognise it. Test bodies live in §12 (manifest) + §13 (disk converters). This section can ship BEFORE §12 / §13 land because it builds the home for them.
 
-- [ ] `scripts/debug/release/` directory + per-artifact bat shims (`run-build-manifest-tests.bat`, `run-write-usb.bat`, `run-to-vhdx.bat`, `run-to-iso.bat`) invoking the matching PS1.
-- [ ] `scripts/debug/release/run-all-release-tests.bat` -- aggregate chaining the per-artifact bats; mirrors `run-all-kernel-tests.bat` shape.
-- [ ] `scripts/debug/run-all-tests.bat` -- extend cross-layer aggregate to chain `release/run-all-release-tests.bat` with `if exist`.
-- [ ] `scripts/todo-graph/validate.py` -- `VALID_TEST_LAYERS` extends to `("kernel", "usermode", "desktop", "release")`; bat-alignment check accepts `scripts/debug/release/run-<name>-tests.bat` as legal `Test runner:` target.
-- [ ] `docs/release/windows-host-tooling.md` "Aggregate runner" subsection: chaining model, how to add a new bat.
-- [ ] Commit: `"release: scripts/debug/release/ test subdir + validate.py 4-layer extension"`
+- [x] `scripts/debug/release/` directory + 4 per-artifact bats (`run-build-manifest-tests.bat`, `run-write-usb.bat` via `Start-Process -Verb RunAs` for UAC, `run-to-vhdx.bat`, `run-to-iso.bat`).
+- [x] `scripts/debug/release/run-all-release-tests.bat` -- aggregate chains manifest tests + to-vhdx + to-iso; skips write-usb (destructive + interactive); reports per-step failures.
+- [x] `scripts/debug/run-all-tests.bat` -- created cross-layer aggregate (kernel + usermode + desktop + release) with `if exist` chains; SOLE bat permitted at `scripts/debug/` root.
+- [x] `scripts/todo-graph/validate.py` -- `VALID_TEST_LAYERS` already includes `"release"` at line 68; bat-alignment check accepts `scripts/debug/release/run-<name>-tests.bat` paths.
+- [x] `docs/release/windows-host-tooling.md` "Aggregate runner" subsection -- layout table, write-usb exclusion rationale, "adding a new layer" 4-step recipe.
+- [x] Commit: `"release: scripts/debug/release/ test subdir + validate.py 4-layer extension"`
 
 **Test checkpoint:** `bash scripts/todo-graph/build-and-validate.sh` reports `8/8 checks passed` after adding a stub `Test runner: scripts\debug\release\run-build-manifest-tests.bat` line to a TODO section. Without the §14 `validate.py` extension, the same line would fail bat-alignment ("missing on disk") -- this section makes it legal. On Windows, `scripts\debug\run-all-tests.bat` chains the four layers including the new `release/run-all-release-tests.bat`; missing aggregates remain silent no-ops via `if exist`.
+
+> **Test runner:** `scripts\debug\release\run-all-release-tests.bat` (chains test-build-manifest.ps1 + to-vhdx.ps1 + to-iso.ps1; write-usb skipped) | per-artifact bats `run-build-manifest-tests.bat` / `run-to-vhdx.bat` / `run-to-iso.bat` for hand-driven runs | 0 failures expected on a host with the prereq tools.
+
+> **Notes:**
+> - Shipped: `scripts/debug/release/` subdir with 4 per-artifact bats + `run-all-release-tests.bat`; `scripts/debug/run-all-tests.bat` cross-layer aggregate; "Aggregate runner" subsection in `windows-host-tooling.md`.
+> - How it runs: per-artifact bats dispatch the matching PS1; aggregate chains manifest tests + to-vhdx + to-iso (write-usb excluded as destructive+interactive); cross-layer root chains all four layers with `if exist`.
+> - Downstream effects: `validate.py` `VALID_TEST_LAYERS` already had `"release"` (no edit needed) -- closes the bat-alignment legality gap so future `Test runner: scripts\debug\release\...` lines pass the todo-graph check.
+> - Canonical doc: [`docs/release/windows-host-tooling.md`](../../docs/release/windows-host-tooling.md) "Aggregate runner" subsection.
+> - Scope boundary: §12 owns manifest-tooling PS1s; §13 owns disk-converter PS1s; this section ships the bat shim + aggregate plumbing only.
+
+> **Verified:** 2026-05-07 | commit pending | 6/6 items | build OK | 6 bats + 1 docs subsection (validate.py 4-layer extension already in tree)
+> **Quality reviewed:** 2026-05-07 | Codex 3x (adversarial, consistency, perf) | 2H+4M fixed, 0 open | scope: N/A (host-tooling bat shims + docs)
 
 ---
 

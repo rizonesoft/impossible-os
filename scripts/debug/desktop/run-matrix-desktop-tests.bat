@@ -56,4 +56,7 @@ echo [SKIP] monitors=3 dpi=96/144/192 -- needs virtio-gpu multi-output driver
 echo.
 echo === Matrix summary: %TOTAL% cells, %FAILED% failed, %SKIPPED% skipped (pending driver + runner work) ===
 echo.
-pause
+set RC=%FAILED%
+if %RC% GTR 0 set RC=1
+if not defined NO_PAUSE pause
+exit /b %RC%

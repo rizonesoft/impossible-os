@@ -15,4 +15,6 @@
 :: is genuinely kernel-only -- run usermode\run-all-usermode-tests.bat
 :: separately for the user-mode layer.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoUsermodeTests
-pause
+set RC=%errorlevel%
+if not defined NO_PAUSE pause
+exit /b %RC%

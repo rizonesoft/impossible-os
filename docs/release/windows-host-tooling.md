@@ -234,3 +234,48 @@ Optional informational tools (detected and reported, NOT used):
 |---|---|---|
 | Hyper-V module | Windows Pro/Enterprise + Hyper-V feature enabled | to-vhdx.ps1 (env note only) |
 | `oscdimg.exe` | Windows ADK | to-iso.ps1 (env note only) |
+
+## Aggregate runner
+
+`scripts\debug\release\` is the Windows-side test subdir for release
+tooling, peer to the existing `kernel\` / `usermode\` / `desktop\`
+subdirs. Per-artifact bat shims dispatch the matching PS1; the
+aggregate `run-all-release-tests.bat` chains the non-destructive
+shims; the cross-layer `scripts\debug\run-all-tests.bat` chains all
+four per-layer aggregates with `if exist` so missing layers are
+silent no-ops.
+
+### Layout
+
+| File | Role |
+|---|---|
+| `scripts\debug\release\run-build-manifest-tests.bat` | runs `test-build-manifest.ps1` (26 assertions) |
+| `scripts\debug\release\run-write-usb.bat` | launches `write-usb.ps1` with UAC elevation (`Start-Process -Verb RunAs`); destructive + interactive, NOT chained |
+| `scripts\debug\release\run-to-vhdx.bat` | runs `to-vhdx.ps1` against `build\release\disk.img` |
+| `scripts\debug\release\run-to-iso.bat` | runs `to-iso.ps1` against `build\release\disk.img` |
+| `scripts\debug\release\run-all-release-tests.bat` | aggregate: chains manifest tests + to-vhdx + to-iso (skips write-usb); reports per-step failures |
+| `scripts\debug\run-all-tests.bat` | cross-layer: chains kernel + usermode + desktop + release aggregates |
+
+### Why write-usb is excluded from the aggregate
+
+`run-all-release-tests.bat` deliberately does NOT chain
+`run-write-usb.bat`. The USB writer is destructive (raw write to a
+physical drive) and interactive (double confirmation), so a CI-style
+aggregate run is the wrong shape. Click `run-write-usb.bat` from
+File Explorer to launch it manually with UAC elevation.
+
+### Adding a new layer
+
+When a new test layer joins (e.g. `firmware/`):
+
+1. Create `scripts\debug\<layer>\` and put the per-artifact bats there.
+2. Add `scripts\debug\<layer>\run-all-<layer>-tests.bat` to chain them.
+3. Add `<layer>` to `VALID_TEST_LAYERS` in `scripts/todo-graph/validate.py`
+   (the TODO bat-alignment check resolves
+   `scripts\debug\<layer>\run-<name>-tests.bat` paths in `Test runner:`
+   lines against this tuple).
+4. Add an `if exist` block to `scripts\debug\run-all-tests.bat`.
+
+Only `run-all-tests.bat` is permitted at the `scripts\debug\` root;
+all per-category bats live under the layer subdirs (enforced by the
+bat-alignment check and `scripts/lint.sh`).
