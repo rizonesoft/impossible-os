@@ -40,12 +40,30 @@ def run_validator(target: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+_TMPDIR: tempfile.TemporaryDirectory | None = None
+_TMPDIR_PATH: Path | None = None
+
+
+def _ensure_tmpdir() -> Path:
+    """Lazy-create a process-scoped TemporaryDirectory the harness owns and cleans up."""
+    global _TMPDIR, _TMPDIR_PATH
+    if _TMPDIR is None:
+        _TMPDIR = tempfile.TemporaryDirectory(prefix="boot-entry-validate-")
+        _TMPDIR_PATH = Path(_TMPDIR.name)
+    return _TMPDIR_PATH
+
+
 def write_tmp(payload: Any, *, recompute_crc: bool = False) -> Path:
-    """Write payload to a temp .json file. If recompute_crc and payload has a list `entries`,
-    update payload['crc32'] in-process before writing."""
+    """Write payload to a temp .json file under the harness-owned TemporaryDirectory.
+
+    All fixtures live under one TemporaryDirectory that gets cleaned up at the end of main();
+    no per-test unlink needed. Replaces the prior NamedTemporaryFile(delete=False) pattern that
+    leaked one file per case (~78 leaks per run on every machine).
+    """
     if recompute_crc and isinstance(payload, dict) and isinstance(payload.get("entries"), list):
         payload["crc32"] = f"0x{_compute_crc(payload['entries']):08X}"
-    fd = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+    base = _ensure_tmpdir()
+    fd = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, dir=str(base))
     json.dump(payload, fd)
     fd.close()
     return Path(fd.name)

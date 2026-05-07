@@ -97,6 +97,9 @@ Define the on-ESP entry store schema. The file format is the contract every late
 > - Canonical doc: [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md).
 > - Scope boundary: §1 owns schema + canonical doc + host validator; §2 owns bootloader parser + C-side canonicalization; §10 owns per-kind loaders + UKI prefix runtime check; signed-store (Ed25519) is a Branch B follow-up.
 
+> **Verified:** 2026-05-08 | commit `767ea206` | 7/7 items | build OK | tests 78/78 PASS
+> **Quality reviewed:** 2026-05-08 | Codex 7x (design + test-coverage + adversarial + re-adversarial + adversarial-impl + consistency + perf) | 1C+7H+10M+2L fixed, 0 open | scope: boot-code-quality
+
 ---
 
 ## 2. Boot Entry Parser and Validator

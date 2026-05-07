@@ -14,7 +14,7 @@ python3 tools/boot-entry-validate/validate.py resources/boot/bootentries-example
 # Recompute the crc32 field in-place (useful when editing the sample)
 python3 tools/boot-entry-validate/validate.py --emit-crc resources/boot/bootentries-example.json
 
-# Run the test harness (validates the canonical sample + 5 negative cases)
+# Run the 78-case mutator harness (canonical sample + 77 negative mutators)
 python3 tools/boot-entry-validate/test_validate.py
 ```
 
