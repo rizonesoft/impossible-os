@@ -31,7 +31,7 @@
     SIGN_STAMP_FILE        Path to build/.signed-artifacts.stamp.
 #>
 
-[CmdletBinding()]
+
 param(
     [Parameter(Position = 0)] [string] $Subcommand,
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)] [string[]] $Rest

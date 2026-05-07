@@ -31,7 +31,7 @@
     2  usage / missing tool / invalid block_size
 #>
 
-[CmdletBinding()]
+
 param(
     [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Rest
 )

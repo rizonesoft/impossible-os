@@ -31,7 +31,7 @@
     2  usage / missing tool
 #>
 
-[CmdletBinding()]
+
 param(
     [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Rest
 )

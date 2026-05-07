@@ -18,7 +18,7 @@
   Exit code: 0 when all 23 assertions pass; non-zero otherwise.
 #>
 
-[CmdletBinding()]
+
 param()
 
 $ErrorActionPreference = 'Stop'

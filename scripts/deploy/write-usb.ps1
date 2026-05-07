@@ -47,7 +47,7 @@
 
 #Requires -RunAsAdministrator
 
-[CmdletBinding()]
+
 param(
     [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Rest
 )
