@@ -24,7 +24,7 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o
+OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o
 
 .PHONY: all clean
 
@@ -57,6 +57,14 @@ elf_bootproto.o: elf_bootproto.c elf_bootproto.h elf_types.h \
 # struct boot_error_history_entry from include/kernel/boot_info.h via
 # boot_info_mirror.h offset asserts.
 boot_history.o: boot_history.c efi.h boot_info_mirror.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Boot entry store parser. Pure C, no UEFI types -- linkable from both the
+# bootloader and the kernel unit-test build. Header lives at
+# include/boot/boot_entries_parser.h; spec at docs/boot/boot-entry-schema.md.
+boot_entries_parser.o: boot_entries_parser.c \
+                       ../../../include/boot/boot_entries_parser.h \
+                       ../../../include/boot/boot_entries.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Assemble the PE relocation stub

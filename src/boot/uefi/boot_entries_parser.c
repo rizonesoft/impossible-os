@@ -1,0 +1,1055 @@
+/* boot_entries_parser.c -- bootloader boot entry store parser implementation.
+ *
+ * Pure C, no UEFI types and no allocations. Companion header:
+ * include/boot/boot_entries_parser.h. See docs/boot/boot-entry-schema.md for the
+ * authoritative spec (CRC algorithm, envelope shape, kind ranges, fallback).
+ *
+ * Iterative tokenizer + walker with explicit depth cap (BOOT_ENTRIES_MAX_PARSE_DEPTH);
+ * adversarial input cannot blow the bootloader stack.
+ *
+ * Compiled in two contexts:
+ *   - src/boot/uefi/Makefile -> bootloader, freestanding x86_64-elf
+ *   - src/kernel/test (via test_boot_entry_parser.c) -> kernel unit-test build
+ *
+ * The translation unit avoids stdlib headers; `unsigned char` / `unsigned int`
+ * are exact widths on every Impossible OS target (LP64 / LLP64).
+ */
+
+#include "../../../include/boot/boot_entries_parser.h"
+
+typedef unsigned char  u8;
+typedef unsigned int   u32;
+typedef int            i32;
+
+#define NULL_PTR ((void *)0)
+
+/* ---- IEEE 802.3 CRC-32 (polynomial 0xEDB88320) ----------------------------- */
+
+static u32 g_crc32_table[256];
+static int g_crc32_ready = 0;
+
+static void crc32_init(void)
+{
+    u32 i, j, c;
+    for (i = 0; i < 256u; i++) {
+        c = i;
+        for (j = 0; j < 8u; j++)
+            c = (c & 1u) ? ((c >> 1) ^ BOOT_ENTRIES_CRC32_POLY) : (c >> 1);
+        g_crc32_table[i] = c;
+    }
+    g_crc32_ready = 1;
+}
+
+/* Computes IEEE 802.3 CRC-32 (init 0xFFFFFFFF, final XOR 0xFFFFFFFF) over raw bytes,
+ * with the byte range [zero_off, zero_off+8) treated as 8 ASCII zeros instead of the
+ * actual file content. Saves a scratch buffer copy in freestanding-no-heap context.
+ */
+static u32 crc32_zeroed(const u8 *raw, u32 len, u32 zero_off)
+{
+    u32 i, crc = 0xFFFFFFFFu;
+    if (!g_crc32_ready) crc32_init();
+    for (i = 0; i < len; i++) {
+        u8 b = (i >= zero_off && i < zero_off + 8u) ? (u8)'0' : raw[i];
+        crc = (crc >> 8) ^ g_crc32_table[(crc ^ b) & 0xFFu];
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+/* ---- Locate `"crc32": "0xHHHHHHHH"` in raw bytes --------------------------- */
+
+/* Skips whitespace forward. Returns next non-WS offset (may equal len). */
+static u32 skip_ws_forward(const u8 *raw, u32 len, u32 pos)
+{
+    while (pos < len) {
+        u8 c = raw[pos];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { pos++; continue; }
+        break;
+    }
+    return pos;
+}
+
+/* Parse 8 hex digits at offset; return parsed value or 0 on parse failure.
+ * Returns 1 on OK, 0 on failure (invalid hex chars). */
+static int parse_hex8(const u8 *raw, u32 off, u32 *out_val)
+{
+    u32 v = 0, i;
+    for (i = 0; i < 8u; i++) {
+        u8 c = raw[off + i];
+        u32 nybble;
+        if (c >= '0' && c <= '9') nybble = (u32)(c - '0');
+        else if (c >= 'a' && c <= 'f') nybble = 10u + (u32)(c - 'a');
+        else if (c >= 'A' && c <= 'F') nybble = 10u + (u32)(c - 'A');
+        else return 0;
+        v = (v << 4) | nybble;
+    }
+    *out_val = v;
+    return 1;
+}
+
+/* Linear scan for the bytes `"crc32"`. Returns offset of the opening quote, or
+ * (u32)-1 if not found. */
+static u32 find_crc32_key(const u8 *raw, u32 len)
+{
+    static const char KEY[] = "\"crc32\"";
+    u32 i;
+    if (len < 7u) return (u32)-1;
+    for (i = 0; i + 7u <= len; i++) {
+        u32 j;
+        int match = 1;
+        for (j = 0; j < 7u; j++) {
+            if (raw[i + j] != (u8)KEY[j]) { match = 0; break; }
+        }
+        if (match) return i;
+    }
+    return (u32)-1;
+}
+
+/* Find `"crc32" \s* : \s* "0xHHHHHHHH"`. On success, *zero_off = offset of
+ * the 8 hex chars (the bytes the CRC compute zeros), *expected = parsed value.
+ * Returns 1 on OK, 0 on fail.
+ */
+static int find_crc_field(const u8 *raw, u32 len, u32 *zero_off, u32 *expected)
+{
+    u32 key = find_crc32_key(raw, len);
+    if (key == (u32)-1) return 0;
+    u32 p = key + 7u;             /* past the closing quote of "crc32" */
+    p = skip_ws_forward(raw, len, p);
+    if (p >= len || raw[p] != ':') return 0;
+    p++;
+    p = skip_ws_forward(raw, len, p);
+    if (p >= len || raw[p] != '"') return 0;
+    p++;
+    if (p + 2u >= len) return 0;
+    if (raw[p] != '0' || (raw[p + 1] != 'x' && raw[p + 1] != 'X')) return 0;
+    p += 2u;
+    if (p + 8u > len) return 0;
+    if (!parse_hex8(raw, p, expected)) return 0;
+    *zero_off = p;
+    return 1;
+}
+
+/* ---- Minimal helpers: strlen, memcmp, copy ----------------------------- */
+
+static u32 s_len(const char *s)
+{
+    u32 n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+static int bytes_eq(const u8 *a, const u8 *b, u32 n)
+{
+    u32 i;
+    for (i = 0; i < n; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+static void copy_clamped(char *dst, u32 dst_max, const u8 *src, u32 src_len)
+{
+    u32 n = (src_len < dst_max - 1u) ? src_len : (dst_max - 1u);
+    u32 i;
+    for (i = 0; i < n; i++) dst[i] = (char)src[i];
+    dst[n] = '\0';
+}
+
+static void zero_buf(void *p, u32 n)
+{
+    u8 *b = (u8 *)p;
+    u32 i;
+    for (i = 0; i < n; i++) b[i] = 0;
+}
+
+/* ---- JSON tokenizer (iterative) --------------------------------------- */
+
+typedef enum {
+    TOK_EOF = 0, TOK_LBRACE, TOK_RBRACE, TOK_LBRACKET, TOK_RBRACKET,
+    TOK_COLON, TOK_COMMA, TOK_STRING, TOK_NUMBER, TOK_TRUE, TOK_FALSE, TOK_NULL,
+    TOK_ERROR
+} tok_t;
+
+typedef struct {
+    const u8 *raw;
+    u32 raw_len;
+    u32 pos;
+    /* Current token: */
+    tok_t kind;
+    u32 start;       /* offset of first byte of token */
+    u32 end;         /* offset just past last byte of token */
+    /* For TOK_STRING, content_start / content_end span the bytes BETWEEN the
+     * surrounding quotes (so the caller can compare the raw inner bytes). */
+    u32 content_start;
+    u32 content_end;
+    /* For TOK_NUMBER, parsed integer value (numbers in this schema are non-
+     * negative integers <= 64; we don't support floats / negatives at the
+     * envelope layer). */
+    u32 number_value;
+    int number_valid;       /* 1 if parsed cleanly; 0 if out of range or non-int */
+} lexer_t;
+
+static void lex_skip_ws(lexer_t *L)
+{
+    while (L->pos < L->raw_len) {
+        u8 c = L->raw[L->pos];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') { L->pos++; continue; }
+        return;
+    }
+}
+
+/* Skip a JSON string starting at L->pos (must point at the opening quote).
+ * Sets content_start / content_end. Handles \\, \", \/, \n, \r, \t, \b, \f, \uHHHH (skip).
+ * Returns 1 on OK; 0 on malformed. */
+static int lex_string(lexer_t *L)
+{
+    if (L->pos >= L->raw_len || L->raw[L->pos] != '"') return 0;
+    L->start = L->pos;
+    L->pos++;
+    L->content_start = L->pos;
+    while (L->pos < L->raw_len) {
+        u8 c = L->raw[L->pos];
+        if (c == '"') {
+            L->content_end = L->pos;
+            L->pos++;
+            L->end = L->pos;
+            L->kind = TOK_STRING;
+            return 1;
+        }
+        if (c == '\\') {
+            if (L->pos + 1u >= L->raw_len) return 0;
+            u8 esc = L->raw[L->pos + 1];
+            if (esc == 'u') {
+                /* \uHHHH -- require exactly 4 hex digits */
+                if (L->pos + 5u >= L->raw_len) return 0;
+                u32 i;
+                for (i = 0; i < 4u; i++) {
+                    u8 h = L->raw[L->pos + 2u + i];
+                    int ok = (h >= '0' && h <= '9') ||
+                             (h >= 'a' && h <= 'f') ||
+                             (h >= 'A' && h <= 'F');
+                    if (!ok) return 0;
+                }
+                L->pos += 6u;
+                continue;
+            }
+            /* Whitelist only RFC 8259 single-char escapes. Reject \q etc. */
+            if (esc != '"' && esc != '\\' && esc != '/' &&
+                esc != 'b' && esc != 'f' && esc != 'n' && esc != 'r' && esc != 't') {
+                return 0;
+            }
+            L->pos += 2u;
+            continue;
+        }
+        if (c < 0x20u) return 0;   /* control char in string -- malformed */
+        L->pos++;
+    }
+    return 0;   /* unterminated string */
+}
+
+/* Number tokenizer for non-negative integer values 0..2^32-1. Sufficient for
+ * schema_version + numeric kind + timeout_override. Floats / negatives are
+ * rejected (number_valid = 0). */
+static int lex_number(lexer_t *L)
+{
+    L->start = L->pos;
+    L->number_valid = 1;
+    L->number_value = 0;
+    if (L->pos >= L->raw_len) return 0;
+    if (L->raw[L->pos] == '-') {
+        L->number_valid = 0;
+        L->pos++;
+    }
+    if (L->pos >= L->raw_len) return 0;
+    /* digits */
+    int saw_digit = 0;
+    while (L->pos < L->raw_len) {
+        u8 c = L->raw[L->pos];
+        if (c >= '0' && c <= '9') {
+            u32 d = (u32)(c - '0');
+            if (L->number_value > (0xFFFFFFFFu - d) / 10u) L->number_valid = 0;
+            L->number_value = L->number_value * 10u + d;
+            saw_digit = 1;
+            L->pos++;
+            continue;
+        }
+        break;
+    }
+    if (!saw_digit) return 0;
+    /* fractional / exponent -> reject (mark invalid but advance past) */
+    if (L->pos < L->raw_len && (L->raw[L->pos] == '.' || L->raw[L->pos] == 'e' || L->raw[L->pos] == 'E')) {
+        L->number_valid = 0;
+        while (L->pos < L->raw_len) {
+            u8 c = L->raw[L->pos];
+            if ((c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-') {
+                L->pos++;
+                continue;
+            }
+            break;
+        }
+    }
+    L->end = L->pos;
+    L->kind = TOK_NUMBER;
+    return 1;
+}
+
+static int lex_literal(lexer_t *L, const char *lit, tok_t kind)
+{
+    u32 n = s_len(lit);
+    if (L->pos + n > L->raw_len) return 0;
+    if (!bytes_eq(L->raw + L->pos, (const u8 *)lit, n)) return 0;
+    L->start = L->pos;
+    L->pos += n;
+    L->end = L->pos;
+    L->kind = kind;
+    return 1;
+}
+
+/* Advance to the next token. Returns 1 on success (token in L), 0 on parse error
+ * (kind set to TOK_ERROR). EOF is success with TOK_EOF. */
+static int lex_next(lexer_t *L)
+{
+    lex_skip_ws(L);
+    if (L->pos >= L->raw_len) {
+        L->kind = TOK_EOF;
+        L->start = L->end = L->pos;
+        return 1;
+    }
+    u8 c = L->raw[L->pos];
+    switch (c) {
+        case '{': L->start = L->pos; L->pos++; L->end = L->pos; L->kind = TOK_LBRACE; return 1;
+        case '}': L->start = L->pos; L->pos++; L->end = L->pos; L->kind = TOK_RBRACE; return 1;
+        case '[': L->start = L->pos; L->pos++; L->end = L->pos; L->kind = TOK_LBRACKET; return 1;
+        case ']': L->start = L->pos; L->pos++; L->end = L->pos; L->kind = TOK_RBRACKET; return 1;
+        case ':': L->start = L->pos; L->pos++; L->end = L->pos; L->kind = TOK_COLON; return 1;
+        case ',': L->start = L->pos; L->pos++; L->end = L->pos; L->kind = TOK_COMMA; return 1;
+        case '"': return lex_string(L);
+        case 't': return lex_literal(L, "true",  TOK_TRUE);
+        case 'f': return lex_literal(L, "false", TOK_FALSE);
+        case 'n': return lex_literal(L, "null",  TOK_NULL);
+        case '-':
+        case '0': case '1': case '2': case '3': case '4':
+        case '5': case '6': case '7': case '8': case '9':
+            return lex_number(L);
+        default:
+            L->kind = TOK_ERROR;
+            return 0;
+    }
+}
+
+static void lex_init(lexer_t *L, const u8 *raw, u32 len)
+{
+    L->raw = raw; L->raw_len = len; L->pos = 0;
+    L->kind = TOK_EOF; L->start = L->end = 0;
+    L->content_start = L->content_end = 0;
+    L->number_value = 0; L->number_valid = 0;
+}
+
+/* Iterative JSON-value walker. The lexer currently points at the FIRST token of
+ * a value. On success, advances past the entire value (including its closing
+ * brace / bracket for composites) and leaves the lexer in a state where the
+ * caller's next lex_next() returns the FOLLOWING token (',', '}', ']', etc).
+ *
+ * Validates JSON object/array grammar (delimiter balance is NOT enough; a
+ * payload like {"k":} would balance but is malformed -- iterative state
+ * machine with explicit container stack is required). Reject codes are
+ * mapped by the caller; this returns 1/0.
+ *
+ * Stack capped at BOOT_ENTRIES_MAX_PARSE_DEPTH; deep nesting -> reject.
+ */
+typedef enum {
+    SKV_OBJ_FIRST_KEY,    /* just consumed '{', expect STRING key or '}' */
+    SKV_OBJ_NEXT_KEY,     /* just consumed ',', expect STRING key */
+    SKV_OBJ_COMMA_END,    /* just consumed value, expect ',' or '}' */
+    SKV_ARR_FIRST_VAL,    /* just consumed '[', expect value or ']' */
+    SKV_ARR_NEXT_VAL,     /* just consumed ',', expect value */
+    SKV_ARR_COMMA_END,    /* just consumed value, expect ',' or ']' */
+} skv_state_t;
+
+static int skip_value_post_token(lexer_t *L)
+{
+    tok_t k = L->kind;
+    /* Atomic values: nothing else to do. */
+    if (k == TOK_STRING || k == TOK_NUMBER || k == TOK_TRUE || k == TOK_FALSE || k == TOK_NULL) {
+        return 1;
+    }
+    if (k != TOK_LBRACE && k != TOK_LBRACKET) return 0;
+
+    skv_state_t stack[BOOT_ENTRIES_MAX_PARSE_DEPTH];
+    u32 depth = 0;
+    if (depth >= BOOT_ENTRIES_MAX_PARSE_DEPTH) return 0;
+    stack[depth++] = (k == TOK_LBRACE) ? SKV_OBJ_FIRST_KEY : SKV_ARR_FIRST_VAL;
+
+    while (depth > 0) {
+        if (!lex_next(L)) return 0;
+        if (L->kind == TOK_EOF) return 0;
+        skv_state_t st = stack[depth - 1];
+
+        if (st == SKV_OBJ_FIRST_KEY || st == SKV_OBJ_NEXT_KEY) {
+            if (st == SKV_OBJ_FIRST_KEY && L->kind == TOK_RBRACE) {
+                depth--;
+                if (depth > 0) stack[depth - 1] = (stack[depth - 1] == SKV_OBJ_FIRST_KEY ||
+                                                   stack[depth - 1] == SKV_OBJ_NEXT_KEY ||
+                                                   stack[depth - 1] == SKV_OBJ_COMMA_END)
+                                                  ? SKV_OBJ_COMMA_END : SKV_ARR_COMMA_END;
+                continue;
+            }
+            if (L->kind != TOK_STRING) return 0;
+            /* Expect ':' */
+            if (!lex_next(L) || L->kind != TOK_COLON) return 0;
+            /* Consume value (recurse via state push or atomic) */
+            if (!lex_next(L)) return 0;
+            if (L->kind == TOK_LBRACE || L->kind == TOK_LBRACKET) {
+                if (depth >= BOOT_ENTRIES_MAX_PARSE_DEPTH) return 0;
+                /* Mark current state as "after value" before descending */
+                stack[depth - 1] = SKV_OBJ_COMMA_END;
+                stack[depth++] = (L->kind == TOK_LBRACE) ? SKV_OBJ_FIRST_KEY : SKV_ARR_FIRST_VAL;
+            } else if (L->kind == TOK_STRING || L->kind == TOK_NUMBER ||
+                       L->kind == TOK_TRUE || L->kind == TOK_FALSE || L->kind == TOK_NULL) {
+                stack[depth - 1] = SKV_OBJ_COMMA_END;
+            } else {
+                return 0;
+            }
+        }
+        else if (st == SKV_OBJ_COMMA_END) {
+            if (L->kind == TOK_RBRACE) {
+                depth--;
+                if (depth > 0) stack[depth - 1] = (stack[depth - 1] == SKV_ARR_FIRST_VAL ||
+                                                   stack[depth - 1] == SKV_ARR_NEXT_VAL ||
+                                                   stack[depth - 1] == SKV_ARR_COMMA_END)
+                                                  ? SKV_ARR_COMMA_END : SKV_OBJ_COMMA_END;
+                continue;
+            }
+            if (L->kind != TOK_COMMA) return 0;
+            stack[depth - 1] = SKV_OBJ_NEXT_KEY;
+        }
+        else if (st == SKV_ARR_FIRST_VAL || st == SKV_ARR_NEXT_VAL) {
+            if (st == SKV_ARR_FIRST_VAL && L->kind == TOK_RBRACKET) {
+                depth--;
+                if (depth > 0) stack[depth - 1] = (stack[depth - 1] == SKV_ARR_FIRST_VAL ||
+                                                   stack[depth - 1] == SKV_ARR_NEXT_VAL ||
+                                                   stack[depth - 1] == SKV_ARR_COMMA_END)
+                                                  ? SKV_ARR_COMMA_END : SKV_OBJ_COMMA_END;
+                continue;
+            }
+            /* Token is the start of a value */
+            if (L->kind == TOK_LBRACE || L->kind == TOK_LBRACKET) {
+                if (depth >= BOOT_ENTRIES_MAX_PARSE_DEPTH) return 0;
+                stack[depth - 1] = SKV_ARR_COMMA_END;
+                stack[depth++] = (L->kind == TOK_LBRACE) ? SKV_OBJ_FIRST_KEY : SKV_ARR_FIRST_VAL;
+            } else if (L->kind == TOK_STRING || L->kind == TOK_NUMBER ||
+                       L->kind == TOK_TRUE || L->kind == TOK_FALSE || L->kind == TOK_NULL) {
+                stack[depth - 1] = SKV_ARR_COMMA_END;
+            } else {
+                return 0;
+            }
+        }
+        else { /* SKV_ARR_COMMA_END */
+            if (L->kind == TOK_RBRACKET) {
+                depth--;
+                if (depth > 0) stack[depth - 1] = (stack[depth - 1] == SKV_ARR_FIRST_VAL ||
+                                                   stack[depth - 1] == SKV_ARR_NEXT_VAL ||
+                                                   stack[depth - 1] == SKV_ARR_COMMA_END)
+                                                  ? SKV_ARR_COMMA_END : SKV_OBJ_COMMA_END;
+                continue;
+            }
+            if (L->kind != TOK_COMMA) return 0;
+            stack[depth - 1] = SKV_ARR_NEXT_VAL;
+        }
+    }
+    return 1;
+}
+
+/* ---- Validation helpers ---------------------------------------------- */
+
+static int is_kebab_id(const u8 *s, u32 n)
+{
+    /* ^[a-z0-9]+(-[a-z0-9]+)*$ */
+    u32 i;
+    int prev_dash = 0;
+    if (n == 0u) return 0;
+    for (i = 0; i < n; i++) {
+        u8 c = s[i];
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            prev_dash = 0;
+        } else if (c == '-') {
+            if (i == 0u || prev_dash) return 0;
+            prev_dash = 1;
+        } else {
+            return 0;
+        }
+    }
+    if (prev_dash) return 0;   /* trailing dash */
+    return 1;
+}
+
+static u32 flag_name_to_bit(const u8 *s, u32 n)
+{
+    static const struct { const char *name; u32 bit; } NAMES[] = {
+        { "active",            BOOT_ENTRY_FLAG_ACTIVE },
+        { "hidden",            BOOT_ENTRY_FLAG_HIDDEN },
+        { "trusted_chainload", BOOT_ENTRY_FLAG_TRUSTED_CHAINLOAD },
+        { "hide_when_alone",   BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE },
+        { "allow_editor",      BOOT_ENTRY_FLAG_ALLOW_EDITOR },
+    };
+    u32 i;
+    for (i = 0; i < sizeof(NAMES)/sizeof(NAMES[0]); i++) {
+        u32 nl = s_len(NAMES[i].name);
+        if (nl == n && bytes_eq(s, (const u8 *)NAMES[i].name, n))
+            return NAMES[i].bit;
+    }
+    return 0u;   /* unknown flag -- caller logs warn + drops (forward-compat) */
+}
+
+static i32 kind_name_to_num(const u8 *s, u32 n)
+{
+    static const struct { const char *name; u32 num; } NAMES[] = {
+        { "split",       BOOT_ENTRY_KIND_SPLIT },
+        { "uki",         BOOT_ENTRY_KIND_UKI },
+        { "chainload",   BOOT_ENTRY_KIND_CHAINLOAD },
+        { "network",     BOOT_ENTRY_KIND_NETWORK },
+        { "resume",      BOOT_ENTRY_KIND_RESUME },
+        { "recovery",    BOOT_ENTRY_KIND_RECOVERY },
+        { "installer",   BOOT_ENTRY_KIND_INSTALLER },
+        { "safe",        BOOT_ENTRY_KIND_SAFE },
+        { "diagnostics", BOOT_ENTRY_KIND_DIAGNOSTICS },
+        { "test",        BOOT_ENTRY_KIND_TEST },
+    };
+    u32 i;
+    for (i = 0; i < sizeof(NAMES)/sizeof(NAMES[0]); i++) {
+        u32 nl = s_len(NAMES[i].name);
+        if (nl == n && bytes_eq(s, (const u8 *)NAMES[i].name, n))
+            return (i32)NAMES[i].num;
+    }
+    return -1;
+}
+
+/* ---- Reject helpers --------------------------------------------------- */
+
+static void set_reject(boot_entries_parse_result_t *out,
+                       boot_entries_reject_code_t code,
+                       const char *msg)
+{
+    out->reject_code = code;
+    u32 i, n = s_len(msg);
+    if (n >= BOOT_ENTRIES_REJECT_MSG_LEN) n = BOOT_ENTRIES_REJECT_MSG_LEN - 1u;
+    for (i = 0; i < n; i++) out->reject_msg[i] = msg[i];
+    out->reject_msg[n] = '\0';
+}
+
+static void log_reject(boot_entries_log_fn log, const char *msg)
+{
+    if (log) {
+        log("[BOOT] boot-entries: rejected: ");
+        log(msg);
+        log("\n");
+    }
+}
+
+/* ---- Parse one entry envelope ---------------------------------------- */
+
+/* L is sitting at the LBRACE that opens this entry. On success, advances past the
+ * matching RBRACE; populates `out`. On failure, sets reject in `result`. */
+static int parse_entry_object(lexer_t *L, u32 idx,
+                              boot_entry_envelope_t *out,
+                              boot_entries_parse_result_t *result,
+                              int secure_boot_active,
+                              boot_entries_log_fn log)
+{
+    if (L->kind != TOK_LBRACE) {
+        set_reject(result, BOOT_ENTRIES_REJECT_NOT_OBJECT, "entry is not a JSON object");
+        return 0;
+    }
+
+    /* Track which fields we've seen so we can require the mandatory set. The schema
+     * makes payload mandatory on every entry; per-entry-kind validation owns the
+     * payload contents but the envelope-layer parser requires its presence. */
+    int saw_id = 0, saw_title = 0, saw_kind = 0, saw_flags = 0;
+    int saw_sort_key = 0, saw_machine_id = 0, saw_policy_tags = 0, saw_payload = 0;
+
+    /* Defaults for output. */
+    zero_buf(out, sizeof(*out));
+    out->payload_present = 0;
+    out->kind_skipped = 0;
+    out->kind = BOOT_ENTRY_KIND_SPLIT;   /* placeholder; overwritten below */
+
+    /* Need a reusable buffer to compare entry IDs across iterations */
+    (void)idx;   /* unused -- caller tracks index */
+
+    while (1) {
+        if (!lex_next(L)) {
+            set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected entry field or '}'");
+            return 0;
+        }
+        if (L->kind == TOK_RBRACE) {
+            break;
+        }
+        if (L->kind != TOK_STRING) {
+            set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected entry field name (string)");
+            return 0;
+        }
+        /* Save the key range so we can compare BEFORE advancing the lexer */
+        u32 key_cs = L->content_start;
+        u32 key_ce = L->content_end;
+        /* Expect colon */
+        if (!lex_next(L) || L->kind != TOK_COLON) {
+            set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ':' after field name");
+            return 0;
+        }
+        /* Advance to value */
+        if (!lex_next(L)) {
+            set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected entry field value");
+            return 0;
+        }
+        u32 key_len = key_ce - key_cs;
+        const u8 *key_ptr = L->raw + key_cs;
+
+        /* Match key */
+        if (key_len == 2u && bytes_eq(key_ptr, (const u8 *)"id", 2u)) {
+            if (L->kind != TOK_STRING) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ID, "id must be a string");
+                return 0;
+            }
+            u32 vlen = L->content_end - L->content_start;
+            if (vlen < 1u || vlen > BOOT_ENTRIES_MAX_ID_LEN) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ID, "id length out of range");
+                return 0;
+            }
+            if (!is_kebab_id(L->raw + L->content_start, vlen)) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ID, "id is not kebab-case");
+                return 0;
+            }
+            copy_clamped(out->id, sizeof(out->id), L->raw + L->content_start, vlen);
+            saw_id = 1;
+        }
+        else if (key_len == 5u && bytes_eq(key_ptr, (const u8 *)"title", 5u)) {
+            if (L->kind != TOK_STRING) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_TITLE, "title must be a string");
+                return 0;
+            }
+            u32 vlen = L->content_end - L->content_start;
+            if (vlen < 1u || vlen > BOOT_ENTRIES_MAX_TITLE_LEN) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_TITLE, "title length out of range");
+                return 0;
+            }
+            copy_clamped(out->title, sizeof(out->title), L->raw + L->content_start, vlen);
+            saw_title = 1;
+        }
+        else if (key_len == 4u && bytes_eq(key_ptr, (const u8 *)"kind", 4u)) {
+            if (L->kind == TOK_STRING) {
+                u32 vlen = L->content_end - L->content_start;
+                i32 num = kind_name_to_num(L->raw + L->content_start, vlen);
+                if (num >= 0) {
+                    out->kind = (u32)num;
+                } else {
+                    /* Unknown string kind -- skip-with-warn (forward-compat) */
+                    out->kind_skipped = 1;
+                    out->kind = 0xFFFFFFFFu;   /* sentinel */
+                }
+            } else if (L->kind == TOK_NUMBER) {
+                if (!L->number_valid) {
+                    set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "kind number invalid");
+                    return 0;
+                }
+                u32 v = L->number_value;
+                /* Stable range 0..99: reject as malformed if not a known name. */
+                if (v < 100u) {
+                    /* Reverse-lookup: only known stable kinds are 0..9 */
+                    if (v > 9u) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_UNKNOWN_KIND_RANGE,
+                                   "kind in stable range but not a known value");
+                        return 0;
+                    }
+                    out->kind = v;
+                } else if (v <= 199u) {
+                    /* Vendor range -- skip with warn */
+                    out->kind_skipped = 1;
+                    out->kind = v;
+                } else {
+                    /* Reserved future -- skip with warn */
+                    out->kind_skipped = 1;
+                    out->kind = v;
+                }
+            } else {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                           "kind must be string or integer");
+                return 0;
+            }
+            saw_kind = 1;
+        }
+        else if (key_len == 5u && bytes_eq(key_ptr, (const u8 *)"flags", 5u)) {
+            if (L->kind != TOK_LBRACKET) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_FLAGS, "flags must be an array");
+                return 0;
+            }
+            /* Strict element walk: alternates between "expect string-or-]" and
+             * "expect ,-or-]". Catches `[,]`, `[a,,b]`, `[a b]` (missing comma),
+             * trailing comma `[a,]`. Forward-compat: unknown flag names drop
+             * with warn (bit==0). The flag is security-relevant
+             * (trusted_chainload feeds the chainload Secure Boot gate) so
+             * grammar must be tight. */
+            u32 bits = 0;
+            int expect_value = 1;   /* 1 = string or `]`; 0 = `,` or `]` */
+            int saw_any = 0;
+            while (1) {
+                if (!lex_next(L)) {
+                    set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "flags array malformed");
+                    return 0;
+                }
+                if (L->kind == TOK_RBRACKET) {
+                    /* trailing-comma reject: if we just consumed `,` we're in
+                     * expect_value=1; an empty array (saw_any==0) is OK. */
+                    if (saw_any && expect_value) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_FLAGS, "trailing comma in flags");
+                        return 0;
+                    }
+                    break;
+                }
+                if (expect_value) {
+                    if (L->kind != TOK_STRING) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_FLAGS, "flags element not a string");
+                        return 0;
+                    }
+                    u32 flag_len = L->content_end - L->content_start;
+                    u32 bit = flag_name_to_bit(L->raw + L->content_start, flag_len);
+                    bits |= bit;
+                    expect_value = 0;
+                    saw_any = 1;
+                } else {
+                    if (L->kind != TOK_COMMA) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_FLAGS, "expected ',' or ']' in flags");
+                        return 0;
+                    }
+                    expect_value = 1;
+                }
+            }
+            out->flags = bits;
+            saw_flags = 1;
+        }
+        else if (key_len == 8u && bytes_eq(key_ptr, (const u8 *)"sort_key", 8u)) {
+            if (L->kind != TOK_STRING) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "sort_key must be a string");
+                return 0;
+            }
+            saw_sort_key = 1;
+        }
+        else if (key_len == 10u && bytes_eq(key_ptr, (const u8 *)"machine_id", 10u)) {
+            if (L->kind != TOK_STRING) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "machine_id must be a string");
+                return 0;
+            }
+            saw_machine_id = 1;
+        }
+        else if (key_len == 11u && bytes_eq(key_ptr, (const u8 *)"policy_tags", 11u)) {
+            if (L->kind != TOK_LBRACKET) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "policy_tags must be an array");
+                return 0;
+            }
+            if (!skip_value_post_token(L)) {
+                set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "policy_tags array malformed");
+                return 0;
+            }
+            saw_policy_tags = 1;
+        }
+        else if (key_len == 7u && bytes_eq(key_ptr, (const u8 *)"payload", 7u)) {
+            if (L->kind != TOK_LBRACE) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "payload must be an object");
+                return 0;
+            }
+            out->payload_offset = L->start;
+            if (!skip_value_post_token(L)) {
+                set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "payload object malformed or too deep");
+                return 0;
+            }
+            out->payload_length = L->end - out->payload_offset;
+            out->payload_present = 1;
+            saw_payload = 1;
+        }
+        else if (key_len == 16u && bytes_eq(key_ptr, (const u8 *)"timeout_override", 16u)) {
+            if (L->kind != TOK_NUMBER || !L->number_valid || L->number_value > 600u) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                           "timeout_override must be int in 0..600");
+                return 0;
+            }
+        }
+        else {
+            /* Unknown envelope key -- skip the value (forward-compat) */
+            if (!skip_value_post_token(L)) {
+                set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "unknown field value malformed");
+                return 0;
+            }
+        }
+
+        /* After the value, expect ',' or '}' */
+        if (!lex_next(L)) {
+            set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ',' or '}' after entry value");
+            return 0;
+        }
+        if (L->kind == TOK_RBRACE) break;
+        if (L->kind != TOK_COMMA) {
+            set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ',' between entry fields");
+            return 0;
+        }
+    }
+
+    /* Required fields. payload is mandatory in the schema even though per-entry-kind
+     * validation is deferred -- a missing payload means the per-kind handler has no
+     * data to operate on, which is a malformed entry, not an "optional field". */
+    if (!(saw_id && saw_title && saw_kind && saw_flags && saw_sort_key && saw_machine_id
+          && saw_policy_tags && saw_payload)) {
+        set_reject(result, BOOT_ENTRIES_REJECT_MISSING_FIELD, "entry missing required envelope fields");
+        return 0;
+    }
+
+    /* Path-escape (chainload) policy: trusted_chainload required when secure_boot_active. */
+    if (out->kind == BOOT_ENTRY_KIND_CHAINLOAD && secure_boot_active &&
+        !(out->flags & BOOT_ENTRY_FLAG_TRUSTED_CHAINLOAD)) {
+        set_reject(result, BOOT_ENTRIES_REJECT_PATH_ESCAPE,
+                   "kind=chainload without trusted_chainload under Secure Boot");
+        return 0;
+    }
+
+    if (out->kind_skipped && log) {
+        log("[BOOT] boot-entries: skipped entry ");
+        log(out->id);
+        log(" (kind unknown / vendor-reserved)\n");
+    }
+    return 1;
+}
+
+/* ---- Top-level parse -------------------------------------------------- */
+
+int boot_entries_parse(const unsigned char *raw, unsigned int raw_len,
+                       int secure_boot_active,
+                       boot_entries_log_fn log,
+                       boot_entries_parse_result_t *out)
+{
+    /* Initialize */
+    zero_buf(out, sizeof(*out));
+    out->reject_code = BOOT_ENTRIES_OK;
+
+    if (!raw || raw_len == 0u) {
+        set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "empty or NULL input");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+
+    /* Size cap */
+    if (raw_len > BOOT_ENTRIES_MAX_TOTAL_BYTES) {
+        set_reject(out, BOOT_ENTRIES_REJECT_FILE_TOO_LARGE, "file size exceeds 16 KiB cap");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+
+    /* Locate crc32 field early -- needed for verification AFTER we walk the structure */
+    u32 zero_off, expected_crc;
+    if (!find_crc_field(raw, raw_len, &zero_off, &expected_crc)) {
+        set_reject(out, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD,
+                   "crc32 field not found in expected shape");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+    out->header_crc = expected_crc;
+    out->computed_crc = crc32_zeroed(raw, raw_len, zero_off);
+    if (out->computed_crc != out->header_crc) {
+        set_reject(out, BOOT_ENTRIES_REJECT_CRC_MISMATCH,
+                   "CRC mismatch (file bytes diverged from stored CRC)");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+
+    /* Now parse the structure. */
+    lexer_t L;
+    lex_init(&L, raw, raw_len);
+
+    /* Top-level: { schema_version, crc32, entries } -- walk fields */
+    if (!lex_next(&L) || L.kind != TOK_LBRACE) {
+        set_reject(out, BOOT_ENTRIES_REJECT_NOT_OBJECT, "top-level not an object");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+
+    int saw_sv = 0, saw_crc = 0, saw_entries = 0;
+    while (1) {
+        if (!lex_next(&L)) {
+            set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field or '}'");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+        if (L.kind == TOK_RBRACE) break;
+        if (L.kind != TOK_STRING) {
+            set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field name");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+        u32 key_cs = L.content_start, key_ce = L.content_end;
+        if (!lex_next(&L) || L.kind != TOK_COLON) {
+            set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ':' after top-level field");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+        if (!lex_next(&L)) {
+            set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected top-level field value");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+        u32 key_len = key_ce - key_cs;
+        const u8 *key_ptr = L.raw + key_cs;
+
+        if (key_len == 14u && bytes_eq(key_ptr, (const u8 *)"schema_version", 14u)) {
+            if (L.kind != TOK_NUMBER || !L.number_valid || L.number_value != BOOT_ENTRIES_SCHEMA_VERSION) {
+                set_reject(out, BOOT_ENTRIES_REJECT_BAD_SCHEMA_VERSION,
+                           "schema_version must equal 1");
+                log_reject(log, out->reject_msg);
+                return out->reject_code;
+            }
+            saw_sv = 1;
+        }
+        else if (key_len == 5u && bytes_eq(key_ptr, (const u8 *)"crc32", 5u)) {
+            if (L.kind != TOK_STRING) {
+                set_reject(out, BOOT_ENTRIES_REJECT_BAD_CRC32_FIELD, "crc32 must be a string");
+                log_reject(log, out->reject_msg);
+                return out->reject_code;
+            }
+            saw_crc = 1;
+        }
+        else if (key_len == 7u && bytes_eq(key_ptr, (const u8 *)"entries", 7u)) {
+            if (L.kind != TOK_LBRACKET) {
+                set_reject(out, BOOT_ENTRIES_REJECT_NOT_ARRAY, "entries must be an array");
+                log_reject(log, out->reject_msg);
+                return out->reject_code;
+            }
+            /* Walk entries */
+            u32 idx = 0;
+            while (1) {
+                if (!lex_next(&L)) {
+                    set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "entries array malformed");
+                    log_reject(log, out->reject_msg);
+                    return out->reject_code;
+                }
+                if (L.kind == TOK_RBRACKET) break;
+                if (L.kind == TOK_COMMA) continue;
+                if (L.kind != TOK_LBRACE) {
+                    set_reject(out, BOOT_ENTRIES_REJECT_NOT_OBJECT, "entries element not an object");
+                    log_reject(log, out->reject_msg);
+                    return out->reject_code;
+                }
+                if (idx >= BOOT_ENTRIES_MAX_ENTRIES) {
+                    set_reject(out, BOOT_ENTRIES_REJECT_TOO_MANY_ENTRIES,
+                               "entries array exceeds 64-entry cap");
+                    log_reject(log, out->reject_msg);
+                    return out->reject_code;
+                }
+                boot_entry_envelope_t tmp;
+                if (!parse_entry_object(&L, idx, &tmp, out, secure_boot_active, log)) {
+                    log_reject(log, out->reject_msg);
+                    return out->reject_code;
+                }
+                /* Duplicate-id check */
+                u32 j;
+                for (j = 0; j < out->entry_count; j++) {
+                    if (out->entries[j].id[0] && tmp.id[0]) {
+                        u32 a = s_len(out->entries[j].id);
+                        u32 b = s_len(tmp.id);
+                        if (a == b && bytes_eq((const u8 *)out->entries[j].id, (const u8 *)tmp.id, a)) {
+                            set_reject(out, BOOT_ENTRIES_REJECT_DUPLICATE_ID,
+                                       "duplicate entry id");
+                            log_reject(log, out->reject_msg);
+                            return out->reject_code;
+                        }
+                    }
+                }
+                if (tmp.kind_skipped) {
+                    out->skipped_count++;
+                } else {
+                    out->entries[out->entry_count] = tmp;
+                    out->entry_count++;
+                }
+                idx++;
+            }
+            saw_entries = 1;
+        }
+        else {
+            /* Unknown top-level key -- skip the value */
+            if (!skip_value_post_token(&L)) {
+                set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "unknown top-level value malformed");
+                log_reject(log, out->reject_msg);
+                return out->reject_code;
+            }
+        }
+
+        /* After value, expect ',' or '}' */
+        if (!lex_next(&L)) {
+            set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ',' or '}' at top level");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+        if (L.kind == TOK_RBRACE) break;
+        if (L.kind != TOK_COMMA) {
+            set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE, "expected ',' between top-level fields");
+            log_reject(log, out->reject_msg);
+            return out->reject_code;
+        }
+    }
+
+    if (!(saw_sv && saw_crc && saw_entries)) {
+        set_reject(out, BOOT_ENTRIES_REJECT_MISSING_FIELD,
+                   "missing schema_version / crc32 / entries");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+
+    /* After the root `}` we must see only whitespace then EOF. CRC-correct files
+     * with trailing garbage (e.g. a second top-level object) are malformed. */
+    if (!lex_next(&L) || L.kind != TOK_EOF) {
+        set_reject(out, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                   "trailing content after root object");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+
+    if (out->entry_count == 0u && out->skipped_count == 0u) {
+        set_reject(out, BOOT_ENTRIES_REJECT_NO_ENTRIES, "entries array is empty");
+        log_reject(log, out->reject_msg);
+        return out->reject_code;
+    }
+
+    if (log) {
+        char buf[64];
+        u32 i, n;
+        const char *prefix = "[BOOT] boot-entries: parsed ";
+        for (n = 0; prefix[n]; n++) buf[n] = prefix[n];
+        /* Format entry_count (decimal, max 2 digits since cap is 64) */
+        u32 ec = out->entry_count;
+        if (ec >= 10u) { buf[n++] = (char)('0' + ec/10u); ec %= 10u; }
+        buf[n++] = (char)('0' + ec);
+        const char *suffix = " entries\n";
+        for (i = 0; suffix[i]; i++) buf[n++] = suffix[i];
+        buf[n] = '\0';
+        log(buf);
+    }
+
+    return BOOT_ENTRIES_OK;
+}
+
+/* ---- Fallback synth --------------------------------------------------- */
+
+void boot_entries_synthesize_fallback(int uki_mode, boot_entry_envelope_t *out)
+{
+    zero_buf(out, sizeof(*out));
+    /* id = "fallback" */
+    {
+        const char *id = "fallback";
+        u32 i;
+        for (i = 0; id[i] && i < sizeof(out->id) - 1u; i++) out->id[i] = id[i];
+        out->id[i] = '\0';
+    }
+    /* title = "Impossible OS (fallback)" */
+    {
+        const char *t = "Impossible OS (fallback)";
+        u32 i;
+        for (i = 0; t[i] && i < sizeof(out->title) - 1u; i++) out->title[i] = t[i];
+        out->title[i] = '\0';
+    }
+    out->kind = uki_mode ? BOOT_ENTRY_KIND_UKI : BOOT_ENTRY_KIND_SPLIT;
+    out->flags = BOOT_ENTRY_FLAG_ACTIVE;
+    out->payload_present = 0;
+    out->kind_skipped = 0;
+}

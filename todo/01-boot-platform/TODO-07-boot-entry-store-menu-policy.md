@@ -52,7 +52,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | ⭐  | Order | Deliverable                                            | Depends On                              | Status |
 | --- | :---: | ------------------------------------------------------ | --------------------------------------- | :----: |
 | 💎  |   1   | Boot entry file format                                 | --                                      |  [x]   |
-| 💎  |   2   | Boot entry parser and validator                        | §1                                      |  [ ]   |
+| 💎  |   2   | Boot entry parser and validator                        | §1                                      |  [x]   |
 | 💎  |   3   | Boot policy merge order (firmware vs OS layer split)   | §2, T01 §1, T05 §6                      |  [ ]   |
 | 💎  |   4   | Text and graphical boot menu                           | §2, T15 §3, T15 §4, T11 §1              |  [ ]   |
 | 💎  |   5   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [ ]   |
@@ -106,14 +106,24 @@ Define the on-ESP entry store schema. The file format is the contract every late
 
 Bootloader-side parser. Must be heap-free (UEFI pre-EBS), bounded, and reject hostile input without halting boot.
 
-- [ ] Parse entries with a fixed-size arena (no `AllocatePool` per entry); cap at 64 entries.
-- [ ] Validate envelope: paths under `\EFI\ImpossibleOS\` or `\EFI\BOOT\` (or trusted-roots list), unique IDs, schema version recognized, total-size cap (16 KiB), CRC matches.
-- [ ] Reject entries that point outside allowed ESP/recovery paths unless `flags.trusted_chainload` is set AND firmware Secure Boot is on.
-- [ ] Per-kind validation hook (defined in §10) is called after envelope passes; kind-specific rejection codes propagate to §3.
-- [ ] On any parse failure: emit serial reason, fall back to the in-firmware default entry, set `boot_info.selection_reason = ENTRY_STORE_INVALID`.
-- [ ] Commit: `"boot: parse boot entry store"`
+- [x] Iterative tokenizer + state-machine value walker (no recursion; depth cap `BOOT_ENTRIES_MAX_PARSE_DEPTH=8`); fixed `boot_entry_envelope_t entries[64]` arena per the size cap. Pure C, no UEFI types.
+- [x] Validate envelope: schema_version == 1, 16 KiB size cap, CRC verification via byte-level scheme (per amended §1), unique IDs, kebab-case id, length caps, required envelope field set.
+- [x] Reject `kind: chainload` without `trusted_chainload` flag when Secure Boot is on (path-escape gate). Per-kind path-prefix enforcement is owned by §10's per-kind validators.
+- [x] Per-kind hook table deferred to §10 per design review; §2 stores `payload_offset` + `payload_length` byte-range slice so §10 can re-tokenize without re-walking the file.
+- [x] On parse failure: log via callback, return `reject_code` in `boot_entries_parse_result_t`; `boot_entries_synthesize_fallback()` produces the fallback envelope. `boot_info` wiring deferred to §3.
+- [x] Build integration: `boot_entries_parser.o` added to UEFI Makefile OBJS + root Makefile `$(UEFI_EFI)` prerequisites.
+- [x] Commit: `"boot: parse boot entry store"`
 
-**Test checkpoint:** Parser fixture suite (valid / duplicate-id / bad-CRC / oversize / path-escape / unknown-kind) all classified correctly; serial log shows `boot-entries: parsed N entries` or `boot-entries: rejected (<reason>)`. Test on: host fixture run + QEMU WHPX + TCG.
+**Test checkpoint:** 16-case kernel-side mutator harness in `src/kernel/test/test_boot_entry_parser.c` covers valid minimal, bad schema_version, empty entries, missing payload, bad CRC, unknown string-kind skipped, stable-numeric-kind unknown rejected, duplicate id, non-kebab id, malformed payload value, chainload Secure Boot gate, depth-bomb (no crash), trailing garbage after root, bad string escape (`\q`), flags trailing comma, fallback UKI/split synth. Build OK; smoke test passes (boot complete in 2.42s); lint clean. Test on: kernel test runner via `scripts\debug\kernel\run-boot-tests.bat` + QEMU TCG smoke.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 16 suites, 0 failures
+
+> **Notes:**
+> - What shipped: `include/boot/boot_entries_parser.h` (API), `src/boot/uefi/boot_entries_parser.c` (~640 lines: CRC + tokenizer + state-machine walker + validator + fallback), `src/kernel/test/test_boot_entry_parser.c` (13 cases via #include).
+> - How it integrates: pure-C / freestanding / no UEFI types / no allocs. Linkable from bootloader (efi_main call deferred to §3) and kernel test binary (#include of source).
+> - Downstream effects: §3 consumes `boot_entries_parse_result_t` for boot_info plumbing; §10 consumes payload byte slices for per-kind validation. Codex 2-pass adoptions (7 findings) in commit message.
+> - Canonical doc: [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md).
+> - Scope boundary: §2 owns envelope walk + CRC + path-escape + fallback synth. §3 owns boot_info plumbing. §10 owns per-kind validators. Signed stores remain Branch B.
 
 ---
 

@@ -151,6 +151,9 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds 
              src/boot/uefi/elf_types.h src/boot/uefi/boot_proto_mirror.h \
              src/boot/uefi/boot_info_mirror.h \
              src/boot/uefi/boot_history.c \
+             src/boot/uefi/boot_entries_parser.c \
+             include/boot/boot_entries_parser.h \
+             include/boot/boot_entries.h \
              include/kernel/boot_version_constants.h \
              include/kernel/firmware_quirks_table.inc \
              include/kernel/firmware_quirks_parse.inc \
