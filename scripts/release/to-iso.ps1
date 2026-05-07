@@ -32,11 +32,11 @@
 #>
 
 
-param(
-    [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Rest
-)
-
 $ErrorActionPreference = 'Stop'
+
+# $args bypass the PS parameter binder so `--Out` etc. can't trigger
+# the "advanced function -> common parameter" auto-prefix collision.
+$Rest = @($args | ForEach-Object { [string] $_ })
 
 $ScriptDir = Split-Path -Parent $PSCommandPath
 $RepoRoot  = [System.IO.Path]::GetFullPath((Join-Path $ScriptDir '..\..'))

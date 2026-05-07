@@ -32,12 +32,16 @@
 #>
 
 
-param(
-    [Parameter(Position = 0)] [string] $Subcommand,
-    [Parameter(Position = 1, ValueFromRemainingArguments = $true)] [string[]] $Rest
-)
-
 $ErrorActionPreference = 'Stop'
+
+# Use $args directly instead of a [Parameter()]-decorated param block.
+# Any [Parameter(...)] attribute promotes the script to "advanced
+# function" status; PowerShell then auto-adds common parameters
+# (-OutVariable, -OutBuffer, ...) and `--Out` prefix-matches them
+# producing "parameter name 'Out' is ambiguous" before the script body
+# runs. Plain $args bypasses the parameter binder entirely.
+$Subcommand = if ($args.Count -gt 0) { [string] $args[0] } else { '' }
+$Rest = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)] | ForEach-Object { [string] $_ }) } else { @() }
 
 # ---- repo root + helpers ----------------------------------------------------
 
