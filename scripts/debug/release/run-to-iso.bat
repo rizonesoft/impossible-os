@@ -5,4 +5,6 @@
 :: build/release/disk.iso; manifest-to-ESP cross-check is fail-closed
 :: via either bash+verify-esp.sh OR native PS+mtype.
 powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0..\..\release\to-iso.ps1" %*
-pause
+set RC=%errorlevel%
+if not defined NO_PAUSE pause
+exit /b %RC%

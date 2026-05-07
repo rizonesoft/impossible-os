@@ -75,10 +75,16 @@ TEST_RUNNER_LINE_RE = re.compile(
     r"^\s*>?\s*\*\*Test runner:\*\*\s*(?P<rest>.+)$"
 )
 TEST_RUNNER_BAT_RE = re.compile(
-    # Backtick-quoted path under scripts/debug/<layer>/run-...bat.
-    # Accepts BOTH `\` (Windows-canonical per the project convention) AND
-    # `/` separators since both forms appear in tracked TODOs.
-    r"`scripts[\\/]+debug[\\/]+(?P<layer>[a-z]+)[\\/]+(?P<bat>run-[a-z0-9_-]+\.bat)`",
+    # Backtick-quoted path under scripts/debug/<layer>/run-<name>-tests.bat
+    # OR run-all-<layer>-tests.bat. Accepts BOTH `\` (Windows-canonical per
+    # the project convention) AND `/` separators since both forms appear in
+    # tracked TODOs. Tightened (Codex consistency review): the previous
+    # `run-<anything>.bat` shape accidentally accepted launcher bats
+    # (run-to-vhdx.bat, run-to-iso.bat, run-write-usb.bat) as test
+    # runners, eroding the intended distinction between non-destructive
+    # test runners and per-artifact launchers (the destructive USB writer
+    # in particular). Now requires the trailing `-tests` segment.
+    r"`scripts[\\/]+debug[\\/]+(?P<layer>[a-z]+)[\\/]+(?P<bat>run-[a-z0-9_-]+-tests\.bat)`",
     re.IGNORECASE,
 )
 

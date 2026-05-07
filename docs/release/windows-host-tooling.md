@@ -250,7 +250,7 @@ silent no-ops.
 | File | Role |
 |---|---|
 | `scripts\debug\release\run-build-manifest-tests.bat` | runs `test-build-manifest.ps1` (26 assertions) |
-| `scripts\debug\release\run-write-usb.bat` | launches `write-usb.ps1` with UAC elevation (`Start-Process -Verb RunAs`); destructive + interactive, NOT chained |
+| `scripts\debug\release\run-write-usb.bat` | launches `write-usb.ps1` with UAC elevation (`Start-Process -Verb RunAs`); fire-and-forget -- the parent bat exits 0 once the elevation dialog is dispatched, regardless of whether the user accepts UAC or whether the elevated writer succeeds. Destructive + interactive, NOT chained by `run-all-release-tests.bat`; check the elevated PowerShell window's exit text for the actual write result. |
 | `scripts\debug\release\run-to-vhdx.bat` | runs `to-vhdx.ps1` against `build\release\disk.img` |
 | `scripts\debug\release\run-to-iso.bat` | runs `to-iso.ps1` against `build\release\disk.img` |
 | `scripts\debug\release\run-all-release-tests.bat` | aggregate: chains manifest tests + to-vhdx + to-iso (skips write-usb); reports per-step failures |

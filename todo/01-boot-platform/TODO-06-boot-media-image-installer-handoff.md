@@ -428,8 +428,8 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 > - Canonical doc: [`docs/release/windows-host-tooling.md`](../../docs/release/windows-host-tooling.md) "Aggregate runner" subsection.
 > - Scope boundary: §12 owns manifest-tooling PS1s; §13 owns disk-converter PS1s; this section ships the bat shim + aggregate plumbing only.
 
-> **Verified:** 2026-05-07 | commit pending | 6/6 items | build OK | 6 bats + 1 docs subsection (validate.py 4-layer extension already in tree)
-> **Quality reviewed:** 2026-05-07 | Codex 3x (adversarial, consistency, perf) | 2H+4M fixed, 0 open | scope: N/A (host-tooling bat shims + docs)
+> **Verified:** 2026-05-07 | commit `f39185c5` | 6/6 items | build OK | 6 bats + 1 docs subsection + validate.py regex tightening
+> **Quality reviewed:** 2026-05-07 | Codex 6x (adversarial, consistency, perf, post-impl adversarial+consistency+perf) | 2H+6M+1L fixed, 0 open | scope: N/A (host-tooling bat shims + docs)
 
 ---
 
