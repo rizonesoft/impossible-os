@@ -34,7 +34,7 @@ static void dec_zero(void)
      * UNSET sentinel set the field explicitly after dec_zero(). */
     s_dec_buf.boot_media_role = BOOT_MEDIA_ROLE_NORMAL;
     /* v19 selection ABI defaults (Rules 9-11). UNSET selection_reason
-     * is now FATAL post-§4 live producer; happy-path fixtures need a
+     * is now FATAL post-bootloader live producer; happy-path fixtures need a
      * valid reason + non-empty selected_entry_id. Tests exercising the
      * UNSET / out-of-range / non-NUL-terminated sentinels override
      * after dec_zero(). */

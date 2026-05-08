@@ -134,6 +134,7 @@ static CHAR16 g_boot_error_var[] = u"BootError";
 #define BOOT_SECTION_BL_PAGETABLES  0x0104u  /* setup_kernel_pages */
 #define BOOT_SECTION_BL_EBS         0x0105u  /* ExitBootServices retry loop */
 #define BOOT_SECTION_BL_POLICY      0x0106u  /* boot_policy_invoke */
+#define BOOT_SECTION_BL_MENU        0x0107u  /* boot_menu_run */
 
 static UINT16 g_boot_section = BOOT_SECTION_UNKNOWN;
 
@@ -237,6 +238,7 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_BOOT_POLICY_OK  0xB0B3  /* Policy decision copied to boot_info */
 #define POST16_BL_COUNTER_SCAN    0xB0B4  /* Counter directory scan entry */
 #define POST16_BL_COUNTER_DECR    0xB0B5  /* Counter decrement (write-new + Flush() + Close(success) + delete-old) */
+#define POST16_BL_MENU            0xB0B6  /* Boot menu rendered (interactive selector) */
 
 /* --- Helper: memory ops ---
  * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
@@ -3962,7 +3964,9 @@ static void policy_counter_decrement(const char *id,
     EFI_STATUS close_st = newf->Close(newf);
     int new_durable = (!EFI_ERROR(flush_st) && !EFI_ERROR(close_st));
     if (!new_durable) {
-        serial_early_print("[BOOT] policy: counter new-file flush/close failed -- skipping delete-old (preserves old, scan resolves dup conservatively)\n");
+        serial_early_print(
+            "[BOOT] policy: counter new-file flush/close failed -- "
+            "skipping delete-old (preserves old, scan resolves dup conservatively)\n");
         dir->Close(dir);
         root->Close(root);
         return;
@@ -4065,6 +4069,259 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
     serial_early_print("[BOOT] policy: ");
     serial_early_print(what);
     serial_early_print(" AllocatePool failed -- publishing FALLBACK_STORE_INVALID\n");
+}
+
+/* Boot menu cap. UEFI spec section 13.5 supports far more entries, but
+ * pragmatic UX caps at 16 visible rows -- matches systemd-boot. */
+#define BOOT_MENU_MAX_VISIBLE 16
+
+/* Default countdown when no per-entry override is set. 5 seconds per
+ * the boot menu spec. */
+#define BOOT_MENU_DEFAULT_TIMEOUT_S 5u
+
+/* Effective countdown cap. The firmware watchdog at watchdog_reset()
+ * runs on a 60s schedule (WD_TIMEOUT in efi_main); the menu loop calls
+ * watchdog_reset() each tick to keep the watchdog fed, but a sanity
+ * cap on the per-entry timeout_override prevents pathological values
+ * (parser allows up to 600) from staying in interactive mode for far
+ * longer than any kiosk operator expects. */
+#define BOOT_MENU_TIMEOUT_CAP_S 60u
+
+/* Render one frame of the menu. GOP path uses the existing Selawik AA
+ * font infrastructure (bsod_aa_string + bsod_aa_TITLE / bsod_aa_SUB
+ * tables); when the framebuffer is unavailable we fall back to
+ * gST->ConOut->OutputString. Serial mirror always logs the current
+ * highlighted index for diagnostic visibility. */
+static void boot_menu_render(const boot_entries_parse_result_t *parse,
+                             const unsigned int *cand_idx,
+                             unsigned int cand_count,
+                             unsigned int selected_idx,
+                             unsigned int seconds_left,
+                             int gop_available)
+{
+    /* Serial mirror -- always, regardless of GOP availability. The
+     * smoke test asserts this line appears so headless operators see
+     * the same selection state as graphical ones. */
+    serial_early_print("[BOOT] menu: ");
+    serial_early_print_uint((UINT32)cand_count);
+    serial_early_print(" entries, selected=");
+    if (selected_idx < cand_count) {
+        const boot_entry_envelope_t *e = &parse->entries[cand_idx[selected_idx]];
+        serial_early_print("\"");
+        serial_early_print(e->id);
+        serial_early_print("\"");
+    } else {
+        serial_early_print("(none)");
+    }
+    serial_early_print(" timeout=");
+    serial_early_print_uint(seconds_left);
+    serial_early_print("s\n");
+
+    if (gop_available && gFramebuffer && gFbPitch > 0u && gFbHeight > 0u) {
+        /* GOP path: clear top portion, render title + entry rows.
+         * Use bsod_aa_TITLE for the heading and bsod_aa_SUB for entries. */
+        const UINT32 row_h = 32;
+        const UINT32 title_y = 60;
+        const UINT32 list_y0 = 130;
+        const UINT32 col_x = 80;
+        UINT32 bg = fb_pack_rgb(0x0A, 0x0A, 0x0A);
+        UINT32 hi_bg = fb_pack_rgb(0x40, 0x80, 0xC0);
+
+        /* Clear background. */
+        for (UINT32 y = 0; y < gFbHeight && y < (list_y0 + row_h * BOOT_MENU_MAX_VISIBLE + row_h); y++)
+            for (UINT32 x = 0; x < gFbWidth; x++)
+                gFramebuffer[y * gFbPitch + x] = bg;
+
+        /* Title. */
+        bsod_aa_string(col_x, title_y, "Impossible OS Boot Menu",
+                       bsod_aa_TITLE, bsod_aa_TITLE_data, 28u,
+                       0xE0, 0xE0, 0xE0, 0x0A, 0x0A, 0x0A);
+
+        /* Entry rows. */
+        for (unsigned int i = 0; i < cand_count && i < BOOT_MENU_MAX_VISIBLE; i++) {
+            UINT32 y = list_y0 + (UINT32)i * row_h;
+            const boot_entry_envelope_t *e = &parse->entries[cand_idx[i]];
+            UINT8 fg_r = 0xC8, fg_g = 0xC8, fg_b = 0xC8;
+            UINT8 bg_r = 0x0A, bg_g = 0x0A, bg_b = 0x0A;
+            if (i == selected_idx) {
+                /* Highlight: blue bar across the row. */
+                for (UINT32 yi = y; yi < y + row_h && yi < gFbHeight; yi++)
+                    for (UINT32 xi = col_x - 8; xi < gFbWidth && xi < col_x + 800; xi++)
+                        gFramebuffer[yi * gFbPitch + xi] = hi_bg;
+                fg_r = 0xFF; fg_g = 0xFF; fg_b = 0xFF;
+                bg_r = 0x40; bg_g = 0x80; bg_b = 0xC0;
+            }
+            /* Title (envelope.title), fall back to id. */
+            const char *label = e->title[0] ? e->title : e->id;
+            bsod_aa_string(col_x, y + 4u, label,
+                           bsod_aa_SUB, bsod_aa_SUB_data, 18u,
+                           fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+        }
+
+        /* Footer: countdown. */
+        UINT32 footer_y = list_y0 + (UINT32)BOOT_MENU_MAX_VISIBLE * row_h + 30;
+        if (footer_y < gFbHeight) {
+            char foot[64];
+            const char prefix[] = "Auto-boot in ";
+            unsigned int p = 0;
+            while (prefix[p] && p < sizeof(foot) - 8u) { foot[p] = prefix[p]; p++; }
+            unsigned int sl = seconds_left;
+            char buf[12];
+            unsigned int n = 0;
+            if (sl == 0) buf[n++] = '0';
+            else {
+                char rev[12];
+                unsigned int rn = 0;
+                while (sl > 0 && rn < 11) { rev[rn++] = (char)('0' + (sl % 10)); sl /= 10; }
+                while (rn > 0) buf[n++] = rev[--rn];
+            }
+            for (unsigned int j = 0; j < n && p < sizeof(foot) - 4u; j++) foot[p++] = buf[j];
+            const char suffix[] = "s. Use arrows + Enter.";
+            for (unsigned int j = 0; suffix[j] && p < sizeof(foot) - 1u; j++) foot[p++] = suffix[j];
+            foot[p] = 0;
+            bsod_aa_string(col_x, footer_y, foot,
+                           bsod_aa_SUB, bsod_aa_SUB_data, 18u,
+                           0x80, 0x80, 0x80, 0x0A, 0x0A, 0x0A);
+        }
+    } else if (gST && gST->ConOut && gST->ConOut->OutputString) {
+        /* ConOut text fallback. UEFI text console only -- no
+         * fancy formatting. */
+        gST->ConOut->OutputString(gST->ConOut, u"\r\n=== Impossible OS Boot Menu ===\r\n");
+        for (unsigned int i = 0; i < cand_count && i < BOOT_MENU_MAX_VISIBLE; i++) {
+            const boot_entry_envelope_t *e = &parse->entries[cand_idx[i]];
+            const char *label = e->title[0] ? e->title : e->id;
+            CHAR16 line[160];
+            unsigned int p = 0;
+            line[p++] = (i == selected_idx) ? u'>' : u' ';
+            line[p++] = u' ';
+            for (unsigned int j = 0; label[j] && p < sizeof(line)/sizeof(line[0]) - 4u; j++)
+                line[p++] = (CHAR16)(unsigned char)label[j];
+            line[p++] = u'\r';
+            line[p++] = u'\n';
+            line[p] = 0;
+            gST->ConOut->OutputString(gST->ConOut, line);
+        }
+    }
+}
+
+/* Run the menu countdown + input loop. Returns the index in cand_idx[]
+ * of the chosen entry; on countdown expiry, returns default_idx (the
+ * ladder pick). The watchdog is reset every iteration so a long
+ * timeout_override does not trigger a firmware reset. */
+static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
+                                  const unsigned int *cand_idx,
+                                  unsigned int cand_count,
+                                  unsigned int default_idx,
+                                  unsigned int timeout_s)
+{
+    boot_set_section(BOOT_SECTION_BL_MENU);
+    post_code16(POST16_BL_MENU);
+
+    if (cand_count == 0u) return 0;
+    if (cand_count == 1u) {
+        serial_early_print("[BOOT] menu: 1 candidate -- skipping\n");
+        return 0;  /* single entry: no choice */
+    }
+
+    /* Cap the timeout against the watchdog window. boot_fatal would
+     * fire a reset if the menu sat past the 60s WD_TIMEOUT without
+     * watchdog_reset(); we DO call watchdog_reset() each tick, but
+     * an explicit cap is defense-in-depth. */
+    if (timeout_s == 0u || timeout_s > BOOT_MENU_TIMEOUT_CAP_S)
+        timeout_s = BOOT_MENU_DEFAULT_TIMEOUT_S;
+
+    int gop_available = (gFramebuffer != (UINT32 *)0);
+    unsigned int selected = (default_idx < cand_count) ? default_idx : 0;
+    unsigned int elapsed_ms = 0;
+    unsigned int countdown_ms = timeout_s * 1000u;
+    int counting_down = 1;
+
+    /* Flush stale keystrokes from firmware menus / boot-time keypress
+     * buffer. Mirrors the boot_fatal_dwell pattern. */
+    if (gST && gST->ConIn && gST->ConIn->Reset)
+        gST->ConIn->Reset(gST->ConIn, 0);
+
+    /* Initial render. */
+    boot_menu_render(parse, cand_idx, cand_count, selected,
+                     timeout_s, gop_available);
+    int dirty = 0;
+    unsigned int last_seconds_logged = timeout_s;
+
+    while (counting_down ? (elapsed_ms < countdown_ms) : 1) {
+        watchdog_reset();  /* keep the firmware watchdog fed */
+
+        /* Poll for a keystroke. */
+        if (gST && gST->ConIn && gST->ConIn->ReadKeyStroke) {
+            EFI_INPUT_KEY key;
+            EFI_STATUS rs = gST->ConIn->ReadKeyStroke(gST->ConIn, &key);
+            if (!EFI_ERROR(rs)) {
+                /* Only ACTIONABLE keys cancel the countdown. Stray
+                 * non-action keys (printable chars, modifier ghost
+                 * events, firmware console noise after reset) are
+                 * IGNORED so they cannot strand the boot in an
+                 * indefinite menu dwell -- watchdog_reset() runs
+                 * every tick, so a non-action keypress would
+                 * otherwise sit forever. Codex re-adversarial
+                 * caught this regression in the menu fix loop. */
+                int is_action = 0;
+                if (key.ScanCode == EFI_SCAN_UP) {
+                    if (selected > 0) selected--;
+                    dirty = 1;
+                    is_action = 1;
+                } else if (key.ScanCode == EFI_SCAN_DOWN) {
+                    if (selected + 1u < cand_count) selected++;
+                    dirty = 1;
+                    is_action = 1;
+                } else if (key.ScanCode == EFI_SCAN_HOME) {
+                    selected = 0;
+                    dirty = 1;
+                    is_action = 1;
+                } else if (key.ScanCode == EFI_SCAN_END) {
+                    selected = cand_count - 1u;
+                    dirty = 1;
+                    is_action = 1;
+                } else if (key.ScanCode == EFI_SCAN_ESC) {
+                    /* Esc boots the highlighted entry without further
+                     * interaction (per the menu spec). */
+                    serial_early_print("[BOOT] menu: Esc -- boot highlighted\n");
+                    return selected;
+                } else if (key.UnicodeChar == EFI_CHAR_CR
+                           || key.UnicodeChar == EFI_CHAR_LF) {
+                    serial_early_print("[BOOT] menu: Enter -- boot selected\n");
+                    return selected;
+                }
+                if (is_action && counting_down) {
+                    counting_down = 0;
+                    serial_early_print("[BOOT] menu: countdown cancelled by keypress\n");
+                }
+            }
+        }
+
+        if (gBS && gBS->Stall) gBS->Stall(50000);  /* 50 ms tick */
+        elapsed_ms += 50u;
+
+        if (counting_down) {
+            unsigned int seconds_left = (countdown_ms > elapsed_ms)
+                ? (countdown_ms - elapsed_ms) / 1000u
+                : 0u;
+            if (seconds_left != last_seconds_logged) {
+                last_seconds_logged = seconds_left;
+                dirty = 1;
+            }
+        }
+
+        if (dirty) {
+            unsigned int seconds_left = counting_down
+                ? ((countdown_ms > elapsed_ms) ? (countdown_ms - elapsed_ms) / 1000u : 0u)
+                : 0u;
+            boot_menu_render(parse, cand_idx, cand_count, selected,
+                             seconds_left, gop_available);
+            dirty = 0;
+        }
+    }
+
+    serial_early_print("[BOOT] menu: countdown expired -- auto-selecting default\n");
+    return selected;
 }
 
 /* The boot-policy invoke step. Owns ESP read, OptionalData decode,
@@ -4277,9 +4534,93 @@ static void boot_policy_invoke(void)
         }
     }
 
+    /* ---- Boot menu (interactive selection). ----------------------- */
+    /* Build the candidate list from parsed entries minus rejected[]
+     * minus HIDDEN/kind_skipped. Cap at BOOT_MENU_MAX_VISIBLE. */
+    unsigned int cand_idx[BOOT_MENU_MAX_VISIBLE];
+    unsigned int cand_default_idx = 0;
+    unsigned int cand_count = boot_policy_menu_collect(parse, decision,
+                                                cand_idx,
+                                                BOOT_MENU_MAX_VISIBLE,
+                                                &cand_default_idx);
+    /* Default-not-found gate: when the policy ladder picked an entry
+     * that is NOT representable in the visible candidate window
+     * (cap-truncated past BOOT_MENU_MAX_VISIBLE, filtered out by
+     * HIDDEN/kind_skipped/rejected, or otherwise missing from the
+     * collected list), suppress the menu. Rendering it would
+     * highlight a different entry than the one that actually boots
+     * on Enter / timeout -- a user-visible boot-selection integrity
+     * failure. The ladder pick still applies; only the interactive
+     * UI is suppressed. */
+    int default_visible = (cand_default_idx != BOOT_POLICY_MENU_DEFAULT_NOT_FOUND);
+    if (!default_visible && decision->selected_entry_id[0] == 0) {
+        /* Decision had no selected id (empty STORE_INVALID sentinel);
+         * NOT_FOUND just means "no anchor". Fall back to highlighting
+         * candidate 0; menu still safe to render. */
+        cand_default_idx = 0;
+        default_visible = 1;
+    }
+    if (default_visible &&
+        boot_policy_menu_should_show(decision, parse, cand_count)) {
+        /* Honor per-entry timeout_override on the default candidate
+         * (if set), else fall back to the BOOT_MENU_DEFAULT_TIMEOUT_S
+         * default. The cap inside boot_menu_run() is the watchdog-
+         * safety belt. */
+        unsigned int timeout_s = BOOT_MENU_DEFAULT_TIMEOUT_S;
+        if (cand_default_idx < cand_count) {
+            const boot_entry_envelope_t *def_e =
+                &parse->entries[cand_idx[cand_default_idx]];
+            if (def_e->timeout_override != BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE
+                && def_e->timeout_override > 0u
+                && def_e->timeout_override <= BOOT_MENU_TIMEOUT_CAP_S) {
+                timeout_s = def_e->timeout_override;
+            }
+        }
+        unsigned int chosen = boot_menu_run(parse, cand_idx, cand_count,
+                                            cand_default_idx, timeout_s);
+        if (chosen != cand_default_idx && chosen < cand_count) {
+            /* User picked a DIFFERENT entry -- operator override.
+             * Replace the decision id + envelope so counter
+             * decrement targets the user's choice; flip the reason
+             * to HOTKEY so v19 audit consumers (Registry,
+             * policy-audit, LoaderXxx) see the operator action.
+             * Default-Enter (chosen == default) keeps the original
+             * ladder reason because the operator only confirmed
+             * without changing the choice. */
+            const boot_entry_envelope_t *picked =
+                &parse->entries[cand_idx[chosen]];
+            decision->selected = *picked;
+            decision->reason = BOOT_SELECTION_HOTKEY;
+            UINTN i;
+            for (i = 0; i < sizeof(decision->selected_entry_id) - 1u
+                        && picked->id[i]; i++)
+                decision->selected_entry_id[i] = picked->id[i];
+            decision->selected_entry_id[i] = 0;
+            /* Mirror into boot_info v19 fields too. */
+            for (i = 0; i < sizeof(g_boot_info_ptr->selected_entry_id) - 1u
+                        && picked->id[i]; i++)
+                g_boot_info_ptr->selected_entry_id[i] = picked->id[i];
+            g_boot_info_ptr->selected_entry_id[i] = 0;
+            g_boot_info_ptr->selection_reason = (UINT32)BOOT_SELECTION_HOTKEY;
+            serial_early_print("[BOOT] menu: user override -- chosen=\"");
+            serial_early_print(picked->id);
+            serial_early_print("\" reason=HOTKEY\n");
+        }
+    } else {
+        serial_early_print("[BOOT] menu: skipped (");
+        if (!default_visible)
+            serial_early_print("ladder pick not in visible window)");
+        else if (cand_count == 0u) serial_early_print("no viable candidates)");
+        else if (cand_count == 1u) serial_early_print("single candidate)");
+        else serial_early_print("forced selection path)");
+        serial_early_print("\n");
+    }
+
     /* Capture the chosen kind for the post-EBS populate block. The
      * fallback envelope's kind is the right answer for STORE_INVALID
-     * (boot_entries_synthesize_fallback set it to SPLIT or UKI). */
+     * (boot_entries_synthesize_fallback set it to SPLIT or UKI). For
+     * a menu-overridden pick, decision->selected was already updated
+     * above so the kind reflects the user's choice. */
     g_policy_selected_kind = decision->selected.kind;
 
     serial_early_print("[BOOT] policy: selection_reason=");
@@ -9494,7 +9835,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         serial_early_print("[WARN] Boot media not present "
                            "(reported by firmware -- may be stale)\n");
 
-    /* §6: Read UEFI boot variables (BootCurrent, BootOrder, BootNext).
+    /* Read UEFI boot variables (BootCurrent, BootOrder, BootNext).
      * RuntimeServices->GetVariable is available before ExitBootServices. */
     {
         EFI_GUID global_guid = EFI_GLOBAL_VARIABLE_GUID;

@@ -56,7 +56,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   3   | Boot policy merge order (firmware vs OS layer split)   | §2, T01 §1, T05 §6                      |  [x]   |
 | 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring | §3                                      |  [x]   |
 | 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator    | §3, §4                                  |  [x]   |
-| 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [ ]   |
+| 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [x]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [ ]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [ ]   |
 | 💎  |   9   | A/B and recovery entry integration                     | §3, §4, T21 §3, T22 §1                  |  [ ]   |
@@ -221,15 +221,24 @@ UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is **not** power-fail-atomic on FAT32 --
 
 Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mirror for headless, both first-class -- a kiosk host must be selectable without keyboard. Reuse the existing `bsod_aa_char` + `fb_pack_rgb` infrastructure in `bootx64.c` (Selawik AA font already shipped); fall back to `gST->ConOut->OutputString` when GOP is absent or `FrameBufferBase == 0`. Countdown via `gBS->Stall(50000)` ticks (50ms granularity); default 5s; per-entry `timeout_override` from the parsed envelope wins when set. Input via `gST->ConIn->WaitForEvent` + `ReadKeyStroke`: `Up/Down` move, `Home/End` jump, `Enter` select, `Esc` boot the highlighted entry without further interaction. **NEW** `bootloader_secureboot_active()` helper reads `SecureBoot` + `SetupMode` + `AuditMode` UEFI variables BEFORE the menu renders -- `boot_info.secure_boot_enabled` is kernel-populated post-EBS and cannot be trusted pre-EBS (Codex design review 2026-05-08 H finding). The new helper feeds both the §7 indicator and `boot_policy_inputs.secure_boot_active`. Forced-selection paths (hotkey override, watchdog, A/B, recovery) skip the interactive menu entirely and proceed straight to handoff -- no zero-countdown UX surprise.
 
-- [ ] GOP renderer using `bsod_aa_char` + `fb_pack_rgb`; UEFI text protocol fallback; serial mirror via `serial_early_print`.
-- [ ] `bootloader_secureboot_active()` helper reads `SecureBoot` + `SetupMode` + `AuditMode` pre-menu; feeds §7 indicator + `boot_policy_inputs.secure_boot_active`.
-- [ ] `gBS->Stall(50000)` 50ms-tick countdown; default 5s; per-entry `timeout_override` wins; any key cancels.
-- [ ] `gST->ConIn` `ReadKeyStroke` navigation: Up/Down/Home/End/Enter/Esc.
-- [ ] Candidate list = `parse_result.entries[]` minus `decision.rejected[]` (HIDDEN + KIND_SKIPPED filtered).
-- [ ] Forced-selection paths (hotkey/watchdog/A/B/recovery) skip the interactive menu entirely.
-- [ ] Commit: `"boot: menu renderer + countdown + input infrastructure"`
+- [x] GOP renderer using `bsod_aa_char` + `fb_pack_rgb`; UEFI text protocol fallback; serial mirror via `serial_early_print`. Implemented as `boot_menu_render()` in `bootx64.c`; clears framebuffer + renders Selawik AA title + entry rows + countdown footer; ConOut path uses `gST->ConOut->OutputString` with prefix `>` for highlight.
+- [x] `bootloader_secureboot_active()` helper -- shipped in §4 (commit a24bc44f), consumed by §7 indicator + `boot_policy_inputs.secure_boot_active`. §6 simply uses the existing helper; no new code here.
+- [x] `gBS->Stall(50000)` 50ms-tick countdown; default 5s; per-entry `timeout_override` wins; any key cancels. Implemented in `boot_menu_run()`. Watchdog reset every tick (Codex caught: 600s timeout would trip 60s firmware watchdog without it). Effective timeout capped at `BOOT_MENU_TIMEOUT_CAP_S=60s`.
+- [x] `gST->ConIn` `ReadKeyStroke` navigation: Up/Down/Home/End/Enter/Esc. Scan codes per UEFI 2.10 spec Table 12.4 added as `EFI_SCAN_*` constants in `efi.h`.
+- [x] Candidate list = `parse_result.entries[]` minus `decision.rejected[]` (HIDDEN + KIND_SKIPPED filtered). Implemented as public pure helper `boot_policy_menu_collect()` in `boot_policy.c`; returns `BOOT_POLICY_MENU_DEFAULT_NOT_FOUND` when ladder pick is beyond cap or filtered (caller suppresses menu).
+- [x] Forced-selection paths (hotkey/watchdog/A/B/recovery) skip the interactive menu entirely. Implemented as `boot_policy_menu_should_show()`; only `STORE_DEFAULT`, `BOOTNEXT_HINT`, `UNKNOWN_BOOTCURRENT` render the menu.
+- [x] Commit: `"boot: menu renderer + countdown + input infrastructure"`
 
-**Test checkpoint:** Menu renders 4+ entries on QEMU WHPX (GOP); countdown decrements 5..0 then auto-selects; arrow keys move + cancel countdown; Enter boots the highlighted entry. Serial mirror shows the same lines on TCG (no GOP). `bootloader_secureboot_active()` returns 1 with SecureBoot=1 + SetupMode=0; 0 otherwise. Test on: QEMU WHPX (GOP), TCG (serial fallback), VirtualBox, bare metal.
+**Test checkpoint:** Menu renders 4+ entries on QEMU WHPX (GOP); countdown decrements 5..0 then auto-selects; arrow keys move + cancel countdown; Enter boots the highlighted entry. Serial mirror shows the same lines on TCG (no GOP). `bootloader_secureboot_active()` returns 1 with SecureBoot=1 + SetupMode=0; 0 otherwise. Smoke test verified menu-skip path: serial shows `[BOOT] menu: skipped (no viable candidates)` on FALLBACK_STORE_INVALID with no bootentries.json, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX (GOP), TCG (serial fallback), VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 new menu-helper suites (3 should_show + 6 collect), 0 failures
+
+> **Notes:**
+> - What shipped: `boot_menu_render()` + `boot_menu_run()` static helpers in `bootx64.c`, public pure helpers `boot_policy_menu_should_show()` + `boot_policy_menu_collect()` in `boot_policy.c`, `BOOT_POLICY_MENU_DEFAULT_NOT_FOUND` sentinel, EFI_SCAN_* + EFI_CHAR_* constants in `efi.h`, 1 new POST16 (0xB0B6 optional), 9 unit tests.
+> - How it integrates: `boot_policy_invoke()` calls `boot_policy_menu_collect()` -> `boot_policy_menu_should_show()` -> `boot_menu_run()` after the ladder + before counter decrement; user-pick override flips `decision->reason` to `BOOT_SELECTION_HOTKEY` so v19 audit consumers see the operator action; watchdog reset every 50ms tick.
+> - Downstream effects: live menu-render path; serial mirror gives kiosk/headless operators visibility on selection. Codex review adoptions in commit message.
+> - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) (menu UX) + [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (§7 indicator legend will land there).
+> - Scope boundary: §6 owns renderer + countdown + input + filter. Indicators (SB/measured-boot/A-B/recovery/network/last-failure) + hotkey table (F8/F10/F11/Esc) + `hide_when_alone` flag are §7. Demote-not-drop visual is §9.
 
 ---
 

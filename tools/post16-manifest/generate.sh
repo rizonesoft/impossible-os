@@ -171,6 +171,7 @@ POST16_OPTIONAL_REASONS=(
     "POST16_BL_ESP_FILES=scenario-dependent: required-files batch requires SimpleFS on the boot device handle"
     "POST16_BL_BOOT_POLICY_PARSE=scenario-dependent: emitted only when bootentries.json is present and readable on the ESP"
     "POST16_BL_COUNTER_DECR=scenario-dependent: emitted only when the policy ladder selects a real store entry (not FALLBACK_STORE_INVALID / NO_VIABLE)"
+    "POST16_BL_MENU=scenario-dependent: emitted only when the policy ladder picks a soft entry AND >=2 viable candidates remain after filter"
 )
 
 # Build the optional-name set from the reasons array for fast lookup.

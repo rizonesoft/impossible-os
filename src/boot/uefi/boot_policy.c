@@ -574,3 +574,88 @@ int boot_policy_counter_dedup_insert(boot_counter_t *out,
     (*count)++;
     return 1;  /* appended */
 }
+
+/* ---- Boot menu pure logic helpers -------------------------------------- */
+
+int boot_policy_menu_should_show(const boot_policy_decision_t *decision,
+                                 const boot_entries_parse_result_t *parse,
+                                 unsigned int viable_count)
+{
+    if (!decision || !parse) return 0;
+    if (viable_count < 2u) return 0;
+    switch ((unsigned int)decision->reason) {
+        case BOOT_SELECTION_STORE_DEFAULT:
+        case BOOT_SELECTION_BOOTNEXT_HINT:
+        case BOOT_SELECTION_UNKNOWN_BOOTCURRENT:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+unsigned int boot_policy_menu_collect(
+    const boot_entries_parse_result_t *parse,
+    const boot_policy_decision_t *decision,
+    unsigned int *out_idx, unsigned int cap,
+    unsigned int *out_default_idx)
+{
+    unsigned int n = 0;
+    int default_found = 0;
+    if (out_default_idx) *out_default_idx = BOOT_POLICY_MENU_DEFAULT_NOT_FOUND;
+    if (!parse || !decision || !out_idx || cap == 0u) return 0;
+    /* If the decision did not name a selected entry (empty id, e.g.
+     * STORE_INVALID), there is nothing to find; treat as
+     * default-not-applicable rather than not-found so the caller
+     * still gets visible candidates without artificially suppressing
+     * the menu. */
+    int decision_has_selected = (decision->selected_entry_id[0] != 0);
+    for (unsigned int i = 0; i < parse->entry_count && n < cap; i++) {
+        const boot_entry_envelope_t *e = &parse->entries[i];
+        if (e->kind_skipped) continue;
+        if (e->flags & BOOT_ENTRY_FLAG_HIDDEN) continue;
+        int rejected = 0;
+        for (unsigned int r = 0; r < decision->rejected_count; r++) {
+            const char *a = e->id;
+            const char *b = decision->rejected[r].id;
+            unsigned int j;
+            int eq = 1;
+            for (j = 0; j < sizeof(e->id); j++) {
+                if (a[j] != b[j]) { eq = 0; break; }
+                if (a[j] == 0) break;
+            }
+            if (eq) { rejected = 1; break; }
+        }
+        if (rejected) continue;
+        out_idx[n] = i;
+        if (out_default_idx && decision_has_selected) {
+            const char *a = e->id;
+            const char *b = decision->selected_entry_id;
+            unsigned int j;
+            int eq = 1;
+            for (j = 0; j < sizeof(e->id); j++) {
+                if (a[j] != b[j]) { eq = 0; break; }
+                if (a[j] == 0) break;
+            }
+            if (eq) {
+                *out_default_idx = n;
+                default_found = 1;
+            }
+        }
+        n++;
+    }
+    /* Sentinel resolution:
+     *   - decision had no selected id: leave NOT_FOUND. Caller
+     *     interprets as "no anchor"; menu can render with index 0
+     *     highlighted (boot_policy_invoke picks index 0 if NOT_FOUND).
+     *   - decision had a selected id AND we found it within cap:
+     *     out_default_idx already set above.
+     *   - decision had a selected id AND we did NOT find it (cap-
+     *     truncation OR filtered out OR id no longer in store):
+     *     leave NOT_FOUND. Caller MUST suppress the menu otherwise
+     *     the visible default diverges from the actual decision. */
+    if (!decision_has_selected || default_found) {
+        /* nothing to do; either NOT_FOUND-as-no-anchor or set above */
+        (void)0;
+    }
+    return n;
+}

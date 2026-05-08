@@ -1001,7 +1001,7 @@ static void test_ladder_split_mode_rejects_uki_entry(void)
 
 static void test_counter_dedup_insert_raw_duplicates(void)
 {
-    /* §5 worst-case demotion invariant: raw inputs foo+1-3 and foo+0-4
+    /* counter-dedup worst-case demotion invariant: raw inputs foo+1-3 and foo+0-4
      * must merge to a single entry with tries_left=0, tries_done=4
      * (lowest left wins; highest done wins). Calls
      * boot_policy_counter_dedup_insert() directly so the merge logic
@@ -1173,6 +1173,316 @@ static void test_ladder_supported_kinds_mask_filters_unavailable(void)
                    "kind=network rejected as KIND_UNAVAILABLE");
 }
 
+/* ---- menu pure-logic tests ------------------------------------------ */
+
+static void test_menu_should_show_store_default_two_entries(void)
+{
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    d.reason = BOOT_SELECTION_STORE_DEFAULT;
+
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 2u), 1,
+                   "STORE_DEFAULT + 2 candidates -> show");
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 1u), 0,
+                   "single candidate -> skip");
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 0u), 0,
+                   "no candidates -> skip");
+}
+
+static void test_menu_should_show_forced_selection_skips(void)
+{
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 4u;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+
+    /* Each forced-selection reason MUST skip the menu. */
+    d.reason = BOOT_SELECTION_HOTKEY;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 4u), 0, "HOTKEY skips menu");
+    d.reason = BOOT_SELECTION_WATCHDOG_ROLLBACK;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 4u), 0, "WATCHDOG_ROLLBACK skips menu");
+    d.reason = BOOT_SELECTION_AB_TRY_STATE;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 4u), 0, "AB_TRY_STATE skips menu");
+    d.reason = BOOT_SELECTION_RECOVERY_REQUEST;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 4u), 0, "RECOVERY_REQUEST skips menu");
+    d.reason = BOOT_SELECTION_FALLBACK_NO_VIABLE;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 4u), 0, "FALLBACK_NO_VIABLE skips menu");
+    d.reason = BOOT_SELECTION_FALLBACK_STORE_INVALID;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 4u), 0, "FALLBACK_STORE_INVALID skips menu");
+    d.reason = BOOT_SELECTION_UNSET;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 4u), 0, "UNSET sentinel skips menu");
+}
+
+static void test_menu_should_show_soft_reasons_render(void)
+{
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 3u;
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+
+    d.reason = BOOT_SELECTION_STORE_DEFAULT;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 3u), 1, "STORE_DEFAULT renders");
+    d.reason = BOOT_SELECTION_BOOTNEXT_HINT;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 3u), 1, "BOOTNEXT_HINT renders");
+    d.reason = BOOT_SELECTION_UNKNOWN_BOOTCURRENT;
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, &r, 3u), 1, "UNKNOWN_BOOTCURRENT renders");
+}
+
+static void test_menu_collect_filters_hidden_and_skipped(void)
+{
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 4u;
+    /* Visible. */
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "alpha");
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    /* HIDDEN -- should be filtered. */
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "hidden");
+    r.entries[1].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE | BOOT_ENTRY_FLAG_HIDDEN;
+    /* Visible. */
+    zero_envelope(&r.entries[2]);
+    set_id(r.entries[2].id, "beta");
+    r.entries[2].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[2].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    /* kind_skipped -- should be filtered. */
+    zero_envelope(&r.entries[3]);
+    set_id(r.entries[3].id, "vendor");
+    r.entries[3].kind = 100u;
+    r.entries[3].kind_skipped = 1;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    set_id(d.selected_entry_id, "beta");
+
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
+    TEST_ASSERT_EQ(n, 2u, "2 visible candidates after HIDDEN + kind_skipped filter");
+    TEST_ASSERT_EQ(idx[0], 0u, "first visible is alpha (entry 0)");
+    TEST_ASSERT_EQ(idx[1], 2u, "second visible is beta (entry 2)");
+    TEST_ASSERT_EQ(def, 1u, "default highlight points at beta (selected_entry_id match)");
+}
+
+static void test_menu_collect_filters_rejected(void)
+{
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 3u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "good");
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "exhausted");
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[2]);
+    set_id(r.entries[2].id, "okay");
+    r.entries[2].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    /* "exhausted" is in rejected[]. */
+    d.rejected_count = 1u;
+    set_id(d.rejected[0].id, "exhausted");
+    d.rejected[0].reason = BOOT_REJECT_REASON_TRIES_EXHAUSTED;
+    set_id(d.selected_entry_id, "good");
+
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
+    TEST_ASSERT_EQ(n, 2u, "rejected entry filtered from menu");
+    TEST_ASSERT_EQ(idx[0], 0u, "good is at index 0");
+    TEST_ASSERT_EQ(idx[1], 2u, "okay is at index 1 (exhausted skipped)");
+    TEST_ASSERT_EQ(def, 0u, "default highlight on good");
+}
+
+static void test_menu_helpers_null_and_zero_cap_guards(void)
+{
+    /* menu-helper defensive guards: public helpers must reject NULL inputs +
+     * cap==0 without dereferencing or writing past out_idx[]. Pinning
+     * these so a future refactor cannot regress the pre-EBS firmware
+     * contract into a crash class. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "a");
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "b");
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    d.reason = BOOT_SELECTION_STORE_DEFAULT;
+
+    /* should_show NULL guards. */
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(NULL, &r, 2u), 0,
+                   "should_show NULL decision -> 0");
+    TEST_ASSERT_EQ(boot_policy_menu_should_show(&d, NULL, 2u), 0,
+                   "should_show NULL parse -> 0");
+
+    /* collect NULL guards. */
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    TEST_ASSERT_EQ(boot_policy_menu_collect(NULL, &d, idx, 8u, &def), 0u,
+                   "collect NULL parse -> 0 count");
+    TEST_ASSERT_EQ(def, BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "collect NULL parse leaves NOT_FOUND");
+
+    def = 99u;
+    TEST_ASSERT_EQ(boot_policy_menu_collect(&r, NULL, idx, 8u, &def), 0u,
+                   "collect NULL decision -> 0 count");
+    TEST_ASSERT_EQ(def, BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "collect NULL decision leaves NOT_FOUND");
+
+    def = 99u;
+    TEST_ASSERT_EQ(boot_policy_menu_collect(&r, &d, NULL, 8u, &def), 0u,
+                   "collect NULL out_idx -> 0 count");
+    TEST_ASSERT_EQ(def, BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "collect NULL out_idx leaves NOT_FOUND");
+
+    /* cap==0 guard. */
+    def = 99u;
+    TEST_ASSERT_EQ(boot_policy_menu_collect(&r, &d, idx, 0u, &def), 0u,
+                   "collect cap==0 -> 0 count");
+    TEST_ASSERT_EQ(def, BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "collect cap==0 leaves NOT_FOUND");
+
+    /* NULL out_default_idx is also valid (caller may not need it). */
+    TEST_ASSERT_EQ(boot_policy_menu_collect(&r, &d, idx, 8u, NULL), 2u,
+                   "collect NULL out_default_idx still produces visible count");
+}
+
+static void test_menu_collect_default_not_found_when_truncated(void)
+{
+    /* menu-helper regression: when the ladder pick is BEYOND the visible cap,
+     * the helper MUST return BOOT_POLICY_MENU_DEFAULT_NOT_FOUND so the
+     * caller suppresses the menu. Otherwise the visible default would
+     * highlight a different entry than the one that actually boots on
+     * timeout / Enter -- a boot-selection integrity failure. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 5u;
+    for (unsigned i = 0; i < 5u; i++) {
+        zero_envelope(&r.entries[i]);
+        char id[8];
+        id[0] = (char)('a' + i); id[1] = 0;
+        set_id(r.entries[i].id, id);
+        r.entries[i].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    }
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    /* Selected entry is at parse index 4 (id="e"); cap is 3 -> the
+     * helper visits indices 0..2 and never sees "e". */
+    set_id(d.selected_entry_id, "e");
+
+    unsigned int idx[3];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 3u, &def);
+    TEST_ASSERT_EQ(n, 3u, "cap=3 still caps visible entries at 3");
+    TEST_ASSERT_EQ(def, BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "selected entry beyond cap -> NOT_FOUND sentinel");
+}
+
+static void test_menu_collect_default_not_found_when_filtered(void)
+{
+    /* Selected entry is filtered (HIDDEN flag) -> not in visible
+     * candidates -> NOT_FOUND. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "visible");
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "ghost");
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE | BOOT_ENTRY_FLAG_HIDDEN;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    set_id(d.selected_entry_id, "ghost");  /* the hidden one */
+
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
+    TEST_ASSERT_EQ(n, 1u, "1 visible candidate after HIDDEN filter");
+    TEST_ASSERT_EQ(def, BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "selected hidden -> NOT_FOUND sentinel");
+}
+
+static void test_menu_collect_no_anchor_when_id_empty(void)
+{
+    /* Decision has empty selected_entry_id (STORE_INVALID sentinel).
+     * Helper must NOT mark NOT_FOUND for that case -- it means "no
+     * anchor", caller falls back to highlighting candidate 0. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "first");
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "second");
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    /* selected_entry_id stays empty. */
+
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
+    TEST_ASSERT_EQ(n, 2u, "2 visible candidates");
+    TEST_ASSERT_EQ(def, BOOT_POLICY_MENU_DEFAULT_NOT_FOUND,
+                   "empty decision id -> NOT_FOUND (caller treats as no-anchor)");
+}
+
+static void test_menu_collect_cap_enforced(void)
+{
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 5u;
+    for (unsigned i = 0; i < 5u; i++) {
+        zero_envelope(&r.entries[i]);
+        char id[8];
+        id[0] = (char)('a' + i); id[1] = 0;
+        set_id(r.entries[i].id, id);
+        r.entries[i].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    }
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+
+    unsigned int idx[3];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 3u, &def);
+    TEST_ASSERT_EQ(n, 3u, "cap=3 caps output at 3");
+    TEST_ASSERT_EQ(idx[0], 0u, "first three retained in order");
+    TEST_ASSERT_EQ(idx[1], 1u, "second");
+    TEST_ASSERT_EQ(idx[2], 2u, "third");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_boot_policy(void)
@@ -1212,6 +1522,26 @@ void test_register_boot_policy(void)
                             test_counter_dedup_insert_raw_duplicates, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: counter_dedup_insert cap-full + duplicate-merge-at-cap",
                             test_counter_dedup_insert_cap_full, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_should_show STORE_DEFAULT + 2 entries -> show",
+                            test_menu_should_show_store_default_two_entries, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_should_show forced-selection reasons skip",
+                            test_menu_should_show_forced_selection_skips, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_should_show soft reasons render",
+                            test_menu_should_show_soft_reasons_render, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect filters HIDDEN + kind_skipped",
+                            test_menu_collect_filters_hidden_and_skipped, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect filters rejected[]",
+                            test_menu_collect_filters_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu helpers NULL + zero-cap guards",
+                            test_menu_helpers_null_and_zero_cap_guards, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect default NOT_FOUND when truncated past cap",
+                            test_menu_collect_default_not_found_when_truncated, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect default NOT_FOUND when selected is HIDDEN",
+                            test_menu_collect_default_not_found_when_filtered, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect empty decision id -> NOT_FOUND no-anchor",
+                            test_menu_collect_no_anchor_when_id_empty, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect cap enforced",
+                            test_menu_collect_cap_enforced, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: torn-duplicate end-to-end (dedup + ladder filter)",
                             test_counter_torn_duplicate_resolution, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: supported_kinds_mask filters unavailable kinds",

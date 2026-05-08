@@ -308,6 +308,42 @@ int boot_policy_counter_dedup_insert(boot_counter_t *out,
                                      unsigned int cap,
                                      const boot_counter_t *cand);
 
+/* ---- Boot menu pure logic helpers -------------------------------------
+ * Render + input-loop UEFI glue lives in bootx64.c. The two pure-C
+ * helpers below are factored out so kernel tests can exercise the
+ * filtering and visibility rules without UEFI / firmware mocks.
+ *
+ * boot_policy_menu_should_show:
+ *   Returns 1 iff the policy ladder picked a "soft" entry (the user
+ *   has a meaningful choice between candidates) AND >=2 viable
+ *   candidates remain. Forced-selection reasons (HOTKEY / WATCHDOG /
+ *   AB_TRY_STATE / RECOVERY_REQUEST / FALLBACK_*) all return 0.
+ *
+ * boot_policy_menu_collect:
+ *   Walks parse->entries[] and produces an index list of viable
+ *   candidates: not kind_skipped, not flagged HIDDEN, not in
+ *   decision->rejected[]. Returns the count; sets *out_default_idx to
+ *   the index in out_idx[] whose envelope id matches
+ *   decision->selected_entry_id, or BOOT_POLICY_MENU_DEFAULT_NOT_FOUND
+ *   when the selected entry is NOT representable within `cap` (e.g.
+ *   it lives beyond the cap or has been filtered out). Callers MUST
+ *   suppress the menu in that case -- otherwise the visible default
+ *   highlight would diverge from the actual boot decision, and a
+ *   timeout / Enter would boot a different entry than the user sees.
+ *   `cap` is the visible-row limit (BOOT_MENU_MAX_VISIBLE in the
+ *   bootloader; tests pass smaller values to exercise the cap).
+ */
+#define BOOT_POLICY_MENU_DEFAULT_NOT_FOUND  0xFFFFFFFFu
+int boot_policy_menu_should_show(const boot_policy_decision_t *decision,
+                                 const boot_entries_parse_result_t *parse,
+                                 unsigned int viable_count);
+
+unsigned int boot_policy_menu_collect(
+    const boot_entries_parse_result_t *parse,
+    const boot_policy_decision_t *decision,
+    unsigned int *out_idx, unsigned int cap,
+    unsigned int *out_default_idx);
+
 #define BOOT_COUNTER_FILENAME_MAX  64u   /* 47 + 1 + 1 + 1 + 2 + NUL + slack */
 #define BOOT_COUNTER_TRIES_LEFT_MAX  9u
 #define BOOT_COUNTER_TRIES_DONE_MAX  99u

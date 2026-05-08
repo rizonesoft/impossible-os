@@ -247,6 +247,29 @@ typedef struct {
     CHAR16 UnicodeChar;
 } EFI_INPUT_KEY;
 
+/* EFI_INPUT_KEY ScanCode constants per UEFI 2.10 spec Table 12.4. Used
+ * by the boot menu's navigation. UnicodeChar=='\r' (0x000D) is Enter;
+ * ScanCode==0x17 is Esc. Plain ASCII keys come through as ScanCode=0
+ * + UnicodeChar=<char>. */
+#define EFI_SCAN_NULL          0x0000
+#define EFI_SCAN_UP            0x0001
+#define EFI_SCAN_DOWN          0x0002
+#define EFI_SCAN_RIGHT         0x0003
+#define EFI_SCAN_LEFT          0x0004
+#define EFI_SCAN_HOME          0x0005
+#define EFI_SCAN_END           0x0006
+#define EFI_SCAN_INSERT        0x0007
+#define EFI_SCAN_DELETE        0x0008
+#define EFI_SCAN_PAGE_UP       0x0009
+#define EFI_SCAN_PAGE_DOWN     0x000A
+#define EFI_SCAN_F1            0x000B
+#define EFI_SCAN_F8            0x0012
+#define EFI_SCAN_F10           0x0014
+#define EFI_SCAN_F11           0x0015
+#define EFI_SCAN_ESC           0x0017
+#define EFI_CHAR_CR            0x000D
+#define EFI_CHAR_LF            0x000A
+
 typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL {
     EFI_STATUS (EFIAPI *Reset)(struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This, BOOLEAN ExtendedVerification);
     EFI_STATUS (EFIAPI *ReadKeyStroke)(struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL *This, EFI_INPUT_KEY *Key);
