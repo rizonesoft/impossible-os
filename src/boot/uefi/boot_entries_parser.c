@@ -778,9 +778,13 @@ static int parse_entry_object(lexer_t *L, u32 idx,
                 return 0;
             }
             u32 vlen = L->content_end - L->content_start;
-            if (!is_uuid_text(L->raw + L->content_start, vlen)) {
+            /* Empty machine_id is the explicit "match any machine" wildcard
+             * (the boot-policy filter treats e->machine_id[0]=='\0' as
+             * universal). Non-empty values must be RFC 4122 textual UUID
+             * form; the policy filter compares exact 36-char strings. */
+            if (vlen > 0u && !is_uuid_text(L->raw + L->content_start, vlen)) {
                 set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
-                           "machine_id must be RFC 4122 UUID textual form");
+                           "machine_id must be empty or RFC 4122 UUID textual form");
                 return 0;
             }
             copy_clamped(out->machine_id, sizeof(out->machine_id), L->raw + L->content_start, vlen);

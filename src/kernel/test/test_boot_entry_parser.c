@@ -235,6 +235,29 @@ static void test_parser_malformed_payload_rejected(void)
     TEST_ASSERT(rc != BOOT_ENTRIES_OK, "malformed payload value rejected");
 }
 
+static void test_parser_empty_machine_id_accepted(void)
+{
+    /* The boot-policy filter treats empty machine_id as "match any
+     * machine"; the parser must accept the empty string in that field
+     * without rejecting the store. Real-parser fixture (vs the manual
+     * envelope construction in test_boot_policy.c) so a regression in
+     * the parser's machine_id branch is caught here. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"global\",\"title\":\"Global\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"\","
+        "\"policy_tags\":[],\"payload\":{}}]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
+                   "empty machine_id accepted as wildcard");
+    TEST_ASSERT_EQ(r.entry_count, 1u, "one entry retained");
+    TEST_ASSERT(r.entries[0].machine_id[0] == '\0',
+                "empty machine_id preserved as wildcard sentinel");
+}
+
 static void test_parser_chainload_passes_under_secure_boot(void)
 {
     /* The parser no longer hard-rejects an untrusted chainload under
@@ -397,6 +420,8 @@ void test_register_boot_entry_parser(void)
                             test_parser_id_not_kebab, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: malformed payload value rejected",
                             test_parser_malformed_payload_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: empty machine_id wildcard accepted",
+                            test_parser_empty_machine_id_accepted, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: chainload retained under SB (policy demote)",
                             test_parser_chainload_passes_under_secure_boot, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: depth-bomb rejected without crash",

@@ -91,7 +91,7 @@ Each entry object carries an envelope plus a per-kind payload:
 | `flags`            | array of string | yes      | subset of {active, hidden, trusted_chainload, hide_when_alone, allow_editor} |
 | `timeout_override` | integer         | no       | 0..600; if absent, use loader default                       |
 | `sort_key`         | string          | yes      | sort string (BLS-style); shorter sorts earlier              |
-| `machine_id`       | string          | yes      | RFC 4122 UUID textual form                                  |
+| `machine_id`       | string          | yes      | RFC 4122 UUID textual form, OR empty string for the "match any machine" wildcard |
 | `policy_tags`      | array of string | yes      | reserved for future policy filtering; may be empty          |
 | `payload`          | object          | yes      | per-kind fields (see "Per-Kind Fields" below)               |
 

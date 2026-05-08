@@ -338,8 +338,13 @@ def validate_envelope(entry: dict, idx: int) -> None:
 
     if not isinstance(entry["sort_key"], str):
         fail(f"entry[{idx}]: sort_key must be a string")
-    if not isinstance(entry["machine_id"], str) or not _UUID_RE.match(entry["machine_id"]):
-        fail(f"entry[{idx}]: machine_id must be RFC 4122 UUID format, got {entry['machine_id']!r}")
+    if not isinstance(entry["machine_id"], str):
+        fail(f"entry[{idx}]: machine_id must be a string, got {entry['machine_id']!r}")
+    # Empty machine_id is the explicit "match any machine" wildcard
+    # (the boot-policy ladder treats e->machine_id[0]=='\\0' as universal).
+    # Non-empty values must be RFC 4122 textual UUID form.
+    if entry["machine_id"] != "" and not _UUID_RE.match(entry["machine_id"]):
+        fail(f"entry[{idx}]: machine_id must be empty or RFC 4122 UUID format, got {entry['machine_id']!r}")
     if not isinstance(entry["policy_tags"], list):
         fail(f"entry[{idx}]: policy_tags must be an array")
     for i, tag in enumerate(entry["policy_tags"]):

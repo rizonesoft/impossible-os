@@ -257,8 +257,31 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
 
     /* Normalize the optional counter array: NULL means "no counters tracked",
      * but a stale or buggy caller could pass NULL with a nonzero count and
-     * crash counter_lookup() below. Treat NULL as zero count regardless. */
+     * crash counter_lookup() below. Treat NULL as zero count regardless.
+     * Also cap counter_count at BOOT_ENTRIES_MAX_ENTRIES so a hostile or
+     * stale ESP that scanned thousands of `<id>+<L>-<D>` files cannot turn
+     * a single pre-EBS policy decision into O(entries x counters) work
+     * with both bounds unbounded. The bootloader-side counter scan caps
+     * at MAX_ENTRIES too, but enforcing here keeps the contract
+     * load-bearing regardless of caller. */
     if (!counters) counter_count = 0u;
+    if (counter_count > BOOT_ENTRIES_MAX_ENTRIES) counter_count = BOOT_ENTRIES_MAX_ENTRIES;
+
+    /* Counter-scan overflow: a hostile/stale ESP could flood the counter
+     * directory with thousands of files; the bootloader-side scan caps at
+     * MAX_ENTRIES, but a tries-exhausted record beyond that cap would be
+     * silently dropped, allowing an exhausted entry to boot un-gated.
+     * Fail closed: when the caller signals overflow, fall straight to the
+     * fallback envelope so the operator can recover via Branch B-wired
+     * counter cleanup. */
+    if (inputs->counters_overflow) {
+        out->reason = BOOT_SELECTION_FALLBACK_NO_VIABLE;
+        boot_entries_synthesize_fallback(inputs->invoked_via_uki ? 1 : 0,
+                                         &out->selected);
+        sp_copy_clamped(out->selected_entry_id, sizeof(out->selected_entry_id),
+                        out->selected.id, sp_strlen(out->selected.id));
+        return;
+    }
 
     /* STORE_INVALID short-circuit: the parser failed, the caller will use
      * boot_entries_synthesize_fallback(). Nothing to filter or pick. */
@@ -352,8 +375,12 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
     /* --- Ladder priority 3: A/B try-state. The slot index maps to the
      * Nth candidate (0-based). A/B integration owns the policy that maps
      * slot index to a specific entry pair; pre-integration, we accept
-     * whatever index the prober supplies. */
-    if (inputs->ab_slot_index != BOOT_POLICY_NO_AB_SLOT) {
+     * whatever index the prober supplies. `ab_slot_valid` MUST be set --
+     * a zero-initialized inputs struct (BSS / AllocateZeroPool) has
+     * valid=0 and skips this priority, preventing accidental slot-0
+     * selection that would override recovery + store-default. */
+    if (inputs->ab_slot_valid &&
+        inputs->ab_slot_index != BOOT_POLICY_NO_AB_SLOT) {
         unsigned int seen = 0;
         for (unsigned int i = 0; i < parse->entry_count; i++) {
             if (!candidate[i]) continue;
@@ -442,6 +469,18 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
         return;
     }
 
-    /* --- Ladder priority 6: fallback (no viable candidate). */
+    /* --- Ladder priority 6: fallback (no viable candidate). The public
+     * contract states that `selected` is valid for every reason except
+     * UNSET and FALLBACK_STORE_INVALID, so we synthesize the fallback
+     * envelope inline here. The caller still needs to handle
+     * STORE_INVALID separately because the parser result is unusable in
+     * that case (no store to read uki_mode from). */
     out->reason = BOOT_SELECTION_FALLBACK_NO_VIABLE;
+    /* Honor the caller's UKI invocation context so a UKI boot that
+     * exhausts all viable entries gets a kind=uki fallback envelope, not
+     * a split-path one. invoked_via_uki=0 (default) -> kind=split. */
+    boot_entries_synthesize_fallback(inputs->invoked_via_uki ? 1 : 0,
+                                     &out->selected);
+    sp_copy_clamped(out->selected_entry_id, sizeof(out->selected_entry_id),
+                    out->selected.id, sp_strlen(out->selected.id));
 }

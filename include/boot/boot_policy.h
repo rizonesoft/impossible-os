@@ -126,8 +126,15 @@ typedef struct {
     int          watchdog_rollback;
 
     /* A/B try-state (input owned by the A/B + recovery integration feature).
-     * Filled by the slot-state probe; 0xFFFF = "no A/B applies", otherwise
-     * the 0-based slot index the prober picked. */
+     * `ab_slot_valid` MUST be 1 for the ladder to consider this branch --
+     * BSS-zero default (valid=0) means "no A/B applies", so a freshly-
+     * AllocateZeroPool'd inputs struct does NOT silently fire the A/B
+     * priority with slot 0. When valid=1, ab_slot_index is the 0-based
+     * slot index the prober picked. The legacy BOOT_POLICY_NO_AB_SLOT
+     * sentinel below is preserved for callers that want to express
+     * "definitely no A/B" via a sentinel value AND keeps backwards
+     * compatibility with code that sets only ab_slot_index. */
+    unsigned int ab_slot_valid;
     unsigned int ab_slot_index;
 
     /* Recovery request (input owned by the A/B + recovery integration
@@ -137,6 +144,20 @@ typedef struct {
 
     /* Path-escape gate (forwarded from the parser's secure_boot_active). */
     int          secure_boot_active;
+
+    /* UKI invocation context. When the bootloader was launched via the
+     * Unified Kernel Image path (BOOT_FLAG_INVOKED_VIA_UKI), this flag
+     * MUST be 1 so FALLBACK_NO_VIABLE synthesizes a kind=uki envelope
+     * instead of the default split-path one. Default 0 (split). */
+    int          invoked_via_uki;
+
+    /* Counter-scan overflow signal. The bootloader-side counter directory
+     * scan caps its array at BOOT_ENTRIES_MAX_ENTRIES; if the scan saw
+     * more files than the cap, it sets this flag. The ladder then fails
+     * closed (returns FALLBACK_NO_VIABLE) rather than risk booting an
+     * entry whose tries-exhausted record was dropped beyond the cap by a
+     * hostile or stale ESP. */
+    int          counters_overflow;
 } boot_policy_inputs_t;
 
 #define BOOT_POLICY_NO_AB_SLOT  0xFFFFu
@@ -228,6 +249,20 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
                         const boot_counter_t *counters,
                         unsigned int counter_count,
                         boot_policy_decision_t *out);
+
+/* ---- Result-size discipline (pre-EBS allocation) -----------------------
+ * boot_policy_decision_t carries an inline 64-entry rejected[] array plus
+ * a deep-copied selected envelope, so it is several KiB. The bootloader
+ * MUST allocate it (and the upstream boot_entries_parse_result_t) via
+ * gBS->AllocatePool, NOT as an automatic local on the pre-EBS stack.
+ * The static_asserts below pin the upper bound so a future envelope
+ * widening cannot silently push a stack-allocating caller into stack
+ * exhaustion.
+ */
+_Static_assert(sizeof(boot_policy_decision_t) <= 8u * 1024u,
+               "boot_policy_decision_t exceeds 8 KiB; callers must use AllocatePool");
+_Static_assert(sizeof(boot_policy_inputs_t) <= 256u,
+               "boot_policy_inputs_t grew unexpectedly; review BSS-zero defaults");
 
 #ifdef __cplusplus
 }

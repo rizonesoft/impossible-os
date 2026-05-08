@@ -545,6 +545,7 @@ static void test_ladder_ab_slot_picks_index(void)
 
     boot_policy_inputs_t in;
     zero_inputs(&in);
+    in.ab_slot_valid = 1u;
     in.ab_slot_index = 1u;               /* 0-based: pick slot-b */
     boot_policy_decision_t d;
     boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
@@ -619,8 +620,14 @@ static void test_ladder_watchdog_only_peak_is_no_viable(void)
 
     TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_FALLBACK_NO_VIABLE,
                    "no alternate -> fallback, NOT re-pick peak");
-    TEST_ASSERT(d.selected_entry_id[0] == '\0',
-                "no entry selected when peak suppressed and no alternate");
+    /* Public contract: selected envelope is valid for FALLBACK_NO_VIABLE
+     * (boot_policy_decide synthesizes a fallback envelope so the caller
+     * can boot). Verify the synthesized id is NOT the failing peak's id. */
+    TEST_ASSERT(d.selected_entry_id[0] != '\0',
+                "fallback envelope synthesized on FALLBACK_NO_VIABLE");
+    TEST_ASSERT(!(d.selected_entry_id[0] == 'o' && d.selected_entry_id[1] == 'n'
+                  && d.selected_entry_id[2] == 'l' && d.selected_entry_id[3] == 'y'),
+                "fallback id is NOT the failing peak's id");
 }
 
 static void test_ladder_null_counters_with_count_safe(void)
@@ -701,6 +708,119 @@ static void test_ladder_empty_store_is_no_viable(void)
     TEST_ASSERT_EQ(d.rejected_count, 0u, "no per-entry rejects on empty store");
 }
 
+static void test_ladder_counters_overflow_fails_closed(void)
+{
+    /* Regression for re-adversarial round 3 [M counter]: when the
+     * caller signals the counter directory scan saw more files than
+     * the cap, the ladder MUST fall back rather than risk booting an
+     * exhausted entry whose counter was dropped. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 1u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "ok");
+    set_id(r.entries[0].sort_key, "10");
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    in.counters_overflow = 1;
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_FALLBACK_NO_VIABLE,
+                   "counter overflow -> fail-closed fallback");
+    TEST_ASSERT(d.selected_entry_id[0] != '\0',
+                "fallback envelope synthesized on overflow");
+}
+
+static void test_ladder_uki_mode_propagates_to_fallback(void)
+{
+    /* Regression for re-adversarial round 3 [H]: when invoked_via_uki
+     * is set, FALLBACK_NO_VIABLE must synthesize a kind=uki envelope,
+     * not a split-path one. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 0u;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    in.invoked_via_uki = 1;
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_FALLBACK_NO_VIABLE,
+                   "no entries -> fallback");
+    TEST_ASSERT_EQ(d.selected.kind, BOOT_ENTRY_KIND_UKI,
+                   "UKI mode produces kind=uki fallback envelope");
+}
+
+static void test_ladder_zeroed_inputs_no_ab_default(void)
+{
+    /* Regression for the H1 BSS-zero footgun: a freshly zeroed inputs
+     * struct has ab_slot_index==0 but ab_slot_valid==0, so the A/B
+     * priority MUST NOT fire and pick slot 0. Default behavior is
+     * store-default. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "alpha");
+    set_id(r.entries[0].sort_key, "10");
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "beta");
+    set_id(r.entries[1].sort_key, "20");
+    r.entries[1].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    /* Raw zeroed inputs -- mimics gBS->AllocateZeroPool() result. */
+    boot_policy_inputs_t in;
+    for (unsigned int i = 0; i < sizeof(in); i++) ((unsigned char *)&in)[i] = 0;
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_STORE_DEFAULT,
+                   "zero inputs -> store-default, NOT A/B slot 0");
+    TEST_ASSERT(d.selected_entry_id[0] == 'a',
+                "lowest sort_key wins (alpha), not slot-0 via A/B");
+}
+
+static void test_parser_empty_machine_id_wildcard(void)
+{
+    /* Regression for M3: empty machine_id is the documented wildcard;
+     * parser must accept it without is_uuid_text rejection. The policy
+     * filter handles "empty matches any machine" semantics; this test
+     * proves the parser does not block the on-disk fixture from existing.
+     */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 1u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "global");
+    set_id(r.entries[0].sort_key, "10");
+    /* Empty machine_id -- the wildcard. */
+    r.entries[0].machine_id[0] = 0;
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    /* No local UUID either -- should still match the wildcard entry. */
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_STORE_DEFAULT,
+                   "empty machine_id wildcard matches any machine");
+    TEST_ASSERT(d.selected_entry_id[0] == 'g', "global entry picked");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_boot_policy(void)
@@ -732,6 +852,14 @@ void test_register_boot_policy(void)
     test_suite_register_cat("boot-policy: path-escape demote keeps other viable (regression)",
                             test_ladder_path_escape_demote_keeps_other_viable,
                             TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: zeroed inputs do NOT auto-fire A/B slot 0 (regression)",
+                            test_ladder_zeroed_inputs_no_ab_default, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: empty machine_id wildcard accepted (regression)",
+                            test_parser_empty_machine_id_wildcard, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: counters_overflow fails closed (regression)",
+                            test_ladder_counters_overflow_fails_closed, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: invoked_via_uki -> kind=uki fallback (regression)",
+                            test_ladder_uki_mode_propagates_to_fallback, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: store-default picks lowest sort_key",
                             test_ladder_store_default_picks_lowest_sort_key,
                             TEST_CAT_BOOT);

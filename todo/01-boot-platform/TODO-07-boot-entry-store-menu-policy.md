@@ -148,10 +148,11 @@ Two distinct layers, deterministically composed. **Firmware layer**: UEFI `BootC
 > - [ ] Scan `\EFI\ImpossibleOS\counters\` directory pre-handoff: parse each filename with `boot_counter_parse_filename`, build the `boot_counter_t` array, then `SetInfo`-rename the chosen entry's counter file to record the new (`tries_left-1`, `tries_done+1`) values atomically.
 > - [ ] Wire `boot_policy_decide()` into `bootx64.c` post-parse, pre-handoff; copy `decision.selected_entry_id` + `decision.reason` + `decision.rejected[]` into `boot_info`.
 > - [ ] When the chosen entry implies a path change (`kind=recovery` -> `BOOT_PATH_RECOVERY`, etc.), update `boot_info.boot_path` + `boot_info.boot_reason` accordingly.
+> - [ ] Add `boot_decision_validate`-style Phase-0 validator for the v19 selection ABI: reject `selection_reason == BOOT_SELECTION_UNSET` (after Branch B producer ships), reject `selection_reason` outside `[0..BOOT_SELECTION_REASON_MAX]`, reject `rejected_entry_count > BOOT_ENTRIES_MAX_ENTRIES`, reject `rejected_entries[i].reason` outside `[0..BOOT_REJECT_REASON_MAX]`, and reject non-NUL-terminated `selected_entry_id`. Lives alongside the existing `boot_decision_validate()` in `src/kernel/main/boot_decision.c`.
 
-**Test checkpoint:** 23 ladder + counter unit tests in `src/kernel/test/test_boot_policy.c` cover the 6 worked examples plus BLS filename round-trip / two-digit-done / bad-grammar rejection / boundary caps + NULL guards / kind_skipped + hidden + empty-local-machine-id rejects / A/B slot indexing / multi-signal priority (watchdog beats recovery) / empty-store fallback / 3 regression tests (watchdog-only-peak no-fallthrough, NULL counters with stale count, path-escape per-entry demote). Build OK; lint clean. Branch B follow-ups (live ESP read, OptionalData parse, counter scan + rename) integrate with hotkey input from `§4`, watchdog from `§9`, A/B from `§6` + `TODO-21`, recovery from `§6` + `TODO-22`. Test on: kernel test runner + QEMU TCG once Branch B lands.
+**Test checkpoint:** 27 ladder + counter unit tests in `src/kernel/test/test_boot_policy.c` cover the 6 worked examples plus BLS filename round-trip / two-digit-done / bad-grammar rejection / boundary caps + NULL guards / kind_skipped + hidden + empty-local-machine-id rejects / A/B slot indexing / multi-signal priority (watchdog beats recovery) / empty-store fallback / 7 regression tests (watchdog-only-peak no-fallthrough, NULL counters with stale count, path-escape per-entry demote, zeroed inputs no auto-A/B, empty machine_id wildcard, counters_overflow fail-closed, invoked_via_uki -> kind=uki fallback). Plus 1 new parser fixture in `test_boot_entry_parser.c` for empty-machine_id acceptance. Build OK; lint clean. Branch B follow-ups (live ESP read, OptionalData parse, counter scan + rename) integrate with hotkey input from `§4`, watchdog from `§9`, A/B from `§6` + `TODO-21`, recovery from `§6` + `TODO-22`. Test on: kernel test runner + QEMU TCG once Branch B lands.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 23 suites added (42 total in TEST_CAT_BOOT), 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 28 suites added (47 total in TEST_CAT_BOOT), 0 failures
 
 > **Notes:**
 > - What shipped: `boot_policy.{h,c}` (~370 lines: 6-priority ladder + filter + BLS counter grammar), parser widened (4 retained fields), boot_info v19 with selection ABI, `test_boot_policy.c` (13 cases).
@@ -160,7 +161,12 @@ Two distinct layers, deterministically composed. **Firmware layer**: UEFI `BootC
 > - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md).
 > - Scope boundary: §3 owns the ladder + selection ABI + counter grammar. Branch B follow-ups above own bootloader-side ESP / NVRAM I/O.
 
+> **Verified:** 2026-05-08 | commit `39b9feee` | 6/6 items + 6 Branch B [ ] | build OK | smoke PASS (KVM 2.60s)
+> **Accepted:** [M] v19 selection ABI lacks Phase-0 validator (reason: deferred until Branch B producer ships) -> XREF: 01-boot-platform/TODO-07 §3 Branch B (item: "Add `boot_decision_validate`-style Phase-0 validator for the v19 selection ABI" in the §3 Branch B follow-up block above)
+> **Quality reviewed:** 2026-05-08 | Codex 8x (design + adversarial 2x + re-adversarial 2x + test-coverage + consistency + perf) | 8H+14M fixed, 1M accepted-XREF | scope: boot-code-quality
+
 ---
+
 
 ## 4. Text and Graphical Boot Menu
 

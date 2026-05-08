@@ -1596,10 +1596,23 @@ struct boot_info {
      * passed parsing. See enum boot_selection_reason / boot_reject_reason
      * in include/boot/boot_policy.h.
      *
-     * Sentinels: selected_entry_id="" iff store was rejected outright AND
-     * fallback synth used; selection_reason==BOOT_SELECTION_UNSET (0) is
-     * a producer-must-overwrite invariant; rejected_entry_count==0 is
-     * legal (no entries filtered out). */
+     * Producer status: v19 storage ships ahead of the live producer. The
+     * boot-entry policy module (src/boot/uefi/boot_policy.c) provides
+     * boot_policy_decide(), but bootx64.c does not yet read the ESP store
+     * or invoke the ladder -- that's tracked in the boot-entry policy
+     * Branch B follow-up "Wire boot_policy_decide() into bootx64.c" in
+     * todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md. Until
+     * that lands, selection_reason == BOOT_SELECTION_UNSET (0) is the
+     * explicit "no decision available" sentinel: kernel-side consumers
+     * (registry surface from the loader-variables feature, policy audit
+     * from the watchdog feature) MUST treat UNSET as a no-op, NOT as a
+     * producer bug. selected_entry_id is empty in that case. After the
+     * producer ships, UNSET becomes a producer-must-overwrite invariant --
+     * the registry/audit consumers will validate selection_reason within
+     * [BOOT_SELECTION_STORE_DEFAULT..BOOT_SELECTION_REASON_MAX] and reject
+     * UNSET.
+     *
+     * rejected_entry_count==0 is always legal (no entries filtered out). */
     char     selected_entry_id[64];       /* internal id of the entry chosen by the ladder */
     uint32_t selection_reason;            /* enum boot_selection_reason */
     uint32_t _selection_pad;              /* alignment to 8-byte boundary */
