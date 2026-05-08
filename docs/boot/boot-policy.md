@@ -203,3 +203,5 @@ The kernel-side consumers are:
 | Counter directory scan + crash-tolerant decrement (write-new + Flush + Close + delete-old) | crash-tolerant counter protocol feature |
 | SMBIOS table 1 UUID extraction for `local_machine_id` | OS-visible loader UEFI variables feature |
 | `mark-good` / health-gated promotion | health gate (`§11`) |
+
+> Menu UX (indicator legend, hotkey table, `hide_when_alone` semantics, F10 firmware-setup narrow path) is documented in [boot-menu.md](boot-menu.md).

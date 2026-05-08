@@ -791,9 +791,9 @@ static void nvram_write_boot_error(UINT32 code)
 /* BootError values must be a known BOOT_ERR_* code from efi.h.  Reject
  * anything else as untrusted input (a pre-OS UEFI app can write under
  * the public Impossible OS GUID).  Keep this in sync with the registry
- * in efi.h: highest currently-defined code is BOOT_ERR_UKI_DISK_OVERRIDE
- * (0x0013). */
-#define BOOT_ERR_REGISTRY_MAX 0x0013
+ * in efi.h: highest currently-defined code is BOOT_ERR_FW_SETUP_RESET_RET
+ * (0x0014). */
+#define BOOT_ERR_REGISTRY_MAX 0x0014
 
 static UINT32 nvram_read_boot_error(void)
 {
@@ -4092,12 +4092,75 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
  * tables); when the framebuffer is unavailable we fall back to
  * gST->ConOut->OutputString. Serial mirror always logs the current
  * highlighted index for diagnostic visibility. */
+/* Compose ASCII indicator tags for one entry into a fixed buffer.
+ * ASCII-only because the Selawik AA atlas covers 0x20..0x7E and
+ * Windows serial consoles garble multi-byte UTF-8.
+ *
+ *   [SB]   Secure Boot active (firmware reports SB enabled)
+ *   [REC]  recovery entry (kind == RECOVERY)
+ *   [NET]  network entry (kind == NETWORK)
+ *   [FAIL] last-failure recorded for this id in decision->rejected[]
+ *
+ * [MB] (measured boot) is reserved for the TPM event-log integration
+ * and stays out of menu-indicators ship -- event-log producer is in
+ * the measured-boot TODO domain.
+ *
+ * out_buf is a >= 32-byte caller-owned buffer; returns out_buf. */
+static const char *boot_menu_indicators(const boot_entry_envelope_t *e,
+                                        const boot_policy_decision_t *decision,
+                                        int sb_active,
+                                        char *out_buf,
+                                        unsigned int out_cap)
+{
+    unsigned int p = 0;
+    if (out_cap == 0u) return out_buf;
+    out_buf[0] = 0;
+
+    if (sb_active && p + 5u < out_cap) {
+        out_buf[p++] = '['; out_buf[p++] = 'S'; out_buf[p++] = 'B'; out_buf[p++] = ']';
+        out_buf[p++] = ' ';
+    }
+    if (e->kind == BOOT_ENTRY_KIND_RECOVERY && p + 6u < out_cap) {
+        out_buf[p++] = '['; out_buf[p++] = 'R'; out_buf[p++] = 'E'; out_buf[p++] = 'C';
+        out_buf[p++] = ']'; out_buf[p++] = ' ';
+    }
+    if (e->kind == BOOT_ENTRY_KIND_NETWORK && p + 6u < out_cap) {
+        out_buf[p++] = '['; out_buf[p++] = 'N'; out_buf[p++] = 'E'; out_buf[p++] = 'T';
+        out_buf[p++] = ']'; out_buf[p++] = ' ';
+    }
+    if (decision != (const boot_policy_decision_t *)0) {
+        for (unsigned int r = 0; r < decision->rejected_count; r++) {
+            unsigned int reason = decision->rejected[r].reason;
+            if (reason == (unsigned int)BOOT_REJECT_REASON_NONE) continue;
+            const char *a = e->id;
+            const char *b = decision->rejected[r].id;
+            unsigned int j;
+            int eq = 1;
+            for (j = 0; j < sizeof(e->id); j++) {
+                if (a[j] != b[j]) { eq = 0; break; }
+                if (a[j] == 0) break;
+            }
+            if (!eq) continue;
+            if (p + 7u < out_cap) {
+                out_buf[p++] = '['; out_buf[p++] = 'F'; out_buf[p++] = 'A';
+                out_buf[p++] = 'I'; out_buf[p++] = 'L'; out_buf[p++] = ']';
+                out_buf[p++] = ' ';
+            }
+            break;
+        }
+    }
+    out_buf[p] = 0;
+    return out_buf;
+}
+
 static void boot_menu_render(const boot_entries_parse_result_t *parse,
                              const unsigned int *cand_idx,
                              unsigned int cand_count,
                              unsigned int selected_idx,
                              unsigned int seconds_left,
-                             int gop_available)
+                             int gop_available,
+                             const boot_policy_decision_t *decision,
+                             int sb_active)
 {
     /* Serial mirror -- always, regardless of GOP availability. The
      * smoke test asserts this line appears so headless operators see
@@ -4151,9 +4214,22 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
                 fg_r = 0xFF; fg_g = 0xFF; fg_b = 0xFF;
                 bg_r = 0x40; bg_g = 0x80; bg_b = 0xC0;
             }
-            /* Title (envelope.title), fall back to id. */
+            /* Indicator badges first (ASCII, atlas-safe), then title. */
+            char ind[40];
+            (void)boot_menu_indicators(e, decision, sb_active,
+                                       ind, (unsigned int)sizeof(ind));
             const char *label = e->title[0] ? e->title : e->id;
-            bsod_aa_string(col_x, y + 4u, label,
+            UINT32 lx = col_x;
+            if (ind[0]) {
+                bsod_aa_string(lx, y + 4u, ind,
+                               bsod_aa_SUB, bsod_aa_SUB_data, 18u,
+                               fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
+                /* Approximate AA width per char: SUB at 18px ~ 11px/char. */
+                unsigned int ind_len = 0;
+                while (ind[ind_len]) ind_len++;
+                lx += (UINT32)ind_len * 11u;
+            }
+            bsod_aa_string(lx, y + 4u, label,
                            bsod_aa_SUB, bsod_aa_SUB_data, 18u,
                            fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
         }
@@ -4189,11 +4265,16 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
         gST->ConOut->OutputString(gST->ConOut, u"\r\n=== Impossible OS Boot Menu ===\r\n");
         for (unsigned int i = 0; i < cand_count && i < BOOT_MENU_MAX_VISIBLE; i++) {
             const boot_entry_envelope_t *e = &parse->entries[cand_idx[i]];
+            char ind[40];
+            (void)boot_menu_indicators(e, decision, sb_active,
+                                       ind, (unsigned int)sizeof(ind));
             const char *label = e->title[0] ? e->title : e->id;
-            CHAR16 line[160];
+            CHAR16 line[200];
             unsigned int p = 0;
             line[p++] = (i == selected_idx) ? u'>' : u' ';
             line[p++] = u' ';
+            for (unsigned int j = 0; ind[j] && p < sizeof(line)/sizeof(line[0]) - 4u; j++)
+                line[p++] = (CHAR16)(unsigned char)ind[j];
             for (unsigned int j = 0; label[j] && p < sizeof(line)/sizeof(line[0]) - 4u; j++)
                 line[p++] = (CHAR16)(unsigned char)label[j];
             line[p++] = u'\r';
@@ -4208,19 +4289,32 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
  * of the chosen entry; on countdown expiry, returns default_idx (the
  * ladder pick). The watchdog is reset every iteration so a long
  * timeout_override does not trigger a firmware reset. */
+/* Hotkey result codes returned in *out_hotkey by boot_menu_run().
+ * Negative values are sentinels (none / firmware-setup-pending);
+ * non-negative values index into cand_idx[] like the return value. */
+#define BOOT_MENU_HOTKEY_NONE       0  /* no hotkey side-effect */
+#define BOOT_MENU_HOTKEY_SAFE_MODE  1  /* F8 pressed */
+#define BOOT_MENU_HOTKEY_FW_SETUP   2  /* F10 -> firmware setup (handled in invoke) */
+
 static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                                   const unsigned int *cand_idx,
                                   unsigned int cand_count,
                                   unsigned int default_idx,
-                                  unsigned int timeout_s)
+                                  unsigned int timeout_s,
+                                  const boot_policy_decision_t *decision,
+                                  int sb_active,
+                                  int allow_skip_when_alone,
+                                  int *out_hotkey)
 {
     boot_set_section(BOOT_SECTION_BL_MENU);
     post_code16(POST16_BL_MENU);
 
+    if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_NONE;
+
     if (cand_count == 0u) return 0;
-    if (cand_count == 1u) {
-        serial_early_print("[BOOT] menu: 1 candidate -- skipping\n");
-        return 0;  /* single entry: no choice */
+    if (cand_count == 1u && allow_skip_when_alone) {
+        serial_early_print("[BOOT] menu: 1 candidate + hide_when_alone -- skipping\n");
+        return 0;
     }
 
     /* Cap the timeout against the watchdog window. boot_fatal would
@@ -4243,7 +4337,7 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
 
     /* Initial render. */
     boot_menu_render(parse, cand_idx, cand_count, selected,
-                     timeout_s, gop_available);
+                     timeout_s, gop_available, decision, sb_active);
     int dirty = 0;
     unsigned int last_seconds_logged = timeout_s;
     /* Throttle watchdog refresh: the firmware WD_TIMEOUT in efi_main
@@ -4300,7 +4394,30 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                            || key.UnicodeChar == EFI_CHAR_LF) {
                     serial_early_print("[BOOT] menu: Enter -- boot selected\n");
                     return selected;
+                } else if (key.ScanCode == EFI_SCAN_F8) {
+                    /* F8 = safe-mode override hotkey. The kernel-side
+                     * wire-up (boot_info.safe_mode_request, safe-mode
+                     * cmdline injection) lives in the safe-mode
+                     * section of this TODO; this section ships the
+                     * recognition + audit log so the operator gets
+                     * immediate feedback. */
+                    serial_early_print("[BOOT] menu: F8 -- safe-mode requested (kernel wire-up pending)\n");
+                    if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_SAFE_MODE;
+                    return selected;
+                } else if (key.ScanCode == EFI_SCAN_F10) {
+                    /* F10 = firmware setup. The actual reset-into-
+                     * setup transition is owned by the caller in
+                     * boot_policy_invoke() because it touches NV
+                     * UEFI variables (OsIndications) and gRT->
+                     * ResetSystem. Signal via out_hotkey so the
+                     * caller can do the gated setvar+reset. */
+                    serial_early_print("[BOOT] menu: F10 -- firmware setup requested\n");
+                    if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_FW_SETUP;
+                    return selected;
                 }
+                /* F11 is handled BEFORE this loop is entered (pre-
+                 * menu probe in boot_policy_invoke); inside the loop
+                 * the menu is already showing, so F11 is a no-op. */
                 if (is_action && counting_down) {
                     counting_down = 0;
                     serial_early_print("[BOOT] menu: countdown cancelled by keypress\n");
@@ -4326,13 +4443,122 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                 ? ((countdown_ms > elapsed_ms) ? (countdown_ms - elapsed_ms) / 1000u : 0u)
                 : 0u;
             boot_menu_render(parse, cand_idx, cand_count, selected,
-                             seconds_left, gop_available);
+                             seconds_left, gop_available, decision, sb_active);
             dirty = 0;
         }
     }
 
     serial_early_print("[BOOT] menu: countdown expired -- auto-selecting default\n");
     return selected;
+}
+
+/* Pre-menu F11 probe: brief 100ms ConIn poll for F11 so the operator
+ * can force the menu to show even when the ladder picked a forced-
+ * selection path (HOTKEY, WATCHDOG, AB_TRY_STATE, RECOVERY_REQUEST,
+ * FALLBACK_*). Returns 1 if F11 was buffered, 0 otherwise. Drains
+ * any other pending keys (they would just race the menu loop's
+ * own ReadKeyStroke). */
+static int boot_menu_probe_f11(void)
+{
+    if (!gST || !gST->ConIn || !gST->ConIn->ReadKeyStroke
+        || !gBS || !gBS->Stall)
+        return 0;
+    int seen = 0;
+    /* Two 50ms slots so a key delivered after firmware-to-loader
+     * handoff but before policy decide still lands. */
+    for (unsigned int slot = 0; slot < 2u; slot++) {
+        EFI_INPUT_KEY key;
+        EFI_STATUS rs;
+        while (!EFI_ERROR((rs = gST->ConIn->ReadKeyStroke(gST->ConIn, &key)))) {
+            if (key.ScanCode == EFI_SCAN_F11) seen = 1;
+            /* Other keys are drained -- we cannot replay them into
+             * the menu loop's ReadKeyStroke and a stale buffered
+             * keystroke would trip the menu_run is_action gate
+             * unhelpfully. */
+        }
+        gBS->Stall(50000);
+    }
+    return seen;
+}
+
+/* F10 firmware-setup transition. Reads OsIndicationsSupported; if
+ * BOOT_TO_FW_UI bit is supported, OR-in only that bit on
+ * OsIndications and ResetSystem. Capsule trigger bits stay banned.
+ * Returns 0 on unsupported / failure (caller stays in menu and
+ * renders an unsupported message); does not return on success
+ * (ResetSystem is supposed to terminate). */
+#define BOOT_OS_INDICATIONS_BOOT_TO_FW_UI  (1ull << 0)
+static int boot_menu_enter_fw_setup(void)
+{
+    if (!gST || !gST->RuntimeServices)
+        return 0;
+    EFI_RUNTIME_SERVICES *rt = gST->RuntimeServices;
+    if (!rt->GetVariable || !rt->SetVariable || !rt->ResetSystem)
+        return 0;
+
+    EFI_GUID global_guid = EFI_GLOBAL_VARIABLE_GUID;
+    UINT64 supported = 0;
+    UINTN sz = sizeof(supported);
+    UINT32 attrs = 0;
+    EFI_STATUS st = rt->GetVariable(u"OsIndicationsSupported",
+                                    &global_guid, &attrs, &sz, &supported);
+    if (EFI_ERROR(st) || sz != sizeof(supported)) {
+        serial_early_print("[BOOT] menu: F10 -- OsIndicationsSupported absent (firmware unsupported)\n");
+        return 0;
+    }
+    if ((supported & BOOT_OS_INDICATIONS_BOOT_TO_FW_UI) == 0) {
+        serial_early_print("[BOOT] menu: F10 -- BOOT_TO_FW_UI not in OsIndicationsSupported\n");
+        return 0;
+    }
+
+    UINT64 indications = 0;
+    sz = sizeof(indications);
+    attrs = 0;
+    st = rt->GetVariable(u"OsIndications", &global_guid, &attrs, &sz, &indications);
+    if (EFI_ERROR(st)) {
+        /* EFI_NOT_FOUND -> current value is 0; that is normal on a
+         * clean system. Any other error is a real read failure that
+         * should leave the operator in the menu rather than gambling
+         * on a write. */
+        if (st != EFI_NOT_FOUND) {
+            serial_early_print("[BOOT] menu: F10 -- OsIndications read failed\n");
+            return 0;
+        }
+        indications = 0;
+        attrs = 0x07; /* NV | BS | RT */
+    } else if (sz != sizeof(indications)) {
+        serial_early_print("[BOOT] menu: F10 -- OsIndications has unexpected size\n");
+        return 0;
+    }
+
+    /* OR in ONLY the firmware-setup bit. Any capsule-trigger bits
+     * already in the variable stay (we are not authoring them, just
+     * preserving the firmware's state). */
+    indications |= BOOT_OS_INDICATIONS_BOOT_TO_FW_UI;
+
+    /* Always rewrite with the spec-mandated NV | BS | RT attrs. */
+    st = rt->SetVariable(u"OsIndications", &global_guid,
+                         (UINT32)0x07, sizeof(indications), &indications);
+    if (EFI_ERROR(st)) {
+        serial_early_print("[BOOT] menu: F10 -- SetVariable failed; staying in menu\n");
+        return 0;
+    }
+
+    serial_early_print("[BOOT] menu: F10 -- OsIndications written; resetting into firmware setup\n");
+    rt->ResetSystem(EFI_RESET_COLD, 0, 0, (CHAR16 *)0);
+    /* UEFI 2.10 spec contract: ResetSystem MUST NOT return. If it
+     * does, the firmware is misbehaving AND OsIndications is now
+     * persisted with BOOT_TO_FW_UI set -- on the next reboot the
+     * firmware would unexpectedly enter setup. Halt rather than
+     * fall through to a normal boot, which would proceed with the
+     * pending firmware-setup indication still set. */
+    boot_fatal(BOOT_ERR_FW_SETUP_RESET_RET,
+               "F10 firmware setup transition failed",
+               "ResetSystem returned (UEFI 2.10 spec violation; "
+               "OsIndications was already written so a normal boot "
+               "is unsafe -- next reboot would unexpectedly enter "
+               "firmware setup).");
+    return 1;
 }
 
 /* The boot-policy invoke step. Owns ESP read, OptionalData decode,
@@ -4571,8 +4797,41 @@ static void boot_policy_invoke(void)
         cand_default_idx = 0;
         default_visible = 1;
     }
-    if (default_visible &&
-        boot_policy_menu_should_show(decision, parse, cand_count)) {
+    /* F11 force-show probe: read keys briefly BEFORE the should_show
+     * gate so an operator can force the menu to render on paths that
+     * would otherwise auto-pick (forced-selection / single-entry
+     * with hide_when_alone / etc.). The flag also clears the watchdog
+     * once so the dwell does not start with a stale window. */
+    int force_show = boot_menu_probe_f11();
+    if (force_show) watchdog_reset();
+    /* HIDE_WHEN_ALONE: when the visible candidate list has exactly
+     * one entry AND it carries the flag, skip the interactive menu
+     * (Win11 single-OS / systemd-boot default-pattern parity).
+     * Without the flag, render briefly even for one entry so the
+     * operator gets a chance to hit F8/F10/F11. F11 force_show
+     * overrides the flag -- the operator's emergency override must
+     * work on the quiet single-OS path too. */
+    int allow_skip_when_alone = 0;
+    if (cand_count == 1u && cand_default_idx < cand_count && !force_show) {
+        const boot_entry_envelope_t *lone =
+            &parse->entries[cand_idx[cand_default_idx]];
+        if (lone->flags & BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE)
+            allow_skip_when_alone = 1;
+    }
+    /* show_menu fires when:
+     *   1. force_show (F11 buffered); OR
+     *   2. should_show returns 1 (>= 2 viable candidates AND soft
+     *      ladder reason); OR
+     *   3. exactly 1 candidate AND the flag is NOT set (so the lone
+     *      entry still gets a brief countdown for F8/F10/F11
+     *      access).
+     */
+    int single_entry_render = (cand_count == 1u && !allow_skip_when_alone);
+    int show_menu = default_visible &&
+        (force_show ||
+         boot_policy_menu_should_show(decision, parse, cand_count) ||
+         single_entry_render);
+    if (show_menu) {
         /* Honor per-entry timeout_override on the default candidate.
          * Schema range is 0..600 (inclusive). 0 = "immediate auto-
          * boot, no menu UI" -- a kiosk preference; the lookup must
@@ -4591,16 +4850,59 @@ static void boot_policy_invoke(void)
             }
         }
         unsigned int chosen;
-        if (explicit_zero) {
+        int hotkey = BOOT_MENU_HOTKEY_NONE;
+        int sb_active = bootloader_secureboot_active();
+        if (explicit_zero && !force_show) {
             /* Skip menu UI entirely: kiosk/automated boot path. The
              * default candidate auto-boots without rendering or
-             * polling for keys. */
+             * polling for keys. F11 force_show overrides the kiosk
+             * suppression so the operator's emergency override
+             * works on any single-OS path. */
             serial_early_print("[BOOT] menu: timeout_override=0 -- "
                                "immediate auto-boot, no UI\n");
             chosen = cand_default_idx;
         } else {
-            chosen = boot_menu_run(parse, cand_idx, cand_count,
-                                   cand_default_idx, timeout_s);
+            /* If force_show overrode an explicit-zero kiosk
+             * timeout, render with the default countdown so the
+             * operator gets a usable F8/F10/F11 window. */
+            if (explicit_zero && force_show)
+                timeout_s = BOOT_MENU_DEFAULT_TIMEOUT_S;
+            /* F10 unsupported / SetVariable failure must return the
+             * operator to the menu, not silently fall through to
+             * boot. Re-enter the menu loop on every F10 failure;
+             * cap iterations to keep a stuck firmware from spinning
+             * forever. */
+            const unsigned int F10_MAX_RETRIES = 8u;
+            unsigned int f10_retries = 0;
+            for (;;) {
+                hotkey = BOOT_MENU_HOTKEY_NONE;
+                chosen = boot_menu_run(parse, cand_idx, cand_count,
+                                       cand_default_idx, timeout_s,
+                                       decision, sb_active,
+                                       allow_skip_when_alone, &hotkey);
+                if (hotkey != BOOT_MENU_HOTKEY_FW_SETUP) break;
+                /* F10 pressed: try the firmware-setup transition.
+                 * boot_menu_enter_fw_setup() does not return on
+                 * success (ResetSystem terminates execution). If
+                 * it returns, the transition was unsupported or
+                 * SetVariable failed -- log and re-render the menu
+                 * so the operator gets another shot at picking. */
+                (void)boot_menu_enter_fw_setup();
+                if (++f10_retries >= F10_MAX_RETRIES) {
+                    serial_early_print("[BOOT] menu: F10 retries exhausted -- "
+                                       "booting highlighted entry\n");
+                    break;
+                }
+                serial_early_print("[BOOT] menu: F10 unsupported -- "
+                                   "re-entering menu\n");
+            }
+        }
+        /* F8 -> safe-mode signal. The kernel-side observer +
+         * boot_info wire-up are owned by the safe-mode TODO; this
+         * section's contribution is the recognition + audit log. */
+        if (hotkey == BOOT_MENU_HOTKEY_SAFE_MODE) {
+            serial_early_print("[BOOT] menu: F8 audit recorded "
+                               "(boot_info safe_mode wire-up pending)\n");
         }
         if (chosen != cand_default_idx && chosen < cand_count) {
             /* User picked a DIFFERENT entry -- operator override.
@@ -4635,7 +4937,8 @@ static void boot_policy_invoke(void)
         if (!default_visible)
             serial_early_print("ladder pick not in visible window)");
         else if (cand_count == 0u) serial_early_print("no viable candidates)");
-        else if (cand_count == 1u) serial_early_print("single candidate)");
+        else if (cand_count == 1u && allow_skip_when_alone)
+            serial_early_print("hide_when_alone)");
         else serial_early_print("forced selection path)");
         serial_early_print("\n");
     }

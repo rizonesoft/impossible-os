@@ -57,7 +57,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring | §3                                      |  [x]   |
 | 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator    | §3, §4                                  |  [x]   |
 | 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [x]   |
-| 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [ ]   |
+| 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [x]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [ ]   |
 | 💎  |   9   | A/B and recovery entry integration                     | §3, §4, T21 §3, T22 §1                  |  [ ]   |
 | 💎  |  10   | Previous-kernel and known-good entries                 | §2, §14, T06 §1                         |  [ ]   |
@@ -251,17 +251,28 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 
 ## 7. Boot Menu Indicators, Hotkeys, hide_when_alone
 
-Layer indicators + hotkeys + single-entry skip on top of §6's renderer. **F10 firmware setup narrow path**: read `OsIndicationsSupported`; if `EFI_OS_INDICATIONS_BOOT_TO_FW_UI` (bit 0) is NOT set, render "F10 unsupported" and return to menu. Otherwise read existing `OsIndications`, OR in **only** that single bit, write back with attributes `NV | BS | RT`, then `gRT->ResetSystem(EfiResetCold, ...)`. Capsule-trigger bits (`PROCESS_CAPSULES_ON_DISK` etc.) remain banned per the UEFI hardening doctrine. Add `BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE` (bit 5) to `include/boot/boot_entries.h`; update parser flag accept-list and host validator; semantics = single-entry store where the lone candidate has the flag bypasses the menu UI (Win11 single-OS / systemd-boot `default-pattern` parity). Indicator legend: ✓ Secure Boot, 🛡️ measured boot, 🅰️/🅱️ A/B slot, 🛟 recovery available, 🌐 network entry, ⚠️ last-failure reason from `decision.rejected[]`.
+Layer indicators + hotkeys + single-entry skip on top of the menu renderer. F10 firmware setup uses the narrow `OsIndications` BOOT_TO_FW_UI path, gated on `OsIndicationsSupported`; capsule-trigger bits stay banned per the UEFI hardening doctrine. `BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE` already lives at bit 3 (the §7 draft saying "bit 5" was stale before ship); parser already accepts the `hide_when_alone` name. Indicators are ASCII-only (`[SB]`, `[REC]`, `[NET]`, `[FAIL]`) because the Selawik AA atlas covers 0x20-0x7E and Windows serial mojibakes multi-byte UTF-8; `[MB]` reserved for the TPM event-log producer. F8 ships as recognition + audit log; kernel-side safe-mode wire-up (boot_info.safe_mode_request, supported_kinds_mask widening for SAFE) owned by §8.
 
-- [ ] Per-entry indicators: SB / measured-boot / A-B slot / recovery / network / last-failure-reason.
-- [ ] Hotkey table: `F8` safe-mode override, `F10` firmware setup (narrow OsIndications path), `F11` force-show menu, `Esc` boot highlighted.
-- [ ] F10 narrow path: gate on `OsIndicationsSupported & EFI_OS_INDICATIONS_BOOT_TO_FW_UI`; OR only that bit; never touch capsule bits.
-- [ ] `BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE` (bit 5) added to flag set; parser + host validator updated.
-- [ ] Single-entry store with `hide_when_alone` flag bypasses the menu UI.
-- [ ] Document hotkey table + indicator legend + `hide_when_alone` semantics in `docs/boot/boot-menu.md`; cross-link from boot-policy + boot-entry-schema.
-- [ ] Commit: `"boot: menu indicators + hotkeys + hide_when_alone"`
+- [x] Per-entry indicators in `boot_menu_indicators()`: `[SB]` / `[REC]` / `[NET]` / `[FAIL]`. `[MB]` reserved for TPM event-log; A/B slot indicator deferred to §9.
+- [x] Hotkey table in `boot_menu_run()`: F8 (safe-mode signal), F10 (firmware setup), F11 (force-show via pre-menu probe), Esc (boot highlighted), Enter (boot selected).
+- [x] F10 narrow path in `boot_menu_enter_fw_setup()`: gated on `OsIndicationsSupported & BOOT_TO_FW_UI`; OR-in only that bit; ResetSystem ONLY after SetVariable returns EFI_SUCCESS, otherwise stay in menu.
+- [x] F11 force-show via `boot_menu_probe_f11()` BEFORE `boot_policy_menu_should_show()` so the operator can override forced-selection paths.
+- [x] `BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE` already at bit 3 in `boot_entries.h` v1 mask; parser accept-list already accepts the name.
+- [x] Single-entry store with `hide_when_alone` bypasses menu UI; without flag the lone-entry menu still renders briefly for hotkey access.
+- [x] Hotkey table + indicator legend + `hide_when_alone` semantics in `docs/boot/boot-menu.md`; cross-linked from `boot-policy.md` + `boot-entry-schema.md`.
+- [x] F8 kernel wire-up (boot_info.safe_mode_request field + supported_kinds_mask widening for SAFE) owned by §8; §7 ships F8 recognition + audit log only.
+- [x] Commit: `"boot: menu indicators + hotkeys + hide_when_alone"`
 
-**Test checkpoint:** Boot a store with `KIND_SAFE` + `KIND_RECOVERY` + one demoted entry -> indicators render correctly. F8 with `KIND_SAFE` highlighted -> `safe_mode=1` reaches kernel. F10 on firmware that supports `BOOT_TO_FW_UI` reboots into setup; on firmware that doesn't, stays in menu with unsupported message. Single-entry store with `hide_when_alone` bypasses UI; without flag shows menu. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Boot a multi-entry store -> recovery row renders `[REC]` ahead of title. SecureBoot=1 -> all rows render `[SB]`. F10 with `BOOT_TO_FW_UI` supported -> reboots into setup; without support -> serial logs `OsIndicationsSupported absent` and menu continues. F8 -> serial logs `safe-mode requested (kernel wire-up pending)`. Single-entry + `hide_when_alone` -> serial logs `1 candidate + hide_when_alone -- skipping`; without flag the menu renders. F11 buffered during handoff -> menu renders even on forced-selection paths. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Test runner:** N/A (pre-EBS UEFI bootloader code -- no kernel-testable mirror) | validation: serial log on QEMU WHPX + TCG + bare metal per Test checkpoint above
+
+> **Notes:**
+> - What shipped: `boot_menu_indicators` + `boot_menu_probe_f11` + `boot_menu_enter_fw_setup` helpers; `BOOT_MENU_HOTKEY_*` codes; `boot_menu_run` extended with hotkey return + decision/sb context + allow_skip_when_alone.
+> - How it integrates: `boot_policy_invoke()` probes F11, computes hide_when_alone, calls `boot_menu_run`, dispatches F10 -> `boot_menu_enter_fw_setup` (gated on SetVariable success).
+> - Downstream effects: live menu UX surface -- indicators visible, hotkeys active, F10 reboots into firmware setup, hide_when_alone honored.
+> - Canonical doc: [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (legend + hotkey table + F10 narrow path).
+> - Scope boundary: §7 owns indicators + hotkeys + hide_when_alone; F8 kernel wire-up + SAFE kind admission belong to §8; A/B slot indicator + last-failure label belong to §9; `[MB]` measured-boot indicator belongs to the measured-boot TODO domain.
 
 ---
 
@@ -443,7 +454,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Recovery boot entry                                    | ✅ WinRE                          | ✅ GRUB recovery                      | ⬜ Planned -- §9         |
 | 💎  | Safe mode entry                                        | ✅ msconfig safeboot flag         | ✅ rescue.target / single             | ⬜ Planned -- §8         |
 | 💎  | Previous-kernel rollback entry                         | ⚠️ BCD bootsequence (limited UX)  | ✅ GRUB previous kernel               | ⬜ Planned -- §10        |
-| 💎  | Boot menu UI (text + graphical)                        | ⚠️ Minimal "Choose an OS"         | ✅ GRUB / systemd-boot menus          | ⬜ Planned -- §6 + §7    |
+| 💎  | Boot menu UI (text + graphical)                        | ⚠️ Minimal "Choose an OS"         | ✅ GRUB / systemd-boot menus          | ✅ §6 GOP+ConOut+serial; §7 indicators ([SB]/[REC]/[NET]/[FAIL]) + hotkeys (F8/F10/F11) + hide_when_alone |
 | 💎  | Offline entry editor tooling                           | ✅ bcdedit / bcdboot              | ✅ grub-mkconfig / bootctl            | ⬜ Planned -- §11        |
 | 💎  | Loop prevention via per-entry try counter              | ⚠️ Recovery loop after 2 fails    | ✅ systemd-boot tries=/done=          | 🟦 BLS counter grammar + ladder gate ship in §3; crash-tolerant bootloader rename in §5 |
 | 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | ⬜ Planned -- §14        |

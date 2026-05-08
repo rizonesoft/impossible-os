@@ -352,3 +352,5 @@ for the full list of checks.
 | `bootcfg.exe`                    | Online + offline editor; consumes validator (later)        |
 | `src/boot/uefi/bootx64.c`        | Bootloader parser; CRC verify; per-kind dispatch (later)   |
 | `src/kernel/...`                 | Boot policy merge consumer of `boot_info.selected_entry_id` (later) |
+
+> Menu UX consumers of these flags + kinds (indicator legend, hotkey behavior, `hide_when_alone` single-entry skip) are documented in [boot-menu.md](boot-menu.md).

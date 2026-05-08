@@ -82,6 +82,8 @@ typedef UINTN               EFI_TPL;
 #define BOOT_ERR_UKI_PAYLOAD        0x0012  /* UKI signed-payload copy/allocate failed */
 /* UKI mode rejects disk-side initrd= / module= / recovery_image= cmdline override */
 #define BOOT_ERR_UKI_DISK_OVERRIDE  0x0013
+/* F10 firmware-setup ResetSystem returned (UEFI 2.10 spec violation; OsIndications was already written) */
+#define BOOT_ERR_FW_SETUP_RESET_RET 0x0014
 
 /* --- GUID --- */
 typedef struct {
