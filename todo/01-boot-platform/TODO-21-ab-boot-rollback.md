@@ -24,7 +24,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 - → XREF: `TODO-03-bootloader-error-recovery.md §2` -- boot failure screen integration
 - → XREF: `10-platform-services/TODO-03-updates-packages.md` -- update engine (downstream consumer)
 - → XREF: `../02-kernel-core/TODO-02-kernel-configuration-policy.md §4, §5, §10` -- LastKnownGood, Safe Mode recovery, and boot-status acceptance feed rollback decisions
-- → XREF: `TODO-07-boot-entry-store-menu-policy.md §6` -- A/B slot state from §3 here feeds the boot menu's slot/recovery entry generation
+- → XREF: `TODO-07-boot-entry-store-menu-policy.md §9` -- A/B slot state from §1 + §3 + §4 here feeds the boot menu's slot/recovery entry generation + counter merge + auto-select-recovery (§9 deferred until those §§ land)
 
 ---
 

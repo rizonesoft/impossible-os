@@ -59,7 +59,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [x]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [x]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [/]   |
-| 💎  |   9   | A/B and recovery entry integration                     | §3, §4, T21 §3, T22 §1                  |  [ ]   |
+| 💎  |   9   | A/B and recovery entry integration (DEFERRED)          | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [ ]   |
 | 💎  |  10   | Previous-kernel and known-good entries                 | §2, §14, T06 §1                         |  [ ]   |
 | 💎  |  11   | Boot entry editor tooling                              | §1-§10                                  |  [ ]   |
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [ ]   |
@@ -312,17 +312,17 @@ Convert today's ad-hoc `boot.conf` booleans into structured entries with explici
 
 ## 9. A/B and Recovery Entry Integration
 
-Generate entries from runtime state; the user sees a single coherent menu instead of two parallel mechanisms. Demote-not-drop on failure.
+Generate entries from runtime state; the user sees a single coherent menu instead of two parallel mechanisms. Demote-not-drop on failure. **Section deferred 2026-05-09**: the runtime-state producers (TODO-21 A/B slot metadata + TODO-22 recovery partition) are not yet shipped; §9 has nothing to integrate until they land. See blocker XREFs per item below; re-enter §9 after the prerequisites land.
 
-- [ ] Generate entries for slot A, slot B, recovery, and fallback kernel from [`TODO-21 §3`](TODO-21-ab-boot-rollback.md) slot metadata and [`TODO-22 §1`](TODO-22-recovery-partition.md) recovery layout.
-- [ ] Merge A/B success/failure counters into entry display labels (`Slot A (current, 0 failures)`, `Slot B (try 2/3)`).
-- [ ] Auto-select recovery on double-fail; if recovery partition is also corrupt, fall through to fallback default with `selection_reason = ALL_PATHS_BAD`.
-- [ ] Demote-not-drop: bad entries stay visible greyed out with `last_failure_reason` label so users see WHY a slot is bad. ⭐ vs Linux BLS silent-sort-last.
-- [ ] Display rollback reason in the menu line and feed it to VPD.
-- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include RECOVERY once recovery-partition load path lands.
+- [ ] Generate entries for slot A, slot B, recovery, fallback. Blocked: TODO-21 §1+§3, TODO-22 §1.
+- [ ] Merge A/B success/failure counters into entry labels. Blocked: TODO-21 §1+§4.
+- [ ] Auto-select recovery on double-fail with `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD`. Blocked: TODO-21 §4 + TODO-22 §2; sentinel enum value lands when TODO-22 §2 ships.
+- [ ] Demote-not-drop visual (greyed-out + `last_failure_reason` label). Partially unblocked: §6+§8 keep TRIES_EXHAUSTED rows visible; §7 adds `[FAIL]` indicator. The greyed style + label string remains §9 scope.
+- [ ] Display rollback reason in menu line + feed to VPD. Blocked: TODO-21 §6 (rollback-reason source) + VPD label hooks.
+- [ ] Widen `supported_kinds_mask` to include `BOOT_ENTRY_KIND_RECOVERY`. Blocked: TODO-22 §2 (recovery load path).
 - [ ] Commit: `"boot: integrate A/B and recovery entries"`
 
-**Test checkpoint:** Corrupt slot A kernel; reboot 3 times; menu shows `Slot A (try 3/3, kernel CRC fail)` greyed out and auto-selects slot B. Both slots fail -> recovery selected without user input. Recovery partition corrupt + both slots fail -> fallback default with ALL_PATHS_BAD reason. Test on: QEMU TCG (deterministic); bare metal.
+**Test checkpoint:** Corrupt slot A kernel; reboot 3 times; menu shows `Slot A (try 3/3, kernel CRC fail)` greyed out and auto-selects slot B. Both slots fail -> recovery selected without user input. Recovery partition corrupt + both slots fail -> fallback default with ALL_PATHS_BAD reason. Test on: QEMU TCG (deterministic); bare metal. **Cannot run today** -- requires TODO-21 + TODO-22 producers.
 
 ---
 
