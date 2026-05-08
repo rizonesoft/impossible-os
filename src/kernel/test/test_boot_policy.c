@@ -1278,8 +1278,13 @@ static void test_menu_collect_filters_hidden_and_skipped(void)
     TEST_ASSERT_EQ(def, 1u, "default highlight points at beta (selected_entry_id match)");
 }
 
-static void test_menu_collect_filters_rejected(void)
+static void test_menu_collect_demote_not_drop_on_tries_exhausted(void)
 {
+    /* Demote-not-drop contract: TRIES_EXHAUSTED is a demote signal,
+     * NOT a hide signal. The exhausted entry stays visible in the
+     * menu so the operator can see it and manually inspect/select.
+     * Greyed-out + last_failure_reason label belongs to the A/B and
+     * Recovery integration UX layer. */
     boot_entries_parse_result_t r;
     for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
     r.reject_code = BOOT_ENTRIES_OK;
@@ -1296,7 +1301,6 @@ static void test_menu_collect_filters_rejected(void)
 
     boot_policy_decision_t d;
     for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
-    /* "exhausted" is in rejected[]. */
     d.rejected_count = 1u;
     set_id(d.rejected[0].id, "exhausted");
     d.rejected[0].reason = BOOT_REJECT_REASON_TRIES_EXHAUSTED;
@@ -1305,9 +1309,57 @@ static void test_menu_collect_filters_rejected(void)
     unsigned int idx[8];
     unsigned int def = 99u;
     unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
-    TEST_ASSERT_EQ(n, 2u, "rejected entry filtered from menu");
-    TEST_ASSERT_EQ(idx[0], 0u, "good is at index 0");
-    TEST_ASSERT_EQ(idx[1], 2u, "okay is at index 1 (exhausted skipped)");
+    TEST_ASSERT_EQ(n, 3u,
+                   "TRIES_EXHAUSTED stays visible (demote-not-drop)");
+    TEST_ASSERT_EQ(idx[0], 0u, "good at index 0");
+    TEST_ASSERT_EQ(idx[1], 1u, "exhausted at index 1 (still visible)");
+    TEST_ASSERT_EQ(idx[2], 2u, "okay at index 2");
+    TEST_ASSERT_EQ(def, 0u, "default highlight on good");
+}
+
+static void test_menu_collect_filters_hard_hide_reasons(void)
+{
+    /* Hard-hide reasons (everything except TRIES_EXHAUSTED) are
+     * filtered from the menu: the loader cannot or will not boot
+     * the entry, so showing it as selectable would let the operator
+     * pick something the loader cannot execute. Tests both
+     * KIND_SKIPPED and KIND_UNAVAILABLE (the most common cases:
+     * vendor/reserved-future entries and entries whose kind is not
+     * in supported_kinds_mask). */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 4u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "good");
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "vendor-reserved");
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[2]);
+    set_id(r.entries[2].id, "recovery-no-handler");
+    r.entries[2].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[3]);
+    set_id(r.entries[3].id, "okay");
+    r.entries[3].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_decision_t d;
+    for (unsigned i = 0; i < sizeof(d); i++) ((unsigned char *)&d)[i] = 0;
+    d.rejected_count = 2u;
+    set_id(d.rejected[0].id, "vendor-reserved");
+    d.rejected[0].reason = BOOT_REJECT_REASON_KIND_SKIPPED;
+    set_id(d.rejected[1].id, "recovery-no-handler");
+    d.rejected[1].reason = BOOT_REJECT_REASON_KIND_UNAVAILABLE;
+    set_id(d.selected_entry_id, "good");
+
+    unsigned int idx[8];
+    unsigned int def = 99u;
+    unsigned int n = boot_policy_menu_collect(&r, &d, idx, 8u, &def);
+    TEST_ASSERT_EQ(n, 2u,
+                   "KIND_SKIPPED + KIND_UNAVAILABLE both filtered");
+    TEST_ASSERT_EQ(idx[0], 0u, "good at index 0");
+    TEST_ASSERT_EQ(idx[1], 3u,
+                   "okay at index 1 (both unsupported kinds skipped)");
     TEST_ASSERT_EQ(def, 0u, "default highlight on good");
 }
 
@@ -1530,8 +1582,10 @@ void test_register_boot_policy(void)
                             test_menu_should_show_soft_reasons_render, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_collect filters HIDDEN + kind_skipped",
                             test_menu_collect_filters_hidden_and_skipped, TEST_CAT_BOOT);
-    test_suite_register_cat("boot-policy: menu_collect filters rejected[]",
-                            test_menu_collect_filters_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect demote-not-drop on TRIES_EXHAUSTED",
+                            test_menu_collect_demote_not_drop_on_tries_exhausted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: menu_collect filters hard-hide reasons (KIND_SKIPPED + KIND_UNAVAILABLE)",
+                            test_menu_collect_filters_hard_hide_reasons, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu helpers NULL + zero-cap guards",
                             test_menu_helpers_null_and_zero_cap_guards, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: menu_collect default NOT_FOUND when truncated past cap",

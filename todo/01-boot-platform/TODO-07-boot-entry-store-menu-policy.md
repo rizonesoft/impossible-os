@@ -225,20 +225,27 @@ Pre-EBS user-visible selector. GOP for graphical, UEFI text protocol + serial mi
 - [x] `bootloader_secureboot_active()` helper -- shipped in §4 (commit a24bc44f), consumed by §7 indicator + `boot_policy_inputs.secure_boot_active`. §6 simply uses the existing helper; no new code here.
 - [x] `gBS->Stall(50000)` 50ms-tick countdown; default 5s; per-entry `timeout_override` wins; any key cancels. Implemented in `boot_menu_run()`. Watchdog reset every tick (Codex caught: 600s timeout would trip 60s firmware watchdog without it). Effective timeout capped at `BOOT_MENU_TIMEOUT_CAP_S=60s`.
 - [x] `gST->ConIn` `ReadKeyStroke` navigation: Up/Down/Home/End/Enter/Esc. Scan codes per UEFI 2.10 spec Table 12.4 added as `EFI_SCAN_*` constants in `efi.h`.
-- [x] Candidate list = `parse_result.entries[]` minus `decision.rejected[]` (HIDDEN + KIND_SKIPPED filtered). Implemented as public pure helper `boot_policy_menu_collect()` in `boot_policy.c`; returns `BOOT_POLICY_MENU_DEFAULT_NOT_FOUND` when ladder pick is beyond cap or filtered (caller suppresses menu).
-- [x] Forced-selection paths (hotkey/watchdog/A/B/recovery) skip the interactive menu entirely. Implemented as `boot_policy_menu_should_show()`; only `STORE_DEFAULT`, `BOOTNEXT_HINT`, `UNKNOWN_BOOTCURRENT` render the menu.
+- [x] Candidate list filter via `boot_policy_menu_collect()`: HIDDEN flag + KIND_SKIPPED-in-rejected only. Demote-not-drop reasons (TRIES_EXHAUSTED, FAILED_HEALTH) stay visible per §9 contract.
+- [x] `boot_policy_menu_should_show()` skips UI on forced-selection reasons; only soft reasons (STORE_DEFAULT, BOOTNEXT_HINT, UNKNOWN_BOOTCURRENT) render the menu.
+- [x] `timeout_override == 0` honored as immediate auto-boot (kiosk path; UI suppressed). Schema range stays 0..600.
+- [x] Watchdog refresh throttled to 10s intervals inside `boot_menu_run()` (firmware WD is 60s; per-tick refresh was wasteful).
+- [ ] Dirty-rectangle repaint for `boot_menu_render()`: draw title once, repaint only changed rows on selection moves + footer once per second.
 - [x] Commit: `"boot: menu renderer + countdown + input infrastructure"`
 
 **Test checkpoint:** Menu renders 4+ entries on QEMU WHPX (GOP); countdown decrements 5..0 then auto-selects; arrow keys move + cancel countdown; Enter boots the highlighted entry. Serial mirror shows the same lines on TCG (no GOP). `bootloader_secureboot_active()` returns 1 with SecureBoot=1 + SetupMode=0; 0 otherwise. Smoke test verified menu-skip path: serial shows `[BOOT] menu: skipped (no viable candidates)` on FALLBACK_STORE_INVALID with no bootentries.json, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX (GOP), TCG (serial fallback), VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 9 new menu-helper suites (3 should_show + 6 collect), 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 11 menu-helper suites, 0 failures
 
 > **Notes:**
-> - What shipped: `boot_menu_render()` + `boot_menu_run()` static helpers in `bootx64.c`, public pure helpers `boot_policy_menu_should_show()` + `boot_policy_menu_collect()` in `boot_policy.c`, `BOOT_POLICY_MENU_DEFAULT_NOT_FOUND` sentinel, EFI_SCAN_* + EFI_CHAR_* constants in `efi.h`, 1 new POST16 (0xB0B6 optional), 9 unit tests.
-> - How it integrates: `boot_policy_invoke()` calls `boot_policy_menu_collect()` -> `boot_policy_menu_should_show()` -> `boot_menu_run()` after the ladder + before counter decrement; user-pick override flips `decision->reason` to `BOOT_SELECTION_HOTKEY` so v19 audit consumers see the operator action; watchdog reset every 50ms tick.
-> - Downstream effects: live menu-render path; serial mirror gives kiosk/headless operators visibility on selection. Codex review adoptions in commit message.
-> - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) (menu UX) + [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (§7 indicator legend will land there).
-> - Scope boundary: §6 owns renderer + countdown + input + filter. Indicators (SB/measured-boot/A-B/recovery/network/last-failure) + hotkey table (F8/F10/F11/Esc) + `hide_when_alone` flag are §7. Demote-not-drop visual is §9.
+> - What shipped: `boot_menu_render` + `boot_menu_run` + pure helpers `boot_policy_menu_should_show` + `boot_policy_menu_collect`; `EFI_SCAN_*` constants; POST16 0xB0B6; 11 unit tests.
+> - How it integrates: `boot_policy_invoke()` calls collect -> should_show -> menu_run after ladder, before counter decrement; `timeout_override==0` skips UI; user-pick flips reason to HOTKEY.
+> - Downstream effects: live menu-render path; serial mirror gives kiosk/headless operators visibility on selection.
+> - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) (menu UX) + [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (§7 indicator legend lands there).
+> - Scope boundary: §6 owns renderer + countdown + input + filter; indicators + hotkeys + `hide_when_alone` are §7; demote-not-drop visual is §9.
+
+> **Verified:** 2026-05-08 | commit `34ae373c` (impl) + post-review fixup | 5/6 items + 1 deferred | build OK | smoke PASS (KVM 2.49s)
+> **Deferred:** [M] Dirty-rectangle repaint for `boot_menu_render` (full-band redraw on 4K GOP causes key-repeat jank) -> XREF: 01-boot-platform/TODO-07 §6 (item: "Dirty-rectangle repaint for `boot_menu_render()`" at line 232)
+> **Quality reviewed:** 2026-05-08 | Codex 8x (design + adversarial + test-coverage + 3 re-adversarial + consistency + perf) | 4H+5M fixed, 1M deferred | scope: boot-code-quality
 
 ---
 

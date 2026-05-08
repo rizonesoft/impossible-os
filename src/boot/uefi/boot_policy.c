@@ -613,8 +613,24 @@ unsigned int boot_policy_menu_collect(
         const boot_entry_envelope_t *e = &parse->entries[i];
         if (e->kind_skipped) continue;
         if (e->flags & BOOT_ENTRY_FLAG_HIDDEN) continue;
+        /* Filter all HARD-HIDE reasons -- structural exclusions where
+         * the loader cannot or will not boot the entry. The single
+         * exception is TRIES_EXHAUSTED, which is a demote signal:
+         * the entry CAN still be manually retried, so it stays
+         * visible in the menu (the greyed-out + last_failure_reason
+         * label UX is owned by section 9, A/B and Recovery
+         * integration). All other reasons (KIND_SKIPPED,
+         * KIND_UNAVAILABLE, NOT_ACTIVE, HIDDEN, MACHINE_ID_MISMATCH,
+         * PATH_ESCAPE) hide the entry: showing them as selectable
+         * would let the operator pick something the loader cannot
+         * actually execute, falsifying the v19 audit trail. */
         int rejected = 0;
         for (unsigned int r = 0; r < decision->rejected_count; r++) {
+            unsigned int reason = decision->rejected[r].reason;
+            if (reason == (unsigned int)BOOT_REJECT_REASON_TRIES_EXHAUSTED)
+                continue;
+            if (reason == (unsigned int)BOOT_REJECT_REASON_NONE)
+                continue;
             const char *a = e->id;
             const char *b = decision->rejected[r].id;
             unsigned int j;

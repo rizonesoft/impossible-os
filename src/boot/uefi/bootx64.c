@@ -4246,9 +4246,20 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                      timeout_s, gop_available);
     int dirty = 0;
     unsigned int last_seconds_logged = timeout_s;
+    /* Throttle watchdog refresh: the firmware WD_TIMEOUT in efi_main
+     * is 60s, so 50ms-tick refreshes (20Hz, 1200 SetWatchdogTimer
+     * calls per minute) are wasteful. Refresh once per 10s of menu
+     * dwell instead -- well under the 60s budget but cheap on
+     * firmware-service churn. The initial reset before the loop
+     * keeps the boot-side watchdog window from trailing in. */
+    watchdog_reset();
+    unsigned int last_wd_reset_ms = 0;
 
     while (counting_down ? (elapsed_ms < countdown_ms) : 1) {
-        watchdog_reset();  /* keep the firmware watchdog fed */
+        if (elapsed_ms - last_wd_reset_ms >= 10000u) {
+            watchdog_reset();
+            last_wd_reset_ms = elapsed_ms;
+        }
 
         /* Poll for a keystroke. */
         if (gST && gST->ConIn && gST->ConIn->ReadKeyStroke) {
@@ -4562,22 +4573,35 @@ static void boot_policy_invoke(void)
     }
     if (default_visible &&
         boot_policy_menu_should_show(decision, parse, cand_count)) {
-        /* Honor per-entry timeout_override on the default candidate
-         * (if set), else fall back to the BOOT_MENU_DEFAULT_TIMEOUT_S
-         * default. The cap inside boot_menu_run() is the watchdog-
-         * safety belt. */
+        /* Honor per-entry timeout_override on the default candidate.
+         * Schema range is 0..600 (inclusive). 0 = "immediate auto-
+         * boot, no menu UI" -- a kiosk preference; the lookup must
+         * preserve that explicit zero rather than rewriting it to
+         * BOOT_MENU_DEFAULT_TIMEOUT_S. NONE (sentinel) means "no
+         * override set" and falls back to the default. */
         unsigned int timeout_s = BOOT_MENU_DEFAULT_TIMEOUT_S;
+        int explicit_zero = 0;
         if (cand_default_idx < cand_count) {
             const boot_entry_envelope_t *def_e =
                 &parse->entries[cand_idx[cand_default_idx]];
             if (def_e->timeout_override != BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE
-                && def_e->timeout_override > 0u
                 && def_e->timeout_override <= BOOT_MENU_TIMEOUT_CAP_S) {
                 timeout_s = def_e->timeout_override;
+                if (timeout_s == 0u) explicit_zero = 1;
             }
         }
-        unsigned int chosen = boot_menu_run(parse, cand_idx, cand_count,
-                                            cand_default_idx, timeout_s);
+        unsigned int chosen;
+        if (explicit_zero) {
+            /* Skip menu UI entirely: kiosk/automated boot path. The
+             * default candidate auto-boots without rendering or
+             * polling for keys. */
+            serial_early_print("[BOOT] menu: timeout_override=0 -- "
+                               "immediate auto-boot, no UI\n");
+            chosen = cand_default_idx;
+        } else {
+            chosen = boot_menu_run(parse, cand_idx, cand_count,
+                                   cand_default_idx, timeout_s);
+        }
         if (chosen != cand_default_idx && chosen < cand_count) {
             /* User picked a DIFFERENT entry -- operator override.
              * Replace the decision id + envelope so counter
