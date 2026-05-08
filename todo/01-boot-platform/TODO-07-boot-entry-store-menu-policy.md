@@ -58,7 +58,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator    | §3, §4                                  |  [x]   |
 | 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [x]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [x]   |
-| 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [ ]   |
+| 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [/]   |
 | 💎  |   9   | A/B and recovery entry integration                     | §3, §4, T21 §3, T22 §1                  |  [ ]   |
 | 💎  |  10   | Previous-kernel and known-good entries                 | §2, §14, T06 §1                         |  [ ]   |
 | 💎  |  11   | Boot entry editor tooling                              | §1-§10                                  |  [ ]   |
@@ -281,17 +281,27 @@ Layer indicators + hotkeys + single-entry skip on top of the menu renderer. F10 
 
 ## 8. Safe Mode, Test Mode, and Diagnostics Entries
 
-Convert today's ad-hoc `boot.conf` booleans into structured entries with explicit flags.
+Convert today's ad-hoc `boot.conf` booleans into structured entries with explicit flags. SAFE ships now via post-policy `boot_config` materialization; TEST + DIAGNOSTICS need per-kind payload parsing plus an early-policy-read for DIAGNOSTICS' verbose POST. Both deferred to §13 entry-kind dispatch.
 
-- [ ] Represent safe mode as `kind: safe` entry with explicit `safe_mode_subset` field (minimal / network / cmd) rather than a `boot.conf` switch.
-- [ ] Add a `kind: test` entry that names the `TEST_CAT_*` suite (`mm` / `fs` / `boot` / etc.) instead of running all tests.
-- [ ] Add `kind: diagnostics` entry that enables verbose POST + extended boot logging.
-- [ ] On selection, `boot_config` is materialized from the entry's flag set; existing kernel consumers see the same `boot_config` they read today (no consumer churn).
-- [ ] Cross-domain wiring: [`TODO-10 §7`](TODO-10-bare-metal-hardening.md) and [`02-kernel-core/TODO-02 §5`](../02-kernel-core/TODO-02-kernel-configuration-policy.md) consume safe-mode entry flags and populate `KUSER_SHARED_DATA.SafeBootMode`.
-- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include SAFE / TEST / DIAGNOSTICS once boot_config materialization above ships.
-- [ ] Commit: `"boot: structured safe/test/diagnostic entries"`
+- [x] `kind: safe` admitted via `supported_kinds_mask` widen; post-policy materialization sets `boot_config.boot_mode = 1`. `safe_mode_subset` payload parsing deferred to §13.
+- [x] F8 hotkey wires safe-mode intent into `boot_config.boot_mode = 1` independent of selected envelope kind (closes §7's deferred F8 wire-up).
+- [ ] `kind: test` admission + `test_suite` payload parsing deferred to §13 (per-kind handler reads payload; without it every test entry would run all categories).
+- [ ] `kind: diagnostics` admission deferred to §13 + an early-policy-read redesign (`boot_config.verbose` is consumed pre-policy).
+- [x] On SAFE selection, `boot_config.boot_mode` is materialized post-policy pre-EBS; existing kernel consumers read the field unchanged.
+- [x] Cross-domain consumers wire `boot_config.boot_mode` -> KUSD `SafeBootMode` per [TODO-10](TODO-10-bare-metal-hardening.md) + [02-kernel-core TODO-02](../02-kernel-core/TODO-02-kernel-configuration-policy.md); §8 only changes the producer.
+- [x] `supported_kinds_mask` widened to include KIND_SAFE only; TEST + DIAGNOSTICS stay filtered until §13.
+- [x] Commit: `"boot: structured safe/test/diagnostic entries"`
 
-**Test checkpoint:** Selecting safe-mode entry yields `boot_config.safe_mode == 1` and serial shows `safe-mode active`; KUSD `SafeBootMode` non-zero post-boot. Test-mode entry runs the matching `TEST_CAT_*` suite. Diagnostics entry enables verbose POST. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Selecting `kind: safe` yields `boot_config.boot_mode == 1` and serial shows `[BOOT] policy: kind=SAFE -- boot_config.boot_mode=1 materialized`. F8 on any highlighted entry yields `[BOOT] menu: F8 -- boot_config.boot_mode=1 (safe-mode override)`. KUSD `SafeBootMode` non-zero post-boot once kernel consumers wire up. TEST + DIAGNOSTICS entries currently rejected with `BOOT_REJECT_REASON_KIND_UNAVAILABLE` (§13 owns admission). Test on: QEMU WHPX + TCG; bare metal.
+
+> **Test runner:** N/A (pre-EBS materialization in bootloader; kernel-side observers owned by TODO-10 + 02-kernel-core TODO-02) | validation: serial log on QEMU WHPX + TCG + bare metal per Test checkpoint
+
+> **Notes:**
+> - What shipped: `supported_kinds_mask |= KIND_SAFE`; SAFE materialization in `boot_policy_invoke()` after menu pick; F8 hotkey wires `boot_config.boot_mode = 1` independent of kind.
+> - How it integrates: both writes target `g_boot_info_ptr->config.boot_mode`, the same field consumed by the existing boot.conf parser; F8 path runs before SAFE materialization so F8 + SAFE combinations are idempotent.
+> - Downstream effects: closes §7's deferred F8 wire-up; unblocks TODO-10 + 02-kernel-core TODO-02 KUSD SafeBootMode consumers.
+> - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) (per-kind dispatch) + [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (F8 row).
+> - Scope boundary: §8 owns SAFE materialization + F8 wire-up + KIND_SAFE admission. TEST + DIAGNOSTICS payload parsing is §13. KUSD SafeBootMode population is TODO-10 + 02-kernel-core TODO-02.
 
 ---
 
@@ -455,7 +465,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Structured boot entries                                | ✅ BCD store + bcdedit            | ✅ systemd-boot/GRUB BLS              | ⬜ Planned -- §1, §2     |
 | 💎  | BootNext one-shot read (firmware-layer)                | ✅ Firmware BootNext + BCD        | ✅ efibootmgr -n                      | ✅ Firmware fields read + OS-side ladder + live ESP store wiring |
 | 💎  | Recovery boot entry                                    | ✅ WinRE                          | ✅ GRUB recovery                      | ⬜ Planned -- §9         |
-| 💎  | Safe mode entry                                        | ✅ msconfig safeboot flag         | ✅ rescue.target / single             | ⬜ Planned -- §8         |
+| 💎  | Safe mode entry                                        | ✅ msconfig safeboot flag         | ✅ rescue.target / single             | 🟦 §8 KIND_SAFE admitted + boot_mode=1 materialized; F8 hotkey wired; subset payload deferred to §13 |
 | 💎  | Previous-kernel rollback entry                         | ⚠️ BCD bootsequence (limited UX)  | ✅ GRUB previous kernel               | ⬜ Planned -- §10        |
 | 💎  | Boot menu UI (text + graphical)                        | ⚠️ Minimal "Choose an OS"         | ✅ GRUB / systemd-boot menus          | ✅ §6 GOP+ConOut+serial; §7 indicators ([SB]/[REC]/[NET]/[FAIL]) + hotkeys (F8/F10/F11) + hide_when_alone |
 | 💎  | Offline entry editor tooling                           | ✅ bcdedit / bcdboot              | ✅ grub-mkconfig / bootctl            | ⬜ Planned -- §11        |

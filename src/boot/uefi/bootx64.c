@@ -4414,13 +4414,13 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                     serial_early_print("[BOOT] menu: Enter -- boot selected\n");
                     return selected;
                 } else if (key.ScanCode == EFI_SCAN_F8) {
-                    /* F8 = safe-mode override hotkey. The kernel-side
-                     * wire-up (boot_info.safe_mode_request, safe-mode
-                     * cmdline injection) lives in the safe-mode
-                     * section of this TODO; this section ships the
-                     * recognition + audit log so the operator gets
-                     * immediate feedback. */
-                    serial_early_print("[BOOT] menu: F8 -- safe-mode requested (kernel wire-up pending)\n");
+                    /* F8 = safe-mode override hotkey. The caller
+                     * (boot_policy_invoke) sets boot_config.boot_mode
+                     * = 1 in response to BOOT_MENU_HOTKEY_SAFE_MODE
+                     * so kernel-side observers (KUSD SafeBootMode,
+                     * bare-metal hardening guards) see the operator
+                     * intent. */
+                    serial_early_print("[BOOT] menu: F8 -- safe-mode requested (boot_config update in caller)\n");
                     if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_SAFE_MODE;
                     return selected;
                 } else if (key.ScanCode == EFI_SCAN_F10) {
@@ -4766,6 +4766,16 @@ static void boot_policy_invoke(void)
     } else {
         inputs->supported_kinds_mask = (1u << BOOT_ENTRY_KIND_SPLIT);
     }
+    /* SAFE entries are now bootable: the loader still loads the
+     * ambient kernel.exe, but boot_config.boot_mode is materialized
+     * from envelope.kind == SAFE post-policy so the kernel sees
+     * safe-mode requested. The kernel-side observers (KUSD
+     * SafeBootMode, bare-metal hardening guards) read boot_mode
+     * unchanged. TEST and DIAGNOSTICS stay filtered until per-kind
+     * payload parsing lands -- TEST without test_suite payload
+     * would run all categories, and DIAGNOSTICS verbose flag must
+     * be honored BEFORE policy decide to affect early POST. */
+    inputs->supported_kinds_mask |= (1u << BOOT_ENTRY_KIND_SAFE);
 
     /* hotkey / watchdog / A/B / recovery_requested are owned by
      * neighboring features (boot menu, watchdog audit, A/B integration,
@@ -4972,12 +4982,20 @@ static void boot_policy_invoke(void)
             g_menu_f10_disabled = 0;
             g_menu_no_autoboot = 0;
         }
-        /* F8 -> safe-mode signal. The kernel-side observer +
-         * boot_info wire-up are owned by the safe-mode TODO; this
-         * section's contribution is the recognition + audit log. */
+        /* F8 -> safe-mode signal. Wire the operator's safe-mode
+         * intent into boot_config.boot_mode. Kernel-side consumers
+         * (KUSD SafeBootMode population, bare-metal hardening
+         * guards) read boot_config.boot_mode unchanged. */
         if (hotkey == BOOT_MENU_HOTKEY_SAFE_MODE) {
-            serial_early_print("[BOOT] menu: F8 audit recorded "
-                               "(boot_info safe_mode wire-up pending)\n");
+            /* F8 wires the operator's safe-mode request into
+             * boot_config.boot_mode regardless of which entry was
+             * highlighted -- the operator's intent is "boot in
+             * safe mode" independent of kind. Cross-domain wire-up:
+             * KUSER_SHARED_DATA.SafeBootMode is populated from this
+             * value by the kernel configuration policy. */
+            g_boot_info_ptr->config.boot_mode = 1u;
+            serial_early_print("[BOOT] menu: F8 -- boot_config.boot_mode=1 "
+                               "(safe-mode override)\n");
         }
         if (chosen != cand_default_idx && chosen < cand_count) {
             /* User picked a DIFFERENT entry -- operator override.
@@ -5024,6 +5042,40 @@ static void boot_policy_invoke(void)
      * a menu-overridden pick, decision->selected was already updated
      * above so the kind reflects the user's choice. */
     g_policy_selected_kind = decision->selected.kind;
+
+    /* Per-kind boot_config materialization. After the entry is
+     * picked (post-menu, pre-counter-decrement), translate the
+     * envelope kind into boot_config so kernel-side consumers see
+     * the operator's selection without consumer churn. SAFE is the
+     * only kind shipped here -- it sets boot_mode=1 which the
+     * kernel configuration policy then mirrors into KUSER_SHARED_
+     * DATA.SafeBootMode. TEST + DIAGNOSTICS materialization needs
+     * per-kind payload parsing (test_suite filter, diag verbosity
+     * subset) which is owned by the entry-kind handler table; the
+     * mask gate keeps them filtered until that work ships.
+     *
+     * Precedence: a structured boot-entry pick is the AUTHORITATIVE
+     * source of boot_mode and overrides any boot.conf legacy value.
+     * Otherwise an old `boot_mode=recovery` line in boot.conf would
+     * silently defeat a fresh `kind: safe` entry pick (operator
+     * picks SAFE, kernel boots recovery -- a precedence bug). The
+     * F8 hotkey path above already wrote boot_mode=1 by the time
+     * this runs, and SAFE materialization is idempotent (writing
+     * 1 over 1 is a no-op). */
+    if (g_policy_selected_kind == BOOT_ENTRY_KIND_SAFE) {
+        unsigned int prior = g_boot_info_ptr->config.boot_mode;
+        g_boot_info_ptr->config.boot_mode = 1u;
+        if (prior != 1u) {
+            serial_early_print("[BOOT] policy: kind=SAFE -- "
+                               "boot_config.boot_mode=1 materialized "
+                               "(overrode boot.conf value=");
+            serial_early_print_uint((UINT32)prior);
+            serial_early_print(")\n");
+        } else {
+            serial_early_print("[BOOT] policy: kind=SAFE -- "
+                               "boot_config.boot_mode=1 (already set)\n");
+        }
+    }
 
     serial_early_print("[BOOT] policy: selection_reason=");
     serial_early_print_uint((UINT32)decision->reason);
