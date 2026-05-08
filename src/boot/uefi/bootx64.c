@@ -235,6 +235,8 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_BOOT_POLICY_PARSE 0xB0B1 /* Boot entries store parsed */
 #define POST16_BL_BOOT_POLICY_DECIDE 0xB0B2 /* Policy ladder decided */
 #define POST16_BL_BOOT_POLICY_OK  0xB0B3  /* Policy decision copied to boot_info */
+#define POST16_BL_COUNTER_SCAN    0xB0B4  /* Counter directory scan entry */
+#define POST16_BL_COUNTER_DECR    0xB0B5  /* Counter decrement (write-new + delete-old) */
 
 /* --- Helper: memory ops ---
  * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
@@ -3714,6 +3716,267 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
     return EFI_SUCCESS;
 }
 
+/* Counter directory path. UEFI Open() takes a backslash-rooted path
+ * relative to volume root; CHAR16 form. */
+static const CHAR16 g_counter_dir_path[] = u"\\EFI\\ImpossibleOS\\counters";
+
+/* Open the boot device's root volume. Returns EFI_SUCCESS + (*out_root)
+ * on success; caller MUST Close *out_root when done. */
+static EFI_STATUS counters_open_volume_root(EFI_FILE_PROTOCOL **out_root)
+{
+    *out_root = (EFI_FILE_PROTOCOL *)0;
+    if (!g_boot_device_handle) return EFI_NOT_FOUND;
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    EFI_STATUS s = gBS->HandleProtocol(g_boot_device_handle, &fs_guid, (VOID **)&fs);
+    if (EFI_ERROR(s) || !fs) return EFI_NOT_FOUND;
+    return fs->OpenVolume(fs, out_root);
+}
+
+/* Scan \EFI\ImpossibleOS\counters\ and parse each <id>+<L>-<D>
+ * filename. Caps at BOOT_ENTRIES_MAX_ENTRIES; sets *out_overflow=1
+ * if more files exist than the cap. Directory missing -> *out_count=0
+ * (treated as no counters, ladder applies no gate). */
+static void policy_scan_counters(boot_counter_t *out, unsigned int cap,
+                                 unsigned int *out_count, int *out_overflow)
+{
+    *out_count = 0;
+    *out_overflow = 0;
+    post_code16(POST16_BL_COUNTER_SCAN);
+
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    if (EFI_ERROR(counters_open_volume_root(&root)) || !root) return;
+
+    EFI_FILE_PROTOCOL *dir = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS s = root->Open(root, &dir, (CHAR16 *)g_counter_dir_path,
+                              EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(s) || !dir) {
+        root->Close(root);
+        return;
+    }
+
+    /* Loop over directory entries via repeated Read() until 0 bytes. */
+    /* EFI_FILE_INFO + filename slack. UEFI spec section 13.5: Read on a
+     * directory returns one EFI_FILE_INFO per call; the FileName field
+     * is variable-length. 1024 bytes covers an ASCII filename up to
+     * roughly 470 CHAR16 chars -- way more than the 64-char counter
+     * filename cap. */
+    UINT8 info_buf[1024];
+    for (;;) {
+        UINTN sz = sizeof(info_buf);
+        s = dir->Read(dir, &sz, info_buf);
+        /* Distinguish EOF (sz==0 + EFI_SUCCESS) from scan failure. Any
+         * EFI_ERROR -- corrupt directory, transient media error, or
+         * EFI_BUFFER_TOO_SMALL on a pathologically long filename --
+         * means we cannot trust the partial set we have already read.
+         * A malicious or stale ESP could otherwise hide an exhausted
+         * record by injecting an early read error: the selected entry
+         * would then reach policy_counter_decrement() with
+         * counter_existed=0, get re-bootstrapped to +2-1, and
+         * effectively un-demote. Fail closed by setting
+         * counters_overflow=1 (the ladder treats it the same as the
+         * cap-exceeded case: FALLBACK_NO_VIABLE). */
+        if (EFI_ERROR(s)) {
+            *out_overflow = 1;
+            serial_early_print("[BOOT] policy: counter dir Read failed -- fail-closed\n");
+            break;
+        }
+        if (sz == 0) break;  /* clean EOF */
+        EFI_FILE_INFO *fi = (EFI_FILE_INFO *)info_buf;
+        /* Skip directories ("." / ".." / nested) -- counters dir is flat. */
+        if (fi->Attribute & EFI_FILE_DIRECTORY) continue;
+        /* Convert UCS-2 filename to ASCII into a small stack buffer. */
+        char ascii_name[BOOT_COUNTER_FILENAME_MAX];
+        UINTN i;
+        for (i = 0; i < sizeof(ascii_name) - 1u; i++) {
+            CHAR16 c = fi->FileName[i];
+            if (c == 0) break;
+            if (c > 0x7F) { i = 0; break; }  /* non-ASCII: reject */
+            ascii_name[i] = (char)c;
+        }
+        ascii_name[i] = 0;
+        if (i == 0) continue;  /* empty or non-ASCII filename */
+
+        boot_counter_t parsed;
+        if (!boot_counter_parse_filename(ascii_name, (unsigned int)i, &parsed))
+            continue;
+        /* Always call the dedup helper -- a duplicate id at cap-full
+         * MUST be allowed to merge (worst-case demotion of an existing
+         * slot, not a new slot). Only -1 (NEW id rejected because cap
+         * was already full) is genuine overflow. */
+        int ins = boot_policy_counter_dedup_insert(out, out_count, cap, &parsed);
+        if (ins < 0) {
+            *out_overflow = 1;
+            /* Keep iterating to count remaining for diagnostics, and
+             * to still allow merge into an already-existing slot for
+             * subsequent duplicates. */
+        }
+    }
+    /* seen > cap is no longer the trigger -- duplicates of existing
+     * ids inflate `seen` past `cap` without representing overflow.
+     * The per-insert -1 above is the authoritative overflow signal. */
+
+    dir->Close(dir);
+    root->Close(root);
+
+    serial_early_print("[BOOT] policy: counter scan found ");
+    serial_early_print_uint((UINT32)*out_count);
+    serial_early_print(" counter(s)");
+    if (*out_overflow) serial_early_print(" (overflow)");
+    serial_early_print("\n");
+}
+
+/* Crash-tolerant decrement. NOT atomic rename. Per UEFI spec section
+ * 13.5 the EFI_FILE_PROTOCOL.SetInfo rename is NOT power-fail-atomic on
+ * FAT32: LFN entries can span multiple directory entries and a reset
+ * mid-rename can leave torn names. The protocol is:
+ *   1. Open(new_filename, CREATE) -> Close (flush directory).
+ *   2. Open(old_filename) + Delete().
+ * A reset between (1) and (2) leaves both files; the next-boot scan
+ * resolves duplicates with worst-case semantics (min tries_left, max
+ * tries_done) so a torn rename can never silently un-demote an entry.
+ *
+ * First-boot bootstrap (counter_existed=0): write `<id>+2-1` per the BLS
+ * 3-try semantic (3 tries default, one already done). Without this
+ * positive-budget bootstrap, single-entry installs would brick after one
+ * boot before the health-gated mark-good feature ships. mark-good will
+ * later DELETE the counter on success, returning the entry to the
+ * "no counter, no gate" state. */
+static void policy_counter_decrement(const char *id,
+                                     unsigned int cur_left,
+                                     unsigned int cur_done,
+                                     int counter_existed)
+{
+    if (!id || id[0] == 0) return;
+    post_code16(POST16_BL_COUNTER_DECR);
+
+    /* Compute post-decrement state. First-boot bootstrap: jump to BLS-3
+     * default (2 left, 1 done) -- treats the absent-counter case as
+     * "fresh entry, default 3 tries, one consumed by this boot". */
+    unsigned int new_left, new_done;
+    if (counter_existed) {
+        new_left = (cur_left > 0u) ? (cur_left - 1u) : 0u;
+        new_done = (cur_done < BOOT_COUNTER_TRIES_DONE_MAX)
+                       ? (cur_done + 1u) : BOOT_COUNTER_TRIES_DONE_MAX;
+    } else {
+        new_left = 2u;
+        new_done = 1u;
+    }
+
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    if (EFI_ERROR(counters_open_volume_root(&root)) || !root) {
+        serial_early_print("[BOOT] policy: counter decrement skipped (volume open failed)\n");
+        return;
+    }
+
+    /* Open (or create) the counters directory. UEFI Open with CREATE
+     * + EFI_FILE_DIRECTORY auto-mkdirs if absent. */
+    EFI_FILE_PROTOCOL *dir = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS s = root->Open(root, &dir, (CHAR16 *)g_counter_dir_path,
+                              EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE
+                                | EFI_FILE_MODE_CREATE,
+                              EFI_FILE_DIRECTORY);
+    if (EFI_ERROR(s) || !dir) {
+        /* Read-only or full filesystem: log + skip. The ladder treats
+         * absent counter as "no gate" so boot continues; the entry just
+         * isn't tracked. */
+        serial_early_print("[BOOT] policy: counter dir open(CREATE) failed -- read-only ESP? skipping decrement\n");
+        root->Close(root);
+        return;
+    }
+
+    /* Build new + old filenames. */
+    boot_counter_t new_c;
+    char new_name[BOOT_COUNTER_FILENAME_MAX];
+    {
+        unsigned int idl = 0;
+        while (id[idl] && idl < BOOT_ENTRIES_MAX_ID_LEN) idl++;
+        for (unsigned int j = 0; j < idl; j++) new_c.id[j] = id[j];
+        new_c.id[idl] = 0;
+        new_c.tries_left = new_left;
+        new_c.tries_done = new_done;
+    }
+    if (boot_counter_format_filename(&new_c, new_name, sizeof(new_name)) == 0) {
+        serial_early_print("[BOOT] policy: counter format failed (id too long?)\n");
+        dir->Close(dir);
+        root->Close(root);
+        return;
+    }
+
+    /* CHAR16-ify the new filename. */
+    CHAR16 new_name_w[BOOT_COUNTER_FILENAME_MAX];
+    {
+        UINTN j;
+        for (j = 0; j < sizeof(new_name_w) / sizeof(new_name_w[0]) - 1u; j++) {
+            char c = new_name[j];
+            if (c == 0) break;
+            new_name_w[j] = (CHAR16)(unsigned char)c;
+        }
+        new_name_w[j] = 0;
+    }
+
+    /* Step 1: Open(new, CREATE|WRITE) then Close (flush directory). */
+    EFI_FILE_PROTOCOL *newf = (EFI_FILE_PROTOCOL *)0;
+    s = dir->Open(dir, &newf, new_name_w,
+                  EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
+                  0);
+    if (EFI_ERROR(s) || !newf) {
+        serial_early_print("[BOOT] policy: counter Open(new, CREATE) failed for ");
+        serial_early_print(new_name);
+        serial_early_print("\n");
+        dir->Close(dir);
+        root->Close(root);
+        return;
+    }
+    newf->Close(newf);  /* flush directory entry */
+
+    /* Step 2: Open(old) + Delete(), iff there was an old. The old
+     * filename is reconstructed from current state. Skip on first-boot
+     * bootstrap (counter_existed=0). */
+    if (counter_existed) {
+        boot_counter_t old_c = new_c;
+        old_c.tries_left = cur_left;
+        old_c.tries_done = cur_done;
+        char old_name[BOOT_COUNTER_FILENAME_MAX];
+        if (boot_counter_format_filename(&old_c, old_name, sizeof(old_name)) > 0) {
+            CHAR16 old_name_w[BOOT_COUNTER_FILENAME_MAX];
+            UINTN j;
+            for (j = 0; j < sizeof(old_name_w) / sizeof(old_name_w[0]) - 1u; j++) {
+                char c = old_name[j];
+                if (c == 0) break;
+                old_name_w[j] = (CHAR16)(unsigned char)c;
+            }
+            old_name_w[j] = 0;
+
+            /* If old == new (cur was already at the bootstrap state),
+             * skip Open+Delete to avoid removing the file we just
+             * created. */
+            int same = 1;
+            for (j = 0; j < sizeof(new_name); j++) {
+                if (new_name[j] != old_name[j]) { same = 0; break; }
+                if (new_name[j] == 0) break;
+            }
+            if (!same) {
+                EFI_FILE_PROTOCOL *oldf = (EFI_FILE_PROTOCOL *)0;
+                EFI_STATUS os = dir->Open(dir, &oldf, old_name_w,
+                                          EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
+                                          0);
+                if (!EFI_ERROR(os) && oldf) {
+                    oldf->Delete(oldf);  /* Delete also closes the handle. */
+                }
+            }
+        }
+    }
+
+    serial_early_print("[BOOT] policy: counter decrement OK -> ");
+    serial_early_print(new_name);
+    if (!counter_existed) serial_early_print(" (first-boot bootstrap)");
+    serial_early_print("\n");
+
+    dir->Close(dir);
+    root->Close(root);
+}
+
 /* serial_early_print signature for the parser logger callback. */
 static void boot_policy_log_cb(const char *s) { serial_early_print(s); }
 
@@ -3915,15 +4178,21 @@ static void boot_policy_invoke(void)
         inputs->supported_kinds_mask = (1u << BOOT_ENTRY_KIND_SPLIT);
     }
 
-    /* hotkey / watchdog / A/B / recovery_requested / counters_overflow
-     * are all owned by neighboring features (boot menu, watchdog
-     * audit, A/B integration, recovery integration, crash-tolerant
-     * counter protocol). All zero today -- the BSS-zero default is
+    /* hotkey / watchdog / A/B / recovery_requested are owned by
+     * neighboring features (boot menu, watchdog audit, A/B integration,
+     * recovery integration). All zero today -- the BSS-zero default is
      * the documented "no override" semantics for each axis. */
 
+    /* ---- Counter directory scan. ------------------------------------ */
+    boot_counter_t counters[BOOT_ENTRIES_MAX_ENTRIES];
+    unsigned int counter_count = 0;
+    int counters_overflow = 0;
+    policy_scan_counters(counters, BOOT_ENTRIES_MAX_ENTRIES,
+                         &counter_count, &counters_overflow);
+    inputs->counters_overflow = counters_overflow;
+
     /* ---- Run the ladder. -------------------------------------------- */
-    boot_policy_decide(inputs, parse,
-                       (const boot_counter_t *)0, 0u, decision);
+    boot_policy_decide(inputs, parse, counters, counter_count, decision);
     post_code16(POST16_BL_BOOT_POLICY_DECIDE);
 
     /* On STORE_INVALID the ladder leaves selected_entry_id empty per
@@ -3987,6 +4256,43 @@ static void boot_policy_invoke(void)
     serial_early_print_uint((UINT32)decision->rejected_count);
     if (decision->rejected_overflow) serial_early_print(" (overflow)");
     serial_early_print("\n");
+
+    /* ---- Crash-tolerant counter decrement for the chosen entry. ------
+     * Only decrement when the ladder selected an entry FROM THE STORE.
+     * Fallback paths (STORE_INVALID, NO_VIABLE) chose a synthesized
+     * fallback envelope, not a parsed-store entry, so there is no real
+     * counter to track. */
+    if (decision->reason != BOOT_SELECTION_FALLBACK_STORE_INVALID &&
+        decision->reason != BOOT_SELECTION_FALLBACK_NO_VIABLE &&
+        decision->selected_entry_id[0] != 0) {
+        /* Look up the chosen entry's current counter state, if any. */
+        boot_counter_t cur;
+        int existed = 0;
+        unsigned int idl = 0;
+        while (decision->selected_entry_id[idl]
+               && idl < sizeof(decision->selected_entry_id))
+            idl++;
+        for (unsigned int ci = 0; ci < counter_count; ci++) {
+            unsigned int j;
+            int eq = 1;
+            for (j = 0; j < sizeof(counters[ci].id); j++) {
+                if (counters[ci].id[j] != decision->selected_entry_id[j]) {
+                    eq = 0; break;
+                }
+                if (counters[ci].id[j] == 0) break;
+            }
+            if (eq) {
+                cur = counters[ci];
+                existed = 1;
+                break;
+            }
+        }
+        unsigned int cur_left = existed ? cur.tries_left : 0u;
+        unsigned int cur_done = existed ? cur.tries_done : 0u;
+        policy_counter_decrement(decision->selected_entry_id,
+                                 cur_left, cur_done, existed);
+        (void)idl;
+    }
 
     post_code16(POST16_BL_BOOT_POLICY_OK);
 

@@ -146,6 +146,7 @@ POST16_REQUIRED_NAMES=(
     POST16_BL_BOOT_POLICY
     POST16_BL_BOOT_POLICY_DECIDE
     POST16_BL_BOOT_POLICY_OK
+    POST16_BL_COUNTER_SCAN
 )
 
 # Optional set: POST16 codes that ARE emitted by the bootloader but are
@@ -169,6 +170,7 @@ POST16_OPTIONAL_REASONS=(
     "POST16_BL_ESP_BPB=scenario-dependent: FAT BPB check requires partition BlockIO with usable BlockSize"
     "POST16_BL_ESP_FILES=scenario-dependent: required-files batch requires SimpleFS on the boot device handle"
     "POST16_BL_BOOT_POLICY_PARSE=scenario-dependent: emitted only when bootentries.json is present and readable on the ESP"
+    "POST16_BL_COUNTER_DECR=scenario-dependent: emitted only when the policy ladder selects a real store entry (not FALLBACK_STORE_INVALID / NO_VIABLE)"
 )
 
 # Build the optional-name set from the reasons array for fast lookup.

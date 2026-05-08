@@ -39,9 +39,14 @@
  *
  * Counters (tries_left / tries_done) live as BLS-style filename state at
  * \EFI\ImpossibleOS\counters\<entry-id>+<L>-<D> -- one zero-byte file per
- * tracked entry. Updates use FAT32 atomic rename (single-cluster directory
- * entry write). Counters are NOT NVRAM and NOT in the CRC-pinned
- * bootentries.json store.
+ * tracked entry. Updates use a CRASH-TOLERANT protocol: write-new + flush +
+ * delete-old. UEFI EFI_FILE_PROTOCOL.SetInfo rename is NOT power-fail-atomic
+ * on FAT32 -- LFN entries can span multiple directory entries and a reset
+ * mid-rename can leave torn names, duplicates, or orphaned old names. The
+ * scan path resolves duplicates conservatively (lowest tries_left + highest
+ * tries_done = worst-case demotion) so a torn rename never silently ignores
+ * an apparent exhaustion record. Counters are NOT NVRAM and NOT in the
+ * CRC-pinned bootentries.json store.
  */
 
 #ifndef BOOT_BOOT_POLICY_H
@@ -235,11 +240,13 @@ typedef struct {
  *   D        : tries_done as decimal 0..99
  *
  * `tries_left=0` means the entry has been demoted (still visible, no auto-
- * select). The decrement-rename happens AFTER the ladder picks the entry
- * and BEFORE the kernel handoff so a hard reset mid-boot doesn't double-
- * decrement; the rename is FAT32 single-cluster atomic so the worst
- * post-crash state is the old filename remaining (counters un-decremented,
- * which the next boot will detect as a stale try).
+ * select). The decrement happens AFTER the ladder picks the entry and
+ * BEFORE the kernel handoff so a hard reset mid-boot doesn't double-
+ * decrement; the protocol is write-new + flush + delete-old (NOT atomic
+ * rename). A reset between write-new and delete-old leaves both files; the
+ * conservative duplicate resolution (lowest tries_left + highest tries_done)
+ * resolves to the worst-case state on next boot, never silently ignoring an
+ * exhaustion record.
  */
 typedef struct {
     char         id[64];
@@ -262,6 +269,35 @@ int  boot_counter_parse_filename(const char *name, unsigned int name_len,
  */
 unsigned int boot_counter_format_filename(const boot_counter_t *c,
                                           char *out, unsigned int out_cap);
+
+/* Conservative duplicate dedupe helper. Append `cand` into `out[]` if
+ * its id is not already present; if it IS present (torn-rename
+ * duplicate), merge into the existing slot with worst-case demotion:
+ * retain min(tries_left) AND max(tries_done).
+ *
+ * Tri-state return:
+ *   +1 = appended (new id, slot filled, *count incremented)
+ *    0 = merged into existing slot (same id seen twice; *count unchanged)
+ *   -1 = cap-full reject (new id, but *count == cap; *count unchanged)
+ *
+ * The tri-state distinction matters at production scan sites: a torn
+ * rename that produces a duplicate of an existing id MUST be allowed
+ * to merge even when *count == cap (the slot for that id is already
+ * occupied). Only a NEW id arriving at cap-full counts as overflow.
+ * The earlier 0/1 binary return conflated merged-at-cap with rejected-
+ * at-cap, which forced a user-visible boot denial after a power loss
+ * at exactly the boundary this dedupe is meant to recover from.
+ *
+ * Pure C; no UEFI types. Cross-includable from the kernel test runner
+ * so the merge invariant is unit-testable -- the bootloader's
+ * policy_scan_counters() is the production caller, but the actual
+ * worst-case merge logic must be exercised against raw torn-duplicate
+ * fixtures (foo+1-3 + foo+0-4 -> tries_left=0, tries_done=4) before
+ * the ladder filter runs. */
+int boot_policy_counter_dedup_insert(boot_counter_t *out,
+                                     unsigned int *count,
+                                     unsigned int cap,
+                                     const boot_counter_t *cand);
 
 #define BOOT_COUNTER_FILENAME_MAX  64u   /* 47 + 1 + 1 + 1 + 2 + NUL + slack */
 #define BOOT_COUNTER_TRIES_LEFT_MAX  9u

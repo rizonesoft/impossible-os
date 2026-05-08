@@ -696,6 +696,9 @@ enum boot_decision_error {
     BOOT_DECISION_ERR_REASON_PATH        = 6,  /* reason not allowed with current path (R5) */
     BOOT_DECISION_ERR_FALLBACK_REASON    = 7,  /* fallback_depth>0 but reason not fallback-class (R6) */
     BOOT_DECISION_ERR_REASON_FLAG        = 8,  /* trigger-reason without matching flag (R7) */
+    BOOT_DECISION_ERR_BAD_SELECTION_REASON = 9,  /* selection_reason UNSET or > REASON_MAX (v19) */
+    BOOT_DECISION_ERR_BAD_SELECTED_ID    = 10, /* selected_entry_id not NUL-terminated within 64 bytes (v19) */
+    BOOT_DECISION_ERR_BAD_REJECTED_ENTRY = 11, /* rejected_entries integrity violation (v19) */
 };
 
 /* Validate decision record fields.  Runs in Phase 0 after

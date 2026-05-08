@@ -534,3 +534,41 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
     sp_copy_clamped(out->selected_entry_id, sizeof(out->selected_entry_id),
                     out->selected.id, sp_strlen(out->selected.id));
 }
+
+/* ---- Conservative duplicate dedupe ------------------------------------- */
+
+int boot_policy_counter_dedup_insert(boot_counter_t *out,
+                                     unsigned int *count,
+                                     unsigned int cap,
+                                     const boot_counter_t *cand)
+{
+    if (!out || !count || !cand || cap == 0u) return -1;
+    /* Look for existing entry with the same id. Merge ALWAYS wins over
+     * cap-full -- a duplicate id is just an update of a slot already
+     * occupied, so the array does not grow and the dedupe must be
+     * allowed to apply worst-case demotion. */
+    for (unsigned int i = 0; i < *count; i++) {
+        const char *a = out[i].id;
+        const char *b = cand->id;
+        unsigned int j;
+        int eq = 1;
+        for (j = 0; j < sizeof(out[i].id); j++) {
+            if (a[j] != b[j]) { eq = 0; break; }
+            if (a[j] == 0) break;
+        }
+        if (eq) {
+            /* Conservative: lowest tries_left wins; highest tries_done wins.
+             * Worst-case demotion -- never silently un-demote across a torn
+             * rename. */
+            if (cand->tries_left < out[i].tries_left)
+                out[i].tries_left = cand->tries_left;
+            if (cand->tries_done > out[i].tries_done)
+                out[i].tries_done = cand->tries_done;
+            return 0;  /* merged */
+        }
+    }
+    if (*count >= cap) return -1;  /* cap-full, NEW id, reject */
+    out[*count] = *cand;
+    (*count)++;
+    return 1;  /* appended */
+}

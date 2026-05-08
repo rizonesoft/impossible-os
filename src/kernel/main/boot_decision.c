@@ -37,6 +37,7 @@
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
+#include "boot/boot_policy.h"  /* shared v19 ABI constants: BOOT_SELECTION_REASON_MAX, BOOT_REJECT_REASON_MAX, sentinel enum values. boot_policy.h is freestanding (no UEFI types) so kernel-side inclusion is safe; this avoids hardcoded magic numbers in the v19 validator and gives compile-time drift detection if the bootloader-side enum changes. */
 
 const char *boot_path_name(uint32_t path)
 {
@@ -447,6 +448,125 @@ boot_result_t boot_decision_validate(const struct boot_info *info,
             if (out_error != (enum boot_decision_error *)0)
                 *out_error = BOOT_DECISION_ERR_UNKNOWN_FLAG;
             return BOOT_FATAL;
+        }
+    }
+
+    /* Rule 9: v19 selection_reason range + UNSET-fatal. boot_policy_invoke()
+     * (the live producer in bootx64.c) writes a non-UNSET selection_reason
+     * on every code path -- including the AllocatePool-failure fallback path
+     * which writes FALLBACK_STORE_INVALID directly. UNSET reaching the
+     * validator means the producer was skipped or regressed. */
+    {
+        uint32_t sreason = info->selection_reason;
+        if (sreason == (uint32_t)BOOT_SELECTION_UNSET ||
+            sreason > (uint32_t)BOOT_SELECTION_REASON_MAX) {
+            klog(LOG_ERROR, "boot",
+                 (sreason == (uint32_t)BOOT_SELECTION_UNSET)
+                     ? "boot_decision: selection_reason is UNSET (boot_policy_invoke skipped or producer regression)"
+                     : "boot_decision: selection_reason %u out of range (max %u); stale loader",
+                 (uint64_t)sreason, (uint64_t)BOOT_SELECTION_REASON_MAX);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_BAD_SELECTION_REASON;
+            return BOOT_FATAL;
+        }
+    }
+
+    /* Rule 10: selected_entry_id NUL-terminated within 64 bytes. Empty
+     * (id[0]==0) is the documented sentinel for FALLBACK_STORE_INVALID
+     * per the v19 ABI; allowed only when reason == FALLBACK_STORE_INVALID.
+     * For every other reason, id MUST be non-empty (the policy ladder
+     * picked a concrete entry from the parsed store). */
+    {
+        const char *sid = info->selected_entry_id;
+        unsigned int j;
+        int has_nul = 0;
+        for (j = 0; j < sizeof(info->selected_entry_id); j++) {
+            if (sid[j] == 0) { has_nul = 1; break; }
+        }
+        if (!has_nul) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: selected_entry_id not NUL-terminated within 64 bytes (producer wrote raw bytes past the cap)");
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_BAD_SELECTED_ID;
+            return BOOT_FATAL;
+        }
+        /* Empty-id sentinel: only valid for STORE_INVALID. */
+        uint32_t sreason = info->selection_reason;
+        if (sid[0] == 0 && sreason != (uint32_t)BOOT_SELECTION_FALLBACK_STORE_INVALID) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: selected_entry_id empty but selection_reason=%u (empty allowed only for FALLBACK_STORE_INVALID=%u)",
+                 (uint64_t)sreason,
+                 (uint64_t)BOOT_SELECTION_FALLBACK_STORE_INVALID);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_BAD_SELECTED_ID;
+            return BOOT_FATAL;
+        }
+    }
+
+    /* Rule 11: rejected_entries integrity. count <= MAX_ENTRIES; overflow
+     * boolean; for each populated entry, id NUL-terminated and reason in
+     * (NONE, REJECT_REASON_MAX]. NONE is documented as "sentinel; never
+     * written" so any rejected entry asserting NONE is a producer bug. */
+    {
+        uint32_t rcount = info->rejected_entry_count;
+        uint32_t rover  = info->rejected_entry_overflow;
+        if (rcount > (uint32_t)BOOT_ENTRIES_MAX_ENTRIES) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: rejected_entry_count %u exceeds MAX_ENTRIES %u",
+                 (uint64_t)rcount, (uint64_t)BOOT_ENTRIES_MAX_ENTRIES);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_BAD_REJECTED_ENTRY;
+            return BOOT_FATAL;
+        }
+        if (rover > 1u) {
+            klog(LOG_ERROR, "boot",
+                 "boot_decision: rejected_entry_overflow %u not boolean (0/1)",
+                 (uint64_t)rover);
+            if (out_error != (enum boot_decision_error *)0)
+                *out_error = BOOT_DECISION_ERR_BAD_REJECTED_ENTRY;
+            return BOOT_FATAL;
+        }
+        unsigned int ri;
+        for (ri = 0; ri < rcount; ri++) {
+            const char *rid = info->rejected_entries[ri].id;
+            unsigned int rreason = info->rejected_entries[ri].reason;
+            unsigned int j;
+            int rhas_nul = 0;
+            for (j = 0; j < sizeof(info->rejected_entries[ri].id); j++) {
+                if (rid[j] == 0) { rhas_nul = 1; break; }
+            }
+            if (!rhas_nul) {
+                klog(LOG_ERROR, "boot",
+                     "boot_decision: rejected_entries[%u].id not NUL-terminated",
+                     (uint64_t)ri);
+                if (out_error != (enum boot_decision_error *)0)
+                    *out_error = BOOT_DECISION_ERR_BAD_REJECTED_ENTRY;
+                return BOOT_FATAL;
+            }
+            /* A populated rejected entry MUST name a real id. id[0]=0
+             * (empty string is NUL-terminated) would slip past the
+             * NUL-term check above but carries no diagnostic value --
+             * the policy-audit consumer cannot identify the entry. */
+            if (rid[0] == 0) {
+                klog(LOG_ERROR, "boot",
+                     "boot_decision: rejected_entries[%u].id is empty (count>0 requires non-empty id)",
+                     (uint64_t)ri);
+                if (out_error != (enum boot_decision_error *)0)
+                    *out_error = BOOT_DECISION_ERR_BAD_REJECTED_ENTRY;
+                return BOOT_FATAL;
+            }
+            /* NONE (0) is the documented "never written" sentinel; reject. */
+            if (rreason < (unsigned int)BOOT_REJECT_REASON_KIND_SKIPPED ||
+                rreason > (unsigned int)BOOT_REJECT_REASON_MAX) {
+                klog(LOG_ERROR, "boot",
+                     "boot_decision: rejected_entries[%u].reason %u out of range [%u..%u] (NONE is sentinel; never written)",
+                     (uint64_t)ri, (uint64_t)rreason,
+                     (uint64_t)BOOT_REJECT_REASON_KIND_SKIPPED,
+                     (uint64_t)BOOT_REJECT_REASON_MAX);
+                if (out_error != (enum boot_decision_error *)0)
+                    *out_error = BOOT_DECISION_ERR_BAD_REJECTED_ENTRY;
+                return BOOT_FATAL;
+            }
         }
     }
 

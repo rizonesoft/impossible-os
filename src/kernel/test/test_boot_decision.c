@@ -18,6 +18,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/klog_suppress.h"
 #include "kernel/boot_info.h"
+#include "boot/boot_policy.h"  /* v19 selection ABI constants */
 
 static struct boot_info s_dec_buf;
 
@@ -32,6 +33,16 @@ static void dec_zero(void)
      * happy-path fixtures don't trip the gate; tests exercising the
      * UNSET sentinel set the field explicitly after dec_zero(). */
     s_dec_buf.boot_media_role = BOOT_MEDIA_ROLE_NORMAL;
+    /* v19 selection ABI defaults (Rules 9-11). UNSET selection_reason
+     * is now FATAL post-§4 live producer; happy-path fixtures need a
+     * valid reason + non-empty selected_entry_id. Tests exercising the
+     * UNSET / out-of-range / non-NUL-terminated sentinels override
+     * after dec_zero(). */
+    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_STORE_DEFAULT;
+    s_dec_buf.selected_entry_id[0] = 'd';
+    s_dec_buf.selected_entry_id[1] = 'e';
+    s_dec_buf.selected_entry_id[2] = 'f';
+    s_dec_buf.selected_entry_id[3] = 0;
 }
 
 static void test_boot_decision_null_info(void)
@@ -766,6 +777,202 @@ static void test_boot_decision_trust_flags_zero_accepted(void)
     TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "no err");
 }
 
+/* ---- v19 selection ABI tests (Rules 9-11) ---------------------------- */
+
+static void test_boot_decision_v19_unset_selection_reason_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    /* Override the dec_zero default to UNSET. */
+    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_UNSET;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: UNSET selection_reason -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_SELECTION_REASON,
+                   "err=BAD_SELECTION_REASON");
+}
+
+static void test_boot_decision_v19_oor_selection_reason_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_REASON_MAX + 1u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: OOR selection_reason -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_SELECTION_REASON,
+                   "err=BAD_SELECTION_REASON");
+}
+
+static void test_boot_decision_v19_non_nul_terminated_id_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    /* Fill all 64 bytes with non-NUL chars -- producer wrote raw bytes
+     * without a terminator. */
+    for (uint32_t i = 0; i < sizeof(s_dec_buf.selected_entry_id); i++)
+        s_dec_buf.selected_entry_id[i] = (char)('a' + (i % 26));
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: non-NUL-terminated id -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_SELECTED_ID,
+                   "err=BAD_SELECTED_ID");
+}
+
+static void test_boot_decision_v19_empty_id_with_non_store_invalid_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    /* Empty id is the documented STORE_INVALID sentinel; using it with
+     * any other selection_reason is a producer bug. */
+    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_STORE_DEFAULT;
+    s_dec_buf.selected_entry_id[0] = 0;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: empty id with non-STORE_INVALID -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_SELECTED_ID,
+                   "err=BAD_SELECTED_ID");
+}
+
+static void test_boot_decision_v19_store_invalid_with_empty_id_ok(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.selection_reason = (uint32_t)BOOT_SELECTION_FALLBACK_STORE_INVALID;
+    s_dec_buf.selected_entry_id[0] = 0;  /* documented sentinel */
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_OK,
+                   "v19: STORE_INVALID + empty id is the documented sentinel");
+    TEST_ASSERT_EQ((uint64_t)err, (uint64_t)BOOT_DECISION_ERR_OK, "err=OK");
+}
+
+static void test_boot_decision_v19_rejected_count_oor_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.rejected_entry_count = (uint32_t)BOOT_ENTRIES_MAX_ENTRIES + 1u;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected_count > MAX -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
+                   "err=BAD_REJECTED_ENTRY");
+}
+
+static void test_boot_decision_v19_rejected_overflow_non_boolean_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.rejected_entry_overflow = 2u;  /* not 0/1 */
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected_overflow non-boolean -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
+                   "err=BAD_REJECTED_ENTRY");
+}
+
+static void test_boot_decision_v19_rejected_none_sentinel_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.rejected_entry_count = 1u;
+    s_dec_buf.rejected_entries[0].id[0] = 'b';
+    s_dec_buf.rejected_entries[0].id[1] = 'a';
+    s_dec_buf.rejected_entries[0].id[2] = 'd';
+    s_dec_buf.rejected_entries[0].id[3] = 0;
+    /* NONE (0) is documented as "sentinel; never written" -- a producer
+     * asserting NONE on a populated rejected entry is a bug. */
+    s_dec_buf.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_NONE;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected[].reason==NONE -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
+                   "err=BAD_REJECTED_ENTRY");
+}
+
+static void test_boot_decision_v19_rejected_empty_id_fatal(void)
+{
+    /* A populated rejected entry MUST name a real id. id[0]=0 is
+     * NUL-terminated (passes the basic NUL-term check) but carries
+     * no diagnostic value -- policy-audit consumers cannot identify
+     * the entry. The tighter Rule 11 check rejects it. */
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.rejected_entry_count = 1u;
+    s_dec_buf.rejected_entries[0].id[0] = 0;  /* empty NUL-terminated */
+    s_dec_buf.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_KIND_SKIPPED;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: empty rejected[].id -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
+                   "err=BAD_REJECTED_ENTRY");
+}
+
+static void test_boot_decision_v19_rejected_id_not_nul_terminated_fatal(void)
+{
+    TEST_KLOG_SUPPRESS("boot");
+    dec_zero();
+    s_dec_buf.boot_path     = BOOT_PATH_NORMAL;
+    s_dec_buf.boot_reason   = BOOT_REASON_NORMAL;
+    s_dec_buf.boot_source_flags = BOOT_SOURCE_FLAG_MEDIA_PRESENT;
+    s_dec_buf.rejected_entry_count = 1u;
+    /* Fill 64 bytes with no NUL. */
+    for (uint32_t i = 0; i < sizeof(s_dec_buf.rejected_entries[0].id); i++)
+        s_dec_buf.rejected_entries[0].id[i] = (char)('a' + (i % 26));
+    s_dec_buf.rejected_entries[0].reason = (uint32_t)BOOT_REJECT_REASON_KIND_SKIPPED;
+
+    enum boot_decision_error err = BOOT_DECISION_ERR_OK;
+    boot_result_t r = boot_decision_validate(&s_dec_buf, &err);
+    TEST_ASSERT_EQ((uint64_t)r, (uint64_t)BOOT_FATAL, "v19: rejected[].id non-NUL-terminated -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)err,
+                   (uint64_t)BOOT_DECISION_ERR_BAD_REJECTED_ENTRY,
+                   "err=BAD_REJECTED_ENTRY");
+}
+
 void test_register_boot_decision(void)
 {
     test_suite_register_cat("boot_decision: NULL info rejected",
@@ -844,6 +1051,26 @@ void test_register_boot_decision(void)
                             test_boot_decision_trust_flags_zero_accepted, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: trust flags outside MASK_KNOWN rejected (FATAL)",
                             test_boot_decision_trust_flags_unknown_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 UNSET selection_reason FATAL",
+                            test_boot_decision_v19_unset_selection_reason_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 OOR selection_reason FATAL",
+                            test_boot_decision_v19_oor_selection_reason_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 non-NUL-terminated selected_entry_id FATAL",
+                            test_boot_decision_v19_non_nul_terminated_id_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 empty id with non-STORE_INVALID FATAL",
+                            test_boot_decision_v19_empty_id_with_non_store_invalid_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 STORE_INVALID + empty id is documented sentinel",
+                            test_boot_decision_v19_store_invalid_with_empty_id_ok, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 rejected_count OOR FATAL",
+                            test_boot_decision_v19_rejected_count_oor_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 rejected_overflow non-boolean FATAL",
+                            test_boot_decision_v19_rejected_overflow_non_boolean_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 rejected[].reason == NONE FATAL (sentinel)",
+                            test_boot_decision_v19_rejected_none_sentinel_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 empty rejected[].id FATAL",
+                            test_boot_decision_v19_rejected_empty_id_fatal, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_decision: v19 rejected[].id non-NUL-terminated FATAL",
+                            test_boot_decision_v19_rejected_id_not_nul_terminated_fatal, TEST_CAT_BOOT);
     test_suite_register_cat("boot_decision: trust unreadable-trio (runtime-unavailable) accepted",
                             test_boot_decision_trust_unreadable_trio, TEST_CAT_BOOT);
 }

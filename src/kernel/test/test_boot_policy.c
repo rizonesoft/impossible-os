@@ -999,6 +999,140 @@ static void test_ladder_split_mode_rejects_uki_entry(void)
                    "kind=UKI under split mode = KIND_UNAVAILABLE");
 }
 
+static void test_counter_dedup_insert_raw_duplicates(void)
+{
+    /* §5 worst-case demotion invariant: raw inputs foo+1-3 and foo+0-4
+     * must merge to a single entry with tries_left=0, tries_done=4
+     * (lowest left wins; highest done wins). Calls
+     * boot_policy_counter_dedup_insert() directly so the merge logic
+     * is exercised before the ladder filter sees the deduped output.
+     */
+    boot_counter_t out[8];
+    unsigned int count = 0;
+
+    boot_counter_t a;
+    set_id(a.id, "foo");
+    a.tries_left = 1u;
+    a.tries_done = 3u;
+    int r1 = boot_policy_counter_dedup_insert(out, &count, 8u, &a);
+    TEST_ASSERT_EQ(r1, 1, "first insert appends");
+    TEST_ASSERT_EQ(count, 1u, "count == 1 after first append");
+
+    boot_counter_t b;
+    set_id(b.id, "foo");
+    b.tries_left = 0u;
+    b.tries_done = 4u;
+    int r2 = boot_policy_counter_dedup_insert(out, &count, 8u, &b);
+    TEST_ASSERT_EQ(r2, 0, "duplicate id merges; does not append");
+    TEST_ASSERT_EQ(count, 1u, "count stays 1 after merge");
+    TEST_ASSERT_EQ(out[0].tries_left, 0u, "min(1, 0) wins -> tries_left=0");
+    TEST_ASSERT_EQ(out[0].tries_done, 4u, "max(3, 4) wins -> tries_done=4");
+
+    /* Reverse order: insert b first then a. Should produce the same
+     * worst-case merged state (commutative). */
+    boot_counter_t out2[8];
+    unsigned int count2 = 0;
+    boot_policy_counter_dedup_insert(out2, &count2, 8u, &b);
+    int r3 = boot_policy_counter_dedup_insert(out2, &count2, 8u, &a);
+    TEST_ASSERT_EQ(r3, 0, "reverse-order duplicate also merges");
+    TEST_ASSERT_EQ(count2, 1u, "reverse: count stays 1");
+    TEST_ASSERT_EQ(out2[0].tries_left, 0u, "reverse: tries_left=0");
+    TEST_ASSERT_EQ(out2[0].tries_done, 4u, "reverse: tries_done=4");
+
+    /* Different ids: both append, no merge. */
+    boot_counter_t c;
+    set_id(c.id, "bar");
+    c.tries_left = 5u;
+    c.tries_done = 1u;
+    int r4 = boot_policy_counter_dedup_insert(out, &count, 8u, &c);
+    TEST_ASSERT_EQ(r4, 1, "different id appends");
+    TEST_ASSERT_EQ(count, 2u, "count == 2");
+}
+
+static void test_counter_dedup_insert_cap_full(void)
+{
+    /* Cap behavior: once count == cap, append returns 0 and out[]
+     * is not modified. Existing entries can still be merged
+     * (dedup is purely id-driven, independent of cap). */
+    boot_counter_t out[2];
+    unsigned int count = 0;
+    boot_counter_t a;
+    set_id(a.id, "a");
+    a.tries_left = 3u;
+    a.tries_done = 0u;
+    boot_counter_t b;
+    set_id(b.id, "b");
+    b.tries_left = 3u;
+    b.tries_done = 0u;
+    boot_counter_t c;
+    set_id(c.id, "c");
+    c.tries_left = 3u;
+    c.tries_done = 0u;
+
+    TEST_ASSERT_EQ(boot_policy_counter_dedup_insert(out, &count, 2u, &a), 1, "1st fits");
+    TEST_ASSERT_EQ(boot_policy_counter_dedup_insert(out, &count, 2u, &b), 1, "2nd fits");
+    TEST_ASSERT_EQ(count, 2u, "count == cap");
+    TEST_ASSERT_EQ(boot_policy_counter_dedup_insert(out, &count, 2u, &c), -1, "3rd new id rejected at cap (return -1)");
+    TEST_ASSERT_EQ(count, 2u, "count unchanged on cap-reject");
+
+    /* Even at cap, a duplicate of an existing id can still merge.
+     * Return value 0 = merged (distinct from -1 = cap-full reject). */
+    boot_counter_t a2;
+    set_id(a2.id, "a");
+    a2.tries_left = 0u;
+    a2.tries_done = 5u;
+    TEST_ASSERT_EQ(boot_policy_counter_dedup_insert(out, &count, 2u, &a2), 0, "cap full, duplicate merges (return 0)");
+    TEST_ASSERT_EQ(out[0].tries_left, 0u, "cap-full merge: tries_left=0 (worst case)");
+    TEST_ASSERT_EQ(out[0].tries_done, 5u, "cap-full merge: tries_done=5 (worst case)");
+}
+
+static void test_counter_torn_duplicate_resolution(void)
+{
+    /* End-to-end: feed raw torn-duplicate inputs through dedup, then
+     * pass the deduped array to boot_policy_decide. The selected
+     * entry must reach FALLBACK_NO_VIABLE because foo's worst-case
+     * tries_left is 0 (TRIES_EXHAUSTED filter). */
+    boot_counter_t arr[8];
+    unsigned int cnt = 0;
+
+    boot_counter_t torn_a;
+    set_id(torn_a.id, "foo");
+    torn_a.tries_left = 1u;
+    torn_a.tries_done = 3u;
+    boot_policy_counter_dedup_insert(arr, &cnt, 8u, &torn_a);
+
+    boot_counter_t torn_b;
+    set_id(torn_b.id, "foo");
+    torn_b.tries_left = 0u;
+    torn_b.tries_done = 4u;
+    boot_policy_counter_dedup_insert(arr, &cnt, 8u, &torn_b);
+
+    TEST_ASSERT_EQ(cnt, 1u, "torn pair merged to one slot");
+    TEST_ASSERT_EQ(arr[0].tries_left, 0u, "merged tries_left=0");
+    TEST_ASSERT_EQ(arr[0].tries_done, 4u, "merged tries_done=4");
+
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 1u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "foo");
+    set_id(r.entries[0].sort_key, "10");
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, arr, cnt, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_FALLBACK_NO_VIABLE,
+                   "torn-duplicate end-to-end: foo demoted to tries_left=0 -> filtered out");
+    TEST_ASSERT_EQ(d.rejected_count, 1u, "exactly one reject recorded");
+    TEST_ASSERT_EQ(d.rejected[0].reason, BOOT_REJECT_REASON_TRIES_EXHAUSTED,
+                   "reject reason = TRIES_EXHAUSTED");
+}
+
 static void test_ladder_supported_kinds_mask_filters_unavailable(void)
 {
     /* Caller-side capability gate: bootloader cannot execute kind=network
@@ -1074,6 +1208,12 @@ void test_register_boot_policy(void)
                             test_ladder_zeroed_inputs_no_ab_default, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: empty machine_id wildcard accepted (regression)",
                             test_parser_empty_machine_id_wildcard, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: counter_dedup_insert raw duplicates worst-case merge",
+                            test_counter_dedup_insert_raw_duplicates, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: counter_dedup_insert cap-full + duplicate-merge-at-cap",
+                            test_counter_dedup_insert_cap_full, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: torn-duplicate end-to-end (dedup + ladder filter)",
+                            test_counter_torn_duplicate_resolution, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: supported_kinds_mask filters unavailable kinds",
                             test_ladder_supported_kinds_mask_filters_unavailable,
                             TEST_CAT_BOOT);

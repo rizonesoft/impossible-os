@@ -67,7 +67,16 @@ Filter misses go into `boot_policy_decision_t.rejected[]` as `(id, reason)` pair
 | `<L>` | single decimal digit 0..9 | `tries_left`. 0 means demoted (still visible, no auto-select). |
 | `<D>` | one or two decimal digits 0..99 | `tries_done`. |
 
-Updates use FAT32's atomic single-cluster directory-entry rename: write the new filename via `EFI_FILE_PROTOCOL.SetInfo`-driven rename, no read-modify-write of any shared file. The worst post-crash state is the old filename remaining (counters un-decremented), which the next boot will detect as a stale try via the `tries_done` peak heuristic in the watchdog rollback path.
+Updates use a CRASH-TOLERANT protocol: **write-new + flush + delete-old**. UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is NOT power-fail-atomic on FAT32 -- LFN entries can span multiple directory entries and a reset mid-rename can leave torn names, duplicates, or orphaned old names. The protocol:
+
+1. `Open(new_filename, CREATE | WRITE)` -> `Close()` (flushes the directory entry to disk).
+2. `Open(old_filename, READ | WRITE)` -> `Delete()` (removes the stale entry).
+
+A reset between (1) and (2) leaves both files. The next-boot scan resolves duplicates **conservatively**: when the same `<entry-id>` appears twice (torn rename), retain `min(tries_left)` AND `max(tries_done)` -- worst-case demotion. A torn rename can never silently un-demote an entry or hide an apparent exhaustion record.
+
+**First-boot bootstrap**: when `policy_counter_decrement()` is called for an entry that has no counter file yet (chosen entry with `counter_existed=0`), it creates `<id>+2-1` directly. This matches the systemd-boot BLS 3-try semantic (3 tries default; one consumed by this boot leaves 2 left, 1 done). Without this positive-budget bootstrap, single-entry installs would brick after one boot before the health-gated mark-good feature ships. mark-good will later DELETE the counter on success, returning the entry to the "no counter, no gate" state.
+
+A counter file with `tries_left=0` means the entry has been demoted: it stays visible in the menu but is filtered from auto-select via the ladder's `BOOT_REJECT_REASON_TRIES_EXHAUSTED` gate.
 
 Counters are explicitly NOT in:
 
@@ -75,7 +84,7 @@ Counters are explicitly NOT in:
 - NVRAM -- entry-store doctrine is "NVRAM is exceptional-only" (no per-boot writes).
 - A shared sidecar JSON file -- a sidecar would have the same blast-radius problem at smaller scale.
 
-The bootloader-side glue (directory scan, `SetInfo` rename) lives in `bootx64.c`; the pure-C parse + format helpers (`boot_counter_parse_filename`, `boot_counter_format_filename`) live in [`boot_policy.c`](../../src/boot/uefi/boot_policy.c) and are unit-tested round-trip.
+The bootloader-side glue lives in `bootx64.c` (`policy_scan_counters()` for the directory walk + conservative duplicate dedupe; `policy_counter_decrement()` for the write-new + flush + delete-old protocol). The pure-C parse + format helpers (`boot_counter_parse_filename`, `boot_counter_format_filename`) live in [`boot_policy.c`](../../src/boot/uefi/boot_policy.c) and are unit-tested round-trip.
 
 ## 5. Worked examples
 

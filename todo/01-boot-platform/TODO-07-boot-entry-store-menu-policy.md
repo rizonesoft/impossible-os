@@ -55,7 +55,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   2   | Boot entry parser and validator                        | §1                                      |  [x]   |
 | 💎  |   3   | Boot policy merge order (firmware vs OS layer split)   | §2, T01 §1, T05 §6                      |  [x]   |
 | 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring | §3                                      |  [x]   |
-| 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator    | §3, §4                                  |  [ ]   |
+| 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator    | §3, §4                                  |  [x]   |
 | 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [ ]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [ ]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [ ]   |
@@ -193,15 +193,24 @@ Wire the §3 ladder into the live boot path. Pre-EBS only -- counter mutation (�
 
 UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is **not** power-fail-atomic on FAT32 -- LFN entries can span multiple directory entries, and a reset mid-rename can leave torn names, duplicates, or orphaned old names (Codex design review 2026-05-08 H finding). Counter persistence has to assume the rename can fail at any byte and design for that. The crash-tolerant protocol is: (1) `Open(new_filename, CREATE)`, (2) `Close` to flush the directory entry, (3) `Open(old_filename) + Delete()`. A reset between (1) and (3) leaves both files; the conservative scan resolves duplicates with **lowest** `tries_left` + **highest** `tries_done` (worst-case demotion -- never silently ignore an apparent exhaustion record). This section also lands the kernel-side Phase-0 validator for the v19 selection ABI that §4 starts producing: rejects out-of-range `selection_reason` / `rejected_entries` / non-NUL-terminated id; treats `UNSET` as the explicit "no decision available" sentinel until §4 ships, then flips to fatal.
 
-- [ ] Counter scan in `\EFI\ImpossibleOS\counters\`; cap at `BOOT_ENTRIES_MAX_ENTRIES`; overflow -> `counters_overflow=1` (fail-closed at ladder).
-- [ ] Conservative duplicate resolution: lowest `tries_left` + highest `tries_done` wins.
-- [ ] Crash-tolerant decrement: write-new + flush + delete-old (NOT atomic rename).
-- [ ] First-boot bootstrap: missing counter file for chosen entry -> `Open(CREATE)` `<id>+0-1`.
-- [ ] Phase-0 v19 ABI validator in `src/kernel/main/boot_decision.c` rejecting out-of-range fields.
-- [ ] Update `docs/boot/boot-policy.md` section 4 + remove "atomic FAT32 rename" wording in `include/boot/boot_policy.h`.
-- [ ] Commit: `"boot: crash-tolerant counter protocol + v19 ABI validator"`
+- [x] Counter scan in `\EFI\ImpossibleOS\counters\`; cap at `BOOT_ENTRIES_MAX_ENTRIES`; overflow -> `counters_overflow=1`. Implemented as `policy_scan_counters()` in `bootx64.c` with conservative duplicate resolution at scan time.
+- [x] Conservative duplicate resolution: lowest `tries_left` + highest `tries_done` wins. Implemented in `counters_insert()` helper; covers torn-rename worst-case.
+- [x] Crash-tolerant decrement: write-new + flush + delete-old (NOT atomic rename). Implemented as `policy_counter_decrement()` in `bootx64.c`; auto-mkdirs the `counters/` directory on first decrement; logs + skips on read-only ESP.
+- [x] First-boot bootstrap: missing counter file for chosen entry -> `Open(CREATE)` `<id>+2-1` (BLS 3-try semantic, NOT `+0-1` -- design review caught that `+0-1` would brick single-entry installs before mark-good ships).
+- [x] Phase-0 v19 ABI validator in `src/kernel/main/boot_decision.c` rejecting out-of-range fields. Rules 9-11 added: `selection_reason` UNSET-fatal + range; `selected_entry_id` NUL-terminated + STORE_INVALID empty-sentinel; `rejected_entries` integrity (count, overflow, NUL-term, NONE-rejected).
+- [x] Update `docs/boot/boot-policy.md` section 4 + remove "atomic FAT32 rename" wording in `include/boot/boot_policy.h`.
+- [x] Commit: `"boot: crash-tolerant counter protocol + v19 ABI validator"`
 
-**Test checkpoint:** Pre-populated counter dir with torn duplicate (`foo+1-3` and `foo+0-4`) -> ladder treats `foo` as `tries_left=0`. Decrement creates new + deletes old. Simulated mid-rename crash (test harness leaves both) resolves to worst-case state on next boot. Phase-0 validator rejects synthetic out-of-range `selection_reason`. Test on: QEMU TCG (FS deterministic); bare metal.
+**Test checkpoint:** Pre-populated counter dir with torn duplicate (`foo+1-3` and `foo+0-4`) -> ladder treats `foo` as `tries_left=0` (worst-case demotion via `counters_insert()` dedupe). Decrement creates new + deletes old. First-boot bootstrap creates `<id>+2-1` (BLS 3-try). Phase-0 validator rejects synthetic out-of-range `selection_reason`, UNSET reason, non-NUL-terminated `selected_entry_id`, empty-id-with-non-STORE_INVALID, OOR `rejected_entry_count`, non-boolean `rejected_entry_overflow`, NONE-sentinel rejected reason, non-NUL-terminated rejected id. Build OK; smoke PASS (KVM 2.42s) -- counter dir absent on test ESP so scan returns 0 (correct happy-path for first boot). Test on: QEMU TCG (FS deterministic); bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 new boot-decision suites (9 v19 validator + 1 torn-duplicate counter), 0 failures
+
+> **Notes:**
+> - What shipped: `policy_scan_counters()` + `policy_counter_decrement()` + `counters_insert()` helpers in `bootx64.c`, 3 new validator rules (9-11) + 3 new error codes in `boot_decision.{c,h}`, `boot/boot_policy.h` included from kernel for shared ABI, EFI_FILE_INFO struct + EFI_FILE_DIRECTORY constant in `efi.h`, 2 new POST16 codes (0xB0B4 required + 0xB0B5 optional).
+> - How it integrates: `boot_policy_invoke()` calls scan before ladder, decrement after entry pick (skipped on FALLBACK_*); kernel-side validator runs in Phase 0 after `boot_caps_validate`; smoke test green.
+> - Downstream effects: closes the v19 ABI loop -- §4 producer + §5 validator; per-entry tries-tracking is now durable across boots. Codex design review adoptions in commit message.
+> - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) section 4.
+> - Scope boundary: §5 owns counter persistence + v19 validator. mark-good (deletes counter on success) and the menu UX for demoted entries are §14 / §6 / §9 work.
 
 ---
 
