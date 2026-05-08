@@ -141,7 +141,7 @@ Two distinct layers, deterministically composed. **Firmware layer**: UEFI `BootC
 - [x] OS-layer precedence ladder `boot_policy_decide()` in `src/boot/uefi/boot_policy.c`: hotkey > watchdog > A/B > recovery > store default (BootCurrent OptionalData hint) > fallback.
 - [x] boot_info schema v18 -> v19 adds `selected_entry_id[64]` + `selection_reason` (new 9-value enum) + `rejected_entries[64]` + `rejected_entry_count` + `rejected_entry_overflow`. Mirror + manifest + doc-coverage all updated.
 - [x] Parser widened: envelope retains `sort_key` / `machine_id` / `policy_tags[4][24]` / `policy_tag_overflow` / `timeout_override`. Closes Codex design review High finding (parser was discarding ladder inputs).
-- [x] BLS-style counter filename `<entry-id>+<L>-<D>` parser + formatter ship in the policy module. Storage: zero-byte files under `\EFI\ImpossibleOS\counters\`, atomic FAT32 rename. NOT in bootentries.json. NOT NVRAM.
+- [x] BLS-style counter filename `<entry-id>+<L>-<D>` parser + formatter ship in the policy module. Storage: zero-byte files under `\EFI\ImpossibleOS\counters\`. The original spec assumed atomic FAT32 rename; §5 design review caught that UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is NOT power-fail-atomic on FAT32, so §5 ships the crash-tolerant write-new + Flush() + Close(success) + delete-old protocol instead. NOT in bootentries.json. NOT NVRAM.
 - [x] Document precedence ladder + 6 worked examples in [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md).
 - [x] Commit: `"boot: define boot entry policy precedence"`
 
@@ -191,11 +191,11 @@ Wire the §3 ladder into the live boot path. Pre-EBS only -- counter mutation (�
 
 ## 5. Crash-Tolerant Counter Protocol + v19 ABI Validator
 
-UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is **not** power-fail-atomic on FAT32 -- LFN entries can span multiple directory entries, and a reset mid-rename can leave torn names, duplicates, or orphaned old names (Codex design review 2026-05-08 H finding). Counter persistence has to assume the rename can fail at any byte and design for that. The crash-tolerant protocol is: (1) `Open(new_filename, CREATE)`, (2) `Close` to flush the directory entry, (3) `Open(old_filename) + Delete()`. A reset between (1) and (3) leaves both files; the conservative scan resolves duplicates with **lowest** `tries_left` + **highest** `tries_done` (worst-case demotion -- never silently ignore an apparent exhaustion record). This section also lands the kernel-side Phase-0 validator for the v19 selection ABI that §4 starts producing: rejects out-of-range `selection_reason` / `rejected_entries` / non-NUL-terminated id; treats `UNSET` as the explicit "no decision available" sentinel until §4 ships, then flips to fatal.
+UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is **not** power-fail-atomic on FAT32 -- LFN entries can span multiple directory entries, and a reset mid-rename can leave torn names, duplicates, or orphaned old names (Codex design review 2026-05-08 H finding). Counter persistence has to assume the rename can fail at any byte and design for that. The crash-tolerant protocol is: (1) `Open(new_filename, CREATE)`, (2) `Flush()` + `Close()` -- BOTH must return EFI_SUCCESS for the replacement to be considered durable, (3) only on confirmed durability, `Open(old_filename) + Delete()`. If either Flush or Close fails, step 3 is skipped and the old file is preserved (next-boot scan dedupes). A reset between (1) and (3) leaves both files; the conservative scan resolves duplicates with **lowest** `tries_left` + **highest** `tries_done` (worst-case demotion -- never silently ignore an apparent exhaustion record). This section also lands the kernel-side Phase-0 validator for the v19 selection ABI that §4 starts producing: rejects out-of-range `selection_reason` / `rejected_entries` / non-NUL-terminated id; treats `UNSET` as the explicit "no decision available" sentinel until §4 ships, then flips to fatal.
 
 - [x] Counter scan in `\EFI\ImpossibleOS\counters\`; cap at `BOOT_ENTRIES_MAX_ENTRIES`; overflow -> `counters_overflow=1`. Implemented as `policy_scan_counters()` in `bootx64.c` with conservative duplicate resolution at scan time.
 - [x] Conservative duplicate resolution: lowest `tries_left` + highest `tries_done` wins. Implemented in `counters_insert()` helper; covers torn-rename worst-case.
-- [x] Crash-tolerant decrement: write-new + flush + delete-old (NOT atomic rename). Implemented as `policy_counter_decrement()` in `bootx64.c`; auto-mkdirs the `counters/` directory on first decrement; logs + skips on read-only ESP.
+- [x] Crash-tolerant decrement: write-new + Flush() + Close(success) + delete-old (NOT atomic rename). Implemented as `policy_counter_decrement()` in `bootx64.c`; auto-mkdirs the `counters/` directory on first decrement; logs + skips on read-only ESP.
 - [x] First-boot bootstrap: missing counter file for chosen entry -> `Open(CREATE)` `<id>+2-1` (BLS 3-try semantic, NOT `+0-1` -- design review caught that `+0-1` would brick single-entry installs before mark-good ships).
 - [x] Phase-0 v19 ABI validator in `src/kernel/main/boot_decision.c` rejecting out-of-range fields. Rules 9-11 added: `selection_reason` UNSET-fatal + range; `selected_entry_id` NUL-terminated + STORE_INVALID empty-sentinel; `rejected_entries` integrity (count, overflow, NUL-term, NONE-rejected).
 - [x] Update `docs/boot/boot-policy.md` section 4 + remove "atomic FAT32 rename" wording in `include/boot/boot_policy.h`.
@@ -206,11 +206,14 @@ UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is **not** power-fail-atomic on FAT32 --
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 new boot-decision suites (9 v19 validator + 1 torn-duplicate counter), 0 failures
 
 > **Notes:**
-> - What shipped: `policy_scan_counters()` + `policy_counter_decrement()` + `counters_insert()` helpers in `bootx64.c`, 3 new validator rules (9-11) + 3 new error codes in `boot_decision.{c,h}`, `boot/boot_policy.h` included from kernel for shared ABI, EFI_FILE_INFO struct + EFI_FILE_DIRECTORY constant in `efi.h`, 2 new POST16 codes (0xB0B4 required + 0xB0B5 optional).
-> - How it integrates: `boot_policy_invoke()` calls scan before ladder, decrement after entry pick (skipped on FALLBACK_*); kernel-side validator runs in Phase 0 after `boot_caps_validate`; smoke test green.
-> - Downstream effects: closes the v19 ABI loop -- §4 producer + §5 validator; per-entry tries-tracking is now durable across boots. Codex design review adoptions in commit message.
+> - What shipped: `policy_scan_counters()` + `policy_counter_decrement()` helpers in `bootx64.c`, public `boot_policy_counter_dedup_insert()` (tri-state: +1 append / 0 merge / -1 cap-reject) in `boot_policy.c`, 3 v19 validator rules (9-11) + 3 error codes in `boot_decision.{c,h}`, `boot/boot_policy.h` consumed by kernel for shared ABI, EFI_FILE_INFO + EFI_FILE_DIRECTORY in `efi.h`, 2 POST16 codes (0xB0B4 required + 0xB0B5 optional).
+> - How it integrates: `boot_policy_invoke()` calls scan before ladder, decrement after entry pick (skipped on FALLBACK_*; durability gate Flush+Close before delete-old; scan stops on cap-overflow); kernel validator runs Phase 0 after `boot_caps_validate`; smoke test green.
+> - Downstream effects: closes the v19 ABI loop (§4 producer + §5 validator); per-entry tries-tracking is durable across boots. Codex review adoptions in commit message.
 > - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) section 4.
-> - Scope boundary: §5 owns counter persistence + v19 validator. mark-good (deletes counter on success) and the menu UX for demoted entries are §14 / §6 / §9 work.
+> - Scope boundary: §5 owns counter persistence + v19 validator. mark-good (deletes counter on success) is §14; menu UX for demoted entries is §6 / §9.
+
+> **Verified:** 2026-05-08 | commit `1d86c05c` | 7/7 items | build OK | smoke PASS (KVM 2.43s)
+> **Quality reviewed:** 2026-05-08 | Codex 13x (design + adversarial 4x + test-coverage + consistency 3x + perf 2x + re-adversarial 5x) | 2H+11M fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 
@@ -437,7 +440,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | ⭐  | Schema-versioned + CRC-checksummed entry store         | ❌ Binary BCD, no checksum        | ❌ INI / cfg, no checksum             | ✅ §1 schema_version=1 + CRC-32 IEEE 802.3 🚀 |
 | ⭐  | Per-entry mutation audit (add/remove/reorder logged)   | ❌ Not logged                     | ❌ Not logged                         | ⬜ Planned -- §12 🚀     |
 
-> **After §1-§16:** Impossible OS matches Windows 11 and Linux on structured entries, BootNext provenance, recovery, safe mode, previous-kernel rollback, menu UX (renderer §6 + indicators §7), offline tooling, loop prevention (ladder §3 + crash-tolerant rename §5), health-gated mark-good, entry kinds, OS-visible loader vars, and first-install bootstrap.
+> **After §1-§16:** Impossible OS matches Windows 11 and Linux on structured entries, BootNext provenance, recovery, safe mode, previous-kernel rollback, menu UX (renderer §6 + indicators §7), offline tooling, loop prevention (ladder §3 + crash-tolerant decrement §5), health-gated mark-good, entry kinds, OS-visible loader vars, and first-install bootstrap.
 > **After §3 + §9 + §12 + §1 ⭐ rows:** Impossible OS surpasses both with documented two-layer precedence, demote-not-drop UX, per-decision audit, schema+CRC store, and per-entry mutation audit.
 
 ---

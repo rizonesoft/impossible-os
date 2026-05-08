@@ -1,10 +1,12 @@
 /*
  * src/boot/uefi/boot_policy.c -- Boot policy merge order
  *
- * Pure-C ladder + BLS-style counter filename parser/formatter. UEFI-side
- * glue (Boot#### GetVariable, ESP directory scan, FAT32 atomic rename)
- * lives in bootx64.c; this file is freestanding and cross-includable from
- * the kernel test runner the same way boot_entries_parser.c is.
+ * Pure-C ladder + BLS-style counter filename parser/formatter +
+ * conservative duplicate dedupe helper. UEFI-side glue (Boot####
+ * GetVariable, ESP directory scan, write-new + Flush() + Close(success) +
+ * delete-old crash-tolerant decrement) lives in bootx64.c; this file
+ * is freestanding and cross-includable from the kernel test runner
+ * the same way boot_entries_parser.c is.
  */
 
 #ifndef BOOT_POLICY_NO_HEADER

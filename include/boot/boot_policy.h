@@ -39,14 +39,17 @@
  *
  * Counters (tries_left / tries_done) live as BLS-style filename state at
  * \EFI\ImpossibleOS\counters\<entry-id>+<L>-<D> -- one zero-byte file per
- * tracked entry. Updates use a CRASH-TOLERANT protocol: write-new + flush +
- * delete-old. UEFI EFI_FILE_PROTOCOL.SetInfo rename is NOT power-fail-atomic
- * on FAT32 -- LFN entries can span multiple directory entries and a reset
- * mid-rename can leave torn names, duplicates, or orphaned old names. The
- * scan path resolves duplicates conservatively (lowest tries_left + highest
- * tries_done = worst-case demotion) so a torn rename never silently ignores
- * an apparent exhaustion record. Counters are NOT NVRAM and NOT in the
- * CRC-pinned bootentries.json store.
+ * tracked entry. Updates use a CRASH-TOLERANT protocol:
+ *     write-new + Flush() + Close(success) + delete-old.
+ * The new file is treated as durable ONLY when BOTH Flush() and Close()
+ * return EFI_SUCCESS; if either fails, delete-old is SKIPPED and the old
+ * file is preserved. UEFI EFI_FILE_PROTOCOL.SetInfo rename is NOT power-
+ * fail-atomic on FAT32 -- LFN entries can span multiple directory entries
+ * and a reset mid-rename can leave torn names, duplicates, or orphaned old
+ * names. The scan path resolves duplicates conservatively (lowest
+ * tries_left + highest tries_done = worst-case demotion) so a torn rename
+ * never silently ignores an apparent exhaustion record. Counters are NOT
+ * NVRAM and NOT in the CRC-pinned bootentries.json store.
  */
 
 #ifndef BOOT_BOOT_POLICY_H
@@ -242,11 +245,17 @@ typedef struct {
  * `tries_left=0` means the entry has been demoted (still visible, no auto-
  * select). The decrement happens AFTER the ladder picks the entry and
  * BEFORE the kernel handoff so a hard reset mid-boot doesn't double-
- * decrement; the protocol is write-new + flush + delete-old (NOT atomic
- * rename). A reset between write-new and delete-old leaves both files; the
- * conservative duplicate resolution (lowest tries_left + highest tries_done)
- * resolves to the worst-case state on next boot, never silently ignoring an
- * exhaustion record.
+ * decrement; the protocol is:
+ *   1. Open(new_filename, CREATE) -> Flush() -> Close(). The new file is
+ *      treated as durable ONLY when BOTH Flush() and Close() return
+ *      EFI_SUCCESS.
+ *   2. ONLY on confirmed durability: Open(old_filename) + Delete(). If
+ *      either Flush or Close failed in step 1, step 2 is skipped and the
+ *      old file is preserved.
+ * NOT atomic rename. A reset between step 1 and step 2 leaves both files;
+ * the conservative duplicate resolution (lowest tries_left + highest
+ * tries_done) resolves to the worst-case state on next boot, never
+ * silently ignoring an exhaustion record.
  */
 typedef struct {
     char         id[64];

@@ -236,7 +236,7 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_BOOT_POLICY_DECIDE 0xB0B2 /* Policy ladder decided */
 #define POST16_BL_BOOT_POLICY_OK  0xB0B3  /* Policy decision copied to boot_info */
 #define POST16_BL_COUNTER_SCAN    0xB0B4  /* Counter directory scan entry */
-#define POST16_BL_COUNTER_DECR    0xB0B5  /* Counter decrement (write-new + delete-old) */
+#define POST16_BL_COUNTER_DECR    0xB0B5  /* Counter decrement (write-new + Flush() + Close(success) + delete-old) */
 
 /* --- Helper: memory ops ---
  * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
@@ -3423,9 +3423,10 @@ static void load_staged_payloads(void)
  * the boot_info v19 selection ABI. The chosen entry's kind is held in
  * g_policy_selected_kind so the post-EBS boot-decision populate block
  * can apply the path-changing kind override AFTER the media-role
- * switch. Counter-directory scan + crash-tolerant rename + the
- * kernel-side Phase-0 v19 ABI validator are owned by the next section
- * and are NOT part of this invocation.
+ * switch. The counter directory scan + crash-tolerant decrement
+ * (write-new + Flush() + Close(success) + delete-old) ship in this
+ * same invocation; the kernel-side Phase-0 v19 ABI validator lives
+ * in src/kernel/main/boot_decision.c.
  * ============================================================================ */
 
 /* Read SecureBoot + SetupMode + AuditMode pre-EBS so the policy filter's
@@ -3807,9 +3808,17 @@ static void policy_scan_counters(boot_counter_t *out, unsigned int cap,
         int ins = boot_policy_counter_dedup_insert(out, out_count, cap, &parsed);
         if (ins < 0) {
             *out_overflow = 1;
-            /* Keep iterating to count remaining for diagnostics, and
-             * to still allow merge into an already-existing slot for
-             * subsequent duplicates. */
+            /* Stop scanning on first cap-overflow. The ladder fail-
+             * closes (FALLBACK_NO_VIABLE) regardless of further
+             * counter content once counters_overflow is set, so any
+             * additional Read+parse work is wasted. Stopping here
+             * also caps the worst-case pre-EBS time on a hostile or
+             * stale ESP that contains thousands of parseable counter
+             * filenames -- without this break, each spurious file
+             * would force a firmware Read + UCS-2 conversion +
+             * parse + dedup-scan with no policy benefit. */
+            serial_early_print("[BOOT] policy: counter dir cap exceeded -- stopping scan (fail-closed)\n");
+            break;
         }
     }
     /* seen > cap is no longer the trigger -- duplicates of existing
@@ -3830,7 +3839,10 @@ static void policy_scan_counters(boot_counter_t *out, unsigned int cap,
  * 13.5 the EFI_FILE_PROTOCOL.SetInfo rename is NOT power-fail-atomic on
  * FAT32: LFN entries can span multiple directory entries and a reset
  * mid-rename can leave torn names. The protocol is:
- *   1. Open(new_filename, CREATE) -> Close (flush directory).
+ *   1. Open(new_filename, CREATE) -> Flush -> Close. Both Flush and
+ *      Close must return EFI_SUCCESS for the new file to be considered
+ *      durably committed; if EITHER fails we skip step 2 and preserve
+ *      the old file (next-boot scan dedupes).
  *   2. Open(old_filename) + Delete().
  * A reset between (1) and (2) leaves both files; the next-boot scan
  * resolves duplicates with worst-case semantics (min tries_left, max
@@ -3915,7 +3927,22 @@ static void policy_counter_decrement(const char *id,
         new_name_w[j] = 0;
     }
 
-    /* Step 1: Open(new, CREATE|WRITE) then Close (flush directory). */
+    /* Step 1: Open(new, CREATE|WRITE), Flush durability, Close.
+     * The replacement MUST be durably committed before we touch the
+     * old file. UEFI Close() is documented to flush (UEFI 2.10 spec
+     * section 13.5) but firmware can still return failure on either
+     * Flush or Close; if we ignore those statuses and proceed to
+     * delete-old, a flush failure plus a reset can leave NEITHER the
+     * old nor the new counter -- the next-boot scan would see the
+     * entry as untracked, bootstrap to +2-1, and defeat the demotion
+     * logic this section exists to provide.
+     *
+     * Safer ordering: Flush + Close on the new file; if EITHER fails
+     * we log and SKIP the delete-old. Worst case we then have BOTH
+     * files (the old is durable from a prior boot; the new may or
+     * may not be durable). The next-boot scan resolves duplicates
+     * conservatively (worst-case demotion); a torn replacement still
+     * yields a coherent fail-closed state. */
     EFI_FILE_PROTOCOL *newf = (EFI_FILE_PROTOCOL *)0;
     s = dir->Open(dir, &newf, new_name_w,
                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE,
@@ -3928,7 +3955,18 @@ static void policy_counter_decrement(const char *id,
         root->Close(root);
         return;
     }
-    newf->Close(newf);  /* flush directory entry */
+    /* Flush explicitly. If Flush fails the new file is not durable,
+     * so we MUST keep the old file intact. */
+    EFI_STATUS flush_st = EFI_SUCCESS;
+    if (newf->Flush) flush_st = newf->Flush(newf);
+    EFI_STATUS close_st = newf->Close(newf);
+    int new_durable = (!EFI_ERROR(flush_st) && !EFI_ERROR(close_st));
+    if (!new_durable) {
+        serial_early_print("[BOOT] policy: counter new-file flush/close failed -- skipping delete-old (preserves old, scan resolves dup conservatively)\n");
+        dir->Close(dir);
+        root->Close(root);
+        return;
+    }
 
     /* Step 2: Open(old) + Delete(), iff there was an old. The old
      * filename is reconstructed from current state. Skip on first-boot

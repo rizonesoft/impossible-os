@@ -67,10 +67,10 @@ Filter misses go into `boot_policy_decision_t.rejected[]` as `(id, reason)` pair
 | `<L>` | single decimal digit 0..9 | `tries_left`. 0 means demoted (still visible, no auto-select). |
 | `<D>` | one or two decimal digits 0..99 | `tries_done`. |
 
-Updates use a CRASH-TOLERANT protocol: **write-new + flush + delete-old**. UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is NOT power-fail-atomic on FAT32 -- LFN entries can span multiple directory entries and a reset mid-rename can leave torn names, duplicates, or orphaned old names. The protocol:
+Updates use a CRASH-TOLERANT protocol: **write-new + Flush() + Close(success) + delete-old**. The new file is treated as durable ONLY when BOTH Flush() and Close() return EFI_SUCCESS; delete-old is SKIPPED on either failure. UEFI `EFI_FILE_PROTOCOL.SetInfo` rename is NOT power-fail-atomic on FAT32 -- LFN entries can span multiple directory entries and a reset mid-rename can leave torn names, duplicates, or orphaned old names. The protocol:
 
-1. `Open(new_filename, CREATE | WRITE)` -> `Close()` (flushes the directory entry to disk).
-2. `Open(old_filename, READ | WRITE)` -> `Delete()` (removes the stale entry).
+1. `Open(new_filename, CREATE | WRITE)` -> `Flush()` -> `Close()`. The replacement is treated as durably committed ONLY when BOTH `Flush()` and `Close()` return `EFI_SUCCESS`. UEFI 2.10 spec section 13.5 documents `Close()` as flushing on its own, but firmware can still fail either call; if EITHER fails, step 2 is SKIPPED and the old file is preserved (next-boot scan resolves duplicates conservatively).
+2. `Open(old_filename, READ | WRITE)` -> `Delete()` (removes the stale entry; ONLY if step 1 confirmed durable).
 
 A reset between (1) and (2) leaves both files. The next-boot scan resolves duplicates **conservatively**: when the same `<entry-id>` appears twice (torn rename), retain `min(tries_left)` AND `max(tries_done)` -- worst-case demotion. A torn rename can never silently un-demote an entry or hide an apparent exhaustion record.
 
@@ -84,7 +84,7 @@ Counters are explicitly NOT in:
 - NVRAM -- entry-store doctrine is "NVRAM is exceptional-only" (no per-boot writes).
 - A shared sidecar JSON file -- a sidecar would have the same blast-radius problem at smaller scale.
 
-The bootloader-side glue lives in `bootx64.c` (`policy_scan_counters()` for the directory walk + conservative duplicate dedupe; `policy_counter_decrement()` for the write-new + flush + delete-old protocol). The pure-C parse + format helpers (`boot_counter_parse_filename`, `boot_counter_format_filename`) live in [`boot_policy.c`](../../src/boot/uefi/boot_policy.c) and are unit-tested round-trip.
+The bootloader-side glue lives in `bootx64.c` (`policy_scan_counters()` for the directory walk + conservative duplicate dedupe; `policy_counter_decrement()` for the write-new + Flush() + Close(success) + delete-old protocol). The pure-C parse + format helpers (`boot_counter_parse_filename`, `boot_counter_format_filename`) live in [`boot_policy.c`](../../src/boot/uefi/boot_policy.c) and are unit-tested round-trip.
 
 ## 5. Worked examples
 
@@ -200,6 +200,6 @@ The kernel-side consumers are:
 | Per-kind payload validation | per-kind validators (`§10`) |
 | `bootentries.json` ESP read in bootx64.c | ESP store read + policy wiring feature (shipped) |
 | Boot#### `OptionalData` parse for `BootCurrent`-to-id mapping | ESP store read + policy wiring feature (shipped) |
-| Counter directory scan + crash-tolerant rename | crash-tolerant counter protocol feature |
+| Counter directory scan + crash-tolerant decrement (write-new + Flush + Close + delete-old) | crash-tolerant counter protocol feature |
 | SMBIOS table 1 UUID extraction for `local_machine_id` | OS-visible loader UEFI variables feature |
 | `mark-good` / health-gated promotion | health gate (`§11`) |
