@@ -278,6 +278,36 @@ typedef struct EFI_SIMPLE_TEXT_INPUT_PROTOCOL {
     VOID *WaitForKey;
 } EFI_SIMPLE_TEXT_INPUT_PROTOCOL;
 
+/* --- Simple Text Input Ex Protocol (UEFI 2.10 spec 12.2) ---
+ *
+ * Required to portably read scan codes >= 0x15 (F11/F12 and beyond).
+ * The plain Simple Text Input protocol covers Appendix B Table B-1
+ * scan codes 0x00..0x14 only; F11 + F12 are defined in the Ex table
+ * exclusively. We use this for the boot-menu F11 force-show probe;
+ * F8/F10 + Esc/Enter stay on the plain ConIn path because they fall
+ * inside the Simple Text Input scan-code range.
+ */
+typedef struct {
+    UINT32  KeyShiftState;
+    UINT8   KeyToggleState;
+} EFI_KEY_STATE;
+typedef struct {
+    EFI_INPUT_KEY  Key;
+    EFI_KEY_STATE  KeyState;
+} EFI_KEY_DATA;
+
+typedef struct EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL {
+    EFI_STATUS (EFIAPI *Reset)(struct EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This, BOOLEAN ExtendedVerification);
+    EFI_STATUS (EFIAPI *ReadKeyStrokeEx)(struct EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *This, EFI_KEY_DATA *KeyData);
+    VOID *WaitForKeyEx;
+    VOID *SetState;
+    VOID *RegisterKeyNotify;
+    VOID *UnregisterKeyNotify;
+} EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL;
+
+#define EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL_GUID \
+    { 0xdd9e7534, 0x7762, 0x4698, { 0x8c, 0x14, 0xf5, 0x85, 0x17, 0xa6, 0x25, 0xaa } }
+
 /* --- Configuration Table --- */
 typedef struct {
     EFI_GUID    VendorGuid;

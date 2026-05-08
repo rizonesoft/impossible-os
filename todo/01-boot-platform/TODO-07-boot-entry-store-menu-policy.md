@@ -274,6 +274,9 @@ Layer indicators + hotkeys + single-entry skip on top of the menu renderer. F10 
 > - Canonical doc: [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (legend + hotkey table + F10 narrow path).
 > - Scope boundary: §7 owns indicators + hotkeys + hide_when_alone; F8 kernel wire-up + SAFE kind admission belong to §8; A/B slot indicator + last-failure label belong to §9; `[MB]` measured-boot indicator belongs to the measured-boot TODO domain.
 
+> **Verified:** 2026-05-09 | commit `d7d1cff6` (impl) + post-review fixup | 9/9 items | build OK | smoke PASS (KVM 2.59s)
+> **Quality reviewed:** 2026-05-09 | Codex 9x (design + adversarial + 5 re-adversarial + consistency + perf) | 2H+9M fixed | scope: boot-code-quality
+
 ---
 
 ## 8. Safe Mode, Test Mode, and Diagnostics Entries

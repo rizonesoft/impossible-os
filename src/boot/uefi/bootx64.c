@@ -4296,6 +4296,22 @@ static void boot_menu_render(const boot_entries_parse_result_t *parse,
 #define BOOT_MENU_HOTKEY_SAFE_MODE  1  /* F8 pressed */
 #define BOOT_MENU_HOTKEY_FW_SETUP   2  /* F10 -> firmware setup (handled in invoke) */
 
+/* Per-menu-session F10 lockout: once retries to the firmware-setup
+ * transition are exhausted, further F10 keypresses are logged and
+ * ignored so the menu stays interactive instead of falling through
+ * to a normal boot the operator did not request. Reset by every
+ * boot_policy_invoke() entry. */
+static int g_menu_f10_disabled;
+
+/* Per-menu-session "no auto-boot" gate: when set, boot_menu_run()
+ * disables the countdown expiry path so that the menu stays up
+ * indefinitely and only returns when the operator presses Enter,
+ * Esc, or another action key. Used after F10 retry exhaustion --
+ * a normal boot after a failed firmware-setup request would be a
+ * stranded boot the operator did not authorize. Reset on every
+ * boot_policy_invoke() entry. */
+static int g_menu_no_autoboot;
+
 static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                                   const unsigned int *cand_idx,
                                   unsigned int cand_count,
@@ -4328,7 +4344,10 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
     unsigned int selected = (default_idx < cand_count) ? default_idx : 0;
     unsigned int elapsed_ms = 0;
     unsigned int countdown_ms = timeout_s * 1000u;
-    int counting_down = 1;
+    int counting_down = g_menu_no_autoboot ? 0 : 1;
+    if (g_menu_no_autoboot)
+        serial_early_print("[BOOT] menu: countdown disabled "
+                           "(awaiting explicit Enter/Esc)\n");
 
     /* Flush stale keystrokes from firmware menus / boot-time keypress
      * buffer. Mirrors the boot_fatal_dwell pattern. */
@@ -4411,9 +4430,22 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
                      * UEFI variables (OsIndications) and gRT->
                      * ResetSystem. Signal via out_hotkey so the
                      * caller can do the gated setvar+reset. */
-                    serial_early_print("[BOOT] menu: F10 -- firmware setup requested\n");
-                    if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_FW_SETUP;
-                    return selected;
+                    if (g_menu_f10_disabled) {
+                        /* Prior F10 attempt exhausted retries
+                         * (firmware reports BOOT_TO_FW_UI
+                         * unsupported or SetVariable persistently
+                         * failed). Stay in menu; require explicit
+                         * Enter/Esc instead of triggering more
+                         * SetVariable churn. */
+                        serial_early_print("[BOOT] menu: F10 ignored "
+                                           "(retries exhausted this session)\n");
+                        is_action = 1;
+                        dirty = 1;
+                    } else {
+                        serial_early_print("[BOOT] menu: F10 -- firmware setup requested\n");
+                        if (out_hotkey) *out_hotkey = BOOT_MENU_HOTKEY_FW_SETUP;
+                        return selected;
+                    }
                 }
                 /* F11 is handled BEFORE this loop is entered (pre-
                  * menu probe in boot_policy_invoke); inside the loop
@@ -4458,23 +4490,48 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
  * FALLBACK_*). Returns 1 if F11 was buffered, 0 otherwise. Drains
  * any other pending keys (they would just race the menu loop's
  * own ReadKeyStroke). */
+/* Drain cap per probe slot. A held key generating repeats at typical
+ * USB/PS2 rates produces tens of events per slot; 32 covers that
+ * comfortably while bounding the worst case if firmware misbehaves
+ * (returns EFI_SUCCESS forever). */
+#define BOOT_F11_PROBE_DRAIN_CAP  32u
+
 static int boot_menu_probe_f11(void)
 {
-    if (!gST || !gST->ConIn || !gST->ConIn->ReadKeyStroke
-        || !gBS || !gBS->Stall)
-        return 0;
+    if (!gST || !gBS || !gBS->Stall) return 0;
+
+    /* Prefer Simple Text Input Ex per UEFI 2.10 spec 12.2 + Appendix
+     * B Table B-1: F11 (scan 0x15) is in the Ex table only, not the
+     * plain Simple Text Input table. Plain ConIn->ReadKeyStroke is
+     * only required to deliver scan codes 0x00..0x14, so F11 may not
+     * be reported there on conforming firmware. Try Ex first via
+     * gBS->LocateProtocol; fall back to ConIn for permissive firmware
+     * that aggregates Ex scan codes into the plain protocol (most
+     * desktop UEFI does, but the spec does not require it). */
+    EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *cin_ex = (EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *)0;
+    EFI_GUID ex_guid = EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL_GUID;
+    if (gBS && gBS->LocateProtocol)
+        (void)gBS->LocateProtocol(&ex_guid, (VOID *)0, (VOID **)&cin_ex);
+
     int seen = 0;
-    /* Two 50ms slots so a key delivered after firmware-to-loader
-     * handoff but before policy decide still lands. */
     for (unsigned int slot = 0; slot < 2u; slot++) {
-        EFI_INPUT_KEY key;
-        EFI_STATUS rs;
-        while (!EFI_ERROR((rs = gST->ConIn->ReadKeyStroke(gST->ConIn, &key)))) {
-            if (key.ScanCode == EFI_SCAN_F11) seen = 1;
-            /* Other keys are drained -- we cannot replay them into
-             * the menu loop's ReadKeyStroke and a stale buffered
-             * keystroke would trip the menu_run is_action gate
-             * unhelpfully. */
+        unsigned int drained = 0;
+        if (cin_ex && cin_ex->ReadKeyStrokeEx) {
+            EFI_KEY_DATA kd;
+            EFI_STATUS rs;
+            while (drained < BOOT_F11_PROBE_DRAIN_CAP
+                   && !EFI_ERROR((rs = cin_ex->ReadKeyStrokeEx(cin_ex, &kd)))) {
+                if (kd.Key.ScanCode == EFI_SCAN_F11) seen = 1;
+                drained++;
+            }
+        } else if (gST->ConIn && gST->ConIn->ReadKeyStroke) {
+            EFI_INPUT_KEY key;
+            EFI_STATUS rs;
+            while (drained < BOOT_F11_PROBE_DRAIN_CAP
+                   && !EFI_ERROR((rs = gST->ConIn->ReadKeyStroke(gST->ConIn, &key)))) {
+                if (key.ScanCode == EFI_SCAN_F11) seen = 1;
+                drained++;
+            }
         }
         gBS->Stall(50000);
     }
@@ -4869,11 +4926,16 @@ static void boot_policy_invoke(void)
                 timeout_s = BOOT_MENU_DEFAULT_TIMEOUT_S;
             /* F10 unsupported / SetVariable failure must return the
              * operator to the menu, not silently fall through to
-             * boot. Re-enter the menu loop on every F10 failure;
-             * cap iterations to keep a stuck firmware from spinning
-             * forever. */
+             * boot. Re-enter the menu loop on every F10 failure.
+             * After the cap, set g_menu_f10_disabled so subsequent
+             * F10 keystrokes are ignored (the operator must press
+             * Enter/Esc to boot); this avoids both an infinite
+             * SetVariable spin AND a stranded normal boot the
+             * operator did not request. */
             const unsigned int F10_MAX_RETRIES = 8u;
             unsigned int f10_retries = 0;
+            g_menu_f10_disabled = 0;
+            g_menu_no_autoboot = 0;
             for (;;) {
                 hotkey = BOOT_MENU_HOTKEY_NONE;
                 chosen = boot_menu_run(parse, cand_idx, cand_count,
@@ -4889,13 +4951,26 @@ static void boot_policy_invoke(void)
                  * so the operator gets another shot at picking. */
                 (void)boot_menu_enter_fw_setup();
                 if (++f10_retries >= F10_MAX_RETRIES) {
-                    serial_early_print("[BOOT] menu: F10 retries exhausted -- "
-                                       "booting highlighted entry\n");
-                    break;
+                    serial_early_print("[BOOT] menu: F10 retries "
+                                       "exhausted -- F10 disabled "
+                                       "this session, countdown "
+                                       "disabled, press Enter/Esc "
+                                       "to boot\n");
+                    g_menu_f10_disabled = 1;
+                    g_menu_no_autoboot = 1;
+                    /* Re-enter menu one more time with F10 disabled
+                     * AND countdown disabled so the menu stays up
+                     * indefinitely until the operator picks
+                     * Enter/Esc. A failed firmware-setup request
+                     * must not convert into a normal boot via
+                     * countdown expiry. */
+                    continue;
                 }
                 serial_early_print("[BOOT] menu: F10 unsupported -- "
                                    "re-entering menu\n");
             }
+            g_menu_f10_disabled = 0;
+            g_menu_no_autoboot = 0;
         }
         /* F8 -> safe-mode signal. The kernel-side observer +
          * boot_info wire-up are owned by the safe-mode TODO; this
