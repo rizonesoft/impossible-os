@@ -259,7 +259,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  18
+#define BOOT_INFO_VERSION  19
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -686,6 +686,20 @@ struct boot_info {
     char    sbat_level[64];
     UINT32  dbx_size;
     UINT32  degraded_trust_flags;
+
+    /* v19: Boot policy selection (boot-entry policy feature). The
+     * bootloader walks the precedence ladder and records the chosen
+     * entry id + reason here. See enum boot_selection_reason +
+     * boot_reject_reason in include/boot/boot_policy.h. */
+    char     selected_entry_id[64];
+    UINT32   selection_reason;
+    UINT32   _selection_pad;
+    struct {
+        char     id[64];
+        UINT32   reason;
+    } rejected_entries[64];
+    UINT32   rejected_entry_count;
+    UINT32   rejected_entry_overflow;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

@@ -53,7 +53,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | --- | :---: | ------------------------------------------------------ | --------------------------------------- | :----: |
 | 💎  |   1   | Boot entry file format                                 | --                                      |  [x]   |
 | 💎  |   2   | Boot entry parser and validator                        | §1                                      |  [x]   |
-| 💎  |   3   | Boot policy merge order (firmware vs OS layer split)   | §2, T01 §1, T05 §6                      |  [ ]   |
+| 💎  |   3   | Boot policy merge order (firmware vs OS layer split)   | §2, T01 §1, T05 §6                      |  [/]   |
 | 💎  |   4   | Text and graphical boot menu                           | §2, T15 §3, T15 §4, T11 §1              |  [ ]   |
 | 💎  |   5   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [ ]   |
 | 💎  |   6   | A/B and recovery entry integration                     | §3, T21 §3, T22 §1                      |  [ ]   |
@@ -134,15 +134,31 @@ Bootloader-side parser. Must be heap-free (UEFI pre-EBS), bounded, and reject ho
 
 Two distinct layers, deterministically composed. **Firmware layer**: UEFI `BootCurrent` / `BootNext` / `BootOrder` are read-only inputs -- the firmware has already deleted `BootNext` before our bootloader runs (UEFI 2.10 §3.1.5), so we observe the *result* via `BootCurrent`, never override it. **OS layer**: once an Impossible OS `Boot####` has been selected by firmware, this section picks the internal entry id from the store. Win11's BCD merge and Linux's per-loader rules conflate these layers, which makes precedence opaque -- documenting the split is where Impossible OS earns ⭐.
 
-- [ ] Capture firmware-layer provenance into `boot_info.firmware_boot_provenance`: `BootCurrent`, observed-or-absent `BootNext`, `BootOrder[0..]`. Read-only, diagnostics only.
-- [ ] Map `BootCurrent` -> internal entry id via `Boot####` `OptionalData` tagged blob (`IPOS\1` + entry-id); unknown `Boot####` falls through to store default with `UNKNOWN_BOOTCURRENT` reason.
-- [ ] Define OS-layer precedence: hotkey > watchdog rollback (BlackBox sticky, §9) > A/B try-state > recovery request > store default (BootNext is a soft hint here) > fallback. Worked examples in `docs/boot/boot-policy.md`.
-- [ ] Persist `boot_info.selected_entry_id`, `boot_info.selection_reason`, and the rejected/skipped entries list with reason codes for diagnostics.
-- [ ] Loop prevention: per-entry `tries_left`/`tries_done` in the store (BLS-style atomic CoW rename, NOT NVRAM). Decrement pre-handoff; `tries_left=0` -> demoted but visible (§6).
-- [ ] Document precedence + worked examples (BootCurrent unknown, watchdog overrides A/B, A/B fail + recovery, store-invalid fallback) in `docs/boot/boot-policy.md`.
-- [ ] Commit: `"boot: define boot entry policy precedence"`
+- [x] Firmware-layer provenance: documented view over existing `boot_info.uefi_boot_*` fields per Codex design review; no duplicate aggregate added. Mapping in [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md).
+- [x] OS-layer precedence ladder `boot_policy_decide()` in `src/boot/uefi/boot_policy.c`: hotkey > watchdog > A/B > recovery > store default (BootCurrent OptionalData hint) > fallback.
+- [x] boot_info schema v18 -> v19 adds `selected_entry_id[64]` + `selection_reason` (new 9-value enum) + `rejected_entries[64]` + `rejected_entry_count` + `rejected_entry_overflow`. Mirror + manifest + doc-coverage all updated.
+- [x] Parser widened: envelope retains `sort_key` / `machine_id` / `policy_tags[4][24]` / `policy_tag_overflow` / `timeout_override`. Closes Codex design review High finding (parser was discarding ladder inputs).
+- [x] BLS-style counter filename `<entry-id>+<L>-<D>` parser + formatter ship in the policy module. Storage: zero-byte files under `\EFI\ImpossibleOS\counters\`, atomic FAT32 rename. NOT in bootentries.json. NOT NVRAM.
+- [x] Document precedence ladder + 6 worked examples in [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md).
+- [x] Commit: `"boot: define boot entry policy precedence"`
 
-**Test checkpoint:** Six precedence scenarios from `docs/boot/boot-policy.md` produce the documented selection on QEMU; serial log shows reason code per case. `boot_info.selection_reason` matches expected enum value. `firmware_boot_provenance` records `was_bootnext=1` when QEMU sets `BootNext`; OS layer does not claim to "override" it. Test on: QEMU WHPX + TCG; bare metal once §4 menu lands.
+> **Branch B follow-ups (filed under §3, owner-tracked here):**
+> - [ ] Read `\EFI\ImpossibleOS\bootentries.json` from the ESP in `bootx64.c` via the `EFI_FILE_PROTOCOL` size-probe + `AllocatePool` pattern from `boot_conf_load`; pass to `boot_entries_parse()`.
+> - [ ] Parse `Boot####.OptionalData` tagged blob (`IPOS\x01` + kebab-case entry-id) via fresh `gRT->GetVariable(Boot####, EFI_GLOBAL_VARIABLE)` in the bootloader policy path; populate `boot_policy_inputs.bootcurrent_entry_id` + `bootcurrent_known`.
+> - [ ] Scan `\EFI\ImpossibleOS\counters\` directory pre-handoff: parse each filename with `boot_counter_parse_filename`, build the `boot_counter_t` array, then `SetInfo`-rename the chosen entry's counter file to record the new (`tries_left-1`, `tries_done+1`) values atomically.
+> - [ ] Wire `boot_policy_decide()` into `bootx64.c` post-parse, pre-handoff; copy `decision.selected_entry_id` + `decision.reason` + `decision.rejected[]` into `boot_info`.
+> - [ ] When the chosen entry implies a path change (`kind=recovery` -> `BOOT_PATH_RECOVERY`, etc.), update `boot_info.boot_path` + `boot_info.boot_reason` accordingly.
+
+**Test checkpoint:** 23 ladder + counter unit tests in `src/kernel/test/test_boot_policy.c` cover the 6 worked examples plus BLS filename round-trip / two-digit-done / bad-grammar rejection / boundary caps + NULL guards / kind_skipped + hidden + empty-local-machine-id rejects / A/B slot indexing / multi-signal priority (watchdog beats recovery) / empty-store fallback / 3 regression tests (watchdog-only-peak no-fallthrough, NULL counters with stale count, path-escape per-entry demote). Build OK; lint clean. Branch B follow-ups (live ESP read, OptionalData parse, counter scan + rename) integrate with hotkey input from `§4`, watchdog from `§9`, A/B from `§6` + `TODO-21`, recovery from `§6` + `TODO-22`. Test on: kernel test runner + QEMU TCG once Branch B lands.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 23 suites added (42 total in TEST_CAT_BOOT), 0 failures
+
+> **Notes:**
+> - What shipped: `boot_policy.{h,c}` (~370 lines: 6-priority ladder + filter + BLS counter grammar), parser widened (4 retained fields), boot_info v19 with selection ABI, `test_boot_policy.c` (13 cases).
+> - How it integrates: pure-C / freestanding / no UEFI types / no allocs. Cross-include pattern same as `boot_entries_parser.c`; live bootloader wiring deferred per Branch B follow-ups.
+> - Downstream effects: feeds `§4` (menu) / `§9` (audit) / `§11` (mark-good); closes Codex design High where envelope discarded ladder inputs. Adoptions in commit message.
+> - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md).
+> - Scope boundary: §3 owns the ladder + selection ABI + counter grammar. Branch B follow-ups above own bootloader-side ESP / NVRAM I/O.
 
 ---
 
@@ -331,19 +347,19 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | ⭐  | Feature                                                | 🪟 Win11                          | 🐧 Linux                              | 🚀 Impossible OS         |
 | --- | ------------------------------------------------------ | --------------------------------- | ------------------------------------- | ------------------------ |
 | 💎  | Structured boot entries                                | ✅ BCD store + bcdedit            | ✅ systemd-boot/GRUB BLS              | ⬜ Planned -- §1, §2     |
-| 💎  | BootNext one-shot read (firmware-layer)                | ✅ Firmware BootNext + BCD        | ✅ efibootmgr -n                      | ⬜ Planned -- §3         |
+| 💎  | BootNext one-shot read (firmware-layer)                | ✅ Firmware BootNext + BCD        | ✅ efibootmgr -n                      | 🟦 Firmware fields read; OS-side ladder ships in §3 |
 | 💎  | Recovery boot entry                                    | ✅ WinRE                          | ✅ GRUB recovery                      | ⬜ Planned -- §6         |
 | 💎  | Safe mode entry                                        | ✅ msconfig safeboot flag         | ✅ rescue.target / single             | ⬜ Planned -- §5         |
 | 💎  | Previous-kernel rollback entry                         | ⚠️ BCD bootsequence (limited UX)  | ✅ GRUB previous kernel               | ⬜ Planned -- §7         |
 | 💎  | Boot menu UI (text + graphical)                        | ⚠️ Minimal "Choose an OS"         | ✅ GRUB / systemd-boot menus          | ⬜ Planned -- §4         |
 | 💎  | Offline entry editor tooling                           | ✅ bcdedit / bcdboot              | ✅ grub-mkconfig / bootctl            | ⬜ Planned -- §8         |
-| 💎  | Loop prevention via per-entry try counter              | ⚠️ Recovery loop after 2 fails    | ✅ systemd-boot tries=/done=          | ⬜ Planned -- §3, §6     |
+| 💎  | Loop prevention via per-entry try counter              | ⚠️ Recovery loop after 2 fails    | ✅ systemd-boot tries=/done=          | 🟦 BLS counter grammar + ladder gate ship; bootloader rename pending |
 | 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | ⬜ Planned -- §11        |
 | 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | ⬜ Planned -- §10        |
 | 💎  | OS-visible loader UEFI variables                       | ❌ None standardized              | ✅ systemd LoaderXxx interface        | ⬜ Planned -- §12        |
 | 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | ⬜ Planned -- §13        |
-| ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ⬜ Planned -- §3 🚀      |
-| ⭐  | Demote-not-drop bad entries with last_failure_reason   | ❌ Hidden recovery loop           | ⚠️ Bad entries silently sorted last   | ⬜ Planned -- §3, §6 🚀  |
+| ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ✅ §3 ladder + 6-example doc 🚀 |
+| ⭐  | Demote-not-drop bad entries with last_failure_reason   | ❌ Hidden recovery loop           | ⚠️ Bad entries silently sorted last   | 🟦 §3 records reject reasons; UI label in §6 🚀 |
 | ⭐  | Per-decision audit trail (BlackBox primary)            | ❌ Event log only                 | ❌ journalctl scattered               | ⬜ Planned -- §9 🚀      |
 | ⭐  | Schema-versioned + CRC-checksummed entry store         | ❌ Binary BCD, no checksum        | ❌ INI / cfg, no checksum             | ⬜ Planned -- §1 🚀      |
 | ⭐  | Per-entry mutation audit (add/remove/reorder logged)   | ❌ Not logged                     | ❌ Not logged                         | ⬜ Planned -- §9 🚀      |

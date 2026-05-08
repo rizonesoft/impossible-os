@@ -594,6 +594,7 @@ static int parse_entry_object(lexer_t *L, u32 idx,
     out->payload_present = 0;
     out->kind_skipped = 0;
     out->kind = BOOT_ENTRY_KIND_SPLIT;   /* placeholder; overwritten below */
+    out->timeout_override = BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE;
 
     /* Need a reusable buffer to compare entry IDs across iterations */
     (void)idx;   /* unused -- caller tracks index */
@@ -762,6 +763,13 @@ static int parse_entry_object(lexer_t *L, u32 idx,
                 set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "sort_key must be a string");
                 return 0;
             }
+            u32 vlen = L->content_end - L->content_start;
+            if (vlen > BOOT_ENTRIES_MAX_SORT_KEY_LEN) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                           "sort_key length out of range");
+                return 0;
+            }
+            copy_clamped(out->sort_key, sizeof(out->sort_key), L->raw + L->content_start, vlen);
             saw_sort_key = 1;
         }
         else if (key_len == 10u && bytes_eq(key_ptr, (const u8 *)"machine_id", 10u)) {
@@ -775,6 +783,7 @@ static int parse_entry_object(lexer_t *L, u32 idx,
                            "machine_id must be RFC 4122 UUID textual form");
                 return 0;
             }
+            copy_clamped(out->machine_id, sizeof(out->machine_id), L->raw + L->content_start, vlen);
             saw_machine_id = 1;
         }
         else if (key_len == 11u && bytes_eq(key_ptr, (const u8 *)"policy_tags", 11u)) {
@@ -804,6 +813,20 @@ static int parse_entry_object(lexer_t *L, u32 idx,
                         set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
                                    "policy_tags element must be a string");
                         return 0;
+                    }
+                    u32 tlen = L->content_end - L->content_start;
+                    if (tlen > BOOT_ENTRIES_MAX_POLICY_TAG_LEN) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "policy_tags element exceeds 23-char cap");
+                        return 0;
+                    }
+                    if (out->policy_tag_count < BOOT_ENTRIES_MAX_POLICY_TAGS) {
+                        copy_clamped(out->policy_tags[out->policy_tag_count],
+                                     BOOT_ENTRIES_MAX_POLICY_TAG_LEN + 1u,
+                                     L->raw + L->content_start, tlen);
+                        out->policy_tag_count++;
+                    } else {
+                        out->policy_tag_overflow = 1;
                     }
                     expect_value = 0;
                     saw_any = 1;
@@ -838,6 +861,7 @@ static int parse_entry_object(lexer_t *L, u32 idx,
                            "timeout_override must be int in 0..600");
                 return 0;
             }
+            out->timeout_override = (u32)L->number_value;
         }
         else {
             /* Unknown envelope key -- skip the value (forward-compat) */
@@ -869,13 +893,12 @@ static int parse_entry_object(lexer_t *L, u32 idx,
         return 0;
     }
 
-    /* Path-escape (chainload) policy: trusted_chainload required when secure_boot_active. */
-    if (out->kind == BOOT_ENTRY_KIND_CHAINLOAD && secure_boot_active &&
-        !(out->flags & BOOT_ENTRY_FLAG_TRUSTED_CHAINLOAD)) {
-        set_reject(result, BOOT_ENTRIES_REJECT_PATH_ESCAPE,
-                   "kind=chainload without trusted_chainload under Secure Boot");
-        return 0;
-    }
+    /* Path-escape policy moved to the boot-policy filter (per-entry demote
+     * instead of whole-store reject). The parser passes untrusted chainload
+     * entries through; boot_policy_decide() records BOOT_REJECT_REASON_PATH_ESCAPE
+     * per entry under Secure Boot so other viable entries still get a chance.
+     * Suppresses an unused-parameter warning when the conditional is gone: */
+    (void)secure_boot_active;
 
     /* Per-skipped-entry logging is deferred to a summary line in
      * boot_entries_parse() so a hostile 64-skipped store cannot dominate

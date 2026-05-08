@@ -24,7 +24,7 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o
+OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o
 
 .PHONY: all clean
 
@@ -65,6 +65,15 @@ boot_history.o: boot_history.c efi.h boot_info_mirror.h
 boot_entries_parser.o: boot_entries_parser.c \
                        ../../../include/boot/boot_entries_parser.h \
                        ../../../include/boot/boot_entries.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Boot policy ladder + counter filename parser. Pure C, no UEFI types --
+# linkable from both the bootloader and the kernel unit-test build. Header
+# lives at include/boot/boot_policy.h; spec at docs/boot/boot-policy.md.
+boot_policy.o: boot_policy.c \
+               ../../../include/boot/boot_policy.h \
+               ../../../include/boot/boot_entries_parser.h \
+               ../../../include/boot/boot_entries.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Assemble the PE relocation stub

@@ -151,7 +151,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  18
+#define BOOT_INFO_VERSION  19
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -1579,6 +1579,36 @@ struct boot_info {
     char     sbat_level[64];              /* SbatLevel string truncated to 63 bytes + NUL */
     uint32_t dbx_size;                    /* bytes in dbx variable; 0 = absent/unreadable */
     uint32_t degraded_trust_flags;        /* BOOT_DEGRADED_TRUST_* bitmask */
+
+    /* v19: Boot policy selection (boot-entry policy feature). The bootloader
+     * walks the precedence ladder (hotkey > watchdog > A/B > recovery >
+     * store-default > fallback) and records the chosen entry id + reason
+     * here. Parallel to boot_path/boot_reason: those are the path-flow
+     * axis, this is the policy-ladder axis. When the chosen entry implies
+     * a path change (recovery, diagnostics), the loader updates
+     * boot_path/boot_reason as well.
+     *
+     * rejected_entries[] records per-entry policy-layer rejects: ladder
+     * filter misses (kind_skipped, not active, hidden, machine_id mismatch,
+     * tries_exhausted, path_escape) plus the BootCurrent unmapped diagnostic.
+     * Parser-level rejects (CRC mismatch, schema_version, etc.) fail the
+     * whole store; this array is for per-entry rejects after the store
+     * passed parsing. See enum boot_selection_reason / boot_reject_reason
+     * in include/boot/boot_policy.h.
+     *
+     * Sentinels: selected_entry_id="" iff store was rejected outright AND
+     * fallback synth used; selection_reason==BOOT_SELECTION_UNSET (0) is
+     * a producer-must-overwrite invariant; rejected_entry_count==0 is
+     * legal (no entries filtered out). */
+    char     selected_entry_id[64];       /* internal id of the entry chosen by the ladder */
+    uint32_t selection_reason;            /* enum boot_selection_reason */
+    uint32_t _selection_pad;              /* alignment to 8-byte boundary */
+    struct {
+        char     id[64];                  /* envelope.id of the rejected entry */
+        uint32_t reason;                  /* enum boot_reject_reason */
+    } rejected_entries[64];               /* BOOT_ENTRIES_MAX_ENTRIES; packed prefix */
+    uint32_t rejected_entry_count;        /* 0..64; packed-prefix length */
+    uint32_t rejected_entry_overflow;     /* 1 if more than 64 rejects observed */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

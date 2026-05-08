@@ -235,9 +235,13 @@ static void test_parser_malformed_payload_rejected(void)
     TEST_ASSERT(rc != BOOT_ENTRIES_OK, "malformed payload value rejected");
 }
 
-static void test_parser_chainload_secure_boot_gate(void)
+static void test_parser_chainload_passes_under_secure_boot(void)
 {
-    /* secure_boot_active=1, kind=chainload, but no trusted_chainload flag -> reject */
+    /* The parser no longer hard-rejects an untrusted chainload under
+     * Secure Boot -- per-entry demote is now owned by the boot-policy
+     * filter so other viable entries are not killed by one bad entry.
+     * The store parses cleanly; the policy layer is exercised in
+     * test_boot_policy.c::test_ladder_path_escape_under_secure_boot. */
     static const char JSON[] =
         "{"
         "\"schema_version\":1,"
@@ -251,8 +255,11 @@ static void test_parser_chainload_secure_boot_gate(void)
     unsigned int n = load_fixture(JSON);
     boot_entries_parse_result_t r;
     int rc = boot_entries_parse(s_fixture_buf, n, 1, NULL_PTR, &r);
-    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_PATH_ESCAPE,
-                   "chainload without trusted_chainload + Secure Boot rejected");
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK,
+                   "chainload entry retained under Secure Boot for policy filter");
+    TEST_ASSERT_EQ(r.entry_count, 1u, "one entry retained");
+    TEST_ASSERT_EQ(r.entries[0].kind, BOOT_ENTRY_KIND_CHAINLOAD,
+                   "kind=chainload preserved");
 }
 
 static void test_parser_depth_bomb(void)
@@ -390,8 +397,8 @@ void test_register_boot_entry_parser(void)
                             test_parser_id_not_kebab, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: malformed payload value rejected",
                             test_parser_malformed_payload_rejected, TEST_CAT_BOOT);
-    test_suite_register_cat("boot-entries: chainload Secure Boot gate",
-                            test_parser_chainload_secure_boot_gate, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: chainload retained under SB (policy demote)",
+                            test_parser_chainload_passes_under_secure_boot, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: depth-bomb rejected without crash",
                             test_parser_depth_bomb, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: trailing garbage rejected",

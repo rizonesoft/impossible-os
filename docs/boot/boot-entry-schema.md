@@ -153,8 +153,7 @@ inputs.
 | `efi_path`     | string  | yes      | path on the named device (target firmware syntax)      |
 | `device_guid`  | string  | yes      | partition GUID hosting `efi_path`                      |
 
-REQUIRED: entry's `flags` MUST include `trusted_chainload` AND firmware Secure Boot must be on.
-Otherwise the parser rejects the entry with a logged reason.
+REQUIRED: entry's `flags` MUST include `trusted_chainload` when firmware Secure Boot is on. The parser does NOT enforce this -- the boot-policy filter does (see [`boot-policy.md`](boot-policy.md) section 3 and `BOOT_REJECT_REASON_PATH_ESCAPE`). Untrusted chainload entries under Secure Boot are demoted per-entry (other viable entries still get to boot) rather than failing the whole store.
 
 ### 4.4 `kind: network`
 

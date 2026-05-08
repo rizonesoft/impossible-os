@@ -77,6 +77,11 @@ _Static_assert(sizeof(unsigned int) == 4, "boot_entries.h assumes 32-bit unsigne
 #define BOOT_ENTRIES_MAX_TITLE_LEN      63u
 #define BOOT_ENTRIES_MAX_ID_LEN         47u
 #define BOOT_ENTRIES_MAX_PATH_LEN       255u
+#define BOOT_ENTRIES_MAX_SORT_KEY_LEN   63u
+#define BOOT_ENTRIES_UUID_TEXT_LEN      36u
+#define BOOT_ENTRIES_MAX_POLICY_TAGS    4u
+#define BOOT_ENTRIES_MAX_POLICY_TAG_LEN 23u
+#define BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE 0xFFFFFFFFu
 
 /* CRC-32 polynomial (IEEE 802.3 / zlib / PNG / Ethernet). Reuses the kernel-side
  * gpt_crc32() at src/kernel/fs/gpt.c when consumed kernel-side; the bootloader's

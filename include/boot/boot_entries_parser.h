@@ -76,8 +76,14 @@ typedef enum {
 typedef struct {
     char id[64];                 /* up to BOOT_ENTRIES_MAX_ID_LEN (47) + NUL + slack */
     char title[80];              /* up to BOOT_ENTRIES_MAX_TITLE_LEN (63) + NUL + slack */
+    char sort_key[64];           /* BLS-style sort string; up to BOOT_ENTRIES_MAX_SORT_KEY_LEN + NUL */
+    char machine_id[40];         /* RFC 4122 textual UUID (36 chars) + NUL + slack */
+    char policy_tags[BOOT_ENTRIES_MAX_POLICY_TAGS][BOOT_ENTRIES_MAX_POLICY_TAG_LEN + 1u];
+    unsigned int policy_tag_count;    /* 0..BOOT_ENTRIES_MAX_POLICY_TAGS retained */
+    unsigned int policy_tag_overflow; /* 1 if JSON had more tags than the cap */
     unsigned int kind;           /* boot_entry_kind_t numeric value */
     unsigned int flags;          /* OR of BOOT_ENTRY_FLAG_* */
+    unsigned int timeout_override;    /* 0..600 from JSON, BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE if absent */
     unsigned int payload_offset; /* byte offset of the payload object's `{` in raw input */
     unsigned int payload_length; /* byte length of payload object including braces */
     int payload_present;         /* 1 if payload_offset/length valid; 0 if entry has no payload object */
@@ -112,9 +118,21 @@ typedef void (*boot_entries_log_fn)(const char *);
 
 /* Parse + validate a boot entry store. Caller-provided `out` is fully populated;
  * on rejection, `out->entries` is left in an indeterminate state (entry_count is
- * meaningful on REJECT_OK only). `secure_boot_active` flips path-escape
- * enforcement: when 1, paths outside `\EFI\ImpossibleOS\` / `\EFI\BOOT\` are
- * rejected unless the entry has the trusted_chainload flag.
+ * meaningful on REJECT_OK only).
+ *
+ * `secure_boot_active` is a forward-looking parameter retained for future
+ * grammar gates (e.g. additional payload-field shape requirements that depend
+ * on Secure Boot state); it is currently a no-op at the parser layer.
+ *
+ * IMPORTANT: Path-escape (chainload + Secure Boot + missing trusted_chainload
+ * flag) is NOT enforced by the parser. It is the boot-policy filter's
+ * responsibility (see boot_policy_decide() with BOOT_REJECT_REASON_PATH_ESCAPE
+ * in include/boot/boot_policy.h). The parser passes untrusted chainload
+ * entries through so other viable entries are not killed by one bad entry --
+ * per-entry demote rather than whole-store reject. Callers MUST run every
+ * parsed entry through boot_policy_decide() before treating it as bootable;
+ * BOOT_ENTRIES_OK is "store grammar accepted", not "every entry safe to
+ * launch".
  *
  * Returns 0 on success (== BOOT_ENTRIES_OK), nonzero on rejection.
  */

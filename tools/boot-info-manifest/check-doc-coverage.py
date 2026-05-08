@@ -93,6 +93,7 @@ PREFIX_SECTIONS: dict[str, list[str]] = {
     "usb_controller.": ["Nested struct: `boot_usb_controller`"],
     "uefi_runtime.":   ["Nested struct: `boot_uefi_runtime`"],
     "loader_identity.":["Bootloader build identity"],
+    "rejected_entries[":["Boot policy selection (v19)"],
 }
 # Top-level scalar sections that carry PRIMARY ownership rows -- any of
 # these can host a bare-name row and satisfy the coverage gate.
@@ -134,6 +135,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Local boot device path detail (v16)",
     "Local boot device path detail (v17)",
     "Firmware trust landscape (v18)",
+    "Boot policy selection (v19)",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

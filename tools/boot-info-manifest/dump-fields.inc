@@ -393,3 +393,16 @@ F(sbat_level);
 F(sbat_level[0]);
 F(dbx_size);
 F(degraded_trust_flags);
+
+/* v19: boot policy selection (boot-entry policy feature). */
+F(selected_entry_id);
+F(selected_entry_id[0]);
+F(selection_reason);
+F(_selection_pad);
+F(rejected_entries);
+F(rejected_entries[0]);
+F(rejected_entries[0].id);
+F(rejected_entries[0].id[0]);
+F(rejected_entries[0].reason);
+F(rejected_entry_count);
+F(rejected_entry_overflow);
