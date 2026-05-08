@@ -288,7 +288,7 @@ Convert today's ad-hoc `boot.conf` booleans into structured entries with explici
 - [ ] `kind: test` admission + `test_suite` payload parsing deferred to §13 (per-kind handler reads payload; without it every test entry would run all categories).
 - [ ] `kind: diagnostics` admission deferred to §13 + an early-policy-read redesign (`boot_config.verbose` is consumed pre-policy).
 - [x] On SAFE selection, `boot_config.boot_mode` is materialized post-policy pre-EBS; existing kernel consumers read the field unchanged.
-- [x] Cross-domain consumers wire `boot_config.boot_mode` -> KUSD `SafeBootMode` per [TODO-10](TODO-10-bare-metal-hardening.md) + [02-kernel-core TODO-02](../02-kernel-core/TODO-02-kernel-configuration-policy.md); §8 only changes the producer.
+- [x] KUSD `SafeBootMode` consumer mirrors `boot_config.boot_mode` per [02-kernel-core TODO-02](../02-kernel-core/TODO-02-kernel-configuration-policy.md#5-safe-mode-policy-and-effective-safe-mode); §8 only changes the producer.
 - [x] `supported_kinds_mask` widened to include KIND_SAFE only; TEST + DIAGNOSTICS stay filtered until §13.
 - [x] Commit: `"boot: structured safe/test/diagnostic entries"`
 
@@ -301,7 +301,12 @@ Convert today's ad-hoc `boot.conf` booleans into structured entries with explici
 > - How it integrates: both writes target `g_boot_info_ptr->config.boot_mode`, the same field consumed by the existing boot.conf parser; F8 path runs before SAFE materialization so F8 + SAFE combinations are idempotent.
 > - Downstream effects: closes §7's deferred F8 wire-up; unblocks TODO-10 + 02-kernel-core TODO-02 KUSD SafeBootMode consumers.
 > - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md) (per-kind dispatch) + [`docs/boot/boot-menu.md`](../../docs/boot/boot-menu.md) (F8 row).
-> - Scope boundary: §8 owns SAFE materialization + F8 wire-up + KIND_SAFE admission. TEST + DIAGNOSTICS payload parsing is §13. KUSD SafeBootMode population is TODO-10 + 02-kernel-core TODO-02.
+> - Scope boundary: §8 owns SAFE materialization + F8 wire-up + KIND_SAFE admission. TEST + DIAGNOSTICS payload parsing is §13. KUSD SafeBootMode population is 02-kernel-core TODO-02 §5.
+
+> **Verified:** 2026-05-09 | commit `9fb38d53` (impl) + post-review fixup | 6/8 items + 2 deferred to §13 | build OK | smoke PASS (KVM)
+> **Deferred:** [M] `kind: test` admission + test_suite payload parsing -> XREF: 01-boot-platform/TODO-07 §13 (item: "Entry kinds: split, UKI, chainload, network, resume" -- per-kind handler table reads payload object)
+> **Deferred:** [M] `kind: diagnostics` admission + verbose POST early-policy-read -> XREF: 01-boot-platform/TODO-07 §13 (item: "Entry kinds: split, UKI, chainload, network, resume" -- diagnostics needs early-policy-read pass before pre-policy verbose decision)
+> **Quality reviewed:** 2026-05-09 | Codex 5x (design + adversarial + re-adversarial + consistency + perf) | 1H+3M fixed, 1M rejected (SAFE payload validation -- §8 scope does not depend on payload fields, payload subset is §13 scope) | scope: boot-code-quality
 
 ---
 

@@ -125,7 +125,7 @@ Represent safe mode as a first-class kernel policy object, not a scattered colle
 - [ ] Define `safe_mode_t`: none, minimal, network, directory-services-repair equivalent.
 - [ ] Gate drivers, network stack, desktop, third-party modules, code integrity relaxations, and services; this consumer contract is consumed by D04 T05 §5, D09 T03 §6 and §8, and T19 §1 and §8.
 - [ ] Surface safe-mode reason, selected control set, and recovery trigger through `kernel_config_get()` for boot logs and crash/recovery consumers.
-- [ ] Mirror effective Safe Mode, debugger enablement, and mitigation summary into `KUSER_SHARED_DATA` (`SafeBootMode`, `KdDebuggerEnabled`, `MitigationPolicies`) through T11 §11.
+- [ ] Mirror `boot_config.boot_mode` (bootloader producer per [TODO-07 §8](../01-boot-platform/TODO-07-boot-entry-store-menu-policy.md)) into KUSD `SafeBootMode`, plus `KdDebuggerEnabled` + `MitigationPolicies`, via T11 §11.
 - [ ] Ensure Safe Mode cannot be disabled by a registry value once requested by boot policy.
 - [ ] Distinguish operator-requested safe mode from repeated-failure recovery safe mode and preserve that reason code through the full boot.
 - [ ] Commit: `"kernel: add Safe Mode and recovery policy object"`
