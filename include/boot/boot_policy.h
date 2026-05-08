@@ -111,9 +111,12 @@ typedef struct {
     char         bootcurrent_entry_id[64];
     int          bootcurrent_known;     /* 1 if the resolution succeeded */
 
-    /* Local-machine UUID for the machine_id filter. Producer is the existing
-     * boot_info.smbios_system_uuid path; an empty machine_id field on an
-     * envelope means "match any machine". */
+    /* Local-machine UUID for the machine_id filter. Producer is the
+     * SMBIOS table 1 (System Information) UUID extraction owned by the
+     * loader-variables feature -- until that ships, callers leave this
+     * empty and the filter treats every entry with a non-empty
+     * machine_id as a mismatch. An empty machine_id field on an
+     * envelope is the documented wildcard ("match any machine"). */
     char         local_machine_id[40];  /* 36-char UUID + NUL + slack, "" if absent */
 
     /* Operator hotkey override (input owned by the boot-menu feature).
@@ -158,6 +161,21 @@ typedef struct {
      * entry whose tries-exhausted record was dropped beyond the cap by a
      * hostile or stale ESP. */
     int          counters_overflow;
+
+    /* Bitmask of stable kinds the caller can actually execute on the
+     * current load path. Bit (1u << BOOT_ENTRY_KIND_X) set means the
+     * caller has a working loader for that kind; cleared means the
+     * caller would have to refuse the handoff if this kind were chosen.
+     * The filter rejects entries whose kind is unsupported with
+     * BOOT_REJECT_REASON_KIND_UNAVAILABLE so the ladder picks something
+     * the caller can finish booting.
+     *
+     * `0` is the back-compat default: NO gate. The pure-C unit tests
+     * exercise the ladder without this field; the bootloader sets the
+     * mask to the kinds its load_kernel path can dispatch (split + UKI
+     * + the boot.conf-flag kinds today; chainload / network / resume
+     * are added when the per-entry-kind handlers feature ships). */
+    unsigned int supported_kinds_mask;
 } boot_policy_inputs_t;
 
 #define BOOT_POLICY_NO_AB_SLOT  0xFFFFu
@@ -249,6 +267,44 @@ void boot_policy_decide(const boot_policy_inputs_t *inputs,
                         const boot_counter_t *counters,
                         unsigned int counter_count,
                         boot_policy_decision_t *out);
+
+/* ---- Selected-kind to (boot_path, boot_reason, src_flag_add) override ---
+ * Pure mapping table for the post-handoff boot-decision populate block.
+ * For path-changing kinds (recovery / diagnostics / network / resume)
+ * returns 1 and fills `out` with raw uint values that match the kernel-
+ * side enums in include/kernel/boot_info.h. The static_asserts in the
+ * bootloader's populate-block call site pin those raw values to the
+ * kernel enum, so a future enum reorder triggers a build error before
+ * the mapping silently drifts. For non-path-changing kinds (split / uki
+ * / installer / safe / test / chainload / vendor / reserved-future)
+ * returns 0 and leaves the caller's boot_path / boot_reason / source
+ * flags unmodified (a media-role override, if any, stands).
+ *
+ * Pure C, no UEFI types -- cross-includable from the kernel test runner
+ * the same way boot_policy_decide() is. The raw-uint outputs decouple
+ * the bootloader pure-C surface from kernel headers so the build layer
+ * boundary stays clean.
+ */
+typedef struct {
+    unsigned int boot_path;     /* enum boot_path_type raw value */
+    unsigned int boot_reason;   /* enum boot_reason_code raw value */
+    unsigned int src_flag_add;  /* BOOT_SOURCE_FLAG_* bits to OR in */
+} boot_policy_path_override_t;
+
+int boot_policy_kind_to_path(unsigned int kind,
+                             boot_policy_path_override_t *out);
+
+/* Raw-value constants the helper returns. Pinned to the kernel-side
+ * enum values via static_assert at the call site in bootx64.c. Listed
+ * here so the test runner can assert against the same constants. */
+#define BOOT_POLICY_PATH_RECOVERY       3u
+#define BOOT_POLICY_PATH_NETWORK        4u
+#define BOOT_POLICY_PATH_RESUME         5u
+#define BOOT_POLICY_PATH_DIAGNOSTIC     7u
+#define BOOT_POLICY_REASON_USER_SELECTED        2u
+#define BOOT_POLICY_REASON_RECOVERY_TRIGGER     9u
+#define BOOT_POLICY_REASON_DIAGNOSTIC_REQUEST  11u
+#define BOOT_POLICY_SRC_FLAG_RECOVERY_TRIGGERED (1u << 5)
 
 /* ---- Result-size discipline (pre-EBS allocation) -----------------------
  * boot_policy_decision_t carries an inline 64-entry rejected[] array plus

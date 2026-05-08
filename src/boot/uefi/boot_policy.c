@@ -213,6 +213,24 @@ static int entry_passes_filter(const boot_entry_envelope_t *e,
         record_reject(out, e->id, BOOT_REJECT_REASON_HIDDEN);
         return 0;
     }
+    /* Caller-side capability gate: kinds the bootloader cannot actually
+     * execute (network/resume/chainload until per-kind handlers ship)
+     * are filtered here so the ladder never selects an entry whose
+     * handoff the caller cannot finish. mask=0 disables the gate.
+     *
+     * Closed-mask for kind >= 32: the mask is 32 bits so any kind that
+     * cannot be represented (vendor 100..199, reserved-future >=200)
+     * fails closed under any non-zero mask. Today the parser already
+     * sets kind_skipped on those ranges and the earlier branch filters
+     * them out, but defense-in-depth: if a future parser change stops
+     * setting kind_skipped for some range, the mask gate STILL refuses
+     * to promote a kind whose loader the caller cannot vouch for. */
+    if (inputs->supported_kinds_mask != 0u &&
+        (e->kind >= 32u ||
+         (inputs->supported_kinds_mask & (1u << e->kind)) == 0u)) {
+        record_reject(out, e->id, BOOT_REJECT_REASON_KIND_UNAVAILABLE);
+        return 0;
+    }
     if (!machine_id_matches_local(e, inputs->local_machine_id)) {
         record_reject(out, e->id, BOOT_REJECT_REASON_MACHINE_ID_MISMATCH);
         return 0;
@@ -241,6 +259,38 @@ static int sort_key_less(const char *a, const char *b)
         i++;
     }
     return a[i] == '\0' && b[i] != '\0';
+}
+
+/* ---- Selected-kind path override (pure mapping) ------------------------- */
+
+int boot_policy_kind_to_path(unsigned int kind,
+                             boot_policy_path_override_t *out)
+{
+    if (!out) return 0;
+    out->boot_path = 0u;
+    out->boot_reason = 0u;
+    out->src_flag_add = 0u;
+    switch (kind) {
+        case BOOT_ENTRY_KIND_RECOVERY:
+            out->boot_path    = BOOT_POLICY_PATH_RECOVERY;
+            out->boot_reason  = BOOT_POLICY_REASON_RECOVERY_TRIGGER;
+            out->src_flag_add = BOOT_POLICY_SRC_FLAG_RECOVERY_TRIGGERED;
+            return 1;
+        case BOOT_ENTRY_KIND_DIAGNOSTICS:
+            out->boot_path   = BOOT_POLICY_PATH_DIAGNOSTIC;
+            out->boot_reason = BOOT_POLICY_REASON_DIAGNOSTIC_REQUEST;
+            return 1;
+        case BOOT_ENTRY_KIND_NETWORK:
+            out->boot_path   = BOOT_POLICY_PATH_NETWORK;
+            out->boot_reason = BOOT_POLICY_REASON_USER_SELECTED;
+            return 1;
+        case BOOT_ENTRY_KIND_RESUME:
+            out->boot_path   = BOOT_POLICY_PATH_RESUME;
+            out->boot_reason = BOOT_POLICY_REASON_USER_SELECTED;
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 /* ---- Ladder entrypoint -------------------------------------------------- */

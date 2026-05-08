@@ -49,6 +49,7 @@ Every entry from the parsed store is run through a per-entry filter. The filter 
 | `machine_id` non-empty AND not equal to local SMBIOS UUID | `BOOT_REJECT_REASON_MACHINE_ID_MISMATCH` | An empty `machine_id` field on the entry means "match any machine". An empty local SMBIOS UUID means "machine has no UUID -- match only entries with empty `machine_id`". |
 | Counter file shows `tries_left == 0` | `BOOT_REJECT_REASON_TRIES_EXHAUSTED` | Demoted-but-visible: still in the menu, never auto-selected. |
 | `kind == chainload`, `secure_boot_active`, `trusted_chainload` flag absent | `BOOT_REJECT_REASON_PATH_ESCAPE` | Mirrors the parser's path-escape gate; restated here so the diagnostic surfaces in `rejected_entries[]`. |
+| `inputs.supported_kinds_mask != 0`, `kind >= 32 OR (mask & (1 << kind)) == 0` | `BOOT_REJECT_REASON_KIND_UNAVAILABLE` | Caller-side capability gate; closed-mask. The bootloader admits only kinds whose semantics today's load_kernel path can fully execute -- currently `{SPLIT, UKI}`. Kinds whose owner section has not yet shipped (RECOVERY needs the recovery-partition load path; SAFE/TEST/DIAGNOSTICS need boot_config materialization from entry flags; INSTALLER needs offline + first-install seeding; CHAINLOAD/NETWORK/RESUME need the per-entry-kind handler table) are filtered so the ladder never selects an entry the caller cannot finish booting -- the alternative (record selection but execute the default path) would lie to the kernel about which mode actually ran. Each owner section widens the mask as it ships. `mask == 0` leaves the gate disabled (test-suite back-compat). |
 
 Filter misses go into `boot_policy_decision_t.rejected[]` as `(id, reason)` pairs; the count is `rejected_count` and the overflow flag is `rejected_overflow` (set if more than 64 rejects observed).
 
@@ -149,6 +150,20 @@ Ladder: filter drops the only candidate with `BOOT_REJECT_REASON_PATH_ESCAPE`. N
 
 Expected: `selection_reason = BOOT_SELECTION_FALLBACK_NO_VIABLE`, the bootloader synthesizes a fallback envelope. The audit log shows the rejected entry with `PATH_ESCAPE` so the operator sees why the chainload was suppressed.
 
+## 5.7 Path-changing kind -> `boot_path` / `boot_reason` mapping
+
+When the policy ladder picks an entry whose `kind` implies a non-normal flow, the bootloader's POST-EBS boot-decision populate block in `bootx64.c` overrides `boot_info.boot_path` + `boot_info.boot_reason` after the media-role switch. The mapping must satisfy the kernel-side `boot_decision_validate()` table in `src/kernel/main/boot_decision.c` (every reason has its required path + trigger flag).
+
+| Selected entry kind | `boot_info.boot_path` | `boot_info.boot_reason` | `boot_info.boot_source_flags` add | Notes |
+| --- | --- | --- | --- | --- |
+| `BOOT_ENTRY_KIND_RECOVERY` | `BOOT_PATH_RECOVERY` | `BOOT_REASON_RECOVERY_TRIGGER` | `BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED` | Validator at `boot_decision.c` requires the trigger flag whenever reason = `RECOVERY_TRIGGER`; missing flag is BOOT_FATAL. |
+| `BOOT_ENTRY_KIND_DIAGNOSTICS` | `BOOT_PATH_DIAGNOSTIC` | `BOOT_REASON_DIAGNOSTIC_REQUEST` | -- | No flag required. |
+| `BOOT_ENTRY_KIND_NETWORK` | `BOOT_PATH_NETWORK` | `BOOT_REASON_USER_SELECTED` | -- | `NETWORK_INSECURE` is the post-validation outcome owned by the per-kind handlers feature; until it ships the ladder records "user/policy picked the network entry" without making a security claim. |
+| `BOOT_ENTRY_KIND_RESUME` | `BOOT_PATH_RESUME` | `BOOT_REASON_USER_SELECTED` | -- | `RESUME_VALIDATED` / `RESUME_INVALIDATED` are owned by the resume-validator feature; the ladder records intent only. |
+| Any other kind (split / uki / installer / safe / test) | unchanged | unchanged | unchanged | Media-role override (if any) wins; no kind-driven override. |
+
+The override runs AFTER the media-role switch so a `kind=recovery` policy decision wins over a NORMAL media role, but a `media_role=installer` cold boot still records `BOOT_PATH_INSTALLER` if no path-changing kind was picked (the kind table above only fires for the four path-changing kinds). When both fire (e.g. media role = recovery AND policy ladder picked `kind=recovery`), the values agree and the order does not matter.
+
 ## 6. Diagnostic surface
 
 After the ladder runs, the bootloader writes the decision into `boot_info`:
@@ -174,7 +189,8 @@ The kernel-side consumers are:
 | A/B slot probe | A/B + recovery integration (`§6`), `TODO-21` |
 | Recovery-request signal | A/B + recovery integration (`§6`), `TODO-22` |
 | Per-kind payload validation | per-kind validators (`§10`) |
-| `bootentries.json` ESP read in bootx64.c | tracked sub-item under `§3` (Branch B follow-up) |
-| Boot#### `OptionalData` parse for `BootCurrent`-to-id mapping | tracked sub-item under `§3` (Branch B follow-up) |
-| Counter directory scan + atomic rename | tracked sub-item under `§3` (Branch B follow-up) |
+| `bootentries.json` ESP read in bootx64.c | ESP store read + policy wiring feature (shipped) |
+| Boot#### `OptionalData` parse for `BootCurrent`-to-id mapping | ESP store read + policy wiring feature (shipped) |
+| Counter directory scan + crash-tolerant rename | crash-tolerant counter protocol feature |
+| SMBIOS table 1 UUID extraction for `local_machine_id` | OS-visible loader UEFI variables feature |
 | `mark-good` / health-gated promotion | health gate (`§11`) |

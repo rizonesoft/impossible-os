@@ -54,7 +54,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   1   | Boot entry file format                                 | --                                      |  [x]   |
 | 💎  |   2   | Boot entry parser and validator                        | §1                                      |  [x]   |
 | 💎  |   3   | Boot policy merge order (firmware vs OS layer split)   | §2, T01 §1, T05 §6                      |  [x]   |
-| 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring | §3                                      |  [ ]   |
+| 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring | §3                                      |  [x]   |
 | 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator    | §3, §4                                  |  [ ]   |
 | 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [ ]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [ ]   |
@@ -166,14 +166,23 @@ Two distinct layers, deterministically composed. **Firmware layer**: UEFI `BootC
 
 Wire the §3 ladder into the live boot path. Pre-EBS only -- counter mutation (§5) and `gRT->SetVariable` calls happen here while Boot Services + Runtime Services are still callable. Integration point: AFTER `boot_conf_load` and AFTER the GOP/SecureBoot read (§6), BEFORE `load_kernel()` at `src/boot/uefi/bootx64.c:~9023` -- never post-EBS, since counter mutation needs Boot Services. Sanity cap matches `BOOT_ENTRIES_MAX_TOTAL_BYTES` (16 KiB); larger files hard-fail with `boot_fatal()` rather than silently truncating. Path-changing kinds (recovery/diagnostics/network/resume) update `boot_info.boot_path` + `boot_info.boot_reason` to the matching enum values; otherwise leave the existing values alone. `FALLBACK_STORE_INVALID` is the only ladder reason where the caller still synthesizes the fallback envelope itself (the ladder leaves `selected` empty per §3 contract).
 
-- [ ] Read `\EFI\ImpossibleOS\bootentries.json` via size-probe + `AllocatePool` (mirror `boot_conf_load` shape); pass to `boot_entries_parse()`.
-- [ ] Parse `Boot####.OptionalData` (`IPOS\x01` tag + kebab-case id) via `gRT->GetVariable`; populate `bootcurrent_entry_id` + `bootcurrent_known`.
-- [ ] Invoke `boot_policy_decide()` post-parse, post-§6-SB-read, pre-`load_kernel`; copy decision into `boot_info` v19 fields.
-- [ ] Map path-changing kinds to `boot_info.boot_path` + `boot_info.boot_reason` per the kind -> path table in `docs/boot/boot-policy.md`.
-- [ ] Synthesize fallback envelope on `BOOT_SELECTION_FALLBACK_STORE_INVALID` per the §3 ladder contract.
-- [ ] Commit: `"boot: read ESP store + wire boot policy decide into bootloader"`
+- [x] Read `\EFI\ImpossibleOS\bootentries.json` via size-probe + `AllocatePool`; pass to `boot_entries_parse()`. `boot_fatal()` on >16 KiB; short-read rejected.
+- [x] Parse `Boot####.OptionalData` (`IPOS\x01` tag + kebab-case id) via `gRT->GetVariable`; populate `bootcurrent_entry_id` + `bootcurrent_known`. Bounded walk + kebab grammar gate.
+- [x] Invoke `boot_policy_decide()` post-parse, pre-`load_kernel`; copy decision into `boot_info` v19 fields. `supported_kinds_mask` admits `{SPLIT, UKI}` today; later sections widen.
+- [x] Map path-changing kinds to `boot_info.boot_path` + `boot_info.boot_reason` per the kind -> path table. Pure mapping helper applied in the post-EBS populate block; `_Static_assert`s pin raw constants to kernel enums.
+- [x] Synthesize fallback envelope on `BOOT_SELECTION_FALLBACK_STORE_INVALID`. Covers parser-reject AND heap-exhaustion paths.
+- [x] Commit: `"boot: read ESP store + wire boot policy decide into bootloader"`
 
-**Test checkpoint:** Crafted `bootentries.json` boots through the ladder; serial shows `[BOOT] policy: selection_reason=N (...)` and the chosen entry id; `kind=recovery` flips `boot_info.boot_path` to `BOOT_PATH_RECOVERY`. Missing/corrupt store falls back without halting. Test on: QEMU WHPX + TCG; VirtualBox; bare metal once §6 menu ships.
+**Test checkpoint:** Crafted `bootentries.json` boots through the ladder; serial shows `[BOOT] policy: selection_reason=N (...)` and the chosen entry id; `kind=recovery` flips `boot_info.boot_path` to `BOOT_PATH_RECOVERY`. Missing/corrupt store falls back without halting. Smoke test verified missing-store flow: serial shows `selection_reason=8 (FALLBACK_STORE_INVALID) selected="fallback" kind=0`, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX + TCG; VirtualBox; bare metal once §6 menu ships.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 7 new boot-policy suites added, 0 failures
+
+> **Notes:**
+> - What shipped: `boot_policy_invoke()` + 3 helpers in `bootx64.c`, pure mapping `boot_policy_kind_to_path()` in `boot_policy.c`, `supported_kinds_mask` input field, 4 POST16 codes, 7 unit tests.
+> - How it integrates: pre-EBS slot in `efi_main` between `init_gop` and `load_kernel`; post-EBS kind override in the boot-decision populate block (after media-role switch); smoke test green on KVM.
+> - Downstream effects: live producer for boot_info v19 selection ABI; kernel-side Phase-0 validator + counter scan ship in §5. Codex review adoptions in commit message.
+> - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md).
+> - Scope boundary: §4 owns ESP read / OD parse / ladder invoke / boot_info v19 fields / kind override. §5 owns counter scan + ABI validator. §8 / §9 / §13 / §16 each widen `supported_kinds_mask`.
 
 ---
 
@@ -234,6 +243,7 @@ Convert today's ad-hoc `boot.conf` booleans into structured entries with explici
 - [ ] Add `kind: diagnostics` entry that enables verbose POST + extended boot logging.
 - [ ] On selection, `boot_config` is materialized from the entry's flag set; existing kernel consumers see the same `boot_config` they read today (no consumer churn).
 - [ ] Cross-domain wiring: [`TODO-10 §7`](TODO-10-bare-metal-hardening.md) and [`02-kernel-core/TODO-02 §5`](../02-kernel-core/TODO-02-kernel-configuration-policy.md) consume safe-mode entry flags and populate `KUSER_SHARED_DATA.SafeBootMode`.
+- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include SAFE / TEST / DIAGNOSTICS once boot_config materialization above ships.
 - [ ] Commit: `"boot: structured safe/test/diagnostic entries"`
 
 **Test checkpoint:** Selecting safe-mode entry yields `boot_config.safe_mode == 1` and serial shows `safe-mode active`; KUSD `SafeBootMode` non-zero post-boot. Test-mode entry runs the matching `TEST_CAT_*` suite. Diagnostics entry enables verbose POST. Test on: QEMU WHPX + TCG; bare metal.
@@ -249,6 +259,7 @@ Generate entries from runtime state; the user sees a single coherent menu instea
 - [ ] Auto-select recovery on double-fail; if recovery partition is also corrupt, fall through to fallback default with `selection_reason = ALL_PATHS_BAD`.
 - [ ] Demote-not-drop: bad entries stay visible greyed out with `last_failure_reason` label so users see WHY a slot is bad. ⭐ vs Linux BLS silent-sort-last.
 - [ ] Display rollback reason in the menu line and feed it to VPD.
+- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include RECOVERY once recovery-partition load path lands.
 - [ ] Commit: `"boot: integrate A/B and recovery entries"`
 
 **Test checkpoint:** Corrupt slot A kernel; reboot 3 times; menu shows `Slot A (try 3/3, kernel CRC fail)` greyed out and auto-selects slot B. Both slots fail -> recovery selected without user input. Recovery partition corrupt + both slots fail -> fallback default with ALL_PATHS_BAD reason. Test on: QEMU TCG (deterministic); bare metal.
@@ -312,7 +323,9 @@ The §1 envelope only carries the discriminator; this section owns the per-kind 
 - [ ] `kind: resume` -- hibernation snapshot ([`TODO-26 §3, §5`](TODO-26-hibernation-resume-fast-startup-handoff.md)); digest must match §1 metadata. Loader sets `boot_info.resume_payload_*`.
 - [ ] `kind: recovery`/`installer`/`safe`/`diagnostics`/`test` -- defer to §8 + §9 + §16 for production rules; this section just enforces validators exist and unknown kinds are rejected.
 - [ ] Per-kind hook table `g_entry_kind_handlers[ENTRY_KIND_*]` in `bootx64.c` (`validate`/`prepare`/`boot` callbacks); new kinds appended.
+- [ ] Wire `load_kernel()` to consume `decision->selected.payload_*` so the §4 ladder's chosen entry drives the kernel/cmdline/initrd actually loaded, not just `selected_entry_id` recording.
 - [ ] Document each kind's required + optional fields in `docs/boot/boot-entry-schema.md`.
+- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include CHAINLOAD / NETWORK / RESUME once their per-kind handlers land.
 - [ ] Commit: `"boot: per-entry-kind validators and load paths"`
 
 **Test checkpoint:** Each kind has a matching parser-fixture test (valid + 2 rejection cases). Selecting a `kind: uki` entry sets `BOOT_FLAG_INVOKED_VIA_UKI` and reaches the kernel without disk-side cmdline override. Selecting a `kind: chainload` entry under Secure Boot without `trusted_chainload` is rejected. `kind: resume` digest mismatch falls through to the next priority entry per §3. Test on: QEMU WHPX + TCG (UKI), TCG (network sim, chainload), bare metal once §4 menu ships.
@@ -346,6 +359,7 @@ Publish the live entry list, capability bitmap, selected entry, and one-shot ove
 - [ ] Define `LoaderFeatures` capability bits 0-5 (one-shot honors, entries publish, tries publish, kinds, audit). Additive; new feature -> new bit. Table in `docs/boot/loader-vars.md`.
 - [ ] Variables written via `gRT->SetVariable` after boot-info publish, before kernel handoff; failure sets `boot_info.loader_vars_degraded` and continues boot.
 - [ ] Document compatibility in `docs/boot/loader-vars.md`: a Linux user-mode tool reading the systemd-boot interface format Just Works against an Impossible OS-booted system.
+- [ ] Extract SMBIOS table 1 (System Information) UUID pre-EBS, expose via `boot_info`, and wire `boot_policy_inputs.local_machine_id` to it so machine-pinned `machine_id` entries become selectable.
 - [ ] Commit: `"boot: OS-visible loader UEFI variables"`
 
 **Test checkpoint:** Post-boot, `efivar -l | grep Loader` (or equivalent) shows all read-only vars; values match `boot_info`. Setting `LoaderEntryOneShot` to a known entry id then rebooting causes that entry to boot once, then revert to the store default. `LoaderFeatures` advertises the bits implemented. NVRAM-quota-full harness sets `loader_vars_degraded` without aborting boot. Test on: QEMU WHPX + TCG; bare metal.
@@ -393,7 +407,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | ⭐  | Feature                                                | 🪟 Win11                          | 🐧 Linux                              | 🚀 Impossible OS         |
 | --- | ------------------------------------------------------ | --------------------------------- | ------------------------------------- | ------------------------ |
 | 💎  | Structured boot entries                                | ✅ BCD store + bcdedit            | ✅ systemd-boot/GRUB BLS              | ⬜ Planned -- §1, §2     |
-| 💎  | BootNext one-shot read (firmware-layer)                | ✅ Firmware BootNext + BCD        | ✅ efibootmgr -n                      | 🟦 Firmware fields read; OS-side ladder ships in §3 |
+| 💎  | BootNext one-shot read (firmware-layer)                | ✅ Firmware BootNext + BCD        | ✅ efibootmgr -n                      | ✅ Firmware fields read + OS-side ladder + live ESP store wiring |
 | 💎  | Recovery boot entry                                    | ✅ WinRE                          | ✅ GRUB recovery                      | ⬜ Planned -- §9         |
 | 💎  | Safe mode entry                                        | ✅ msconfig safeboot flag         | ✅ rescue.target / single             | ⬜ Planned -- §8         |
 | 💎  | Previous-kernel rollback entry                         | ⚠️ BCD bootsequence (limited UX)  | ✅ GRUB previous kernel               | ⬜ Planned -- §10        |
@@ -404,8 +418,8 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | ⬜ Planned -- §13        |
 | 💎  | OS-visible loader UEFI variables                       | ❌ None standardized              | ✅ systemd LoaderXxx interface        | ⬜ Planned -- §15        |
 | 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | ⬜ Planned -- §16        |
-| ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ✅ §3 ladder + 6-example doc 🚀 |
-| ⭐  | Demote-not-drop bad entries with last_failure_reason   | ❌ Hidden recovery loop           | ⚠️ Bad entries silently sorted last   | 🟦 §3 records reject reasons; UI label in §9 🚀 |
+| ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ✅ §3 ladder + 6-example doc + live producer in §4 🚀 |
+| ⭐  | Demote-not-drop bad entries with last_failure_reason   | ❌ Hidden recovery loop           | ⚠️ Bad entries silently sorted last   | 🟦 §4 records reject reasons in boot_info v19; menu UI label in §9 🚀 |
 | ⭐  | Per-decision audit trail (BlackBox primary)            | ❌ Event log only                 | ❌ journalctl scattered               | ⬜ Planned -- §12 🚀     |
 | ⭐  | Schema-versioned + CRC-checksummed entry store         | ❌ Binary BCD, no checksum        | ❌ INI / cfg, no checksum             | ✅ §1 schema_version=1 + CRC-32 IEEE 802.3 🚀 |
 | ⭐  | Per-entry mutation audit (add/remove/reorder logged)   | ❌ Not logged                     | ❌ Not logged                         | ⬜ Planned -- §12 🚀     |

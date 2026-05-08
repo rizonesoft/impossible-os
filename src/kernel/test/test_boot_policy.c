@@ -821,6 +821,224 @@ static void test_parser_empty_machine_id_wildcard(void)
     TEST_ASSERT(d.selected_entry_id[0] == 'g', "global entry picked");
 }
 
+static void test_ladder_supported_kinds_mask_rejects_kind_ge_32(void)
+{
+    /* Closed-mask invariant: any kind >= 32 cannot be represented in
+     * the 32-bit mask, so a non-zero mask MUST reject it with
+     * KIND_UNAVAILABLE rather than fall-through-pass. Defense-in-depth
+     * for the day a parser change leaves a vendor or reserved-future
+     * envelope un-flagged with kind_skipped.
+     */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+    /* High kind, NOT marked kind_skipped (forced through the mask gate). */
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "high-kind");
+    set_id(r.entries[0].sort_key, "10");
+    r.entries[0].kind = 100u;            /* BOOT_ENTRY_KIND_VENDOR_FIRST */
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    /* kind_skipped intentionally 0 -- exercise mask gate, not parser flag. */
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "split");
+    set_id(r.entries[1].sort_key, "20");
+    r.entries[1].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    in.supported_kinds_mask = (1u << BOOT_ENTRY_KIND_SPLIT);
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_STORE_DEFAULT,
+                   "split wins despite high-kind being first");
+    TEST_ASSERT(d.selected_entry_id[0] == 's', "split selected");
+    TEST_ASSERT_EQ(d.rejected_count, 1u, "high-kind rejected");
+    TEST_ASSERT_EQ(d.rejected[0].reason, BOOT_REJECT_REASON_KIND_UNAVAILABLE,
+                   "kind=100 rejected as KIND_UNAVAILABLE");
+}
+
+static void test_kind_to_path_recovery(void)
+{
+    boot_policy_path_override_t o;
+    int r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_RECOVERY, &o);
+    TEST_ASSERT_EQ(r, 1, "recovery is path-changing");
+    TEST_ASSERT_EQ(o.boot_path, BOOT_POLICY_PATH_RECOVERY,
+                   "boot_path = RECOVERY (3)");
+    TEST_ASSERT_EQ(o.boot_reason, BOOT_POLICY_REASON_RECOVERY_TRIGGER,
+                   "boot_reason = RECOVERY_TRIGGER (9)");
+    TEST_ASSERT_EQ(o.src_flag_add, BOOT_POLICY_SRC_FLAG_RECOVERY_TRIGGERED,
+                   "src_flag = RECOVERY_TRIGGERED (1<<5)");
+}
+
+static void test_kind_to_path_diagnostics(void)
+{
+    boot_policy_path_override_t o;
+    int r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_DIAGNOSTICS, &o);
+    TEST_ASSERT_EQ(r, 1, "diagnostics is path-changing");
+    TEST_ASSERT_EQ(o.boot_path, BOOT_POLICY_PATH_DIAGNOSTIC, "DIAGNOSTIC (7)");
+    TEST_ASSERT_EQ(o.boot_reason, BOOT_POLICY_REASON_DIAGNOSTIC_REQUEST, "DIAGNOSTIC_REQUEST (11)");
+    TEST_ASSERT_EQ(o.src_flag_add, 0u, "no source flag for DIAGNOSTIC_REQUEST");
+}
+
+static void test_kind_to_path_network(void)
+{
+    boot_policy_path_override_t o;
+    int r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_NETWORK, &o);
+    TEST_ASSERT_EQ(r, 1, "network is path-changing");
+    TEST_ASSERT_EQ(o.boot_path, BOOT_POLICY_PATH_NETWORK, "NETWORK (4)");
+    TEST_ASSERT_EQ(o.boot_reason, BOOT_POLICY_REASON_USER_SELECTED, "USER_SELECTED (2)");
+    TEST_ASSERT_EQ(o.src_flag_add, 0u, "no required source flag for USER_SELECTED");
+}
+
+static void test_kind_to_path_resume(void)
+{
+    boot_policy_path_override_t o;
+    int r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_RESUME, &o);
+    TEST_ASSERT_EQ(r, 1, "resume is path-changing");
+    TEST_ASSERT_EQ(o.boot_path, BOOT_POLICY_PATH_RESUME, "RESUME (5)");
+    TEST_ASSERT_EQ(o.boot_reason, BOOT_POLICY_REASON_USER_SELECTED, "USER_SELECTED (2)");
+    TEST_ASSERT_EQ(o.src_flag_add, 0u, "no required source flag for USER_SELECTED");
+}
+
+static void test_kind_to_path_split_is_no_op(void)
+{
+    /* Non-path-changing kinds: helper returns 0 and leaves output
+     * struct zeroed. Caller leaves boot_path / boot_reason / src_flags
+     * alone; media-role override (if any) stands. */
+    boot_policy_path_override_t o;
+    int r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_SPLIT, &o);
+    TEST_ASSERT_EQ(r, 0, "split is NOT path-changing");
+    TEST_ASSERT_EQ(o.boot_path, 0u, "boot_path zeroed on no-op");
+    TEST_ASSERT_EQ(o.boot_reason, 0u, "boot_reason zeroed on no-op");
+    TEST_ASSERT_EQ(o.src_flag_add, 0u, "src_flag_add zeroed on no-op");
+
+    r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_UKI, &o);
+    TEST_ASSERT_EQ(r, 0, "uki is NOT path-changing");
+
+    r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_INSTALLER, &o);
+    TEST_ASSERT_EQ(r, 0, "installer is NOT path-changing (media-role owns)");
+
+    r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_SAFE, &o);
+    TEST_ASSERT_EQ(r, 0, "safe is NOT path-changing");
+
+    r = boot_policy_kind_to_path(BOOT_ENTRY_KIND_TEST, &o);
+    TEST_ASSERT_EQ(r, 0, "test is NOT path-changing");
+
+    /* Vendor / reserved-future / out-of-range: also no-op. */
+    r = boot_policy_kind_to_path(150u, &o);
+    TEST_ASSERT_EQ(r, 0, "vendor kind is NOT path-changing");
+    r = boot_policy_kind_to_path(0xFFFFFFFFu, &o);
+    TEST_ASSERT_EQ(r, 0, "garbage kind is NOT path-changing");
+}
+
+static void test_ladder_uki_mode_rejects_split_entry(void)
+{
+    /* Cross-mode selection guard: bootloader is mode-locked at
+     * detect_uki_sections() time; the policy ladder cannot switch
+     * modes. Under UKI mode, mask admits only KIND_UKI. A split
+     * entry must reject with KIND_UNAVAILABLE rather than be
+     * selected and produce a lying selected_entry_id.
+     */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 1u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "split-only");
+    set_id(r.entries[0].sort_key, "10");
+    r.entries[0].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    in.invoked_via_uki = 1;
+    in.supported_kinds_mask = (1u << BOOT_ENTRY_KIND_UKI);  /* mode-locked */
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    /* No viable candidate -> ladder synthesizes UKI fallback envelope. */
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_FALLBACK_NO_VIABLE,
+                   "no viable when only-entry is wrong-mode kind");
+    TEST_ASSERT_EQ(d.selected.kind, (unsigned int)BOOT_ENTRY_KIND_UKI,
+                   "UKI fallback envelope synthesized in UKI mode");
+    TEST_ASSERT_EQ(d.rejected_count, 1u, "split entry rejected");
+    TEST_ASSERT_EQ(d.rejected[0].reason, BOOT_REJECT_REASON_KIND_UNAVAILABLE,
+                   "kind=SPLIT under UKI mode = KIND_UNAVAILABLE");
+}
+
+static void test_ladder_split_mode_rejects_uki_entry(void)
+{
+    /* Symmetric guard: split mode (invoked_via_uki=0) rejects a
+     * kind=UKI entry. */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 1u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "uki-only");
+    set_id(r.entries[0].sort_key, "10");
+    r.entries[0].kind = BOOT_ENTRY_KIND_UKI;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    in.invoked_via_uki = 0;
+    in.supported_kinds_mask = (1u << BOOT_ENTRY_KIND_SPLIT);
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_FALLBACK_NO_VIABLE,
+                   "no viable when only-entry is wrong-mode kind");
+    TEST_ASSERT_EQ(d.selected.kind, (unsigned int)BOOT_ENTRY_KIND_SPLIT,
+                   "SPLIT fallback envelope synthesized in split mode");
+    TEST_ASSERT_EQ(d.rejected_count, 1u, "uki entry rejected");
+    TEST_ASSERT_EQ(d.rejected[0].reason, BOOT_REJECT_REASON_KIND_UNAVAILABLE,
+                   "kind=UKI under split mode = KIND_UNAVAILABLE");
+}
+
+static void test_ladder_supported_kinds_mask_filters_unavailable(void)
+{
+    /* Caller-side capability gate: bootloader cannot execute kind=network
+     * until the per-entry-kind handlers feature ships. With the mask set
+     * to {SPLIT, UKI} only, a kind=network entry must be rejected with
+     * BOOT_REJECT_REASON_KIND_UNAVAILABLE and the ladder must pick the
+     * surviving SPLIT candidate instead. mask=0 leaves the gate disabled
+     * (back-compat with every other test in this file).
+     */
+    boot_entries_parse_result_t r;
+    for (unsigned i = 0; i < sizeof(r); i++) ((unsigned char *)&r)[i] = 0;
+    r.reject_code = BOOT_ENTRIES_OK;
+    r.entry_count = 2u;
+    zero_envelope(&r.entries[0]);
+    set_id(r.entries[0].id, "net-boot");
+    set_id(r.entries[0].sort_key, "10");
+    r.entries[0].kind = BOOT_ENTRY_KIND_NETWORK;
+    r.entries[0].flags = BOOT_ENTRY_FLAG_ACTIVE;
+    zero_envelope(&r.entries[1]);
+    set_id(r.entries[1].id, "split-boot");
+    set_id(r.entries[1].sort_key, "20");
+    r.entries[1].kind = BOOT_ENTRY_KIND_SPLIT;
+    r.entries[1].flags = BOOT_ENTRY_FLAG_ACTIVE;
+
+    boot_policy_inputs_t in;
+    zero_inputs(&in);
+    in.supported_kinds_mask = (1u << BOOT_ENTRY_KIND_SPLIT) |
+                              (1u << BOOT_ENTRY_KIND_UKI);
+    boot_policy_decision_t d;
+    boot_policy_decide(&in, &r, ((const boot_counter_t *)0), 0u, &d);
+
+    TEST_ASSERT_EQ(d.reason, BOOT_SELECTION_STORE_DEFAULT,
+                   "supported kind wins despite higher-priority unsupported");
+    TEST_ASSERT(d.selected_entry_id[0] == 's',
+                "split-boot picked, not net-boot");
+    TEST_ASSERT_EQ(d.rejected_count, 1u, "one rejection recorded");
+    TEST_ASSERT_EQ(d.rejected[0].reason, BOOT_REJECT_REASON_KIND_UNAVAILABLE,
+                   "kind=network rejected as KIND_UNAVAILABLE");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_boot_policy(void)
@@ -856,6 +1074,26 @@ void test_register_boot_policy(void)
                             test_ladder_zeroed_inputs_no_ab_default, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: empty machine_id wildcard accepted (regression)",
                             test_parser_empty_machine_id_wildcard, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: supported_kinds_mask filters unavailable kinds",
+                            test_ladder_supported_kinds_mask_filters_unavailable,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: supported_kinds_mask closed for kind >= 32",
+                            test_ladder_supported_kinds_mask_rejects_kind_ge_32,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: kind_to_path RECOVERY",
+                            test_kind_to_path_recovery, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: kind_to_path DIAGNOSTICS",
+                            test_kind_to_path_diagnostics, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: kind_to_path NETWORK",
+                            test_kind_to_path_network, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: kind_to_path RESUME",
+                            test_kind_to_path_resume, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: kind_to_path non-path-changing kinds are no-op",
+                            test_kind_to_path_split_is_no_op, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: UKI mode rejects kind=SPLIT entry",
+                            test_ladder_uki_mode_rejects_split_entry, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-policy: split mode rejects kind=UKI entry",
+                            test_ladder_split_mode_rejects_uki_entry, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: counters_overflow fails closed (regression)",
                             test_ladder_counters_overflow_fails_closed, TEST_CAT_BOOT);
     test_suite_register_cat("boot-policy: invoked_via_uki -> kind=uki fallback (regression)",

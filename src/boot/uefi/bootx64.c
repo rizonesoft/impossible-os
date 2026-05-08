@@ -29,6 +29,8 @@
 #include "boot_loader_identity.h" /* generated; provides BOOT_LOADER_GIT_SHA + ..._BUILD_TIME + ..._BUILD_LABEL */
 #include "../../../include/boot/uki_cmdline_check.h" /* uki_find_disk_override_token() shared with kernel test */
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
+#include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
+#include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
 #include "../../../include/kernel/firmware_quirks_parse.inc" /* shared firmware_quirk_disable= tokenizer */
 
 /* Inline rdtsc for boot timing */
@@ -131,8 +133,28 @@ static CHAR16 g_boot_error_var[] = u"BootError";
 #define BOOT_SECTION_BL_KERNEL      0x0103u  /* load_kernel */
 #define BOOT_SECTION_BL_PAGETABLES  0x0104u  /* setup_kernel_pages */
 #define BOOT_SECTION_BL_EBS         0x0105u  /* ExitBootServices retry loop */
+#define BOOT_SECTION_BL_POLICY      0x0106u  /* boot_policy_invoke */
 
 static UINT16 g_boot_section = BOOT_SECTION_UNKNOWN;
+
+/* Boot-policy decision artifacts captured pre-EBS for the post-EBS
+ * boot-decision populate block to read. Selected kind is preserved as
+ * a sentinel-bearing UINT32: 0xFFFFFFFF means "no policy decision ran"
+ * (BSS-zero would collide with BOOT_ENTRY_KIND_SPLIT == 0). The populate
+ * block applies the path-changing kind override (recovery / diagnostics
+ * / network / resume) AFTER the media-role switch so policy intent
+ * trumps a NORMAL media role but still falls back to an installer /
+ * recovery / diagnostics media role when no path-changing kind fired.
+ *
+ * The boot_info v19 fields (selected_entry_id / selection_reason /
+ * rejected_entries) are written directly into g_boot_info_ptr by the
+ * boot-policy invoke step pre-EBS; they survive EBS as part of the
+ * boot_info struct at BOOT_INFO_PHYS_ADDR. This static is a separate
+ * carry-channel for the kind because the kind is needed to map to
+ * boot_path / boot_reason but the post-EBS populate block lives in a
+ * different scope. */
+#define G_POLICY_KIND_UNSET 0xFFFFFFFFu
+static UINT32 g_policy_selected_kind = G_POLICY_KIND_UNSET;
 
 /* Forward declaration of the history-ring writer (definition lives in
  * src/boot/uefi/boot_history.c).  Three call sites: boot_fatal(),
@@ -209,6 +231,10 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_ESP_INTEGRITY_OK 0xB09C  /* ESP integrity all gates passed */
 #define POST16_BL_ROLLBACK_REFUSE 0xB09A  /* Anti-rollback: shipped < required */
 #define POST16_BL_ROLLBACK_PASS   0xB09B  /* Anti-rollback: shipped >= required */
+#define POST16_BL_BOOT_POLICY     0xB0B0  /* Boot policy invocation entry */
+#define POST16_BL_BOOT_POLICY_PARSE 0xB0B1 /* Boot entries store parsed */
+#define POST16_BL_BOOT_POLICY_DECIDE 0xB0B2 /* Policy ladder decided */
+#define POST16_BL_BOOT_POLICY_OK  0xB0B3  /* Policy decision copied to boot_info */
 
 /* --- Helper: memory ops ---
  * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
@@ -3383,6 +3409,525 @@ static void load_staged_payloads(void)
     g_boot_info_ptr->payload_count       = (UINT32)g_staged_payload_count;
     g_boot_info_ptr->payload_overflow    = g_staged_payload_overflow;
     g_boot_info_ptr->payload_total_bytes = total_bytes;
+}
+
+/* ============================================================================
+ * Boot policy invocation -- ESP store + Boot####.OptionalData + ladder.
+ *
+ * Runs pre-EBS, between init_gop OK and load_kernel. Reads
+ * \EFI\ImpossibleOS\bootentries.json from the boot device, decodes
+ * Boot####.OptionalData for the BootCurrent->internal-id mapping, runs
+ * the pure-C boot_policy_decide() ladder, and copies the decision into
+ * the boot_info v19 selection ABI. The chosen entry's kind is held in
+ * g_policy_selected_kind so the post-EBS boot-decision populate block
+ * can apply the path-changing kind override AFTER the media-role
+ * switch. Counter-directory scan + crash-tolerant rename + the
+ * kernel-side Phase-0 v19 ABI validator are owned by the next section
+ * and are NOT part of this invocation.
+ * ============================================================================ */
+
+/* Read SecureBoot + SetupMode + AuditMode pre-EBS so the policy filter's
+ * path-escape gate (chainload + Secure Boot + missing trusted_chainload
+ * flag) can fire. boot_info.secure_boot_enabled is kernel-populated
+ * AFTER ExitBootServices (the kernel re-reads SecureBoot via UEFI RT)
+ * and is not trustworthy here. UEFI 2.10 specification section 32.3:
+ * SB is active iff SecureBoot == 1 AND SetupMode == 0. AuditMode == 1
+ * means SB is in audit-only mode (signature verification logged but
+ * not enforced) -- treat as not-enforcing for the path-escape gate.
+ * The boot-menu feature reuses this helper to drive the menu indicator. */
+static int bootloader_secureboot_active(void)
+{
+    EFI_GUID global_guid = EFI_GLOBAL_VARIABLE_GUID;
+    EFI_RUNTIME_SERVICES *rt = gST ? gST->RuntimeServices : (EFI_RUNTIME_SERVICES *)0;
+    if (!rt || !rt->GetVariable) return 0;
+
+    UINT8 sb = 0, setup = 0, audit = 0;
+    UINT32 attrs = 0;
+    UINTN sz;
+
+    sz = sizeof(sb);
+    if (EFI_ERROR(rt->GetVariable(u"SecureBoot", &global_guid, &attrs, &sz, &sb))
+        || sz != sizeof(sb))
+        return 0;
+    if (sb != 1) return 0;
+
+    sz = sizeof(setup);
+    if (!EFI_ERROR(rt->GetVariable(u"SetupMode", &global_guid, &attrs, &sz, &setup))
+        && sz == sizeof(setup) && setup != 0)
+        return 0;
+
+    sz = sizeof(audit);
+    if (!EFI_ERROR(rt->GetVariable(u"AuditMode", &global_guid, &attrs, &sz, &audit))
+        && sz == sizeof(audit) && audit != 0)
+        return 0;
+
+    return 1;
+}
+
+/* Decode Boot####.OptionalData where #### == BootCurrent. The optional
+ * data trails the EFI_LOAD_OPTION header + Description (UCS-2 NUL-term)
+ * + FilePathList (FilePathListLength bytes). When the trailing blob
+ * starts with the 5-byte tag "IPOS\x01", the next bytes up to a NUL or
+ * end-of-blob are the kebab-case internal entry id; copy NUL-terminated
+ * into out_id (max 47 chars + NUL) and set *out_known = 1.
+ *
+ * Untrusted firmware input: every offset is bounded against lo_sz; a
+ * truncated Description (no NUL within max_desc_bytes) leaves
+ * *out_known = 0 without dereferencing past the buffer. Same for an
+ * over-long FilePathList. */
+static void read_boot_optionaldata_id(UINT16 boot_current,
+                                      char out_id[64],
+                                      int *out_known)
+{
+    out_id[0] = 0;
+    *out_known = 0;
+    if (boot_current == 0xFFFFu) return;
+
+    EFI_GUID global_guid = EFI_GLOBAL_VARIABLE_GUID;
+    EFI_RUNTIME_SERVICES *rt = gST ? gST->RuntimeServices : (EFI_RUNTIME_SERVICES *)0;
+    if (!rt || !rt->GetVariable) return;
+
+    static const char hex[] = "0123456789ABCDEF";
+    CHAR16 var_name[] = u"Boot0000";
+    var_name[4] = (CHAR16)hex[(boot_current >> 12) & 0xF];
+    var_name[5] = (CHAR16)hex[(boot_current >> 8) & 0xF];
+    var_name[6] = (CHAR16)hex[(boot_current >> 4) & 0xF];
+    var_name[7] = (CHAR16)hex[boot_current & 0xF];
+
+    UINT8 lo_buf[2048];
+    UINTN lo_sz = sizeof(lo_buf);
+    UINT32 attrs = 0;
+    EFI_STATUS s = rt->GetVariable(var_name, &global_guid, &attrs, &lo_sz, lo_buf);
+    if (EFI_ERROR(s) || lo_sz <= 6u) return;
+
+    UINT16 fp_len = (UINT16)(lo_buf[4] | ((UINT16)lo_buf[5] << 8));
+    const CHAR16 *desc = (const CHAR16 *)&lo_buf[6];
+    UINTN max_desc_bytes = lo_sz - 6u;
+
+    /* Walk Description until NUL CHAR16. */
+    UINTN di;
+    UINTN desc_end_byte = (UINTN)-1;
+    for (di = 0; (di * 2u + 1u) < max_desc_bytes; di++) {
+        if (desc[di] == 0) {
+            desc_end_byte = 6u + (di + 1u) * 2u;  /* byte after NUL CHAR16 */
+            break;
+        }
+    }
+    if (desc_end_byte == (UINTN)-1) return;
+    if (desc_end_byte + (UINTN)fp_len > lo_sz) return;
+
+    UINTN od_off = desc_end_byte + (UINTN)fp_len;
+    UINTN od_len = lo_sz - od_off;
+    if (od_len < 6u) return;  /* IPOS\x01 + at least 1 id byte */
+
+    const UINT8 *od = lo_buf + od_off;
+    if (od[0] != 'I' || od[1] != 'P' || od[2] != 'O' || od[3] != 'S' || od[4] != 0x01)
+        return;
+
+    /* Copy ASCII id NUL-terminated; reject non-kebab chars defensively
+     * to keep a malformed firmware variable from poisoning the ladder
+     * input. id grammar = [a-z0-9-] (kebab-case). */
+    UINTN i;
+    for (i = 0; i < 47u && (5u + i) < od_len; i++) {
+        UINT8 c = od[5u + i];
+        if (c == 0) break;
+        int kebab = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+        if (!kebab) {
+            out_id[0] = 0;
+            return;
+        }
+        out_id[i] = (char)c;
+    }
+    out_id[i] = 0;
+    if (i > 0) *out_known = 1;
+}
+
+/* Read \EFI\ImpossibleOS\bootentries.json into a freshly AllocatePool'd
+ * buffer. Mirror parse_boot_conf's size-probe + AllocatePool shape.
+ * Returns EFI_SUCCESS + (*out_buf, *out_len) on success; EFI_NOT_FOUND
+ * when the file is absent (ladder treats this as STORE_INVALID and
+ * synthesizes the fallback envelope). hard-fails via boot_fatal() when
+ * the file exceeds BOOT_ENTRIES_MAX_TOTAL_BYTES (16 KiB) per the boot
+ * entry file format spec -- anything larger means filesystem corruption
+ * or hostile input, never silent truncation. */
+static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
+{
+    *out_buf = (unsigned char *)0;
+    *out_len = 0;
+
+    if (!g_boot_device_handle) return EFI_NOT_FOUND;
+
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+    EFI_STATUS status = gBS->HandleProtocol(g_boot_device_handle, &fs_guid,
+                                            (VOID **)&fs);
+    if (EFI_ERROR(status) || !fs) return EFI_NOT_FOUND;
+
+    EFI_FILE_PROTOCOL *root_dir = (EFI_FILE_PROTOCOL *)0;
+    status = fs->OpenVolume(fs, &root_dir);
+    if (EFI_ERROR(status) || !root_dir) return EFI_NOT_FOUND;
+
+    EFI_FILE_PROTOCOL *json_file = (EFI_FILE_PROTOCOL *)0;
+    status = root_dir->Open(root_dir, &json_file,
+                            u"\\EFI\\ImpossibleOS\\bootentries.json",
+                            EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !json_file) {
+        root_dir->Close(root_dir);
+        return EFI_NOT_FOUND;
+    }
+
+    UINT64 file_size = 0;
+    {
+        EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+        UINTN info_size = 0;
+        status = json_file->GetInfo(json_file, &file_info_guid, &info_size, (VOID *)0);
+        if (status != EFI_BUFFER_TOO_SMALL || info_size == 0) {
+            json_file->Close(json_file);
+            root_dir->Close(root_dir);
+            return EFI_NOT_FOUND;
+        }
+        VOID *info_buf = (VOID *)0;
+        status = gBS->AllocatePool(EfiLoaderData, info_size, &info_buf);
+        if (EFI_ERROR(status) || !info_buf) {
+            json_file->Close(json_file);
+            root_dir->Close(root_dir);
+            serial_early_print("[BOOT] policy: AllocatePool exhaustion -- treating store as absent\n");
+            return EFI_NOT_FOUND;
+        }
+        status = json_file->GetInfo(json_file, &file_info_guid, &info_size, info_buf);
+        if (EFI_ERROR(status)) {
+            gBS->FreePool(info_buf);
+            json_file->Close(json_file);
+            root_dir->Close(root_dir);
+            return EFI_NOT_FOUND;
+        }
+        file_size = ((EFI_FILE_INFO *)info_buf)->FileSize;
+        gBS->FreePool(info_buf);
+    }
+
+    if (file_size == 0) {
+        json_file->Close(json_file);
+        root_dir->Close(root_dir);
+        return EFI_NOT_FOUND;
+    }
+    if (file_size > (UINT64)BOOT_ENTRIES_MAX_TOTAL_BYTES) {
+        json_file->Close(json_file);
+        root_dir->Close(root_dir);
+        boot_fatal(BOOT_ERR_CONF_INVALID,
+                   "bootentries.json exceeds 16 KiB cap",
+                   "Filesystem likely corrupt; bootentries.json claimed >16 KiB. "
+                   "Max-store cap pinned per the boot entry file format spec.");
+    }
+
+    unsigned char *buf = (unsigned char *)0;
+    status = gBS->AllocatePool(EfiLoaderData, (UINTN)file_size + 1u, (VOID **)&buf);
+    if (EFI_ERROR(status) || !buf) {
+        json_file->Close(json_file);
+        root_dir->Close(root_dir);
+        serial_early_print("[BOOT] policy: AllocatePool exhaustion -- treating store as absent\n");
+        return EFI_NOT_FOUND;
+    }
+
+    UINTN read_len = (UINTN)file_size;
+    status = json_file->Read(json_file, &read_len, buf);
+    json_file->Close(json_file);
+    root_dir->Close(root_dir);
+
+    if (EFI_ERROR(status) || read_len == 0) {
+        gBS->FreePool(buf);
+        return EFI_NOT_FOUND;
+    }
+    /* Reject short reads. UEFI Read() may legally return EFI_SUCCESS
+     * with fewer bytes than requested on a flaky controller; feeding a
+     * truncated prefix to the parser would let a syntactically-valid
+     * JSON prefix poison the policy decision. boot-code-quality Gate 14
+     * forbids silent truncation -- the corruption rule is "all or
+     * nothing" for parsed config blobs. */
+    if (read_len != (UINTN)file_size) {
+        serial_early_print("[BOOT] policy: bootentries.json short read (");
+        serial_early_print_uint((UINT32)read_len);
+        serial_early_print(" of ");
+        serial_early_print_uint((UINT32)file_size);
+        serial_early_print(" bytes) -- rejecting as unreadable\n");
+        gBS->FreePool(buf);
+        return EFI_NOT_FOUND;
+    }
+    buf[read_len] = 0;
+    *out_buf = buf;
+    *out_len = read_len;
+    return EFI_SUCCESS;
+}
+
+/* serial_early_print signature for the parser logger callback. */
+static void boot_policy_log_cb(const char *s) { serial_early_print(s); }
+
+/* Trampoline so the ladder log callback formats numeric values without
+ * relying on libc. Used to print selection_reason name + selected id. */
+static const char *selection_reason_name(unsigned int r)
+{
+    switch (r) {
+        case BOOT_SELECTION_UNSET:                 return "UNSET";
+        case BOOT_SELECTION_STORE_DEFAULT:         return "STORE_DEFAULT";
+        case BOOT_SELECTION_BOOTNEXT_HINT:         return "BOOTNEXT_HINT";
+        case BOOT_SELECTION_HOTKEY:                return "HOTKEY";
+        case BOOT_SELECTION_WATCHDOG_ROLLBACK:     return "WATCHDOG_ROLLBACK";
+        case BOOT_SELECTION_AB_TRY_STATE:          return "AB_TRY_STATE";
+        case BOOT_SELECTION_RECOVERY_REQUEST:      return "RECOVERY_REQUEST";
+        case BOOT_SELECTION_FALLBACK_NO_VIABLE:    return "FALLBACK_NO_VIABLE";
+        case BOOT_SELECTION_FALLBACK_STORE_INVALID:return "FALLBACK_STORE_INVALID";
+        case BOOT_SELECTION_UNKNOWN_BOOTCURRENT:   return "UNKNOWN_BOOTCURRENT";
+        default:                                   return "?";
+    }
+}
+
+/* Write a minimal STORE_INVALID decision directly to boot_info v19
+ * without going through the parser/decision heap path. Used when the
+ * pre-EBS AllocatePool budget is exhausted -- as the live producer for
+ * the v19 selection ABI we MUST publish a coherent decision instead of
+ * leaving the fields at BSS-zero (BOOT_SELECTION_UNSET) which would
+ * confuse the kernel-side Phase-0 ABI validator that lands in the next
+ * section. The fallback envelope's id ("fallback") is the canonical
+ * synth id; capture its kind so the populate block sees a sane
+ * non-path-changing kind. */
+static void boot_policy_publish_alloc_failure_fallback(const char *what)
+{
+    boot_entry_envelope_t fb;
+    boot_entries_synthesize_fallback((g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0, &fb);
+
+    UINTN i;
+    for (i = 0; i < sizeof(g_boot_info_ptr->selected_entry_id) - 1u && fb.id[i]; i++)
+        g_boot_info_ptr->selected_entry_id[i] = fb.id[i];
+    g_boot_info_ptr->selected_entry_id[i] = 0;
+    g_boot_info_ptr->selection_reason = (UINT32)BOOT_SELECTION_FALLBACK_STORE_INVALID;
+    g_boot_info_ptr->rejected_entry_count = 0u;
+    g_boot_info_ptr->rejected_entry_overflow = 0u;
+    g_policy_selected_kind = fb.kind;
+
+    serial_early_print("[BOOT] policy: ");
+    serial_early_print(what);
+    serial_early_print(" AllocatePool failed -- publishing FALLBACK_STORE_INVALID\n");
+}
+
+/* The boot-policy invoke step. Owns ESP read, OptionalData decode,
+ * ladder dispatch, and boot_info v19 population. Counter scan / crash-
+ * tolerant rename / kernel-side Phase-0 ABI validator are owned by the
+ * next section. */
+static void boot_policy_invoke(void)
+{
+    boot_set_section(BOOT_SECTION_BL_POLICY);
+    post_code16(POST16_BL_BOOT_POLICY);
+    serial_early_print("[BOOT] boot_policy_invoke...\n");
+
+    /* Allocate the result + decision + inputs structs in pool. The
+     * decision is ~3 KiB and the parser result is ~3.5 KiB so keeping
+     * them off the pre-EBS stack (~64 KiB on most firmware) is the
+     * right call -- the include/boot/boot_policy.h static_assert pins
+     * decision <= 8 KiB precisely so this allocation discipline is
+     * load-bearing. */
+    boot_entries_parse_result_t *parse =
+        (boot_entries_parse_result_t *)0;
+    boot_policy_inputs_t *inputs = (boot_policy_inputs_t *)0;
+    boot_policy_decision_t *decision = (boot_policy_decision_t *)0;
+    unsigned char *json_buf = (unsigned char *)0;
+    UINTN json_len = 0;
+    EFI_STATUS s;
+
+    s = gBS->AllocatePool(EfiLoaderData, sizeof(*parse), (VOID **)&parse);
+    if (EFI_ERROR(s) || !parse) {
+        boot_policy_publish_alloc_failure_fallback("parse_result");
+        return;
+    }
+    s = gBS->AllocatePool(EfiLoaderData, sizeof(*inputs), (VOID **)&inputs);
+    if (EFI_ERROR(s) || !inputs) {
+        gBS->FreePool(parse);
+        boot_policy_publish_alloc_failure_fallback("inputs");
+        return;
+    }
+    s = gBS->AllocatePool(EfiLoaderData, sizeof(*decision), (VOID **)&decision);
+    if (EFI_ERROR(s) || !decision) {
+        gBS->FreePool(inputs);
+        gBS->FreePool(parse);
+        boot_policy_publish_alloc_failure_fallback("decision");
+        return;
+    }
+
+    /* Zero everything; UEFI AllocatePool returns uninitialized pool. */
+    for (UINTN i = 0; i < sizeof(*parse); i++) ((UINT8 *)parse)[i] = 0;
+    for (UINTN i = 0; i < sizeof(*inputs); i++) ((UINT8 *)inputs)[i] = 0;
+    for (UINTN i = 0; i < sizeof(*decision); i++) ((UINT8 *)decision)[i] = 0;
+
+    /* Conservative input defaults for branches the ladder reads pre-set. */
+    inputs->boot_current = 0xFFFFu;
+    inputs->ab_slot_index = BOOT_POLICY_NO_AB_SLOT;
+
+    /* ---- Parse the ESP store (or synthesize a STORE_INVALID result). */
+    s = load_bootentries_json(&json_buf, &json_len);
+    if (s == EFI_SUCCESS && json_buf && json_len > 0) {
+        int sb_active = bootloader_secureboot_active();
+        int rc = boot_entries_parse(json_buf, (unsigned int)json_len,
+                                    sb_active, boot_policy_log_cb, parse);
+        (void)rc;
+        post_code16(POST16_BL_BOOT_POLICY_PARSE);
+        serial_early_print("[BOOT] policy: bootentries.json parsed reject_code=");
+        serial_early_print_uint((UINT32)parse->reject_code);
+        serial_early_print(" entries=");
+        serial_early_print_uint((UINT32)parse->entry_count);
+        serial_early_print("\n");
+    } else {
+        /* Missing or unreadable -- synthesize a STORE_INVALID result so
+         * the ladder writes FALLBACK_STORE_INVALID and the caller below
+         * synthesizes the in-firmware fallback envelope. Use the
+         * existing JSON_PARSE reject code with a clear reject_msg; the
+         * code distinguishes "store unreadable" from "store rejected"
+         * via the message shown on serial. */
+        parse->reject_code = BOOT_ENTRIES_REJECT_JSON_PARSE;
+        const char *m = "bootentries.json absent or unreadable";
+        UINTN mi;
+        for (mi = 0; mi < BOOT_ENTRIES_REJECT_MSG_LEN - 1u && m[mi]; mi++)
+            parse->reject_msg[mi] = m[mi];
+        parse->reject_msg[mi] = 0;
+        serial_early_print("[BOOT] policy: bootentries.json absent/unreadable -- fallback\n");
+    }
+
+    /* ---- Fill ladder inputs. ----------------------------------------- */
+    inputs->boot_current     = g_boot_info_ptr->uefi_boot_current;
+    inputs->boot_next        = g_boot_info_ptr->uefi_boot_next;
+    inputs->boot_next_valid  = g_boot_info_ptr->uefi_boot_next_valid ? 1 : 0;
+    inputs->secure_boot_active = bootloader_secureboot_active();
+    inputs->invoked_via_uki  = (g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0;
+
+    /* Local machine UUID feeds the machine_id filter. The bootloader
+     * does not yet parse SMBIOS table 1 (System Information) for the
+     * UUID -- that producer ships with the loader-variables feature
+     * which also exports the UUID to userspace via the LoaderXxx
+     * variables and the registry. Until then leave local_machine_id
+     * empty, which per the schema doc means "machine has no UUID --
+     * match only entries with an empty machine_id (wildcard)". This
+     * is the right behavior for today's bootstrap-seeded default
+     * entries, which all use the empty-string wildcard. Machine-
+     * pinned entries become selectable when SMBIOS UUID parsing
+     * lands. */
+    inputs->local_machine_id[0] = 0;
+
+    /* Resolve BootCurrent -> internal id via Boot####.OptionalData. */
+    read_boot_optionaldata_id(g_boot_info_ptr->uefi_boot_current,
+                              inputs->bootcurrent_entry_id,
+                              &inputs->bootcurrent_known);
+
+    /* Caller-side capability gate. Mode-locked: today's load_kernel
+     * uses the embedded UKI payload OR the disk kernel.exe based on
+     * detect_uki_sections() before policy runs; the policy ladder
+     * cannot switch modes. Cross-mode selection (kind=uki under
+     * split, kind=split under UKI) would write a lying
+     * selected_entry_id to boot_info v19 -- the ladder picked a
+     * payload the loader will not actually load.
+     *
+     * UKI mode  -> admit only KIND_UKI.
+     * Split mode -> admit only KIND_SPLIT.
+     *
+     * Every other kind needs follow-up wiring in a later section
+     * before it can be selected without lying to consumers:
+     *   - RECOVERY: needs recovery-partition load path (recovery
+     *     integration feature + recovery partition feature).
+     *   - SAFE / TEST / DIAGNOSTICS: need boot_config materialization
+     *     from the entry flag set so the kernel actually enters the
+     *     matching mode instead of running the normal default.
+     *   - INSTALLER: needs the installer-bootstrap entry-seeding flow.
+     *   - CHAINLOAD / NETWORK / RESUME: need the per-entry-kind handler
+     *     table (LoadImage / fetch+digest / hibernation validation).
+     * Each owner section widens this mask as it ships. KIND_UNAVAILABLE
+     * is the right reject reason while the loader cannot finish the
+     * handoff a chosen entry would imply. Note that even within the
+     * current mode, the selected entry's payload metadata (kernel/
+     * cmdline/root for split, .linux section path for UKI) is
+     * informational only until per-kind dispatchers land -- the loader
+     * still loads the ambient payload. The mask gate is the floor;
+     * selecting same-mode entries is the policy decision the kernel
+     * sees recorded, not an instruction the loader follows yet. */
+    if (inputs->invoked_via_uki) {
+        inputs->supported_kinds_mask = (1u << BOOT_ENTRY_KIND_UKI);
+    } else {
+        inputs->supported_kinds_mask = (1u << BOOT_ENTRY_KIND_SPLIT);
+    }
+
+    /* hotkey / watchdog / A/B / recovery_requested / counters_overflow
+     * are all owned by neighboring features (boot menu, watchdog
+     * audit, A/B integration, recovery integration, crash-tolerant
+     * counter protocol). All zero today -- the BSS-zero default is
+     * the documented "no override" semantics for each axis. */
+
+    /* ---- Run the ladder. -------------------------------------------- */
+    boot_policy_decide(inputs, parse,
+                       (const boot_counter_t *)0, 0u, decision);
+    post_code16(POST16_BL_BOOT_POLICY_DECIDE);
+
+    /* On STORE_INVALID the ladder leaves selected_entry_id empty per
+     * the file-format fallback contract; the caller synthesizes the
+     * fallback envelope from the parser's helper. */
+    if (decision->reason == BOOT_SELECTION_FALLBACK_STORE_INVALID) {
+        boot_entries_synthesize_fallback(inputs->invoked_via_uki ? 1 : 0,
+                                         &decision->selected);
+        UINTN i;
+        for (i = 0; i < sizeof(decision->selected_entry_id) - 1u
+                    && decision->selected.id[i]; i++)
+            decision->selected_entry_id[i] = decision->selected.id[i];
+        decision->selected_entry_id[i] = 0;
+    }
+
+    /* ---- Copy decision into boot_info v19 selection fields. ---------- */
+    {
+        UINTN i;
+        for (i = 0; i < sizeof(g_boot_info_ptr->selected_entry_id) - 1u
+                    && decision->selected_entry_id[i]; i++)
+            g_boot_info_ptr->selected_entry_id[i] = decision->selected_entry_id[i];
+        g_boot_info_ptr->selected_entry_id[i] = 0;
+    }
+    g_boot_info_ptr->selection_reason = (UINT32)decision->reason;
+    g_boot_info_ptr->rejected_entry_count = decision->rejected_count;
+    g_boot_info_ptr->rejected_entry_overflow = decision->rejected_overflow;
+    {
+        UINTN ri;
+        UINTN n = decision->rejected_count;
+        if (n > BOOT_ENTRIES_MAX_ENTRIES) n = BOOT_ENTRIES_MAX_ENTRIES;
+        for (ri = 0; ri < n; ri++) {
+            UINTN i;
+            for (i = 0; i < sizeof(g_boot_info_ptr->rejected_entries[0].id) - 1u
+                        && decision->rejected[ri].id[i]; i++)
+                g_boot_info_ptr->rejected_entries[ri].id[i] = decision->rejected[ri].id[i];
+            g_boot_info_ptr->rejected_entries[ri].id[i] = 0;
+            g_boot_info_ptr->rejected_entries[ri].reason = decision->rejected[ri].reason;
+        }
+    }
+
+    /* Capture the chosen kind for the post-EBS populate block. The
+     * fallback envelope's kind is the right answer for STORE_INVALID
+     * (boot_entries_synthesize_fallback set it to SPLIT or UKI). */
+    g_policy_selected_kind = decision->selected.kind;
+
+    serial_early_print("[BOOT] policy: selection_reason=");
+    serial_early_print_uint((UINT32)decision->reason);
+    serial_early_print(" (");
+    serial_early_print(selection_reason_name((unsigned int)decision->reason));
+    serial_early_print(") selected=\"");
+    serial_early_print(g_boot_info_ptr->selected_entry_id);
+    serial_early_print("\" kind=");
+    serial_early_print_uint((UINT32)decision->selected.kind);
+    serial_early_print(" rejected=");
+    serial_early_print_uint((UINT32)decision->rejected_count);
+    if (decision->rejected_overflow) serial_early_print(" (overflow)");
+    serial_early_print("\n");
+
+    post_code16(POST16_BL_BOOT_POLICY_OK);
+
+    /* FreePool the heap structures. The boot_info copies survive in
+     * BOOT_INFO_PHYS_ADDR. The JSON buffer can also be released --
+     * the parser deep-copied every needed string into the envelope
+     * arrays inside parse_result, but parse_result itself is being
+     * freed too. The kind static was already captured. */
+    if (json_buf) gBS->FreePool(json_buf);
+    gBS->FreePool(decision);
+    gBS->FreePool(inputs);
+    gBS->FreePool(parse);
 }
 
 /* ============================================================================
@@ -9020,6 +9565,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                    "Deliberate boot failure triggered by error_screen_test=1 in boot.conf.");
     }
 
+    /* Boot-policy invocation: read \EFI\ImpossibleOS\bootentries.json,
+     * decode Boot####.OptionalData, run the precedence ladder, and
+     * publish the decision into boot_info v19. Pre-EBS only -- counter
+     * mutation and gRT->SetVariable calls happen here while Boot
+     * Services + Runtime Services are still callable. The path-changing
+     * kind override (recovery / diagnostics / network / resume) lives
+     * in the post-EBS boot-decision populate block where the rest of
+     * the path/reason wiring is centralized. */
+    watchdog_reset();
+    boot_policy_invoke();
+
     /* Load kernel ELF */
     post_code16(POST16_BL_KERNEL_OPEN);
     watchdog_reset();
@@ -9387,6 +9943,44 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 break;
             default:
                 break;
+        }
+        /* Boot-policy ladder kind override. Runs AFTER the media-role
+         * switch so a path-changing entry kind (recovery / diagnostics
+         * / network / resume) wins over a NORMAL media role but a
+         * non-path-changing kind (split / uki / installer / safe /
+         * test) leaves the media-role decision in place. The mapping
+         * is documented in docs/boot/boot-policy.md and lives as a
+         * pure helper in boot_policy.c so it is unit-testable from the
+         * kernel test runner. The static_asserts pin the helper's
+         * raw-value outputs to the kernel boot_path_type /
+         * boot_reason_code / BOOT_SOURCE_FLAG_* enums; a future enum
+         * reorder triggers a build error here before the mapping can
+         * silently drift. */
+        _Static_assert(BOOT_POLICY_PATH_RECOVERY == BOOT_PATH_RECOVERY,
+                       "boot_policy raw constant drift: PATH_RECOVERY");
+        _Static_assert(BOOT_POLICY_PATH_NETWORK == BOOT_PATH_NETWORK,
+                       "boot_policy raw constant drift: PATH_NETWORK");
+        _Static_assert(BOOT_POLICY_PATH_RESUME == BOOT_PATH_RESUME,
+                       "boot_policy raw constant drift: PATH_RESUME");
+        _Static_assert(BOOT_POLICY_PATH_DIAGNOSTIC == BOOT_PATH_DIAGNOSTIC,
+                       "boot_policy raw constant drift: PATH_DIAGNOSTIC");
+        _Static_assert(BOOT_POLICY_REASON_USER_SELECTED == BOOT_REASON_USER_SELECTED,
+                       "boot_policy raw constant drift: REASON_USER_SELECTED");
+        _Static_assert(BOOT_POLICY_REASON_RECOVERY_TRIGGER == BOOT_REASON_RECOVERY_TRIGGER,
+                       "boot_policy raw constant drift: REASON_RECOVERY_TRIGGER");
+        _Static_assert(BOOT_POLICY_REASON_DIAGNOSTIC_REQUEST == BOOT_REASON_DIAGNOSTIC_REQUEST,
+                       "boot_policy raw constant drift: REASON_DIAGNOSTIC_REQUEST");
+        _Static_assert(BOOT_POLICY_SRC_FLAG_RECOVERY_TRIGGERED == BOOT_SOURCE_FLAG_RECOVERY_TRIGGERED,
+                       "boot_policy raw constant drift: SRC_FLAG_RECOVERY_TRIGGERED");
+        if (g_policy_selected_kind != G_POLICY_KIND_UNSET) {
+            boot_policy_path_override_t ovr;
+            if (boot_policy_kind_to_path(g_policy_selected_kind, &ovr)) {
+                g_boot_info_ptr->boot_path = ovr.boot_path;
+                g_boot_info_ptr->boot_reason = ovr.boot_reason;
+                src_flags |= ovr.src_flag_add;
+            }
+            /* Non-path-changing kind: helper returned 0; media-role
+             * override (if any) stands. */
         }
         g_boot_info_ptr->boot_source_flags = src_flags;
         /* Fallback depth: 0 on the primary path. The current loader
