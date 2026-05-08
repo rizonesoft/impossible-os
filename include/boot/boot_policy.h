@@ -170,11 +170,31 @@ typedef struct {
      * BOOT_REJECT_REASON_KIND_UNAVAILABLE so the ladder picks something
      * the caller can finish booting.
      *
-     * `0` is the back-compat default: NO gate. The pure-C unit tests
-     * exercise the ladder without this field; the bootloader sets the
-     * mask to the kinds its load_kernel path can dispatch (split + UKI
-     * + the boot.conf-flag kinds today; chainload / network / resume
-     * are added when the per-entry-kind handlers feature ships). */
+     * Contract:
+     *   - mask == 0 -> gate DISABLED (back-compat for the pure-C unit
+     *     tests that pre-date this field).
+     *   - mask != 0 -> closed-mask: kind >= 32 always rejects (vendor /
+     *     reserved-future ranges fail closed even if the parser stops
+     *     setting kind_skipped).
+     *   - mask != 0, kind < 32, bit clear -> rejects with
+     *     KIND_UNAVAILABLE.
+     *
+     * Today's bootloader (boot_policy_invoke()) sets EXACTLY ONE bit
+     * based on the launch mode: BOOT_ENTRY_KIND_UKI when
+     * invoked_via_uki=1, BOOT_ENTRY_KIND_SPLIT otherwise. Cross-mode
+     * selection would lie to the kernel about which payload was
+     * loaded (load_kernel is mode-locked at detect_uki_sections time
+     * and cannot switch modes from a policy decision), so the gate
+     * filters those entries out.
+     *
+     * Future owner sections widen the mask one kind at a time, ONLY
+     * when their load path can fully execute the selected entry's
+     * payload: SAFE/TEST/DIAGNOSTICS need boot_config materialization
+     * from entry flags; RECOVERY needs the recovery-partition load
+     * path; INSTALLER needs a distinct installer-image load path plus offline + first-install seeding;
+     * CHAINLOAD/NETWORK/RESUME need the per-entry-kind handler table.
+     * Each owner section's TODO has a checklist item to widen this
+     * mask. */
     unsigned int supported_kinds_mask;
 } boot_policy_inputs_t;
 

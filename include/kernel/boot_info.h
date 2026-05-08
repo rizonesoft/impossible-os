@@ -1596,21 +1596,30 @@ struct boot_info {
      * passed parsing. See enum boot_selection_reason / boot_reject_reason
      * in include/boot/boot_policy.h.
      *
-     * Producer status: v19 storage ships ahead of the live producer. The
-     * boot-entry policy module (src/boot/uefi/boot_policy.c) provides
-     * boot_policy_decide(), but bootx64.c does not yet read the ESP store
-     * or invoke the ladder -- that's tracked in the boot-entry policy
-     * Branch B follow-up "Wire boot_policy_decide() into bootx64.c" in
-     * todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md. Until
-     * that lands, selection_reason == BOOT_SELECTION_UNSET (0) is the
-     * explicit "no decision available" sentinel: kernel-side consumers
-     * (registry surface from the loader-variables feature, policy audit
-     * from the watchdog feature) MUST treat UNSET as a no-op, NOT as a
-     * producer bug. selected_entry_id is empty in that case. After the
-     * producer ships, UNSET becomes a producer-must-overwrite invariant --
-     * the registry/audit consumers will validate selection_reason within
-     * [BOOT_SELECTION_STORE_DEFAULT..BOOT_SELECTION_REASON_MAX] and reject
-     * UNSET.
+     * Producer status: LIVE. The bootloader's boot_policy_invoke()
+     * (src/boot/uefi/bootx64.c) reads bootentries.json from the ESP,
+     * decodes Boot####.OptionalData, runs boot_policy_decide(), and
+     * publishes the decision into the v19 fields BEFORE ExitBootServices.
+     *
+     * UNSET (0) is reserved as a producer-bug sentinel: kernel-side
+     * consumers (registry / policy audit / loader-variables feature)
+     * MUST validate selection_reason within
+     * [BOOT_SELECTION_STORE_DEFAULT..BOOT_SELECTION_REASON_MAX] and
+     * REJECT UNSET as a missing-producer fault. The bootloader code
+     * path always publishes a non-UNSET reason, including a synthetic
+     * BOOT_SELECTION_FALLBACK_STORE_INVALID for AllocatePool exhaustion
+     * (publishes the empty-selected_entry_id sentinel directly without
+     * heap), so consumers seeing UNSET have caught a regression.
+     *
+     * For BOOT_SELECTION_FALLBACK_STORE_INVALID, selected_entry_id is
+     * EMPTY (the documented sentinel for an unusable parsed store).
+     * The bootloader synthesizes a fallback envelope via
+     * boot_entries_synthesize_fallback() for kind capture and the
+     * load-time identifier, but the v19 selected_entry_id stays empty
+     * to distinguish "policy chose nothing from the store" from
+     * "policy chose entry-X". For every other selection_reason, the
+     * field is non-empty (NUL-terminated entry id from the parsed
+     * store).
      *
      * rejected_entry_count==0 is always legal (no entries filtered out). */
     char     selected_entry_id[64];       /* internal id of the entry chosen by the ladder */

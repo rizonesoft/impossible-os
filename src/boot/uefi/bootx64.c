@@ -3526,11 +3526,18 @@ static void read_boot_optionaldata_id(UINT16 boot_current,
 
     /* Copy ASCII id NUL-terminated; reject non-kebab chars defensively
      * to keep a malformed firmware variable from poisoning the ladder
-     * input. id grammar = [a-z0-9-] (kebab-case). */
+     * input. id grammar = [a-z0-9-] (kebab-case). The terminator MUST
+     * be a NUL byte (or the buffer's natural end-of-blob); if the loop
+     * ran out the 47-char cap WITHOUT seeing one, the firmware id was
+     * longer than the cap and any prefix we'd publish is a lie -- a
+     * 47-char-without-NUL "default-os-with-extra-tail" would silently
+     * promote to "default-os" and falsely match an existing entry.
+     * Reject the OptionalData mapping outright in that case. */
     UINTN i;
+    int saw_terminator = 0;
     for (i = 0; i < 47u && (5u + i) < od_len; i++) {
         UINT8 c = od[5u + i];
-        if (c == 0) break;
+        if (c == 0) { saw_terminator = 1; break; }
         int kebab = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
         if (!kebab) {
             out_id[0] = 0;
@@ -3538,8 +3545,50 @@ static void read_boot_optionaldata_id(UINT16 boot_current,
         }
         out_id[i] = (char)c;
     }
+    /* Termination matrix. UEFI variable length is authoritative
+     * (the firmware does not truncate OptionalData), so end-of-blob
+     * IS a valid terminator even at the 47-char cap.
+     *   - in-loop NUL break: saw_terminator already set inside the
+     *     loop, post-loop guard is no-op.
+     *   - end-of-blob ((5+i) >= od_len): id ended exactly there;
+     *     accept regardless of i.
+     *   - i == 47 with byte at (5+i) == 0: explicit NUL just past
+     *     the max-length id; accept.
+     *   - i == 47 with byte at (5+i) != 0 AND (5+i) < od_len: cap
+     *     hit AND the firmware id continues past 47 chars; the
+     *     47-char prefix could silently promote to a real entry id,
+     *     so reject. */
+    if (!saw_terminator) {
+        if ((5u + i) >= od_len) {
+            saw_terminator = 1;  /* end-of-blob */
+        } else if (od[5u + i] == 0) {
+            saw_terminator = 1;  /* explicit NUL just past copied region */
+        }
+        /* else: i == 47 with non-NUL data following = reject */
+    }
     out_id[i] = 0;
-    if (i > 0) *out_known = 1;
+    /* Full kebab-case grammar (matches the boot-entry parser at
+     * boot_entries_parser.c sp_is_kebab_char + the leading/trailing/
+     * consecutive-dash gates): reject ids that start or end with '-',
+     * or contain '--'. The per-char gate above already rejected
+     * non-kebab bytes. Accepting a malformed id here would pollute
+     * boot_info.rejected_entries[] with noise from untrusted firmware
+     * even though the malformed id can never match a valid store
+     * entry. Defense-in-depth keeps the audit surface clean. */
+    if (i > 0 && saw_terminator) {
+        if (out_id[0] == '-' || out_id[i - 1u] == '-') {
+            out_id[0] = 0;
+            return;
+        }
+        UINTN j;
+        for (j = 1; j < i; j++) {
+            if (out_id[j] == '-' && out_id[j - 1u] == '-') {
+                out_id[0] = 0;
+                return;
+            }
+        }
+        *out_known = 1;
+    }
 }
 
 /* Read \EFI\ImpossibleOS\bootentries.json into a freshly AllocatePool'd
@@ -3611,12 +3660,19 @@ static EFI_STATUS load_bootentries_json(unsigned char **out_buf, UINTN *out_len)
         return EFI_NOT_FOUND;
     }
     if (file_size > (UINT64)BOOT_ENTRIES_MAX_TOTAL_BYTES) {
+        /* Per the boot entry schema fallback contract, an oversize
+         * store is an INVALID store, not a fatal bootloader error --
+         * boot_policy_invoke() routes EFI_NOT_FOUND through to the
+         * FALLBACK_STORE_INVALID synthesis path so the operator gets
+         * a usable fallback envelope instead of a halt. A hostile or
+         * corrupt ESP cannot stop the machine just by inflating the
+         * policy file. */
         json_file->Close(json_file);
         root_dir->Close(root_dir);
-        boot_fatal(BOOT_ERR_CONF_INVALID,
-                   "bootentries.json exceeds 16 KiB cap",
-                   "Filesystem likely corrupt; bootentries.json claimed >16 KiB. "
-                   "Max-store cap pinned per the boot entry file format spec.");
+        serial_early_print("[BOOT] policy: bootentries.json oversize (");
+        serial_early_print_uint((UINT32)file_size);
+        serial_early_print(" bytes > 16 KiB cap) -- treating as invalid store\n");
+        return EFI_NOT_FOUND;
     }
 
     unsigned char *buf = (unsigned char *)0;
@@ -3694,10 +3750,12 @@ static void boot_policy_publish_alloc_failure_fallback(const char *what)
     boot_entry_envelope_t fb;
     boot_entries_synthesize_fallback((g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0, &fb);
 
-    UINTN i;
-    for (i = 0; i < sizeof(g_boot_info_ptr->selected_entry_id) - 1u && fb.id[i]; i++)
-        g_boot_info_ptr->selected_entry_id[i] = fb.id[i];
-    g_boot_info_ptr->selected_entry_id[i] = 0;
+    /* Per the boot_info v19 ABI, FALLBACK_STORE_INVALID publishes an
+     * EMPTY selected_entry_id; the synthesized "fallback" name is
+     * the load-time identifier, NOT the policy decision. Capture the
+     * kind for the post-EBS populate block override but leave the id
+     * field at its BSS-zero (empty NUL-terminated) state. */
+    g_boot_info_ptr->selected_entry_id[0] = 0;
     g_boot_info_ptr->selection_reason = (UINT32)BOOT_SELECTION_FALLBACK_STORE_INVALID;
     g_boot_info_ptr->rejected_entry_count = 0u;
     g_boot_info_ptr->rejected_entry_overflow = 0u;
@@ -3760,10 +3818,17 @@ static void boot_policy_invoke(void)
     inputs->boot_current = 0xFFFFu;
     inputs->ab_slot_index = BOOT_POLICY_NO_AB_SLOT;
 
+    /* Cache SecureBoot state once -- bootloader_secureboot_active()
+     * does 3 gRT->GetVariable reads which can stall ~5 ms each on
+     * AMI/Phoenix firmware. The parser currently treats this
+     * argument as a no-op (path-escape gating is owned by the
+     * policy filter) but pass the same cached value so a future
+     * parser-layer gate sees the matching value. */
+    int sb_active = bootloader_secureboot_active();
+
     /* ---- Parse the ESP store (or synthesize a STORE_INVALID result). */
     s = load_bootentries_json(&json_buf, &json_len);
     if (s == EFI_SUCCESS && json_buf && json_len > 0) {
-        int sb_active = bootloader_secureboot_active();
         int rc = boot_entries_parse(json_buf, (unsigned int)json_len,
                                     sb_active, boot_policy_log_cb, parse);
         (void)rc;
@@ -3793,7 +3858,7 @@ static void boot_policy_invoke(void)
     inputs->boot_current     = g_boot_info_ptr->uefi_boot_current;
     inputs->boot_next        = g_boot_info_ptr->uefi_boot_next;
     inputs->boot_next_valid  = g_boot_info_ptr->uefi_boot_next_valid ? 1 : 0;
-    inputs->secure_boot_active = bootloader_secureboot_active();
+    inputs->secure_boot_active = sb_active;  /* cached above */
     inputs->invoked_via_uki  = (g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0;
 
     /* Local machine UUID feeds the machine_id filter. The bootloader
@@ -3832,7 +3897,7 @@ static void boot_policy_invoke(void)
      *   - SAFE / TEST / DIAGNOSTICS: need boot_config materialization
      *     from the entry flag set so the kernel actually enters the
      *     matching mode instead of running the normal default.
-     *   - INSTALLER: needs the installer-bootstrap entry-seeding flow.
+     *   - INSTALLER: needs a distinct installer-image load path plus offline + first-install seeding.
      *   - CHAINLOAD / NETWORK / RESUME: need the per-entry-kind handler
      *     table (LoadImage / fetch+digest / hibernation validation).
      * Each owner section widens this mask as it ships. KIND_UNAVAILABLE
@@ -3865,13 +3930,19 @@ static void boot_policy_invoke(void)
      * the file-format fallback contract; the caller synthesizes the
      * fallback envelope from the parser's helper. */
     if (decision->reason == BOOT_SELECTION_FALLBACK_STORE_INVALID) {
+        /* Synthesize the fallback envelope so g_policy_selected_kind
+         * captures the right kind for the post-EBS populate block,
+         * but leave decision->selected_entry_id empty per the
+         * boot_info v19 ABI: empty is the documented sentinel for
+         * FALLBACK_STORE_INVALID (see include/kernel/boot_info.h
+         * "selected_entry_id is empty in that case"). The fallback
+         * envelope's "fallback" id is the LOAD-time identifier used
+         * by load_kernel; the v19 selected_entry_id is the POLICY
+         * decision and the policy did NOT pick an entry from the
+         * (rejected) store. */
         boot_entries_synthesize_fallback(inputs->invoked_via_uki ? 1 : 0,
                                          &decision->selected);
-        UINTN i;
-        for (i = 0; i < sizeof(decision->selected_entry_id) - 1u
-                    && decision->selected.id[i]; i++)
-            decision->selected_entry_id[i] = decision->selected.id[i];
-        decision->selected_entry_id[i] = 0;
+        decision->selected_entry_id[0] = 0;
     }
 
     /* ---- Copy decision into boot_info v19 selection fields. ---------- */

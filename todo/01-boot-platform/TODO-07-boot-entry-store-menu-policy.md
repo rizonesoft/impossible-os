@@ -164,25 +164,28 @@ Two distinct layers, deterministically composed. **Firmware layer**: UEFI `BootC
 
 ## 4. ESP Store Read + Boot#### OptionalData + Policy Wiring
 
-Wire the §3 ladder into the live boot path. Pre-EBS only -- counter mutation (§5) and `gRT->SetVariable` calls happen here while Boot Services + Runtime Services are still callable. Integration point: AFTER `boot_conf_load` and AFTER the GOP/SecureBoot read (§6), BEFORE `load_kernel()` at `src/boot/uefi/bootx64.c:~9023` -- never post-EBS, since counter mutation needs Boot Services. Sanity cap matches `BOOT_ENTRIES_MAX_TOTAL_BYTES` (16 KiB); larger files hard-fail with `boot_fatal()` rather than silently truncating. Path-changing kinds (recovery/diagnostics/network/resume) update `boot_info.boot_path` + `boot_info.boot_reason` to the matching enum values; otherwise leave the existing values alone. `FALLBACK_STORE_INVALID` is the only ladder reason where the caller still synthesizes the fallback envelope itself (the ladder leaves `selected` empty per §3 contract).
+Wire the §3 ladder into the live boot path. Pre-EBS only -- counter mutation (§5) and `gRT->SetVariable` calls happen here while Boot Services + Runtime Services are still callable. Integration point: AFTER `boot_conf_load` and AFTER the GOP/SecureBoot read (§6), BEFORE `load_kernel()` at `src/boot/uefi/bootx64.c:~9023` -- never post-EBS, since counter mutation needs Boot Services. Sanity cap matches `BOOT_ENTRIES_MAX_TOTAL_BYTES` (16 KiB); larger files are treated as INVALID stores per the schema fallback contract -- the loader synthesizes the in-firmware fallback envelope rather than halting (a hostile or corrupt ESP cannot stop the machine just by inflating the policy file). Path-changing kinds (recovery/diagnostics/network/resume) update `boot_info.boot_path` + `boot_info.boot_reason` to the matching enum values; otherwise leave the existing values alone. `FALLBACK_STORE_INVALID` is the only ladder reason where the caller still synthesizes the fallback envelope itself (the ladder leaves `selected` empty per §3 contract).
 
-- [x] Read `\EFI\ImpossibleOS\bootentries.json` via size-probe + `AllocatePool`; pass to `boot_entries_parse()`. `boot_fatal()` on >16 KiB; short-read rejected.
+- [x] Read `\EFI\ImpossibleOS\bootentries.json` via size-probe + `AllocatePool`; pass to `boot_entries_parse()`. Oversize (>16 KiB) and short reads return EFI_NOT_FOUND so the ladder synthesizes the fallback envelope.
 - [x] Parse `Boot####.OptionalData` (`IPOS\x01` tag + kebab-case id) via `gRT->GetVariable`; populate `bootcurrent_entry_id` + `bootcurrent_known`. Bounded walk + kebab grammar gate.
-- [x] Invoke `boot_policy_decide()` post-parse, pre-`load_kernel`; copy decision into `boot_info` v19 fields. `supported_kinds_mask` admits `{SPLIT, UKI}` today; later sections widen.
+- [x] Invoke `boot_policy_decide()` post-parse, pre-`load_kernel`; copy decision into `boot_info` v19 fields. `supported_kinds_mask` is mode-locked: UKI launches admit only `{UKI}`, split launches admit only `{SPLIT}` (the bootloader cannot switch modes from a policy decision); later sections widen.
 - [x] Map path-changing kinds to `boot_info.boot_path` + `boot_info.boot_reason` per the kind -> path table. Pure mapping helper applied in the post-EBS populate block; `_Static_assert`s pin raw constants to kernel enums.
 - [x] Synthesize fallback envelope on `BOOT_SELECTION_FALLBACK_STORE_INVALID`. Covers parser-reject AND heap-exhaustion paths.
 - [x] Commit: `"boot: read ESP store + wire boot policy decide into bootloader"`
 
-**Test checkpoint:** Crafted `bootentries.json` boots through the ladder; serial shows `[BOOT] policy: selection_reason=N (...)` and the chosen entry id; `kind=recovery` flips `boot_info.boot_path` to `BOOT_PATH_RECOVERY`. Missing/corrupt store falls back without halting. Smoke test verified missing-store flow: serial shows `selection_reason=8 (FALLBACK_STORE_INVALID) selected="fallback" kind=0`, smoke PASS in 2.55s on KVM. Test on: QEMU WHPX + TCG; VirtualBox; bare metal once §6 menu ships.
+**Test checkpoint:** Crafted `bootentries.json` boots through the ladder; serial shows `[BOOT] policy: selection_reason=N (...)` and the chosen entry id; `kind=recovery` flips `boot_info.boot_path` to `BOOT_PATH_RECOVERY`. Missing/corrupt store falls back without halting. Smoke test verified missing-store flow: serial shows `selection_reason=8 (FALLBACK_STORE_INVALID) selected="" kind=0` (empty selected_entry_id is the documented v19 ABI sentinel; the synthesized "fallback" envelope is only the load-time object), smoke PASS in 2.46s on KVM. Test on: QEMU WHPX + TCG; VirtualBox; bare metal once §6 menu ships.
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 7 new boot-policy suites added, 0 failures
 
 > **Notes:**
-> - What shipped: `boot_policy_invoke()` + 3 helpers in `bootx64.c`, pure mapping `boot_policy_kind_to_path()` in `boot_policy.c`, `supported_kinds_mask` input field, 4 POST16 codes, 7 unit tests.
+> - What shipped: `boot_policy_invoke()` + 3 helpers in `bootx64.c`, pure mapping `boot_policy_kind_to_path()` in `boot_policy.c`, `supported_kinds_mask` input field, 4 POST16 codes, 9 unit tests.
 > - How it integrates: pre-EBS slot in `efi_main` between `init_gop` and `load_kernel`; post-EBS kind override in the boot-decision populate block (after media-role switch); smoke test green on KVM.
 > - Downstream effects: live producer for boot_info v19 selection ABI; kernel-side Phase-0 validator + counter scan ship in §5. Codex review adoptions in commit message.
 > - Canonical doc: [`docs/boot/boot-policy.md`](../../docs/boot/boot-policy.md).
 > - Scope boundary: §4 owns ESP read / OD parse / ladder invoke / boot_info v19 fields / kind override. §5 owns counter scan + ABI validator. §8 / §9 / §13 / §16 each widen `supported_kinds_mask`.
+
+> **Verified:** 2026-05-08 | commit `a24bc44f` | 6/6 items | build OK | smoke PASS (KVM 2.46s)
+> **Quality reviewed:** 2026-05-08 | Codex 8x (adversarial + consistency + perf + re-adversarial 5x) | 1H+7M fixed, 0 open | scope: boot-code-quality
 
 ---
 
@@ -374,6 +377,7 @@ Who creates the FIRST default entry on a freshly-installed system? Who creates t
 - [ ] Installer integration: 15-installer-release release script invokes `bootcfg --offline --seed` after artifacts + recovery partition land; produces 3-entry default (slot-A, slot-B, recovery).
 - [ ] First-boot self-seed: missing store + recovery partition present + known-good slot -> synthesize 3-entry default atomically. Handles wiped-ESP recovery.
 - [ ] Image build path: `scripts/release/` invokes `bootcfg --offline --seed --image=<vhdx>` so .vhdx/.iso/.raw artifacts ship with seeded store; CI verifies via §2 parser.
+- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include INSTALLER once installer entries drive a distinct installer-image load path AND offline + first-install seeding is complete.
 - [ ] Document bootstrap order + ownership boundary (installer vs first-boot vs CI) in `docs/boot/bootstrap.md`.
 - [ ] Commit: `"boot: bootstrap and first-install entry seeding"`
 

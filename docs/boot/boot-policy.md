@@ -49,7 +49,7 @@ Every entry from the parsed store is run through a per-entry filter. The filter 
 | `machine_id` non-empty AND not equal to local SMBIOS UUID | `BOOT_REJECT_REASON_MACHINE_ID_MISMATCH` | An empty `machine_id` field on the entry means "match any machine". An empty local SMBIOS UUID means "machine has no UUID -- match only entries with empty `machine_id`". |
 | Counter file shows `tries_left == 0` | `BOOT_REJECT_REASON_TRIES_EXHAUSTED` | Demoted-but-visible: still in the menu, never auto-selected. |
 | `kind == chainload`, `secure_boot_active`, `trusted_chainload` flag absent | `BOOT_REJECT_REASON_PATH_ESCAPE` | Mirrors the parser's path-escape gate; restated here so the diagnostic surfaces in `rejected_entries[]`. |
-| `inputs.supported_kinds_mask != 0`, `kind >= 32 OR (mask & (1 << kind)) == 0` | `BOOT_REJECT_REASON_KIND_UNAVAILABLE` | Caller-side capability gate; closed-mask. The bootloader admits only kinds whose semantics today's load_kernel path can fully execute -- currently `{SPLIT, UKI}`. Kinds whose owner section has not yet shipped (RECOVERY needs the recovery-partition load path; SAFE/TEST/DIAGNOSTICS need boot_config materialization from entry flags; INSTALLER needs offline + first-install seeding; CHAINLOAD/NETWORK/RESUME need the per-entry-kind handler table) are filtered so the ladder never selects an entry the caller cannot finish booting -- the alternative (record selection but execute the default path) would lie to the kernel about which mode actually ran. Each owner section widens the mask as it ships. `mask == 0` leaves the gate disabled (test-suite back-compat). |
+| `inputs.supported_kinds_mask != 0`, `kind >= 32 OR (mask & (1 << kind)) == 0` | `BOOT_REJECT_REASON_KIND_UNAVAILABLE` | Caller-side capability gate; closed-mask. The bootloader sets a mode-locked one-bit mask: `{UKI}` when invoked via the UKI launch path, `{SPLIT}` otherwise. Cross-mode selection (kind=uki under split, kind=split under UKI) would lie about which payload was loaded since the loader is mode-locked at `detect_uki_sections()` time and cannot switch modes from a policy decision. Same-mode payload metadata is recorded as the policy decision but not yet consumed by `load_kernel` -- the per-entry-kind handlers feature owns that. Kinds whose owner section has not yet shipped (RECOVERY needs the recovery-partition load path; SAFE/TEST/DIAGNOSTICS need boot_config materialization from entry flags; INSTALLER needs a distinct installer-image load path plus offline + first-install seeding; CHAINLOAD/NETWORK/RESUME need the per-entry-kind handler table) are filtered so the ladder never selects an entry the caller cannot finish booting -- the alternative (record selection but execute the default path) would lie to the kernel about which mode actually ran. Each owner section widens the mask as it ships. `mask == 0` leaves the gate disabled (test-suite back-compat). |
 
 Filter misses go into `boot_policy_decision_t.rejected[]` as `(id, reason)` pairs; the count is `rejected_count` and the overflow flag is `rejected_overflow` (set if more than 64 rejects observed).
 
@@ -126,7 +126,7 @@ Expected: `selection_reason = BOOT_SELECTION_RECOVERY_REQUEST`, `selected_entry_
 
 Ladder: short-circuit at the top. The caller (`bootx64.c`) calls `boot_entries_synthesize_fallback()` to build a single-entry envelope and proceeds with that.
 
-Expected: `selection_reason = BOOT_SELECTION_FALLBACK_STORE_INVALID`, `selected_entry_id = ""` (the fallback envelope's id is the canonical synth id; bootx64 copies it after the ladder returns).
+Expected: `selection_reason = BOOT_SELECTION_FALLBACK_STORE_INVALID`, `selected_entry_id = ""` (the documented v19 ABI sentinel for STORE_INVALID -- per `include/kernel/boot_info.h` "selected_entry_id is empty in that case"). The bootloader still synthesizes the fallback envelope via `boot_entries_synthesize_fallback()` to capture the kind for the post-EBS path-changing override and to drive `load_kernel`, but the kind capture and the load-time identifier are separate concerns from the v19 policy decision id.
 
 ### 5.5 Hotkey overrides everything
 
@@ -170,7 +170,7 @@ After the ladder runs, the bootloader writes the decision into `boot_info`:
 
 | Field | Source | Notes |
 | --- | --- | --- |
-| `selected_entry_id[64]` | `boot_policy_decision_t.selected_entry_id` | NUL-terminated. Empty iff store was invalid AND fallback envelope chosen (the bootloader copies the fallback id in afterward). |
+| `selected_entry_id[64]` | `boot_policy_decision_t.selected_entry_id` | NUL-terminated. Empty for `FALLBACK_STORE_INVALID` -- the documented v19 ABI sentinel for an unusable parsed store. The bootloader still synthesizes a fallback envelope via `boot_entries_synthesize_fallback()` for kind capture and load-time identifier, but the v19 selected_entry_id stays empty. |
 | `selection_reason` | `boot_policy_decision_t.reason` | `enum boot_selection_reason` -- 9 distinct values plus the `BOOT_SELECTION_UNSET` sentinel. |
 | `rejected_entries[64]` + `rejected_entry_count` | `boot_policy_decision_t.rejected[]` | (id, reason) pairs. Cap = `BOOT_ENTRIES_MAX_ENTRIES`; overflow surfaces via `rejected_entry_overflow`. |
 
