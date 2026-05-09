@@ -60,7 +60,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [x]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [/]   |
 | 💎  |   9   | A/B and recovery entry integration (DEFERRED)          | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [ ]   |
-| 💎  |  10   | Previous-kernel and known-good entries                 | §2, §14, T06 §1                         |  [ ]   |
+| 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)      | §2, §14, T06 §1, T03 D15 §6 (updater)   |  [ ]   |
 | 💎  |  11   | Boot entry editor tooling                              | §1-§10                                  |  [ ]   |
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [ ]   |
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [ ]   |
@@ -328,16 +328,16 @@ Generate entries from runtime state; the user sees a single coherent menu instea
 
 ## 10. Previous-Kernel and Known-Good Entries
 
-After an update, the previous kernel stays available until the new kernel is confirmed good. Health gate (§14) is the gating signal, not a wall-clock timer.
+After an update, the previous kernel stays available until the new kernel is confirmed good. Health gate (§14) is the gating signal, not a wall-clock timer. **Section deferred 2026-05-09**: the producers it integrates (§14 health gate + the post-update insertion hook owned by the updater in 15-installer-release) are not yet shipped; without them §10's items have nothing to integrate. Same shape as §9. See blocker XREFs per item below; re-enter §10 after the prerequisites land.
 
-- [ ] Persist last-known-good kernel path, manifest digest, and slot id in the entry store.
-- [ ] Insert "Previous kernel (known-good)" entry post-update; remove it ONLY after [`§14`](#14-per-entry-health-gated-mark-good) marks the new kernel "good" (not slot-level `mark_boot_successful`).
-- [ ] Interlock with code integrity (TODO-13 measured boot) and [`TODO-06 §1`](TODO-06-boot-media-image-installer-handoff.md) manifest format -- entry digest must match the manifest digest.
-- [ ] Failed health gate or panic on the new kernel auto-promotes the previous-kernel entry; the new entry's `last_failure_reason` shows why.
-- [ ] Manifest-missing fallback: unreadable manifest -> `MANIFEST_UNREADABLE` reason, refuse to retire previous-kernel entry.
+- [ ] Persist last-known-good kernel path + manifest digest + slot id in the entry store. Blocked: §14 (kernel-good signal) + 15-installer-release TODO-03 §6 (updater that writes the persisted state).
+- [ ] Insert "Previous kernel (known-good)" entry post-update; remove ONLY after §14 marks new kernel good. Blocked: §14 + updater hook.
+- [ ] Interlock with TODO-13 measured boot + TODO-06 §1 manifest digest. TODO-06 §1 is shipped; TODO-13 §9 (attestation export) consumes the selected entry id but the digest-equality check still depends on the updater wiring.
+- [ ] Failed-health or panic auto-promotes previous-kernel; `last_failure_reason` set on the new entry. Blocked: §14 (health-gate failure source) + a panic-counter persistence path (no current owner).
+- [ ] Manifest-missing fallback -> `BOOT_REJECT_REASON_MANIFEST_UNREADABLE`. Blocked: enum value not yet added; manifest read in bootloader is partial (TODO-06 §7 manifest verification is `[/]`).
 - [ ] Commit: `"boot: previous-kernel known-good entries"`
 
-**Test checkpoint:** Apply update -> reboot -> menu shows new + previous. Boot new + health gate passes -> reboot -> previous-kernel entry retired. Boot new and panic 3x -> previous-kernel entry auto-selected. Manifest deleted post-update -> previous-kernel stays around. Test on: QEMU TCG; bare metal.
+**Test checkpoint:** Apply update -> reboot -> menu shows new + previous. Boot new + health gate passes -> reboot -> previous-kernel entry retired. Boot new and panic 3x -> previous-kernel entry auto-selected. Manifest deleted post-update -> previous-kernel stays around. Test on: QEMU TCG; bare metal. **Cannot run today** -- requires §14 + the updater + a panic-counter producer.
 
 ---
 
