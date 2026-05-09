@@ -153,9 +153,11 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds 
              src/boot/uefi/boot_history.c \
              src/boot/uefi/boot_entries_parser.c \
              src/boot/uefi/boot_policy.c \
+             src/boot/uefi/boot_sticky.c \
              include/boot/boot_entries_parser.h \
              include/boot/boot_entries.h \
              include/boot/boot_policy.h \
+             include/boot/boot_audit_codes.h \
              include/kernel/boot_version_constants.h \
              include/kernel/firmware_quirks_table.inc \
              include/kernel/firmware_quirks_parse.inc \

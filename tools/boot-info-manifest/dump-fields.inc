@@ -406,3 +406,15 @@ F(rejected_entries[0].id[0]);
 F(rejected_entries[0].reason);
 F(rejected_entry_count);
 F(rejected_entry_overflow);
+
+/* v20: policy audit surface (boot-entry audit feature). */
+F(audit_degraded);
+F(sticky_present);
+F(sticky_recovery_trigger);
+F(sticky_watchdog_rollback_request);
+F(sticky_last_outcome);
+F(sticky_audit_degraded_last_boot);
+F(sticky_last_event_code);
+F(sticky_last_boot_seq);
+F(sticky_consumed_trigger_seq);
+F(_audit_pad);

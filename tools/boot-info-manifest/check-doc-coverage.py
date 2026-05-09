@@ -136,6 +136,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Local boot device path detail (v17)",
     "Firmware trust landscape (v18)",
     "Boot policy selection (v19)",
+    "Policy audit surface (v20)",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]

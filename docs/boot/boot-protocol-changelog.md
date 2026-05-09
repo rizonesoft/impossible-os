@@ -33,7 +33,26 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v16 (current) -- Local boot device path detail
+### v20 (current) -- Policy audit surface
+
+- **Commit**: pending ([Policy Audit Trail and Rollback Reason Codes](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#12-policy-audit-trail-and-rollback-reason-codes))
+- **Fields added**: ten fields appended after the v19 selection block -- `audit_degraded` (`uint8_t`), `sticky_present` (`uint8_t`), `sticky_recovery_trigger` (`uint8_t`), `sticky_watchdog_rollback_request` (`uint8_t`), `sticky_last_outcome` (`uint8_t`), `sticky_audit_degraded_last_boot` (`uint8_t`), `sticky_last_event_code` (`uint16_t`), `sticky_last_boot_seq` (`uint32_t`), `sticky_consumed_trigger_seq` (`uint32_t`), `_audit_pad` (`uint32_t`). Mirror updated atomically; manifest dumper + doc-coverage allow-list updated together.
+- **Why**: per-decision boot policy audit needs a way for the bootloader to surface the `ImpossibleOS-BootSticky` UEFI variable's cross-boot trigger bits (recovery request, watchdog rollback request) to the kernel-side publisher, plus a flag indicating whether the sticky read itself was trusted. The sticky var is exceptional-only (per-boot NVRAM writes wear flash); per-boot audit history lands in BlackBox JSONL (`X:\Boot\history.jsonl`) with monotonic `boot_seq` from a BlackBox-side dual-file counter.
+- **Producers / consumers**: bootloader's `boot_sticky_read_into_boot_info()` in `src/boot/uefi/boot_sticky.c` populates the surface pre-policy; `boot_policy_invoke()` consumes `sticky_recovery_trigger` and `sticky_watchdog_rollback_request` as ladder inputs. Kernel's `boot_audit_publish()` in `src/kernel/main/boot_audit.c` reads the full surface to compose the JSONL line, then acks consumed triggers via `uefi_var_set` post-publish (two-phase ack).
+- **Back-compat**: NONE -- v20 requires rebuilding and reflashing BOTH `BOOTX64.EFI` and `kernel.exe` together. The kernel's `boot_info_validate_header()` enforces an exact `BOOT_INFO_VERSION` + `header.size` match before accepting the handoff; a v19 consumer reading a v20 producer (or vice versa) halts at Phase 0 with "boot_info: bad header". The "zero/absent sticky" defaults only apply once both halves are v20 and the sticky var is missing on first boot.
+
+### v19 -- Boot policy selection
+
+- **Commit**: shipped in [boot policy merge order](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#3-boot-policy-merge-order) (commit `39b9feee`).
+- **Fields added**: `selected_entry_id[64]`, `selection_reason` (`uint32_t`), `_selection_pad`, `rejected_entries[64]` (each carrying 64-byte id + reason u32), `rejected_entry_count`, `rejected_entry_overflow`. Documented in [`boot-info-fields.md`](boot-info-fields.md) "Boot policy selection (v19)".
+- **Why**: bootloader's policy ladder needs to record the chosen entry id + reason + per-entry rejects so the kernel can populate registry / loader-variables / audit consumers without re-deriving the decision.
+- **Producers / consumers**: bootloader writes via `boot_policy_invoke()`; kernel reads via the v19 Phase-0 ABI validator in `boot_decision.c`. Forward-compat: rejected_entry_overflow=1 advertises that consumers may have missed entries beyond the 64 cap.
+
+### v17, v18 -- intermediate
+
+- v18 added the firmware trust-landscape surface (`sbat_level`, `dbx_size`, `degraded_trust_flags`); v17 was an interim alignment bump. Both are documented inline in `boot_info.h` version-block comments and in [`boot-info-fields.md`](boot-info-fields.md) "Firmware trust landscape (v18)".
+
+### v16 -- Local boot device path detail
 
 - **Commit**: pending (Local Boot Device Path Detail Capture in [`todo/01-boot-platform/TODO-05-boot-device-discovery.md`](../../todo/01-boot-platform/TODO-05-boot-device-discovery.md#14-local-boot-device-path-detail-capture))
 - **Fields added**: four fields appended after the v15 `boot_description` tail -- `boot_nvme_nsid` (`uint32_t` at offset 23952), `boot_nvme_eui64[8]` (offset 23956), `boot_pci_device` (offset 23964), `boot_pci_function` (offset 23965), and `_v16_pad[2]` (offset 23966) for alignment. Per-field `_Static_assert` offsets on both kernel header and bootloader mirror.

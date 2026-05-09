@@ -20,7 +20,7 @@ ABI invariants (enforced by `_Static_assert` in the header):
 - Six critical count fields are pinned by offset between kernel and bootloader mirror: `mmap_count`, `gop_mode_count`, `config_table_count`, `rt_mmap_count`, `usb_device_count`, `uefi_boot_current`.
 - `boot_config.cmdline` is at byte offset 32 (stable across versions); `boot_config.config_found` at 288; `sizeof(struct boot_config) == 512`.
 
-Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 18`.
+Every version bump goes in both [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) and [`src/boot/uefi/boot_info_mirror.h`](../../src/boot/uefi/boot_info_mirror.h) (the mirror header included by both [`src/boot/uefi/bootx64.c`](../../src/boot/uefi/bootx64.c) and the host manifest dumper [`tools/boot-info-manifest/dump-mirror.c`](../../tools/boot-info-manifest/dump-mirror.c)). Current: `BOOT_INFO_VERSION = 20`.
 
 ## Top-level `struct boot_info` fields
 
@@ -410,6 +410,23 @@ Result of the boot-entry policy ladder (boot-entry policy feature, owning TODO `
 | `rejected_entries` | bootx64 boot policy | P0 | kernel registry (`HKLM\SYSTEM\Boot\Rejected\*`), policy-audit | persistent | boot-entry policy | packed-prefix array of (id, reason) pairs for entries the ladder filtered OUT. Each row: `id[64]` (NUL-terminated kebab-case) plus `uint32_t reason` (`enum boot_reject_reason`: `KIND_SKIPPED`, `NOT_ACTIVE`, `HIDDEN`, `MACHINE_ID_MISMATCH`, `TRIES_EXHAUSTED`, `PATH_ESCAPE`, `KIND_UNAVAILABLE`). Parser-level rejects (CRC mismatch, schema version, etc.) fail the whole store; this list is for per-entry filter misses after the store passed parsing. Cap = `BOOT_ENTRIES_MAX_ENTRIES` (64). |
 | `rejected_entry_count` | bootx64 boot policy | P0 | kernel | persistent | boot-entry policy | 0..64; packed-prefix length of `rejected_entries`. 0 = no entries filtered out. |
 | `rejected_entry_overflow` | bootx64 boot policy | P0 | kernel | persistent | boot-entry policy | 1 if the bootloader observed more than 64 rejects (extras dropped after recording the `[WARN]` line). |
+
+## Policy audit surface (v20)
+
+Surface for the per-decision boot policy audit trail (boot-entry audit feature, owning TODO `01-boot-platform/TODO-07`). The bootloader reads the `ImpossibleOS-BootSticky` UEFI variable (single 256-byte record, exceptional-only -- per-boot history goes to `X:\BlackBox\boot\history.jsonl`) and surfaces the relevant bits here. The kernel's `boot_audit_publish()` consumes this block plus the v19 selection block to compose one JSONL line per boot, then acks consumed triggers via `uefi_var_set` post-publish. Bootloader is read-only on the sticky var.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `audit_degraded` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if the sticky read failed (missing / wrong attrs / wrong size / bad CRC). Consumers MUST treat `sticky_*` fields as zeros and emit `BOOT_AUDIT_EVENT_AUDIT_DEGRADED` in the JSONL line. |
+| `sticky_present` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if a valid sticky record was read; 0 means absent or untrusted. |
+| `sticky_recovery_trigger` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if the sticky carried `recovery_trigger=1`. The bootloader maps this to `boot_policy_inputs.recovery_request` for the ladder; the kernel acks (clears the bit) post-publish. |
+| `sticky_watchdog_rollback_request` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if the sticky carried `watchdog_rollback_request=1`. Same two-phase ack as `sticky_recovery_trigger`. |
+| `sticky_last_outcome` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if the previous boot reached mark-good. Carried for diagnostics only; does not feed the ladder. |
+| `sticky_audit_degraded_last_boot` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if the previous boot's NVRAM/BlackBox path was degraded (chain-of-degradation visibility). |
+| `sticky_last_event_code` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | `enum boot_audit_event_code` from previous boot. See [`include/boot/boot_audit_codes.h`](../../include/boot/boot_audit_codes.h). |
+| `sticky_last_boot_seq` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | Monotonic boot counter from the previous boot's record. Kernel uses it to set the new `boot_seq = sticky_last_boot_seq + 1` when authoring the JSONL line. |
+| `sticky_consumed_trigger_seq` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | Boot seq of the last successful trigger ack (helps the kernel detect torn ack windows -- if the bootloader observes a trigger AND `sticky_consumed_trigger_seq == sticky_last_boot_seq`, the previous boot acked but this boot saw the trigger anyway, which means the previous boot also saw it but never cleared -- fail-safe). |
+| `_audit_pad` | bootx64 boot policy | P0 | none | persistent | boot-entry audit | reserved zero; alignment to 8-byte boundary. |
 
 ## Nested struct: `boot_payload_desc`
 

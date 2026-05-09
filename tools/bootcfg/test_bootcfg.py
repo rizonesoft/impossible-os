@@ -383,6 +383,99 @@ def t_write_failure_rc2(p: Path) -> None:
         pass
 
 
+# ---- mutation log -----------------------------------------------------------
+
+@case("mutation-log: omitted -> no file created")
+def t_mutation_log_omitted(p: Path) -> None:
+    _emit_seed(p)
+    sibling = p.parent / "mutations.jsonl"
+    assert not sibling.exists(), "no mutation log expected when --mutation-log omitted"
+
+
+@case("mutation-log: emit-seed appends one record (prior_crc=null on fresh)")
+def t_mutation_log_emit_seed_fresh(p: Path) -> None:
+    log = p.parent / "mutations.jsonl"
+    cp = _run(["emit-seed", str(p), "--mutation-log", str(log)])
+    assert cp.returncode == 0, cp.stderr
+    assert log.exists(), "mutation log not created"
+    lines = log.read_text().strip().splitlines()
+    assert len(lines) == 1, f"expected 1 record, got {len(lines)}"
+    rec = json.loads(lines[0])
+    assert rec["kind"] == "emit-seed"
+    assert rec["target_id"] == "default"
+    assert rec["prior_crc"] is None, "fresh emit-seed should record prior_crc=null"
+    assert rec["new_crc"].startswith("0x"), rec["new_crc"]
+    assert rec["schema"] == 1
+    assert "user=" in rec["requester"]
+
+
+@case("mutation-log: idempotent emit-seed records prior_crc == new_crc on second run")
+def t_mutation_log_emit_seed_idempotent(p: Path) -> None:
+    log = p.parent / "mutations.jsonl"
+    _run(["emit-seed", str(p), "--mutation-log", str(log)])
+    cp = _run(["emit-seed", str(p), "--mutation-log", str(log)])
+    assert cp.returncode == 0
+    lines = log.read_text().strip().splitlines()
+    assert len(lines) == 2, f"expected 2 records, got {len(lines)}"
+    rec1 = json.loads(lines[0])
+    rec2 = json.loads(lines[1])
+    assert rec2["prior_crc"] == rec1["new_crc"], "second run should see first run's crc"
+    assert rec2["new_crc"] == rec1["new_crc"], "idempotent seed: same crc both runs"
+
+
+@case("mutation-log: add appends a record with the new id")
+def t_mutation_log_add(p: Path) -> None:
+    log = p.parent / "mutations.jsonl"
+    _emit_seed(p)
+    cp = _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("slot-b")),
+               "--mutation-log", str(log)])
+    assert cp.returncode == 0
+    lines = log.read_text().strip().splitlines()
+    assert len(lines) == 1, f"expected 1 record, got {len(lines)}"
+    rec = json.loads(lines[0])
+    assert rec["kind"] == "add"
+    assert rec["target_id"] == "slot-b"
+    assert rec["prior_crc"] != rec["new_crc"], "add changes the store CRC"
+
+
+@case("mutation-log: remove appends a record after a successful remove")
+def t_mutation_log_remove(p: Path) -> None:
+    log = p.parent / "mutations.jsonl"
+    _emit_seed(p)
+    _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("extra"))])
+    cp = _run(["remove", str(p), "extra", "--mutation-log", str(log)])
+    assert cp.returncode == 0
+    lines = log.read_text().strip().splitlines()
+    assert len(lines) == 1, f"expected 1 record, got {len(lines)}"
+    rec = json.loads(lines[0])
+    assert rec["kind"] == "remove"
+    assert rec["target_id"] == "extra"
+
+
+@case("mutation-log: failed mutation does NOT append a record")
+def t_mutation_log_skips_on_failure(p: Path) -> None:
+    log = p.parent / "mutations.jsonl"
+    _emit_seed(p)
+    cp = _run(["remove", str(p), "nonexistent", "--mutation-log", str(log)])
+    assert cp.returncode == 3, cp.stderr
+    assert not log.exists(), "no mutation log expected when remove fails"
+
+
+@case("mutation-log: set-default emits note carrying the assigned sort_key")
+def t_mutation_log_set_default(p: Path) -> None:
+    log = p.parent / "mutations.jsonl"
+    _emit_seed(p)
+    _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("slot-b"))])
+    cp = _run(["set-default", str(p), "slot-b", "--mutation-log", str(log)])
+    assert cp.returncode == 0
+    lines = log.read_text().strip().splitlines()
+    assert len(lines) == 1, f"expected 1 record, got {len(lines)}"
+    rec = json.loads(lines[0])
+    assert rec["kind"] == "set-default"
+    assert rec["target_id"] == "slot-b"
+    assert "note" in rec and "00-slot-b" in rec["note"], rec.get("note", "<missing>")
+
+
 # ---- summary ----------------------------------------------------------------
 
 print(f"\n{PASS_COUNT}/{PASS_COUNT + FAIL_COUNT} bootcfg tests passed")

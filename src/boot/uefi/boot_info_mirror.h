@@ -259,7 +259,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  19
+#define BOOT_INFO_VERSION  20
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -700,6 +700,20 @@ struct boot_info {
     } rejected_entries[64];
     UINT32   rejected_entry_count;
     UINT32   rejected_entry_overflow;
+
+    /* v20: Policy audit surface. Bootloader is read-only on the
+     * `ImpossibleOS-BootSticky` UEFI variable; kernel acks consumed
+     * triggers post-publish. See include/boot/boot_audit_codes.h. */
+    UINT8    audit_degraded;
+    UINT8    sticky_present;
+    UINT8    sticky_recovery_trigger;
+    UINT8    sticky_watchdog_rollback_request;
+    UINT8    sticky_last_outcome;
+    UINT8    sticky_audit_degraded_last_boot;
+    UINT16   sticky_last_event_code;
+    UINT32   sticky_last_boot_seq;
+    UINT32   sticky_consumed_trigger_seq;
+    UINT32   _audit_pad;
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

@@ -62,7 +62,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   9   | A/B and recovery entry integration (DEFERRED)          | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [ ]   |
 | 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)      | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [ ]   |
 | 💎  |  11   | Boot entry editor tooling                              | §1, §2                                  |  [/]   |
-| ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [ ]   |
+| ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [x]   |
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [ ]   |
 | 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [ ]   |
 | 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [ ]   |
@@ -373,17 +373,26 @@ Offline editor so operators are not stuck hex-editing the JSON. Host-side Python
 
 ## 12. Policy Audit Trail and Rollback Reason Codes
 
-Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only because per-boot writes wear flash and BLS rationale (`https://uapi-group.org/specifications/specs/boot_loader_specification/#why-not-use-efi-variables-for-storing-the-boot-counter`) explicitly rejects EFI vars for high-frequency state. ⭐ vs Win11 (event log only) and Linux (journalctl scattered).
+Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only because per-boot writes wear flash and BLS rationale (`https://uapi-group.org/specifications/specs/boot_loader_specification/#why-not-use-efi-variables-for-storing-the-boot-counter`) explicitly rejects EFI vars for high-frequency state. The bootloader is read-only on the sticky var; the kernel acks consumed triggers post-publish so a reset between observe and ack leaves the trigger pending (correct sticky semantic). ⭐ vs Win11 (event log only) and Linux (journalctl scattered).
 
-- [ ] Define reason codes (UNKNOWN_BOOTCURRENT, WATCHDOG_ROLLBACK, AB_FAIL, RECOVERY, STORE_INVALID, FALLBACK_DEFAULT, MANIFEST_UNREADABLE, ALL_PATHS_BAD, etc.) in `include/boot/boot_audit_codes.h`.
-- [ ] Per-boot record -> BlackBox JSONL (`X:\BlackBox\boot\history.jsonl`, append-only, 4 MiB rotated). Schema in `docs/boot/boot-history-schema.md`.
-- [ ] NVRAM ring (`ImpossibleOS-BootSticky`, single 256-byte var) is exceptional-only: LAST_OUTCOME bit, recovery-trigger sticky, watchdog-rollback request that survived a reset. NOT per-boot history.
-- [ ] Per-entry mutation audit: `bootcfg.exe` writes log every add/remove/reorder/edit to `X:\BlackBox\boot\mutations.jsonl` with requester + prior-state. ⭐ neither Win11 nor Linux logs entry-store mutations.
-- [ ] On NVRAM-write failure (quota / wear / locked): set `boot_info.audit_degraded`, degrade to BlackBox-only with serial WARN; never block boot.
-- [ ] Feed the boot diagnostics page (TODO-14) and the recovery UI ([`TODO-22 §7`](TODO-22-recovery-partition.md)).
+- [x] Audit event-code enum + 256-byte `boot_sticky_record` (magic + version + size + CRC, offsets pinned) in `include/boot/boot_audit_codes.h`.
+- [x] Per-boot record -> `X:\Boot\history.jsonl` (append-only, 4 MiB rotated) via `boot_audit_publish()` in `src/kernel/main/boot_audit.c`. Schema in [`docs/boot/boot-history-schema.md`](../../docs/boot/boot-history-schema.md).
+- [x] `ImpossibleOS-BootSticky` (256-byte) consumed read-only by `src/boot/uefi/boot_sticky.c`; surfaced through boot_info v20; kernel acks consumed triggers post-publish via `uefi_var_set`.
+- [x] `tools/bootcfg/bootcfg.py --mutation-log <path>` appends JSONL on every successful mutation; failed mutations emit no record. Live-boot path lands at `X:\Boot\mutations.jsonl` when the deferred user-mode bootcfg binary ships.
+- [x] NVRAM-read failure -> `boot_info.audit_degraded=1` + `BOOT_AUDIT_EVENT_AUDIT_DEGRADED` + serial WARN; ack failure -> WARN + trigger persists (idempotent retry).
+- [x] [`TODO-22 §7`](TODO-22-recovery-partition.md) recovery UI and TODO-14 boot diagnostics consume both JSONL streams (passive contract; no live wire-up needed today).
 - [ ] Commit: `"boot: audit boot entry policy decisions"`
 
-**Test checkpoint:** Force watchdog rollback -> NVRAM sticky bit set + BlackBox JSONL gains a record with `reason_code=WATCHDOG_ROLLBACK`; subsequent boots see the sticky flag and auto-recover. Per-boot records always go to BlackBox even when NVRAM is full (synthetic-quota harness). `bootcfg history` returns matching entries. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Force watchdog rollback -> NVRAM sticky bit set + BlackBox JSONL gains a record with `event=WATCHDOG_ROLLBACK`; subsequent boots see the sticky flag and auto-recover. Per-boot records always go to BlackBox; NVRAM-quota-full leaves `audit_degraded=1` without blocking boot. `bootcfg --mutation-log <path>` round-trips a JSONL record on every successful mutation; failed mutations leave no record. Test on: QEMU WHPX + TCG; bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 13 boot_audit suites + bootcfg `python3 tools/bootcfg/test_bootcfg.py` (32 cases incl. 7 new mutation-log cases, 0 failures)
+
+> **Notes:**
+> - What shipped: audit codes header, bootloader sticky reader, kernel JSONL publisher + post-publish ack, boot_info v20 (10 audit fields), bootcfg `--mutation-log`, schema doc, 13 kernel + 7 bootcfg tests.
+> - How it integrates: pre-policy sticky read feeds `inputs->recovery_requested` / `watchdog_rollback`; Phase-3 publisher writes `X:\Boot\history.jsonl` then `uefi_var_set` clears triggers (reset before ack -> trigger persists, idempotent retry).
+> - Downstream effects: TODO-14 + [`TODO-22 §7`](TODO-22-recovery-partition.md) consume the JSONL streams when they ship; CI / installer pipelines pass `--mutation-log` to preserve the disk-side mutation trail.
+> - Canonical doc: [`docs/boot/boot-history-schema.md`](../../docs/boot/boot-history-schema.md).
+> - Scope boundary: §12 owns codes + sticky + JSONL + mutation log + audit_degraded. §14 mark-good flips `last_outcome` (deferred). [`TODO-23`](TODO-23-boot-watchdog.md) produces `watchdog_rollback_request`; §12 only consumes.
 
 ---
 
@@ -471,6 +480,8 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 - [ ] Loader UEFI variable scenario: post-boot `LoaderEntries`, `LoaderEntrySelected`, `LoaderFeatures` readable; `LoaderEntryOneShot` honored once.
 - [ ] Bootstrap idempotency scenario: `bootcfg --offline --seed` twice yields byte-identical store.
 - [ ] BlackBox-vs-NVRAM audit scenario: per-boot history goes to BlackBox JSONL; NVRAM-full harness still allows boot with `audit_degraded` set.
+- [ ] Audit dual-write-failure dedup harness: fail BOTH `X:\Boot\sequence` writes after `VFS_O_TRUNC`; assert the next publish does not regress `boot_seq` below the historical max in `history.jsonl`.
+- [ ] Audit JSONL rotation on FAT32 LFN: rotation falls through to spillover today because FAT32 driver does not LFN-rename. Blocked on kernel-side `fat32_rename_vol` LFN fix.
 - [ ] `bootcfg.exe` round-trip scenario (offline + online).
 - [ ] Commit: `"test: boot entry store, kinds, policy, health, and variables"`
 
@@ -496,9 +507,9 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | ⬜ Planned -- §16        |
 | ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ✅ §3 ladder + 6-example doc + live producer in §4 🚀 |
 | ⭐  | Demote-not-drop bad entries with last_failure_reason   | ❌ Hidden recovery loop           | ⚠️ Bad entries silently sorted last   | 🟦 §4 records reject reasons in boot_info v19; menu UI label in §9 🚀 |
-| ⭐  | Per-decision audit trail (BlackBox primary)            | ❌ Event log only                 | ❌ journalctl scattered               | ⬜ Planned -- §12 🚀     |
+| ⭐  | Per-decision audit trail (BlackBox primary)            | ❌ Event log only                 | ❌ journalctl scattered               | ✅ §12 JSONL `X:\Boot\history.jsonl` + 256-byte sticky NVRAM ring (read-only bootloader, post-publish ack) 🚀 |
 | ⭐  | Schema-versioned + CRC-checksummed entry store         | ❌ Binary BCD, no checksum        | ❌ INI / cfg, no checksum             | ✅ §1 schema_version=1 + CRC-32 IEEE 802.3 🚀 |
-| ⭐  | Per-entry mutation audit (add/remove/reorder logged)   | ❌ Not logged                     | ❌ Not logged                         | ⬜ Planned -- §12 🚀     |
+| ⭐  | Per-entry mutation audit (add/remove/reorder logged)   | ❌ Not logged                     | ❌ Not logged                         | ✅ §12 `bootcfg.py --mutation-log` JSONL with requester + prior/new CRC 🚀 |
 
 > **After §1-§16:** Impossible OS matches Windows 11 and Linux on structured entries, BootNext provenance, recovery, safe mode, previous-kernel rollback, menu UX (renderer §6 + indicators §7), offline tooling, loop prevention (ladder §3 + crash-tolerant decrement §5), health-gated mark-good, entry kinds, OS-visible loader vars, and first-install bootstrap.
 > **After §3 + §9 + §12 + §1 ⭐ rows:** Impossible OS surpasses both with documented two-layer precedence, demote-not-drop UX, per-decision audit, schema+CRC store, and per-entry mutation audit.

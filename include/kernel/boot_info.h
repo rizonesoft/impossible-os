@@ -108,7 +108,16 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  * sanity gate;
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-/* v18 adds firmware trust-landscape surface (sbat_level, dbx_size,
+/* v20 adds policy audit surface: audit_degraded (1 if NVRAM sticky
+ *     read failed or BlackBox publish path is unavailable), plus a
+ *     6-byte snapshot of the ImpossibleOS-BootSticky NVRAM record
+ *     consumed pre-policy (recovery_trigger, watchdog_rollback_request,
+ *     last_outcome, audit_degraded_last_boot, last_event_code). The
+ *     kernel's boot_audit_publish() composes a JSONL line from the
+ *     selection block + this snapshot and appends to
+ *     X:\BlackBox\boot\history.jsonl, then acks consumed triggers via
+ *     uefi_var_set. Bootloader is read-only on the sticky var.
+ * v18 adds firmware trust-landscape surface (sbat_level, dbx_size,
  *     degraded_trust_flags) populated by uefi_secureboot_init() in the
  *     kernel-populated section. SBAT (Secure Boot Advanced Targeting,
  *     Microsoft revocation infrastructure) level string and dbx
@@ -151,7 +160,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  19
+#define BOOT_INFO_VERSION  20
 #endif
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
@@ -1634,6 +1643,31 @@ struct boot_info {
     } rejected_entries[64];               /* BOOT_ENTRIES_MAX_ENTRIES; packed prefix */
     uint32_t rejected_entry_count;        /* 0..64; packed-prefix length */
     uint32_t rejected_entry_overflow;     /* 1 if more than 64 rejects observed */
+
+    /* v20: Policy audit surface. The bootloader reads
+     * `ImpossibleOS-BootSticky` (256-byte UEFI variable) pre-policy
+     * and surfaces the relevant bits here. NVRAM is exceptional-only:
+     * the bootloader NEVER writes the sticky var; the kernel's
+     * boot_audit_publish() acks consumed triggers post-publish so a
+     * crash between observe and ack leaves the trigger pending.
+     *
+     * audit_degraded == 1 means the bootloader could not trust the
+     * sticky read (missing / wrong attrs / wrong size / bad CRC).
+     * Consumers must treat the sticky_* fields as zeros in that case
+     * and emit BOOT_AUDIT_EVENT_AUDIT_DEGRADED in the JSONL line.
+     *
+     * sticky_present == 1 indicates a valid sticky record was read;
+     * 0 means absent or untrusted. */
+    uint8_t  audit_degraded;
+    uint8_t  sticky_present;
+    uint8_t  sticky_recovery_trigger;
+    uint8_t  sticky_watchdog_rollback_request;
+    uint8_t  sticky_last_outcome;
+    uint8_t  sticky_audit_degraded_last_boot;
+    uint16_t sticky_last_event_code;      /* enum boot_audit_event_code */
+    uint32_t sticky_last_boot_seq;
+    uint32_t sticky_consumed_trigger_seq;
+    uint32_t _audit_pad;                  /* alignment to 8-byte boundary */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

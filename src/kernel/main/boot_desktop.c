@@ -290,6 +290,13 @@ void boot_phase3(void)
      * if no record exists. */
     boot_version_blackbox_transcribe();
 
+    /* Per-boot policy audit JSONL publish + sticky-trigger ack. Reads
+     * the v20 audit surface in g_boot_info, composes one line under
+     * X:\Boot\history.jsonl, and clears any consumed sticky triggers
+     * via uefi_var_set AFTER the file write succeeds. */
+    extern void boot_audit_publish(void);
+    boot_audit_publish();
+
     /* Report degraded subsystems.  Names come from kernel_subsystem_name() --
      * single source of truth in boot_init.c.  Loop bound is SUBSYS_COUNT,
      * not a hard-coded constant, so new SUBSYS_* slots are reported

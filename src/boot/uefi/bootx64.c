@@ -4782,6 +4782,23 @@ static void boot_policy_invoke(void)
      * recovery integration). All zero today -- the BSS-zero default is
      * the documented "no override" semantics for each axis. */
 
+    /* Boot policy NVRAM sticky read. The bootloader reads
+     * `ImpossibleOS-BootSticky` and surfaces the trigger bits to the
+     * ladder; the kernel acks consumed triggers post-publish via
+     * uefi_var_set. Bootloader is read-only -- this is what the
+     * exceptional-only NVRAM contract demands. A reset between read
+     * and ack leaves the trigger pending, which is the correct sticky
+     * semantic (a recovery request must persist across crashes until
+     * the recovery boot durably records its outcome). */
+    extern void boot_sticky_read_into_boot_info(struct boot_info *bi);
+    boot_sticky_read_into_boot_info(g_boot_info_ptr);
+    if (g_boot_info_ptr->sticky_present) {
+        if (g_boot_info_ptr->sticky_recovery_trigger)
+            inputs->recovery_requested = 1;
+        if (g_boot_info_ptr->sticky_watchdog_rollback_request)
+            inputs->watchdog_rollback = 1;
+    }
+
     /* ---- Counter directory scan. ------------------------------------ */
     boot_counter_t counters[BOOT_ENTRIES_MAX_ENTRIES];
     unsigned int counter_count = 0;

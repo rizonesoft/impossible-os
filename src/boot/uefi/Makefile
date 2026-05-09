@@ -24,7 +24,7 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o
+OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o
 
 .PHONY: all clean
 
@@ -57,6 +57,14 @@ elf_bootproto.o: elf_bootproto.c elf_bootproto.h elf_types.h \
 # struct boot_error_history_entry from include/kernel/boot_info.h via
 # boot_info_mirror.h offset asserts.
 boot_history.o: boot_history.c efi.h boot_info_mirror.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Boot policy NVRAM sticky reader (read-only consumer of the
+# `ImpossibleOS-BootSticky` variable). Surfaces cross-boot trigger bits
+# to boot_info v20 audit fields. Bootloader never writes; kernel acks
+# consumed triggers post-publish via uefi_var_set.
+boot_sticky.o: boot_sticky.c efi.h boot_info_mirror.h \
+               ../../../include/boot/boot_audit_codes.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Boot entry store parser. Pure C, no UEFI types -- linkable from both the

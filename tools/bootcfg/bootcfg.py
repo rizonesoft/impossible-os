@@ -36,10 +36,13 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
+import socket
 import sys
 import tempfile
+import time
 import zlib
 from pathlib import Path
 from typing import Any
@@ -232,6 +235,86 @@ def _validate_then_write(path: Path, data: dict) -> None:
         sys.exit(2)
 
 
+# ---- Mutation audit log -----------------------------------------------------
+
+# JSONL schema version pinned to match include/boot/boot_audit_codes.h
+# BOOT_AUDIT_JSONL_SCHEMA_VERSION. Bump when the wire format changes.
+MUTATION_LOG_SCHEMA_VERSION = 1
+
+
+def _requester_label() -> str:
+    """Best-effort identification of who ran bootcfg. Format kept short
+    so it fits in the JSONL line without bloating the audit trail."""
+    try:
+        user = getpass.getuser()
+    except Exception:  # pragma: no cover -- some CI containers lack passwd
+        user = "unknown"
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = "unknown"
+    return f"bootcfg.py user={user} host={host}"
+
+
+def _append_mutation_log(
+    log_path: Path | None,
+    kind: str,
+    target_id: str,
+    prior_crc: str | None,
+    new_crc: str,
+    note: str = "",
+) -> None:
+    """Append one JSONL record to the mutation log. No-op when
+    log_path is None (caller did not pass --mutation-log).
+
+    The mutation log is the disk-side `mutations.jsonl` half of the
+    boot policy audit trail. Live-boot mutations (the deferred user-mode
+    bootcfg binary) will append to `X:\\BlackBox\\boot\\mutations.jsonl`
+    directly; offline runs append wherever the operator points the path.
+    CI / installer pipelines should pass an explicit --mutation-log so
+    the trail survives the host-side staging step.
+
+    Best-effort: write failures emit a [WARN] but never fail the
+    mutation itself (the bootentries.json edit already succeeded
+    atomically before this call). Otherwise a read-only mount on the
+    log location would cancel a successful entry edit -- the wrong
+    direction.
+    """
+    if log_path is None:
+        return
+    record = {
+        "ts": int(time.time()),
+        "schema": MUTATION_LOG_SCHEMA_VERSION,
+        "kind": kind,
+        "target_id": target_id,
+        "prior_crc": prior_crc,
+        "new_crc": new_crc,
+        "requester": _requester_label(),
+    }
+    if note:
+        record["note"] = note
+    line = json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="ascii") as f:
+            f.write(line)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+    except OSError as e:
+        print(f"[WARN] mutation-log: append failed: {e}", file=sys.stderr)
+
+
+def _resolve_mutation_log(args: argparse.Namespace) -> Path | None:
+    """Honor --mutation-log if provided. Empty / unset -> None (skip)."""
+    raw = getattr(args, "mutation_log", None)
+    if not raw:
+        return None
+    return Path(raw)
+
+
 # ---- Subcommand: list -------------------------------------------------------
 
 
@@ -271,6 +354,7 @@ def cmd_add(args: argparse.Namespace) -> int:
         return 2
 
     data, _ = _load(path)
+    prior_crc = data.get("crc32")
     new_id = new_entry["id"]
     for e in data["entries"]:
         if e["id"] == new_id:
@@ -282,6 +366,8 @@ def cmd_add(args: argparse.Namespace) -> int:
         return 1
     data["entries"].append(new_entry)
     _validate_then_write(path, data)
+    _append_mutation_log(_resolve_mutation_log(args), "add", new_id,
+                         prior_crc, data["crc32"])
     print(f"add: {new_id!r} appended; new store CRC {data['crc32']}")
     return 0
 
@@ -292,6 +378,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 def cmd_remove(args: argparse.Namespace) -> int:
     path = Path(args.path)
     data, _ = _load(path)
+    prior_crc = data.get("crc32")
     target = args.id
     before = len(data["entries"])
     data["entries"] = [e for e in data["entries"] if e["id"] != target]
@@ -303,6 +390,8 @@ def cmd_remove(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
     _validate_then_write(path, data)
+    _append_mutation_log(_resolve_mutation_log(args), "remove", target,
+                         prior_crc, data["crc32"])
     print(f"remove: {target!r} dropped; new store CRC {data['crc32']}")
     return 0
 
@@ -325,6 +414,7 @@ def cmd_set_default(args: argparse.Namespace) -> int:
     """
     path = Path(args.path)
     data, _ = _load(path)
+    prior_crc = data.get("crc32")
     target = args.id
     target_idx = None
     for i, e in enumerate(data["entries"]):
@@ -355,6 +445,9 @@ def cmd_set_default(args: argparse.Namespace) -> int:
         n += 1
 
     _validate_then_write(path, data)
+    _append_mutation_log(_resolve_mutation_log(args), "set-default", target,
+                         prior_crc, data["crc32"],
+                         note=f"sort_key={target_entry['sort_key']!r}")
     print(f"set-default: {target!r} now lowest sort_key "
           f"({target_entry['sort_key']!r}); new store CRC {data['crc32']}")
     return 0
@@ -366,8 +459,20 @@ def cmd_set_default(args: argparse.Namespace) -> int:
 def cmd_emit_seed(args: argparse.Namespace) -> int:
     """Idempotent: writing twice yields a byte-identical store."""
     path = Path(args.path)
+    prior_crc = None
+    if path.is_file():
+        try:
+            prior_data, _ = _load(path)
+            prior_crc = prior_data.get("crc32")
+        except SystemExit:
+            # Existing file failed validation; treat as no prior state
+            # for the audit log -- the seed write is what brings it
+            # back to a known-good state.
+            prior_crc = "INVALID"
     data = _seed_store()
     _validate_then_write(path, data)
+    _append_mutation_log(_resolve_mutation_log(args), "emit-seed", "default",
+                         prior_crc, data["crc32"])
     print(f"emit-seed: wrote idempotent default store to {path}; "
           f"CRC {data['crc32']}")
     return 0
@@ -388,15 +493,28 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("path")
     p_list.set_defaults(func=cmd_list)
 
+    # --mutation-log <path> is honored by every mutating subcommand.
+    # Empty / unset -> no log emitted. CI / installer pipelines should
+    # always pass it so the boot policy audit trail (the disk-side
+    # half of TODO-07's audit feature) survives the host-side staging
+    # step. Live-boot mutations (the deferred user-mode bootcfg
+    # binary) will append directly to X:\BlackBox\boot\mutations.jsonl.
+    mutation_help = (
+        "append a JSONL audit record to <path> after the mutation; "
+        "skip when omitted"
+    )
+
     p_add = sub.add_parser("add", help="append an entry (validated)")
     p_add.add_argument("path")
     p_add.add_argument("--json", required=True,
                        help="entry as a JSON object")
+    p_add.add_argument("--mutation-log", help=mutation_help)
     p_add.set_defaults(func=cmd_add)
 
     p_remove = sub.add_parser("remove", help="drop an entry by id")
     p_remove.add_argument("path")
     p_remove.add_argument("id")
+    p_remove.add_argument("--mutation-log", help=mutation_help)
     p_remove.set_defaults(func=cmd_remove)
 
     p_setdef = sub.add_parser(
@@ -405,6 +523,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_setdef.add_argument("path")
     p_setdef.add_argument("id")
+    p_setdef.add_argument("--mutation-log", help=mutation_help)
     p_setdef.set_defaults(func=cmd_set_default)
 
     p_seed = sub.add_parser(
@@ -412,6 +531,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="write idempotent default store (single split entry)",
     )
     p_seed.add_argument("path")
+    p_seed.add_argument("--mutation-log", help=mutation_help)
     p_seed.set_defaults(func=cmd_emit_seed)
 
     return p
