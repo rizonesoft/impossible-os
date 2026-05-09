@@ -276,6 +276,69 @@ def t_policy_tag_len_overflow(p: Path) -> None:
     assert p.read_bytes() == pre
 
 
+# ---- ASCII-clean parity (Codex consistency H finding) ----------------------
+
+@case("validator rejects sort_key with non-ASCII (would expand on JSON serialize)")
+def t_sort_key_nonascii(p: Path) -> None:
+    _emit_seed(p)
+    bad = _seed_extra_entry("nonascii")
+    bad["sort_key"] = "01-cafe-é"  # one non-ASCII char would become é escapes
+    pre = p.read_bytes()
+    cp = _run(["add", str(p), "--json", json.dumps(bad)])
+    assert cp.returncode == 1, cp.stderr
+    assert "printable ASCII" in cp.stderr, cp.stderr
+    assert p.read_bytes() == pre
+
+
+@case("validator rejects title with non-ASCII (escape would expand)")
+def t_title_nonascii(p: Path) -> None:
+    _emit_seed(p)
+    bad = _seed_extra_entry("noasciititle")
+    bad["title"] = "Café"  # one non-ASCII char would JSON-escape to \\u00e9
+    pre = p.read_bytes()
+    cp = _run(["add", str(p), "--json", json.dumps(bad)])
+    assert cp.returncode == 1, cp.stderr
+    assert "printable ASCII" in cp.stderr, cp.stderr
+    assert p.read_bytes() == pre
+
+
+@case("validator rejects policy_tag with backslash (escape would expand)")
+def t_policy_tag_escape(p: Path) -> None:
+    _emit_seed(p)
+    bad = _seed_extra_entry("escape")
+    bad["policy_tags"] = ["a\\b"]  # backslash forces JSON escape -> raw byte mismatch
+    pre = p.read_bytes()
+    cp = _run(["add", str(p), "--json", json.dumps(bad)])
+    assert cp.returncode == 1, cp.stderr
+    assert "printable ASCII" in cp.stderr, cp.stderr
+    assert p.read_bytes() == pre
+
+
+# ---- emit-seed wildcard (Codex consistency H finding) ----------------------
+
+@case("emit-seed uses empty machine_id wildcard (not all-zero UUID)")
+def t_seed_machine_id_wildcard(p: Path) -> None:
+    _emit_seed(p)
+    data = json.loads(p.read_text())
+    mid = data["entries"][0]["machine_id"]
+    assert mid == "", (
+        f"seed machine_id must be empty wildcard for the policy ladder "
+        f"to admit it on any machine; got {mid!r}"
+    )
+
+
+# ---- pre-read size cap (Codex perf M finding) -------------------------------
+
+@case("pre-read size cap rejects oversized file before parse work")
+def t_oversize_pre_read(p: Path) -> None:
+    # Write a >16 KiB file. Validator MAX_TOTAL_BYTES is 16 KiB.
+    p.write_bytes(b"X" * (17 * 1024))
+    cp = _run(["list", str(p)])
+    assert cp.returncode == 1, cp.stderr
+    assert "MAX_TOTAL_BYTES" in cp.stderr, cp.stderr
+    assert "rejected pre-read" in cp.stderr, cp.stderr
+
+
 # ---- usage ------------------------------------------------------------------
 
 @case("missing path returns rc=2 (usage error)")
@@ -284,6 +347,40 @@ def t_missing_path(p: Path) -> None:
     cp = _run(["list", str(p)])
     assert cp.returncode == 2, cp.stderr
     assert "not a file" in cp.stderr, cp.stderr
+
+
+@case("write failure on read-only directory returns rc=2 (filesystem error)")
+def t_write_failure_rc2(p: Path) -> None:
+    """Filesystem-level write failure must map to rc=2 (usage error),
+    not rc=1 (validation failure). A read-only parent directory is the
+    canonical case."""
+    import stat
+    _emit_seed(p)
+    # Make the parent directory read-only (chmod 0o555). The atomic
+    # write writes a tempfile there + os.replace; tempfile creation
+    # fails with PermissionError when the directory has no write bit.
+    try:
+        parent = p.parent
+        original_mode = parent.stat().st_mode
+        parent.chmod(0o555)
+        try:
+            new_entry = _seed_extra_entry("rotest")
+            cp = _run(["add", str(p), "--json", json.dumps(new_entry)])
+            # rc=2 (usage error). On root-as-uid systems chmod 0o555
+            # is ignored; in that case skip the assertion.
+            if cp.returncode == 0:
+                # Root: write succeeded despite read-only flag. Skip.
+                return
+            assert cp.returncode == 2, (
+                f"write failure should be rc=2, got {cp.returncode}\n"
+                f"{cp.stderr}"
+            )
+            assert "write failed" in cp.stderr or "stat failed" in cp.stderr, cp.stderr
+        finally:
+            parent.chmod(original_mode)
+    except OSError:
+        # Some test environments cannot chmod -- skip the case.
+        pass
 
 
 # ---- summary ----------------------------------------------------------------

@@ -325,6 +325,16 @@ def validate_envelope(entry: dict, idx: int) -> None:
         fail(f"entry[{idx}]: id must be kebab-case (lowercase a-z 0-9 dash-separated, no leading/trailing dash), got {entry['id']!r}")
     if not isinstance(entry["title"], str) or not (1 <= len(entry["title"]) <= MAX_TITLE_LEN):
         fail(f"entry[{idx}]: title must be a string of length 1..{MAX_TITLE_LEN}")
+    # Same ASCII-clean discipline as sort_key / policy_tags: the
+    # bootloader parser caps title against raw JSON content bytes
+    # (content_end - content_start), and bootcfg writes with
+    # ensure_ascii=True. Non-ASCII or escape-bearing titles would
+    # expand under serialization and trip the parser cap at boot
+    # despite passing Python len() at host time.
+    title = entry["title"]
+    if any(ord(c) < 0x20 or ord(c) > 0x7E or c in ('\\', '"') for c in title):
+        fail(f"entry[{idx}]: title must be printable ASCII without "
+             f"backslash or double-quote, got {title!r}")
 
     if not isinstance(entry["flags"], list):
         fail(f"entry[{idx}]: flags must be an array")
@@ -341,11 +351,20 @@ def validate_envelope(entry: dict, idx: int) -> None:
 
     if not isinstance(entry["sort_key"], str):
         fail(f"entry[{idx}]: sort_key must be a string")
-    # sort_key length cap matches the bootloader/parser ABI; an
-    # over-cap key would otherwise validate at the host but be
-    # rejected as BAD_ENVELOPE_FIELD by the parser at boot time.
-    if len(entry["sort_key"]) > MAX_SORT_KEY_LEN:
-        fail(f"entry[{idx}]: sort_key length {len(entry['sort_key'])} > "
+    # sort_key cap matches the bootloader parser's check, which
+    # measures content_end - content_start (raw JSON content bytes
+    # between quotes). For pure ASCII without backslash / double-
+    # quote / control chars, Python char count equals raw JSON byte
+    # count -- so we enforce ASCII-clean + length here. Non-ASCII or
+    # escape-bearing values would expand under JSON serialization
+    # (with ensure_ascii=True) and trip the parser's cap at boot
+    # despite passing Python len() at host time.
+    sk = entry["sort_key"]
+    if any(ord(c) < 0x20 or ord(c) > 0x7E or c in ('\\', '"') for c in sk):
+        fail(f"entry[{idx}]: sort_key must be printable ASCII without "
+             f"backslash or double-quote, got {sk!r}")
+    if len(sk) > MAX_SORT_KEY_LEN:
+        fail(f"entry[{idx}]: sort_key length {len(sk)} > "
              f"MAX_SORT_KEY_LEN {MAX_SORT_KEY_LEN}")
     if not isinstance(entry["machine_id"], str):
         fail(f"entry[{idx}]: machine_id must be a string, got {entry['machine_id']!r}")
@@ -356,16 +375,18 @@ def validate_envelope(entry: dict, idx: int) -> None:
         fail(f"entry[{idx}]: machine_id must be empty or RFC 4122 UUID format, got {entry['machine_id']!r}")
     if not isinstance(entry["policy_tags"], list):
         fail(f"entry[{idx}]: policy_tags must be an array")
-    # policy_tags array + per-tag length caps match the parser's
-    # fixed-size storage (BOOT_ENTRIES_MAX_POLICY_TAGS x
-    # BOOT_ENTRIES_MAX_POLICY_TAG_LEN). Excess tags / over-cap tags
-    # would parse-overflow at boot.
+    # policy_tags array + per-tag caps match the parser's fixed-size
+    # storage. Same ASCII-clean discipline as sort_key so Python
+    # len() equals raw JSON content byte length.
     if len(entry["policy_tags"]) > MAX_POLICY_TAGS:
         fail(f"entry[{idx}]: policy_tags has {len(entry['policy_tags'])} "
              f"items > MAX_POLICY_TAGS {MAX_POLICY_TAGS}")
     for i, tag in enumerate(entry["policy_tags"]):
         if not isinstance(tag, str):
             fail(f"entry[{idx}]: policy_tags[{i}] must be a string, got {type(tag).__name__}")
+        if any(ord(c) < 0x20 or ord(c) > 0x7E or c in ('\\', '"') for c in tag):
+            fail(f"entry[{idx}]: policy_tags[{i}] must be printable "
+                 f"ASCII without backslash or double-quote, got {tag!r}")
         if len(tag) > MAX_POLICY_TAG_LEN:
             fail(f"entry[{idx}]: policy_tags[{i}] length {len(tag)} > "
                  f"MAX_POLICY_TAG_LEN {MAX_POLICY_TAG_LEN}")

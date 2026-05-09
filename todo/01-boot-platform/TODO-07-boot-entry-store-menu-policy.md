@@ -365,6 +365,10 @@ Offline editor so operators are not stuck hex-editing the JSON. Host-side Python
 > - Canonical doc: [`docs/boot/bootcfg.md`](../../docs/boot/bootcfg.md).
 > - Scope boundary: §11 owns the offline editor + the validator length-cap parity. Live-boot UEFI-variable subcommands (BootNext / one-shot / history) belong to a future user-mode binary; the §12 audit log owns the history side.
 
+> **Verified:** 2026-05-09 | commit `01cbc213` (impl) + post-review fixup | 7/8 items + 1 deferred | build OK | tests 25/25 + 78/78 PASS
+> **Deferred:** [M] Live-boot bootcfg native binary (set-bootnext-hint / set-oneshot / dump-history) -> XREF: 01-boot-platform/TODO-07 §11 (item: "Live-boot subcommands deferred to a future user-mode binary owner" at line 348 -- needs UEFI var write + BlackBox JSONL access)
+> **Quality reviewed:** 2026-05-09 | Codex 5x (design + adversarial + 2 re-adversarial + consistency + perf) | 2H+5M fixed | scope: N/A (host-side Python tool)
+
 ---
 
 ## 12. Policy Audit Trail and Rollback Reason Codes

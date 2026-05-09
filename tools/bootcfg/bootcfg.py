@@ -59,7 +59,13 @@ import validate as _validator  # type: ignore  # noqa: E402
 # the store is missing/invalid. Match it byte-for-byte so a freshly seeded
 # store loads the same kernel as the no-store fallback path.
 FALLBACK_KERNEL_PATH = "\\EFI\\ImpossibleOS\\kernel.exe"
-SEED_MACHINE_ID = "00000000-0000-0000-0000-000000000000"
+# Empty machine_id is the explicit "match any machine" wildcard per
+# the boot-policy ladder (e->machine_id[0] == '\\0'). Using a
+# placeholder UUID would be treated as a real machine pin and
+# rejected as MACHINE_ID_MISMATCH on every machine whose local
+# machine_id differs (i.e. all of them, since SMBIOS UUID extraction
+# has not shipped). The seed must be a wildcard.
+SEED_MACHINE_ID = ""
 
 
 def _seed_store() -> dict:
@@ -94,7 +100,26 @@ def _load(path: Path) -> tuple[dict, bytes]:
     if not path.is_file():
         print(f"[FAIL] {path}: not a file", file=sys.stderr)
         sys.exit(2)
-    raw = path.read_bytes()
+    # Pre-read size guard: bound host-side I/O + JSON parse work so
+    # an operator pointing bootcfg at the wrong (or maliciously
+    # oversized) file does not consume unbounded memory before the
+    # validator's MAX_TOTAL_BYTES check runs. Mirrors the standalone
+    # validator's pre-read stat size check.
+    try:
+        file_size = path.stat().st_size
+    except OSError as e:
+        print(f"[FAIL] {path}: stat failed: {e}", file=sys.stderr)
+        sys.exit(2)
+    if file_size > _validator.MAX_TOTAL_BYTES:
+        print(f"[FAIL] {path}: file size {file_size} > "
+              f"MAX_TOTAL_BYTES {_validator.MAX_TOTAL_BYTES} "
+              f"(rejected pre-read)", file=sys.stderr)
+        sys.exit(1)
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        print(f"[FAIL] {path}: read failed: {e}", file=sys.stderr)
+        sys.exit(2)
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -197,7 +222,14 @@ def _validate_then_write(path: Path, data: dict) -> None:
     # The validator must accept what we are about to write. If it rejects,
     # bail with the validator's exit -- never persist an invalid store.
     _validator.validate_store(data, raw, recompute_crc=False)
-    _atomic_write(path, raw)
+    try:
+        _atomic_write(path, raw)
+    except OSError as e:
+        # Filesystem-level errors (read-only mount, ENOSPC, EPERM)
+        # map to rc=2 (usage error) per the documented exit-code
+        # contract; they are NOT validation failures (rc=1).
+        print(f"[FAIL] {path}: write failed: {e}", file=sys.stderr)
+        sys.exit(2)
 
 
 # ---- Subcommand: list -------------------------------------------------------
