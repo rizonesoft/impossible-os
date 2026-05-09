@@ -381,7 +381,7 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 - [x] `tools/bootcfg/bootcfg.py --mutation-log <path>` appends JSONL on every successful mutation; failed mutations emit no record. Live-boot path lands at `X:\Boot\mutations.jsonl` when the deferred user-mode bootcfg binary ships.
 - [x] NVRAM-read failure -> `boot_info.audit_degraded=1` + `BOOT_AUDIT_EVENT_AUDIT_DEGRADED` + serial WARN; ack failure -> WARN + trigger persists (idempotent retry).
 - [x] [`TODO-22 §7`](TODO-22-recovery-partition.md) recovery UI and TODO-14 boot diagnostics consume both JSONL streams (passive contract; no live wire-up needed today).
-- [ ] Commit: `"boot: audit boot entry policy decisions"`
+- [x] Commit: `"boot: audit boot entry policy decisions"`
 
 **Test checkpoint:** Force watchdog rollback -> NVRAM sticky bit set + BlackBox JSONL gains a record with `event=WATCHDOG_ROLLBACK`; subsequent boots see the sticky flag and auto-recover. Per-boot records always go to BlackBox; NVRAM-quota-full leaves `audit_degraded=1` without blocking boot. `bootcfg --mutation-log <path>` round-trips a JSONL record on every successful mutation; failed mutations leave no record. Test on: QEMU WHPX + TCG; bare metal.
 
