@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""bootcfg -- offline boot-entry-store editor.
+
+Edits `\\EFI\\ImpossibleOS\\bootentries.json` (or any offline copy on a mounted
+ESP) using the canonical schema validator at `tools/boot-entry-validate/`.
+Every write goes through the validator before persisting; reject invalid
+stores rather than corrupting the file. Atomic CoW + fsync durability matches
+the boot-counter rename protocol's "write-new + flush + close + atomic-
+replace" contract -- a host crash mid-write never leaves a torn or missing
+store.
+
+Subcommands (offline mode, all operate on a path argument):
+    list <path>                      Dump entries to stdout.
+    add <path> --json <entry-json>   Append an entry; fail if id already exists.
+    remove <path> <id>               Drop an entry by id.
+    set-default <path> <id>          Reassign sort_keys so <id> is the lowest
+                                     among ACTIVE entries (the policy ladder
+                                     picks lowest-sort_key first; mere array
+                                     reordering does not change the default).
+    emit-seed <path>                 Write the idempotent default store
+                                     (one split entry pointing at the
+                                     bootloader's hardcoded fallback path).
+                                     Idempotent -- running twice yields a
+                                     byte-identical store.
+
+Live-boot subcommands DEFERRED (need a running OS user-mode binary, not host
+Python): set-bootnext-hint, set-oneshot, dump-history.
+
+Exit codes:
+    0  -- success
+    1  -- validation failure (printed to stderr with [FAIL] prefix)
+    2  -- usage error (missing argument, file unreadable, etc.)
+    3  -- conflict (id collision on add, missing id on remove/set-default)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+import zlib
+from pathlib import Path
+from typing import Any
+
+# Reuse the validator's schema constants + validate_store + CRC helpers.
+# This is the SINGLE source of truth for envelope/payload rules; bootcfg
+# does not duplicate any of them.
+SELF_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SELF_DIR.parent.parent
+sys.path.insert(0, str(REPO_ROOT / "tools" / "boot-entry-validate"))
+import validate as _validator  # type: ignore  # noqa: E402
+
+
+# ---- Defaults for emit-seed --------------------------------------------------
+
+# The bootloader's in-firmware fallback (boot_entries_synthesize_fallback) when
+# the store is missing/invalid. Match it byte-for-byte so a freshly seeded
+# store loads the same kernel as the no-store fallback path.
+FALLBACK_KERNEL_PATH = "\\EFI\\ImpossibleOS\\kernel.exe"
+SEED_MACHINE_ID = "00000000-0000-0000-0000-000000000000"
+
+
+def _seed_store() -> dict:
+    """Idempotent seed: one split entry at the canonical kernel path."""
+    return {
+        "schema_version": _validator.SCHEMA_VERSION,
+        "crc32": "0x00000000",  # placeholder; rewritten before write
+        "entries": [
+            {
+                "id": "default",
+                "title": "Impossible OS",
+                "kind": "split",
+                "flags": ["active"],
+                "sort_key": "00-default",
+                "machine_id": SEED_MACHINE_ID,
+                "policy_tags": [],
+                "payload": {
+                    "kernel": FALLBACK_KERNEL_PATH,
+                    "cmdline": "",
+                    "root": "A",
+                },
+            }
+        ],
+    }
+
+
+# ---- Read / parse -----------------------------------------------------------
+
+
+def _load(path: Path) -> tuple[dict, bytes]:
+    """Read + JSON-parse + validate. Returns (parsed, raw bytes)."""
+    if not path.is_file():
+        print(f"[FAIL] {path}: not a file", file=sys.stderr)
+        sys.exit(2)
+    raw = path.read_bytes()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"[FAIL] {path}: JSON parse error: {e}", file=sys.stderr)
+        sys.exit(1)
+    # Validate as a read; failures bail with the validator's [FAIL] prefix.
+    _validator.validate_store(data, raw, recompute_crc=False)
+    return data, raw
+
+
+# ---- Serialize + write -------------------------------------------------------
+
+
+def _canonical_dumps(data: dict) -> bytes:
+    """Deterministic JSON shape for stable CRC computation. Pretty-printed
+    with the spec-mandated top-level field order: schema_version, crc32,
+    entries."""
+    top = {
+        "schema_version": data["schema_version"],
+        "crc32": data["crc32"],
+        "entries": data["entries"],
+    }
+    return json.dumps(top, indent=2, ensure_ascii=True).encode("ascii") + b"\n"
+
+
+def _recompute_crc(data: dict) -> dict:
+    """Stamp the canonical CRC into data['crc32']. Returns mutated data."""
+    data["crc32"] = "0x00000000"
+    raw = _canonical_dumps(data)
+    crc = _validator.compute_crc_from_file(raw)
+    data["crc32"] = f"0x{crc:08X}"
+    return data
+
+
+def _atomic_write(path: Path, raw: bytes) -> None:
+    """Atomic CoW + fsync durability protocol.
+
+    Mirrors the boot-counter rename protocol on FAT32 ESPs:
+        1. Write `<path>.new` to the same directory.
+        2. fsync the new file's contents to disk.
+        3. fsync the parent directory so the directory entry for `.new`
+           is durable before the rename.
+        4. os.replace() atomically swaps `.new` over `<path>`.
+        5. fsync the parent directory again so the rename is durable.
+
+    Without steps 2/3/5, FAT32 (and ext4 with default mount opts) can leave
+    a torn or missing store after a host crash mid-write. The validator on
+    the next read would reject the store, and the bootloader would fall
+    back to the synthesized default -- recoverable but not the contract
+    bootcfg promised. With these steps, the store is either the old
+    version or the new version; never torn.
+    """
+    parent = path.parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+    # Use a tempfile in the same directory so os.replace() is atomic
+    # (rename across filesystems is not).
+    fd, tmp_name = tempfile.mkstemp(dir=parent, prefix=path.name + ".", suffix=".new")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+            f.flush()
+            os.fsync(f.fileno())
+        # Durable parent directory entry for the new file (Linux/POSIX).
+        # fsync on a directory fd is undefined on Windows -- os.replace's
+        # native MoveFileEx is itself atomic on NTFS, and on Windows hosts
+        # editing a FAT32 ESP through a mtools / driver layer the host's
+        # OS handles durability. Skip-on-error is intentional.
+        try:
+            dir_fd = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+        os.replace(tmp_path, path)
+        try:
+            dir_fd = os.open(parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+    except BaseException:
+        # Best-effort cleanup of the temp file on any failure path.
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _validate_then_write(path: Path, data: dict) -> None:
+    """Stamp CRC, validate the would-be-on-disk bytes, atomic-write."""
+    _recompute_crc(data)
+    raw = _canonical_dumps(data)
+    # The validator must accept what we are about to write. If it rejects,
+    # bail with the validator's exit -- never persist an invalid store.
+    _validator.validate_store(data, raw, recompute_crc=False)
+    _atomic_write(path, raw)
+
+
+# ---- Subcommand: list -------------------------------------------------------
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    data, _ = _load(path)
+    print(f"store: {path}")
+    print(f"  schema_version: {data['schema_version']}")
+    print(f"  crc32:          {data['crc32']}")
+    print(f"  entries:        {len(data['entries'])}")
+    for i, e in enumerate(data["entries"]):
+        flags = ",".join(e.get("flags", [])) or "(none)"
+        sk = e.get("sort_key", "")
+        print(f"    [{i}] id={e['id']!r}  kind={e['kind']!r}  "
+              f"sort_key={sk!r}  flags={flags}")
+        title = e.get("title", "")
+        if title:
+            print(f"        title: {title!r}")
+    return 0
+
+
+# ---- Subcommand: add --------------------------------------------------------
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    try:
+        new_entry = json.loads(args.json)
+    except json.JSONDecodeError as e:
+        print(f"[FAIL] --json: parse error: {e}", file=sys.stderr)
+        return 2
+    if not isinstance(new_entry, dict):
+        print("[FAIL] --json: must be a JSON object", file=sys.stderr)
+        return 2
+    if "id" not in new_entry:
+        print("[FAIL] --json: entry has no id", file=sys.stderr)
+        return 2
+
+    data, _ = _load(path)
+    new_id = new_entry["id"]
+    for e in data["entries"]:
+        if e["id"] == new_id:
+            print(f"[FAIL] add: id {new_id!r} already exists", file=sys.stderr)
+            return 3
+    if len(data["entries"]) + 1 > _validator.MAX_ENTRIES:
+        print(f"[FAIL] add: store at MAX_ENTRIES={_validator.MAX_ENTRIES}",
+              file=sys.stderr)
+        return 1
+    data["entries"].append(new_entry)
+    _validate_then_write(path, data)
+    print(f"add: {new_id!r} appended; new store CRC {data['crc32']}")
+    return 0
+
+
+# ---- Subcommand: remove -----------------------------------------------------
+
+
+def cmd_remove(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    data, _ = _load(path)
+    target = args.id
+    before = len(data["entries"])
+    data["entries"] = [e for e in data["entries"] if e["id"] != target]
+    if len(data["entries"]) == before:
+        print(f"[FAIL] remove: id {target!r} not found", file=sys.stderr)
+        return 3
+    if len(data["entries"]) == 0:
+        print("[FAIL] remove: store would be empty (>=1 entry required)",
+              file=sys.stderr)
+        return 1
+    _validate_then_write(path, data)
+    print(f"remove: {target!r} dropped; new store CRC {data['crc32']}")
+    return 0
+
+
+# ---- Subcommand: set-default ------------------------------------------------
+
+
+def cmd_set_default(args: argparse.Namespace) -> int:
+    """Reassign sort_keys so <id> is the lowest among ACTIVE entries.
+
+    Codex design review caught that the policy ladder picks the lowest
+    sort_key (tie-break by array order). Merely reordering the array does
+    not change the default; we must rewrite sort_keys.
+
+    Strategy: lex-min the sort_key of the target entry by prefixing "00-",
+    and renumber every other ACTIVE entry's sort_key with a "NN-" prefix
+    in the original active-array order so the picked entry wins by lex
+    compare. Inactive / hidden entries keep their existing sort_keys --
+    the ladder filters them out before the default tie-break runs.
+    """
+    path = Path(args.path)
+    data, _ = _load(path)
+    target = args.id
+    target_idx = None
+    for i, e in enumerate(data["entries"]):
+        if e["id"] == target:
+            target_idx = i
+            break
+    if target_idx is None:
+        print(f"[FAIL] set-default: id {target!r} not found", file=sys.stderr)
+        return 3
+    target_entry = data["entries"][target_idx]
+    if "active" not in target_entry.get("flags", []):
+        print(f"[FAIL] set-default: id {target!r} is not active "
+              f"(ladder filters non-active entries before tie-break)",
+              file=sys.stderr)
+        return 1
+
+    # Active entries (excluding target) get sort_keys 01-..., 02-..., ...;
+    # target gets 00-default. The "NN-" prefix is the canonical sort_key
+    # convention used by the example store + validator.
+    target_entry["sort_key"] = f"00-{target_entry['id']}"
+    n = 1
+    for e in data["entries"]:
+        if e is target_entry:
+            continue
+        if "active" not in e.get("flags", []):
+            continue
+        e["sort_key"] = f"{n:02d}-{e['id']}"
+        n += 1
+
+    _validate_then_write(path, data)
+    print(f"set-default: {target!r} now lowest sort_key "
+          f"({target_entry['sort_key']!r}); new store CRC {data['crc32']}")
+    return 0
+
+
+# ---- Subcommand: emit-seed --------------------------------------------------
+
+
+def cmd_emit_seed(args: argparse.Namespace) -> int:
+    """Idempotent: writing twice yields a byte-identical store."""
+    path = Path(args.path)
+    data = _seed_store()
+    _validate_then_write(path, data)
+    print(f"emit-seed: wrote idempotent default store to {path}; "
+          f"CRC {data['crc32']}")
+    return 0
+
+
+# ---- argparse glue ----------------------------------------------------------
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="bootcfg",
+        description="Offline boot-entry-store editor (host-side; "
+                    "live-boot subcommands deferred).",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    p_list = sub.add_parser("list", help="dump entries")
+    p_list.add_argument("path")
+    p_list.set_defaults(func=cmd_list)
+
+    p_add = sub.add_parser("add", help="append an entry (validated)")
+    p_add.add_argument("path")
+    p_add.add_argument("--json", required=True,
+                       help="entry as a JSON object")
+    p_add.set_defaults(func=cmd_add)
+
+    p_remove = sub.add_parser("remove", help="drop an entry by id")
+    p_remove.add_argument("path")
+    p_remove.add_argument("id")
+    p_remove.set_defaults(func=cmd_remove)
+
+    p_setdef = sub.add_parser(
+        "set-default",
+        help="reassign sort_keys so id wins the lowest-sort_key tie-break",
+    )
+    p_setdef.add_argument("path")
+    p_setdef.add_argument("id")
+    p_setdef.set_defaults(func=cmd_set_default)
+
+    p_seed = sub.add_parser(
+        "emit-seed",
+        help="write idempotent default store (single split entry)",
+    )
+    p_seed.add_argument("path")
+    p_seed.set_defaults(func=cmd_emit_seed)
+
+    return p
+
+
+def main(argv: list[str]) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv[1:])
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

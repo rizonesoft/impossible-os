@@ -36,6 +36,9 @@ MAX_TOTAL_BYTES = 16 * 1024
 MAX_TITLE_LEN = 63
 MAX_ID_LEN = 47
 MAX_PATH_LEN = 255
+MAX_SORT_KEY_LEN = 63       # BOOT_ENTRIES_MAX_SORT_KEY_LEN
+MAX_POLICY_TAGS = 4         # BOOT_ENTRIES_MAX_POLICY_TAGS
+MAX_POLICY_TAG_LEN = 23     # BOOT_ENTRIES_MAX_POLICY_TAG_LEN
 
 KNOWN_FLAGS = frozenset({
     "active",
@@ -338,6 +341,12 @@ def validate_envelope(entry: dict, idx: int) -> None:
 
     if not isinstance(entry["sort_key"], str):
         fail(f"entry[{idx}]: sort_key must be a string")
+    # sort_key length cap matches the bootloader/parser ABI; an
+    # over-cap key would otherwise validate at the host but be
+    # rejected as BAD_ENVELOPE_FIELD by the parser at boot time.
+    if len(entry["sort_key"]) > MAX_SORT_KEY_LEN:
+        fail(f"entry[{idx}]: sort_key length {len(entry['sort_key'])} > "
+             f"MAX_SORT_KEY_LEN {MAX_SORT_KEY_LEN}")
     if not isinstance(entry["machine_id"], str):
         fail(f"entry[{idx}]: machine_id must be a string, got {entry['machine_id']!r}")
     # Empty machine_id is the explicit "match any machine" wildcard
@@ -347,9 +356,19 @@ def validate_envelope(entry: dict, idx: int) -> None:
         fail(f"entry[{idx}]: machine_id must be empty or RFC 4122 UUID format, got {entry['machine_id']!r}")
     if not isinstance(entry["policy_tags"], list):
         fail(f"entry[{idx}]: policy_tags must be an array")
+    # policy_tags array + per-tag length caps match the parser's
+    # fixed-size storage (BOOT_ENTRIES_MAX_POLICY_TAGS x
+    # BOOT_ENTRIES_MAX_POLICY_TAG_LEN). Excess tags / over-cap tags
+    # would parse-overflow at boot.
+    if len(entry["policy_tags"]) > MAX_POLICY_TAGS:
+        fail(f"entry[{idx}]: policy_tags has {len(entry['policy_tags'])} "
+             f"items > MAX_POLICY_TAGS {MAX_POLICY_TAGS}")
     for i, tag in enumerate(entry["policy_tags"]):
         if not isinstance(tag, str):
             fail(f"entry[{idx}]: policy_tags[{i}] must be a string, got {type(tag).__name__}")
+        if len(tag) > MAX_POLICY_TAG_LEN:
+            fail(f"entry[{idx}]: policy_tags[{i}] length {len(tag)} > "
+                 f"MAX_POLICY_TAG_LEN {MAX_POLICY_TAG_LEN}")
     if not isinstance(entry["payload"], dict):
         fail(f"entry[{idx}]: payload must be an object")
 

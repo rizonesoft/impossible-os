@@ -293,7 +293,7 @@ def cases() -> list[Case]:
     out.append(("uki_path good prefix accepted", _uki_good, ("pass",)))
     out.append(("machine_id non-UUID rejected",
                 lambda: write_tmp(mutate(entry0={"machine_id": "not-a-uuid"}), recompute_crc=True),
-                ("fail", "machine_id must be RFC 4122 UUID")))
+                ("fail", "machine_id must be empty or RFC 4122 UUID format")))
     out.append(("recovery GUID non-UUID rejected", _recovery_bad_guid, ("fail", "recovery_partition_guid must be RFC 4122 UUID")))
     out.append(("chainload device_guid non-UUID rejected", _chainload_bad_guid, ("fail", "device_guid must be RFC 4122 UUID")))
     out.append(("NaN token in extra payload field rejected", _nan_payload, ("fail", "non-finite JSON token")))

@@ -237,6 +237,15 @@ mkdir -p "$ESP_STAGE/EFI/BOOT" "$ESP_STAGE/EFI/ImpossibleOS" "$ESP_STAGE/boot" \
 cp "$BL_PATH" "$ESP_STAGE/EFI/BOOT/BOOTX64.EFI"
 cp "$KR_PATH" "$ESP_STAGE/boot/kernel.exe"
 cp "$BOOT_CONF" "$ESP_STAGE/EFI/ImpossibleOS/boot.conf"
+
+# Seed the boot-entry store with the idempotent default. Running twice
+# yields a byte-identical store, so re-runs of build-image do not
+# perturb the image hash. The seed entry points at the same kernel
+# path the bootloader's in-firmware fallback would synthesize, so a
+# seeded store and a missing store boot the same kernel.
+python3 "$REPO_ROOT/tools/bootcfg/bootcfg.py" emit-seed \
+    "$ESP_STAGE/EFI/ImpossibleOS/bootentries.json" >/dev/null
+
 # /IPOS/role.txt drives the boot-media role-detection feature: the
 # bootloader reads this file from both ESP and BlackBox before kernel
 # load and feeds the decision into boot_info->boot_media_role.

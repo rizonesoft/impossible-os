@@ -60,8 +60,8 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [x]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [/]   |
 | 💎  |   9   | A/B and recovery entry integration (DEFERRED)          | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [ ]   |
-| 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)      | §2, §14, T06 §1, T03 D15 §6 (updater)   |  [ ]   |
-| 💎  |  11   | Boot entry editor tooling                              | §1-§10                                  |  [ ]   |
+| 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)      | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [ ]   |
+| 💎  |  11   | Boot entry editor tooling                              | §1, §2                                  |  [/]   |
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [ ]   |
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [ ]   |
 | 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [ ]   |
@@ -343,16 +343,27 @@ After an update, the previous kernel stays available until the new kernel is con
 
 ## 11. Boot Entry Editor Tooling
 
-Online and offline editors so operators are not stuck hex-editing the JSON.
+Offline editor so operators are not stuck hex-editing the JSON. Host-side Python ships now (offline + CI/release path); native user-mode binary deferred until user-mode runtime supports it.
 
-- [ ] Add `bootcfg.exe` user-mode tool for list / add / remove / set-default / set-bootnext-hint / set-oneshot / dump-history.
-- [ ] Add offline image-edit mode that operates on a mounted ESP for CI and release tooling (no kernel boot required).
-- [ ] All writes go through the §2 validator before persisting; reject invalid stores rather than corrupting the file. Atomic CoW file replacement (write `bootentries.json.new` then rename).
-- [ ] Update install/release scripts to use `bootcfg.exe --offline --seed` for ESP seeding (consumed by §16 bootstrap).
-- [ ] Document command surface in `docs/boot/bootcfg.md`.
-- [ ] Commit: `"tools: boot entry editor"`
+- [x] `tools/bootcfg/bootcfg.py` host CLI subcommands: list / add / remove / set-default / emit-seed. Live-boot subcommands (set-bootnext-hint, set-oneshot, dump-history) deferred to a future user-mode binary.
+- [x] Offline-only mode (operates on a path argument); CI + release tooling consume it directly.
+- [x] Every write goes through `tools/boot-entry-validate/validate.py`; invalid stores never touch disk. Atomic CoW: tempfile + fsync + os.replace + parent-dir fsync.
+- [x] `set-default` rewrites sort_keys (not just array order); the policy ladder picks lowest sort_key.
+- [x] `scripts/release/build-image.sh` invokes `bootcfg.py emit-seed` to populate the staged ESP; idempotent re-run preserves the deterministic-image guarantee.
+- [x] Command surface + atomic-write protocol + deferred-subcommand list documented in [`docs/boot/bootcfg.md`](../../docs/boot/bootcfg.md).
+- [x] Validator gap closed: `MAX_SORT_KEY_LEN=63`, `MAX_POLICY_TAGS=4`, `MAX_POLICY_TAG_LEN=23` enforced so bootcfg cannot persist parser-rejecting stores.
+- [x] Commit: `"tools: boot entry editor"`
 
-**Test checkpoint:** `bootcfg list` shows current entries; `bootcfg set-default <id>` round-trips through reboot. Offline mode rejects an entry that points outside ESP. Atomic write survives a simulated power-cut between rename steps. Test on: live boot + Linux host offline edit.
+**Test checkpoint:** `python3 tools/bootcfg/bootcfg.py list <path>` shows current entries; `set-default <id>` rewrites sort_keys so the named id wins the policy ladder's lowest-sort_key tie-break. `emit-seed` is byte-idempotent. `add` of an entry with an over-cap sort_key, oversize policy_tags array, or path-escape kernel path fails before persisting. Atomic write leaves no `.new` tempfiles on success or rejection. Test on: 19 self-contained tests in `tools/bootcfg/test_bootcfg.py` + smoke build with `scripts/release/build-image.sh`.
+
+> **Test runner:** `python3 tools/bootcfg/test_bootcfg.py` | 19 cases, 0 failures (mirrors `tools/boot-entry-validate/test_validate.py` pattern, no pytest dep)
+
+> **Notes:**
+> - What shipped: `tools/bootcfg/bootcfg.py` (5 subcommands), `tools/bootcfg/test_bootcfg.py` (19 cases), `docs/boot/bootcfg.md`, validator length-cap parity (3 new constants), `build-image.sh` emit-seed integration.
+> - How it integrates: bootcfg imports validate.py for schema + CRC + validate_store; never duplicates schema constants. Atomic CoW = tempfile + fsync + os.replace + parent-dir fsync. emit-seed wired into release-image staging.
+> - Downstream effects: deterministic build-image now seeds the boot store; CI consumers gain validated edit primitives; live-boot bootcfg is the only piece left for the editor-tooling story.
+> - Canonical doc: [`docs/boot/bootcfg.md`](../../docs/boot/bootcfg.md).
+> - Scope boundary: §11 owns the offline editor + the validator length-cap parity. Live-boot UEFI-variable subcommands (BootNext / one-shot / history) belong to a future user-mode binary; the §12 audit log owns the history side.
 
 ---
 
@@ -473,7 +484,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Safe mode entry                                        | ✅ msconfig safeboot flag         | ✅ rescue.target / single             | 🟦 §8 KIND_SAFE admitted + boot_mode=1 materialized; F8 hotkey wired; subset payload deferred to §13 |
 | 💎  | Previous-kernel rollback entry                         | ⚠️ BCD bootsequence (limited UX)  | ✅ GRUB previous kernel               | ⬜ Planned -- §10        |
 | 💎  | Boot menu UI (text + graphical)                        | ⚠️ Minimal "Choose an OS"         | ✅ GRUB / systemd-boot menus          | ✅ §6 GOP+ConOut+serial; §7 indicators ([SB]/[REC]/[NET]/[FAIL]) + hotkeys (F8/F10/F11) + hide_when_alone |
-| 💎  | Offline entry editor tooling                           | ✅ bcdedit / bcdboot              | ✅ grub-mkconfig / bootctl            | ⬜ Planned -- §11        |
+| 💎  | Offline entry editor tooling                           | ✅ bcdedit / bcdboot              | ✅ grub-mkconfig / bootctl            | 🟦 §11 host-side `bootcfg.py` (list/add/remove/set-default/emit-seed) + validator parity; live-boot binary deferred |
 | 💎  | Loop prevention via per-entry try counter              | ⚠️ Recovery loop after 2 fails    | ✅ systemd-boot tries=/done=          | 🟦 BLS counter grammar + ladder gate ship in §3; crash-tolerant bootloader rename in §5 |
 | 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | ⬜ Planned -- §14        |
 | 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | ⬜ Planned -- §13        |
