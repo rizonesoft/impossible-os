@@ -115,7 +115,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     last_outcome, audit_degraded_last_boot, last_event_code). The
  *     kernel's boot_audit_publish() composes a JSONL line from the
  *     selection block + this snapshot and appends to
- *     X:\BlackBox\boot\history.jsonl, then acks consumed triggers via
+ *     X:\Boot\history.jsonl, then acks consumed triggers via
  *     uefi_var_set. Bootloader is read-only on the sticky var.
  * v18 adds firmware trust-landscape surface (sbat_level, dbx_size,
  *     degraded_trust_flags) populated by uefi_secureboot_init() in the

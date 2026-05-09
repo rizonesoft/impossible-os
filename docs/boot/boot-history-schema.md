@@ -60,7 +60,7 @@ One JSON object per line, NUL-terminated by `\n`. Every record carries `schema` 
 | --- | --- | --- |
 | `schema` | u32 | Pinned to `BOOT_AUDIT_JSONL_SCHEMA_VERSION = 1`. Bump only on incompatible wire changes. |
 | `ts` | u64 | Wall-clock unix seconds at publish time. `0` = wall clock not available. |
-| `boot_seq` | u32 | Monotonic boot counter. New boot `n` writes `n = sticky.last_boot_seq + 1`. |
+| `boot_seq` | u32 | Monotonic boot counter sourced from the BlackBox-side dual-file counter (`X:\Boot\sequence` + `sequence.new`). Each boot writes `prev + 1` (saturating at `UINT32_MAX`); reader takes max-of-both. `sticky.last_boot_seq` is a previous-record diagnostic / ack-context field, NOT the seq source. |
 | `event` | string | Symbolic name from `boot_audit_event_code` (`NORMAL`, `WATCHDOG_ROLLBACK`, `RECOVERY`, etc.). |
 | `event_code` | u16 | Numeric value from `boot_audit_event_code`. Pinned for forward compat. |
 | `selection_reason` | u32 | Numeric `boot_selection_reason` from the policy ladder. |

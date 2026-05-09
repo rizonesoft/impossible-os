@@ -413,7 +413,7 @@ Result of the boot-entry policy ladder (boot-entry policy feature, owning TODO `
 
 ## Policy audit surface (v20)
 
-Surface for the per-decision boot policy audit trail (boot-entry audit feature, owning TODO `01-boot-platform/TODO-07`). The bootloader reads the `ImpossibleOS-BootSticky` UEFI variable (single 256-byte record, exceptional-only -- per-boot history goes to `X:\BlackBox\boot\history.jsonl`) and surfaces the relevant bits here. The kernel's `boot_audit_publish()` consumes this block plus the v19 selection block to compose one JSONL line per boot, then acks consumed triggers via `uefi_var_set` post-publish. Bootloader is read-only on the sticky var.
+Surface for the per-decision boot policy audit trail (boot-entry audit feature, owning TODO `01-boot-platform/TODO-07`). The bootloader reads the `ImpossibleOS-BootSticky` UEFI variable (single 256-byte record, exceptional-only -- per-boot history goes to `X:\Boot\history.jsonl`) and surfaces the relevant bits here. The kernel's `boot_audit_publish()` consumes this block plus the v19 selection block to compose one JSONL line per boot, then acks consumed triggers via `uefi_var_set` post-publish. Bootloader is read-only on the sticky var.
 
 | Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -424,7 +424,7 @@ Surface for the per-decision boot policy audit trail (boot-entry audit feature, 
 | `sticky_last_outcome` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if the previous boot reached mark-good. Carried for diagnostics only; does not feed the ladder. |
 | `sticky_audit_degraded_last_boot` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | 1 if the previous boot's NVRAM/BlackBox path was degraded (chain-of-degradation visibility). |
 | `sticky_last_event_code` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | `enum boot_audit_event_code` from previous boot. See [`include/boot/boot_audit_codes.h`](../../include/boot/boot_audit_codes.h). |
-| `sticky_last_boot_seq` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | Monotonic boot counter from the previous boot's record. Kernel uses it to set the new `boot_seq = sticky_last_boot_seq + 1` when authoring the JSONL line. |
+| `sticky_last_boot_seq` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | Previous-record diagnostic / ack-context field. The JSONL `boot_seq` comes from the BlackBox-side dual-file counter (`X:\Boot\sequence` + `sequence.new`), NOT from this field. `sticky_last_boot_seq` is preserved across boots so consumers can correlate ack acknowledgments with the boot that acked them. |
 | `sticky_consumed_trigger_seq` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | Boot seq of the last successful trigger ack (helps the kernel detect torn ack windows -- if the bootloader observes a trigger AND `sticky_consumed_trigger_seq == sticky_last_boot_seq`, the previous boot acked but this boot saw the trigger anyway, which means the previous boot also saw it but never cleared -- fail-safe). |
 | `_audit_pad` | bootx64 boot policy | P0 | none | persistent | boot-entry audit | reserved zero; alignment to 8-byte boundary. |
 

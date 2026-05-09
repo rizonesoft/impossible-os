@@ -269,7 +269,7 @@ def _append_mutation_log(
 
     The mutation log is the disk-side `mutations.jsonl` half of the
     boot policy audit trail. Live-boot mutations (the deferred user-mode
-    bootcfg binary) will append to `X:\\BlackBox\\boot\\mutations.jsonl`
+    bootcfg binary) will append to `X:\\Boot\\mutations.jsonl`
     directly; offline runs append wherever the operator points the path.
     CI / installer pipelines should pass an explicit --mutation-log so
     the trail survives the host-side staging step.
@@ -498,7 +498,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # always pass it so the boot policy audit trail (the disk-side
     # half of TODO-07's audit feature) survives the host-side staging
     # step. Live-boot mutations (the deferred user-mode bootcfg
-    # binary) will append directly to X:\BlackBox\boot\mutations.jsonl.
+    # binary) will append directly to X:\Boot\mutations.jsonl.
     mutation_help = (
         "append a JSONL audit record to <path> after the mutation; "
         "skip when omitted"

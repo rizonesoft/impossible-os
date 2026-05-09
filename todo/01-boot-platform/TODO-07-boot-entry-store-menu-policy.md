@@ -388,11 +388,16 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 13 boot_audit suites + bootcfg `python3 tools/bootcfg/test_bootcfg.py` (32 cases incl. 7 new mutation-log cases, 0 failures)
 
 > **Notes:**
-> - What shipped: audit codes header, bootloader sticky reader, kernel JSONL publisher + post-publish ack, boot_info v20 (10 audit fields), bootcfg `--mutation-log`, schema doc, 13 kernel + 7 bootcfg tests.
-> - How it integrates: pre-policy sticky read feeds `inputs->recovery_requested` / `watchdog_rollback`; Phase-3 publisher writes `X:\Boot\history.jsonl` then `uefi_var_set` clears triggers (reset before ack -> trigger persists, idempotent retry).
-> - Downstream effects: TODO-14 + [`TODO-22 §7`](TODO-22-recovery-partition.md) consume the JSONL streams when they ship; CI / installer pipelines pass `--mutation-log` to preserve the disk-side mutation trail.
+> - What shipped: audit codes header, sticky reader, JSONL publisher + selection-reason-gated ack, boot_info v20, dual-file boot_seq, bootcfg `--mutation-log`, 22 kernel + 7 bootcfg tests.
+> - How it integrates: pre-policy sticky read feeds `inputs->recovery_requested` / `watchdog_rollback`; Phase-3 publish + `uefi_var_set` clears triggers only when `selection_reason` matches (reset between -> trigger persists).
+> - Downstream effects: TODO-14 + [`TODO-22 §7`](TODO-22-recovery-partition.md) consume both JSONL streams when shipped; CI passes `--mutation-log` to stage the disk trail.
 > - Canonical doc: [`docs/boot/boot-history-schema.md`](../../docs/boot/boot-history-schema.md).
-> - Scope boundary: §12 owns codes + sticky + JSONL + mutation log + audit_degraded. §14 mark-good flips `last_outcome` (deferred). [`TODO-23`](TODO-23-boot-watchdog.md) produces `watchdog_rollback_request`; §12 only consumes.
+> - Scope boundary: §12 owns codes + sticky + JSONL + mutation log. §14 flips `last_outcome` (deferred). [`TODO-23`](TODO-23-boot-watchdog.md) produces `watchdog_rollback_request`.
+
+> **Verified:** 2026-05-10 | commit `38517fcc` | 7/7 items | build OK | smoke PASS (KVM 2.41s, seq=1) | tests 32/32 bootcfg + 22 boot_audit
+> **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 488)
+> **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit JSONL rotation on FAT32 LFN" at line 489)
+> **Quality reviewed:** 2026-05-10 | Codex 12x (design + adversarial 2x + test-coverage + re-adversarial 5x + adversarial-impl 4x + consistency + perf) | 7H+5M+0L fixed, 0 open, 2L deferred-XREF | scope: kernel-code-quality + boot-code-quality
 
 ---
 

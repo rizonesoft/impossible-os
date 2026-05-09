@@ -2,8 +2,8 @@
  * boot_audit_codes.h -- Policy audit reason codes and NVRAM sticky record
  *
  * Per-decision boot policy audit trail. The disk-first half lives in
- * BlackBox JSONL (`X:\BlackBox\boot\history.jsonl` for per-boot history,
- * `X:\BlackBox\boot\mutations.jsonl` for entry-store mutations). The
+ * BlackBox JSONL (`X:\Boot\history.jsonl` for per-boot history,
+ * `X:\Boot\mutations.jsonl` for entry-store mutations). The
  * NVRAM half is a single 256-byte UEFI variable named
  * `ImpossibleOS-BootSticky` and is EXCEPTIONAL-ONLY -- it carries
  * cross-boot triggers (recovery request, watchdog rollback request) and
