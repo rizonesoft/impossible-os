@@ -59,11 +59,18 @@ typedef struct {
     unsigned int has_root;    /* 1 if root field present */
 } boot_entry_decoded_split_t;
 
-/* Decoded UKI payload. UKI carries no disk-side payload object -- the
- * kernel content lives in the .linux PE section of the running
- * BOOTX64.UKI.efi. The struct exists for shape parity with split. */
+/* Decoded UKI payload. The runtime load path is BOOTX64.UKI.efi's own
+ * embedded .linux / .cmdline / .initrd PE sections, not disk-side
+ * fields, so payload-absence is accepted by the validator. When a
+ * payload object IS present the validator enforces schema 4.2:
+ * `uki_path` required (ASCII + \EFI\Linux\ or \EFI\ImpossibleOS\
+ * prefix + no traversal), optional `profile` integer 0..15, all other
+ * keys rejected as smuggled overrides on a Secure-Boot-signed UKI.
+ * The decoded struct intentionally carries no fields because the
+ * advisory uki_path is not consumed by the loader; the contract is
+ * enforcement-only. */
 typedef struct {
-    unsigned int _placeholder; /* reserved; UKI has no per-kind disk fields */
+    unsigned int _placeholder; /* reserved; uki_path is validated, not decoded */
 } boot_entry_decoded_uki_t;
 
 /* Decoded payload union, dispatched on envelope.kind. Future per-kind

@@ -406,7 +406,7 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 The §1 envelope only carries the discriminator; this section owns the per-kind validators, payload-loading paths, and the integration with neighboring TODOs that produce/consume each kind. Without this section, the schema is a paper exercise -- §1 supports a flag-based "kernel + initrd" model that cannot represent the UKI artifact already shipped in [`TODO-02 §11`](TODO-02-uefi-hardening-secureboot.md), or the resume / network / chainload cases owned by neighboring TODOs.
 
 - [x] `kind: split` validator (kernel required + ASCII + allowed-prefix + no `..`; cmdline / root / initrd[] optional). Authoritative loader: SOLE candidate, refuses fallback to ambient on miss.
-- [x] `kind: uki` payload-forbidden validator (empty `{}` tolerated; non-empty rejected so a Secure-Boot-signed UKI cannot carry a smuggled cmdline override).
+- [x] `kind: uki` schema-enforced validator: payload-absence accepted; payload-present requires `uki_path` (ASCII + Linux/ImpossibleOS prefix + no traversal), optional `profile` 0..15, all other keys rejected as smuggled overrides.
 - [ ] `kind: chainload` stub validator (`REJ_NOT_SUPPORTED`). LoadImage/StartImage runtime path -> [`TODO-27 §1`](TODO-27-uefi-advanced.md).
 - [ ] `kind: network` stub validator. HTTP/TFTP runtime + url+digest fields -> [`TODO-25 §7`](TODO-25-network-pxe-http-boot.md).
 - [ ] `kind: resume` stub validator. Hibernation snapshot runtime -> [`TODO-26 §3, §5`](TODO-26-hibernation-resume-fast-startup-handoff.md).
@@ -415,18 +415,21 @@ The §1 envelope only carries the discriminator; this section owns the per-kind 
 - [x] `boot_policy_invoke()` validates AFTER menu+SAFE, BEFORE counter decrement; reject -> `FALLBACK_NO_VIABLE`; accept -> stashed decoded drives `load_kernel()` SOLE-candidate path.
 - [x] Per-kind fields documented in [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md) section 4.1.
 - [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include CHAINLOAD / NETWORK / RESUME once their per-kind handlers land. Today only SPLIT/UKI/SAFE are admitted.
-- [ ] Commit: `"boot: per-entry-kind validators and load paths"`
+- [x] Commit: `"boot: per-entry-kind validators and load paths"`
 
 **Test checkpoint:** Each kind has matching parser-fixture tests (valid + 2 rejection cases). Selecting a `kind: uki` entry sets `BOOT_FLAG_INVOKED_VIA_UKI` and reaches the kernel without disk-side cmdline override. Selecting a `kind: chainload` entry under Secure Boot without `trusted_chainload` is rejected. `kind: resume` digest mismatch falls through to the next priority entry per §3. SPLIT-with-validated-kernel-path: load_kernel opens that exact path or fails (no ambient fallback); SPLIT-with-rejected-payload: ladder demotes to `FALLBACK_NO_VIABLE`. Test on: QEMU WHPX + TCG (UKI), TCG (network sim, chainload), bare metal once §4 menu ships.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 23 boot_entry_kind suites added, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 32 boot_entry_kind suites, 0 failures
 
 > **Notes:**
-> - What shipped: `boot_entry_kind.{h,c}` (validators + decoded union), bootx64.c post-menu dispatch + authoritative SPLIT/SAFE load_kernel path, 23 kernel tests.
+> - What shipped: `boot_entry_kind.{h,c}` (validators + decoded union), bootx64.c post-menu dispatch + authoritative SPLIT/SAFE load_kernel path, 32 kernel tests.
 > - How it integrates: validate runs after menu + SAFE materialization, before counter decrement; reject -> FALLBACK_NO_VIABLE (counter skips, audit retains id); accept -> decoded stash + SOLE-candidate load.
 > - Downstream effects: TODO-27 / TODO-25 / TODO-26 own the runtime paths; §13 ships the validator dispatch + decoded ABI they plug into.
 > - Canonical doc: [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md) section 4.
 > - Scope boundary: §13 owns validators + SPLIT loader wiring + decoded ABI. supported_kinds_mask widening for CHAINLOAD/NETWORK/RESUME stays deferred until owner sections ship runtime paths.
+
+> **Verified:** 2026-05-10 | commit `e5abf3a1` (impl) + post-review fixup | 7/10 items + 3 deferred to owner sections | build OK | tests 32/32 boot_entry_kind PASS
+> **Quality reviewed:** 2026-05-10 | Codex 11x (design + adversarial 8x + consistency + perf + re-adversarial) | 1C+15H+8M+0L fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 

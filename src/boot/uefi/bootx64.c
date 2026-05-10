@@ -4754,15 +4754,19 @@ static void boot_policy_invoke(void)
      * selected_entry_id to boot_info v19 -- the ladder picked a
      * payload the loader will not actually load.
      *
-     * UKI mode  -> admit only KIND_UKI.
-     * Split mode -> admit only KIND_SPLIT.
+     * UKI mode   -> admit only KIND_UKI.
+     * Split mode -> admit KIND_SPLIT and KIND_SAFE. SAFE shares
+     *               SPLIT's payload shape and load path; the
+     *               safe-mode subset is materialized post-policy
+     *               from the selected entry's flag set into
+     *               boot_config.boot_mode.
      *
      * Every other kind needs follow-up wiring in a later section
      * before it can be selected without lying to consumers:
      *   - RECOVERY: needs recovery-partition load path (recovery
      *     integration feature + recovery partition feature).
-     *   - SAFE / TEST / DIAGNOSTICS: need boot_config materialization
-     *     from the entry flag set so the kernel actually enters the
+     *   - TEST / DIAGNOSTICS: need boot_config materialization from
+     *     the entry flag set so the kernel actually enters the
      *     matching mode instead of running the normal default.
      *   - INSTALLER: needs a distinct installer-image load path plus offline + first-install seeding.
      *   - CHAINLOAD / NETWORK / RESUME: need the per-entry-kind handler

@@ -148,7 +148,13 @@ The `payload` object's required + optional fields by kind:
 
 NOTE: under UKI mode the store is advisory; selecting a `kind: uki` entry simply updates menu
 labeling. The UKI image's embedded `.cmdline` / `.linux` / `.initrd` are the load-bearing
-inputs.
+inputs. The validator (`validate_uki()`) accepts payload-absence (firmware launched
+BOOTX64.UKI.efi which already located the kernel via PE sections) but enforces the schema
+contract whenever a payload object IS present: `uki_path` is required, must be ASCII, must
+start with `\EFI\Linux\` or `\EFI\ImpossibleOS\`, must not contain `..`; `profile` is parsed
+as a non-negative integer 0..15 (decimals, signs, and out-of-range values reject). Disk-side
+`kernel` / `cmdline` / `initrd` / `root` keys are forbidden in UKI payloads -- those would
+be smuggled overrides on a Secure-Boot-signed image.
 
 ### 4.3 `kind: chainload`
 

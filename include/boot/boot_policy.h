@@ -187,22 +187,28 @@ typedef struct {
      *   - mask != 0, kind < 32, bit clear -> rejects with
      *     KIND_UNAVAILABLE.
      *
-     * Today's bootloader (boot_policy_invoke()) sets EXACTLY ONE bit
-     * based on the launch mode: BOOT_ENTRY_KIND_UKI when
-     * invoked_via_uki=1, BOOT_ENTRY_KIND_SPLIT otherwise. Cross-mode
-     * selection would lie to the kernel about which payload was
-     * loaded (load_kernel is mode-locked at detect_uki_sections time
-     * and cannot switch modes from a policy decision), so the gate
-     * filters those entries out.
+     * Today's bootloader (boot_policy_invoke()) sets the mask based on
+     * the launch mode:
+     *   - invoked_via_uki=1 (UKI mode): BOOT_ENTRY_KIND_UKI bit only.
+     *     Cross-mode SPLIT/SAFE entries reject with KIND_UNAVAILABLE
+     *     because BOOTX64.UKI.efi cannot load disk-side kernels.
+     *   - invoked_via_uki=0 (split mode): BOOT_ENTRY_KIND_SPLIT and
+     *     BOOT_ENTRY_KIND_SAFE bits. SAFE entries share SPLIT's payload
+     *     shape and load path; the safe-mode subset is materialized
+     *     post-policy by the caller from the selected entry's flags.
+     *
+     * load_kernel is mode-locked at detect_uki_sections time and cannot
+     * switch modes from a policy decision, so the gate filters
+     * cross-mode entries out structurally.
      *
      * Future owner sections widen the mask one kind at a time, ONLY
      * when their load path can fully execute the selected entry's
-     * payload: SAFE/TEST/DIAGNOSTICS need boot_config materialization
-     * from entry flags; RECOVERY needs the recovery-partition load
-     * path; INSTALLER needs a distinct installer-image load path plus offline + first-install seeding;
-     * CHAINLOAD/NETWORK/RESUME need the per-entry-kind handler table.
-     * Each owner section's TODO has a checklist item to widen this
-     * mask. */
+     * payload: TEST/DIAGNOSTICS need boot_config materialization from
+     * entry flags; RECOVERY needs the recovery-partition load path;
+     * INSTALLER needs a distinct installer-image load path plus offline
+     * + first-install seeding; CHAINLOAD/NETWORK/RESUME need the
+     * per-entry-kind handler table. Each owner section's TODO has a
+     * checklist item to widen this mask. */
     unsigned int supported_kinds_mask;
 } boot_policy_inputs_t;
 

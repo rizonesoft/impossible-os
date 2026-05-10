@@ -183,6 +183,35 @@ static int jr_skip_value(jr_t *j, int allow_object)
     return 0;
 }
 
+/* Read a JSON non-negative integer literal capped at `cap`. Rejects
+ * leading sign, decimal points, exponents, and values that overflow
+ * the cap. Used by validators that need to enforce a strict numeric
+ * range (e.g. UKI profile 0..15) where `jr_skip_value` would accept
+ * any JSON number including decimals and negatives. */
+static int jr_read_uint_capped(jr_t *j, u32 cap, u32 *out)
+{
+    jr_skip_ws(j);
+    if (jr_eof(j)) return 0;
+    u8 c = j->buf[j->pos];
+    if (!(c >= '0' && c <= '9')) return 0;
+    u32 v = 0;
+    int saw = 0;
+    while (!jr_eof(j)) {
+        u8 nc = j->buf[j->pos];
+        if (nc >= '0' && nc <= '9') {
+            saw = 1;
+            v = v * 10u + (u32)(nc - '0');
+            if (v > cap) return 0;
+            j->pos++;
+        } else if (nc == '.' || nc == 'e' || nc == 'E' || nc == '+' || nc == '-') {
+            return 0;
+        } else break;
+    }
+    if (!saw) return 0;
+    *out = v;
+    return 1;
+}
+
 /* Read a flat string array into `out` (each element NUL-terminated),
  * capping at `max_count` strings. Returns 1 on success. */
 static int jr_read_string_array(jr_t *j,
@@ -231,6 +260,17 @@ static int str_starts_with(const char *s, const char *p)
         s++; p++;
     }
     return 1;
+}
+
+/* UKI-specific prefix check. Schema 4.2 restricts uki_path to PE
+ * binaries under \EFI\Linux or \EFI\ImpossibleOS -- the bare-segment
+ * and \boot\ alternates allowed for SPLIT do not apply because UKI
+ * images live under per-vendor signed dirs. */
+static int uki_path_prefix_allowed(const char *path)
+{
+    if (str_starts_with(path, "\\EFI\\Linux\\")) return 1;
+    if (str_starts_with(path, "\\EFI\\ImpossibleOS\\")) return 1;
+    return 0;
 }
 
 static int path_is_under_allowed_prefix(const char *path)
@@ -381,20 +421,29 @@ static int validate_uki(unsigned int flags,
     (void)flags;
     (void)secure_boot_active;
     (void)out;
-    /* UKI payload schema: uki_path (string, required by canonical
-     * doc but the running BOOTX64.UKI.efi already located the kernel,
-     * so payload-absence is also accepted at runtime), profile
-     * (integer, optional). Disk-side `kernel` / `cmdline` / `initrd`
-     * keys ARE NOT permitted -- those would be smuggled overrides on
-     * a Secure-Boot-signed UKI. The validator allowlists known UKI
-     * keys and rejects anything else. */
+    /* UKI payload schema (boot-entry-schema.md section 4.2):
+     *   - uki_path: string, REQUIRED when payload object present, must
+     *     be under \EFI\Linux or \EFI\ImpossibleOS, ASCII, no
+     *     directory traversal.
+     *   - profile: integer 0..15, optional, per UAPI UKI multi-profile
+     *     selector.
+     * Disk-side `kernel` / `cmdline` / `initrd` / `root` keys are
+     * forbidden -- those would be smuggled overrides on a
+     * Secure-Boot-signed UKI. Payload-ABSENCE remains accepted because
+     * the running BOOTX64.UKI.efi already located the kernel via its
+     * own embedded sections; the disk schema is advisory at runtime. */
     if (!payload_bytes || payload_len == 0)
         return BOOT_ENTRY_KIND_OK;
 
     jr_t j; j.buf = payload_bytes; j.len = payload_len; j.pos = 0;
     if (!jr_match(&j, '{')) return BOOT_ENTRY_KIND_REJ_PAYLOAD_FORBIDDEN;
     jr_skip_ws(&j);
-    if (!jr_eof(&j) && j.buf[j.pos] == '}') { j.pos++; return BOOT_ENTRY_KIND_OK; }
+    /* Empty `{}` payload: contract requires uki_path; reject. */
+    if (!jr_eof(&j) && j.buf[j.pos] == '}')
+        return BOOT_ENTRY_KIND_REJ_FIELD_MISSING;
+
+    int saw_uki_path = 0;
+    char uki_path_buf[BOOT_ENTRIES_MAX_PATH_LEN + 1u];
 
     while (!jr_eof(&j)) {
         char key[64];
@@ -403,38 +452,44 @@ static int validate_uki(unsigned int flags,
         if (!jr_match(&j, ':'))
             return BOOT_ENTRY_KIND_REJ_FIELD_TYPE;
 
-        /* Allowed UKI keys: uki_path (advisory string) + profile
-         * (integer 0..15 per UAPI UKI multi-profile selector).
-         * Anything else is a forbidden override on a signed UKI. */
-        int allowed = 0;
         if (key[0] == 'u' && key[1] == 'k' && key[2] == 'i' &&
             key[3] == '_' && key[4] == 'p' && key[5] == 'a' &&
             key[6] == 't' && key[7] == 'h' && key[8] == 0) {
-            char dump[BOOT_ENTRIES_MAX_PATH_LEN + 1u];
-            if (!jr_read_string(&j, dump, sizeof(dump)))
+            if (!jr_read_string(&j, uki_path_buf, sizeof(uki_path_buf)))
                 return BOOT_ENTRY_KIND_REJ_FIELD_TYPE;
-            allowed = 1;
+            if (uki_path_buf[0] == 0)
+                return BOOT_ENTRY_KIND_REJ_FIELD_VALUE;
+            if (!str_is_ascii(uki_path_buf))
+                return BOOT_ENTRY_KIND_REJ_FIELD_VALUE;
+            if (path_has_dotdot(uki_path_buf))
+                return BOOT_ENTRY_KIND_REJ_FIELD_VALUE;
+            if (!uki_path_prefix_allowed(uki_path_buf))
+                return BOOT_ENTRY_KIND_REJ_FIELD_VALUE;
+            saw_uki_path = 1;
         } else if (key[0] == 'p' && key[1] == 'r' && key[2] == 'o' &&
                    key[3] == 'f' && key[4] == 'i' && key[5] == 'l' &&
                    key[6] == 'e' && key[7] == 0) {
-            /* Profile is a JSON number 0..15. The skip-value walker
-             * accepts any number; the parser already validated the
-             * integer grammar. */
-            if (!jr_skip_value(&j, 0))
+            u32 profile = 0;
+            /* profile must be a non-negative integer in 0..15. The
+             * capped reader rejects negatives, decimals, exponents,
+             * and out-of-range values. */
+            if (!jr_read_uint_capped(&j, 15u, &profile))
                 return BOOT_ENTRY_KIND_REJ_FIELD_TYPE;
-            allowed = 1;
         } else {
             /* Reject smuggled overrides (kernel, cmdline, initrd, root,
              * arbitrary vendor keys that could redirect the load). */
             return BOOT_ENTRY_KIND_REJ_PAYLOAD_FORBIDDEN;
         }
-        (void)allowed;
 
         jr_skip_ws(&j);
         if (jr_eof(&j)) return BOOT_ENTRY_KIND_REJ_FIELD_TYPE;
         u8 nx = j.buf[j.pos];
         if (nx == ',') { j.pos++; continue; }
-        if (nx == '}') { j.pos++; return BOOT_ENTRY_KIND_OK; }
+        if (nx == '}') {
+            j.pos++;
+            if (!saw_uki_path) return BOOT_ENTRY_KIND_REJ_FIELD_MISSING;
+            return BOOT_ENTRY_KIND_OK;
+        }
         return BOOT_ENTRY_KIND_REJ_FIELD_TYPE;
     }
 

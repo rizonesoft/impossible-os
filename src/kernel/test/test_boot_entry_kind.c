@@ -173,11 +173,99 @@ static void test_uki_no_payload(void)
 
 static void test_uki_empty_payload_object(void)
 {
-    /* Forward-compat: empty `{}` tolerated. */
+    /* Schema 4.2 requires uki_path when a payload object is present;
+     * empty `{}` violates the contract. */
     boot_entry_decoded_t dec;
     int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI, "{}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_MISSING,
+        "UKI with empty {} payload rejected (uki_path required)");
+}
+
+static void test_uki_payload_without_uki_path_rejected(void)
+{
+    /* Profile alone is insufficient -- uki_path is required. */
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"profile\": 3}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_MISSING,
+        "UKI with profile but no uki_path rejected");
+}
+
+static void test_uki_path_impossibleos_prefix_accepted(void)
+{
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\\\\EFI\\\\ImpossibleOS\\\\boot.efi\"}", &dec);
     TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_OK,
-        "UKI with empty {} payload accepted");
+        "UKI with ImpossibleOS prefix accepted");
+}
+
+static void test_uki_path_bad_prefix_rejected(void)
+{
+    /* SPLIT allows \boot\ and bare-segment but UKI does not. */
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\\\\boot\\\\image.efi\"}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_VALUE,
+        "UKI with \\boot\\ prefix rejected");
+}
+
+static void test_uki_path_bare_segment_rejected(void)
+{
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\\\\image.efi\"}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_VALUE,
+        "UKI with bare-segment path rejected");
+}
+
+static void test_uki_path_traversal_rejected(void)
+{
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\\\\EFI\\\\Linux\\\\..\\\\evil.efi\"}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_VALUE,
+        "UKI with traversal in uki_path rejected");
+}
+
+static void test_uki_path_empty_string_rejected(void)
+{
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\"}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_VALUE,
+        "UKI with empty uki_path rejected");
+}
+
+static void test_uki_profile_negative_rejected(void)
+{
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\\\\EFI\\\\Linux\\\\img.efi\","
+        "\"profile\": -1}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_TYPE,
+        "UKI with negative profile rejected");
+}
+
+static void test_uki_profile_overflow_rejected(void)
+{
+    /* Schema caps profile at 0..15. */
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\\\\EFI\\\\Linux\\\\img.efi\","
+        "\"profile\": 99}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_TYPE,
+        "UKI with profile > 15 rejected");
+}
+
+static void test_uki_profile_decimal_rejected(void)
+{
+    boot_entry_decoded_t dec;
+    int rc = run_validate_kind(BOOT_ENTRY_KIND_UKI,
+        "{\"uki_path\": \"\\\\EFI\\\\Linux\\\\img.efi\","
+        "\"profile\": 1.5}", &dec);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)BOOT_ENTRY_KIND_REJ_FIELD_TYPE,
+        "UKI with decimal profile rejected");
 }
 
 static void test_uki_cmdline_smuggle_rejected(void)
@@ -344,16 +432,34 @@ void test_register_boot_entry_kind(void)
         test_split_unknown_key_skipped, TEST_CAT_BOOT);
     test_suite_register_cat("boot_entry_kind UKI no payload OK",
         test_uki_no_payload, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_entry_kind UKI empty {} OK",
+    test_suite_register_cat("boot_entry_kind UKI empty {} rejects",
         test_uki_empty_payload_object, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI without uki_path rejects",
+        test_uki_payload_without_uki_path_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_entry_kind UKI rejects cmdline override",
         test_uki_cmdline_smuggle_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_entry_kind UKI rejects kernel override",
         test_uki_kernel_override_rejected, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_entry_kind UKI accepts uki_path",
+    test_suite_register_cat("boot_entry_kind UKI accepts uki_path (Linux prefix)",
         test_uki_uki_path_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI accepts uki_path (ImpossibleOS prefix)",
+        test_uki_path_impossibleos_prefix_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI rejects \\boot\\ prefix",
+        test_uki_path_bad_prefix_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI rejects bare-segment path",
+        test_uki_path_bare_segment_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI rejects path traversal",
+        test_uki_path_traversal_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI rejects empty uki_path",
+        test_uki_path_empty_string_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_entry_kind UKI accepts uki_path + profile",
         test_uki_uki_path_with_profile, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI rejects negative profile",
+        test_uki_profile_negative_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI rejects profile > 15",
+        test_uki_profile_overflow_rejected, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_entry_kind UKI rejects decimal profile",
+        test_uki_profile_decimal_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_entry_kind SAFE accepts SPLIT shape",
         test_safe_valid, TEST_CAT_BOOT);
     test_suite_register_cat("boot_entry_kind SAFE with custom kernel path",
