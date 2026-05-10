@@ -130,10 +130,14 @@ The `payload` object's required + optional fields by kind:
 
 | Field      | Type            | Required | Notes                                                  |
 | ---------- | --------------- | -------- | ------------------------------------------------------ |
-| `kernel`   | string          | yes      | ESP-relative path, ASCII, <=255 chars                  |
-| `initrd`   | array of string | no       | 0..8 ESP-relative paths                                |
-| `cmdline`  | string          | yes      | ASCII, <=4096 chars                                    |
-| `root`     | string          | yes      | slot id (`A` / `B`) or partition GUID                  |
+| `kernel`   | string          | yes      | ESP-relative path, ASCII, <=255 chars; under one of the allowed prefixes; no `..` traversal |
+| `initrd`   | array of string | no       | 0..8 ESP-relative paths; same prefix + traversal rules as `kernel` |
+| `cmdline`  | string          | no       | ASCII; <=255 chars (`BOOT_ENTRIES_MAX_PATH_LEN`); empty string accepted |
+| `root`     | string          | no       | slot id (`A` / `B`) or partition GUID; ASCII; no `..` |
+
+**Allowed path prefixes** (kernel + initrd entries): `\EFI\ImpossibleOS\`, `\EFI\Linux\`, `\boot\`, or a single-segment `\<file>` (e.g. `\kernel.exe`). Anything else is rejected with `REJ_FIELD_VALUE`.
+
+**Validator behavior:** the per-kind validator (`include/boot/boot_entry_kind.h`) requires `kernel` only; `cmdline` / `root` are optional but get ASCII / traversal checks when present. Unknown payload keys are tolerated for forward compatibility (vendor extension fields).
 
 ### 4.2 `kind: uki`
 

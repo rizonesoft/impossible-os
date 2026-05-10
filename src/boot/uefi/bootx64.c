@@ -31,6 +31,7 @@
 #include "../../../include/boot/uki_cmdline_media_role.h" /* uki_cmdline_extract_media_role() shared with kernel test */
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
 #include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
+#include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
 #include "../../../include/kernel/firmware_quirks_parse.inc" /* shared firmware_quirk_disable= tokenizer */
 
 /* Inline rdtsc for boot timing */
@@ -157,6 +158,18 @@ static UINT16 g_boot_section = BOOT_SECTION_UNKNOWN;
 #define G_POLICY_KIND_UNSET 0xFFFFFFFFu
 static UINT32 g_policy_selected_kind = G_POLICY_KIND_UNSET;
 
+/* Per-kind decoded payload from the policy-selected envelope. Populated
+ * by boot_policy_invoke() AFTER menu override + SAFE materialization
+ * but BEFORE counter decrement -- so the validation runs on the FINAL
+ * pick, not a pre-menu candidate. Consumed by load_kernel(): when
+ * g_policy_decoded.valid && g_policy_decoded.kind == SPLIT, the
+ * decoded kernel path is the SOLE candidate (no fallback to ambient
+ * search) so the ladder cannot report `selected=X` while a different
+ * kernel actually loaded. Default-zero state means "no authoritative
+ * payload" and load_kernel falls back to its existing kernel_paths[]
+ * search. */
+static boot_entry_decoded_t g_policy_decoded;
+
 /* Forward declaration of the history-ring writer (definition lives in
  * src/boot/uefi/boot_history.c).  Three call sites: boot_fatal(),
  * the EBS retry success branch, and the kernel side via the
@@ -239,6 +252,8 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_COUNTER_SCAN    0xB0B4  /* Counter directory scan entry */
 #define POST16_BL_COUNTER_DECR    0xB0B5  /* Counter decrement (write-new + Flush() + Close(success) + delete-old) */
 #define POST16_BL_MENU            0xB0B6  /* Boot menu rendered (interactive selector) */
+#define POST16_BL_KIND_VALIDATE   0xB0B7  /* Per-kind payload validation entry */
+#define POST16_BL_KIND_VALIDATE_OK 0xB0B8 /* Per-kind validation accepted (or demoted to fallback) */
 
 /* --- Helper: memory ops ---
  * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
@@ -4766,16 +4781,25 @@ static void boot_policy_invoke(void)
     } else {
         inputs->supported_kinds_mask = (1u << BOOT_ENTRY_KIND_SPLIT);
     }
-    /* SAFE entries are now bootable: the loader still loads the
-     * ambient kernel.exe, but boot_config.boot_mode is materialized
-     * from envelope.kind == SAFE post-policy so the kernel sees
-     * safe-mode requested. The kernel-side observers (KUSD
-     * SafeBootMode, bare-metal hardening guards) read boot_mode
-     * unchanged. TEST and DIAGNOSTICS stay filtered until per-kind
-     * payload parsing lands -- TEST without test_suite payload
-     * would run all categories, and DIAGNOSTICS verbose flag must
-     * be honored BEFORE policy decide to affect early POST. */
-    inputs->supported_kinds_mask |= (1u << BOOT_ENTRY_KIND_SAFE);
+    /* SAFE entries are bootable in SPLIT mode only -- the loader
+     * still loads the ambient kernel.exe, but boot_config.boot_mode
+     * is materialized from envelope.kind == SAFE post-policy so the
+     * kernel sees safe-mode requested. The kernel-side observers
+     * (KUSD SafeBootMode, bare-metal hardening guards) read
+     * boot_mode unchanged. Under UKI mode (invoked_via_uki),
+     * admitting SAFE would let a SAFE entry's validated kernel path
+     * be reported in audit while the running BOOTX64.UKI.efi's
+     * embedded .linux kernel actually loads -- the loader's UKI
+     * fast path returns before the authoritative SPLIT/SAFE branch
+     * runs. Mode-locking SAFE to non-UKI mode kills that
+     * misleading-state class entirely; UKI mode admits only UKI.
+     * TEST and DIAGNOSTICS stay filtered until per-kind payload
+     * parsing lands -- TEST without test_suite payload would run
+     * all categories, and DIAGNOSTICS verbose flag must be honored
+     * BEFORE policy decide to affect early POST. */
+    if (!inputs->invoked_via_uki) {
+        inputs->supported_kinds_mask |= (1u << BOOT_ENTRY_KIND_SAFE);
+    }
 
     /* hotkey / watchdog / A/B / recovery_requested are owned by
      * neighboring features (boot menu, watchdog audit, A/B integration,
@@ -5079,7 +5103,131 @@ static void boot_policy_invoke(void)
      * F8 hotkey path above already wrote boot_mode=1 by the time
      * this runs, and SAFE materialization is idempotent (writing
      * 1 over 1 is a no-op). */
-    if (g_policy_selected_kind == BOOT_ENTRY_KIND_SAFE) {
+    /* Per-kind payload validation. Runs AFTER menu but BEFORE any
+     * per-kind materialization (SAFE boot_mode flip) and BEFORE
+     * counter decrement -- so a rejected SAFE entry does NOT force
+     * boot_mode=1 on the fallback kernel that loads instead. The
+     * earlier ordering (SAFE materialization first, validate
+     * second) let a malformed SAFE entry change the kernel's boot
+     * mode while audit said FALLBACK_NO_VIABLE.
+     *
+     * Skip on fallback paths: STORE_INVALID and NO_VIABLE both
+     * synthesize an envelope with no payload object; running per-
+     * kind validation against a synthesized fallback would always
+     * fail SPLIT (payload-missing) and force a second-order
+     * fallback. The fallback path's load_kernel already uses the
+     * ambient kernel_paths[] search.
+     *
+     * On reject: flip reason to FALLBACK_NO_VIABLE AND clear
+     * g_policy_selected_kind so the post-EBS kind->path mapping
+     * does not still see SAFE/RECOVERY/etc. Counter decrement
+     * skips on the demoted reason; selected_entry_id stays
+     * populated so the audit trail records which entry was rejected.
+     * On accept: stash decoded payload for the loader. */
+    post_code16(POST16_BL_KIND_VALIDATE);
+    if (decision->reason != BOOT_SELECTION_FALLBACK_STORE_INVALID &&
+        decision->reason != BOOT_SELECTION_FALLBACK_NO_VIABLE) {
+        const unsigned char *payload_bytes = (const unsigned char *)0;
+        unsigned int payload_len = 0;
+        if (json_buf && decision->selected.payload_present &&
+            decision->selected.payload_offset + decision->selected.payload_length
+                <= (unsigned int)json_len) {
+            payload_bytes = json_buf + decision->selected.payload_offset;
+            payload_len = decision->selected.payload_length;
+        }
+        int vrc = boot_entry_kind_validate(decision->selected.kind,
+                                            decision->selected.flags,
+                                            sb_active,
+                                            payload_bytes, payload_len,
+                                            &g_policy_decoded);
+        if (vrc != BOOT_ENTRY_KIND_OK) {
+            serial_early_print("[BOOT] policy: kind validate REJECT (");
+            serial_early_print(boot_entry_kind_reject_name(vrc));
+            serial_early_print(") -- demoting to fallback\n");
+
+            /* Append the rejected entry to decision->rejected[] AND
+             * boot_info.rejected_entries[] so structured audit
+             * consumers (registry, policy-audit, loader vars) can
+             * see the per-entry KIND_UNAVAILABLE reason. Without
+             * this, post-boot consumers see retained selected id +
+             * FALLBACK_NO_VIABLE but no structured reject row
+             * explaining the demotion -- only serial text.
+             * Skip when the array is at the cap to preserve
+             * ladder-level rejects (set overflow=1 instead). */
+            if (decision->rejected_count < BOOT_ENTRIES_MAX_ENTRIES) {
+                unsigned int ri = decision->rejected_count;
+                UINTN i;
+                for (i = 0; i < sizeof(decision->rejected[0].id) - 1u
+                            && decision->selected_entry_id[i]; i++)
+                    decision->rejected[ri].id[i] = decision->selected_entry_id[i];
+                decision->rejected[ri].id[i] = 0;
+                decision->rejected[ri].reason =
+                    (unsigned int)BOOT_REJECT_REASON_KIND_UNAVAILABLE;
+                decision->rejected_count++;
+
+                /* Mirror into boot_info v19 rejected_entries[]. */
+                if (g_boot_info_ptr->rejected_entry_count <
+                    BOOT_ENTRIES_MAX_ENTRIES) {
+                    UINT32 bi = g_boot_info_ptr->rejected_entry_count;
+                    for (i = 0;
+                         i < sizeof(g_boot_info_ptr->rejected_entries[0].id) - 1u
+                         && decision->selected_entry_id[i]; i++)
+                        g_boot_info_ptr->rejected_entries[bi].id[i] =
+                            decision->selected_entry_id[i];
+                    g_boot_info_ptr->rejected_entries[bi].id[i] = 0;
+                    g_boot_info_ptr->rejected_entries[bi].reason =
+                        (UINT32)BOOT_REJECT_REASON_KIND_UNAVAILABLE;
+                    g_boot_info_ptr->rejected_entry_count = bi + 1;
+                } else {
+                    g_boot_info_ptr->rejected_entry_overflow = 1u;
+                }
+            } else {
+                decision->rejected_overflow = 1u;
+                g_boot_info_ptr->rejected_entry_overflow = 1u;
+            }
+
+            decision->reason = BOOT_SELECTION_FALLBACK_NO_VIABLE;
+            g_boot_info_ptr->selection_reason =
+                (UINT32)BOOT_SELECTION_FALLBACK_NO_VIABLE;
+            g_policy_decoded.valid = 0;
+            /* Clear the captured kind so the post-EBS kind->path
+             * mapping does not still see SAFE/RECOVERY/etc.
+             * Otherwise a rejected SAFE entry would cause the
+             * fallback kernel to inherit boot_path/boot_reason
+             * mappings the rejected entry implied. */
+            g_policy_selected_kind = G_POLICY_KIND_UNSET;
+        } else {
+            serial_early_print("[BOOT] policy: kind validate OK kind=");
+            serial_early_print_uint((UINT32)g_policy_decoded.kind);
+            if (g_policy_decoded.kind == BOOT_ENTRY_KIND_SPLIT &&
+                g_policy_decoded.u.split.has_kernel) {
+                serial_early_print(" kernel=\"");
+                serial_early_print(g_policy_decoded.u.split.kernel);
+                serial_early_print("\"");
+            }
+            serial_early_print("\n");
+        }
+    } else {
+        /* Fallback path: synthesized envelope, no per-kind validation.
+         * Leave g_policy_decoded zero (valid=0), load_kernel uses
+         * ambient kernel_paths[]. */
+        serial_early_print("[BOOT] policy: kind validate skipped (fallback path)\n");
+    }
+    post_code16(POST16_BL_KIND_VALIDATE_OK);
+
+    /* SAFE materialization: post-validate so a malformed SAFE entry
+     * does not flip boot_mode=1 before its rejection demotes it.
+     * Gated on g_policy_decoded.valid so a demoted-to-FALLBACK_
+     * NO_VIABLE entry leaves boot_mode at whatever boot.conf
+     * provided (the fallback kernel then runs with boot.conf
+     * defaults, not the rejected entry's intended mode).
+     *
+     * Precedence remains: a successfully-validated SAFE entry is
+     * the AUTHORITATIVE source of boot_mode and overrides
+     * boot.conf. F8 hotkey wrote boot_mode=1 earlier; SAFE
+     * materialization here is idempotent in that case. */
+    if (g_policy_decoded.valid &&
+        g_policy_selected_kind == BOOT_ENTRY_KIND_SAFE) {
         unsigned int prior = g_boot_info_ptr->config.boot_mode;
         g_boot_info_ptr->config.boot_mode = 1u;
         if (prior != 1u) {
@@ -6050,8 +6198,76 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
         }
     }
 
-    /* Fallback kernel search: try paths in order (S3) */
-    {
+    /* Authoritative SPLIT path from policy ladder (when validated). When
+     * g_policy_decoded carries a validated SPLIT kernel path, that path
+     * is the SOLE candidate -- no fallback to ambient kernel_paths[]
+     * search. Otherwise the ladder reports `selected=X` while a
+     * different kernel actually loaded, which is the exact misleading-
+     * state the entry-kind validator pipeline is supposed to prevent.
+     * The validator already checked the path is ASCII + under an
+     * allowed prefix + no `..` traversal, so the UCS-2 conversion below
+     * is a direct byte-to-CHAR16 widen. */
+    int kernel_loaded_from_authoritative = 0;
+    /* SAFE entries share the SPLIT payload shape (same kernel/cmdline/
+     * root/initrd[] fields, validated by the same code path). When a
+     * SAFE entry carries a non-default kernel path, the loader MUST
+     * honor it -- otherwise audit reports `selected=safe-entry-id`
+     * while the ambient kernel boots, recreating the same
+     * misleading-state failure the entry-kind validator pipeline
+     * was meant to eliminate. The decoded union for SAFE lives at
+     * u.split (validate_safe == validate_split), so the
+     * authoritative-path branch reads the same fields for both. */
+    int policy_owns_kernel_path =
+        g_policy_decoded.valid &&
+        (g_policy_decoded.kind == BOOT_ENTRY_KIND_SPLIT ||
+         g_policy_decoded.kind == BOOT_ENTRY_KIND_SAFE) &&
+        g_policy_decoded.u.split.has_kernel;
+
+    /* Degraded boot guard: when the policy ladder owns the kernel path
+     * but root_dir is NULL (boot device handle missing or lacks
+     * SimpleFS), the ambient all-volumes fallback would silently load
+     * an arbitrary kernel.exe from any volume while audit still names
+     * the policy entry. Refuse to enter the fallback -- the
+     * authoritative path either runs against the boot device or fails
+     * closed. Operator sees the explicit reason on serial. */
+    if (policy_owns_kernel_path && !root_dir) {
+        serial_early_print("[FAIL] load_kernel: policy selected an "
+                           "authoritative kernel path but boot device "
+                           "is unavailable; refusing ambient fallback "
+                           "(would mislead audit)\n");
+        return EFI_NOT_FOUND;
+    }
+
+    if (policy_owns_kernel_path && root_dir) {
+        const char *ap = g_policy_decoded.u.split.kernel;
+        CHAR16 ucs[BOOT_ENTRIES_MAX_PATH_LEN + 1u];
+        UINTN k = 0;
+        while (ap[k] && k < BOOT_ENTRIES_MAX_PATH_LEN) {
+            ucs[k] = (CHAR16)(unsigned char)ap[k];
+            k++;
+        }
+        ucs[k] = 0;
+        serial_early_print("[BOOT] load_kernel: authoritative SPLIT path \"");
+        serial_early_print(ap);
+        serial_early_print("\"\n");
+        status = root_dir->Open(root_dir, &kernel_file, ucs,
+                                 EFI_FILE_MODE_READ, 0);
+        if (EFI_ERROR(status)) {
+            serial_early_print("[FAIL] Authoritative kernel path not "
+                               "openable; refusing fallback to ambient "
+                               "(would mislead audit)\n");
+            root_dir->Close(root_dir);
+            return status;
+        }
+        serial_early_print("[BOOT] Kernel found at authoritative path\n");
+        kernel_loaded_from_authoritative = 1;
+    }
+
+    /* Fallback kernel search: try paths in order. Runs ONLY when the
+     * policy ladder did not produce an authoritative SPLIT path
+     * (synthesized fallback envelope, FALLBACK_STORE_INVALID, or
+     * validation rejected the chosen entry). */
+    if (!kernel_loaded_from_authoritative) {
         static const CHAR16 *kernel_paths[] = {
             u"\\boot\\kernel.exe",
             u"\\kernel.exe",

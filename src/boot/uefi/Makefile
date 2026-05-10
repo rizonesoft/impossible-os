@@ -24,7 +24,7 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o
+OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o boot_entry_kind.o
 
 .PHONY: all clean
 
@@ -65,6 +65,14 @@ boot_history.o: boot_history.c efi.h boot_info_mirror.h
 # consumed triggers post-publish via uefi_var_set.
 boot_sticky.o: boot_sticky.c efi.h boot_info_mirror.h \
                ../../../include/boot/boot_audit_codes.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Per-kind entry validators. Pure C, no UEFI types -- linkable from both
+# the bootloader and the kernel unit-test build. Header lives at
+# include/boot/boot_entry_kind.h; spec at docs/boot/boot-entry-schema.md.
+boot_entry_kind.o: boot_entry_kind.c \
+                   ../../../include/boot/boot_entry_kind.h \
+                   ../../../include/boot/boot_entries.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Boot entry store parser. Pure C, no UEFI types -- linkable from both the

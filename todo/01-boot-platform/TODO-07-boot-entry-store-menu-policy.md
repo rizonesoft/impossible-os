@@ -63,7 +63,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)      | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [ ]   |
 | 💎  |  11   | Boot entry editor tooling                              | §1, §2                                  |  [/]   |
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [x]   |
-| 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [ ]   |
+| 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
 | 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [ ]   |
 | 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [ ]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [ ]   |
@@ -405,19 +405,28 @@ Per-decision audit. Disk-first (BlackBox JSONL) -- NVRAM is exceptional-only bec
 
 The §1 envelope only carries the discriminator; this section owns the per-kind validators, payload-loading paths, and the integration with neighboring TODOs that produce/consume each kind. Without this section, the schema is a paper exercise -- §1 supports a flag-based "kernel + initrd" model that cannot represent the UKI artifact already shipped in [`TODO-02 §11`](TODO-02-uefi-hardening-secureboot.md), or the resume / network / chainload cases owned by neighboring TODOs.
 
-- [ ] `kind: split` -- legacy split-payload entry. Validator: `kernel`/`initrd[]` paths exist, `cmdline` ASCII, `root` is slot id or partition GUID. Loader: existing split-path code in `bootx64.c`.
-- [ ] `kind: uki` -- single PE under `\EFI\Linux\` or `\EFI\ImpossibleOS\`; consumes shipped UKI fast path ([`TODO-02 §11, §16`](TODO-02-uefi-hardening-secureboot.md)). Sets `BOOT_FLAG_INVOKED_VIA_UKI`. No disk-side cmdline.
-- [ ] `kind: chainload` -- non-IPOS UEFI app ([`TODO-27 §1`](TODO-27-uefi-advanced.md)); requires `trusted_chainload` + Secure Boot. Loader: UEFI `LoadImage`/`StartImage`.
-- [ ] `kind: network` -- HTTP/TFTP target ([`TODO-25 §7`](TODO-25-network-pxe-http-boot.md)); requires `url`+`asset_digest` (sha256). Verify digest before exec.
-- [ ] `kind: resume` -- hibernation snapshot ([`TODO-26 §3, §5`](TODO-26-hibernation-resume-fast-startup-handoff.md)); digest must match §1 metadata. Loader sets `boot_info.resume_payload_*`.
-- [ ] `kind: recovery`/`installer`/`safe`/`diagnostics`/`test` -- defer to §8 + §9 + §16 for production rules; this section just enforces validators exist and unknown kinds are rejected.
-- [ ] Per-kind hook table `g_entry_kind_handlers[ENTRY_KIND_*]` in `bootx64.c` (`validate`/`prepare`/`boot` callbacks); new kinds appended.
-- [ ] Wire `load_kernel()` to consume `decision->selected.payload_*` so the §4 ladder's chosen entry drives the kernel/cmdline/initrd actually loaded, not just `selected_entry_id` recording.
-- [ ] Document each kind's required + optional fields in `docs/boot/boot-entry-schema.md`.
-- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include CHAINLOAD / NETWORK / RESUME once their per-kind handlers land.
+- [x] `kind: split` validator (kernel required + ASCII + allowed-prefix + no `..`; cmdline / root / initrd[] optional). Authoritative loader: SOLE candidate, refuses fallback to ambient on miss.
+- [x] `kind: uki` payload-forbidden validator (empty `{}` tolerated; non-empty rejected so a Secure-Boot-signed UKI cannot carry a smuggled cmdline override).
+- [ ] `kind: chainload` stub validator (`REJ_NOT_SUPPORTED`). LoadImage/StartImage runtime path -> [`TODO-27 §1`](TODO-27-uefi-advanced.md).
+- [ ] `kind: network` stub validator. HTTP/TFTP runtime + url+digest fields -> [`TODO-25 §7`](TODO-25-network-pxe-http-boot.md).
+- [ ] `kind: resume` stub validator. Hibernation snapshot runtime -> [`TODO-26 §3, §5`](TODO-26-hibernation-resume-fast-startup-handoff.md).
+- [x] `kind: safe` accepts SPLIT shape; `recovery`/`installer`/`diagnostics`/`test` stub-reject pending production rules in §8 + §9 + §16.
+- [x] Per-kind dispatch via `boot_entry_kind_validate()` in `include/boot/boot_entry_kind.h` + `src/boot/uefi/boot_entry_kind.c`.
+- [x] `boot_policy_invoke()` validates AFTER menu+SAFE, BEFORE counter decrement; reject -> `FALLBACK_NO_VIABLE`; accept -> stashed decoded drives `load_kernel()` SOLE-candidate path.
+- [x] Per-kind fields documented in [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md) section 4.1.
+- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include CHAINLOAD / NETWORK / RESUME once their per-kind handlers land. Today only SPLIT/UKI/SAFE are admitted.
 - [ ] Commit: `"boot: per-entry-kind validators and load paths"`
 
-**Test checkpoint:** Each kind has a matching parser-fixture test (valid + 2 rejection cases). Selecting a `kind: uki` entry sets `BOOT_FLAG_INVOKED_VIA_UKI` and reaches the kernel without disk-side cmdline override. Selecting a `kind: chainload` entry under Secure Boot without `trusted_chainload` is rejected. `kind: resume` digest mismatch falls through to the next priority entry per §3. Test on: QEMU WHPX + TCG (UKI), TCG (network sim, chainload), bare metal once §4 menu ships.
+**Test checkpoint:** Each kind has matching parser-fixture tests (valid + 2 rejection cases). Selecting a `kind: uki` entry sets `BOOT_FLAG_INVOKED_VIA_UKI` and reaches the kernel without disk-side cmdline override. Selecting a `kind: chainload` entry under Secure Boot without `trusted_chainload` is rejected. `kind: resume` digest mismatch falls through to the next priority entry per §3. SPLIT-with-validated-kernel-path: load_kernel opens that exact path or fails (no ambient fallback); SPLIT-with-rejected-payload: ladder demotes to `FALLBACK_NO_VIABLE`. Test on: QEMU WHPX + TCG (UKI), TCG (network sim, chainload), bare metal once §4 menu ships.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 23 boot_entry_kind suites added, 0 failures
+
+> **Notes:**
+> - What shipped: `boot_entry_kind.{h,c}` (validators + decoded union), bootx64.c post-menu dispatch + authoritative SPLIT/SAFE load_kernel path, 23 kernel tests.
+> - How it integrates: validate runs after menu + SAFE materialization, before counter decrement; reject -> FALLBACK_NO_VIABLE (counter skips, audit retains id); accept -> decoded stash + SOLE-candidate load.
+> - Downstream effects: TODO-27 / TODO-25 / TODO-26 own the runtime paths; §13 ships the validator dispatch + decoded ABI they plug into.
+> - Canonical doc: [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md) section 4.
+> - Scope boundary: §13 owns validators + SPLIT loader wiring + decoded ABI. supported_kinds_mask widening for CHAINLOAD/NETWORK/RESUME stays deferred until owner sections ship runtime paths.
 
 ---
 
@@ -507,7 +516,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Offline entry editor tooling                           | ✅ bcdedit / bcdboot              | ✅ grub-mkconfig / bootctl            | 🟦 §11 host-side `bootcfg.py` (list/add/remove/set-default/emit-seed) + validator parity; live-boot binary deferred |
 | 💎  | Loop prevention via per-entry try counter              | ⚠️ Recovery loop after 2 fails    | ✅ systemd-boot tries=/done=          | 🟦 BLS counter grammar + ladder gate ship in §3; crash-tolerant bootloader rename in §5 |
 | 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | ⬜ Planned -- §14        |
-| 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | ⬜ Planned -- §13        |
+| 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | 🟦 §13 SPLIT/UKI/SAFE validators + authoritative SPLIT loader; CHAINLOAD/NETWORK/RESUME deferred to owner TODOs |
 | 💎  | OS-visible loader UEFI variables                       | ❌ None standardized              | ✅ systemd LoaderXxx interface        | ⬜ Planned -- §15        |
 | 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | ⬜ Planned -- §16        |
 | ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ✅ §3 ladder + 6-example doc + live producer in §4 🚀 |
