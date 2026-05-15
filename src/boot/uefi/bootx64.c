@@ -4949,6 +4949,442 @@ static void policy_write_health_subset(const boot_entry_envelope_t *env)
     }
 }
 
+/* Forward declarations for helpers defined later in the file but
+ * called from the boot-policy invoke path. */
+static int smbios_extract_system_uuid(char out[37]);
+static int smbios_format_uuid(const UINT8 src[16], char out[37]);
+
+/* ----- systemd-boot Boot Loader Interface (LoaderXxx vars) -----------
+ *
+ * systemd-boot defines a set of UEFI variables under vendor GUID
+ * 4a67b082-0a4c-41cf-b6c7-440b29bb8c4f that Linux user-mode tools
+ * (bootctl, systemctl reboot --boot-loader-entry) read to query boot
+ * loader state and write to override the next boot. Impossible OS
+ * publishes the same surface so those tools work unmodified.
+ *
+ * Read-only (bootloader -> OS, NV+BS+RT):
+ *   LoaderInfo               -- "ImpossibleOS bootloader vX"
+ *   LoaderFirmwareInfo       -- gST->FirmwareVendor + revision
+ *   LoaderFirmwareType       -- "UEFI <major>.<minor>"
+ *   LoaderImageIdentifier    -- canonical loader path on ESP
+ *   LoaderDevicePartUUID     -- ESP GPT partition GUID (lowercase 36-char)
+ *   LoaderEntries            -- NUL-separated UCS-2 entry ids, double-NUL term
+ *   LoaderEntryDefault       -- default entry id (lowest sort_key)
+ *   LoaderEntrySelected      -- this boot's selected entry id
+ *   LoaderConfigTimeout      -- decimal seconds string
+ *   LoaderTimeInitUSec       -- TSC-derived boot loader start in usec
+ *   LoaderTimeExecUSec       -- TSC-derived handoff usec
+ *   LoaderFeatures           -- 64-bit LE bitmap (canonical bit positions)
+ *
+ * One-shot (OS -> bootloader, NV+BS+RT, deleted after consumption):
+ *   LoaderEntryOneShot       -- next boot's entry id
+ *   LoaderConfigTimeoutOneShot -- next boot's timeout
+ *
+ * LoaderFeatures bit positions follow the upstream
+ * https://systemd.io/BOOT_LOADER_INTERFACE/ spec verbatim. Advertising
+ * a bit means we implement the documented semantic; not advertising
+ * means the capability is absent. Impossible OS-specific extensions
+ * (entry kinds, audit JSONL, health gate) live in a SEPARATE variable
+ * `ImpossibleOSLoaderFeaturesExt` under our own vendor GUID so we
+ * never lie about systemd-boot capability bits.
+ *
+ * Failure model: every gRT->SetVariable() call is wrapped in
+ * loader_set_var() which sets boot_info.loader_vars_degraded on any
+ * error and continues. Userland still boots; the kernel surfaces
+ * degraded publication state in the audit JSONL. */
+
+/* systemd-boot vendor GUID (Linux compat -- DO NOT change). */
+static const EFI_GUID g_loader_systemd_guid =
+    { 0x4a67b082, 0x0a4c, 0x41cf,
+      { 0xb6, 0xc7, 0x44, 0x0b, 0x29, 0xbb, 0x8c, 0x4f } };
+
+/* LoaderFeatures bits per upstream Boot Loader Interface spec. Only
+ * advertise bits the bootloader actually implements; advertising a bit
+ * we do not honor is a compatibility lie. */
+#define LOADER_FEATURE_CONFIG_TIMEOUT          (1ULL << 0)  /* writable LoaderConfigTimeout -- NOT advertised */
+#define LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT  (1ULL << 1)
+#define LOADER_FEATURE_ENTRY_DEFAULT           (1ULL << 2)  /* writable LoaderEntryDefault -- NOT advertised */
+#define LOADER_FEATURE_ENTRY_ONESHOT           (1ULL << 3)
+#define LOADER_FEATURE_BOOT_COUNTING           (1ULL << 4)
+#define LOADER_FEATURE_XBOOTLDR                (1ULL << 5)  /* XBOOTLDR partition -- NOT advertised */
+/* We advertise: ConfigTimeoutOneShot + EntryOneShot + BootCounting */
+#define LOADER_FEATURES_PUBLISHED \
+    (LOADER_FEATURE_CONFIG_TIMEOUT_ONESHOT \
+     | LOADER_FEATURE_ENTRY_ONESHOT \
+     | LOADER_FEATURE_BOOT_COUNTING)
+
+/* Canonical loader install path on the ESP (Impossible OS UEFI
+ * bootloader). systemd-boot publishes the actual loaded path via
+ * device-path walk; we publish the canonical install location since
+ * it is what operators expect to see and what bootctl displays. */
+#define LOADER_IMAGE_IDENTIFIER_PATH u"\\EFI\\ImpossibleOS\\BOOTX64.EFI"
+
+/* Bound on any LoaderXxx variable payload. systemd-boot caps at ~4 KiB
+ * per var; our LoaderEntries is the largest payload (up to 64 ids * 48
+ * chars * 2 bytes UCS-2 + terminators = ~6 KiB). Allocate 8 KiB on the
+ * stack-frame inside the publisher. */
+#define LOADER_VAR_PAYLOAD_MAX  8192u
+
+/* Convert an ASCII NUL-terminated string to UCS-2 (UTF-16LE) into the
+ * caller buffer; returns the byte count including the trailing
+ * UCS-2 NUL (2 bytes). Caller-buffer must hold at least
+ * (strlen+1)*2 bytes. */
+static UINTN loader_ascii_to_ucs2(const char *src, CHAR16 *dst, UINTN dst_cap)
+{
+    UINTN i = 0;
+    if (!src || !dst || dst_cap < 2) return 0;
+    while (src[i] && i < (dst_cap / 2u) - 1u) {
+        dst[i] = (CHAR16)(unsigned char)src[i];
+        i++;
+    }
+    dst[i] = 0;
+    return (i + 1u) * 2u;
+}
+
+/* Convert UINT64 decimal to ASCII into out[buf_cap]. Returns the
+ * length (excluding NUL). Always NUL-terminates. */
+static UINTN loader_u64_to_decimal(UINT64 v, char *out, UINTN cap)
+{
+    char tmp[24];
+    UINTN tlen = 0;
+    if (!out || cap == 0) return 0;
+    if (v == 0) tmp[tlen++] = '0';
+    while (v) {
+        tmp[tlen++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    }
+    UINTN out_pos = 0;
+    while (tlen > 0 && out_pos < cap - 1u) {
+        out[out_pos++] = tmp[--tlen];
+    }
+    out[out_pos] = 0;
+    return out_pos;
+}
+
+/* Write a UEFI variable with NV+BS+RT attrs. On failure, log + set
+ * loader_vars_degraded=1 (best-effort). Never halts. */
+static void loader_set_var(const CHAR16 *name, UINTN payload_size,
+                            const void *payload)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable) {
+        g_boot_info_ptr->loader_vars_degraded = 1;
+        return;
+    }
+    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE
+                 | EFI_VARIABLE_BOOTSERVICE_ACCESS
+                 | EFI_VARIABLE_RUNTIME_ACCESS;
+    EFI_STATUS s = gST->RuntimeServices->SetVariable(
+        (CHAR16 *)name, (EFI_GUID *)&g_loader_systemd_guid,
+        attrs, payload_size, (VOID *)payload);
+    if (EFI_ERROR(s)) {
+        g_boot_info_ptr->loader_vars_degraded = 1;
+        serial_early_print("[BOOT] loader-vars: SetVariable failed -- degraded mode\n");
+    }
+}
+
+/* Write a UEFI variable from an ASCII string. */
+static void loader_set_var_ascii(const CHAR16 *name, const char *value)
+{
+    CHAR16 buf[512];
+    UINTN n = loader_ascii_to_ucs2(value, buf, sizeof(buf));
+    if (n == 0) return;
+    /* systemd-boot interface convention: string vars are UCS-2 WITHOUT
+     * the trailing NUL counted (so userspace tools treat the bytes as
+     * the exact string). We follow the same convention: size = n - 2. */
+    if (n < 2) return;
+    loader_set_var(name, n - 2u, buf);
+}
+
+/* Format the GPT partition GUID at boot_info.boot_partition_guid into
+ * RFC 4122 textual form (lowercase) and write LoaderDevicePartUUID.
+ * GPT GUIDs use the same little-endian-on-wire convention as SMBIOS. */
+static void loader_set_var_part_uuid(void)
+{
+    const UINT8 *raw = (const UINT8 *)g_boot_info_ptr->boot_partition_guid;
+    /* Skip if we never populated a real GPT GUID (zero or MBR fallback
+     * in [0..3] only). systemd-boot spec: var absent => unknown. */
+    int all_zero = 1;
+    for (UINTN i = 0; i < 16; i++) if (raw[i]) { all_zero = 0; break; }
+    if (all_zero) return;
+    char ascii[37];
+    if (!smbios_format_uuid(raw, ascii)) return;
+    loader_set_var_ascii(u"LoaderDevicePartUUID", ascii);
+}
+
+/* Format gST->FirmwareVendor + FirmwareRevision and write LoaderFirmware*. */
+static void loader_set_firmware_info(void)
+{
+    CHAR16 buf[256];
+    UINTN p = 0;
+    if (gST && gST->FirmwareVendor) {
+        const CHAR16 *fv = gST->FirmwareVendor;
+        while (fv[p] != 0 && p < (sizeof(buf) / sizeof(buf[0])) - 16u) {
+            buf[p] = fv[p];
+            p++;
+        }
+    }
+    if (gST) {
+        /* Append " " + revision hex */
+        const char *suffix = " ";
+        UINTN si = 0;
+        while (suffix[si] && p < (sizeof(buf) / sizeof(buf[0])) - 12u) {
+            buf[p++] = (CHAR16)(unsigned char)suffix[si++];
+        }
+        UINT32 rev = gST->FirmwareRevision;
+        char dec[16];
+        UINTN dl = loader_u64_to_decimal((UINT64)rev, dec, sizeof(dec));
+        for (UINTN i = 0; i < dl && p < (sizeof(buf) / sizeof(buf[0])) - 1u; i++) {
+            buf[p++] = (CHAR16)(unsigned char)dec[i];
+        }
+    }
+    buf[p] = 0;
+    if (p > 0)
+        loader_set_var(u"LoaderFirmwareInfo", p * 2u, buf);
+
+    /* Firmware type: "UEFI <major>.<minor>" from gST->Hdr.Revision. */
+    if (gST) {
+        char ft[32] = { 'U','E','F','I',' ', 0 };
+        UINTN tp = 5;
+        UINT32 ver = gST->Hdr.Revision;
+        UINT32 maj = (ver >> 16) & 0xFFFF;
+        UINT32 min = ver & 0xFFFF;
+        char dbuf[8];
+        UINTN dn = loader_u64_to_decimal((UINT64)maj, dbuf, sizeof(dbuf));
+        for (UINTN i = 0; i < dn; i++) ft[tp++] = dbuf[i];
+        ft[tp++] = '.';
+        dn = loader_u64_to_decimal((UINT64)min, dbuf, sizeof(dbuf));
+        for (UINTN i = 0; i < dn; i++) ft[tp++] = dbuf[i];
+        ft[tp] = 0;
+        loader_set_var_ascii(u"LoaderFirmwareType", ft);
+    }
+}
+
+/* Compose + write LoaderEntries from the parser result. UCS-2,
+ * NUL-separated, trailing double-NUL terminator. systemd-boot's
+ * bootctl reads this and lists each id. */
+static void loader_set_entries(const boot_entries_parse_result_t *parse)
+{
+    if (!parse || parse->entry_count == 0) return;
+    /* Stack-allocate the payload buffer. */
+    static CHAR16 buf[LOADER_VAR_PAYLOAD_MAX / 2u];
+    UINTN p = 0;
+    UINTN cap = sizeof(buf) / sizeof(buf[0]);
+    for (UINTN e = 0; e < parse->entry_count; e++) {
+        const char *id = parse->entries[e].id;
+        UINTN j = 0;
+        while (id[j] && p < cap - 2u) {
+            buf[p++] = (CHAR16)(unsigned char)id[j++];
+        }
+        if (p < cap - 1u) buf[p++] = 0;  /* NUL separator */
+    }
+    /* Trailing double-NUL: one was emitted by the loop for the last
+     * entry; add the second. */
+    if (p < cap) buf[p++] = 0;
+    loader_set_var(u"LoaderEntries", p * 2u, buf);
+}
+
+/* Publish the read-only Loader* variables. Called after the policy
+ * decision lands in boot_info and after the per-entry counter
+ * decrement, BEFORE the kernel handoff. Failure is best-effort: each
+ * SetVariable independently flips loader_vars_degraded but never
+ * blocks boot. */
+static void loader_publish_readonly_vars(
+    const boot_entries_parse_result_t *parse,
+    const boot_policy_decision_t *decision,
+    UINT64 init_usec, UINT64 exec_usec, UINT32 timeout_seconds)
+{
+    /* LoaderInfo */
+    loader_set_var_ascii(u"LoaderInfo", "Impossible OS bootloader 1.0");
+
+    /* LoaderFirmwareInfo + LoaderFirmwareType */
+    loader_set_firmware_info();
+
+    /* LoaderImageIdentifier (canonical install path). UCS-2 literal. */
+    {
+        const CHAR16 *p = LOADER_IMAGE_IDENTIFIER_PATH;
+        UINTN n = 0;
+        while (p[n] != 0) n++;
+        loader_set_var(u"LoaderImageIdentifier", n * 2u, p);
+    }
+
+    /* LoaderDevicePartUUID */
+    loader_set_var_part_uuid();
+
+    /* LoaderEntries (NUL-separated ids, double-NUL terminator). */
+    loader_set_entries(parse);
+
+    /* LoaderEntryDefault -- the entry with the lowest sort_key.
+     * The policy ladder evaluates this at boot time; for the published
+     * default we use the parsed entry whose sort_key sorts first. */
+    if (parse && parse->entry_count > 0) {
+        UINTN best = 0;
+        for (UINTN i = 1; i < parse->entry_count; i++) {
+            /* Lexical compare on NUL-terminated sort_key. */
+            const char *a = parse->entries[best].sort_key;
+            const char *b = parse->entries[i].sort_key;
+            UINTN k = 0;
+            while (a[k] == b[k] && a[k] != 0) k++;
+            if ((unsigned char)b[k] < (unsigned char)a[k]) best = i;
+        }
+        loader_set_var_ascii(u"LoaderEntryDefault", parse->entries[best].id);
+    }
+
+    /* LoaderEntrySelected -- this boot's selected id (already in
+     * boot_info v19). Skipped on FALLBACK_STORE_INVALID where the
+     * selected_entry_id is empty by ABI. */
+    if (decision && decision->selected_entry_id[0] != 0)
+        loader_set_var_ascii(u"LoaderEntrySelected", decision->selected_entry_id);
+
+    /* LoaderConfigTimeout -- current effective timeout in seconds. */
+    {
+        char tbuf[16];
+        loader_u64_to_decimal((UINT64)timeout_seconds, tbuf, sizeof(tbuf));
+        loader_set_var_ascii(u"LoaderConfigTimeout", tbuf);
+    }
+
+    /* LoaderTimeInitUSec / LoaderTimeExecUSec -- TSC-derived
+     * microseconds since bootloader entry / kernel handoff. */
+    {
+        char tbuf[24];
+        loader_u64_to_decimal(init_usec, tbuf, sizeof(tbuf));
+        loader_set_var_ascii(u"LoaderTimeInitUSec", tbuf);
+        loader_u64_to_decimal(exec_usec, tbuf, sizeof(tbuf));
+        loader_set_var_ascii(u"LoaderTimeExecUSec", tbuf);
+    }
+
+    /* LoaderFeatures -- canonical systemd-boot bit positions; only
+     * the bits we honor are set. */
+    {
+        UINT64 features = LOADER_FEATURES_PUBLISHED;
+        loader_set_var(u"LoaderFeatures", sizeof(features), &features);
+    }
+}
+
+/* Read and consume LoaderEntryOneShot + LoaderConfigTimeoutOneShot.
+ * Both are deleted after consumption so the next boot reverts to
+ * the configured default. Out-params are written only when a valid
+ * value was consumed. */
+static void loader_consume_one_shot_vars(
+    char *out_entry_id, UINTN entry_id_cap,
+    int *out_have_entry,
+    UINT32 *out_timeout_seconds,
+    int *out_have_timeout)
+{
+    *out_have_entry = 0;
+    *out_have_timeout = 0;
+    if (!gST || !gST->RuntimeServices ||
+        !gST->RuntimeServices->GetVariable ||
+        !gST->RuntimeServices->SetVariable) {
+        return;
+    }
+    UINT32 attrs = 0;
+    UINTN sz;
+
+    /* LoaderEntryOneShot: UCS-2 string of the desired entry id. */
+    {
+        CHAR16 buf[64];
+        sz = sizeof(buf);
+        EFI_STATUS s = gST->RuntimeServices->GetVariable(
+            u"LoaderEntryOneShot", (EFI_GUID *)&g_loader_systemd_guid,
+            &attrs, &sz, buf);
+        if (!EFI_ERROR(s) && sz > 0 && sz < sizeof(buf)) {
+            UINTN i = 0;
+            UINTN clen = sz / 2u;
+            while (i < clen && buf[i] != 0 &&
+                   i < entry_id_cap - 1u) {
+                /* Only accept ASCII printable for entry ids. */
+                CHAR16 c = buf[i];
+                if (c < 0x20 || c > 0x7E) break;
+                out_entry_id[i] = (char)c;
+                i++;
+            }
+            out_entry_id[i] = 0;
+            if (i > 0) *out_have_entry = 1;
+            /* Delete the var so it is honored exactly once. */
+            (void)gST->RuntimeServices->SetVariable(
+                u"LoaderEntryOneShot",
+                (EFI_GUID *)&g_loader_systemd_guid,
+                attrs, 0, (VOID *)0);
+        }
+    }
+
+    /* LoaderConfigTimeoutOneShot: decimal UCS-2 seconds. */
+    {
+        CHAR16 buf[16];
+        sz = sizeof(buf);
+        EFI_STATUS s = gST->RuntimeServices->GetVariable(
+            u"LoaderConfigTimeoutOneShot",
+            (EFI_GUID *)&g_loader_systemd_guid,
+            &attrs, &sz, buf);
+        if (!EFI_ERROR(s) && sz > 0 && sz < sizeof(buf)) {
+            UINTN i = 0, clen = sz / 2u;
+            UINT32 acc = 0;
+            int saw_digit = 0;
+            int rejected = 0;
+            while (i < clen && buf[i] != 0) {
+                CHAR16 c = buf[i];
+                if (c < '0' || c > '9') { rejected = 1; break; }
+                UINT32 digit = (UINT32)(c - '0');
+                /* Overflow-safe cap check: reject BEFORE the multiply.
+                 * Cap is 3600 (one hour). A pre-multiply check defeats
+                 * a hostile UCS-2 value like "999999999999999" that
+                 * would wrap UINT32 and slip past a post-arithmetic
+                 * check. */
+                if (acc > 360u || (acc == 360u && digit > 0u)) {
+                    rejected = 1;
+                    break;
+                }
+                acc = acc * 10u + digit;
+                saw_digit = 1;
+                i++;
+            }
+            if (saw_digit && !rejected) {
+                *out_timeout_seconds = acc;
+                *out_have_timeout = 1;
+            }
+            /* Delete regardless of validity -- a malformed value should
+             * not stick around to be re-evaluated next boot. */
+            (void)gST->RuntimeServices->SetVariable(
+                u"LoaderConfigTimeoutOneShot",
+                (EFI_GUID *)&g_loader_systemd_guid,
+                attrs, 0, (VOID *)0);
+        }
+    }
+}
+
+/* Impossible-OS-specific feature bitmap (under our own vendor GUID,
+ * NOT systemd-boot's GUID) advertising extension capabilities. Bit
+ * positions are project-local; documented in docs/boot/loader-vars.md.
+ * Linux tools never read this variable; Impossible-OS-aware userspace
+ * (bootcfg, sysinfo) does. */
+#define IMPOSSIBLE_FEATURE_AUDIT_JSONL    (1ULL << 0)
+#define IMPOSSIBLE_FEATURE_ENTRY_KINDS    (1ULL << 1)
+#define IMPOSSIBLE_FEATURE_HEALTH_GATE    (1ULL << 2)
+#define IMPOSSIBLE_FEATURE_DEMOTE_NOT_DROP (1ULL << 3)
+#define IMPOSSIBLE_FEATURES_PUBLISHED \
+    (IMPOSSIBLE_FEATURE_AUDIT_JSONL \
+     | IMPOSSIBLE_FEATURE_ENTRY_KINDS \
+     | IMPOSSIBLE_FEATURE_HEALTH_GATE \
+     | IMPOSSIBLE_FEATURE_DEMOTE_NOT_DROP)
+
+static void loader_publish_impossible_ext(void)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
+        return;
+    UINT64 features = IMPOSSIBLE_FEATURES_PUBLISHED;
+    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE
+                 | EFI_VARIABLE_BOOTSERVICE_ACCESS
+                 | EFI_VARIABLE_RUNTIME_ACCESS;
+    EFI_STATUS s = gST->RuntimeServices->SetVariable(
+        u"ImpossibleOSLoaderFeaturesExt",
+        (EFI_GUID *)&g_impossible_os_guid,
+        attrs, sizeof(features), &features);
+    if (EFI_ERROR(s)) {
+        g_boot_info_ptr->loader_vars_degraded = 1;
+        serial_early_print("[BOOT] loader-vars: Impossible ext SetVariable failed\n");
+    }
+}
+
 /* The boot-policy invoke step. Owns ESP read, OptionalData decode,
  * ladder dispatch, and boot_info v19 population. Counter scan / crash-
  * tolerant rename / kernel-side Phase-0 ABI validator are owned by the
@@ -5044,23 +5480,58 @@ static void boot_policy_invoke(void)
     inputs->secure_boot_active = sb_active;  /* cached above */
     inputs->invoked_via_uki  = (g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0;
 
-    /* Local machine UUID feeds the machine_id filter. The bootloader
-     * does not yet parse SMBIOS table 1 (System Information) for the
-     * UUID -- that producer ships with the loader-variables feature
-     * which also exports the UUID to userspace via the LoaderXxx
-     * variables and the registry. Until then leave local_machine_id
-     * empty, which per the schema doc means "machine has no UUID --
-     * match only entries with an empty machine_id (wildcard)". This
-     * is the right behavior for today's bootstrap-seeded default
-     * entries, which all use the empty-string wildcard. Machine-
-     * pinned entries become selectable when SMBIOS UUID parsing
-     * lands. */
-    inputs->local_machine_id[0] = 0;
+    /* Local machine UUID feeds the machine_id filter. Extract from
+     * SMBIOS Type 1 (System Information) via the ConfigurationTable
+     * entry-point lookup. The schema doc treats local_machine_id="" as
+     * the "machine has no UUID -- match only entries with an empty
+     * machine_id (wildcard)" sentinel, so any failure (no SMBIOS,
+     * anchor mismatch, Type 1 absent, UUID not-specified) leaves the
+     * field empty and machine-pinned entries simply do not match. */
+    {
+        char uuid_buf[37];
+        uuid_buf[0] = 0;
+        (void)smbios_extract_system_uuid(uuid_buf);
+        UINTN k = 0;
+        while (uuid_buf[k] && k < sizeof(inputs->local_machine_id) - 1u) {
+            inputs->local_machine_id[k] = uuid_buf[k];
+            k++;
+        }
+        inputs->local_machine_id[k] = 0;
+    }
 
     /* Resolve BootCurrent -> internal id via Boot####.OptionalData. */
     read_boot_optionaldata_id(g_boot_info_ptr->uefi_boot_current,
                               inputs->bootcurrent_entry_id,
                               &inputs->bootcurrent_known);
+
+    /* Consume systemd-boot one-shot vars. LoaderEntryOneShot overlays
+     * the firmware-resolved bootcurrent hint (the policy ladder treats
+     * bootcurrent_entry_id as a preferred-default bias, which is the
+     * correct semantic for "next boot only"). LoaderConfigTimeoutOneShot
+     * is captured into a local for the menu timeout below. Both vars
+     * are deleted after read so they fire exactly once. */
+    static char s_loader_oneshot_entry[64];
+    int loader_have_entry_oneshot = 0;
+    UINT32 loader_oneshot_timeout = 0;
+    int loader_have_timeout_oneshot = 0;
+    loader_consume_one_shot_vars(
+        s_loader_oneshot_entry, sizeof(s_loader_oneshot_entry),
+        &loader_have_entry_oneshot,
+        &loader_oneshot_timeout,
+        &loader_have_timeout_oneshot);
+    if (loader_have_entry_oneshot) {
+        UINTN k = 0;
+        while (s_loader_oneshot_entry[k] &&
+               k < sizeof(inputs->bootcurrent_entry_id) - 1u) {
+            inputs->bootcurrent_entry_id[k] = s_loader_oneshot_entry[k];
+            k++;
+        }
+        inputs->bootcurrent_entry_id[k] = 0;
+        inputs->bootcurrent_known = 1;
+        serial_early_print("[BOOT] loader-vars: LoaderEntryOneShot consumed -> ");
+        serial_early_print(s_loader_oneshot_entry);
+        serial_early_print("\n");
+    }
 
     /* Caller-side capability gate. Mode-locked: today's load_kernel
      * uses the embedded UKI payload OR the disk kernel.exe based on
@@ -5284,6 +5755,16 @@ static void boot_policy_invoke(void)
                 timeout_s = def_e->timeout_override;
                 if (timeout_s == 0u) explicit_zero = 1;
             }
+        }
+        /* LoaderConfigTimeoutOneShot (systemd-boot one-shot) overrides
+         * the per-entry timeout_override for this boot only. The var
+         * was consumed + deleted earlier in this function so the
+         * override fires exactly once. Cap at BOOT_MENU_TIMEOUT_CAP_S. */
+        if (loader_have_timeout_oneshot &&
+            loader_oneshot_timeout <= BOOT_MENU_TIMEOUT_CAP_S) {
+            timeout_s = loader_oneshot_timeout;
+            explicit_zero = (timeout_s == 0u);
+            serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot applied\n");
         }
         unsigned int chosen;
         int hotkey = BOOT_MENU_HOTKEY_NONE;
@@ -5643,6 +6124,41 @@ static void boot_policy_invoke(void)
     }
 
     post_code16(POST16_BL_BOOT_POLICY_OK);
+
+    /* Publish systemd-boot-compatible LoaderXxx UEFI variables AFTER
+     * the policy decision lands in boot_info and AFTER the per-entry
+     * counter decrement, BEFORE the kernel handoff. Every SetVariable
+     * failure flips boot_info.loader_vars_degraded but never blocks
+     * boot. Init/exec usec timestamps come from boot_info.timing if
+     * tsc_freq is calibrated; otherwise 0 is published (advisory).
+     *
+     * Timeout published: the consumed LoaderConfigTimeoutOneShot
+     * value (if any) takes precedence over BOOT_MENU_DEFAULT_TIMEOUT_S
+     * so userspace tools see the effective next-boot value. */
+    {
+        UINT32 published_timeout = loader_have_timeout_oneshot ?
+            loader_oneshot_timeout : (UINT32)BOOT_MENU_DEFAULT_TIMEOUT_S;
+        UINT64 init_us = 0, exec_us = 0;
+        UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;
+        if (tsc_freq > 0) {
+            UINT64 now = boot_rdtsc();
+            UINT64 entry = g_boot_info_ptr->timing.bl_entry;
+            if (now > entry) {
+                /* Convert TSC delta to microseconds. tsc_freq is Hz;
+                 * (delta * 1e6) / tsc_freq fits in u64 for any
+                 * bootloader uptime under ~5800 years on a 3GHz TSC. */
+                init_us = (now - entry) / (tsc_freq / 1000000ULL);
+                /* Exec time is approximated as init_us here -- we
+                 * publish before the kernel handoff; the spec allows
+                 * publishing the same timestamp for both when the
+                 * loader does not measure them separately. */
+                exec_us = init_us;
+            }
+        }
+        loader_publish_readonly_vars(parse, decision,
+                                      init_us, exec_us, published_timeout);
+        loader_publish_impossible_ext();
+    }
 
     /* FreePool the heap structures. The boot_info copies survive in
      * BOOT_INFO_PHYS_ADDR. The JSON buffer can also be released --
@@ -8207,6 +8723,198 @@ static void parse_fpdt(void)
     }
 
     serial_early_print("[BOOT] FPDT: no basic boot record\n");
+}
+
+/* ----- SMBIOS Type 1 (System Information) UUID extraction --------------
+ *
+ * SMBIOS UUID feeds the boot policy ladder's machine_id filter (the
+ * envelope's machine_id field uses RFC 4122 textual UUID, OR empty for
+ * the "match any machine" wildcard) and the LoaderXxx variable feature
+ * (publication only; the kernel's own SMBIOS walker also extracts the
+ * UUID post-EBS for the kernel-side surface).
+ *
+ * Anchor lookup: prefer the SMBIOS3 64-bit entry point (SMBIOS3 GUID)
+ * which has anchor string "_SM3_" and a 64-bit TableAddress, then fall
+ * back to SMBIOS 2.x with "_SM_" anchor and 32-bit TableAddress.
+ * Per the SMBIOS spec sections 5.2.1 / 5.2.2 we validate the anchor
+ * string + checksum before trusting any field.
+ *
+ * Type 1 UUID format: per SMBIOS 2.6+ the first three fields of the
+ * 16-byte UUID at offset 8 are little-endian-on-wire and must be
+ * byte-swapped to RFC 4122 textual form. UUID "00000000-0000-0000-..."
+ * or "FF...FF" is the "not-specified" sentinel and is left as the
+ * empty wildcard. */
+
+/* SMBIOS entry-point anchors (UEFI-specific layouts; the shared
+ * header in include/boot/boot_smbios_parse.h owns the pure data
+ * walker for Type 1 lookup + the UUID formatter). */
+struct smbios_ep32 {
+    char     anchor[4];          /* "_SM_" */
+    UINT8    checksum;
+    UINT8    length;
+    UINT8    major_version;
+    UINT8    minor_version;
+    UINT16   max_structure_size;
+    UINT8    entry_point_revision;
+    UINT8    formatted_area[5];
+    char     dmi_anchor[5];      /* "_DMI_" */
+    UINT8    dmi_checksum;
+    UINT16   structure_table_length;
+    UINT32   structure_table_address;
+    UINT16   structure_count;
+    UINT8    bcd_revision;
+} __attribute__((packed));
+
+struct smbios_ep64 {
+    char     anchor[5];          /* "_SM3_" */
+    UINT8    checksum;
+    UINT8    length;
+    UINT8    major_version;
+    UINT8    minor_version;
+    UINT8    docrev;
+    UINT8    entry_point_revision;
+    UINT8    reserved;
+    UINT32   structure_table_max_size;
+    UINT64   structure_table_address;
+} __attribute__((packed));
+
+#include "../../../include/boot/boot_smbios_parse.h"
+
+/* Thin UEFI-typed adapters around the pure header helpers. */
+static int smbios_format_uuid(const UINT8 src[16], char out[37])
+{
+    return boot_smbios_format_uuid((const unsigned char *)src, out);
+}
+
+/* SMBIOS entry-point checksum: sum of all bytes from base..base+len
+ * modulo 256 must be 0 per spec section 5.2.1 / 5.2.2. */
+static int smbios_ep_checksum_ok(const UINT8 *base, UINTN len)
+{
+    UINT8 sum = 0;
+    if (!base || len == 0 || len > 256) return 0;
+    for (UINTN i = 0; i < len; i++) sum = (UINT8)(sum + base[i]);
+    return sum == 0;
+}
+
+/* Extract the SMBIOS Type 1 UUID into RFC 4122 textual form, written
+ * into `out[37]` (caller buffer). Returns 1 on success (out is a
+ * valid 36-char UUID), 0 otherwise (out is set to empty string).
+ * Prefers SMBIOS3 entry point if both are advertised. */
+static int smbios_extract_system_uuid(char out[37])
+{
+    out[0] = 0;
+    if (!gST) return 0;
+    /* gST->ConfigurationTable must be non-NULL before indexing.
+     * Firmware that advertises a nonzero NumberOfTableEntries with a
+     * NULL table pointer is malformed but seen in the wild on some
+     * legacy systems; bail safely. */
+    if (!gST->ConfigurationTable || gST->NumberOfTableEntries == 0) {
+        serial_early_print("[BOOT] SMBIOS: ConfigurationTable absent\n");
+        return 0;
+    }
+    EFI_GUID g3 = EFI_SMBIOS3_TABLE_GUID;
+    EFI_GUID g2 = EFI_SMBIOS_TABLE_GUID;
+    const void *ep_addr = (const void *)0;
+    int ep_is_3 = 0;
+    for (UINTN i = 0; i < gST->NumberOfTableEntries; i++) {
+        EFI_CONFIGURATION_TABLE *entry = &gST->ConfigurationTable[i];
+        if (guid_equal(&entry->VendorGuid, &g3)) {
+            ep_addr = entry->VendorTable;
+            ep_is_3 = 1;
+            break;   /* SMBIOS3 wins -- 64-bit address space */
+        }
+        if (guid_equal(&entry->VendorGuid, &g2) && !ep_addr) {
+            ep_addr = entry->VendorTable;
+            ep_is_3 = 0;
+            /* keep scanning in case SMBIOS3 is advertised later */
+        }
+    }
+    if (!ep_addr) {
+        serial_early_print("[BOOT] SMBIOS: no entry point in ConfigurationTable\n");
+        return 0;
+    }
+
+    const UINT8 *table_base = (const UINT8 *)0;
+    UINTN table_len = 0;
+    if (ep_is_3) {
+        const struct smbios_ep64 *e = (const struct smbios_ep64 *)ep_addr;
+        /* Anchor: must be "_SM3_" + minimum length per SMBIOS spec
+         * section 5.2.2. */
+        if (e->anchor[0] != '_' || e->anchor[1] != 'S' || e->anchor[2] != 'M' ||
+            e->anchor[3] != '3' || e->anchor[4] != '_') {
+            serial_early_print("[BOOT] SMBIOS3: anchor mismatch\n");
+            return 0;
+        }
+        if (e->length < sizeof(*e)) {
+            serial_early_print("[BOOT] SMBIOS3: length too small\n");
+            return 0;
+        }
+        /* Checksum: 8-bit sum of all bytes in the entry point must be
+         * zero per SMBIOS spec section 5.2.2. A failed checksum means
+         * a corrupt or hostile firmware table; do NOT trust the
+         * structure_table_address field. */
+        if (!smbios_ep_checksum_ok((const UINT8 *)e, e->length)) {
+            serial_early_print("[BOOT] SMBIOS3: entry-point checksum failed\n");
+            return 0;
+        }
+        table_base = (const UINT8 *)(UINTN)e->structure_table_address;
+        table_len = (UINTN)e->structure_table_max_size;
+    } else {
+        const struct smbios_ep32 *e = (const struct smbios_ep32 *)ep_addr;
+        if (e->anchor[0] != '_' || e->anchor[1] != 'S' ||
+            e->anchor[2] != 'M' || e->anchor[3] != '_') {
+            serial_early_print("[BOOT] SMBIOS2: anchor mismatch\n");
+            return 0;
+        }
+        if (e->length < sizeof(*e)) {
+            serial_early_print("[BOOT] SMBIOS2: length too small\n");
+            return 0;
+        }
+        /* Both checksums required per SMBIOS spec section 5.2.1: the
+         * 8-bit sum of the first `length` bytes (entry point checksum),
+         * AND the 5-byte _DMI_ subsection has its own checksum byte at
+         * offset 16. */
+        if (!smbios_ep_checksum_ok((const UINT8 *)e, e->length)) {
+            serial_early_print("[BOOT] SMBIOS2: entry-point checksum failed\n");
+            return 0;
+        }
+        /* DMI subsection checksum: sum of bytes at offsets 16..30
+         * (length 15: dmi_anchor[5] + dmi_checksum + structure_table_*
+         * + structure_count + bcd_revision) must be zero. */
+        if (!smbios_ep_checksum_ok((const UINT8 *)e + 16, 15)) {
+            serial_early_print("[BOOT] SMBIOS2: _DMI_ checksum failed\n");
+            return 0;
+        }
+        table_base = (const UINT8 *)(UINTN)e->structure_table_address;
+        table_len = (UINTN)e->structure_table_length;
+    }
+    if (!table_base || table_len == 0) {
+        serial_early_print("[BOOT] SMBIOS: NULL table base or zero length\n");
+        return 0;
+    }
+
+    const struct boot_smbios_header *h =
+        boot_smbios_find_type1((const unsigned char *)table_base,
+                                (unsigned int)table_len);
+    if (!h) {
+        serial_early_print("[BOOT] SMBIOS: Type 1 not found\n");
+        return 0;
+    }
+    /* UUID at offset 8 within the Type 1 structure; requires length
+     * >= 25 per spec section 7.2. */
+    if (h->length < 25) {
+        serial_early_print("[BOOT] SMBIOS: Type 1 too small for UUID\n");
+        return 0;
+    }
+    const UINT8 *raw = (const UINT8 *)h + 8;
+    if (!smbios_format_uuid(raw, out)) {
+        serial_early_print("[BOOT] SMBIOS: Type 1 UUID is not-specified sentinel\n");
+        return 0;
+    }
+    serial_early_print("[BOOT] SMBIOS: system UUID=");
+    serial_early_print(out);
+    serial_early_print("\n");
+    return 1;
 }
 
 /* ============================================================================

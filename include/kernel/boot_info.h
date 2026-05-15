@@ -160,8 +160,12 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  20
+#define BOOT_INFO_VERSION  21
 #endif
+/* v21 adds loader_vars_degraded + loader_vars_pad: bootloader sets the
+ * degraded flag if any systemd-boot-compatible LoaderXxx UEFI variable
+ * write failed (NVRAM quota, firmware refusal). Kernel surfaces this in
+ * audit + diagnostics. */
 
 /* Upper bound for pre-copy address validation: the UEFI bootloader
  * identity-maps [0, 4 GiB) with 2 MiB pages in setup_page_tables()
@@ -1668,6 +1672,20 @@ struct boot_info {
     uint32_t sticky_last_boot_seq;
     uint32_t sticky_consumed_trigger_seq;
     uint32_t _audit_pad;                  /* alignment to 8-byte boundary */
+
+    /* v21: OS-visible Loader UEFI variables (systemd-boot interface
+     * compatibility). The bootloader publishes 11 read-only Loader*
+     * variables under vendor GUID 4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+     * and consumes 2 one-shot vars (LoaderEntryOneShot,
+     * LoaderConfigTimeoutOneShot). A SetVariable failure on any of
+     * these (NVRAM quota full, firmware refusal) flips
+     * loader_vars_degraded so the kernel can record degraded
+     * publication state in the boot audit JSONL. The bootloader does
+     * NOT halt on these failures -- userland still boots, just
+     * without complete Loader* observability. See docs/boot/loader-
+     * vars.md. */
+    uint8_t  loader_vars_degraded;
+    uint8_t  _loader_vars_pad[7];
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

@@ -671,6 +671,19 @@ typedef struct {
     { 0xeb9d2d30, 0x2d88, 0x11d3, \
       { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
 
+/* SMBIOS 3.x (64-bit) entry point GUID + SMBIOS 2.x (32-bit) entry
+ * point GUID per UEFI 2.10 spec section 4.6. Each ConfigurationTable
+ * entry with these GUIDs points at the corresponding _SM3_ / _SM_
+ * anchor structure. Mirrors UEFI_GUID_SMBIOS3 / UEFI_GUID_SMBIOS in
+ * include/kernel/boot_info.h. */
+#define EFI_SMBIOS3_TABLE_GUID \
+    { 0xf2fd1544, 0x9794, 0x4a2c, \
+      { 0x99, 0x2e, 0xe5, 0xbb, 0xcf, 0x20, 0xe3, 0x94 } }
+
+#define EFI_SMBIOS_TABLE_GUID \
+    { 0xeb9d2d31, 0x2d88, 0x11d3, \
+      { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
+
 /* --- EDID Active Protocol -- provides raw EDID block from firmware --- */
 /* Bytes 54–71 of EDID: preferred timing descriptor.
  *   H-active: byte[56] | (byte[58] >> 4) << 8

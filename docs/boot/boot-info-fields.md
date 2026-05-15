@@ -428,6 +428,15 @@ Surface for the per-decision boot policy audit trail (boot-entry audit feature, 
 | `sticky_consumed_trigger_seq` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` | persistent | boot-entry audit | Boot seq of the last successful trigger ack (helps the kernel detect torn ack windows -- if the bootloader observes a trigger AND `sticky_consumed_trigger_seq == sticky_last_boot_seq`, the previous boot acked but this boot saw the trigger anyway, which means the previous boot also saw it but never cleared -- fail-safe). |
 | `_audit_pad` | bootx64 boot policy | P0 | none | persistent | boot-entry audit | reserved zero; alignment to 8-byte boundary. |
 
+## OS-visible Loader UEFI variables (v21)
+
+Surface for the systemd-boot Boot Loader Interface compatibility feature (boot-entry loader-vars feature, owning TODO `01-boot-platform/TODO-07`). The bootloader publishes 11 read-only `Loader*` UEFI variables under vendor GUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f` after the policy decision and consumes 2 one-shot vars (`LoaderEntryOneShot`, `LoaderConfigTimeoutOneShot`) early in policy invoke. See [`docs/boot/loader-vars.md`](loader-vars.md) for the full variable inventory + feature bitmap.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `loader_vars_degraded` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` + diagnostics | persistent | boot-entry loader-vars | 1 if any `Loader*` SetVariable call failed (NVRAM quota, firmware refusal). Userland still boots; the kernel surfaces the flag in the boot audit JSONL so operators see degraded publication state. |
+| `_loader_vars_pad` | bootx64 boot policy | P0 | none | persistent | boot-entry loader-vars | reserved zero; 7-byte alignment pad. |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).

@@ -259,7 +259,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  20
+#define BOOT_INFO_VERSION  21
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -714,6 +714,12 @@ struct boot_info {
     UINT32   sticky_last_boot_seq;
     UINT32   sticky_consumed_trigger_seq;
     UINT32   _audit_pad;
+
+    /* v21: OS-visible Loader UEFI variables. Bootloader sets
+     * loader_vars_degraded if any systemd-boot LoaderXxx SetVariable
+     * fails (NVRAM quota / firmware refusal). Never halts. */
+    UINT8    loader_vars_degraded;
+    UINT8    _loader_vars_pad[7];
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

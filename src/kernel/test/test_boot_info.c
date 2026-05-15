@@ -1407,31 +1407,33 @@ static void test_boot_loader_identity_layout_pinned(void)
  * loader_identity was. When the next ABI bump appends new fields,
  * update both the offset and the field name here so the tail-pin
  * test continues to enforce the end-of-struct invariant. */
-static void test_boot_info_v19_tail(void)
+static void test_boot_info_v20_tail(void)
 {
-    /* rejected_entry_overflow is the last field in the v19 tail
-     * block. v19 appended the boot policy selection ABI
-     * (selected_entry_id[64] + selection_reason + _selection_pad +
-     * rejected_entries[64] + rejected_entry_count +
-     * rejected_entry_overflow) after the v18 SBAT/dbx/degraded_trust
-     * trio. The compiler adds up to 7 bytes of trailing padding to
-     * round the struct to an 8-byte alignment boundary. The tail
-     * invariant is therefore end-of-rejected_entry_overflow +
+    /* _audit_pad is the last field in the v20 tail block. v20 appended
+     * the policy audit surface (audit_degraded + sticky_present +
+     * sticky_recovery_trigger + sticky_watchdog_rollback_request +
+     * sticky_last_outcome + sticky_audit_degraded_last_boot +
+     * sticky_last_event_code + sticky_last_boot_seq +
+     * sticky_consumed_trigger_seq + _audit_pad) after the v19 boot
+     * policy selection ABI. The compiler adds up to 7 bytes of
+     * trailing padding to round the struct to an 8-byte alignment
+     * boundary. The tail invariant is therefore end-of-_audit_pad +
      * <=7-byte tail-pad == struct size. The pinned struct size
      * catches accidental drift in either direction.
      *
-     * History: v18 pinned 24056 with degraded_trust_flags as tail;
-     * v17 pinned an earlier size with boot_media_role* as tail. */
+     * History: v19 pinned 28488 with rejected_entry_overflow as tail;
+     * v18 pinned 24056 with degraded_trust_flags as tail; v17 pinned
+     * an earlier size with boot_media_role* as tail. */
     uint64_t off = (uint64_t)__builtin_offsetof(
-        struct boot_info, rejected_entry_overflow);
+        struct boot_info, _loader_vars_pad);
     uint64_t end = off + (uint64_t)sizeof(
-        ((struct boot_info *)0)->rejected_entry_overflow);
+        ((struct boot_info *)0)->_loader_vars_pad);
     TEST_ASSERT_EQ((uint64_t)(sizeof(struct boot_info) - end < 8u), 1u,
-                   "rejected_entry_overflow must be the v19 tail field "
+                   "_loader_vars_pad must be the v21 tail field "
                    "(<= 7-byte alignment pad to next struct boundary)");
-    TEST_ASSERT_EQ((uint64_t)sizeof(struct boot_info), (uint64_t)28488u,
-                   "v19 struct size pinned at 28488 bytes "
-                   "(boot policy selection ABI appended to v18 tail)");
+    TEST_ASSERT_EQ((uint64_t)sizeof(struct boot_info), (uint64_t)28512u,
+                   "v21 struct size pinned at 28512 bytes "
+                   "(loader-vars surface appended to v20 tail)");
 }
 
 /* loader_identity is no longer the tail (v14 appended UKI payload
@@ -1587,8 +1589,8 @@ void test_register_boot_info(void)
     /* Bootloader build identity. */
     test_suite_register_cat("boot_loader_identity: layout pinned (64B, packed)",
                             test_boot_loader_identity_layout_pinned, TEST_CAT_BOOT);
-    test_suite_register_cat("boot_info: v19 tail field pin (rejected_entry_overflow)",
-                            test_boot_info_v19_tail, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: v20 tail field pin (_audit_pad)",
+                            test_boot_info_v20_tail, TEST_CAT_BOOT);
     test_suite_register_cat("boot_info: loader_identity offset stable (v13 layout)",
                             test_boot_info_loader_identity_offset_stable, TEST_CAT_BOOT);
     test_suite_register_cat("boot_loader_identity: zero is loader-did-not-populate",

@@ -2588,10 +2588,11 @@ static int kn_is_reserved_uefi_var(const struct boot_uefi_guid *g,
         for (unsigned int i = 0; i < sizeof(*g); i++)
             if (a[i] != b[i]) return 0;
     }
-    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-MarkGood"))     return 1;
-    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-CurBootCtr"))   return 1;
-    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-HealthSubset")) return 1;
-    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-BootSticky"))   return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-MarkGood"))         return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-CurBootCtr"))       return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-HealthSubset"))     return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-BootSticky"))       return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOSLoaderFeaturesExt")) return 1;
     return 0;
 }
 

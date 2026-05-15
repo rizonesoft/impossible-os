@@ -65,7 +65,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [x]   |
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
 | 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
-| 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [ ]   |
+| 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [x]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [ ]   |
 | 💎  |  17   | Boot entry tests                                       | §1-§16                                  |  [ ]   |
 
@@ -475,15 +475,28 @@ Follow-ups (wanted checks depend on producers outside §14's scope):
 
 Publish the live entry list, capability bitmap, selected entry, and one-shot overrides as systemd-boot-compatible `LoaderXxx` UEFI variables under vendor UUID `4a67b082-0a4c-41cf-b6c7-440b29bb8c4f` so userspace tooling (and ported third-party tools like `bootctl`-equivalents) does not need to re-parse the on-disk store. Without this, dynamic entries (A/B-generated, recovery-generated, network-discovered, chainload) are invisible to userspace until the on-disk store is regenerated. Linux parity (`https://systemd.io/BOOT_LOADER_INTERFACE/`).
 
-- [ ] Publish read-only LoaderXxx vars (bootloader -> OS) per `docs/boot/loader-vars.md`: entries, selected, device, timeout, init/exec time, image+firmware identity, features bitmap.
-- [ ] Honor OS-written one-shot vars: `LoaderEntryOneShot`, `LoaderConfigTimeoutOneShot`. Bootloader reads + deletes after consumption.
-- [ ] Define `LoaderFeatures` capability bits 0-5 (one-shot honors, entries publish, tries publish, kinds, audit). Additive; new feature -> new bit. Table in `docs/boot/loader-vars.md`.
-- [ ] Variables written via `gRT->SetVariable` after boot-info publish, before kernel handoff; failure sets `boot_info.loader_vars_degraded` and continues boot.
-- [ ] Document compatibility in `docs/boot/loader-vars.md`: a Linux user-mode tool reading the systemd-boot interface format Just Works against an Impossible OS-booted system.
-- [ ] Extract SMBIOS table 1 (System Information) UUID pre-EBS, expose via `boot_info`, and wire `boot_policy_inputs.local_machine_id` to it so machine-pinned `machine_id` entries become selectable.
-- [ ] Commit: `"boot: OS-visible loader UEFI variables"`
+- [x] Publish 12 read-only `Loader*` vars via `loader_publish_readonly_vars()` in `bootx64.c`, after policy decision + counter decrement, before kernel handoff.
+- [x] Consume + delete `LoaderEntryOneShot` + `LoaderConfigTimeoutOneShot` in `loader_consume_one_shot_vars()`; EntryOneShot overlays `bootcurrent_entry_id`; TimeoutOneShot overrides menu countdown with pre-multiply overflow guard (3600s cap).
+- [x] `LoaderFeatures` uses canonical systemd-boot bit positions (bit 1, 3, 4 advertised). Impossible OS extensions in separate `ImpossibleOSLoaderFeaturesExt` var under our vendor GUID.
+- [x] Every `gRT->SetVariable` is wrapped in `loader_set_var()`; failure flips `boot_info.loader_vars_degraded = 1` and continues boot.
+- [x] Compatibility documented in [`docs/boot/loader-vars.md`](../../docs/boot/loader-vars.md): bit positions, one-shot protocol, Linux tool Just-Works statement, security model.
+- [x] SMBIOS Type 1 UUID extraction via pure walker in [`include/boot/boot_smbios_parse.h`](../../include/boot/boot_smbios_parse.h); anchor + length + checksum validated; ConfigurationTable NULL-guarded; feeds `inputs->local_machine_id`.
+- [x] `boot_info` v21 ABI bump (mirror + manifest + doc-coverage allowlist): adds `loader_vars_degraded` + `_loader_vars_pad[7]`.
+- [x] Reserved-name guard in `NtSetSystemEnvironmentValueEx` extended to refuse user-mode writes to `ImpossibleOSLoaderFeaturesExt`.
+- [x] Commit: `"boot: OS-visible loader UEFI variables"`
 
-**Test checkpoint:** Post-boot, `efivar -l | grep Loader` (or equivalent) shows all read-only vars; values match `boot_info`. Setting `LoaderEntryOneShot` to a known entry id then rebooting causes that entry to boot once, then revert to the store default. `LoaderFeatures` advertises the bits implemented. NVRAM-quota-full harness sets `loader_vars_degraded` without aborting boot. Test on: QEMU WHPX + TCG; bare metal.
+**Test checkpoint:** Post-boot, `efivar -l | grep Loader` (or equivalent) shows all read-only vars; values match `boot_info`. Setting `LoaderEntryOneShot` to a known entry id then rebooting causes that entry to boot once, then revert to the store default. `LoaderFeatures` advertises the bits implemented. NVRAM-quota-full harness sets `loader_vars_degraded` without aborting boot. Smoke (QEMU OVMF) confirms SMBIOS Type 1 walker handles the "not-specified sentinel" cleanly (QEMU UUID is all-zero); kernel-side SMBIOS UUID test exercises the pure walker + RFC 4122 formatter via 11 unit tests in `test_smbios_parse.c`. Test on: QEMU WHPX + TCG; bare metal once a real GPT ESP and SMBIOS UUID are present.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 11 smbios_parse suites added, 0 failures (live-UEFI integration tests deferred -- forbidden per test policy; validation via smoke + bare metal)
+
+> **Notes:**
+> - What shipped: `boot_smbios_parse.h` pure walker + UUID formatter; bootloader LoaderXxx publish + one-shot consume + SMBIOS extraction; `boot_info` v21; `docs/boot/loader-vars.md`; 11 unit tests; reserved-name guard extended.
+> - How it integrates: `boot_policy_invoke()` consumes one-shot vars before bootcurrent resolution; SMBIOS UUID feeds `inputs->local_machine_id`; LoaderXxx published after decision + counter decrement, before EBS. Fail-soft on every SetVariable.
+> - Downstream effects: `bootctl status` / `systemctl reboot --boot-loader-entry` work unmodified; machine_id-pinned entries become selectable. Codex design + adversarial adoptions in commit message.
+> - Canonical doc: [`docs/boot/loader-vars.md`](../../docs/boot/loader-vars.md).
+> - Scope boundary: §15 owns systemd-boot interface + SMBIOS UUID extraction. Kernel-side `Loader*` reads + sysinfo CLI integration belong to a future user-mode tool TODO.
+
+> **Verified:** 2026-05-15 | 9/9 items | build OK | smoke PASS (KVM 2.32s, SMBIOS Type 1 walker fires) | tests: 11 smbios_parse + existing suites unchanged
 
 ---
 
@@ -540,7 +553,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Loop prevention via per-entry try counter              | ⚠️ Recovery loop after 2 fails    | ✅ systemd-boot tries=/done=          | 🟦 BLS counter grammar + ladder gate ship in §3; crash-tolerant bootloader rename in §5 |
 | 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | 🟦 §14 entry-level gate + registry + state-bound MarkGood handoff + per-entry health_check_subset override; wanted network/service-crash checks SKIPPED pending owner subsystems |
 | 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | 🟦 §13 SPLIT/UKI/SAFE validators + authoritative SPLIT loader; CHAINLOAD/NETWORK/RESUME deferred to owner TODOs |
-| 💎  | OS-visible loader UEFI variables                       | ❌ None standardized              | ✅ systemd LoaderXxx interface        | ⬜ Planned -- §15        |
+| 💎  | OS-visible loader UEFI variables                       | ❌ None standardized              | ✅ systemd LoaderXxx interface        | ✅ §15 publishes 12 LoaderXxx vars under systemd-boot vendor GUID (canonical bit positions); honors EntryOneShot + ConfigTimeoutOneShot; ImpossibleOSLoaderFeaturesExt advertises extension capabilities |
 | 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | ⬜ Planned -- §16        |
 | ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ✅ §3 ladder + 6-example doc + live producer in §4 🚀 |
 | ⭐  | Demote-not-drop bad entries with last_failure_reason   | ❌ Hidden recovery loop           | ⚠️ Bad entries silently sorted last   | 🟦 §4 records reject reasons in boot_info v19; menu UI label in §9 🚀 |

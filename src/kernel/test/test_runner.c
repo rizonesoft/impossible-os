@@ -390,6 +390,7 @@ extern void test_register_boot_health(void);
 extern void test_register_boot_health_check(void);
 extern void test_register_boot_trend(void);
 extern void test_register_smbios(void);
+extern void test_register_smbios_parse(void);
 extern void test_register_mat_violation(void);
 extern void test_register_json_builder(void);
 extern void test_register_boot_perf_budget(void);
@@ -458,6 +459,7 @@ void test_runner_init(void)
     test_register_boot_health_check();
     test_register_boot_trend();
     test_register_smbios();
+    test_register_smbios_parse();
     test_register_mat_violation();
     test_register_json_builder();
     test_register_boot_perf_budget();
