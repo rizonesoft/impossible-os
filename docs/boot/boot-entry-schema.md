@@ -93,6 +93,7 @@ Each entry object carries an envelope plus a per-kind payload:
 | `sort_key`         | string          | yes      | sort string (BLS-style); shorter sorts earlier              |
 | `machine_id`       | string          | yes      | RFC 4122 UUID textual form, OR empty string for the "match any machine" wildcard |
 | `policy_tags`      | array of string | yes      | reserved for future policy filtering; may be empty          |
+| `health_check_subset` | array of string | no   | optional; up to 8 names, each 1..23 printable-ASCII chars; restricts the post-boot health gate to the named checks (intersection with kernel registry). Absent / empty -> kernel runs the full default set. See [`boot-health.md`](boot-health.md). |
 | `payload`          | object          | yes      | per-kind fields (see "Per-Kind Fields" below)               |
 
 The `flags` array uses string names mapped to the bit values defined in

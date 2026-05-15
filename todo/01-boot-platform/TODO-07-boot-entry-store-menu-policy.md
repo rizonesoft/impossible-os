@@ -64,7 +64,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  11   | Boot entry editor tooling                              | §1, §2                                  |  [/]   |
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [x]   |
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
-| 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [ ]   |
+| 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
 | 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [ ]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [ ]   |
 | 💎  |  17   | Boot entry tests                                       | §1-§16                                  |  [ ]   |
@@ -437,17 +437,36 @@ The §1 envelope only carries the discriminator; this section owns the per-kind 
 
 Bootloader marks try-down (decrement `tries_left`); userspace marks good ONLY after a configurable health check passes. Layered ABOVE [`TODO-21 §5`](TODO-21-ab-boot-rollback.md) (slot-level `mark_boot_successful`) and [`02-kernel-core/TODO-02 §10`](../02-kernel-core/TODO-02-kernel-configuration-policy.md) (boot acceptance ledger) -- those ship the foundations; this section adds entry-level gating + configurable health checks. Linux parity (systemd-bless-boot.service after `boot-complete.target`, plus `systemd-boot-check-no-failures.service` and Fedora greenboot's required-vs-wanted model). Without this gate, a boot that reaches the kernel but fails required services / safe-mode policy / resume validation can retire the previous-kernel entry and poison rollback.
 
-- [ ] Add syscall + helper API: `mark_entry_successful(entry_id)` -- calls TODO-21 §5 slot-level mark + removes per-entry tries counter from store.
-- [ ] Define health-check registry: required (must all pass) and wanted (logged, non-blocking) checks; each check returns `OK` / `SOFT_FAIL` / `HARD_FAIL`.
-- [ ] Default required checks: kernel reached desktop-ready, no `klog(LOG_ERR, ...)` from `boot_*` subsystems, no triggered panic.
-- [ ] Default wanted checks: network reachable, X:\ mountable, no service crash in first 60s.
-- [ ] `boot_health_check_run()` from desktop-ready in `boot_desktop.c`: OK -> `mark_entry_successful()`; HARD_FAIL -> entry stays indeterminate.
-- [ ] Configurable per-entry: `health_check_subset` field can override required/wanted lists (e.g. recovery skips network-reachable).
-- [ ] User-mode tool: `bootcfg health` prints last health check report from BlackBox.
-- [ ] Document model + check registration API in `docs/boot/boot-health.md`.
-- [ ] Commit: `"boot: per-entry health-gated mark-good"`
+- [x] Helper API `mark_entry_successful(entry_id)` writes `ImpossibleOS-MarkGood` (NV+BS+RT) with the state-bound triple from `CurBootCtr`; bootloader consume deletes the matching counter file pre-EBS.
+- [x] Health-check registry in `boot_health_check.{h,c}`: required + wanted; each returns `OK` / `SOFT_FAIL` / `HARD_FAIL` / `SKIPPED`. Cap 12; duplicate-name reject; pre-scheduler registration.
+- [x] Default required checks: `desktop_ready` (`SUBSYS_DESKTOP` ready), `no_boot_err` (klog ring scan for `boot`/`BOOT` exact + `boot_*` lowercase; reporter tags excluded), `no_panic` (trivially OK since `panic_screen` halts).
+- [/] Default wanted checks: `x_mountable` shipped (`vfs_is_mounted('X')`); `network_reachable` + `no_service_crash_60s` registered as `SKIPPED` -- no NIC stack and no service supervisor yet. Follow-up items below.
+- [x] `boot_health_check_run()` fires in `boot_phase3` after `boot_audit_publish`; PASS -> `mark_entry_successful`; required SOFT/HARD/SKIPPED -> INDETERMINATE. Single-shot. Writes JSONL to `X:\Boot\health.jsonl` (4 MiB rotation).
+- [x] Per-entry `health_check_subset` envelope field (up to 8 printable-ASCII names, 23 chars each). Bootloader writes `ImpossibleOS-HealthSubset` (BS+RT); kernel intersects with registry. Absent -> full default set.
+- [x] `bootcfg health <path>` host subcommand tabulates the last JSONL record (partial-line tolerant).
+- [x] Documented in [`docs/boot/boot-health.md`](../../docs/boot/boot-health.md); schema field in [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md).
+- [x] Reserved-name guard in `NtSetSystemEnvironmentValueEx` blocks user-mode writes to the four kernel-owned vars (MarkGood, CurBootCtr, HealthSubset, BootSticky).
+- [x] Attribute binding on every handoff read: MarkGood == NV+BS+RT; CurBootCtr + HealthSubset == BS+RT only.
+- [x] Commit: `"boot: per-entry health-gated mark-good"`
 
-**Test checkpoint:** Boot reaches desktop, all required checks pass -> entry marked good (tries counter removed from store). Boot reaches desktop but kernel logged `klog(LOG_ERR, ...)` from a boot subsystem -> entry stays indeterminate, tries_left already decremented, next reboot will retry. Force `HARD_FAIL` on the network check (a wanted check) -> entry still marked good. Test on: QEMU WHPX + TCG; bare metal.
+Follow-ups (wanted checks depend on producers outside §14's scope):
+
+- [ ] Re-enable `network_reachable` wanted check once a NIC stack provides reachability state. Owner: TODO-25 (network) when basic L3 lands; check currently returns `SKIPPED`.
+- [ ] Re-enable `no_service_crash_60s` wanted check once a service supervisor lands. Owner: future service-supervisor TODO; check currently returns `SKIPPED`.
+- [ ] Wire TODO-21 §5 slot-level `mark_boot_successful()` call into `mark_entry_successful()` when TODO-21 §5 ships. Today it is a documented XREF hook in `boot_health_check.c`.
+
+**Test checkpoint:** Boot reaches desktop, all required checks pass -> entry marked good (mark-good UEFI var written; next bootloader run deletes the counter file). Boot reaches desktop but kernel logged `LOG_ERROR` from a `boot_*` subsystem -> `no_boot_err` returns HARD_FAIL, gate aggregates INDETERMINATE, no mark-good var written, tries_left stays decremented for next-boot retry. `network_reachable` and `no_service_crash_60s` return SKIPPED today (wanted), never block the gate. Smoke (no bootentries.json on test ESP) confirms gate fires + reports PASS + correctly skips mark-good because no CurBootCtr is written by the bootloader on the fallback path. Test on: QEMU WHPX + TCG; bare metal once a real bootentries.json with health_check_subset is present.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 36 boot_health_check suites + 8 health_check_subset parser fixture suites, 0 failures (host validator 86/86, bootcfg 32/32)
+
+> **Notes:**
+> - What shipped: `boot_health_handoff.h` cross-boot ABI, `boot_health_check.{h,c}` kernel registry + gate, bootloader handoff helpers, `health_check_subset` schema + parser + validator, `bootcfg health`, reserved-name guard.
+> - How it integrates: gate runs after `boot_audit_publish`; PASS writes state-bound MarkGood; next bootloader's consume deletes the counter file matching the triple. Fail-soft on every uefi_var / vfs call.
+> - Downstream effects: closes the per-entry confirmation half of §5's counter protocol; unblocks §10 retirement once its updater hook lands. Codex 3-pass adoptions in commit message.
+> - Canonical doc: [`docs/boot/boot-health.md`](../../docs/boot/boot-health.md).
+> - Scope boundary: §14 owns entry-level gate + handoff + override transport. TODO-21 §5 (slot-level) + 02-kernel-core/TODO-02 §10 (acceptance ledger) remain unshipped foundations.
+
+> **Verified:** 2026-05-15 | 11/11 items + 3 deferred follow-ups | build OK | smoke PASS (KVM 2.36s, gate fires PASS) | tests: 36 boot_health_check + 8 health_check_subset parser + 86 host validator + 32 bootcfg
 
 ---
 
@@ -518,7 +537,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Boot menu UI (text + graphical)                        | ⚠️ Minimal "Choose an OS"         | ✅ GRUB / systemd-boot menus          | ✅ §6 GOP+ConOut+serial; §7 indicators ([SB]/[REC]/[NET]/[FAIL]) + hotkeys (F8/F10/F11) + hide_when_alone |
 | 💎  | Offline entry editor tooling                           | ✅ bcdedit / bcdboot              | ✅ grub-mkconfig / bootctl            | 🟦 §11 host-side `bootcfg.py` (list/add/remove/set-default/emit-seed) + validator parity; live-boot binary deferred |
 | 💎  | Loop prevention via per-entry try counter              | ⚠️ Recovery loop after 2 fails    | ✅ systemd-boot tries=/done=          | 🟦 BLS counter grammar + ladder gate ship in §3; crash-tolerant bootloader rename in §5 |
-| 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | ⬜ Planned -- §14        |
+| 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | 🟦 §14 entry-level gate + registry + state-bound MarkGood handoff + per-entry health_check_subset override; wanted network/service-crash checks SKIPPED pending owner subsystems |
 | 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | 🟦 §13 SPLIT/UKI/SAFE validators + authoritative SPLIT loader; CHAINLOAD/NETWORK/RESUME deferred to owner TODOs |
 | 💎  | OS-visible loader UEFI variables                       | ❌ None standardized              | ✅ systemd LoaderXxx interface        | ⬜ Planned -- §15        |
 | 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | ⬜ Planned -- §16        |

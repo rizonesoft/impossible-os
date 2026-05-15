@@ -4633,6 +4633,235 @@ static int boot_menu_enter_fw_setup(void)
     return 1;
 }
 
+/* ----- TODO-07 section 14 health-gate handoff helpers ----------------- */
+
+#include "../../../include/boot/boot_health_handoff.h"
+
+/* Variable names + attribute sets for the cross-boot health handoff.
+ * Names mirror BOOT_HEALTH_VAR_*_ASCII in boot_health_handoff.h. */
+static const CHAR16 g_health_mark_good_var[]    = u"ImpossibleOS-MarkGood";
+static const CHAR16 g_health_cur_boot_ctr_var[] = u"ImpossibleOS-CurBootCtr";
+static const CHAR16 g_health_subset_var[]       = u"ImpossibleOS-HealthSubset";
+
+/* Read the MarkGood UEFI variable (NV+BS+RT) into a kernel-validated
+ * record. Returns 1 if a usable record was found, 0 on absent / wrong
+ * size / wrong attrs / invalid (magic / version / CRC / id grammar).
+ *
+ * Attribute binding: a pre-OS tool (ESP UEFI shell or separate boot
+ * tool) could preseed a CRC-valid record with non-canonical attrs to
+ * steer the gate. Enforce attrs == NV|BS|RT exactly so the only
+ * legitimate producer is the kernel's mark_entry_successful path,
+ * which always writes UEFI_VAR_NV_BOOT_RUNTIME. */
+static int health_read_mark_good(struct boot_health_mark_good_record *out)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->GetVariable)
+        return 0;
+    if (!out) return 0;
+    for (unsigned int i = 0; i < sizeof(*out); i++)
+        ((UINT8 *)out)[i] = 0;
+    UINTN sz = sizeof(*out);
+    UINT32 attrs = 0;
+    EFI_STATUS s = gST->RuntimeServices->GetVariable(
+        (CHAR16 *)g_health_mark_good_var, &g_impossible_os_guid,
+        &attrs, &sz, (VOID *)out);
+    if (EFI_ERROR(s)) return 0;
+    if (sz != sizeof(*out)) return 0;
+    {
+        const UINT32 expected = EFI_VARIABLE_NON_VOLATILE
+                              | EFI_VARIABLE_BOOTSERVICE_ACCESS
+                              | EFI_VARIABLE_RUNTIME_ACCESS;
+        if (attrs != expected) {
+            serial_early_print("[BOOT] policy: MarkGood attrs mismatch -- ignoring\n");
+            return 0;
+        }
+    }
+    if (!boot_health_mark_good_is_valid(out)) return 0;
+    return 1;
+}
+
+/* Delete the MarkGood variable. Best-effort; failure is logged WARN. */
+static void health_clear_mark_good(void)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
+        return;
+    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE
+                 | EFI_VARIABLE_BOOTSERVICE_ACCESS
+                 | EFI_VARIABLE_RUNTIME_ACCESS;
+    EFI_STATUS s = gST->RuntimeServices->SetVariable(
+        (CHAR16 *)g_health_mark_good_var, &g_impossible_os_guid,
+        attrs, 0, (VOID *)0);
+    if (EFI_ERROR(s)) {
+        serial_early_print("[BOOT] policy: MarkGood clear failed\n");
+    }
+}
+
+/* Consume an outstanding MarkGood record at the start of boot_policy_
+ * invoke. State-bound: only deletes the counter file whose filename
+ * matches the {entry_id, tries_left, tries_done} triple in the
+ * MarkGood record. A stale record (no matching counter file) is
+ * cleared without consuming. */
+static void policy_consume_mark_good_var(void)
+{
+    struct boot_health_mark_good_record rec;
+    if (!health_read_mark_good(&rec)) {
+        /* No record (absent or invalid) -- nothing to do. We still
+         * clear the variable on invalid so a corrupt record cannot
+         * persist indefinitely. */
+        return;
+    }
+
+    /* Build the counter filename for the bound state and try to open
+     * it. boot_counter_format_filename writes "<id>+<L>-<D>" into the
+     * caller buffer. */
+    boot_counter_t cur;
+    for (unsigned int j = 0; j < sizeof(cur.id); j++) cur.id[j] = 0;
+    {
+        unsigned int idl = 0;
+        while (rec.entry_id[idl] != 0 && idl < BOOT_ENTRIES_MAX_ID_LEN) {
+            cur.id[idl] = rec.entry_id[idl];
+            idl++;
+        }
+    }
+    cur.tries_left = rec.tries_left;
+    cur.tries_done = rec.tries_done;
+    char fname[BOOT_COUNTER_FILENAME_MAX];
+    int fname_len = boot_counter_format_filename(&cur, fname, sizeof(fname));
+    if (fname_len == 0) {
+        serial_early_print("[BOOT] policy: MarkGood id format failed -- clearing var\n");
+        health_clear_mark_good();
+        return;
+    }
+
+    /* Open counters dir. If missing, no counter to delete; clear var. */
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    if (EFI_ERROR(counters_open_volume_root(&root)) || !root) {
+        health_clear_mark_good();
+        return;
+    }
+    EFI_FILE_PROTOCOL *dir = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS ds = root->Open(root, &dir, (CHAR16 *)g_counter_dir_path,
+                                EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE,
+                                EFI_FILE_DIRECTORY);
+    if (EFI_ERROR(ds) || !dir) {
+        root->Close(root);
+        health_clear_mark_good();
+        return;
+    }
+
+    /* Build CHAR16 filename and try to open. */
+    CHAR16 fname_w[BOOT_COUNTER_FILENAME_MAX];
+    {
+        UINTN j;
+        for (j = 0; j < sizeof(fname_w)/sizeof(fname_w[0]) - 1u; j++) {
+            char c = fname[j];
+            if (c == 0) break;
+            fname_w[j] = (CHAR16)(unsigned char)c;
+        }
+        fname_w[j] = 0;
+    }
+
+    EFI_FILE_PROTOCOL *fh = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS os = dir->Open(dir, &fh, fname_w,
+                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+    if (!EFI_ERROR(os) && fh) {
+        /* State-bound match: delete the counter. fh->Delete is a
+         * Close+remove combo in UEFI. */
+        EFI_STATUS xs = fh->Delete(fh);
+        if (EFI_ERROR(xs)) {
+            serial_early_print("[BOOT] policy: MarkGood Delete failed -- clearing var\n");
+        } else {
+            serial_early_print("[BOOT] policy: MarkGood consumed (deleted ");
+            serial_early_print(fname);
+            serial_early_print(")\n");
+        }
+    } else {
+        /* No matching counter -- stale or replayed record. Clear and
+         * move on. */
+        serial_early_print("[BOOT] policy: MarkGood stale (no counter ");
+        serial_early_print(fname);
+        serial_early_print(") -- clearing var\n");
+    }
+
+    dir->Close(dir);
+    root->Close(root);
+    health_clear_mark_good();
+}
+
+/* Write the CurBootCtr UEFI variable (BS+RT, no NV) with the post-
+ * decrement counter state for the selected entry. Kernel reads it to
+ * compose the state-bound MarkGood record on health pass. Failure is
+ * a LOG_WARN -- the kernel falls back to "no mark-good available". */
+static void policy_write_cur_boot_ctr(const char *entry_id,
+                                       unsigned int tries_left,
+                                       unsigned int tries_done)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
+        return;
+    if (!entry_id || entry_id[0] == 0) return;
+    struct boot_health_cur_boot_ctr_record rec;
+    for (unsigned int i = 0; i < sizeof(rec); i++) ((UINT8 *)&rec)[i] = 0;
+    rec.magic   = BOOT_HEALTH_CUR_BOOT_CTR_MAGIC;
+    rec.version = BOOT_HEALTH_VAR_VERSION;
+    {
+        unsigned int idl = 0;
+        while (entry_id[idl] != 0 && idl < BOOT_HEALTH_HANDOFF_ID_LEN - 1u) {
+            rec.entry_id[idl] = entry_id[idl];
+            idl++;
+        }
+        rec.entry_id[idl] = 0;
+    }
+    rec.tries_left = tries_left;
+    rec.tries_done = tries_done;
+    rec.reserved   = 0u;
+    rec.crc32      = boot_health_handoff_compute_crc(&rec,
+                        (unsigned int)sizeof(rec));
+    UINT32 attrs = EFI_VARIABLE_BOOTSERVICE_ACCESS
+                 | EFI_VARIABLE_RUNTIME_ACCESS;
+    EFI_STATUS s = gST->RuntimeServices->SetVariable(
+        (CHAR16 *)g_health_cur_boot_ctr_var, &g_impossible_os_guid,
+        attrs, sizeof(rec), (VOID *)&rec);
+    if (EFI_ERROR(s)) {
+        serial_early_print("[BOOT] policy: CurBootCtr SetVariable failed\n");
+    }
+}
+
+/* Write the HealthSubset UEFI variable (BS+RT) iff the selected entry
+ * envelope carries a non-empty health_check_subset. Absent / empty
+ * subset -> kernel runs the full default check set. */
+static void policy_write_health_subset(const boot_entry_envelope_t *env)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
+        return;
+    if (!env || env->health_check_subset_count == 0u) return;
+    struct boot_health_subset_record rec;
+    for (unsigned int i = 0; i < sizeof(rec); i++) ((UINT8 *)&rec)[i] = 0;
+    rec.magic   = BOOT_HEALTH_SUBSET_MAGIC;
+    rec.version = BOOT_HEALTH_VAR_VERSION;
+    rec.count   = env->health_check_subset_count;
+    rec.reserved = 0u;
+    unsigned int cap = BOOT_HEALTH_SUBSET_MAX_NAMES;
+    if (rec.count > cap) rec.count = cap;
+    for (unsigned int i = 0; i < rec.count; i++) {
+        unsigned int j;
+        for (j = 0; j < BOOT_HEALTH_SUBSET_NAME_LEN - 1u; j++) {
+            char c = env->health_check_subset[i][j];
+            if (c == 0) break;
+            rec.names[i][j] = c;
+        }
+        rec.names[i][j] = 0;
+    }
+    rec.crc32 = boot_health_handoff_compute_crc(&rec,
+                  (unsigned int)sizeof(rec));
+    UINT32 attrs = EFI_VARIABLE_BOOTSERVICE_ACCESS
+                 | EFI_VARIABLE_RUNTIME_ACCESS;
+    EFI_STATUS s = gST->RuntimeServices->SetVariable(
+        (CHAR16 *)g_health_subset_var, &g_impossible_os_guid,
+        attrs, sizeof(rec), (VOID *)&rec);
+    if (EFI_ERROR(s)) {
+        serial_early_print("[BOOT] policy: HealthSubset SetVariable failed\n");
+    }
+}
+
 /* The boot-policy invoke step. Owns ESP read, OptionalData decode,
  * ladder dispatch, and boot_info v19 population. Counter scan / crash-
  * tolerant rename / kernel-side Phase-0 ABI validator are owned by the
@@ -4826,6 +5055,14 @@ static void boot_policy_invoke(void)
         if (g_boot_info_ptr->sticky_watchdog_rollback_request)
             inputs->watchdog_rollback = 1;
     }
+
+    /* ---- Consume any outstanding MarkGood handoff. -----------------
+     * State-bound: only deletes the counter whose filename matches the
+     * {entry_id, tries_left, tries_done} triple recorded by the kernel
+     * that wrote the var. Runs BEFORE the counter scan so the scan sees
+     * the post-consume state -- the entry that was marked good appears
+     * as "no counter, no gate" exactly like a fresh, untracked entry. */
+    policy_consume_mark_good_var();
 
     /* ---- Counter directory scan. ------------------------------------ */
     boot_counter_t counters[BOOT_ENTRIES_MAX_ENTRIES];
@@ -5293,6 +5530,28 @@ static void boot_policy_invoke(void)
         unsigned int cur_done = existed ? cur.tries_done : 0u;
         policy_counter_decrement(decision->selected_entry_id,
                                  cur_left, cur_done, existed);
+
+        /* Post-decrement state for the kernel handoff. First-boot
+         * bootstrap path: counter_existed==0 -> policy_counter_decrement
+         * wrote the BLS-3 bootstrap (tries_left=2, tries_done=1).
+         * Subsequent boots write (cur_left-1, cur_done+1) with the
+         * saturation logic from policy_counter_decrement. */
+        unsigned int new_left, new_done;
+        if (existed) {
+            new_left = (cur_left > 0u) ? (cur_left - 1u) : 0u;
+            new_done = (cur_done < BOOT_COUNTER_TRIES_DONE_MAX)
+                          ? (cur_done + 1u) : BOOT_COUNTER_TRIES_DONE_MAX;
+        } else {
+            new_left = 2u;
+            new_done = 1u;
+        }
+        policy_write_cur_boot_ctr(decision->selected_entry_id,
+                                  new_left, new_done);
+
+        /* Propagate per-entry health_check_subset if present. The
+         * decision carries the parsed envelope of the selected entry
+         * in decision->selected (boot_entries_parser_t shape). */
+        policy_write_health_subset(&decision->selected);
         (void)idl;
     }
 

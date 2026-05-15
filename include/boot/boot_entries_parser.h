@@ -73,6 +73,12 @@ typedef enum {
  * kind TODO's handler table, which consumes payload_offset / payload_length
  * as a byte-range slice into the original raw buffer.
  */
+/* Caps for the health_check_subset override -- shared with the cross-boot
+ * handoff record in include/boot/boot_health_handoff.h. Geometry chosen
+ * so the bootloader can copy entries by name without re-marshalling. */
+#define BOOT_ENTRIES_HEALTH_SUBSET_NAME_LEN 24u
+#define BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES 8u
+
 typedef struct {
     char id[64];                 /* up to BOOT_ENTRIES_MAX_ID_LEN (47) + NUL + slack */
     char title[80];              /* up to BOOT_ENTRIES_MAX_TITLE_LEN (63) + NUL + slack */
@@ -81,6 +87,15 @@ typedef struct {
     char policy_tags[BOOT_ENTRIES_MAX_POLICY_TAGS][BOOT_ENTRIES_MAX_POLICY_TAG_LEN + 1u];
     unsigned int policy_tag_count;    /* 0..BOOT_ENTRIES_MAX_POLICY_TAGS retained */
     unsigned int policy_tag_overflow; /* 1 if JSON had more tags than the cap */
+    /* Optional per-entry health-check subset (TODO-07 section 14). When
+     * non-empty, restricts the kernel's health-gate run to the named
+     * checks (intersection with registry). Absent / empty -> kernel runs
+     * the full default check set. Names are matched by exact string
+     * comparison; unknown names are ignored with a warning so adding a
+     * new check name later does not retroactively invalidate stores. */
+    char health_check_subset[BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES]
+                             [BOOT_ENTRIES_HEALTH_SUBSET_NAME_LEN];
+    unsigned int health_check_subset_count;
     unsigned int kind;           /* boot_entry_kind_t numeric value */
     unsigned int flags;          /* OR of BOOT_ENTRY_FLAG_* */
     unsigned int timeout_override;    /* 0..600 from JSON, BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE if absent */

@@ -297,6 +297,19 @@ void boot_phase3(void)
     extern void boot_audit_publish(void);
     boot_audit_publish();
 
+    /* Per-entry health-gated mark-good gate. Reads the bootloader's
+     * CurBootCtr handoff, runs registered required + wanted checks,
+     * writes a one-line record to X:\Boot\health.jsonl, and on a clean
+     * pass composes the MarkGood UEFI variable so the next bootloader
+     * run can delete the per-entry tries counter file. Layered above
+     * the slot-level mark in TODO-21 section 5 (unshipped today). */
+    {
+        extern void boot_health_check_register_defaults(void);
+        extern int boot_health_check_run(void);
+        boot_health_check_register_defaults();
+        (void)boot_health_check_run();
+    }
+
     /* Report degraded subsystems.  Names come from kernel_subsystem_name() --
      * single source of truth in boot_init.c.  Loop bound is SUBSYS_COUNT,
      * not a hard-coded constant, so new SUBSYS_* slots are reported

@@ -396,6 +396,167 @@ static void test_parser_fallback_split(void)
     TEST_ASSERT_EQ(e.kind, BOOT_ENTRY_KIND_SPLIT, "fallback under split mode is kind=split");
 }
 
+/* ---- health_check_subset (TODO-07 section 14) ------------------------- */
+
+static void test_parser_health_subset_valid(void)
+{
+    static const char JSON[] =
+        "{"
+        "\"schema_version\":1,"
+        "\"crc32\":\"0x00000000\","
+        "\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"health_check_subset\":[\"desktop_ready\",\"no_panic\"],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "valid health_check_subset accepted");
+    TEST_ASSERT_EQ(r.entries[0].health_check_subset_count, 2u,
+                   "count=2 retained");
+    TEST_ASSERT_EQ((unsigned int)r.entries[0].health_check_subset[0][0], (unsigned int)'d',
+                   "first name first byte is 'd'");
+}
+
+static void test_parser_health_subset_absent_accepted(void)
+{
+    /* Field is optional; absent => count=0. */
+    static const char JSON[] =
+        "{"
+        "\"schema_version\":1,"
+        "\"crc32\":\"0x00000000\","
+        "\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_OK, "absent subset accepted");
+    TEST_ASSERT_EQ(r.entries[0].health_check_subset_count, 0u,
+                   "absent => count=0");
+}
+
+static void test_parser_health_subset_rejects_non_array(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"health_check_subset\":\"not-an-array\","
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                   "non-array subset rejected");
+}
+
+static void test_parser_health_subset_rejects_overflow(void)
+{
+    /* 9 names exceeds the 8 cap. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"health_check_subset\":[\"n1\",\"n2\",\"n3\",\"n4\",\"n5\",\"n6\",\"n7\",\"n8\",\"n9\"],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                   "subset count > 8 rejected");
+}
+
+static void test_parser_health_subset_rejects_empty_name(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"health_check_subset\":[\"\"],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                   "empty subset name rejected");
+}
+
+static void test_parser_health_subset_rejects_oversize_name(void)
+{
+    /* 24-byte name exceeds the 23-char cap (24 includes terminator). */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"health_check_subset\":[\"aaaaaaaaaaaaaaaaaaaaaaaa\"],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                   "subset name longer than 23 chars rejected");
+}
+
+static void test_parser_health_subset_rejects_backslash_in_name(void)
+{
+    /* A backslash in a name would parse as a JSON escape; "\\u0001"
+     * decodes to a control char which the parser must reject under the
+     * printable-ASCII grammar. */
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"health_check_subset\":[\"bad\\u0001ctrl\"],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                   "control char in subset name rejected");
+}
+
+static void test_parser_health_subset_rejects_trailing_comma(void)
+{
+    static const char JSON[] =
+        "{\"schema_version\":1,\"crc32\":\"0x00000000\",\"entries\":["
+        "{\"id\":\"slot-a\",\"title\":\"Slot A\",\"kind\":\"split\","
+        "\"flags\":[\"active\"],\"sort_key\":\"00\","
+        "\"machine_id\":\"11111111-2222-3333-4444-555555555555\","
+        "\"policy_tags\":[],"
+        "\"health_check_subset\":[\"desktop_ready\",],"
+        "\"payload\":{\"kernel\":\"\\\\EFI\\\\ImpossibleOS\\\\kernel.exe\"}}"
+        "]}";
+    unsigned int n = load_fixture(JSON);
+    boot_entries_parse_result_t r;
+    int rc = boot_entries_parse(s_fixture_buf, n, 0, NULL_PTR, &r);
+    TEST_ASSERT_EQ(rc, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                   "subset trailing comma rejected");
+}
+
 /* ---- Registration ----------------------------------------------------- */
 
 void test_register_boot_entry_parser(void)
@@ -440,6 +601,22 @@ void test_register_boot_entry_parser(void)
                             test_parser_fallback_uki, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: fallback split synth",
                             test_parser_fallback_split, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset valid",
+                            test_parser_health_subset_valid, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset absent accepted",
+                            test_parser_health_subset_absent_accepted, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset non-array rejected",
+                            test_parser_health_subset_rejects_non_array, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset overflow rejected",
+                            test_parser_health_subset_rejects_overflow, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset empty name rejected",
+                            test_parser_health_subset_rejects_empty_name, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset oversize name rejected",
+                            test_parser_health_subset_rejects_oversize_name, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset backslash rejected",
+                            test_parser_health_subset_rejects_backslash_in_name, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: health_check_subset trailing comma rejected",
+                            test_parser_health_subset_rejects_trailing_comma, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

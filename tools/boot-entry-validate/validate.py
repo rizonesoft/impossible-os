@@ -39,6 +39,8 @@ MAX_PATH_LEN = 255
 MAX_SORT_KEY_LEN = 63       # BOOT_ENTRIES_MAX_SORT_KEY_LEN
 MAX_POLICY_TAGS = 4         # BOOT_ENTRIES_MAX_POLICY_TAGS
 MAX_POLICY_TAG_LEN = 23     # BOOT_ENTRIES_MAX_POLICY_TAG_LEN
+MAX_HEALTH_SUBSET_NAMES = 8   # BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES
+MAX_HEALTH_SUBSET_NAME_LEN = 23  # BOOT_ENTRIES_HEALTH_SUBSET_NAME_LEN - 1 (NUL)
 
 KNOWN_FLAGS = frozenset({
     "active",
@@ -390,6 +392,28 @@ def validate_envelope(entry: dict, idx: int) -> None:
         if len(tag) > MAX_POLICY_TAG_LEN:
             fail(f"entry[{idx}]: policy_tags[{i}] length {len(tag)} > "
                  f"MAX_POLICY_TAG_LEN {MAX_POLICY_TAG_LEN}")
+    # Optional health_check_subset (TODO-07 section 14). Absent / empty
+    # -> kernel runs the default check set. Non-empty restricts the run
+    # to the named checks (intersection with the kernel registry).
+    if "health_check_subset" in entry:
+        subset = entry["health_check_subset"]
+        if not isinstance(subset, list):
+            fail(f"entry[{idx}]: health_check_subset must be an array")
+        if len(subset) > MAX_HEALTH_SUBSET_NAMES:
+            fail(f"entry[{idx}]: health_check_subset has {len(subset)} "
+                 f"items > MAX_HEALTH_SUBSET_NAMES {MAX_HEALTH_SUBSET_NAMES}")
+        for i, name in enumerate(subset):
+            if not isinstance(name, str):
+                fail(f"entry[{idx}]: health_check_subset[{i}] must be a "
+                     f"string, got {type(name).__name__}")
+            if len(name) == 0 or len(name) > MAX_HEALTH_SUBSET_NAME_LEN:
+                fail(f"entry[{idx}]: health_check_subset[{i}] length "
+                     f"{len(name)} out of 1..{MAX_HEALTH_SUBSET_NAME_LEN}")
+            if any(ord(c) < 0x20 or ord(c) > 0x7E or c in ('\\', '"')
+                   for c in name):
+                fail(f"entry[{idx}]: health_check_subset[{i}] must be "
+                     f"printable ASCII without backslash or double-quote, "
+                     f"got {name!r}")
     if not isinstance(entry["payload"], dict):
         fail(f"entry[{idx}]: payload must be an object")
 

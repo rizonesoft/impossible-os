@@ -456,6 +456,76 @@ def cmd_set_default(args: argparse.Namespace) -> int:
 # ---- Subcommand: emit-seed --------------------------------------------------
 
 
+def cmd_health(args: argparse.Namespace) -> int:
+    """Print the last health-gate report from a copy of X:\\Boot\\health.jsonl.
+
+    Read-only -- never writes the JSONL file. Resilient to a partial
+    last line (treats incomplete tail as "no report") so a host that
+    snapshotted the file mid-write does not crash the tool.
+    """
+    path = Path(args.path)
+    if not path.is_file():
+        print(f"health: {path} not found", file=sys.stderr)
+        return 1
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        print(f"health: cannot read {path}: {e}", file=sys.stderr)
+        return 1
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        print(f"health: {path} is empty -- no gate has run yet")
+        return 0
+    try:
+        rec = json.loads(lines[-1])
+    except json.JSONDecodeError:
+        # Tail may be partial (writer crashed mid-flush). Try the
+        # previous line.
+        if len(lines) >= 2:
+            try:
+                rec = json.loads(lines[-2])
+            except json.JSONDecodeError:
+                print(f"health: last line malformed; cannot parse",
+                      file=sys.stderr)
+                return 1
+        else:
+            print(f"health: only line is malformed; cannot parse",
+                  file=sys.stderr)
+            return 1
+    schema = rec.get("schema_version", "?")
+    aggregate = rec.get("aggregate", "?")
+    selected = rec.get("selected_entry_id", "?")
+    print(f"Last health gate (schema_version={schema})")
+    print(f"  aggregate         : {aggregate}")
+    print(f"  selected_entry_id : {selected}")
+    if "tries_left" in rec:
+        print(f"  tries_left        : {rec['tries_left']}")
+        print(f"  tries_done        : {rec['tries_done']}")
+    print(f"  cur_boot_ctr      : "
+          f"{'present' if rec.get('cur_boot_ctr_present') else 'absent'}")
+    print(f"  subset            : "
+          f"{'present' if rec.get('subset_present') else 'absent'}")
+    counts = rec.get("counts", {})
+    print(f"  required          : "
+          f"ok={counts.get('required_ok', 0)} "
+          f"soft={counts.get('required_soft', 0)} "
+          f"hard={counts.get('required_hard', 0)} "
+          f"skipped={counts.get('required_skipped', 0)}")
+    print(f"  wanted            : "
+          f"ok={counts.get('wanted_ok', 0)} "
+          f"soft={counts.get('wanted_soft', 0)} "
+          f"hard={counts.get('wanted_hard', 0)} "
+          f"skipped={counts.get('wanted_skipped', 0)}")
+    print(f"  checks:")
+    for c in rec.get("checks", []):
+        ran = c.get("ran", False)
+        ran_mark = "[run]" if ran else "[skip]"
+        print(f"    {ran_mark} {c.get('name', '?'):24s} "
+              f"kind={c.get('kind', '?'):8s} "
+              f"result={c.get('result', '?')}")
+    return 0
+
+
 def cmd_emit_seed(args: argparse.Namespace) -> int:
     """Idempotent: writing twice yields a byte-identical store."""
     path = Path(args.path)
@@ -533,6 +603,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_seed.add_argument("path")
     p_seed.add_argument("--mutation-log", help=mutation_help)
     p_seed.set_defaults(func=cmd_emit_seed)
+
+    p_health = sub.add_parser(
+        "health",
+        help="print last health-gate report from a copy of "
+             "X:\\Boot\\health.jsonl",
+    )
+    p_health.add_argument("path",
+                          help="path to a host-side copy of health.jsonl")
+    p_health.set_defaults(func=cmd_health)
 
     return p
 

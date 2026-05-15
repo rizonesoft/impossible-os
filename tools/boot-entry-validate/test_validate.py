@@ -200,6 +200,40 @@ def cases() -> list[Case]:
                 ("fail", "payload must be an object")))
     out.append(("duplicate id", _make_dup_id, ("fail", "duplicate id")))
 
+    # ---- health_check_subset (TODO-07 section 14) ----
+    out.append(("health_check_subset valid 2 names",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    ["desktop_ready", "no_panic"]}), recompute_crc=True),
+                ("pass",)))
+    out.append(("health_check_subset not array",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    "minimal"}), recompute_crc=True),
+                ("fail", "health_check_subset must be an array")))
+    out.append(("health_check_subset overflow (9 names)",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    [f"n{i}" for i in range(9)]}), recompute_crc=True),
+                ("fail", "MAX_HEALTH_SUBSET_NAMES")))
+    out.append(("health_check_subset empty name",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    [""]}), recompute_crc=True),
+                ("fail", "length 0 out of")))
+    out.append(("health_check_subset oversize name (24 chars)",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    ["a" * 24]}), recompute_crc=True),
+                ("fail", "length 24 out of")))
+    out.append(("health_check_subset name max length (23 chars)",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    ["a" * 23]}), recompute_crc=True),
+                ("pass",)))
+    out.append(("health_check_subset name with backslash",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    ["bad\\name"]}), recompute_crc=True),
+                ("fail", "must be printable ASCII")))
+    out.append(("health_check_subset name with control char",
+                lambda: write_tmp(mutate(entry0={"health_check_subset":
+                    ["bad\x01ctrl"]}), recompute_crc=True),
+                ("fail", "must be printable ASCII")))
+
     # ---- CRC ----
     out.append(("bad CRC", lambda: write_tmp(mutate(top={"crc32": "0xDEADBEEF"})),
                 ("fail", "CRC mismatch")))

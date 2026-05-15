@@ -2553,6 +2553,48 @@ static NTSTATUS nt_query_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
     return rc;
 }
 
+/* Wide (UCS-2) name compare against an ASCII literal. Names like
+ * "ImpossibleOS-MarkGood" are ASCII-only, so each wide char must equal
+ * the unsigned-byte value of the ASCII char. Both must NUL-terminate
+ * at the same position. */
+static int kn_wide_name_eq_ascii(const uint16_t *wname, const char *aname)
+{
+    if (!wname || !aname) return 0;
+    for (;;) {
+        if (*aname == '\0' && *wname == 0) return 1;
+        if (*aname == '\0' || *wname == 0) return 0;
+        if ((uint16_t)(unsigned char)*aname != *wname) return 0;
+        aname++;
+        wname++;
+    }
+}
+
+/* Reserved-variable guard. Returns 1 if the (guid, name) pair names a
+ * kernel-owned variable that user-mode code must never write. Forging
+ * a record in any of these names would let user-mode break the per-
+ * entry health gate, the per-decision audit pipeline, or the crash-
+ * tolerant counter protocol. Defense in depth on top of the state-
+ * binding in the MarkGood handoff record (see
+ * include/boot/boot_health_handoff.h). */
+static int kn_is_reserved_uefi_var(const struct boot_uefi_guid *g,
+                                    const uint16_t *name)
+{
+    static const struct boot_uefi_guid vendor = IMPOSSIBLE_OS_VENDOR_GUID_INIT;
+    if (!g || !name) return 0;
+    /* GUID compare via byte compare -- struct layout is firmware-defined. */
+    {
+        const unsigned char *a = (const unsigned char *)g;
+        const unsigned char *b = (const unsigned char *)&vendor;
+        for (unsigned int i = 0; i < sizeof(*g); i++)
+            if (a[i] != b[i]) return 0;
+    }
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-MarkGood"))     return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-CurBootCtr"))   return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-HealthSubset")) return 1;
+    if (kn_wide_name_eq_ascii(name, "ImpossibleOS-BootSticky"))   return 1;
+    return 0;
+}
+
 /* NtSetSystemEnvironmentValueEx(Name, VendorGuid, Value, ValueLength, Attributes)
  * SSDT 0x00D5 -- Win32 SetFirmwareEnvironmentVariableExW maps here. */
 static NTSTATUS nt_set_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
@@ -2582,6 +2624,16 @@ static NTSTATUS nt_set_env_value_ex(uint64_t name_ptr, uint64_t guid_ptr,
     kname = marshal_user_pwstr_name(name_ptr, &s);
     if (!kname)
         return s;
+
+    /* Reserved-name guard. Kernel-owned variables under the Impossible
+     * OS vendor GUID may only be written by kernel code via the direct
+     * uefi_var_set / uefi_set_variable path -- never through this
+     * user-mode-facing Nt syscall. The list lives in
+     * kn_is_reserved_uefi_var; updates require auditing every consumer. */
+    if (kn_is_reserved_uefi_var(&kguid, kname)) {
+        kfree(kname);
+        return STATUS_ACCESS_DENIED;
+    }
 
     if (length > 0) {
         if (ProbeForReadIfUser((const void *)value_ptr, (uint32_t)length,

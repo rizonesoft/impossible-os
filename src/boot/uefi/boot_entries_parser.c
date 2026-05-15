@@ -845,6 +845,88 @@ static int parse_entry_object(lexer_t *L, u32 idx,
             }
             saw_policy_tags = 1;
         }
+        else if (key_len == 19u && bytes_eq(key_ptr, (const u8 *)"health_check_subset", 19u)) {
+            /* Optional per-entry override (TODO-07 section 14). Array of
+             * up to BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES strings naming
+             * health checks to run. Empty / absent -> kernel runs the
+             * full default check set. Cap-exceeded -> hard reject (no
+             * silent truncation; the user's intent could be a
+             * lock-out-everything-else override). */
+            if (L->kind != TOK_LBRACKET) {
+                set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                           "health_check_subset must be an array");
+                return 0;
+            }
+            int expect_value = 1;
+            int saw_any = 0;
+            while (1) {
+                if (!lex_next(L)) {
+                    set_reject(result, BOOT_ENTRIES_REJECT_JSON_PARSE,
+                               "health_check_subset array malformed");
+                    return 0;
+                }
+                if (L->kind == TOK_RBRACKET) {
+                    if (saw_any && expect_value) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "trailing comma in health_check_subset");
+                        return 0;
+                    }
+                    break;
+                }
+                if (expect_value) {
+                    if (L->kind != TOK_STRING) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "health_check_subset element must be a string");
+                        return 0;
+                    }
+                    u32 nlen = L->content_end - L->content_start;
+                    if (nlen == 0u
+                        || nlen >= BOOT_ENTRIES_HEALTH_SUBSET_NAME_LEN) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "health_check_subset element length out of range");
+                        return 0;
+                    }
+                    /* Printable-ASCII grammar (matches validate.py) so
+                     * the kernel can pass names straight to the
+                     * registry without re-sanitising. Reject backslash
+                     * + double-quote (would have been escape sequences
+                     * the lexer already decoded; their unescaped form
+                     * is forbidden in registry names). */
+                    {
+                        const u8 *vp = L->raw + L->content_start;
+                        for (u32 vi = 0; vi < nlen; vi++) {
+                            u8 c = vp[vi];
+                            if (c < 0x20u || c > 0x7Eu
+                                || c == (u8)'\\' || c == (u8)'"') {
+                                set_reject(result,
+                                    BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                    "health_check_subset element must be printable ASCII without backslash or quote");
+                                return 0;
+                            }
+                        }
+                    }
+                    if (out->health_check_subset_count
+                        >= BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "health_check_subset exceeds 8-name cap");
+                        return 0;
+                    }
+                    copy_clamped(out->health_check_subset[out->health_check_subset_count],
+                                 BOOT_ENTRIES_HEALTH_SUBSET_NAME_LEN,
+                                 L->raw + L->content_start, nlen);
+                    out->health_check_subset_count++;
+                    expect_value = 0;
+                    saw_any = 1;
+                } else {
+                    if (L->kind != TOK_COMMA) {
+                        set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD,
+                                   "expected ',' or ']' in health_check_subset");
+                        return 0;
+                    }
+                    expect_value = 1;
+                }
+            }
+        }
         else if (key_len == 7u && bytes_eq(key_ptr, (const u8 *)"payload", 7u)) {
             if (L->kind != TOK_LBRACE) {
                 set_reject(result, BOOT_ENTRIES_REJECT_BAD_ENVELOPE_FIELD, "payload must be an object");
