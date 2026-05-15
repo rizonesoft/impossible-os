@@ -4696,10 +4696,18 @@ static void health_clear_mark_good(void)
 }
 
 /* Consume an outstanding MarkGood record at the start of boot_policy_
- * invoke. State-bound: only deletes the counter file whose filename
- * matches the {entry_id, tries_left, tries_done} triple in the
- * MarkGood record. A stale record (no matching counter file) is
- * cleared without consuming. */
+ * invoke. State-bound authorization: the exact {entry_id, tries_left,
+ * tries_done} triple file must exist for the consume to fire. Once
+ * authorized, ALL counter files matching entry_id are deleted -- the
+ * crash-tolerant counter protocol intentionally leaves duplicate
+ * <id>+L-D files for the same entry id after a torn rename, dedupes
+ * them at scan time with worst-case semantics, and only the dedupe
+ * winner gets the per-boot decrement. If MarkGood deleted only the
+ * exact bound filename, an orphan duplicate (e.g. <id>+2-1) would
+ * survive the consume and re-tracking would resume next boot. The
+ * sweep keeps the bound triple as the authorization gate but
+ * guarantees the entry is fully returned to the "no counter"
+ * good state. */
 static void policy_consume_mark_good_var(void)
 {
     struct boot_health_mark_good_record rec;
@@ -4710,29 +4718,29 @@ static void policy_consume_mark_good_var(void)
         return;
     }
 
-    /* Build the counter filename for the bound state and try to open
-     * it. boot_counter_format_filename writes "<id>+<L>-<D>" into the
-     * caller buffer. */
-    boot_counter_t cur;
-    for (unsigned int j = 0; j < sizeof(cur.id); j++) cur.id[j] = 0;
-    {
-        unsigned int idl = 0;
-        while (rec.entry_id[idl] != 0 && idl < BOOT_ENTRIES_MAX_ID_LEN) {
-            cur.id[idl] = rec.entry_id[idl];
-            idl++;
-        }
+    /* Build the authorization filename for the bound state. */
+    boot_counter_t bound;
+    for (unsigned int j = 0; j < sizeof(bound.id); j++) bound.id[j] = 0;
+    unsigned int idlen = 0;
+    while (rec.entry_id[idlen] != 0 && idlen < BOOT_ENTRIES_MAX_ID_LEN) {
+        bound.id[idlen] = rec.entry_id[idlen];
+        idlen++;
     }
-    cur.tries_left = rec.tries_left;
-    cur.tries_done = rec.tries_done;
-    char fname[BOOT_COUNTER_FILENAME_MAX];
-    int fname_len = boot_counter_format_filename(&cur, fname, sizeof(fname));
-    if (fname_len == 0) {
+    if (idlen == 0u) {
+        health_clear_mark_good();
+        return;
+    }
+    bound.tries_left = rec.tries_left;
+    bound.tries_done = rec.tries_done;
+    char bound_name[BOOT_COUNTER_FILENAME_MAX];
+    int bound_len = boot_counter_format_filename(&bound, bound_name,
+                                                  sizeof(bound_name));
+    if (bound_len == 0) {
         serial_early_print("[BOOT] policy: MarkGood id format failed -- clearing var\n");
         health_clear_mark_good();
         return;
     }
 
-    /* Open counters dir. If missing, no counter to delete; clear var. */
     EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
     if (EFI_ERROR(counters_open_volume_root(&root)) || !root) {
         health_clear_mark_good();
@@ -4748,39 +4756,118 @@ static void policy_consume_mark_good_var(void)
         return;
     }
 
-    /* Build CHAR16 filename and try to open. */
-    CHAR16 fname_w[BOOT_COUNTER_FILENAME_MAX];
+    /* Step 1: state-bound authorization. The exact bound filename
+     * MUST exist for the sweep to fire -- otherwise this is a stale /
+     * replayed record (or the counter was already cleaned up). */
+    CHAR16 bound_w[BOOT_COUNTER_FILENAME_MAX];
     {
         UINTN j;
-        for (j = 0; j < sizeof(fname_w)/sizeof(fname_w[0]) - 1u; j++) {
-            char c = fname[j];
+        for (j = 0; j < sizeof(bound_w)/sizeof(bound_w[0]) - 1u; j++) {
+            char c = bound_name[j];
             if (c == 0) break;
-            fname_w[j] = (CHAR16)(unsigned char)c;
+            bound_w[j] = (CHAR16)(unsigned char)c;
         }
-        fname_w[j] = 0;
+        bound_w[j] = 0;
     }
 
-    EFI_FILE_PROTOCOL *fh = (EFI_FILE_PROTOCOL *)0;
-    EFI_STATUS os = dir->Open(dir, &fh, fname_w,
-                               EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
-    if (!EFI_ERROR(os) && fh) {
-        /* State-bound match: delete the counter. fh->Delete is a
-         * Close+remove combo in UEFI. */
-        EFI_STATUS xs = fh->Delete(fh);
-        if (EFI_ERROR(xs)) {
-            serial_early_print("[BOOT] policy: MarkGood Delete failed -- clearing var\n");
-        } else {
-            serial_early_print("[BOOT] policy: MarkGood consumed (deleted ");
-            serial_early_print(fname);
-            serial_early_print(")\n");
-        }
-    } else {
-        /* No matching counter -- stale or replayed record. Clear and
-         * move on. */
+    EFI_FILE_PROTOCOL *probe = (EFI_FILE_PROTOCOL *)0;
+    EFI_STATUS ps = dir->Open(dir, &probe, bound_w,
+                               EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(ps) || !probe) {
+        /* Authorization failed -- stale / replayed. Clear and move on. */
         serial_early_print("[BOOT] policy: MarkGood stale (no counter ");
-        serial_early_print(fname);
+        serial_early_print(bound_name);
         serial_early_print(") -- clearing var\n");
+        dir->Close(dir);
+        root->Close(root);
+        health_clear_mark_good();
+        return;
     }
+    probe->Close(probe);
+
+    /* Step 2: authorized sweep. Walk the counter directory; for every
+     * file whose parsed id matches rec.entry_id, delete it. Same
+     * walker shape as policy_scan_counters but the action is delete
+     * instead of dedup-insert. The boot_counter_parse_filename grammar
+     * rejects non-counter files (skip-with-noop), so non-counter
+     * files in the directory are left alone. Note: the dir's Read
+     * position is already at 0 (we have not Read this handle yet --
+     * the Step 1 probe opened a separate file handle), so no
+     * SetPosition is needed. */
+    UINT8 info_buf[1024];
+    unsigned int deleted = 0;
+    int sweep_complete = 0;
+    for (;;) {
+        UINTN sz = sizeof(info_buf);
+        EFI_STATUS s = dir->Read(dir, &sz, info_buf);
+        if (EFI_ERROR(s)) {
+            /* Partial directory view -- duplicate counter files for
+             * this entry_id may survive. Do NOT clear MarkGood: leave
+             * the authorization in NV so the next boot retries. The
+             * counter that survives keeps the entry tracked, which is
+             * the conservative outcome. */
+            serial_early_print("[BOOT] policy: MarkGood sweep Read failed -- keeping MarkGood for retry\n");
+            dir->Close(dir);
+            root->Close(root);
+            return;
+        }
+        if (sz == 0) { sweep_complete = 1; break; }  /* clean EOF */
+        EFI_FILE_INFO *fi = (EFI_FILE_INFO *)info_buf;
+        if (fi->Attribute & EFI_FILE_DIRECTORY) continue;
+        char ascii_name[BOOT_COUNTER_FILENAME_MAX];
+        UINTN i;
+        for (i = 0; i < sizeof(ascii_name) - 1u; i++) {
+            CHAR16 c = fi->FileName[i];
+            if (c == 0) break;
+            if (c > 0x7F) { i = 0; break; }
+            ascii_name[i] = (char)c;
+        }
+        ascii_name[i] = 0;
+        if (i == 0) continue;
+        boot_counter_t parsed;
+        if (!boot_counter_parse_filename(ascii_name, (unsigned int)i, &parsed))
+            continue;
+        /* Match the bound entry_id exactly (NUL-terminated, ASCII
+         * already validated by parse_filename). */
+        int eq = 1;
+        for (unsigned int j = 0; j < sizeof(parsed.id); j++) {
+            if (parsed.id[j] != bound.id[j]) { eq = 0; break; }
+            if (parsed.id[j] == 0) break;
+        }
+        if (!eq) continue;
+
+        /* Open + Delete this counter file. */
+        CHAR16 w[BOOT_COUNTER_FILENAME_MAX];
+        UINTN j;
+        for (j = 0; j < sizeof(w)/sizeof(w[0]) - 1u; j++) {
+            char c = ascii_name[j];
+            if (c == 0) break;
+            w[j] = (CHAR16)(unsigned char)c;
+        }
+        w[j] = 0;
+        EFI_FILE_PROTOCOL *fh = (EFI_FILE_PROTOCOL *)0;
+        EFI_STATUS os = dir->Open(dir, &fh, w,
+                                   EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0);
+        if (EFI_ERROR(os) || !fh) continue;
+        EFI_STATUS xs = fh->Delete(fh);
+        if (!EFI_ERROR(xs)) deleted++;
+    }
+
+    /* Sweep reached clean EOF: every same-id counter we observed has
+     * been opened + Deleted (or skipped on Open failure -- those are
+     * surviving counters the next boot's scan still sees, which means
+     * MarkGood acts as a strict guarantee against the bound state but
+     * a best-effort guarantee against transient firmware errors on
+     * sibling counters. The next boot's scan would then re-decrement
+     * any survivor and a future health pass would retry). Clearing
+     * MarkGood is safe because the authorization triple is now
+     * spent. */
+    (void)sweep_complete;
+    serial_early_print("[BOOT] policy: MarkGood consumed (id=");
+    serial_early_print(bound.id);
+    serial_early_print(", deleted ");
+    serial_early_print_uint((UINT32)deleted);
+    serial_early_print(" counter file(s))\n");
 
     dir->Close(dir);
     root->Close(root);

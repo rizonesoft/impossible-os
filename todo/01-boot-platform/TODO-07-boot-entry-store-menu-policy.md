@@ -466,7 +466,8 @@ Follow-ups (wanted checks depend on producers outside §14's scope):
 > - Canonical doc: [`docs/boot/boot-health.md`](../../docs/boot/boot-health.md).
 > - Scope boundary: §14 owns entry-level gate + handoff + override transport. TODO-21 §5 (slot-level) + 02-kernel-core/TODO-02 §10 (acceptance ledger) remain unshipped foundations.
 
-> **Verified:** 2026-05-15 | 11/11 items + 3 deferred follow-ups | build OK | smoke PASS (KVM 2.36s, gate fires PASS) | tests: 36 boot_health_check + 8 health_check_subset parser + 86 host validator + 32 bootcfg
+> **Verified:** 2026-05-15 | 11/11 items + 3 deferred follow-ups | build OK | smoke PASS (KVM 2.45s, gate fires PASS) | tests: 36 boot_health_check + 8 health_check_subset parser + 86 host validator + 32 bootcfg
+> **Quality reviewed:** 2026-05-15 | Codex 8x (design + test-coverage + adversarial 2x + consistency + perf + re-adversarial 2x) | 1H+5M fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 

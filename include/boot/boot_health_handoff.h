@@ -136,6 +136,12 @@ struct boot_health_cur_boot_ctr_record {
 
 _Static_assert(sizeof(struct boot_health_cur_boot_ctr_record) == BOOT_HEALTH_CUR_BOOT_CTR_SIZE,
     "boot_health_cur_boot_ctr_record size must match BOOT_HEALTH_CUR_BOOT_CTR_SIZE");
+_Static_assert(__builtin_offsetof(struct boot_health_cur_boot_ctr_record, magic) == 0, "");
+_Static_assert(__builtin_offsetof(struct boot_health_cur_boot_ctr_record, version) == 4, "");
+_Static_assert(__builtin_offsetof(struct boot_health_cur_boot_ctr_record, entry_id) == 8, "");
+_Static_assert(__builtin_offsetof(struct boot_health_cur_boot_ctr_record, tries_left) == 72, "");
+_Static_assert(__builtin_offsetof(struct boot_health_cur_boot_ctr_record, tries_done) == 76, "");
+_Static_assert(__builtin_offsetof(struct boot_health_cur_boot_ctr_record, reserved) == 80, "");
 _Static_assert(__builtin_offsetof(struct boot_health_cur_boot_ctr_record, crc32) == 84, "");
 
 /* HealthSubset: bootloader-written, kernel-consumed. Per-boot only.
@@ -158,7 +164,12 @@ struct boot_health_subset_record {
 _Static_assert(sizeof(struct boot_health_subset_record) == BOOT_HEALTH_SUBSET_SIZE,
     "boot_health_subset_record size must match BOOT_HEALTH_SUBSET_SIZE");
 _Static_assert(__builtin_offsetof(struct boot_health_subset_record, magic) == 0, "");
+_Static_assert(__builtin_offsetof(struct boot_health_subset_record, version) == 4, "");
+_Static_assert(__builtin_offsetof(struct boot_health_subset_record, count) == 8, "");
+_Static_assert(__builtin_offsetof(struct boot_health_subset_record, reserved) == 12, "");
 _Static_assert(__builtin_offsetof(struct boot_health_subset_record, names) == 16, "");
+_Static_assert(__builtin_offsetof(struct boot_health_subset_record, crc32) ==
+    16 + BOOT_HEALTH_SUBSET_MAX_NAMES * BOOT_HEALTH_SUBSET_NAME_LEN, "");
 
 /* CRC-32/IEEE-802.3 over the first (total_len - 4) bytes of buf. Same
  * polynomial used by boot_entries envelope and boot_sticky so producer

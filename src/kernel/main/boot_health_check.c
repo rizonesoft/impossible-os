@@ -346,45 +346,24 @@ read_health_subset(struct boot_health_subset_record *out)
 
 /* ---- mark_entry_successful --------------------------------------------- */
 
-NTSTATUS
-mark_entry_successful(const char *entry_id)
+/* Internal helper: compose + write the MarkGood record from an already-
+ * validated CurBootCtr record. Avoids a redundant firmware GetVariable
+ * + CRC pass on the gate's PASS path, where boot_health_check_run has
+ * already read and validated the same record. */
+static NTSTATUS
+mark_entry_successful_from_ctr(const struct boot_health_cur_boot_ctr_record *ctr)
 {
-    struct boot_health_cur_boot_ctr_record ctr;
-    struct boot_health_mark_good_record    rec;
-    unsigned int idlen;
+    struct boot_health_mark_good_record rec;
     NTSTATUS s;
 
-    if (!entry_id || entry_id[0] == '\0')
-        return STATUS_INVALID_PARAMETER;
-    idlen = strn_count(entry_id, BOOT_HEALTH_HANDOFF_ID_LEN);
-    if (idlen == 0u || idlen >= BOOT_HEALTH_HANDOFF_ID_LEN)
-        return STATUS_INVALID_PARAMETER;
-
-    if (!read_cur_boot_ctr(&ctr)) {
-        /* No binding available. Without CurBootCtr we cannot state-bind
-         * the mark-good record (Codex H finding: stale replay defense
-         * requires the {entry_id, tries_left, tries_done} triple). */
-        klog(LOG_WARN, "BOOT",
-             "health: CurBootCtr absent/invalid -- skipping mark_entry_successful");
-        return STATUS_NOT_FOUND;
-    }
-
-    /* Caller must agree with bootloader on which entry is being marked.
-     * Mismatch = producer bug (kernel saw a different selected_entry_id
-     * than the bootloader wrote into CurBootCtr). Refuse so the mismatch
-     * surfaces loudly. */
-    if (!str_eq_n(ctr.entry_id, entry_id, BOOT_HEALTH_HANDOFF_ID_LEN)) {
-        klog(LOG_WARN, "BOOT",
-             "health: mark_entry_successful id mismatch -- CurBootCtr says different entry");
-        return STATUS_INVALID_PARAMETER;
-    }
+    if (!ctr) return STATUS_INVALID_PARAMETER;
 
     memset(&rec, 0, sizeof(rec));
     rec.magic   = BOOT_HEALTH_MARK_GOOD_MAGIC;
     rec.version = BOOT_HEALTH_VAR_VERSION;
-    memcpy(rec.entry_id, ctr.entry_id, BOOT_HEALTH_HANDOFF_ID_LEN);
-    rec.tries_left = ctr.tries_left;
-    rec.tries_done = ctr.tries_done;
+    memcpy(rec.entry_id, ctr->entry_id, BOOT_HEALTH_HANDOFF_ID_LEN);
+    rec.tries_left = ctr->tries_left;
+    rec.tries_done = ctr->tries_done;
     rec.reserved   = 0u;
     rec.crc32      = boot_health_handoff_compute_crc(&rec,
                         (unsigned int)sizeof(rec));
@@ -407,6 +386,40 @@ mark_entry_successful(const char *entry_id)
      * that section is unshipped today. When it lands, the kernel-side
      * call will fire here after the per-entry mark succeeds. */
     return STATUS_SUCCESS;
+}
+
+NTSTATUS
+mark_entry_successful(const char *entry_id)
+{
+    struct boot_health_cur_boot_ctr_record ctr;
+    unsigned int idlen;
+
+    if (!entry_id || entry_id[0] == '\0')
+        return STATUS_INVALID_PARAMETER;
+    idlen = strn_count(entry_id, BOOT_HEALTH_HANDOFF_ID_LEN);
+    if (idlen == 0u || idlen >= BOOT_HEALTH_HANDOFF_ID_LEN)
+        return STATUS_INVALID_PARAMETER;
+
+    if (!read_cur_boot_ctr(&ctr)) {
+        /* No binding available. Without CurBootCtr we cannot state-bind
+         * the mark-good record -- stale replay defense requires the
+         * {entry_id, tries_left, tries_done} triple. */
+        klog(LOG_WARN, "BOOT",
+             "health: CurBootCtr absent/invalid -- skipping mark_entry_successful");
+        return STATUS_NOT_FOUND;
+    }
+
+    /* Caller must agree with bootloader on which entry is being marked.
+     * Mismatch = producer bug (kernel saw a different selected_entry_id
+     * than the bootloader wrote into CurBootCtr). Refuse so the mismatch
+     * surfaces loudly. */
+    if (!str_eq_n(ctr.entry_id, entry_id, BOOT_HEALTH_HANDOFF_ID_LEN)) {
+        klog(LOG_WARN, "BOOT",
+             "health: mark_entry_successful id mismatch -- CurBootCtr says different entry");
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    return mark_entry_successful_from_ctr(&ctr);
 }
 
 /* ---- JSONL report ------------------------------------------------------ */
@@ -624,9 +637,11 @@ boot_health_check_run(void)
          (uint64_t)want_hard, (uint64_t)want_skipped);
 
     if (agg == BOOT_HEALTH_AGG_PASS && have_ctr) {
-        /* CurBootCtr.entry_id is the bootloader-validated id; pass it
-         * to mark_entry_successful so the state-binding is exact. */
-        (void)mark_entry_successful(ctr.entry_id);
+        /* Use the already-validated record from the gate's read; the
+         * public mark_entry_successful would re-read CurBootCtr,
+         * forcing a second RT-mutex-serialized firmware call we
+         * already paid for. */
+        (void)mark_entry_successful_from_ctr(&ctr);
     } else if (agg == BOOT_HEALTH_AGG_PASS && !have_ctr) {
         klog(LOG_WARN, "BOOT",
              "health: gate passed but CurBootCtr absent -- cannot mark good");
