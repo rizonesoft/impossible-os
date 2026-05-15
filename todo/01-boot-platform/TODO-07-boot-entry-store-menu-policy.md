@@ -496,7 +496,8 @@ Publish the live entry list, capability bitmap, selected entry, and one-shot ove
 > - Canonical doc: [`docs/boot/loader-vars.md`](../../docs/boot/loader-vars.md).
 > - Scope boundary: §15 owns systemd-boot interface + SMBIOS UUID extraction. Kernel-side `Loader*` reads + sysinfo CLI integration belong to a future user-mode tool TODO.
 
-> **Verified:** 2026-05-15 | 9/9 items | build OK | smoke PASS (KVM 2.32s, SMBIOS Type 1 walker fires) | tests: 11 smbios_parse + existing suites unchanged
+> **Verified:** 2026-05-15 | 9/9 items | build OK | smoke PASS (KVM 2.42s, SMBIOS Type 1 walker fires, loader-vars publish path silent on success) | tests: 11 smbios_parse + existing suites unchanged
+> **Quality reviewed:** 2026-05-15 | Codex 5x (design + adversarial 2x + consistency + perf + re-adversarial) | 1H+5M fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 

@@ -316,6 +316,9 @@ boot_audit_compose_line(const struct boot_info *bi, uint32_t boot_seq,
     jb_puts(&j, "],\"rejected_overflow\":");
     jb_u32_dec(&j, bi->rejected_entry_overflow ? 1u : 0u);
 
+    jb_puts(&j, ",\"loader_vars_degraded\":");
+    jb_u32_dec(&j, bi->loader_vars_degraded ? 1u : 0u);
+
     jb_puts(&j, ",\"boot_info_version\":");
     jb_u32_dec(&j, BOOT_INFO_VERSION);
     jb_puts(&j, "}\n");

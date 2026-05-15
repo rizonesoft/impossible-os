@@ -691,13 +691,20 @@ const struct smbios_system_info *smbios_get_info(void)
 
 int smbios_get_system_uuid(uint8_t uuid[16])
 {
-    uint32_t i, all_zero = 1;
+    uint32_t i, all_zero = 1, all_ff = 1;
     if (!s_info.valid) return 0;
+    /* Match the bootloader's sentinel rule (see boot_smbios_format_uuid
+     * in include/boot/boot_smbios_parse.h): both all-zero and all-FF
+     * are the firmware "not specified" sentinels. Reporting all-FF as
+     * a valid UUID would let userland mint machine_id-pinned entries
+     * the bootloader's local_machine_id filter will never match. */
     for (i = 0; i < 16; i++) {
         uuid[i] = s_info.sys_uuid[i];
-        if (s_info.sys_uuid[i] != 0) all_zero = 0;
+        if (s_info.sys_uuid[i] != 0x00) all_zero = 0;
+        if (s_info.sys_uuid[i] != 0xFF) all_ff = 0;
     }
-    return !all_zero;
+    if (all_zero || all_ff) return 0;
+    return 1;
 }
 
 /* Format uuid[16] as "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" into buf (37 bytes). */

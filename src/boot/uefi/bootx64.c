@@ -5280,19 +5280,25 @@ static void loader_consume_one_shot_vars(
     UINT32 attrs = 0;
     UINTN sz;
 
-    /* LoaderEntryOneShot: UCS-2 string of the desired entry id. */
+    /* LoaderEntryOneShot: UCS-2 string of the desired entry id. The
+     * delete path MUST fire on every observed-present case (success,
+     * EFI_BUFFER_TOO_SMALL on an oversize value, exact-buffer-size
+     * value), not just on the parse-success branch. A user-writable
+     * malformed value that escapes the delete would sit in NVRAM
+     * across boots and block clean recovery. */
     {
         CHAR16 buf[64];
+        int present = 0;
         sz = sizeof(buf);
         EFI_STATUS s = gST->RuntimeServices->GetVariable(
             u"LoaderEntryOneShot", (EFI_GUID *)&g_loader_systemd_guid,
             &attrs, &sz, buf);
         if (!EFI_ERROR(s) && sz > 0 && sz < sizeof(buf)) {
+            present = 1;
             UINTN i = 0;
             UINTN clen = sz / 2u;
             while (i < clen && buf[i] != 0 &&
                    i < entry_id_cap - 1u) {
-                /* Only accept ASCII printable for entry ids. */
                 CHAR16 c = buf[i];
                 if (c < 0x20 || c > 0x7E) break;
                 out_entry_id[i] = (char)c;
@@ -5300,7 +5306,17 @@ static void loader_consume_one_shot_vars(
             }
             out_entry_id[i] = 0;
             if (i > 0) *out_have_entry = 1;
-            /* Delete the var so it is honored exactly once. */
+        } else if (s == EFI_BUFFER_TOO_SMALL || (!EFI_ERROR(s) && sz == sizeof(buf))) {
+            /* Malformed (oversize) but present -- delete without
+             * honoring so a hostile or stale value cannot persist
+             * indefinitely. Buffer too small means the firmware
+             * reported the variable exists but is larger than 64
+             * CHAR16; sz == buf_size is the boundary case where the
+             * value happens to fill the buffer with no NUL room. */
+            present = 1;
+            serial_early_print("[BOOT] loader-vars: LoaderEntryOneShot malformed/oversize -- deleting\n");
+        }
+        if (present) {
             (void)gST->RuntimeServices->SetVariable(
                 u"LoaderEntryOneShot",
                 (EFI_GUID *)&g_loader_systemd_guid,
@@ -5308,15 +5324,18 @@ static void loader_consume_one_shot_vars(
         }
     }
 
-    /* LoaderConfigTimeoutOneShot: decimal UCS-2 seconds. */
+    /* LoaderConfigTimeoutOneShot: decimal UCS-2 seconds. Same
+     * delete-on-malformed contract as LoaderEntryOneShot above. */
     {
         CHAR16 buf[16];
+        int present = 0;
         sz = sizeof(buf);
         EFI_STATUS s = gST->RuntimeServices->GetVariable(
             u"LoaderConfigTimeoutOneShot",
             (EFI_GUID *)&g_loader_systemd_guid,
             &attrs, &sz, buf);
         if (!EFI_ERROR(s) && sz > 0 && sz < sizeof(buf)) {
+            present = 1;
             UINTN i = 0, clen = sz / 2u;
             UINT32 acc = 0;
             int saw_digit = 0;
@@ -5342,8 +5361,11 @@ static void loader_consume_one_shot_vars(
                 *out_timeout_seconds = acc;
                 *out_have_timeout = 1;
             }
-            /* Delete regardless of validity -- a malformed value should
-             * not stick around to be re-evaluated next boot. */
+        } else if (s == EFI_BUFFER_TOO_SMALL || (!EFI_ERROR(s) && sz == sizeof(buf))) {
+            present = 1;
+            serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot malformed/oversize -- deleting\n");
+        }
+        if (present) {
             (void)gST->RuntimeServices->SetVariable(
                 u"LoaderConfigTimeoutOneShot",
                 (EFI_GUID *)&g_loader_systemd_guid,
@@ -6132,12 +6154,29 @@ static void boot_policy_invoke(void)
      * boot. Init/exec usec timestamps come from boot_info.timing if
      * tsc_freq is calibrated; otherwise 0 is published (advisory).
      *
-     * Timeout published: the consumed LoaderConfigTimeoutOneShot
-     * value (if any) takes precedence over BOOT_MENU_DEFAULT_TIMEOUT_S
-     * so userspace tools see the effective next-boot value. */
+     * Timeout published: must match the EFFECTIVE timeout the menu
+     * actually used. Precedence (highest wins):
+     *   1. LoaderConfigTimeoutOneShot (already consumed above)
+     *   2. selected entry envelope.timeout_override (if in range)
+     *   3. BOOT_MENU_DEFAULT_TIMEOUT_S
+     * If we just published BOOT_MENU_DEFAULT_TIMEOUT_S when the
+     * actual menu used a per-entry override, Linux tools would see a
+     * stale value and report the wrong effective timeout. */
     {
-        UINT32 published_timeout = loader_have_timeout_oneshot ?
-            loader_oneshot_timeout : (UINT32)BOOT_MENU_DEFAULT_TIMEOUT_S;
+        UINT32 published_timeout = (UINT32)BOOT_MENU_DEFAULT_TIMEOUT_S;
+        /* Per-entry override from the SELECTED entry. The decision's
+         * envelope is populated even on FALLBACK paths (synthesized
+         * fallback envelope has timeout_override == NONE). */
+        if (decision &&
+            decision->selected.timeout_override != BOOT_ENTRIES_TIMEOUT_OVERRIDE_NONE
+            && decision->selected.timeout_override <= BOOT_MENU_TIMEOUT_CAP_S) {
+            published_timeout = decision->selected.timeout_override;
+        }
+        /* One-shot wins over per-entry override (consumed above). */
+        if (loader_have_timeout_oneshot &&
+            loader_oneshot_timeout <= BOOT_MENU_TIMEOUT_CAP_S) {
+            published_timeout = loader_oneshot_timeout;
+        }
         UINT64 init_us = 0, exec_us = 0;
         UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;
         if (tsc_freq > 0) {
