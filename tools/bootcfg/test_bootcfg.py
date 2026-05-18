@@ -99,24 +99,48 @@ def t_emit_seed_validates(p: Path) -> None:
     assert cp.returncode == 0, cp.stderr
 
 
-@case("emit-seed: kernel path matches bootloader fallback")
+@case("emit-seed: kernel path matches release staged path")
 def t_emit_seed_canonical_kernel_path(p: Path) -> None:
     _emit_seed(p)
     data = json.loads(p.read_text())
-    got = data["entries"][0]["payload"]["kernel"]
-    want = "\\EFI\\ImpossibleOS\\kernel.exe"
+    # slot-a is the first entry and the active default
+    slot_a = next(e for e in data["entries"] if e["id"] == "slot-a")
+    got = slot_a["payload"]["kernel"]
+    want = "\\boot\\kernel.exe"
     assert got == want, f"kernel path drift: got {got!r}, want {want!r}"
+
+
+@case("emit-seed: 3-entry default (slot-a + slot-b + recovery)")
+def t_emit_seed_three_entries(p: Path) -> None:
+    _emit_seed(p)
+    data = json.loads(p.read_text())
+    ids = [e["id"] for e in data["entries"]]
+    assert ids == ["slot-a", "slot-b", "recovery"], ids
+    by_id = {e["id"]: e for e in data["entries"]}
+    assert by_id["slot-a"]["kind"] == "split"
+    assert by_id["slot-a"]["flags"] == ["active"]
+    assert by_id["slot-b"]["kind"] == "split"
+    # slot-b ships inactive until dual-slot layout owner widens it
+    assert by_id["slot-b"]["flags"] == [], by_id["slot-b"]["flags"]
+    assert by_id["recovery"]["kind"] == "recovery"
+    assert by_id["recovery"]["flags"] == ["active"]
+    # recovery_partition_guid is the canonical placeholder
+    assert by_id["recovery"]["payload"]["recovery_partition_guid"] == \
+        "49504F53-7265-636F-7665-727900000001"
 
 
 # ---- list -------------------------------------------------------------------
 
-@case("list: shows seeded entry id + kind")
+@case("list: shows all three seeded entry ids + kinds")
 def t_list_shows_entries(p: Path) -> None:
     _emit_seed(p)
     cp = _run(["list", str(p)])
     assert cp.returncode == 0, cp.stderr
-    assert "id='default'" in cp.stdout, cp.stdout
+    assert "id='slot-a'" in cp.stdout, cp.stdout
+    assert "id='slot-b'" in cp.stdout, cp.stdout
+    assert "id='recovery'" in cp.stdout, cp.stdout
     assert "kind='split'" in cp.stdout, cp.stdout
+    assert "kind='recovery'" in cp.stdout, cp.stdout
 
 
 # ---- add --------------------------------------------------------------------
@@ -124,18 +148,18 @@ def t_list_shows_entries(p: Path) -> None:
 @case("add: appends new entry + revalidates")
 def t_add_appends(p: Path) -> None:
     _emit_seed(p)
-    cp = _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("slot-b"))])
+    cp = _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("extra"))])
     assert cp.returncode == 0, cp.stderr
     cp = _run_validate(p)
     assert cp.returncode == 0, cp.stderr
     data = json.loads(p.read_text())
-    assert {e["id"] for e in data["entries"]} == {"default", "slot-b"}
+    assert {e["id"] for e in data["entries"]} == {"slot-a", "slot-b", "recovery", "extra"}
 
 
 @case("add: rejects duplicate id (rc=3)")
 def t_add_dup(p: Path) -> None:
     _emit_seed(p)
-    cp = _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("default"))])
+    cp = _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("slot-a"))])
     assert cp.returncode == 3, f"expected rc=3, got {cp.returncode}\n{cp.stderr}"
     assert "already exists" in cp.stderr, cp.stderr
 
@@ -160,7 +184,7 @@ def t_remove_drops(p: Path) -> None:
     cp = _run(["remove", str(p), "extra"])
     assert cp.returncode == 0, cp.stderr
     data = json.loads(p.read_text())
-    assert {e["id"] for e in data["entries"]} == {"default"}
+    assert {e["id"] for e in data["entries"]} == {"slot-a", "slot-b", "recovery"}
     assert _run_validate(p).returncode == 0
 
 
@@ -174,8 +198,11 @@ def t_remove_missing(p: Path) -> None:
 
 @case("remove: last entry rejected (>=1 entry required)")
 def t_remove_last(p: Path) -> None:
+    # Drain the 3-entry seed down to one entry, then attempt to remove it.
     _emit_seed(p)
-    cp = _run(["remove", str(p), "default"])
+    _run(["remove", str(p), "recovery"])
+    _run(["remove", str(p), "slot-b"])
+    cp = _run(["remove", str(p), "slot-a"])
     assert cp.returncode == 1, cp.stderr
     out = (cp.stderr + cp.stdout).lower()
     assert "empty" in out or "1 entry" in cp.stderr
@@ -185,25 +212,29 @@ def t_remove_last(p: Path) -> None:
 
 @case("set-default: reassigns sort_keys so target wins lex tie-break")
 def t_set_default(p: Path) -> None:
+    # Add a fresh active entry so the test does not depend on which seed
+    # entry is currently the default; slot-a starts as the default.
     _emit_seed(p)
-    _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("slot-b"))])
-    cp = _run(["set-default", str(p), "slot-b"])
+    _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("custom"))])
+    cp = _run(["set-default", str(p), "custom"])
     assert cp.returncode == 0, cp.stderr
     data = json.loads(p.read_text())
     by_id = {e["id"]: e for e in data["entries"]}
-    assert by_id["slot-b"]["sort_key"] == "00-slot-b", by_id
-    assert by_id["default"]["sort_key"] != "00-default", by_id
+    assert by_id["custom"]["sort_key"] == "00-custom", by_id
+    # slot-a was renumbered out of the 00- slot
+    assert by_id["slot-a"]["sort_key"] != "00-slot-a", by_id
     sorted_entries = sorted(data["entries"], key=lambda e: e["sort_key"])
-    assert sorted_entries[0]["id"] == "slot-b", sorted_entries
+    assert sorted_entries[0]["id"] == "custom", sorted_entries
     assert _run_validate(p).returncode == 0
 
 
-@case("set-default: rejects inactive id (would be filtered by ladder)")
+@case("set-default: rejects seeded slot-b (inactive in seed)")
 def t_set_default_inactive(p: Path) -> None:
+    # slot-b ships inactive in the 3-entry seed; set-default must refuse
+    # to promote it because the ladder filters non-active entries before
+    # the lowest-sort_key tie-break runs.
     _emit_seed(p)
-    inactive = _seed_extra_entry("inactive", sort_key="01-inactive", flags=[])
-    _run(["add", str(p), "--json", json.dumps(inactive)])
-    cp = _run(["set-default", str(p), "inactive"])
+    cp = _run(["set-default", str(p), "slot-b"])
     assert cp.returncode == 1, cp.stderr
     assert "not active" in cp.stderr, cp.stderr
 
@@ -320,11 +351,13 @@ def t_policy_tag_escape(p: Path) -> None:
 def t_seed_machine_id_wildcard(p: Path) -> None:
     _emit_seed(p)
     data = json.loads(p.read_text())
-    mid = data["entries"][0]["machine_id"]
-    assert mid == "", (
-        f"seed machine_id must be empty wildcard for the policy ladder "
-        f"to admit it on any machine; got {mid!r}"
-    )
+    # Every seeded entry must be wildcard so the seed admits any host.
+    for e in data["entries"]:
+        mid = e["machine_id"]
+        assert mid == "", (
+            f"seed machine_id for {e['id']!r} must be empty wildcard for "
+            f"the policy ladder to admit it on any machine; got {mid!r}"
+        )
 
 
 # ---- pre-read size cap (Codex perf M finding) -------------------------------
@@ -402,6 +435,9 @@ def t_mutation_log_emit_seed_fresh(p: Path) -> None:
     assert len(lines) == 1, f"expected 1 record, got {len(lines)}"
     rec = json.loads(lines[0])
     assert rec["kind"] == "emit-seed"
+    # target_id="default" is the v1 schema-pinned stable label for the
+    # seed action; it is NOT an entry id (the 3-entry seed contains
+    # slot-a / slot-b / recovery). Pinned in docs/boot/boot-history-schema.md.
     assert rec["target_id"] == "default"
     assert rec["prior_crc"] is None, "fresh emit-seed should record prior_crc=null"
     assert rec["new_crc"].startswith("0x"), rec["new_crc"]
@@ -427,14 +463,14 @@ def t_mutation_log_emit_seed_idempotent(p: Path) -> None:
 def t_mutation_log_add(p: Path) -> None:
     log = p.parent / "mutations.jsonl"
     _emit_seed(p)
-    cp = _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("slot-b")),
+    cp = _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("extra")),
                "--mutation-log", str(log)])
     assert cp.returncode == 0
     lines = log.read_text().strip().splitlines()
     assert len(lines) == 1, f"expected 1 record, got {len(lines)}"
     rec = json.loads(lines[0])
     assert rec["kind"] == "add"
-    assert rec["target_id"] == "slot-b"
+    assert rec["target_id"] == "extra"
     assert rec["prior_crc"] != rec["new_crc"], "add changes the store CRC"
 
 
@@ -465,15 +501,15 @@ def t_mutation_log_skips_on_failure(p: Path) -> None:
 def t_mutation_log_set_default(p: Path) -> None:
     log = p.parent / "mutations.jsonl"
     _emit_seed(p)
-    _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("slot-b"))])
-    cp = _run(["set-default", str(p), "slot-b", "--mutation-log", str(log)])
+    _run(["add", str(p), "--json", json.dumps(_seed_extra_entry("custom"))])
+    cp = _run(["set-default", str(p), "custom", "--mutation-log", str(log)])
     assert cp.returncode == 0
     lines = log.read_text().strip().splitlines()
     assert len(lines) == 1, f"expected 1 record, got {len(lines)}"
     rec = json.loads(lines[0])
     assert rec["kind"] == "set-default"
-    assert rec["target_id"] == "slot-b"
-    assert "note" in rec and "00-slot-b" in rec["note"], rec.get("note", "<missing>")
+    assert rec["target_id"] == "custom"
+    assert "note" in rec and "00-custom" in rec["note"], rec.get("note", "<missing>")
 
 
 # ---- summary ----------------------------------------------------------------

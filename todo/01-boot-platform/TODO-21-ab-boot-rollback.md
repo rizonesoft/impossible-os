@@ -97,6 +97,8 @@ Bootloader reads metadata and mounts the correct slot's filesystem.
 - [ ] Mount the active slot's partition (not EFI partition) for kernel loading
 - [ ] Pass `boot_info.active_slot = 'A'/'B'` to kernel
 - [ ] Log: `"[BOOT] Booting Slot %c (tries=%u, successful=%u)"` with slot info
+- [ ] Honor SPLIT `payload.root` in `load_kernel()` so the seeded slot-b entry resolves to its partition -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
+- [ ] Flip seeded `slot-b` from inactive to active in `bootcfg.py` `_seed_store()` once root-aware lookup ships -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
 - [ ] Commit: `"boot: slot selection -- boot from active slot, rollback on failure"`
 
 **Test checkpoint:** Normal boot shows `"Booting Slot A (tries=0, successful=1)"`. Manual metadata corruption triggers rollback to Slot B.

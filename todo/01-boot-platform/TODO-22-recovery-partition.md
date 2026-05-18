@@ -60,10 +60,11 @@ title: "TODO-22 -- Recovery Partition & Self-Repair"
 Add a read-only recovery partition to the GPT disk layout.
 
 - [ ] GPT layout: EFI (64 MiB) + Slot A (200 MiB) + Slot B (200 MiB) + Recovery (32 MiB)
-- [ ] Recovery partition type GUID: custom `{IMPOSSIBLE-RECOVERY-PART}`
+- [ ] Recovery partition type GUID: adopt `49504F53-7265-636F-7665-727900000001` (placeholder in `bootcfg.py`) -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
 - [ ] Contents: `recovery.exe` (minimal kernel), `kernel.bak` (last known-good kernel), `ixfs-fsck` tool
 - [ ] Partition marked read-only in GPT attributes
 - [ ] `scripts/build.sh` creates recovery partition with contents
+- [ ] First-boot self-seed (missing store + recovery partition + known-good slot -> synthesize 3-entry default) -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
 - [ ] Commit: `"build: add recovery partition to GPT disk layout"`
 
 **Test checkpoint:** `fdisk -l` shows 4 partitions including Recovery.

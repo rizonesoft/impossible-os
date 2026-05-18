@@ -58,10 +58,13 @@ import validate as _validator  # type: ignore  # noqa: E402
 
 # ---- Defaults for emit-seed --------------------------------------------------
 
-# The bootloader's in-firmware fallback (boot_entries_synthesize_fallback) when
-# the store is missing/invalid. Match it byte-for-byte so a freshly seeded
-# store loads the same kernel as the no-store fallback path.
-FALLBACK_KERNEL_PATH = "\\EFI\\ImpossibleOS\\kernel.exe"
+# Canonical staged-kernel path used by the release image builder and the
+# Makefile efi_staging layout. The bootloader's policy ladder treats a
+# validated SPLIT kernel path as the SOLE candidate (no ambient fallback) --
+# the seeded path MUST match the staged kernel path on disk or the loader
+# fails closed before reaching the ambient kernel_paths[] search. See
+# docs/boot/bootstrap.md for the staged-vs-seeded contract.
+SEED_KERNEL_PATH = "\\boot\\kernel.exe"
 # Empty machine_id is the explicit "match any machine" wildcard per
 # the boot-policy ladder (e->machine_id[0] == '\\0'). Using a
 # placeholder UUID would be treated as a real machine pin and
@@ -69,28 +72,78 @@ FALLBACK_KERNEL_PATH = "\\EFI\\ImpossibleOS\\kernel.exe"
 # machine_id differs (i.e. all of them, since SMBIOS UUID extraction
 # has not shipped). The seed must be a wildcard.
 SEED_MACHINE_ID = ""
+# Canonical placeholder GUID for the Impossible OS recovery partition.
+# The recovery-partition-in-disk-layout feature adopts this GUID when it
+# ships; until then the recovery entry is dormant -- the bootloader filters
+# kind=recovery via supported_kinds_mask (KIND_UNAVAILABLE) so no resolve
+# is attempted. Hex prefix "49504F53" is ASCII "IPOS" for grep-ability.
+# See docs/boot/bootstrap.md for the adoption contract.
+SEED_RECOVERY_PARTITION_GUID = "49504F53-7265-636F-7665-727900000001"
 
 
 def _seed_store() -> dict:
-    """Idempotent seed: one split entry at the canonical kernel path."""
+    """Idempotent 3-entry seed: slot-A + slot-B + recovery.
+
+    Deterministic id generation from (machine_id, kind, slot): with
+    machine_id="" wildcard, ids reduce to kind+slot strings ("slot-a",
+    "slot-b", "recovery"). A second run produces a byte-identical store.
+
+    Today's gating (per docs/boot/bootstrap.md):
+      - slot-a: active, kind=split, lowest sort_key -> ladder default.
+      - slot-b: INACTIVE (flags=[]) until the A/B-rollback dual-slot
+        layout and root-selection semantics ship. Without those, an
+        active slot-b would load the same kernel.exe slot-a does,
+        falsifying rollback / parity claims (Codex design review High).
+      - recovery: active envelope but kind=recovery is filtered by
+        the bootloader's supported_kinds_mask (KIND_UNAVAILABLE) until
+        the recovery-partition load path widens it. Entry exists in
+        the store as the committed contract; resolves to a real
+        partition only after the recovery-partition GPT layout ships.
+    """
     return {
         "schema_version": _validator.SCHEMA_VERSION,
         "crc32": "0x00000000",  # placeholder; rewritten before write
         "entries": [
             {
-                "id": "default",
-                "title": "Impossible OS",
+                "id": "slot-a",
+                "title": "Impossible OS (slot A)",
                 "kind": "split",
                 "flags": ["active"],
-                "sort_key": "00-default",
+                "sort_key": "00-slot-a",
                 "machine_id": SEED_MACHINE_ID,
                 "policy_tags": [],
                 "payload": {
-                    "kernel": FALLBACK_KERNEL_PATH,
+                    "kernel": SEED_KERNEL_PATH,
                     "cmdline": "",
                     "root": "A",
                 },
-            }
+            },
+            {
+                "id": "slot-b",
+                "title": "Impossible OS (slot B)",
+                "kind": "split",
+                "flags": [],
+                "sort_key": "50-slot-b",
+                "machine_id": SEED_MACHINE_ID,
+                "policy_tags": [],
+                "payload": {
+                    "kernel": SEED_KERNEL_PATH,
+                    "cmdline": "",
+                    "root": "B",
+                },
+            },
+            {
+                "id": "recovery",
+                "title": "Impossible OS Recovery",
+                "kind": "recovery",
+                "flags": ["active"],
+                "sort_key": "99-recovery",
+                "machine_id": SEED_MACHINE_ID,
+                "policy_tags": [],
+                "payload": {
+                    "recovery_partition_guid": SEED_RECOVERY_PARTITION_GUID,
+                },
+            },
         ],
     }
 
@@ -541,6 +594,11 @@ def cmd_emit_seed(args: argparse.Namespace) -> int:
             prior_crc = "INVALID"
     data = _seed_store()
     _validate_then_write(path, data)
+    # target_id="default" is the v1 schema-pinned stable label for the
+    # store-level seed operation (NOT an entry id; the 3-entry seed
+    # contains slot-a / slot-b / recovery). Schema contract pinned in
+    # docs/boot/boot-history-schema.md; do not change without bumping
+    # the mutation-log schema version.
     _append_mutation_log(_resolve_mutation_log(args), "emit-seed", "default",
                          prior_crc, data["crc32"])
     print(f"emit-seed: wrote idempotent default store to {path}; "

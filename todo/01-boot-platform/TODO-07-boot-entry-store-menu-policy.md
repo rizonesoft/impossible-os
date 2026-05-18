@@ -66,7 +66,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
 | 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
 | 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [x]   |
-| 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [ ]   |
+| 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
 | 💎  |  17   | Boot entry tests                                       | §1-§16                                  |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
@@ -505,15 +505,24 @@ Publish the live entry list, capability bitmap, selected entry, and one-shot ove
 
 Who creates the FIRST default entry on a freshly-installed system? Who creates the recovery entry on the first boot after the recovery partition first appears? This is missing today: §11 covers list/add/remove and §9 generates from runtime state, but the bootstrap path is implicit. Idempotent offline seeding closes the gap.
 
-- [ ] `bootcfg.exe --offline --seed` is idempotent: deterministic id generation from `(machine-id, kind, slot)` tuples; second run produces byte-identical store.
-- [ ] Installer integration: 15-installer-release release script invokes `bootcfg --offline --seed` after artifacts + recovery partition land; produces 3-entry default (slot-A, slot-B, recovery).
-- [ ] First-boot self-seed: missing store + recovery partition present + known-good slot -> synthesize 3-entry default atomically. Handles wiped-ESP recovery.
-- [ ] Image build path: `scripts/release/` invokes `bootcfg --offline --seed --image=<vhdx>` so .vhdx/.iso/.raw artifacts ship with seeded store; CI verifies via §2 parser.
-- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include INSTALLER once installer entries drive a distinct installer-image load path AND offline + first-install seeding is complete.
-- [ ] Document bootstrap order + ownership boundary (installer vs first-boot vs CI) in `docs/boot/bootstrap.md`.
-- [ ] Commit: `"boot: bootstrap and first-install entry seeding"`
+- [x] `bootcfg.py emit-seed` produces byte-identical 3-entry store; ids deterministic from `(machine_id, kind, slot)` (wildcard machine_id -> `slot-a` / `slot-b` / `recovery`).
+- [/] Release-image-build integration shipped via `scripts/release/build-image.sh`; dedicated installer release script pending -> XREF: [`../15-installer-release/TODO-01-release-artifacts.md`](../15-installer-release/TODO-01-release-artifacts.md).
+- [ ] First-boot self-seed (synthesize 3-entry default on missing store). Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md) + [`TODO-21 §2`](TODO-21-ab-boot-rollback.md).
+- [x] Image build path: `scripts/release/build-image.sh` ships the 3-entry seed; `kernel` path matches staged location per staged-vs-seeded contract.
+- [ ] Widen `supported_kinds_mask` to include INSTALLER once distinct installer-image load path exists AND first-install seeding is complete. Blocked: no distinct load path today.
+- [x] Documented bootstrap order + ownership boundary in [`docs/boot/bootstrap.md`](../../docs/boot/bootstrap.md).
+- [x] Commit: `"boot: bootstrap and first-install entry seeding"`
 
-**Test checkpoint:** Run `bootcfg --offline --seed` twice on the same mounted ESP; resulting `bootentries.json` is byte-identical. Delete `bootentries.json` from a known-good install; reboot; first-boot self-seed reconstructs it without user intervention. CI image builds verify seeded store passes §2 validation. Test on: host (offline) + QEMU WHPX (first-boot self-seed) + bare metal.
+**Test checkpoint:** Run `bootcfg.py emit-seed` twice on the same mounted ESP; resulting `bootentries.json` is byte-identical (CRC `0x69430B34`, 1040 bytes, 3 entries). Validator accepts the seed. Mutation log of two consecutive `emit-seed` runs records identical `new_crc` on both with the second carrying `prior_crc == new_crc`. First-boot self-seed scenario cannot run today -- requires TODO-22 §1 producer. Test on: host (offline) + QEMU smoke (bootloader synthesizes 1-entry fallback on missing seed -- existing path).
+
+> **Test runner:** `python3 tools/bootcfg/test_bootcfg.py` | 33 cases (added `emit-seed: 3-entry default`); host validator `python3 tools/boot-entry-validate/test_validate.py` | 86 cases, 0 failures
+
+> **Notes:**
+> - What shipped: 3-entry `_seed_store()` in `tools/bootcfg/bootcfg.py` (slot-a active + slot-b inactive + recovery active-but-filtered); new `docs/boot/bootstrap.md`.
+> - How it integrates: release-image build already invokes `bootcfg.py emit-seed`; bootloader filters slot-b (NOT_ACTIVE) and recovery (KIND_UNAVAILABLE); ladder picks slot-a by sort_key.
+> - Downstream effects: closes bootstrap gap, fixes latent §11 staged-path bug; TODO-21 §3 and TODO-22 §2 each flip-to-live with single-line follow-ups.
+> - Canonical doc: [`docs/boot/bootstrap.md`](../../docs/boot/bootstrap.md).
+> - Scope boundary: §16 owns host-side seed + bootstrap doc + image-build integration. Self-seed + INSTALLER widening + installer-release script are deferred to TODO-22 §1, TODO-21 §3, and 15-installer-release.
 
 ---
 
@@ -555,7 +564,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 | 💎  | Per-entry health-gated mark-good                       | ❌ Implicit (timer past)          | ✅ systemd-bless + boot-complete      | 🟦 §14 entry-level gate + registry + state-bound MarkGood handoff + per-entry health_check_subset override; wanted network/service-crash checks SKIPPED pending owner subsystems |
 | 💎  | Entry kinds (UKI, chainload, network, resume)          | ⚠️ BCD osloader / resume (split)  | ✅ BLS Type 1 / Type 2 (UKI)          | 🟦 §13 SPLIT/UKI/SAFE validators + authoritative SPLIT loader; CHAINLOAD/NETWORK/RESUME deferred to owner TODOs |
 | 💎  | OS-visible loader UEFI variables                       | ❌ None standardized              | ✅ systemd LoaderXxx interface        | ✅ §15 publishes 12 LoaderXxx vars under systemd-boot vendor GUID (canonical bit positions); honors EntryOneShot + ConfigTimeoutOneShot; ImpossibleOSLoaderFeaturesExt advertises extension capabilities |
-| 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | ⬜ Planned -- §16        |
+| 💎  | First-install bootstrap (idempotent offline seed)      | ✅ bcdboot from install media     | ✅ bootctl install / grub-install     | 🟦 §16 `bootcfg.py emit-seed` writes byte-identical 3-entry default (slot-a active + slot-b inactive + recovery active-but-filtered); release-image build seeds every artifact; first-boot self-seed deferred to TODO-22 §1 |
 | ⭐  | Documented deterministic policy precedence (2 layers)  | ⚠️ BCD rules underdocumented      | ⚠️ Per-bootloader behavior            | ✅ §3 ladder + 6-example doc + live producer in §4 🚀 |
 | ⭐  | Demote-not-drop bad entries with last_failure_reason   | ❌ Hidden recovery loop           | ⚠️ Bad entries silently sorted last   | 🟦 §4 records reject reasons in boot_info v19; menu UI label in §9 🚀 |
 | ⭐  | Per-decision audit trail (BlackBox primary)            | ❌ Event log only                 | ❌ journalctl scattered               | ✅ §12 JSONL `X:\Boot\history.jsonl` + 256-byte sticky NVRAM ring (read-only bootloader, post-publish ack) 🚀 |

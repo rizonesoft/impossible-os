@@ -120,7 +120,7 @@ One JSON object per line. Written by every mutating subcommand of `bootcfg.py` (
 | `schema` | u32 | Pinned to `BOOT_AUDIT_JSONL_SCHEMA_VERSION = 1`. |
 | `ts` | u64 | Wall-clock unix seconds at write time. |
 | `kind` | string | One of `add`, `remove`, `set-default`, `emit-seed`. New mutating subcommands add new values here. |
-| `target_id` | string | The entry id affected (or `"default"` for `emit-seed`). |
+| `target_id` | string | The entry id affected (or `"default"` for `emit-seed` -- a v1-stable label for the store-level seed action, NOT an entry id; the 3-entry seed contains slot-a / slot-b / recovery). |
 | `prior_crc` | string \| null | Pre-mutation `bootentries.json` CRC, hex `"0xNNNNNNNN"`. `null` on fresh `emit-seed` (no prior file). `"INVALID"` if the prior file failed validation. |
 | `new_crc` | string | Post-mutation CRC. |
 | `requester` | string | `bootcfg.py user=<user> host=<host>` (offline). Live-boot binary will use a process-id form. |
