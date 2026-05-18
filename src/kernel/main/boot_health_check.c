@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_health_check.c -- per-entry health-gated mark-good gate (TODO-07 section 14)
+ * boot_health_check.c -- per-entry health-gated mark-good gate
  *
  * Phase-3 single-shot gate. Reads bootloader-supplied CurBootCtr + (optional)
  * HealthSubset UEFI variables, runs registered health checks, writes a JSONL
@@ -382,9 +382,10 @@ mark_entry_successful_from_ctr(const struct boot_health_cur_boot_ctr_record *ctr
          (uint64_t)rec.entry_id,
          (uint64_t)rec.tries_left,
          (uint64_t)rec.tries_done);
-    /* Slot-level mark_boot_successful is a TODO-21 section 5 hook;
-     * that section is unshipped today. When it lands, the kernel-side
-     * call will fire here after the per-entry mark succeeds. */
+    /* Slot-level mark_boot_successful is the A/B-rollback mark-good
+     * hook; that feature is unshipped today. When it lands, the
+     * kernel-side call will fire here after the per-entry mark
+     * succeeds. */
     return STATUS_SUCCESS;
 }
 

@@ -524,6 +524,9 @@ Who creates the FIRST default entry on a freshly-installed system? Who creates t
 > - Canonical doc: [`docs/boot/bootstrap.md`](../../docs/boot/bootstrap.md).
 > - Scope boundary: §16 owns host-side seed + bootstrap doc + image-build integration. Self-seed + INSTALLER widening + installer-release script are deferred to TODO-22 §1, TODO-21 §3, and 15-installer-release.
 
+> **Verified:** 2026-05-19 | commit `17ee74f9` | 5/7 items | build OK | tests 33/33 bootcfg + 86/86 validator | lint clean
+> **Quality reviewed:** 2026-05-19 | Codex 4x (design + adversarial + consistency + perf) | 1C+2H+3M fixed, 0 open | scope: N/A (host-side Python tool + docs)
+
 ---
 
 ## 17. Boot Entry Tests
@@ -538,7 +541,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 - [ ] Per-entry health-gate scenario: kernel reaches desktop with klog ERR -> entry stays indeterminate; clean boot -> entry marked good.
 - [ ] Entry-kind dispatch scenario: `kind: uki` boots via UKI fast path, `kind: chainload` rejected without Secure Boot when `trusted_chainload` unset.
 - [ ] Loader UEFI variable scenario: post-boot `LoaderEntries`, `LoaderEntrySelected`, `LoaderFeatures` readable; `LoaderEntryOneShot` honored once.
-- [ ] Bootstrap idempotency scenario: `bootcfg --offline --seed` twice yields byte-identical store.
+- [ ] Bootstrap idempotency scenario: `bootcfg.py emit-seed` twice yields byte-identical store.
 - [ ] BlackBox-vs-NVRAM audit scenario: per-boot history goes to BlackBox JSONL; NVRAM-full harness still allows boot with `audit_degraded` set.
 - [ ] Audit dual-write-failure dedup harness: fail BOTH `X:\Boot\sequence` writes after `VFS_O_TRUNC`; assert the next publish does not regress `boot_seq` below the historical max in `history.jsonl`.
 - [ ] Audit JSONL rotation on FAT32 LFN: rotation falls through to spillover today because FAT32 driver does not LFN-rename. Blocked on kernel-side `fat32_rename_vol` LFN fix.
@@ -597,7 +600,7 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 - [ ] `test_health_gate_userspace_signal` -- after passing health, `mark_entry_successful(id)` removes the tries counter from the store.
 - [ ] `test_loader_variables_published` -- `LoaderEntries` / `LoaderEntrySelected` / `LoaderFeatures` readable post-boot; values match `boot_info`.
 - [ ] `test_loader_one_shot_consumed` -- `LoaderEntryOneShot` honored once, then deleted.
-- [ ] `test_bootstrap_idempotent_offline_seed` -- `bootcfg --offline --seed` twice yields byte-identical `bootentries.json`.
+- [ ] `test_bootstrap_idempotent_offline_seed` -- `bootcfg.py emit-seed` twice yields byte-identical `bootentries.json`.
 - [ ] `test_bootstrap_first_boot_self_seed` -- missing `bootentries.json` + present recovery partition + known-good slot -> first-boot synthesis.
 - [ ] `test_audit_blackbox_primary_nvram_exceptional` -- per-boot record lands in BlackBox JSONL; NVRAM-quota-full harness still boots with `audit_degraded` set.
 - [ ] `test_audit_mutation_log` -- `bootcfg add/remove/reorder` writes a mutation record with requester + prior-state.

@@ -392,7 +392,7 @@ def validate_envelope(entry: dict, idx: int) -> None:
         if len(tag) > MAX_POLICY_TAG_LEN:
             fail(f"entry[{idx}]: policy_tags[{i}] length {len(tag)} > "
                  f"MAX_POLICY_TAG_LEN {MAX_POLICY_TAG_LEN}")
-    # Optional health_check_subset (TODO-07 section 14). Absent / empty
+    # Optional health_check_subset (per-entry health-gate override). Absent / empty
     # -> kernel runs the default check set. Non-empty restricts the run
     # to the named checks (intersection with the kernel registry).
     if "health_check_subset" in entry:

@@ -13,7 +13,7 @@ The bootloader cannot write `bootentries.json` -- it can only read it. Something
 | Reproducible release-image build (raw/USB)  | `scripts/release/build-image.sh`                 | YES -- calls `bootcfg.py emit-seed` after ESP staging      | Idempotent; CI re-runs do not perturb the image hash               |
 | Reproducible release-image build (VHD/VHDX) | `scripts/release/build-image.sh` -> `to-vhdx.sh` | YES (inherited from raw image)                            | Conversion preserves the seeded store byte-for-byte                |
 | Hybrid ISO build                            | `scripts/release/build-iso.sh`                   | YES (inherited from raw image)                            | El Torito + bootable USB stick path                                |
-| Installer (post-image-build)                | Future installer-release script (UNSHIPPED)      | Will call `bootcfg --offline --seed` after layout         | Future owner; today the release-image bake already covers it       |
+| Installer (post-image-build)                | Future installer-release script (UNSHIPPED)      | Will call `python3 tools/bootcfg/bootcfg.py emit-seed <mounted-esp>/EFI/ImpossibleOS/bootentries.json` after layout | Future owner; today the release-image bake already covers it       |
 | First boot on a fresh install               | Bootloader (`bootx64.c`)                         | NO (read-only); SYNTHESIZES single-entry fallback if absent | Recoverable but degraded -- operator sees `selection_reason=FALLBACK_STORE_INVALID` |
 | Operator edits offline                      | `tools/bootcfg/bootcfg.py`                       | YES (`add` / `remove` / `set-default` / `emit-seed`)      | Atomic CoW + fsync; validator gates every write                    |
 | Operator edits live-boot                    | Future user-mode `bootcfg.exe` (UNSHIPPED)       | Will write via UEFI runtime variable + ESP mount          | Live-boot subcommands `set-bootnext-hint` / `set-oneshot` / etc.   |
@@ -22,7 +22,7 @@ The bootloader cannot write `bootentries.json` -- it can only read it. Something
 
 ## The 3-entry default seed
 
-`bootcfg --offline --seed <path>` writes three entries with deterministic ids derived from the `(machine_id, kind, slot)` tuple. With `machine_id=""` (wildcard), the ids reduce to kind+slot strings:
+`python3 tools/bootcfg/bootcfg.py emit-seed <mounted-esp>/EFI/ImpossibleOS/bootentries.json` writes three entries with deterministic ids derived from the `(machine_id, kind, slot)` tuple. With `machine_id=""` (wildcard), the ids reduce to kind+slot strings:
 
 ```
 slot-a    kind=split,    flags=[active], sort_key=00-slot-a, root=A
@@ -35,7 +35,7 @@ recovery  kind=recovery, flags=[active], sort_key=99-recovery
 The seed must produce a byte-identical store on every run. Two implications:
 
 1. **Reproducible release images.** `scripts/release/build-image.sh` re-runs after a clean rebuild produce the exact same image bytes (the `bootentries.json` hash is part of the image hash). CI cannot tell "rebuilt with same inputs" from "no change" if the seed varied per run.
-2. **Idempotent recovery.** An operator running `bootcfg --offline --seed` against an already-seeded ESP gets a no-op write -- old store == new store. Re-seeding after a partial install never corrupts a valid existing store.
+2. **Idempotent recovery.** An operator running `bootcfg.py emit-seed` against an already-seeded ESP gets a no-op write -- old store == new store. Re-seeding after a partial install never corrupts a valid existing store.
 
 ### Why slot-b ships inactive
 
@@ -107,7 +107,7 @@ The existing 1-entry fallback in `boot_entries_synthesize_fallback` covers "miss
 2. Operator runs installer on target hardware
 3. Installer partitions the disk -- creates ESP + slot-A + slot-B + recovery partitions
 4. Installer copies image files onto each partition
-5. Installer calls bootcfg --offline --seed --target=<mounted-esp>
+5. Installer calls python3 tools/bootcfg/bootcfg.py emit-seed <mounted-esp>/EFI/ImpossibleOS/bootentries.json
      producing the 3-entry default
 6. Installer reboots
 7. Bootloader reads bootentries.json (seeded) -- selects slot-A by sort_key
@@ -118,10 +118,10 @@ The existing 1-entry fallback in `boot_entries_synthesize_fallback` covers "miss
 
 | Failure                                    | Symptom                                              | Recovery                                              |
 | ------------------------------------------ | ---------------------------------------------------- | ----------------------------------------------------- |
-| Image build ran but emit-seed skipped      | Bootloader synthesizes 1-entry fallback; audit shows `selection_reason=FALLBACK_STORE_INVALID` | Operator runs `bootcfg --offline --seed <mounted-esp>` after boot |
+| Image build ran but emit-seed skipped      | Bootloader synthesizes 1-entry fallback; audit shows `selection_reason=FALLBACK_STORE_INVALID` | Operator runs `python3 tools/bootcfg/bootcfg.py emit-seed <mounted-esp>/EFI/ImpossibleOS/bootentries.json` after boot |
 | Seed kernel path drifted from staged path  | `load_kernel()` returns `EFI_NOT_FOUND`; failure screen | Re-stage kernel at `\boot\kernel.exe` OR re-seed with the new path |
 | Store corrupt (CRC mismatch / oversized)   | Parser rejects; bootloader synthesizes fallback      | Same as above                                         |
-| Operator removed `bootentries.json`        | Bootloader synthesizes fallback                      | `bootcfg --offline --seed`                            |
+| Operator removed `bootentries.json`        | Bootloader synthesizes fallback                      | `bootcfg.py emit-seed`                                |
 | All three seeded entries somehow inactive  | Ladder reports `FALLBACK_NO_VIABLE`                  | Should not happen with the canonical seed; if it does, re-seed |
 
 ## References

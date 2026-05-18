@@ -4633,7 +4633,7 @@ static int boot_menu_enter_fw_setup(void)
     return 1;
 }
 
-/* ----- TODO-07 section 14 health-gate handoff helpers ----------------- */
+/* ----- per-entry health-gate handoff helpers -------------------------- */
 
 #include "../../../include/boot/boot_health_handoff.h"
 

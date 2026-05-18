@@ -87,7 +87,7 @@ typedef struct {
     char policy_tags[BOOT_ENTRIES_MAX_POLICY_TAGS][BOOT_ENTRIES_MAX_POLICY_TAG_LEN + 1u];
     unsigned int policy_tag_count;    /* 0..BOOT_ENTRIES_MAX_POLICY_TAGS retained */
     unsigned int policy_tag_overflow; /* 1 if JSON had more tags than the cap */
-    /* Optional per-entry health-check subset (TODO-07 section 14). When
+    /* Optional per-entry health-check subset. When
      * non-empty, restricts the kernel's health-gate run to the named
      * checks (intersection with registry). Absent / empty -> kernel runs
      * the full default check set. Names are matched by exact string

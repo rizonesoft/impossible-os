@@ -846,7 +846,7 @@ static int parse_entry_object(lexer_t *L, u32 idx,
             saw_policy_tags = 1;
         }
         else if (key_len == 19u && bytes_eq(key_ptr, (const u8 *)"health_check_subset", 19u)) {
-            /* Optional per-entry override (TODO-07 section 14). Array of
+            /* Optional per-entry health-gate override. Array of
              * up to BOOT_ENTRIES_HEALTH_SUBSET_MAX_NAMES strings naming
              * health checks to run. Empty / absent -> kernel runs the
              * full default check set. Cap-exceeded -> hard reject (no

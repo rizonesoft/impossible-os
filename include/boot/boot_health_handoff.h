@@ -1,8 +1,8 @@
 /* ============================================================================
  * boot_health_handoff.h -- cross-boot ABI for per-entry health-gated mark-good
  *
- * Three UEFI variables compose the bootloader <-> kernel handoff for TODO-07
- * section 14. All under IMPOSSIBLE_OS_VENDOR_GUID:
+ * Three UEFI variables compose the bootloader <-> kernel handoff for the
+ * per-entry health-gated mark-good feature. All under IMPOSSIBLE_OS_VENDOR_GUID:
  *
  *   ImpossibleOS-CurBootCtr   (BS+RT, no NV)
  *     Written by bootloader pre-EBS after policy_counter_decrement. Carries
@@ -54,9 +54,10 @@
  * version gated, and pinned with _Static_assert to catch ABI drift between
  * the bootloader producer and the kernel consumer.
  *
- * Owner: TODO-07 section 14. Layered ABOVE TODO-21 section 5 (slot-level
- * mark_boot_successful, still unshipped) -- the slot-level hook is a no-op
- * today; the entry-level counter removal is what this header makes work.
+ * Owner: the per-entry health-gated mark-good feature. Layered ABOVE
+ * the A/B-rollback slot-level mark_boot_successful (still unshipped) --
+ * the slot-level hook is a no-op today; the entry-level counter
+ * removal is what this header makes work.
  * ============================================================================ */
 
 #ifndef BOOT_HEALTH_HANDOFF_H

@@ -396,7 +396,7 @@ static void test_parser_fallback_split(void)
     TEST_ASSERT_EQ(e.kind, BOOT_ENTRY_KIND_SPLIT, "fallback under split mode is kind=split");
 }
 
-/* ---- health_check_subset (TODO-07 section 14) ------------------------- */
+/* ---- health_check_subset (per-entry health-gate override) ------------- */
 
 static void test_parser_health_subset_valid(void)
 {

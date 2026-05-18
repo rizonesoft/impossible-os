@@ -302,7 +302,7 @@ void boot_phase3(void)
      * writes a one-line record to X:\Boot\health.jsonl, and on a clean
      * pass composes the MarkGood UEFI variable so the next bootloader
      * run can delete the per-entry tries counter file. Layered above
-     * the slot-level mark in TODO-21 section 5 (unshipped today). */
+     * the A/B-rollback slot-level mark (unshipped today). */
     {
         extern void boot_health_check_register_defaults(void);
         extern int boot_health_check_run(void);

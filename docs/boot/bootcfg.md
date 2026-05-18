@@ -39,10 +39,15 @@ bootcfg set-default <path> <id>
     entries before the default tie-break runs).
 
 bootcfg emit-seed <path>
-    Write the idempotent default store (one split entry pointing at
-    `\EFI\ImpossibleOS\kernel.exe` -- byte-for-byte the bootloader's
-    in-firmware fallback). Running twice yields a byte-identical
-    store; safe to wire into release / install scripts.
+    Write the idempotent 3-entry default store: slot-a (active, split,
+    kernel=\boot\kernel.exe), slot-b (inactive, split -- gated on the
+    dual-slot A/B-rollback feature), and recovery (active envelope,
+    kind=recovery filtered today via supported_kinds_mask until the
+    recovery-partition load path ships). Kernel path matches the
+    release image's staged location at `<ESP>/boot/kernel.exe`.
+    Running twice yields a byte-identical store; safe to wire into
+    release / install scripts. See docs/boot/bootstrap.md for the
+    full ownership boundary and lifecycle contract.
 ```
 
 ## Exit codes

@@ -200,7 +200,7 @@ def cases() -> list[Case]:
                 ("fail", "payload must be an object")))
     out.append(("duplicate id", _make_dup_id, ("fail", "duplicate id")))
 
-    # ---- health_check_subset (TODO-07 section 14) ----
+    # ---- health_check_subset (per-entry health-gate override) ----
     out.append(("health_check_subset valid 2 names",
                 lambda: write_tmp(mutate(entry0={"health_check_subset":
                     ["desktop_ready", "no_panic"]}), recompute_crc=True),

@@ -1,5 +1,5 @@
 /* ============================================================================
- * boot_health_check.h -- per-entry health-gated mark-good (TODO-07 section 14)
+ * boot_health_check.h -- per-entry health-gated mark-good
  *
  * Greenboot-style gate. The bootloader has already decremented the
  * selected entry's tries counter pre-EBS; this module is the userspace
@@ -104,7 +104,7 @@ enum boot_health_aggregate boot_health_check_last_aggregate(void);
 
 /* Mark the named entry as successful by composing the MarkGood UEFI
  * variable record from the CurBootCtr handoff. Public so a future
- * user-mode tool (deferred per TODO-07 section 11) can call it via a
+ * user-mode tool (the deferred live-boot bootcfg binary) can call it via a
  * syscall thin wrapper without going through the full gate.
  *
  * Returns STATUS_SUCCESS on successful write, an NTSTATUS error code

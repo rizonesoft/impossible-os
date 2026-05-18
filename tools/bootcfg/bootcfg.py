@@ -17,11 +17,14 @@ Subcommands (offline mode, all operate on a path argument):
                                      among ACTIVE entries (the policy ladder
                                      picks lowest-sort_key first; mere array
                                      reordering does not change the default).
-    emit-seed <path>                 Write the idempotent default store
-                                     (one split entry pointing at the
-                                     bootloader's hardcoded fallback path).
-                                     Idempotent -- running twice yields a
-                                     byte-identical store.
+    emit-seed <path>                 Write the idempotent 3-entry default
+                                     store (slot-a active + slot-b inactive
+                                     + recovery active-but-kind-filtered).
+                                     Kernel path matches the release image's
+                                     staged \\boot\\kernel.exe location.
+                                     Running twice yields a byte-identical
+                                     store. See docs/boot/bootstrap.md for
+                                     the ownership boundary and lifecycle.
 
 Live-boot subcommands DEFERRED (need a running OS user-mode binary, not host
 Python): set-bootnext-hint, set-oneshot, dump-history.
@@ -656,7 +659,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_seed = sub.add_parser(
         "emit-seed",
-        help="write idempotent default store (single split entry)",
+        help="write idempotent 3-entry default store "
+             "(slot-a active + slot-b inactive + recovery filtered)",
     )
     p_seed.add_argument("path")
     p_seed.add_argument("--mutation-log", help=mutation_help)
