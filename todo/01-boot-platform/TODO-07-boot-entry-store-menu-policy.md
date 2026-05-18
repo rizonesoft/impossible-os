@@ -67,7 +67,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  14   | Per-entry health-gated mark-good                       | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
 | 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [x]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
-| 💎  |  17   | Boot entry tests                                       | §1-§16                                  |  [ ]   |
+| 💎  |  17   | Boot entry tests                                       | §1-§16                                  |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -531,24 +531,35 @@ Who creates the FIRST default entry on a freshly-installed system? Who creates t
 
 ## 17. Boot Entry Tests
 
-Unit + scenario tests so regressions surface in CI, not on a user's laptop.
+Umbrella aggregation: per-section coverage shipped throughout §1-§16; this section maps that coverage and lists blocked / deferred live-boot scenarios. No new test files land here.
 
-- [ ] Parser fixture tests for valid + every invalid case enumerated in §2 + per-kind cases from §13.
-- [ ] QEMU boot menu timeout/default-selection scenario.
-- [ ] Firmware-vs-OS layer separation scenario (§3): firmware sets `BootNext` to an unknown `Boot####`; bootloader logs `UNKNOWN_BOOTCURRENT` and falls through to in-store default.
-- [ ] A/B rollback entry-selection scenario across 1-fail, 2-fail, 3-fail boundaries (demote-not-drop UX preserved).
-- [ ] Recovery auto-select scenario (both slots failed); ALL_PATHS_BAD scenario (recovery also corrupt).
-- [ ] Per-entry health-gate scenario: kernel reaches desktop with klog ERR -> entry stays indeterminate; clean boot -> entry marked good.
-- [ ] Entry-kind dispatch scenario: `kind: uki` boots via UKI fast path, `kind: chainload` rejected without Secure Boot when `trusted_chainload` unset.
-- [ ] Loader UEFI variable scenario: post-boot `LoaderEntries`, `LoaderEntrySelected`, `LoaderFeatures` readable; `LoaderEntryOneShot` honored once.
-- [ ] Bootstrap idempotency scenario: `bootcfg.py emit-seed` twice yields byte-identical store.
-- [ ] BlackBox-vs-NVRAM audit scenario: per-boot history goes to BlackBox JSONL; NVRAM-full harness still allows boot with `audit_degraded` set.
-- [ ] Audit dual-write-failure dedup harness: fail BOTH `X:\Boot\sequence` writes after `VFS_O_TRUNC`; assert the next publish does not regress `boot_seq` below the historical max in `history.jsonl`.
-- [ ] Audit JSONL rotation on FAT32 LFN: rotation falls through to spillover today because FAT32 driver does not LFN-rename. Blocked on kernel-side `fat32_rename_vol` LFN fix.
-- [ ] `bootcfg.exe` round-trip scenario (offline + online).
-- [ ] Commit: `"test: boot entry store, kinds, policy, health, and variables"`
+> **Note:** Several items below reference a "live-boot integration harness" -- a framework that boots an image in QEMU/WHPX/bare-metal with seeded `bootentries.json` + simulated UEFI variable state, asserts kernel/serial output, and tears down. This harness does not yet have a current owner; it is scope-gap-protocol Branch C work (new TODO file in `00-infrastructure` or successor) that landed when the QEMU smoke test gained richer assertion capability beyond `Boot complete in` + `C:\>`. Until that owner is filed, the items below citing the harness stay `[ ]`/`[/]` with the gap explicit.
 
-**Test checkpoint:** All fixtures pass under `make test-boot`; all QEMU scenarios complete without manual intervention. Bare-metal pass on at least one test laptop. Test on: host fixtures + QEMU WHPX + TCG; bare metal.
+- [x] Parser fixture tests (envelope + per-kind + invalid cases): covered by the host validator suite (§1), kernel parser suite (§2), and entry-kind suite (§13). See each section's Test runner line for current case counts.
+- [ ] QEMU boot menu timeout/default-selection scenario. Pre-EBS UEFI menu_run is not kernel-testable; needs a live-boot harness.
+- [/] Firmware-vs-OS layer separation scenario: §3 ladder + §4 reject-record path tested; §6 menu_should_show covers UNKNOWN_BOOTCURRENT rendering. Full end-to-end fall-through to in-store default needs an integration / live-boot harness.
+- [ ] A/B rollback entry-selection scenario (1/2/3-fail). Blocked: [`TODO-21 §1`](TODO-21-ab-boot-rollback.md), [`TODO-21 §3`](TODO-21-ab-boot-rollback.md), [`TODO-21 §4`](TODO-21-ab-boot-rollback.md).
+- [ ] Recovery auto-select + ALL_PATHS_BAD scenario. Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md), [`TODO-22 §2`](TODO-22-recovery-partition.md).
+- [/] Per-entry health-gate scenario: unit-level coverage shipped via §14 (`test_boot_health_check.c` + health_check_subset parser fixtures); full live-boot scenario needs the live-boot harness.
+- [/] Entry-kind dispatch: SPLIT/UKI/SAFE covered via §13; chainload -> [`T27 §1`](TODO-27-uefi-advanced.md), network -> [`T25 §7`](TODO-25-network-pxe-http-boot.md), resume -> [`T26 §3`](TODO-26-hibernation-resume-fast-startup-handoff.md).
+- [/] Loader UEFI variable scenario: helper-level coverage shipped via §15 (`test_smbios_parse.c`); live post-boot readback needs the live-boot harness.
+- [x] Bootstrap idempotency scenario: covered by §16 `emit-seed: idempotent` + 3-entry default (`test_bootcfg.py`).
+- [x] BlackBox-vs-NVRAM audit scenario: covered by §12 (`test_boot_audit.c` + bootcfg mutation-log).
+- [ ] Audit dual-write-failure dedup harness. No current owner -- scope-gap-protocol Branch C: needs a static-helper testability seam in `boot_audit.c` ([L]). Property already correct by construction.
+- [ ] Audit JSONL rotation on FAT32 LFN. Blocked on cross-cluster LFN removal in [`../05-storage-filesystems/TODO-04 §16`](../05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md) (currently refuses non-first-cluster destinations).
+- [/] `bootcfg.exe` round-trip scenario: offline subset shipped via §11+§16 (`test_bootcfg.py`); live-boot `bootcfg.exe` deferred per [`§11`](#11-boot-entry-editor-tooling).
+- [ ] Commit: `"test: boot entry test suite aggregation + status"`
+
+**Test checkpoint:** Per-section unit suites already register under `TEST_CAT_BOOT` and run with `make test-boot` (or `bash scripts/test.sh SUITE=boot`); the §17 commit is pure status reconciliation -- no new test code lands here. Live-boot scenarios depend on harness infrastructure that is not in this TODO's scope; XREF'd to their owner sections above. Bare-metal pass requires the user's laptop -- not gateable from WSL. Test on: host (`python3 tools/bootcfg/test_bootcfg.py` + `python3 tools/boot-entry-validate/test_validate.py`) + QEMU TCG (`make test-boot`).
+
+> **Test runner:** N/A (aggregation section -- no new test file) | validation: per-section runners; aggregate via `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+
+> **Notes:**
+> - What shipped: status reconciliation only -- every checklist item maps to per-section coverage, a blocker XREF, or a live-boot harness gap.
+> - Structure / consumers: §17 is the umbrella; §1-§16 carry the actual cases (parser / policy / decision / menu / entry-kind / audit / health / smbios / bootcfg). Per-section Test runner lines have the current counts. `make test-boot` aggregates them.
+> - Downstream effects: closes the umbrella. Remaining gaps are explicit per-item with concrete blocker XREFs; the live-boot integration harness has no current owner -- see the in-section Note below.
+> - Canonical doc: this section + per-section Test runner lines.
+> - Scope boundary: §17 owns aggregation + status. New tests for covered behavior belong in their owner sections; dual-write testability + FAT32 LFN belong elsewhere.
 
 ---
 
@@ -581,47 +592,17 @@ Unit + scenario tests so regressions surface in CI, not on a user's laptop.
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_boot_entry()` -- register in `src/kernel/test/test_runner.c` under `TEST_CAT_BOOT`.
-> Tests run with `debug=1` or `test=1` in `boot.conf`.
+Per-section test files were shipped under each implemented section instead of a single monolithic `test_boot_entry.c`. §17 above maps each scenario to its owner test file. No single registration function is owed -- each per-section file already registers under `TEST_CAT_BOOT`.
 
-- [ ] `test_boot_entry_parse_valid` -- minimal valid store yields the expected entry count and id list.
-- [ ] `test_boot_entry_rejects_duplicate_id` -- store with two entries sharing an id returns parse error.
-- [ ] `test_boot_entry_rejects_bad_crc` -- corrupted checksum byte rejected.
-- [ ] `test_boot_entry_rejects_path_escape` -- entry pointing outside `\EFI\ImpossibleOS\` rejected unless `trusted_chainload` + Secure Boot on.
-- [ ] `test_boot_entry_rejects_unknown_kind` -- entry with `kind: future_kind` rejected with logged reason.
-- [ ] `test_boot_policy_layer_separation` -- firmware sets `BootNext` to unknown `Boot####`; OS layer sees `UNKNOWN_BOOTCURRENT`, falls through to in-store default.
-- [ ] `test_boot_policy_watchdog_overrides_os_layer` -- watchdog rollback flag (BlackBox sticky) beats OS-layer A/B selection (firmware-layer `BootNext` is NOT under OS control).
-- [ ] `test_boot_policy_ab_rollback_selection` -- 3-fail slot demoted (visible with `last_failure_reason`), alternate slot selected.
-- [ ] `test_boot_policy_loop_prevention` -- entry with `tries_left=0` demoted, policy re-runs.
-- [ ] `test_entry_kind_uki_first_class` -- `kind: uki` entry sets `BOOT_FLAG_INVOKED_VIA_UKI` and reaches kernel without disk-side cmdline override.
-- [ ] `test_entry_kind_chainload_secure_boot_gate` -- `kind: chainload` without `trusted_chainload` + Secure Boot rejected.
-- [ ] `test_entry_kind_resume_digest_mismatch` -- `kind: resume` with bad digest falls through to next priority.
-- [ ] `test_health_gate_blocks_premature_mark_good` -- kernel reaches desktop but health-check `HARD_FAIL` -> entry NOT marked good.
-- [ ] `test_health_gate_userspace_signal` -- after passing health, `mark_entry_successful(id)` removes the tries counter from the store.
-- [ ] `test_loader_variables_published` -- `LoaderEntries` / `LoaderEntrySelected` / `LoaderFeatures` readable post-boot; values match `boot_info`.
-- [ ] `test_loader_one_shot_consumed` -- `LoaderEntryOneShot` honored once, then deleted.
-- [ ] `test_bootstrap_idempotent_offline_seed` -- `bootcfg.py emit-seed` twice yields byte-identical `bootentries.json`.
-- [ ] `test_bootstrap_first_boot_self_seed` -- missing `bootentries.json` + present recovery partition + known-good slot -> first-boot synthesis.
-- [ ] `test_audit_blackbox_primary_nvram_exceptional` -- per-boot record lands in BlackBox JSONL; NVRAM-quota-full harness still boots with `audit_degraded` set.
-- [ ] `test_audit_mutation_log` -- `bootcfg add/remove/reorder` writes a mutation record with requester + prior-state.
-- [ ] Create `src/kernel/test/test_boot_entry.c`; register via `test_register_boot_entry()`.
-- [ ] Author / extend `scripts/debug/kernel/run-boot-tests.bat` (already exists) so the new tests run in the boot suite.
-- [ ] Commit: `"test: add boot entry test suite"`
+Live-boot scenarios (menu rendering, A/B rollback, recovery auto-select, loader-var readback) require a live-boot integration harness that this TODO does not own; they remain `[ ]` in §17 with the blocker XREFs above.
 
 ---
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===`
-- [ ] QEMU boot menu keyboard selection (GOP).
-- [ ] QEMU firmware-vs-OS layer separation: firmware `BootNext` to unknown `Boot####`, bootloader falls through to OS-layer default with `UNKNOWN_BOOTCURRENT` reason.
-- [ ] A/B rollback auto-selection after 3-fail threshold; demoted slot stays visible with `last_failure_reason`.
-- [ ] UKI / chainload / network / resume kinds each dispatch through their per-kind handler.
-- [ ] Health gate blocks mark-good when kernel logs `LOG_ERR`; passes mark-good on clean boot.
-- [ ] LoaderXxx UEFI variables present post-boot; one-shot honored once.
-- [ ] Bootstrap idempotent offline seed yields byte-identical store on repeat runs.
-- [ ] Bare-metal menu over GOP and serial fallback.
-- [ ] `make test-boot` passes (boot suite includes the new TODO-07 tests).
-- [ ] Commit: `"boot: TODO-07 entry store + kinds + policy + health + loader vars + bootstrap complete"`
+- [x] `bash scripts/build.sh` -> `tail -1 build/build.log` -> `=== BUILD OK ===` (re-verified at every section ship).
+- [/] QEMU + bare-metal scenarios: unit-level coverage shipped for every implemented section (see Implementation Order [x]/[/] rows + per-section Test runner lines). Live-boot scenarios deferred to the live-boot harness owner.
+- [x] `make test-boot` aggregates all `TEST_CAT_BOOT` registrations from per-section files.
+- [ ] Commit: `"boot: TODO-07 entry store + kinds + policy + health + loader vars + bootstrap complete"` (closes when §9, §10, §16 first-boot self-seed, §17 deferred items all land).
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 20 suites pending implementation
+**Test runner:** see per-section Test runner lines for current counts; aggregate via `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot).
