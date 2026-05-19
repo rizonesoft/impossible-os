@@ -23,8 +23,13 @@ Once you have built the OS (`bash scripts/build.sh`), choose the artifact format
 
 Full per-format recipes, verification flows (`bootimg inspect`), Secure Boot setup, and troubleshooting are in [Boot Artifacts: Build, Verify, Write](../release/boot-artifacts.md).
 
+## Boot protocol
+
+Impossible OS boots **UEFI/GPT/ESP only**. Multiboot2 / GRUB / Limine / legacy BIOS / Linux x86 boot protocol / EFI stub direct boot / kexec are explicit non-goals. The `BUILD_ALT_BOOT={off,diagnostic,compatible}` Makefile variable selects how the codebase treats the latent Multiboot2 parser; developer builds default to `diagnostic` (parser compiled but never reached), and release builds should override to `off` (release-side assertion lands when the deprecation gate's symbol gating ships). Full policy contract, decision-flip criteria, and security trade-offs are in [Alternate Boot Protocol Policy](../boot/alt-boot.md).
+
 ## See Also
 
 - [Boot Artifacts: Build, Verify, Write](../release/boot-artifacts.md) -- per-format build, write, verify, troubleshoot
+- [Alternate Boot Protocol Policy](../boot/alt-boot.md) -- UEFI-only stance + non-goals + `BUILD_ALT_BOOT` policy
 - [Infrastructure → Development Tooling](../infrastructure/development-tooling.md) -- build system and `build.sh run`
 - [CI Boot Matrix for Every Artifact](../../todo/01-boot-platform/TODO-06-boot-media-image-installer-handoff.md#9-ci-boot-matrix-for-every-artifact) -- owns the Hyper-V/WHPX VHDX boot-test runner blocker

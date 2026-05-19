@@ -35,6 +35,42 @@ CFLAGS  := --target=x86_64-elf \
 # `make` invocation override only one half.
 CFLAGS += $(KERNEL_EXTRA_CFLAGS)
 ASFLAGS := -f elf64 -g
+
+# --- Alternate boot protocol policy ---
+# BUILD_ALT_BOOT selects how Multiboot2 / GRUB / Limine entry surfaces are
+# treated in the build. Three modes:
+#   off         - parser excluded from kernel image; entry.asm magic check
+#                 compiled out; no GRUB artifact. NOT YET ENFORCED -- the
+#                 symbol gating lands with the deprecation-or-promotion
+#                 gate work. Today setting `off` only changes the -D macro.
+#   diagnostic  - parser code included but never reached on the UEFI boot
+#                 path; current state by inertia. Useful for development /
+#                 spec research.
+#   compatible  - full Multiboot2 parity; GRUB ISO shipped. Implementation
+#                 lives in the parity-audit / adapter / degradation /
+#                 test-image sections.
+#
+# Developer default is `diagnostic`. Release builds SHOULD set
+# BUILD_ALT_BOOT=off when invoking make (the release script does not yet
+# enforce this; the rejection assertion lands with the deprecation gate's
+# symbol gating). See docs/boot/alt-boot.md for the full contract.
+#
+# This block ships the policy doc + define propagation. Actual symbol
+# gating in entry.asm + multiboot2_parse.c lands in the deprecation gate.
+# The define propagates to BOTH CFLAGS (kernel C) AND ASFLAGS (NASM) so
+# the future gating can use the same `-D` macro from both toolchains.
+BUILD_ALT_BOOT ?= diagnostic
+ifeq ($(BUILD_ALT_BOOT),off)
+    BUILD_ALT_BOOT_DEFINE := -DBUILD_ALT_BOOT_OFF=1
+else ifeq ($(BUILD_ALT_BOOT),diagnostic)
+    BUILD_ALT_BOOT_DEFINE := -DBUILD_ALT_BOOT_DIAGNOSTIC=1
+else ifeq ($(BUILD_ALT_BOOT),compatible)
+    BUILD_ALT_BOOT_DEFINE := -DBUILD_ALT_BOOT_COMPATIBLE=1
+else
+    $(error BUILD_ALT_BOOT must be one of: off, diagnostic, compatible (got '$(BUILD_ALT_BOOT)'))
+endif
+CFLAGS  += $(BUILD_ALT_BOOT_DEFINE)
+ASFLAGS += $(BUILD_ALT_BOOT_DEFINE)
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000
 
 # --- Directories ---

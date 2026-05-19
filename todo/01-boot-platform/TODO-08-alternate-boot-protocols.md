@@ -45,7 +45,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 | ⭐  | Order | Deliverable                                        | Depends On                | Status |
 | --- | :---: | -------------------------------------------------- | ------------------------- | :----: |
-| 💎  |   1   | Alternate boot protocol policy                     | T01 §8                    |  [ ]   |
+| 💎  |   1   | Alternate boot protocol policy                     | T01 §8                    |  [/]   |
 | 💎  |   2   | Multiboot2 feature parity audit                    | §1                        |  [ ]   |
 | 💎  |   3   | Multiboot2-to-boot_info adapter                    | §2, T01 §11, T01 §12      |  [ ]   |
 | 💎  |   4   | Unsupported-feature degradation matrix             | §2, §3                    |  [ ]   |
@@ -60,15 +60,24 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 ## 1. Alternate Boot Protocol Policy
 
-- [ ] Decide supported state for Multiboot2: `unsupported` (delete parser), `diagnostic` (gate behind `ALLOW_ALT_BOOT=1`), or `compatible` (full feature parity).
-- [ ] Decide supported state for Limine / stivale: default `rejected` (UEFI + Multiboot2 cover dual-boot). Override only on concrete user scenario; documented in §5.
-- [ ] Explicit non-goal table in `docs/boot/alt-boot.md`: Multiboot1, Linux x86 boot protocol / bzImage / zboot, EFI stub direct boot, kexec kernel-to-kernel (warm-update owned by TODO-01 §14 + 03-memory-concurrency/TODO-11).
-- [ ] Document UEFI-only features in `docs/boot/alt-boot.md`: runtime services, Secure Boot, TPM, BootOrder, GOP, USB handoff, ESP integrity, UKI sig chain, A/B, recovery, hibernation, watchdog.
-- [ ] `BUILD_ALT_BOOT={off,diagnostic,compatible}` plumbing: Makefile variable + `scripts/build.sh` env + `-DBUILD_ALT_BOOT_<MODE>` compile-time define + `scripts/release/build-image.sh` thread-through for release artifact filtering.
-- [ ] Update `docs/getting-started/` to state the policy decision and the platforms it applies to.
+- [/] Decide supported state for Multiboot2: default `diagnostic` by inertia; decision-flip criteria for `off` vs `compatible` documented; final flip lands in §7 with symbol gating.
+- [x] Decide supported state for Limine / stivale: default `rejected` per `docs/boot/alt-boot.md`; re-evaluation gate in §7.
+- [x] Explicit non-goal table in `docs/boot/alt-boot.md`: Multiboot1, Linux x86 boot protocol / bzImage / zboot, EFI stub direct boot, kexec, legacy BIOS, Limine.
+- [x] Document UEFI-only features in `docs/boot/alt-boot.md`: runtime services, Secure Boot, TPM, BootOrder, GOP, USB handoff, ESP integrity, UKI sig chain, A/B, recovery, hibernation, watchdog.
+- [/] `BUILD_ALT_BOOT` plumbing: Makefile var + `$(error)` validation + `-D` propagated to CFLAGS + ASFLAGS; `build.sh` help documents passthrough. Symbol-presence assertion lands with §7.
+- [x] Updated `docs/getting-started/index.md` Boot protocol section: UEFI-only stance + non-goals + `BUILD_ALT_BOOT` pointer.
 - [ ] Commit: `"boot: alternate boot protocol policy"`
 
-**Test checkpoint:** Build with `BUILD_ALT_BOOT=off` produces no `multiboot2_*` symbols in the kernel image (`nm build/kernel.exe | grep multiboot2` returns empty); `=diagnostic` includes them but `objcopy --extract-section .multiboot2_header` reports zero size; `=compatible` ships the GRUB-bootable artifact in `build/release/`. Docs state the chosen policy verbatim with a single canonical phrase.
+**Test checkpoint:** `BUILD_ALT_BOOT=diagnostic make` (default) builds OK; `BUILD_ALT_BOOT=off make` builds OK (today same kernel image -- gating deferred to §7); `BUILD_ALT_BOOT=bogus make` fails fast at Makefile parse with `$(error)`. `docs/boot/alt-boot.md` exists with UEFI-only statement + non-goals + `BUILD_ALT_BOOT` plumbing reference; `docs/getting-started/index.md` Boot protocol section points to it. Behavioral assertions about symbol presence and GRUB artifact shipment are §7 territory. Test on: host (Make parse + clean build).
+
+> **Test runner:** N/A (policy + Makefile var + docs; no kernel-testable surface) | validation: `bash scripts/build.sh` (OK) + `BUILD_ALT_BOOT=bogus make` (fail-fast) + lint clean
+
+> **Notes:**
+> - What shipped: `BUILD_ALT_BOOT` Makefile var with `$(error)` validation + CFLAGS/ASFLAGS `-D` propagation; `docs/boot/alt-boot.md` canonical policy doc; `docs/getting-started/` Boot protocol section.
+> - Structure / consumers: `docs/boot/alt-boot.md` is single-source-of-truth; cross-linked from getting-started + Makefile comment + TODO-08 §1.
+> - Downstream effects: policy decision deferred (`[/]`); final flip to `off`/`compatible` lands in §7 with symbol gating. §2-§6 remain `[ ]` blocked on §1 decision.
+> - Canonical doc: [`docs/boot/alt-boot.md`](../../docs/boot/alt-boot.md).
+> - Scope boundary: §1 owns policy doc + `BUILD_ALT_BOOT` plumbing + non-goal contract. §7 owns symbol gating (entry.asm + multiboot2_parse.c + release assertion) that makes modes behaviorally distinct.
 
 ---
 

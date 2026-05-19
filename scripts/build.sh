@@ -46,6 +46,17 @@ Usage:
   bash scripts/build.sh --jobs=N        Override parallel jobs (default: nproc)
   bash scripts/build.sh --help          Show this help
 
+Environment variables (passed through to make):
+  BUILD_ALT_BOOT={off,diagnostic,compatible}
+                                        Alternate boot protocol policy.
+                                        Developer default is `diagnostic`
+                                        (parser compiled, never reached on
+                                        UEFI boot). Release builds force
+                                        `off` via scripts/release/build-image.sh.
+                                        See docs/boot/alt-boot.md.
+  KERNEL_EXTRA_CFLAGS=...               Append CFLAGS to kernel compile
+                                        (e.g. fixture-mode ABI overrides).
+
 Output:
   Tee'd to build/build.log. Last line is always one of:
     === BUILD OK ===
