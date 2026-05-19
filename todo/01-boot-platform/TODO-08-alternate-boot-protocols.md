@@ -2,7 +2,7 @@
 schema_version: 1
 id: alternate-boot-protocols
 domain: 01-boot-platform
-status: closed
+status: done
 title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 ---
 
@@ -175,7 +175,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [~] Compatible-mode ship gate: N/A.
 - [~] Compatible-mode reciprocal XREF in TODO-02 §16: N/A.
 - [x] Updated `docs/boot/alt-boot.md` to reflect `unsupported` closure status.
-- [ ] Commit: `"boot: settle alternate boot support level"`
+- [x] Commit: `"boot: settle alternate boot support level"` (commit `69397ff3`)
 
 **Test checkpoint:** Repository state matches the chosen policy (`unsupported`): `find src/boot/ src/kernel/ include/kernel -name "multiboot2*"` returns empty (verified post-deletion); `nm build/kernel.exe | grep -i multiboot` returns empty (verified); `bash scripts/build.sh clean` produces `=== BUILD OK ===` (verified); `bash scripts/test-smoke.sh` reaches `SMOKE TEST PASSED` (verified, 2.770s KVM boot). INDEX.md TODO-08 line marks closed.
 
@@ -187,6 +187,9 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 > - Downstream effects: closes TODO-08; alt-boot fenced off so no future contributor ships Multiboot2 / GRUB / Limine / legacy BIOS / EFI stub / kexec without a new policy decision.
 > - Canonical doc: [`docs/boot/alt-boot.md`](../../docs/boot/alt-boot.md).
 > - Scope boundary: §7 owns deletion + linker.ld + Makefile cleanup. `BOOT_PRODUCER_MULTIBOOT2 = 2` enum value kept reserved for ABI stability.
+
+> **Verified:** 2026-05-20 | commit `69397ff3` | 7/7 items + 5 retired | build OK | smoke PASS (KVM 2.690s) + tooling 375/375 PASS + nm `multiboot2` empty
+> **Quality reviewed:** 2026-05-20 | Codex 8x (design + adversarial 5x + consistency 2x + perf) | 2C+3H+5M fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 

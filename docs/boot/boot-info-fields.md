@@ -449,27 +449,24 @@ Surface for the systemd-boot Boot Loader Interface compatibility feature (boot-e
 | `length` | u64 | Size in bytes | `phys_start + length` must not wrap `u64`; `0` marks an empty slot. |
 | `alignment` | u64 | Required natural alignment | `0` (no requirement) or a power of 2. |
 | `checksum` | u64 | CRC-32C in low 32 bits when `CHECKSUMMED` set | Computed by consumer when they process the payload. |
-| `producer_id` | u32 | `enum boot_payload_producer` | `BOOT_PRODUCER_UEFI`, `_MULTIBOOT2`, or `_KERNEL_TEST` for fixture buffers. |
+| `producer_id` | u32 | `enum boot_payload_producer` | `BOOT_PRODUCER_UEFI` or `_KERNEL_TEST` (fixture buffers). `_MULTIBOOT2 = 2` is RESERVED -- alt-boot policy is `unsupported`; the value is kept for ABI stability but no producer emits it. |
 | `_reserved` | u32 | Pad to 48 bytes | Zero. |
 
-## Legacy / Multiboot2-only fields
+## Legacy / Multiboot2-only fields (historical)
 
-The repo supports two boot paths today:
+The repo currently supports ONE boot path: UEFI (`src/boot/uefi/bootx64.c`). The Multiboot2 parser, header asm, 32-bit entry stub, and `grub.cfg` were deleted under the alt-boot `unsupported` policy ([TODO-08](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md) closed; see [`docs/boot/alt-boot.md`](alt-boot.md)).
 
-- **UEFI (primary)** -- `src/boot/uefi/bootx64.c`, the shipping path.
-- **Multiboot2 (legacy)** -- `src/boot/entry.asm` + `src/kernel/multiboot2_parse.c`, retained so GRUB-based boots still produce a usable `struct boot_info`.
-
-The fields below exist because Multiboot2 produced them. The UEFI bootloader fills them too for parity, but nothing outside the Multiboot2 parser consumes them. Decision per field:
+The fields below remain in `struct boot_info` for ABI stability -- removing them would shift offsets and force a `BOOT_INFO_VERSION` bump. The UEFI bootloader fills them when applicable; no kernel consumer reads them today.
 
 | Field | Status | Replacement owner | Notes |
 | --- | --- | --- | --- |
-| `mem_lower_kb` | **deprecate** | `mmap[]` (UEFI memory map) | No kernel consumer today. UEFI mmap supersedes lower/upper-memory reporting. Flag for removal in a future `BOOT_INFO_VERSION` bump once the Multiboot2 path is retired or migrated. |
+| `mem_lower_kb` | **deprecate** | `mmap[]` (UEFI memory map) | No kernel consumer. UEFI mmap supersedes lower/upper-memory reporting. Removal candidate for a future `BOOT_INFO_VERSION` bump. |
 | `mem_upper_kb` | **deprecate** | `mmap[]` | Same reason. |
-| `module_start`     | **retain as compatibility alias** | boot-protocol §4 typed payload descriptors | Per §4 checklist ("Keep legacy single `module_start/module_end` as compatibility aliases until consumers migrate"). Once typed descriptors are populated by both bootloader and MB2, remove. |
+| `module_start`     | **retain as compatibility alias** | boot-protocol §4 typed payload descriptors | Kept as a compatibility alias until consumers migrate to typed descriptors. |
 | `module_end`       | **retain as compatibility alias** | boot-protocol §4 typed payload descriptors | Same. |
 | `module_available` | **retain as compatibility alias** | boot-protocol §4 typed payload descriptors | Same. |
 
-Multiboot2 retain/retire decision itself is a separate question owned by [alternate boot protocols roadmap](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md); this doc only records per-field status.
+These fields no longer reflect any active code path; removing them is gated on a future ABI version bump.
 
 ## Nested struct: `boot_mmap_entry`
 
