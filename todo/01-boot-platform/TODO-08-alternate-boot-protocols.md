@@ -66,7 +66,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [x] Document UEFI-only features in `docs/boot/alt-boot.md`: runtime services, Secure Boot, TPM, BootOrder, GOP, USB handoff, ESP integrity, UKI sig chain, A/B, recovery, hibernation, watchdog.
 - [/] `BUILD_ALT_BOOT` plumbing: Makefile var + `$(error)` validation + `-D` propagated to CFLAGS + ASFLAGS; `build.sh` help documents passthrough. Symbol-presence assertion lands with §7.
 - [x] Updated `docs/getting-started/index.md` Boot protocol section: UEFI-only stance + non-goals + `BUILD_ALT_BOOT` pointer.
-- [ ] Commit: `"boot: alternate boot protocol policy"`
+- [x] Commit: `"boot: alternate boot protocol policy"` (commit `8117d6c7`)
 
 **Test checkpoint:** `BUILD_ALT_BOOT=diagnostic make` (default) builds OK; `BUILD_ALT_BOOT=off make` builds OK (today same kernel image -- gating deferred to §7); `BUILD_ALT_BOOT=bogus make` fails fast at Makefile parse with `$(error)`. `docs/boot/alt-boot.md` exists with UEFI-only statement + non-goals + `BUILD_ALT_BOOT` plumbing reference; `docs/getting-started/index.md` Boot protocol section points to it. Behavioral assertions about symbol presence and GRUB artifact shipment are §7 territory. Test on: host (Make parse + clean build).
 
