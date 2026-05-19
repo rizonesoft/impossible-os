@@ -3710,16 +3710,16 @@ def _self_test_clangd(workspace_root: Path) -> int:
 
 def _self_test_asm(workspace_root: Path) -> int:
     """asm-lsp end-to-end smoke: SKIP when asm-lsp is missing, else
-    spawn + initialize + didOpen(src/boot/entry.asm) + hover on the
-    first `mov` mnemonic and print the byte-count of the instruction-
-    reference response.
+    spawn + initialize + didOpen(src/kernel/isr_stubs.asm) + hover on
+    the first `mov` mnemonic and print the byte-count of the
+    instruction-reference response.
 
-    Mirrors _self_test_clangd's fail-closed discipline. The hover
-    target file is src/boot/entry.asm; the TODO draft said
-    src/kernel/entry.asm, but the real tree puts the kernel entry
-    stub under src/boot/ (the kernel-side NASM files are ISR stubs,
-    SIMD helpers, etc., none of which carries the canonical `mov`
-    we want to exercise on asm-lsp's instruction-reference payload)."""
+    Mirrors _self_test_clangd's fail-closed discipline. Target file
+    retargeted to src/kernel/isr_stubs.asm when the alternate-boot
+    entry stub (src/boot/entry.asm) was deleted alongside the
+    Multiboot2 parser (policy = unsupported per docs/boot/alt-boot.md).
+    isr_stubs.asm carries canonical `mov` instructions that exercise
+    asm-lsp's instruction-reference payload identically."""
     try:
         from servers import asm_server
     except Exception as exc:
@@ -3738,7 +3738,7 @@ def _self_test_asm(workspace_root: Path) -> int:
     # Sandbox the self-test file read: resolve strictly, verify the
     # target stays inside workspace_root, reject non-regular files,
     # enforce the 8 MiB cap. Same guarantees as _self_test_clangd.
-    entry_asm = workspace_root / "src" / "boot" / "entry.asm"
+    entry_asm = workspace_root / "src" / "kernel" / "isr_stubs.asm"
     try:
         resolved = entry_asm.resolve(strict=True)
     except (OSError, RuntimeError) as exc:

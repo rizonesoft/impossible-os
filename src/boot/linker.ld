@@ -1,24 +1,29 @@
 /* ============================================================================
  * Linker Script -- 64-bit kernel memory layout
  *
- * GRUB loads the ELF at 1 MiB. The Multiboot2 header must come first.
- * BSS boundaries are exported for zeroing in entry.asm.
+ * The UEFI bootloader (src/boot/uefi/bootx64.c) loads kernel.exe as an ELF
+ * file, resolves the `kernel_main` symbol from the ELF symbol table, and
+ * calls it directly in 64-bit Long Mode. The ELF entry point declared
+ * here (ENTRY) is the conventional load address but is not the symbol the
+ * loader actually transfers control to -- the symbol-table lookup is
+ * authoritative.
+ *
+ * Alternate boot protocols (Multiboot2, GRUB, Limine, legacy BIOS, EFI
+ * stub direct boot, kexec) are explicit non-goals per the alt-boot
+ * policy doc (docs/boot/alt-boot.md). The 1 MiB load address remains for
+ * historical UEFI loader compatibility; bootx64.c relocates the kernel
+ * to wherever the ELF PT_LOAD headers request.
  * ============================================================================ */
 
-ENTRY(_start)
+ENTRY(kernel_main)
 OUTPUT_FORMAT(elf64-x86-64)
 
 SECTIONS
 {
-    /* GRUB loads the kernel at 1 MiB */
+    /* Kernel loaded at 1 MiB (matches the historical entry-point address; the
+     * UEFI loader places PT_LOAD segments per the ELF program headers). */
     . = 1M;
     __kernel_start = .;
-
-    /* Multiboot2 header must come first (GRUB scans for it) */
-    .multiboot2 ALIGN(8) :
-    {
-        *(.multiboot2)
-    }
 
     /* Code section */
     .text ALIGN(4K) :
@@ -51,13 +56,19 @@ SECTIONS
         *(.data)
     }
 
-    /* Uninitialized data (BSS) -- zeroed by entry.asm */
+    /* Uninitialized data (BSS) -- zeroed by the UEFI bootloader when
+     * copying PT_LOAD segments with p_memsz > p_filesz.
+     *
+     * `*(.bss .bss.*)` catches BOTH the catch-all .bss section AND any
+     * retained-or-named subsections (e.g. `.bss.bsp_boot_stack` emitted
+     * by clang when a C object has `__attribute__((retain))`). Without
+     * the `.bss.*` glob, retained subsections land AFTER __kernel_end
+     * and overlap PMM bitmap territory -- Codex caught a real boot-time
+     * stack/bitmap overlap from exactly that drift. */
     .bss ALIGN(4K) :
     {
-        __bss_start = .;
         *(COMMON)
-        *(.bss)
-        __bss_end = .;
+        *(.bss .bss.*)
     }
 
     /* End of kernel -- PMM bitmap is placed here */

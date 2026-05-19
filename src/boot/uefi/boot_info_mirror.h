@@ -304,7 +304,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, build_label) == 2
 /* enum boot_payload_producer mirror */
 #define BOOT_PRODUCER_NONE          0u
 #define BOOT_PRODUCER_UEFI          1u
-#define BOOT_PRODUCER_MULTIBOOT2    2u
+#define BOOT_PRODUCER_MULTIBOOT2    2u  /* RESERVED -- alt-boot policy = unsupported */
 #define BOOT_PRODUCER_KERNEL_TEST   3u
 
 /* BOOT_CAP_* mirror -- bitmasks value-for-value identical to

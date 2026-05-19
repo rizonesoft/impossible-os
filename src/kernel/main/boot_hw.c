@@ -10,7 +10,6 @@
 
 #include "kernel/types.h"
 #include "kernel/cpuid.h"
-#include "kernel/multiboot2.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_version.h"
 #include "registry.h"
@@ -33,8 +32,44 @@
 #include "kernel/msr.h"
 #include "main/main_internal.h"
 
-/* External: Multiboot2 parser */
-extern void multiboot2_parse(uintptr_t mbi_addr);
+/* Global boot info -- the canonical, kernel-side handoff structure.
+ * Populated by the UEFI bootloader via memcpy from the bootloader's
+ * mirror at BOOT_INFO_PHYS_ADDR (0x10000). Storage lives here (not in
+ * a protocol-specific file) so the kernel link does not depend on any
+ * bootloader-protocol parser. Alt-boot protocol = unsupported per the
+ * alternate-boot-protocol policy doc. */
+struct boot_info g_boot_info;
+
+/* BSP kernel boot stack. The UEFI bootloader calls kernel_main directly
+ * on its own EfiLoaderData stack; this static array provides a stable
+ * kernel-owned stack region whose top is exposed as the label `stack_top`
+ * for TSS.rsp0 (used on ring 3 -> ring 0 transitions) and IST setup.
+ *
+ * `stack_top` is declared via module-scope inline asm as a TRUE LABEL
+ * (symbol address == bsp_boot_stack + BSP_BOOT_STACK_SIZE), preserving
+ * the ABI that the previous entry.asm-defined `global stack_top`
+ * provided. `gdt.c` imports it as `extern char stack_top[]` and casts
+ * the symbol address directly into kernel_tss.rsp0; declaring it as a
+ * C `char *const` would put the pointer in .rodata and TSS.rsp0 would
+ * land at the address of the pointer object rather than the stack top.
+ *
+ * `used` + `retain` prevent LTO / --gc-sections from discarding the
+ * stack region (no direct C reads -- only the assembly-side label
+ * arithmetic and the gdt.c symbol cast). 16 KB matches AP_STACK_SIZE
+ * in include/kernel/smp.h. */
+#define BSP_BOOT_STACK_SIZE 16384
+__attribute__((aligned(16), used, retain))
+char bsp_boot_stack[BSP_BOOT_STACK_SIZE];
+/* Define `stack_top` as a true label symbol so its address arithmetic
+ * matches the original entry.asm `global stack_top` ABI exactly. Keep
+ * the literal size in sync with BSP_BOOT_STACK_SIZE above; the
+ * _Static_assert below pins the contract at compile time. */
+__asm__ (
+    ".globl stack_top\n\t"
+    ".set stack_top, bsp_boot_stack + 16384\n\t"
+);
+_Static_assert(BSP_BOOT_STACK_SIZE == 16384,
+    "BSP_BOOT_STACK_SIZE must match the literal in the stack_top inline asm above");
 
 /* UEFI boot magic */
 #define UEFI_BOOT_MAGIC 0x55454649ULL  /* "UEFI" */
@@ -115,10 +150,8 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
              (uint64_t)g_boot_info.header.version,
              (uint64_t)g_boot_info.header.size,
              (uint64_t)g_boot_info.header.magic);
-    } else if (magic == MULTIBOOT2_BOOTLOADER_MAGIC) {
-        multiboot2_parse((uintptr_t)mbi);
     } else {
-        boot_halt("Unknown bootloader magic");
+        boot_halt("Unknown bootloader magic (UEFI is the only supported boot path)");
     }
     boot_progress(0, "BOOT_INFO", 0x0026);
 
@@ -143,8 +176,8 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* typed payload descriptor array: validate the packed-prefix,
      * overlap, range, alignment, total-bytes, and unknown-required
      * invariants before any subsystem consumes payloads. Empty array
-     * (zero producers today outside the multiboot2 module handoff)
-     * short-circuits cleanly. */
+     * (zero producers in the UEFI boot path today) short-circuits
+     * cleanly. */
     {
         enum boot_payload_error err = BOOT_PAYLOAD_ERR_OK;
         if (boot_payload_validate(&g_boot_info, &err) != BOOT_OK) {

@@ -10,9 +10,12 @@
 #include "main/main_internal.h"
 
 /* Kernel entry point
- *   magic = MULTIBOOT2_BOOTLOADER_MAGIC (0x36D76289) for GRUB
- *           or UEFI_BOOT_MAGIC (0x55454649) for our UEFI bootloader
- *   mbi   = Multiboot2 info pointer (GRUB) or boot_info pointer (UEFI)
+ *   magic = UEFI_BOOT_MAGIC (0x55454649, ASCII "UEFI") -- the only
+ *           accepted bootloader magic. Alternate boot protocols
+ *           (Multiboot2, GRUB, Limine, legacy BIOS, EFI stub direct
+ *           boot, kexec) are explicit non-goals per the alt-boot
+ *           policy doc (docs/boot/alt-boot.md).
+ *   mbi   = boot_info pointer at BOOT_INFO_PHYS_ADDR (0x10000)
  */
 void kernel_main(uint64_t magic, uint64_t mbi)
 {

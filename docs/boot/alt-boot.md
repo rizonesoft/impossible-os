@@ -4,7 +4,7 @@
 >
 > **Canonical policy statement:** UEFI/GPT/ESP is the only supported boot path for Impossible OS. Multiboot2 / GRUB / Limine / stivale / legacy BIOS / Linux x86 boot protocol / EFI stub direct boot / kexec are NOT supported entry points.
 >
-> **Current build state:** `diagnostic` by inertia -- the Multiboot2 parser at [`src/kernel/multiboot2_parse.c`](../../src/kernel/multiboot2_parse.c) compiles into the kernel image and [`src/boot/entry.asm`](../../src/boot/entry.asm) carries the magic-check dispatch, but the production UEFI boot path never invokes the parser. No build today actually runs the alternate path.
+> **Current build state:** `unsupported` (policy committed). The Multiboot2 parser, multiboot2_header.asm, entry.asm magic-check stub, and grub.cfg have been deleted from the tree. UEFI/GPT/ESP is the only supported boot path. `BUILD_ALT_BOOT` defaults to `off`; the variable is retained as a knob for a hypothetical future flip back to `diagnostic` / `compatible` (no source code consumes the macro now that the parser is gone).
 
 This doc pins the policy contract so adjacent contributors don't accidentally re-introduce alternate-protocol code without a deliberate policy decision.
 
@@ -12,47 +12,38 @@ This doc pins the policy contract so adjacent contributors don't accidentally re
 
 | Mode | Meaning | Default for | Status |
 |---|---|---|---|
-| `off` | Parser excluded from kernel image; entry.asm magic check compiled out; no GRUB artifact ships. | Release builds (recommended; not yet enforced) | Enforcement gating lands in the [deprecation-or-promotion gate](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#7-deprecation-or-promotion-gate) |
-| `diagnostic` | Parser code included but never reached on UEFI path. Useful for development / spec research. | Developer builds | Today's actual state |
-| `compatible` | Full Multiboot2 parity per the [Multiboot2-to-boot_info adapter](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#3-multiboot2-to-boot_info-adapter); GRUB ISO ships. | Not selected | Implementation in the [later compatibility sections](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#2-multiboot2-feature-parity-audit) |
+| `off` | Parser excluded from kernel image; no GRUB artifact ships. | All builds (default) | **Current state** -- parser + entry stub + grub.cfg + multiboot2.h deleted in the [deprecation-or-promotion gate](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#7-deprecation-or-promotion-gate) |
+| `diagnostic` | (Retired) Parser code included but never reached on UEFI path. | Not selected | Was today's state pre-policy commit; parser since deleted |
+| `compatible` | Full Multiboot2 parity; GRUB ISO ships. | Not selected | Would require re-implementing the parser from the GNU Multiboot2 spec |
 
 ### Build-mode plumbing
 
-The `BUILD_ALT_BOOT` Makefile variable selects the mode. Three call sites:
+The `BUILD_ALT_BOOT` Makefile variable is retained for documentation continuity and to make a hypothetical future flip back to `diagnostic` / `compatible` a single-knob change. Today the parser, header, entry stub, and `grub.cfg` are deleted from the tree; no source code reads the macro.
 
 ```
 # Makefile:
-BUILD_ALT_BOOT ?= diagnostic
+BUILD_ALT_BOOT ?= off
 # propagates -DBUILD_ALT_BOOT_{OFF,DIAGNOSTIC,COMPATIBLE}=1 to CFLAGS + ASFLAGS
+# (informational; no source code reads the macro post-deletion)
 
 # scripts/build.sh:
-BUILD_ALT_BOOT=off bash scripts/build.sh    # explicit override
-
-# scripts/release/build-image.sh:
-# Release builds SHOULD set BUILD_ALT_BOOT=off before invoking make.
-# The release script does NOT yet enforce this; it copies the prebuilt
-# build/kernel.exe without checking which mode produced it. Release-
-# time enforcement (assertion that kernel image contains no multiboot2
-# symbols) lands together with the deprecation gate's symbol gating
-# in entry.asm and multiboot2_parse.c. Until then, the release default
-# is unenforced -- caller responsibility.
+BUILD_ALT_BOOT=off bash scripts/build.sh    # default; override is a no-op today
 ```
 
-The define propagates to both C and NASM toolchains so the eventual gating can use the same `-D` macro from `entry.asm` (NASM `%ifdef`), `multiboot2_header.asm`, `boot_hw.c`, and `multiboot2_parse.c`. Today the defines exist but no code consumes them; the value is informational until the [deprecation-or-promotion gate](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#7-deprecation-or-promotion-gate) lands.
+If the policy ever flips back, the deleted files are restored from git history AND gated with `%ifndef BUILD_ALT_BOOT_OFF` (NASM) / `#ifndef BUILD_ALT_BOOT_OFF` (C) so the `off` mode keeps producing a clean kernel image. The `-D` macro propagation to both CFLAGS and ASFLAGS is already in place to support that gating from either toolchain.
 
-### Today vs the future gating
+### Today vs the retired state
 
-| Item | Today (policy section) | After deprecation gate |
+| Item | Today (unsupported) | If policy ever flips back |
 |---|---|---|
-| `BUILD_ALT_BOOT` Makefile variable | OK defined; default `diagnostic` | unchanged |
-| `-D` define propagated to CFLAGS + ASFLAGS | OK | unchanged |
-| `scripts/build.sh` help text | OK documents env var | unchanged |
-| `entry.asm` magic check gated by `BUILD_ALT_BOOT_OFF` | not gated; always present | excluded when off |
-| `multiboot2_parse.c` in kernel image when `off` | always present | excluded |
-| `nm build/kernel.exe \| grep multiboot2` returns empty with `BUILD_ALT_BOOT=off` | no (no gating yet) | yes |
-| Release script asserts no multiboot2 symbols | no | yes |
+| `BUILD_ALT_BOOT` Makefile variable | defined; default `off`; informational only | gates restored parser via `-D` |
+| `-D` define propagated to CFLAGS + ASFLAGS | yes (informational) | actively consumed by restored gates |
+| `scripts/build.sh` help text | documents env var | unchanged |
+| `entry.asm` / `multiboot2_*` files | deleted (git log carries history) | restored from git; `%ifndef BUILD_ALT_BOOT_OFF` gated |
+| `nm build/kernel.exe \| grep multiboot2` | empty (no symbols emit) | empty when `off`; populated when `diagnostic`/`compatible` |
+| Release script asserts no multiboot2 symbols | not needed -- symbols structurally absent | required gate to prevent leakage |
 
-The policy section ships the plumbing; the deprecation-or-promotion gate enforces the policy by adding the actual gates.
+The deletion is the enforcement. There is no separate gating layer to maintain.
 
 ## Explicit non-goals (decided regardless of Multiboot2 outcome)
 
@@ -103,27 +94,26 @@ If `compatible` mode ships, the [deprecation-or-promotion gate](../../todo/01-bo
 
 Native UEFI/UKI chain remains the canonical secure path. `compatible` is the explicit trade-off path.
 
-## Decision-flip criteria
+## Reopen criteria
 
-The default `diagnostic` is not a positive choice; it's the codified current state. To move to `off` or `compatible`, document the trigger in a future policy-section update:
+The committed policy is `unsupported`. A future re-evaluation back to `diagnostic` or `compatible` requires both a new policy decision AND code restoration -- not a single flag flip.
 
-**Flip to `off` (recommended):**
+**To reopen toward `diagnostic` (parser compiled but not reached):**
 
-- Zero concrete users requesting Multiboot2 / GRUB compatibility.
-- [Deprecation-or-promotion gate](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#7-deprecation-or-promotion-gate) work scheduled to delete the parser, gate entry.asm, and update INDEX.md.
-- Analysis in [TODO-08](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md) gap-audit suggests this is the right long-term answer.
+- File a new TODO section under TODO-08 (or successor TODO) explaining the deployment scenario that needs the parser available for inspection / spec research without shipping it on a live boot path.
+- `git restore` the deleted files at their pre-§7 revision: `src/kernel/multiboot2_parse.c`, `include/kernel/multiboot2.h`, `src/boot/multiboot2_header.asm`, `src/boot/entry.asm`, `src/boot/grub.cfg`.
+- Restore `g_boot_info` storage to the canonical location (do NOT duplicate -- keep the `src/kernel/main/boot_hw.c` definition; delete the multiboot2_parse.c copy if `git restore` brings it back).
+- Add `%ifndef BUILD_ALT_BOOT_OFF` / `#ifndef BUILD_ALT_BOOT_OFF` gates so the default `off` mode keeps producing a clean kernel image.
 
-**Flip to `compatible`:**
+**To reopen toward `compatible` (full Multiboot2 parity + GRUB artifact):**
 
-- Concrete user / deployment scenario requiring GRUB boot (e.g., chainload from existing dual-boot install, kiosk / embedded with locked-down firmware).
-- Team capacity to track upstream GRUB + shim CVE backlog quarterly.
-- The [parity audit](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#2-multiboot2-feature-parity-audit) + [adapter](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#3-multiboot2-to-boot_info-adapter) + [degradation matrix](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#4-unsupported-feature-degradation-matrix) + [test images](../../todo/01-boot-platform/TODO-08-alternate-boot-protocols.md#6-compatibility-test-images) scope accepted.
-- Promotion-gate criteria satisfied.
+- All of the above PLUS the §7 promotion gate: upstream GRUB CVE backlog scan, upstream shim CVE backlog scan, SBAT / dbx / revocation status check, reciprocal XREF to the Secure Boot owner confirming the alt-boot variant is a documented weaker trust-boundary, quarterly re-check cadence.
+- Concrete deployment scenario justifying the ongoing CVE / SBAT maintenance burden.
+- Reimplement the full §2-§6 work that was retired under closure: parity audit, boot_info adapter, degradation matrix, GRUB documentation, compat test images.
 
-**Stay at `diagnostic` (current state):**
+**Status today:**
 
-- Policy decision postponed.
-- Maintenance cost: every `boot_info` refactor must keep `multiboot2_parse.c` in sync; this is the cost of leaving dead code in the boot path.
+`unsupported`. Multiboot2 parser, entry stub, header asm, and `grub.cfg` are deleted. `BUILD_ALT_BOOT` defaults to `off`. UEFI/GPT/ESP is the only supported boot path. The deletion itself is the enforcement; there is no flag check at boot time because there is no parser to enable.
 
 ## References
 

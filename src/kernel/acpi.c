@@ -4,8 +4,8 @@
  * Walks the RSDP → RSDT/XSDT → FADT chain to discover the PM1a control
  * block port, which is used to initiate an S5 (soft-off) shutdown.
  *
- * The RSDP physical address is provided by the Multiboot2 bootloader and
- * stored in g_boot_info.acpi_rsdp_addr by multiboot2_parse.c.
+ * The RSDP physical address is provided by the UEFI bootloader and
+ * stored in g_boot_info.acpi_rsdp_addr.
  *
  * Shutdown sequence:
  *   1. Parse DSDT/SSDT for \_S5 sleep type value (SLP_TYPa)

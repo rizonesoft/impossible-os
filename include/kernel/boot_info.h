@@ -1299,7 +1299,7 @@ enum boot_payload_type {
 enum boot_payload_producer {
     BOOT_PRODUCER_NONE          = 0,
     BOOT_PRODUCER_UEFI          = 1,   /* src/boot/uefi/bootx64.c */
-    BOOT_PRODUCER_MULTIBOOT2    = 2,   /* src/kernel/multiboot2_parse.c */
+    BOOT_PRODUCER_MULTIBOOT2    = 2,   /* RESERVED -- alt-boot policy = unsupported (docs/boot/alt-boot.md) */
     BOOT_PRODUCER_KERNEL_TEST   = 3,   /* src/kernel/test/test_boot_info.c fixture */
 };
 
@@ -1808,7 +1808,9 @@ _Static_assert(__builtin_offsetof(struct boot_info, dbx_size) == 24044,
 _Static_assert(__builtin_offsetof(struct boot_info, degraded_trust_flags) == 24048,
     "boot_info.degraded_trust_flags offset drift -- update kernel + bootloader mirror");
 
-/* Global boot info -- populated by multiboot2_parse() or UEFI bootloader */
+/* Global boot info -- populated by the UEFI bootloader (storage def in
+ * src/kernel/main/boot_hw.c). Alternate boot protocols are unsupported
+ * (docs/boot/alt-boot.md). */
 extern struct boot_info g_boot_info;
 
 /*: Populate HKLM\SYSTEM\Boot\Device\ from g_boot_info.

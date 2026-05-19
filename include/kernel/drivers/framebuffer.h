@@ -11,7 +11,7 @@
 
 /* ---- Lifecycle ---- */
 
-/* Initialize the framebuffer console (call after multiboot2_parse + heap_init) */
+/* Initialize the framebuffer console (call after boot_info populated + heap_init) */
 void fb_init(void);
 
 /* Clear the screen with background color */

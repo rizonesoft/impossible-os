@@ -20,7 +20,7 @@
 #   2c -- clangd_server.is_available / install_hint / required_capabilities
 #         surface is wired and stable.
 #   3a -- --self-test --lang=asm: SKIP when asm-lsp missing, or OK with a
-#         non-zero instruction-reference byte count on src/boot/entry.asm.
+#         non-zero instruction-reference byte count on src/kernel/isr_stubs.asm.
 #   3b -- .asm-lsp.toml at repo root pins assembler = "nasm" (NASM flavor;
 #         asm-lsp defaults to GAS).
 #   3c -- asm_server surface (ASM_LSP_BIN / LANG_TAG / is_available /

@@ -1,6 +1,6 @@
 # ============================================================================
 # Impossible OS — Root Makefile
-# Target: x86-64, UEFI-only (GRUB + Multiboot2)
+# Target: x86-64, UEFI/GPT/ESP only (alt-boot policy = unsupported)
 # ============================================================================
 
 # Tools (LLVM toolchain: Clang is a universal cross-compiler via --target)
@@ -37,29 +37,18 @@ CFLAGS += $(KERNEL_EXTRA_CFLAGS)
 ASFLAGS := -f elf64 -g
 
 # --- Alternate boot protocol policy ---
-# BUILD_ALT_BOOT selects how Multiboot2 / GRUB / Limine entry surfaces are
-# treated in the build. Three modes:
-#   off         - parser excluded from kernel image; entry.asm magic check
-#                 compiled out; no GRUB artifact. NOT YET ENFORCED -- the
-#                 symbol gating lands with the deprecation-or-promotion
-#                 gate work. Today setting `off` only changes the -D macro.
-#   diagnostic  - parser code included but never reached on the UEFI boot
-#                 path; current state by inertia. Useful for development /
-#                 spec research.
-#   compatible  - full Multiboot2 parity; GRUB ISO shipped. Implementation
-#                 lives in the parity-audit / adapter / degradation /
-#                 test-image sections.
+# Policy = UNSUPPORTED. The Multiboot2 parser, GRUB header, and 32-bit
+# Multiboot2 entry stub have been removed from the tree. UEFI/GPT/ESP is
+# the only supported boot path. See docs/boot/alt-boot.md for the
+# canonical policy doc, non-goal table, and decision-flip criteria.
 #
-# Developer default is `diagnostic`. Release builds SHOULD set
-# BUILD_ALT_BOOT=off when invoking make (the release script does not yet
-# enforce this; the rejection assertion lands with the deprecation gate's
-# symbol gating). See docs/boot/alt-boot.md for the full contract.
-#
-# This block ships the policy doc + define propagation. Actual symbol
-# gating in entry.asm + multiboot2_parse.c lands in the deprecation gate.
-# The define propagates to BOTH CFLAGS (kernel C) AND ASFLAGS (NASM) so
-# the future gating can use the same `-D` macro from both toolchains.
-BUILD_ALT_BOOT ?= diagnostic
+# BUILD_ALT_BOOT is retained as a variable so a future hypothetical flip
+# back to `diagnostic` or `compatible` has a documented knob to set. The
+# variable currently only propagates a -D define; no source code consumes
+# it (the parser it would gate has been deleted). Valid values stay at
+# {off, diagnostic, compatible} so the documented build-flag surface
+# remains stable; default is `off` to match the policy decision.
+BUILD_ALT_BOOT ?= off
 ifeq ($(BUILD_ALT_BOOT),off)
     BUILD_ALT_BOOT_DEFINE := -DBUILD_ALT_BOOT_OFF=1
 else ifeq ($(BUILD_ALT_BOOT),diagnostic)
@@ -83,8 +72,6 @@ KERNEL_DIR := $(SRC_DIR)/kernel
 LIBC_DIR   := $(SRC_DIR)/libc
 DESKTOP_DIR:= $(SRC_DIR)/desktop
 
-ISO_DIR    := $(BUILD_DIR)/isodir
-ISO_FILE   := $(BUILD_DIR)/os-build.iso
 KERNEL_BIN := $(BUILD_DIR)/kernel.exe
 LINKER_SCRIPT := $(SRC_DIR)/boot/linker.ld
 
@@ -158,7 +145,7 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-x86 test-desktop test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
 all: _increment_build check-abi assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
@@ -850,16 +837,6 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_h
 	@cp -f tests/perf-baseline.json $(SYSROOT)/tests/perf-baseline.json
 	@echo "[USER] hello/cmd + test_{harness_smoke,syscall,faultinject,smoke_boot,stress_libc,perf_syscall,libc,ipc,process,fileio,win32,loader_{elf,pe,eif}}.exe + manifests -> sysroot"
 
-## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
-iso: $(ISO_FILE)
-
-$(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg userland
-	@mkdir -p $(ISO_DIR)/boot/grub
-	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.exe
-	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
-	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR) 2>/dev/null
-	@echo "[ISO] $(ISO_FILE) created"
-
 ## system-disk: Create bootable GPT system disk with EFI + IXFS partitions
 SYSTEM_DISK := $(BUILD_DIR)/system-disk.img
 SYSTEM_DISK_SIZE := 512M
@@ -1465,10 +1442,9 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(GENERATED_HDRS)
 # tracking).
 $(BUILD_DIR)/kernel/main/boot_proto.o: $(BUILD_DIR)/boot_proto_sha.h
 
-# Assemble NASM source files
-# entry.asm is multi-format (starts 32-bit, transitions to 64-bit)
-# multiboot2_header.asm is format-agnostic (data only)
-# Both assembled as elf64 since the linker expects elf64 objects
+# Assemble NASM source files (all elf64; the kernel ELF is loaded by the
+# UEFI bootloader at src/boot/uefi/bootx64.c, which resolves kernel_main
+# via the ELF symbol table and calls it in 64-bit Long Mode).
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@

@@ -9,15 +9,17 @@
 #
 #   1. Repo-root `.asm-lsp.toml` pins `assembler = "nasm"` +
 #      `instruction_set = "x86/x86-64"` (dual mode; the underscore
-#      form "x86_64" is not accepted by the upstream schema, and
-#      the long-mode-only "x86-64" value misreads the [BITS 32]
-#      prolog in src/boot/entry.asm). asm-lsp defaults to GAS syntax;
-#      without the pin, every mov/jmp/label/macro in our .asm files
-#      parses wrong and diagnostics become pure noise.
+#      form "x86_64" is not accepted by the upstream schema; dual
+#      mode preserves [BITS 32] prolog parsing for any future 32-bit
+#      stubs even though the live tree is now 64-bit-only post-
+#      alt-boot deletion). asm-lsp defaults to GAS syntax; without
+#      the pin, every mov/jmp/label/macro in our .asm files parses
+#      wrong and diagnostics become pure noise.
 #
 #   2. Extensions `.asm` + `.S`. The bulk of the tree uses `.asm`
-#      (src/boot/entry.asm, src/kernel/isr_stubs.asm, etc.); some
-#      future bootloader TUs may use `.S` so we reserve both.
+#      (src/kernel/isr_stubs.asm, src/kernel/sched/syscall_entry.asm,
+#      src/kernel/smp/ap_trampoline.asm, etc.); some future bootloader
+#      TUs may use `.S` so we reserve both.
 #
 # Graceful-skip contract mirrors clangd_server: `is_available()`
 # returns False when `asm-lsp` is absent; `spawn()` raises LspError

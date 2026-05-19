@@ -25,7 +25,7 @@ Full per-format recipes, verification flows (`bootimg inspect`), Secure Boot set
 
 ## Boot protocol
 
-Impossible OS boots **UEFI/GPT/ESP only**. Multiboot2 / GRUB / Limine / legacy BIOS / Linux x86 boot protocol / EFI stub direct boot / kexec are explicit non-goals. The `BUILD_ALT_BOOT={off,diagnostic,compatible}` Makefile variable selects how the codebase treats the latent Multiboot2 parser; developer builds default to `diagnostic` (parser compiled but never reached), and release builds should override to `off` (release-side assertion lands when the deprecation gate's symbol gating ships). Full policy contract, decision-flip criteria, and security trade-offs are in [Alternate Boot Protocol Policy](../boot/alt-boot.md).
+Impossible OS boots **UEFI/GPT/ESP only**. Multiboot2 / GRUB / Limine / legacy BIOS / Linux x86 boot protocol / EFI stub direct boot / kexec are explicit non-goals. The Multiboot2 parser was deleted (policy committed to `unsupported`); the `BUILD_ALT_BOOT` Makefile variable is retained as a knob (default `off`) for a hypothetical future flip. Full policy contract, decision-flip criteria, and security trade-offs are in [Alternate Boot Protocol Policy](../boot/alt-boot.md).
 
 ## See Also
 
