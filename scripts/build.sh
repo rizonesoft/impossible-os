@@ -51,8 +51,11 @@ Environment variables (passed through to make):
                                         Alternate boot protocol policy.
                                         Developer default is `diagnostic`
                                         (parser compiled, never reached on
-                                        UEFI boot). Release builds force
-                                        `off` via scripts/release/build-image.sh.
+                                        UEFI boot). Release builds SHOULD
+                                        set `off`; scripts/release/build-image.sh
+                                        does NOT yet enforce this -- caller
+                                        responsibility until the deprecation
+                                        gate ships symbol-presence assertion.
                                         See docs/boot/alt-boot.md.
   KERNEL_EXTRA_CFLAGS=...               Append CFLAGS to kernel compile
                                         (e.g. fixture-mode ABI overrides).

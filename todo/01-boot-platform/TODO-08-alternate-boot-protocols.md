@@ -79,6 +79,9 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 > - Canonical doc: [`docs/boot/alt-boot.md`](../../docs/boot/alt-boot.md).
 > - Scope boundary: §1 owns policy doc + `BUILD_ALT_BOOT` plumbing + non-goal contract. §7 owns symbol gating (entry.asm + multiboot2_parse.c + release assertion) that makes modes behaviorally distinct.
 
+> **Verified:** 2026-05-19 | commit `8117d6c7` (impl) + `479832ed` (commit-row flip) | 5/7 items | build OK | lint clean
+> **Quality reviewed:** 2026-05-19 | Codex 4x (design + adversarial 2x + consistency + perf) | 3H+2M fixed, 0 open | scope: N/A (policy + Makefile var + docs; no kernel-testable surface)
+
 ---
 
 ## 2. Multiboot2 Feature Parity Audit
