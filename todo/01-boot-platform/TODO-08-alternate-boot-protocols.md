@@ -29,13 +29,17 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - -> XREF: `TODO-22-recovery-partition.md` -- recovery trigger (alt-boot lacks BootNext; boot.conf-only path per §4)
 - -> XREF: `TODO-23-boot-watchdog.md` -- UEFI watchdog (alt-boot replaces or disables per §4)
 - -> XREF: `TODO-26-hibernation-resume-fast-startup-handoff.md` -- hibernation resume refused on alt-boot (no UEFI variable for state) per §4
+- -> XREF: `TODO-07-boot-entry-store-menu-policy.md §15` -- LoaderXxx UEFI variables: alt-boot path sets `boot_info.loader_vars_degraded = 1` (already v21 ABI) per §4
+- -> XREF: `TODO-01-boot-protocol-abi-handoff.md §14` -- warm-kernel-update / KHO is the owner of kexec-style kernel-to-kernel transitions; alt-boot does NOT own this
 
 ## Outcome
 
 - Alternate boot protocols have explicit support level: unsupported, diagnostic-only, or compatible.
 - If retained, Multiboot2 maps into canonical `boot_info` semantics with clear missing-feature behavior surfaced via TODO-01 §11 capability bits.
 - If deprecated, build/docs/tests make unsupported paths impossible to mistake for product boot.
-- Legacy BIOS, Limine/stivale, GRUB, and future protocols have a documented policy.
+- Legacy BIOS, Limine/stivale, GRUB, and future protocols have a documented policy; explicit non-goals (Multiboot1, Linux boot protocol, EFI stub, kexec) are named so adjacent contributors don't try to ship them under TODO-08 scope.
+- Alt-boot degradation is enumerable from userspace via `boot_info.alt_boot_degraded[]` + `NtQueryAltBootDegraded()` syscall; no serial-scrape needed.
+- `compatible`-mode promotion gate explicitly tracks upstream GRUB/shim CVE backlog + SBAT/dbx/revocation status with a Secure Boot owner reciprocal XREF.
 
 ## Implementation Order
 
@@ -58,8 +62,9 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 - [ ] Decide supported state for Multiboot2: `unsupported` (delete parser), `diagnostic` (gate behind `ALLOW_ALT_BOOT=1`), or `compatible` (full feature parity).
 - [ ] Decide supported state for Limine / stivale: default `rejected` (UEFI + Multiboot2 cover dual-boot). Override only on concrete user scenario; documented in §5.
+- [ ] Explicit non-goal table in `docs/boot/alt-boot.md`: Multiboot1, Linux x86 boot protocol / bzImage / zboot, EFI stub direct boot, kexec kernel-to-kernel (warm-update owned by TODO-01 §14 + 03-memory-concurrency/TODO-11).
 - [ ] Document UEFI-only features in `docs/boot/alt-boot.md`: runtime services, Secure Boot, TPM, BootOrder, GOP, USB handoff, ESP integrity, UKI sig chain, A/B, recovery, hibernation, watchdog.
-- [ ] Add build flag `BUILD_ALT_BOOT={off,diagnostic,compatible}` to include/exclude alternate boot artifacts.
+- [ ] `BUILD_ALT_BOOT={off,diagnostic,compatible}` plumbing: Makefile variable + `scripts/build.sh` env + `-DBUILD_ALT_BOOT_<MODE>` compile-time define + `scripts/release/build-image.sh` thread-through for release artifact filtering.
 - [ ] Update `docs/getting-started/` to state the policy decision and the platforms it applies to.
 - [ ] Commit: `"boot: alternate boot protocol policy"`
 
@@ -72,6 +77,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [ ] Compare every Multiboot2 information tag against `boot_info` fields; produce a parity table mapping each tag to its `boot_info` equivalent or marking it absent.
 - [ ] Identify unavailable fields and whether the kernel can degrade gracefully (memory map, framebuffer, ACPI RSDP, modules, command line, boot device).
 - [ ] Audit: framebuffer mode (Multiboot2 lacks GOP mode list), memory map (Multiboot2 type taxonomy vs UEFI), ACPI RSDP table, module list, command line, boot device identity.
+- [ ] Audit Multiboot2 UEFI tags (`grub-mkrescue` UEFI mode): tag 7 EFI64 system table, tag 11/12 EFI image handle, tag 17 EFI memory map -- §3 / §4 must explicitly consume-or-document-as-degraded each.
 - [ ] Record parity table in this TODO and in `docs/boot/boot-protocol.md` (the canonical living contract per T01 §8).
 - [ ] Commit: `"boot: audit Multiboot2 parity"`
 
@@ -96,10 +102,14 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 ## 4. Unsupported-Feature Degradation Matrix
 
 - [ ] Define behavior for each missing UEFI feature: no UEFI variables, no runtime services, no Secure Boot, no TPM event log, no BootOrder, no USB pre-EBS handoff, no ESP integrity gate.
+- [ ] LoaderXxx UEFI variables (T07 §15): alt-boot lacks `gRT->SetVariable`, set `boot_info.loader_vars_degraded = 1` and skip publish loop.
 - [ ] Higher-level alt-boot losses (UKI sig chain / A/B / recovery / hibernation / watchdog): modules untrusted; A/B defaults to slot A; recovery via boot.conf only; hibernation refused; UEFI watchdog replaced or disabled.
-- [ ] Reciprocal XREFs: T02 §16 (UKI), T21 (A/B), T22 (recovery), T26 (hibernation), T23 (watchdog) -- back-link "alt-boot path loses this feature; degraded via T08 §4".
+- [ ] Reciprocal XREFs: T02 §16 (UKI), T21 (A/B), T22 (recovery), T26 (hibernation), T23 (watchdog), T07 §15 (LoaderXxx) -- back-link "alt-boot path loses this feature; degraded via T08 §4".
+- [ ] Concrete alt-boot crash recovery flow: no UEFI variables -> T23 watchdog rollback cannot run; persistence via `boot.conf` + BlackBox JSONL (T07 §12); 3-crash threshold -> `boot_fatal(BOOT_ERR_ALT_BOOT_LOOP)` + serial recovery instructions.
 - [ ] Mark affected subsystems degraded through the readiness oracle (`kernel_subsystem_set_ready` set with degraded flag); the oracle dump must show which subsystems are degraded due to alt-boot path.
 - [ ] Show structured warning in VPD/serial: `[WARN] Alt-boot: <feature> unavailable -- <subsystem> degraded` once per missing feature.
+- [ ] Structured degraded surface: `boot_info.alt_boot_degraded[N]` array + `alt_boot_degraded_count` + `NtQueryAltBootDegraded()` syscall so post-boot tools render the list (not serial-scrape).
+- [ ] Security-cost note in `docs/boot/alt-boot.md`: `compatible` inherits upstream GRUB/shim CVE surface (BootHole CVE-2020-10713, shim CVE-2023-40547 family, 2025 SB bypasses) -- native UEFI/UKI remains canonical secure path.
 - [ ] Prevent release-mode boot from continuing on unsupported protocol unless `boot.conf` has `allow_alt_boot=1` (default 0); halt with `boot_fatal()` otherwise.
 - [ ] Commit: `"boot: alternate protocol degradation matrix"`
 
@@ -111,6 +121,10 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 - [ ] Document GRUB Multiboot2 usage with the chosen §1 policy state -- include `grub.cfg` template, `grub-mkrescue` invocation, and supported kernel + module load paths.
 - [ ] Document Limine / stivale policy: default `rejected` per §1 (niche, UEFI+Multiboot2 cover dual-boot). Re-evaluation gate filed in §7 alongside Multiboot2 promotion.
+- [ ] Document Multiboot1 explicit rejection (pre-GRUB-2.02; some old GRUB configs may still emit it).
+- [ ] Document Linux x86 boot protocol / bzImage / zboot entry as explicit non-goal (Limine supports it; we don't -- Impossible OS uses its own ABI).
+- [ ] Document EFI stub direct boot (CONFIG_EFI_STUB equivalent for `kernel.exe`) as explicit non-goal; UEFI boot path is always `BOOTX64.EFI` -> `kernel.exe`.
+- [ ] Document kexec as explicit non-goal in TODO-08 scope; warm-kernel-update is owned by [TODO-01 §14](TODO-01-boot-protocol-abi-handoff.md) + [03-memory-concurrency/TODO-11](../03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md).
 - [ ] Document that legacy BIOS is unsupported on x86_64 unless a future TODO adds it; cite Win11 24H2's UEFI-only stance as the parity baseline.
 - [ ] Update `docs/development/vm-boot-testing.md` (or create) with the alt-boot QEMU command lines and what to expect on serial.
 - [ ] Commit: `"docs: alternate boot protocol boundary"`
@@ -124,7 +138,8 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [ ] Build GRUB Multiboot2 test ISO via `grub-mkrescue` if §1 policy is `diagnostic` or `compatible`; skip if `unsupported`.
 - [ ] Boot QEMU with the GRUB ISO; assert kernel reaches `Boot complete in` + `C:\>` on serial under the §3 adapter path.
 - [ ] Assert missing UEFI-only features degrade per §4 matrix (warnings on serial, oracle reports degraded).
-- [ ] Add CI skip gate keyed on `BUILD_ALT_BOOT` -- when policy is `unsupported`, the test SKIPs with a recorded reason; when `diagnostic` or `compatible`, the test must PASS.
+- [ ] CI gate: `scripts/test-tooling.sh` invokes `scripts/test-alt-boot.sh` keyed on `BUILD_ALT_BOOT`; SKIP on `unsupported`, PASS required on `diagnostic`/`compatible`. Release-artifact filter in `scripts/release/build-manifest.sh`.
+- [ ] Reciprocal XREF in TODO-06 §4 (Hybrid ISO / El Torito): GRUB Multiboot2 ISO uses separate boot catalog from canonical UEFI ISO; back-link "alt-boot variant from T08 §6".
 - [ ] Commit: `"test: alternate boot protocol image"`
 
 **Test checkpoint:** `bash scripts/test-alt-boot.sh` builds the GRUB ISO (when applicable) and runs it under QEMU. Output matches policy: `unsupported` -> `[SKIP] alt-boot disabled by policy`; `diagnostic`/`compatible` -> serial shows `[BOOT] Multiboot2 path` + `Boot complete in` + the §4 degradation warnings + final `C:\>` prompt. Test exits 0 on success.
@@ -136,6 +151,8 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [ ] If §1 chose `unsupported`: remove the parser source files, delete the multiboot2 header asm, delete `grub.cfg`, keep only the policy doc; update INDEX.md to mark TODO-08 as "decision-only" or close.
 - [ ] If §1 chose `diagnostic`: keep parser code but compile-gate all references behind `BUILD_ALT_BOOT=diagnostic`; never ship in release artifacts (D15 T01 §2 raw image excludes alt-boot when policy is diagnostic).
 - [ ] If §1 chose `compatible`: add the alt-boot path as a row in `TODO-28-boot-validation-certification-matrix.md` certification matrix; update D15 T01 to ship the GRUB ISO as a release artifact.
+- [ ] **Compatible-mode ship gate**: before any GRUB artifact ships, run upstream GRUB CVE backlog scan, upstream shim CVE backlog scan, and SBAT/dbx/revocation status check; quarterly re-check while `compatible` ships.
+- [ ] **Compatible-mode reciprocal XREF** in [`TODO-02 §16`](TODO-02-uefi-hardening-secureboot.md) confirming alt-boot variant is documented as a weaker trust-boundary; Secure Boot owner explicitly accepts the CVE inheritance.
 - [ ] Update `docs/boot/alt-boot.md` to reflect closure status; do NOT reference `GAP-ANALYSIS.md` (deprecated artifact -- gap analysis lives per-TODO via `/gap-audit-todo`).
 - [ ] Commit: `"boot: settle alternate boot support level"`
 
@@ -146,14 +163,17 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 ## OS Comparison
 
 | ⭐  | Feature                              | 🪟 Win11                      | 🐧 Linux                       | 🚀 Impossible OS                 |
-| --- | ------------------------------------ | ----------------------------- | ------------------------------ | -------------------------------- |
+| --- | ------------------------------------ | ------------------------------ | ------------------------------ | --------------------------------- |
 | 💎  | UEFI primary boot                    | ✅ UEFI/GPT only since 24H2   | ✅ UEFI is default             | ✅ UEFI is the canonical path    |
 | 💎  | Legacy BIOS / CSM                    | ❌ removed in 24H2            | ⚠️ deprecated; distro-specific | ❌ unsupported -- §5 doc stance  |
 | 💎  | Multiboot2 / GRUB protocol           | ❌ no equivalent              | ✅ widely shipped              | ⬜ §1 decides -- §3 adapter      |
 | 💎  | Limine / stivale protocol            | ❌ no equivalent              | ⚠️ niche distros               | ⬜ §5 documents stance           |
-| ⭐  | Explicit unsupported-path fence      | ⚠️ bootmgr-specific halts     | ⚠️ distro-specific            | ⬜ §1 + §4 + §7 structured gate  |
+| ⭐  | Explicit unsupported-path fence      | ⚠️ bootmgr-specific halts     | ⚠️ distro-specific             | ⬜ §1 + §4 + §7 structured gate  |
 | ⭐  | Capability-bit degradation surfacing | ❌ silent feature absence     | ❌ silent feature absence      | ⬜ §3 via T01 §11 caps_degraded  |
-| ⭐  | Higher-level alt-boot loss matrix    | ❌ undefined                  | ❌ distro-specific             | ⬜ §4 -- UKI/A-B/recovery/hib   |
+| ⭐  | Higher-level alt-boot loss matrix    | ❌ undefined                  | ❌ distro-specific             | ⬜ §4 -- UKI/A-B/recovery/hib    |
+| ⭐  | Userspace degraded-feature syscall   | ❌ no equivalent              | ❌ scrape dmesg                | ⬜ §4 `NtQueryAltBootDegraded`   |
+| ⭐  | Compatible-mode CVE-tracking gate    | n/a (no alt-boot)             | ⚠️ per-distro shim/grub        | ⬜ §7 quarterly CVE + dbx scan   |
+| 💎  | Explicit alt-boot non-goals          | ⚠️ Microsoft-only path        | ⚠️ implicit per-distro         | ⬜ §1 + §5 MB1/Linux/EFI/kexec   |
 
 > **After parity items:** Impossible OS will match the Linux + Win11 floor on UEFI/GPT once §1 decides the alt-boot policy. The exclusive items push beyond: a structured "supported / diagnostic / unsupported" taxonomy with a build-flag gate (§1 + §7) and capability-bit-driven degradation surfacing (§3 via T01 §11) that surfaces missing features through the readiness oracle rather than silently degrading.
 
@@ -168,6 +188,10 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [ ] `test_multiboot2_boot_path_attribution` -- assert `boot_info.boot_path == ALT_BOOT` AND `boot_reason == ALT_BOOT_PROTOCOL` AND `boot_source_flags & MULTIBOOT2_HEADER != 0`.
 - [ ] `test_alt_boot_policy_release_rejects` -- with `BUILD_ALT_BOOT=diagnostic` AND `boot.conf:allow_alt_boot=0`, simulated alt-boot path triggers `boot_fatal()` with `BOOT_ERR_ALT_BOOT_REFUSED`.
 - [ ] `test_alt_boot_policy_allow_continues` -- with `allow_alt_boot=1`, boot continues; readiness oracle reports degraded subsystems with `ALT_BOOT_PROTOCOL` reason.
+- [ ] `test_alt_boot_loader_vars_degraded` -- alt-boot path sets `boot_info.loader_vars_degraded == 1`; LoaderXxx publish is skipped.
+- [ ] `test_alt_boot_degraded_array_populated` -- `boot_info.alt_boot_degraded_count > 0` AND the array enumerates exactly the missing UEFI features per §4 matrix; `NtQueryAltBootDegraded()` returns the same list.
+- [ ] `test_alt_boot_crash_loop_fatal` -- 3 simulated alt-boot crashes (BlackBox JSONL counter) trigger `boot_fatal(BOOT_ERR_ALT_BOOT_LOOP)` on the 4th attempt.
+- [ ] `test_multiboot2_efi_tags_parsed` -- when Multiboot2 carries tag 7 / 11 / 12 / 17, the adapter populates the corresponding `boot_info` UEFI fields (or sets the explicit degraded flag if intentionally ignored).
 - [ ] Commit: `"test: alternate boot protocol adapter + policy"`
 
 ---
