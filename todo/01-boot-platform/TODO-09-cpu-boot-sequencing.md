@@ -93,8 +93,17 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 
 **Test checkpoint:** Serial or POST shows CPUID stage (`POSTCODE_CPUID_INIT` / `boot_progress` "CPUID"); `g_cpu` has NX and AMD extended topology bits on AMD hosts; homogeneous check on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+> **Notes:**
+> - What shipped: `cpuid_init()` at `src/kernel/cpuid.c:187-233` parses Intel + AMD leaves (`0x80000001` NX/Page1GB/RDTSCP/SVM, `0x80000008` addr bits, `0x8000001E` Zen topology); 54+ feature flags in `g_cpu` (`struct cpu_features`).
+> - How it integrates: `boot_phase0()` calls `cpuid_init()` after `heap_init` (`boot_hw.c:332`); `cpu_has(CPU_FEATURE_*)` consumers read `g_cpu` cache; `boot_progress(0, "CPUID", POST16_CPUID_OK)` emits serial line.
+> - Downstream effects: unblocks every subsequent `cpu_has()` gate; consumers in `cpu_security.c`, `vmm.c`, `simd_enable_avx()`.
+> - Canonical doc: `include/kernel/cpuid.h` (struct definition + feature constants).
+> - Scope boundary: §1 owns the Phase 0 probe + storage. Full feature-struct definition + AP per-CPU storage lives in [`02-kernel-core/TODO-09 §1`](../02-kernel-core/TODO-09-x86-64-architecture.md).
+
 > **Verified:** 2026-04-12 -- all 6 items confirmed. `cpuid_init()` at `boot_hw.c:332`. Extended leaves 0x80000001/0x80000008/0x8000001E at `cpuid.c:187-233`, guarded by `max_ext_leaf`. 54+ feature flags in `g_cpu` (`struct cpu_features`). `boot_progress(0, "CPUID", POST16_CPUID_OK)` at `boot_hw.c:334`. Codex adversarial: `cpuid_raw` NULL-pointer rejected (internal helper, all callers pass stack locals, Gate 5: validate at system boundaries only). Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. Feature flags match CPUID register bits consistently. O(1) one-time Phase 0 call. Intel SDM Vol. 2A compliant (leaf bounds). Parity: matches Windows NtQuerySystemInformation + Linux /proc/cpuinfo. Accepted: none.
+> **Verified:** 2026-05-20 | commit `00f9429d` | 6/6 items | build OK | lint CLEAN
+> **Quality reviewed:** 2026-05-20 | Codex 3x (adversarial, consistency, perf) | 3M fixed | scope: kernel-code-quality
 
 ---
 
@@ -132,42 +141,54 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 - [x] `platform_detect()` in `cpuid_platform.c` populates `g_boot_info.hv_vendor` + `g_boot_info.hv_flags` for Hyper-V, KVM, VMware, VirtualBox
 - [x] Detection runs from `timer_hal_init()` → `platform_detect()` in Phase 1, before timer backend selection
 - [x] UTS timer probe uses `platform_has_apic_freq_msr()` which reads cached platform state
-- [ ] Registry mirror (deferred): when `registry_init()` + hardware hive APIs from `TODO-14-registry-completion.md` allow pre-desktop writes, persist `hv_vendor` string and `hv_flags` dword under `HKLM\HARDWARE\VM\` for Win32-style inventory (no stub keys in tree today)
+- [ ] Registry mirror deferred -- persist `hv_vendor` + `hv_flags` under `HKLM\HARDWARE\VM\` when `TODO-14-registry-completion.md` exposes pre-desktop hardware-hive writes
+- [ ] Hyper-V SynIC + reference TSC page MSR setup NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13` (init `HV_X64_MSR_REFERENCE_TSC = 0x40000021`) and `01-boot-platform/TODO-11-interrupt-timer-arch.md §6` (UTS consumer)
+- [ ] Confidential-compute guest detection (TDX CPUID `0x21`, SEV/SEV-SNP CPUID `0x8000001F`) NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13`; mirror `boot_info.cc_kind` flag for downstream cache-type sequencing
 - [x] Commit: `"boot: hypervisor detection with hv_flags in boot_info"`
 
 **Test checkpoint:** `g_boot_info.hv_vendor` / `hv_flags` populated before timer backend selection; klog or serial shows hypervisor detection before first `[UTS]` / `[Timer]` line on Hyper-V and KVM guests; bare metal shows empty vendor or known non-HV path. QEMU WHPX, TCG, VirtualBox, bare metal.
 
+> **Notes:**
+> - What shipped: `hv_vendor[16]` + `hv_flags` fields in `struct boot_info`; 5 `HV_FLAG_*` constants; `platform_detect()` populates them for Hyper-V / KVM / VMware / VBox.
+> - How it integrates: `timer_hal_init()` calls `platform_detect()` before backend selection; `platform_has_apic_freq_msr()` reads the cached state.
+> - Downstream effects: feeds UTS timer probe ([TODO-11 §1](TODO-11-interrupt-timer-arch.md)); enables Hyper-V enlightenments without re-probing.
+> - Canonical doc: `src/kernel/cpuid_platform.c`.
+> - Scope boundary: §3 owns `boot_info` fields + `platform_detect()` call sites. Registry mirror + TLFS TSC reference page deferred to TODO-14 + TODO-09 owners.
+
 ---
 
 ## 4. AP CPU Hardening (`ap_cpu_harden()`) *(deferred -- blocked by §2; current `cpu_harden()` + `cpu_harden_post_pagetable()` applied on APs in smp.c)*
-**Prompt:** When APs start up via `smp_ap_main()`, they run their own GDT/IDT/LAPIC setup but currently skip the EFER and CR4 security features that BSP Phase 0 enables. An AP running without `EFER.NXE`/`SMEP`/`SMAP` is a full privilege bypass vector -- kernel code on that AP can execute user pages and access user memory unchecked. Implement `ap_cpu_harden()` that replicates the BSP Phase 0 CPU activation: `msr_write(IA32_EFER, bsp_efer_val)`, then `cr4_write(bsp_cr4_val)` (read from BSP at Phase 0, stored in `cpu_data[0].efer_at_boot` and `cpu_data[0].cr4_at_boot`); call from `smp_ap_main()` immediately after GDT load and before AP signals ready; each AP logs `[AP%u] CPU hardening applied EFER=0x{val} CR4=0x{val}`.
+**Prompt:** When APs start up via `smp_ap_main()`, they run their own GDT/IDT/LAPIC setup but currently skip the EFER and CR4 security features that BSP Phase 0 enables. An AP running without `EFER.NXE`/`SMEP`/`SMAP` is a full privilege bypass vector. The replication contract is a per-CPU MSR profile (registry of MSRs the BSP programmed in Phase 0/1 that every AP mirrors), not EFER+CR4 alone -- otherwise each new boot-time MSR (TSC_AUX, SPEC_CTRL, CET) silently drifts on APs.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §1--§8` -- notes that AP trampoline must enable same CR4/MSR features; this TODO writes the call site; TODO-24 provides the underlying `cpu_efer_harden()` function reused on APs.
+> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §1--§8` -- TODO-10 provides EFER / SPEC_CTRL / CET setters reused on APs; this TODO writes the call site.
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §11` -- `IA32_TSC_AUX` per-CPU programming, consumed via the profile registry.
 
-- [ ] Add `efer_at_boot` and `cr4_at_boot` fields to `struct cpu_data`; BSP stores values at end of Phase 0
-- [ ] Implement `ap_cpu_harden()` in `boot_init.c`: reads BSP values, applies to current CPU
+- [ ] Add `efer_at_boot`, `cr4_at_boot`, `pat_at_boot`, `tsc_aux`, `spec_ctrl_at_boot` to `struct cpu_data`; BSP stores values at end of Phase 0/1
+- [ ] Define `bsp_per_cpu_msr_profile[]` registry in `cpu_security.c`; entries: msr, value, name, feature_gate; seed with EFER, PAT, TSC_AUX, plus SPEC_CTRL/CET as TODO-10 §8-§10 land
+- [ ] Implement `ap_cpu_harden()`: apply BSP EFER + CR4, walk profile registry; AP-local GS_BASE baseline is set separately (per-CPU value, not replicated)
 - [ ] Call `ap_cpu_harden()` in `smp_ap_main()` before `ap_ready_flag = 1`
-- [ ] Verify (serial log): `[AP1] CPU hardening applied` appears for each non-BSP CPU
-- [ ] Verify: no AP starts with `EFER.NXE=0` when BSP has `EFER.NXE=1`
-- [ ] Commit: `"smp: apply CPU hardening on AP startup via ap_cpu_harden()"`
+- [ ] Verify (serial log): `[AP%u] CPU hardening applied EFER=... CR4=... MSRs=N`; no AP boots with `EFER.NXE=0` when BSP has it; every profile readback matches BSP
+- [ ] Commit: `"smp: ap_cpu_harden() with per-CPU MSR profile registry"`
 
 **Test checkpoint:** Boot on SMP system (2+ CPUs). Serial log shows `[AP1] CPU hardening applied EFER=0x... CR4=0x...` for every AP before `ap_ready_flag = 1`. Verify EFER/CR4 values match BSP. On single-CPU system: no AP messages, BSP-only boot succeeds. Verify on QEMU WHPX (SMP), TCG (1 CPU), VirtualBox (4 CPUs), bare metal. Bare metal: confirm AP does not crash between GDT load and `ap_cpu_harden()` call -- this window is IRQ-disabled but NMI-vulnerable.
 
 ---
 
 ## 5. Phase 1 XSAVE & PCID Activation Window *(deferred -- blocked by `02-kernel-core/TODO-10-kernel-security-hardening.md` and `02-kernel-core/TODO-09-x86-64-architecture.md` §1; XSAVE already enabled via `simd_enable_avx()` in Phase 0)*
-**Prompt:** XSAVE and PCID require VMM to be ready first -- XSAVE because per-thread XSAVE areas are allocated in TEB pages managed by VMM, and PCID because `CR4.PCIDE` changes how CR3 is loaded (PCID bits 11:0) and must be set only after the page table base is established. Slot these activations into Phase 1: (1) after `vmm_init()`: call `cpu_xsave_enable()` -- sets `CR4.OSXSAVE`, calls `XSETBV(XCR0, X87|SSE|AVX)`, stores `xsave_area_size` in a global; (2) after process table is initialised: call `cpu_pcid_enable()` -- sets `CR4.PCIDE`, validates INVPCID is available; PCID 0 reserved for kernel; emit `POSTCODE_XSAVE_ENABLED` and `POSTCODE_PCID_ENABLED`. Both functions are no-ops if the CPU does not support the feature.
+**Prompt:** XSAVE and PCID require VMM to be ready first -- XSAVE because per-thread XSAVE areas are allocated in TEB pages managed by VMM, and PCID because `CR4.PCIDE` changes how CR3 is loaded (PCID bits 11:0) and must be set only after the page table base is established. Slot these activations into Phase 1: (1) after `vmm_init()`: call `cpu_xsave_enable()` -- sets `CR4.OSXSAVE`, calls `XSETBV(XCR0, X87|SSE|AVX [|CET_U|CET_S])`, stores `xsave_area_size` in a global; (2) after process table is initialised: call `cpu_pcid_enable()` -- sets `CR4.PCIDE`, validates INVPCID is available; PCID 0 reserved for kernel; emit `POSTCODE_XSAVE_ENABLED` and `POSTCODE_PCID_ENABLED`. Both functions are no-ops if the CPU does not support the feature. The XCR0 mask must include any architecture-owned optional xstate components required by later security features (CET user + supervisor state, XCR0 bits 11-12) so TODO-10 §9-§10 can enable CET without re-sequencing the xstate window.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §1` -- `cpu_xsave_enable()` implementation (XSAVE area sizing, XCR0 bits).
-> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §4` -- `cpu_pcid_enable()` and CR3 load changes for KPTI (PCID implementation).
-> → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §1` -- TEB allocation at thread create; XSAVE areas tie to per-thread TEB pages, so VMM must be ready before XSAVE is enabled globally.
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §1` -- `cpu_xsave_enable()` / `cpu_configure_xcr0()` implementation (XSAVE area sizing, XCR0 bits).
+> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §4` -- `cpu_pcid_enable()` and CR3 load changes for KPTI.
+> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §9-§10` -- CR4.CET + S_CET MSR enablement; this section reserves the XCR0 CET state components in the same Phase 1 window so CET activation downstream does not require re-sequencing.
+> → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §1` -- TEB allocation at thread create.
 
 - [ ] Add `POSTCODE_XSAVE_ENABLED`, `POSTCODE_PCID_ENABLED` to `boot_init.h` Phase 1 constants
 - [ ] Insert `BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable)` in `boot_phase1()` after VMM init
 - [ ] Insert `BOOT_STEP(SUBSYS_PCID, cpu_pcid_enable)` in `boot_phase1()` after process table init
-- [ ] Verify (serial log): `[Phase1] XSAVE enabled (area=N bytes)` and `[Phase1] PCID enabled`
+- [ ] When TODO-10 §9 lands, extend `cpu_configure_xcr0()` to add `XCR0_CET_U`/`XCR0_CET_S` bits if `cpu_has(CPU_FEATURE_CET_SS)`; AP `ap_cpu_harden()` (§4) verifies the same XCR0 mask was applied
+- [ ] Verify (serial log): `[Phase1] XSAVE enabled (area=N bytes, mask=0x...)` and `[Phase1] PCID enabled`
 - [ ] Verify: XSAVE enable does not run in Phase 0 (VMM not yet up at that point)
 - [ ] Commit: `"boot: activate XSAVE and PCID in Phase 1 after VMM ready"`
 
@@ -182,38 +203,37 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §10` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
 
-- [ ] Define `cpu_features_required_mask` in `cpuid.h`: bitmask of features that all CPUs must share (NX, SSE2, LAHF, CMPXCHG16B, SYSCALL, PAE, PGE); derive from BSP's detected features at Phase 0
-- [ ] Implement `cpu_validate_ap_features(uint32_t ap_id)` in `cpu_security.c`: runs on each AP after CPUID probe, compares AP features against BSP `cpu_features_required_mask`
-- [ ] On mismatch: log `[AP%u] FEATURE MISMATCH: BSP has %s, AP missing` for each missing feature; set `cpu_data[ap_id].feature_mismatch = true`
-- [ ] If any security-critical feature is missing (NX, SMEP, SMAP): degrade BSP to lowest common denominator (disable feature globally) and log `[WARN] Degrading %s -- AP%u does not support it`
-- [ ] Define `BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED = 0x3E` in a bugcheck header (or `boot_init.h` until a dedicated bugcheck header exists); panic on fatal mismatch
-- [ ] If CPU family/model differs beyond tolerance (different vendor, or missing Long Mode): panic with `BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` -- system cannot safely continue with asymmetric CPUs
-- [ ] Add `POSTCODE_AP_VALIDATE = 0x27` to `boot_init.h` (Phase 0 range, runs during SMP bringup on each AP); emit per-AP
-- [ ] Add debug `POST16(0xD600)` on entry to `cpu_validate_ap_features()`, `POST16(0xD601)` on success exit (remove after bare-metal verification)
-- [ ] Verify (serial log): on homogeneous system, `[AP%u] Feature validation OK` for each AP; on simulated mismatch (debug flag), degradation message appears
-- [ ] Commit: `"smp: AP feature consistency validation with graceful degradation"`
+- [ ] Define `cpu_features_required_mask` in `cpuid.h`: bitmask all CPUs must share (NX, SSE2, LAHF, CMPXCHG16B, SYSCALL, PAE, PGE); derive from BSP at Phase 0
+- [ ] Two-phase enable ordering: APs publish CPUID mask into `cpu_data[ap_id].features` BEFORE BSP enables/pins any optional CR4/MSR feature; global mask is BSP & every AP, no post-pin downgrade
+- [ ] Hybrid handling: read `CPUID.1A` core type per CPU; intersect E-core features (UMIP, AVX-512 commonly differ on Intel hybrid); store `cpu_data[ap_id].core_type`
+- [ ] Implement `cpu_validate_ap_features(uint32_t ap_id)` in `cpu_security.c`: runs on each AP; compares against BSP required mask; panic on missing required
+- [ ] On optional mismatch: log `[AP%u] FEATURE MISMATCH: BSP has %s, AP missing`; set `cpu_data[ap_id].feature_mismatch = true`; intersection step prevents enabling that feature globally
+- [ ] Define `BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED = 0x3E`; panic on missing required mask, vendor mismatch, or missing Long Mode
+- [ ] Add `POSTCODE_AP_VALIDATE = 0x27` to `boot_init.h`; debug `POST16(0xD600)/(0xD601)` entry/success (remove after bare metal verifies)
+- [ ] TSC sync between APs NOT owned here -- relies on `02-kernel-core/TODO-08-time-filetime-management.md §3` "Per-CPU TSC sync"
+- [ ] Verify (serial log): homogeneous shows `[AP%u] Feature validation OK`; hybrid shows core-type masks intersected
+- [ ] Commit: `"smp: AP feature intersection + hybrid-aware consistency validation"`
 
 **Test checkpoint:** Boot on SMP system. Log shows `[AP1] Feature validation OK` for every AP. No degradation messages on homogeneous hardware. Bare metal: verify on systems with identical CPU cores; note that P-core/E-core hybrid CPUs may show feature differences (UMIP, AVX-512) that should degrade gracefully, not panic.
 
 ---
 
-## 7. CR4 Safety-Bit Pinning
+## 7. CR0/CR4 Safety-Bit Pinning
 
-Linux pins CR4 bits (SMEP, SMAP, UMIP, FSGSBASE, CET) after boot to prevent rootkits from disabling security features by writing CR4. Windows HAL protects equivalent bits. Impossible OS has no post-boot CR4 protection -- a kernel exploit can trivially clear CR4.SMEP and execute user pages.
+Linux pins CR0.WP and CR4 bits (SMEP, SMAP, UMIP, FSGSBASE, CET) after boot to prevent rootkits from disabling protection by writing the control registers. Windows HAL protects equivalent bits. Impossible OS has no post-boot protection -- a kernel exploit can trivially clear CR4.SMEP and execute user pages, OR clear CR0.WP and write through `PTE.W=0` (classic rootkit primitive for patching read-only kernel text).
 
-- [ ] Add `CR4_UMIP` (bit 11), `CR4_FSGSBASE` (bit 16), `CR4_CET` (bit 23) definitions to `cpu_security.c` alongside existing `CR4_SMEP`/`CR4_SMAP` (or move all CR4 bit definitions to a shared header)
-- [ ] Define `cr4_pinned_mask` in `cpu_security.c`: bitmask of CR4 bits that must not be cleared after boot; includes `CR4_SMEP`, `CR4_SMAP`, `CR4_UMIP`, `CR4_FSGSBASE`, `CR4_CET` (set bits only for features that are actually enabled)
-- [ ] Populate `cr4_pinned_mask` at end of Phase 1 (BSP) after all CR4 feature activation is complete -- must be AFTER §5 (XSAVE/PCID activation) so that `CR4.OSXSAVE` and `CR4.PCIDE` are set before pinning; set `cr4_pinning_active = true`
-- [ ] Define `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION = 0x109` in the same bugcheck header
-- [ ] Implement `cr4_verify_pinned()`: reads CR4, checks `(cr4 & cr4_pinned_mask) == cr4_pinned_mask`; if not, panic with `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION` and log which bit was cleared
-- [ ] Call `cr4_verify_pinned()` at strategic points: (a) on return from `#GP` handler, (b) periodically from the LAPIC timer DPC, (c) on each AP after hardening
-- [ ] Implement `cr4_write_safe(uint64_t new_cr4)`: wrapper around `write_cr4()` that asserts pinned bits are preserved; all kernel code must use this wrapper after pinning is active. **Rollback:** If pinning causes false panics, set `cr4_pinning_active = false` and revert to unprotected `write_cr4()` until all callers are audited
-- [ ] Add `POSTCODE_CR4_PINNED = 0x39` to `boot_init.h` (Phase 1 range -- pinning runs at end of Phase 1 after XSAVE/PCID)
-- [ ] Add debug `POST16(0xD400)` before `cr4_pinned_mask` population, `POST16(0xD401)` after pinning active (remove after bare-metal verification; `0xD7xx` range reserved for xhci.c)
-- [ ] Verify (serial log): `[Phase1] CR4 pinned: mask=0x%lx` appears after XSAVE/PCID activation
-- [ ] Commit: `"boot: CR4 safety-bit pinning with CRITICAL_STRUCTURE_CORRUPTION panic"`
+- [ ] Add `CR0_WP` (bit 16), `CR4_UMIP` (bit 11), `CR4_FSGSBASE` (bit 16), `CR4_CET` (bit 23) to a shared header alongside existing `CR4_SMEP`/`CR4_SMAP`
+- [ ] Define `cr0_pinned_mask` (includes `CR0_WP`) and `cr4_pinned_mask` (SMEP/SMAP/UMIP/FSGSBASE/CET; only bits for features actually enabled) in `cpu_security.c`
+- [ ] Populate both masks at end of Phase 1 (BSP) AFTER §5 (XSAVE/PCID) so `CR4.OSXSAVE`/`CR4.PCIDE` are set first; set `cr_pinning_active = true`
+- [ ] Define `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION = 0x109`
+- [ ] Implement `cr0_verify_pinned()` + `cr4_verify_pinned()`: panic with `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION` when any pinned bit clears, logging the register + bit name
+- [ ] Implement `cr0_write_safe()` + `cr4_write_safe()` wrappers; all kernel writes use them after pinning is active. Rollback knob: clear `cr_pinning_active` if false panics surface
+- [ ] Call both verifiers from: (a) `#GP` handler return, (b) LAPIC timer DPC tick, (c) each AP after `ap_cpu_harden()`
+- [ ] Add `POSTCODE_CR_PINNED = 0x39` to `boot_init.h`; debug `POST16(0xD400)/(0xD401)` around pinning activation (`0xD7xx` reserved for xhci.c)
+- [ ] Verify (serial log): `[Phase1] CR0/CR4 pinned: cr0_mask=0x... cr4_mask=0x...` after XSAVE/PCID; debug-build test of `write_cr0(cr0 & ~CR0_WP)` and `write_cr4(cr4 & ~CR4_SMEP)` both trigger `CRITICAL_STRUCTURE_CORRUPTION`
+- [ ] Commit: `"boot: CR0.WP + CR4 safety-bit pinning with CRITICAL_STRUCTURE_CORRUPTION panic"`
 
-**Test checkpoint:** Boot completes with `[Phase1] CR4 pinned: mask=0x...` log line after XSAVE/PCID activation. In debug build, call `write_cr4(cr4 & ~CR4_SMEP)` from a test -- verify it triggers `CRITICAL_STRUCTURE_CORRUPTION` panic. Verify on QEMU WHPX (SMP), TCG, VirtualBox, bare metal. Bare metal: confirm XSAVE/PCID Phase 1 activation completes before pinning takes effect.
+**Test checkpoint:** Boot completes with `[Phase1] CR0/CR4 pinned: cr0_mask=0x... cr4_mask=0x...` after XSAVE/PCID activation. Debug-build tests clearing CR0.WP or CR4.SMEP both panic with `CRITICAL_STRUCTURE_CORRUPTION`. Verify on QEMU WHPX (SMP), TCG, VirtualBox, bare metal. Bare metal: confirm XSAVE/PCID Phase 1 activation completes before pinning takes effect.
 
 ---
 
@@ -249,15 +269,15 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > [!TIP]
 > **Competitive edge:** A single `[CPU%u AUDIT]` line per CPU with EFER, CR0, CR4, XCR0, PAT, IA32_MISC_ENABLE, and all security feature status in a fixed parseable format is something no other OS provides. This enables automated boot verification scripts and CI regression detection.
 
-- [ ] Add `#define MSR_IA32_MISC_ENABLE 0x1A0` to `include/kernel/msr.h` if not already present (needed for audit readout)
-- [ ] Implement `cpu_audit_registers(uint32_t cpu_id)` in `cpu_security.c`: reads EFER, CR0, CR4, XCR0 (if OSXSAVE), PAT, IA32_MISC_ENABLE; formats as single structured log line
-- [ ] Log format: `[CPU%u AUDIT] EFER=0x%lx CR0=0x%lx CR4=0x%lx XCR0=0x%lx PAT=0x%lx MISC=0x%lx NX=%u SMEP=%u SMAP=%u UMIP=%u CET=%u FSGS=%u PCID=%u`
-- [ ] Call on BSP at end of Phase 0 (after all CR4/EFER activation); call on each AP at end of `ap_cpu_harden()`
-- [ ] Store audit data in `cpu_data[cpu_id].audit` struct for runtime query via Registry key `HKLM\HARDWARE\CPU\%u\Registers`
-- [ ] After SMP bringup complete: compare all AP audit structs against BSP; log `[SMP] All %u CPUs register-consistent` or `[SMP] WARN: CPU%u differs from BSP` with specific register and bit differences
-- [ ] Add `POSTCODE_CPU_AUDIT = 0x2A` to `boot_init.h` (Phase 0 range -- audit runs at end of Phase 0 on BSP, and on each AP during SMP bringup)
-- [ ] Add debug `POST16(0xD300)` on entry to `cpu_audit_registers()`, `POST16(0xD301)` on exit (remove after bare-metal verification; `0xD9xx` range reserved for cpu_security.c)
-- [ ] Commit: `"boot: per-CPU register state audit trail at boot"`
+- [ ] Add `MSR_IA32_MISC_ENABLE 0x1A0`, `MSR_IA32_ARCH_CAPABILITIES 0x10A`, `MSR_IA32_BIOS_SIGN_ID 0x8B` to `msr.h` if absent (SPEC_CTRL 0x48 from TODO-10 §8)
+- [ ] Implement `cpu_audit_registers(cpu_id)` in `cpu_security.c`: reads EFER, CR0, CR4, XCR0 (if OSXSAVE), PAT, MISC_ENABLE + CPUID-gated ARCH_CAPABILITIES / SPEC_CTRL / BIOS_SIGN_ID
+- [ ] Use `msr_try_read()` as secondary safety net only -- existence gates come from CPUID first
+- [ ] Log format: `[CPU%u AUDIT] EFER=... CR0=... CR4=... XCR0=... PAT=... MISC=... ARCH_CAPS=... SPEC_CTRL=... UCODE=... NX=... SMEP=... ... PCID=...`
+- [ ] Call on BSP at end of Phase 0; call on each AP at end of `ap_cpu_harden()`
+- [ ] Store in `cpu_data[cpu_id].audit` struct (ARCH_CAPS / SPEC_CTRL / ucode_rev fields added); expose via `HKLM\HARDWARE\CPU\%u\Registers` when registry write supports it
+- [ ] After SMP bringup: compare AP audits against BSP; log `[SMP] All %u CPUs register-consistent` or per-CPU divergence
+- [ ] Add `POSTCODE_CPU_AUDIT = 0x2A` to `boot_init.h`; debug `POST16(0xD300)/(0xD301)` entry/exit
+- [ ] Commit: `"boot: per-CPU register audit (EFER/CR/XCR0/PAT/MISC/ARCH_CAPS/SPEC_CTRL/microcode)"`
 
 **Test checkpoint:** Boot on SMP system. Log shows `[CPU0 AUDIT] EFER=... CR4=... ` line, then `[CPU1 AUDIT]` for each AP, then `[SMP] All N CPUs register-consistent`. Bare metal: compare audit output between QEMU and real hardware -- the differences (e.g., SMEP absent on QEMU TCG, PAT differences) should be clearly visible. CI scripts can grep for `[CPU. AUDIT]` lines and fail on unexpected register values.
 
@@ -274,9 +294,12 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ⬜ §5 planned           |
 | 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ⬜ §6 planned           |
 | 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ⬜ §7 planned           |
+| 💎  | CR0.WP pinning              | ✅ HAL invariant            | ✅ cr0_pinned_bits       | ⬜ §7 planned           |
 | 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ⬜ §8 planned           |
 | 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ⬜ §8 MTRR bullet       |
+| 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ⬜ §6 hybrid bullet     |
 | ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ⬜ §3 boot_info only    |
+| ⭐  | Confidential VM guest       | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x     | ⬜ XREF 02/T09 §13      |
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |
 
@@ -298,10 +321,12 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
   - Hypervisor detection ran before timer: `g_boot_info.platform_type != PLATFORM_UNKNOWN` (platform_detect() completed); if `hv_vendor` is non-empty, `hv_flags != 0` (flags were set)
   - `cpu_has(CPU_FEATURE_SSE2)` returns true (matches `g_cpu.has_sse2`)
   - CR4.OSXSAVE is set if CPU supports XSAVE (`g_cpu.has_xsave` implies `CR4 & (1 << 18)`)
-  - §6: `cpu_data[ap_id].feature_mismatch == false` for every online AP (no feature degradation on homogeneous system)
-  - §7: `cr4_pinning_active == true` after boot; `(read_cr4() & cr4_pinned_mask) == cr4_pinned_mask` (pinned bits intact)
+  - §4: `bsp_per_cpu_msr_profile_size > 0` once §2 lands (registry populated)
+  - §5: when `cpu_has(CPU_FEATURE_CET_SS)`, expected XCR0 mask includes CET_U + CET_S bits (deferred assert until TODO-10 §9 lands)
+  - §6: `cpu_data[ap_id].feature_mismatch == false` for every online AP on homogeneous systems; hybrid systems: `cpu_data[ap_id].core_type` is populated and global mask = intersection
+  - §7: `cr_pinning_active == true` after boot; `(read_cr0() & cr0_pinned_mask) == cr0_pinned_mask` AND `(read_cr4() & cr4_pinned_mask) == cr4_pinned_mask` (both intact)
   - §8: `rdmsr(IA32_PAT)` on test CPU matches `g_bsp_pat_msr` (PAT synchronized)
-  - §9: `cpu_data[0].audit.efer != 0` (audit data populated); `cpu_data[0].audit.cr4 & CR4_PAE` (PAE always set in long mode)
+  - §9: `cpu_data[0].audit.efer != 0` (populated); `cpu_data[0].audit.cr4 & CR4_PAE`; on CPUID-capable CPUs, `audit.arch_caps != 0` and `audit.ucode_rev != 0`
 - [ ] Register in `test_runner_init()`: `test_register_cpu_seq()`
 - [ ] Commit: `"test: add cpu_seq test suite"`
 
@@ -325,7 +350,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 
 **Test checkpoint:** Every Verification bullet above holds on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; §2/§4/§5/§6--§9 items marked N/A until those sections ship stay documented in serial/klog gaps, not silent failures.
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | tests pending implementation (§2-§9 still [ ]/[/]) -- once `test_cpu_seq.c` lands, expect N suites, 0 failures
 
 ---
 
@@ -336,3 +361,5 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 2026-04-10 | validate | validate-todo-file: Inputs XREFs use full `.md` paths; VMM PAT XREF §1→§11; PEB/TEB link disambiguated to `TODO-11-peb-teb-user-abi.md §1`; §7 TODO-10 §13→§10; §3 `HV_FLAG_*` + test checkpoint; Impl Order `defer`→`[ ]`, T24/T01 § refs; OS table padded + last row TODO-14 §2; Unit/Verification checkpoints + `run-boot-tests.bat`; History added; reciprocal XREF on PEB/TEB §6. Flags: §3/§5/§6 blocked on T24/T01; §7--§10 need `cpu_data`/`g_bsp_pat_msr`/audit fields. |
 | 2026-04-11 | gap-analysis | Web: Hyper-V TLFS timers (`HV_X64_MSR_TIME_REF_COUNT`); Linux SMP/`verify_cpu` paths; MTRR+PAT SMP context (Gentoo/kernel docs). Code-truth: `boot_hw.c` Phase0 order; `platform_detect()` in `timer.c` + `cpu_security.c`; SMEP/SMAP globally skipped (`hv_supports_cr4_smep_smap` returns 0); PAT value ~307; no Registry HV keys. Added `IMPORTANT` current-state block; Inputs `cpuid_platform.c`/`timer.c`; TSC XREF `TODO-08-time-filetime-management.md`; §1 Registry deferral + Impl §1→`[/]`; §8 MTRR bullet + OS row; TODO-20 XREF. |
 | 2026-04-11 | validate | validate-todo-file: Inputs add `boot_hw.c`, fix `boot_phase0` anchor; XREF `TODO-07-time` → §2,§3; OS POST row → `TODO-14-boot-diagnostics.md` §2; Unit Tests `→` arrow; 9 sections Commit+checkpoint OK; §9 at 10 pre-Commit bullets (split if grow); `[/]` row 3 + external T24/T01 blockers; `run-boot-tests.bat` present. |
+| 2026-05-20 | gap-analysis | Codex gap-audit: 6 findings + 2 retargets. Branch A on §4 (per-CPU MSR profile registry), §5 (CET xstate handoff), §6 (intersection ordering + hybrid CPUID 0x1A + TSC-sync XREF), §7 (CR0.WP pinning), §9 (ARCH_CAPS/SPEC_CTRL/microcode audit). Branch C: 02/T09 §15 (TDX/SEV-SNP/HV ref TSC), 01/T11 §6 (HV ref TSC consumer). OS table +3 rows (CR0.WP, hybrid, conf-compute). |
+| 2026-05-20 | review | §1 re-review (commit `00f9429d`): Codex 3x adversarial+consistency+perf. 3M fixed: num_cores uint8 wrap >=256 cores (cpuid.c:237 widened to uint16); AMD ThreadsPerCore not decoded (cpuid.c:246 + topology.c:54); threads_per_core re-introduced same wrap (clamped at 255). Perf: approved. Lint CLEAN. |

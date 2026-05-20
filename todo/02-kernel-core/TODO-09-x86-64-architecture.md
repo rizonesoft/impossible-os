@@ -421,9 +421,14 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## 15. Future Silicon Extensions
 
+> -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §3` -- this section owns the kernel-side guest enlightenment + confidential-compute guest detection that §3 of the boot-sequencing TODO mirrors as `boot_info` flags.
+
 - [ ] Stub: if `CPUID.(7,0):EDX[5]` set: log `[cpu] UINTR present; not yet enabled`; structure definitions in `include/kernel/uintr.h` (UPID, UITT); full implementation deferred until UINTR reaches mainstream silicon
 - [ ] Stub: if `CPUID.(7,0):ECX[16]` set: log `[vmm] LA57 (57-bit VA) detected; 4-level paging active`; enabling at runtime requires a full VMM rewrite; relevant for server SKUs with > 256 TiB virtual address space
-- [ ] Commit: `"kernel/cpu: UINTR/LA57 detection stubs, future silicon log entries"`
+- [ ] TDX guest stub: probe CPUID leaf `0x21` for `"IntelTDX    "` signature; set `boot_info.cc_kind = CC_INTEL_TDX`; log; full attestation deferred
+- [ ] SEV/SEV-ES/SEV-SNP guest stub: probe CPUID leaf `0x8000001F` EAX bits 1/3/4; set `boot_info.cc_kind = CC_AMD_SEV/_ES/_SNP`; log; full attestation deferred
+- [ ] Hyper-V SynIC + reference TSC MSR init: when `boot_info.hv_flags & HV_FLAG_TSC_ENLIGHTENMENT`, program `HV_X64_MSR_REFERENCE_TSC=0x40000021` + SynIC SIMP/SIEFP; consumer in `01-boot-platform/TODO-11-interrupt-timer-arch.md §6`
+- [ ] Commit: `"kernel/cpu: future-silicon + guest enlightenment stubs (UINTR/LA57/TDX/SEV-SNP/Hyper-V ref TSC)"`
 
 **Test checkpoint:** When CPU advertises UINTR or LA57, serial shows one-line stub log and kernel continues without enabling new modes. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
