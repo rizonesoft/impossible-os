@@ -135,6 +135,9 @@ Document and enforce the required activation sequence in `boot_phase0()`. The MS
 > - Canonical doc: `include/kernel/cpu_security.h` (`cpu_security_log_state` prototype + intent comment).
 > - Scope boundary: §2 owns the activation-order LOG line only; NX/SMEP/SMAP/UMIP/PKU/PAT enable code is in `02-kernel-core/TODO-10 §1/§2/§5`. CR4-bit pinning + full per-CPU audit live in §7 + §9.
 
+> **Verified:** 2026-05-20 | commit `77fce853` | 7/7 items | build OK | smoke PASS (TCG 2.64s)
+> **Quality reviewed:** 2026-05-20 | Codex 4x (design, adversarial, consistency, perf) | 1M fixed | scope: kernel-code-quality
+
 ---
 
 ## 3. Hypervisor Detection Before Timer Selection
@@ -373,3 +376,4 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 2026-04-11 | validate | validate-todo-file: Inputs add `boot_hw.c`, fix `boot_phase0` anchor; XREF `TODO-07-time` → §2,§3; OS POST row → `TODO-14-boot-diagnostics.md` §2; Unit Tests `→` arrow; 9 sections Commit+checkpoint OK; §9 at 10 pre-Commit bullets (split if grow); `[/]` row 3 + external T24/T01 blockers; `run-boot-tests.bat` present. |
 | 2026-05-20 | gap-analysis | Codex gap-audit: 6 findings + 2 retargets. Branch A on §4 (per-CPU MSR profile registry), §5 (CET xstate handoff), §6 (intersection ordering + hybrid CPUID 0x1A + TSC-sync XREF), §7 (CR0.WP pinning), §9 (ARCH_CAPS/SPEC_CTRL/microcode audit). Branch C: 02/T09 §15 (TDX/SEV-SNP/HV ref TSC), 01/T11 §6 (HV ref TSC consumer). OS table +3 rows (CR0.WP, hybrid, conf-compute). |
 | 2026-05-20 | review | §1 re-review (commit `00f9429d`): Codex 3x adversarial+consistency+perf. 3M fixed: num_cores uint8 wrap >=256 cores (cpuid.c:237 widened to uint16); AMD ThreadsPerCore not decoded (cpuid.c:246 + topology.c:54); threads_per_core re-introduced same wrap (clamped at 255). Perf: approved. Lint CLEAN. |
+| 2026-05-20 | implement | §2 shipped (commit `77fce853`): POSTCODE_CPU_HARDEN_DONE alias + cpu_security_log_state() helper + 2 BSP call sites + 1 unit test. Codex 4x (design adopted moving log out of shared helpers; adversarial 2x approved; consistency 1M fixed test-comment contract drift; perf approved). Stale prereq references (msr_init / cpu_efer_harden) dropped from §2 preamble. Smoke PASS TCG 2.64s. |

@@ -56,13 +56,16 @@ static void test_smep_smap_state(void)
     (void)cr4;
 }
 
-/* Phase 0 activation-summary helper: callable without crashing. Reads MSR
- * EFER + CR4 + cpu_has() and emits one klog line. Proves the path is
- * callable from any context with no side effects on the running kernel. */
+/* BSP-only Phase 0 activation-summary helper smoke test. Confirms the
+ * helper returns cleanly when invoked from the test runner (which runs on
+ * the BSP after boot). Per the header contract, the helper itself is
+ * BSP-only -- this test does NOT establish AP / ISR / preemption safety;
+ * the `[Phase0]` label would misattribute register state if called from
+ * an AP. Future AP audit needs a separate phase/context-aware helper. */
 static void test_cpu_security_log_state(void)
 {
     cpu_security_log_state("unit-test");
-    TEST_ASSERT(1, "cpu_security_log_state() returns cleanly");
+    TEST_ASSERT(1, "cpu_security_log_state() returns cleanly on BSP");
 }
 
 /* ---- S3: KPTI trampoline infrastructure ---- */
