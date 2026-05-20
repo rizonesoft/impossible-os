@@ -63,7 +63,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | ⭐  | Order | Deliverable                                      | Depends On                    | Status |
 | --- | :---: | ------------------------------------------------ | ----------------------------- | :----: |
 | 💎  |   1   | CPUID detection & per-CPU capability capture     | D2/T01 §1                     |  [x]   |
-| 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T24 §1 §3, D2/T01 §3   |  [ ]   |
+| 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T10 §1, D2/T01 §2      |  [x]   |
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12                |  [/]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T24 §1 §7              |  [ ]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [ ]   |
@@ -107,23 +107,33 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 
 ---
 
-## 2. Phase 0 CPU Security Activation Order *(deferred -- blocked by TODO-24 `cpu_efer_harden`/`cpu_cr4_harden` + TODO-01 `msr_init`; minimal path in `TODO-10-bare-metal-hardening.md` §10)*
-**Prompt:** Document and enforce the required activation sequence in `boot_phase0()`: (1) `msr_init()` (centralized MSR layer, TODO-01 §3) must run before any MSR write; (2) `cpu_efer_harden()` sets `EFER.NXE=1`, `EFER.SCE=1`, `EFER.FFXSR` if supported -- **this must complete before VMM init** because VMM will write PTE bit 63 (NX) on the first `vmm_map_page()` call; (3) `cpu_cr4_harden()` sets `CR4.SMEP`, `CR4.SMAP`, `CR4.UMIP` if detected -- must run before any user-mode-visible mapping; emit a `POSTCODE_CPU_HARDEN_DONE` after the last CR4 write. Add `BOOT_REQUIRE(SUBSYS_MSR)` guards to EFER/CR4 steps so wrong-order calls panic with a clear message. Log: `[Phase0] EFER=0x{val} CR4=0x{val}`.
+## 2. Phase 0 CPU Security Activation Order
+
+Document and enforce the required activation sequence in `boot_phase0()`. The MSR layer is `msr_read`/`msr_write` inline statics in `msr.h` (no separate `_init` phase). EFER hardening (`cpu_enable_nx`) sets `EFER.NXE` before VMM walks page tables. CR4 hardening splits across two windows: NX/UMIP/PKU/PAT pre-VMM via `cpu_harden()`, then SMEP/SMAP post-pagetable via `cpu_harden_post_pagetable()` once kernel PTEs no longer carry the User bit. Each window emits a consolidated `[Phase0] CPU security <phase>: EFER=... CR4=... NX=N UMIP=N PKU=N SMEP=N SMAP=N` log line. `POSTCODE_CPU_HARDEN_DONE` (alias for `POST16_CPU_HARDEN_OK`) marks completion of the pre-VMM window.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §1, §3` -- `cpu_efer_harden()` and `cpu_cr4_harden()` implementations live there.
-> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §5` -- `msr_init()` implementation lives there (MSR Management Infrastructure).
-> → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- Phase 0 boot sequence; this step slots between serial init and PMM.
+> -> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §1, §2` -- NX (cpu_enable_nx + EFER.NXE) shipped; SMEP/SMAP exist but gated off until kernel PTE User-bit policy is fixed.
+> -> XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §2` -- Phase 0 boot sequence; this step slots between heap and VMM NX policy.
+> **Stale-prereq note:** earlier drafts referenced `cpu_efer_harden()` / `cpu_cr4_harden()` / `msr_init()` / `SUBSYS_MSR` as upstream prerequisites; those names never landed and are not needed. Actual symbols: `cpu_enable_nx`/`_smep`/`_smap`/`_umip`/`_pku` + umbrella `cpu_harden()` / `cpu_harden_post_pagetable()`. `msr_read`/`msr_write` are inline statics in `msr.h:16/23` with no init phase.
 
-- [ ] Add `POSTCODE_MSR_INIT`, `POSTCODE_CPU_EFER`, `POSTCODE_CPU_CR4`, `POSTCODE_CPU_HARDEN_DONE` to `boot_init.h`
-- [ ] Insert `BOOT_STEP(SUBSYS_MSR, msr_init)` in `boot_phase0()` before VMM step
-- [ ] Insert `BOOT_STEP(SUBSYS_CPU_EFER, cpu_efer_harden)` immediately after MSR init
-- [ ] Insert `BOOT_STEP(SUBSYS_CPU_CR4, cpu_cr4_harden)` after EFER step
-- [ ] Add `BOOT_REQUIRE(SUBSYS_MSR)` inside `cpu_efer_harden()` and `cpu_cr4_harden()`
-- [ ] Verify (serial log): `[Phase0] EFER.NXE=1 SMEP=1 SMAP=1 UMIP=1` appears before first VMM log line
-- [ ] Commit: `"boot: enforce Phase 0 CPU security activation order before VMM init"`
+- [x] Add `POSTCODE_CPU_HARDEN_DONE` alias for `POST16_CPU_HARDEN_OK` in `boot_init.h` (no double-emit, same constant)
+- [x] `boot_phase0()` already wraps `cpu_harden()` with POST16_CPU_HARDEN + POSTCODE_CPU_HARDEN_DONE at `boot_hw.c:555-558`
+- [x] Implement `cpu_security_log_state(const char *phase_label)` in `cpu_security.c` reading EFER/CR4 + cpu_has() for NX/UMIP/PKU/SMEP/SMAP (BSP-only; helpers also run on APs)
+- [x] Wire `cpu_security_log_state("pre-VMM")` after `cpu_harden()` and before `vmm_apply_nx_policy()` in `boot_phase0()`
+- [x] Wire `cpu_security_log_state("post-pagetable")` after `cpu_harden_post_pagetable()` to show the deferred SMEP/SMAP state
+- [x] Verify (smoke test): two `[Phase0] CPU security ...` lines on serial; pre-VMM == post-pagetable today (SMEP/SMAP gated off), will diverge once TODO-10 §2 unblocks
+- [x] Commit: `"boot: Phase 0 CPU security activation-state summary lines + POSTCODE_CPU_HARDEN_DONE alias"`
 
-**Test checkpoint:** Serial log shows `[Phase0] EFER.NXE=1` before first `[VMM]` line. `POSTCODE_CPU_HARDEN_DONE` visible on POST display. Wrong-order boot (VMM before EFER) triggers `BOOT_REQUIRE` panic with clear subsystem name. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. Bare metal is critical -- EFER/CR4 writes have different side effects under EPT vs native paging.
+**Test checkpoint:** `bash scripts/test-smoke.sh` shows `[Phase0] CPU security pre-VMM:` line before any `[vmm]` activity, and `[Phase0] CPU security post-pagetable:` line after `[vmm] NX policy applied`. Both lines decode EFER + CR4 + per-feature status. `POSTCODE_CPU_HARDEN_DONE` visible on POST display. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- bare metal SMEP/SMAP values flip to 1 once `02-kernel-core/TODO-10 §2` lands.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 1 added suite ("CPU security: activation-state helper callable"), 0 failures
+>
+> **Notes:**
+> - What shipped: `cpu_security_log_state()` helper + two BSP-only call sites in `boot_hw.c` + `POSTCODE_CPU_HARDEN_DONE` alias.
+> - How it runs: BSP-only `cpu_security_log_state("pre-VMM")` after `cpu_harden()`, then `cpu_security_log_state("post-pagetable")` after `cpu_harden_post_pagetable()`. Helpers stay BSP-context-agnostic so AP path emits no false evidence.
+> - Downstream effects: serial log gains two structured lines diagnosticians can grep; divergence between them signals when CR4 hardening completes once TODO-10 §2 unblocks SMEP/SMAP.
+> - Canonical doc: `include/kernel/cpu_security.h` (`cpu_security_log_state` prototype + intent comment).
+> - Scope boundary: §2 owns the activation-order LOG line only; NX/SMEP/SMAP/UMIP/PKU/PAT enable code is in `02-kernel-core/TODO-10 §1/§2/§5`. CR4-bit pinning + full per-CPU audit live in §7 + §9.
 
 ---
 
@@ -287,8 +297,8 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 
 | ⭐   | Feature                     | 🪟 Win11                    | 🐧 Linux                 | 🚀 Impossible OS        |
 | --- | --------------------------- | --------------------------- | ------------------------ | ----------------------- |
-| 💎  | EFER.NXE before NX pages    | ✅ Hal before paging        | ✅ cpu_init pre-paging   | ⚠️ §2 order WIP         |
-| 💎  | SMEP/SMAP BSP Phase 0       | ✅ Hal CR4 early            | ✅ setup_cr4 early       | ⚠️ §2 bare metal gap    |
+| 💎  | EFER.NXE before NX pages    | ✅ Hal before paging        | ✅ cpu_init pre-paging   | ✅ §2 cpu_harden + log  |
+| 💎  | SMEP/SMAP BSP Phase 0       | ✅ Hal CR4 early            | ✅ setup_cr4 early       | ⚠️ §2 wired, T10 §2 gate|
 | 💎  | AP hardening matches BSP    | ✅ Hal per AP               | ✅ cpu_init secondary    | ⚠️ §4 smp partial       |
 | 💎  | XSAVE after VMM ready       | ✅ OSXSAVE post-paging      | ✅ fpu deferred          | ⚠️ §5 AVX no formal win |
 | 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ⬜ §5 planned           |

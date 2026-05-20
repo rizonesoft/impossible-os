@@ -349,3 +349,22 @@ void cpu_verify_hardening(void)
     }
     POST16(0xD904);
 }
+
+/* Single consolidated activation-state line for the BSP Phase 0 sequence.
+ * Owner: TODO-09 cpu-boot-sequencing activation-order section. Do NOT call
+ * from APs -- the `[Phase0]` label would mis-attribute AP register state. */
+void cpu_security_log_state(const char *phase_label)
+{
+    uint64_t efer = msr_read(MSR_IA32_EFER);
+    uint64_t cr4  = read_cr4();
+    unsigned nx   = cpu_has(CPU_FEATURE_NX)   ? ((efer >> 11) & 1u) : 0u;
+    unsigned umip = cpu_has(CPU_FEATURE_UMIP) ? ((cr4  >> 11) & 1u) : 0u;
+    unsigned pku  = cpu_has(CPU_FEATURE_PKU)  ? ((cr4  >> 22) & 1u) : 0u;
+    unsigned smep = cpu_has(CPU_FEATURE_SMEP) ? ((cr4  >> 20) & 1u) : 0u;
+    unsigned smap = cpu_has(CPU_FEATURE_SMAP) ? ((cr4  >> 21) & 1u) : 0u;
+
+    klog(LOG_INFO, "cpu",
+         "[Phase0] CPU security %s: EFER=0x%lx CR4=0x%lx NX=%u UMIP=%u PKU=%u SMEP=%u SMAP=%u",
+         phase_label, efer, cr4,
+         (uint64_t)nx, (uint64_t)umip, (uint64_t)pku, (uint64_t)smep, (uint64_t)smap);
+}

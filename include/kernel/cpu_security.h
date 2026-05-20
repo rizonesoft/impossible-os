@@ -50,6 +50,13 @@ void cpu_harden_post_pagetable(void);
  * cpu_harden_post_pagetable(). Reads back EFER/CR4 and logs discrepancies. */
 void cpu_verify_hardening(void);
 
+/* Emit a single consolidated `[Phase0] CPU security <phase_label>: EFER=...
+ * CR4=... NX=N UMIP=N PKU=N SMEP=N SMAP=N` line. BSP-only; intended for the
+ * boot_phase0 activation sequence so log readers can see what was enabled
+ * before/after the VMM walk in one structured line. Owner: 01-boot-platform
+ * TODO-09 cpu-boot-sequencing activation-order section. */
+void cpu_security_log_state(const char *phase_label);
+
 /* ---- SMAP user-space access brackets ---- */
 
 /* STAC: Set AC flag -- allows kernel to access user pages (SMAP bypass).

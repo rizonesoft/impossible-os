@@ -80,6 +80,10 @@ typedef enum {
 #define POSTCODE_KLOG_INIT      0x23
 #define POSTCODE_CPUID_INIT     0x24
 #define POSTCODE_SIMD_INIT      0x25
+/* CPU security activation completion alias. Same constant as POST16_CPU_HARDEN_OK
+ * (the canonical marker emitted from boot_phase0 after cpu_harden() returns);
+ * named for clarity in the TODO-09 cpu-boot-sequencing activation-order section. */
+#define POSTCODE_CPU_HARDEN_DONE POST16_CPU_HARDEN_OK
 #define POSTCODE_BOOT_CFG       0x26
 #define POSTCODE_GDT_INIT       0x30
 #define POSTCODE_IDT_INIT       0x31

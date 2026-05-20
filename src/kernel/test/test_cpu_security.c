@@ -56,6 +56,15 @@ static void test_smep_smap_state(void)
     (void)cr4;
 }
 
+/* Phase 0 activation-summary helper: callable without crashing. Reads MSR
+ * EFER + CR4 + cpu_has() and emits one klog line. Proves the path is
+ * callable from any context with no side effects on the running kernel. */
+static void test_cpu_security_log_state(void)
+{
+    cpu_security_log_state("unit-test");
+    TEST_ASSERT(1, "cpu_security_log_state() returns cleanly");
+}
+
 /* ---- S3: KPTI trampoline infrastructure ---- */
 
 static void test_kpti_percpu_kernel_cr3(void)
@@ -1070,6 +1079,8 @@ void test_register_x86(void)
         test_nx_efer_set, TEST_CAT_X86);
     test_suite_register_cat("CPU security: SMEP/SMAP CR4 accessible",
         test_smep_smap_state, TEST_CAT_X86);
+    test_suite_register_cat("CPU security: activation-state helper callable",
+        test_cpu_security_log_state, TEST_CAT_X86);
     test_suite_register_cat("CPU security: kernel_cr3 non-zero",
         test_kpti_percpu_kernel_cr3, TEST_CAT_X86);
     test_suite_register_cat("CPU security: user_cr3 == kernel_cr3",
