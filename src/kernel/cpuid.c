@@ -232,18 +232,23 @@ void cpuid_init(void)
     /* ---- Leaf 0x80000008: Address sizes and core count ---- */
     if (g_cpu.max_ext_leaf >= 0x80000008) {
         cpuid_raw(0x80000008, 0, &eax, &ebx, &ecx, &edx);
-        g_cpu.phys_addr_bits   = (uint8_t)(eax & 0xFF);        /* EAX[7:0] */
-        g_cpu.linear_addr_bits = (uint8_t)((eax >> 8) & 0xFF); /* EAX[15:8] */
-        g_cpu.num_cores        = (uint8_t)((ecx & 0xFF) + 1);  /* ECX[7:0] + 1 */
+        g_cpu.phys_addr_bits   = (uint8_t)(eax & 0xFF);            /* EAX[7:0] */
+        g_cpu.linear_addr_bits = (uint8_t)((eax >> 8) & 0xFF);     /* EAX[15:8] */
+        g_cpu.num_cores        = (uint16_t)((ecx & 0xFF) + 1);     /* ECX[7:0] + 1; uint16 holds 256 */
     }
 
     /* ---- Leaf 0x8000001E: Zen chiplet topology (AMD only) ---- */
     if (cpu_has(CPU_FEATURE_TOPO_EXT) &&
         g_cpu.max_ext_leaf >= 0x8000001E) {
         cpuid_raw(0x8000001E, 0, &eax, &ebx, &ecx, &edx);
-        g_cpu.ext_apic_id     = eax;                           /* EAX[31:0] */
-        g_cpu.compute_unit_id = (uint8_t)(ebx & 0xFF);         /* EBX[7:0] */
-        g_cpu.node_id         = (uint8_t)(ecx & 0xFF);         /* ECX[7:0] */
+        g_cpu.ext_apic_id      = eax;                              /* EAX[31:0] */
+        g_cpu.compute_unit_id  = (uint8_t)(ebx & 0xFF);            /* EBX[7:0]  ComputeUnitId */
+        {
+            /* EBX[15:8] = ThreadsPerComputeUnit - 1 (AMD APM Vol 3); clamp +1 result at 255 */
+            uint32_t tpc = ((ebx >> 8) & 0xFF) + 1;
+            g_cpu.threads_per_core = (uint8_t)(tpc > 255 ? 255 : tpc);
+        }
+        g_cpu.node_id          = (uint8_t)(ecx & 0xFF);            /* ECX[7:0] */
     }
 
     /* ---- Log results ---- */

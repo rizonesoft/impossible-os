@@ -122,14 +122,14 @@ struct cpu_features {
     /* Address sizes (from leaf 0x80000008) */
     uint8_t  phys_addr_bits;      /* physical address width (typically 48) */
     uint8_t  linear_addr_bits;    /* linear address width (48, or 57 if LA57) */
-    uint8_t  num_cores;           /* number of physical cores */
-    uint8_t  _pad0;               /* alignment padding */
+    uint16_t num_cores;           /* number of physical cores (uint8 wraps at 256) */
 
     /* Zen topology (from leaf 0x8000001E, AMD only) */
     uint32_t ext_apic_id;         /* extended APIC ID */
     uint8_t  compute_unit_id;     /* physical core within CCD */
     uint8_t  node_id;             /* NUMA domain identifier */
-    uint8_t  _pad1[2];            /* alignment padding */
+    uint8_t  threads_per_core;    /* SMT siblings per core (1 = no SMT); 0 = unknown */
+    uint8_t  _pad1;               /* alignment padding */
 
     /* PKRU XSAVE component (from leaf 0x0D subleaf 9) */
     uint32_t pkru_xsave_offset;   /* byte offset of PKRU in XSAVE area (0 = not available) */

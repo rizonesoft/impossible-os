@@ -51,7 +51,7 @@ static void topology_parse_zen(void)
         /* CCD is not available from BSP-only data; leave 0 (unknown) */
         g_cpu_topo[i].ccd_id       = 0;
         g_cpu_topo[i].core_type    = CORE_TYPE_GENERIC;
-        g_cpu_topo[i].smt_siblings = 1;
+        g_cpu_topo[i].smt_siblings = g_cpu.threads_per_core ? g_cpu.threads_per_core : 1;
 
         if (g_cpu_topo[i].node_id > max_node)
             max_node = g_cpu_topo[i].node_id;
