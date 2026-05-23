@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     321 |     175067 |
-| **Headers** (`.h`)    |     230 |      44719 |
-| **Assembly** (`.asm`) |       9 |       1095 |
-| **Subtotal**          | **560** | **220881** |
+| **C sources** (`.c`)  |     328 |     184329 |
+| **Headers** (`.h`)    |     234 |      45847 |
+| **Assembly** (`.asm`) |       7 |        763 |
+| **Subtotal**          | **569** | **230939** |
 
 ## SDK Tools
 
@@ -32,37 +32,37 @@
 
 |                                   |   Files |     Lines |
 | --------------------------------- | ------: | --------: |
-| **Shell scripts** (`.sh`)         |      69 |     29882 |
-| **Batch scripts** (`.bat`)        |      67 |       910 |
+| **Shell scripts** (`.sh`)         |      69 |     29905 |
+| **Batch scripts** (`.bat`)        |      67 |       988 |
 | **PowerShell** (`.ps1`)           |      11 |      3305 |
-| **Python** (`.py`)                |      81 |     30127 |
+| **Python** (`.py`)                |      83 |     31440 |
 | **JavaScript** (`.js`)            |       1 |       524 |
-| **Include fragments** (`.inc`)    |       7 |      3198 |
-| **Makefile**                      |       3 |      1577 |
-| **Linker scripts** (`.ld`/`.lds`) |       2 |       137 |
-| **Subtotal**                      | **241** | **69660** |
+| **Include fragments** (`.inc`)    |       7 |      3213 |
+| **Makefile**                      |       3 |      1609 |
+| **Linker scripts** (`.ld`/`.lds`) |       2 |       148 |
+| **Subtotal**                      | **243** | **71132** |
 
 ## Documentation & Project Metadata
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     379 |     102178 |
-| **JSON** (`.json`)          |      11 |        747 |
+| **Markdown** (`.md`)        |     386 |     103608 |
+| **JSON** (`.json`)          |      11 |        766 |
 | **YAML** (`.yml`/`.yaml`)   |      12 |       1199 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
-| **Config** (`.cfg`/`.conf`) |       2 |         98 |
-| **Subtotal**                | **426** | **180343** |
+| **Config** (`.cfg`/`.conf`) |       1 |         82 |
+| **Subtotal**                | **432** | **181776** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **808** | **292260** |
-| **Supporting text + metadata** |  **426** | **180343** |
-| **All counted text files**     | **1234** | **472603** |
+| **Core code + tooling**        |  **819** | **303790** |
+| **Supporting text + metadata** |  **432** | **181776** |
+| **All counted text files**     | **1251** | **485566** |
 
-> Vendored code excluded: ~13908 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
+> Vendored code excluded: ~14013 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -75,17 +75,17 @@
 > Entire university courses teach that operating systems are a multi-decade, multi-hundred-
 > person endeavor. One developer apparently missed that lecture.*
 
-|                               |         Linux |     Windows |        Impossible OS |
-| ----------------------------- | ------------: | ----------: | -------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |              292,260 |
-| **Developers**                | ~1,000 active | ~5,000 peak |                    1 |
-| **Time span**                 |      33 years |    40 years | 2 month(s), 2 day(s) |
+|                               |         Linux |     Windows |         Impossible OS |
+| ----------------------------- | ------------: | ----------: | --------------------: |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               303,790 |
+| **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
+| **Time span**                 |      33 years |    40 years | 2 month(s), 18 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 292,260
-> lines of core code and tooling would take **172 developers** working for **2 month(s), 2 day(s)**.
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 303,790
+> lines of core code and tooling would take **142 developers** working for **2 month(s), 18 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-05-08 07:35 · commit `ddf449a3`*
+*Last updated: 2026-05-24 00:02 · commit `530c18ac`*
