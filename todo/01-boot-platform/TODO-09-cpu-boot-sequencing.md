@@ -64,7 +64,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | --- | :---: | ------------------------------------------------ | ----------------------------- | :----: |
 | 💎  |   1   | CPUID detection & per-CPU capability capture     | D2/T01 §1                     |  [x]   |
 | 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T10 §1, D2/T01 §2      |  [x]   |
-| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12                |  [/]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12                |  [x]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T24 §1 §7              |  [ ]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [ ]   |
 | 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [ ]   |
@@ -153,7 +153,7 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 - [x] Define `HV_FLAG_TSC_ENLIGHTENMENT`, `HV_FLAG_TLBFLUSH_HYPERCALL`, `HV_FLAG_KVM_STEAL_TIME`, `HV_FLAG_APIC_FREQ_MSR`, `HV_FLAG_VMWARE_BACKDOOR` in `boot_init.h`
 - [x] `platform_detect()` in `cpuid_platform.c` populates `g_boot_info.hv_vendor` + `g_boot_info.hv_flags` for Hyper-V, KVM, VMware, VirtualBox
 - [x] Detection runs from `timer_hal_init()` → `platform_detect()` in Phase 1, before timer backend selection
-- [x] UTS timer probe uses `platform_has_apic_freq_msr()` which reads cached platform state
+- [x] UTS timer probe gates the Hyper-V MSR read on `HV_FLAG_APIC_FREQ_MSR` and uses `msr_try_read()` (`cal_try_hyperv_msr` in `lapic.c`)
 - [ ] Registry mirror deferred -- persist `hv_vendor` + `hv_flags` under `HKLM\HARDWARE\VM\` when `TODO-14-registry-completion.md` exposes pre-desktop hardware-hive writes
 - [ ] Hyper-V SynIC + reference TSC page MSR setup NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13` (init `HV_X64_MSR_REFERENCE_TSC = 0x40000021`) and `01-boot-platform/TODO-11-interrupt-timer-arch.md §6` (UTS consumer)
 - [ ] Confidential-compute guest detection (TDX CPUID `0x21`, SEV/SEV-SNP CPUID `0x8000001F`) NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13`; mirror `boot_info.cc_kind` flag for downstream cache-type sequencing
@@ -161,12 +161,17 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 
 **Test checkpoint:** `g_boot_info.hv_vendor` / `hv_flags` populated before timer backend selection; klog or serial shows hypervisor detection before first `[UTS]` / `[Timer]` line on Hyper-V and KVM guests; bare metal shows empty vendor or known non-HV path. QEMU WHPX, TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 4 added suites (Platform hv_vendor NUL, hv_flags in range, APIC freq flag/func consistent on Hyper-V, bare metal clean); 2 pass on KVM, 2 platform-skip.
+>
 > **Notes:**
-> - What shipped: `hv_vendor[16]` + `hv_flags` fields in `struct boot_info`; 5 `HV_FLAG_*` constants; `platform_detect()` populates them for Hyper-V / KVM / VMware / VBox.
-> - How it integrates: `timer_hal_init()` calls `platform_detect()` before backend selection; `platform_has_apic_freq_msr()` reads the cached state.
-> - Downstream effects: feeds UTS timer probe ([TODO-11 §1](TODO-11-interrupt-timer-arch.md)); enables Hyper-V enlightenments without re-probing.
+> - What shipped: `hv_vendor[16]` + `hv_flags` fields in `struct boot_info`; 5 `HV_FLAG_*` constants; `platform_detect()` populates them for Hyper-V / KVM / VMware / VBox, each gated on its own CPUID privilege/feature leaf.
+> - How it integrates: `timer_hal_init()` calls `platform_detect()` before backend selection; `cal_try_hyperv_msr` reads `HV_FLAG_APIC_FREQ_MSR` + uses `msr_try_read()`; `platform_has_apic_freq_msr()` mirrors the same flag.
+> - Downstream effects: feeds UTS timer probe ([TODO-11 §1](TODO-11-interrupt-timer-arch.md)); a constrained Hyper-V partition without `AccessFrequencyMsrs` now falls through to the next calibration tier instead of #GP-crashing.
 > - Canonical doc: `src/kernel/cpuid_platform.c`.
 > - Scope boundary: §3 owns `boot_info` fields + `platform_detect()` call sites. Registry mirror + TLFS TSC reference page deferred to TODO-14 + TODO-09 owners.
+
+> **Verified:** 2026-05-23 | commit `<pending>` | 6/6 owned items + 3 XREF-deferred | build OK | smoke PASS (KVM 2.51s)
+> **Quality reviewed:** 2026-05-23 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+2M fixed | scope: kernel-code-quality + boot-code-quality
 
 ---
 
@@ -311,7 +316,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ⬜ §8 planned           |
 | 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ⬜ §8 MTRR bullet       |
 | 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ⬜ §6 hybrid bullet     |
-| ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ⬜ §3 boot_info only    |
+| ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ✅ §3 TLFS-gated hv_flags |
 | ⭐  | Confidential VM guest       | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x     | ⬜ XREF 02/T09 §13      |
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |

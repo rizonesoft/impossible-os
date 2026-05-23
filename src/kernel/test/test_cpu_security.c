@@ -18,6 +18,8 @@
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/cpu_security.h"
 #include "kernel/cpuid_platform.h"
+#include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
 #include "kernel/topology.h"
 #include "kernel/pmc.h"
 #include "kernel/kpti.h"
@@ -1074,6 +1076,57 @@ static void test_copy_user_fault_inject_max_cap(void)
     copy_user_fail_max_injections_clear();
 }
 
+/* ---- Hypervisor detection (boot_info.hv_vendor + hv_flags) ---- */
+
+/* hv_vendor must be NUL-terminated within the 16-byte buffer. */
+static void test_platform_hv_vendor_null_terminated(void)
+{
+    int i;
+    int found_nul = 0;
+    for (i = 0; i < 16; i++) {
+        if (g_boot_info.hv_vendor[i] == '\0') { found_nul = 1; break; }
+    }
+    TEST_ASSERT(found_nul, "hv_vendor[16] contains a NUL terminator");
+}
+
+/* hv_flags must only contain bits defined by HV_FLAG_*. */
+static void test_platform_hv_flags_in_range(void)
+{
+    uint32_t defined = HV_FLAG_TSC_ENLIGHTENMENT | HV_FLAG_TLBFLUSH_HYPERCALL |
+                       HV_FLAG_APIC_FREQ_MSR | HV_FLAG_KVM_STEAL_TIME |
+                       HV_FLAG_VMWARE_BACKDOOR;
+    TEST_ASSERT((g_boot_info.hv_flags & ~defined) == 0,
+                "hv_flags contains only defined HV_FLAG_* bits");
+}
+
+/* platform_has_apic_freq_msr() and (hv_flags & HV_FLAG_APIC_FREQ_MSR) must
+ * agree on Hyper-V -- they read the same underlying truth after platform
+ * detection populates hv_flags from CPUID 0x40000003 AccessFrequencyMsrs. */
+static void test_platform_apic_freq_consistent_on_hyperv(void)
+{
+    if (platform_get() != PLATFORM_HYPERV) {
+        TEST_SKIP("not running on Hyper-V");
+        return;
+    }
+    int flag = !!(g_boot_info.hv_flags & HV_FLAG_APIC_FREQ_MSR);
+    int func = platform_has_apic_freq_msr();
+    TEST_ASSERT_EQ(func, flag,
+                   "Hyper-V: platform_has_apic_freq_msr() matches HV_FLAG_APIC_FREQ_MSR");
+}
+
+/* Bare metal must have empty hv_vendor and zero hv_flags. */
+static void test_platform_baremetal_clean(void)
+{
+    if (platform_get() != PLATFORM_BARE_METAL) {
+        TEST_SKIP("not running on bare metal");
+        return;
+    }
+    TEST_ASSERT_EQ(g_boot_info.hv_vendor[0], (char)0,
+                   "bare metal: hv_vendor is empty");
+    TEST_ASSERT_EQ((uint64_t)g_boot_info.hv_flags, 0ULL,
+                   "bare metal: hv_flags is zero");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -1092,6 +1145,16 @@ void test_register_x86(void)
         test_kpti_active_false, TEST_CAT_X86);
     test_suite_register_cat("CPU security: kernel_cr3 matches HW CR3",
         test_kpti_kernel_cr3_matches_hw, TEST_CAT_X86);
+
+    /* Hypervisor detection */
+    test_suite_register_cat("Platform: hv_vendor NUL-terminated",
+        test_platform_hv_vendor_null_terminated, TEST_CAT_X86);
+    test_suite_register_cat("Platform: hv_flags only contains defined bits",
+        test_platform_hv_flags_in_range, TEST_CAT_X86);
+    test_suite_register_cat("Platform: APIC freq flag/func consistent on Hyper-V",
+        test_platform_apic_freq_consistent_on_hyperv, TEST_CAT_X86);
+    test_suite_register_cat("Platform: bare metal hv_vendor/hv_flags clean",
+        test_platform_baremetal_clean, TEST_CAT_X86);
 
     /* S1: XSAVE / XRSTOR */
     test_suite_register_cat("XSAVE: xcr0_active non-zero",

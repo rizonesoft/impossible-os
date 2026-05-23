@@ -73,40 +73,73 @@ platform_id_t platform_detect(void)
     }
 
     /* Step 2: Read CPUID leaf 0x40000000 -- hypervisor vendor string.
-     * EBX:ECX:EDX = 12-byte ASCII vendor ID (not null-terminated). */
+     * EAX = max supported HV CPUID leaf; EBX:ECX:EDX = 12-byte ASCII vendor ID
+     * (not null-terminated). */
     cpuid(0x40000000, &eax, &ebx, &ecx, &edx);
+    uint32_t hv_max_leaf = eax;
 
     /* Step 3: Match vendor strings.
      * EBX=chars[0..3], ECX=chars[4..7], EDX=chars[8..11] */
 
-    /* "Microsoft Hv" -- Hyper-V (Gen 1 and Gen 2) */
+    /* "Microsoft Hv" -- Hyper-V (Gen 1 and Gen 2).
+     * TLFS privilege flags (CPUID 0x40000003 EAX): bit 9 =
+     * AccessPartitionReferenceTsc (MSR 0x40000021), bit 11 =
+     * AccessFrequencyMsrs (MSR 0x40000022, 0x40000023). TLB-flush
+     * hypercall is advertised by CPUID 0x40000004 EAX bit 2
+     * (UseHypercallForRemoteFlush). A vendor-string match alone is
+     * not sufficient -- constrained partitions can omit any of these. */
     if (u32_eq(ebx, "Micr") && u32_eq(ecx, "osof") && u32_eq(edx, "t Hv")) {
+        uint32_t hv_flags = 0;
         cached_platform = PLATFORM_HYPERV;
-        g_boot_info.hv_flags = HV_FLAG_TSC_ENLIGHTENMENT |
-                               HV_FLAG_TLBFLUSH_HYPERCALL |
-                               HV_FLAG_APIC_FREQ_MSR;
+        if (hv_max_leaf >= 0x40000003) {
+            uint32_t p_eax, p_ebx, p_ecx, p_edx;
+            cpuid(0x40000003, &p_eax, &p_ebx, &p_ecx, &p_edx);
+            if (p_eax & (1u << 9))  hv_flags |= HV_FLAG_TSC_ENLIGHTENMENT;
+            if (p_eax & (1u << 11)) hv_flags |= HV_FLAG_APIC_FREQ_MSR;
+        }
+        if (hv_max_leaf >= 0x40000004) {
+            uint32_t r_eax, r_ebx, r_ecx, r_edx;
+            cpuid(0x40000004, &r_eax, &r_ebx, &r_ecx, &r_edx);
+            if (r_eax & (1u << 2)) hv_flags |= HV_FLAG_TLBFLUSH_HYPERCALL;
+        }
+        g_boot_info.hv_flags = hv_flags;
         {
             const char *s = "Microsoft Hv";
             int k;
             for (k = 0; s[k] && k < 15; k++) g_boot_info.hv_vendor[k] = s[k];
             g_boot_info.hv_vendor[k] = '\0';
         }
-        klog(LOG_INFO, "platform", "Detected: Hyper-V (CPUID 0x40000000, flags=0x%x)",
-             (uint64_t)g_boot_info.hv_flags);
+        klog(LOG_INFO, "platform",
+             "Detected: Hyper-V (CPUID 0x40000000, max_leaf=0x%x, flags=0x%x)",
+             (uint64_t)hv_max_leaf, (uint64_t)g_boot_info.hv_flags);
         return cached_platform;
     }
 
-    /* "VMwareVMware" -- VMware Workstation / Fusion / ESXi */
+    /* "VMwareVMware" -- VMware Workstation / Fusion / ESXi.
+     * VMware has no CPUID feature bit for the backdoor protocol itself --
+     * the "VMwareVMware" vendor-string match IS the canonical backdoor
+     * presence indicator per VMware KB 1009458. APIC bus frequency lives
+     * in CPUID leaf 0x40000010 EBX (kHz); gate the flag on a non-zero
+     * value so a constrained VMware partition that omits the leaf does
+     * not advertise a fast-path that fails. */
     if (u32_eq(ebx, "VMwa") && u32_eq(ecx, "reVM") && u32_eq(edx, "ware")) {
+        uint32_t hv_flags = HV_FLAG_VMWARE_BACKDOOR;
         cached_platform = PLATFORM_VMWARE;
-        g_boot_info.hv_flags = HV_FLAG_VMWARE_BACKDOOR | HV_FLAG_APIC_FREQ_MSR;
+        if (hv_max_leaf >= 0x40000010) {
+            uint32_t f_eax, f_ebx, f_ecx, f_edx;
+            cpuid(0x40000010, &f_eax, &f_ebx, &f_ecx, &f_edx);
+            if (f_ebx != 0) hv_flags |= HV_FLAG_APIC_FREQ_MSR;
+        }
+        g_boot_info.hv_flags = hv_flags;
         {
             const char *s = "VMwareVMware";
             int k;
             for (k = 0; s[k] && k < 15; k++) g_boot_info.hv_vendor[k] = s[k];
             g_boot_info.hv_vendor[k] = '\0';
         }
-        klog(LOG_INFO, "platform", "Detected: VMware (CPUID 0x40000000)");
+        klog(LOG_INFO, "platform",
+             "Detected: VMware (CPUID 0x40000000, flags=0x%x)",
+             (uint64_t)g_boot_info.hv_flags);
         return cached_platform;
     }
 
@@ -123,18 +156,32 @@ platform_id_t platform_detect(void)
         return cached_platform;
     }
 
-    /* "KVMKVMKVM\0\0\0" -- KVM (Linux host, hardware virtualization) */
+    /* "KVMKVMKVM\0\0\0" -- KVM (Linux host, hardware virtualization).
+     * KVM publishes paravirt features via CPUID 0x40000001 EAX:
+     *   bit 0 = KVM_FEATURE_CLOCKSOURCE
+     *   bit 3 = KVM_FEATURE_CLOCKSOURCE2
+     *   bit 5 = KVM_FEATURE_STEAL_TIME
+     * Vendor-string match alone is not sufficient; a KVM guest with steal
+     * time disabled on the host (`-cpu host,-kvm-steal-time`) still has
+     * the vendor string but no MSR. Reference: Documentation/virt/kvm/cpuid.rst. */
     if (u32_eq(ebx, "KVMK") && u32_eq(ecx, "VMKV") && u32_eq(edx, "M\0\0\0")) {
+        uint32_t hv_flags = 0;
         cached_platform = PLATFORM_QEMU_KVM;
-        g_boot_info.hv_flags = HV_FLAG_KVM_STEAL_TIME;
+        if (hv_max_leaf >= 0x40000001) {
+            uint32_t k_eax, k_ebx, k_ecx, k_edx;
+            cpuid(0x40000001, &k_eax, &k_ebx, &k_ecx, &k_edx);
+            if (k_eax & (1u << 5)) hv_flags |= HV_FLAG_KVM_STEAL_TIME;
+        }
+        g_boot_info.hv_flags = hv_flags;
         {
             const char *s = "KVMKVMKVM";
             int k;
             for (k = 0; s[k] && k < 15; k++) g_boot_info.hv_vendor[k] = s[k];
             g_boot_info.hv_vendor[k] = '\0';
         }
-        klog(LOG_INFO, "platform", "Detected: QEMU/KVM (CPUID 0x40000000, flags=0x%x)",
-             (uint64_t)g_boot_info.hv_flags);
+        klog(LOG_INFO, "platform",
+             "Detected: QEMU/KVM (CPUID 0x40000000, max_leaf=0x%x, flags=0x%x)",
+             (uint64_t)hv_max_leaf, (uint64_t)g_boot_info.hv_flags);
         return cached_platform;
     }
 
@@ -181,8 +228,12 @@ int platform_has_apic_freq_msr(void)
 {
     switch (cached_platform) {
     case PLATFORM_HYPERV:
-        /* Hyper-V: MSR 0x40000023 (HV_X64_MSR_APIC_FREQUENCY) */
-        return 1;
+        /* Hyper-V: MSR 0x40000023 (HV_X64_MSR_APIC_FREQUENCY).
+         * Constrained Hyper-V partitions can omit the AccessFrequencyMsrs
+         * privilege (CPUID 0x40000003 EAX bit 11); platform_detect() decodes
+         * that into HV_FLAG_APIC_FREQ_MSR. Mirror the flag here so callers
+         * see the same truth that cal_try_hyperv_msr gates on. */
+        return (g_boot_info.hv_flags & HV_FLAG_APIC_FREQ_MSR) ? 1 : 0;
 
     case PLATFORM_VMWARE:
     case PLATFORM_QEMU_KVM:

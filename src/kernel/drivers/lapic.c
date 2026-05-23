@@ -328,8 +328,17 @@ static inline void cal_cpuid(uint32_t leaf,
 #include "kernel/cpuid_platform.h"
 
 /* Hyper-V: MSR 0x40000023 (HV_X64_MSR_APIC_FREQUENCY)
- * Returns exact LAPIC frequency in Hz -- 0ns latency, no hardware probing. */
+ * Returns exact LAPIC frequency in Hz -- 0ns latency, no hardware probing.
+ * Availability is advertised by CPUID 0x40000003 EAX bit 11
+ * (AccessFrequencyMsrs); platform_detect() decodes that into
+ * HV_FLAG_APIC_FREQ_MSR. A constrained Hyper-V partition can omit the MSR,
+ * so we gate on the flag AND fall through msr_try_read() per the
+ * kernel-code-quality Gate 6 rule. */
 #define HV_MSR_APIC_FREQUENCY  0x40000023
+
+#include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
+#include "kernel/msr.h"
 
 static int cal_try_hyperv_msr(void)
 {
@@ -337,8 +346,11 @@ static int cal_try_hyperv_msr(void)
 
     if (platform_get() != PLATFORM_HYPERV)
         return 0;
+    if (!(g_boot_info.hv_flags & HV_FLAG_APIC_FREQ_MSR))
+        return 0;
 
-    freq = cal_rdmsr(HV_MSR_APIC_FREQUENCY);
+    if (msr_try_read(HV_MSR_APIC_FREQUENCY, &freq) != 0)
+        return 0;
     if (freq == 0 || freq > 0xFFFFFFFFULL)
         return 0;
 
