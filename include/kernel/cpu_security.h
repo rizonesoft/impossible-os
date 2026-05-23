@@ -57,14 +57,26 @@ void cpu_verify_hardening(void);
  * CPUID approximation. */
 void cpu_record_bsp_profile(void);
 
-/* Replicate the BSP's hardened CPU state onto the calling AP: match the
- * BSP XCR0 mask (intersected with this AP's own supported bits), enable the
- * gated security features, force the BSP's required CR4 bits, replay the
- * BSP MSR profile, then capture this AP's snapshot, verify it against the
- * BSP baseline (warn-only; the controlled bug-check on mismatch is the AP
- * feature consistency validation), and emit a "[AP%u] CPU hardening
- * applied ..." audit line. Must run after the AP's GS base is set. */
+/* Replicate the BSP's hardened CPU state onto the calling AP and BUFFER a
+ * snapshot -- AP-only state replication, no verification, no serial output:
+ * match the BSP XCR0 mask (intersected with this AP's own supported bits),
+ * enable the gated security features (NX/UMIP/PKU then SMEP/SMAP, each
+ * CPUID-gated), replay the BSP MSR profile, then store this AP's EFER/CR4/
+ * PAT/XCR0 snapshot into per_cpu_data. Must run after the AP's GS base is set.
+ * Emits NO serial output (AP-side serial I/O with IRQs masked around the
+ * online transition would delay the online signal or leave the AP counted-
+ * online-but-not-IPI-ready). The warn-only verification against the BSP
+ * baseline and the audit-line emission happen later in ap_cpu_harden_log(),
+ * run by the BSP; the controlled bug-check + force-after-validation of any
+ * missing CR4 bit are owned by the AP feature consistency validation. */
 void ap_cpu_harden(uint32_t cpu_id);
+
+/* Verify one AP's buffered snapshot against the BSP baseline (warn-only on
+ * EFER.NXE / required-CR4 / PAT drift) and emit its "[AP%u] CPU hardening
+ * applied ..." audit line. Called by the BSP for each online AP after SMP
+ * bringup, never on the AP itself, to keep unbounded serial I/O off the AP
+ * bringup critical path. */
+void ap_cpu_harden_log(uint32_t cpu_id);
 
 #ifdef KERNEL_TESTS
 /* Test-only read accessors for the BSP per-CPU MSR replay profile. */

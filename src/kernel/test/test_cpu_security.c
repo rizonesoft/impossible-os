@@ -797,7 +797,7 @@ static void test_wc_pat_entry(void)
      * this is a genuine hypervisor limitation, not a code bug. The kernel
      * degrades gracefully (framebuffer gets WT instead of WC). */
     cpu_configure_pat();
-    uint64_t pat = msr_read(0x277);  /* MSR_IA32_PAT */
+    uint64_t pat = msr_read(MSR_IA32_PAT);
     uint8_t entry1 = (uint8_t)((pat >> 8) & 0xFF);
     if (entry1 == 0x01) {
     } else if (entry1 == 0x04) {

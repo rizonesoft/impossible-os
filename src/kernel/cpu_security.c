@@ -27,11 +27,14 @@
 #define CR4_SMAP     (1UL << 21)
 #define CR4_CET      (1UL << 23)
 
-/* CR4 bits that MUST be identical on every CPU. ap_cpu_harden() forces the
- * subset the BSP actually enabled, so a bit the BSP sets in a later boot
- * phase (e.g. CR4.PCIDE once PCID activation lands) replicates to APs
- * without revising the AP hardening path. The BSP and APs share one page
- * table / CR3, so any bit safe to set on the BSP is safe on the AP. */
+/* CR4 bits that MUST be identical on every CPU. ap_cpu_harden() uses this
+ * mask only for WARN-ONLY verification of an AP against the BSP today (it
+ * does NOT force-OR the mask -- blindly setting an architectural CR4 bit
+ * before AP feature validation could #GP on a feature-skewed AP). The
+ * force-after-validation of any missing bit is owned by the AP feature
+ * consistency validation, which knows each AP can take the bit. The BSP and
+ * APs share one page table / CR3, so a bit safe on the BSP is safe on an
+ * AP once validation confirms the AP supports it. */
 #define CR4_UNIFORM_MASK \
     (CR4_OSXSAVE | CR4_UMIP | CR4_SMEP | CR4_SMAP | \
      CR4_PCIDE | CR4_PKE | CR4_FSGSBASE | CR4_CET)
@@ -74,6 +77,25 @@ static uint64_t xcr0_read_safe(void)
     return xcr0_read();
 }
 
+/* While > 0, the per-feature cpu_enable_* log lines are suppressed. Each AP
+ * raises this around its cpu_harden()/cpu_harden_post_pagetable() calls so the
+ * AP does NO serial output before it is marked online (klog -> serial_write
+ * busy-waits on the UART with IRQs masked, which could delay the AP online
+ * signal or leave it counted-online-but-not-IPI-ready). The BSP emits the
+ * authoritative per-AP audit afterward via ap_cpu_harden_log().
+ *
+ * A NESTING COUNTER, not a boolean: the smp_init launch loop is NOT strictly
+ * serialized on the timeout path (a late AP that missed its 100ms+50ms window
+ * can still be inside ap_cpu_harden() when the next AP starts). Each AP's own
+ * atomic increment keeps the depth >= 1 for the whole duration of its own
+ * cpu_harden(), so an overlapping AP's decrement can never drop it to 0 mid-
+ * hardening -- every AP stays quiet until it exits. The BSP runs cpu_harden()
+ * only in Phase 0 with depth 0, so BSP hardening still logs normally. */
+static int s_harden_quiet_depth;
+#define HARDEN_KLOG(...) \
+    do { if (__atomic_load_n(&s_harden_quiet_depth, __ATOMIC_RELAXED) == 0) \
+             klog(__VA_ARGS__); } while (0)
+
 /* ---- NX (No-Execute) via EFER.NXE ---- */
 
 void cpu_enable_nx(void)
@@ -84,7 +106,7 @@ void cpu_enable_nx(void)
     uint64_t efer = msr_read(MSR_IA32_EFER);
     if (!(efer & EFER_NXE)) {
         msr_write(MSR_IA32_EFER, efer | EFER_NXE);
-        klog(LOG_DEBUG, "cpu", "NX enabled (EFER.NXE)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "NX enabled (EFER.NXE)");
     }
 }
 
@@ -110,14 +132,14 @@ void cpu_enable_smep(void)
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
-        klog(LOG_DEBUG, "cpu", "SMEP: skipped (kernel pages have User bit -- needs KPTI S6)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMEP: skipped (kernel pages have User bit -- needs KPTI S6)");
         return;
     }
 
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_SMEP)) {
         write_cr4(cr4 | CR4_SMEP);
-        klog(LOG_DEBUG, "cpu", "SMEP enabled (CR4.SMEP)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMEP enabled (CR4.SMEP)");
     }
 }
 
@@ -129,14 +151,14 @@ void cpu_enable_smap(void)
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
-        klog(LOG_DEBUG, "cpu", "SMAP: skipped (kernel pages have User bit -- needs KPTI S6)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMAP: skipped (kernel pages have User bit -- needs KPTI S6)");
         return;
     }
 
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_SMAP)) {
         write_cr4(cr4 | CR4_SMAP);
-        klog(LOG_DEBUG, "cpu", "SMAP enabled (CR4.SMAP)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "SMAP enabled (CR4.SMAP)");
     }
 }
 
@@ -265,7 +287,7 @@ void cpu_enable_umip(void)
     uint64_t cr4 = read_cr4();
     if (!(cr4 & CR4_UMIP)) {
         write_cr4(cr4 | CR4_UMIP);
-        klog(LOG_DEBUG, "cpu", "UMIP enabled (CR4.UMIP)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "UMIP enabled (CR4.UMIP)");
     }
 }
 
@@ -281,7 +303,7 @@ void cpu_enable_pku(void)
      * whose XCR0 was intersected down to a narrower mask, the global would
      * lie and we would set CR4.PKE without the PKRU xstate enabled here. */
     if (!(xcr0_read_safe() & (1UL << 9))) {
-        klog(LOG_WARN, "cpu", "PKU: XCR0 bit 9 not set on this CPU; skipping CR4.PKE");
+        HARDEN_KLOG(LOG_WARN, "cpu", "PKU: XCR0 bit 9 not set on this CPU; skipping CR4.PKE");
         return;
     }
 
@@ -289,7 +311,7 @@ void cpu_enable_pku(void)
     if (!(cr4 & CR4_PKE)) {
         write_cr4(cr4 | CR4_PKE);
         pku_enabled = 1;
-        klog(LOG_DEBUG, "cpu", "PKU enabled (CR4.PKE)");
+        HARDEN_KLOG(LOG_DEBUG, "cpu", "PKU enabled (CR4.PKE)");
     }
 }
 
@@ -500,7 +522,10 @@ static void ap_apply_xcr0(void)
     uint32_t eax, ebx, ecx, edx;
     uint64_t ap_supported, mask, cr4;
 
-    if (!s_bsp_profile_ready)
+    /* Acquire-load pairs with the RELEASE store in cpu_record_bsp_profile()
+     * so the BSP's baseline writes (s_bsp_xcr0 etc.) are visible here before
+     * we consume them, with no compiler reordering of the plain reads. */
+    if (!__atomic_load_n(&s_bsp_profile_ready, __ATOMIC_ACQUIRE))
         return;
 
     /* Gate on THIS AP's own CPUID-reported XSAVE (leaf 1 ECX bit 26), not
@@ -571,9 +596,15 @@ void ap_cpu_harden(uint32_t cpu_id)
      *    feature-consistency validation exists could #GP on a feature-skewed
      *    AP. Those future bits are replicated by their owning sections (PCID
      *    activation, CR4 pinning) under that validation; this path stays
-     *    warn-only on any residual CR4 mismatch (see step 5). */
+     *    warn-only on any residual CR4 mismatch (verified by the BSP).
+     *    The quiet-depth bracket suppresses the per-feature cpu_enable_* log
+     *    lines so the AP does NO serial output before it is marked online;
+     *    the nesting counter keeps this AP quiet even if a late overlapping
+     *    AP enters/exits its own bracket meanwhile. */
+    __atomic_fetch_add(&s_harden_quiet_depth, 1, __ATOMIC_RELAXED);
     cpu_harden();
     cpu_harden_post_pagetable();
+    __atomic_fetch_sub(&s_harden_quiet_depth, 1, __ATOMIC_RELAXED);
 
     /* 3. Replay the BSP MSR profile (PAT verbatim, TSC_AUX per-CPU). */
     applied = ap_apply_msr_profile(cpu_id);
@@ -597,11 +628,35 @@ void ap_cpu_harden(uint32_t cpu_id)
         pc->msr_profile_applied = applied;
     }
 
-    /* Verify the security-critical baseline matches the BSP. Warn-only here;
-     * the controlled bug-check on mismatch is the AP feature consistency
-     * validation. EFER.SCE deliberately differs (APs have no SYSCALL MSR
-     * setup), so only NXE is compared, not the whole EFER register. */
-    if (s_bsp_profile_ready) {
+    /* No serial output here: ap_cpu_harden() runs on the AP with IRQs masked
+     * around the online transition, and klog -> serial_write busy-waits on
+     * the UART unbounded. Emitting here would either delay the AP online
+     * signal (pre-increment) or leave the AP counted-online-but-not-IPI-ready
+     * (post-increment). The BSP calls ap_cpu_harden_log() for each online AP
+     * after bringup, reading the snapshot buffered above. */
+}
+
+/* Emit one AP's CPU-hardening audit line + any security-critical mismatch
+ * warnings, from the snapshot ap_cpu_harden() buffered into per_cpu_data.
+ * Called by the BSP for each online AP after SMP bringup -- never on the AP
+ * itself -- so unbounded serial I/O stays off the AP bringup critical path.
+ * EFER.SCE deliberately differs (APs have no SYSCALL MSR setup), so only NXE
+ * is compared, not the whole EFER register. */
+void ap_cpu_harden_log(uint32_t cpu_id)
+{
+    struct per_cpu_data *pc = smp_get_cpu(cpu_id);
+    uint64_t efer, cr4, pat, xcr0;
+    uint32_t applied;
+
+    if (!pc)
+        return;
+    efer    = pc->efer_at_boot;
+    cr4     = pc->cr4_at_boot;
+    pat     = pc->pat_at_boot;
+    xcr0    = pc->xcr0_at_boot;
+    applied = pc->msr_profile_applied;
+
+    if (__atomic_load_n(&s_bsp_profile_ready, __ATOMIC_ACQUIRE)) {
         if ((efer & EFER_NXE) != (s_bsp_efer & EFER_NXE))
             klog(LOG_WARN, "smp",
                  "[AP%u] EFER.NXE mismatch: AP=0x%lx BSP=0x%lx",

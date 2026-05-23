@@ -40,7 +40,6 @@ extern void idt_get_idtr(void *out_idtr);  /* fills 10-byte IDTR */
 /* ---- State ---- */
 
 static struct per_cpu_data cpu_data[MAX_CPUS];
-static volatile uint32_t   ap_online_count = 0;
 static uint32_t            total_cpus = 0;
 
 /* ---- MSR helpers ---- */
@@ -145,21 +144,23 @@ void ap_entry(uint32_t cpu_index)
 
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)pcpu);
 
-    /* CPU security hardening on this AP: match the BSP XCR0, enable
-     * NX/UMIP/PKU/SMEP/SMAP, force the BSP's required CR4 bits, replay the
-     * BSP MSR profile (PAT, TSC_AUX), and verify against the BSP baseline.
-     * Page tables already have U/S cleared by the BSP's vmm_apply_nx_policy(),
-     * so SMEP/SMAP are safe here. Replaces the former bare cpu_harden() +
+    /* CPU security hardening on this AP: match the BSP XCR0, enable the
+     * gated NX/UMIP/PKU/SMEP/SMAP set, replay the BSP MSR profile (PAT,
+     * TSC_AUX), and verify against the BSP baseline (warn-only on drift;
+     * force-after-validation of any missing CR4 bit is the feature
+     * consistency validation's job, not this path). Page tables already
+     * have U/S cleared by the BSP's vmm_apply_nx_policy(), so SMEP/SMAP are
+     * safe here. Replaces the former bare cpu_harden() +
      * cpu_harden_post_pagetable() + ad-hoc TSC_AUX write. */
     ap_cpu_harden(cpu_index);
 
     /* Initialize this AP's LAPIC */
     lapic_init_ap();
 
-    /* Fill per-CPU data */
+    /* Fill per-CPU data (is_online is published LAST, below, as the
+     * authoritative online flag -- see the release store before sti). */
     pcpu->cpu_id     = cpu_index;
     pcpu->lapic_id   = lapic_id();
-    pcpu->is_online  = 1;
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;
     pcpu->current_irql  = PASSIVE_LEVEL;
@@ -176,11 +177,18 @@ void ap_entry(uint32_t cpu_index)
     /* Memory barrier to ensure all writes are visible before incrementing count */
     smp_mb();
 
-    /* Signal BSP that this AP is online */
-    __atomic_fetch_add(&ap_online_count, 1, __ATOMIC_SEQ_CST);
-
-    klog(LOG_INFO, "smp", "AP %u online (LAPIC ID=%u)",
-         (uint64_t)cpu_index, (uint64_t)pcpu->lapic_id);
+    /* Publish this AP as online with a RELEASE store, as the LAST write before
+     * parking. is_online is the SINGLE source of truth the BSP uses to (a) end
+     * its per-AP bringup wait, (b) count total_cpus, and (c) gate the per-AP
+     * audit -- there is no separate count hint that could race ahead of this
+     * publication. An acquire-load that observes is_online==1 is guaranteed to
+     * see every preceding write (lapic_id, the ap_cpu_harden() snapshot); an
+     * AP that never reached here has is_online==0, so the BSP's waited / counted
+     * / audited sets are identical. The AP emits NO serial output from here to
+     * `sti` (klog busy-waits on the UART with IRQs masked); the BSP emits the
+     * "online" line + hardening audit from the buffered per_cpu_data after
+     * bringup -- see smp_init. */
+    __atomic_store_n(&pcpu->is_online, 1, __ATOMIC_RELEASE);
 
     /* AP is parked -- enable interrupts and halt.
      * The LAPIC timer or IPI will wake it when the scheduler is ready. */
@@ -321,7 +329,6 @@ void smp_init(void)
     for (i = 0; i < cpu_count; i++) {
         const struct cpu_info *ci = acpi_get_cpu_info(i);
         uintptr_t stack_phys;
-        uint32_t expected;
 
         if (!ci || !ci->enabled || i == bsp_index)
             continue;
@@ -370,19 +377,20 @@ void smp_init(void)
         lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
         delay_ms(1);        /* 200µs minimum per Intel spec, use 1ms */
 
-        /* Wait for AP to come online (timeout: 100ms) */
-        expected = ap_count;
+        /* Wait for THIS AP to publish online (acquire-load its own is_online
+         * flag; timeout 100ms). Polling the per-AP authoritative flag -- not a
+         * separate cumulative count -- means the BSP never proceeds while an AP
+         * is mid-publication, and the wait/count/audit all key off one signal. */
         {
             uint32_t timeout = 100;
-            while (__atomic_load_n(&ap_online_count, __ATOMIC_SEQ_CST)
-                   < expected && timeout > 0) {
+            while (!__atomic_load_n(&cpu_data[ap_count].is_online,
+                                    __ATOMIC_ACQUIRE) && timeout > 0) {
                 delay_ms(1);
                 timeout--;
             }
         }
 
-        if (__atomic_load_n(&ap_online_count, __ATOMIC_SEQ_CST)
-            < expected) {
+        if (!__atomic_load_n(&cpu_data[ap_count].is_online, __ATOMIC_ACQUIRE)) {
             /* Retry with second SIPI */
             lapic_send_sipi(ci->apic_id, AP_TRAMPOLINE_ADDR >> 12);
             delay_ms(1);
@@ -390,27 +398,41 @@ void smp_init(void)
             /* Wait again (50ms) */
             {
                 uint32_t timeout = 50;
-                while (__atomic_load_n(&ap_online_count, __ATOMIC_SEQ_CST)
-                       < expected && timeout > 0) {
+                while (!__atomic_load_n(&cpu_data[ap_count].is_online,
+                                        __ATOMIC_ACQUIRE) && timeout > 0) {
                     delay_ms(1);
                     timeout--;
                 }
             }
-
-            if (__atomic_load_n(&ap_online_count, __ATOMIC_SEQ_CST)
-                < expected) {
-                klog(LOG_WARN, "smp",
-                     "AP %u (LAPIC ID=%u) did not respond",
-                     (uint64_t)ap_count, (uint64_t)ci->apic_id);
-            }
         }
+
     }
 
-    total_cpus = 1 + __atomic_load_n(&ap_online_count, __ATOMIC_SEQ_CST);
+    /* Count online APs and emit each one's "online" line + CPU-hardening audit
+     * from the BSP, both gated on that AP's OWN is_online flag via an ACQUIRE
+     * load. is_online is the single publication source (release-stored last by
+     * the AP), so the count and the audit derive from the same flags -- they
+     * cannot diverge, and the acquire/release edge makes the AP's lapic_id +
+     * ap_cpu_harden() snapshot visible here. An AP that never published
+     * is_online is neither counted nor audited (consistent). BSP-side emission
+     * keeps unbounded serial I/O off the AP bringup critical path. */
+    {
+        uint32_t online = 0;
+        for (i = 1; i <= ap_count; i++) {
+            if (__atomic_load_n(&cpu_data[i].is_online, __ATOMIC_ACQUIRE)) {
+                online++;
+                klog(LOG_INFO, "smp", "AP %u online (LAPIC ID=%u)",
+                     (uint64_t)i, (uint64_t)cpu_data[i].lapic_id);
+                ap_cpu_harden_log(i);
+            } else {
+                klog(LOG_WARN, "smp", "AP %u did not respond", (uint64_t)i);
+            }
+        }
+        total_cpus = 1 + online;
+    }
 
     klog(LOG_INFO, "smp", "%u CPUs online (BSP + %u APs)",
-         (uint64_t)total_cpus,
-         (uint64_t)__atomic_load_n(&ap_online_count, __ATOMIC_SEQ_CST));
+         (uint64_t)total_cpus, (uint64_t)(total_cpus - 1));
 }
 
 /* ---- Query API ---- */
