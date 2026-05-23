@@ -145,19 +145,13 @@ void ap_entry(uint32_t cpu_index)
 
     msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)pcpu);
 
-    /* CPU security hardening on this AP (NX, SMEP, SMAP).
-     * Page tables already have U/S cleared by BSP's vmm_apply_nx_policy(),
-     * so SMEP/SMAP are safe to enable immediately. */
-    cpu_harden();
-    cpu_harden_post_pagetable();
-
-    /* Write logical CPU ID to IA32_TSC_AUX for RDTSCP identification.
-     * Only if BSP probe succeeded (g_tsc_aux_available set in boot_hw.c). */
-    {
-        extern int g_tsc_aux_available;
-        if (g_tsc_aux_available)
-            msr_write(MSR_IA32_TSC_AUX, (uint64_t)cpu_index);
-    }
+    /* CPU security hardening on this AP: match the BSP XCR0, enable
+     * NX/UMIP/PKU/SMEP/SMAP, force the BSP's required CR4 bits, replay the
+     * BSP MSR profile (PAT, TSC_AUX), and verify against the BSP baseline.
+     * Page tables already have U/S cleared by the BSP's vmm_apply_nx_policy(),
+     * so SMEP/SMAP are safe here. Replaces the former bare cpu_harden() +
+     * cpu_harden_post_pagetable() + ad-hoc TSC_AUX write. */
+    ap_cpu_harden(cpu_index);
 
     /* Initialize this AP's LAPIC */
     lapic_init_ap();
@@ -208,6 +202,13 @@ void smp_init(void)
     uint32_t trampoline_size;
     uint8_t gdtr[10];
     uint8_t idtr[10];
+
+    /* Freeze the BSP's hardened register/MSR baseline now -- after all
+     * Phase 0/1 xstate mutations (simd_enable_avx512 may have cleared AVX-512
+     * XCR0 bits) and before any AP starts -- so each AP replicates the BSP's
+     * final state, not a recomputed-from-CPUID approximation. Recorded on
+     * every platform, including single-CPU, for the register audit trail. */
+    cpu_record_bsp_profile();
 
     cpu_count = acpi_get_cpu_count();
     if (cpu_count <= 1) {

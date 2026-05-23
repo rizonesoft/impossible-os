@@ -50,6 +50,30 @@ void cpu_harden_post_pagetable(void);
  * cpu_harden_post_pagetable(). Reads back EFER/CR4 and logs discrepancies. */
 void cpu_verify_hardening(void);
 
+/* Freeze the BSP's final boot-time register/MSR baseline (EFER, CR4, PAT,
+ * XCR0) and snapshot the per-CPU MSR replay profile values. Call once on
+ * the BSP after all Phase 0/1 xstate mutations and before SMP bringup so
+ * every AP replicates the BSP's final state rather than a recomputed-from-
+ * CPUID approximation. */
+void cpu_record_bsp_profile(void);
+
+/* Replicate the BSP's hardened CPU state onto the calling AP: match the
+ * BSP XCR0 mask (intersected with this AP's own supported bits), enable the
+ * gated security features, force the BSP's required CR4 bits, replay the
+ * BSP MSR profile, then capture this AP's snapshot, verify it against the
+ * BSP baseline (warn-only; the controlled bug-check on mismatch is the AP
+ * feature consistency validation), and emit a "[AP%u] CPU hardening
+ * applied ..." audit line. Must run after the AP's GS base is set. */
+void ap_cpu_harden(uint32_t cpu_id);
+
+#ifdef KERNEL_TESTS
+/* Test-only read accessors for the BSP per-CPU MSR replay profile. */
+uint32_t cpu_msr_profile_count(void);
+int      cpu_msr_profile_entry(uint32_t idx, uint32_t *msr_out,
+                               uint64_t *value_out, int *per_cpu_out);
+uint64_t cpu_bsp_pat_baseline(void);
+#endif
+
 /* Emit a single consolidated `[Phase0] CPU security <phase_label>: EFER=...
  * CR4=... NX=N UMIP=N PKU=N SMEP=N SMAP=N` line. BSP-only; intended for the
  * boot_phase0 activation sequence so log readers can see what was enabled

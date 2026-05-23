@@ -65,7 +65,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   1   | CPUID detection & per-CPU capability capture     | D2/T01 §1                     |  [x]   |
 | 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T10 §1, D2/T01 §2      |  [x]   |
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12                |  [x]   |
-| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T24 §1 §7              |  [ ]   |
+| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1                 |  [x]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [ ]   |
 | 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [ ]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [ ]   |
@@ -175,21 +175,31 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 
 ---
 
-## 4. AP CPU Hardening (`ap_cpu_harden()`) *(deferred -- blocked by §2; current `cpu_harden()` + `cpu_harden_post_pagetable()` applied on APs in smp.c)*
-**Prompt:** When APs start up via `smp_ap_main()`, they run their own GDT/IDT/LAPIC setup but currently skip the EFER and CR4 security features that BSP Phase 0 enables. An AP running without `EFER.NXE`/`SMEP`/`SMAP` is a full privilege bypass vector. The replication contract is a per-CPU MSR profile (registry of MSRs the BSP programmed in Phase 0/1 that every AP mirrors), not EFER+CR4 alone -- otherwise each new boot-time MSR (TSC_AUX, SPEC_CTRL, CET) silently drifts on APs.
+## 4. AP CPU Hardening (`ap_cpu_harden()`)
+**Prompt:** When APs start up via `ap_entry()` (the planning-era `smp_ap_main` name), they run their own GDT/IDT/LAPIC setup but historically replicated only a bare `cpu_harden()` + `cpu_harden_post_pagetable()` and an ad-hoc TSC_AUX write. An AP running without `EFER.NXE`/`SMEP`/`SMAP`, or with the wrong PAT cache type on shared MMIO, is a privilege-bypass / corruption vector. The replication contract is a per-CPU MSR profile (registry of MSRs the BSP programmed in Phase 0/1 that every AP mirrors), not EFER+CR4 alone -- otherwise each new boot-time MSR (TSC_AUX, SPEC_CTRL, CET) silently drifts on APs.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §1--§8` -- TODO-10 provides EFER / SPEC_CTRL / CET setters reused on APs; this TODO writes the call site.
+> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §1--§8` -- TODO-10 provides EFER / SPEC_CTRL / CET setters reused on APs; this TODO writes the call site. SPEC_CTRL/CET MSR-profile entries are appended when those setters ship.
 > → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §11` -- `IA32_TSC_AUX` per-CPU programming, consumed via the profile registry.
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §1, §5` -- `ap_apply_xcr0()` here resolves the per-AP XCR0 configuration those sections deferred (their `Accepted: AP XCR0` notes); the formal Phase 1 XSAVE/PCID window remains §5 below.
 
-- [ ] Add `efer_at_boot`, `cr4_at_boot`, `pat_at_boot`, `tsc_aux`, `spec_ctrl_at_boot` to `struct cpu_data`; BSP stores values at end of Phase 0/1
-- [ ] Define `bsp_per_cpu_msr_profile[]` registry in `cpu_security.c`; entries: msr, value, name, feature_gate; seed with EFER, PAT, TSC_AUX, plus SPEC_CTRL/CET as TODO-10 §8-§10 land
-- [ ] Implement `ap_cpu_harden()`: apply BSP EFER + CR4, walk profile registry; AP-local GS_BASE baseline is set separately (per-CPU value, not replicated)
-- [ ] Call `ap_cpu_harden()` in `smp_ap_main()` before `ap_ready_flag = 1`
-- [ ] Verify (serial log): `[AP%u] CPU hardening applied EFER=... CR4=... MSRs=N`; no AP boots with `EFER.NXE=0` when BSP has it; every profile readback matches BSP
-- [ ] Commit: `"smp: ap_cpu_harden() with per-CPU MSR profile registry"`
+- [x] 7 boot-snapshot fields (EFER/CR4/PAT/XCR0/SPEC_CTRL/TSC_AUX/applied-count) added to `per_cpu_data` after the asm-pinned KPTI offsets; BSP fills `cpu_data[0]`, each AP fills its own
+- [x] `s_bsp_msr_profile[]` in `cpu_security.c` -- `{msr,value,name,feature,per_cpu}`: PAT verbatim + TSC_AUX per-CPU; `cpu_record_bsp_profile()` freezes values from live BSP MSRs pre-bringup; SPEC_CTRL/CET added when TODO-10 setters ship
+- [x] `ap_cpu_harden(cpu_id)`: match BSP XCR0 (AP-local-intersected) -> gated `cpu_harden()` -> replay MSR profile -> snapshot+verify. EFER NXE-only (no SCE); CR4 via gated path, no blind force
+- [x] `ap_cpu_harden(cpu_index)` wired into `ap_entry()` (replaces bare `cpu_harden` + TSC_AUX block); `cpu_record_bsp_profile()` at `smp_init()` entry so the baseline is the final post-Phase-1 XCR0
+- [x] Verify (serial log): `[BSP] hardening baseline ...` then per-AP `[AP%u] CPU hardening applied EFER/CR4/PAT/XCR0/MSRs`; warn-only on EFER.NXE/required-CR4/PAT mismatch (bug-check on mismatch is §6)
+- [x] Commit: `"smp: ap_cpu_harden() with per-CPU MSR profile registry"`
 
-**Test checkpoint:** Boot on SMP system (2+ CPUs). Serial log shows `[AP1] CPU hardening applied EFER=0x... CR4=0x...` for every AP before `ap_ready_flag = 1`. Verify EFER/CR4 values match BSP. On single-CPU system: no AP messages, BSP-only boot succeeds. Verify on QEMU WHPX (SMP), TCG (1 CPU), VirtualBox (4 CPUs), bare metal. Bare metal: confirm AP does not crash between GDT load and `ap_cpu_harden()` call -- this window is IRQ-disabled but NMI-vulnerable.
+**Test checkpoint:** Boot on SMP system (2+ CPUs). Serial log shows `[AP1] CPU hardening applied EFER=0x... CR4=0x... PAT=0x... XCR0=0x...` for every AP before it is marked online. Verify EFER.NXE/PAT match BSP. On single-CPU system: no AP messages, BSP-only boot succeeds and `[BSP] hardening baseline` still logs. Verify on QEMU WHPX (SMP), TCG (1 CPU), VirtualBox (4 CPUs), bare metal. Bare metal: confirm AP does not crash between GDT load and `ap_cpu_harden()` call -- this window is IRQ-disabled but NMI-vulnerable.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 6 added suites (MSR profile populated/bounds/PAT-verbatim/TSC_AUX-per-CPU, BSP PAT baseline, BSP snapshot recorded), 0 failures. AP-path replay validated via serial log on multi-CPU platforms (unit tests cannot call the live AP hardening path).
+>
+> **Notes:**
+> - What shipped: `ap_cpu_harden()` + `cpu_record_bsp_profile()` + `s_bsp_msr_profile[]` (PAT verbatim, TSC_AUX per-CPU) in `cpu_security.c`; 7 boot-snapshot fields in `per_cpu_data`; `smp.c` AP path now calls the single contract function.
+> - How it runs: BSP freezes its EFER/CR4/PAT/XCR0 baseline at `smp_init()` entry; each AP matches XCR0 (AP-local-intersected), runs gated enables, replays the MSR profile, snapshots + warns on drift. Reads are AP-local, never BSP-global `g_cpu`.
+> - Downstream effects: resolves the per-AP XCR0 gap deferred by `02-kernel-core/TODO-09 §2/§3/§5`; provides the `ap_cpu_harden()` SMEP/SMAP call site `03-memory-concurrency/TODO-02` names; feeds §9 audit fields.
+> - Canonical doc: `include/kernel/cpu_security.h` (`ap_cpu_harden` / `cpu_record_bsp_profile` prototypes).
+> - Scope boundary: §4 owns AP replication + warn-only verify. Force-after-validation + the mismatch bug-check are §6; the Phase 1 XSAVE/PCID window is §5; SPEC_CTRL/CET MSR values owned by `02-kernel-core/TODO-10 §8--§10`.
 
 ---
 
@@ -225,6 +235,7 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 - [ ] Two-phase enable ordering: APs publish CPUID mask into `cpu_data[ap_id].features` BEFORE BSP enables/pins any optional CR4/MSR feature; global mask is BSP & every AP, no post-pin downgrade
 - [ ] Hybrid handling: read `CPUID.1A` core type per CPU; intersect E-core features (UMIP, AVX-512 commonly differ on Intel hybrid); store `cpu_data[ap_id].core_type`
 - [ ] Implement `cpu_validate_ap_features(uint32_t ap_id)` in `cpu_security.c`: runs on each AP; compares against BSP required mask; panic on missing required
+- [ ] After validation, force the BSP required-CR4 mask (`s_bsp_required_cr4`, recorded by §4) for AP-proven bits -- closes §4's warn-only gap (→ XREF §4 `ap_cpu_harden()`)
 - [ ] On optional mismatch: log `[AP%u] FEATURE MISMATCH: BSP has %s, AP missing`; set `cpu_data[ap_id].feature_mismatch = true`; intersection step prevents enabling that feature globally
 - [ ] Define `BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED = 0x3E`; panic on missing required mask, vendor mismatch, or missing Long Mode
 - [ ] Add `POSTCODE_AP_VALIDATE = 0x27` to `boot_init.h`; debug `POST16(0xD600)/(0xD601)` entry/success (remove after bare metal verifies)
@@ -307,7 +318,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | --- | --------------------------- | --------------------------- | ------------------------ | ----------------------- |
 | 💎  | EFER.NXE before NX pages    | ✅ Hal before paging        | ✅ cpu_init pre-paging   | ✅ §2 cpu_harden + log  |
 | 💎  | SMEP/SMAP BSP Phase 0       | ✅ Hal CR4 early            | ✅ setup_cr4 early       | ⚠️ §2 wired, T10 §2 gate|
-| 💎  | AP hardening matches BSP    | ✅ Hal per AP               | ✅ cpu_init secondary    | ⚠️ §4 smp partial       |
+| 💎  | AP hardening matches BSP    | ✅ Hal per AP               | ✅ cpu_init secondary    | ✅ §4 ap_cpu_harden+profile |
 | 💎  | XSAVE after VMM ready       | ✅ OSXSAVE post-paging      | ✅ fpu deferred          | ⚠️ §5 AVX no formal win |
 | 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ⬜ §5 planned           |
 | 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ⬜ §6 planned           |
@@ -321,7 +332,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |
 
-> **§1 complete.** **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). §2, §4, §5 deferred -- blocked by `02-kernel-core/TODO-10-kernel-security-hardening.md` and `02-kernel-core/TODO-09-x86-64-architecture.md` implementations. §7--§10 are parity and competitive-edge sections. Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
+> **§1, §2, §4 complete.** **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; force-after-validation + the AP-mismatch bug-check are deferred to §6, the formal Phase 1 XSAVE/PCID window to §5. §5 still blocked on `02-kernel-core/TODO-10-kernel-security-hardening.md` (PCID) + `02-kernel-core/TODO-09-x86-64-architecture.md` (XSAVE window). §7--§10 are parity and competitive-edge sections. Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 
 ---
 

@@ -1127,6 +1127,145 @@ static void test_platform_baremetal_clean(void)
                    "bare metal: hv_flags is zero");
 }
 
+/* ---- AP CPU hardening: BSP MSR replay profile + baseline ---- */
+
+static void test_ap_msr_profile_populated(void)
+{
+    /* Pin the exact registry shape: exactly PAT (verbatim) + TSC_AUX
+     * (per-CPU), no unknown entries. An accidental added/duplicate/wrong
+     * entry would change AP MSR replay, so reject anything else here. */
+    uint32_t i, count = cpu_msr_profile_count();
+    uint32_t pat_count = 0, tsc_aux_count = 0, unknown = 0;
+
+    TEST_ASSERT_EQ((uint64_t)count, 2ULL,
+                   "MSR profile registry has exactly 2 entries");
+    for (i = 0; i < count; i++) {
+        uint32_t msr = 0;
+        uint64_t value = 0;
+        int per_cpu = -1;
+        if (cpu_msr_profile_entry(i, &msr, &value, &per_cpu) != 0)
+            continue;
+        if (msr == MSR_IA32_PAT && per_cpu == 0)
+            pat_count++;
+        else if (msr == MSR_IA32_TSC_AUX && per_cpu == 1)
+            tsc_aux_count++;
+        else
+            unknown++;
+    }
+    TEST_ASSERT_EQ((uint64_t)pat_count, 1ULL,
+                   "exactly one verbatim PAT profile entry");
+    TEST_ASSERT_EQ((uint64_t)tsc_aux_count, 1ULL,
+                   "exactly one per-CPU TSC_AUX profile entry");
+    TEST_ASSERT_EQ((uint64_t)unknown, 0ULL,
+                   "no unknown MSR profile entries");
+}
+
+static void test_ap_msr_profile_entry_bounds(void)
+{
+    uint32_t count = cpu_msr_profile_count();
+    uint32_t msr = 0xABCDu;
+    uint64_t value = 0x1234ULL;
+    int per_cpu = 7;
+
+    /* idx == count and a large idx must fail WITHOUT mutating out-params. */
+    TEST_ASSERT_EQ(cpu_msr_profile_entry(count, &msr, &value, &per_cpu), -1,
+                   "cpu_msr_profile_entry(count) returns -1");
+    TEST_ASSERT_EQ(cpu_msr_profile_entry(0xFFFFu, &msr, &value, &per_cpu), -1,
+                   "cpu_msr_profile_entry(large idx) returns -1");
+    TEST_ASSERT_EQ((uint64_t)msr, 0xABCDULL,
+                   "failed lookup leaves msr out-param untouched");
+    TEST_ASSERT_EQ(value, 0x1234ULL,
+                   "failed lookup leaves value out-param untouched");
+    TEST_ASSERT_EQ((uint64_t)per_cpu, 7ULL,
+                   "failed lookup leaves per_cpu out-param untouched");
+
+    /* Valid index with all NULL out-params must still succeed. */
+    TEST_ASSERT_EQ(cpu_msr_profile_entry(0, (uint32_t *)0, (uint64_t *)0,
+                                         (int *)0), 0,
+                   "valid index tolerates NULL out-params");
+}
+
+static void test_ap_msr_profile_pat_entry(void)
+{
+    uint32_t msr = 0;
+    uint64_t value = 0;
+    int per_cpu = -1;
+
+    /* Entry 0 is PAT: replicated verbatim (not per-CPU). */
+    TEST_ASSERT_EQ(cpu_msr_profile_entry(0, &msr, &value, &per_cpu), 0,
+                   "MSR profile entry 0 readable");
+    TEST_ASSERT_EQ((uint64_t)msr, (uint64_t)MSR_IA32_PAT,
+                   "MSR profile entry 0 is IA32_PAT");
+    TEST_ASSERT_EQ((uint64_t)per_cpu, 0ULL,
+                   "PAT profile entry is replicated verbatim (per_cpu == 0)");
+}
+
+static void test_ap_msr_profile_tsc_aux_per_cpu(void)
+{
+    uint32_t i, count = cpu_msr_profile_count();
+    int found = 0;
+
+    /* TSC_AUX must be flagged per-CPU (value is logical id, not BSP value). */
+    for (i = 0; i < count; i++) {
+        uint32_t msr = 0;
+        uint64_t value = 0;
+        int per_cpu = -1;
+        if (cpu_msr_profile_entry(i, &msr, &value, &per_cpu) == 0 &&
+            msr == MSR_IA32_TSC_AUX) {
+            found = 1;
+            TEST_ASSERT_EQ((uint64_t)per_cpu, 1ULL,
+                           "TSC_AUX profile entry is per-CPU (per_cpu == 1)");
+        }
+    }
+    TEST_ASSERT(found, "MSR profile registry contains TSC_AUX");
+}
+
+static void test_ap_bsp_pat_baseline_matches_live(void)
+{
+    /* cpu_record_bsp_profile() ran during smp_init(); PAT is not reprogrammed
+     * afterward, so the recorded baseline equals the live BSP PAT MSR. */
+    TEST_ASSERT_EQ(cpu_bsp_pat_baseline(), msr_read(MSR_IA32_PAT),
+                   "BSP PAT baseline matches live IA32_PAT");
+}
+
+static void test_ap_bsp_snapshot_recorded(void)
+{
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    TEST_ASSERT(bsp != (struct per_cpu_data *)0, "BSP per-CPU data present");
+    if (!bsp) return;
+
+    /* Baseline was captured: EFER non-zero (LME/LMA set in long mode) and
+     * CR4.PAE set (mandatory in 64-bit mode). */
+    TEST_ASSERT(bsp->efer_at_boot != 0,
+                "BSP efer_at_boot recorded (non-zero)");
+    TEST_ASSERT((bsp->cr4_at_boot & (1ULL << 5)) != 0,
+                "BSP cr4_at_boot has CR4.PAE set");
+    if (cpu_has(CPU_FEATURE_NX))
+        TEST_ASSERT((bsp->efer_at_boot & EFER_NXE) != 0,
+                    "BSP efer_at_boot has EFER.NXE when NX supported");
+
+    /* PAT snapshot is internally consistent: recorded field == accessor
+     * baseline == live MSR. */
+    TEST_ASSERT_EQ(bsp->pat_at_boot, cpu_bsp_pat_baseline(),
+                   "BSP pat_at_boot == PAT baseline accessor");
+    TEST_ASSERT_EQ(bsp->pat_at_boot, msr_read(MSR_IA32_PAT),
+                   "BSP pat_at_boot == live IA32_PAT");
+
+    /* XCR0 snapshot: x87+SSE bits present when XSAVE supported, else 0. */
+    if (cpu_has(CPU_FEATURE_XSAVE))
+        TEST_ASSERT_EQ(bsp->xcr0_at_boot & 0x3ULL, 0x3ULL,
+                       "BSP xcr0_at_boot has x87+SSE bits when XSAVE present");
+    else
+        TEST_ASSERT_EQ(bsp->xcr0_at_boot, 0ULL,
+                       "BSP xcr0_at_boot == 0 when XSAVE absent");
+
+    /* BSP is logical CPU 0 and never runs the AP replay, so its TSC_AUX
+     * snapshot is 0 and its profile-applied counter stays 0. */
+    TEST_ASSERT_EQ(bsp->tsc_aux, 0ULL, "BSP tsc_aux snapshot == 0");
+    TEST_ASSERT_EQ((uint64_t)bsp->msr_profile_applied, 0ULL,
+                   "BSP msr_profile_applied == 0 (AP-only counter)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -1145,6 +1284,20 @@ void test_register_x86(void)
         test_kpti_active_false, TEST_CAT_X86);
     test_suite_register_cat("CPU security: kernel_cr3 matches HW CR3",
         test_kpti_kernel_cr3_matches_hw, TEST_CAT_X86);
+
+    /* AP CPU hardening: BSP MSR replay profile + baseline */
+    test_suite_register_cat("AP harden: MSR profile populated",
+        test_ap_msr_profile_populated, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: MSR profile entry bounds/NULL",
+        test_ap_msr_profile_entry_bounds, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: PAT profile entry verbatim",
+        test_ap_msr_profile_pat_entry, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: TSC_AUX profile entry per-CPU",
+        test_ap_msr_profile_tsc_aux_per_cpu, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: BSP PAT baseline matches live",
+        test_ap_bsp_pat_baseline_matches_live, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: BSP baseline snapshot recorded",
+        test_ap_bsp_snapshot_recorded, TEST_CAT_X86);
 
     /* Hypervisor detection */
     test_suite_register_cat("Platform: hv_vendor NUL-terminated",

@@ -126,6 +126,22 @@ struct per_cpu_data {
     uint64_t          kpti_syscall_target; /* jump target after SYSCALL CR3 swap */
     uint64_t          kpti_isr_target;    /* jump target after ISR CR3 swap */
 
+    /* Boot-time control/MSR snapshot. The BSP fills cpu_data[0] in
+     * cpu_record_bsp_profile(); each AP fills its own block in
+     * ap_cpu_harden() (TODO-09 AP CPU hardening). Consumed by the AP-vs-BSP
+     * consistency warning here and the per-CPU register audit trail. All
+     * fields are per-CPU (only the owning CPU writes them) so no lock is
+     * required. Placed after the asm-pinned KPTI region; never read by
+     * assembly, so no offset _Static_assert is needed. */
+    uint64_t          efer_at_boot;        /* IA32_EFER after hardening */
+    uint64_t          cr4_at_boot;         /* CR4 after hardening */
+    uint64_t          pat_at_boot;         /* IA32_PAT after profile replay */
+    uint64_t          xcr0_at_boot;        /* XCR0 (0 if XSAVE absent) */
+    uint64_t          spec_ctrl_at_boot;   /* IA32_SPEC_CTRL (0 until SPEC_CTRL setter ships) */
+    uint64_t          tsc_aux;             /* IA32_TSC_AUX = logical CPU id */
+    uint32_t          msr_profile_applied; /* count of BSP profile MSRs replayed */
+    uint32_t          _harden_pad;         /* alignment */
+
 #ifdef KERNEL_TESTS
     /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
      * On each kmalloc() call, a non-zero value decrements; when the

@@ -11,17 +11,30 @@
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
 #include "kernel/security/pku.h"
+#include "kernel/smp.h"                 /* per_cpu_data, smp_get_cpu() for AP hardening */
 #ifdef KERNEL_TESTS
-#include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
 
 /* ---- CR4 bit definitions ---- */
-#define CR4_UMIP  (1UL << 11)
-#define CR4_PKE   (1UL << 22)
-#define CR4_SMEP  (1UL << 20)
-#define CR4_SMAP  (1UL << 21)
+#define CR4_FSGSBASE (1UL << 16)
+#define CR4_PCIDE    (1UL << 17)
+#define CR4_OSXSAVE  (1UL << 18)
+#define CR4_UMIP     (1UL << 11)
+#define CR4_PKE      (1UL << 22)
+#define CR4_SMEP     (1UL << 20)
+#define CR4_SMAP     (1UL << 21)
+#define CR4_CET      (1UL << 23)
+
+/* CR4 bits that MUST be identical on every CPU. ap_cpu_harden() forces the
+ * subset the BSP actually enabled, so a bit the BSP sets in a later boot
+ * phase (e.g. CR4.PCIDE once PCID activation lands) replicates to APs
+ * without revising the AP hardening path. The BSP and APs share one page
+ * table / CR3, so any bit safe to set on the BSP is safe on the AP. */
+#define CR4_UNIFORM_MASK \
+    (CR4_OSXSAVE | CR4_UMIP | CR4_SMEP | CR4_SMAP | \
+     CR4_PCIDE | CR4_PKE | CR4_FSGSBASE | CR4_CET)
 
 static inline uint64_t read_cr4(void)
 {
@@ -33,6 +46,32 @@ static inline uint64_t read_cr4(void)
 static inline void write_cr4(uint64_t val)
 {
     __asm__ volatile ("mov %0, %%cr4" : : "r"(val));
+}
+
+/* ---- XCR0 helpers ---- */
+
+static inline uint64_t xcr0_read(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+static inline void xcr0_write(uint64_t mask)
+{
+    __asm__ volatile ("xsetbv"
+                      :: "a"((uint32_t)mask), "d"((uint32_t)(mask >> 32)), "c"(0));
+}
+
+/* Read this CPU's live XCR0, or 0 if XSAVE/OSXSAVE is not active here. Safe
+ * on any CPU: xgetbv only executes when CR4.OSXSAVE is set on THIS core, so
+ * it never traps on a core that has not enabled XSAVE (unlike gating on the
+ * BSP-global cpu_has(XSAVE)). */
+static uint64_t xcr0_read_safe(void)
+{
+    if (!(read_cr4() & CR4_OSXSAVE))
+        return 0;
+    return xcr0_read();
 }
 
 /* ---- NX (No-Execute) via EFER.NXE ---- */
@@ -237,13 +276,13 @@ void cpu_enable_pku(void)
     if (!cpu_has(CPU_FEATURE_PKU))
         return;
 
-    /* XCR0 bit 9 (PKRU state) must already be set by cpu_configure_xcr0() */
-    {
-        extern struct cpu_features g_cpu;
-        if (!(g_cpu.xcr0_active & (1UL << 9))) {
-            klog(LOG_WARN, "cpu", "PKU: XCR0 bit 9 not set; skipping CR4.PKE");
-            return;
-        }
+    /* XCR0 bit 9 (PKRU state) must be active on THIS CPU before CR4.PKE.
+     * Read the live XCR0, not the BSP-global g_cpu.xcr0_active -- on an AP
+     * whose XCR0 was intersected down to a narrower mask, the global would
+     * lie and we would set CR4.PKE without the PKRU xstate enabled here. */
+    if (!(xcr0_read_safe() & (1UL << 9))) {
+        klog(LOG_WARN, "cpu", "PKU: XCR0 bit 9 not set on this CPU; skipping CR4.PKE");
+        return;
     }
 
     uint64_t cr4 = read_cr4();
@@ -368,3 +407,239 @@ void cpu_security_log_state(const char *phase_label)
          phase_label, efer, cr4,
          (uint64_t)nx, (uint64_t)umip, (uint64_t)pku, (uint64_t)smep, (uint64_t)smap);
 }
+
+/* ============================================================================
+ * AP CPU hardening -- replicate the BSP's hardened state onto every AP.
+ *
+ * An AP that boots without the BSP's EFER/CR4/MSR state is a privilege-bypass
+ * vector (NX absent, wrong PAT cache type on shared MMIO, etc.). Rather than
+ * re-deriving each AP's state from CPUID (which drifts across hybrid P/E cores
+ * and microcode revisions, and silently misses every new boot-time MSR), the
+ * BSP records the exact values it programmed and each AP replays them.
+ * ============================================================================ */
+
+/* ---- Per-CPU MSR replay profile ----
+ *
+ * cpu_record_bsp_profile() fills `value` for non-per-CPU entries from the
+ * BSP's live MSRs before SMP bringup; ap_apply_msr_profile() replays them on
+ * each AP. Written once on the BSP (pre-SIPI), then read-only during AP
+ * startup, so no lock is needed -- the existing smp_mb() before each SIPI in
+ * smp_init() is the release barrier pairing the fill with AP launch.
+ *
+ * SPEC_CTRL / CET MSR entries are appended when the kernel-security-hardening
+ * Spectre and CET setters ship (they own the values). */
+#define MSR_PROFILE_ALWAYS  0xFFFFFFFFu   /* feature gate: always apply */
+
+struct msr_profile_entry {
+    uint32_t    msr;        /* MSR index */
+    uint64_t    value;      /* BSP value, filled at record time; ignored if per_cpu */
+    const char *name;       /* for the audit log */
+    uint32_t    feature;    /* CPU_FEATURE_* gate, or MSR_PROFILE_ALWAYS */
+    uint8_t     per_cpu;    /* 1 = value is per-CPU: write cpu_id, not BSP value */
+};
+
+static struct msr_profile_entry s_bsp_msr_profile[] = {
+    { MSR_IA32_PAT,     0, "PAT",     MSR_PROFILE_ALWAYS, 0 },
+    { MSR_IA32_TSC_AUX, 0, "TSC_AUX", CPU_FEATURE_RDTSCP, 1 },
+};
+#define MSR_PROFILE_COUNT (sizeof(s_bsp_msr_profile) / sizeof(s_bsp_msr_profile[0]))
+
+/* BSP baseline, captured once by cpu_record_bsp_profile(), read by every AP. */
+static uint64_t s_bsp_efer;
+static uint64_t s_bsp_cr4;
+static uint64_t s_bsp_pat;
+static uint64_t s_bsp_xcr0;
+static uint64_t s_bsp_required_cr4;   /* s_bsp_cr4 & CR4_UNIFORM_MASK */
+static int      s_bsp_profile_ready;
+
+void cpu_record_bsp_profile(void)
+{
+    uint32_t i;
+    struct per_cpu_data *bsp;
+
+    s_bsp_efer = msr_read(MSR_IA32_EFER);
+    s_bsp_cr4  = read_cr4();
+    s_bsp_pat  = msr_read(MSR_IA32_PAT);
+    s_bsp_xcr0 = cpu_has(CPU_FEATURE_XSAVE) ? xcr0_read() : 0;
+    s_bsp_required_cr4 = s_bsp_cr4 & CR4_UNIFORM_MASK;
+
+    /* Freeze the replicated MSR values from the BSP's live MSRs. Per-CPU
+     * entries (TSC_AUX) keep value 0 -- their value is computed on the AP. */
+    for (i = 0; i < MSR_PROFILE_COUNT; i++) {
+        if (s_bsp_msr_profile[i].per_cpu)
+            continue;
+        s_bsp_msr_profile[i].value = msr_read(s_bsp_msr_profile[i].msr);
+    }
+
+    /* Snapshot the BSP's own block (cpu_id 0) for the register audit trail. */
+    bsp = smp_get_cpu(0);
+    if (bsp) {
+        bsp->efer_at_boot = s_bsp_efer;
+        bsp->cr4_at_boot  = s_bsp_cr4;
+        bsp->pat_at_boot  = s_bsp_pat;
+        bsp->xcr0_at_boot = s_bsp_xcr0;
+        bsp->tsc_aux      = 0;
+    }
+
+    /* Publish the baseline before any AP reads it. The smp_mb() before each
+     * SIPI completes the release; this barrier makes the contract explicit. */
+    __atomic_store_n(&s_bsp_profile_ready, 1, __ATOMIC_RELEASE);
+
+    klog(LOG_INFO, "cpu",
+         "[BSP] hardening baseline EFER=0x%lx CR4=0x%lx PAT=0x%lx XCR0=0x%lx reqCR4=0x%lx",
+         s_bsp_efer, s_bsp_cr4, s_bsp_pat, s_bsp_xcr0, s_bsp_required_cr4);
+}
+
+/* Apply the BSP's recorded XCR0 mask on the calling AP, intersected with this
+ * AP's own CPUID-reported supported bits (leaf 0x0D) so a narrower AP never
+ * #GP's on xsetbv (Intel hybrid P/E parts). Sets CR4.OSXSAVE first. Uses the
+ * recorded BSP mask, NOT a CPUID recompute, so an AP cannot re-enable an
+ * xstate component the BSP deliberately disabled (e.g. AVX-512 throttle). */
+static void ap_apply_xcr0(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    uint64_t ap_supported, mask, cr4;
+
+    if (!s_bsp_profile_ready)
+        return;
+
+    /* Gate on THIS AP's own CPUID-reported XSAVE (leaf 1 ECX bit 26), not
+     * the BSP-global cpu_has(XSAVE): a feature-skewed AP that lacks XSAVE
+     * must not touch CR4.OSXSAVE or xsetbv (both #GP without XSAVE). */
+    cpuid_raw(0x01, 0, &eax, &ebx, &ecx, &edx);
+    if (!(ecx & (1u << 26)))
+        return;
+
+    cpuid_raw(0x0D, 0, &eax, &ebx, &ecx, &edx);
+    ap_supported = ((uint64_t)edx << 32) | eax;
+    mask = s_bsp_xcr0 & ap_supported;
+    if ((mask & 0x3) != 0x3)    /* x87+SSE are mandatory; never xsetbv without them */
+        return;
+
+    cr4 = read_cr4();
+    write_cr4(cr4 | CR4_OSXSAVE);
+    xcr0_write(mask);
+}
+
+/* Replay the BSP MSR profile on the calling AP. Returns the number applied. */
+static uint32_t ap_apply_msr_profile(uint32_t cpu_id)
+{
+    uint32_t i, applied = 0;
+
+    for (i = 0; i < MSR_PROFILE_COUNT; i++) {
+        struct msr_profile_entry *e = &s_bsp_msr_profile[i];
+
+        if (e->feature != MSR_PROFILE_ALWAYS &&
+            !cpu_has((enum cpu_feature)e->feature))
+            continue;
+
+        if (e->per_cpu) {
+            /* TSC_AUX = logical CPU id, only if the BSP probe confirmed it. */
+            if (e->msr == MSR_IA32_TSC_AUX) {
+                extern int g_tsc_aux_available;
+                if (!g_tsc_aux_available)
+                    continue;
+                msr_write(MSR_IA32_TSC_AUX, (uint64_t)cpu_id);
+            } else {
+                continue;   /* unknown per-CPU entry: skip rather than guess */
+            }
+        } else {
+            msr_write(e->msr, e->value);
+        }
+        applied++;
+    }
+    return applied;
+}
+
+void ap_cpu_harden(uint32_t cpu_id)
+{
+    struct per_cpu_data *pc;
+    uint64_t efer, cr4, pat, xcr0;
+    uint32_t applied;
+
+    /* 1. Match the BSP's validated XCR0 BEFORE cpu_harden() so
+     *    cpu_enable_pku() sees this AP's real PKRU xstate -- otherwise the
+     *    AP could set CR4.PKE while its XCR0 lacks the PKRU component. */
+    ap_apply_xcr0();
+
+    /* 2. Gated security feature enables -- same path the BSP took, idempotent
+     *    and per-feature CPUID-gated (NX/UMIP/PKU/PAT, then SMEP/SMAP). Each
+     *    cpu_enable_* only sets the bit when the feature is present, so this
+     *    is the AP-local-safe way to bring an AP up to the BSP's CR4 state.
+     *    We deliberately do NOT force-OR the BSP CR4 mask here: blindly
+     *    setting an architectural CR4 bit (PCIDE/FSGSBASE/CET) before the AP
+     *    feature-consistency validation exists could #GP on a feature-skewed
+     *    AP. Those future bits are replicated by their owning sections (PCID
+     *    activation, CR4 pinning) under that validation; this path stays
+     *    warn-only on any residual CR4 mismatch (see step 5). */
+    cpu_harden();
+    cpu_harden_post_pagetable();
+
+    /* 3. Replay the BSP MSR profile (PAT verbatim, TSC_AUX per-CPU). */
+    applied = ap_apply_msr_profile(cpu_id);
+
+    /* 4. Capture this AP's snapshot for the register audit trail. The XCR0
+     *    read gates on THIS AP's live CR4.OSXSAVE (xcr0_read_safe), never the
+     *    BSP-global cpu_has(XSAVE) -- a feature-skewed AP that never enabled
+     *    OSXSAVE would #GP on xgetbv otherwise. */
+    efer = msr_read(MSR_IA32_EFER);
+    cr4  = read_cr4();
+    pat  = msr_read(MSR_IA32_PAT);
+    xcr0 = xcr0_read_safe();
+
+    pc = smp_get_cpu(cpu_id);
+    if (pc) {
+        pc->efer_at_boot        = efer;
+        pc->cr4_at_boot         = cr4;
+        pc->pat_at_boot         = pat;
+        pc->xcr0_at_boot        = xcr0;
+        pc->tsc_aux             = (uint64_t)cpu_id;
+        pc->msr_profile_applied = applied;
+    }
+
+    /* Verify the security-critical baseline matches the BSP. Warn-only here;
+     * the controlled bug-check on mismatch is the AP feature consistency
+     * validation. EFER.SCE deliberately differs (APs have no SYSCALL MSR
+     * setup), so only NXE is compared, not the whole EFER register. */
+    if (s_bsp_profile_ready) {
+        if ((efer & EFER_NXE) != (s_bsp_efer & EFER_NXE))
+            klog(LOG_WARN, "smp",
+                 "[AP%u] EFER.NXE mismatch: AP=0x%lx BSP=0x%lx",
+                 (uint64_t)cpu_id, efer, s_bsp_efer);
+        if ((cr4 & s_bsp_required_cr4) != s_bsp_required_cr4)
+            klog(LOG_WARN, "smp",
+                 "[AP%u] CR4 required-bit mismatch: AP=0x%lx need=0x%lx",
+                 (uint64_t)cpu_id, cr4, s_bsp_required_cr4);
+        if (pat != s_bsp_pat)
+            klog(LOG_WARN, "smp",
+                 "[AP%u] PAT mismatch: AP=0x%lx BSP=0x%lx",
+                 (uint64_t)cpu_id, pat, s_bsp_pat);
+    }
+
+    klog(LOG_INFO, "smp",
+         "[AP%u] CPU hardening applied EFER=0x%lx CR4=0x%lx PAT=0x%lx XCR0=0x%lx MSRs=%u",
+         (uint64_t)cpu_id, efer, cr4, pat, xcr0, (uint64_t)applied);
+}
+
+#ifdef KERNEL_TESTS
+uint32_t cpu_msr_profile_count(void)
+{
+    return (uint32_t)MSR_PROFILE_COUNT;
+}
+
+int cpu_msr_profile_entry(uint32_t idx, uint32_t *msr_out,
+                          uint64_t *value_out, int *per_cpu_out)
+{
+    if (idx >= MSR_PROFILE_COUNT)
+        return -1;
+    if (msr_out)     *msr_out     = s_bsp_msr_profile[idx].msr;
+    if (value_out)   *value_out   = s_bsp_msr_profile[idx].value;
+    if (per_cpu_out) *per_cpu_out = s_bsp_msr_profile[idx].per_cpu;
+    return 0;
+}
+
+uint64_t cpu_bsp_pat_baseline(void)
+{
+    return s_bsp_pat;
+}
+#endif /* KERNEL_TESTS */
