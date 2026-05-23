@@ -170,7 +170,7 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 > - Canonical doc: `src/kernel/cpuid_platform.c`.
 > - Scope boundary: §3 owns `boot_info` fields + `platform_detect()` call sites. Registry mirror + TLFS TSC reference page deferred to TODO-14 + TODO-09 owners.
 
-> **Verified:** 2026-05-23 | commit `<pending>` | 6/6 owned items + 3 XREF-deferred | build OK | smoke PASS (KVM 2.51s)
+> **Verified:** 2026-05-23 | commit `4ed1f6f1` | 6/6 owned items + 3 XREF-deferred | build OK | smoke PASS (KVM 2.51s)
 > **Quality reviewed:** 2026-05-23 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+2M fixed | scope: kernel-code-quality + boot-code-quality
 
 ---
