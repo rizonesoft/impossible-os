@@ -66,7 +66,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T10 §1, D2/T01 §2      |  [x]   |
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12                |  [x]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1                 |  [x]   |
-| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [ ]   |
+| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [x]   |
 | 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [ ]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [ ]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [ ]   |
@@ -211,24 +211,33 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 
 ---
 
-## 5. Phase 1 XSAVE & PCID Activation Window *(deferred -- blocked by `02-kernel-core/TODO-10-kernel-security-hardening.md` and `02-kernel-core/TODO-09-x86-64-architecture.md` §1; XSAVE already enabled via `simd_enable_avx()` in Phase 0)*
-**Prompt:** XSAVE and PCID require VMM to be ready first -- XSAVE because per-thread XSAVE areas are allocated in TEB pages managed by VMM, and PCID because `CR4.PCIDE` changes how CR3 is loaded (PCID bits 11:0) and must be set only after the page table base is established. Slot these activations into Phase 1: (1) after `vmm_init()`: call `cpu_xsave_enable()` -- sets `CR4.OSXSAVE`, calls `XSETBV(XCR0, X87|SSE|AVX [|CET_U|CET_S])`, stores `xsave_area_size` in a global; (2) after process table is initialised: call `cpu_pcid_enable()` -- sets `CR4.PCIDE`, validates INVPCID is available; PCID 0 reserved for kernel; emit `POSTCODE_XSAVE_ENABLED` and `POSTCODE_PCID_ENABLED`. Both functions are no-ops if the CPU does not support the feature. The XCR0 mask must include any architecture-owned optional xstate components required by later security features (CET user + supervisor state, XCR0 bits 11-12) so TODO-10 §9-§10 can enable CET without re-sequencing the xstate window.
+## 5. Phase 1 XSAVE & PCID Activation Window
+**Prompt:** Activate XSAVE and PCID in the correct boot window relative to page-table setup, with POST codes and verification logging. Code-truth: the XCR0 base mask is already programmed in Phase 0 by `cpu_configure_xcr0()` (from `cpuid_init`), and that is correct -- Phase-0 `simd_enable_avx()` and `pku_init()` require XCR0, and per-thread XSAVE areas come from `pmm_alloc_contiguous()` (not TEB/VMM pages), so XSAVE has no real VMM dependency to wait on. This section adds a Phase 1 `cpu_xsave_enable()` *finalize* (records the final XCR0 mask + `xsave_size_max` and logs them; runs after `simd_enable_avx512()`'s throttle guard so the logged mask is final; does NOT re-run `XSETBV`, which would re-enable any AVX-512 xstate the throttle guard cleared), plus a `cpu_pcid_enable()` that sets the bare `CR4.PCIDE` bit (PCID stays 0 everywhere -> legacy TLB behavior) now that page tables exist. Both are no-ops on CPUs lacking the feature; `cpu_pcid_enable()` gates on the calling CPU's own CPUID so it is safe on a feature-skewed AP.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §1` -- `cpu_xsave_enable()` / `cpu_configure_xcr0()` implementation (XSAVE area sizing, XCR0 bits).
-> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §4` -- `cpu_pcid_enable()` and CR3 load changes for KPTI.
-> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §9-§10` -- CR4.CET + S_CET MSR enablement; this section reserves the XCR0 CET state components in the same Phase 1 window so CET activation downstream does not require re-sequencing.
-> → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §1` -- TEB allocation at thread create.
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §1` -- `cpu_xsave_enable()` finalize builds on `cpu_configure_xcr0()` (XSAVE area sizing, XCR0 bits) which §1 ships.
+> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §7` -- per-process PCID tagging + NOFLUSH CR3. This section ships ONLY the bare `CR4.PCIDE` activation; §7 owns the TLB-tagging exploitation and must NOT double-enable the CR4 bit (already set here).
+> → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §9-§10` -- CET xstate is **supervisor** state managed via `IA32_XSS` + `XSAVES` (CET_U component 11, CET_S component 12), NOT `XCR0`. CET state reservation is owned by §9 where CET is enabled; this section does not touch `XCR0` CET bits because setting reserved `XCR0` bits would `#GP`.
+> → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §1` -- TEB allocation at thread create (per-thread xstate consumer context).
 
-- [ ] Add `POSTCODE_XSAVE_ENABLED`, `POSTCODE_PCID_ENABLED` to `boot_init.h` Phase 1 constants
-- [ ] Insert `BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable)` in `boot_phase1()` after VMM init
-- [ ] Insert `BOOT_STEP(SUBSYS_PCID, cpu_pcid_enable)` in `boot_phase1()` after process table init
-- [ ] When TODO-10 §9 lands, extend `cpu_configure_xcr0()` to add `XCR0_CET_U`/`XCR0_CET_S` bits if `cpu_has(CPU_FEATURE_CET_SS)`; AP `ap_cpu_harden()` (§4) verifies the same XCR0 mask was applied
-- [ ] Verify (serial log): `[Phase1] XSAVE enabled (area=N bytes, mask=0x...)` and `[Phase1] PCID enabled`
-- [ ] Verify: XSAVE enable does not run in Phase 0 (VMM not yet up at that point)
-- [ ] Commit: `"boot: activate XSAVE and PCID in Phase 1 after VMM ready"`
+- [x] Added `POSTCODE_XSAVE_ENABLED` (0x42) / `POSTCODE_PCID_ENABLED` (0x43) + `SUBSYS_XSAVE`/`SUBSYS_PCID` (before `SUBSYS_COUNT`) with matching `s_subsys_names[]` entries (Gate-3 parallel-array sync)
+- [x] `BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable)` in `boot_phase1()` after `simd_enable_avx512()`; finalize records `xsave_size_max` + live XCR0, logs `[Phase1] XSAVE enabled (area=N bytes, mask=0x...)`, no re-XSETBV
+- [x] `BOOT_STEP(SUBSYS_PCID, cpu_pcid_enable)` in `boot_phase1()` (real dep is page-table base from Phase-0 VMM, not the process table); asserts `CR3[11:0]==0`, sets `CR4.PCIDE`, logs `[Phase1] PCID enabled`; replicated on APs in `ap_cpu_harden()`
+- [x] CET xstate reservation delegated to `02-kernel-core/TODO-10 §9` (CET state is `IA32_XSS` supervisor state, not `XCR0`); reciprocal item filed there; AP XCR0 already handled by `ap_apply_xcr0()`
+- [x] Verify (serial log): BSP emits both lines from `boot_phase1`; AP copies HARDEN_KLOG-suppressed pre-online, audited by `ap_cpu_harden_log()`
+- [x] XCR0 base activation correctly stays in Phase 0 (SIMD + PKU require it; XSAVE areas are PMM, not TEB); Phase 1 only finalizes. Corrects the original "XSAVE must not run in Phase 0" premise
+- [x] Commit: `"boot: activate XSAVE and PCID in Phase 1 after VMM ready"`
 
-**Test checkpoint:** Serial log shows `[Phase1] XSAVE enabled (area=N bytes)` after `[VMM] init complete`. `[Phase1] PCID enabled` appears after process table init. On CPUs without XSAVE: log shows `[Phase1] XSAVE: not supported, skipped`. Verify no `XSAVE` or `PCID` log lines appear during Phase 0. Verify on QEMU WHPX, TCG (XSAVE may be absent), VirtualBox, bare metal.
+**Test checkpoint:** Serial log shows `[Phase1] XSAVE enabled (area=N bytes, mask=0x...)` and `[Phase1] PCID enabled` from `boot_phase1` (after `[VMM]` from Phase 0). On CPUs without XSAVE: `[Phase1] XSAVE: not supported, skipped`. Unit tests assert the postconditions: `cpu_has(XSAVE)` implies `CR4.OSXSAVE`, `cpu_has(PCID)` implies `CR4.PCIDE`, and `CR3[11:0]==0` (PCID stays 0). Verify on QEMU WHPX, TCG (XSAVE/PCID may be absent), VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 72 suites, 0 failures
+
+> **Notes:**
+> - Shipped `cpu_xsave_enable()` (BSP finalize, no re-XSETBV) + `cpu_pcid_enable()` (bare `CR4.PCIDE`, PCID 0) in `cpu_security.c`; wired as `BOOT_STEP`s in `boot_phase1` after the AVX-512 throttle guard; 2 new POST codes + 2 new `SUBSYS_*` slots.
+> - PCID replicated on APs via `cpu_pcid_enable()` inside `ap_cpu_harden()`'s serial-quiet bracket (AP-local CPUID gate, no #GP on feature-skewed AP); deferral comment updated to drop PCIDE from the "do-not-force" set.
+> - `02-kernel-core/TODO-10 §7` now only adds per-process PCID tagging + NOFLUSH CR3 on top of the already-set `CR4.PCIDE` (must not re-enable). Codex design + adversarial adoptions in the commit message.
+> - Canonical doc: this section + `src/kernel/cpu_security.c` `cpu_xsave_enable`/`cpu_pcid_enable`.
+> - Scope boundary: §5 owns XSAVE finalize + bare `CR4.PCIDE` activation. TODO-10 §7 owns PCID exploitation (tagging/NOFLUSH); TODO-10 §9 owns CET xstate (`IA32_XSS`); §7 (this TODO) owns CR4 pinning.
 
 ---
 
@@ -344,8 +353,8 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | EFER.NXE before NX pages    | ✅ Hal before paging        | ✅ cpu_init pre-paging   | ✅ §2 cpu_harden + log  |
 | 💎  | SMEP/SMAP BSP Phase 0       | ✅ Hal CR4 early            | ✅ setup_cr4 early       | ⚠️ §2 wired, T10 §2 gate|
 | 💎  | AP hardening matches BSP    | ✅ Hal per AP               | ✅ cpu_init secondary    | ✅ §4 ap_cpu_harden+profile |
-| 💎  | XSAVE after VMM ready       | ✅ OSXSAVE post-paging      | ✅ fpu deferred          | ⚠️ §5 AVX no formal win |
-| 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ⬜ §5 planned           |
+| 💎  | XSAVE after VMM ready       | ✅ OSXSAVE post-paging      | ✅ fpu deferred          | ✅ §5 Phase 1 finalize  |
+| 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ✅ §5 CR4.PCIDE set      |
 | 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ⬜ §6 planned           |
 | 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ⬜ §7 planned           |
 | 💎  | CR0.WP pinning              | ✅ HAL invariant            | ✅ cr0_pinned_bits       | ⬜ §7 planned           |
@@ -357,7 +366,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |
 
-> **§1, §2, §4 complete.** **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. §5 still blocked on `02-kernel-core/TODO-10-kernel-security-hardening.md` (PCID) + `02-kernel-core/TODO-09-x86-64-architecture.md` (XSAVE window). §7--§9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
+> **§1, §2, §4, §5 complete.** **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §7--§9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 
 ---
 

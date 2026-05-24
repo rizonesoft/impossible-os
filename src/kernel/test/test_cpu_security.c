@@ -152,6 +152,35 @@ static void test_cr4_osxsave(void)
                 "CR4.OSXSAVE (bit 18) is set when XSAVE supported");
 }
 
+/* ---- S5 (TODO-09-boot): PCID activation window ---- */
+
+/* cpu_pcid_enable() runs on the BSP in boot_phase1 (this test runs on the
+ * BSP); if the CPU reports PCID, CR4.PCIDE must be set as a result. Read-only
+ * post-boot assertion -- never calls the activation function (would mutate
+ * live CR4). */
+static void test_cr4_pcide(void)
+{
+    if (!cpu_has(CPU_FEATURE_PCID)) {
+        TEST_SKIP("CPU does not support PCID");
+        return;
+    }
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    TEST_ASSERT(cr4 & (1ULL << 17),
+                "CR4.PCIDE (bit 17) is set when PCID supported (Phase 1 activated it)");
+}
+
+/* PCID activation keeps PCID 0 everywhere until TODO-10 S7; the live CR3 must
+ * therefore carry no PCID in bits [11:0]. This guards against a premature
+ * tagging change landing without the KPTI machinery. */
+static void test_cr3_pcid_zero(void)
+{
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    TEST_ASSERT_EQ(cr3 & 0xFFFULL, 0,
+                   "CR3[11:0] == 0 (PCID stays 0 until TODO-10 S7 tagging)");
+}
+
 /* ---- S2: AVX2 memops ---- */
 
 static void test_memcpy_avx_correctness(void)
@@ -1318,6 +1347,12 @@ void test_register_x86(void)
         test_xcr0_has_x87_sse, TEST_CAT_X86);
     test_suite_register_cat("XSAVE: CR4.OSXSAVE set",
         test_cr4_osxsave, TEST_CAT_X86);
+
+    /* S5 (TODO-09-boot): PCID activation window */
+    test_suite_register_cat("PCID: CR4.PCIDE set when supported",
+        test_cr4_pcide, TEST_CAT_X86);
+    test_suite_register_cat("PCID: CR3[11:0] stays 0 (no tagging yet)",
+        test_cr3_pcid_zero, TEST_CAT_X86);
 
     /* S2: AVX2 memops */
     test_suite_register_cat("AVX2: memcpy_avx correctness",

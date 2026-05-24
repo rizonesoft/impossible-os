@@ -10,10 +10,30 @@
 #pragma once
 
 #include "kernel/cpuid.h"
+#include "kernel/boot_init.h"   /* boot_result_t for the BOOT_STEP activation fns */
 
 /* Enable NX (No-Execute) bit via EFER.NXE.
  * Must be called before any PTE NX bits are set. */
 void cpu_enable_nx(void);
+
+/* Phase 1 XSAVE finalize (TODO-09-boot S5). BSP-only. The XCR0 base mask is
+ * configured back in Phase 0 by cpu_configure_xcr0() (cpuid_init) because the
+ * Phase-0 SIMD and PKU paths need it; per-thread XSAVE areas come from
+ * pmm_alloc_contiguous(), not VMM/TEB, so XSAVE has no real VMM dependency.
+ * This finalize runs AFTER simd_enable_avx512()'s throttle guard so it records
+ * the FINAL XCR0 mask + xsave area size and logs them. It does NOT re-run
+ * XSETBV (that would re-enable any xstate the throttle guard cleared).
+ * No-op (returns BOOT_OK) when the CPU lacks XSAVE. */
+boot_result_t cpu_xsave_enable(void);
+
+/* CR4.PCIDE activation window (TODO-09-boot S5). Safe on BSP and APs; gated on
+ * the CALLING CPU's own CPUID PCID bit (leaf 1 ECX[17]) so a feature-skewed AP
+ * never #GPs setting a reserved CR4 bit. Sets CR4.PCIDE only when CR3[11:0]==0
+ * (architectural requirement). PCID stays 0 everywhere (legacy TLB behavior) --
+ * per-process PCID tagging + NOFLUSH CR3 is owned by TODO-10 S7 (blocked on
+ * KPTI). Logs via HARDEN_KLOG so the AP-bringup path stays serial-silent.
+ * No-op (returns BOOT_OK) when the CPU lacks PCID. */
+boot_result_t cpu_pcid_enable(void);
 
 /* Enable SMEP (Supervisor Mode Execution Prevention) via CR4.SMEP.
  * Prevents kernel from executing user-mode pages. */

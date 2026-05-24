@@ -60,7 +60,9 @@ typedef enum {
     SUBSYS_UEFI_TIME = 22,  /* UEFI RTC wall-clock seed */
     SUBSYS_SECUREBOOT = 23, /* Secure Boot state detection */
     SUBSYS_TPM      = 24,   /* TPM event log + PCR integrity */
-    SUBSYS_COUNT    = 25,  /* sentinel -- keep last */
+    SUBSYS_XSAVE    = 25,   /* XSAVE/XCR0 Phase 1 finalize (TODO-09-boot S5) */
+    SUBSYS_PCID     = 26,   /* CR4.PCIDE activation window (TODO-09-boot S5) */
+    SUBSYS_COUNT    = 27,  /* sentinel -- keep last */
 } kernel_subsys_t;
 
 /* --- POST code constants --------------------------------------------------
@@ -96,6 +98,8 @@ typedef enum {
 #define POSTCODE_KBD_INIT       0x38
 #define POSTCODE_SMBIOS_INIT    0x40
 #define POSTCODE_FB_INIT        0x41
+#define POSTCODE_XSAVE_ENABLED  0x42  /* XSAVE/XCR0 Phase 1 finalize (TODO-09-boot S5) */
+#define POSTCODE_PCID_ENABLED   0x43  /* CR4.PCIDE activation window (TODO-09-boot S5) */
 #define POSTCODE_PCI_INIT       0x50
 #define POSTCODE_STORAGE_INIT   0x51
 #define POSTCODE_VFS_INIT       0x52

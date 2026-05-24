@@ -51,6 +51,8 @@ static const char *const s_subsys_names[SUBSYS_COUNT] = {
     "UEFI_TIME",  /* 22 */
     "SECUREBOOT", /* 23 */
     "TPM",        /* 24 */
+    "XSAVE",      /* 25 */
+    "PCID",       /* 26 */
 };
 
 _Static_assert(sizeof(s_subsys_names) / sizeof(s_subsys_names[0]) == SUBSYS_COUNT,

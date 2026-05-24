@@ -328,6 +328,38 @@ void cpu_configure_pat(void)
     msr_write(MSR_IA32_PAT, pat_new);
 }
 
+/* ---- XSAVE/XCR0 Phase 1 finalize (BSP) -- TODO-09-boot S5 ----
+ *
+ * The XCR0 base mask was already programmed in Phase 0 by cpu_configure_xcr0()
+ * (cpuid_init), because Phase-0 simd_enable_avx() and pku_init() require it,
+ * and per-thread XSAVE areas come from pmm_alloc_contiguous() rather than
+ * VMM/TEB pages -- so XSAVE has no real VMM dependency to wait on. This
+ * finalize runs in Phase 1 AFTER simd_enable_avx512()'s throttle guard and
+ * just records the FINAL state. It intentionally does NOT re-run XSETBV: a
+ * recompute would re-enable any AVX-512 xstate the throttle guard cleared. */
+boot_result_t cpu_xsave_enable(void)
+{
+    extern struct cpu_features g_cpu;
+    uint64_t cr4, xcr0;
+
+    if (!cpu_has(CPU_FEATURE_XSAVE)) {
+        HARDEN_KLOG(LOG_INFO, "cpu", "[Phase1] XSAVE: not supported, skipped");
+        return BOOT_OK;
+    }
+
+    /* Re-assert CR4.OSXSAVE idempotently (defensive against a later CR4 op
+     * that might have cleared it); never touch XCR0 itself here. */
+    cr4 = read_cr4();
+    if (!(cr4 & CR4_OSXSAVE))
+        write_cr4(cr4 | CR4_OSXSAVE);
+
+    xcr0 = xcr0_read_safe();
+    HARDEN_KLOG(LOG_INFO, "cpu",
+                "[Phase1] XSAVE enabled (area=%u bytes, mask=0x%lx)",
+                (uint64_t)g_cpu.xsave_size_max, xcr0);
+    return BOOT_OK;
+}
+
 /* ---- Combined hardening call ---- */
 
 void cpu_harden(void)
@@ -512,6 +544,63 @@ void cpu_record_bsp_profile(void)
          s_bsp_efer, s_bsp_cr4, s_bsp_pat, s_bsp_xcr0, s_bsp_required_cr4);
 }
 
+/* ---- CR4.PCIDE activation window (BSP + AP) -- TODO-09-boot S5 ----
+ *
+ * Sets CR4.PCIDE so the architectural PCID feature is on. PCID stays 0 on
+ * every CR3 load (and CR3 bit 63 stays 0), so behavior is identical to
+ * PCIDE=0 (full non-global TLB flush on every CR3 write) -- enabling the bit
+ * now is safe and benign even though no consumer uses it yet. Per-process
+ * PCID tagging + NOFLUSH CR3 switches are owned by TODO-10 S7 (blocked on
+ * KPTI S4-S6); this function is ONLY the activation window. Safe on BSP and
+ * APs: it gates on the calling CPU's own CPUID PCID bit, never the BSP-global
+ * flag, and on an AP it additionally mirrors the BSP (never sets a uniform CR4
+ * bit the BSP left clear). Logs via HARDEN_KLOG so AP bringup stays silent. */
+boot_result_t cpu_pcid_enable(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    uint64_t cr4, cr3;
+
+    /* Gate on THIS CPU's own CPUID PCID (leaf 1 ECX bit 17), not the
+     * BSP-global cpu_has(PCID): CR4.PCIDE is a reserved bit on a core that
+     * lacks PCID, so a feature-skewed AP would #GP on the write. */
+    cpuid_raw(0x01, 0, &eax, &ebx, &ecx, &edx);
+    if (!(ecx & (1u << 17)))
+        return BOOT_OK;     /* PCID absent on this core -- nothing to do */
+
+    /* AP mirror: once the BSP baseline is published (s_bsp_profile_ready set
+     * via the same RELEASE/ACQUIRE handshake ap_apply_xcr0 uses), an AP must
+     * not set a uniform CR4 bit the BSP left clear, or the AP would diverge
+     * from the BSP CR4 with no audit catching the extra bit. On the BSP path
+     * (boot_phase1) the profile is not yet recorded (ready == 0), so the BSP
+     * is authoritative and proceeds on its own CPUID gate. */
+    if (__atomic_load_n(&s_bsp_profile_ready, __ATOMIC_ACQUIRE) &&
+        !(s_bsp_cr4 & CR4_PCIDE))
+        return BOOT_OK;     /* BSP did not enable PCIDE -- AP must not either */
+
+    /* Intel SDM Vol. 3A Section 4.10.1: CR4.PCIDE may be set to 1 only when
+     * CR3[11:0] == 0, else #GP. The boot PML4 is page-aligned so this is a
+     * hard invariant; a nonzero value means CR3 corruption. Report BOOT_FATAL
+     * (NOT BOOT_OK) so BOOT_STEP leaves SUBSYS_PCID NOT ready -- otherwise a
+     * broken CR3 would publish a false "PCID ready" + POSTCODE_PCID_ENABLED
+     * while PCIDE is actually off, hiding the violation from later consumers.
+     * BOOT_STEP does not halt on FATAL; boot continues with PCID not-ready. */
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+    if (cr3 & 0xFFFULL) {
+        HARDEN_KLOG(LOG_ERROR, "cpu",
+                    "[Phase1] PCID: CR3[11:0]=0x%lx nonzero -- CR4.PCIDE NOT set (invariant violated)",
+                    cr3 & 0xFFFULL);
+        return BOOT_FATAL;
+    }
+
+    cr4 = read_cr4();
+    if (!(cr4 & CR4_PCIDE))
+        write_cr4(cr4 | CR4_PCIDE);
+
+    HARDEN_KLOG(LOG_INFO, "cpu", "[Phase1] PCID enabled (INVPCID %s)",
+                cpu_has(CPU_FEATURE_INVPCID) ? "available" : "absent");
+    return BOOT_OK;
+}
+
 /* Apply the BSP's recorded XCR0 mask on the calling AP, intersected with this
  * AP's own CPUID-reported supported bits (leaf 0x0D) so a narrower AP never
  * #GP's on xsetbv (Intel hybrid P/E parts). Sets CR4.OSXSAVE first. Uses the
@@ -592,11 +681,14 @@ void ap_cpu_harden(uint32_t cpu_id)
      *    cpu_enable_* only sets the bit when the feature is present, so this
      *    is the AP-local-safe way to bring an AP up to the BSP's CR4 state.
      *    We deliberately do NOT force-OR the BSP CR4 mask here: blindly
-     *    setting an architectural CR4 bit (PCIDE/FSGSBASE/CET) before the AP
+     *    setting an architectural CR4 bit (FSGSBASE/CET) before the AP
      *    feature-consistency validation exists could #GP on a feature-skewed
-     *    AP. Those future bits are replicated by their owning sections (PCID
-     *    activation, CR4 pinning) under that validation; this path stays
-     *    warn-only on any residual CR4 mismatch (verified by the BSP).
+     *    AP. Those future bits are replicated by their owning sections (CR4
+     *    pinning) under that validation; this path stays warn-only on any
+     *    residual CR4 mismatch (verified by the BSP). PCID is the exception:
+     *    cpu_pcid_enable() below gates on the AP's own CPUID, so it is the
+     *    same kind of feature-gated enable as cpu_enable_* (no #GP risk) and
+     *    its owning section (TODO-09-boot S5) replicates it here directly.
      *    The quiet-depth bracket suppresses the per-feature cpu_enable_* log
      *    lines so the AP does NO serial output before it is marked online;
      *    the nesting counter keeps this AP quiet even if a late overlapping
@@ -604,6 +696,10 @@ void ap_cpu_harden(uint32_t cpu_id)
     __atomic_fetch_add(&s_harden_quiet_depth, 1, __ATOMIC_RELAXED);
     cpu_harden();
     cpu_harden_post_pagetable();
+    /* CR4.PCIDE replication: TODO-09-boot S5 owns PCID activation and replicates
+     * it here so APs match the BSP's CR4.PCIDE. Inside the quiet bracket so the
+     * AP emits no serial output before it is marked online. */
+    cpu_pcid_enable();
     __atomic_fetch_sub(&s_harden_quiet_depth, 1, __ATOMIC_RELAXED);
 
     /* 3. Replay the BSP MSR profile (PAT verbatim, TSC_AUX per-CPU). */

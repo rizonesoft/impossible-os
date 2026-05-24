@@ -186,7 +186,11 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 7. PCID: TLB Tagging for No-Flush CR3 Switch
 
-- [ ] Enable `CR4.PCIDE (bit 17)` if `cpu_has(CPU_FEATURE_PCID)`: `cpu_set_cr4_bit(CR4_PCIDE)` during `cpu_harden_post_pagetable()` (or a dedicated `cpu_enable_pcid()` called from the same post-NX-policy window)
+> [!IMPORTANT]
+> → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §5` -- the bare `CR4.PCIDE` bit is ALREADY set there (BSP `boot_phase1` + AP `ap_cpu_harden()`, via `cpu_pcid_enable()`). This section adds per-process PCID tagging + NOFLUSH CR3 on top of the already-active feature; it must NOT re-enable or duplicate the CR4 activation.
+
+- [x] `CR4.PCIDE (bit 17)` activation -- DONE in `01-boot-platform/TODO-09 §5` via `cpu_pcid_enable()` (BSP + AP). This section consumes the already-set bit and adds tagging; do NOT re-enable it here
+- [ ] Assign a 12-bit PCID to each process; stored in `task->pcid`:
 - [ ] Assign a 12-bit PCID to each process; stored in `task->pcid`:
   - PCID 0 = reserved for initial boot / no-PCID fallback
   - PCID 1..4094 = per-process; allocated from a monotone counter with wrap; on wrap, issue a global `INVPCID` (type 2 = global) to flush all stale TLB entries
@@ -266,6 +270,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
   2. `wrmsr(MSR_IA32_S_CET, S_CET_SH_STK_EN | S_CET_WR_SHSTK_EN)`
   3. Ensure `MSR_IA32_PL0_SSP` is set to the initial kernel shadow stack page's last 8 bytes (top of the shadow stack)
 
+- [ ] CET xstate reservation: set `IA32_XSS` bits 11/12 (CET_U/CET_S) for `XSAVES`/`XRSTORS` -- SUPERVISOR state via `IA32_XSS`, NOT `XCR0`. Owns the CET xstate window deferred from `01-boot-platform/TODO-09 §5`
 - [ ] Each kernel thread needs a shadow stack: one 4 KiB page per thread, marked `PTE_USER=0`, `PTE_NX=1`, and the special **supervisor shadow stack token** format (bit 1 of the 8-byte token set indicates this is the bottom of the shadow stack)
 - [ ] `cet_alloc_shadow_stack(thread)`: `pmm_alloc_contiguous(1)`; write token at the end of the page; `vmm_map_page(shadow_stack_va, pa, PTE_SUPERVISOR_SHADOW_STACK)`; PTE bit 5 = 1 marks shadow-stack pages; processor enforces SHSTK semantics (only `RSTORSSP`/`SAVEPREVSSP` can write)
 - [ ] On kernel thread creation in `src/kernel/sched/task.c` (`task_create()`): allocate shadow stack; set `task->shadow_stack_top`

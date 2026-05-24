@@ -39,7 +39,7 @@ title: "TODO-05 -- AI/ML Native Inference Runtime"
 ## Inputs
 
 - `02-kernel-core/TODO-09-x86-64-architecture.md §1` (→ XREF) -- XSAVE design; `CR4.OSXSAVE`; `XSETBV(XCR0, AVX_MASK)` -- §4 per-thread XSAVE context builds on this
-- `01-boot-platform/TODO-09-cpu-boot-sequencing.md §6` (→ XREF) -- Phase 1 XSAVE & PCID activation window; §4 adds per-thread TEB XSAVE area after §6 activates OSXSAVE
+- `01-boot-platform/TODO-09-cpu-boot-sequencing.md §5` (→ XREF) -- Phase 1 XSAVE & PCID activation window; §4 adds per-thread XSAVE area after §5 finalizes OSXSAVE (XSAVE areas are PMM-backed, not TEB)
 - `10-platform-services/TODO-09-compiler-sdk.md §3` (→ XREF) -- GCC/G++ C++ support; ggml C++ bindings depend on this (stretch, post-C99 core)
 - `include/kernel/mm/pmm.h` -- `pmm_alloc_contiguous(count)` -- §4 model tensor allocation (128 MB–4 GB contiguous regions)
 - `include/kernel/mm/vmm.h` -- `vmm_map_page()` -- §4 user-mode tensor memory mapping

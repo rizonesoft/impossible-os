@@ -44,6 +44,7 @@
 #include "kernel/drivers/ioapic.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
+#include "kernel/cpu_security.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
 #include "kernel/uefi_runtime.h"
@@ -87,6 +88,22 @@ void boot_phase1(void)
      * enabled in phase 0; this only turns on the 512-bit memops path
      * if the CPU measurably does not throttle. */
     simd_enable_avx512();
+
+    /* --- XSAVE finalize + PCID activation window (TODO-09-boot S5) ---
+     * XCR0 was configured in Phase 0 (cpu_configure_xcr0 in cpuid_init), where
+     * Phase-0 SIMD + PKU require it; this finalizes AFTER the AVX-512 throttle
+     * guard above so it records the final XCR0 mask, and activates CR4.PCIDE
+     * now that page tables are established (VMM came up in Phase 0). Both are
+     * no-ops on CPUs lacking the feature. */
+    BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable);
+    if (kernel_subsystem_ready(SUBSYS_XSAVE))
+        boot_progress(1, "XSAVE", POSTCODE_XSAVE_ENABLED);
+    BOOT_STEP(SUBSYS_PCID, cpu_pcid_enable);
+    /* Emit the PCID milestone only on real readiness -- cpu_pcid_enable()
+     * returns BOOT_FATAL (leaving SUBSYS_PCID not-ready) if the CR3[11:0]==0
+     * invariant is violated, so a broken CR3 never publishes a false marker. */
+    if (kernel_subsystem_ready(SUBSYS_PCID))
+        boot_progress(1, "PCID", POSTCODE_PCID_ENABLED);
 
     /* --- Bugcheck: wire NMI crash handler after IDT (TODO-16 S1) --- */
     {

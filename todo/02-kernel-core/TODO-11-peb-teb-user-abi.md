@@ -144,7 +144,7 @@ Allocate the PEB in the user address space and fill it before the first instruct
 
 ## 6. TEB Allocation and Population at Thread Create
 
-> → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §6` -- Phase 1 XSAVE/PCID window references TEB-backed XSAVE layout from this section.
+> → XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §5` -- Phase 1 XSAVE/PCID activation window (XSAVE areas are PMM-backed via `task_alloc_xsave()`, not TEB).
 
 One TEB per thread. Allocated in the user address space near the thread stack.
 
