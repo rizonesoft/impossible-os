@@ -95,15 +95,27 @@ void boot_phase1(void)
      * guard above so it records the final XCR0 mask, and activates CR4.PCIDE
      * now that page tables are established (VMM came up in Phase 0). Both are
      * no-ops on CPUs lacking the feature. */
-    BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable);
-    if (kernel_subsystem_ready(SUBSYS_XSAVE))
-        boot_progress(1, "XSAVE", POSTCODE_XSAVE_ENABLED);
-    BOOT_STEP(SUBSYS_PCID, cpu_pcid_enable);
-    /* Emit the PCID milestone only on real readiness -- cpu_pcid_enable()
-     * returns BOOT_FATAL (leaving SUBSYS_PCID not-ready) if the CR3[11:0]==0
-     * invariant is violated, so a broken CR3 never publishes a false marker. */
-    if (kernel_subsystem_ready(SUBSYS_PCID))
-        boot_progress(1, "PCID", POSTCODE_PCID_ENABLED);
+    /* Three result states for each activation:
+     *   BOOT_OK       -> feature actually enabled  -> ready + *_ENABLED marker
+     *   BOOT_DEGRADED -> unsupported/skipped (fine) -> ready, NO marker
+     *   BOOT_FATAL    -> invariant violation (PCID CR3) -> NOT ready + degraded_mask
+     * Emitting POSTCODE_*_ENABLED only on BOOT_OK keeps the progress/POST
+     * stream from claiming activation on a CPU that lacks the feature; setting
+     * degraded_mask on BOOT_FATAL surfaces a CR3-corruption fault in the
+     * end-of-boot degraded summary instead of only a single klog line. */
+    {
+        boot_result_t xr = cpu_xsave_enable();
+        kernel_subsystem_set_ready(SUBSYS_XSAVE, xr == BOOT_OK || xr == BOOT_DEGRADED);
+        if (xr == BOOT_OK)
+            boot_progress(1, "XSAVE", POSTCODE_XSAVE_ENABLED);
+
+        boot_result_t pr = cpu_pcid_enable();
+        kernel_subsystem_set_ready(SUBSYS_PCID, pr == BOOT_OK || pr == BOOT_DEGRADED);
+        if (pr == BOOT_FATAL)
+            g_boot_info.degraded_mask |= (1u << SUBSYS_PCID);
+        else if (pr == BOOT_OK)
+            boot_progress(1, "PCID", POSTCODE_PCID_ENABLED);
+    }
 
     /* --- Bugcheck: wire NMI crash handler after IDT (TODO-16 S1) --- */
     {

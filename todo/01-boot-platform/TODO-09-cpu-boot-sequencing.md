@@ -221,8 +221,8 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 > → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §1` -- TEB allocation at thread create (per-thread xstate consumer context).
 
 - [x] Added `POSTCODE_XSAVE_ENABLED` (0x42) / `POSTCODE_PCID_ENABLED` (0x43) + `SUBSYS_XSAVE`/`SUBSYS_PCID` (before `SUBSYS_COUNT`) with matching `s_subsys_names[]` entries (Gate-3 parallel-array sync)
-- [x] `BOOT_STEP(SUBSYS_XSAVE, cpu_xsave_enable)` in `boot_phase1()` after `simd_enable_avx512()`; finalize records `xsave_size_max` + live XCR0, logs `[Phase1] XSAVE enabled (area=N bytes, mask=0x...)`, no re-XSETBV
-- [x] `BOOT_STEP(SUBSYS_PCID, cpu_pcid_enable)` in `boot_phase1()` (real dep is page-table base from Phase-0 VMM, not the process table); asserts `CR3[11:0]==0`, sets `CR4.PCIDE`, logs `[Phase1] PCID enabled`; replicated on APs in `ap_cpu_harden()`
+- [x] `cpu_xsave_enable()` finalize in `boot_phase1()` after `simd_enable_avx512()`; records `xsave_size_max` + live XCR0, logs `[Phase1] XSAVE enabled (...)`, no re-XSETBV (BOOT_OK enabled / BOOT_DEGRADED unsupported)
+- [x] `cpu_pcid_enable()` in `boot_phase1()` (real dep is Phase-0 VMM page-table base, not the process table); asserts `CR3[11:0]==0`, sets `CR4.PCIDE`, logs `[Phase1] PCID enabled`; replicated on APs in `ap_cpu_harden()`
 - [x] CET xstate reservation delegated to `02-kernel-core/TODO-10 §9` (CET state is `IA32_XSS` supervisor state, not `XCR0`); reciprocal item filed there; AP XCR0 already handled by `ap_apply_xcr0()`
 - [x] Verify (serial log): BSP emits both lines from `boot_phase1`; AP copies HARDEN_KLOG-suppressed pre-online, audited by `ap_cpu_harden_log()`
 - [x] XCR0 base activation correctly stays in Phase 0 (SIMD + PKU require it; XSAVE areas are PMM, not TEB); Phase 1 only finalizes. Corrects the original "XSAVE must not run in Phase 0" premise
@@ -233,11 +233,13 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 > **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 72 suites, 0 failures
 
 > **Notes:**
-> - Shipped `cpu_xsave_enable()` (BSP finalize, no re-XSETBV) + `cpu_pcid_enable()` (bare `CR4.PCIDE`, PCID 0) in `cpu_security.c`; wired as `BOOT_STEP`s in `boot_phase1` after the AVX-512 throttle guard; 2 new POST codes + 2 new `SUBSYS_*` slots.
+> - Shipped `cpu_xsave_enable()` (BSP finalize, no re-XSETBV) + `cpu_pcid_enable()` (bare `CR4.PCIDE`, PCID 0) in `cpu_security.c`; called in `boot_phase1` after the AVX-512 throttle guard with explicit `boot_result_t` handling (BOOT_OK enabled -> POSTCODE; BOOT_DEGRADED unsupported -> ready, no marker; BOOT_FATAL CR3-invariant -> not-ready + degraded_mask); 2 new POST codes + 2 new `SUBSYS_*` slots.
 > - PCID replicated on APs via `cpu_pcid_enable()` inside `ap_cpu_harden()`'s serial-quiet bracket (AP-local CPUID gate, no #GP on feature-skewed AP); deferral comment updated to drop PCIDE from the "do-not-force" set.
 > - `02-kernel-core/TODO-10 §7` now only adds per-process PCID tagging + NOFLUSH CR3 on top of the already-set `CR4.PCIDE` (must not re-enable). Codex design + adversarial adoptions in the commit message.
 > - Canonical doc: this section + `src/kernel/cpu_security.c` `cpu_xsave_enable`/`cpu_pcid_enable`.
 > - Scope boundary: §5 owns XSAVE finalize + bare `CR4.PCIDE` activation. TODO-10 §7 owns PCID exploitation (tagging/NOFLUSH); TODO-10 §9 owns CET xstate (`IA32_XSS`); §7 (this TODO) owns CR4 pinning.
+> **Verified:** 2026-05-24 | commit `b6ab5093` | 6/6 items | build OK | smoke PASS (KVM 2.77s); both `[Phase1]` lines on serial
+> **Quality reviewed:** 2026-05-24 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

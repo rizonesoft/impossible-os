@@ -23,16 +23,21 @@ void cpu_enable_nx(void);
  * This finalize runs AFTER simd_enable_avx512()'s throttle guard so it records
  * the FINAL XCR0 mask + xsave area size and logs them. It does NOT re-run
  * XSETBV (that would re-enable any xstate the throttle guard cleared).
- * No-op (returns BOOT_OK) when the CPU lacks XSAVE. */
+ * Returns: BOOT_OK when XSAVE was finalized (feature present); BOOT_DEGRADED
+ * when the CPU lacks XSAVE (caller marks the subsystem ready but emits no
+ * *_ENABLED milestone). */
 boot_result_t cpu_xsave_enable(void);
 
 /* CR4.PCIDE activation window (TODO-09-boot S5). Safe on BSP and APs; gated on
  * the CALLING CPU's own CPUID PCID bit (leaf 1 ECX[17]) so a feature-skewed AP
- * never #GPs setting a reserved CR4 bit. Sets CR4.PCIDE only when CR3[11:0]==0
- * (architectural requirement). PCID stays 0 everywhere (legacy TLB behavior) --
- * per-process PCID tagging + NOFLUSH CR3 is owned by TODO-10 S7 (blocked on
- * KPTI). Logs via HARDEN_KLOG so the AP-bringup path stays serial-silent.
- * No-op (returns BOOT_OK) when the CPU lacks PCID. */
+ * never #GPs setting a reserved CR4 bit. Sets CR4.PCIDE only when CR3[11:0]==0.
+ * PCID stays 0 everywhere (legacy TLB behavior) -- per-process PCID tagging +
+ * NOFLUSH CR3 is owned by TODO-10 S7 (blocked on KPTI). Logs via HARDEN_KLOG so
+ * the AP-bringup path stays serial-silent.
+ * Returns: BOOT_OK when CR4.PCIDE was set (feature present, invariant holds);
+ * BOOT_DEGRADED for a legit skip (CPU lacks PCID, or an AP mirrors a BSP that
+ * did not enable it) -- ready, no milestone; BOOT_FATAL when the CR3[11:0]==0
+ * invariant is violated (caller leaves the subsystem not-ready + degraded). */
 boot_result_t cpu_pcid_enable(void);
 
 /* Enable SMEP (Supervisor Mode Execution Prevention) via CR4.SMEP.

@@ -342,9 +342,13 @@ boot_result_t cpu_xsave_enable(void)
     extern struct cpu_features g_cpu;
     uint64_t cr4, xcr0;
 
+    /* BOOT_DEGRADED (not BOOT_OK) for the unsupported skip: the caller marks
+     * SUBSYS_XSAVE ready (the step ran) but does NOT emit the *_ENABLED
+     * milestone, so the progress/POST stream never claims XSAVE was activated
+     * on a CPU that lacks it. */
     if (!cpu_has(CPU_FEATURE_XSAVE)) {
         HARDEN_KLOG(LOG_INFO, "cpu", "[Phase1] XSAVE: not supported, skipped");
-        return BOOT_OK;
+        return BOOT_DEGRADED;
     }
 
     /* Re-assert CR4.OSXSAVE idempotently (defensive against a later CR4 op
@@ -563,9 +567,14 @@ boot_result_t cpu_pcid_enable(void)
     /* Gate on THIS CPU's own CPUID PCID (leaf 1 ECX bit 17), not the
      * BSP-global cpu_has(PCID): CR4.PCIDE is a reserved bit on a core that
      * lacks PCID, so a feature-skewed AP would #GP on the write. */
+    /* BOOT_DEGRADED (not BOOT_OK) for legit skips: the caller marks
+     * SUBSYS_PCID ready (the step ran) but does NOT emit POSTCODE_PCID_ENABLED,
+     * so the progress stream never claims PCID was activated when it was not. */
     cpuid_raw(0x01, 0, &eax, &ebx, &ecx, &edx);
-    if (!(ecx & (1u << 17)))
-        return BOOT_OK;     /* PCID absent on this core -- nothing to do */
+    if (!(ecx & (1u << 17))) {
+        HARDEN_KLOG(LOG_INFO, "cpu", "[Phase1] PCID: not supported, skipped");
+        return BOOT_DEGRADED;   /* PCID absent on this core -- nothing to do */
+    }
 
     /* AP mirror: once the BSP baseline is published (s_bsp_profile_ready set
      * via the same RELEASE/ACQUIRE handshake ap_apply_xcr0 uses), an AP must
@@ -575,15 +584,15 @@ boot_result_t cpu_pcid_enable(void)
      * is authoritative and proceeds on its own CPUID gate. */
     if (__atomic_load_n(&s_bsp_profile_ready, __ATOMIC_ACQUIRE) &&
         !(s_bsp_cr4 & CR4_PCIDE))
-        return BOOT_OK;     /* BSP did not enable PCIDE -- AP must not either */
+        return BOOT_DEGRADED;   /* BSP did not enable PCIDE -- AP must not either */
 
     /* Intel SDM Vol. 3A Section 4.10.1: CR4.PCIDE may be set to 1 only when
      * CR3[11:0] == 0, else #GP. The boot PML4 is page-aligned so this is a
      * hard invariant; a nonzero value means CR3 corruption. Report BOOT_FATAL
-     * (NOT BOOT_OK) so BOOT_STEP leaves SUBSYS_PCID NOT ready -- otherwise a
-     * broken CR3 would publish a false "PCID ready" + POSTCODE_PCID_ENABLED
-     * while PCIDE is actually off, hiding the violation from later consumers.
-     * BOOT_STEP does not halt on FATAL; boot continues with PCID not-ready. */
+     * so the caller leaves SUBSYS_PCID NOT ready AND records degraded_mask --
+     * otherwise a broken CR3 would publish a false "PCID ready" while PCIDE is
+     * actually off, hiding the violation from later consumers and the
+     * end-of-boot degraded summary. */
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
     if (cr3 & 0xFFFULL) {
         HARDEN_KLOG(LOG_ERROR, "cpu",
