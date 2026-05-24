@@ -165,10 +165,12 @@ void ap_cpu_harden_log(uint32_t cpu_id);
 
 #ifdef KERNEL_TESTS
 /* Test-only read accessors for the BSP per-CPU MSR replay profile. */
+struct mtrr_snapshot;  /* fwd decl; full def in kernel/mtrr.h */
 uint32_t cpu_msr_profile_count(void);
 int      cpu_msr_profile_entry(uint32_t idx, uint32_t *msr_out,
                                uint64_t *value_out, int *per_cpu_out);
 uint64_t cpu_bsp_pat_baseline(void);
+void     cpu_bsp_mtrr_baseline(struct mtrr_snapshot *out);
 #endif
 
 /* Emit a single consolidated `[Phase0] CPU security <phase_label>: EFER=...

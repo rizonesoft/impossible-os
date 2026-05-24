@@ -69,7 +69,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [x]   |
 | 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [x]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [x]   |
-| 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [ ]   |
+| 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [x]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [ ]   |
 | 💎  |  10   | AP bringup hardening & robustness                | §4, §6                        |  [ ]   |
 
@@ -316,21 +316,28 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 > [!NOTE]
 > → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- VMM uses `vmm_map_mmio_uc()` which relies on PAT index 3 being UC. If an AP's PAT MSR maps index 3 to WB, MMIO accessed on that AP is cached and hardware registers read stale values.
 
-> [!IMPORTANT]
-> **PAT constant decode bug (2026-04-08):** `boot_hw.c` (~307) writes `0x0007040600010406` intending "entry 1: WT(04)→WC(01)" per the comment. Decoding bits [23:16] (PA2): 0x07 → 0x01. The actual change is at PA2, not PA1. Meanwhile `vmm_map_mmio_wc()` uses `VMM_FLAG_WRITETHROUGH` only (PWT=1, PCD=0, PAT bit=0) which selects PAT index 1 = still 0x04 (WT). **Net effect: framebuffer is mapped WT, not WC -- silent perf regression on every CPU.** Fix the constant to `0x0007040600070106` (or similar -- ensure PA1 = 0x01 = WC) BEFORE wiring AP sync, otherwise APs will faithfully synchronize the wrong layout.
+> [!NOTE]
+> **PAT constant decode bug -- FIXED 2026-05-24.** `PAT_WC_VALUE` (in `cpu_security.c`, not `boot_hw.c`) was `0x0007040600010406`, putting WC at PA2 (index 2) not PA1 (index 1): `vmm_map_mmio_wc()` + `PAGE_WRITECOMBINE` (PWT-only -> index 1) silently got WT and `PAGE_NOCACHE` (PCD-only -> index 2) silently got WC. Corrected to `0x0007040600070106` (Intel default, only PA1 = 0x01 WC); a compile-time `_Static_assert` now pins PA1=WC/PA2=UC-/PA3=UC.
 
-- [ ] **Fix the PAT constant decode bug in `boot_hw.c` (~307) first** -- correct value should set PA1 (bits 15:8) to 0x01 (WC), not PA2. Verify by computing expected hex and decoding before/after with byte-level comments. Add a unit test that asserts `(g_bsp_pat_msr >> 8) & 0xFF == 0x01` to catch future regressions.
-- [ ] **MTRR AP parity (Linux-style):** on SMP bringup, read fixed/variable MTRRs + `IA32_MTRR_DEF_TYPE` on BSP; on each AP compare to BSP snapshot; if firmware left inconsistent MTRRs (common on some VMs), log `klog(LOG_WARN, ...)` and program AP MTRRs to match BSP before relying on UC MMIO paths from AP-scheduled code (→ XREF `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` for MMIO cache type expectations)
-- [ ] Read BSP PAT MSR value in Phase 0 after `cpuid_init()`; store in `g_bsp_pat_msr` global (or in `cpu_data[0].pat_msr`)
-- [ ] In `ap_cpu_harden()` (§4): after EFER/CR4 replication, write `wrmsr(IA32_PAT, g_bsp_pat_msr)` to synchronize AP PAT to BSP. **Rollback:** If PAT write crashes AP, skip the wrmsr and log `[WARN] AP%u PAT sync skipped` -- AP will use firmware-default PAT which is usually identical to BSP anyway
-- [ ] Read back AP PAT and verify match: `rdmsr(IA32_PAT) == g_bsp_pat_msr`; log `[AP%u] PAT synced: 0x%lx` on success, panic on mismatch (hardware fault)
-- [ ] If the kernel later reprograms PAT (e.g., for Write-Combining framebuffer in TODO-01 §6), broadcast the new PAT value to all online APs via IPI + `smp_call_function(pat_update_ap, &new_pat, true)` (note: `smp_call_function()` does not exist yet -- defer this bullet until SMP IPI infrastructure is available)
-- [ ] Add `POSTCODE_PAT_SYNC = 0x29` to `boot_init.h` (Phase 0 range -- PAT sync runs on each AP during SMP bringup)
-- [ ] Add debug `POST16(0xD800)` before PAT wrmsr on AP, `POST16(0xD801)` after readback verify (remove after bare-metal verification)
-- [ ] Verify (serial log): `[AP%u] PAT synced` appears for each AP
-- [ ] Commit: `"smp: synchronize PAT MSR on AP startup"`
+- [x] **PAT decode-bug fix** -- `PAT_WC_VALUE` -> `0x0007040600070106` in `cpu_security.c` (PA1=WC; PA2/PA3 Intel-default), pinned by compile-time `_Static_assert`. Fixes framebuffer WC, `PAGE_WRITECOMBINE`, `PAGE_NOCACHE`.
+- [x] **MTRR AP parity audit (warn-only)** -- new `mtrr.c`/`.h` + `CPU_FEATURE_MTRR`; BSP snapshots, each AP captures, BSP WARNs on divergence. No reprogram -- MMIO correctness rides on PAT (UC wins over MTRR, SDM 11.5.2).
+- [x] BSP PAT + MTRR baselines captured in `cpu_record_bsp_profile()` (`s_bsp_pat` via §4 MSR registry; `s_bsp_mtrr`), mirrored into `cpu_data[0]`.
+- [x] AP PAT = SINGLE authoritative write via §4 registry replay (`ap_apply_msr_profile`); `cpu_harden()` no longer programs PAT (removed AP double-write). BSP programs PAT once in `boot_phase0` post-page-table.
+- [x] AP PAT readback verify in `ap_cpu_harden_log()`: `[AP%u] PAT synced` on match, WARN on mismatch (no panic -- hypervisor-trapped PAT is a known degraded mode).
+- [ ] **DEFERRED (needs SMP IPI rendezvous):** runtime PAT re-broadcast + divergent-AP MTRR reprogram (SDM 11.11.8) -- blocked on `smp_call_function()`. §8 ships warn-only audit (correctness-complete: MMIO uses PAT-UC).
+- [x] Verify (serial log): `[AP%u] PAT synced` + `[AP%u] MTRR synced` (or mismatch WARN) appear for each AP.
+- [x] Commit: `"smp: fix PAT WC decode bug + MTRR/PAT AP parity audit"`
 
-**Test checkpoint:** Boot on SMP system. All APs show `PAT synced` in serial log with matching hex value. Bare metal: verify PAT value is identical across BSP and all APs using the register audit trail (§9). On systems with MTRR override (LAPIC/IOAPIC ranges), confirm MMIO still works from AP-scheduled code paths.
+**Test checkpoint:** Boot on SMP. Serial shows `mm: PAT: entry 1 = WC (0x0007040600070106)` on the BSP and `[AP%u] PAT synced` + `[AP%u] MTRR synced` for each AP. Unit tests (`SUITE=x86`): live PAT indices 1/2/3 decode WC/UC-/UC (TEST_SKIP under a PAT-trapping hypervisor); MTRR capture deterministic, var_count bounded, BSP baseline matches live. Bare metal: confirm PAT identical across BSP+APs via the §9 audit trail; any `MTRR mismatch` WARN flags firmware skew.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 7 added suites (PAT index 0/2/3 decode, MTRR deterministic/bounded/equal/baseline) + PAT index 1 hardened, 0 failures. AP-path parity + live MSR-failure paths validated via serial log (msr_try_read-guarded, not unit-mockable).
+
+> **Notes:**
+> - Shipped: PAT decode-bug fix (`PAT_WC_VALUE`, `_Static_assert`-pinned) + new `mtrr.c`/`mtrr.h` snapshot/audit module + `CPU_FEATURE_MTRR` + per-CPU MTRR fields; `[AP%u] PAT synced`/`MTRR synced` audit lines.
+> - PAT = single authoritative write/CPU: BSP in `boot_phase0`, each AP via the §4 MSR-profile replay (`cpu_harden()` no longer writes PAT). MTRR audit is warn-only (`rdmsr`, AP-local CPUID + `msr_try_read` guard).
+> - Fixes 3 silent cache-type bugs (framebuffer WC, `PAGE_WRITECOMBINE`, `PAGE_NOCACHE`); confirmed live on TCG. Codex design adoptions in the commit message.
+> - Canonical doc: this section + `src/kernel/mtrr.c` + `cpu_security.c` PAT/`s_bsp_mtrr` block.
+> - Scope boundary: §8 owns PAT sync + MTRR parity AUDIT; divergent-AP MTRR reprogram + runtime PAT re-broadcast need an IPI rendezvous (`smp_call_function`, deferred). MMIO cache correctness owned by PAT (TODO-01 §11).
 
 ---
 
@@ -386,8 +393,8 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ✅ §6 BugCheck 0x3E      |
 | 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ✅ §7 verify + 0x109    |
 | 💎  | CR0.WP pinning              | ✅ HAL invariant            | ✅ cr0_pinned_bits       | ✅ §7 per-CPU pinned    |
-| 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ⬜ §8 planned           |
-| 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ⬜ §8 MTRR bullet       |
+| 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ✅ §8 registry replay + audit |
+| 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ✅ §8 parity audit (warn-only)|
 | 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ✅ §6 global AND-mask   |
 | ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ✅ §3 TLFS-gated hv_flags |
 | ⭐  | Confidential VM guest       | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x     | ⬜ XREF 02/T09 §13      |

@@ -26,6 +26,7 @@ extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/smp.h"
 #include "kernel/cpu_regs.h"
 #include "kernel/msr.h"
+#include "kernel/mtrr.h"
 #include "kernel/mm/memops.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/security/pku.h"
@@ -892,21 +893,127 @@ static void test_vmm_map_huge_1g_alignment(void)
 
 static void test_wc_pat_entry(void)
 {
-    /* PAT MSR entry 1 should be WC (0x01) after cpu_configure_pat().
-     * Write PAT again and readback to test the current CPU's behavior.
-     * WHPX traps PAT MSR writes and returns Intel default (WT = 0x04);
-     * this is a genuine hypervisor limitation, not a code bug. The kernel
-     * degrades gracefully (framebuffer gets WT instead of WC). */
+    /* PAT index 1 must be WC (0x01) -- selected by vmm_map_mmio_wc() and
+     * PAGE_WRITECOMBINE (PWT-only). When the platform honors the PAT write the
+     * live MSR reads back WC; a hypervisor that traps PAT writes (WHPX) returns
+     * the Intel default (WT) instead. That is a hypervisor limitation, so we
+     * SKIP rather than accept-two-answers (the constant itself is pinned WC by
+     * a compile-time _Static_assert in cpu_security.c, platform-independently).
+     * (TODO-09-boot S8) */
     cpu_configure_pat();
     uint64_t pat = msr_read(MSR_IA32_PAT);
     uint8_t entry1 = (uint8_t)((pat >> 8) & 0xFF);
-    if (entry1 == 0x01) {
-    } else if (entry1 == 0x04) {
-        /* WHPX traps PAT writes; kernel degrades to WT (functional) */
-    } else {
-        TEST_ASSERT_EQ(entry1, 0x01,
-                       "PAT entry 1 is WC (0x01) or WT (0x04)");
-    }
+    if (entry1 != 0x01)
+        TEST_SKIP("hypervisor traps PAT write (live index1 != WC); "
+                  "constant pinned WC at compile time");
+    TEST_ASSERT_EQ(entry1, 0x01, "PAT index 1 = WC (0x01) on this CPU");
+}
+
+static void test_pat_index0_wb(void)
+{
+    /* PAT index 0 (no PAT/PCD/PWT bits = default mapping) must stay WB (0x06).
+     * The S8 fix only changed PA1; a bad constant or future edit touching PA0
+     * would corrupt ordinary write-back memory. (TODO-09-boot S8) */
+    cpu_configure_pat();
+    uint64_t pat = msr_read(MSR_IA32_PAT);
+    uint8_t entry0 = (uint8_t)(pat & 0xFF);
+    if (entry0 != 0x06)
+        TEST_SKIP("hypervisor traps PAT write (live index0 != WB)");
+    TEST_ASSERT_EQ(entry0, 0x06, "PAT index 0 = WB (0x06) for normal memory");
+}
+
+static void test_pat_index2_uc_minus(void)
+{
+    /* PAT index 2 (PCD-only, PAGE_NOCACHE) must be UC- (0x07), not WC. The old
+     * decode bug put WC at index 2, silently write-combining NOCACHE requests.
+     * (TODO-09-boot S8) */
+    cpu_configure_pat();
+    uint64_t pat = msr_read(MSR_IA32_PAT);
+    uint8_t entry2 = (uint8_t)((pat >> 16) & 0xFF);
+    if (entry2 != 0x07)
+        TEST_SKIP("hypervisor traps PAT write (live index2 != UC-)");
+    TEST_ASSERT_EQ(entry2, 0x07, "PAT index 2 = UC- (0x07) for PAGE_NOCACHE");
+}
+
+static void test_pat_index3_uc_strong(void)
+{
+    /* PAT index 3 (PCD+PWT, vmm_map_mmio_uc) must be UC-strong (0x00) -- the
+     * device-MMIO correctness path. Unchanged by the S8 fix; assert it stayed
+     * UC. (TODO-09-boot S8) */
+    cpu_configure_pat();
+    uint64_t pat = msr_read(MSR_IA32_PAT);
+    uint8_t entry3 = (uint8_t)((pat >> 24) & 0xFF);
+    if (entry3 != 0x00)
+        TEST_SKIP("hypervisor traps PAT write (live index3 != UC)");
+    TEST_ASSERT_EQ(entry3, 0x00, "PAT index 3 = UC-strong (0x00) for MMIO");
+}
+
+static void test_mtrr_capture_deterministic(void)
+{
+    /* mtrr_capture() is a read-only snapshot; two back-to-back captures on the
+     * same CPU must be identical (no side effects, no drift). (TODO-09-boot S8) */
+    struct mtrr_snapshot a, b;
+    mtrr_capture(&a);
+    mtrr_capture(&b);
+    if (!a.supported)
+        TEST_SKIP("MTRR not supported on this CPU");
+    TEST_ASSERT(mtrr_snapshot_equal(&a, &b),
+                "two mtrr_capture() calls on one CPU are identical");
+    /* A supported snapshot folds DEF_TYPE + variable + fixed MTRRs into the
+     * checksum; a 0 checksum would mean the register contents never got
+     * folded, silently weakening the only divergence-detecting field. */
+    TEST_ASSERT(a.checksum != 0,
+                "supported MTRR snapshot has a non-zero checksum");
+}
+
+static void test_mtrr_var_count_bounded(void)
+{
+    /* MTRRCAP.VCNT is an 8-bit field; the captured variable count must never
+     * exceed the architectural max (guards the PHYSBASE/PHYSMASK read loop
+     * against an out-of-range count). (TODO-09-boot S8) */
+    struct mtrr_snapshot a;
+    mtrr_capture(&a);
+    if (!a.supported)
+        TEST_SKIP("MTRR not supported on this CPU");
+    TEST_ASSERT(a.var_count <= MTRR_VARIABLE_MAX,
+                "MTRR var_count within architectural bound");
+}
+
+static void test_mtrr_snapshot_equal_discriminates(void)
+{
+    /* mtrr_snapshot_equal() must return equal only when ALL compared fields
+     * match, and detect a difference in any one of them -- so a divergent AP
+     * is never silently reported as "synced". Hand-built snapshots; no MSR
+     * access needed. (TODO-09-boot S8) */
+    struct mtrr_snapshot a = { .cap = 0x0508, .def_type = 0xC06,
+                               .var_count = 8, .supported = 1,
+                               .checksum = 0xABCDEF12 };
+    struct mtrr_snapshot b = a;
+    TEST_ASSERT(mtrr_snapshot_equal(&a, &b), "identical snapshots compare equal");
+    b.checksum = a.checksum ^ 1ULL;
+    TEST_ASSERT(!mtrr_snapshot_equal(&a, &b), "checksum difference detected");
+    b = a; b.def_type ^= 1ULL;
+    TEST_ASSERT(!mtrr_snapshot_equal(&a, &b), "def_type difference detected");
+    b = a; b.var_count += 1;
+    TEST_ASSERT(!mtrr_snapshot_equal(&a, &b), "var_count difference detected");
+    b = a; b.supported = 0;
+    TEST_ASSERT(!mtrr_snapshot_equal(&a, &b), "supported difference detected");
+    b = a; b.cap ^= MTRRCAP_FIX;
+    TEST_ASSERT(!mtrr_snapshot_equal(&a, &b), "cap difference detected");
+}
+
+static void test_mtrr_bsp_baseline_matches_live(void)
+{
+    /* The BSP MTRR baseline recorded in cpu_record_bsp_profile() must equal a
+     * fresh capture on the BSP (tests run on the BSP). MTRRs are never
+     * reprogrammed, so the snapshot stays valid. (TODO-09-boot S8) */
+    struct mtrr_snapshot base, live;
+    cpu_bsp_mtrr_baseline(&base);
+    mtrr_capture(&live);
+    if (!base.supported)
+        TEST_SKIP("MTRR not supported / baseline not captured");
+    TEST_ASSERT(mtrr_snapshot_equal(&base, &live),
+                "BSP MTRR baseline matches live capture");
 }
 
 /* ---- S9: CPU Topology ---- */
@@ -1513,8 +1620,24 @@ void test_register_x86(void)
         test_1g_page_pdpt0_not_promoted, TEST_CAT_X86);
     test_suite_register_cat("1GiB: misaligned address rejected",
         test_vmm_map_huge_1g_alignment, TEST_CAT_X86);
-    test_suite_register_cat("PAT: entry 1 is WC (0x01)",
+    test_suite_register_cat("PAT: index 1 is WC (0x01)",
         test_wc_pat_entry, TEST_CAT_X86);
+
+    /* S8: PAT decode-bug guards + MTRR parity audit */
+    test_suite_register_cat("PAT: index 0 is WB (normal memory)",
+        test_pat_index0_wb, TEST_CAT_X86);
+    test_suite_register_cat("PAT: index 2 is UC- (PAGE_NOCACHE)",
+        test_pat_index2_uc_minus, TEST_CAT_X86);
+    test_suite_register_cat("PAT: index 3 is UC-strong (MMIO)",
+        test_pat_index3_uc_strong, TEST_CAT_X86);
+    test_suite_register_cat("MTRR: capture is deterministic",
+        test_mtrr_capture_deterministic, TEST_CAT_X86);
+    test_suite_register_cat("MTRR: var_count within bound",
+        test_mtrr_var_count_bounded, TEST_CAT_X86);
+    test_suite_register_cat("MTRR: snapshot_equal discriminates",
+        test_mtrr_snapshot_equal_discriminates, TEST_CAT_X86);
+    test_suite_register_cat("MTRR: BSP baseline matches live",
+        test_mtrr_bsp_baseline_matches_live, TEST_CAT_X86);
 
     /* S9: CPU Topology */
     test_suite_register_cat("Topo: CPU 0 logical_id == 0",

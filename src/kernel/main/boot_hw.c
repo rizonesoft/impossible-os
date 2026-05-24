@@ -566,10 +566,13 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     POST16(POST16_NX_POLICY_OK);
 
     /* --- PAT: program entry 1 = WC for framebuffer VRAM ---
-     * PAT is per-CPU; cpu_harden() programmed it, but page table
-     * modifications may have triggered a CR3 reload. Write again and
-     * readback verify. If WHPX traps the write (returns Intel default),
-     * degrade to WT (still functional, ~2-5x slower than WC for FB). */
+     * PAT is per-CPU and is owned by a single authoritative write per CPU
+     * (TODO-09-boot S8): this is the BSP's, placed AFTER the page-table
+     * takeover above because a CR3 reload can reset PAT to the Intel default
+     * on some hypervisors. (APs program PAT once via the MSR-profile replay in
+     * ap_cpu_harden(); cpu_harden() no longer touches PAT.) Readback verify:
+     * if WHPX traps the write (returns Intel default), degrade to WT (still
+     * functional, ~2-5x slower than WC for FB). */
     POST16(POST16_PAT);
     {
         cpu_configure_pat();

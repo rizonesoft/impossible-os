@@ -15,6 +15,7 @@
 #include "kernel/bugcheck.h"            /* KeBugCheckEx for AP feature validation (S6) */
 #include "kernel/topology.h"            /* CORE_TYPE_* for AP core-type probe (S6) */
 #include "kernel/cpu_regs.h"            /* CR0/CR4 control-register bit defines (CR pinning) */
+#include "kernel/mtrr.h"                /* MTRR snapshot + parity audit (S8) */
 #ifdef KERNEL_TESTS
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
@@ -325,10 +326,24 @@ void cpu_enable_pku(void)
 
 /* ---- PAT: reprogram entry 1 to WC (per-CPU MSR) ---- */
 
-/* PAT value with entry 1 = WC (Write-Combining).
- * Intel default: 0x0007040600070406 (entry 1 = WT = 0x04).
- * We change entry 1 to WC (0x01) for framebuffer VRAM performance. */
-#define PAT_WC_VALUE  0x0007040600010406ULL
+/* PAT value: Intel power-on default with ONLY entry 1 changed to WC.
+ * Intel default = 0x0007040600070406. Byte layout (PA0 is the low byte):
+ *   PA0=0x06 WB | PA1=0x01 WC | PA2=0x07 UC- | PA3=0x00 UC(strong)
+ *   PA4=0x06 WB | PA5=0x04 WT | PA6=0x07 UC- | PA7=0x00 UC(strong)
+ * Index selection from the PTE PAT/PCD/PWT bits:
+ *   PWT only (vmm_map_mmio_wc, PAGE_WRITECOMBINE) -> index 1 = WC
+ *   PCD+PWT  (vmm_map_mmio_uc)                    -> index 3 = UC(strong)
+ *   PCD only (PAGE_NOCACHE)                       -> index 2 = UC-
+ * Prior value 0x0007040600010406 set WC at PA2 (index 2), NOT PA1, so
+ * framebuffer/PAGE_WRITECOMBINE silently got WT and PAGE_NOCACHE got WC
+ * (TODO-09-boot S8 decode-bug fix 2026-05-24). */
+#define PAT_WC_VALUE  0x0007040600070106ULL
+
+/* Layer-1 defense: pin the load-bearing entries at compile time so the decode
+ * bug can never recur silently (the unit test is Layer 3). */
+_Static_assert(((PAT_WC_VALUE >> 8)  & 0xFF) == 0x01, "PAT index 1 must be WC (framebuffer/PAGE_WRITECOMBINE)");
+_Static_assert(((PAT_WC_VALUE >> 16) & 0xFF) == 0x07, "PAT index 2 must be UC- (PAGE_NOCACHE)");
+_Static_assert(((PAT_WC_VALUE >> 24) & 0xFF) == 0x00, "PAT index 3 must be UC-strong (vmm_map_mmio_uc)");
 
 void cpu_configure_pat(void)
 {
@@ -379,7 +394,12 @@ void cpu_harden(void)
     cpu_enable_nx();
     cpu_enable_umip();
     cpu_enable_pku();
-    cpu_configure_pat();
+    /* PAT is NOT programmed here: it is owned by a single authoritative write
+     * per CPU (TODO-09-boot S8). The BSP programs PAT in boot_phase0 after the
+     * page-table takeover (boot_hw.c, post-CR3-reload); each AP programs it
+     * exactly once via the MSR-profile replay in ap_cpu_harden(). Writing it
+     * here too would double the AP-side WRMSR and could leave a transient
+     * constant-vs-BSP mismatch before the authoritative profile write. */
 }
 
 /* Enable SMEP/SMAP after page tables have been fixed (U/S cleared from
@@ -518,6 +538,10 @@ static uint64_t s_bsp_xcr0;
 static uint64_t s_bsp_required_cr4;   /* s_bsp_cr4 & CR4_UNIFORM_MASK */
 static int      s_bsp_profile_ready;
 
+/* BSP MTRR baseline (TODO-09-boot S8). Captured once in cpu_record_bsp_profile();
+ * each AP is compared against it in ap_cpu_harden_log() (warn-only audit). */
+static struct mtrr_snapshot s_bsp_mtrr;
+
 /* AP feature consistency (TODO-09-boot S6). Global intersection = BSP & every
  * online AP within CPU_FEATURES_AP_PROBE_MASK; 0 until cpu_features_finalize_
  * global() publishes it BSP-side after the online acquire pass. */
@@ -551,6 +575,9 @@ void cpu_record_bsp_profile(void)
         s_bsp_msr_profile[i].value = msr_read(s_bsp_msr_profile[i].msr);
     }
 
+    /* MTRR baseline (S8): snapshot the BSP's MTRR state for AP parity audit. */
+    mtrr_capture(&s_bsp_mtrr);
+
     /* Snapshot the BSP's own block (cpu_id 0) for the register audit trail. */
     bsp = smp_get_cpu(0);
     if (bsp) {
@@ -559,6 +586,11 @@ void cpu_record_bsp_profile(void)
         bsp->pat_at_boot  = s_bsp_pat;
         bsp->xcr0_at_boot = s_bsp_xcr0;
         bsp->tsc_aux      = 0;
+        bsp->mtrr_cap       = s_bsp_mtrr.cap;
+        bsp->mtrr_def_type  = s_bsp_mtrr.def_type;
+        bsp->mtrr_checksum  = s_bsp_mtrr.checksum;
+        bsp->mtrr_var_count = s_bsp_mtrr.var_count;
+        bsp->mtrr_supported = s_bsp_mtrr.supported;
     }
 
     /* Publish the baseline before any AP reads it. The smp_mb() before each
@@ -1030,6 +1062,22 @@ void ap_cpu_harden(uint32_t cpu_id)
     pat  = msr_read(MSR_IA32_PAT);
     xcr0 = xcr0_read_safe();
 
+    /* MTRR parity snapshot (S8): read-only rdmsr capture, gated on this AP's
+     * LOCAL CPUID with an msr_try_read guard, so a feature-skewed AP records
+     * supported=0 rather than faulting. No MTRR writes -- audit only. */
+    {
+        struct mtrr_snapshot ap_mtrr;
+        mtrr_capture(&ap_mtrr);
+        pc = smp_get_cpu(cpu_id);
+        if (pc) {
+            pc->mtrr_cap       = ap_mtrr.cap;
+            pc->mtrr_def_type  = ap_mtrr.def_type;
+            pc->mtrr_checksum  = ap_mtrr.checksum;
+            pc->mtrr_var_count = ap_mtrr.var_count;
+            pc->mtrr_supported = ap_mtrr.supported;
+        }
+    }
+
     pc = smp_get_cpu(cpu_id);
     if (pc) {
         pc->efer_at_boot        = efer;
@@ -1092,6 +1140,37 @@ void ap_cpu_harden_log(uint32_t cpu_id)
             klog(LOG_WARN, "smp",
                  "[AP%u] PAT mismatch: AP=0x%lx BSP=0x%lx",
                  (uint64_t)cpu_id, pat, s_bsp_pat);
+        else
+            klog(LOG_INFO, "smp",
+                 "[AP%u] PAT synced: 0x%lx", (uint64_t)cpu_id, pat);
+
+        /* MTRR parity audit (S8): warn-only -- no reprogramming. MMIO cache
+         * correctness rides on PAT (UC PAT type always wins over MTRR, SDM
+         * 11.5.2), so divergence here is defense-in-depth, not a hard fault. */
+        if (pc->mtrr_supported && s_bsp_mtrr.supported) {
+            struct mtrr_snapshot ap = {
+                .cap = pc->mtrr_cap, .def_type = pc->mtrr_def_type,
+                .var_count = pc->mtrr_var_count, .supported = pc->mtrr_supported,
+                .checksum = pc->mtrr_checksum,
+            };
+            if (!mtrr_snapshot_equal(&ap, &s_bsp_mtrr))
+                klog(LOG_WARN, "smp",
+                     "[AP%u] MTRR mismatch: AP def=0x%lx sum=0x%lx vcnt=%u | "
+                     "BSP def=0x%lx sum=0x%lx vcnt=%u (firmware MTRR skew)",
+                     (uint64_t)cpu_id, pc->mtrr_def_type, pc->mtrr_checksum,
+                     (uint64_t)pc->mtrr_var_count, s_bsp_mtrr.def_type,
+                     s_bsp_mtrr.checksum, (uint64_t)s_bsp_mtrr.var_count);
+            else
+                klog(LOG_INFO, "smp",
+                     "[AP%u] MTRR synced: def=0x%lx vcnt=%u",
+                     (uint64_t)cpu_id, pc->mtrr_def_type,
+                     (uint64_t)pc->mtrr_var_count);
+        } else if (pc->mtrr_supported != s_bsp_mtrr.supported) {
+            klog(LOG_WARN, "smp",
+                 "[AP%u] MTRR support skew: AP=%u BSP=%u",
+                 (uint64_t)cpu_id, (uint64_t)pc->mtrr_supported,
+                 (uint64_t)s_bsp_mtrr.supported);
+        }
     }
 
     klog(LOG_INFO, "smp",
@@ -1137,5 +1216,11 @@ int cpu_msr_profile_entry(uint32_t idx, uint32_t *msr_out,
 uint64_t cpu_bsp_pat_baseline(void)
 {
     return s_bsp_pat;
+}
+
+void cpu_bsp_mtrr_baseline(struct mtrr_snapshot *out)
+{
+    if (out)
+        *out = s_bsp_mtrr;
 }
 #endif /* KERNEL_TESTS */

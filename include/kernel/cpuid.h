@@ -95,7 +95,10 @@ enum cpu_feature {
     CPU_FEATURE_PAGE1GB   = 52,   /* 1-Gigabyte huge pages */
     CPU_FEATURE_RDTSCP    = 53,   /* RDTSCP instruction */
 
-    CPU_FEATURE_COUNT     = 54    /* total features tracked */
+    /* CPUID Leaf 0x01 EDX */
+    CPU_FEATURE_MTRR      = 54,   /* Memory Type Range Registers (EDX bit 12) */
+
+    CPU_FEATURE_COUNT     = 55    /* total features tracked */
 };
 
 /* --- AP feature consistency masks (TODO-09-boot S6) --------------------- */

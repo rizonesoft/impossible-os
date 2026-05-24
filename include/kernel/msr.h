@@ -69,6 +69,30 @@ int msr_try_read(uint32_t index, uint64_t *out);
 /* PAT (Page Attribute Table) */
 #define MSR_IA32_PAT                0x00000277
 
+/* MTRR (Memory Type Range Registers) -- Intel SDM Vol 3 11.11.
+ * Used for AP parity auditing (TODO-09-boot S8): the BSP snapshots its MTRR
+ * state and each AP is compared against it; divergence is logged. MMIO cache
+ * correctness itself rides on PAT (UC PAT type always wins over MTRR per SDM
+ * 11.5.2), so this audit is defense-in-depth, not the correctness gate. */
+#define MSR_IA32_MTRRCAP            0x000000FE  /* read-only capability */
+#define MSR_IA32_MTRR_DEF_TYPE      0x000002FF  /* default type + enable bits */
+#define MSR_IA32_MTRR_PHYSBASE0     0x00000200  /* variable pair base; MASK = +1 */
+/* Fixed-range MTRRs (present only when MTRRCAP.FIX) */
+#define MSR_IA32_MTRR_FIX64K_00000  0x00000250
+#define MSR_IA32_MTRR_FIX16K_80000  0x00000258
+#define MSR_IA32_MTRR_FIX16K_A0000  0x00000259
+#define MSR_IA32_MTRR_FIX4K_C0000   0x00000268  /* through 0x26F (8 registers) */
+
+/* MTRRCAP fields */
+#define MTRRCAP_VCNT_MASK           0xFFu        /* bits [7:0]: variable range count */
+#define MTRRCAP_FIX                 (1ULL << 8)  /* fixed-range MTRRs supported */
+#define MTRRCAP_WC                  (1ULL << 10) /* write-combining type supported */
+/* MTRR_DEF_TYPE fields */
+#define MTRR_DEF_TYPE_TYPE_MASK     0xFFu        /* bits [7:0]: default memory type */
+#define MTRR_DEF_TYPE_FE            (1ULL << 10) /* fixed-range MTRRs enabled */
+#define MTRR_DEF_TYPE_E             (1ULL << 11) /* MTRRs enabled */
+#define MTRR_VARIABLE_MAX           255u         /* MTRRCAP.VCNT is an 8-bit field */
+
 /* Speculation control */
 #define MSR_IA32_SPEC_CTRL          0x00000048
 #define MSR_IA32_PRED_CMD           0x00000049

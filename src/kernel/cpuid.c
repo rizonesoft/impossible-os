@@ -108,6 +108,7 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_FPU,   edx,  0);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_TSC,   edx,  4);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_APIC,  edx,  9);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_MTRR,  edx, 12);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_MMX,   edx, 23);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SSE,   edx, 25);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SSE2,  edx, 26);

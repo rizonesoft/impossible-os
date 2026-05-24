@@ -159,6 +159,17 @@ struct per_cpu_data {
     uint64_t          cr0_pinned;          /* CR0 bits to keep set on this CPU (CR0_WP) */
     uint64_t          cr4_pinned;          /* CR4 security bits to keep set on this CPU */
 
+    /* MTRR parity snapshot (TODO-09-boot S8). Compact, comparable view of this
+     * CPU's MTRR state (mirrors struct mtrr_snapshot scalars). BSP fills
+     * cpu_data[0] in cpu_record_bsp_profile(); each AP fills its own in
+     * ap_cpu_harden(); the BSP compares AP-vs-BSP in ap_cpu_harden_log() and
+     * WARNs on divergence (audit only -- no reprogramming). Per-CPU, no lock. */
+    uint64_t          mtrr_cap;            /* IA32_MTRRCAP (0 if MTRR absent) */
+    uint64_t          mtrr_def_type;       /* IA32_MTRR_DEF_TYPE */
+    uint64_t          mtrr_checksum;       /* FNV-1a over variable + fixed MTRRs */
+    uint32_t          mtrr_var_count;      /* MTRRCAP.VCNT captured */
+    uint32_t          mtrr_supported;      /* 1 = MTRRs present + snapshotted */
+
 #ifdef KERNEL_TESTS
     /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
      * On each kmalloc() call, a non-zero value decrements; when the
