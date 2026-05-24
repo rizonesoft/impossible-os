@@ -117,6 +117,16 @@ void boot_phase1(void)
             boot_progress(1, "PCID", POSTCODE_PCID_ENABLED);
     }
 
+    /* --- CR0/CR4 safety-bit pinning (TODO-09-boot S7) ---
+     * MUST run AFTER the XSAVE/PCID activation above so CR4.OSXSAVE/PCIDE are
+     * already set (the pinned mask captures whatever security bits are live).
+     * Pins CR0.WP + enabled CR4 SMEP/SMAP/UMIP/FSGSBASE/CET on the BSP and arms
+     * enforcement; each AP pins its own bits at the tail of ap_cpu_harden(). */
+    POST16(0xD400);
+    cpu_pin_control_regs();
+    POST16(0xD401);
+    boot_progress(1, "CR_PINNED", POSTCODE_CR_PINNED);
+
     /* --- Bugcheck: wire NMI crash handler after IDT (TODO-16 S1) --- */
     {
         extern void bugcheck_init(void);

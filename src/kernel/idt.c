@@ -249,6 +249,22 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         }
     }
 
+    /* ---- CR0/CR4 safety-bit verify on #GP (TODO-09-boot S7) ----
+     * A #GP is the classic symptom of a kernel exploit having just cleared a
+     * protection bit (CR4.SMEP to run user pages, CR0.WP to patch RO text).
+     * Run BEFORE the handler dispatch / default exception panic so it covers
+     * BOTH a handled #GP (msr probe) AND an unhandled #GP (which would
+     * otherwise panic_screen() and never reach the return path). A cleared pin
+     * bug-checks CRITICAL_STRUCTURE_CORRUPTION (BSP) or records + halts (AP);
+     * no-op until pinning is active / this CPU has pinned. Runs after the GS
+     * self-pointer check above so smp_this_cpu() is valid. */
+    if (vec == 13) {
+        extern void cr0_verify_pinned(void);
+        extern void cr4_verify_pinned(void);
+        cr0_verify_pinned();
+        cr4_verify_pinned();
+    }
+
     /* ---- transition ring: record ring-3 -> ring-0 entry ----
      * Only record when coming from ring 3 (user mode). Covers INT
      * 0x80, INT 0x2E, and hardware IRQs that preempted user code.
@@ -330,19 +346,6 @@ irql_restore:
     /* ---- IRQL restore on interrupt exit ---- */
     if (vec >= 32 && pcpu->current_irql != prev_irql)
         pcpu->current_irql = prev_irql;
-
-    /* ---- CR0/CR4 safety-bit verify on #GP return (TODO-09-boot S7) ----
-     * A #GP is the classic symptom of a kernel exploit having just cleared a
-     * protection bit (CR4.SMEP to run user pages, CR0.WP to patch RO text).
-     * Re-check the calling CPU's pinned bits before returning; a cleared pin
-     * bug-checks CRITICAL_STRUCTURE_CORRUPTION (BSP) or records + halts (AP).
-     * No-op until pinning is active / this CPU has pinned. */
-    if (vec == 13) {
-        extern void cr0_verify_pinned(void);
-        extern void cr4_verify_pinned(void);
-        cr0_verify_pinned();
-        cr4_verify_pinned();
-    }
 
     /* ---- -18 iretq invariants ----
      * Before the asm stub's swapgs + iretq returns to ring 3, verify

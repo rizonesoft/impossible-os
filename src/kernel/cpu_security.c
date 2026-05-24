@@ -834,9 +834,12 @@ void cpu_features_check_ap_faults(void)
 
 /* CR4 security bits eligible for pinning (Linux cr4_pin equivalent). Only the
  * bits actually SET on a given CPU at pin time are pinned on that CPU, so a
- * feature-skewed AP pins fewer bits rather than bug-checking on one it lacks. */
+ * feature-skewed AP pins fewer bits rather than bug-checking on one it lacks.
+ * CR4.PKE is included because cpu_enable_pku() turns it on when PKU + the PKRU
+ * xstate are present; clearing it after pin would silently drop PKU enforcement
+ * otherwise (it stays unpinned on CPUs where PKU was never enabled). */
 #define CR4_PINNABLE_MASK \
-    (CR4_SMEP | CR4_SMAP | CR4_UMIP | CR4_FSGSBASE | CR4_CET)
+    (CR4_SMEP | CR4_SMAP | CR4_UMIP | CR4_FSGSBASE | CR4_CET | CR4_PKE)
 
 /* Global enforcement flag. Set by the BSP in cpu_pin_control_regs() at end of
  * Phase 1 (before APs launch); read on every CPU. Per-CPU masks

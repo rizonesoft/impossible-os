@@ -18,6 +18,8 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/user_range.h"
 #include "kernel/cpuid.h"
+#include "kernel/cpu_regs.h"      /* CR0_TS */
+#include "kernel/cpu_security.h"  /* cr0_write_safe (CR0 pin preservation) */
 #include "kernel/klog.h"
 #include "kernel/exec.h"
 #include "kernel/ipc/signal.h"
@@ -837,8 +839,8 @@ uint64_t schedule_now(struct interrupt_frame *frame)
         } else {
             uint64_t cr0;
             __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
-            cr0 |= (1UL << 3);
-            __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
+            cr0 |= CR0_TS;          /* defer FPU: next FPU use faults #NM */
+            cr0_write_safe(cr0);    /* preserve pinned CR0.WP (TODO-09-boot S7) */
         }
     }
 
@@ -942,8 +944,8 @@ uint64_t schedule(struct interrupt_frame *frame)
     } else {
         uint64_t cr0;
         __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
-        cr0 |= (1UL << 3);  /* CR0.TS */
-        __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
+        cr0 |= CR0_TS;          /* defer FPU: next FPU use faults #NM */
+        cr0_write_safe(cr0);    /* preserve pinned CR0.WP (TODO-09-boot S7) */
     }
     }
 

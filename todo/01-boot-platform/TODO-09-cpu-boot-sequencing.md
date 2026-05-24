@@ -282,12 +282,12 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 Linux pins CR0.WP and CR4 bits (SMEP, SMAP, UMIP, FSGSBASE, CET) after boot to prevent rootkits from disabling protection by writing the control registers. Windows HAL protects equivalent bits. Impossible OS has no post-boot protection -- a kernel exploit can trivially clear CR4.SMEP and execute user pages, OR clear CR0.WP and write through `PTE.W=0` (classic rootkit primitive for patching read-only kernel text).
 
 - [x] Shared `include/kernel/cpu_regs.h` with `CR0_*` + `CR4_*` bit defines (single source of truth); `cpu_security.c` + `cpuid.c` use it (cpuid.c's hardcoded `(1<<18)` -> `CR4_OSXSAVE`)
-- [x] Per-CPU pin masks in `per_cpu_data` (`cr0_pinned`/`cr4_pinned`), NOT a global mask: each CPU pins only the bits IT has, so a skewed AP pins fewer rather than bug-checking (design review). cr4 = live CR4 & (SMEP|SMAP|UMIP|FSGSBASE|CET)
+- [x] Per-CPU pin masks in `per_cpu_data` (`cr0_pinned`/`cr4_pinned`), NOT a global mask: each CPU pins only the bits IT has, so a skewed AP pins fewer rather than bug-checking (design review). cr4 = live CR4 & (SMEP|SMAP|UMIP|FSGSBASE|CET|PKE) -- PKE included so a post-pin CR4.PKE clear can't silently drop PKU
 - [x] `cpu_pin_control_regs()` pins the calling CPU + sets global `cr_pinning_active`; called at end of `boot_phase1` AFTER XSAVE/PCID (BSP) and at the tail of `ap_cpu_harden()` (each AP)
 - [x] `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION = 0x109` (bugcheck.h + panic.c name table)
 - [x] `cr0_verify_pinned()`/`cr4_verify_pinned()`: BSP bug-checks directly; an AP records the fault + halts and the BSP raises it via `cpu_cr_pin_check()` (an AP must not run the panic path -- design review)
-- [x] `cr0_write_safe()`/`cr4_write_safe()`: force the calling CPU's pinned bits on when active. Rollback knob: clear `cr_pinning_active`. (No post-pin raw CR writes today; wrappers are the path for future ones)
-- [x] Verifiers called from: (a) `isr_handler` #GP (vec 13) return, (b) BSP LAPIC timer tick via `cpu_cr_pin_tick()` (dedicated hook, not the singleton splash callback), (c) each AP at `ap_cpu_harden()` tail
+- [x] `cr0_write_safe()`/`cr4_write_safe()`: force the calling CPU's pinned bits on when active; rollback knob clears `cr_pinning_active`. The scheduler's post-pin CR0.TS writes (`task.c` lazy-FPU) route through `cr0_write_safe` (preserves CR0.WP)
+- [x] Verifiers called from: (a) top of `isr_handler` on #GP (vec 13) before dispatch, covering the unhandled-#GP panic path, (b) BSP LAPIC timer tick via `cpu_cr_pin_tick()` (dedicated hook), (c) each AP at `ap_cpu_harden()` tail
 - [x] `POSTCODE_CR_PINNED = 0x39` (boot_init.h); `POST16(0xD400)/(0xD401)` around BSP pinning
 - [x] Verify (serial log): `[Phase1] CR0/CR4 pinned: cr0_mask=0x10000 cr4_mask=0x800` on KVM (CR0.WP + CR4.UMIP); panic-on-clear is a manual debug-build test (KeBugCheckEx halts -- cannot run in the unit harness)
 - [x] Commit: `"boot: CR0.WP + CR4 safety-bit pinning with CRITICAL_STRUCTURE_CORRUPTION panic"`
@@ -297,11 +297,15 @@ Linux pins CR0.WP and CR4 bits (SMEP, SMAP, UMIP, FSGSBASE, CET) after boot to p
 > **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 78 suites, 0 failures
 
 > **Notes:**
-> - Shipped shared `include/kernel/cpu_regs.h` + `cpu_pin_control_regs()`/`cr0_cr4_write_safe`/`cr0_cr4_verify_pinned`/`cpu_cr_pin_check`/`cpu_cr_pin_tick` in `cpu_security.c`; per-CPU pin masks in `per_cpu_data`; `BUGCHECK 0x109`; `POSTCODE_CR_PINNED`.
-> - BSP pins at end of `boot_phase1` (after XSAVE/PCID), each AP at `ap_cpu_harden` tail; verified on #GP return (idt.c), BSP timer tick (`cpu_cr_pin_tick`), AP tail. AP violations record + halt -> BSP raises 0x109 (panic path is BSP-only-safe).
+> - Shipped shared `include/kernel/cpu_regs.h` + `cpu_pin_control_regs()`/`cr0_write_safe`/`cr4_write_safe`/`cr0_verify_pinned`/`cr4_verify_pinned`/`cpu_cr_pin_check`/`cpu_cr_pin_tick` in `cpu_security.c`; per-CPU pin masks in `per_cpu_data`; `BUGCHECK 0x109`; `POSTCODE_CR_PINNED`.
+> - BSP pins at end of `boot_phase1` (after XSAVE/PCID), each AP at `ap_cpu_harden` tail; verified at the top of `isr_handler` on #GP before dispatch (idt.c), BSP timer tick (`cpu_cr_pin_tick`), AP tail. AP violations record + halt -> BSP raises 0x109 (panic path is BSP-only-safe).
 > - Resolves the §4-deferred shared-CR-define + cpuid.c OSXSAVE-hardcode item; also fixed a latent AP `cpu_id`-set-too-late bug. Codex design-review adoptions in the commit message.
 > - Canonical doc: this section + `include/kernel/cpu_regs.h` + `src/kernel/cpu_security.c` pinning block.
 > - Scope boundary: §7 owns CR0/CR4 pinning + verify. CET pinned once TODO-10 §9-§10 enables it; AP-local CR4-enable gating stays §10; per-AP periodic verify needs an AP timer tick (today APs verify on #GP + harden tail).
+
+> **Verified:** 2026-05-24 | commit `0f3191c5` | 9/9 items | build OK | smoke PASS (KVM); SMP -smp 2 AP1 online + CR0/CR4 pinned
+> **Accepted:** [H] no periodic AP CR-pin verification -- APs verify only at `ap_cpu_harden` tail + on #GP (AP LAPIC timers masked), so a post-pin AP CR-clear without a #GP stays undetected until the next AP fault -> XREF: 01-boot-platform/TODO-09 §10 (item: "Periodic CR-pin verification on every online CPU via a BSP->AP verify-IPI from `cpu_cr_pin_tick()`" at line 364)
+> **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 2H+1M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
