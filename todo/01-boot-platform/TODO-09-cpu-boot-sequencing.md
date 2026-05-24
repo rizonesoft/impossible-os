@@ -271,6 +271,10 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 > - Codex design review (3 findings) adoptions + a §6-introduced AP double fault (POST16 FB draw before AVX enable) root-caused and fixed; details in the commit message.
 > - Canonical doc: this section + `src/kernel/cpu_security.c` `cpu_validate_ap_features`.
 > - Scope boundary: §6 owns DETECTION (validate + intersection + bug-check); §10 owns AP-local CR4-enable gating; `02-kernel-core/TODO-09 §9` owns topology core_type consumption; TODO-08 §3 owns TSC sync.
+> **Verified:** 2026-05-24 | commit `eeba36a1` | 9/9 items | build OK | smoke PASS (KVM 2.45s); SMP -smp 2 AP1 online + validation OK
+> **Accepted:** [H] optional CR4/MSR skew (CR4.UMIP via cpu_enable_umip, TSC_AUX MSR) still BSP-global-gated in cpu_harden/ap_apply_msr_profile -> #GP on a genuinely feature-skewed AP (pre-existing from §4; not a homogeneous/real-HW case; §6 detects + excludes from the global mask) -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX" at line 350)
+> **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 276)
+> **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
 

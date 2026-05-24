@@ -92,6 +92,7 @@ static const struct { BUGCHECK_CODE code; const char *name; } s_bugcheck_names[]
     { 0x1E,       "KMODE_EXCEPTION_NOT_HANDLED" },
     { 0x50,       "PAGE_FAULT_IN_NONPAGED_AREA" },
     { 0x3B,       "SYSTEM_SERVICE_EXCEPTION" },
+    { 0x3E,       "MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED" },
     { 0x77,       "KERNEL_STACK_INPAGE_ERROR" },
     { 0x7A,       "KERNEL_DATA_INPAGE_ERROR" },
     { 0x139,      "KERNEL_SECURITY_CHECK_FAILURE" },
