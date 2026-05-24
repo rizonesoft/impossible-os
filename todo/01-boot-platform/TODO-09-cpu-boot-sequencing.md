@@ -339,6 +339,10 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 > - Canonical doc: this section + `src/kernel/mtrr.c` + `cpu_security.c` PAT/`s_bsp_mtrr` block.
 > - Scope boundary: §8 owns PAT sync + MTRR parity AUDIT; divergent-AP MTRR reprogram + runtime PAT re-broadcast need an IPI rendezvous (`smp_call_function`, deferred). MMIO cache correctness owned by PAT (TODO-01 §11).
 
+> **Verified:** 2026-05-24 | commit `27124dca` | 6/7 items | build OK | smoke PASS (KVM 2.640s); PAT WC active, MTRR audit wired
+> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 343)
+> **Quality reviewed:** 2026-05-24 | Codex 10x (design, adversarial, consistency, perf, re-adversarial, test-coverage) | 2H+4M+1L fixed, 1M deferred | scope: kernel-code-quality
+
 ---
 
 ## 9. CPU Register State Audit Trail
