@@ -97,6 +97,7 @@ typedef enum {
 #define POSTCODE_DPC_INIT       0x36
 #define POSTCODE_RTC_INIT       0x37
 #define POSTCODE_KBD_INIT       0x38
+#define POSTCODE_CR_PINNED      0x39  /* CR0/CR4 safety-bit pinning active (TODO-09-boot S7) */
 #define POSTCODE_SMBIOS_INIT    0x40
 #define POSTCODE_FB_INIT        0x41
 #define POSTCODE_XSAVE_ENABLED  0x42  /* XSAVE/XCR0 Phase 1 finalize (TODO-09-boot S5) */

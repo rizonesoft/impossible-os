@@ -14,20 +14,14 @@
 #include "kernel/smp.h"                 /* per_cpu_data, smp_get_cpu() for AP hardening */
 #include "kernel/bugcheck.h"            /* KeBugCheckEx for AP feature validation (S6) */
 #include "kernel/topology.h"            /* CORE_TYPE_* for AP core-type probe (S6) */
+#include "kernel/cpu_regs.h"            /* CR0/CR4 control-register bit defines (CR pinning) */
 #ifdef KERNEL_TESTS
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
 #endif
 
-/* ---- CR4 bit definitions ---- */
-#define CR4_FSGSBASE (1UL << 16)
-#define CR4_PCIDE    (1UL << 17)
-#define CR4_OSXSAVE  (1UL << 18)
-#define CR4_UMIP     (1UL << 11)
-#define CR4_PKE      (1UL << 22)
-#define CR4_SMEP     (1UL << 20)
-#define CR4_SMAP     (1UL << 21)
-#define CR4_CET      (1UL << 23)
+/* CR0/CR4 bit definitions: single source of truth in kernel/cpu_regs.h
+ * (CR0/CR4 safety-bit pinning resolved the former per-file duplication). */
 
 /* CR4 bits that MUST be identical on every CPU. ap_cpu_harden() uses this
  * mask only for WARN-ONLY verification of an AP against the BSP today (it
@@ -51,6 +45,18 @@ static inline uint64_t read_cr4(void)
 static inline void write_cr4(uint64_t val)
 {
     __asm__ volatile ("mov %0, %%cr4" : : "r"(val));
+}
+
+static inline uint64_t read_cr0(void)
+{
+    uint64_t val;
+    __asm__ volatile ("mov %%cr0, %0" : "=r"(val));
+    return val;
+}
+
+static inline void write_cr0(uint64_t val)
+{
+    __asm__ volatile ("mov %0, %%cr0" : : "r"(val));
 }
 
 /* ---- XCR0 helpers ---- */
@@ -824,6 +830,143 @@ void cpu_features_check_ap_faults(void)
                  (uint64_t)CPU_FEATURES_REQUIRED_MASK, (uint64_t)s_ap_fault_reason);
 }
 
+/* ---- CR0/CR4 safety-bit pinning (TODO-09-boot S7) ---------------------- */
+
+/* CR4 security bits eligible for pinning (Linux cr4_pin equivalent). Only the
+ * bits actually SET on a given CPU at pin time are pinned on that CPU, so a
+ * feature-skewed AP pins fewer bits rather than bug-checking on one it lacks. */
+#define CR4_PINNABLE_MASK \
+    (CR4_SMEP | CR4_SMAP | CR4_UMIP | CR4_FSGSBASE | CR4_CET)
+
+/* Global enforcement flag. Set by the BSP in cpu_pin_control_regs() at end of
+ * Phase 1 (before APs launch); read on every CPU. Per-CPU masks
+ * (per_cpu_data.cr0/cr4_pinned) stay 0 until each CPU pins, so a CPU that has
+ * not pinned yet enforces nothing. Rollback knob: clear this to disable
+ * enforcement if a false positive ever surfaces in the field. */
+static volatile int cr_pinning_active;
+
+/* AP -> BSP CR-pin fault hand-off. An AP that finds a cleared pin must NOT run
+ * the panic path itself (it uses BSP-global XCR0/SIMD that #GP/#UD on a skewed
+ * AP), so it records here and halts; the BSP raises the bug-check from
+ * cpu_cr_pin_check(). Same pattern as the AP feature-validation hand-off. */
+static volatile uint32_t s_cr_fault_cpu;       /* 0 = none, else cpu_id + 1 */
+static volatile uint32_t s_cr_fault_reg;       /* 0 = CR0, 4 = CR4 */
+static volatile uint64_t s_cr_fault_expected;  /* pinned mask that should be set */
+static volatile uint64_t s_cr_fault_actual;    /* bits actually still set */
+
+void cpu_pin_control_regs(void)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    uint64_t cr0_mask = read_cr0() & CR0_WP;
+    uint64_t cr4_mask = read_cr4() & CR4_PINNABLE_MASK;
+
+    if (pc) {
+        pc->cr0_pinned = cr0_mask;
+        pc->cr4_pinned = cr4_mask;
+    }
+    __atomic_store_n(&cr_pinning_active, 1, __ATOMIC_RELEASE);
+
+    /* BSP-only log (APs run this inside the serial-quiet bringup bracket). */
+    if (pc && pc->cpu_id == 0)
+        klog(LOG_INFO, "cpu",
+             "[Phase1] CR0/CR4 pinned: cr0_mask=0x%lx cr4_mask=0x%lx",
+             cr0_mask, cr4_mask);
+}
+
+void cr0_write_safe(uint64_t val)
+{
+    struct per_cpu_data *pc;
+    if (__atomic_load_n(&cr_pinning_active, __ATOMIC_ACQUIRE) &&
+        (pc = smp_this_cpu()) != (struct per_cpu_data *)0)
+        val |= pc->cr0_pinned;   /* a write that clears a pinned bit is corrected */
+    write_cr0(val);
+}
+
+void cr4_write_safe(uint64_t val)
+{
+    struct per_cpu_data *pc;
+    if (__atomic_load_n(&cr_pinning_active, __ATOMIC_ACQUIRE) &&
+        (pc = smp_this_cpu()) != (struct per_cpu_data *)0)
+        val |= pc->cr4_pinned;
+    write_cr4(val);
+}
+
+/* Raise (BSP) or hand off (AP) a CR-pin violation. reg = 0 (CR0) or 4 (CR4). */
+static void cr_pin_violation(uint32_t reg, uint64_t expected, uint64_t actual)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    uint32_t id = pc ? pc->cpu_id : 0;
+
+    if (id == 0) {
+        /* BSP: panic path is feature-safe here. */
+        klog(LOG_FATAL, "cpu",
+             "CR%u pin violation: expected 0x%lx still-set 0x%lx",
+             (uint64_t)reg, expected, actual);
+        KeBugCheckEx(BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION,
+                     (uint64_t)reg, expected, actual, 0);
+    }
+    /* AP: record + halt; the BSP raises the bug-check in cpu_cr_pin_check(). */
+    s_cr_fault_reg      = reg;
+    s_cr_fault_expected = expected;
+    s_cr_fault_actual   = actual;
+    __atomic_store_n(&s_cr_fault_cpu, id + 1, __ATOMIC_RELEASE);
+    for (;;)
+        __asm__ volatile ("cli; hlt");
+}
+
+void cr0_verify_pinned(void)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    uint64_t m, cr0;
+    if (!__atomic_load_n(&cr_pinning_active, __ATOMIC_ACQUIRE) || !pc)
+        return;
+    m = pc->cr0_pinned;
+    if (!m)
+        return;
+    cr0 = read_cr0();
+    if ((cr0 & m) != m)
+        cr_pin_violation(0, m, cr0 & m);
+}
+
+void cr4_verify_pinned(void)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    uint64_t m, cr4;
+    if (!__atomic_load_n(&cr_pinning_active, __ATOMIC_ACQUIRE) || !pc)
+        return;
+    m = pc->cr4_pinned;
+    if (!m)
+        return;
+    cr4 = read_cr4();
+    if ((cr4 & m) != m)
+        cr_pin_violation(4, m, cr4 & m);
+}
+
+/* BSP-side: raise BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION if any AP recorded a
+ * CR-pin violation and halted. Called from the BSP periodic verify path. */
+void cpu_cr_pin_check(void)
+{
+    uint32_t c = __atomic_load_n(&s_cr_fault_cpu, __ATOMIC_ACQUIRE);
+    if (!c)
+        return;
+    klog(LOG_FATAL, "cpu",
+         "[AP%u] CR%u pin violation: expected 0x%lx still-set 0x%lx",
+         (uint64_t)(c - 1), (uint64_t)s_cr_fault_reg,
+         s_cr_fault_expected, s_cr_fault_actual);
+    KeBugCheckEx(BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION,
+                 (uint64_t)s_cr_fault_reg, s_cr_fault_expected,
+                 s_cr_fault_actual, (uint64_t)c);
+}
+
+/* BSP periodic hook (fired from the LAPIC timer ISR; AP LAPIC timers are
+ * masked so this is BSP-only): verify the BSP's own pins + poll AP faults. */
+void cpu_cr_pin_tick(void)
+{
+    cr0_verify_pinned();
+    cr4_verify_pinned();
+    cpu_cr_pin_check();
+}
+
 void ap_cpu_harden(uint32_t cpu_id)
 {
     struct per_cpu_data *pc;
@@ -893,6 +1036,17 @@ void ap_cpu_harden(uint32_t cpu_id)
         pc->tsc_aux             = (uint64_t)cpu_id;
         pc->msr_profile_applied = applied;
     }
+
+    /* 5. Pin this AP's CR0/CR4 safety bits (TODO-09-boot S7) now that cpu_harden
+     *    has set them. Per-CPU mask = this AP's own live bits, so a skewed AP
+     *    pins only what it has. cr_pinning_active was already set by the BSP in
+     *    Phase 1. The just-pinned bits are trivially still set, but run the
+     *    verifiers as the post-ap_cpu_harden self-check the section requires
+     *    (a real violation here would record + halt this AP; the BSP raises the
+     *    bug-check via cpu_cr_pin_check()). */
+    cpu_pin_control_regs();
+    cr0_verify_pinned();
+    cr4_verify_pinned();
 
     /* No serial output here: ap_cpu_harden() runs on the AP with IRQs masked
      * around the online transition, and klog -> serial_write busy-waits on

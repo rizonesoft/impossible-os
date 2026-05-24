@@ -24,6 +24,7 @@ extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/pmc.h"
 #include "kernel/kpti.h"
 #include "kernel/smp.h"
+#include "kernel/cpu_regs.h"
 #include "kernel/msr.h"
 #include "kernel/mm/memops.h"
 #include "kernel/mm/vmm.h"
@@ -215,6 +216,41 @@ static void test_global_feature_mask_has_required(void)
                    "global intersection retains every required feature");
     TEST_ASSERT_EQ(g & ~(g_cpu.flags & (uint64_t)CPU_FEATURES_AP_PROBE_MASK), 0,
                    "global intersection is a subset of the BSP probed features");
+}
+
+/* ---- S7 (TODO-09-boot): CR0/CR4 safety-bit pinning ---- */
+
+/* After boot the BSP pinned CR0.WP. Read-only: the pinned mask in per_cpu_data
+ * must include CR0_WP and CR0.WP must actually be set. Does NOT call the
+ * verifiers (they bug-check on a cleared pin -- panic-on-clear is a manual
+ * debug-build test). */
+static void test_cr0_wp_pinned(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+    uint64_t cr0;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    TEST_ASSERT(cpu->cr0_pinned & CR0_WP,
+                "BSP pinned mask includes CR0.WP (cr0_pinned & CR0_WP)");
+    TEST_ASSERT(cr0 & CR0_WP, "CR0.WP is actually set on the BSP");
+}
+
+/* Every bit the BSP pinned in CR0 must still be set (pins hold post-boot). */
+static void test_cr0_pins_held(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+    uint64_t cr0, m = cpu->cr0_pinned;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    TEST_ASSERT_EQ(cr0 & m, m, "all pinned CR0 bits remain set");
+}
+
+/* Every bit the BSP pinned in CR4 must still be set, and the pinned mask must
+ * be a subset of the live CR4 (only actually-enabled bits get pinned). */
+static void test_cr4_pins_held(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+    uint64_t cr4, m = cpu->cr4_pinned;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    TEST_ASSERT_EQ(cr4 & m, m, "all pinned CR4 bits remain set");
 }
 
 /* ---- S2: AVX2 memops ---- */
@@ -1397,6 +1433,14 @@ void test_register_x86(void)
         test_required_subset_of_probe, TEST_CAT_X86);
     test_suite_register_cat("AP features: global intersection retains required",
         test_global_feature_mask_has_required, TEST_CAT_X86);
+
+    /* S7 (TODO-09-boot): CR0/CR4 safety-bit pinning */
+    test_suite_register_cat("CR pin: CR0.WP pinned + set",
+        test_cr0_wp_pinned, TEST_CAT_X86);
+    test_suite_register_cat("CR pin: pinned CR0 bits held",
+        test_cr0_pins_held, TEST_CAT_X86);
+    test_suite_register_cat("CR pin: pinned CR4 bits held",
+        test_cr4_pins_held, TEST_CAT_X86);
 
     /* S2: AVX2 memops */
     test_suite_register_cat("AVX2: memcpy_avx correctness",

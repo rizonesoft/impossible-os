@@ -126,6 +126,36 @@ uint64_t cpu_feature_global_mask(void);
  * feature-safe (an AP cannot bug-check itself -- see cpu_validate_ap_features). */
 void cpu_features_check_ap_faults(void);
 
+/* ---- CR0/CR4 safety-bit pinning (TODO-09-boot S7) ---- */
+
+/* Pin the CALLING CPU's CR0.WP + enabled CR4 security bits (SMEP/SMAP/UMIP/
+ * FSGSBASE/CET) into per_cpu_data and arm enforcement. Per-CPU: each CPU pins
+ * only the bits it actually has set, so a feature-skewed AP never bug-checks on
+ * a bit it lacks. Called on the BSP at end of Phase 1 (after XSAVE/PCID) and on
+ * each AP at the tail of ap_cpu_harden(). */
+void cpu_pin_control_regs(void);
+
+/* Pin-aware control-register writes: when pinning is active they force the
+ * calling CPU's pinned bits back on, so a write that tries to clear a pinned
+ * bit is corrected. All post-pin kernel CR0/CR4 writes should use these. */
+void cr0_write_safe(uint64_t val);
+void cr4_write_safe(uint64_t val);
+
+/* Verify the calling CPU's pinned CR0/CR4 bits are still set. On the BSP a
+ * cleared pin raises BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION directly; on an AP
+ * it records the fault + halts and the BSP raises it via cpu_cr_pin_check()
+ * (an AP must not run the panic path -- it uses BSP-global XCR0/SIMD). No-op
+ * until the calling CPU has pinned. */
+void cr0_verify_pinned(void);
+void cr4_verify_pinned(void);
+
+/* BSP-side: raise the bug-check if any AP recorded a CR-pin violation. */
+void cpu_cr_pin_check(void);
+
+/* BSP periodic hook (LAPIC timer ISR; AP timers are masked): verify the BSP's
+ * own pins and poll for AP-recorded faults. */
+void cpu_cr_pin_tick(void);
+
 /* Verify one AP's buffered snapshot against the BSP baseline (warn-only on
  * EFER.NXE / required-CR4 / PAT drift) and emit its "[AP%u] CPU hardening
  * applied ..." audit line. Called by the BSP for each online AP after SMP

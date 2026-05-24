@@ -85,6 +85,20 @@ void timer_unregister_tick_callback(void)
 
 void timer_tick_callback_fire(void)
 {
+    /* CR0/CR4 safety-bit periodic verify (TODO-09-boot S7). Own counter, NOT
+     * the singleton tick_cb_fn slot below (that is owned by the boot splash and
+     * unregistered at desktop start). The LAPIC timer fires only on the BSP (AP
+     * LAPIC timers are masked), so this is the BSP periodic integrity check;
+     * APs are verified at ap_cpu_harden tail + on #GP. */
+    {
+        extern void cpu_cr_pin_tick(void);
+        static uint32_t cr_pin_counter;
+        if (++cr_pin_counter >= 256) {
+            cr_pin_counter = 0;
+            cpu_cr_pin_tick();
+        }
+    }
+
     if (!tick_cb_fn) return;
     tick_cb_counter++;
     if (tick_cb_counter >= tick_cb_divisor) {

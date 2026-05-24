@@ -68,7 +68,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1                 |  [x]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [x]   |
 | 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [x]   |
-| 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [ ]   |
+| 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [x]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [ ]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [ ]   |
 | 💎  |  10   | AP bringup hardening & robustness                | §4, §6                        |  [ ]   |
@@ -204,7 +204,6 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 
 > **Verified:** 2026-05-24 | commit `dd595e8a` | 6/6 items | build OK | smoke PASS (KVM 2.72s)
 > **Deferred:** [H] AP-side `cpu_enable_*` + TSC_AUX enable gates use BSP-global `cpu_has()` (pre-existing; no #GP on homogeneous HW) -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX")
-> **Deferred:** [M] CR4.OSXSAVE hardcoded `(1<<18)` in `cpuid.c`, not a shared define -> XREF: 01-boot-platform/TODO-09 §7 (item: "Add `CR0_WP` (bit 16), `CR4_UMIP` (bit 11), `CR4_FSGSBASE` (bit 16), `CR4_CET` (bit 23) to a shared header")
 > **Deferred:** [H] sparse-slot dense `smp_cpu_count()` after a partial AP timeout (pre-existing; AP hardening unaffected) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Sparse-slot accounting: `smp_cpu_count()` is a dense online count")
 > **Deferred:** [M] timed-out AP can go live-but-uncounted (pre-existing degraded bringup) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()`")
 > **Quality reviewed:** 2026-05-24 | Codex ~20x (adversarial, consistency, perf, re-adversarial) converged | AP serial + online-publication hardened to a single release/acquire `is_online` signal; 5H+6M+1L fixed, 2H+2M deferred-XREF | scope: kernel-code-quality
@@ -273,7 +272,7 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 > - Scope boundary: §6 owns DETECTION (validate + intersection + bug-check); §10 owns AP-local CR4-enable gating; `02-kernel-core/TODO-09 §9` owns topology core_type consumption; TODO-08 §3 owns TSC sync.
 > **Verified:** 2026-05-24 | commit `eeba36a1` | 9/9 items | build OK | smoke PASS (KVM 2.45s); SMP -smp 2 AP1 online + validation OK
 > **Accepted:** [H] optional CR4/MSR skew (CR4.UMIP via cpu_enable_umip, TSC_AUX MSR) still BSP-global-gated in cpu_harden/ap_apply_msr_profile -> #GP on a genuinely feature-skewed AP (pre-existing from §4; not a homogeneous/real-HW case; §6 detects + excludes from the global mask) -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX" at line 350)
-> **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 276)
+> **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 275)
 > **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -282,18 +281,27 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 
 Linux pins CR0.WP and CR4 bits (SMEP, SMAP, UMIP, FSGSBASE, CET) after boot to prevent rootkits from disabling protection by writing the control registers. Windows HAL protects equivalent bits. Impossible OS has no post-boot protection -- a kernel exploit can trivially clear CR4.SMEP and execute user pages, OR clear CR0.WP and write through `PTE.W=0` (classic rootkit primitive for patching read-only kernel text).
 
-- [ ] Add `CR0_WP` (bit 16), `CR4_UMIP` (bit 11), `CR4_FSGSBASE` (bit 16), `CR4_CET` (bit 23) to a shared header alongside existing `CR4_SMEP`/`CR4_SMAP`
-- [ ] Define `cr0_pinned_mask` (includes `CR0_WP`) and `cr4_pinned_mask` (SMEP/SMAP/UMIP/FSGSBASE/CET; only bits for features actually enabled) in `cpu_security.c`
-- [ ] Populate both masks at end of Phase 1 (BSP) AFTER §5 (XSAVE/PCID) so `CR4.OSXSAVE`/`CR4.PCIDE` are set first; set `cr_pinning_active = true`
-- [ ] Define `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION = 0x109`
-- [ ] Implement `cr0_verify_pinned()` + `cr4_verify_pinned()`: panic with `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION` when any pinned bit clears, logging the register + bit name
-- [ ] Implement `cr0_write_safe()` + `cr4_write_safe()` wrappers; all kernel writes use them after pinning is active. Rollback knob: clear `cr_pinning_active` if false panics surface
-- [ ] Call both verifiers from: (a) `#GP` handler return, (b) LAPIC timer DPC tick, (c) each AP after `ap_cpu_harden()`
-- [ ] Add `POSTCODE_CR_PINNED = 0x39` to `boot_init.h`; debug `POST16(0xD400)/(0xD401)` around pinning activation (`0xD7xx` reserved for xhci.c)
-- [ ] Verify (serial log): `[Phase1] CR0/CR4 pinned: cr0_mask=0x... cr4_mask=0x...` after XSAVE/PCID; debug-build test of `write_cr0(cr0 & ~CR0_WP)` and `write_cr4(cr4 & ~CR4_SMEP)` both trigger `CRITICAL_STRUCTURE_CORRUPTION`
-- [ ] Commit: `"boot: CR0.WP + CR4 safety-bit pinning with CRITICAL_STRUCTURE_CORRUPTION panic"`
+- [x] Shared `include/kernel/cpu_regs.h` with `CR0_*` + `CR4_*` bit defines (single source of truth); `cpu_security.c` + `cpuid.c` use it (cpuid.c's hardcoded `(1<<18)` -> `CR4_OSXSAVE`)
+- [x] Per-CPU pin masks in `per_cpu_data` (`cr0_pinned`/`cr4_pinned`), NOT a global mask: each CPU pins only the bits IT has, so a skewed AP pins fewer rather than bug-checking (design review). cr4 = live CR4 & (SMEP|SMAP|UMIP|FSGSBASE|CET)
+- [x] `cpu_pin_control_regs()` pins the calling CPU + sets global `cr_pinning_active`; called at end of `boot_phase1` AFTER XSAVE/PCID (BSP) and at the tail of `ap_cpu_harden()` (each AP)
+- [x] `BUGCHECK_CRITICAL_STRUCTURE_CORRUPTION = 0x109` (bugcheck.h + panic.c name table)
+- [x] `cr0_verify_pinned()`/`cr4_verify_pinned()`: BSP bug-checks directly; an AP records the fault + halts and the BSP raises it via `cpu_cr_pin_check()` (an AP must not run the panic path -- design review)
+- [x] `cr0_write_safe()`/`cr4_write_safe()`: force the calling CPU's pinned bits on when active. Rollback knob: clear `cr_pinning_active`. (No post-pin raw CR writes today; wrappers are the path for future ones)
+- [x] Verifiers called from: (a) `isr_handler` #GP (vec 13) return, (b) BSP LAPIC timer tick via `cpu_cr_pin_tick()` (dedicated hook, not the singleton splash callback), (c) each AP at `ap_cpu_harden()` tail
+- [x] `POSTCODE_CR_PINNED = 0x39` (boot_init.h); `POST16(0xD400)/(0xD401)` around BSP pinning
+- [x] Verify (serial log): `[Phase1] CR0/CR4 pinned: cr0_mask=0x10000 cr4_mask=0x800` on KVM (CR0.WP + CR4.UMIP); panic-on-clear is a manual debug-build test (KeBugCheckEx halts -- cannot run in the unit harness)
+- [x] Commit: `"boot: CR0.WP + CR4 safety-bit pinning with CRITICAL_STRUCTURE_CORRUPTION panic"`
 
-**Test checkpoint:** Boot completes with `[Phase1] CR0/CR4 pinned: cr0_mask=0x... cr4_mask=0x...` after XSAVE/PCID activation. Debug-build tests clearing CR0.WP or CR4.SMEP both panic with `CRITICAL_STRUCTURE_CORRUPTION`. Verify on QEMU WHPX (SMP), TCG, VirtualBox, bare metal. Bare metal: confirm XSAVE/PCID Phase 1 activation completes before pinning takes effect.
+**Test checkpoint:** Boot completes with `[Phase1] CR0/CR4 pinned: cr0_mask=0x.. cr4_mask=0x..` after XSAVE/PCID activation. Unit tests assert the read-only invariants (CR0.WP pinned + set; all pinned CR0/CR4 bits remain set). Manual debug-build test: a raw `write_cr0(cr0 & ~CR0_WP)` then `cr0_verify_pinned()` panics `CRITICAL_STRUCTURE_CORRUPTION`. Verify on QEMU WHPX (SMP), TCG, VirtualBox, bare metal. Bare metal: confirm XSAVE/PCID Phase 1 activation completes before pinning takes effect.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 78 suites, 0 failures
+
+> **Notes:**
+> - Shipped shared `include/kernel/cpu_regs.h` + `cpu_pin_control_regs()`/`cr0_cr4_write_safe`/`cr0_cr4_verify_pinned`/`cpu_cr_pin_check`/`cpu_cr_pin_tick` in `cpu_security.c`; per-CPU pin masks in `per_cpu_data`; `BUGCHECK 0x109`; `POSTCODE_CR_PINNED`.
+> - BSP pins at end of `boot_phase1` (after XSAVE/PCID), each AP at `ap_cpu_harden` tail; verified on #GP return (idt.c), BSP timer tick (`cpu_cr_pin_tick`), AP tail. AP violations record + halt -> BSP raises 0x109 (panic path is BSP-only-safe).
+> - Resolves the §4-deferred shared-CR-define + cpuid.c OSXSAVE-hardcode item; also fixed a latent AP `cpu_id`-set-too-late bug. Codex design-review adoptions in the commit message.
+> - Canonical doc: this section + `include/kernel/cpu_regs.h` + `src/kernel/cpu_security.c` pinning block.
+> - Scope boundary: §7 owns CR0/CR4 pinning + verify. CET pinned once TODO-10 §9-§10 enables it; AP-local CR4-enable gating stays §10; per-AP periodic verify needs an AP timer tick (today APs verify on #GP + harden tail).
 
 ---
 
@@ -353,6 +361,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 
 - [ ] AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX use global `cpu_has()` today; validate this AP's own CPUID before the privileged CR4/MSR writes to avoid #GP on a skewed AP (→ XREF §4)
 - [ ] After §6 validation passes, force the BSP required-CR4 mask (`s_bsp_required_cr4`, recorded by §4) for AP-proven bits -- closes §4's warn-only CR4 gap (→ XREF §4 `ap_cpu_harden()`, §6 validation)
+- [ ] Periodic CR-pin verification on every online CPU via a BSP->AP verify-IPI from `cpu_cr_pin_tick()` (or a per-AP tick): §7 verifies APs only at `ap_cpu_harden()` tail + on #GP since AP LAPIC timers are masked (→ XREF §7 `cpu_cr_pin_tick`)
 - [ ] Degraded-bringup: a timed-out AP still completes `ap_entry()` (publishes `is_online`+`sti`) and can go live-but-uncounted; add a per-AP accept/abandon state the AP checks before it goes live (→ XREF §4; pre-existing)
 - [ ] Sparse-slot accounting: `smp_cpu_count()` is a dense online count; after a partial timeout, dense-ID consumers (`boot_async_group()`) skip a live high slot -- use a max-slot+1 bound or an online-CPU map (→ XREF §4; pre-existing)
 - [ ] Commit: `"smp: AP bringup hardening -- AP-local gates, CR4 force-after-validation, degraded-bringup robustness"`
@@ -371,8 +380,8 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | XSAVE after VMM ready       | ✅ OSXSAVE post-paging      | ✅ fpu deferred          | ✅ §5 Phase 1 finalize  |
 | 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ✅ §5 CR4.PCIDE set      |
 | 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ✅ §6 BugCheck 0x3E      |
-| 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ⬜ §7 planned           |
-| 💎  | CR0.WP pinning              | ✅ HAL invariant            | ✅ cr0_pinned_bits       | ⬜ §7 planned           |
+| 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ✅ §7 verify + 0x109    |
+| 💎  | CR0.WP pinning              | ✅ HAL invariant            | ✅ cr0_pinned_bits       | ✅ §7 per-CPU pinned    |
 | 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ⬜ §8 planned           |
 | 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ⬜ §8 MTRR bullet       |
 | 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ✅ §6 global AND-mask   |
@@ -381,7 +390,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |
 
-> **§1, §2, §4, §5, §6 complete.** **§6:** `cpu_validate_ap_features()` bug-checks 0x3E on missing required feature / vendor / Long Mode; optional skew flagged on the AP + logged BSP-side; `cpu_features_finalize_global()` publishes the BSP-and-every-online-AP intersection. **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §7--§9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
+> **§1, §2, §4, §5, §6, §7 complete.** **§7:** shared `cpu_regs.h` + per-CPU CR0.WP/CR4 safety-bit pinning (`cpu_pin_control_regs`), verified on #GP return / BSP timer tick / each AP, `CRITICAL_STRUCTURE_CORRUPTION` (0x109) on a cleared pin (BSP raises; APs record + halt). **§6:** `cpu_validate_ap_features()` bug-checks 0x3E on missing required feature / vendor / Long Mode; optional skew flagged on the AP + logged BSP-side; `cpu_features_finalize_global()` publishes the BSP-and-every-online-AP intersection. **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §8, §9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 
 ---
 

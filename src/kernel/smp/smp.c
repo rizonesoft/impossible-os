@@ -131,7 +131,12 @@ void ap_entry(uint32_t cpu_index)
 
     /* Set up GS base to point to this CPU's per_cpu_data */
     pcpu = &cpu_data[cpu_index];
-    pcpu->self = pcpu;  /* self-pointer for gs:0 access */
+    pcpu->self   = pcpu;        /* self-pointer for gs:0 access */
+    pcpu->cpu_id = cpu_index;   /* set BEFORE ap_cpu_harden: cpu_validate_ap_
+                                 * features + the CR-pin BSP/AP fault routing
+                                 * (cpu_id==0 means BSP) read smp_this_cpu()->
+                                 * cpu_id; a late set left it 0 and made an AP
+                                 * look like the BSP. */
 
     /* KPTI: AP gets same kernel CR3 as BSP (shared boot PML4).
      * user_cr3 = kernel_cr3 until allocates per-process PML4. */
@@ -158,8 +163,8 @@ void ap_entry(uint32_t cpu_index)
     lapic_init_ap();
 
     /* Fill per-CPU data (is_online is published LAST, below, as the
-     * authoritative online flag -- see the release store before sti). */
-    pcpu->cpu_id     = cpu_index;
+     * authoritative online flag -- see the release store before sti).
+     * cpu_id was set at entry (before ap_cpu_harden). */
     pcpu->lapic_id   = lapic_id();
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;

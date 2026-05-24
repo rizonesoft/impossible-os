@@ -331,6 +331,19 @@ irql_restore:
     if (vec >= 32 && pcpu->current_irql != prev_irql)
         pcpu->current_irql = prev_irql;
 
+    /* ---- CR0/CR4 safety-bit verify on #GP return (TODO-09-boot S7) ----
+     * A #GP is the classic symptom of a kernel exploit having just cleared a
+     * protection bit (CR4.SMEP to run user pages, CR0.WP to patch RO text).
+     * Re-check the calling CPU's pinned bits before returning; a cleared pin
+     * bug-checks CRITICAL_STRUCTURE_CORRUPTION (BSP) or records + halts (AP).
+     * No-op until pinning is active / this CPU has pinned. */
+    if (vec == 13) {
+        extern void cr0_verify_pinned(void);
+        extern void cr4_verify_pinned(void);
+        cr0_verify_pinned();
+        cr4_verify_pinned();
+    }
+
     /* ---- -18 iretq invariants ----
      * Before the asm stub's swapgs + iretq returns to ring 3, verify
      * the two selector invariants that are cheap to check from C (the

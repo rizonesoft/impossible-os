@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     328 |     184807 |
-| **Headers** (`.h`)    |     234 |      45950 |
+| **C sources** (`.c`)  |     328 |     185049 |
+| **Headers** (`.h`)    |     235 |      46024 |
 | **Assembly** (`.asm`) |       7 |        763 |
-| **Subtotal**          | **569** | **231520** |
+| **Subtotal**          | **570** | **231836** |
 
 ## SDK Tools
 
@@ -46,21 +46,21 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     386 |     103662 |
+| **Markdown** (`.md`)        |     386 |     103671 |
 | **JSON** (`.json`)          |      11 |        766 |
 | **YAML** (`.yml`/`.yaml`)   |      12 |       1199 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **432** | **181830** |
+| **Subtotal**                | **432** | **181839** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **819** | **304371** |
-| **Supporting text + metadata** |  **432** | **181830** |
-| **All counted text files**     | **1251** | **486201** |
+| **Core code + tooling**        |  **820** | **304687** |
+| **Supporting text + metadata** |  **432** | **181839** |
+| **All counted text files**     | **1252** | **486526** |
 
 > Vendored code excluded: ~14013 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               304,371 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               304,687 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 2 month(s), 19 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 304,371
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 304,687
 > lines of core code and tooling would take **140 developers** working for **2 month(s), 19 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-05-24 21:09 · commit `2a2daa2b`*
+*Last updated: 2026-05-24 21:58 · commit `6bf91275`*

@@ -11,6 +11,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/klog.h"
 #include "kernel/msr.h"
+#include "kernel/cpu_regs.h"   /* CR4_OSXSAVE (shared CR-bit defines) */
 
 /* Global CPU features -- zero-initialized at startup */
 struct cpu_features g_cpu;
@@ -416,11 +417,11 @@ void cpu_configure_xcr0(void)
     if (!cpu_has(CPU_FEATURE_XSAVE))
         return;
 
-    /* Set CR4.OSXSAVE (bit 18) to enable XGETBV/XSETBV */
+    /* Set CR4.OSXSAVE to enable XGETBV/XSETBV */
     {
         uint64_t cr4;
         __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
-        cr4 |= (1UL << 18);
+        cr4 |= CR4_OSXSAVE;
         __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
     }
 

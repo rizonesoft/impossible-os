@@ -152,6 +152,13 @@ struct per_cpu_data {
     uint8_t           feature_mismatch;    /* 1 = BSP has an optional probed feature this AP lacks */
     uint8_t           _feat_pad[2];        /* alignment */
 
+    /* CR0/CR4 safety-bit pinning (TODO-09-boot S7). Per-CPU: each CPU pins the
+     * bits IT actually has set (skew-safe -- a feature-skewed AP pins fewer
+     * bits, no false bug-check). 0 = not yet pinned (no enforcement). Written
+     * once by the owning CPU at pin time; read by that CPU's verify path. */
+    uint64_t          cr0_pinned;          /* CR0 bits to keep set on this CPU (CR0_WP) */
+    uint64_t          cr4_pinned;          /* CR4 security bits to keep set on this CPU */
+
 #ifdef KERNEL_TESTS
     /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
      * On each kmalloc() call, a non-zero value decrements; when the
