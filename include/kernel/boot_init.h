@@ -87,6 +87,7 @@ typedef enum {
  * named for clarity in the TODO-09 cpu-boot-sequencing activation-order section. */
 #define POSTCODE_CPU_HARDEN_DONE POST16_CPU_HARDEN_OK
 #define POSTCODE_BOOT_CFG       0x26
+#define POSTCODE_AP_VALIDATE    0x27  /* AP feature consistency validation (TODO-09-boot S6) */
 #define POSTCODE_GDT_INIT       0x30
 #define POSTCODE_IDT_INIT       0x31
 #define POSTCODE_ACPI_INIT      0x32

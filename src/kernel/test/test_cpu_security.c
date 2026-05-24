@@ -181,6 +181,42 @@ static void test_cr3_pcid_zero(void)
                    "CR3[11:0] == 0 (PCID stays 0 until TODO-10 S7 tagging)");
 }
 
+/* ---- S6 (TODO-09-boot): AP feature consistency validation ---- */
+
+/* The BSP must satisfy every required baseline feature (it passed the Phase-0
+ * minimum check and is executing in long mode). Read-only invariant on
+ * g_cpu.flags; does not invoke the AP validation path. */
+static void test_required_mask_subset_of_bsp(void)
+{
+    extern struct cpu_features g_cpu;
+    TEST_ASSERT_EQ(g_cpu.flags & CPU_FEATURES_REQUIRED_MASK,
+                   (uint64_t)CPU_FEATURES_REQUIRED_MASK,
+                   "BSP flags include every CPU_FEATURES_REQUIRED_MASK bit");
+}
+
+/* The probe mask must be a superset of the required mask, or a passing
+ * AP probe could omit a required bit the validator then never checks. */
+static void test_required_subset_of_probe(void)
+{
+    TEST_ASSERT_EQ(CPU_FEATURES_REQUIRED_MASK & CPU_FEATURES_AP_PROBE_MASK,
+                   (uint64_t)CPU_FEATURES_REQUIRED_MASK,
+                   "CPU_FEATURES_REQUIRED_MASK is a subset of CPU_FEATURES_AP_PROBE_MASK");
+}
+
+/* After cpu_features_finalize_global() runs in smp_init, the published global
+ * intersection must still carry every required bit (all online CPUs have them
+ * or boot bug-checked) and must be a subset of the BSP's probed features. */
+static void test_global_feature_mask_has_required(void)
+{
+    extern struct cpu_features g_cpu;
+    uint64_t g = cpu_feature_global_mask();
+    TEST_ASSERT_EQ(g & CPU_FEATURES_REQUIRED_MASK,
+                   (uint64_t)CPU_FEATURES_REQUIRED_MASK,
+                   "global intersection retains every required feature");
+    TEST_ASSERT_EQ(g & ~(g_cpu.flags & (uint64_t)CPU_FEATURES_AP_PROBE_MASK), 0,
+                   "global intersection is a subset of the BSP probed features");
+}
+
 /* ---- S2: AVX2 memops ---- */
 
 static void test_memcpy_avx_correctness(void)
@@ -1353,6 +1389,14 @@ void test_register_x86(void)
         test_cr4_pcide, TEST_CAT_X86);
     test_suite_register_cat("PCID: CR3[11:0] stays 0 (no tagging yet)",
         test_cr3_pcid_zero, TEST_CAT_X86);
+
+    /* S6 (TODO-09-boot): AP feature consistency validation */
+    test_suite_register_cat("AP features: BSP satisfies required mask",
+        test_required_mask_subset_of_bsp, TEST_CAT_X86);
+    test_suite_register_cat("AP features: required is subset of probe mask",
+        test_required_subset_of_probe, TEST_CAT_X86);
+    test_suite_register_cat("AP features: global intersection retains required",
+        test_global_feature_mask_has_required, TEST_CAT_X86);
 
     /* S2: AVX2 memops */
     test_suite_register_cat("AVX2: memcpy_avx correctness",

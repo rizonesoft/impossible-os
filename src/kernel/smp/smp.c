@@ -232,6 +232,10 @@ void smp_init(void)
         cpu_data[0].current_task  = (void *)0;
         msr_write(MSR_IA32_GS_BASE, (uint64_t)(uintptr_t)&cpu_data[0]);
         total_cpus = 1;
+        /* No APs to validate; the global feature intersection is just the BSP's
+         * probed feature set (TODO-09-boot S6). Publish it so consumers and the
+         * cpu_feature_global_mask() query are valid on single-CPU systems. */
+        cpu_features_finalize_global();
         return;
     }
 
@@ -430,6 +434,16 @@ void smp_init(void)
         }
         total_cpus = 1 + online;
     }
+
+    /* If any AP failed feature validation it recorded the fault and halted
+     * (it could not bug-check itself safely); raise 0x3E here on the BSP where
+     * the panic path is feature-safe (TODO-09-boot S6). No-op if all APs passed. */
+    cpu_features_check_ap_faults();
+
+    /* Publish the global feature intersection now that the online set is fixed
+     * (TODO-09-boot S6). Done here, after the is_online acquire pass above, so
+     * a late/timed-out AP cannot downgrade the published mask. */
+    cpu_features_finalize_global();
 
     klog(LOG_INFO, "smp", "%u CPUs online (BSP + %u APs)",
          (uint64_t)total_cpus, (uint64_t)(total_cpus - 1));

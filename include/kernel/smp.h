@@ -142,6 +142,16 @@ struct per_cpu_data {
     uint32_t          msr_profile_applied; /* count of BSP profile MSRs replayed */
     uint32_t          _harden_pad;         /* alignment */
 
+    /* AP feature consistency (TODO-09-boot S6). Published by the AP in
+     * cpu_validate_ap_features() (top of ap_cpu_harden), read by the BSP after
+     * the is_online acquire pass. Per-CPU (only the owning CPU writes), so no
+     * lock; visibility rides the same is_online release/acquire edge as the
+     * boot snapshot above. */
+    uint64_t          features;            /* security-critical CPUID subset (CPU_FEATURES_AP_PROBE_MASK layout) */
+    uint8_t           core_type;           /* CORE_TYPE_P / _E / _GENERIC from CPUID 0x1A */
+    uint8_t           feature_mismatch;    /* 1 = BSP has an optional probed feature this AP lacks */
+    uint8_t           _feat_pad[2];        /* alignment */
+
 #ifdef KERNEL_TESTS
     /* Per-CPU kmalloc fault-injection countdown. 0 disables the hook.
      * On each kmalloc() call, a non-zero value decrements; when the

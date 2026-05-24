@@ -368,6 +368,45 @@ void cpuid_init(void)
     (void)cpuid_memcpy;
 }
 
+/* ---- AP feature probe (TODO-09-boot S6) -------------------------------- */
+
+/* Re-probe the security-critical feature subset on the calling CPU into a
+ * LOCAL mask (never g_cpu). Bit positions mirror cpuid_init() exactly so the
+ * AP mask and the BSP g_cpu.flags are directly comparable -- keep these in
+ * lockstep with the set_flag_if() calls in cpuid_init() above. Only the
+ * CPU_FEATURES_AP_PROBE_MASK subset is probed (this section validates
+ * security-critical mismatches, not the full feature set). */
+uint64_t cpuid_probe_ap_features(void)
+{
+    uint32_t eax, ebx, ecx, edx, max_leaf, max_ext;
+    uint64_t m = 0;
+
+    cpuid_raw(0x00000000, 0, &max_leaf, &ebx, &ecx, &edx);
+    if (max_leaf >= 0x01) {
+        cpuid_raw(0x01, 0, &eax, &ebx, &ecx, &edx);
+        set_flag_if(&m, CPU_FEATURE_SSE2,  edx, 26);
+        set_flag_if(&m, CPU_FEATURE_XSAVE, ecx, 26);
+        set_flag_if(&m, CPU_FEATURE_AVX,   ecx, 28);
+        set_flag_if(&m, CPU_FEATURE_PCID,  ecx, 17);
+    }
+    if (max_leaf >= 0x07) {
+        cpuid_raw(0x07, 0, &eax, &ebx, &ecx, &edx);
+        set_flag_if(&m, CPU_FEATURE_SMEP,    ebx,  7);
+        set_flag_if(&m, CPU_FEATURE_AVX512F, ebx, 16);
+        set_flag_if(&m, CPU_FEATURE_SMAP,    ebx, 20);
+        set_flag_if(&m, CPU_FEATURE_UMIP,    ecx,  2);
+        set_flag_if(&m, CPU_FEATURE_PKU,     ecx,  3);
+    }
+    cpuid_raw(0x80000000, 0, &max_ext, &ebx, &ecx, &edx);
+    if (max_ext >= 0x80000001) {
+        cpuid_raw(0x80000001, 0, &eax, &ebx, &ecx, &edx);
+        set_flag_if(&m, CPU_FEATURE_SYSCALL, edx, 11);
+        set_flag_if(&m, CPU_FEATURE_NX,      edx, 20);
+        set_flag_if(&m, CPU_FEATURE_LM,      edx, 29);
+    }
+    return m & CPU_FEATURES_AP_PROBE_MASK;
+}
+
 /* ---- XCR0 configuration ------------------------------------------------ */
 
 void cpu_configure_xcr0(void)

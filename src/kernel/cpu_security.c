@@ -12,6 +12,8 @@
 #include "kernel/klog.h"
 #include "kernel/security/pku.h"
 #include "kernel/smp.h"                 /* per_cpu_data, smp_get_cpu() for AP hardening */
+#include "kernel/bugcheck.h"            /* KeBugCheckEx for AP feature validation (S6) */
+#include "kernel/topology.h"            /* CORE_TYPE_* for AP core-type probe (S6) */
 #ifdef KERNEL_TESTS
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
@@ -510,6 +512,20 @@ static uint64_t s_bsp_xcr0;
 static uint64_t s_bsp_required_cr4;   /* s_bsp_cr4 & CR4_UNIFORM_MASK */
 static int      s_bsp_profile_ready;
 
+/* AP feature consistency (TODO-09-boot S6). Global intersection = BSP & every
+ * online AP within CPU_FEATURES_AP_PROBE_MASK; 0 until cpu_features_finalize_
+ * global() publishes it BSP-side after the online acquire pass. */
+static uint64_t s_global_feature_mask;
+
+/* AP feature-validation fault hand-off (TODO-09-boot S6). An AP that fails the
+ * required/vendor/Long-Mode gate cannot bug-check itself (the panic path uses
+ * BSP-global XCR0/SIMD that #GP/#UD on a skewed AP), so it records the fault
+ * here and halts; the BSP raises the 0x3E bug-check in
+ * cpu_features_check_ap_faults() where the panic path is safe. */
+static volatile uint32_t s_ap_fault_cpu;     /* 0 = none, else cpu_id + 1 */
+static volatile uint64_t s_ap_fault_feat;    /* failing AP's probed mask */
+static volatile uint32_t s_ap_fault_reason;  /* 1 = vendor, 2 = Long Mode, 3 = required */
+
 void cpu_record_bsp_profile(void)
 {
     uint32_t i;
@@ -674,6 +690,140 @@ static uint32_t ap_apply_msr_profile(uint32_t cpu_id)
     return applied;
 }
 
+/* ---- AP feature consistency validation (TODO-09-boot S6) --------------- */
+
+uint64_t cpu_feature_global_mask(void)
+{
+    return __atomic_load_n(&s_global_feature_mask, __ATOMIC_ACQUIRE);
+}
+
+void cpu_validate_ap_features(uint32_t cpu_id)
+{
+    extern struct cpu_features g_cpu;
+    struct per_cpu_data *pc = smp_get_cpu(cpu_id);
+    uint32_t eax, ebx, ecx, edx, max_leaf;
+    uint64_t ap_feat;
+    uint8_t  core_type = CORE_TYPE_GENERIC;
+    char     vendor[13];
+    int      vendor_ok;
+
+    /* No POST16 here: POST16 -> post_display16 -> fb_fill_rect draws to the
+     * framebuffer with the BSP-selected SIMD path (AVX-512), which #UDs on an
+     * AP whose XCR0/AVX-512 the caller has not enabled yet, and races other
+     * CPUs on the shared FB corner. POST16 is a BSP pre-klog triple-fault aid;
+     * AP feature validation is diagnosed BSP-side by ap_cpu_harden_log(). */
+
+    /* AP-local probe (does NOT touch g_cpu). */
+    ap_feat = cpuid_probe_ap_features();
+
+    /* Vendor string (leaf 0: EBX, EDX, ECX) + core type (leaf 0x1A). */
+    cpuid_raw(0x00000000, 0, &max_leaf, &ebx, &ecx, &edx);
+    {
+        uint32_t *v = (uint32_t *)vendor;
+        v[0] = ebx; v[1] = edx; v[2] = ecx;
+        vendor[12] = '\0';
+    }
+    if (max_leaf >= 0x1A) {
+        cpuid_raw(0x1A, 0, &eax, &ebx, &ecx, &edx);
+        uint8_t t = (uint8_t)((eax >> 24) & 0xFF);
+        if (t == CORE_TYPE_P || t == CORE_TYPE_E)
+            core_type = t;
+    }
+
+    if (pc) {
+        pc->features         = ap_feat;
+        pc->core_type        = core_type;
+        pc->feature_mismatch = 0;
+    }
+
+    /* Fatal gate: vendor must match the BSP, Long Mode must be present, and
+     * every required baseline feature must be set. A CPU failing any of these
+     * cannot run the kernel safely. The AP must NOT KeBugCheckEx() itself: the
+     * panic path captures FPU via the BSP-global XCR0 (panic_capture_fpu_state)
+     * and draws via the BSP-global SIMD framebuffer path, both of which #GP/#UD
+     * on exactly this feature-skewed AP. Instead record the fault and halt this
+     * AP locally (no FB/FPU/serial); the BSP raises the 0x3E bug-check from
+     * cpu_features_check_ap_faults() after bringup, where the panic path is
+     * safe. The halted AP never sets is_online, so it is excluded regardless. */
+    vendor_ok = 1;
+    for (uint32_t k = 0; k < 12; k++) {
+        if (vendor[k] != g_cpu.vendor[k]) { vendor_ok = 0; break; }
+    }
+    if (!vendor_ok ||
+        !(ap_feat & (1ULL << CPU_FEATURE_LM)) ||
+        (ap_feat & CPU_FEATURES_REQUIRED_MASK) != CPU_FEATURES_REQUIRED_MASK) {
+        s_ap_fault_feat   = ap_feat;
+        s_ap_fault_reason = !vendor_ok ? 1u
+                          : !(ap_feat & (1ULL << CPU_FEATURE_LM)) ? 2u : 3u;
+        __atomic_store_n(&s_ap_fault_cpu, cpu_id + 1, __ATOMIC_RELEASE);
+        for (;;)
+            __asm__ volatile ("cli; hlt");
+    }
+
+    /* Optional skew within the probed subset: any optional feature the BSP has
+     * that this AP lacks. Flag only (no AP serial output); the BSP logs it via
+     * ap_cpu_harden_log() and the global intersection (finalize) prevents
+     * kernel-wide reliance on it. */
+    {
+        uint64_t bsp_opt = g_cpu.flags & CPU_FEATURES_AP_PROBE_MASK &
+                           ~(uint64_t)CPU_FEATURES_REQUIRED_MASK;
+        if (pc && (bsp_opt & ~ap_feat) != 0)
+            pc->feature_mismatch = 1;
+    }
+}
+
+void cpu_features_finalize_global(void)
+{
+    extern struct cpu_features g_cpu;
+    uint64_t m = g_cpu.flags & CPU_FEATURES_AP_PROBE_MASK;   /* BSP is the base */
+    uint32_t i;
+
+    /* AND in every ONLINE AP's published features. Scan ALL slots, not
+     * smp_cpu_count(): that returns the dense online COUNT (1 + online), so on
+     * a sparse online set (e.g. AP1 timed out, AP2 online) a count-bounded loop
+     * would skip the higher-id online AP and publish an over-broad mask.
+     * is_online (acquire) gates each slot; never-started slots are zeroed BSS. */
+    for (i = 1; i < MAX_CPUS; i++) {
+        struct per_cpu_data *pc = smp_get_cpu(i);
+        if (pc && __atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE))
+            m &= pc->features;
+    }
+
+    /* xstate-dependent features are usable only if the OS enabled the backing
+     * XCR0 component -- CPUID presence alone is not enough (e.g. AVX-512 cleared
+     * by simd_enable_avx512()'s throttle guard). The published mask promises
+     * "safe to USE on every online CPU", so clear any xstate feature whose XCR0
+     * component is not active. XCR0 is uniform across CPUs (ap_apply_xcr0
+     * replicates the BSP mask), so the BSP's g_cpu.xcr0_active is authoritative. */
+    {
+        uint64_t xcr0 = g_cpu.xcr0_active;
+        if (xcr0 == 0)                                m &= ~(1ULL << CPU_FEATURE_XSAVE);
+        if (!(xcr0 & (1ULL << 2)))                    m &= ~(1ULL << CPU_FEATURE_AVX);
+        if ((xcr0 & (7ULL << 5)) != (7ULL << 5))      m &= ~(1ULL << CPU_FEATURE_AVX512F);
+        if (!(xcr0 & (1ULL << 9)))                    m &= ~(1ULL << CPU_FEATURE_PKU);
+    }
+
+    __atomic_store_n(&s_global_feature_mask, m, __ATOMIC_RELEASE);
+    klog(LOG_INFO, "smp",
+         "Global CPU feature intersection 0x%lx (probe mask 0x%lx)",
+         m, (uint64_t)CPU_FEATURES_AP_PROBE_MASK);
+}
+
+/* BSP-side: if any AP recorded a feature-validation fault and halted, raise the
+ * 0x3E bug-check here (panic path is safe on the BSP). Call after SMP bringup. */
+void cpu_features_check_ap_faults(void)
+{
+    uint32_t c = __atomic_load_n(&s_ap_fault_cpu, __ATOMIC_ACQUIRE);
+    if (!c)
+        return;
+    klog(LOG_FATAL, "smp",
+         "[AP%u] feature validation FAILED (reason %u: 1=vendor 2=LongMode 3=required, feat=0x%lx)",
+         (uint64_t)(c - 1), (uint64_t)s_ap_fault_reason, s_ap_fault_feat);
+    KeBugCheckEx(BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED,
+                 (uint64_t)(c - 1), s_ap_fault_feat,
+                 (uint64_t)CPU_FEATURES_REQUIRED_MASK, (uint64_t)s_ap_fault_reason);
+}
+
 void ap_cpu_harden(uint32_t cpu_id)
 {
     struct per_cpu_data *pc;
@@ -684,6 +834,17 @@ void ap_cpu_harden(uint32_t cpu_id)
      *    cpu_enable_pku() sees this AP's real PKRU xstate -- otherwise the
      *    AP could set CR4.PKE while its XCR0 lacks the PKRU component. */
     ap_apply_xcr0();
+
+    /* 1b. Validate this AP's CPUID against the BSP baseline BEFORE the optional
+     *     CR4/MSR enables in cpu_harden() (publish-before-enable). ap_apply_xcr0()
+     *     is feature-gated (intersects this AP's CPUID), so it enables nothing
+     *     the AP lacks and does not pre-empt this check. On a required/vendor/
+     *     Long-Mode failure the AP records the fault and halts (no self
+     *     bug-check -- the panic path uses BSP-global XCR0/SIMD that would
+     *     #GP/#UD on a skewed AP); the BSP raises 0x3E via
+     *     cpu_features_check_ap_faults(). Optional skew is flagged (no AP
+     *     serial); the BSP logs it. */
+    cpu_validate_ap_features(cpu_id);
 
     /* 2. Gated security feature enables -- same path the BSP took, idempotent
      *    and per-feature CPUID-gated (NX/UMIP/PKU/PAT, then SMEP/SMAP). Each
@@ -779,6 +940,24 @@ void ap_cpu_harden_log(uint32_t cpu_id)
     klog(LOG_INFO, "smp",
          "[AP%u] CPU hardening applied EFER=0x%lx CR4=0x%lx PAT=0x%lx XCR0=0x%lx MSRs=%u",
          (uint64_t)cpu_id, efer, cr4, pat, xcr0, (uint64_t)applied);
+
+    /* AP feature consistency result (S6). The AP buffered features/mismatch in
+     * cpu_validate_ap_features(); a missing-required mismatch would already
+     * have bug-checked, so reaching here means required features are present. */
+    {
+        extern struct cpu_features g_cpu;
+        if (pc->feature_mismatch) {
+            uint64_t bsp_opt = g_cpu.flags & CPU_FEATURES_AP_PROBE_MASK &
+                               ~(uint64_t)CPU_FEATURES_REQUIRED_MASK;
+            klog(LOG_WARN, "smp",
+                 "[AP%u] FEATURE MISMATCH: BSP optional 0x%lx, AP 0x%lx, missing 0x%lx (core_type 0x%x)",
+                 (uint64_t)cpu_id, bsp_opt, pc->features,
+                 bsp_opt & ~pc->features, (uint64_t)pc->core_type);
+        } else {
+            klog(LOG_INFO, "smp", "[AP%u] Feature validation OK (core_type 0x%x)",
+                 (uint64_t)cpu_id, (uint64_t)pc->core_type);
+        }
+    }
 }
 
 #ifdef KERNEL_TESTS

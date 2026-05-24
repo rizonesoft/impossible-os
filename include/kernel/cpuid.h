@@ -98,6 +98,31 @@ enum cpu_feature {
     CPU_FEATURE_COUNT     = 54    /* total features tracked */
 };
 
+/* --- AP feature consistency masks (TODO-09-boot S6) --------------------- */
+
+/* Architectural baseline every CPU (BSP + every AP) MUST share. A CPU missing
+ * any of these cannot run the kernel safely -> BUGCHECK_MULTIPROCESSOR_
+ * CONFIGURATION_NOT_SUPPORTED. PAE/PGE/LAHF/CMPXCHG16B are NOT separately
+ * tracked here: they are prerequisites of x86-64 long mode itself, so a CPU
+ * lacking them never reaches kernel C code (it could not have entered long
+ * mode). LM is included as the explicit Linux verify_cpu.S-style guard. */
+#define CPU_FEATURES_REQUIRED_MASK \
+    ((1ULL << CPU_FEATURE_NX)  | (1ULL << CPU_FEATURE_SSE2) | \
+     (1ULL << CPU_FEATURE_LM)  | (1ULL << CPU_FEATURE_SYSCALL))
+
+/* The security-critical feature subset cpuid_probe_ap_features() probes on each
+ * AP. Per this section's scope ("validates security-critical feature
+ * mismatches"), it is NOT the full feature set: it covers the required baseline
+ * plus the optional features that drive CR4/XCR0 enables and hybrid divergence
+ * (SMEP/SMAP/UMIP/PKU/AVX/AVX512F/PCID/XSAVE). The global intersection and the
+ * optional-mismatch check operate only within this mask. */
+#define CPU_FEATURES_AP_PROBE_MASK \
+    (CPU_FEATURES_REQUIRED_MASK | \
+     (1ULL << CPU_FEATURE_SMEP) | (1ULL << CPU_FEATURE_SMAP) | \
+     (1ULL << CPU_FEATURE_UMIP) | (1ULL << CPU_FEATURE_PKU)  | \
+     (1ULL << CPU_FEATURE_AVX)  | (1ULL << CPU_FEATURE_AVX512F) | \
+     (1ULL << CPU_FEATURE_PCID) | (1ULL << CPU_FEATURE_XSAVE))
+
 /* --- Global CPU feature structure --- */
 
 struct cpu_features {
@@ -144,6 +169,12 @@ struct cpu_features {
 
 /* Initialize CPUID detection. Call once at boot, after heap_init(). */
 void cpuid_init(void);
+
+/* Probe the security-critical CPU feature subset (CPU_FEATURES_AP_PROBE_MASK)
+ * on the CALLING CPU and return it in the g_cpu.flags bit layout. AP-safe: does
+ * NOT touch g_cpu, so an AP can publish its own mask without racing the BSP
+ * global. Used by cpu_validate_ap_features() (TODO-09-boot S6). */
+uint64_t cpuid_probe_ap_features(void);
 
 /* Configure XCR0 based on detected CPU features.
  * Enables x87+SSE+AVX always, AVX-512 if supported, PKRU if supported.

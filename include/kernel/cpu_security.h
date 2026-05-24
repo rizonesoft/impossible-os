@@ -96,6 +96,36 @@ void cpu_record_bsp_profile(void);
  * missing CR4 bit are owned by the AP feature consistency validation. */
 void ap_cpu_harden(uint32_t cpu_id);
 
+/* Validate the calling AP's CPUID feature set against the BSP baseline
+ * (TODO-09-boot S6). Runs at the TOP of ap_cpu_harden() on the AP, before any
+ * optional CR4/MSR enable (publish-before-enable). Probes this AP's security-
+ * critical feature subset + core type into per_cpu_data; bug-checks
+ * (MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED) on vendor mismatch, missing Long
+ * Mode, or any missing CPU_FEATURES_REQUIRED_MASK bit. Optional features the
+ * BSP has but this AP lacks set per_cpu_data.feature_mismatch (no serial output
+ * on the AP; the BSP logs it later via ap_cpu_harden_log). Does NOT mutate the
+ * global mask -- that is reduced BSP-side by cpu_features_finalize_global(). */
+void cpu_validate_ap_features(uint32_t cpu_id);
+
+/* Reduce the global feature intersection = BSP & every ONLINE AP's published
+ * features (within CPU_FEATURES_AP_PROBE_MASK) and publish it once. BSP-only;
+ * call AFTER the is_online acquire pass so a late/timed-out AP cannot downgrade
+ * an already-published mask. */
+void cpu_features_finalize_global(void);
+
+/* The published global feature intersection (0 until finalized). Acquire-load.
+ * A set bit means the feature is present on EVERY online CPU AND, for
+ * xstate-dependent features (AVX/AVX512F/PKU/XSAVE), the OS has enabled the
+ * backing XCR0 component -- so it is safe to USE everywhere. Gate cross-CPU
+ * feature reliance on this rather than the BSP-only cpu_has(). */
+uint64_t cpu_feature_global_mask(void);
+
+/* BSP-side: raise BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED if any AP
+ * recorded a feature-validation fault and halted. Call once after SMP bringup;
+ * no-op if every AP passed. The bug-check runs on the BSP so the panic path is
+ * feature-safe (an AP cannot bug-check itself -- see cpu_validate_ap_features). */
+void cpu_features_check_ap_faults(void);
+
 /* Verify one AP's buffered snapshot against the BSP baseline (warn-only on
  * EFER.NXE / required-CR4 / PAT drift) and emit its "[AP%u] CPU hardening
  * applied ..." audit line. Called by the BSP for each online AP after SMP

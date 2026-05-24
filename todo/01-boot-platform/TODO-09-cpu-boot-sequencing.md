@@ -67,7 +67,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12                |  [x]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1                 |  [x]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [x]   |
-| 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [ ]   |
+| 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [x]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [ ]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [ ]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [ ]   |
@@ -248,20 +248,29 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) when an AP's CPUID feature set is incompatible with the BSP. Linux runs `verify_cpu.S` on each AP during trampoline entry to ensure Long Mode and SSE. Impossible OS currently has no equivalent -- an AP with different capabilities could silently cause undefined behavior.
 
 > [!IMPORTANT]
-> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §10` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches.
+> → XREF: `02-kernel-core/TODO-09-x86-64-architecture.md §9` -- CPU topology parsing; topology differences (core count, cache layout) are informational, not a failure. This section only validates *security-critical* feature mismatches. §6 publishes `per_cpu_data.core_type`; §9 consumes it for accurate hybrid P/E masks (concrete item filed there).
 
-- [ ] Define `cpu_features_required_mask` in `cpuid.h`: bitmask all CPUs must share (NX, SSE2, LAHF, CMPXCHG16B, SYSCALL, PAE, PGE); derive from BSP at Phase 0
-- [ ] Two-phase enable ordering: APs publish CPUID mask into `cpu_data[ap_id].features` BEFORE BSP enables/pins any optional CR4/MSR feature; global mask is BSP & every AP, no post-pin downgrade
-- [ ] Hybrid handling: read `CPUID.1A` core type per CPU; intersect E-core features (UMIP, AVX-512 commonly differ on Intel hybrid); store `cpu_data[ap_id].core_type`
-- [ ] Implement `cpu_validate_ap_features(uint32_t ap_id)` in `cpu_security.c`: runs on each AP; compares against BSP required mask; panic on missing required
-- [ ] On optional mismatch: log `[AP%u] FEATURE MISMATCH: BSP has %s, AP missing`; set `cpu_data[ap_id].feature_mismatch = true`; intersection step prevents enabling that feature globally
-- [ ] Define `BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED = 0x3E`; panic on missing required mask, vendor mismatch, or missing Long Mode
-- [ ] Add `POSTCODE_AP_VALIDATE = 0x27` to `boot_init.h`; debug `POST16(0xD600)/(0xD601)` entry/success (remove after bare metal verifies)
-- [ ] TSC sync between APs NOT owned here -- relies on `02-kernel-core/TODO-08-time-filetime-management.md §3` "Per-CPU TSC sync"
-- [ ] Verify (serial log): homogeneous shows `[AP%u] Feature validation OK`; hybrid shows core-type masks intersected
-- [ ] Commit: `"smp: AP feature intersection + hybrid-aware consistency validation"`
+- [x] `CPU_FEATURES_REQUIRED_MASK` in `cpuid.h` = NX|SSE2|LM|SYSCALL (PAE/PGE/LAHF/CMPXCHG16B are long-mode prerequisites, never reach kernel C, so not tracked; LM is the verify_cpu.S-style guard)
+- [x] Two-phase ordering: each AP publishes its mask into `cpu_data[ap_id].features` before `cpu_harden()`'s optional CR4 enables; global intersection reduced BSP-side by `cpu_features_finalize_global()` after the `is_online` pass
+- [x] Hybrid: `cpu_validate_ap_features()` reads `CPUID.1A` core type into `cpu_data[ap_id].core_type`; optional-mismatch check is within `CPU_FEATURES_AP_PROBE_MASK` so E-core gaps (AVX-512) degrade, not panic
+- [x] `cpu_validate_ap_features(cpu_id)` in `cpu_security.c` (after `ap_apply_xcr0()`, before `cpu_harden()`); `cpuid_probe_ap_features()` in cpuid.c does the AP-local probe; bug-checks on missing required / vendor / Long Mode
+- [x] On optional mismatch: `cpu_data[ap_id].feature_mismatch = 1` on the AP (no serial); BSP logs `[AP%u] FEATURE MISMATCH: ...` via `ap_cpu_harden_log()`; global intersection prevents kernel-wide reliance
+- [x] `BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED = 0x3E` in `bugcheck.h`; `KeBugCheckEx` on missing required mask / vendor mismatch / missing Long Mode
+- [x] `POSTCODE_AP_VALIDATE = 0x27` added. POST16(0xD600/0xD601) intentionally NOT used: it draws the FB corner (`fb_fill_rect` -> AVX-512) which #UDs on an AP before XCR0/AVX is enabled + races the shared FB; logged BSP-side instead
+- [x] TSC sync between APs NOT owned here -- relies on `02-kernel-core/TODO-08-time-filetime-management.md §3` "Per-CPU TSC sync"
+- [x] Verify (serial log): homogeneous shows `[AP%u] Feature validation OK`; BSP logs the global intersection mask; hybrid mismatches logged BSP-side
+- [x] Commit: `"smp: AP feature intersection + hybrid-aware consistency validation"`
 
-**Test checkpoint:** Boot on SMP system. Log shows `[AP1] Feature validation OK` for every AP. No degradation messages on homogeneous hardware. Bare metal: verify on systems with identical CPU cores; note that P-core/E-core hybrid CPUs may show feature differences (UMIP, AVX-512) that should degrade gracefully, not panic.
+**Test checkpoint:** Boot on SMP system. Log shows `[AP1] Feature validation OK (core_type 0x..)` for every AP + `Global CPU feature intersection 0x..`. No degradation on homogeneous hardware. Unit tests assert the mask invariants (BSP satisfies required, required subset of probe, global intersection retains required). Bare metal: P/E hybrid CPUs may show feature differences (AVX-512) that degrade gracefully, not panic.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 75 suites, 0 failures
+
+> **Notes:**
+> - Shipped `cpu_validate_ap_features()` + `cpu_features_finalize_global()` + `cpu_feature_global_mask()` (cpu_security.c), `cpuid_probe_ap_features()` (cpuid.c), masks in `cpuid.h`, 3 `per_cpu_data` fields, `BUGCHECK 0x3E`, `POSTCODE_AP_VALIDATE`.
+> - AP validates after `ap_apply_xcr0()`, before `cpu_harden()`; bug-checks 0x3E on required/vendor/LM failure; optional skew flagged on AP + logged BSP-side; global intersection reduced BSP-side after the online pass.
+> - Codex design review (3 findings) adoptions + a §6-introduced AP double fault (POST16 FB draw before AVX enable) root-caused and fixed; details in the commit message.
+> - Canonical doc: this section + `src/kernel/cpu_security.c` `cpu_validate_ap_features`.
+> - Scope boundary: §6 owns DETECTION (validate + intersection + bug-check); §10 owns AP-local CR4-enable gating; `02-kernel-core/TODO-09 §9` owns topology core_type consumption; TODO-08 §3 owns TSC sync.
 
 ---
 
@@ -357,18 +366,18 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | AP hardening matches BSP    | ✅ Hal per AP               | ✅ cpu_init secondary    | ✅ §4 ap_cpu_harden+profile |
 | 💎  | XSAVE after VMM ready       | ✅ OSXSAVE post-paging      | ✅ fpu deferred          | ✅ §5 Phase 1 finalize  |
 | 💎  | PCID after page tables      | ✅ PCIDE post-PML4          | ✅ cr4 post-paging       | ✅ §5 CR4.PCIDE set      |
-| 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ⬜ §6 planned           |
+| 💎  | AP feature consistency      | ✅ BugCheck 0x3E            | ✅ verify_cpu per AP     | ✅ §6 BugCheck 0x3E      |
 | 💎  | CR4 bit pinning             | ✅ HAL pins CR4             | ✅ cr4_pinned_bits       | ⬜ §7 planned           |
 | 💎  | CR0.WP pinning              | ✅ HAL invariant            | ✅ cr0_pinned_bits       | ⬜ §7 planned           |
 | 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ⬜ §8 planned           |
 | 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ⬜ §8 MTRR bullet       |
-| 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ⬜ §6 hybrid bullet     |
+| 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ✅ §6 global AND-mask   |
 | ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ✅ §3 TLFS-gated hv_flags |
 | ⭐  | Confidential VM guest       | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x     | ⬜ XREF 02/T09 §13      |
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |
 
-> **§1, §2, §4, §5 complete.** **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §7--§9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
+> **§1, §2, §4, §5, §6 complete.** **§6:** `cpu_validate_ap_features()` bug-checks 0x3E on missing required feature / vendor / Long Mode; optional skew flagged on the AP + logged BSP-side; `cpu_features_finalize_global()` publishes the BSP-and-every-online-AP intersection. **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §7--§9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 
 ---
 
