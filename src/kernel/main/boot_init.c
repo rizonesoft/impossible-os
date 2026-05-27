@@ -283,29 +283,52 @@ boot_result_t boot_async_group(const char *group_name,
         return worst;
     }
 
-    /* Dispatch steps across APs, BSP takes one step too.
-     * Round-robin: step 0 -> BSP, step 1 -> AP1, step 2 -> AP2, etc. */
-    /* Clear async state on all APs */
-    for (uint32_t i = 0; i < ncpus; i++) {
-        struct per_cpu_data *pcpu = smp_get_cpu(i);
-        if (pcpu) {
-            pcpu->async_done = 0;
-            pcpu->async_result = (uint8_t)BOOT_OK;
-            pcpu->async_fn = (void *)0;
-            pcpu->async_name = (void *)0;
-            pcpu->in_async_work = 0;
+    /* Build the list of ONLINE AP slots (TODO-09-boot S10). Logical CPU IDs are
+     * slot-allocated, so after a partial bringup the online set can be sparse
+     * (slot 1 abandoned, slot 2 live). smp_cpu_count() is a DENSE count; using
+     * it as a slot bound (the old `ap_idx < ncpus`) skipped a live high slot and
+     * left it without work. Walk every slot and collect the ones truly online;
+     * one async step goes to each, step 0 stays on the BSP, overflow to BSP. */
+    uint32_t online_aps[MAX_CPUS];
+    uint32_t n_online_aps = 0;
+    for (uint32_t s = 1; s < MAX_CPUS; s++) {
+        struct per_cpu_data *ap = smp_get_cpu(s);
+        if (ap && __atomic_load_n(&ap->is_online, __ATOMIC_ACQUIRE))
+            online_aps[n_online_aps++] = s;
+    }
+    uint32_t n_workers = (count - 1 < n_online_aps) ? (count - 1) : n_online_aps;
+
+    /* Clear async state on the BSP + EVERY online AP (not just this group's
+     * n_workers): a prior larger group may have left async_fn/async_name armed
+     * on a high online slot this smaller group does not reassign. The async IPI
+     * handler treats a non-NULL async_fn as live work, so a stray/misdelivered
+     * async IPI to that slot would rerun stale boot init. Clear all, assign
+     * n_workers. */
+    {
+        struct per_cpu_data *bsp = smp_get_cpu(0);
+        if (bsp) {
+            bsp->async_done = 0; bsp->async_result = (uint8_t)BOOT_OK;
+            bsp->async_fn = (void *)0; bsp->async_name = (void *)0;
+            bsp->in_async_work = 0;
+        }
+    }
+    for (uint32_t w = 0; w < n_online_aps; w++) {
+        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
+        if (ap) {
+            ap->async_done = 0; ap->async_result = (uint8_t)BOOT_OK;
+            ap->async_fn = (void *)0; ap->async_name = (void *)0;
+            ap->in_async_work = 0;
         }
     }
     smp_mb();
 
-    /* Assign work to APs first (skip BSP = cpu 0) */
-    uint32_t ap_idx = 1;  /* start with AP1 */
-    for (uint32_t i = 1; i < count && ap_idx < ncpus; i++, ap_idx++) {
-        struct per_cpu_data *ap = smp_get_cpu(ap_idx);
-        if (!ap || !ap->is_online) continue;
+    /* Assign work: step (w+1) -> online_aps[w]. */
+    for (uint32_t w = 0; w < n_workers; w++) {
+        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
+        if (!ap) continue;
 
-        ap->async_name = steps[i].name;
-        ap->async_fn   = (void *)steps[i].fn;
+        ap->async_name = steps[w + 1].name;
+        ap->async_fn   = (void *)steps[w + 1].fn;
         smp_mb();
 
         /* Send IPI to wake the AP */
@@ -321,8 +344,9 @@ boot_result_t boot_async_group(const char *group_name,
     klog(LOG_INFO, "ASYNC", "[ASYNC] %s completed on CPU%u (BSP) in %ums",
          steps[0].name, bsp_id, (uint32_t)bsp_ms);
 
-    /* If more steps than CPUs, BSP runs the remaining ones sequentially */
-    for (uint32_t i = ncpus; i < count; i++) {
+    /* If more steps than workers, BSP runs the remaining ones sequentially
+     * (step 0 + n_workers worker steps already assigned). */
+    for (uint32_t i = 1 + n_workers; i < count; i++) {
         klog(LOG_INFO, "ASYNC", "[ASYNC] %s (overflow, BSP)", steps[i].name);
         boot_result_t r = steps[i].fn();
         if (r > bsp_result) bsp_result = r;
@@ -333,8 +357,8 @@ boot_result_t boot_async_group(const char *group_name,
     uint32_t timeout_ms = 10000;  /* 10 second timeout */
     uint64_t deadline = system_get_ticks() + timeout_ms / 10;
 
-    for (uint32_t i = 1; i < count && i < ncpus; i++) {
-        struct per_cpu_data *ap = smp_get_cpu(i);
+    for (uint32_t w = 0; w < n_workers; w++) {
+        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
         if (!ap) continue;
 
         while (!ap->async_done) {
@@ -353,8 +377,8 @@ boot_result_t boot_async_group(const char *group_name,
 
     /* Collect results */
     boot_result_t worst = bsp_result;
-    for (uint32_t i = 1; i < count && i < ncpus; i++) {
-        struct per_cpu_data *ap = smp_get_cpu(i);
+    for (uint32_t w = 0; w < n_workers; w++) {
+        struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
         if (ap && (boot_result_t)ap->async_result > worst)
             worst = (boot_result_t)ap->async_result;
     }

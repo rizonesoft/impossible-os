@@ -404,6 +404,7 @@ uint64_t cpuid_probe_ap_features(void)
         cpuid_raw(0x80000001, 0, &eax, &ebx, &ecx, &edx);
         set_flag_if(&m, CPU_FEATURE_SYSCALL, edx, 11);
         set_flag_if(&m, CPU_FEATURE_NX,      edx, 20);
+        set_flag_if(&m, CPU_FEATURE_RDTSCP,  edx, 27);
         set_flag_if(&m, CPU_FEATURE_LM,      edx, 29);
     }
     return m & CPU_FEATURES_AP_PROBE_MASK;

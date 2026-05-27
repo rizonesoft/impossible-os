@@ -55,6 +55,15 @@
 
 #define AP_CANARY_MAGIC        0xDEADC0DE
 
+/* AP bringup handshake states (TODO-09-boot S10), CAS-transitioned in
+ * per_cpu_data.ap_bringup_state. STARTING is the initial value the BSP sets
+ * before SIPI; the AP CASes it to ONLINE (winner publishes is_online + goes
+ * live), the BSP CASes it to ABANDONED on timeout (winner means the AP must
+ * park). */
+#define AP_BRINGUP_STARTING    0u
+#define AP_BRINGUP_ONLINE      1u
+#define AP_BRINGUP_ABANDONED   2u
+
 /* Per-AP kernel stack size (16 KiB, same as BSP) */
 #define AP_STACK_SIZE          16384
 
@@ -106,6 +115,12 @@ struct per_cpu_data {
     KIRQL    current_irql;      /* current IRQL (0 = PASSIVE_LEVEL) */
     uint8_t  _irql_pad[3];     /* pad to 4-byte alignment */
     uint32_t is_online;         /* 1 when AP has finished init */
+    /* AP bringup handshake state (TODO-09-boot S10). A CAS state machine that
+     * closes the live-but-uncounted race: the AP transitions STARTING->ONLINE
+     * (and only then publishes is_online + sti) while the BSP transitions
+     * STARTING->ABANDONED on bringup timeout. Exactly one transition wins, so a
+     * slow AP that the BSP gave up on parks instead of going live uncounted. */
+    uint32_t ap_bringup_state;  /* AP_BRINGUP_* (atomic, CAS-transitioned) */
     void    *current_task;      /* pointer to current thread (future) */
 
     /* Async boot init work dispatch */

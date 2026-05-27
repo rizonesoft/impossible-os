@@ -19,6 +19,7 @@
  *   0x30-0xEF   Dynamic IRQ allocation     irq.c (runtime, not here)
  *   0x80        Linux-style syscall        syscall.c (INT 0x80, DPL=3)
  *   0x81        Yield (cooperative switch)  task.c (INT 0x81)
+ *   0xFB        CR-pin verify IPI          lapic.h (TODO-09-boot S10)
  *   0xFC        Async init IPI             boot_init.c
  *   0xFD        Reschedule IPI             lapic.h
  *   0xFE        TLB shootdown IPI          lapic.h
@@ -56,7 +57,8 @@
 #define VECTOR_LINUX_SYSCALL       0x80  /* INT 0x80 -- Linux-style syscall */
 #define VECTOR_YIELD               0x81  /* INT 0x81 -- cooperative yield */
 
-/* ---- IPI vectors (high range, 0xFC-0xFE) ---- */
+/* ---- IPI vectors (high range, 0xFB-0xFE) ---- */
+#define VECTOR_IPI_CR_VERIFY       0xFB  /* CR0/CR4 pin re-verify (TODO-09-boot S10) */
 #define VECTOR_IPI_ASYNC_INIT      0xFC  /* AP async work dispatch */
 #define VECTOR_IPI_RESCHEDULE      0xFD  /* cross-CPU reschedule */
 #define VECTOR_IPI_TLB_SHOOTDOWN   0xFE  /* TLB invalidation */
@@ -84,6 +86,20 @@ _Static_assert(VECTOR_IPI_ASYNC_INIT != VECTOR_IPI_TLB_SHOOTDOWN,
     "Async init and TLB shootdown IPI vectors must differ");
 _Static_assert(VECTOR_IPI_RESCHEDULE != VECTOR_IPI_TLB_SHOOTDOWN,
     "Reschedule and TLB shootdown IPI vectors must differ");
+_Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_IPI_ASYNC_INIT,
+    "CR-verify and async init IPI vectors must differ");
+_Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_IPI_RESCHEDULE,
+    "CR-verify and reschedule IPI vectors must differ");
+_Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_IPI_TLB_SHOOTDOWN,
+    "CR-verify and TLB shootdown IPI vectors must differ");
+_Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_LAPIC_SPURIOUS,
+    "CR-verify IPI must not be spurious vector");
+_Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_LAPIC_TIMER,
+    "CR-verify IPI must not collide with LAPIC timer");
+_Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_LINUX_SYSCALL &&
+               VECTOR_IPI_CR_VERIFY != VECTOR_NT_SYSCALL &&
+               VECTOR_IPI_CR_VERIFY != VECTOR_YIELD,
+    "CR-verify IPI must not collide with a software-interrupt vector");
 
 /* Software vectors must not collide with IPI vectors */
 _Static_assert(VECTOR_LINUX_SYSCALL != VECTOR_IPI_ASYNC_INIT,

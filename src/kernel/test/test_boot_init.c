@@ -11,6 +11,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/boot_init.h"
+#include "kernel/drivers/lapic.h"   /* IPI_VECTOR_* for the CR-verify vector test (S10) */
 #include "kernel/boot_info.h"
 #include "kernel/boot_timing.h"
 #include "kernel/klog.h"
@@ -328,6 +329,18 @@ static void test_async_ipi_vector(void)
                 "ASYNC_INIT != TLB_SHOOTDOWN (0xFE)");
 }
 
+static void test_cr_verify_ipi_vector(void)
+{
+    /* The S10 CR-pin verify-IPI vector must not collide with any other IPI
+     * vector (ASYNC_INIT 0xFC / RESCHEDULE 0xFD / TLB_SHOOTDOWN 0xFE). */
+    TEST_ASSERT(IPI_VECTOR_CR_VERIFY != IPI_VECTOR_ASYNC_INIT,
+                "CR_VERIFY != ASYNC_INIT");
+    TEST_ASSERT(IPI_VECTOR_CR_VERIFY != IPI_VECTOR_RESCHEDULE,
+                "CR_VERIFY != RESCHEDULE");
+    TEST_ASSERT(IPI_VECTOR_CR_VERIFY != IPI_VECTOR_TLB_SHOOTDOWN,
+                "CR_VERIFY != TLB_SHOOTDOWN");
+}
+
 /* ---- kernel_subsystem_apply_result() helper ----
  *
  * The Phase 0 propagation fix factors the boot_result_t -> {ready,
@@ -478,6 +491,7 @@ void test_register_boot_init(void)
     test_suite_register_cat("Boot init: bootperf POST codes", test_bootperf_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async POST codes", test_async_post_codes, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: async IPI vector", test_async_ipi_vector, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot init: CR-verify IPI vector", test_cr_verify_ipi_vector, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: Phase 0 propagation slots",
                             test_subsys_phase0_propagation_slots, TEST_CAT_BOOT);
     test_suite_register_cat("Boot init: apply_result dual channel",

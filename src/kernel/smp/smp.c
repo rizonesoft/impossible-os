@@ -193,6 +193,24 @@ void ap_entry(uint32_t cpu_index)
      * `sti` (klog busy-waits on the UART with IRQs masked); the BSP emits the
      * "online" line + hardening audit from the buffered per_cpu_data after
      * bringup -- see smp_init. */
+    /* Bringup handshake (TODO-09-boot S10): claim ONLINE via CAS. If the BSP
+     * already CAS'd us to ABANDONED (its per-AP wait timed out), we LOST the
+     * race -- do NOT publish is_online and do NOT sti; park dark so a CPU the
+     * BSP gave up on never goes live-but-uncounted (no scheduler visibility, no
+     * stray IPI handling). Exactly one of {AP-ONLINE, BSP-ABANDONED} wins. */
+    {
+        uint32_t expected = AP_BRINGUP_STARTING;
+        if (!__atomic_compare_exchange_n(&pcpu->ap_bringup_state, &expected,
+                                         AP_BRINGUP_ONLINE, 0,
+                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            /* Abandoned -- park dark, never online. */
+            for (;;)
+                __asm__ volatile("cli; hlt");
+        }
+    }
+
+    /* Won the handshake -- publish online (RELEASE; the BSP's acquire-load sees
+     * every preceding write) as the LAST write before going live. */
     __atomic_store_n(&pcpu->is_online, 1, __ATOMIC_RELEASE);
 
     /* AP is parked -- enable interrupts and halt.
@@ -377,6 +395,11 @@ void smp_init(void)
                 (uint64_t)(stack_phys + AP_STACK_SIZE);
         }
 
+        /* Arm the bringup handshake (TODO-09-boot S10): STARTING is the value
+         * the AP will CAS to ONLINE; published by the smp_mb() below before the
+         * SIPI so the AP observes it. */
+        cpu_data[ap_count].ap_bringup_state = AP_BRINGUP_STARTING;
+
         /* Memory fence to ensure all writes are visible before SIPI */
         smp_mb();
 
@@ -421,6 +444,36 @@ void smp_init(void)
             }
         }
 
+        /* Bringup verdict (TODO-09-boot S10): if the AP still has not published
+         * online, CAS its handshake STARTING->ABANDONED. Winning the CAS means
+         * the AP has not yet claimed ONLINE, so a late arrival will lose its own
+         * CAS and park dark instead of going live-but-uncounted. Losing the CAS
+         * means the AP claimed ONLINE in the publication gap (between its ONLINE
+         * CAS and its is_online release store) -- it is committed to going live,
+         * so we MUST wait (bounded) for that release store to land before the
+         * count/audit/feature pass below runs. Skipping the wait would let the
+         * count loop observe is_online==0 and omit an AP that is about to sti and
+         * handle IPIs -- the live-but-uncounted state this whole protocol exists
+         * to prevent. ONLINE is the only state the failing CAS can observe: the
+         * AP is the sole setter of ONLINE and the BSP is the sole setter of
+         * ABANDONED, which we just failed to set. */
+        if (!__atomic_load_n(&cpu_data[ap_count].is_online, __ATOMIC_ACQUIRE)) {
+            uint32_t expected = AP_BRINGUP_STARTING;
+            if (__atomic_compare_exchange_n(&cpu_data[ap_count].ap_bringup_state,
+                                            &expected, AP_BRINGUP_ABANDONED, 0,
+                                            __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                klog(LOG_WARN, "smp",
+                     "AP %u abandoned (bringup timeout) -- parked, not counted",
+                     (uint64_t)ap_count);
+            } else if (expected == AP_BRINGUP_ONLINE) {
+                uint32_t timeout = 100;
+                while (!__atomic_load_n(&cpu_data[ap_count].is_online,
+                                        __ATOMIC_ACQUIRE) && timeout > 0) {
+                    delay_ms(1);
+                    timeout--;
+                }
+            }
+        }
     }
 
     /* Count online APs and emit each one's "online" line + CPU-hardening audit
@@ -469,6 +522,11 @@ void smp_init(void)
      * set is fixed: one [SMP] All N CPUs register-consistent line or per-CPU
      * divergence WARNs. */
     cpu_audit_consistency_check(total_cpus);
+
+    /* Arm the periodic CR-pin verify-IPI (TODO-09-boot S10): the online set is
+     * fixed and APs are parked with IRQs enabled, so the BSP timer tick can now
+     * broadcast re-verify IPIs that the APs service. */
+    cpu_cr_verify_ipi_init();
 
     klog(LOG_INFO, "smp", "%u CPUs online (BSP + %u APs)",
          (uint64_t)total_cpus, (uint64_t)(total_cpus - 1));

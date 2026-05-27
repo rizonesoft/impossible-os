@@ -25,6 +25,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/vectors.h"   /* central IDT/IPI vector registry + uniqueness asserts */
 
 /* LAPIC register offsets */
 #define LAPIC_REG_ID          0x020
@@ -77,6 +78,7 @@
 /* IPI vectors (high end to avoid conflicts with hardware IRQs) */
 #define IPI_VECTOR_RESCHEDULE     0xFD
 #define IPI_VECTOR_TLB_SHOOTDOWN  0xFE
+#define IPI_VECTOR_CR_VERIFY      VECTOR_IPI_CR_VERIFY  /* 0xFB; central guard (S10) */
 
 /* ---- API ---- */
 
@@ -100,6 +102,9 @@ void lapic_write(uint32_t reg, uint32_t val);
 
 /* Send a fixed IPI to a specific CPU (by LAPIC ID) */
 void lapic_send_ipi(uint8_t target_apic_id, uint8_t vector);
+/* ISR-safe best-effort send (single delivery-status check, no spin). Returns 1
+ * if sent, 0 if a prior IPI is still pending. */
+int  lapic_send_ipi_nowait(uint8_t target_apic_id, uint8_t vector);
 
 /* Send a fixed IPI to all CPUs except self */
 void lapic_send_ipi_all_but_self(uint8_t vector);

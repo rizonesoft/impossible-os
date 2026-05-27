@@ -16,6 +16,8 @@
 #include "kernel/topology.h"            /* CORE_TYPE_* for AP core-type probe (S6) */
 #include "kernel/cpu_regs.h"            /* CR0/CR4 control-register bit defines (CR pinning) */
 #include "kernel/mtrr.h"                /* MTRR snapshot + parity audit (S8) */
+#include "kernel/idt.h"                 /* idt_register_handler, interrupt_frame (S10 verify-IPI) */
+#include "kernel/drivers/lapic.h"       /* IPI_VECTOR_CR_VERIFY, lapic_send_ipi, lapic_eoi (S10) */
 #include "registry.h"                   /* HKLM\HARDWARE\CPU registry exposure (S9 audit) */
 
 extern int snprintf(char *buf, size_t size, const char *fmt, ...);  /* per-CPU subkey build (S9) */
@@ -108,11 +110,27 @@ static int s_harden_quiet_depth;
     do { if (__atomic_load_n(&s_harden_quiet_depth, __ATOMIC_RELAXED) == 0) \
              klog(__VA_ARGS__); } while (0)
 
+/* AP-LOCAL feature predicate (TODO-09-boot S10). The optional CR4 enables
+ * (UMIP/PKU/SMEP/SMAP) must gate on the CALLING CPU's own capability, not the
+ * BSP-global g_cpu bitmap -- a feature-skewed AP (BSP has UMIP, this AP does
+ * not) would otherwise #GP setting the CR4 bit. On the BSP (cpu_id 0) this is
+ * just cpu_has(); on an AP it reads pc->features, the AP-local CPUID subset
+ * that cpu_validate_ap_features() (S6) probed and stored BEFORE cpu_harden()
+ * runs the enables. Feature must be inside CPU_FEATURES_AP_PROBE_MASK to be
+ * represented in pc->features. */
+static int cpu_feature_local(enum cpu_feature feature)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    if (pc && pc->cpu_id != 0)
+        return (pc->features & (1ULL << (uint32_t)feature)) != 0;
+    return cpu_has(feature) ? 1 : 0;
+}
+
 /* ---- NX (No-Execute) via EFER.NXE ---- */
 
 void cpu_enable_nx(void)
 {
-    if (!cpu_has(CPU_FEATURE_NX))
+    if (!cpu_has(CPU_FEATURE_NX))   /* NX is REQUIRED (S6 bug-checks if absent) -- global is safe */
         return;
 
     uint64_t efer = msr_read(MSR_IA32_EFER);
@@ -140,7 +158,7 @@ static int hv_supports_cr4_smep_smap(void)
 
 void cpu_enable_smep(void)
 {
-    if (!cpu_has(CPU_FEATURE_SMEP))
+    if (!cpu_feature_local(CPU_FEATURE_SMEP))   /* AP-local: optional, may be skewed */
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
@@ -159,7 +177,7 @@ void cpu_enable_smep(void)
 
 void cpu_enable_smap(void)
 {
-    if (!cpu_has(CPU_FEATURE_SMAP))
+    if (!cpu_feature_local(CPU_FEATURE_SMAP))   /* AP-local: optional, may be skewed */
         return;
 
     if (!hv_supports_cr4_smep_smap()) {
@@ -293,7 +311,7 @@ int copy_to_user(void *user_dst, const void *src, uint32_t len)
 
 void cpu_enable_umip(void)
 {
-    if (!cpu_has(CPU_FEATURE_UMIP))
+    if (!cpu_feature_local(CPU_FEATURE_UMIP))   /* AP-local: optional, may be skewed */
         return;
 
     uint64_t cr4 = read_cr4();
@@ -307,7 +325,7 @@ void cpu_enable_umip(void)
 
 void cpu_enable_pku(void)
 {
-    if (!cpu_has(CPU_FEATURE_PKU))
+    if (!cpu_feature_local(CPU_FEATURE_PKU))   /* AP-local: optional, may be skewed */
         return;
 
     /* XCR0 bit 9 (PKRU state) must be active on THIS CPU before CR4.PKE.
@@ -556,8 +574,27 @@ static uint64_t s_global_feature_mask;
  * here and halts; the BSP raises the 0x3E bug-check in
  * cpu_features_check_ap_faults() where the panic path is safe. */
 static volatile uint32_t s_ap_fault_cpu;     /* 0 = none, else cpu_id + 1 */
-static volatile uint64_t s_ap_fault_feat;    /* failing AP's probed mask */
-static volatile uint32_t s_ap_fault_reason;  /* 1 = vendor, 2 = Long Mode, 3 = required */
+static volatile uint64_t s_ap_fault_feat;    /* reasons 1-3: AP probed mask; reason 4: offending CR3 */
+static volatile uint32_t s_ap_fault_reason;  /* 1=vendor, 2=Long Mode, 3=required, 4=PCID CR3 invariant */
+static volatile uint32_t s_ap_fault_claim;   /* 0 = unclaimed; first faulting AP CASes 0->1 */
+
+/* Record one AP's bringup fault for the BSP (TODO-09-boot S6 + S10). The slot is
+ * single-writer: the first faulting AP to CAS s_ap_fault_claim 0->1 owns the
+ * record and publishes (cpu_id, detail, reason); later faulting APs still halt
+ * but do NOT overwrite the winner's tuple, so the BSP 0x3E payload always names
+ * one real, self-consistent fault even when multiple APs fault concurrently.
+ * s_ap_fault_cpu is release-stored LAST so cpu_features_check_ap_faults()'s
+ * acquire-load sees the detail/reason writes that precede it. */
+static void cpu_record_ap_fault(uint32_t cpu_id, uint64_t detail, uint32_t reason)
+{
+    uint32_t expected = 0;
+    if (!__atomic_compare_exchange_n(&s_ap_fault_claim, &expected, 1u, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+        return;   /* another AP already owns the slot */
+    s_ap_fault_feat   = detail;
+    s_ap_fault_reason = reason;
+    __atomic_store_n(&s_ap_fault_cpu, cpu_id + 1, __ATOMIC_RELEASE);
+}
 
 void cpu_record_bsp_profile(void)
 {
@@ -710,7 +747,7 @@ static uint32_t ap_apply_msr_profile(uint32_t cpu_id)
         struct msr_profile_entry *e = &s_bsp_msr_profile[i];
 
         if (e->feature != MSR_PROFILE_ALWAYS &&
-            !cpu_has((enum cpu_feature)e->feature))
+            !cpu_feature_local((enum cpu_feature)e->feature))   /* AP-local: RDTSCP/TSC_AUX may be skewed (S10) */
             continue;
 
         if (e->per_cpu) {
@@ -793,10 +830,9 @@ void cpu_validate_ap_features(uint32_t cpu_id)
     if (!vendor_ok ||
         !(ap_feat & (1ULL << CPU_FEATURE_LM)) ||
         (ap_feat & CPU_FEATURES_REQUIRED_MASK) != CPU_FEATURES_REQUIRED_MASK) {
-        s_ap_fault_feat   = ap_feat;
-        s_ap_fault_reason = !vendor_ok ? 1u
-                          : !(ap_feat & (1ULL << CPU_FEATURE_LM)) ? 2u : 3u;
-        __atomic_store_n(&s_ap_fault_cpu, cpu_id + 1, __ATOMIC_RELEASE);
+        cpu_record_ap_fault(cpu_id, ap_feat,
+                            !vendor_ok ? 1u
+                          : !(ap_feat & (1ULL << CPU_FEATURE_LM)) ? 2u : 3u);
         for (;;)
             __asm__ volatile ("cli; hlt");
     }
@@ -858,7 +894,7 @@ void cpu_features_check_ap_faults(void)
     if (!c)
         return;
     klog(LOG_FATAL, "smp",
-         "[AP%u] feature validation FAILED (reason %u: 1=vendor 2=LongMode 3=required, feat=0x%lx)",
+         "[AP%u] validation FAILED (reason %u: 1=vendor 2=LongMode 3=required 4=PCID-CR3; feat/cr3=0x%lx)",
          (uint64_t)(c - 1), (uint64_t)s_ap_fault_reason, s_ap_fault_feat);
     KeBugCheckEx(BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED,
                  (uint64_t)(c - 1), s_ap_fault_feat,
@@ -996,13 +1032,131 @@ void cpu_cr_pin_check(void)
                  s_cr_fault_actual, (uint64_t)c);
 }
 
+/* CR-pin verify-IPI (TODO-09-boot S10). AP LAPIC timers are masked, so S7 only
+ * re-verified an AP at its ap_cpu_harden() tail + on #GP. This closes that gap:
+ * the BSP's cpu_cr_pin_tick() broadcasts IPI_VECTOR_CR_VERIFY to every online AP,
+ * which re-runs the pin verify in the IPI handler. Ready only after SMP bringup
+ * registers the handler (cpu_cr_verify_ipi_init); cleared/0 disables it. */
+static volatile int s_cr_verify_ipi_ready;
+
+/* AP-side handler: re-verify this CPU's CR0/CR4 pins, then EOI. Minimal by
+ * design -- the verifiers only read CR0/CR4 and, on a real violation, record
+ * the fault + halt this AP (cr_pin_violation); the BSP raises the bug-check
+ * from cpu_cr_pin_check() on its next tick. No klog on the match path. */
+static uint64_t cr_verify_ipi_handler(struct interrupt_frame *frame)
+{
+    cr0_verify_pinned();
+    cr4_verify_pinned();
+    lapic_eoi();
+    return (uint64_t)frame;
+}
+
+/* Register the verify-IPI handler and arm the broadcast. Called once by the BSP
+ * after SMP bringup (APs online, IDT live). The handler lives in the shared
+ * handlers[] table, so one registration covers every CPU's ISR dispatch. */
+void cpu_cr_verify_ipi_init(void)
+{
+    idt_register_handler(IPI_VECTOR_CR_VERIFY, cr_verify_ipi_handler);
+    __atomic_store_n(&s_cr_verify_ipi_ready, 1, __ATOMIC_RELEASE);
+    klog(LOG_INFO, "cpu",
+         "CR-pin verify-IPI armed (vector 0x%x)",
+         (uint64_t)IPI_VECTOR_CR_VERIFY);
+}
+
+/* Rotating cursor over AP slots [1, MAX_CPUS) so the verify-IPI covers every
+ * online AP fairly (TODO-09-boot S10). */
+static uint32_t s_cr_verify_cursor;
+
+/* Send a verify-IPI to ONE online AP per timer tick, round-robin (BSP-only,
+ * from the timer ISR). ISR-SAFE: lapic_send_ipi_nowait() does a single
+ * delivery-status check and never spins. Sending to exactly one AP per tick
+ * (advancing the cursor) guarantees fairness -- a fixed slot-1-first scan would
+ * systematically starve higher APs whenever an earlier send leaves ICR
+ * delivery-status pending. Over n_online ticks every online AP is re-verified;
+ * the verify is periodic defense-in-depth, so the per-AP cadence is fine. */
+static void cpu_cr_verify_broadcast(void)
+{
+    uint32_t tries;
+    for (tries = 1; tries < MAX_CPUS; tries++) {
+        uint32_t slot = 1u + (s_cr_verify_cursor++ % (uint32_t)(MAX_CPUS - 1));
+        struct per_cpu_data *pc = smp_get_cpu(slot);
+        if (pc && __atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE)) {
+            lapic_send_ipi_nowait((uint8_t)pc->lapic_id, IPI_VECTOR_CR_VERIFY);
+            return;  /* one IPI per tick; next tick continues from the cursor */
+        }
+    }
+}
+
 /* BSP periodic hook (fired from the LAPIC timer ISR; AP LAPIC timers are
- * masked so this is BSP-only): verify the BSP's own pins + poll AP faults. */
+ * masked so this is BSP-only): verify the BSP's own pins, poll AP faults, and
+ * broadcast a re-verify IPI to the online APs (once armed). */
 void cpu_cr_pin_tick(void)
 {
     cr0_verify_pinned();
     cr4_verify_pinned();
     cpu_cr_pin_check();
+    if (__atomic_load_n(&s_cr_verify_ipi_ready, __ATOMIC_ACQUIRE))
+        cpu_cr_verify_broadcast();
+}
+
+/* Force the BSP required-CR4 bits this AP can prove it supports (TODO-09-boot
+ * S10) -- closes S4's warn-only gap (the BSP verified the uniform mask but
+ * never forced it). Runs AFTER cpu_validate_ap_features() so pc->features is
+ * populated, and BEFORE cpu_pin_control_regs() so the forced bits are pinned.
+ *
+ * Safety: forced = s_bsp_required_cr4 & ap_forceable. s_bsp_required_cr4 only
+ * contains bits the BSP actually set (so globally-disabled SMEP/SMAP are not in
+ * it), and ap_forceable is restricted to the CR4 bits whose CPUID feature is in
+ * the S6 AP probe mask -- FSGSBASE/CET are NOT probed, so they are excluded and
+ * stay owned by their feature enables. The intersection is provably safe to OR
+ * on this AP. Routed through cr4_write_safe() to preserve the S7 pins. */
+/* Pure mapping: which CR4 bits an AP with `features` (S6 AP-probe-mask layout)
+ * can safely have forced. ONLY the CR4 bits whose CPUID feature is in the AP
+ * probe mask appear here -- CR4_FSGSBASE and CR4_CET are deliberately EXCLUDED
+ * because the AP probe does not cover them, so forcing them on a skewed AP
+ * could #GP. Extracted (and exported under KERNEL_TESTS) so the exclusion is
+ * unit-testable. */
+uint64_t cpu_ap_forceable_cr4(uint64_t features)
+{
+    uint64_t forceable = 0;
+    if (features & (1ULL << CPU_FEATURE_XSAVE)) forceable |= CR4_OSXSAVE;
+    if (features & (1ULL << CPU_FEATURE_UMIP))  forceable |= CR4_UMIP;
+    if (features & (1ULL << CPU_FEATURE_SMEP))  forceable |= CR4_SMEP;
+    if (features & (1ULL << CPU_FEATURE_SMAP))  forceable |= CR4_SMAP;
+    if (features & (1ULL << CPU_FEATURE_PCID))  forceable |= CR4_PCIDE;
+    if (features & (1ULL << CPU_FEATURE_PKU))   forceable |= CR4_PKE;
+    return forceable;
+}
+
+uint64_t cpu_ap_forceable_cr4_live(uint64_t features, uint64_t xcr0, uint64_t cr3)
+{
+    uint64_t forceable = cpu_ap_forceable_cr4(features);
+    /* CR4.PKE needs the PKRU xstate live in XCR0 (bit 9), not just the PKU
+     * CPUID bit -- cpu_enable_pku() refuses PKE without it for the AP-XCR0-skew
+     * case (CPUID reports PKU but XSAVE leaf 0x0D lacks PKRU state, so
+     * ap_apply_xcr0() never set bit 9). Forcing PKE there would #GP. Drop it. */
+    if (!(xcr0 & (1ULL << 9)))
+        forceable &= ~(uint64_t)CR4_PKE;
+    /* CR4.PCIDE may be set only when CR3[11:0] == 0 (Intel SDM 4.10.1), else
+     * #GP. cpu_pcid_enable() treats a nonzero low CR3 as BOOT_FATAL and does NOT
+     * set PCIDE; the force path must mirror that refusal rather than re-OR it. */
+    if (cr3 & 0xFFFULL)
+        forceable &= ~(uint64_t)CR4_PCIDE;
+    return forceable;
+}
+
+static void cpu_force_ap_required_cr4(void)
+{
+    struct per_cpu_data *pc = smp_this_cpu();
+    uint64_t forced, cr3;
+
+    if (!pc)
+        return;
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+    forced = s_bsp_required_cr4 &
+             cpu_ap_forceable_cr4_live(pc->features, xcr0_read_safe(), cr3);
+    if (forced)
+        cr4_write_safe(read_cr4() | forced);
 }
 
 void ap_cpu_harden(uint32_t cpu_id)
@@ -1049,8 +1203,30 @@ void ap_cpu_harden(uint32_t cpu_id)
     cpu_harden_post_pagetable();
     /* CR4.PCIDE replication: TODO-09-boot S5 owns PCID activation and replicates
      * it here so APs match the BSP's CR4.PCIDE. Inside the quiet bracket so the
-     * AP emits no serial output before it is marked online. */
-    cpu_pcid_enable();
+     * AP emits no serial output before it is marked online. A BOOT_FATAL return
+     * means CR3[11:0] != 0 -- real CR3 corruption, NOT a legit BOOT_DEGRADED skip
+     * (PCID absent / BSP left PCIDE clear). cpu_force_ap_required_cr4() below now
+     * drops PCIDE for exactly this CR3 state, so the AP would otherwise come
+     * online with a corrupt CR3 and the fatal invariant downgraded to a warn-only
+     * CR4 mismatch (the HARDEN_KLOG error is suppressed in this quiet bracket).
+     * Instead halt: balance the quiet depth, record the fault for the BSP
+     * (reason 4, s_ap_fault_feat = offending CR3) and spin -- mirroring the S6
+     * feature-fault handoff (the AP cannot self-bug-check; the panic path uses
+     * BSP-global XCR0/SIMD that would #GP/#UD here). The AP never publishes
+     * is_online; cpu_features_check_ap_faults() raises 0x3E on the BSP. */
+    if (cpu_pcid_enable() == BOOT_FATAL) {
+        uint64_t bad_cr3;
+        __asm__ volatile ("mov %%cr3, %0" : "=r"(bad_cr3));
+        __atomic_fetch_sub(&s_harden_quiet_depth, 1, __ATOMIC_RELAXED);
+        cpu_record_ap_fault(cpu_id, bad_cr3, 4u);
+        for (;;)
+            __asm__ volatile ("cli; hlt");
+    }
+    /* Force the AP-proven subset of the BSP required-CR4 mask (S10): guarantees
+     * this AP matches the BSP's uniform CR4 state for every bit it supports,
+     * closing S4's verify-only gap. Done before cpu_pin_control_regs() so the
+     * forced bits get pinned. */
+    cpu_force_ap_required_cr4();
     __atomic_fetch_sub(&s_harden_quiet_depth, 1, __ATOMIC_RELAXED);
 
     /* 3. Replay the BSP MSR profile (PAT verbatim, TSC_AUX per-CPU). */

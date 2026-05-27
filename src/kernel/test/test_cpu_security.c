@@ -1064,6 +1064,80 @@ static void test_cpu_audit_pat_matches_profile(void)
                    "audited BSP PAT matches the MSR-profile baseline");
 }
 
+/* ---- AP bringup hardening (TODO-09-boot S10) ---- */
+
+static void test_ap_forceable_cr4_excludes_fsgsbase_cet(void)
+{
+    /* The force-after-validation mask must NEVER include FSGSBASE/CET -- those
+     * CR4 bits are not in the S6 AP probe, so forcing them on a skewed AP could
+     * #GP. With ALL features set, the forceable mask still excludes them. */
+    uint64_t all = ~0ULL;
+    uint64_t f = cpu_ap_forceable_cr4(all);
+    TEST_ASSERT_EQ((uint32_t)(f & (CR4_FSGSBASE | CR4_CET)), 0u,
+                   "forceable CR4 excludes FSGSBASE + CET (not AP-probed)");
+    TEST_ASSERT_EQ((uint32_t)((f & (CR4_OSXSAVE | CR4_UMIP | CR4_SMEP |
+                                    CR4_SMAP | CR4_PCIDE | CR4_PKE)) ==
+                              (CR4_OSXSAVE | CR4_UMIP | CR4_SMEP |
+                               CR4_SMAP | CR4_PCIDE | CR4_PKE)), 1u,
+                   "forceable CR4 includes the AP-probed CR4 bits");
+}
+
+static void test_ap_forceable_cr4_gated_by_features(void)
+{
+    /* No features -> nothing forceable (a CPU that proves nothing forces
+     * nothing). */
+    TEST_ASSERT_EQ((uint32_t)cpu_ap_forceable_cr4(0), 0u,
+                   "forceable CR4 is empty when no features are present");
+    /* Only SMEP probed -> only CR4_SMEP forceable. */
+    uint64_t f = cpu_ap_forceable_cr4(1ULL << CPU_FEATURE_SMEP);
+    TEST_ASSERT_EQ((uint32_t)f, (uint32_t)CR4_SMEP,
+                   "SMEP-only features yield exactly CR4_SMEP");
+}
+
+static void test_ap_forceable_cr4_live_preconditions(void)
+{
+    /* Two CR4 bits have live preconditions beyond CPUID presence; the force path
+     * must drop them when the precondition fails, mirroring the safe-enable
+     * paths, else it #GPs on a skewed AP. cr3=0 is the clean boot-PML4 value. */
+    uint64_t pku = 1ULL << CPU_FEATURE_PKU;
+    uint64_t pcid = 1ULL << CPU_FEATURE_PCID;
+
+    /* PKE: XCR0.PKRU (bit 9) clear -> dropped even though PKU is present. */
+    TEST_ASSERT_EQ((uint32_t)(cpu_ap_forceable_cr4_live(pku, 0x7, 0) & CR4_PKE), 0u,
+                   "PKE dropped when XCR0 bit 9 clear");
+    /* PKE: XCR0 bit 9 set -> retained. */
+    TEST_ASSERT_EQ((uint32_t)((cpu_ap_forceable_cr4_live(pku, (1ULL << 9), 0) & CR4_PKE)
+                              == CR4_PKE), 1u,
+                   "PKE retained when XCR0 bit 9 set");
+    /* PCIDE: CR3[11:0] nonzero -> dropped even though PCID is present (SDM
+     * 4.10.1 says PCIDE may be set only when CR3[11:0]==0, else #GP). */
+    TEST_ASSERT_EQ((uint32_t)(cpu_ap_forceable_cr4_live(pcid, 0, 0x123) & CR4_PCIDE), 0u,
+                   "PCIDE dropped when CR3[11:0] nonzero");
+    /* PCIDE: CR3[11:0]==0 -> retained. */
+    TEST_ASSERT_EQ((uint32_t)((cpu_ap_forceable_cr4_live(pcid, 0, 0x1000) & CR4_PCIDE)
+                              == CR4_PCIDE), 1u,
+                   "PCIDE retained when CR3[11:0] zero");
+    /* Gates touch only PKE/PCIDE: SMEP forceable regardless of XCR0/CR3 state. */
+    uint64_t smep = 1ULL << CPU_FEATURE_SMEP;
+    TEST_ASSERT_EQ((uint32_t)cpu_ap_forceable_cr4_live(smep, 0, 0xFFF), (uint32_t)CR4_SMEP,
+                   "live gates touch only PKE/PCIDE, not SMEP");
+}
+
+static void test_ap_probe_mask_covers_gated_features(void)
+{
+    /* The AP-local enable gates + TSC_AUX read this AP probe mask; if a gated
+     * feature is dropped from it, the AP-local gate silently falls back to
+     * never-enable. Guard every feature the S10 gating depends on. */
+    uint64_t m = CPU_FEATURES_AP_PROBE_MASK;
+    /* != 0 forces a 32-bit-safe boolean: RDTSCP (bit 53) lives in the high
+     * dword and would truncate to 0 if TEST_ASSERT narrowed the u64 to int. */
+    TEST_ASSERT((m & (1ULL << CPU_FEATURE_UMIP))   != 0, "AP probe mask covers UMIP");
+    TEST_ASSERT((m & (1ULL << CPU_FEATURE_PKU))    != 0, "AP probe mask covers PKU");
+    TEST_ASSERT((m & (1ULL << CPU_FEATURE_SMEP))   != 0, "AP probe mask covers SMEP");
+    TEST_ASSERT((m & (1ULL << CPU_FEATURE_SMAP))   != 0, "AP probe mask covers SMAP");
+    TEST_ASSERT((m & (1ULL << CPU_FEATURE_RDTSCP)) != 0, "AP probe mask covers RDTSCP (TSC_AUX gate)");
+}
+
 /* ---- S9: CPU Topology ---- */
 
 static void test_topo_cpu0_logical_id(void)
@@ -1698,6 +1772,16 @@ void test_register_x86(void)
         test_cpu_audit_cr4_pae, TEST_CAT_X86);
     test_suite_register_cat("Audit: BSP PAT matches MSR-profile baseline",
         test_cpu_audit_pat_matches_profile, TEST_CAT_X86);
+
+    /* S10: AP bringup hardening */
+    test_suite_register_cat("AP harden: forceable CR4 excludes FSGSBASE/CET",
+        test_ap_forceable_cr4_excludes_fsgsbase_cet, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: forceable CR4 gated by features",
+        test_ap_forceable_cr4_gated_by_features, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: forceable CR4 live preconditions (PKE/PCIDE)",
+        test_ap_forceable_cr4_live_preconditions, TEST_CAT_X86);
+    test_suite_register_cat("AP harden: probe mask covers gated features",
+        test_ap_probe_mask_covers_gated_features, TEST_CAT_X86);
 
     /* S9: CPU Topology */
     test_suite_register_cat("Topo: CPU 0 logical_id == 0",

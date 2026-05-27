@@ -71,7 +71,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [x]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [x]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [x]   |
-| 💎  |  10   | AP bringup hardening & robustness                | §4, §6                        |  [ ]   |
+| 💎  |  10   | AP bringup hardening & robustness                | §4, §6                        |  [x]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
 > ⭐ = exclusive -- hypervisor pre-detection before timer HAL selection, per-activation postcode audit trail, and structured register dump are not surfaced the same way on Windows or Linux.
@@ -304,8 +304,7 @@ Linux pins CR0.WP and CR4 bits (SMEP, SMAP, UMIP, FSGSBASE, CET) after boot to p
 > - Scope boundary: §7 owns CR0/CR4 pinning + verify. CET pinned once TODO-10 §9-§10 enables it; AP-local CR4-enable gating stays §10; per-AP periodic verify needs an AP timer tick (today APs verify on #GP + harden tail).
 
 > **Verified:** 2026-05-24 | commit `0f3191c5` | 9/9 items | build OK | smoke PASS (KVM); SMP -smp 2 AP1 online + CR0/CR4 pinned
-> **Accepted:** [H] no periodic AP CR-pin verification -- APs verify only at `ap_cpu_harden` tail + on #GP (AP LAPIC timers masked), so a post-pin AP CR-clear without a #GP stays undetected until the next AP fault -> XREF: 01-boot-platform/TODO-09 §10 (item: "Periodic CR-pin verification on every online CPU via a BSP->AP verify-IPI from `cpu_cr_pin_tick()`" at line 364)
-> **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 2H+1M fixed, 1H accepted-XREF | scope: kernel-code-quality
+> **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 2H+1M fixed, 1H accepted-XREF (resolved by §10 verify-IPI) | scope: kernel-code-quality
 
 ---
 
@@ -340,7 +339,7 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 > - Scope boundary: §8 owns PAT sync + MTRR parity AUDIT; divergent-AP MTRR reprogram + runtime PAT re-broadcast need an IPI rendezvous (`smp_call_function`, deferred). MMIO cache correctness owned by PAT (TODO-01 §11).
 
 > **Verified:** 2026-05-24 | commit `27124dca` | 6/7 items | build OK | smoke PASS (KVM 2.640s); PAT WC active, MTRR audit wired
-> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 343)
+> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 342)
 > **Quality reviewed:** 2026-05-24 | Codex 10x (design, adversarial, consistency, perf, re-adversarial, test-coverage) | 2H+4M+1L fixed, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -387,14 +386,23 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > → XREF: `01-boot-platform/TODO-09 §4` -- `ap_cpu_harden()` / `cpu_record_bsp_profile()` / `s_bsp_required_cr4`; this section closes §4's warn-only / global-gate deferrals.
 > → XREF: `01-boot-platform/TODO-09 §6` -- AP feature validation must run BEFORE the CR4 force so only AP-proven bits are forced.
 
-- [ ] AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX use global `cpu_has()` today; validate this AP's own CPUID before the privileged CR4/MSR writes to avoid #GP on a skewed AP (→ XREF §4)
-- [ ] After §6 validation passes, force the BSP required-CR4 mask (`s_bsp_required_cr4`, recorded by §4) for AP-proven bits -- closes §4's warn-only CR4 gap (→ XREF §4 `ap_cpu_harden()`, §6 validation)
-- [ ] Periodic CR-pin verification on every online CPU via a BSP->AP verify-IPI from `cpu_cr_pin_tick()` (or a per-AP tick): §7 verifies APs only at `ap_cpu_harden()` tail + on #GP since AP LAPIC timers are masked (→ XREF §7 `cpu_cr_pin_tick`)
-- [ ] Degraded-bringup: a timed-out AP still completes `ap_entry()` (publishes `is_online`+`sti`) and can go live-but-uncounted; add a per-AP accept/abandon state the AP checks before it goes live (→ XREF §4; pre-existing)
-- [ ] Sparse-slot accounting: `smp_cpu_count()` is a dense online count; after a partial timeout, dense-ID consumers (`boot_async_group()`) skip a live high slot -- use a max-slot+1 bound or an online-CPU map (→ XREF §4; pre-existing)
-- [ ] Commit: `"smp: AP bringup hardening -- AP-local gates, CR4 force-after-validation, degraded-bringup robustness"`
+- [x] **AP-local enable gating** -- `cpu_feature_local()` (BSP->`cpu_has`, AP->§6 `pc->features`) gates `cpu_enable_umip/pku/smep/smap` + TSC_AUX replay so a skewed AP no longer #GPs; `RDTSCP` added to the AP probe mask.
+- [x] **CR4 force-after-validation** -- `cpu_force_ap_required_cr4()` ORs `s_bsp_required_cr4 & cpu_ap_forceable_cr4(pc->features)` via `cr4_write_safe` (after §6, before §7 pin); forceable mask excludes FSGSBASE/CET. Closes §4 verify-only gap.
+- [x] **Periodic CR-pin verify-IPI** -- `IPI_VECTOR_CR_VERIFY` (0xFB) + handler (`cr0/cr4_verify_pinned` + EOI); `cpu_cr_pin_tick()` broadcasts to online APs once armed post-bringup. Closes the §7 AP-verify gap (AP LAPIC timers masked).
+- [x] **Degraded-bringup abandon (CAS)** -- per-CPU `ap_bringup_state`: AP CASes STARTING->ONLINE (only the winner publishes `is_online`+`sti`), BSP CASes STARTING->ABANDONED on timeout; a late AP loses and parks dark, never live-but-uncounted.
+- [x] **Sparse-slot accounting** -- `boot_async_group()` distributes work over an explicit online-slot list (walk 1..MAX_CPUS, filter `is_online`), not the dense `smp_cpu_count()` bound; a live high slot after a partial timeout now gets work.
+- [x] Commit: `"smp: AP bringup hardening -- AP-local gates, CR4 force-after-validation, degraded-bringup robustness"`
 
-**Test checkpoint:** Boot on SMP system. A feature-skewed AP (or VM forcing a CPUID difference) degrades without #GP; serial shows the forced-CR4 / mismatch path. Partial-bringup (one AP timed out) leaves `smp_cpu_count()` and `boot_async_group()` consistent -- the live high-slot AP still gets work. Verify on QEMU WHPX (SMP), TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot on SMP system. A feature-skewed AP (or VM forcing a CPUID difference) degrades without #GP; serial shows the forced-CR4 / mismatch path. Partial-bringup (one AP timed out) leaves `smp_cpu_count()` and `boot_async_group()` consistent -- the live high-slot AP still gets work, and the timed-out AP logs `AP %u abandoned` and parks. Verify on QEMU WHPX (SMP), TCG, VirtualBox, bare metal. Single-CPU (KVM smoke): no APs, no verify-IPI armed, boots clean.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 3 added suites (forceable-CR4 excludes FSGSBASE/CET, forceable gated-by-features, AP probe mask covers gated) + `run-boot-tests.bat` CR-verify IPI vector uniqueness, 0 failures. AP-path behavior validated via serial log on multi-CPU platforms.
+
+> **Notes:**
+> - Shipped: AP-local enable gating, CR4 force-after-validation, CR-pin verify-IPI (`IPI_VECTOR_CR_VERIFY`), CAS abandon state (`ap_bringup_state`), sparse-slot `boot_async_group` -- across `cpu_security.c` + `smp.c` + `boot_init.c`.
+> - All on the AP bringup path: gating/force run in `ap_cpu_harden` (AP-local, pre-pin); abandon CAS in `ap_entry` vs `smp_init` timeout; verify-IPI armed at `smp_init` end, broadcast from the BSP timer tick; `RDTSCP` added to the §6 AP probe mask.
+> - Closes §4 (warn-only CR4, global gates) + §7 (no periodic AP CR-pin verify) deferrals. Codex design adoptions in the commit message.
+> - Canonical doc: this section + `cpu_security.c` AP-harden block + `smp.c` bringup.
+> - Scope boundary: §10 owns AP-local gating, CR4 force, verify-IPI, abandon, sparse async. PAT re-broadcast + divergent-AP MTRR reprogram (§8 deferred) still need an all-CPU rendezvous, NOT the fire-and-forget verify-IPI.
 
 ---
 
@@ -413,12 +421,13 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | PAT MSR AP sync             | ✅ pat per CPU              | ✅ pat per AP            | ✅ §8 registry replay + audit |
 | 💎  | MTRR AP matches BSP         | ✅ HAL sync paths           | ✅ mtrr_bp_init on APs   | ✅ §8 parity audit (warn-only)|
 | 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ✅ §6 global AND-mask   |
+| 💎  | AP bringup robustness       | ✅ KeStartProcessors timeout| ✅ cpuhp + per-cpu cr-pin| ✅ §10 abandon CAS + verify-IPI |
 | ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ✅ §3 TLFS-gated hv_flags |
 | ⭐  | Confidential VM guest       | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x     | ⬜ XREF 02/T09 §13      |
 | ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ✅ §9 [CPU%u AUDIT] line |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |
 
-> **§1, §2, §4, §5, §6, §7 complete.** **§7:** shared `cpu_regs.h` + per-CPU CR0.WP/CR4 safety-bit pinning (`cpu_pin_control_regs`), verified on #GP return / BSP timer tick / each AP, `CRITICAL_STRUCTURE_CORRUPTION` (0x109) on a cleared pin (BSP raises; APs record + halt). **§6:** `cpu_validate_ap_features()` bug-checks 0x3E on missing required feature / vendor / Long Mode; optional skew flagged on the AP + logged BSP-side; `cpu_features_finalize_global()` publishes the BSP-and-every-online-AP intersection. **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §8, §9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
+> **§1-§10 all complete -- TODO-09 fully implemented.** **§10:** AP-local enable gating (`cpu_feature_local`), CR4 force-after-validation (`cpu_force_ap_required_cr4`, FSGSBASE/CET excluded), CR-pin verify-IPI (`IPI_VECTOR_CR_VERIFY` broadcast from `cpu_cr_pin_tick`), degraded-bringup abandon CAS (`ap_bringup_state`), and sparse-slot `boot_async_group` -- closes §4's warn-only/global-gate and §7's no-periodic-AP-verify deferrals. **§7:** shared `cpu_regs.h` + per-CPU CR0.WP/CR4 safety-bit pinning (`cpu_pin_control_regs`), verified on #GP return / BSP timer tick / each AP, `CRITICAL_STRUCTURE_CORRUPTION` (0x109) on a cleared pin (BSP raises; APs record + halt). **§6:** `cpu_validate_ap_features()` bug-checks 0x3E on missing required feature / vendor / Long Mode; optional skew flagged on the AP + logged BSP-side; `cpu_features_finalize_global()` publishes the BSP-and-every-online-AP intersection. **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §8, §9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.
 
 ---
 

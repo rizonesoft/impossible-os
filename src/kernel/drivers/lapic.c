@@ -221,11 +221,32 @@ static void ipi_wait_delivery(void)
         barrier();
 }
 
+/* Serialize the ICR HI/LO programming pair against timer-ISR re-entry
+ * (TODO-09-boot S10). The CR-pin verify-IPI broadcast fires from the timer ISR;
+ * if it preempted a thread-context sender between its ICR_HI and ICR_LO writes
+ * it would clobber ICR_HI and the resumed sender's ICR_LO would target the
+ * wrong CPU. Disabling local interrupts across the wait + HI + LO write makes
+ * the sequence atomic vs the ISR. (The ISR sender already runs with IF=0; the
+ * save/restore is a no-op there.) */
+static inline uint64_t lapic_irq_save(void)
+{
+    uint64_t f;
+    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(f) :: "memory");
+    return f;
+}
+static inline void lapic_irq_restore(uint64_t f)
+{
+    __asm__ volatile ("pushq %0; popfq" :: "r"(f) : "memory", "cc");
+}
+
 void lapic_send_ipi(uint8_t target_apic_id, uint8_t vector)
 {
+    uint64_t flags;
+
     if (!lapic_base)
         return;
 
+    flags = lapic_irq_save();
     ipi_wait_delivery();
 
     /* Set target APIC ID in ICR high (bits 24-31) */
@@ -237,13 +258,45 @@ void lapic_send_ipi(uint8_t target_apic_id, uint8_t vector)
                 ICR_FIXED | ICR_DEST_FIELD |
                 ICR_LEVEL_ASSERT | ICR_TRIGGER_EDGE |
                 (uint32_t)vector);
+    lapic_irq_restore(flags);
+}
+
+/* ISR-safe IPI send: a SINGLE delivery-status check, never the spin loop.
+ * Returns 1 if the IPI was written, 0 if a prior IPI is still pending (the
+ * caller may retry on a later tick). For periodic/best-effort broadcasters
+ * (the CR-pin verify-IPI, TODO-09-boot S10) that run in the timer ISR and must
+ * not busy-wait there. The IRQ-save makes the check+HI+LO atomic vs any other
+ * ICR writer regardless of calling context. */
+int lapic_send_ipi_nowait(uint8_t target_apic_id, uint8_t vector)
+{
+    uint64_t flags;
+
+    if (!lapic_base)
+        return 0;
+
+    flags = lapic_irq_save();
+    if (lapic_read(LAPIC_REG_ICR_LO) & (1 << 12)) {
+        lapic_irq_restore(flags);
+        return 0;  /* delivery pending -- skip this round rather than spin in the ISR */
+    }
+
+    lapic_write(LAPIC_REG_ICR_HI, (uint32_t)target_apic_id << 24);
+    lapic_write(LAPIC_REG_ICR_LO,
+                ICR_FIXED | ICR_DEST_FIELD |
+                ICR_LEVEL_ASSERT | ICR_TRIGGER_EDGE |
+                (uint32_t)vector);
+    lapic_irq_restore(flags);
+    return 1;
 }
 
 void lapic_send_ipi_all_but_self(uint8_t vector)
 {
+    uint64_t flags;
+
     if (!lapic_base)
         return;
 
+    flags = lapic_irq_save();
     ipi_wait_delivery();
 
     /* Shorthand: all-but-self, no need to set destination */
@@ -252,6 +305,7 @@ void lapic_send_ipi_all_but_self(uint8_t vector)
                 ICR_FIXED | ICR_DEST_ALL_BUT_SELF |
                 ICR_LEVEL_ASSERT | ICR_TRIGGER_EDGE |
                 (uint32_t)vector);
+    lapic_irq_restore(flags);
 }
 
 void lapic_send_init(uint8_t target_apic_id)
