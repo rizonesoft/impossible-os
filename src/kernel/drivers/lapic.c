@@ -137,8 +137,10 @@ void lapic_init(void)
     /* Send EOI to clear any pending interrupts from init */
     lapic_write(LAPIC_REG_EOI, 0);
 
-    /* Enable error vector now (after masking everything else) */
-    lapic_write(LAPIC_REG_LVT_ERROR, 0xFE); /* vector 0xFE for errors */
+    /* Enable error vector now (after masking everything else). Central registry
+     * vector (vectors.h) -- distinct from the 0xFE TLB-shootdown IPI it used to
+     * alias as a raw literal. */
+    lapic_write(LAPIC_REG_LVT_ERROR, VECTOR_LAPIC_ERROR);
 
     /* Final EOI */
     lapic_write(LAPIC_REG_EOI, 0);
@@ -185,8 +187,8 @@ void lapic_init_ap(void)
             lapic_write(LAPIC_REG_LVT_THERMAL, LVT_MASKED);
     }
 
-    /* Error vector */
-    lapic_write(LAPIC_REG_LVT_ERROR, 0xFE);
+    /* Error vector (central registry; was a raw 0xFE aliasing TLB shootdown) */
+    lapic_write(LAPIC_REG_LVT_ERROR, VECTOR_LAPIC_ERROR);
 
     /* Clear pending */
     lapic_write(LAPIC_REG_EOI, 0);

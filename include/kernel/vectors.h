@@ -19,6 +19,7 @@
  *   0x30-0xEF   Dynamic IRQ allocation     irq.c (runtime, not here)
  *   0x80        Linux-style syscall        syscall.c (INT 0x80, DPL=3)
  *   0x81        Yield (cooperative switch)  task.c (INT 0x81)
+ *   0xFA        LAPIC error LVT            lapic.c (LVT_ERROR vector)
  *   0xFB        CR-pin verify IPI          lapic.h (TODO-09-boot S10)
  *   0xFC        Async init IPI             boot_init.c
  *   0xFD        Reschedule IPI             lapic.h
@@ -56,6 +57,9 @@
 #define VECTOR_NT_SYSCALL          0x2E  /* INT 0x2E -- NT compat syscall */
 #define VECTOR_LINUX_SYSCALL       0x80  /* INT 0x80 -- Linux-style syscall */
 #define VECTOR_YIELD               0x81  /* INT 0x81 -- cooperative yield */
+
+/* ---- LAPIC error LVT (0xFA) ---- */
+#define VECTOR_LAPIC_ERROR         0xFA  /* LAPIC LVT error vector (lapic.c BSP+AP) */
 
 /* ---- IPI vectors (high range, 0xFB-0xFE) ---- */
 #define VECTOR_IPI_CR_VERIFY       0xFB  /* CR0/CR4 pin re-verify (TODO-09-boot S10) */
@@ -96,6 +100,16 @@ _Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_LAPIC_SPURIOUS,
     "CR-verify IPI must not be spurious vector");
 _Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_LAPIC_TIMER,
     "CR-verify IPI must not collide with LAPIC timer");
+
+/* LAPIC error LVT must not collide with any IPI / spurious / timer vector */
+_Static_assert(VECTOR_LAPIC_ERROR != VECTOR_IPI_CR_VERIFY &&
+               VECTOR_LAPIC_ERROR != VECTOR_IPI_ASYNC_INIT &&
+               VECTOR_LAPIC_ERROR != VECTOR_IPI_RESCHEDULE &&
+               VECTOR_LAPIC_ERROR != VECTOR_IPI_TLB_SHOOTDOWN,
+    "LAPIC error LVT must not collide with an IPI vector (notably TLB shootdown 0xFE)");
+_Static_assert(VECTOR_LAPIC_ERROR != VECTOR_LAPIC_SPURIOUS &&
+               VECTOR_LAPIC_ERROR != VECTOR_LAPIC_TIMER,
+    "LAPIC error LVT must not collide with spurious or timer vector");
 _Static_assert(VECTOR_IPI_CR_VERIFY != VECTOR_LINUX_SYSCALL &&
                VECTOR_IPI_CR_VERIFY != VECTOR_NT_SYSCALL &&
                VECTOR_IPI_CR_VERIFY != VECTOR_YIELD,

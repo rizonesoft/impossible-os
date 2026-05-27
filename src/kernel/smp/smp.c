@@ -162,10 +162,24 @@ void ap_entry(uint32_t cpu_index)
     /* Initialize this AP's LAPIC */
     lapic_init_ap();
 
-    /* Fill per-CPU data (is_online is published LAST, below, as the
-     * authoritative online flag -- see the release store before sti).
-     * cpu_id was set at entry (before ap_cpu_harden). */
-    pcpu->lapic_id   = lapic_id();
+    /* Identity guard (TODO-09-boot S10): the BSP pre-stored this slot's EXPECTED
+     * apic_id into pcpu->lapic_id before the SIPI. cpu_index came from the single
+     * shared AP_DATA page, which the BSP rewrites per AP; a slow AP that latches
+     * AP_DATA after the BSP reassigned the slot would arrive here under the wrong
+     * cpu_index. If our LIVE LAPIC ID does not match the slot's expected id, we
+     * are that impostor -- do NOT claim the slot: park dark so the slot's real AP
+     * (or the abandon CAS) owns it, and we are never counted/scheduled under a
+     * mismatched identity. (This closes the misidentified-online outcome; the
+     * deeper concurrent-stack isolation needs the AP_DATA consume-ack handshake
+     * tracked as a separate S10 item.) */
+    {
+        uint32_t live = lapic_id();
+        if (live != pcpu->lapic_id) {
+            for (;;)
+                __asm__ volatile("cli; hlt");
+        }
+        pcpu->lapic_id = live;
+    }
     pcpu->irq_count  = 0;
     pcpu->preempt_count = 0;
     pcpu->current_irql  = PASSIVE_LEVEL;
@@ -393,6 +407,12 @@ void smp_init(void)
             /* Store stack in per-CPU data for TSS */
             cpu_data[ap_count].rsp0 =
                 (uint64_t)(stack_phys + AP_STACK_SIZE);
+
+            /* Pre-store this slot's EXPECTED apic_id (TODO-09-boot S10): the AP
+             * validates its live LAPIC ID against this before claiming ONLINE,
+             * so a slow AP that latched a rewritten shared-AP_DATA cpu_index
+             * parks instead of coming online under a mismatched identity. */
+            cpu_data[ap_count].lapic_id = ci->apic_id;
         }
 
         /* Arm the bringup handshake (TODO-09-boot S10): STARTING is the value
