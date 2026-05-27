@@ -105,6 +105,7 @@ title: "TODO-14 -- Registry System Completion"
 - [ ] Value data max: **1 MiB** (increase `REG_MAX_VALUE_SIZE` from 512 → 1 048 576; large values use `pmm_alloc_contiguous`); **HIGH RISK** -- current `reg_value_t.data` is a fixed `uint8_t[512]` array; must change to pointer-based allocation for data > 512 bytes; update `hive_save`/`hive_load`, `RegSetValueEx`, `RegQueryValueEx`; rollback: keep 512 limit if breakage detected
 - [ ] Key path depth max: 512 levels -- `reg_path_depth(path)` count of `\\` separators; return `ERROR_INVALID_PARAMETER` if exceeded
 - [ ] Total key count: soft warn at 90% of pool; hard limit returns `ERROR_OUTOFMEMORY`; pool size comment documents the limit
+- [ ] **`RegCreateKeyEx` atomic create-or-fail** -- links the key, then allocates the `HKEY` separately; handle-pool exhaustion leaves a linked-but-handleless key. Reserve the handle before linking or roll back on failure. (TODO-09-boot §9.)
 
 - [ ] `reg_key_t.last_write_time` currently stores raw PIT ticks; convert to Windows `FILETIME` (100-ns intervals since 1601-01-01) via `ticks_to_filetime()` (→ XREF `TODO-08-time-filetime-management.md §4`); if `ticks_to_filetime()` is not yet available, implement a minimal stub (`ticks * PIT_NS_PER_TICK / 100 + FILETIME_EPOCH_BIAS`) inline -- full implementation in TODO-17 §4
 - [ ] `RegQueryInfoKey` `lpftLastWriteTime` output: return the FILETIME, not raw ticks

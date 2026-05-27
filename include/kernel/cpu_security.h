@@ -190,6 +190,7 @@ void cpu_security_log_state(const char *phase_label);
 void cpu_audit_registers(uint32_t cpu_id);
 void cpu_audit_log(uint32_t cpu_id);
 void cpu_audit_consistency_check(uint32_t total_cpus);
+void cpu_audit_ensure_bsp(void);
 void cpu_audit_populate_registry(void);
 
 /* ---- SMAP user-space access brackets ---- */

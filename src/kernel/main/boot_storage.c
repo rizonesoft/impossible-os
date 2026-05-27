@@ -21,6 +21,7 @@
 #include "kernel/smp.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
+#include "kernel/cpu_security.h"   /* cpu_audit_ensure_bsp (S9 per-CPU audit) */
 #include "kernel/boot_halt.h"
 #include "kernel/boot_recovery.h"
 #include "kernel/acpi.h"
@@ -167,10 +168,14 @@ void boot_phase2(void)
         POST16(POST16_SMP_OK);
         kernel_subsystem_set_ready(SUBSYS_SMP, true);
         boot_progress(2, "SMP", POST16_SMP_OK);
-        /* smp_init() emitted the per-CPU [CPU%u AUDIT] lines + consistency
-         * verdict (TODO-09-boot S9); mark the milestone. */
-        boot_progress(2, "CPU_AUDIT", POSTCODE_CPU_AUDIT);
     }
+
+    /* Per-CPU register audit (TODO-09-boot S9). smp_init() emits the [CPU%u
+     * AUDIT] lines + consistency verdict on the ACPI path; this fallback (a
+     * no-op when smp_init already audited the BSP) guarantees the BSP audit on
+     * a non-ACPI/degraded boot that skipped smp_init entirely. */
+    cpu_audit_ensure_bsp();
+    boot_progress(2, "CPU_AUDIT", POSTCODE_CPU_AUDIT);
 
     /* CPU topology: Zen CCD/NUMA + Intel hybrid P/E-core detection */
     {

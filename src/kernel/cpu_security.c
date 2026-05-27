@@ -1355,6 +1355,21 @@ void cpu_audit_consistency_check(uint32_t total_cpus)
              (uint64_t)divergent, (uint64_t)total_cpus);
 }
 
+/* Guarantee the BSP register audit ran, on EVERY boot path. smp_init() does it
+ * on the ACPI path (single-CPU + SMP), but a non-ACPI/degraded boot skips
+ * smp_init() entirely -- this fallback (idempotent via audit_captured) keeps
+ * the [CPU0 AUDIT] line + consistency verdict present there too. Called from
+ * boot_phase2 after the SMP-bringup block. */
+void cpu_audit_ensure_bsp(void)
+{
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    if (bsp && bsp->audit_captured)
+        return;  /* smp_init() already audited the BSP */
+    cpu_audit_registers(0);
+    cpu_audit_log(0);
+    cpu_audit_consistency_check(1);
+}
+
 /* Expose each CPU's buffered audit snapshot under HKLM\HARDWARE\CPU\%u\Registers.
  * Called from registry_populate_defaults() (Phase 2, AFTER registry_init() --
  * smp_init() runs earlier, so the data is captured but the registry is not yet
@@ -1372,6 +1387,7 @@ void cpu_audit_populate_registry(void)
         char subkey[48];
         HKEY hKey;
         uint32_t disp;
+        long rc;
 
         if (!pc || !__atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE) ||
             !pc->audit_captured)
@@ -1380,15 +1396,36 @@ void cpu_audit_populate_registry(void)
         if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, subkey, 0, (const char *)0, 0,
                            KEY_ALL_ACCESS, (void *)0, &hKey, &disp) != ERROR_SUCCESS)
             continue;
-        RegSetQword(hKey, "EFER",      pc->efer_at_boot);
-        RegSetQword(hKey, "CR0",       pc->cr0_at_boot);
-        RegSetQword(hKey, "CR4",       pc->cr4_at_boot);
-        RegSetQword(hKey, "XCR0",      pc->xcr0_at_boot);
-        RegSetQword(hKey, "PAT",       pc->pat_at_boot);
-        RegSetQword(hKey, "MiscEnable", pc->misc_enable);
-        RegSetQword(hKey, "ArchCaps",  pc->arch_caps);
-        RegSetQword(hKey, "SpecCtrl",  pc->spec_ctrl_at_boot);
-        RegSetDword(hKey, "MicrocodeRev", pc->ucode_rev);
+        /* Create the completeness marker FIRST so it is present even if the
+         * fixed-size registry value pool is exhausted by the field writes
+         * below. If even this allocation fails, the pool is already full --
+         * skip the key rather than publish one with no marker. */
+        if (RegSetDword(hKey, "AuditComplete", 0u) != ERROR_SUCCESS) {
+            klog(LOG_WARN, "cpu",
+                 "[CPU%u AUDIT] registry export skipped (value pool full)",
+                 (uint64_t)i);
+            RegCloseKey(hKey);
+            continue;
+        }
+        /* Accumulate setter results; RegSetQword can fail (ERROR_OUTOFMEMORY)
+         * once the pool is exhausted. */
+        rc  = RegSetQword(hKey, "EFER",       pc->efer_at_boot);
+        rc |= RegSetQword(hKey, "CR0",        pc->cr0_at_boot);
+        rc |= RegSetQword(hKey, "CR4",        pc->cr4_at_boot);
+        rc |= RegSetQword(hKey, "XCR0",       pc->xcr0_at_boot);
+        rc |= RegSetQword(hKey, "PAT",        pc->pat_at_boot);
+        rc |= RegSetQword(hKey, "MiscEnable", pc->misc_enable);
+        rc |= RegSetQword(hKey, "ArchCaps",   pc->arch_caps);
+        rc |= RegSetQword(hKey, "SpecCtrl",   pc->spec_ctrl_at_boot);
+        rc |= RegSetDword(hKey, "MicrocodeRev", pc->ucode_rev);
+        if (rc == 0)
+            /* All fields written -- overwrite the existing marker IN PLACE
+             * (no new allocation, so this cannot fail for lack of pool). */
+            RegSetDword(hKey, "AuditComplete", 1u);
+        else
+            klog(LOG_WARN, "cpu",
+                 "[CPU%u AUDIT] registry export incomplete (value pool full); "
+                 "AuditComplete stays 0", (uint64_t)i);
         RegCloseKey(hKey);
     }
 }

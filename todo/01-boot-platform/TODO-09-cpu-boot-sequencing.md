@@ -371,7 +371,11 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > - Each CPU captures on itself (BSP in Phase 2, AP at `ap_cpu_harden` tail); BSP emits all lines post-bringup (serial-quiet AP rule). CPUID-gated + `msr_try_read` net; microcode read is Intel-wrmsr / AMD-direct.
 > - Single consolidated parseable line per CPU = CI-grep target (`[CPU. AUDIT]`); no other OS surfaces this. Confirmed live on KVM. Codex design adoptions in the commit message.
 > - Canonical doc: this section + `cpu_security.c` audit block.
-> - Scope boundary: `[CPU%u AUDIT]` is the authoritative consolidated line; the §4/§6/§8 per-feature success lines remain for their checkpoints. Registry exposure owned here; registry infra is TODO-13.
+> - Scope boundary: `[CPU%u AUDIT]` is the authoritative consolidated line; the §4/§6/§8 per-feature success lines remain for their checkpoints. Registry exposure owned here; registry-engine infra is `02-kernel-core/TODO-14`.
+
+> **Verified:** 2026-05-27 | commit `2a96de4b` | 8/8 items | build OK | smoke PASS (KVM); `[CPU0 AUDIT]` + `[SMP] All 1 CPUs register-consistent` on serial
+> **Accepted:** [M] `RegCreateKeyEx` non-atomic create+handle-alloc can publish a markerless `HKLM\HARDWARE\CPU\%u\Registers` key under handle-pool exhaustion (benign here -- absent `AuditComplete` reads as incomplete; affects all RegCreateKeyEx callers) -> XREF: 02-kernel-core/TODO-14 (item: "`RegCreateKeyEx` atomic create-or-fail" at line 108)
+> **Quality reviewed:** 2026-05-27 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 4M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
