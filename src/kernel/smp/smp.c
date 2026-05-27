@@ -241,6 +241,12 @@ void smp_init(void)
          * probed feature set (TODO-09-boot S6). Publish it so consumers and the
          * cpu_feature_global_mask() query are valid on single-CPU systems. */
         cpu_features_finalize_global();
+        /* Register audit trail (TODO-09-boot S9) runs on EVERY platform: capture
+         * + emit the BSP's [CPU0 AUDIT] line and the (trivially consistent)
+         * verdict here, since this path returns before the SMP audit below. */
+        cpu_audit_registers(0);
+        cpu_audit_log(0);
+        cpu_audit_consistency_check(total_cpus);
         return;
     }
 
@@ -425,6 +431,14 @@ void smp_init(void)
      * ap_cpu_harden() snapshot visible here. An AP that never published
      * is_online is neither counted nor audited (consistent). BSP-side emission
      * keeps unbounded serial I/O off the AP bringup critical path. */
+    /* CPU register audit trail (TODO-09-boot S9): capture + emit the BSP's
+     * consolidated [CPU0 AUDIT] line here (Phase 2, IDT loaded -> msr_try_read
+     * is live -- it could NOT run at end of Phase 0). APs captured their own
+     * snapshot at the ap_cpu_harden() tail; the BSP emits each AP's line in the
+     * loop below from the buffered per_cpu_data. */
+    cpu_audit_registers(0);
+    cpu_audit_log(0);
+
     {
         uint32_t online = 0;
         for (i = 1; i <= ap_count; i++) {
@@ -433,6 +447,7 @@ void smp_init(void)
                 klog(LOG_INFO, "smp", "AP %u online (LAPIC ID=%u)",
                      (uint64_t)i, (uint64_t)cpu_data[i].lapic_id);
                 ap_cpu_harden_log(i);
+                cpu_audit_log(i);
             } else {
                 klog(LOG_WARN, "smp", "AP %u did not respond", (uint64_t)i);
             }
@@ -449,6 +464,11 @@ void smp_init(void)
      * (TODO-09-boot S6). Done here, after the is_online acquire pass above, so
      * a late/timed-out AP cannot downgrade the published mask. */
     cpu_features_finalize_global();
+
+    /* Per-CPU register consistency verdict (TODO-09-boot S9), after the online
+     * set is fixed: one [SMP] All N CPUs register-consistent line or per-CPU
+     * divergence WARNs. */
+    cpu_audit_consistency_check(total_cpus);
 
     klog(LOG_INFO, "smp", "%u CPUs online (BSP + %u APs)",
          (uint64_t)total_cpus, (uint64_t)(total_cpus - 1));

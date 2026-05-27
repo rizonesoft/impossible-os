@@ -108,3 +108,48 @@ int msr_try_read(uint32_t index, uint64_t *out)
         return 0;
     }
 }
+
+/* #GP-safe MSR write companion to msr_try_read(). Same probe mechanism: a
+ * temporary #GP handler keyed to the wrmsr's exact RIP turns a fault into a
+ * -1 return instead of a panic. wrmsr (0F 30) is 2 bytes like rdmsr (0F 32),
+ * so gp_probe_handler's +2 skip is correct for both. Used for probe-style
+ * writes to architectural-but-not-universally-writable MSRs (e.g. the Intel
+ * IA32_BIOS_SIGN_ID microcode-revision read sequence). Returns 0 on success,
+ * -1 if the write #GP'd or the kernel IDT is not yet loaded. */
+int msr_try_write(uint32_t index, uint64_t value)
+{
+    uint32_t lo = (uint32_t)(value & 0xFFFFFFFFu);
+    uint32_t hi = (uint32_t)(value >> 32);
+    uint64_t irq_flags;
+    uint64_t probe_addr;
+
+    if (!idt_is_loaded())
+        return -1;
+
+    spin_lock_irqsave(&s_probe_lock, &irq_flags);
+
+    s_saved_gp_handler = idt_get_handler(13);
+    s_gp_fired = 0;
+
+    __asm__ volatile (
+        "lea 1f(%%rip), %0\n\t"
+        : "=r"(probe_addr)
+    );
+    s_probe_rip = probe_addr;
+
+    idt_register_handler(13, gp_probe_handler);
+
+    __asm__ volatile (
+        "1: wrmsr\n\t"
+        :
+        : "a"(lo), "d"(hi), "c"(index)
+    );
+
+    idt_register_handler(13, s_saved_gp_handler);
+
+    {
+        int faulted = s_gp_fired;
+        spin_unlock_irqrestore(&s_probe_lock, irq_flags);
+        return faulted ? -1 : 0;
+    }
+}

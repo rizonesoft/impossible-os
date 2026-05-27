@@ -1016,6 +1016,54 @@ static void test_mtrr_bsp_baseline_matches_live(void)
                 "BSP MTRR baseline matches live capture");
 }
 
+/* ---- CPU register audit trail (TODO-09-boot S9) ----
+ * Read-only checks of cpu_data[0]'s audit snapshot, captured during smp_init().
+ * Tests do NOT call cpu_audit_registers() (it writes per_cpu_data + does the
+ * Intel microcode-read MSR write); they assert the boot-captured values. */
+
+static void test_cpu_audit_captured(void)
+{
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    TEST_ASSERT(bsp != (struct per_cpu_data *)0, "cpu_data[0] present");
+    TEST_ASSERT_EQ(bsp->audit_captured, 1u,
+                   "BSP register audit was captured during smp_init()");
+}
+
+static void test_cpu_audit_cr0_wp(void)
+{
+    /* CR0/CR4 safety-bit pinning sets CR0.WP; the audit snapshot must show it. */
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    TEST_ASSERT_EQ((uint32_t)((bsp->cr0_at_boot >> 16) & 1u), 1u,
+                   "audited BSP CR0.WP is set");
+}
+
+static void test_cpu_audit_efer_nxe(void)
+{
+    /* NX is a required feature; the audited EFER must have NXE set. */
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    TEST_ASSERT_EQ((uint32_t)((bsp->efer_at_boot >> 11) & 1u), 1u,
+                   "audited BSP EFER.NXE is set");
+}
+
+static void test_cpu_audit_cr4_pae(void)
+{
+    /* Long mode requires CR4.PAE (bit 5); a captured CR4 of 0 would mean the
+     * audit never read it. Sanity-checks the capture path. */
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    TEST_ASSERT_EQ((uint32_t)((bsp->cr4_at_boot >> 5) & 1u), 1u,
+                   "audited BSP CR4.PAE is set (capture is live)");
+}
+
+static void test_cpu_audit_pat_matches_profile(void)
+{
+    /* The audit reads PAT fresh; on the BSP it must equal the MSR-profile PAT
+     * baseline (PAT is never reprogrammed post-boot). Cross-checks the audit
+     * snapshot against the independent PAT baseline. */
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    TEST_ASSERT_EQ(bsp->pat_at_boot, cpu_bsp_pat_baseline(),
+                   "audited BSP PAT matches the MSR-profile baseline");
+}
+
 /* ---- S9: CPU Topology ---- */
 
 static void test_topo_cpu0_logical_id(void)
@@ -1638,6 +1686,18 @@ void test_register_x86(void)
         test_mtrr_snapshot_equal_discriminates, TEST_CAT_X86);
     test_suite_register_cat("MTRR: BSP baseline matches live",
         test_mtrr_bsp_baseline_matches_live, TEST_CAT_X86);
+
+    /* S9: CPU register audit trail */
+    test_suite_register_cat("Audit: BSP register snapshot captured",
+        test_cpu_audit_captured, TEST_CAT_X86);
+    test_suite_register_cat("Audit: BSP CR0.WP set in snapshot",
+        test_cpu_audit_cr0_wp, TEST_CAT_X86);
+    test_suite_register_cat("Audit: BSP EFER.NXE set in snapshot",
+        test_cpu_audit_efer_nxe, TEST_CAT_X86);
+    test_suite_register_cat("Audit: BSP CR4.PAE set (capture live)",
+        test_cpu_audit_cr4_pae, TEST_CAT_X86);
+    test_suite_register_cat("Audit: BSP PAT matches MSR-profile baseline",
+        test_cpu_audit_pat_matches_profile, TEST_CAT_X86);
 
     /* S9: CPU Topology */
     test_suite_register_cat("Topo: CPU 0 logical_id == 0",

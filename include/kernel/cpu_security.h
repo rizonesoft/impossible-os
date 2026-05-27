@@ -180,6 +180,18 @@ void     cpu_bsp_mtrr_baseline(struct mtrr_snapshot *out);
  * TODO-09 cpu-boot-sequencing activation-order section. */
 void cpu_security_log_state(const char *phase_label);
 
+/* CPU register state audit trail (TODO-09-boot S9). cpu_audit_registers()
+ * captures the calling CPU's security-relevant registers into per_cpu_data (no
+ * serial output -- safe on the quiet AP path); cpu_audit_log() emits the single
+ * consolidated `[CPU%u AUDIT]` line BSP-side; cpu_audit_consistency_check()
+ * compares all APs against the BSP after bringup; cpu_audit_populate_registry()
+ * exposes the snapshots under HKLM\HARDWARE\CPU\%u\Registers (Phase 2, after
+ * registry_init()). */
+void cpu_audit_registers(uint32_t cpu_id);
+void cpu_audit_log(uint32_t cpu_id);
+void cpu_audit_consistency_check(uint32_t total_cpus);
+void cpu_audit_populate_registry(void);
+
 /* ---- SMAP user-space access brackets ---- */
 
 /* STAC: Set AC flag -- allows kernel to access user pages (SMAP bypass).

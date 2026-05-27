@@ -40,6 +40,12 @@ static inline void msr_write(uint32_t index, uint64_t value)
  * Implemented in msr.c using a temporary #GP handler. */
 int msr_try_read(uint32_t index, uint64_t *out);
 
+/* #GP-safe MSR write companion. Returns 0 on success, -1 if the wrmsr faulted
+ * (MSR not writable) or the kernel IDT is not yet loaded. For probe-style
+ * writes to architectural-but-maybe-unwritable MSRs; gate on CPUID/vendor
+ * first, same as msr_try_read(). Implemented in msr.c. */
+int msr_try_write(uint32_t index, uint64_t value);
+
 /* ---- MSR index constants ----------------------------------------------- */
 
 /* EFER / SYSCALL */
@@ -97,6 +103,10 @@ int msr_try_read(uint32_t index, uint64_t *out);
 #define MSR_IA32_SPEC_CTRL          0x00000048
 #define MSR_IA32_PRED_CMD           0x00000049
 #define MSR_IA32_ARCH_CAPS          0x0000010A
+
+/* CPU register audit (TODO-09-boot S9) */
+#define MSR_IA32_MISC_ENABLE        0x000001A0  /* feature-enable bits */
+#define MSR_IA32_BIOS_SIGN_ID       0x0000008B  /* microcode signature/revision */
 
 /* Performance monitoring */
 #define MSR_IA32_MPERF              0x000000E7

@@ -70,7 +70,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [x]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [x]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [x]   |
-| ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [ ]   |
+| ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [x]   |
 | 💎  |  10   | AP bringup hardening & robustness                | §4, §6                        |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
@@ -352,17 +352,26 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > [!TIP]
 > **Competitive edge:** A single `[CPU%u AUDIT]` line per CPU with EFER, CR0, CR4, XCR0, PAT, IA32_MISC_ENABLE, and all security feature status in a fixed parseable format is something no other OS provides. This enables automated boot verification scripts and CI regression detection.
 
-- [ ] Add `MSR_IA32_MISC_ENABLE 0x1A0`, `MSR_IA32_ARCH_CAPABILITIES 0x10A`, `MSR_IA32_BIOS_SIGN_ID 0x8B` to `msr.h` if absent (SPEC_CTRL 0x48 from TODO-10 §8)
-- [ ] Implement `cpu_audit_registers(cpu_id)` in `cpu_security.c`: reads EFER, CR0, CR4, XCR0 (if OSXSAVE), PAT, MISC_ENABLE + CPUID-gated ARCH_CAPABILITIES / SPEC_CTRL / BIOS_SIGN_ID
-- [ ] Use `msr_try_read()` as secondary safety net only -- existence gates come from CPUID first
-- [ ] Log format: `[CPU%u AUDIT] EFER=... CR0=... CR4=... XCR0=... PAT=... MISC=... ARCH_CAPS=... SPEC_CTRL=... UCODE=... NX=... SMEP=... ... PCID=...`
-- [ ] Call on BSP at end of Phase 0; call on each AP at end of `ap_cpu_harden()`
-- [ ] Store in `cpu_data[cpu_id].audit` struct (ARCH_CAPS / SPEC_CTRL / ucode_rev fields added); expose via `HKLM\HARDWARE\CPU\%u\Registers` when registry write supports it
-- [ ] After SMP bringup: compare AP audits against BSP; log `[SMP] All %u CPUs register-consistent` or per-CPU divergence
-- [ ] Add `POSTCODE_CPU_AUDIT = 0x2A` to `boot_init.h`; debug `POST16(0xD300)/(0xD301)` entry/exit
-- [ ] Commit: `"boot: per-CPU register audit (EFER/CR/XCR0/PAT/MISC/ARCH_CAPS/SPEC_CTRL/microcode)"`
+- [x] Added `MSR_IA32_MISC_ENABLE 0x1A0` + `MSR_IA32_BIOS_SIGN_ID 0x8B` to `msr.h` (ARCH_CAPS 0x10A + SPEC_CTRL 0x48 already present).
+- [x] `cpu_audit_registers(cpu_id)` in `cpu_security.c`: reads EFER/CR0/CR4/XCR0(if OSXSAVE)/PAT/MISC_ENABLE + CPUID-gated ARCH_CAPS/SPEC_CTRL + vendor-decoded microcode rev; buffers into `per_cpu_data`, no serial (safe on the quiet AP path).
+- [x] CPUID is the existence gate; `msr_try_read()` is the #GP-safe net for every optional MSR. Intel-only microcode wrmsr path (gated on GenuineIntel); AMD reads patch level directly.
+- [x] `cpu_audit_log(cpu_id)` emits the consolidated `[CPU%u AUDIT] EFER=.. CR0=.. CR4=.. XCR0=.. PAT=.. MISC=.. ARCH_CAPS=.. SPEC_CTRL=.. UCODE=.. NX/SMEP/SMAP/UMIP/WP/PCID/OSXSAVE=..` line (flags from captured bits = per-CPU truth).
+- [x] BSP audit runs in **Phase 2** (`smp_init`, after IDT load -- NOT Phase 0, where `msr_try_read` is unavailable pre-IDT); each AP captures at the `ap_cpu_harden()` tail, BSP emits post-bringup. Single-CPU too.
+- [x] Flat `per_cpu_data` fields (`cr0_at_boot`/`misc_enable`/`arch_caps`/`ucode_rev`; EFER/CR4/PAT/XCR0/SPEC_CTRL reused); exposed via `HKLM\HARDWARE\CPU\%u\Registers` (`cpu_audit_populate_registry`, Phase 2).
+- [x] `cpu_audit_consistency_check()` compares each AP vs BSP (EFER.NXE, uniform CR4, PAT, XCR0, ARCH_CAPS) -> `[SMP] All %u CPUs register-consistent` or per-CPU divergence WARN.
+- [x] `POSTCODE_CPU_AUDIT = 0x2A` (boot_init.h), Phase-2 `boot_progress` milestone. `POST16(0xD300/0xD301)` SKIPPED -- Phase 2 has klog up, not a pre-`sti` path.
+- [x] Commit: `"boot: per-CPU register audit (EFER/CR/XCR0/PAT/MISC/ARCH_CAPS/SPEC_CTRL/microcode)"`
 
-**Test checkpoint:** Boot on SMP system. Log shows `[CPU0 AUDIT] EFER=... CR4=... ` line, then `[CPU1 AUDIT]` for each AP, then `[SMP] All N CPUs register-consistent`. Bare metal: compare audit output between QEMU and real hardware -- the differences (e.g., SMEP absent on QEMU TCG, PAT differences) should be clearly visible. CI scripts can grep for `[CPU. AUDIT]` lines and fail on unexpected register values.
+**Test checkpoint:** Boot on SMP system. Log shows `[CPU0 AUDIT] EFER=... CR4=... ` then `[CPU1 AUDIT]` per AP, then `[SMP] All N CPUs register-consistent`. Confirmed on KVM single-CPU: `[CPU0 AUDIT] EFER=0xd00 CR0=0x80010033 CR4=0x60e68 ... NX=1 ... WP=1 PCID=1 OSXSAVE=1` + `[SMP] All 1 CPUs register-consistent`. Bare metal: differences (SMEP absent on TCG, real UCODE vs KVM's 0xffffffff) are clearly visible; CI greps `[CPU. AUDIT]` and fails on unexpected register values. Unit tests assert the BSP snapshot was captured with sane values.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 5 added suites (audit captured, CR0.WP, EFER.NXE, CR4.PAE, PAT matches baseline), 0 failures. AP audit + consistency validated via serial log on multi-CPU platforms.
+
+> **Notes:**
+> - Shipped: `cpu_audit_registers`/`cpu_audit_log`/`cpu_audit_consistency_check`/`cpu_audit_populate_registry` in `cpu_security.c`; flat per-CPU audit fields; `[CPU%u AUDIT]` + `[SMP] All N register-consistent` lines; `HKLM\HARDWARE\CPU\%u\Registers`.
+> - Each CPU captures on itself (BSP in Phase 2, AP at `ap_cpu_harden` tail); BSP emits all lines post-bringup (serial-quiet AP rule). CPUID-gated + `msr_try_read` net; microcode read is Intel-wrmsr / AMD-direct.
+> - Single consolidated parseable line per CPU = CI-grep target (`[CPU. AUDIT]`); no other OS surfaces this. Confirmed live on KVM. Codex design adoptions in the commit message.
+> - Canonical doc: this section + `cpu_security.c` audit block.
+> - Scope boundary: `[CPU%u AUDIT]` is the authoritative consolidated line; the §4/§6/§8 per-feature success lines remain for their checkpoints. Registry exposure owned here; registry infra is TODO-13.
 
 ---
 
@@ -402,7 +411,7 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 | 💎  | Hybrid feature intersect    | ✅ Group affinity           | ✅ cpu_caps per type     | ✅ §6 global AND-mask   |
 | ⭐  | HV detect before timer      | ✅ Before HAL timer         | ⚠️ Clocksource may lag   | ✅ §3 TLFS-gated hv_flags |
 | ⭐  | Confidential VM guest       | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x     | ⬜ XREF 02/T09 §13      |
-| ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ⬜ §9 planned           |
+| ⭐  | CPU register audit trail    | ❌ ETW fragments            | ❌ dmesg fragments       | ✅ §9 [CPU%u AUDIT] line |
 | ⭐  | POST per activation step    | ❌ BIOS POST only           | ❌ dmesg only            | ⬜ TODO-14-boot-diag §2 |
 
 > **§1, §2, §4, §5, §6, §7 complete.** **§7:** shared `cpu_regs.h` + per-CPU CR0.WP/CR4 safety-bit pinning (`cpu_pin_control_regs`), verified on #GP return / BSP timer tick / each AP, `CRITICAL_STRUCTURE_CORRUPTION` (0x109) on a cleared pin (BSP raises; APs record + halt). **§6:** `cpu_validate_ap_features()` bug-checks 0x3E on missing required feature / vendor / Long Mode; optional skew flagged on the AP + logged BSP-side; `cpu_features_finalize_global()` publishes the BSP-and-every-online-AP intersection. **§3:** `boot_info` hypervisor fields + `timer_hal_init()` ordering are in tree; **Registry mirror and TLFS-grade TSC reference page setup are still open** (see §3 unchecked bullet). **§4:** `ap_cpu_harden()` + per-CPU MSR replay profile + BSP baseline ship; CR4 force-after-validation + degraded-bringup robustness deferred to §10, the AP-mismatch bug-check to §6, the formal Phase 1 XSAVE/PCID window to §5. **§5:** `cpu_xsave_enable()` finalize + `cpu_pcid_enable()` (bare `CR4.PCIDE`) ship in `boot_phase1`, replicated on APs; XSAVE base stays in Phase 0 (SIMD/PKU need it). PCID exploitation (tagging/NOFLUSH) stays with `02-kernel-core/TODO-10 §7`; CET xstate with TODO-10 §9. §8, §9 are parity/competitive-edge; §10 hardens AP bringup (closes §4's deferrals). Minimal CPU hardening runs via `cpu_harden()` + `cpu_harden_post_pagetable()` (`TODO-10-bare-metal-hardening.md` §10). Full formal sequencing lands when the kernel hardening TODO ships `cpu_efer_harden()` / `cpu_cr4_harden()`.

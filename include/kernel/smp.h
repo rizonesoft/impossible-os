@@ -142,6 +142,16 @@ struct per_cpu_data {
     uint32_t          msr_profile_applied; /* count of BSP profile MSRs replayed */
     uint32_t          _harden_pad;         /* alignment */
 
+    /* CPU register audit trail (TODO-09-boot S9). Captured by cpu_audit_registers()
+     * on the owning CPU (BSP in Phase 2, each AP at the ap_cpu_harden() tail);
+     * emitted as a single `[CPU%u AUDIT]` line BSP-side. The EFER/CR4/PAT/XCR0/
+     * SPEC_CTRL fields above are reused; these add the remaining audit state. */
+    uint64_t          cr0_at_boot;         /* CR0 (WP/PG/etc.) on this CPU */
+    uint64_t          misc_enable;         /* IA32_MISC_ENABLE (0 if unreadable) */
+    uint64_t          arch_caps;           /* IA32_ARCH_CAPABILITIES (0 if absent) */
+    uint32_t          ucode_rev;           /* microcode revision (vendor-decoded) */
+    uint32_t          audit_captured;      /* 1 once cpu_audit_registers() ran */
+
     /* AP feature consistency (TODO-09-boot S6). Published by the AP in
      * cpu_validate_ap_features() (top of ap_cpu_harden), read by the BSP after
      * the is_online acquire pass. Per-CPU (only the owning CPU writes), so no

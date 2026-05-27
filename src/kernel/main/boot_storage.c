@@ -167,6 +167,9 @@ void boot_phase2(void)
         POST16(POST16_SMP_OK);
         kernel_subsystem_set_ready(SUBSYS_SMP, true);
         boot_progress(2, "SMP", POST16_SMP_OK);
+        /* smp_init() emitted the per-CPU [CPU%u AUDIT] lines + consistency
+         * verdict (TODO-09-boot S9); mark the milestone. */
+        boot_progress(2, "CPU_AUDIT", POSTCODE_CPU_AUDIT);
     }
 
     /* CPU topology: Zen CCD/NUMA + Intel hybrid P/E-core detection */

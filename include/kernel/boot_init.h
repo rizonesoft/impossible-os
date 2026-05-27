@@ -88,6 +88,7 @@ typedef enum {
 #define POSTCODE_CPU_HARDEN_DONE POST16_CPU_HARDEN_OK
 #define POSTCODE_BOOT_CFG       0x26
 #define POSTCODE_AP_VALIDATE    0x27  /* AP feature consistency validation (TODO-09-boot S6) */
+#define POSTCODE_CPU_AUDIT      0x2A  /* per-CPU register audit trail emitted (TODO-09-boot S9) */
 #define POSTCODE_GDT_INIT       0x30
 #define POSTCODE_IDT_INIT       0x31
 #define POSTCODE_ACPI_INIT      0x32

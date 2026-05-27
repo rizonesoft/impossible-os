@@ -16,6 +16,9 @@
 #include "kernel/topology.h"            /* CORE_TYPE_* for AP core-type probe (S6) */
 #include "kernel/cpu_regs.h"            /* CR0/CR4 control-register bit defines (CR pinning) */
 #include "kernel/mtrr.h"                /* MTRR snapshot + parity audit (S8) */
+#include "registry.h"                   /* HKLM\HARDWARE\CPU registry exposure (S9 audit) */
+
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);  /* per-CPU subkey build (S9) */
 #ifdef KERNEL_TESTS
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
 #include "kernel/sched/task.h" /* task_current() for task-filter gate */
@@ -1099,6 +1102,11 @@ void ap_cpu_harden(uint32_t cpu_id)
     cr0_verify_pinned();
     cr4_verify_pinned();
 
+    /* 6. Capture this AP's full register audit snapshot (TODO-09-boot S9).
+     *    No serial output (the BSP emits the [CPU%u AUDIT] line post-bringup);
+     *    runs after the AP's IDT is loaded so msr_try_read() is live. */
+    cpu_audit_registers(cpu_id);
+
     /* No serial output here: ap_cpu_harden() runs on the AP with IRQs masked
      * around the online transition, and klog -> serial_write busy-waits on
      * the UART unbounded. Emitting here would either delay the AP online
@@ -1193,6 +1201,195 @@ void ap_cpu_harden_log(uint32_t cpu_id)
             klog(LOG_INFO, "smp", "[AP%u] Feature validation OK (core_type 0x%x)",
                  (uint64_t)cpu_id, (uint64_t)pc->core_type);
         }
+    }
+}
+
+/* ---- CPU register state audit trail (TODO-09-boot S9) ------------------- */
+
+/* Read this CPU's microcode revision. MSR 0x8B (IA32_BIOS_SIGN_ID) is
+ * architectural on Intel + AMD. Intel reports the revision in the HIGH dword,
+ * but only after a CPUID(1) reload of the signature register -- the documented
+ * sequence is "clear the MSR, execute CPUID, re-read". AMD exposes the patch
+ * level directly in the LOW dword with no write. We probe #GP-safely first, and
+ * ONLY Intel takes the write path (gating strictly on GenuineIntel keeps the
+ * wrmsr off any vendor that does not define the write semantics). */
+static uint32_t cpu_read_microcode_rev(void)
+{
+    extern struct cpu_features g_cpu;
+    static const char intel_vendor[12] =
+        { 'G','e','n','u','i','n','e','I','n','t','e','l' };
+    uint64_t sig;
+    uint32_t a, b, c, d, i;
+    int is_intel = 1;
+
+    /* EXACT GenuineIntel match -- a loose vendor[0]=='G' could let a spoofed or
+     * odd vendor string take the Intel write path. */
+    for (i = 0; i < 12; i++) {
+        if (g_cpu.vendor[i] != intel_vendor[i]) { is_intel = 0; break; }
+    }
+
+    if (msr_try_read(MSR_IA32_BIOS_SIGN_ID, &sig) != 0)
+        return 0;  /* MSR not present on this CPU */
+
+    if (is_intel) {
+        /* Intel reports the revision in the HIGH dword only after a CPUID(1)
+         * reload of the signature register: clear the MSR, CPUID, re-read. The
+         * clear uses msr_try_write() so even a vendor-string spoof that is not
+         * really Intel cannot #GP us during BSP/AP bringup. */
+        if (msr_try_write(MSR_IA32_BIOS_SIGN_ID, 0) != 0)
+            return 0;
+        cpuid_raw(0x01, 0, &a, &b, &c, &d);
+        if (msr_try_read(MSR_IA32_BIOS_SIGN_ID, &sig) != 0)
+            return 0;
+        return (uint32_t)(sig >> 32);
+    }
+    return (uint32_t)(sig & 0xFFFFFFFFu);  /* AMD + others: low-dword patch level */
+}
+
+/* Capture the calling CPU's security-relevant register state into per_cpu_data.
+ * Runs ON the CPU being audited: the BSP in Phase 2 (after the IDT is loaded --
+ * msr_try_read needs it), and each AP at the tail of ap_cpu_harden(). Emits NO
+ * serial output, so it is safe on the serial-quiet pre-online AP path; the BSP
+ * emits the consolidated line later via cpu_audit_log(). CPUID gates each
+ * optional MSR, with msr_try_read() as the #GP-safe net underneath. */
+void cpu_audit_registers(uint32_t cpu_id)
+{
+    struct per_cpu_data *pc = smp_get_cpu(cpu_id);
+    uint64_t cr4, val;
+
+    if (!pc)
+        return;
+
+    cr4 = read_cr4();
+    pc->efer_at_boot = msr_read(MSR_IA32_EFER);
+    pc->cr0_at_boot  = read_cr0();
+    pc->cr4_at_boot  = cr4;
+    pc->xcr0_at_boot = (cr4 & CR4_OSXSAVE) ? xcr0_read_safe() : 0;
+    pc->pat_at_boot  = msr_read(MSR_IA32_PAT);
+    pc->misc_enable  = (msr_try_read(MSR_IA32_MISC_ENABLE, &val) == 0) ? val : 0;
+    pc->arch_caps    = (cpu_has(CPU_FEATURE_ARCH_CAP) &&
+                        msr_try_read(MSR_IA32_ARCH_CAPS, &val) == 0) ? val : 0;
+    pc->spec_ctrl_at_boot = (cpu_has(CPU_FEATURE_SPEC_CTRL) &&
+                        msr_try_read(MSR_IA32_SPEC_CTRL, &val) == 0) ? val : 0;
+    pc->ucode_rev    = cpu_read_microcode_rev();
+    pc->audit_captured = 1;
+}
+
+/* Emit the single consolidated `[CPU%u AUDIT]` line from the buffered snapshot.
+ * BSP-side only (never on the AP itself -- keeps serial I/O off the AP bringup
+ * critical path). Feature flags are derived from the captured register BITS
+ * (per-CPU truth), not BSP-global cpu_has(). This is the authoritative,
+ * fixed-format, CI-greppable per-CPU register line. */
+void cpu_audit_log(uint32_t cpu_id)
+{
+    struct per_cpu_data *pc = smp_get_cpu(cpu_id);
+    uint64_t efer, cr0, cr4, xcr0;
+
+    if (!pc || !pc->audit_captured)
+        return;
+    efer = pc->efer_at_boot;
+    cr0  = pc->cr0_at_boot;
+    cr4  = pc->cr4_at_boot;
+    xcr0 = pc->xcr0_at_boot;
+
+    klog(LOG_INFO, "cpu",
+         "[CPU%u AUDIT] EFER=0x%lx CR0=0x%lx CR4=0x%lx XCR0=0x%lx PAT=0x%lx "
+         "MISC=0x%lx ARCH_CAPS=0x%lx SPEC_CTRL=0x%lx UCODE=0x%x "
+         "NX=%u SMEP=%u SMAP=%u UMIP=%u WP=%u PCID=%u OSXSAVE=%u",
+         (uint64_t)cpu_id, efer, cr0, cr4, xcr0, pc->pat_at_boot,
+         pc->misc_enable, pc->arch_caps, pc->spec_ctrl_at_boot,
+         (uint64_t)pc->ucode_rev,
+         (uint64_t)((efer >> 11) & 1u),   /* NX (EFER.NXE) */
+         (uint64_t)((cr4 >> 20) & 1u),    /* SMEP */
+         (uint64_t)((cr4 >> 21) & 1u),    /* SMAP */
+         (uint64_t)((cr4 >> 11) & 1u),    /* UMIP */
+         (uint64_t)((cr0 >> 16) & 1u),    /* CR0.WP */
+         (uint64_t)((cr4 >> 17) & 1u),    /* PCID (CR4.PCIDE) */
+         (uint64_t)((cr4 >> 18) & 1u));   /* OSXSAVE */
+}
+
+/* Compare every online AP's audit snapshot against the BSP's and emit a single
+ * verdict line. Security-relevant subset: EFER.NXE, the uniform CR4 bits, PAT,
+ * XCR0, ARCH_CAPABILITIES. Divergence is WARN-only (informational audit; the
+ * hard AP-vs-BSP guards live in S4/S6). BSP-side, after SMP bringup. */
+void cpu_audit_consistency_check(uint32_t total_cpus)
+{
+    struct per_cpu_data *bsp = smp_get_cpu(0);
+    uint32_t i, divergent = 0;
+
+    if (!bsp || !bsp->audit_captured)
+        return;
+
+    /* Iterate ALL slots filtered on is_online, NOT i < total_cpus: AP logical
+     * IDs are slot-allocated, so after a partial bringup (AP1 times out, AP2
+     * online) the live AP sits past the dense online count. Bounding by
+     * total_cpus would skip it and falsely report consistency. */
+    for (i = 1; i < MAX_CPUS; i++) {
+        struct per_cpu_data *pc = smp_get_cpu(i);
+        if (!pc || !__atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE) ||
+            !pc->audit_captured)
+            continue;
+        if (((pc->efer_at_boot ^ bsp->efer_at_boot) & EFER_NXE) ||
+            ((pc->cr4_at_boot & s_bsp_required_cr4) != s_bsp_required_cr4) ||
+            pc->pat_at_boot != bsp->pat_at_boot ||
+            pc->xcr0_at_boot != bsp->xcr0_at_boot ||
+            pc->arch_caps != bsp->arch_caps) {
+            klog(LOG_WARN, "smp",
+                 "[CPU%u AUDIT] register divergence from BSP: "
+                 "EFER=0x%lx/0x%lx CR4=0x%lx/0x%lx PAT=0x%lx/0x%lx "
+                 "XCR0=0x%lx/0x%lx ARCH_CAPS=0x%lx/0x%lx",
+                 (uint64_t)i, pc->efer_at_boot, bsp->efer_at_boot,
+                 pc->cr4_at_boot, bsp->cr4_at_boot, pc->pat_at_boot,
+                 bsp->pat_at_boot, pc->xcr0_at_boot, bsp->xcr0_at_boot,
+                 pc->arch_caps, bsp->arch_caps);
+            divergent++;
+        }
+    }
+
+    if (divergent == 0)
+        klog(LOG_INFO, "smp",
+             "[SMP] All %u CPUs register-consistent", (uint64_t)total_cpus);
+    else
+        klog(LOG_WARN, "smp",
+             "[SMP] %u of %u CPUs diverge from BSP register state",
+             (uint64_t)divergent, (uint64_t)total_cpus);
+}
+
+/* Expose each CPU's buffered audit snapshot under HKLM\HARDWARE\CPU\%u\Registers.
+ * Called from registry_populate_defaults() (Phase 2, AFTER registry_init() --
+ * smp_init() runs earlier, so the data is captured but the registry is not yet
+ * up at audit time). Read-only consumer of the per_cpu_data audit fields. */
+void cpu_audit_populate_registry(void)
+{
+    uint32_t i;
+
+    /* Iterate ALL slots filtered on is_online (NOT smp_cpu_count(), which
+     * collapses sparse slots after a partial bringup): otherwise an online AP
+     * past the dense count would be omitted from the registry exactly when the
+     * audit trail matters most. cpu0 (BSP) has is_online == 1. */
+    for (i = 0; i < MAX_CPUS; i++) {
+        struct per_cpu_data *pc = smp_get_cpu(i);
+        char subkey[48];
+        HKEY hKey;
+        uint32_t disp;
+
+        if (!pc || !__atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE) ||
+            !pc->audit_captured)
+            continue;
+        snprintf(subkey, sizeof(subkey), "HARDWARE\\CPU\\%u\\Registers", i);
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, subkey, 0, (const char *)0, 0,
+                           KEY_ALL_ACCESS, (void *)0, &hKey, &disp) != ERROR_SUCCESS)
+            continue;
+        RegSetQword(hKey, "EFER",      pc->efer_at_boot);
+        RegSetQword(hKey, "CR0",       pc->cr0_at_boot);
+        RegSetQword(hKey, "CR4",       pc->cr4_at_boot);
+        RegSetQword(hKey, "XCR0",      pc->xcr0_at_boot);
+        RegSetQword(hKey, "PAT",       pc->pat_at_boot);
+        RegSetQword(hKey, "MiscEnable", pc->misc_enable);
+        RegSetQword(hKey, "ArchCaps",  pc->arch_caps);
+        RegSetQword(hKey, "SpecCtrl",  pc->spec_ctrl_at_boot);
+        RegSetDword(hKey, "MicrocodeRev", pc->ucode_rev);
+        RegCloseKey(hKey);
     }
 }
 

@@ -1868,6 +1868,14 @@ void registry_populate_defaults(void)
     /*: Populate boot device provenance (HKLM\SYSTEM\Boot\Device\*) */
     boot_device_populate_registry();
 
+    /* Populate per-CPU register audit (HKLM\HARDWARE\CPU\%u\Registers) from the
+     * snapshots captured during SMP bringup (TODO-09-boot S9). Local extern to
+     * keep this arch-neutral file free of cpu_security.h (arch header). */
+    {
+        extern void cpu_audit_populate_registry(void);
+        cpu_audit_populate_registry();
+    }
+
     /* Populate firmware platform classification (HKLM\SYSTEM\Boot\Firmware\*) */
     {
         extern void firmware_platform_populate_registry(void);
