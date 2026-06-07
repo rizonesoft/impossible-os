@@ -17,6 +17,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_halt.h"
 /* A single GDT entry (8 bytes) */
 struct gdt_entry {
     uint16_t limit_low;
@@ -78,6 +79,26 @@ static void gdt_set_tss(uint32_t index, uint64_t base, uint32_t limit)
     upper[1] = 0;                        /* reserved */
 }
 
+/* IST stacks for critical exceptions. Each IST = 1 guard page (bottom) +
+ * IST_STACK_PAGES usable pages. 4 KiB was too tight: the #DF/NMI/MCE path
+ * falls through to panic_screen() -> write_crash_dump(), which puts a 2 KiB
+ * buffer on the stack before the VFS/NVRAM/framebuffer render chain. */
+#define IST_STACK_PAGES 2   /* usable pages above the guard (8 KiB) */
+
+/* Allocate one IST stack with a guard page at the bottom; return the stack
+ * top. IST is critical boot infrastructure: without a valid, guarded stack a
+ * #DF/NMI/MCE triple-faults instead of showing a BSOD, so any allocation or
+ * guard failure is fatal, not degraded. */
+static uint64_t ist_alloc(const char *guard_label)
+{
+    uintptr_t base = pmm_alloc_contiguous(IST_STACK_PAGES + 1);
+    if (!base)
+        boot_halt("IST stack allocation failed (out of physical memory)");
+    if (vmm_install_guard_page(base, guard_label) != 0)
+        boot_halt("IST guard page install failed");
+    return (uint64_t)(base + (uint64_t)(IST_STACK_PAGES + 1) * VMM_PAGE_SIZE);
+}
+
 void gdt_init(void)
 {
     uint64_t tss_base = (uint64_t)(uintptr_t)&kernel_tss;
@@ -97,33 +118,19 @@ void gdt_init(void)
         kernel_tss.rsp0 = (uint64_t)(uintptr_t)stack_top;
     }
 
-    /* IST stacks for critical exceptions: #DF, NMI, MCE.
-     * Allocated from PMM (identity-mapped, phys = virt).
-     * PMM is initialized in Phase 0, GDT in Phase 1 -- always available.
-     * Each IST gets 2 pages: guard (bottom) + stack (top).
-     * IST pointer goes to the TOP (highest address). */
+    /* IST stacks for critical exceptions: #DF, NMI, MCE. Allocated from PMM
+     * (identity-mapped, phys = virt). PMM is up in Phase 0, GDT in Phase 1.
+     * Failure is fatal (see ist_alloc). NOTE: this configures the BSP TSS
+     * only; per-CPU TSS/IST for APs (AP bringup hardening) is not set up here,
+     * so AP critical-exception IST delivery is not yet SMP-covered. */
     POST16(0xD200);
-    {
-        uintptr_t ist1_base = pmm_alloc_contiguous(2);  /* #DF: guard + stack */
-        uintptr_t ist2_base = pmm_alloc_contiguous(2);  /* NMI: guard + stack */
-        uintptr_t ist3_base = pmm_alloc_contiguous(2);  /* MCE: guard + stack */
-
-        if (ist1_base) {
-            vmm_install_guard_page(ist1_base, "GUARD: IST #DF stack overflow");
-            kernel_tss.ist1 = ist1_base + 8192;  /* stack top = guard + 4K + 4K */
-        }
-        if (ist2_base) {
-            vmm_install_guard_page(ist2_base, "GUARD: IST NMI stack overflow");
-            kernel_tss.ist2 = ist2_base + 8192;
-        }
-        if (ist3_base) {
-            vmm_install_guard_page(ist3_base, "GUARD: IST MCE stack overflow");
-            kernel_tss.ist3 = ist3_base + 8192;
-        }
-
-        klog(LOG_INFO, "cpu", "IST stacks: DF=%p NMI=%p MCE=%p (guard pages installed)",
-             kernel_tss.ist1, kernel_tss.ist2, kernel_tss.ist3);
-    }
+    kernel_tss.ist1 = ist_alloc("GUARD: IST #DF stack overflow");
+    kernel_tss.ist2 = ist_alloc("GUARD: IST NMI stack overflow");
+    kernel_tss.ist3 = ist_alloc("GUARD: IST MCE stack overflow");
+    klog(LOG_INFO, "cpu",
+         "IST stacks: DF=%p NMI=%p MCE=%p (%u KiB each + guard page)",
+         kernel_tss.ist1, kernel_tss.ist2, kernel_tss.ist3,
+         (uint64_t)(IST_STACK_PAGES * 4));
     POST16(0xD201);
 
     /* Set the I/O Permission Bitmap offset to beyond the TSS (no IOPB) */

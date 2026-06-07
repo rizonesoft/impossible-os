@@ -74,7 +74,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | ⭐  | Order | Deliverable                                            | Depends On | Status |
 | --- | :---: | ------------------------------------------------------ | ---------- | :----: |
 | 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | --          |  [x]   |
-| 💎  |   2   | IST stacks for critical exceptions                     | --          |  [x]   |
+| 💎  |   2   | IST stacks for critical exceptions                     | --          |  [/]   |
 | 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [x]   |
 | 💎  |   4   | ACPI FADT boot architecture flags                      | --          |  [/]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [x]   |
@@ -142,14 +142,27 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 > [!WARNING]
 > **Nested-NMI gap:** the shared IST2 NMI stack does NOT nest safely -- a second NMI arriving after the first unblocks (post-`iret`) reuses IST2 and corrupts the prior frame. Linux carries an explicit `repeat_nmi`/`nested_nmi` latch-and-replay path (`arch/x86/entry/entry_64.S`). Today only fatal NMIs (panic_screen) run, so the path is dormant -- but `TODO-23 §1` (LAPIC-NMI boot watchdog) makes it live. Per-CPU nested-NMI latch/replay (or drop) semantics must land before that watchdog ships. → XREF: `TODO-23 §1`.
 
-- [x] Allocate 3 IST stacks (4 KiB each) from PMM during `gdt_init()` -- identity-mapped, phys = virt
+- [x] Allocate 3 IST stacks (`IST_STACK_PAGES`=2, 8 KiB usable + 4 KiB guard page each) from PMM during `gdt_init()` via `ist_alloc()`; identity-mapped, `boot_halt` on alloc/guard failure
 - [x] Set `kernel_tss.ist1` = DF stack top, `kernel_tss.ist2` = NMI stack top, `kernel_tss.ist3` = MCE stack top
 - [x] Update IDT entries: vector 8 (#DF) → IST=1, vector 2 (NMI) → IST=2, vector 18 (MCE) → IST=3
 - [x] NMI/MCE/#DF handlers: existing `panic_screen()` provides register dump, BSOD, NVRAM write, halt -- no separate handler needed for the fatal-fault path (corrected/recoverable MCE recovery is a separate RAS scope, not yet owned -- see gap report)
 - [ ] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault *(deferred to BM Test 1)*
+- [ ] AP per-CPU TSS/IST: BSP-only today -- APs share one `kernel_tss`/IST (no AP `ltr`), so AP #DF/NMI/MCE IST delivery is not SMP-safe. Owned by `D01 T09 §10` (item: "Per-CPU TSS + IST").
 - [x] Commit: `"kernel: IST stacks for #DF, NMI, MCE -- no more silent triple faults"`
 
 **Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1723 kernel suites, 0 failures
+
+> **Notes:**
+> - Shipped: IST1/2/3 for #DF/NMI/MCE allocated in `gdt.c` `gdt_init()` via `ist_alloc()` (8 KiB usable + guard page each); IDT IST indices wired in `idt.c` (vec 8->1, 2->2, 18->3).
+> - Runs: #DF/NMI/MCE with no registered handler fall through to `panic_screen()` (BSOD + NVRAM + halt); a stack overflow lands on the fresh IST stack, and overflowing the IST itself hits the labeled guard page.
+> - Review hardening (2026-06-07): `boot_halt` on IST alloc/guard failure (was a silent NULL-IST arm -> triple fault), IST size 4->8 KiB (panic path puts a 2 KiB buffer on stack), and the 3 inline allocs consolidated into `ist_alloc()`.
+> - Scope boundary: BSP TSS only -- per-CPU TSS/IST for APs is owned by `D01 T09 §10`; corrected/recoverable MCE (RAS) recovery is unowned (recommended new TODO).
+> - Test gap: IST-allocated and stack-overflow-#DF assertions are deferred to `test_bare_metal.c` (Unit Tests section) + BM Test 1.
+> **Verified:** 2026-06-07 | commit `2d9bfbf3` | 4/6 items | build OK | boot 1723 PASS
+> **Accepted:** [Critical] AP per-CPU TSS/IST not configured -- all CPUs share one `kernel_tss`/IST1-3 (no AP `ltr`), so AP #DF/NMI/MCE IST delivery is not SMP-safe -> XREF: 01-boot-platform/TODO-09 §10 (item: "Per-CPU TSS + IST")
+> **Quality reviewed:** 2026-06-07 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M+1L fixed, 1Crit accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -429,7 +442,7 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 | ⭐   | Feature                 | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS               |
 | --- | ----------------------- | ------------------------- | ------------------------- | ----------------------------- |
 | 💎   | UC MMIO mapping         | ✅ MmMapIoSpace            | ✅ ioremap_uc              | ✅ §1 vmm_map_mmio_uc          |
-| 💎   | IST stacks              | ✅ All critical exceptions | ✅ IST1-4 DF/NMI/MCE       | ✅ §2 IST1-3 DF/NMI/MCE        |
+| 💎   | IST stacks              | ✅ All critical exceptions | ✅ IST1-4 DF/NMI/MCE       | ⚠️ §2 BSP IST1-3 (AP: T09 §10) |
 | 💎   | ACPI FADT boot arch     | ✅ HAL checks all flags    | ✅ Gates PIT/RTC/PS2       | ✅ §4 IAPC_BOOT_ARCH parsed    |
 | 💎   | PS/2 ACPI detection     | ✅ HAL detects i8042       | ✅ i8042.nopnp             | ✅ §5 FADT + GSI routing       |
 | 💎   | AHCI MSI fallback       | ✅ StorAHCI INTx fallback  | ✅ libahci polled fallback | ✅ §6 MSI→INTx→polled          |
