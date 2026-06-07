@@ -79,7 +79,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |   4   | ACPI FADT boot architecture flags                      | --          |  [x]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [x]   |
-| 💎  |   7   | Resilient boot with graceful degradation               | --          |  [x]   |
+| 💎  |   7   | Resilient boot with graceful degradation               | --          |  [/]   |
 | 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [/]   |
 | 💎  |   9   | CPU security activation and verification               | §4, §8     |  [x]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [x]   |
@@ -316,14 +316,29 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 > **Non-critical (BOOT_DEGRADED if fail):** RTC, keyboard, mouse, NIC, AHCI, SMBIOS, splash, registry, SMP, DHCP.
 > A degraded boot reaches the desktop with reduced functionality. The user sees a notification listing what failed.
 
-- [x] `BOOT_TRY(subsys, fn_call, name)` macro: calls fn, sets degraded_mask on failure, logs warning, continues
-- [x] `g_boot_info.degraded_mask` (32-bit) tracks which subsystems failed
-- [x] Classification: critical subsystems use `boot_halt()` (PMM, VMM, GDT, IDT, VFS); non-critical use BOOT_TRY or void+log (RTC, keyboard, mouse, etc.)
-- [x] Phase 3 desktop: logs degraded subsystem list if any failed
+- [x] `BOOT_TRY(subsys, fn_call, name)` macro: delegates ready/degraded_mask to `kernel_subsystem_apply_result()` (single source of truth, bounds-checked), logs warning on any non-OK, continues
+- [x] `g_boot_info.degraded_mask` (32-bit) tracks which subsystems failed; `_Static_assert(SUBSYS_COUNT <= 32)` guards the `1u<<subsys` width
+- [x] Classification: critical subsystems `boot_halt()` (PMM, VMM, GDT, IDT, VFS); the wired non-critical paths (UEFI vars/time, SecureBoot, TPM, XSAVE, PCID) use `apply_result` -> degraded_mask
+- [x] Phase 3 desktop: logs degraded subsystem list (bounded by `SUBSYS_COUNT`, names from single source)
 - [x] Bare-metal skip workarounds already removed in §3 (clac fix) and §5 (ACPI gate)
+- [ ] Add `SUBSYS_*` slots + `s_subsys_names[]` for the non-critical subsystems the callout lists but the enum lacks (keyboard, mouse, AHCI, NIC, SMBIOS, splash, DHCP) so degraded_mask can represent them
+- [ ] Wire Phase 1-3 non-critical inits through `apply_result`: `rtc/keyboard/mouse/fb_init` are void and `ahci_init` return is ignored, so failures never set degraded_mask -- make them return `boot_result_t` and wrap
+- [ ] Forced-failure regression: force one non-critical init to fail -> boot reaches Phase 3 -> degraded summary lists it (the Test checkpoint below is non-functional until then)
 - [x] Commit: `"boot: resilient init with BOOT_TRY -- non-critical failures degrade, never crash"`
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed -- degraded`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1723 kernel suites, 0 failures
+
+> **Notes:**
+> - Infrastructure shipped: `BOOT_TRY` macro, `kernel_subsystem_apply_result()`, `g_boot_info.degraded_mask`, and the Phase 3 degraded-subsystem summary (bounded by `SUBSYS_COUNT`).
+> - Critical subsystems (PMM/VMM/Heap/GDT/IDT/VFS) `boot_halt()`; the wired non-critical paths (UEFI vars/time, SecureBoot, TPM, XSAVE, PCID) record degraded_mask via `apply_result`.
+> - Review hardening (2026-06-07): `BOOT_TRY` now delegates to `apply_result` (was OK-only ready + unbounded shift); added `_Static_assert(SUBSYS_COUNT <= 32)` guarding the uint32 degraded_mask shift.
+> - Downgraded to `[/]`: most non-critical inits (`rtc/keyboard/mouse/fb` void, `ahci_init` return ignored) mark ready unconditionally and several lack a `SUBSYS_` slot, so their failures never reach degraded_mask. 3 concrete `[ ]` items filed.
+> - Scope boundary: this section owns the degradation INFRASTRUCTURE; per-driver result-returning signatures + the forced-failure test are the filed follow-ups.
+> **Verified:** 2026-06-07 | commit `2340c34e` | 5/8 items | build OK | boot 1723 PASS, smoke PASS (KVM 3.0s)
+> **Deferred:** [H] resilient wrapping not wired for most non-critical subsystems (void/ignored-return inits + missing enum slots) -- Test checkpoint non-functional until then -> XREF: 01-boot-platform/TODO-10 §7 (item: "Wire Phase 1-3 non-critical inits through `apply_result`")
+> **Quality reviewed:** 2026-06-07 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 1H deferred (re-adversarial skipped: header-only fix, no faultable region) | scope: kernel-code-quality
 
 ---
 

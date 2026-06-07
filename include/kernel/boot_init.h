@@ -65,6 +65,14 @@ typedef enum {
     SUBSYS_COUNT    = 27,  /* sentinel -- keep last */
 } kernel_subsys_t;
 
+/* g_boot_info.degraded_mask is a uint32 and BOOT_TRY / kernel_subsystem_
+ * apply_result() record failures via `1u << subsys`. If the enum ever grows
+ * past 32 slots the shift becomes undefined and degraded subsystems silently
+ * drop out of the boot-health summary. Widen degraded_mask to uint64 (and bump
+ * the boot_info mirror/version) before adding the 33rd subsystem. */
+_Static_assert(SUBSYS_COUNT <= 32,
+    "degraded_mask is uint32: SUBSYS_COUNT must stay <= 32 or 1u<<subsys is UB");
+
 /* --- POST code constants --------------------------------------------------
  *
  * One code per major init step. Values match common BIOS diagnostic LED
@@ -409,13 +417,14 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
 #define BOOT_TRY(subsys, fn_call, name) \
     do { \
         boot_result_t _bt_r = (fn_call); \
-        if (_bt_r == BOOT_OK) { \
-            kernel_subsystem_set_ready((subsys), true); \
-        } else { \
-            extern struct boot_info g_boot_info; \
-            g_boot_info.degraded_mask |= (1u << (subsys)); \
-            klog(LOG_WARN, "boot", "%s: init failed -- degraded", (name)); \
-        } \
+        /* Delegate the ready/degraded_mask mapping to the single source of \
+         * truth -- it sets ready on BOOT_OK||BOOT_DEGRADED, records \
+         * degraded_mask on any non-OK, and bounds-checks subsys (so the \
+         * 1u<<subsys shift is never out of range). */ \
+        kernel_subsystem_apply_result((subsys), _bt_r); \
+        if (_bt_r != BOOT_OK) \
+            klog(LOG_WARN, "boot", "%s: init result %d -- degraded", \
+                 (name), (int)_bt_r); \
     } while (0)
 
 /*
