@@ -229,8 +229,10 @@ Implement `vmm_map_mmio()` / `MmMapIoSpace()` to create uncacheable (UC) mapping
 
 > **Current state (2026-03-28):** The bootloader maps all 4 GiB with `0x87` (Present+Writable+User+PS) -- no PCD/PWT bits, so all pages are WB cached. LAPIC/IOAPIC work because MTRRs override those specific ranges to UC. HPET, ECAM, and other MMIO devices have no MTRR entries and crash on bare metal when accessed through WB pages. The HPET calibration path in `lapic.c` currently has a probe guard but should use a proper UC mapping instead.
 
-- [ ] Implement `vmm_map_mmio(phys_base, size)` -- allocate 4 KiB PTEs, set `PCD=1` + `PWT=1` (UC memory type), return virtual address. Use a dedicated kernel VA region above the identity map to avoid conflicts.
-- [ ] Implement `vmm_unmap_mmio(virt, size)` -- unmap and free PTEs.
+- [ ] Implement `vmm_map_mmio(phys_base, size)` -- 4 KiB PTEs, `PCD=1`+`PWT=1` (UC), return VA via a central kernel VA allocator with reserved non-overlapping ranges (identity/mmap/PE/MMIO), replacing the minimal hand-picked windows (D01 T10 §1).
+- [ ] Implement `vmm_unmap_mmio(virt, size)` -- unmap PTEs AND reclaim the VA range (minimal version leaks the VA span on unmap/failure).
+- [ ] VMM-wide kernel page-table-creation lock: `get_or_create_table()` is unlocked, so two CPUs mapping a fresh `kernel_pml4` subtree race. Serialize it or pre-create the MMIO hierarchy pre-SMP (bites D01 T10 §1).
+- [ ] PE loader rejects reserved kernel VA ranges: `pe_load()` accepts any file-controlled `ImageBase`, which can map over the MMIO/mmap windows. Reject overlap once the central VA allocator owns the ranges.
 - [ ] Implement `MmMapIoSpace(phys, size, cache_type)` Win32 wrapper -- routes to `vmm_map_mmio()` with cache type translation (`MmNonCached` → UC, `MmWriteCombined` → WC via PAT).
 - [ ] HPET validation: read General Capabilities register via UC mapping; reject if `REV_ID == 0`, `COUNTER_CLK_PERIOD == 0`, or `COUNTER_CLK_PERIOD > 100000000` (>100ns/tick).
 - [ ] HPET quirk table: static table of `{ vendor_id, device_id, quirk_flags }` for known-broken HPET implementations (AMD SB700/SB800 HPET counter freeze, Intel ICH9 64-bit read errata). Check against HPET's `VENDOR_ID` field in the capabilities register.

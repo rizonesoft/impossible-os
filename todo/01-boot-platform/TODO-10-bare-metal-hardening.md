@@ -11,7 +11,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 > **Goal:** Make the kernel boot reliably on any x86-64 bare-metal hardware. After this TODO, the boot sequence is robust against absent hardware, misconfigured firmware, and platform-specific quirks through correct gating, fallback behavior, and bare-metal-first validation. Rich POST/VPD diagnostics stay owned by the dedicated diagnostics TODOs referenced below.
 
 > [!IMPORTANT]
-> **Current state (2026-04-11):** `clac` is removed from `isr_common_stub` (`isr_stubs.asm`). UC MMIO uses `vmm_map_mmio_uc` / `vmm_unmap_mmio` (`vmm.c`). IST stacks and TSS fields are allocated in `gdt.c` with IDT IST wiring in `idt.c`. FADT `IAPC_BOOT_ARCH` gates legacy devices (`acpi.c`). AHCI MSI setup masks the LAPIC timer around PCI MSI writes (`ahci_core.c`). `BOOT_TRY` + `g_boot_info.degraded_mask` live in `boot_init.h` with Phase 1--3 call sites. Per-process PML4 + CR3 switch live in `vmm.c` / `task.c`. Early boot reads prior POST from UEFI NVRAM and logs last-boot outcome (`boot_hw.c`, `boot_init.c`). **Still open:** §1 `hpet_read_ns()` (owner TODO-11 §1 UTS), §7 deliberate kernel stack-overflow BSOD test, §4 `pmm_mark_region_used` cleanup for fixed ELF phys + boot PML4 User-bit blocker for SMEP/SMAP on bare metal, `src/kernel/test/test_bare_metal.c` + `test_register_bare_metal()`, BM Test 5, Verification checklist. Dense per-function POST16 instrumentation beyond the `0xD1xx` bring-up set is owned by `TODO-15-visual-post-display.md`.
+> **Current state (2026-04-11):** `clac` is removed from `isr_common_stub` (`isr_stubs.asm`). UC MMIO uses `vmm_map_mmio_uc` / `vmm_unmap_mmio` (`vmm.c`). IST stacks and TSS fields are allocated in `gdt.c` with IDT IST wiring in `idt.c`. FADT `IAPC_BOOT_ARCH` gates legacy devices (`acpi.c`). AHCI MSI setup masks the LAPIC timer around PCI MSI writes (`ahci_core.c`). `BOOT_TRY` + `g_boot_info.degraded_mask` live in `boot_init.h` with Phase 1--3 call sites. Per-process PML4 + CR3 switch live in `vmm.c` / `task.c`. Early boot reads prior POST from UEFI NVRAM and logs last-boot outcome (`boot_hw.c`, `boot_init.c`). **Still open:** §1 `hpet_read_ns()` (owner TODO-11 §1 UTS), §7 deliberate kernel stack-overflow BSOD test, §4 `pmm_mark_region_used` cleanup for fixed ELF phys + boot PML4 User-bit blocker for SMEP/SMAP on bare metal, `src/kernel/test/test_bare_metal.c` + `test_register_bare_metal()`, BM Test 5, Verification checklist. Dense per-function POST16 instrumentation beyond the `0xD1xx` bring-up set is owned by `TODO-15-visual-post-display.md`. **Gap-audit 2026-06-06 demotions:** §4 -> `[/]` (ACPI capability APIs ignore `acpi_hw_reduced()`; hw-reduced platforms wrongly report legacy devices present), §8 -> `[/]` (per-process PML4 ships, but "directly unblocks SMEP/SMAP" was false -- the boot PML4 still has User on kernel pages; real unblock owned by `D02 T10 §3-§6` KPTI). **Newly named gaps:** nested-NMI safety on shared IST2 (blocking prereq for `TODO-23 §1` watchdog), and corrected/recoverable machine-check (RAS/WHEA) recovery -- currently every MCE panics; no owner exists, a dedicated RAS TODO is recommended.
 
 > [!IMPORTANT]
 > **Origin (2026-03-28) -- historical context:** A full day of bare-metal debugging on an i5-11600K laptop exposed fundamental gaps (SMEP page tables, HPET WB MMIO, GS_BASE clobbered by GDT reload, TSS RSP0 uninitialized, heartbeat ISR reentrancy, RTC hang, calibration timeouts). The **original mystery symptom** was hardware interrupts (LAPIC timer / PIT) faulting on bare metal while software `INT 0x81` through the same ISR path worked -- **root cause fixed 2026-03-29** (`clac` #UD in `isr_common_stub`, §3). Workarounds listed here (mouse/AHCI/timer disabled) were removed as the real fixes landed; keep this block so future readers know why the TODO exists.
@@ -54,7 +54,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 - → XREF: `TODO-15-visual-post-display.md` §1 §4 -- 4-digit POST16 system and per-function instrumentation (moved from this TODO to TODO-15)
 - → XREF: `TODO-15-visual-post-display.md` §7 -- Tier 1 VPD raw VRAM; follows bare-metal interrupt and page-flip constraints in this file §6
 - → XREF: `TODO-24-blackbox-service-partition.md` §5-§8 -- authoritative owner for log, boot timeline, crash, perf, and diagnostic storage paths
-- → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- NX/SMEP/SMAP implementation (this TODO does NOT reimplement; handles bare-metal quirks like shared page tables)
+- → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md §2` (SMEP/SMAP CR4 activation) + `§3-§6` (KPTI clean kernel PML4 -- the actual unblock for bare-metal SMEP/SMAP, since the boot PML4 has User on all kernel 2 MiB pages) -- this TODO does NOT reimplement; `§8`/`§9` here observe + verify the bare-metal shared-page-table quirk once that owner clears kernel U/S bits
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` -- boot_progress() infrastructure (this TODO consumes it)
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §11` -- full `vmm_map_mmio()` / UC MMIO; this TODO §1 keeps minimal `vmm_map_mmio_uc()` only
 - → XREF: `TODO-03-bootloader-error-recovery.md §6` -- serial port probe and COM2 fallback; §8 here provides graceful degradation when serial is absent, §6 there detects serial presence in the bootloader
@@ -76,11 +76,11 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | --          |  [x]   |
 | 💎  |   2   | IST stacks for critical exceptions                     | --          |  [x]   |
 | 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [x]   |
-| 💎  |   4   | ACPI FADT boot architecture flags                      | --          |  [x]   |
+| 💎  |   4   | ACPI FADT boot architecture flags                      | --          |  [/]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [x]   |
 | 💎  |   7   | Resilient boot with graceful degradation               | --          |  [x]   |
-| 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [x]   |
+| 💎  |   8   | Per-process page tables (minimal base)                 | §1         |  [/]   |
 | 💎  |   9   | CPU security activation and verification               | §4, §8     |  [x]   |
 | 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)           | §3         |  [x]   |
 | ⭐  |  11   | ~~`boot.conf` subsystem skip list~~                    | --          |  [x]   |
@@ -113,6 +113,22 @@ Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for de
 
 **Test checkpoint:** QEMU: HPET calibration succeeds (`Tier 2: HPET calibration -> N ticks/ms`). Bare metal: HPET mapped via UC, no MCE, calibration succeeds. `hpet_read_ns()` is deferred (TODO-11 §1); when implemented, returns monotonic ns. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | 88 kernel suites, 0 failures
+
+> **Notes:**
+> - Shipped `vmm_map_mmio_uc()` / `vmm_map_mmio_wc()` / `vmm_unmap_mmio()` in `vmm.c`: 4 KiB PTEs, UC via PCD+PWT+NX (PAT index 3), bump allocator over a dedicated kernel VA window.
+> - Consumers: LAPIC UC self-test (`boot_hw.c`), HPET calibration (`lapic.c` `cal_try_hpet`), and post-boot NVMe/xHCI/HPET/framebuffer BAR mappings.
+> - Review hardening (2026-06-07): one `mmio_map_range()` helper with `s_mmio_lock` on VA reservation, uint64 page math, mid-loop rollback, MMIO window moved to 9-10 GiB (disjoint from mmap + PE-image windows).
+> - Full `vmm_map_mmio()` (cache-type selection, central VA allocator, VA reclaim) is owned downstream by `D03 T01 §11`.
+> - Scope boundary: `hpet_read_ns()` monotonic-time wrapper deferred to `D01 T11 §1` (UTS / HPET standalone driver).
+> **Verified:** 2026-06-07 | commit `bc4a72b8` | 5/6 items | build OK | mm 88/88 PASS
+> **Accepted:** [M] MMIO bump allocator never reclaims unmapped VA + windows hand-picked disjoint (no central kernel VA allocator) -> XREF: 03-memory-concurrency/TODO-01 §11 (item: "Implement `vmm_map_mmio(phys_base, size)` ... central kernel VA allocator with reserved non-overlapping ranges")
+> **Accepted:** [H] `get_or_create_table()` unlocked -- concurrent post-SMP MMIO maps into a fresh `kernel_pml4` subtree race (pre-existing VMM-wide; original §1 held no map lock at all) -> XREF: 03-memory-concurrency/TODO-01 §11 (item: "VMM-wide kernel page-table-creation lock")
+> **Accepted:** [H] `pe_load()` accepts file-controlled `ImageBase` that can overlap the MMIO window (pre-existing VA-layout gap) -> XREF: 03-memory-concurrency/TODO-01 §11 (item: "PE loader rejects reserved kernel VA ranges")
+> **Quality reviewed:** 2026-06-07 | Codex 7x (adversarial, consistency, perf, re-adversarial) | 6H+2M fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
+
+---
+
 ## 2. IST Stacks for Critical Exceptions
 
 Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Check Exception (MCE). Without IST, a stack overflow during an exception handler causes a triple fault and silent reboot -- the most common "mystery crash" on bare metal.
@@ -123,14 +139,19 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 > Linux uses IST1 for #DF, IST2 for NMI, IST3 for MCE. Windows uses separate stacks for the same exceptions via task gates (32-bit) or IST (64-bit). Both guarantee that these critical exceptions can always execute even when the kernel stack is corrupted.
 > **Debug POST (§2):** `POST16(0xD200)` = IST alloc start, `0xD201` = TSS IST fields, `0xD202` = IDT IST vectors, `0xD203` = §2 done.
 
+> [!WARNING]
+> **Nested-NMI gap:** the shared IST2 NMI stack does NOT nest safely -- a second NMI arriving after the first unblocks (post-`iret`) reuses IST2 and corrupts the prior frame. Linux carries an explicit `repeat_nmi`/`nested_nmi` latch-and-replay path (`arch/x86/entry/entry_64.S`). Today only fatal NMIs (panic_screen) run, so the path is dormant -- but `TODO-23 §1` (LAPIC-NMI boot watchdog) makes it live. Per-CPU nested-NMI latch/replay (or drop) semantics must land before that watchdog ships. → XREF: `TODO-23 §1`.
+
 - [x] Allocate 3 IST stacks (4 KiB each) from PMM during `gdt_init()` -- identity-mapped, phys = virt
 - [x] Set `kernel_tss.ist1` = DF stack top, `kernel_tss.ist2` = NMI stack top, `kernel_tss.ist3` = MCE stack top
 - [x] Update IDT entries: vector 8 (#DF) → IST=1, vector 2 (NMI) → IST=2, vector 18 (MCE) → IST=3
-- [x] NMI/MCE/#DF handlers: existing `panic_screen()` provides register dump, BSOD, NVRAM write, halt -- no separate handler needed
+- [x] NMI/MCE/#DF handlers: existing `panic_screen()` provides register dump, BSOD, NVRAM write, halt -- no separate handler needed for the fatal-fault path (corrected/recoverable MCE recovery is a separate RAS scope, not yet owned -- see gap report)
 - [ ] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault *(deferred to BM Test 1)*
 - [x] Commit: `"kernel: IST stacks for #DF, NMI, MCE -- no more silent triple faults"`
 
 **Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 3. Hardware Interrupt Root Cause Investigation *(done)*
 Root cause found and fixed 2026-03-29.
@@ -159,6 +180,8 @@ Root cause found and fixed 2026-03-29.
 
 **Test checkpoint:** Table rows match serial on each platform; no triple fault after `sti` with LAPIC timer ticking; `clac` absent from `isr_common_stub` (`isr_stubs.asm`). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 4. ACPI FADT Boot Architecture Flags
 Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices exist before touching any I/O ports. This prevents crashes on platforms without PIT, PS/2 controller, or RTC.
 
@@ -178,9 +201,12 @@ Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices 
 - [x] API: `acpi_has_8042()`, `acpi_has_cmos_rtc()`, `acpi_msi_supported()`, `acpi_has_vga()` -- all safe-default to 1 if FADT absent/short
 - [x] `acpi_hw_reduced()` already exists -- logged alongside IAPC_BOOT_ARCH
 - [x] Log: `IAPC_BOOT_ARCH: 8042=%d RTC=%d MSI=%d VGA=%d HW_REDUCED=%d`
+- [ ] Hardware-reduced override: `acpi_has_8042()`/`acpi_has_cmos_rtc()`/`acpi_has_vga()` return 0 when `acpi_hw_reduced()` is set (ACPI 6.0 hw-reduced has no legacy I/O); keep FADT-absent/short default-present for legacy PCs
 - [x] Commit: `"kernel: parse ACPI FADT IAPC_BOOT_ARCH flags for legacy device detection"`
 
 **Test checkpoint:** Boot on QEMU. Log shows IAPC_BOOT_ARCH with all flags. On bare metal, log shows actual hardware configuration. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 5. PS/2 Controller Detection and Safe Init
 Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports 0x60/0x64 if the i8042 doesn't exist.
@@ -198,6 +224,8 @@ Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports
 - [x] Commit: `"drivers: PS/2 keyboard/mouse gated by ACPI i8042 detection + GSI-based IRQ"`
 
 **Test checkpoint:** Boot on laptop without PS/2 mouse. Mouse init logs "skipped" and boot continues. Boot on QEMU with PS/2 -- mouse works normally. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 6. AHCI Interrupt Hardening
 Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI setup, verify ABAR MMIO accessibility, fall back to polled mode if MSI fails.
@@ -218,6 +246,8 @@ Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI s
 
 **Test checkpoint:** Boot on bare metal. AHCI init logs either "MSI vector 0xNN" or "INTx fallback" or "polled mode". No crash. Disk I/O works. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 7. Resilient Boot with Graceful Degradation
 Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, call init, check result, log outcome, continue on failure. Never `boot_halt()` for non-critical subsystems.
 
@@ -237,9 +267,11 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed -- degraded`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 8. Per-Process Page Tables (Minimal Base)
 
-Implement the minimal per-process page table infrastructure so each task has its own PML4. Kernel pages are supervisor-only, user pages have the User bit. CR3 switches on context switch. This directly unblocks SMEP/SMAP on bare metal and eliminates the user-stacks-in-kernel-heap hack.
+Implement the minimal per-process page table infrastructure so each task has its own PML4. Kernel pages are supervisor-only, user pages have the User bit. CR3 switches on context switch. This eliminates the user-stacks-in-kernel-heap hack and is a prerequisite step toward SMEP/SMAP on bare metal -- but does NOT by itself enable them: the boot / kernel-task PML4 (`entry.asm`) still carries the User bit on all kernel 2 MiB pages, so the actual unblock is the KPTI clean kernel PML4 owned by `D02 T10 §3-§6` (see §9).
 
 **Files:** `src/kernel/mm/vmm.c`, `include/kernel/mm/vmm.h`, `src/kernel/sched/task.c`, `include/kernel/sched/task.h`
 
@@ -264,10 +296,12 @@ Implement the minimal per-process page table infrastructure so each task has its
 - [x] `schedule()` + `schedule_now()`: CR3 switch if next task has different PML4
 - [x] `task_create()`: kernel tasks use boot PML4 (cr3=0)
 - [ ] Remove `pmm_mark_region_used(USER_ELF_BASE, USER_ELF_SIZE)` (`user_range.h`) -- deferred, ELF loader still uses fixed phys address
-- [ ] Remove SMEP/SMAP skip -- moved to §9 (CPU security activation)
+- [ ] Bare-metal SMEP/SMAP unblock is external: boot-PML4 User-bit clearing / clean kernel PML4 owned by `D02 T10 §3-§6` (KPTI); §9 here only verifies once it lands
 - [x] Commit: `"mm: per-process page tables -- user/kernel separation, CR3 switch"`
 
-**Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Kernel pages don't have User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: SMEP/SMAP enabled (CR4 bits set), cmd.exe runs, no page faults. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Cloned per-process kernel pages don't have the User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: cmd.exe runs in its own PML4, no page faults. SMEP/SMAP remain skipped on bare metal (boot-PML4 User-bit blocker, unblock owned by `D02 T10 §3-§6`); do NOT expect CR4.SMEP/SMAP set here. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 9. CPU Security Activation and Verification
 
@@ -287,6 +321,8 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 
 **Test checkpoint:** Boot on bare metal. Log shows `[OK] cpu: NX enabled, SMEP skipped (shared page tables), SMAP skipped`. On QEMU: log shows all three enabled (or EPT-enforced). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 10. Boot Order Hardening (Timer-Last, UEFI-Safe)
 
 Formalize the boot order lessons learned: timer is the last thing initialized before `sti`, all UEFI runtime calls mask the LAPIC timer, and `boot_splash_start_animation()` only runs after `sti`.
@@ -301,6 +337,8 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** Phase 1 order is correct. UEFI runtime calls don't crash with timer running. Boot order comment block is visible at top of `boot_interrupts.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 11. ~~`boot.conf` Subsystem Skip List~~ *(removed)*
 
 > [!NOTE]
@@ -309,6 +347,8 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 - [x] Commit: "(shipped) removed boot.conf skip list -- BOOT_TRY + degraded_mask only"
 
 **Test checkpoint:** N/A -- `boot.conf` skip list removed 2026-03-29; use `BOOT_TRY` / `degraded_mask` (§7) for intentional subsystem failure tests instead.
+
+---
 
 ## 12. Logging and Diagnostic Storage Moved to TODO-24
 
@@ -320,6 +360,8 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 - [x] Commit: "(doc) move log and diagnostic storage ownership to TODO-24"
 
 **Test checkpoint:** Use `TODO-24 §5-§8` verification; this file only depends on those outputs existing on bare metal.
+
+---
 
 ## 13. CPU Feature Minimum Requirements and Verification
 
@@ -337,6 +379,8 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 - [x] Commit: `"boot: CPU feature minimum requirements + post-activation verification"`
 
 **Test checkpoint:** Boot on CPU without SMAP. Log shows `[WARN] cpu: SMAP not available -- skipped`. Boot continues. On CPU with SMAP: verification confirms CR4.SMAP is set. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 14. Bare-Metal Test Matrix and Validation Plan
 
@@ -360,6 +404,8 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 - [x] Commit: "(shipped) bare-metal test matrix inline in TODO-10"
 
 **Test checkpoint:** Bare-metal boot on i5-11600K matches the checklist. All phases within timing thresholds. VMs: QEMU WHPX, QEMU TCG, VirtualBox match matrix rows above.
+
+---
 
 ## 15. Boot Splash Spinner Bare-Metal Fix
 
@@ -395,6 +441,8 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 | ⭐   | Bare-metal test matrix  | ❌ Internal only (WHQL)    | ❌ Community-driven        | ✅ §14 4-platform matrix       |
 
 > **After §1--§14:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
+
+---
 
 ## Bare Metal Testing Plan
 
@@ -471,6 +519,8 @@ Full acceptance pass. All sections complete.
 
 **~20 minutes.** Full regression pass.
 
+---
+
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_bare_metal()` (see [`src/kernel/test/test_runner.c`](../../src/kernel/test/test_runner.c) and `include/kernel/test/test.h`; same pattern as `02-kernel-core/TODO-11-peb-teb-user-abi.md` Unit Tests).
@@ -484,6 +534,7 @@ Full acceptance pass. All sections complete.
   - IST stacks allocated: `kernel_tss.ist1 != 0`, `kernel_tss.ist2 != 0`, `kernel_tss.ist3 != 0`
   - ACPI FADT flags: `acpi_has_8042()` returns 0 or 1; `acpi_has_cmos_rtc()` returns 0 or 1 (never crashes)
   - `acpi_msi_supported()` returns 0 or 1 (consistent with FADT)
+  - hw-reduced override (§4): when `acpi_hw_reduced()` is set, `acpi_has_8042()`/`acpi_has_cmos_rtc()`/`acpi_has_vga()` all return 0 regardless of `boot_arch_flags`
   - `g_boot_info.degraded_mask == 0` on a clean boot (no subsystems failed)
   - Per-process PML4: `vmm_create_user_pml4()` returns non-NULL; `vmm_destroy_user_pml4()` frees without crash
   - `vmm_set_user_page()` on a valid PML4+virt succeeds (User bit is set in PTE)
@@ -499,6 +550,8 @@ Full acceptance pass. All sections complete.
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=boot` passes after `test_bare_metal.c` and `test_register_bare_metal()` land; smoke script greps succeed on reference QEMU boot. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
@@ -512,15 +565,3 @@ Full acceptance pass. All sections complete.
 **Test checkpoint:** All Verification bullets pass on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal; BM Test 5 items complete; `tail -1 build/build.log` shows `=== BUILD OK ===`.
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
-
----
-
-## History
-
-| Date | Action | Summary |
-| --- | --- | --- |
-| 2026-04-11 | validate | validate-todo-file (pass 2): §1/§2/§6 Debug POST in callouts; §6/§5 checkpoints + platforms; BM Test 5 skip bullet replaced; Unit Tests **Test checkpoint**; Verification `---` before History; runner path fix. Pass 1: en-dash to ASCII; VMM XREF §1 to §11; Debug POST folded into callouts so Commit precedes final Test checkpoint; OS table header + dedupe Graceful row; post-OS summary matches skip-list removal; §11/§12/§14 Commit; Verification test runner; Inputs `boot_hw.c` path still via markdown links. Flags: §1 `hpet_read_ns` deferred; §8 two open items; BM Test 5 open; `test_bare_metal.c` not in tree; `### BM Test` headings remain (named tests, not N.M). |
-| 2026-04-11 | validate | validate-todo-file (pass 3): §1/§2/§6 Debug POST in NOTE/IMPORTANT; Outcome + Impl Order footnote match BOOT_TRY; §1/§4/§5/§7/§9/§10/§12/§13/§14/§15 Test checkpoint platform lists; OS table rebuilt aligned; §11 shipped Commit line; TODO-03 XREF arrow; §5 IMPORTANT empty `>` lines removed; Unit Tests intro drops missing TODO-05 path, points at test_runner.c. |
-| 2026-04-11 | gap-analysis | gap-audit-todo: Current state callout; Origin block marked historical + §3 fix; Outcome NVRAM/VPD nuance; §15 stale timer text fixed; Unit Tests note `test_boot_init` degraded_mask overlap; Inputs + `boot_init.h`; TODO-11 §1/§2 XREF TODO-10 §1 (was §3). Research: 6 web + 2 docs fetched (Linux kernel stacks doc; MmMapIoSpaceEx Learn). No new `##` sections; OS table unchanged. |
-| 2026-04-11 | validate | validate-todo-file (pass 4): §1 deferral XREF TODO-11 §1 (not §7); Inputs TODO-11 blurb; §5 **Test checkpoint**; §8 IMPORTANT blank `>` removed; §4 `USER_ELF_*`; BM Test 5 NVRAM bullet matches `[BOOT] Last boot succeeded`; History chronological; TODO-11 XREF §5 + parity paragraph. Flags: `### BM Test`; Impl Order `[x]` vs open Verification/BM5. |
-| 2026-04-12 | validate | TODO-15 validate-todo-file: Inputs XREF to TODO-15 §1 §4 split from old `§1-§4` line; added back-XREF from TODO-15 §7 Tier 1 VPD to this file §6 (page flip / bare metal). |

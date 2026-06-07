@@ -23,6 +23,7 @@
 #include "kernel/mm/swap.h"
 #include "kernel/mm/mmap.h"
 #include "kernel/panic.h"
+#include "kernel/sched/spinlock.h"      /* s_mmio_lock: SMP-safe MMIO VA allocator (unconditional) */
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
@@ -943,85 +944,115 @@ uintptr_t vmm_get_kernel_cr3(void)
 /* --- MMIO mapping (UC -- Uncacheable) ------------------------------------ */
 
 /* Bump allocator for MMIO virtual addresses.
- * Starts at 4 GiB (above the identity map) and grows upward.
- * Each mapping is page-aligned. */
-#define MMIO_VA_BASE  0x100000000ULL  /* 4 GiB */
-#define MMIO_VA_LIMIT 0x140000000ULL  /* 5 GiB -- 1 GiB for MMIO */
+ * The kernel VA windows are picked disjoint by hand (no central allocator yet):
+ *   0-4 GiB   identity map (entry.asm)
+ *   4-5 GiB   mmap.c        (MMAP_BASE..MMAP_END)
+ *   5 GiB+    PE image bases (pe.c, DEFAULT 0x140000000 + SizeOfImage; note the
+ *             ImageBase is file-controlled, so a PE could in principle request
+ *             this window -- the PE loader rejecting reserved ranges + a central
+ *             VA allocator is the real guard, not this hand-picked base)
+ *   8 GiB     test "unmapped" probe sentinel (test_vmm.c)
+ *   9-10 GiB  MMIO          (this window)
+ * Do not overlap these: the allocators are independent and vmm_map_page()
+ * overwrites PTEs unconditionally, so an overlap silently corrupts mappings.
+ * A central kernel VA allocator that reserves non-overlapping ranges is the
+ * real fix (tracked in the VMM memory-protection TODO). */
+#define MMIO_VA_BASE  0x240000000ULL  /* 9 GiB (clear of default PE base + test sentinel) */
+#define MMIO_VA_LIMIT 0x280000000ULL  /* 10 GiB -- 1 GiB for MMIO */
 
 static uintptr_t s_mmio_next_va = MMIO_VA_BASE;
+/* Serializes the bump allocator + PTE installation. MMIO maps happen from
+ * the BSP at boot AND from driver init that may run post-SMP / on APs
+ * (nvme.c, xhci.c, hot-plug), so concurrent callers must not race on
+ * s_mmio_next_va or hand out the same VA range. */
+static spinlock_t s_mmio_lock = SPINLOCK_INIT;
 
 /* UC flags: PCD=1 (bit 4) + PWT=1 (bit 3) = Strong Uncacheable */
 #define VMM_MMIO_UC  (VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | \
                       VMM_FLAG_NOCACHE | VMM_FLAG_WRITETHROUGH | VMM_FLAG_NX)
-
-void *vmm_map_mmio_uc(uint64_t phys_base, uint32_t size)
-{
-    uintptr_t va, va_start;
-    uint32_t pages, i;
-
-    if (size == 0 || (phys_base & 0xFFF) != 0)
-        return (void *)0;
-
-    pages = (size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
-    va_start = s_mmio_next_va;
-
-    if (va_start + (uint64_t)pages * VMM_PAGE_SIZE > MMIO_VA_LIMIT)
-        return (void *)0;  /* out of MMIO VA space */
-
-    for (i = 0; i < pages; i++) {
-        va = va_start + (uint64_t)i * VMM_PAGE_SIZE;
-        if (vmm_map_page(va, phys_base + (uint64_t)i * VMM_PAGE_SIZE,
-                          VMM_MMIO_UC) != 0)
-            return (void *)0;
-    }
-
-    s_mmio_next_va = va_start + (uint64_t)pages * VMM_PAGE_SIZE;
-
-    return (void *)va_start;
-}
 
 /* WC flags: PWT=1 (bit 3), PCD=0 -> PAT index 1 = Write-Combining.
  * Requires PAT MSR entry 1 to be programmed as WC (boot_phase0). */
 #define VMM_MMIO_WC  (VMM_FLAG_PRESENT | VMM_FLAG_WRITABLE | \
                       VMM_FLAG_WRITETHROUGH | VMM_FLAG_NX)
 
-void *vmm_map_mmio_wc(uint64_t phys_base, uint32_t size)
+/* Reserve a VA range from the MMIO bump allocator and install PTEs with the
+ * given cache flags. Overflow-safe page math (size is uint32, widened before
+ * the round-up so it cannot wrap), SMP-safe reservation, and full rollback if
+ * any page fails to map. Returns the VA base or NULL on failure. */
+static void *mmio_map_range(uint64_t phys_base, uint32_t size, uint64_t flags)
 {
-    uintptr_t va, va_start;
-    uint32_t pages, i;
+    uintptr_t va_start;
+    uint64_t pages, i, j, irq_flags;
 
     if (size == 0 || (phys_base & 0xFFF) != 0)
         return (void *)0;
 
-    pages = (size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
-    va_start = s_mmio_next_va;
+    pages = ((uint64_t)size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
+    if (pages == 0)
+        return (void *)0;
 
-    if (va_start + (uint64_t)pages * VMM_PAGE_SIZE > MMIO_VA_LIMIT)
-        return (void *)0;  /* out of MMIO VA space */
-
-    for (i = 0; i < pages; i++) {
-        va = va_start + (uint64_t)i * VMM_PAGE_SIZE;
-        if (vmm_map_page(va, phys_base + (uint64_t)i * VMM_PAGE_SIZE,
-                          VMM_MMIO_WC) != 0)
+    /* Reject a physical range that wraps or runs past the 52-bit physical
+     * address space a PTE can encode. pages * VMM_PAGE_SIZE is at most ~4 GiB
+     * (size is uint32), so it cannot overflow; phys_base near 2^64 still can.
+     * The VA side is bounds-checked under the lock below; this guards phys. */
+    {
+        uint64_t phys_end = phys_base + pages * VMM_PAGE_SIZE;
+        if (phys_end <= phys_base || phys_end > (PTE_ADDR_MASK + VMM_PAGE_SIZE))
             return (void *)0;
     }
 
-    s_mmio_next_va = va_start + (uint64_t)pages * VMM_PAGE_SIZE;
+    /* Reserve a unique VA range under the lock, then release BEFORE installing
+     * PTEs. The reserved range is exclusively ours, so the (potentially long,
+     * PT-frame-allocating) map loop and any rollback need no lock -- and we
+     * never hold IRQs off across O(pages) page-table work (framebuffer maps
+     * thousands of pages). vmm_map_page() page-table SMP-safety across adjacent
+     * ranges is a separate VMM-wide concern, not introduced here. */
+    spin_lock_irqsave(&s_mmio_lock, &irq_flags);
+    va_start = s_mmio_next_va;
+    if (va_start + pages * VMM_PAGE_SIZE > MMIO_VA_LIMIT) {
+        spin_unlock_irqrestore(&s_mmio_lock, irq_flags);
+        return (void *)0;  /* out of MMIO VA space */
+    }
+    s_mmio_next_va = va_start + pages * VMM_PAGE_SIZE;
+    spin_unlock_irqrestore(&s_mmio_lock, irq_flags);
+
+    for (i = 0; i < pages; i++) {
+        if (vmm_map_page(va_start + i * VMM_PAGE_SIZE,
+                          phys_base + i * VMM_PAGE_SIZE, flags) != 0) {
+            /* Roll back the pages already mapped this call. The reserved VA
+             * range itself is not returned to the allocator (VA-reclaim is the
+             * documented minimal-scope limitation). */
+            for (j = 0; j < i; j++)
+                vmm_unmap_page(va_start + j * VMM_PAGE_SIZE, 0);
+            return (void *)0;
+        }
+    }
 
     return (void *)va_start;
+}
+
+void *vmm_map_mmio_uc(uint64_t phys_base, uint32_t size)
+{
+    return mmio_map_range(phys_base, size, VMM_MMIO_UC);
+}
+
+void *vmm_map_mmio_wc(uint64_t phys_base, uint32_t size)
+{
+    return mmio_map_range(phys_base, size, VMM_MMIO_WC);
 }
 
 void vmm_unmap_mmio(void *virt, uint32_t size)
 {
     uintptr_t va = (uintptr_t)virt;
-    uint32_t pages, i;
+    uint64_t pages, i;
 
     if (!virt || size == 0)
         return;
 
-    pages = (size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
+    pages = ((uint64_t)size + VMM_PAGE_SIZE - 1) / VMM_PAGE_SIZE;
     for (i = 0; i < pages; i++)
-        vmm_unmap_page(va + (uint64_t)i * VMM_PAGE_SIZE, 0);
+        vmm_unmap_page(va + i * VMM_PAGE_SIZE, 0);
 }
 
 /* --- Split 2 MiB huge page into 4 KiB pages ----------------------------- */

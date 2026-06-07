@@ -69,6 +69,22 @@ static void test_vmm_map_mmio_wc(void)
     pmm_free_frame(phys);
 }
 
+/* Regression: mmio_map_range() must reject invalid args without mapping.
+ * Guards the uint32 page-count overflow (size near UINT32_MAX rounded up in
+ * 32-bit math wrapped to 0 pages and returned a non-NULL unmapped VA) and the
+ * alignment precondition. All cases reject before any PTE is installed. */
+static void test_vmm_map_mmio_reject(void)
+{
+    TEST_ASSERT(vmm_map_mmio_uc(0xFEE00000, 0) == (void *)0,
+                "UC map rejects size 0");
+    TEST_ASSERT(vmm_map_mmio_uc(0xFEE00001, VMM_PAGE_SIZE) == (void *)0,
+                "UC map rejects unaligned phys_base");
+    TEST_ASSERT(vmm_map_mmio_uc(0xFEE00000, 0xFFFFFFFFu) == (void *)0,
+                "UC map rejects size near UINT32_MAX (no overflow to 0 pages)");
+    TEST_ASSERT(vmm_map_mmio_wc(0xFEE00000, 0xFFFFFFFFu) == (void *)0,
+                "WC map rejects size near UINT32_MAX (no overflow to 0 pages)");
+}
+
 static void test_vmm_split_huge_page(void)
 {
     /* Verify that vmm_split_huge_page works on a known identity-mapped address.
@@ -254,6 +270,7 @@ void test_register_vmm(void)
 {
     test_suite_register_cat("VMM: map/read/unmap", test_vmm_map_roundtrip, TEST_CAT_MM);
     test_suite_register_cat("VMM: mmio_wc map/write", test_vmm_map_mmio_wc, TEST_CAT_MM);
+    test_suite_register_cat("VMM: mmio map arg reject", test_vmm_map_mmio_reject, TEST_CAT_MM);
     test_suite_register_cat("VMM: split huge page", test_vmm_split_huge_page, TEST_CAT_MM);
     test_suite_register_cat("VMM: guard page install", test_vmm_guard_page_install, TEST_CAT_MM);
     test_suite_register_cat("VMM: map_user_page roundtrip",

@@ -103,6 +103,9 @@ title: "TODO-10 -- Kernel Security Hardening"
 
 ## 2. SMEP & SMAP: CR4 Activation + CLAC/STAC Wrappers
 
+> [!NOTE]
+> The boot-PML4 User-bit blocker (the `[/]` item below) is observed and bare-metal-verified by `01-boot-platform/TODO-10-bare-metal-hardening.md §8-§9`, which owns the bare-metal shared-page-table quirk (not this CR4 activation). KPTI `§3-§6` here build the clean kernel PML4 that actually unblocks CR4.SMEP/SMAP.
+
 - [x] `read_cr4()`/`write_cr4()` + `CR4_SMEP`/`CR4_SMAP` in `cpu_security.c`
 - [x] `cpu_enable_smep()` + `cpu_enable_smap()` call `hv_supports_cr4_smep_smap()` before touching CR4 (intended: skip WHPX/Hyper-V VM exits; enable KVM/VBox/bare metal when kernel PTE U/S is fixed)
 - [/] **CR4.SMEP/SMAP actually set on any host:** blocked until shared boot PML4 clears **User** from kernel text/data huge pages (see `CLAUDE.md` SMEP/SMAP + `hv_supports_cr4_smep_smap()` in `src/kernel/cpu_security.c`); today the helper returns 0 always, so CR4 SMEP/SMAP never turn on

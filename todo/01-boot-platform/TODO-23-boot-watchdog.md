@@ -62,6 +62,7 @@ Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disable
 - [ ] After logging: trigger ACPI reboot (`acpi_reboot()`)
 - [ ] NMI handler is minimal: write to serial, set NVRAM "watchdog_triggered" flag, reboot
 - [ ] If LAPIC not available: fall back to PIT-based software watchdog (less reliable, maskable)
+- [ ] Nested-NMI safety prerequisite: per-CPU latch/replay (or drop) so a watchdog NMI during an existing NMI/MCE path cannot corrupt the shared IST2 stack (Linux `repeat_nmi` model); must land before enabling the watchdog NMI. → XREF: `D01 T10 §2`
 - [ ] Commit: `"boot: software watchdog via LAPIC NMI -- detect hung boot phases"`
 
 **Test checkpoint:** Add `for(;;){}` in boot_phase2 (debug build only). Watchdog fires → serial shows `"WATCHDOG: boot hung at POST 0xNNNN, RIP=0xNNNN"` → system reboots.
