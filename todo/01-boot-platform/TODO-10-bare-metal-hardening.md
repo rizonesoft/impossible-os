@@ -193,6 +193,17 @@ Root cause found and fixed 2026-03-29.
 
 **Test checkpoint:** Table rows match serial on each platform; no triple fault after `sti` with LAPIC timer ticking; `clac` absent from `isr_common_stub` (`isr_stubs.asm`). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1723 kernel suites, 0 failures
+
+> **Notes:**
+> - Shipped: removed the unconditional `clac` from `isr_common_stub` (`isr_stubs.asm:23`) -- it was the only CPUID-gated opcode in the ISR entry path; nothing else (`stac`/`xsave`/`fsgsbase`/AVX/`rdrand`) lives there.
+> - Root cause: `clac` ran before any `CPUID.SMAP` check; on TCG/VBox (no SMAP) it raised #UD, the #UD handler re-entered `isr_common_stub` -> `clac` -> #UD -> triple fault.
+> - Downstream: the bare-metal timer skip (`timer.c`) and AHCI skip workarounds were removed once the real ISR-path fix landed; hardware interrupts work on all 4 platforms.
+> - Scope boundary: re-adding `clac` (CPUID-gated / alternatives-patched, not an unconditional opcode) when SMAP is actually enabled is owned by `D02 T10 §2`.
+> - Canonical: `isr_stubs.asm:23` NOTE + the `D02 T10 §2` re-add item.
+> **Verified:** 2026-06-07 | commit `93f997c6` | 4/4 items | build OK | boot 1723 PASS
+> **Quality reviewed:** 2026-06-07 | Codex 3x (adversarial, consistency, perf) | 0 findings (re-adversarial skipped: confirmation-only, no code change) | scope: kernel-code-quality
+
 ---
 
 ## 4. ACPI FADT Boot Architecture Flags
