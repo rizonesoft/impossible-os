@@ -250,16 +250,23 @@ void mouse_init(void)
 
     POST16(0xD503);
 
-    /* Gate: skip if no i8042 controller present.
-     * Probe port 0x64 directly -- FADT is unreliable on QEMU WHPX. */
-    if (!acpi_has_8042()) {
+    /* Gate: never touch 0x60/0x64 unless an i8042 is actually present.
+     * Hardware-reduced ACPI hard-skips; otherwise probe port 0x64 directly
+     * (FADT IAPC_BOOT_ARCH.8042 is unreliable on QEMU WHPX). The probe runs
+     * unconditionally so a no/short-FADT box with no i8042 is also skipped. */
+    if (acpi_hw_reduced()) {
+        exit_reason = "ACPI hardware-reduced (no i8042)";
+        goto report;
+    }
+    {
         uint8_t probe = inb(0x64);
         if (probe == 0xFF) {
             exit_reason = "no i8042 (port 0x64 reads 0xFF)";
             goto report;
         }
-        klog(LOG_INFO, "input", "PS/2 mouse: FADT says no i8042 but port probe OK (0x%x)",
-             (uint32_t)probe);
+        if (!acpi_has_8042())
+            klog(LOG_INFO, "input", "PS/2 mouse: FADT says no i8042 but port probe OK (0x%x)",
+                 (uint32_t)probe);
     }
 
     /* Start cursor at screen center */
@@ -282,8 +289,12 @@ void mouse_init(void)
         exit_reason = "no auxiliary port (touchpad/USB?)";
         goto report;
     }
-    status_byte |= 0x02;       /* Bit 1 = enable IRQ 12 */
+    /* Enable the mouse clock now, but keep IRQ12 (bit 1) DISABLED until the
+     * device is confirmed working below. Otherwise an aborted init (NACK/BAT
+     * fail / timeout) leaves IRQ12 unmasked on a controller with no working
+     * mouse, producing spurious IRQ12s. */
     status_byte &= ~0x20;      /* Bit 5 = 0 = enable mouse clock */
+    status_byte &= ~0x02;      /* Bit 1 = 0 = IRQ 12 stays off for now */
     ps2_send_cmd(0x60);
     ps2_wait_input();
     outb(PS2_DATA_PORT, status_byte);
@@ -348,6 +359,17 @@ void mouse_init(void)
         while ((inb(PS2_STATUS_PORT) & 0x01) && --timeout)
             inb(PS2_DATA_PORT);
     }
+
+    /* Device confirmed working (reset/BAT/defaults/sample/res/F4 all ACKed) --
+     * NOW enable IRQ 12, so an earlier abort never left it on. Set bit 1 on the
+     * CACHED config byte (clock-on, IRQ12-off) we wrote above and write it
+     * straight back. Do NOT re-read the config: data reporting is enabled, so
+     * the output buffer may hold a mouse data packet, not the config byte -- a
+     * read here would treat packet data as config and corrupt the controller. */
+    status_byte |= 0x02;       /* Bit 1 = enable IRQ 12 */
+    ps2_send_cmd(0x60);
+    ps2_wait_input();
+    outb(PS2_DATA_PORT, status_byte);
 
     /* Register mouse via GSI-based routing (IOAPIC handles vector allocation) */
     if (ioapic_available()) {

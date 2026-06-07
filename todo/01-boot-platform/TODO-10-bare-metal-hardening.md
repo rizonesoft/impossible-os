@@ -252,14 +252,25 @@ Gate all PS/2 keyboard and mouse I/O behind ACPI detection. Never write to ports
 > [!NOTE]
 > **Debug POST (§5):** `POST16(0xD500)` = PS/2 detect start, `0xD501` = i8042 check done, `0xD502` = keyboard init, `0xD503` = mouse probe, `0xD504` = §5 complete.
 
-- [x] `keyboard_init()`: checks `acpi_has_8042()` before any port I/O -- skips if no i8042
-- [x] `mouse_init()`: checks `acpi_has_8042()` + 0xFF status + reset ACK probe -- skips gracefully
-- [x] Timeouts increased to 1000000 with 0xFF early-exit on `ps2_wait_input`/`ps2_wait_output`
-- [x] `mouse_init()` re-enabled in `boot_interrupts.c` -- ACPI gate replaces skip workaround
-- [x] Keyboard, mouse, vbox_mouse migrated to `irq_request_gsi()` when IOAPIC available
+- [x] `keyboard_init()`/`mouse_init()`: `acpi_hw_reduced()` hard-skip, then an unconditional `inb(0x64)==0xFF` probe before any 0x60/0x64 I/O (FADT 8042 bit is advisory only -- unreliable on WHPX)
+- [x] `mouse_init()`: reset->0xFA ACK->BAT 0xAA->defaults/sample/res/F4 sequence; IRQ12 enabled only after the device is confirmed (aborted init never leaves IRQ12 on)
+- [x] PS/2 waits are bounded (`PS2_WAIT_SHORT`/`PS2_WAIT_LONG`, 1024-iter flush) with `0xFF` floating-bus early-exit
+- [x] `mouse_init()`/`vbox_mouse_init()` run from `boot_storage.c` deferred-input init -- ACPI gate replaces the old skip workaround
+- [x] Keyboard, mouse, vbox_mouse use `irq_request_gsi()` when IOAPIC available; PIC fallback unmasks the line (`pic_unmask_irq`)
 - [x] Commit: `"drivers: PS/2 keyboard/mouse gated by ACPI i8042 detection + GSI-based IRQ"`
 
 **Test checkpoint:** Boot on laptop without PS/2 mouse. Mouse init logs "skipped" and boot continues. Boot on QEMU with PS/2 -- mouse works normally. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1723 kernel suites, 0 failures
+
+> **Notes:**
+> - Shipped: `keyboard_init`/`mouse_init`/`vbox_mouse_init` gate PS/2 access on ACPI + a direct port-0x64 probe; IRQ routing via `irq_request_gsi()` (IOAPIC) with a `pic_unmask_irq` PIC fallback.
+> - Integrates: run from `boot_storage.c` deferred-input init; IRQ callbacks unchanged; bounded waits (`PS2_WAIT_*`, 1024-iter flush) with 0xFF floating-bus early-exit.
+> - Review hardening (2026-06-07): `acpi_hw_reduced()` hard-skip + unconditional 0xFF probe (never write an i8042-less box); mouse IRQ12 deferred until the device ACKs (cached-config write, no read-after-reporting); vbox PIC fallback now unmasks.
+> - Scope boundary: resolves the §4-deferred hw-reduced PS/2 hard-skip; this owns the i8042 path only.
+> - Test gap: PS/2 init is live-port I/O (no pure unit-test surface) -- validated by boot suite + smoke + multi-platform boot.
+> **Verified:** 2026-06-07 | commit `ea51dc78` | 5/5 items | build OK | boot 1723 PASS, smoke PASS (KVM 2.7s)
+> **Quality reviewed:** 2026-06-07 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+3M fixed | scope: kernel-code-quality
 
 ---
 

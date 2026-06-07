@@ -308,6 +308,11 @@ int vbox_mouse_init(void)
     } else {
         irq_register(PIC1_OFFSET + irq_line, vbox_irq_callback,
                      (void *)0, "vbox_mouse");
+        /* The GSI path unmasks at the IOAPIC; the PIC path must unmask the
+         * line explicitly (pic_init masks all but cascade), else VMMDev
+         * interrupts stay masked and the IRQ path is dead. */
+        if (irq_line < 16)
+            pic_unmask_irq(irq_line);
     }
 
     /* Enable all VMMDev interrupts via the MMIO region.
