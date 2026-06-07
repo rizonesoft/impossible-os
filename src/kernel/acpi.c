@@ -428,6 +428,18 @@ int acpi_init(void)
         return -1;
     }
 
+    /* FADT fixed fields read below (pm1a_control_block @64, dsdt @40, and the
+     * flags/boot_arch_flags fields the capability accessors read at @109/@112)
+     * require the ACPI 1.0 minimum FADT length of 116 bytes. The table is
+     * firmware-supplied and the checksum does not bound its length, so reject
+     * a truncated FADT before dereferencing past its declared end -- leaving
+     * fadt_ptr NULL makes the accessors safe-default to legacy-present. */
+    if (fadt_hdr->length < 116) {
+        printk("[ACPI] FADT too short (%u < 116) -- ignoring\n",
+               (uint32_t)fadt_hdr->length);
+        return -1;
+    }
+
     fadt = (const struct acpi_fadt *)fadt_hdr;
     fadt_ptr = fadt;
 
@@ -454,7 +466,7 @@ int acpi_init(void)
              (uint64_t)((fadt->boot_arch_flags & (1u << 5)) ? 0 : 1),
              (uint64_t)((fadt->boot_arch_flags & (1u << 3)) ? 0 : 1),
              (uint64_t)((fadt->boot_arch_flags & (1u << 2)) ? 0 : 1),
-             (uint64_t)((fadt->flags >> 20) & 1));
+             (uint64_t)acpi_hw_reduced());  /* length-guarded flags read */
     }
 
     /* ---- Parse MADT for SMP discovery ---- */
@@ -707,8 +719,14 @@ void acpi_reboot(void)
 
     __asm__ volatile("cli");
 
-    /* Method 1: ACPI reset register (FADT 2.0+) */
+    /* Method 1: ACPI reset register (FADT 2.0+).
+     * revision >= 2 alone does not prove the table is long enough -- reset_reg
+     * (GAS) and reset_value sit at offset 116+, past the 116-byte init floor,
+     * so a malformed short rev-2 FADT would overread. Require the declared
+     * length to cover reset_value before touching either field. */
     if (acpi_ready && fadt_ptr &&
+        fadt_ptr->header.length >= (__builtin_offsetof(struct acpi_fadt, reset_value)
+                                    + sizeof(fadt_ptr->reset_value)) &&
         fadt_ptr->header.revision >= 2 &&
         fadt_ptr->reset_reg.address != 0) {
 
@@ -844,12 +862,19 @@ uint16_t acpi_get_pmtimer_port(void)
 {
     if (!fadt_ptr)
         return 0;
+    /* pm_timer_block is at FADT offset 76 (4 bytes) -- needs length >= 80. */
+    if (fadt_ptr->header.length < 80)
+        return 0;
     return (uint16_t)fadt_ptr->pm_timer_block;
 }
 
 int acpi_pmtimer_is_32bit(void)
 {
     if (!fadt_ptr)
+        return 0;
+    /* flags is at FADT offset 112 (4 bytes) -- needs length >= 116 (same
+     * bounds rule as acpi_hw_reduced); a short table cannot prove TMR_VAL_EXT. */
+    if (fadt_ptr->header.length < 116)
         return 0;
     /* FADT flags bit 8: TMR_VAL_EXT -- 1 = 32-bit PM Timer */
     return (fadt_ptr->flags & (1u << 8)) ? 1 : 0;
@@ -858,6 +883,12 @@ int acpi_pmtimer_is_32bit(void)
 int acpi_hw_reduced(void)
 {
     if (!fadt_ptr)
+        return 0;
+    /* flags is at FADT offset 112 (4 bytes) -- reading it needs length >= 116
+     * (ACPI 1.0 minimum FADT). A truncated/malformed table cannot be declared
+     * hardware-reduced; treat it as legacy so the bounds check is not bypassed
+     * by the capability accessors that call this first. */
+    if (fadt_ptr->header.length < 116)
         return 0;
     /* FADT flags bit 20: HW_REDUCED_ACPI -- legacy devices absent */
     return (fadt_ptr->flags & (1u << 20)) ? 1 : 0;
@@ -873,6 +904,12 @@ int acpi_hw_reduced(void)
 
 int acpi_has_8042(void)
 {
+    /* Hardware-reduced ACPI platforms have no legacy fixed hardware (no
+     * i8042/CMOS/VGA legacy ports), regardless of the IAPC_BOOT_ARCH bits,
+     * which are reserved/ignored under the hardware-reduced model. Override
+     * to absent so the PS/2 path is never probed there. */
+    if (acpi_hw_reduced())
+        return 0;
     if (!fadt_ptr)
         return 1;  /* assume present if no FADT */
     /* FADT length must be >= 113 for boot_arch_flags to be valid */
@@ -883,6 +920,8 @@ int acpi_has_8042(void)
 
 int acpi_has_cmos_rtc(void)
 {
+    if (acpi_hw_reduced())
+        return 0;  /* hardware-reduced: no CMOS RTC */
     if (!fadt_ptr)
         return 1;
     if (fadt_ptr->header.length < 113)
@@ -903,6 +942,8 @@ int acpi_msi_supported(void)
 
 int acpi_has_vga(void)
 {
+    if (acpi_hw_reduced())
+        return 0;  /* hardware-reduced: no legacy VGA */
     if (!fadt_ptr)
         return 1;
     if (fadt_ptr->header.length < 113)

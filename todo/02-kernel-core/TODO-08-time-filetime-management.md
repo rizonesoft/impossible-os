@@ -61,7 +61,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [x]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
-| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [x]   |
+| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [/]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [x]   |
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [x]   |
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-12 §5      |  [x]   |
@@ -132,6 +132,7 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 - [x] `KeSetSystemTime(new_time)`: updates anchor + re-latches mono_ns(); seqlock write-protected
 - [x] `wall_clock_ready()`: returns 1 after init
 - [x] Protected by `seqlock_t` (SEQLOCK_INIT) for SMP-safe concurrent reads
+- [ ] CMOS-RTC absence gating: latch `rtc_available()` from `acpi_has_cmos_rtc()`; gate the RTC fallback + `klog_disk` + compositor clock + `rtc_get_*` so hardware-reduced platforms never touch CMOS 0x70/0x71 (consumer of `D01 T10 §4`)
 - [x] Commit: `"kernel: time -- wall clock init from UEFI GetTime with RTC fallback"`
 
 ## 6. Kernel Time Service

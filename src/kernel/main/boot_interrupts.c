@@ -267,10 +267,18 @@ void boot_phase1(void)
     boot_progress(1, "PIC", 0x1036);
 
     /* --- RTC --- */
+    /* Gate CMOS RTC init on ACPI: hardware-reduced platforms (and any FADT
+     * with CMOS_RTC_NOT_PRESENT) have no CMOS RTC, so touching ports 0x70/0x71
+     * reads garbage. acpi_has_cmos_rtc() safe-defaults to present for legacy
+     * PCs (no/short FADT), so this never skips a real RTC. */
     POST16(POST16_RTC);
-    rtc_init();
+    if (acpi_has_cmos_rtc()) {
+        rtc_init();
+        kernel_subsystem_set_ready(SUBSYS_RTC, true);
+    } else {
+        klog(LOG_INFO, "rtc", "skipped (ACPI: no CMOS RTC -- hardware-reduced)");
+    }
     POST16(POST16_RTC_OK);
-    kernel_subsystem_set_ready(SUBSYS_RTC, true);
     boot_progress(1, "RTC", POST16_RTC_OK);
 
     /* --- Framebuffer + boot splash (before input so splash messages are visible) --- */

@@ -76,7 +76,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)            | --          |  [x]   |
 | 💎  |   2   | IST stacks for critical exceptions                     | --          |  [/]   |
 | 💎  |   3   | Hardware interrupt root cause investigation            | §2         |  [x]   |
-| 💎  |   4   | ACPI FADT boot architecture flags                      | --          |  [/]   |
+| 💎  |   4   | ACPI FADT boot architecture flags                      | --          |  [x]   |
 | 💎  |   5   | PS/2 controller detection and safe init                | §4         |  [x]   |
 | 💎  |   6   | AHCI interrupt hardening                               | §1, §3     |  [x]   |
 | 💎  |   7   | Resilient boot with graceful degradation               | --          |  [x]   |
@@ -225,10 +225,22 @@ Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices 
 - [x] API: `acpi_has_8042()`, `acpi_has_cmos_rtc()`, `acpi_msi_supported()`, `acpi_has_vga()` -- all safe-default to 1 if FADT absent/short
 - [x] `acpi_hw_reduced()` already exists -- logged alongside IAPC_BOOT_ARCH
 - [x] Log: `IAPC_BOOT_ARCH: 8042=%d RTC=%d MSI=%d VGA=%d HW_REDUCED=%d`
-- [ ] Hardware-reduced override: `acpi_has_8042()`/`acpi_has_cmos_rtc()`/`acpi_has_vga()` return 0 when `acpi_hw_reduced()` is set (ACPI 6.0 hw-reduced has no legacy I/O); keep FADT-absent/short default-present for legacy PCs
+- [x] Hardware-reduced override: `acpi_has_8042()`/`acpi_has_cmos_rtc()`/`acpi_has_vga()` return 0 when `acpi_hw_reduced()` is set; FADT-absent/short keeps default-present for legacy PCs (FADT `flags`/`pm_timer_block` reads now length-guarded)
 - [x] Commit: `"kernel: parse ACPI FADT IAPC_BOOT_ARCH flags for legacy device detection"`
 
 **Test checkpoint:** Boot on QEMU. Log shows IAPC_BOOT_ARCH with all flags. On bare metal, log shows actual hardware configuration. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1723 kernel suites, 0 failures
+
+> **Notes:**
+> - Shipped: FADT `IAPC_BOOT_ARCH` parse (8042/RTC/MSI/VGA) + `acpi_has_8042/cmos_rtc/vga/msi_supported` + `acpi_hw_reduced` in `acpi.c`, gated behind `header.length` checks since the field is firmware-supplied.
+> - Integrates: `keyboard_init`/`mouse_init` (§5) and LAPIC PIT-calibration gate on these before touching legacy 0x60/0x64/CMOS ports.
+> - Review hardening (2026-06-07): hw-reduced override; FADT `flags`/`pm_timer_block` reads + the `acpi_init` parse floor + the `acpi_reboot` reset-reg all length-guard vs short-table overread; `rtc_init` gated on `acpi_has_cmos_rtc()`.
+> - Scope boundary: FADT-absent/short keeps default-present so legacy PCs still probe; the §5 driver-side `0xFF`/reset-ACK probe is the access guard. MSI is intentionally NOT hw-reduced-overridden.
+> - Test gap: short-FADT-length fixtures (112/113/115/116) need a `fadt_ptr` injection hook -> `test_bare_metal.c` (Unit Tests section).
+> **Verified:** 2026-06-07 | commit `b959ad2a` | 5/5 items | build OK | boot 1723 PASS, smoke PASS (KVM 2.5s)
+> **Accepted:** [H] runtime CMOS consumers (wall_clock RTC fallback, klog_disk, compositor clock, rtc_get_*) still touch 0x70/0x71 on hw-reduced -- §4 ships the signal, system-wide gating is clock-subsystem scope -> XREF: 02-kernel-core/TODO-08 §5 (item: "CMOS-RTC absence gating: latch `rtc_available()` ...")
+> **Quality reviewed:** 2026-06-07 | Codex 7x (adversarial, adversarial-impl, consistency, perf, re-adversarial) | 4H+1M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
