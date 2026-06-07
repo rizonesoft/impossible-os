@@ -11,6 +11,13 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/boot_init.h"
 #include "kernel/sched/event.h"
+
+/* Max PCI capabilities to walk before declaring the chain malformed. PCI
+ * config space is device/firmware-supplied; a cyclic/self-pointing next ptr
+ * would otherwise hang the boot-time cap walk forever. Matches Linux's
+ * PCI_FIND_CAP_TTL (48). */
+#define AHCI_PCI_CAP_TTL 48
+
 /* ---- Driver state ---- */
 volatile uint8_t *abar;
 struct ahci_port  ports[AHCI_MAX_PORTS];
@@ -48,20 +55,6 @@ void ahci_memset(void *dst, uint8_t val, uint64_t n)
     uint8_t *d = (uint8_t *)dst;
     while (n--)
         *d++ = val;
-}
-
-/* ---- Map MMIO region ---- */
-static void ahci_map_mmio(uint64_t phys, uint32_t size)
-{
-    uint64_t page_start = phys & ~(uint64_t)0xFFF;
-    uint64_t page_end   = (phys + size + 0xFFF) & ~(uint64_t)0xFFF;
-    uint64_t page;
-    uint64_t flags = VMM_KERNEL_RW | VMM_FLAG_NOCACHE | VMM_FLAG_WRITETHROUGH;
-
-    for (page = page_start; page < page_end; page += VMM_PAGE_SIZE) {
-        if (vmm_get_physical(page) == 0)
-            vmm_map_page(page, page, flags);
-    }
 }
 
 /* ---- Port register access ---- */
@@ -626,7 +619,8 @@ int ahci_init(void)
         uint16_t pci_sts = pci_read16(bus, slot, func, PCI_STATUS);
         if (pci_sts & (1U << 4)) {  /* Capabilities list present */
             uint8_t cap_ptr = pci_read8(bus, slot, func, 0x34) & 0xFC;
-            while (cap_ptr >= 0x40) {
+            int cap_ttl = AHCI_PCI_CAP_TTL;
+            while (cap_ptr >= 0x40 && cap_ttl-- > 0) {
                 uint8_t cid = pci_read8(bus, slot, func, cap_ptr);
                 if (cid == 0x05) {  /* MSI */
                     uint16_t msi_ctrl = pci_read16(bus, slot, func,
@@ -657,10 +651,21 @@ int ahci_init(void)
         return -1;
     }
 
-    ahci_map_mmio(abar_addr, 0x2000);
-    abar = (volatile uint8_t *)abar_addr;
+    /* Map ABAR as UC via the dedicated MMIO mapper. The boot identity map
+     * already covers BAR5's physical range as WB; accessing AHCI registers
+     * through WB pages causes stale reads / MCE on real hardware (same hazard
+     * as HPET, §1). vmm_map_mmio_uc() maps at a fresh kernel VA that is never
+     * identity-mapped, so the UC attributes always take effect (unlike the old
+     * ahci_map_mmio(), which skipped already-identity-mapped pages -> WB). */
+    abar = (volatile uint8_t *)vmm_map_mmio_uc(abar_addr, 0x2000);
+    if (!abar) {
+        klog(LOG_WARN, "ahci", "ABAR UC map failed (phys 0x%x) -- no AHCI",
+             abar_addr);
+        return -1;
+    }
 
-    klog(LOG_DEBUG, "ahci", "ABAR at 0x%x", abar_addr);
+    klog(LOG_DEBUG, "ahci", "ABAR phys 0x%x UC-mapped at %p",
+         abar_addr, (uint64_t)(uintptr_t)abar);
 
     /* ---- BIOS/OS Handoff (BOHC) ---- */
     {
@@ -805,11 +810,12 @@ void ahci_setup_interrupts(void)
     if (!initialized || !abar)
         return;
 
-    /* Validate ABAR: must be page-aligned, within 4 GiB, not NULL/bogus */
-    if ((uintptr_t)abar == 0 || ((uintptr_t)abar & 0xFFF) != 0 ||
-        (uintptr_t)abar >= 0x100000000ULL) {
-        klog(LOG_WARN, "ahci", "AHCI: invalid ABAR %p, using polling",
-             (uint64_t)(uintptr_t)abar);
+    /* abar is the UC kernel VA returned by vmm_map_mmio_uc() in ahci_init()
+     * (page-aligned by construction, lives in the MMIO VA window above the
+     * identity map). The physical-BAR validation happened before mapping; here
+     * a NULL abar just means the map failed and AHCI runs polled. */
+    if (!abar) {
+        klog(LOG_WARN, "ahci", "AHCI: ABAR not mapped, using polling");
         return;
     }
 
@@ -833,8 +839,9 @@ void ahci_setup_interrupts(void)
             /* Capabilities list present */
             uint8_t cap_off = pci_read8(ahci_pci_bus, ahci_pci_slot,
                                          ahci_pci_func, 0x34) & 0xFC;
+            int cap_ttl = AHCI_PCI_CAP_TTL;
 
-            while (cap_off >= 0x40) {
+            while (cap_off >= 0x40 && cap_ttl-- > 0) {
                 uint8_t cap_id = pci_read8(ahci_pci_bus, ahci_pci_slot,
                                            ahci_pci_func, cap_off);
 
@@ -852,12 +859,15 @@ void ahci_setup_interrupts(void)
                         irq_register(ahci_irq_vector, ahci_irq_handler,
                                      NULL, "ahci");
 
-                        /* Message Address: 0xFEE00000 targets BSP
-                         * (LAPIC ID 0, no redirection) */
+                        /* Message Address: physical-destination mode, target
+                         * the BSP's ACTUAL LAPIC ID in bits [19:12]. Do NOT
+                         * hardcode ID 0 -- the BSP APIC ID is not guaranteed
+                         * to be 0 on real SMP hardware, and a wrong dest sends
+                         * AHCI completions to the wrong CPU or nowhere. */
                         msi_addr_off = cap_off + 4;
                         pci_write32(ahci_pci_bus, ahci_pci_slot,
                                     ahci_pci_func, msi_addr_off,
-                                    0xFEE00000);
+                                    0xFEE00000U | ((uint32_t)lapic_id() << 12));
 
                         /* Check 64-bit capable (bit 7 of MSI Control) */
                         if (msi_ctrl & (1U << 7)) {
@@ -948,6 +958,10 @@ void ahci_setup_interrupts(void)
 
                 ioapic_route_irq(pci_irq_line, ahci_irq_vector,
                                  0, 0x0F);
+                /* ioapic_route_irq() installs the entry MASKED; unmask it or
+                 * AHCI completion interrupts never arrive (dead INTx path on
+                 * IOAPIC-only platforms like VirtualBox). */
+                ioapic_unmask_irq(pci_irq_line);
 
                 ghc = ahci_read32(abar, AHCI_GHC);
                 ghc |= AHCI_GHC_IE;

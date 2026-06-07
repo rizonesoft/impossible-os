@@ -280,8 +280,8 @@ Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI s
 **Files:** `src/kernel/drivers/ahci/ahci_core.c`
 
 > [!IMPORTANT]
-> On bare metal, enabling MSI writes to PCI config space which triggers the device to send MSI messages to the LAPIC. If the LAPIC timer is also firing, the two LAPIC writes can race. Additionally, AHCI ABAR MMIO at the device's BAR5 address is accessed through WB-cached page table entries -- same issue as HPET.
-> **Debug POST (§6):** `POST16(0xD600)` = AHCI harden start, `0xD601` = LAPIC masked, `0xD602` = MSI enable, `0xD603` = MSI verify, `0xD604` = LAPIC unmasked, `0xD605` = §6 done. Crash at 0xD602: MSI enable faulted device.
+> On bare metal, enabling MSI writes to PCI config space which triggers the device to send MSI messages to the LAPIC. If the LAPIC timer is also firing, the two LAPIC writes can race (the LVT-timer mask closes this). AHCI ABAR MMIO at the device's BAR5 is now mapped UC via `vmm_map_mmio_uc()` (§1) -- accessing it through the boot WB identity map caused stale reads / MCE, same hazard as HPET.
+> **Observability:** `ahci_setup_interrupts()` runs in Phase 2 with `klog` fully up (logs "MSI vector 0xNN" / "INTx IRQ" / "using polling" and "ABAR phys 0xX UC-mapped at 0xY"), so it uses klog rather than POST16.
 
 - [x] Mask LAPIC timer LVT before MSI enable; unmask after
 - [x] Validate ABAR: page-aligned, within 4 GiB, not 0 -- logs and uses polling if invalid
@@ -292,6 +292,17 @@ Make `ahci_setup_interrupts()` safe on bare metal: mask LAPIC timer during MSI s
 - [x] Commit: `"drivers: AHCI interrupt hardening -- LAPIC mask + ABAR validation"`
 
 **Test checkpoint:** Boot on bare metal. AHCI init logs either "MSI vector 0xNN" or "INTx fallback" or "polled mode". No crash. Disk I/O works. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1723 kernel suites, 0 failures
+
+> **Notes:**
+> - Shipped: `ahci_setup_interrupts()` -- LAPIC-timer mask during MSI program, MSI->INTx(IOAPIC)->polled fallback chain, device-present re-verify after MSI enable.
+> - Runs in Phase 2 with klog outcomes; ABAR mapped UC via `vmm_map_mmio_uc()` (§1) so HBA/port registers are never read through the WB identity map.
+> - Review hardening (2026-06-07): ABAR now genuinely UC (old `ahci_map_mmio` left it WB; deleted); MSI dest = real BSP `lapic_id()` (was hardcoded 0); INTx fallback now `ioapic_unmask_irq`; both PCI cap walks TTL-bounded.
+> - Scope boundary: consumes §1 `vmm_map_mmio_uc`; AHCI data-path (NCQ/rw) owned by the storage driver, not this section.
+> - Test gap: AHCI is live PCI/MMIO (no pure unit-test surface) -- validated by smoke (log shows "ABAR phys 0xX UC-mapped" + NCQ) + boot suite.
+> **Verified:** 2026-06-07 | commit `417a1294` | 6/6 items | build OK | boot 1723 PASS, smoke PASS (KVM 2.5s)
+> **Quality reviewed:** 2026-06-07 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit+3H fixed | scope: kernel-code-quality
 
 ---
 
