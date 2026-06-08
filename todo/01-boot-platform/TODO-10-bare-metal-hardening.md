@@ -480,7 +480,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 > - Transfer verified sound: TODO-24 §5-§8 exist + shipped; `klog_disk.c` resolves `klog_dir` to `X:\Logs\` (BlackBox) / `C:\` fallback; no orphaned scope.
 > - Cross-TODO consistency fixes this review: TODO-24 §5 status `[x]`->`[/]` (open reentrancy item), TODO-24 §6 test-checkpoint serial-path contradiction, removed a duplicate `klog_dir` assertion from TODO-10's Unit Tests.
 > - re-adversarial skipped: docs-only TODO consistency fixes, no code/faultable region.
-> **Verified:** 2026-06-08 | commit `_PENDING_` | 2/2 items | build OK | docs-only ownership transfer (klog_dir X:\ shipped per TODO-24 §5-§8; lint 0 err, todo-graph 8/8)
+> **Verified:** 2026-06-08 | commit `f32157aa` | 2/2 items | build OK | docs-only ownership transfer (klog_dir X:\ shipped per TODO-24 §5-§8; lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] latent `klog_disk_flush` re-entrancy on the C:\ fallback path (BlackBox unmounted) -- §12 "shipped" covers the X:\ path only -> XREF: 01-boot-platform/TODO-24 §5 (item: "klog_disk_flush re-entrancy guard when C:\ fallback is active" at line 136)
 > **Quality reviewed:** 2026-06-08 | Codex 3x (adversarial, consistency, perf) | 1H+2M fixed (cross-TODO ownership consistency), 1H accepted-XREF | scope: N/A (docs-only ownership pointer)
 
