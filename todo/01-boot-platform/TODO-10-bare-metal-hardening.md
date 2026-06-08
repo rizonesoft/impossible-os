@@ -402,13 +402,25 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 > Minimal prerequisite -- full CPU boot sequencing (EFER before VMM, XSAVE/PCID, AP parity) is in `TODO-09-cpu-boot-sequencing.md §2,§5,§1`. This section implements just enough to ensure NX/SMEP/SMAP work on bare metal and verifies post-activation.
 
 - [x] Activation order formalized: `cpu_harden()` (NX) → `vmm_apply_nx_policy()` → `cpu_harden_post_pagetable()` (SMEP/SMAP) → `cpu_verify_hardening()`
-- [x] `cpu_verify_hardening()`: reads back EFER (NX), CR4 (SMEP/SMAP), logs discrepancies or EPT enforcement
-- [x] Bare metal: SMEP/SMAP still skipped -- boot PML4 has User bit on all 2MiB pages (entry.asm 0x87). Need to clear User from kernel pages in boot PML4 first. Per-process PML4 has correct U/S but kernel PML4 does not.
-- [x] VMs: SMEP/SMAP work on KVM/TCG/VBox (if CPUID has feature), EPT enforced on WHPX. Logged.
+- [x] `cpu_verify_hardening()`: reads back EFER (NX), CR4 (SMEP/SMAP/UMIP/PKU), logs enabled / FAILED / skipped (SMEP/SMAP skipped on every platform until KPTI clears User from kernel pages)
+- [x] All platforms (bare metal AND VMs): SMEP/SMAP skipped -- boot PML4 (entry.asm 0x87) has User on all kernel 2MiB pages so CR4.SMEP would #PF; `hv_supports_cr4_smep_smap()` returns 0 (commit 5cc120f3 dropped the earlier VM-only enable path).
+- [x] `cpu_verify_hardening()` logs honest skip on every platform incl. WHPX; the false `SMEP enforced via EPT` branch was removed this review. Unblock is external: clean kernel PML4 (KPTI, `D02 T10 §3-§6`).
 - [x] Debug POST codes: 0xD900-0xD904
 - [x] Commit: `"boot: CPU security activation with post-enable verification"`
 
-**Test checkpoint:** Boot on bare metal. Log shows `[OK] cpu: NX enabled, SMEP skipped (shared page tables), SMAP skipped`. On QEMU: log shows all three enabled (or EPT-enforced). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot on any platform. Log shows `Verify: NX enabled (EFER.NXE set)` plus `Verify: SMEP skipped (kernel PTE User bit -- needs KPTI)` and the same for SMAP -- SMEP/SMAP are skipped on ALL platforms (bare metal AND QEMU/WHPX/VBox) until the KPTI clean kernel PML4 clears User from kernel pages; do NOT expect CR4.SMEP/SMAP set or an `EPT-enforced` line. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+**Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) -- `test_cpu_security.c` covers NX EFER.NXE set + SMEP/SMAP CR4 accessibility + activation-state helper. The verify path is logs-only (void), so no direct unit surface; validated by serial log on boot.
+
+> **Notes:**
+> - Activation order (BSP boot_phase0): `cpu_harden()` NX/UMIP/PKU -> `vmm_apply_nx_policy()` -> `cpu_harden_post_pagetable()` SMEP/SMAP -> `cpu_verify_hardening()` reads back EFER/CR4 and logs enabled/skipped/FAILED.
+> - SMEP/SMAP are skipped on EVERY platform (not just bare metal): `hv_supports_cr4_smep_smap()` returns 0 because the boot PML4 keeps User on kernel pages; the unblock is the KPTI clean kernel PML4 (`02-kernel-core/TODO-10`).
+> - This review removed the false `SMEP enforced via EPT (Hyper-V)` verify log and corrected boot_hw.c comments that wrongly claimed `vmm_apply_nx_policy()` clears the User bit (it applies NX only).
+> - NX policy now hard-fails (LOG_ERROR + `boot_halt`) instead of silently leaving a text-overlapping huge page executable on a split OOM -- NX is REQUIRED and verify only reads EFER.
+> - Verified on KVM serial: `NX enabled`, `SMEP/SMAP skipped (needs KPTI)`, `UMIP enabled`, CR4=0x40e68 (SMEP/SMAP bits clear).
+> **Verified:** 2026-06-08 | commit `e194e646` | 5/5 items | build OK | security 79+16 PASS, smoke PASS (KVM 2.6s; NX enabled + SMEP/SMAP skipped confirmed in serial)
+> **Accepted:** [M] `cpu_enable_pku` publishes per-CPU PKU as global `pku_enabled` -- an AP lacking PKU/XCR0.9 could run PKRU without CR4.PKE -> XREF: 01-boot-platform/TODO-09 §6 (item: "PKU global skew" at line 262)
+> **Quality reviewed:** 2026-06-08 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

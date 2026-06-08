@@ -551,13 +551,19 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
     }
 
-    /* --- CPU security hardening: NX (SMEP/SMAP deferred until page tables fixed) --- */
+    /* --- CPU security hardening: NX now; SMEP/SMAP skipped (see below) --- */
     POST16(POST16_CPU_HARDEN);
     cpu_harden();
     cpu_security_log_state("pre-VMM");
     POST16(POSTCODE_CPU_HARDEN_DONE);
 
-    /* --- Apply NX policy + clear User bit from kernel pages --- */
+    /* --- Apply NX policy (per-page NX on kernel non-text mappings) ---
+     * NOTE: this applies NX only -- it does NOT clear the User bit from
+     * kernel pages. The boot PML4 (entry.asm flag 0x87) still carries User
+     * on all kernel 2 MiB pages, which is why cpu_harden_post_pagetable()
+     * below still skips SMEP/SMAP on EVERY platform (hv_supports_cr4_smep_smap
+     * returns 0). The User-bit clear is the KPTI clean-kernel-PML4 work in
+     * 02-kernel-core/TODO-10 (KPTI sections). */
     POST16(POST16_NX_POLICY);
     vmm_apply_nx_policy();
 
@@ -589,7 +595,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     }
     POST16(POST16_PAT_OK);
 
-    /* --- Now safe to enable SMEP/SMAP (kernel pages no longer User) --- */
+    /* --- SMEP/SMAP enable attempt (skipped on all platforms today) ---
+     * cpu_harden_post_pagetable() calls cpu_enable_smep/smap, but both bail
+     * via hv_supports_cr4_smep_smap()==0 because kernel pages still carry the
+     * User bit (see the NX-policy note above). cpu_verify_hardening() reads
+     * back EFER/CR4 and logs NX enabled + SMEP/SMAP skipped. They activate
+     * once the KPTI clean kernel PML4 lands (02-kernel-core/TODO-10). */
     cpu_harden_post_pagetable();
     cpu_security_log_state("post-pagetable");
     cpu_verify_hardening();

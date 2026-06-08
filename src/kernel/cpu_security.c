@@ -442,7 +442,7 @@ void cpu_verify_hardening(void)
     /* Verify NX (EFER.NXE, bit 11) */
     efer = msr_read(MSR_IA32_EFER);
     if (cpu_has(CPU_FEATURE_NX)) {
-        if (efer & (1ULL << 11))
+        if (efer & EFER_NXE)
             klog(LOG_INFO, "cpu", "Verify: NX enabled (EFER.NXE set)");
         else
             klog(LOG_WARN, "cpu", "Verify: NX FAILED -- EFER.NXE not set after enable");
@@ -451,11 +451,16 @@ void cpu_verify_hardening(void)
 
     /* Verify SMEP/SMAP (CR4 bits 20, 21) */
     cr4 = read_cr4();
+    /* SMEP/SMAP are skipped on EVERY platform today: hv_supports_cr4_smep_smap()
+     * returns 0 because the boot PML4 carries the User bit on all kernel pages,
+     * so enabling CR4.SMEP would #PF on kernel code fetch. The skip path is the
+     * honest report on all platforms -- there is NO "enforced via EPT" branch:
+     * EPT is second-level address translation and does not provide SMEP's
+     * supervisor-no-execute-user-page semantics, so claiming Hyper-V enforces
+     * SMEP/SMAP via EPT would be a false security signal to an operator. */
     if (cpu_has(CPU_FEATURE_SMEP)) {
         if (cr4 & CR4_SMEP)
             klog(LOG_INFO, "cpu", "Verify: SMEP enabled (CR4.SMEP set)");
-        else if (platform_detect() == PLATFORM_HYPERV)
-            klog(LOG_INFO, "cpu", "Verify: SMEP enforced via EPT (Hyper-V)");
         else if (!hv_supports_cr4_smep_smap())
             klog(LOG_INFO, "cpu", "Verify: SMEP skipped (kernel PTE User bit -- needs KPTI)");
         else
@@ -466,8 +471,6 @@ void cpu_verify_hardening(void)
     if (cpu_has(CPU_FEATURE_SMAP)) {
         if (cr4 & CR4_SMAP)
             klog(LOG_INFO, "cpu", "Verify: SMAP enabled (CR4.SMAP set)");
-        else if (platform_detect() == PLATFORM_HYPERV)
-            klog(LOG_INFO, "cpu", "Verify: SMAP enforced via EPT (Hyper-V)");
         else if (!hv_supports_cr4_smep_smap())
             klog(LOG_INFO, "cpu", "Verify: SMAP skipped (kernel PTE User bit -- needs KPTI)");
         else

@@ -23,6 +23,7 @@
 #include "kernel/mm/swap.h"
 #include "kernel/mm/mmap.h"
 #include "kernel/panic.h"
+#include "kernel/boot_halt.h"           /* boot_halt: fatal NX-policy enforcement failure */
 #include "kernel/sched/spinlock.h"      /* s_mmio_lock: SMP-safe MMIO VA allocator (unconditional) */
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
@@ -1395,9 +1396,28 @@ void vmm_apply_nx_policy(void)
                              * Fall through to the 4 KiB walk below. */
                             pde = pd[pdi];
                         } else {
-                            /* Split failed (out of memory) -- leave whole page
-                             * executable as degraded fallback. */
-                            continue;
+                            /* Split failed: this 2 MiB page overlaps .text and
+                             * could not be broken into 4 KiB pages, so the
+                             * non-text kernel data sharing it would stay
+                             * executable. NX is a REQUIRED guarantee
+                             * (cpu_enable_nx bug-checks when the CPU lacks NX),
+                             * and cpu_verify_hardening only reads EFER.NXE -- it
+                             * would log "NX enabled" while data stayed
+                             * executable. This runs in boot_phase0 with nearly
+                             * all RAM free, so a single-frame split failure means
+                             * the PMM is broken: halt rather than ship a false
+                             * NX-pass with W+X kernel data. */
+                            /* LOG_ERROR (not LOG_FATAL): klog(LOG_FATAL)
+                             * halts in its own bare for(;;) loop and never
+                             * returns, which would make boot_halt below
+                             * unreachable and skip the styled halt screen +
+                             * POST16_BOOT_FAILED + subsystem dump. Log the
+                             * detail, then let boot_halt own the halt. */
+                            klog(LOG_ERROR, "mm",
+                                 "NX policy: huge-page split failed at 0x%x "
+                                 "(.text overlap) -- kernel data would stay "
+                                 "executable", (uint64_t)page_base);
+                            boot_halt("NX policy: cannot enforce NX on kernel data");
                         }
                     } else {
                         /* Entire huge page is non-text kernel data -- NX it */

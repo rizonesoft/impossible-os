@@ -67,7 +67,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12                |  [x]   |
 | 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1                 |  [x]   |
 | 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1      |  [x]   |
-| 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [x]   |
+| 💎  |   6   | AP feature consistency validation                | §1, §4                        |  [/]   |
 | 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                        |  [x]   |
 | 💎  |   8   | MTRR/PAT AP synchronization                      | §4                            |  [x]   |
 | ⭐  |   9   | CPU register state audit trail                   | §2, §5                        |  [x]   |
@@ -259,6 +259,7 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 - [x] TSC sync between APs NOT owned here -- relies on `02-kernel-core/TODO-08-time-filetime-management.md §3` "Per-CPU TSC sync"
 - [x] Verify (serial log): homogeneous shows `[AP%u] Feature validation OK`; BSP logs the global intersection mask; hybrid mismatches logged BSP-side
 - [x] Commit: `"smp: AP feature intersection + hybrid-aware consistency validation"`
+- [ ] PKU global skew: `cpu_enable_pku` sets global `pku_enabled` from any enabling CPU, but PKU is AP-optional -- consumers (`pku.c`/`task.c`) could run PKRU on a CPU without CR4.PKE. Gate it on the online-CPU intersection. Filed from D01 T10 §9.
 
 **Test checkpoint:** Boot on SMP system. Log shows `[AP1] Feature validation OK (core_type 0x..)` for every AP + `Global CPU feature intersection 0x..`. No degradation on homogeneous hardware. Unit tests assert the mask invariants (BSP satisfies required, required subset of probe, global intersection retains required). Bare metal: P/E hybrid CPUs may show feature differences (AVX-512) that degrade gracefully, not panic.
 
@@ -272,7 +273,7 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 > - Scope boundary: §6 owns DETECTION (validate + intersection + bug-check); §10 owns AP-local CR4-enable gating; `02-kernel-core/TODO-09 §9` owns topology core_type consumption; TODO-08 §3 owns TSC sync.
 > **Verified:** 2026-05-24 | commit `eeba36a1` | 9/9 items | build OK | smoke PASS (KVM 2.45s); SMP -smp 2 AP1 online + validation OK
 > **Accepted:** [H] optional CR4/MSR skew (CR4.UMIP via cpu_enable_umip, TSC_AUX MSR) still BSP-global-gated in cpu_harden/ap_apply_msr_profile -> #GP on a genuinely feature-skewed AP (pre-existing from §4; not a homogeneous/real-HW case; §6 detects + excludes from the global mask) -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX" at line 350)
-> **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 275)
+> **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 276)
 > **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -339,7 +340,7 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 > - Scope boundary: §8 owns PAT sync + MTRR parity AUDIT; divergent-AP MTRR reprogram + runtime PAT re-broadcast need an IPI rendezvous (`smp_call_function`, deferred). MMIO cache correctness owned by PAT (TODO-01 §11).
 
 > **Verified:** 2026-05-24 | commit `27124dca` | 6/7 items | build OK | smoke PASS (KVM 2.640s); PAT WC active, MTRR audit wired
-> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 342)
+> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 343)
 > **Quality reviewed:** 2026-05-24 | Codex 10x (design, adversarial, consistency, perf, re-adversarial, test-coverage) | 2H+4M+1L fixed, 1M deferred | scope: kernel-code-quality
 
 ---
