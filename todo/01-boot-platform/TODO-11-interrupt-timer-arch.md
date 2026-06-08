@@ -171,6 +171,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 - [x] `uptime_ns()` added: prefers `read_ns()`, falls back to `ticks * (1e9/freq)`
 - [x] Serial log: `UTS: LAPIC selected (Hyper-V, 200000 ticks/ms = 200 MHz bus)` emitted
 - [x] Commit: `"kernel: UTS uptime_ns() + read_ns vtable extension"`
+- [ ] Add backend-aware `timer_hal_quiesce()`/`resume()` masking the ACTIVE timer (LAPIC LVT or PIT IOAPIC IRQ0); `uefi_runtime.c` rt_call masks LAPIC only, so the PIT backend (TCG) fires into firmware during UEFI RT calls. Filed from D01 T10 §10.
 
 **Test checkpoint:** Serial shows `UTS:` line with active driver name; `uptime_ns()` increases monotonically. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 

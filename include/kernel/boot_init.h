@@ -432,11 +432,17 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode);
  *
  * If condition is false, logs the message and halts. Use for invariants
  * that should never be violated (e.g., "IDT must be ready before timer").
+ *
+ * The diagnostic uses LOG_ERROR, NOT LOG_FATAL: klog(LOG_FATAL) halts in
+ * its own bare for(;;) loop and never returns, which would make the
+ * boot_halt() below unreachable -- losing boot_halt's styled halt screen,
+ * POST16_BOOT_FAILED write, and subsystem-readiness dump. boot_halt() is
+ * the single intended boot-failure renderer for an asserted violation.
  */
 #define BOOT_ASSERT(cond, msg) \
     do { \
         if (!(cond)) { \
-            klog(LOG_FATAL, "boot", "ASSERT FAILED: %s", (msg)); \
+            klog(LOG_ERROR, "boot", "ASSERT FAILED: %s", (msg)); \
             boot_halt(msg); \
         } \
     } while (0)

@@ -5,8 +5,10 @@
  * kernel's virtual address space (identity-mapped: virt = phys), then
  * stores the runtime services function pointers for later use.
  *
- * All runtime service calls are serialized with a spinlock because
- * UEFI firmware runtime code is NOT reentrant.
+ * All runtime service calls are serialized with the sleepable mutex
+ * `s_rt_mutex` because UEFI firmware runtime code is NOT reentrant;
+ * threads yield on contention rather than spin. The panic/reset path
+ * uses mutex_trylock to avoid blocking.
  * ============================================================================ */
 
 #include "kernel/uefi_runtime.h"
@@ -735,26 +737,37 @@ static void rt_call_exit(struct rt_call_state *state, const char *svc_name)
     }
 }
 
-/* Emergency RT call for panic/reset -- trylock, no sleep, no latency log */
+/* Emergency RT call for panic/reset -- trylock, no sleep, no latency log.
+ * Returns 1 if the firmware mutex was acquired, 0 if contended (caller
+ * proceeds anyway -- a reboot attempt beats a certain hang). */
 static int rt_call_enter_emergency(struct rt_call_state *state)
 {
     state->saved_lvt = 0;
     state->tsc_start = 0;
-    if (!mutex_trylock(&s_rt_mutex))
-        return 0;  /* contended -- caller proceeds without lock */
+    /* Mask THIS CPU's LAPIC timer BEFORE the (try)lock and regardless of
+     * its outcome: the timer-last / UEFI-safe invariant must hold even on
+     * the contended path. If firmware enables interrupts internally during
+     * ResetSystem, an unmasked timer could fire into firmware on the
+     * panic/reset CPU and corrupt the reset. (LAPIC LVT only, matching
+     * rt_call_enter; the PIT-backend gap is tracked in the UTS timer HAL.) */
     if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
         uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
         lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
         state->saved_lvt = lvt;
     }
-    return 1;
+    return mutex_trylock(&s_rt_mutex);
 }
 
-static void rt_call_exit_emergency(struct rt_call_state *state)
+/* `locked` is the value rt_call_enter_emergency returned. The timer LVT is
+ * always restored (it was masked unconditionally above); the mutex is
+ * released only if we actually held it. Only reached if ResetSystem
+ * returned (failure) -- on success the machine has already rebooted. */
+static void rt_call_exit_emergency(struct rt_call_state *state, int locked)
 {
     if (state->saved_lvt)
         lapic_write(LAPIC_REG_LVT_TIMER, state->saved_lvt);
-    mutex_unlock(&s_rt_mutex);
+    if (locked)
+        mutex_unlock(&s_rt_mutex);
 }
 
 uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
@@ -921,8 +934,9 @@ void uefi_reset(uint32_t reset_type)
             klog(LOG_WARN, "UEFI", "ResetSystem: mutex contended, proceeding without lock");
         /* ResetSystem() does NOT return on success */
         s_rt->reset_system(reset_type, UEFI_SUCCESS, 0, (void *)0);
-        if (got_lock) rt_call_exit_emergency(&rcs);
-        /* If we get here, it failed */
+        /* Only reached on failure: restore the timer LVT (masked above
+         * regardless of lock) and release the mutex if we held it. */
+        rt_call_exit_emergency(&rcs, got_lock);
         klog(LOG_ERROR, "UEFI", "ResetSystem() returned -- falling back");
     }
 

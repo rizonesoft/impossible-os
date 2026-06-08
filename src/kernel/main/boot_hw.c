@@ -514,12 +514,17 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     /* --- CPU feature minimum requirements --- */
     {
         int missing = 0;
+        /* LOG_ERROR, not LOG_FATAL: klog(LOG_FATAL) halts in its own
+         * for(;;) loop and never returns, which would defeat the
+         * accumulate-both-features pattern AND make the boot_halt below
+         * unreachable (no styled halt screen / POST16_BOOT_FAILED). Let
+         * boot_halt render the single fatal boot failure. */
         if (!cpu_has(CPU_FEATURE_NX)) {
-            klog(LOG_FATAL, "cpu", "MINIMUM: NX (No-Execute) not available -- cannot boot safely");
+            klog(LOG_ERROR, "cpu", "MINIMUM: NX (No-Execute) not available -- cannot boot safely");
             missing = 1;
         }
         if (!cpu_has(CPU_FEATURE_SSE2)) {
-            klog(LOG_FATAL, "cpu", "MINIMUM: SSE2 not available -- required for kernel math");
+            klog(LOG_ERROR, "cpu", "MINIMUM: SSE2 not available -- required for kernel math");
             missing = 1;
         }
         if (missing)

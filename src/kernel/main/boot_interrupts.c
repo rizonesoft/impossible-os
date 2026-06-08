@@ -5,23 +5,31 @@
  *
  *   1. GDT + IST stacks    -- segment selectors + exception stacks
  *   2. IDT + IRQ            -- interrupt vectors registered
- *   3. ACPI (MADT)          -- discover CPUs, LAPIC/IOAPIC addresses
- *   4. LAPIC + IOAPIC       -- interrupt routing ready (PIC disabled)
- *   5. PIC                  -- only if no IOAPIC (legacy fallback)
- *   6. RTC                  -- non-critical, safe after IDT
- *   7. Input (kbd/mouse)    -- needs IRQ routing (IOAPIC or PIC)
- *   8. Framebuffer          -- needs PMM (Phase 0), no IRQ dependency
- *   9. Splash + UEFI info   -- cosmetic, after FB
+ *   3. Bugcheck + crash reg -- NMI crash handler wired after IDT
+ *   4. ACPI (MADT)          -- discover CPUs, LAPIC/IOAPIC addresses
+ *   5. LAPIC + IOAPIC       -- interrupt routing ready (PIC disabled)
+ *   6. PIC                  -- only if no IOAPIC (legacy fallback)
+ *   7. RTC                  -- non-critical, safe after IDT
+ *   8. Framebuffer + splash -- needs PMM (Phase 0), no IRQ dependency;
+ *                              before input so splash messages are visible
+ *   9. UEFI info gathering  -- uefi_config_init etc., cosmetic
  *  10. Timer (LAST!)        -- generates interrupts immediately on start;
- *                              must be LAST before sti to prevent timer
- *                              firing into uninitialized subsystems
- *  11. sti                  -- enable interrupts (timer starts ticking)
- *  12. splash animation     -- only after sti (needs timer ticks)
+ *                              must be the LAST interrupt source armed
+ *                              before sti so it can't fire into an
+ *                              uninitialized subsystem
+ *  11. DPC queues           -- must be ready before sti: an ISR may queue
+ *                              a DPC the instant interrupts are enabled
+ *  12. sti                  -- enable interrupts (timer starts ticking)
+ *  13. splash animation     -- after sti (needs timer ticks); also
+ *                              registers the timer tick callback
+ *  14. Input (kbd/mouse)    -- AFTER sti so the splash spinner stays alive
+ *                              during slow PS/2 reset busy-waits
  *
  * UEFI RUNTIME CALLS: All UEFI runtime service calls (SetVariable, GetTime,
- * etc.) may enable interrupts internally via firmware SMI. The LAPIC timer
- * must be masked during these calls if it's running. See boot_post_write16()
- * and uefi_runtime.c for the mask/unmask pattern.
+ * etc.) may enable interrupts internally via firmware SMI. The active timer
+ * must be masked during these calls if it's running. See rt_call_enter() /
+ * rt_call_exit() in uefi_runtime.c for the LAPIC mask/unmask pattern
+ * (boot_post_nvram_write16() in boot_init.c handles the NVRAM-POST path).
  *
  * Provides: boot_phase1() and the legacy boot_interrupts_init() wrapper.
  * ============================================================================ */

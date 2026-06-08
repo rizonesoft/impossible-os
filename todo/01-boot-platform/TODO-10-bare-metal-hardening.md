@@ -431,12 +431,23 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 **Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/main/boot_init.c`
 
 - [x] Timer last before sti (already in place, documented in init order contract)
-- [x] LAPIC timer masked during ALL UEFI runtime calls (rt_mask_timer/rt_unmask_timer in uefi_runtime.c)
-- [x] Phase 1 init order contract documented at top of boot_interrupts.c (12-step sequence)
+- [x] LAPIC timer masked during ALL UEFI runtime calls via `rt_call_enter`/`rt_call_exit` (+ emergency variants) in uefi_runtime.c. PIT-backend (TCG) masking is backend-aware UTS work -> `01-boot-platform/TODO-11 §6`.
+- [x] Phase 1 init order contract documented at top of boot_interrupts.c (14-step sequence, matches actual code: DPC-before-sti, input-after-sti)
 - [x] `BOOT_ASSERT(cond, msg)` macro added -- used for IDT/GDT checks before timer init
 - [x] Commit: `"boot: formalize Phase 1 init order -- timer-last, UEFI-safe, documented contract"`
 
 **Test checkpoint:** Phase 1 order is correct. UEFI runtime calls don't crash with timer running. Boot order comment block is visible at top of `boot_interrupts.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+**Test runner:** No dedicated kernel test surface -- BOOT_ASSERT halts via `boot_halt`, and `rt_call_enter`/`rt_call_exit` are static helpers touching the live LAPIC + firmware mutex (cannot be unit-tested without forbidden live-boot calls). Validated by `bash scripts/test-smoke.sh` (boot to userspace) + serial-log inspection on each platform.
+
+> **Notes:**
+> - Timer-last + UEFI-safe formalized: timer is armed last before `sti`; UEFI runtime calls mask the LAPIC timer via `rt_call_enter`/`rt_call_exit`; a 14-step INIT ORDER CONTRACT heads `boot_interrupts.c`; `BOOT_ASSERT` guards IDT/GDT-before-timer.
+> - This review fixed the `klog(LOG_FATAL)`-makes-`boot_halt`-unreachable bug in `BOOT_ASSERT` and the `boot_hw.c` CPU-minimum check (LOG_ERROR + boot_halt so the styled halt screen / POST16_BOOT_FAILED actually render).
+> - Emergency reset (`uefi_reset`) now masks the timer regardless of firmware-mutex contention; the init-order contract + `uefi_runtime.c` header were corrected to match the real code (DPC-before-sti, input-after-sti, sleepable mutex).
+> - Scope boundary: PIT-backend (TCG) timer masking is backend-aware UTS work owned by `01-boot-platform/TODO-11 §6`; LAPIC-backend (bare metal / WHPX) is masked here.
+> **Verified:** 2026-06-08 | commit `483ff06c` | 4/4 items | build OK | boot 1723+16 PASS, smoke PASS (KVM 2.57s)
+> **Accepted:** [M] `rt_call` masking is LAPIC-only -- PIT-backend (TCG) timer can fire into firmware during UEFI RT calls -> XREF: 01-boot-platform/TODO-11 §6 (item: "Add backend-aware `timer_hal_quiesce()`/`resume()`" at line 174)
+> **Quality reviewed:** 2026-06-08 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M+2L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -537,6 +548,7 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 | 💎   | Graceful degradation    | ✅ Safe Mode + Last Known  | ✅ systemd continues       | ✅ §7 BOOT_TRY + degraded_mask |
 | 💎   | Per-process page tables | ✅ Each process own CR3    | ✅ mm_struct per task      | ✅ §8 PML4 clone + CR3 switch  |
 | 💎   | CPU security verify     | ✅ HAL verifies CR4/EFER   | ✅ Checks feature enable   | ✅ §9 verify NX/SMEP/SMAP      |
+| 💎   | Boot order / UEFI-safe  | ✅ Ordered HAL + RT serialize | ✅ setup_arch + efi_call wrap | ✅ §10 timer-last + rt_call mask |
 | 💎   | Logging on main FS      | ✅ C:\Windows\System32     | ✅ /var/log                | ✅ §12 KLOG_DIR X:\ (T24)      |
 | 💎   | CPU feature minimums    | ✅ NX required since Vista | ✅ Minimum checks at boot  | ✅ §13 NX+SSE2 required        |
 | ⭐   | Bare-metal test matrix  | ❌ Internal only (WHQL)    | ❌ Community-driven        | ✅ §14 4-platform matrix       |
