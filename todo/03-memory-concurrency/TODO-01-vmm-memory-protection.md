@@ -61,7 +61,7 @@ title: "TODO-01 -- VMM Memory Protection & Diagnostics"
 | 💎  |   9   | Heap canaries + double-free detection                     | --                             |  [ ]   |
 | 💎  |  10   | Kernel memory leak detector                               | §9                            |  [ ]   |
 | 💎  |  11   | MMIO mapping with UC attributes + HPET validation         | --                             |  [ ]   |
-| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [x]   |
+| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`)       | --                             |  [/]   |
 | 💎  |  13   | Auto-growing user stacks                                  | §1                             |  [ ]   |
 | 💎  |  14   | NtLockVirtualMemory / mlock -- pin pages in RAM           | §3                             |  [ ]   |
 | 💎  |  15   | Commit charge tracking + enforcement                      | §3                             |  [ ]   |
@@ -259,6 +259,9 @@ Map an arbitrary PMM-allocated physical frame into a specific process PML4 at a 
 - [x] Zero-fill the physical frame BEFORE mapping via `zero_page(phys)` (identity-mapped, so phys == kernel VA). Prevents kernel data leaking to user mode.
 - [x] Unit test in `test_vmm.c`: `test_vmm_map_user_page_roundtrip` -- allocates frame, maps at 0x200000000 via kernel PML4, writes pattern through identity map, reads back through mapped VA, asserts match + vmm_get_physical resolve, unmaps, verifies PTE cleared. 5 assertions, no live boot calls.
 - [x] Commit: `"mm: vmm_map_user_page -- map arbitrary phys frame into per-process PML4 at user VA"` (ce91b05a)
+- [ ] Privatize cloned kernel PDs before splitting a huge page outside PD[4]: `vmm_create_user_pml4` shares PDPT[1..511] by raw pointer, so `uthread_create` PDPT[1] stacks mutate the global kernel PD. Filed from D01 T10 §8; consumer D02 T11 §14.
+- [ ] Make `task_exec` fork+exec private-frame remap atomic under OOM: on `pmm_alloc_frame` failure it continues into `exec_load` and corrupts the parent image; preallocate-or-rollback and fail exec. Filed from D01 T10 §8; see TODO-05 §1 COW fork.
+- [ ] In the `task_exec` private-frame remap loop, zero via `zero_page` not a scalar qword loop, and batch one TLB flush after all PTEs install instead of per-page INVLPG. Filed from D01 T10 §8 perf review.
 
 **Test checkpoint:** Unit test passes (pattern write through identity map, read through mapped user VA). `task_exec()` path still works (it uses `vmm_set_user_page()` for the ELF range, which is unchanged). Boot completes normally on QEMU WHPX, TCG, VirtualBox, bare metal.
 

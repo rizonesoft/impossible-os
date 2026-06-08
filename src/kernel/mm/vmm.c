@@ -511,8 +511,17 @@ uintptr_t vmm_create_user_pml4(void)
     pdpt_phys = pmm_alloc_frame();
     pd_phys   = pmm_alloc_frame();
     pt_phys   = pmm_alloc_frame();
-    if (!pml4_phys || !pdpt_phys || !pd_phys || !pt_phys)
+    if (!pml4_phys || !pdpt_phys || !pd_phys || !pt_phys) {
+        /* Free any frames that DID allocate. The all-or-nothing return
+         * below would otherwise strand 1-3 page-table frames in the PMM
+         * bitmap with no owner on every failed process creation / fork
+         * under memory pressure (or fault injection). */
+        if (pml4_phys) pmm_free_frame(pml4_phys);
+        if (pdpt_phys) pmm_free_frame(pdpt_phys);
+        if (pd_phys)   pmm_free_frame(pd_phys);
+        if (pt_phys)   pmm_free_frame(pt_phys);
         return 0;
+    }
 
     pml4 = (pte_t *)pml4_phys;
     pdpt = (pte_t *)pdpt_phys;

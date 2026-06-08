@@ -113,6 +113,7 @@ Replace the single global run queue with one `struct rq` per logical CPU. `sched
 - [ ] Per-CPU idle task: created during `sched_init_cpu(cpu_id)` at priority 39, `SCHED_NORMAL`
 - [ ] Boot log per AP: `[SCHED] CPU%u: run queue initialised`
 - [ ] Commit: `"sched: per-CPU run queues -- struct rq[MAX_CPUS], local dequeue, task placement"`
+- [ ] task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs before `vmm_destroy_user_pml4` + per-thread/TEB frame frees; today's local-CR3 guard only covers the reaping CPU. Filed from D01 T10 §8 review.
 
 ## 4. Work-Stealing Load Balancer `[Opus]`
 

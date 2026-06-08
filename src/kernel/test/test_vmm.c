@@ -7,6 +7,7 @@
 #include "kernel/test/test.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
+#include "kernel/mm/user_range.h"
 
 static void test_vmm_map_roundtrip(void)
 {
@@ -266,6 +267,80 @@ static void test_vmm_map_fault_inject_max_cap(void)
     vmm_map_fail_max_injections_clear();
 }
 
+/* Per-process page tables (minimal base). Build a THROWAWAY user PML4 in
+ * freshly allocated frames, inspect its U/S bits via the identity map,
+ * then tear it down. The PML4 is never installed into CR3, so this is a
+ * pure page-table-construction test with no effect on the running address
+ * space. PTE phys field is bits 12-51. */
+#define TEST_PTE_ADDR_MASK 0x000FFFFFFFFFF000ULL
+
+static void test_vmm_user_pml4_create_destroy(void)
+{
+    uint64_t free0 = pmm_get_free_frames();
+
+    uintptr_t cr3 = vmm_create_user_pml4();
+    TEST_ASSERT(cr3 != 0, "vmm_create_user_pml4 returns non-zero PML4 phys");
+
+    uint64_t *pml4 = (uint64_t *)cr3;
+    /* PML4[0] and PDPT[0] are on the ring-3 path -- User bit required. */
+    TEST_ASSERT((pml4[0] & (VMM_FLAG_PRESENT | VMM_FLAG_USER)) ==
+                (VMM_FLAG_PRESENT | VMM_FLAG_USER),
+                "PML4[0] is Present + User");
+    uint64_t *pdpt = (uint64_t *)(pml4[0] & TEST_PTE_ADDR_MASK);
+    TEST_ASSERT((pdpt[0] & (VMM_FLAG_PRESENT | VMM_FLAG_USER)) ==
+                (VMM_FLAG_PRESENT | VMM_FLAG_USER),
+                "PDPT[0] is Present + User");
+    uint64_t *pd = (uint64_t *)(pdpt[0] & TEST_PTE_ADDR_MASK);
+
+    /* Cloned kernel PD entry (VA 0x0) is a kernel-only 2 MiB huge page:
+     * Present + Huge but User CLEARED -- the "cloned per-process kernel
+     * pages don't have the User bit" guarantee. */
+    TEST_ASSERT((pd[0] & VMM_FLAG_PRESENT) != 0, "cloned kernel PD[0] Present");
+    TEST_ASSERT((pd[0] & VMM_FLAG_HUGE) != 0, "cloned kernel PD[0] is huge");
+    TEST_ASSERT((pd[0] & VMM_FLAG_USER) == 0,
+                "cloned kernel PD[0] has NO User bit (supervisor-only)");
+
+    /* PD[USER_PD_INDEX] was split from a huge page into a 4 KiB PT. */
+    TEST_ASSERT((pd[USER_PD_INDEX] & VMM_FLAG_PRESENT) != 0,
+                "user PD entry Present");
+    TEST_ASSERT((pd[USER_PD_INDEX] & VMM_FLAG_HUGE) == 0,
+                "user PD entry split into 4 KiB PT (not huge)");
+    uint64_t *pt = (uint64_t *)(pd[USER_PD_INDEX] & TEST_PTE_ADDR_MASK);
+    /* User-range pages default to kernel-only until set_user_page. */
+    TEST_ASSERT((pt[0] & VMM_FLAG_PRESENT) != 0, "user PT[0] Present");
+    TEST_ASSERT((pt[0] & VMM_FLAG_USER) == 0,
+                "user PT[0] kernel-only until set_user_page");
+
+    vmm_destroy_user_pml4(cr3);
+
+    /* create allocates 4 frames (PML4/PDPT/PD/PT); destroy frees exactly
+     * those 4 -- no PAGE_OWNED data frames were installed. Net zero proves
+     * destroy reclaims the whole tree (catches the leak class where the
+     * destroy path is unwired or misses a level). */
+    TEST_ASSERT_EQ(pmm_get_free_frames(), free0,
+                   "create+destroy is frame-neutral (no PML4 tree leak)");
+}
+
+static void test_vmm_set_user_page_sets_bit(void)
+{
+    uintptr_t cr3 = vmm_create_user_pml4();
+    TEST_ASSERT(cr3 != 0, "vmm_create_user_pml4 returns non-zero PML4 phys");
+
+    uintptr_t va = USER_ELF_BASE;  /* 0x800000, inside the split user PT */
+    uint64_t *pml4 = (uint64_t *)cr3;
+    uint64_t *pdpt = (uint64_t *)(pml4[0] & TEST_PTE_ADDR_MASK);
+    uint64_t *pd   = (uint64_t *)(pdpt[0] & TEST_PTE_ADDR_MASK);
+    uint64_t *pt   = (uint64_t *)(pd[USER_PD_INDEX] & TEST_PTE_ADDR_MASK);
+    uint64_t pti = (va >> 12) & 0x1FF;
+
+    TEST_ASSERT((pt[pti] & VMM_FLAG_USER) == 0, "page starts kernel-only");
+    vmm_set_user_page(cr3, va);
+    TEST_ASSERT((pt[pti] & VMM_FLAG_USER) != 0,
+                "vmm_set_user_page sets User on the 4 KiB PTE");
+
+    vmm_destroy_user_pml4(cr3);
+}
+
 void test_register_vmm(void)
 {
     test_suite_register_cat("VMM: map/read/unmap", test_vmm_map_roundtrip, TEST_CAT_MM);
@@ -281,6 +356,10 @@ void test_register_vmm(void)
                             test_vmm_map_fault_inject_task_filter, TEST_CAT_MM);
     test_suite_register_cat("VMM: fault-inject max-injections cap",
                             test_vmm_map_fault_inject_max_cap, TEST_CAT_MM);
+    test_suite_register_cat("VMM: user PML4 create/destroy U-S bits",
+                            test_vmm_user_pml4_create_destroy, TEST_CAT_MM);
+    test_suite_register_cat("VMM: set_user_page sets User bit",
+                            test_vmm_set_user_page_sets_bit, TEST_CAT_MM);
 }
 
 #endif /* KERNEL_TESTS */

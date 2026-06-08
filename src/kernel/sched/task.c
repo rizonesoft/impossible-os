@@ -2261,6 +2261,42 @@ void task_cleanup(uint32_t pid)
 
     POST16(POST16_TLS_EXPAND_CLEAN);
 
+    /* Tear down the per-process page tables LAST -- after every user
+     * mapping (secondary-thread stacks/TEBs above, plus this task's own
+     * user stack, which lives inside this PML4) has been unmapped.
+     * vmm_destroy_user_pml4 frees the PML4/PDPT/PD/PT frames cloned by
+     * vmm_create_user_pml4 plus any PAGE_OWNED private image frames the
+     * fork+exec isolation path (task_exec -> vmm_remap_user_page)
+     * installed. Without this every user process leaks its whole
+     * page-table tree and its private image frames on exit.
+     *
+     * cr3 == 0 means a kernel task, or a launcher-spawned task running
+     * on the boot/kernel PML4 -- nothing per-process to free.
+     *
+     * Safety: never free the PML4 that is the CR3 currently loaded on
+     * THIS CPU -- the page walker would then traverse freed (and soon
+     * reused) frames. All current callers (task_waitpid, the user-mode
+     * launcher) run from a DIFFERENT task whose CR3 differs; switching to
+     * the kernel CR3 first is defense in depth for any future
+     * self-reaping path.
+     *
+     * SMP precondition (shared with the per-thread reap loop above):
+     * this only frees the dead task's frames because TASK_DEAD implies
+     * the task is off-CPU on EVERY CPU. The local-CR3 guard does NOT
+     * prove that on its own -- a proven-off-CPU-on-all-CPUs reap barrier
+     * lands with the per-CPU run queues work (SMP phase 2). Today's flat
+     * single-CPU scheduler (one global current_task cursor) makes the
+     * dead task off-CPU before any reaper runs, so the assumption holds. */
+    if (tasks[pid].cr3) {
+        uintptr_t cur_cr3;
+        __asm__ volatile("mov %%cr3, %0" : "=r"(cur_cr3));
+        if (cur_cr3 == tasks[pid].cr3)
+            __asm__ volatile("mov %0, %%cr3"
+                             : : "r"(vmm_get_kernel_cr3()) : "memory");
+        vmm_destroy_user_pml4(tasks[pid].cr3);
+        tasks[pid].cr3 = 0;
+    }
+
     tasks[pid].kernel_rsp = 0;
     tasks[pid].rsp = 0;
 }

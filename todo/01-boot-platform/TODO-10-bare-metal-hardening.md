@@ -360,7 +360,7 @@ Implement the minimal per-process page table infrastructure so each task has its
 > - `schedule()` / `schedule_now()`: load new task's CR3 before `iretq`
 > - Boot task (PID 0): continues using the identity-mapped PML4 (kernel-only task)
 > **Regression risk:** CR3 switch adds ~100ns per switch; bad PT breaks user ELF. Rollback: shared identity map, re-skip SMEP/SMAP.
-> **Debug POST (§8):** `POST16(0xD800)` = PML4 create start, `0xD801` = kernel entries cloned, `0xD802` = user page mapped, `0xD803` = CR3 switch test, `0xD804` = SMEP/SMAP enable, `0xD805` = user ELF loaded in new PML4, `0xD806` = §8 complete. On crash at 0xD803: CR3 switch broke. At 0xD804: SMEP/SMAP faulted.
+> **Debug POST (§8):** none. The PML4 create / CR3 switch / per-process mark paths run per-task at runtime (after Phase 3), where klog is fully functional; per kernel-code-quality Gate 4, POST16 is reserved for pre-`sti` boot-path triple-fault diagnostics and is intentionally NOT used here. Validation is via klog (`Task %u: per-process PML4 failed` on OOM) plus the boot/smoke serial log. The originally-planned 0xD800-0xD806 codes were not wired (would have spammed port 0x80 on every process spawn).
 
 - [x] `vmm_create_user_pml4()` -- clones kernel PML4, splits PD[4] into 4KiB PT, User bit on PML4/PDPT/PD levels
 - [x] `vmm_set_user_page(pml4, virt)` -- sets User bit on individual 4KiB pages in split PT
@@ -373,6 +373,22 @@ Implement the minimal per-process page table infrastructure so each task has its
 - [x] Commit: `"mm: per-process page tables -- user/kernel separation, CR3 switch"`
 
 **Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Cloned per-process kernel pages don't have the User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: cmd.exe runs in its own PML4, no page faults. SMEP/SMAP remain skipped on bare metal (boot-PML4 User-bit blocker, unblock owned by `D02 T10 §3-§6`); do NOT expect CR4.SMEP/SMAP set here. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+**Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) -- `test_vmm.c` adds `test_vmm_user_pml4_create_destroy` (frame-neutral create+destroy, cloned-kernel-PD-no-User, split-PT checks) and `test_vmm_set_user_page_sets_bit`; 14 assertions across 2 tests.
+
+> **Notes:**
+> - Per-process PML4 minimal base: each user task clones the kernel PML4, splits PD[4] into 4 KiB PTEs, and carries User only on PML4[0]/PDPT[0]/PD[4]; cloned kernel 2 MiB pages stay supervisor-only.
+> - `schedule()`/`schedule_now()` load the task CR3 (cr3=0 -> kernel PML4); `task_cleanup` now calls `vmm_destroy_user_pml4` to reclaim the full PML4 tree + PAGE_OWNED frames on exit (unwired-destroy gap fixed this review).
+> - SMEP/SMAP stay skipped on bare metal: the boot PML4 (`entry.asm`) still has User on all kernel pages; the real unblock is the KPTI clean kernel PML4 (`02-kernel-core/TODO-10 §3-§6`).
+> - Full per-process VM (COW fork, mmap, arbitrary-VA user mapping) is out of scope here -- owned by `03-memory-concurrency/TODO-05` and `TODO-01 §12`.
+> - Status `[/]`: 2 items deferred (remove `pmm_mark_region_used`; external bare-metal SMEP/SMAP unblock).
+> **Verified:** 2026-06-08 | commit `0ee5aa32` | 6/8 items | build OK | mm 102+16 PASS (14 new §8 assertions), smoke PASS (KVM 2.4s)
+> **Accepted:** [Critical] `map_user_page_impl` splits the shared kernel PD (PDPT[1]) for `uthread_create` stacks, breaking per-process isolation -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Privatize cloned kernel PDs before splitting a huge page outside PD[4]" at line 262)
+> **Accepted:** [Critical] `task_exec` continues into `exec_load` after partial OOM remap, corrupting the parent image -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Make `task_exec` fork+exec private-frame remap atomic under OOM" at line 263)
+> **Accepted:** [M] scheduler reads CR3 on every context switch instead of a per-CPU cache -> XREF: 02-kernel-core/TODO-10 §6 (item: "Context switch (`task_switch`): update `smp_this_cpu()->user_cr3`" at line 182)
+> **Accepted:** [M] `task_exec` remap zeros 1 MiB scalar + per-page INVLPG -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "In the `task_exec` private-frame remap loop, zero via `zero_page`" at line 264)
+> **Accepted:** [H] `task_cleanup` PML4 teardown only guards the local CPU CR3 -- an SMP reaper on another CPU could free a still-loaded page table (pre-existing reap assumption, same as the per-thread unmap path; not reachable on today's single-CPU scheduler) -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs" at line 116)
+> **Quality reviewed:** 2026-06-08 | Codex 5x (adversarial x2, consistency, perf, re-adversarial) | 1H+1M fixed, 2Crit+1H+2M accepted-XREF | scope: kernel-code-quality
 
 ---
 
