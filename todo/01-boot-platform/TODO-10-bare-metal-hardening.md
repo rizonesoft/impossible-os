@@ -468,10 +468,21 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 > The temporary log-path reshuffle that once lived here is no longer owned by the bare-metal hardening roadmap. `TODO-24-blackbox-service-partition.md` is now the single owner for `X:\` BlackBox layout, `klog_dir`, boot timeline output, crash persistence, and perf/diag file paths.
 
 - [x] Bare-metal constraints from this TODO fed the final storage design, but the authoritative checklist now lives in `TODO-24 §5-§8`
-- [x] `klog_dir` / BlackBox / crash path work remain shipped in tree; this file now treats them as consumed prerequisites rather than active scope
+- [x] `klog_dir` / BlackBox / crash path work shipped in tree (X:\ path), treated here as consumed prerequisites. Remaining multi-platform verification + the §5 C:\-fallback reentrancy follow-up stay owned by `TODO-24` (§5 is `[/]`).
 - [x] Commit: "(doc) move log and diagnostic storage ownership to TODO-24"
 
 **Test checkpoint:** Use `TODO-24 §5-§8` verification; this file only depends on those outputs existing on bare metal.
+
+**Test runner:** No kernel test surface -- §12 is an ownership pointer; verification of `klog_dir`/BlackBox/crash paths is owned by `01-boot-platform/TODO-24 §5-§8` and exercised by that TODO's bare-metal checkpoints.
+
+> **Notes:**
+> - Ownership transfer only: logging + diagnostic storage (X:\ BlackBox layout, `klog_dir`, boot timeline, crash persistence, perf/diag) is owned by `01-boot-platform/TODO-24 §5-§8`; reciprocal back-XREF in TODO-24 §15.
+> - Transfer verified sound: TODO-24 §5-§8 exist + shipped; `klog_disk.c` resolves `klog_dir` to `X:\Logs\` (BlackBox) / `C:\` fallback; no orphaned scope.
+> - Cross-TODO consistency fixes this review: TODO-24 §5 status `[x]`->`[/]` (open reentrancy item), TODO-24 §6 test-checkpoint serial-path contradiction, removed a duplicate `klog_dir` assertion from TODO-10's Unit Tests.
+> - re-adversarial skipped: docs-only TODO consistency fixes, no code/faultable region.
+> **Verified:** 2026-06-08 | commit `_PENDING_` | 2/2 items | build OK | docs-only ownership transfer (klog_dir X:\ shipped per TODO-24 §5-§8; lint 0 err, todo-graph 8/8)
+> **Accepted:** [H] latent `klog_disk_flush` re-entrancy on the C:\ fallback path (BlackBox unmounted) -- §12 "shipped" covers the X:\ path only -> XREF: 01-boot-platform/TODO-24 §5 (item: "klog_disk_flush re-entrancy guard when C:\ fallback is active" at line 136)
+> **Quality reviewed:** 2026-06-08 | Codex 3x (adversarial, consistency, perf) | 1H+2M fixed (cross-TODO ownership consistency), 1H accepted-XREF | scope: N/A (docs-only ownership pointer)
 
 ---
 
@@ -652,7 +663,6 @@ Full acceptance pass. All sections complete.
   - Per-process PML4: `vmm_create_user_pml4()` returns non-NULL; `vmm_destroy_user_pml4()` frees without crash
   - `vmm_set_user_page()` on a valid PML4+virt succeeds (User bit is set in PTE)
   - CPU verification: `cpu_verify_hardening()` does not crash; logs NX/SMEP/SMAP status
-  - `klog_dir` runtime global resolves to `"X:\\Logs\\"` (BlackBox) or `"C:\\Impossible\\System\\Logs\\"` (fallback)
 - [ ] Add to `scripts/test-smoke.sh`:
   - Grep serial for `IAPC_BOOT_ARCH:` (FADT flags parsed)
   - Grep serial for `IST stacks:` (IST allocated)

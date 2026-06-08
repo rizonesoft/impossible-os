@@ -49,7 +49,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | 💎 |   2   | Build pipeline -- format and populate BlackBox        | §1                |  [x]   |
 | 💎 |   3   | Kernel mount -- discover "BlackBox" GPT name, mount X:| §1                |  [x]   |
 | 💎 |   4   | Directory skeleton -- create dirs on first boot       | §3                |  [x]   |
-| 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [x]   |
+| 💎 |   5   | Klog migration -- move all log output to X:\Logs\     | §3, §4            |  [/]   |
 | 💎 |   6   | Boot logs -- per-boot session files to X:\Boot\       | §3, §4            |  [x]   |
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [x]   |
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [x]   |
@@ -151,7 +151,7 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 - [x] Stale `BOOT_NNN.LOG` comments updated
 - [x] Commit: `"kernel: move per-boot session logs to X:\\Boot\\"`
 
-**Test checkpoint:** After boot, `X:\Boot\` contains `26040501.LOG` and `26040501.json`. Serial log path shows `X:\Boot\` prefix. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+**Test checkpoint:** After boot, `X:\Boot\` contains the per-boot session files `26040501.LOG` and `26040501.json`; serial session logs stay at `X:\Logs\Serial\` (owned by §5, built from `klog_dir + "Serial\\"`). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ## 7. Crash Dump Path -- crash_recovery.log to X:\Crash\
 
