@@ -530,14 +530,30 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 | QEMU WHPX | LAPIC | Hyper-V MSR | MSI | Skipped (8042=0) | ✅ CR3 switch | ~10s |
 | QEMU TCG | PIT | N/A | MSI | Skipped (8042=0) | ✅ CR3 switch | ~3s |
 | VirtualBox | LAPIC | PM Timer | INTx | Active (8042=1) | ✅ CR3 switch | ~45s (NCQ) |
-| Bare metal | LAPIC | TSC ref | MSI | Active (8042=1) | ✅ CR3 switch | ~10s |
+| Bare metal | LAPIC | TSC ref | MSI | Active (8042=1) | TBD (BM Test 5) | ~10s |
 
-- [x] Phase thresholds: Phase 0 <200ms ✅, Phase 1 <2s ✅, Phase 2 <10s ✅ (except VBox NCQ), Phase 3 <15s ✅
-- [x] Regression policy: documented in CLAUDE.md ("Bare metal first" + validate-todo-file skill §11)
-- [x] Checklist covered by BM Tests 1-4 in testing plan above
+- [x] Phase acceptance bands documented (P0 <200ms, P1 <2s, P2 <10s except VBox NCQ, P3 <15s) -- manual per-platform bands from BM records; per-phase bare-metal record owned by BM Test 5
+- [x] Regression detection: automated = `boot_perf_budget.c` per-step + 4s-total WARN/ERR (stricter than the bands by design) + `boot_trend.c` drift alarms; policy = CLAUDE.md "Bare Metal First" + validate-todo-file check 11
+- [x] BM Tests 1-4 cover the recorded matrix cells; bare-metal per-process PT + per-phase timing are owned by BM Test 5 items below
 - [x] Commit: "(shipped) bare-metal test matrix inline in TODO-10"
 
-**Test checkpoint:** Bare-metal boot on i5-11600K matches the checklist. All phases within timing thresholds. VMs: QEMU WHPX, QEMU TCG, VirtualBox match matrix rows above.
+**Test checkpoint:** Acceptance is BM Test 5 on the i5-11600K: boot matches the checklist with every phase inside the bands (capture the `PERF` step-duration table + any `BOOT-BUDGET` WARN/ERR serial lines). Recorded so far: QEMU WHPX, QEMU TCG, VirtualBox match the matrix rows above; the bare-metal per-process PT cell is TBD until BM Test 5 runs.
+
+**Test runner:** No kernel test surface -- §14 is a documentation matrix + validation plan. Runtime artifacts come from BM Test 5 serial captures (`PERF` table + `BOOT-BUDGET` lines); the budget machinery itself is tested by `01-boot-platform/TODO-29 §1` (SUITE=boot).
+
+> **Notes:**
+> - §14 documents the 4-platform matrix, phase acceptance bands, and regression layers; execution of the missing bare-metal cells is owned by BM Test 5 `[ ]` items.
+> - This review fixed false completeness: bare-metal Per-Process PT cell -> `TBD (BM Test 5)`, BM Test 4 retracted EPT row struck through, Test checkpoint reworded from asserted-pass to acceptance criteria.
+> - Threshold layering clarified: phase bands = manual per-platform acceptance; `boot_perf_budget.c` per-step + 4s-total WARN/ERR = stricter automated layer; `boot_trend.c` = drift alarms.
+> - BM Test 5 extended with the exact serial artifact strings and a bare-metal per-process PT closure item.
+> - Scope boundary: budget/trend machinery cost findings filed in `01-boot-platform/TODO-29 §1/§3` (both reopened `[/]`).
+> - re-adversarial skipped: docs-only fixes, no C/H lines changed.
+> **Verified:** 2026-06-10 | commit `TBD` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
+> **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
+> **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 95)
+> **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 669)
+> **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 668)
+> **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)
 
 ---
 
@@ -631,7 +647,7 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 
 - [x] cmd.exe runs with own PML4, types input, shows output on all 3 VMs
 - [x] NX verified: `Verify: NX enabled (EFER.NXE set)` on all platforms
-- [x] SMEP/SMAP: EPT-enforced on WHPX, not available on TCG/VBox (no CPUID feature)
+- [x] ~~SMEP/SMAP: EPT-enforced on WHPX~~ RETRACTED (see note above) -- actual outcome: SMEP/SMAP not enabled on any platform; TCG/VBox lack the CPUID feature, WHPX log line was a false signal
 - [x] No page faults, no triple faults (after fixing User bit on PML4/PDPT levels + user stack in PD[4])
 
 **Results (2026-03-29, post-§9):**
@@ -650,7 +666,8 @@ Full acceptance pass. All sections complete.
 - [ ] Force a non-critical init failure via `BOOT_TRY` path (§7); boot completes with degraded notification (no `boot.conf` skip list)
 - [ ] Second boot: serial shows `[BOOT] Last boot succeeded` after a clean prior shutdown (`boot_hw.c` NVRAM path)
 - [ ] Spinner smooth during PCI scan (no stutter)
-- [ ] Boot time within thresholds (Phase 0 <200ms, Phase 1 <2s)
+- [ ] Boot time within thresholds for ALL phases (P0 <200ms, P1 <2s, P2 <10s, P3 <15s) -- capture the serial `PERF: --- Boot step durations (sorted by time) ---` table + any `BOOT-BUDGET` WARN/ERR lines as the per-phase artifact
+- [ ] Per-process PT on bare metal: cmd.exe in own PML4, CR3 switch, NX verify -- closes the §14 matrix `TBD (BM Test 5)` cell and the BM Test 4 bare-metal TBD row
 - [ ] Keyboard responsive, AHCI I/O works
 
 **~20 minutes.** Full regression pass.

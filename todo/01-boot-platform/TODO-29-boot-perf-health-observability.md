@@ -61,9 +61,9 @@ implements_after: TODO-04
 
 | ⭐ | Order | Deliverable                                         | Depends On                                | Status |
 | -- | :---: | --------------------------------------------------- | ----------------------------------------- | :----: |
-| 💎 |   1   | Per-phase boot perf budgets + threshold alarms      | --                                        |  [x]   |
+| 💎 |   1   | Per-phase boot perf budgets + threshold alarms      | --                                        |  [/]   |
 | 💎 |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                     |  [x]   |
-| ⭐ |   3   | Boot perf trend file + regression detection         | §1, §2                                    |  [x]   |
+| ⭐ |   3   | Boot perf trend file + regression detection         | §1, §2                                    |  [/]   |
 | 💎 |   4   | SMBIOS init profiling + optimization                | §1                                        |  [x]   |
 | 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [x]   |
 | 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [x]   |
@@ -92,6 +92,7 @@ Today `boot_progress(phase, step, postcode)` records 31 timeline entries with ab
 - [x] Soft = 1.5x target -> WARN; hard = 4x target -> ERR. Equal-to-target is OK. Halt-on-breach owned by TODO-23 watchdog.
 - [x] Total-boot-time `boot_perf_total_check()` -- compares `steps[last].tsc - steps[0].tsc` against 4000ms target with same soft/hard thresholds.
 - [x] Schema bump for `boot-timeline.json` -- per-record `target_ms` field (0 = no budget). Trend-analysis decoder is owned by §3.
+- [ ] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
 - [x] Commit: `"boot: per-phase perf budgets + threshold alarms"`
 
 **Test checkpoint:** `boot_perf_budget_classify(99, 100) == OK`; `(150, 100) == OK`; `(151, 100) == SOFT`; `(400, 100) == SOFT`; `(401, 100) == HARD`. Lookup of known step returns budget; unknown + NULL return NULL. Clean boot stays silent; synthetic over-budget step triggers WARN/ERR.
@@ -152,6 +153,7 @@ The §1 budget check catches absolute breaches, but a slow drift inside the budg
 - [x] Top-level schema validation only; bad `schema_version` or non-array `boots` -> rename to `.corrupt-<seq>` + fresh v1 write.
 - [x] 3-run median per phase (prior=`boots[3..5]`, newest=`boots[0..2]`); emits BOOT-TREND WARN when growth >15%; first 5 boots silent.
 - [x] CI hook stays owned by the boot-validation matrix (this section ships data file + warn line only).
+- [ ] Defer `boot_trend_publish_json()` (cJSON RMW + sync VFS I/O) to a post-DESKTOP_READY work item; record only fixed-size durations during boot -- takes the trend layer's own cost out of measured boot time
 - [x] Commit: `"boot: rolling boot-trend.json + regression alarms"`
 
 **Test checkpoint:** Synthetic 6-boot fixture with prior-3 `SMBIOS=[80,80,80]` and newest-3 `[150,150,150]` produces an 87% regression alarm. Same shape but newest-3 `[80,82,84]` stays silent (median 82 within 15% band). Unit test seeds the file with 16 fixture entries and asserts prepend+trim to 16. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
