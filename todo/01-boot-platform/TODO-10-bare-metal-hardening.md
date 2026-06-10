@@ -511,7 +511,7 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 > - Recommended features (SMEP/SMAP/RDRAND) warn-and-continue unchanged; SMEP/SMAP remain skipped on every platform until KPTI (§9).
 > - This review corrected the stale test checkpoint (CR4.SMAP-set claim), qualified the cpu_security.h blanket BSP/AP-safe claim, and added the BM Test 4 EPT-claim retraction note.
 > - Scope boundary: NX/SMEP/SMAP/CET ENABLE implementation is owned by `02-kernel-core/TODO-10`; this section owns the boot minimum gate + post-activation verification/diagnosis.
-> **Verified:** 2026-06-10 | commit `TBD` | 4/4 items | build OK | security 79+16 + x86 152+16 PASS, smoke PASS (KVM 2.48s)
+> **Verified:** 2026-06-10 | commit `c843ca25` | 4/4 items | build OK | security 79+16 + x86 152+16 PASS, smoke PASS (KVM 2.48s)
 > **Quality reviewed:** 2026-06-10 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+3M fixed | scope: kernel-code-quality
 
 ---
