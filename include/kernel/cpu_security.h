@@ -2,7 +2,9 @@
  * cpu_security.h -- CPU security feature activation
  *
  * Functions to enable NX, SMEP, SMAP, CET, and other CPU security features.
- * Each is safe to call on BSP and APs. No-ops if the feature is unsupported.
+ * Enable functions are safe to call on BSP and APs and no-op if the feature
+ * is unsupported. EXCEPTIONS are marked per-prototype: cpu_verify_hardening()
+ * is BSP-only and halts boot (boot_halt) on NX readback failure.
  *
  * XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md
  * ============================================================================ */
@@ -72,7 +74,8 @@ void cpu_harden(void);
 void cpu_harden_post_pagetable(void);
 
 /* Verify CPU security features are active. Call after cpu_harden() +
- * cpu_harden_post_pagetable(). Reads back EFER/CR4 and logs discrepancies. */
+ * cpu_harden_post_pagetable(). Reads back EFER/CR4 and logs discrepancies.
+ * NX readback failure halts boot (NX is a boot minimum). BSP-only. */
 void cpu_verify_hardening(void);
 
 /* Freeze the BSP's final boot-time register/MSR baseline (EFER, CR4, PAT,

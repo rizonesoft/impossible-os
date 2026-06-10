@@ -58,7 +58,7 @@ flowchart TD
   class todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1 active
   click todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md"
   todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06["alternate-boot-protocols<br/>TODO-08"]
-  class todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06 active
+  class todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06 done
   click todo_01_boot_platform_TODO_08_alternate_boot_protocols_md_0eab06 "https://github.com/rizonetech/impossible-os/blob/main/todo/01-boot-platform/TODO-08-alternate-boot-protocols.md"
   todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775["cpu-boot-sequencing<br/>TODO-09"]
   class todo_01_boot_platform_TODO_09_cpu_boot_sequencing_md_711775 active
@@ -724,6 +724,8 @@ flowchart TD
   todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 -.->|accepted| todo_01_boot_platform_TODO_02_uefi_hardening_secureboot_md_a4ee3c
   todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 -.->|accepted| todo_02_kernel_core_TODO_19_code_integrity_trust_policy_md_211b09
   todo_01_boot_platform_TODO_03_bootloader_error_recovery_md_f7e477 -.->|accepted| todo_04_drivers_hardware_TODO_04_security_hardware_md_4e7447
+  todo_01_boot_platform_TODO_06_boot_media_image_installer_handoff_md_5871e1 -.->|accepted| todo_15_installer_release_TODO_04_release_qa_md_95bcbc
+  todo_01_boot_platform_TODO_07_boot_entry_store_menu_policy_md_21e3f1 -.->|deferred| todo_05_storage_filesystems_TODO_04_fat32_hardening_vfs_semantics_md_511b7d
   todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 -.->|accepted| todo_02_kernel_core_TODO_14_registry_completion_md_e13937
   todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 -.->|accepted| todo_02_kernel_core_TODO_31_kernel_bulletproofing_md_f4ac23
   todo_02_kernel_core_TODO_12_native_api_ssdt_md_8ba594 -.->|accepted| todo_02_kernel_core_TODO_14_registry_completion_md_e13937

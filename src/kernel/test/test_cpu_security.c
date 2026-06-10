@@ -54,9 +54,11 @@ static void test_smep_smap_state(void)
     uint64_t cr4;
     __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
 
-    /* On Hyper-V, SMEP/SMAP may be enforced via EPT even if CR4 bits
-     * are not set. On bare metal/TCG, they're skipped. Either way,
-     * the test just confirms no crash accessing cr4. */
+    /* SMEP/SMAP are skipped on EVERY platform (kernel PTE User bit --
+     * needs KPTI); there is NO EPT-enforcement path (that claim was
+     * retracted as a false security signal in the TODO-10 bare-metal
+     * hardening CPU-security review). The test just confirms no crash
+     * accessing cr4. */
     (void)cr4;
 }
 

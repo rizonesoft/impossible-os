@@ -109,9 +109,18 @@ enum cpu_feature {
  * tracked here: they are prerequisites of x86-64 long mode itself, so a CPU
  * lacking them never reaches kernel C code (it could not have entered long
  * mode). LM is included as the explicit Linux verify_cpu.S-style guard. */
-#define CPU_FEATURES_REQUIRED_MASK \
-    ((1ULL << CPU_FEATURE_NX)  | (1ULL << CPU_FEATURE_SSE2) | \
-     (1ULL << CPU_FEATURE_LM)  | (1ULL << CPU_FEATURE_SYSCALL))
+/* X-macro list: the SINGLE canonical source for the required baseline.
+ * Generates CPU_FEATURES_REQUIRED_MASK (AP validation, cpu_security.c)
+ * AND the BSP minimum-requirements gate table (boot_hw.c). Adding a
+ * required feature here updates both consumers; they cannot drift. */
+#define CPU_FEATURES_REQUIRED_LIST(X) \
+    X(CPU_FEATURE_NX,      "NX (No-Execute) not available -- cannot boot safely") \
+    X(CPU_FEATURE_SSE2,    "SSE2 not available -- required for kernel math") \
+    X(CPU_FEATURE_LM,      "Long Mode not reported -- CPUID inconsistent with 64-bit execution") \
+    X(CPU_FEATURE_SYSCALL, "SYSCALL/SYSRET not available -- required for the syscall fast path")
+
+#define CPU_FEATURE_REQ_BIT_(feat, diag) | (1ULL << (feat))
+#define CPU_FEATURES_REQUIRED_MASK (0ULL CPU_FEATURES_REQUIRED_LIST(CPU_FEATURE_REQ_BIT_))
 
 /* The security-critical feature subset cpuid_probe_ap_features() probes on each
  * AP. Per this section's scope ("validates security-critical feature

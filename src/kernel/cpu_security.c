@@ -9,6 +9,7 @@
 #include "kernel/cpuid_platform.h"
 #include "kernel/msr.h"
 #include "kernel/boot_init.h"
+#include "kernel/boot_halt.h"           /* boot_halt for NX verify hard-fail (BSP-only) */
 #include "kernel/klog.h"
 #include "kernel/security/pku.h"
 #include "kernel/smp.h"                 /* per_cpu_data, smp_get_cpu() for AP hardening */
@@ -432,7 +433,9 @@ void cpu_harden_post_pagetable(void)
 }
 
 /* Verify that CPU security features are actually active after enable.
- * Reads back EFER and CR4 and logs any discrepancies. */
+ * Reads back EFER and CR4 and logs any discrepancies. NX is a boot
+ * minimum: a failed NX readback halts (boot_halt) instead of warning.
+ * BSP-only -- the single caller is boot_phase0 (boot_hw.c). */
 void cpu_verify_hardening(void)
 {
     uint64_t efer, cr4;
@@ -442,10 +445,19 @@ void cpu_verify_hardening(void)
     /* Verify NX (EFER.NXE, bit 11) */
     efer = msr_read(MSR_IA32_EFER);
     if (cpu_has(CPU_FEATURE_NX)) {
-        if (efer & EFER_NXE)
+        if (efer & EFER_NXE) {
             klog(LOG_INFO, "cpu", "Verify: NX enabled (EFER.NXE set)");
-        else
-            klog(LOG_WARN, "cpu", "Verify: NX FAILED -- EFER.NXE not set after enable");
+        } else {
+            /* NX is a boot minimum (boot_hw.c CPU-minimum gate): CPUID
+             * reported NX but EFER.NXE did not stick (trapped/ignored
+             * WRMSR). vmm_apply_nx_policy() already marked pages NX, so
+             * continuing would silently run with NO no-execute enforcement.
+             * This readback is the last chance to catch that. BSP-only
+             * caller (boot_phase0), so boot_halt owns the halt; LOG_ERROR
+             * (not LOG_FATAL) so the styled halt screen still renders. */
+            klog(LOG_ERROR, "cpu", "Verify: NX FAILED -- EFER.NXE not set after enable");
+            boot_halt("CPU NX activation failed (EFER.NXE not set)");
+        }
     }
     POST16(0xD901);
 

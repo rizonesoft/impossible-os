@@ -495,13 +495,24 @@ Define the minimum CPU feature set required to boot, verify features are actuall
 > [!IMPORTANT]
 > → XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- owns the IMPLEMENTATION of NX/SMEP/SMAP/CET. This section owns VERIFICATION that features actually took effect on real hardware, and DIAGNOSIS when they don't.
 
-- [x] Minimum: NX + SSE2 required -- boot halts with clear message if missing
+- [x] Minimum: NX + SSE2 + LM + SYSCALL required (= `CPU_FEATURES_REQUIRED_MASK`, same baseline AP validation bug-checks against) -- boot halts with clear per-feature message if missing
 - [x] Recommended: SMEP, SMAP, RDRAND -- warns if missing, continues
-- [x] `cpu_verify_hardening()`: reads EFER/CR4, logs discrepancies (implemented in §9)
+- [x] `cpu_verify_hardening()`: reads EFER/CR4, logs discrepancies (implemented in §9); NX readback failure HALTS boot (NX is a boot minimum, the readback is the last chance to catch a trapped/ignored EFER.NXE write)
 - [x] Known quirks documented in CLAUDE.md bare metal gotchas section
 - [x] Commit: `"boot: CPU feature minimum requirements + post-activation verification"`
 
-**Test checkpoint:** Boot on CPU without SMAP. Log shows `[WARN] cpu: SMAP not available -- skipped`. Boot continues. On CPU with SMAP: verification confirms CR4.SMAP is set. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot on CPU without SMAP. Log shows `[WARN] cpu: RECOMMENDED: SMAP not available`. Boot continues. On every platform today: `Verify: SMAP skipped (kernel PTE User bit -- needs KPTI)` -- do NOT expect CR4.SMAP set until the KPTI clean kernel PML4 lands (see §9 checkpoint). On a CPU missing any required feature: `MINIMUM: <feature> ...` then halt `CPU does not meet minimum requirements (NX + SSE2 + LM + SYSCALL)`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+**Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) -- `test_cpu_security.c` required-mask trio (BSP flags contain REQUIRED_MASK, REQUIRED subset of AP_PROBE, global mask honors required); `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) -- NX EFER.NXE + SMEP/SMAP CR4 state. The halt paths (minimum gate, NX verify fail) are boot_halt-terminal -- no unit surface; validated by serial log.
+
+> **Notes:**
+> - BSP minimum gate (boot_hw.c) is generated from `CPU_FEATURES_REQUIRED_LIST` (cpuid.h X-macro), the same list that generates `CPU_FEATURES_REQUIRED_MASK` for AP validation -- gate table and mask cannot drift; halt names NX+SSE2+LM+SYSCALL.
+> - `cpu_verify_hardening()` now HALTS (LOG_ERROR + boot_halt) when CPUID reports NX but EFER.NXE reads back clear -- last chance to catch a trapped/ignored WRMSR; BSP-only (single caller boot_phase0).
+> - Recommended features (SMEP/SMAP/RDRAND) warn-and-continue unchanged; SMEP/SMAP remain skipped on every platform until KPTI (§9).
+> - This review corrected the stale test checkpoint (CR4.SMAP-set claim), qualified the cpu_security.h blanket BSP/AP-safe claim, and added the BM Test 4 EPT-claim retraction note.
+> - Scope boundary: NX/SMEP/SMAP/CET ENABLE implementation is owned by `02-kernel-core/TODO-10`; this section owns the boot minimum gate + post-activation verification/diagnosis.
+> **Verified:** 2026-06-10 | commit `TBD` | 4/4 items | build OK | security 79+16 + x86 152+16 PASS, smoke PASS (KVM 2.48s)
+> **Quality reviewed:** 2026-06-10 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+3M fixed | scope: kernel-code-quality
 
 ---
 
@@ -561,7 +572,7 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 | 💎   | CPU security verify     | ✅ HAL verifies CR4/EFER   | ✅ Checks feature enable   | ✅ §9 verify NX/SMEP/SMAP      |
 | 💎   | Boot order / UEFI-safe  | ✅ Ordered HAL + RT serialize | ✅ setup_arch + efi_call wrap | ✅ §10 timer-last + rt_call mask |
 | 💎   | Logging on main FS      | ✅ C:\Windows\System32     | ✅ /var/log                | ✅ §12 KLOG_DIR X:\ (T24)      |
-| 💎   | CPU feature minimums    | ✅ NX required since Vista | ✅ Minimum checks at boot  | ✅ §13 NX+SSE2 required        |
+| 💎   | CPU feature minimums    | ✅ NX required since Vista | ✅ verify_cpu required mask | ✅ §13 NX+SSE2+LM+SYSCALL mask |
 | ⭐   | Bare-metal test matrix  | ❌ Internal only (WHQL)    | ❌ Community-driven        | ✅ §14 4-platform matrix       |
 
 > **After §1--§14:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
@@ -616,6 +627,7 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 ### BM Test 4 -- Memory Model (§8 + §9) ✅ PASSED 2026-03-29
 > [!NOTE]
 > Per-process page tables working on all 3 VM platforms. cmd.exe runs in its own PML4 with User bit on ELF + stack pages. CR3 switches on context switch. SMEP/SMAP still skipped (boot PML4 has User on all 2MiB pages -- needs kernel PML4 fix).
+> **Retraction (2026-06-08, §9 review):** the "SMEP/SMAP: EPT-enforced on WHPX" rows below recorded a verify log line that was later removed as a FALSE security signal (EPT does not provide SMEP semantics). Historical record kept as-run; current behavior is `Verify: SMEP/SMAP skipped (kernel PTE User bit -- needs KPTI)` on every platform.
 
 - [x] cmd.exe runs with own PML4, types input, shows output on all 3 VMs
 - [x] NX verified: `Verify: NX enabled (EFER.NXE set)` on all platforms

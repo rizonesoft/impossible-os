@@ -513,22 +513,36 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
 
     /* --- CPU feature minimum requirements --- */
     {
+        /* The BSP gate enforces the SAME baseline that AP feature validation
+         * (cpu_validate_ap_features, CPU_FEATURES_REQUIRED_MASK) bug-checks
+         * APs against. Without this, a BSP missing a required bit (e.g.
+         * SYSCALL) boots past the clear minimum-requirements halt while an
+         * AP with the same gap would bug-check -- a divergent contract. */
+        /* Rows generated from CPU_FEATURES_REQUIRED_LIST (cpuid.h): the
+         * same X-macro that generates CPU_FEATURES_REQUIRED_MASK, so the
+         * gate table and the mask cannot drift apart. */
+#define CPU_FEATURE_REQ_ROW_(f, diag) { (f), (diag) },
+        static const struct {
+            enum cpu_feature feat;
+            const char      *msg;
+        } req[] = {
+            CPU_FEATURES_REQUIRED_LIST(CPU_FEATURE_REQ_ROW_)
+        };
+#undef CPU_FEATURE_REQ_ROW_
         int missing = 0;
         /* LOG_ERROR, not LOG_FATAL: klog(LOG_FATAL) halts in its own
          * for(;;) loop and never returns, which would defeat the
-         * accumulate-both-features pattern AND make the boot_halt below
+         * accumulate-all-features pattern AND make the boot_halt below
          * unreachable (no styled halt screen / POST16_BOOT_FAILED). Let
          * boot_halt render the single fatal boot failure. */
-        if (!cpu_has(CPU_FEATURE_NX)) {
-            klog(LOG_ERROR, "cpu", "MINIMUM: NX (No-Execute) not available -- cannot boot safely");
-            missing = 1;
-        }
-        if (!cpu_has(CPU_FEATURE_SSE2)) {
-            klog(LOG_ERROR, "cpu", "MINIMUM: SSE2 not available -- required for kernel math");
-            missing = 1;
+        for (size_t i = 0; i < sizeof(req) / sizeof(req[0]); i++) {
+            if (!cpu_has(req[i].feat)) {
+                klog(LOG_ERROR, "cpu", "MINIMUM: %s", req[i].msg);
+                missing = 1;
+            }
         }
         if (missing)
-            boot_halt("CPU does not meet minimum requirements (NX + SSE2)");
+            boot_halt("CPU does not meet minimum requirements (NX + SSE2 + LM + SYSCALL)");
 
         /* Recommended features: warn if missing, continue */
         if (!cpu_has(CPU_FEATURE_SMEP))
