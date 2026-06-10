@@ -548,7 +548,7 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > - BM Test 5 extended with the exact serial artifact strings and a bare-metal per-process PT closure item.
 > - Scope boundary: budget/trend machinery cost findings filed in `01-boot-platform/TODO-29 §1/§3` (both reopened `[/]`).
 > - re-adversarial skipped: docs-only fixes, no C/H lines changed.
-> **Verified:** 2026-06-10 | commit `TBD` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
+> **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
 > **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 95)
 > **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 669)
