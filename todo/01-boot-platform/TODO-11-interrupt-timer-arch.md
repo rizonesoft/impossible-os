@@ -146,6 +146,18 @@ Only mask the 8259 PIC when MADT says PCAT_COMPAT -- virtual platforms may have 
 
 **Test checkpoint:** PCAT_COMPAT=1 shows PIC disabled log; PCAT_COMPAT=0 skips PIC I/O. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | full suite 3500 PASS; dedicated irq_timer suite owned by Unit Tests section
+
+> **Notes:**
+> - Review hardened the degraded paths: APIC-only platform with failed IOAPIC now `boot_halt`s instead of booting with zero interrupt controllers.
+> - `timer_hal_init()` validates the LAPIC backend; calibration failure or missing LAPIC degrades to PIT only when `pit_present()` and a controller can route it, else halts loud.
+> - `lapic_timer_calibrated()` distinguishes measured frequency from the hardcoded all-tiers-failed estimate, which can no longer drive the system tick.
+> - Scope: the happy paths (PCAT gated `pic_disable()`, APIC-only log, `pic_init()` fallback) were already correct; this review closed the failure paths the S2 fail-closed work made reachable.
+
+> **Verified:** 2026-06-11 | commit `dc7e7bf0` | 5/5 items | build OK | smoke PASS (KVM 2.4s)
+> **Deferred:** [M] no dedicated PIC/timer-fallback unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
+> **Quality reviewed:** 2026-06-11 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 4H+1M fixed, 1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 4. Full IDT Coverage
