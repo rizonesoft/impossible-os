@@ -68,16 +68,24 @@ static uint8_t  pcat_compat = 1;    /* MADT bit 0: 1=legacy PIC present, 0=APIC-
 
 /* ---- SMP discovery state ---- */
 
-static struct cpu_info        cpus[MAX_CPUS];
-static uint32_t               cpu_count = 0;
+static struct cpu_info        cpus[MAX_CPUS] = {
+    { 0, 0, 1, 1 }  /* BSP placeholder until MADT parse */
+};
+static uint32_t               cpu_count = 1;  /* BSP-only until MADT parse */
 static uint32_t               lapic_base_addr = 0xFEE00000; /* default */
 static uint32_t               ioapic_base_addr = 0;
 static struct madt_int_override int_overrides[24]; /* ISA only has 16, extra room */
 static uint32_t               override_count = 0;
 static uint32_t               ioapic_gsi_base = 0;
 
-/* Consolidated MADT info struct (populated by parse_madt) */
-static struct acpi_madt_info  s_madt_info;
+/* Consolidated MADT info struct (populated by parse_madt). Static defaults
+ * mirror the legacy accessors so the consolidated getter agrees with them
+ * even when acpi_init() fails before the MADT is reached. */
+static struct acpi_madt_info  s_madt_info = {
+    .lapic_base = 0xFEE00000,
+    .flags      = 0x1,          /* PCAT assumed present */
+    .cpu_count  = 1,
+};
 
 /* ---- Helpers ---- */
 
@@ -240,6 +248,48 @@ static uint8_t read_bsp_lapic_id(void)
     return (uint8_t)((*lapic_id_reg >> 24) & 0xFF);
 }
 
+/* Typed MADT record sizes (ACPI 6.x Table 5-21 ff.) for length validation.
+ * Firmware-controlled entry->length must cover the full typed payload
+ * before the cast -- a short record would read past the declared table. */
+#define MADT_X2APIC_ENTRY_LEN        16  /* type 9: hdr + rsvd + id + flags + uid */
+#define MADT_LAPIC_OVERRIDE_LEN      12  /* type 5: hdr + rsvd(2) + addr64 */
+
+/* Reset every MADT-derived global to the BSP-only legacy defaults. Runs
+ * before EVERY parse outcome (valid table, short table, no MADT) so a
+ * reparse can never blend state from two tables. */
+static void madt_reset_state(void)
+{
+    cpu_count = 0;
+    override_count = 0;
+    lapic_base_addr = 0xFEE00000;
+    ioapic_base_addr = 0;
+    ioapic_gsi_base = 0;
+    pcat_compat = 1;
+}
+
+/* Publish the consolidated MADT view consumed by acpi_madt_info().
+ * Runs on every parse outcome (full table, short table, no MADT) so the
+ * consolidated getter never disagrees with the legacy accessors. */
+static void madt_publish_info(uint32_t flags)
+{
+    uint32_t j;
+
+    s_madt_info.lapic_base       = lapic_base_addr;
+    s_madt_info.ioapic_base      = ioapic_base_addr;
+    s_madt_info.ioapic_gsi_base  = ioapic_gsi_base;
+    s_madt_info.flags            = flags;
+    s_madt_info.override_count   = override_count;
+    s_madt_info.cpu_count        = cpu_count;
+    for (j = 0; j < override_count &&
+                j < sizeof(s_madt_info.overrides) / sizeof(s_madt_info.overrides[0]); j++) {
+        s_madt_info.overrides[j].bus_irq = int_overrides[j].source;
+        s_madt_info.overrides[j].gsi     = int_overrides[j].gsi;
+        s_madt_info.overrides[j].flags   = int_overrides[j].flags;
+    }
+    for (j = 0; j < cpu_count && j < sizeof(s_madt_info.cpu_lapic_ids); j++)
+        s_madt_info.cpu_lapic_ids[j] = cpus[j].apic_id;
+}
+
 /* Parse the MADT to discover CPUs, I/O APIC, and interrupt overrides */
 static void parse_madt(const struct acpi_madt *madt)
 {
@@ -247,6 +297,24 @@ static void parse_madt(const struct acpi_madt *madt)
     uint32_t length = madt->header.length;
     uint32_t offset;
     uint8_t bsp_lapic_id;
+    uint32_t x2apic_skipped = 0, x2apic_skip_max = 0;
+
+    madt_reset_state();
+
+    /* The fixed MADT body (SDT header + lapic_addr + flags) must be present
+     * before any field past the SDT header is trusted. */
+    if (length < sizeof(struct acpi_madt)) {
+        klog(LOG_ERROR, "acpi",
+             "MADT body too short (%u bytes, need %u) -- table ignored, single-core fallback",
+             (uint64_t)length, (uint64_t)sizeof(struct acpi_madt));
+        cpu_count = 1;
+        cpus[0].apic_id = 0;
+        cpus[0].acpi_id = 0;
+        cpus[0].is_bsp  = 1;
+        cpus[0].enabled = 1;
+        madt_publish_info(0x1);  /* PCAT assumed present, matches default */
+        return;
+    }
 
     /* Read LAPIC base from MADT header */
     lapic_base_addr = madt->lapic_addr;
@@ -258,23 +326,67 @@ static void parse_madt(const struct acpi_madt *madt)
          (uint64_t)pcat_compat,
          pcat_compat ? "" : " -- PIC absent, APIC-only mode");
 
-    /* Get BSP LAPIC ID so we can mark it */
-    bsp_lapic_id = read_bsp_lapic_id();
-
-    /* Walk variable-length MADT entries starting after the fixed header */
+    /* Pass 1: apply the 64-bit LAPIC address override (type 5) BEFORE the
+     * first LAPIC MMIO access -- the BSP ID read below must use the real
+     * base when firmware relocated it. */
     offset = sizeof(struct acpi_madt);
-
-    while (offset + 2 <= length) {
+    while (offset + sizeof(struct madt_entry_header) <= length) {
         const struct madt_entry_header *entry =
             (const struct madt_entry_header *)(data + offset);
 
-        if (entry->length < 2 || offset + entry->length > length)
+        if (entry->length < sizeof(struct madt_entry_header) ||
+            offset + entry->length > length)
+            break;
+
+        if (entry->type == MADT_TYPE_LAPIC_OVERRIDE) {
+            if (entry->length < MADT_LAPIC_OVERRIDE_LEN) {
+                klog(LOG_WARN, "acpi",
+                     "MADT[%u]: short LAPIC address override (len=%u) -- skipped",
+                     (uint64_t)offset, (uint64_t)entry->length);
+            } else {
+                uint64_t addr64 =
+                    *(const uint64_t *)(const void *)(data + offset + 4);
+                if (addr64 > 0xFFFFFFFFull) {
+                    /* LAPIC bases above 4 GiB never occur on shipping
+                     * hardware; reject loudly instead of truncating. */
+                    klog(LOG_ERROR, "acpi",
+                         "LAPIC address override above 4 GiB unsupported -- keeping 0x%x",
+                         (uint64_t)lapic_base_addr);
+                } else if (addr64 != 0) {
+                    lapic_base_addr = (uint32_t)addr64;
+                }
+            }
+        }
+        offset += entry->length;
+    }
+
+    /* Get BSP LAPIC ID so we can mark it (base is final after pass 1) */
+    bsp_lapic_id = read_bsp_lapic_id();
+
+    /* Pass 2: walk variable-length MADT entries starting after the fixed
+     * header. Every typed record validates entry->length against the full
+     * typed payload before the cast -- firmware data is untrusted input. */
+    offset = sizeof(struct acpi_madt);
+
+    while (offset + sizeof(struct madt_entry_header) <= length) {
+        const struct madt_entry_header *entry =
+            (const struct madt_entry_header *)(data + offset);
+
+        if (entry->length < sizeof(struct madt_entry_header) ||
+            offset + entry->length > length)
             break;
 
         switch (entry->type) {
         case MADT_TYPE_LAPIC: {
             const struct madt_lapic *lapic =
                 (const struct madt_lapic *)entry;
+
+            if (entry->length < sizeof(struct madt_lapic)) {
+                klog(LOG_WARN, "acpi",
+                     "MADT[%u]: short LAPIC record (len=%u) -- skipped",
+                     (uint64_t)offset, (uint64_t)entry->length);
+                break;
+            }
 
             klog(LOG_DEBUG, "acpi",
                  "  MADT[%u]: LAPIC acpi_id=%u apic_id=%u flags=0x%x",
@@ -294,20 +406,38 @@ static void parse_madt(const struct acpi_madt *madt)
             break;
         }
 
-        case 9: /* MADT_TYPE_X2APIC */ {
-            /* x2APIC entry: 16 bytes total
-             * offset 4: acpi_uid (uint32_t)
-             * offset 8: flags (uint32_t)
-             * offset 12: x2apic_id (uint32_t) */
+        case MADT_TYPE_X2APIC: {
+            /* Processor Local x2APIC (ACPI 6.x): rsvd(2) at offset 2,
+             * X2APIC ID (4) at offset 4, Flags (4) at offset 8,
+             * ACPI Processor UID (4) at offset 12. 16 bytes total. */
             const uint8_t *e = data + offset;
-            uint32_t x2_uid   = *(const uint32_t *)(e + 4);
-            uint32_t x2_flags = *(const uint32_t *)(e + 8);
-            uint32_t x2_id    = *(const uint32_t *)(e + 12);
+            uint32_t x2_uid, x2_flags, x2_id;
+
+            if (entry->length < MADT_X2APIC_ENTRY_LEN) {
+                klog(LOG_WARN, "acpi",
+                     "MADT[%u]: short x2APIC record (len=%u) -- skipped",
+                     (uint64_t)offset, (uint64_t)entry->length);
+                break;
+            }
+            x2_id    = *(const uint32_t *)(e + 4);
+            x2_flags = *(const uint32_t *)(e + 8);
+            x2_uid   = *(const uint32_t *)(e + 12);
 
             klog(LOG_DEBUG, "acpi",
                  "  MADT[%u]: x2APIC uid=%u id=%u flags=0x%x",
                  (uint64_t)offset, (uint64_t)x2_uid,
                  (uint64_t)x2_id, (uint64_t)x2_flags);
+
+            if (x2_id > 0xFF) {
+                /* IDs above 255 cannot be addressed in xAPIC mode; the
+                 * MSR-based x2APIC send path (APIC interrupt routing TODO)
+                 * is required before these CPUs can be started. One summary
+                 * WARN after the walk -- large servers can have hundreds. */
+                x2apic_skipped++;
+                if (x2_id > x2apic_skip_max)
+                    x2apic_skip_max = x2_id;
+                break;
+            }
 
             if ((x2_flags & 0x01) || (x2_flags & 0x02)) {
                 if (cpu_count < MAX_CPUS) {
@@ -325,6 +455,13 @@ static void parse_madt(const struct acpi_madt *madt)
             const struct madt_ioapic *ioapic =
                 (const struct madt_ioapic *)entry;
 
+            if (entry->length < sizeof(struct madt_ioapic)) {
+                klog(LOG_WARN, "acpi",
+                     "MADT[%u]: short IOAPIC record (len=%u) -- skipped",
+                     (uint64_t)offset, (uint64_t)entry->length);
+                break;
+            }
+
             /* Use the first I/O APIC found */
             if (ioapic_base_addr == 0) {
                 ioapic_base_addr = ioapic->ioapic_addr;
@@ -337,6 +474,13 @@ static void parse_madt(const struct acpi_madt *madt)
             const struct madt_int_override *ovr =
                 (const struct madt_int_override *)entry;
 
+            if (entry->length < sizeof(struct madt_int_override)) {
+                klog(LOG_WARN, "acpi",
+                     "MADT[%u]: short interrupt override (len=%u) -- skipped",
+                     (uint64_t)offset, (uint64_t)entry->length);
+                break;
+            }
+
             if (override_count < 24) {
                 int_overrides[override_count] = *ovr;
                 override_count++;
@@ -348,13 +492,9 @@ static void parse_madt(const struct acpi_madt *madt)
             break;
         }
 
-        case MADT_TYPE_LAPIC_OVERRIDE: {
-            /* 64-bit LAPIC address override -- update base */
-            const uint64_t *addr64 =
-                (const uint64_t *)(data + offset + 4);
-            lapic_base_addr = (uint32_t)(*addr64);
+        case MADT_TYPE_LAPIC_OVERRIDE:
+            /* Applied in pass 1 (before the BSP LAPIC ID read) */
             break;
-        }
 
         default:
             klog(LOG_DEBUG, "acpi",
@@ -367,23 +507,48 @@ static void parse_madt(const struct acpi_madt *madt)
         offset += entry->length;
     }
 
-    /* Populate consolidated MADT info struct */
-    s_madt_info.lapic_base       = lapic_base_addr;
-    s_madt_info.ioapic_base      = ioapic_base_addr;
-    s_madt_info.ioapic_gsi_base  = ioapic_gsi_base;
-    s_madt_info.flags            = madt->flags;
-    s_madt_info.override_count   = override_count;
-    s_madt_info.cpu_count        = cpu_count;
+    if (x2apic_skipped) {
+        klog(LOG_WARN, "acpi",
+             "%u x2APIC CPUs skipped (ids up to %u exceed xAPIC 8-bit addressing)",
+             (uint64_t)x2apic_skipped, (uint64_t)x2apic_skip_max);
+    }
+
+    /* The running BSP must be represented in the CPU set. If it is missing
+     * (no records, or the BSP's own x2APIC id was skipped above), fail
+     * closed to BSP-only mode: no AP is ever started, so 8-bit physical
+     * routing to the BSP's xAPIC id stays unambiguous. */
     {
         uint32_t j;
-        for (j = 0; j < override_count && j < 24; j++) {
-            s_madt_info.overrides[j].bus_irq = int_overrides[j].source;
-            s_madt_info.overrides[j].gsi     = int_overrides[j].gsi;
-            s_madt_info.overrides[j].flags   = int_overrides[j].flags;
+        int bsp_found = 0;
+        for (j = 0; j < cpu_count; j++) {
+            if (cpus[j].is_bsp) {
+                bsp_found = 1;
+                break;
+            }
         }
-        for (j = 0; j < cpu_count && j < 64; j++)
-            s_madt_info.cpu_lapic_ids[j] = cpus[j].apic_id;
+        if (!bsp_found) {
+            if (x2apic_skipped) {
+                klog(LOG_ERROR, "acpi",
+                     "BSP not in usable MADT CPU set (x2APIC ids skipped) -- "
+                     "x2APIC mode required; forcing BSP-only, no AP bringup");
+            } else if (cpu_count > 0) {
+                klog(LOG_ERROR, "acpi",
+                     "BSP apic_id=%u missing from MADT CPU set -- forcing BSP-only",
+                     (uint64_t)bsp_lapic_id);
+            } else {
+                klog(LOG_WARN, "acpi",
+                     "MADT listed no usable CPUs -- BSP-only fallback");
+            }
+            cpus[0].apic_id = bsp_lapic_id;
+            cpus[0].acpi_id = 0;
+            cpus[0].is_bsp  = 1;
+            cpus[0].enabled = 1;
+            cpu_count = 1;
+        }
     }
+
+    /* Populate consolidated MADT info struct */
+    madt_publish_info(madt->flags);
 
     klog(LOG_INFO, "acpi",
          "MADT: %u CPUs, LAPIC=0x%x, IOAPIC=0x%x GSI=%u, %u overrides, PCAT_COMPAT=%u",
@@ -475,18 +640,16 @@ int acpi_init(void)
 
     if (madt_hdr) {
         parse_madt((const struct acpi_madt *)madt_hdr);
-
-        klog(LOG_INFO, "acpi",
-             "MADT: %u CPUs, LAPIC=0x%x, IOAPIC=0x%x, %u overrides",
-             (uint64_t)cpu_count, (uint64_t)lapic_base_addr,
-             (uint64_t)ioapic_base_addr, (uint64_t)override_count);
+        /* parse_madt() logs the full "MADT: ..." summary line */
     } else {
         /* No MADT -- single CPU, no APIC routing */
+        madt_reset_state();
         cpu_count = 1;
         cpus[0].apic_id = 0;
         cpus[0].acpi_id = 0;
         cpus[0].is_bsp  = 1;
         cpus[0].enabled  = 1;
+        madt_publish_info(0x1);  /* PCAT assumed present, matches default */
 
         klog(LOG_WARN, "acpi", "No MADT found -- single-core mode");
     }

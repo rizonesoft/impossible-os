@@ -129,6 +129,7 @@ struct acpi_madt {
 #define MADT_TYPE_NMI_SOURCE     3   /* NMI Source */
 #define MADT_TYPE_LAPIC_NMI      4   /* Local APIC NMI */
 #define MADT_TYPE_LAPIC_OVERRIDE 5   /* Local APIC Address Override */
+#define MADT_TYPE_X2APIC         9   /* Processor Local x2APIC */
 
 /* Common MADT entry header */
 struct madt_entry_header {
