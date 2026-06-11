@@ -18,12 +18,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
 
-/* Optional periodic callback (for boot splash animation etc.) */
-static void (*pit_callback_fn)(void) = (void *)0;
-static uint32_t pit_callback_divisor = 0;  /* call every N ticks */
-static uint32_t pit_callback_counter = 0;
-
-/* Spinlock protecting tick_count and callback state.
+/* Spinlock protecting tick_count.
  * Used with irqsave/irqrestore so it is safe even if called from
  * inside another IRQ handler where IRQs are already off. */
 static spinlock_t pit_lock = SPINLOCK_INIT;
@@ -53,39 +48,20 @@ static volatile uint64_t tick_count = 0;
 static uint32_t pit_divisor;
 static uint32_t pit_actual_freq;
 
-/* Increment tick counter and fire callbacks. Called from either
- * pit_irq_handler (PIT-as-tick-source) or LAPIC timer handler. */
-int pit_tick_increment(void)
+/* Increment the tick counter and fire the UTS tick callback. The callback
+ * fires AFTER releasing pit_lock -- it may render frames and copy to VRAM;
+ * holding the timekeeping lock across that stalls pit_get_ticks() on other
+ * CPUs. The NT timer scan moved to pit_irq_handler so the PIT tick path
+ * runs the same post-tick sequence as lapic_timer_handler(). */
+void pit_tick_increment(void)
 {
-    int callback_fired = 0;
     uint64_t flags;
 
     spin_lock_irqsave(&pit_lock, &flags);
     tick_count++;
-
-    /* Fire HAL tick callback (platform-agnostic: spinner, heartbeat, etc.) */
-    timer_tick_callback_fire();
-
-    /* Fire PIT-specific callback (legacy mechanism) */
-    if (pit_callback_fn) {
-        pit_callback_counter++;
-        if (pit_callback_counter >= pit_callback_divisor) {
-            pit_callback_counter = 0;
-            pit_callback_fn();
-            callback_fired = 1;
-        }
-    }
     spin_unlock_irqrestore(&pit_lock, flags);
 
-    /* NT timer queue scan AFTER releasing pit_lock -- nt_timer_tick()
-     * takes its own irqsave spinlock and must not be nested under
-     * pit_lock to keep lock-order simple. */
-    {
-        extern void nt_timer_tick(void);
-        nt_timer_tick();
-    }
-
-    return callback_fired;
+    timer_tick_callback_fire();
 }
 
 /* Set the actual timer frequency (when LAPIC timer replaces PIT). */
@@ -112,9 +88,14 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
     extern uint64_t schedule(struct interrupt_frame *frame);
     extern uint32_t dpc_drain_current_cpu(void);
     extern void kusd_update_time(void);
+    extern void nt_timer_tick(void);
+    /* Same post-tick order as lapic_timer_handler(): tick + callback,
+     * EOI, KUSD time for user readers, NT timer scan (sees fresh KUSD),
+     * DPC drain, then schedule. Keep the two paths in lockstep. */
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
     kusd_update_time();
+    nt_timer_tick();
     dpc_drain_current_cpu();
     return schedule(frame);
 }
@@ -208,22 +189,3 @@ timer_driver_t pit_driver = {
     .read_ns   = mono_ns,
 };
 
-void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks)
-{
-    uint64_t flags;
-    spin_lock_irqsave(&pit_lock, &flags);
-    pit_callback_counter = 0;
-    pit_callback_divisor = every_n_ticks;
-    pit_callback_fn = fn;
-    spin_unlock_irqrestore(&pit_lock, flags);
-}
-
-void pit_unregister_callback(void)
-{
-    uint64_t flags;
-    spin_lock_irqsave(&pit_lock, &flags);
-    pit_callback_fn = (void *)0;
-    pit_callback_divisor = 0;
-    pit_callback_counter = 0;
-    spin_unlock_irqrestore(&pit_lock, flags);
-}

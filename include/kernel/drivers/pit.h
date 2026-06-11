@@ -28,10 +28,10 @@ void pit_init(void);
  * Touching ports 0x40-0x43 when this returns 0 reads garbage. */
 int pit_present(void);
 
-/* Increment the tick counter from an external timer source (e.g., LAPIC timer).
- * Also fires the registered callback if one is active.
- * Returns non-zero if a callback was fired (for caller info). */
-int pit_tick_increment(void);
+/* Increment the tick counter and fire the UTS tick callback (outside
+ * pit_lock). Called from pit_irq_handler, which then runs the same
+ * post-tick sequence as the LAPIC timer handler. */
+void pit_tick_increment(void);
 
 /* Set the actual timer frequency (used when LAPIC timer replaces PIT). */
 void pit_set_freq(uint32_t hz);
@@ -45,14 +45,6 @@ uint64_t pit_get_ticks(void);
 
 /* Get current PIT tick frequency in Hz */
 uint32_t pit_get_freq(void);
-
-/* Register a periodic callback that fires from the PIT IRQ handler.
- * fn is called every 'every_n_ticks' PIT ticks (e.g., 7 = ~15 fps at 100 Hz).
- * Only one callback can be active at a time. Use for boot splash animation. */
-void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks);
-
-/* Unregister the PIT callback. */
-void pit_unregister_callback(void);
 
 /* PIT driver vtable for timer HAL selection */
 extern timer_driver_t pit_driver;

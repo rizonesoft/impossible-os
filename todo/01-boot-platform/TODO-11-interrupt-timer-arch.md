@@ -302,15 +302,28 @@ Remove the boot splash spinner's direct dependency on PIT IRQ 0 so it works on L
 
 **Files:** `src/kernel/boot_splash.c`, `src/kernel/boot_timing.c`
 
-- [x] Spinner already uses `timer_register_tick_callback(spinner_advance, 10)` in `spinner_start()` -- driven by UTS, not PIT directly
+- [x] Spinner uses `timer_register_tick_callback(spinner_advance, 10)` in `spinner_start()` -- driven by UTS, not PIT directly
 - [x] UTS routes to LAPIC timer on Hyper-V/KVM/hardware, PIT fallback on TCG only
 - [x] `spinner_advance()` called every 10 ticks (100ms at 100 Hz = 10 fps) via `timer_tick_callback_fire()` in both PIT and LAPIC ISRs
-- [x] No direct PIT hook to remove -- architecture is already LAPIC-safe
+- [x] Legacy unused `pit_register_callback`/`pit_unregister_callback` direct-PIT hook DELETED during review (zero callers; UTS singleton slot supersedes it); `pit_tick_increment()` no longer fires the callback under `pit_lock`
+- [x] `pit_irq_handler` post-tick sequence mirrors `lapic_timer_handler` (tick+callback, EOI, KUSD, NT timer scan, DPC drain, schedule)
+- [x] Tick-callback writers serialized by `s_tick_cb_lock` (irqsave) with retract-first publication; BSP-only writer gate refuses AP callers (tick ISR is BSP-only)
 - [x] Verified working on Hyper-V (LAPIC) and QEMU TCG (PIT)
-- [x] Already implemented -- marking complete
 - [x] Commit: "(shipped) boot splash spinner driven by UTS tick callback"
 
-**Test checkpoint:** Spinner advances on LAPIC path (WHPX) and PIT fallback (TCG); no direct PIT-only hook required. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Spinner advances on LAPIC path (WHPX) and PIT fallback (TCG); no direct PIT-only hook remains. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | tick-callback suites in `test_timer_tick_cb.c`, 0 failures
+
+> **Notes:**
+> - Spinner animation is fully UTS-driven: `spinner.c` registers the singleton tick callback; both PIT and LAPIC ISRs fire it.
+> - Review pass deleted the consumerless legacy PIT callback API and hoisted the callback fire out of `pit_lock` (lock-hold-time rule).
+> - PIT and LAPIC tick paths now run an identical post-tick sequence so NT timers wake against fresh KUSD time on both backends.
+> - Tick-callback register/unregister is BSP-only (gated, klog WARN on AP) with retract-first publication under `s_tick_cb_lock`.
+> - Scope boundary: AP/per-CPU tick delivery arrives with AP timer bring-up in `03-memory-concurrency/TODO-07-smp-phase2.md` §3.
+
+> **Verified:** 2026-06-12 | commit `d76bd3e1` | 7/7 items | build OK | smoke PASS (KVM 2.620s)
+> **Quality reviewed:** 2026-06-12 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M fixed, 0 open | scope: kernel-code-quality
 
 ---
 

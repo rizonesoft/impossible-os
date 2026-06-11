@@ -16,6 +16,8 @@
 #include "kernel/boot_info.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/smp.h"
+#include "kernel/klog.h"
 
 /* THE single source of truth -- set once by timer_hal_init() */
 timer_driver_t *g_system_timer = (timer_driver_t *)0;
@@ -108,21 +110,52 @@ static uint32_t tick_cb_divisor = 0;
 static uint32_t tick_cb_counter = 0;
 
 /* Register/unregister run with interrupts enabled while the timer ISR reads
- * the same slot. Publish fn LAST with release ordering so the ISR never
- * observes a non-NULL fn paired with an unwritten divisor; retract fn FIRST
- * so the ISR bails out before divisor/counter are cleared. */
+ * the same slot. Writers RETRACT fn first, then update divisor/counter, then
+ * publish fn LAST with release ordering -- the ISR snapshot (acquire) either
+ * sees NULL (skips) or the new fn with its matching divisor already visible,
+ * so a live replacement can never pair a stale fn with the new cadence.
+ * s_tick_cb_lock serializes concurrent writers AND (because it is irqsave)
+ * excludes the tick ISR on the writer's own CPU. The tick ISR fires only on
+ * the BSP (LAPIC timer is BSP-only, PIT IRQ 0 routes to the BSP), so writers
+ * MUST run on the BSP too -- an AP writer's irqsave would not stop the BSP
+ * ISR mid-update and the ISR could pair a stale fn with a new divisor. The
+ * gate below refuses AP callers (same pattern as lapic_timer_set_hz); the
+ * slot stays unchanged so the current owner keeps its cadence. */
+static spinlock_t s_tick_cb_lock = SPINLOCK_INIT;
+
+static int tick_cb_writer_on_ap(void)
+{
+    struct per_cpu_data *me = smp_this_cpu();
+    return me && me->cpu_id != 0;
+}
+
 void timer_register_tick_callback(void (*fn)(void), uint32_t every_n_ticks)
 {
+    uint64_t irqf;
+    if (tick_cb_writer_on_ap()) {
+        klog(LOG_WARN, "timer", "tick callback register refused on AP");
+        return;
+    }
+    spin_lock_irqsave(&s_tick_cb_lock, &irqf);
+    __atomic_store_n(&tick_cb_fn, (void (*)(void))0, __ATOMIC_RELEASE);
     tick_cb_counter = 0;
     tick_cb_divisor = every_n_ticks;
     __atomic_store_n(&tick_cb_fn, fn, __ATOMIC_RELEASE);
+    spin_unlock_irqrestore(&s_tick_cb_lock, irqf);
 }
 
 void timer_unregister_tick_callback(void)
 {
+    uint64_t irqf;
+    if (tick_cb_writer_on_ap()) {
+        klog(LOG_WARN, "timer", "tick callback unregister refused on AP");
+        return;
+    }
+    spin_lock_irqsave(&s_tick_cb_lock, &irqf);
     __atomic_store_n(&tick_cb_fn, (void (*)(void))0, __ATOMIC_RELEASE);
     tick_cb_divisor = 0;
     tick_cb_counter = 0;
+    spin_unlock_irqrestore(&s_tick_cb_lock, irqf);
 }
 
 void timer_tick_callback_fire(void)

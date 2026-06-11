@@ -69,12 +69,17 @@ uint64_t uptime_ns(void);
  * At 100 Hz timer, every_n_ticks=10 gives ~10 fps.
  * SINGLETON slot: a second registration silently replaces the first.
  * every_n_ticks == 0 is guarded -- the callback never fires.
- * Safe to call with interrupts enabled: fn is published with release
- * ordering after the divisor, and the ISR snapshots it with acquire. */
+ * BSP-ONLY writer: the tick ISR fires only on the BSP, and register/
+ * unregister exclude it by disabling interrupts on the writer CPU --
+ * which only works when the writer IS the BSP. AP callers are refused
+ * with a klog warning and the slot is left unchanged. Safe to call with
+ * interrupts enabled: fn is retracted, divisor/counter written, then fn
+ * published with release ordering; the ISR snapshots with acquire. */
 void timer_register_tick_callback(void (*fn)(void), uint32_t every_n_ticks);
 
-/* Unregister the tick callback. Retracts fn before clearing the divisor,
- * so a concurrent ISR fire either runs the old callback or none. */
+/* Unregister the tick callback. BSP-only (see register). Retracts fn
+ * before clearing the divisor, so a concurrent ISR fire either runs the
+ * old callback or none. */
 void timer_unregister_tick_callback(void);
 
 /* Called from PIT/LAPIC ISR to fire the registered callback at the
