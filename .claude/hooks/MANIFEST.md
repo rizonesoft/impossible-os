@@ -98,6 +98,7 @@
 | subagent_audit | `.claude/hooks/subagent_audit.py` | SubagentStop | STATE | N | -- | -- | Records `{ts, subagent_type, duration_ms, tool_uses_total}` to `.claude/state/subagent-log.jsonl`. Flags runaway subagents (> 30 tool calls or > 10 min) into the same skip-log. |
 | pre_compact_flush | `.claude/hooks/pre_compact_flush.py` | PreCompact | SIDE-EFFECT | N | -- | -- | TODO-08 §16: marks every active entry in `.claude/state/skill-progress.json` as `compaction_orphaned: true` (with `orphan_ts_ns` + `orphan_reason`) so post-compaction `skill_step_block` + `skill_step_observer` skip them, ending the catch-22 where a stale entry blocked every post-compaction commit. Idempotent. Then snapshots every `.claude/state/*.json` into `.claude/state/.compaction-snapshots/<ts>/` (retains 3 most recent). Also invalidates `.claude/state/transcript-scan-cache.json` (the design-review hook's offset cache; semantic window changes on compaction). |
 | tool_history_writer | `.claude/hooks/tool_history_writer.py` | PostToolUse `*` | STATE | N | -- | -- | Appends `{event, tool_name, tool_use_id, ts_ns, duration_ms, success, target}` to `.claude/state/tool-history.jsonl` per tool call. `target` is the primary input identifier (file_path / pattern / first 240 chars of command), added by TODO-08 partial-enforcement heuristics so downstream gates can answer "was a todo/**/*.md Read before the first src/ Edit?" without re-scanning the transcript. Live-rotates at 10 MiB to `.1`; SessionStart truncates if older than 7 days. |
+| overnight_guard | `.claude/hooks/overnight_guard.py` | SessionStart (`session-start`), UserPromptSubmit (`prompt`), Stop (`stop`) | BLOCK (Stop only) | N | -- | `overnight_guard.py pause/clear "<reason>"` | Overnight TODO-run guard for `/overnight-todo-runner` and the overnight-runner plugin. Tracks active run state in `.claude/state/overnight-run.json`; the Stop handler exits 2 (BLOCK) between section ships so the agent continues to the next `[ ]` section instead of final-answering; session-start/prompt handlers re-inject run context. Halt-on-error doctrine: `pause` with diagnosis on hard failure, never skip past. |
 
 ## Plugin Hooks (auto-loaded)
 
@@ -132,6 +133,26 @@ These hooks ship inside installed plugin caches under `~/.claude/plugins/cache/`
 ### `feature-dev@claude-plugins-official` (unknown version)
 
 No `hooks/hooks.json` shipped under this plugin's installPath. Plugin contributes skills + commands + agents only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
+
+### `chromemcp@rizonetech` 0.1.2
+
+No `hooks/hooks.json` shipped. Plugin contributes the ChromeMCP browser-automation skills + MCP server wiring only. (Note: ChromeMCP is forbidden in overnight runs -- Impossible OS uses its own smoke-test infrastructure.)
+
+### `overnight-runner@rizonetech` 0.1.3
+
+No `hooks/hooks.json` shipped. Plugin contributes the overnight-runner skills (start/schedule/status) + launch scripts; the repo-side guard hook it relies on is `.claude/hooks/overnight_guard.py` (see the SessionStart/UserPromptSubmit/Stop table above), wired via `.claude/settings.json`, not via plugin hooks.
+
+### `frontend-design@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes the frontend-design skill only.
+
+### `skill-creator@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes the skill-creator skill only.
+
+### `claude-md-management@claude-plugins-official` 1.0.0
+
+No `hooks/hooks.json` shipped. Plugin contributes the revise-claude-md / claude-md-improver skills only.
 
 > Plugin selection lives at `~/.claude/plugins/installed_plugins.json`. The retired `firecrawl@claude-plugins-official` plugin was uninstalled 2026-04-27. When installing or removing a plugin, add or remove the matching `### <name>@<marketplace>` subsection here in the same commit; `audit-hooks.sh` cross-checks the plugin index against the subsection headings.
 
