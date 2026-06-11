@@ -139,8 +139,8 @@ Only mask the 8259 PIC when MADT says PCAT_COMPAT -- virtual platforms may have 
 
 - [x] `boot_phase1()` checks `acpi_pcat_compat()` before PIC I/O -- already implemented
 - [x] PCAT_COMPAT + IOAPIC active → `pic_disable()` called; logs "Switched to LAPIC/IOAPIC (PIC disabled)"
-- [x] PCAT_COMPAT=0 → all PIC I/O skipped; logs "APIC-only, no PIC"
-- [x] `pic_init()` fallback when no IOAPIC available or no ACPI -- already implemented
+- [x] PCAT_COMPAT=0 + working IOAPIC → all PIC I/O skipped; logs "APIC-only, no PIC"; PCAT_COMPAT=0 + IOAPIC init FAILED → `boot_halt` (no controller can route external IRQs)
+- [x] `pic_init()` fallback when no IOAPIC took over AND (no ACPI or PCAT_COMPAT=1)
 - [x] Already implemented -- marking complete (no new code needed)
 - [x] Commit: "(shipped) conditional PIC disable per ACPI PCAT_COMPAT"
 

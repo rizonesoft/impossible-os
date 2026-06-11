@@ -9,6 +9,8 @@
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
+#include "kernel/acpi.h"
+#include "kernel/boot_info.h"
 #include "kernel/timer.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
@@ -114,6 +116,17 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
     kusd_update_time();
     dpc_drain_current_cpu();
     return schedule(frame);
+}
+
+int pit_present(void)
+{
+    extern struct boot_info g_boot_info;
+    /* No ACPI: legacy PC, PIT assumed present. With ACPI: PIT exists only
+     * when PCAT_COMPAT=1 and the FADT is not hardware-reduced -- the same
+     * rule the LAPIC calibration Tier 3 enforces before touching PIT ports. */
+    if (!g_boot_info.acpi_available)
+        return 1;
+    return acpi_pcat_compat() && !acpi_hw_reduced();
 }
 
 void pit_init(void)

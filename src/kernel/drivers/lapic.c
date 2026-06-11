@@ -789,8 +789,20 @@ static int cal_try_pit(void);
  *   Tier 3: PIT channel 2 (~10ms, legacy only)
  * Falls back to hardcoded estimate if ALL tiers fail.
  */
+/* 1 = a real calibration tier measured the frequency; 0 = uncalibrated or
+ * running on the hardcoded estimate. Consumed by timer_hal_init() so the
+ * estimate can never silently become the system tick source. */
+static int cal_succeeded = 0;
+
+int lapic_timer_calibrated(void)
+{
+    return cal_succeeded;
+}
+
 void lapic_timer_calibrate(void)
 {
+    cal_succeeded = 0;
+
     if (!lapic_base)
         return;
 
@@ -798,6 +810,7 @@ void lapic_timer_calibrate(void)
     if (cal_try_hyperv_msr() || cal_try_vmware_cpuid() || cal_try_cpuid_15h()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 1 succeeded -- no PIT/HPET needed");
+        cal_succeeded = 1;
         return;
     }
 
@@ -810,11 +823,13 @@ void lapic_timer_calibrate(void)
     if (cal_try_hpet()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 2 succeeded -- HPET (UC mapped)");
+        cal_succeeded = 1;
         return;
     }
     if (cal_try_pmtimer()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 2 succeeded -- no PIT needed");
+        cal_succeeded = 1;
         return;
     }
 
@@ -822,10 +837,13 @@ void lapic_timer_calibrate(void)
     if (cal_try_pit()) {
         klog(LOG_INFO, "lapic",
              "Calibration: Tier 3 succeeded -- PIT channel 2");
+        cal_succeeded = 1;
         return;
     }
 
-    /* All tiers failed -- use conservative hardcoded estimate */
+    /* All tiers failed -- keep a conservative hardcoded estimate for
+     * diagnostic sleep paths, but cal_succeeded stays 0 so the timer HAL
+     * never selects the LAPIC driver on a guessed frequency. */
     cal_ticks_per_ms = 100;
     klog(LOG_WARN, "lapic",
          "All calibration tiers failed -- using hardcoded %u ticks/ms",

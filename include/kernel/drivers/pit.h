@@ -23,6 +23,11 @@ typedef struct timer_driver timer_driver_t;
 /* Initialize PIT channel 0 at the target frequency */
 void pit_init(void);
 
+/* Returns 1 when the platform declares a legacy 8254 PIT: no ACPI at all
+ * (legacy PC assumed), or PCAT_COMPAT=1 and not hardware-reduced.
+ * Touching ports 0x40-0x43 when this returns 0 reads garbage. */
+int pit_present(void);
+
 /* Increment the tick counter from an external timer source (e.g., LAPIC timer).
  * Also fires the registered callback if one is active.
  * Returns non-zero if a callback was fired (for caller info). */

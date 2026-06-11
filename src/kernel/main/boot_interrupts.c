@@ -268,8 +268,12 @@ void boot_phase1(void)
         if (!g_boot_info.acpi_available || acpi_pcat_compat()) {
             pic_init();
         } else {
-            klog(LOG_INFO, "irq",
-                 "PIC: skipped (PCAT_COMPAT=0, APIC-only platform)");
+            /* APIC-only platform (PCAT_COMPAT=0) with no working IOAPIC:
+             * no controller can route external IRQs and the PIC is
+             * firmware-declared absent. Booting on would leave timer,
+             * input, and device interrupts silently dead. */
+            boot_halt("irq: APIC-only platform but LAPIC/IOAPIC init failed"
+                      " -- no usable interrupt controller");
         }
     }
     boot_progress(1, "PIC", 0x1036);

@@ -120,7 +120,9 @@ void timer_tick_callback_fire(void)
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/ioapic.h"
+#include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
+#include "kernel/boot_halt.h"
 
 void timer_hal_init(void)
 {
@@ -136,10 +138,29 @@ void timer_hal_init(void)
         klog(LOG_INFO, "timer",
              "UTS: %s selected (QEMU TCG -- PIT is wall-clock accurate)",
              g_system_timer->name);
-    } else {
+    } else if (lapic_available()) {
         /* Real HW, Hyper-V, VMware, VBox, KVM: LAPIC is the best timer.
          * The calibration waterfall finds the freq without assuming PIT. */
         lapic_timer_calibrate();   /* waterfall: MSR → CPUID → HPET → PM → PIT */
+
+        if (!lapic_timer_calibrated()) {
+            /* All calibration tiers failed: the hardcoded estimate must
+             * never drive the system tick. Degrade to a routable PIT or
+             * fail loud -- a guessed LAPIC frequency is a silent-skew boot. */
+            if (pit_present() && (ioapic_available() || pic_available())) {
+                klog(LOG_WARN, "timer",
+                     "UTS: LAPIC calibration failed -- falling back to PIT");
+                pit_init();
+                g_system_timer = &pit_driver;
+                klog(LOG_INFO, "timer",
+                     "UTS: %s selected (calibration-fallback)",
+                     g_system_timer->name);
+                return;
+            }
+            boot_halt("timer: LAPIC calibration failed and no usable PIT "
+                      "fallback -- no trustworthy tick source");
+        }
+
         lapic_timer_init(100);     /* 100 Hz periodic mode */
 
         g_system_timer = &lapic_driver;
@@ -156,5 +177,19 @@ void timer_hal_init(void)
              platform_name(),
              (uint64_t)lapic_timer_ticks_per_ms(),
              (uint64_t)(lapic_timer_ticks_per_ms() / 1000));
+    } else if (pit_present() && (ioapic_available() || pic_available())) {
+        /* LAPIC bring-up failed but the platform has a PIT and an external
+         * controller can route it: degrade to the PIT tick instead of
+         * booting timer-less. */
+        klog(LOG_WARN, "timer",
+             "UTS: LAPIC unavailable -- falling back to PIT");
+        pit_init();
+        g_system_timer = &pit_driver;
+        klog(LOG_INFO, "timer", "UTS: %s selected (LAPIC-fallback)",
+             g_system_timer->name);
+    } else {
+        /* No LAPIC timer and no usable PIT (absent or unroutable): a
+         * silent timer-less boot hangs later with no diagnostic. */
+        boot_halt("timer: no usable tick source (LAPIC failed, PIT absent or unroutable)");
     }
 }

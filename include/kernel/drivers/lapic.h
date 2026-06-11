@@ -141,6 +141,10 @@ void lapic_timer_set_hz(uint32_t new_hz);
 /* Returns the calibrated LAPIC timer ticks per millisecond (0 if uncalibrated). */
 uint32_t lapic_timer_ticks_per_ms(void);
 
+/* Returns 1 when a real calibration tier measured the LAPIC frequency,
+ * 0 when uncalibrated or running on the hardcoded estimate. */
+int lapic_timer_calibrated(void);
+
 /* Returns 1 if the LAPIC is available and initialized */
 int lapic_available(void);
 
