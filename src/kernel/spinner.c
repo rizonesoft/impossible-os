@@ -2,8 +2,9 @@
  * spinner.c -- Progressive arc-ring spinner (breathing animation engine)
  *
  * Windows 11-style Fluent 2 spinner: a dynamic arc that rotates while its
- * length oscillates.  Animation is driven by sleep_ms() polling loop
- * via the Unified Timer Subsystem (UTS).
+ * length oscillates.  Animation is driven by the LAPIC timer tick callback
+ * registered in spinner_start() (~10fps), with explicit boot_splash_tick()
+ * keep-alive calls from long interrupt-light boot phases.
  *
  * Two concurrent behaviors (per Fluent Design spec):
  *   1. Continuous base rotation at constant speed (100°/s)
@@ -23,7 +24,8 @@
 
 /* ---- Animation timing ---- */
 
-/* Animation runs at ~10fps via sleep_ms(100) polling loop */
+/* Animation runs at ~10fps: timer_register_tick_callback(spinner_advance, 10)
+ * fires every 10 ticks of the 100Hz timer backend (PIT on TCG, LAPIC else) */
 #define SPINNER_CYCLE_FRAMES 20  /* frames per cycle (2.0s @ 10fps) */
 #define SPINNER_HALF_CYCLE   10  /* expand phase = contract phase */
 
@@ -197,12 +199,22 @@ void spinner_start(void)
     timer_register_tick_callback(spinner_advance, 10);
 }
 
+/* Reentrancy guard: spinner_advance is called from the BSP timer tick ISR
+ * AND from thread-context boot_splash_tick()/boot_splash_delay() with
+ * interrupts enabled. A tick ISR landing mid-render would otherwise tear the
+ * frame (same-CPU reentrancy -- the LAPIC timer fires only on the BSP and
+ * all splash callers run on the BSP boot thread, so a plain flag suffices:
+ * the ISR runs to completion, sees the flag, and skips one frame). */
+static volatile int s_in_advance = 0;
+
 /* Advance one animation frame.  Called from timer tick ISR callback.
  * Renders the current frame and swaps the spinner bounding rect.
  * Runs in interrupt context -- no sleeping, no locks. */
 void spinner_advance(void)
 {
     if (!s_active) return;
+    if (s_in_advance) return;  /* tick ISR interrupted a thread-context advance */
+    s_in_advance = 1;
 
     s_frame++;
     spinner_render(255);
@@ -211,6 +223,8 @@ void spinner_advance(void)
     uint32_t bx, by, bw, bh;
     spinner_get_bounds(&bx, &by, &bw, &bh);
     fb_swap_rect(bx, by, bw, bh);
+
+    s_in_advance = 0;
 }
 
 void spinner_stop(void)

@@ -11,9 +11,10 @@
  * boot_splash_finish(). During this time, fb_putchar is locked so
  * printk output goes only to serial.
  *
- * Animation is driven by the PIT timer interrupt at ~20 fps via
- * the spinner component (spinner.c), which rotates and breathes
- * a dynamic arc ring continuously even during blocking I/O.
+ * Animation is driven by the unified timer tick callback (PIT backend on
+ * TCG, LAPIC elsewhere) at divisor 10 (~10fps at 100Hz), registered by
+ * spinner_start() in spinner.c, which rotates and breathes a dynamic arc
+ * ring continuously even during blocking I/O.
  * ============================================================================ */
 
 #include "kernel/boot_splash.h"

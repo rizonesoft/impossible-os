@@ -7,10 +7,10 @@
  *
  * Usage (boot splash integration):
  *   spinner_init(cx, cy, radius, stroke, color);
- *   spinner_start();          // marks spinner active (non-blocking)
- *   spinner_advance();        // render + swap one frame (call from tick)
+ *   spinner_start();          // registers the timer tick callback (10 ticks)
+ *   spinner_advance();        // optional manual keep-alive frame
  *   ...boot sequence...
- *   spinner_stop();           // marks spinner inactive
+ *   spinner_stop();           // unregisters the timer tick callback
  *
  * Part of the Progressive Spinner component (TODO-010.97).
  * ============================================================================ */
@@ -29,16 +29,19 @@ void spinner_init(int32_t cx, int32_t cy,
 
 /* ---- Animation control ---- */
 
-/* Mark spinner as active (non-blocking -- returns immediately).
- * Call spinner_advance() periodically to render frames. */
+/* Mark spinner active and register spinner_advance as the SINGLETON timer
+ * tick callback at 10 ticks (~10fps at 100Hz). Non-blocking. The spinner
+ * owns the tick-callback slot from here until spinner_stop() -- registering
+ * another callback overwrites the spinner's and kills ISR-driven animation. */
 void spinner_start(void);
 
 /* Advance one animation frame: render + swap bounding rect.
- * Call from boot_splash_tick() or any periodic callback.
- * No-op if spinner is not active. */
+ * Normally fired from the timer tick ISR; manual calls from thread context
+ * (boot_splash_tick) are a keep-alive for interrupt-light phases and are
+ * reentrancy-guarded against the ISR. No-op if spinner is not active. */
 void spinner_advance(void);
 
-/* Mark spinner as inactive.
+/* Mark spinner inactive and unregister the timer tick callback.
  * Leaves the last frame on screen -- caller should clear if needed. */
 void spinner_stop(void);
 

@@ -376,14 +376,12 @@ void boot_phase1(void)
     }
 
     __asm__ volatile ("sti");
+    /* spinner_start() (via boot_splash_start_animation) registers the
+     * singleton timer tick callback at 10 ticks (~10fps, Fluent 100 deg/s).
+     * The slot has exactly one owner -- do NOT register another callback
+     * here: a second registration silently overwrites the spinner's and
+     * historically ran the animation at 2x design speed. */
     boot_splash_start_animation();
-
-    /* Drive splash spinner from timer interrupt so it stays alive during
-     * long busy-waits (e.g., PS/2 mouse reset). */
-    {
-        extern void boot_splash_tick(void);
-        timer_register_tick_callback(boot_splash_tick, 5);
-    }
 
     /* --- Input devices (after timer+sti so splash spinner is alive) --- */
     boot_splash_status("Detecting PS/2 keyboard...");

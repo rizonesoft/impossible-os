@@ -69,16 +69,20 @@ static void (*tick_cb_fn)(void) = (void *)0;
 static uint32_t tick_cb_divisor = 0;
 static uint32_t tick_cb_counter = 0;
 
+/* Register/unregister run with interrupts enabled while the timer ISR reads
+ * the same slot. Publish fn LAST with release ordering so the ISR never
+ * observes a non-NULL fn paired with an unwritten divisor; retract fn FIRST
+ * so the ISR bails out before divisor/counter are cleared. */
 void timer_register_tick_callback(void (*fn)(void), uint32_t every_n_ticks)
 {
     tick_cb_counter = 0;
     tick_cb_divisor = every_n_ticks;
-    tick_cb_fn = fn;
+    __atomic_store_n(&tick_cb_fn, fn, __ATOMIC_RELEASE);
 }
 
 void timer_unregister_tick_callback(void)
 {
-    tick_cb_fn = (void *)0;
+    __atomic_store_n(&tick_cb_fn, (void (*)(void))0, __ATOMIC_RELEASE);
     tick_cb_divisor = 0;
     tick_cb_counter = 0;
 }
@@ -99,11 +103,16 @@ void timer_tick_callback_fire(void)
         }
     }
 
-    if (!tick_cb_fn) return;
+    /* Snapshot fn with acquire ordering (pairs with the release store in
+     * register/unregister) and call the snapshot -- never re-read the slot
+     * between the NULL check and the indirect call. */
+    void (*fn)(void) = __atomic_load_n(&tick_cb_fn, __ATOMIC_ACQUIRE);
+    uint32_t divisor = tick_cb_divisor;
+    if (!fn || divisor == 0) return;
     tick_cb_counter++;
-    if (tick_cb_counter >= tick_cb_divisor) {
+    if (tick_cb_counter >= divisor) {
         tick_cb_counter = 0;
-        tick_cb_fn();
+        fn();
     }
 }
 

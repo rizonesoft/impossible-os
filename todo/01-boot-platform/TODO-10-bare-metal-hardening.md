@@ -561,16 +561,29 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 
 The boot splash spinner stutters on bare metal -- stops and restarts repeatedly during Phase 2. **Historical note (pre-2026-03-29):** the LAPIC timer ISR was effectively broken on bare metal/TCG due to `clac` #UD (§3), so the spinner only advanced when the compositor or `boot_splash_tick()` explicitly called it. **After the §3 fix**, the timer ISR runs; remaining visible stutter on VirtualBox is dominated by NCQ timeout (15s I/O), not a dead timer.
 
-**Files:** `src/kernel/boot_splash.c`, `src/kernel/spinner.c`, `src/kernel/main/boot_storage.c`
+**Files:** `src/kernel/boot_splash.c`, `src/kernel/spinner.c`, `src/kernel/timer.c`, `src/kernel/main/boot_interrupts.c`, `src/kernel/main/boot_storage.c`
 
-- [x] Spinner driven by `timer_register_tick_callback(spinner_advance, 10)` -- fires at 10fps from LAPIC timer ISR
-- [x] Explicit `boot_splash_tick()` calls already present during long operations (PCI, AHCI, VFS, desktop)
+- [x] Spinner driven by `timer_register_tick_callback(spinner_advance, 10)` -- ~10fps from the active timer ISR (LAPIC; PIT backend on TCG)
+- [x] Explicit `boot_splash_tick()` keep-alive calls present during long boot phases (PCI scan, partition/filesystem mount, BlackBox/registry, desktop init, test phase)
 - [x] Timer IS working on bare metal (§3 fixed clac). Spinner callback fires correctly.
 - [x] VBox stutter: caused by NCQ timeout (15s blocking I/O), not a spinner bug. Timer ISR fires during NCQ wait (`event_wait_timeout`), spinner advances. Display may lag due to VBox VGA emulation under heavy I/O -- cosmetic, not a kernel issue.
 - [x] Verified: QEMU WHPX ✅, TCG ✅, bare metal ✅. VBox: minor stutter during NCQ timeout only.
-- [x] No code change needed -- §3 (clac fix) resolved the root cause.
+- [x] §3 (clac fix) resolved the original stutter root cause; section-15 review (2026-06-11) then fixed drift: removed stale `boot_splash_tick@5` override in `boot_interrupts.c` that overwrote the `@10` registration (ran animation at 2x Fluent speed)
+- [x] Tick-callback slot hardening: atomic acquire/release publication + divisor-0 guard in `timer.c`, reentrancy guard in `spinner_advance` (ISR vs thread-context callers), unit tests in `test_timer_tick_cb.c`
 
 **Test checkpoint:** Bare metal: spinner rotates smoothly during PCI scan and AHCI init (no visible stutter or freeze). QEMU: spinner unchanged (already smooth). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts/debug/kernel/run-boot-tests.bat` (TEST_CAT_BOOT) -- `test_timer_tick_cb.c`: 2 tests / 3 assertions on the singleton tick-callback slot
+
+> **Notes:**
+> - Diagnostic section; review found real drift: stale `boot_splash_tick@5` registration in `boot_interrupts.c` silently overwrote the spinner's `@10` slot, running the animation at 2x Fluent design speed -- removed, `spinner_start()` is the single owner
+> - Tick-callback slot hardened in `timer.c`: release/acquire fn publication, ISR snapshot, divisor-0 guard; `spinner_advance` gained a reentrancy guard (BSP ISR vs thread-context keep-alive calls)
+> - `test_timer_tick_cb.c` (TEST_CAT_BOOT) covers divisor counting, unregister retraction, divisor-0 guard; saves/restores the live spinner around the slot tests
+> - NCQ tag-state race surfaced by the adversarial pass is owned by the AHCI NCQ section in 05-storage TODO-01 (Accepted below)
+
+> **Verified:** 2026-06-11 | commit `pending` | 8/8 items | build OK | smoke PASS (KVM 2.400s)
+> **Accepted:** [M] NCQ tag state races AHCI ISR in `ncq_sync_rw` timeout path (reason: scope) -> XREF: 05-storage-filesystems/TODO-01 §3 (item: "Guard NCQ tag state vs AHCI ISR" at line 94)
+> **Quality reviewed:** 2026-06-11 | Codex 7x (adversarial x2, consistency, perf, re-adversarial x3) | 2H+6M+2L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -590,8 +603,9 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 | 💎   | Logging on main FS      | ✅ C:\Windows\System32     | ✅ /var/log                | ✅ §12 KLOG_DIR X:\ (T24)      |
 | 💎   | CPU feature minimums    | ✅ NX required since Vista | ✅ verify_cpu required mask | ✅ §13 NX+SSE2+LM+SYSCALL mask |
 | ⭐   | Bare-metal test matrix  | ❌ Internal only (WHQL)    | ❌ Community-driven        | ✅ §14 4-platform matrix       |
+| ⭐   | Boot spinner liveness   | ✅ ISR-driven ring         | ⚠️ plymouth (optional)     | ✅ §15 timer ISR @10fps Fluent |
 
-> **After §1--§14:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
+> **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 
 ---
 

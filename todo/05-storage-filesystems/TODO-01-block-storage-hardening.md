@@ -91,6 +91,7 @@ Detect NCQ capability via `CAP.SNCQ`. Issue `READ_FPDMA_QUEUED (0x60)` / `WRITE_
 - [ ] `ahci_ncq_read(port, lba, count, buf)` / `ahci_ncq_write(port, lba, count, buf)`: allocate tag; build command FIS with `0x60`/`0x61`; set `PxSACT |= (1 << tag)`; set `PxCI |= (1 << tag)`; store callback in `port->pending[tag]`
 - [ ] NCQ completion: IRQ handler -- if `PxIS.SDBS` set: read `PxSACT`; for each bit 0 in `~PxSACT & port->ncq_active`: call `port->pending[tag].callback`; `ahci_free_tag(port, tag)`
 - [ ] Non-NCQ fallback: if `ncq_depth == 0`, fall through to existing DMA R/W path unchanged
+- [ ] Guard NCQ tag state vs AHCI ISR: `ncq_sync_rw` timeout path in `ahci_ncq.c` races the `ahci_irq.c` SDB completion path on `tags_pending`/`tag_status` -- IRQ-save per-port lock or atomic bitops, reconcile HW completion before tag free
 - [ ] Log: `[AHCI] Port %u NCQ enabled, depth=%u`
 - [ ] Commit: `"drivers: AHCI NCQ -- CAP.SNCQ detect, READ/WRITE_FPDMA_QUEUED, 32-deep tag allocator, SDB FIS"`
 

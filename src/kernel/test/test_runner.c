@@ -388,6 +388,7 @@ extern void test_register_firmware_platform(void);
 extern void test_register_firmware_advisor(void);
 extern void test_register_boot_health(void);
 extern void test_register_boot_health_check(void);
+extern void test_register_timer_tick_cb(void);
 extern void test_register_boot_trend(void);
 extern void test_register_smbios(void);
 extern void test_register_smbios_parse(void);
@@ -457,6 +458,7 @@ void test_runner_init(void)
     test_register_firmware_advisor();
     test_register_boot_health();
     test_register_boot_health_check();
+    test_register_timer_tick_cb();
     test_register_boot_trend();
     test_register_smbios();
     test_register_smbios_parse();

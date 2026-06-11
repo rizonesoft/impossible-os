@@ -61,10 +61,15 @@ uint64_t uptime_ns(void);
  * The callback runs in interrupt context -- keep it short, no sleeping. */
 
 /* Register a periodic callback called every `every_n_ticks` timer ticks.
- * At 100 Hz timer, every_n_ticks=10 gives ~10 fps. */
+ * At 100 Hz timer, every_n_ticks=10 gives ~10 fps.
+ * SINGLETON slot: a second registration silently replaces the first.
+ * every_n_ticks == 0 is guarded -- the callback never fires.
+ * Safe to call with interrupts enabled: fn is published with release
+ * ordering after the divisor, and the ISR snapshots it with acquire. */
 void timer_register_tick_callback(void (*fn)(void), uint32_t every_n_ticks);
 
-/* Unregister the tick callback. */
+/* Unregister the tick callback. Retracts fn before clearing the divisor,
+ * so a concurrent ISR fire either runs the old callback or none. */
 void timer_unregister_tick_callback(void);
 
 /* Called from PIT/LAPIC ISR to fire the registered callback at the
