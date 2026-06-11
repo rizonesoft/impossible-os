@@ -245,6 +245,7 @@ Hot paths like klog timestamping, scheduler accounting, and network packet times
 - [ ] Implement `KeQuerySystemTimeCoarse(FILETIME *out)` -- returns the last ISR-cached SystemTime value (no TSC read, no seqlock)
 - [ ] Implement `KeQueryInterruptTimeCoarse()` -- returns the cached `g_interrupt_time` directly
 - [ ] Update `klog()` to use `KeQuerySystemTimeCoarse()` for timestamps once the time service is ready
+- [ ] Migrate raw `system_get_ticks()` timestamp/window consumers to a rebased time source (`uptime_ns()` or the coarse API): `etw.c` event timestamps, `klog.c` boot/ratelimit stamps, `registry.c` header stamps, `wer.c` crash path, `virtio/blk_init.c`+`blk_telemetry.c` adaptive windows -- raw lifetime ticks are reinterpreted when `KeSetTimerResolution` changes the tick rate (filed from `01-boot-platform/TODO-11` §6 review; `uptime()` itself already migrated)
 - [ ] Commit: `"kernel: time -- coarse time fast path for hot-path callers"`
 
 ## 17. NTP Clock Adjustment Hooks

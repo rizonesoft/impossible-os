@@ -43,10 +43,11 @@ uint32_t system_get_freq(void)
 
 uint64_t uptime(void)
 {
-    uint32_t freq = system_get_freq();
-    if (freq == 0)
-        return 0;
-    return system_get_ticks() / freq;
+    /* Derive from the rebased monotonic source: dividing the lifetime
+     * tick counter by the LIVE frequency would rewind across a
+     * KeSetTimerResolution rate change (ticks accumulated at the old
+     * rate reinterpreted at the new one) */
+    return uptime_ns() / 1000000000ULL;
 }
 
 uint64_t uptime_ns(void)

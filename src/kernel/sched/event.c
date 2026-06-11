@@ -156,13 +156,14 @@ void event_reset(event_t *ev)
  * ------------------------------------------------------------------------- */
 int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
 {
-    uint64_t start   = system_get_ticks();
-    uint32_t freq    = system_get_freq();
-    uint64_t timeout = freq ? ((uint64_t)timeout_ms * freq) / 1000 : 0;
+    /* Absolute monotonic deadline: an entry-time frequency snapshot of
+     * raw ticks is wrong across a KeSetTimerResolution rate change (a
+     * 5 s wait at 100 Hz becomes ~250 ms if the rate moves to 2000 Hz) */
+    uint64_t deadline = uptime_ns() + (uint64_t)timeout_ms * 1000000ULL;
 
     while (!atomic_read(&ev->state)) {
         /* Check deadline BEFORE yielding */
-        if ((system_get_ticks() - start) >= timeout)
+        if (uptime_ns() >= deadline)
             return 0;  /* timed out */
 
         /* Cooperative yield: DON'T use enqueue_and_block() here.

@@ -87,8 +87,12 @@ void timer_tick_callback_fire(void);
  * active backend has no one-shot support (PIT) or no usable conversion.
  * MECHANISM ONLY: arming temporarily replaces the periodic tick; the
  * timer ISR auto-restores periodic mode when the one-shot fires, so the
- * scheduler heartbeat can never silently stop. The tickless-idle
- * governor owns true one-shot policy when it lands. */
+ * scheduler heartbeat can never silently stop.
+ * CANCELLATION CONTRACT: a UEFI runtime call concurrent with an armed
+ * one-shot may CANCEL it (resume forces periodic instead of risking a
+ * deadline lost while masked) -- callers must tolerate a periodic tick
+ * arriving instead of their event and re-arm. The tickless-idle
+ * governor re-arms on every idle entry, which satisfies this naturally. */
 int timer_arm_oneshot(uint64_t deadline_mono_ns);
 
 /* Pure delegation core for timer_arm_oneshot (unit-testable with a fake

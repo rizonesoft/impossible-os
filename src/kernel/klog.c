@@ -43,7 +43,9 @@ static log_level_t           s_global_min = LOG_DEBUG;  /* default: keep all */
 /* Rate limiting: per-subsystem message count within a 1-second window */
 #define KLOG_RATE_SLOTS     32
 #define KLOG_RATE_DEFAULT   100     /* msgs per window */
-#define KLOG_RATE_WINDOW    100     /* ticks (100 Hz = 1 second) */
+#define KLOG_RATE_WINDOW_MS 1000    /* monotonic window -- raw ticks would
+                                     * shrink the window when the tick
+                                     * rate rises (KeSetTimerResolution) */
 
 typedef struct {
     const char *tag;
@@ -636,7 +638,8 @@ static log_level_t subsys_min_level(const char *subsystem)
 static klog_rate_slot_t *rate_slot(const char *subsystem)
 {
     uint32_t i;
-    uint32_t now = (uint32_t)system_get_ticks();
+    extern uint64_t uptime_ns(void);
+    uint32_t now = (uint32_t)(uptime_ns() / 1000000ULL);   /* monotonic ms */
 
     if (!subsystem || !subsystem[0])
         return (klog_rate_slot_t *)0;
@@ -644,7 +647,7 @@ static klog_rate_slot_t *rate_slot(const char *subsystem)
     for (i = 0; i < s_rate_count; i++) {
         if (s_rate[i].tag == subsystem || str_eq(s_rate[i].tag, subsystem)) {
             /* Reset window if expired */
-            if (now - s_rate[i].window_start >= KLOG_RATE_WINDOW) {
+            if (now - s_rate[i].window_start >= KLOG_RATE_WINDOW_MS) {
                 /* Emit summary for dropped messages before resetting */
                 if (s_rate[i].dropped > 0) {
                     s_rate[i].dropped = 0;  /* clear before recursive klog */

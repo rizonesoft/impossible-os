@@ -186,7 +186,7 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 > - Static asserts in `vectors.h` now pin every DPL=3 software vector outside every hardware IRQ window.
 
 > **Verified:** 2026-06-11 | commit `5ae7bdb8` | 7/7 items | build OK | smoke PASS (KVM 2.4s)
-> **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 204)
+> **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 205)
 > **Accepted:** [H] ring-3 INT n on a DPL=0 gate panics the kernel (user DoS; kernel-wide fault-isolation gap) -> XREF: 02-kernel-core/TODO-23 §4 (item: "`ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher" at line 184)
 > **Deferred:** [M] no dedicated IDT/vector unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
 > **Quality reviewed:** 2026-06-11 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 6H+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
@@ -257,6 +257,10 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 > - Integrates: `uefi_runtime.c` rt_call uses quiesce/resume (exercised live on every boot UEFI variable read); one-shot ISR auto-restores the periodic heartbeat; nothing arms one-shot at boot.
 > - Downstream: tickless-idle mechanism ready for the D02 T26 idle governor; closes the D01 T10 §10 rt_call PIT gap (normal path).
 > - Scope boundary: HV reference-TSC page init is D02 T09 §15 (consumer here stays blocked until it lands); recalibrate-on-freq-change is D02 T26 §15; AP timers are §7.
+> **Verified:** 2026-06-12 | commit `00adcb9b` | 9/10 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
+> **Accepted:** [H] AP-side timer-resolution requests are refused + rolled back (BSP delegation needs a cross-CPU call) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "`smp_call_function(cpu, fn, arg)` cross-CPU synchronous call" at line 97)
+> **Accepted:** [M] remaining raw-tick timestamp/window consumers (etw, registry, wer, virtio windows, klog boot stamps) reinterpret lifetime ticks across a rate change -> XREF: 02-kernel-core/TODO-08 §16 (item: "Migrate raw `system_get_ticks()` timestamp/window consumers" at line 248)
+> **Quality reviewed:** 2026-06-12 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
