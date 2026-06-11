@@ -266,8 +266,11 @@ static int port_init(struct ahci_port *p, int port_num)
     return 0;
 }
 
-/* ---- AHCI interrupt service routine ---- */
-static void ahci_irq_handler(uint8_t vector, void *ctx)
+/* ---- AHCI interrupt service routine ----
+ * Returns IRQ_HANDLED when the controller raised this interrupt
+ * (AHCI_IS nonzero), IRQ_NONE otherwise -- the INTx line can be shared
+ * with other PCI devices. */
+static int ahci_irq_body(uint8_t vector, void *ctx)
 {
     uint32_t is;
     int i;
@@ -277,7 +280,7 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
 
     is = ahci_read32(abar, AHCI_IS);
     if (!is)
-        return;
+        return IRQ_NONE;
 
     for (i = 0; i < num_ports_total; i++) {
         if (!ports[i].active)
@@ -358,6 +361,13 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
     }
 
     ahci_write32(abar, AHCI_IS, is);
+    return IRQ_HANDLED;
+}
+
+/* irq_handler_t shim for the MSI path (vector exclusively ours) */
+static void ahci_irq_handler(uint8_t vector, void *ctx)
+{
+    (void)ahci_irq_body(vector, ctx);
 }
 
 /* ---- CLO + COMRESET recovery for stuck BSY/DRQ ---- */
@@ -951,39 +961,27 @@ void ahci_setup_interrupts(void)
 
         if (pci_irq_line != 0 && pci_irq_line != 0xFF &&
             ioapic_available()) {
-            ahci_irq_vector = irq_alloc_vector();
+            /* PCI INTx is level-triggered active-low (0x0F) and the line
+             * may be shared with other devices: register through the
+             * shared-chain GSI API with claim semantics. */
+            ahci_irq_vector = irq_request_gsi_ex(pci_irq_line,
+                                                 ahci_irq_body, NULL,
+                                                 "ahci", 0x0F, 1);
             if (ahci_irq_vector) {
-                irq_register(ahci_irq_vector, ahci_irq_handler,
-                             NULL, "ahci");
+                ghc = ahci_read32(abar, AHCI_GHC);
+                ghc |= AHCI_GHC_IE;
+                ahci_write32(abar, AHCI_GHC, ghc);
 
-                /* ioapic_route_irq() installs the entry MASKED; unmask it or
-                 * AHCI completion interrupts never arrive (dead INTx path on
-                 * IOAPIC-only platforms like VirtualBox). Both calls report
-                 * unroutable GSIs -- fall back to polling on failure. */
-                if (ioapic_route_irq(pci_irq_line, ahci_irq_vector,
-                                     0, 0x0F) != 0 ||
-                    ioapic_unmask_irq(pci_irq_line) != 0) {
-                    irq_unregister(ahci_irq_vector);
-                    irq_free_vector(ahci_irq_vector);
-                    ahci_irq_vector = 0;
-                    klog(LOG_WARN, "ahci",
-                           "AHCI: INTx IRQ %u not routable, using polling",
-                           (uint64_t)pci_irq_line);
-                } else {
-                    ghc = ahci_read32(abar, AHCI_GHC);
-                    ghc |= AHCI_GHC_IE;
-                    ahci_write32(abar, AHCI_GHC, ghc);
-
-                    /* NOTE: use_events stays 0 -- same as MSI path */
-                    irq_ok = 1;
-                    klog(LOG_INFO, "ahci",
-                           "AHCI: INTx IRQ %u -> vector 0x%x (legacy)",
-                           (uint64_t)pci_irq_line,
-                           (uint64_t)ahci_irq_vector);
-                }
+                /* NOTE: use_events stays 0 -- same as MSI path */
+                irq_ok = 1;
+                klog(LOG_INFO, "ahci",
+                       "AHCI: INTx IRQ %u -> vector 0x%x (legacy, shared)",
+                       (uint64_t)pci_irq_line,
+                       (uint64_t)ahci_irq_vector);
             } else {
                 klog(LOG_WARN, "ahci",
-                       "AHCI: no free IRQ vector, using polling");
+                       "AHCI: INTx IRQ %u not routable, using polling",
+                       (uint64_t)pci_irq_line);
             }
         } else {
             klog(LOG_WARN, "ahci",

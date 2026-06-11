@@ -79,7 +79,7 @@ title: "TODO-12 -- Task Manager, Device Manager & Core Utilities"
 - [ ] Output redirect: `>` and `>>` token detection in shell line parser; file-node redirect
 - [ ] Stretch: Tab completion: `vfs_readdir()` prefix match; fill command buffer
 - [ ] Stretch: `|` pipe: `pipe_create()`; fork two command evaluations; connect stdio
-- [ ] Kernel diagnostic commands: `irq list` (print GSI/vector/handler/fire-count table from the `irq.c` registry) and `boot-timeline` (render `X:\Perf\boot-timeline.json`) -- deferred from `01-boot-platform/TODO-11-interrupt-timer-arch.md` §5, §9
+- [ ] Kernel diagnostic commands: `irq list` (print GSI/vector/handler/fire-count/shared/quarantined table from the `irq.c` registry) and `boot-timeline` (render `X:\Perf\boot-timeline.json`) -- deferred from `01-boot-platform/TODO-11-interrupt-timer-arch.md` §5, §9
 - [ ] Register all in command dispatch table with usage strings
 - [ ] Commit: `"shell: commands -- cd/pwd/mkdir/rmdir/cp/mv/rm/touch/whoami/date/free, >/>> redirect"`
 

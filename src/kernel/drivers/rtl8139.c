@@ -12,7 +12,9 @@
 #include "kernel/drivers/rtl8139.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/idt.h"
+#include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
 #include "kernel/mm/heap.h"
 #include "kernel/net/net.h"
@@ -161,7 +163,10 @@ static void nic_memcpy(void *dst, const void *src, uint64_t n)
 }
 
 /* --- IRQ handler --- */
-static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
+/* Claim-status body: the NIC's ISR register says whether THIS device
+ * raised the interrupt (the PCI INTx line may be shared). Returns the
+ * raw status (0 = not ours). */
+static uint16_t rtl8139_irq_body(void)
 {
     uint16_t status;
     uint64_t flags;
@@ -170,6 +175,8 @@ static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
      * Hold nic_rx_lock across the receive drain to serialise with
      * any concurrent rtl8139_receive() call from the network thread. */
     status = inw_nic(io_base + REG_ISR);
+    if (!status)
+        return 0;
 
     if (status & INT_ROK) {
         uint8_t pkt_buf[ETH_FRAME_MAX];
@@ -213,7 +220,20 @@ static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
 
     /* Acknowledge all handled interrupts */
     outw_nic(io_base + REG_ISR, status);
+    return status;
+}
 
+/* Shared-chain registrant (IOAPIC GSI path; EOI owned by the dispatcher) */
+static int rtl8139_irq_shared(uint8_t vector, void *ctx)
+{
+    (void)vector; (void)ctx;
+    return rtl8139_irq_body() ? IRQ_HANDLED : IRQ_NONE;
+}
+
+/* IDT-level handler (PIC-only fallback path) */
+static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
+{
+    (void)rtl8139_irq_body();
     irq_eoi(irq_line);
     return (uint64_t)frame;
 }
@@ -309,10 +329,21 @@ int rtl8139_init(void)
     /* 10. Enable receiver and transmitter */
     outb_nic(io_base + REG_CMD, CMD_RE | CMD_TE);
 
-    /* 11. Register IRQ handler. PCI interrupt-line can be unset/0xFF on
-     * APIC-routed firmware; isa_irq_to_vector() returns 0 (the divide-error
-     * vector) for those -- never register on it. */
-    if (irq_line < 16) {
+    /* 11. Register IRQ handler. PCI INTx is level-low (0x0F) and the
+     * line may be shared -- go through the shared GSI API on IOAPIC
+     * systems (the old bare IDT install received nothing there). PCI
+     * interrupt-line can be unset/0xFF on APIC-routed firmware;
+     * isa_irq_to_vector() returns 0 (the divide-error vector) for
+     * those -- never register on it. */
+    if (irq_line != 0 && irq_line != 0xFF && ioapic_available()) {
+        if (!irq_request_gsi_ex((uint32_t)irq_line, rtl8139_irq_shared,
+                                (void *)0, "rtl8139", 0x0F, 1))
+            klog(LOG_WARN, "net",
+                 "RTL8139: INTx GSI %u not routable -- IRQ disabled",
+                 (uint64_t)irq_line);
+    } else if (irq_line != 0 && irq_line < 16) {
+        /* irq_line 0 is unset, not ISA IRQ0 -- registering there would
+         * steal the PIT vector (0x20) */
         idt_register_handler(isa_irq_to_vector(irq_line), rtl8139_irq_handler);
         pic_unmask_irq(irq_line);
     } else {

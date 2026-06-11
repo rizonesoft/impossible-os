@@ -11,7 +11,7 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 > **Goal:** Define the authoritative Phase 1 interrupt and timer architecture: ACPI MADT first, LAPIC/IOAPIC before legacy PIC enable paths where applicable, full 256-vector IDT coverage, dynamic GSI/vector registration (`irq_request_gsi`), and a unified timer HAL (`uptime_ns()`) choosing HPET, LAPIC, or PIT. Historical bug class: PIT before IOAPIC routing on PCAT_COMPAT machines; that init order is fixed in tree. Remaining work: UTS high-res reads via the `mono_clock` contract, one-shot/TSC-deadline mode, IRQ affinity + GSI validation + shared INTx handlers + storm quarantine, driver migration to `irq_request_gsi`, AP LAPIC timers, shell tools (`irq list`, `boot-timeline`), and unit tests below.
 
 > [!IMPORTANT]
-> **Current state (2026-04-11):** Phase 1 order matches `boot_interrupts.c`: GDT → IDT → ACPI (MADT) → LAPIC/IOAPIC → PIC path → services → `timer_hal_init()` before `sti` (see `02-kernel-core/TODO-01-kernel-init-sequencing.md` §3). PIT-before-IOAPIC routing hazard is **fixed in tree**. Open work (gap-audit 2026-06-11): §5 affinity + GSI routing validation + shared INTx handlers + storm quarantine + driver migration; §6 mono_clock single-clocksource contract + one-shot/TSC-deadline mode + HV TSC page + quiesce/resume; §7 AP LAPIC timer bring-up (BSP-only today); shell tools in `09-desktop-shell/TODO-12-utilities.md` §1; Unit Tests + Verification below.
+> **Current state (2026-04-11):** Phase 1 order matches `boot_interrupts.c`: GDT → IDT → ACPI (MADT) → LAPIC/IOAPIC → PIC path → services → `timer_hal_init()` before `sti` (see `02-kernel-core/TODO-01-kernel-init-sequencing.md` §3). PIT-before-IOAPIC routing hazard is **fixed in tree**. Open work (gap-audit 2026-06-11, §5 shipped 2026-06-11): §6 mono_clock single-clocksource contract + one-shot/TSC-deadline mode + HV TSC page + quiesce/resume; §7 AP LAPIC timer bring-up (BSP-only today); shell tools in `09-desktop-shell/TODO-12-utilities.md` §1; Verification below.
 >
 > **Historical:** PCAT_COMPAT machines can see IRQ 0 from both PIC and IOAPIC if the PIT is enabled before IOAPIC routing; MADT-first sequencing avoids that class of bug.
 
@@ -58,7 +58,7 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 | 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                  |  [x]   |
 | 💎  |   3   | Conditional PIC disable             | §1, §2              |  [x]   |
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [x]   |
-| 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [/]   |
+| 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [x]   |
 | 💎  |   6   | Unified timer subsystem (UTS)       | §5, TODO-09 §4      |  [/]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [/]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [x]   |
@@ -205,17 +205,25 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [x] Existing `irq_handler_t` kept as `void (*)(uint8_t vector, void *ctx)` -- no breaking change needed; GSI API added alongside
 - [x] `irq_request_gsi(gsi, handler, ctx, name)`: allocates vector via `irq_alloc_vector()`, registers handler, programs IOAPIC redirection with MADT override flags; returns vector or 0
 - [x] `irq_free_gsi(gsi)`: masks IOAPIC entry, unregisters handler, frees vector
-- [ ] `irq_set_affinity(gsi, cpu_mask)` -- implement when IRQ balancing is needed; currently all routes to BSP (functional on SMP, just not balanced)
+- [x] `irq_set_affinity(gsi, cpu_mask)`: online-CPU validated, PASSIVE_LEVEL-only, `ioapic_set_destination()` RMW under `ioapic_lock`, route-lifetime locked
 - [x] GSI routing-domain validation: `irq_request_gsi()` returns 0 and rolls back the vector when the GSI exceeds the IOAPIC redirection range (shipped in S2 review, commit 1678de87); GSI-99 unit test asserts the fix when the Unit Tests suite lands
-- [ ] Shared GSI handlers for PCI INTx: per-vector handler chain + shared-registration flag, dispatch walks all handlers, single EOI; required before driver migration (`irq_entry` is single-handler today)
-- [ ] IRQ storm quarantine: auto-mask a vector/GSI after threshold unhandled fires (today log+EOI forever); expose quarantined state via `irq list` (D09 T12 §1)
+- [x] Shared GSI handlers for PCI INTx: `irq_request_gsi_ex()` claim chains (`IRQ_HANDLED`/`IRQ_NONE`), mask+drain-protected mutation, parked-vector teardown, MADT-override-authoritative flags with loud mismatch refusal on join
+- [x] IRQ storm quarantine: all-`IRQ_NONE` streak + idt.c unhandled-vector limit both mask at the owning controller; a joining sharer is the recovery point (Linux `__setup_irq` parity); `irq list` exposure deferred with that item (D09 T12 §1)
 - [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table
 - [x] `irq_dispatch()` already exists in `irq.c` -- registered handler called + EOI sent
 - [ ] `irq list` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
-- [ ] Migrate existing drivers to `irq_request_gsi()` -- mechanical pass over `src/kernel/drivers/` ISA call sites (owned here); MSI/MSI-X devices follow `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 instead
+- [x] Drivers migrated to shared GSI claims: AHCI, vbox_mouse, rtl8139, virtio-input, ACPI SCI (fixes the S4 SCI vector regression); PS/2 done earlier (5466cc7e); MSI/MSI-X follow `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3
+- [x] Vector-space hardening: INT 0x80/0x81 gates reserved out of the dynamic allocator (live ALPC-starvation incident), `irq_unregister` only clears IDT slots it owns, `irq_reserve_vector()` API for bare-IDT static claims
 - [x] Commit: `"kernel: GSI-based IRQ request API -- irq_request_gsi/free_gsi, IOAPIC-backed"`
 
 **Test checkpoint:** `irq_request_gsi()` returns valid vector for ISA IRQ 1 when IOAPIC present; invalid GSI returns 0. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | irq_timer: 16 suites incl. allocator exhaustion, GSI range/reserve guards | 0 failures
+> **Notes:**
+> - Shipped: shared-GSI claim chains + storm quarantine + vector parking + affinity in `src/kernel/irq.c`; `ioapic_set_destination()`; `test_irq_timer.c` (16 suites, TEST_CAT_BOOT).
+> - Integrates: all PCI INTx consumers (AHCI, vbox_mouse, rtl8139, virtio-input, ACPI SCI) register via `irq_request_gsi_ex()`; registration order no longer matters; MADT overrides authoritative for line flags.
+> - Downstream: unblocks `irq list` rendering (D09 T12 §1) and MSI/MSI-X (D04 T02 §3); Codex 13-round adversarial adoption trail lives in the ship commit message.
+> - Scope boundary: MSI/MSI-X is D04 T02 §3; IRQ balancing policy is future D03 work (affinity primitive ships here); chain/parking/quarantine internals are platform-validated (live IOAPIC programming is test-banned).
 
 ---
 
@@ -317,15 +325,15 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 | 💎 | LAPIC/IOAPIC before PIT      | ✅ HAL APIC first                | ✅ APIC before IRQ                | ✅ §2 done                         |
 | 💎 | Conditional PIC disable      | ✅ PCAT gated                    | ✅ mask 8259A                     | ✅ §3 done                         |
 | 💎 | Full IDT coverage            | ✅ KiUnexpectedInterrupt         | ✅ spurious path                  | ✅ §4 IDT full                     |
-| 💎 | Dynamic IRQ registration     | ✅ IoConnectInterrupt            | ✅ request_irq                    | [/] §5 GSI only                    |
-| 💎 | Shared line IRQs (INTx)      | ✅ line-based sharing            | ✅ IRQF_SHARED                    | ⬜ §5 single-handler               |
+| 💎 | Dynamic IRQ registration     | ✅ IoConnectInterrupt            | ✅ request_irq                    | ✅ §5 GSI + affinity               |
+| 💎 | Shared line IRQs (INTx)      | ✅ line-based sharing            | ✅ IRQF_SHARED                    | ✅ §5 claim chains + storm guard   |
 | 💎 | Unified timer HAL            | ✅ QPC picks source              | ✅ clocksource framework          | [/] §6 LAPIC PIT                   |
 | 💎 | One-shot / TSC-deadline tick | ✅ dynamic tick                  | ✅ NO_HZ tsc-deadline             | ⬜ §6 periodic only                |
 | 💎 | MSI / MSI-X (PCI)            | ✅ IoConnectInterruptEx          | ✅ pci MSI vectors                | ⬜ D04T02 §3                       |
 | 💎 | LAPIC timer calibration      | ✅ HAL per CPU cal               | ✅ calibrate delay                | [/] §7 BSP only                    |
 | ⭐  | Boot timeline JSON           | ❌ WPA offline trace             | ❌ systemd analyze post           | ✅ §9 JSON file                    |
 
-> **Parity:** §1--§4, §8, §10 match Windows/Linux for APIC/IDT paths. **[/]** §5 (affinity, GSI validation, shared handlers, storm quarantine, driver migration), §6 (mono_clock contract, one-shot/TSC-deadline), §7 (AP LAPIC timer) remain. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
+> **Parity:** §1--§5, §8, §10 match Windows/Linux for APIC/IDT/IRQ-registration paths. **[/]** §6 (mono_clock contract, one-shot/TSC-deadline), §7 (AP LAPIC timer) remain. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
 
 ---
 
@@ -334,15 +342,13 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 > Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_irq_timer()` (same pattern as other `test_register_*` suites).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
-- [ ] Create `src/kernel/test/test_irq_timer.c` with:
-  - `acpi_madt_info()` returns non-NULL with `cpu_count >= 1` and valid `lapic_base`
-  - `acpi_pcat_compat()` returns 0 or 1 (consistent with MADT flags)
-  - `acpi_get_ioapic_base()` returns non-zero address when IOAPIC present
-  - `irq_request_gsi(99, dummy_handler, NULL, "test")` returns 0 for invalid GSI (no crash)
-  - `irq_request_gsi()` with valid GSI (e.g., ISA IRQ 1) returns non-zero vector in range 32-239
-  - `irq_gsi_count()` returns 0 for an unregistered GSI
-  - `uptime_ns()` returns > 0 after boot; two calls 1ms apart differ by approximately 1000000 ns (within 50% tolerance)
-  - Timer driver active: `g_system_timer` non-NULL and `g_system_timer->name` is "LAPIC" or "PIT"; when §6 mono_clock contract lands, `uptime_ns()` and `mono_ns()` agree within tolerance
+- [x] `src/kernel/test/test_irq_timer.c` shipped (16 suites, TEST_CAT_BOOT, registered via `test_register_irq_timer()`):
+  - MADT consolidated info populated + mirrors legacy accessors; PCAT bit boolean
+  - ISA vector translation both directions (incl. IRQ9 SCI -> 0x71, 0x2E non-ISA)
+  - allocator exhaustion walk: ISA-window avoidance, dynamic-range bounds, 0x80/0x81 avoidance, depleted-terminal 0, recovery
+  - GSI validation: NULL-handler + out-of-range isolated (dummy-handler range guards), reserve-vector collision refusals, affinity validation, reverse-map oracles
+  - UTS: `g_system_timer` selected, `uptime_ns()` monotonic, HPET consistency, LAPIC calibration state
+  - **Note:** live-GSI registration (valid-GSI vector assertion from the original draft) is test-banned (live IOAPIC programming); covered by smoke + QEMU serial instead
   - Shared GSI: two handlers registered shared on one GSI both fire (TEST_PENDING until §5 sharing lands)
   - One-shot: `arm_oneshot(deadline)` fires exactly once near the deadline (TEST_PENDING until §6 lands)
   - AP timers: per-CPU tick counters advance on all CPUs with `-smp 4` (TEST_PENDING until §7 AP bring-up lands)

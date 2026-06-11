@@ -84,5 +84,47 @@ void irq_free_gsi(uint32_t gsi);
 /* Get interrupt fire count for a GSI (looks up the mapped vector). */
 uint64_t irq_gsi_count(uint32_t gsi);
 
+/* ---- Shared GSI API (PCI INTx lines can be shared by several devices) ----
+ * Shared handlers return a claim status so the dispatcher can tell a
+ * serviced level interrupt from line noise / another device's interrupt. */
+#define IRQ_NONE     0   /* not my interrupt */
+#define IRQ_HANDLED  1   /* device serviced */
+typedef int (*irq_shared_handler_t)(uint8_t vector, void *ctx);
+
+/* Request a GSI with explicit MADT-style flags (PCI INTx is level-low =
+ * 0x0F; pass 0 to use the MADT override / ISA default) and an optional
+ * shared mode. Shared registrants chain on one vector; every handler in
+ * the chain runs per interrupt and reports IRQ_HANDLED / IRQ_NONE.
+ * Returns the vector, or 0 on failure. Non-shared requests on a vector
+ * that already has a chain fail (and vice versa). */
+uint8_t irq_request_gsi_ex(uint32_t gsi, irq_shared_handler_t handler,
+                           void *ctx, const char *name, uint16_t flags,
+                           int shared);
+
+/* Remove ONE shared registrant from a GSI chain (matched by handler+ctx).
+ * Masks the line during chain mutation and drains in-flight dispatches
+ * before the node is reusable. Frees the vector when the chain empties.
+ * Returns 0 on success, -1 when not found. Not callable from ISR context. */
+int irq_release_gsi_shared(uint32_t gsi, irq_shared_handler_t handler,
+                           void *ctx);
+
+/* Route a GSI's interrupt delivery to the first set bit of cpu_mask
+ * (logical CPU index). The CPU must be online. Returns 0 on success,
+ * -1 on unrouted GSI / offline CPU / empty mask / no IOAPIC. */
+int irq_set_affinity(uint32_t gsi, uint64_t cpu_mask);
+
+/* Reverse map: the GSI a vector was requested for, or 0xFFFFFFFF. */
+uint32_t irq_gsi_for_vector(uint8_t vec);
+
+/* 1 when the vector was auto-masked by the storm quarantine. */
+int irq_vector_quarantined(uint8_t vec);
+
+/* Statically reserve a dynamic-range vector for a handler that installs
+ * straight into the IDT (no irq_table footprint), e.g. a firmware-derived
+ * ACPI SCI vector. The allocator will never return it. Returns 0 on
+ * success or when the vector is outside the dynamic range (nothing to
+ * reserve), -1 when a dynamic registration already owns the vector. */
+int irq_reserve_vector(uint8_t vector, const char *name);
+
 /* Initialize the IRQ subsystem. Called once during boot. */
 void irq_init(void);

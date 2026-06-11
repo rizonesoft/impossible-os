@@ -167,23 +167,39 @@ static void vbox_mouse_poll(void)
 
 /* ---- IRQ handler ---- */
 
+/* Claim-status body: VMMDev pending-events word says whether THIS device
+ * raised the interrupt (the PCI INTx line may be shared, e.g. with the
+ * ACPI SCI on VirtualBox IRQ9) */
+static int vbox_irq_body(void)
+{
+    if (!(vmmdev_mem && vmmdev_mem[2]))
+        return 0;
+
+    /* Acknowledge all pending events */
+    fill_header(&ack_pkt->header,
+                sizeof(struct vbox_ack_events),
+                VBOX_REQUEST_ACK_EVENTS);
+    ack_pkt->events = vmmdev_mem[2];
+    vbox_send(ack_pkt_phys);
+
+    /* Poll mouse position */
+    vbox_mouse_poll();
+    return 1;
+}
+
+/* Shared-chain registrant (IOAPIC GSI path; EOI owned by the dispatcher) */
+static int vbox_irq_shared(uint8_t vector, void *ctx)
+{
+    (void)vector; (void)ctx;
+    return vbox_irq_body() ? IRQ_HANDLED : IRQ_NONE;
+}
+
+/* Legacy exclusive callback (PIC-only path) */
 static void vbox_irq_callback(uint8_t vector, void *ctx)
 {
     (void)vector;
     (void)ctx;
-
-    /* Check if there are pending events */
-    if (vmmdev_mem && vmmdev_mem[2]) {
-        /* Acknowledge all pending events */
-        fill_header(&ack_pkt->header,
-                    sizeof(struct vbox_ack_events),
-                    VBOX_REQUEST_ACK_EVENTS);
-        ack_pkt->events = vmmdev_mem[2];
-        vbox_send(ack_pkt_phys);
-
-        /* Poll mouse position */
-        vbox_mouse_poll();
-    }
+    (void)vbox_irq_body();
     /* EOI handled by irq_register dispatch */
 }
 
@@ -301,18 +317,29 @@ int vbox_mouse_init(void)
     abs_x = (int32_t)(fb_get_width() / 2);
     abs_y = (int32_t)(fb_get_height() / 2);
 
-    /* Register IRQ handler via GSI-based routing */
-    if (ioapic_available()) {
-        irq_request_gsi((uint32_t)irq_line, vbox_irq_callback,
-                         (void *)0, "vbox_mouse");
-    } else {
+    /* Register IRQ handler via GSI-based routing. PCI INTx is
+     * level-low (0x0F) and shareable -- VirtualBox routes VMMDev on
+     * IRQ9, the same line as the ACPI SCI. PCI interrupt-line can be
+     * unset (0) or 0xFF on APIC-routed firmware: routing those would
+     * claim a bogus GSI (0 is the PIT route), so guard first like the
+     * other INTx migrations. */
+    if (irq_line != 0 && irq_line != 0xFF && ioapic_available()) {
+        if (!irq_request_gsi_ex((uint32_t)irq_line, vbox_irq_shared,
+                                (void *)0, "vbox_mouse", 0x0F, 1))
+            klog(LOG_WARN, "vbox",
+                 "VMMDev INTx GSI %u not routable -- IRQ disabled",
+                 (uint64_t)irq_line);
+    } else if (irq_line != 0 && irq_line < 16) {
         irq_register(isa_irq_to_vector(irq_line), vbox_irq_callback,
                      (void *)0, "vbox_mouse");
         /* The GSI path unmasks at the IOAPIC; the PIC path must unmask the
          * line explicitly (pic_init masks all but cascade), else VMMDev
          * interrupts stay masked and the IRQ path is dead. */
-        if (irq_line < 16)
-            pic_unmask_irq(irq_line);
+        pic_unmask_irq(irq_line);
+    } else {
+        klog(LOG_WARN, "vbox",
+             "VMMDev PCI IRQ line %u invalid -- IRQ disabled",
+             (uint64_t)irq_line);
     }
 
     /* Enable all VMMDev interrupts via the MMIO region.

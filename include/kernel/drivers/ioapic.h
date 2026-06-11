@@ -58,5 +58,9 @@ int ioapic_unmask_irq(uint32_t gsi);
  * Returns the GSI (may differ from irq due to overrides). */
 uint32_t ioapic_isa_to_gsi(uint8_t isa_irq);
 
+/* Rewrite a routed GSI's destination LAPIC ID (physical mode).
+ * Returns 0 on success, -1 on invalid GSI / no IOAPIC. */
+int ioapic_set_destination(uint32_t gsi, uint8_t dest_lapic);
+
 /* Returns 1 if the I/O APIC is available and initialized */
 int ioapic_available(void);

@@ -58,6 +58,10 @@ static volatile int s_idt_loaded;
  * Prevents log flooding from repeated synthetic interrupts. */
 static uint64_t unhandled_counts[256];
 
+/* Unhandled-vector fire count at which the storm quarantine masks the
+ * line at its owning controller (a stuck level line livelocks the CPU) */
+#define IDT_STORM_QUARANTINE_LIMIT  10000u
+
 /* ---- External assembly: ISR stubs 0-31 ---- */
 extern void isr0(void);  extern void isr1(void);  extern void isr2(void);
 extern void isr3(void);  extern void isr4(void);  extern void isr5(void);
@@ -351,6 +355,30 @@ uint64_t isr_handler(struct interrupt_frame *frame)
             klog(LOG_WARN, "idt",
                  "Unhandled interrupt vec=%u (0x%x): %u total hits",
                  (uint64_t)vec, (uint64_t)vec, count);
+        } else if (count == IDT_STORM_QUARANTINE_LIMIT) {
+            /* A no-handler vector storming at this rate livelocks the
+             * CPU (stuck level line). Mask it at the owning controller
+             * when one is known; otherwise it stays log-only. */
+            uint8_t  isa = irq_vector_to_isa((uint8_t)vec);
+            uint32_t gsi = irq_gsi_for_vector((uint8_t)vec);
+            if (gsi != 0xFFFFFFFFu && ioapic_available()) {
+                ioapic_mask_irq(gsi);
+                klog(LOG_ERROR, "idt",
+                     "vec 0x%x QUARANTINED (GSI %u masked, %u unhandled hits)",
+                     (uint64_t)vec, (uint64_t)gsi, count);
+            } else if (isa != 0xFF) {
+                if (ioapic_available())
+                    ioapic_mask_irq(ioapic_isa_to_gsi(isa));
+                else
+                    pic_mask_irq(isa);
+                klog(LOG_ERROR, "idt",
+                     "vec 0x%x QUARANTINED (ISA IRQ %u masked, %u unhandled hits)",
+                     (uint64_t)vec, (uint64_t)isa, count);
+            } else {
+                klog(LOG_ERROR, "idt",
+                     "vec 0x%x storming (%u unhandled hits) -- no maskable controller",
+                     (uint64_t)vec, count);
+            }
         }
 
         /* EOI -- controller-aware: PIC-delivered ISA vectors must EOI the

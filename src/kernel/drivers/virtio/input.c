@@ -21,7 +21,9 @@
 #include "kernel/drivers/virtio/virtio.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/idt.h"
+#include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/mouse.h"
@@ -142,14 +144,29 @@ static void drain_eventq(void)
 }
 
 /* ---- IRQ handler ---- */
-static uint64_t virtio_input_irq(struct interrupt_frame *frame)
+/* Claim-status body: the virtio ISR status read (which also acks) says
+ * whether THIS device raised the interrupt (INTx line may be shared) */
+static int virtio_input_irq_body(void)
 {
-    /* Read ISR status to acknowledge the interrupt (modern: MMIO read) */
-    virtio_read_isr(&pci_dev);
+    if (!virtio_read_isr(&pci_dev))
+        return 0;
 
     /* Process events */
     drain_eventq();
+    return 1;
+}
 
+/* Shared-chain registrant (IOAPIC GSI path; EOI owned by the dispatcher) */
+static int virtio_input_irq_shared(uint8_t vector, void *ctx)
+{
+    (void)vector; (void)ctx;
+    return virtio_input_irq_body() ? IRQ_HANDLED : IRQ_NONE;
+}
+
+/* IDT-level handler (PIC-only fallback path) */
+static uint64_t virtio_input_irq(struct interrupt_frame *frame)
+{
+    (void)virtio_input_irq_body();
     irq_eoi(irq_line);
     return (uint64_t)frame;
 }
@@ -245,10 +262,21 @@ int virtio_input_init(void)
     }
     virtq_kick(&eventq);
 
-    /* 8. Register IRQ handler. PCI interrupt-line can be unset/0xFF on
-     * APIC-routed firmware; isa_irq_to_vector() returns 0 (the divide-error
-     * vector) for those -- never register on it. */
-    if (irq_line < 16) {
+    /* 8. Register IRQ handler. PCI INTx is level-low (0x0F) and the
+     * line may be shared -- go through the shared GSI API on IOAPIC
+     * systems (the old bare IDT install received nothing there). PCI
+     * interrupt-line can be unset/0xFF on APIC-routed firmware;
+     * isa_irq_to_vector() returns 0 (the divide-error vector) for
+     * those -- never register on it. */
+    if (irq_line != 0 && irq_line != 0xFF && ioapic_available()) {
+        if (!irq_request_gsi_ex((uint32_t)irq_line, virtio_input_irq_shared,
+                                (void *)0, "virtio-input", 0x0F, 1))
+            klog(LOG_WARN, "input",
+                 "virtio-input: INTx GSI %u not routable -- IRQ disabled",
+                 (uint64_t)irq_line);
+    } else if (irq_line != 0 && irq_line < 16) {
+        /* irq_line 0 is unset, not ISA IRQ0 -- registering there would
+         * steal the PIT vector (0x20) */
         idt_register_handler(isa_irq_to_vector(irq_line), virtio_input_irq);
         pic_unmask_irq(irq_line);
     } else {

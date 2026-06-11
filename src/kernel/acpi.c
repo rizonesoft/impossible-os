@@ -25,6 +25,9 @@
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/fs/fat32.h"
+#include "kernel/irq.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/drivers/ioapic.h"
 
 /* ---- I/O helpers ---- */
 
@@ -748,12 +751,14 @@ void acpi_enable_fixed_events(void)
          (uint64_t)s_pm1a_sts_port, (uint64_t)s_pm1a_en_port);
 }
 
-/* SCI interrupt handler -- dispatches ACPI fixed events */
-static uint64_t acpi_sci_handler(struct interrupt_frame *frame)
+/* SCI body -- services PM1a fixed events and reports whether THIS
+ * controller raised the interrupt (the SCI line may be shared) */
+static int acpi_sci_process(void)
 {
     uint16_t sts;
+    int handled = 0;
 
-    if (!s_pm1a_sts_port) goto eoi;
+    if (!s_pm1a_sts_port) return 0;
 
     sts = inw_acpi(s_pm1a_sts_port);
 
@@ -762,25 +767,40 @@ static uint64_t acpi_sci_handler(struct interrupt_frame *frame)
         outw_acpi(s_pm1a_sts_port, (1u << 8));  /* clear PWRBTN_STS */
         klog(LOG_INFO, "acpi", "Power button pressed (SCI)");
         /* Power button handler dispatch pending -- see power management roadmap. */
+        handled = 1;
     }
 
     if (sts & (1u << 9)) {
         /* Sleep button pressed */
         outw_acpi(s_pm1a_sts_port, (1u << 9));  /* clear SLPBTN_STS */
         klog(LOG_INFO, "acpi", "Sleep button pressed (SCI)");
+        handled = 1;
     }
 
     if (sts & (1u << 15)) {
         /* WAK_STS -- system just woke from sleep */
         outw_acpi(s_pm1a_sts_port, (1u << 15));  /* clear WAK_STS */
         klog(LOG_INFO, "acpi", "Wake event detected (WAK_STS)");
+        handled = 1;
     }
 
-eoi:
-    {
-        extern void lapic_eoi(void);
-        lapic_eoi();
-    }
+    return handled;
+}
+
+/* Shared-chain registrant for the IOAPIC GSI path (EOI owned by the
+ * irq dispatch wrapper) */
+static int acpi_sci_shared(uint8_t vector, void *ctx)
+{
+    (void)vector; (void)ctx;
+    return acpi_sci_process() ? IRQ_HANDLED : IRQ_NONE;
+}
+
+/* IDT-level handler for the PIC-only fallback path; EOI is
+ * controller-aware (PIC-delivered ISA vector needs the PIC EOI) */
+static uint64_t acpi_sci_handler(struct interrupt_frame *frame)
+{
+    acpi_sci_process();
+    irq_eoi(irq_vector_to_isa((uint8_t)frame->int_no));
     return (uint64_t)frame;
 }
 
@@ -790,12 +810,53 @@ void acpi_register_sci(void)
 
     if (!fadt_ptr) return;
 
-    /* SCI interrupt number from FADT */
-    sci_vec = (uint8_t)(32 + fadt_ptr->sci_interrupt);
+    if (ioapic_available()) {
+        /* FADT SCI_INT below 16 is an ISA IRQ (translate through MADT
+         * overrides to its GSI); 16 and above it is already a GSI
+         * (ACPI 6.x FADT SCI_INT definition). Route through the GSI API
+         * so the IOAPIC redirection entry actually exists -- the old
+         * bare IDT install at 32+n received nothing on IOAPIC systems
+         * and used the pre-remap slave-PIC vector math (IRQ9 -> 0x29,
+         * while ISA IRQ9 delivers at 0x71 since the S4 remap). */
+        uint32_t gsi = (fadt_ptr->sci_interrupt < 16)
+                           ? ioapic_isa_to_gsi((uint8_t)fadt_ptr->sci_interrupt)
+                           : (uint32_t)fadt_ptr->sci_interrupt;
+        /* SCI is level-triggered active-low per the ACPI spec (0x0F);
+         * irq_request_gsi_ex itself treats a MADT override naming this
+         * GSI as authoritative (including flags 0 = conforms-to-bus),
+         * so no pre-resolution is needed here */
+        sci_vec = irq_request_gsi_ex(gsi, acpi_sci_shared, (void *)0,
+                                     "acpi-sci", 0x0F, 1);
+        if (!sci_vec) {
+            klog(LOG_ERROR, "acpi",
+                 "SCI GSI %u not routable -- SCI not registered",
+                 (uint64_t)gsi);
+            return;
+        }
+        klog(LOG_INFO, "acpi", "SCI registered (SCI_INT %u, GSI %u, vec 0x%x)",
+             (uint64_t)fadt_ptr->sci_interrupt, (uint64_t)gsi,
+             (uint64_t)sci_vec);
+        return;
+    }
 
+    /* PIC-only fallback: SCI must be an ISA IRQ, delivered at the
+     * canonical ISA vector (0x20-0x27 master, 0x70-0x77 slave remap) */
+    if (fadt_ptr->sci_interrupt >= 16) {
+        klog(LOG_ERROR, "acpi",
+             "SCI_INT %u is a GSI but no IOAPIC -- SCI not registered",
+             (uint64_t)fadt_ptr->sci_interrupt);
+        return;
+    }
+    sci_vec = isa_irq_to_vector((uint8_t)fadt_ptr->sci_interrupt);
+    if (!sci_vec) {
+        klog(LOG_ERROR, "acpi", "SCI ISA IRQ %u has no vector -- not registered",
+             (uint64_t)fadt_ptr->sci_interrupt);
+        return;
+    }
     idt_register_handler(sci_vec, acpi_sci_handler);
+    pic_unmask_irq((uint8_t)fadt_ptr->sci_interrupt);
 
-    klog(LOG_INFO, "acpi", "SCI handler registered (IRQ %u, vec %u)",
+    klog(LOG_INFO, "acpi", "SCI handler registered (ISA IRQ %u, vec 0x%x, PIC)",
          (uint64_t)fadt_ptr->sci_interrupt, (uint64_t)sci_vec);
 }
 

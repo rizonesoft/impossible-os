@@ -343,6 +343,27 @@ int ioapic_unmask_irq(uint32_t gsi)
     return 0;
 }
 
+int ioapic_set_destination(uint32_t gsi, uint8_t dest_lapic)
+{
+    uint64_t entry;
+    uint64_t irqf;
+    int pin;
+
+    if (!ioapic_base)
+        return -1;
+    pin = ioapic_gsi_to_pin(gsi);
+    if (pin < 0)
+        return -1;
+
+    spin_lock_irqsave(&ioapic_lock, &irqf);
+    entry = ioapic_get_entry((uint8_t)pin);
+    entry &= ~(0xFFULL << 56);              /* clear destination field */
+    entry |= ((uint64_t)dest_lapic << 56);
+    ioapic_set_entry((uint8_t)pin, entry);
+    spin_unlock_irqrestore(&ioapic_lock, irqf);
+    return 0;
+}
+
 int ioapic_available(void)
 {
     return ioapic_ready;
