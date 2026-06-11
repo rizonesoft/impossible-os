@@ -177,6 +177,20 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 
 **Test checkpoint:** Unhandled vector logs warning + EOI; spurious 0xFF and Hyper-V synthetic vectors do not panic. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | full suite 3500 PASS; dedicated irq_timer suite owned by Unit Tests section
+
+> **Notes:**
+> - Review moved ISA IRQ 8-15 to vectors 0x70-0x77: the historical 0x28-0x2F window put IRQ14 on the architecturally fixed DPL=3 NT syscall gate (INT 0x2E); `isa_irq_to_vector()` is now the only mapping and `irq.c` reserves the window permanently.
+> - Unhandled-vector EOI is controller-aware (`irq_vector_to_isa()` + `irq_eoi()`); PIC spurious IRQ7/15 detected via the 8259 ISR before any EOI; spurious 0xFF no longer EOIs (fixed in the S1/S2 pass).
+> - All PIC-fallback registrants migrated (mouse, vbox_mouse, virtio-input, rtl8139) with irq_line<16 guards so the sentinel can never land on vector 0.
+> - Static asserts in `vectors.h` now pin every DPL=3 software vector outside every hardware IRQ window.
+
+> **Verified:** 2026-06-11 | commit `5ae7bdb8` | 7/7 items | build OK | smoke PASS (KVM 2.4s)
+> **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 204)
+> **Accepted:** [H] ring-3 INT n on a DPL=0 gate panics the kernel (user DoS; kernel-wide fault-isolation gap) -> XREF: 02-kernel-core/TODO-23 §4 (item: "`ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher" at line 184)
+> **Deferred:** [M] no dedicated IDT/vector unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
+> **Quality reviewed:** 2026-06-11 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 6H+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 5. Dynamic IRQ Registration API
