@@ -184,7 +184,11 @@ try {
 
     $manifestPath = Join-Path $isoStage 'IPOS\manifest.json'
     Write-Note 'generating artifact manifest at /IPOS/manifest.json (--Format iso)'
-    & pwsh -NoProfile -File $buildManifest 'build' '--Out' $manifestPath '--Format' 'iso' | Out-Null
+    # Use powershell.exe (PS5.1) so the inner call doesn't silently no-op
+    # on hosts without PS7 on PATH (the rc check would otherwise pass on
+    # stale $LASTEXITCODE=0 with no manifest written). Same fix as
+    # scripts/release/test-build-manifest.ps1.
+    & powershell.exe -ExecutionPolicy Bypass -NoProfile -File $buildManifest 'build' '--Out' $manifestPath '--Format' 'iso' | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Err "build-manifest.ps1 build --Format iso failed (exit=$LASTEXITCODE)"
         exit 1

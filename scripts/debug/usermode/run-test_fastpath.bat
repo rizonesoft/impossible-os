@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-test_fastpath.bat -- -17 fast-path transport probe (test_fastpath.exe)
 ::
 :: Runs the five isolated ring-0<->3 fast-path probes (gs:0x30, gs:0x40,
@@ -9,4 +10,5 @@
 :: UTEST: verdict line so a drifted probe names itself without
 :: re-reading the serial log.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests -UtestFilter "test_fastpath.exe"
+popd
 pause

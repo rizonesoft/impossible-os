@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-all-kernel-tests.bat -- Run every kernel-side TEST_CAT_* suite
 ::
 :: Boots QEMU once with `test=1` and no SUITE filter, so the kernel
@@ -18,3 +19,4 @@ powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" 
 set RC=%errorlevel%
 if not defined NO_PAUSE pause
 exit /b %RC%
+popd

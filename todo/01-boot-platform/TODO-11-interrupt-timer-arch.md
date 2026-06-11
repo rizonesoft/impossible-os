@@ -117,6 +117,18 @@ Restructure `boot_interrupts.c` so LAPIC and IOAPIC are brought up before the PI
 
 **Test checkpoint:** Serial shows `LAPIC enabled` before PIT/HPET timer init; IOAPIC MMIO mapped from MADT. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | full suite 3500 PASS; dedicated irq_timer suite owned by Unit Tests section
+
+> **Notes:**
+> - Review hardened the shipped init: LAPIC + IOAPIC MMIO now UC-mapped via `vmm_map_mmio_uc()` with fail-closed PIC fallback (was WB identity-map access, a bare-metal gotcha violation).
+> - IOAPIC IOREGSEL/IOWIN window serialized with `ioapic_lock` (irqsave) across select+data pairs and 64-bit entry RMW; VER validated before programming; base must be page-aligned.
+> - GSI routing domain honored: `ioapic_gsi_to_pin()` translates absolute GSI to pin; public APIs take `uint32_t gsi`, return int; mandatory PIT route gates `ioapic_ready` so the PIC is never disabled without a working timer route.
+> - Consumers updated: `irq_request_gsi()` rolls back on unroutable GSI (closes the S5 validation item), AHCI INTx falls back to polling, spurious 0xFF no longer EOIs (Intel SDM 11.9).
+
+> **Verified:** 2026-06-11 | commit `1678de87` | 7/7 items | build OK | smoke PASS (KVM 2.4s)
+> **Deferred:** [M] no dedicated LAPIC/IOAPIC unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
+> **Quality reviewed:** 2026-06-11 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1C+6H+1M fixed, 1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 3. Conditional PIC Disable
@@ -168,7 +180,7 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [x] `irq_request_gsi(gsi, handler, ctx, name)`: allocates vector via `irq_alloc_vector()`, registers handler, programs IOAPIC redirection with MADT override flags; returns vector or 0
 - [x] `irq_free_gsi(gsi)`: masks IOAPIC entry, unregisters handler, frees vector
 - [ ] `irq_set_affinity(gsi, cpu_mask)` -- implement when IRQ balancing is needed; currently all routes to BSP (functional on SMP, just not balanced)
-- [ ] GSI routing-domain validation: `irq_request_gsi()` returns 0 and rolls back the vector when the GSI exceeds the IOAPIC redirection range (today `ioapic_route_irq()` silently drops it); GSI-99 unit test asserts the fix
+- [x] GSI routing-domain validation: `irq_request_gsi()` returns 0 and rolls back the vector when the GSI exceeds the IOAPIC redirection range (shipped in S2 review, commit 1678de87); GSI-99 unit test asserts the fix when the Unit Tests suite lands
 - [ ] Shared GSI handlers for PCI INTx: per-vector handler chain + shared-registration flag, dispatch walks all handlers, single EOI; required before driver migration (`irq_entry` is single-handler today)
 - [ ] IRQ storm quarantine: auto-mask a vector/GSI after threshold unhandled fires (today log+EOI forever); expose quarantined state via `irq list` (D09 T12 §1)
 - [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table

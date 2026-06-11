@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-test_fileio.bat -- file-I/O coverage binary (test_fileio.exe)
 ::
 :: Exercises SYS_OPENFILE + SYS_READHANDLE + SYS_CLOSEHANDLE +
@@ -10,4 +11,5 @@
 :: -NoKernelTests skips the kernel TEST_CAT_* sweep so usermode
 :: iteration is fast.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests -UtestFilter "test_fileio.exe"
+popd
 pause

@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-all-usermode-tests.bat -- Boot once, run every user-mode test_*.exe
 ::
 :: -TestOnly + -NoKernelTests + (no -UtestFilter) makes the scenario launcher
@@ -13,3 +14,4 @@ powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" 
 set RC=%errorlevel%
 if not defined NO_PAUSE pause
 exit /b %RC%
+popd

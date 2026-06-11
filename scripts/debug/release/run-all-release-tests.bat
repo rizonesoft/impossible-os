@@ -9,7 +9,7 @@
 :: Each step exits non-zero on failure; the bat aborts and reports
 :: which step failed. Mirrors run-all-kernel-tests.bat shape.
 
-setlocal
+setlocal EnableDelayedExpansion
 set FAILS=0
 :: pushd auto-maps UNC working dirs to a drive letter so the spawned
 :: PS1s see a real local CWD (\\wsl.localhost\... is unsupported as a
@@ -18,24 +18,41 @@ set FAILS=0
 pushd "%~dp0"
 set ROOT=%~dp0..\..\..
 
+:: Exit-code contract for the chained PS1 peers (matches their docstrings):
+::   0  test passed
+::   1  test failed (real regression)
+::   2  usage / missing tool / unmet prereq -- environmental, not a regression
+::
+:: rc=2 is treated as [SKIP] (not [FAIL]) so the aggregator stays useful on
+:: hosts that don't have the full Windows-side toolchain installed. The
+:: PS1 already prints `[ERROR] missing tool: ...` with install hints to
+:: stderr, so the [SKIP] line is just the aggregator's interpretation.
+
 echo === build-manifest.ps1 (26 assertions) ===
 powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0..\..\release\test-build-manifest.ps1"
-if errorlevel 1 (
+set RC=!ERRORLEVEL!
+if !RC! NEQ 0 (
     echo [FAIL] test-build-manifest.ps1
     set /A FAILS+=1
 )
 
 if exist "%ROOT%\build\release\disk.img" (
-    echo === to-vhdx.ps1 (qemu-img convert + verify) ===
+    echo === to-vhdx.ps1 ^(qemu-img convert + verify^) ===
     powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0..\..\release\to-vhdx.ps1"
-    if errorlevel 1 (
+    set RC=!ERRORLEVEL!
+    if !RC! EQU 2 (
+        echo [SKIP] to-vhdx.ps1 -- tool/prereq missing ^(see [ERROR] line above^)
+    ) else if !RC! NEQ 0 (
         echo [FAIL] to-vhdx.ps1
         set /A FAILS+=1
     )
 
-    echo === to-iso.ps1 (xorriso) ===
+    echo === to-iso.ps1 ^(xorriso^) ===
     powershell.exe -ExecutionPolicy Bypass -NoProfile -File "%~dp0..\..\release\to-iso.ps1"
-    if errorlevel 1 (
+    set RC=!ERRORLEVEL!
+    if !RC! EQU 2 (
+        echo [SKIP] to-iso.ps1 -- tool/prereq missing ^(see [ERROR] line above^)
+    ) else if !RC! NEQ 0 (
         echo [FAIL] to-iso.ps1
         set /A FAILS+=1
     )

@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-all-desktop-tests.bat -- Desktop layer aggregate.
 ::
 :: Chains the desktop test bats so the cross-layer
@@ -35,3 +36,4 @@ if %OVERALL% GTR 0 (
 )
 if not defined NO_PAUSE pause
 exit /b %RC%
+popd

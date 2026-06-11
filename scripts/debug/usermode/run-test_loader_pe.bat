@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-test_loader_pe.bat -- §15 binary-format loader coverage: PE32+
 ::
 :: Runs only test_loader_pe.exe and exits. Binary is produced by
@@ -8,4 +9,5 @@
 :: so a regression that silently routes this through the ELF loader
 :: surfaces as `format=ELF`.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests -UtestFilter "test_loader_pe.exe"
+popd
 pause

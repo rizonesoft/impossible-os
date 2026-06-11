@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-matrix-desktop-tests.bat -- multi-monitor + DPI test matrix entry
 :: point for the desktop UI test framework (section 13).
 ::
@@ -60,3 +61,4 @@ set RC=%FAILED%
 if %RC% GTR 0 set RC=1
 if not defined NO_PAUSE pause
 exit /b %RC%
+popd

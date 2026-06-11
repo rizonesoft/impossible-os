@@ -26,14 +26,14 @@
 #include "kernel/types.h"
 
 /* ---- Maximum limits ----
- * Raised 2026-04-19 from 512 to 1024 after the suite count hit 496
- * (see kernel-test-harness roadmap, action-registry section) -- the
- * old ceiling would silently drop the next ~3 TODO sections' tests.
- * When suite_count approaches TEST_MAX_SUITES again, revisit the
- * testing infrastructure: consider kunit-style conditional compilation,
+ * Raised 2026-04-19 from 512 to 1024 after the suite count hit 496;
+ * raised 2026-05-10 from 1024 to 2048 after the cap was hit again
+ * (1024 + 42 dropped on the 2026-05-10 boot-suite run). When
+ * suite_count approaches TEST_MAX_SUITES again, revisit the testing
+ * infrastructure: consider kunit-style conditional compilation,
  * parallel execution on SMP, or splitting into loadable test modules.
  * Current growth rate: ~5 suites per TODO section. */
-#define TEST_MAX_SUITES     1024
+#define TEST_MAX_SUITES     2048
 #define TEST_MAX_NAME_LEN   32
 
 /* ---- Test categories for selective execution ---- */

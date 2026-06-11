@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-all-usermode-tests-tcg.bat -- Boot once under TCG, run every user-mode test_*.exe
 ::
 :: TCG mirror of run-all-usermode-tests.bat. Use when WHPX is unavailable
@@ -10,4 +11,5 @@
 :: then correctness / stress / perf) WITHOUT re-running the kernel
 :: TEST_CAT_* sweep first. -Accel tcg forces software emulation.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel tcg -TestOnly -NoKernelTests
+popd
 pause

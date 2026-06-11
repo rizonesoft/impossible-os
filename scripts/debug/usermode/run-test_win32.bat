@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-test_win32.bat -- Win32 API binary (test_win32.exe)
 ::
 :: Exercises the Win32 shim (user/lib/win32.c) from ring 3:
@@ -10,4 +11,5 @@
 :: -NoKernelTests skips the kernel TEST_CAT_* sweep so usermode
 :: iteration is fast.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests -UtestFilter "test_win32.exe"
+popd
 pause

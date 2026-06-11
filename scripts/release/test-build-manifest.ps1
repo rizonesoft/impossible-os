@@ -53,18 +53,48 @@ function Note { param([string] $M) Write-Output $M }
 function Ok   { param([string] $M) $Script:Pass++; Write-Output ("  [PASS] " + $M) }
 function Bad  { param([string] $M) $Script:Fail++; Write-Output ("  [FAIL] " + $M) }
 
+# Inner shell is `powershell.exe` (Windows PowerShell 5.1) to match the
+# runtime declared in build-manifest.ps1 and the runtime the launching
+# .bat selects. `& pwsh` was the prior shape; on hosts without PS7 on
+# PATH the call resolves to nothing, no native process runs, and
+# $LASTEXITCODE retains its prior value (0) -- the rc check then passes
+# while no manifest is written. Pass -ExecutionPolicy Bypass so UNC-
+# pathed scripts (\\wsl.localhost\...) are not blocked as Internet zone
+# under default RemoteSigned policy.
+$Script:InnerPS = 'powershell.exe'
+
 function Invoke-Manifest {
     param([string[]] $ScriptArgs)
-    & pwsh -NoProfile -File (Join-Path $RepoRoot 'scripts\release\build-manifest.ps1') @ScriptArgs 2>&1
-    return $LASTEXITCODE
+    # Local-relax: native-process stderr captured via `2>&1` is wrapped as
+    # NativeCommandError ErrorRecord and promoted to terminating by the
+    # script-level `$ErrorActionPreference = 'Stop'`. Negative tests (check
+    # mode rejecting bad input) MUST be allowed to write [ERROR] to stderr
+    # without aborting the test peer at the call site.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Script:InnerPS -ExecutionPolicy Bypass -NoProfile -File (Join-Path $RepoRoot 'scripts\release\build-manifest.ps1') @ScriptArgs 2>&1
+        $rc = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    return $rc
 }
 
 function Invoke-ManifestCapture {
     # Returns @{ rc = N; out = <combined stderr+stdout> } so we can assert on
-    # error text from check-mode failures.
+    # error text from check-mode failures. See Invoke-Manifest for why we
+    # have to locally relax $ErrorActionPreference around `2>&1` here.
     param([string[]] $ScriptArgs)
-    $combined = & pwsh -NoProfile -File (Join-Path $RepoRoot 'scripts\release\build-manifest.ps1') @ScriptArgs 2>&1
-    @{ rc = $LASTEXITCODE; out = ($combined -join "`n") }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $combined = & $Script:InnerPS -ExecutionPolicy Bypass -NoProfile -File (Join-Path $RepoRoot 'scripts\release\build-manifest.ps1') @ScriptArgs 2>&1
+        $rc = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    @{ rc = $rc; out = ($combined -join "`n") }
 }
 
 function Get-ManifestObject {
@@ -212,9 +242,17 @@ $fpTmp    = Join-Path $TmpDir 'sign.fingerprint'
 $stampTmp = Join-Path $TmpDir 'sign.stamp'
 Set-Content -LiteralPath $fpTmp -Value 'deadbeef' -NoNewline
 Set-Content -LiteralPath $stampTmp -Value '' -NoNewline
-$past = (Get-Date).AddHours(-1)
-(Get-Item -LiteralPath $fpTmp).LastWriteTime    = $past
-(Get-Item -LiteralPath $stampTmp).LastWriteTime = $past
+# Anchor staleness to max(BOOTX64.EFI, kernel.exe) mtime, not wall clock.
+# Get-SecureBootStatus marks the stamp 'unsigned' when stamp_mt < max(bl_mt,
+# kr_mt). A wall-clock "1 hour ago" stops being older-than-the-artifact
+# whenever the build is more than an hour old, so the test silently mis-
+# verifies on day-old build trees. Anchor to artifact mtime instead.
+$blMt = (Get-Item -LiteralPath 'build/tools/BOOTX64.EFI').LastWriteTimeUtc
+$krMt = (Get-Item -LiteralPath 'build/kernel.exe').LastWriteTimeUtc
+$artifactMt = if ($blMt -gt $krMt) { $blMt } else { $krMt }
+$past = $artifactMt.AddSeconds(-60)
+(Get-Item -LiteralPath $fpTmp).LastWriteTimeUtc    = $past
+(Get-Item -LiteralPath $stampTmp).LastWriteTimeUtc = $past
 $mStalePath = Join-Path $TmpDir 'm_stale.json'
 $prevFp    = $env:SIGN_FINGERPRINT_FILE
 $prevStamp = $env:SIGN_STAMP_FILE
@@ -234,7 +272,11 @@ if ($rawS -match '"secure_boot_status":\s*"unsigned"') { Ok "stale signing stamp
 Note "[4j] build refuses stale boot-info-abi.kernel.json (older than artifacts)"
 $abiTmp = Join-Path $TmpDir 'abi.json'
 Copy-Item -LiteralPath 'build/boot-info-abi.kernel.json' -Destination $abiTmp
-(Get-Item -LiteralPath $abiTmp).LastWriteTime = (Get-Date).AddHours(-1)
+# Same wall-clock-vs-artifact-mtime issue as [4i]; see comment there.
+$blMt = (Get-Item -LiteralPath 'build/tools/BOOTX64.EFI').LastWriteTimeUtc
+$krMt = (Get-Item -LiteralPath 'build/kernel.exe').LastWriteTimeUtc
+$artifactMt = if ($blMt -gt $krMt) { $blMt } else { $krMt }
+(Get-Item -LiteralPath $abiTmp).LastWriteTimeUtc = $artifactMt.AddSeconds(-60)
 $mStaleAbiPath = Join-Path $TmpDir 'm_stale_abi.json'
 $prevAbi = $env:BOOT_INFO_ABI_FILE
 $env:BOOT_INFO_ABI_FILE = $abiTmp

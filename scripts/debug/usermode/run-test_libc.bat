@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-test_libc.bat -- libc coverage binary (test_libc.exe)
 ::
 :: Smoke-checks user/include/string.h + stdio.h: strlen, strcmp x2,
@@ -7,4 +8,5 @@
 :: TEST_CAT_* sweep first; -UtestFilter limits the launcher to this
 :: one binary.
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -TestOnly -NoKernelTests -UtestFilter "test_libc.exe"
+popd
 pause

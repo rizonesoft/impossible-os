@@ -93,7 +93,27 @@ if (-not (Test-Path -LiteralPath $InImg -PathType Leaf)) {
 $qemuImg = Get-Command qemu-img.exe -ErrorAction SilentlyContinue
 if (-not $qemuImg) { $qemuImg = Get-Command qemu-img -ErrorAction SilentlyContinue }
 if (-not $qemuImg) {
-    Write-Err "missing tool: qemu-img.exe (install qemu-tools or 'choco install qemu-img')"
+    # Fallback: standard Windows install paths. The QEMU MSI / official
+    # installer drops qemu-img.exe in `<ProgramFiles>\qemu\` by default
+    # without prepending it to PATH. Don't fail-closed on a tool that
+    # exists at a well-known install location -- the cost is one
+    # Test-Path per fallback.
+    $qemuFallbacks = @()
+    foreach ($pfx in @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData)) {
+        if ($pfx) {
+            $qemuFallbacks += (Join-Path $pfx 'qemu\qemu-img.exe')
+            $qemuFallbacks += (Join-Path $pfx 'chocolatey\bin\qemu-img.exe')
+        }
+    }
+    foreach ($cand in $qemuFallbacks) {
+        if (Test-Path -LiteralPath $cand -PathType Leaf) {
+            $qemuImg = [pscustomobject] @{ Path = $cand }
+            break
+        }
+    }
+}
+if (-not $qemuImg) {
+    Write-Err "missing tool: qemu-img.exe (install qemu-tools, 'choco install qemu-img', or place it on PATH)"
     exit 2
 }
 
@@ -130,13 +150,49 @@ Write-Note ("Hyper-V module {0}; using qemu-img.exe for byte-parity with the Lin
 
 if (Test-Path -LiteralPath $OutImg) { Remove-Item -LiteralPath $OutImg -Force }
 
+# ---- UNC staging ------------------------------------------------------------
+# Windows qemu-img.exe cannot read or write through `\\wsl.localhost\` (or
+# `\\wsl$\`) UNC paths -- WSL's 9p file server returns a non-power-of-two
+# `request_alignment`, which trips bdrv_open_driver's assertion in qemu's
+# block layer regardless of the convert/info/compare subcommand. The
+# .bat aggregator's `pushd "%~dp0"` UNC-to-drive auto-mapping doesn't help
+# here because the mapped drive still routes through 9p.
+#
+# Detect a UNC input or output and stage to a local Windows temp dir so
+# qemu-img only ever touches NTFS-backed files. Bytes are identical: the
+# stage is a verbatim copy and the convert is the same invocation, so the
+# byte-parity contract with the Linux peer (`to-vhdx.sh`) is preserved.
+
+$isUncIn  = $inCanon  -match '^\\\\'
+$isUncOut = $outCanon -match '^\\\\'
+$stageDir = $null
+if ($isUncIn -or $isUncOut) {
+    $stageDir = Join-Path ([System.IO.Path]::GetTempPath()) ("to-vhdx-stage-" + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
+    Write-Note ("staging via {0} (input/output on UNC; qemu-img cannot operate over WSL 9p)" -f $stageDir)
+}
+
+if ($isUncIn) {
+    $convertIn = Join-Path $stageDir 'in.img'
+    Copy-Item -LiteralPath $inCanon -Destination $convertIn -Force
+} else {
+    $convertIn = $inCanon
+}
+if ($isUncOut) {
+    $convertOut = Join-Path $stageDir ('out_' + (Split-Path -Leaf $outCanon))
+} else {
+    $convertOut = $outCanon
+}
+
+try {
+
 # ---- convert ----------------------------------------------------------------
 
 Write-Note "input  $InImg"
 Write-Note ("output $OutImg (subformat=dynamic block_size={0})" -f $BlockSize)
 
 $opts = "subformat=dynamic,block_size=$BlockSize"
-& $qemuImg.Path convert -f raw -O vhdx -o $opts -- $InImg $OutImg
+& $qemuImg.Path convert -f raw -O vhdx -o $opts -- $convertIn $convertOut
 if ($LASTEXITCODE -ne 0) {
     Write-Err "qemu-img convert failed (exit=$LASTEXITCODE)"
     exit 1
@@ -145,7 +201,7 @@ if ($LASTEXITCODE -ne 0) {
 # ---- verify -----------------------------------------------------------------
 
 if ($Verify) {
-    $infoJson = & $qemuImg.Path info --output=json $OutImg
+    $infoJson = & $qemuImg.Path info --output=json $convertOut
     if ($LASTEXITCODE -ne 0) {
         Write-Err "qemu-img info failed on $OutImg"
         exit 1
@@ -157,12 +213,25 @@ if ($Verify) {
     }
     Write-Note ("qemu-img info OK (format={0})" -f $info.format)
 
-    & $qemuImg.Path compare -f raw -F vhdx -- $InImg $OutImg | Out-Null
+    & $qemuImg.Path compare -f raw -F vhdx -- $convertIn $convertOut | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Err "qemu-img compare reports byte-content drift between $InImg and $OutImg"
         exit 1
     }
     Write-Note 'qemu-img compare OK (byte-content identical)'
+}
+
+# Move the staged VHDX back to the user-facing output path (UNC if that's
+# what the caller asked for) only after convert+verify pass; on failure
+# we leave $OutImg empty so retry semantics are obvious.
+if ($isUncOut) {
+    Move-Item -LiteralPath $convertOut -Destination $outCanon -Force
+}
+
+} finally {
+    if ($stageDir -and (Test-Path -LiteralPath $stageDir)) {
+        Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # ---- summary ----------------------------------------------------------------

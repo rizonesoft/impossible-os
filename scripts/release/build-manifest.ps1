@@ -336,22 +336,31 @@ function Write-Utf8NoBom {
 # ---- build mode -------------------------------------------------------------
 
 function Invoke-CmdBuild {
-    param([string[]] $Args)
+    # NOTE: parameter name MUST NOT be $Args. $Args is a PowerShell reserved
+    # automatic variable; declaring `param([string[]] $Args)` looks like it
+    # works but the parameter binder silently drops the value passed via
+    # `-Args $x`, leaving the function-local $Args empty. Symptom is "the
+    # --Out flag is ignored and the script writes to the default path",
+    # which the test peer then can't find. Keep this $ScriptArgs.
+    param([string[]] $ScriptArgs)
 
     $out = 'build/artifacts/manifest.json'
     $format = 'raw'
     $vmImagePath = ''
 
     $i = 0
-    while ($i -lt $Args.Count) {
-        $a = $Args[$i]
+    while ($i -lt $ScriptArgs.Count) {
+        $a = $ScriptArgs[$i]
+        # PowerShell `switch` is case-insensitive by default AND has no
+        # implicit break -- listing both '--Out' and '--out' would match
+        # twice and over-increment $i. Single PascalCase entries cover both
+        # spellings. `--vm-image` is kept alongside `--VmImage` because the
+        # hyphen makes them genuinely different strings, not just case.
         switch ($a) {
-            '--Out'      { $out = $Args[$i + 1]; $i += 2 }
-            '--out'      { $out = $Args[$i + 1]; $i += 2 }
-            '--Format'   { $format = $Args[$i + 1]; $i += 2 }
-            '--format'   { $format = $Args[$i + 1]; $i += 2 }
-            '--VmImage'  { $vmImagePath = $Args[$i + 1]; $i += 2 }
-            '--vm-image' { $vmImagePath = $Args[$i + 1]; $i += 2 }
+            '--Out'      { $out = $ScriptArgs[$i + 1]; $i += 2 }
+            '--Format'   { $format = $ScriptArgs[$i + 1]; $i += 2 }
+            '--VmImage'  { $vmImagePath = $ScriptArgs[$i + 1]; $i += 2 }
+            '--vm-image' { $vmImagePath = $ScriptArgs[$i + 1]; $i += 2 }
             '-h'         { Show-Usage; exit 0 }
             '--help'     { Show-Usage; exit 0 }
             default      { Write-Err "unknown build flag: $a"; Show-Usage; exit 2 }
@@ -725,13 +734,15 @@ function Validate-EntryRow {
 }
 
 function Invoke-CmdCheck {
-    param([string[]] $Args)
-    if ($Args.Count -ne 1) {
+    # See Invoke-CmdBuild: $Args is reserved; using it as a parameter name
+    # silently drops the value at the call site.
+    param([string[]] $ScriptArgs)
+    if ($ScriptArgs.Count -ne 1) {
         Write-Err "check requires exactly one path argument"
         Show-Usage
         exit 2
     }
-    $path = $Args[0]
+    $path = $ScriptArgs[0]
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         Write-Err "manifest not found: $path"
         exit 1
@@ -1014,8 +1025,8 @@ if (-not $Subcommand) {
     exit 2
 }
 switch ($Subcommand) {
-    'build'  { Invoke-CmdBuild -Args $Rest }
-    'check'  { Invoke-CmdCheck -Args $Rest }
+    'build'  { Invoke-CmdBuild -ScriptArgs $Rest }
+    'check'  { Invoke-CmdCheck -ScriptArgs $Rest }
     '-h'     { Show-Usage; exit 0 }
     '--help' { Show-Usage; exit 0 }
     default  { Write-Err "unknown subcommand: $Subcommand"; Show-Usage; exit 2 }

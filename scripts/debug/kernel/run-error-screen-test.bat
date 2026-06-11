@@ -1,4 +1,5 @@
 @echo off
+pushd "%~dp0"
 :: run-error-screen-test.bat -- Trigger boot error screen with QR code
 ::
 :: Sets error_screen_test=1 in boot.conf, which makes the bootloader
@@ -15,4 +16,5 @@
 ::   - QEMU installed on Windows
 ::   - bash scripts/build.sh (builds system-disk.img)
 powershell.exe -ExecutionPolicy Bypass -File "%~dp0..\..\machines\run-qemu.ps1" -Accel whpx -ErrorScreenTest
+popd
 pause

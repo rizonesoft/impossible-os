@@ -213,8 +213,15 @@ fp_tmp="$TMPDIR/sign.fingerprint"
 stamp_tmp="$TMPDIR/sign.stamp"
 echo "deadbeef" > "$fp_tmp"
 touch "$stamp_tmp"
-# Backdate stamps to be older than build/kernel.exe (which mtime is "now").
-touch -d "1 hour ago" "$fp_tmp" "$stamp_tmp"
+# Anchor staleness to max(BOOTX64.EFI, kernel.exe) mtime, not wall clock.
+# Get_secure_boot_status flags the stamp 'unsigned' when stamp_mt < max(bl_mt,
+# kr_mt). A wall-clock "1 hour ago" stops being older-than-the-artifact when
+# the build is more than an hour old, so the test silently mis-verifies on
+# day-old build trees. Pick the newer of the two artifacts and step back 60s.
+bl_epoch=$(stat -c %Y build/tools/BOOTX64.EFI)
+kr_epoch=$(stat -c %Y build/kernel.exe)
+artifact_epoch=$(( bl_epoch > kr_epoch ? bl_epoch : kr_epoch ))
+touch -d "@$(( artifact_epoch - 60 ))" "$fp_tmp" "$stamp_tmp"
 SIGN_FINGERPRINT_FILE="$fp_tmp" SIGN_STAMP_FILE="$stamp_tmp" \
     bash scripts/release/build-manifest.sh build --out "$TMPDIR/m_stale.json" >/dev/null
 if grep -q '"secure_boot_status": "unsigned"' "$TMPDIR/m_stale.json"; then
@@ -226,7 +233,11 @@ fi
 note "[4j] build refuses stale boot-info-abi.kernel.json (older than artifacts)"
 abi_tmp="$TMPDIR/abi.json"
 cp build/boot-info-abi.kernel.json "$abi_tmp"
-touch -d "1 hour ago" "$abi_tmp"
+# Same wall-clock-vs-artifact-mtime issue as [4i]; see comment there.
+bl_epoch=$(stat -c %Y build/tools/BOOTX64.EFI)
+kr_epoch=$(stat -c %Y build/kernel.exe)
+artifact_epoch=$(( bl_epoch > kr_epoch ? bl_epoch : kr_epoch ))
+touch -d "@$(( artifact_epoch - 60 ))" "$abi_tmp"
 set +e
 err_out="$(BOOT_INFO_ABI_FILE="$abi_tmp" bash scripts/release/build-manifest.sh build --out "$TMPDIR/m_stale_abi.json" 2>&1 >/dev/null)"
 rc=$?
