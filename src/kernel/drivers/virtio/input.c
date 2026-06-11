@@ -129,7 +129,12 @@ static void drain_eventq(void)
     int idx;
 
     while ((idx = virtq_get_buf(&eventq, &len)) >= 0) {
-        if (idx < EVENT_BUF_COUNT && len >= sizeof(struct virtio_input_event))
+        /* virtq_get_buf bounds idx to the queue size, but event_bufs is
+         * only EVENT_BUF_COUNT entries -- never index past it, not even
+         * on the recycle path */
+        if (idx >= EVENT_BUF_COUNT)
+            continue;
+        if (len >= sizeof(struct virtio_input_event))
             process_event(&event_bufs[idx]);
 
         /* Recycle the buffer: re-add to available ring */

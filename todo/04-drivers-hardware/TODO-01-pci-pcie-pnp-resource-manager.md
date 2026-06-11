@@ -74,7 +74,7 @@ title: "TODO-01 -- PCI/PCIe, PnP & Resource Manager"
 
 ## 5. IRQ Routing and MSI/MSI-X Handoff
 
-- [ ] Route legacy INTx through `_PRT`/IOAPIC when MSI is unavailable.
+- [ ] Route legacy INTx through `_PRT`/IOAPIC when MSI is unavailable -- replaces the PCI_INTERRUPT_LINE-as-GSI assumption in the `irq_request_gsi_ex` consumers (`ahci_core.c`, `vbox_mouse.c`, `rtl8139.c`, `virtio/input.c`; filed from `01-boot-platform/TODO-11` §5 review).
 - [ ] Call APIC vector allocator for MSI/MSI-X.
 - [ ] Store active interrupt mode on device nodes.
 - [ ] Commit: `"drivers: centralize PCI interrupt routing"`

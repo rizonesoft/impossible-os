@@ -92,25 +92,31 @@ uint64_t irq_gsi_count(uint32_t gsi);
 typedef int (*irq_shared_handler_t)(uint8_t vector, void *ctx);
 
 /* Request a GSI with explicit MADT-style flags (PCI INTx is level-low =
- * 0x0F; pass 0 to use the MADT override / ISA default) and an optional
+ * 0x0F; a MADT override naming the GSI is authoritative over the caller
+ * flags, including override flags 0 = conforms-to-bus) and an optional
  * shared mode. Shared registrants chain on one vector; every handler in
  * the chain runs per interrupt and reports IRQ_HANDLED / IRQ_NONE.
  * Returns the vector, or 0 on failure. Non-shared requests on a vector
- * that already has a chain fail (and vice versa). */
+ * that already has a chain fail (and vice versa). PASSIVE_LEVEL-only
+ * (current_irql < DISPATCH_LEVEL): callers at DISPATCH_LEVEL or above
+ * are refused with 0 (joining drains in-flight dispatches). */
 uint8_t irq_request_gsi_ex(uint32_t gsi, irq_shared_handler_t handler,
                            void *ctx, const char *name, uint16_t flags,
                            int shared);
 
 /* Remove ONE shared registrant from a GSI chain (matched by handler+ctx).
  * Masks the line during chain mutation and drains in-flight dispatches
- * before the node is reusable. Frees the vector when the chain empties.
- * Returns 0 on success, -1 when not found. Not callable from ISR context. */
+ * before the node is reusable. Parks the vector when the chain empties.
+ * Returns 0 on success, -1 when not found. PASSIVE_LEVEL-only
+ * (current_irql < DISPATCH_LEVEL, broader than just ISR context):
+ * refused with -1 -- a DISPATCH_LEVEL caller would deadlock the drain. */
 int irq_release_gsi_shared(uint32_t gsi, irq_shared_handler_t handler,
                            void *ctx);
 
 /* Route a GSI's interrupt delivery to the first set bit of cpu_mask
  * (logical CPU index). The CPU must be online. Returns 0 on success,
- * -1 on unrouted GSI / offline CPU / empty mask / no IOAPIC. */
+ * -1 on unrouted GSI / offline CPU / empty mask / no IOAPIC.
+ * PASSIVE_LEVEL-only (current_irql < DISPATCH_LEVEL): refused with -1. */
 int irq_set_affinity(uint32_t gsi, uint64_t cpu_mask);
 
 /* Reverse map: the GSI a vector was requested for, or 0xFFFFFFFF. */

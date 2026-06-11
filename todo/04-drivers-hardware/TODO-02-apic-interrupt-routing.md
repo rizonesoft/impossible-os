@@ -103,6 +103,7 @@ Maintain a bitmap of vectors 32–254. `apic_alloc_msi_vector()` finds the lowes
 - [ ] `apic_msi_data(vector)` → `vector | (0 << 15) | (0 << 14) | (0 << 11)` (edge-triggered, fixed delivery)
 - [ ] `EXPORT_SYMBOL(apic_alloc_msi_vector)`, `EXPORT_SYMBOL(apic_free_msi_vector)`, `EXPORT_SYMBOL(apic_msi_address)`, `EXPORT_SYMBOL(apic_msi_data)` -- consumed by `pci_enable_msi/msix` in TODO-08
 - [ ] Boot log: `[APIC] MSI vector pool: 32–254 (%u vectors available)`
+- [ ] Per-vector dispatch gating for shared GSI chains: split the global `irq_chain_lock` entry gate in `src/kernel/irq.c` (`irq_shared_dispatch_wrapper` entry increment, `irq_chain_drain` callers) into per-`irq_entry` locks so a registration/release drain on one GSI cannot stall ISR entry on unrelated shared lines; filed from `01-boot-platform/TODO-11` §5 perf review
 - [ ] Commit: `"lapic: MSI vector bitmap allocator -- apic_alloc/free_msi_vector, address/data helpers"`
 
 ## 4. TLB Shootdown IPI `[Opus]`

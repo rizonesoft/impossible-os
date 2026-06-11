@@ -422,6 +422,19 @@ int virtq_get_buf(struct virtqueue *vq, uint32_t *len)
     used_idx = vq->last_used % vq->size;
     desc_idx = vq->used->ring[used_idx].id;
 
+    /* The descriptor id is DEVICE-SUPPLIED data: a malformed or hostile
+     * device can return an id outside the descriptor table, and callers
+     * index their buffer arrays with it. Treat out-of-range as ring
+     * corruption: consume the entry and report nothing-new so the drain
+     * loop terminates instead of corrupting memory. */
+    if (desc_idx >= vq->size) {
+        klog(LOG_ERROR, "virtio",
+             "used-ring id %u >= queue size %u -- corrupt ring entry dropped",
+             (uint64_t)desc_idx, (uint64_t)vq->size);
+        vq->last_used++;
+        return -1;
+    }
+
     if (len)
         *len = vq->used->ring[used_idx].len;
 
