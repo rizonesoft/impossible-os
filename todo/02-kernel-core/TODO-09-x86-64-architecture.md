@@ -14,7 +14,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §13 AMD SVM + Intel VT-x detection. **Open [ ]:** §7 through §12, §14 through §16 per Implementation Order.
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-23` (gap analysis 2026-04-12: `TODO-23` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
-> - TSC invariant check + TSC-Deadline APIC -> `TODO-17`
+> - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
 > - HWP/CPPC frequency scaling + thermal monitoring -> `TODO-26`
 > - NUMA-aware page allocator -> `D03` `03-memory-concurrency`
 > - Hybrid P/E-core scheduler policy -> `D03` `03-memory-concurrency`

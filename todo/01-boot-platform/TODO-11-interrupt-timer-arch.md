@@ -8,10 +8,10 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 
 # TODO-11 -- Interrupt Architecture & Unified Timer Subsystem
 
-> **Goal:** Define the authoritative Phase 1 interrupt and timer architecture: ACPI MADT first, LAPIC/IOAPIC before legacy PIC enable paths where applicable, full 256-vector IDT coverage, dynamic GSI/vector registration (`irq_request_gsi`), and a unified timer HAL (`uptime_ns()`) choosing HPET, LAPIC, or PIT. Historical bug class: PIT before IOAPIC routing on PCAT_COMPAT machines; that init order is fixed in tree. Remaining work: HPET wired into UTS (`hpet_ns` / `hpet_init` exist; not `g_system_timer` yet), IRQ affinity and driver migration to `irq_request_gsi`, shell tools (`irq list`, `boot-timeline`), and unit tests below.
+> **Goal:** Define the authoritative Phase 1 interrupt and timer architecture: ACPI MADT first, LAPIC/IOAPIC before legacy PIC enable paths where applicable, full 256-vector IDT coverage, dynamic GSI/vector registration (`irq_request_gsi`), and a unified timer HAL (`uptime_ns()`) choosing HPET, LAPIC, or PIT. Historical bug class: PIT before IOAPIC routing on PCAT_COMPAT machines; that init order is fixed in tree. Remaining work: UTS high-res reads via the `mono_clock` contract, one-shot/TSC-deadline mode, IRQ affinity + GSI validation + shared INTx handlers + storm quarantine, driver migration to `irq_request_gsi`, AP LAPIC timers, shell tools (`irq list`, `boot-timeline`), and unit tests below.
 
 > [!IMPORTANT]
-> **Current state (2026-04-11):** Phase 1 order matches `boot_interrupts.c`: GDT → IDT → ACPI (MADT) → LAPIC/IOAPIC → PIC path → services → `timer_hal_init()` before `sti` (see `02-kernel-core/TODO-01-kernel-init-sequencing.md` §3). PIT-before-IOAPIC routing hazard is **fixed in tree**. Open work: §6 HPET as UTS backend (`hpet_ns`), §5 affinity + driver migration + `irq list` in `09-desktop-shell/TODO-12-utilities.md` §1, §7 recalibration hook (`02-kernel-core/TODO-26-power-management.md` §15), Unit Tests + Verification below.
+> **Current state (2026-04-11):** Phase 1 order matches `boot_interrupts.c`: GDT → IDT → ACPI (MADT) → LAPIC/IOAPIC → PIC path → services → `timer_hal_init()` before `sti` (see `02-kernel-core/TODO-01-kernel-init-sequencing.md` §3). PIT-before-IOAPIC routing hazard is **fixed in tree**. Open work (gap-audit 2026-06-11): §5 affinity + GSI routing validation + shared INTx handlers + storm quarantine + driver migration; §6 mono_clock single-clocksource contract + one-shot/TSC-deadline mode + HV TSC page + quiesce/resume; §7 AP LAPIC timer bring-up (BSP-only today); shell tools in `09-desktop-shell/TODO-12-utilities.md` §1; Unit Tests + Verification below.
 >
 > **Historical:** PCAT_COMPAT machines can see IRQ 0 from both PIC and IOAPIC if the PIT is enabled before IOAPIC routing; MADT-first sequencing avoids that class of bug.
 
@@ -60,7 +60,7 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [x]   |
 | 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [/]   |
 | 💎  |   6   | Unified timer subsystem (UTS)       | §5, TODO-09 §4      |  [/]   |
-| 💎  |   7   | LAPIC timer calibration             | §6                  |  [x]   |
+| 💎  |   7   | LAPIC timer calibration             | §6                  |  [/]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [x]   |
 | ⭐  |   9   | Boot time visualization             | §7, TODO-14 §3, §6  |  [x]   |
 | 💎  |  10   | Remove Hyper-V debug workarounds    | §1--§7              |  [x]   |
@@ -156,6 +156,9 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [x] `irq_request_gsi(gsi, handler, ctx, name)`: allocates vector via `irq_alloc_vector()`, registers handler, programs IOAPIC redirection with MADT override flags; returns vector or 0
 - [x] `irq_free_gsi(gsi)`: masks IOAPIC entry, unregisters handler, frees vector
 - [ ] `irq_set_affinity(gsi, cpu_mask)` -- implement when IRQ balancing is needed; currently all routes to BSP (functional on SMP, just not balanced)
+- [ ] GSI routing-domain validation: `irq_request_gsi()` returns 0 and rolls back the vector when the GSI exceeds the IOAPIC redirection range (today `ioapic_route_irq()` silently drops it); GSI-99 unit test asserts the fix
+- [ ] Shared GSI handlers for PCI INTx: per-vector handler chain + shared-registration flag, dispatch walks all handlers, single EOI; required before driver migration (`irq_entry` is single-handler today)
+- [ ] IRQ storm quarantine: auto-mask a vector/GSI after threshold unhandled fires (today log+EOI forever); expose quarantined state via `irq list` (D09 T12 §1)
 - [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table
 - [x] `irq_dispatch()` already exists in `irq.c` -- registered handler called + EOI sent
 - [ ] `irq list` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
@@ -174,7 +177,8 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 
 - [x] `timer_driver_t` vtable exists with `name`, `init`, `get_ticks`, `sleep_ms`, `get_freq`; added `read_ns` field
 - [x] PIT and LAPIC drivers implemented and working (in `pit.c` and `lapic.c`)
-- [ ] Wire HPET into UTS as optional `timer_driver_t` backend -- `hpet_init()` / `hpet_ns()` / `hpet_available()` already live in `hpet.c` (`mono_clock.c` consumes `hpet_ns()`). Remaining: expose `read_ns` via a small HPET driver vtable entry and/or select HPET in `timer_hal_init()` when LAPIC path is unsuitable; keep `vmm_map_mmio_uc()` (TODO-10 §1). `lapic.c` already UC-maps HPET for calibration tiers.
+- [ ] Single clocksource contract: UTS `read_ns` delegates to `mono_ns()` (`mono_clock.c`, D02 T08 §4) instead of growing a second HPET path; UTS keeps tick/event delivery; UC-map any HPET MMIO (TODO-10 §1)
+- [ ] One-shot / TSC-deadline LAPIC mode: `timer_driver_t` gains `arm_oneshot(deadline_ns)` via `IA32_TSC_DEADLINE` (CPUID-gated, LVT one-shot fallback); tickless-idle enabler, policy owner D02 T26 idle governor
 - [ ] Hyper-V reference TSC page consumer: when `boot_info.hv_flags & HV_FLAG_TSC_ENLIGHTENMENT`, prefer `HV_X64_MSR_REFERENCE_TSC` page over LAPIC calibration; init owner `02-kernel-core/TODO-09 §15`
 - [x] LAPIC timer: calibration via Hyper-V MSR / PIT busy-wait already working
 - [x] Selection waterfall: platform_detect() -> Hyper-V MSR -> LAPIC calibration -> PIT fallback; `hv_flags` available
@@ -196,6 +200,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 - [x] LAPIC calibration: 4-tier waterfall (Hyper-V MSR → CPUID 0x15 → TSC-referenced → PM Timer → PIT ch2) in `lapic.c`; stores `cal_ticks_per_ms`. HPET tier uses `vmm_map_mmio_uc()` when that path runs (TODO-10 §1); WB caching caused MCE before UC mapping. TSC-referenced tier added 2026-03-28 for bare metal.
 - [x] Run on BSP during `timer_hal_init()` -- confirmed working in serial log
 - [x] Scheduler uses LAPIC periodic timer at 100 Hz; `sched_tick` driven by LAPIC ISR
+- [ ] AP LAPIC timer bring-up: program + unmask the LVT timer per AP with BSP calibration, per-CPU `sched_tick` (today APs are masked, BSP-only tick); consumer D03 T07 §3 per-CPU run queues
 - [ ] Recalibrate hook for CPU frequency changes -- deferred to `02-kernel-core/TODO-26-power-management.md` §15
 - [x] Serial log: `LAPIC timer: periodic, vec=34, ICR=N, div=1 (calibrated, 100 Hz target)`
 - [x] Already implemented -- marking complete
@@ -263,12 +268,14 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 | 💎 | Conditional PIC disable      | ✅ PCAT gated                    | ✅ mask 8259A                     | ✅ §3 done                         |
 | 💎 | Full IDT coverage            | ✅ KiUnexpectedInterrupt         | ✅ spurious path                  | ✅ §4 IDT full                     |
 | 💎 | Dynamic IRQ registration     | ✅ IoConnectInterrupt            | ✅ request_irq                    | [/] §5 GSI only                    |
+| 💎 | Shared line IRQs (INTx)      | ✅ line-based sharing            | ✅ IRQF_SHARED                    | ⬜ §5 single-handler               |
 | 💎 | Unified timer HAL            | ✅ QPC picks source              | ✅ clocksource framework          | [/] §6 LAPIC PIT                   |
-| 💎 | MSI / MSI-X (PCI)            | ✅ IoConnectInterruptEx          | ✅ pci MSI vectors                | ⬜ TODO-05 §5                      |
-| 💎 | LAPIC timer calibration      | ✅ HAL per CPU cal               | ✅ calibrate delay                | ✅ §7 waterfall                    |
+| 💎 | One-shot / TSC-deadline tick | ✅ dynamic tick                  | ✅ NO_HZ tsc-deadline             | ⬜ §6 periodic only                |
+| 💎 | MSI / MSI-X (PCI)            | ✅ IoConnectInterruptEx          | ✅ pci MSI vectors                | ⬜ D04T02 §3                       |
+| 💎 | LAPIC timer calibration      | ✅ HAL per CPU cal               | ✅ calibrate delay                | [/] §7 BSP only                    |
 | ⭐  | Boot timeline JSON           | ❌ WPA offline trace             | ❌ systemd analyze post           | ✅ §9 JSON file                    |
 
-> **Parity:** §1--§4, §7--§8, §10 match Windows/Linux for APIC/IDT/LAPIC tick paths. **[/]** §5 (affinity, `irq list`, driver migration) and §6 (HPET as `g_system_timer` / `read_ns`) remain. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
+> **Parity:** §1--§4, §8, §10 match Windows/Linux for APIC/IDT paths. **[/]** §5 (affinity, GSI validation, shared handlers, storm quarantine, driver migration), §6 (mono_clock contract, one-shot/TSC-deadline), §7 (AP LAPIC timer) remain. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
 
 ---
 
@@ -285,7 +292,10 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
   - `irq_request_gsi()` with valid GSI (e.g., ISA IRQ 1) returns non-zero vector in range 32-239
   - `irq_gsi_count()` returns 0 for an unregistered GSI
   - `uptime_ns()` returns > 0 after boot; two calls 1ms apart differ by approximately 1000000 ns (within 50% tolerance)
-  - Timer driver active: `g_system_timer` non-NULL and `g_system_timer->name` is "LAPIC" or "PIT" today; when §6 HPET backend lands, accept "HPET" too
+  - Timer driver active: `g_system_timer` non-NULL and `g_system_timer->name` is "LAPIC" or "PIT"; when §6 mono_clock contract lands, `uptime_ns()` and `mono_ns()` agree within tolerance
+  - Shared GSI: two handlers registered shared on one GSI both fire (TEST_PENDING until §5 sharing lands)
+  - One-shot: `arm_oneshot(deadline)` fires exactly once near the deadline (TEST_PENDING until §6 lands)
+  - AP timers: per-CPU tick counters advance on all CPUs with `-smp 4` (TEST_PENDING until §7 AP bring-up lands)
   - `hpet_available()` consistent with ACPI HPET table presence (0 or 1); `hpet_ns()` returns 0 when HPET disabled
   - IDT coverage: software `INT 0xFE` does not triple-fault (unhandled vector logs warning + EOI)
   - LAPIC spurious vector (0xFF): software `INT 0xFF` does not crash
