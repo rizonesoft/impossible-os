@@ -23,7 +23,14 @@ only when every domain is complete or a hard-stop condition fires.
 
 ## Cursor
 
-- **Start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
+- **Current (2026-06-11):** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`,
+  resume at `## 5. Dynamic IRQ Registration API`. Stages 1-2 (validate +
+  gap-audit) for TODO-11 already completed in the 2026-06-11 run -- do NOT
+  re-run them; go straight to the section pipeline at section 5. The working
+  tree carries uncommitted in-progress edits from the interrupted session
+  (`timer.c`, `boot_interrupts.c`, `test_runner.c`, ...) -- inspect and fold
+  them into the section 5 work, do not discard them.
+- **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
 - Everything before the cursor (domain `00-infrastructure`, and
   `01-boot-platform` TODO-01 through TODO-10) is DONE -- do not revisit except
   when an XREF from active work lands a concrete item there.
@@ -100,4 +107,4 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 > Append one line per session: date, cursor at start, cursor at end, sections
 > shipped, pauses/blockers. Keep entries to one line each.
 
-- (no runs yet)
+- 2026-06-11 16:36 SAST: run 1 -- TODO-11 validate + gap-audit done, sections 1-4 worked; stopped at section 5 (Dynamic IRQ Registration API) on Claude usage limit; uncommitted section-5 work left in tree; resume armed for 20:47.
