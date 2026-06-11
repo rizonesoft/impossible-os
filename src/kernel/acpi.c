@@ -20,6 +20,7 @@
 
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
@@ -239,13 +240,27 @@ static uint16_t parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
 
 /* ---- MADT parsing ---- */
 
-/* Read the BSP's LAPIC ID from the APIC base MSR */
+/* Read the BSP's LAPIC ID register through a UC mapping (device MMIO must
+ * never be read through the WB identity map). The mapping is cached per
+ * physical base so a reparse does not leak mapping pages. */
 static uint8_t read_bsp_lapic_id(void)
 {
-    /* Read from LAPIC ID register at offset 0x20 (identity-mapped) */
-    volatile uint32_t *lapic_id_reg =
-        (volatile uint32_t *)(uintptr_t)(lapic_base_addr + 0x20);
-    return (uint8_t)((*lapic_id_reg >> 24) & 0xFF);
+    static volatile uint32_t *s_lapic_map = (volatile uint32_t *)0;
+    static uint32_t s_lapic_map_phys = 0;
+
+    if (!s_lapic_map || s_lapic_map_phys != lapic_base_addr) {
+        s_lapic_map = (volatile uint32_t *)
+            vmm_map_mmio_uc(lapic_base_addr, 4096);
+        s_lapic_map_phys = lapic_base_addr;
+        if (!s_lapic_map) {
+            klog(LOG_WARN, "acpi",
+                 "UC map of LAPIC at 0x%x failed -- assuming BSP id 0",
+                 (uint64_t)lapic_base_addr);
+            return 0;
+        }
+    }
+    /* LAPIC ID register at offset 0x20, id in bits 24-31 */
+    return (uint8_t)((s_lapic_map[0x20 / 4] >> 24) & 0xFF);
 }
 
 /* Typed MADT record sizes (ACPI 6.x Table 5-21 ff.) for length validation.

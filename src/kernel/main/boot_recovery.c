@@ -50,12 +50,12 @@ static void kbd_poll_begin(void)
 {
     __asm__ volatile ("cli");
     if (kernel_subsystem_ready(SUBSYS_IOAPIC)) {
-        extern void ioapic_mask_irq(uint8_t irq);
+        extern int ioapic_mask_irq(uint32_t gsi);
         extern uint32_t ioapic_isa_to_gsi(uint8_t isa_irq);
         /* Mask the routed keyboard GSI, not raw IRQ1 -- ACPI may
          * have an interrupt source override remapping ISA IRQ1. */
         uint32_t gsi = ioapic_isa_to_gsi(1);
-        ioapic_mask_irq((uint8_t)gsi);
+        ioapic_mask_irq(gsi);
     }
     /* Drain any pending scancodes */
     while (inb(0x64) & 0x01)

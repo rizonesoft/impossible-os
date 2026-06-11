@@ -956,23 +956,31 @@ void ahci_setup_interrupts(void)
                 irq_register(ahci_irq_vector, ahci_irq_handler,
                              NULL, "ahci");
 
-                ioapic_route_irq(pci_irq_line, ahci_irq_vector,
-                                 0, 0x0F);
                 /* ioapic_route_irq() installs the entry MASKED; unmask it or
                  * AHCI completion interrupts never arrive (dead INTx path on
-                 * IOAPIC-only platforms like VirtualBox). */
-                ioapic_unmask_irq(pci_irq_line);
+                 * IOAPIC-only platforms like VirtualBox). Both calls report
+                 * unroutable GSIs -- fall back to polling on failure. */
+                if (ioapic_route_irq(pci_irq_line, ahci_irq_vector,
+                                     0, 0x0F) != 0 ||
+                    ioapic_unmask_irq(pci_irq_line) != 0) {
+                    irq_unregister(ahci_irq_vector);
+                    irq_free_vector(ahci_irq_vector);
+                    ahci_irq_vector = 0;
+                    klog(LOG_WARN, "ahci",
+                           "AHCI: INTx IRQ %u not routable, using polling",
+                           (uint64_t)pci_irq_line);
+                } else {
+                    ghc = ahci_read32(abar, AHCI_GHC);
+                    ghc |= AHCI_GHC_IE;
+                    ahci_write32(abar, AHCI_GHC, ghc);
 
-                ghc = ahci_read32(abar, AHCI_GHC);
-                ghc |= AHCI_GHC_IE;
-                ahci_write32(abar, AHCI_GHC, ghc);
-
-                /* NOTE: use_events stays 0 -- same as MSI path */
-                irq_ok = 1;
-                klog(LOG_INFO, "ahci",
-                       "AHCI: INTx IRQ %u -> vector 0x%x (legacy)",
-                       (uint64_t)pci_irq_line,
-                       (uint64_t)ahci_irq_vector);
+                    /* NOTE: use_events stays 0 -- same as MSI path */
+                    irq_ok = 1;
+                    klog(LOG_INFO, "ahci",
+                           "AHCI: INTx IRQ %u -> vector 0x%x (legacy)",
+                           (uint64_t)pci_irq_line,
+                           (uint64_t)ahci_irq_vector);
+                }
             } else {
                 klog(LOG_WARN, "ahci",
                        "AHCI: no free IRQ vector, using polling");

@@ -196,8 +196,17 @@ uint8_t irq_request_gsi(uint32_t gsi, irq_handler_t handler, void *ctx,
                 break;
             }
         }
-        ioapic_route_irq((uint8_t)gsi, vec, 0, flags);
-        ioapic_unmask_irq((uint8_t)gsi);
+        if (ioapic_route_irq(gsi, vec, 0, flags) != 0 ||
+            ioapic_unmask_irq(gsi) != 0) {
+            /* GSI outside the IOAPIC routing domain: roll back so the
+             * caller sees failure instead of a vector that never fires */
+            irq_unregister(vec);
+            irq_free_vector(vec);
+            klog(LOG_ERROR, "irq",
+                 "irq_request_gsi(%u): GSI not routable on this IOAPIC",
+                 (uint64_t)gsi);
+            return 0;
+        }
     }
 
     gsi_to_vector[gsi] = vec;
@@ -218,7 +227,7 @@ void irq_free_gsi(uint32_t gsi)
 
     /* Mask the IOAPIC entry */
     if (ioapic_available())
-        ioapic_mask_irq((uint8_t)gsi);
+        ioapic_mask_irq(gsi);
 
     irq_unregister(vec);
     irq_free_vector(vec);

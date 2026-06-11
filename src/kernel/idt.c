@@ -310,9 +310,10 @@ uint64_t isr_handler(struct interrupt_frame *frame)
     {
         uint64_t count;
 
-        /* LAPIC spurious (0xFF): silent EOI, no logging */
+        /* LAPIC spurious (0xFF): NO EOI -- spurious interrupts do not set
+         * an ISR bit (Intel SDM 11.9); an EOI here would acknowledge the
+         * highest real in-service interrupt instead. Silent return. */
         if (vec == 0xFF) {
-            lapic_eoi();
             result = (uint64_t)frame;
             goto irql_restore;
         }

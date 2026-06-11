@@ -135,7 +135,7 @@ void pit_init(void)
      * so the PIT never fires into an unregistered IDT slot. */
     pic_unmask_irq(IRQ_TIMER);
     if (ioapic_available())
-        ioapic_unmask_irq((uint8_t)ioapic_isa_to_gsi(IRQ_TIMER));
+        ioapic_unmask_irq(ioapic_isa_to_gsi(IRQ_TIMER));
 
     klog(LOG_INFO, "timer", "PIT timer: %u Hz (divisor %u)",
            (uint64_t)pit_actual_freq, (uint64_t)pit_divisor);

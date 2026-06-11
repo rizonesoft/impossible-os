@@ -23,13 +23,22 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/sched/spinlock.h"
 /* ---- State ---- */
 
 static volatile uint32_t *ioapic_base = (volatile uint32_t *)0;
 static uint32_t max_redir_entries = 0;
+static uint32_t ioapic_gsi_base = 0;   /* first GSI handled by this IOAPIC */
 static int ioapic_ready = 0;
 
-/* ---- MMIO register access ---- */
+/* The IOREGSEL/IOWIN pair is a shared two-step register window: any
+ * interleaved select from another CPU lands the data phase on the wrong
+ * register. Held across every select+data sequence AND across the 64-bit
+ * redirection-entry read/modify/write pairs. */
+static spinlock_t ioapic_lock = SPINLOCK_INIT;
+
+/* ---- MMIO register access (callers hold ioapic_lock) ---- */
 
 /* I/O APIC uses indirect register access:
  * Write register index to IOREGSEL (offset 0x00),
@@ -45,6 +54,18 @@ static void ioapic_write(uint32_t reg, uint32_t val)
 {
     ioapic_base[0] = reg;          /* IOREGSEL */
     ioapic_base[4] = val;          /* IOWIN */
+}
+
+/* Translate an absolute GSI to this IOAPIC's redirection-table pin.
+ * Returns the pin index, or -1 when the GSI is outside this IOAPIC's
+ * GSI range (gsi_base for max_redir_entries pins). */
+static int ioapic_gsi_to_pin(uint32_t gsi)
+{
+    if (gsi < ioapic_gsi_base)
+        return -1;
+    if (gsi - ioapic_gsi_base >= max_redir_entries)
+        return -1;
+    return (int)(gsi - ioapic_gsi_base);
 }
 
 /* ---- Redirection table access ---- */
@@ -101,21 +122,55 @@ void ioapic_init(void)
         klog(LOG_WARN, "ioapic", "No I/O APIC found -- staying with PIC");
         return;
     }
+    if (base_addr & 0xFFF) {
+        klog(LOG_ERROR, "ioapic",
+             "I/O APIC base 0x%x not page-aligned -- staying with PIC",
+             (uint64_t)base_addr);
+        return;
+    }
 
-    ioapic_base = (volatile uint32_t *)(uintptr_t)base_addr;
+    /* IOREGSEL/IOWIN are device registers: UC mapping is mandatory
+     * (cached/reordered access returns stale interrupt state on real HW) */
+    ioapic_base = (volatile uint32_t *)vmm_map_mmio_uc(base_addr, 4096);
+    if (!ioapic_base) {
+        klog(LOG_ERROR, "ioapic",
+             "UC map of I/O APIC at 0x%x failed -- staying with PIC",
+             (uint64_t)base_addr);
+        return;
+    }
 
-    /* Read version register: bits 16-23 = max redirection entry */
-    ver = ioapic_read(0x01);
+    /* Read version register: bits 16-23 = max redirection entry.
+     * 0 / all-ones means no device decodes the window -- fail closed
+     * instead of programming 256 phantom entries. */
+    {
+        uint64_t irqf;
+        spin_lock_irqsave(&ioapic_lock, &irqf);
+        ver = ioapic_read(0x01);
+        spin_unlock_irqrestore(&ioapic_lock, irqf);
+    }
+    if (ver == 0 || ver == 0xFFFFFFFF) {
+        klog(LOG_ERROR, "ioapic",
+             "I/O APIC version register invalid (0x%x) -- device absent, staying with PIC",
+             (uint64_t)ver);
+        ioapic_base = (volatile uint32_t *)0;
+        return;
+    }
     max_redir_entries = ((ver >> 16) & 0xFF) + 1;
+    ioapic_gsi_base = acpi_madt_info()->ioapic_gsi_base;
 
     /* Get BSP LAPIC ID for routing */
     bsp_lapic_id = lapic_id();
 
     /* Mask ALL entries first (safe default).
      * ioapic_route_irq() also routes masked; each driver unmasks after init. */
-    for (i = 0; i < max_redir_entries; i++) {
-        /* Set mask bit (bit 16), vector 0, destination 0 */
-        ioapic_set_entry((uint8_t)i, (uint64_t)1 << 16);
+    {
+        uint64_t irqf;
+        spin_lock_irqsave(&ioapic_lock, &irqf);
+        for (i = 0; i < max_redir_entries; i++) {
+            /* Set mask bit (bit 16), vector 0, destination 0 */
+            ioapic_set_entry((uint8_t)i, (uint64_t)1 << 16);
+        }
+        spin_unlock_irqrestore(&ioapic_lock, irqf);
     }
 
     /* Route standard ISA IRQs to BSP with vectors 32-47.
@@ -125,6 +180,8 @@ void ioapic_init(void)
      * systems. With the standard IRQ 0→GSI 2 override, IRQ 2 would also
      * map to GSI 2 and overwrite the PIT routing, killing the timer. */
     {
+        int pit_routed = 0;       /* the PIT route is mandatory: without it
+                                   * the PIC gets disabled with no timer */
         uint8_t gsi_routed[24];   /* track which GSIs are already routed */
         for (i = 0; i < 24; i++)
             gsi_routed[i] = 0;
@@ -153,16 +210,33 @@ void ioapic_init(void)
                 }
             }
 
-            if (gsi < max_redir_entries) {
+            if (ioapic_route_irq(gsi, (uint8_t)(32 + i),
+                                 (uint8_t)bsp_lapic_id, flags) == 0) {
                 klog(LOG_DEBUG, "ioapic",
                      "  Route: ISA IRQ %u -> GSI %u, vec %u, dest LAPIC %u, flags=0x%x",
                      (uint64_t)i, (uint64_t)gsi, (uint64_t)(32 + i),
                      (uint64_t)bsp_lapic_id, (uint64_t)flags);
-                ioapic_route_irq((uint8_t)gsi, (uint8_t)(32 + i),
-                                (uint8_t)bsp_lapic_id, flags);
                 if (gsi < 24)
                     gsi_routed[gsi] = 1;
+                if (i == 0)
+                    pit_routed = 1;
+            } else {
+                klog(LOG_WARN, "ioapic",
+                     "  ISA IRQ %u -> GSI %u outside this IOAPIC's range -- not routed",
+                     (uint64_t)i, (uint64_t)gsi);
             }
+        }
+
+        if (!pit_routed) {
+            /* Without the timer route, advertising IOAPIC readiness would
+             * let boot disable the PIC and lose all timer interrupts.
+             * Fail closed and keep the PIC path alive. */
+            klog(LOG_ERROR, "ioapic",
+                 "PIT route (ISA IRQ 0) not coverable by this IOAPIC -- "
+                 "staying with PIC");
+            ioapic_base = (volatile uint32_t *)0;
+            max_redir_entries = 0;
+            return;
         }
     }
 
@@ -174,13 +248,18 @@ void ioapic_init(void)
          (uint64_t)bsp_lapic_id);
 }
 
-void ioapic_route_irq(uint8_t irq, uint8_t vector,
-                      uint8_t dest_lapic, uint16_t flags)
+int ioapic_route_irq(uint32_t gsi, uint8_t vector,
+                     uint8_t dest_lapic, uint16_t flags)
 {
     uint64_t entry = 0;
+    uint64_t irqf;
+    int pin;
 
-    if (!ioapic_base || irq >= max_redir_entries)
-        return;
+    if (!ioapic_base)
+        return -1;
+    pin = ioapic_gsi_to_pin(gsi);
+    if (pin < 0)
+        return -1;
 
     /* Vector (bits 0-7) */
     entry = (uint64_t)vector;
@@ -212,31 +291,50 @@ void ioapic_route_irq(uint8_t irq, uint8_t vector,
      * handler so that no IRQ fires into the IDT before a handler exists. */
     entry |= (1ULL << 16);
 
-    ioapic_set_entry(irq, entry);
+    spin_lock_irqsave(&ioapic_lock, &irqf);
+    ioapic_set_entry((uint8_t)pin, entry);
+    spin_unlock_irqrestore(&ioapic_lock, irqf);
+    return 0;
 }
 
-void ioapic_mask_irq(uint8_t irq)
+int ioapic_mask_irq(uint32_t gsi)
 {
     uint64_t entry;
+    uint64_t irqf;
+    int pin;
 
-    if (!ioapic_base || irq >= max_redir_entries)
-        return;
+    if (!ioapic_base)
+        return -1;
+    pin = ioapic_gsi_to_pin(gsi);
+    if (pin < 0)
+        return -1;
 
-    entry = ioapic_get_entry(irq);
+    spin_lock_irqsave(&ioapic_lock, &irqf);
+    entry = ioapic_get_entry((uint8_t)pin);
     entry |= (1ULL << 16);  /* set mask bit */
-    ioapic_set_entry(irq, entry);
+    ioapic_set_entry((uint8_t)pin, entry);
+    spin_unlock_irqrestore(&ioapic_lock, irqf);
+    return 0;
 }
 
-void ioapic_unmask_irq(uint8_t irq)
+int ioapic_unmask_irq(uint32_t gsi)
 {
     uint64_t entry;
+    uint64_t irqf;
+    int pin;
 
-    if (!ioapic_base || irq >= max_redir_entries)
-        return;
+    if (!ioapic_base)
+        return -1;
+    pin = ioapic_gsi_to_pin(gsi);
+    if (pin < 0)
+        return -1;
 
-    entry = ioapic_get_entry(irq);
+    spin_lock_irqsave(&ioapic_lock, &irqf);
+    entry = ioapic_get_entry((uint8_t)pin);
     entry &= ~(1ULL << 16);  /* clear mask bit */
-    ioapic_set_entry(irq, entry);
+    ioapic_set_entry((uint8_t)pin, entry);
+    spin_unlock_irqrestore(&ioapic_lock, irqf);
+    return 0;
 }
 
 int ioapic_available(void)

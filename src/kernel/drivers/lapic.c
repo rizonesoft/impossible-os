@@ -28,6 +28,7 @@
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
 #include "kernel/boot_info.h"
+#include "kernel/mm/vmm.h"
 
 /* ---- State ---- */
 
@@ -78,8 +79,16 @@ void lapic_init(void)
         return;
     }
 
-    lapic_base = (volatile uint32_t *)(uintptr_t)base_addr;
-    klog(LOG_DEBUG, "lapic", "init: base=0x%x", (uint64_t)base_addr);
+    /* LAPIC registers are device MMIO: UC mapping is mandatory (cached
+     * access returns stale ISR/IRR state and breaks EOI on real HW) */
+    lapic_base = (volatile uint32_t *)vmm_map_mmio_uc(base_addr, 4096);
+    if (!lapic_base) {
+        klog(LOG_ERROR, "lapic",
+             "UC map of LAPIC at 0x%x failed -- staying with PIC",
+             (uint64_t)base_addr);
+        return;
+    }
+    klog(LOG_DEBUG, "lapic", "init: base=0x%x (UC-mapped)", (uint64_t)base_addr);
 
     /* Enable the APIC via the IA32_APIC_BASE MSR (set bit 11 = global enable)
      * This is required on some hardware before MMIO access works. */

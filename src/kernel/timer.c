@@ -145,9 +145,10 @@ void timer_hal_init(void)
         g_system_timer = &lapic_driver;
 
         /* Suppress PIT -- never program it on non-TCG platforms.
-         * Mask PIT IRQ0 to prevent ghost ticks from stale PIT state. */
+         * Mask the PIT's routed GSI (ISA IRQ 0 is usually overridden to
+         * GSI 2) to prevent ghost ticks from stale PIT state. */
         if (ioapic_available())
-            ioapic_mask_irq(0);
+            ioapic_mask_irq(ioapic_isa_to_gsi(0));
 
         klog(LOG_INFO, "timer",
              "UTS: %s selected (%s, %u ticks/ms = %u MHz bus)",

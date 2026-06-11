@@ -34,20 +34,25 @@
  * overrides, and route all ISA IRQs to the BSP's LAPIC. */
 void ioapic_init(void);
 
-/* Route an IRQ (GSI) to a specific LAPIC with the given vector.
- *   irq:        Global System Interrupt number (0-23)
+/* Route a GSI to a specific LAPIC with the given vector. The GSI is
+ * translated to this IOAPIC's redirection pin (gsi - gsi_base).
+ *   gsi:        absolute Global System Interrupt number
  *   vector:     IDT vector number (32-254)
  *   dest_lapic: target LAPIC ID (use 0 for BSP)
  *   flags:      MADT override flags (polarity + trigger mode)
- *               0 = default (edge-triggered, active-high) */
-void ioapic_route_irq(uint8_t irq, uint8_t vector,
-                      uint8_t dest_lapic, uint16_t flags);
+ *               0 = default (edge-triggered, active-high)
+ * Returns 0 on success, -1 when the GSI is outside this IOAPIC's range
+ * or the IOAPIC is unavailable. Entry is installed MASKED. */
+int ioapic_route_irq(uint32_t gsi, uint8_t vector,
+                     uint8_t dest_lapic, uint16_t flags);
 
-/* Mask (disable) an IRQ in the I/O APIC redirection table */
-void ioapic_mask_irq(uint8_t irq);
+/* Mask (disable) a GSI in the I/O APIC redirection table.
+ * Returns 0 on success, -1 on invalid GSI / no IOAPIC. */
+int ioapic_mask_irq(uint32_t gsi);
 
-/* Unmask (enable) an IRQ in the I/O APIC redirection table */
-void ioapic_unmask_irq(uint8_t irq);
+/* Unmask (enable) a GSI in the I/O APIC redirection table.
+ * Returns 0 on success, -1 on invalid GSI / no IOAPIC. */
+int ioapic_unmask_irq(uint32_t gsi);
 
 /* Translate an ISA IRQ number to a GSI using MADT overrides.
  * Returns the GSI (may differ from irq due to overrides). */
