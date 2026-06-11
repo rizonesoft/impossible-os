@@ -45,6 +45,8 @@ permissions:
 
 env:
   LLVM_VERSION: "19"
+  # Node 20 runtime removed from runners 2026-09-16; opt in to Node 24 now.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   visual-regression:
@@ -58,22 +60,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # LLVM + deps mirror the build workflow so caching is shared across jobs.
-      - name: Cache LLVM toolchain
-        id: cache-llvm
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/lib/llvm-${{ env.LLVM_VERSION }}
-            /usr/bin/clang-${{ env.LLVM_VERSION }}
-            /usr/bin/ld.lld-${{ env.LLVM_VERSION }}
-            /usr/bin/llvm-objcopy-${{ env.LLVM_VERSION }}
-            /usr/bin/llvm-ar-${{ env.LLVM_VERSION }}
-            /usr/bin/llvm-nm-${{ env.LLVM_VERSION }}
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v2
-
+      # LLVM + deps mirror the build workflow. No actions/cache on the /usr
+      # LLVM paths: unprivileged tar cannot restore root-owned paths
+      # (tar exit 2, hit 2026-06-11 in build.yml).
       - name: Install LLVM ${{ env.LLVM_VERSION }}
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION }} main" \

@@ -32,6 +32,9 @@ permissions:
 
 env:
   LLVM_VERSION: "19"
+  # Node 20 actions runtime is removed from runners 2026-09-16 (forced to 24
+  # from 2026-06-16). Opt in now so checkout/cache/upload-artifact run on 24.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:
@@ -46,31 +49,16 @@ jobs:
         with:
           fetch-depth: 0  # Full history for build_info.h commit hash
 
-      # ── Cache LLVM toolchain ────────────────────────────────────────────────
-      # The LLVM apt install takes ~30s; caching the installed binaries
-      # shaves this off on subsequent runs. Cache paths must cover every
-      # binary the 14-sentinel setup.sh --verify contract looks for.
-      - name: Cache LLVM toolchain
-        id: cache-llvm
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/lib/llvm-${{ env.LLVM_VERSION }}
-            /usr/bin/clang-${{ env.LLVM_VERSION }}
-            /usr/bin/clangd-${{ env.LLVM_VERSION }}
-            /usr/bin/ld.lld-${{ env.LLVM_VERSION }}
-            /usr/bin/llvm-objcopy-${{ env.LLVM_VERSION }}
-            /usr/bin/llvm-ar-${{ env.LLVM_VERSION }}
-            /usr/bin/llvm-nm-${{ env.LLVM_VERSION }}
-          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v3
-
       # ── Install LLVM (clang-19, clangd-19, lld-19, llvm-19) ─────────────────
       # llvm-${VERSION} owns llvm-ar-${VERSION} / llvm-nm-${VERSION} /
       # llvm-objcopy-${VERSION}; install it explicitly so setup.sh --verify
       # does not rely on apt Recommends auto-pulling it. clangd-${VERSION}
       # is required by the LSP-MCP bridge stress sub-test 8a.
+      # NOTE: do NOT cache the /usr/lib + /usr/bin LLVM paths with
+      # actions/cache -- restore extracts with unprivileged tar, which cannot
+      # write root-owned paths and fails the job with tar exit 2 (hit
+      # 2026-06-11; the apt install only costs ~30s, cache removed).
       - name: Install LLVM ${{ env.LLVM_VERSION }}
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
           echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION }} main" \

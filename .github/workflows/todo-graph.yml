@@ -37,6 +37,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Node 20 runtime removed from runners 2026-09-16; opt in to Node 24 now.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   validate:
     name: build + validate
