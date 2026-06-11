@@ -376,6 +376,19 @@ static volatile uint32_t s_oneshot_armed;
 /* Calibration window in milliseconds -- shared by all tiers */
 #define CAL_MS  10
 
+/* Plausibility bounds for a LAPIC timer rate, applied to EVERY tier
+ * before it can mark calibration successful: firmware/hypervisor leaves
+ * are untrusted input, and a wild value (0, or one that overflows the
+ * 32-bit initial count when scaled) skews or storms the scheduler tick.
+ * 1 MHz floor (slowest plausible crystal) through 10 GHz ceiling. */
+#define CAL_TICKS_PER_MS_MIN  1000u
+#define CAL_TICKS_PER_MS_MAX  10000000u
+static int cal_value_plausible(uint32_t ticks_per_ms)
+{
+    return ticks_per_ms >= CAL_TICKS_PER_MS_MIN &&
+           ticks_per_ms <= CAL_TICKS_PER_MS_MAX;
+}
+
 /* ---- MSR / CPUID helpers for calibration ---- */
 
 /* cal_rdmsr replaced by msr_read() from kernel/msr.h */
@@ -429,6 +442,10 @@ static int cal_try_hyperv_msr(void)
         return 0;
 
     cal_ticks_per_ms = (uint32_t)(freq / 1000);
+    if (!cal_value_plausible(cal_ticks_per_ms)) {
+        cal_ticks_per_ms = 0;
+        return 0;
+    }
     klog(LOG_INFO, "lapic",
          "Tier 1: Hyper-V MSR 0x40000023 -> %u ticks/ms (%u MHz bus)",
          (uint64_t)cal_ticks_per_ms,
@@ -451,6 +468,10 @@ static int cal_try_vmware_cpuid(void)
         return 0;
 
     cal_ticks_per_ms = ebx;  /* kHz = ticks per ms */
+    if (!cal_value_plausible(cal_ticks_per_ms)) {
+        cal_ticks_per_ms = 0;
+        return 0;
+    }
     klog(LOG_INFO, "lapic",
          "Tier 1: %s CPUID 0x40000010 -> %u ticks/ms (%u MHz bus)",
          platform_name(),
@@ -485,41 +506,41 @@ static int cal_try_cpuid_15h(void)
 
     crystal_hz = ecx;
 
-    /* ECX == 0 on some CPUs -- use known crystal frequencies.
-     * Check CPUID.01H model/family for identification. */
+    /* ECX == 0 on some CPUs: derive the crystal from CPUID 0x16 base
+     * frequency and the TSC/crystal ratio (crystal = TSC * EAX/EBX,
+     * with TSC approximated by the 0x16 base MHz). A static per-model
+     * lookup table is NOT used -- a stale entry would silently become
+     * an authoritative calibration; machines without 0x16 fall through
+     * to the measured HPET/PM/PIT tiers instead. */
     if (crystal_hz == 0) {
-        uint32_t eax1, ebx1, ecx1, edx1;
-        uint32_t family, model;
+        uint32_t base_mhz, ebx16, ecx16, edx16;
 
-        cal_cpuid(0x01, &eax1, &ebx1, &ecx1, &edx1);
-        family = (eax1 >> 8) & 0xF;
-        model  = (eax1 >> 4) & 0xF;
-        if (family == 6)
-            model |= ((eax1 >> 16) & 0xF) << 4;
-
-        /* Known crystal frequencies by CPU model:
-         * Skylake/Kaby Lake/Coffee Lake: 24 MHz
-         * Atom Goldmont/Tremont: 19.2 MHz
-         * Reference: Intel SDM Vol. 3 Table 18-85 */
-        if (model == 0x55 || model == 0x4E || model == 0x5E ||
-            model == 0x8E || model == 0x9E || model == 0xA5 ||
-            model == 0xA6 || model == 0xA7) {
-            crystal_hz = 24000000;   /* 24 MHz -- Skylake+ */
-        } else if (model == 0x5C || model == 0x5F || model == 0x7A ||
-                   model == 0x86) {
-            crystal_hz = 19200000;   /* 19.2 MHz -- Atom */
-        } else {
-            return 0;  /* Unknown model -- can't determine crystal */
-        }
+        if (max_leaf < 0x16)
+            return 0;
+        cal_cpuid(0x16, &base_mhz, &ebx16, &ecx16, &edx16);
+        if (base_mhz == 0)
+            return 0;
+        crystal_hz = (uint64_t)base_mhz * 1000000ULL * eax / ebx;
+        if (crystal_hz == 0)
+            return 0;
     }
 
+    /* SDM: the APIC timer is clocked at the CORE CRYSTAL frequency, not
+     * the TSC frequency (TSC = crystal * EBX/EAX runs ~100x faster on
+     * Skylake+). Storing the TSC rate here would program a wildly fast
+     * scheduler tick on bare metal. The ratio is validated above only
+     * to confirm the leaf is populated. */
     tsc_freq = crystal_hz * ebx / eax;
     if (tsc_freq == 0)
         return 0;
 
-    cal_ticks_per_ms = (uint32_t)(tsc_freq / 1000);
+    cal_ticks_per_ms = (uint32_t)(crystal_hz / 1000);
+    if (!cal_value_plausible(cal_ticks_per_ms)) {
+        cal_ticks_per_ms = 0;
+        return 0;
+    }
     klog(LOG_INFO, "lapic",
-         "Tier 1: CPUID 0x15 -> %u ticks/ms (crystal=%u Hz, ratio=%u/%u)",
+         "Tier 1: CPUID 0x15 -> %u ticks/ms (crystal=%u Hz, TSC ratio=%u/%u)",
          (uint64_t)cal_ticks_per_ms,
          crystal_hz,
          (uint64_t)ebx, (uint64_t)eax);
@@ -565,6 +586,10 @@ static int cal_try_tsc_reference(void)
         return 0;  /* Too few ticks -- unreliable */
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    if (!cal_value_plausible(cal_ticks_per_ms)) {
+        cal_ticks_per_ms = 0;
+        return 0;
+    }
 
     /* Sanity: bus frequency must be in a reasonable range (100-500 MHz).
      * Below 100 MHz: TSC is scaled down (VBox NEM with slow TSC).
@@ -708,6 +733,10 @@ static int cal_try_hpet(void)
     }
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    if (!cal_value_plausible(cal_ticks_per_ms)) {
+        cal_ticks_per_ms = 0;
+        return 0;
+    }
     klog(LOG_INFO, "lapic",
          "Tier 2: HPET calibration -> %u ticks/ms (%u MHz bus, HPET %u MHz)",
          (uint64_t)cal_ticks_per_ms,
@@ -779,6 +808,10 @@ static int cal_try_pmtimer(void)
         return 0;  /* Too few ticks -- unreliable */
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    if (!cal_value_plausible(cal_ticks_per_ms)) {
+        cal_ticks_per_ms = 0;
+        return 0;
+    }
     klog(LOG_INFO, "lapic",
          "Tier 2: PM Timer calibration -> %u ticks/ms (%u MHz bus, port=0x%x %s)",
          (uint64_t)cal_ticks_per_ms,
@@ -850,13 +883,13 @@ void lapic_timer_calibrate(void)
         return;
     }
 
-    /* All tiers failed -- keep a conservative hardcoded estimate for
-     * diagnostic sleep paths, but cal_succeeded stays 0 so the timer HAL
-     * never selects the LAPIC driver on a guessed frequency. */
-    cal_ticks_per_ms = 100;
+    /* All tiers failed -- cal_ticks_per_ms stays 0 per the header
+     * contract (consumers like mono_clock gate on ticks_per_ms > 0; a
+     * stored estimate would masquerade as a real calibration). The
+     * timer HAL halts or falls back to the PIT on !cal_succeeded. */
+    cal_ticks_per_ms = 0;
     klog(LOG_WARN, "lapic",
-         "All calibration tiers failed -- using hardcoded %u ticks/ms",
-         (uint64_t)cal_ticks_per_ms);
+         "All calibration tiers failed -- LAPIC timer rate unknown");
 }
 
 /* PIT base frequency (Hz) -- the 8254 oscillator runs at this exact rate */
@@ -949,6 +982,10 @@ static int cal_try_pit(void)
     }
 
     cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    if (!cal_value_plausible(cal_ticks_per_ms)) {
+        cal_ticks_per_ms = 0;
+        return 0;
+    }
     klog(LOG_INFO, "lapic",
          "Tier 3: PIT ch2 calibration -> %u ticks/ms (%u MHz bus)",
          (uint64_t)cal_ticks_per_ms,
@@ -973,12 +1010,22 @@ static uint64_t lapic_get_ticks(void)
 
 static void lapic_sleep_ms(uint32_t ms)
 {
+    uint64_t ticks;
+
     if (lapic_timer_hz == 0)
         return;
-    uint64_t target = lapic_tick_count +
-                      ((uint64_t)ms * lapic_timer_hz / 1000);
-    while (lapic_tick_count < target)
-        __asm__ volatile("hlt");
+    /* Ceiling conversion with a 1-tick floor: at 100 Hz a 1-9 ms sleep
+     * would otherwise truncate to ZERO ticks and return immediately,
+     * collapsing driver polling loops (NVMe waits sleep_ms(1) per
+     * iteration) into tight spins that exhaust their timeouts early. */
+    ticks = ((uint64_t)ms * lapic_timer_hz + 999) / 1000;
+    if (ticks == 0)
+        ticks = 1;
+    {
+        uint64_t target = lapic_tick_count + ticks;
+        while (lapic_tick_count < target)
+            __asm__ volatile("hlt");
+    }
 }
 
 static uint32_t lapic_get_freq(void)
@@ -1121,9 +1168,12 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
          * another CPU may have masked the LVT after this interrupt was
          * accepted, and the restore must not unmask it into firmware */
         uint32_t cur = lapic_read(LAPIC_REG_LVT_TIMER);
-        uint32_t icr = (cal_ticks_per_ms > 0 && lapic_timer_hz > 0)
-                           ? cal_ticks_per_ms * 1000 / lapic_timer_hz
-                           : 10000000;
+        uint64_t icr64 = (cal_ticks_per_ms > 0 && lapic_timer_hz > 0)
+                           ? (uint64_t)cal_ticks_per_ms * 1000ULL
+                                 / lapic_timer_hz
+                           : 10000000ULL;
+        uint32_t icr = (icr64 > 0xFFFFFFFFULL) ? 0xFFFFFFFFu
+                                               : (uint32_t)icr64;
         lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
         lapic_write(LAPIC_REG_LVT_TIMER,
                     LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR
@@ -1151,9 +1201,12 @@ void lapic_timer_resume_fixup(void)
             return;
     }
     if (__atomic_exchange_n(&s_oneshot_armed, 0, __ATOMIC_ACQ_REL)) {
-        uint32_t icr = (cal_ticks_per_ms > 0 && lapic_timer_hz > 0)
-                           ? cal_ticks_per_ms * 1000 / lapic_timer_hz
-                           : 10000000;
+        uint64_t icr64 = (cal_ticks_per_ms > 0 && lapic_timer_hz > 0)
+                           ? (uint64_t)cal_ticks_per_ms * 1000ULL
+                                 / lapic_timer_hz
+                           : 10000000ULL;
+        uint32_t icr = (icr64 > 0xFFFFFFFFULL) ? 0xFFFFFFFFu
+                                               : (uint32_t)icr64;
         lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
         lapic_write(LAPIC_REG_LVT_TIMER,
                     LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR);
@@ -1170,9 +1223,13 @@ void lapic_timer_init(uint32_t hz)
 
     lapic_timer_hz = hz;
 
-    /* Calculate ICR from calibrated frequency, or use xv6 fallback */
+    /* Calculate ICR from calibrated frequency, or use xv6 fallback.
+     * 64-bit math: ticks/ms * 1000 wraps u32 above ~4.29 GHz rates. */
     if (cal_ticks_per_ms > 0) {
-        icr = cal_ticks_per_ms * 1000 / hz;
+        uint64_t icr64 = (uint64_t)cal_ticks_per_ms * 1000ULL / hz;
+        icr = (icr64 > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)icr64;
+        if (icr == 0)
+            icr = 1;
     } else {
         /* xv6 hardcoded: ICR=10000000 with div=1 works on QEMU + most HW */
         icr = 10000000;
@@ -1240,7 +1297,10 @@ int lapic_timer_set_hz(uint32_t new_hz)
      * must never be rescaled by a new frequency) */
     mono_clock_tick_rebase(new_hz);
 
-    icr = cal_ticks_per_ms * 1000 / new_hz;
+    {
+        uint64_t icr64 = (uint64_t)cal_ticks_per_ms * 1000ULL / new_hz;
+        icr = (icr64 > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)icr64;
+    }
     if (icr == 0) icr = 1;
 
     lapic_write(LAPIC_REG_TIMER_ICR, icr);

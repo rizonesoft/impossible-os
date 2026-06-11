@@ -270,7 +270,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 
 **Files:** `src/kernel/drivers/lapic.c`, `src/kernel/sched/task.c` (scheduler tick hookup)
 
-- [x] LAPIC calibration: 4-tier waterfall (Hyper-V MSR → CPUID 0x15 → TSC-referenced → PM Timer → PIT ch2) in `lapic.c`; stores `cal_ticks_per_ms`. HPET tier uses `vmm_map_mmio_uc()` when that path runs (TODO-10 §1); WB caching caused MCE before UC mapping. TSC-referenced tier added 2026-03-28 for bare metal.
+- [x] LAPIC calibration waterfall in `lapic.c`: Tier 1 Hyper-V MSR / VMware-KVM CPUID 0x40000010 / Intel CPUID 0x15 core-crystal rate, Tier 2 HPET (UC-mapped per TODO-10 §1) / ACPI PM Timer measurement, Tier 3 PIT ch2; every tier range-validated before success; stores `cal_ticks_per_ms` (0 on total failure). The old TSC-referenced helper is intentionally NOT called (TSC rate is not the APIC rate).
 - [x] Run on BSP during `timer_hal_init()` -- confirmed working in serial log
 - [x] Scheduler uses LAPIC periodic timer at 100 Hz; `sched_tick` driven by LAPIC ISR
 - [ ] AP LAPIC timer bring-up: program + unmask the LVT timer per AP with BSP calibration, per-CPU `sched_tick` (today APs are masked, BSP-only tick); consumer D03 T07 §3 per-CPU run queues
@@ -280,6 +280,19 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 - [x] Commit: "(shipped) LAPIC timer calibration waterfall + scheduler 100 Hz tick"
 
 **Test checkpoint:** Serial shows `LAPIC timer: periodic` with calibrated ICR; scheduler ticks without triple fault. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | irq_timer: LAPIC calibration state suite | 0 failures
+> **Notes:**
+> - Shipped (review hardening): every calibration tier range-validated before success; CPUID 0x15 stores the core-crystal rate (not TSC) with CPUID 0x16 derivation when ECX=0; ticks_per_ms stays 0 on total failure; u64 ICR clamps at all four programming sites; `lapic_sleep_ms` ceiling with 1-tick floor.
+> - Integrates: `timer_hal_init()` runs the waterfall on the BSP; the 100 Hz tick drives kusd/NT-timers/DPC/schedule; `LAPIC_TIMER_VECTOR` now aliases the central `VECTOR_LAPIC_TIMER` registry symbol.
+> - Downstream: per-finding evidence in the review commit; NT-timer wheel and DPC ISR budget filed with their owners (see Accepted lines).
+> - Scope boundary: AP LAPIC timers stay masked until per-CPU run queues land (own open item below); recalibrate-on-frequency-change is owned by the cpufreq governor section.
+> **Verified:** 2026-06-12 | commit `4208a2e0` | 5/7 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
+> **Deferred:** [H] AP LAPIC timer bring-up (BSP-only tick today) blocked on per-CPU scheduler infrastructure -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Allocate `g_rq[MAX_CPUS]`; initialise each during `sched_init_cpu(cpu_id)` called by each AP" at line 111)
+> **Accepted:** [M] recalibrate hook for CPU frequency changes -> XREF: 02-kernel-core/TODO-26 §15 (item: "Timer recalibration on frequency transition" at line 604)
+> **Accepted:** [H] `nt_timer_tick()` walks every armed timer in the 100 Hz ISR (O(N) IRQ-off work at scale) -> XREF: 02-kernel-core/TODO-05 (item: "Replace the flat NT timer armed list with an ordered structure" at line 167)
+> **Accepted:** [M] DPC drain in the timer ISR caps count (32) but not per-callback runtime -> XREF: 02-kernel-core/TODO-07 §6 (item: "DPC runtime budget in the timer ISR drain" at line 152)
+> **Quality reviewed:** 2026-06-12 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 4H+3M fixed, 1H+2M accepted-XREF | scope: kernel-code-quality
 
 ---
 

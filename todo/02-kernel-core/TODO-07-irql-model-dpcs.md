@@ -149,6 +149,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Coalescing: `dpc_drain_current_cpu()` returns immediately if queue head is NULL (fast skip)
 - [x] No recursion: DPC callbacks can re-queue but the drain loop is bounded by `DPC_BATCH_LIMIT=32`
 - [x] Commit: `"kernel: timer -- schedule and coalesce DPC dispatch"`
+- [ ] DPC runtime budget in the timer ISR drain: `DPC_BATCH_LIMIT=32` caps the COUNT but not per-callback runtime; add a time budget (mono_ns cap per drain) or move arbitrary-callback execution out of hard IRQ context to a DISPATCH-level dispatch point -- filed from `01-boot-platform/TODO-11` §7 perf review (`dpc.c` drain_queue, `lapic.c` lapic_timer_handler)
 
 > [!WARNING]
 > **High-risk section.** This wires `KiDispatchDpc` into the LAPIC timer ISR return path. A bug here causes DPC drain on every timer tick -- if the drain crashes, the system triple-faults on the next tick with no recovery. **Rollback:** If DPC dispatch crashes, comment out the `KiDispatchDpc()` call in the timer ISR and fall back to workqueue-only deferred work. Test timer interrupts still work (scheduler tick, compositor frame) before wiring DPC dispatch.

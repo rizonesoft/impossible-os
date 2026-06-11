@@ -601,6 +601,7 @@ Kernel-core governor framework that sits between the scheduler's load metrics an
   - `balanced` governor: min=lowest, max=highest, EPP=128 (balanced)
 - [ ] `IA32_HWP_STATUS (0x777)` -- read current performance state for telemetry
 - [ ] Boot log: `[CPUFREQ] HWP enabled: %u--%u MHz, guaranteed=%u MHz`
+- [ ] Timer recalibration on frequency transition: when a governor/HWP P-state change can alter the APIC bus or TSC rate, refresh `lapic_timer_calibrate()` + `mono_clock_crosscheck_tsc()` and rebase the tick epoch (`mono_clock_tick_rebase`) -- closes the recalibrate-hook deferral from `01-boot-platform/TODO-11` §7
 - [ ] Detect CPPC: `CPUID.80000008H:EBX[25]` (CPPC)
 - [ ] Evaluate ACPI `_CPC` (Continuous Performance Control) package per CPU
 - [ ] `PERF_CTL` MSR / ACPI `SystemIO` writes for requested performance level

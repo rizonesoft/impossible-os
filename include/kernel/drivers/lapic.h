@@ -118,16 +118,21 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page);
 
 /* ---- LAPIC Timer ---- */
 
-/* Dedicated vector for LAPIC timer.
- * Uses vector 34 (IRQ 2 cascade -- doesn't exist on APIC systems).
- * Must be within 32-47 (the IDT-stub-covered hardware IRQ range). */
-#define LAPIC_TIMER_VECTOR    34
+/* Dedicated vector for LAPIC timer -- single-sourced from the central
+ * registry (vector 0x22 = 34, the IRQ 2 cascade slot that does not
+ * exist on APIC systems; within the IDT-stub-covered 32-47 range).
+ * The vectors.h uniqueness asserts protect THIS value because it is
+ * the same symbol, not a drifting duplicate. */
+#define LAPIC_TIMER_VECTOR    VECTOR_LAPIC_TIMER
 
 /* Calibrate the LAPIC timer via a 3-tier waterfall:
- *   Tier 1: MSR/CPUID (instant, no PIT) -- Hyper-V, VMware, KVM, CPUID 0x15
- *   Tier 2: HPET / ACPI PM Timer (10ms delay, no PIT)
- *   Tier 3: PIT channel 2 (10ms delay, only if PCAT_COMPAT && !HW_REDUCED)
- * Falls back to a hardcoded conservative estimate if all tiers fail. */
+ *   Tier 1: MSR/CPUID (instant, no PIT) -- Hyper-V MSR, VMware/KVM
+ *           CPUID 0x40000010, Intel CPUID 0x15 core-crystal rate
+ *   Tier 2: HPET / ACPI PM Timer measurement (10ms window, no PIT)
+ *   Tier 3: PIT channel 2 (10ms, only if PCAT_COMPAT && !HW_REDUCED)
+ * Every tier's value passes a plausibility range check before success.
+ * On total failure ticks_per_ms stays 0 and the timer HAL halts or
+ * falls back to the PIT -- no guessed frequency ever drives the tick. */
 void lapic_timer_calibrate(void);
 
 /* Start the LAPIC timer in periodic mode at the given frequency (Hz)
