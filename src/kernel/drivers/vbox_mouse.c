@@ -306,7 +306,7 @@ int vbox_mouse_init(void)
         irq_request_gsi((uint32_t)irq_line, vbox_irq_callback,
                          (void *)0, "vbox_mouse");
     } else {
-        irq_register(PIC1_OFFSET + irq_line, vbox_irq_callback,
+        irq_register(isa_irq_to_vector(irq_line), vbox_irq_callback,
                      (void *)0, "vbox_mouse");
         /* The GSI path unmasks at the IOAPIC; the PIC path must unmask the
          * line explicitly (pic_init masks all but cascade), else VMMDev

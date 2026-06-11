@@ -20,6 +20,9 @@
 #include "kernel/sched/irql.h"
 #include "kernel/sched/transition_ring.h" /* fast-path transition ring */
 #include "kernel/smp.h"
+#include "kernel/irq.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/drivers/ioapic.h"
 
 /* IDT entry (16 bytes in Long Mode) */
 struct idt_entry {
@@ -325,6 +328,19 @@ uint64_t isr_handler(struct interrupt_frame *frame)
             goto irql_restore;
         }
 
+        /* PIC spurious IRQ7/IRQ15: the 8259 delivers these with no ISR
+         * bit set. No EOI for spurious IRQ7; spurious IRQ15 needs an EOI
+         * to the MASTER only (the cascade IS in service there). */
+        if (!ioapic_available() && pic_available()) {
+            uint8_t isa = irq_vector_to_isa(vec);
+            if ((isa == 7 || isa == 15) && !pic_irq_in_service(isa)) {
+                if (isa == 15)
+                    pic_send_eoi(2);  /* cascade line on the master */
+                result = (uint64_t)frame;
+                goto irql_restore;
+            }
+        }
+
         count = ++unhandled_counts[vec];
 
         if (count == 1) {
@@ -337,8 +353,13 @@ uint64_t isr_handler(struct interrupt_frame *frame)
                  (uint64_t)vec, (uint64_t)vec, count);
         }
 
-        /* EOI -- idempotent, prevents ISR bit getting stuck */
-        lapic_eoi();
+        /* EOI -- controller-aware: PIC-delivered ISA vectors must EOI the
+         * 8259 (a stuck in-service bit blocks that priority level), all
+         * other vectors EOI the LAPIC. Idempotent on the LAPIC side. */
+        if (vec >= 32)
+            irq_eoi(irq_vector_to_isa((uint8_t)vec));
+        else
+            lapic_eoi();
     }
 
     result = (uint64_t)frame;

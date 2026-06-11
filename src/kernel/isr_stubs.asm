@@ -210,7 +210,7 @@ ISR_NOERRCODE 128     ; syscall -- INT 0x80 (user → kernel)
 ISR_NOERRCODE 129     ; yield() -- cooperative task switch (INT 0x81)
 
 ; =============================================================================
-; Dynamic / Synthetic interrupt stubs (vectors 48–255)
+; Dynamic / Synthetic interrupt stubs (vectors 48-255)
 ;
 ; Covers MSI/MSI-X, VMBus SINT, STIMER, LAPIC spurious, and any other
 ; vector Hyper-V or hardware may deliver.  Without these, any interrupt

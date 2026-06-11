@@ -245,9 +245,17 @@ int virtio_input_init(void)
     }
     virtq_kick(&eventq);
 
-    /* 8. Register IRQ handler */
-    idt_register_handler(PIC1_OFFSET + irq_line, virtio_input_irq);
-    pic_unmask_irq(irq_line);
+    /* 8. Register IRQ handler. PCI interrupt-line can be unset/0xFF on
+     * APIC-routed firmware; isa_irq_to_vector() returns 0 (the divide-error
+     * vector) for those -- never register on it. */
+    if (irq_line < 16) {
+        idt_register_handler(isa_irq_to_vector(irq_line), virtio_input_irq);
+        pic_unmask_irq(irq_line);
+    } else {
+        klog(LOG_WARN, "input",
+             "virtio-input: PCI IRQ line %u not a valid ISA line -- IRQ disabled",
+             (uint64_t)irq_line);
+    }
 
     /* 9. Set DRIVER_OK -- device is live */
     virtio_set_status(&pci_dev,

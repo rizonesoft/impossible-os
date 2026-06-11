@@ -21,6 +21,8 @@
 
 #include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/lapic.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/vectors.h"
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
 #include "kernel/mm/vmm.h"
@@ -210,11 +212,15 @@ void ioapic_init(void)
                 }
             }
 
-            if (ioapic_route_irq(gsi, (uint8_t)(32 + i),
+            /* ISA IRQ 0-7 -> 0x20+, IRQ 8-15 -> VECTOR_ISA_IRQ8_BASE+
+             * (matches the PIC remap; keeps IRQ14 off the INT 0x2E gate) */
+            uint8_t vec = (i < 8) ? (uint8_t)(PIC1_OFFSET + i)
+                                  : (uint8_t)(VECTOR_ISA_IRQ8_BASE + (i - 8));
+            if (ioapic_route_irq(gsi, vec,
                                  (uint8_t)bsp_lapic_id, flags) == 0) {
                 klog(LOG_DEBUG, "ioapic",
-                     "  Route: ISA IRQ %u -> GSI %u, vec %u, dest LAPIC %u, flags=0x%x",
-                     (uint64_t)i, (uint64_t)gsi, (uint64_t)(32 + i),
+                     "  Route: ISA IRQ %u -> GSI %u, vec 0x%x, dest LAPIC %u, flags=0x%x",
+                     (uint64_t)i, (uint64_t)gsi, (uint64_t)vec,
                      (uint64_t)bsp_lapic_id, (uint64_t)flags);
                 if (gsi < 24)
                     gsi_routed[gsi] = 1;

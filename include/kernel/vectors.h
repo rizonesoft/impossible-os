@@ -13,10 +13,13 @@
  *   Range       Purpose                    Owner
  *   ---------   -------------------------  -------------------------
  *   0x00-0x1F   CPU exceptions             x86 architecture (fixed)
- *   0x20-0x2F   PIC/PIT legacy IRQs        pic.c, pit.c
+ *   0x20-0x27   ISA IRQ 0-7 (master)       pic.c, pit.c, ioapic.c
  *   0x22        LAPIC timer                lapic.c (remapped from IRQ0)
  *   0x2E        NT syscall compat          syscall.c (INT 0x2E, DPL=3)
  *   0x30-0xEF   Dynamic IRQ allocation     irq.c (runtime, not here)
+ *   0x70-0x77   ISA IRQ 8-15 (slave)       pic.c, ioapic.c -- moved off
+ *                                          0x28-0x2F so IRQ14 can never
+ *                                          alias the DPL=3 INT 0x2E gate
  *   0x80        Linux-style syscall        syscall.c (INT 0x80, DPL=3)
  *   0x81        Yield (cooperative switch)  task.c (INT 0x81)
  *   0xFA        LAPIC error LVT            lapic.c (LVT_ERROR vector)
@@ -49,9 +52,16 @@
 #define VECTOR_MACHINE_CHECK       0x12
 #define VECTOR_SIMD_FP_ERROR       0x13
 
-/* ---- Hardware IRQs (PIC offset, 0x20-0x2F) ---- */
+/* ---- Hardware IRQs ----
+ * ISA IRQ 0-7 (master PIC / IOAPIC pins) use 0x20-0x27.
+ * ISA IRQ 8-15 (slave PIC / IOAPIC pins) use 0x70-0x77: the historical
+ * 0x28-0x2F placement put IRQ14 on 0x2E, the architecturally fixed
+ * Windows NT syscall vector (ntdll INT 2Eh). irq.c reserves 0x70-0x77
+ * out of the dynamic allocator. */
 #define VECTOR_PIT_TIMER           0x20  /* IRQ0 -- PIT channel 0 */
 #define VECTOR_LAPIC_TIMER         0x22  /* remapped LAPIC timer */
+#define VECTOR_ISA_IRQ8_BASE       0x70  /* ISA IRQ 8 -> 0x70 ... IRQ 15 -> 0x77 */
+#define VECTOR_PS2_MOUSE           (VECTOR_ISA_IRQ8_BASE + 4)  /* ISA IRQ12 */
 
 /* ---- Software interrupts (statically assigned) ---- */
 #define VECTOR_NT_SYSCALL          0x2E  /* INT 0x2E -- NT compat syscall */
@@ -74,6 +84,19 @@
  * Every pair of statically assigned non-exception vectors must differ.
  * CPU exceptions (0x00-0x1F) are architecture-fixed and cannot collide
  * with each other, so we only check the software/IPI vectors. */
+
+/* DPL=3 software vectors must live OUTSIDE every hardware IRQ range so a
+ * device line can never alias a user-callable gate (IRQ14 vs INT 0x2E). */
+_Static_assert(VECTOR_NT_SYSCALL < 0x20 || VECTOR_NT_SYSCALL > 0x27,
+    "NT syscall vector must not sit in the ISA IRQ0-7 range");
+_Static_assert(VECTOR_NT_SYSCALL < VECTOR_ISA_IRQ8_BASE ||
+               VECTOR_NT_SYSCALL > VECTOR_ISA_IRQ8_BASE + 7,
+    "NT syscall vector must not sit in the ISA IRQ8-15 range");
+_Static_assert(VECTOR_LINUX_SYSCALL < VECTOR_ISA_IRQ8_BASE ||
+               VECTOR_LINUX_SYSCALL > VECTOR_ISA_IRQ8_BASE + 7,
+    "Linux syscall vector must not sit in the ISA IRQ8-15 range");
+_Static_assert(VECTOR_ISA_IRQ8_BASE + 7 < 0x80,
+    "ISA IRQ8-15 range must stay below the DPL=3 INT 0x80 gate");
 
 /* Software vectors must not collide with each other */
 _Static_assert(VECTOR_NT_SYSCALL != VECTOR_LINUX_SYSCALL,

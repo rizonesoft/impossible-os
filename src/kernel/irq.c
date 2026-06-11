@@ -26,6 +26,9 @@ struct irq_entry {
     const char    *name;        /* debugging label */
     uint64_t       count;       /* total interrupts on this vector */
     uint8_t        allocated;   /* 1 if allocated via irq_alloc_vector() */
+    uint8_t        reserved;    /* 1 = statically owned (ISA IRQ 8-15
+                                 * window); never returned by the dynamic
+                                 * allocator, survives free/unregister */
 };
 
 static struct irq_entry irq_table[256];
@@ -43,11 +46,24 @@ static uint64_t irq_dispatch_wrapper(struct interrupt_frame *frame)
     if (e->handler)
         e->handler(vec, e->ctx);
 
-    /* Send EOI for hardware IRQs (vectors 32+) */
+    /* Send EOI for hardware IRQs (vectors 32+). The ISA irq number only
+     * matters on the PIC path; ISA vectors live at PIC1_OFFSET+0..7 and
+     * PIC2_OFFSET+0..7 (0x70+ -- NOT contiguous with the master range). */
     if (vec >= 32)
-        irq_eoi((uint8_t)(vec - 32));
+        irq_eoi(irq_vector_to_isa(vec));
 
     return (uint64_t)frame;
+}
+
+/* Translate a vector back to its ISA irq number for PIC EOI routing.
+ * Returns 0xFF for non-ISA vectors (LAPIC/IOAPIC routed; LAPIC EOI only). */
+uint8_t irq_vector_to_isa(uint8_t vec)
+{
+    if (vec >= PIC1_OFFSET && vec < PIC1_OFFSET + 8)
+        return (uint8_t)(vec - PIC1_OFFSET);
+    if (vec >= PIC2_OFFSET && vec < PIC2_OFFSET + 8)
+        return (uint8_t)(8 + (vec - PIC2_OFFSET));
+    return 0xFF;
 }
 
 /* ---- Public API ---- */
@@ -88,8 +104,11 @@ void irq_unregister(uint8_t vector)
 
     irq_table[vector].handler   = (irq_handler_t)0;
     irq_table[vector].ctx       = (void *)0;
-    irq_table[vector].name      = (const char *)0;
-    irq_table[vector].allocated = 0;
+    irq_table[vector].name      = irq_table[vector].reserved
+                                      ? "isa-irq8-15" : (const char *)0;
+    /* Reserved vectors stay allocated: the ISA IRQ 8-15 window must never
+     * fall back into the dynamic allocator pool */
+    irq_table[vector].allocated = irq_table[vector].reserved ? 1 : 0;
 
     /* Clear the IDT handler so unknown vectors get the default path */
     idt_register_handler(vector, (interrupt_handler_t)0);
@@ -113,7 +132,8 @@ void irq_free_vector(uint8_t vector)
         return;
 
     irq_unregister(vector);
-    irq_table[vector].allocated = 0;
+    if (!irq_table[vector].reserved)
+        irq_table[vector].allocated = 0;
 }
 
 const char *irq_get_name(uint8_t vector)
@@ -148,7 +168,16 @@ void irq_init(void)
         irq_table[i].count     = 0;
         irq_table[i].allocated = 0;
     }
-    klog(LOG_INFO, "irq", "Dynamic IRQ subsystem ready (vectors 0x30-0xEF allocatable)");
+    /* Reserve the ISA IRQ 8-15 vector window (PIC2 remap / IOAPIC slave
+     * pins) out of the dynamic allocator -- it sits inside 0x30-0xEF. */
+    for (i = PIC2_OFFSET; i < (uint32_t)PIC2_OFFSET + 8; i++) {
+        irq_table[i].allocated = 1;
+        irq_table[i].reserved  = 1;
+        irq_table[i].name = "isa-irq8-15";
+    }
+    klog(LOG_INFO, "irq",
+         "Dynamic IRQ subsystem ready (vectors 0x30-0xEF allocatable, "
+         "0x70-0x77 reserved for ISA IRQ 8-15)");
 }
 
 /* ---- High-level GSI-based API ---- */

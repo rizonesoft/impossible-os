@@ -309,9 +309,17 @@ int rtl8139_init(void)
     /* 10. Enable receiver and transmitter */
     outb_nic(io_base + REG_CMD, CMD_RE | CMD_TE);
 
-    /* 11. Register IRQ handler */
-    idt_register_handler(PIC1_OFFSET + irq_line, rtl8139_irq_handler);
-    pic_unmask_irq(irq_line);
+    /* 11. Register IRQ handler. PCI interrupt-line can be unset/0xFF on
+     * APIC-routed firmware; isa_irq_to_vector() returns 0 (the divide-error
+     * vector) for those -- never register on it. */
+    if (irq_line < 16) {
+        idt_register_handler(isa_irq_to_vector(irq_line), rtl8139_irq_handler);
+        pic_unmask_irq(irq_line);
+    } else {
+        klog(LOG_WARN, "net",
+             "RTL8139: PCI IRQ line %u not a valid ISA line -- IRQ disabled",
+             (uint64_t)irq_line);
+    }
 
     rx_ready = 0;
 

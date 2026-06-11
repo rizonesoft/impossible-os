@@ -66,6 +66,10 @@ uint64_t irq_get_count(uint8_t vector);
  * Used by Task Manager for per-vector statistics. */
 const uint64_t *irq_get_counts(void);
 
+/* Translate a vector back to its ISA irq number (0-15) for PIC EOI
+ * routing. Returns 0xFF for non-ISA vectors (LAPIC EOI only). */
+uint8_t irq_vector_to_isa(uint8_t vec);
+
 /* ---- High-level GSI-based API ---- */
 
 /* Request an IRQ by GSI number. Allocates a vector, programs the IOAPIC

@@ -13,6 +13,7 @@
 
 #include "kernel/drivers/mouse.h"
 #include "kernel/irq.h"
+#include "kernel/vectors.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/framebuffer.h"
@@ -376,7 +377,7 @@ void mouse_init(void)
         irq_request_gsi(ioapic_isa_to_gsi(IRQ_MOUSE),
                          mouse_irq_callback, (void *)0, "ps2_mouse");
     } else {
-        irq_register(44, mouse_irq_callback, (void *)0, "ps2_mouse");
+        irq_register(VECTOR_PS2_MOUSE, mouse_irq_callback, (void *)0, "ps2_mouse");
         pic_unmask_irq(IRQ_MOUSE);
     }
 

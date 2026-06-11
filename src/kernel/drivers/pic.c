@@ -2,10 +2,12 @@
  * pic.c -- 8259 Programmable Interrupt Controller driver
  *
  * Initializes the PIC in cascade mode and remaps IRQs:
- *   Master (PIC1): IRQ 0-7  -> interrupt vectors 32-39
- *   Slave  (PIC2): IRQ 8-15 -> interrupt vectors 40-47
+ *   Master (PIC1): IRQ 0-7  -> interrupt vectors 0x20-0x27
+ *   Slave  (PIC2): IRQ 8-15 -> interrupt vectors 0x70-0x77
  *
- * This avoids conflicts with CPU exceptions (0-31).
+ * The slave window is NOT contiguous with the master: the historical
+ * 0x28-0x2F placement put IRQ14 on the DPL=3 NT syscall gate (INT 0x2E).
+ * Use isa_irq_to_vector() for the mapping; irq.c reserves 0x70-0x77.
  * ============================================================================ */
 
 #include "kernel/drivers/pic.h"
@@ -61,7 +63,7 @@ void pic_init(void)
     /* ICW2: Set interrupt vector offsets */
     outb(PIC1_DATA, PIC1_OFFSET);   /* Master: IRQ 0-7  -> INT 32-39 */
     io_wait();
-    outb(PIC2_DATA, PIC2_OFFSET);   /* Slave:  IRQ 8-15 -> INT 40-47 */
+    outb(PIC2_DATA, PIC2_OFFSET);   /* Slave:  IRQ 8-15 -> INT 0x70-0x77 */
     io_wait();
 
     /* ICW3: Configure cascade wiring */
@@ -85,7 +87,7 @@ void pic_init(void)
 
     pic_ready = 1;
 
-    klog(LOG_INFO, "irq", "PIC remapped (IRQ 0-7 -> INT 32-39, IRQ 8-15 -> INT 40-47)");
+    klog(LOG_INFO, "irq", "PIC remapped (IRQ 0-7 -> INT 0x20-0x27, IRQ 8-15 -> INT 0x70-0x77)");
 
     (void)mask1;
     (void)mask2;
@@ -157,10 +159,27 @@ void irq_eoi(uint8_t irq)
     /* Use LAPIC EOI only when the full APIC system is active (IOAPIC routing
      * interrupts AND PIC disabled).  If only the LAPIC is present but the PIC
      * is still routing (no IOAPIC), we MUST send EOI to the PIC -- otherwise
-     * the PIC blocks all further interrupts of that priority level. */
-    if (ioapic_available()) {
+     * the PIC blocks all further interrupts of that priority level.
+     * irq > 15 marks a non-ISA vector (LAPIC-delivered even on PIC-routed
+     * systems, e.g. the LAPIC timer): never EOI the 8259 for those. */
+    if (ioapic_available() || irq > 15) {
         lapic_eoi();
     } else {
         pic_send_eoi(irq);
     }
+}
+
+int pic_irq_in_service(uint8_t irq)
+{
+    uint8_t isr;
+    if (irq > 15)
+        return 0;
+    if (irq < 8) {
+        outb(PIC1_CMD, 0x0B);          /* OCW3: read ISR */
+        isr = inb(PIC1_CMD);
+        return (isr >> irq) & 1;
+    }
+    outb(PIC2_CMD, 0x0B);
+    isr = inb(PIC2_CMD);
+    return (isr >> (irq - 8)) & 1;
 }

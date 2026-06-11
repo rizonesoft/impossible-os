@@ -201,6 +201,7 @@ During SMP bringup each AP executes CPUID and reports its feature flags to the B
 > [!IMPORTANT]
 > This must run during AP bringup (before the AP enters the scheduler for the first time) so that the feature mask is stable before the first `XSAVE`-capable thread is scheduled. Do not query features lazily per context switch.
 
+- [ ] Per-CPU TSS + guarded IST stacks with `ltr` on every AP (today only BSP `gdt_init()` loads TR; an AP NMI/#DF/MCE on the IST gates triple-faults); consumer `01-boot-platform/TODO-11` §4 IDT IST assignments
 - [ ] Each AP: execute CPUID leaf 1 (ECX/EDX) and leaf 7 (EBX/ECX) during bringup trampoline; store in `per_cpu_cpuid[AP_id]`
 - [ ] BSP: after all APs check in, compute `g_cpu_feature_intersection = AND(per_cpu_cpuid[0..n])`; publish to `cpu_features` global
 - [ ] If any AP lacks SSE2 or NX: `klog(LOG_WARN, "SMP", "CPU%u missing mandatory feature SSE2/NX -- left offline")`; set `g_cpu_state[id] = CPU_OFFLINE`
