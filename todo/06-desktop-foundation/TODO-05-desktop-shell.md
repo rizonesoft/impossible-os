@@ -16,7 +16,6 @@ title: "TODO-05 -- Desktop Shell Completion"
 - [`src/desktop/wm.c`](../../src/desktop/wm.c) -- window lifecycle, minimize/maximize (from TODO-01)
 - → XREF: `06-desktop-foundation/TODO-01-wm-completion.md` -- minimize/maximize must be implemented first
 - → XREF: `06-desktop-foundation/TODO-04-control-library.md §5` -- context menu engine needed for right-click
-- → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md` §9, §3 -- kernel defers `irq list` and `boot-timeline` shell commands to this shell backlog
 
 ## Outcome
 

@@ -11,7 +11,7 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 > **Goal:** Define the authoritative Phase 1 interrupt and timer architecture: ACPI MADT first, LAPIC/IOAPIC before legacy PIC enable paths where applicable, full 256-vector IDT coverage, dynamic GSI/vector registration (`irq_request_gsi`), and a unified timer HAL (`uptime_ns()`) choosing HPET, LAPIC, or PIT. Historical bug class: PIT before IOAPIC routing on PCAT_COMPAT machines; that init order is fixed in tree. Remaining work: HPET wired into UTS (`hpet_ns` / `hpet_init` exist; not `g_system_timer` yet), IRQ affinity and driver migration to `irq_request_gsi`, shell tools (`irq list`, `boot-timeline`), and unit tests below.
 
 > [!IMPORTANT]
-> **Current state (2026-04-11):** Phase 1 order matches `boot_interrupts.c`: GDT → IDT → ACPI (MADT) → LAPIC/IOAPIC → PIC path → services → `timer_hal_init()` before `sti` (see `02-kernel-core/TODO-01-kernel-init-sequencing.md` §3). PIT-before-IOAPIC routing hazard is **fixed in tree**. Open work: §6 HPET as UTS backend (`hpet_ns`), §5 affinity + driver migration + `irq list` in `06-desktop-foundation/TODO-05-desktop-shell.md`, §7 recalibration hook (`02-kernel-core/TODO-26-power-management.md` §15), Unit Tests + Verification below.
+> **Current state (2026-04-11):** Phase 1 order matches `boot_interrupts.c`: GDT → IDT → ACPI (MADT) → LAPIC/IOAPIC → PIC path → services → `timer_hal_init()` before `sti` (see `02-kernel-core/TODO-01-kernel-init-sequencing.md` §3). PIT-before-IOAPIC routing hazard is **fixed in tree**. Open work: §6 HPET as UTS backend (`hpet_ns`), §5 affinity + driver migration + `irq list` in `09-desktop-shell/TODO-12-utilities.md` §1, §7 recalibration hook (`02-kernel-core/TODO-26-power-management.md` §15), Unit Tests + Verification below.
 >
 > **Historical:** PCAT_COMPAT machines can see IRQ 0 from both PIC and IOAPIC if the PIT is enabled before IOAPIC routing; MADT-first sequencing avoids that class of bug.
 
@@ -86,6 +86,8 @@ Extract interrupt topology from the MADT during `acpi_init()` before LAPIC/IOAPI
 
 **Test checkpoint:** Serial shows `MADT:` line with LAPIC/IOAPIC bases and override count before LAPIC enable; `acpi_madt_info()` non-NULL in tests. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 2. LAPIC / IOAPIC Init Before PIT
 
 Restructure `boot_interrupts.c` so LAPIC and IOAPIC are brought up before the PIT, using MADT data from §1.
@@ -103,6 +105,8 @@ Restructure `boot_interrupts.c` so LAPIC and IOAPIC are brought up before the PI
 
 **Test checkpoint:** Serial shows `LAPIC enabled` before PIT/HPET timer init; IOAPIC MMIO mapped from MADT. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 3. Conditional PIC Disable
 
 Only mask the 8259 PIC when MADT says PCAT_COMPAT -- virtual platforms may have no PIC at all.
@@ -117,6 +121,8 @@ Only mask the 8259 PIC when MADT says PCAT_COMPAT -- virtual platforms may have 
 - [x] Commit: "(shipped) conditional PIC disable per ACPI PCAT_COMPAT"
 
 **Test checkpoint:** PCAT_COMPAT=1 shows PIC disabled log; PCAT_COMPAT=0 skips PIC I/O. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 4. Full IDT Coverage
 
@@ -135,6 +141,8 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 
 **Test checkpoint:** Unhandled vector logs warning + EOI; spurious 0xFF and Hyper-V synthetic vectors do not panic. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 5. Dynamic IRQ Registration API
 
 Replace all hardcoded IRQ-to-vector assignments with a runtime registration API backed by the IOAPIC.
@@ -150,11 +158,13 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [ ] `irq_set_affinity(gsi, cpu_mask)` -- implement when IRQ balancing is needed; currently all routes to BSP (functional on SMP, just not balanced)
 - [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table
 - [x] `irq_dispatch()` already exists in `irq.c` -- registered handler called + EOI sent
-- [ ] `irq list` shell command -- deferred to `06-desktop-foundation/TODO-05-desktop-shell.md` (no § yet)
-- [ ] Migrate existing drivers to `irq_request_gsi()` -- deferred here; mechanical pass tracked in `04-drivers-hardware/INDEX.md` driver work
+- [ ] `irq list` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
+- [ ] Migrate existing drivers to `irq_request_gsi()` -- mechanical pass over `src/kernel/drivers/` ISA call sites (owned here); MSI/MSI-X devices follow `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 instead
 - [x] Commit: `"kernel: GSI-based IRQ request API -- irq_request_gsi/free_gsi, IOAPIC-backed"`
 
 **Test checkpoint:** `irq_request_gsi()` returns valid vector for ISA IRQ 1 when IOAPIC present; invalid GSI returns 0. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 6. Unified Timer Subsystem (UTS)
 
@@ -175,6 +185,8 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 
 **Test checkpoint:** Serial shows `UTS:` line with active driver name; `uptime_ns()` increases monotonically. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 7. LAPIC Timer Calibration
 
 Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then switch the scheduler to LAPIC-driven ticks.
@@ -190,6 +202,8 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 - [x] Commit: "(shipped) LAPIC timer calibration waterfall + scheduler 100 Hz tick"
 
 **Test checkpoint:** Serial shows `LAPIC timer: periodic` with calibrated ICR; scheduler ticks without triple fault. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 8. Migrate Boot Splash Spinner Off PIT Callback
 
@@ -207,6 +221,8 @@ Remove the boot splash spinner's direct dependency on PIT IRQ 0 so it works on L
 
 **Test checkpoint:** Spinner advances on LAPIC path (WHPX) and PIT fallback (TCG); no direct PIT-only hook required. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 9. Boot Time Visualization
 
 JSON boot timeline on disk plus optional shell charting later (overlay bar removed).
@@ -216,10 +232,12 @@ JSON boot timeline on disk plus optional shell charting later (overlay bar remov
 - [x] Overlay bar removed (per user preference) -- JSON timeline is the diagnostic output
 - [x] `boot_timeline_dump_json()`: writes `X:\Perf\boot-timeline.json` (path moved from `X:\Boot\` when FPDT records joined the timeline; see TODO-04 §4) with `[{"stage":"fpdt:reset_end","phase":0,"post":"0x0000","start_ms":0,"duration_ms":50,"source":"fpdt","unreliable":false},{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7,"source":"tsc","unreliable":false},...]`
 - [x] Called from `boot_phase3()` after `boot_timing_write_report()`
-- [ ] `boot-timeline` shell command -- deferred to `06-desktop-foundation/TODO-05-desktop-shell.md` (no § yet)
+- [ ] `boot-timeline` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
 - [x] Commit: `"kernel: boot timeline JSON dump"`
 
-**Test checkpoint:** With BlackBox mounted, `X:\Perf\boot-timeline.json` exists after desktop boot when dump path enabled; JSON contains stage objects. `boot-timeline` shell deferred to `06-desktop-foundation/TODO-05-desktop-shell.md`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** With BlackBox mounted, `X:\Perf\boot-timeline.json` exists after desktop boot when dump path enabled; JSON contains stage objects. `boot-timeline` shell deferred to `09-desktop-shell/TODO-12-utilities.md` §1. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 10. Remove Hyper-V Debug Workarounds
 
@@ -252,6 +270,8 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 > **Parity:** §1--§4, §7--§8, §10 match Windows/Linux for APIC/IDT/LAPIC tick paths. **[/]** §5 (affinity, `irq list`, driver migration) and §6 (HPET as `g_system_timer` / `read_ns`) remain. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
 
+---
+
 ## Unit Tests
 
 > Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_irq_timer()` (same pattern as other `test_register_*` suites).
@@ -272,6 +292,8 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 - [ ] Register in `test_runner_init()`: `test_register_irq_timer()`
 - [ ] Commit: `"test: add irq_timer test suite"`
 
+---
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
@@ -279,15 +301,17 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 - [ ] Serial log shows `[LAPIC] Enabled` before `[PIT]` or `[HPET]` lines
 - [ ] Serial log shows `[APIC] PIC disabled (PCAT_COMPAT)` in QEMU (PCAT_COMPAT = 1)
 - [ ] All 256 IDT vectors filled; trigger an unmapped vector from a test path → no triple-fault, prints `[FAULT]` message
-- [ ] `irq_request_gsi()` path verified via unit tests in `## Unit Tests` (until `irq list` lands in `06-desktop-foundation/TODO-05-desktop-shell.md`)
+- [ ] `irq_request_gsi()` path verified via unit tests in `## Unit Tests` (until `irq list` lands in `09-desktop-shell/TODO-12-utilities.md` §1)
 - [ ] `uptime_ns()` returns monotonically increasing values sampled 1 ms apart; delta ≈ 1 000 000 ns
 - [ ] Serial log shows `[LAPIC] CPU0 timer: {N}MHz (calibrated against HPET)` or `PIT` fallback
 - [ ] Boot splash spinner animates correctly with `-no-hpet` QEMU flag (LAPIC fallback path)
-- [ ] With BlackBox mounted and dump path enabled, `X:\Perf\boot-timeline.json` exists after boot; `boot-timeline` shell deferred to `06-desktop-foundation/TODO-05-desktop-shell.md` (§9)
+- [ ] With BlackBox mounted and dump path enabled, `X:\Perf\boot-timeline.json` exists after boot; `boot-timeline` shell deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (§9)
 - [ ] QEMU `-smp 4`: serial log shows `[SMP] AP1 online`, `[SMP] AP2 online`, `[SMP] AP3 online`; no Hyper-V workaround blocks compile
 - [ ] Commit: `"kernel: irq-timer-arch verified -- MADT APIC, IDT, UTS, LAPIC calibration"`
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+
+---
 
 ## History
 
