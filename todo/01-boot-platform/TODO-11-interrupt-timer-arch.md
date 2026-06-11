@@ -86,6 +86,18 @@ Extract interrupt topology from the MADT during `acpi_init()` before LAPIC/IOAPI
 
 **Test checkpoint:** Serial shows `MADT:` line with LAPIC/IOAPIC bases and override count before LAPIC enable; `acpi_madt_info()` non-NULL in tests. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | full suite 3500 PASS; dedicated irq_timer suite owned by Unit Tests section
+
+> **Notes:**
+> - MADT parse hardened in review: per-type record length guards, two-pass type-5 LAPIC override before the BSP MMIO ID read, x2APIC id>255 skip with one aggregated WARN.
+> - x2APIC field order fixed to ACPI 6.x (id@4/flags@8/uid@12; shipped code had id/uid swapped, masked on QEMU where uid==id).
+> - `madt_reset_state()` + `madt_publish_info()` keep `acpi_madt_info()` and legacy accessors consistent on every outcome (short table, no MADT, reparse); BSP-only fail-closed when the BSP is not in the usable CPU set.
+> - Consumers unchanged: `boot_interrupts.c` Phase 1 order, `smp.c` AP startup, `ioapic.c` ISA routing.
+
+> **Verified:** 2026-06-11 | commit `86f26c5e` | 6/6 items | build OK | smoke PASS (KVM 2.4s)
+> **Deferred:** [M] no dedicated MADT/irq unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
+> **Quality reviewed:** 2026-06-11 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 5H+5M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 2. LAPIC / IOAPIC Init Before PIT
@@ -285,7 +297,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
 - [ ] Create `src/kernel/test/test_irq_timer.c` with:
-  - `acpi_madt_info()` returns non-NULL with `lapic_count >= 1` and valid `lapic_base`
+  - `acpi_madt_info()` returns non-NULL with `cpu_count >= 1` and valid `lapic_base`
   - `acpi_pcat_compat()` returns 0 or 1 (consistent with MADT flags)
   - `acpi_get_ioapic_base()` returns non-zero address when IOAPIC present
   - `irq_request_gsi(99, dummy_handler, NULL, "test")` returns 0 for invalid GSI (no crash)
@@ -307,7 +319,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Serial log shows `[ACPI] MADT:` line before any `[LAPIC]` or `[IOAPIC]` lines
+- [ ] Serial log shows the `acpi: MADT:` summary line before any LAPIC or IOAPIC init lines
 - [ ] Serial log shows `[LAPIC] Enabled` before `[PIT]` or `[HPET]` lines
 - [ ] Serial log shows `[APIC] PIC disabled (PCAT_COMPAT)` in QEMU (PCAT_COMPAT = 1)
 - [ ] All 256 IDT vectors filled; trigger an unmapped vector from a test path → no triple-fault, prints `[FAULT]` message
