@@ -59,7 +59,7 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 | 💎  |   3   | Conditional PIC disable             | §1, §2              |  [x]   |
 | 💎  |   4   | Full IDT coverage                   | §2, §3              |  [x]   |
 | 💎  |   5   | Dynamic IRQ registration API        | §2, §4              |  [x]   |
-| 💎  |   6   | Unified timer subsystem (UTS)       | §5, TODO-09 §4      |  [/]   |
+| 💎  |   6   | Unified timer subsystem (UTS)       | §5, TODO-09 §4      |  [x]   |
 | 💎  |   7   | LAPIC timer calibration             | §6                  |  [/]   |
 | 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7              |  [x]   |
 | ⭐  |   9   | Boot time visualization             | §7, TODO-14 §3, §6  |  [x]   |
@@ -239,17 +239,24 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 
 - [x] `timer_driver_t` vtable exists with `name`, `init`, `get_ticks`, `sleep_ms`, `get_freq`; added `read_ns` field
 - [x] PIT and LAPIC drivers implemented and working (in `pit.c` and `lapic.c`)
-- [ ] Single clocksource contract: UTS `read_ns` delegates to `mono_ns()` (`mono_clock.c`, D02 T08 §4) instead of growing a second HPET path; UTS keeps tick/event delivery; UC-map any HPET MMIO (TODO-10 §1)
-- [ ] One-shot / TSC-deadline LAPIC mode: `timer_driver_t` gains `arm_oneshot(deadline_ns)` via `IA32_TSC_DEADLINE` (CPUID-gated, LVT one-shot fallback); tickless-idle enabler, policy owner D02 T26 idle governor
-- [ ] Hyper-V reference TSC page consumer: when `boot_info.hv_flags & HV_FLAG_TSC_ENLIGHTENMENT`, prefer `HV_X64_MSR_REFERENCE_TSC` page over LAPIC calibration; init owner `02-kernel-core/TODO-09 §15`
+- [x] Single clocksource contract: both driver vtables set `.read_ns = mono_ns` (no second HPET path); `MONO_SRC_LAPIC` scales by the LIVE tick frequency via pure `mono_lapic_ticks_to_ns()` (resolution-change safe)
+- [x] One-shot / TSC-deadline LAPIC mode: `arm_oneshot()` vtable hook, `IA32_TSC_DEADLINE` CPUID-gated with LVT one-shot fallback, overflow-safe conversion helpers; ISR auto-restores periodic mode until the D02 T26 idle governor owns tickless policy
+- [ ] Hyper-V reference TSC page consumer (`HV_X64_MSR_REFERENCE_TSC` preferred when enlightened): BLOCKED on the MSR/page init owned by `02-kernel-core/TODO-09 §15` (item: "Hyper-V SynIC + reference TSC MSR init")
 - [x] LAPIC timer: calibration via Hyper-V MSR / PIT busy-wait already working
 - [x] Selection waterfall: platform_detect() -> Hyper-V MSR -> LAPIC calibration -> PIT fallback; `hv_flags` available
 - [x] `uptime_ns()` added: prefers `read_ns()`, falls back to `ticks * (1e9/freq)`
 - [x] Serial log: `UTS: LAPIC selected (Hyper-V, 200000 ticks/ms = 200 MHz bus)` emitted
 - [x] Commit: `"kernel: UTS uptime_ns() + read_ns vtable extension"`
-- [ ] Add backend-aware `timer_hal_quiesce()`/`resume()` masking the ACTIVE timer (LAPIC LVT or PIT IOAPIC IRQ0); `uefi_runtime.c` rt_call masks LAPIC only, so the PIT backend (TCG) fires into firmware during UEFI RT calls. Filed from D01 T10 §10.
+- [x] Backend-aware `timer_hal_quiesce()`/`resume()` masks the ACTIVE timer (LAPIC LVT or routed PIT line); rt_call adopted it, closing the D01 T10 §10 PIT-into-firmware gap (panic path stays LAPIC-only: ioapic_lock is panic-unsafe)
 
 **Test checkpoint:** Serial shows `UTS:` line with active driver name; `uptime_ns()` increases monotonically. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | irq_timer: 21 suites incl. clocksource contract, one-shot conversion/delegation | 0 failures
+> **Notes:**
+> - Shipped: `.read_ns = mono_ns` on both drivers, `arm_oneshot` vtable hook + `lapic_timer_arm_oneshot()` (TSC-deadline/LVT), `timer_hal_quiesce()/resume()` in `timer.c`, pure conversion helpers.
+> - Integrates: `uefi_runtime.c` rt_call uses quiesce/resume (exercised live on every boot UEFI variable read); one-shot ISR auto-restores the periodic heartbeat; nothing arms one-shot at boot.
+> - Downstream: tickless-idle mechanism ready for the D02 T26 idle governor; closes the D01 T10 §10 rt_call PIT gap (normal path).
+> - Scope boundary: HV reference-TSC page init is D02 T09 §15 (consumer here stays blocked until it lands); recalibrate-on-freq-change is D02 T26 §15; AP timers are §7.
 
 ---
 
@@ -331,13 +338,13 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 | 💎 | Full IDT coverage            | ✅ KiUnexpectedInterrupt         | ✅ spurious path                  | ✅ §4 IDT full                     |
 | 💎 | Dynamic IRQ registration     | ✅ IoConnectInterrupt            | ✅ request_irq                    | ✅ §5 GSI + affinity               |
 | 💎 | Shared line IRQs (INTx)      | ✅ line-based sharing            | ✅ IRQF_SHARED                    | ✅ §5 claim chains + storm guard   |
-| 💎 | Unified timer HAL            | ✅ QPC picks source              | ✅ clocksource framework          | [/] §6 LAPIC PIT                   |
-| 💎 | One-shot / TSC-deadline tick | ✅ dynamic tick                  | ✅ NO_HZ tsc-deadline             | ⬜ §6 periodic only                |
+| 💎 | Unified timer HAL            | ✅ QPC picks source              | ✅ clocksource framework          | ✅ §6 mono_clock contract          |
+| 💎 | One-shot / TSC-deadline tick | ✅ dynamic tick                  | ✅ NO_HZ tsc-deadline             | ✅ §6 mechanism (governor D02T26)  |
 | 💎 | MSI / MSI-X (PCI)            | ✅ IoConnectInterruptEx          | ✅ pci MSI vectors                | ⬜ D04T02 §3                       |
 | 💎 | LAPIC timer calibration      | ✅ HAL per CPU cal               | ✅ calibrate delay                | [/] §7 BSP only                    |
 | ⭐  | Boot timeline JSON           | ❌ WPA offline trace             | ❌ systemd analyze post           | ✅ §9 JSON file                    |
 
-> **Parity:** §1--§5, §8, §10 match Windows/Linux for APIC/IDT/IRQ-registration paths. **[/]** §6 (mono_clock contract, one-shot/TSC-deadline), §7 (AP LAPIC timer) remain. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
+> **Parity:** §1--§6, §8, §10 match Windows/Linux for APIC/IDT/IRQ-registration/timer-HAL paths. **[/]** §7 (AP LAPIC timer) remains; §6's HV reference-TSC consumer is blocked on D02 T09 §15. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
 
 ---
 

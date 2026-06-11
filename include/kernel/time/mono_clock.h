@@ -27,6 +27,16 @@ uint64_t mono_ns(void);
 /* Read current monotonic time in FILETIME units (100 ns intervals). */
 uint64_t mono_filetime_units(void);
 
+/* Pure tick-counter scaling for the LAPIC/PIT fallback source (no
+ * hardware access; unit-testable). freq 0 = no tick source -> 0. */
+uint64_t mono_lapic_ticks_to_ns(uint64_t ticks, uint32_t freq_hz);
+
+/* Bank accumulated tick time into the ns epoch at the OLD stored rate
+ * and publish the NEW rate. MUST be called BEFORE the tick hardware
+ * reprograms or the fallback clock rewinds across a resolution change.
+ * The reader consumes only this snapshot (epoch ns/ticks/freq). */
+void mono_clock_tick_rebase(uint32_t new_freq_hz);
+
 /* Return the selected clock source name ("TSC", "HPET", "LAPIC", "none"). */
 const char *mono_clock_source_name(void);
 

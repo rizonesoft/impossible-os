@@ -68,6 +68,7 @@
 /* LVT timer modes */
 #define LVT_TIMER_ONESHOT     0x00000000
 #define LVT_TIMER_PERIODIC    0x00020000
+#define LVT_TIMER_TSC_DEADLINE 0x00040000  /* mode bits 18:17 = 10b */
 #define LVT_MASKED            0x00010000
 
 /* Timer divider values (for DCR register) */
@@ -134,9 +135,20 @@ void lapic_timer_calibrate(void);
  * lapic_timer_calibrate(), or a hardcoded fallback. */
 void lapic_timer_init(uint32_t hz);
 
-/* Reprogram the LAPIC timer to a new frequency (Hz).
- * Used by KeSetTimerResolution to change the tick rate. */
-void lapic_timer_set_hz(uint32_t new_hz);
+/* Reprogram the BSP heartbeat rate (KeSetTimerResolution path).
+ * Returns 0 on success, -1 when refused (no LAPIC, uncalibrated, hz 0,
+ * or AP caller -- the heartbeat is BSP-only). */
+int lapic_timer_set_hz(uint32_t new_hz);
+
+/* Pure one-shot conversion helpers (no hardware access; unit-testable).
+ * Split multiply-divide avoids u64 overflow without 128-bit division. */
+uint64_t lapic_oneshot_ns_to_tsc(uint64_t delta_ns, uint64_t freq_hz);
+uint64_t lapic_oneshot_ns_to_ticks(uint64_t delta_ns, uint32_t ticks_per_ms);
+
+/* Drop a one-shot that may have expired while the LVT was masked and
+ * force periodic mode. Called by timer_hal_resume() after restoring the
+ * pre-quiesce LVT -- the heartbeat must never stay silently stopped. */
+void lapic_timer_resume_fixup(void);
 
 /* Returns the calibrated LAPIC timer ticks per millisecond (0 if uncalibrated). */
 uint32_t lapic_timer_ticks_per_ms(void);

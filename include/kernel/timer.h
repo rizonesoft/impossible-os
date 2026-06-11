@@ -27,6 +27,11 @@ typedef struct timer_driver {
     void (*sleep_ms)(uint32_t ms);                   /* blocking delay */
     uint32_t (*get_freq)(void);                      /* current tick freq (Hz) */
     uint64_t (*read_ns)(void);                       /* monotonic nanoseconds (0 if unsupported) */
+    int (*arm_oneshot)(uint64_t deadline_mono_ns);   /* one-shot event at an
+                                                      * absolute mono_ns()
+                                                      * deadline; NULL when
+                                                      * the backend has no
+                                                      * one-shot support */
 } timer_driver_t;
 
 /* ---- THE single source of truth ---- */
@@ -75,6 +80,36 @@ void timer_unregister_tick_callback(void);
 /* Called from PIT/LAPIC ISR to fire the registered callback at the
  * configured frequency.  Not for external use. */
 void timer_tick_callback_fire(void);
+
+/* ---- One-shot timer event (tickless-idle enabler) ----
+ * Arm a single timer event at an absolute mono_ns() deadline. Past
+ * deadlines fire as soon as possible. Returns 0 on success, -1 when the
+ * active backend has no one-shot support (PIT) or no usable conversion.
+ * MECHANISM ONLY: arming temporarily replaces the periodic tick; the
+ * timer ISR auto-restores periodic mode when the one-shot fires, so the
+ * scheduler heartbeat can never silently stop. The tickless-idle
+ * governor owns true one-shot policy when it lands. */
+int timer_arm_oneshot(uint64_t deadline_mono_ns);
+
+/* Pure delegation core for timer_arm_oneshot (unit-testable with a fake
+ * driver): -1 on NULL driver / no one-shot hook, else the backend's
+ * return value, deadline forwarded unmodified. */
+int timer_arm_oneshot_on(timer_driver_t *drv, uint64_t deadline_mono_ns);
+
+/* ---- Backend-aware tick quiesce (UEFI runtime-call safety) ----
+ * Mask the ACTIVE timer backend's tick delivery (LAPIC LVT timer, or the
+ * PIT's routed IOAPIC GSI / PIC line) so firmware that re-enables
+ * interrupts internally (SMI) cannot take a tick in firmware context.
+ * SINGLE-USER and non-reentrant: serialized by the UEFI RT mutex; not
+ * for general use. resume() restores the exact pre-quiesce state. */
+void timer_hal_quiesce(void);
+void timer_hal_resume(void);
+
+/* Serialized tick-rate change (KeSetTimerResolution path): banks the
+ * mono_clock tick epoch and reprograms the LAPIC rate as ONE mode
+ * transition. Returns 0 on success, -1 when refused (PIT backend has a
+ * fixed rate; AP callers are refused -- the heartbeat is BSP-only). */
+int timer_set_tick_hz(uint32_t new_hz);
 
 /* ---- UTS initialization ---- */
 

@@ -22,6 +22,7 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/zw.h"
 #include "kernel/cpu_security.h"
+#include "kernel/timer.h"
 #include "kernel/mm/heap.h"
 #include "kernel/ob/peb.h"
 #include "kernel/drivers/lapic.h"
@@ -711,19 +712,19 @@ static void rt_call_enter(struct rt_call_state *state)
 {
     state->saved_lvt = 0;
     mutex_lock(&s_rt_mutex);
-    if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
-        uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
-        lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
-        state->saved_lvt = lvt;
-    }
+    /* Backend-aware quiesce: masks the ACTIVE timer's tick delivery
+     * (LAPIC LVT, or the PIT's routed IOAPIC GSI / PIC line on the TCG
+     * fallback path). Single-user, serialized by s_rt_mutex. */
+    if (kernel_subsystem_ready(SUBSYS_TIMER))
+        timer_hal_quiesce();
     state->tsc_start = rt_rdtsc();
 }
 
 static void rt_call_exit(struct rt_call_state *state, const char *svc_name)
 {
     uint64_t elapsed = rt_rdtsc() - state->tsc_start;
-    if (state->saved_lvt)
-        lapic_write(LAPIC_REG_LVT_TIMER, state->saved_lvt);
+    if (kernel_subsystem_ready(SUBSYS_TIMER))
+        timer_hal_resume();
     mutex_unlock(&s_rt_mutex);
 
     /* Log latency warning if RT call took > 50ms */
@@ -748,8 +749,10 @@ static int rt_call_enter_emergency(struct rt_call_state *state)
      * its outcome: the timer-last / UEFI-safe invariant must hold even on
      * the contended path. If firmware enables interrupts internally during
      * ResetSystem, an unmasked timer could fire into firmware on the
-     * panic/reset CPU and corrupt the reset. (LAPIC LVT only, matching
-     * rt_call_enter; the PIT-backend gap is tracked in the UTS timer HAL.) */
+     * panic/reset CPU and corrupt the reset. (LAPIC LVT only -- the
+     * normal rt_call path is backend-aware via timer_hal_quiesce(), but
+     * the PIT backend's IOAPIC mask takes ioapic_lock, which is unsafe
+     * in panic context; the emergency PIT-on-IOAPIC gap is deliberate.) */
     if (lapic_available() && kernel_subsystem_ready(SUBSYS_TIMER)) {
         uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
         lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);

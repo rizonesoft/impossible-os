@@ -9,7 +9,8 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/ntstatus.h"
-#include "kernel/drivers/lapic.h"
+#include "kernel/timer.h"
+#include "kernel/sched/spinlock.h"
 #include "kernel/klog.h"
 
 /* ---- State --------------------------------------------------------------- */
@@ -24,9 +25,18 @@ static struct {
 
 static uint32_t s_current_resolution = TIMER_RES_DEFAULT;
 
+/* Serializes request-table mutation + arbitration: concurrent set and
+ * release calls must not interleave around a refused transition. Rare
+ * PASSIVE-level path (NtSetTimerResolution), never an ISR. */
+static spinlock_t s_res_lock = SPINLOCK_INIT;
+
 /* ---- Internal ------------------------------------------------------------ */
 
-static void arbitrate(void)
+/* Returns 0 when the arbitrated rate is live (or unchanged), -1 when the
+ * tick-source transition was refused -- the caller must roll back the
+ * request that triggered it so recorded state never diverges from the
+ * actual heartbeat. */
+static int arbitrate(void)
 {
     uint32_t best = TIMER_RES_DEFAULT;
     uint32_t i;
@@ -41,20 +51,20 @@ static void arbitrate(void)
         best = TIMER_RES_MINIMUM;
 
     if (best != s_current_resolution) {
-        s_current_resolution = best;
-
-        /* Reprogram LAPIC timer to match new resolution.
-         * Resolution is in 100 ns units; Hz = 10000000 / resolution */
-        {
-            uint32_t new_hz = (uint32_t)(10000000ULL / best);
-            if (new_hz > 0)
-                lapic_timer_set_hz(new_hz);
+        /* Publish the new resolution ONLY after the tick source actually
+         * changed rate -- a refused transition (AP caller, fixed-rate
+         * PIT backend) must not advertise a resolution the heartbeat
+         * does not deliver. NO LOGGING here: the caller holds s_res_lock
+         * (and the mode lock nests inside) and klog can flush to disk;
+         * diagnostics are emitted by the syscall layer after unlock. */
+        uint32_t new_hz = (uint32_t)(10000000ULL / best);
+        if (new_hz > 0 && timer_set_tick_hz(new_hz) == 0) {
+            s_current_resolution = best;
+        } else {
+            return -1;
         }
-
-        klog(LOG_INFO, "time", "Timer resolution: %u us (%u Hz)",
-             (uint64_t)(best / 10),
-             (uint64_t)(10000000ULL / best));
     }
+    return 0;
 }
 
 /* ---- Kernel API ---------------------------------------------------------- */
@@ -70,6 +80,12 @@ void timer_resolution_init(void)
 uint32_t KeSetTimerResolution(uint32_t desired_100ns, int set)
 {
     uint32_t i;
+    uint32_t slot = MAX_REQUESTS;
+    uint32_t current;
+    uint64_t irqf;
+    int refused = 0;
+
+    spin_lock_irqsave(&s_res_lock, &irqf);
 
     if (set) {
         /* Clamp */
@@ -84,22 +100,53 @@ uint32_t KeSetTimerResolution(uint32_t desired_100ns, int set)
                 s_requests[i].pid = 0;  /* TODO: task_current()->pid */
                 s_requests[i].resolution_100ns = desired_100ns;
                 s_requests[i].active = 1;
+                slot = i;
                 break;
             }
         }
+
+        /* A request whose tick-source transition was refused (AP caller,
+         * fixed-rate PIT backend) must not linger as recorded-but-never-
+         * applied state: roll it back so the advertised resolution and
+         * the request table stay truthful. BSP delegation for AP-side
+         * requests arrives with the cross-CPU call facility. */
+        if (arbitrate() != 0) {
+            refused = 1;
+            if (slot < MAX_REQUESTS)
+                s_requests[slot].active = 0;
+        }
     } else {
-        /* Release: remove first matching request */
+        /* Release: remove first matching request, but RESTORE it if the
+         * resulting tick-rate transition is refused -- otherwise the
+         * heartbeat stays at the finer rate with no recorded owner */
         for (i = 0; i < MAX_REQUESTS; i++) {
             if (s_requests[i].active &&
                 s_requests[i].resolution_100ns == desired_100ns) {
                 s_requests[i].active = 0;
+                slot = i;
                 break;
             }
         }
+        if (arbitrate() != 0) {
+            refused = 1;
+            if (slot < MAX_REQUESTS)
+                s_requests[slot].active = 1;
+        }
     }
 
-    arbitrate();
-    return s_current_resolution;
+    current = s_current_resolution;
+    spin_unlock_irqrestore(&s_res_lock, irqf);
+
+    /* Diagnostics AFTER every lock is released (klog can flush to disk) */
+    if (refused)
+        klog(LOG_WARN, "time",
+             "Timer resolution change refused -- keeping %u us (BSP-only "
+             "transition or fixed-rate backend)",
+             (uint64_t)(current / 10));
+    else
+        klog(LOG_INFO, "time", "Timer resolution: %u us",
+             (uint64_t)(current / 10));
+    return current;
 }
 
 void KeQueryTimerResolution(uint32_t *max_time, uint32_t *min_time,

@@ -21,6 +21,9 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/msr.h"
 #include "kernel/timer.h"
+#include "kernel/cpuid.h"
+#include "kernel/time/mono_clock.h"
+#include "kernel/smp.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/idt.h"
 #include "kernel/sched/task.h"
@@ -363,6 +366,12 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page)
 
 /* Calibrated ticks per millisecond (0 = uncalibrated / fallback) */
 static uint32_t cal_ticks_per_ms = 0;
+
+/* One-shot timer event armed (tickless-idle enabler): the timer ISR
+ * auto-restores periodic mode when the one-shot fires so the scheduler
+ * heartbeat can never silently stop (the future idle governor owns true
+ * tickless policy). ISR + arm path both touch it: atomic accesses. */
+static volatile uint32_t s_oneshot_armed;
 
 /* Calibration window in milliseconds -- shared by all tiers */
 #define CAL_MS  10
@@ -982,13 +991,97 @@ static void lapic_init_wrapper(uint32_t hz)
     lapic_timer_init(hz);
 }
 
+static inline uint64_t lapic_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* Pure conversion helpers (testable without touching hardware) */
+uint64_t lapic_oneshot_ns_to_tsc(uint64_t delta_ns, uint64_t freq_hz)
+{
+    /* Split multiply-divide: delta * freq overflows u64 after a few
+     * seconds at GHz rates, and 128-bit division has no freestanding
+     * runtime. (delta % 1e9) < 1e9 keeps the partial product in range. */
+    return (delta_ns / 1000000000ULL) * freq_hz
+         + ((delta_ns % 1000000000ULL) * freq_hz) / 1000000000ULL;
+}
+
+uint64_t lapic_oneshot_ns_to_ticks(uint64_t delta_ns, uint32_t ticks_per_ms)
+{
+    return (delta_ns / 1000000ULL) * ticks_per_ms
+         + ((delta_ns % 1000000ULL) * ticks_per_ms) / 1000000ULL;
+}
+
+static int lapic_timer_arm_oneshot(uint64_t deadline_mono_ns)
+{
+    uint64_t now, delta;
+
+    if (!lapic_base || lapic_timer_hz == 0)
+        return -1;
+
+    /* BSP-only: the periodic heartbeat is a BSP-global design (AP LVT
+     * timers are masked) and arming an AP's local timer would create
+     * cross-CPU delivery/restore races. Per-CPU one-shot arrives with
+     * the per-CPU run-queue work. */
+    {
+        struct per_cpu_data *me = smp_this_cpu();
+        if (me && me->cpu_id != 0)
+            return -1;
+    }
+
+    now = mono_ns();
+    /* Past deadlines fire as soon as possible */
+    delta = (deadline_mono_ns > now) ? (deadline_mono_ns - now) : 0;
+
+    /* Preferred: TSC-deadline mode (CPUID-gated; needs the invariant-TSC
+     * frequency for the ns -> TSC conversion). 128-bit multiply: a u64
+     * delta_ns * 4 GHz overflows 64 bits after ~4.6 seconds. */
+    if (cpu_has(CPU_FEATURE_TSC_DL) && cpu_has(CPU_FEATURE_TSC_INV)) {
+        extern uint64_t boot_timing_tsc_freq(void);
+        uint64_t freq = boot_timing_tsc_freq();
+        if (freq > 0) {
+            uint64_t delta_tsc = lapic_oneshot_ns_to_tsc(delta, freq);
+            uint64_t target = lapic_rdtsc() + (delta_tsc ? delta_tsc : 1);
+            __atomic_store_n(&s_oneshot_armed, 1, __ATOMIC_RELEASE);
+            lapic_write(LAPIC_REG_LVT_TIMER,
+                        LVT_TIMER_TSC_DEADLINE | LAPIC_TIMER_VECTOR);
+            /* SDM: serialize between the LVT mode change and the
+             * deadline MSR write, or the wrmsr can be ignored */
+            __asm__ volatile("mfence" ::: "memory");
+            msr_write(MSR_IA32_TSC_DEADLINE, target);
+            return 0;
+        }
+    }
+
+    /* Fallback: LVT one-shot mode from the calibrated bus frequency */
+    if (cal_ticks_per_ms == 0)
+        return -1;
+    {
+        uint64_t ticks = lapic_oneshot_ns_to_ticks(delta, cal_ticks_per_ms);
+        if (ticks == 0)
+            ticks = 1;
+        if (ticks > 0xFFFFFFFFULL)
+            return -1;   /* beyond the 32-bit initial-count range */
+        __atomic_store_n(&s_oneshot_armed, 1, __ATOMIC_RELEASE);
+        lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+        lapic_write(LAPIC_REG_LVT_TIMER,
+                    LVT_TIMER_ONESHOT | LAPIC_TIMER_VECTOR);
+        lapic_write(LAPIC_REG_TIMER_ICR, (uint32_t)ticks);
+        return 0;
+    }
+}
+
 /* Exported vtable for timer HAL selection */
 timer_driver_t lapic_driver = {
-    .name      = "LAPIC",
-    .init      = lapic_init_wrapper,
-    .get_ticks = lapic_get_ticks,
-    .sleep_ms  = lapic_sleep_ms,
-    .get_freq  = lapic_get_freq,
+    .name        = "LAPIC",
+    .init        = lapic_init_wrapper,
+    .get_ticks   = lapic_get_ticks,
+    .sleep_ms    = lapic_sleep_ms,
+    .get_freq    = lapic_get_freq,
+    .read_ns     = mono_ns,
+    .arm_oneshot = lapic_timer_arm_oneshot,
 };
 
 static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
@@ -1019,7 +1112,53 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
         dpc_drain_current_cpu();
     }
 
+    /* One-shot fired: restore periodic mode IMMEDIATELY -- the periodic
+     * heartbeat (scheduler, NT timers, DPC drain) must never silently
+     * stop. Minimal reprogram, no logging in the ISR. The tickless-idle
+     * governor will own true one-shot residency when it lands. */
+    if (__atomic_exchange_n(&s_oneshot_armed, 0, __ATOMIC_ACQ_REL)) {
+        /* Preserve a concurrent quiesce's mask bit: an rt_call on
+         * another CPU may have masked the LVT after this interrupt was
+         * accepted, and the restore must not unmask it into firmware */
+        uint32_t cur = lapic_read(LAPIC_REG_LVT_TIMER);
+        uint32_t icr = (cal_ticks_per_ms > 0 && lapic_timer_hz > 0)
+                           ? cal_ticks_per_ms * 1000 / lapic_timer_hz
+                           : 10000000;
+        lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+        lapic_write(LAPIC_REG_LVT_TIMER,
+                    LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR
+                        | (cur & LVT_MASKED));
+        lapic_write(LAPIC_REG_TIMER_ICR, icr ? icr : 1);
+    }
+
     return schedule(frame);
+}
+
+/* Quiesce/resume fixup: an armed one-shot whose deadline expired while
+ * the LVT was masked never reaches the ISR auto-restore -- the heartbeat
+ * would stay silently stopped after a UEFI runtime call. Conservatively
+ * drop the pending one-shot and force periodic mode (the consumer
+ * re-arms; losing a one-shot event beats losing the scheduler tick). */
+void lapic_timer_resume_fixup(void)
+{
+    /* BSP-only: s_oneshot_armed is BSP heartbeat state. An AP resuming
+     * from a UEFI runtime call must restore only its own saved LVT --
+     * consuming the flag here would lose the BSP's pending one-shot and
+     * program the AP's local timer as periodic/unmasked. */
+    {
+        struct per_cpu_data *me = smp_this_cpu();
+        if (me && me->cpu_id != 0)
+            return;
+    }
+    if (__atomic_exchange_n(&s_oneshot_armed, 0, __ATOMIC_ACQ_REL)) {
+        uint32_t icr = (cal_ticks_per_ms > 0 && lapic_timer_hz > 0)
+                           ? cal_ticks_per_ms * 1000 / lapic_timer_hz
+                           : 10000000;
+        lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+        lapic_write(LAPIC_REG_LVT_TIMER,
+                    LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR);
+        lapic_write(LAPIC_REG_TIMER_ICR, icr ? icr : 1);
+    }
 }
 
 void lapic_timer_init(uint32_t hz)
@@ -1079,12 +1218,27 @@ void lapic_timer_init(uint32_t hz)
          (uint64_t)hz);
 }
 
-void lapic_timer_set_hz(uint32_t new_hz)
+int lapic_timer_set_hz(uint32_t new_hz)
 {
     uint32_t icr;
 
     if (!lapic_base || cal_ticks_per_ms == 0 || new_hz == 0)
-        return;
+        return -1;
+
+    /* BSP-only: the heartbeat is the BSP's LAPIC timer (AP LVTs are
+     * masked); reprogramming an AP's local timer would publish a new
+     * global rate without changing the actual tick source. AP-side
+     * routing arrives with the per-CPU timer bring-up. */
+    {
+        struct per_cpu_data *me = smp_this_cpu();
+        if (me && me->cpu_id != 0)
+            return -1;   /* caller logs after releasing its locks */
+    }
+
+    /* Bank tick time at the OLD rate before the frequency changes --
+     * otherwise the mono_clock tick fallback rewinds (lifetime ticks
+     * must never be rescaled by a new frequency) */
+    mono_clock_tick_rebase(new_hz);
 
     icr = cal_ticks_per_ms * 1000 / new_hz;
     if (icr == 0) icr = 1;
@@ -1092,6 +1246,8 @@ void lapic_timer_set_hz(uint32_t new_hz)
     lapic_write(LAPIC_REG_TIMER_ICR, icr);
     lapic_timer_hz = new_hz;
 
-    klog(LOG_DEBUG, "lapic", "LAPIC timer ICR updated: %u Hz (ICR=%u)",
-         (uint64_t)new_hz, (uint64_t)icr);
+    /* No logging here: timer_set_tick_hz holds the mode lock across this
+     * call and klog can flush to disk -- the syscall layer logs after
+     * releasing every lock */
+    return 0;
 }

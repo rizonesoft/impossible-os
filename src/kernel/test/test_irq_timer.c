@@ -17,6 +17,8 @@
 #include "kernel/drivers/hpet.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/vectors.h"
+#include "kernel/time/mono_clock.h"
+#include "kernel/drivers/pit.h"
 
 /* ---- MADT consolidated info (S1) ---------------------------------------- */
 
@@ -248,6 +250,99 @@ static void test_hpet_consistency(void)
                     "HPET present implies nonzero frequency");
 }
 
+static void test_uts_clocksource_contract(void)
+{
+    /* Single clocksource contract: both backends delegate read_ns to
+     * mono_ns (pointer equality is pure and platform-independent) */
+    TEST_ASSERT(pit_driver.read_ns == mono_ns,
+                "pit_driver.read_ns delegates to mono_ns");
+    TEST_ASSERT(lapic_driver.read_ns == mono_ns,
+                "lapic_driver.read_ns delegates to mono_ns");
+    /* When a mono source is live, uptime_ns() must be coherent with
+     * mono_ns() (same clock, sampled close together) */
+    if (mono_clock_source_id() != MONO_SRC_NONE) {
+        uint64_t a = mono_ns();
+        uint64_t b = uptime_ns();
+        TEST_ASSERT(b >= a, "uptime_ns >= earlier mono_ns sample");
+        TEST_ASSERT(b - a < 50000000ULL,
+                    "uptime_ns within 50ms of mono_ns sample");
+    }
+}
+
+static void test_uts_oneshot_surface(void)
+{
+    /* PIT has no one-shot; LAPIC provides the hook (vtable shape only --
+     * arming the live timer from a test would perturb the system tick) */
+    TEST_ASSERT(pit_driver.arm_oneshot == (int (*)(uint64_t))0,
+                "PIT backend has no one-shot hook");
+    TEST_ASSERT(lapic_driver.arm_oneshot != (int (*)(uint64_t))0,
+                "LAPIC backend provides arm_oneshot");
+    if (g_system_timer == &pit_driver)
+        TEST_ASSERT_EQ(timer_arm_oneshot(0), -1,
+                       "one-shot refused on the PIT backend");
+}
+
+static void test_oneshot_conversion_helpers(void)
+{
+    /* ns -> TSC: split multiply-divide must be exact and overflow-free */
+    TEST_ASSERT_EQ(lapic_oneshot_ns_to_tsc(0, 4000000000ULL), 0,
+                   "0 ns -> 0 TSC ticks");
+    TEST_ASSERT_EQ(lapic_oneshot_ns_to_tsc(1000000000ULL, 4000000000ULL),
+                   4000000000ULL, "1 s at 4 GHz = 4e9 TSC ticks");
+    TEST_ASSERT_EQ(lapic_oneshot_ns_to_tsc(3600000000000ULL, 4000000000ULL),
+                   14400000000000ULL, "1 hour at 4 GHz (would overflow u64 mul)");
+    TEST_ASSERT_EQ(lapic_oneshot_ns_to_tsc(1, 1000000000ULL), 1,
+                   "1 ns at 1 GHz = 1 tick");
+    /* ns -> LAPIC initial-count ticks */
+    TEST_ASSERT_EQ(lapic_oneshot_ns_to_ticks(0, 100000), 0,
+                   "0 ns -> 0 LAPIC ticks");
+    TEST_ASSERT_EQ(lapic_oneshot_ns_to_ticks(1000000000ULL, 100000),
+                   100000000ULL, "1 s at 100000 ticks/ms = 1e8 ticks");
+    TEST_ASSERT(lapic_oneshot_ns_to_ticks(60000000000ULL, 100000)
+                    > 0xFFFFFFFFULL,
+                "60 s at 100000 ticks/ms exceeds the 32-bit ICR range");
+    TEST_ASSERT(lapic_oneshot_ns_to_ticks(42000000000ULL, 100000)
+                    <= 0xFFFFFFFFULL,
+                "42 s at 100000 ticks/ms still fits the 32-bit ICR range");
+}
+
+static void test_mono_lapic_scaling(void)
+{
+    TEST_ASSERT_EQ(mono_lapic_ticks_to_ns(100, 100), 1000000000ULL,
+                   "100 ticks at 100 Hz = 1 s");
+    TEST_ASSERT_EQ(mono_lapic_ticks_to_ns(1000, 1000), 1000000000ULL,
+                   "1000 ticks at 1000 Hz = 1 s (resolution change)");
+    TEST_ASSERT_EQ(mono_lapic_ticks_to_ns(123, 0), 0,
+                   "freq 0 (no tick source) -> 0");
+}
+
+static int  s_fake_oneshot_rc;
+static uint64_t s_fake_oneshot_deadline;
+static int fake_arm_oneshot(uint64_t deadline_mono_ns)
+{
+    s_fake_oneshot_deadline = deadline_mono_ns;
+    return s_fake_oneshot_rc;
+}
+
+static void test_oneshot_delegation(void)
+{
+    timer_driver_t fake = { .name = "fake", .arm_oneshot = fake_arm_oneshot };
+    timer_driver_t no_hook = { .name = "nohook" };
+
+    TEST_ASSERT_EQ(timer_arm_oneshot_on((timer_driver_t *)0, 5), -1,
+                   "NULL driver refused");
+    TEST_ASSERT_EQ(timer_arm_oneshot_on(&no_hook, 5), -1,
+                   "driver without one-shot hook refused");
+    s_fake_oneshot_rc = 0;
+    TEST_ASSERT_EQ(timer_arm_oneshot_on(&fake, 0x123456789ABCDEFULL), 0,
+                   "backend return value preserved (success)");
+    TEST_ASSERT_EQ(s_fake_oneshot_deadline, 0x123456789ABCDEFULL,
+                   "absolute deadline forwarded unmodified");
+    s_fake_oneshot_rc = -1;
+    TEST_ASSERT_EQ(timer_arm_oneshot_on(&fake, 7), -1,
+                   "backend return value preserved (failure)");
+}
+
 static void test_lapic_calibration_state(void)
 {
     /* When the LAPIC timer drives the system, calibration must have
@@ -295,6 +390,16 @@ void test_register_irq_timer(void)
         test_uptime_ns_monotonic, TEST_CAT_BOOT);
     test_suite_register_cat("irq_timer: HPET consistency",
         test_hpet_consistency, TEST_CAT_BOOT);
+    test_suite_register_cat("irq_timer: UTS clocksource contract",
+        test_uts_clocksource_contract, TEST_CAT_BOOT);
+    test_suite_register_cat("irq_timer: UTS one-shot surface",
+        test_uts_oneshot_surface, TEST_CAT_BOOT);
+    test_suite_register_cat("irq_timer: one-shot conversion helpers",
+        test_oneshot_conversion_helpers, TEST_CAT_BOOT);
+    test_suite_register_cat("irq_timer: mono LAPIC tick scaling",
+        test_mono_lapic_scaling, TEST_CAT_BOOT);
+    test_suite_register_cat("irq_timer: one-shot delegation",
+        test_oneshot_delegation, TEST_CAT_BOOT);
     test_suite_register_cat("irq_timer: LAPIC calibration state",
         test_lapic_calibration_state, TEST_CAT_BOOT);
 }

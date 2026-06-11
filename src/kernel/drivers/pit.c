@@ -12,6 +12,7 @@
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
 #include "kernel/timer.h"
+#include "kernel/time/mono_clock.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
 #include "kernel/sched/task.h"
@@ -201,6 +202,10 @@ timer_driver_t pit_driver = {
     .get_ticks = pit_get_ticks,
     .sleep_ms  = pit_sleep_ms,
     .get_freq  = pit_get_freq,
+    /* Single clocksource contract: delegate to mono_clock instead of
+     * growing a second ns path; pre-init mono_ns() returns 0 and
+     * uptime_ns() falls back to the tick counter. No one-shot on PIT. */
+    .read_ns   = mono_ns,
 };
 
 void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks)

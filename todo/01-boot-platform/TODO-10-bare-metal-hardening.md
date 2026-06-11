@@ -446,7 +446,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 > - Emergency reset (`uefi_reset`) now masks the timer regardless of firmware-mutex contention; the init-order contract + `uefi_runtime.c` header were corrected to match the real code (DPC-before-sti, input-after-sti, sleepable mutex).
 > - Scope boundary: PIT-backend (TCG) timer masking is backend-aware UTS work owned by `01-boot-platform/TODO-11 §6`; LAPIC-backend (bare metal / WHPX) is masked here.
 > **Verified:** 2026-06-08 | commit `483ff06c` | 4/4 items | build OK | boot 1723+16 PASS, smoke PASS (KVM 2.57s)
-> **Accepted:** [M] `rt_call` masking is LAPIC-only -- PIT-backend (TCG) timer can fire into firmware during UEFI RT calls -> XREF: 01-boot-platform/TODO-11 §6 (item: "Add backend-aware `timer_hal_quiesce()`/`resume()`" at line 246)
+> **Accepted:** [L] panic/emergency reset keeps LAPIC-only masking on the PIT backend (reason: ioapic_lock is panic-unsafe, deliberate) -- the normal rt_call PIT gap is CLOSED by `timer_hal_quiesce()` -> XREF: 01-boot-platform/TODO-11 §6 (item: "Backend-aware `timer_hal_quiesce()`/`resume()`" at line 250)
 > **Quality reviewed:** 2026-06-08 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M+2L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---

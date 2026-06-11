@@ -15,6 +15,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_info.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/sched/spinlock.h"
 
 /* THE single source of truth -- set once by timer_hal_init() */
 timer_driver_t *g_system_timer = (timer_driver_t *)0;
@@ -61,6 +62,42 @@ uint64_t uptime_ns(void)
         if (freq == 0) return 0;
         return (system_get_ticks() * 1000000000ULL) / freq;
     }
+}
+
+/* Timer mode transitions (arm one-shot / quiesce / resume) share one
+ * lock so an arm can never rewrite an LVT that a UEFI runtime call just
+ * masked. The timer ISR does NOT take this lock: holders run with IRQs
+ * disabled (irqsave) and the tick ISR is BSP-only, so the ISR and a
+ * same-CPU holder are mutually excluded; the cross-CPU ISR-restore case
+ * preserves the mask bit instead. */
+static spinlock_t s_timer_mode_lock = SPINLOCK_INIT;
+static int s_quiesced;   /* guarded by s_timer_mode_lock */
+
+/* Pure delegation core (testable with a fake driver): refuses a NULL
+ * driver or a backend without one-shot support, otherwise forwards the
+ * absolute deadline and preserves the backend's return value. */
+int timer_arm_oneshot_on(timer_driver_t *drv, uint64_t deadline_mono_ns)
+{
+    if (!drv || !drv->arm_oneshot)
+        return -1;
+    return drv->arm_oneshot(deadline_mono_ns);
+}
+
+int timer_arm_oneshot(uint64_t deadline_mono_ns)
+{
+    uint64_t irqf;
+    int rc;
+
+    spin_lock_irqsave(&s_timer_mode_lock, &irqf);
+    if (s_quiesced) {
+        /* A UEFI runtime call masked the tick: arming now would rewrite
+         * the LVT unmasked while firmware may have interrupts enabled */
+        spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
+        return -1;
+    }
+    rc = timer_arm_oneshot_on(g_system_timer, deadline_mono_ns);
+    spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
+    return rc;
 }
 
 /* ---- Timer tick callback (ISR-context periodic callback) ---- */
@@ -123,6 +160,83 @@ void timer_tick_callback_fire(void)
 #include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
 #include "kernel/boot_halt.h"
+
+/* Serialized tick-rate change: the rebase + LAPIC reprogram must be one
+ * mode transition (an interleaved arm/quiesce could pair an old epoch
+ * with a new rate). PIT backend has a fixed rate: no-op there. */
+int timer_set_tick_hz(uint32_t new_hz)
+{
+    uint64_t irqf;
+    int rc = -1;
+
+    spin_lock_irqsave(&s_timer_mode_lock, &irqf);
+    if (g_system_timer == &lapic_driver)
+        rc = lapic_timer_set_hz(new_hz);
+    spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
+    return rc;
+}
+
+/* ---- Backend-aware tick quiesce (UEFI runtime-call safety) ----
+ * Single-user (serialized by the UEFI RT mutex); the mode lock below
+ * additionally excludes a concurrent one-shot arm. State is "which
+ * backend was masked + what to restore". */
+static uint32_t s_quiesce_saved_lvt;   /* LAPIC backend: pre-mask LVT */
+static int      s_quiesce_pit_masked;  /* PIT backend: 1=IOAPIC, 2=PIC */
+
+void timer_hal_quiesce(void)
+{
+    uint64_t irqf;
+
+    spin_lock_irqsave(&s_timer_mode_lock, &irqf);
+    if (s_quiesced || !g_system_timer) {
+        spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
+        return;
+    }
+
+    if (g_system_timer == &lapic_driver) {
+        uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
+        lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
+        s_quiesce_saved_lvt = lvt;
+    } else if (g_system_timer == &pit_driver) {
+        /* The PIT tick arrives through whichever controller routes ISA
+         * IRQ0 -- mask at that controller, not at the 8254 itself */
+        if (ioapic_available()) {
+            ioapic_mask_irq(ioapic_isa_to_gsi(0));
+            s_quiesce_pit_masked = 1;
+        } else if (pic_available()) {
+            pic_mask_irq(0);
+            s_quiesce_pit_masked = 2;
+        }
+    }
+    s_quiesced = 1;
+    spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
+}
+
+void timer_hal_resume(void)
+{
+    uint64_t irqf;
+
+    spin_lock_irqsave(&s_timer_mode_lock, &irqf);
+    if (!s_quiesced) {
+        spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
+        return;
+    }
+
+    if (g_system_timer == &lapic_driver) {
+        lapic_write(LAPIC_REG_LVT_TIMER, s_quiesce_saved_lvt);
+        /* An armed one-shot whose deadline expired while masked never
+         * reaches the ISR auto-restore: drop it and force periodic */
+        lapic_timer_resume_fixup();
+    } else if (s_quiesce_pit_masked == 1) {
+        ioapic_unmask_irq(ioapic_isa_to_gsi(0));
+    } else if (s_quiesce_pit_masked == 2) {
+        pic_unmask_irq(0);
+    }
+    s_quiesce_saved_lvt = 0;
+    s_quiesce_pit_masked = 0;
+    s_quiesced = 0;
+    spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
+}
 
 void timer_hal_init(void)
 {

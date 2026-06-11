@@ -94,6 +94,7 @@ After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, al
 - [ ] Hook into `vmm_unmap()` and `vmm_mprotect()` -- call `tlb_shootdown(addr_space->cpu_mask, vaddr, len)` after PTE store + `smp_mb()`
 - [ ] Single-CPU fast path: if `cpu_mask` has only the local CPU bit set, just `invlpg(vaddr)` without IPI overhead
 - [ ] Boot log: `[SMP] TLB shootdown IPI registered (vector 0xE0)`
+- [ ] `smp_call_function(cpu, fn, arg)` cross-CPU synchronous call (same IPI+ack pattern): first consumer is BSP delegation of timer-resolution transitions (`timer_set_tick_hz` refuses AP callers today; `KeSetTimerResolution` rolls back AP-side requests -- `src/kernel/time/timer_resolution.c`, filed from `01-boot-platform/TODO-11` §6 review)
 - [ ] Commit: `"smp: TLB shootdown IPI -- invlpg range, atomic ack counter, vmm_unmap/mprotect hook"`
 
 ## 3. Per-CPU Run Queues `[Opus]`
