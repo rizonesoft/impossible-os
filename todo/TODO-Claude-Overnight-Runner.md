@@ -31,13 +31,13 @@ only when every domain is complete or a hard-stop condition fires.
   **USER AUTHORIZED Monocypher vendoring (2026-06-12):** the dependency
   addition for `02-kernel-core/TODO-03` §5 is approved -- do not re-ask.
   Run-5 work queue, in order:
-  1. **`02-kernel-core/TODO-03` §5** -- vendor Monocypher via the normal
-     section pipeline (pulled forward like TODO-13 §2 was; only §5, not
-     the whole file -- TODO-03 gets its own validate/gap-audit when the
-     domain cursor reaches it).
+  1. **`02-kernel-core/TODO-03` §5** -- DONE: Monocypher 4.0.2 + kernel
+     CSPRNG + `NtGetRandom` shipped (99910014) + reviewed (21168666).
+     (TODO-03 gets its own validate/gap-audit when the domain cursor
+     reaches it; only §5 was pulled forward.)
   2. **TODO-12 §6 -> §7 -> §8** in numeric order (§6/§8 use the new
-     crypto; §7 boot_info seed handoff is crypto-free and was already
-     unblocked).
+     crypto -- now available; §7 boot_info seed handoff is crypto-free
+     and was already unblocked). <- NEXT
   3. **§9/§10**, then `complete-todo-file` closure.
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
@@ -124,3 +124,4 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 - 2026-06-12 ~07:00 SAST: run 3 (interactive, cut short) -- preflight caught build break at HEAD (half-committed peek->drain refactor); drain implemented + tests migrated + committed (dd19d586), build OK, security suite green; user redirected to headless timer; §5 review + §4 re-open queued for run 4.
 - 2026-06-12 ~07:00-09:45 SAST: run 4 -- TODO-12 §5 reviewed (5ccdd14d, Codex 4x); TODO-13 §2 TPM2 transport pulled forward, shipped + reviewed (8ae51bf1 + c3779b6d, Codex 9x); TODO-12 §4 TPM RNG shipped + reviewed (ee546157 + review fixes: periodicity scan, first-failure contract, splash-before-TPM; Codex 10x); cursor at TODO-12 §6.
 - 2026-06-12 ~10:00 SAST: between-runs -- user authorized Monocypher vendoring (D02T03 §5); run-5 queue set (D02T03 §5 -> TODO-12 §6/§7/§8 -> §9/§10 -> closure); headless unit PATH fixed via systemd --setenv (handoff flagged missing ~/.local/bin + nvm node).
+- 2026-06-12 ~10:00-11:50 SAST: run 5 -- D02T03 §5 Monocypher 4.0.2 + kernel CSPRNG + NtGetRandom 0x03D8 shipped (99910014) + reviewed (21168666); Codex design+test-coverage+adversarial(multi-round)+consistency+perf+re-adversarial; 2 latent bugs fixed (heap_init truncation, USER_PT_WINDOW reservation+payload check); perf/SMP hardening (single-ratchet NtGetRandom, emergency seed I/O out of lock, atomic g_seeded); 2 systemic HIGH accepted-XREF (TODO-10 §2, TODO-12 §12); cross-TODO unblocks landed (TODO-12, TODO-10/11/06-desktop/01-sdk ownership). Next: 01-boot TODO-12 §6.
