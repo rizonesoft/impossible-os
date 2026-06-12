@@ -23,13 +23,12 @@ only when every domain is complete or a hard-stop condition fires.
 
 ## Cursor
 
-- **Current (2026-06-11):** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`,
-  resume at `## 5. Dynamic IRQ Registration API`. Stages 1-2 (validate +
-  gap-audit) for TODO-11 already completed in the 2026-06-11 run -- do NOT
-  re-run them; go straight to the section pipeline at section 5. The working
-  tree carries uncommitted in-progress edits from the interrupted session
-  (`timer.c`, `boot_interrupts.c`, `test_runner.c`, ...) -- inspect and fold
-  them into the section 5 work, do not discard them.
+- **Current (2026-06-12):** `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md`,
+  fresh file -- start at pipeline stage 1 (validate). TODO-11 is closed:
+  §1-§6 + §8-§10 shipped and reviewed with stamps; §7 (LAPIC calibration)
+  stays `[/]` blocked-with-XREF on `03-memory-concurrency/TODO-07` §3 (AP
+  LAPIC timer bring-up) -- acceptable per the file-complete criterion;
+  loose-end sweep committed as c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
 - Everything before the cursor (domain `00-infrastructure`, and
   `01-boot-platform` TODO-01 through TODO-10) is DONE -- do not revisit except
@@ -108,3 +107,4 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 > shipped, pauses/blockers. Keep entries to one line each.
 
 - 2026-06-11 16:36 SAST: run 1 -- TODO-11 validate + gap-audit done, sections 1-4 worked; stopped at section 5 (Dynamic IRQ Registration API) on Claude usage limit; uncommitted section-5 work left in tree; resume armed for 20:47.
+- 2026-06-12 02:35 SAST: run 1 resumed -- TODO-11 §5 + §6 implemented + reviewed, §7 reviewed ([/] blocked on D03T07§3), §8/§9/§10 review passes shipped (98592c32, 7ea3a01f, 80328e01), loose-end sweep c4e92774; cursor advanced to TODO-12-early-entropy-random-seed.md.
