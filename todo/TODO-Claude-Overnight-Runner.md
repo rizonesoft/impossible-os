@@ -28,14 +28,17 @@ only when every domain is complete or a hard-stop condition fires.
   (§5 review shipped 5ccdd14d). TODO-13 §2 TPM transport pulled forward and
   shipped + reviewed (8ae51bf1 + review stamps) per user direction, so §4 is
   UNBLOCKED and now SHIPPED + REVIEWED (§4: ee546157 + review stamps).
-  **§6 and §8 are blocked on a USER DECISION:** both need
-  `02-kernel-core/TODO-03` §5 (Monocypher vendoring -- a dependency
-  addition, stop-and-ask per CLAUDE.md). Ask the user to authorize
-  vendoring Monocypher; once authorized, implement D02T03 §5 via the
-  normal pipeline, then §6 and §8. Work queue meanwhile:
-  1. **§7 implement** (boot_info seed handoff -- dep TODO-01 §4, done;
-     kernel-side descriptor consumption + zeroing, no crypto needed).
-  2. **§9/§10** after §6-§8 close.
+  **USER AUTHORIZED Monocypher vendoring (2026-06-12):** the dependency
+  addition for `02-kernel-core/TODO-03` §5 is approved -- do not re-ask.
+  Run-5 work queue, in order:
+  1. **`02-kernel-core/TODO-03` §5** -- vendor Monocypher via the normal
+     section pipeline (pulled forward like TODO-13 §2 was; only §5, not
+     the whole file -- TODO-03 gets its own validate/gap-audit when the
+     domain cursor reaches it).
+  2. **TODO-12 §6 -> §7 -> §8** in numeric order (§6/§8 use the new
+     crypto; §7 boot_info seed handoff is crypto-free and was already
+     unblocked).
+  3. **§9/§10**, then `complete-todo-file` closure.
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
@@ -120,3 +123,4 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 - 2026-06-12 ~02:35-04:48 SAST: run 2 (same session) -- TODO-12 validate + gap-audit + §1-§3 shipped; §4 filed blocked-with-XREF (a98dca94); died mid-§5 on transient API 500, staged §5 work left in tree; resume armed, §4 re-opened per user direction.
 - 2026-06-12 ~07:00 SAST: run 3 (interactive, cut short) -- preflight caught build break at HEAD (half-committed peek->drain refactor); drain implemented + tests migrated + committed (dd19d586), build OK, security suite green; user redirected to headless timer; §5 review + §4 re-open queued for run 4.
 - 2026-06-12 ~07:00-09:45 SAST: run 4 -- TODO-12 §5 reviewed (5ccdd14d, Codex 4x); TODO-13 §2 TPM2 transport pulled forward, shipped + reviewed (8ae51bf1 + c3779b6d, Codex 9x); TODO-12 §4 TPM RNG shipped + reviewed (ee546157 + review fixes: periodicity scan, first-failure contract, splash-before-TPM; Codex 10x); cursor at TODO-12 §6.
+- 2026-06-12 ~10:00 SAST: between-runs -- user authorized Monocypher vendoring (D02T03 §5); run-5 queue set (D02T03 §5 -> TODO-12 §6/§7/§8 -> §9/§10 -> closure); headless unit PATH fixed via systemd --setenv (handoff flagged missing ~/.local/bin + nvm node).
