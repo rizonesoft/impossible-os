@@ -37,7 +37,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | --- | :---: | ------------------------------------------ | ------------------ | :----: |
 | 💎  |   1   | Entropy source inventory and quality model | T04 §2             |  [x]   |
 | 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [x]   |
-| 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [ ]   |
+| 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [x]   |
 | 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [ ]   |
 | 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [ ]   |
 | 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [ ]   |
@@ -101,13 +101,22 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 3. CPU RDRAND/RDSEED Collection
 
-- [ ] Use CPUID-gated RDSEED first, RDRAND second.
-- [ ] Retry bounded times and reject all-zero/repeated output.
-- [ ] Mix CPU vendor/family/model only as non-secret personalization.
-- [ ] Record source health in boot_info.
-- [ ] Commit: `"boot: collect CPU RNG entropy"`
+- [x] `bl_collect_cpu_rng()` (bootx64.c): RDSEED preferred, RDRAND fallback, both behind max-leaf-gated CPUID probes (leaf 0 first, leaf 7.0 EBX bit 18 / leaf 1 ECX bit 30 -- kernel `cpuid.c` discipline) so missing leaves degrade instead of #UD.
+- [x] Bounded retries (`BL_RDSEED_RETRIES` 1024 with pause per qword, `BL_RDRAND_RETRIES` 10); whole sample rejected on all-zero or all-identical qwords (stuck-DRNG heuristic, covers 0xFF fill).
+- [x] CPU vendor string + family/model/stepping appended to the ACCEPTED RNG payload as non-secret personalization -- never a standalone record, so a framed src-1 record always implies real RNG output (design review adoption).
+- [x] Source health encoded by the framed records in the published seed payload (verified live: `RNG: RDSEED 64 bytes` + 85-byte payload on KVM); the in-payload mask/quality header is §7.
+- [x] Commit: `"boot: collect CPU RNG entropy"`
 
-**Test checkpoint:** Platforms with RDSEED log `RNG: RDSEED N bytes`; TCG `qemu64` (no RDSEED) falls back to RDRAND or degrades without crashing (CPUID-gated, never #UD). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Platforms with RDSEED log `[BOOT] RNG: RDSEED 64 bytes` (verified on KVM, seed payload published); TCG `qemu64` (no RDSEED) falls back to RDRAND or degrades without crashing (CPUID-gated, never #UD). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** N/A (pure UEFI bootloader code) | validation: smoke PASS + `[BOOT] RNG: RDSEED 64 bytes` + seed payload line on KVM
+
+> **Notes:**
+> - Shipped `bl_cpuid()`/`bl_rdseed64()`/`bl_rdrand64()`/`bl_collect_cpu_rng()` in bootx64.c; runs inside `collect_boot_entropy()` between the EFI RNG and OEM0 sources.
+> - Sample = 8 qwords RDSEED (RDRAND-grade when any qword fell back) + 16 identity bytes, framed as one src-1 record; intermediates zeroed after framing.
+> - Downstream: first live producer exercising the §2 descriptor publication end-to-end (85-byte payload verified on KVM); §7 parses the record.
+> - Canonical contract doc: `include/kernel/entropy.h` framing + source classes.
+> - Scope boundary: kernel-side AT_RANDOM/canary RDRAND users stay on `src/kernel/random.c` until §8 seeds the CSPRNG.
 
 ---
 
@@ -207,7 +216,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | --- | ------------------------------ | -------------------------- | --------------------------- | --------------------------- |
 | 💎  | Entropy quality/credit model   | ✅ internal pool credit    | ✅ credit accounting        | ✅ §1 mask+class+policy     |
 | 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random     | ✅ §2 + OEM0, framed seed   |
-| 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ⬜ §3 CPUID-gated           |
+| 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ✅ §3 RDSEED-first, gated   |
 | 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ⬜ §4 TPM2_GetRandom        |
 | 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ⬜ §5 low-quality only      |
 | 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ⬜ §6 versioned + MAC       |

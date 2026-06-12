@@ -8791,11 +8791,161 @@ static void parse_fpdt(void)
  * (NULL) per UEFI 2.10 37.5.2.
  * ============================================================================ */
 #define BL_ENTROPY_SRC_FW_RNG    0u
+#define BL_ENTROPY_SRC_CPU_RNG   1u
 #define BL_ENTROPY_SRC_ACPI_OEM0 3u
 #define BL_ENTROPY_FW_BYTES      64u
+#define BL_ENTROPY_CPU_QWORDS    8u    /* 64 RNG bytes */
 #define BL_ENTROPY_OEM0_CAP      512u
+/* Per-qword RDSEED retry budget. RDSEED legitimately underflows when the
+ * DRNG conditioner is drained; Intel DRG guide recommends pause+retry.
+ * 1024 spins of pause is far below 1ms even on slow cores, so the
+ * pre-EBS latency is bounded while still riding out normal underflow. */
+#define BL_RDSEED_RETRIES        1024u
+#define BL_RDRAND_RETRIES        10u
 #define POST16_BL_ENTROPY        0xB034
 #define POST16_BL_ENTROPY_OK     0xB035
+
+static UINTN bl_entropy_frame(UINT8 *buf, UINTN cap, UINTN pos,
+                              UINT8 src, const UINT8 *data, UINT32 len);
+
+/* CPUID with subleaf -- max-leaf gating is the CALLER's job. */
+static void bl_cpuid(UINT32 leaf, UINT32 subleaf,
+                     UINT32 *eax, UINT32 *ebx, UINT32 *ecx, UINT32 *edx)
+{
+    UINT32 a, b, c, d;
+    __asm__ volatile ("cpuid"
+                      : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                      : "a"(leaf), "c"(subleaf));
+    if (eax) *eax = a;
+    if (ebx) *ebx = b;
+    if (ecx) *ecx = c;
+    if (edx) *edx = d;
+}
+
+/* One RDSEED attempt with bounded pause-retry. Returns 1 on success. */
+static int bl_rdseed64(UINT64 *out)
+{
+    UINT32 tries = BL_RDSEED_RETRIES;
+    while (tries-- > 0) {
+        UINT64 v;
+        UINT8 ok;
+        __asm__ volatile ("rdseed %0; setc %1"
+                          : "=r"(v), "=qm"(ok) : : "cc");
+        if (ok) { *out = v; return 1; }
+        __asm__ volatile ("pause");
+    }
+    return 0;
+}
+
+/* RDRAND with the Intel-recommended 10-retry loop. Returns 1 on success. */
+static int bl_rdrand64(UINT64 *out)
+{
+    UINT32 tries = BL_RDRAND_RETRIES;
+    while (tries-- > 0) {
+        UINT64 v;
+        UINT8 ok;
+        __asm__ volatile ("rdrand %0; setc %1"
+                          : "=r"(v), "=qm"(ok) : : "cc");
+        if (ok) { *out = v; return 1; }
+        __asm__ volatile ("pause");
+    }
+    return 0;
+}
+
+/* Collect CPU RNG entropy: RDSEED preferred (fully conditioned seed
+ * grade), RDRAND fallback. CPUID gates follow the kernel cpuid.c
+ * discipline: leaf 0 max-basic first, leaf absent = feature absent.
+ * The whole sample is rejected when the DRNG looks stuck (all-zero or
+ * all qwords identical). On acceptance, the CPU identity (vendor string
+ * + family/model/stepping dword) is APPENDED to the same record as
+ * non-secret personalization -- never emitted standalone, so a framed
+ * src-1 record always implies real RNG output came with it. Returns the
+ * new transcript position, or pos unchanged on degrade. */
+static UINTN bl_collect_cpu_rng(UINT8 *seed, UINTN cap, UINTN pos)
+{
+    UINT32 max_basic, ebx, ecx, edx;
+    int has_rdseed = 0, has_rdrand = 0;
+
+    bl_cpuid(0, 0, &max_basic, &ebx, &ecx, &edx);
+    if (max_basic >= 7) {
+        UINT32 f_ebx;
+        bl_cpuid(7, 0, (UINT32 *)0, &f_ebx, (UINT32 *)0, (UINT32 *)0);
+        has_rdseed = (f_ebx >> 18) & 1u;
+    }
+    if (max_basic >= 1) {
+        UINT32 f_ecx;
+        bl_cpuid(1, 0, (UINT32 *)0, (UINT32 *)0, &f_ecx, (UINT32 *)0);
+        has_rdrand = (f_ecx >> 30) & 1u;
+    }
+    if (!has_rdseed && !has_rdrand) {
+        serial_early_print("[BOOT] RNG: no RDSEED/RDRAND (CPUID)\n");
+        return pos;
+    }
+
+    UINT64 q[BL_ENTROPY_CPU_QWORDS];
+    UINTN i;
+    int used_rdseed = has_rdseed;
+    for (i = 0; i < BL_ENTROPY_CPU_QWORDS; i++) {
+        int ok = 0;
+        if (has_rdseed)
+            ok = bl_rdseed64(&q[i]);
+        if (!ok && has_rdrand) {
+            ok = bl_rdrand64(&q[i]);
+            if (ok)
+                used_rdseed = 0;   /* ANY fallback makes the sample RDRAND-grade */
+        }
+        if (!ok) {
+            serial_early_print("[BOOT] RNG: CPU DRNG exhausted -- degraded\n");
+            efi_memset(q, 0, sizeof(q));
+            return pos;
+        }
+    }
+
+    /* Stuck-DRNG heuristics: all-zero output or every qword identical
+     * (catches 0xFF..FF fill too, since all 8 would match). */
+    {
+        int all_zero = 1, all_same = 1;
+        for (i = 0; i < BL_ENTROPY_CPU_QWORDS; i++) {
+            if (q[i] != 0) all_zero = 0;
+            if (q[i] != q[0]) all_same = 0;
+        }
+        if (all_zero || all_same) {
+            serial_early_print("[BOOT] RNG: CPU DRNG output rejected (stuck)\n");
+            efi_memset(q, 0, sizeof(q));
+            return pos;
+        }
+    }
+
+    /* Payload = 64 RNG bytes + 16 bytes non-secret personalization
+     * (CPUID vendor string + family/model/stepping dword). */
+    UINT8 payload[BL_ENTROPY_CPU_QWORDS * 8 + 16];
+    for (i = 0; i < BL_ENTROPY_CPU_QWORDS; i++) {
+        UINTN b;
+        for (b = 0; b < 8; b++)
+            payload[i * 8 + b] = (UINT8)(q[i] >> (b * 8));
+    }
+    {
+        UINT32 v_ebx, v_ecx, v_edx, fms;
+        bl_cpuid(0, 0, (UINT32 *)0, &v_ebx, &v_ecx, &v_edx);
+        bl_cpuid(1, 0, &fms, (UINT32 *)0, (UINT32 *)0, (UINT32 *)0);
+        UINT8 *p = payload + BL_ENTROPY_CPU_QWORDS * 8;
+        UINTN b;
+        for (b = 0; b < 4; b++) p[b]      = (UINT8)(v_ebx >> (b * 8));
+        for (b = 0; b < 4; b++) p[4 + b]  = (UINT8)(v_edx >> (b * 8));
+        for (b = 0; b < 4; b++) p[8 + b]  = (UINT8)(v_ecx >> (b * 8));
+        for (b = 0; b < 4; b++) p[12 + b] = (UINT8)(fms >> (b * 8));
+    }
+
+    UINTN np = bl_entropy_frame(seed, cap, pos, BL_ENTROPY_SRC_CPU_RNG,
+                                payload, (UINT32)sizeof(payload));
+    efi_memset(q, 0, sizeof(q));
+    efi_memset(payload, 0, sizeof(payload));
+    if (np == 0)
+        return pos;
+    serial_early_print(used_rdseed ? "[BOOT] RNG: RDSEED 64 bytes\n"
+                                   : "[BOOT] RNG: RDRAND 64 bytes\n");
+    return np;
+}
 
 /* Find an ACPI SDT by 4-char signature via RSDP -> XSDT/RSDT walk.
  * Same validation discipline as serial_spcr_probe(): signature +
@@ -8964,6 +9114,9 @@ static void collect_boot_entropy(void)
             }
         }
     }
+
+    /* --- Source: CPU RDSEED/RDRAND --- */
+    pos = bl_collect_cpu_rng(seed, EFI_PAGE_SIZE, pos);
 
     /* --- Source: ACPI OEM0 entropy table (Win11 winload parity) --- */
     {
