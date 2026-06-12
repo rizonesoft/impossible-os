@@ -95,6 +95,18 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 
 ## Hard Rules
 
+- **Session-exit policy: the work unit is the ENTIRE queue, not one
+  section.** Finishing a section (ship + review + push) is NOT a reason to
+  run `overnight-runner finish-check` / `handoff` or to final-answer. After
+  every section: update the cursor, then IMMEDIATELY start the next section
+  in the queue. A session may end ONLY on: (a) a user-decision blocker
+  (stop-and-ask boundary -- record the question in the cursor first), (b) a
+  hard failure per the halt-on-error rule below, (c) every remaining section
+  in every remaining domain blocked-with-XREF, or (d) external death (usage
+  limit / API error -- not a choice). `finish-check` + `handoff` run ONLY in
+  cases (a)-(c). Do NOT clear the overnight-guard state between sections.
+  The hourly watchdog timer relaunches the run after any death; mid-queue
+  voluntary exits defeat the runner's purpose.
 - **NO ChromeMCP / browser automation. Ever.** Impossible OS has its own
   smoke-test infrastructure: `bash scripts/test-smoke.sh` (boot-to-userspace),
   `bash scripts/test.sh` (unit suites), `bash scripts/build.sh` (build).
