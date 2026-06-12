@@ -86,3 +86,9 @@ sdk/build/
 # intermediate with the same policy.
 src/boot/uefi/bootx64.so
 src/boot/uefi/*.o
+
+# .claude/overnight/ -- overnight-runner CLI runtime state (never committed).
+.claude/overnight/
+
+# .claude/worktrees/ -- harness-created git worktrees (embedded repos).
+.claude/worktrees/
