@@ -28,7 +28,7 @@ title: "TODO-07 -- SMP Phase 2"
 - → XREF: `02-kernel-core/TODO-07-irql-model-dpcs.md` -- IPI delivery at `DISPATCH_LEVEL`; TLB shootdown in §2 and RCU IPIs in §7 must not lower IRQL during handler
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §1` -- `vmm_unmap` and `mprotect` call `tlb_shootdown()` from §2 after every PTE change on a shared address space
 - → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §15` -- per-thread TEB unmap on `thread_join()` is consumer of §7; until `tlb_shootdown()` lands, §15 defers TEB reclamation to `task_cleanup()` and accepts a bounded leak (16 * 4 KiB per multithreaded process). Implementing §7 here unblocks §15's runtime reclamation path.
-- → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md` §10 -- optional `irq_send_ipi`-style HAL wrapper; Phase 1 uses `lapic_send_ipi()` until §7 IPI infrastructure matures
+- → XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md` §10 -- `irq_send_ipi(cpu, vector)` HAL wrapper owned by §2 (item at the TLB-shootdown section); Phase 1 uses `lapic_send_ipi()` until it lands
 
 ## Outcome
 
@@ -95,6 +95,7 @@ After `vmm_unmap()` or `mprotect()` modifies a PTE in a shared address space, al
 - [ ] Single-CPU fast path: if `cpu_mask` has only the local CPU bit set, just `invlpg(vaddr)` without IPI overhead
 - [ ] Boot log: `[SMP] TLB shootdown IPI registered (vector 0xE0)`
 - [ ] `smp_call_function(cpu, fn, arg)` cross-CPU synchronous call (same IPI+ack pattern): first consumer is BSP delegation of timer-resolution transitions (`timer_set_tick_hz` refuses AP callers today; `KeSetTimerResolution` rolls back AP-side requests -- `src/kernel/time/timer_resolution.c`, filed from `01-boot-platform/TODO-11` §6 review)
+- [ ] `irq_send_ipi(cpu, vector)` arch-neutral wrapper over `lapic_send_ipi()` in `src/kernel/irq.c`; retrofit direct callers so neutral code drops `kernel/drivers/lapic.h` (filed from `01-boot-platform/TODO-11` §10)
 - [ ] Commit: `"smp: TLB shootdown IPI -- invlpg range, atomic ack counter, vmm_unmap/mprotect hook"`
 
 ## 3. Per-CPU Run Queues `[Opus]`

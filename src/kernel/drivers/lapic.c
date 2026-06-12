@@ -401,6 +401,30 @@ static inline uint64_t cal_rdtsc(void)
     return ((uint64_t)hi << 32) | lo;
 }
 
+/* Wall-clock deadline for the measurement loops below. A bare iteration
+ * cap (200M reads) maps to wildly different wall time per platform: with
+ * interrupts off in timer_hal_init, a dead-but-advertised HPET could burn
+ * tens of seconds before the cap fires. When the bootloader measured the
+ * TSC, bound each tier at 4x the 10ms window instead; returns 0 (no
+ * deadline, iteration cap only) when no TSC frequency is known. */
+static inline uint64_t cal_deadline(void)
+{
+    uint64_t f = g_boot_info.timing.tsc_freq;
+    /* Plausibility gate: the handoff value comes from a 1ms UEFI Stall
+     * measurement and is advisory. Outside 1 MHz through 10 GHz treat it
+     * as garbage and return 0 (iteration cap only) -- a tiny value would
+     * round the 40ms delta toward 0 and instantly time out healthy
+     * timers; the range also keeps the multiply far from u64 wrap. */
+    if (f < 1000000ULL || f > 10000000000ULL)
+        return 0;
+    return cal_rdtsc() + (f * (CAL_MS * 4) / 1000);
+}
+
+static inline int cal_deadline_hit(uint64_t deadline)
+{
+    return deadline != 0 && cal_rdtsc() > deadline;
+}
+
 static inline void cal_cpuid(uint32_t leaf,
                               uint32_t *eax, uint32_t *ebx,
                               uint32_t *ecx, uint32_t *edx)
@@ -461,6 +485,13 @@ static int cal_try_vmware_cpuid(void)
     platform_id_t plat = platform_get();
 
     if (plat != PLATFORM_VMWARE && plat != PLATFORM_QEMU_KVM)
+        return 0;
+
+    /* Capability gate: platform_detect() sets HV_FLAG_APIC_FREQ_MSR only
+     * after probing max_leaf >= 0x40000010 with nonzero EBX. Reading the
+     * leaf without that gate would trust garbage on hypervisors that cap
+     * the leaf range below 0x40000010 (most KVM configs). */
+    if (!(g_boot_info.hv_flags & HV_FLAG_APIC_FREQ_MSR))
         return 0;
 
     cal_cpuid(0x40000010, &eax, &ebx, &ecx, &edx);
@@ -710,11 +741,13 @@ static int cal_try_hpet(void)
 
     {
         uint32_t spin = 200000000;
+        uint64_t deadline = cal_deadline();
         do {
             cur_hpet = hpet_read64((uint64_t)(uintptr_t)hpet_uc, HPET_COUNTER);
-        } while (cur_hpet < target_hpet && --spin > 0);
+        } while (cur_hpet < target_hpet && --spin > 0 &&
+                 !cal_deadline_hit(deadline));
 
-        if (spin == 0) {
+        if (cur_hpet < target_hpet) {
             lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
             vmm_unmap_mmio(hpet_uc, VMM_PAGE_SIZE);
             klog(LOG_WARN, "lapic", "Tier 2: HPET calibration timeout");
@@ -787,12 +820,14 @@ static int cal_try_pmtimer(void)
     start_pm = pmtimer_read(port) & mask;
     {
         uint32_t spin = 200000000;
+        uint64_t deadline = cal_deadline();
         do {
             cur_pm = pmtimer_read(port) & mask;
             elapsed_pm = (cur_pm - start_pm) & mask;
-        } while (elapsed_pm < PMTIMER_10MS && --spin > 0);
+        } while (elapsed_pm < PMTIMER_10MS && --spin > 0 &&
+                 !cal_deadline_hit(deadline));
 
-        if (spin == 0) {
+        if (elapsed_pm < PMTIMER_10MS) {
             lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
             klog(LOG_WARN, "lapic", "Tier 2: PM Timer calibration timeout");
             return 0;
@@ -959,9 +994,15 @@ static int cal_try_pit(void)
     lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
 
     /* ---- 3. Wait for PIT output (bit 5 of port 0x61) ---- */
-    timeout = 200000000;  /* generous spin timeout */
-    while (!(cal_inb(0x61) & 0x20) && --timeout > 0)
-        ;
+    timeout = 200000000;  /* iteration cap (no-TSC fallback) */
+    {
+        uint64_t deadline = cal_deadline();
+        while (!(cal_inb(0x61) & 0x20) && --timeout > 0 &&
+               !cal_deadline_hit(deadline))
+            ;
+        if (cal_deadline_hit(deadline))
+            timeout = 0;   /* report as timeout below */
+    }
 
     /* ---- 4. Read LAPIC timer current count ---- */
     lapic_remaining = lapic_read(LAPIC_REG_TIMER_CCR);

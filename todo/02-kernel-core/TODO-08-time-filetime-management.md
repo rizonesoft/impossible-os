@@ -101,6 +101,7 @@ Select the highest-resolution monotonic source available: invariant TSC → HPET
 - [x] Scale factor: num/den pair for integer multiply without hot-path division; overflow-safe split for TSC
 - [x] Logs selected source: `"Monotonic clock: TSC (N MHz, invariant)"` or `"LAPIC (N ticks/ms)"`
 - [x] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
+- [ ] Clocksource quality watchdog (Linux parity): cross-check active source vs PIT/HPET/PM and demote on drift, replacing the `platform_is_tcg()` gate in `timer_hal_init()` (from `01-boot-platform/TODO-11` §10)
 
 ## 3. Invariant TSC Detection and Per-CPU Offset Calibration
 On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a constant rate regardless of C-states or frequency scaling, and is synchronized by the firmware across all cores at reset. Verify this and apply correction offsets where needed.

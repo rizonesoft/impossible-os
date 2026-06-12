@@ -186,7 +186,7 @@ Fill all 256 IDT vectors with correct stubs so no vector ever triggers an unhand
 > - Static asserts in `vectors.h` now pin every DPL=3 software vector outside every hardware IRQ window.
 
 > **Verified:** 2026-06-11 | commit `5ae7bdb8` | 7/7 items | build OK | smoke PASS (KVM 2.4s)
-> **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 205)
+> **Accepted:** [H] AP NMI/#DF/MCE IST delivery needs per-CPU TSS (APs never load TR) -> XREF: 03-memory-concurrency/TODO-07 §9 (item: "Per-CPU TSS + guarded IST stacks with `ltr` on every AP" at line 206)
 > **Accepted:** [H] ring-3 INT n on a DPL=0 gate panics the kernel (user DoS; kernel-wide fault-isolation gap) -> XREF: 02-kernel-core/TODO-23 §4 (item: "`ki_dispatch_exception(rec, ctx, mode, first_chance)` -- master dispatcher" at line 184)
 > **Deferred:** [M] no dedicated IDT/vector unit suite yet (reason: suite owned by TODO-level Unit Tests) -> XREF: 01-boot-platform/TODO-11 Unit Tests (item: "Create `src/kernel/test/test_irq_timer.c`" at line 287)
 > **Quality reviewed:** 2026-06-11 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 6H+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
@@ -259,7 +259,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 > - Scope boundary: HV reference-TSC page init is D02 T09 §15 (consumer here stays blocked until it lands); recalibrate-on-freq-change is D02 T26 §15; AP timers are §7.
 > **Verified:** 2026-06-12 | commit `00adcb9b` | 9/10 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
 > **Accepted:** [H] AP-side timer-resolution requests are refused + rolled back (BSP delegation needs a cross-CPU call) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "`smp_call_function(cpu, fn, arg)` cross-CPU synchronous call" at line 97)
-> **Accepted:** [M] remaining raw-tick timestamp/window consumers (etw, registry, wer, virtio windows, klog boot stamps) reinterpret lifetime ticks across a rate change -> XREF: 02-kernel-core/TODO-08 §16 (item: "Migrate raw `system_get_ticks()` timestamp/window consumers" at line 248)
+> **Accepted:** [M] remaining raw-tick timestamp/window consumers (etw, registry, wer, virtio windows, klog boot stamps) reinterpret lifetime ticks across a rate change -> XREF: 02-kernel-core/TODO-08 §16 (item: "Migrate raw `system_get_ticks()` timestamp/window consumers" at line 249)
 > **Quality reviewed:** 2026-06-12 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -288,7 +288,7 @@ Measure the LAPIC timer frequency per CPU using HPET or PIT as a reference, then
 > - Downstream: per-finding evidence in the review commit; NT-timer wheel and DPC ISR budget filed with their owners (see Accepted lines).
 > - Scope boundary: AP LAPIC timers stay masked until per-CPU run queues land (own open item below); recalibrate-on-frequency-change is owned by the cpufreq governor section.
 > **Verified:** 2026-06-12 | commit `4208a2e0` | 5/7 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
-> **Deferred:** [H] AP LAPIC timer bring-up (BSP-only tick today) blocked on per-CPU scheduler infrastructure -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Allocate `g_rq[MAX_CPUS]`; initialise each during `sched_init_cpu(cpu_id)` called by each AP" at line 111)
+> **Deferred:** [H] AP LAPIC timer bring-up (BSP-only tick today) blocked on per-CPU scheduler infrastructure -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "Allocate `g_rq[MAX_CPUS]`; initialise each during `sched_init_cpu(cpu_id)` called by each AP" at line 112)
 > **Accepted:** [M] recalibrate hook for CPU frequency changes -> XREF: 02-kernel-core/TODO-26 §15 (item: "Timer recalibration on frequency transition" at line 604)
 > **Accepted:** [H] `nt_timer_tick()` walks every armed timer in the 100 Hz ISR (O(N) IRQ-off work at scale) -> XREF: 02-kernel-core/TODO-05 (item: "Replace the flat NT timer armed list with an ordered structure" at line 167)
 > **Accepted:** [M] DPC drain in the timer ISR caps count (32) but not per-callback runtime -> XREF: 02-kernel-core/TODO-07 §6 (item: "DPC runtime budget in the timer ISR drain" at line 152)
@@ -364,12 +364,29 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 **Files:** `src/kernel/main/boot_interrupts.c`, `src/kernel/drivers/lapic.c`, `src/kernel/smp/smp.c`
 
-- [x] Audit: no `#ifdef HYPERV_WORKAROUND`, `HV_QUIRK`, or `HV_BAR` blocks remain -- all removed during TODO-02 §2/§4/§8 restructure
+- [x] Audit: no `#ifdef HYPERV_WORKAROUND`, `HV_QUIRK`, or `HV_BAR` blocks remain in `src/`/`include/` (TODO-14's HV_BAR origin note is history, not code) -- removed during TODO-02 §2/§4/§8 restructure
 - [x] No workaround paths to remove -- correct ACPI/LAPIC/IOAPIC init order established in Phase 1
+- [x] APIC-frequency capability gate unified (review fix): `HV_FLAG_APIC_FREQ_MSR` probed for KVM like VMware; `platform_has_apic_freq_msr()` and `cal_try_vmware_cpuid()` both gate on the flag instead of platform identity
+- [x] Calibration loops wall-clock bounded (review fix): `cal_deadline()` (4x 10ms window from boot TSC freq, plausibility-gated 1 MHz through 10 GHz) caps the HPET/PM/PIT measurement spins that previously relied on a 200M-iteration count alone
 - [ ] SMP IPI abstraction (`irq_send_ipi` style) -- deferred to `03-memory-concurrency/TODO-07-smp-phase2.md` §2 (today `lapic_send_ipi()` is the direct path)
 - [x] Commit: "(shipped) Hyper-V workaround compile-time blocks removed -- audit clean"
 
 **Test checkpoint:** `rg HYPERV_WORKAROUND src/kernel` returns no matches; SMP bringup logs AP online lines on `-smp 4` QEMU. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** N/A (audit + boot-path capability gating; no pure-helper surface) | validation: smoke PASS + full suite green + serial calibration tier logs on WHPX
+
+> **Notes:**
+> - Audit clean: no HYPERV_WORKAROUND/HV_QUIRK/HV_BAR blocks in `src/`/`include/`; AP bringup uses per-AP INIT->SIPI (no deprecated Init Level De-Assert broadcast).
+> - Review unified the APIC-frequency capability contract: one `HV_FLAG_APIC_FREQ_MSR` truth across `cpuid_platform.c` detection, `platform_has_apic_freq_msr()`, and the Tier 1 calibration gate.
+> - Review added `cal_deadline()` so a dead-but-advertised HPET/PM/PIT cannot burn tens of seconds with interrupts off before the tier falls through.
+> - The TCG-selects-PIT branch in `timer_hal_init()` stays: TCG TSC is instruction-counted (LAPIC-derived time skews vs wall clock); replacement is the tracked clocksource watchdog.
+> - Scope boundary: IPI HAL wrapper owned by `03-memory-concurrency/TODO-07-smp-phase2.md` §2; AP bringup timing owned by `01-boot-platform/TODO-09` §10.
+
+> **Verified:** 2026-06-12 | commit `7ea3a01f` | 4/5 items | build OK | smoke PASS (KVM 2.590s)
+> **Accepted:** [H] `platform_is_tcg()` timer-backend gate is identity-based; proper fix is a clocksource quality watchdog (reason: TCG test platform depends on PIT today) -> XREF: 02-kernel-core/TODO-08 §2 (item: "Clocksource quality watchdog" at line 104)
+> **Accepted:** [M] AP bringup serializes 10ms INIT settle + 1ms SIPI per AP (reason: INIT/SIPI restructure needs bare-metal validation) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Phase-split INIT settle + 200us SIPI wait" at line 397)
+> **Accepted:** [L] direct `lapic_send_ipi()` callers pending arch-neutral wrapper (reason: scope) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "irq_send_ipi(cpu, vector) arch-neutral wrapper" at line 98)
+> **Quality reviewed:** 2026-06-12 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+4M+1L fixed, 0 open, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
 
 ---
 

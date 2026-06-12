@@ -172,6 +172,16 @@ platform_id_t platform_detect(void)
             cpuid(0x40000001, &k_eax, &k_ebx, &k_ecx, &k_edx);
             if (k_eax & (1u << 5)) hv_flags |= HV_FLAG_KVM_STEAL_TIME;
         }
+        /* APIC bus frequency leaf (0x40000010 EBX, kHz) -- same capability
+         * probe as VMware above: most KVM configs cap max_leaf at
+         * 0x40000001, so the flag stays clear and calibration falls
+         * through to the measured tiers instead of trusting a missing
+         * leaf's garbage. */
+        if (hv_max_leaf >= 0x40000010) {
+            uint32_t f_eax, f_ebx, f_ecx, f_edx;
+            cpuid(0x40000010, &f_eax, &f_ebx, &f_ecx, &f_edx);
+            if (f_ebx != 0) hv_flags |= HV_FLAG_APIC_FREQ_MSR;
+        }
         g_boot_info.hv_flags = hv_flags;
         {
             const char *s = "KVMKVMKVM";
@@ -237,8 +247,11 @@ int platform_has_apic_freq_msr(void)
 
     case PLATFORM_VMWARE:
     case PLATFORM_QEMU_KVM:
-        /* VMware/KVM: CPUID leaf 0x40000010 EBX = APIC bus freq (kHz) */
-        return 1;
+        /* VMware/KVM: CPUID leaf 0x40000010 EBX = APIC bus freq (kHz).
+         * platform_detect() probes the leaf (max_leaf + nonzero EBX) and
+         * records HV_FLAG_APIC_FREQ_MSR; mirror that flag so callers and
+         * cal_try_vmware_cpuid() all see one truth. */
+        return (g_boot_info.hv_flags & HV_FLAG_APIC_FREQ_MSR) ? 1 : 0;
 
     case PLATFORM_BARE_METAL: {
         /* Bare metal: check CPUID leaf 0x15 (Time Stamp Counter) */
