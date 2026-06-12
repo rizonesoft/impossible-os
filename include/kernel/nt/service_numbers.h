@@ -590,7 +590,7 @@
 #define SSDT_NtQueryInformationThreadEx       0x039D
 
 /* ====================================================================
- * 0x03C0-0x03D7: Impossible OS Exclusive Extensions (24)
+ * 0x03C0-0x03D8: Impossible OS Exclusive Extensions (25)
  * ==================================================================== */
 #define SSDT_NtQueryKernelModuleInfo          0x03C0
 #define SSDT_NtQueryBootConfiguration         0x03C1
@@ -616,6 +616,7 @@
 #define SSDT_NtQueryHardLinks                 0x03D5
 #define SSDT_NtQueryDriverList                0x03D6
 #define SSDT_NtQueryTaskList                  0x03D7
+#define SSDT_NtGetRandom                      0x03D8
 
 /* ====================================================================
  * Total count and bounds
@@ -643,10 +644,10 @@
  *   Cache: 0x01FF        Worker: 0x0207     Enlistment: 0x0211
  *   Partition: 0x021C    Enclave: 0x022F    Extensions: 0x0244
  *   Network: 0x030A      Storage: 0x032E    Compositor: 0x0354
- *   Diagnostics: 0x03D8
+ *   Diagnostics: 0x03D9
  * ==================================================================== */
-#define SSDT_MAIN_COUNT                       470
-#define SSDT_LAST_MAIN_INDEX                  0x03D7  /* SSDT_NtQueryTaskList */
+#define SSDT_MAIN_COUNT                       471
+#define SSDT_LAST_MAIN_INDEX                  0x03D8  /* SSDT_NtGetRandom */
 
 /* Compile-time verification:
  * - Count must fit within the table capacity

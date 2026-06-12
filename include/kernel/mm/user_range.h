@@ -30,6 +30,17 @@
 /* PD index for the 2 MiB region containing user ELF (0x800000 >> 21 = 4) */
 #define USER_PD_INDEX   (USER_ELF_BASE >> 21)
 
+/* Full extent of the 2 MiB huge page that contains the user ELF range:
+ * 0x800000 .. 0xA00000. vmm_create_user_pml4() replaces this entire PD
+ * entry with a per-process 4 KiB PT (User bits on ELF pages, Present bit
+ * CLEARED on the 0x900000 guard page). Kernel allocations must therefore
+ * never land anywhere inside this window: a kernel structure at, e.g.,
+ * 0x900000 would vanish whenever a user process's CR3 is active. PMM
+ * reserves the full window, not just USER_ELF_SIZE. */
+#define USER_PT_WINDOW_BASE  (USER_PD_INDEX << 21)            /* 0x800000 */
+#define USER_PT_WINDOW_SIZE  0x200000UL                       /* one PD entry */
+#define USER_PT_WINDOW_END   (USER_PT_WINDOW_BASE + USER_PT_WINDOW_SIZE)
+
 /* Shmem / section view user-VA range (distinct from USER_ELF range).
  * Each user task has a private 256 MiB bump region for MapViewOfSection
  * allocations. Shmem sections get mapped here with User+Writable PTEs
@@ -47,3 +58,8 @@ _Static_assert(USER_PD_INDEX == 4, "USER_PD_INDEX must be 4 (0x800000 >> 21)");
 /* Verify range fits within a single 2 MiB PD entry */
 _Static_assert((USER_ELF_BASE >> 21) == ((USER_ELF_END - 1) >> 21),
     "User ELF range must fit within a single 2 MiB PD entry");
+_Static_assert(USER_PT_WINDOW_BASE == 0x800000 &&
+               USER_PT_WINDOW_END  == 0xA00000,
+    "User PT window must span the full 2 MiB PD entry (0x800000-0xA00000)");
+_Static_assert(USER_ELF_END < USER_PT_WINDOW_END,
+    "0x900000 guard page must lie inside the reserved PT window");

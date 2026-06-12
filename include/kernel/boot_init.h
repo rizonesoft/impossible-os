@@ -199,6 +199,8 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_RTC_OK           0x1051
 #define POST16_TPM_TRANSPORT    0x1054  /* TPM2 command transport (TIS/CRB) */
 #define POST16_TPM_TRANSPORT_OK 0x1055
+#define POST16_CSPRNG           0x1056  /* kernel CSPRNG first seed */
+#define POST16_CSPRNG_OK        0x1057
 #define POST16_KBD              0x1060
 #define POST16_KBD_OK           0x1061
 #define POST16_MOUSE            0x1070

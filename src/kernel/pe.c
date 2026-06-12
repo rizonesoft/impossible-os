@@ -270,6 +270,7 @@ static const pe_export_entry_t s_ntdll_exports[] = {
     { "NtEnumerateValueKey",         SSDT_NtEnumerateValueKey },
     { "NtExtendSection",             SSDT_NtExtendSection },
     { "NtFlushKey",                  SSDT_NtFlushKey },
+    { "NtGetRandom",                 SSDT_NtGetRandom },
     { "NtImpersonateClientOfPort",   SSDT_NtImpersonateClientOfPort },
     { "NtListenPort",                SSDT_NtListenPort },
     { "NtLoadKey",                   SSDT_NtLoadKey },

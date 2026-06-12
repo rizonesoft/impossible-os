@@ -175,7 +175,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 6. Seed File Carryover Lifecycle
 
 > [!NOTE]
-> **Blocked on a user decision (2026-06-12):** the seed-file MAC/KDF needs a real keyed hash (HMAC-Blake2b), owned by `02-kernel-core/TODO-03` §5 (item: "Monocypher provides production-grade ... Blake2b" -- vendors Monocypher). Vendoring Monocypher is a dependency addition, which is a stop-and-ask boundary (CLAUDE.md Safety Gates); the overnight runner must not pull it forward unilaterally. §8 (CSPRNG seeding) funnels through the same prerequisite. Ask the user: authorize vendoring Monocypher (implement D02T03 §5 via the normal pipeline), then implement §6 and §8 in order.
+> **UNBLOCKED (2026-06-12):** the user authorized Monocypher vendoring and `02-kernel-core/TODO-03` §5 SHIPPED (Monocypher 4.0.2 + kernel CSPRNG + `NtGetRandom`). HMAC-Blake2b for the seed-file MAC/KDF builds on `crypto_blake2b()`; the CSPRNG-ready signal for the rotate step is `csprng_is_seeded()`.
 
 - [ ] Store `X:\Boot\random-seed.bin` with version, counter, and MAC.
 - [ ] Anti-clone system token: per-machine secret in a UEFI NVRAM variable (TPM NV fallback) bound into the seed-file MAC/KDF -- a cloned image with a copied seed file fails closed to degraded (systemd-boot parity).
@@ -208,6 +208,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Provide temporary bounded random API with explicit degraded flag.
 - [ ] Block release-mode cryptographic operations until seeded.
 - [ ] This section delivers the FIRST seed only; runtime reseeding (`csprng_add_entropy()`, thresholds, interrupt-timing accounting, hwrng hooks) is owned by `../02-kernel-core/TODO-03-kernel-libraries.md` §5.
+- [ ] Boundary (D02T03 §5 shipped): `csprng_init()` already drains the staged jitter/TPM transcript at Phase 1; this section owns the boot_info seed PAYLOAD mix (via §7 + `csprng_add_entropy()`), KASLR-consumer ordering, and policy gates.
 - [ ] Commit: `"kernel: seed early CSPRNG from boot entropy"`
 
 **Test checkpoint:** `early_entropy_init()` logs before KASLR/canary consumers; `csprng_fill()` (D02T03 §5) succeeds post-seed; with all sources forced off the temporary API returns the degraded flag and release-mode crypto refuses. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

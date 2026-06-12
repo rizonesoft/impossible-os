@@ -1119,6 +1119,17 @@ int acpi_pmtimer_is_32bit(void)
     return (fadt_ptr->flags & (1u << 8)) ? 1 : 0;
 }
 
+uint32_t acpi_pmtimer_read_value(void)
+{
+    uint16_t port = acpi_get_pmtimer_port();
+    uint32_t v;
+
+    if (port == 0)
+        return 0;
+    __asm__ volatile("inl %1, %0" : "=a"(v) : "Nd"(port));
+    return acpi_pmtimer_is_32bit() ? v : (v & 0x00FFFFFFu);
+}
+
 int acpi_hw_reduced(void)
 {
     if (!fadt_ptr)

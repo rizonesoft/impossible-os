@@ -37,7 +37,7 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/irql.h"
 #include "kernel/elf.h"
-#include "kernel/random.h"
+#include "kernel/csprng.h"
 #include "kernel/boot_init.h"
 
 /* Use VECTOR_YIELD from vectors.h (single source of truth) */
@@ -1774,45 +1774,7 @@ int task_exec(const uint8_t *data, uint64_t size)
          * compiled with -fstack-protector use a zero or constant canary,
          * defeating stack overflow protection. */
         ustk -= 2;  /* 2 qwords = 16 bytes */
-        {
-            uint8_t *rand_buf = (uint8_t *)ustk;
-            if (!rdrand_bytes(rand_buf, 16)) {
-                /* Fallback: TSC-mixed bytes. NOT cryptographically strong.
-                 *
-                 * Why this is acceptable for now:
-                 *   1. Impossible OS user binaries are compiled with
-                 *      -fno-stack-protector (see Makefile USER_CFLAGS), so
-                 *      glibc's __stack_chk_guard is NOT consumed by any
-                 *      current user binary. AT_RANDOM is informational only
-                 *      until libc with stack canaries lands.
-                 *   2. Hardware (RDRAND-capable) takes the fast path above.
-                 *      The fallback only fires on TCG and very old VMs.
-                 *   3. The LOG_WARN below makes degraded entropy observable.
-                 *
-                 * Once user binaries link against a libc compiled with
-                 * -fstack-protector (planned with the dynamic loader work),
-                 * this fallback MUST be replaced with a proper kernel
-                 * entropy source. The follow-up item is tracked on the
-                 * userland stack-protector and kernel-CSPRNG roadmaps. */
-                uint32_t lo1, hi1, lo2, hi2;
-                __asm__ volatile ("rdtsc" : "=a"(lo1), "=d"(hi1));
-                /* Tiny delay to decorrelate the second sample */
-                __asm__ volatile ("pause; pause; pause; pause" ::: "memory");
-                __asm__ volatile ("rdtsc" : "=a"(lo2), "=d"(hi2));
-                uint64_t mix = ((uint64_t)hi1 << 32 | lo1)
-                             ^ (((uint64_t)hi2 << 32 | lo2) * 0x9E3779B97F4A7C15ULL)
-                             ^ ((uint64_t)pid * 0xBF58476D1CE4E5B9ULL);
-                uint32_t i;
-                for (i = 0; i < 8; i++) rand_buf[i] = (uint8_t)(mix >> (i * 8));
-                mix ^= mix << 13; mix ^= mix >> 7; mix ^= mix << 17;
-                for (i = 0; i < 8; i++) rand_buf[8 + i] = (uint8_t)(mix >> (i * 8));
-                klog(LOG_ERROR, "sched",
-                     "task_exec: RDRAND unavailable, using TSC fallback for "
-                     "AT_RANDOM (DEGRADED ENTROPY -- not exploitable today "
-                     "because user binaries are -fno-stack-protector; "
-                     "TODO-20 S5 will replace this with a kernel CSPRNG)");
-            }
-        }
+        csprng_fill((uint8_t *)ustk, 16);
         at_random_addr = (uint64_t)ustk;
 
         /*: detect ELF and extract program-header metadata for the auxv.

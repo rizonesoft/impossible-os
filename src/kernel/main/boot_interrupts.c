@@ -54,6 +54,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/cpu_security.h"
 #include "kernel/entropy.h"
+#include "kernel/csprng.h"
 #include "kernel/tpm_transport.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
@@ -463,6 +464,16 @@ void boot_phase1(void)
     entropy_collect_tpm();
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);
+
+    /* Kernel CSPRNG first seed. Placement is load-bearing: AFTER the
+     * jitter and TPM collectors above (csprng_init drains their staged
+     * transcript), BEFORE any consumer (AT_RANDOM in task_exec, future
+     * KASLR). The boot_info seed payload arrives later via the TODO-12
+     * handoff sections as a csprng_add_entropy() reseed. */
+    POST16(POST16_CSPRNG);
+    csprng_init();
+    POST16(POST16_CSPRNG_OK);
+    boot_progress(1, "CSPRNG", POST16_CSPRNG_OK);
 
     /* --- Input devices (after timer+sti so splash spinner is alive) --- */
     boot_splash_status("Detecting PS/2 keyboard...");

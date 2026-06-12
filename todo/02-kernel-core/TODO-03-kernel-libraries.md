@@ -11,7 +11,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > **Goal:** Build the complete freestanding library layer the rest of the kernel depends on: `snprintf`/`vsnprintf` in `libc` (§1; `panic.c` / klog migration still deferred), full floating-point math beyond `kmath.h` (§2), LZ4 (§3; assumed by TODO-26/TODO-27), miniz deflate/ZIP (§4), Monocypher + kernel CSPRNG (§5), cJSON (§6), and Mbed TLS record layer (§7) for HTTPS/FTPS consumers. All ports compile with `-ffreestanding -nostdlib` and route heap through `kmalloc`/`kfree` with `pmm_alloc_contiguous` for buffers > 4 KiB.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-04-13):** `src/libc/string.c` + `include/libc/string.h` ship `snprintf`/`vsnprintf` and string/memory ops (§1 core done; `panic.c` still hand-rolls crash text). `include/kernel/kmath.h` already inlines `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` for stb; §2 `src/libc/math.c` trig/log suite not started. `src/libs/cjson/` + `src/kernel/json.c` implement §6 parser + thin wrappers; `cJSON_SetMaxDepth` / production call sites still open. No `src/libs/lz4`, `miniz`, `monocypher`, or `mbedtls` trees. `test_register_klibs` is not declared or called from `src/kernel/test/test_runner.c`.
+> **Current state (code-truth 2026-06-12):** `src/libc/string.c` + `include/libc/string.h` ship `snprintf`/`vsnprintf` and string/memory ops (§1 core done; `panic.c` still hand-rolls crash text). `include/kernel/kmath.h` already inlines `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` for stb; §2 `src/libc/math.c` trig/log suite not started. `src/libs/cjson/` + `src/kernel/json.c` implement §6 parser + thin wrappers; `cJSON_SetMaxDepth` / production call sites still open. `src/libs/monocypher/` + `src/kernel/csprng.c` ship §5 (crypto + CSPRNG + `NtGetRandom`); `test_register_klibs` is wired in `test_runner.c` with 15 crypto/CSPRNG suites. No `src/libs/lz4`, `miniz`, or `mbedtls` trees yet.
 > **Already done -- do NOT re-implement:**
 > - `stb_truetype` -> `src/kernel/gfx/stb_truetype_impl.c` [done]
 > - `stb_image` -> `include/stb_image.h` + `src/kernel/image.c` [done]
@@ -36,7 +36,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - -> XREF: `12-user-platform-sdk/TODO-03-kernel-libraries.md` -- COMPLEMENT: ZIP writer + stream deflate after D02 T03 §6 reader/port; do not re-vendor miniz here
 - -> XREF: `TODO-26-power-management.md §4` -- S4 hibernation image write uses LZ4 block compression; requires §3 of this TODO to be complete first
 - -> XREF: `TODO-27-crash-dump-generation.md §5, §6` -- crash dump minidump/kernel dump use LZ4 compression; requires §3
-- -> XREF: `TODO-10-kernel-security-hardening.md §11` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
+- -> XREF: `TODO-10-kernel-security-hardening.md §12` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
 - -> XREF: `TODO-15-security-reference-monitor.md §14` -- AppContainer / package SID hashing uses Monocypher (T03 §8; T15 §14)
 - -> XREF: `TODO-14-registry-completion.md §5` -- registry hive WAJ uses CRC32C; separate from Monocypher but benefits from a consistent hash dispatch layer (§6)
 - -> XREF: `TODO-04-system-logging.md §10` -- HMAC-Blake2b chain for tamper-evident `events.jsonl`; requires Monocypher Blake2b + kernel CSPRNG (§5)
@@ -65,7 +65,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   2   | Complete floating-point math library                 | --                   |  [ ]   |
 | 💎  |   3   | LZ4 block compressor                                 | --                   |  [ ]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [ ]   |
-| 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [ ]   |
+| 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [/]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [ ]   |
 
@@ -206,39 +206,31 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 ## 5. Monocypher Crypto Primitives + Kernel CSPRNG
 
-- [ ] Vendor `monocypher.c` + `monocypher.h` (BSD-2, ~3000 lines) into `src/libs/monocypher/`
-- [ ] Compile with `-ffreestanding -nostdlib`; Monocypher uses zero heap allocation -- all state is on the caller-provided stack or caller-provided buffers; no `malloc` redirects needed
-- [ ] Expose the following primitives (keep names unchanged):
-  - **ChaCha20** -- `crypto_chacha20_djb()` / `crypto_chacha20_x()` stream cipher; 256-bit key, 64-bit nonce
-  - **Poly1305** -- `crypto_poly1305()` MAC; pairs with ChaCha20 for AEAD
-  - **ChaCha20-Poly1305** -- `crypto_aead_lock()` / `crypto_aead_unlock()` authenticated encryption
-  - **Blake2b** -- `crypto_blake2b()` cryptographic hash; 256 or 512-bit output
-  - **Argon2id** -- `crypto_argon2()` memory-hard password hash; used by desktop login/password hashing (-> XREF `09-desktop-shell/TODO-06-security-accounts.md §2`)
-  - **X25519** -- `crypto_x25519()` Diffie-Hellman key exchange
-  - **Ed25519** -- `crypto_eddsa_sign()` / `crypto_eddsa_check()` signatures; used for EIF code signing (-> XREF `TODO-17-binary-system.md §17`)
+- [x] Vendored Monocypher 4.0.2 into `src/libs/monocypher/` (core + optional standard-Ed25519/SHA-512 unit + LICENCE; sha256 in commit; only mod: `kernel/types.h` include shim for `-nostdinc`)
+- [x] Compiles with kernel flags (`-ffreestanding -nostdlib -nostdinc -mno-sse`); integer-only C99, zero heap allocation
+- [x] Primitives exposed, names unchanged: ChaCha20, Poly1305, AEAD, Blake2b, Argon2id (-> XREF `09-desktop-shell/TODO-06-security-accounts.md §2`), X25519, EdDSA-Blake2b + standard Ed25519 (EIF signing -> XREF `TODO-17-binary-system.md §17`)
+- [x] `src/kernel/csprng.c` + `include/kernel/csprng.h`: `csprng_init/fill/u64/is_seeded` plus pure `csprng_core_*` helpers (explicit state, unit-testable without live init; bounded irqsave lock holds)
+- [x] `csprng_init()` seeds per the `entropy.h` conditioner contract: RDRAND + TSC/link-address + ACPI PM timer + staged jitter/TPM transcript, Blake2b-256 conditioned; Phase 1 after `entropy_collect_tpm()`
+- [x] Continuous operation: fast-key-erasure on EVERY fill (ratchet under lock, stream outside) -- stronger than the drafted 4 MiB re-key, adopted from Codex design review
+- [/] Canary seed sharing: `csprng_u64()` ready; BLOCKED on `TODO-10-kernel-security-hardening.md §12` (`canary_init()` not implemented; reciprocal item filed there)
+- [x] `task_exec()` AT_RANDOM now `csprng_fill(rand_buf, 16)`; RDRAND/TSC fallback block deleted (satisfies `TODO-11-peb-teb-user-abi.md §13` follow-up)
+- [ ] Wire `csprng_u64()` into EIF `load_base=0` randomized base -- BLOCKED on `TODO-20-eif-full-implementation.md §8` (unimplemented; its spec already names the kernel CSPRNG)
+- [x] `NtGetRandom(buf, len, flags)` at SSDT 0x03D8 (main count 470 -> 471): probe + 256 B chunked bounce copy, 1 MiB cap, `ntdll` export, master-table row (-> XREF `TODO-A-SSDT-Master-Table.md`)
+- [/] `csprng_add_entropy()` reseed API shipped (HIGH-only seed credit); remaining: reseed thresholds + interrupt-timing accounting; hwrng hook via `04-drivers-hardware/TODO-09` §12; first seed via `01-boot-platform/TODO-12` §8
+- [x] Single CSPRNG ownership: duplicate entropy plans routed to `csprng_fill()`/`csprng_add_entropy()` in `09-desktop-shell/TODO-06` §1, `07-networking/TODO-03` §5, `12-user-platform-sdk/TODO-01` §4
 
-- [ ] Create `src/kernel/csprng.c` and `include/kernel/csprng.h`:
-  ```c
-  void     csprng_init(void);              /* called from Phase 1 init */
-  void     csprng_fill(void *buf, size_t len); /* fills with random bytes */
-  uint64_t csprng_u64(void);               /* convenience -- random uint64_t */
-  ```
-- [ ] `csprng_init()` seeds from multiple entropy sources:
-  1. Three `RDRAND` retries (Intel/AMD hardware RNG); if any succeed use the 64-bit value
-  2. RDTSC XOR'd with the physical address of `csprng_init` (ASLR entropy)
-  3. ACPI PM timer reading (adds ~20 bits of timing entropy)
-  4. XOR all sources into a 256-bit seed; expand with Blake2b to produce the initial ChaCha20 key
-- [ ] Continuous operation: maintain a global ChaCha20 state; `csprng_fill` calls `crypto_chacha20_x()` to generate output; re-key every 4 MiB of output (forward-secrecy)
-- [ ] Share the RDRAND seed path with `TODO-10-kernel-security-hardening.md §11` (`__stack_chk_guard` canary init); `canary_init()` calls `csprng_u64()` after `csprng_init()` runs
-- [ ] Replace `task_exec()` AT_RANDOM TSC fallback with `csprng_fill(rand_buf, 16)` (-> XREF `02-kernel-core/TODO-11-peb-teb-user-abi.md §13` follow-up). Until this lands, AT_RANDOM uses RDRAND on hardware and a TSC-mixed fallback on TCG; user binaries are `-fno-stack-protector` so this is not currently exploitable.
-- [ ] Wire `csprng_u64()` into `TODO-20-eif-full-implementation.md` §8 so `load_base=0` EIF binaries choose a randomized base without a TSC fallback
-- [ ] `SYS_GETRANDOM` syscall: `getrandom(buf, len, flags)` fills user buffer via `csprng_fill` + `copy_to_user`; add to SSDT (-> XREF `TODO-12-native-api-ssdt.md §5`)
-- [ ] `csprng_add_entropy(buf, len, quality)` runtime reseed API: reseed thresholds, interrupt-timing accounting, hwrng hooks (virtio-rng via `04-drivers-hardware/TODO-09` §12); first-seed producer is `01-boot-platform/TODO-12` §8
-- [ ] Single CSPRNG ownership: route the duplicate entropy plans to `csprng_fill()`/`csprng_add_entropy()` -- `09-desktop-shell/TODO-06` §11 pool, `07-networking/TODO-03` §5 Mbed TLS RDRAND+TSC source, `12-user-platform-sdk/TODO-01` §4
+- [x] Commit: `"libs: Monocypher crypto, kernel CSPRNG (RDRAND + Blake2b), SYS_GETRANDOM"`
 
-- [ ] Commit: `"libs: Monocypher crypto, kernel CSPRNG (RDRAND + Blake2b), SYS_GETRANDOM"`
+**Test checkpoint:** AEAD round-trip + tamper rejection; Blake2b RFC 7693 + X25519 RFC 7748 + independent Ed25519 vectors; CSPRNG core golden vectors (two independent implementations agreed); `csprng_fill` outputs differ; `NtGetRandom` via real `ssdt_dispatch` + chunk boundaries 1/255/256/257/513 with canaries. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-**Test checkpoint:** `crypto_aead_lock`/`unlock` round-trip on test vector; `csprng_fill` two 32 B buffers differ; Blake2b self-test vector passes; `RDRAND` path exercised on hardware when present. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 15 klibs suites in `test_klibs.c`, 0 failures
+
+> **Notes:**
+> - Shipped: `src/libs/monocypher/` (Monocypher 4.0.2) + `src/kernel/csprng.c` (ChaCha20 fast-key-erasure CSPRNG, Blake2b conditioner) + `NtGetRandom` SSDT 0x03D8 + `acpi_pmtimer_read_value()`.
+> - Runs: `csprng_init()` in Phase 1 after the TPM collector (drains staged jitter/TPM transcript); `csprng_register_ssdt()` in the Phase 3 SSDT block; `task_exec()` AT_RANDOM consumes `csprng_fill`.
+> - Downstream: unblocks `01-boot-platform/TODO-12` §6/§8, `TODO-04` §10 klog HMAC, EIF signing (T17 §17); Codex adoptions + two latent-bug fixes (heap truncation, user PT window) detailed in the ship commit.
+> - Canonical doc: `include/kernel/csprng.h` + the `include/kernel/entropy.h` conditioner contract.
+> - Scope boundary: boot seed payload mixing/ordering/policy stay with `01-boot-platform/TODO-12` §7-§9; virtio-rng hook with `04-drivers-hardware/TODO-09` §12; `canary_init()` with `TODO-10` §11.
 
 ---
 
@@ -312,15 +304,16 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎 | LZ4 in kernel              | ⚠️ Xpress     | ✅ lib/lz4    | ⬜ §3            |
 | 💎 | Deflate zlib               | ✅ Rtl LZNT1 | ✅ zlib       | ⬜ §4 miniz      |
 | 💎 | ZIP read                   | ✅ Shell      | ✅ unzip      | ⬜ §4            |
-| 💎 | ChaCha Poly AEAD           | ✅ BCrypt     | ✅ chacha     | ⬜ §5            |
-| 💎 | Blake2b                    | ✅ no native  | ✅ blake2b    | ⬜ §5            |
-| 💎 | Argon2id                   | ✅ KDF API    | ✅ argon2     | ⬜ §5            |
-| 💎 | X25519 ECDH                | ✅ BCrypt     | ✅ ecdh       | ⬜ §5            |
-| 💎 | Ed25519                    | ✅ BCrypt     | ✅ eddsa      | ⬜ §5            |
-| 💎 | Kernel CSPRNG              | ✅ BCrypt     | ✅ random.c   | ⬜ §5            |
+| 💎 | ChaCha Poly AEAD           | ✅ BCrypt     | ✅ chacha     | ✅ §5 Monocypher |
+| 💎 | Blake2b                    | ✅ no native  | ✅ blake2b    | ✅ §5 Monocypher |
+| 💎 | Argon2id                   | ✅ KDF API    | ✅ argon2     | ✅ §5 Monocypher |
+| 💎 | X25519 ECDH                | ✅ BCrypt     | ✅ ecdh       | ✅ §5 Monocypher |
+| 💎 | Ed25519                    | ✅ BCrypt     | ✅ eddsa      | ✅ §5 std + Blake2b EdDSA |
+| 💎 | Kernel CSPRNG              | ✅ BCrypt     | ✅ random.c   | ✅ §5 fast-key-erasure ChaCha20 |
+| 💎 | getrandom syscall          | ✅ BCryptGenRandom | ✅ getrandom(2) | ✅ §5 NtGetRandom 0x03D8 |
 | 💎 | JSON in kernel             | ❌ user COM   | ❌ none std   | ✅ §6 cJSON      |
 | 💎 | TLS record crypto          | ✅ SChannel   | ✅ ktls       | ⬜ §7 mbed       |
-| ⭐ | One ring-0 CSPRNG façade (TLS seed + hiber + dumps + klog HMAC) | ⚠️ many BCrypt entry points | ⚠️ `get_random_bytes` + drivers | ⬜ §5 `csprng_fill` |
+| ⭐ | One ring-0 CSPRNG façade (TLS seed + hiber + dumps + klog HMAC) | ⚠️ many BCrypt entry points | ⚠️ `get_random_bytes` + drivers | ✅ §5 `csprng_fill`/`csprng_add_entropy` |
 
 After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, crypto, JSON, and the TLS record layer for hibernation, dumps, IXFS, and `07-networking` HTTPS.
 
@@ -331,7 +324,7 @@ After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, cryp
 > Wire into `test_runner_init()` via `test_register_klibs()` (see `src/kernel/test/test_runner.c` and `include/kernel/test/test.h`). Use `test_suite_register_cat(..., TEST_CAT_EXEC)` for each case.
 > Boot tests run with `debug=1` or `test=1` in `boot.conf`.
 
-- [ ] Create `src/kernel/test/test_klibs.c` with:
+- [/] Create `src/kernel/test/test_klibs.c` -- EXISTS with 15 crypto/CSPRNG suites (§5 coverage: Monocypher vectors, CSPRNG core/golden/absorb, NtGetRandom dispatch + chunks); the §1-§4 cases below still to add:
   - `snprintf(buf, 32, "%d", 42)` -> `"42"`, returns 2
   - `snprintf(buf, 32, "%s %s", "hello", "world")` -> `"hello world"`
   - `snprintf(buf, 32, "0x%x", 0xDEAD)` -> `"0xdead"`
@@ -345,7 +338,7 @@ After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, cryp
   - CRC32: known input -> matches precomputed CRC
   - SHA-256: `"abc"` -> known hash `ba7816bf...`
   - AES-128-ECB: encrypt + decrypt round-trip -> plaintext matches
-- [ ] Add `extern void test_register_klibs(void);` in `test_runner.c`, call `test_register_klibs()` from `test_runner_init()`
+- [x] Add `extern void test_register_klibs(void);` in `test_runner.c`, call `test_register_klibs()` from `test_runner_init()`
 - [ ] Until §3 exists: register LZ4 round-trip test as `TEST_SKIP` or behind `#if 0`; until §4/§5 ship crypto: skip CRC32 / SHA-256 / AES bullets or use `TEST_SKIP` with explicit reason (avoid linking missing symbols)
 - [ ] Commit: `"test: add kernel libraries test suite"`
 

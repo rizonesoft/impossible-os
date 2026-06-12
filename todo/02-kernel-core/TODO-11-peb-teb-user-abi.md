@@ -255,7 +255,7 @@ Windows supports 1088 TLS slots per thread: 64 static slots in `TEB.TlsSlots[64]
 The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL`. Linux user-mode C libraries (glibc, musl) expect additional entries -- most critically `AT_RANDOM` (16 random bytes used to seed the stack canary `__stack_chk_guard`) and `AT_PHDR`/`AT_PHNUM` (program header location for the dynamic linker). Without `AT_RANDOM`, dynamically linked ELF binaries compiled with `-fstack-protector` will use a zero or predictable canary, defeating stack overflow protection.
 
 > [!NOTE]
-> Resolved: shared `rdrand_bytes()` lives in `include/kernel/random.h` + `src/kernel/random.c`; `gpt.c` and `kusd_time.c` were migrated. The `elf_load_result` struct now carries `phdr_vaddr`, `phnum`, `phent`. The ELF program-header walk for auxv is the same shared `elf_compute_phdr_info()` static helper used by `elf_load()`, so the loader and `elf_extract_phdr_info()` cannot diverge. The CSPRNG (TODO-03 §3) is still the future superset for AT_RANDOM entropy hardening on TCG.
+> Resolved: shared `rdrand_bytes()` lives in `include/kernel/random.h` + `src/kernel/random.c`; `gpt.c` and `kusd_time.c` were migrated. The `elf_load_result` struct now carries `phdr_vaddr`, `phnum`, `phent`. The ELF program-header walk for auxv is the same shared `elf_compute_phdr_info()` static helper used by `elf_load()`, so the loader and `elf_extract_phdr_info()` cannot diverge. AT_RANDOM hardening landed 2026-06-12: `task_exec()` now fills the 16 bytes via `csprng_fill()` (`TODO-03` §5); the RDRAND-direct + TSC fallback block is gone.
 
 - [x] Define auxv type constants in `include/kernel/elf.h`:
   - `AT_PHDR   = 3` -- address of ELF program headers in memory

@@ -224,22 +224,28 @@ boot_result_t pmm_init(void)
     /* Bitmap itself */
     pmm_mark_region_used(kernel_end_phys, bitmap_end - kernel_end_phys);
 
-    /* User-mode ELF load area (USER_ELF_BASE .. USER_ELF_END).
-     * User programs are loaded at fixed virtual addresses starting at
-     * USER_ELF_BASE (defined in kernel/mm/user_range.h, must match user.ld).
-     * Since the kernel uses identity mapping, this physical region must be
-     * reserved at init so pmm_alloc_contiguous never hands it out. */
-    pmm_mark_region_used(USER_ELF_BASE, USER_ELF_SIZE);
+    /* User PT window (USER_PT_WINDOW_BASE .. USER_PT_WINDOW_END): the FULL
+     * 2 MiB huge page containing the user ELF range, not just USER_ELF_SIZE.
+     * vmm_create_user_pml4() replaces this PD entry per process (User bits
+     * on ELF pages, Present CLEARED on the 0x900000 guard page), so kernel
+     * data placed anywhere in the window would vanish under a user CR3.
+     * Historical near-miss: heap_init's contiguous run landed at 0x900000
+     * once the kernel image grew, and the per-process guard page made the
+     * heap's block-list head not-present in process context (boot hang at
+     * first user exec). Since the kernel uses identity mapping, reserve the
+     * whole physical window so pmm_alloc_* never hands any of it out. */
+    pmm_mark_region_used(USER_PT_WINDOW_BASE, USER_PT_WINDOW_SIZE);
 
-    /* Runtime verify: confirm first and last frames of user range are reserved.
-     * If these aren't set, pmm_alloc_contiguous could hand out user memory. */
+    /* Runtime verify: confirm first and last frames of the window are
+     * reserved. If these aren't set, pmm_alloc_contiguous could hand out
+     * user-window memory. */
     {
-        uint64_t first_frame = USER_ELF_BASE / PMM_FRAME_SIZE;
-        uint64_t last_frame  = (USER_ELF_END - PMM_FRAME_SIZE) / PMM_FRAME_SIZE;
+        uint64_t first_frame = USER_PT_WINDOW_BASE / PMM_FRAME_SIZE;
+        uint64_t last_frame  = (USER_PT_WINDOW_END - PMM_FRAME_SIZE) / PMM_FRAME_SIZE;
         if (!bitmap_test(first_frame) || !bitmap_test(last_frame)) {
             klog(LOG_FATAL, "PMM",
-                 "User ELF range 0x%x-0x%x not reserved in bitmap!",
-                 (uint64_t)USER_ELF_BASE, (uint64_t)USER_ELF_END);
+                 "User PT window 0x%x-0x%x not reserved in bitmap!",
+                 (uint64_t)USER_PT_WINDOW_BASE, (uint64_t)USER_PT_WINDOW_END);
         }
     }
 
@@ -261,11 +267,14 @@ boot_result_t pmm_init(void)
         /* boot_payload_validate ran before PMM init and cross-checked
          * payloads against boot_info/USB/TPM/FB/rt_mmap. It could not
          * see the PMM-internal reservations that depend on RAM size
-         * (bitmap extent) or USER_ELF range. Check now before apply
+         * (bitmap extent) or the user PT window. Check now before apply
          * so a bootloader-loaded payload that happens to land on the
-         * bitmap or USER_ELF fails boot with a clear diagnostic,
-         * rather than silently getting clobbered by the bitmap
-         * initializer or corrupted by a user-process load. */
+         * bitmap or the user PT window fails boot with a clear
+         * diagnostic, rather than silently getting clobbered by the
+         * bitmap initializer or vanishing under a user CR3. The window
+         * is the FULL 2 MiB PD entry (matches pmm_mark_region_used
+         * above), not just USER_ELF_SIZE -- a payload at 0x900000 is
+         * equally unsafe. */
         if (boot_reserved_check_payloads_disjoint(0ull, 0x100000ull,
                                                   "low_mem_1mb") != 0u ||
             boot_reserved_check_payloads_disjoint((uint64_t)0x100000ull,
@@ -274,9 +283,9 @@ boot_result_t pmm_init(void)
             boot_reserved_check_payloads_disjoint((uint64_t)kernel_end_phys,
                                                   (uint64_t)(bitmap_end - kernel_end_phys),
                                                   "pmm_bitmap") != 0u ||
-            boot_reserved_check_payloads_disjoint((uint64_t)USER_ELF_BASE,
-                                                  (uint64_t)USER_ELF_SIZE,
-                                                  "user_elf") != 0u) {
+            boot_reserved_check_payloads_disjoint((uint64_t)USER_PT_WINDOW_BASE,
+                                                  (uint64_t)USER_PT_WINDOW_SIZE,
+                                                  "user_pt_window") != 0u) {
             klog(LOG_FATAL, "mm",
                  "PMM: payload range collides with PMM-internal region");
             return BOOT_FATAL;

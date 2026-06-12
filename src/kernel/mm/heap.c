@@ -78,33 +78,48 @@ boot_result_t heap_init(void)
 {
     uintptr_t heap_base;
     size_t i;
+    int primary_ok;   /* the +1 guard frame is owned ONLY on this path */
 
     total_heap_size = 0;
     used_bytes = 0;
 
-    /* Allocate contiguous physical frames for the initial heap.
-     * Since we're identity-mapped, phys addr == virt addr. */
-    heap_base = pmm_alloc_frame();
-    if (heap_base == 0) {
-        klog(LOG_ERROR, "mm", "Heap: out of physical memory");
-        return BOOT_FATAL;
-    }
-
-    /* Allocate remaining pages -- they must be contiguous for a simple heap.
-     * PMM allocates linearly from the bitmap, so consecutive calls give
-     * consecutive frames (as long as the region is free). */
-    for (i = 1; i < HEAP_INITIAL_PAGES; i++) {
-        uintptr_t frame = pmm_alloc_frame();
-        if (frame == 0) {
-            klog(LOG_ERROR, "mm", "Heap: out of physical memory at page %u",
-                   (uint64_t)i);
-            break;
+    /* Allocate the full heap (plus its guard frame) as ONE contiguous run.
+     * The PMM bitmap search skips reserved windows (kernel image, user ELF
+     * range at 0x800000), so this lands wherever 2 MiB + 4 KiB actually
+     * fits. The historical frame-by-frame loop silently truncated the heap
+     * at the first reserved frame: a kernel image growing toward 0x800000
+     * shrank the heap to a fraction of HEAP_INITIAL_PAGES and boot died of
+     * heap exhaustion much later (fork's user-stack kmalloc was the first
+     * visible casualty). Since we're identity-mapped, phys == virt. */
+    heap_base = pmm_alloc_contiguous(HEAP_INITIAL_PAGES + 1);
+    if (heap_base != 0) {
+        i = HEAP_INITIAL_PAGES;
+        primary_ok = 1;   /* HEAP_INITIAL_PAGES+1 frames are all owned */
+    } else {
+        primary_ok = 0;
+        /* Degraded fallback: grow frame-by-frame from the lowest free
+         * frame and keep whatever contiguous run exists. */
+        klog(LOG_WARN, "mm",
+             "Heap: no contiguous %u KiB run -- falling back to partial heap",
+             (uint64_t)((HEAP_INITIAL_PAGES + 1) * HEAP_PAGE_SIZE / 1024));
+        heap_base = pmm_alloc_frame();
+        if (heap_base == 0) {
+            klog(LOG_ERROR, "mm", "Heap: out of physical memory");
+            return BOOT_FATAL;
         }
-        /* Verify contiguity */
-        if (frame != heap_base + i * HEAP_PAGE_SIZE) {
-            /* Non-contiguous -- still usable but we stop here */
-            pmm_free_frame(frame);
-            break;
+        for (i = 1; i < HEAP_INITIAL_PAGES; i++) {
+            uintptr_t frame = pmm_alloc_frame();
+            if (frame == 0) {
+                klog(LOG_ERROR, "mm",
+                     "Heap: out of physical memory at page %u", (uint64_t)i);
+                break;
+            }
+            /* Verify contiguity */
+            if (frame != heap_base + i * HEAP_PAGE_SIZE) {
+                /* Non-contiguous -- still usable but we stop here */
+                pmm_free_frame(frame);
+                break;
+            }
         }
     }
 
@@ -124,19 +139,44 @@ boot_result_t heap_init(void)
     heap_start_block->is_free = 1;
     heap_start_block->next = (struct block_header *)0;
 
-    /* Install guard page immediately after heap end.
-     * The PMM bitmap has the next frame free, so allocate it as a sentinel.
-     * If heap_init exhausted contiguous frames, the guard may fail -- non-fatal. */
+    /* Install guard page immediately after heap end. Ownership of the
+     * guard frame is tracked by primary_ok, NOT by `i`: the fallback loop
+     * can also reach i == HEAP_INITIAL_PAGES (if 512 frames happened to be
+     * contiguous) WITHOUT having allocated the +1 frame, so keying off `i`
+     * would clear a PTE for a frame PMM still considers free -- a later
+     * pmm_alloc_frame() could then hand that not-present frame to another
+     * subsystem (false guard-page panic / ownership corruption). On the
+     * fallback path we explicitly claim the adjacent frame and only guard
+     * it if PMM actually returned heap_end. */
     {
         uintptr_t heap_end = heap_base + total_heap_size;
-        uintptr_t guard = pmm_alloc_frame();
-        if (guard == heap_end) {
-            vmm_install_guard_page(guard, "GUARD: kernel heap overflow");
-            klog(LOG_INFO, "mm", "Kernel heap: %u KiB at %p (guard at %p)",
-                   (uint64_t)(total_heap_size / 1024), heap_base, guard);
+        uintptr_t guard;
+
+        if (primary_ok) {
+            guard = heap_end;  /* +1 frame of the contiguous run, owned */
         } else {
-            /* Non-contiguous -- free and skip guard */
-            if (guard) pmm_free_frame(guard);
+            guard = pmm_alloc_frame();
+            if (guard != heap_end) {
+                if (guard) pmm_free_frame(guard);
+                guard = 0;
+            }
+        }
+        if (guard == heap_end) {
+            if (vmm_install_guard_page(guard, "GUARD: kernel heap overflow") != 0) {
+                /* Guard install failed (vmm_install_guard_page fails BEFORE
+                 * clearing the PTE, so the frame is still present and still
+                 * adjacent to the heap). Do NOT free it: returning it to PMM
+                 * would let a later allocation reuse the heap-adjacent frame,
+                 * so a one-page heap overrun would silently corrupt that new
+                 * owner instead of landing in owned padding. Keep it as a
+                 * silent sentinel and log the degraded guard state. */
+                klog(LOG_WARN, "mm", "Kernel heap: %u KiB at %p (guard install failed -- frame retained as padding)",
+                       (uint64_t)(total_heap_size / 1024), heap_base);
+            } else {
+                klog(LOG_INFO, "mm", "Kernel heap: %u KiB at %p (guard at %p)",
+                       (uint64_t)(total_heap_size / 1024), heap_base, guard);
+            }
+        } else {
             klog(LOG_INFO, "mm", "Kernel heap: %u KiB at %p (no guard -- non-contiguous)",
                    (uint64_t)(total_heap_size / 1024), heap_base);
         }

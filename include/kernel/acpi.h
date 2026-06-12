@@ -278,6 +278,11 @@ uint16_t acpi_get_pmtimer_port(void);
  * Returns 0 for 24-bit PM Timer. */
 int acpi_pmtimer_is_32bit(void);
 
+/* Current PM Timer counter value, masked to its real width (24 or
+ * 32 bits). Returns 0 when no PM Timer block exists (HW-reduced ACPI).
+ * Used as a timing entropy sample by the kernel CSPRNG seeder. */
+uint32_t acpi_pmtimer_read_value(void);
+
 /* Returns 1 if FADT flags bit 20 (HW_REDUCED_ACPI) is set.
  * When set, legacy devices (PIT, PIC, RTC) do NOT exist. */
 int acpi_hw_reduced(void);

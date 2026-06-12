@@ -113,6 +113,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 - [x] `stac()`/`clac()` inlines + `KERNEL_ACCESS_USER_BEGIN()`/`KERNEL_ACCESS_USER_END()` macros in `cpu_security.h`; no-op if `!cpu_has(CPU_FEATURE_SMAP)`
 - [x] `copy_from_user()` / `copy_to_user()` added in `cpu_security.c` with SMAP brackets
 - [ ] Migrate existing syscall argument dereferences to use `copy_from_user`; deferred to **T12** `TODO-12-native-api-ssdt.md` (syscall / INT paths) when those sections implement user-buffer rules
+- [ ] Harden the user-copy path to reject supervisor destinations (per-process User-PTE check), not just range-check below `MM_USER_PROBE_ADDRESS`; needs §2 User-bit drop + §3-§6 KPTI. -> XREF: `TODO-03-kernel-libraries.md` §5
 - [ ] `ProbeForRead` / `ProbeForWrite`; deferred to T23 (SEH)
 - [ ] Re-introduce `clac` at the top of `isr_common_stub` when SMAP is enabled for real (today removed: comment at `src/kernel/isr_stubs.asm` ~line 23; must be CPUID-gated or alternative-slots like Linux `FENCE_SWAPGS_*`, not an unconditional opcode)
 - [ ] Commit: `kernel/security: CR4 SMEP/SMAP live, IDT clac/SMAP entry path` (partial: helpers landed; CR4 + IDT still open)
@@ -349,6 +350,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
   - address-taken local variables
   - calls to `alloca`; Clang 19 supports this exactly
 - [ ] Verify no `__stack_chk_guard` linker error before the `__stack_chk_guard` init block in §9 runs
+- [ ] Seed `__stack_chk_guard` from `csprng_u64()` (`02-kernel-core/TODO-03` §5, SHIPPED 2026-06-12) when `canary_init()` runs after `csprng_init()`; keep the inline RDRAND/TSC path only for pre-CSPRNG boot phases
 
 - [ ] `src/kernel/security/stack_canary.c`:
   ```c

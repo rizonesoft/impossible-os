@@ -11,7 +11,7 @@ title: "TODO-06 -- Security & User Accounts"
 > **Goal:** Add proper multi-user authentication, cryptographic password hashing, file permissions enforcement, a graphical login/lock screen, and UAC-equivalent privilege elevation -- transitioning from a single root-equivalent user to a production-grade security model that rivals Windows 11 and Linux.
 
 > [!IMPORTANT]
-> **Already exists**: `IXFS_S_IRUSR/IWUSR/IXUSR` permission constants + `i_uid/i_gid` inode fields + `ixfs_check_perm(inode, uid, ...)` in `ixfs.h` -- §9 VFS enforcement layer wires these up; do not redefine. `CPU_FEATURE_RDRAND` flag in `cpuid.h`. `vfs_mkdir/create/open/read/write`. `RegGetValue/SetValueEx/RegCreateKeyEx` for `HKU\{name}\` hive. `task_create_user()` for launching processes. `gfx_blur_rect()` (compositor) for blurred backgrounds. `theme_get(THEME_ACCENT)` for accent color. `SYS_CLIPBOARD_GET=57`, `SYS_SEARCH=58` highest assigned → `SYS_PRIVILEGE_REQUEST=59`. **Missing**: `auth_*`, `csprng_*`, monocypher, login/lock screen UI, privilege token in task struct, UAC consent dialog. **Scope note**: §1 (user account stub) from TODO-03 §1 was a placeholder -- the full implementation lives here; TODO-03 §1 becomes a forward reference to this TODO. Complete sections in order: CSPRNG → password hashing → user accounts → auth API → home dirs → login screen UI → login flow → lock screen → user switching → file permissions → UAC elevation.
+> **Already exists**: `IXFS_S_IRUSR/IWUSR/IXUSR` permission constants + `i_uid/i_gid` inode fields + `ixfs_check_perm(inode, uid, ...)` in `ixfs.h` -- §9 VFS enforcement layer wires these up; do not redefine. `CPU_FEATURE_RDRAND` flag in `cpuid.h`. `vfs_mkdir/create/open/read/write`. `RegGetValue/SetValueEx/RegCreateKeyEx` for `HKU\{name}\` hive. `task_create_user()` for launching processes. `gfx_blur_rect()` (compositor) for blurred backgrounds. `theme_get(THEME_ACCENT)` for accent color. `SYS_CLIPBOARD_GET=57`, `SYS_SEARCH=58` highest assigned → `SYS_PRIVILEGE_REQUEST=59`. **Missing**: `auth_*`, login/lock screen UI, privilege token in task struct, UAC consent dialog (`csprng_*` + Monocypher SHIPPED 2026-06-12 via `02-kernel-core/TODO-03` §5 -- consume, do not re-implement). **Scope note**: §1 (user account stub) from TODO-03 §1 was a placeholder -- the full implementation lives here; TODO-03 §1 becomes a forward reference to this TODO. Complete sections in order: CSPRNG → password hashing → user accounts → auth API → home dirs → login screen UI → login flow → lock screen → user switching → file permissions → UAC elevation.
 
 ## Inputs
 
@@ -50,7 +50,7 @@ title: "TODO-06 -- Security & User Accounts"
 
 | ⭐  | Order | Deliverable                                                                                           | Depends On                                                                            | Status |
 | --- | :---: | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §11 CSPRNG -- RDRAND + PIT jitter entropy pool, `csprng_read(buf, len)`                               | `CPU_FEATURE_RDRAND` cpuid flag (exists)                                              |  [ ]   |
+| ⭐  |   1   | §1 CSPRNG -- consume kernel `csprng_fill()` (shipped in D02T03 §5; ad-hoc pool retired)               | `02-kernel-core/TODO-03` §5 (shipped)                                                 |  [/]   |
 | ⭐  |   2   | §2 Password hashing -- monocypher vendor, `crypto_argon2i`, `auth_hash/verify_password`               | §11 CSPRNG (salt generation); `kmalloc` (argon2i work-area)                          |  [ ]   |
 | 💎  |   3   | §1 User account system -- `user_account_t`, Registry CRUD, Admin + Guest first boot                   | §2 password hashing; Registry (exists)                                                |  [ ]   |
 | 💎  |   4   | §3 Authentication API -- `auth_login/logout/get_current_user`, `HKU\{name}` hive load/unload          | §1 account system; Registry hive load                                                 |  [ ]   |
@@ -66,20 +66,15 @@ title: "TODO-06 -- Security & User Accounts"
 
 ## 1. CSPRNG `[Opus]`
 
-Entropy pool seeded from RDRAND + PIT jitter. `csprng_read(buf, len)` fills with cryptographically secure random bytes. Used by §2 password salt, ASLR, and network nonce generation.
+The kernel CSPRNG SHIPPED 2026-06-12 in `02-kernel-core/TODO-03` §5: `src/kernel/csprng.c` (ChaCha20 fast-key-erasure, Blake2b conditioner, seeded at boot Phase 1, `NtGetRandom` syscall). This section is now a thin consumer: auth code calls `csprng_fill()`/`csprng_u64()` directly for §2 password salts and nonces.
 
-**Files:** `src/kernel/csprng.c` (new), `include/kernel/csprng.h` (new)
+**Files:** consume `include/kernel/csprng.h` (exists; no desktop-side files)
 
 > [!NOTE]
-> `[Opus]` due to: hardware entropy interface (RDRAND), entropy pool design (mixing multiple entropy sources), and security-critical use (cryptographic salt, ASLR). **Pool design**: 256-byte `g_entropy_pool[256]` byte array; `static uint32_t g_pool_pos`. Seeding at `csprng_init()`: (a) if `cpu_has_feature(CPU_FEATURE_RDRAND)`: call `RDRAND` 64 times; XOR each 4-byte value into pool at rolling positions; (b) PIT jitter: read `system_get_ticks()` 32 times with 1-tick busy-wait between reads; mix into pool using a simple hash (`pool[i % 256] ^= (jitter_val >> 8) * 0x9e3779b9`). **Output**: `csprng_read(buf, len)`: iterate `len` bytes; each byte = `g_entropy_pool[g_pool_pos % 256] ^ (g_pool_pos * 0x6B + 0x45)`; advance `g_pool_pos`; every 64 bytes: re-mix PIT jitter. **Note**: this is a XSalsa20-class CSPRNG not a hardware RNG -- argon2i memory-hardness compensates for any pool bias. `csprng_init()` called from `kernel_main()` before any auth use. Fallback: if RDRAND unavailable, use PIT jitter + boot timestamp only; log `[WARN] RDRAND unavailable -- CSPRNG seeded from PIT jitter only`.
+> The previously drafted ad-hoc 256-byte XOR pool (RDRAND + PIT jitter, `csprng_read()`) is OBSOLETE and must NOT be implemented -- it was the fallback for the case where this domain shipped before the kernel library section; the real CSPRNG won the race.
 
-- [ ] OWNERSHIP: kernel CSPRNG is `02-kernel-core/TODO-03` §5 `csprng_fill()` (seeded by `01-boot-platform/TODO-12` §8); consume that API -- the ad-hoc pool below is fallback only if this ships first
-- [ ] `void csprng_init(void)` -- seed pool from RDRAND (if available) + PIT jitter + boot timestamp
-- [ ] `void csprng_read(uint8_t *buf, size_t len)` -- fill buffer; re-mix jitter every 64 bytes
-- [ ] RDRAND inline asm: `asm volatile("rdrand %0" : "=r"(val) : : "cc")` in a retry loop (up to 10 retries; RDRAND can fail transiently)
-- [ ] `csprng_init()` called from `kernel_main()` after PIT and PMM are live; before any auth
-- [ ] Boot log: `klog(LOG_OK, "csprng", "entropy pool seeded (%s)", rdrand_ok ? "RDRAND+jitter" : "jitter only")`
-- [ ] Commit: `"security: CSPRNG -- RDRAND+PIT jitter entropy pool, csprng_read()"`
+- [x] OWNERSHIP RESOLVED: kernel CSPRNG is `02-kernel-core/TODO-03` §5 `csprng_fill()` (shipped; first-seed hardening continues in `01-boot-platform/TODO-12` §8); the ad-hoc pool design is retired
+- [ ] §2 password hashing and any nonce generation in this TODO call `csprng_fill()` directly (verify when §2 is implemented; no `csprng_read` shim)
 
 ## 2. Password Hashing `[Opus]`
 

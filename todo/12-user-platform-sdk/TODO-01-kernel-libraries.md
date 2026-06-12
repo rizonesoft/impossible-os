@@ -162,7 +162,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 **Output files:** `src/libs/monocypher/monocypher.c`, `include/libs/monocypher.h`,
 `src/libs/monocypher/csprng.c`, `include/libs/csprng.h`
 
-- [ ] OWNERSHIP: duplicates `02-kernel-core/TODO-03` §5 (Monocypher + `csprng_fill()` + SYS_GETRANDOM); whichever ships first owns the code, the other becomes a consumer XREF
+- [x] OWNERSHIP RESOLVED (2026-06-12): `02-kernel-core/TODO-03` §5 shipped first and owns Monocypher + CSPRNG + `NtGetRandom`; this section is a consumer (SDK headers + user-mode `getrandom` wrapper only; reconcile sub-items at next validate pass)
 - [ ] **Port monocypher** (BSD-2-Clause, ~3000 lines, v4.x):
   - [ ] Vendor `monocypher.c` + `monocypher.h` into `src/libs/monocypher/`
   - [ ] Zero malloc needed -- all state in caller-provided buffers; verify no `malloc`/`free` calls in source
