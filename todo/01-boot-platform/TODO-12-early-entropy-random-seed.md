@@ -175,16 +175,24 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 6. Seed File Carryover Lifecycle
 
 > [!NOTE]
-> **UNBLOCKED (2026-06-12):** the user authorized Monocypher vendoring and `02-kernel-core/TODO-03` §5 SHIPPED (Monocypher 4.0.2 + kernel CSPRNG + `NtGetRandom`). HMAC-Blake2b for the seed-file MAC/KDF builds on `crypto_blake2b()`; the CSPRNG-ready signal for the rotate step is `csprng_is_seeded()`.
+> **UNBLOCKED (2026-06-12):** the user authorized Monocypher vendoring and `02-kernel-core/TODO-03` §5 SHIPPED (Monocypher 4.0.2 + kernel CSPRNG + `NtGetRandom`). MAC/KDF use `crypto_blake2b_keyed()` (keyed Blake2b = the HMAC-Blake2b equivalent); the CSPRNG-ready signal for the rotate step is `csprng_is_seeded()`.
 
-- [ ] Store `X:\Boot\random-seed.bin` with version, counter, and MAC.
-- [ ] Anti-clone system token: per-machine secret in a UEFI NVRAM variable (TPM NV fallback) bound into the seed-file MAC/KDF -- a cloned image with a copied seed file fails closed to degraded (systemd-boot parity).
-- [ ] Read seed during boot, mix once, then rotate after kernel CSPRNG is ready.
-- [ ] Prevent seed reuse after crash/power loss where possible.
-- [ ] Handle read-only/recovery media without blocking boot.
+> [!IMPORTANT]
+> **Design decisions (Codex design review 2026-06-12) -- pinned before coding:**
+> - **§6/§7 first-seed boundary (explicit).** X:\ (BlackBox FAT32) mounts in Phase 2/3, but `csprng_init()` runs in Phase 1 -- so the kernel-side seed FILE cannot feed the FIRST seed. §6 owns the seed-file FORMAT + per-machine NVRAM token + crash-tolerant rotation + a Phase-3 `csprng_add_entropy()` RESEED (defense-in-depth). The EARLY first-seed contribution (reading the same file format pre-ExitBootServices into the boot_info payload) is owned by §7. §6 is a runtime reseed/rotation/anti-clone feature, NOT the early entropy path.
+> - **Crash safety.** FAT32 LFN rename is NOT power-fail-atomic (`docs/boot/boot-policy.md`, `docs/boot/boot-history-schema.md`); a `.tmp`+rename protocol is unsafe for the LFN name `random-seed.bin`. Use the established BlackBox dual-file protocol (write-new + flush + close-success THEN delete-old; highest-valid-counter-on-read). The future FAT32-safe atomic-replace primitive is `05-storage-filesystems/TODO-04 §16`.
+> - **Anti-replay.** MAC over `version||counter||payload` stops field tampering but NOT replay of an old valid file. Persist the highest accepted counter in the NVRAM token record; reject `counter <= last_seen` (regenerate). One small NVRAM write per boot rotation (systemd-boot parity).
+> - **Mismatch recovery.** On absent/changed NVRAM token (firmware reset, board swap, clone), do NOT mix the old payload, but once CSPRNG is seeded WRITE a fresh token-MACed seed file + log the clone/reset event -- never leave a permanently-degraded invalid file.
+> - **TPM NV fallback NOT available.** Only `TPM2_GetRandom` exists today (no `TPM2_NV_Read/Write`); the token is UEFI-NVRAM-only. TPM NV fallback is a tracked follow-up (`04-drivers-hardware/TODO-13` TPM stack, or a new item when TPM NV ops land).
+
+- [ ] Seed-file format + pure encode/decode helpers (`src/kernel/seed_file.c` + `.h`): magic + version + counter(u64) + 32-byte payload + 32-byte `crypto_blake2b_keyed` MAC; bad-MAC/bad-magic rejection; no VFS (unit-testable).
+- [ ] Per-machine anti-clone token in a UEFI NVRAM variable (private GUID, non-volatile) holding secret + last-seen counter; `csprng_fill`-created on first boot; binds the MAC so a copied seed fails closed (systemd-boot parity).
+- [ ] Phase-3 read lifecycle: verify MAC against the NVRAM token, reject `counter <= last_seen` (anti-replay), `csprng_add_entropy(payload, 32, HIGH)` on valid+fresh; do not mix on mismatch/absent token.
+- [ ] Rotation after `csprng_is_seeded()`: counter++, payload = `csprng_fill(32)`, crash-tolerant dual-file write (new + flush + close-ok + delete-old), update NVRAM last-seen; mismatch-recovery writes a fresh file here too.
+- [ ] Degrade (read-only/recovery media, missing file, write failure) without blocking boot: `seed=none` + WARN + continue; `boot.conf seed_file=off` knob.
 - [ ] Commit: `"boot: random seed carryover file"`
 
-**Test checkpoint:** After two consecutive boots `X:\Boot\random-seed.bin` exists with an incremented counter and valid MAC; deleting it degrades to `seed=none` without blocking boot; the rotate happens only after the kernel CSPRNG signals ready. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** After two consecutive boots `X:\Boot\random-seed.bin` exists with an incremented counter and valid MAC; deleting it degrades to `seed=none` without blocking boot; a copied file with a mismatched NVRAM token fails closed AND the next boot writes a fresh valid file; an old-counter file is rejected (anti-replay); the rotate happens only after `csprng_is_seeded()`. Pure format helpers: encode/decode round-trip + bad-MAC + bad-counter rejection. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -192,6 +200,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 - [ ] Add typed seed payload via TODO-01 with address, length, source mask, quality bits, and checksum. Use `BOOT_PAYLOAD_RANDOM_SEED` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h); the TODO-01 §4 validator rejects overlap with boot_info / rt_mmap / USB DMA / framebuffer before CSPRNG seeds against the buffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Accept and concatenate a seed from an earlier boot stage instead of overwriting it (Linux EFI config-table pattern); the kernel mixes both.
+- [ ] EARLY first-seed boundary (per §6 design pin): bootloader reads the §6 `random-seed.bin` format pre-EBS into this payload so carryover reaches `csprng_init()` at Phase 1. §6 owns format+token+rotation; §7 owns the early read.
 - [ ] Ensure PMM reserves seed memory until CSPRNG consumes it.
 - [ ] Zero seed memory after consumption.
 - [ ] Add ABI tests for seed descriptor.
