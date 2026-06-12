@@ -174,6 +174,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 6. Seed File Carryover Lifecycle
 
+> [!NOTE]
+> **Blocked on a user decision (2026-06-12):** the seed-file MAC/KDF needs a real keyed hash (HMAC-Blake2b), owned by `02-kernel-core/TODO-03` §5 (item: "Monocypher provides production-grade ... Blake2b" -- vendors Monocypher). Vendoring Monocypher is a dependency addition, which is a stop-and-ask boundary (CLAUDE.md Safety Gates); the overnight runner must not pull it forward unilaterally. §8 (CSPRNG seeding) funnels through the same prerequisite. Ask the user: authorize vendoring Monocypher (implement D02T03 §5 via the normal pipeline), then implement §6 and §8 in order.
+
 - [ ] Store `X:\Boot\random-seed.bin` with version, counter, and MAC.
 - [ ] Anti-clone system token: per-machine secret in a UEFI NVRAM variable (TPM NV fallback) bound into the seed-file MAC/KDF -- a cloned image with a copied seed file fails closed to degraded (systemd-boot parity).
 - [ ] Read seed during boot, mix once, then rotate after kernel CSPRNG is ready.

@@ -28,9 +28,14 @@ only when every domain is complete or a hard-stop condition fires.
   (§5 review shipped 5ccdd14d). TODO-13 §2 TPM transport pulled forward and
   shipped + reviewed (8ae51bf1 + review stamps) per user direction, so §4 is
   UNBLOCKED and now SHIPPED + REVIEWED (§4: ee546157 + review stamps).
-  Work queue: **§6 onward** per the normal per-file pipeline (§6 seed file
-  carryover, §7 boot_info seed handoff, §8 CSPRNG seeding -- §8 needs
-  D02T03 §5 Monocypher, check that XREF before starting it).
+  **§6 and §8 are blocked on a USER DECISION:** both need
+  `02-kernel-core/TODO-03` §5 (Monocypher vendoring -- a dependency
+  addition, stop-and-ask per CLAUDE.md). Ask the user to authorize
+  vendoring Monocypher; once authorized, implement D02T03 §5 via the
+  normal pipeline, then §6 and §8. Work queue meanwhile:
+  1. **§7 implement** (boot_info seed handoff -- dep TODO-01 §4, done;
+     kernel-side descriptor consumption + zeroing, no crypto needed).
+  2. **§9/§10** after §6-§8 close.
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
