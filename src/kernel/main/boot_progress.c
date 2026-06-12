@@ -378,9 +378,9 @@ close:
     /* Write to X:\Perf\ (BlackBox) or C:\Impossible\System\Logs\ (fallback).
      * Path moved from X:\Boot\ when FPDT entries joined the timeline so
      * the file lives next to boot-profile.log under the perf dump tree. */
+    char tl_path[64];
     {
         const char *tl_dir = klog_using_blackbox ? "X:\\Perf\\" : klog_dir;
-        char tl_path[64];
         int tp = 0, tj;
         for (tj = 0; tl_dir[tj]; tj++) tl_path[tp++] = tl_dir[tj];
         {
@@ -388,19 +388,28 @@ close:
             for (tj = 0; fn[tj]; tj++) tl_path[tp++] = fn[tj];
         }
         tl_path[tp] = '\0';
-        /* Create file via parent dir to avoid FAT32 dir cache re-walk bug */
-        {
-            struct vfs_node *dir = vfs_open(tl_dir, VFS_O_READ);
-            if (dir && dir->ops && dir->ops->create)
-                dir->ops->create(dir, "boot-timeline.json", VFS_FILE);
-            if (dir)
-                vfs_close(dir);
-        }
-        f = vfs_open(tl_path, VFS_O_WRITE);
+        /* Single-open create + truncate (same pattern as boot_version.c /
+         * boot_trend.c / boot_health.c). Truncation matters: a later boot
+         * with fewer records would otherwise leave stale tail bytes from
+         * the previous timeline and the JSON would not parse. */
+        f = vfs_open(tl_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
     }
     if (f) {
-        vfs_write(f, 0, pos, buf);
+        int wr = vfs_write(f, 0, pos, buf);
         vfs_close(f);
+        if (wr < 0 || (uint32_t)wr != pos) {
+            /* Fail closed (same pattern as boot_health.c): TRUNC already
+             * destroyed the previous boot's file, so a partial write is a
+             * malformed JSON prefix no consumer can parse. Re-truncate to
+             * empty -- "no data this boot" is a recoverable signal. */
+            klog(LOG_WARN, "boot",
+                 "boot-timeline.json short write (%d of %u); truncating to empty",
+                 (int64_t)wr, (uint64_t)pos);
+            struct vfs_node *trunc =
+                vfs_open(tl_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+            if (trunc)
+                vfs_close(trunc);
+        }
     }
 
     {

@@ -68,7 +68,11 @@ void boot_progress_poll(void);
  * is unavailable. JSON array of records: FPDT firmware-phase entries
  * first (source="fpdt", unreliable=true on zero/garbage records), then
  * bootloader+kernel TSC steps (source="tsc"). Each record carries
- * {stage, phase, post, start_ms, duration_ms, source, unreliable}.
+ * {stage, phase, post, start_ms, duration_ms, target_ms, source,
+ * unreliable}; target_ms is the per-step boot_perf_budget target
+ * (0 when the step has no budget row). On a short write the file is
+ * re-truncated to empty (fail closed) so consumers never see a
+ * malformed JSON prefix.
  * When FPDT is reliable, all start_ms values are ms-since-firmware-reset
  * so FPDT and TSC entries form one monotonic timeline; when unreliable,
  * FPDT entries collapse to start_ms=0 with unreliable=true, and TSC

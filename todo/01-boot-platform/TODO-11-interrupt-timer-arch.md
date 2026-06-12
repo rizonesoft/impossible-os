@@ -334,12 +334,27 @@ JSON boot timeline on disk plus optional shell charting later (overlay bar remov
 **Files:** `src/kernel/main/boot_progress.c`, `include/kernel/boot_progress.h` -- `src/shell/cmd/boot_timeline.c` deferred (not in tree)
 
 - [x] Overlay bar removed (per user preference) -- JSON timeline is the diagnostic output
-- [x] `boot_timeline_dump_json()`: writes `X:\Perf\boot-timeline.json` (path moved from `X:\Boot\` when FPDT records joined the timeline; see TODO-04 §4) with `[{"stage":"fpdt:reset_end","phase":0,"post":"0x0000","start_ms":0,"duration_ms":50,"source":"fpdt","unreliable":false},{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7,"source":"tsc","unreliable":false},...]`
-- [x] Called from `boot_phase3()` after `boot_timing_write_report()`
+- [x] `boot_timeline_dump_json()`: writes `X:\Perf\boot-timeline.json` (path moved from `X:\Boot\` when FPDT records joined the timeline; see TODO-04 §4) with `[{"stage":"fpdt:reset_end","phase":0,"post":"0x0000","start_ms":0,"duration_ms":50,"target_ms":0,"source":"fpdt","unreliable":false},{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7,"target_ms":10,"source":"tsc","unreliable":false},...]` (`target_ms` = per-step boot_perf_budget target, 0 when unbudgeted)
+- [x] Called from `boot_desktop.c` (Phase 3 desktop-ready path) after `boot_timing_write_report()`
+- [x] Single-open `VFS_O_WRITE|VFS_O_CREATE|VFS_O_TRUNC` write with fail-closed short-write handling (re-truncate to empty; same pattern as `boot_health.c`) -- added during review; previous bare `VFS_O_WRITE` left stale tail bytes across boots
 - [ ] `boot-timeline` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
 - [x] Commit: `"kernel: boot timeline JSON dump"`
 
 **Test checkpoint:** With BlackBox mounted, `X:\Perf\boot-timeline.json` exists after desktop boot when dump path enabled; JSON contains stage objects. `boot-timeline` shell deferred to `09-desktop-shell/TODO-12-utilities.md` §1. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | FPDT/timing producer suites in `test_boot_timing.c`, 0 failures; JSON dump itself is live-VFS (file presence validated by boot checkpoint)
+
+> **Notes:**
+> - `boot_timeline_dump_json()` (boot_progress.c) emits FPDT firmware phases + TSC kernel steps as one JSON array to `X:\Perf\boot-timeline.json` (fallback `C:\Impossible\System\Logs\`).
+> - Record schema: stage/phase/post/start_ms/duration_ms/target_ms/source/unreliable; reliability tracking marks saturated or reverse-ordered TSC data.
+> - Review pass added create+truncate single-open with fail-closed short-write handling so consumers never see stale tails or partial JSON.
+> - Canonical schema contract lives in `include/kernel/boot_progress.h` above `boot_timeline_dump_json()`.
+> - Scope boundary: rendering (`boot-timeline` shell command) is owned by `09-desktop-shell/TODO-12-utilities.md` §1.
+> - re-adversarial skipped: single-function fail-closed write fix + doc sync; no locking/ISR/lifecycle changes.
+
+> **Verified:** 2026-06-12 | commit `98592c32` | 4/5 items | build OK | smoke PASS (KVM 2.730s)
+> **Accepted:** [L] `boot-timeline` shell renderer out of scope for kernel dump (reason: scope) -> XREF: 09-desktop-shell/TODO-12 §1 (item: "Kernel diagnostic commands" at line 82)
+> **Quality reviewed:** 2026-06-12 | Codex 3x (adversarial, consistency, perf) | 3M fixed, 0 open | scope: kernel-code-quality
 
 ---
 
