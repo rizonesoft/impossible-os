@@ -117,6 +117,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Downstream: first live producer exercising the §2 descriptor publication end-to-end (85-byte payload verified on KVM); §7 parses the record.
 > - Canonical contract doc: `include/kernel/entropy.h` framing + source classes.
 > - Scope boundary: kernel-side AT_RANDOM/canary RDRAND users stay on `src/kernel/random.c` until §8 seeds the CSPRNG.
+> - re-adversarial skipped in review: fix was a 6-line contract comment update.
+
+> **Verified:** 2026-06-12 | commit `8c0bb636` | 4/4 items | build OK | smoke PASS (KVM, RDSEED 64 bytes live)
+> **Quality reviewed:** 2026-06-12 | Codex 6x (design, adversarial x2, adversarial-impl, consistency, perf) | 2H+1M+1L fixed, 0 open | scope: boot-code-quality
 
 ---
 

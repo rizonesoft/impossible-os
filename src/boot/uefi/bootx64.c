@@ -8782,7 +8782,10 @@ static void parse_fpdt(void)
  *
  * Transcript format mirrors include/kernel/entropy.h framing:
  *   u8 src_id | u32 len (LE) | payload
- * src ids: 0 = firmware RNG (EFI_RNG_PROTOCOL), 3 = ACPI OEM0 table.
+ * src ids: 0 = firmware RNG (EFI_RNG_PROTOCOL, 64 bytes),
+ *          1 = CPU RDSEED/RDRAND (64 RNG bytes + 16 personalization
+ *              bytes: CPUID vendor EBX,EDX,ECX order + FMS dword),
+ *          3 = ACPI OEM0 table payload (up to 512 bytes).
  *
  * Hang contract: a firmware GetRNG that never returns cannot be recovered
  * pre-EBS (no preemption). The boot.conf escape hatch firmware_rng=off
