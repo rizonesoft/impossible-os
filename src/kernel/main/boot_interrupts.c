@@ -54,6 +54,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/cpu_security.h"
 #include "kernel/entropy.h"
+#include "kernel/tpm_transport.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
@@ -438,6 +439,16 @@ void boot_phase1(void)
      * is the same source class Linux jitterentropy uses. Quality is
      * LOW by definition (the entropy model clamps JITTER regardless). */
     entropy_collect_jitter();
+
+    /* TPM2 command transport (TIS/CRB). Phase 1 placement is load-
+     * bearing: needs validated ACPI (acpi_init above), UC MMIO maps
+     * (VMM, Phase 0), and the calibrated TSC for poll deadlines
+     * (boot_timing_init above). The Phase 0 tpm_init() event-log parse
+     * is independent. Absent/wedged TPMs degrade; boot continues. */
+    POST16(POST16_TPM_TRANSPORT);
+    tpm_transport_init();
+    POST16(POST16_TPM_TRANSPORT_OK);
+    boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);
 
     /* spinner_start() (via boot_splash_start_animation) registers the
      * singleton timer tick callback at 10 ticks (~10fps, Fluent 100 deg/s).

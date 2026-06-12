@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). Still missing: TPM RNG read (§4, blocked on TODO-13 §2 transport), seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). Still missing: TPM RNG read (§4, unblocked -- TODO-13 §2 transport shipped 2026-06-12), seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
 
 ## Inputs
 
@@ -127,9 +127,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 4. TPM RNG Collection
 
 > [!NOTE]
-> **Blocked (2026-06-12):** TPM2_GetRandom requires the TPM2 command transport (TIS/CRB locality + command/response buffers), which is `[ ]` at `01-boot-platform/TODO-13` §2 (item: "Implement locality request/release and command/response buffer handling" at line 62). Implement this section after that transport ships; the seed transcript already reserves src id 2 (`ENTROPY_SRC_TPM_RNG`).
+> **Unblocked (2026-06-12):** the TPM2 command transport shipped at `01-boot-platform/TODO-13` §2 (`tpm2_submit()` in `src/kernel/tpm_transport.c`, Phase 1 init). Collect via kernel-side TPM2_GetRandom and stage through `entropy_stage_source(ENTROPY_SRC_TPM_RNG, ...)` (src id 2 already reserved) so the §8 first seed consumes it.
 
-- [ ] Use TPM2_GetRandom when TPM transport is available. -> XREF: `01-boot-platform/TODO-13` §2 (blocker)
+- [ ] Use TPM2_GetRandom when TPM transport is available. -> XREF: `01-boot-platform/TODO-13` §2 (`tpm2_submit()`, shipped)
 - [ ] Mix TPM output with other sources rather than trusting it alone.
 - [ ] Degrade cleanly on no TPM, timeout, or error.
 - [ ] Include TPM RNG availability in measured boot report.

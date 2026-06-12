@@ -77,6 +77,7 @@ Integrate ACPICA (Intel's open-source AML interpreter, Apache-2.0) as a static l
   - `AcpiInitializeSubsystem()` → `AcpiInitializeTables(NULL, 32, FALSE)` → `AcpiLoadTables()` → `AcpiEnableSubsystem(ACPI_FULL_INITIALIZATION)` → `AcpiInitializeObjects()`
 - [ ] Remove hand-rolled `acpi_find_table()`, `acpi_get_hpet_base()`, `acpi_get_mcfg()` -- replace with `AcpiGetTable("HPET", ...)`, `AcpiGetTable("MCFG", ...)`; keep the header API but back them with ACPICA
 - [ ] `acpi_evaluate(path, args, result)` wrapper around `AcpiEvaluateObject` for use by §5–§10
+- [ ] TPM2 ACPI start method (2/8): retrofit `tpm_transport_init()` start-method dispatch to invoke the TPM2 table's AML start method (replaces degrade-with-WARN). -> XREF: `01-boot-platform/TODO-13` §2 (consumer)
 - [ ] Boot log: `[ACPI] ACPICA %s initialised; namespace: %u objects`
 - [ ] Commit: `"acpi: ACPICA AML interpreter -- OSL, AcpiInitializeSubsystem, namespace load"`
 

@@ -36,7 +36,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
 | 💎 | 1 | Harden TCG event-log parser | TODO-01 §4 | [ ] |
-| 💎 | 2 | TPM2 command transport | §1 | [ ] |
+| 💎 | 2 | TPM2 command transport | §1 (ordering-only; transport does not consume the parser) | [x] |
 | 💎 | 3 | PCR read API | §2 | [ ] |
 | 💎 | 4 | PCR replay engine | §1, ../02-kernel-core/TODO-03 §3 | [ ] |
 | 💎 | 5 | Secure Boot variable measurement reconciliation | §4, TODO-02 §3 | [ ] |
@@ -58,12 +58,24 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 2. TPM2 Command Transport
 
-- [ ] Locate TPM2 ACPI table or TIS/CRB interface.
-- [ ] Implement locality request/release and command/response buffer handling.
-- [ ] Add timeout and degraded-boot behavior for absent or wedged TPMs.
-- [ ] Support TPM2_Startup detection without perturbing firmware-owned state.
-- [ ] Unblocks `01-boot-platform/TODO-12` §4 (TPM2_GetRandom entropy collection) -- notify that consumer when this ships.
-- [ ] Commit: `"tpm: add TPM2 command transport"`
+- [x] Discovery (`tpm_transport.c` `tpm_transport_init()`): ACPI TPM2 table start method 6/7, TIS fixed-base fallback, UC MMIO; methods 2/8 degrade -> XREF: `04-drivers-hardware/TODO-03` §1 (item: "TPM2 ACPI start method (2/8) via ACPICA").
+- [x] Locality 0 held from init; TIS FIFO write AND read chunked by live burstCount with Expect/dataAvail checks; CRB cmdReady/START/goIdle handshake with size-capped mapped buffers.
+- [x] PTP TIMEOUT_A-D TSC poll deadlines (iteration fallback when freq unknown); timeout = sticky transport failure, boot continues; Phase 1 init after `acpi_init()` per design review.
+- [x] TPM2_Startup never perturbs firmware-owned state: GetCapability probe first, Startup(CLEAR) only on TPM_RC_INITIALIZE; vendor logged.
+- [x] `tpm2_submit()` whole-transaction serialized (concurrent caller gets TPM_T_ERR_BUSY); response bounded by caller cap + TPM_T_MAX_RESPONSE; response tag vocabulary enforced.
+- [x] Unblocked `01-boot-platform/TODO-12` §4 (TPM2_GetRandom) -- consumer note updated in the same commit.
+- [x] Commit: `"tpm: add TPM2 command transport"`
+
+**Test checkpoint:** With QEMU `-tpm` (swtpm) serial shows `TPM2 transport up (TIS|CRB, vendor XXXX)`; without a TPM the log shows `no TPM2 table and no firmware TPM; transport not started` and boot continues (verified live on KVM smoke, POST16 0x1055). Known TCG TPM-init freeze (`project_tcg_tpm_freeze`) must not regress: transport init is Phase 1, after the freeze point. QEMU WHPX, QEMU TCG, VirtualBox, bare metal (test laptop fTPM).
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 2 transport suites (marshaling + fake-TIS submit) in `test_tpm_transport.c`, 0 failures
+
+> **Notes:**
+> - Shipped `include/kernel/tpm_transport.h` + `src/kernel/tpm_transport.c` (TIS/FIFO burst-chunked + CRB, ACPI TPM2 discovery, conditional Startup) + Phase 1 wiring in `boot_interrupts.c` (POST16 0x1054/0x1055).
+> - Runs once in Phase 1 after ACPI + boot timing; `tpm2_submit()` is the single public command path, whole-transaction serialized, sticky-failed on wedge.
+> - Downstream: TODO-12 §4 (TPM RNG) consumes `tpm2_submit()`; §3 PCR read and §7 NV index build on the same API; Codex design + test-coverage adoptions in the section commit.
+> - Canonical contract doc: `include/kernel/tpm_transport.h` header comment (phase + concurrency contracts).
+> - Scope boundary: ACPI-start methods (2/8) degrade until ACPICA lands (owner: `04-drivers-hardware/TODO-03` §1); event-log parsing stays in `tpm.c` (§1); PCR commands are §3.
 
 ## 3. PCR Read API
 
@@ -144,6 +156,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 | ⭐ | Feature | Windows | Linux | Impossible OS |
 | --- | --- | --- | --- | --- |
+| 💎 | TPM2 command transport (TIS/CRB) | tpm.sys TIS/CRB | tpm_tis/tpm_crb drivers | ✅ §2 burst-chunked TIS + CRB |
 | 💎 | Secure Boot PCR integration | Measured Boot | IMA/TPM tools | TODO-13 |
 | 💎 | PCR replay | internal/Defender | tpm2-tools | TODO-13 §4 |
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
@@ -151,6 +164,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## Unit Tests
 
+- [x] Shipped with §2 (2 suites, TEST_CAT_SECURITY, `test_tpm_transport.c`): transport marshaling + fake-TIS submit (chunking, protocol violations, sticky fail, reentrancy).
 - [ ] `test_tpm_event_log_tpm12_fixture`
 - [ ] `test_tpm_event_log_tpm20_fixture`
 - [ ] `test_tpm_pcr_replay_sha256`
