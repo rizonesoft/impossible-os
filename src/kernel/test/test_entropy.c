@@ -10,6 +10,8 @@
 
 #include "kernel/test/test.h"
 #include "kernel/entropy.h"
+#include "kernel/seed_file.h"
+#include "libc/string.h"
 
 static void test_entropy_source_mask(void)
 {
@@ -284,6 +286,210 @@ static void test_entropy_staged_transcript(void)
     entropy_record_source(ENTROPY_SRC_SEED_FILE, ENTROPY_Q_NONE);
 }
 
+static void test_random_seed_format(void)
+{
+    /* Pure seed-file format helpers: encode/accept round-trip plus every
+     * rejection class, in check order (no VFS, no NVRAM). */
+    static const uint8_t secret[SEED_FILE_SECRET_LEN] = { 0x5A, 0x01, 0xFE };
+    uint8_t payload[SEED_FILE_PAYLOAD_LEN];
+    uint8_t payload_out[SEED_FILE_PAYLOAD_LEN];
+    struct seed_file_blob blob, tampered;
+    uint64_t counter_out = 0;
+    uint32_t i;
+
+    for (i = 0; i < SEED_FILE_PAYLOAD_LEN; i++)
+        payload[i] = (uint8_t)(i * 7u + 3u);
+
+    seed_file_encode(&blob, 42, payload, secret);
+    TEST_ASSERT_EQ(blob.magic, SEED_FILE_MAGIC, "encode sets magic");
+    TEST_ASSERT_EQ(blob.version, SEED_FILE_VERSION, "encode sets version");
+
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret, 41,
+                                    &counter_out, payload_out),
+                   (uint32_t)SEED_FILE_OK, "valid blob accepted");
+    TEST_ASSERT_EQ(counter_out, 42u, "counter round-trips");
+    TEST_ASSERT_EQ(memcmp(payload_out, payload, SEED_FILE_PAYLOAD_LEN), 0,
+                   "payload round-trips");
+
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE - 1, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_LEN, "short buffer rejected");
+    TEST_ASSERT_EQ(seed_file_accept(NULL, SEED_FILE_SIZE, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_LEN, "NULL buffer rejected");
+
+    tampered = blob;
+    tampered.magic ^= 1u;
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_MAGIC, "bad magic rejected");
+
+    tampered = blob;
+    tampered.version = SEED_FILE_VERSION + 1;
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_VERSION, "bad version rejected");
+
+    tampered = blob;
+    tampered.payload[5] ^= 0x80u;
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_MAC, "tampered payload fails MAC");
+
+    /* Counter tamper fails the MAC -- REPLAY is unreachable for forgeries. */
+    tampered = blob;
+    tampered.counter = 9999;
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_MAC, "tampered counter fails MAC");
+
+    /* Anti-replay: valid MAC but counter <= last_seen. */
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret, 42,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_REPLAY, "counter == last_seen replayed");
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret, 100,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_REPLAY, "counter < last_seen replayed");
+
+    /* Oversized input is BAD_LEN, never truncated to a valid blob. */
+    {
+        uint8_t big[SEED_FILE_SIZE + 1];
+        memcpy(big, &blob, SEED_FILE_SIZE);
+        big[SEED_FILE_SIZE] = 0;
+        TEST_ASSERT_EQ(seed_file_accept(big, SEED_FILE_SIZE + 1, secret, 41,
+                                        NULL, NULL),
+                       (uint32_t)SEED_FILE_BAD_LEN, "oversized buffer rejected");
+    }
+
+    /* The stored MAC field itself is authenticated end to end. */
+    tampered = blob;
+    tampered.mac[0] ^= 1u;
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_MAC, "mac[0] tamper rejected");
+    tampered = blob;
+    tampered.mac[SEED_FILE_MAC_LEN - 1] ^= 0x80u;
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_MAC, "mac[31] tamper rejected");
+
+    /* Rejections never write the caller's outputs (no poisoning). */
+    {
+        uint64_t c_sentinel = 0xA5A5A5A5A5A5A5A5ULL;
+        uint8_t p_sentinel[SEED_FILE_PAYLOAD_LEN];
+        uint8_t p_copy[SEED_FILE_PAYLOAD_LEN];
+        memset(p_sentinel, 0xC3, sizeof(p_sentinel));
+        memcpy(p_copy, p_sentinel, sizeof(p_copy));
+
+        tampered = blob;
+        tampered.payload[0] ^= 1u;  /* BAD_MAC */
+        TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                        &c_sentinel, p_sentinel),
+                       (uint32_t)SEED_FILE_BAD_MAC, "poison probe: BAD_MAC");
+        TEST_ASSERT_EQ(c_sentinel, 0xA5A5A5A5A5A5A5A5ULL,
+                       "BAD_MAC leaves counter_out unchanged");
+        TEST_ASSERT_EQ(memcmp(p_sentinel, p_copy, sizeof(p_copy)), 0,
+                       "BAD_MAC leaves payload_out unchanged");
+
+        TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret, 42,
+                                        &c_sentinel, p_sentinel),
+                       (uint32_t)SEED_FILE_REPLAY, "poison probe: REPLAY");
+        TEST_ASSERT_EQ(c_sentinel, 0xA5A5A5A5A5A5A5A5ULL,
+                       "REPLAY leaves counter_out unchanged");
+        TEST_ASSERT_EQ(memcmp(p_sentinel, p_copy, sizeof(p_copy)), 0,
+                       "REPLAY leaves payload_out unchanged");
+    }
+
+    /* Either OK-path output pointer may be NULL independently. */
+    counter_out = 0;
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret, 41,
+                                    &counter_out, NULL),
+                   (uint32_t)SEED_FILE_OK, "counter_out-only accept");
+    TEST_ASSERT_EQ(counter_out, 42u, "counter_out-only value");
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret, 41,
+                                    NULL, payload_out),
+                   (uint32_t)SEED_FILE_OK, "payload_out-only accept");
+
+    /* Counter extremes: 0 can never be fresh (last_seen starts at 0);
+     * UINT64_MAX is accepted by the pure helper -- the phase3 rotation
+     * guard owns the wraparound (skips rotation at exhaustion). */
+    seed_file_encode(&tampered, 0, payload, secret);
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 0,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_REPLAY, "counter 0 never fresh");
+    seed_file_encode(&tampered, (uint64_t)0xFFFFFFFFFFFFFFFFULL,
+                     payload, secret);
+    TEST_ASSERT_EQ(seed_file_accept(&tampered, SEED_FILE_SIZE, secret, 41,
+                                    &counter_out, NULL),
+                   (uint32_t)SEED_FILE_OK, "max counter accepted (pure)");
+    TEST_ASSERT_EQ(counter_out, (uint64_t)0xFFFFFFFFFFFFFFFFULL,
+                   "max counter round-trips");
+}
+
+static void test_random_seed_provenance_gate(void)
+{
+    /* seed_file_hw_provenance: HIGH hardware class -> 1; timing-only or
+     * seed-file-only credit -> 0 (no self-laundering). Boot collectors
+     * populate the global record before tests run: snapshot, retract
+     * every source, assert, then restore (record + Q_NONE retraction is
+     * the documented pure in-memory pattern). */
+    uint32_t saved_q = entropy_source_quality();
+    uint32_t saved_mask = entropy_source_mask();
+    uint32_t src;
+
+    for (src = 0; src < ENTROPY_SRC_COUNT; src++)
+        entropy_record_source((entropy_src_t)src, ENTROPY_Q_NONE);
+
+    TEST_ASSERT_EQ((uint64_t)seed_file_hw_provenance(), 0u,
+                   "no sources recorded: no provenance");
+
+    entropy_record_source(ENTROPY_SRC_JITTER, ENTROPY_Q_HIGH);
+    TEST_ASSERT_EQ((uint64_t)seed_file_hw_provenance(), 0u,
+                   "jitter (clamped LOW) is not hardware provenance");
+    entropy_record_source(ENTROPY_SRC_JITTER, ENTROPY_Q_NONE);
+
+    entropy_record_source(ENTROPY_SRC_SEED_FILE, ENTROPY_Q_HIGH);
+    TEST_ASSERT_EQ((uint64_t)seed_file_hw_provenance(), 0u,
+                   "seed-file credit never proves provenance (no launder)");
+    entropy_record_source(ENTROPY_SRC_SEED_FILE, ENTROPY_Q_NONE);
+
+    entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_HIGH);
+    TEST_ASSERT_EQ((uint64_t)seed_file_hw_provenance(), 1u,
+                   "HIGH TPM RNG is hardware provenance");
+    entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_NONE);
+
+    entropy_record_source(ENTROPY_SRC_CPU_RNG, ENTROPY_Q_LOW);
+    TEST_ASSERT_EQ((uint64_t)seed_file_hw_provenance(), 0u,
+                   "LOW hardware credit is not provenance");
+    entropy_record_source(ENTROPY_SRC_CPU_RNG, ENTROPY_Q_NONE);
+
+    /* Restore the boot-time record exactly. */
+    for (src = 0; src < ENTROPY_SRC_COUNT; src++) {
+        entropy_quality_t q = (saved_mask & ENTROPY_SRC_BIT(src))
+            ? entropy_quality_get(saved_q, (entropy_src_t)src)
+            : ENTROPY_Q_NONE;
+        entropy_record_source((entropy_src_t)src, q);
+    }
+}
+
+static void test_random_seed_clone_rejected(void)
+{
+    /* A blob MACed under one machine's token secret must fail closed on a
+     * machine with a different secret (anti-clone). */
+    static const uint8_t secret_a[SEED_FILE_SECRET_LEN] = { 0x11, 0x22 };
+    static const uint8_t secret_b[SEED_FILE_SECRET_LEN] = { 0x11, 0x23 };
+    uint8_t payload[SEED_FILE_PAYLOAD_LEN] = { 0xAB };
+    struct seed_file_blob blob;
+
+    seed_file_encode(&blob, 7, payload, secret_a);
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret_a, 0,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_OK, "own-machine blob accepted");
+    TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret_b, 0,
+                                    NULL, NULL),
+                   (uint32_t)SEED_FILE_BAD_MAC, "cloned blob fails closed");
+}
+
 void test_register_entropy(void)
 {
     test_suite_register_cat("entropy: quality slot packing",
@@ -298,4 +504,10 @@ void test_register_entropy(void)
         test_entropy_record_clamp, TEST_CAT_SECURITY);
     test_suite_register_cat("entropy: staged transcript",
         test_entropy_staged_transcript, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: seed file format",
+        test_random_seed_format, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: seed file clone rejected",
+        test_random_seed_clone_rejected, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: seed file provenance gate",
+        test_random_seed_provenance_gate, TEST_CAT_SECURITY);
 }

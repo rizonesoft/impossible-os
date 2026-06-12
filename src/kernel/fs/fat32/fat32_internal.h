@@ -147,8 +147,11 @@ void     fat32_short_name_to_str(const uint8_t *raw, char *out);
 void     lfn_extract_chars(const struct fat32_lfn_entry *lfn,
                            char *name_buf, int seq_index);
 
-/* Sector cache */
-void     scache_flush(struct fat32_volume *vol);
+/* Sector cache. scache_flush returns 0 when every dirty sector reached
+ * blkdev_write, -1 when any write failed (failed slots stay dirty for
+ * retry) -- mid-sequence callers may ignore it, durability boundaries
+ * (fat32_flush_disk -> vfs_flush) must not. */
+int      scache_flush(struct fat32_volume *vol);
 void     scache_invalidate(struct fat32_volume *vol);
 
 /* Sector I/O */

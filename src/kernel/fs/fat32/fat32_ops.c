@@ -148,6 +148,13 @@ static int fat32_file_read(struct vfs_node *node, uint32_t offset,
     if (!cluster_buf)
         return -1;
 
+    /* LOCKING GAP (tracked, storage domain): this read path touches the
+     * shared sector cache (overlay in fat32_read_sectors_multi, FAT
+     * walks via fat32_next_cluster) WITHOUT vol->lock. Taking vol->lock
+     * here deadlocks: it is a cli-spinlock and blkdev_read can wait on
+     * an IRQ-driven completion. The write path already holds vol->lock
+     * across device I/O (same violation, opposite direction); the fix
+     * is the FAT32 mutex conversion, not more spinlock coverage. */
     cluster = f->first_cluster;
     {
         uint32_t skip = offset / bytes_per_cluster;
@@ -386,7 +393,9 @@ static struct vfs_node *fat32_finddir(struct vfs_node *node, const char *name)
     dir_cluster = (f && f->first_cluster >= 2)
                 ? f->first_cluster : vol->bpb.root_cluster;
 
-    /* Re-read if cache is empty or holds a different directory */
+    /* Re-read if cache is empty or holds a different directory.
+     * Unlocked by necessity (vol->lock is a cli-spinlock; the rebuild
+     * does device I/O) -- part of the tracked FAT32 locking gap. */
     if (vol->dir_file_count == 0 || vol->dir_cached_cluster != dir_cluster) {
         vol->dir_file_count = 0;
         fat32_read_dir(vol, dir_cluster);
@@ -601,6 +610,13 @@ static int fat32_vfs_flush(struct vfs_node *node)
     fat32_fsinfo_flush(vol);
     rc = fat32_flush_disk(vol);
     spin_unlock(&vol->lock);
+    /* Device-cache sync OUTSIDE the spinlock: driver flush paths can
+     * sleep (VirtIO waits on an event with interrupts enabled). Our
+     * sectors were submitted via blkdev_write under the lock above, so
+     * the sync covers them; later writers dirtying new sectors are not
+     * this flush's durability problem. */
+    if (blkdev_sync(vol->dev) != 0)
+        rc = -1;
     return rc;
 }
 

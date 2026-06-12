@@ -37,8 +37,14 @@ static int blkdev_virtio_write(uint64_t lba, uint32_t count,
 
 static int blkdev_virtio_flush(void *driver_data)
 {
+    int rc;
     (void)driver_data;
-    return virtio_blk_flush();
+    rc = virtio_blk_flush();
+    /* virtio_blk_flush returns 1 when VIRTIO_BLK_F_FLUSH was not
+     * negotiated: per the VirtIO spec the device then has no volatile
+     * write cache, so completed writes are already durable. The blkdev
+     * contract is "0 = durable" -- normalize. */
+    return (rc == 1) ? 0 : rc;
 }
 
 static int blkdev_virtio_discard(uint64_t sector, uint32_t num_sectors,

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-12T11:48:55+02:00",
-  "total_suites": 1209,
-  "total_assertions": 3333,
+  "timestamp": "2026-06-12T12:01:02+02:00",
+  "total_suites": 1212,
+  "total_assertions": 3375,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -30,7 +30,7 @@
     {"file": "test_crashdump.c", "suites": 35, "assertions": 112},
     {"file": "test_desktop.c", "suites": 46, "assertions": 204},
     {"file": "test_desktop_reset.c", "suites": 0, "assertions": 0},
-    {"file": "test_entropy.c", "suites": 6, "assertions": 51},
+    {"file": "test_entropy.c", "suites": 9, "assertions": 86},
     {"file": "test_exec.c", "suites": 24, "assertions": 44},
     {"file": "test_fastpath_hardening.c", "suites": 6, "assertions": 15},
     {"file": "test_firmware_advisor.c", "suites": 5, "assertions": 17},
@@ -62,7 +62,7 @@
     {"file": "test_uefi_boot.c", "suites": 42, "assertions": 111},
     {"file": "test_usermode.c", "suites": 0, "assertions": 0},
     {"file": "test_usermode_launcher.c", "suites": 34, "assertions": 117},
-    {"file": "test_vfs.c", "suites": 13, "assertions": 33},
+    {"file": "test_vfs.c", "suites": 13, "assertions": 40},
     {"file": "test_vmm.c", "suites": 11, "assertions": 44}
   ]
 }

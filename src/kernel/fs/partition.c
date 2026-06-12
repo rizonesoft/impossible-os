@@ -93,6 +93,14 @@ static int part_write(uint64_t lba, uint32_t count, const void *buf,
     return blkdev_write(pi->parent, pi->start_lba + lba, count, buf);
 }
 
+static int part_flush(void *drv_data)
+{
+    /* Device write caches are per-disk, not per-partition: forward the
+     * sync to the parent so vfs_flush durability holds on partitions. */
+    struct partition_info *pi = (struct partition_info *)drv_data;
+    return blkdev_sync(pi->parent);
+}
+
 /* ---- Filesystem probing ---- */
 
 static uint16_t read_le16(const uint8_t *p)
@@ -241,12 +249,17 @@ static void register_partition(const struct blkdev *parent,
         pi->gpt_name[j] = '\0';
     }
 
-    /* Build sub-blkdev */
+    /* Build sub-blkdev. Zero-init first: blkdev_register copies the
+     * struct, and a garbage function pointer in an unset member (flush,
+     * discard) is a wild indirect call later (#UD at boot, 2026-06-12
+     * incident -- blkdev_sync on a partition jumped into boot_info). */
+    sub = (struct blkdev){0};
     part_strcpy(sub.name, name, sizeof(sub.name));
     sub.sector_size  = parent->sector_size;
     sub.sector_count = sector_count;
     sub.read         = part_read;
     sub.write        = part_write;
+    sub.flush        = part_flush;
     sub.driver_data  = (void *)pi;
     sub.active       = 1;
 

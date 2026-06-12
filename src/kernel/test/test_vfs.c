@@ -195,19 +195,51 @@ static void test_vfs_o_trunc_directory_silently_masked(void)
     vfs_unlink(dir_path);
 }
 
-/* FAT32 lowercase-LFN regression. The SFN-cache fix in
- * fat32_vfs_truncate + fat32_file_write_vfs is verified by production
- * smoke (4 Phase-3 writers persist correctly). The unit-test variant
- * exposes a second FAT32 cache-coherency layer (fat32_zero_cluster
- * writes through the sector cache, fat32_read_sectors_multi reads
- * disk direct) that is tracked as a separate FAT32 hardening item. */
+/* FAT32 lowercase-LFN TRUNC round-trip. Unblocked by the sector-cache
+ * coherence overlays in fat32_read/write_sectors_multi (the
+ * fat32_zero_cluster cache-vs-direct-write gap that previously zeroed
+ * freshly created files). Exercises: LFN create on FAT32, TRUNC reopen
+ * via cached SFN, shrink, exact-size + no-stale-tail read-back. */
 static void test_vfs_o_trunc_fat32_lowercase_lfn(void)
 {
-    /* FAT32 round-trip blocked by a separate fat32_zero_cluster cache
-     * coherency gap (scache write-back vs disk-direct read). Production
-     * smoke verifies the 4 Phase-3 writers persist; the unit-test
-     * variant lands once the coherency item ships. */
-    TEST_SKIP("FAT32 zero-cluster coherency follow-up tracked");
+    const char *path = "X:\\Boot\\trunc_lfn_roundtrip.tmp";
+
+    if (!vfs_is_mounted('X')) {
+        TEST_SKIP("X: (FAT32 BlackBox) not mounted on this platform");
+        return;
+    }
+
+    vfs_test_write_n(path, 0xAA, 256);
+
+    struct vfs_node *f = vfs_open(path,
+                                  VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    TEST_ASSERT(f != NULL, "FAT32 VFS_O_TRUNC reopen succeeds");
+    if (!f) { vfs_unlink(path); return; }
+
+    uint8_t shorter[32];
+    for (uint32_t i = 0; i < sizeof(shorter); i++) shorter[i] = 0xBB;
+    int wrote = vfs_write(f, 0, sizeof(shorter), shorter);
+    TEST_ASSERT(wrote == (int)sizeof(shorter), "FAT32 short write returns 32");
+    vfs_close(f);
+
+    struct vfs_node *r = vfs_open(path, VFS_O_READ);
+    TEST_ASSERT(r != NULL, "FAT32 post-TRUNC reopen for read succeeds");
+    if (r) {
+        TEST_ASSERT_EQ((uint64_t)r->size, (uint64_t)32u,
+                       "FAT32 TRUNC + short write yields exact-size 32");
+        uint8_t verify[64];
+        for (uint32_t i = 0; i < sizeof(verify); i++) verify[i] = 0;
+        int got = vfs_read(r, 0, sizeof(shorter), verify);
+        TEST_ASSERT(got == (int)sizeof(shorter), "FAT32 read back 32 bytes");
+        int all_bb = 1;
+        for (uint32_t i = 0; i < sizeof(shorter); i++)
+            if (verify[i] != 0xBB) { all_bb = 0; break; }
+        TEST_ASSERT(all_bb, "FAT32 no stale 0xAA tail (cache coherent)");
+        vfs_close(r);
+    }
+
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)vfs_unlink(path), 0u,
+                   "FAT32 LFN unlink succeeds (LFN-aware delete)");
 }
 
 /* IXFS rejects vfs_rename_ex REPLACE_EXISTING explicitly. */

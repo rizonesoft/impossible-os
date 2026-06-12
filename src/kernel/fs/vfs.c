@@ -496,6 +496,15 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
     return node;
 }
 
+int vfs_flush(struct vfs_node *node)
+{
+    if (!node)
+        return -1;
+    if (!node->ops || !node->ops->flush)
+        return 0;   /* no cache to flush -- write-through filesystem */
+    return node->ops->flush(node);
+}
+
 int vfs_close(struct vfs_node *node)
 {
     if (!node)
@@ -640,6 +649,16 @@ int vfs_unlink(const char *path)
         struct vfs_node *target = parent->ops->finddir(parent, name);
         if (target && target->ref_count > 0)
             return -1;  /* file is still open */
+
+        /* The finddir above can rebuild the filesystem's directory node
+         * cache with THIS directory's children, clobbering the slot that
+         * backs `parent` (FAT32 per-volume dir_files cache) -- its
+         * fs_data would then describe a child and the unlink would scan
+         * the wrong cluster. Re-resolve parent before dispatching. */
+        parent = (len > 0) ? walk_path(mounts[idx].root, parent_path)
+                           : mounts[idx].root;
+        if (!parent || !parent->ops || !parent->ops->unlink)
+            return -1;
     }
 
     return parent->ops->unlink(parent, name);

@@ -86,7 +86,10 @@ struct boot_config {
                                      * 0 = skip (escape hatch for firmware whose RNG
                                      * hangs inside GetRNG -- no pre-EBS preemption
                                      * exists to recover a non-returning call) */
-    UINT8   _reserved[7];           /* future fields -- zero-filled by defaults */
+    UINT8   seed_file;              /* 1 = kernel reads + rotates the random-seed
+                                     * carryover file in Phase 3 (default);
+                                     * 0 = seed_file=off escape hatch */
+    UINT8   _reserved[6];           /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel

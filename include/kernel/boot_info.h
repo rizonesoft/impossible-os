@@ -1085,10 +1085,16 @@ struct boot_config {
      * GetRNG (no pre-EBS preemption exists to recover a non-returning
      * firmware call -- the operator disables the source instead). */
     uint8_t  firmware_rng;
+    /* Random-seed carryover file lifecycle (early entropy). 1 = read +
+     * rotate X:\Boot\random-seed.bin in Phase 3 (default); 0 = boot.conf
+     * seed_file=off escape hatch (e.g. media whose filesystem is too
+     * damaged to trust with writes). Kernel-side consumer:
+     * seed_file_phase3(). */
+    uint8_t  seed_file;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[7];
+    uint8_t  _reserved[6];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

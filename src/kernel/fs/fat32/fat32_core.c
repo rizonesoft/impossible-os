@@ -364,16 +364,23 @@ static scache_entry_t *scache_evict(struct fat32_volume *vol)
     return &vol->cache[lru_idx];
 }
 
-void scache_flush(struct fat32_volume *vol)
+int scache_flush(struct fat32_volume *vol)
 {
     int i;
+    int rc = 0;
     for (i = 0; i < SCACHE_SLOTS; i++) {
         if (vol->cache[i].valid && vol->cache[i].dirty) {
-            blkdev_write(vol->dev, vol->cache[i].sector, 1,
-                         vol->cache[i].data);
+            if (blkdev_write(vol->dev, vol->cache[i].sector, 1,
+                             vol->cache[i].data) != 0) {
+                /* Keep the slot dirty so a later flush can retry; the
+                 * caller's durability decision needs the failure. */
+                rc = -1;
+                continue;
+            }
             vol->cache[i].dirty = 0;
         }
     }
+    return rc;
 }
 
 void scache_invalidate(struct fat32_volume *vol)
@@ -422,7 +429,25 @@ int fat32_read_sector(struct fat32_volume *vol, uint32_t sector, void *buf)
 int fat32_read_sectors_multi(struct fat32_volume *vol, uint32_t sector,
                               uint32_t count, void *buf)
 {
-    return blkdev_read(vol->dev, sector, count, buf);
+    int i;
+
+    if (blkdev_read(vol->dev, sector, count, buf) != 0)
+        return -1;
+
+    /* Cache coherence: the sector cache may hold NEWER (dirty) copies of
+     * sectors in this range (fat32_write_sector path). Overlay them, or
+     * the caller merges data into stale disk content. */
+    for (i = 0; i < SCACHE_SLOTS; i++) {
+        scache_entry_t *e = &vol->cache[i];
+        if (e->valid && e->sector >= sector &&
+            e->sector < sector + count) {
+            uint8_t *dst = (uint8_t *)buf + ((e->sector - sector) * 512u);
+            int k;
+            for (k = 0; k < 512; k++)
+                dst[k] = e->data[k];
+        }
+    }
+    return 0;
 }
 
 int fat32_write_sector(struct fat32_volume *vol, uint32_t sector,
@@ -450,7 +475,29 @@ int fat32_write_sector(struct fat32_volume *vol, uint32_t sector,
 int fat32_write_sectors_multi(struct fat32_volume *vol, uint32_t sector,
                                uint32_t count, const void *buf)
 {
-    return blkdev_write(vol->dev, sector, count, buf);
+    int i;
+
+    if (blkdev_write(vol->dev, sector, count, buf) != 0)
+        return -1;
+
+    /* Cache coherence: stale DIRTY entries for these sectors (e.g. the
+     * fat32_zero_cluster zeros of a fresh cluster) would later flush
+     * OVER this direct write (2026-06-12 incident: freshly created files
+     * read back as all-zeros depending on cache pressure). Sync
+     * overlapping entries to the written content and mark clean. */
+    for (i = 0; i < SCACHE_SLOTS; i++) {
+        scache_entry_t *e = &vol->cache[i];
+        if (e->valid && e->sector >= sector &&
+            e->sector < sector + count) {
+            const uint8_t *src =
+                (const uint8_t *)buf + ((e->sector - sector) * 512u);
+            int k;
+            for (k = 0; k < 512; k++)
+                e->data[k] = src[k];
+            e->dirty = 0;
+        }
+    }
+    return 0;
 }
 
 /* ---- FAT entry manipulation ---- */
@@ -651,8 +698,18 @@ int fat32_zero_cluster(struct fat32_volume *vol, uint32_t cluster)
 
 int fat32_flush_disk(struct fat32_volume *vol)
 {
+    int rc = 0;
     fat32_fsinfo_flush(vol);
-    fat32_set_clean_marker(vol);
-    scache_flush(vol);
-    return 0;
+    /* NOTE: deliberately NO fat32_set_clean_marker here. This runs on
+     * every vfs_flush of a mounted, still-mutable volume; marking the
+     * FAT clean mid-session would let a later crash skip dirty-volume
+     * repair. Clean-marking belongs to fat32_mark_clean (unmount /
+     * shutdown), after the last write. */
+    if (scache_flush(vol) != 0)
+        rc = -1;
+    /* NOTE: no blkdev_sync here -- this runs under vol->lock (spinlock)
+     * and device flush can sleep (VirtIO event_wait). The durability
+     * boundary that includes the device cache is fat32_vfs_flush, which
+     * syncs AFTER dropping the lock. */
+    return rc;
 }

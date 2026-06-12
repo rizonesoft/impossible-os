@@ -166,6 +166,13 @@ int vfs_read(struct vfs_node *node, uint32_t offset, uint32_t size, uint8_t *buf
 /* Write to an open file */
 int vfs_write(struct vfs_node *node, uint32_t offset, uint32_t size, const uint8_t *buffer);
 
+/* Flush an open file to stable storage. Returns 0 only when every cached
+ * write reached the device AND the device cache was synced (FAT32:
+ * scache_flush + blkdev_sync) -- the durability boundary for
+ * write-then-flush protocols. A filesystem without a flush op is
+ * write-through: success. */
+int vfs_flush(struct vfs_node *node);
+
 /* Read a directory entry at index */
 struct vfs_dirent *vfs_readdir(struct vfs_node *dir_node, uint32_t index);
 

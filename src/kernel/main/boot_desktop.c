@@ -35,6 +35,7 @@
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
 #include "kernel/uefi_runtime.h"
+#include "kernel/seed_file.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
@@ -269,6 +270,14 @@ void boot_phase3(void)
      * This marker is independent of the anti-rollback raise (which now
      * waits for the compositor-steady signal; see boot_rollback.c). */
     boot_post_nvram_write16(POST16_BOOT_OK);
+
+    /* Random-seed carryover: read + verify + reseed + rotate
+     * X:\Boot\random-seed.bin (Phase-3 reseed via csprng_add_entropy;
+     * the FIRST seed is the Phase-1 staged transcript, and the early
+     * boot_info read of the same file format is the seed-handoff
+     * section's job). Runs before entropy_report() so the summary line
+     * reflects the seed-file source. */
+    seed_file_phase3();
 
     /* Entropy source summary -- one line, WARN when degraded. Collectors
      * land with the early-entropy TODO sections; until then this honestly

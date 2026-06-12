@@ -172,6 +172,22 @@ int fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
 
     fat32_make_short_name(name, short_name);
 
+    /* LFN-aware scan (mirrors the stat/open lookup): accumulate long-name
+     * chars across entries so an LFN file ("random-seed.new") matches by
+     * its real name -- the generated short alias (RANDOM~1.NEW numeric
+     * tail) is unpredictable from the long name, so the old SFN-only
+     * match could never delete LFN files. */
+    {
+        char lfn_name[FAT32_MAX_NAME];
+        int lfn_active = 0;
+        uint32_t lfn_start_cluster = 0;
+        uint8_t lfn_chk = 0;
+        int lfn_expect_seq = 0;
+        int k;
+
+        for (k = 0; k < FAT32_MAX_NAME; k++)
+            lfn_name[k] = '\0';
+
     while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
         uint32_t sector = cluster_to_sector(vol, cur_cluster);
         uint32_t i;
@@ -183,17 +199,76 @@ int fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
         for (i = 0; i < bytes_per_cluster; i += 32) {
             struct fat32_dir_entry *de =
                 (struct fat32_dir_entry *)&cluster_buf[i];
+            char ename[FAT32_MAX_NAME];
             int j, match;
 
             if (de->name[0] == 0x00) goto del_not_found;
-            if (de->name[0] == 0xE5) continue;
-            if (de->attr == FAT32_ATTR_LFN) continue;
-            if (de->attr & FAT32_ATTR_VOLUME_ID) continue;
-
-            match = 1;
-            for (j = 0; j < 11; j++) {
-                if (de->name[j] != short_name[j]) { match = 0; break; }
+            if (de->name[0] == 0xE5) { lfn_active = 0; continue; }
+            if (de->attr == FAT32_ATTR_LFN) {
+                struct fat32_lfn_entry *lfn =
+                    (struct fat32_lfn_entry *)&cluster_buf[i];
+                int seq = lfn->seq & LFN_SEQ_MASK;
+                if (lfn->seq & LFN_LAST_ENTRY) {
+                    for (k = 0; k < FAT32_MAX_NAME; k++)
+                        lfn_name[k] = '\0';
+                    lfn_active = 1;
+                    lfn_start_cluster = cur_cluster;
+                    lfn_chk = lfn->checksum;
+                    lfn_expect_seq = seq;
+                }
+                /* Run integrity: descending contiguous sequence, one
+                 * checksum across every slot. A crafted directory must
+                 * not be able to alias an arbitrary long name onto an
+                 * unrelated SFN (this scan DELETES on match). */
+                if (lfn_active &&
+                    (seq != lfn_expect_seq || lfn->checksum != lfn_chk ||
+                     seq < 1 || seq > FAT32_LFN_MAX_ENTRIES)) {
+                    lfn_active = 0;
+                } else if (lfn_active) {
+                    lfn_extract_chars(lfn, lfn_name, seq - 1);
+                    lfn_expect_seq = seq - 1;
+                }
+                continue;
             }
+            if (de->attr & FAT32_ATTR_VOLUME_ID) { lfn_active = 0; continue; }
+
+            /* The accumulated LFN run binds to THIS SFN only when it is
+             * complete (ran down to seq 1) and its checksum matches the
+             * checksum derived from the SFN that follows it. */
+            if (lfn_active &&
+                (lfn_expect_seq != 0 ||
+                 fat32_lfn_checksum(de->name) != lfn_chk))
+                lfn_active = 0;
+
+            /* Match by long name when one is present, else by 8.3; a
+             * direct short-alias match is accepted either way (callers
+             * may pass the alias). */
+            if (lfn_active && lfn_name[0] != '\0')
+                fat32_strcpy(ename, lfn_name, FAT32_MAX_NAME);
+            else
+                fat32_short_name_to_str(de->name, ename);
+
+            match = fat32_strcasecmp(ename, name);
+            if (!match) {
+                match = 1;
+                for (j = 0; j < 11; j++) {
+                    if (de->name[j] != short_name[j]) { match = 0; break; }
+                }
+            }
+
+            if (match && lfn_active && lfn_start_cluster != cur_cluster) {
+                /* The LFN run begins in a prior directory cluster; the
+                 * backward slot wipe below only walks this cluster, so a
+                 * stale LFN tail would survive and could bind to a future
+                 * SFN with the same checksum. Same refusal contract as
+                 * rename replace-existing; cross-cluster LFN removal is
+                 * the tracked follow-up there. */
+                klog(LOG_WARN, "fat32",
+                     "delete: LFN run crosses directory cluster boundary; "
+                     "refused");
+                goto del_not_found;
+            }
+            lfn_active = 0;
 
             if (match) {
                 uint32_t fc = ((uint32_t)de->first_cluster_hi << 16)
@@ -230,6 +305,7 @@ int fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
         }
 
         cur_cluster = fat32_get_fat_entry(vol, cur_cluster);
+    }
     }
 
 del_not_found:

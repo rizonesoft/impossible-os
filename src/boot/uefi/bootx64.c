@@ -2518,6 +2518,7 @@ static void boot_config_defaults(struct boot_config *cfg)
     cfg->deferred       = 1;    /* defer non-critical inits by default */
     cfg->utest_isolation = 1;   /* per-test isolation ON (opt-out only via boot.conf) */
     cfg->firmware_rng   = 1;    /* collect EFI_RNG_PROTOCOL entropy by default */
+    cfg->seed_file      = 1;    /* kernel seed-file carryover lifecycle on by default */
     cfg->cmdline[0]     = '\0';
     cfg->config_found   = 0;
 }
@@ -2574,6 +2575,13 @@ static void parse_conf_kv(struct boot_config *cfg,
         if      (ascii_streq(val, "off")) cfg->firmware_rng = 0;
         else if (ascii_streq(val, "on"))  cfg->firmware_rng = 1;
         else                              cfg->firmware_rng = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "seed_file")) {
+        /* Escape hatch: skip the kernel's random-seed carryover file
+         * read/rotate (e.g. damaged or read-only BlackBox media). */
+        if      (ascii_streq(val, "off")) cfg->seed_file = 0;
+        else if (ascii_streq(val, "on"))  cfg->seed_file = 1;
+        else                              cfg->seed_file = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "compositor")) {
         /* Desktop UI test framework, headless compositor section. */

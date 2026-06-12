@@ -152,6 +152,7 @@ Write LFN directory entry chains before the 8.3 SFN entry. Encode names as UTF-1
 - [x] `fat32_lfn_write_slots(vol, dir_cluster, sfn, name, sfn_entry)`: writes LFN slots in reverse order (highest seq first, OR'd with 0x40 on last), packs UTF-16LE with 0xFFFF fill on partial slot, writes SFN entry after all slots
 - [x] `fat32_create_file_vol()` and `fat32_create_dir_vol()`: call `fat32_needs_lfn()` -- if yes: `fat32_lfn_write_slots()`; if pure 8.3: existing SFN-only path preserved
 - [x] LFN delete: `fat32_delete_file_vol()` scans backwards from SFN entry, matches `attr==0x0F` + checksum, marks each preceding LFN slot with `0xE5`
+- [ ] **LFN run validation in lookups** -- finddir/stat/read_dir assemble LFN names without checksum/sequence binding to the SFN; mirror the delete-scan validation (TODO-12 §6) so crafted directories cannot alias names.
 - [x] Commit: `"fs/fat32: LFN write -- slot chain, UTF-16LE encode, SFN checksum, LFN delete"`
 
 ---
@@ -192,7 +193,8 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 - [x] Report: `"N errors, N cross-links, N lost clusters -- Clean/Fixed/Errors remain"`; returns 0 (clean) or -1 (errors)
 - [x] Public API: `fat32_fsck(vol, fix)` in `fat32.h`
 - [x] `chkdsk` shell command: moved to `05-storage-filesystems/TODO-13-partition-tools-storage-suite.md §4` -- kernel `fat32_fsck()` API is ready; shell wiring is §4's scope
-- [ ] **Durable repair-write contract.** `fat32_set_fat_entry()` calls `fat32_write_sector()` which writes to the FAT sector cache and always returns 0; the actual `blkdev_write` happens later during `scache_evict` / `scache_flush` and that path discards the device-level error. Repair calls inside `walk_chain` (cross-link truncate) and the lost-cluster scan therefore see "0 = success" even when the disk write fails. Auto-fsck-on-dirty-mount in §1 then clears `volume_dirty` and exposes a still-corrupted volume. Fix: make `fat32_write_sector` / `scache_evict` / `scache_flush` return `blkdev_write`'s status, OR have `fat32_fsck` call an explicit `fat32_flush_disk(vol)` after the repair pass and propagate that flush's status as `repair_failed`. Add a regression test that injects a `blkdev_write` failure mid-repair and asserts `fat32_fsck` returns -1 and `volume_dirty` stays set. Affects ALL FAT32 writes, not only fsck repair: this same cache-swallow-error path means a `vfs_write` to a FAT32 file can succeed at the syscall layer while the disk write silently failed. The §1 auto-fsck-on-dirty path is the most acute consumer (silent corruption -> clean-bit cleared) but the broader contract fix is required.
+- [/] **Durable repair-write contract** -- PARTIAL via 01-boot-platform/TODO-12 §6: `scache_flush` propagates `blkdev_write` failures, `fat32_flush_disk` propagates + `blkdev_sync`, exposed via `vfs_flush()`.
+- [ ] **Repair-write remainder** -- `scache_evict` still discards write errors; `fat32_fsck` must call `fat32_flush_disk` post-repair and return -1 / keep `volume_dirty` on failure; injected-`blkdev_write`-failure regression test.
 - [x] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster detection"`
 
 ---
@@ -349,14 +351,15 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [x] BlackBox dir-skeleton creation made unconditional in `boot_storage.c`.
 - [x] Cross-FS regression tests -- 3 IXFS variants pin TRUNC shrinks / no-WRITE rejected / dir silently masked. FAT32 variant TEST_PENDING.
 - [x] 4 consumer retrofits to single-open `VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC`. Smoke: all 4 Phase-3 writers persist.
-- [ ] **FAT32 zero-cluster cache coherency** -- scache write-back vs `fat32_read_sectors_multi` direct read; reused-cluster reads see stale on-disk bytes. Flip FAT32 TEST_PENDING when fixed.
+- [x] **FAT32 zero-cluster cache coherency** -- fixed in 01-boot-platform/TODO-12 §6: `fat32_read/write_sectors_multi` overlay/sync overlapping cache slots; FAT32 TRUNC round-trip test runs live (was TEST_SKIP).
 - [ ] **VFS per-vnode share-mode locking** -- unlocked window between `vfs_add_handle` and `ref_count++` lets concurrent opens skip the share check; TRUNC dispatch lengthens it. Dormant on BSP-only Phase-3.
-- [ ] **FAT32 cache-slot stability for live handles** -- `fat32_finddir` returns `vol->dir_files` pointers; cache invalidation can overwrite a slot a live handle aims at. Per-open alloc or pinning. Dormant on sequential writers.
+- [ ] **FAT32 cache-slot stability for live handles** -- rebuilds can reassign a `dir_files` slot a live handle aims at. TODO-12 §6 shipped identity-preserving reset (same dir + SFN keeps state); full fix = per-open vnode alloc or pinning.
+- [ ] **FAT32 vol->lock concurrency overhaul** -- cli-spinlock held across blkdev I/O on writes, while reads/finddir touch the cache unlocked (locking them deadlocks). Convert to a sleepable mutex + one cache-access discipline.
 - [x] Commit: `"fs: VFS_O_TRUNC end-to-end -- FAT32 cached refresh + exact-slot handle cleanup + cross-FS policy"`
 
 **Test checkpoint:** Long file written, reopened with `VFS_O_TRUNC | VFS_O_WRITE`, shorter payload reads back at exact size with no stale tail (IXFS via unit test; FAT32 via smoke -- 4 Phase-3 writers persist). TRUNC without WRITE returns NULL. Directory + TRUNC silently masked at VFS layer. Smoke PASSes with no Phase-3 WARN cluster. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-fs-tests.bat` (SUITE=fs) | 4 new VFS_O_TRUNC sub-tests (3 IXFS + 1 FAT32 SKIP) | 0 failures
+> **Test runner:** `scripts\debug\kernel\run-fs-tests.bat` (SUITE=fs) | 4 new VFS_O_TRUNC sub-tests (3 IXFS + 1 FAT32, live since the TODO-12 §6 coherence fix) | 0 failures
 >
 > **Notes:**
 > - **What shipped** -- `vfs_open` TRUNC dispatch + exact-slot handle cleanup; FAT32 SFN/dir/scache invalidation; 4 consumer retrofits; 3 IXFS tests + FAT32 TEST_SKIP.
@@ -392,10 +395,10 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [x] FAT walk bound from BPB data region, capped at FAT32 spec max `0x0FFFFFEF`; rejects malformed/reserved cluster pointers before `cluster_to_sector`.
 - [x] Refuses non-first-cluster destinations (`dst_cluster != dir_cluster`) until cross-cluster LFN removal lands.
 - [x] Unit tests: IXFS rejects flag, legacy `vfs_rename` routes via `_ex` shim, flag-bit consistency.
-- [ ] **Cross-cluster LFN removal** -- walk back into prior cluster to mark trailing LFN slots `0xE5`; currently refused so replace-existing on those layouts returns -1.
+- [ ] **Cross-cluster LFN removal** -- walk back into prior cluster to mark trailing LFN slots `0xE5`; currently refused, so replace-existing AND `fat32_delete_file_vol` (LFN-aware since 01-boot-platform/TODO-12 §6) return -1 on those layouts.
 - [x] Commit: `"fs: VFS rename replace-existing -- atomic temp-file durable-write primitive (FAT32)"`
 
-**Test checkpoint:** Unit tests cover IXFS rejection, legacy 2-arg `vfs_rename` routing through the new `_ex` shim, and flag-bit consistency. FAT32 replace-existing happy path + dst-open refusal exercised via smoke once a consumer (TODO-29 §3 boot-trend.json) writes through the primitive; the FAT32-specific unit-test path is blocked by the same `fat32_zero_cluster` cache-coherency gap that gates `test_vfs_o_trunc_fat32_lowercase_lfn`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Unit tests cover IXFS rejection, legacy 2-arg `vfs_rename` routing through the new `_ex` shim, and flag-bit consistency. FAT32 replace-existing happy path + dst-open refusal exercised via smoke once a consumer (TODO-29 §3 boot-trend.json) writes through the primitive; the `fat32_zero_cluster` cache-coherency gap that previously gated `test_vfs_o_trunc_fat32_lowercase_lfn` was fixed in 01-boot-platform/TODO-12 §6 (that test now runs live), so a FAT32-specific replace-existing unit test is unblocked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-fs-tests.bat` (SUITE=fs) | 3 new replace-existing sub-tests | 0 failures
 >
@@ -410,7 +413,6 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > **Verified:** 2026-05-03 | commit `847d9a1e` | 12/13 items + 1 follow-up | build OK | smoke PASS (KVM 2.530s)
 > **Accepted:** [H] open-handle gate runs outside FAT32 vol->lock (TOCTOU window) -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "VFS per-vnode share-mode locking" at line 354 -- inherited from existing `vfs_unlink` race; dormant on BSP-only Phase-3)
 > **Accepted:** [H] FAT32 dir-cache eviction can detach the node tracked by VFS gate -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 355 -- dormant on sequential writers)
-> **Accepted:** [H] scache_flush swallows blkdev_write failures -> XREF: 05-storage-filesystems/TODO-04 §6 (durable repair-write item -- replace-existing inherits the §6 cluster)
 > **Quality reviewed:** 2026-05-03 | Codex 7x (design + adversarial + 3x re-adversarial + consistency + perf) | 5H+2M+1L fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 ---

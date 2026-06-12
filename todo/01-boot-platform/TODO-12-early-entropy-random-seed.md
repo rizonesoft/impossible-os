@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). Still missing: seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). §6 shipped the seed-file carryover lifecycle (`seed_file.c`: MAC'd format, NVRAM anti-clone token, Phase-3 reseed + crash-tolerant rotation). Still missing: kernel-side descriptor consumption + zeroing (§7, incl. the early pre-EBS read of the §6 file format), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
 
 ## Inputs
 
@@ -40,7 +40,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [x]   |
 | 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [x]   |
 | 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [x]   |
-| 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [ ]   |
+| 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [x]   |
 | 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [ ]   |
 | 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5      |  [ ]   |
 | ⭐  |   9   | Entropy diagnostics and policy gates       | §1-§8              |  [ ]   |
@@ -163,7 +163,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Notes:**
 > - Shipped: src-7 TIME record in the bootloader seed payload; `entropy_collect_jitter()` post-`sti` in `boot_interrupts.c`; staged-transcript APIs (768-byte cap) in `entropy.c`.
 > - Runs at the earliest post-interrupt point so the staged jitter is available to the §8 first seed; staging failure sets a sticky overflow flag and never records quality.
-> - Downstream: §6 seed-file bytes and D04T09 §12 virtio-rng use `entropy_stage_source()`; §8 hashes boot payload + staged transcript then `consume_zero()`.
+> - Downstream: §8 hashes boot payload + staged transcript then `consume_zero()`; §6 (shipped) and D04T09 §12 virtio-rng reseed later via `csprng_add_entropy()` instead (post-drain sources never stage).
 > - Canonical contract doc: `include/kernel/entropy.h` (staged transcript block).
 > - Scope boundary: ongoing runtime reseed cadence is D02T03 §5 (`csprng_add_entropy`); this section only feeds the first seed.
 
@@ -174,9 +174,6 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 6. Seed File Carryover Lifecycle
 
-> [!NOTE]
-> **UNBLOCKED (2026-06-12):** the user authorized Monocypher vendoring and `02-kernel-core/TODO-03` §5 SHIPPED (Monocypher 4.0.2 + kernel CSPRNG + `NtGetRandom`). MAC/KDF use `crypto_blake2b_keyed()` (keyed Blake2b = the HMAC-Blake2b equivalent); the CSPRNG-ready signal for the rotate step is `csprng_is_seeded()`.
-
 > [!IMPORTANT]
 > **Design decisions (Codex design review 2026-06-12) -- pinned before coding:**
 > - **§6/§7 first-seed boundary (explicit).** X:\ (BlackBox FAT32) mounts in Phase 2/3, but `csprng_init()` runs in Phase 1 -- so the kernel-side seed FILE cannot feed the FIRST seed. §6 owns the seed-file FORMAT + per-machine NVRAM token + crash-tolerant rotation + a Phase-3 `csprng_add_entropy()` RESEED (defense-in-depth). The EARLY first-seed contribution (reading the same file format pre-ExitBootServices into the boot_info payload) is owned by §7. §6 is a runtime reseed/rotation/anti-clone feature, NOT the early entropy path.
@@ -185,14 +182,23 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - **Mismatch recovery.** On absent/changed NVRAM token (firmware reset, board swap, clone), do NOT mix the old payload, but once CSPRNG is seeded WRITE a fresh token-MACed seed file + log the clone/reset event -- never leave a permanently-degraded invalid file.
 > - **TPM NV fallback NOT available.** Only `TPM2_GetRandom` exists today (no `TPM2_NV_Read/Write`); the token is UEFI-NVRAM-only. TPM NV fallback is a tracked follow-up (`04-drivers-hardware/TODO-13` TPM stack, or a new item when TPM NV ops land).
 
-- [ ] Seed-file format + pure encode/decode helpers (`src/kernel/seed_file.c` + `.h`): magic + version + counter(u64) + 32-byte payload + 32-byte `crypto_blake2b_keyed` MAC; bad-MAC/bad-magic rejection; no VFS (unit-testable).
-- [ ] Per-machine anti-clone token in a UEFI NVRAM variable (private GUID, non-volatile) holding secret + last-seen counter; `csprng_fill`-created on first boot; binds the MAC so a copied seed fails closed (systemd-boot parity).
-- [ ] Phase-3 read lifecycle: verify MAC against the NVRAM token, reject `counter <= last_seen` (anti-replay), `csprng_add_entropy(payload, 32, HIGH)` on valid+fresh; do not mix on mismatch/absent token.
-- [ ] Rotation after `csprng_is_seeded()`: counter++, payload = `csprng_fill(32)`, crash-tolerant dual-file write (new + flush + close-ok + delete-old), update NVRAM last-seen; mismatch-recovery writes a fresh file here too.
-- [ ] Degrade (read-only/recovery media, missing file, write failure) without blocking boot: `seed=none` + WARN + continue; `boot.conf seed_file=off` knob.
+- [x] Seed-file format + pure helpers (`src/kernel/seed_file.c` + `.h`): 80-byte blob (magic/version/counter/payload/keyed-Blake2b MAC), `seed_file_encode()`/`seed_file_accept()` in fixed check order; rejections write no outputs.
+- [x] Per-machine anti-clone token: `IPOSSeedToken` NVRAM record (secret[32] + last_seen u64) under `IMPOSSIBLE_OS_VENDOR_GUID`, minted from `csprng_fill()` only with `seed_file_hw_provenance()` (degraded boots defer); copied seeds fail closed.
+- [x] Phase-3 read lifecycle (`seed_file_phase3()` in `boot_desktop.c`): both names read, highest fresh counter wins; NVRAM last_seen persist is the commit point -- HIGH credit only after persist, persist failure mixes uncredited (LOW).
+- [x] Provenance-gated rotation (HIGH hardware source this boot OR freshly credited carryover -- degraded CSPRNG output is never persisted): rename-free double write; durable `vfs_flush()` boundary fixed at root (FAT32 `blkdev_sync`); wrap guard.
+- [x] Degrade without blocking boot: unmounted X: / absent file / NVRAM-less firmware / write failure all WARN + continue; `boot.conf seed_file=off` knob (mirror + manifest + docs synced).
 - [ ] Commit: `"boot: random seed carryover file"`
 
 **Test checkpoint:** After two consecutive boots `X:\Boot\random-seed.bin` exists with an incremented counter and valid MAC; deleting it degrades to `seed=none` without blocking boot; a copied file with a mismatched NVRAM token fails closed AND the next boot writes a fresh valid file; an old-counter file is rejected (anti-replay); the rotate happens only after `csprng_is_seeded()`. Pure format helpers: encode/decode round-trip + bad-MAC + bad-counter rejection. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 8 entropy suites incl. seed file format + clone rejection, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/seed_file.c` + `include/kernel/seed_file.h` (80-byte MAC'd format, NVRAM token, Phase-3 lifecycle) plus five FAT32/VFS root-cause fixes: durable `vfs_flush()` (scache error propagation + `blkdev_sync` outside `vol->lock`), sector-cache coherence for multi-sector I/O, LFN-aware delete, unlink parent re-resolution, partition blkdev zero-init + flush forwarding.
+> - Runs once from the Phase-3 boot path (`boot_desktop.c`, before `entropy_report()` so the summary reflects the seed source); one NVRAM write per boot (token mint or consumed-counter commit).
+> - Downstream: section 7 reads the same file format pre-EBS into the boot_info payload (early first-seed); `vfs_flush()` is the new durability boundary for any write-then-flush protocol; Codex design + test-coverage adoptions in the section commit.
+> - Canonical contract doc: `include/kernel/seed_file.h` header comment (format, threat model, crash-tolerance argument).
+> - Scope boundary: section 7 owns the early read + descriptor consumption; FAT32-safe atomic-replace primitive stays `05-storage-filesystems/TODO-04 section 16`; TPM NV token fallback tracked in `04-drivers-hardware/TODO-13`.
 
 ---
 
@@ -260,11 +266,11 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ✅ §3 RDSEED-first, gated   |
 | 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ✅ §4 budgeted + floor-gated |
 | 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ✅ §5 staged, LOW-clamped   |
-| 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ⬜ §6 versioned + MAC       |
+| 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ✅ §6 MAC+NVRAM anti-clone  |
 | 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ⬜ §8 pre-KASLR             |
 | ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ⬜ §9 registry + BlackBox   |
 
-> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§5 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing), §6-§9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
+> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§6 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing, MAC'd seed carryover with NVRAM anti-clone/anti-replay -- stronger than the unauthenticated Linux seed file), §7-§9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
 
 ---
 
@@ -277,8 +283,8 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [x] Shipped with §4 (in `test_tpm_transport.c`, TEST_CAT_SECURITY): GetRandom marshal/parse negatives, bounded-loop request-cap protocol, RNG collection via fake TIS (floor boundary both sides, stuck heuristics, report flag, no-transport no-op)
 - [x] Register in `test_runner_init()`: `test_register_entropy()` (`test_runner.c`)
 - [ ] `test_entropy_mix_fixture` -- fixed-input Blake2b transcript determinism (lands with §8 once D02T03 §5 vendors Monocypher)
-- [ ] `test_random_seed_format` -- seed file version/counter/MAC round-trip + bad-MAC rejection (§6)
-- [ ] `test_random_seed_clone_rejected` -- valid-MAC seed file without the machine's system token classifies degraded (§6)
+- [x] `test_random_seed_format` (shipped with §6, `test_entropy.c`): round-trip + every rejection class (len/magic/version/MAC/replay incl. mac-field tamper + counter extremes) + no-output-poisoning sentinels
+- [x] `test_random_seed_clone_rejected` (shipped with §6, `test_entropy.c`): blob MAC'd under secret A fails closed under secret B
 - [ ] `test_entropy_seed_zeroized` -- buffer all-zero after consumption (§7)
 - [ ] `test_external_entropy_oneshot` -- injected entropy consumed once, source overwritten before use (§9)
 

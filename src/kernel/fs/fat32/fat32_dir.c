@@ -461,6 +461,9 @@ void fat32_read_dir(struct fat32_volume *vol, uint32_t cluster)
     uint32_t i;
     char lfn_buf[FAT32_MAX_NAME];
     int lfn_active = 0;
+    /* Same-directory refresh? Slots refilled by the SAME on-disk file
+     * (matching SFN) keep their live open state below. */
+    int same_dir = (vol->dir_cached_cluster == cluster);
 
     vol->dir_file_count = 0;
     bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
@@ -539,6 +542,37 @@ void fat32_read_dir(struct fat32_volume *vol, uint32_t cluster)
                | (uint32_t)de->first_cluster_lo;
 
             f = &vol->dir_files[vol->dir_file_count];
+            /* Slot identity can change on rebuild: reset the per-open
+             * bookkeeping unless this is the SAME directory and the slot
+             * is being refilled by the SAME on-disk file (SFN match) --
+             * then a live handle's state survives the refresh. Stale
+             * state from a DIFFERENT previous occupant gave phantom
+             * "file is still open" unlink failures (2026-06-12); open
+             * handles whose slot gets reassigned to another file remain
+             * a tracked node-lifetime gap (storage domain). */
+            {
+                int same_file = same_dir;
+                int sk;
+                if (same_file) {
+                    for (sk = 0; sk < 11; sk++) {
+                        if (f->sfn[sk] != de->name[sk]) {
+                            same_file = 0;
+                            break;
+                        }
+                    }
+                }
+                if (!same_file) {
+                    uint32_t hk;
+                    uint8_t *hb = (uint8_t *)f->node.open_handles;
+                    f->node.ref_count = 0;
+                    f->node.delete_on_close = 0;
+                    f->node.flags = 0;
+                    f->node.oplock_level = 0;
+                    f->node.oplock_owner = 0;
+                    for (hk = 0; hk < sizeof(f->node.open_handles); hk++)
+                        hb[hk] = 0;
+                }
+            }
             fat32_strcpy(f->node.name, name, VFS_MAX_NAME);
             f->node.type = (de->attr & FAT32_ATTR_DIRECTORY)
                            ? VFS_DIRECTORY : VFS_FILE;
