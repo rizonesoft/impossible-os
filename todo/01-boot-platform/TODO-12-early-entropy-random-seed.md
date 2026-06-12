@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). Still missing: TPM RNG read (§4), jitter mix (§5), seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). Still missing: TPM RNG read (§4, blocked on TODO-13 §2 transport), seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
 
 ## Inputs
 
@@ -143,9 +143,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 - [x] Boot timing personalization: bootloader src-7 TIME record (bl_entry, reset_end, tsc_freq, rdtsc; 32 bytes); `collect_boot_entropy()` moved after the TSC measurement, record refused when tsc_freq is 0.
 - [x] Jitter sampling: `entropy_collect_jitter()` in `boot_interrupts.c` at the earliest post-`sti` point (so the §8 first seed sees it); 64 rdtsc deltas across variable pause loops, staged.
-- [x] Staged transcript in `entropy.c`: `entropy_stage_source()` (success-return, sticky overflow flag, quality only on success), `entropy_staged_peek()`, `entropy_staged_consume_zero()`.
+- [x] Staged transcript in `entropy.c`: `entropy_stage_source()` (success-return, sticky overflow flag, quality only on success), `entropy_staged_drain()` (atomic copy+zero+reset, all-or-nothing), `entropy_staged_consume_zero()`.
 - [x] VM timing never high: §1 model clamps JITTER/TIME to LOW; live report shows `jitter=low` and the sampler logs the vm caveat (verified on KVM).
-- [x] Commit: `"boot: mix timing jitter into entropy pool"`
+- [x] Commit: swept into `c9f2ca5d` (run-2 died mid-section) + `dd19d586` (drain refactor) in place of the planned `"boot: mix timing jitter into entropy pool"`.
 
 **Test checkpoint:** Serial shows `[BOOT] RNG: boot timing 32 bytes` + `entropy: jitter: 64 samples staged (LOW...)` and the report line shows `jitter=low` never high (verified on KVM, 122-byte seed payload). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -157,6 +157,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Downstream: §6 seed-file bytes and D04T09 §12 virtio-rng use `entropy_stage_source()`; §8 hashes boot payload + staged transcript then `consume_zero()`.
 > - Canonical contract doc: `include/kernel/entropy.h` (staged transcript block).
 > - Scope boundary: ongoing runtime reseed cadence is D02T03 §5 (`csprng_add_entropy`); this section only feeds the first seed.
+
+> **Verified:** 2026-06-12 | commit `dd19d586` (+`c9f2ca5d` sweep) | 5/5 items | build OK | smoke PASS (KVM 2.570s)
+> **Quality reviewed:** 2026-06-12 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M+1L fixed, 0 open | scope: kernel-code-quality + boot-code-quality
 
 ---
 
@@ -239,7 +242,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ⬜ §8 pre-KASLR             |
 | ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ⬜ §9 registry + BlackBox   |
 
-> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; all sections planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
+> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§3 + §5 shipped (model, firmware+OEM0, CPU RNG, jitter/timing), §4/§6-§9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
 
 ---
 
@@ -248,6 +251,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_entropy()` (`src/kernel/test/test_entropy.c`, TEST_CAT_SECURITY). Tests use fixtures + pure helpers only; live EFI/TPM/VFS collection paths are validated by boot checkpoints.
 
 - [x] Shipped with §1 (5 suites): quality slot packing, classification (degraded/minimum/good + descriptor-bypass guard), policy gate, transcript framing (exact-fit/wrap/no-write-on-refusal), record + clamp + Q_NONE retraction
+- [x] Shipped with §5 (6th suite): staged transcript -- stage/credit-visibility, NULL + too-small drain guards, full drain + empty re-drain, oversized refusal leaves record intact + overflow flag, consume_zero reset
 - [x] Register in `test_runner_init()`: `test_register_entropy()` (`test_runner.c`)
 - [ ] `test_entropy_mix_fixture` -- fixed-input Blake2b transcript determinism (lands with §8 once D02T03 §5 vendors Monocypher)
 - [ ] `test_random_seed_format` -- seed file version/counter/MAC round-trip + bad-MAC rejection (§6)

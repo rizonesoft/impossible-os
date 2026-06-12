@@ -1,0 +1,320 @@
+{
+  "active": true,
+  "artifacts": [],
+  "blockers": [],
+  "checked_item_review": {
+    "items": {},
+    "status": "not-applicable"
+  },
+  "chromemcp": {
+    "blockers": [],
+    "evidence": [
+      {
+        "http_status": 200,
+        "recovery": "chromemcp up && chromemcp status",
+        "roots": [
+          "/home/derickpayne/ChromeMCP",
+          "/home/derickpayne/.codex/plugins/rizonetech-local/plugins/chromemcp-browser"
+        ],
+        "status": "passed",
+        "url": "http://127.0.0.1:8931/healthz",
+        "visible_interactions": {
+          "enabled": true,
+          "focusIntervalMs": 750,
+          "focusScript": "/home/derickpayne/ChromeMCP/launcher/Focus-Chrome.ps1"
+        }
+      }
+    ],
+    "final_visible_handoff": false,
+    "method": "real-mcp",
+    "report_paths": [],
+    "required_for_user_facing": true,
+    "routes": [],
+    "screenshot_paths": [],
+    "status": "passed",
+    "viewports": []
+  },
+  "chromemcp_failures": {},
+  "commit_push": {
+    "blockers": [],
+    "branch": null,
+    "commit_sha": null,
+    "evidence": [],
+    "status": "pending"
+  },
+  "completed_slices": [],
+  "current_slice": null,
+  "deploy": {
+    "blockers": [],
+    "evidence": [],
+    "status": "pending"
+  },
+  "gates": {
+    "automated_tests": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338089+00:00"
+    },
+    "browser_handoff": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338096+00:00"
+    },
+    "browser_verification": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338092+00:00"
+    },
+    "commit_push": {
+      "evidence": [],
+      "required": false,
+      "status": "not-applicable",
+      "updated_at": "2026-06-12T04:57:02.338099+00:00"
+    },
+    "destructive_approval": {
+      "evidence": [],
+      "required": false,
+      "status": "not-applicable",
+      "updated_at": "2026-06-12T04:57:02.338101+00:00"
+    },
+    "feature_gate": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338090+00:00"
+    },
+    "implemented": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338088+00:00"
+    },
+    "implemented_review": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338085+00:00"
+    },
+    "production_deploy": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338098+00:00"
+    },
+    "rollback_plan": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338102+00:00"
+    },
+    "todo_history_updated": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338103+00:00"
+    },
+    "visual_qa": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338093+00:00"
+    },
+    "workflow_matrix": {
+      "evidence": [],
+      "required": true,
+      "status": "pending",
+      "updated_at": "2026-06-12T04:57:02.338095+00:00"
+    }
+  },
+  "module_checks": {},
+  "modules": [
+    {
+      "deploy_queue_markers": [],
+      "deploy_rules": [
+        "Apply generic deploy safety: explicit authorization, focused tests/builds, rollback notes, and post-deploy verification.",
+        "Do not assume Laravel, WordPress, Node, or another stack-specific deploy command unless the repository provides it."
+      ],
+      "label": "Generic",
+      "matched_markers": [],
+      "name": "generic",
+      "suggested_checks": []
+    }
+  ],
+  "next_action": "Read the adversarial todo review report, reconcile the codebase, and start the first unblocked slice.",
+  "no_browser": false,
+  "notes": [
+    {
+      "at": "2026-06-12T05:07:16.380790+00:00",
+      "note": "run 4 resumed in interactive session; CLI at ~/.local/bin lacks --resume flag but active state matches todo file, continuing on existing state; slice 1 = review TODO-12 section 5 (entropy staged transcript), slice 2 = re-open section 4 via TODO-13 section 2 TPM transport, then section 6 onward"
+    }
+  ],
+  "preflight": {
+    "captured_at": "2026-06-12T04:57:02.328942+00:00",
+    "checkpoint_required": false,
+    "chromemcp": {
+      "http_status": 200,
+      "recovery": "chromemcp up && chromemcp status",
+      "roots": [
+        "/home/derickpayne/ChromeMCP",
+        "/home/derickpayne/.codex/plugins/rizonetech-local/plugins/chromemcp-browser"
+      ],
+      "status": "passed",
+      "url": "http://127.0.0.1:8931/healthz",
+      "visible_interactions": {
+        "enabled": true,
+        "focusIntervalMs": 750,
+        "focusScript": "/home/derickpayne/ChromeMCP/launcher/Focus-Chrome.ps1"
+      }
+    },
+    "classifications": [
+      "deploy",
+      "docs_research",
+      "ui_browser_work"
+    ],
+    "dangerous_operations": [],
+    "git": {
+      "branch": "main",
+      "captured_at": "2026-06-12T04:57:02.338057+00:00",
+      "dirty_count": 7,
+      "entries": [
+        {
+          "ownership": "pre_existing",
+          "path": "ocs/test-coverage/coverage.json",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "docs/test-coverage/coverage.md",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "include/kernel/entropy.h",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "todo/01-boot-platform/TODO-10-bare-metal-hardening.md",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": ".claude/overnight/",
+          "status": "??"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": ".claude/worktrees/",
+          "status": "??"
+        }
+      ],
+      "side_change_candidates": [
+        {
+          "ownership": "pre_existing",
+          "path": "ocs/test-coverage/coverage.json",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "docs/test-coverage/coverage.md",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "include/kernel/entropy.h",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": "todo/01-boot-platform/TODO-10-bare-metal-hardening.md",
+          "status": "M"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": ".claude/overnight/",
+          "status": "??"
+        },
+        {
+          "ownership": "pre_existing",
+          "path": ".claude/worktrees/",
+          "status": "??"
+        }
+      ],
+      "side_change_policy": "preserve user side changes, inspect every dirty file before staging, include safe small side changes in the next coherent commit/push, and never discard/reset/restore/checkout/clean without explicit user instruction"
+    },
+    "module_blockers": [],
+    "module_checks": {},
+    "modules": [
+      {
+        "deploy_queue_markers": [],
+        "deploy_rules": [
+          "Apply generic deploy safety: explicit authorization, focused tests/builds, rollback notes, and post-deploy verification.",
+          "Do not assume Laravel, WordPress, Node, or another stack-specific deploy command unless the repository provides it."
+        ],
+        "label": "Generic",
+        "matched_markers": [],
+        "name": "generic",
+        "suggested_checks": []
+      }
+    ],
+    "notes": [
+      "Project modules are detected from repository markers. Apply only the module rules that match this repository.",
+      "Every checked todo item must be verified against current code/evidence before trusting it.",
+      "preserve user side changes, inspect every dirty file before staging, include safe small side changes in the next coherent commit/push, and never discard/reset/restore/checkout/clean without explicit user instruction",
+      "ChromeMCP is preferred for user-facing verification.",
+      "If ChromeMCP is blocked, browser/UI completion gates must remain blocked until real evidence is captured."
+    ],
+    "status": "passed",
+    "todo_file": "todo/TODO-Claude-Overnight-Runner.md",
+    "todo_file_exists": true,
+    "todo_items": {
+      "checked": [],
+      "checked_count": 0,
+      "unchecked_count": 0
+    }
+  },
+  "rollback_manifest": {},
+  "slices": {},
+  "started_at": "2026-06-12T04:57:02.338105+00:00",
+  "status": "started",
+  "todo_adversarial_review": {
+    "applied_fixes": [],
+    "captured_at": "2026-06-12T04:57:02.293229+00:00",
+    "checked_count": 0,
+    "findings": [],
+    "item_count": 0,
+    "report_path": ".claude/overnight/reports/overnight-todo-adversarial-review-todo-TODO-Claude-Overnight-Runner.md-f2081491e4.json",
+    "status": "passed",
+    "todo_file": "todo/TODO-Claude-Overnight-Runner.md",
+    "unchecked_count": 0
+  },
+  "todo_file": "todo/TODO-Claude-Overnight-Runner.md",
+  "updated_at": "2026-06-12T05:07:16.380777+00:00",
+  "visual_qa": {
+    "blockers": [],
+    "checks": [],
+    "evidence": [],
+    "screenshot_paths": [],
+    "status": "pending"
+  },
+  "workflow_matrix": {
+    "matrix_paths": [],
+    "routes": [],
+    "states": [],
+    "status": "pending",
+    "viewports": []
+  }
+}

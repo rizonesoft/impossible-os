@@ -9116,8 +9116,11 @@ static void collect_boot_entropy(void)
                     pos = np;
                     serial_early_print("[BOOT] RNG: EFI_RNG_PROTOCOL 64 bytes\n");
                 }
-                efi_memset(fw_bytes, 0, sizeof(fw_bytes));
             }
+            /* Wipe unconditionally: UEFI gives no guarantee the buffer
+             * is untouched on a failed GetRNG, and partial seed bytes
+             * must not linger on the stack. */
+            efi_memset(fw_bytes, 0, sizeof(fw_bytes));
         }
     }
 
@@ -12602,7 +12605,16 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         UINT64 t0 = boot_rdtsc();
         gBS->Stall(1000);  /* 1ms */
         UINT64 t1 = boot_rdtsc();
-        g_boot_info_ptr->timing.tsc_freq = (t1 - t0) * 1000;  /* Hz */
+        UINT64 delta = t1 - t0;
+        /* Non-monotonic rdtsc or an implausible rate (outside 100 MHz
+         * through 10 GHz) publishes 0 so consumers (TIME entropy
+         * record, init_us diagnostics) see unknown, not garbage. */
+        if (t1 <= t0 || delta < 100000ULL || delta > 10000000ULL) {
+            g_boot_info_ptr->timing.tsc_freq = 0;
+            serial_early_print("[BOOT] TSC calibration rejected (implausible delta)\n");
+        } else {
+            g_boot_info_ptr->timing.tsc_freq = delta * 1000;  /* Hz */
+        }
     }
 
     /* Step 4d2: Collect early firmware entropy (EFI RNG + CPU + OEM0 +

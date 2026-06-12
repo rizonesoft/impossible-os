@@ -231,6 +231,15 @@ static void test_entropy_staged_transcript(void)
                                         ENTROPY_Q_HIGH), 1,
                    "staging a fitting record succeeds");
 
+    /* Credit is recorded by the time stage_source returns (under the
+     * staging lock, so a drain observing the bytes observes the credit). */
+    TEST_ASSERT_EQ((entropy_source_mask() >> ENTROPY_SRC_SEED_FILE) & 1u, 1u,
+                   "staged source mask bit visible after stage_source");
+    TEST_ASSERT_EQ(entropy_quality_get(entropy_source_quality(),
+                                       ENTROPY_SRC_SEED_FILE),
+                   ENTROPY_Q_HIGH,
+                   "staged source quality visible after stage_source");
+
     /* NULL dest and too-small cap consume nothing. */
     TEST_ASSERT_EQ(entropy_staged_drain((uint8_t *)0, sizeof(out)), 0u,
                    "drain to NULL returns 0");

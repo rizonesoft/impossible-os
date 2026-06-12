@@ -153,9 +153,11 @@ int entropy_stage_source(entropy_src_t src, const uint8_t *data,
         return 0;
     }
     s_stage_pos = np;
+    /* Credit under the lock: a drain that observes these bytes must
+     * also observe the source's mask/quality accounting. */
+    entropy_record_source(src, q);
     spin_unlock_irqrestore(&s_stage_lock, irqf);
 
-    entropy_record_source(src, q);
     return 1;
 }
 
