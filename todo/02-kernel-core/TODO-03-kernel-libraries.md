@@ -233,6 +233,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [ ] Replace `task_exec()` AT_RANDOM TSC fallback with `csprng_fill(rand_buf, 16)` (-> XREF `02-kernel-core/TODO-11-peb-teb-user-abi.md §13` follow-up). Until this lands, AT_RANDOM uses RDRAND on hardware and a TSC-mixed fallback on TCG; user binaries are `-fno-stack-protector` so this is not currently exploitable.
 - [ ] Wire `csprng_u64()` into `TODO-20-eif-full-implementation.md` §8 so `load_base=0` EIF binaries choose a randomized base without a TSC fallback
 - [ ] `SYS_GETRANDOM` syscall: `getrandom(buf, len, flags)` fills user buffer via `csprng_fill` + `copy_to_user`; add to SSDT (-> XREF `TODO-12-native-api-ssdt.md §5`)
+- [ ] `csprng_add_entropy(buf, len, quality)` runtime reseed API: reseed thresholds, interrupt-timing accounting, hwrng hooks (virtio-rng via `04-drivers-hardware/TODO-09` §12); first-seed producer is `01-boot-platform/TODO-12` §8
+- [ ] Single CSPRNG ownership: route the duplicate entropy plans to `csprng_fill()`/`csprng_add_entropy()` -- `09-desktop-shell/TODO-06` §11 pool, `07-networking/TODO-03` §5 Mbed TLS RDRAND+TSC source, `12-user-platform-sdk/TODO-01` §4
 
 - [ ] Commit: `"libs: Monocypher crypto, kernel CSPRNG (RDRAND + Blake2b), SYS_GETRANDOM"`
 

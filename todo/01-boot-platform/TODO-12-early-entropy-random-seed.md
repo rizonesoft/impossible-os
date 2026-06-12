@@ -22,6 +22,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - -> XREF: `TODO-01-boot-protocol-abi-handoff.md §4` -- random seed payload descriptor
 - -> XREF: `../02-kernel-core/TODO-03-kernel-libraries.md §5` -- Monocypher + kernel CSPRNG (`csprng_fill()`)
 - -> XREF: `../02-kernel-core/TODO-10-kernel-security-hardening.md §14` -- KASLR consumes early entropy
+- -> XREF: `../04-drivers-hardware/TODO-09-hypervisor-abstraction.md §12` -- virtio-rng guest hwrng source (post-PCI, feeds runtime reseed)
 
 ## Outcome
 
@@ -47,7 +48,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 1. Entropy Source Inventory and Quality Model
 
-- [ ] Define source classes: firmware RNG, CPU RNG, TPM RNG, seed file, jitter, time.
+- [ ] Define source classes: firmware RNG, CPU RNG, TPM RNG, ACPI OEM0 table, seed file, guest hwrng (virtio-rng, post-PCI only -- never pre-KASLR; collection owned by `04-drivers-hardware/TODO-09` §12), jitter, time.
+- [ ] Pin the conditioner: source-tagged, length-framed transcript hashed with Blake2b (Monocypher, D02T03 §5) -- never raw XOR, so weak sources cannot cancel strong ones.
+- [ ] Define bootloader-seed trust/credit policy (Linux RANDOM_TRUST_BOOTLOADER analog): descriptor quality bits are advisory; the kernel decides credit.
 - [ ] Assign quality bits conservatively and log degraded states.
 - [ ] Define minimum quality for Secure Boot release mode and debug mode.
 - [ ] Add source mask to boot diagnostics.
@@ -62,6 +65,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Locate EFI_RNG_PROTOCOL before ExitBootServices.
 - [ ] Query supported algorithms when available.
 - [ ] Collect at least 64 bytes and mix into seed buffer.
+- [ ] Collect ACPI OEM0 entropy table bytes when present (Win11 parity; raw table access via T04 §2 catalog).
 - [ ] Time out and degrade cleanly on broken firmware.
 - [ ] Commit: `"boot: collect firmware RNG entropy"`
 
@@ -108,6 +112,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 6. Seed File Carryover Lifecycle
 
 - [ ] Store `X:\Boot\random-seed.bin` with version, counter, and MAC.
+- [ ] Anti-clone system token: per-machine secret in a UEFI NVRAM variable (TPM NV fallback) bound into the seed-file MAC/KDF -- a cloned image with a copied seed file fails closed to degraded (systemd-boot parity).
 - [ ] Read seed during boot, mix once, then rotate after kernel CSPRNG is ready.
 - [ ] Prevent seed reuse after crash/power loss where possible.
 - [ ] Handle read-only/recovery media without blocking boot.
@@ -120,6 +125,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 7. boot_info Seed Handoff
 
 - [ ] Add typed seed payload via TODO-01 with address, length, source mask, quality bits, and checksum. Use `BOOT_PAYLOAD_RANDOM_SEED` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h); the TODO-01 §4 validator rejects overlap with boot_info / rt_mmap / USB DMA / framebuffer before CSPRNG seeds against the buffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
+- [ ] Accept and concatenate a seed from an earlier boot stage instead of overwriting it (Linux EFI config-table pattern); the kernel mixes both.
 - [ ] Ensure PMM reserves seed memory until CSPRNG consumes it.
 - [ ] Zero seed memory after consumption.
 - [ ] Add ABI tests for seed descriptor.
@@ -135,6 +141,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Feed Monocypher/ChaCha CSPRNG once available.
 - [ ] Provide temporary bounded random API with explicit degraded flag.
 - [ ] Block release-mode cryptographic operations until seeded.
+- [ ] This section delivers the FIRST seed only; runtime reseeding (`csprng_add_entropy()`, thresholds, interrupt-timing accounting, hwrng hooks) is owned by `../02-kernel-core/TODO-03-kernel-libraries.md` §5.
 - [ ] Commit: `"kernel: seed early CSPRNG from boot entropy"`
 
 **Test checkpoint:** `early_entropy_init()` logs before KASLR/canary consumers; `csprng_fill()` (D02T03 §5) succeeds post-seed; with all sources forced off the temporary API returns the degraded flag and release-mode crypto refuses. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -146,6 +153,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Log source mask and quality class without exposing seed bytes.
 - [ ] Show degraded randomness in VPD/recovery if release policy fails.
 - [ ] Add `HKLM\SYSTEM\Boot\Entropy`.
+- [ ] Admin external-entropy injection (Win11 ExternalEntropy parity): one-shot consume with overwrite-before-use, bytes never logged, mask-only diagnostics.
 - [ ] Add BlackBox report.
 - [ ] Commit: `"boot: entropy diagnostics and policy"`
 
@@ -159,6 +167,8 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Test no source -> degraded but safe (mask=0 yields degraded flag, never a fake high-quality claim).
 - [ ] Test seed file format: version/counter/MAC encode + decode round-trip, bad-MAC rejection (pure helpers, no live VFS).
 - [ ] Test zeroization after consumption (consume fixture buffer, assert all-zero).
+- [ ] Test cloned seed file: valid MAC but missing/different system token fails closed to degraded.
+- [ ] Test external-entropy one-shot: consumed exactly once, source overwritten before use.
 - [ ] Commit: `"test: early entropy handoff"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=security` runs the entropy suites with 0 failures; suites use fixtures and pure helpers only (no live boot infrastructure, per test policy). QEMU WHPX, QEMU TCG.
@@ -189,6 +199,8 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] `test_entropy_mix_fixture` -- fixed-input mixer determinism (known digest)
 - [ ] `test_random_seed_format` -- seed file version/counter/MAC round-trip + bad-MAC rejection
 - [ ] `test_entropy_seed_zeroized` -- buffer all-zero after consumption
+- [ ] `test_random_seed_clone_rejected` -- valid-MAC seed file without the machine's system token classifies degraded
+- [ ] `test_external_entropy_oneshot` -- injected entropy consumed once, source overwritten before use
 - [ ] Register in `test_runner_init()`: `test_register_entropy()`
 
 ---

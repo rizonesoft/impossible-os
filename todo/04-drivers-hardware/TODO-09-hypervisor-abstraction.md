@@ -47,8 +47,9 @@ title: "TODO-09 -- Hypervisor Abstraction Layer"
 | 💎  |   9   | §9 VirtIO 9P shared folders                                     | §2, VirtIO core, VFS mount                  |  [ ]   |
 | 💎  |  10   | §10 Hyper-V synthetic HID (keyboard + mouse)                     | §2, VMBus core (existing)                   |  [ ]   |
 | 💎  |  11   | §11 Hyper-V synthetic video                                     | §2, VMBus, framebuffer infrastructure       |  [ ]   |
+| 💎  |  12   | §12 VirtIO RNG guest entropy                                    | §2, VirtIO core (existing), D02T03 §5       |  [ ]   |
 
-> All eleven rows are 💎 parity: VirtualBox, KVM/QEMU, and Hyper-V guest-additions are shipping features of those hypervisors. The ⭐ differentiator is the unified `hv.h` dispatch table -- Impossible OS treats all three hypervisors as first-class targets behind a single clean interface, whereas Linux's hypervisor drivers span dozens of kernel subsystems with no cross-hypervisor abstraction.
+> All parity rows are 💎: VirtualBox, KVM/QEMU, and Hyper-V guest-additions are shipping features of those hypervisors. The ⭐ differentiator is the unified `hv.h` dispatch table -- Impossible OS treats all three hypervisors as first-class targets behind a single clean interface, whereas Linux's hypervisor drivers span dozens of kernel subsystems with no cross-hypervisor abstraction.
 
 ---
 
@@ -214,6 +215,21 @@ Open the VMBus Video VSP channel, negotiate a resolution, and map the synthetic 
 - [ ] `hv_ops.display_resize(w, h)`: send `VIDSYN_SCREEN_RESIZE`, renegotiate VRAM mapping
 - [ ] Boot log: `[HYPERV] Synthetic video %ux%u @ GPA 0x%llx`
 - [ ] Commit: `"drivers: Hyper-V synthetic video -- Video VSP, VRAM mapping, dirty-region flush"`
+
+## 12. VirtIO RNG Guest Entropy
+
+Discover the virtio-rng device (PCI device ID 0x1005), drain host-provided entropy through a single virtqueue, and feed it into the kernel CSPRNG's runtime reseed API. Filed from `01-boot-platform/TODO-12` gap audit: without this, QEMU/KVM guests lacking EFI RNG, TPM, and trusted RDRAND stay degraded even when the host exposes proper entropy.
+
+**Files:** `src/kernel/drivers/virtio/rng.c` (new), reuses `src/kernel/drivers/virtio/virtio.c` core
+
+- [ ] `virtio_rng_init()`: PCI probe for virtio device ID 0x1005; negotiate features; set up the single requestq
+- [ ] Request path: post a bounded buffer (64-256 bytes), consume on completion, pass to `csprng_add_entropy(buf, len, quality)` (-> XREF `02-kernel-core/TODO-03-kernel-libraries.md §5`)
+- [ ] Rate limit pulls (host fairness) and zero buffers after handoff
+- [ ] Source classified as guest hwrng per `01-boot-platform/TODO-12` §1 quality model (post-PCI; never pre-KASLR)
+- [ ] Boot log: `[VIRTIO] rng: N bytes seeded to CSPRNG`
+- [ ] Commit: `"drivers: virtio-rng guest entropy -- requestq drain into csprng_add_entropy"`
+
+**Test checkpoint:** QEMU with `-device virtio-rng-pci` logs the seed line and the entropy source mask gains the guest-hwrng bit; without the device, init degrades silently (no probe errors). QEMU WHPX, QEMU TCG; N/A on VirtualBox/bare metal (no device).
 
 ## OS Comparison
 

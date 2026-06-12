@@ -130,7 +130,7 @@ Integrate Mbed TLS (Apache-2.0, ~60 K lines) as a static kernel library (`lib/li
 
 - [ ] Vendor Mbed TLS source into `lib/mbedtls/` (3.x LTS branch); add `lib/mbedtls/include/mbedtls/mbedtls_config.h` with the restricted feature set above
 - [ ] `lib/mbedtls/platform_port.c`: `mbedtls_platform_set_calloc_free(kmalloc_wrapper, kfree)`; `mbedtls_platform_set_time(kernel_time_shim)`; `kernel_time_shim()` returns `(uptime_ms() / 1000) + BUILD_UNIX_BASE`
-- [ ] `lib/mbedtls/entropy_hw.c`: hardware entropy source using `RDRAND` x4 + TSC; register via `mbedtls_entropy_add_source()`
+- [ ] `lib/mbedtls/entropy_hw.c`: entropy source backed by the kernel CSPRNG (`csprng_fill()`, `02-kernel-core/TODO-03` §5); register via `mbedtls_entropy_add_source()`; RDRAND x4 + TSC only as pre-CSPRNG fallback
 - [ ] `scripts/build_mbedtls.sh`: compile all Mbed TLS `.c` files with kernel flags (`-target x86_64-elf -ffreestanding -nostdlib -nostdinc -I include -I lib/mbedtls/include -O2`); archive to `lib/libmbedtls.a`; called from `scripts/build.sh` before kernel link
 - [ ] Linker: add `lib/libmbedtls.a` to the kernel link command in the main `Makefile`
 - [ ] Smoke test: `mbedtls_sha256("test", 4, digest, 0)` → correct known digest; printed to serial on boot
