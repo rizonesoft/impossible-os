@@ -770,6 +770,9 @@ else
         echo "  scripts/test-ai-system.sh --help (check surface)"
     else
         echo "AI workflow regression: $PASS passed, $FAIL failed"
+        for f in "${FAILURES[@]}"; do
+            echo "  FAIL: $f"
+        done
     fi
     exit 1
 fi
