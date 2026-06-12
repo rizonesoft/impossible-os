@@ -8896,6 +8896,12 @@ static UINTN bl_entropy_frame(UINT8 *buf, UINTN cap, UINTN pos,
 {
     UINTN need = 1u + 4u + (UINTN)len;
     UINTN k;
+    /* Same refusal contract as the kernel framing twin
+     * (entropy_frame_source): NULL pointers and out-of-vocabulary
+     * source ids are refused before any byte is written. 8 = source
+     * class count in include/kernel/entropy.h. */
+    if (!buf || !data || src >= 8u)
+        return 0;
     if (len == 0 || pos > cap || need > cap - pos)
         return 0;
     buf[pos++] = src;
@@ -8912,12 +8918,6 @@ static void collect_boot_entropy(void)
 {
     post_code16(POST16_BL_ENTROPY);
 
-    if (!g_boot_info_ptr->config.firmware_rng) {
-        serial_early_print("[BOOT] RNG: disabled by boot.conf (firmware_rng=off)\n");
-        post_code16(POST16_BL_ENTROPY_OK);
-        return;
-    }
-
     EFI_PHYSICAL_ADDRESS seed_addr = 0;
     EFI_STATUS status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
                                            1, &seed_addr);
@@ -8930,8 +8930,13 @@ static void collect_boot_entropy(void)
     efi_memset(seed, 0, EFI_PAGE_SIZE);
     UINTN pos = 0;
 
-    /* --- Source: EFI_RNG_PROTOCOL (UEFI 2.10 37.5) --- */
-    {
+    /* --- Source: EFI_RNG_PROTOCOL (UEFI 2.10 37.5) ---
+     * The firmware_rng gate covers ONLY this block: the escape hatch
+     * exists for hanging GetRNG implementations, and disabling it must
+     * not also drop the independent ACPI OEM0 source below. */
+    if (!g_boot_info_ptr->config.firmware_rng) {
+        serial_early_print("[BOOT] RNG: EFI_RNG_PROTOCOL disabled by boot.conf\n");
+    } else {
         EFI_GUID rng_guid = EFI_RNG_PROTOCOL_GUID;
         EFI_RNG_PROTOCOL *rng = (EFI_RNG_PROTOCOL *)0;
         status = gBS->LocateProtocol(&rng_guid, (VOID *)0, (VOID **)&rng);

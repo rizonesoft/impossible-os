@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** Later TODOs mention CSPRNG and Monocypher (`02-kernel-core/TODO-03` §5 ships `csprng_fill()`; `TODO-10` §11 seeds `__stack_chk_guard` with RDRAND; §14 KASLR uses RDRAND directly). Boot code uses RDRAND in some contexts and TPM presence is parsed, but there is no early entropy pool, no seed file lifecycle, no EFI_RNG_PROTOCOL usage, no TPM RNG read, and no boot_info seed handoff. `BOOT_PAYLOAD_RANDOM_SEED = 7` is already reserved in `include/kernel/boot_info.h` (owner: this TODO).
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). Still missing: TPM RNG read (§4), jitter mix (§5), seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
 
 ## Inputs
 
@@ -92,6 +92,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Downstream: §7 consumes the BOOT_PAYLOAD_RANDOM_SEED descriptor (reserve, parse, zero); Codex design adoptions in the section commit.
 > - Canonical contract doc: `include/kernel/entropy.h` (framing) + `docs/boot/boot-info-fields.md` (`firmware_rng` row).
 > - Scope boundary: kernel-side consumption/zeroing is §7; TPM RNG is §4; the hang limitation is an escape hatch, not a timeout (no pre-EBS preemption).
+> - Review fixes: firmware_rng gate scoped to the EFI RNG block only (OEM0 unaffected); bl_entropy_frame mirrors the kernel twin refusals; re-adversarial skipped (20-line control-flow + doc fix).
+
+> **Verified:** 2026-06-12 | commit `65828c7e` | 5/5 items | build OK | smoke PASS (KVM, RNG-absent degrade path)
+> **Quality reviewed:** 2026-06-12 | Codex 7x (design, adversarial x2, adversarial-impl, re-adversarial, consistency, perf) | 2H+3M+1L fixed, 0 open | scope: boot-code-quality
 
 ---
 
