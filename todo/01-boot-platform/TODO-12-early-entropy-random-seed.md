@@ -9,7 +9,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 # TODO-12 -- Early Entropy & Random Seed Handoff
 
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
-> **Current state:** Later TODOs mention CSPRNG and Monocypher. Boot code uses RDRAND in some contexts and TPM presence is parsed, but there is no early entropy pool, no seed file lifecycle, no EFI_RNG_PROTOCOL usage, no TPM RNG read, and no boot_info seed handoff.
+
+> [!IMPORTANT]
+> **Current state (2026-06-12):** Later TODOs mention CSPRNG and Monocypher (`02-kernel-core/TODO-03` §5 ships `csprng_fill()`; `TODO-10` §11 seeds `__stack_chk_guard` with RDRAND; §14 KASLR uses RDRAND directly). Boot code uses RDRAND in some contexts and TPM presence is parsed, but there is no early entropy pool, no seed file lifecycle, no EFI_RNG_PROTOCOL usage, no TPM RNG read, and no boot_info seed handoff. `BOOT_PAYLOAD_RANDOM_SEED = 7` is already reserved in `include/kernel/boot_info.h` (owner: this TODO).
 
 ## Inputs
 
@@ -18,7 +20,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [`include/kernel/tpm.h`](../../include/kernel/tpm.h)
 - -> XREF: `TODO-13-tpm-measured-boot-attestation.md §2` -- TPM command transport
 - -> XREF: `TODO-01-boot-protocol-abi-handoff.md §4` -- random seed payload descriptor
-- -> XREF: `../02-kernel-core/TODO-03-kernel-libraries.md §3` -- kernel CSPRNG
+- -> XREF: `../02-kernel-core/TODO-03-kernel-libraries.md §5` -- Monocypher + kernel CSPRNG (`csprng_fill()`)
 - -> XREF: `../02-kernel-core/TODO-10-kernel-security-hardening.md §14` -- KASLR consumes early entropy
 
 ## Outcome
@@ -30,18 +32,18 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## Implementation Order
 
-| ⭐ | Order | Deliverable | Depends On | Status |
-| --- | :---: | --- | --- | :---: |
-| 💎 | 1 | Entropy source inventory and quality model | TODO-04 §2 | [ ] |
-| 💎 | 2 | EFI_RNG_PROTOCOL collection | §1 | [ ] |
-| 💎 | 3 | CPU RDRAND/RDSEED collection | §1, TODO-09 §1 | [ ] |
-| 💎 | 4 | TPM RNG collection | §1, TODO-13 §2 | [ ] |
-| 💎 | 5 | Boot timing and interrupt jitter mix-in | §1 | [ ] |
-| 💎 | 6 | Seed file carryover lifecycle | §1, TODO-24 | [ ] |
-| 💎 | 7 | boot_info seed handoff | TODO-01 §4 | [ ] |
-| 💎 | 8 | Kernel early CSPRNG seeding | §7, ../02-kernel-core/TODO-03 §3 | [ ] |
-| ⭐ | 9 | Entropy diagnostics and policy gates | §1-§8 | [ ] |
-| 💎 | 10 | Entropy tests | §1-§9 | [ ] |
+| ⭐  | Order | Deliverable                                | Depends On         | Status |
+| --- | :---: | ------------------------------------------ | ------------------ | :----: |
+| 💎  |   1   | Entropy source inventory and quality model | T04 §2             |  [ ]   |
+| 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [ ]   |
+| 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [ ]   |
+| 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [ ]   |
+| 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [ ]   |
+| 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [ ]   |
+| 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [ ]   |
+| 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5      |  [ ]   |
+| ⭐  |   9   | Entropy diagnostics and policy gates       | §1-§8              |  [ ]   |
+| 💎  |  10   | Entropy tests                              | §1-§9              |  [ ]   |
 
 ## 1. Entropy Source Inventory and Quality Model
 
@@ -51,6 +53,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Add source mask to boot diagnostics.
 - [ ] Commit: `"boot: early entropy source model"`
 
+**Test checkpoint:** Serial log shows one `entropy:` summary line listing each source class with its quality class (e.g. `entropy: fw=ok cpu=ok tpm=none seed=none jitter=low time=low`); degraded sources log at WARN. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 2. EFI_RNG_PROTOCOL Collection
 
 - [ ] Locate EFI_RNG_PROTOCOL before ExitBootServices.
@@ -58,6 +64,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Collect at least 64 bytes and mix into seed buffer.
 - [ ] Time out and degrade cleanly on broken firmware.
 - [ ] Commit: `"boot: collect firmware RNG entropy"`
+
+**Test checkpoint:** On OVMF with RNG support the bootloader logs `RNG: EFI_RNG_PROTOCOL N bytes` before ExitBootServices; on firmware without the protocol it logs the degraded path and boot continues. QEMU WHPX, QEMU TCG (OVMF), VirtualBox, bare metal.
+
+---
 
 ## 3. CPU RDRAND/RDSEED Collection
 
@@ -67,6 +77,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Record source health in boot_info.
 - [ ] Commit: `"boot: collect CPU RNG entropy"`
 
+**Test checkpoint:** Platforms with RDSEED log `RNG: RDSEED N bytes`; TCG `qemu64` (no RDSEED) falls back to RDRAND or degrades without crashing (CPUID-gated, never #UD). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 4. TPM RNG Collection
 
 - [ ] Use TPM2_GetRandom when TPM transport is available.
@@ -74,6 +88,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Degrade cleanly on no TPM, timeout, or error.
 - [ ] Include TPM RNG availability in measured boot report.
 - [ ] Commit: `"boot: collect TPM RNG entropy"`
+
+**Test checkpoint:** With QEMU `-tpm` (swtpm) the log shows `RNG: TPM2_GetRandom N bytes`; without a TPM the source reads `tpm=none` and boot continues. Known TCG TPM-init freeze (`project_tcg_tpm_freeze`) must not regress. QEMU WHPX, QEMU TCG, VirtualBox, bare metal (test laptop has fTPM).
+
+---
 
 ## 5. Boot Timing and Interrupt Jitter Mix-In
 
@@ -83,6 +101,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Add VM/hypervisor detection caveats to diagnostics.
 - [ ] Commit: `"boot: mix timing jitter into entropy pool"`
 
+**Test checkpoint:** Source mask shows `jitter=low time=low` (never high) on every platform; on detected hypervisors the diagnostics line carries the VM caveat. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 6. Seed File Carryover Lifecycle
 
 - [ ] Store `X:\Boot\random-seed.bin` with version, counter, and MAC.
@@ -90,6 +112,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Prevent seed reuse after crash/power loss where possible.
 - [ ] Handle read-only/recovery media without blocking boot.
 - [ ] Commit: `"boot: random seed carryover file"`
+
+**Test checkpoint:** After two consecutive boots `X:\Boot\random-seed.bin` exists with an incremented counter and valid MAC; deleting it degrades to `seed=none` without blocking boot; the rotate happens only after the kernel CSPRNG signals ready. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 7. boot_info Seed Handoff
 
@@ -99,6 +125,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Add ABI tests for seed descriptor.
 - [ ] Commit: `"boot: hand off early entropy seed"`
 
+**Test checkpoint:** Kernel logs `entropy: seed payload N bytes (mask=0x.., quality=..)` during Phase 0/1; the TODO-01 §4 payload validator accepts the descriptor; after CSPRNG consumption a debug read of the seed buffer shows zeros. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 8. Kernel Early CSPRNG Seeding
 
 - [ ] Add `early_entropy_init()` before KASLR/ASLR consumers where possible.
@@ -106,6 +136,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Provide temporary bounded random API with explicit degraded flag.
 - [ ] Block release-mode cryptographic operations until seeded.
 - [ ] Commit: `"kernel: seed early CSPRNG from boot entropy"`
+
+**Test checkpoint:** `early_entropy_init()` logs before KASLR/canary consumers; `csprng_fill()` (D02T03 §5) succeeds post-seed; with all sources forced off the temporary API returns the degraded flag and release-mode crypto refuses. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 9. Entropy Diagnostics and Policy Gates
 
@@ -115,34 +149,60 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [ ] Add BlackBox report.
 - [ ] Commit: `"boot: entropy diagnostics and policy"`
 
+**Test checkpoint:** `HKLM\SYSTEM\Boot\Entropy` holds source mask + quality class (no seed bytes anywhere in registry, logs, or BlackBox); a forced-degraded boot in release policy shows the VPD/recovery indication. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## 10. Entropy Tests
 
-- [ ] Unit tests for source mixing determinism with fixtures.
-- [ ] Test no source -> degraded but safe.
-- [ ] Test seed file rotate.
-- [ ] Test zeroization after consumption.
+- [ ] Unit tests for source mixing determinism with fixtures (pure mixer fed fixed inputs produces the known digest).
+- [ ] Test no source -> degraded but safe (mask=0 yields degraded flag, never a fake high-quality claim).
+- [ ] Test seed file format: version/counter/MAC encode + decode round-trip, bad-MAC rejection (pure helpers, no live VFS).
+- [ ] Test zeroization after consumption (consume fixture buffer, assert all-zero).
 - [ ] Commit: `"test: early entropy handoff"`
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=security` runs the entropy suites with 0 failures; suites use fixtures and pure helpers only (no live boot infrastructure, per test policy). QEMU WHPX, QEMU TCG.
+
+---
 
 ## OS Comparison
 
-| ⭐ | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | firmware RNG | CNG/boot entropy | EFI RNG to random | TODO-12 |
-| 💎 | seed carryover | system secrets | random-seed | TODO-12 §8 |
-| 💎 | TPM RNG mix | TPM-backed paths | tpm-rng | TODO-12 §5 |
-| ⭐ | visible entropy quality report | hidden | dmesg only | TODO-12 §9 |
+| ⭐  | Feature                        | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS            |
+| --- | ------------------------------ | -------------------------- | --------------------------- | --------------------------- |
+| 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random     | ⬜ §2 EFI_RNG_PROTOCOL      |
+| 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ⬜ §3 CPUID-gated           |
+| 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ⬜ §4 TPM2_GetRandom        |
+| 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ⬜ §5 low-quality only      |
+| 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ⬜ §6 versioned + MAC       |
+| 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ⬜ §8 pre-KASLR             |
+| ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ⬜ §9 registry + BlackBox   |
+
+> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; all sections planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
+
+---
 
 ## Unit Tests
 
-- [ ] `test_entropy_source_mask`
-- [ ] `test_entropy_mix_fixture`
-- [ ] `test_random_seed_rotation`
-- [ ] `test_entropy_seed_zeroized`
+> Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_entropy()` (new `src/kernel/test/test_entropy.c`, TEST_CAT_SECURITY). Tests use fixtures + pure helpers only; live EFI/TPM/VFS collection paths are validated by boot checkpoints.
+
+- [ ] `test_entropy_source_mask` -- mask bit per source class; degraded classification for mask=0
+- [ ] `test_entropy_mix_fixture` -- fixed-input mixer determinism (known digest)
+- [ ] `test_random_seed_format` -- seed file version/counter/MAC round-trip + bad-MAC rejection
+- [ ] `test_entropy_seed_zeroized` -- buffer all-zero after consumption
+- [ ] Register in `test_runner_init()`: `test_register_entropy()`
+
+---
 
 ## Verification
 
-- [ ] QEMU OVMF without RNG degrades visibly
-- [ ] QEMU with virtio/EFI RNG
-- [ ] Bare metal with RDRAND
-- [ ] Bare metal with TPM RNG
+- [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===`
+- [ ] `bash scripts/test.sh SUITE=security` -> entropy suites PASS, 0 failures
+- [ ] `bash scripts/test-smoke.sh` -> boots to `C:\>`; stripped log shows the `entropy:` source-mask line
+- [ ] QEMU OVMF without RNG protocol degrades visibly (serial shows degraded WARN) (manual -- needs RNG-less OVMF build)
+- [ ] QEMU with EFI RNG: `entropy: fw=ok` in serial
+- [ ] Bare metal with RDRAND: `cpu=ok` (manual -- run on rig)
+- [ ] Bare metal with TPM RNG: `tpm=ok` (manual -- run on rig)
+- [ ] Commit: `"boot: early entropy verified -- sources, seed handoff, CSPRNG"`
+
+**Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | entropy suites, 0 failures
 
