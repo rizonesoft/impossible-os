@@ -234,24 +234,22 @@ void entropy_collect_tpm(void)
     }
     n = (uint32_t)got;
 
-    /* Stuck-output heuristics (mirrors the bootloader CPU collector):
-     * all-identical bytes (covers all-zero and 0xFF fill), and for a
-     * multi-chunk sample, identical halves (a TPM replaying the same
-     * digest every call). */
-    stuck = 1;
-    for (i = 1; i < n; i++) {
-        if (buf[i] != buf[0]) {
-            stuck = 0;
-            break;
-        }
-    }
-    if (!stuck && (n & 1u) == 0u && n >= 2u * ENTROPY_TPM_FLOOR) {
-        uint32_t half = n / 2u;
-        stuck = 1;
-        for (i = 0; i < half; i++) {
-            if (buf[i] != buf[half + i]) {
-                stuck = 0;
-                break;
+    /* Stuck-output heuristic: reject ANY periodic sample (period
+     * p <= n/2). p=1 covers all-zero/0xFF fill; larger periods catch
+     * a TPM replaying the same chunk every GetRandom call at ANY
+     * chunk size (16-byte replays at n=32 or 48 dodge a plain
+     * identical-halves check). O(n^2/2) = ~2K byte compares on a
+     * one-shot boot path; real random data has no period. */
+    stuck = 0;
+    {
+        uint32_t p;
+        for (p = 1; p <= n / 2u && !stuck; p++) {
+            stuck = 1;
+            for (i = p; i < n; i++) {
+                if (buf[i] != buf[i - p]) {
+                    stuck = 0;
+                    break;
+                }
             }
         }
     }

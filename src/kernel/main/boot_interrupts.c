@@ -445,6 +445,16 @@ void boot_phase1(void)
      * (VMM, Phase 0), and the calibrated TSC for poll deadlines
      * (boot_timing_init above). The Phase 0 tpm_init() event-log parse
      * is independent. Absent/wedged TPMs degrade; boot continues. */
+    /* spinner_start() (via boot_splash_start_animation) registers the
+     * singleton timer tick callback at 10 ticks (~10fps, Fluent 100 deg/s).
+     * The slot has exactly one owner -- do NOT register another callback
+     * here: a second registration silently overwrites the spinner's and
+     * historically ran the animation at 2x design speed. Starts BEFORE
+     * the TPM work below: a present-but-slow TPM can legally consume
+     * the probe + RNG budgets (up to 5s combined) and the spinner must
+     * already be animating through that window. */
+    boot_splash_start_animation();
+
     POST16(POST16_TPM_TRANSPORT);
     tpm_transport_init();
     /* TPM RNG entropy rides the fresh transport (cumulative-budget
@@ -453,13 +463,6 @@ void boot_phase1(void)
     entropy_collect_tpm();
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);
-
-    /* spinner_start() (via boot_splash_start_animation) registers the
-     * singleton timer tick callback at 10 ticks (~10fps, Fluent 100 deg/s).
-     * The slot has exactly one owner -- do NOT register another callback
-     * here: a second registration silently overwrites the spinner's and
-     * historically ran the animation at 2x design speed. */
-    boot_splash_start_animation();
 
     /* --- Input devices (after timer+sti so splash spinner is alive) --- */
     boot_splash_status("Detecting PS/2 keyboard...");

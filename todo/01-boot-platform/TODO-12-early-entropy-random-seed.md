@@ -127,7 +127,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 4. TPM RNG Collection
 
 - [x] TPM2_GetRandom over the TODO-13 §2 transport: `entropy_collect_tpm()` (`entropy.c`) via `tpm2_get_random_bounded()` (`tpm_transport.c`; 2000ms cumulative budget, 48-byte per-call cap, 64-byte target).
-- [x] Mix, never trust alone: output staged as one src-2 record in the framed transcript (hashed with all sources at §8); 32-byte floor + stuck-RNG heuristics (all-identical, identical halves) gate the HIGH credit.
+- [x] Mix, never trust alone: staged as one src-2 record in the framed transcript (hashed with all sources at §8); 32-byte floor + periodicity scan (rejects period p <= n/2: constant fill, replayed chunks) gate the HIGH credit.
 - [x] Degrade cleanly: absent/wedged transport skips silently (report shows `tpm=none`); short yield or protocol failure logs WARN with no credit; boot continues.
 - [x] TPM RNG availability in the measured boot report: `tpm_rng_available` field in `boot_integrity_report` + `tpm_integrity_set_rng_available()` (set only on credited collection).
 - [x] Commit: `"boot: collect TPM RNG entropy"`
@@ -142,6 +142,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Downstream: §8 first seed consumes the staged src-2 record; D02T03 §5 runtime reseed and the TODO-04 (drivers) command layer reuse `tpm2_get_random_bounded()`; Codex design + test-coverage adoptions in the section commit.
 > - Canonical contract doc: `include/kernel/tpm_transport.h` (GetRandom helpers) + `include/kernel/entropy.h` (collector contract).
 > - Scope boundary: first-seed collection only -- runtime reseed cadence is D02T03 §5; attestation/PCR use of the report flag is `01-boot-platform/TODO-13` §9.
+
+> **Verified:** 2026-06-12 | commit `ee546157` | 5/5 items | build OK | smoke PASS (KVM 2.560s)
+> **Quality reviewed:** 2026-06-12 | Codex 10x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x4) | 4H+6M fixed, 0 open | scope: kernel-code-quality
 
 ---
 

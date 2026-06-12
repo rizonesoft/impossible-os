@@ -466,6 +466,16 @@ static void test_tpm2_get_random(void)
     r = tpm2_get_random_bounded(out, 64u, 100u);
     TEST_ASSERT_EQ(r, 32, "short yield returns the partial byte count");
 
+    /* Protocol failure on the FIRST response: bounded helper returns
+     * a negative error, never a zero-byte "yield". */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    tpm2_be32_put(fk_rsp + 6, TPM2_RC_INITIALIZE);  /* rc != SUCCESS */
+    r = tpm2_get_random_bounded(out, 64u, 100u);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_RESPONSE,
+                   "failed first GetRandom response -> ERR_RESPONSE");
+
     /* Budget ownership: a nested bounded call during an in-flight
      * bounded sequence bounces with BUSY (never clobbers the active
      * cumulative budget) and the outer sequence still completes. */
@@ -549,6 +559,19 @@ static void test_entropy_tpm_collect(void)
                    "exactly-32-byte varied yield credited");
     len = entropy_staged_drain(out, (uint32_t)sizeof(out));
     TEST_ASSERT_EQ(len, 37u, "staged floor record is 1+4+32 bytes");
+
+    /* Chunk replay: two identical 16-byte responses reach the 32-byte
+     * floor as period-16 data -- the periodicity scan rejects it. */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(16u);  /* same canned 16 bytes every call */
+    entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_NONE);
+    tpm_integrity_set_rng_available(0);
+    entropy_collect_tpm();
+    TEST_ASSERT_EQ((entropy_source_mask() >> ENTROPY_SRC_TPM_RNG) & 1u, 0u,
+                   "replayed 16-byte chunks not credited");
+    TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
+                   "replayed 16-byte chunks not staged");
 
     /* Exact 32-byte all-identical sample: rejected by the heuristic
      * even though it meets the floor (identical-halves needs 64). */

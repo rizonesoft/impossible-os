@@ -27,12 +27,10 @@ only when every domain is complete or a hard-stop condition fires.
   Stages 1-2 (validate + gap-audit) and §1-§3 + §5 are done AND reviewed
   (§5 review shipped 5ccdd14d). TODO-13 §2 TPM transport pulled forward and
   shipped + reviewed (8ae51bf1 + review stamps) per user direction, so §4 is
-  UNBLOCKED. Work queue, in order:
-  1. **§4 implement** -- TPM RNG collection via kernel-side TPM2_GetRandom
-     over `tpm2_submit()`, staged through
-     `entropy_stage_source(ENTROPY_SRC_TPM_RNG, ...)`; normal section
-     pipeline.
-  2. **§6 onward** per the normal per-file pipeline.
+  UNBLOCKED and now SHIPPED + REVIEWED (§4: ee546157 + review stamps).
+  Work queue: **§6 onward** per the normal per-file pipeline (§6 seed file
+  carryover, §7 boot_info seed handoff, §8 CSPRNG seeding -- §8 needs
+  D02T03 §5 Monocypher, check that XREF before starting it).
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
@@ -116,4 +114,4 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 - 2026-06-12 02:35 SAST: run 1 resumed -- TODO-11 §5 + §6 implemented + reviewed, §7 reviewed ([/] blocked on D03T07§3), §8/§9/§10 review passes shipped (98592c32, 7ea3a01f, 80328e01), loose-end sweep c4e92774; cursor advanced to TODO-12-early-entropy-random-seed.md.
 - 2026-06-12 ~02:35-04:48 SAST: run 2 (same session) -- TODO-12 validate + gap-audit + §1-§3 shipped; §4 filed blocked-with-XREF (a98dca94); died mid-§5 on transient API 500, staged §5 work left in tree; resume armed, §4 re-opened per user direction.
 - 2026-06-12 ~07:00 SAST: run 3 (interactive, cut short) -- preflight caught build break at HEAD (half-committed peek->drain refactor); drain implemented + tests migrated + committed (dd19d586), build OK, security suite green; user redirected to headless timer; §5 review + §4 re-open queued for run 4.
-- 2026-06-12 ~07:00-08:45 SAST: run 4 -- TODO-12 §5 reviewed (5ccdd14d: staged-credit lock ordering, RNG wipe, TSC sanity; Codex 4x); TODO-13 §2 TPM2 transport pulled forward, shipped (8ae51bf1, Codex 9x incl. design phase-move Critical + CRB align/budget review fixes) + review-stamped; TODO-12 §4 unblocked; cursor at TODO-12 §4 implement.
+- 2026-06-12 ~07:00-09:45 SAST: run 4 -- TODO-12 §5 reviewed (5ccdd14d, Codex 4x); TODO-13 §2 TPM2 transport pulled forward, shipped + reviewed (8ae51bf1 + c3779b6d, Codex 9x); TODO-12 §4 TPM RNG shipped + reviewed (ee546157 + review fixes: periodicity scan, first-failure contract, splash-before-TPM; Codex 10x); cursor at TODO-12 §6.

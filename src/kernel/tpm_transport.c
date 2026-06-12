@@ -360,8 +360,14 @@ int tpm2_get_random_bounded(uint8_t *out, uint32_t want, uint32_t budget_ms)
         }
         n = tpm2_parse_get_random(rsp, (uint32_t)n, out + got,
                                   want - got);
-        if (n <= 0)
+        if (n <= 0) {
+            /* A malformed/failed FIRST response is a protocol error,
+             * not a zero-byte yield -- honor the negative-on-first-
+             * failure contract. Later failures keep partial bytes. */
+            if (got == 0u)
+                first_err = TPM_T_ERR_RESPONSE;
             break;
+        }
         got += (uint32_t)n;
     }
     tpm_t_seq_end();
