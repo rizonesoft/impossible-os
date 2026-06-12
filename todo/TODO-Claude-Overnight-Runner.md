@@ -43,8 +43,11 @@ only when every domain is complete or a hard-stop condition fires.
      (dff35172) + reviewed (c1da9924); digest-chained first-seed
      handoff, producer-identity frame release, FLAG_VALID retire
      semantics, NVRAM verify budget, phase3 early-counter anti-replay.
-  4. **TODO-12 §8** first-seed policy + KASLR ordering. <- NEXT
-  5. **§9/§10**, then `complete-todo-file` closure.
+  4. **TODO-12 §8** -- DONE (run 8): early CSPRNG seeding shipped
+     (4ce71522) + reviewed (d364441e); named init point, CSPRNG-owned
+     credited class, unconditional key-gen gate, classified fill.
+  5. **TODO-12 §9** entropy diagnostics + policy gates. <- NEXT
+  6. **§10 tests**, then `complete-todo-file` closure.
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
