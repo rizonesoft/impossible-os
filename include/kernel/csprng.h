@@ -89,9 +89,10 @@ int csprng_core_absorb_digest(csprng_core_t *c, int seeded,
 /* Seed the global instance. Called once from boot Phase 1 after the
  * interrupt-jitter and TPM RNG collectors have staged their transcript
  * records AND after boot_seed_consume() has validated the boot_info seed
- * payload -- boot_transcript/boot_len carry that validated transcript
- * ((NULL, 0) when no payload was usable) and are hashed into the FIRST
- * key together with the local + staged sources. Logs the entropy
+ * payload -- boot_transcript/boot_len carry its Blake2b-256 digest over
+ * every accepted payload transcript ((NULL, 0) when no payload was
+ * usable) and are hashed into the FIRST key together with the local +
+ * staged sources. Logs the entropy
  * classification; degraded boots WARN loudly but continue (release-mode
  * gating is owned by the boot entropy policy sections). */
 void csprng_init(const uint8_t *boot_transcript, uint32_t boot_len);

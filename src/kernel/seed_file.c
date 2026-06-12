@@ -175,6 +175,15 @@ void seed_file_early_mark_consumed(uint64_t counter)
     g_early_consumed = 1;
 }
 
+/* Per-boot budget on NVRAM-backed verify attempts. The bootloader can
+ * publish at most the two rotation names; a small safety margin covers
+ * a legitimate earlier-stage payload. Without the cap, a malformed
+ * payload packed with src-4 records could force thousands of slow UEFI
+ * variable reads in Phase 1 before the first CSPRNG seed. BSP boot
+ * path only -- plain counter per the SMP gate. */
+#define SEED_FILE_EARLY_VERIFY_BUDGET  8u
+static uint32_t g_early_verify_attempts;
+
 int seed_file_early_verify(const uint8_t *blob, uint32_t len,
                            uint64_t *counter_out,
                            uint8_t payload_out[SEED_FILE_PAYLOAD_LEN])
@@ -185,6 +194,22 @@ int seed_file_early_verify(const uint8_t *blob, uint32_t len,
 
     if (!blob || !counter_out || !payload_out)
         return 0;
+    /* Length gate BEFORE any NVRAM I/O: a record that is not exactly
+     * the on-disk blob size can never verify, and the reject must not
+     * cost a firmware variable read. */
+    if (len != (uint32_t)SEED_FILE_SIZE)
+        return 0;
+    if (g_early_verify_attempts >= SEED_FILE_EARLY_VERIFY_BUDGET) {
+        if (g_early_verify_attempts == SEED_FILE_EARLY_VERIFY_BUDGET) {
+            g_early_verify_attempts++;
+            klog(LOG_WARN, "entropy",
+                 "early seed: verify budget exhausted (%u attempts) -- "
+                 "remaining carryover records dropped",
+                 (uint64_t)SEED_FILE_EARLY_VERIFY_BUDGET);
+        }
+        return 0;
+    }
+    g_early_verify_attempts++;
     if (!seed_token_load(&tok)) {
         /* Absent/foreign token: fail closed (anti-clone). Recovery --
          * minting a fresh token + file -- is the Phase-3 lifecycle's

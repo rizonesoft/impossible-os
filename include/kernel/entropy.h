@@ -207,12 +207,17 @@ entropy_seed_status_t entropy_seed_parse(
 
 /* Impure Phase 1 consumer (src/kernel/main/boot_seed.c): walk every
  * validated BOOT_PAYLOAD_RANDOM_SEED descriptor, parse it (NVRAM-backed
- * seed-file verification), record accepted sources, copy the combined
- * transcript into out, then wipe the payload pages and return the frames
- * to the PMM when the descriptor certifies exclusive page ownership
- * (4 KiB-aligned phys_start AND alignment == 4096). Returns the combined
- * transcript length (0 = no usable payload; boot continues degraded).
- * BSP boot path only -- runs once in Phase 1 BEFORE csprng_init(). */
+ * seed-file verification), record accepted sources, and digest-chain
+ * each accepted transcript (Blake2b-256 over the concatenation -- one
+ * descriptor at the full length cap never overflows a fixed buffer, so
+ * the every-descriptor-mixed contract holds for any chain depth). Each
+ * payload is wiped after use; frames return to the PMM only when OUR
+ * bootloader produced the descriptor with the exclusive-page shape.
+ * Writes the BOOT_SEED_DIGEST_LEN digest to out (cap must be >= that)
+ * and returns its length, or 0 when no payload contributed bytes (boot
+ * continues degraded). BSP boot path only -- runs once in Phase 1
+ * BEFORE csprng_init(). */
+#define BOOT_SEED_DIGEST_LEN  32u
 uint32_t boot_seed_consume(uint8_t *out, uint32_t cap);
 
 /* PURE consumability classifier for one RANDOM_SEED descriptor (the
@@ -236,12 +241,17 @@ boot_seed_desc_class_t boot_seed_desc_classify(uint32_t flags,
                                                uint64_t length);
 
 /* PURE release helper for one consumed payload (unit-testable half of
- * the consume path): wipe 'length' bytes at 'payload' and return 1 when
- * the descriptor certifies exclusive page ownership (4 KiB-aligned
- * phys_start AND alignment == 4096) so the caller may return the frames
- * to the PMM, 0 otherwise (wiped but frames stay reserved). */
+ * the consume path): wipe 'length' bytes at 'payload' and return 1 ONLY
+ * when the FULL ownership contract holds -- producer_id is our own
+ * bootloader (BOOT_PRODUCER_UEFI, whose RANDOM_SEED publish contract is
+ * an AllocatePages-exclusive page) AND the page shape is certified
+ * (4 KiB-aligned phys_start, alignment == 4096). Alignment alone is a
+ * natural-alignment hint, never ownership: a foreign producer's
+ * page-aligned descriptor may point into a shared allocation. 0 =
+ * wiped but frames stay reserved. */
 int boot_seed_release_payload(uint8_t *payload, uint64_t length,
-                              uint64_t phys_start, uint64_t alignment);
+                              uint64_t phys_start, uint64_t alignment,
+                              uint32_t producer_id);
 
 /* Collect TPM RNG output (TPM2_GetRandom over the TPM2 command
  * transport) into the staged transcript as ENTROPY_SRC_TPM_RNG.

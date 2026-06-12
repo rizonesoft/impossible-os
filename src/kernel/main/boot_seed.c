@@ -90,32 +90,52 @@ boot_seed_desc_class_t boot_seed_desc_classify(uint32_t flags,
 }
 
 int boot_seed_release_payload(uint8_t *payload, uint64_t length,
-                              uint64_t phys_start, uint64_t alignment)
+                              uint64_t phys_start, uint64_t alignment,
+                              uint32_t producer_id)
 {
     if (!payload || length == 0)
         return 0;
     crypto_wipe(payload, (size_t)length);
-    /* Exclusive page ownership: 4 KiB-aligned start AND the producer
-     * certified page-granular allocation (alignment == 4096) -- the
-     * shape our bootloader's AllocatePages publication produces. A
-     * sub-page buffer inside a shared allocation must never be freed
-     * by frame. */
-    return ((phys_start & 0xFFFull) == 0u) && (alignment == 4096ull);
+    /* Frame release needs an OWNERSHIP contract, not just shape:
+     * alignment is the generic natural-alignment field, and a foreign
+     * producer's page-aligned descriptor can truthfully certify 4096
+     * while pointing into a shared allocation. Only OUR bootloader's
+     * publish contract (producer_id == BOOT_PRODUCER_UEFI plus the
+     * AllocatePages-exclusive page shape) makes the frames safe to
+     * return; everything else is wipe-only. */
+    return (producer_id == (uint32_t)BOOT_PRODUCER_UEFI) &&
+           ((phys_start & 0xFFFull) == 0u) && (alignment == 4096ull);
 }
+
+/* Per-payload parse scratch, sized to the descriptor length contract so
+ * a contract-valid payload can NEVER hit NO_FIT (re-framed output is
+ * always <= input length). Static, not stack: 16 KiB would smash the
+ * Phase 1 stack. BSP-only by construction (Phase 1 runs before APs);
+ * wiped after every use. */
+static uint8_t s_payload_tx[BOOT_SEED_PAYLOAD_CAP];
 
 uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
 {
+    crypto_blake2b_ctx ctx;
     uint32_t idx = 0;
-    uint32_t total = 0;
+    uint64_t total = 0;
     uint32_t consumed = 0;
     uint32_t rejected = 0;
 
     POST16(POST16_BOOT_SEED);
 
-    if (!out || cap == 0) {
+    if (!out || cap < BOOT_SEED_DIGEST_LEN) {
         POST16(POST16_BOOT_SEED_OK);
         return 0;
     }
+
+    /* Digest-chain the payload transcripts instead of concatenating
+     * them into one buffer: 32 descriptors at the 16 KiB cap is half a
+     * megabyte, far past any sane static buffer, and dropping a payload
+     * for buffer space would silently break the every-descriptor-mixed
+     * contract. Blake2b-256 over the concatenated transcripts preserves
+     * the entropy up to the key size the CSPRNG derives anyway. */
+    crypto_blake2b_init(&ctx, BOOT_SEED_DIGEST_LEN);
 
     /* Always look up occurrence 0: retiring a descriptor clears its
      * FLAG_VALID and boot_payload_find() skips retired entries, so the
@@ -174,7 +194,8 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
                                      BOOT_PAYLOAD_FLAG_CHECKSUMMED) ? 1 : 0,
                                     d->checksum,
                                     boot_seed_verify_carryover,
-                                    out + total, cap - total,
+                                    s_payload_tx,
+                                    (uint32_t)sizeof(s_payload_tx),
                                     &out_len, &res);
         }
 
@@ -188,7 +209,8 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
         if (payload) {
             owns_pages = boot_seed_release_payload(payload, d->length,
                                                    d->phys_start,
-                                                   d->alignment);
+                                                   d->alignment,
+                                                   d->producer_id);
             if (owns_pages) {
                 uint64_t page;
                 uint64_t end = (d->phys_start + d->length + 0xFFFull) &
@@ -204,12 +226,14 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
         }
 
         if (st != ENTROPY_SEED_OK) {
-            if (parsed)
+            if (parsed) {
+                crypto_wipe(s_payload_tx, sizeof(s_payload_tx));
                 klog(LOG_WARN, "entropy",
                      "seed payload #%u rejected: parse status=%u "
                      "(wiped, %s)",
                      (uint64_t)idx, (uint64_t)st,
                      owns_pages ? "pages freed" : "pages kept reserved");
+            }
             rejected++;
             continue;
         }
@@ -222,6 +246,10 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
          * skip its only absorption. */
         if (res.seed_file_ok > 0u)
             seed_file_early_mark_consumed(res.seed_file_counter);
+        if (out_len) {
+            crypto_blake2b_update(&ctx, s_payload_tx, out_len);
+            crypto_wipe(s_payload_tx, sizeof(s_payload_tx));
+        }
         total += out_len;
         consumed++;
 
@@ -239,5 +267,16 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
              "staged sources only");
 
     POST16(POST16_BOOT_SEED_OK);
-    return total;
+
+    /* No accepted transcript bytes: nothing to hand to the first seed.
+     * (An accepted header-only payload contributes no bytes either.) */
+    if (total == 0) {
+        crypto_wipe(&ctx, sizeof(ctx));
+        return 0;
+    }
+    crypto_blake2b_final(&ctx, out);
+    klog(LOG_INFO, "entropy",
+         "seed payload digest: %lu transcript bytes over %u payload(s)",
+         (uint64_t)total, (uint64_t)consumed);
+    return BOOT_SEED_DIGEST_LEN;
 }

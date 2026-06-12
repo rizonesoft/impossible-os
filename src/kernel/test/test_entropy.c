@@ -808,7 +808,8 @@ static void test_entropy_seed_zeroized(void)
     /* Page-owning shape: wiped AND releasable. */
     memset(buf, 0xA5, sizeof(buf));
     TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, sizeof(buf),
-                                                       0x5000ull, 4096ull),
+                                                       0x5000ull, 4096ull,
+                                                       BOOT_PRODUCER_UEFI),
                    1u, "aligned page-certified payload is releasable");
     for (sum = 0, i = 0; i < sizeof(buf); i++)
         sum += buf[i];
@@ -817,7 +818,8 @@ static void test_entropy_seed_zeroized(void)
     /* Sub-page shape: wiped but NOT releasable. */
     memset(buf, 0xA5, sizeof(buf));
     TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, sizeof(buf),
-                                                       0x5010ull, 4096ull),
+                                                       0x5010ull, 4096ull,
+                                                       BOOT_PRODUCER_UEFI),
                    0u, "unaligned start never frees frames");
     for (sum = 0, i = 0; i < sizeof(buf); i++)
         sum += buf[i];
@@ -825,18 +827,32 @@ static void test_entropy_seed_zeroized(void)
 
     memset(buf, 0xA5, sizeof(buf));
     TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, sizeof(buf),
-                                                       0x5000ull, 8ull),
+                                                       0x5000ull, 8ull,
+                                                       BOOT_PRODUCER_UEFI),
                    0u, "non-page alignment never frees frames");
     for (sum = 0, i = 0; i < sizeof(buf); i++)
         sum += buf[i];
     TEST_ASSERT_EQ(sum, 0u, "non-page-certified payload still wiped");
 
+    /* Foreign producer: alignment is NOT ownership -- a perfectly
+     * page-shaped descriptor from another producer is wipe-only. */
+    memset(buf, 0xA5, sizeof(buf));
+    TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, sizeof(buf),
+                                                       0x5000ull, 4096ull,
+                                                       BOOT_PRODUCER_NONE),
+                   0u, "foreign-producer payload never frees frames");
+    for (sum = 0, i = 0; i < sizeof(buf); i++)
+        sum += buf[i];
+    TEST_ASSERT_EQ(sum, 0u, "foreign-producer payload still wiped");
+
     /* Guards: NULL / zero length are no-ops. */
     TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(NULL, 64,
-                                                       0x5000ull, 4096ull),
+                                                       0x5000ull, 4096ull,
+                                                       BOOT_PRODUCER_UEFI),
                    0u, "NULL payload refused");
     TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, 0,
-                                                       0x5000ull, 4096ull),
+                                                       0x5000ull, 4096ull,
+                                                       BOOT_PRODUCER_UEFI),
                    0u, "zero length refused");
 }
 

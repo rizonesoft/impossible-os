@@ -214,23 +214,26 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 7. boot_info Seed Handoff
 
 - [x] Typed seed payload: 32-byte versioned `entropy_seed_header` (twin mirrors) + whole-payload CRC-32C, `FLAG_CHECKSUMMED`. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
-- [x] Earlier-stage concatenation (Linux EFI config-table pattern): `boot_seed_consume()` walks EVERY `RANDOM_SEED` descriptor; the bootloader appends its own instead of overwriting a prior stage's.
+- [x] Earlier-stage mixing (Linux EFI config-table pattern): `boot_seed_consume()` walks EVERY `RANDOM_SEED` descriptor and digest-chains each accepted transcript (Blake2b-256), so any chain depth fits; ours appends, never overwrites.
 - [x] EARLY first-seed boundary (per §6 design pin): `bl_collect_seed_carryover()` reads both rotation names pre-EBS as src-4 records; `seed_file_early_verify()` fails closed; `csprng_core_seed2()` folds into the FIRST key.
-- [x] PMM reservation: `BOOT_PAYLOAD_FLAG_RESERVED` descriptor (reserved by `boot_reserved.c`); `boot_seed_desc_classify()` gates consumption (unreserved/out-of-map retired untouched); frames freed only with certified exclusive page ownership.
-- [x] Zeroization: `boot_seed_release_payload()` (pure) wipes accepted AND rejected payloads; `FLAG_VALID` cleared post-consume; Phase-1 transcript buffer wiped after `csprng_init()`.
+- [x] PMM reservation: `BOOT_PAYLOAD_FLAG_RESERVED` descriptor (reserved by `boot_reserved.c`); `boot_seed_desc_classify()` gates consumption; frames freed only for our producer's certified exclusive pages.
+- [x] Zeroization: `boot_seed_release_payload()` (pure) wipes accepted AND rejected payloads; `FLAG_VALID` cleared post-consume; per-payload scratch + 32-byte digest wiped after `csprng_init()`.
 - [x] ABI tests: `entropy_seed_parse` suites (header/CRC/framing gates, all-or-nothing NO_FIT, carryover routing, descriptor gate, zeroization matrix) in `test_entropy.c`; `csprng_core_seed2` full-state equivalence in `test_klibs.c`.
 - [x] Commit: `"boot: hand off early entropy seed"`
 
-**Test checkpoint:** Kernel logs `entropy: seed payload N bytes (mask=0x.., quality=..)` during Phase 0/1; the TODO-01 §4 payload validator accepts the descriptor; after CSPRNG consumption a debug read of the seed buffer shows zeros. QEMU WHPX, QEMU TCG, VirtualBox, bare metal. (KVM smoke 2026-06-12: `seed payload 154 bytes (mask=0x82, quality=0x4008): 2 records` -> `csprng: seeded: transcript 135+122 bytes`.)
+**Test checkpoint:** Kernel logs `entropy: seed payload N bytes (mask=0x.., quality=..)` then `seed payload digest: N transcript bytes over M payload(s)` during Phase 1; the TODO-01 §4 payload validator accepts the descriptor; after CSPRNG consumption a debug read of the seed buffer shows zeros. QEMU WHPX, QEMU TCG, VirtualBox, bare metal. (KVM smoke 2026-06-12: `seed payload 154 bytes (mask=0x82, quality=0x4008): 2 records` -> `digest: 122 transcript bytes over 1 payload(s)` -> `csprng: seeded: transcript 135+32 bytes`.)
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | entropy + klibs suites, 0 failures
 
 > **Notes:**
 > - Shipped: `src/kernel/main/boot_seed.c` consumer + `entropy_seed_parse()` pure parser + `csprng_core_seed2()` first-seed fold + bootloader publish path in `collect_boot_entropy()` (header, mask/quality, carryover read, CRC-32C).
-> - Runs once on the BSP in Phase 1 before `csprng_init()`; payload validated by the TODO-01 §4 validator, wiped + page-freed (ownership-certified) after consumption.
-> - Downstream: §8 first-seed ordering partially delivered (payload folds into the initial key); Codex design/test-coverage adoptions in the section commit message.
+> - Runs once on the BSP in Phase 1 before `csprng_init()`; each validated payload is digest-chained (Blake2b-256), wiped, and page-freed only for our producer's certified pages.
+> - Downstream: §8 first-seed ordering partially delivered (payload folds into the initial key); Codex adoption details in the section + review commit messages.
 > - Canonical doc: header twin contract in [`include/kernel/entropy.h`](../../include/kernel/entropy.h) (seed payload block).
 > - Scope boundary: §6 owns seed-file format/token/rotation/credit; §7 owns the early read + handoff; §8 owns KASLR-consumer ordering + degraded API; §9 owns diagnostics surfaces.
+
+> **Verified:** 2026-06-12 | commit `dff35172` | 6/6 items | build OK | smoke PASS (KVM 2.540s), 4634+16 tests
+> **Quality reviewed:** 2026-06-12 | Codex 12x (design, test-coverage, adversarial, re-adversarial, consistency, perf) | 9H+4M+1L fixed, 0 open | scope: boot-code-quality + kernel-code-quality
 
 ---
 

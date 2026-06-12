@@ -475,17 +475,18 @@ void boot_phase1(void)
      * post-init reseed a consumer could race past. */
     POST16(POST16_CSPRNG);
     {
-        /* Static, not stack: 4 KiB would crowd the Phase 1 stack.
-         * BSP-only by construction (Phase 1 runs before AP startup);
-         * wiped immediately after the seed absorbs it. */
-        static uint8_t s_boot_seed_tx[4096];
+        /* boot_seed_consume digest-chains every accepted payload
+         * transcript into one Blake2b-256 digest (the per-payload
+         * scratch lives in boot_seed.c); only the 32-byte digest
+         * travels through here. Wiped after the seed absorbs it. */
+        uint8_t boot_seed_digest[BOOT_SEED_DIGEST_LEN];
         uint32_t boot_seed_len;
 
-        boot_seed_len = boot_seed_consume(s_boot_seed_tx,
-                                          (uint32_t)sizeof(s_boot_seed_tx));
-        csprng_init(boot_seed_len ? s_boot_seed_tx : (const uint8_t *)0,
+        boot_seed_len = boot_seed_consume(boot_seed_digest,
+                                          (uint32_t)sizeof(boot_seed_digest));
+        csprng_init(boot_seed_len ? boot_seed_digest : (const uint8_t *)0,
                     boot_seed_len);
-        crypto_wipe(s_boot_seed_tx, sizeof(s_boot_seed_tx));
+        crypto_wipe(boot_seed_digest, sizeof(boot_seed_digest));
     }
     POST16(POST16_CSPRNG_OK);
     boot_progress(1, "CSPRNG", POST16_CSPRNG_OK);
