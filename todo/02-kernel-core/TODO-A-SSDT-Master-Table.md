@@ -656,4 +656,4 @@ title: "SSDT Master Table"
 >
 > **Implementation progress: 140/471 wired** (29.7%) -- **120 complete `[x]`** (25.5%) + **20 partial/stub `[/]`** (4.2%). Complete ranges: ETW (7/7), Time/Timer (5/5), Registry CRUD + advanced (19/27), File I/O (15/28 with 6 partial deferrals for IRP/async), Process+Thread (15/24 with 5 stubs), Memory (11/19 with 3 AWE stubs), Sync (17/30 with 4 keyed-event stubs), Token open/query/adjust (9/21 -- §16 complete), Namespace (6/6 -- §17 complete: directory + symlink). Run `/audit-ssdt` to refresh.
 
-**Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 470 services"` during init.
+**Test checkpoint:** `syscall_dispatch(0xFFFF)` returns `STATUS_NOT_IMPLEMENTED`, not crash. `syscall_dispatch(valid_index)` calls correct handler. Serial: `"ssdt: registered 471 services"` during init.

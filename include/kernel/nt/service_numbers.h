@@ -621,8 +621,8 @@
 /* ====================================================================
  * Total count and bounds
  *
- * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 470).
- * SSDT_LAST_MAIN_INDEX = highest allocated service number (0x03D7).
+ * SSDT_MAIN_COUNT = number of SSDT_Nt* defines above (currently 471).
+ * SSDT_LAST_MAIN_INDEX = highest allocated service number (0x03D8).
  *
  * WARNING: When adding a new service number:
  *   1. Add the #define SSDT_NtXxx line in the correct functional range

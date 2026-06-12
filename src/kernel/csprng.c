@@ -34,7 +34,11 @@
 
 static csprng_core_t g_core;                 /* guarded by g_lock */
 static spinlock_t    g_lock = SPINLOCK_INIT;
-static int           g_seeded;               /* guarded by g_lock */
+/* g_seeded: written under g_lock, but ALSO read lock-free as the fast-path
+ * "already seeded?" check (atomic acquire/release so the seed key write is
+ * visible before the flag flips). The unseeded path is purely defensive --
+ * csprng_init runs in Phase 1 before any consumer. */
+static int           g_seeded;
 static uint64_t      g_fill_calls;           /* guarded by g_lock */
 
 /* ---- Pure core ---- */
@@ -58,12 +62,18 @@ void csprng_core_ratchet(csprng_core_t *c, uint8_t out_key[CSPRNG_KEY_SIZE])
     crypto_wipe(block, sizeof(block));
 }
 
-void csprng_core_stream(const uint8_t key[CSPRNG_KEY_SIZE], void *out,
-                        size_t len)
+void csprng_core_stream_at(const uint8_t key[CSPRNG_KEY_SIZE],
+                           uint64_t block, void *out, size_t len)
 {
     static const uint8_t nonce[8] = {0};  /* request key is single-use */
 
-    crypto_chacha20_djb((uint8_t *)out, NULL, len, key, nonce, 0);
+    crypto_chacha20_djb((uint8_t *)out, NULL, len, key, nonce, block);
+}
+
+void csprng_core_stream(const uint8_t key[CSPRNG_KEY_SIZE], void *out,
+                        size_t len)
+{
+    csprng_core_stream_at(key, 0, out, len);
 }
 
 void csprng_core_reseed(csprng_core_t *c,
@@ -159,7 +169,7 @@ void csprng_init(void)
 
     spin_lock_irqsave(&g_lock, &fl);
     csprng_core_seed(&g_core, transcript, pos);
-    g_seeded = 1;
+    __atomic_store_n(&g_seeded, 1, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&g_lock, fl);
     crypto_wipe(transcript, sizeof(transcript));
 
@@ -177,41 +187,72 @@ void csprng_init(void)
     }
 }
 
-/* Defensive: a consumer ran before Phase 1 seeding. Seed from the local
- * sources so output is never the all-zero-key stream. Caller holds g_lock. */
-static void emergency_seed_locked(void)
+/* Defensive: a consumer ran before Phase 1 seeding. Collect a local-source
+ * transcript OUTSIDE g_lock (RDRAND retries + ACPI PM timer I/O must never
+ * run under a spinlock), then install it under the lock with a re-check so
+ * only one CPU wins the seed race. Returns 1 if THIS call performed the
+ * seed (caller logs after unlock -- klog must not run under a spinlock).
+ * Purely defensive: csprng_init runs in Phase 1 before any consumer. */
+static int emergency_seed(void)
 {
     uint8_t  transcript[160];
     uint32_t pos = 0;
     int      had_hw = 0;
+    uint64_t fl;
+    int      did_seed = 0;
 
     pos = collect_local_sources(transcript, sizeof(transcript), pos, &had_hw);
-    csprng_core_seed(&g_core, transcript, pos);
-    g_seeded = 1;
+
+    spin_lock_irqsave(&g_lock, &fl);
+    if (!g_seeded) {
+        csprng_core_seed(&g_core, transcript, pos);
+        __atomic_store_n(&g_seeded, 1, __ATOMIC_RELEASE);
+        did_seed = 1;
+    }
+    spin_unlock_irqrestore(&g_lock, fl);
+
     crypto_wipe(transcript, sizeof(transcript));
-    klog(LOG_ERROR, "csprng",
-         "emergency seed: csprng_fill() before csprng_init() "
-         "(rdrand=%u) -- check boot init ordering", (uint64_t)had_hw);
+    return did_seed;
+}
+
+/* Produce one single-use request key: ensure the generator is seeded
+ * (emergency-seed outside the lock if not), then ratchet the global key
+ * ONCE under g_lock. The lock hold is exactly one bounded 64-byte
+ * ChaCha20 block -- no I/O, no logging, no unbounded work. Callers stream
+ * arbitrary-length output from the returned key OUTSIDE the lock (using an
+ * advancing block counter for multi-chunk fills). */
+static void csprng_request_key(uint8_t out_key[CSPRNG_KEY_SIZE])
+{
+    uint64_t fl;
+    int      did_emergency = 0;
+
+    if (!__atomic_load_n(&g_seeded, __ATOMIC_ACQUIRE))
+        did_emergency = emergency_seed();
+
+    spin_lock_irqsave(&g_lock, &fl);
+    csprng_core_ratchet(&g_core, out_key);
+    g_fill_calls++;
+    spin_unlock_irqrestore(&g_lock, fl);
+
+    if (did_emergency)
+        klog(LOG_ERROR, "csprng",
+             "emergency seed: csprng request before csprng_init() -- "
+             "check boot init ordering");
 }
 
 /* ---- Global output path ---- */
 
 void csprng_fill(void *buf, size_t len)
 {
-    uint8_t  rkey[CSPRNG_KEY_SIZE];
-    uint64_t fl;
+    uint8_t rkey[CSPRNG_KEY_SIZE];
 
     if (buf == NULL || len == 0)
         return;
 
-    spin_lock_irqsave(&g_lock, &fl);
-    if (!g_seeded)
-        emergency_seed_locked();
-    csprng_core_ratchet(&g_core, rkey);
-    g_fill_calls++;
-    spin_unlock_irqrestore(&g_lock, fl);
-
-    csprng_core_stream(rkey, buf, len);
+    csprng_request_key(rkey);
+    /* Single ChaCha20 call generates the whole request from the request
+     * key -- the global lock was taken exactly once (in request_key). */
+    csprng_core_stream_at(rkey, 0, buf, len);
     crypto_wipe(rkey, sizeof(rkey));
 }
 
@@ -228,6 +269,7 @@ void csprng_add_entropy(const void *buf, uint32_t len,
 {
     uint8_t  digest[CSPRNG_KEY_SIZE];
     uint64_t fl;
+    int      new_seeded;
 
     if (buf == NULL || len == 0)
         return;
@@ -237,20 +279,15 @@ void csprng_add_entropy(const void *buf, uint32_t len,
     crypto_blake2b(digest, sizeof(digest), (const uint8_t *)buf, len);
 
     spin_lock_irqsave(&g_lock, &fl);
-    g_seeded = csprng_core_absorb_digest(&g_core, g_seeded, digest, quality);
+    new_seeded = csprng_core_absorb_digest(&g_core, g_seeded, digest, quality);
+    __atomic_store_n(&g_seeded, new_seeded, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&g_lock, fl);
     crypto_wipe(digest, sizeof(digest));
 }
 
 int csprng_is_seeded(void)
 {
-    uint64_t fl;
-    int s;
-
-    spin_lock_irqsave(&g_lock, &fl);
-    s = g_seeded;
-    spin_unlock_irqrestore(&g_lock, fl);
-    return s;
+    return __atomic_load_n(&g_seeded, __ATOMIC_ACQUIRE);
 }
 
 /* ---- NtGetRandom SSDT handler ----
@@ -260,11 +297,15 @@ int csprng_is_seeded(void)
  * Fills exactly Length bytes (no Linux-style short reads -- the CSPRNG
  * never blocks, so partial fills have nothing to signal). Flags must be 0;
  * the parameter exists so getrandom(2) compat flags (GRND_*) can map onto
- * it without an ABI break. Generation goes through a kernel bounce buffer
- * in bounded chunks; the CSPRNG lock is never held during the user copy
- * (csprng_fill releases it before streaming), and the copy itself goes
- * through copy_to_user (SMAP-safe, fault-recoverable) -- never a raw
- * memcpy into a ring-3 pointer.
+ * it without an ABI break.
+ *
+ * The global CSPRNG lock is taken EXACTLY ONCE per request (a single
+ * csprng_request_key ratchet), regardless of length. The per-chunk
+ * keystream is then generated OUTSIDE the lock from that single request
+ * key with an advancing ChaCha20 block counter, copied to user through a
+ * kernel bounce buffer via copy_to_user (SMAP-safe, fault-recoverable) --
+ * never a raw memcpy into a ring-3 pointer, and never 4096 lock churns for
+ * a 1 MiB request.
  *
  * Destination validation is the standard NT contract: ProbeForWriteIfUser
  * range/alignment check (UserMode callers) + copy_to_user. Tighter
@@ -277,7 +318,9 @@ int csprng_is_seeded(void)
 NTSTATUS NtGetRandom(void *user_buf, uint64_t len, uint64_t flags)
 {
     uint8_t  chunk[CSPRNG_COPY_CHUNK];
+    uint8_t  rkey[CSPRNG_KEY_SIZE];
     uint8_t *dst = (uint8_t *)user_buf;
+    uint64_t block = 0;   /* ChaCha20 block counter, advances per chunk */
     NTSTATUS st;
 
     if (user_buf == NULL || len == 0 ||
@@ -288,19 +331,25 @@ NTSTATUS NtGetRandom(void *user_buf, uint64_t len, uint64_t flags)
     if (st != STATUS_SUCCESS)
         return st;
 
+    /* One ratchet for the whole request; stream chunks outside the lock. */
+    csprng_request_key(rkey);
+
     while (len > 0) {
         uint32_t n = (len < sizeof(chunk)) ? (uint32_t)len
                                            : (uint32_t)sizeof(chunk);
 
-        csprng_fill(chunk, n);
+        csprng_core_stream_at(rkey, block, chunk, n);
+        block += (n + 63u) / 64u;   /* advance by the blocks consumed */
         if (copy_to_user(dst, chunk, n) != 0) {
             crypto_wipe(chunk, sizeof(chunk));
+            crypto_wipe(rkey, sizeof(rkey));
             return STATUS_ACCESS_VIOLATION;
         }
         dst += n;
         len -= n;
     }
     crypto_wipe(chunk, sizeof(chunk));
+    crypto_wipe(rkey, sizeof(rkey));
     return STATUS_SUCCESS;
 }
 

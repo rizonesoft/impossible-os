@@ -51,8 +51,15 @@ void csprng_core_seed(csprng_core_t *c, const uint8_t *transcript,
  * single-use request key. Bounded work -- safe under a spinlock. */
 void csprng_core_ratchet(csprng_core_t *c, uint8_t out_key[CSPRNG_KEY_SIZE]);
 
-/* Stream 'len' bytes of ChaCha20 keystream from a single-use request key.
- * Pure function of (key, len); no shared state -- call OUTSIDE any lock. */
+/* Stream 'len' bytes of ChaCha20 keystream from a single-use request key,
+ * starting at block counter 'block'. Pure function of (key, block, len);
+ * no shared state -- call OUTSIDE any lock. Multi-chunk fills from ONE
+ * request key advance 'block' by ceil(chunk/64) per chunk so the keystream
+ * is continuous (NtGetRandom uses this to take the global lock once). */
+void csprng_core_stream_at(const uint8_t key[CSPRNG_KEY_SIZE],
+                           uint64_t block, void *out, size_t len);
+
+/* Stream 'len' bytes from block 0 -- csprng_core_stream_at(key, 0, ...). */
 void csprng_core_stream(const uint8_t key[CSPRNG_KEY_SIZE], void *out,
                         size_t len);
 
@@ -78,10 +85,15 @@ int csprng_core_absorb_digest(csprng_core_t *c, int seeded,
  * sections). */
 void csprng_init(void);
 
-/* Fill 'buf' with 'len' cryptographically random bytes. SMP-safe; callable
- * from thread or interrupt context (irqsave lock with bounded hold). If
- * invoked before csprng_init() (defensive), performs an emergency RDRAND/
- * TSC seed and logs LOG_ERROR. */
+/* Fill 'buf' with 'len' cryptographically random bytes. SMP-safe: the
+ * global key ratchet runs under one irqsave spinlock with a bounded
+ * (64-byte) hold; the keystream for the request is generated OUTSIDE the
+ * lock. THREAD CONTEXT for arbitrary 'len' -- the keystream generation
+ * runs in the caller's context, so a multi-KB fill from an ISR would run
+ * with interrupts disabled for the whole stream. ISR callers must keep
+ * 'len' small (<= a few hundred bytes). If invoked before csprng_init()
+ * (defensive), performs an emergency local-source seed and logs LOG_ERROR
+ * after releasing the lock. */
 void csprng_fill(void *buf, size_t len);
 
 /* Convenience: one random uint64_t. */

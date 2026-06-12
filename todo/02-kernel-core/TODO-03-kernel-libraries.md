@@ -223,7 +223,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 **Test checkpoint:** AEAD round-trip + tamper rejection; Blake2b RFC 7693 + X25519 RFC 7748 + independent Ed25519 vectors; CSPRNG core golden vectors (two independent implementations agreed); `csprng_fill` outputs differ; `NtGetRandom` via real `ssdt_dispatch` + chunk boundaries 1/255/256/257/513 with canaries. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 15 klibs suites in `test_klibs.c`, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 14 klibs suites in `test_klibs.c`, 0 failures
 
 > **Notes:**
 > - Shipped: `src/libs/monocypher/` (Monocypher 4.0.2) + `src/kernel/csprng.c` (ChaCha20 fast-key-erasure CSPRNG, Blake2b conditioner) + `NtGetRandom` SSDT 0x03D8 + `acpi_pmtimer_read_value()`.
@@ -231,6 +231,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - Downstream: unblocks `01-boot-platform/TODO-12` §6/§8, `TODO-04` §10 klog HMAC, EIF signing (T17 §17); Codex adoptions + two latent-bug fixes (heap truncation, user PT window) detailed in the ship commit.
 > - Canonical doc: `include/kernel/csprng.h` + the `include/kernel/entropy.h` conditioner contract.
 > - Scope boundary: boot seed payload mixing/ordering/policy stay with `01-boot-platform/TODO-12` §7-§9; virtio-rng hook with `04-drivers-hardware/TODO-09` §12; `canary_init()` with `TODO-10` §11.
+> **Verified:** 2026-06-12 | commit `99910014` | 9/12 items | build OK | tests 4523/4523 PASS, smoke PASS
+> **Accepted:** [H] `NtGetRandom` (and every UserMode NtXxx handler) trusts `ProbeFor*IfUser` range-only check; a ring-3 low kernel VA below `MM_USER_PROBE_ADDRESS` passes (systemic, per-process frames shared until PE loader) -> XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §2 (item: "Harden the user-copy path to reject supervisor destinations" at line 116)
+> **Accepted:** [H] global `s_previous_mode` can race on SMP, skipping a handler's probe (reason: gated on SMP user scheduling) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §12 (item: "Make `s_previous_mode` ... per-CPU" at line 431)
+> **Quality reviewed:** 2026-06-12 | Codex 11x (design + test-coverage + adversarial + consistency + perf + re-adversarial) | 3H+5M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
 
