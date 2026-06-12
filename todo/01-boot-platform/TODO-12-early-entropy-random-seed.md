@@ -38,7 +38,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   1   | Entropy source inventory and quality model | T04 §2             |  [x]   |
 | 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [x]   |
 | 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [x]   |
-| 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [ ]   |
+| 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [/]   |
 | 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [ ]   |
 | 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [ ]   |
 | 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [ ]   |
@@ -126,7 +126,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 4. TPM RNG Collection
 
-- [ ] Use TPM2_GetRandom when TPM transport is available.
+> [!NOTE]
+> **Blocked (2026-06-12):** TPM2_GetRandom requires the TPM2 command transport (TIS/CRB locality + command/response buffers), which is `[ ]` at `01-boot-platform/TODO-13` §2 (item: "Implement locality request/release and command/response buffer handling" at line 62). Implement this section after that transport ships; the seed transcript already reserves src id 2 (`ENTROPY_SRC_TPM_RNG`).
+
+- [ ] Use TPM2_GetRandom when TPM transport is available. -> XREF: `01-boot-platform/TODO-13` §2 (blocker)
 - [ ] Mix TPM output with other sources rather than trusting it alone.
 - [ ] Degrade cleanly on no TPM, timeout, or error.
 - [ ] Include TPM RNG availability in measured boot report.

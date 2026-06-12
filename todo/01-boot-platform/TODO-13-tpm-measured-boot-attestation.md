@@ -62,6 +62,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Implement locality request/release and command/response buffer handling.
 - [ ] Add timeout and degraded-boot behavior for absent or wedged TPMs.
 - [ ] Support TPM2_Startup detection without perturbing firmware-owned state.
+- [ ] Unblocks `01-boot-platform/TODO-12` §4 (TPM2_GetRandom entropy collection) -- notify that consumer when this ships.
 - [ ] Commit: `"tpm: add TPM2 command transport"`
 
 ## 3. PCR Read API
