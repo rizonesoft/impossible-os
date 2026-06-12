@@ -159,11 +159,30 @@ int entropy_stage_source(entropy_src_t src, const uint8_t *data,
     return 1;
 }
 
-const uint8_t *entropy_staged_peek(uint32_t *out_len)
+uint32_t entropy_staged_drain(uint8_t *out, uint32_t cap)
 {
-    if (out_len)
-        *out_len = __atomic_load_n(&s_stage_pos, __ATOMIC_ACQUIRE);
-    return s_stage_buf;
+    uint64_t irqf;
+    uint32_t i, n;
+
+    if (!out)
+        return 0;
+
+    spin_lock_irqsave(&s_stage_lock, &irqf);
+    n = s_stage_pos;
+    if (n > cap) {
+        /* All-or-nothing: a partial drain would split a record across
+         * two consumers. Leave the transcript intact for a retry with
+         * a big enough buffer. */
+        spin_unlock_irqrestore(&s_stage_lock, irqf);
+        return 0;
+    }
+    for (i = 0; i < n; i++) {
+        out[i] = s_stage_buf[i];
+        s_stage_buf[i] = 0;
+    }
+    s_stage_pos = 0;
+    spin_unlock_irqrestore(&s_stage_lock, irqf);
+    return n;
 }
 
 void entropy_staged_consume_zero(void)

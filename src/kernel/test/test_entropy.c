@@ -219,8 +219,9 @@ static void test_entropy_record_clamp(void)
 static void test_entropy_staged_transcript(void)
 {
     uint8_t data[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    uint32_t len = 0;
-    const uint8_t *buf;
+    uint8_t out[ENTROPY_STAGE_CAP];
+    uint8_t tiny[4];
+    uint32_t len;
 
     /* Start from a clean slate (tests may run after the boot jitter
      * sampler staged real bytes; consume_zero is the supported reset). */
@@ -229,31 +230,46 @@ static void test_entropy_staged_transcript(void)
     TEST_ASSERT_EQ(entropy_stage_source(ENTROPY_SRC_SEED_FILE, data, 8,
                                         ENTROPY_Q_HIGH), 1,
                    "staging a fitting record succeeds");
-    buf = entropy_staged_peek(&len);
-    TEST_ASSERT_EQ(len, 13u, "staged length = 1+4+8");
-    TEST_ASSERT_EQ(buf[0], (uint8_t)ENTROPY_SRC_SEED_FILE,
-                   "staged record carries the src id");
 
-    /* Oversized record refused; length unchanged; no partial bytes. */
+    /* NULL dest and too-small cap consume nothing. */
+    TEST_ASSERT_EQ(entropy_staged_drain((uint8_t *)0, sizeof(out)), 0u,
+                   "drain to NULL returns 0");
+    TEST_ASSERT_EQ(entropy_staged_drain(tiny, (uint32_t)sizeof(tiny)), 0u,
+                   "drain with cap < staged length returns 0");
+
+    /* Full drain returns the record and consumes it. */
+    len = entropy_staged_drain(out, (uint32_t)sizeof(out));
+    TEST_ASSERT_EQ(len, 13u, "drained length = 1+4+8");
+    TEST_ASSERT_EQ(out[0], (uint8_t)ENTROPY_SRC_SEED_FILE,
+                   "drained record carries the src id");
+    TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
+                   "second drain finds an empty transcript");
+
+    /* Oversized record refused; staged content stays intact. */
     {
         uint8_t big[ENTROPY_STAGE_CAP];
         uint32_t i;
         for (i = 0; i < sizeof(big); i++) big[i] = (uint8_t)i;
+        TEST_ASSERT_EQ(entropy_stage_source(ENTROPY_SRC_SEED_FILE, data, 8,
+                                            ENTROPY_Q_HIGH), 1,
+                       "restaging after drain succeeds");
         TEST_ASSERT_EQ(entropy_stage_source(ENTROPY_SRC_JITTER, big,
                                             (uint32_t)sizeof(big),
                                             ENTROPY_Q_LOW), 0,
                        "oversized record refused");
         TEST_ASSERT_EQ(entropy_staged_overflowed(), 1,
                        "overflow flag set after refusal");
-        entropy_staged_peek(&len);
-        TEST_ASSERT_EQ(len, 13u, "refusal leaves staged length unchanged");
+        len = entropy_staged_drain(out, (uint32_t)sizeof(out));
+        TEST_ASSERT_EQ(len, 13u, "refusal leaves staged record intact");
     }
 
-    /* Consume zeroes the buffer and resets position. */
+    /* consume_zero is the no-copy reset path. */
+    TEST_ASSERT_EQ(entropy_stage_source(ENTROPY_SRC_SEED_FILE, data, 8,
+                                        ENTROPY_Q_HIGH), 1,
+                   "staging before consume_zero succeeds");
     entropy_staged_consume_zero();
-    buf = entropy_staged_peek(&len);
-    TEST_ASSERT_EQ(len, 0u, "consume resets staged length");
-    TEST_ASSERT_EQ(buf[0], 0u, "consume zeroes staged bytes");
+    TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
+                   "consume_zero resets staged length");
 
     /* Restore the global record slot the staging test touched. */
     entropy_record_source(ENTROPY_SRC_SEED_FILE, ENTROPY_Q_NONE);

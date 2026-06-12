@@ -119,12 +119,16 @@ uint32_t entropy_source_quality(void);
 int entropy_stage_source(entropy_src_t src, const uint8_t *data,
                          uint32_t len, entropy_quality_t q);
 
-/* Read access for the CSPRNG seeding consumer: returns the staged
- * buffer and writes its current length. SINGLE-CONSUMER contract: call
- * on the BSP boot path only, then consume_zero() after hashing. */
-const uint8_t *entropy_staged_peek(uint32_t *out_len);
+/* Atomically drain the staged transcript: copy up to cap bytes into
+ * out, zero the staged bytes, reset the position -- all under one
+ * irqsave lock so a concurrent producer can never append between the
+ * snapshot and the wipe (its record either made the drain or is fully
+ * intact for the next one). Returns the copied length, or 0 when out
+ * is NULL or cap is too small for the staged content (nothing is
+ * consumed in that case). */
+uint32_t entropy_staged_drain(uint8_t *out, uint32_t cap);
 
-/* Zero the staged transcript and reset its position (post-hash). */
+/* Zero + reset without consuming (test/reset path). */
 void entropy_staged_consume_zero(void);
 
 /* 1 when any record was refused for lack of space (diagnostics). */
