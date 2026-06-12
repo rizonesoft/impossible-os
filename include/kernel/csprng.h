@@ -108,6 +108,37 @@ void csprng_init(const uint8_t *boot_transcript, uint32_t boot_len);
  * after releasing the lock. */
 void csprng_fill(void *buf, size_t len);
 
+/* Fill + return the CREDITED entropy class so degraded output is
+ * explicit (fill itself never blocks or fails post-init -- Win11
+ * BCryptGenRandom parity). Callers that need key-grade bytes refuse on
+ * ENTROPY_CLASS_DEGRADED (or gate on csprng_crypto_ok). */
+entropy_class_t csprng_fill_classified(void *buf, uint32_t len);
+
+/* CSPRNG-owned credited entropy class: snapshotted from the diagnostic
+ * record at the first-seed install (where it is bound to the absorbed
+ * transcript) and upgraded only when csprng_add_entropy actually
+ * absorbs hardware-quality material (csprng_class_upgrade rule). The
+ * loose diagnostic record in entropy.c is for reporting; THIS is for
+ * policy. */
+entropy_class_t csprng_credited_class(void);
+
+/* PURE upgrade rule (unit-testable): one absorbed HIGH contribution of
+ * key size or more lifts DEGRADED to MINIMUM; nothing reaches GOOD
+ * without per-source provenance (runtime reseed roadmap); never
+ * downgrades. */
+entropy_class_t csprng_class_upgrade(entropy_class_t cur,
+                                     entropy_quality_t quality,
+                                     uint32_t len);
+
+/* Cryptographic key-generation gate: 1 when the CSPRNG is seeded AND
+ * the credited class is at least MINIMUM -- UNCONDITIONALLY. The
+ * mutable boot.conf debug byte never relaxes key-grade readiness;
+ * debug-mode latitude applies to boot progression (entropy_policy_ok
+ * callers), not here. Key-generation consumers (key mint, future
+ * TLS/session keys) check this BEFORE drawing; bulk consumers like
+ * NtGetRandom never gate on it. */
+int csprng_crypto_ok(void);
+
 /* Convenience: one random uint64_t. */
 uint64_t csprng_u64(void);
 

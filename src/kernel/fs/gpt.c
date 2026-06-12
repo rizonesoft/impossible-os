@@ -464,10 +464,10 @@ int guid_from_string(const char *str, struct gpt_guid *g)
 
 /* ---- GUID v4 Generation (random) ---- */
 
-/* RDRAND is provided by include/kernel/random.h (shared with kusd_time.c
- * and task.c auxv setup). When the kernel CSPRNG lands, replace
- * rdrand_bytes() calls with kernel_random_bytes() at all sites.
+/* GUID randomness comes from the kernel CSPRNG (csprng_fill, seeded at
+ * Phase 1); RDRAND + XorShift survive only as the pre-seed fallback.
  * XREF: 16-architecture-ports/TODO-01-arch-abstraction-layer.md -- HAL random source */
+#include "kernel/csprng.h"
 #include "kernel/random.h"
 
 /* XorShift64 PRNG fallback seeded from TSC */
@@ -509,8 +509,14 @@ struct gpt_guid guid_generate(void)
     struct gpt_guid g;
     uint8_t raw[16];
 
-    /* Fill 16 bytes with random data */
-    if (!rdrand_bytes(raw, 16))
+    /* Kernel CSPRNG first (seeded at Phase 1 by early_entropy_init,
+     * long before any GPT write path): never blocks, and on RDRAND-less
+     * systems it still mixes firmware/TPM/jitter sources instead of the
+     * predictable TSC XorShift. The RDRAND + XorShift chain survives
+     * ONLY as the pre-seed defensive fallback. */
+    if (csprng_is_seeded())
+        csprng_fill(raw, sizeof(raw));
+    else if (!rdrand_bytes(raw, 16))
         prng_fill(raw, 16);
 
     /* Set version 4 (random): bits 48–51 = 0100 */

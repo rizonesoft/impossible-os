@@ -396,6 +396,94 @@ static void test_csprng_core(void)
     }
 }
 
+static void test_csprng_crypto_gate(void)
+{
+    /* PURE upgrade rule matrix (kernel early CSPRNG seeding section). */
+    TEST_ASSERT_EQ(csprng_class_upgrade(ENTROPY_CLASS_DEGRADED,
+                                        ENTROPY_Q_HIGH, CSPRNG_KEY_SIZE),
+                   ENTROPY_CLASS_MINIMUM,
+                   "key-size HIGH absorb lifts degraded to minimum");
+    TEST_ASSERT_EQ(csprng_class_upgrade(ENTROPY_CLASS_DEGRADED,
+                                        ENTROPY_Q_HIGH,
+                                        CSPRNG_KEY_SIZE - 1u),
+                   ENTROPY_CLASS_DEGRADED,
+                   "short HIGH absorb never upgrades");
+    TEST_ASSERT_EQ(csprng_class_upgrade(ENTROPY_CLASS_DEGRADED,
+                                        ENTROPY_Q_LOW, 4096u),
+                   ENTROPY_CLASS_DEGRADED,
+                   "LOW absorb never upgrades regardless of size");
+    TEST_ASSERT_EQ(csprng_class_upgrade(ENTROPY_CLASS_MINIMUM,
+                                        ENTROPY_Q_HIGH, 4096u),
+                   ENTROPY_CLASS_MINIMUM,
+                   "absorb can never prove GOOD (needs per-source provenance)");
+    TEST_ASSERT_EQ(csprng_class_upgrade(ENTROPY_CLASS_GOOD,
+                                        ENTROPY_Q_LOW, 8u),
+                   ENTROPY_CLASS_GOOD, "upgrade rule never downgrades");
+    TEST_ASSERT_EQ(csprng_class_upgrade(ENTROPY_CLASS_DEGRADED,
+                                        ENTROPY_Q_NONE, CSPRNG_KEY_SIZE),
+                   ENTROPY_CLASS_DEGRADED, "Q_NONE never upgrades");
+    TEST_ASSERT_EQ(csprng_class_upgrade(ENTROPY_CLASS_DEGRADED,
+                                        (entropy_quality_t)3, CSPRNG_KEY_SIZE),
+                   ENTROPY_CLASS_DEGRADED,
+                   "reserved quality value never upgrades");
+
+    /* Read-only oracles against the live (boot-seeded) global: the gate
+     * must be exactly seeded AND policy(credited, release-mode), and
+     * fill_classified must report the same credited class. */
+    {
+        uint8_t buf[16];
+        entropy_class_t credited = csprng_credited_class();
+
+        /* The gate is UNCONDITIONALLY release-strict: the mutable
+         * boot.conf debug byte must never relax key-grade readiness. */
+        TEST_ASSERT_EQ((uint64_t)csprng_crypto_ok(),
+                       (uint64_t)(csprng_is_seeded() &&
+                                  entropy_policy_ok(credited, 1)),
+                       "crypto gate == seeded AND release policy(credited)");
+        memset(buf, 0, sizeof(buf));
+        TEST_ASSERT_EQ(csprng_fill_classified(buf, sizeof(buf)), credited,
+                       "fill_classified reports the credited class");
+        {
+            uint64_t sum = 0;
+            uint32_t i;
+            for (i = 0; i < sizeof(buf); i++)
+                sum += buf[i];
+            TEST_ASSERT_NEQ(sum, 0u, "fill_classified fills the buffer");
+        }
+
+        /* Insulation: the credited class is CSPRNG-owned and must not
+         * follow the loose diagnostic record. Mutate ONLY the diagnostic
+         * record (snapshot/restore, the documented in-memory pattern) and
+         * assert the credited class + crypto gate do not move -- a
+         * recorded-but-not-absorbed source must never approve key
+         * generation. */
+        {
+            uint32_t saved_mask = entropy_source_mask();
+            uint32_t saved_q = entropy_source_quality();
+            int gate_before = csprng_crypto_ok();
+            uint32_t src;
+
+            for (src = 0; src < ENTROPY_SRC_COUNT; src++)
+                entropy_record_source((entropy_src_t)src, ENTROPY_Q_NONE);
+            entropy_record_source(ENTROPY_SRC_FW_RNG, ENTROPY_Q_HIGH);
+            entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_HIGH);
+
+            TEST_ASSERT_EQ(csprng_credited_class(), credited,
+                           "credited class insulated from diagnostic record");
+            TEST_ASSERT_EQ((uint64_t)csprng_crypto_ok(),
+                           (uint64_t)gate_before,
+                           "crypto gate insulated from diagnostic record");
+
+            for (src = 0; src < ENTROPY_SRC_COUNT; src++) {
+                entropy_quality_t q = (saved_mask & ENTROPY_SRC_BIT(src))
+                    ? entropy_quality_get(saved_q, (entropy_src_t)src)
+                    : ENTROPY_Q_NONE;
+                entropy_record_source((entropy_src_t)src, q);
+            }
+        }
+    }
+}
+
 static void test_csprng_global(void)
 {
     uint8_t b1[32], b2[32];
@@ -552,6 +640,8 @@ void test_register_klibs(void)
                             test_csprng_absorb_policy, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: csprng add_entropy",
                             test_csprng_add_entropy_global, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: csprng crypto gate",
+        test_csprng_crypto_gate, TEST_CAT_SECURITY);
     test_suite_register_cat("klibs: csprng global",
                             test_csprng_global, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: NtGetRandom",

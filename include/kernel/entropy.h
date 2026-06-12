@@ -220,6 +220,13 @@ entropy_seed_status_t entropy_seed_parse(
 #define BOOT_SEED_DIGEST_LEN  32u
 uint32_t boot_seed_consume(uint8_t *out, uint32_t cap);
 
+/* The SINGLE named early-entropy init point (kernel early CSPRNG seeding
+ * section): boot_seed_consume -> csprng_init -> wipe, then logs the
+ * credited class + release crypto-gate verdict. Runs once on the BSP in
+ * Phase 1, BEFORE every randomness consumer (AT_RANDOM, AP canaries,
+ * KUSD cookie, GUID generation, future KASLR). */
+void early_entropy_init(void);
+
 /* PURE consumability classifier for one RANDOM_SEED descriptor (the
  * load-bearing gate inside boot_seed_consume, exported for tests).
  * NOT_RESERVED and OUT_OF_MAP descriptors must be retired UNTOUCHED:

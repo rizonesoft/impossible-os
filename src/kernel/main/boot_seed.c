@@ -31,6 +31,7 @@
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
+#include "kernel/csprng.h"
 #include "kernel/entropy.h"
 #include "kernel/seed_file.h"
 #include "kernel/klog.h"
@@ -279,4 +280,28 @@ uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
          "seed payload digest: %lu transcript bytes over %u payload(s)",
          (uint64_t)total, (uint64_t)consumed);
     return BOOT_SEED_DIGEST_LEN;
+}
+
+void early_entropy_init(void)
+{
+    /* The SINGLE named early-entropy init point, BEFORE every randomness
+     * consumer (AT_RANDOM in task_exec, AP canaries, KUSD cookie, GUID
+     * generation, future KASLR): consume the boot_info seed payloads,
+     * fold the digest into the FIRST CSPRNG key, report the credited
+     * class + crypto-gate verdict. BSP boot path only (Phase 1). */
+    uint8_t digest[BOOT_SEED_DIGEST_LEN];
+    uint32_t len;
+    entropy_class_t cls;
+
+    len = boot_seed_consume(digest, (uint32_t)sizeof(digest));
+    csprng_init(len ? digest : (const uint8_t *)0, len);
+    crypto_wipe(digest, sizeof(digest));
+
+    cls = csprng_credited_class();
+    klog(LOG_INFO, "entropy",
+         "early entropy init complete: credited class=%s, "
+         "release crypto %s",
+         cls == ENTROPY_CLASS_GOOD ? "good" :
+         cls == ENTROPY_CLASS_MINIMUM ? "minimum" : "degraded",
+         csprng_crypto_ok() ? "permitted" : "REFUSED until reseed");
 }

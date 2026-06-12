@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). §6 shipped the seed-file carryover lifecycle (`seed_file.c`: MAC'd format, NVRAM anti-clone token, Phase-3 reseed + crash-tolerant rotation). Still missing: kernel-side descriptor consumption + zeroing (§7, incl. the early pre-EBS read of the §6 file format), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). §6 shipped the seed-file carryover lifecycle (`seed_file.c`: MAC'd format, NVRAM anti-clone token, Phase-3 reseed + crash-tolerant rotation). §7 shipped the boot_info seed handoff (digest-chained first-seed consumption + zeroing + pre-EBS carryover read). §8 shipped the named `early_entropy_init()` point, the CSPRNG-owned credited class, the unconditional key-generation gate `csprng_crypto_ok()`, and `csprng_fill_classified()`. Remaining: diagnostics/policy surfaces (§9) and the §10 test sweep.
 
 ## Inputs
 
@@ -42,7 +42,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [x]   |
 | 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [x]   |
 | 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [x]   |
-| 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5      |  [ ]   |
+| 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5      |  [x]   |
 | ⭐  |   9   | Entropy diagnostics and policy gates       | §1-§8              |  [ ]   |
 | 💎  |  10   | Entropy tests                              | §1-§9              |  [ ]   |
 
@@ -239,15 +239,24 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 8. Kernel Early CSPRNG Seeding
 
-- [ ] Add `early_entropy_init()` before KASLR/ASLR consumers where possible.
-- [ ] Feed Monocypher/ChaCha CSPRNG once available.
-- [ ] Provide temporary bounded random API with explicit degraded flag.
-- [ ] Block release-mode cryptographic operations until seeded.
-- [ ] This section delivers the FIRST seed only; runtime reseeding (`csprng_add_entropy()`, thresholds, interrupt-timing accounting, hwrng hooks) is owned by `../02-kernel-core/TODO-03-kernel-libraries.md` §5.
-- [ ] Boundary (D02T03 §5 + §7 shipped): `csprng_init()` drains staged jitter/TPM AND folds the §7 payload into the FIRST key; this section owns only KASLR-consumer ordering, the degraded-flag API, and policy gates.
-- [ ] Commit: `"kernel: seed early CSPRNG from boot entropy"`
+- [x] `early_entropy_init()` (`boot_seed.c`): the single named Phase-1 init point (consume -> first seed -> wipe -> class log), BEFORE every consumer (AT_RANDOM, AP canaries, KUSD cookie, GUIDs, future KASLR).
+- [x] Feed Monocypher/ChaCha CSPRNG: `csprng_init()` drains local + staged sources AND the §7 payload digest into the FIRST Blake2b-derived key (shipped D02T03 §5 + §7; named init point here).
+- [x] Degraded-flag API: `csprng_fill_classified()` fills (never blocks, BCryptGenRandom parity) and returns the CSPRNG-owned `csprng_credited_class()`; `rdrand_bytes()` stays the documented non-CSPRNG helper.
+- [x] Key-generation crypto gate: `csprng_crypto_ok()` = seeded AND credited >= MINIMUM, UNCONDITIONALLY (mutable boot.conf debug never relaxes it); credited class bound to ABSORBED material, never the diagnostic record; `guid_generate()` migrated.
+- [x] This section delivers the FIRST seed only; runtime reseeding (`csprng_add_entropy()`, thresholds, interrupt-timing accounting, hwrng hooks) is owned by `../02-kernel-core/TODO-03-kernel-libraries.md` §5.
+- [x] Boundary (D02T03 §5 + §7 shipped): `csprng_init()` drains staged jitter/TPM AND folds the §7 payload into the FIRST key; this section owns only KASLR-consumer ordering, the degraded-flag API, and policy gates.
+- [x] Commit: `"kernel: seed early CSPRNG from boot entropy"`
 
-**Test checkpoint:** `early_entropy_init()` logs before KASLR/canary consumers; `csprng_fill()` (D02T03 §5) succeeds post-seed; with all sources forced off the temporary API returns the degraded flag and release-mode crypto refuses. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `early_entropy_init()` logs `early entropy init complete: credited class=.., release crypto ..` before any consumer; `csprng_fill()` succeeds post-seed; the credited class is insulated from diagnostic-record mutation (unit-tested) and release-mode `csprng_crypto_ok()` refuses on DEGRADED. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | klibs csprng crypto gate suite, 0 failures
+
+> **Notes:**
+> - Shipped: `early_entropy_init()` (`boot_seed.c`) + CSPRNG-owned credited class (`g_crypto_class`, `csprng.c`) + `csprng_crypto_ok()` gate + `csprng_fill_classified()` + `guid_generate()` CSPRNG migration (`gpt.c`).
+> - Runs once on the BSP at Phase 1 inside the POST16_CSPRNG markers; credited class snapshotted at the first-seed install and upgraded only on absorbed HIGH material.
+> - Downstream: key-generation consumers (future TLS/session keys) gate on `csprng_crypto_ok()`; `seed_file` mint keeps its STRICTER hw-provenance gate; Codex adoptions in the section commit message.
+> - Canonical doc: gate + class contract in [`include/kernel/csprng.h`](../../include/kernel/csprng.h).
+> - Scope boundary: runtime reseed thresholds/hwrng are D02T03 §5; diagnostics surfaces (registry/VPD/BlackBox) are §9; KASLR itself is future VMM work.
 
 ---
 
@@ -289,10 +298,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ✅ §5 staged, LOW-clamped   |
 | 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ✅ §6 MAC+NVRAM anti-clone  |
 | 💎  | Bootloader-kernel seed handoff | ✅ winload loader block    | ✅ EFI config-table seed    | ✅ §7 typed+CRC, first-seed |
-| 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ⬜ §8 pre-KASLR             |
+| 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ✅ §8 named init + gate     |
 | ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ⬜ §9 registry + BlackBox   |
 
-> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§7 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing, MAC'd seed carryover with NVRAM anti-clone/anti-replay -- stronger than the unauthenticated Linux seed file -- and the §7 checksummed typed handoff folding verified carryover into the FIRST kernel seed), §8-§9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
+> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§8 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing, MAC'd seed carryover with NVRAM anti-clone/anti-replay -- stronger than the unauthenticated Linux seed file -- the §7 checksummed typed handoff folding verified carryover into the FIRST kernel seed, and the §8 named init point with a credited-class release crypto gate -- stronger than Linux, which has no boot-time crypto-readiness gate), §9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
 
 ---
 
@@ -304,7 +313,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [x] Shipped with §5 (6th suite): staged transcript -- stage/credit-visibility, NULL + too-small drain guards, full drain + empty re-drain, oversized refusal leaves record intact + overflow flag, consume_zero reset
 - [x] Shipped with §4 (in `test_tpm_transport.c`, TEST_CAT_SECURITY): GetRandom marshal/parse negatives, bounded-loop request-cap protocol, RNG collection via fake TIS (floor boundary both sides, stuck heuristics, report flag, no-transport no-op)
 - [x] Register in `test_runner_init()`: `test_register_entropy()` (`test_runner.c`)
-- [ ] `test_entropy_mix_fixture` -- fixed-input Blake2b transcript determinism (lands with §8 once D02T03 §5 vendors Monocypher)
+- [x] Mix determinism (shipped with D02T03 §5 + §7/§8, `test_klibs.c`): csprng core seed determinism + `seed2` concat equivalence + crypto-gate suite (upgrade matrix, oracle consistency, diagnostic-record insulation)
 - [x] `test_random_seed_format` (shipped with §6, `test_entropy.c`): round-trip + every rejection class (len/magic/version/MAC/replay incl. mac-field tamper + counter extremes) + no-output-poisoning sentinels
 - [x] `test_random_seed_clone_rejected` (shipped with §6, `test_entropy.c`): blob MAC'd under secret A fails closed under secret B
 - [x] Shipped with §7 (3 suites, `test_entropy.c`): payload parse gates + NO_FIT, carryover routing, `test_entropy_seed_zeroized` via pure `boot_seed_release_payload`; `csprng_core_seed2` equivalence in `test_klibs.c`

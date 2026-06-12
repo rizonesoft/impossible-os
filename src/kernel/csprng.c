@@ -40,6 +40,13 @@ static spinlock_t    g_lock = SPINLOCK_INIT;
  * csprng_init runs in Phase 1 before any consumer. */
 static int           g_seeded;
 static uint64_t      g_fill_calls;           /* guarded by g_lock */
+/* CSPRNG-owned credited entropy class (entropy_class_t): written under
+ * g_lock at the points where key material is actually absorbed (first
+ * seed install, add_entropy absorb), read lock-free with acquire. The
+ * release crypto gate reads THIS, never the loose diagnostic source
+ * record in entropy.c -- a recorded-but-not-absorbed source must not
+ * approve key generation. */
+static uint32_t      g_crypto_class;         /* ENTROPY_CLASS_DEGRADED = 0 */
 
 /* ---- Pure core ---- */
 
@@ -188,19 +195,26 @@ void csprng_init(const uint8_t *boot_transcript, uint32_t boot_len)
      *
      * The multi-KB Blake2b runs OUTSIDE g_lock (short-hold contract);
      * only the bounded key install is locked. */
+    /* Credited class is snapshotted at the SAME install: every source in
+     * the diagnostic record at this point staged material that this very
+     * transcript absorbed (collectors record + stage in one sequence;
+     * boot_seed_consume records payload sources before handing over the
+     * digest), so the snapshot is bound to absorbed key material -- the
+     * release crypto gate must never trust the loose diagnostic record
+     * at some later read time. */
+    cls = entropy_classify(entropy_source_mask(), entropy_source_quality());
     {
         csprng_core_t local;
 
         csprng_core_seed2(&local, transcript, pos, boot_transcript, boot_len);
         spin_lock_irqsave(&g_lock, &fl);
         g_core = local;
+        __atomic_store_n(&g_crypto_class, (uint32_t)cls, __ATOMIC_RELEASE);
         __atomic_store_n(&g_seeded, 1, __ATOMIC_RELEASE);
         spin_unlock_irqrestore(&g_lock, fl);
         crypto_wipe(&local, sizeof(local));
     }
     crypto_wipe(transcript, sizeof(transcript));
-
-    cls = entropy_classify(entropy_source_mask(), entropy_source_quality());
     if (cls == ENTROPY_CLASS_DEGRADED) {
         klog(LOG_WARN, "csprng",
              "seeded DEGRADED: no hardware-backed source (rdrand=%u, "
@@ -249,7 +263,13 @@ static int emergency_seed(void)
  * ChaCha20 block -- no I/O, no logging, no unbounded work. Callers stream
  * arbitrary-length output from the returned key OUTSIDE the lock (using an
  * advancing block counter for multi-chunk fills). */
-static void csprng_request_key(uint8_t out_key[CSPRNG_KEY_SIZE])
+/* Ratchet a request key; *class_out (optional) receives the credited
+ * class snapshotted in the SAME critical section as the ratchet, so the
+ * label is bound to the key state these bytes derive from -- a class
+ * read after the fill could already reflect a concurrent upgrade whose
+ * material these bytes never saw. */
+static void csprng_request_key_classified(uint8_t out_key[CSPRNG_KEY_SIZE],
+                                          entropy_class_t *class_out)
 {
     uint64_t fl;
     int      did_emergency = 0;
@@ -259,6 +279,8 @@ static void csprng_request_key(uint8_t out_key[CSPRNG_KEY_SIZE])
 
     spin_lock_irqsave(&g_lock, &fl);
     csprng_core_ratchet(&g_core, out_key);
+    if (class_out)
+        *class_out = (entropy_class_t)g_crypto_class;
     g_fill_calls++;
     spin_unlock_irqrestore(&g_lock, fl);
 
@@ -266,6 +288,11 @@ static void csprng_request_key(uint8_t out_key[CSPRNG_KEY_SIZE])
         klog(LOG_ERROR, "csprng",
              "emergency seed: csprng request before csprng_init() -- "
              "check boot init ordering");
+}
+
+static void csprng_request_key(uint8_t out_key[CSPRNG_KEY_SIZE])
+{
+    csprng_request_key_classified(out_key, (entropy_class_t *)0);
 }
 
 /* ---- Global output path ---- */
@@ -292,6 +319,22 @@ uint64_t csprng_u64(void)
     return v;
 }
 
+entropy_class_t csprng_class_upgrade(entropy_class_t cur,
+                                     entropy_quality_t quality,
+                                     uint32_t len)
+{
+    /* One absorbed hardware-quality contribution of key size or more
+     * proves AT LEAST one HIGH source reached the key: DEGRADED lifts
+     * to MINIMUM. It can never prove GOOD -- two-independent-source
+     * accounting needs per-source provenance, owned by the runtime
+     * reseed roadmap (entropy diagnostics + hwrng sections). Never
+     * downgrades. */
+    if (quality == ENTROPY_Q_HIGH && len >= CSPRNG_KEY_SIZE &&
+        cur < ENTROPY_CLASS_MINIMUM)
+        return ENTROPY_CLASS_MINIMUM;
+    return cur;
+}
+
 void csprng_add_entropy(const void *buf, uint32_t len,
                         entropy_quality_t quality)
 {
@@ -309,6 +352,14 @@ void csprng_add_entropy(const void *buf, uint32_t len,
     spin_lock_irqsave(&g_lock, &fl);
     new_seeded = csprng_core_absorb_digest(&g_core, g_seeded, digest, quality);
     __atomic_store_n(&g_seeded, new_seeded, __ATOMIC_RELEASE);
+    /* Credited-class upgrade happens HERE, where the bytes were actually
+     * absorbed -- one atomic step with the absorb, never from the
+     * diagnostic record. */
+    if (new_seeded) {
+        entropy_class_t up = csprng_class_upgrade(
+            (entropy_class_t)g_crypto_class, quality, len);
+        __atomic_store_n(&g_crypto_class, (uint32_t)up, __ATOMIC_RELEASE);
+    }
     spin_unlock_irqrestore(&g_lock, fl);
     crypto_wipe(digest, sizeof(digest));
 }
@@ -316,6 +367,45 @@ void csprng_add_entropy(const void *buf, uint32_t len,
 int csprng_is_seeded(void)
 {
     return __atomic_load_n(&g_seeded, __ATOMIC_ACQUIRE);
+}
+
+entropy_class_t csprng_credited_class(void)
+{
+    return (entropy_class_t)__atomic_load_n(&g_crypto_class,
+                                            __ATOMIC_ACQUIRE);
+}
+
+int csprng_crypto_ok(void)
+{
+    /* Cryptographic key-generation gate: seeded AND credited class (bound
+     * to absorbed material) at least MINIMUM -- UNCONDITIONALLY. The
+     * boot.conf debug byte is mutable ESP state and must never relax
+     * key-grade readiness (adversarial finding: debug=1 would have
+     * approved personalization-grade output for key mint); debug-mode
+     * latitude applies to boot PROGRESSION (entropy_policy_ok callers),
+     * never to this gate. */
+    if (!csprng_is_seeded())
+        return 0;
+    return entropy_policy_ok(csprng_credited_class(), 1 /* release */);
+}
+
+entropy_class_t csprng_fill_classified(void *buf, uint32_t len)
+{
+    /* Fill ALWAYS succeeds post-init (never blocks, Win11
+     * BCryptGenRandom parity); the return value makes degraded output
+     * EXPLICIT so callers needing key-grade bytes can refuse. The class
+     * is snapshotted under the SAME lock as the request-key ratchet --
+     * never sampled after the fill, where a concurrent upgrade could
+     * mislabel bytes generated from the pre-upgrade key. */
+    uint8_t rkey[CSPRNG_KEY_SIZE];
+    entropy_class_t cls = ENTROPY_CLASS_DEGRADED;
+
+    if (buf == NULL || len == 0)
+        return csprng_credited_class();
+    csprng_request_key_classified(rkey, &cls);
+    csprng_core_stream_at(rkey, 0, buf, len);
+    crypto_wipe(rkey, sizeof(rkey));
+    return cls;
 }
 
 /* ---- NtGetRandom SSDT handler ----

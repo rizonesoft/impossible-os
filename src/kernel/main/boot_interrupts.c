@@ -56,7 +56,6 @@
 #include "kernel/entropy.h"
 #include "kernel/csprng.h"
 #include "kernel/tpm_transport.h"
-#include "libs/monocypher/monocypher.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
@@ -474,20 +473,7 @@ void boot_phase1(void)
      * into the same initial key -- first-seed-or-nothing, never a
      * post-init reseed a consumer could race past. */
     POST16(POST16_CSPRNG);
-    {
-        /* boot_seed_consume digest-chains every accepted payload
-         * transcript into one Blake2b-256 digest (the per-payload
-         * scratch lives in boot_seed.c); only the 32-byte digest
-         * travels through here. Wiped after the seed absorbs it. */
-        uint8_t boot_seed_digest[BOOT_SEED_DIGEST_LEN];
-        uint32_t boot_seed_len;
-
-        boot_seed_len = boot_seed_consume(boot_seed_digest,
-                                          (uint32_t)sizeof(boot_seed_digest));
-        csprng_init(boot_seed_len ? boot_seed_digest : (const uint8_t *)0,
-                    boot_seed_len);
-        crypto_wipe(boot_seed_digest, sizeof(boot_seed_digest));
-    }
+    early_entropy_init();
     POST16(POST16_CSPRNG_OK);
     boot_progress(1, "CSPRNG", POST16_CSPRNG_OK);
 
