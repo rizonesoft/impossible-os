@@ -415,21 +415,21 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 > Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_irq_timer()` (same pattern as other `test_register_*` suites).
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 
-- [x] `src/kernel/test/test_irq_timer.c` shipped (16 suites, TEST_CAT_BOOT, registered via `test_register_irq_timer()`):
+- [x] `src/kernel/test/test_irq_timer.c` shipped (21 suites, TEST_CAT_BOOT, registered via `test_register_irq_timer()`):
   - MADT consolidated info populated + mirrors legacy accessors; PCAT bit boolean
   - ISA vector translation both directions (incl. IRQ9 SCI -> 0x71, 0x2E non-ISA)
   - allocator exhaustion walk: ISA-window avoidance, dynamic-range bounds, 0x80/0x81 avoidance, depleted-terminal 0, recovery
   - GSI validation: NULL-handler + out-of-range isolated (dummy-handler range guards), reserve-vector collision refusals, affinity validation, reverse-map oracles
   - UTS: `g_system_timer` selected, `uptime_ns()` monotonic, HPET consistency, LAPIC calibration state
   - **Note:** live-GSI registration (valid-GSI vector assertion from the original draft) is test-banned (live IOAPIC programming); covered by smoke + QEMU serial instead
-  - Shared GSI: two handlers registered shared on one GSI both fire (TEST_PENDING until §5 sharing lands)
-  - One-shot: `arm_oneshot(deadline)` fires exactly once near the deadline (TEST_PENDING until §6 lands)
-  - AP timers: per-CPU tick counters advance on all CPUs with `-smp 4` (TEST_PENDING until §7 AP bring-up lands)
+  - Shared GSI: gsi_ex validation covers shared-flag plumbing; live two-handler fire is test-banned (live IOAPIC) -- covered by smoke + QEMU serial
+  - One-shot: surface + conversion helpers + pure delegation suites shipped with §6 (fake-driver based; live deadline fire is test-banned)
+  - AP timers: per-CPU tick counters advance on all CPUs with `-smp 4` (pending §7 AP bring-up; see §7 Deferred XREF to D03 TODO-07 §3)
   - `hpet_available()` consistent with ACPI HPET table presence (0 or 1); `hpet_ns()` returns 0 when HPET disabled
   - IDT coverage: software `INT 0xFE` does not triple-fault (unhandled vector logs warning + EOI)
   - LAPIC spurious vector (0xFF): software `INT 0xFF` does not crash
-- [ ] Register in `test_runner_init()`: `test_register_irq_timer()`
-- [ ] Commit: `"test: add irq_timer test suite"`
+- [x] Register in `test_runner_init()`: `test_register_irq_timer()` (`test_runner.c:469`)
+- [x] Commit: shipped across §5/§6 section commits `0107203c` + `02d9e908` (suite grew with each section, 21 suites total)
 
 ---
 
