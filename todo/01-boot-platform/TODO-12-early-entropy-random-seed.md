@@ -48,7 +48,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 1. Entropy Source Inventory and Quality Model
 
-- [x] 8 source classes in `include/kernel/entropy.h` (fw/cpu/tpm/oem0/seed/guest-hwrng/jitter/time) as u32 mask + u32 packed 2-bit quality, mirrorable into the §7 descriptor; guest hwrng owned by `04-drivers-hardware/TODO-09` §12.
+- [x] 8 source classes in `include/kernel/entropy.h` as u32 mask + u32 packed quality, carried in the §7 seed-payload header (not the generic descriptor); guest hwrng owned by `04-drivers-hardware/TODO-09` §12.
 - [x] Conditioner contract pinned + `entropy_frame_source()` shipped: source-tagged length-framed transcript with wrap guard, hard-fail on no-fit; Blake2b hash lands with D02T03 §5.
 - [x] Bootloader-seed trust policy: descriptor quality is advisory -- `entropy_classify()` re-derives the class and never credits JITTER/TIME even when marked HIGH.
 - [x] Conservative quality: `entropy_record_source()` clamps JITTER/TIME to LOW, reserved value 3 records as NONE, Q_NONE retracts a source.
@@ -66,6 +66,10 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Downstream: §7 descriptor mirrors the mask+quality pair; D02T03 §5 CSPRNG consumes the transcript framing; Codex test-coverage adoptions in the section commit.
 > - Canonical contract doc: `include/kernel/entropy.h` header comment (conditioner transcript + advisory-quality policy).
 > - Scope boundary: no collection here -- EFI RNG (§2), CPU (§3), TPM (§4), jitter (§5), seed file (§6), virtio-rng (D04T09 §12).
+> - re-adversarial skipped in review: fix diff was header-comment + TODO wording only.
+
+> **Verified:** 2026-06-12 | commit `6ad5d2ac` | 6/6 items | build OK | smoke PASS (KVM 2.620s)
+> **Quality reviewed:** 2026-06-12 | Codex 7x (design, test-coverage, adversarial x2, re-adversarial, consistency, perf) | 3H+5M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -203,15 +207,15 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## Unit Tests
 
-> Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_entropy()` (new `src/kernel/test/test_entropy.c`, TEST_CAT_SECURITY). Tests use fixtures + pure helpers only; live EFI/TPM/VFS collection paths are validated by boot checkpoints.
+> Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_entropy()` (`src/kernel/test/test_entropy.c`, TEST_CAT_SECURITY). Tests use fixtures + pure helpers only; live EFI/TPM/VFS collection paths are validated by boot checkpoints.
 
-- [ ] `test_entropy_source_mask` -- mask bit per source class; degraded classification for mask=0
-- [ ] `test_entropy_mix_fixture` -- fixed-input mixer determinism (known digest)
-- [ ] `test_random_seed_format` -- seed file version/counter/MAC round-trip + bad-MAC rejection
-- [ ] `test_entropy_seed_zeroized` -- buffer all-zero after consumption
-- [ ] `test_random_seed_clone_rejected` -- valid-MAC seed file without the machine's system token classifies degraded
-- [ ] `test_external_entropy_oneshot` -- injected entropy consumed once, source overwritten before use
-- [ ] Register in `test_runner_init()`: `test_register_entropy()`
+- [x] Shipped with §1 (5 suites): quality slot packing, classification (degraded/minimum/good + descriptor-bypass guard), policy gate, transcript framing (exact-fit/wrap/no-write-on-refusal), record + clamp + Q_NONE retraction
+- [x] Register in `test_runner_init()`: `test_register_entropy()` (`test_runner.c`)
+- [ ] `test_entropy_mix_fixture` -- fixed-input Blake2b transcript determinism (lands with §8 once D02T03 §5 vendors Monocypher)
+- [ ] `test_random_seed_format` -- seed file version/counter/MAC round-trip + bad-MAC rejection (§6)
+- [ ] `test_random_seed_clone_rejected` -- valid-MAC seed file without the machine's system token classifies degraded (§6)
+- [ ] `test_entropy_seed_zeroized` -- buffer all-zero after consumption (§7)
+- [ ] `test_external_entropy_oneshot` -- injected entropy consumed once, source overwritten before use (§9)
 
 ---
 

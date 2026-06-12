@@ -7,8 +7,10 @@
  * Runtime reseeding (csprng_add_entropy) is owned by the kernel CSPRNG
  * (02-kernel-core kernel-libraries, Monocypher section).
  *
- * Source mask + quality pack into two u32 values so the pair can later be
- * mirrored verbatim into the boot_info seed payload descriptor:
+ * Source mask + quality pack into two u32 values so the pair can later
+ * travel inside the random-seed PAYLOAD's own header (the generic
+ * boot_payload_desc carries no per-payload metadata fields; the seed
+ * handoff section defines that in-payload header):
  *   mask     -- bit n set means source class n contributed bytes
  *   quality  -- 2 bits per source class (ENTROPY_Q_*), source n at bits 2n
  *
@@ -77,10 +79,11 @@ static inline entropy_quality_t entropy_quality_get(uint32_t packed,
 /* Derive the overall class from mask + packed quality. Pure. */
 entropy_class_t entropy_classify(uint32_t mask, uint32_t quality);
 
-/* Policy gate: release mode requires >= ENTROPY_CLASS_MINIMUM (at least
- * one hardware-backed HIGH source); debug mode accepts anything but the
- * caller is expected to log DEGRADED loudly. Returns 1 = OK to proceed
- * with cryptographic operations, 0 = refuse (release) / degraded (debug). */
+/* Policy gate (boolean accept). Release mode: returns 1 only for
+ * >= ENTROPY_CLASS_MINIMUM (at least one hardware-backed HIGH source).
+ * Debug mode: ALWAYS returns 1 -- proceeding degraded is allowed there,
+ * and the caller must inspect cls itself for the loud DEGRADED WARN
+ * (entropy_report() does this for the boot summary). */
 int entropy_policy_ok(entropy_class_t cls, int release_mode);
 
 /* Append one source-tagged, length-framed contribution to the transcript
