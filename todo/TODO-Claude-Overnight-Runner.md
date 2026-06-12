@@ -30,15 +30,19 @@ only when every domain is complete or a hard-stop condition fires.
   UNBLOCKED and now SHIPPED + REVIEWED (§4: ee546157 + review stamps).
   **USER AUTHORIZED Monocypher vendoring (2026-06-12):** the dependency
   addition for `02-kernel-core/TODO-03` §5 is approved -- do not re-ask.
-  Run-5 work queue, in order:
+  Run-5/6 work queue, in order:
   1. **`02-kernel-core/TODO-03` §5** -- DONE: Monocypher 4.0.2 + kernel
      CSPRNG + `NtGetRandom` shipped (99910014) + reviewed (21168666).
      (TODO-03 gets its own validate/gap-audit when the domain cursor
      reaches it; only §5 was pulled forward.)
-  2. **TODO-12 §6 -> §7 -> §8** in numeric order (§6/§8 use the new
-     crypto -- now available; §7 boot_info seed handoff is crypto-free
-     and was already unblocked). <- NEXT
-  3. **§9/§10**, then `complete-todo-file` closure.
+  2. **TODO-12 §6** -- DONE (run 6): seed-file carryover shipped
+     (08340720) + reviewed (23b3b611); FAT32 durability/coherence/LFN
+     fixes landed with it; follow-ups filed in `05-storage/TODO-04`
+     §4/§6/§15 + `01-boot/TODO-24` §5.
+  3. **TODO-12 §7 -> §8** in numeric order (§7 boot_info seed handoff
+     incl. the early pre-EBS read of the §6 file format; §8 first-seed
+     policy + KASLR ordering). <- NEXT
+  4. **§9/§10**, then `complete-todo-file` closure.
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
@@ -125,3 +129,4 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 - 2026-06-12 ~07:00-09:45 SAST: run 4 -- TODO-12 §5 reviewed (5ccdd14d, Codex 4x); TODO-13 §2 TPM2 transport pulled forward, shipped + reviewed (8ae51bf1 + c3779b6d, Codex 9x); TODO-12 §4 TPM RNG shipped + reviewed (ee546157 + review fixes: periodicity scan, first-failure contract, splash-before-TPM; Codex 10x); cursor at TODO-12 §6.
 - 2026-06-12 ~10:00 SAST: between-runs -- user authorized Monocypher vendoring (D02T03 §5); run-5 queue set (D02T03 §5 -> TODO-12 §6/§7/§8 -> §9/§10 -> closure); headless unit PATH fixed via systemd --setenv (handoff flagged missing ~/.local/bin + nvm node).
 - 2026-06-12 ~10:00-11:50 SAST: run 5 -- D02T03 §5 Monocypher 4.0.2 + kernel CSPRNG + NtGetRandom 0x03D8 shipped (99910014) + reviewed (21168666); Codex design+test-coverage+adversarial(multi-round)+consistency+perf+re-adversarial; 2 latent bugs fixed (heap_init truncation, USER_PT_WINDOW reservation+payload check); perf/SMP hardening (single-ratchet NtGetRandom, emergency seed I/O out of lock, atomic g_seeded); 2 systemic HIGH accepted-XREF (TODO-10 §2, TODO-12 §12); cross-TODO unblocks landed (TODO-12, TODO-10/11/06-desktop/01-sdk ownership). Next: 01-boot TODO-12 §6.
+- 2026-06-12 ~12:00-15:00 SAST: run 6 (interactive /overnight-runner:start --resume) -- TODO-12 §6 seed-file carryover shipped (08340720) + reviewed (23b3b611); Codex 16x (design, test-coverage, adversarial x2, adversarial-impl x5, re-adversarial x5, consistency, perf): 1C+10H+9M+2L fixed, 4H+2M accepted-XREF, 2 rejected with evidence; landed with it: FAT32 sector-cache coherence (new files read back all-zeros), LFN-aware validated delete, vfs_unlink/vfs_rename_ex parent re-resolution, partition blkdev zero-init (#UD wild call into boot_info), durable vfs_flush (dirty-since-sync gate under new sync_mutex), NtFlushBuffersFile failure propagation, hardware-provenance gate on seed mint/rotation; evidence: 4565+16 tests, smoke PASS, live multi-boot carryover (mint->rotate->accept->anti-replay->clone-reset recovery). Next: TODO-12 §7.
