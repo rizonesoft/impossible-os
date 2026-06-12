@@ -39,10 +39,12 @@ only when every domain is complete or a hard-stop condition fires.
      (08340720) + reviewed (23b3b611); FAT32 durability/coherence/LFN
      fixes landed with it; follow-ups filed in `05-storage/TODO-04`
      §4/§6/§15 + `01-boot/TODO-24` §5.
-  3. **TODO-12 §7 -> §8** in numeric order (§7 boot_info seed handoff
-     incl. the early pre-EBS read of the §6 file format; §8 first-seed
-     policy + KASLR ordering). <- NEXT
-  4. **§9/§10**, then `complete-todo-file` closure.
+  3. **TODO-12 §7** -- DONE (run 8): boot_info seed handoff shipped
+     (dff35172) + reviewed (c1da9924); digest-chained first-seed
+     handoff, producer-identity frame release, FLAG_VALID retire
+     semantics, NVRAM verify budget, phase3 early-counter anti-replay.
+  4. **TODO-12 §8** first-seed policy + KASLR ordering. <- NEXT
+  5. **§9/§10**, then `complete-todo-file` closure.
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
