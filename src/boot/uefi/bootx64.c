@@ -2517,6 +2517,7 @@ static void boot_config_defaults(struct boot_config *cfg)
     cfg->test_quiet     = 0;    /* verbose (show PASS lines) */
     cfg->deferred       = 1;    /* defer non-critical inits by default */
     cfg->utest_isolation = 1;   /* per-test isolation ON (opt-out only via boot.conf) */
+    cfg->firmware_rng   = 1;    /* collect EFI_RNG_PROTOCOL entropy by default */
     cfg->cmdline[0]     = '\0';
     cfg->config_found   = 0;
 }
@@ -2567,6 +2568,12 @@ static void parse_conf_kv(struct boot_config *cfg,
     }
     else if (ascii_streq(key, "test_quiet")) {
         cfg->test_quiet = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "firmware_rng")) {
+        /* Escape hatch for firmware whose RNG hangs inside GetRNG. */
+        if      (ascii_streq(val, "off")) cfg->firmware_rng = 0;
+        else if (ascii_streq(val, "on"))  cfg->firmware_rng = 1;
+        else                              cfg->firmware_rng = (UINT8)ascii_atoi(val);
     }
     else if (ascii_streq(key, "compositor")) {
         /* Desktop UI test framework, headless compositor section. */
@@ -8764,6 +8771,263 @@ static void parse_fpdt(void)
     serial_early_print("[BOOT] FPDT: no basic boot record\n");
 }
 
+/* ============================================================================
+ * Early entropy collection (TODO-12 early-entropy S2)
+ *
+ * Collects firmware entropy pre-ExitBootServices into a page-aligned
+ * EfiLoaderData buffer and publishes it as a BOOT_PAYLOAD_RANDOM_SEED
+ * descriptor with FLAG_RESERVED (same memory-ownership convention as the
+ * boot.conf payloads -- without the descriptor the kernel PMM would
+ * reclaim the page with raw seed bytes still in it).
+ *
+ * Transcript format mirrors include/kernel/entropy.h framing:
+ *   u8 src_id | u32 len (LE) | payload
+ * src ids: 0 = firmware RNG (EFI_RNG_PROTOCOL), 3 = ACPI OEM0 table.
+ *
+ * Hang contract: a firmware GetRNG that never returns cannot be recovered
+ * pre-EBS (no preemption). The boot.conf escape hatch firmware_rng=off
+ * skips the protocol entirely; GetInfo is skipped as nonessential and
+ * GetRNG is called exactly once with the firmware-default algorithm
+ * (NULL) per UEFI 2.10 37.5.2.
+ * ============================================================================ */
+#define BL_ENTROPY_SRC_FW_RNG    0u
+#define BL_ENTROPY_SRC_ACPI_OEM0 3u
+#define BL_ENTROPY_FW_BYTES      64u
+#define BL_ENTROPY_OEM0_CAP      512u
+#define POST16_BL_ENTROPY        0xB034
+#define POST16_BL_ENTROPY_OK     0xB035
+
+/* Find an ACPI SDT by 4-char signature via RSDP -> XSDT/RSDT walk.
+ * Same validation discipline as serial_spcr_probe(): signature +
+ * checksum gates before trusting any pointer, length bounds before
+ * dereference. Returns NULL when absent or malformed. */
+static const BL_ACPI_SDT_HDR *bl_find_acpi_table(const char sig[4])
+{
+    UINTN i;
+    EFI_GUID acpi20_guid = EFI_ACPI_20_TABLE_GUID;
+    EFI_GUID acpi10_guid = EFI_ACPI_TABLE_GUID;
+    BL_ACPI_RSDP *rsdp = (BL_ACPI_RSDP *)0;
+
+    if (!gST || gST->NumberOfTableEntries == 0)
+        return (const BL_ACPI_SDT_HDR *)0;
+
+    for (i = 0; i < gST->NumberOfTableEntries; i++) {
+        EFI_CONFIGURATION_TABLE *entry = &gST->ConfigurationTable[i];
+        if (guid_equal(&entry->VendorGuid, &acpi20_guid)) {
+            rsdp = (BL_ACPI_RSDP *)entry->VendorTable;
+            break;
+        }
+        if (guid_equal(&entry->VendorGuid, &acpi10_guid) && !rsdp)
+            rsdp = (BL_ACPI_RSDP *)entry->VendorTable;
+    }
+    if (!rsdp)
+        return (const BL_ACPI_SDT_HDR *)0;
+    if (rsdp->signature[0] != 'R' || rsdp->signature[1] != 'S' ||
+        rsdp->signature[2] != 'D' || rsdp->signature[3] != ' ' ||
+        rsdp->signature[4] != 'P' || rsdp->signature[5] != 'T' ||
+        rsdp->signature[6] != 'R' || rsdp->signature[7] != ' ')
+        return (const BL_ACPI_SDT_HDR *)0;
+    if (!acpi_checksum_ok(rsdp, 20))
+        return (const BL_ACPI_SDT_HDR *)0;
+
+    /* Prefer XSDT (64-bit entries) when revision >= 2 and the extended
+     * checksum holds; otherwise fall back to RSDT (32-bit entries). */
+    UINT64 sdt_addr = 0;
+    UINTN entry_size = 4;
+    if (rsdp->revision >= 2 &&
+        rsdp->length == sizeof(BL_ACPI_RSDP) &&
+        acpi_checksum_ok(rsdp, rsdp->length) &&
+        rsdp->xsdt_addr != 0) {
+        sdt_addr = rsdp->xsdt_addr;
+        entry_size = 8;
+    } else if (rsdp->rsdt_addr != 0) {
+        sdt_addr = rsdp->rsdt_addr;
+        entry_size = 4;
+    }
+    if (sdt_addr == 0)
+        return (const BL_ACPI_SDT_HDR *)0;
+
+    const BL_ACPI_SDT_HDR *root = (const BL_ACPI_SDT_HDR *)(UINTN)sdt_addr;
+    /* The root MUST actually be an XSDT/RSDT before its body is treated
+     * as a pointer array -- a checksum-valid but wrong SDT here would
+     * have its payload dereferenced as addresses. */
+    if (entry_size == 8) {
+        if (root->signature[0] != 'X' || root->signature[1] != 'S' ||
+            root->signature[2] != 'D' || root->signature[3] != 'T')
+            return (const BL_ACPI_SDT_HDR *)0;
+    } else {
+        if (root->signature[0] != 'R' || root->signature[1] != 'S' ||
+            root->signature[2] != 'D' || root->signature[3] != 'T')
+            return (const BL_ACPI_SDT_HDR *)0;
+    }
+    if (root->length < 36 || root->length > (1024u * 1024u))
+        return (const BL_ACPI_SDT_HDR *)0;
+    if (!acpi_checksum_ok(root, root->length))
+        return (const BL_ACPI_SDT_HDR *)0;
+
+    UINTN count = (root->length - 36) / entry_size;
+    const UINT8 *entries = (const UINT8 *)root + 36;
+    for (i = 0; i < count; i++) {
+        UINT64 addr = 0;
+        UINTN b;
+        /* unaligned-safe little-endian entry read (4 or 8 bytes) */
+        for (b = 0; b < entry_size; b++)
+            addr |= (UINT64)entries[i * entry_size + b] << (b * 8);
+        if (addr == 0)
+            continue;
+        const BL_ACPI_SDT_HDR *t = (const BL_ACPI_SDT_HDR *)(UINTN)addr;
+        if (t->signature[0] != sig[0] || t->signature[1] != sig[1] ||
+            t->signature[2] != sig[2] || t->signature[3] != sig[3])
+            continue;
+        if (t->length < 36 || t->length > (1024u * 1024u))
+            continue;
+        if (!acpi_checksum_ok(t, t->length))
+            continue;
+        return t;
+    }
+    return (const BL_ACPI_SDT_HDR *)0;
+}
+
+/* Append one framed record (u8 src | u32 len LE | payload) to the seed
+ * transcript. Returns new position, 0 when it would not fit (caller
+ * treats as hard failure -- truncated seed records are forbidden). */
+static UINTN bl_entropy_frame(UINT8 *buf, UINTN cap, UINTN pos,
+                              UINT8 src, const UINT8 *data, UINT32 len)
+{
+    UINTN need = 1u + 4u + (UINTN)len;
+    UINTN k;
+    if (len == 0 || pos > cap || need > cap - pos)
+        return 0;
+    buf[pos++] = src;
+    buf[pos++] = (UINT8)(len & 0xFF);
+    buf[pos++] = (UINT8)((len >> 8) & 0xFF);
+    buf[pos++] = (UINT8)((len >> 16) & 0xFF);
+    buf[pos++] = (UINT8)((len >> 24) & 0xFF);
+    for (k = 0; k < len; k++)
+        buf[pos++] = data[k];
+    return pos;
+}
+
+static void collect_boot_entropy(void)
+{
+    post_code16(POST16_BL_ENTROPY);
+
+    if (!g_boot_info_ptr->config.firmware_rng) {
+        serial_early_print("[BOOT] RNG: disabled by boot.conf (firmware_rng=off)\n");
+        post_code16(POST16_BL_ENTROPY_OK);
+        return;
+    }
+
+    EFI_PHYSICAL_ADDRESS seed_addr = 0;
+    EFI_STATUS status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+                                           1, &seed_addr);
+    if (EFI_ERROR(status)) {
+        serial_early_print("[BOOT] RNG: seed page AllocatePages failed -- degraded\n");
+        post_code16(POST16_BL_ENTROPY_OK);
+        return;
+    }
+    UINT8 *seed = (UINT8 *)(UINTN)seed_addr;
+    efi_memset(seed, 0, EFI_PAGE_SIZE);
+    UINTN pos = 0;
+
+    /* --- Source: EFI_RNG_PROTOCOL (UEFI 2.10 37.5) --- */
+    {
+        EFI_GUID rng_guid = EFI_RNG_PROTOCOL_GUID;
+        EFI_RNG_PROTOCOL *rng = (EFI_RNG_PROTOCOL *)0;
+        status = gBS->LocateProtocol(&rng_guid, (VOID *)0, (VOID **)&rng);
+        if (EFI_ERROR(status) || !rng) {
+            serial_early_print("[BOOT] RNG: EFI_RNG_PROTOCOL absent\n");
+        } else {
+            UINT8 fw_bytes[BL_ENTROPY_FW_BYTES];
+            /* Single GetRNG with the firmware-default algorithm (NULL).
+             * GetInfo is skipped as nonessential: one fewer firmware
+             * call that could hang, and the default algorithm is what
+             * we consume either way. */
+            status = rng->GetRNG(rng, (EFI_RNG_ALGORITHM *)0,
+                                 BL_ENTROPY_FW_BYTES, fw_bytes);
+            if (EFI_ERROR(status)) {
+                serial_early_print("[BOOT] RNG: GetRNG failed -- degraded\n");
+            } else {
+                UINTN np = bl_entropy_frame(seed, EFI_PAGE_SIZE, pos,
+                                            BL_ENTROPY_SRC_FW_RNG,
+                                            fw_bytes, BL_ENTROPY_FW_BYTES);
+                if (np != 0) {
+                    pos = np;
+                    serial_early_print("[BOOT] RNG: EFI_RNG_PROTOCOL 64 bytes\n");
+                }
+                efi_memset(fw_bytes, 0, sizeof(fw_bytes));
+            }
+        }
+    }
+
+    /* --- Source: ACPI OEM0 entropy table (Win11 winload parity) --- */
+    {
+        const BL_ACPI_SDT_HDR *oem0 = bl_find_acpi_table("OEM0");
+        if (!oem0) {
+            serial_early_print("[BOOT] RNG: ACPI OEM0 absent\n");
+        } else {
+            UINT32 payload_len = oem0->length - 36u;
+            if (payload_len > BL_ENTROPY_OEM0_CAP)
+                payload_len = BL_ENTROPY_OEM0_CAP;
+            if (payload_len > 0) {
+                UINTN np = bl_entropy_frame(seed, EFI_PAGE_SIZE, pos,
+                                            BL_ENTROPY_SRC_ACPI_OEM0,
+                                            (const UINT8 *)oem0 + 36,
+                                            payload_len);
+                if (np != 0) {
+                    pos = np;
+                    serial_early_print("[BOOT] RNG: ACPI OEM0 ");
+                    serial_early_print_uint(payload_len);
+                    serial_early_print(" bytes\n");
+                }
+            }
+        }
+    }
+
+    if (pos == 0) {
+        /* Nothing collected: zero the page and return it -- an
+         * unpublished EfiLoaderData page would be reclaimed by the
+         * kernel PMM with raw loader bytes still in it, and stale
+         * memory must never masquerade as seed material. */
+        efi_memset(seed, 0, EFI_PAGE_SIZE);
+        gBS->FreePages(seed_addr, 1);
+        serial_early_print("[BOOT] RNG: no firmware entropy collected -- degraded\n");
+        post_code16(POST16_BL_ENTROPY_OK);
+        return;
+    }
+
+    /* Publish as a typed payload so the kernel reserves + consumes +
+     * zeroes the page (descriptor validation owned by the boot protocol;
+     * kernel-side consumption owned by the early-entropy seed handoff
+     * section). */
+    UINT32 idx = g_boot_info_ptr->payload_count;
+    if (idx >= BOOT_PAYLOAD_MAX) {
+        efi_memset(seed, 0, EFI_PAGE_SIZE);
+        gBS->FreePages(seed_addr, 1);
+        serial_early_print("[BOOT] RNG: payload table full -- seed dropped\n");
+        post_code16(POST16_BL_ENTROPY_OK);
+        return;
+    }
+    struct boot_payload_desc *d = &g_boot_info_ptr->payload_descriptors[idx];
+    d->type        = BOOT_PAYLOAD_RANDOM_SEED;
+    d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
+    d->phys_start  = (UINT64)seed_addr;
+    d->length      = (UINT64)pos;
+    d->alignment   = 4096ull;
+    d->checksum    = 0ull;
+    d->producer_id = BOOT_PRODUCER_UEFI;
+    d->_reserved   = 0u;
+    g_boot_info_ptr->payload_count = idx + 1u;
+    g_boot_info_ptr->payload_total_bytes += (UINT64)pos;
+
+    serial_early_print("[BOOT] RNG: seed payload ");
+    serial_early_print_uint((UINT32)pos);
+    serial_early_print(" bytes at 0x");
+    serial_early_print_hex64((UINT64)seed_addr);
+    serial_early_print("\n");
+    post_code16(POST16_BL_ENTROPY_OK);
+}
+
 /* ----- SMBIOS Type 1 (System Information) UUID extraction --------------
  *
  * SMBIOS UUID feeds the boot policy ladder's machine_id filter (the
@@ -12140,6 +12404,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 4d: Parse FPDT for firmware boot timing */
     parse_fpdt();
+
+    /* Step 4d2: Collect early firmware entropy (EFI RNG + ACPI OEM0) */
+    collect_boot_entropy();
 
     /* Estimate TSC frequency using UEFI Stall (1ms) */
     {

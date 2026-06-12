@@ -1079,10 +1079,16 @@ struct boot_config {
      * table. boot.conf line `firmware_quirk_disable=broken_fpdt,bogus_mat`
      * is parsed by the bootloader into this mask. */
     uint8_t  firmware_quirk_disable;
+    /* Firmware RNG collection (early entropy). 1 = collect
+     * EFI_RNG_PROTOCOL bytes pre-EBS (default); 0 = boot.conf
+     * firmware_rng=off escape hatch for firmware whose RNG hangs inside
+     * GetRNG (no pre-EBS preemption exists to recover a non-returning
+     * firmware call -- the operator disables the source instead). */
+    uint8_t  firmware_rng;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[8];
+    uint8_t  _reserved[7];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

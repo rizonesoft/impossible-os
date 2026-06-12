@@ -36,7 +36,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | ⭐  | Order | Deliverable                                | Depends On         | Status |
 | --- | :---: | ------------------------------------------ | ------------------ | :----: |
 | 💎  |   1   | Entropy source inventory and quality model | T04 §2             |  [x]   |
-| 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [ ]   |
+| 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [x]   |
 | 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [ ]   |
 | 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [ ]   |
 | 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [ ]   |
@@ -75,14 +75,23 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 2. EFI_RNG_PROTOCOL Collection
 
-- [ ] Locate EFI_RNG_PROTOCOL before ExitBootServices.
-- [ ] Query supported algorithms when available.
-- [ ] Collect at least 64 bytes and mix into seed buffer.
-- [ ] Collect ACPI OEM0 entropy table bytes when present (Win11 parity; raw table access via T04 §2 catalog).
-- [ ] Time out and degrade cleanly on broken firmware.
-- [ ] Commit: `"boot: collect firmware RNG entropy"`
+- [x] `collect_boot_entropy()` (bootx64.c, step 4d2 pre-EBS): locates EFI_RNG_PROTOCOL (GUID + struct added to `efi.h` per UEFI 2.10 37.5), collects 64 bytes via one `GetRNG(NULL)` call into a framed seed transcript.
+- [x] GetInfo deliberately SKIPPED (nonessential firmware call that could hang; the default algorithm is consumed either way) -- design review adoption, see commit.
+- [x] ACPI OEM0 table bytes collected when present (Win11 parity): `bl_find_acpi_table()` RSDP->XSDT/RSDT walk with signature/length/checksum gates; payload capped 512 bytes.
+- [x] Seed page published as `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_VALID|FLAG_RESERVED) so PMM cannot reclaim raw seed bytes; empty collection zeroes + frees the page.
+- [x] Degrade contract: every absent/failed source logs `[BOOT] RNG:` and boot continues; `firmware_rng=off` boot.conf escape hatch (boot_config `_reserved` byte, both headers + manifest + docs) for firmware whose GetRNG never returns.
+- [x] Commit: `"boot: collect firmware RNG entropy"`
 
-**Test checkpoint:** On OVMF with RNG support the bootloader logs `RNG: EFI_RNG_PROTOCOL N bytes` before ExitBootServices; on firmware without the protocol it logs the degraded path and boot continues. QEMU WHPX, QEMU TCG (OVMF), VirtualBox, bare metal.
+**Test checkpoint:** On firmware with RNG support the bootloader logs `[BOOT] RNG: EFI_RNG_PROTOCOL 64 bytes` + `RNG: seed payload N bytes` before ExitBootServices; on firmware without the protocol it logs the degraded path and boot continues (verified: stock OVMF logs absent + degraded, smoke PASS). QEMU WHPX, QEMU TCG (OVMF), VirtualBox, bare metal.
+
+> **Test runner:** N/A (pure UEFI bootloader code) | validation: smoke PASS + `[BOOT] RNG:` serial lines; kernel-side parsing tests land with §7
+
+> **Notes:**
+> - Shipped `collect_boot_entropy()` + `bl_find_acpi_table()` + `bl_entropy_frame()` in bootx64.c, EFI_RNG_PROTOCOL defs in efi.h, `firmware_rng` boot_config knob (mirror + kernel header + ABI manifest + docs row + POST16 0xB034/0xB035).
+> - Runs at boot step 4d2 (after FPDT, pre-EBS); transcript mirrors the `entropy.h` framing so the §7/§8 kernel consumer parses one format.
+> - Downstream: §7 consumes the BOOT_PAYLOAD_RANDOM_SEED descriptor (reserve, parse, zero); Codex design adoptions in the section commit.
+> - Canonical contract doc: `include/kernel/entropy.h` (framing) + `docs/boot/boot-info-fields.md` (`firmware_rng` row).
+> - Scope boundary: kernel-side consumption/zeroing is §7; TPM RNG is §4; the hang limitation is an escape hatch, not a timeout (no pre-EBS preemption).
 
 ---
 
@@ -193,7 +202,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | ⭐  | Feature                        | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS            |
 | --- | ------------------------------ | -------------------------- | --------------------------- | --------------------------- |
 | 💎  | Entropy quality/credit model   | ✅ internal pool credit    | ✅ credit accounting        | ✅ §1 mask+class+policy     |
-| 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random     | ⬜ §2 EFI_RNG_PROTOCOL      |
+| 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random     | ✅ §2 + OEM0, framed seed   |
 | 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ⬜ §3 CPUID-gated           |
 | 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ⬜ §4 TPM2_GetRandom        |
 | 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ⬜ §5 low-quality only      |

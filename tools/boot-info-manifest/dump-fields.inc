@@ -102,6 +102,7 @@ F(config.compositor);
 F(config.test_monitors_count);
 F(config.anti_rollback_raise);
 F(config.firmware_quirk_disable);
+F(config.firmware_rng);
 F(config._reserved);
 F(config._reserved[0]);         /* element-size sentinel */
 F(config.cmdline);

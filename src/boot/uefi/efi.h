@@ -684,6 +684,27 @@ typedef struct {
     { 0xeb9d2d31, 0x2d88, 0x11d3, \
       { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
 
+/* --- EFI RNG Protocol (UEFI 2.10 section 37.5) --- */
+#define EFI_RNG_PROTOCOL_GUID \
+    { 0x3152bca5, 0xeade, 0x433d, \
+      { 0x86, 0x2e, 0xc0, 0x1c, 0xdc, 0x29, 0x1f, 0x44 } }
+
+typedef EFI_GUID EFI_RNG_ALGORITHM;
+
+typedef struct _EFI_RNG_PROTOCOL EFI_RNG_PROTOCOL;
+struct _EFI_RNG_PROTOCOL {
+    /* GetInfo(This, &AlgoListSize, AlgoList) -- enumerate algorithms */
+    EFI_STATUS (EFIAPI *GetInfo)(EFI_RNG_PROTOCOL *This,
+                                 UINTN *RNGAlgorithmListSize,
+                                 EFI_RNG_ALGORITHM *RNGAlgorithmList);
+    /* GetRNG(This, Algo-or-NULL, ValueLength, Value) -- NULL algorithm
+     * selects the firmware default per UEFI 2.10 37.5.2 */
+    EFI_STATUS (EFIAPI *GetRNG)(EFI_RNG_PROTOCOL *This,
+                                EFI_RNG_ALGORITHM *RNGAlgorithm,
+                                UINTN RNGValueLength,
+                                UINT8 *RNGValue);
+};
+
 /* --- EDID Active Protocol -- provides raw EDID block from firmware --- */
 /* Bytes 54–71 of EDID: preferred timing descriptor.
  *   H-active: byte[56] | (byte[58] >> 4) << 8
