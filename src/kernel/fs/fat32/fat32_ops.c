@@ -613,10 +613,20 @@ static int fat32_vfs_flush(struct vfs_node *node)
     /* Device-cache sync OUTSIDE the spinlock: driver flush paths can
      * sleep (VirtIO waits on an event with interrupts enabled). Our
      * sectors were submitted via blkdev_write under the lock above, so
-     * the sync covers them; later writers dirtying new sectors are not
-     * this flush's durability problem. */
-    if (blkdev_sync(vol->dev) != 0)
-        rc = -1;
+     * the sync covers them. Skip the (millisecond-class) device flush
+     * when nothing reached blkdev_write since the last successful sync
+     * -- NtFlushBuffersFile on an unchanged handle must not cost a
+     * FLUSH CACHE EXT. The gate + sync pair runs under sync_mutex
+     * (sleepable) so a concurrent flusher cannot observe the cleared
+     * flag and return success while the first sync is still in flight. */
+    mutex_lock(&vol->sync_mutex);
+    if (__atomic_exchange_n(&vol->dirty_since_sync, 0, __ATOMIC_ACQ_REL)) {
+        if (blkdev_sync(vol->dev) != 0) {
+            __atomic_store_n(&vol->dirty_since_sync, 1, __ATOMIC_RELEASE);
+            rc = -1;
+        }
+    }
+    mutex_unlock(&vol->sync_mutex);
     return rc;
 }
 
@@ -798,6 +808,7 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
 
     vol->dev = dev;
     vol->lock = (spinlock_t)SPINLOCK_INIT;
+    mutex_init(&vol->sync_mutex, "fat32_sync");
 
     /* Read the boot sector */
     if (fat32_read_sector(vol, 0, vol->sector_buf) != 0) {

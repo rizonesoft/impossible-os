@@ -735,6 +735,18 @@ int vfs_rename_ex(const char *old_path, const char *new_path, uint32_t flags)
         struct vfs_node *dst = new_parent->ops->finddir(new_parent, new_name);
         if (dst && dst->ref_count > 0)
             return -1;
+
+        /* Same hazard as vfs_unlink: the finddir above can rebuild the
+         * filesystem's directory node cache with THIS directory's
+         * children, clobbering the slot backing the parent -- the rename
+         * would then target the wrong cluster. Re-resolve before
+         * dispatching (parent_path still holds the new-path parent,
+         * which equals the old-path parent per the same-directory check
+         * above). */
+        old_parent = (len > 0) ? walk_path(mounts[new_idx].root, parent_path)
+                               : mounts[new_idx].root;
+        if (!old_parent || !old_parent->ops || !old_parent->ops->rename)
+            return -1;
     }
 
     return old_parent->ops->rename(old_parent, old_name, new_name, flags);

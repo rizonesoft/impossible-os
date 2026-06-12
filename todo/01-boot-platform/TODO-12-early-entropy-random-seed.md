@@ -187,7 +187,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [x] Phase-3 read lifecycle (`seed_file_phase3()` in `boot_desktop.c`): both names read, highest fresh counter wins; NVRAM last_seen persist is the commit point -- HIGH credit only after persist, persist failure mixes uncredited (LOW).
 - [x] Provenance-gated rotation (HIGH hardware source this boot OR freshly credited carryover -- degraded CSPRNG output is never persisted): rename-free double write; durable `vfs_flush()` boundary fixed at root (FAT32 `blkdev_sync`); wrap guard.
 - [x] Degrade without blocking boot: unmounted X: / absent file / NVRAM-less firmware / write failure all WARN + continue; `boot.conf seed_file=off` knob (mirror + manifest + docs synced).
-- [ ] Commit: `"boot: random seed carryover file"`
+- [x] Commit: `"boot: random seed carryover file"` (08340720)
 
 **Test checkpoint:** After two consecutive boots `X:\Boot\random-seed.bin` exists with an incremented counter and valid MAC; deleting it degrades to `seed=none` without blocking boot; a copied file with a mismatched NVRAM token fails closed AND the next boot writes a fresh valid file; an old-counter file is rejected (anti-replay); the rotate happens only after `csprng_is_seeded()`. Pure format helpers: encode/decode round-trip + bad-MAC + bad-counter rejection. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -199,6 +199,15 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Downstream: section 7 reads the same file format pre-EBS into the boot_info payload (early first-seed); `vfs_flush()` is the new durability boundary for any write-then-flush protocol; Codex design + test-coverage adoptions in the section commit.
 > - Canonical contract doc: `include/kernel/seed_file.h` header comment (format, threat model, crash-tolerance argument).
 > - Scope boundary: section 7 owns the early read + descriptor consumption; FAT32-safe atomic-replace primitive stays `05-storage-filesystems/TODO-04 section 16`; TPM NV token fallback tracked in `04-drivers-hardware/TODO-13`.
+
+> **Verified:** 2026-06-12 | commit `08340720` | 5/5 items | build OK | smoke PASS (KVM 2.690s), tests 4565+16 PASS, live 2-boot carryover (seed=ok class=good)
+> **Accepted:** [H] FAT32 vol->lock cli-spinlock spans device I/O on writes while reads scan the cache unlocked -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 vol->lock concurrency overhaul" at line 357)
+> **Accepted:** [H] dir-cache rebuilds can reassign a slot a live open handle aims at -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 356)
+> **Accepted:** [H] scache_evict discards failed writes + void FAT2 repair reports repaired (false durability) -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "Repair-write remainder" at line 197)
+> **Accepted:** [H] boot_audit/health writers ack NVRAM state on write+close alone -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write retrofit for boot-state X:\ writers" at line 137)
+> **Accepted:** [M] vfs_unmount never clean-marks FAT32 -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "vfs_unmount filesystem hook" at line 358)
+> **Accepted:** [M] LFN lookups (finddir/stat/read_dir) lack checksum/sequence run validation (delete validates) -> XREF: 05-storage-filesystems/TODO-04 §4 (item: "LFN run validation in lookups" at line 155)
+> **Quality reviewed:** 2026-06-12 | Codex 16x (design, test-coverage, adversarial x2, adversarial-impl x5, re-adversarial x5, consistency, perf) | 1C+10H+9M+2L fixed, 4H+2M accepted-XREF, 2 rejected, 0 open | scope: kernel-code-quality + boot-code-quality
 
 ---
 

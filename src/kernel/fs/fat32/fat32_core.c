@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "fat32_internal.h"
+#include "libc/string.h"
 
 /* ---- String helpers (stateless) ---- */
 
@@ -311,7 +312,13 @@ void fat32_compare_repair_fats(struct fat32_volume *vol)
             klog(LOG_WARN, "fat32",
                  "FAT mismatch at sector %u -- repairing FAT2",
                  (uint64_t)s);
-            blkdev_write(vol->dev, fat2_base + s, 1, buf1);
+            if (blkdev_write(vol->dev, fat2_base + s, 1, buf1) != 0)
+                klog(LOG_WARN, "fat32",
+                     "FAT2 repair write failed at sector %u",
+                     (uint64_t)s);
+            else
+                __atomic_store_n(&vol->dirty_since_sync, 1,
+                                 __ATOMIC_RELEASE);
         }
     }
 
@@ -358,6 +365,7 @@ static scache_entry_t *scache_evict(struct fat32_volume *vol)
         blkdev_write(vol->dev, vol->cache[lru_idx].sector, 1,
                      vol->cache[lru_idx].data);
         vol->cache[lru_idx].dirty = 0;
+        __atomic_store_n(&vol->dirty_since_sync, 1, __ATOMIC_RELEASE);
     }
 
     vol->cache[lru_idx].valid = 0;
@@ -378,6 +386,7 @@ int scache_flush(struct fat32_volume *vol)
                 continue;
             }
             vol->cache[i].dirty = 0;
+            __atomic_store_n(&vol->dirty_since_sync, 1, __ATOMIC_RELEASE);
         }
     }
     return rc;
@@ -442,9 +451,7 @@ int fat32_read_sectors_multi(struct fat32_volume *vol, uint32_t sector,
         if (e->valid && e->sector >= sector &&
             e->sector < sector + count) {
             uint8_t *dst = (uint8_t *)buf + ((e->sector - sector) * 512u);
-            int k;
-            for (k = 0; k < 512; k++)
-                dst[k] = e->data[k];
+            memcpy(dst, (const void *)e->data, 512);
         }
     }
     return 0;
@@ -491,12 +498,11 @@ int fat32_write_sectors_multi(struct fat32_volume *vol, uint32_t sector,
             e->sector < sector + count) {
             const uint8_t *src =
                 (const uint8_t *)buf + ((e->sector - sector) * 512u);
-            int k;
-            for (k = 0; k < 512; k++)
-                e->data[k] = src[k];
+            memcpy((void *)e->data, src, 512);
             e->dirty = 0;
         }
     }
+    __atomic_store_n(&vol->dirty_since_sync, 1, __ATOMIC_RELEASE);
     return 0;
 }
 

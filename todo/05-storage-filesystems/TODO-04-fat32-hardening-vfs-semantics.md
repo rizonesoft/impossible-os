@@ -194,7 +194,7 @@ Implement `fat32_fsck(vol, fix)` to validate BPB, compare FAT1/FAT2, detect cros
 - [x] Public API: `fat32_fsck(vol, fix)` in `fat32.h`
 - [x] `chkdsk` shell command: moved to `05-storage-filesystems/TODO-13-partition-tools-storage-suite.md §4` -- kernel `fat32_fsck()` API is ready; shell wiring is §4's scope
 - [/] **Durable repair-write contract** -- PARTIAL via 01-boot-platform/TODO-12 §6: `scache_flush` propagates `blkdev_write` failures, `fat32_flush_disk` propagates + `blkdev_sync`, exposed via `vfs_flush()`.
-- [ ] **Repair-write remainder** -- `scache_evict` still discards write errors; `fat32_fsck` must call `fat32_flush_disk` post-repair and return -1 / keep `volume_dirty` on failure; injected-`blkdev_write`-failure regression test.
+- [ ] **Repair-write remainder** -- `scache_evict` discards failed writes (false durability); `fat32_compare_repair_fats` is void so failed FAT2 repairs report as repaired; `fat32_fsck` must flush post-repair and fail closed; injected-failure test.
 - [x] Commit: `"fs/fat32: fsck -- BPB check, FAT1/2 compare, cross-link, lost cluster detection"`
 
 ---
@@ -355,6 +355,7 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [ ] **VFS per-vnode share-mode locking** -- unlocked window between `vfs_add_handle` and `ref_count++` lets concurrent opens skip the share check; TRUNC dispatch lengthens it. Dormant on BSP-only Phase-3.
 - [ ] **FAT32 cache-slot stability for live handles** -- rebuilds can reassign a `dir_files` slot a live handle aims at. TODO-12 §6 shipped identity-preserving reset (same dir + SFN keeps state); full fix = per-open vnode alloc or pinning.
 - [ ] **FAT32 vol->lock concurrency overhaul** -- cli-spinlock held across blkdev I/O on writes, while reads/finddir touch the cache unlocked (locking them deadlocks). Convert to a sleepable mutex + one cache-access discipline.
+- [ ] **vfs_unmount filesystem hook** -- `vfs_unmount()` only clears the mount table; add a per-FS unmount op so FAT32 can flush + `fat32_mark_clean` + `blkdev_sync` on clean unmount (today only the ACPI shutdown path clean-marks X:).
 - [x] Commit: `"fs: VFS_O_TRUNC end-to-end -- FAT32 cached refresh + exact-slot handle cleanup + cross-FS policy"`
 
 **Test checkpoint:** Long file written, reopened with `VFS_O_TRUNC | VFS_O_WRITE`, shorter payload reads back at exact size with no stale tail (IXFS via unit test; FAT32 via smoke -- 4 Phase-3 writers persist). TRUNC without WRITE returns NULL. Directory + TRUNC silently masked at VFS layer. Smoke PASSes with no Phase-3 WARN cluster. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

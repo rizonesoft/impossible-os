@@ -200,7 +200,12 @@ void seed_file_phase3(void)
     int i;
 
     if (!g_boot_info.config.seed_file) {
-        klog(LOG_INFO, "entropy", "seed file: disabled by boot.conf");
+        /* Zero means boot.conf seed_file=off OR a pre-seed_file
+         * bootloader (zero-filled _reserved byte) -- name both so a
+         * binary-skew boot is not misread as operator intent. */
+        klog(LOG_INFO, "entropy",
+             "seed file: disabled (boot.conf seed_file=off or "
+             "pre-seed_file bootloader)");
         return;
     }
     if (!csprng_is_seeded()) {

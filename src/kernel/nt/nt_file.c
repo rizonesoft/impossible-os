@@ -369,14 +369,18 @@ static NTSTATUS NtFlushBuffersFile_handler(
     if (!fo || !fo->vfs_node)
         return STATUS_INVALID_HANDLE;
 
-    if (fo->vfs_node->ops && fo->vfs_node->ops->flush)
-        fo->vfs_node->ops->flush(fo->vfs_node);
-
-    if (iosb) {
-        iosb->Status = STATUS_SUCCESS;
-        iosb->Information = 0;
+    /* vfs_flush is the durability boundary (cache write-back + device
+     * cache sync); a swallowed failure here would let FlushFileBuffers
+     * acknowledge data the disk never accepted. */
+    {
+        NTSTATUS st = (vfs_flush(fo->vfs_node) == 0)
+                      ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+        if (iosb) {
+            iosb->Status = st;
+            iosb->Information = 0;
+        }
+        return st;
     }
-    return STATUS_SUCCESS;
 }
 
 /* ---- NtLockFile / NtUnlockFile ------------------------------------------ */

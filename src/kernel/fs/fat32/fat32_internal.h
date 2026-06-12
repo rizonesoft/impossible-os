@@ -14,6 +14,7 @@
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/mutex.h"
 #include "kernel/timer.h"
 #include "kernel/nt/filetime.h"
 #include "kernel/time/wall_clock.h"
@@ -134,6 +135,18 @@ struct fat32_volume {
     uint32_t            fsinfo_next_free;
     int                 fsinfo_valid;
     int                 fsinfo_dirty;
+    /* 1 when any sector reached blkdev_write since the last successful
+     * blkdev_sync -- lets fat32_vfs_flush skip the (millisecond-class)
+     * device cache flush when nothing changed. Writers set it with
+     * __atomic stores; the flush gate reads/clears it ONLY under
+     * sync_mutex (a lock-free exchange would let a second flusher skip
+     * while the first sync is still in flight and return a false
+     * durability ack). */
+    volatile uint32_t   dirty_since_sync;
+    /* Serializes the dirty-gate + blkdev_sync pair in fat32_vfs_flush.
+     * Sleepable on purpose: device flush can sleep, so this must NOT be
+     * a spinlock; never acquire while holding vol->lock. */
+    mutex_t             sync_mutex;
     /* Volume health */
     uint8_t             volume_dirty;   /* 1 if FAT[1] dirty bit was clear on mount */
 };

@@ -165,6 +165,20 @@ int fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     uint8_t *cluster_buf;
     uint8_t short_name[11];
     uint32_t cur_cluster = dir_cluster;
+    /* Bounded FAT walk (mirrors fat32_rename_vol): this loop runs under
+     * vol->lock (cli-spinlock) -- a cyclic or corrupt directory chain
+     * must fail fast, never wedge the CPU with interrupts off. */
+    uint32_t spc = vol->bpb.sectors_per_cluster ? vol->bpb.sectors_per_cluster : 1u;
+    uint32_t data_sectors = (vol->bpb.total_sectors > vol->bpb.first_data_sector)
+                            ? (vol->bpb.total_sectors - vol->bpb.first_data_sector)
+                            : 0;
+    uint32_t last_valid_cluster = (data_sectors / spc) + 1u;
+    uint32_t max_iter;
+    uint32_t iter = 0;
+
+    if (last_valid_cluster > 0x0FFFFFEFu) last_valid_cluster = 0x0FFFFFEFu;
+    if (last_valid_cluster < 2) last_valid_cluster = 2;
+    max_iter = last_valid_cluster + 1u;
 
     cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
     if (!cluster_buf)
@@ -189,8 +203,17 @@ int fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
             lfn_name[k] = '\0';
 
     while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
-        uint32_t sector = cluster_to_sector(vol, cur_cluster);
+        uint32_t sector;
         uint32_t i;
+
+        if (++iter > max_iter || cur_cluster > last_valid_cluster) {
+            klog(LOG_WARN, "fat32",
+                 "delete: FAT walk exceeded bounds (iter=%u cur=%u last=%u)",
+                 (uint64_t)iter, (uint64_t)cur_cluster,
+                 (uint64_t)last_valid_cluster);
+            goto del_not_found;
+        }
+        sector = cluster_to_sector(vol, cur_cluster);
 
         if (fat32_read_sectors_multi(vol, sector, vol->bpb.sectors_per_cluster,
                                      cluster_buf) != 0)
