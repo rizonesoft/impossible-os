@@ -395,3 +395,8 @@ const struct boot_integrity_report *tpm_integrity_report(void)
 {
     return &s_integrity_report;
 }
+
+void tpm_integrity_set_rng_available(int available)
+{
+    s_integrity_report.tpm_rng_available = available ? 1u : 0u;
+}

@@ -154,7 +154,7 @@ Build the TPM 2.0 command layer ON TOP of the shipped transport: discovery, TIS/
 - [ ] `tpm2_get_capability(prop, count, out)`: CC `0x017A` via `tpm2_submit()`; parse `TPML_TAGGED_TPM_PROPERTY` response
 - [ ] `tpm2_pcr_read(pcr_index, bank, out_digest)`: CC `0x017E`; `TPML_PCR_SELECTION`; parse `TPML_DIGEST`; coordinate with `01-boot-platform/TODO-13` §3 (PCR read API owner)
 - [ ] `tpm2_pcr_extend(pcr_index, digest_sha256)`: CC `0x0182`; `TPML_DIGEST_VALUES` with one `TPMT_HA` (hash_alg=`TPM_ALG_SHA256`, digest[32])
-- [ ] `tpm2_get_random(len, out)`: CC `0x017B`; `bytesRequested = len`; parse `TPM2B_DIGEST`; runtime reseed feed (first-seed collection is `01-boot-platform/TODO-12` §4)
+- [ ] Runtime reseed feed over the shipped `tpm2_get_random_bounded()` (`src/kernel/tpm_transport.c`; GetRandom marshaling helpers already exist) -- first-seed collection shipped at `01-boot-platform/TODO-12` §4 (`entropy_collect_tpm()`)
 - [ ] IOCTL surface: `NtDeviceIoControlFile` on `\Device\TPM0` → dispatch `IOCTL_TPM_PCR_READ`, `IOCTL_TPM_GET_RANDOM`, `IOCTL_TPM_PCR_EXTEND` to above commands
 - [ ] Boot log: `[TPM2] command layer ready, firmware version=%u.%u` (interface + Startup already logged by the transport)
 - [ ] Commit: `"kernel: TPM2 command layer -- GetCapability/PCR/GetRandom over tpm2_submit, IOCTL surface"`

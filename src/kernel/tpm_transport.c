@@ -173,6 +173,14 @@ static const struct tpm_t_io s_mmio_io = { mmio_r8, mmio_w8,
                                            mmio_r32, mmio_w32 };
 static const struct tpm_t_io *s_io = &s_mmio_io;
 
+/* Sequence/transaction primitives (defined with tpm2_submit below). */
+static int  tpm_t_check_args(const uint8_t *cmd, uint32_t cmd_len,
+                             const uint8_t *rsp, uint32_t rsp_cap);
+static int  tpm_t_submit_txn(const uint8_t *cmd, uint32_t cmd_len,
+                             uint8_t *rsp, uint32_t rsp_cap);
+static int  tpm_t_seq_begin(uint32_t budget_ms);
+static void tpm_t_seq_end(void);
+
 /* ---- Poll deadline helpers ---- */
 
 /* ARCH: x86-64 -- raw TSC read for poll deadlines (pre-scheduler safe). */
@@ -195,24 +203,10 @@ static uint64_t s_budget_deadline;  /* TSC mode */
 static uint64_t s_budget_iters;     /* iteration mode */
 static int      s_budget_active;
 
-static void tpm_t_budget_begin(uint32_t ms)
-{
-    s_budget_active = 1;
-    if (s_tsc_per_ms) {
-        s_budget_deadline = tpm_t_rdtsc() + (uint64_t)ms * s_tsc_per_ms;
-        s_budget_iters = 0;
-    } else {
-        s_budget_deadline = 0;
-        s_budget_iters = (uint64_t)ms * TPM_T_NOFREQ_ITERS_PER_MS;
-    }
-}
-
-static void tpm_t_budget_end(void)
-{
-    s_budget_active = 0;
-    s_budget_deadline = 0;
-    s_budget_iters = 0;
-}
+/* Budget arm/disarm happens ONLY inside tpm_t_seq_begin/seq_end (the
+ * sequence owns the busy gate for its whole duration, so the unlocked
+ * budget reads in tpm_t_wait_tick are only ever reached by the budget
+ * owner's transaction) and the test seam. */
 
 static void tpm_t_wait_begin(struct tpm_t_wait *w, uint32_t ms)
 {
@@ -302,6 +296,86 @@ uint32_t tpm2_build_getcap_manufacturer(uint8_t *buf, uint32_t cap)
     tpm2_be32_put(buf + 14, TPM2_PT_MANUFACTURER);
     tpm2_be32_put(buf + 18, 1u);  /* propertyCount */
     return 22u;
+}
+
+uint32_t tpm2_build_get_random(uint8_t *buf, uint32_t cap, uint16_t nbytes)
+{
+    if (!buf || cap < 12u || nbytes == 0u)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(buf + 2, 12u);
+    tpm2_be32_put(buf + 6, TPM2_CC_GET_RANDOM);
+    tpm2_be16_put(buf + 10, nbytes);
+    return 12u;
+}
+
+int tpm2_parse_get_random(const uint8_t *rsp, uint32_t len,
+                          uint8_t *out, uint32_t out_cap)
+{
+    uint32_t size, rc, i;
+    uint16_t n;
+
+    if (!out || tpm2_rsp_parse(rsp, len, 0, &size, &rc) != 0 ||
+        rc != TPM2_RC_SUCCESS)
+        return -1;
+    /* Body: TPM2B_DIGEST = u16 size + bytes, inside the header-declared
+     * response size. */
+    if (size < TPM2_RSP_HEADER_SIZE + 2u)
+        return -1;
+    n = tpm2_be16_get(rsp + TPM2_RSP_HEADER_SIZE);
+    if (n == 0u || (uint32_t)n > size - TPM2_RSP_HEADER_SIZE - 2u ||
+        (uint32_t)n > out_cap)
+        return -1;
+    for (i = 0; i < n; i++)
+        out[i] = rsp[TPM2_RSP_HEADER_SIZE + 2u + i];
+    return (int)n;
+}
+
+int tpm2_get_random_bounded(uint8_t *out, uint32_t want, uint32_t budget_ms)
+{
+    uint8_t cmd[16];
+    uint8_t rsp[80];
+    uint32_t got = 0;
+    int first_err = 0;
+
+    if (!out || want == 0u)
+        return TPM_T_ERR_ARG;
+
+    /* Own the busy gate for the WHOLE sequence: no other transaction
+     * can poll under (and consume) this sequence's budget, and a
+     * racing caller bounces with BUSY instead of clobbering it. */
+    first_err = tpm_t_seq_begin(budget_ms);
+    if (first_err != 0)
+        return first_err;
+    while (got < want) {
+        uint32_t remaining = want - got;
+        uint16_t req = (remaining > 48u) ? 48u : (uint16_t)remaining;
+        uint32_t cmd_len = tpm2_build_get_random(cmd, sizeof(cmd), req);
+        int n = tpm_t_check_args(cmd, cmd_len, rsp, sizeof(rsp));
+        if (n == 0)
+            n = tpm_t_submit_txn(cmd, cmd_len, rsp, sizeof(rsp));
+        if (n < 0) {
+            first_err = n;
+            break;
+        }
+        n = tpm2_parse_get_random(rsp, (uint32_t)n, out + got,
+                                  want - got);
+        if (n <= 0)
+            break;
+        got += (uint32_t)n;
+    }
+    tpm_t_seq_end();
+
+    /* Wipe the response staging buffer -- it held seed material. */
+    {
+        uint32_t i;
+        for (i = 0; i < sizeof(rsp); i++)
+            rsp[i] = 0;
+    }
+
+    if (got == 0u && first_err < 0)
+        return first_err;
+    return (int)got;
 }
 
 int tpm2_rsp_parse(const uint8_t *rsp, uint32_t len,
@@ -537,20 +611,99 @@ static int crb_submit(const uint8_t *cmd, uint32_t cmd_len,
 
 /* ---- Public submit (whole-transaction serialization) ---- */
 
+/* Validate command buffers (shared by the public and owned paths). */
+static int tpm_t_check_args(const uint8_t *cmd, uint32_t cmd_len,
+                            const uint8_t *rsp, uint32_t rsp_cap)
+{
+    if (!cmd || !rsp || cmd_len < TPM2_RSP_HEADER_SIZE ||
+        cmd_len > TPM_T_MAX_RESPONSE || rsp_cap < TPM2_RSP_HEADER_SIZE)
+        return TPM_T_ERR_ARG;
+    /* Marshaled length must match the header's size field -- a
+     * mismatch would desynchronize the FIFO byte accounting. */
+    if (tpm2_be32_get(cmd + 2) != cmd_len)
+        return TPM_T_ERR_ARG;
+    return 0;
+}
+
+/* Run one transaction. The caller MUST own the busy gate (public
+ * submit or an owned sequence); sticky failure is recorded here. */
+static int tpm_t_submit_txn(const uint8_t *cmd, uint32_t cmd_len,
+                            uint8_t *rsp, uint32_t rsp_cap)
+{
+    uint64_t irqf;
+    int rc;
+
+    rc = (s_iface == TPM_T_IFACE_CRB) ? crb_submit(cmd, cmd_len, rsp, rsp_cap)
+                                      : tis_submit(cmd, cmd_len, rsp, rsp_cap);
+
+    if (rc == TPM_T_ERR_TIMEOUT) {
+        /* A wedged interface stays wedged: every later command would
+         * burn its full poll budget. Fail sticky (s_available stays
+         * set so callers see ERR_FAILED, not ERR_NODEV); boot
+         * continues. */
+        spin_lock_irqsave(&s_state_lock, &irqf);
+        s_failed = 1;
+        spin_unlock_irqrestore(&s_state_lock, irqf);
+        klog(LOG_WARN, "TPM",
+             "transport timed out; marking transport failed (sticky)");
+    }
+    return rc;
+}
+
+/* Atomically reserve the busy gate AND the cumulative budget for a
+ * multi-command sequence: while a sequence runs, no other transaction
+ * can poll (so the budget is only ever consumed by its owner), and no
+ * other budget can be armed. Returns 0 on success or a TPM_T_ERR_*. */
+static int tpm_t_seq_begin(uint32_t budget_ms)
+{
+    uint64_t irqf;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    if (!s_available) {
+        spin_unlock_irqrestore(&s_state_lock, irqf);
+        return TPM_T_ERR_NODEV;
+    }
+    if (s_failed) {
+        spin_unlock_irqrestore(&s_state_lock, irqf);
+        return TPM_T_ERR_FAILED;
+    }
+    if (s_busy || s_budget_active) {
+        spin_unlock_irqrestore(&s_state_lock, irqf);
+        return TPM_T_ERR_BUSY;
+    }
+    s_busy = 1;
+    s_budget_active = 1;
+    if (s_tsc_per_ms) {
+        s_budget_deadline = tpm_t_rdtsc() +
+                            (uint64_t)budget_ms * s_tsc_per_ms;
+        s_budget_iters = 0;
+    } else {
+        s_budget_deadline = 0;
+        s_budget_iters = (uint64_t)budget_ms * TPM_T_NOFREQ_ITERS_PER_MS;
+    }
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+    return 0;
+}
+
+static void tpm_t_seq_end(void)
+{
+    uint64_t irqf;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_busy = 0;
+    s_budget_active = 0;
+    s_budget_deadline = 0;
+    s_budget_iters = 0;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+}
+
 int tpm2_submit(const uint8_t *cmd, uint32_t cmd_len,
                 uint8_t *rsp, uint32_t rsp_cap)
 {
     uint64_t irqf;
     int rc;
 
-    if (!cmd || !rsp || cmd_len < TPM2_RSP_HEADER_SIZE ||
-        cmd_len > TPM_T_MAX_RESPONSE || rsp_cap < TPM2_RSP_HEADER_SIZE)
-        return TPM_T_ERR_ARG;
-
-    /* Marshaled length must match the header's size field -- a
-     * mismatch would desynchronize the FIFO byte accounting. */
-    if (tpm2_be32_get(cmd + 2) != cmd_len)
-        return TPM_T_ERR_ARG;
+    rc = tpm_t_check_args(cmd, cmd_len, rsp, rsp_cap);
+    if (rc != 0)
+        return rc;
 
     spin_lock_irqsave(&s_state_lock, &irqf);
     if (!s_available) {
@@ -568,23 +721,11 @@ int tpm2_submit(const uint8_t *cmd, uint32_t cmd_len,
     s_busy = 1;
     spin_unlock_irqrestore(&s_state_lock, irqf);
 
-    rc = (s_iface == TPM_T_IFACE_CRB) ? crb_submit(cmd, cmd_len, rsp, rsp_cap)
-                                      : tis_submit(cmd, cmd_len, rsp, rsp_cap);
+    rc = tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
 
     spin_lock_irqsave(&s_state_lock, &irqf);
     s_busy = 0;
-    if (rc == TPM_T_ERR_TIMEOUT) {
-        /* A wedged interface stays wedged: every later command would
-         * burn its full poll budget. Fail sticky (s_available stays
-         * set so callers see ERR_FAILED, not ERR_NODEV); boot
-         * continues. */
-        s_failed = 1;
-    }
     spin_unlock_irqrestore(&s_state_lock, irqf);
-
-    if (rc == TPM_T_ERR_TIMEOUT)
-        klog(LOG_WARN, "TPM",
-             "transport timed out; marking transport failed (sticky)");
     return rc;
 }
 
@@ -612,15 +753,20 @@ static void tpm_t_startup_probe(void)
     uint32_t cmd_len, rc;
     int n;
 
-    /* Bound the WHOLE probe sequence (GetCapability + optional Startup
-     * + re-probe) so per-burst timeout resets cannot stretch boot. */
-    tpm_t_budget_begin(TPM_T_INIT_PROBE_BUDGET_MS);
+    /* Own the busy gate + cumulative budget for the WHOLE probe
+     * sequence (GetCapability + optional Startup + re-probe) so
+     * per-burst timeout resets cannot stretch boot and no concurrent
+     * submitter can consume the probe budget. */
+    if (tpm_t_seq_begin(TPM_T_INIT_PROBE_BUDGET_MS) != 0) {
+        klog(LOG_WARN, "TPM", "startup probe skipped (transport busy)");
+        return;
+    }
 
     cmd_len = tpm2_build_getcap_manufacturer(cmd, sizeof(cmd));
-    n = tpm2_submit(cmd, cmd_len, rsp, sizeof(rsp));
+    n = tpm_t_submit_txn(cmd, cmd_len, rsp, sizeof(rsp));
     if (n < 0 || tpm2_rsp_parse(rsp, (uint32_t)n, 0, 0, &rc) != 0) {
         klog(LOG_WARN, "TPM", "startup probe failed (err=%d)", (uint64_t)n);
-        tpm_t_budget_end();
+        tpm_t_seq_end();
         return;
     }
 
@@ -628,23 +774,23 @@ static void tpm_t_startup_probe(void)
         /* Firmware did not send TPM2_Startup (kernel owns the TPM
          * lifecycle on this boot); send Startup(CLEAR) exactly once. */
         cmd_len = tpm2_build_startup(cmd, sizeof(cmd));
-        n = tpm2_submit(cmd, cmd_len, rsp, sizeof(rsp));
+        n = tpm_t_submit_txn(cmd, cmd_len, rsp, sizeof(rsp));
         if (n < 0 || tpm2_rsp_parse(rsp, (uint32_t)n, 0, 0, &rc) != 0 ||
             rc != TPM2_RC_SUCCESS) {
             klog(LOG_WARN, "TPM", "TPM2_Startup(CLEAR) failed (rc=0x%x)",
                  (uint64_t)rc);
-            tpm_t_budget_end();
+            tpm_t_seq_end();
             return;
         }
         klog(LOG_INFO, "TPM", "TPM2_Startup(CLEAR) sent (firmware skipped it)");
         cmd_len = tpm2_build_getcap_manufacturer(cmd, sizeof(cmd));
-        n = tpm2_submit(cmd, cmd_len, rsp, sizeof(rsp));
+        n = tpm_t_submit_txn(cmd, cmd_len, rsp, sizeof(rsp));
         if (n < 0 || tpm2_rsp_parse(rsp, (uint32_t)n, 0, 0, &rc) != 0) {
-            tpm_t_budget_end();
+            tpm_t_seq_end();
             return;
         }
     }
-    tpm_t_budget_end();
+    tpm_t_seq_end();
 
     /* GetCapability payload: moreData(1) capability(4) count(4)
      * property(4) value(4) -- manufacturer is 4 ASCII chars. */
@@ -880,11 +1026,20 @@ const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
 
 void tpm_t_test_budget_iters(uint64_t iters)
 {
-    if (iters) {
-        s_budget_active = 1;
-        s_budget_deadline = 0;
-        s_budget_iters = iters;
-    } else {
-        tpm_t_budget_end();
-    }
+    uint64_t irqf;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_budget_active = iters ? 1 : 0;
+    s_budget_deadline = 0;
+    s_budget_iters = iters;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+}
+
+int tpm_t_test_budget_active(void)
+{
+    uint64_t irqf;
+    int active;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    active = s_budget_active;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+    return active;
 }

@@ -115,6 +115,27 @@ uint32_t tpm2_build_startup(uint8_t *buf, uint32_t cap);
  * Returns command length, 0 if cap too small. */
 uint32_t tpm2_build_getcap_manufacturer(uint8_t *buf, uint32_t cap);
 
+/* Marshal TPM2_GetRandom(bytesRequested). Returns command length, 0 if
+ * cap too small or nbytes is 0. */
+uint32_t tpm2_build_get_random(uint8_t *buf, uint32_t cap, uint16_t nbytes);
+
+/* Parse a TPM2_GetRandom response: validates the header (tag/size/rc
+ * via tpm2_rsp_parse, rc must be TPM2_RC_SUCCESS) and the TPM2B_DIGEST
+ * payload bounds, then copies the random bytes to out. Returns the
+ * byte count (> 0) or -1 on any malformed/failed response. */
+int tpm2_parse_get_random(const uint8_t *rsp, uint32_t len,
+                          uint8_t *out, uint32_t out_cap);
+
+/* Collect up to `want` random bytes via repeated TPM2_GetRandom calls,
+ * the WHOLE sequence capped by one cumulative wall-clock budget (the
+ * per-command PTP timeouts reset per FIFO burst and would otherwise
+ * accumulate against a slow device -- same rationale as the startup
+ * probe budget). Returns bytes collected (>= 0; may be short on a
+ * mid-sequence error) or a negative TPM_T_ERR_* when the FIRST call
+ * fails. Boot-path callers pass a small budget_ms (e.g. 2000). */
+int tpm2_get_random_bounded(uint8_t *out, uint32_t want,
+                            uint32_t budget_ms);
+
 /* Parse + validate a response header: tag, size, rc. Checks
  * len >= header, header size field >= header and <= len. Returns 0 on
  * success, -1 malformed. Out pointers may be NULL. */
@@ -145,3 +166,8 @@ const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
  * only) -- mirrors the boot startup-probe budget so its expiry path is
  * testable. 0 disarms. */
 void tpm_t_test_budget_iters(uint64_t iters);
+
+/* 1 while a cumulative budget is armed (kernel unit tests only) --
+ * lets tests prove a nested/racing caller did not clobber an active
+ * sequence budget. */
+int tpm_t_test_budget_active(void);

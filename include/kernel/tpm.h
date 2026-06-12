@@ -72,7 +72,8 @@ struct boot_integrity_report {
     uint32_t event_count;              /* total measured events */
     uint8_t  tpm_version;              /* 0=none, 1=1.2, 2=2.0 */
     uint8_t  secure_boot;              /* 1 if Secure Boot was active */
-    uint8_t  pad2[2];
+    uint8_t  tpm_rng_available;        /* 1 once TPM2_GetRandom contributed entropy */
+    uint8_t  pad2;
 };
 
 /* Initialize boot integrity verification.
@@ -93,3 +94,8 @@ int tpm_integrity_verified(void);
 /* Returns the full boot integrity report for the System Settings UI.
  * Valid after tpm_integrity_init(). */
 const struct boot_integrity_report *tpm_integrity_report(void);
+
+/* Record TPM RNG availability in the report. Called by the entropy
+ * TPM collector AFTER tpm_integrity_init() (the transport and RNG
+ * collection run in Phase 1; the report is built in Phase 0). */
+void tpm_integrity_set_rng_available(int available);

@@ -11,6 +11,8 @@
 #include "kernel/entropy.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/tpm.h"
+#include "kernel/tpm_transport.h"
 
 /* Global source record. Written by collectors on the BSP boot path
  * (single-threaded by construction today); atomics keep readback safe
@@ -201,6 +203,74 @@ void entropy_staged_consume_zero(void)
 int entropy_staged_overflowed(void)
 {
     return __atomic_load_n(&s_stage_overflow, __ATOMIC_RELAXED) != 0;
+}
+
+/* ---- TPM RNG collector (boot Phase 1, after tpm_transport_init) ---- */
+
+/* HIGH-credit byte floor: the quality model treats one HIGH hardware
+ * source as policy-satisfying (MINIMUM), so a TPM contributing less
+ * than a full digest of output must not earn that credit. */
+#define ENTROPY_TPM_BYTES        64u
+#define ENTROPY_TPM_FLOOR        32u
+#define ENTROPY_TPM_BUDGET_MS    2000u
+
+void entropy_collect_tpm(void)
+{
+    uint8_t buf[ENTROPY_TPM_BYTES];
+    uint32_t i, n;
+    int got;
+    int stuck;
+
+    if (!tpm_transport_available())
+        return;  /* absent/wedged TPM already logged by the transport */
+
+    got = tpm2_get_random_bounded(buf, ENTROPY_TPM_BYTES,
+                                  ENTROPY_TPM_BUDGET_MS);
+    if (got < (int)ENTROPY_TPM_FLOOR) {
+        klog(LOG_WARN, "entropy",
+             "tpm: GetRandom yielded %d bytes (floor %u); not credited",
+             (int64_t)got, (uint64_t)ENTROPY_TPM_FLOOR);
+        goto wipe;
+    }
+    n = (uint32_t)got;
+
+    /* Stuck-output heuristics (mirrors the bootloader CPU collector):
+     * all-identical bytes (covers all-zero and 0xFF fill), and for a
+     * multi-chunk sample, identical halves (a TPM replaying the same
+     * digest every call). */
+    stuck = 1;
+    for (i = 1; i < n; i++) {
+        if (buf[i] != buf[0]) {
+            stuck = 0;
+            break;
+        }
+    }
+    if (!stuck && (n & 1u) == 0u && n >= 2u * ENTROPY_TPM_FLOOR) {
+        uint32_t half = n / 2u;
+        stuck = 1;
+        for (i = 0; i < half; i++) {
+            if (buf[i] != buf[half + i]) {
+                stuck = 0;
+                break;
+            }
+        }
+    }
+    if (stuck) {
+        klog(LOG_WARN, "entropy",
+             "tpm: GetRandom output failed stuck-RNG heuristic; rejected");
+        goto wipe;
+    }
+
+    if (entropy_stage_source(ENTROPY_SRC_TPM_RNG, buf, n,
+                             ENTROPY_Q_HIGH)) {
+        klog(LOG_INFO, "entropy", "RNG: TPM2_GetRandom %u bytes",
+             (uint64_t)n);
+        tpm_integrity_set_rng_available(1);
+    }
+
+wipe:
+    for (i = 0; i < (uint32_t)sizeof(buf); i++)
+        buf[i] = 0;
 }
 
 /* Short quality token for the diagnostics line. */

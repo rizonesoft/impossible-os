@@ -447,6 +447,10 @@ void boot_phase1(void)
      * is independent. Absent/wedged TPMs degrade; boot continues. */
     POST16(POST16_TPM_TRANSPORT);
     tpm_transport_init();
+    /* TPM RNG entropy rides the fresh transport (cumulative-budget
+     * bounded); staged so the first CSPRNG seed sees it. Absent or
+     * wedged TPMs degrade and the entropy report shows tpm=none. */
+    entropy_collect_tpm();
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);
 

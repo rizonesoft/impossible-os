@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). Still missing: TPM RNG read (§4, unblocked -- TODO-13 §2 transport shipped 2026-06-12), seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). Still missing: seed file lifecycle (§6), kernel-side descriptor consumption + zeroing (§7), CSPRNG seeding (§8 -- `csprng_fill()` itself is owned by `02-kernel-core/TODO-03` §5). `TODO-10` §11 canary + §14 KASLR still use RDRAND directly until §8 lands.
 
 ## Inputs
 
@@ -38,7 +38,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   1   | Entropy source inventory and quality model | T04 §2             |  [x]   |
 | 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [x]   |
 | 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [x]   |
-| 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [/]   |
+| 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [x]   |
 | 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [x]   |
 | 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [ ]   |
 | 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [ ]   |
@@ -126,16 +126,22 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 4. TPM RNG Collection
 
-> [!NOTE]
-> **Unblocked (2026-06-12):** the TPM2 command transport shipped at `01-boot-platform/TODO-13` §2 (`tpm2_submit()` in `src/kernel/tpm_transport.c`, Phase 1 init). Collect via kernel-side TPM2_GetRandom and stage through `entropy_stage_source(ENTROPY_SRC_TPM_RNG, ...)` (src id 2 already reserved) so the §8 first seed consumes it.
+- [x] TPM2_GetRandom over the TODO-13 §2 transport: `entropy_collect_tpm()` (`entropy.c`) via `tpm2_get_random_bounded()` (`tpm_transport.c`; 2000ms cumulative budget, 48-byte per-call cap, 64-byte target).
+- [x] Mix, never trust alone: output staged as one src-2 record in the framed transcript (hashed with all sources at §8); 32-byte floor + stuck-RNG heuristics (all-identical, identical halves) gate the HIGH credit.
+- [x] Degrade cleanly: absent/wedged transport skips silently (report shows `tpm=none`); short yield or protocol failure logs WARN with no credit; boot continues.
+- [x] TPM RNG availability in the measured boot report: `tpm_rng_available` field in `boot_integrity_report` + `tpm_integrity_set_rng_available()` (set only on credited collection).
+- [x] Commit: `"boot: collect TPM RNG entropy"`
 
-- [ ] Use TPM2_GetRandom when TPM transport is available. -> XREF: `01-boot-platform/TODO-13` §2 (`tpm2_submit()`, shipped)
-- [ ] Mix TPM output with other sources rather than trusting it alone.
-- [ ] Degrade cleanly on no TPM, timeout, or error.
-- [ ] Include TPM RNG availability in measured boot report.
-- [ ] Commit: `"boot: collect TPM RNG entropy"`
+**Test checkpoint:** With QEMU `-tpm` (swtpm) the log shows `RNG: TPM2_GetRandom 64 bytes` and the report line `tpm=ok`; without a TPM the source reads `tpm=none` and boot continues (verified live on KVM smoke). Known TCG TPM-init freeze (`project_tcg_tpm_freeze`) must not regress. QEMU WHPX, QEMU TCG, VirtualBox, bare metal (test laptop has fTPM).
 
-**Test checkpoint:** With QEMU `-tpm` (swtpm) the log shows `RNG: TPM2_GetRandom N bytes`; without a TPM the source reads `tpm=none` and boot continues. Known TCG TPM-init freeze (`project_tcg_tpm_freeze`) must not regress. QEMU WHPX, QEMU TCG, VirtualBox, bare metal (test laptop has fTPM).
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 4 TPM suites in `test_tpm_transport.c` (2 added with this section: GetRandom marshal+parse, RNG collection via fake TIS), 0 failures
+
+> **Notes:**
+> - Shipped `entropy_collect_tpm()` in `entropy.c` + `tpm2_build_get_random()`/`tpm2_parse_get_random()`/`tpm2_get_random_bounded()` in `tpm_transport.c` + `tpm_rng_available` report field in `tpm.h`/`tpm.c`.
+> - Runs once in Phase 1 right after `tpm_transport_init()` (boot_interrupts.c); the whole GetRandom sequence shares one 2000ms cumulative budget so a slow TPM cannot stall boot.
+> - Downstream: §8 first seed consumes the staged src-2 record; D02T03 §5 runtime reseed and the TODO-04 (drivers) command layer reuse `tpm2_get_random_bounded()`; Codex design + test-coverage adoptions in the section commit.
+> - Canonical contract doc: `include/kernel/tpm_transport.h` (GetRandom helpers) + `include/kernel/entropy.h` (collector contract).
+> - Scope boundary: first-seed collection only -- runtime reseed cadence is D02T03 §5; attestation/PCR use of the report flag is `01-boot-platform/TODO-13` §9.
 
 ---
 
@@ -236,13 +242,13 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  | Entropy quality/credit model   | ✅ internal pool credit    | ✅ credit accounting        | ✅ §1 mask+class+policy     |
 | 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random     | ✅ §2 + OEM0, framed seed   |
 | 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ✅ §3 RDSEED-first, gated   |
-| 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ⬜ §4 TPM2_GetRandom        |
+| 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ✅ §4 budgeted + floor-gated |
 | 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ✅ §5 staged, LOW-clamped   |
 | 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ⬜ §6 versioned + MAC       |
 | 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ⬜ §8 pre-KASLR             |
 | ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ⬜ §9 registry + BlackBox   |
 
-> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§3 + §5 shipped (model, firmware+OEM0, CPU RNG, jitter/timing), §4/§6-§9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
+> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§5 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing), §6-§9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
 
 ---
 
@@ -252,6 +258,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 - [x] Shipped with §1 (5 suites): quality slot packing, classification (degraded/minimum/good + descriptor-bypass guard), policy gate, transcript framing (exact-fit/wrap/no-write-on-refusal), record + clamp + Q_NONE retraction
 - [x] Shipped with §5 (6th suite): staged transcript -- stage/credit-visibility, NULL + too-small drain guards, full drain + empty re-drain, oversized refusal leaves record intact + overflow flag, consume_zero reset
+- [x] Shipped with §4 (in `test_tpm_transport.c`, TEST_CAT_SECURITY): GetRandom marshal/parse negatives, bounded-loop request-cap protocol, RNG collection via fake TIS (floor boundary both sides, stuck heuristics, report flag, no-transport no-op)
 - [x] Register in `test_runner_init()`: `test_register_entropy()` (`test_runner.c`)
 - [ ] `test_entropy_mix_fixture` -- fixed-input Blake2b transcript determinism (lands with §8 once D02T03 §5 vendors Monocypher)
 - [ ] `test_random_seed_format` -- seed file version/counter/MAC round-trip + bad-MAC rejection (§6)

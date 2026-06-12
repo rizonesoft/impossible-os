@@ -8,6 +8,8 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/entropy.h"
+#include "kernel/tpm.h"
 #include "kernel/tpm_transport.h"
 
 /* ---- Fake TIS register file ----
@@ -30,10 +32,15 @@ static uint32_t fk_cmd_total;     /* bytes received when go arrived */
 static int      fk_dead;          /* all waits time out (wedge test) */
 static int      fk_no_valid;      /* status reads lack stsValid (stale) */
 static uint32_t fk_burst_delay;   /* STS reads reporting burst=0 first */
+static int      fk_vary;          /* vary response payload per command */
+static int      fk_one_shot;      /* die after the first completed command */
+static uint16_t fk_rand_req[4];   /* GetRandom bytesRequested per command */
+static uint32_t fk_rand_req_n;
 static int      fk_expect_mode;   /* 0 normal, 1 never assert, 2 stuck on */
 static int      fk_stuck_avail;   /* dataAvail never drops (trailing bytes) */
 static int      fk_reentry_rc;    /* captured nested-submit rc */
-static int      fk_reentry_armed;
+static int      fk_reentry_armed; /* 1: nested submit; 2: nested bounded */
+static int      fk_budget_after_nested;  /* budget state after the probe */
 
 /* TIS register offsets/bits mirrored from the transport (the fake
  * implements the same PTP contract the real device does). */
@@ -57,12 +64,18 @@ static void fake_w8(uint32_t off, uint8_t v)
     if (off != FK_REG_FIFO || fk_executed)
         return;
     if (fk_reentry_armed) {
-        /* Reentrancy probe: a nested submit during an in-flight
-         * transaction must bounce with TPM_T_ERR_BUSY. */
-        uint8_t cmd[12], rsp[16];
+        /* Reentrancy probe: a nested submit (or nested bounded RNG
+         * sequence) during an in-flight transaction must bounce with
+         * TPM_T_ERR_BUSY without disturbing the outer caller. */
+        int mode = fk_reentry_armed;
+        uint8_t cmd[12], rsp[16], rnd[8];
         uint32_t n = tpm2_build_startup(cmd, sizeof(cmd));
         fk_reentry_armed = 0;
-        fk_reentry_rc = tpm2_submit(cmd, n, rsp, sizeof(rsp));
+        fk_reentry_rc = (mode == 2)
+            ? tpm2_get_random_bounded(rnd, sizeof(rnd), 50u)
+            : tpm2_submit(cmd, n, rsp, sizeof(rsp));
+        /* The outer sequence's budget must survive the nested bounce. */
+        fk_budget_after_nested = tpm_t_test_budget_active();
     }
     if (fk_cmd_len < FAKE_BUF_CAP)
         fk_cmd[fk_cmd_len] = v;
@@ -115,7 +128,18 @@ static void fake_w32(uint32_t off, uint32_t v)
     if ((v & FK_STS_GO) && fk_cmd_len >= fk_cmd_expect) {
         fk_executed = 1;
         fk_cmd_total = fk_cmd_len;
+        /* Record GetRandom bytesRequested for protocol assertions. */
+        if (fk_cmd_len >= 12u &&
+            tpm2_be32_get(fk_cmd + 6) == TPM2_CC_GET_RANDOM &&
+            fk_rand_req_n < 4u)
+            fk_rand_req[fk_rand_req_n++] = tpm2_be16_get(fk_cmd + 10);
+        if (fk_vary)
+            fk_rsp[12] = (uint8_t)(fk_rsp[12] + 1u);
+        if (fk_one_shot == 1)
+            fk_one_shot = 2;  /* arm: next commandReady kills the fake */
     }
+    if ((v & FK_STS_COMMAND_READY) && fk_one_shot == 2)
+        fk_dead = 1;
 }
 
 static const struct tpm_t_io fk_io = { fake_r8, fake_w8,
@@ -133,10 +157,15 @@ static void fake_reset(void)
     fk_dead = 0;
     fk_no_valid = 0;
     fk_burst_delay = 0;
+    fk_vary = 0;
+    fk_one_shot = 0;
+    fk_rand_req[0] = fk_rand_req[1] = fk_rand_req[2] = fk_rand_req[3] = 0;
+    fk_rand_req_n = 0;
     fk_expect_mode = 0;
     fk_stuck_avail = 0;
     fk_reentry_rc = 0;
     fk_reentry_armed = 0;
+    fk_budget_after_nested = -1;
 }
 
 /* Stage a canned success response with the given rc and total size. */
@@ -368,10 +397,200 @@ static void test_tpm2_submit_fake(void)
     (void)old;
 }
 
+/* Stage a canned GetRandom success response carrying an n-byte
+ * TPM2B_DIGEST with varied (non-stuck) payload bytes. */
+static void fake_set_rsp_random(uint16_t n)
+{
+    uint32_t i;
+    fake_set_rsp(TPM2_RC_SUCCESS, 10u + 2u + (uint32_t)n);
+    tpm2_be16_put(fk_rsp + 10, n);
+    for (i = 0; i < n; i++)
+        fk_rsp[12u + i] = (uint8_t)(i * 7u + 3u);
+}
+
+static void test_tpm2_get_random(void)
+{
+    uint8_t buf[24], out[64];
+    uint8_t rsp[64];
+    int r;
+
+    /* Pure marshal/parse helpers. */
+    TEST_ASSERT_EQ(tpm2_build_get_random(buf, sizeof(buf), 32u), 12u,
+                   "GetRandom command is 12 bytes");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 6), TPM2_CC_GET_RANDOM,
+                   "GetRandom command code");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 10), 32u,
+                   "GetRandom bytesRequested field");
+    TEST_ASSERT_EQ(tpm2_build_get_random(buf, sizeof(buf), 0u), 0u,
+                   "GetRandom refuses zero bytesRequested");
+
+    tpm2_be16_put(rsp + 0, 0x8001u);
+    tpm2_be32_put(rsp + 2, 10u + 2u + 16u);
+    tpm2_be32_put(rsp + 6, TPM2_RC_SUCCESS);
+    tpm2_be16_put(rsp + 10, 16u);
+    r = tpm2_parse_get_random(rsp, 28u, out, sizeof(out));
+    TEST_ASSERT_EQ(r, 16, "valid 16-byte TPM2B parses");
+    tpm2_be16_put(rsp + 10, 0u);
+    TEST_ASSERT_EQ(tpm2_parse_get_random(rsp, 28u, out, sizeof(out)), -1,
+                   "zero-size TPM2B rejected");
+    tpm2_be16_put(rsp + 10, 17u);
+    TEST_ASSERT_EQ(tpm2_parse_get_random(rsp, 28u, out, sizeof(out)), -1,
+                   "TPM2B size beyond response size rejected");
+    tpm2_be16_put(rsp + 10, 16u);
+    TEST_ASSERT_EQ(tpm2_parse_get_random(rsp, 28u, out, 8u), -1,
+                   "TPM2B size beyond out_cap rejected");
+    tpm2_be32_put(rsp + 6, TPM2_RC_INITIALIZE);
+    TEST_ASSERT_EQ(tpm2_parse_get_random(rsp, 28u, out, sizeof(out)), -1,
+                   "nonzero rc rejected");
+
+    /* Bounded loop protocol: 64-byte target with 32-byte canned
+     * returns must request 48 (per-call cap) then 32 (remaining). */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    fk_vary = 1;
+    r = tpm2_get_random_bounded(out, 64u, 100u);
+    TEST_ASSERT_EQ(r, 64, "bounded loop collects the full 64 bytes");
+    TEST_ASSERT_EQ(fk_rand_req_n, 2u, "bounded loop issued 2 commands");
+    TEST_ASSERT_EQ((uint32_t)fk_rand_req[0], 48u,
+                   "first request capped at 48 bytes");
+    TEST_ASSERT_EQ((uint32_t)fk_rand_req[1], 32u,
+                   "second request asks for the remaining 32");
+
+    /* Short yield: one 32-byte response then a dead interface returns
+     * the partial count, not an error. */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    fk_one_shot = 1;
+    r = tpm2_get_random_bounded(out, 64u, 100u);
+    TEST_ASSERT_EQ(r, 32, "short yield returns the partial byte count");
+
+    /* Budget ownership: a nested bounded call during an in-flight
+     * bounded sequence bounces with BUSY (never clobbers the active
+     * cumulative budget) and the outer sequence still completes. */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    fk_vary = 1;
+    fk_reentry_armed = 2;
+    r = tpm2_get_random_bounded(out, 64u, 100u);
+    TEST_ASSERT_EQ(r, 64, "outer bounded sequence completes");
+    TEST_ASSERT_EQ(fk_reentry_rc, TPM_T_ERR_BUSY,
+                   "nested bounded call bounced with BUSY");
+    TEST_ASSERT_EQ(fk_budget_after_nested, 1,
+                   "outer budget still armed after nested bounce");
+    TEST_ASSERT_EQ(tpm_t_test_budget_active(), 0,
+                   "budget disarmed once the outer sequence ends");
+    tpm_t_test_install((const struct tpm_t_io *)0, TPM_T_IFACE_NONE, 0);
+}
+
+static void test_entropy_tpm_collect(void)
+{
+    uint8_t out[ENTROPY_STAGE_CAP];
+    uint32_t len;
+
+    /* Happy path: 2x 32-byte varied GetRandom responses -> one staged
+     * 64-byte src-2 record, HIGH credit, report flag set. */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    fk_vary = 1;
+    entropy_staged_consume_zero();
+    tpm_integrity_set_rng_available(0);
+    entropy_collect_tpm();
+    TEST_ASSERT_EQ((entropy_source_mask() >> ENTROPY_SRC_TPM_RNG) & 1u, 1u,
+                   "TPM source mask bit set after collection");
+    TEST_ASSERT_EQ(entropy_quality_get(entropy_source_quality(),
+                                       ENTROPY_SRC_TPM_RNG),
+                   ENTROPY_Q_HIGH, "TPM source credited HIGH");
+    len = entropy_staged_drain(out, (uint32_t)sizeof(out));
+    TEST_ASSERT_EQ(len, 69u, "staged record is 1+4+64 bytes");
+    TEST_ASSERT_EQ(out[0], (uint8_t)ENTROPY_SRC_TPM_RNG,
+                   "staged record carries TPM src id");
+    TEST_ASSERT_EQ(tpm_integrity_report()->tpm_rng_available, 1u,
+                   "integrity report records TPM RNG availability");
+
+    /* Stuck output: identical halves (vary off -> same 32 bytes twice)
+     * must be rejected with no staged record. */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_NONE);
+    tpm_integrity_set_rng_available(0);
+    entropy_collect_tpm();
+    TEST_ASSERT_EQ((entropy_source_mask() >> ENTROPY_SRC_TPM_RNG) & 1u, 0u,
+                   "identical-halves output not credited");
+    TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
+                   "identical-halves output not staged");
+
+    /* Floor: one 16-byte response then a dead interface -> 16 < 32
+     * floor, no credit. */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(16u);
+    fk_one_shot = 1;
+    entropy_collect_tpm();
+    TEST_ASSERT_EQ((entropy_source_mask() >> ENTROPY_SRC_TPM_RNG) & 1u, 0u,
+                   "below-floor yield not credited");
+    TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
+                   "below-floor yield not staged");
+
+    /* Exact 32-byte floor: one varied 32-byte response then dead --
+     * the minimum valid contribution IS credited. */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    fk_one_shot = 1;
+    entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_NONE);
+    tpm_integrity_set_rng_available(0);
+    entropy_collect_tpm();
+    TEST_ASSERT_EQ((entropy_source_mask() >> ENTROPY_SRC_TPM_RNG) & 1u, 1u,
+                   "exactly-32-byte varied yield credited");
+    len = entropy_staged_drain(out, (uint32_t)sizeof(out));
+    TEST_ASSERT_EQ(len, 37u, "staged floor record is 1+4+32 bytes");
+
+    /* Exact 32-byte all-identical sample: rejected by the heuristic
+     * even though it meets the floor (identical-halves needs 64). */
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp_random(32u);
+    {
+        uint32_t k;
+        for (k = 0; k < 32u; k++)
+            fk_rsp[12u + k] = 0x5Au;
+    }
+    fk_one_shot = 1;
+    entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_NONE);
+    tpm_integrity_set_rng_available(0);
+    entropy_collect_tpm();
+    TEST_ASSERT_EQ((entropy_source_mask() >> ENTROPY_SRC_TPM_RNG) & 1u, 0u,
+                   "32-byte constant-fill output not credited");
+    TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
+                   "32-byte constant-fill output not staged");
+    TEST_ASSERT_EQ(tpm_integrity_report()->tpm_rng_available, 0u,
+                   "report flag stays clear on rejected output");
+
+    /* No transport: collector is a silent no-op. */
+    tpm_t_test_install((const struct tpm_t_io *)0, TPM_T_IFACE_NONE, 0);
+    entropy_collect_tpm();
+    TEST_ASSERT_EQ(entropy_staged_drain(out, (uint32_t)sizeof(out)), 0u,
+                   "no transport stages nothing");
+
+    /* Restore globals the collector touched. */
+    entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_NONE);
+    tpm_integrity_set_rng_available(0);
+    entropy_staged_consume_zero();
+}
+
 void test_register_tpm_transport(void)
 {
     test_suite_register_cat("tpm: transport marshaling",
         test_tpm2_marshal, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: transport submit (fake TIS)",
         test_tpm2_submit_fake, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: GetRandom marshal + parse",
+        test_tpm2_get_random, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: RNG entropy collection (fake TIS)",
+        test_entropy_tpm_collect, TEST_CAT_SECURITY);
 }

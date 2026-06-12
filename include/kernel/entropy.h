@@ -134,6 +134,14 @@ void entropy_staged_consume_zero(void);
 /* 1 when any record was refused for lack of space (diagnostics). */
 int entropy_staged_overflowed(void);
 
+/* Collect TPM RNG output (TPM2_GetRandom over the TPM2 command
+ * transport) into the staged transcript as ENTROPY_SRC_TPM_RNG.
+ * Requires a 32-byte minimum before crediting HIGH and rejects
+ * stuck-RNG output; absent/failed TPMs degrade silently (the report
+ * line shows tpm=none). Called once from boot Phase 1 after
+ * tpm_transport_init(). */
+void entropy_collect_tpm(void);
+
 /* Emit the one-line boot diagnostics summary:
  *   entropy: fw=.. cpu=.. tpm=.. oem0=.. seed=.. hwrng=.. jitter=.. time=.. (class=..)
  * Logs at WARN when the overall class is DEGRADED, INFO otherwise.
