@@ -134,6 +134,115 @@ void entropy_staged_consume_zero(void);
 /* 1 when any record was refused for lack of space (diagnostics). */
 int entropy_staged_overflowed(void);
 
+/* ---- boot_info seed payload handoff (boot_info seed handoff section) ----
+ * The BOOT_PAYLOAD_RANDOM_SEED payload begins with this 32-byte header,
+ * followed by exactly transcript_len bytes of framed records (the
+ * entropy_frame_source framing above). source_mask / quality are ADVISORY
+ * (Linux RANDOM_TRUST_BOOTLOADER analog): the kernel re-derives credit
+ * from the records it actually accepts. The header is versioned
+ * independently of struct boot_info -- adding fields to reserved[] needs
+ * no BOOT_INFO_VERSION bump. The bootloader mirror lives in bootx64.c
+ * (struct bl_seed_header); both sides pin the layout with static asserts. */
+#define ENTROPY_SEED_MAGIC    0x53525049u  /* "IPRS" little-endian */
+#define ENTROPY_SEED_VERSION  1u
+
+struct entropy_seed_header {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t source_mask;     /* advisory ENTROPY_SRC_BIT() union */
+    uint32_t quality;         /* advisory packed 2-bit-per-source */
+    uint32_t transcript_len;  /* framed bytes following this header */
+    uint32_t reserved[3];     /* zero; future fields, no version bump */
+};
+
+_Static_assert(sizeof(struct entropy_seed_header) == 32,
+    "seed payload header is a bootloader-kernel handoff -- 32 bytes exactly");
+_Static_assert(__builtin_offsetof(struct entropy_seed_header, transcript_len) == 16,
+    "transcript_len at offset 16 -- bootloader mirror depends on this");
+
+typedef enum {
+    ENTROPY_SEED_OK = 0,
+    ENTROPY_SEED_BAD_ARGS,    /* NULL payload/out */
+    ENTROPY_SEED_TOO_SHORT,   /* payload smaller than the header */
+    ENTROPY_SEED_BAD_MAGIC,
+    ENTROPY_SEED_BAD_VERSION,
+    ENTROPY_SEED_BAD_LENGTH,  /* transcript_len != payload len - header */
+    ENTROPY_SEED_BAD_CRC,     /* FLAG_CHECKSUMMED set, CRC-32C mismatch */
+    ENTROPY_SEED_BAD_RECORD,  /* framing violation inside the transcript */
+    ENTROPY_SEED_NO_FIT       /* out cap too small for accepted records */
+} entropy_seed_status_t;
+
+/* Seed-file record verifier hook (impure side: NVRAM token + MAC; tests
+ * inject a fake). Returns 1 to accept -- payload_out gets the inner
+ * 32-byte payload and *counter_out the blob counter -- or 0 to reject
+ * (the record is dropped, parsing continues). */
+typedef int (*entropy_seed_verify_fn)(const uint8_t *blob, uint32_t len,
+                                      uint64_t *counter_out,
+                                      uint8_t payload_out[32]);
+
+struct entropy_seed_parse_result {
+    uint32_t hdr_mask;        /* advisory mask from the header */
+    uint32_t hdr_quality;     /* advisory quality from the header */
+    uint32_t records_mask;    /* sources actually present in accepted records */
+    uint32_t record_count;    /* framed records copied to out */
+    uint32_t seed_file_ok;    /* src-4 records the verifier accepted */
+    uint32_t seed_file_rejected;
+    uint64_t seed_file_counter; /* highest accepted carryover counter */
+};
+
+/* PURE payload parser (no NVRAM, no CSPRNG, no logging): validate the
+ * header, the CRC-32C when checksummed != 0, and every framed record;
+ * copy accepted records into out re-framed for the CSPRNG transcript.
+ * Seed-file (src-4) records carry a raw 80-byte blob and are routed
+ * through 'verify' -- accepted ones are re-framed as a 32-byte src-4
+ * record (the verified inner payload), rejected ones are dropped without
+ * failing the parse. Any structural failure rejects the WHOLE payload
+ * (out is not consumed). */
+entropy_seed_status_t entropy_seed_parse(
+    const uint8_t *payload, uint64_t len,
+    int checksummed, uint64_t checksum,
+    entropy_seed_verify_fn verify,
+    uint8_t *out, uint32_t cap, uint32_t *out_len,
+    struct entropy_seed_parse_result *res);
+
+/* Impure Phase 1 consumer (src/kernel/main/boot_seed.c): walk every
+ * validated BOOT_PAYLOAD_RANDOM_SEED descriptor, parse it (NVRAM-backed
+ * seed-file verification), record accepted sources, copy the combined
+ * transcript into out, then wipe the payload pages and return the frames
+ * to the PMM when the descriptor certifies exclusive page ownership
+ * (4 KiB-aligned phys_start AND alignment == 4096). Returns the combined
+ * transcript length (0 = no usable payload; boot continues degraded).
+ * BSP boot path only -- runs once in Phase 1 BEFORE csprng_init(). */
+uint32_t boot_seed_consume(uint8_t *out, uint32_t cap);
+
+/* PURE consumability classifier for one RANDOM_SEED descriptor (the
+ * load-bearing gate inside boot_seed_consume, exported for tests).
+ * NOT_RESERVED and OUT_OF_MAP descriptors must be retired UNTOUCHED:
+ * an unreserved range may already be allocator-owned, an out-of-map
+ * range is not dereferenceable. BAD_LENGTH is safe to wipe. */
+typedef enum {
+    BOOT_SEED_DESC_CONSUMABLE = 0,
+    BOOT_SEED_DESC_NOT_RESERVED,  /* FLAG_RESERVED missing -- PMM never pinned it */
+    BOOT_SEED_DESC_OUT_OF_MAP,    /* outside the 4 GiB boot identity map */
+    BOOT_SEED_DESC_BAD_LENGTH     /* below header size or above the payload cap */
+} boot_seed_desc_class_t;
+
+/* Payload sanity cap shared by the classifier and its tests: one
+ * descriptor larger than this is malformed for the seed type. */
+#define BOOT_SEED_PAYLOAD_CAP  16384ull
+
+boot_seed_desc_class_t boot_seed_desc_classify(uint32_t flags,
+                                               uint64_t phys_start,
+                                               uint64_t length);
+
+/* PURE release helper for one consumed payload (unit-testable half of
+ * the consume path): wipe 'length' bytes at 'payload' and return 1 when
+ * the descriptor certifies exclusive page ownership (4 KiB-aligned
+ * phys_start AND alignment == 4096) so the caller may return the frames
+ * to the PMM, 0 otherwise (wiped but frames stay reserved). */
+int boot_seed_release_payload(uint8_t *payload, uint64_t length,
+                              uint64_t phys_start, uint64_t alignment);
+
 /* Collect TPM RNG output (TPM2_GetRandom over the TPM2 command
  * transport) into the staged transcript as ENTROPY_SRC_TPM_RNG.
  * Requires a 32-byte minimum before crediting HIGH and rejects

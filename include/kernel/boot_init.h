@@ -201,6 +201,8 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_TPM_TRANSPORT_OK 0x1055
 #define POST16_CSPRNG           0x1056  /* kernel CSPRNG first seed */
 #define POST16_CSPRNG_OK        0x1057
+#define POST16_BOOT_SEED        0x1058  /* boot_info seed payload consume */
+#define POST16_BOOT_SEED_OK     0x1059
 #define POST16_KBD              0x1060
 #define POST16_KBD_OK           0x1061
 #define POST16_MOUSE            0x1070

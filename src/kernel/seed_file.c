@@ -155,6 +155,61 @@ static NTSTATUS seed_token_store(const struct seed_token *tok)
                         tok, sizeof(*tok), UEFI_VAR_NV_BOOT_RUNTIME);
 }
 
+/* ---- Early (Phase 1) payload verification ------------------------------- */
+
+/* Highest counter the early consumer ABSORBED into the first seed this
+ * boot. BSP boot path only (Phase 1 runs before APs exist; Phase 3 is
+ * the single other reader) -- no lock needed, documented per the SMP
+ * gate. Set ONLY via seed_file_early_mark_consumed() AFTER the whole
+ * payload was accepted into the transcript: a record that merely
+ * VERIFIED but whose payload was later rejected (BAD_RECORD / NO_FIT)
+ * never reached the CSPRNG, and marking it consumed would make
+ * seed_file_phase3() skip the only absorption it gets. */
+static uint64_t g_early_counter;
+static int      g_early_consumed;
+
+void seed_file_early_mark_consumed(uint64_t counter)
+{
+    if (!g_early_consumed || counter > g_early_counter)
+        g_early_counter = counter;
+    g_early_consumed = 1;
+}
+
+int seed_file_early_verify(const uint8_t *blob, uint32_t len,
+                           uint64_t *counter_out,
+                           uint8_t payload_out[SEED_FILE_PAYLOAD_LEN])
+{
+    struct seed_token tok;
+    seed_file_status_t st;
+    uint64_t counter = 0;
+
+    if (!blob || !counter_out || !payload_out)
+        return 0;
+    if (!seed_token_load(&tok)) {
+        /* Absent/foreign token: fail closed (anti-clone). Recovery --
+         * minting a fresh token + file -- is the Phase-3 lifecycle's
+         * job once the CSPRNG is seeded. */
+        klog(LOG_WARN, "entropy",
+             "early seed: NVRAM token absent -- carryover rejected "
+             "(fail closed; Phase 3 re-mints)");
+        return 0;
+    }
+    st = seed_file_accept(blob, len, tok.secret, tok.last_seen,
+                          &counter, payload_out);
+    crypto_wipe(&tok, sizeof(tok));
+    if (st != SEED_FILE_OK) {
+        klog(LOG_WARN, "entropy",
+             "early seed: carryover rejected (status=%u) -- fail closed",
+             (uint64_t)st);
+        return 0;
+    }
+    /* Side-effect-free on success: the caller (boot_seed_consume) marks
+     * the counter consumed ONLY after the whole payload is accepted into
+     * the first-seed transcript. */
+    *counter_out = counter;
+    return 1;
+}
+
 int seed_file_hw_provenance(void)
 {
     /* At least one HARDWARE RNG class credited HIGH this boot. The
@@ -292,8 +347,20 @@ void seed_file_phase3(void)
          * generator state may be predictable -- a replacement drawn from
          * it would launder forward). Credit (HIGH accounting) waits for
          * the replacement-write + NVRAM commit below; the bytes
-         * themselves are absorbed exactly once, here. */
-        csprng_add_entropy(payload, SEED_FILE_PAYLOAD_LEN, ENTROPY_Q_LOW);
+         * themselves are absorbed exactly once -- here, UNLESS the
+         * boot_info seed handoff already folded this exact counter into
+         * the Phase-1 first seed (boot_seed_consume + csprng_init). */
+        if (g_early_consumed && best_counter == g_early_counter) {
+            /* EXACT counter match means the same blob: a strictly LOWER
+             * disk winner is a different blob whose bytes never reached
+             * the first seed and must still be absorbed. */
+            klog(LOG_INFO, "entropy",
+                 "seed file: carryover already in the first seed "
+                 "(counter=%llu) -- pre-mix skipped",
+                 (unsigned long long)best_counter);
+        } else {
+            csprng_add_entropy(payload, SEED_FILE_PAYLOAD_LEN, ENTROPY_Q_LOW);
+        }
         crypto_wipe(payload, sizeof(payload));
     }
 
@@ -319,9 +386,11 @@ void seed_file_phase3(void)
      * CSPRNG output is trustworthy -- a HIGH hardware source collected
      * this boot, OR a fresh valid carryover (a rescued boot may re-seed
      * forward; the chain root was a provenance-OK boot because mint and
-     * rotation are both gated). Skipping leaves any prior file valid:
-     * last_seen advances only after a durable replacement exists. */
-    if (!have_payload && !seed_file_hw_provenance()) {
+     * rotation are both gated). The EARLY-consumed carryover (boot_info
+     * seed handoff, verified against the same NVRAM token) satisfies the
+     * gate identically. Skipping leaves any prior file valid: last_seen
+     * advances only after a durable replacement exists. */
+    if (!have_payload && !g_early_consumed && !seed_file_hw_provenance()) {
         klog(LOG_WARN, "entropy",
              "seed file: degraded boot -- rotation deferred, prior file "
              "kept");
@@ -334,8 +403,22 @@ void seed_file_phase3(void)
      * 0 would replay-reject every future file -- skip instead of writing
      * a poisoned counter. */
     {
-        uint64_t base = have_payload ? best_counter : tok.last_seen;
+        /* The consumed counter that must become unreplayable covers BOTH
+         * absorption paths: the Phase-3 disk winner AND the Phase-1
+         * early-consumed payload counter -- whichever is higher. Leaving
+         * the early counter out of last_seen would keep an
+         * already-absorbed blob fresh for a later boot (replay). */
+        uint64_t consumed_counter = have_payload ? best_counter : 0;
+        int consumed_any = have_payload;
+        uint64_t base;
         int first_ok;
+
+        if (g_early_consumed) {
+            consumed_any = 1;
+            if (g_early_counter > consumed_counter)
+                consumed_counter = g_early_counter;
+        }
+        base = consumed_any ? consumed_counter : tok.last_seen;
         /* NEVER truncate the file that supplied the accepted payload
          * until a higher-counter replacement is durable elsewhere: the
          * replacement goes to the OTHER name first (partner by default;
@@ -362,26 +445,26 @@ void seed_file_phase3(void)
         crypto_wipe(fresh, sizeof(fresh));
         first_ok = (seed_write_file(first_path, &blob) == 0);
 
-        if (have_payload) {
-            /* The payload bytes were already absorbed (pre-mix above);
-             * what remains is the ACCOUNTING. COMMIT POINT: persist the
-             * consumed counter BEFORE recording HIGH so a counter that
-             * was not durably recorded is never advertised as fresh
-             * (anti-replay), and only after the durable replacement
-             * exists. */
+        if (consumed_any) {
+            /* The payload bytes were already absorbed (Phase-3 pre-mix
+             * above and/or the Phase-1 first seed); what remains is the
+             * ACCOUNTING. COMMIT POINT: persist the consumed counter
+             * BEFORE recording HIGH so a counter that was not durably
+             * recorded is never advertised as fresh (anti-replay), and
+             * only after the durable replacement exists. */
             if (first_ok) {
-                tok.last_seen = best_counter;
+                tok.last_seen = consumed_counter;
                 if (seed_token_store(&tok) == STATUS_SUCCESS) {
                     entropy_record_source(ENTROPY_SRC_SEED_FILE,
                                           ENTROPY_Q_HIGH);
                     klog(LOG_INFO, "entropy",
                          "seed file: carryover accepted (counter=%llu)",
-                         (unsigned long long)best_counter);
+                         (unsigned long long)consumed_counter);
                 } else {
                     klog(LOG_WARN, "entropy",
                          "seed file: NVRAM commit failed -- carryover "
                          "stays uncredited (counter=%llu)",
-                         (unsigned long long)best_counter);
+                         (unsigned long long)consumed_counter);
                 }
             } else {
                 klog(LOG_WARN, "entropy",
@@ -391,7 +474,7 @@ void seed_file_phase3(void)
         }
 
         if (!first_ok) {
-            if (!have_payload)
+            if (!consumed_any)
                 klog(LOG_WARN, "entropy",
                      "seed file: rotation write failed (read-only or "
                      "full media?) -- boot continues");

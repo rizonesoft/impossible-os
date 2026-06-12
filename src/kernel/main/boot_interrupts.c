@@ -56,6 +56,7 @@
 #include "kernel/entropy.h"
 #include "kernel/csprng.h"
 #include "kernel/tpm_transport.h"
+#include "libs/monocypher/monocypher.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
@@ -468,10 +469,24 @@ void boot_phase1(void)
     /* Kernel CSPRNG first seed. Placement is load-bearing: AFTER the
      * jitter and TPM collectors above (csprng_init drains their staged
      * transcript), BEFORE any consumer (AT_RANDOM in task_exec, future
-     * KASLR). The boot_info seed payload arrives later via the TODO-12
-     * handoff sections as a csprng_add_entropy() reseed. */
+     * KASLR). The boot_info seed payload (bootloader EFI RNG / RDSEED /
+     * OEM0 / pre-EBS seed-file carryover) is consumed FIRST so it folds
+     * into the same initial key -- first-seed-or-nothing, never a
+     * post-init reseed a consumer could race past. */
     POST16(POST16_CSPRNG);
-    csprng_init();
+    {
+        /* Static, not stack: 4 KiB would crowd the Phase 1 stack.
+         * BSP-only by construction (Phase 1 runs before AP startup);
+         * wiped immediately after the seed absorbs it. */
+        static uint8_t s_boot_seed_tx[4096];
+        uint32_t boot_seed_len;
+
+        boot_seed_len = boot_seed_consume(s_boot_seed_tx,
+                                          (uint32_t)sizeof(s_boot_seed_tx));
+        csprng_init(boot_seed_len ? s_boot_seed_tx : (const uint8_t *)0,
+                    boot_seed_len);
+        crypto_wipe(s_boot_seed_tx, sizeof(s_boot_seed_tx));
+    }
     POST16(POST16_CSPRNG_OK);
     boot_progress(1, "CSPRNG", POST16_CSPRNG_OK);
 

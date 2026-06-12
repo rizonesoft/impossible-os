@@ -46,6 +46,14 @@ typedef struct csprng_core {
 void csprng_core_seed(csprng_core_t *c, const uint8_t *transcript,
                       uint32_t len);
 
+/* Two-part seed: key = Blake2b-256(t1 || t2) via incremental hashing --
+ * exactly equivalent to csprng_core_seed over the concatenation, without
+ * needing one contiguous buffer. Either part may be (NULL, 0). Used by
+ * csprng_init to fold the boot_info seed payload transcript into the
+ * FIRST key (first-seed-or-nothing; never a post-init reseed). */
+void csprng_core_seed2(csprng_core_t *c, const uint8_t *t1, uint32_t l1,
+                       const uint8_t *t2, uint32_t l2);
+
 /* Ratchet: generate 64 keystream bytes from the current key; the first 32
  * replace the core key (forward secrecy), the last 32 are returned as a
  * single-use request key. Bounded work -- safe under a spinlock. */
@@ -80,10 +88,13 @@ int csprng_core_absorb_digest(csprng_core_t *c, int seeded,
 
 /* Seed the global instance. Called once from boot Phase 1 after the
  * interrupt-jitter and TPM RNG collectors have staged their transcript
- * records. Logs the entropy classification; degraded boots WARN loudly
- * but continue (release-mode gating is owned by the boot entropy policy
- * sections). */
-void csprng_init(void);
+ * records AND after boot_seed_consume() has validated the boot_info seed
+ * payload -- boot_transcript/boot_len carry that validated transcript
+ * ((NULL, 0) when no payload was usable) and are hashed into the FIRST
+ * key together with the local + staged sources. Logs the entropy
+ * classification; degraded boots WARN loudly but continue (release-mode
+ * gating is owned by the boot entropy policy sections). */
+void csprng_init(const uint8_t *boot_transcript, uint32_t boot_len);
 
 /* Fill 'buf' with 'len' cryptographically random bytes. SMP-safe: the
  * global key ratchet runs under one irqsave spinlock with a bounded

@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/boot_info.h"
 #include "kernel/entropy.h"
 #include "kernel/seed_file.h"
 #include "libc/string.h"
@@ -490,6 +491,355 @@ static void test_random_seed_clone_rejected(void)
                    (uint32_t)SEED_FILE_BAD_MAC, "cloned blob fails closed");
 }
 
+/* ---- boot_info seed payload (boot_info seed handoff section) ----------- */
+
+/* Local CRC-32C twin (bitwise Castagnoli) -- the kernel's entropy_crc32c
+ * is static; an independent reimplementation also catches an accidental
+ * polynomial change on either side of the bootloader/kernel mirror. */
+static uint32_t tseed_crc32c(const uint8_t *data, uint64_t len)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    uint64_t i;
+    int b;
+
+    for (i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (b = 0; b < 8; b++)
+            crc = (crc >> 1) ^ (0x82F63B78u & (0u - (crc & 1u)));
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+/* Build a bootloader-shaped payload: 32-byte header + framed records.
+ * Returns total payload length. */
+static uint64_t tseed_build(uint8_t *buf, uint32_t cap,
+                            uint32_t mask, uint32_t quality,
+                            const uint8_t *recs, uint32_t recs_len)
+{
+    struct entropy_seed_header *hdr = (struct entropy_seed_header *)buf;
+
+    memset(buf, 0, cap);
+    hdr->magic          = ENTROPY_SEED_MAGIC;
+    hdr->version        = ENTROPY_SEED_VERSION;
+    hdr->source_mask    = mask;
+    hdr->quality        = quality;
+    hdr->transcript_len = recs_len;
+    if (recs_len)
+        memcpy(buf + sizeof(*hdr), recs, recs_len);
+    return sizeof(*hdr) + recs_len;
+}
+
+/* entropy_seed_verify_fn fake: accepts an 80-byte blob whose first byte is
+ * 0xAA; counter = second byte; payload_out = 0x5A fill. Everything else
+ * rejected. */
+static int tseed_fake_verify(const uint8_t *blob, uint32_t len,
+                             uint64_t *counter_out, uint8_t payload_out[32])
+{
+    if (len != 80u || blob[0] != 0xAAu)
+        return 0;
+    *counter_out = (uint64_t)blob[1];
+    memset(payload_out, 0x5A, 32);
+    return 1;
+}
+
+static void test_boot_seed_payload_parse(void)
+{
+    uint8_t payload[512];
+    uint8_t recs[256];
+    uint8_t out[256];
+    uint32_t out_len;
+    struct entropy_seed_parse_result res;
+    uint64_t plen;
+    uint32_t rlen;
+
+    /* Two framed records: 8-byte FW_RNG + 32-byte TIME. */
+    static const uint8_t fw[8]  = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    uint8_t tm[32];
+    memset(tm, 0x77, sizeof(tm));
+    rlen = entropy_frame_source(recs, sizeof(recs), 0,
+                                ENTROPY_SRC_FW_RNG, fw, sizeof(fw));
+    rlen = entropy_frame_source(recs, sizeof(recs), rlen,
+                                ENTROPY_SRC_TIME, tm, sizeof(tm));
+    TEST_ASSERT(rlen == (5u + 8u) + (5u + 32u), "fixture framing length");
+
+    /* NULL-arg guards. */
+    plen = tseed_build(payload, sizeof(payload), 0x81u, 0x2u, recs, rlen);
+    TEST_ASSERT_EQ(entropy_seed_parse(NULL, plen, 0, 0, NULL,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_BAD_ARGS, "NULL payload rejected");
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                      NULL, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_BAD_ARGS, "NULL out rejected");
+
+    /* Header gates. */
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, 31, 0, 0, NULL,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_TOO_SHORT, "31 bytes too short");
+    payload[0] ^= 1u;
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_BAD_MAGIC, "magic tamper rejected");
+    payload[0] ^= 1u;
+    payload[4] ^= 1u;  /* version word */
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_BAD_VERSION, "version bump rejected");
+    payload[4] ^= 1u;
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen + 1u, 0, 0, NULL,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_BAD_LENGTH,
+                   "trailing slack rejected (exact-length contract)");
+
+    /* CRC gates: high checksum bits, then a flipped payload bit. */
+    {
+        uint64_t crc = (uint64_t)tseed_crc32c(payload, plen);
+        TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 1,
+                                          crc | (1ull << 32), NULL,
+                                          out, sizeof(out), &out_len, &res),
+                       (uint32_t)ENTROPY_SEED_BAD_CRC,
+                       "checksum high bits must be zero");
+        payload[40] ^= 1u;
+        TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 1, crc, NULL,
+                                          out, sizeof(out), &out_len, &res),
+                       (uint32_t)ENTROPY_SEED_BAD_CRC, "bit flip fails CRC");
+        payload[40] ^= 1u;
+
+        /* Bootloader-shaped contract test: header + records + CRC over
+         * the WHOLE payload accepted end-to-end. */
+        out_len = 0xFFFFFFFFu;
+        TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 1, crc,
+                                          NULL,
+                                          out, sizeof(out), &out_len, &res),
+                       (uint32_t)ENTROPY_SEED_OK,
+                       "bootloader-shaped payload accepted");
+        TEST_ASSERT_EQ(out_len, rlen, "all framed bytes copied");
+        TEST_ASSERT_EQ(memcmp(out, recs, rlen), 0, "records copied intact");
+        TEST_ASSERT_EQ(res.record_count, 2u, "two records counted");
+        TEST_ASSERT_EQ(res.records_mask,
+                       ENTROPY_SRC_BIT(ENTROPY_SRC_FW_RNG) |
+                       ENTROPY_SRC_BIT(ENTROPY_SRC_TIME),
+                       "records mask re-derived from records");
+        TEST_ASSERT_EQ(res.hdr_mask, 0x81u, "advisory mask surfaced");
+        TEST_ASSERT_EQ(res.hdr_quality, 0x2u, "advisory quality surfaced");
+    }
+
+    /* Record framing violations reject the WHOLE payload. */
+    {
+        uint8_t bad[5] = { (uint8_t)ENTROPY_SRC_COUNT, 1, 0, 0, 0 };
+        plen = tseed_build(payload, sizeof(payload), 0, 0, bad, 5);
+        out_len = 0xFFFFFFFFu;
+        TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                          out, sizeof(out), &out_len, &res),
+                       (uint32_t)ENTROPY_SEED_BAD_RECORD,
+                       "src id out of range rejected");
+        TEST_ASSERT_EQ(out_len, 0u, "out not consumed on bad record");
+
+        bad[0] = (uint8_t)ENTROPY_SRC_FW_RNG;  /* rlen = 1 but no byte */
+        plen = tseed_build(payload, sizeof(payload), 0, 0, bad, 5);
+        TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                          out, sizeof(out), &out_len, &res),
+                       (uint32_t)ENTROPY_SEED_BAD_RECORD,
+                       "record length overrun rejected");
+
+        bad[1] = 0;  /* rlen = 0 */
+        plen = tseed_build(payload, sizeof(payload), 0, 0, bad, 5);
+        TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                          out, sizeof(out), &out_len, &res),
+                       (uint32_t)ENTROPY_SEED_BAD_RECORD,
+                       "zero-length record rejected");
+    }
+
+    /* Output cap too small -> NO_FIT (never truncate). */
+    plen = tseed_build(payload, sizeof(payload), 0, 0, recs, rlen);
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                      out, 8, &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_NO_FIT, "tiny out cap is NO_FIT");
+
+    /* All-or-nothing boundary: cap fits record 1 (5+8=13 bytes) but not
+     * record 2 -- the parser has already copied a prefix when it hits
+     * the wall, and the contract is out_len == 0 so the caller consumes
+     * NOTHING from a rejected payload. */
+    out_len = 0xFFFFFFFFu;
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                      out, 13, &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_NO_FIT,
+                   "second record overflow is NO_FIT");
+    TEST_ASSERT_EQ(out_len, 0u, "partial copy never reaches the caller");
+
+    /* Empty transcript (header only) parses OK with zero records. */
+    plen = tseed_build(payload, sizeof(payload), 0, 0, NULL, 0);
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_OK, "header-only payload OK");
+    TEST_ASSERT_EQ(out_len, 0u, "header-only payload copies nothing");
+    TEST_ASSERT_EQ(res.record_count, 0u, "header-only has zero records");
+}
+
+static void test_boot_seed_carryover_routing(void)
+{
+    uint8_t payload[512];
+    uint8_t recs[384];
+    uint8_t out[384];
+    uint32_t out_len;
+    struct entropy_seed_parse_result res;
+    uint64_t plen;
+    uint32_t rlen;
+    uint8_t blob_ok[80], blob_ok2[80], blob_bad[80];
+
+    memset(blob_ok, 0x11, sizeof(blob_ok));
+    blob_ok[0] = 0xAA; blob_ok[1] = 7;     /* accepted, counter 7 */
+    memset(blob_ok2, 0x22, sizeof(blob_ok2));
+    blob_ok2[0] = 0xAA; blob_ok2[1] = 9;   /* accepted, counter 9 */
+    memset(blob_bad, 0x33, sizeof(blob_bad));
+    blob_bad[0] = 0xBB;                    /* rejected by fake verifier */
+
+    /* src-4 ok + src-4 bad + src-4 ok2 + one FW record. */
+    rlen = entropy_frame_source(recs, sizeof(recs), 0,
+                                ENTROPY_SRC_SEED_FILE,
+                                blob_ok, sizeof(blob_ok));
+    rlen = entropy_frame_source(recs, sizeof(recs), rlen,
+                                ENTROPY_SRC_SEED_FILE,
+                                blob_bad, sizeof(blob_bad));
+    rlen = entropy_frame_source(recs, sizeof(recs), rlen,
+                                ENTROPY_SRC_SEED_FILE,
+                                blob_ok2, sizeof(blob_ok2));
+    {
+        static const uint8_t fw[8] = { 9, 9, 9, 9, 9, 9, 9, 9 };
+        rlen = entropy_frame_source(recs, sizeof(recs), rlen,
+                                    ENTROPY_SRC_FW_RNG, fw, sizeof(fw));
+    }
+    plen = tseed_build(payload, sizeof(payload), 0, 0, recs, rlen);
+
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0,
+                                      tseed_fake_verify,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_OK, "carryover payload parses");
+    TEST_ASSERT_EQ(res.seed_file_ok, 2u, "two carryover blobs accepted");
+    TEST_ASSERT_EQ(res.seed_file_rejected, 1u,
+                   "rejected blob dropped without failing the parse");
+    TEST_ASSERT_EQ(res.seed_file_counter, 9u,
+                   "highest accepted counter tracked");
+    TEST_ASSERT_EQ(res.record_count, 3u,
+                   "accepted records = 2 carryover + 1 firmware");
+    TEST_ASSERT_EQ(res.records_mask,
+                   ENTROPY_SRC_BIT(ENTROPY_SRC_SEED_FILE) |
+                   ENTROPY_SRC_BIT(ENTROPY_SRC_FW_RNG),
+                   "mask covers seed-file + firmware only");
+
+    /* Accepted carryover is RE-FRAMED as the 32-byte verified inner
+     * payload, not the raw 80-byte blob. */
+    TEST_ASSERT_EQ((uint64_t)out[0], (uint64_t)ENTROPY_SRC_SEED_FILE,
+                   "first out record is src-4");
+    TEST_ASSERT_EQ((uint64_t)out[1], 32u, "re-framed to inner 32 bytes");
+    TEST_ASSERT_EQ((uint64_t)out[5], 0x5Au, "inner payload from verifier");
+
+    /* Re-frame path honors the same all-or-nothing cap contract: the
+     * first accepted carryover re-frame (5+32=37 bytes) fits, the second
+     * does not -> NO_FIT with nothing consumed. */
+    out_len = 0xFFFFFFFFu;
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0,
+                                      tseed_fake_verify,
+                                      out, 37, &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_NO_FIT,
+                   "second re-framed carryover overflow is NO_FIT");
+    TEST_ASSERT_EQ(out_len, 0u, "re-frame partial copy never consumed");
+
+    /* No verifier wired -> every src-4 record is dropped (fail closed),
+     * the rest of the payload still parses. */
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, NULL,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_OK, "NULL verifier parses");
+    TEST_ASSERT_EQ(res.seed_file_ok, 0u, "NULL verifier accepts nothing");
+    TEST_ASSERT_EQ(res.seed_file_rejected, 3u,
+                   "NULL verifier drops all carryover records");
+    TEST_ASSERT_EQ(res.record_count, 1u, "firmware record survives");
+}
+
+static void test_boot_seed_desc_classify(void)
+{
+    const uint32_t vr = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
+
+    /* VALID-only (never PMM-pinned): untouchable regardless of range --
+     * the round-2 adversarial regression case. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(BOOT_PAYLOAD_FLAG_VALID,
+                                           0x5000ull, 256ull),
+                   (uint32_t)BOOT_SEED_DESC_NOT_RESERVED,
+                   "VALID-only descriptor is not consumable");
+
+    /* Out of the 4 GiB identity map: start above, and length crossing. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, BOOT_INFO_EARLY_MAP_END,
+                                           256ull),
+                   (uint32_t)BOOT_SEED_DESC_OUT_OF_MAP,
+                   "start at map end is out of map");
+    TEST_ASSERT_EQ(boot_seed_desc_classify(vr,
+                                           BOOT_INFO_EARLY_MAP_END - 64ull,
+                                           65ull),
+                   (uint32_t)BOOT_SEED_DESC_OUT_OF_MAP,
+                   "range crossing map end is out of map");
+    TEST_ASSERT_EQ(boot_seed_desc_classify(vr,
+                                           BOOT_INFO_EARLY_MAP_END - 64ull,
+                                           64ull),
+                   (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
+                   "range ending exactly at map end passes the map gate");
+
+    /* Length contract: below header, above cap, and both boundaries. */
+    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull, 31ull),
+                   (uint32_t)BOOT_SEED_DESC_BAD_LENGTH,
+                   "31 bytes below header size");
+    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull,
+                                           BOOT_SEED_PAYLOAD_CAP + 1ull),
+                   (uint32_t)BOOT_SEED_DESC_BAD_LENGTH,
+                   "cap+1 above contract");
+    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull, 32ull),
+                   (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
+                   "header-sized payload consumable");
+    TEST_ASSERT_EQ(boot_seed_desc_classify(vr, 0x5000ull,
+                                           BOOT_SEED_PAYLOAD_CAP),
+                   (uint32_t)BOOT_SEED_DESC_CONSUMABLE,
+                   "cap-sized payload consumable");
+}
+
+static void test_entropy_seed_zeroized(void)
+{
+    uint8_t buf[96];
+    uint32_t i;
+    uint64_t sum;
+
+    /* Page-owning shape: wiped AND releasable. */
+    memset(buf, 0xA5, sizeof(buf));
+    TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, sizeof(buf),
+                                                       0x5000ull, 4096ull),
+                   1u, "aligned page-certified payload is releasable");
+    for (sum = 0, i = 0; i < sizeof(buf); i++)
+        sum += buf[i];
+    TEST_ASSERT_EQ(sum, 0u, "payload all-zero after consumption");
+
+    /* Sub-page shape: wiped but NOT releasable. */
+    memset(buf, 0xA5, sizeof(buf));
+    TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, sizeof(buf),
+                                                       0x5010ull, 4096ull),
+                   0u, "unaligned start never frees frames");
+    for (sum = 0, i = 0; i < sizeof(buf); i++)
+        sum += buf[i];
+    TEST_ASSERT_EQ(sum, 0u, "unaligned payload still wiped");
+
+    memset(buf, 0xA5, sizeof(buf));
+    TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, sizeof(buf),
+                                                       0x5000ull, 8ull),
+                   0u, "non-page alignment never frees frames");
+    for (sum = 0, i = 0; i < sizeof(buf); i++)
+        sum += buf[i];
+    TEST_ASSERT_EQ(sum, 0u, "non-page-certified payload still wiped");
+
+    /* Guards: NULL / zero length are no-ops. */
+    TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(NULL, 64,
+                                                       0x5000ull, 4096ull),
+                   0u, "NULL payload refused");
+    TEST_ASSERT_EQ((uint64_t)boot_seed_release_payload(buf, 0,
+                                                       0x5000ull, 4096ull),
+                   0u, "zero length refused");
+}
+
 void test_register_entropy(void)
 {
     test_suite_register_cat("entropy: quality slot packing",
@@ -510,4 +860,12 @@ void test_register_entropy(void)
         test_random_seed_clone_rejected, TEST_CAT_SECURITY);
     test_suite_register_cat("entropy: seed file provenance gate",
         test_random_seed_provenance_gate, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: boot seed payload parse",
+        test_boot_seed_payload_parse, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: boot seed carryover routing",
+        test_boot_seed_carryover_routing, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: boot seed descriptor gate",
+        test_boot_seed_desc_classify, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: boot seed zeroized",
+        test_entropy_seed_zeroized, TEST_CAT_SECURITY);
 }

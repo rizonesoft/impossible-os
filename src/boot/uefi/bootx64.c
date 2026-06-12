@@ -8788,14 +8788,31 @@ static void parse_fpdt(void)
  * boot.conf payloads -- without the descriptor the kernel PMM would
  * reclaim the page with raw seed bytes still in it).
  *
+ * Payload layout (boot_info seed handoff section): a 32-byte header
+ * (struct bl_seed_header -- mirror of struct entropy_seed_header in
+ * include/kernel/entropy.h, layout pinned by static asserts on both
+ * sides) followed by transcript_len bytes of framed records. The
+ * descriptor carries FLAG_CHECKSUMMED with CRC-32C of the WHOLE payload
+ * in the checksum low 32 bits. mask/quality in the header are ADVISORY;
+ * the kernel re-derives credit from the records it accepts.
+ *
  * Transcript format mirrors include/kernel/entropy.h framing:
  *   u8 src_id | u32 len (LE) | payload
  * src ids: 0 = firmware RNG (EFI_RNG_PROTOCOL, 64 bytes),
  *          1 = CPU RDSEED/RDRAND (64 RNG bytes + 16 personalization
  *              bytes: CPUID vendor EBX,EDX,ECX order + FMS dword),
  *          3 = ACPI OEM0 table payload (up to 512 bytes),
+ *          4 = seed-file carryover (raw 80-byte X:\Boot\random-seed.*
+ *              blob, read pre-EBS from the same-disk BLACKBOX volume;
+ *              NOT verified here -- the kernel checks MAC + counter
+ *              against the NVRAM token and fails closed),
  *          7 = boot timing personalization (bl_entry, reset_end,
  *              tsc_freq, rdtsc-now -- 32 bytes, LOW/uncredited).
+ *
+ * Earlier-stage concatenation (Linux EFI config-table parity): an
+ * already-published RANDOM_SEED descriptor from a prior chain stage is
+ * left untouched; ours is appended as an additional descriptor and the
+ * kernel mixes every one.
  *
  * Hang contract: a firmware GetRNG that never returns cannot be recovered
  * pre-EBS (no preemption). The boot.conf escape hatch firmware_rng=off
@@ -8806,10 +8823,36 @@ static void parse_fpdt(void)
 #define BL_ENTROPY_SRC_FW_RNG    0u
 #define BL_ENTROPY_SRC_CPU_RNG   1u
 #define BL_ENTROPY_SRC_ACPI_OEM0 3u
+#define BL_ENTROPY_SRC_SEED_FILE 4u
 #define BL_ENTROPY_SRC_TIME      7u
 #define BL_ENTROPY_FW_BYTES      64u
 #define BL_ENTROPY_CPU_QWORDS    8u    /* 64 RNG bytes */
 #define BL_ENTROPY_OEM0_CAP      512u
+#define BL_SEED_FILE_SIZE        80u   /* on-disk blob, kernel seed_file.h */
+
+/* Advisory per-source quality classes (mirror of entropy_quality_t). */
+#define BL_ENTROPY_Q_LOW         1u
+#define BL_ENTROPY_Q_HIGH        2u
+
+/* In-payload seed header -- mirror of struct entropy_seed_header in
+ * include/kernel/entropy.h. Layout pinned on BOTH sides; bump
+ * BL_SEED_VERSION together with ENTROPY_SEED_VERSION. */
+#define BL_SEED_MAGIC            0x53525049u  /* "IPRS" little-endian */
+#define BL_SEED_VERSION          1u
+
+struct bl_seed_header {
+    UINT32 magic;
+    UINT32 version;
+    UINT32 source_mask;
+    UINT32 quality;          /* 2 bits per source id */
+    UINT32 transcript_len;   /* framed bytes after this header */
+    UINT32 reserved[3];
+};
+
+_Static_assert(sizeof(struct bl_seed_header) == 32,
+    "seed header is a bootloader-kernel handoff -- 32 bytes exactly");
+_Static_assert(__builtin_offsetof(struct bl_seed_header, transcript_len) == 16,
+    "transcript_len at offset 16 -- kernel entropy_seed_header twin");
 /* Per-qword RDSEED retry budget. RDSEED legitimately underflows when the
  * DRNG conditioner is drained; Intel DRG guide recommends pause+retry.
  * 1024 spins of pause is far below 1ms even on slow cores, so the
@@ -8821,6 +8864,10 @@ static void parse_fpdt(void)
 
 static UINTN bl_entropy_frame(UINT8 *buf, UINTN cap, UINTN pos,
                               UINT8 src, const UINT8 *data, UINT32 len);
+/* Same-disk BLACKBOX volume locator (defined with the media-role block
+ * below; reused here for the pre-EBS seed-file carryover read). */
+static EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *
+media_role_locate_blackbox_fs(EFI_HANDLE boot_part_handle);
 
 /* CPUID with subleaf -- max-leaf gating is the CALLER's job. */
 static void bl_cpuid(UINT32 leaf, UINT32 subleaf,
@@ -9078,12 +9125,108 @@ static UINTN bl_entropy_frame(UINT8 *buf, UINTN cap, UINTN pos,
     return pos;
 }
 
+/* CRC-32C (Castagnoli, reflected 0x82F63B78), bitwise. Twin of the
+ * kernel's entropy_crc32c() in src/kernel/entropy.c (mirror pattern --
+ * the bootloader cannot link kernel objects). One-shot use on a <= 4 KiB
+ * payload; no table needed pre-EBS. */
+static UINT32 bl_crc32c(const UINT8 *data, UINTN len)
+{
+    UINT32 crc = 0xFFFFFFFFu;
+    UINTN i;
+    int b;
+
+    for (i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (b = 0; b < 8; b++)
+            crc = (crc >> 1) ^ (0x82F63B78u & (0u - (crc & 1u)));
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+/* Read one seed-file candidate from an already-open volume root. Frames
+ * the raw blob as a src-4 record ONLY when the file is exactly
+ * BL_SEED_FILE_SIZE bytes (anything else is torn/corrupt -- the kernel
+ * would reject it on length anyway, so skip the framing). Returns the
+ * new transcript position, or 'pos' unchanged when absent/short/oversize.
+ * The blob is NOT verified here: MAC + anti-replay need the NVRAM token
+ * secret, and that check (plus the fail-closed policy) is kernel-side. */
+static UINTN bl_seed_read_candidate(EFI_FILE_PROTOCOL *root,
+                                    const CHAR16 *path,
+                                    UINT8 *seed, UINTN cap, UINTN pos)
+{
+    EFI_FILE_PROTOCOL *file = (EFI_FILE_PROTOCOL *)0;
+    UINT8 blob[BL_SEED_FILE_SIZE + 1u];  /* +1 detects oversize */
+    UINTN read_len = sizeof(blob);
+    EFI_STATUS status;
+
+    status = root->Open(root, &file, (CHAR16 *)path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(status) || !file)
+        return pos;
+
+    status = file->Read(file, &read_len, blob);
+    file->Close(file);
+    if (EFI_ERROR(status) || read_len != (UINTN)BL_SEED_FILE_SIZE) {
+        /* Short read = torn write or wrong file; oversize read (cap+1
+         * filled) = not our format. Either way: no record. */
+        efi_memset(blob, 0, sizeof(blob));
+        serial_early_print("[BOOT] RNG: seed file unreadable or wrong size -- skipped\n");
+        return pos;
+    }
+
+    {
+        UINTN np = bl_entropy_frame(seed, cap, pos, BL_ENTROPY_SRC_SEED_FILE,
+                                    blob, BL_SEED_FILE_SIZE);
+        efi_memset(blob, 0, sizeof(blob));
+        if (np != 0) {
+            serial_early_print("[BOOT] RNG: seed file carryover 80 bytes (kernel verifies)\n");
+            return np;
+        }
+    }
+    return pos;
+}
+
+/* Pre-EBS read of the kernel's seed carryover files from the same-disk
+ * BLACKBOX volume (early first-seed boundary: the seed-file section owns
+ * format/token/rotation, THIS path owns getting the bytes to
+ * csprng_init at Phase 1, long before X: mounts). Both rotation names
+ * are read -- a crash mid-rotation can leave either valid; the kernel
+ * accepts the highest fresh counter. Gated on the same boot.conf
+ * seed_file knob as the kernel lifecycle (one escape hatch, both ends). */
+static UINTN bl_collect_seed_carryover(UINT8 *seed, UINTN cap, UINTN pos)
+{
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+
+    if (!g_boot_info_ptr->config.seed_file) {
+        serial_early_print("[BOOT] RNG: seed file disabled by boot.conf\n");
+        return pos;
+    }
+    fs = media_role_locate_blackbox_fs(g_boot_device_handle);
+    if (!fs) {
+        serial_early_print("[BOOT] RNG: BLACKBOX volume not found -- no seed carryover\n");
+        return pos;
+    }
+    if (EFI_ERROR(fs->OpenVolume(fs, &root)) || !root) {
+        serial_early_print("[BOOT] RNG: BLACKBOX OpenVolume failed -- no seed carryover\n");
+        return pos;
+    }
+    pos = bl_seed_read_candidate(root, u"\\Boot\\random-seed.bin",
+                                 seed, cap, pos);
+    pos = bl_seed_read_candidate(root, u"\\Boot\\random-seed.new",
+                                 seed, cap, pos);
+    root->Close(root);
+    return pos;
+}
+
 static void collect_boot_entropy(void)
 {
     post_code16(POST16_BL_ENTROPY);
 
-    EFI_PHYSICAL_ADDRESS seed_addr = 0;
-    EFI_STATUS status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+    /* Below 4 GiB: the kernel consumer dereferences phys_start through
+     * the boot identity map, which covers the first 4 GiB only --
+     * AllocateAny on high-memory firmware can return frames above that. */
+    EFI_PHYSICAL_ADDRESS seed_addr = 0xFFFFFFFFull;
+    EFI_STATUS status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
                                            1, &seed_addr);
     if (EFI_ERROR(status)) {
         serial_early_print("[BOOT] RNG: seed page AllocatePages failed -- degraded\n");
@@ -9092,7 +9235,13 @@ static void collect_boot_entropy(void)
     }
     UINT8 *seed = (UINT8 *)(UINTN)seed_addr;
     efi_memset(seed, 0, EFI_PAGE_SIZE);
-    UINTN pos = 0;
+    /* Reserve the 32-byte in-payload header; framed records follow it.
+     * The header is filled in LAST -- mask/quality/transcript_len are
+     * not known until every source has run. */
+    UINTN pos = sizeof(struct bl_seed_header);
+    UINT32 src_mask = 0;
+    UINT32 src_quality = 0;
+    UINTN prev;
 
     /* --- Source: EFI_RNG_PROTOCOL (UEFI 2.10 37.5) ---
      * The firmware_rng gate covers ONLY this block: the escape hatch
@@ -9122,6 +9271,9 @@ static void collect_boot_entropy(void)
                                             fw_bytes, BL_ENTROPY_FW_BYTES);
                 if (np != 0) {
                     pos = np;
+                    src_mask    |= 1u << BL_ENTROPY_SRC_FW_RNG;
+                    src_quality |= BL_ENTROPY_Q_HIGH
+                                   << (2u * BL_ENTROPY_SRC_FW_RNG);
                     serial_early_print("[BOOT] RNG: EFI_RNG_PROTOCOL 64 bytes\n");
                 }
             }
@@ -9133,7 +9285,12 @@ static void collect_boot_entropy(void)
     }
 
     /* --- Source: CPU RDSEED/RDRAND --- */
+    prev = pos;
     pos = bl_collect_cpu_rng(seed, EFI_PAGE_SIZE, pos);
+    if (pos != prev) {
+        src_mask    |= 1u << BL_ENTROPY_SRC_CPU_RNG;
+        src_quality |= BL_ENTROPY_Q_HIGH << (2u * BL_ENTROPY_SRC_CPU_RNG);
+    }
 
     /* --- Source: ACPI OEM0 entropy table (Win11 winload parity) --- */
     {
@@ -9151,12 +9308,25 @@ static void collect_boot_entropy(void)
                                             payload_len);
                 if (np != 0) {
                     pos = np;
+                    src_mask    |= 1u << BL_ENTROPY_SRC_ACPI_OEM0;
+                    src_quality |= BL_ENTROPY_Q_HIGH
+                                   << (2u * BL_ENTROPY_SRC_ACPI_OEM0);
                     serial_early_print("[BOOT] RNG: ACPI OEM0 ");
                     serial_early_print_uint(payload_len);
                     serial_early_print(" bytes\n");
                 }
             }
         }
+    }
+
+    /* --- Source: seed-file carryover (pre-EBS read; kernel verifies) --- */
+    prev = pos;
+    pos = bl_collect_seed_carryover(seed, EFI_PAGE_SIZE, pos);
+    if (pos != prev) {
+        /* LOW advisory: HIGH credit for carryover belongs to the kernel's
+         * Phase-3 commit point, never the unverified pre-EBS read. */
+        src_mask    |= 1u << BL_ENTROPY_SRC_SEED_FILE;
+        src_quality |= BL_ENTROPY_Q_LOW << (2u * BL_ENTROPY_SRC_SEED_FILE);
     }
 
     /* --- Source: boot timing personalization (TIME -- LOW, uncredited) --- */
@@ -9182,21 +9352,37 @@ static void collect_boot_entropy(void)
                                         tbytes, (UINT32)sizeof(tbytes));
             if (np != 0) {
                 pos = np;
+                src_mask    |= 1u << BL_ENTROPY_SRC_TIME;
+                src_quality |= BL_ENTROPY_Q_LOW << (2u * BL_ENTROPY_SRC_TIME);
                 serial_early_print("[BOOT] RNG: boot timing 32 bytes (personalization)\n");
             }
         }
     }
 
-    if (pos == 0) {
-        /* Nothing collected: zero the page and return it -- an
-         * unpublished EfiLoaderData page would be reclaimed by the
-         * kernel PMM with raw loader bytes still in it, and stale
-         * memory must never masquerade as seed material. */
+    if (pos == sizeof(struct bl_seed_header)) {
+        /* Nothing collected (header slot is all that's filled): zero the
+         * page and return it -- an unpublished EfiLoaderData page would
+         * be reclaimed by the kernel PMM with raw loader bytes still in
+         * it, and stale memory must never masquerade as seed material. */
         efi_memset(seed, 0, EFI_PAGE_SIZE);
         gBS->FreePages(seed_addr, 1);
         serial_early_print("[BOOT] RNG: no firmware entropy collected -- degraded\n");
         post_code16(POST16_BL_ENTROPY_OK);
         return;
+    }
+
+    /* Fill the in-payload header (kernel entropy_seed_parse contract:
+     * IPRS magic, version, advisory mask/quality, exact transcript_len). */
+    {
+        struct bl_seed_header *hdr = (struct bl_seed_header *)seed;
+        hdr->magic          = BL_SEED_MAGIC;
+        hdr->version        = BL_SEED_VERSION;
+        hdr->source_mask    = src_mask;
+        hdr->quality        = src_quality;
+        hdr->transcript_len = (UINT32)(pos - sizeof(struct bl_seed_header));
+        hdr->reserved[0]    = 0;
+        hdr->reserved[1]    = 0;
+        hdr->reserved[2]    = 0;
     }
 
     /* Publish as a typed payload so the kernel reserves + consumes +
@@ -9213,11 +9399,14 @@ static void collect_boot_entropy(void)
     }
     struct boot_payload_desc *d = &g_boot_info_ptr->payload_descriptors[idx];
     d->type        = BOOT_PAYLOAD_RANDOM_SEED;
-    d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
+    d->flags       = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED |
+                     BOOT_PAYLOAD_FLAG_CHECKSUMMED;
     d->phys_start  = (UINT64)seed_addr;
     d->length      = (UINT64)pos;
     d->alignment   = 4096ull;
-    d->checksum    = 0ull;
+    /* CRC-32C of the WHOLE payload (header included), low 32 bits;
+     * the kernel parser rejects on mismatch before reading a record. */
+    d->checksum    = (UINT64)bl_crc32c(seed, pos);
     d->producer_id = BOOT_PRODUCER_UEFI;
     d->_reserved   = 0u;
     g_boot_info_ptr->payload_count = idx + 1u;

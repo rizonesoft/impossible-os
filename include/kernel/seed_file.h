@@ -100,6 +100,28 @@ seed_file_status_t seed_file_accept(const void *buf, uint32_t len,
  * a HIGH-credited source on the next boot. Reads the global record. */
 int seed_file_hw_provenance(void);
 
+/* Early (Phase 1) verifier for the boot_info seed payload's src-4 records
+ * (matches the entropy_seed_verify_fn shape in kernel/entropy.h): loads the
+ * IPOSSeedToken NVRAM record and runs seed_file_accept() against last_seen.
+ * Returns 1 accepted (payload_out + *counter_out populated), 0 rejected
+ * (absent token, bad MAC, replay, malformed -- all fail closed).
+ * SIDE-EFFECT-FREE on success: consumption is recorded separately via
+ * seed_file_early_mark_consumed(). The Phase-3 lifecycle still owns the
+ * last_seen persist (commit point), HIGH credit, and rotation. BSP boot
+ * path only. */
+int seed_file_early_verify(const uint8_t *blob, uint32_t len,
+                           uint64_t *counter_out,
+                           uint8_t payload_out[SEED_FILE_PAYLOAD_LEN]);
+
+/* Record that the early consumer ABSORBED a verified carryover counter
+ * into the first seed, so seed_file_phase3() does not absorb the same
+ * bytes twice. Called by boot_seed_consume() ONLY after the whole
+ * payload was accepted into the transcript -- a record that verified
+ * but whose payload later failed (BAD_RECORD / NO_FIT) never reached
+ * the CSPRNG and must not be marked. Keeps the highest counter across
+ * payloads. BSP boot path only. */
+void seed_file_early_mark_consumed(uint64_t counter);
+
 /* Phase-3 boot lifecycle: read + verify + reseed + rotate. Called once from
  * the Phase 3 boot path after X: is mounted and the CSPRNG is seeded; not
  * SMP-shared (single boot-path caller, no retained state). Degrades with a

@@ -13,6 +13,8 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/tpm.h"
 #include "kernel/tpm_transport.h"
+#include "libc/string.h"
+#include "libs/monocypher/monocypher.h"
 
 /* Global source record. Written by collectors on the BSP boot path
  * (single-threaded by construction today); atomics keep readback safe
@@ -299,4 +301,129 @@ void entropy_report(void)
          entropy_q_str(entropy_quality_get(quality, ENTROPY_SRC_JITTER)),
          entropy_q_str(entropy_quality_get(quality, ENTROPY_SRC_TIME)),
          cls_str[cls]);
+}
+
+/* ---- boot_info seed payload parser (boot_info seed handoff section) ----- */
+
+/* CRC-32C (Castagnoli, reflected 0x82F63B78), bitwise -- one-shot boot-path
+ * use on a <= 4 KiB payload; no table needed. Twin of the bootloader's
+ * bl_crc32c() in bootx64.c (mirror pattern -- the bootloader cannot share
+ * kernel objects); ixfs_crc32c() is the same polynomial but owned by the
+ * IXFS block layer. */
+static uint32_t entropy_crc32c(const uint8_t *data, uint64_t len)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    uint64_t i;
+    int b;
+
+    for (i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (b = 0; b < 8; b++)
+            crc = (crc >> 1) ^ (0x82F63B78u & (0u - (crc & 1u)));
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+entropy_seed_status_t entropy_seed_parse(
+    const uint8_t *payload, uint64_t len,
+    int checksummed, uint64_t checksum,
+    entropy_seed_verify_fn verify,
+    uint8_t *out, uint32_t cap, uint32_t *out_len,
+    struct entropy_seed_parse_result *res)
+{
+    const struct entropy_seed_header *hdr;
+    uint64_t pos;
+    uint32_t opos = 0;
+
+    if (out_len)
+        *out_len = 0;
+    if (res)
+        memset(res, 0, sizeof(*res));
+    if (!payload || !out || !out_len || !res)
+        return ENTROPY_SEED_BAD_ARGS;
+    if (len < sizeof(struct entropy_seed_header))
+        return ENTROPY_SEED_TOO_SHORT;
+
+    hdr = (const struct entropy_seed_header *)payload;
+    if (hdr->magic != ENTROPY_SEED_MAGIC)
+        return ENTROPY_SEED_BAD_MAGIC;
+    if (hdr->version != ENTROPY_SEED_VERSION)
+        return ENTROPY_SEED_BAD_VERSION;
+    /* Exact-length contract: the descriptor length must be header +
+     * transcript_len, nothing more -- trailing slack would be unhashed
+     * attacker-reachable bytes masquerading as consumed seed. */
+    if ((uint64_t)hdr->transcript_len !=
+        len - sizeof(struct entropy_seed_header))
+        return ENTROPY_SEED_BAD_LENGTH;
+    if (checksummed) {
+        /* CRC-32C of the WHOLE payload (header included) lives in the
+         * descriptor checksum's low 32 bits; high bits must be zero. */
+        if ((checksum >> 32) != 0u)
+            return ENTROPY_SEED_BAD_CRC;
+        if (entropy_crc32c(payload, len) != (uint32_t)checksum)
+            return ENTROPY_SEED_BAD_CRC;
+    }
+
+    res->hdr_mask    = hdr->source_mask;
+    res->hdr_quality = hdr->quality;
+
+    pos = sizeof(struct entropy_seed_header);
+    while (pos < len) {
+        uint8_t  src;
+        uint32_t rlen;
+
+        if (len - pos < 5u)
+            return ENTROPY_SEED_BAD_RECORD;
+        src  = payload[pos];
+        rlen = (uint32_t)payload[pos + 1] |
+               ((uint32_t)payload[pos + 2] << 8) |
+               ((uint32_t)payload[pos + 3] << 16) |
+               ((uint32_t)payload[pos + 4] << 24);
+        if (src >= (uint8_t)ENTROPY_SRC_COUNT)
+            return ENTROPY_SEED_BAD_RECORD;
+        if (rlen == 0 || rlen > len - pos - 5u)
+            return ENTROPY_SEED_BAD_RECORD;
+
+        if (src == (uint8_t)ENTROPY_SRC_SEED_FILE) {
+            /* Raw carryover blob: route through the verifier; the
+             * accepted record is re-framed with the verified 32-byte
+             * inner payload (MAC/header bytes are non-secret framing,
+             * not seed material). Rejection drops the record only --
+             * a stale or cloned carryover must not discard the
+             * firmware/CPU records that travelled with it. */
+            uint8_t  inner[32];
+            uint64_t counter = 0;
+
+            if (verify &&
+                verify(payload + pos + 5, rlen, &counter, inner)) {
+                uint32_t np = entropy_frame_source(
+                    out, cap, opos, ENTROPY_SRC_SEED_FILE,
+                    inner, (uint32_t)sizeof(inner));
+                crypto_wipe(inner, sizeof(inner));
+                if (np == 0)
+                    return ENTROPY_SEED_NO_FIT;
+                opos = np;
+                res->records_mask |= ENTROPY_SRC_BIT(ENTROPY_SRC_SEED_FILE);
+                res->record_count++;
+                res->seed_file_ok++;
+                if (counter > res->seed_file_counter)
+                    res->seed_file_counter = counter;
+            } else {
+                res->seed_file_rejected++;
+            }
+        } else {
+            uint32_t np = entropy_frame_source(
+                out, cap, opos, (entropy_src_t)src,
+                payload + pos + 5, rlen);
+            if (np == 0)
+                return ENTROPY_SEED_NO_FIT;
+            opos = np;
+            res->records_mask |= ENTROPY_SRC_BIT((entropy_src_t)src);
+            res->record_count++;
+        }
+        pos += 5u + (uint64_t)rlen;
+    }
+
+    *out_len = opos;
+    return ENTROPY_SEED_OK;
 }

@@ -1,0 +1,243 @@
+/* ============================================================================
+ * boot_seed.c -- boot_info random-seed payload consumer (Phase 1)
+ *
+ * Walks every validated BOOT_PAYLOAD_RANDOM_SEED descriptor, parses the
+ * in-payload header + framed transcript (entropy_seed_parse, pure), routes
+ * seed-file carryover records through the NVRAM-token verifier
+ * (seed_file_early_verify), records accepted sources in the entropy model,
+ * and hands the combined validated transcript to the caller for the FIRST
+ * CSPRNG seed (csprng_init folds it into the initial key -- never a
+ * post-init reseed).
+ *
+ * Memory ownership: each consumed payload is wiped in place; the frames go
+ * back to the PMM ONLY when the descriptor certifies exclusive page
+ * ownership (4 KiB-aligned phys_start AND alignment == 4096 -- the shape
+ * our bootloader's AllocatePages publication produces). A descriptor from
+ * another producer that does not certify page ownership is wiped but its
+ * frames stay reserved: a sub-page buffer inside a shared allocation must
+ * never be freed by frame. The descriptor's FLAG_VALID is cleared in the
+ * kernel copy after consumption so later scans cannot mistake the zeroed
+ * range for live seed material.
+ *
+ * Earlier-stage concatenation (Linux EFI config-table parity): EVERY
+ * RANDOM_SEED descriptor is consumed and mixed, not just the first -- a
+ * chain stage that published its own seed payload contributes alongside
+ * ours instead of being overwritten.
+ *
+ * BSP boot path only: runs once in Phase 1 before csprng_init(); no SMP
+ * concerns by construction (APs are not started yet).
+ * ============================================================================ */
+
+#include "kernel/types.h"
+#include "kernel/boot_info.h"
+#include "kernel/boot_init.h"
+#include "kernel/entropy.h"
+#include "kernel/seed_file.h"
+#include "kernel/klog.h"
+#include "kernel/mm/pmm.h"
+#include "libs/monocypher/monocypher.h"
+
+/* entropy_seed_verify_fn shape over the seed_file module. */
+static int boot_seed_verify_carryover(const uint8_t *blob, uint32_t len,
+                                      uint64_t *counter_out,
+                                      uint8_t payload_out[32])
+{
+    return seed_file_early_verify(blob, len, counter_out, payload_out);
+}
+
+/* Record every source present in the accepted records, quality taken from
+ * the ADVISORY header slot but re-clamped by entropy_record_source (JITTER/
+ * TIME never above LOW, reserved value -> NONE). The seed-file class is
+ * recorded LOW here regardless of the header: HIGH credit belongs to the
+ * Phase-3 lifecycle's NVRAM commit point, not the early read. */
+static void boot_seed_record_sources(const struct entropy_seed_parse_result *r)
+{
+    uint32_t src;
+
+    for (src = 0; src < (uint32_t)ENTROPY_SRC_COUNT; src++) {
+        entropy_quality_t q;
+
+        if ((r->records_mask & ENTROPY_SRC_BIT(src)) == 0u)
+            continue;
+        if (src == (uint32_t)ENTROPY_SRC_SEED_FILE)
+            q = ENTROPY_Q_LOW;
+        else
+            q = entropy_quality_get(r->hdr_quality, (entropy_src_t)src);
+        entropy_record_source((entropy_src_t)src, q);
+    }
+}
+
+boot_seed_desc_class_t boot_seed_desc_classify(uint32_t flags,
+                                               uint64_t phys_start,
+                                               uint64_t length)
+{
+    /* RESERVED gate first: a descriptor without FLAG_RESERVED was never
+     * pinned by the PMM reservation pass, so by Phase 1 its frames may
+     * already be allocator-owned. Touching them (even to wipe) would
+     * corrupt the new owner -- retire untouched. */
+    if ((flags & BOOT_PAYLOAD_FLAG_RESERVED) == 0u)
+        return BOOT_SEED_DESC_NOT_RESERVED;
+    /* Identity-map bound: phys_start is dereferenced through the boot
+     * identity map, which covers the first 4 GiB only. An out-of-map
+     * payload cannot even be wiped. */
+    if (phys_start >= BOOT_INFO_EARLY_MAP_END ||
+        length > BOOT_INFO_EARLY_MAP_END - phys_start)
+        return BOOT_SEED_DESC_OUT_OF_MAP;
+    if (length < sizeof(struct entropy_seed_header) ||
+        length > BOOT_SEED_PAYLOAD_CAP)
+        return BOOT_SEED_DESC_BAD_LENGTH;
+    return BOOT_SEED_DESC_CONSUMABLE;
+}
+
+int boot_seed_release_payload(uint8_t *payload, uint64_t length,
+                              uint64_t phys_start, uint64_t alignment)
+{
+    if (!payload || length == 0)
+        return 0;
+    crypto_wipe(payload, (size_t)length);
+    /* Exclusive page ownership: 4 KiB-aligned start AND the producer
+     * certified page-granular allocation (alignment == 4096) -- the
+     * shape our bootloader's AllocatePages publication produces. A
+     * sub-page buffer inside a shared allocation must never be freed
+     * by frame. */
+    return ((phys_start & 0xFFFull) == 0u) && (alignment == 4096ull);
+}
+
+uint32_t boot_seed_consume(uint8_t *out, uint32_t cap)
+{
+    uint32_t idx = 0;
+    uint32_t total = 0;
+    uint32_t consumed = 0;
+    uint32_t rejected = 0;
+
+    POST16(POST16_BOOT_SEED);
+
+    if (!out || cap == 0) {
+        POST16(POST16_BOOT_SEED_OK);
+        return 0;
+    }
+
+    /* Always look up occurrence 0: retiring a descriptor clears its
+     * FLAG_VALID and boot_payload_find() skips retired entries, so the
+     * next live descriptor pops into slot 0. Bounded by the table size
+     * as a belt against a find/retire semantics regression. */
+    for (idx = 0; idx < (uint32_t)BOOT_PAYLOAD_MAX; idx++) {
+        const struct boot_payload_desc *d =
+            boot_payload_find(&g_boot_info,
+                              (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 0);
+        struct entropy_seed_parse_result res;
+        entropy_seed_status_t st;
+        uint8_t *payload = (uint8_t *)0;
+        uint32_t out_len = 0;
+        int owns_pages = 0;
+        int parsed = 0;
+        boot_seed_desc_class_t cls;
+
+        if (!d)
+            break;
+
+        /* boot_payload_validate proved the range is disjoint from every
+         * retained region and does not wrap; the classifier layers the
+         * seed contract on top: PMM reservation (an unreserved range may
+         * already be allocator-owned -- untouchable), the boot identity
+         * map bound (an out-of-map range cannot even be wiped), and the
+         * type-specific length contract. */
+        cls = boot_seed_desc_classify(d->flags, d->phys_start, d->length);
+
+        if (cls == BOOT_SEED_DESC_NOT_RESERVED) {
+            klog(LOG_WARN, "entropy",
+                 "seed payload #%u rejected: not PMM-reserved "
+                 "(retired untouched)", (uint64_t)idx);
+            st = ENTROPY_SEED_BAD_ARGS;
+        } else if (cls == BOOT_SEED_DESC_OUT_OF_MAP) {
+            klog(LOG_WARN, "entropy",
+                 "seed payload #%u rejected: 0x%lx for %lu bytes is "
+                 "outside the boot identity map (retired untouched)",
+                 (uint64_t)idx, (uint64_t)d->phys_start,
+                 (uint64_t)d->length);
+            st = ENTROPY_SEED_BAD_ARGS;
+        } else if (cls == BOOT_SEED_DESC_BAD_LENGTH) {
+            klog(LOG_WARN, "entropy",
+                 "seed payload #%u rejected: length %lu outside contract "
+                 "(wiped)",
+                 (uint64_t)idx, (uint64_t)d->length);
+            payload = (uint8_t *)(uintptr_t)d->phys_start;
+            st = ENTROPY_SEED_BAD_LENGTH;
+        } else {
+            /* Identity-mapped low memory -- the same access contract
+             * every other payload consumer (boot.conf modules,
+             * warm-update state) relies on. */
+            payload = (uint8_t *)(uintptr_t)d->phys_start;
+            parsed = 1;
+            st = entropy_seed_parse(payload, d->length,
+                                    (d->flags &
+                                     BOOT_PAYLOAD_FLAG_CHECKSUMMED) ? 1 : 0,
+                                    d->checksum,
+                                    boot_seed_verify_carryover,
+                                    out + total, cap - total,
+                                    &out_len, &res);
+        }
+
+        /* Single retire path for EVERY discovered descriptor: wipe +
+         * ownership decision (accepted, parse-rejected, and bad-length
+         * payloads alike -- rejected bytes are still one-time seed
+         * material from someone's RNG and must not linger), then clear
+         * FLAG_VALID in the kernel copy so boot_payload_find() never
+         * rediscovers the zeroed/recycled range. The bootloader's
+         * original at 0x10000 is untouched. */
+        if (payload) {
+            owns_pages = boot_seed_release_payload(payload, d->length,
+                                                   d->phys_start,
+                                                   d->alignment);
+            if (owns_pages) {
+                uint64_t page;
+                uint64_t end = (d->phys_start + d->length + 0xFFFull) &
+                               ~0xFFFull;
+                for (page = d->phys_start; page < end; page += 4096ull)
+                    pmm_free_frame((uintptr_t)page);
+            }
+        }
+        {
+            struct boot_payload_desc *mut =
+                (struct boot_payload_desc *)(uintptr_t)d;
+            mut->flags &= ~(uint32_t)BOOT_PAYLOAD_FLAG_VALID;
+        }
+
+        if (st != ENTROPY_SEED_OK) {
+            if (parsed)
+                klog(LOG_WARN, "entropy",
+                     "seed payload #%u rejected: parse status=%u "
+                     "(wiped, %s)",
+                     (uint64_t)idx, (uint64_t)st,
+                     owns_pages ? "pages freed" : "pages kept reserved");
+            rejected++;
+            continue;
+        }
+
+        boot_seed_record_sources(&res);
+        /* Mark carryover consumed ONLY now -- the whole payload was
+         * accepted into the transcript. A verified src-4 record inside
+         * a payload that failed later (BAD_RECORD / NO_FIT) never
+         * reached the CSPRNG; marking it would make seed_file_phase3()
+         * skip its only absorption. */
+        if (res.seed_file_ok > 0u)
+            seed_file_early_mark_consumed(res.seed_file_counter);
+        total += out_len;
+        consumed++;
+
+        klog(LOG_INFO, "entropy",
+             "seed payload %u bytes (mask=0x%x, quality=0x%x): "
+             "%u records, carryover %u ok / %u rejected",
+             (uint64_t)d->length, (uint64_t)res.hdr_mask,
+             (uint64_t)res.hdr_quality, (uint64_t)res.record_count,
+             (uint64_t)res.seed_file_ok, (uint64_t)res.seed_file_rejected);
+    }
+
+    if (consumed == 0 && rejected == 0)
+        klog(LOG_INFO, "entropy",
+             "seed payload: none published -- first seed uses local + "
+             "staged sources only");
+
+    POST16(POST16_BOOT_SEED_OK);
+    return total;
+}

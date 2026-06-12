@@ -360,6 +360,40 @@ static void test_csprng_core(void)
         TEST_ASSERT_NEQ(memcmp(sa, sb, sizeof(sa)), 0,
                         "reseed diverges the keystream");
     }
+
+    /* Two-part seed: seed2(t1, t2) must equal seed(t1 || t2) exactly
+     * (csprng_init folds the boot_info seed transcript via this path). */
+    {
+        static const uint8_t t1[] = "first transcript part";
+        static const uint8_t t2[] = "and the boot payload part";
+        uint8_t cat[sizeof(t1) + sizeof(t2)];
+
+        memcpy(cat, t1, sizeof(t1));
+        memcpy(cat + sizeof(t1), t2, sizeof(t2));
+        csprng_core_seed(&a, cat, sizeof(cat));
+        a.ctr = 0;  /* belt: compare from a known-equal baseline */
+        b.ctr = 77; /* must be RESET by seed2, not inherited */
+        csprng_core_seed2(&b, t1, sizeof(t1), t2, sizeof(t2));
+        TEST_ASSERT_EQ(memcmp(a.key, b.key, CSPRNG_KEY_SIZE), 0,
+                       "seed2 equals seed over the concatenation");
+        TEST_ASSERT_EQ(b.ctr, 0u, "seed2 resets the block counter");
+        /* Full-state equivalence: the first ratchet from both states
+         * must produce identical request keys (catches any divergence
+         * the key compare alone would miss). */
+        csprng_core_ratchet(&a, ka);
+        csprng_core_ratchet(&b, kb);
+        TEST_ASSERT_EQ(memcmp(ka, kb, CSPRNG_KEY_SIZE), 0,
+                       "first ratchet after seed2 matches seed");
+
+        /* Either part may be absent: (t, NULL) == seed(t). */
+        csprng_core_seed(&a, t1, sizeof(t1));
+        csprng_core_seed2(&b, t1, sizeof(t1), NULL, 0);
+        TEST_ASSERT_EQ(memcmp(a.key, b.key, CSPRNG_KEY_SIZE), 0,
+                       "seed2 with empty second part equals seed");
+        csprng_core_seed2(&b, NULL, 0, t1, sizeof(t1));
+        TEST_ASSERT_EQ(memcmp(a.key, b.key, CSPRNG_KEY_SIZE), 0,
+                       "seed2 with empty first part equals seed");
+    }
 }
 
 static void test_csprng_global(void)

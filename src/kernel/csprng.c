@@ -50,6 +50,21 @@ void csprng_core_seed(csprng_core_t *c, const uint8_t *transcript,
     c->ctr = 0;
 }
 
+void csprng_core_seed2(csprng_core_t *c, const uint8_t *t1, uint32_t l1,
+                       const uint8_t *t2, uint32_t l2)
+{
+    crypto_blake2b_ctx ctx;
+
+    crypto_blake2b_init(&ctx, CSPRNG_KEY_SIZE);
+    if (t1 && l1)
+        crypto_blake2b_update(&ctx, t1, l1);
+    if (t2 && l2)
+        crypto_blake2b_update(&ctx, t2, l2);
+    crypto_blake2b_final(&ctx, c->key);
+    c->ctr = 0;
+    crypto_wipe(&ctx, sizeof(ctx));
+}
+
 void csprng_core_ratchet(csprng_core_t *c, uint8_t out_key[CSPRNG_KEY_SIZE])
 {
     static const uint8_t nonce[8] = {0};  /* key is single-epoch: no reuse */
@@ -147,7 +162,7 @@ static uint32_t collect_local_sources(uint8_t *buf, uint32_t cap,
     return pos;
 }
 
-void csprng_init(void)
+void csprng_init(const uint8_t *boot_transcript, uint32_t boot_len)
 {
     uint8_t  transcript[CSPRNG_TRANSCRIPT_CAP];
     uint32_t pos = 0;
@@ -159,30 +174,43 @@ void csprng_init(void)
     pos = collect_local_sources(transcript, sizeof(transcript), pos, &had_hw);
 
     /* Kernel-side staged boot transcript (interrupt jitter, TPM RNG).
-     * Records are already source-framed; drain zeroes the staging area.
-     * The boot_info seed PAYLOAD (bootloader EFI RNG / RDSEED / OEM0
-     * collection) arrives via the TODO-12 seed handoff sections, which
-     * feed csprng_add_entropy() -- reseeding, not first-seed-or-nothing. */
+     * Records are already source-framed; drain zeroes the staging area. */
     staged = entropy_staged_drain(transcript + pos,
                                   (uint32_t)sizeof(transcript) - pos);
     pos += staged;
 
-    spin_lock_irqsave(&g_lock, &fl);
-    csprng_core_seed(&g_core, transcript, pos);
-    __atomic_store_n(&g_seeded, 1, __ATOMIC_RELEASE);
-    spin_unlock_irqrestore(&g_lock, fl);
+    /* First-seed-or-nothing: the boot_info seed payload transcript
+     * (bootloader EFI RNG / RDSEED / OEM0 / verified seed-file carryover,
+     * validated by boot_seed_consume) is hashed into the SAME initial
+     * key as the local + staged sources. Folding it in as a post-init
+     * csprng_add_entropy() reseed would let any consumer between init
+     * and the reseed draw from the weaker local-only key.
+     *
+     * The multi-KB Blake2b runs OUTSIDE g_lock (short-hold contract);
+     * only the bounded key install is locked. */
+    {
+        csprng_core_t local;
+
+        csprng_core_seed2(&local, transcript, pos, boot_transcript, boot_len);
+        spin_lock_irqsave(&g_lock, &fl);
+        g_core = local;
+        __atomic_store_n(&g_seeded, 1, __ATOMIC_RELEASE);
+        spin_unlock_irqrestore(&g_lock, fl);
+        crypto_wipe(&local, sizeof(local));
+    }
     crypto_wipe(transcript, sizeof(transcript));
 
     cls = entropy_classify(entropy_source_mask(), entropy_source_quality());
     if (cls == ENTROPY_CLASS_DEGRADED) {
         klog(LOG_WARN, "csprng",
              "seeded DEGRADED: no hardware-backed source (rdrand=%u, "
-             "staged=%u bytes) -- output is personalization-grade only",
-             (uint64_t)had_hw, (uint64_t)staged);
+             "staged=%u bytes, boot payload %u bytes) -- output is "
+             "personalization-grade only",
+             (uint64_t)had_hw, (uint64_t)staged, (uint64_t)boot_len);
     } else {
         klog(LOG_INFO, "csprng",
-             "seeded: transcript %u bytes (staged %u), class=%s",
-             (uint64_t)pos, (uint64_t)staged,
+             "seeded: transcript %u+%u bytes (staged %u), class=%s",
+             (uint64_t)pos, (uint64_t)boot_len, (uint64_t)staged,
              cls == ENTROPY_CLASS_GOOD ? "good" : "minimum");
     }
 }

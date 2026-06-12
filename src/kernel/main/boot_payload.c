@@ -553,6 +553,13 @@ boot_payload_find(const struct boot_info *info,
         const struct boot_payload_desc *d = &info->payload_descriptors[i];
         if (d->type != type)
             continue;
+        /* FLAG_VALID is load-bearing consume state: the validator rejects
+         * non-VALID descriptors at Phase 0, so the only way the bit is
+         * clear here is a consumer (e.g. the seed payload path) retiring
+         * the descriptor after wiping/freeing the range. A retired
+         * descriptor must never be rediscovered. */
+        if ((d->flags & BOOT_PAYLOAD_FLAG_VALID) == 0u)
+            continue;
         if (seen == index)
             return d;
         seen++;

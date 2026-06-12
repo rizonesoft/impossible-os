@@ -1180,6 +1180,51 @@ static void test_payload_find_returns_nth_of_type(void)
                    "find RECOVERY_IMAGE [0] NULL (none in fixture)");
 }
 
+static void test_payload_find_skips_retired_descriptors(void)
+{
+    const struct boot_payload_desc *d;
+
+    bi_payload_zero();
+    /* Two RANDOM_SEED descriptors. Retiring slot 0 (consumer clears
+     * FLAG_VALID after wipe/free) must make it undiscoverable, and the
+     * surviving descriptor must pop into occurrence 0 -- the contract
+     * boot_seed_consume's find(type, 0) retire loop relies on. */
+    s_test_buf.payload_count                     = 2;
+    s_test_buf.payload_descriptors[0].type       = BOOT_PAYLOAD_RANDOM_SEED;
+    s_test_buf.payload_descriptors[0].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[0].phys_start = SAFE_PAYLOAD_START;
+    s_test_buf.payload_descriptors[0].length     = 0x1000ull;
+    s_test_buf.payload_descriptors[1].type       = BOOT_PAYLOAD_RANDOM_SEED;
+    s_test_buf.payload_descriptors[1].flags      = BOOT_PAYLOAD_FLAG_VALID;
+    s_test_buf.payload_descriptors[1].phys_start = SAFE_PAYLOAD_START + 0x10000ull;
+    s_test_buf.payload_descriptors[1].length     = 0x1000ull;
+    s_test_buf.payload_total_bytes               = 0x2000ull;
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 1);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
+                   "both seed descriptors discoverable pre-retire");
+
+    s_test_buf.payload_descriptors[0].flags &=
+        ~(uint32_t)BOOT_PAYLOAD_FLAG_VALID;
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)1,
+                   "survivor pops into occurrence 0");
+    TEST_ASSERT_EQ((unsigned long)d->phys_start,
+                   (unsigned long)(SAFE_PAYLOAD_START + 0x10000ull),
+                   "occurrence 0 is the still-valid slot 1");
+
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 1);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
+                   "retired descriptor is not rediscoverable");
+
+    s_test_buf.payload_descriptors[1].flags &=
+        ~(uint32_t)BOOT_PAYLOAD_FLAG_VALID;
+    d = boot_payload_find(&s_test_buf, BOOT_PAYLOAD_RANDOM_SEED, 0);
+    TEST_ASSERT_EQ((unsigned long)(d != (void *)0 ? 1 : 0), (unsigned long)0,
+                   "all retired -> find returns NULL (loop terminates)");
+}
+
 static void test_payload_find_rejects_null_info_and_none_type(void)
 {
     const struct boot_payload_desc *d;
@@ -1569,6 +1614,8 @@ void test_register_boot_info(void)
                             test_payload_none_past_prefix_with_phys_start_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: find nth of type",
                             test_payload_find_returns_nth_of_type, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_payload: find skips retired",
+        test_payload_find_skips_retired_descriptors, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: find rejects NULL + NONE",
                             test_payload_find_rejects_null_info_and_none_type, TEST_CAT_BOOT);
     test_suite_register_cat("boot_payload: find rejects count > MAX",
