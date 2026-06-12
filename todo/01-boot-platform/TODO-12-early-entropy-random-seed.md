@@ -258,6 +258,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Canonical doc: gate + class contract in [`include/kernel/csprng.h`](../../include/kernel/csprng.h).
 > - Scope boundary: runtime reseed thresholds/hwrng are D02T03 §5; diagnostics surfaces (registry/VPD/BlackBox) are §9; KASLR itself is future VMM work.
 
+> **Verified:** 2026-06-12 | commit `4ce71522` | 6/6 items | build OK | smoke PASS (KVM 2.680s), 4646+16 tests
+> **Quality reviewed:** 2026-06-12 | Codex 8x (design, test-coverage, adversarial, re-adversarial, consistency, perf) | 5H+2M fixed, 0 open | scope: kernel-code-quality
+
 ---
 
 ## 9. Entropy Diagnostics and Policy Gates

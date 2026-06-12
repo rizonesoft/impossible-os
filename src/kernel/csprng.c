@@ -128,9 +128,14 @@ int csprng_core_absorb_digest(csprng_core_t *c, int seeded,
 /* Frame the always-available local sources (RDRAND, TSC + link address,
  * ACPI PM timer) into 'buf'. Returns the new transcript position and
  * sets *had_hw to 1 when RDRAND contributed. Shared by the Phase 1 init
- * and the defensive emergency path. */
+ * and the defensive emergency path. 'record' gates the diagnostic
+ * entropy_record_source calls: the EMERGENCY path passes 0 because its
+ * material is DISCARDED when csprng_init installs the real first key --
+ * a stale CPU_RNG HIGH record from a discarded emergency transcript
+ * would let the init-time credited-class snapshot claim HIGH provenance
+ * the installed key never absorbed (post-commit adversarial finding). */
 static uint32_t collect_local_sources(uint8_t *buf, uint32_t cap,
-                                      uint32_t pos, int *had_hw)
+                                      uint32_t pos, int *had_hw, int record)
 {
     uint8_t  rd[CSPRNG_KEY_SIZE];
     uint64_t t[3];
@@ -144,7 +149,8 @@ static uint32_t collect_local_sources(uint8_t *buf, uint32_t cap,
         if (npos != 0) {
             pos = npos;
             *had_hw = 1;
-            entropy_record_source(ENTROPY_SRC_CPU_RNG, ENTROPY_Q_HIGH);
+            if (record)
+                entropy_record_source(ENTROPY_SRC_CPU_RNG, ENTROPY_Q_HIGH);
         }
         crypto_wipe(rd, sizeof(rd));
     }
@@ -162,7 +168,8 @@ static uint32_t collect_local_sources(uint8_t *buf, uint32_t cap,
                                              (const uint8_t *)t, sizeof(t));
         if (npos != 0) {
             pos = npos;
-            entropy_record_source(ENTROPY_SRC_TIME, ENTROPY_Q_LOW);
+            if (record)
+                entropy_record_source(ENTROPY_SRC_TIME, ENTROPY_Q_LOW);
         }
     }
     crypto_wipe(t, sizeof(t));
@@ -178,7 +185,8 @@ void csprng_init(const uint8_t *boot_transcript, uint32_t boot_len)
     uint64_t fl;
     entropy_class_t cls;
 
-    pos = collect_local_sources(transcript, sizeof(transcript), pos, &had_hw);
+    pos = collect_local_sources(transcript, sizeof(transcript), pos, &had_hw,
+                                1 /* record: this transcript IS the key */);
 
     /* Kernel-side staged boot transcript (interrupt jitter, TPM RNG).
      * Records are already source-framed; drain zeroes the staging area. */
@@ -243,7 +251,10 @@ static int emergency_seed(void)
     uint64_t fl;
     int      did_seed = 0;
 
-    pos = collect_local_sources(transcript, sizeof(transcript), pos, &had_hw);
+    /* record=0: this transcript is DISCARDED by the real csprng_init
+     * install -- recording it would bind diagnostic credit to nothing. */
+    pos = collect_local_sources(transcript, sizeof(transcript), pos, &had_hw,
+                                0);
 
     spin_lock_irqsave(&g_lock, &fl);
     if (!g_seeded) {
