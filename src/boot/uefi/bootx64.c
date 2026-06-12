@@ -8785,7 +8785,9 @@ static void parse_fpdt(void)
  * src ids: 0 = firmware RNG (EFI_RNG_PROTOCOL, 64 bytes),
  *          1 = CPU RDSEED/RDRAND (64 RNG bytes + 16 personalization
  *              bytes: CPUID vendor EBX,EDX,ECX order + FMS dword),
- *          3 = ACPI OEM0 table payload (up to 512 bytes).
+ *          3 = ACPI OEM0 table payload (up to 512 bytes),
+ *          7 = boot timing personalization (bl_entry, reset_end,
+ *              tsc_freq, rdtsc-now -- 32 bytes, LOW/uncredited).
  *
  * Hang contract: a firmware GetRNG that never returns cannot be recovered
  * pre-EBS (no preemption). The boot.conf escape hatch firmware_rng=off
@@ -8796,6 +8798,7 @@ static void parse_fpdt(void)
 #define BL_ENTROPY_SRC_FW_RNG    0u
 #define BL_ENTROPY_SRC_CPU_RNG   1u
 #define BL_ENTROPY_SRC_ACPI_OEM0 3u
+#define BL_ENTROPY_SRC_TIME      7u
 #define BL_ENTROPY_FW_BYTES      64u
 #define BL_ENTROPY_CPU_QWORDS    8u    /* 64 RNG bytes */
 #define BL_ENTROPY_OEM0_CAP      512u
@@ -9141,6 +9144,34 @@ static void collect_boot_entropy(void)
                     serial_early_print_uint(payload_len);
                     serial_early_print(" bytes\n");
                 }
+            }
+        }
+    }
+
+    /* --- Source: boot timing personalization (TIME -- LOW, uncredited) --- */
+    {
+        UINT64 vals[4];
+        vals[0] = g_boot_info_ptr->timing.bl_entry;
+        vals[1] = g_boot_info_ptr->timing.reset_end;
+        vals[2] = g_boot_info_ptr->timing.tsc_freq;
+        vals[3] = boot_rdtsc();
+        if (vals[2] == 0) {
+            /* The caller orders the TSC measurement before this; a zero
+             * here means that contract broke -- refuse the record rather
+             * than framing a misleading placeholder. */
+            serial_early_print("[BOOT] RNG: TIME record refused (tsc_freq=0)\n");
+        } else {
+            UINT8 tbytes[32];
+            UINTN vi, b;
+            for (vi = 0; vi < 4; vi++)
+                for (b = 0; b < 8; b++)
+                    tbytes[vi * 8 + b] = (UINT8)(vals[vi] >> (b * 8));
+            UINTN np = bl_entropy_frame(seed, EFI_PAGE_SIZE, pos,
+                                        BL_ENTROPY_SRC_TIME,
+                                        tbytes, (UINT32)sizeof(tbytes));
+            if (np != 0) {
+                pos = np;
+                serial_early_print("[BOOT] RNG: boot timing 32 bytes (personalization)\n");
             }
         }
     }
@@ -12566,9 +12597,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Step 4d: Parse FPDT for firmware boot timing */
     parse_fpdt();
 
-    /* Step 4d2: Collect early firmware entropy (EFI RNG + ACPI OEM0) */
-    collect_boot_entropy();
-
     /* Estimate TSC frequency using UEFI Stall (1ms) */
     {
         UINT64 t0 = boot_rdtsc();
@@ -12576,6 +12604,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         UINT64 t1 = boot_rdtsc();
         g_boot_info_ptr->timing.tsc_freq = (t1 - t0) * 1000;  /* Hz */
     }
+
+    /* Step 4d2: Collect early firmware entropy (EFI RNG + CPU + OEM0 +
+     * boot timing). Runs AFTER the TSC measurement so the TIME record
+     * carries a real tsc_freq, never a zero placeholder. */
+    collect_boot_entropy();
 
     /* Step 4e: Discover USB devices via UEFI firmware (Phase A) */
     post_code16(POST16_BL_USB_DISC);

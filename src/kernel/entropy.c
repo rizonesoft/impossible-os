@@ -10,6 +10,7 @@
 
 #include "kernel/entropy.h"
 #include "kernel/klog.h"
+#include "kernel/sched/spinlock.h"
 
 /* Global source record. Written by collectors on the BSP boot path
  * (single-threaded by construction today); atomics keep readback safe
@@ -126,6 +127,59 @@ uint32_t entropy_source_mask(void)
 uint32_t entropy_source_quality(void)
 {
     return __atomic_load_n(&s_entropy_quality, __ATOMIC_RELAXED);
+}
+
+/* ---- Staged transcript (kernel-side collectors -> CSPRNG seeding) ---- */
+static uint8_t  s_stage_buf[ENTROPY_STAGE_CAP];
+static uint32_t s_stage_pos;       /* guarded by s_stage_lock */
+static uint32_t s_stage_overflow;  /* sticky; guarded by s_stage_lock */
+static spinlock_t s_stage_lock = SPINLOCK_INIT;
+
+int entropy_stage_source(entropy_src_t src, const uint8_t *data,
+                         uint32_t len, entropy_quality_t q)
+{
+    uint64_t irqf;
+    uint32_t np;
+
+    spin_lock_irqsave(&s_stage_lock, &irqf);
+    np = entropy_frame_source(s_stage_buf, ENTROPY_STAGE_CAP, s_stage_pos,
+                              src, data, len);
+    if (np == 0) {
+        s_stage_overflow = 1;
+        spin_unlock_irqrestore(&s_stage_lock, irqf);
+        klog(LOG_WARN, "entropy",
+             "staged transcript refused src %u record (%u bytes)",
+             (uint64_t)src, (uint64_t)len);
+        return 0;
+    }
+    s_stage_pos = np;
+    spin_unlock_irqrestore(&s_stage_lock, irqf);
+
+    entropy_record_source(src, q);
+    return 1;
+}
+
+const uint8_t *entropy_staged_peek(uint32_t *out_len)
+{
+    if (out_len)
+        *out_len = __atomic_load_n(&s_stage_pos, __ATOMIC_ACQUIRE);
+    return s_stage_buf;
+}
+
+void entropy_staged_consume_zero(void)
+{
+    uint64_t irqf;
+    uint32_t i;
+    spin_lock_irqsave(&s_stage_lock, &irqf);
+    for (i = 0; i < ENTROPY_STAGE_CAP; i++)
+        s_stage_buf[i] = 0;
+    s_stage_pos = 0;
+    spin_unlock_irqrestore(&s_stage_lock, irqf);
+}
+
+int entropy_staged_overflowed(void)
+{
+    return __atomic_load_n(&s_stage_overflow, __ATOMIC_RELAXED) != 0;
 }
 
 /* Short quality token for the diagnostics line. */

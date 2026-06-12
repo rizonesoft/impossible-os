@@ -39,7 +39,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [x]   |
 | 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [x]   |
 | 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [/]   |
-| 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [ ]   |
+| 💎  |   5   | Boot timing and interrupt jitter mix-in    | §1                 |  [x]   |
 | 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [ ]   |
 | 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [ ]   |
 | 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5      |  [ ]   |
@@ -141,13 +141,22 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 5. Boot Timing and Interrupt Jitter Mix-In
 
-- [ ] Mix FPDT/TSC boot timings as low-quality personalization.
-- [ ] Add optional PIT/LAPIC jitter sampling after interrupts are available.
-- [ ] Never count deterministic VM timing as high-quality entropy.
-- [ ] Add VM/hypervisor detection caveats to diagnostics.
-- [ ] Commit: `"boot: mix timing jitter into entropy pool"`
+- [x] Boot timing personalization: bootloader src-7 TIME record (bl_entry, reset_end, tsc_freq, rdtsc; 32 bytes); `collect_boot_entropy()` moved after the TSC measurement, record refused when tsc_freq is 0.
+- [x] Jitter sampling: `entropy_collect_jitter()` in `boot_interrupts.c` at the earliest post-`sti` point (so the §8 first seed sees it); 64 rdtsc deltas across variable pause loops, staged.
+- [x] Staged transcript in `entropy.c`: `entropy_stage_source()` (success-return, sticky overflow flag, quality only on success), `entropy_staged_peek()`, `entropy_staged_consume_zero()`.
+- [x] VM timing never high: §1 model clamps JITTER/TIME to LOW; live report shows `jitter=low` and the sampler logs the vm caveat (verified on KVM).
+- [x] Commit: `"boot: mix timing jitter into entropy pool"`
 
-**Test checkpoint:** Source mask shows `jitter=low time=low` (never high) on every platform; on detected hypervisors the diagnostics line carries the VM caveat. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Serial shows `[BOOT] RNG: boot timing 32 bytes` + `entropy: jitter: 64 samples staged (LOW...)` and the report line shows `jitter=low` never high (verified on KVM, 122-byte seed payload). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 6 entropy suites incl. staged transcript, 0 failures
+
+> **Notes:**
+> - Shipped: src-7 TIME record in the bootloader seed payload; `entropy_collect_jitter()` post-`sti` in `boot_interrupts.c`; staged-transcript APIs (768-byte cap) in `entropy.c`.
+> - Runs at the earliest post-interrupt point so the staged jitter is available to the §8 first seed; staging failure sets a sticky overflow flag and never records quality.
+> - Downstream: §6 seed-file bytes and D04T09 §12 virtio-rng use `entropy_stage_source()`; §8 hashes boot payload + staged transcript then `consume_zero()`.
+> - Canonical contract doc: `include/kernel/entropy.h` (staged transcript block).
+> - Scope boundary: ongoing runtime reseed cadence is D02T03 §5 (`csprng_add_entropy`); this section only feeds the first seed.
 
 ---
 
@@ -225,7 +234,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random     | ✅ §2 + OEM0, framed seed   |
 | 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ✅ §3 RDSEED-first, gated   |
 | 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ⬜ §4 TPM2_GetRandom        |
-| 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ⬜ §5 low-quality only      |
+| 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy             | ✅ §5 staged, LOW-clamped   |
 | 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ⬜ §6 versioned + MAC       |
 | 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ⬜ §8 pre-KASLR             |
 | ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ⬜ §9 registry + BlackBox   |

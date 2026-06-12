@@ -216,6 +216,49 @@ static void test_entropy_record_clamp(void)
     }
 }
 
+static void test_entropy_staged_transcript(void)
+{
+    uint8_t data[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    uint32_t len = 0;
+    const uint8_t *buf;
+
+    /* Start from a clean slate (tests may run after the boot jitter
+     * sampler staged real bytes; consume_zero is the supported reset). */
+    entropy_staged_consume_zero();
+
+    TEST_ASSERT_EQ(entropy_stage_source(ENTROPY_SRC_SEED_FILE, data, 8,
+                                        ENTROPY_Q_HIGH), 1,
+                   "staging a fitting record succeeds");
+    buf = entropy_staged_peek(&len);
+    TEST_ASSERT_EQ(len, 13u, "staged length = 1+4+8");
+    TEST_ASSERT_EQ(buf[0], (uint8_t)ENTROPY_SRC_SEED_FILE,
+                   "staged record carries the src id");
+
+    /* Oversized record refused; length unchanged; no partial bytes. */
+    {
+        uint8_t big[ENTROPY_STAGE_CAP];
+        uint32_t i;
+        for (i = 0; i < sizeof(big); i++) big[i] = (uint8_t)i;
+        TEST_ASSERT_EQ(entropy_stage_source(ENTROPY_SRC_JITTER, big,
+                                            (uint32_t)sizeof(big),
+                                            ENTROPY_Q_LOW), 0,
+                       "oversized record refused");
+        TEST_ASSERT_EQ(entropy_staged_overflowed(), 1,
+                       "overflow flag set after refusal");
+        entropy_staged_peek(&len);
+        TEST_ASSERT_EQ(len, 13u, "refusal leaves staged length unchanged");
+    }
+
+    /* Consume zeroes the buffer and resets position. */
+    entropy_staged_consume_zero();
+    buf = entropy_staged_peek(&len);
+    TEST_ASSERT_EQ(len, 0u, "consume resets staged length");
+    TEST_ASSERT_EQ(buf[0], 0u, "consume zeroes staged bytes");
+
+    /* Restore the global record slot the staging test touched. */
+    entropy_record_source(ENTROPY_SRC_SEED_FILE, ENTROPY_Q_NONE);
+}
+
 void test_register_entropy(void)
 {
     test_suite_register_cat("entropy: quality slot packing",
@@ -228,4 +271,6 @@ void test_register_entropy(void)
         test_entropy_frame_source, TEST_CAT_SECURITY);
     test_suite_register_cat("entropy: record + clamp",
         test_entropy_record_clamp, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: staged transcript",
+        test_entropy_staged_transcript, TEST_CAT_SECURITY);
 }

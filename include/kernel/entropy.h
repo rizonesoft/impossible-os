@@ -103,6 +103,33 @@ void entropy_record_source(entropy_src_t src, entropy_quality_t q);
 uint32_t entropy_source_mask(void);
 uint32_t entropy_source_quality(void);
 
+/* ---- Kernel-side staged transcript ----
+ * Collectors that run AFTER the bootloader handoff (jitter sampler,
+ * seed file, virtio-rng) append framed records here; the CSPRNG seeding
+ * section hashes this together with the boot seed payload, then calls
+ * the consume API to zero it. Fixed capacity ENTROPY_STAGE_CAP; staging
+ * a record that does not fit FAILS (returns 0, overflow flag set,
+ * source quality NOT recorded) -- silent truncation of seed material is
+ * forbidden. */
+#define ENTROPY_STAGE_CAP 768u
+
+/* Frame (src, data, len) into the staged transcript and, on success,
+ * record the source at quality q. Returns 1 staged, 0 refused
+ * (overflow, bad args). Safe with interrupts enabled (irqsave lock). */
+int entropy_stage_source(entropy_src_t src, const uint8_t *data,
+                         uint32_t len, entropy_quality_t q);
+
+/* Read access for the CSPRNG seeding consumer: returns the staged
+ * buffer and writes its current length. SINGLE-CONSUMER contract: call
+ * on the BSP boot path only, then consume_zero() after hashing. */
+const uint8_t *entropy_staged_peek(uint32_t *out_len);
+
+/* Zero the staged transcript and reset its position (post-hash). */
+void entropy_staged_consume_zero(void);
+
+/* 1 when any record was refused for lack of space (diagnostics). */
+int entropy_staged_overflowed(void);
+
 /* Emit the one-line boot diagnostics summary:
  *   entropy: fw=.. cpu=.. tpm=.. oem0=.. seed=.. hwrng=.. jitter=.. time=.. (class=..)
  * Logs at WARN when the overall class is DEGRADED, INFO otherwise.

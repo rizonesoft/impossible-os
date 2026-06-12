@@ -53,6 +53,8 @@
 #include "kernel/boot_splash.h"
 #include "kernel/boot_init.h"
 #include "kernel/cpu_security.h"
+#include "kernel/entropy.h"
+#include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
 #include "kernel/uefi_runtime.h"
@@ -64,6 +66,53 @@
 #include "main/main_internal.h"
 
 /* ---- Phase 1 ------------------------------------------------------------ */
+
+/* CPU-execution jitter sampler (ARCH: x86-64 rdtsc -- boot-path file).
+ * 64 samples of rdtsc deltas across variable-length pause loops; the
+ * delta low bytes go to the staged entropy transcript as JITTER (LOW --
+ * the model clamps it there regardless; deterministic VM timing must
+ * never masquerade as high-quality entropy, hence the vm caveat log). */
+static void entropy_collect_jitter(void)
+{
+    uint8_t deltas[64];
+    uint64_t prev, now;
+    uint32_t i, spin;
+    volatile uint32_t sink = 0;
+
+    {
+        uint32_t lo, hi;
+        __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+        prev = ((uint64_t)hi << 32) | lo;
+    }
+    for (i = 0; i < (uint32_t)sizeof(deltas); i++) {
+        /* Variable work keyed on the previous sample so loop length is
+         * data-dependent: pipeline + cache noise feeds the deltas. */
+        uint32_t work = 16u + ((uint32_t)prev & 0x3Fu);
+        for (spin = 0; spin < work; spin++) {
+            sink += spin;
+            __asm__ volatile ("pause");
+        }
+        {
+            uint32_t lo, hi;
+            __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+            now = ((uint64_t)hi << 32) | lo;
+        }
+        deltas[i] = (uint8_t)(now - prev);
+        prev = now;
+    }
+    (void)sink;
+
+    if (entropy_stage_source(ENTROPY_SRC_JITTER, deltas,
+                             (uint32_t)sizeof(deltas), ENTROPY_Q_LOW)) {
+        klog(LOG_INFO, "entropy", "jitter: 64 samples staged (LOW%s)",
+             platform_get() == PLATFORM_BARE_METAL ? "" : ", vm timing caveat");
+    }
+    {
+        uint32_t k;
+        for (k = 0; k < (uint32_t)sizeof(deltas); k++)
+            deltas[k] = 0;
+    }
+}
 
 void boot_phase1(void)
 {
@@ -380,6 +429,16 @@ void boot_phase1(void)
     }
 
     __asm__ volatile ("sti");
+
+    /* Jitter entropy sample -- earliest post-sti point so the staged
+     * bytes are available to the first CSPRNG seed (Phase 3 would be
+     * too late for pre-KASLR consumers). CPU-execution jitter, not
+     * tick-boundary sampling: 64 tick-boundary samples at 100 Hz would
+     * cost 640ms of boot; execution jitter finishes in microseconds and
+     * is the same source class Linux jitterentropy uses. Quality is
+     * LOW by definition (the entropy model clamps JITTER regardless). */
+    entropy_collect_jitter();
+
     /* spinner_start() (via boot_splash_start_animation) registers the
      * singleton timer tick callback at 10 ticks (~10fps, Fluent 100 deg/s).
      * The slot has exactly one owner -- do NOT register another callback
