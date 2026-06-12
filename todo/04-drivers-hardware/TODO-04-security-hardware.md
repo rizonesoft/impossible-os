@@ -142,26 +142,22 @@ Call `EFI_RUNTIME_SERVICES.GetVariable("SecureBoot", &EFI_GLOBAL_VARIABLE, ...)`
 - [ ] Boot log: `[SECBOOT] Secure Boot: %s` (`enabled` / `disabled` / `setup mode`)
 - [ ] Commit: `"kernel: Secure Boot state -- EFI GetVariable SecureBoot, Registry HKLM\\SYSTEM\\SecureBoot"`
 
-## 6. TPM 2.0 Command Driver `[Opus]`
+## 6. TPM 2.0 Command Layer and IOCTL Surface `[Opus]`
 
-Extend `src/kernel/tpm.c` with the TPM 2.0 command interface -- detect CRB (Command Response Buffer) or FIFO (TIS) interface from the ACPI `TPM2` table, implement `tpm2_send_command(cmd)` / `tpm2_recv_response()`, and expose `STARTUP`, `GetCapability`, `PCR_Read`, `PCR_Extend`, and `GetRandom`.
+Build the TPM 2.0 command layer ON TOP of the shipped transport: discovery, TIS/CRB submission, locality, timeouts, and `TPM2_Startup` all live in `src/kernel/tpm_transport.c` (`tpm2_submit()`; shipped at `01-boot-platform/TODO-13` §2 -- do NOT re-implement transport here). This section owns the command marshaling above the transport plus the user-visible device surface.
 
-**Files:** `src/kernel/tpm.c` (extend), `include/kernel/tpm.h` (extend)
+**Files:** `src/kernel/tpm.c` (extend), `include/kernel/tpm.h` (extend); transport contract: [`include/kernel/tpm_transport.h`](../../include/kernel/tpm_transport.h)
 
 > [!NOTE]
-> ACPI `TPM2` table (signature `"TPM2"`): offset 36 = `Platform Class (2B)`, offset 40 = `Control Area Base Address (8B)`, offset 48 = `Start Method (4B)` -- `7` = CRB, `6` = FIFO. CRB control area: `Request (0x00)`, `Status (0x04)`, `Cancel (0x08)`, `Start (0x0C)`, `InterruptControl (0x10)`, `CmdSize (0x18)`, `CmdAddress (0x20)`, `RspSize (0x28)`, `RspAddress (0x30)`. Command buffer follows the control area.
+> Transport, ACPI TPM2 discovery, CRB control-area layout, and Startup detection shipped in `01-boot-platform/TODO-13` §2; the canonical register/offset reference is `src/kernel/tpm_transport.c`. PCR read marshaling is owned by `01-boot-platform/TODO-13` §3; coordinate to avoid duplication.
 
-- [ ] ACPI `TPM2` table parse: `tpm2_init()` locates table via ACPI; reads `StartMethod`; maps `ControlAreaBase` MMIO
-- [ ] CRB transport: `tpm2_crb_send(cmd, len)`: write command to `CmdAddress`; write `CmdSize`; write `Start.RequestUse`; poll `Status.Ready`; signal `Start=1`; poll until `Start==0`; read response from `RspAddress`
-- [ ] FIFO (TIS) transport: `tpm2_fifo_send(cmd, len)`: request locality 0 (`ACCESS_0 = 0x0`); `STS.commandReady=1`; burst write command bytes; `STS.tpmGo=1`; poll `STS.dataAvail`; burst read response
-- [ ] `tpm2_startup(TPM_SU_CLEAR)`: command code `0x0144`; 2-byte `startupType = 0x0000` (CLEAR); send; verify RC == `TPM_RC_SUCCESS (0)` or `TPM_RC_INITIALIZE (0x100)` (already started)
-- [ ] `tpm2_get_capability(prop, count, out)`: CC `0x017A`; property group `TPM_PT_*`; parse `TPML_TAGGED_TPM_PROPERTY` response
-- [ ] `tpm2_pcr_read(pcr_index, bank, out_digest)`: CC `0x017E`; `TPML_PCR_SELECTION`; parse `TPML_DIGEST` response; copy 32-byte SHA-256 digest to `out_digest`
-- [ ] `tpm2_pcr_extend(pcr_index, digest_sha256)`: CC `0x0182`; `TPML_DIGEST_VALUES` with one `TPMT_HA` (hash_alg=`TPM_ALG_SHA256`, digest[32])`
-- [ ] `tpm2_get_random(len, out)`: CC `0x017C`; `bytesRequested = len`; parse `TPM2B_DIGEST` response; call `hwrng_reseed(out, len)` to feed into entropy pool
+- [ ] `tpm2_get_capability(prop, count, out)`: CC `0x017A` via `tpm2_submit()`; parse `TPML_TAGGED_TPM_PROPERTY` response
+- [ ] `tpm2_pcr_read(pcr_index, bank, out_digest)`: CC `0x017E`; `TPML_PCR_SELECTION`; parse `TPML_DIGEST`; coordinate with `01-boot-platform/TODO-13` §3 (PCR read API owner)
+- [ ] `tpm2_pcr_extend(pcr_index, digest_sha256)`: CC `0x0182`; `TPML_DIGEST_VALUES` with one `TPMT_HA` (hash_alg=`TPM_ALG_SHA256`, digest[32])
+- [ ] `tpm2_get_random(len, out)`: CC `0x017B`; `bytesRequested = len`; parse `TPM2B_DIGEST`; runtime reseed feed (first-seed collection is `01-boot-platform/TODO-12` §4)
 - [ ] IOCTL surface: `NtDeviceIoControlFile` on `\Device\TPM0` → dispatch `IOCTL_TPM_PCR_READ`, `IOCTL_TPM_GET_RANDOM`, `IOCTL_TPM_PCR_EXTEND` to above commands
-- [ ] Boot log: `[TPM2] Interface=%s (CRB/FIFO), STARTUP OK, firmware version=%u.%u`
-- [ ] Commit: `"kernel: TPM2 command driver -- CRB/FIFO transport, STARTUP/PCR/GetRandom, IOCTL surface"`
+- [ ] Boot log: `[TPM2] command layer ready, firmware version=%u.%u` (interface + Startup already logged by the transport)
+- [ ] Commit: `"kernel: TPM2 command layer -- GetCapability/PCR/GetRandom over tpm2_submit, IOCTL surface"`
 
 ## 7. Boot-Time Kernel Integrity Check `[Opus]`
 

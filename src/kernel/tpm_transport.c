@@ -82,6 +82,14 @@
 /* Fast-timeout iteration cap for unit tests (whole wait, not per ms). */
 #define TPM_T_FAST_TEST_ITERS 64u
 
+/* Cumulative wall-clock budget for the boot-time startup probe. The
+ * per-step PTP timeouts reset on every FIFO burst, so a slow-but-
+ * present device could otherwise stretch one boot probe into tens of
+ * seconds (worst case: TIMEOUT_A per byte). A healthy TPM answers
+ * GetCapability in single-digit milliseconds; one that cannot finish
+ * the probe inside this budget is treated as wedged for this boot. */
+#define TPM_T_INIT_PROBE_BUDGET_MS 3000u
+
 /* ---- Module state (s_state_lock guards the transition fields; the
  * in-flight transaction itself runs lock-free under s_busy ownership,
  * never holding the spinlock across MMIO polling) ---- */
@@ -99,6 +107,40 @@ static volatile uint8_t *s_crb_cmd;    /* mapped CRB command buffer */
 static volatile uint8_t *s_crb_rsp;    /* mapped CRB response buffer */
 static uint32_t s_crb_cmd_size;
 static uint32_t s_crb_rsp_size;
+
+/* Page-aligned underlying mappings (for unwind): the usable pointers
+ * above may sit at an offset inside these windows because CRB control
+ * areas and data buffers are commonly NOT page-aligned (QEMU: base +
+ * 0x40 / + 0x80) while the VMM MMIO mapper requires aligned phys. */
+struct tpm_t_map {
+    void    *base;  /* mapped VA (page-aligned), NULL = not mapped */
+    uint32_t size;  /* mapped span for vmm_unmap_mmio */
+};
+static struct tpm_t_map s_tis_map;
+static struct tpm_t_map s_crb_ctrl_map;
+static struct tpm_t_map s_crb_cmd_map;
+static struct tpm_t_map s_crb_rsp_map;
+
+/* Map [pa, pa + size) UC, tolerating a non-page-aligned pa: aligns the
+ * base down, widens the span by the offset, returns the usable pointer
+ * at the original offset. Records the underlying mapping in *m. */
+static volatile uint8_t *tpm_t_map_uc(uint64_t pa, uint32_t size,
+                                      struct tpm_t_map *m)
+{
+    uint32_t off = (uint32_t)(pa & 0xFFFu);
+    void *base = vmm_map_mmio_uc(pa - off, off + size);
+    m->base = base;
+    m->size = base ? off + size : 0;
+    return base ? (volatile uint8_t *)base + off : 0;
+}
+
+static void tpm_t_unmap(struct tpm_t_map *m)
+{
+    if (m->base)
+        vmm_unmap_mmio(m->base, m->size);
+    m->base = 0;
+    m->size = 0;
+}
 
 /* ---- Register io seam ---- */
 
@@ -146,6 +188,32 @@ struct tpm_t_wait {
     uint64_t iters_left; /* iteration budget when no TSC frequency */
 };
 
+/* Cumulative budget shared by every wait inside one bounded sequence
+ * (the boot startup probe). 0/0 = inactive. Only touched from the
+ * single thread running the bounded sequence. */
+static uint64_t s_budget_deadline;  /* TSC mode */
+static uint64_t s_budget_iters;     /* iteration mode */
+static int      s_budget_active;
+
+static void tpm_t_budget_begin(uint32_t ms)
+{
+    s_budget_active = 1;
+    if (s_tsc_per_ms) {
+        s_budget_deadline = tpm_t_rdtsc() + (uint64_t)ms * s_tsc_per_ms;
+        s_budget_iters = 0;
+    } else {
+        s_budget_deadline = 0;
+        s_budget_iters = (uint64_t)ms * TPM_T_NOFREQ_ITERS_PER_MS;
+    }
+}
+
+static void tpm_t_budget_end(void)
+{
+    s_budget_active = 0;
+    s_budget_deadline = 0;
+    s_budget_iters = 0;
+}
+
 static void tpm_t_wait_begin(struct tpm_t_wait *w, uint32_t ms)
 {
     if (s_fast_timeouts) {
@@ -160,10 +228,23 @@ static void tpm_t_wait_begin(struct tpm_t_wait *w, uint32_t ms)
     }
 }
 
-/* Returns 1 while the wait may continue, 0 on expiry. */
+/* Returns 1 while the wait may continue, 0 on expiry. The cumulative
+ * budget (when active) caps the SUM of all waits in the sequence --
+ * per-step PTP timeouts reset on every burst and would otherwise
+ * accumulate unboundedly against a slow device. */
 static int tpm_t_wait_tick(struct tpm_t_wait *w)
 {
     __asm__ volatile ("pause");
+    if (s_budget_active) {
+        if (s_budget_deadline) {
+            if (tpm_t_rdtsc() >= s_budget_deadline)
+                return 0;
+        } else {
+            if (s_budget_iters == 0)
+                return 0;
+            s_budget_iters--;
+        }
+    }
     if (w->deadline)
         return tpm_t_rdtsc() < w->deadline;
     if (w->iters_left == 0)
@@ -257,9 +338,14 @@ static uint32_t tis_wait_burst(uint32_t ms)
     struct tpm_t_wait w;
     tpm_t_wait_begin(&w, ms);
     do {
-        uint32_t burst = (s_io->r32(TPM_TIS_REG_STS) >> 8) & 0xFFFFu;
-        if (burst)
-            return burst;
+        /* burstCount is only meaningful while stsValid is set (PTP
+         * status register semantics) -- ignore it otherwise. */
+        uint32_t sts = s_io->r32(TPM_TIS_REG_STS);
+        if (sts & TPM_TIS_STS_VALID) {
+            uint32_t burst = (sts >> 8) & 0xFFFFu;
+            if (burst)
+                return burst;
+        }
     } while (tpm_t_wait_tick(&w));
     return 0;
 }
@@ -304,10 +390,13 @@ static int tis_submit(const uint8_t *cmd, uint32_t cmd_len,
     int sts;
 
     /* Idle -> Ready. commandReady is write-1-to-request and reads back
-     * set once the TPM is ready for a command (PTP 1.05). */
+     * set once the TPM is ready for a command (PTP 1.05). Require
+     * stsValid in the same read: status bits are stale without it. */
     s_io->w32(TPM_TIS_REG_STS, TPM_TIS_STS_COMMAND_READY);
-    if (tpm_t_poll32(TPM_TIS_REG_STS, TPM_TIS_STS_COMMAND_READY,
-                     TPM_TIS_STS_COMMAND_READY, TPM_T_TIMEOUT_B_MS) != 0)
+    if (tpm_t_poll32(TPM_TIS_REG_STS,
+                     TPM_TIS_STS_VALID | TPM_TIS_STS_COMMAND_READY,
+                     TPM_TIS_STS_VALID | TPM_TIS_STS_COMMAND_READY,
+                     TPM_T_TIMEOUT_B_MS) != 0)
         return TPM_T_ERR_TIMEOUT;
 
     /* Write all bytes except the last in burstCount-sized chunks. */
@@ -523,10 +612,15 @@ static void tpm_t_startup_probe(void)
     uint32_t cmd_len, rc;
     int n;
 
+    /* Bound the WHOLE probe sequence (GetCapability + optional Startup
+     * + re-probe) so per-burst timeout resets cannot stretch boot. */
+    tpm_t_budget_begin(TPM_T_INIT_PROBE_BUDGET_MS);
+
     cmd_len = tpm2_build_getcap_manufacturer(cmd, sizeof(cmd));
     n = tpm2_submit(cmd, cmd_len, rsp, sizeof(rsp));
     if (n < 0 || tpm2_rsp_parse(rsp, (uint32_t)n, 0, 0, &rc) != 0) {
         klog(LOG_WARN, "TPM", "startup probe failed (err=%d)", (uint64_t)n);
+        tpm_t_budget_end();
         return;
     }
 
@@ -539,14 +633,18 @@ static void tpm_t_startup_probe(void)
             rc != TPM2_RC_SUCCESS) {
             klog(LOG_WARN, "TPM", "TPM2_Startup(CLEAR) failed (rc=0x%x)",
                  (uint64_t)rc);
+            tpm_t_budget_end();
             return;
         }
         klog(LOG_INFO, "TPM", "TPM2_Startup(CLEAR) sent (firmware skipped it)");
         cmd_len = tpm2_build_getcap_manufacturer(cmd, sizeof(cmd));
         n = tpm2_submit(cmd, cmd_len, rsp, sizeof(rsp));
-        if (n < 0 || tpm2_rsp_parse(rsp, (uint32_t)n, 0, 0, &rc) != 0)
+        if (n < 0 || tpm2_rsp_parse(rsp, (uint32_t)n, 0, 0, &rc) != 0) {
+            tpm_t_budget_end();
             return;
+        }
     }
+    tpm_t_budget_end();
 
     /* GetCapability payload: moreData(1) capability(4) count(4)
      * property(4) value(4) -- manufacturer is 4 ASCII chars. */
@@ -578,8 +676,7 @@ static int tpm_t_init_tis(uint64_t base_pa)
 {
     uint32_t did_vid;
 
-    s_tis_base = (volatile uint8_t *)vmm_map_mmio_uc(base_pa,
-                                                     TPM_TIS_WINDOW_SIZE);
+    s_tis_base = tpm_t_map_uc(base_pa, TPM_TIS_WINDOW_SIZE, &s_tis_map);
     if (!s_tis_base) {
         klog(LOG_WARN, "TPM", "TIS MMIO map failed at 0x%lx", base_pa);
         return 0;
@@ -590,7 +687,7 @@ static int tpm_t_init_tis(uint64_t base_pa)
     if (did_vid == 0u || did_vid == 0xFFFFFFFFu) {
         klog(LOG_INFO, "TPM", "no TIS device at 0x%lx (DID_VID=0x%x)",
              base_pa, (uint64_t)did_vid);
-        vmm_unmap_mmio((void *)s_tis_base, TPM_TIS_WINDOW_SIZE);
+        tpm_t_unmap(&s_tis_map);
         s_tis_base = 0;
         s_iface = TPM_T_IFACE_NONE;
         return 0;
@@ -604,7 +701,7 @@ static int tpm_t_init_tis(uint64_t base_pa)
                     TPM_TIS_ACCESS_VALID | TPM_TIS_ACCESS_ACTIVE,
                     TPM_T_TIMEOUT_A_MS) != 0) {
         klog(LOG_WARN, "TPM", "TIS locality 0 not granted");
-        vmm_unmap_mmio((void *)s_tis_base, TPM_TIS_WINDOW_SIZE);
+        tpm_t_unmap(&s_tis_map);
         s_tis_base = 0;
         s_iface = TPM_T_IFACE_NONE;
         return 0;
@@ -623,7 +720,10 @@ static int tpm_t_init_crb(uint64_t ctrl_pa)
         klog(LOG_WARN, "TPM", "TPM2 table CRB control area address is 0");
         return 0;
     }
-    s_crb_base = (volatile uint8_t *)vmm_map_mmio_uc(ctrl_pa, 0x1000u);
+    /* CRB control areas are commonly a register tail INSIDE a larger
+     * MMIO page (QEMU: interface base + 0x40), so the address is not
+     * page-aligned; tpm_t_map_uc handles the offset. */
+    s_crb_base = tpm_t_map_uc(ctrl_pa, 0x30u, &s_crb_ctrl_map);
     if (!s_crb_base) {
         klog(LOG_WARN, "TPM", "CRB control area map failed at 0x%lx",
              ctrl_pa);
@@ -654,13 +754,11 @@ static int tpm_t_init_crb(uint64_t ctrl_pa)
          * s_crb_rsp_size never read past the mapped window. */
         uint32_t span = (s_crb_rsp_size > s_crb_cmd_size) ? s_crb_rsp_size
                                                           : s_crb_cmd_size;
-        s_crb_cmd = (volatile uint8_t *)vmm_map_mmio_uc(cmd_pa, span);
+        s_crb_cmd = tpm_t_map_uc(cmd_pa, span, &s_crb_cmd_map);
         s_crb_rsp = s_crb_cmd;
     } else {
-        s_crb_cmd = (volatile uint8_t *)vmm_map_mmio_uc(cmd_pa,
-                                                        s_crb_cmd_size);
-        s_crb_rsp = (volatile uint8_t *)vmm_map_mmio_uc(rsp_pa,
-                                                        s_crb_rsp_size);
+        s_crb_cmd = tpm_t_map_uc(cmd_pa, s_crb_cmd_size, &s_crb_cmd_map);
+        s_crb_rsp = tpm_t_map_uc(rsp_pa, s_crb_rsp_size, &s_crb_rsp_map);
     }
     if (!s_crb_cmd || !s_crb_rsp) {
         klog(LOG_WARN, "TPM", "CRB buffer map failed");
@@ -674,11 +772,9 @@ static int tpm_t_init_crb(uint64_t ctrl_pa)
 fail_unwind:
     /* Unmap in reverse order and clear every static so a malformed
      * table cannot leave stray UC windows or stale pointers behind. */
-    if (s_crb_rsp && s_crb_rsp != s_crb_cmd)
-        vmm_unmap_mmio((void *)s_crb_rsp, s_crb_rsp_size);
-    if (s_crb_cmd)
-        vmm_unmap_mmio((void *)s_crb_cmd, s_crb_cmd_size);
-    vmm_unmap_mmio((void *)s_crb_base, 0x1000u);
+    tpm_t_unmap(&s_crb_rsp_map);
+    tpm_t_unmap(&s_crb_cmd_map);
+    tpm_t_unmap(&s_crb_ctrl_map);
     s_crb_cmd = 0;
     s_crb_rsp = 0;
     s_crb_base = 0;
@@ -780,4 +876,15 @@ const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
     s_busy = 0;
     spin_unlock_irqrestore(&s_state_lock, irqf);
     return old;
+}
+
+void tpm_t_test_budget_iters(uint64_t iters)
+{
+    if (iters) {
+        s_budget_active = 1;
+        s_budget_deadline = 0;
+        s_budget_iters = iters;
+    } else {
+        tpm_t_budget_end();
+    }
 }

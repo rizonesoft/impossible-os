@@ -28,6 +28,8 @@ static int      fk_ready;         /* commandReady latched */
 static int      fk_executed;      /* go received, response phase */
 static uint32_t fk_cmd_total;     /* bytes received when go arrived */
 static int      fk_dead;          /* all waits time out (wedge test) */
+static int      fk_no_valid;      /* status reads lack stsValid (stale) */
+static uint32_t fk_burst_delay;   /* STS reads reporting burst=0 first */
 static int      fk_expect_mode;   /* 0 normal, 1 never assert, 2 stuck on */
 static int      fk_stuck_avail;   /* dataAvail never drops (trailing bytes) */
 static int      fk_reentry_rc;    /* captured nested-submit rc */
@@ -74,6 +76,11 @@ static uint32_t fake_r32(uint32_t off)
     uint8_t sts;
     if (off != FK_REG_STS || fk_dead)
         return 0;
+    if (fk_no_valid) {
+        /* Stale status: burstCount nonzero but stsValid clear -- the
+         * transport must not trust any of it. */
+        return 1u << 8;
+    }
     sts = FK_STS_VALID;
     if (fk_ready && !fk_executed && fk_cmd_len == 0)
         sts |= FK_STS_COMMAND_READY;
@@ -85,6 +92,11 @@ static uint32_t fake_r32(uint32_t off)
     }
     if (fk_stuck_avail || (fk_executed && fk_rsp_pos < fk_rsp_len))
         sts |= FK_STS_DATA_AVAIL;
+    if (fk_burst_delay) {
+        /* Slow device: valid status but no burst capacity yet. */
+        fk_burst_delay--;
+        return (uint32_t)sts;
+    }
     /* burstCount = 1: worst-case chunking on every byte. */
     return (uint32_t)sts | (1u << 8);
 }
@@ -119,6 +131,8 @@ static void fake_reset(void)
     fk_executed = 0;
     fk_cmd_total = 0;
     fk_dead = 0;
+    fk_no_valid = 0;
+    fk_burst_delay = 0;
     fk_expect_mode = 0;
     fk_stuck_avail = 0;
     fk_reentry_rc = 0;
@@ -303,6 +317,37 @@ static void test_tpm2_submit_fake(void)
     TEST_ASSERT_EQ(r, 10, "outer submit completes despite probe");
     TEST_ASSERT_EQ(fk_reentry_rc, TPM_T_ERR_BUSY,
                    "nested submit bounced with BUSY");
+
+    /* Stale status: burstCount nonzero with stsValid clear must never
+     * be trusted -- the ready poll times out instead of writing FIFO
+     * bytes off stale state. Reinstall clears the sticky failure. */
+    fake_reset();
+    fake_set_rsp(TPM2_RC_SUCCESS, 10u);
+    fk_no_valid = 1;
+    r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
+    TEST_ASSERT_EQ(r, TPM_T_ERR_TIMEOUT,
+                   "stale status without stsValid -> timeout, no writes");
+    TEST_ASSERT_EQ(fk_cmd_len, 0u, "no FIFO bytes written on stale status");
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+
+    /* Cumulative budget: a slow device (valid status, delayed bursts)
+     * fits inside the per-step waits but must NOT fit inside a small
+     * cumulative budget -- mirrors the boot startup-probe cap. */
+    fake_reset();
+    fake_set_rsp(TPM2_RC_SUCCESS, 10u);
+    fk_burst_delay = 16u;
+    tpm_t_test_budget_iters(8u);
+    r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
+    TEST_ASSERT_EQ(r, TPM_T_ERR_TIMEOUT,
+                   "slow device exceeds cumulative budget -> timeout");
+    tpm_t_test_budget_iters(0u);
+    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    fake_reset();
+    fake_set_rsp(TPM2_RC_SUCCESS, 10u);
+    fk_burst_delay = 16u;
+    r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
+    TEST_ASSERT_EQ(r, 10,
+                   "same slow device succeeds without the budget");
 
     /* Wedge: every wait times out -> sticky failure -> ERR_FAILED. */
     fake_reset();

@@ -9,7 +9,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 # TODO-13 -- TPM Measured Boot, PCR Replay & Attestation
 
 > **Goal:** Complete the measured-boot trust chain from firmware through bootloader and kernel. The bootloader retrieves the TCG event log and the kernel parses it, but true integrity requires PCR replay, TPM2 PCR reads, baseline enrollment, sealed storage, and diagnostics. This TODO turns the current TPM presence/event-count code into a full boot integrity feature.
-> **Current state:** `retrieve_tpm_event_log()` copies the event log into `boot_info`, `tpm_init()` parses enough to count events and identify hash algorithms, and `tpm_integrity_init()` is a stub that reports `BOOT_INTEGRITY_NO_CRYPTO`. There is no TPM2 command transport, no PCR read, no PCR replay, no baseline enrollment, no TPM NV storage, and no attestation report.
+> **Current state (2026-06-12):** `retrieve_tpm_event_log()` copies the event log into `boot_info`, `tpm_init()` parses enough to count events and identify hash algorithms, and `tpm_integrity_init()` is a stub that reports `BOOT_INTEGRITY_NO_CRYPTO`. §2 shipped the TPM2 command transport (`tpm2_submit()` in `src/kernel/tpm_transport.c`: TIS/CRB, ACPI TPM2 discovery, conditional Startup, Phase 1 init). Still missing: PCR read (§3), PCR replay (§4), baseline enrollment (§6), TPM NV storage (§7), attestation report (§9).
 
 ## Inputs
 
@@ -76,6 +76,11 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Downstream: TODO-12 §4 (TPM RNG) consumes `tpm2_submit()`; §3 PCR read and §7 NV index build on the same API; Codex design + test-coverage adoptions in the section commit.
 > - Canonical contract doc: `include/kernel/tpm_transport.h` header comment (phase + concurrency contracts).
 > - Scope boundary: ACPI-start methods (2/8) degrade until ACPICA lands (owner: `04-drivers-hardware/TODO-03` §1); event-log parsing stays in `tpm.c` (§1); PCR commands are §3.
+
+> **Verified:** 2026-06-12 | commit `8ae51bf1` | 6/6 items | build OK | smoke PASS (KVM 2.530s)
+> **Accepted:** [M] ACPI start methods 2/8 degrade-with-WARN until an AML interpreter exists -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "TPM2 ACPI start method (2/8)" at line 80)
+> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 82)
+> **Quality reviewed:** 2026-06-12 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 1Crit+6H+6M fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-code-quality
 
 ## 3. PCR Read API
 
@@ -149,6 +154,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Add event-log parser fixtures for TPM 1.2 and TPM 2.0.
 - [ ] Add PCR replay known-vector tests.
 - [ ] Add QEMU swtpm test path.
+- [ ] Fake-CRB buffer seam + unit suite for `crb_submit()` in `src/kernel/tpm_transport.c` (cmdReady/START/goIdle, shared cmd/rsp buffer, oversized response) -- the §2 io seam covers TIS only; CRB is validated live via swtpm.
 - [ ] Add degraded tests for no TPM, truncated log, and inactive PCR banks.
 - [ ] Commit: `"test: TPM measured boot coverage"`
 
@@ -176,4 +182,3 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Secure Boot enabled OVMF
 - [ ] Bare metal with TPM 2.0
 - [ ] Bare metal without TPM degrades cleanly
-

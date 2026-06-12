@@ -140,3 +140,8 @@ struct tpm_t_io {
  * microsecond scale so timeout-path tests do not stall the suite. */
 const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
                                           int iface, int fast);
+
+/* Arm the cumulative wait budget in iteration mode (kernel unit tests
+ * only) -- mirrors the boot startup-probe budget so its expiry path is
+ * testable. 0 disarms. */
+void tpm_t_test_budget_iters(uint64_t iters);
