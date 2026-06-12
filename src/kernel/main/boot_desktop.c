@@ -279,12 +279,30 @@ void boot_phase3(void)
      * reflects the seed-file source. */
     seed_file_phase3();
 
+    /* One-shot admin external-entropy consume (Win11 ExternalEntropy
+     * parity): destroys + absorbs HKLM\SYSTEM\Boot\Entropy\ExternalEntropy
+     * when present. Runs BEFORE the summary + diagnostics surfaces so
+     * they reflect the post-injection state. */
+    {
+        extern void entropy_external_consume(void);
+        entropy_external_consume();
+    }
+
     /* Entropy source summary -- one line, WARN when degraded. Collectors
      * land with the early-entropy TODO sections; until then this honestly
      * reports all-none rather than implying randomness we do not have. */
     {
         extern void entropy_report(void);
         entropy_report();
+    }
+
+    /* Diagnostics surfaces (mask/quality/class only -- never seed bytes):
+     * HKLM\SYSTEM\Boot\Entropy registry mirror + X:\Diag\entropy.json. */
+    {
+        extern void entropy_populate_registry(void);
+        extern void entropy_publish_json(void);
+        entropy_populate_registry();
+        entropy_publish_json();
     }
 
     boot_timing_print_steps();

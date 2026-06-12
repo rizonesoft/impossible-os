@@ -856,6 +856,65 @@ static void test_entropy_seed_zeroized(void)
                    0u, "zero length refused");
 }
 
+static void test_external_entropy_oneshot(void)
+{
+    uint8_t src[64], dst[64];
+    uint32_t i;
+    uint64_t sum;
+
+    /* Normal path: full copy, source destroyed. */
+    memset(src, 0xC7, sizeof(src));
+    memset(dst, 0, sizeof(dst));
+    TEST_ASSERT_EQ(entropy_external_oneshot(src, sizeof(src),
+                                            dst, sizeof(dst)),
+                   (uint32_t)sizeof(src), "full offering copied");
+    TEST_ASSERT_EQ((uint64_t)dst[0], 0xC7u, "copy carries the bytes");
+    TEST_ASSERT_EQ((uint64_t)dst[63], 0xC7u, "copy carries the last byte");
+    for (sum = 0, i = 0; i < sizeof(src); i++)
+        sum += src[i];
+    TEST_ASSERT_EQ(sum, 0u, "source wiped after the copy (one-shot)");
+
+    /* Cap clamp: only cap bytes copied, source STILL fully wiped. */
+    memset(src, 0x3D, sizeof(src));
+    memset(dst, 0, sizeof(dst));
+    TEST_ASSERT_EQ(entropy_external_oneshot(src, sizeof(src), dst, 16),
+                   16u, "oversize offering clamped to cap");
+    TEST_ASSERT_EQ((uint64_t)dst[15], 0x3Du, "clamped copy filled");
+    TEST_ASSERT_EQ((uint64_t)dst[16], 0u, "clamp writes nothing past cap");
+    for (sum = 0, i = 0; i < sizeof(src); i++)
+        sum += src[i];
+    TEST_ASSERT_EQ(sum, 0u, "full source wiped even when clamped");
+
+    /* Reject paths: NULL dst / zero cap still destroy the source. */
+    memset(src, 0x99, sizeof(src));
+    TEST_ASSERT_EQ(entropy_external_oneshot(src, sizeof(src), NULL, 64),
+                   0u, "NULL dst copies nothing");
+    for (sum = 0, i = 0; i < sizeof(src); i++)
+        sum += src[i];
+    TEST_ASSERT_EQ(sum, 0u, "rejected offering still destroyed");
+    /* cap == 0: copies nothing, writes nothing, source STILL destroyed. */
+    memset(src, 0x44, sizeof(src));
+    memset(dst, 0xEE, sizeof(dst));
+    TEST_ASSERT_EQ(entropy_external_oneshot(src, sizeof(src), dst, 0),
+                   0u, "zero cap copies nothing");
+    TEST_ASSERT_EQ((uint64_t)dst[0], 0xEEu, "zero cap writes nothing");
+    for (sum = 0, i = 0; i < sizeof(src); i++)
+        sum += src[i];
+    TEST_ASSERT_EQ(sum, 0u, "zero-cap offering still destroyed");
+    TEST_ASSERT_EQ(entropy_external_oneshot(NULL, 32, dst, 32),
+                   0u, "NULL src refused");
+    TEST_ASSERT_EQ(entropy_external_oneshot(src, 0, dst, 32),
+                   0u, "zero-length offering refused");
+
+    /* Class names are the stable diagnostics vocabulary. */
+    TEST_ASSERT_EQ(strcmp(entropy_class_str(ENTROPY_CLASS_GOOD), "good"),
+                   0, "class string: good");
+    TEST_ASSERT_EQ(strcmp(entropy_class_str(ENTROPY_CLASS_MINIMUM),
+                          "minimum"), 0, "class string: minimum");
+    TEST_ASSERT_EQ(strcmp(entropy_class_str(ENTROPY_CLASS_DEGRADED),
+                          "degraded"), 0, "class string: degraded");
+}
+
 void test_register_entropy(void)
 {
     test_suite_register_cat("entropy: quality slot packing",
@@ -884,4 +943,6 @@ void test_register_entropy(void)
         test_boot_seed_desc_classify, TEST_CAT_SECURITY);
     test_suite_register_cat("entropy: boot seed zeroized",
         test_entropy_seed_zeroized, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: external one-shot",
+        test_external_entropy_oneshot, TEST_CAT_SECURITY);
 }

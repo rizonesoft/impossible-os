@@ -303,6 +303,34 @@ void entropy_report(void)
          cls_str[cls]);
 }
 
+const char *entropy_class_str(entropy_class_t cls)
+{
+    switch (cls) {
+    case ENTROPY_CLASS_GOOD:    return "good";
+    case ENTROPY_CLASS_MINIMUM: return "minimum";
+    default:                    return "degraded";
+    }
+}
+
+uint32_t entropy_external_oneshot(uint8_t *src, uint32_t len,
+                                  uint8_t *dst, uint32_t cap)
+{
+    uint32_t n;
+
+    if (!src)
+        return 0;
+    if (!dst || len == 0 || cap == 0) {
+        /* Nothing copyable -- the source is STILL destroyed: a rejected
+         * offering must never remain readable. */
+        crypto_wipe(src, len);
+        return 0;
+    }
+    n = (len < cap) ? len : cap;
+    memcpy(dst, src, n);
+    crypto_wipe(src, len);
+    return n;
+}
+
 /* ---- boot_info seed payload parser (boot_info seed handoff section) ----- */
 
 /* CRC-32C (Castagnoli, reflected 0x82F63B78), bitwise -- one-shot boot-path

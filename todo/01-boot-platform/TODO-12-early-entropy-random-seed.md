@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). §6 shipped the seed-file carryover lifecycle (`seed_file.c`: MAC'd format, NVRAM anti-clone token, Phase-3 reseed + crash-tolerant rotation). §7 shipped the boot_info seed handoff (digest-chained first-seed consumption + zeroing + pre-EBS carryover read). §8 shipped the named `early_entropy_init()` point, the CSPRNG-owned credited class, the unconditional key-generation gate `csprng_crypto_ok()`, and `csprng_fill_classified()`. Remaining: diagnostics/policy surfaces (§9) and the §10 test sweep.
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). §6 shipped the seed-file carryover lifecycle (`seed_file.c`: MAC'd format, NVRAM anti-clone token, Phase-3 reseed + crash-tolerant rotation). §7 shipped the boot_info seed handoff (digest-chained first-seed consumption + zeroing + pre-EBS carryover read). §8 shipped the named `early_entropy_init()` point, the CSPRNG-owned credited class, the unconditional key-generation gate `csprng_crypto_ok()`, and `csprng_fill_classified()`. §9 shipped the diagnostics surfaces (HKLM\SYSTEM\Boot\Entropy mirror, X:\Diag\entropy.json, splash degraded warning, external-entropy one-shot -- cross-reboot activation blocked on D02 TODO-14 hive-load wiring). Remaining: the §10 test sweep.
 
 ## Inputs
 
@@ -43,7 +43,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   6   | Seed file carryover lifecycle              | §1, T24 §3,§4      |  [x]   |
 | 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [x]   |
 | 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5      |  [x]   |
-| ⭐  |   9   | Entropy diagnostics and policy gates       | §1-§8              |  [ ]   |
+| ⭐  |   9   | Entropy diagnostics and policy gates       | §1-§8              |  [/]   |
 | 💎  |  10   | Entropy tests                              | §1-§9              |  [ ]   |
 
 ## 1. Entropy Source Inventory and Quality Model
@@ -265,14 +265,23 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 9. Entropy Diagnostics and Policy Gates
 
-- [ ] Log source mask and quality class without exposing seed bytes.
-- [ ] Show degraded randomness in VPD/recovery if release policy fails.
-- [ ] Add `HKLM\SYSTEM\Boot\Entropy`.
-- [ ] Admin external-entropy injection (Win11 ExternalEntropy parity): one-shot consume with overwrite-before-use, bytes never logged, mask-only diagnostics.
-- [ ] Add BlackBox report.
-- [ ] Commit: `"boot: entropy diagnostics and policy"`
+- [x] Mask/class logging without seed bytes: `entropy_report()` summary + the `registry: HKLM\SYSTEM\Boot\Entropy mask=.. class=..` checkpoint line (`entropy_registry.c`).
+- [x] Degraded indication: `early_entropy_init()` posts a persistent `boot_splash_diag()` WARNING when the credited class is DEGRADED (VPD tier 1 is already stopped there; registry + JSON carry the durable record).
+- [x] `HKLM\SYSTEM\Boot\Entropy`: SourceMask, QualityPacked, Class, CreditedClass, CryptoGateOk, ExternalEntropySeen/Bytes (`entropy_populate_registry()`).
+- [/] Admin external-entropy one-shot (Win11 ExternalEntropy parity): `entropy_external_consume()` destroys the registry value BEFORE absorbing (Q_LOW, never logged); pure `entropy_external_oneshot()` core tested. Cross-reboot activation BLOCKED on hive-load wiring -> XREF: [`02-kernel-core/TODO-14 §8`](../02-kernel-core/TODO-14-registry-completion.md#8-advanced-hive-features) (item: "Wire registry_load_hives() into boot").
+- [x] BlackBox report: `X:\Diag\entropy.json` (mask/quality/class/gate/provenance/external counters -- never bytes) via `entropy_publish_json()`.
+- [x] Commit: `"boot: entropy diagnostics and policy"`
 
-**Test checkpoint:** `HKLM\SYSTEM\Boot\Entropy` holds source mask + quality class (no seed bytes anywhere in registry, logs, or BlackBox); a forced-degraded boot in release policy shows the VPD/recovery indication. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `HKLM\SYSTEM\Boot\Entropy` holds source mask + quality class (no seed bytes anywhere in registry, logs, or BlackBox); a degraded boot shows the splash WARNING line; serial shows `registry: HKLM\SYSTEM\Boot\Entropy mask=..` + `JSON: wrote X:\Diag\entropy.json`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal. (KVM smoke 2026-06-12: `mask=0xc2 class=minimum credited=minimum gate=1` + entropy.json 202 bytes.)
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | entropy external one-shot suite, 0 failures
+
+> **Notes:**
+> - Shipped: `src/kernel/entropy_registry.c` (registry mirror + entropy.json + external-entropy one-shot consume) + pure `entropy_external_oneshot()`/`entropy_class_str()` in `entropy.c` + degraded splash warning in `early_entropy_init()`.
+> - Runs once on the Phase-3 boot path after `seed_file_phase3()` (consume -> report -> registry -> JSON) so every surface reflects the final boot entropy state.
+> - Downstream: cross-reboot ExternalEntropy activates when D02 TODO-14 §8 wires `registry_load_hives()`; Codex adoptions in the section commit message.
+> - Canonical doc: surface contract in [`include/kernel/entropy.h`](../../include/kernel/entropy.h) (diagnostics surfaces block).
+> - Scope boundary: §1 owns the model/report line; §8 owns the crypto gate the surfaces mirror; the desktop-visible post-boot notification is desktop-domain work, not §9.
 
 ---
 
@@ -302,9 +311,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed     | ✅ §6 MAC+NVRAM anti-clone  |
 | 💎  | Bootloader-kernel seed handoff | ✅ winload loader block    | ✅ EFI config-table seed    | ✅ §7 typed+CRC, first-seed |
 | 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early        | ✅ §8 named init + gate     |
-| ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ⬜ §9 registry + BlackBox   |
+| ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only               | ✅ §9 registry+JSON+splash  |
 
-> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§8 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing, MAC'd seed carryover with NVRAM anti-clone/anti-replay -- stronger than the unauthenticated Linux seed file -- the §7 checksummed typed handoff folding verified carryover into the FIRST kernel seed, and the §8 named init point with a credited-class release crypto gate -- stronger than Linux, which has no boot-time crypto-readiness gate), §9 still planned (⬜). The ⭐ §9 visible quality report (registry + BlackBox + VPD degraded indication) goes beyond both.
+> **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§8 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing, MAC'd seed carryover with NVRAM anti-clone/anti-replay -- stronger than the unauthenticated Linux seed file -- the §7 checksummed typed handoff folding verified carryover into the FIRST kernel seed, and the §8 named init point with a credited-class release crypto gate -- stronger than Linux, which has no boot-time crypto-readiness gate), and the §9 visible quality surfaces. The ⭐ §9 quality report (HKLM registry mirror + X:\Diag\entropy.json + splash degraded warning) goes beyond both; the §9 admin ExternalEntropy one-shot awaits the D02 TODO-14 hive-load wiring for cross-reboot use.
 
 ---
 
@@ -320,7 +329,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [x] `test_random_seed_format` (shipped with §6, `test_entropy.c`): round-trip + every rejection class (len/magic/version/MAC/replay incl. mac-field tamper + counter extremes) + no-output-poisoning sentinels
 - [x] `test_random_seed_clone_rejected` (shipped with §6, `test_entropy.c`): blob MAC'd under secret A fails closed under secret B
 - [x] Shipped with §7 (3 suites, `test_entropy.c`): payload parse gates + NO_FIT, carryover routing, `test_entropy_seed_zeroized` via pure `boot_seed_release_payload`; `csprng_core_seed2` equivalence in `test_klibs.c`
-- [ ] `test_external_entropy_oneshot` -- injected entropy consumed once, source overwritten before use (§9)
+- [x] `test_external_entropy_oneshot` (shipped with §9, `test_entropy.c`): copy/clamp/reject matrix, source destroyed on every path, class-string vocabulary
 
 ---
 

@@ -301,7 +301,18 @@ void early_entropy_init(void)
     klog(LOG_INFO, "entropy",
          "early entropy init complete: credited class=%s, "
          "release crypto %s",
-         cls == ENTROPY_CLASS_GOOD ? "good" :
-         cls == ENTROPY_CLASS_MINIMUM ? "minimum" : "degraded",
+         entropy_class_str(cls),
          csprng_crypto_ok() ? "permitted" : "REFUSED until reseed");
+
+    /* Visible degraded indication on a still-live surface: the splash
+     * diag line persists from here until the desktop takes over (VPD
+     * tier 1 is already stopped by this point, and the Phase-3 surfaces
+     * -- registry mirror + entropy.json -- carry the durable record).
+     * The credited class is FINAL here: the Phase-3 seed-file carryover
+     * absorbs at Q_LOW and can never upgrade it. */
+    if (cls == ENTROPY_CLASS_DEGRADED) {
+        extern void boot_splash_diag(const char *msg);
+        boot_splash_diag("WARNING: degraded randomness -- no hardware "
+                         "entropy source credited");
+    }
 }

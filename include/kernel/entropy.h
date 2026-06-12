@@ -220,6 +220,25 @@ entropy_seed_status_t entropy_seed_parse(
 #define BOOT_SEED_DIGEST_LEN  32u
 uint32_t boot_seed_consume(uint8_t *out, uint32_t cap);
 
+/* ---- Entropy diagnostics surfaces (diagnostics + policy gates section) --
+ * Registry mirror, BlackBox JSON, and the one-shot admin external-entropy
+ * consume (src/kernel/entropy_registry.c). All length/mask/class only --
+ * seed bytes never reach any surface. Phase-3 boot path, BSP only. */
+#define ENTROPY_EXTERNAL_MAX  512u
+void entropy_external_consume(void);
+void entropy_populate_registry(void);
+void entropy_publish_json(void);
+
+/* PURE one-shot core (unit-testable): copy min(len, cap) bytes of src to
+ * dst, then WIPE the full src buffer (the source must never be readable
+ * after the copy is taken). Returns the copied length; 0 on NULL/empty
+ * input (nothing copied, src still wiped when non-NULL). */
+uint32_t entropy_external_oneshot(uint8_t *src, uint32_t len,
+                                  uint8_t *dst, uint32_t cap);
+
+/* Human-readable class name ("degraded" / "minimum" / "good"). */
+const char *entropy_class_str(entropy_class_t cls);
+
 /* The SINGLE named early-entropy init point (kernel early CSPRNG seeding
  * section): boot_seed_consume -> csprng_init -> wipe, then logs the
  * credited class + release crypto-gate verdict. Runs once on the BSP in
