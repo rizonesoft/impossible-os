@@ -23,17 +23,23 @@ only when every domain is complete or a hard-stop condition fires.
 
 ## Cursor
 
-- **Current (2026-06-12, run 3):** `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md`,
-  resume at `## 4. TPM RNG Collection`. Stages 1-2 (validate + gap-audit) and
-  §1-§3 are done. §4 was filed blocked-with-XREF on TODO-13 §2 TPM transport
-  (commit a98dca94); **user direction 2026-06-12: re-open §4 instead** -- if
-  the TPM transport is genuinely the only blocker, pull that prerequisite
-  forward (implement TODO-13 §2 transport first via the normal section
-  pipeline, then return to §4); only if the prerequisite itself is blocked
-  does the §4 XREF stand. After §4, continue with §5: the working tree holds
-  staged in-progress §5 work (`entropy.c`, `entropy.h`, `bootx64.c`,
-  `boot_interrupts.c`, `test_entropy.c`) -- inspect and fold it in, do not
-  discard. Previous session died on a transient API 500, not a quality gate.
+- **Current (2026-06-12, run 4):** `todo/01-boot-platform/TODO-12-early-entropy-random-seed.md`.
+  Stages 1-2 (validate + gap-audit) and §1-§3 are done. Work queue, in order:
+  1. **§5 review** -- §5 is checklist-complete and committed (implementation
+     swept into c9f2ca5d + drain refactor completed in dd19d586; build OK,
+     security suite green) but NOT reviewed: run `Skill(review-todo-section)`
+     on §5. The §5 checklist bullet still naming `entropy_staged_peek()` is
+     stale -- the API is now `entropy_staged_drain()`; correct it during the
+     review evidence map.
+  2. **§4 re-open (user direction 2026-06-12)** -- §4 was filed
+     blocked-with-XREF on TODO-13 §2 TPM transport (a98dca94); re-open it: if
+     the TPM transport is genuinely the only blocker, pull that prerequisite
+     forward (implement TODO-13 §2 via the normal section pipeline, then
+     return to §4); only if the prerequisite itself is blocked does the §4
+     XREF stand.
+  3. **§6 onward** per the normal per-file pipeline.
+  Uncommitted in tree: line-number XREF touch-ups in TODO-01/TODO-10 +
+  coverage docs -- mechanical, fold into the next natural commit.
 - TODO-11 is closed: §1-§6 + §8-§10 shipped and reviewed; §7 stays `[/]`
   blocked-with-XREF on `03-memory-concurrency/TODO-07` §3; sweep c4e92774.
 - **Original start:** `todo/01-boot-platform/TODO-11-interrupt-timer-arch.md`
@@ -116,3 +122,4 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 - 2026-06-11 16:36 SAST: run 1 -- TODO-11 validate + gap-audit done, sections 1-4 worked; stopped at section 5 (Dynamic IRQ Registration API) on Claude usage limit; uncommitted section-5 work left in tree; resume armed for 20:47.
 - 2026-06-12 02:35 SAST: run 1 resumed -- TODO-11 §5 + §6 implemented + reviewed, §7 reviewed ([/] blocked on D03T07§3), §8/§9/§10 review passes shipped (98592c32, 7ea3a01f, 80328e01), loose-end sweep c4e92774; cursor advanced to TODO-12-early-entropy-random-seed.md.
 - 2026-06-12 ~02:35-04:48 SAST: run 2 (same session) -- TODO-12 validate + gap-audit + §1-§3 shipped; §4 filed blocked-with-XREF (a98dca94); died mid-§5 on transient API 500, staged §5 work left in tree; resume armed, §4 re-opened per user direction.
+- 2026-06-12 ~07:00 SAST: run 3 (interactive, cut short) -- preflight caught build break at HEAD (half-committed peek->drain refactor); drain implemented + tests migrated + committed (dd19d586), build OK, security suite green; user redirected to headless timer; §5 review + §4 re-open queued for run 4.
