@@ -35,7 +35,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 | ⭐  | Order | Deliverable                                | Depends On         | Status |
 | --- | :---: | ------------------------------------------ | ------------------ | :----: |
-| 💎  |   1   | Entropy source inventory and quality model | T04 §2             |  [ ]   |
+| 💎  |   1   | Entropy source inventory and quality model | T04 §2             |  [x]   |
 | 💎  |   2   | EFI_RNG_PROTOCOL collection                | §1                 |  [ ]   |
 | 💎  |   3   | CPU RDRAND/RDSEED collection               | §1, T09 §1         |  [ ]   |
 | 💎  |   4   | TPM RNG collection                         | §1, T13 §2         |  [ ]   |
@@ -48,15 +48,24 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 1. Entropy Source Inventory and Quality Model
 
-- [ ] Define source classes: firmware RNG, CPU RNG, TPM RNG, ACPI OEM0 table, seed file, guest hwrng (virtio-rng, post-PCI only -- never pre-KASLR; collection owned by `04-drivers-hardware/TODO-09` §12), jitter, time.
-- [ ] Pin the conditioner: source-tagged, length-framed transcript hashed with Blake2b (Monocypher, D02T03 §5) -- never raw XOR, so weak sources cannot cancel strong ones.
-- [ ] Define bootloader-seed trust/credit policy (Linux RANDOM_TRUST_BOOTLOADER analog): descriptor quality bits are advisory; the kernel decides credit.
-- [ ] Assign quality bits conservatively and log degraded states.
-- [ ] Define minimum quality for Secure Boot release mode and debug mode.
-- [ ] Add source mask to boot diagnostics.
-- [ ] Commit: `"boot: early entropy source model"`
+- [x] 8 source classes in `include/kernel/entropy.h` (fw/cpu/tpm/oem0/seed/guest-hwrng/jitter/time) as u32 mask + u32 packed 2-bit quality, mirrorable into the §7 descriptor; guest hwrng owned by `04-drivers-hardware/TODO-09` §12.
+- [x] Conditioner contract pinned + `entropy_frame_source()` shipped: source-tagged length-framed transcript with wrap guard, hard-fail on no-fit; Blake2b hash lands with D02T03 §5.
+- [x] Bootloader-seed trust policy: descriptor quality is advisory -- `entropy_classify()` re-derives the class and never credits JITTER/TIME even when marked HIGH.
+- [x] Conservative quality: `entropy_record_source()` clamps JITTER/TIME to LOW, reserved value 3 records as NONE, Q_NONE retracts a source.
+- [x] Policy minimums: `entropy_policy_ok()` -- release requires >= MINIMUM (one HIGH hardware source); debug proceeds with WARN.
+- [x] Source mask in boot diagnostics: `entropy_report()` one-line summary from the Phase 3 path (`boot_desktop.c`), WARN when degraded.
+- [x] Commit: `"boot: early entropy source model"`
 
-**Test checkpoint:** Serial log shows one `entropy:` summary line listing each source class with its quality class (e.g. `entropy: fw=ok cpu=ok tpm=none seed=none jitter=low time=low`); degraded sources log at WARN. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Serial log shows one `entropy:` summary line listing each source class with its quality class (e.g. `entropy: fw=none cpu=none ... (class=degraded)` until collectors land); degraded class logs at WARN. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 5 entropy suites in `test_entropy.c`, 0 failures
+
+> **Notes:**
+> - Shipped `include/kernel/entropy.h` + `src/kernel/entropy.c`: 8 source classes, packed quality, classify/policy/framing/record/report functions.
+> - Runs from the Phase 3 boot path: collectors (§2-§6) record sources as they land; `entropy_report()` prints the honest all-none line until then.
+> - Downstream: §7 descriptor mirrors the mask+quality pair; D02T03 §5 CSPRNG consumes the transcript framing; Codex test-coverage adoptions in the section commit.
+> - Canonical contract doc: `include/kernel/entropy.h` header comment (conditioner transcript + advisory-quality policy).
+> - Scope boundary: no collection here -- EFI RNG (§2), CPU (§3), TPM (§4), jitter (§5), seed file (§6), virtio-rng (D04T09 §12).
 
 ---
 
@@ -179,6 +188,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 | ⭐  | Feature                        | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS            |
 | --- | ------------------------------ | -------------------------- | --------------------------- | --------------------------- |
+| 💎  | Entropy quality/credit model   | ✅ internal pool credit    | ✅ credit accounting        | ✅ §1 mask+class+policy     |
 | 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random     | ⬜ §2 EFI_RNG_PROTOCOL      |
 | 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix        | ⬜ §3 CPUID-gated           |
 | 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver           | ⬜ §4 TPM2_GetRandom        |

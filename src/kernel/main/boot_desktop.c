@@ -268,6 +268,14 @@ void boot_phase3(void)
      * waits for the compositor-steady signal; see boot_rollback.c). */
     boot_post_nvram_write16(POST16_BOOT_OK);
 
+    /* Entropy source summary -- one line, WARN when degraded. Collectors
+     * land with the early-entropy TODO sections; until then this honestly
+     * reports all-none rather than implying randomness we do not have. */
+    {
+        extern void entropy_report(void);
+        entropy_report();
+    }
+
     boot_timing_print_steps();
     boot_perf_dump();
     boot_perf_compare();

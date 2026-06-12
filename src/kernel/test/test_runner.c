@@ -396,6 +396,7 @@ extern void test_register_mat_violation(void);
 extern void test_register_json_builder(void);
 extern void test_register_boot_perf_budget(void);
 extern void test_register_irq_timer(void);
+extern void test_register_entropy(void);
 extern void test_register_boot_device(void);
 extern void test_register_x86(void);
 extern void test_register_ob(void);
@@ -467,6 +468,7 @@ void test_runner_init(void)
     test_register_json_builder();
     test_register_boot_perf_budget();
     test_register_irq_timer();
+    test_register_entropy();
     test_register_boot_device();
     test_register_harness();
 
