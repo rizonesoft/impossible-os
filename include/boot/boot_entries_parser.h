@@ -172,4 +172,19 @@ void boot_entries_synthesize_fallback(
     boot_entry_envelope_t *out
 );
 
+/* Boot Loader Specification display-order comparator: returns nonzero iff
+ * envelope `a` sorts before `b`. Keys in priority order: sort_key, then
+ * machine_id, then id (stable tiebreak). This is the subset of the BLS
+ * display order the parse result can express; "bad-counted last" + "version"
+ * sub-keys are tracked BLI-parity follow-ups in the boot entry store TODO. */
+int boot_entry_bls_less(const boot_entry_envelope_t *a,
+                        const boot_entry_envelope_t *b);
+
+/* Stable in-place BLS sort of the index array idx[0..n-1] into
+ * parse->entries[]. Insertion sort (n is bounded by BOOT_ENTRIES_MAX_ENTRIES
+ * / BOOT_MENU_MAX_VISIBLE). Shared by the on-screen menu candidate list and
+ * the LoaderEntries variable so bootctl and the menu agree on order. */
+void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
+                           unsigned int *idx, unsigned int n);
+
 #endif /* BOOT_ENTRIES_PARSER_H */

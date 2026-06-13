@@ -396,6 +396,66 @@ static void test_parser_fallback_split(void)
     TEST_ASSERT_EQ(e.kind, BOOT_ENTRY_KIND_SPLIT, "fallback under split mode is kind=split");
 }
 
+/* ---- BLS display order (boot_entries_bls_sort) ------------------------ */
+
+/* Set the three display-order keys of a zeroed envelope. id/sort_key/machine_id
+ * are fixed char arrays; copy clamped to capacity, NUL-terminated. */
+static void bls_set(boot_entry_envelope_t *e, const char *id,
+                    const char *sort_key, const char *machine_id)
+{
+    unsigned int i;
+    for (i = 0; i + 1u < sizeof(e->id) && id[i]; i++) e->id[i] = id[i];
+    e->id[i] = '\0';
+    for (i = 0; i + 1u < sizeof(e->sort_key) && sort_key[i]; i++) e->sort_key[i] = sort_key[i];
+    e->sort_key[i] = '\0';
+    for (i = 0; i + 1u < sizeof(e->machine_id) && machine_id[i]; i++) e->machine_id[i] = machine_id[i];
+    e->machine_id[i] = '\0';
+}
+
+static int bls_streq(const char *a, const char *b)
+{
+    unsigned int k = 0;
+    while (a[k] == b[k] && a[k] != 0) k++;
+    return a[k] == b[k];
+}
+
+/* sort_key is the primary key; empty sort_key (the "match any"/unset value)
+ * sorts before any non-empty key. id breaks ties when sort_key is equal. The
+ * entries[] array is deliberately built out of display order. */
+static void test_bls_sort_by_sort_key_then_id(void)
+{
+    static boot_entries_parse_result_t r;
+    bls_set(&r.entries[0], "zeta",  "20", "m1");
+    bls_set(&r.entries[1], "alpha", "10", "m1");
+    bls_set(&r.entries[2], "beta",  "20", "m1");
+    bls_set(&r.entries[3], "gamma", "",   "m1");
+    r.entry_count = 4;
+
+    unsigned int idx[4] = {0, 1, 2, 3};
+    boot_entries_bls_sort(&r, idx, 4u);
+
+    TEST_ASSERT(bls_streq(r.entries[idx[0]].id, "gamma"), "empty sort_key sorts first");
+    TEST_ASSERT(bls_streq(r.entries[idx[1]].id, "alpha"), "sort_key 10 second");
+    TEST_ASSERT(bls_streq(r.entries[idx[2]].id, "beta"),  "sort_key 20 tiebreak id beta before zeta");
+    TEST_ASSERT(bls_streq(r.entries[idx[3]].id, "zeta"),  "sort_key 20 tiebreak id zeta last");
+}
+
+/* machine_id is the secondary key: equal sort_key falls through to machine_id
+ * before id. */
+static void test_bls_sort_machine_id_tiebreak(void)
+{
+    static boot_entries_parse_result_t r;
+    bls_set(&r.entries[0], "id-a", "10", "mb");
+    bls_set(&r.entries[1], "id-b", "10", "ma");
+    r.entry_count = 2;
+
+    unsigned int idx[2] = {0, 1};
+    boot_entries_bls_sort(&r, idx, 2u);
+
+    TEST_ASSERT(bls_streq(r.entries[idx[0]].machine_id, "ma"), "machine_id tiebreak: ma first");
+    TEST_ASSERT(bls_streq(r.entries[idx[1]].machine_id, "mb"), "machine_id tiebreak: mb second");
+}
+
 /* ---- health_check_subset (per-entry health-gate override) ------------- */
 
 static void test_parser_health_subset_valid(void)
@@ -601,6 +661,10 @@ void test_register_boot_entry_parser(void)
                             test_parser_fallback_uki, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: fallback split synth",
                             test_parser_fallback_split, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: BLS sort by sort_key then id",
+                            test_bls_sort_by_sort_key_then_id, TEST_CAT_BOOT);
+    test_suite_register_cat("boot-entries: BLS sort machine_id tiebreak",
+                            test_bls_sort_machine_id_tiebreak, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: health_check_subset valid",
                             test_parser_health_subset_valid, TEST_CAT_BOOT);
     test_suite_register_cat("boot-entries: health_check_subset absent accepted",

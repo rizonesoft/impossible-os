@@ -591,8 +591,8 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 
 The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loader Interface variables but diverge from the BLI/BLS contract in three ways a `bootctl` / `systemd-analyze` / `systemctl reboot --boot-loader-menu=` consumer would hit (Codex gap-audit 2026-06-13). This section corrects them without re-opening the shipped sections.
 
-- [x] BLS display ordering by `sort_key` then `machine_id` (`id` tiebreak), shared by the menu (`cand_idx` sorted after collect) + `LoaderEntries` so both agree. Helpers `boot_entry_bls_less`/`boot_entries_bls_sort` in `bootx64.c`.
-- [x] `LoaderConfigTimeoutOneShot` systemd-exact: 0 = menu with no timeout (`g_menu_no_autoboot`), 1..3600 honored (no 60s cap, no silent drop). Kiosk auto-boot stays on the per-entry `timeout_override` path.
+- [x] BLS display ordering by `sort_key` then `machine_id` (`id` tiebreak), shared by the menu + `LoaderEntries`. Helpers `boot_entry_bls_less`/`boot_entries_bls_sort` in `boot_entries_parser.c`; unit-tested in `test_boot_entry_parser.c`.
+- [x] `LoaderConfigTimeoutOneShot`: 0 = menu no timeout, 1..60 honored, 61..3600 clamped to 60 + `[WARN]` (watchdog-window divergence, not a silent drop); a present one-shot forces the menu. Kiosk stays on per-entry `timeout_override`.
 - [ ] Distinct `LoaderTimeInitUSec`/`ExecUSec`: deferred -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point so both publish 0; folded into the publish-relocation follow-up below. `LoaderTimeMenuUSec` not added (not in upstream BLI).
 - [ ] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
 - [ ] Relocate the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS) so distinct non-zero `LoaderTimeInitUSec`/`ExecUSec` publish (today `tsc_freq` is 0 at the publish point, so both read 0). (§18 follow-up)
@@ -600,12 +600,12 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 
 **Test checkpoint:** against a multi-entry store, `LoaderEntries` matches the on-screen menu order (bad-counted last, then `sort_key`); `LoaderConfigTimeoutOneShot=0` shows the menu with no countdown (or warns+clamps per the chosen policy); `systemd-analyze` reports non-zero loader time. Extend `test_boot_entries` with out-of-array `sort_key` + bad-counter ordering assertions. Test on: QEMU TCG (deterministic); bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2 BLS-order suites added (sort_key/id + machine_id tiebreak), 0 failures
 
 > **Notes:**
-> - **What shipped:** 2 systemd-BLI parity fixes in `bootx64.c` -- shared BLS display order (`sort_key`/`machine_id`) for the menu + `LoaderEntries`; systemd-exact `LoaderConfigTimeoutOneShot` (0 = menu no-timeout, 1..3600, forces the menu even on quiet paths).
+> - **What shipped:** 2 systemd-BLI parity fixes in `bootx64.c` -- shared BLS display order (`sort_key`/`machine_id`) for the menu + `LoaderEntries`; `LoaderConfigTimeoutOneShot` (0 = menu no-timeout, 1..60 honored, >60 clamped to 60 + WARN, forces the menu even on quiet paths).
 > - **How it integrates:** the sort applies to `cand_idx` after `boot_policy_menu_collect` + inside `loader_set_entries`; a present one-shot forces `show_menu` + bypasses `hide_when_alone`, and value 0 sets `g_menu_no_autoboot`.
-> - **Downstream:** `bootctl` + `systemd-analyze` consumers now see consistent menu/LoaderEntries order + non-zero loader time; design adoptions in the commit message.
+> - **Downstream:** `bootctl` consumers now see consistent menu/LoaderEntries order; `systemd-analyze` loader-time parity stays deferred (the timestamp publish-relocation follow-up). Design adoptions in the commit message.
 > - **Canonical doc:** `docs/boot/boot-entry-schema.md`; systemd Boot Loader Interface spec for var semantics.
 > - **Scope boundary:** two `[ ]` follow-ups -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8) and relocating the LoaderTime publish after `load_kernel`.
 

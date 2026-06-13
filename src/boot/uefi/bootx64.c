@@ -4371,10 +4371,15 @@ static unsigned int boot_menu_run(const boot_entries_parse_result_t *parse,
         return 0;
     }
 
-    /* Cap the timeout against the watchdog window. boot_fatal would
-     * fire a reset if the menu sat past the 60s WD_TIMEOUT without
-     * watchdog_reset(); we DO call watchdog_reset() each tick, but
-     * an explicit cap is defense-in-depth. */
+    /* Cap the countdown at BOOT_MENU_TIMEOUT_CAP_S (60s). We call
+     * watchdog_reset() each tick, but on a SetWatchdogTimer refresh
+     * failure watchdog_reset() leaves g_wd_armed set (the firmware timer
+     * may still be live) and stops refreshing, so a countdown longer than
+     * the ~60s firmware watchdog window could be reset by firmware mid-
+     * dwell. The cap keeps the interactive countdown inside one watchdog
+     * window; longer LoaderConfigTimeoutOneShot requests are clamped to
+     * 60 with a [WARN] at the apply site. timeout_s == 0 falls back to the
+     * default here (one-shot 0 takes the no-countdown path separately). */
     if (timeout_s == 0u || timeout_s > BOOT_MENU_TIMEOUT_CAP_S)
         timeout_s = BOOT_MENU_DEFAULT_TIMEOUT_S;
 
@@ -5184,51 +5189,10 @@ static void loader_set_firmware_info(void)
 
 /* Lexical compare of two NUL-terminated ASCII strings (unsigned byte
  * order). Returns <0, 0, >0 like strcmp. */
-static int boot_entry_str_cmp(const char *a, const char *b)
-{
-    UINTN k = 0;
-    while (a[k] == b[k] && a[k] != 0) k++;
-    return (int)(unsigned char)a[k] - (int)(unsigned char)b[k];
-}
-
-/* BLS display-order comparator: "less" iff entry a sorts before b. Keys
- * in priority order: sort_key, then machine_id, then id (stable
- * tiebreak). This is the subset of the Boot Loader Specification display
- * order that the parse result can express today. The remaining BLS
- * sub-keys -- "bad-counted entries last" (needs the crash-tolerant
- * counter state, a separate join) and "version" (absent from
- * boot_entry_envelope_t) -- are tracked follow-ups; LoaderFeatures
- * bit 8 (sort-key support) is NOT advertised until they land. */
-static int boot_entry_bls_less(const boot_entry_envelope_t *a,
-                               const boot_entry_envelope_t *b)
-{
-    int c = boot_entry_str_cmp(a->sort_key, b->sort_key);
-    if (c != 0) return c < 0;
-    c = boot_entry_str_cmp(a->machine_id, b->machine_id);
-    if (c != 0) return c < 0;
-    return boot_entry_str_cmp(a->id, b->id) < 0;
-}
-
-/* Fill order[0..n-1] with a stable BLS-sorted permutation of the index
- * array idx[0..n-1] into parse->entries[]. Insertion sort -- n is at
- * most BOOT_MENU_MAX_VISIBLE / MAX_ENTRIES, both small. Shared by the
- * menu candidate list and LoaderEntries so bootctl and the on-screen
- * menu agree on order. */
-static void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
-                                  unsigned int *idx, unsigned int n)
-{
-    for (unsigned int i = 1; i < n; i++) {
-        unsigned int v = idx[i];
-        int j = (int)i - 1;
-        while (j >= 0 &&
-               boot_entry_bls_less(&parse->entries[v],
-                                   &parse->entries[idx[j]])) {
-            idx[j + 1] = idx[j];
-            j--;
-        }
-        idx[j + 1] = v;
-    }
-}
+/* BLS display-order comparator (boot_entry_bls_less) + stable sort
+ * (boot_entries_bls_sort) live in boot_entries_parser.c -- pure C over the
+ * envelope struct, shared with the kernel-side unit tests. Declared in
+ * boot/boot_entries_parser.h. */
 
 /* Compose + write LoaderEntries from the parser result, in BLS display
  * order (matching the menu). UCS-2, NUL-separated, trailing double-NUL
@@ -5882,23 +5846,31 @@ static void boot_policy_invoke(void)
         /* LoaderConfigTimeoutOneShot (systemd Boot Loader Interface,
          * one-shot) overrides the per-entry timeout_override for this
          * boot only. The var was consumed + deleted earlier so it fires
-         * exactly once. Honor systemd semantics EXACTLY for this
-         * systemd-named variable: value 0 = show the menu with NO
-         * timeout (no auto-boot); 1..3600 = countdown seconds. The
-         * parser already capped the value at 3600. Do NOT apply the 60s
-         * per-entry cap here, and do NOT route 0 to the kiosk auto-boot
-         * path (kiosk stays on the per-entry timeout_override above);
-         * the prior <=60s gate silently dropped 61..3600s requests. */
+         * exactly once. systemd semantics: value 0 = show the menu with
+         * NO timeout (no auto-boot); 1..N = countdown seconds. Value 0 is
+         * routed to the no-countdown menu path (NOT the per-entry kiosk
+         * path). A non-zero value above the 60s watchdog window is clamped
+         * to 60 with a [WARN] -- a documented Impossible divergence from
+         * systemd's 3600s range, because the interactive countdown cannot
+         * safely outlive one firmware watchdog window (see boot_menu_run).
+         * The prior <=60s gate instead silently dropped 61..3600 to the
+         * default; clamp + warn replaces that silent drop. */
         int oneshot_no_timeout = 0;
         if (loader_have_timeout_oneshot) {
             if (loader_oneshot_timeout == 0u) {
                 oneshot_no_timeout = 1;   /* menu, no countdown */
                 explicit_zero = 0;        /* override any kiosk default */
                 serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot=0 -- menu shown, no timeout\n");
-            } else {
-                timeout_s = loader_oneshot_timeout;   /* 1..3600 */
+            } else if (loader_oneshot_timeout > BOOT_MENU_TIMEOUT_CAP_S) {
+                timeout_s = BOOT_MENU_TIMEOUT_CAP_S;
                 explicit_zero = 0;
-                serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot applied (1..3600s)\n");
+                serial_early_print("[WARN] loader-vars: "
+                                   "LoaderConfigTimeoutOneShot > 60s "
+                                   "clamped to 60s (watchdog window)\n");
+            } else {
+                timeout_s = loader_oneshot_timeout;   /* 1..60 */
+                explicit_zero = 0;
+                serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot applied\n");
             }
         }
         unsigned int chosen;
@@ -6289,11 +6261,13 @@ static void boot_policy_invoke(void)
             published_timeout = decision->selected.timeout_override;
         }
         /* One-shot wins over per-entry override (consumed above).
-         * Publish the full systemd one-shot value (0..3600, parser-
-         * capped) so bootctl reflects what the menu honored; do NOT
-         * apply the 60s per-entry cap here. */
+         * Publish what the menu actually honored: 0 (menu no-timeout) or
+         * the value clamped to the 60s watchdog window, so bootctl and the
+         * on-screen countdown agree (a request above 60 was clamped to 60
+         * at the apply site). */
         if (loader_have_timeout_oneshot) {
-            published_timeout = loader_oneshot_timeout;
+            published_timeout = (loader_oneshot_timeout > BOOT_MENU_TIMEOUT_CAP_S)
+                ? BOOT_MENU_TIMEOUT_CAP_S : loader_oneshot_timeout;
         }
         UINT64 init_us = 0, exec_us = 0;
         UINT64 tsc_freq = g_boot_info_ptr->timing.tsc_freq;

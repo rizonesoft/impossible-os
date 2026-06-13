@@ -1288,3 +1288,41 @@ void boot_entries_synthesize_fallback(int uki_mode, boot_entry_envelope_t *out)
     out->payload_present = 0;
     out->kind_skipped = 0;
 }
+
+/* ---- BLS display order ------------------------------------------------ */
+
+/* NUL-terminated string compare (no <string.h> in this TU). Returns <0/0/>0
+ * like strcmp. Local to the BLS comparator; the parser's own scans use
+ * length-bounded byte compares instead. */
+static int boot_entry_str_cmp(const char *a, const char *b)
+{
+    u32 k = 0;
+    while (a[k] == b[k] && a[k] != 0) k++;
+    return (int)(unsigned char)a[k] - (int)(unsigned char)b[k];
+}
+
+int boot_entry_bls_less(const boot_entry_envelope_t *a,
+                        const boot_entry_envelope_t *b)
+{
+    int c = boot_entry_str_cmp(a->sort_key, b->sort_key);
+    if (c != 0) return c < 0;
+    c = boot_entry_str_cmp(a->machine_id, b->machine_id);
+    if (c != 0) return c < 0;
+    return boot_entry_str_cmp(a->id, b->id) < 0;
+}
+
+void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
+                           unsigned int *idx, unsigned int n)
+{
+    for (unsigned int i = 1; i < n; i++) {
+        unsigned int v = idx[i];
+        int j = (int)i - 1;
+        while (j >= 0 &&
+               boot_entry_bls_less(&parse->entries[v],
+                                   &parse->entries[idx[j]])) {
+            idx[j + 1] = idx[j];
+            j--;
+        }
+        idx[j + 1] = v;
+    }
+}
