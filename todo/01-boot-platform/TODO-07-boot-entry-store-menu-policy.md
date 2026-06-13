@@ -59,8 +59,8 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |   6   | Boot menu renderer + countdown + input infrastructure  | §4, T15 §3, T15 §4                      |  [x]   |
 | 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone       | §6                                      |  [x]   |
 | 💎  |   8   | Safe mode, test mode, and diagnostics entries          | §3, T10 §7                              |  [/]   |
-| 💎  |   9   | A/B and recovery entry integration (DEFERRED)          | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [ ]   |
-| 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)      | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [ ]   |
+| 💎  |   9   | A/B and recovery entry integration (DEFERRED)          | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [/]   |
+| 💎  |  10   | Previous-kernel and known-good entries (DEFERRED)      | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [/]   |
 | 💎  |  11   | Boot entry editor tooling                              | §1, §2                                  |  [/]   |
 | ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional)     | §3, §4, §9                              |  [x]   |
 | 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume    | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
@@ -325,6 +325,15 @@ Generate entries from runtime state; the user sees a single coherent menu instea
 
 **Test checkpoint:** Corrupt slot A kernel; reboot 3 times; menu shows `Slot A (try 3/3, kernel CRC fail)` greyed out and auto-selects slot B. Both slots fail -> recovery selected without user input. Recovery partition corrupt + both slots fail -> fallback default with ALL_PATHS_BAD reason. Test on: QEMU TCG (deterministic); bare metal. **Cannot run today** -- requires TODO-21 + TODO-22 producers.
 
+> **Test runner:** N/A (deferred -- blocked on unshipped producers) | validation: §9 Test checkpoint once TODO-21 + TODO-22 land
+> **Notes:**
+> - **Status:** deferred 2026-05-09 (re-filed `[/]` 2026-06-13); all items blocked on unshipped runtime-state producers, nothing to integrate until they land.
+> - **Blockers:** A/B slot metadata (`01-boot-platform/TODO-21` §1/§3/§4) + recovery partition (`01-boot-platform/TODO-22` §1/§2), both NEEDS_WORK.
+> - **Partial:** the demote-not-drop greyed-out visual + label is the only §9-owned piece; §6/§8 keep TRIES_EXHAUSTED rows visible and §7 adds the `[FAIL]` indicator.
+> - **Scope boundary:** §9 owns the menu integration of A/B + recovery entries; TODO-21/TODO-22 own the runtime state it reads.
+> **Verified:** 2026-06-13 | 0/6 items (all blocked) | build N/A | scope: section deferred -- all items blocked on unshipped producers, no code shippable this pass
+> **Deferred:** [M] A/B + recovery menu integration blocked on the runtime-state producers -> XREF: 01-boot-platform/TODO-21 §1 (item: "Choose storage: UEFI NVRAM ... vs GPT metadata partition" at line 5) + 01-boot-platform/TODO-22 §1 (item: "GPT layout: EFI (64 MiB) + Slot A ..." at line 5)
+
 ---
 
 ## 10. Previous-Kernel and Known-Good Entries
@@ -339,6 +348,15 @@ After an update, the previous kernel stays available until the new kernel is con
 - [ ] Commit: `"boot: previous-kernel known-good entries"`
 
 **Test checkpoint:** Apply update -> reboot -> menu shows new + previous. Boot new + health gate passes -> reboot -> previous-kernel entry retired. Boot new and panic 3x -> previous-kernel entry auto-selected. Manifest deleted post-update -> previous-kernel stays around. Test on: QEMU TCG; bare metal. **Cannot run today** -- requires §14 + the updater + a panic-counter producer.
+
+> **Test runner:** N/A (deferred -- blocked on the updater + panic-counter producers) | validation: §10 Test checkpoint once they land
+> **Notes:**
+> - **Status:** deferred 2026-05-09 (re-filed `[/]` 2026-06-13); items blocked on the post-update insertion hook + a panic-counter producer. §14 health gate is shipped but its consumers here are not.
+> - **Blockers:** the installer updater that writes persisted known-good state (`15-installer-release/TODO-03`, exact hook section TBD) + a panic-counter persistence path with no current owner.
+> - **Partial:** §14 (health gate) + TODO-06 §1 (manifest digest) are shipped; the digest-equality + entry-insertion still need the updater wiring.
+> - **Scope boundary:** §10 owns the previous-kernel/known-good menu entries; the installer updater + §14 own the good/bad signal it gates on.
+> **Verified:** 2026-06-13 | 0/6 items (all blocked) | build N/A | scope: section deferred -- blocked on the updater + a panic-counter producer, no code shippable this pass
+> **Deferred:** [M] previous-kernel known-good entries blocked on producers -> XREF: 15-installer-release/TODO-03 §6 (item: "`scripts/make-delta.sh`" at line 7 -- the precise post-update known-good-writer hook needs a concrete owner item filed there) + an ownerless panic-counter persistence path (needs a tracked owner before §10 can proceed)
 
 ---
 
