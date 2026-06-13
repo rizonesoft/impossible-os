@@ -156,6 +156,35 @@ No `hooks/hooks.json` shipped. Plugin contributes the skill-creator skill only.
 
 No `hooks/hooks.json` shipped. Plugin contributes the revise-claude-md / claude-md-improver skills only.
 
+### `desktop-commander@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes the desktop-commander MCP server (filesystem + process tools) only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
+
+### `code-modernization@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes the legacy-analyst / business-rules-extractor / security-auditor / test-engineer / architecture-critic agents only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
+
+### `claude-code-setup@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes Claude Code setup/config helper skills + commands only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
+
+### `commit-commands@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes commit slash-commands only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
+
+### `plugin-dev@claude-plugins-official` (unknown version)
+
+No `hooks/hooks.json` shipped. Plugin contributes the agent-creator / plugin-validator / skill-reviewer agents + plugin-dev skills only. Listed here so audit-hooks.sh can recognize the absence as authorised, not drift.
+
+### `remember@claude-plugins-official` 0.7.3
+
+`hooks/hooks.json`:
+
+| Event | Matcher | Command | Purpose |
+|---|---|---|---|
+| SessionStart | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/session-start-hook.sh` | Loads the `.remember/` persistent-memory primer (now/today/recent/archive/core buffers) at session start. |
+| PostToolUse | -- | `bash ${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-hook.sh` | Appends to the `.remember/` rolling history buffer after tool calls. |
+
 > Plugin selection lives at `~/.claude/plugins/installed_plugins.json`. The retired `firecrawl@claude-plugins-official` plugin was uninstalled 2026-04-27. When installing or removing a plugin, add or remove the matching `### <name>@<marketplace>` subsection here in the same commit; `audit-hooks.sh` cross-checks the plugin index against the subsection headings.
 
 ## Wrap.sh eligibility quick reference
