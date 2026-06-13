@@ -304,10 +304,13 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 > **Notes:**
 > - What shipped: section 10 test-sweep closure -- suites shipped with sections 1-9; 3 new: clone-fail-closed-to-degraded, source-framed golden blake2b-256 KAT, and the boot_seed_record_sources credit-gate (`test_boot_seed.c`).
-> - How it runs: `bash scripts/test.sh SUITE=security` -- 360 kernel + 16 user-mode pass, 0 failures; both new suites confirmed `[ OK ]` in `build/test.log`.
+> - How it runs: `bash scripts/test.sh SUITE=security` -- 367 kernel + 16 user-mode pass, 0 failures; all three new suites confirmed `[ OK ]` in `build/test.log`.
 > - Downstream: completes sections 1-9 coverage; Codex step-13 adversarial adoptions (F2 clone-degraded, F3 source-framed) in the commit message; F1 (external-consume ordering) rejected per test-policy (see Unit Tests Note).
 > - Canonical doc: test policy in [`docs/infrastructure/test-policy.md`](../../docs/infrastructure/test-policy.md); entropy contract in [`include/kernel/entropy.h`](../../include/kernel/entropy.h).
 > - Scope boundary: live EFI/TPM/VFS/registry collection paths are validated by boot checkpoints, not unit tests; section 9 owns the diagnostics surfaces.
+
+> **Verified:** 2026-06-13 | commit `51d9eb90` | 7/7 items | build OK | tests 367+16 PASS, smoke PASS (KVM 2.520s)
+> **Quality reviewed:** 2026-06-13 | Codex 7x (adversarial x2, adversarial-impl x2, re-adversarial, consistency, perf) | 1H+3M+1L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -331,7 +334,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## Unit Tests
 
-> Wire into `src/kernel/test/test_runner.c` / `test_runner_init()` via `test_register_entropy()` (`src/kernel/test/test_entropy.c`, TEST_CAT_SECURITY). Tests use fixtures + pure helpers only; live EFI/TPM/VFS collection paths are validated by boot checkpoints.
+> Wire into `src/kernel/test/test_runner.c` / `test_runner_init()`. Suites span `test_register_entropy()` (`test_entropy.c`), `test_register_boot_seed()` (`test_boot_seed.c`), `test_register_klibs()` (`test_klibs.c` -- csprng mixer), and `test_register_tpm_transport()` (`test_tpm_transport.c` -- §4 TPM RNG), all TEST_CAT_SECURITY. Tests use fixtures + pure helpers only; live EFI/TPM/VFS/registry collection paths are validated by boot checkpoints.
 
 - [x] Shipped with §1 (5 suites): quality slot packing, classification (degraded/minimum/good + descriptor-bypass guard), policy gate, transcript framing (exact-fit/wrap/no-write-on-refusal), record + clamp + Q_NONE retraction
 - [x] Shipped with §5 (6th suite): staged transcript -- stage/credit-visibility, NULL + too-small drain guards, full drain + empty re-drain, oversized refusal leaves record intact + overflow flag, consume_zero reset
