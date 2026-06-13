@@ -353,14 +353,14 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===`
-- [ ] `bash scripts/test.sh SUITE=security` -> entropy suites PASS, 0 failures
-- [ ] `bash scripts/test-smoke.sh` -> boots to `C:\>`; stripped log shows the `entropy:` source-mask line
-- [ ] QEMU OVMF without RNG protocol degrades visibly (serial shows degraded WARN) (manual -- needs RNG-less OVMF build)
-- [ ] QEMU with EFI RNG: `entropy: fw=ok` in serial
-- [ ] Bare metal with RDRAND: `cpu=ok` (manual -- run on rig)
-- [ ] Bare metal with TPM RNG: `tpm=ok` (manual -- run on rig)
-- [ ] Commit: `"boot: early entropy verified -- sources, seed handoff, CSPRNG"`
+- [x] `bash scripts/build.sh clean` -> `=== BUILD OK ===` (2026-06-13 clean build)
+- [x] `bash scripts/test.sh SUITE=security` -> 367 kernel + 16 user-mode PASS, 0 failures (2026-06-13)
+- [x] `bash scripts/test-smoke.sh` -> Boot complete 2.520s + `C:\>`; source-mask line `entropy: fw=none cpu=ok tpm=none ... (class=minimum)` (KVM)
+- [ ] QEMU OVMF without RNG protocol degrades visibly (serial shows degraded WARN). Blocked: manual -- needs an all-hardware-sources-absent OVMF (this KVM OVMF is fw=none but still class=minimum via cpu=ok)
+- [ ] QEMU with EFI RNG: `entropy: fw=ok` in serial. Blocked: manual -- needs firmware exposing EFI_RNG_PROTOCOL (this KVM OVMF reports fw=none)
+- [ ] Bare metal with RDRAND: `cpu=ok`. Blocked: manual -- run on rig (KVM already shows cpu=ok; row requires real hardware)
+- [ ] Bare metal with TPM RNG: `tpm=ok`. Blocked: manual -- run on rig (needs fTPM/dTPM)
+- [ ] Commit: `"boot: early entropy verified -- sources, seed handoff, CSPRNG"`. Deferred: whole-TODO sign-off gated on §9 cross-reboot (-> `02-kernel-core/TODO-14 §8`) + the bare-metal rows above
 
 **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | entropy suites, 0 failures
 
