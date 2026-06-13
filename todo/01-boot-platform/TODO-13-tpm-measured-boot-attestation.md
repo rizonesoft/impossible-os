@@ -104,13 +104,13 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 3. PCR Read API
 
-- [ ] Implement `tpm2_pcr_read(bank, pcr_mask, out)`.
-- [ ] Support SHA-1, SHA-256, SHA-384, and SHA-512 banks where active.
-- [ ] Add caching for PCR values read during Phase 0.
-- [ ] Expose `tpm_pcr_get(index, alg)` to policy consumers.
+- [ ] Implement SINGLE-PCR `tpm2_pcr_read(alg, pcr_index, out_digest, *out_len)` via `TPM2_CC_PCR_Read`; pure marshal/parse seam (fixture-testable) + thin `tpm2_submit` wrapper. One PCR/call (Codex [H]: a bitmap can't map a multi-PCR `TPML_DIGEST`).
+- [ ] Support SHA-1/256/384/512 banks; an inactive bank returns `out_len == 0` via an explicit status enum (OK / INACTIVE / bad-arg / transport-err), distinct from a transport error or malformed response.
+- [ ] Populate the PCR cache EAGERLY in Phase 1 after `tpm_transport_init` (BSP, write-once like `s_events`, no lock); `tpm_pcr_get(index, alg)` reads it. NOT Phase 0 (Codex [H]: transport is Phase-1-only).
+- [ ] Move `TPM_ALG_SHA1/256/384/512` + a public digest-length helper from `tpm.c` to `include/kernel/tpm.h` (they become public API inputs to `tpm_pcr_get`).
 - [ ] Commit: `"tpm: read PCR values"`
 
-**Test checkpoint:** `tpm2_pcr_read(bank, mask, out)` against QEMU swtpm returns the SHA-256 PCR0 value matching `swtpm`'s state; SHA-1/384/512 banks read where active, absent banks report not-active (not error); a second `tpm_pcr_get(index, alg)` for a Phase-0 value hits the cache (no second TPM transaction). Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
+**Test checkpoint:** `tpm2_pcr_read(bank, mask, out)` against QEMU swtpm returns the SHA-256 PCR0 value matching `swtpm`'s state; SHA-1/384/512 banks read where active, absent banks report not-active (not error); a second `tpm_pcr_get(index, alg)` for a Phase-1-cached value hits the cache (no second TPM transaction). Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
 
 ## 4. PCR Replay Engine
 
