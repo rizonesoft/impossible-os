@@ -16,6 +16,8 @@
 #include "kernel/tpm.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
+#include "kernel/fs/vfs.h"
+#include "libc/string.h"   /* snprintf */
 
 /* ---- TCG event log structures ---- */
 
@@ -56,11 +58,214 @@ static int      s_available;
 static int      s_version;
 static uint32_t s_event_count;
 
+/* Preserved per-event measured-boot metadata. Written once by tpm_init() on the
+ * Phase-1 BSP and read-only afterwards, so no lock is required. */
+static struct tpm_event  s_events[TPM_EVENT_MAX];
+static uint32_t          s_event_overflow;
+static tpm_evlog_status_t s_evlog_status = TPM_EVLOG_NO_LOG;
+static uint32_t          s_evlog_fail_offset;
+
+/* ---- Unaligned-safe little-endian byte loads ----
+ *
+ * The TCG log is a flat firmware buffer with no alignment guarantee. Reading
+ * multi-byte fields with pointer casts (e.g. *(const uint32_t*)p) can fault on
+ * strict-alignment cores; assemble the value from bytes instead. Every caller
+ * MUST first prove (via the subtraction-form bounds checks) that the bytes are
+ * in range. */
+static inline uint16_t tpm_le16(const uint8_t *p)
+{
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+static inline uint32_t tpm_le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+/* Digest length in bytes for a TCG algorithm id; 0 means unknown/unsupported. */
+static uint16_t tpm_alg_digest_len(uint16_t alg_id)
+{
+    switch (alg_id) {
+        case TPM_ALG_SHA1:   return 20;
+        case TPM_ALG_SHA256: return 32;
+        case TPM_ALG_SHA384: return 48;
+        case TPM_ALG_SHA512: return 64;
+        default:             return 0;
+    }
+}
+
+/* Strength rank for "primary digest" selection (higher = stronger). */
+static int tpm_alg_rank(uint16_t alg_id)
+{
+    switch (alg_id) {
+        case TPM_ALG_SHA512: return 4;
+        case TPM_ALG_SHA384: return 3;
+        case TPM_ALG_SHA256: return 2;
+        case TPM_ALG_SHA1:   return 1;
+        default:             return 0;
+    }
+}
+
+/* Record one parsed event into the metadata array. Returns 0 on success, 1 on
+ * cap overflow (caller stops the walk and reports TPM_EVLOG_CAP_EXCEEDED). */
+static int tpm_event_record(struct tpm_event *out, uint32_t out_max, uint32_t idx,
+                            uint32_t pcr_index, uint32_t event_type,
+                            uint32_t digest_count, uint16_t primary_alg_id,
+                            uint8_t primary_digest_len, uint32_t primary_digest_off,
+                            uint32_t payload_off, uint32_t payload_size)
+{
+    if (!out)            /* count-only caller: nothing to store, not an overflow */
+        return 0;
+    if (idx >= out_max)  /* genuine cap overflow */
+        return 1;
+    struct tpm_event *e = &out[idx];
+    e->pcr_index          = pcr_index;
+    e->event_type         = event_type;
+    e->digest_count       = digest_count;
+    e->primary_alg_id     = primary_alg_id;
+    e->primary_digest_len = primary_digest_len;
+    e->pad                = 0;
+    e->primary_digest_off = primary_digest_off;
+    e->payload_off        = payload_off;
+    e->payload_size       = payload_size;
+    return 0;
+}
+
+/* Pure TCG event-log parser (no globals, no klog) so it is unit-testable
+ * against fixture buffers. Walks `log[0..log_size)` of the given TCG version,
+ * filling out[0..out_max) with per-event metadata. *out_count is the number of
+ * events recorded, *out_overflow is 1 when the log held more than out_max
+ * events, *out_fail_offset is the byte offset of the first rejection (0 on OK).
+ * Returns the structured status; a non-OK status means a malformed log -- the
+ * caller must NOT treat the partial prefix as authoritative. */
+tpm_evlog_status_t tpm_evlog_parse(const uint8_t *log, uint32_t log_size, int version,
+                                   struct tpm_event *out, uint32_t out_max,
+                                   uint32_t *out_count, uint32_t *out_overflow,
+                                   uint32_t *out_fail_offset)
+{
+    uint32_t rec = 0, overflow = 0, fail_off = 0;
+    tpm_evlog_status_t status = TPM_EVLOG_OK;
+
+    if (out_count)       *out_count = 0;
+    if (out_overflow)    *out_overflow = 0;
+    if (out_fail_offset) *out_fail_offset = 0;
+
+    if (!log || (size_t)log_size < sizeof(struct tcg_pcr_event))
+        return TPM_EVLOG_BAD_HEADER;
+
+    /* First entry is TCG_PCR_EVENT (always): pcr(4) type(4) digest[20]
+     * data_size(4) data[]. Containment is subtraction-form (overflow-safe). */
+    uint32_t first_pcr   = tpm_le32(log + 0);
+    uint32_t first_type  = tpm_le32(log + 4);
+    uint32_t first_dsize = tpm_le32(log + 28);
+    if ((size_t)first_dsize > (size_t)log_size - sizeof(struct tcg_pcr_event)) {
+        if (out_fail_offset) *out_fail_offset = 28u;
+        return TPM_EVLOG_TRUNCATED;
+    }
+    if (tpm_event_record(out, out_max, rec, first_pcr, first_type, 1u,
+                         TPM_ALG_SHA1, 20u, 8u, 32u, first_dsize)) {
+        if (out_overflow)    *out_overflow = 1;
+        if (out_fail_offset) *out_fail_offset = 0u;
+        return TPM_EVLOG_CAP_EXCEEDED;   /* out!=NULL with out_max == 0 */
+    }
+    rec++;
+
+    uint32_t offset = (uint32_t)sizeof(struct tcg_pcr_event) + first_dsize;
+
+    if (version == 2) {
+        /* TCG_PCR_EVENT2: pcr(4) type(4) TPML_DIGEST_VALUES{count(4)
+         * [alg(2) digest[]]*} data_size(4) data[]. */
+        while (offset < log_size) {
+            /* offset < log_size with fewer than a header's worth of bytes left
+             * is a dangling partial event, not clean EOF (an exact log ends at
+             * offset == log_size). Treat it as truncation. */
+            if ((log_size - offset) < 12u) {
+                status = TPM_EVLOG_TRUNCATED; fail_off = offset; break;
+            }
+            uint32_t pcr    = tpm_le32(log + offset);
+            uint32_t etype  = tpm_le32(log + offset + 4u);
+            uint32_t dcount = tpm_le32(log + offset + 8u);
+            if (dcount > 8u) { status = TPM_EVLOG_TRUNCATED; fail_off = offset + 8u; break; }
+
+            uint32_t digests_size = 4u;
+            uint32_t dpos = offset + 12u;
+            uint16_t primary_alg = 0; uint8_t primary_len = 0; uint32_t primary_off = 0;
+            int best = 0, oob = 0, bad_alg = 0;
+            uint32_t d;
+            for (d = 0; d < dcount; d++) {
+                if (dpos > log_size || (log_size - dpos) < 2u) { oob = 1; break; }
+                uint16_t alg_id = tpm_le16(log + dpos);
+                uint16_t dsz = tpm_alg_digest_len(alg_id);
+                if (dsz == 0u) { bad_alg = 1; break; }
+                if ((log_size - dpos) < (uint32_t)(2u + dsz)) { oob = 1; break; }
+                int r = tpm_alg_rank(alg_id);
+                if (r > best) {
+                    best = r; primary_alg = alg_id;
+                    primary_len = (uint8_t)dsz; primary_off = dpos + 2u;
+                }
+                digests_size += 2u + dsz;
+                dpos += 2u + dsz;
+            }
+            if (bad_alg) { status = TPM_EVLOG_UNSUPPORTED_ALG; fail_off = dpos; break; }
+            if (oob)     { status = TPM_EVLOG_TRUNCATED; fail_off = dpos; break; }
+
+            uint32_t event2_header = 8u + digests_size;
+            if (event2_header > log_size - offset
+                || 4u > log_size - offset - event2_header) {
+                status = TPM_EVLOG_TRUNCATED; fail_off = offset; break;
+            }
+            uint32_t ev_data_size = tpm_le32(log + offset + event2_header);
+            if (ev_data_size > log_size - offset - event2_header - 4u) {
+                status = TPM_EVLOG_TRUNCATED; fail_off = offset + event2_header; break;
+            }
+            uint32_t payload_off = offset + event2_header + 4u;
+            uint32_t entry_size  = event2_header + 4u + ev_data_size;
+
+            if (tpm_event_record(out, out_max, rec, pcr, etype, dcount, primary_alg,
+                                 primary_len, primary_off, payload_off, ev_data_size)) {
+                status = TPM_EVLOG_CAP_EXCEEDED; fail_off = offset; overflow = 1; break;
+            }
+            rec++;
+            offset += entry_size;
+        }
+    } else {
+        /* TCG 1.2: every entry is TCG_PCR_EVENT (32-byte header + data). */
+        while (offset < log_size) {
+            /* Sub-header remainder is a dangling partial event, not clean EOF. */
+            if ((log_size - offset) < 32u) {
+                status = TPM_EVLOG_TRUNCATED; fail_off = offset; break;
+            }
+            uint32_t pcr   = tpm_le32(log + offset);
+            uint32_t etype = tpm_le32(log + offset + 4u);
+            uint32_t ev_data_size = tpm_le32(log + offset + 28u);
+            if (ev_data_size > log_size - offset - 32u) {
+                status = TPM_EVLOG_TRUNCATED; fail_off = offset + 28u; break;
+            }
+            uint32_t payload_off = offset + 32u;
+            uint32_t entry_size  = 32u + ev_data_size;
+            if (tpm_event_record(out, out_max, rec, pcr, etype, 1u, TPM_ALG_SHA1, 20u,
+                                 offset + 8u, payload_off, ev_data_size)) {
+                status = TPM_EVLOG_CAP_EXCEEDED; fail_off = offset; overflow = 1; break;
+            }
+            rec++;
+            offset += entry_size;
+        }
+    }
+
+    if (out_overflow)    *out_overflow = overflow;
+    if (out_fail_offset) *out_fail_offset = fail_off;
+    if (out_count)       *out_count = rec;
+    return status;
+}
+
 boot_result_t tpm_init(void)
 {
     s_available = 0;
     s_version = 0;
     s_event_count = 0;
+    s_event_overflow = 0;
+    s_evlog_status = TPM_EVLOG_NO_LOG;
+    s_evlog_fail_offset = 0;
 
     if (!g_boot_info.tpm_available) {
         klog(LOG_INFO, "TPM", "Not detected");
@@ -92,182 +297,29 @@ boot_result_t tpm_init(void)
         return BOOT_DEGRADED;
     }
 
-    /* Parse the first entry -- must be EV_NO_ACTION with spec ID event */
-    const struct tcg_pcr_event *first =
-        (const struct tcg_pcr_event *)log;
+    /* Parse via the pure walker (unit-testable; see tpm_evlog_parse) into the
+     * static metadata array, then publish the structured result. */
+    uint32_t cnt = 0, ovf = 0, foff = 0;
+    tpm_evlog_status_t st = tpm_evlog_parse(log, log_size, s_version,
+                                            s_events, TPM_EVENT_MAX,
+                                            &cnt, &ovf, &foff);
+    s_evlog_status      = st;
+    s_evlog_fail_offset = foff;
+    s_event_overflow    = ovf;
 
-    /* Containment check, overflow-safe: rearrange to subtraction so a
-     * malformed event_data_size near UINT32_MAX cannot wrap the sum
-     * back to a small value. Codex 2026-04-30 Round 2 finding: the
-     * previous form sizeof(...) + event_data_size could wrap in 32-bit
-     * and pass the > log_size check while the buffer was actually too
-     * small. Order matters: check log_size >= header size FIRST so
-     * the subtraction below cannot wrap. */
-    if ((size_t)log_size < sizeof(struct tcg_pcr_event)) {
-        klog(LOG_WARN, "TPM", "Event log smaller than header");
+    if (st != TPM_EVLOG_OK) {
+        /* Malformed log: do not expose a partial prefix as a valid count.
+         * Callers gate on tpm_evlog_status() == TPM_EVLOG_OK. */
+        s_event_count = 0;
+        klog(LOG_WARN, "TPM",
+             "TPM %s event log rejected (status=%d at offset %u); %u events before fault",
+             s_version == 2 ? "2.0" : "1.2", (int)st, foff, cnt);
         return BOOT_DEGRADED;
     }
-    if ((size_t)first->event_data_size
-            > (size_t)log_size - sizeof(struct tcg_pcr_event)) {
-        klog(LOG_WARN, "TPM", "Event log truncated");
-        return BOOT_DEGRADED;
-    }
 
-    /* For TPM 2.0 crypto-agile logs, parse the spec ID event to get
-     * hash algorithm sizes -- needed to walk TCG_PCR_EVENT2 entries */
-    uint32_t total_digest_size = 20;  /* default: SHA-1 only */
-    (void)total_digest_size;  /* used for future PCR replay verification */
-    uint32_t num_algs = 0;
-    const char *hash_name = "SHA-1";
-
-    if (s_version == 2 && first->event_type == EV_NO_ACTION &&
-        first->event_data_size >= sizeof(struct tcg_spec_id_event)) {
-
-        const struct tcg_spec_id_event *spec =
-            (const struct tcg_spec_id_event *)(log + sizeof(struct tcg_pcr_event));
-
-        num_algs = spec->number_of_algorithms;
-
-        /* Cap the iteration count at the loop's hard limit (8). */
-        uint32_t algs_to_read = num_algs;
-        if (algs_to_read > 8u)
-            algs_to_read = 8u;
-
-        /* Bounds gate: each algorithm entry is 4 bytes (uint16 alg_id +
-         * uint16 digest_size) trailing the spec_id_event header. The
-         * cap-present check at the if-line above only confirmed the
-         * header fits; a malformed cap-present log can still claim
-         * number_of_algorithms = N while the buffer holds only the
-         * header. Codex 2026-04-30 finding: read past first event
-         * payload / past log buffer. Validate the advertised table
-         * before touching alg_ptr.
-         *
-         * Overflow-safe: algs_to_read is at most 8 (capped above), so
-         * algs_to_read * 4 is at most 32 -- no multiplication wrap on
-         * any uint32_t. The addition uses size_t and cannot overflow
-         * because both addends are bounded by struct sizes. */
-        size_t needed = sizeof(struct tcg_spec_id_event)
-                      + (size_t)algs_to_read * 4u;
-        if ((size_t)first->event_data_size < needed) {
-            klog(LOG_WARN, "TPM",
-                 "Event log spec event truncated: data_size=%u < needed=%lu (num_algs=%u); skipping algorithm parse",
-                 (uint64_t)first->event_data_size,
-                 (uint64_t)needed,
-                 (uint64_t)num_algs);
-            algs_to_read = 0u;
-        }
-
-        /* Calculate total digest size from algorithm list */
-        const uint8_t *alg_ptr = (const uint8_t *)(spec + 1);
-        total_digest_size = 0;
-        uint32_t i;
-        for (i = 0; i < algs_to_read; i++) {
-            uint16_t alg_id = *(const uint16_t *)(alg_ptr + i * 4);
-            uint16_t digest_sz = *(const uint16_t *)(alg_ptr + i * 4 + 2);
-            total_digest_size += digest_sz;
-
-            /* Pick the strongest algorithm name for logging */
-            if (alg_id == TPM_ALG_SHA384)      hash_name = "SHA-384";
-            else if (alg_id == TPM_ALG_SHA256)  hash_name = "SHA-256";
-            else if (alg_id == TPM_ALG_SHA512)  hash_name = "SHA-512";
-        }
-    }
-
-    /* Walk the event log and count entries.
-     * First entry is TCG_PCR_EVENT format (always).
-     * Remaining entries are TCG_PCR_EVENT2 format for TPM 2.0. */
-    /* Safe to compute as uint32_t now that the containment checks
-     * above proved event_data_size + sizeof(tcg_pcr_event) fits in
-     * the (possibly larger) log_size; the sum still fits in uint32_t
-     * because sizeof(tcg_pcr_event) is small and event_data_size has
-     * already been bound-checked against log_size. */
-    uint32_t offset = (uint32_t)sizeof(struct tcg_pcr_event)
-                    + first->event_data_size;
-    uint32_t event_count = 1;  /* count the first entry */
-
-    /* Containment pattern: every check is "required <= log_size -
-     * offset" form so a malformed log claiming near-4GiB sizes cannot
-     * wrap a uint32_t addition past the bound. Codex 2026-04-30
-     * Round 3 finding: prior `offset + N < log_size` chain wraps when
-     * offset or N approaches UINT32_MAX. log_size is uint32_t per the
-     * boot_info contract. */
-    if (s_version == 2) {
-        /* TCG_PCR_EVENT2 format:
-         * uint32_t pcr_index
-         * uint32_t event_type
-         * TPML_DIGEST_VALUES { uint32_t count; TPMT_HA[count] }
-         * uint32_t event_data_size
-         * uint8_t  event_data[] */
-        while (offset < log_size && (uint32_t)(log_size - offset) >= 12u) {
-            /* Skip pcr_index (4) + event_type (4) */
-            uint32_t digest_count = *(const uint32_t *)(log + offset + 8);
-            if (digest_count > 8) break;  /* sanity check */
-
-            /* Walk digests: count field (4) + sum of (alg_id(2) + digest).
-             * After the count field, dptr is at log + offset + 12. */
-            uint32_t digests_size = 4;  /* count field */
-            uint32_t dpos = offset + 12u;  /* offset is bounded; +12 fits u32 */
-            uint32_t d;
-            int oob = 0;
-            for (d = 0; d < digest_count; d++) {
-                /* Need at least 2 bytes for alg_id at dpos. */
-                if (dpos > log_size || (log_size - dpos) < 2u) { oob = 1; break; }
-                uint16_t alg_id = *(const uint16_t *)(log + dpos);
-                uint16_t dsz = 0;
-                /* Look up digest size from algorithm ID */
-                if (alg_id == TPM_ALG_SHA1) dsz = 20;
-                else if (alg_id == TPM_ALG_SHA256) dsz = 32;
-                else if (alg_id == TPM_ALG_SHA384) dsz = 48;
-                else if (alg_id == TPM_ALG_SHA512) dsz = 64;
-                else dsz = 32;  /* unknown -- guess SHA-256 */
-                /* Need 2 + dsz bytes at dpos. */
-                if ((log_size - dpos) < (uint32_t)(2u + dsz)) { oob = 1; break; }
-                digests_size += 2u + dsz;
-                dpos += 2u + dsz;
-            }
-            if (oob) goto done;
-
-            /* event2_header = 8 (pcr+type) + digests_size. digests_size
-             * is bounded by the per-iteration check above, so the sum
-             * cannot wrap u32 (max digest_count=8, max dsz=64 each;
-             * worst-case digests_size = 4 + 8*(2+64) = 532). */
-            uint32_t event2_header = 8u + digests_size;
-
-            /* Need event2_header + 4 bytes (ev_data_size field) at offset. */
-            if (event2_header > log_size - offset
-                || 4u > log_size - offset - event2_header) break;
-
-            uint32_t ev_data_size =
-                *(const uint32_t *)(log + offset + event2_header);
-            /* entry_size = header + 4 (length field) + ev_data_size.
-             * ev_data_size is attacker-controlled u32; check via
-             * subtraction. */
-            if (ev_data_size > log_size - offset - event2_header - 4u) break;
-            uint32_t entry_size = event2_header + 4u + ev_data_size;
-
-            event_count++;
-            offset += entry_size;
-        }
-    } else {
-        /* TCG 1.2 format -- all entries are TCG_PCR_EVENT (32-byte
-         * fixed header + variable event_data). */
-        while (offset < log_size && (log_size - offset) >= 32u) {
-            uint32_t ev_data_size = *(const uint32_t *)(log + offset + 28);
-            /* Need 32 + ev_data_size bytes at offset; subtract to
-             * avoid wrap. */
-            if (ev_data_size > log_size - offset - 32u) break;
-            uint32_t entry_size = 32u + ev_data_size;
-            event_count++;
-            offset += entry_size;
-        }
-    }
-
-done:
-    s_event_count = event_count;
-
-    klog(LOG_INFO, "TPM", "TPM %s detected, %s, %u boot events measured",
-         s_version == 2 ? "2.0" : "1.2", hash_name, event_count);
-
+    s_event_count = cnt;
+    klog(LOG_INFO, "TPM", "TPM %s detected, %u boot events measured",
+         s_version == 2 ? "2.0" : "1.2", cnt);
     return BOOT_OK;
 }
 
@@ -284,6 +336,136 @@ int tpm_version(void)
 uint32_t tpm_event_count(void)
 {
     return s_event_count;
+}
+
+tpm_evlog_status_t tpm_evlog_status(void)
+{
+    return s_evlog_status;
+}
+
+uint32_t tpm_evlog_fail_offset(void)
+{
+    return s_evlog_fail_offset;
+}
+
+int tpm_event_overflow(void)
+{
+    return (int)s_event_overflow;
+}
+
+const struct tpm_event *tpm_event_get(uint32_t i)
+{
+    /* Metadata is meaningful only after a clean parse; a rejected log leaves
+     * a partial prefix that callers must not treat as authoritative. */
+    if (s_evlog_status != TPM_EVLOG_OK || i >= s_event_count)
+        return (const struct tpm_event *)0;
+    return &s_events[i];
+}
+
+/* ---- CEL-JSON export ----
+ *
+ * Writes X:\Diag\tpm-events.json as a TCG Canonical Event Log (CEL) JSON
+ * subset so external verifiers (systemd-pcrlock, Keylime) can consume it. The
+ * parse runs in Phase 0 (no filesystem); this export runs from the post-mount
+ * desktop bring-up off the preserved metadata. STREAMING: one bounded
+ * vfs_write per event, so an attacker-influenced event count cannot force a
+ * large in-RAM JSON buffer. Payload bodies are omitted (offset/size + digest
+ * are exported); the digest hex is read from the retained log buffer. Only a
+ * clean parse (TPM_EVLOG_OK) is exported -- a rejected log writes nothing. */
+static char tpm_hexdig(uint8_t n)
+{
+    return (char)(n < 10u ? ('0' + n) : ('a' + (n - 10u)));
+}
+
+static const char *tpm_alg_name(uint16_t alg_id)
+{
+    switch (alg_id) {
+        case TPM_ALG_SHA1:   return "sha1";
+        case TPM_ALG_SHA256: return "sha256";
+        case TPM_ALG_SHA384: return "sha384";
+        case TPM_ALG_SHA512: return "sha512";
+        default:             return "unknown";
+    }
+}
+
+void tpm_evlog_export_cel(void)
+{
+    if (s_evlog_status != TPM_EVLOG_OK || s_event_count == 0u)
+        return;
+    const uint8_t *log = (const uint8_t *)g_boot_info.tpm_event_log;
+    uint32_t log_size = g_boot_info.tpm_event_log_size;
+    if (!log)
+        return;
+
+    /* Create via parent dir first (FAT32 dir-cache re-walk pattern). */
+    struct vfs_node *dir = vfs_open("X:\\Diag\\", VFS_O_READ);
+    if (dir && dir->ops && dir->ops->create)
+        dir->ops->create(dir, "tpm-events.json", VFS_FILE);
+    struct vfs_node *f = vfs_open("X:\\Diag\\tpm-events.json", VFS_O_WRITE);
+    if (!f) {
+        klog(LOG_WARN, "TPM", "CEL export: cannot open X:\\Diag\\tpm-events.json");
+        return;
+    }
+
+    uint32_t woff = 0;
+    char chunk[640];
+    int n;
+
+    n = snprintf(chunk, sizeof(chunk),
+                 "{\"version\":1,\"format\":\"cel-json-subset\","
+                 "\"eventCount\":%u,\"events\":[\n", s_event_count);
+    if (n <= 0 || (uint32_t)n >= sizeof(chunk)
+        || vfs_write(f, woff, (uint32_t)n, (const uint8_t *)chunk) != n) {
+        vfs_close(f);
+        return;
+    }
+    woff += (uint32_t)n;
+
+    uint32_t i;
+    for (i = 0; i < s_event_count; i++) {
+        const struct tpm_event *e = &s_events[i];
+
+        /* Hex-encode the primary digest from the retained log. The parser
+         * proved primary_digest_off + primary_digest_len <= log_size. Clamp
+         * defensively so a corrupt metadata entry cannot overread. */
+        char hex[129];
+        uint32_t dl = e->primary_digest_len;
+        if (dl > 64u) dl = 64u;
+        if (e->primary_digest_off > log_size
+            || dl > log_size - e->primary_digest_off)
+            dl = 0u;
+        uint32_t j;
+        for (j = 0; j < dl; j++) {
+            uint8_t b = log[e->primary_digest_off + j];
+            hex[j * 2u]      = tpm_hexdig((uint8_t)(b >> 4));
+            hex[j * 2u + 1u] = tpm_hexdig((uint8_t)(b & 0x0Fu));
+        }
+        hex[dl * 2u] = '\0';
+
+        n = snprintf(chunk, sizeof(chunk),
+                     "%s{\"pcrIndex\":%u,\"eventType\":%u,\"digestCount\":%u,"
+                     "\"hashAlg\":\"%s\",\"digest\":\"%s\","
+                     "\"eventPayloadOffset\":%u,\"eventSize\":%u}",
+                     (i ? ",\n" : ""),
+                     e->pcr_index, e->event_type, e->digest_count,
+                     tpm_alg_name(e->primary_alg_id), hex,
+                     e->payload_off, e->payload_size);
+        if (n <= 0 || (uint32_t)n >= sizeof(chunk)
+            || vfs_write(f, woff, (uint32_t)n, (const uint8_t *)chunk) != n) {
+            klog(LOG_WARN, "TPM", "CEL export: write failed at event %u", i);
+            vfs_close(f);
+            return;
+        }
+        woff += (uint32_t)n;
+    }
+
+    n = snprintf(chunk, sizeof(chunk), "\n]}\n");
+    if (n > 0 && (uint32_t)n < sizeof(chunk))
+        vfs_write(f, woff, (uint32_t)n, (const uint8_t *)chunk);
+    vfs_close(f);
+    klog(LOG_INFO, "TPM",
+         "CEL event log exported to X:\\Diag\\tpm-events.json (%u events)",
+         s_event_count);
 }
 
 /* ============================================================================

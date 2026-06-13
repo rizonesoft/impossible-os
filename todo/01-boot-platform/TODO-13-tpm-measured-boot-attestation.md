@@ -35,7 +35,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
-| 💎 | 1 | Harden TCG event-log parser | TODO-01 §4 | [ ] |
+| 💎 | 1 | Harden TCG event-log parser | -- | [/] |
 | 💎 | 2 | TPM2 command transport | §1 (ordering-only; transport does not consume the parser) | [x] |
 | 💎 | 3 | PCR read API | §2 | [ ] |
 | 💎 | 4 | PCR replay engine | §1, ../02-kernel-core/TODO-03 §3 | [ ] |
@@ -51,15 +51,26 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 1. Harden TCG Event-Log Parser
 
-- [ ] Parse TPM 1.2 and TPM 2.0 crypto-agile logs without unaligned reads.
-- [ ] Preserve per-event PCR index, type, digest list, and event payload metadata.
-- [ ] Reject truncation with explicit offsets and status codes.
-- [ ] Export event summaries to `X:\Diag\tpm-events.json` as a TCG CEL-JSON (Canonical Event Log) subset so external verifiers (systemd-pcrlock, Keylime) can consume the log without a custom parser.
-- [ ] When the bootloader copies the TCG event log, publish a typed payload descriptor of type `BOOT_PAYLOAD_TPM_EVENT_LOG` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) pointing at the copy so TODO-01 §4's overlap validator retains the region alongside boot_info / rt_mmap / USB DMA / framebuffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
-- [ ] Bootloader copies the EXACT log (parse final-event length before `AllocatePool`; the `+256` estimate truncates large events) or degrades `BOOT_CAP_TPM_EVENT_LOG`; descriptor needs `VALID|RESERVED` for PMM retention.
-- [ ] Commit: `"tpm: harden measured boot event log parser"`
+- [x] Parse TPM 1.2 + TPM 2.0 crypto-agile logs with unaligned-safe byte loads (`tpm_le16`/`tpm_le32`); pure `tpm_evlog_parse()` in `tpm.c`, no pointer-cast reads.
+- [x] Preserve per-event metadata (PCR index, type, digest count, primary digest off/len/alg, payload off/size) in `struct tpm_event` (offset-based into the retained log, no copy).
+- [x] Reject truncation/corruption with `tpm_evlog_status_t` + exact `fail_offset`; partial-tail, cap-overflow, and unsupported-alg are distinct; event count stays 0 on any non-OK status.
+- [x] Export `X:\Diag\tpm-events.json` as a TCG CEL-JSON subset via a streaming writer (`tpm_evlog_export_cel`, one bounded `vfs_write` per event), hooked post-mount in `boot_desktop.c` (parse runs Phase 0, before the filesystem).
+- [x] Bootloader copies the EXACT log (`tpm_compute_log_size`, not the `+256` estimate) or degrades `BOOT_CAP_TPM_EVENT_LOG`; retention via the legacy `tpm_event_log` boot_reserved path (no descriptor: would double-reserve + fatal).
+- [ ] Bound the bootloader TPM read/copy by the UEFI memory-map extent of `log_location` (vs firmware reporting `!truncated` past its buffer); today bounded only by `TPM_EVENT_LOG_MAX`. (Codex adversarial [H].)
+- [x] Commit: `"tpm: harden measured boot event log parser"`
 
-**Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the bootloader copy publishes a `BOOT_PAYLOAD_TPM_EVENT_LOG` descriptor that TODO-01 §4's overlap validator retains. Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
+**Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the page-aligned bootloader copy is retained by the legacy `tpm_event_log` boot_reserved reservation (no double-reserve fatal at boot). Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 9 tpm-evlog suites in `test_tpm_event_log.c`, 0 failures
+
+> **Notes:**
+> - **What shipped:** pure `tpm_evlog_parse()` (unaligned-safe byte loads, per-event `struct tpm_event` metadata, structured status + fail offset) + streaming CEL-JSON exporter; bootloader `tpm_compute_log_size()` exact-size copy or cap-degrade.
+> - **How it integrates:** parse runs Phase 0 from `tpm_init` (which wraps the pure walker); CEL export runs post-mount from `boot_desktop.c`; the log is retained by the legacy `tpm_event_log` boot_reserved reservation.
+> - **Downstream:** §4 PCR replay + §9 attestation/CEL consume the preserved metadata + offsets. Codex 4x (design + adversarial + re-adversarial) adoptions in the commit message.
+> - **Canonical doc:** `include/kernel/tpm.h` (parse contract); TCG CEL-JSON for the export format.
+> - **Scope boundary:** the UEFI mem-map-extent read bound is a deferred `[ ]` item in this section; retention is legacy-fields-only (no typed RESERVED descriptor).
+
+---
 
 ## 2. TPM2 Command Transport
 
@@ -84,7 +95,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Verified:** 2026-06-12 | commit `8ae51bf1` | 6/6 items | build OK | smoke PASS (KVM 2.530s)
 > **Accepted:** [M] ACPI start methods 2/8 degrade-with-WARN until an AML interpreter exists -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "TPM2 ACPI start method (2/8)" at line 80)
-> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 87)
+> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 98)
 > **Quality reviewed:** 2026-06-12 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 1Crit+6H+6M fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-code-quality
 
 ## 3. PCR Read API

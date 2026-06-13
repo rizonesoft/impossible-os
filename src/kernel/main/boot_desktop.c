@@ -330,6 +330,13 @@ void boot_phase3(void)
     /* Write hardware inventory to X:\Diag\hwdump.txt */
     hw_dump_write_file();
 
+    /* Export the measured-boot TCG event log (parsed in Phase 0) as a
+     * CEL-JSON subset now that X:\ is mounted. No-op without a clean parse. */
+    {
+        extern void tpm_evlog_export_cel(void);
+        tpm_evlog_export_cel();
+    }
+
     /* Boot protocol section 6: dump the boot_reserved region table to
      * X:\Diag\boot-reserved.json so a post-boot user can audit
      * exactly which physical ranges the PMM kept reserved. */

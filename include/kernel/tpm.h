@@ -23,6 +23,74 @@ int tpm_version(void);
 /* Returns the number of measured boot events in the event log. */
 uint32_t tpm_event_count(void);
 
+/* ---- TCG event-log parse result (measured-boot event-log hardening) ----
+ *
+ * The parser walks the bootloader-copied TCG log once, preserving per-event
+ * metadata (PCR index, type, primary digest, payload span) and returning a
+ * structured status. Truncation/corruption is reported with the exact failing
+ * byte offset; on any non-OK status the metadata array is marked invalid and
+ * event_count stays 0 (a malformed prefix never looks like a shorter valid
+ * log). All multi-byte log fields are read with byte-load helpers, so a
+ * misaligned firmware log cannot fault on strict-alignment cores.
+ *
+ * SMP: written once by tpm_init() (Phase-1 BSP, single-threaded) and read-only
+ * thereafter, so the static metadata array needs no lock. */
+typedef enum {
+    TPM_EVLOG_OK           = 0,  /* clean parse to end-of-buffer */
+    TPM_EVLOG_NO_LOG       = 1,  /* no log present / degraded by loader caps */
+    TPM_EVLOG_BAD_HEADER   = 2,  /* first TCG_PCR_EVENT header malformed/short */
+    TPM_EVLOG_BAD_SPEC_ID  = 3,  /* crypto-agile spec-ID event malformed */
+    TPM_EVLOG_TRUNCATED    = 4,  /* an entry runs past the buffer end */
+    TPM_EVLOG_CAP_EXCEEDED = 5,  /* more events than TPM_EVENT_MAX */
+    TPM_EVLOG_UNSUPPORTED_ALG = 6, /* digest bank uses an unknown hash alg */
+} tpm_evlog_status_t;
+
+/* Fixed cap on preserved events. A static array (no attacker-sized alloc);
+ * overflow is reported as TPM_EVLOG_CAP_EXCEEDED, not silently dropped. */
+#define TPM_EVENT_MAX 256u
+
+/* Per-event metadata. Digest/payload bytes are NOT copied -- the event log
+ * buffer is retained by the legacy tpm_event_log boot_reserved reservation, so
+ * offsets into it stay valid for later replay and CEL-JSON export. */
+struct tpm_event {
+    uint32_t pcr_index;
+    uint32_t event_type;
+    uint32_t digest_count;       /* number of digests in this event's bank list */
+    uint16_t primary_alg_id;     /* TPM_ALG_* of the strongest digest present */
+    uint8_t  primary_digest_len; /* 20/32/48/64 */
+    uint8_t  pad;
+    uint32_t primary_digest_off; /* byte offset of the primary digest in the log */
+    uint32_t payload_off;        /* byte offset of event_data in the log */
+    uint32_t payload_size;       /* event_data length */
+};
+
+/* Pure, side-effect-free TCG event-log parser (no globals, no klog) so it is
+ * unit-testable against fixture buffers. Fills out[0..out_max) with per-event
+ * metadata; *out_count = events recorded, *out_overflow = 1 if the log held
+ * more than out_max events, *out_fail_offset = byte offset of the first
+ * rejection. Returns the structured status (non-OK => malformed; the caller
+ * must not trust the partial prefix). Out params may be NULL. */
+tpm_evlog_status_t tpm_evlog_parse(const uint8_t *log, uint32_t log_size, int version,
+                                   struct tpm_event *out, uint32_t out_max,
+                                   uint32_t *out_count, uint32_t *out_overflow,
+                                   uint32_t *out_fail_offset);
+
+/* Structured parse status + the exact offset of the first rejection (0 when
+ * status == TPM_EVLOG_OK). */
+tpm_evlog_status_t tpm_evlog_status(void);
+uint32_t           tpm_evlog_fail_offset(void);
+
+/* Preserved event metadata. tpm_event_get() returns NULL for out-of-range i
+ * or when the last parse failed. tpm_event_overflow() is 1 when the log held
+ * more than TPM_EVENT_MAX events. */
+const struct tpm_event *tpm_event_get(uint32_t i);
+int                     tpm_event_overflow(void);
+
+/* Export the parsed event log as a TCG CEL-JSON subset to
+ * X:\Diag\tpm-events.json. The parse runs in Phase 0 (no filesystem); call
+ * this from post-mount bring-up. No-op unless the last parse was clean. */
+void tpm_evlog_export_cel(void);
+
 /* ---- Boot Integrity Verification API ----
  *
  * Verifies that measured boot values (PCR digests from the TCG event log)
