@@ -14,12 +14,18 @@
  *                                a second consume call) can see them.
  *                                Absorbed at ENTROPY_Q_LOW: admin-supplied
  *                                bytes are unverifiable and must never
- *                                launder provenance. DORMANT across
- *                                reboots until the registry hive load is
- *                                wired at boot (owned by the registry
- *                                completion TODO); the consume path is
- *                                live for any value present in the boot
- *                                registry tree.
+ *                                launder provenance. SECURE-DELETE GATE:
+ *                                a value is absorbed ONLY when registry
+ *                                persistence is inactive (in-memory-only,
+ *                                no on-disk recovery source can retain the
+ *                                bytes). On-disk / cross-reboot offerings
+ *                                are DEFERRED -- the hive .bak/journal
+ *                                would otherwise let a recovered value be
+ *                                absorbed twice; secure deletion across all
+ *                                recovery sources lands with the registry
+ *                                hive-load wiring (TODO-14 Advanced Hive
+ *                                Features), the same work that activates
+ *                                the cross-reboot path.
  *   entropy_populate_registry()  HKLM\SYSTEM\Boot\Entropy mirror.
  *   entropy_publish_json()       X:\Diag\entropy.json BlackBox report.
  *
@@ -67,7 +73,12 @@ void entropy_external_consume(void)
                          &type, stored, &size);
     if (rc == ERROR_MORE_DATA) {
         /* Oversize offering: hard-reject (never truncate-consume), but
-         * still destroy it -- stale admin entropy must not linger. */
+         * still destroy the in-memory value -- stale admin entropy must not
+         * linger. A rejected offering is never absorbed, so on-disk
+         * recovery-source residue is a non-issue here; durable on-disk
+         * destroy of a rejected value lands with the secure one-shot
+         * deletion in the registry hive-load wiring (TODO-14 Advanced Hive
+         * Features). */
         klog(LOG_WARN, "entropy",
              "external entropy: %u bytes exceeds the %u-byte cap -- "
              "rejected and destroyed", (uint64_t)size,
@@ -81,6 +92,10 @@ void entropy_external_consume(void)
         return;
     }
     if (rc != ERROR_SUCCESS || type != REG_BINARY || size == 0) {
+        /* RegQueryValueEx may have copied value bytes into `stored` before
+         * this type/size check -- wipe them so a malformed (wrong-type)
+         * offering never leaves seed material resident on the kernel stack. */
+        crypto_wipe(stored, sizeof(stored));
         RegCloseKey(hKey);
         return;
     }
@@ -91,9 +106,33 @@ void entropy_external_consume(void)
     got = entropy_external_oneshot(stored, size, copy,
                                    (uint32_t)sizeof(copy));
 
-    /* OVERWRITE-BEFORE-USE: store the zeroed buffer over the registry
-     * value and delete it BEFORE absorbing the copy -- after this point
-     * no registry reader (or a re-entered consume) can see the bytes. */
+    /* SECURE-DELETE-BEFORE-ABSORB. A one-shot secret may be absorbed only
+     * once its bytes cannot reappear from ANY source. With the current hive
+     * format an on-disk offering survives a main-hive delete: hive_save()
+     * backs the pre-delete hive up to <hive>.bak and recovery falls back to
+     * it, so "delete + flush" does NOT erase the value -- a later main-hive
+     * recovery reintroduces it and the one-shot is absorbed twice (entropy
+     * reuse). Secure deletion across main + journal + .bak is owned by the
+     * registry hive-load wiring (02-kernel-core/TODO-14 Advanced Hive
+     * Features), the same work that activates the cross-reboot offering.
+     * Until it lands, refuse any offering that could have an on-disk copy:
+     * absorb ONLY when registry persistence is inactive (in-memory-only
+     * value, no recovery source to retain it -- today's only live case).
+     * This is the runtime half of the cross-reboot deferral, so wiring hive
+     * load without the secure delete cannot silently re-enable reuse. */
+    if (registry_persistence_active()) {
+        crypto_wipe(copy, sizeof(copy));
+        RegCloseKey(hKey);
+        klog(LOG_WARN, "entropy",
+             "external entropy: on-disk one-shot deferred to hive-load "
+             "wiring -- offering NOT absorbed");
+        return;
+    }
+
+    /* In-memory-only path: overwrite the value with zeros and delete it
+     * BEFORE absorbing the copy. No on-disk copy exists, so the delete is
+     * fully effective -- no later reader (or re-entered consume) can see
+     * the bytes. */
     RegSetValueEx(hKey, "ExternalEntropy", 0, REG_BINARY, stored, size);
     RegDeleteValue(hKey, "ExternalEntropy");
     RegCloseKey(hKey);
@@ -105,8 +144,8 @@ void entropy_external_consume(void)
     g_external_consumed_len = got;
 
     klog(LOG_INFO, "entropy",
-         "external entropy: %u bytes consumed (one-shot; value destroyed "
-         "before use)", (uint64_t)got);
+         "external entropy: %u bytes consumed (one-shot; in-memory value "
+         "destroyed before use)", (uint64_t)got);
 }
 
 void entropy_populate_registry(void)

@@ -266,9 +266,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 ## 9. Entropy Diagnostics and Policy Gates
 
 - [x] Mask/class logging without seed bytes: `entropy_report()` summary + the `registry: HKLM\SYSTEM\Boot\Entropy mask=.. class=..` checkpoint line (`entropy_registry.c`).
-- [x] Degraded indication: `early_entropy_init()` posts a persistent `boot_splash_diag()` WARNING when the credited class is DEGRADED (VPD tier 1 is already stopped there; registry + JSON carry the durable record).
+- [x] Degraded indication, TWO call sites: `early_entropy_init()` posts the `boot_splash_diag()` WARNING at Phase 1 AND `boot_desktop.c` re-posts the identical string before `boot_splash_finish()` (Phase-2 storage diagnostics reuse + clear the line); registry + JSON carry the durable record.
 - [x] `HKLM\SYSTEM\Boot\Entropy`: SourceMask, QualityPacked, Class, CreditedClass, CryptoGateOk, ExternalEntropySeen/Bytes (`entropy_populate_registry()`).
-- [/] Admin external-entropy one-shot (Win11 ExternalEntropy parity): `entropy_external_consume()` destroys the registry value BEFORE absorbing (Q_LOW, never logged); pure `entropy_external_oneshot()` core tested. Cross-reboot activation BLOCKED on hive-load wiring -> XREF: [`02-kernel-core/TODO-14 §8`](../02-kernel-core/TODO-14-registry-completion.md#8-advanced-hive-features) (item: "Wire registry_load_hives() into boot").
+- [/] Admin external-entropy one-shot (Win11 ExternalEntropy parity): `entropy_external_consume()` absorbs (Q_LOW) only when `registry_persistence_active()` is false; on-disk/cross-reboot offerings DEFERRED -> XREF: `02-kernel-core/TODO-14 §8`.
 - [x] BlackBox report: `X:\Diag\entropy.json` (mask/quality/class/gate/provenance/external counters -- never bytes) via `entropy_publish_json()`.
 - [x] Commit: `"boot: entropy diagnostics and policy"`
 
@@ -277,9 +277,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | entropy external one-shot suite, 0 failures
 
 > **Notes:**
-> - Shipped: `src/kernel/entropy_registry.c` (registry mirror + entropy.json + external-entropy one-shot consume) + pure `entropy_external_oneshot()`/`entropy_class_str()` in `entropy.c` + degraded splash warning in `early_entropy_init()`.
+> - Shipped: `entropy_registry.c` (registry mirror + entropy.json + persistence-gated external one-shot consume) + `registry_persistence_active()` predicate + pure `entropy_external_oneshot()`/`entropy_class_str()` in `entropy.c` + degraded splash warning at TWO sites (`early_entropy_init()` Phase 1, `boot_desktop.c` Phase 3).
 > - Runs once on the Phase-3 boot path after `seed_file_phase3()` (consume -> report -> registry -> JSON) so every surface reflects the final boot entropy state.
-> - Downstream: cross-reboot ExternalEntropy activates when D02 TODO-14 §8 wires `registry_load_hives()`; Codex adoptions in the section commit message.
+> - Downstream: cross-reboot ExternalEntropy + secure one-shot deletion deferred to D02 TODO-14 §8 (load wiring + scrub `.bak`/journal + per-hive flush); Codex 2x review adoptions in the section commit message.
 > - Canonical doc: surface contract in [`include/kernel/entropy.h`](../../include/kernel/entropy.h) (diagnostics surfaces block).
 > - Scope boundary: §1 owns the model/report line; §8 owns the crypto gate the surfaces mirror; the desktop-visible post-boot notification is desktop-domain work, not §9.
 

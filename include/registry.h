@@ -408,6 +408,16 @@ void registry_flush(void);
  * propagate I/O errors to user mode. */
 int registry_flush_checked(void);
 
+/* True once the on-disk hive layer has engaged this boot (ready + hive table
+ * initialized by the first save/load) -- a LATCH that stays true even if C:
+ * later unmounts, because recoverable hive copies (main + journal + .bak) may
+ * already exist. Deliberately NOT a current-mount test (that would re-open the
+ * absorb path for disk-originated secrets after an unmount). Side-effect free:
+ * unlike registry_flush_checked() it does NOT trigger a hive save. Used by
+ * one-shot-secret consumers that must NOT absorb a value whose bytes could
+ * survive in an on-disk recovery source. */
+int registry_persistence_active(void);
+
 /* Save all hives to disk unconditionally (for clean shutdown). */
 void registry_save_all(void);
 

@@ -2668,6 +2668,19 @@ int registry_flush_checked(void)
     return failures;  /* 0 = all clean, >0 = count of failed hives */
 }
 
+int registry_persistence_active(void)
+{
+    /* Persistence-ORIGIN latch, not flush liveness. hive_table_inited is set
+     * once the on-disk hive layer first engages this boot (save/load) and is
+     * never cleared, so recoverable hive copies (main/.bak/journal) may exist
+     * from here on. It deliberately does NOT test vfs_is_mounted('C'): a later
+     * unmount must not make this return 0 and re-open the in-memory absorb
+     * path for disk-originated one-shot secrets. Side-effect free (saves
+     * nothing) -- unlike registry_flush_checked(), which DOES flush and which
+     * returns -1 on unmount. */
+    return (registry_ready && hive_table_inited) ? 1 : 0;
+}
+
 void registry_flush(void)
 {
     uint32_t i;

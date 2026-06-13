@@ -406,7 +406,10 @@ title: "TODO-14 -- Registry System Completion"
 
 ## 8. Advanced Hive Features
 
-- [ ] Wire `registry_load_hives()` into boot (`boot_storage.c` after defaults, needs C: mounted); activates the cross-reboot `ExternalEntropy` one-shot (`entropy_external_consume()`). -> XREF: `01-boot-platform/TODO-12 §9`
+- [ ] Wire `registry_load_hives()` into boot (`boot_storage.c` after defaults, needs C: mounted); this loads on-disk `ExternalEntropy`, so the secure-delete items below MUST land together. -> XREF: `01-boot-platform/TODO-12 §9`
+- [ ] Secure one-shot deletion across main + journal + `.bak` before cross-reboot absorb (else recovery reintroduces the value = reuse); then drop the `registry_persistence_active()` gate. -> XREF: `01-boot-platform/TODO-12 §9`
+- [ ] Per-hive flush status (`registry_flush_hive_checked()`) so an unrelated dirty hive failing can't discard a persisted SYSTEM one-shot in `entropy_external_consume()`. -> XREF: `01-boot-platform/TODO-12 §9`
+- [ ] Recovery tests (with the secure-delete work): post-consume main-hive corruption must NOT reintroduce `ExternalEntropy`; an unrelated-hive flush failure must NOT discard a deleted SYSTEM one-shot.
 - [ ] Maintain two alternating journal files: `SYSTEM.hive.log1` and `SYSTEM.hive.log2`; current active log tracked in hive header `active_log` byte (0=log1, 1=log2)
 - [ ] Write cycle: dirty pages + header written to active log → `fsync` → commit marker written → `fsync` → copy dirty pages into main hive file → clear journal → switch active log to the other file
 - [ ] Recovery: on mount, check both log files for a valid commit marker; use the one with the higher sequence number; if both are valid but different, the newer one wins; if neither has a commit marker, hive is clean

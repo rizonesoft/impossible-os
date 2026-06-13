@@ -11,6 +11,8 @@
 
 #include "kernel/types.h"
 #include "kernel/klog.h"
+#include "kernel/entropy.h"
+#include "kernel/csprng.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/boot_reserved.h"
@@ -246,6 +248,13 @@ void boot_phase3(void)
 
     /* Finish boot splash and stop timer-driven spinner */
     timer_unregister_tick_callback();
+    /* Re-post the degraded-randomness warning LAST on the splash diag
+     * line: Phase-2 storage diagnostics reuse and clear that line, so
+     * the Phase-1 post from early_entropy_init() may already be gone.
+     * The credited class is final (Phase-3 carryover absorbs at Q_LOW). */
+    if (csprng_credited_class() == ENTROPY_CLASS_DEGRADED)
+        boot_splash_diag("WARNING: degraded randomness -- no hardware "
+                         "entropy source credited");
     boot_splash_finish();
 
     /* Boot complete timing */
