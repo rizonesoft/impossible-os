@@ -127,6 +127,9 @@ bare-metal deployment.
 - [ ] **PCR 10 -- first user process hash** (in `src/kernel/sched/task.c`):
   - On first `task_create()` with `is_user = 1`: hash the process image; `tpm2_pcr_extend(10, digest32)`
   - Log `"[TPM] PCR[10] = first user process measured"`
+> [!NOTE]
+> **TPM Quote SUPERSEDED for implementation** by the active TODO -> XREF: [`01-boot-platform/TODO-13 §13`](../01-boot-platform/TODO-13-tpm-measured-boot-attestation.md) (Attestation Key Provisioning and TPM2 Quote: EK->AK provisioning, credential-activation, `TPM2_CC_Quote`, anti-replay nonce). This research-spike item informed §13; the implementation work is tracked there.
+
 - [ ] **TPM Quote (remote attestation)** (`tpm2_quote(pcr_mask, nonce, sig_out, sig_len)`):
   - `TPM2_CC_Quote` command: selects PCRs by bitmask (`pcr_mask`); signs PCR digest with TPM's AIK (Attestation Identity Key) using ECDSA or RSASSA
   - Returns signed quote blob → can be verified by remote verifier that holds the TPM's public AIK

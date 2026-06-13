@@ -43,16 +43,18 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 6 | Baseline enrollment and storage | §3, §4 | [ ] |
 | 💎 | 7 | TPM NV index support | §2, §6 | [ ] |
 | ⭐ | 8 | Sealed-secret boot policy hooks | §7 | [ ] |
-| 💎 | 9 | Attestation report export | §3-§6 | [ ] |
+| 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
-| 💎 | 11 | TPM tests and event-log fixtures | §1-§10 | [ ] |
+| 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [ ] |
+| 💎 | 12 | PCR allocation table and policy masks | §4, §6, §8 | [ ] |
+| 💎 | 13 | Attestation key provisioning and TPM2 quote | §3, §7, §12 | [ ] |
 
 ## 1. Harden TCG Event-Log Parser
 
 - [ ] Parse TPM 1.2 and TPM 2.0 crypto-agile logs without unaligned reads.
 - [ ] Preserve per-event PCR index, type, digest list, and event payload metadata.
 - [ ] Reject truncation with explicit offsets and status codes.
-- [ ] Export event summaries to `X:\Diag\tpm-events.json`.
+- [ ] Export event summaries to `X:\Diag\tpm-events.json` as a TCG CEL-JSON (Canonical Event Log) subset so external verifiers (systemd-pcrlock, Keylime) can consume the log without a custom parser.
 - [ ] When the bootloader copies the TCG event log, publish a typed payload descriptor of type `BOOT_PAYLOAD_TPM_EVENT_LOG` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) pointing at the copy so TODO-01 §4's overlap validator retains the region alongside boot_info / rt_mmap / USB DMA / framebuffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Commit: `"tpm: harden measured boot event log parser"`
 
@@ -81,7 +83,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Verified:** 2026-06-12 | commit `8ae51bf1` | 6/6 items | build OK | smoke PASS (KVM 2.530s)
 > **Accepted:** [M] ACPI start methods 2/8 degrade-with-WARN until an AML interpreter exists -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "TPM2 ACPI start method (2/8)" at line 80)
-> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 84)
+> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 86)
 > **Quality reviewed:** 2026-06-12 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 1Crit+6H+6M fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-code-quality
 
 ## 3. PCR Read API
@@ -146,7 +148,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 9. Attestation Report Export
 
-- [ ] Build signed `boot_attestation_report_t` with PCRs, event digest, Secure Boot state, and nonce.
+- [ ] Build the TPM-rooted `boot_attestation_report_t`: PCRs, event digest, Secure Boot state, verifier nonce, and the §13 `TPM2_Quote` blob + AK public + EK-cert chain (TPM-signed quote, not a software signature).
 - [ ] Export to `X:\Diag\attestation.json`.
 - [ ] Add native query API for user-mode system settings.
 - [ ] Add remote-attestation placeholder for platform services.
@@ -178,6 +180,40 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 **Test checkpoint:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) runs the new TPM suites with 0 failures: TPM 1.2 + 2.0 event-log parser fixtures, PCR-replay known-vector tests, the fake-CRB buffer seam suite for `crb_submit()`, and degraded cases (no TPM, truncated log, inactive banks); the QEMU swtpm path boots green on KVM. Platforms: kernel unit tests + QEMU swtpm KVM; bare metal (test laptop fTPM).
 
+---
+
+## 12. PCR Allocation and Policy Mask Table
+
+A single source of truth for which boot events extend which PCR, and which PCR masks the sealed-secret / baseline / quote consumers use. Without it the §9 manifest-extend into PCR 11 collides with established conventions (BitLocker seals to PCR7+PCR11; systemd-stub/pcrlock use PCR 11 for UKI kernel-boot; Keylime may exclude PCR 11 from runtime masks), so a benign kernel-ABI-manifest or event-order change could trigger FDE unseal failure, a recovery prompt, or a false attestation mismatch instead of being reported as the intended layer.
+
+- [ ] Author `docs/boot/pcr-allocation.md`: the Impossible OS PCR ownership table (firmware/Secure Boot PCR 0-7, kernel-ABI-manifest + UKI kernel-boot on PCR 11, OS-owned indices) with the exact event name extended into each.
+- [ ] Make the §9 `.bootproto` manifest extend a distinct *named* TCG event inside PCR 11 (shared with the UKI kernel-boot convention, NOT a separate PCR), with a documented extend ordering so replay (§4) is deterministic.
+- [ ] Define the sealed-secret default PCR mask (§8) and document whether it includes PCR 11 (BitLocker's PCR7+PCR11 default re-seals on any PCR-11 change -- state the trade-off vs a PCR7-only mask).
+- [ ] Define the quote PCR mask (§13) and the baseline PCR mask (§6) so a manifest-only change is attributed to the kernel-ABI layer, not a blanket mismatch.
+- [ ] Expose `tpm_pcr_owner(index)` / a static allocation table consulted by §6, §8, and §13 so masks are derived from one place, not duplicated per consumer.
+- [ ] Commit: `"tpm: PCR allocation table and policy masks"`
+
+**Test checkpoint:** A manifest-only change (rebuild kernel with a new `.bootproto` sha) is reported as the kernel-ABI layer in diagnostics and does NOT spuriously fail FDE unseal (§8) or remote-attestation verification (§13); the allocation table in `docs/boot/pcr-allocation.md` matches the runtime extends (a unit test asserts each owned PCR's event name). Platforms: kernel unit tests + QEMU swtpm KVM; bare metal.
+
+---
+
+## 13. Attestation Key Provisioning and TPM2 Quote
+
+The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cannot prove the PCRs came from this machine's TPM; both Win11 Device Health Attestation and Linux Keylime rely on a TPM-resident Attestation Key (AK) bound to the Endorsement Key, and `TPM2_Quote` (the TPM signs the PCR digest + a verifier nonce). This section provisions the AK and produces verifiable quotes; §9 consumes them. -> XREF: supersedes the research-spike `18-future-research/TODO-04 §2` (item: "TPM Quote (remote attestation)") for the active implementation.
+
+- [ ] Retrieve the EK certificate from the standard NV indices (RSA `0x01c00002`, ECC `0x01c0000a`) and expose the EK-cert chain to verifiers; degrade cleanly when absent (vTPM/fTPM without a cert).
+- [ ] Provision the AK: `TPM2_CreatePrimary` EK under the endorsement hierarchy, `TPM2_Create` + `TPM2_Load` a restricted signing AK, persist it via `TPM2_EvictControl` to a stable handle (or recreate deterministically each boot).
+- [ ] Support `TPM2_MakeCredential` / `TPM2_ActivateCredential` so a remote verifier can confirm the AK is bound to a TPM whose EK cert it trusts (credential-activation challenge).
+- [ ] Implement `tpm2_quote(pcr_mask, nonce, sig_out, sig_len)` via `TPM2_CC_Quote`: sign the selected-PCR digest + verifier nonce with the AK (ECDSA or RSASSA); return the `TPMS_ATTEST` + signature.
+- [ ] Anti-replay: the quote MUST embed the verifier-supplied nonce; reject quote requests with no fresh nonce; surface the TPM `clockInfo` (resetCount/restartCount) in the attest so the verifier can detect stale/replayed quotes.
+- [ ] Wire the quote blob + AK public + EK-cert chain into §9's `boot_attestation_report_t`, replacing the software-"signed" placeholder so the exported report is TPM-rooted and remote-verifiable.
+- [ ] Degraded: no TPM / no EK cert / AK provisioning failure -> report `attestation_unavailable` and continue boot; NEVER gate boot on a quote.
+- [ ] Commit: `"tpm: attestation key provisioning and TPM2 quote"`
+
+**Test checkpoint:** Against QEMU swtpm, `tpm2_quote(mask, nonce, ...)` returns a `TPMS_ATTEST` + signature that verifies under the AK public key and carries the supplied nonce; a credential-activation round-trip (`MakeCredential`/`ActivateCredential`) succeeds; a replayed quote (stale nonce) is rejected; with no TPM the path reports `attestation_unavailable` and boot continues. Platforms: QEMU swtpm KVM (quote + verify); bare metal (test laptop fTPM, real EK cert).
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature | Windows | Linux | Impossible OS |
@@ -187,6 +223,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | PCR replay | internal/Defender | tpm2-tools | TODO-13 §4 |
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |
+| 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | TODO-13 §13 (EK->AK + TPM2_Quote) |
+| 💎 | PCR allocation policy | PCR7+11 BitLocker seal | systemd-pcrlock CEL | TODO-13 §12 (allocation table) |
 
 ## Unit Tests
 
@@ -195,6 +233,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] `test_tpm_event_log_tpm20_fixture`
 - [ ] `test_tpm_pcr_replay_sha256`
 - [ ] `test_tpm_integrity_mismatch_report`
+- [ ] `test_tpm_pcr_allocation_manifest_layer` (§12: manifest-only change attributed to kernel-ABI layer, not blanket mismatch)
+- [ ] `test_tpm_quote_verify_nonce` (§13: swtpm quote verifies under AK pubkey + carries nonce; stale-nonce replay rejected)
 
 ## Verification
 
