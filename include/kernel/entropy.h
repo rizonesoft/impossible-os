@@ -279,6 +279,15 @@ int boot_seed_release_payload(uint8_t *payload, uint64_t length,
                               uint64_t phys_start, uint64_t alignment,
                               uint32_t producer_id);
 
+/* The boot-seed credit TRUST BOUNDARY (exported for tests): records ONLY the
+ * sources present in r->records_mask (re-derived from accepted records),
+ * never the advisory r->hdr_mask -- so a rejected/cloned carryover, whose
+ * records_mask bit is absent, can never be laundered into credit by an
+ * adversarial all-HIGH header. SEED_FILE is force-clamped to LOW; every other
+ * accepted source takes its advisory hdr_quality (entropy_record_source then
+ * applies the conservative JITTER/TIME clamps). */
+void boot_seed_record_sources(const struct entropy_seed_parse_result *r);
+
 /* Collect TPM RNG output (TPM2_GetRandom over the TPM2 command
  * transport) into the staged transcript as ENTROPY_SRC_TPM_RNG.
  * Requires a 32-byte minimum before crediting HIGH and rejects

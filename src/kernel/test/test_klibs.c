@@ -15,6 +15,7 @@
 #include "kernel/test/test.h"
 #include "kernel/types.h"
 #include "kernel/csprng.h"
+#include "kernel/entropy.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/zw.h"
@@ -259,6 +260,82 @@ static void test_csprng_core_vectors(void)
     TEST_ASSERT_EQ(memcmp(stream, k_core_stream48, 47), 0,
                    "47-byte stream is a prefix of the 48-byte stream");
     TEST_ASSERT_EQ(stream[47], 0xC5, "47-byte stream canary intact");
+}
+
+/* Section 10 item 1: source-mixing determinism on a SOURCE-FRAMED transcript
+ * (not just a raw string). entropy_frame_source builds a multi-source
+ * length-tagged transcript; the bytes are pinned to a golden layout, and the
+ * mixer keys that exact transcript to a known blake2b-256 digest computed by
+ * an independent reference (Python hashlib, byte-verified against the in-tree
+ * RFC 7693 vector). A regression that dropped a source tag/length or reordered
+ * records would change the framed bytes and the digest. */
+static const uint8_t k_framed_transcript[17] = {
+    /* src=ENTROPY_SRC_FW_RNG(0), len=4 LE, payload DE AD BE EF */
+    0x00, 0x04, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF,
+    /* src=ENTROPY_SRC_TPM_RNG(2), len=3 LE, payload 11 22 33 */
+    0x02, 0x03, 0x00, 0x00, 0x00, 0x11, 0x22, 0x33,
+};
+static const uint8_t k_framed_seed_key[32] = {
+    0xC0, 0x17, 0xF0, 0x5B, 0xC1, 0x0F, 0x66, 0x5C,
+    0xF6, 0x0E, 0x49, 0x51, 0x8A, 0xE2, 0x8C, 0xBE,
+    0x15, 0x01, 0x89, 0x39, 0xBE, 0x2B, 0x10, 0xA2,
+    0xF4, 0x9B, 0x58, 0xFB, 0xAB, 0xD3, 0x84, 0x43,
+};
+/* Same two records in TPM-first order -- pins the swapped negative case so
+ * order-sensitivity cannot pass on a malformed (empty/truncated) frame. */
+static const uint8_t k_framed_swapped[17] = {
+    /* src=ENTROPY_SRC_TPM_RNG(2), len=3 LE, payload 11 22 33 */
+    0x02, 0x03, 0x00, 0x00, 0x00, 0x11, 0x22, 0x33,
+    /* src=ENTROPY_SRC_FW_RNG(0), len=4 LE, payload DE AD BE EF */
+    0x00, 0x04, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF,
+};
+
+static void test_csprng_source_framed_vector(void)
+{
+    static const uint8_t fw[4]  = { 0xDE, 0xAD, 0xBE, 0xEF };
+    static const uint8_t tpm[3] = { 0x11, 0x22, 0x33 };
+    uint8_t framed[64];
+    uint8_t swapped[64];
+    csprng_core_t a, b;
+    uint32_t n, n2;
+
+    /* Build the framed transcript and pin its byte layout (src tags, LE
+     * lengths, ordering, concatenation). */
+    n = entropy_frame_source(framed, sizeof(framed), 0,
+                             ENTROPY_SRC_FW_RNG, fw, sizeof(fw));
+    n = entropy_frame_source(framed, sizeof(framed), n,
+                             ENTROPY_SRC_TPM_RNG, tpm, sizeof(tpm));
+    TEST_ASSERT_EQ(n, (uint32_t)sizeof(k_framed_transcript),
+                   "two-source framed transcript length");
+    TEST_ASSERT_EQ(memcmp(framed, k_framed_transcript, sizeof(k_framed_transcript)),
+                   0, "framed transcript matches golden byte layout");
+
+    /* Known digest: the mixer keys the framed transcript to the independently
+     * computed blake2b-256 of exactly those bytes. */
+    csprng_core_seed(&a, framed, n);
+    TEST_ASSERT_EQ(memcmp(a.key, k_framed_seed_key, CSPRNG_KEY_SIZE), 0,
+                   "framed transcript seeds the known blake2b-256 digest");
+
+    /* Determinism: same framed input -> same key. */
+    csprng_core_seed(&b, framed, n);
+    TEST_ASSERT_EQ(memcmp(a.key, b.key, CSPRNG_KEY_SIZE), 0,
+                   "framed source mixing is deterministic");
+
+    /* Order sensitivity: swapping the two records yields a different digest --
+     * a regression that dropped src tags/lengths would collide these. Pin the
+     * swapped transcript first so the negative case cannot pass on a malformed
+     * (empty / truncated) frame. */
+    n2 = entropy_frame_source(swapped, sizeof(swapped), 0,
+                              ENTROPY_SRC_TPM_RNG, tpm, sizeof(tpm));
+    n2 = entropy_frame_source(swapped, sizeof(swapped), n2,
+                              ENTROPY_SRC_FW_RNG, fw, sizeof(fw));
+    TEST_ASSERT_EQ(n2, (uint32_t)sizeof(k_framed_swapped),
+                   "swapped transcript framing length");
+    TEST_ASSERT_EQ(memcmp(swapped, k_framed_swapped, sizeof(k_framed_swapped)), 0,
+                   "swapped transcript matches golden swapped layout");
+    csprng_core_seed(&b, swapped, n2);
+    TEST_ASSERT_NEQ(memcmp(a.key, b.key, CSPRNG_KEY_SIZE), 0,
+                    "source order changes the mixed digest");
 }
 
 static void test_csprng_absorb_policy(void)
@@ -636,6 +713,8 @@ void test_register_klibs(void)
                             test_csprng_core, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: csprng core vectors",
                             test_csprng_core_vectors, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: csprng source-framed vector",
+        test_csprng_source_framed_vector, TEST_CAT_SECURITY);
     test_suite_register_cat("klibs: csprng absorb policy",
                             test_csprng_absorb_policy, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: csprng add_entropy",

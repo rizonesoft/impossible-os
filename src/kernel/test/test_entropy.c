@@ -755,6 +755,66 @@ static void test_boot_seed_carryover_routing(void)
     TEST_ASSERT_EQ(res.record_count, 1u, "firmware record survives");
 }
 
+static void test_random_seed_clone_degraded(void)
+{
+    /* A cloned seed file (valid-looking carryover whose machine token does
+     * not match) must fail CLOSED end-to-end, not merely fail the MAC check:
+     * routed through the boot-seed parser with adversarial all-HIGH advisory
+     * header bits, the rejected carryover leaves no accepted record and the
+     * re-derived class is DEGRADED -- the advisory header can never launder a
+     * rejected clone into credit. Pure helpers only (no live VFS/NVRAM). */
+    uint8_t payload[256];
+    uint8_t recs[128];
+    uint8_t out[128];
+    uint32_t out_len = 0xFFFFFFFFu;
+    struct entropy_seed_parse_result res;
+    uint64_t plen;
+    uint32_t rlen;
+    uint8_t clone[80];
+
+    /* First byte != 0xAA -> tseed_fake_verify rejects, modelling the
+     * seed_file_early_verify BAD_MAC a wrong-token clone produces. */
+    memset(clone, 0x5C, sizeof(clone));
+    clone[0] = 0xBB;
+
+    rlen = entropy_frame_source(recs, sizeof(recs), 0,
+                                ENTROPY_SRC_SEED_FILE, clone, sizeof(clone));
+    /* Adversarial advisory header: claim every source HIGH. */
+    plen = tseed_build(payload, sizeof(payload), 0xFFu, 0xFFFFFFFFu,
+                       recs, rlen);
+
+    TEST_ASSERT_EQ(entropy_seed_parse(payload, plen, 0, 0, tseed_fake_verify,
+                                      out, sizeof(out), &out_len, &res),
+                   (uint32_t)ENTROPY_SEED_OK,
+                   "cloned-only payload parses (rejection is not a parse error)");
+    TEST_ASSERT_EQ(res.seed_file_ok, 0u, "cloned carryover not accepted");
+    TEST_ASSERT_EQ(res.seed_file_rejected, 1u, "cloned carryover counted rejected");
+    TEST_ASSERT_EQ(res.record_count, 0u, "no accepted records from a clone");
+    TEST_ASSERT_EQ(res.records_mask, 0u, "no source credited from a clone");
+    TEST_ASSERT_EQ(out_len, 0u, "nothing copied from a rejected clone");
+
+    /* Fail closed: empty re-derived mask classifies DEGRADED regardless of
+     * the all-HIGH advisory header the parser surfaced but never trusted. */
+    TEST_ASSERT_EQ(res.hdr_quality, 0xFFFFFFFFu, "adversarial advisory surfaced");
+    TEST_ASSERT_EQ(entropy_classify(res.records_mask, res.hdr_quality),
+                   ENTROPY_CLASS_DEGRADED,
+                   "clone fails closed to degraded despite HIGH advisory bits");
+
+    /* The format layer rejects the wrong-token blob directly (anti-clone). */
+    {
+        static const uint8_t secret_a[SEED_FILE_SECRET_LEN] = { 0x11, 0x22 };
+        static const uint8_t secret_b[SEED_FILE_SECRET_LEN] = { 0x11, 0x23 };
+        uint8_t pl[SEED_FILE_PAYLOAD_LEN] = { 0xAB };
+        struct seed_file_blob blob;
+
+        seed_file_encode(&blob, 7, pl, secret_a);
+        TEST_ASSERT_EQ(seed_file_accept(&blob, SEED_FILE_SIZE, secret_b, 0,
+                                        NULL, NULL),
+                       (uint32_t)SEED_FILE_BAD_MAC,
+                       "wrong-token clone rejected at the format layer");
+    }
+}
+
 static void test_boot_seed_desc_classify(void)
 {
     const uint32_t vr = BOOT_PAYLOAD_FLAG_VALID | BOOT_PAYLOAD_FLAG_RESERVED;
@@ -933,6 +993,8 @@ void test_register_entropy(void)
         test_random_seed_format, TEST_CAT_SECURITY);
     test_suite_register_cat("entropy: seed file clone rejected",
         test_random_seed_clone_rejected, TEST_CAT_SECURITY);
+    test_suite_register_cat("entropy: seed file clone degraded",
+        test_random_seed_clone_degraded, TEST_CAT_SECURITY);
     test_suite_register_cat("entropy: seed file provenance gate",
         test_random_seed_provenance_gate, TEST_CAT_SECURITY);
     test_suite_register_cat("entropy: boot seed payload parse",

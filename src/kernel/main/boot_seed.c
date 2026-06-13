@@ -51,7 +51,7 @@ static int boot_seed_verify_carryover(const uint8_t *blob, uint32_t len,
  * TIME never above LOW, reserved value -> NONE). The seed-file class is
  * recorded LOW here regardless of the header: HIGH credit belongs to the
  * Phase-3 lifecycle's NVRAM commit point, not the early read. */
-static void boot_seed_record_sources(const struct entropy_seed_parse_result *r)
+void boot_seed_record_sources(const struct entropy_seed_parse_result *r)
 {
     uint32_t src;
 

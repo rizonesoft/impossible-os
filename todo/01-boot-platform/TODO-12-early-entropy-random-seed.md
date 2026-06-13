@@ -11,7 +11,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > **Goal:** Provide trustworthy randomness as early as possible. Secure Boot, TPM, code integrity, log integrity, ASLR, stack canaries, and cryptographic services all need entropy, but the boot platform currently has no owned plan for firmware RNG, CPU RNG, TPM RNG, seed carryover, or early-kernel CSPRNG seeding.
 
 > [!IMPORTANT]
-> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). §6 shipped the seed-file carryover lifecycle (`seed_file.c`: MAC'd format, NVRAM anti-clone token, Phase-3 reseed + crash-tolerant rotation). §7 shipped the boot_info seed handoff (digest-chained first-seed consumption + zeroing + pre-EBS carryover read). §8 shipped the named `early_entropy_init()` point, the CSPRNG-owned credited class, the unconditional key-generation gate `csprng_crypto_ok()`, and `csprng_fill_classified()`. §9 shipped the diagnostics surfaces (HKLM\SYSTEM\Boot\Entropy mirror, X:\Diag\entropy.json, splash degraded warning, external-entropy one-shot -- cross-reboot activation blocked on D02 TODO-14 hive-load wiring). Remaining: the §10 test sweep.
+> **Current state (2026-06-12):** §1 shipped the kernel entropy model (`include/kernel/entropy.h` + `entropy.c`: source classes, packed quality, classify/policy/framing/report). §2 shipped bootloader collection: `collect_boot_entropy()` gathers EFI_RNG_PROTOCOL + ACPI OEM0 bytes pre-EBS and publishes a `BOOT_PAYLOAD_RANDOM_SEED` descriptor (FLAG_RESERVED). §3 shipped CPU RDSEED/RDRAND collection into the same payload. §5 shipped the src-7 TIME record, the post-`sti` jitter sampler, and the kernel staged transcript (`entropy_stage_source()`/`entropy_staged_drain()`). §4 shipped TPM RNG collection (`entropy_collect_tpm()` over the TODO-13 §2 transport, budgeted + floor-gated). §6 shipped the seed-file carryover lifecycle (`seed_file.c`: MAC'd format, NVRAM anti-clone token, Phase-3 reseed + crash-tolerant rotation). §7 shipped the boot_info seed handoff (digest-chained first-seed consumption + zeroing + pre-EBS carryover read). §8 shipped the named `early_entropy_init()` point, the CSPRNG-owned credited class, the unconditional key-generation gate `csprng_crypto_ok()`, and `csprng_fill_classified()`. §9 shipped the diagnostics surfaces (HKLM\SYSTEM\Boot\Entropy mirror, X:\Diag\entropy.json, splash degraded warning, external-entropy one-shot -- cross-reboot activation blocked on D02 TODO-14 hive-load wiring). §10 shipped the test-sweep closure (15 entropy + 2 csprng security-category suites; 2 added: clone-fail-closed-to-degraded composition + source-framed golden blake2b-256 KAT). Remaining: §9 cross-reboot ExternalEntropy (blocked on D02 TODO-14 §8) and the manual bare-metal Verification rows (RDRAND/TPM on the rig, RNG-less OVMF degrade).
 
 ## Inputs
 
@@ -44,7 +44,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 | 💎  |   7   | boot_info seed handoff                     | T01 §4             |  [x]   |
 | 💎  |   8   | Kernel early CSPRNG seeding                | §7, D02T03 §5      |  [x]   |
 | ⭐  |   9   | Entropy diagnostics and policy gates       | §1-§8              |  [/]   |
-| 💎  |  10   | Entropy tests                              | §1-§9              |  [ ]   |
+| 💎  |  10   | Entropy tests                              | §1-§9              |  [x]   |
 
 ## 1. Entropy Source Inventory and Quality Model
 
@@ -290,15 +290,24 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 10. Entropy Tests
 
-- [ ] Unit tests for source mixing determinism with fixtures (pure mixer fed fixed inputs produces the known digest).
-- [ ] Test no source -> degraded but safe (mask=0 yields degraded flag, never a fake high-quality claim).
-- [ ] Test seed file format: version/counter/MAC encode + decode round-trip, bad-MAC rejection (pure helpers, no live VFS).
-- [ ] Test zeroization after consumption (consume fixture buffer, assert all-zero).
-- [ ] Test cloned seed file: valid MAC but missing/different system token fails closed to degraded.
-- [ ] Test external-entropy one-shot: consumed exactly once, source overwritten before use.
-- [ ] Commit: `"test: early entropy handoff"`
+- [x] Source mixing determinism: `test_csprng_source_framed_vector` (`test_klibs.c`) -- golden framed transcript -> known blake2b-256 KAT + order-sensitivity; `test_csprng_core_vectors`/`test_csprng_core` cover raw-transcript determinism.
+- [x] No source -> degraded but safe: `test_entropy_classify` (`test_entropy.c`) -- `entropy_classify(0,0)` is DEGRADED, and quality-without-mask / descriptor-HIGH-timing never credit (never a fake high-quality claim).
+- [x] Seed file format: `test_random_seed_format` (`test_entropy.c`) -- `seed_file_encode`/`seed_file_accept` round-trip + every rejection class (len/magic/version/MAC/replay), pure helpers, no live VFS.
+- [x] Zeroization after consumption: `test_entropy_seed_zeroized` (`test_entropy.c`) -- `boot_seed_release_payload` wipes accepted, rejected, foreign-producer, and sub-page shapes to all-zero.
+- [x] Cloned seed file fails closed to degraded: `test_random_seed_clone_rejected` (wrong-token -> `SEED_FILE_BAD_MAC`) + `test_random_seed_clone_degraded` (cloned-only payload, all-HIGH advisory -> `records_mask=0`, classify DEGRADED).
+- [x] External-entropy one-shot: `test_external_entropy_oneshot` (`test_entropy.c`) -- source destroyed on every path; `entropy_external_consume()` ordering validated by boot checkpoint (live registry/CSPRNG forbidden -- see Unit Tests Note).
+- [x] Commit: `"test: early entropy handoff"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=security` runs the entropy suites with 0 failures; suites use fixtures and pure helpers only (no live boot infrastructure, per test policy). QEMU WHPX, QEMU TCG.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 15 entropy (`test_entropy.c`) + 1 boot_seed (`test_boot_seed.c`) + 2 csprng (`test_klibs.c`) security suites, 0 failures
+
+> **Notes:**
+> - What shipped: section 10 test-sweep closure -- suites shipped with sections 1-9; 3 new: clone-fail-closed-to-degraded, source-framed golden blake2b-256 KAT, and the boot_seed_record_sources credit-gate (`test_boot_seed.c`).
+> - How it runs: `bash scripts/test.sh SUITE=security` -- 360 kernel + 16 user-mode pass, 0 failures; both new suites confirmed `[ OK ]` in `build/test.log`.
+> - Downstream: completes sections 1-9 coverage; Codex step-13 adversarial adoptions (F2 clone-degraded, F3 source-framed) in the commit message; F1 (external-consume ordering) rejected per test-policy (see Unit Tests Note).
+> - Canonical doc: test policy in [`docs/infrastructure/test-policy.md`](../../docs/infrastructure/test-policy.md); entropy contract in [`include/kernel/entropy.h`](../../include/kernel/entropy.h).
+> - Scope boundary: live EFI/TPM/VFS/registry collection paths are validated by boot checkpoints, not unit tests; section 9 owns the diagnostics surfaces.
 
 ---
 
@@ -333,6 +342,9 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 - [x] `test_random_seed_clone_rejected` (shipped with §6, `test_entropy.c`): blob MAC'd under secret A fails closed under secret B
 - [x] Shipped with §7 (3 suites, `test_entropy.c`): payload parse gates + NO_FIT, carryover routing, `test_entropy_seed_zeroized` via pure `boot_seed_release_payload`; `csprng_core_seed2` equivalence in `test_klibs.c`
 - [x] `test_external_entropy_oneshot` (shipped with §9, `test_entropy.c`): copy/clamp/reject matrix, source destroyed on every path, class-string vocabulary
+- [x] Shipped with §10: `test_random_seed_clone_degraded` (clone -> classify DEGRADED) + `test_csprng_source_framed_vector` (golden framed blake2b-256 KAT) + `test_boot_seed.c` record-sources credit gate (records_mask not hdr_mask)
+
+> **Note:** `entropy_external_consume()` integration ordering (secure-delete-before-absorb, one-shot deletion, refuse-second-consume) is not unit-tested -- it is entangled with the live registry (`RegOpenKeyEx`/`RegQueryValueEx`/`RegDeleteValue`), `registry_persistence_active()`, and the global `csprng_add_entropy()`, all on the test-policy HARD-BAN list. The pure one-shot core `entropy_external_oneshot` (source-overwrite on every path) IS unit-tested; the ordering is validated by the Phase-3 boot serial checkpoint.
 
 ---
 
