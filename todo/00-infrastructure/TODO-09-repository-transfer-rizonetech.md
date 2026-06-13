@@ -73,7 +73,7 @@ file_patterns:
 |  ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                        | §4, §5                         |  [x]   |
 |  ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph   | §5, §6                         |  [/]   |
 |  ⭐  |   8   |    8    | Move-back and public-visibility runbook                           | §1, §2, §3, §4, §5, §6, §7     |  [/]   |
-|  ⭐  |   9   |    9    | Documentation sync and closure                                    | §1, §2, §3, §4, §5, §6, §7, §8 |  [ ]   |
+|  ⭐  |   9   |    9    | Documentation sync and closure                                    | §1, §2, §3, §4, §5, §6, §7, §8 |  [x]   |
 
 > **Order vs section number:** The file is ordered by execution flow. Section 8 is intentionally specified before the first transfer happens so the team can confirm the move is reversible rather than discovering account or Pages constraints after the repository is already in the organization.
 
@@ -344,16 +344,24 @@ Define the return path before it is needed. Moving back later should be a planne
 
 Close the roadmap by making the final owner state discoverable and removing transfer-only ambiguity from contributor docs.
 
-- [ ] Update [`docs/infrastructure/github-setup.md`](../../docs/infrastructure/github-setup.md) with the final repository owner, transfer date, Pages custom-domain settings, DNS shape, branch protection notes, and org policy notes.
-- [ ] Update [`todo/00-infrastructure/INDEX.md`](INDEX.md) if this TODO moves from `draft` to `active` or `done`.
-- [ ] Update [`todo/TODO-00-INDEX.md`](../TODO-00-INDEX.md) only if this work should be promoted to root Active Epics.
-- [ ] Add a "Repository Ownership" or "Canonical GitHub URL" note to contributor-facing docs if repeated confusion appears during transfer.
-- [ ] Run URL searches and preserve a short final owner-reference inventory in the TODO notes or commit message.
-- [ ] Run TODO graph build/validate after the final docs edit.
-- [ ] Mark Implementation Order rows complete only when the corresponding operator action and validation evidence exist.
-- [ ] Commit: `"todo: close repository transfer to rizonetech"`
+- [x] Updated `github-setup.md` ownership note with final owner (`rizonetech`), transfer date (2026-04-27), custom-domain + DNS shape, branch protection, and the org-level autonomous-agent-boundary policy note.
+- [x] No INDEX.md status change: TODO stays `draft` (consistent with the domain's other shipped 00-infra TODOs); the §2-§7 operator-validation tail keeps it non-final.
+- [x] Not promoted to root Active Epics (`TODO-00-INDEX.md`): repository-ops work stays a domain TODO.
+- [x] Repository-ownership note added to `github-setup.md` (final owner + canonical URL + org policy) -- the contributor-facing single source of truth.
+- [x] Owner-reference inventory: ZERO active `rizonesoft/impossible-os` (main-repo) URL refs outside transfer docs; sibling repos (archived `impossible-os-bootloader`) + brand/contact/CODEOWNERS refs intentionally retained per §6.
+- [x] TODO graph build/validate after the final docs edit: 8/8 checks PASS.
+- [x] Implementation Order rows respected: §2-§7 stay `[/]` (operator validation pending), §8 `[/]` (execution operator-deferred); only doc-complete rows are closed.
+- [x] Commit: `"todo: close repository transfer to rizonetech"`
 
 **Test checkpoint:** A new contributor can find the canonical repository URL, clone it, view the Pages site, and follow the docs without encountering stale owner names except where history is intentional.
+
+> **Test runner:** N/A (documentation closure -- no kernel/usermode/desktop test surface) | validation: `github-setup.md` records final owner + date + DNS + branch-protection + org policy; owner-reference inventory shows only intentional brand history; `todo-graph build-and-validate` 8/8.
+
+> **Notes:**
+> - **What shipped:** `github-setup.md` ownership note synced to the final owner state -- transfer date (2026-04-27), custom-domain/DNS, branch protection, and the org-level autonomous-agent-boundary policy.
+> - **Structure / consumers:** the contributor-facing canonical owner-state record; companion to `repository-transfer-preflight.md` (baseline) + `repository-move-back-runbook.md` (§8 future move-back).
+> - **Canonical doc:** [`docs/infrastructure/github-setup.md`](../../docs/infrastructure/github-setup.md).
+> - **Scope boundary:** documentation sync only; the operator-validation tail (DNS TTL restore, release dry-run, org Copilot UI check) stays owned by §2-§7 `[/]`, and the move-back execution by §8.
 
 ---
 
@@ -372,7 +380,7 @@ Close the roadmap by making the final owner state discoverable and removing tran
 
 > **After §1-§4:** Inventory, org readiness, Pages continuity plan, and a time-boxed transfer runbook with rollback exist before any GitHub setting is touched.
 > **After §5-§7:** Settings audit, first-party URL sweep, and end-to-end validation suite confirm the move did not silently break Pages, Actions, releases, badges, or graph tooling.
-> **After §8-§9:** A move-back and public-visibility runbook is documented before it is needed, and `docs/infrastructure/github-setup.md` carries the final state for future contributors.
+> **After §8-§9:** A move-back and public-visibility runbook is documented before it is needed (`repository-move-back-runbook.md`), and `docs/infrastructure/github-setup.md` carries the final owner state (owner, transfer date, DNS, branch protection, org policy) for future contributors. The remaining operator-validation tail (DNS TTL restore, release dry-run, org Copilot UI) stays tracked in §2-§7 `[/]`.
 
 ---
 

@@ -6,7 +6,13 @@
 
 The `rizonetech/impossible-os` GitHub repository is configured with CI/CD pipelines, automated release management, issue/PR templates, branch protection, and community documentation. A secondary archived repo (`rizonesoft/impossible-os-bootloader`) exists but all development happens in the main repo.
 
-> **Planned ownership move.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the completed transfer from `rizonesoft/impossible-os` to `rizonetech/impossible-os` (enterprise org), plus the §8 future move-back / public-visibility runbook. The current-state baseline -- repository identity, Pages source mode, custom-domain DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
+> **Repository ownership and org policy.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the completed transfer (executed **2026-04-27**) from `rizonesoft/impossible-os` to `rizonetech/impossible-os` (enterprise org), plus the §8 future move-back / public-visibility runbook ([`repository-move-back-runbook.md`](repository-move-back-runbook.md)).
+>
+> **Verified after the move:** owner is `rizonetech`; custom domain `impossibleos.co` (apex A records on GitHub Pages IPs, `www` CNAME to `rizonetech.github.io`, cert approved, apex serves over HTTPS); branch-protection / ruleset **structure** carried over.
+>
+> **Operator-pending (tracked in §2 / §5 / §7, NOT yet verified):** Pages `https_enforced` is still `false` (an HTTPS-redirect hardening gap to flip under the new owner); the ruleset **bypass actor** (Maintain role) did not map cleanly, so direct push to `main` is currently blocked pending §5 restoration; and the org-level **autonomous-agent boundary** (Settings -> Copilot -> Access policies) is an operator-only UI check (O5) with no public API, not yet confirmed -- see [`ai-system.md`](ai-system.md#autonomous-agent-boundary-policy).
+>
+> The pre-transfer current-state baseline -- repository identity, Pages source mode, DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
 
 ```mermaid
 graph TD
