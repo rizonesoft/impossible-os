@@ -301,7 +301,7 @@ FastMCP dispatches concurrent tool calls. Even with the bridge-level `_CALL_LOCK
 >
 > - **What shipped:** `lsp_client.py` adds `_DEFAULT_REQUEST_TIMEOUT_S = 5.0`, `_TIMEOUT_ENV = "LSP_MCP_TIMEOUT"`, and `_resolve_request_timeout()` validating both explicit + env-derived values; `LspSubprocess.request(timeout=None)` resolves at call time. `bridge.py` adds `_self_test_stress()` (100-way fan-in, 20 s deadline, fail-soft pool shutdown) + `--stress` CLI flag. 3 new harness sub-tests (8a stress, 8b fake-LSP reorder demux, 8c env timeout); items 1-3+5 of the §8 checklist were already shipped in §1 + §7 and are marked `[x]` with file:line citations.
 > - **How it runs:** `python3 scripts/lsp-mcp/bridge.py --self-test --stress` spawns clangd, runs 100 concurrent hover calls, asserts no Future leaks. `LSP_MCP_TIMEOUT=2.0 python3 ...` overrides the default per-request timeout for ad-hoc / tool-handler-default callers (existing in-tree callers all pass explicit floats; env affects only `timeout=None` paths). Demux verification is the deterministic 8b path -- clangd hover responses don't echo (line, character), so the stress test cannot detect demux scrambling on its own and now claims only "no Future leaks".
-> - **Downstream effects:** unblocks §13 (LSP subprocess health monitoring + auto-restart) which builds on the per-LspSubprocess locks shipped here; closes the concurrency-correctness gate that Codex flagged for `todo-graph` in [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache). Codex 2x review adoptions (design + adversarial) in commit `<§8 commit>`.
+> - **Downstream effects:** unblocks §13 (LSP subprocess health monitoring + auto-restart) which builds on the per-LspSubprocess locks shipped here; closes the concurrency-correctness gate that Codex flagged for `todo-graph` in [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache). Codex 2x review adoptions (design + adversarial) in commit `a249c81e`.
 > - **Canonical doc:** [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/) for the request/response correlation contract; [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) for the precedent that flagged this concurrency surface.
 > - **Scope boundary:** §8 does NOT own crash detection / auto-restart (§13), structured JSON logging with correlation IDs (§14), warm-start eager spawn (§16), or the per-LSP `cleanup_paths` retrofit (filed in §12). Stress test exercises clangd only; mixed-language stress is not a §8 deliverable -- 8b is the demux contract validator and uses a fake LSP for determinism.
 
@@ -331,7 +331,7 @@ Make the bridge discoverable, installable, and documented. Without this, §1-§8
 >
 > - **What shipped:** new `scripts/lsp-mcp/tests/test_boundary.sh` (~95 LOC; runtime-imported deny set + grep audit) and `scripts/lsp-mcp/mcp.json` (sidecar manifest); root `.mcp.json` gains `lsp-bridge` entry; `scripts/setup-deps.sh` adds 4 OPTIONAL probes; `scripts/setup.sh` extends `verify_tools()` with an OPTIONAL-tier report block; `Makefile` adds `lsp-mcp` + `lsp-mcp-selftest` targets; `.asm-lsp.toml` gains `[default_config.opts]` diagnostics-disable; `docs/infrastructure/development-tooling.md` gets the LSP MCP Bridge H3 subsection (~120 lines); `docs/infrastructure/ai-system.md` MCP-boundary section rewrites the blanket no-repo-tracked rule into a two-category model with a 3-criteria allowlist + procedural gate.
 > - **How it runs:** `make lsp-mcp-selftest` for CI; `bash scripts/setup.sh --verify` for the OPTIONAL-tier status; `bash scripts/lsp-mcp/tests/test_boundary.sh` for standalone read-only boundary audit (also wrapped by `test_bridge.sh` 7f). Claude Code auto-launches the bridge as a subprocess via the `lsp-bridge` entry in root `.mcp.json` on session start.
-> - **Downstream effects:** turns §1-§8 from "exists in scripts/" into "available as an MCP server in any Claude Code session" -- restart Claude Code and the 6 tools (`mcp__lsp-bridge__hover`, etc.) appear callable. Closes the asm-lsp Accepted-XREF from the asm-lsp integration section. Codex 2x review adoptions in commit `<§9 commit>`.
+> - **Downstream effects:** turns §1-§8 from "exists in scripts/" into "available as an MCP server in any Claude Code session" -- restart Claude Code and the 6 tools (`mcp__lsp-bridge__hover`, etc.) appear callable. Closes the asm-lsp Accepted-XREF from the asm-lsp integration section. Codex 2x review adoptions in commit `a644d2ce`.
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- single source of truth for users; the section's troubleshooting block is where install / configuration / failure-mode docs live.
 > - **Scope boundary:** §9 does NOT own the boundary-policy itself (that's [TODO-02 autonomous-agent boundary](TODO-02-ai-development-system.md)) -- §9 implements the carve-out the policy permits. Does NOT auto-install OPTIONAL deps (each is a deliberate user choice). Does NOT cover §10 (test-tooling.sh integration), §11-§16 (extended tools, lifecycle, watchdog, logging, sandboxing, warm-start) -- those are subsequent sections.
 
@@ -357,7 +357,7 @@ The bridge is host-side Python tooling, so tests live outside the kernel `test_r
 >
 > - **What shipped:** new sub-test 9a in `test_bridge.sh` (~30 LOC: LSP-process-leak detection via pre/post-harness pgrep diff with delta semantics); `scripts/test-tooling.sh` `[lsp-mcp]` block (~40 LOC, 2 aggregate-runner shells); `.github/workflows/build.yml` step "Run LSP-MCP bridge tests" between unit tests and stale-ABI fixtures. The other 6 sub-test contracts (10a-10e + 10g) were already shipped under different sub-test numbering across §1-§9.
 > - **How it runs:** the harness invocation flows three ways: (1) directly via `bash scripts/lsp-mcp/tests/test_bridge.sh`, (2) through `scripts/test-tooling.sh` aggregate (also invoked locally + at the start of the CI build), (3) via the explicit GitHub Actions step for log-visibility. `test_boundary.sh` runs standalone in all three flows.
-> - **Downstream effects:** closes the test-coverage gate the TODO-06 §8 precedent established for repo-tracked MCP servers. Future LSP-MCP work (§11-§16) extends this same harness with new sub-tests; the `[lsp-mcp]` block in test-tooling.sh + the GitHub Actions step do not need re-wiring per future section. Codex 2x review adoptions in commit `<§10 commit>`.
+> - **Downstream effects:** closes the test-coverage gate the TODO-06 §8 precedent established for repo-tracked MCP servers. Future LSP-MCP work (§11-§16) extends this same harness with new sub-tests; the `[lsp-mcp]` block in test-tooling.sh + the GitHub Actions step do not need re-wiring per future section. Codex 2x review adoptions in commit `0b03fbb5`.
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- single source of truth; the test-checkpoint paragraph above describes the verification flow.
 > - **Scope boundary:** §10 does NOT own the per-language LSP integrations (§2-§6), the MCP tool surface (§7), the per-LSP serialization (§8), or the manifest/setup/docs/boundary-policy work (§9). §10 wires §1-§9's test contracts into the standard CI surfaces.
 
@@ -703,28 +703,28 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 > [!NOTE]
 > Host-side tooling checks live outside `test_runner_init()`. This TODO owns a shell-based regression pack (`scripts/lsp-mcp/tests/test_bridge.sh`), same pattern as [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) and [TODO-01 §7](./TODO-01-developer-tooling-stack.md#7-tooling-doctor-and-regression-pack). No kernel-side test runner involvement.
 
-- [ ] Create `scripts/lsp-mcp/tests/test_bridge.sh` with 7 base sub-tests (detailed in §10 checklist): zero-LSP self-test, clangd smoke, tool-schema shape, stress, extension-router reject, subprocess cleanup, boundary audit.
-- [ ] Extend the harness with at least one sub-test per §11-§18 capability (extended tools, file-change lifecycle, watchdog respawn, correlation-ID log, path-escape rejection, warm-start, type-hierarchy round-trip + capability-gate + 17-tool census).
-- [ ] Wire into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) surface checks (harness exists + executable, `--help` exits 0).
-- [ ] Wire into `.github/workflows/build.yml` post-build step "Run LSP-MCP bridge tests" (runs after `make` succeeds; gates per-language sub-tests on binary presence).
-- [ ] Commit: `"test: add lsp-mcp bridge test harness"`
+- [x] Created `scripts/lsp-mcp/tests/test_bridge.sh` (shipped §1, base sub-tests 1a-1g) + `test_boundary.sh`; now 99 sub-tests covering every §1-§18 capability.
+- [x] Extended the harness with at least one sub-test per §11-§18 capability (extended tools 11a-11g, file-change 12a-12f, watchdog 13a-13h, correlation-ID 14a-..., path-escape 15a-..., warm-start 16a-17g, type-hierarchy 18a-18e).
+- [x] Wired into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) `[lsp-mcp]` block (shipped §10; bridge-harness + boundary aggregate sub-tests).
+- [x] Wired into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) "Run LSP-MCP bridge tests" post-build step (shipped §10).
+- [x] Commit: `"test: add lsp-mcp bridge test harness"` (landed incrementally across §1-§18 section commits).
 
 ---
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===` (bridge is Python; build shouldn't regress).
-- [ ] `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0 on a host with clangd-19 installed; prints `[lsp-mcp] OK: 0 LSPs spawned, 17 tools registered, bridge ready`.
-- [ ] `--self-test --tools` prints 17 MCP tool schemas (6 core + 8 extended + 2 type-hierarchy + 1 `_health` meta); `type_hierarchy_supertypes`/`type_hierarchy_subtypes` take `path`/`line`/`character` like the other position tools.
-- [ ] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with all base sub-tests + §11-§18 extension sub-tests PASS on a host with clangd-19.
-- [ ] `--self-test --tools` reports 17 tools (6 core + 8 extended + 2 type-hierarchy + 1 meta) with correct typed params.
-- [ ] `_health` MCP tool returns per-LSP status; exercise via kill-and-respawn during `test_bridge.sh`.
-- [ ] `hover(path="/etc/passwd", ...)` is rejected; `hover(path="src/kernel/main.c", ...)` succeeds (sandbox enforced).
-- [ ] `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0 and prints `[boundary] OK: 0 write-capable LSP methods reachable from MCP surface`.
-- [ ] `bash scripts/test-tooling.sh` passes; new surface checks visible in the output count.
-- [ ] `.mcp.json` (root, authoritative) lists `lsp-bridge` as an entry alongside `todo-graph`; `jq -r '. | keys' .mcp.json` includes it.
-- [ ] Register `lsp-bridge` in Claude Code harness; a `/<hover>` (or equivalent MCP tool call) against a known C symbol returns a non-empty hover response through the MCP protocol.
-- [ ] Verify on: WSL2 (primary host for Claude Code); Linux native (Arch, Ubuntu 24.04); macOS as a secondary nice-to-have (pwsh/PSES path differs). No bare-metal or VM testing needed -- this is host-side dev tooling.
-- [ ] Commit: `"scripts/lsp-mcp: bridge complete"`
+- [x] `bash scripts/build.sh clean` -> `=== BUILD OK ===` (20.0s, 2026-06-13; bridge is Python, no kernel regression).
+- [x] `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0; prints `[lsp-mcp] OK: 0 LSPs spawned, 17 tools registered, bridge ready` (2026-06-13).
+- [x] `--self-test --tools` prints 17 MCP tool schemas (6 core + 8 extended + 2 type-hierarchy + 1 `_health` meta); `type_hierarchy_supertypes`/`type_hierarchy_subtypes` take `path`/`line`/`character`.
+- [x] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; 99/99 sub-tests PASS (base + §11-§18) with clangd-19 (2026-06-13).
+- [x] `--self-test --tools` reports 17 tools (6 core + 8 extended + 2 type-hierarchy + 1 meta) with correct typed params.
+- [x] `_health` MCP tool returns per-LSP status; exercised via kill-and-respawn in sub-tests 13a-13h (part of 99/99).
+- [x] `hover(path="/etc/passwd")` rejected (`lsp-path-outside-workspace`); `hover(path="src/kernel/main.c")` succeeds -- sandbox enforced (2026-06-13).
+- [x] `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0: `[boundary] OK: 0 write-capable LSP methods reachable from MCP surface`.
+- [ ] `bash scripts/test-tooling.sh` passes. NOTE 2026-06-13: lsp-mcp surface checks PASS within it; the full suite fails only on 2 pre-existing UNRELATED audits (audit-ai-system + audit-hooks plugin-MANIFEST drift), not a TODO-07 regression.
+- [x] `.mcp.json` (root) lists `lsp-bridge`; `jq -r '. | keys' .mcp.json` includes it (2026-06-13).
+- [x] `lsp-bridge` registered in the Claude Code harness; `mcp__lsp-bridge__hover` on `kernel_main` returned the full signature + doc through MCP (2026-06-13). §18 type-hierarchy tools register after the next Claude Code restart.
+- [/] Verify on: WSL2 (DONE 2026-06-13 -- every check above ran on WSL2); Linux native (Arch, Ubuntu 24.04) + macOS still pending (user runs on those).
+- [x] Commit: `"scripts/lsp-mcp: bridge complete"`
 
-**Test runner:** N/A (host-side Python tooling, no `TEST_CAT_*` surface) | validation: `bash scripts/lsp-mcp/tests/test_bridge.sh` 7/7 sub-tests PASS on a host with `clangd-19`; `bash scripts/test-tooling.sh` passes with new surface checks counted.
+**Test runner:** N/A (host-side Python tooling, no `TEST_CAT_*` surface) | validation: `bash scripts/lsp-mcp/tests/test_bridge.sh` 99/99 sub-tests PASS on a host with `clangd-19` (2026-06-13); `bash scripts/lsp-mcp/tests/test_boundary.sh` 0 write-capable methods.
