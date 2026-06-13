@@ -246,9 +246,12 @@ single signature.
 
 Deterministic ordering: `.osrel` -> `.cmdline` -> `.linux` -> `.initrd` -> `.recovery` -> `.modules`. Order is load-bearing for PCR measurement reproducibility (the measured-boot log consumes the section list in this order; reordering breaks attestation comparisons). Only the first three are mandatory; the last three are conditional on payload files existing in `build/uki-payloads/`.
 
+The `.sbat` revocation-metadata section is NOT in this list: it is embedded into the `BOOTX64.EFI` stub at link time. `src/boot/uefi/sbat.asm` `incbin`s `src/boot/uefi/sbat.csv` into a `.sbat` ELF section, `uefi.lds` places it, and the ELF->PE objcopy carries it with `-j .sbat`; the UKI inherits the section from the stub. Link-time embedding is the only reliable path: post-hoc `objcopy --add-section` on the PE drops the content (GNU ELF->PE), corrupts the PE optional header so firmware rejects the image (GNU PE->PE), or produces a 0-byte section (llvm-objcopy). A build-time gate in `scripts/build.sh` validates `sbat.csv` structurally (exact header, one `impossibleos` row, every row 6 fields, positive generation) and byte-compares the embedded `.sbat` in both `BOOTX64.EFI` and `BOOTX64.UKI.efi` against the source, hard-failing on any mismatch. Bump the generation per the SBAT Bump checklist above.
+
 | PE Section  | Source                                   | Purpose                                                       |
 |-------------|------------------------------------------|---------------------------------------------------------------|
 | (stub)      | `build/tools/BOOTX64.EFI`                | UEFI entry point; PE code + data, parses sections at boot      |
+| `.sbat`     | `src/boot/uefi/sbat.csv` (in stub)       | SBAT revocation metadata; inherited from the stub, makes the artifact SBAT-revocable |
 | `.osrel`    | `build/uki-osrel.txt` (auto-generated)   | NAME / ID / VERSION_ID / PRETTY_NAME (`os-release` form)        |
 | `.cmdline`  | `resources/boot/boot.conf`               | `boot_config` key/value file (UKI-mode equivalent)             |
 | `.linux`    | `build/kernel.exe`                       | The ELF kernel; consumed by `load_kernel()` directly           |

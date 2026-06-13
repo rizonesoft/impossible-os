@@ -24,7 +24,7 @@ CFLAGS += $(EXTRA_CFLAGS)
 
 OUTDIR ?= ../../../build/tools
 
-OBJS := bootx64.o reloc.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o boot_entry_kind.o
+OBJS := bootx64.o reloc.o sbat.o elf_bootproto.o boot_history.o boot_entries_parser.o boot_policy.o boot_sticky.o boot_entry_kind.o
 
 .PHONY: all clean
 
@@ -96,19 +96,26 @@ boot_policy.o: boot_policy.c \
 reloc.o: reloc.asm
 	$(AS) -f elf64 $< -o $@
 
+# Embed SBAT revocation metadata (sbat.csv) as a .sbat ELF section via
+# incbin, carried into the PE by the ELF->PE objcopy (-j .sbat). sbat.csv
+# is a prerequisite so a generation bump rebuilds the section.
+sbat.o: sbat.asm sbat.csv
+	$(AS) -f elf64 $< -o $@
+
 # Link as shared object with relocations preserved
-bootx64.so: $(OBJS)
+bootx64.so: $(OBJS) uefi.lds
 	$(LD) -shared -Bsymbolic \
 	    -T uefi.lds \
 	    -o $@ $(OBJS)
 
 # Convert ELF → PE/COFF
-$(OUTDIR)/BOOTX64.EFI: bootx64.so
+$(OUTDIR)/BOOTX64.EFI: bootx64.so sbat.csv
 	@mkdir -p $(OUTDIR)
 	$(OBJCOPY) \
 	    -j .text -j .rodata -j .sdata -j .data \
 	    -j .dynamic -j .dynsym -j .dynstr \
 	    -j .rel -j .rela -j .rel.* -j .rela.* \
+	    -j .sbat \
 	    -j .reloc \
 	    --target efi-app-x86_64 \
 	    $< $@

@@ -30,6 +30,14 @@ SECTIONS
 
     . = ALIGN(4096);
 
+    /* SBAT revocation metadata (incbin of sbat.csv via sbat.asm). Carried
+     * into the PE by the ELF->PE objcopy (-j .sbat). */
+    .sbat : {
+        *(.sbat)
+    }
+
+    . = ALIGN(4096);
+
     .data : {
         *(.got .got.plt)
         *(.sdata .sdata.*)

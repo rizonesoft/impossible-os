@@ -476,6 +476,47 @@ OSEOF
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "EFI Signing" "sign-efi" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
+# SBAT revocation-metadata gate: the boot artifacts must stay SBAT-revocable
+# (a vulnerable build must be revocable by SBAT generation, not just dbx).
+# Stage 1 validates the source CSV structurally; stage 2
+# verifies each built artifact carries a .sbat section whose bytes equal the
+# source. A name-only presence check would pass an empty/stale/wrong section,
+# so this compares exact content. Runs after signing -- sbsign appends a
+# signature and does not touch the .sbat section.
+{
+    SBAT_SRC="src/boot/uefi/sbat.csv"
+    SBAT_HDR="sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md"
+    sbat_fail() { echo "[sbat] FATAL: $1" >> "$LOG"; print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+    [ -f "$SBAT_SRC" ] || sbat_fail "$SBAT_SRC missing"
+    # Stage 1: structural + semantic validation of the source CSV.
+    [ "$(sed -n '1p' "$SBAT_SRC")" = "$SBAT_HDR" ] || sbat_fail "sbat.csv line 1 is not the shim SBAT header"
+    # Whole-file shape: exactly the header + impossibleos rows (2 non-empty
+    # lines), and EVERY non-empty line has 6 comma fields. Without this a
+    # third malformed row would slip past the impossibleos-only check and
+    # then pass Stage 2 (artifacts byte-match the same bad source).
+    sbat_nonempty=$(grep -c . "$SBAT_SRC")
+    [ "$sbat_nonempty" -eq 2 ] || sbat_fail "sbat.csv must have exactly 2 non-empty rows (header + impossibleos; found $sbat_nonempty)"
+    sbat_badfields=$(awk -F, 'NF>0 && NF!=6 {c++} END{print c+0}' "$SBAT_SRC")
+    [ "$sbat_badfields" -eq 0 ] || sbat_fail "sbat.csv has $sbat_badfields row(s) without exactly 6 fields"
+    sbat_rows=$(grep -c '^impossibleos,' "$SBAT_SRC")
+    [ "$sbat_rows" -eq 1 ] || sbat_fail "sbat.csv needs exactly one impossibleos row (found $sbat_rows)"
+    sbat_line=$(grep '^impossibleos,' "$SBAT_SRC")
+    sbat_fields=$(printf '%s' "$sbat_line" | awk -F, '{print NF}')
+    [ "$sbat_fields" -eq 6 ] || sbat_fail "impossibleos row needs 6 fields (found $sbat_fields)"
+    sbat_gen=$(printf '%s' "$sbat_line" | cut -d, -f2)
+    case "$sbat_gen" in ''|*[!0-9]*) sbat_fail "impossibleos generation '$sbat_gen' is not a positive integer";; esac
+    [ "$sbat_gen" -ge 1 ] || sbat_fail "impossibleos generation must be >= 1 (got $sbat_gen)"
+    # Stage 2: per-artifact byte-compare of the embedded .sbat against the source.
+    for sbat_art in build/tools/BOOTX64.EFI build/tools/BOOTX64.UKI.efi; do
+        [ -f "$sbat_art" ] || continue   # UKI is skipped when stub/kernel are absent
+        sbat_tmp=$(mktemp)
+        objcopy -O binary --only-section=.sbat "$sbat_art" "$sbat_tmp" 2>>"$LOG" || { rm -f "$sbat_tmp"; sbat_fail "cannot dump .sbat from $sbat_art"; }
+        cmp -s "$sbat_tmp" "$SBAT_SRC" || { rm -f "$sbat_tmp"; sbat_fail "$sbat_art .sbat does not match $SBAT_SRC (missing/empty/stale)"; }
+        rm -f "$sbat_tmp"
+    done
+    echo "[sbat] OK: BOOTX64.EFI + UKI carry .sbat == $SBAT_SRC (impossibleos gen $sbat_gen)" >> "$LOG"
+} || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+
 # boot_info ABI manifest: compile kernel-view + mirror-view dumpers, emit
 # JSON for both, diff them. Fails the build on any field/offset/size drift.
 # Static asserts in the headers remain the first line of defense; this

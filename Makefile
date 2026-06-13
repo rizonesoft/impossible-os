@@ -123,7 +123,9 @@ $(BUILD_INFO_H): .FORCE
 
 # --- Source Discovery ---
 # Assembly sources (boot + kernel) — exclude ap_trampoline.asm (built separately as flat binary)
-ASM_SRCS := $(shell find $(BOOT_DIR) $(KERNEL_DIR) -name '*.asm' ! -name 'ap_trampoline.asm' 2>/dev/null)
+# sbat.asm is also excluded: it is built by the src/boot/uefi sub-make, where
+# its `incbin "sbat.csv"` resolves relative to the bootloader source dir.
+ASM_SRCS := $(shell find $(BOOT_DIR) $(KERNEL_DIR) -name '*.asm' ! -name 'ap_trampoline.asm' ! -name 'sbat.asm' 2>/dev/null)
 ASM_OBJS := $(patsubst $(SRC_DIR)/%.asm, $(BUILD_DIR)/%.o, $(ASM_SRCS))
 
 # AP trampoline: assembled as flat binary, then converted to linkable ELF object
@@ -170,6 +172,7 @@ UEFI_EFI := $(BUILD_DIR)/tools/BOOTX64.EFI
 uefi-boot: $(UEFI_EFI)
 
 $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds \
+             src/boot/uefi/sbat.asm src/boot/uefi/sbat.csv \
              src/boot/uefi/elf_bootproto.c src/boot/uefi/elf_bootproto.h \
              src/boot/uefi/elf_types.h src/boot/uefi/boot_proto_mirror.h \
              src/boot/uefi/boot_info_mirror.h \

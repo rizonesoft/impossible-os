@@ -80,7 +80,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [x]   |
 | 💎  |  15   | Post-boot SecureBoot revalidation        | §5              |  [/]   |
 | 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI | §11    |  [/]   |
-| 💎  |  17   | SBAT revocation metadata in boot artifacts | §9, §11    |  [ ]   |
+| 💎  |  17   | SBAT revocation metadata in boot artifacts | §9, §11    |  [x]   |
 
 ---
 
@@ -571,20 +571,28 @@ Promoted from §11 deferred [H] (gap-audit 2026-05-01). The Unified Kernel Image
 
 ## 17. SBAT Revocation Metadata in Boot Artifacts
 
-Promoted from gap-audit 2026-06-13 (Codex parity-floor finding). The Impossible bootloader (`BOOTX64.EFI`) and the Unified Kernel Image (`BOOTX64.UKI.efi`) embed no `.sbat` PE section, so neither artifact is SBAT-revocable: a vulnerable build can only be revoked by coarse dbx hash/cert revocation, not the fine-grained SBAT generation mechanism shim and systemd UKIs use. A SBAT-enforcing shim (§6) compares the loaded image's `.sbat` section against the `SbatLevel` UEFI variable; an image with no `.sbat` is a chain-of-trust gap that a stricter shim can refuse outright. §9 owns the SBAT bump *process* doc; this section owns the actual embedded section in the artifacts. **Files:** `src/boot/uefi/sbat.csv` (new), `src/boot/uefi/Makefile` (BOOTX64.EFI section embed), `scripts/build.sh` (UKI pack + build-time presence gate), `docs/guides/secure-boot-keys.md` (ordering + bump cross-ref), `src/kernel/test/test_uefi_boot.c` (presence test).
+Promoted from gap-audit 2026-06-13 (Codex parity-floor finding). The Impossible bootloader (`BOOTX64.EFI`) and the Unified Kernel Image (`BOOTX64.UKI.efi`) embed no `.sbat` PE section, so neither artifact is SBAT-revocable: a vulnerable build can only be revoked by coarse dbx hash/cert revocation, not the fine-grained SBAT generation mechanism shim and systemd UKIs use. A SBAT-enforcing shim (§6) compares the loaded image's `.sbat` section against the `SbatLevel` UEFI variable; an image with no `.sbat` is a chain-of-trust gap that a stricter shim can refuse outright. §9 owns the SBAT bump *process* doc; this section owns the actual embedded section in the artifacts. **Files:** `src/boot/uefi/sbat.csv` + `src/boot/uefi/sbat.asm` (new), `src/boot/uefi/Makefile` + `uefi.lds` (link-time `.sbat` embed via `-j .sbat`), root `Makefile` (exclude sbat.asm from the kernel ASM glob), `scripts/build.sh` (build-time content gate), `docs/guides/secure-boot-keys.md` (layout + bump cross-ref).
 
-- [ ] Create `src/boot/uefi/sbat.csv`: the upstream `sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md` header row plus an `impossibleos,1,Impossible OS,impossible-os,1,https://impossibleos.co/` component row (generation 1).
-- [ ] Embed `.sbat` in `BOOTX64.EFI`: extend the `src/boot/uefi/Makefile` objcopy step with `--add-section .sbat=$(SRC)/sbat.csv --set-section-flags .sbat=readonly,data` after the existing `-j` section copies.
-- [ ] Embed `.sbat` in `BOOTX64.UKI.efi`: add `--add-section .sbat=src/boot/uefi/sbat.csv` to the `scripts/build.sh` UKI pack step, placed before `.linux` (systemd-stub convention) so the whole-chain signature covers it.
-- [ ] Pin `.sbat` in the `docs/guides/secure-boot-keys.md` UKI section-ordering table and cross-reference the §9 SBAT-bump checklist: a CVE bump increments the `impossibleos` generation number in `sbat.csv` and rebuilds both artifacts.
-- [ ] Build-time presence gate: `scripts/build.sh` hard-fails if `build/tools/BOOTX64.EFI` or `BOOTX64.UKI.efi` lacks a `.sbat` section (`llvm-objdump -h ... | grep -q '\.sbat'`).
-- [ ] Bootloader publishes SBAT presence into `boot_info` (a `sbat_generation` byte, 0 = absent) so the kernel has an observable surface; `detect_uki_sections()` / the EFI section walk records it pre-EBS.
-- [ ] Unit test `test_sbat_section_present` (TEST_CAT_BOOT) asserts the published `sbat_generation` is non-zero on a build with the section, exercising the pure boot_info field (no live boot calls).
+- [x] Create `src/boot/uefi/sbat.csv`: the upstream `sbat,1,SBAT Version,sbat,1,https://github.com/rhboot/shim/blob/main/SBAT.md` header row plus an `impossibleos,1,Impossible OS,impossible-os,1,https://impossibleos.co/` component row (generation 1).
+- [x] Embed `.sbat` in `BOOTX64.EFI` at link time: `src/boot/uefi/sbat.asm` `incbin`s `sbat.csv` into a `.sbat` section (placed by `uefi.lds`, carried by the ELF->PE `-j .sbat`). Post-hoc objcopy was unviable (content drop / PE corruption / 0 bytes).
+- [x] `.sbat` in `BOOTX64.UKI.efi`: the UKI is built from the `BOOTX64.EFI` stub, so it inherits the stub's `.sbat` (no separate add -- re-adding would duplicate the section).
+- [x] Pin `.sbat` in the `docs/guides/secure-boot-keys.md` UKI section layout + cross-reference the SBAT-bump checklist (a CVE bump increments the `impossibleos` generation in `sbat.csv`).
+- [x] Build-time **content**-validating gate in `scripts/build.sh`: validates `sbat.csv` structure then byte-`cmp`s both artifacts' embedded `.sbat` against the source, hard-failing on any mismatch.
 - [ ] Commit: `"boot: embed .sbat revocation metadata in BOOTX64.EFI + UKI -- SBAT-revocable boot artifacts"`
 
-**Test checkpoint:** `bash scripts/build.sh` produces `BOOTX64.EFI` and `BOOTX64.UKI.efi` each carrying a `.sbat` section (`llvm-objdump -h build/tools/BOOTX64.EFI | grep .sbat`); the CSV parses as valid SBAT (`impossibleos,1`); a SBAT-enforcing shim with `SbatLevel` at or below generation 1 loads the image, above it refuses with the shim SBAT self-check message. The build aborts if either artifact lacks `.sbat`. Test on: QEMU WHPX, QEMU TCG (OVMF + shim), bare metal (UEFI 2.7+).
+> [!NOTE]
+> **No kernel test surface.** A `boot_info` `sbat_generation` field + kernel unit test was dropped (Codex design review 2026-06-13): the kernel cannot enforce shim SBAT revocation after ExitBootServices, and `boot_info` version/size is exact-match fatal, so a test-only ABI field adds a synchronized-reflash failure mode for zero runtime benefit. Verification is the build-time PE content gate above (validates the final artifacts before signing).
+
+**Test checkpoint:** `bash scripts/build.sh` produces `BOOTX64.EFI` and `BOOTX64.UKI.efi` each carrying a `.sbat` section whose bytes equal `src/boot/uefi/sbat.csv`; the build log shows `[sbat] OK: ... (impossibleos gen 1)`. The gate validates the source CSV structurally (exact shim header + one `impossibleos,<positive-gen>` row, 6 fields) then byte-`cmp`s each artifact's `.sbat` (dumped via `objcopy -O binary --only-section=.sbat`) against the source; the build aborts (`=== BUILD FAILED ===`) on any missing/empty/stale section. A SBAT-enforcing shim with `SbatLevel` at or below generation 1 loads the image, above it refuses. Test on: QEMU WHPX, QEMU TCG (OVMF + shim), bare metal (UEFI 2.7+).
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) + `scripts\debug\kernel\run-secureboot.bat`
+
+> **Notes:**
+> - **What shipped:** `src/boot/uefi/sbat.csv` (shim SBAT CSV, `impossibleos` gen 1) embedded as a `.sbat` PE section in both `BOOTX64.EFI` and `BOOTX64.UKI.efi`, making the artifacts SBAT-revocable (parity with shim/systemd).
+> - **How it integrates:** `src/boot/uefi/sbat.asm` `incbin`s the CSV into a `.sbat` ELF section (placed by `uefi.lds`, carried by the ELF->PE `-j .sbat`); the UKI inherits it from the stub; a `scripts/build.sh` gate validates `sbat.csv` + byte-`cmp`s both artifacts, hard-failing on drift.
+> - **Downstream:** the §9 SBAT-bump checklist drives generation increments; a SBAT-enforcing shim can now revoke a vulnerable build by `SbatLevel` instead of coarse dbx.
+> - **Canonical doc:** `docs/guides/secure-boot-keys.md` (UKI section layout + SBAT Bump checklist).
+> - **Scope boundary:** no `boot_info` field / no kernel test (the kernel cannot enforce shim SBAT after ExitBootServices); verification is build-time only. UKI addons/profiles stay advanced (TODO-27 if ever).
 
 ---
 
@@ -601,7 +609,7 @@ Promoted from gap-audit 2026-06-13 (Codex parity-floor finding). The Impossible 
 | ⭐   | Boot timeline         | ❌ ETW WPA (heavyweight)        | ❌ systemd-analyze (userland)| ✅ §7 per-step JSON + NVRAM     |
 | 💎   | Atomic serial         | ✅ KdPrint spinlock             | ✅ printk logbuf             | ✅ §8 klog ring + serial        |
 | 💎   | SBAT shim ops         | ✅ MS Secure Boot program       | ✅ distro shim refresh       | ✅ §9 SBAT checklist doc        |
-| 💎   | SBAT artifact revoke  | ✅ MS-signed shim SBAT          | ✅ shim + UKI .sbat section  | ⬜ §17 BOOTX64 + UKI .sbat      |
+| 💎   | SBAT artifact revoke  | ✅ MS-signed shim SBAT          | ✅ shim + UKI .sbat section  | ✅ §17 BOOTX64 + UKI .sbat      |
 | 💎   | DB/dbx inventory      | ✅ msinfo32 SB details          | ✅ mokutil --db              | ✅ §9 registry Db/Dbx counts    |
 | 💎   | EBS retry hardening   | ✅ bootmgr bounded retry        | ✅ efi-stub retry patch      | ✅ §9 4-attempt bounded loop    |
 | 💎   | Capsule install UX    | ✅ Windows Update stack         | ✅ fwupd + LVFS              | ⬜ TODO-27 §2 (query-only)      |
@@ -625,7 +633,7 @@ Promoted from gap-audit 2026-06-13 (Codex parity-floor finding). The Impossible 
 - [x] Add ESP integrity test: 3 suites in `test_uefi_boot.c` covering (1) BOOT_INFO_VERSION >= 11 + esp_filesystem_type/esp_type_guid_valid bit-range, (2) registry SizeMB matches `g_boot_info.esp_size_mb`, (3) `HKLM\HARDWARE\BOOT\ESP\Uuid` is empty (non-GPT) or 36-char canonical GUID with dashes at 8/13/18/23. Tests use TEST_SKIP for non-disk boot path; no live boot calls.
 - [x] Add Win32 firmware test: `pe_exports_sorted_check()` validates kernel32+ntdll table sort order survives the new insertions; `HKLM\SYSTEM\SecureBoot\Vars\VarsValid` validity contract (size keys present iff VarsValid=1); `NtQuerySystemInformation(SystemFirmwareTableInformation, ACPI, enumerate)` returns SUCCESS or NOT_FOUND with at least one 4-byte signature on success.
 - [ ] Commit: `"test: extend uefi_boot suite with shim CA, ESP probe, kernel32 firmware exports"`
-- [ ] Add §17 SBAT test: `test_sbat_section_present` asserts `g_boot_info.sbat_generation` is non-zero (boot_info-published, pure field, no live boot calls); build-time `.sbat` presence is gated separately in `scripts/build.sh`.
+- [x] §17 SBAT: no kernel test surface (the `sbat_generation` boot_info field was dropped per design review). `.sbat` content is validated by the two-stage build-time gate in `scripts/build.sh`.
 
 > **Done:** 32 suites registered via `test_register_uefi_boot()` (originally 9; expanded across §13 ESP-integrity (3) and §14 Win32 firmware (3) plus subsequent sub-assertions). Up to date as of 2026-05-01.
 
