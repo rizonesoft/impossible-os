@@ -44,16 +44,16 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 | ⭐  | Order | Deliverable                                        | Depends On                | Status |
 | --- | :---: | -------------------------------------------------- | ------------------------- | :----: |
 | 💎  |   1   | Alternate boot protocol policy                     | T01 §8                    |  [x]   |
-| 💎  |   2   | Multiboot2 feature parity audit                    | §1                        |  [~]   |
-| 💎  |   3   | Multiboot2-to-boot_info adapter                    | §2, T01 §11, T01 §12      |  [~]   |
-| 💎  |   4   | Unsupported-feature degradation matrix             | §2, §3                    |  [~]   |
-| 💎  |   5   | GRUB/Limine/legacy BIOS documentation              | §1                        |  [~]   |
-| ⭐  |   6   | Compatibility test images                          | §3                        |  [~]   |
+| 💎  |   2   | Multiboot2 feature parity audit                    | §1                        |  [x]   |
+| 💎  |   3   | Multiboot2-to-boot_info adapter                    | §2, T01 §11, T01 §12      |  [x]   |
+| 💎  |   4   | Unsupported-feature degradation matrix             | §2, §3                    |  [x]   |
+| 💎  |   5   | GRUB/Limine/legacy BIOS documentation              | §1                        |  [x]   |
+| ⭐  |   6   | Compatibility test images                          | §3                        |  [x]   |
 | ⭐  |   7   | Deprecation or promotion gate                      | §1                        |  [x]   |
 
 > 💎 = parity -- Linux distros ship Multiboot2 + UEFI dual-boot; Win11 is UEFI-only since 24H2 (no Multiboot equivalent).
 > ⭐ = exclusive -- §6 + §7 explicit policy gate (neither OS publishes a structured "supported / diagnostic / unsupported" taxonomy for alternate boot protocols).
-> `[~]` = not applicable -- §1 chose `unsupported`; §2-§6 implement / document the Multiboot2 path that policy decision retired.
+> `[x]` (§2-§6) = retired-closed -- §1 chose `unsupported` and §7 deleted the Multiboot2 parser/stub; these sections would have implemented / documented the retired path, so they are closed N/A (per-section RETIRED callouts + Verified retirement stamps note 0 items, no code surface).
 
 ---
 
@@ -96,6 +96,8 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired under `unsupported` policy).
 
+> **Verified:** 2026-06-13 | RETIRED under §1 `unsupported` policy (§7 deleted the parser, commit `8117d6c7`) | 0 items -- N/A, no code surface
+
 ---
 
 ## 3. Multiboot2-to-boot_info Adapter
@@ -111,6 +113,8 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [~] Commit -- N/A.
 
 **Test checkpoint:** N/A (section retired under `unsupported` policy).
+
+> **Verified:** 2026-06-13 | RETIRED under §1 `unsupported` policy (§7 deleted the parser, commit `8117d6c7`) | 0 items -- N/A, no code surface
 
 ---
 
@@ -132,6 +136,8 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired under `unsupported` policy).
 
+> **Verified:** 2026-06-13 | RETIRED under §1 `unsupported` policy (§7 deleted the parser, commit `8117d6c7`) | 0 items -- N/A, no code surface
+
 ---
 
 ## 5. GRUB / Limine / Legacy BIOS Documentation
@@ -150,6 +156,8 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired; non-goal content lives in `docs/boot/alt-boot.md`).
 
+> **Verified:** 2026-06-13 | RETIRED under §1 `unsupported` policy (non-goal docs shipped via §1 to `docs/boot/alt-boot.md`) | 0 items -- N/A, no code surface
+
 ---
 
 ## 6. Compatibility Test Images
@@ -164,6 +172,8 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 - [~] Commit -- N/A.
 
 **Test checkpoint:** N/A (section retired; the canonical UEFI ISO from TODO-06 §4 remains the only ISO artifact).
+
+> **Verified:** 2026-06-13 | RETIRED under §1 `unsupported` policy (no GRUB Multiboot2 ISO built; `scripts/test-alt-boot.sh` never created) | 0 items -- N/A, no code surface
 
 ---
 
