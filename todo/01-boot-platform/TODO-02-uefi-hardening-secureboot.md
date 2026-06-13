@@ -81,6 +81,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  15   | Post-boot SecureBoot revalidation        | §5              |  [/]   |
 | 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI | §11    |  [/]   |
 | 💎  |  17   | SBAT revocation metadata in boot artifacts | §9, §11    |  [x]   |
+| 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17 |  [ ]   |
 
 ---
 
@@ -596,6 +597,22 @@ Promoted from gap-audit 2026-06-13 (Codex parity-floor finding). The Impossible 
 
 > **Verified:** 2026-06-13 | commit `900ade7c` | 5/5 items | build OK | smoke PASS (KVM 2.160s)
 > **Quality reviewed:** 2026-06-13 | Codex 8x (design + adversarial + consistency + perf + re-adversarial) | 4H+6M fixed | scope: boot-code-quality
+
+---
+
+## 18. Build Idempotency: UKI SBAT Survives Incremental Rebuild
+
+The UKI pack step (`scripts/build.sh`) runs `objcopy --add-section ... "$UKI_STUB"` against `build/tools/BOOTX64.EFI` on every build. On a clean build that stub is freshly linked and **unsigned**, so the UKI inherits a clean `.sbat` and the §17 Stage-2 byte-compare gate passes. On an **incremental** build the Makefile does not relink an up-to-date stub, so `build/tools/BOOTX64.EFI` persists in the **signed** state `scripts/sign-efi.sh` left it in (Phase 2b `mv`s the signed temp over the original in place). `objcopy --add-section` on an already-Authenticode-signed PE corrupts the section table, so `objcopy --only-section=.sbat` can no longer dump `.sbat` and the build fails with `[sbat] FATAL: cannot dump .sbat from build/tools/BOOTX64.UKI.efi`. Net effect: **no build can run twice without `clean`** -- `scripts/test.sh` and the post-commit unit-test hook both incremental-build first and fail. Reproduced 2026-06-13: clean build OK, immediate no-op incremental build FAILs at the UKI SBAT gate; `rm -f build/tools/BOOTX64.EFI build/tools/BOOTX64.UKI.efi` then build OK (Makefile relinks an unsigned stub). Pre-existing; surfaced during TODO-07 §18 review. SECURITY-SENSITIVE (Secure Boot signing / image-assembly path) -- the fix needs human review + bare-metal SB-chain verification before it lands, per CLAUDE.md Safety Gates. Candidate fixes: **(A)** non-destructive signing -- sign to a distinct path, keep `build/tools/BOOTX64.EFI` unsigned, place the signed artifact on the ESP via the System Disk step (most correct); **(B)** strip the signature from a temp stub copy inside the UKI pack (`sbattach --remove` from `sbsigntools`) and pack from the temp; **(C)** `rm` the stub + UKI before the EFI Boot step so the Makefile always relinks an unsigned stub (smallest, but defeats bootloader incremental caching).
+
+- [ ] Decide the fix shape (A / B / C above) and record the choice + rationale.
+- [ ] Implement the chosen fix without changing what is signed, the key material, or the SB policy -- incremental output must byte-match the authoritative clean-build output.
+- [ ] Verify BOTH build modes: clean build AND immediate no-op incremental build both reach `=== BUILD OK ===` with `[sbat] OK`, and `sbverify` (already in `sign-efi.sh`) passes for both `BOOTX64.EFI` and `BOOTX64.UKI.efi`.
+- [ ] Verify the signed UKI still boots + the SB chain validates on bare metal / a Secure-Boot-enrolled VM (human-gated; cannot be validated in WSL TCG/KVM).
+- [ ] Commit: `"build: TODO-02 §18 -- UKI SBAT survives incremental rebuild (idempotent signing/pack)"`
+
+**Test checkpoint:** `bash scripts/build.sh && bash scripts/build.sh` (two builds, no `clean` between) both end `=== BUILD OK ===` with `[sbat] OK: BOOTX64.EFI + UKI carry .sbat`. `scripts/test.sh SUITE=boot` runs without a build failure. On bare metal with Secure Boot enrolled, the incremental-built UKI boots and the firmware accepts the signature. Test on: WSL TCG (build idempotency only); bare metal (SB-chain acceptance).
+
+> **Test runner:** N/A (build-infrastructure fix) | validation: double-build idempotency + `sbverify` in `sign-efi.sh` + bare-metal SB enrollment
 
 ---
 
