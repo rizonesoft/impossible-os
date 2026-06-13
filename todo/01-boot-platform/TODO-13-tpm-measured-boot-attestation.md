@@ -56,6 +56,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Reject truncation with explicit offsets and status codes.
 - [ ] Export event summaries to `X:\Diag\tpm-events.json` as a TCG CEL-JSON (Canonical Event Log) subset so external verifiers (systemd-pcrlock, Keylime) can consume the log without a custom parser.
 - [ ] When the bootloader copies the TCG event log, publish a typed payload descriptor of type `BOOT_PAYLOAD_TPM_EVENT_LOG` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) pointing at the copy so TODO-01 §4's overlap validator retains the region alongside boot_info / rt_mmap / USB DMA / framebuffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
+- [ ] Bootloader copies the EXACT log (parse final-event length before `AllocatePool`; the `+256` estimate truncates large events) or degrades `BOOT_CAP_TPM_EVENT_LOG`; descriptor needs `VALID|RESERVED` for PMM retention.
 - [ ] Commit: `"tpm: harden measured boot event log parser"`
 
 **Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the bootloader copy publishes a `BOOT_PAYLOAD_TPM_EVENT_LOG` descriptor that TODO-01 §4's overlap validator retains. Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
@@ -83,7 +84,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Verified:** 2026-06-12 | commit `8ae51bf1` | 6/6 items | build OK | smoke PASS (KVM 2.530s)
 > **Accepted:** [M] ACPI start methods 2/8 degrade-with-WARN until an AML interpreter exists -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "TPM2 ACPI start method (2/8)" at line 80)
-> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 86)
+> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 87)
 > **Quality reviewed:** 2026-06-12 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 1Crit+6H+6M fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-code-quality
 
 ## 3. PCR Read API
