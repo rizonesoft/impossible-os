@@ -392,9 +392,9 @@ Close the roadmap by making the final owner state discoverable and removing tran
 
 > Tests for this TODO are **operator-validation**, not kernel-side or host-tooling-side. There is no `TEST_CAT_*` registration, no `src/kernel/test/test_*.c`, no `user/test/test_*.c`, and no `scripts/test-tooling.sh` sub-test to add. The sole verification surface is the live GitHub repository, GitHub Pages, DNS, and the existing tooling already covered by `bash scripts/test-tooling.sh` and `python3 scripts/todo-graph/validate.py`. Section 7 is the validation suite for this TODO.
 
-- [ ] No new automated tests are introduced by this TODO.
-- [ ] Section 7 enumerates the operator-executed checks (git fetch, `curl -I`, DNS lookup, workflow re-run, `bash scripts/lint.sh`, `bash scripts/test-tooling.sh`, `python3 scripts/todo-graph/build.py`, `python3 scripts/todo-graph/validate.py`) that stand in for unit tests here.
-- [ ] Commit: covered by §7's validation commit; no separate test commit.
+- [x] No new automated tests are introduced by this TODO.
+- [x] Section 7 enumerates the operator-executed checks (git fetch, curl, DNS, workflow re-run, lint, test-tooling, todo-graph build/validate) that stand in for unit tests here.
+- [x] Commit: covered by §7's validation commit; no separate test commit.
 
 ---
 
@@ -402,17 +402,17 @@ Close the roadmap by making the final owner state discoverable and removing tran
 
 > **Test runner:** N/A (operator runbook -- no kernel/usermode/desktop test surface) | validation: §7 validation suite (`curl -I https://impossibleos.co/`, `curl -I https://www.impossibleos.co/`, `curl -I https://rizonetech.github.io/impossible-os/`, fresh clone from new origin, latest Pages deployment under `rizonetech`, `bash scripts/lint.sh`, `bash scripts/test-tooling.sh`, `python3 scripts/todo-graph/build.py --quiet`, `python3 scripts/todo-graph/validate.py --warnings-only`).
 
-- [ ] Repository lives at `https://github.com/rizonetech/impossible-os`; old `rizonesoft/impossible-os` URL redirects.
-- [ ] `git fetch` succeeds from the new origin in a fresh clone and in an updated existing clone.
-- [ ] `https://impossibleos.co/` returns `200 OK` with a valid HTTPS certificate.
-- [ ] `https://www.impossibleos.co/` redirects to `https://impossibleos.co/`.
-- [ ] `https://rizonetech.github.io/impossible-os/` either redirects to the custom domain or serves the expected Pages site.
-- [ ] Apex DNS A records match GitHub Pages IPs; `www.impossibleos.co` CNAME resolves to `rizonetech.github.io`.
-- [ ] Latest Pages, build, and (if dispatched) release workflow runs are green under the new owner.
-- [ ] `bash scripts/lint.sh` passes after the URL/badge/doc sweep.
-- [ ] `bash scripts/test-tooling.sh` passes (no regression from URL changes).
-- [ ] `python3 scripts/todo-graph/build.py --quiet` and `python3 scripts/todo-graph/validate.py --warnings-only` both pass.
-- [ ] `rg -n "rizonesoft/impossible-os|github.com/rizonesoft|rizonetech.github.io" README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs gh-pages .github todo` returns only intentional historical or brand references.
-- [ ] Org-level policy still blocks autonomous coding-agent PR flow for the repository (Settings -> Copilot -> Access policies; manual UI check captured in §5/§7 evidence).
-- [ ] Verify on: GitHub.com (production), DNS provider's authoritative resolvers, and the Linux WSL2 dev host. Bare-metal / Windows test platforms not applicable -- this TODO is repository-operations only.
-- [ ] Commit: `"00-infrastructure/TODO-09: repository transfer to rizonetech complete"`
+- [/] Repository lives at `rizonetech/impossible-os`; old URL redirects. (existing-clone origin=rizonetech, fetch/push green this session; fresh-clone + redirect: manual)
+- [/] `git fetch` succeeds from new origin in fresh + updated existing clone. (updated existing clone verified this session; fresh clone: manual)
+- [ ] `https://impossibleos.co/` returns `200 OK` with a valid HTTPS certificate. (manual -- `curl -I` against prod)
+- [ ] `https://www.impossibleos.co/` redirects to `https://impossibleos.co/`. (manual -- `curl -I` against prod)
+- [ ] `https://rizonetech.github.io/impossible-os/` redirects to the custom domain or serves the Pages site. (manual -- `curl -I` against prod)
+- [ ] Apex DNS A records match GitHub Pages IPs; `www` CNAME resolves to `rizonetech.github.io`. (manual -- authoritative DNS)
+- [ ] Latest Pages, build, and (if dispatched) release workflow runs are green under the new owner. (manual -- GitHub Actions UI)
+- [x] `bash scripts/lint.sh` passes after the URL/badge/doc sweep. (2026-06-13: exit 0)
+- [x] `bash scripts/test-tooling.sh` passes (no regression from URL changes). (2026-06-13: 375/375 PASS)
+- [x] `python3 scripts/todo-graph/build.py` + `validate.py` both pass. (2026-06-13: validate 8/8, 0 warnings)
+- [x] Owner-ref scan returns only intentional historical/brand references. (2026-06-13: only this TODO + preflight runbook carry old URL as documented before-state)
+- [ ] Org-level policy still blocks autonomous coding-agent PR flow (Settings -> Copilot -> Access policies; §5/§7 evidence). (manual -- org Settings UI)
+- [/] Verify on GitHub.com (prod), authoritative DNS resolvers, and the WSL2 dev host. (WSL2 tooling verified 2026-06-13; prod + DNS: manual)
+- [x] Commit: `"00-infrastructure/TODO-09: repository transfer to rizonetech complete"`
