@@ -2216,6 +2216,12 @@ _CALL_HIERARCHY_FOLLOW_TIMEOUT_S = 5.0
 _TYPE_HIERARCHY_MAX_ANCHORS = 32
 _TYPE_HIERARCHY_DEADLINE_S = 30.0
 _TYPE_HIERARCHY_FOLLOW_TIMEOUT_S = 5.0
+# Per-anchor supertypes/subtypes cap. The anchor fan-out is bounded, but
+# a single LSP message can be up to 32 MiB; without a per-anchor cap one
+# hostile or pathological supertypes list could balloon the MCP response.
+# Truncation is surfaced (types_total / types_truncated) so a caller can
+# narrow the query instead of silently losing items.
+_TYPE_HIERARCHY_MAX_TYPES_PER_ANCHOR = 200
 
 
 def _normalize_completion(result: Any) -> dict:
@@ -3242,11 +3248,13 @@ def _build_mcp(FastMCP, workspace_root: Path):
         line_v, char_v = _validate_position(line, character)
         resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
         lsp = _get_or_spawn(lang, workspace_root)
-        uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
-        # Spec-correct capability check (boolean | Options dict | absent).
-        # `{}` means "supported with default options", so _caps_missing --
-        # which already handles that LSP 3.17 subtlety -- is reused here
-        # rather than a naive truthiness test.
+        uri = resolved.as_uri()
+        # Capability gate BEFORE opening the document. _caps_missing only
+        # reads server_caps (filled at initialize), so an unsupported LSP
+        # (asm-lsp / bash / PSES) returns capability_missing without paying
+        # the cost of a textDocument/didOpen write -- Codex perf review.
+        # Spec-correct check (boolean | Options dict | absent): `{}` means
+        # "supported with default options", which _caps_missing handles.
         if _caps_missing(lsp.server_caps, ("typeHierarchyProvider",)):
             return {
                 "uri": uri,
@@ -3263,12 +3271,22 @@ def _build_mcp(FastMCP, workspace_root: Path):
                         "typeHierarchyProvider; type hierarchy is "
                         "unavailable for this language.",
             }
+        # Start the wall-clock budget BEFORE the open/refresh so the
+        # didOpen + prepare + every follow-up share one deadline, and bound
+        # the prepare request by the remaining budget (call hierarchy
+        # leaves prepare on a fixed 15s; this hardens it). The residual gap
+        # -- a wedged LSP blocking the bridge mid-write under stdin
+        # backpressure -- is shared by every multi-step tool and is tracked
+        # as an LSP-client write-path follow-up in the health-monitoring
+        # section.
         deadline = _time.monotonic() + _TYPE_HIERARCHY_DEADLINE_S
+        _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
+        prepare_timeout = min(15.0, max(0.1, deadline - _time.monotonic()))
         prepared_raw = lsp.request(
             "textDocument/prepareTypeHierarchy",
             {"textDocument": {"uri": uri},
              "position": {"line": line_v, "character": char_v}},
-            timeout=15.0,
+            timeout=prepare_timeout,
         )
         prepared = _normalize_type_hierarchy_items(prepared_raw)
         if not prepared:
@@ -3326,15 +3344,28 @@ def _build_mcp(FastMCP, workspace_root: Path):
                     anchors_out.append({
                         "anchor": _normalize_type_hierarchy_item(anchor),
                         "types": [],
+                        "types_total": 0,
+                        "types_truncated": False,
                         "anchor_error": exc.to_envelope(),
                     })
                     continue
                 raise
+            # Cap per-anchor types BEFORE normalizing. The anchor fan-out is
+            # bounded at _TYPE_HIERARCHY_MAX_ANCHORS, but a single LSP
+            # message can be up to 32 MiB, so an unbounded supertypes /
+            # subtypes list would let one anchor balloon the whole response.
+            # Slice first, then normalize, and surface types_total /
+            # types_truncated so the caller can narrow the query rather than
+            # receive an arbitrarily large payload -- Codex perf review.
+            follow_items = _normalize_type_hierarchy_items(follow)
+            types_total = len(follow_items)
             types = [_normalize_type_hierarchy_item(t)
-                     for t in _normalize_type_hierarchy_items(follow)]
+                     for t in follow_items[:_TYPE_HIERARCHY_MAX_TYPES_PER_ANCHOR]]
             anchors_out.append({
                 "anchor": _normalize_type_hierarchy_item(anchor),
                 "types": types,
+                "types_total": types_total,
+                "types_truncated": types_total > _TYPE_HIERARCHY_MAX_TYPES_PER_ANCHOR,
             })
         return {
             "uri": uri,

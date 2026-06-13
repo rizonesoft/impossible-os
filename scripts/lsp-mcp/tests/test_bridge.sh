@@ -1995,6 +1995,8 @@ try:
         assert 'data' not in a, a
         assert 'selection_range' in a and 'selectionRange' not in a, a
         assert len(entry['types']) == 1, entry
+        assert entry['types_total'] == 1, entry
+        assert entry['types_truncated'] is False, entry
         t = entry['types'][0]
         # flat TypeHierarchyItem, normalized (selectionRange -> selection_range,
         # opaque 'data' dropped). The Base name carries the prepared anchor's
@@ -2014,6 +2016,102 @@ finally:
     bridge._LSP_SPAWNERS.pop('fake', None)
     with bridge._LIVE_LSPS_LOCK:
         keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake']
+    for k in keys:
+        with bridge._LIVE_LSPS_LOCK:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+        if inst is not None:
+            inst.shutdown(timeout=2.0)
+PY
+}
+
+# --- 18e: per-anchor types cap + truncation metadata ---------------------
+# A supported LSP returning more supertypes than _TYPE_HIERARCHY_MAX_TYPES_
+# PER_ANCHOR (200) must be capped, with types_total / types_truncated
+# surfaced so the caller can narrow the query (Codex perf review). Fake LSP.
+t_type_hierarchy_types_cap() {
+    python3 - << 'PY'
+import sys, tempfile, os
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+import bridge
+from lsp_client import LspSubprocess
+
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],
+                   'result':{'capabilities':{'typeHierarchyProvider': True}}})
+    elif method == 'textDocument/prepareTypeHierarchy':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':[
+            {'name': 'Root', 'kind': 5, 'uri': 'file:///x', 'range': {}, 'selectionRange': {}},
+        ]})
+    elif method == 'typeHierarchy/supertypes':
+        # 250 supertypes -- exceeds the per-anchor cap of 200.
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':[
+            {'name': f'Base{i}', 'kind': 5, 'uri': 'file:///x',
+             'range': {}, 'selectionRange': {}} for i in range(250)
+        ]})
+    elif method == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+    elif 'id' in m:
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+"""
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeextth', mode='w', delete=False, dir=str(ws))
+try:
+    tmp.write('// fake source\n'); tmp.close()
+    bridge._EXT_TO_LANG['.fakeextth'] = 'faketh'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['faketh'] = 'plaintext'
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='faketh')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('faketh', spawn_fake)
+    srv = bridge._build_mcp(FastMCP, ws)
+    fn = srv._tool_manager._tools['type_hierarchy_supertypes'].fn
+    result = fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in result, result
+    assert result['capability_missing'] is False, result
+    assert len(result['anchors']) == 1, result
+    entry = result['anchors'][0]
+    assert entry['types_total'] == 250, entry
+    assert entry['types_truncated'] is True, entry
+    # Capped at _TYPE_HIERARCHY_MAX_TYPES_PER_ANCHOR (200).
+    assert len(entry['types']) == 200, len(entry['types'])
+    print('[type_hierarchy] per-anchor types cap OK (250 -> 200, truncated flagged)')
+finally:
+    os.unlink(tmp.name)
+    bridge._EXT_TO_LANG.pop('.fakeextth', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('faketh', None)
+    bridge._LSP_SPAWNERS.pop('faketh', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'faketh']
     for k in keys:
         with bridge._LIVE_LSPS_LOCK:
             inst = bridge._LIVE_LSPS.pop(k, None)
@@ -5484,6 +5582,7 @@ run "18a type-hierarchy normalizers"     t_type_hierarchy_normalizers
 run "18b type_hierarchy clangd round-trip" t_type_hierarchy_smoke_clangd
 run "18c type_hierarchy capability-missing" t_type_hierarchy_capability_missing
 run "18d type_hierarchy supported walk"   t_type_hierarchy_supported_walk
+run "18e type_hierarchy types cap"        t_type_hierarchy_types_cap
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
