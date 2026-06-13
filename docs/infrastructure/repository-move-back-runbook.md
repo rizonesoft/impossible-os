@@ -1,0 +1,157 @@
+# Repository Move-Back and Public-Visibility Runbook
+
+> Companion to [`repository-transfer-preflight.md`](repository-transfer-preflight.md) (the §1 inventory) and
+> [`github-setup.md`](github-setup.md) (the canonical owner-state record). This runbook defines the **return
+> path** before it is needed: moving `rizonetech/impossible-os` back to a personal account and flipping the
+> repository to public should be a planned ownership change, not a scramble during the public launch.
+>
+> **Status:** forward-planning. The repository currently lives at `rizonetech/impossible-os` (private).
+> No move-back has been executed. This document is the procedure to follow when the move-back trigger fires.
+
+## 1. Move-Back Trigger
+
+Begin the move-back only when ALL of the following hold. Each is a hard gate, not a preference:
+
+- The repository is ready to become **public** (no private-only history, notes, or secrets that must stay private).
+- The **release posture is approved**: the release workflow, issue/PR templates, and changelog are public-ready.
+- A **security / private-history review** is complete: no credentials in git history, no internal-only paths, no
+  embedded tokens (`git log -p | rg -i 'token|secret|password|BEGIN .* PRIVATE KEY'` returns only intentional refs).
+- **Public documentation is ready**: README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT all describe the final
+  public owner and a new contributor can onboard without hitting stale owner names.
+
+If any gate is unmet, do not start the transfer. The move-back is irreversible-ish (redirects can be permanently
+destroyed; see the tombstone rule in §4) and a half-ready public flip is worse than staying private.
+
+## 2. Receiving Account Readiness
+
+Before touching the transfer dialog, confirm the receiving (personal) account can hold the repository AND serve
+the public Pages site:
+
+- The receiving account exists, has 2FA enabled, and the operator has admin on it.
+- **Plan must support the private-repo features the pre-public gates validate.** The visibility flip (§7) validates
+  **custom-domain Pages** and **branch protection / rulesets** BEFORE the repo is made public. A private repo
+  transferred to a **Free** personal account loses both (on private repos, Pages and protected branches are
+  paid-plan features), making those pre-public gates unsatisfiable. Either receive into an account whose plan keeps
+  Pages + branch protection on a private repo, OR follow the Free-account alternate in §7 (flip to public FIRST,
+  then validate Pages + rules, recording an explicit risk/rollback decision).
+- **Same-name / same-network gate (GitHub blocks the transfer on either):** confirm NO repository named
+  `impossible-os` exists at the receiving account AND no **fork in the same network** exists there. A fork in the
+  same network blocks the transfer just as a same-name repo does. Use **fail-closed** checks -- a `gh` network/auth
+  error or an unpaginated forks list must abort the runbook, never silently read as "clear":
+  ```bash
+  set -euo pipefail
+  # Same-name repo: a clean 404 is "ok"; any other gh failure aborts.
+  if gh api "repos/<receiving-owner>/impossible-os" >/dev/null 2>err; then
+    echo "BLOCKER: repo exists at destination"; exit 1
+  elif ! rg -q "Not Found|HTTP 404" err; then
+    echo "ABORT: unexpected gh error checking destination repo"; cat err; exit 2
+  else echo "ok: no same-name repo"; fi
+  # Same-network fork: paginate, match owner login exactly, fail-closed on API error.
+  forks="$(gh api --paginate "repos/rizonetech/impossible-os/forks" --jq '.[].owner.login')" \
+    || { echo "ABORT: forks API failed"; exit 2; }
+  if printf '%s\n' "$forks" | rg -qx "<receiving-owner>"; then
+    echo "BLOCKER: same-network fork at destination"; exit 1
+  else echo "ok: no destination fork"; fi
+  ```
+- The operator has permission to **create a repository** at the receiving account (always true for one's own account).
+
+## 3. Pre-Transfer Preflight (Repeat from the `rizonetech` State)
+
+Re-run the [§1 preflight inventory](repository-transfer-preflight.md) from the **current `rizonetech` state**, not the
+stale `rizonesoft` baseline. The transfer carries different surfaces than the original move, and the inventory must
+reflect what exists NOW:
+
+- Re-capture Pages config (custom domain `impossibleos.co`, HTTPS-enforced, build source).
+- Re-capture branch protection / rulesets, secrets + variables, environments, webhooks, deploy keys, releases,
+  packages, and the access model (collaborators + teams) from `rizonetech/impossible-os`.
+- Re-capture the current DNS baseline (`curl -sIL https://impossibleos.co/`, apex A records, `www` CNAME).
+- Diff against the `github-setup.md` recorded state; investigate any drift before transferring.
+
+## 4. Execute the Transfer Back
+
+- Transfer `rizonetech/impossible-os` to the receiving personal-account path via
+  `https://github.com/rizonetech/impossible-os/settings` -> Danger Zone -> Transfer ownership. Webhooks, services,
+  secrets, deploy keys, issues, PRs, wiki, stars, watchers, and commit/contribution history all travel with the repo.
+- **Audit the post-transfer collaborator state by evidence, not assumption.** GitHub guarantees only that the
+  *original owner* is added as a collaborator and that existing collaborators remain; org **teams** and org-admin
+  roles do NOT map cleanly onto a personal repo (a personal repo has owner + individual collaborators, and some
+  read-only org collaborators may not transfer at all). Enumerate access BEFORE and AFTER and reconcile by the
+  observed diff, not a presumed rule:
+  ```bash
+  gh api "repos/rizonetech/impossible-os/collaborators" --jq '.[].login' | sort > before.txt   # before transfer
+  gh api "repos/<receiving-owner>/impossible-os/collaborators" --jq '.[].login' | sort > after.txt  # after transfer
+  diff before.txt after.txt
+  ```
+  Remove or re-invite users based on the diff. Do not leave any unaudited collaborator on a soon-to-be-public repo.
+- **Tombstone rule (redirect preservation).** GitHub serves redirects from old owner paths
+  (`rizonesoft/impossible-os`, `rizonetech/impossible-os`) to the new location -- but creating a **new repository OR
+  fork at any previous owner path permanently deletes that path's redirect**. After the move-back, NEVER create a
+  repo or fork named `impossible-os` under `rizonesoft` or `rizonetech`. Treat both paths as tombstoned.
+
+## 5. Re-Point First-Party References
+
+- Update local clones' remotes: `git remote set-url origin https://github.com/<receiving-owner>/impossible-os.git`
+  on every working clone.
+- Update first-party owner references in tracked files (README, CONTRIBUTING, SECURITY, docs, `gh-pages/`, and the
+  `REPO_URL_BASE` constant in `scripts/todo-graph/render.py`) to the final canonical owner **only if** the final
+  public owner is not `rizonetech`. Mirror the §6 URL-sweep methodology from the transfer (bulk rewrite + a final
+  `rg` audit that returns only intentional historical/brand references).
+
+## 6. Custom-Domain Continuity
+
+- If the custom domain remains on GitHub Pages, update the `www.impossibleos.co` CNAME back to the receiving
+  account's `<receiving-owner>.github.io` Pages hostname (apex A records stay on GitHub Pages IPs).
+- The repo's `gh-pages/CNAME` (`impossibleos.co`) is preserved by the transfer; do not change it.
+- **Re-verify the custom domain on the receiving account** before or immediately after transfer
+  (`https://github.com/<receiving-owner>/<repo>/settings/pages` -> verify domain), and wait for the HTTPS
+  certificate to be re-issued before relying on the apex over TLS.
+
+## 7. Public-Visibility Flip (Gated)
+
+Flip the repository to **public** ONLY after every gate below is green, in this order:
+
+1. **Custom domain stable** -- apex + `www` resolve and serve over valid HTTPS.
+2. **Secrets audited** -- no credential is exposed by going public. Re-run a **current** consumer scan
+   (`rg '<SECRET_NAME>' .github scripts`) for every repo/environment secret before deleting or rotating, because
+   baselines drift. Concretely: the [§1 preflight](repository-transfer-preflight.md) records `BOOTLOADER_REPO_TOKEN`
+   as the single critical secret consumed by the release workflow, but the **current tree has no live consumer**
+   (`rg BOOTLOADER_REPO_TOKEN .github scripts` is empty; only docs reference it) -- the preflight baseline is stale
+   on this point. Confirm with the live scan, then rotate-or-delete the orphaned token rather than carry it into the
+   public repo. Confirm every remaining secret has a live, intended consumer.
+3. **Private-only notes removed or accepted** -- internal-only docs/comments are deleted or consciously accepted
+   as public.
+4. **Release workflow + issue/PR templates public-ready.**
+5. **Branch protection / rulesets active** under the new owner (a transfer can leave a ruleset's bypass list empty
+   or a required check renamed; re-confirm pushes are gated as intended).
+6. **Security policy public-ready** (`SECURITY.md` describes the public disclosure path).
+
+Then flip visibility via `Settings -> General -> Danger Zone -> Change visibility -> Public`.
+
+**Free-account alternate (only if the receiving account cannot keep Pages + protected branches while private).**
+On a Free personal account a *private* repo has no Pages and no branch protection, so gates 1 and 5 cannot be
+validated before the flip. In that case, reorder: confirm gates 2/3/4/6 (secrets, private notes, release readiness,
+security policy) while still private, **flip to public**, then IMMEDIATELY re-enable + validate custom-domain Pages
+and branch protection, accepting a short window where they are unconfigured. Record this as an explicit
+risk/rollback decision (the repo is briefly public with rules not yet active); if the post-flip Pages/rules
+validation fails, the rollback is to flip back to private and fix before retrying. Prefer the paid-plan path in §2
+unless a Free account is a hard constraint.
+
+## 8. Post-Flip Redirect Verification and Retention
+
+- **Verify redirects from BOTH prior owners** resolve to the final path:
+  ```bash
+  curl -sIL https://github.com/rizonesoft/impossible-os | rg -i 'location|^HTTP'
+  curl -sIL https://github.com/rizonetech/impossible-os | rg -i 'location|^HTTP'
+  ```
+  Both should redirect (HTTP 301) to `https://github.com/<receiving-owner>/impossible-os`.
+- Decide how long to rely on GitHub repository redirects after move-back, and document any old-owner URLs that must
+  remain supported externally (e.g. links published in releases, blog posts, or third-party indexes). The redirects
+  persist indefinitely **unless the tombstone rule (§4) is violated**, so the retention decision is mostly about
+  external links you do not control.
+
+## Acceptance
+
+The final public move is considered ready only after the **custom domain**, **repository visibility**,
+**first-party URLs**, and **security posture** are validated in that order. A new contributor can find the canonical
+repository URL, clone it, view the Pages site, and follow the docs without encountering stale owner names except
+where history is intentional.

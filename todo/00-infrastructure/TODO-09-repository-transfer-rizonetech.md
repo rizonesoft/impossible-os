@@ -72,7 +72,7 @@ file_patterns:
 |  ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit    | §4                             |  [/]   |
 |  ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                        | §4, §5                         |  [x]   |
 |  ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph   | §5, §6                         |  [/]   |
-|  ⭐  |   8   |    8    | Move-back and public-visibility runbook                           | §1, §2, §3, §4, §5, §6, §7     |  [ ]   |
+|  ⭐  |   8   |    8    | Move-back and public-visibility runbook                           | §1, §2, §3, §4, §5, §6, §7     |  [/]   |
 |  ⭐  |   9   |    9    | Documentation sync and closure                                    | §1, §2, §3, §4, §5, §6, §7, §8 |  [ ]   |
 
 > **Order vs section number:** The file is ordered by execution flow. Section 8 is intentionally specified before the first transfer happens so the team can confirm the move is reversible rather than discovering account or Pages constraints after the repository is already in the organization.
@@ -308,28 +308,32 @@ Treat the transfer as complete only after the same surfaces a contributor uses a
 
 Define the return path before it is needed. Moving back later should be a planned ownership change, not a scramble during the public launch.
 
-- [ ] Define the move-back trigger: repository ready to become public, release posture approved, security/private-history review complete, and public documentation ready.
-- [ ] Confirm the personal account can receive the repository back and supports the desired public Pages setup.
-- [ ] Confirm no repository AND no same-network fork exists at the receiving personal-account path -- GitHub blocks the transfer on either, not just same-name repos.
-- [ ] Before moving back, repeat the Section 1 preflight inventory from the `rizonetech` state.
-- [ ] Transfer repository from `rizonetech/impossible-os` back to the intended personal account path.
-- [ ] Record the post-transfer collaborator state: GitHub adds the `rizonetech` org as a collaborator on the moved-back repo; decide keep-or-remove and document it.
-- [ ] Tombstone rule: never create a repo OR fork at any previous owner path (`rizonesoft/impossible-os`, `rizonetech/impossible-os`) -- doing so permanently deletes GitHub's redirect from that path.
-- [ ] Update local remotes and first-party docs back to the final canonical owner, if the final public owner is not `rizonetech`.
-- [ ] Update `www.impossibleos.co` CNAME back to the receiving account's `<owner>.github.io` Pages hostname if the custom domain remains on GitHub Pages.
-- [ ] Re-verify the custom domain on the receiving account before or immediately after transfer.
-- [ ] Flip repository visibility to public only after:
-  - secrets are audited,
-  - private-only notes are removed or accepted,
-  - release workflow and issue templates are public-ready,
-  - branch protection/rulesets are active,
-  - security policy is public-ready,
-  - Pages custom domain is stable.
-- [ ] Verify redirects resolve from BOTH prior owners (`rizonesoft/impossible-os` AND `rizonetech/impossible-os`) to the final path; decide how long to rely on them and document old-owner URLs to keep supported externally.
-- [ ] Resolve stale repo secrets before going public: `BOOTLOADER_REPO_TOKEN` has NO live consumer (`rg` in `.github`/`scripts` is empty; only docs reference it) -- rotate-or-delete rather than carry an orphaned credential public.
-- [ ] Commit: `"docs/github: add move-back and public-visibility runbook"`
+> [!NOTE]
+> Deliverable is the runbook DOC [`docs/infrastructure/repository-move-back-runbook.md`](../../docs/infrastructure/repository-move-back-runbook.md); the actual move-back transfer + visibility flip are a future operator action gated on the move-back trigger (runbook §1). Items below are `[x]` = "documented in the runbook"; execution stays operator-deferred ([/] IO row).
 
-**Test checkpoint:** The final public move is considered ready only after the custom domain, repository visibility, first-party URLs, and security posture are validated in that order.
+- [x] Defined the move-back trigger (public-ready + release-approved + security/history-reviewed + public-docs-ready) in runbook §1.
+- [x] Documented receiving-account readiness incl. the paid-plan-vs-Free caveat for keeping Pages + branch protection on a private repo (runbook §2).
+- [x] Documented the same-name-repo AND same-network-fork blocker with fail-closed `gh` checks (runbook §2).
+- [x] Documented the pre-transfer preflight repeat from the `rizonetech` state (runbook §3).
+- [x] Documented the transfer-back step (webhooks/secrets/deploy-keys/issues/PRs/wiki/etc. travel with the repo) (runbook §4).
+- [x] Documented the post-transfer collaborator audit by evidence (before/after `diff`; org teams + admin roles do NOT map onto a personal repo) (runbook §4).
+- [x] Documented the tombstone rule: never create a repo OR fork at any previous owner path or GitHub permanently deletes that path's redirect (runbook §4).
+- [x] Documented re-pointing local remotes + first-party owner refs to the final canonical owner (runbook §5).
+- [x] Documented the `www.impossibleos.co` CNAME flip, apex continuity, and custom-domain re-verify (runbook §6).
+- [x] Documented the gated public-visibility flip ordering (domain -> secrets -> private notes -> release -> branch protection -> security policy) + a Free-account alternate (runbook §7).
+- [x] Documented verifying redirects from BOTH prior owners + the retention decision (runbook §8).
+- [x] Documented the stale-secret audit (`BOOTLOADER_REPO_TOKEN` orphaned; §1 preflight baseline stale) with a fresh consumer-scan requirement before delete/rotate (runbook §7).
+- [x] Commit: `"docs/github: add move-back and public-visibility runbook"`
+
+**Test checkpoint:** The runbook documents every move-back + public-visibility step in operator-runnable form; `docs/infrastructure/repository-move-back-runbook.md` exists and a reader can follow trigger -> readiness -> transfer -> re-point -> domain -> visibility-flip -> redirect-verify without gaps. The final public move is considered ready only after the custom domain, repository visibility, first-party URLs, and security posture are validated in that order (the actual execution is the future operator action).
+
+> **Test runner:** N/A (operator runbook -- no kernel/usermode/desktop test surface) | validation: `docs/infrastructure/repository-move-back-runbook.md` exists and covers every §8 step; GitHub transfer mechanics verified against GitHub's transferring-a-repository + personal-repo-permissions docs.
+
+> **Notes:**
+> - **What shipped:** `docs/infrastructure/repository-move-back-runbook.md` -- operator runbook for the move-back transfer + public-visibility flip (trigger gates, readiness, transfer-blocker checks, tombstone rule, gated flip, redirect verification).
+> - **Structure / consumers:** operator-facing; companion to `repository-transfer-preflight.md` (§1) and `github-setup.md` (owner-state record). Read when the public-launch move-back trigger fires.
+> - **Canonical doc:** [`docs/infrastructure/repository-move-back-runbook.md`](../../docs/infrastructure/repository-move-back-runbook.md).
+> - **Scope boundary:** documents the procedure only; the actual transfer + visibility flip are future operator actions gated on the trigger. §9 owns syncing `github-setup.md` to the final owner state.
 
 ---
 
@@ -357,7 +361,7 @@ Close the roadmap by making the final owner state discoverable and removing tran
 | ⭐ | Repo-owner transfer runbook              | ❌ N/A (closed src) | ⚠️ Ad-hoc per project | ⏳ §1-§2 shipped (preflight doc + org-readiness probe); §3-§9 planned |
 | ⭐ | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §4 shipped; transfer EXECUTED 2026-04-27 (14/16 operator items verified); §7 dispatch + Step 10 TTL-restore remain (see §4) |
 | ⭐ | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §3 shipped: tracked CNAME + 4 URL fixes + DNS plan + validation; one operator TTL drop remains (see §3) |
-| 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ⬜ Planned -- §8 defines return path before transfer |
+| 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ✅ §8 runbook shipped (`repository-move-back-runbook.md`); execution operator-deferred |
 | ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⏳ §5 shipped 2026-04-27: 19 settings preserved; 3 findings (ruleset bypass, build cancelled, CODEOWNERS drift fixed) -- see §5 |
 | ⭐ | First-party URL / badge / link sweep     | ❌ N/A              | ⚠️ Manual / per-project | ✅ §6 shipped 2026-04-28: URL rewrite across docs + gh-pages + TODOs + render.py base; 229 mermaid URLs flipped (see §6) |
 | ⭐ | End-to-end post-transfer validation      | ❌ N/A              | ⚠️ Manual / per-project | ⏳ §7 shipped 2026-04-28: 5/8 sub-suites green live; 3 operator-deferred (DNS TTL, release dry-run, Copilot UI) -- see §7 |
