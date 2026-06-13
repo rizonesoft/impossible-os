@@ -81,7 +81,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  15   | Post-boot SecureBoot revalidation        | §5              |  [/]   |
 | 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI | §11    |  [/]   |
 | 💎  |  17   | SBAT revocation metadata in boot artifacts | §9, §11    |  [x]   |
-| 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17 |  [ ]   |
+| 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17 |  [/]   |
 
 ---
 
@@ -613,6 +613,16 @@ The UKI pack step (`scripts/build.sh`) runs `objcopy --add-section ... "$UKI_STU
 **Test checkpoint:** `bash scripts/build.sh && bash scripts/build.sh` (two builds, no `clean` between) both end `=== BUILD OK ===` with `[sbat] OK: BOOTX64.EFI + UKI carry .sbat`. `scripts/test.sh SUITE=boot` runs without a build failure. On bare metal with Secure Boot enrolled, the incremental-built UKI boots and the firmware accepts the signature. Test on: WSL TCG (build idempotency only); bare metal (SB-chain acceptance).
 
 > **Test runner:** N/A (build-infrastructure fix) | validation: double-build idempotency + `sbverify` in `sign-efi.sh` + bare-metal SB enrollment
+
+> **Notes:**
+> - **What shipped:** root-cause diagnosis + reproduction + 3 candidate fixes (A/B/C) documented in the section intro. NO code change -- the fix itself is blocked.
+> - **Why blocked:** the UKI pack / signing region of `scripts/build.sh` + `scripts/sign-efi.sh` is the Secure Boot trust-chain build path; CLAUDE.md Safety Gates require human review + bare-metal SB-chain verification, which WSL TCG/KVM cannot provide.
+> - **Workaround:** `rm -f build/tools/BOOTX64.EFI build/tools/BOOTX64.UKI.efi` before a build (or `build.sh clean`) relinks an unsigned stub so the UKI packs cleanly.
+> - **Canonical doc:** this section + memory `project-uki-sbat-incremental-build-bug`.
+> - **Scope boundary:** implementation + bare-metal verification are human-gated; the autonomously-doable part (diagnosis, repro, fix options) is done.
+
+> **Verified:** 2026-06-13 | commit `266f1b3c` | 0/5 items (blocked on human sign-off) | diagnosis + repro + 3 candidate fixes documented | NOT auto-implemented (SB path)
+> **Deferred:** [H] entire §18 fix blocked -- security-sensitive Secure Boot signing/image-assembly path needs human review + bare-metal SB-chain verification per CLAUDE.md Safety Gates -> XREF: 01-boot-platform/TODO-02 §18 (item: "Decide the fix shape (A / B / C above) and record the choice + rationale")
 
 ---
 
