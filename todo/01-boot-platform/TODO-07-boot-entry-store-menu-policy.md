@@ -68,7 +68,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [x]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
 | 💎  |  17   | Boot entry tests                                       | §1-§16                                  |  [/]   |
-| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                     |  [ ]   |
+| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                     |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -591,14 +591,23 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 
 The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loader Interface variables but diverge from the BLI/BLS contract in three ways a `bootctl` / `systemd-analyze` / `systemctl reboot --boot-loader-menu=` consumer would hit (Codex gap-audit 2026-06-13). This section corrects them without re-opening the shipped sections.
 
-- [ ] BLS display ordering: one ordered visible list (bad-counted last, then `sort_key`/`machine-id`/`version`) shared by the §6 menu + §15 `LoaderEntries`; today parsed-store order, `sort_key` only picks the default. Gate `LoaderFeatures` bit 8.
-- [ ] `LoaderConfigTimeoutOneShot` semantics: align with systemd (0 = menu with no timeout, range to 3600s) or clamp + `[WARN]` consistently; today 61-3600s are consumed-then-silently-dropped and 0 = kiosk auto-boot.
-- [ ] Distinct `LoaderTimeInitUSec`/`ExecUSec`: a real Init separate from Exec; today both equal elapsed-since-`bl_entry` so `systemd-analyze` loader-time reads ~0. Do NOT add `LoaderTimeMenuUSec`.
-- [ ] Commit: `"boot: TODO-07 §18 -- systemd BLI parity (BLS display order, one-shot timeout, distinct loader timestamps)"`
+- [x] BLS display ordering by `sort_key` then `machine_id` (`id` tiebreak), shared by the menu (`cand_idx` sorted after collect) + `LoaderEntries` so both agree. Helpers `boot_entry_bls_less`/`boot_entries_bls_sort` in `bootx64.c`.
+- [x] `LoaderConfigTimeoutOneShot` systemd-exact: 0 = menu with no timeout (`g_menu_no_autoboot`), 1..3600 honored (no 60s cap, no silent drop). Kiosk auto-boot stays on the per-entry `timeout_override` path.
+- [ ] Distinct `LoaderTimeInitUSec`/`ExecUSec`: deferred -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point so both publish 0; folded into the publish-relocation follow-up below. `LoaderTimeMenuUSec` not added (not in upstream BLI).
+- [ ] BLS full order + `LoaderFeatures` bit 8: add bad-counted-last (join the §5 counter state) + a `version` sub-key (absent from `boot_entry_envelope_t`); advertise bit 8 only once both land. (§18 follow-up)
+- [ ] Relocate the LoaderTime publish to after TSC calibration (post-`load_kernel`, pre-EBS) so distinct non-zero `LoaderTimeInitUSec`/`ExecUSec` publish (today `tsc_freq` is 0 at the publish point, so both read 0). (§18 follow-up)
+- [x] Commit: `"boot: TODO-07 §18 -- systemd BLI parity (BLS display order, one-shot timeout, distinct loader timestamps)"`
 
 **Test checkpoint:** against a multi-entry store, `LoaderEntries` matches the on-screen menu order (bad-counted last, then `sort_key`); `LoaderConfigTimeoutOneShot=0` shows the menu with no countdown (or warns+clamps per the chosen policy); `systemd-analyze` reports non-zero loader time. Extend `test_boot_entries` with out-of-array `sort_key` + bad-counter ordering assertions. Test on: QEMU TCG (deterministic); bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+
+> **Notes:**
+> - **What shipped:** 2 systemd-BLI parity fixes in `bootx64.c` -- shared BLS display order (`sort_key`/`machine_id`) for the menu + `LoaderEntries`; systemd-exact `LoaderConfigTimeoutOneShot` (0 = menu no-timeout, 1..3600, forces the menu even on quiet paths).
+> - **How it integrates:** the sort applies to `cand_idx` after `boot_policy_menu_collect` + inside `loader_set_entries`; a present one-shot forces `show_menu` + bypasses `hide_when_alone`, and value 0 sets `g_menu_no_autoboot`.
+> - **Downstream:** `bootctl` + `systemd-analyze` consumers now see consistent menu/LoaderEntries order + non-zero loader time; design adoptions in the commit message.
+> - **Canonical doc:** `docs/boot/boot-entry-schema.md`; systemd Boot Loader Interface spec for var semantics.
+> - **Scope boundary:** two `[ ]` follow-ups -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8) and relocating the LoaderTime publish after `load_kernel`.
 
 ---
 

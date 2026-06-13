@@ -5182,18 +5182,72 @@ static void loader_set_firmware_info(void)
     }
 }
 
-/* Compose + write LoaderEntries from the parser result. UCS-2,
- * NUL-separated, trailing double-NUL terminator. systemd-boot's
- * bootctl reads this and lists each id. */
+/* Lexical compare of two NUL-terminated ASCII strings (unsigned byte
+ * order). Returns <0, 0, >0 like strcmp. */
+static int boot_entry_str_cmp(const char *a, const char *b)
+{
+    UINTN k = 0;
+    while (a[k] == b[k] && a[k] != 0) k++;
+    return (int)(unsigned char)a[k] - (int)(unsigned char)b[k];
+}
+
+/* BLS display-order comparator: "less" iff entry a sorts before b. Keys
+ * in priority order: sort_key, then machine_id, then id (stable
+ * tiebreak). This is the subset of the Boot Loader Specification display
+ * order that the parse result can express today. The remaining BLS
+ * sub-keys -- "bad-counted entries last" (needs the crash-tolerant
+ * counter state, a separate join) and "version" (absent from
+ * boot_entry_envelope_t) -- are tracked follow-ups; LoaderFeatures
+ * bit 8 (sort-key support) is NOT advertised until they land. */
+static int boot_entry_bls_less(const boot_entry_envelope_t *a,
+                               const boot_entry_envelope_t *b)
+{
+    int c = boot_entry_str_cmp(a->sort_key, b->sort_key);
+    if (c != 0) return c < 0;
+    c = boot_entry_str_cmp(a->machine_id, b->machine_id);
+    if (c != 0) return c < 0;
+    return boot_entry_str_cmp(a->id, b->id) < 0;
+}
+
+/* Fill order[0..n-1] with a stable BLS-sorted permutation of the index
+ * array idx[0..n-1] into parse->entries[]. Insertion sort -- n is at
+ * most BOOT_MENU_MAX_VISIBLE / MAX_ENTRIES, both small. Shared by the
+ * menu candidate list and LoaderEntries so bootctl and the on-screen
+ * menu agree on order. */
+static void boot_entries_bls_sort(const boot_entries_parse_result_t *parse,
+                                  unsigned int *idx, unsigned int n)
+{
+    for (unsigned int i = 1; i < n; i++) {
+        unsigned int v = idx[i];
+        int j = (int)i - 1;
+        while (j >= 0 &&
+               boot_entry_bls_less(&parse->entries[v],
+                                   &parse->entries[idx[j]])) {
+            idx[j + 1] = idx[j];
+            j--;
+        }
+        idx[j + 1] = v;
+    }
+}
+
+/* Compose + write LoaderEntries from the parser result, in BLS display
+ * order (matching the menu). UCS-2, NUL-separated, trailing double-NUL
+ * terminator. systemd-boot's bootctl reads this and lists each id. */
 static void loader_set_entries(const boot_entries_parse_result_t *parse)
 {
     if (!parse || parse->entry_count == 0) return;
+    /* Build a BLS-sorted index permutation of all entries. */
+    unsigned int order[BOOT_ENTRIES_MAX_ENTRIES];
+    unsigned int n = (unsigned int)parse->entry_count;
+    if (n > BOOT_ENTRIES_MAX_ENTRIES) n = BOOT_ENTRIES_MAX_ENTRIES;
+    for (unsigned int i = 0; i < n; i++) order[i] = i;
+    boot_entries_bls_sort(parse, order, n);
     /* Stack-allocate the payload buffer. */
     static CHAR16 buf[LOADER_VAR_PAYLOAD_MAX / 2u];
     UINTN p = 0;
     UINTN cap = sizeof(buf) / sizeof(buf[0]);
-    for (UINTN e = 0; e < parse->entry_count; e++) {
-        const char *id = parse->entries[e].id;
+    for (unsigned int oi = 0; oi < n; oi++) {
+        const char *id = parse->entries[order[oi]].id;
         UINTN j = 0;
         while (id[j] && p < cap - 2u) {
             buf[p++] = (CHAR16)(unsigned char)id[j++];
@@ -5732,6 +5786,24 @@ static void boot_policy_invoke(void)
                                                 cand_idx,
                                                 BOOT_MENU_MAX_VISIBLE,
                                                 &cand_default_idx);
+    /* BLS display order: sort the visible candidate list so the on-
+     * screen menu matches LoaderEntries (which loader_set_entries emits
+     * in the same order). The policy ladder already chose the default
+     * ENTRY; sorting only reorders the menu rows, so re-find the
+     * default's new position in cand_idx after the sort. */
+    if (cand_count > 1u) {
+        unsigned int default_entry = (cand_default_idx < cand_count)
+            ? cand_idx[cand_default_idx] : 0xFFFFFFFFu;
+        boot_entries_bls_sort(parse, cand_idx, cand_count);
+        if (default_entry != 0xFFFFFFFFu) {
+            for (unsigned int i = 0; i < cand_count; i++) {
+                if (cand_idx[i] == default_entry) {
+                    cand_default_idx = i;
+                    break;
+                }
+            }
+        }
+    }
     /* Default-not-found gate: when the policy ladder picked an entry
      * that is NOT representable in the visible candidate window
      * (cap-truncated past BOOT_MENU_MAX_VISIBLE, filtered out by
@@ -5764,7 +5836,8 @@ static void boot_policy_invoke(void)
      * overrides the flag -- the operator's emergency override must
      * work on the quiet single-OS path too. */
     int allow_skip_when_alone = 0;
-    if (cand_count == 1u && cand_default_idx < cand_count && !force_show) {
+    if (cand_count == 1u && cand_default_idx < cand_count && !force_show
+        && !loader_have_timeout_oneshot) {
         const boot_entry_envelope_t *lone =
             &parse->entries[cand_idx[cand_default_idx]];
         if (lone->flags & BOOT_ENTRY_FLAG_HIDE_WHEN_ALONE)
@@ -5779,8 +5852,13 @@ static void boot_policy_invoke(void)
      *      access).
      */
     int single_entry_render = (cand_count == 1u && !allow_skip_when_alone);
+    /* A present LoaderConfigTimeoutOneShot forces the menu to render
+     * (like F11 force_show): the operator/OS asked to see the menu this
+     * boot (value 0 = no-timeout menu; 1..3600 = countdown). Without
+     * this, a quiet HIDE_WHEN_ALONE / auto-pick path would consume +
+     * delete the one-shot and silently boot through. */
     int show_menu = default_visible &&
-        (force_show ||
+        (force_show || loader_have_timeout_oneshot ||
          boot_policy_menu_should_show(decision, parse, cand_count) ||
          single_entry_render);
     if (show_menu) {
@@ -5801,15 +5879,27 @@ static void boot_policy_invoke(void)
                 if (timeout_s == 0u) explicit_zero = 1;
             }
         }
-        /* LoaderConfigTimeoutOneShot (systemd-boot one-shot) overrides
-         * the per-entry timeout_override for this boot only. The var
-         * was consumed + deleted earlier in this function so the
-         * override fires exactly once. Cap at BOOT_MENU_TIMEOUT_CAP_S. */
-        if (loader_have_timeout_oneshot &&
-            loader_oneshot_timeout <= BOOT_MENU_TIMEOUT_CAP_S) {
-            timeout_s = loader_oneshot_timeout;
-            explicit_zero = (timeout_s == 0u);
-            serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot applied\n");
+        /* LoaderConfigTimeoutOneShot (systemd Boot Loader Interface,
+         * one-shot) overrides the per-entry timeout_override for this
+         * boot only. The var was consumed + deleted earlier so it fires
+         * exactly once. Honor systemd semantics EXACTLY for this
+         * systemd-named variable: value 0 = show the menu with NO
+         * timeout (no auto-boot); 1..3600 = countdown seconds. The
+         * parser already capped the value at 3600. Do NOT apply the 60s
+         * per-entry cap here, and do NOT route 0 to the kiosk auto-boot
+         * path (kiosk stays on the per-entry timeout_override above);
+         * the prior <=60s gate silently dropped 61..3600s requests. */
+        int oneshot_no_timeout = 0;
+        if (loader_have_timeout_oneshot) {
+            if (loader_oneshot_timeout == 0u) {
+                oneshot_no_timeout = 1;   /* menu, no countdown */
+                explicit_zero = 0;        /* override any kiosk default */
+                serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot=0 -- menu shown, no timeout\n");
+            } else {
+                timeout_s = loader_oneshot_timeout;   /* 1..3600 */
+                explicit_zero = 0;
+                serial_early_print("[BOOT] loader-vars: LoaderConfigTimeoutOneShot applied (1..3600s)\n");
+            }
         }
         unsigned int chosen;
         int hotkey = BOOT_MENU_HOTKEY_NONE;
@@ -5840,7 +5930,10 @@ static void boot_policy_invoke(void)
             const unsigned int F10_MAX_RETRIES = 8u;
             unsigned int f10_retries = 0;
             g_menu_f10_disabled = 0;
-            g_menu_no_autoboot = 0;
+            /* LoaderConfigTimeoutOneShot=0 means "show the menu with no
+             * timeout" -- suppress the countdown so the menu stays up
+             * until the operator picks (systemd one-shot semantics). */
+            g_menu_no_autoboot = oneshot_no_timeout;
             for (;;) {
                 hotkey = BOOT_MENU_HOTKEY_NONE;
                 chosen = boot_menu_run(parse, cand_idx, cand_count,
@@ -6195,9 +6288,11 @@ static void boot_policy_invoke(void)
             && decision->selected.timeout_override <= BOOT_MENU_TIMEOUT_CAP_S) {
             published_timeout = decision->selected.timeout_override;
         }
-        /* One-shot wins over per-entry override (consumed above). */
-        if (loader_have_timeout_oneshot &&
-            loader_oneshot_timeout <= BOOT_MENU_TIMEOUT_CAP_S) {
+        /* One-shot wins over per-entry override (consumed above).
+         * Publish the full systemd one-shot value (0..3600, parser-
+         * capped) so bootctl reflects what the menu honored; do NOT
+         * apply the 60s per-entry cap here. */
+        if (loader_have_timeout_oneshot) {
             published_timeout = loader_oneshot_timeout;
         }
         UINT64 init_us = 0, exec_us = 0;
@@ -6207,13 +6302,16 @@ static void boot_policy_invoke(void)
             UINT64 entry = g_boot_info_ptr->timing.bl_entry;
             if (now > entry) {
                 /* Convert TSC delta to microseconds. tsc_freq is Hz;
-                 * (delta * 1e6) / tsc_freq fits in u64 for any
-                 * bootloader uptime under ~5800 years on a 3GHz TSC. */
+                 * (delta * 1e6) / tsc_freq fits in u64 for any plausible
+                 * bootloader uptime. NOTE: timing.tsc_freq is calibrated
+                 * AFTER load_kernel, so it is 0 at this pre-kernel publish
+                 * point and this branch does not run today -- both
+                 * LoaderTime vars publish 0. Producing meaningful distinct
+                 * Init (loader entry) and Exec (about to hand off) values
+                 * requires relocating this publish to a point after TSC
+                 * calibration; that is the open follow-up item in this
+                 * section. Left as equal timestamps until then. */
                 init_us = (now - entry) / (tsc_freq / 1000000ULL);
-                /* Exec time is approximated as init_us here -- we
-                 * publish before the kernel handoff; the spec allows
-                 * publishing the same timestamp for both when the
-                 * loader does not measure them separately. */
                 exec_us = init_us;
             }
         }
