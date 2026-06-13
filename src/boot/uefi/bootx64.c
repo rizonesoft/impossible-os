@@ -3202,22 +3202,30 @@ static int ascii_to_utf16(const char *src, CHAR16 *dst, UINTN dst_max)
 static EFI_STATUS locate_boot_fs(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL **out_fs)
 {
     EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
-    EFI_STATUS status = EFI_NOT_FOUND;
+    EFI_STATUS status;
     *out_fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
-    if (g_boot_device_handle) {
-        status = gBS->HandleProtocol(g_boot_device_handle, &fs_guid,
-                                     (VOID **)out_fs);
-        if (EFI_ERROR(status))
-            status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)out_fs);
-    } else {
-        status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)out_fs);
+    /* Fail closed: trust ONLY the explicit boot-device handle. The prior
+     * gBS->LocateProtocol fallback could return ANY SimpleFS volume in the
+     * system, letting split-path module=/initrd=/recovery_image= payloads
+     * be sourced from a different ESP than the boot device -- a trust-
+     * boundary leak. This mirrors load_kernel() (HandleProtocol-only on
+     * g_boot_device_handle) and media_role_detect_and_record(), both of
+     * which already refuse the ambient-volume fallback. Split-path payload
+     * provenance hardening. */
+    if (!g_boot_device_handle) {
+        serial_early_print("[WARN] No boot-device handle for staged payloads\n");
+        return EFI_NOT_FOUND;
     }
-    /* Defend callers against firmware returning EFI_SUCCESS with a NULL
-     * interface pointer -- load_staged_payloads / load_kernel call
-     * (*out_fs)->OpenVolume directly on the success path. */
-    if (!EFI_ERROR(status) && *out_fs == (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0)
-        status = EFI_NOT_FOUND;
-    return status;
+    status = gBS->HandleProtocol(g_boot_device_handle, &fs_guid,
+                                 (VOID **)out_fs);
+    /* Also guard against firmware returning EFI_SUCCESS with a NULL
+     * interface pointer -- callers call (*out_fs)->OpenVolume directly. */
+    if (EFI_ERROR(status) || *out_fs == (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0) {
+        serial_early_print("[WARN] No SimpleFS on boot device for staged payloads\n");
+        *out_fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+        return EFI_NOT_FOUND;
+    }
+    return EFI_SUCCESS;
 }
 
 static void load_staged_payloads(void)
@@ -7232,6 +7240,28 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             }
         }
         if (!found) {
+            /* Same-provenance gate: if boot.conf staged module/initrd/
+             * recovery_image payloads (g_staged_payload_count > 0, loaded
+             * from the boot device by load_staged_payloads() earlier in
+             * efi_main), refuse to source the kernel from a DIFFERENT
+             * volume. The all-volumes fallback below is the recovery chain
+             * for a PAYLOAD-FREE boot; pairing it with boot-device-sourced
+             * payloads would split the trust chain (kernel from volume A,
+             * initrd/modules from volume B). Fail closed -- the operator
+             * must keep kernel + staged payloads on one volume. Split-path
+             * payload provenance hardening. */
+            if (g_staged_payload_count > 0) {
+                serial_early_print("[FATAL] staged payloads sourced from the "
+                                   "boot device but kernel.exe is absent "
+                                   "there; refusing a non-boot-volume kernel "
+                                   "(provenance mismatch)\n");
+                boot_fatal(BOOT_ERR_CONF_INVALID,
+                           "split-path payloads require the kernel on the same volume",
+                           "boot.conf names module/initrd/recovery_image but "
+                           "kernel.exe is not on the boot device; put the "
+                           "kernel on the boot ESP or remove the staged "
+                           "payload entries.");
+            }
             /*: Device fallback chain -- kernel not on boot device,
              * try all other filesystems before giving up. */
             if (root_dir) root_dir->Close(root_dir);
@@ -11476,12 +11506,12 @@ static void media_role_detect_and_record(EFI_HANDLE boot_part_handle)
     UINT32 bb_role  = BOOT_MEDIA_ROLE_UNSET;
 
     /* ESP read: HandleProtocol on the boot partition directly -- NO
-     * LocateProtocol fallback. locate_boot_fs() falls back to a global
-     * LocateProtocol scan when HandleProtocol on g_boot_device_handle
-     * fails, which can return any SimpleFS volume in the system. For
-     * media-role detection that fallback is a trust-boundary leak: the
-     * loader could read /IPOS/role.txt from an unrelated disk and treat
-     * it as authoritative. Trust only the explicit boot-device handle.
+     * LocateProtocol fallback. An ambient global LocateProtocol scan can
+     * return any SimpleFS volume in the system. For media-role detection
+     * that fallback is a trust-boundary leak: the loader could read
+     * /IPOS/role.txt from an unrelated disk and treat it as authoritative.
+     * Trust only the explicit boot-device handle (load_kernel() and
+     * locate_boot_fs() are HandleProtocol-only for the same reason).
      * Failure -> esp_role stays UNSET, caller emits the default-normal
      * line and (if BlackBox is also UNSET) takes the same path as a
      * marker-absent boot. */
