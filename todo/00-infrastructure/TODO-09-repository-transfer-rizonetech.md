@@ -317,11 +317,11 @@ Define the return path before it is needed. Moving back later should be a planne
 - [x] Documented the pre-transfer preflight repeat from the `rizonetech` state (runbook §3).
 - [x] Documented the transfer-back step (webhooks/secrets/deploy-keys/issues/PRs/wiki/etc. travel with the repo) (runbook §4).
 - [x] Documented the post-transfer collaborator audit by evidence (before/after `diff`; org teams + admin roles do NOT map onto a personal repo) (runbook §4).
-- [x] Documented the tombstone rule: never create a repo OR fork at any previous owner path or GitHub permanently deletes that path's redirect (runbook §4).
+- [x] Documented the tombstone rule: never create a repo OR fork at any NON-destination prior owner path or GitHub permanently deletes that path's redirect; the receiving-owner path is the live repo (runbook §4).
 - [x] Documented re-pointing local remotes + first-party owner refs to the final canonical owner (runbook §5).
 - [x] Documented the `www.impossibleos.co` CNAME flip, apex continuity, and custom-domain re-verify (runbook §6).
 - [x] Documented the gated public-visibility flip ordering (domain -> secrets -> private notes -> release -> branch protection -> security policy) + a Free-account alternate (runbook §7).
-- [x] Documented verifying redirects from BOTH prior owners + the retention decision (runbook §8).
+- [x] Documented asserting the receiving path is live + only NON-destination prior owners 301 to it, plus the redirect-retention decision (runbook §8).
 - [x] Documented the stale-secret audit (`BOOTLOADER_REPO_TOKEN` orphaned; §1 preflight baseline stale) with a fresh consumer-scan requirement before delete/rotate (runbook §7).
 - [x] Commit: `"docs/github: add move-back and public-visibility runbook"`
 
@@ -334,6 +334,9 @@ Define the return path before it is needed. Moving back later should be a planne
 > - **Structure / consumers:** operator-facing; companion to `repository-transfer-preflight.md` (§1) and `github-setup.md` (owner-state record). Read when the public-launch move-back trigger fires.
 > - **Canonical doc:** [`docs/infrastructure/repository-move-back-runbook.md`](../../docs/infrastructure/repository-move-back-runbook.md).
 > - **Scope boundary:** documents the procedure only; the actual transfer + visibility flip are future operator actions gated on the trigger. §9 owns syncing `github-setup.md` to the final owner state.
+
+> **Verified:** 2026-06-13 | commit `5f725132` | 12/12 items | build N/A (operator runbook -- no kernel/test surface) | runbook 227 lines, lint clean, todo-graph 8/8
+> **Quality reviewed:** 2026-06-13 | Codex 8x (adversarial + consistency + perf + re-adversarial) | 10H+6M fixed | scope: N/A (docs runbook); execution operator-deferred (gated on the move-back trigger)
 
 ---
 

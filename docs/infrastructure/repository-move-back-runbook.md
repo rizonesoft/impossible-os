@@ -7,6 +7,12 @@
 >
 > **Status:** forward-planning. The repository currently lives at `rizonetech/impossible-os` (private).
 > No move-back has been executed. This document is the procedure to follow when the move-back trigger fires.
+>
+> **Command recipes are reference, not a tested script.** The `gh` / `curl` / `jq` snippets are written to assert
+> the right invariant and fail closed, but GitHub's REST API evolves -- validate each against the current API
+> before a real run. Run them **authenticated as the receiving owner** with a token scoped for private repos +
+> `admin:org` / ruleset read, so private forks and ruleset bypass actors are actually visible (a thinner token can
+> read "clean" where GitHub would still block the transfer or hide bypass principals).
 
 ## 1. Move-Back Trigger
 
@@ -40,18 +46,35 @@ the public Pages site:
   error or an unpaginated forks list must abort the runbook, never silently read as "clear":
   ```bash
   set -euo pipefail
+  # Resolve the destination's CANONICAL login first -- GitHub logins are case-insensitive, so a
+  # lowercase placeholder must not be string-compared against a mixed-case API login.
+  dest="$(timeout 30 gh api "users/<receiving-owner>" --jq '.login')" \
+    || { echo "ABORT: cannot resolve destination owner"; exit 2; }
   # Same-name repo: a clean 404 is "ok"; any other gh failure aborts.
-  if gh api "repos/<receiving-owner>/impossible-os" >/dev/null 2>err; then
+  if timeout 30 gh api "repos/$dest/impossible-os" >/dev/null 2>err; then
     echo "BLOCKER: repo exists at destination"; exit 1
   elif ! rg -q "Not Found|HTTP 404" err; then
     echo "ABORT: unexpected gh error checking destination repo"; cat err; exit 2
   else echo "ok: no same-name repo"; fi
-  # Same-network fork: paginate, match owner login exactly, fail-closed on API error.
-  forks="$(gh api --paginate "repos/rizonetech/impossible-os/forks" --jq '.[].owner.login')" \
-    || { echo "ABORT: forks API failed"; exit 2; }
-  if printf '%s\n' "$forks" | rg -qx "<receiving-owner>"; then
-    echo "BLOCKER: same-network fork at destination"; exit 1
-  else echo "ok: no destination fork"; fi
+  # Same-network fork (incl. a RENAMED fork the same-name check would miss): scan only the
+  # DESTINATION's own forks (bounded by the personal account's repo count, not the whole fork
+  # network), and flag any whose parent is in the impossible-os network. Fail closed on any error.
+  while read -r r; do
+    [ -z "$r" ] && continue
+    # Compare BOTH .parent (immediate source) and .source (network root): a fork-of-a-fork has a
+    # third-party parent but an impossible-os source, and GitHub still blocks on it.
+    meta="$(timeout 20 gh api "repos/$dest/$r" --jq '[(.parent.full_name // ""), (.source.full_name // "")] | @tsv')" \
+      || { echo "ABORT: fork metadata lookup failed for $r"; exit 2; }
+    par="$(printf '%s' "$meta" | cut -f1)"; src="$(printf '%s' "$meta" | cut -f2)"
+    [ -z "$par$src" ] && { echo "ABORT: fork $r has no parent/source metadata -- inspect manually"; exit 2; }
+    case " $par $src " in
+      *" rizonetech/impossible-os "*|*" rizonesoft/impossible-os "*)
+        echo "BLOCKER: same-network fork at destination ($dest/$r; parent=$par source=$src)"; exit 1;;
+    esac
+  done < <(timeout 30 gh api --paginate "user/repos?visibility=all&affiliation=owner" \
+             --jq ".[] | select(.fork and (.owner.login | ascii_downcase) == (\"$dest\" | ascii_downcase)) | .name" \
+            || { echo "ABORT: destination repo list failed (run authenticated AS $dest so PRIVATE forks are visible)"; exit 2; })
+  echo "ok: no destination fork in the impossible-os network"
   ```
 - The operator has permission to **create a repository** at the receiving account (always true for one's own account).
 
@@ -72,21 +95,46 @@ reflect what exists NOW:
 - Transfer `rizonetech/impossible-os` to the receiving personal-account path via
   `https://github.com/rizonetech/impossible-os/settings` -> Danger Zone -> Transfer ownership. Webhooks, services,
   secrets, deploy keys, issues, PRs, wiki, stars, watchers, and commit/contribution history all travel with the repo.
-- **Audit the post-transfer collaborator state by evidence, not assumption.** GitHub guarantees only that the
-  *original owner* is added as a collaborator and that existing collaborators remain; org **teams** and org-admin
-  roles do NOT map cleanly onto a personal repo (a personal repo has owner + individual collaborators, and some
-  read-only org collaborators may not transfer at all). Enumerate access BEFORE and AFTER and reconcile by the
-  observed diff, not a presumed rule:
+- **Audit the post-transfer access state by evidence, not assumption -- capture PERMISSIONS, not just logins.**
+  GitHub guarantees only that the *original owner* is added as a collaborator and that existing collaborators
+  remain; org **teams** and org-admin roles do NOT map onto a personal repo (a personal repo has owner + individual
+  collaborators, and some org/read-only collaborators may not transfer at all). A login-only diff misses role
+  changes, team-derived access vanishing, and unexpected write/admin grants. Capture login + `role_name` +
+  `permissions`, plus the org team list and any ruleset bypass actors, BEFORE and AFTER:
   ```bash
-  gh api "repos/rizonetech/impossible-os/collaborators" --jq '.[].login' | sort > before.txt   # before transfer
-  gh api "repos/<receiving-owner>/impossible-os/collaborators" --jq '.[].login' | sort > after.txt  # after transfer
-  diff before.txt after.txt
+  set -euo pipefail   # any gh/jq failure ABORTS -- never write an empty artifact that looks like clean evidence.
+  # capture_access OWNER PREFIX: paginated collaborators (default 30/page) + per-ruleset bypass actors.
+  capture_access() {
+    local owner="$1" pre="$2" ids
+    # Every gh call is timeout-wrapped: set -e bounds a FAILED call, but not a STALLED HTTPS request.
+    timeout 60 gh api --paginate "repos/$owner/impossible-os/collaborators?affiliation=all" \
+      --jq '.[] | {login, role_name, permissions}' | jq -s 'sort_by(.login)' > "$pre-access.json"
+    # Bypass actors live on the PER-RULESET endpoint (the list omits them) + need ruleset write access.
+    ids="$(timeout 60 gh api --paginate "repos/$owner/impossible-os/rulesets" --jq '.[].id')"   # aborts on failure
+    : > "$pre-rulesets.ndjson"
+    for id in $ids; do
+      timeout 30 gh api "repos/$owner/impossible-os/rulesets/$id" --jq '{id, name, enforcement, bypass_actors}' >> "$pre-rulesets.ndjson"
+    done
+    # Fail closed if any present ruleset has bypass_actors: null (insufficient scope hid the principals).
+    jq -se 'sort_by(.id) | if any(.bypass_actors == null) then error("bypass_actors null -- re-run with ruleset write access") else . end' \
+      "$pre-rulesets.ndjson" > "$pre-rulesets.json"
+  }
+  capture_access rizonetech before                       # BEFORE transfer (org repo)
+  timeout 60 gh api --paginate "repos/rizonetech/impossible-os/teams" --jq '.[] | {slug, permission}' | jq -s . > before-teams.json
+  # ... perform the transfer (§4) ...
+  capture_access "<receiving-owner>" after               # AFTER transfer (personal repo -- no teams here)
+  timeout 60 gh api --paginate "repos/<receiving-owner>/impossible-os/invitations" \
+    --jq '.[] | {login: .invitee.login, permissions}' | jq -s . > after-invitations.json
+  diff <(jq -S . before-access.json) <(jq -S . after-access.json)   # reconcile roles + permissions, not just names
   ```
-  Remove or re-invite users based on the diff. Do not leave any unaudited collaborator on a soon-to-be-public repo.
-- **Tombstone rule (redirect preservation).** GitHub serves redirects from old owner paths
-  (`rizonesoft/impossible-os`, `rizonetech/impossible-os`) to the new location -- but creating a **new repository OR
-  fork at any previous owner path permanently deletes that path's redirect**. After the move-back, NEVER create a
-  repo or fork named `impossible-os` under `rizonesoft` or `rizonetech`. Treat both paths as tombstoned.
+  Make an explicit keep / remove / re-invite decision PER PRINCIPAL based on role + permission, not name. Do not
+  leave any unaudited write/admin access on a soon-to-be-public repo.
+- **Tombstone rule (redirect preservation).** GitHub serves a redirect from each **prior** owner path to the new
+  location. The prior-owner set is `{rizonesoft, rizonetech} - {receiving-owner}`: if the move-back receives into
+  `rizonesoft` (or `rizonetech`), that path becomes the **live** repo, NOT a redirect -- exclude it. Creating a new
+  repository OR fork at a *non-destination* prior path **permanently deletes that path's redirect**, so after the
+  move-back NEVER create a repo or fork named `impossible-os` under any non-destination prior owner. Tombstone only
+  the non-destination prior paths; the receiving-owner path is the canonical live repo.
 
 ## 5. Re-Point First-Party References
 
@@ -99,12 +147,22 @@ reflect what exists NOW:
 
 ## 6. Custom-Domain Continuity
 
-- If the custom domain remains on GitHub Pages, update the `www.impossibleos.co` CNAME back to the receiving
-  account's `<receiving-owner>.github.io` Pages hostname (apex A records stay on GitHub Pages IPs).
-- The repo's `gh-pages/CNAME` (`impossibleos.co`) is preserved by the transfer; do not change it.
-- **Re-verify the custom domain on the receiving account** before or immediately after transfer
-  (`https://github.com/<receiving-owner>/<repo>/settings/pages` -> verify domain), and wait for the HTTPS
-  certificate to be re-issued before relying on the apex over TLS.
+GitHub repository transfers do **not** guarantee GitHub Pages URL redirects, so a premature `www` CNAME flip can
+cause a cached, user-visible outage whose recovery then waits on DNS TTL. Sequence the DNS change defensively:
+
+- **Lower the `www.impossibleos.co` CNAME TTL** (e.g. to 300s) at the DNS provider BEFORE the transfer, so a
+  mistaken flip is correctable quickly. Apex A records stay on the GitHub Pages IPs throughout.
+- After the transfer, **verify the receiving account's Pages endpoint is live BEFORE flipping the CNAME**:
+  ```bash
+  timeout 30 gh api "repos/<receiving-owner>/impossible-os/pages" --jq '.cname, .status, .html_url'  # cname=impossibleos.co, status=built
+  curl -fsS --max-time 15 -IL "https://<receiving-owner>.github.io/impossible-os/" | rg -i '^HTTP'     # serves before the flip
+  ```
+- Only once the endpoint serves, **flip `www.impossibleos.co` to `<receiving-owner>.github.io`**. The repo's
+  `gh-pages/CNAME` (`impossibleos.co`) is preserved by the transfer; do not change it.
+- **Re-verify the custom domain on the receiving account** (`Settings -> Pages -> verify domain`) and wait for the
+  HTTPS certificate to be re-issued before relying on the apex over TLS. Keep the low TTL through validation.
+- **Rollback:** if Pages or cert validation fails, restore the prior `www` CNAME target and retry; the low TTL
+  bounds the outage window. Restore the normal TTL only after validation is green.
 
 ## 7. Public-Visibility Flip (Gated)
 
@@ -138,12 +196,25 @@ unless a Free account is a hard constraint.
 
 ## 8. Post-Flip Redirect Verification and Retention
 
-- **Verify redirects from BOTH prior owners** resolve to the final path:
+- **Verify the receiving path is live, and each NON-destination prior owner redirects to it.** The receiving owner's
+  path is the canonical live repo (not a redirect); only `{rizonesoft, rizonetech} - {receiving-owner}` should 301:
   ```bash
-  curl -sIL https://github.com/rizonesoft/impossible-os | rg -i 'location|^HTTP'
-  curl -sIL https://github.com/rizonetech/impossible-os | rg -i 'location|^HTTP'
+  set -euo pipefail
+  dest="$(timeout 30 gh api "users/<receiving-owner>" --jq '.login')"   # canonical login
+  # Assert the receiving path IS the live canonical repo (not a redirect).
+  [ "$(timeout 30 gh api "repos/$dest/impossible-os" --jq '.full_name')" = "$dest/impossible-os" ] \
+    || { echo "FAIL: receiving path is not the live repo"; exit 1; }
+  want="https://github.com/$dest/impossible-os"
+  dlc="$(printf '%s' "$dest" | tr A-Z a-z)"
+  # Assert each NON-destination prior owner returns an initial 301 whose Location is the receiving path.
+  for prev in rizonesoft rizonetech; do
+    [ "$(printf '%s' "$prev" | tr A-Z a-z)" = "$dlc" ] && continue   # skip the live owner
+    code="$(curl -s --max-time 15 -o /dev/null -w '%{http_code}' "https://github.com/$prev/impossible-os")"
+    loc="$(curl -s --max-time 15 -o /dev/null -w '%{redirect_url}' "https://github.com/$prev/impossible-os")"
+    if [ "$code" = "301" ] && [ "$loc" = "$want" ]; then echo "ok: $prev 301 -> $want";
+    else echo "FAIL: $prev returned $code -> ${loc:-<none>} (want 301 -> $want)"; exit 1; fi
+  done
   ```
-  Both should redirect (HTTP 301) to `https://github.com/<receiving-owner>/impossible-os`.
 - Decide how long to rely on GitHub repository redirects after move-back, and document any old-owner URLs that must
   remain supported externally (e.g. links published in releases, blog posts, or third-party indexes). The redirects
   persist indefinitely **unless the tombstone rule (§4) is violated**, so the retention decision is mostly about

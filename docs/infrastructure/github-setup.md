@@ -6,7 +6,7 @@
 
 The `rizonetech/impossible-os` GitHub repository is configured with CI/CD pipelines, automated release management, issue/PR templates, branch protection, and community documentation. A secondary archived repo (`rizonesoft/impossible-os-bootloader`) exists but all development happens in the main repo.
 
-> **Planned ownership move.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the transfer from `rizonetech/impossible-os` to `rizonetech/impossible-os` (enterprise org). The current-state baseline -- repository identity, Pages source mode, custom-domain DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
+> **Planned ownership move.** [`todo/00-infrastructure/TODO-09`](../../todo/00-infrastructure/TODO-09-repository-transfer-rizonetech.md) tracks the completed transfer from `rizonesoft/impossible-os` to `rizonetech/impossible-os` (enterprise org), plus the §8 future move-back / public-visibility runbook. The current-state baseline -- repository identity, Pages source mode, custom-domain DNS, Actions/secrets/rulesets, hard-coded owner references, risk register -- is captured once in [`repository-transfer-preflight.md`](repository-transfer-preflight.md) so the §5 / §7 audits and the eventual §8 move-back compare against a single source of truth.
 
 ```mermaid
 graph TD
