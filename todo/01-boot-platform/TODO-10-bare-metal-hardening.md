@@ -460,6 +460,8 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 
 **Test checkpoint:** N/A -- `boot.conf` skip list removed 2026-03-29; use `BOOT_TRY` / `degraded_mask` (§7) for intentional subsystem failure tests instead.
 
+> **Verified:** 2026-06-13 | REMOVED 2026-03-29 -- boot.conf skip-list code deleted (absent from `src/`, confirmed), replaced by `BOOT_TRY` / `degraded_mask` (§7) | 1/1 items | no code surface
+
 ---
 
 ## 12. Logging and Diagnostic Storage Moved to TODO-24
