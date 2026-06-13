@@ -310,9 +310,11 @@ Define the return path before it is needed. Moving back later should be a planne
 
 - [ ] Define the move-back trigger: repository ready to become public, release posture approved, security/private-history review complete, and public documentation ready.
 - [ ] Confirm the personal account can receive the repository back and supports the desired public Pages setup.
-- [ ] Confirm no repository exists at the old destination path that would block the transfer back.
+- [ ] Confirm no repository AND no same-network fork exists at the receiving personal-account path -- GitHub blocks the transfer on either, not just same-name repos.
 - [ ] Before moving back, repeat the Section 1 preflight inventory from the `rizonetech` state.
 - [ ] Transfer repository from `rizonetech/impossible-os` back to the intended personal account path.
+- [ ] Record the post-transfer collaborator state: GitHub adds the `rizonetech` org as a collaborator on the moved-back repo; decide keep-or-remove and document it.
+- [ ] Tombstone rule: never create a repo OR fork at any previous owner path (`rizonesoft/impossible-os`, `rizonetech/impossible-os`) -- doing so permanently deletes GitHub's redirect from that path.
 - [ ] Update local remotes and first-party docs back to the final canonical owner, if the final public owner is not `rizonetech`.
 - [ ] Update `www.impossibleos.co` CNAME back to the receiving account's `<owner>.github.io` Pages hostname if the custom domain remains on GitHub Pages.
 - [ ] Re-verify the custom domain on the receiving account before or immediately after transfer.
@@ -323,7 +325,8 @@ Define the return path before it is needed. Moving back later should be a planne
   - branch protection/rulesets are active,
   - security policy is public-ready,
   - Pages custom domain is stable.
-- [ ] Decide how long to rely on GitHub repository redirects after move-back and document any old-owner URLs that should remain supported externally.
+- [ ] Verify redirects resolve from BOTH prior owners (`rizonesoft/impossible-os` AND `rizonetech/impossible-os`) to the final path; decide how long to rely on them and document old-owner URLs to keep supported externally.
+- [ ] Resolve stale repo secrets before going public: `BOOTLOADER_REPO_TOKEN` has NO live consumer (`rg` in `.github`/`scripts` is empty; only docs reference it) -- rotate-or-delete rather than carry an orphaned credential public.
 - [ ] Commit: `"docs/github: add move-back and public-visibility runbook"`
 
 **Test checkpoint:** The final public move is considered ready only after the custom domain, repository visibility, first-party URLs, and security posture are validated in that order.
