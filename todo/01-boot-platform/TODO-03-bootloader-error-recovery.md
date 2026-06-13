@@ -180,7 +180,7 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 > - Scope boundary: `parse_boot_conf()` and `locate_boot_fs()` still use the silent LocateProtocol pattern; consistency follow-ups filed in §7 and TODO-02 §16 to mirror the §3 hardening.
 > **Verified:** 2026-05-01 | commit `2bf210cd` | 5/5 items | build OK | smoke PASS (KVM 2.45s)
 > **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 182)
-> **Accepted:** [H] Silent LocateProtocol fallback in `locate_boot_fs()` (reason: scope -- TODO-02 §16 owns UKI staged-payload disk reads) -> XREF: 01-boot-platform/TODO-02 §16 (item: "Eliminate silent LocateProtocol fallback in `locate_boot_fs()`" at line 540)
+> **Accepted:** [H] Silent LocateProtocol fallback in `locate_boot_fs()` (RESOLVED 2026-06-13 by TODO-02 §16 commit `46eb95bc`: split-path payload provenance hardening -- `locate_boot_fs()` is HandleProtocol-only and `load_kernel()`'s non-boot fallback fails closed when staged payloads are present).
 > **Quality reviewed:** 2026-05-01 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+2M fixed, 2H accepted-XREF | scope: boot-code-quality
 
 ---
