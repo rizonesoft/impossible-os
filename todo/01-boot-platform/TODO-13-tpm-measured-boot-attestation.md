@@ -56,6 +56,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] When the bootloader copies the TCG event log, publish a typed payload descriptor of type `BOOT_PAYLOAD_TPM_EVENT_LOG` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) pointing at the copy so TODO-01 §4's overlap validator retains the region alongside boot_info / rt_mmap / USB DMA / framebuffer. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Commit: `"tpm: harden measured boot event log parser"`
 
+**Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the bootloader copy publishes a `BOOT_PAYLOAD_TPM_EVENT_LOG` descriptor that TODO-01 §4's overlap validator retains. Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
+
 ## 2. TPM2 Command Transport
 
 - [x] Discovery (`tpm_transport.c` `tpm_transport_init()`): ACPI TPM2 table start method 6/7, TIS fixed-base fallback, UC MMIO; methods 2/8 degrade -> XREF: `04-drivers-hardware/TODO-03` §1 (item: "TPM2 ACPI start method (2/8) via ACPICA").
@@ -79,7 +81,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Verified:** 2026-06-12 | commit `8ae51bf1` | 6/6 items | build OK | smoke PASS (KVM 2.530s)
 > **Accepted:** [M] ACPI start methods 2/8 degrade-with-WARN until an AML interpreter exists -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "TPM2 ACPI start method (2/8)" at line 80)
-> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 82)
+> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 84)
 > **Quality reviewed:** 2026-06-12 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 1Crit+6H+6M fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-code-quality
 
 ## 3. PCR Read API
@@ -90,6 +92,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Expose `tpm_pcr_get(index, alg)` to policy consumers.
 - [ ] Commit: `"tpm: read PCR values"`
 
+**Test checkpoint:** `tpm2_pcr_read(bank, mask, out)` against QEMU swtpm returns the SHA-256 PCR0 value matching `swtpm`'s state; SHA-1/384/512 banks read where active, absent banks report not-active (not error); a second `tpm_pcr_get(index, alg)` for a Phase-0 value hits the cache (no second TPM transaction). Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
+
 ## 4. PCR Replay Engine
 
 - [ ] Replay PCR extend operations from parsed event log for every active bank.
@@ -97,6 +101,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Mark event-log tampering separately from baseline mismatch.
 - [ ] Include exact first mismatch in diagnostics.
 - [ ] Commit: `"tpm: replay measured boot PCRs"`
+
+**Test checkpoint:** On a clean boot, replayed PCR values (extended from the parsed event log, every active bank) equal the hardware PCR reads from §3; a known-vector unit test replays a fixed log to expected digests; injecting one tampered event-log entry flags `event-log tamper` distinctly from `baseline mismatch` and diagnostics name the exact first-mismatch PCR index + offset. Platforms: kernel known-vector unit tests + QEMU swtpm KVM; bare metal.
 
 ## 5. Secure Boot Variable Measurement Reconciliation
 
@@ -106,6 +112,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Feed results to `boot_integrity_report`.
 - [ ] Commit: `"tpm: reconcile Secure Boot measurements"`
 
+**Test checkpoint:** `EV_EFI_VARIABLE_*` events for PK / KEK / db / dbx / SecureBoot / SetupMode decode to the same values the UEFI variables report (read via TODO-02); an injected "SecureBoot active but PCR7 has no policy events" combination is flagged as impossible; the reconciliation result lands in `boot_integrity_report`. Platforms: QEMU swtpm + OVMF Secure Boot KVM; bare metal.
+
 ## 6. Baseline Enrollment and Storage
 
 - [ ] Add first-boot enrollment mode gated by physical-console confirmation.
@@ -113,6 +121,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Include bootloader hash, kernel hash, Secure Boot state, and firmware version metadata.
 - [ ] Support baseline rotation after trusted updates.
 - [ ] Commit: `"tpm: enroll measured boot baseline"`
+
+**Test checkpoint:** First-boot enrollment (gated by physical-console confirmation) stores golden PCRs + bootloader hash + kernel hash + Secure Boot state + firmware version; a second boot reads the stored baseline and reports `verified`; a simulated trusted update triggers baseline rotation (old baseline retired, new one stored), not a mismatch halt. Platforms: QEMU swtpm KVM (enrollment + re-boot); bare metal.
 
 ## 7. TPM NV Index Support
 
@@ -122,6 +132,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Add migration path from UEFI variable storage to TPM NV.
 - [ ] Commit: `"tpm: measured boot NV index storage"`
 
+**Test checkpoint:** Define / read / write / undefine round-trip on one OS-owned NV index against QEMU swtpm; where the TPM supports it the index is PCR-policy-protected (a read under the wrong PCR state is denied); no-space and locked-NV return explicit degraded states (not a wedge); the UEFI-variable -> TPM-NV migration path moves an existing baseline without loss. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
+
 ## 8. Sealed-Secret Boot Policy Hooks
 
 - [ ] Add API for sealing and unsealing small secrets to PCR policy.
@@ -129,6 +141,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Provide code-integrity policy seal hook.
 - [ ] Ensure recovery can prompt when unseal fails.
 - [ ] Commit: `"tpm: sealed boot policy hooks"`
+
+**Test checkpoint:** Seal a small secret to a PCR policy, then unseal succeeds while PCRs match and is denied (with a recovery prompt) after a PCR changes; the FDE key-unlock hook and the code-integrity seal hook are present + callable (stub consumers OK until storage-encryption / CI policy land). Platforms: QEMU swtpm KVM (seal + PCR-change deny); bare metal.
 
 ## 9. Attestation Report Export
 
@@ -141,6 +155,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Reserve forward-compat slots for DRTM (Dynamic Root of Trust for Measurement) fields: `drtm_entry_pcr` (typically PCR 17), `drtm_acm_status`, `drtm_measurement_type` (Intel TXT SENTER vs AMD SKINIT vs none). The native `BOOTX64.EFI` does not issue SENTER/SKINIT today, so these fields are zero/absent; the attestation report format must accept and round-trip them so a future TrenchBoot-style Secure Launch adapter (via TODO-08 alternate protocols, or firmware-initiated DRTM on supported platforms) can populate them without a schema break. -> XREF: [`01-boot-platform/TODO-01 §8`](TODO-01-boot-protocol-abi-handoff.md#8-boot-protocol-documentation-and-schema-changelog) owns the `boot_info` handoff-ABI side of any DRTM fields.
 - [ ] Commit: `"tpm: export boot attestation report"`
 
+**Test checkpoint:** A signed `boot_attestation_report_t` carries PCRs + event digest + Secure Boot state + nonce and exports to `X:\Diag\attestation.json`; the native query API returns the same snapshot to user-mode; the bootloader manifest PCR-extend (PCR 11) ran pre-jump and set `BOOT_CAP_MANIFEST_PCR_BOUND` (clear + boot-continue when no TPM); the report snapshots the handoff triple (manifest sha256, caps words, boot-path provenance) and round-trips the zeroed DRTM forward-compat slots. Platforms: QEMU swtpm KVM; bare metal.
+
 ## 10. Recovery and Mismatch UX
 
 - [ ] Add VPD/boot diagnostics status for verified, no TPM, no baseline, mismatch, and event-log tamper.
@@ -148,6 +164,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Allow trusted baseline reset only from recovery mode with local confirmation.
 - [ ] Integrate with A/B rollback if kernel measurement changed unexpectedly.
 - [ ] Commit: `"recovery: measured boot mismatch UX"`
+
+**Test checkpoint:** VPD / boot diagnostics show distinct status for verified / no-TPM / no-baseline / mismatch / event-log-tamper; recovery mode names which layer changed (firmware vs bootloader vs kernel vs Secure Boot db vs baseline); a trusted baseline reset is accepted ONLY from recovery mode with local confirmation; an unexpected kernel-measurement change triggers A/B rollback integration (TODO-22). Platforms: manual recovery-mode walkthrough (QEMU swtpm + injected mismatch); bare metal.
 
 ## 11. TPM Tests and Event-Log Fixtures
 
@@ -157,6 +175,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Fake-CRB buffer seam + unit suite for `crb_submit()` in `src/kernel/tpm_transport.c` (cmdReady/START/goIdle, shared cmd/rsp buffer, oversized response) -- the §2 io seam covers TIS only; CRB is validated live via swtpm.
 - [ ] Add degraded tests for no TPM, truncated log, and inactive PCR banks.
 - [ ] Commit: `"test: TPM measured boot coverage"`
+
+**Test checkpoint:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) runs the new TPM suites with 0 failures: TPM 1.2 + 2.0 event-log parser fixtures, PCR-replay known-vector tests, the fake-CRB buffer seam suite for `crb_submit()`, and degraded cases (no TPM, truncated log, inactive banks); the QEMU swtpm path boots green on KVM. Platforms: kernel unit tests + QEMU swtpm KVM; bare metal (test laptop fTPM).
 
 ## OS Comparison
 
