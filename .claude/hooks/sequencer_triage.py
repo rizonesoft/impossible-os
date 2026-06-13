@@ -39,6 +39,14 @@ import sys
 SECTION_HEADING_RE = re.compile(r"^##\s+(\d+)\.")
 VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
 TODO_NUM_RE = re.compile(r"/TODO-(\d+)-")
+# An implementation TODO lives in a numbered domain dir and is named TODO-NN-*.
+# This excludes INDEX.md and non-TODO doctrine files (e.g. the runner-doctrine
+# TODO-Claude-Overnight-Runner.md), which the runner must never "work".
+IMPL_TODO_RE = re.compile(r"(?:^|/)todo/\d\d-[^/]+/TODO-\d+-[^/]*\.md$")
+
+
+def is_impl_todo(file_path):
+    return bool(IMPL_TODO_RE.search(file_path.replace("\\", "/")))
 
 DONE = "DONE"
 DONE_UNSTAMPED = "DONE_UNSTAMPED"
@@ -121,8 +129,13 @@ def _todo_num(file_path):
 
 
 def traversal_order(cache):
-    """Domains numeric, files numeric within a domain."""
-    return sorted(cache, key=lambda e: (e.get("domain", ""), _todo_num(e["file_path"])))
+    """Implementation TODOs only, domains numeric, files numeric within a domain.
+
+    Non-TODO doctrine files (INDEX.md, the runner-doctrine file) are excluded:
+    the runner never validates/gap-audits/implements them.
+    """
+    impl = [e for e in cache if is_impl_todo(e["file_path"])]
+    return sorted(impl, key=lambda e: (e.get("domain", ""), _todo_num(e["file_path"])))
 
 
 def next_file(cache, root):
@@ -180,10 +193,16 @@ def cmd_selftest(cache, root):
         for n, c in per:
             if c not in valid:
                 failures.append(f"{entry['file_path']} sec {n}: bad class {c!r}")
-    # 2. traversal order is stable + total.
+    # 2. traversal covers exactly the implementation TODOs, no dupes, and
+    #    excludes non-TODO doctrine files.
     order = traversal_order(cache)
-    if len(order) != len(cache):
-        failures.append("traversal dropped/added entries")
+    impl_count = sum(1 for e in cache if is_impl_todo(e["file_path"]))
+    if len(order) != impl_count:
+        failures.append("traversal dropped/added impl entries")
+    if len({e["file_path"] for e in order}) != len(order):
+        failures.append("traversal has duplicate entries")
+    if any("TODO-Claude-Overnight-Runner" in e["file_path"] for e in order):
+        failures.append("traversal included the runner-doctrine file")
     # 3. next_file is either None or a non-DONE file in the cache.
     entry, cls = next_file(cache, root)
     if entry is not None and cls == DONE:
