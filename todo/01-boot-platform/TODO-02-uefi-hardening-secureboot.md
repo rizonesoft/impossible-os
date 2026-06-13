@@ -510,7 +510,7 @@ Detect firmware tampering, NVRAM corruption, or a physical attacker that modifie
 
 - [x] Drift-detection API (`uefi_secureboot_snapshot` / `_refresh` / `_revalidate_tick` / `_drift_detected`) shipped in `src/kernel/uefi_runtime.c:1186-1486` -- snapshot captured at end of `uefi_secureboot_init()`; do_revalidate helper shared by both consumer entry points; tri-state read helpers; sticky drift + sticky-publish-with-retry.
 - [x] Test `test_secureboot_drift_detection` (TEST_CAT_BOOT, in `test_uefi_boot.c`) asserts revalidate_tick + refresh return 0 on an untampered system and the drift flag stays clear.
-- [ ] **Wire `uefi_secureboot_revalidate_tick()` into a 5-minute periodic kernel worker**: the API exists but the periodic caller does not. Needs a long-period worker pattern (kthread sleeping `5 * 60 * 1000` ms via `sleep_ms()`, or a generic timer-deadline framework) -- new pattern in this kernel. The worker runs in a kernel-task context and yields cooperatively so it can not starve. Consumer side only; no firmware-API changes needed.
+- [ ] **Wire `uefi_secureboot_revalidate_tick()` into the periodic worker pool** (blocked on the kworker pool; no parking timed-sleep exists yet) -> XREF: `02-kernel-core/TODO-07 §18` (item: "Consumer wiring 1 ... `uefi_secureboot_revalidate_tick`").
 - [ ] **Wire `uefi_secureboot_refresh()` into the S3 resume path** -> XREF: [`02-kernel-core/TODO-26-power-management.md §3`](../02-kernel-core/TODO-26-power-management.md#3-s3-suspend-to-ram) (S3 suspend-to-RAM, Implementation Order row 3, currently `[ ]`): the resume handler must call `uefi_secureboot_refresh()` immediately after re-enabling runtime services and `pm_notify_resume()` and before re-entering userspace, so any tampering during sleep is detected before the user types a password. Reciprocal back-reference already filed in TODO-26 §3 prose.
 - [ ] Test extension when consumer wiring lands: simulate tampered live state (PK absent vs snapshot.pk_present=1) and assert `revalidate_tick()` returns 1, klog FATAL fires once, registry `Drift=1`, and the sticky flag stays set on subsequent calls. Currently blocked by lack of a UEFI variable mock layer; revisit when SecureBoot test infrastructure adds `uefi_get_variable` interception.
 - [ ] Commit on each wiring item ship: `"kernel/secureboot: wire <consumer> -> uefi_secureboot_<entry>()"`
@@ -518,6 +518,16 @@ Detect firmware tampering, NVRAM corruption, or a physical attacker that modifie
 **Test checkpoint:** `test_secureboot_drift_detection` passes today (no tampering -> no drift). After consumer wiring lands: a deliberately tampered fixture must trigger LOG_FATAL once and set `HKLM\SYSTEM\SecureBoot\Drift=1`. Test on: QEMU TCG (variable read failure simulation), bare metal (real S3 resume).
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, TEST_CAT_BOOT) | test_secureboot_drift_detection (1 of N drift-related tests; rest gated on consumer wiring + UEFI variable mocks)
+
+> **Notes:**
+> - **What shipped:** the drift-detection API (`uefi_secureboot_snapshot` / `_refresh` / `_revalidate_tick` / `_drift_detected`) in `src/kernel/uefi_runtime.c` + `test_secureboot_drift_detection` (TEST_CAT_BOOT), landed 2026-05-01 `35be4b90`.
+> - **How it integrates:** snapshot frozen at end of `uefi_secureboot_init()`; revalidate re-reads firmware outside `s_sb_lock` via the sleepable `s_rt_mutex`, sets a sticky drift flag + `HKLM\SYSTEM\SecureBoot\Drift=1`.
+> - **Deferred consumer wiring:** the periodic caller is blocked on the kworker pool (a naive kthread busy-`hlt`-polls; `sleep_ms()` does not park); S3 refresh blocked on S3. Owned by `TODO-07 §18` + `TODO-26 §3`.
+> - **Canonical doc:** the §15 NOTE callout above; the worker-pool primitive is `02-kernel-core/TODO-07 §18`.
+> - **Scope boundary:** §5 owns the boot-time baseline; TODO-07 §18 owns the worker-pool primitive + its parking-sleep prerequisite; TODO-26 §3 owns S3 resume; the tampered-state test is owned here, blocked on a UEFI-variable mock layer.
+
+> **Verified:** 2026-06-13 | drift API + test shipped 2026-05-01 `35be4b90` | 2/5 items | build OK | scope: drift-detection API only -- consumer wiring + tampered-state test deferred (no new code this pass)
+> **Deferred:** [M] periodic-worker wiring -> XREF: 02-kernel-core/TODO-07 §18 (item: "Consumer wiring 1 ... register `uefi_secureboot_revalidate_tick`"); S3-resume refresh -> XREF: 02-kernel-core/TODO-26 §3 (item: "S3: Suspend to RAM" at line 160) + TODO-07 §18 Consumer wiring 3; tampered-state test blocked on a UEFI-variable mock layer (test-infra gap, no concrete owner)
 
 ---
 
