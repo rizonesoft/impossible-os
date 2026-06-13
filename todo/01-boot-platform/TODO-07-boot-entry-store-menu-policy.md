@@ -68,6 +68,7 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 | 💎  |  15   | OS-visible loader UEFI variables                       | §3, §4, §9, §13                         |  [x]   |
 | 💎  |  16   | Bootstrap and first-install entry seeding              | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
 | 💎  |  17   | Boot entry tests                                       | §1-§16                                  |  [/]   |
+| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                     |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -565,6 +566,21 @@ Umbrella aggregation: per-section coverage shipped throughout §1-§16; this sec
 > **Deferred:** [L] Audit dual-write-failure dedup harness -> XREF: 01-boot-platform/TODO-07 §17 (item: "Audit dual-write-failure dedup harness" at line 548)
 > **Deferred:** [L] Audit JSONL rotation on FAT32 LFN -> XREF: 05-storage-filesystems/TODO-04 §16 (item: "Refuses non-first-cluster destinations until cross-cluster LFN removal lands" at line 393)
 > **Quality reviewed:** 2026-05-19 | Codex 8x (adversarial 6x + consistency + perf) | 0C+1H+9M fixed, 0 open | scope: N/A (docs-only aggregation section)
+
+---
+
+## 18. Boot Loader Interface (systemd BLI) Parity Fixes
+
+The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loader Interface variables but diverge from the BLI/BLS contract in three ways a `bootctl` / `systemd-analyze` / `systemctl reboot --boot-loader-menu=` consumer would hit (Codex gap-audit 2026-06-13). This section corrects them without re-opening the shipped sections.
+
+- [ ] BLS display ordering: one ordered visible list (bad-counted last, then `sort_key`/`machine-id`/`version`) shared by the §6 menu + §15 `LoaderEntries`; today parsed-store order, `sort_key` only picks the default. Gate `LoaderFeatures` bit 8.
+- [ ] `LoaderConfigTimeoutOneShot` semantics: align with systemd (0 = menu with no timeout, range to 3600s) or clamp + `[WARN]` consistently; today 61-3600s are consumed-then-silently-dropped and 0 = kiosk auto-boot.
+- [ ] Distinct `LoaderTimeInitUSec`/`ExecUSec`: a real Init separate from Exec; today both equal elapsed-since-`bl_entry` so `systemd-analyze` loader-time reads ~0. Do NOT add `LoaderTimeMenuUSec`.
+- [ ] Commit: `"boot: TODO-07 §18 -- systemd BLI parity (BLS display order, one-shot timeout, distinct loader timestamps)"`
+
+**Test checkpoint:** against a multi-entry store, `LoaderEntries` matches the on-screen menu order (bad-counted last, then `sort_key`); `LoaderConfigTimeoutOneShot=0` shows the menu with no countdown (or warns+clamps per the chosen policy); `systemd-analyze` reports non-zero loader time. Extend `test_boot_entries` with out-of-array `sort_key` + bad-counter ordering assertions. Test on: QEMU TCG (deterministic); bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
 
 ---
 
