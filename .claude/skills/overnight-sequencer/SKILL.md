@@ -58,13 +58,16 @@ python3 .claude/hooks/run_phase_guard.py <cmd>
 ### 2. TRIAGE (`phase TRIAGE`)
 
 - `python3 .claude/hooks/sequencer_triage.py --next`.
-  - `{"status":"DONE"}` -> the repo has no NEEDS-WORK files. If this pass made
-    NO progress (`progress_this_pass` is false), you are at fixpoint:
-    `run_phase_guard.py fixpoint`, write the final Run Log line, disarm
+  - `{"status":"DONE"}` -> the oracle sees no NEEDS-WORK / DONE-UNSTAMPED files.
+    Attempt `run_phase_guard.py fixpoint`. It is **ORACLE-VERIFIED**: it rebuilds
+    the todo-graph and REFUSES (exit 1, run stays active) unless `--next` truly
+    returns DONE -- so you cannot finish early. **On success only:** write the
+    final Run Log line, disarm
     (`bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm`), and
-    final-answer with the summary + human punch-list. If this pass DID make
-    progress, `run_phase_guard.py next-pass` and TRIAGE again (temporal blockers
-    may now be unblocked).
+    final-answer with the summary + human punch-list. **If fixpoint is REFUSED**
+    (or this pass made progress): `run_phase_guard.py next-pass` and TRIAGE again
+    -- temporal blockers may now be unblocked. You may ONLY finish via a verified
+    fixpoint; never disarm or final-answer otherwise (the Stop hook blocks it).
   - `{"status":"NEEDS_WORK","file":F}` -> `cursor <domain> F`; go to VALIDATE.
   - `{"status":"DONE_UNSTAMPED","file":F}` -> `cursor <domain> F`; skip
     VALIDATE+GAP_AUDIT, go straight to SECTIONS (review-only; the file is

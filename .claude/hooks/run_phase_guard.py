@@ -238,10 +238,35 @@ def cli(argv):
         print(f"[sequencer] -> pass {state['pass_no']}", file=sys.stderr)
         return 0
     if cmd == "fixpoint":
+        # FIXPOINT is the ONLY path to a permanent stop (it ends the run and the
+        # watchdog auto-disarms). It must NOT be fakeable: machine-verify via the
+        # triage oracle (graph-truth, freshly rebuilt) that ZERO work remains.
+        # If anything remains, REFUSE -- the run stays active and keeps looping.
+        import subprocess
+        root = repo_root()
+        try:
+            subprocess.run(
+                ["bash", "scripts/todo-graph/build-and-validate.sh", "--keep-cache"],
+                cwd=root, capture_output=True, text=True, timeout=300)
+            out = subprocess.run(
+                [sys.executable, str(HOOK_DIR / "sequencer_triage.py"), "--next"],
+                cwd=root, capture_output=True, text=True, timeout=120)
+            nxt = json.loads(out.stdout or "{}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[sequencer] fixpoint REFUSED: oracle check failed ({e}). "
+                  "Fail safe -- keep running, do NOT finish.", file=sys.stderr)
+            return 1
+        if nxt.get("status") != "DONE":
+            print(f"[sequencer] fixpoint REFUSED: the oracle still reports work "
+                  f"(status={nxt.get('status')}, file={nxt.get('file')}). The run "
+                  "is NOT done -- continue the loop. FIXPOINT is only valid when "
+                  "`sequencer_triage.py --next` returns DONE.", file=sys.stderr)
+            return 1
         state["phase"] = "FIXPOINT"
         state["active"] = False
         save_state(state)
-        print("[sequencer] FIXPOINT reached -- run complete", file=sys.stderr)
+        print("[sequencer] FIXPOINT verified by oracle (no remaining work) -- "
+              "run complete", file=sys.stderr)
         return 0
     if cmd == "clear":
         save_state({"active": False})

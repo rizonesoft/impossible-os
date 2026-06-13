@@ -180,6 +180,11 @@ This doctrine is not just guidance: it is hard-enforced. Architecture is
 - **ChromeMCP is off at the systemd-unit level for this repo only** (per-unit env
   on impossible-os's units), so the "NO ChromeMCP. Ever." rule is enforced before
   `claude` even launches, without affecting any other project's overnight runs.
+- **FIXPOINT is machine-verified, not asserted.** The only path to a permanent
+  stop is `run_phase_guard.py fixpoint`, which rebuilds the todo-graph and
+  REFUSES unless `sequencer_triage.py --next` returns DONE (zero remaining work).
+  Until then `Stop` is blocked, so the run cannot finish early; a false fixpoint
+  is impossible. Only a verified fixpoint auto-disarms the watchdog.
 
 ## Run Log
 
