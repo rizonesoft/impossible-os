@@ -69,9 +69,11 @@ FIXPOINT (pass produced no progress) -> auto-disarm timers -> final report + pun
   review-required, skill-step-block) keep running **inside**
   `implement/review-todo-section`. The phase-guard governs the **outer** sequence;
   those govern the **inner** pipeline. Defense in depth.
-- State (`.claude/state/sequencer-run.json`): `pass_no`, `domain`, `file`,
-  `phase`, `section_idx`, `ledger[]`, `progress_this_pass`, `started_at`. A
-  watchdog relaunch resumes mid-sequence exactly where it crashed.
+- State (`.claude/state/sequencer-run.json`): the run **cursor only** --
+  `pass_no`, `domain`, `file`, `phase`, `section_idx`, `progress_this_pass`,
+  `started_at`. No deferral ledger here: deferrals live in the TODO files
+  (`[/]` + Deferred/Accepted stamps) and are queried via todo-graph. A watchdog
+  relaunch resumes mid-sequence exactly where it crashed.
 
 ## Triage / done-detection (graph oracle)
 
@@ -103,8 +105,22 @@ a later pass. Deferred items are retried every pass. The run ends only when a
 | Hard failure (build/test/smoke/Codex/commit-gate) | skills' bounded fix loops; if still failing, roll back (commit nothing), defer w/ diagnostic; retry next pass | advance, **nothing broken shipped** |
 | Persistent failure (identical error across K=3 passes) | escalate to residual punch-list with diagnostics | advance, surfaced to human |
 
-Every deferral is recorded in `.claude/overnight/blocked.md` + the run report:
-silent to the run's *flow*, never silent to the human.
+**Deferrals use the existing machinery, not a new ledger.** The repo already
+owns the full deferred-item / loose-end ecosystem and the runner is only *aware*
+of it:
+- Durable record = TODO-file `[/]` markers + `Deferred:`/`Accepted:` stamps
+  (concrete XREFs), created by `review-todo-section` / `implement-todo-section`.
+- Query = todo-graph `deferred` / `deferred-by`.
+- Resolution = review/implement inbound-sweep + deferred-item-resolution +
+  filed-in-owner checks (a deferral is swept when its target item closes).
+- Closure = `complete-todo-file` loose-end sweep at file completion.
+
+**Fixpoint convergence rides those signals:** `sequencer_triage.py` already reads
+a stamped `[/]` as DONE-for-now, so once a section is properly deferred by the
+normal skills, the oracle recognizes it and the loop converges -- no parallel
+ledger. The only NEW human-facing artifact is the per-run report the plugin
+already writes (`.claude/overnight/reports/`); deferrals are never silent to the
+human because they live in the TODO files + todo-graph.
 
 ## Watchdog = pure failover
 
