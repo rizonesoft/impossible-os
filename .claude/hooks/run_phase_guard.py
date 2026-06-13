@@ -44,6 +44,11 @@ def repo_root():
 
 
 STATE_PATH = repo_root() / ".claude/state/sequencer-run.json"
+# Written by arm-sequencer.sh; present means "an unattended sequencer run is
+# armed". Until the run is active (overnight-sequencer called `start`), the only
+# valid skill is overnight-sequencer -- this is how the headless launch is
+# redirected off the plugin's generic flow without editing the plugin.
+ARMED_MARKER = repo_root() / ".claude/state/sequencer-armed"
 
 # Ordered phases of the per-file pipeline.
 PHASES = ["PREFLIGHT", "TRIAGE", "VALIDATE", "GAP_AUDIT", "SECTIONS",
@@ -98,13 +103,13 @@ def _skill_name(tool_input):
     return tool_input.get("skill") or tool_input.get("name") or ""
 
 
-def evaluate(tool_name, tool_input, state):
+def evaluate(tool_name, tool_input, state, armed=False):
     """Return (allow: bool, message: str). Pure -- unit-testable."""
-    if not state.get("active"):
+    active = bool(state.get("active"))
+    if not active and not armed:
         return True, ""
-    phase = state.get("phase", "PREFLIGHT")
 
-    # 1. AskUserQuestion is never allowed: unattended means decide-or-defer.
+    # AskUserQuestion is never allowed while armed or active.
     if tool_name == "AskUserQuestion":
         return False, (
             "[sequencer] AskUserQuestion is blocked during an unattended run. "
@@ -113,8 +118,25 @@ def evaluate(tool_name, tool_input, state):
             "advance. The run never stops to ask. "
             "(todo/TODO-Claude-Overnight-Runner.md hard rules.)")
 
-    # 2. Sequence-skill ordering: a controlled skill may only fire in a phase
-    #    that allows it.
+    # Armed but not yet started: force the redirect onto overnight-sequencer.
+    if not active and armed:
+        if tool_name == "Skill":
+            sk = _skill_name(tool_input)
+            if sk == "overnight-sequencer":
+                return True, ""
+            return False, (
+                "[sequencer] ARMED unattended run: your only valid skill right now "
+                "is Skill(overnight-sequencer), which drives the per-file pipeline "
+                "from todo/TODO-Claude-Overnight-Runner.md. Do NOT run the generic "
+                "overnight-runner flow or any other skill first. Invoke "
+                "Skill(overnight-sequencer) now.")
+        return True, ""  # Bash / Read / Grep / Glob allowed for setup
+
+    # Active run: phase enforcement. (AskUserQuestion already handled above.)
+    phase = state.get("phase", "PREFLIGHT")
+
+    # Sequence-skill ordering: a controlled skill may only fire in a phase
+    # that allows it.
     if tool_name == "Skill":
         sk = _skill_name(tool_input)
         if sk in SEQUENCE_SKILLS and sk not in PHASE_ALLOWED_SKILLS.get(phase, set()):
@@ -137,7 +159,8 @@ def handle_pretool():
         d = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError):
         return 0
-    allow, msg = evaluate(d.get("tool_name", ""), d.get("tool_input", {}), load_state())
+    allow, msg = evaluate(d.get("tool_name", ""), d.get("tool_input", {}),
+                          load_state(), armed=ARMED_MARKER.exists())
     if allow:
         return 0
     sys.stderr.write(msg)
@@ -174,7 +197,12 @@ def cli(argv):
             "updated_at": argv[1] if len(argv) > 1 else "unknown",
         }
         save_state(state)
-        print(f"[sequencer] started: pass 1, PREFLIGHT", file=sys.stderr)
+        # The redirect served its purpose; the active run now governs.
+        try:
+            ARMED_MARKER.unlink()
+        except FileNotFoundError:
+            pass
+        print("[sequencer] started: pass 1, PREFLIGHT", file=sys.stderr)
         return 0
     if cmd == "status":
         print(json.dumps(state, indent=1))
@@ -263,6 +291,19 @@ def selftest():
     # legacy System A skill blocked everywhere active.
     a, _ = evaluate("Skill", {"skill": "overnight-todo-runner"}, {"active": True, "phase": "SECTIONS"})
     check(not a, "legacy overnight-todo-runner allowed inside a sequencer run")
+    # Armed-but-not-started: only overnight-sequencer skill allowed.
+    a, _ = evaluate("Skill", {"skill": "overnight-sequencer"}, {"active": False}, armed=True)
+    check(a, "overnight-sequencer blocked while armed")
+    a, _ = evaluate("Skill", {"name": "overnight-runner:start"}, {"active": False}, armed=True)
+    check(not a, "generic overnight-runner:start allowed while armed (should redirect)")
+    a, _ = evaluate("Bash", {"command": "python3 .claude/hooks/sequencer_triage.py --next"},
+                    {"active": False}, armed=True)
+    check(a, "Bash blocked while armed (setup needs it)")
+    a, _ = evaluate("AskUserQuestion", {}, {"active": False}, armed=True)
+    check(not a, "AskUserQuestion allowed while armed")
+    # Not armed, not active: everything passes.
+    a, _ = evaluate("Skill", {"skill": "anything"}, {"active": False}, armed=False)
+    check(a, "skill blocked while neither armed nor active")
 
     if fails:
         for f in fails:
