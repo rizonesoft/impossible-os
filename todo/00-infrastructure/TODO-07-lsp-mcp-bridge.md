@@ -59,7 +59,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
 | ⭐  |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
 | 💎  |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
-| 💎  |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
+| 💎  |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -646,6 +646,9 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 > [!IMPORTANT]
 > **Per the skill-template rule, every section normally ends with a `Commit:` item.** §19 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §19 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
+
+> **Verified:** 2026-06-13 | commit `8e121a57` | 0/1 items (standing trigger-watcher, intentionally open) | build N/A | validation: five scale triggers checked vs current repo, none fired
+> **Deferred:** [L] Standing trigger-watcher; no code until a scale threshold fires (2M core LOC / 5min cold clangd-check / 10k compile_commands entries / 2s warm workspace-symbol / 4 GiB clangd RSS) -- current repo is ~5 orders of magnitude under every threshold (2026-06-13) -> XREF: 00-infrastructure/TODO-07 §19 (item: "Review this section's triggers once per calendar year" at line 643)
 
 ---
 
