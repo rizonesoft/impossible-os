@@ -609,6 +609,11 @@ The shipped §15 (loader UEFI vars) + §6 (menu render) publish systemd Boot Loa
 > - **Canonical doc:** `docs/boot/boot-entry-schema.md`; systemd Boot Loader Interface spec for var semantics.
 > - **Scope boundary:** two `[ ]` follow-ups -- full BLS order (bad-counted-last + `version` field + `LoaderFeatures` bit 8) and relocating the LoaderTime publish after `load_kernel`.
 
+> **Verified:** 2026-06-13 | commit `6d382664` | 2/5 items | build OK | kernel tests 2546 PASS (incl 6 new BLS-order assertions)
+> **Deferred:** [H] distinct `LoaderTimeInitUSec`/`ExecUSec` blocked -- `timing.tsc_freq` is 0 at the pre-`load_kernel` publish point -> XREF: 01-boot-platform/TODO-07 §18 (item: "Relocate the LoaderTime publish to after TSC calibration")
+> **Deferred:** [M] full BLS order (bad-counted-last + `version` sub-key) + `LoaderFeatures` bit 8 not advertised -> XREF: 01-boot-platform/TODO-07 §18 (item: "BLS full order + `LoaderFeatures` bit 8")
+> **Quality reviewed:** 2026-06-13 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H+1M deferred | scope: boot-code-quality
+
 ---
 
 ## OS Comparison
