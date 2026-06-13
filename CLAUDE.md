@@ -226,7 +226,8 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 | `/implement-todo-item` | Implement a single `[ ]` (or close a `[/]`) item; auto-promotes to section-ship when it closes the last `[ ]` |
 | `/implement-ssdt-range` | Implement + wire a range of SSDT entries, mark Done [x] |
 | `/complete-todo-file` | Finalize / loose-end sweep an active TODO; runs unit tests + verification + commits |
-| `/overnight-todo-runner` | Drive a TODO file to completion overnight; Stop hook (exit 2) blocks final-answer between section ships until file exhausted / user paused / all remaining sections blocked-with-XREF |
+| `/overnight-sequencer` | Unattended whole-repo completion driver (headless, armed via `arm-sequencer.sh`). Fixpoint loop over every `todo/` file: triage -> validate -> gap-audit -> per-section implement/review -> close -> advance, hard-enforced by `run_phase_guard.py` (no deviation, no asking, no stop before fixpoint). Follows `todo/TODO-Claude-Overnight-Runner.md`. |
+| `/overnight-todo-runner` | (Superseded by `/overnight-sequencer`; retained as interactive fallback pending retirement after first live sequencer run.) Drive ONE TODO file to completion interactively; Stop hook blocks final-answer between section ships. |
 | `/create-todo` | Create a new TODO file |
 | `/validate-todo-file` | Validate a TODO for structural gaps |
 | `/verify-todo-section` | Audit-mode wrapper over `/review-todo-section` (downgrade-only) |

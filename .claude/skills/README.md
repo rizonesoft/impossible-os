@@ -24,7 +24,8 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | [`implement-ssdt-range`](implement-ssdt-range/) | Implement + wire a range of SSDT entries, mark Done `[x]`             |
 | [`implement-unit-tests`](implement-unit-tests/) | Ship a TODO's Unit Tests section end-to-end                           |
 | [`complete-todo-file`](complete-todo-file/) | Finalize a TODO OR sweep an active one for loose ends: stale XREFs / drifted counts / unfilled placeholders / `[/]` platform-list narrowing / reversible `[ ]` manual demos. Full mode also dispatches `implement-unit-tests`, runs Verification items, flags manual-only, commits |
-| [`overnight-todo-runner`](overnight-todo-runner/) | Drive a TODO file to completion overnight: section ship + post-impl review per slice; Stop-hook blocks final-answer until the file is exhausted, the user pauses, or every remaining section is blocked-with-XREF |
+| [`overnight-sequencer`](overnight-sequencer/) | Unattended whole-repo completion driver (headless, armed via `arm-sequencer.sh`): fixpoint loop over every `todo/` file (triage -> validate -> gap-audit -> per-section implement/review -> close -> advance), hard-enforced by `run_phase_guard.py`. Source of truth: `todo/TODO-Claude-Overnight-Runner.md`. |
+| [`overnight-todo-runner`](overnight-todo-runner/) | (Superseded by `overnight-sequencer`; interactive fallback pending retirement after first live sequencer run.) Drive one TODO file to completion interactively; Stop-hook blocks final-answer between section ships |
 
 ### Review + verification
 
