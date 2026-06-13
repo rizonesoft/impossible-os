@@ -563,6 +563,10 @@ Promoted from §11 deferred [H] (gap-audit 2026-05-01). The Unified Kernel Image
 > - **Canonical doc:** `docs/guides/secure-boot-keys.md` (UKI subsection).
 > - **Scope boundary:** the headless serial-to-file smoke harness for the two UKI cases is deferred test-infra (open `[ ]` below); UKI addons/profiles are advanced (TODO-27 if ever).
 
+> **Verified:** 2026-06-13 | commit `46eb95bc` | 8/10 items | build OK | smoke PASS (KVM 2.590s)
+> **Deferred:** [M] headless serial-to-file smoke harness for `uki_initrd_signed` + `uki_initrd_disk_override_rejected` (and the provenance fail-closed case) -- needs a new QEMU serial-capture pattern -> XREF: 01-boot-platform/TODO-02 §16 (item: "Smoke harness for UKI signed-payload cases" below)
+> **Quality reviewed:** 2026-06-13 | Codex 6x (design + adversarial + re-adversarial + consistency + perf) | 0 findings | scope: boot-code-quality
+
 ---
 
 ## 17. SBAT Revocation Metadata in Boot Artifacts
