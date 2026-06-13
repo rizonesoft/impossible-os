@@ -20,12 +20,13 @@
 #   * LSPs are spawned ON DEMAND: first request for a language boots
 #     that LSP; subsequent requests reuse it. Prevents idle overhead
 #     when an agent never touches a language.
-#   * 15 read-only MCP tools registered via _build_mcp():
+#   * 17 read-only MCP tools registered via _build_mcp():
 #     6 core (hover / definition / references / diagnostics /
 #     workspace_symbol / document_symbol), 8 extended (completion /
 #     signature_help / type_definition / implementation /
 #     declaration / call_hierarchy_incoming / call_hierarchy_outgoing
-#     / code_action), and 1 meta (_health -- per-LSP crash + restart
+#     / code_action), 2 type-hierarchy (type_hierarchy_supertypes /
+#     type_hierarchy_subtypes), and 1 meta (_health -- per-LSP crash + restart
 #     bookkeeping; no LSP wire traffic). Each LSP-routed handler
 #     sandboxes the path arg via _dispatch_path(), routes to the
 #     right LSP through _EXT_TO_LANG, and returns a normalized
@@ -37,9 +38,9 @@
 #     _SPAWN_EVENTS gate first-spawn uses; 4 crashes within 60 s
 #     pushes the key to FAILED state.
 #   * --self-test exits 0 with
-#     "[lsp-mcp] OK: 0 LSPs spawned, 15 tools registered, bridge ready"
+#     "[lsp-mcp] OK: 0 LSPs spawned, 17 tools registered, bridge ready"
 #     even when the `mcp` SDK is absent (SKIP path, CI-friendly).
-#     --self-test --tools dumps the 15 tool schemas as JSON.
+#     --self-test --tools dumps the 17 tool schemas as JSON.
 #
 # Usage:
 #   python3 scripts/lsp-mcp/bridge.py              # stdio server
@@ -1505,6 +1506,12 @@ MCP_TOOL_NAMES = (
     "call_hierarchy_incoming",
     "call_hierarchy_outgoing",
     "code_action",
+    # Type hierarchy: read-only sibling of call hierarchy --
+    # prepareTypeHierarchy + supertypes/subtypes. Neither
+    # typeHierarchy/* method mutates the workspace, so they stay out
+    # of _FORBIDDEN_LSP_METHODS.
+    "type_hierarchy_supertypes",
+    "type_hierarchy_subtypes",
     # Health + auto-restart (LSP Subprocess Health Monitoring).
     # Read-only meta tool: returns per-LSP status + restart count
     # without touching any LSP wire path. Works even when every
@@ -2199,6 +2206,17 @@ _CALL_HIERARCHY_DEADLINE_S = 30.0
 # so any single wedged anchor cannot consume the whole deadline.
 _CALL_HIERARCHY_FOLLOW_TIMEOUT_S = 5.0
 
+# Type hierarchy (supertypes / subtypes) shares the call-hierarchy
+# bounded-fan-out design verbatim: prepareTypeHierarchy can return
+# multiple TypeHierarchyItems on overloaded / ambiguous positions, and
+# each anchor drives one supertypes/subtypes follow-up, so the same
+# count cap + wall-clock deadline + per-follow-up timeout keep a
+# pathological position or wedged LSP from tying up an interactive MCP
+# call. Values mirror the _CALL_HIERARCHY_* constants.
+_TYPE_HIERARCHY_MAX_ANCHORS = 32
+_TYPE_HIERARCHY_DEADLINE_S = 30.0
+_TYPE_HIERARCHY_FOLLOW_TIMEOUT_S = 5.0
+
 
 def _normalize_completion(result: Any) -> dict:
     """Normalize textDocument/completion response.
@@ -2320,6 +2338,34 @@ def _normalize_call_hierarchy_calls(result: Any, key: str) -> list:
             ranges = []
         out.append({"item": item, "ranges": ranges})
     return out
+
+
+def _normalize_type_hierarchy_items(result: Any) -> list:
+    """prepareTypeHierarchy / typeHierarchy/supertypes /
+    typeHierarchy/subtypes all return TypeHierarchyItem[] | null.
+    Pass-through as a list of dict items; null or non-list -> []."""
+    if result is None or not isinstance(result, list):
+        return []
+    return [it for it in result if isinstance(it, dict)]
+
+
+def _normalize_type_hierarchy_item(item: Any) -> dict:
+    """Flatten a TypeHierarchyItem to the read-only fields agents need:
+    name / kind / uri / range / selection_range / detail. The
+    TypeHierarchyItem shape carries no edit payload (unlike a
+    WorkspaceEdit), so dropping nothing actionable keeps the read-only
+    boundary intact structurally -- same property the code_action
+    metadata normalizer relies on. A non-dict entry collapses to {}."""
+    if not isinstance(item, dict):
+        return {}
+    return {
+        "name": item.get("name"),
+        "kind": item.get("kind"),
+        "uri": item.get("uri"),
+        "range": item.get("range"),
+        "selection_range": item.get("selectionRange"),
+        "detail": item.get("detail"),
+    }
 
 
 def _normalize_code_actions(result: Any) -> list:
@@ -3170,6 +3216,184 @@ def _build_mcp(FastMCP, workspace_root: Path):
                          f"semantics as call_hierarchy_incoming "
                          f"({_CALL_HIERARCHY_MAX_ANCHORS} anchors "
                          "max).")(call_hierarchy_outgoing)
+
+    def _type_hierarchy_one_step(method: str,
+                                 path: str, line: int,
+                                 character: int) -> dict:
+        """Shared body for supertypes/subtypes type-hierarchy. The LSP
+        contract mirrors call hierarchy: textDocument/prepareTypeHierarchy
+        returns TypeHierarchyItem[] anchoring the symbol; for each item a
+        follow-up typeHierarchy/supertypes or typeHierarchy/subtypes
+        returns the related TypeHierarchyItem[] directly (a FLAT list, not
+        the {from}/{to}-wrapped shape call hierarchy uses). We collapse
+        both steps into one MCP call: prepare, then issue the follow-up
+        for EVERY prepared anchor and bundle per-anchor results into
+        `anchors`. Read-only -- neither method is write-capable.
+
+        Capability gate: unlike call hierarchy we check
+        typeHierarchyProvider BEFORE issuing prepare, because asm-lsp /
+        bash-language-server / PSES never advertise it and we want a
+        clean `capability_missing=True` contract rather than letting the
+        LSP method-not-found error surface. EVERY return path sets
+        `capability_missing` so a caller distinguishes 'this LSP cannot
+        do type hierarchy' from 'no type at this position' without
+        parsing the human-readable note (Codex design review)."""
+        import time as _time
+        line_v, char_v = _validate_position(line, character)
+        resolved, lang, text, mtime_ns = _dispatch_path(path, workspace_root)
+        lsp = _get_or_spawn(lang, workspace_root)
+        uri = _ensure_open_for(lsp, resolved, lang, text, mtime_ns)
+        # Spec-correct capability check (boolean | Options dict | absent).
+        # `{}` means "supported with default options", so _caps_missing --
+        # which already handles that LSP 3.17 subtlety -- is reused here
+        # rather than a naive truthiness test.
+        if _caps_missing(lsp.server_caps, ("typeHierarchyProvider",)):
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "prepared_count": 0,
+                "prepared_total": 0,
+                "anchors": [],
+                "truncated": False,
+                "deadline_exceeded": False,
+                "capability_missing": True,
+                "note": f"the {lang} LSP does not advertise "
+                        "typeHierarchyProvider; type hierarchy is "
+                        "unavailable for this language.",
+            }
+        deadline = _time.monotonic() + _TYPE_HIERARCHY_DEADLINE_S
+        prepared_raw = lsp.request(
+            "textDocument/prepareTypeHierarchy",
+            {"textDocument": {"uri": uri},
+             "position": {"line": line_v, "character": char_v}},
+            timeout=15.0,
+        )
+        prepared = _normalize_type_hierarchy_items(prepared_raw)
+        if not prepared:
+            return {
+                "uri": uri,
+                "lang": lang,
+                "line": line_v,
+                "character": char_v,
+                "prepared_count": 0,
+                "prepared_total": 0,
+                "anchors": [],
+                "truncated": False,
+                "deadline_exceeded": False,
+                "capability_missing": False,
+                "note": "prepareTypeHierarchy returned no items at this "
+                        "position; the LSP does not see a type here.",
+            }
+        # Same count cap + wall-clock deadline as call hierarchy:
+        # prepareTypeHierarchy can return multiple anchors on overloaded
+        # / ambiguous positions, each driving one follow-up, so bound the
+        # fan-out both ways and surface which bound fired.
+        prepared_total = len(prepared)
+        truncated = prepared_total > _TYPE_HIERARCHY_MAX_ANCHORS
+        anchors_to_walk = prepared[:_TYPE_HIERARCHY_MAX_ANCHORS]
+        anchors_out: list[dict] = []
+        deadline_exceeded = False
+        for anchor in anchors_to_walk:
+            now = _time.monotonic()
+            if now >= deadline:
+                deadline_exceeded = True
+                break
+            remaining = deadline - now
+            per_call_timeout = min(
+                _TYPE_HIERARCHY_FOLLOW_TIMEOUT_S, remaining,
+            )
+            if per_call_timeout < 0.1:
+                deadline_exceeded = True
+                break
+            try:
+                # The follow-up needs the RAW prepared anchor: the LSP
+                # spec requires the full TypeHierarchyItem (including its
+                # server-opaque `data`) to resolve supertypes/subtypes.
+                # The RESPONSE, however, exposes only the normalized
+                # anchor so the opaque `data` (which a server can fill
+                # with arbitrary / edit-shaped JSON) never crosses the
+                # read-only MCP boundary -- Codex adversarial review.
+                follow = lsp.request(
+                    method, {"item": anchor}, timeout=per_call_timeout,
+                )
+            except LspError as exc:
+                # A per-anchor timeout is non-fatal: record the anchor
+                # with an empty types list + the error and keep walking
+                # the remaining budget, exactly like call hierarchy.
+                if exc.kind == "lsp-timeout":
+                    anchors_out.append({
+                        "anchor": _normalize_type_hierarchy_item(anchor),
+                        "types": [],
+                        "anchor_error": exc.to_envelope(),
+                    })
+                    continue
+                raise
+            types = [_normalize_type_hierarchy_item(t)
+                     for t in _normalize_type_hierarchy_items(follow)]
+            anchors_out.append({
+                "anchor": _normalize_type_hierarchy_item(anchor),
+                "types": types,
+            })
+        return {
+            "uri": uri,
+            "lang": lang,
+            "line": line_v,
+            "character": char_v,
+            "prepared_count": len(anchors_out),
+            "prepared_total": prepared_total,
+            "truncated": truncated,
+            "deadline_exceeded": deadline_exceeded,
+            "capability_missing": False,
+            "anchors": anchors_out,
+        }
+
+    def type_hierarchy_supertypes(path: str, line: int,
+                                  character: int) -> dict:
+        """LSP prepareTypeHierarchy + typeHierarchy/supertypes.
+        Returns the supertypes (base classes / interfaces) of the type
+        at (line, character)."""
+        def _op() -> Any:
+            return _type_hierarchy_one_step(
+                "typeHierarchy/supertypes", path, line, character,
+            )
+        return _call_lsp(_op, "type_hierarchy_supertypes",
+                         _lang_hint_from_path(path))
+    srv.tool(name="type_hierarchy_supertypes",
+             description="LSP prepareTypeHierarchy then "
+                         "typeHierarchy/supertypes. Returns "
+                         "{prepared_count, prepared_total, truncated, "
+                         "capability_missing, anchors: [{anchor, types: "
+                         "[...]}]} -- the supertypes (base classes / "
+                         "interfaces) of the type at (path, line, "
+                         "character). One entry per prepared anchor so "
+                         "overloaded / ambiguous positions don't drop "
+                         "results. capability_missing=True when the "
+                         "routed LSP has no typeHierarchyProvider "
+                         "(read-only; never mutates the "
+                         "workspace).")(type_hierarchy_supertypes)
+
+    def type_hierarchy_subtypes(path: str, line: int,
+                                character: int) -> dict:
+        """LSP prepareTypeHierarchy + typeHierarchy/subtypes.
+        Returns the subtypes (derived classes / implementers) of the
+        type at (line, character)."""
+        def _op() -> Any:
+            return _type_hierarchy_one_step(
+                "typeHierarchy/subtypes", path, line, character,
+            )
+        return _call_lsp(_op, "type_hierarchy_subtypes",
+                         _lang_hint_from_path(path))
+    srv.tool(name="type_hierarchy_subtypes",
+             description="LSP prepareTypeHierarchy then "
+                         "typeHierarchy/subtypes. Returns the subtypes "
+                         "(derived classes / implementers) of the type "
+                         "at (path, line, character). Same response "
+                         "shape and cap semantics as "
+                         f"type_hierarchy_supertypes "
+                         f"({_TYPE_HIERARCHY_MAX_ANCHORS} anchors "
+                         "max; read-only).")(type_hierarchy_subtypes)
 
     def code_action(path: str, range: dict,
                     diagnostic: Optional[dict] = None) -> dict:

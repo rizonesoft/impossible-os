@@ -704,23 +704,23 @@ Provides deep C code intelligence for editors.
 
 ### LSP MCP Bridge
 
-A FastMCP stdio server that proxies up to five language servers (clangd, asm-lsp, bash-language-server, pyright, PowerShellEditorServices) through 15 read-only MCP tools (6 core + 8 extended + 1 `_health` meta tool), giving Claude Code (the primary AI client this repo supports) compiler-grade code intelligence across every language the repo uses. Resolves the LSP/MCP protocol incompatibility called out above. Other MCP-aware clients (Cursor, Aider) can also consume the surface technically -- the bridge is read-only by design -- but the repo's [autonomous-agent boundary](ai-system.md#autonomous-agent-boundary-policy) applies regardless of client: no MCP server in this repo, including the bridge, enables autonomous commit / push / PR workflows.
+A FastMCP stdio server that proxies up to five language servers (clangd, asm-lsp, bash-language-server, pyright, PowerShellEditorServices) through 17 read-only MCP tools (6 core + 8 extended + 2 type-hierarchy + 1 `_health` meta tool), giving Claude Code (the primary AI client this repo supports) compiler-grade code intelligence across every language the repo uses. Resolves the LSP/MCP protocol incompatibility called out above. Other MCP-aware clients (Cursor, Aider) can also consume the surface technically -- the bridge is read-only by design -- but the repo's [autonomous-agent boundary](ai-system.md#autonomous-agent-boundary-policy) applies regardless of client: no MCP server in this repo, including the bridge, enables autonomous commit / push / PR workflows.
 
-Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md). Repo-tracked under [`scripts/lsp-mcp/`](../../scripts/lsp-mcp/) (~3500 LOC + 69-test harness).
+Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md). Repo-tracked under [`scripts/lsp-mcp/`](../../scripts/lsp-mcp/) (~3500 LOC + 98-test harness).
 
 #### Architecture
 
 | Component                                | File                                                          | Role                                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| FastMCP bridge                           | [`scripts/lsp-mcp/bridge.py`](../../scripts/lsp-mcp/bridge.py)| 15 typed MCP tools (6 core + 8 extended + `_health` meta) + extension router + per-LSP serialization + crash/respawn watchdog |
+| FastMCP bridge                           | [`scripts/lsp-mcp/bridge.py`](../../scripts/lsp-mcp/bridge.py)| 17 typed MCP tools (6 core + 8 extended + 2 type-hierarchy + `_health` meta) + extension router + per-LSP serialization + crash/respawn watchdog |
 | LSP JSON-RPC client                      | [`scripts/lsp-mcp/lsp_client.py`](../../scripts/lsp-mcp/lsp_client.py) | Subprocess lifecycle + request/response demux + read-only deny gate                |
 | Per-language spawn recipes               | [`scripts/lsp-mcp/servers/`](../../scripts/lsp-mcp/servers/)  | One module per LSP: `clangd_server`, `asm_server`, `bash_server`, `python_server`, `powershell_server` |
 | MCP manifest                             | [`scripts/lsp-mcp/mcp.json`](../../scripts/lsp-mcp/mcp.json) + [`.mcp.json`](../../.mcp.json) | stdio transport, registered alongside `todo-graph`              |
-| Self-test + boundary harness             | [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) + [`test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh) | 69 sub-tests + write-capable-method audit             |
+| Self-test + boundary harness             | [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) + [`test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh) | 98 sub-tests + write-capable-method audit             |
 
-#### Fifteen MCP tools (all read-only)
+#### Seventeen MCP tools (all read-only)
 
-Six core tools (`hover`, `definition`, `references`, `diagnostics`, `workspace_symbol`, `document_symbol`), eight extended tools (`completion`, `signature_help`, `type_definition`, `implementation`, `declaration`, `call_hierarchy_incoming`, `call_hierarchy_outgoing`, `code_action`), and one meta tool (`_health` -- returns per-LSP `{status, restart_count, last_crash_reason, last_restart_at, pid, alive, failed}` without touching any LSP wire path; safe even when every LSP is FAILED). The 14 LSP-routed tools take a `path` argument; the extension router (`_dispatch_path`) resolves it to one of the five LSPs:
+Six core tools (`hover`, `definition`, `references`, `diagnostics`, `workspace_symbol`, `document_symbol`), eight extended tools (`completion`, `signature_help`, `type_definition`, `implementation`, `declaration`, `call_hierarchy_incoming`, `call_hierarchy_outgoing`, `code_action`), two type-hierarchy tools (`type_hierarchy_supertypes`, `type_hierarchy_subtypes` -- read-only `prepareTypeHierarchy` + `supertypes`/`subtypes`, capability-gated so an LSP without `typeHierarchyProvider` returns `capability_missing: true` rather than an error), and one meta tool (`_health` -- returns per-LSP `{status, restart_count, last_crash_reason, last_restart_at, pid, alive, failed}` without touching any LSP wire path; safe even when every LSP is FAILED). The 16 LSP-routed tools take a `path` argument; the extension router (`_dispatch_path`) resolves it to one of the five LSPs:
 
 | Extension                  | LSP                          | Install                                                              |
 | -------------------------- | ---------------------------- | -------------------------------------------------------------------- |

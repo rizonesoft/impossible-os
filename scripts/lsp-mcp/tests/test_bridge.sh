@@ -361,11 +361,11 @@ t_selftest() {
     local out
     out="$(python3 scripts/lsp-mcp/bridge.py --self-test 2>&1)"
     # Banner shapes:
-    #   "[lsp-mcp] OK: 0 LSPs spawned, 15 tools registered, bridge ready"
+    #   "[lsp-mcp] OK: 0 LSPs spawned, 17 tools registered, bridge ready"
     # OR "[lsp-mcp] SKIP: mcp SDK not installed; ..." (CI without SDK).
     # Tool count = len(MCP_TOOL_NAMES); pin to the literal so a
     # registration drift fails this test instead of silently sliding.
-    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, 15 tools registered, bridge ready|SKIP: mcp SDK not installed)'
+    echo "$out" | grep -qE '^\[lsp-mcp\] (OK: 0 LSPs spawned, 17 tools registered, bridge ready|SKIP: mcp SDK not installed)'
 }
 
 # --- 1b: import smoke --------------------------------------------------------
@@ -919,7 +919,7 @@ t_selftest_tools() {
     if echo "$out" | grep -qE '^\[lsp-mcp\] SKIP: mcp SDK not installed'; then
         return 0
     fi
-    echo "$out" | grep -qE '^\[lsp-mcp\] OK: 15 tools registered \(hover, definition, references, diagnostics, workspace_symbol, document_symbol, completion, signature_help, type_definition, implementation, declaration, call_hierarchy_incoming, call_hierarchy_outgoing, code_action, _health\)$' || return 1
+    echo "$out" | grep -qE '^\[lsp-mcp\] OK: 17 tools registered \(hover, definition, references, diagnostics, workspace_symbol, document_symbol, completion, signature_help, type_definition, implementation, declaration, call_hierarchy_incoming, call_hierarchy_outgoing, code_action, type_hierarchy_supertypes, type_hierarchy_subtypes, _health\)$' || return 1
     # Each tool's schema must have the right required params.
     python3 -c "
 import json, subprocess, sys
@@ -948,6 +948,9 @@ expected = {
     'call_hierarchy_incoming': (['path','line','character'], []),
     'call_hierarchy_outgoing': (['path','line','character'], []),
     'code_action': (['path','range'], ['diagnostic']),
+    # Two type-hierarchy tools (read-only sibling of call hierarchy).
+    'type_hierarchy_supertypes': (['path','line','character'], []),
+    'type_hierarchy_subtypes': (['path','line','character'], []),
     # Meta tool: zero required params.
     '_health': ([], []),
 }
@@ -1716,6 +1719,296 @@ try:
 finally:
     os.unlink(tmp.name)
     # Drop the fake LSP from registry + caches; let atexit clean the proc.
+    bridge._EXT_TO_LANG.pop('.fakeext', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake', None)
+    bridge._LSP_SPAWNERS.pop('fake', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake']
+    for k in keys:
+        with bridge._LIVE_LSPS_LOCK:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+        if inst is not None:
+            inst.shutdown(timeout=2.0)
+PY
+}
+
+# --- 18a: type-hierarchy normalizers (pure, no LSP) ----------------------
+# _normalize_type_hierarchy_items passes through dict items, drops
+# null/garbage/non-dicts; _normalize_type_hierarchy_item flattens a
+# TypeHierarchyItem to the read-only field set (selectionRange ->
+# selection_range) and collapses a non-dict to {}.
+t_type_hierarchy_normalizers() {
+    python3 - << 'PY'
+import sys
+sys.path.insert(0, 'scripts/lsp-mcp')
+from bridge import (_normalize_type_hierarchy_items,
+                    _normalize_type_hierarchy_item)
+
+# items: list passthrough; null / wrong type / mixed -> dict-only list
+assert _normalize_type_hierarchy_items(None) == []
+assert _normalize_type_hierarchy_items('garbage') == []
+assert _normalize_type_hierarchy_items([{'name': 'A'}, 'skip', 7]) == [{'name': 'A'}]
+
+# item: full TypeHierarchyItem flattens; selectionRange -> selection_range
+full = {'name': 'Base', 'kind': 5, 'uri': 'file:///b.py',
+        'range': {'start': {}}, 'selectionRange': {'end': {}},
+        'detail': 'class Base', 'data': {'opaque': 1}}
+flat = _normalize_type_hierarchy_item(full)
+assert flat == {'name': 'Base', 'kind': 5, 'uri': 'file:///b.py',
+                'range': {'start': {}}, 'selection_range': {'end': {}},
+                'detail': 'class Base'}, flat
+# 'data' (opaque server payload) is intentionally dropped; no edit field exists.
+assert 'data' not in flat
+# Missing fields default to None; non-dict collapses to {}.
+assert _normalize_type_hierarchy_item({'name': 'X'}) == {
+    'name': 'X', 'kind': None, 'uri': None, 'range': None,
+    'selection_range': None, 'detail': None}
+assert _normalize_type_hierarchy_item('not-a-dict') == {}
+print('[type_hierarchy] normalizers OK')
+PY
+}
+
+# --- 18b: type_hierarchy_supertypes round-trip vs clangd (SKIP if missing) -
+# Exercises the wired handler chain: path validation -> capability gate
+# -> prepareTypeHierarchy -> supertypes -> normalize -> envelope. An
+# empty types list for a plain C struct is correct (C has no supertype
+# graph); the assertion proves the round-trip + response contract, not
+# a fabricated result.
+t_type_hierarchy_smoke_clangd() {
+    if ! command -v clangd-19 >/dev/null 2>&1; then
+        return 0  # SKIP: clangd-19 not installed
+    fi
+    python3 - << 'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP: mcp SDK not installed
+import bridge
+
+ws = Path.cwd()
+srv = bridge._build_mcp(FastMCP, ws)
+fn = srv._tool_manager._tools['type_hierarchy_supertypes'].fn
+
+result = fn(path='src/kernel/main.c', line=10, character=0)
+# Tolerate a clangd-not-ready timeout envelope; anything else with an
+# 'error' key is a real path/validation failure.
+if 'error' in result:
+    assert result['error'] in ('lsp-timeout', 'lsp-spawner-import-failed',
+                               'lsp-language-unsupported',
+                               'lsp-binary-missing', 'lsp-spawn-failed'), result
+    sys.exit(0)
+# Successful path: full response contract incl. the capability_missing flag.
+for key in ('anchors', 'prepared_count', 'prepared_total',
+            'truncated', 'deadline_exceeded', 'capability_missing'):
+    assert key in result, (key, result)
+assert result['capability_missing'] is False, result  # clangd advertises it
+assert isinstance(result['anchors'], list), result
+
+# Invalid position lands as an envelope (NOT an exception).
+bad = fn(path='src/kernel/main.c', line=-1, character=0)
+assert 'error' in bad and bad['error'] == 'lsp-position-invalid', bad
+print('[type_hierarchy] clangd round-trip OK')
+PY
+}
+
+# --- 18c: capability-missing contract (fake LSP without provider) --------
+# An LSP that does NOT advertise typeHierarchyProvider must yield
+# capability_missing=True + empty anchors + a note, NEVER an error or a
+# method-not-found surfaced from the LSP. Fake LSP, no real dep.
+t_type_hierarchy_capability_missing() {
+    python3 - << 'PY'
+import sys, tempfile, os
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+import bridge
+from lsp_client import LspSubprocess
+
+# Fake LSP whose initialize advertises NO typeHierarchyProvider.
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':{'capabilities':{}}})
+    elif method == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+    elif 'id' in m:
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+"""
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext', mode='w', delete=False, dir=str(ws))
+try:
+    tmp.write('// fake source\n'); tmp.close()
+    bridge._EXT_TO_LANG['.fakeext'] = 'fake'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake'] = 'plaintext'
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake', spawn_fake)
+    srv = bridge._build_mcp(FastMCP, ws)
+    fn = srv._tool_manager._tools['type_hierarchy_supertypes'].fn
+    result = fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in result, result
+    assert result['capability_missing'] is True, result
+    assert result['anchors'] == [], result
+    assert result['prepared_count'] == 0, result
+    assert 'typeHierarchyProvider' in result['note'], result
+    print('[type_hierarchy] capability-missing contract OK')
+finally:
+    os.unlink(tmp.name)
+    bridge._EXT_TO_LANG.pop('.fakeext', None)
+    bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake', None)
+    bridge._LSP_SPAWNERS.pop('fake', None)
+    with bridge._LIVE_LSPS_LOCK:
+        keys = [k for k in bridge._LIVE_LSPS if k[0] == 'fake']
+    for k in keys:
+        with bridge._LIVE_LSPS_LOCK:
+            inst = bridge._LIVE_LSPS.pop(k, None)
+        if inst is not None:
+            inst.shutdown(timeout=2.0)
+PY
+}
+
+# --- 18d: supported-path walk (fake LSP advertises provider) -------------
+# Provider advertised -> capability_missing=False; prepareTypeHierarchy
+# returns 2 anchors, each supertypes follow-up returns a FLAT
+# TypeHierarchyItem[] that is normalized (selectionRange ->
+# selection_range). Proves the multi-anchor walk + flat-list handling
+# distinct from call hierarchy's {from}/{to} wrapper.
+t_type_hierarchy_supported_walk() {
+    python3 - << 'PY'
+import sys, tempfile, os
+from pathlib import Path
+sys.path.insert(0, 'scripts/lsp-mcp')
+try:
+    from mcp.server.fastmcp import FastMCP
+except Exception:
+    sys.exit(0)  # SKIP
+import bridge
+from lsp_client import LspSubprocess
+
+fake = r"""
+import sys, json
+def read_msg():
+    hdr = b''
+    while True:
+        ch = sys.stdin.buffer.read(1)
+        if not ch: return None
+        hdr += ch
+        if hdr.endswith(b'\r\n\r\n'): break
+    n = 0
+    for line in hdr.split(b'\r\n'):
+        if line.lower().startswith(b'content-length:'):
+            n = int(line.split(b':')[1].strip()); break
+    return json.loads(sys.stdin.buffer.read(n).decode('utf-8'))
+def write_msg(obj):
+    b = json.dumps(obj).encode('utf-8')
+    sys.stdout.buffer.write(b'Content-Length: ' + str(len(b)).encode() + b'\r\n\r\n' + b)
+    sys.stdout.buffer.flush()
+while True:
+    m = read_msg()
+    if m is None: break
+    method = m.get('method')
+    if method == 'initialize':
+        write_msg({'jsonrpc':'2.0','id':m['id'],
+                   'result':{'capabilities':{'typeHierarchyProvider': True}}})
+    elif method == 'textDocument/prepareTypeHierarchy':
+        # Opaque server `data` MUST round-trip to the follow-up request
+        # but MUST NOT appear in the normalized response anchor.
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':[
+            {'name': 'Derived_a', 'kind': 5, 'uri': 'file:///x', 'range': {}, 'selectionRange': {'a': 1}, 'data': {'opaque': 'a'}},
+            {'name': 'Derived_b', 'kind': 5, 'uri': 'file:///x', 'range': {}, 'selectionRange': {'b': 1}, 'data': {'opaque': 'b'}},
+        ]})
+    elif method == 'typeHierarchy/supertypes':
+        item = m['params']['item']
+        # The outbound item MUST be the RAW prepared TypeHierarchyItem,
+        # carrying opaque `data`. Echo data.opaque into the result name so
+        # a regression that sends a normalized (data-stripped) item yields
+        # 'MISSING' here and fails the data-derived assertion below.
+        op = item.get('data', {}).get('opaque', 'MISSING')
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':[
+            {'name': f"Base_of_{item['name']}_{op}", 'kind': 5, 'uri': 'file:///x',
+             'range': {}, 'selectionRange': {'k': 1}, 'detail': 'base', 'data': {'x': 1}},
+        ]})
+    elif method == 'shutdown':
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+    elif method == 'exit':
+        break
+    elif 'id' in m:
+        write_msg({'jsonrpc':'2.0','id':m['id'],'result':None})
+"""
+ws = Path.cwd()
+tmp = tempfile.NamedTemporaryFile(suffix='.fakeext', mode='w', delete=False, dir=str(ws))
+try:
+    tmp.write('// fake source\n'); tmp.close()
+    bridge._EXT_TO_LANG['.fakeext'] = 'fake'
+    bridge._LANG_TO_LSP_LANGUAGE_ID['fake'] = 'plaintext'
+    def spawn_fake(workspace_root):
+        lsp = LspSubprocess(['python3', '-c', fake], lang='fake')
+        lsp.initialize('file://' + str(workspace_root))
+        return lsp
+    bridge.register_spawner('fake', spawn_fake)
+    srv = bridge._build_mcp(FastMCP, ws)
+    fn = srv._tool_manager._tools['type_hierarchy_supertypes'].fn
+    result = fn(path=os.path.basename(tmp.name), line=0, character=0)
+    assert 'error' not in result, result
+    assert result['capability_missing'] is False, result
+    assert result['prepared_count'] == 2, result
+    assert result['prepared_total'] == 2, result
+    assert result['truncated'] is False, result
+    assert len(result['anchors']) == 2, result
+    names = sorted(a['anchor']['name'] for a in result['anchors'])
+    assert names == ['Derived_a', 'Derived_b'], names
+    for entry in result['anchors']:
+        # The RETURNED anchor is normalized: selectionRange -> selection_range,
+        # opaque 'data' dropped (it still reached the follow-up request, proven
+        # by the Base_of_<name> result below).
+        a = entry['anchor']
+        assert 'data' not in a, a
+        assert 'selection_range' in a and 'selectionRange' not in a, a
+        assert len(entry['types']) == 1, entry
+        t = entry['types'][0]
+        # flat TypeHierarchyItem, normalized (selectionRange -> selection_range,
+        # opaque 'data' dropped). The Base name carries the prepared anchor's
+        # data.opaque value ('a'/'b' = last char of Derived_a/Derived_b),
+        # proving the RAW item (with data) reached typeHierarchy/supertypes --
+        # a regression sending a normalized outbound anchor would yield
+        # 'Base_of_<name>_MISSING' and fail here.
+        op = a['name'].split('_')[-1]
+        assert t['name'] == f"Base_of_{a['name']}_{op}", t
+        assert t['selection_range'] == {'k': 1}, t
+        assert 'data' not in t, t
+    print('[type_hierarchy] supported-path 2/2 anchors OK')
+finally:
+    os.unlink(tmp.name)
     bridge._EXT_TO_LANG.pop('.fakeext', None)
     bridge._LANG_TO_LSP_LANGUAGE_ID.pop('fake', None)
     bridge._LSP_SPAWNERS.pop('fake', None)
@@ -5187,6 +5480,10 @@ run "17d argparse rejects bogus mode"    t_warm_start_mode_argparse_reject
 run "17e shutdown publish gate reaps"    t_warm_shutdown_publish_gate
 run "17f bg thread re-entry safe"        t_warm_bg_reentry_safe
 run "17g shutdown gate TOCTOU"           t_warm_shutdown_gate_toctou
+run "18a type-hierarchy normalizers"     t_type_hierarchy_normalizers
+run "18b type_hierarchy clangd round-trip" t_type_hierarchy_smoke_clangd
+run "18c type_hierarchy capability-missing" t_type_hierarchy_capability_missing
+run "18d type_hierarchy supported walk"   t_type_hierarchy_supported_walk
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

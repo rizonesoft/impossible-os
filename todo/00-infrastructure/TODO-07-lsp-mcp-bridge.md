@@ -17,7 +17,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 
 - [`docs/infrastructure/development-tooling.md`](../../docs/infrastructure/development-tooling.md) -- clangd + Bear subsection (lines 689-703, 1008) defines the existing LSP stack and the MCP-incompatibility warning this TODO resolves.
 - [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py) -- canonical precedent: FastMCP Python server, stdio transport, `_CALL_LOCK` serialization, self-test flag, JSON error envelope on failure.
-- [`scripts/todo-graph/mcp.json`](../../scripts/todo-graph/mcp.json) + [`.claude/mcp.json`](../../.claude/mcp.json) -- canonical manifest shape for Claude Code MCP registration.
+- [`scripts/todo-graph/mcp.json`](../../scripts/todo-graph/mcp.json) + [`.mcp.json`](../../.mcp.json) -- canonical manifest shape for Claude Code MCP registration (root `.mcp.json` is the authoritative project-scope registration per §9; the per-server sidecar is informational).
 - [`scripts/setup-deps.sh`](../../scripts/setup-deps.sh) -- host dependency installer; OPTIONAL tier already installs clangd-19.
 - [`.clangd`](../../.clangd) -- clangd config with `--target=x86_64-elf -nostdlib -ffreestanding` flags the bridge must pass through to clangd on `initialize`.
 - [`compile_commands.json`](../../compile_commands.json) -- ~200-entry compilation database; clangd subprocess must be pointed at this file via `initializationOptions`.
@@ -58,11 +58,12 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐  |  15   | Path sandboxing + workspace boundary enforcement                           | §1, §7                            |  [x]   |
 | ⭐  |  16   | Warm-index preloading + cold-start budget                                  | §1, §2, §3, §4, §5, §6            |  [x]   |
 | ⭐  |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
-| 💎  |  18   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
+| 💎  |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
+| 💎  |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
-> §18 is a **deferred planning section**, not active work. It intentionally has no `Commit:` item because nothing ships until a scale trigger fires; see the section for trigger conditions.
+> §19 is a **deferred planning section**, not active work. It intentionally has no `Commit:` item because nothing ships until a scale trigger fires; see the section for trigger conditions.
 
 ---
 
@@ -506,7 +507,7 @@ Every MCP tool takes a `path` argument. Without bounds-checking, an attacker (or
 > - **How it runs:** every MCP tool path arg goes through `_dispatch_path` -> `_open_in_workspace` -> per-segment `os.open(seg, O_RDONLY|O_NOFOLLOW|O_DIRECTORY?, dir_fd=)` walk. `O_NONBLOCK` on the final segment + `S_ISREG` fstat check gate the read; FIFO/device targets are rejected without blocking. Workspace-root resolution priority: `--repo-root` > `LSP_MCP_WORKSPACE_ROOT` > in-tree marker walk > `.git` walk > `cwd`.
 > - **Downstream effects:** closes the residual TOCTOU window the §7 review tracked (Accepted-XREF deleted by this commit). Closes the supply-chain / prompt-injection class every surveyed 3rd-party LSP-MCP bridge (isaacphi, jonrad, mickeyinfoshan, Tritlo, rockerBOO) leaves open. Codex 2x review adoptions (design + adversarial; 2H+2H+2M findings) -- evidence in commit message.
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge / Path sandboxing](../../docs/infrastructure/development-tooling.md) -- new H4 subsection between Read-only boundary and LSP-miss fallback discipline.
-> - **Scope boundary:** §15 does NOT own warm-start eager spawn (§16) or the deferred scale roadmap (§17). Symlink policy is intentionally strict (rejects ALL symlinks, not just escape) -- if intra-workspace symlinks become a real use case later, that's a deliberate policy relaxation in a future section.
+> - **Scope boundary:** §15 does NOT own warm-start eager spawn (§16) or the deferred scale roadmap (§19). Symlink policy is intentionally strict (rejects ALL symlinks, not just escape) -- if intra-workspace symlinks become a real use case later, that's a deliberate policy relaxation in a future section.
 
 > **Verified:** 2026-04-25 | commit `f35ab2ec` | 6/6 items | build OK | tests 81/81 PASS
 > **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf APPROVE) | 1M fixed (post-commit symlinked-workspace replay roundtrip) + 1L stale-stamp | scope: N/A (host-side Python tooling; no domain quality skill applies; re-adversarial skipped -- fix pass is `_workspace_root_from_argv` operator-spelling preservation + dual-prefix anchor, no lifecycle / state-machine touches)
@@ -535,7 +536,7 @@ Verified locally: `python3 scripts/lsp-mcp/bridge.py --warm-start=c --self-test`
 > - `lsp_client.py` extended: `_progress_by_token` + `_progress_lock` + `snapshot_progress()`; `_dispatch_message` handles server-initiated `window/workDoneProgress/create` requests with `{result: null}` ack; everything else gets JSON-RPC `-32601` method-not-found. `_send_response` uses a 0.5s try-acquire on `_io_lock` so a stalled writer cannot deadlock the reader. Percentage values are sanitized at ingest (NaN/Inf/non-numeric dropped, finite clamped to 0..100).
 > - `clangd_server.py` and `python_server.py` now advertise `window: {workDoneProgress: True}` so progress traffic actually flows.
 > - Lifecycle: shared `_WARM_CANCEL` Event flipped in `main()`'s finally BEFORE `_shutdown_all_lsps()`; cleared at the start of each `_warm_start_run` call so in-process re-entry does not inherit the cancelled state.
-> - Default behavior unchanged when flag is absent. Persistent index caching across bridge restarts is owned by §17 (Scale Roadmap).
+> - Default behavior unchanged when flag is absent. Persistent index caching across bridge restarts is owned by §19 (Scale Roadmap).
 
 > **Verified:** 2026-04-25 | commit `cf2c080d` | 6/6 items | build OK | tests 87/87 PASS
 > **Quality reviewed:** 2026-04-25 | Codex 4x (design + adversarial + consistency + perf) | 2H+4M+2L fixed | scope: N/A (python tooling)
@@ -585,14 +586,40 @@ Verified locally: `--warm-start=c --warm-start-mode=background --self-test` retu
 
 ---
 
-## 18. Scale Roadmap (Deferred)
+## 18. Type Hierarchy Tools (Supertypes / Subtypes, Read-Only)
+
+§11 ships call-hierarchy (incoming / outgoing) but not its type-graph sibling. A refactor-planning agent inspecting a type's inheritance or interface-implementation graph has no direct tool: `type_definition` resolves a typedef redirect, `implementation` finds interface impls, and `references` finds use sites, but none answer "what are the supertypes / subtypes of this type?". Add the two read-only LSP 3.17 type-hierarchy tools, mirroring the call-hierarchy bounded-fan-out pattern. clangd-19 advertises `typeHierarchyProvider` (verified on the dev host); pyright resolves Python class hierarchies once installed (OPTIONAL dep, `.py` already routes to it). Both methods are read-only -- never in `_FORBIDDEN_LSP_METHODS`. Found by the 2026-06-13 gap audit (Codex Medium: read-only parity gap; the three substitutes answer declaration/use questions, not supertype/subtype-graph questions).
+
+- [x] Registered `type_hierarchy_supertypes(path, line, character)` -- `prepareTypeHierarchy` then `typeHierarchy/supertypes` via shared `_type_hierarchy_one_step`, walking every prepared anchor; returns `anchors: [{anchor, types}]`. Read-only.
+- [x] Registered `type_hierarchy_subtypes(path, line, character)` -- same prepare step then `typeHierarchy/subtypes`; shares `_type_hierarchy_one_step`.
+- [x] Added `_normalize_type_hierarchy_items()` (list passthrough) + `_normalize_type_hierarchy_item()` flattening `TypeHierarchyItem` to `{name, kind, uri, range, selection_range, detail}` (opaque `data` dropped; no edit payload).
+- [x] Bounded fan-out `_TYPE_HIERARCHY_MAX_ANCHORS=32` + `_TYPE_HIERARCHY_DEADLINE_S=30` + `_TYPE_HIERARCHY_FOLLOW_TIMEOUT_S=5`, mirroring the `_CALL_HIERARCHY_*` constants.
+- [x] Capability gate via `_caps_missing(lsp.server_caps, ("typeHierarchyProvider",))`: unsupported LSPs return empty `anchors` + `note`; every response carries a `capability_missing` boolean (Codex design review).
+- [x] Tool census 15 -> 17: `MCP_TOOL_NAMES`, `bridge.py` docstring, `development-tooling.md` tool table + harness count, and `## Verification` prose.
+- [x] Commit: `"scripts/lsp-mcp: read-only type hierarchy tools (supertypes / subtypes)"`
+
+**Test checkpoint:** `--self-test --tools` shows 17 registered tools (6 core + 8 extended + 2 type-hierarchy + 1 meta `_health`). `type_hierarchy_supertypes` on a C symbol in `src/kernel/` completes the `prepareTypeHierarchy` -> `supertypes` round-trip and returns a well-formed `{anchors: [...]}` payload (an empty `types` list for a plain C struct is correct -- C has no supertype graph; the assertion proves the round-trip + normalization, not a fabricated result). Routing a `.sh` path returns `capability_missing: true` + the `note` (bash-language-server has no `typeHierarchyProvider`), not an error; clangd responses carry `capability_missing: false`. No `typeHierarchy/*` method is in `_FORBIDDEN_LSP_METHODS`; `test_boundary.sh` still reports 0 write-capable methods reachable. Host-side Python; no kernel / POST16 involvement.
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` | 98/98 sub-tests PASS (1a-17g carry forward; 18a normalizer units, 18b clangd supertypes round-trip, 18c capability-missing gate via fake LSP, 18d supported-path multi-anchor walk) PLUS `bash scripts/lsp-mcp/tests/test_boundary.sh` 0 write-capable methods reachable
+
+> **Notes:**
+>
+> - **What shipped:** `bridge.py` +~190 LOC -- `type_hierarchy_supertypes`/`type_hierarchy_subtypes` tools + shared `_type_hierarchy_one_step` + two `_normalize_type_hierarchy_*` helpers + `_TYPE_HIERARCHY_*` constants; `MCP_TOOL_NAMES` 15 -> 17.
+> - **How it runs:** read-only `prepareTypeHierarchy` then per-anchor `supertypes`|`subtypes`, same cap + deadline as call hierarchy; capability-gated via `_caps_missing` (`capability_missing: true` + note when unsupported). clangd round-trip checked.
+> - **Downstream effects:** closes the call-hierarchy/type-hierarchy asymmetry the 2026-06-13 gap audit flagged (Codex Medium); pyright lights up Python class hierarchies with zero code change once installed.
+> - **Canonical doc:** [`docs/infrastructure/development-tooling.md` LSP MCP Bridge subsection](../../docs/infrastructure/development-tooling.md) -- the 17-tool census + read-only boundary.
+> - **Scope boundary:** §18 adds no write-capable type operations (rename stays forbidden); does NOT route C++ (`.cpp`, no C++ source in repo); does NOT own the deferred scale roadmap (§19).
+
+---
+
+## 19. Scale Roadmap (Deferred)
 
 > [!NOTE]
 > **This section is not active work.** It captures the partitioning strategy the bridge will need when the repo grows past the thresholds where single-clangd-per-workspace stops working. Stated explicitly so the architectural shape is not rediscovered under pressure at 2 AM in 2029. No code ships until a trigger below fires.
 
 Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../../COUNT.md)). Single-workspace clangd is fine here and will remain fine for ~10x growth. This section plans for the regime where it stops being fine.
 
-**Deferral triggers -- revisit §17 when ANY of these fire:**
+**Deferral triggers -- revisit §19 when ANY of these fire:**
 
 - Total core LOC (kernel + userland + tooling, per `COUNT.md` "Core code + tooling") crosses **2,000,000**.
 - `clangd-19 --check=src/kernel/main.c` on a **cold cache** takes longer than **5 minutes** (current: ~83 ms, so there's five orders of magnitude of headroom).
@@ -610,12 +637,12 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 **What NOT to plan here:** concrete `[ ]` checklist items, commit lines, test checkpoints, CI wiring. Those land when a trigger fires and this section gets rewritten into active form.
 
-- [ ] Review this section's triggers once per calendar year (or when any trigger appears likely to fire within 6 months). If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §18 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
+- [ ] Review this section's triggers once per calendar year (or when any trigger appears likely to fire within 6 months). If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §19 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
 
-**Test checkpoint:** No runtime verification -- §18 is a trigger-watcher, not executable work. The tracking item closes one year at a time: the reviewer re-reads the five deferral triggers against current repo state (`wc -l`, `jq '.[] | length' compile_commands.json`, wall-clock of `clangd-19 --check` on a cold cache) and records "no trigger fired, reset the clock" in the commit message of the `- [ ] Review` item. When a trigger DOES fire, §18 converts to active form and a real Test checkpoint replaces this block.
+**Test checkpoint:** No runtime verification -- §19 is a trigger-watcher, not executable work. The tracking item closes one year at a time: the reviewer re-reads the five deferral triggers against current repo state (`wc -l`, `jq '.[] | length' compile_commands.json`, wall-clock of `clangd-19 --check` on a cold cache) and records "no trigger fired, reset the clock" in the commit message of the `- [ ] Review` item. When a trigger DOES fire, §19 converts to active form and a real Test checkpoint replaces this block.
 
 > [!IMPORTANT]
-> **Per the skill-template rule, every section normally ends with a `Commit:` item.** §18 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §18 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
+> **Per the skill-template rule, every section normally ends with a `Commit:` item.** §19 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §19 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
 
 ---
 
@@ -649,6 +676,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 | ⭐ | Boundary-compliant repo-tracked MCP (no credentials, read-only) | ❌ no policy                      | ❌ no policy                         | ✅ §9 complies with T02 §8         |
 | 💎 | LSP `completion` + `signature_help` tools                       | ✅ VS Code + Copilot inline       | ✅ every LSP-capable editor          | ✅ §11 via MCP                     |
 | 💎 | LSP call hierarchy (incoming / outgoing)                        | ✅ VS Code call-hierarchy view    | ✅ Emacs/Neovim call-hierarchy modes | ✅ §11 exposed as MCP tools        |
+| 💎 | LSP type hierarchy (supertypes / subtypes)                      | ✅ VS Code type-hierarchy view    | ✅ Emacs/Neovim type-hierarchy modes | ✅ §18 read-only MCP tools         |
 | 💎 | Read-only `code_action` listing (no execute)                    | ✅ VS Code quick-fix popup        | ✅ code-actions in Emacs/Neovim      | ✅ §11 metadata-only (boundary)    |
 | 💎 | File-change lifecycle forwarding (didChange/didSave/didClose)   | ✅ native in every LSP client     | ✅ native in every LSP client        | ✅ §12 forwarded via bridge        |
 | ⭐ | LSP subprocess auto-restart on crash                            | ❌ editor prompts to restart      | ❌ editor prompts to restart         | ✅ §13 watchdog + exp backoff      |
@@ -660,7 +688,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.
 > **After §9-§10:** Impossible OS ships the first repo-tracked cross-language LSP-MCP bridge with boundary audit baked in, auto-registered with Claude Code out-of-the-box via `.claude/mcp.json`. No 3rd-party bridge today bakes in the read-only boundary the [TODO-02 §8](./TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) autonomous-agent policy requires; every existing bridge exposes write-capable LSP methods by default.
-> **After §11-§17:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start` (60s soft budget). §17 makes that bound MCP-launcher compatible by running warm-start on a daemon thread so `srv.run()` answers `initialize` immediately, with the `_SPAWN_EVENTS` gate ensuring concurrent tool calls attach to the in-flight warm spawn.
+> **After §11-§18:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start` (60s soft budget). §17 makes that bound MCP-launcher compatible by running warm-start on a daemon thread so `srv.run()` answers `initialize` immediately, with the `_SPAWN_EVENTS` gate ensuring concurrent tool calls attach to the in-flight warm spawn. §18 closes the call-hierarchy/type-hierarchy asymmetry with two read-only `typeHierarchy/*` tools, completing the navigation-primitive set no surveyed competitor pairs with a read-only boundary.
 
 ---
 
@@ -670,7 +698,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 > Host-side tooling checks live outside `test_runner_init()`. This TODO owns a shell-based regression pack (`scripts/lsp-mcp/tests/test_bridge.sh`), same pattern as [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) and [TODO-01 §7](./TODO-01-developer-tooling-stack.md#7-tooling-doctor-and-regression-pack). No kernel-side test runner involvement.
 
 - [ ] Create `scripts/lsp-mcp/tests/test_bridge.sh` with 7 base sub-tests (detailed in §10 checklist): zero-LSP self-test, clangd smoke, tool-schema shape, stress, extension-router reject, subprocess cleanup, boundary audit.
-- [ ] Extend the harness with sub-tests for §11-§16 capabilities: 14-tool schema check (§11), stale-file didChange forwarding (§12), kill-and-respawn clangd (§13), correlation-ID log thread (§14), path-escape rejection (§15), `--warm-start` budget (§16). One sub-test per section minimum; extend as needed.
+- [ ] Extend the harness with at least one sub-test per §11-§18 capability (extended tools, file-change lifecycle, watchdog respawn, correlation-ID log, path-escape rejection, warm-start, type-hierarchy round-trip + capability-gate + 17-tool census).
 - [ ] Wire into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) surface checks (harness exists + executable, `--help` exits 0).
 - [ ] Wire into `.github/workflows/build.yml` post-build step "Run LSP-MCP bridge tests" (runs after `make` succeeds; gates per-language sub-tests on binary presence).
 - [ ] Commit: `"test: add lsp-mcp bridge test harness"`
@@ -680,15 +708,15 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===` (bridge is Python; build shouldn't regress).
-- [ ] `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0 on a host with clangd-19 installed; prints `[lsp-mcp] OK: 0 LSPs spawned, 14 tools registered, bridge ready`.
-- [ ] `python3 scripts/lsp-mcp/bridge.py --self-test --tools` prints 14 MCP tool schemas (6 core + 8 extended per §11), each with typed required params (hover/definition/references/completion/signature_help/type_definition/implementation/declaration/call_hierarchy_*: `path`, `line`, `character`; diagnostics/document_symbol: `path`; workspace_symbol: `query`; code_action: `path`, `range`).
-- [ ] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with all 7 base sub-tests + §11-§16 extension sub-tests PASS on a host with clangd-19.
-- [ ] `--self-test --tools` reports 14 tools (6 core + 8 extended) with correct typed params.
+- [ ] `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0 on a host with clangd-19 installed; prints `[lsp-mcp] OK: 0 LSPs spawned, 17 tools registered, bridge ready`.
+- [ ] `--self-test --tools` prints 17 MCP tool schemas (6 core + 8 extended + 2 type-hierarchy + 1 `_health` meta); `type_hierarchy_supertypes`/`type_hierarchy_subtypes` take `path`/`line`/`character` like the other position tools.
+- [ ] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with all base sub-tests + §11-§18 extension sub-tests PASS on a host with clangd-19.
+- [ ] `--self-test --tools` reports 17 tools (6 core + 8 extended + 2 type-hierarchy + 1 meta) with correct typed params.
 - [ ] `_health` MCP tool returns per-LSP status; exercise via kill-and-respawn during `test_bridge.sh`.
 - [ ] `hover(path="/etc/passwd", ...)` is rejected; `hover(path="src/kernel/main.c", ...)` succeeds (sandbox enforced).
 - [ ] `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0 and prints `[boundary] OK: 0 write-capable LSP methods reachable from MCP surface`.
 - [ ] `bash scripts/test-tooling.sh` passes; new surface checks visible in the output count.
-- [ ] `.claude/mcp.json` lists `lsp-bridge` as an entry alongside `todo-graph`; `jq -r '. | keys' .claude/mcp.json` includes it.
+- [ ] `.mcp.json` (root, authoritative) lists `lsp-bridge` as an entry alongside `todo-graph`; `jq -r '. | keys' .mcp.json` includes it.
 - [ ] Register `lsp-bridge` in Claude Code harness; a `/<hover>` (or equivalent MCP tool call) against a known C symbol returns a non-empty hover response through the MCP protocol.
 - [ ] Verify on: WSL2 (primary host for Claude Code); Linux native (Arch, Ubuntu 24.04); macOS as a secondary nice-to-have (pwsh/PSES path differs). No bare-metal or VM testing needed -- this is host-side dev tooling.
 - [ ] Commit: `"scripts/lsp-mcp: bridge complete"`
