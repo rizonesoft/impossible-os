@@ -18,8 +18,14 @@ title: "TODO-Claude-Overnight-Runner -- OS Completion Driver (runner doctrine, n
 ## Mission
 
 Drive every TODO file under `todo/` to completion, in order, using the exact
-pipeline below -- no deviation, no reordering, no skipped stages. The run ends
-only when every domain is complete or a hard-stop condition fires.
+pipeline below -- no deviation, no reordering, no skipped stages. The runner is
+a **fixpoint loop**: it sweeps the whole repo in traversal order, then sweeps
+again, because most blockers are temporal (a section blocked on a later domain's
+section completes on a later pass once that section ships). The run ends only
+when a **complete pass makes zero progress** (nothing newly shipped, no deferral
+newly cleared) -- at which point everything autonomously-doable is implemented,
+tested (KVM/TCG + unit), reviewed, and committed, and the only remainder is a
+short human punch-list (bare-metal / WHPX sign-off, genuine product decisions).
 
 ## Cursor
 
@@ -54,9 +60,15 @@ only when every domain is complete or a hard-stop condition fires.
 - Everything before the cursor (domain `00-infrastructure`, and
   `01-boot-platform` TODO-01 through TODO-10) is DONE -- do not revisit except
   when an XREF from active work lands a concrete item there.
-- **Resume rule:** on session start, the cursor is the first TODO file (in
-  traversal order, from the start point) that is not yet 100% complete; within
-  it, the first section not yet shipped-and-reviewed.
+- **Resume rule:** the cursor is computed, not hand-maintained. On session start
+  the runner runs the triage oracle `python3 .claude/hooks/sequencer_triage.py
+  --next` (graph-truth over `build/todo-cache.json` + Verified stamps), which
+  returns the first NEEDS-WORK / DONE-UNSTAMPED file in traversal order; within
+  it, `--classify <file>` gives the first section not shipped-and-reviewed.
+  DONE files (all sections `[x]`/stamped-`[/]` + Verified) are skipped;
+  DONE-UNSTAMPED files (old-system work without stamps) get a `review-todo-section`
+  pass per section. The Cursor block below is a human-readable convenience log,
+  NOT the source of truth -- the oracle is.
 
 ## Traversal Order
 
@@ -121,18 +133,53 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 - **Smoke testing matters.** It is built into the section pipelines
   (implement-todo-section step 16, review verification) -- run it after every
   boot-path change; do not skip it to save time.
-- **Halt on first hard failure** (build break that survives a fix attempt,
-  test regression with unclear root cause, Codex dispatch infrastructure
-  down, commit-gate deadlock): per `feedback_overnight_halt_on_error`,
-  diagnose and fix the root cause; if the root cause cannot be established,
-  PAUSE the run and leave a clear note in this file's Run Log -- never skip
-  past, never paper over with workarounds.
+- **Hard failure: defer-and-escalate, never halt-the-run, never ship broken.**
+  On a hard failure (build break surviving the skill's fix loop, test
+  regression with unclear root cause, Codex infra down, commit-gate deadlock):
+  first diagnose + fix the root cause via the skills' bounded fix loops. If it
+  STILL fails, roll back (commit nothing, clean tree) and DEFER the section with
+  the captured diagnostic, then advance -- a later fix elsewhere may unblock it
+  on the next pass. A failure that reproduces identically across K=3 passes
+  escalates to the residual punch-list (Run Log + the section's Deferred stamp)
+  for human attention. The run never stops on a single failure (that defeats the
+  come-back-in-a-month goal) and never papers over with workarounds or ships
+  broken code (`feedback_no_bandaids`, `feedback_fix_root_causes`). Deferral uses
+  the EXISTING machinery (`[/]` + Deferred/Accepted stamps, todo-graph
+  `deferred`, `complete-todo-file` sweep), not a parallel ledger. [Supersedes the
+  prior halt-and-pause rule for unattended fixpoint runs, per the 2026-06-13
+  design `docs/superpowers/specs/2026-06-13-overnight-sequencer-design.md`.]
 - **Full quality pipeline every section** -- all Codex dispatches, domain
   code-quality gates, unit tests, stamps. No "straightforward section"
   exceptions (`feedback_no_corner_cutting`, `feedback_never_skip_review`).
 - **No scope inflation:** gap-audit edits go into TODO files as checklist
   items; do not implement gap findings inline outside the section pipeline.
 - All other repo doctrine (CLAUDE.md, memory feedback) applies unchanged.
+
+## Enforcement & Scheduling
+
+This doctrine is not just guidance: it is hard-enforced. Architecture is
+**plugin schedules, repo decides** (`docs/superpowers/specs/2026-06-13-overnight-sequencer-design.md`):
+
+- **Scheduler (rizonetech `overnight-runner` plugin, generic, unchanged):**
+  systemd main + watchdog timers, headless `claude` launch, usage-limit snooze,
+  linger-survival, `flock`. The **watchdog is pure failover at `*:0/10`**: a tick
+  is a no-op if a run is alive (flock); it relaunches only when a run died
+  (crash / usage-limit / kill) and the run has not cleanly finished. On fixpoint
+  the runner **auto-disarms its own timers**, so it stops for good (no
+  spin-after-done).
+- **Brain (this repo, `.claude/`):** `sequencer_triage.py` (cursor oracle),
+  `run_phase_guard.py` (a PreToolUse + Stop hook that hard-blocks any tool call
+  outside the current phase's allow-list, and blocks `AskUserQuestion` entirely --
+  unattended means decide-or-defer), and the `overnight-sequencer` skill that
+  drives the per-file / per-section pipeline above. The within-section gates
+  (design-review, adversarial, section-commit, review-required, skill-step-block)
+  keep running inside `implement/review-todo-section`; the phase-guard governs the
+  outer sequence. Run mode is always `bypassPermissions` (a weaker mode stalls an
+  unattended run); it is safe precisely because the run physically cannot skip a
+  phase, ship un-reviewed code, or commit a failing build.
+- **ChromeMCP is off at the systemd-unit level for this repo only** (per-unit env
+  on impossible-os's units), so the "NO ChromeMCP. Ever." rule is enforced before
+  `claude` even launches, without affecting any other project's overnight runs.
 
 ## Run Log
 
