@@ -115,8 +115,8 @@ $(OUTDIR)/BOOTX64.EFI: bootx64.so sbat.csv
 	    -j .text -j .rodata -j .sdata -j .data \
 	    -j .dynamic -j .dynsym -j .dynstr \
 	    -j .rel -j .rela -j .rel.* -j .rela.* \
-	    -j .sbat \
 	    -j .reloc \
+	    -j .sbat \
 	    --target efi-app-x86_64 \
 	    $< $@
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"

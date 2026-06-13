@@ -30,14 +30,6 @@ SECTIONS
 
     . = ALIGN(4096);
 
-    /* SBAT revocation metadata (incbin of sbat.csv via sbat.asm). Carried
-     * into the PE by the ELF->PE objcopy (-j .sbat). */
-    .sbat : {
-        *(.sbat)
-    }
-
-    . = ALIGN(4096);
-
     .data : {
         *(.got .got.plt)
         *(.sdata .sdata.*)
@@ -70,6 +62,18 @@ SECTIONS
     .dynstr : {
         *(.dynstr)
     }
+
+    . = ALIGN(4096);
+
+    /* SBAT revocation metadata (incbin of sbat.csv via sbat.asm), carried
+     * into the PE by the ELF->PE objcopy (-j .sbat). Placed last + page-
+     * aligned so it does not push .reloc (which objcopy emits adjacent to
+     * the prior section) onto an unaligned PE RVA. */
+    .sbat : {
+        *(.sbat)
+    }
+
+    . = ALIGN(4096);
 
     /DISCARD/ : {
         *(.comment)

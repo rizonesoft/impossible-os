@@ -594,6 +594,9 @@ Promoted from gap-audit 2026-06-13 (Codex parity-floor finding). The Impossible 
 > - **Canonical doc:** `docs/guides/secure-boot-keys.md` (UKI section layout + SBAT Bump checklist).
 > - **Scope boundary:** no `boot_info` field / no kernel test (the kernel cannot enforce shim SBAT after ExitBootServices); verification is build-time only. UKI addons/profiles stay advanced (TODO-27 if ever).
 
+> **Verified:** 2026-06-13 | commit `900ade7c` | 5/5 items | build OK | smoke PASS (KVM 2.160s)
+> **Quality reviewed:** 2026-06-13 | Codex 8x (design + adversarial + consistency + perf + re-adversarial) | 4H+6M fixed | scope: boot-code-quality
+
 ---
 
 ## OS Comparison
