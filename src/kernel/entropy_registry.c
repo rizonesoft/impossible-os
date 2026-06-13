@@ -26,7 +26,10 @@
  *                                hive-load wiring (TODO-14 Advanced Hive
  *                                Features), the same work that activates
  *                                the cross-reboot path.
- *   entropy_populate_registry()  HKLM\SYSTEM\Boot\Entropy mirror.
+ *   entropy_populate_registry()  HKLM\SYSTEM\Boot\Entropy\Diagnostics
+ *                                mirror -- a dedicated sub-key, kept separate
+ *                                from the ExternalEntropy input value so the
+ *                                mirror never carries raw admin bytes.
  *   entropy_publish_json()       X:\Diag\entropy.json BlackBox report.
  *
  * All three run once on the Phase-3 boot path (boot_desktop.c) after
@@ -47,6 +50,11 @@
 #include "libs/monocypher/monocypher.h"
 
 #define ENTROPY_REG_PATH       "SYSTEM\\Boot\\Entropy"
+/* Diagnostics MIRROR lives in a dedicated sub-key, never the same key the
+ * admin drops the raw ExternalEntropy one-shot input into -- so a deferred
+ * (not-yet-consumed) on-disk offering can never appear beside the
+ * mask/class/counter mirror, and the mirror surface holds diagnostics only. */
+#define ENTROPY_DIAG_PATH      "SYSTEM\\Boot\\Entropy\\Diagnostics"
 #define ENTROPY_JSON_PATH      "X:\\Diag\\entropy.json"
 #define ENTROPY_JSON_PAGES     1u
 #define ENTROPY_JSON_SIZE      (ENTROPY_JSON_PAGES * 4096u)
@@ -94,7 +102,11 @@ void entropy_external_consume(void)
     if (rc != ERROR_SUCCESS || type != REG_BINARY || size == 0) {
         /* RegQueryValueEx may have copied value bytes into `stored` before
          * this type/size check -- wipe them so a malformed (wrong-type)
-         * offering never leaves seed material resident on the kernel stack. */
+         * offering never leaves seed material resident on the kernel stack.
+         * The on-disk input value (if any) is left untouched: the diagnostics
+         * mirror is a separate sub-key, so it is never polluted, and secure
+         * removal of a malformed on-disk offering is the hive-load wiring's
+         * job (TODO-14 Advanced Hive Features). */
         crypto_wipe(stored, sizeof(stored));
         RegCloseKey(hKey);
         return;
@@ -121,6 +133,12 @@ void entropy_external_consume(void)
      * This is the runtime half of the cross-reboot deferral, so wiring hive
      * load without the secure delete cannot silently re-enable reuse. */
     if (registry_persistence_active()) {
+        /* DEFER, do not consume: leave the ExternalEntropy value untouched in
+         * the live tree so a later registry_flush() preserves the on-disk copy
+         * for the secure-deletion + hive-load wiring (deleting it here would be
+         * serialized away by the next flush, losing the deferred offering). The
+         * value never pollutes the diagnostics surface because that mirror is a
+         * separate sub-key (ENTROPY_DIAG_PATH). Do NOT absorb, do NOT flush. */
         crypto_wipe(copy, sizeof(copy));
         RegCloseKey(hKey);
         klog(LOG_WARN, "entropy",
@@ -154,11 +172,11 @@ void entropy_populate_registry(void)
     uint32_t disp = 0;
     entropy_class_t diag_cls, credited;
 
-    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, ENTROPY_REG_PATH, 0,
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, ENTROPY_DIAG_PATH, 0,
                        (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
                        &hKey, &disp) != ERROR_SUCCESS) {
         klog(LOG_WARN, "entropy",
-             "failed to create HKLM\\" ENTROPY_REG_PATH " key");
+             "failed to create HKLM\\" ENTROPY_DIAG_PATH " key");
         return;
     }
 
@@ -171,6 +189,8 @@ void entropy_populate_registry(void)
     RegSetString(hKey, "Class",         entropy_class_str(diag_cls));
     RegSetString(hKey, "CreditedClass", entropy_class_str(credited));
     RegSetDword(hKey, "CryptoGateOk",   (uint32_t)csprng_crypto_ok());
+    RegSetDword(hKey, "SeedFileHwProvenance",
+                (uint32_t)seed_file_hw_provenance());
     RegSetDword(hKey, "ExternalEntropySeen",  (uint32_t)g_external_seen);
     RegSetDword(hKey, "ExternalEntropyBytes", g_external_consumed_len);
 
@@ -180,7 +200,7 @@ void entropy_populate_registry(void)
      * Phase-3 sequence, so the registry mirror is serial-log-validated
      * rather than unit-tested -- mask/class only, never bytes). */
     klog(LOG_INFO, "entropy",
-         "registry: HKLM\\SYSTEM\\Boot\\Entropy mask=0x%x class=%s "
+         "registry: HKLM\\SYSTEM\\Boot\\Entropy\\Diagnostics mask=0x%x class=%s "
          "credited=%s gate=%u",
          (uint64_t)entropy_source_mask(), entropy_class_str(diag_cls),
          entropy_class_str(credited), (uint64_t)csprng_crypto_ok());

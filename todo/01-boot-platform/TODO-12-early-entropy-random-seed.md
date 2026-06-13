@@ -265,23 +265,26 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## 9. Entropy Diagnostics and Policy Gates
 
-- [x] Mask/class logging without seed bytes: `entropy_report()` summary + the `registry: HKLM\SYSTEM\Boot\Entropy mask=.. class=..` checkpoint line (`entropy_registry.c`).
+- [x] Mask/class logging without seed bytes: `entropy_report()` summary + the `registry: HKLM\SYSTEM\Boot\Entropy\Diagnostics mask=.. class=..` checkpoint line (`entropy_registry.c`).
 - [x] Degraded indication, TWO call sites: `early_entropy_init()` posts the `boot_splash_diag()` WARNING at Phase 1 AND `boot_desktop.c` re-posts the identical string before `boot_splash_finish()` (Phase-2 storage diagnostics reuse + clear the line); registry + JSON carry the durable record.
-- [x] `HKLM\SYSTEM\Boot\Entropy`: SourceMask, QualityPacked, Class, CreditedClass, CryptoGateOk, ExternalEntropySeen/Bytes (`entropy_populate_registry()`).
+- [x] `HKLM\SYSTEM\Boot\Entropy\Diagnostics` mirror sub-key (separate from the `ExternalEntropy` input): SourceMask, QualityPacked, Class, CreditedClass, CryptoGateOk, SeedFileHwProvenance, ExternalEntropySeen/Bytes (`entropy_populate_registry()`).
 - [/] Admin external-entropy one-shot (Win11 ExternalEntropy parity): `entropy_external_consume()` absorbs (Q_LOW) only when `registry_persistence_active()` is false; on-disk/cross-reboot offerings DEFERRED -> XREF: `02-kernel-core/TODO-14 §8`.
 - [x] BlackBox report: `X:\Diag\entropy.json` (mask/quality/class/gate/provenance/external counters -- never bytes) via `entropy_publish_json()`.
 - [x] Commit: `"boot: entropy diagnostics and policy"`
 
-**Test checkpoint:** `HKLM\SYSTEM\Boot\Entropy` holds source mask + quality class (no seed bytes anywhere in registry, logs, or BlackBox); a degraded boot shows the splash WARNING line; serial shows `registry: HKLM\SYSTEM\Boot\Entropy mask=..` + `JSON: wrote X:\Diag\entropy.json`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal. (KVM smoke 2026-06-12: `mask=0xc2 class=minimum credited=minimum gate=1` + entropy.json 202 bytes.)
+**Test checkpoint:** `HKLM\SYSTEM\Boot\Entropy\Diagnostics` holds source mask + quality class (no seed bytes anywhere in registry, logs, or BlackBox); a degraded boot shows the splash WARNING line; serial shows `registry: HKLM\SYSTEM\Boot\Entropy\Diagnostics mask=..` + `JSON: wrote X:\Diag\entropy.json`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal. (KVM smoke 2026-06-12: `mask=0xc2 class=minimum credited=minimum gate=1` + entropy.json 202 bytes.)
 
 > **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | entropy external one-shot suite, 0 failures
 
 > **Notes:**
 > - Shipped: `entropy_registry.c` (registry mirror + entropy.json + persistence-gated external one-shot consume) + `registry_persistence_active()` predicate + pure `entropy_external_oneshot()`/`entropy_class_str()` in `entropy.c` + degraded splash warning at TWO sites (`early_entropy_init()` Phase 1, `boot_desktop.c` Phase 3).
 > - Runs once on the Phase-3 boot path after `seed_file_phase3()` (consume -> report -> registry -> JSON) so every surface reflects the final boot entropy state.
-> - Downstream: cross-reboot ExternalEntropy + secure one-shot deletion deferred to D02 TODO-14 §8 (load wiring + scrub `.bak`/journal + per-hive flush); Codex 2x review adoptions in the section commit message.
+> - Downstream: cross-reboot ExternalEntropy + secure one-shot deletion deferred to D02 TODO-14 §8 (load wiring + scrub `.bak`/journal + per-hive flush); Codex review adoptions in the commit messages.
 > - Canonical doc: surface contract in [`include/kernel/entropy.h`](../../include/kernel/entropy.h) (diagnostics surfaces block).
 > - Scope boundary: §1 owns the model/report line; §8 owns the crypto gate the surfaces mirror; the desktop-visible post-boot notification is desktop-domain work, not §9.
+
+> **Verified:** 2026-06-13 | commit `47502807` | 4/5 items | build OK | smoke PASS (KVM 2.43s)
+> **Quality reviewed:** 2026-06-13 | Codex 8x (adversarial, re-adversarial, consistency, perf) | 3H+5M fixed | scope: kernel-code-quality
 
 ---
 

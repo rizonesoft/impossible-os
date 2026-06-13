@@ -289,9 +289,14 @@ void boot_phase3(void)
     seed_file_phase3();
 
     /* One-shot admin external-entropy consume (Win11 ExternalEntropy
-     * parity): destroys + absorbs HKLM\SYSTEM\Boot\Entropy\ExternalEntropy
-     * when present. Runs BEFORE the summary + diagnostics surfaces so
-     * they reflect the post-injection state. */
+     * parity): for an HKLM\SYSTEM\Boot\Entropy\ExternalEntropy value it
+     * ABSORBS (destroying the value first) only when registry persistence is
+     * inactive (in-memory-only, no on-disk recovery source); a persistent
+     * on-disk offering is left untouched and NOT absorbed (deferred to the
+     * hive-load wiring). The diagnostics mirror is a separate sub-key, so a
+     * deferred offering never appears in it. Runs BEFORE the summary +
+     * diagnostics surfaces, so the registry/JSON mirror reflects the
+     * post-consume-or-defer counters, not a guaranteed injection. */
     {
         extern void entropy_external_consume(void);
         entropy_external_consume();
