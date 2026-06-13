@@ -388,6 +388,32 @@ static const char *tpm_alg_name(uint16_t alg_id)
     }
 }
 
+/* Append n bytes of s into the coalescing buffer acc[cap], flushing acc to f
+ * at *woff when it would overflow. Coalesces the per-event JSON into a bounded
+ * buffer so an attacker-influenced event count (up to TPM_EVENT_MAX) produces
+ * ~cap/event-size writes instead of one tiny FAT32 write per event, while the
+ * in-RAM buffer stays bounded (the streaming intent). Returns 0 / -1 on a
+ * vfs_write failure. */
+static int cel_append(struct vfs_node *f, char *acc, uint32_t cap, uint32_t *alen,
+                      uint32_t *woff, const char *s, uint32_t n)
+{
+    if (*alen != 0u && *alen + n > cap) {
+        if (vfs_write(f, *woff, *alen, (const uint8_t *)acc) != (int)*alen)
+            return -1;
+        *woff += *alen;
+        *alen = 0u;
+    }
+    if (n > cap) {                       /* single chunk bigger than the buffer */
+        if (vfs_write(f, *woff, n, (const uint8_t *)s) != (int)n)
+            return -1;
+        *woff += n;
+        return 0;
+    }
+    memcpy(acc + *alen, s, n);
+    *alen += n;
+    return 0;
+}
+
 void tpm_evlog_export_cel(void)
 {
     if (s_evlog_status != TPM_EVLOG_OK || s_event_count == 0u)
@@ -407,19 +433,19 @@ void tpm_evlog_export_cel(void)
         return;
     }
 
-    uint32_t woff = 0;
-    char chunk[640];
+    uint32_t woff = 0, alen = 0;
+    char acc[4096];     /* coalescing buffer (bounded RAM) */
+    char chunk[640];    /* per-event format temp */
     int n;
 
     n = snprintf(chunk, sizeof(chunk),
                  "{\"version\":1,\"format\":\"cel-json-subset\","
                  "\"eventCount\":%u,\"events\":[\n", s_event_count);
     if (n <= 0 || (uint32_t)n >= sizeof(chunk)
-        || vfs_write(f, woff, (uint32_t)n, (const uint8_t *)chunk) != n) {
+        || cel_append(f, acc, sizeof(acc), &alen, &woff, chunk, (uint32_t)n)) {
         vfs_close(f);
         return;
     }
-    woff += (uint32_t)n;
 
     uint32_t i;
     for (i = 0; i < s_event_count; i++) {
@@ -451,17 +477,18 @@ void tpm_evlog_export_cel(void)
                      tpm_alg_name(e->primary_alg_id), hex,
                      e->payload_off, e->payload_size);
         if (n <= 0 || (uint32_t)n >= sizeof(chunk)
-            || vfs_write(f, woff, (uint32_t)n, (const uint8_t *)chunk) != n) {
+            || cel_append(f, acc, sizeof(acc), &alen, &woff, chunk, (uint32_t)n)) {
             klog(LOG_WARN, "TPM", "CEL export: write failed at event %u", i);
             vfs_close(f);
             return;
         }
-        woff += (uint32_t)n;
     }
 
     n = snprintf(chunk, sizeof(chunk), "\n]}\n");
     if (n > 0 && (uint32_t)n < sizeof(chunk))
-        vfs_write(f, woff, (uint32_t)n, (const uint8_t *)chunk);
+        cel_append(f, acc, sizeof(acc), &alen, &woff, chunk, (uint32_t)n);
+    if (alen != 0u)     /* final flush of the coalescing buffer */
+        vfs_write(f, woff, alen, (const uint8_t *)acc);
     vfs_close(f);
     klog(LOG_INFO, "TPM",
          "CEL event log exported to X:\\Diag\\tpm-events.json (%u events)",

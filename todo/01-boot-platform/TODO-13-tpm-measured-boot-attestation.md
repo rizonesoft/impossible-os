@@ -70,6 +70,10 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - **Canonical doc:** `include/kernel/tpm.h` (parse contract); TCG CEL-JSON for the export format.
 > - **Scope boundary:** the UEFI mem-map-extent read bound is a deferred `[ ]` item in this section; retention is legacy-fields-only (no typed RESERVED descriptor).
 
+> **Verified:** 2026-06-14 | commit `53e24f76` (impl) + review (perf coalescing + stamps) | 5/6 items | build OK | 394 kernel tests PASS (9 new tpm-evlog) + smoke PASS (KVM 2.650s)
+> **Deferred:** [H] bootloader TPM read/copy not bounded by the firmware UEFI mem-map extent (reads from `log_last_entry` capped only by `TPM_EVENT_LOG_MAX`) -> XREF: 01-boot-platform/TODO-13 §1 (item: "Bound the bootloader TPM read/copy by the UEFI memory-map extent of `log_location`")
+> **Quality reviewed:** 2026-06-14 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 1C+1H+3M fixed, 1H deferred | scope: kernel-code-quality + boot-code-quality
+
 ---
 
 ## 2. TPM2 Command Transport
@@ -95,7 +99,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Verified:** 2026-06-12 | commit `8ae51bf1` | 6/6 items | build OK | smoke PASS (KVM 2.530s)
 > **Accepted:** [M] ACPI start methods 2/8 degrade-with-WARN until an AML interpreter exists -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "TPM2 ACPI start method (2/8)" at line 80)
-> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 98)
+> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 102)
 > **Quality reviewed:** 2026-06-12 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 1Crit+6H+6M fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-code-quality
 
 ## 3. PCR Read API
