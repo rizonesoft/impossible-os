@@ -36,6 +36,7 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 - Identify Controller + Identify Namespace executed
 - Read/write sectors via I/O Queue
 - NVMe drive registered as block device, partitions scanned, filesystem mounted
+- Write cache flushed on `blkdev_sync`, controller shutdown notified (CC.SHN) before poweroff/reboot, unsupported namespace geometries rejected (§6)
 - Validation policy for emulated NVMe documents WHPX vs TCG expectations (see `CLAUDE.md` + §5)
 - SMART / Get Log / multi-namespace / discard parity tracked as backlog in §5 for `04-drivers-hardware/TODO-08`
 
@@ -53,6 +54,7 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 | 💎 |   3   | I/O Queue creation and sector read/write      | §2         |  [x]   |
 | 💎 |   4   | Block device registration and VFS integration | §3         |  [x]   |
 | ⭐ |   5   | Advanced NVMe parity backlog (owned by D04 T08) | §1, §2, §3, §4 |  [ ]   |
+| 💎 |   6   | Controller lifecycle: shutdown, flush, I/O validation | §2, §3, §4 |  [ ]   |
 
 ---
 
@@ -169,6 +171,26 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 
 ---
 
+## 6. NVMe Controller Lifecycle: Clean Shutdown, Cache Flush, and I/O Validation
+
+Boot-disk data-integrity gaps found in gap audit: the driver acknowledges durable writes without flushing the controller's volatile cache, never issues the spec shutdown notification before poweroff/reboot, and accepts namespace sector sizes the I/O path cannot encode. These are boot-critical durability/correctness, not advanced parity.
+
+**Files:** `src/kernel/drivers/nvme.c`, `include/kernel/drivers/nvme.h`, `src/kernel/main/blkdev_adapters.c`, `src/kernel/acpi.c`
+
+- [ ] `nvme_flush(ci)` -- submit NVM Flush (opcode 0x00, NSID=1) on the I/O queue, wait for completion; return failure on timeout/error
+- [ ] Register `nvme_flush` as the `bd.flush` callback for each `nvmeN` in `blkdev_register_all()` so `blkdev_sync` (the FAT32/VFS/`NtFlushBuffersFile` durability boundary) actually flushes the cache instead of succeeding on a NULL fn
+- [ ] `nvme_shutdown(ci)` -- set `CC.SHN=01b` (normal shutdown), poll `CSTS.SHST` to 10b (complete) with a `CAP.TO`-derived timeout + `CSTS.CFS` abort check
+- [ ] `nvme_shutdown_all()` invoked from `acpi_shutdown()` + reboot before the PM1a_CNT SLP write so poweroff/reset issues the notification (interim hook -> XREF `04-drivers-hardware/TODO-03` §2 clean-shutdown orchestrator)
+- [ ] Reject unsupported LBA size at Identify Namespace: accept only `ns_sector_size` 512 or 4096; on any other `1<<DS`, log + leave the namespace unregistered rather than register an unencodable geometry
+- [ ] Guard `nvme_read_sectors`/`nvme_write_sectors` so `chunk = 4096 / ns_sector_size` can never be 0 (a >4 KiB sector makes `cdw12 = chunk-1` wrap to `0xFFFFFFFF`, an invalid 4 G-block NLB)
+- [ ] Commit: `"drivers: NVMe clean shutdown + cache flush + LBA-size validation"`
+
+**Test checkpoint:** QEMU TCG poweroff after a write: serial shows `nvme: shutdown complete` (`CSTS.SHST=10b`); `blkdev_sync("nvme0")` succeeds only after a real Flush completion; a forced 8 KiB-sector Identify leaves `nvme0` unregistered. QEMU WHPX, QEMU TCG, bare metal.
+
+**Regression risk:** MEDIUM -- adds a call into `acpi_shutdown()` (poweroff path, runs once at end of life). `nvme_shutdown_all()` must be `CAP.TO`-timeout-bounded so a wedged controller cannot hang poweroff. Flush + LBA validation are additive; the LBA guard only rejects sizes the driver already could not service. Rollback: skip the `acpi_shutdown()` hook -- flush + validation stand alone.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                  | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS                |
@@ -176,6 +198,8 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 | 💎 | NVMe discovery           | ✅ stornvme.sys             | ✅ nvme.ko                   | ✅ §1 BAR UC MMIO map           |
 | 💎 | NVMe I/O path            | ✅ Multi queue MSI IRQ     | ✅ Multi queue MSI IRQ       | ✅ §3 one poll queue pair       |
 | 💎 | NVMe boot mount          | ✅ Boot start driver        | ✅ initramfs loads nvme      | ✅ §4 blkdev then VFS mount     |
+| 💎 | NVMe write durability    | ✅ Flush on FlushBuffers    | ✅ REQ_OP_FLUSH / fsync      | ✅ §6 NVM Flush -> blkdev_sync  |
+| 💎 | NVMe clean shutdown      | ✅ CC.SHN on shutdown       | ✅ shutdown on poweroff      | ✅ §6 CC.SHN + CSTS.SHST poll   |
 | ⭐ | WHPX NVMe CI caveat      | N/A host hypervisor layer   | N/A host hypervisor layer    | ⚠️ Prefer TCG for NVMe tests    |
 | ⭐ | SMART health at boot     | ❌ Needs vendor tools       | ❌ Needs nvme userland       | ⬜ Planned VPD SMART stretch    |
 | ⭐ | Firmware ID at boot      | ❌ Not shown in boot UI     | ❌ dmesg after boot only     | ✅ §2 Identify strings in klog  |
@@ -202,6 +226,8 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
   - When NVMe absent: `nvme_init()` returns without hang or crash
   - Admin plus I/O path covered by Identify plus `nvme_read_sectors(0, 0, 1, buf)` within one test (no public `nvme_admin_submit` symbol)
   - I/O Queue: `nvme_read_sectors` plus `nvme_write_sectors` roundtrip on a scratch LBA only (never sector 0); skip if no writable test partition
+  - §6 durability: when NVMe present, `blkdev_sync("nvme0")` returns success only via a real NVM Flush completion (the `bd.flush` fn is non-NULL); skip when absent
+  - §6 validation: a namespace whose DS encodes an unsupported sector size (> 4096) leaves `nvme0` unregistered (`blkdev_get("nvme0") == NULL`); the read/write `chunk` is never 0
 - [ ] Extend `scripts/test-smoke.sh` for `run-nvme` / `run-nvme-ci` when scripted: grep serial for `Controller v` and `no controller found` and `block device(s):` from `blkdev_list()` after NVMe init
 - [ ] Register in `test_runner_init()`: `test_register_nvme()` (or fold cases into `test_register_storage()` in `test_storage.c` if preferred)
 - [ ] Commit: `"test: add nvme test suite"`

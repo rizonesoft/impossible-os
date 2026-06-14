@@ -95,6 +95,7 @@ Integrate ACPICA (Intel's open-source AML interpreter, Apache-2.0) as a static l
   - `vfs_cache_flush()` -- flush block cache
   - `dhcp_release()` (if network up)
   - `vfs_unmount_all()` -- unmount in reverse mount order
+  - Storage controller shutdown: flush device caches + issue per-controller shutdown notification (NVMe `CC.SHN`) before power-off -> XREF `01-boot-platform/TODO-16` §6 provides `nvme_shutdown_all()` + the `bd.flush` cache-flush fn (interim hook in `acpi_shutdown()` until this orchestrator lands)
   - Dispatch: `POWEROFF` → `acpi_poweroff()`; `REBOOT` → `acpi_reboot()`; `HIBERNATE` → `acpi_hibernate()`
 - [ ] `system_flush()` (no shutdown) -- steps 3–5 only; called by §9 S3 and §10 hibernate
 - [ ] Per-step timeout: if step stalls > 10 s, log `[SHUTDOWN] step timed out, forcing` and continue
