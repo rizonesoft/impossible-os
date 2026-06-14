@@ -44,7 +44,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 7 | TPM NV index support | §2 (transport); §12 (baseline mask) | [/] |
 | ⭐ | 8 | Sealed-secret boot policy hooks | §7, §12 | [x] |
 | 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [/] |
-| ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
+| ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [/] |
 | 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [x] |
 | 💎 | 12 | PCR allocation table and policy masks | (foundational; consumed by §6/§8/§13) | [x] |
 | 💎 | 13 | Attestation key provisioning and TPM2 quote | §3, §7, §12 | [x] |
@@ -283,6 +283,17 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 **Test checkpoint:** VPD / boot diagnostics show distinct status for verified / no-TPM / no-baseline / mismatch / event-log-tamper; recovery mode names which layer changed (firmware vs bootloader vs kernel vs Secure Boot db vs baseline); a trusted baseline reset is accepted ONLY from recovery mode with local confirmation; an unexpected kernel-measurement change triggers A/B rollback integration (TODO-22). Platforms: manual recovery-mode walkthrough (QEMU swtpm + injected mismatch); bare metal.
 
+> **Test runner:** N/A (no new §10 code surface; `tpm_integrity_status_label()` shipped + reviewed with the integrity work) | validation: Phase-1 klog status line
+> **Notes:**
+> - Shipped: VPD/boot-diagnostics status labels via `tpm_integrity_status_label()` (verified / no-TPM / no-baseline / mismatch / tamper / unknown) on a Phase-1 klog line.
+> - Scope boundary: the 3 remaining items (recovery layer-change explanation, baseline reset, A/B rollback) need a recovery-mode environment that does not exist yet (A/B owned by TODO-22); Deferred, §10 stays `[/]`.
+> - No new code shipped this pass: §10 is a blocked-section defer-stamp; the lone done item's helper was reviewed in the integrity sections.
+> **Verified:** 2026-06-14 | commit `c9ce7bcd` (status-label helper, prior) | 1/4 items | build OK | manual (Phase-1 klog status line)
+> **Deferred:** [M] recovery names which layer changed (firmware/bootloader/kernel/SB-db/baseline) -- needs a recovery-mode UI/environment, none exists yet -> XREF: 01-boot-platform/TODO-13 §10 (item: "In recovery, explain whether firmware, bootloader, kernel, Secure Boot db, or baseline changed")
+> **Deferred:** [M] trusted baseline reset only from recovery mode + local confirmation (security-sensitive; recovery-mode + confirmation UX) -> XREF: 01-boot-platform/TODO-13 §10 (item: "Allow trusted baseline reset only from recovery mode with local confirmation")
+> **Deferred:** [M] A/B rollback on an unexpected kernel-measurement change (blocked on TODO-22 A/B rollback infra) -> XREF: 01-boot-platform/TODO-13 §10 (item: "Integrate with A/B rollback if kernel measurement changed unexpectedly")
+> **Quality reviewed:** 2026-06-14 | Codex 0x (blocked section; no new code surface to review) | 0 fixed, 3 deferred | scope: N/A (recovery-mode infra + TODO-22 not yet available)
+
 ## 11. TPM Tests and Event-Log Fixtures
 
 - [x] Event-log parser fixtures for TPM 1.2 + TPM 2.0 -- `test_tpm_event_log.c` (`tpm12_two_events`, `tpm20_event2`) parse full known-good logs; 9 suites incl. truncation/cap/bad-header/partial-tail.
@@ -302,7 +313,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Degraded coverage: added a transport-level no-TPM test (`ERR_NODEV`); truncated-log + inactive-bank cases already covered by the event-log / replay suites.
 > - Scope boundary: this section is test coverage for already-shipped TPM features (transport, event-log, replay); the swtpm script is the host/CI live-validation entry point, not a WSL unit test.
 > **Verified:** 2026-06-14 | commit `c40c4eee` | 5/6 items | build OK | tests 789/789
-> **Deferred:** [M] `tpm_t_test_install` teardown leaves a real-fTPM transport mis-routed after a TPM suite (cross-cutting test-infra) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Follow-up (test-infra): harden `tpm_t_test_install`" at line 305)
+> **Deferred:** [M] `tpm_t_test_install` teardown leaves a real-fTPM transport mis-routed after a TPM suite (cross-cutting test-infra) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Follow-up (test-infra): harden `tpm_t_test_install`" at line 316)
 > **Quality reviewed:** 2026-06-14 | Codex 5x (adversarial-impl + re-adversarial + consistency + perf) | 4H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
