@@ -42,7 +42,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 5 | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3 | [x] |
 | 💎 | 6 | Baseline enrollment and storage | §3, §4, §7 | [/] |
 | 💎 | 7 | TPM NV index support | §2 (transport); §12 (baseline mask) | [/] |
-| ⭐ | 8 | Sealed-secret boot policy hooks | §7 | [ ] |
+| ⭐ | 8 | Sealed-secret boot policy hooks | §7, §12 | [/] |
 | 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
 | 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [ ] |
@@ -219,7 +219,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 8. Sealed-Secret Boot Policy Hooks
 
-- [ ] Prerequisite: extract a shared policy-session seam (trial authPolicy over a caller-supplied PCR mask + run-op-under-real-PolicyPCR-session, single-cleanup `FlushContext`) + a generic mask-to-PCR-select helper, from the static `tpm_nv.c` flow.
+- [x] Prerequisite: shared policy-session seam in `tpm_nv.{c,h}` -- `tpm_policy_session_run` + `tpm_policy_pcr_digest` + `tpm_pcr_mask_to_select` + exposed `tpm_session_cmd_exec`; NV wrappers now thin, no behavior change (§6/§7 suites green).
 - [ ] Seal/unseal small secrets to `tpm_pcr_seal_mask()` (PCR 7, not the baseline mask): `CreatePrimary` parent + `Create` KEYEDHASH object (authPolicy = seal PolicyPCR) + `Load` + `Unseal` via a real POLICY session; single-cleanup handle teardown.
 - [ ] FDE key-unlock hook (callable forward-API; stub consumer until storage-encryption lands).
 - [ ] Code-integrity policy seal hook (callable forward-API; stub consumer until CI-policy lands).

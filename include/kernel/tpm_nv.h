@@ -208,10 +208,41 @@ int tpm2_parse_policy_get_digest(const uint8_t *rsp, uint32_t len,
  * entry) per the spec, so this command carries no handle area. */
 uint32_t tpm2_build_flush_context(uint8_t *buf, uint32_t cap, uint32_t handle);
 
-/* Fill a 3-byte PCR-select bitmap (PCRs 0..23) from the derived baseline mask
- * (tpm_pcr_baseline_mask(), the PCR allocation table). Keeps the policy pinned to
- * the allocation table -- no hard-coded PCR set that could drift from it. */
+/* Fill a 3-byte PCR-select bitmap (PCRs 0..23) from an arbitrary PCR mask (bit i
+ * == PCR i). The shared building block for any PCR policy (baseline, seal, ...). */
+void tpm_pcr_mask_to_select(uint32_t mask, uint8_t out_sel[3]);
+
+/* Fill a 3-byte PCR-select bitmap from the derived baseline mask
+ * (tpm_pcr_baseline_mask()). Thin wrapper over tpm_pcr_mask_to_select. */
 void tpm_nv_baseline_pcr_select(uint8_t out_sel[3]);
+
+/* ---- Shared policy-session seam (reused by NV policy ops + sealed secrets) ----
+ * The single-cleanup PolicyPCR-session machinery, extracted so consumers do not
+ * re-implement the session-handle-leak-on-error/BUSY hazard. Not ISR-safe. */
+
+/* Submit one session-authorized TPM2 command and classify the response. On
+ * TPM_NV_OK leaves rsp intact (+ *out_rlen) for the caller to parse; validates
+ * the response code AND, for ST_SESSIONS successes, the response auth area.
+ * Returns 0 on success (with *out_st = TPM_NV_OK), -1 otherwise (*out_st set). */
+int tpm_session_cmd_exec(const uint8_t *cmd, uint32_t n, uint8_t *rsp, uint32_t cap,
+                         uint32_t *out_rlen, tpm_nv_status_t *out_st);
+
+/* Callback invoked under an open real PolicyPCR session: build + submit + parse
+ * the authorized op using `session`; return its status. */
+typedef tpm_nv_status_t (*tpm_policy_op_fn)(uint32_t session, void *ctx);
+
+/* Open a real POLICY session, satisfy TPM2_PolicyPCR over `sel` in bank `alg`,
+ * invoke op(session, ctx), then FlushContext the session on EVERY path (op
+ * error, BUSY, or a malformed-handle leak). Returns the op status (or the
+ * session-setup failure). */
+tpm_nv_status_t tpm_policy_session_run(uint16_t alg, const uint8_t sel[3],
+                                       tpm_policy_op_fn op, void *ctx);
+
+/* Compute the authPolicy digest for a PolicyPCR over `sel` in bank `alg` via a
+ * TRIAL session (StartAuthSession(TRIAL) + PolicyPCR + PolicyGetDigest + flush).
+ * Writes the 32-byte SHA-256 policy digest to out (cap >= 32). */
+tpm_nv_status_t tpm_policy_pcr_digest(uint16_t alg, const uint8_t sel[3],
+                                      uint8_t *out, uint32_t cap);
 
 /* ---- High-level wrappers (Phase-1 transport; not ISR-safe) ---- */
 
