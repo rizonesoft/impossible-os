@@ -212,7 +212,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 10. Recovery and Mismatch UX
 
-- [ ] Add VPD/boot diagnostics status for verified, no TPM, no baseline, mismatch, and event-log tamper.
+- [x] Add VPD/boot diagnostics status for verified, no TPM, no baseline, mismatch, and event-log tamper -- `tpm_integrity_status_label()` maps the report to one status word (tamper before baseline; UNKNOWN->`unknown`), wired to a Phase-1 `klog` line.
 - [ ] In recovery, explain whether firmware, bootloader, kernel, Secure Boot db, or baseline changed.
 - [ ] Allow trusted baseline reset only from recovery mode with local confirmation.
 - [ ] Integrate with A/B rollback if kernel measurement changed unexpectedly.

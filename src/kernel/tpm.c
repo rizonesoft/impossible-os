@@ -746,6 +746,33 @@ const struct boot_integrity_report *tpm_integrity_report(void)
     return &s_integrity_report;
 }
 
+const char *tpm_integrity_status_label(const struct boot_integrity_report *r)
+{
+    if (!r)
+        return "unknown";
+    /* A zero-initialized or not-yet-evaluated report has overall_status ==
+     * BOOT_INTEGRITY_UNKNOWN. Report it as "unknown" rather than inferring
+     * no-TPM from tpm_version == 0 -- a pre-init report also has version 0, so
+     * the version field cannot distinguish "not checked" from "no hardware".
+     * The authoritative no-TPM signal is overall_status == BOOT_INTEGRITY_NO_TPM,
+     * which tpm_integrity_init() sets only after probing for a TPM. */
+    if (r->overall_status == BOOT_INTEGRITY_UNKNOWN)
+        return "unknown";
+    /* event-log tamper (replay != hardware) is checked BEFORE the baseline
+     * status so the TAMPER->MISMATCH escalation is reported as tamper, not as a
+     * generic baseline mismatch. 1 == TPM_REPLAY_TAMPER (kernel/tpm_replay.h). */
+    if (r->replay_verdict == 1u)
+        return "event-log-tamper";
+    switch (r->overall_status) {
+        case BOOT_INTEGRITY_VERIFIED:    return "verified";
+        case BOOT_INTEGRITY_MISMATCH:    return "baseline-mismatch";
+        case BOOT_INTEGRITY_NO_TPM:      return "no-TPM";
+        case BOOT_INTEGRITY_NO_BASELINE: return "no-baseline";
+        case BOOT_INTEGRITY_NO_CRYPTO:   return "no-crypto";
+        default:                         return "unknown";
+    }
+}
+
 void tpm_integrity_set_rng_available(int available)
 {
     s_integrity_report.tpm_rng_available = available ? 1u : 0u;

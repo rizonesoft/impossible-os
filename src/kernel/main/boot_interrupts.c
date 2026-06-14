@@ -482,6 +482,8 @@ void boot_phase1(void)
                 klog(LOG_WARN, "TPM", "PCR replay: event-log TAMPER at PCR %d",
                      (uint64_t)rpt.first_mismatch_pcr);
         }
+        klog(LOG_INFO, "TPM", "Boot integrity status: %s",
+             tpm_integrity_status_label(tpm_integrity_report()));
     }
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);

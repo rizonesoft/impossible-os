@@ -195,6 +195,13 @@ int tpm_integrity_verified(void);
  * Valid after tpm_integrity_init(). */
 const struct boot_integrity_report *tpm_integrity_report(void);
 
+/* One-word boot-diagnostics status for the integrity report, for serial log /
+ * VPD / recovery UX: "no-TPM", "event-log-tamper" (replay != hardware -- checked
+ * BEFORE baseline so it is never masked by a mismatch status), "baseline-
+ * mismatch", "no-baseline", "no-crypto", "verified", "unknown". Pure -- safe to
+ * call from any context. */
+const char *tpm_integrity_status_label(const struct boot_integrity_report *r);
+
 /* ---- PCR Read API (measured-boot PCR access) ----
  *
  * tpm2_pcr_read() reads ONE PCR in one hash bank via TPM2_PCR_Read on the

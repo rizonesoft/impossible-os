@@ -287,6 +287,42 @@ static void test_replay_finalize(void)
     TEST_ASSERT_EQ(r.verdict, TPM_REPLAY_TAMPER, "confirmed mismatch -> TAMPER kept");
 }
 
+static void test_integrity_status_label(void)
+{
+    struct boot_integrity_report r;
+    memset(&r, 0, sizeof(r));
+
+    /* A zero-initialized / not-yet-evaluated report (overall_status ==
+     * BOOT_INTEGRITY_UNKNOWN) must read "unknown", NOT "no-TPM" -- version 0
+     * alone cannot distinguish "not checked" from "no hardware present". */
+    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "unknown", 8) == 0,
+                "zeroed/unchecked report -> unknown");
+
+    /* An initialized report that probed and found no TPM. */
+    r.overall_status = BOOT_INTEGRITY_NO_TPM;
+    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "no-TPM", 7) == 0, "no TPM -> no-TPM");
+
+    /* TAMPER escalates overall_status to MISMATCH; the label must still report
+     * tamper, NOT a generic baseline mismatch (tamper checked first). */
+    r.tpm_version = 2u;
+    r.replay_verdict = (uint8_t)TPM_REPLAY_TAMPER;
+    r.overall_status = BOOT_INTEGRITY_MISMATCH;
+    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "event-log-tamper", 17) == 0,
+                "replay tamper -> event-log-tamper (not baseline-mismatch)");
+
+    /* A real baseline mismatch WITHOUT replay tamper. */
+    r.replay_verdict = (uint8_t)TPM_REPLAY_VERIFIED;
+    r.overall_status = BOOT_INTEGRITY_MISMATCH;
+    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "baseline-mismatch", 18) == 0,
+                "mismatch w/o tamper -> baseline-mismatch");
+
+    r.overall_status = BOOT_INTEGRITY_VERIFIED;
+    TEST_ASSERT(memcmp(tpm_integrity_status_label(&r), "verified", 9) == 0, "verified");
+
+    TEST_ASSERT(memcmp(tpm_integrity_status_label((const struct boot_integrity_report *)0),
+                       "unknown", 8) == 0, "NULL report -> unknown");
+}
+
 void test_register_tpm_replay(void)
 {
     test_suite_register_cat("tpm: PCR extend banks", test_pcr_extend_banks, TEST_CAT_SECURITY);
@@ -297,6 +333,7 @@ void test_register_tpm_replay(void)
     test_suite_register_cat("tpm: replay bank-digest extract", test_replay_bank_digest_extract, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: replay verify report", test_replay_verify_report, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: replay verdict finalize", test_replay_finalize, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: integrity status label", test_integrity_status_label, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */
