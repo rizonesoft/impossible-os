@@ -608,9 +608,12 @@ void vpd_stage_done(void)
     if (!s_active || !s_has_current)
         return;
 
-    /* Mark current stage green */
+    /* Mark current stage done: clear the square + draw a green checkmark
+     * (mirrors the prior-stage path in vpd_stage_begin so the final completed
+     * stage also shows a checkmark, not a solid green square). */
     vpd_fill_rect(VPD_LEFT_MARGIN, s_last_row_y,
-                   VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_DONE);
+                   VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_BG);
+    vpd_draw_check(VPD_LEFT_MARGIN, s_last_row_y, VPD_COLOR_DONE);
 
     /* Render elapsed time (suppressed on uncalibrated/backwards/overflow TSC) */
     {

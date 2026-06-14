@@ -31,7 +31,9 @@ void vpd_stage_fail(void);
 /* Returns 1 if VPD Tier 1 is active and rendering. */
 int vpd_is_active(void);
 
-/* Update progress bar (0-100%). Called automatically by vpd_stage_begin. */
+/* Retained no-op (source/ABI compat): the proportional progress bar was
+ * intentionally removed (visual clutter); the per-stage TSC-timed status rows
+ * are the progress indication. Kept so existing call sites still compile. */
 void vpd_update_progress(uint8_t percent);
 
 /* Render "Last boot failed at: NAME (0xNNNN)" crash banner at top of screen.

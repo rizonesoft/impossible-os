@@ -173,7 +173,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 > **Page flip gotcha (discovered 2026-03-28):** After `boot_splash_init()` performs fade-in page flips, the visible VRAM page changes. Tier 1 bars written to page 0 become invisible. On real hardware (non-Bochs VGA), writing to page 1 offset (`fb.addr + height * pitch`) may go past VRAM bounds and crash. Tier 1 must either: (a) only render before `fb_init()`, or (b) detect the current visible page and write to it. §10 (Seamless Tier Transition) must handle this cleanly.
 
 - [x] `vpd_init()` -- called after `g_boot_info` parse in `boot_hw.c`; stores fb pointer, pitch, dimensions
-- [x] `vpd_stage_begin(phase, name, postcode)` -- draws stage row: 5x5 status square + name + POST hex; yellow = in-progress
+- [x] `vpd_stage_begin(phase, name, postcode)` -- draws stage row: 7px status square (`VPD_SQUARE_SIZE`) + name + POST hex; yellow = in-progress
 - [x] `vpd_stage_done()` -- marks current stage green + renders elapsed ms
 - [x] `vpd_stage_fail()` -- marks current stage red + renders FAIL text
 - [x] Layout: 10px per row (`VPD_ROW_HEIGHT`), 8px left margin (`VPD_LEFT_MARGIN`), status square = glyph height (7px, `VPD_SQUARE_SIZE`), name + hex columns, right-aligned timing (corrected from the original 4px/5x5 draft to the shipped constants)
@@ -245,7 +245,15 @@ Add visual status icons and a proportional progress bar below the stage list.
 - [x] `vpd_update_progress(percent)` is a retained no-op -- the 4px proportional progress bar was intentionally removed (visual clutter); the per-stage rows convey progress
 - [x] Commit: `"boot: VPD status indicators + progress bar"`
 
-**Test checkpoint:** With `postbars=on`, status squares transition yellow to green checkmarks as stages complete and each row shows elapsed ms (no separate progress bar). QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+**Test checkpoint:** With `postbars=on`, status squares transition yellow to green checkmarks as stages complete (incl. the final stage) and each row shows elapsed ms (no separate progress bar). QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired) | validation: on-screen status squares -> checkmarks with `postbars=on` (manual)
+> **Notes:**
+> - Shipped: status indicators -- yellow in-progress square -> green checkmark (`vpd_draw_check`) on done, red square + "FAIL" on failure; the proportional progress bar was intentionally removed (per-stage TSC rows are the progress indication).
+> - Integrates: rendered per stage via `vpd_stage_begin`/`done`/`fail`; `vpd_draw_check` + `vpd_fill_rect` are bounds-checked (`px<s_width`/`py<s_height`); `vpd_update_progress` is a retained no-op.
+> - Review: Codex 3x fixed 1M+2L -- `vpd_stage_done` drew a green square not a checkmark (final stage looked off; now mirrors `vpd_stage_begin`); the `vpd.h` progress comment + a §4 "5x5 square" item were stale (-> no-op / 7px).
+> - Scope boundary: §7 owns the status indicators; the BGRX color byte-order issue is deferred under §4; the renderer/lifecycle is §4.
+> **Verified:** 2026-06-15 | this review commit (checkmark + doc fixes) | 3/3 items | build OK | manual (on-screen pending)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+1M+2L fixed, 0 open | scope: kernel-code-quality
 
 ## 8. NVRAM Crash Persistence and "Last Boot Failed" Display
 On crash-restart, display exactly where the previous boot failed -- always active regardless of `postbars` setting. This is the killer feature: you crash, reboot, and the screen tells you what happened.
