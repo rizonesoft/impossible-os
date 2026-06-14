@@ -308,3 +308,257 @@ uint32_t tpm2_build_evict_control(uint8_t *buf, uint32_t cap, uint32_t object,
     tpm2_be32_put(buf + off, persistent); off += 4u;  /* persistentHandle */
     return off;
 }
+
+/* ---- Live transport wrappers (Phase-1; not ISR-safe) ---- */
+
+/* The AK is provisioned once per boot and cached. s_ak_ready gates the cache;
+ * its release/acquire orders the handle/pub writes (no lock needed for reads).
+ * s_ak_busy serializes provisioning across CPUs WITHOUT a lock held over the
+ * ms-scale TPM transactions (kernel-code-quality Gate 2: never hold a lock over
+ * blocking I/O) -- a second concurrent caller gets BUSY and retries. */
+static volatile int s_ak_ready;
+static volatile int s_ak_busy;
+static uint32_t s_ak_handle;
+static uint8_t  s_ak_pub[TPM_AK_PUB_MAX];
+static uint16_t s_ak_pub_len;
+
+static tpm_attest_status_t map_attest(tpm_nv_status_t s)
+{
+    switch (s) {
+        case TPM_NV_OK:        return TPM_ATTEST_OK;
+        case TPM_NV_BADARG:    return TPM_ATTEST_BADARG;
+        case TPM_NV_BUSY:      return TPM_ATTEST_BUSY;
+        case TPM_NV_NOTFOUND:  return TPM_ATTEST_NO_EK_CERT;
+        case TPM_NV_TRANSPORT: return TPM_ATTEST_TRANSPORT;
+        default:               return TPM_ATTEST_TPMERR;
+    }
+}
+
+static void at_flush(uint32_t handle)
+{
+    uint8_t cmd[16], rsp[16];
+    uint32_t n;
+    if (handle == 0u)
+        return;
+    n = tpm2_build_flush_context(cmd, sizeof cmd, handle);
+    if (n != 0u)
+        (void)tpm2_submit_waiting(cmd, n, rsp, sizeof rsp, TPM_NV_FLUSH_BUDGET_MS);
+}
+
+/* Submit a leading-object-handle command (CreatePrimary/Load) -> transient
+ * handle, 0 on failure (*out_st classified). Mirrors tpm_seal.c seal_exec_handle
+ * incl. the malformed-handle recovery flush. */
+static uint32_t at_exec_handle(const uint8_t *cmd, uint32_t n, tpm_nv_status_t *out_st)
+{
+    uint8_t rsp[768];
+    uint16_t tag;
+    uint32_t size, rc, h;
+    int r;
+    if (n == 0u) { *out_st = TPM_NV_BADARG; return 0; }
+    r = tpm2_submit(cmd, n, rsp, sizeof rsp);
+    if (r < 0) { *out_st = (r == TPM_T_ERR_BUSY) ? TPM_NV_BUSY : TPM_NV_TRANSPORT; return 0; }
+    if (tpm2_rsp_parse(rsp, (uint32_t)r, &tag, &size, &rc) != 0) { *out_st = TPM_NV_TRANSPORT; return 0; }
+    if (rc != TPM2_RC_SUCCESS) { *out_st = tpm_nv_classify_rc(rc); return 0; }
+    h = tpm2_parse_object_handle(rsp, (uint32_t)r);
+    if (h == 0u) {
+        if ((uint32_t)r >= 14u) {
+            uint32_t raw = tpm2_be32_get(rsp + 10);
+            if ((uint8_t)(raw >> 24) == 0x80u) at_flush(raw);
+        }
+        *out_st = TPM_NV_TRANSPORT;
+        return 0;
+    }
+    *out_st = TPM_NV_OK;
+    return h;
+}
+
+/* (Re)satisfy the EK authPolicy on `session` via PolicySecret(endorsement). A
+ * policy session's digest is CONSUMED on each authorized use, so this MUST run
+ * before EVERY EK-authorized command (Create AND Load of the AK). */
+static tpm_nv_status_t at_policy_secret(uint32_t session)
+{
+    uint8_t cmd[48], rsp[64];
+    uint32_t n, rlen = 0;
+    tpm_nv_status_t st;
+    n = tpm2_build_policy_secret(cmd, sizeof cmd, TPM_RH_ENDORSEMENT, session);
+    if (n == 0u)
+        return TPM_NV_BADARG;
+    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
+    return st;
+}
+
+/* Provision the EK + AK once; cache the AK handle + public. Single-cleanup:
+ * EK + session are flushed on EVERY path; the AK stays loaded on success. */
+static tpm_attest_status_t at_provision(void)
+{
+    uint8_t cmd[256], rsp[768], nonce[16];
+    uint32_t ek, session = 0, ak, n, rlen = 0, i;
+    tpm_nv_status_t st;
+    struct tpm_sealed_blob blob;
+    tpm_attest_status_t r;
+
+    if (!tpm_transport_available())
+        return TPM_ATTEST_NO_TPM;
+    /* 1. CreatePrimary the EK under the endorsement hierarchy. */
+    n = tpm2_build_create_primary_ek(cmd, sizeof cmd);
+    ek = at_exec_handle(cmd, n, &st);
+    if (ek == 0u)
+        return (st == TPM_NV_BUSY) ? TPM_ATTEST_BUSY
+             : (st == TPM_NV_TRANSPORT) ? TPM_ATTEST_TRANSPORT : TPM_ATTEST_PROVISION_FAIL;
+    /* 2. Open a real POLICY session. */
+    memset(nonce, 0xA5, sizeof nonce);
+    n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_POLICY, TPM_ALG_SHA256,
+                                      nonce, sizeof nonce);
+    if (n == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_ek; }
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
+        r = (st == TPM_NV_BUSY) ? TPM_ATTEST_BUSY
+          : (st == TPM_NV_TRANSPORT) ? TPM_ATTEST_TRANSPORT : TPM_ATTEST_PROVISION_FAIL;
+        goto out_ek;
+    }
+    session = tpm2_parse_start_auth_session(rsp, rlen);
+    if (session == 0u) {
+        uint32_t raw = tpm2_rsp_session_handle(rsp, rlen);
+        if (raw != 0u) at_flush(raw);
+        r = TPM_ATTEST_TRANSPORT;
+        goto out_ek;
+    }
+    /* From here flush session + ek on every path. */
+    /* 3. Satisfy the EK policy for Create. */
+    st = at_policy_secret(session);
+    if (st != TPM_NV_OK) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
+    /* 4. Create the AK under the EK (parent auth = the policy session). */
+    n = tpm2_build_create_ak_signing(cmd, sizeof cmd, ek, session);
+    if (n == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
+        r = TPM_ATTEST_PROVISION_FAIL; goto out_session;
+    }
+    if (tpm2_parse_create_sealed(rsp, rlen, &blob) != 0 || blob.pub_len > TPM_AK_PUB_MAX) {
+        r = TPM_ATTEST_TRANSPORT; goto out_session;
+    }
+    /* 5. RE-satisfy the EK policy -- the session was consumed by Create. */
+    st = at_policy_secret(session);
+    if (st != TPM_NV_OK) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
+    /* 6. Load the AK under the EK. */
+    n = tpm2_build_load(cmd, sizeof cmd, ek, &blob);
+    ak = at_exec_handle(cmd, n, &st);
+    if (ak == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
+    /* Cache the AK handle + public (the Create outPublic IS the AK TPMT_PUBLIC). */
+    for (i = 0; i < blob.pub_len; i++) s_ak_pub[i] = blob.pub[i];
+    s_ak_pub_len = blob.pub_len;
+    s_ak_handle = ak;
+    r = TPM_ATTEST_OK;
+out_session:
+    at_flush(session);
+out_ek:
+    at_flush(ek);
+    return r;
+}
+
+/* Ensure the AK is provisioned (once). One CPU provisions; concurrent callers
+ * get BUSY (no lock held across the TPM transactions). */
+static tpm_attest_status_t at_ensure_ak(void)
+{
+    tpm_attest_status_t r;
+    if (__atomic_load_n(&s_ak_ready, __ATOMIC_ACQUIRE))
+        return TPM_ATTEST_OK;
+    if (__atomic_exchange_n(&s_ak_busy, 1, __ATOMIC_ACQ_REL))
+        return TPM_ATTEST_BUSY;            /* another CPU is provisioning */
+    r = at_provision();
+    if (r == TPM_ATTEST_OK)
+        __atomic_store_n(&s_ak_ready, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
+    return r;
+}
+
+tpm_attest_status_t tpm2_quote(uint32_t pcr_mask, const uint8_t *nonce,
+                               uint16_t nonce_len, struct tpm_quote_attest *out,
+                               uint8_t *sig_out, uint32_t sig_cap, uint32_t *sig_len)
+{
+    uint8_t cmd[128], rsp[512];
+    uint32_t n, rlen = 0, i;
+    tpm_nv_status_t st;
+    tpm_attest_status_t pr;
+    if (!nonce || nonce_len < TPM_QUOTE_NONCE_MIN || nonce_len > TPM_QUOTE_NONCE_MAX ||
+        !out || !sig_out)
+        return TPM_ATTEST_BADARG;
+    if (!tpm_transport_available())
+        return TPM_ATTEST_NO_TPM;
+    pr = at_ensure_ak();
+    if (pr != TPM_ATTEST_OK)
+        return pr;
+    /* AK uses userWithAuth -> empty password (TPM_RS_PW). */
+    n = tpm2_build_quote(cmd, sizeof cmd, s_ak_handle, TPM_RS_PW, TPM_ALG_ECDSA,
+                         nonce, nonce_len, pcr_mask);
+    if (n == 0u)
+        return TPM_ATTEST_BADARG;
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
+        if (st == TPM_NV_BUSY) return TPM_ATTEST_BUSY;
+        if (st == TPM_NV_TRANSPORT) return TPM_ATTEST_TRANSPORT;
+        return TPM_ATTEST_QUOTE_FAIL;
+    }
+    if (tpm2_parse_quote(rsp, rlen, out, sig_out, sig_cap, sig_len) != 0)
+        return TPM_ATTEST_QUOTE_FAIL;
+    /* Anti-replay: the attest MUST echo the supplied nonce exactly. */
+    if (out->nonce_len != nonce_len)
+        return TPM_ATTEST_NONCE_STALE;
+    for (i = 0; i < nonce_len; i++)
+        if (out->nonce[i] != nonce[i])
+            return TPM_ATTEST_NONCE_STALE;
+    return TPM_ATTEST_OK;
+}
+
+tpm_attest_status_t tpm_ak_public_get(uint8_t *out, uint16_t cap, uint16_t *out_len)
+{
+    tpm_attest_status_t pr;
+    uint16_t i;
+    if (out_len) *out_len = 0;
+    if (!out)
+        return TPM_ATTEST_BADARG;
+    pr = at_ensure_ak();
+    if (pr != TPM_ATTEST_OK)
+        return pr;
+    if (s_ak_pub_len > cap)
+        return TPM_ATTEST_BADARG;
+    for (i = 0; i < s_ak_pub_len; i++) out[i] = s_ak_pub[i];
+    if (out_len) *out_len = s_ak_pub_len;
+    return TPM_ATTEST_OK;
+}
+
+tpm_attest_status_t tpm_ek_cert_read(uint16_t alg, uint8_t *out, uint16_t cap,
+                                     uint16_t *out_len)
+{
+    uint32_t idx;
+    uint16_t size = 0, off = 0;
+    uint32_t attrs = 0;
+    tpm_nv_status_t st;
+    if (out_len) *out_len = 0;
+    if (!out || cap == 0u)
+        return TPM_ATTEST_BADARG;
+    if (!tpm_transport_available())
+        return TPM_ATTEST_NO_TPM;
+    idx = (alg == TPM_ALG_ECC) ? TPM_NV_INDEX_EK_CERT_ECC : TPM_NV_INDEX_EK_CERT_RSA;
+    /* Size the index first; absent on many vTPM/fTPM -> degrade. */
+    st = tpm_nv_read_public(idx, &size, &attrs);
+    if (st == TPM_NV_NOTFOUND)
+        return TPM_ATTEST_NO_EK_CERT;
+    if (st != TPM_NV_OK)
+        return map_attest(st);
+    if (size == 0u)
+        return TPM_ATTEST_NO_EK_CERT;
+    if (size > cap)
+        size = cap;                                    /* truncate to caller buffer */
+    /* Chunked read (an EK cert is ~1 KiB, over the per-op TPM_NV_MAX_DATA cap). */
+    while (off < size) {
+        uint16_t chunk = (uint16_t)((size - off > TPM_NV_MAX_DATA)
+                                        ? TPM_NV_MAX_DATA : (size - off));
+        uint16_t rd = 0;
+        st = tpm_nv_read(idx, off, out + off, chunk, &rd);
+        if (st != TPM_NV_OK)
+            return map_attest(st);
+        if (rd == 0u)
+            break;
+        off += rd;
+    }
+    if (out_len) *out_len = off;
+    return (off > 0u) ? TPM_ATTEST_OK : TPM_ATTEST_NO_EK_CERT;
+}

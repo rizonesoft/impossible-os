@@ -241,6 +241,35 @@ static void test_attest_build_evict(void)
     TEST_ASSERT_EQ(tpm2_be32_get(buf + 31), 0x81010001u, "EvictControl persistentHandle");
 }
 
+/* ---- Wrapper no-TPM degrade (never gate boot on attestation) ---- */
+
+static void test_attest_no_tpm(void)
+{
+    const struct tpm_t_io *prev;
+    struct tpm_quote_attest att;
+    uint8_t nonce[16], sig[64], pub[64], cert[64];
+    uint16_t got = 0;
+    uint32_t slen = 0, i;
+    for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)i;
+
+    /* Force the transport unavailable: every attestation entry point must report
+     * a degraded status, never hang or fault (attestation NEVER gates boot). */
+    prev = tpm_t_test_install(0, TPM_T_IFACE_NONE, 0);
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_NO_TPM, "quote with no TPM -> NO_TPM");
+    TEST_ASSERT_EQ((int)tpm_ek_cert_read(TPM_ALG_ECC, cert, sizeof cert, &got),
+                   (int)TPM_ATTEST_NO_TPM, "EK cert read with no TPM -> NO_TPM");
+    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+
+    /* Bad args are rejected before any transaction. */
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, 4u, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_BADARG, "quote rejects too-short nonce");
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, 0, 0u, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_BADARG, "quote rejects null nonce");
+    TEST_ASSERT_EQ((int)tpm_ak_public_get(0, sizeof pub, &got),
+                   (int)TPM_ATTEST_BADARG, "ak_public_get rejects null out");
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
@@ -249,4 +278,5 @@ void test_register_tpm_attest(void)
     test_suite_register_cat("tpm: Quote marshal", test_attest_build_quote, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: quote-response (TPMS_ATTEST) parse", test_attest_parse_quote, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: EvictControl marshal", test_attest_build_evict, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attestation no-TPM degrade", test_attest_no_tpm, TEST_CAT_SECURITY);
 }
