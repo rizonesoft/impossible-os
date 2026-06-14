@@ -1,0 +1,104 @@
+/* ============================================================================
+ * tpm_attest.c -- TPM2 attestation: EK cert, AK provisioning, TPM2_Quote
+ *
+ * Pure marshaling builders/parsers (MMIO-free, fixture-tested) plus the live
+ * query wrappers that drive the Phase-1 transport over the shared tpm_nv.c
+ * policy seam. Provisions an Attestation Key bound to the Endorsement Key and
+ * produces TPM-signed quotes a remote verifier can check.
+ *
+ * Auth model: CreatePrimary of the EK is authorized by the endorsement-hierarchy
+ * auth (empty password by default -> TPM_RS_PW). The EK's own authPolicy
+ * (PolicyA = TPM2_PolicySecret(TPM_RH_ENDORSEMENT)) governs USE of the EK as a
+ * parent, so Create of the AK under the EK authorizes via a real policy session
+ * that runs PolicySecret(endorsement) -- reusing the single-cleanup session
+ * teardown discipline from tpm_nv.c / tpm_seal.c.
+ * ============================================================================ */
+
+#include "kernel/types.h"
+#include "kernel/tpm.h"
+#include "kernel/tpm_nv.h"
+#include "kernel/tpm_seal.h"
+#include "kernel/tpm_attest.h"
+#include "kernel/tpm_transport.h"
+#include "kernel/tpm_pcr_alloc.h"
+#include "libc/string.h"
+
+/* The well-known EK authPolicy (PolicyA), SHA-256, from the TCG EK Credential
+ * Profile: the digest of TPM2_PolicySecret(TPM_RH_ENDORSEMENT). Load-bearing --
+ * the EK template MUST carry exactly this or the EK name (and every verifier's
+ * expectation) diverges. */
+const uint8_t TPM_EK_POLICY_A_SHA256[TPM_EK_POLICY_A_LEN] = {
+    0x83, 0x71, 0x97, 0x67, 0x44, 0x84, 0xB3, 0xF8,
+    0x1A, 0x90, 0xCC, 0x8D, 0x46, 0xA5, 0xD7, 0x24,
+    0xFD, 0x52, 0xD7, 0x6E, 0x06, 0x52, 0x0B, 0x64,
+    0xF2, 0xA1, 0xDA, 0x1B, 0x33, 0x14, 0x69, 0xAA,
+};
+
+/* ---- Auth-area writer (one session) ----
+ * authorizationSize(4) + sessionHandle(4) + nonce TPM2B(2,0) +
+ * sessionAttributes(1) + hmac TPM2B(2,0) = 13 bytes. continueSession (0x01) is
+ * set ONLY for a real HMAC/POLICY session (high byte 0x02/0x03); for TPM_RS_PW
+ * it is 0x00 (a password auth is not a savable session -- a strict TPM can
+ * reject continueSession on it, a bare-metal-only failure). Mirrors the
+ * tpm_nv.c / tpm_seal.c writers. */
+static uint32_t at_put_auth(uint8_t *buf, uint32_t off, uint32_t session)
+{
+    uint8_t ht = (uint8_t)(session >> 24);
+    tpm2_be32_put(buf + off, 9u); off += 4u;
+    tpm2_be32_put(buf + off, session); off += 4u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;        /* nonce size 0 */
+    buf[off] = (ht == 0x02u || ht == 0x03u) ? 0x01u : 0x00u; off += 1u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;        /* hmac size 0 */
+    return off;
+}
+
+uint32_t tpm2_build_create_primary_ek(uint8_t *buf, uint32_t cap)
+{
+    /* TPMT_PUBLIC (ECC P-256 EK, TCG low-range template):
+     *   type(2)+nameAlg(2)+attrs(4)
+     *   + authPolicy TPM2B(2 + 32)
+     *   + TPMS_ECC_PARMS{ sym alg(2)+keyBits(2)+mode(2) + scheme(2) + curve(2)
+     *     + kdf(2) }
+     *   + unique TPM2B_ECC_POINT{ x(2 + 32 zero) + y(2 + 32 zero) }
+     * = 8 + 34 + 12 + 68 = 122. */
+    const uint32_t pub_inner = 8u + (2u + 32u) + 12u + (2u + 32u + 2u + 32u);
+    uint32_t total = 10u + 4u + 13u + 6u + (2u + pub_inner) + 2u + 4u;
+    uint32_t off, i;
+    if (!buf || cap < total)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_CREATE_PRIMARY);
+    tpm2_be32_put(buf + 10, TPM_RH_ENDORSEMENT);      /* primaryHandle */
+    off = at_put_auth(buf, 14u, TPM_RS_PW);           /* endorsement pw (empty) */
+    /* inSensitive TPM2B_SENSITIVE_CREATE: size(2) + userAuth(2,0) + data(2,0). */
+    tpm2_be16_put(buf + off, 4u); off += 2u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;
+    /* inPublic TPM2B_PUBLIC. */
+    tpm2_be16_put(buf + off, (uint16_t)pub_inner); off += 2u;
+    tpm2_be16_put(buf + off, TPM_ALG_ECC); off += 2u;        /* type */
+    tpm2_be16_put(buf + off, TPM_ALG_SHA256); off += 2u;     /* nameAlg */
+    tpm2_be32_put(buf + off, TPM_EK_OBJECT_ATTRS); off += 4u;
+    tpm2_be16_put(buf + off, TPM_EK_POLICY_A_LEN); off += 2u;/* authPolicy size */
+    for (i = 0; i < TPM_EK_POLICY_A_LEN; i++) buf[off + i] = TPM_EK_POLICY_A_SHA256[i];
+    off += TPM_EK_POLICY_A_LEN;
+    tpm2_be16_put(buf + off, TPM_ALG_AES); off += 2u;       /* symmetric.algorithm */
+    tpm2_be16_put(buf + off, 128u); off += 2u;              /* symmetric.keyBits */
+    tpm2_be16_put(buf + off, TPM_ALG_CFB); off += 2u;       /* symmetric.mode */
+    tpm2_be16_put(buf + off, TPM_ALG_NULL); off += 2u;      /* scheme */
+    tpm2_be16_put(buf + off, TPM_ECC_NIST_P256); off += 2u; /* curveID */
+    tpm2_be16_put(buf + off, TPM_ALG_NULL); off += 2u;      /* kdf */
+    /* unique TPM2B_ECC_POINT: x{32 zero} + y{32 zero} (NOT empty -- the standard
+     * EK template fixes the unique buffers to 32 zero bytes per coordinate). */
+    tpm2_be16_put(buf + off, 32u); off += 2u;
+    for (i = 0; i < 32u; i++) buf[off + i] = 0u;
+    off += 32u;
+    tpm2_be16_put(buf + off, 32u); off += 2u;
+    for (i = 0; i < 32u; i++) buf[off + i] = 0u;
+    off += 32u;
+    /* outsideInfo TPM2B_DATA(2,0) + creationPCR TPML_PCR_SELECTION count=0. */
+    tpm2_be16_put(buf + off, 0u); off += 2u;
+    tpm2_be32_put(buf + off, 0u); off += 4u;
+    return off;
+}
