@@ -58,12 +58,18 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
     if (out->pcr_count != TPM_BASELINE_MAX_PCRS)
         return 0;
     for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
-        if (out->pcrs[i].index != s_baseline_pcrs[i] || out->pcrs[i].present > 1u)
+        if (out->pcrs[i].index != s_baseline_pcrs[i])
             return 0;
-        if (out->pcrs[i].present)
-            present++;
+        /* A verifiable baseline must pin EVERY measured PCR. Accepting a partial
+         * present-set would let a crafted/degraded baseline ignore changes in
+         * the unpinned PCRs and still VERIFY (false completeness on {0-7,11}).
+         * On a TPM2 platform all measured PCRs live in the active SHA-256 bank,
+         * so a full present-set is the normal, enrollable case. */
+        if (out->pcrs[i].present != 1u)
+            return 0;
+        present++;
     }
-    if (present == 0u)
+    if (present != TPM_BASELINE_MAX_PCRS)
         return 0;
     if (out->secure_boot > 1u || out->secure_boot_valid > 1u ||
         out->fw_hash_present > 1u || out->abi_manifest_present > 1u)
@@ -144,8 +150,7 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
 {
     const struct boot_integrity_report *rep;
     const struct smbios_system_info *si;
-    uint32_t i;
-    int any = 0;
+    uint32_t i, present = 0;
 
     if (!out || tpm_alg_digest_len_pub(alg) != TPM_BASELINE_DIGEST)
         return TPM_BASELINE_BADARG;
@@ -159,15 +164,18 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
         out->pcrs[i].index = s_baseline_pcrs[i];
         if (st == TPM_PCR_OK && dl == TPM_BASELINE_DIGEST) {
             out->pcrs[i].present = 1;
-            any = 1;
+            present++;
         } else {
             out->pcrs[i].present = 0;
             memset(out->pcrs[i].digest, 0, TPM_BASELINE_DIGEST);
         }
     }
     out->pcr_count = TPM_BASELINE_MAX_PCRS;
-    if (!any)
-        return TPM_BASELINE_NO_TPM;   /* no PCR readable -> nothing to baseline */
+    /* A baseline must pin the FULL measured set; a partial snapshot (some PCR
+     * unreadable/inactive) cannot form a verifiable baseline -- report it as
+     * NO_TPM (degraded) rather than enrolling/comparing a partial set. */
+    if (present != TPM_BASELINE_MAX_PCRS)
+        return TPM_BASELINE_NO_TPM;
 
     /* Secure Boot state from the honest Secure Boot reconciliation in the boot
      * integrity report. */
@@ -223,21 +231,28 @@ tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg)
     if (st != TPM_BASELINE_OK)
         return st;
 
-    /* Monotonic generation: a valid existing baseline rotates to gen+1; a first
-     * enroll (or an unreadable/corrupt prior blob) starts at 1. This is the
-     * content-layer anti-rollback; NV write-lock/counter hardening is a tracked
-     * follow-up. */
-    if (tpm_nv_read(nv_index, 0u, old_blob, (uint16_t)sizeof(old_blob), &got) == TPM_NV_OK &&
-        got == (uint16_t)sizeof(old_blob) &&
-        tpm_baseline_validate(old_blob, got, &old)) {
-        /* Refuse to wrap the generation backward (UINT32_MAX -> 0). A baseline
-         * at the max generation cannot be rotated further without anti-rollback
-         * NV hardening. */
-        if (old.generation == 0xFFFFFFFFu)
-            return TPM_BASELINE_TPMERR;
-        gen = old.generation + 1u;
-        if (!tpm_baseline_rotation_ok(old.generation, gen))
-            return TPM_BASELINE_TPMERR;
+    /* Monotonic generation, FAIL CLOSED. A valid existing baseline rotates to
+     * gen+1; ONLY a genuine first enroll (index NOTFOUND / never written) starts
+     * at 1. A short/corrupt existing blob or any read/transport failure must NOT
+     * fall through to gen=1 -- that would roll a high-generation baseline back
+     * over a transient read error (content-layer anti-rollback; NV write-lock/
+     * counter hardening is a tracked follow-up). */
+    {
+        tpm_nv_status_t rd = tpm_nv_read(nv_index, 0u, old_blob,
+                                         (uint16_t)sizeof(old_blob), &got);
+        if (rd == TPM_NV_OK && got == (uint16_t)sizeof(old_blob) &&
+            tpm_baseline_validate(old_blob, got, &old)) {
+            if (old.generation == 0xFFFFFFFFu)
+                return TPM_BASELINE_TPMERR;   /* no backward wrap */
+            gen = old.generation + 1u;
+            if (!tpm_baseline_rotation_ok(old.generation, gen))
+                return TPM_BASELINE_TPMERR;
+        } else if (rd == TPM_NV_NOTFOUND || rd == TPM_NV_UNINIT) {
+            gen = 1u;   /* genuine first enroll */
+        } else {
+            /* Index exists but is unreadable/corrupt, or a transport error. */
+            return (rd == TPM_NV_OK) ? TPM_BASELINE_CORRUPT : nv_to_baseline(rd);
+        }
     }
     b.generation = gen;
     if (tpm_baseline_finalize(&b) == 0u)

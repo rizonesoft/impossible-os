@@ -492,7 +492,13 @@ void boot_phase1(void)
         if (g_boot_info.config.boot_mode == 2u && g_boot_info.config.tpm_enroll) {
             tpm_baseline_status_t bs =
                 tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
-            klog(LOG_INFO, "TPM", "Baseline enroll (recovery-authorized): status %d",
+            /* CONFIG-authorized enrollment (boot.conf boot_mode=recovery +
+             * tpm_enroll), NOT cryptographic recovery provenance -- an operator
+             * with ESP write access opts in. A loader-populated recovery
+             * provenance gate + physical-console confirmation is a tracked
+             * follow-up; until then this is an admin/operator-trust action. */
+            klog(LOG_WARN, "TPM",
+                 "Baseline enroll (CONFIG-authorized, not provenance-verified): status %d",
                  (uint64_t)bs);
         } else {
             uint8_t overall = 0;

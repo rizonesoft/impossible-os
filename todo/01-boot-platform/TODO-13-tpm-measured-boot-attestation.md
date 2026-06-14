@@ -171,9 +171,11 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Enrollment gated by a recovery-authorized `tpm_enroll` config bit (NOT silent first-boot TOFU): when set, assemble + store the blob via `tpm_nv_define_data`/`tpm_nv_write`; report it as config/recovery-authorized enrollment.
 - [ ] Phase-1 baseline verify step in `boot_interrupts` AFTER replay verify (NOT `tpm_integrity_init`): read the blob, compare current PCRs/SB/firmware-hash to golden -> set `boot_integrity_report.overall_status` VERIFIED / MISMATCH / NO_BASELINE.
 - [ ] Baseline rotation under the recovery gate + monotonic generation counter (overwrite the blob; reject a lower generation).
-- [ ] Follow-up: real physical-console keypress confirmation for enrollment (needs a Phase-1 console-input path; current gate is the config bit). -> owner: console-input infra (file when that domain lands).
+- [ ] Follow-up: trusted enrollment PROVENANCE -- gate enroll on a loader-validated recovery flag + console confirmation, NOT the boot.conf config gate (operator/ESP-write authority only). -> owner: recovery-kind + console-input infra.
 - [ ] Follow-up: actual bootloader + kernel image SHA-256 in the baseline -- bootloader must compute + carry them in `boot_info` (`.bootproto` sha is the ABI-manifest hash). -> XREF: §9 + `01-boot-platform/TODO-01`.
 - [ ] Follow-up (blocking for rollback-resistance claims): TPM NV write-lock / monotonic-counter anti-rollback so rotation cannot roll the baseline back to a tampered blob. -> XREF: §7 (`tpm_nv_*` NV mechanism).
+- [ ] Follow-up: atomic `boot_integrity_report` per-PCR publication -- refresh per-PCR statuses + add a PCR11 slot on baseline verdict (today `pcrs[8]` stays `NO_CRYPTO`, so VERIFIED self-contradicts the per-PCR detail). Owner: `tpm.c` report struct.
+- [ ] Follow-up: consolidate the measured PCR set `{0-7,11}` (duplicated in `tpm.c`/`tpm_replay.c`/`tpm_baseline.c`/test) into one canonical iterator from `tpm_pcr_alloc`; use it in cache/replay/baseline + assert blob capacity.
 - [x] Commit: `"tpm: enroll measured boot baseline"` (c7032e45)
 
 **Test checkpoint:** With the recovery-authorized `tpm_enroll` config bit set, enrollment assembles + stores the versioned baseline blob (golden PCRs per bank + Secure Boot state + firmware-version hash + `abi_manifest_sha256`) in the owner-auth NV DATA index; a normal second boot (no enroll bit) reads it via the Phase-1 verify step and reports `verified`; an injected PCR/SB change reports `baseline-mismatch` (not a false `verified`); a NO_BASELINE boot does NOT auto-enroll; a recovery-gated rotation overwrites the blob and rejects a lower generation. The marshal/compare/generation logic is fixture-tested; the live swtpm enroll->reboot->verify->rotate cycle is QEMU-swtpm/bare-metal validation. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
@@ -186,6 +188,11 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Consumes §7 NV (owner-auth data index) + §3 PCR cache + §5 SB state + §4 replay precedence; fills the old `tpm.c` "read golden values" gap as a Phase-1 step (not Phase-0).
 > - Canonical doc: the section "Design (2026-06-14...)" note above + `docs/boot/boot-info-fields.md` (`tpm_enroll`).
 > - Scope: §6 owns baseline CONTENT/enroll/verify/rotate; console confirmation, real image hashes, and NV write-lock anti-rollback are filed follow-up `[ ]` items (infra-blocked).
+> **Verified:** 2026-06-14 | commit `c7032e45` (impl) + review fixes | 4/9 items | build OK | tests 668 security PASS, smoke PASS (KVM 2.50s)
+> **Accepted:** [H] enrollment gate is boot.conf config (`boot_mode==recovery && tpm_enroll`), not loader-validated recovery provenance -- config-spoofable -> XREF: 01-boot-platform/TODO-13 §6 (item: "Follow-up: trusted enrollment PROVENANCE" at line 174)
+> **Accepted:** [H] baseline verify leaves stale per-PCR `NO_CRYPTO` + omits PCR11 in `boot_integrity_report` (self-contradicts VERIFIED) -> XREF: 01-boot-platform/TODO-13 §6 (item: "Follow-up: atomic `boot_integrity_report` per-PCR publication" at line 177)
+> **Accepted:** [M] measured PCR set `{0-7,11}` duplicated across `tpm.c`/`tpm_replay.c`/`tpm_baseline.c`/test -> XREF: 01-boot-platform/TODO-13 §6 (item: "Follow-up: consolidate the measured PCR set" at line 178)
+> **Quality reviewed:** 2026-06-14 | Codex 7x (design + adversarial + consistency + perf + re-adversarial) | 4H+3M fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 ## 7. TPM NV Index Support
 

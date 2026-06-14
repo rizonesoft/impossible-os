@@ -95,6 +95,15 @@ static void test_baseline_finalize_validate(void)
         TEST_ASSERT_EQ(tpm_baseline_validate((const uint8_t *)&c, sizeof(c), &out), 0,
                        "all-absent PCR set rejected (pins nothing)");
     }
+    /* PARTIAL present-set (8 of 9) -> reject: a verifiable baseline must pin the
+     * FULL measured set, else the unpinned PCR's changes go unverified (F-RV3). */
+    {
+        struct tpm_baseline c = b;
+        c.pcrs[4].present = 0u;
+        tpm_baseline_finalize(&c);
+        TEST_ASSERT_EQ(tpm_baseline_validate((const uint8_t *)&c, sizeof(c), &out), 0,
+                       "partial present-set rejected (must pin all measured PCRs)");
+    }
     /* Wrong PCR index order -> reject. */
     {
         struct tpm_baseline c = b;
