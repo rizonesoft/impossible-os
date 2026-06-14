@@ -334,6 +334,16 @@ static tpm_attest_status_t map_attest(tpm_nv_status_t s)
     }
 }
 
+/* Map a provisioning-stage TPM failure: a retryable BUSY/TRANSPORT is preserved
+ * so a caller can retry rather than mark attestation permanently unavailable;
+ * any other TPM-level failure is a genuine provisioning failure. */
+static tpm_attest_status_t at_provision_err(tpm_nv_status_t s)
+{
+    if (s == TPM_NV_BUSY)      return TPM_ATTEST_BUSY;
+    if (s == TPM_NV_TRANSPORT) return TPM_ATTEST_TRANSPORT;
+    return TPM_ATTEST_PROVISION_FAIL;
+}
+
 static void at_flush(uint32_t handle)
 {
     uint8_t cmd[16], rsp[16];
@@ -387,6 +397,34 @@ static tpm_nv_status_t at_policy_secret(uint32_t session)
     return st;
 }
 
+/* TPM2_Load with the parent authorized by a SESSION. The EK is policy-authorized
+ * (adminWithPolicy, no userWithAuth), so Load under it MUST carry the policy
+ * session that just re-satisfied PolicySecret -- NOT TPM_RS_PW (the generic
+ * tpm2_build_load hardcodes TPM_RS_PW and would leave Load unauthorized). */
+static uint32_t at_build_load(uint8_t *buf, uint32_t cap, uint32_t parent,
+                              uint32_t session, const struct tpm_sealed_blob *blob)
+{
+    uint32_t total, off, i;
+    if (!buf || !blob || blob->priv_len == 0u || blob->pub_len == 0u ||
+        blob->priv_len > TPM_SEAL_PRIV_MAX || blob->pub_len > TPM_SEAL_PUB_MAX)
+        return 0;
+    total = 10u + 4u + 13u + (2u + (uint32_t)blob->priv_len) + (2u + (uint32_t)blob->pub_len);
+    if (cap < total)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_LOAD);
+    tpm2_be32_put(buf + 10, parent);
+    off = at_put_auth(buf, 14u, session);             /* policy session, not TPM_RS_PW */
+    tpm2_be16_put(buf + off, blob->priv_len); off += 2u;
+    for (i = 0; i < blob->priv_len; i++) buf[off + i] = blob->priv[i];
+    off += blob->priv_len;
+    tpm2_be16_put(buf + off, blob->pub_len); off += 2u;
+    for (i = 0; i < blob->pub_len; i++) buf[off + i] = blob->pub[i];
+    off += blob->pub_len;
+    return off;
+}
+
 /* Provision the EK + AK once; cache the AK handle + public. Single-cleanup:
  * EK + session are flushed on EVERY path; the AK stays loaded on success. */
 static tpm_attest_status_t at_provision(void)
@@ -403,16 +441,14 @@ static tpm_attest_status_t at_provision(void)
     n = tpm2_build_create_primary_ek(cmd, sizeof cmd);
     ek = at_exec_handle(cmd, n, &st);
     if (ek == 0u)
-        return (st == TPM_NV_BUSY) ? TPM_ATTEST_BUSY
-             : (st == TPM_NV_TRANSPORT) ? TPM_ATTEST_TRANSPORT : TPM_ATTEST_PROVISION_FAIL;
+        return at_provision_err(st);
     /* 2. Open a real POLICY session. */
     memset(nonce, 0xA5, sizeof nonce);
     n = tpm2_build_start_auth_session(cmd, sizeof cmd, TPM2_SE_POLICY, TPM_ALG_SHA256,
                                       nonce, sizeof nonce);
     if (n == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_ek; }
     if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
-        r = (st == TPM_NV_BUSY) ? TPM_ATTEST_BUSY
-          : (st == TPM_NV_TRANSPORT) ? TPM_ATTEST_TRANSPORT : TPM_ATTEST_PROVISION_FAIL;
+        r = at_provision_err(st);
         goto out_ek;
     }
     session = tpm2_parse_start_auth_session(rsp, rlen);
@@ -422,26 +458,33 @@ static tpm_attest_status_t at_provision(void)
         r = TPM_ATTEST_TRANSPORT;
         goto out_ek;
     }
-    /* From here flush session + ek on every path. */
+    /* From here flush session + ek on every path. Every stage preserves a
+     * retryable BUSY/TRANSPORT (at_provision_err) rather than collapsing it to a
+     * permanent PROVISION_FAIL. */
     /* 3. Satisfy the EK policy for Create. */
     st = at_policy_secret(session);
-    if (st != TPM_NV_OK) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
+    if (st != TPM_NV_OK) { r = at_provision_err(st); goto out_session; }
     /* 4. Create the AK under the EK (parent auth = the policy session). */
     n = tpm2_build_create_ak_signing(cmd, sizeof cmd, ek, session);
     if (n == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
     if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0) {
-        r = TPM_ATTEST_PROVISION_FAIL; goto out_session;
+        r = at_provision_err(st); goto out_session;
     }
     if (tpm2_parse_create_sealed(rsp, rlen, &blob) != 0 || blob.pub_len > TPM_AK_PUB_MAX) {
         r = TPM_ATTEST_TRANSPORT; goto out_session;
     }
     /* 5. RE-satisfy the EK policy -- the session was consumed by Create. */
     st = at_policy_secret(session);
-    if (st != TPM_NV_OK) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
-    /* 6. Load the AK under the EK. */
-    n = tpm2_build_load(cmd, sizeof cmd, ek, &blob);
-    ak = at_exec_handle(cmd, n, &st);
-    if (ak == 0u) { r = TPM_ATTEST_PROVISION_FAIL; goto out_session; }
+    if (st != TPM_NV_OK) { r = at_provision_err(st); goto out_session; }
+    /* 6. Load the AK under the EK, authorized by the policy session. A Load of a
+     * near-max AK blob (priv+pub up to the parser caps) overflows the 256-byte
+     * cmd buffer, so Load gets its own blob-sized buffer. */
+    {
+        uint8_t lcmd[TPM_SEAL_PRIV_MAX + TPM_SEAL_PUB_MAX + 64u];
+        n = at_build_load(lcmd, sizeof lcmd, ek, session, &blob);
+        ak = at_exec_handle(lcmd, n, &st);
+    }
+    if (ak == 0u) { r = at_provision_err(st); goto out_session; }
     /* Cache the AK handle + public (the Create outPublic IS the AK TPMT_PUBLIC). */
     for (i = 0; i < blob.pub_len; i++) s_ak_pub[i] = blob.pub[i];
     s_ak_pub_len = blob.pub_len;
@@ -545,8 +588,13 @@ tpm_attest_status_t tpm_ek_cert_read(uint16_t alg, uint8_t *out, uint16_t cap,
         return map_attest(st);
     if (size == 0u)
         return TPM_ATTEST_NO_EK_CERT;
-    if (size > cap)
-        size = cap;                                    /* truncate to caller buffer */
+    if (size > cap) {
+        /* Never return a TRUNCATED DER as OK -- a caller could publish an
+         * unverifiable trust chain. Report the required size so the caller can
+         * retry with a big-enough buffer. */
+        if (out_len) *out_len = size;
+        return TPM_ATTEST_BADARG;
+    }
     /* Chunked read (an EK cert is ~1 KiB, over the per-op TPM_NV_MAX_DATA cap). */
     while (off < size) {
         uint16_t chunk = (uint16_t)((size - off > TPM_NV_MAX_DATA)
@@ -555,10 +603,12 @@ tpm_attest_status_t tpm_ek_cert_read(uint16_t alg, uint8_t *out, uint16_t cap,
         st = tpm_nv_read(idx, off, out + off, chunk, &rd);
         if (st != TPM_NV_OK)
             return map_attest(st);
-        if (rd == 0u)
-            break;
+        if (rd == 0u || rd > chunk)                    /* no progress / overlong -> truncation */
+            return TPM_ATTEST_TRANSPORT;
         off += rd;
     }
     if (out_len) *out_len = off;
-    return (off > 0u) ? TPM_ATTEST_OK : TPM_ATTEST_NO_EK_CERT;
+    /* OK only on a FULLY-read advertised-size cert -- never a truncated DER (a
+     * verifier must not be fed a partial EK chain reported as success). */
+    return (off == size) ? TPM_ATTEST_OK : TPM_ATTEST_TRANSPORT;
 }

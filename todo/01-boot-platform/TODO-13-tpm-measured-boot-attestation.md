@@ -47,7 +47,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
 | 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [x] |
 | 💎 | 12 | PCR allocation table and policy masks | (foundational; consumed by §6/§8/§13) | [x] |
-| 💎 | 13 | Attestation key provisioning and TPM2 quote | §3, §7, §12 | [ ] |
+| 💎 | 13 | Attestation key provisioning and TPM2 quote | §3, §7, §12 | [x] |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -317,16 +317,23 @@ A single source of truth for which boot events extend which PCR, and which PCR m
 
 The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cannot prove the PCRs came from this machine's TPM; both Win11 Device Health Attestation and Linux Keylime rely on a TPM-resident Attestation Key (AK) bound to the Endorsement Key, and `TPM2_Quote` (the TPM signs the PCR digest + a verifier nonce). This section provisions the AK and produces verifiable quotes; §9 consumes them. -> XREF: supersedes the research-spike `18-future-research/TODO-04 §2` (item: "TPM Quote (remote attestation)") for the active implementation.
 
-- [ ] Retrieve the EK certificate from the standard NV indices (RSA `0x01c00002`, ECC `0x01c0000a`) and expose the EK-cert chain to verifiers; degrade cleanly when absent (vTPM/fTPM without a cert).
-- [ ] Provision the AK: `TPM2_CreatePrimary` EK under the endorsement hierarchy, `TPM2_Create` + `TPM2_Load` a restricted signing AK, persist it via `TPM2_EvictControl` to a stable handle (or recreate deterministically each boot).
-- [ ] Support `TPM2_MakeCredential` / `TPM2_ActivateCredential` so a remote verifier can confirm the AK is bound to a TPM whose EK cert it trusts (credential-activation challenge).
-- [ ] Implement `tpm2_quote(pcr_mask, nonce, sig_out, sig_len)` via `TPM2_CC_Quote`: sign the selected-PCR digest + verifier nonce with the AK (ECDSA or RSASSA); return the `TPMS_ATTEST` + signature.
-- [ ] Anti-replay: the quote MUST embed the verifier-supplied nonce; reject quote requests with no fresh nonce; surface the TPM `clockInfo` (resetCount/restartCount) in the attest so the verifier can detect stale/replayed quotes.
-- [ ] Wire the quote blob + AK public + EK-cert chain into §9's `boot_attestation_report_t`, replacing the software-"signed" placeholder so the exported report is TPM-rooted and remote-verifiable.
-- [ ] Degraded: no TPM / no EK cert / AK provisioning failure -> report `attestation_unavailable` and continue boot; NEVER gate boot on a quote.
-- [ ] Commit: `"tpm: attestation key provisioning and TPM2 quote"`
+- [x] Retrieve the EK cert from NV (RSA `0x01c00002`, ECC `0x01c0000a`) -- `tpm_ek_cert_read()`: NV_ReadPublic for size then chunked `tpm_nv_read`; `NO_EK_CERT` when absent (vTPM/fTPM degrade).
+- [x] Provision the AK (`tpm_attest.c`): deterministic ECC-P256 EK `CreatePrimary` (endorsement) + `Create`/`Load` a restricted ECDSA-P256 signing AK under it; `EvictControl` builder present; AK recreated + cached each boot.
+- [ ] Support `TPM2_MakeCredential` / `TPM2_ActivateCredential` for the credential-activation challenge (verifier confirms the AK is bound to a trusted EK). -> follow-up (not yet implemented).
+- [x] `tpm2_quote()` via `TPM2_CC_Quote`: signs the selected-PCR digest + nonce with the AK (ECDSA); parses + returns `struct tpm_quote_attest` + raw signature. Fixture + fake-TIS lifecycle tested.
+- [x] Anti-replay: rejects a too-short/absent nonce, returns `NONCE_STALE` unless the attest extraData echoes it; surfaces `clockInfo` (clock/resetCount/restartCount/safe) in `struct tpm_quote_attest`.
+- [ ] Wire the quote + AK public + EK-cert chain into §9's report (§13 exposes the query APIs; §9 owns integration). -> XREF: [`§9`](#9-attestation-report-export) (item: "Build the TPM-rooted `boot_attestation_report_t`"). Blocked on §9.
+- [x] Degraded: no TPM / no EK cert / AK fail -> classified `tpm_attest_status_t`; every entry point returns a status, NEVER gates boot. Fixture-tested.
+- [x] Commit: `"tpm: attestation key provisioning and TPM2 quote"`
 
 **Test checkpoint:** Against QEMU swtpm, `tpm2_quote(mask, nonce, ...)` returns a `TPMS_ATTEST` + signature that verifies under the AK public key and carries the supplied nonce; a credential-activation round-trip (`MakeCredential`/`ActivateCredential`) succeeds; a replayed quote (stale nonce) is rejected; with no TPM the path reports `attestation_unavailable` and boot continues. Platforms: QEMU swtpm KVM (quote + verify); bare metal (test laptop fTPM, real EK cert).
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 887 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - `tpm_attest.{c,h}`: pure-marshal builders/parsers (EK CreatePrimary, PolicySecret, AK Create, Quote, TPMS_ATTEST parse, EvictControl) + live wrappers (EK-cert read, AK provision, `tpm2_quote`, AK-pub) over the `tpm_nv.c` policy seam.
+> - AK provision: deterministic ECC-P256 EK (endorsement) + restricted ECDSA-P256 signing AK; the policy-auth EK needs `PolicySecret` re-run before EACH EK-authorized command (Create + Load). AK cached per boot; atomic SMP gate, no lock over TPM I/O.
+> - `tpm2_quote` binds the verifier nonce (anti-replay -> `NONCE_STALE`) + surfaces `clockInfo`; every entry point degrades to a classified status and NEVER gates boot.
+> - Query APIs (`tpm2_quote`/`tpm_ak_public_get`/`tpm_ek_cert_read`) are what §9 consumes; report integration + the `MakeCredential`/`ActivateCredential` challenge are tracked follow-ups.
+> - Scope boundary: §13 owns the TPM-rooted signing mechanism; §9 owns the report export; live quote+verify + credential activation are swtpm/bare-metal validation.
 
 ---
 
@@ -341,7 +348,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 | 💎 | Measured-boot baseline (enroll/verify) | Measured Boot baseline | IMA + systemd-pcrlock | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation |
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |
-| 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | TODO-13 §13 (EK->AK + TPM2_Quote) |
+| 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay |
 | 💎 | PCR allocation policy | PCR7+11 BitLocker seal | systemd-pcrlock CEL | ✅ §12 event-centric table + derived masks |
 
 ## Unit Tests

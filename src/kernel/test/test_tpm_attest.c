@@ -280,6 +280,7 @@ static uint32_t af_rsp_len, af_rsp_pos;
 static int      af_ready, af_executed;
 static uint32_t af_seen[32], af_seen_n, af_flush_n;
 static uint32_t af_policy_secret_n;   /* count PolicySecret calls (must be 2) */
+static uint32_t af_load_auth;         /* the auth handle the Load command carried */
 
 #define AF_REG_STS  0x018u
 #define AF_REG_FIFO 0x024u
@@ -305,6 +306,8 @@ static void af_build_response(void)
     if (af_seen_n < 32u) af_seen[af_seen_n++] = cc;
     if (cc == TPM2_CC_FLUSH_CONTEXT) af_flush_n++;
     if (cc == TPM2_CC_POLICY_SECRET) af_policy_secret_n++;
+    /* Load auth handle is at cmd offset 18 (header10 + parent4 + authSize4). */
+    if (cc == TPM2_CC_LOAD) af_load_auth = tpm2_be32_get(af_cmd + 18);
     memset(af_rsp, 0, AF_CAP);
 
     if (cc == TPM2_CC_CREATE_PRIMARY || cc == TPM2_CC_LOAD) {
@@ -333,15 +336,17 @@ static void af_build_response(void)
         tpm2_be32_put(af_rsp + 2, off);
         af_rsp_len = off;
     } else if (cc == TPM2_CC_CREATE) {
-        /* outPriv(2+16) + outPub(2+20) + creationData/Hash(2,0 each) + ticket(8). */
+        /* Near-realistic AK blob: outPriv(2+200) + outPub(2+100) + creationData/
+         * Hash(2,0 each) + ticket(8) -> exercises the Load command buffer. */
         tpm2_be16_put(af_rsp + 0, TPM2_ST_SESSIONS);
         tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
-        tpm2_be32_put(af_rsp + 10, 52u);
-        tpm2_be16_put(af_rsp + 14, 16u);
-        for (i = 0; i < 16u; i++) af_rsp[16 + i] = (uint8_t)(0x70u + i);
-        tpm2_be16_put(af_rsp + 32, 20u);
-        for (i = 0; i < 20u; i++) af_rsp[34 + i] = (uint8_t)(0x80u + i);   /* AK pub */
-        off = af_put_auth(66u);                    /* cd@54/ch@56/ticket@58 zero */
+        tpm2_be16_put(af_rsp + 14, 200u);
+        for (i = 0; i < 200u; i++) af_rsp[16 + i] = (uint8_t)(0x70u + (i & 0x3Fu));
+        tpm2_be16_put(af_rsp + 216, 100u);                       /* AK pub @ 16+200 */
+        for (i = 0; i < 100u; i++) af_rsp[218 + i] = (uint8_t)(0x80u + (i & 0x3Fu));
+        /* creationData@318/creationHash@320/ticket@322..329 zero -> params end @330. */
+        tpm2_be32_put(af_rsp + 10, 330u - 14u);                  /* parameterSize 316 */
+        off = af_put_auth(330u);
         tpm2_be32_put(af_rsp + 2, off);
         af_rsp_len = off;
     } else if (cc == TPM2_CC_QUOTE) {
@@ -379,6 +384,19 @@ static void af_build_response(void)
         off = af_put_auth(a);
         tpm2_be32_put(af_rsp + 2, off);
         af_rsp_len = off;
+    } else if (cc == TPM2_CC_NV_READ_PUBLIC) {
+        /* Report a 2048-byte EK cert for the ECC EK index (oversize test). */
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_NO_SESSIONS);
+        tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
+        tpm2_be16_put(af_rsp + 10, 14u);                  /* nvPublic inner size */
+        tpm2_be32_put(af_rsp + 12, TPM_NV_INDEX_EK_CERT_ECC);
+        tpm2_be16_put(af_rsp + 16, TPM_ALG_SHA256);
+        tpm2_be32_put(af_rsp + 18, 0u);                   /* attributes */
+        tpm2_be16_put(af_rsp + 22, 0u);                   /* authPolicy size */
+        tpm2_be16_put(af_rsp + 24, 2048u);                /* dataSize */
+        tpm2_be16_put(af_rsp + 26, 0u);                   /* TPM2B_NAME size */
+        tpm2_be32_put(af_rsp + 2, 28u);
+        af_rsp_len = 28u;
     } else {
         tpm2_be16_put(af_rsp + 0, TPM2_ST_NO_SESSIONS);
         tpm2_be32_put(af_rsp + 2, 10u);
@@ -428,14 +446,14 @@ static void test_attest_quote_lifecycle(void)
 {
     const struct tpm_t_io *prev;
     struct tpm_quote_attest att;
-    uint8_t nonce[20], sig[128], pub[64];
+    uint8_t nonce[20], sig[128], pub[128];
     uint16_t pub_len = 0;
     uint32_t slen = 0, i;
     tpm_attest_status_t r;
     for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0x55u + i);
 
     af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
-    af_seen_n = 0; af_flush_n = 0; af_policy_secret_n = 0;
+    af_seen_n = 0; af_flush_n = 0; af_policy_secret_n = 0; af_load_auth = 0;
     prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
     memset(&att, 0, sizeof att);
     r = tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen);
@@ -444,7 +462,7 @@ static void test_attest_quote_lifecycle(void)
         tpm_attest_status_t r2 = tpm_ak_public_get(pub, sizeof pub, &pub_len);
         tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
         TEST_ASSERT_EQ((int)r2, (int)TPM_ATTEST_OK, "ak_public_get returns cached AK pub");
-        TEST_ASSERT_EQ((uint32_t)pub_len, 20u, "cached AK pub is the Create outPublic (20 bytes)");
+        TEST_ASSERT_EQ((uint32_t)pub_len, 100u, "cached AK pub is the Create outPublic (100 bytes)");
     }
     TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_OK, "provision + quote succeeds");
     TEST_ASSERT(af_saw(TPM2_CC_CREATE_PRIMARY), "EK CreatePrimary issued");
@@ -452,6 +470,9 @@ static void test_attest_quote_lifecycle(void)
     TEST_ASSERT_EQ(af_policy_secret_n, 2u, "PolicySecret run TWICE (re-satisfied before Load)");
     TEST_ASSERT(af_saw(TPM2_CC_CREATE), "AK Create issued");
     TEST_ASSERT(af_saw(TPM2_CC_LOAD), "AK Load issued");
+    /* F-A1: Load MUST be authorized by the policy session (the EK is policy-auth,
+     * not password) -- a TPM_RS_PW Load would fail on a real EK. */
+    TEST_ASSERT_EQ(af_load_auth, 0x03000000u, "AK Load authorized by the policy session");
     TEST_ASSERT(af_saw(TPM2_CC_QUOTE), "Quote issued");
     TEST_ASSERT(af_flush_n >= 2u, "EK + session flushed (AK kept loaded)");
     /* Anti-replay: the parsed attest echoes our exact nonce. */
@@ -459,6 +480,21 @@ static void test_attest_quote_lifecycle(void)
     TEST_ASSERT(att.nonce[0] == 0x55u && att.nonce[19] == 0x68u, "attest nonce == supplied nonce");
     TEST_ASSERT_EQ(att.pcr_select, 0xFFu, "attest pcrSelect PCRs 0-7");
     TEST_ASSERT(slen == 72u, "ECDSA signature blob returned");
+}
+
+static void test_attest_ek_cert_oversize(void)
+{
+    const struct tpm_t_io *prev;
+    uint8_t cert[64];
+    uint16_t got = 0;
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0; af_seen_n = 0;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    /* The ECC EK index reports 2048 bytes; with a 64-byte buffer the read MUST
+     * NOT return OK with a truncated cert -- a verifier could trust a partial DER. */
+    TEST_ASSERT_EQ((int)tpm_ek_cert_read(TPM_ALG_ECC, cert, sizeof cert, &got),
+                   (int)TPM_ATTEST_BADARG, "oversized EK cert -> BADARG (no truncated OK)");
+    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    TEST_ASSERT_EQ((uint32_t)got, 2048u, "oversized EK cert reports the required size");
 }
 
 void test_register_tpm_attest(void)
@@ -472,4 +508,5 @@ void test_register_tpm_attest(void)
     test_suite_register_cat("tpm: attestation no-TPM degrade", test_attest_no_tpm, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attestation provision+quote lifecycle",
                             test_attest_quote_lifecycle, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: EK cert oversize rejected", test_attest_ek_cert_oversize, TEST_CAT_SECURITY);
 }
