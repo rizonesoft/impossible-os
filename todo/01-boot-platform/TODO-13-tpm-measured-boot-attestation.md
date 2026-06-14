@@ -281,6 +281,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - `scripts/test-swtpm.sh` is the live-validation path: swtpm 2.0 + QEMU `tpm-crb`/`tpm-tis`, asserts boot-complete + TPM transport up; exits 0 (skipped) when swtpm is not installed.
 > - Degraded coverage: added a transport-level no-TPM test (`ERR_NODEV`); truncated-log + inactive-bank cases already covered by the event-log / replay suites.
 > - Scope boundary: this section is test coverage for already-shipped TPM features (transport, event-log, replay); the swtpm script is the host/CI live-validation entry point, not a WSL unit test.
+> **Verified:** 2026-06-14 | commit `c40c4eee` | 5/6 items | build OK | tests 789/789
+> **Deferred:** [M] `tpm_t_test_install` teardown leaves a real-fTPM transport mis-routed after a TPM suite (cross-cutting test-infra) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Follow-up (test-infra): harden `tpm_t_test_install`" at line 273)
+> **Quality reviewed:** 2026-06-14 | Codex 5x (adversarial-impl + re-adversarial + consistency + perf) | 4H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
 
