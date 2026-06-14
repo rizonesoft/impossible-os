@@ -7958,8 +7958,13 @@ static EFI_STATUS get_memory_map(UINTN *map_key_out,
 
     status = gBS->GetMemoryMap(&map_size, mmap, &map_key, &desc_size,
                                 &desc_version);
-    if (EFI_ERROR(status))
+    if (EFI_ERROR(status)) {
+        /* The snapshot buffer is already allocated; a failed second GetMemoryMap
+         * (e.g. the map changed under us) must free it -- the caller never receives
+         * the pointer (*map_out unset), so it cannot. */
+        gBS->FreePool(mmap);
         return status;
+    }
 
     *map_key_out = map_key;
     *map_out = mmap;
@@ -8717,6 +8722,62 @@ static UINT64 tpm_compute_log_size(const UINT8 *log, UINT64 last_off,
     return end;
 }
 
+/* Return a hard CEILING for event-log reads: the byte count from `addr` to the end
+ * of the UEFI memory-map descriptor that contains it, capped at TPM_EVENT_LOG_MAX.
+ * This is a region-boundary guard, NOT a buffer-size record -- the descriptor is a
+ * memory-type classification and a short log pool can sit inside a larger one, so
+ * the caller must still derive the real length from the event records and use this
+ * only to keep the parser from crossing into a different region. Returns 0 when no
+ * descriptor covers `addr` (caller fails closed). The map is snapshotted + freed
+ * here; this runs well before the ExitBootServices map_key is acquired, so it does
+ * not disturb that path. */
+static UINT64 tpm_log_mmap_extent(EFI_PHYSICAL_ADDRESS addr)
+{
+    UINTN  map_key = 0, map_size = 0, desc_size = 0, off;
+    UINT32 desc_version = 0;
+    EFI_MEMORY_DESCRIPTOR *map = (EFI_MEMORY_DESCRIPTOR *)0;
+    UINT64 extent = 0;
+
+    if (EFI_ERROR(get_memory_map(&map_key, &map, &map_size, &desc_size,
+                                 &desc_version)) || !map)
+        return 0;
+    if (desc_size >= sizeof(EFI_MEMORY_DESCRIPTOR) && map_size != 0) {
+        for (off = 0; off + desc_size <= map_size; off += desc_size) {
+            const EFI_MEMORY_DESCRIPTOR *d =
+                (const EFI_MEMORY_DESCRIPTOR *)((const UINT8 *)map + off);
+            UINT64 start  = d->PhysicalStart;
+            UINT64 npages = d->NumberOfPages;
+            /* Trust the descriptor only when npages*PAGE_SIZE cannot overflow. */
+            if (npages == 0 || npages > (0xFFFFFFFFFFFFFFFFull / EFI_PAGE_SIZE))
+                continue;
+            UINT64 end = start + npages * (UINT64)EFI_PAGE_SIZE;
+            if (end <= start) continue;                      /* wrap guard */
+            if ((UINT64)addr >= start && (UINT64)addr < end) {
+                extent = end - (UINT64)addr;
+                if (extent > (UINT64)TPM_EVENT_LOG_MAX)
+                    extent = (UINT64)TPM_EVENT_LOG_MAX;
+                break;
+            }
+        }
+    }
+    gBS->FreePool(map);
+    return extent;
+}
+
+/* TPM is present but its event log is unavailable (retrieval failed, unsizable, or
+ * the copy buffer could not be allocated): publish a present-but-degraded state so
+ * the kernel still runs TPM-present paths while skipping the absent event-log parse.
+ * tpm_available stays 0 ONLY for an actually-absent TPM (no protocol / capability
+ * probe failed / !TPMPresentFlag), which the callers below set directly. */
+static void tpm_publish_log_degraded(UINT8 tpm_ver)
+{
+    g_boot_info_ptr->tpm_available      = 1;
+    g_boot_info_ptr->tpm_version        = tpm_ver;
+    g_boot_info_ptr->tpm_event_log      = 0;
+    g_boot_info_ptr->tpm_event_log_size = 0;
+    g_boot_info_ptr->tpm_event_count    = 0;
+}
+
 static void retrieve_tpm_event_log(void)
 {
     EFI_STATUS status;
@@ -8766,35 +8827,40 @@ static void retrieve_tpm_event_log(void)
                                 &log_location, &log_last_entry,
                                 &log_truncated);
     if (EFI_ERROR(status) || log_location == 0) {
-        serial_early_print("[BOOT] TPM: GetEventLog failed\n");
-        g_boot_info_ptr->tpm_available = 0;
+        serial_early_print("[BOOT] TPM: GetEventLog failed; log degraded\n");
+        tpm_publish_log_degraded(tpm_ver);
         return;
     }
 
-    /* Size the copy EXACTLY by parsing the final event (the TCG2 protocol gives
-     * its start offset but not the buffer end; the legacy +256 guess truncated
-     * large final events). If the firmware reported the log truncated, or the
-     * final event cannot be sized within the cap, the log is not trustworthy:
-     * copy a best-effort buffer for diagnostics but leave tpm_event_log_size at
-     * 0 so the capability publisher degrades BOOT_CAP_TPM_EVENT_LOG (the kernel
-     * skips the parse rather than trusting a partial log) and publish no
-     * reserved descriptor. */
-    BOOLEAN log_exact = 0;
-    UINT64  log_size = 0;
-    if (!log_truncated) {
-        UINT64 last_off = (log_last_entry > log_location)
-                            ? (log_last_entry - log_location) : 0ull;
+    /* Size the copy from the EVENT RECORDS themselves, never from a guess. The
+     * TCG2 protocol gives the final event's start offset but not the buffer end or
+     * the allocation length, so the ONLY trustworthy size is the one
+     * tpm_compute_log_size() derives by parsing the final event's own length
+     * fields. The memory-map extent (cap) is a secondary hard stop on those parse
+     * reads -- a firmware that reports !truncated can still place a short log pool
+     * inside a larger memory descriptor, so the descriptor extent is NOT proof of
+     * the buffer length, only a ceiling that keeps the parser from crossing into a
+     * different region. When the firmware reports truncation, or the final event
+     * cannot be sized within that ceiling, the true length is unknown: publish NO
+     * copied buffer (a guessed copy would read adjacent firmware memory) and degrade
+     * BOOT_CAP_TPM_EVENT_LOG so the kernel skips the parse. */
+    UINT64 cap = tpm_log_mmap_extent(log_location);
+    UINT64 log_size = 0;
+    /* log_last_entry < log_location is a malformed firmware response (the final
+     * entry cannot precede the buffer start); fail closed rather than sizing the
+     * first record as if it were the whole log. log_last_entry == log_location is
+     * the legitimate one-record case (last_off == 0). */
+    if (cap >= 32ull && !log_truncated && log_last_entry >= log_location) {
+        UINT64 last_off = log_last_entry - log_location;
         UINT64 exact = tpm_compute_log_size((const UINT8 *)(UINTN)log_location,
-                                            last_off, tpm_ver,
-                                            (UINT64)TPM_EVENT_LOG_MAX);
-        if (exact >= 32ull) { log_size = exact; log_exact = 1; }
+                                            last_off, tpm_ver, cap);
+        if (exact >= 32ull) log_size = exact;   /* record-derived, within the ceiling */
     }
-    if (!log_exact) {
-        log_size = (log_last_entry > log_location)
-                     ? (log_last_entry - log_location) + 256ull : 4096ull;
-        if (log_size > TPM_EVENT_LOG_MAX) log_size = TPM_EVENT_LOG_MAX;
-        serial_early_print("[WARN] TPM: event log truncated/unsizable; "
-                           "capability degraded\n");
+    if (log_size == 0ull) {
+        serial_early_print("[WARN] TPM: event log unsizable from records; "
+                           "capability degraded, no buffer published\n");
+        tpm_publish_log_degraded(tpm_ver);
+        return;
     }
 
     /* Allocate a PAGE-ALIGNED copy (firmware may reclaim the original after
@@ -8805,8 +8871,8 @@ static void retrieve_tpm_event_log(void)
     status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
                                 log_pages, &log_addr);
     if (EFI_ERROR(status) || !log_addr) {
-        serial_early_print("[BOOT] TPM: failed to allocate log buffer\n");
-        g_boot_info_ptr->tpm_available = 0;
+        serial_early_print("[BOOT] TPM: failed to allocate log buffer; log degraded\n");
+        tpm_publish_log_degraded(tpm_ver);
         return;
     }
     VOID *log_copy = (VOID *)(UINTN)log_addr;
@@ -8833,10 +8899,10 @@ static void retrieve_tpm_event_log(void)
         offset += entry_size;
     }
 
-    /* Store in boot_info. tpm_event_log_size = 0 when not exact, so the
-     * capability publisher degrades BOOT_CAP_TPM_EVENT_LOG. */
+    /* Store in boot_info. log_size is record-derived (the unsizable path returned
+     * already), so the published size always matches the copied bytes exactly. */
     g_boot_info_ptr->tpm_event_log      = (UINT64)(UINTN)log_copy;
-    g_boot_info_ptr->tpm_event_log_size = log_exact ? (UINT32)log_size : 0u;
+    g_boot_info_ptr->tpm_event_log_size = (UINT32)log_size;
     g_boot_info_ptr->tpm_available      = 1;
     g_boot_info_ptr->tpm_version        = tpm_ver;
     g_boot_info_ptr->tpm_event_count    = event_count;

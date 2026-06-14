@@ -56,7 +56,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] Reject truncation/corruption with `tpm_evlog_status_t` + exact `fail_offset`; partial-tail, cap-overflow, and unsupported-alg are distinct; event count stays 0 on any non-OK status.
 - [x] Export `X:\Diag\tpm-events.json` as a TCG CEL-JSON subset via a streaming writer (`tpm_evlog_export_cel`, one bounded `vfs_write` per event), hooked post-mount in `boot_desktop.c` (parse runs Phase 0, before the filesystem).
 - [x] Bootloader copies the EXACT log (`tpm_compute_log_size`, not the `+256` estimate) or degrades `BOOT_CAP_TPM_EVENT_LOG`; retention via the legacy `tpm_event_log` boot_reserved path (no descriptor: would double-reserve + fatal).
-- [ ] Bound the bootloader TPM read/copy by the UEFI memory-map extent of `log_location` (vs firmware reporting `!truncated` past its buffer); today bounded only by `TPM_EVENT_LOG_MAX`. (Codex adversarial [H].)
+- [x] Bound the bootloader TPM read by the UEFI memory-map descriptor ceiling (`tpm_log_mmap_extent()`); copy only the record-derived `tpm_compute_log_size()` length, else degrade via `tpm_publish_log_degraded()`.
+- [ ] Validate the record chain reaches `log_last_entry` exactly before the bootloader copy (a forward bogus in-descriptor LastEntry can retain gap bytes); kernel `tpm_evlog_parse()` validates today.
 - [x] Commit: `"tpm: harden measured boot event log parser"`
 
 **Test checkpoint:** Kernel unit fixtures parse a TPM 1.2 SHA-1 log and a TPM 2.0 crypto-agile (multi-bank) log with zero unaligned reads; a truncated log is rejected with an explicit byte offset + status code (not a silent stop); `X:\Diag\tpm-events.json` lists per-event PCR index / type / digest count; the page-aligned bootloader copy is retained by the legacy `tpm_event_log` boot_reserved reservation (no double-reserve fatal at boot). Platforms: kernel unit tests (fixtures) + QEMU swtpm KVM smoke; bare metal (test laptop fTPM).
@@ -68,11 +69,11 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - **How it integrates:** parse runs Phase 0 from `tpm_init` (which wraps the pure walker); CEL export runs post-mount from `boot_desktop.c`; the log is retained by the legacy `tpm_event_log` boot_reserved reservation.
 > - **Downstream:** §4 PCR replay + §9 attestation/CEL consume the preserved metadata + offsets. Codex 4x (design + adversarial + re-adversarial) adoptions in the commit message.
 > - **Canonical doc:** `include/kernel/tpm.h` (parse contract); TCG CEL-JSON for the export format.
-> - **Scope boundary:** the UEFI mem-map-extent read bound is a deferred `[ ]` item in this section; retention is legacy-fields-only (no typed RESERVED descriptor).
+> - **Scope boundary:** the UEFI mem-map-extent read bound shipped (descriptor ceiling + record-derived copy); the open `[ ]` item is proving the record chain reaches `log_last_entry` (kernel `tpm_evlog_parse()` validates today). Retention is legacy-fields-only.
 
-> **Verified:** 2026-06-14 | commit `53e24f76` (impl) + review (perf coalescing + stamps) | 5/6 items | build OK | 394 kernel tests PASS (9 new tpm-evlog) + smoke PASS (KVM 2.650s)
-> **Deferred:** [H] bootloader TPM read/copy not bounded by the firmware UEFI mem-map extent (reads from `log_last_entry` capped only by `TPM_EVENT_LOG_MAX`) -> XREF: 01-boot-platform/TODO-13 §1 (item: "Bound the bootloader TPM read/copy by the UEFI memory-map extent of `log_location`")
-> **Quality reviewed:** 2026-06-14 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 1C+1H+3M fixed, 1H deferred | scope: kernel-code-quality + boot-code-quality
+> **Verified:** 2026-06-14 | commit `53e24f76` (impl) + read-bound (mmap-descriptor ceiling + record-derived copy + degrade contract) | 6/7 items | build OK | 394 kernel tests PASS + smoke PASS (KVM 2.580s)
+> **Deferred:** [M] bootloader does not prove the event-log record chain reaches `log_last_entry` before the copy (a forward in-descriptor bogus LastEntry can retain gap bytes; kernel `tpm_evlog_parse()` is the authoritative validation) -> XREF: 01-boot-platform/TODO-13 §1 (item: "Validate the record chain reaches `log_last_entry` exactly before the bootloader copy")
+> **Quality reviewed:** 2026-06-14 | Codex 11x (design, adversarial, re-adversarial, consistency, perf) | prior 1C+1H+3M + read-bound 2H+2M fixed, 1M deferred | scope: kernel-code-quality + boot-code-quality
 
 ---
 
@@ -99,7 +100,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Verified:** 2026-06-12 | commit `8ae51bf1` | 6/6 items | build OK | smoke PASS (KVM 2.530s)
 > **Accepted:** [M] ACPI start methods 2/8 degrade-with-WARN until an AML interpreter exists -> XREF: 04-drivers-hardware/TODO-03 §1 (item: "TPM2 ACPI start method (2/8)" at line 80)
-> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 102)
+> **Deferred:** [L] CRB submit path lacks a fake-buffer unit seam (validated live via swtpm checkpoint) -> XREF: 01-boot-platform/TODO-13 §11 (item: "Fake-CRB buffer seam + unit suite for crb_submit()" at line 103)
 > **Quality reviewed:** 2026-06-12 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 1Crit+6H+6M fixed, 0 open, 1M+1L accepted-XREF | scope: kernel-code-quality
 
 ## 3. PCR Read API
