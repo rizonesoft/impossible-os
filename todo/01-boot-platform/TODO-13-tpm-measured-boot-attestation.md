@@ -46,7 +46,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
 | 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [ ] |
-| 💎 | 12 | PCR allocation table and policy masks | §4, §6, §8 | [ ] |
+| 💎 | 12 | PCR allocation table and policy masks | (foundational; consumed by §6/§8/§13) | [x] |
 | 💎 | 13 | Attestation key provisioning and TPM2 quote | §3, §7, §12 | [ ] |
 
 ## 1. Harden TCG Event-Log Parser
@@ -228,11 +228,19 @@ A single source of truth for which boot events extend which PCR, and which PCR m
 
 > **Design (2026-06-14, Codex 2H+1M adopted pre-code):** the source of truth must be EVENT-centric, not PCR-centric -- a per-PCR `tpm_pcr_owner(index)` returning one owner/event cannot classify PCR 11's multiple events (kernel-ABI-manifest vs UKI kernel-boot), so manifest-only drift would still read as a generic mismatch. Model an ordered event allocation table (entries: event_name, pcr, producer, layer, ordering, policy flags) allowing multiple entries per PCR; `tpm_pcr_owner(index)` is a view over it. Masks MUST be DERIVED from per-event policy flags (`seal_ok`/`quote_ok`/`baseline_ok`/`volatile`) or static-asserted against them -- a subset-of-owners check does not catch a seal mask wrongly including PCR 11. The manifest event constant (PCR 11 + `IMPOSSIBLE_OS_KERNEL_ABI_MANIFEST`) MUST live in a bootloader-safe shared header consumed by BOTH the §9 bootloader extend and the kernel table (no producer/consumer drift).
 
-- [ ] Author `docs/boot/pcr-allocation.md`: the event-centric ownership table (PCR 0-7 firmware/SB, PCR 11 kernel-ABI-manifest + UKI kernel-boot, OS indices) with per-event producer + layer + policy attrs + BitLocker/systemd/Keylime trade-offs.
-- [ ] `include/kernel/tpm_pcr_alloc.h` + `tpm_pcr_alloc.c`: ordered EVENT allocation table (event_name, pcr, producer, layer, ordering, policy flags), multiple entries per PCR; `tpm_pcr_owner(index)` is a pure view (no TPM transaction).
-- [ ] Derive `TPM_PCR_MASK_{SEAL,QUOTE,BASELINE}` from per-event policy flags (or static-assert against them); seal default EXCLUDES PCR 11 (PCR7-only FDE, PCR 11 opt-in). Negative test: PCR 11 not in seal default.
-- [ ] Bootloader-safe shared manifest-event constant (PCR 11 + `IMPOSSIBLE_OS_KERNEL_ABI_MANIFEST`) consumed by BOTH producer and consumer; no drift. -> XREF: §9 (manifest PCR-extend item).
-- [ ] Commit: `"tpm: PCR allocation table and policy masks"`
+- [x] `docs/boot/pcr-allocation.md`: event-centric ownership table (PCR 0-7 firmware/SB, PCR 11 UKI kernel-boot + kernel-ABI-manifest) + seal/quote/baseline rationale + BitLocker/systemd/Keylime conventions.
+- [x] `tpm_pcr_alloc.h`/`.c`: ordered EVENT allocation table (`struct tpm_pcr_event_alloc`), two entries on PCR 11; `tpm_pcr_owner(index)` is a pure lowest-ordering-layer view (no TPM transaction).
+- [x] Masks DERIVED from per-event policy flags (`tpm_pcr_{seal,quote,baseline}_mask` scan the table -- no constant to drift); seal default = PCR 7 only, PCR 11 EXCLUDED. Negative test asserts PCR 11 not in seal.
+- [x] Manifest-event constant in dependency-free `include/boot/pcr_manifest.h` (`TPM_PCR_MANIFEST_INDEX`/`_EVENT`); kernel table includes it, bootloader-consumable, one definition. -> XREF: §9 consumes it + owns the drift check.
+- [x] Commit: `"tpm: PCR allocation table and policy masks"`
+
+**Test checkpoint:** A manifest-only change (rebuild kernel with a new `.bootproto` sha) is reported as the kernel-ABI layer in diagnostics and does NOT spuriously fail FDE unseal (§8) or remote-attestation verification (§13); the allocation table in `docs/boot/pcr-allocation.md` matches the runtime extends (a unit test asserts each owned PCR's event name). Platforms: kernel unit tests + QEMU swtpm KVM; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 465 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - `tpm_pcr_alloc.h`/`.c` + `docs/boot/pcr-allocation.md`: event-centric allocation table (10 entries, two on PCR 11) + `tpm_pcr_owner()` view + derived seal/quote/baseline masks; pure data, no TPM transaction or global state.
+> - Consumed by later sections: §6 baseline mask, §8 seal mask, §13 quote mask call the derived-mask helpers instead of hard-coding bitmaps; the manifest event constant is the bootloader producer's source of truth.
+> - Codex design adoptions (event-centric table over per-PCR owner, masks derived from policy flags, seal excludes PCR 11, centralized manifest constant) baked in pre-code; per-finding trail in the commit message.
+> - Scope boundary: this section is the authoritative table only; §9 owns the bootloader PCR-11 manifest extend + the producer-side drift check; §6/§8/§13 own the policy consumers.
 
 **Test checkpoint:** A manifest-only change (rebuild kernel with a new `.bootproto` sha) is reported as the kernel-ABI layer in diagnostics and does NOT spuriously fail FDE unseal (§8) or remote-attestation verification (§13); the allocation table in `docs/boot/pcr-allocation.md` matches the runtime extends (a unit test asserts each owned PCR's event name). Platforms: kernel unit tests + QEMU swtpm KVM; bare metal.
 
@@ -265,7 +273,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |
 | 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | TODO-13 §13 (EK->AK + TPM2_Quote) |
-| 💎 | PCR allocation policy | PCR7+11 BitLocker seal | systemd-pcrlock CEL | TODO-13 §12 (allocation table) |
+| 💎 | PCR allocation policy | PCR7+11 BitLocker seal | systemd-pcrlock CEL | ✅ §12 event-centric table + derived masks |
 
 ## Unit Tests
 
