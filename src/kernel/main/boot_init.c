@@ -431,11 +431,17 @@ void boot_post_write16(uint16_t code)
     post_display16(code);
 
     /* No NVRAM write here -- flash has limited endurance (~100K cycles).
-     * NVRAM is written only twice per boot via boot_post_nvram_write16():
-     *   1. boot_phase0: mark "booting" (entry POST code)
-     *   2. boot_phase3: mark "succeeded" (POST16_BOOT_OK)
-     * If the OS crashes between those two writes, next boot reads the
-     * entry code and knows the previous boot failed. */
+     * NVRAM is updated only at a few key milestones via
+     * boot_post_nvram_write16(): the Phase 0 "booting" entry code, a small set
+     * of mid-boot stage markers (POST16_SIMD_OK, POST16_TIMER_OK,
+     * POST16_REGISTRY_OK), the Phase 3 "succeeded" mark (POST16_BOOT_OK), and
+     * POST16_BOOT_FAILED from the panic handler. On the next boot the value is
+     * POST16_BOOT_OK iff the previous boot completed; anything else means it
+     * did not (the crash banner reads it via boot_post_read16). Note: a clean
+     * panic overwrites the last stage marker with the generic
+     * POST16_BOOT_FAILED, so the crash banner shows a generic failure rather
+     * than the exact failing stage (a stage-preserving enhancement is tracked
+     * in the VPD crash-persistence follow-up). */
 }
 
 void boot_post_nvram_write16(uint16_t code)

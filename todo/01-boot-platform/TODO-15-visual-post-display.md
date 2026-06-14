@@ -223,9 +223,19 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 - [x] Wired into `boot_phase0()` -- displays on both incomplete and failed prior boots
 - [x] Serial log already shows `[BOOT] Last POST code: 0xNNNN (incomplete/FAILED)`
 - [x] Banner auto-clears when splash composites over it
+- [ ] Preserve the failing stage -- a clean panic overwrites the NVRAM stage marker with `POST16_BOOT_FAILED` (`panic.c:1210`), so the banner shows a generic failure not the real stage; keep the stage code or add a separate status variable
 - [x] Commit: `"boot: NVRAM crash persistence -- 'Last boot failed at' display"`
 
 **Test checkpoint:** After failed boot, serial shows `[BOOT] Last POST code:` with non-OK code; `vpd_crash_banner` draws red banner before Tier 1 table when prior POST not success. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired -- file-wide Unit Tests gap) | validation: forced-panic reboot on QEMU/hardware (manual)
+> **Notes:**
+> - Shipped: NVRAM POST persistence (`boot_post_nvram_write16` at boot milestones) + `vpd_crash_banner()` red "Last boot failed: NAME 0xNNNN", rendered independent of postbars (standalone draw when `postbars==0`, info-header line when `postbars>=1`).
+> - Integrates: `vpd_crash_banner()` runs in `boot_hw.c` before `vpd_init()`, reads NVRAM via `boot_post_read16()`, resolves the stage name via `vpd_post16_name()` (55-entry table, "UNKNOWN" fallback for unmapped/sentinel codes).
+> - Review: Codex 3x fixed a stale "NVRAM written only twice" comment (`boot_init.c`); the panic-stage-loss finding is Deferred -- the "exact stage" promise is partial.
+> - Scope boundary: §8 owns the crash banner + NVRAM read; the panic-path NVRAM write lives in `panic.c` and is the subject of the Deferred follow-up below.
+> **Verified:** 2026-06-14 | ship `7b5711f9` (+ this review commit) | 7/8 items | build OK | manual (forced-panic reboot pending)
+> **Deferred:** [M] clean panic overwrites the NVRAM stage marker with generic POST16_BOOT_FAILED, so the banner shows a generic failure not the exact stage -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 226)
+> **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+1M+0L fixed, 1M deferred | scope: kernel-code-quality
 
 ## 9. Tier 2: Splash-Integrated Progress *(deferred)*
 > [!NOTE] Deferred -- the current Tier 1 VPD is a developer diagnostic screen (`postbars=on`). Tier 2 is end-user facing and should be designed after the splash UX is finalized. Revisit when boot reliability is proven on bare metal.
