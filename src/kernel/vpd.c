@@ -543,9 +543,14 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
     }
     s_last_phase = phase;
 
-    /* Bounds check */
-    if (s_row + VPD_ROW_HEIGHT > s_height || s_row / VPD_ROW_HEIGHT > VPD_MAX_ROWS)
+    /* Bounds check -- if the new stage would overflow the visible table, clear
+     * s_has_current so a later vpd_stage_fail() cannot mark the previous
+     * (already-completed) row as the failure point. The NVRAM POST code still
+     * captures the failure for the next-boot banner. */
+    if (s_row + VPD_ROW_HEIGHT > s_height || s_row / VPD_ROW_HEIGHT > VPD_MAX_ROWS) {
+        s_has_current = 0;
         return;
+    }
 
     /* Draw status square (yellow = in progress) */
     vpd_fill_rect(VPD_LEFT_MARGIN, s_row, VPD_SQUARE_SIZE, VPD_SQUARE_SIZE,

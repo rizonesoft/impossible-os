@@ -57,7 +57,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 | 💎  |   1   | 4-digit POST code system (0x0000-0xFFFF)                 | --                  |  [x]   |
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1                  |  [x]   |
 | ⭐  |   3   | Embedded 5x7 bitmap micro-font                          | --                  |  [x]   |
-| 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3              |  [x]   |
+| 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3              |  [/]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4                  |  [/]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4                  |  [x]   |
 | 💎  |   7   | Status indicators and progress bar                      | §6                  |  [x]   |
@@ -155,15 +155,25 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 - [x] `vpd_stage_begin(phase, name, postcode)` -- draws stage row: 5x5 status square + name + POST hex; yellow = in-progress
 - [x] `vpd_stage_done()` -- marks current stage green + renders elapsed ms
 - [x] `vpd_stage_fail()` -- marks current stage red + renders FAIL text
-- [x] Layout: 10px per row, left margin 4px, 5x5 status square, name + hex code, timing right-aligned
+- [x] Layout: 10px per row (`VPD_ROW_HEIGHT`), 8px left margin (`VPD_LEFT_MARGIN`), status square = glyph height (7px, `VPD_SQUARE_SIZE`), name + hex columns, right-aligned timing (corrected from the original 4px/5x5 draft to the shipped constants)
 - [x] Phase separator: 1px gray line between phase groups
 - [x] Colors: bg black, text 0xC0C0C0, done 0x00CC00, progress 0xCCCC00, fail 0xFF2222, pending 0x404040
 - [x] `vpd_is_active()` / `vpd_stop_tier1()` -- tier lifecycle management
 - [x] Hooked into `boot_progress()` -- every stage automatically rendered
 - [x] HV_BAR already removed (prior commit) -- VPD is the replacement
+- [ ] Format-aware color packing -- VPD writes raw BGRX 32-bit constants directly to the FB, but `fb.pixel_format` can be RGBX (red FAIL renders blue). Add `vpd_pack_rgb(r,g,b)` keyed on the format; needs RGBX bare-metal validation
 - [x] Commit: `"boot: Tier 1 VPD renderer -- pre-splash named stages with text"`
 
 **Test checkpoint:** With `postbars=on`, serial or screen shows stage rows from `vpd_stage_begin` hook; `vpd_stop_tier1` runs before splash (`boot_interrupts.c`). No `HV_BAR` strings in serial. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired -- file-wide Unit Tests gap) | validation: on-screen Tier 1 bars on QEMU/hardware (manual)
+> **Notes:**
+> - Shipped: `vpd.c` Tier 1 renderer -- `vpd_init`/`vpd_stage_begin`/`done`/`fail` draw named stage rows (status square + name + POST hex + ms timing) directly to the GOP framebuffer, hooked into `boot_progress()`; pre-splash, no back buffer.
+> - Integrates: rendered per stage via the `boot_progress()` hook; `vpd_stop_tier1()` runs before the splash takes over (`boot_interrupts.c`); all draws guarded by `s_active` + bounds-checked (`px<s_width`, `py<s_height`).
+> - Review: Codex 3x fixed a HIGH (row-overflow left a stale active stage so a later `vpd_stage_fail` marked the wrong row -- now clears `s_has_current`) + a layout doc-drift (8px/7px not 4px/5x5); BGRX color packing deferred.
+> - Scope boundary: §4 owns the Tier 1 renderer; page-flip-after-splash handling is §10; format-aware color packing is the deferred item above.
+> **Verified:** 2026-06-15 | this review commit (HIGH + layout fixes) | 10/11 items | build OK | manual (on-screen pending)
+> **Deferred:** [M] VPD writes BGRX-assumed colors; RGBX framebuffers render swapped channels (red FAIL -> blue) -> XREF: 01-boot-platform/TODO-15 §4 (item: "Format-aware color packing" at line 164)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1M deferred | scope: kernel-code-quality
 
 ## 5. `boot.conf` `postbars` Configuration
 Add the `postbars` key to `boot.conf` parsing so the VPD can be configured without recompilation.
