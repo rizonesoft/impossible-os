@@ -227,6 +227,20 @@ static void test_attest_parse_quote(void)
                    "non-quote attest type rejected");
 }
 
+/* ---- EvictControl byte-layout ---- */
+
+static void test_attest_build_evict(void)
+{
+    uint8_t buf[48];
+    uint32_t n;
+    n = tpm2_build_evict_control(buf, sizeof buf, 0x80000003u, 0x81010001u);
+    TEST_ASSERT_EQ(n, 35u, "EvictControl is 35 bytes");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 6), TPM2_CC_EVICT_CONTROL, "EvictControl CC");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 10), TPM_RH_OWNER, "EvictControl authHandle owner");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 14), 0x80000003u, "EvictControl objectHandle (AK)");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 31), 0x81010001u, "EvictControl persistentHandle");
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
@@ -234,4 +248,5 @@ void test_register_tpm_attest(void)
     test_suite_register_cat("tpm: AK signing-key marshal", test_attest_build_ak, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: Quote marshal", test_attest_build_quote, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: quote-response (TPMS_ATTEST) parse", test_attest_parse_quote, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: EvictControl marshal", test_attest_build_evict, TEST_CAT_SECURITY);
 }

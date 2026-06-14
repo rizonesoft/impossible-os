@@ -287,3 +287,24 @@ int tpm2_parse_quote(const uint8_t *rsp, uint32_t len, struct tpm_quote_attest *
     if (sig_len) *sig_len = slen;
     return 0;
 }
+
+uint32_t tpm2_build_evict_control(uint8_t *buf, uint32_t cap, uint32_t object,
+                                  uint32_t persistent)
+{
+    /* TPM2_EvictControl(auth=TPM_RH_OWNER{auth}, objectHandle, persistentHandle):
+     *   header(10) + authHandle(4) + objectHandle(4) + authArea(13) +
+     *   persistentHandle(4) = 35. Persists a loaded transient AK to a stable
+     *   handle so it survives across the boot the report is exported in. */
+    uint32_t total = 10u + 4u + 4u + 13u + 4u;
+    uint32_t off;
+    if (!buf || cap < total)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_EVICT_CONTROL);
+    tpm2_be32_put(buf + 10, TPM_RH_OWNER);            /* authHandle (owner) */
+    tpm2_be32_put(buf + 14, object);                  /* objectHandle (transient AK) */
+    off = at_put_auth(buf, 18u, TPM_RS_PW);           /* owner pw (empty) */
+    tpm2_be32_put(buf + off, persistent); off += 4u;  /* persistentHandle */
+    return off;
+}
