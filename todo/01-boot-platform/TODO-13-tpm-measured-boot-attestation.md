@@ -166,10 +166,12 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 7. TPM NV Index Support
 
-- [ ] Implement NV read/write/define/undefine for one OS-owned index.
-- [ ] Protect baseline with PCR policy where TPM supports it.
-- [ ] Handle no-space and locked-NV degraded states.
-- [ ] Add migration path from UEFI variable storage to TPM NV.
+> **Design (2026-06-14, Codex 2H+1M adopted pre-code):** §7 owns the NV storage + PCR-policy MECHANISM; §6 owns the baseline CONTENT/enrollment that consumes it (resolves the prior circular §6<->§7 ownership). Constraints for the implementor: a policy-protected index MUST use POLICYREAD/POLICYWRITE, NOT OWNERREAD/OWNERWRITE (owner auth is an operational bypass of any PCR policy; owner auth is for define/undefine only). NV response-code classification MUST branch by FORMAT first -- the NV warnings 0x148-0x14C are format-0 (RC_VER1) and must be exact-compared, never run through a format-1 handle/parameter mask (which would corrupt them and hide locked/no-space states). Do NOT mark §7 complete after CRUD-only; policy protection is part of §7's contract.
+
+- [ ] NV CRUD for one OWNER-auth OS data index: pure `tpm2_build_nv_{define,undefine,write,read}` seam + `tpm_nv_*` wrappers; password auth area (`TPM_RS_PW`). Owner-auth data index, distinct from the policy baseline.
+- [ ] Degraded states: format-first NV RC classification, exact-comparing format-0 warnings (`NV_LOCKED` 0x148, `NV_SPACE` 0x14B, `NV_DEFINED` 0x14C) to `tpm_nv_status_t`; never a wedge. Fixtures for raw 0x148-0x14C.
+- [ ] PCR-policy-protected baseline index: POLICYREAD/POLICYWRITE + `TPM2_StartAuthSession`/`TPM2_PolicyPCR` (trial computes authPolicy; real session satisfies read/write); owner auth only for define/undefine. -> XREF: §8.
+- [ ] Migration from UEFI authenticated-variable storage to TPM NV (lossless) -- consumes the §6 baseline format. -> XREF: §6 (item: "Store golden PCR values in UEFI authenticated variable or TPM NV index").
 - [ ] Commit: `"tpm: measured boot NV index storage"`
 
 **Test checkpoint:** Define / read / write / undefine round-trip on one OS-owned NV index against QEMU swtpm; where the TPM supports it the index is PCR-policy-protected (a read under the wrong PCR state is denied); no-space and locked-NV return explicit degraded states (not a wedge); the UEFI-variable -> TPM-NV migration path moves an existing baseline without loss. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
