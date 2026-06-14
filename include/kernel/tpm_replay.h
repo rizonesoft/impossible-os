@@ -54,3 +54,42 @@ tpm_replay_status_t tpm_replay_pcr_from(const uint8_t *log, uint32_t log_size,
  * tpm_evlog_status() separately. */
 tpm_replay_status_t tpm_replay_pcr(uint16_t alg, uint32_t pcr_index,
                                    uint8_t *out, uint32_t out_cap);
+
+/* Replay-vs-hardware verdict. TAMPER means the event log replays to a value the
+ * TPM's actual PCR does NOT hold -- the log was modified after the TPM was
+ * extended. (A legitimate different boot still replays == hardware; that vs an
+ * enrolled golden baseline is a BASELINE mismatch, owned by baseline enrollment,
+ * not this engine.) */
+typedef enum {
+    TPM_REPLAY_VERIFIED     = 0,  /* every checked PCR: replay == hardware */
+    TPM_REPLAY_TAMPER       = 1,  /* a replayed PCR != the hardware PCR */
+    TPM_REPLAY_UNVERIFIABLE = 2,  /* no hardware PCR was readable (no TPM/transport) */
+} tpm_replay_verdict_t;
+
+struct tpm_replay_report {
+    uint16_t alg;                /* hash bank verified */
+    uint8_t  verdict;            /* tpm_replay_verdict_t */
+    uint8_t  pcr_checked;        /* PCRs both replayed AND read from hardware */
+    uint8_t  mismatch_count;     /* PCRs where replay != hardware */
+    int16_t  first_mismatch_pcr; /* lowest mismatching PCR index, or -1 */
+};
+
+/* Pure report accumulator: fold one PCR's compare outcome (matched 1/0) into the
+ * report, tracking the first mismatch + counts. Init the report to
+ * {alg, TPM_REPLAY_VERIFIED, 0, 0, -1} before the first call. Testable without
+ * live TPM reads. */
+void tpm_replay_report_pcr(struct tpm_replay_report *r, uint32_t pcr_index, int matched);
+
+/* Pure verdict finalizer. log_clean=0 (degraded/absent event log) -> UNVERIFIABLE
+ * (untrusted evidence, NOT tamper -- a missing log must never read as tampering).
+ * complete=0 (a required PCR could not be read / incomplete coverage) downgrades a
+ * would-be VERIFIED to UNVERIFIABLE. A confirmed mismatch (TAMPER, set by
+ * tpm_replay_report_pcr) is actionable and is preserved regardless of coverage. */
+void tpm_replay_finalize(struct tpm_replay_report *r, int log_clean, int complete);
+
+/* Live: replay + hardware-compare the measured-boot PCRs (0-7 + 11) for one bank,
+ * building a tamper report (any replay != hardware -> TPM_REPLAY_TAMPER, with the
+ * first mismatching PCR recorded). PCRs whose bank is inactive/unreadable are
+ * skipped; UNVERIFIABLE if none were readable. Returns TPM_REPLAY_BADARG on bad
+ * args. Runs after the Phase-1 transport (uses tpm_pcr_get). */
+tpm_replay_status_t tpm_replay_verify(uint16_t alg, struct tpm_replay_report *out);

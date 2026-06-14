@@ -155,3 +155,77 @@ tpm_replay_status_t tpm_replay_pcr(uint16_t alg, uint32_t pcr_index,
         return TPM_REPLAY_OK;
     }
 }
+
+void tpm_replay_report_pcr(struct tpm_replay_report *r, uint32_t pcr_index, int matched)
+{
+    if (!r)
+        return;
+    r->pcr_checked++;
+    if (!matched) {
+        r->mismatch_count++;
+        if (r->first_mismatch_pcr < 0)
+            r->first_mismatch_pcr = (int16_t)pcr_index;
+        r->verdict = (uint8_t)TPM_REPLAY_TAMPER;
+    }
+}
+
+void tpm_replay_finalize(struct tpm_replay_report *r, int log_clean, int complete)
+{
+    if (!r)
+        return;
+    if (!log_clean) {
+        /* Missing/malformed log = untrusted evidence, NOT tamper. */
+        r->verdict = (uint8_t)TPM_REPLAY_UNVERIFIABLE;
+        return;
+    }
+    /* A confirmed mismatch (TAMPER) stays; an all-match result is only VERIFIED
+     * when coverage was complete. */
+    if (r->verdict == (uint8_t)TPM_REPLAY_VERIFIED && !complete)
+        r->verdict = (uint8_t)TPM_REPLAY_UNVERIFIABLE;
+}
+
+tpm_replay_status_t tpm_replay_verify(uint16_t alg, struct tpm_replay_report *out)
+{
+    /* The firmware + Secure Boot + kernel-ABI measured-boot PCRs. */
+    static const uint8_t measured[] = { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u };
+    uint16_t dl = tpm_alg_digest_len_pub(alg);
+    uint32_t readable = 0, i;
+    int read_failure = 0;
+
+    if (!out || dl == 0u)
+        return TPM_REPLAY_BADARG;
+    out->alg                = alg;
+    out->verdict            = (uint8_t)TPM_REPLAY_VERIFIED;
+    out->pcr_checked        = 0;
+    out->mismatch_count     = 0;
+    out->first_mismatch_pcr = -1;
+
+    /* A degraded/absent log replays to all-zero; comparing that to hardware would
+     * falsely read as tamper. Gate on a clean parse BEFORE touching the TPM. */
+    if (tpm_evlog_status() != TPM_EVLOG_OK) {
+        tpm_replay_finalize(out, 0 /*log_clean*/, 0);
+        return TPM_REPLAY_OK;
+    }
+
+    for (i = 0; i < sizeof(measured); i++) {
+        uint8_t hw[64], rp[64];
+        uint32_t hwlen = 0;
+        tpm_pcr_status_t st = tpm_pcr_get(measured[i], alg, hw, sizeof(hw), &hwlen);
+        if (st == TPM_PCR_INACTIVE)
+            continue;                       /* bank genuinely absent for this PCR */
+        if (st != TPM_PCR_OK || hwlen != (uint32_t)dl) {
+            read_failure = 1;               /* transport/busy/bad-length -> incomplete */
+            continue;
+        }
+        readable++;
+        if (tpm_replay_pcr(alg, measured[i], rp, sizeof(rp)) != TPM_REPLAY_OK) {
+            read_failure = 1;
+            continue;
+        }
+        tpm_replay_report_pcr(out, measured[i], memcmp(rp, hw, dl) == 0 ? 1 : 0);
+    }
+    /* VERIFIED only when every required PCR for an active bank was actually read
+     * + replayed (no read failures and at least one PCR covered). */
+    tpm_replay_finalize(out, 1 /*log_clean*/, (readable > 0u && !read_failure) ? 1 : 0);
+    return TPM_REPLAY_OK;
+}

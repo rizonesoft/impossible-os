@@ -129,9 +129,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] **Prerequisite:** `tpm_pcr_extend(alg, pcr, digest)` shipped -- `src/kernel/tpm_replay.{c,h}`, `pcr := H_bank(pcr || digest)` dispatching on SHA-1/256/384/512; self-consistency + chaining + bad-arg tests (`test_tpm_replay.c`).
 - [x] **Enabler:** `digests_off` added to `struct tpm_event` (`offset+12` for EVENT2; SHA-1 digest offset for legacy), populated at all 3 §1 record sites; replay iterates `TPML_DIGEST_VALUES` from there. Fixture-asserted in `test_tpm_event_log.c`.
 - [x] Replay PCR extends from the parsed event log via `tpm_replay_pcr`/`_from` (`tpm_replay.c`): per-bank digest extract (legacy raw SHA-1 + EVENT2 list, bounded), skip EV_NO_ACTION, extend in log order. Known-vector + legacy + EV_NO_ACTION tests.
-- [ ] Compare replayed values against hardware PCR reads (uses §3 `tpm_pcr_get`).
-- [ ] Mark event-log tampering separately from baseline mismatch.
-- [ ] Include exact first mismatch in diagnostics.
+- [x] Compare replayed values against hardware PCR reads via `tpm_replay_verify` (replays measured PCRs 0-7/11, reads `tpm_pcr_get`, memcmp).
+- [x] `TPM_REPLAY_TAMPER` (replay != hardware) distinct from `UNVERIFIABLE` (degraded log / incomplete coverage -- never false tamper or false verified). Baseline-vs-golden mismatch owned by enrollment. -> XREF: §6.
+- [x] First mismatch in diagnostics: `tpm_replay_report.first_mismatch_pcr` (lowest mismatching PCR) + `mismatch_count`.
 - [ ] Commit: `"tpm: replay measured boot PCRs"`
 
 **Test checkpoint:** On a clean boot, replayed PCR values (extended from the parsed event log, every active bank) equal the hardware PCR reads from §3; a known-vector unit test replays a fixed log to expected digests; injecting one tampered event-log entry flags `event-log tamper` distinctly from `baseline mismatch` and diagnostics name the exact first-mismatch PCR index + offset. Platforms: kernel known-vector unit tests + QEMU swtpm KVM; bare metal.

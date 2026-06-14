@@ -237,6 +237,56 @@ static void test_replay_bank_digest_extract(void)
                    "absent bank -> 0");
 }
 
+static void test_replay_verify_report(void)
+{
+    /* Tamper case: PCR 0 matches, PCR 4 + 7 mismatch -> TAMPER, first = 4. */
+    struct tpm_replay_report r = { TPM_ALG_SHA256, TPM_REPLAY_VERIFIED, 0u, 0u, -1 };
+    tpm_replay_report_pcr(&r, 0u, 1);
+    tpm_replay_report_pcr(&r, 4u, 0);
+    tpm_replay_report_pcr(&r, 7u, 0);
+    TEST_ASSERT_EQ(r.pcr_checked, 3u, "3 PCRs checked");
+    TEST_ASSERT_EQ(r.mismatch_count, 2u, "2 mismatches");
+    TEST_ASSERT_EQ(r.first_mismatch_pcr, 4, "first mismatch = lowest mismatching PCR (4)");
+    TEST_ASSERT_EQ(r.verdict, TPM_REPLAY_TAMPER, "any replay!=hardware -> TAMPER");
+
+    /* All-match case -> VERIFIED, no mismatch. */
+    {
+        struct tpm_replay_report ok = { TPM_ALG_SHA256, TPM_REPLAY_VERIFIED, 0u, 0u, -1 };
+        tpm_replay_report_pcr(&ok, 0u, 1);
+        tpm_replay_report_pcr(&ok, 7u, 1);
+        TEST_ASSERT_EQ(ok.verdict, TPM_REPLAY_VERIFIED, "all match -> VERIFIED");
+        TEST_ASSERT_EQ(ok.first_mismatch_pcr, -1, "no first mismatch");
+        TEST_ASSERT_EQ(ok.mismatch_count, 0u, "0 mismatches");
+    }
+}
+
+static void test_replay_finalize(void)
+{
+    struct tpm_replay_report r;
+
+    /* Degraded/absent log -> UNVERIFIABLE, never tamper (even if a comparison had
+     * flagged a mismatch from the all-zero replay). */
+    r = (struct tpm_replay_report){ TPM_ALG_SHA256, TPM_REPLAY_TAMPER, 3u, 3u, 0 };
+    tpm_replay_finalize(&r, 0 /*log_clean*/, 0);
+    TEST_ASSERT_EQ(r.verdict, TPM_REPLAY_UNVERIFIABLE, "degraded log -> UNVERIFIABLE not tamper");
+
+    /* Clean log, complete coverage, no mismatch -> VERIFIED. */
+    r = (struct tpm_replay_report){ TPM_ALG_SHA256, TPM_REPLAY_VERIFIED, 9u, 0u, -1 };
+    tpm_replay_finalize(&r, 1, 1 /*complete*/);
+    TEST_ASSERT_EQ(r.verdict, TPM_REPLAY_VERIFIED, "clean + complete + match -> VERIFIED");
+
+    /* Clean log, INCOMPLETE coverage, no mismatch -> UNVERIFIABLE (no false pass). */
+    r = (struct tpm_replay_report){ TPM_ALG_SHA256, TPM_REPLAY_VERIFIED, 1u, 0u, -1 };
+    tpm_replay_finalize(&r, 1, 0 /*incomplete*/);
+    TEST_ASSERT_EQ(r.verdict, TPM_REPLAY_UNVERIFIABLE, "incomplete coverage -> UNVERIFIABLE");
+
+    /* A confirmed mismatch is actionable and preserved even if coverage was
+     * incomplete. */
+    r = (struct tpm_replay_report){ TPM_ALG_SHA256, TPM_REPLAY_TAMPER, 2u, 1u, 4 };
+    tpm_replay_finalize(&r, 1, 0 /*incomplete*/);
+    TEST_ASSERT_EQ(r.verdict, TPM_REPLAY_TAMPER, "confirmed mismatch -> TAMPER kept");
+}
+
 void test_register_tpm_replay(void)
 {
     test_suite_register_cat("tpm: PCR extend banks", test_pcr_extend_banks, TEST_CAT_SECURITY);
@@ -245,6 +295,8 @@ void test_register_tpm_replay(void)
     test_suite_register_cat("tpm: PCR replay known vector", test_replay_known_vector, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PCR replay legacy SHA-1", test_replay_legacy_sha1, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: replay bank-digest extract", test_replay_bank_digest_extract, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: replay verify report", test_replay_verify_report, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: replay verdict finalize", test_replay_finalize, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */
