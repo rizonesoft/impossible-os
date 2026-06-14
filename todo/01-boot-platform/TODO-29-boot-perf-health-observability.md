@@ -68,7 +68,7 @@ implements_after: TODO-04
 | 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [x]   |
 | 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [x]   |
 | ⭐ |   7   | Async font/icon loader (post-desktop-ready)         | §1                                        |  [ ]   |
-| ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T14 §4 (visual heartbeat), T23 (watchdog) |  [ ]   |
+| ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T23 (watchdog); T14 §4 permanently deferred |  [ ]   |
 | 💎 |   9   | EXEC step latency profile (13834ms FAIL; 11x regression) | §1                                   |  [ ]   |
 | ⭐ |  10   | UEFI RT SetVariable latency (>50ms threshold)       | §1, T04 §11                               |  [ ]   |
 | ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T27 §2 (advisor)                  |  [ ]   |
@@ -272,7 +272,7 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 
 - [ ] `boot_heartbeat_arm(phase_ms_target)` and `boot_heartbeat_pet()` in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h). When armed, every 250ms a LAPIC timer ISR emits `[BOOT-HB] phase=<step> elapsed=<ms> target=<target>` on serial and increments `boot_info.heartbeat_seq`.
 - [ ] Wire arm/pet into `boot_progress`: every step entry arms (with the §1 budget as target), every step exit pets (cancels the next heartbeat). Long-running steps emit 4 heartbeats/sec; short steps emit zero.
-- [ ] Coordinate with TODO-14 §4 alive-blink / visual heartbeat (visual) and TODO-23 (watchdog NMI on hard cap). The heartbeat is the soft signal; alive-blink is the visual; watchdog is the hard reset.
+- [ ] Coordinate with TODO-23 (watchdog NMI on hard cap). TODO-14 §4 alive-blink / visual heartbeat is permanently deferred; the heartbeat is the soft serial signal, and the watchdog is the hard reset.
 - [ ] Boot-health.json (§2) records the maximum heartbeat gap observed during the boot, surfacing pauses that stayed under the WARN threshold but were unusually slow.
 - [ ] Commit: `"boot: heartbeat telemetry during long phases"`
 

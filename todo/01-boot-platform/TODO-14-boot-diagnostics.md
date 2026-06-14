@@ -8,10 +8,10 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 # TODO-14 -- Boot Diagnostics, Heartbeat & Spinner
 
-> **Goal:** The arc spinner and boot splash are done. This TODO builds the production diagnostics layer: a named-stage boot progress API that feeds the splash, POST-style hex codes visible on hardware debug cards, cross-boot panic forensics, a panic QR code, runtime vital-signs overlay, alive-blink hang detection, and a multi-instance compositor-integrated spinner -- turning the ad-hoc debug tooling into production-grade features.
+> **Goal:** The arc spinner and boot splash are done. This TODO builds the production diagnostics layer: a named-stage boot progress API that feeds the splash, POST-style hex codes visible on hardware debug cards, cross-boot panic forensics, a panic QR code, runtime vital-signs overlay, and a multi-instance compositor-integrated spinner -- turning the ad-hoc debug tooling into production-grade features. The former alive-blink visual heartbeat is permanently deferred; keep only the shipped safety invariant that forbids framebuffer swaps from ISR context.
 
 > [!IMPORTANT]
-> **Current state:** §1--§3, §5, §10, §11 are shipped/verified; §4 is deferred (`[/]`, safety invariant only -- the blink feature needs a bare-metal-validated safe FB path). §6--§9 remain open. `boot_progress_poll()` has **no in-tree callers** yet. `spinner_create` (§7) / `vital_signs` (§8) sources are not in the tree.
+> **Current state:** §1--§3, §5, §10, §11 are shipped/verified; §4 is permanently deferred (`[~]`, safety invariant only -- no blink feature is planned). §6--§9 remain open. `boot_progress_poll()` has **no in-tree callers** yet. `spinner_create` (§7) / `vital_signs` (§8) sources are not in the tree.
 
 > [!NOTE]
 > **Origin:** The HV_BAR colored pixel bars were added during Hyper-V Gen 2 debugging -- crude but instantly effective. This TODO formalises that approach as an opt-in production debug feature while replacing the unconditional hack with proper structured output.
@@ -32,7 +32,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §1` -- `boot_progress(phase, step, postcode)` in `boot_init.h`; §2 of this TODO wraps it with a named-stage layer
 - → XREF: `02-kernel-core/TODO-01-kernel-init-sequencing.md §7` -- `boot_halt()` is the pre-FB panic anchor that §5 extends with forensic evidence
 - → XREF: `02-kernel-core/TODO-27-crash-dump-generation.md` -- crash dumps complement §5 panic forensics; coordinate PMM page reservation at `0x80000` to avoid collision with minidump workspace
-- → XREF: `02-kernel-core/TODO-14-registry-completion.md` -- `HKLM\SYSTEM\Boot\AliveBlink`, `VitalSigns` registry keys (visual POST / debug bar: [TODO-15 -- Visual POST Display](TODO-15-visual-post-display.md))
+- → XREF: `02-kernel-core/TODO-14-registry-completion.md` -- `VitalSigns` registry key (visual POST / debug bar: [TODO-15 -- Visual POST Display](TODO-15-visual-post-display.md)); `HKLM\SYSTEM\Boot\AliveBlink` is N/A because §4 is permanently deferred.
 - → XREF: `TODO-02-uefi-hardening-secureboot.md §7` -- boot UX polish calls `boot_splash_status()` via the §2 API
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8 -- compositor frame loop must call `spinner_tick()` on every active `g_active_spinners[]` entry per frame; that file §8 (Compositor Performance) owns per-frame integration
 - → XREF: `TODO-03-bootloader-error-recovery.md §13` -- bootloader-stage NVRAM error codes; §3 here persists kernel-stage panic evidence, §13 there persists UEFI-stage boot error codes -- complementary
@@ -46,7 +46,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 - Four-digit hex POST code (native 8 px glyphs) visible in the top-right corner of the framebuffer from kernel entry until `BOOT_DESKTOP_READY`; high byte of each 16-bit code is output to I/O port 0x80.
 - On panic: `struct panic_evidence` captured at `0x80000`; next boot saves `last-panic.txt` and shows "System shut down unexpectedly" toast.
 - Panic BSOD shows a QR code in the bottom-right corner linking to the troubleshooting page.
-- Alive blink returns after **§4** ships (safe framebuffer path; ISR `fb_swap_rect` is not viable).
+- Alive blink is permanently deferred. Only the safety invariant remains: ISR paths must not call `fb_swap_rect()`.
 - **§7** multi-instance `spinner_create()` / `spinner_tick()` and per-frame compositor ticks ship with that section (→ XREF: `08-graphics-ui/TODO-08-window-manager.md` §8).
 - `VitalSigns=1` activates a 20 px bottom-strip showing CPU %, RAM, IRQ rate, uptime, and FPS.
 
@@ -57,7 +57,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   1   | UEFI pre-kernel POST codes         | --                            |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1                            |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
-| 💎  |   4   | Alive blink / visual heartbeat     | §2 (visual only; hang=TODO-23) |  [/]   |
+| 💎  |   4   | Alive blink / visual heartbeat     | permanently deferred; hang=TODO-23 |  [~]   |
 | 💎  |   5   | Panic forensic evidence            | §2                            |  [/]   |
 | ⭐  |   6   | Panic QR code                      | §5; T03 §14 (QR seed)         |  [/]   |
 | 💎  |   7   | System-wide multi-instance spinner | D08 T08 §8 (compositor)       |  [/]   |
@@ -136,26 +136,26 @@ Render a 4-digit hex POST code in the top-right framebuffer corner visible on ev
 
 ---
 
-## 4. Alive Blink / Visual Heartbeat Indicator *(deferred -- ISR `fb_swap_rect` caused recursive interrupts on bare metal; redesign before ship)*
-A 4x4 px VISUAL liveness indicator (a blinking pixel) once a timer-driven path can update the framebuffer without swapping from ISR context. This is a passive visual signal ONLY: it never detects a hang, times out, reboots, or pets a watchdog. Actual hang detection (LAPIC NMI / ACPI TCO watchdog, timeout, auto-reboot, A/B rollback) is owned by → XREF: [`01-boot-platform/TODO-23-boot-watchdog.md`](TODO-23-boot-watchdog.md) (Boot Watchdog & Hang Detection); the soft-signal boot-heartbeat telemetry is → XREF: [`01-boot-platform/TODO-29`](TODO-29-boot-perf-health-observability.md) §8.
+## 4. Alive Blink / Visual Heartbeat Indicator *(permanently deferred -- ISR `fb_swap_rect` caused recursive interrupts on bare metal)*
+The 4x4 px visual liveness indicator is permanently deferred. Keep the already-shipped safety invariant only: framebuffer swaps must never run from ISR context. This section does not own hang detection, timeout, reboot, watchdog petting, or rollback. Actual hang detection (LAPIC NMI / ACPI TCO watchdog, timeout, auto-reboot, A/B rollback) is owned by → XREF: [`01-boot-platform/TODO-23-boot-watchdog.md`](TODO-23-boot-watchdog.md) (Boot Watchdog & Hang Detection); the soft-signal boot-heartbeat telemetry is → XREF: [`01-boot-platform/TODO-29`](TODO-29-boot-perf-health-observability.md) §8.
 
 **Files:** `src/kernel/drivers/pit.c` (or `timer.c`), `src/kernel/main/boot_progress.c`
 
 - [x] Remove/gate any `fb_swap_rect()` from `timer_tick_callback_fire()` / ISR (`alive_blink_tick` regression): no `alive_blink_tick` tick callback exists (only `spinner_advance`); `fb_swap_rect` is ISR-free -- the hazard path is gone.
-- [ ] Design safe commit: compositor tick, DPC, or flag set in ISR plus deferred FB flush
-- [ ] Re-enable `heartbeat=` from `g_boot_info.config` (0=off, 1=on); optional `HKLM\SYSTEM\Boot\AliveBlink` after → XREF: `02-kernel-core/TODO-14-registry-completion.md`
-- [ ] 4x4 px green square at top-left (4,4); toggles ~0.5 s using the safe path only
-- [ ] CPU usage threshold deferred: needs scheduler per-second CPU accounting (future)
-- [ ] Commit: `"kernel: alive blink hang indicator -- safe FB path, no ISR swap"`
+- [~] Safe visual-commit design -- N/A; the visual blink is not planned.
+- [~] Re-enable `heartbeat=` / `HKLM\SYSTEM\Boot\AliveBlink` -- N/A for the visual blink. Serial boot-heartbeat telemetry remains owned by TODO-29 §8.
+- [~] 4x4 px green square at top-left (4,4) -- N/A.
+- [~] CPU usage threshold -- N/A here; scheduler per-second CPU accounting remains owned by future scheduler/vital-signs work.
+- [~] Commit -- N/A.
 
-**Test checkpoint:** With §4 shipped: QEMU WHPX, QEMU TCG, VirtualBox: `heartbeat=1` shows stable blink, no lockup or FB corruption. Bare metal: same; confirm no recursive interrupt storm.
-> **Test runner:** N/A (no kernel test surface yet -- the blink feature is deferred) | validation: serial-log + on-screen, pending the safe FB path
+**Test checkpoint:** N/A (visual blink permanently deferred). Safety regression remains manual/symbol-audit only: no `alive_blink_tick` callback and no `fb_swap_rect()` reachable from timer ISR context.
+> **Test runner:** N/A (no visual feature to test) | validation: manual symbol audit for ISR-free framebuffer swaps
 > **Notes:**
 > - Shipped: only the safety invariant -- the `alive_blink_tick`/ISR `fb_swap_rect` regression path is confirmed absent (no such tick callback registered; `fb_swap_rect` is ISR-free).
-> - Deferred: the visual blink feature (safe FB-path design + `heartbeat=` re-enable + the 4x4 square) needs a deferred-flush path (compositor tick / DPC) and BARE-METAL validation ("no recursive interrupt storm") that cannot be proven on QEMU alone.
+> - Permanently deferred: the visual blink feature (safe FB-path design + `heartbeat=` re-enable + the 4x4 square) is not planned. Do not reintroduce it without a new roadmap decision and bare-metal validation plan.
 > - Scope boundary: actual hang DETECTION (NMI/TCO watchdog, timeout, auto-reboot, A/B rollback) is owned by TODO-23; this section is the passive visual signal only.
-> **Verified:** 2026-06-14 | safety invariant only | 1/7 items | build OK (no code change) | manual (symbol audit)
-> **Deferred:** [M] alive-blink visual feature unimplemented (reason: needs safe deferred-FB path + bare-metal validation per bare-metal-first) -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (Boot Watchdog & Hang Detection)
+> **Verified:** 2026-06-15 | PERMANENTLY DEFERRED | safety invariant only | 1/7 items | doc-only decision | manual (symbol audit)
+> **Deferred:** [M] alive-blink visual feature permanently deferred (reason: framebuffer-from-ISR hazard on bare metal; no visual-blink product requirement remains) -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (Boot Watchdog & Hang Detection)
 
 ---
 
@@ -360,10 +360,10 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 | 💎 | Panic forensics         | ✅ WER minidump EventLog    | ✅ kdump pstore ramoops      | ✅ §5 0x80000 page last-panic.txt |
 | 💎 | Multi UI spinner        | ✅ WinUI ProgressRing       | ✅ GTK Qt spinners           | ⬜ §7 spinner_create pool         |
 | ⭐ | Panic BSOD QR           | ❌ Text URL BSOD only       | ❌ No kernel QR              | ⬜ §6 segno+phone-gated QR        |
-| ⭐ | Alive hang pixel        | ❌ No kernel hang pixel     | ❌ Not production default     | ⬜ §4 redesign safe FB path       |
+| ⭐ | Alive hang pixel        | ❌ No kernel hang pixel     | ❌ Not production default     | [~] §4 permanently deferred      |
 | ⭐ | Live vital overlay      | ⚠️ Task Manager separate    | ⚠️ htop conky third-party    | ⬜ §8 bottom metrics strip        |
 
-> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) but **viewers** match Linux/Win tooling only after the §9 converters land. The ⬜ rows §4/§6/§7/§8 are deferred with recorded blockers (§4 safe-FB path, §6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); §9 converters pending. **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
+> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) but **viewers** match Linux/Win tooling only after the §9 converters land. §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); §9 converters pending. **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
 
 ---
 
@@ -378,7 +378,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
   - `boot_stage_history_get()` returns non-NULL pointer with valid `count > 0` after boot
   - POST hex display: `boot_post_write16(0xAABB)` followed by `boot_post_read16()` returns `0xAABB`
   - `boot_progress_poll()` does not crash when called with no active stage
-  - Alive blink toggle counter increments over 100 timer ticks when `heartbeat=1`
+  - Alive blink toggle-counter test -- N/A; §4 is permanently deferred
   - `spinner_create(SPINNER_MEDIUM, 0x0078D4)` returns non-NULL; `spinner_destroy()` frees the slot; re-create succeeds
   - `spinner_create()` returns NULL after 8 allocations (pool exhausted)
   - Panic evidence (§5): `panic_crc32` returns the canonical IEEE check value (`crc32("123456789") == 0xCBF43926`); a well-formed record built at `0x80000` is restored, the magic is cleared, and a second restore returns nothing (idempotent)
@@ -395,7 +395,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 - [x] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===` (clean build 2026-06-14, exit 0)
 - [ ] Serial log shows `[+Nms] BOOT_PMM: Physical memory manager ready` style entries for at least 8 stages (manual -- serial capture on QEMU/hardware)
 - [ ] POST code visible in top-right corner during QEMU boot; disappears when desktop loads (manual -- visual)
-- [ ] `AliveBlink=1` in `boot.conf` → 4x4 green square blinks in top-left corner during boot and desktop (deferred -- §4 not implemented)
+- [~] `AliveBlink=1` visual-blink verification -- N/A; §4 is permanently deferred
 - [ ] Force `kernel_panic("test")` from shell → BSOD shows QR code in bottom-right corner (deferred -- §6 not implemented)
 - [ ] Force panic twice -> second boot finds `last-panic.txt` in `X:\Crash\` (-> XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` §7) (manual -- §5 shipped; needs forced-panic reboot on QEMU/hardware)
 - [ ] `VitalSigns=1` → bottom strip shows CPU/RAM/IRQ/uptime/FPS, updates every 500 ms (deferred -- §8 not implemented)
