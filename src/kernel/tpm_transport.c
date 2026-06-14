@@ -1211,6 +1211,35 @@ const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
     return old;
 }
 
+struct tpm_t_crb_snapshot tpm_t_test_install_crb_buffers(volatile uint8_t *cmd,
+                                                         uint32_t cmd_size,
+                                                         volatile uint8_t *rsp,
+                                                         uint32_t rsp_size)
+{
+    struct tpm_t_crb_snapshot prev;
+    uint64_t irqf;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    prev.cmd = s_crb_cmd; prev.cmd_size = s_crb_cmd_size;
+    prev.rsp = s_crb_rsp; prev.rsp_size = s_crb_rsp_size;
+    s_crb_cmd = cmd;
+    s_crb_cmd_size = cmd ? cmd_size : 0u;
+    s_crb_rsp = rsp;
+    s_crb_rsp_size = rsp ? rsp_size : 0u;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+    return prev;
+}
+
+void tpm_t_test_restore_crb_buffers(struct tpm_t_crb_snapshot snap)
+{
+    uint64_t irqf;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_crb_cmd = snap.cmd;
+    s_crb_cmd_size = snap.cmd_size;
+    s_crb_rsp = snap.rsp;
+    s_crb_rsp_size = snap.rsp_size;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+}
+
 void tpm_t_test_budget_iters(uint64_t iters)
 {
     uint64_t irqf;

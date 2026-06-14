@@ -11,6 +11,7 @@
 #include "kernel/entropy.h"
 #include "kernel/tpm.h"
 #include "kernel/tpm_transport.h"
+#include "libc/string.h"
 
 /* ---- Fake TIS register file ----
  * Implements just enough of the PTP FIFO state machine for
@@ -692,10 +693,173 @@ static void test_tpm2_pcr_read(void)
                    -1, "nonzero rc rejected");
 }
 
+/* ---- Fake-CRB transaction seam (TODO-13 TPM tests + event-log fixtures) ----
+ * The existing TIS io fake covers the FIFO interface only. crb_submit() drives
+ * the CRB control-area REG_REQ/REG_START registers through the same io-ops table
+ * and copies command/response bytes through the mapped s_crb_cmd/s_crb_rsp
+ * buffers. This fake supplies both: an io that answers the ready/start handshake
+ * plus test buffers installed via tpm_t_test_install_crb_buffers(). */
+
+#define CF_REG_REQ   0x00u
+#define CF_REG_START 0x0Cu
+#define CF_REQ_CMD_READY 0x01u
+#define CF_REQ_GO_IDLE   0x02u
+#define CF_START_START   0x01u
+
+static volatile uint8_t cf_cmd[64];
+static volatile uint8_t cf_rsp[64];
+static int      cf_executed;
+static int      cf_stuck_start;   /* START never clears -> timeout */
+static int      cf_ready;         /* set by a CMD_READY write to REG_REQ */
+static int      cf_goidle;        /* set by a GO_IDLE write to REG_REQ */
+static uint32_t cf_rsp_decl_size; /* size field the fake writes into the response */
+
+static void cf_build_response(void)
+{
+    uint32_t i;
+    for (i = 0; i < sizeof cf_rsp; i++) cf_rsp[i] = 0;
+    /* ST_NO_SESSIONS success; the response's declared size drives crb_submit's
+     * bounds check (the buffer itself is 64 bytes). */
+    cf_rsp[0] = 0x80u; cf_rsp[1] = 0x01u;            /* tag ST_NO_SESSIONS */
+    cf_rsp[2] = (uint8_t)(cf_rsp_decl_size >> 24);
+    cf_rsp[3] = (uint8_t)(cf_rsp_decl_size >> 16);
+    cf_rsp[4] = (uint8_t)(cf_rsp_decl_size >> 8);
+    cf_rsp[5] = (uint8_t)cf_rsp_decl_size;            /* size field */
+    /* rc=SUCCESS (bytes 6..9 zero); 2 payload bytes for the 12-byte happy case. */
+    cf_rsp[10] = 0xA5u; cf_rsp[11] = 0x5Au;
+}
+
+static uint8_t cf_r8(uint32_t off) { (void)off; return 0; }
+static void    cf_w8(uint32_t off, uint8_t v) { (void)off; (void)v; }
+
+static uint32_t cf_r32(uint32_t off)
+{
+    if (off == CF_REG_REQ)
+        /* cmdReady reads as SET (not ready) until crb_submit requests it -- so a
+         * regression that drops the CMD_READY write times out instead of passing. */
+        return cf_ready ? 0u : CF_REQ_CMD_READY;
+    if (off == CF_REG_START)
+        return (cf_stuck_start || !cf_executed) ? CF_START_START : 0u;
+    return 0u;
+}
+
+static void cf_w32(uint32_t off, uint32_t v)
+{
+    if (off == CF_REG_REQ) {
+        if (v & CF_REQ_CMD_READY) cf_ready = 1;   /* ready granted on request */
+        if (v & CF_REQ_GO_IDLE)   cf_goidle = 1;  /* goIdle issued */
+    }
+    if (off == CF_REG_START && (v & CF_START_START)) {
+        cf_build_response();       /* "execute": command already in cf_cmd */
+        cf_executed = 1;           /* START clears (unless cf_stuck_start) */
+    }
+}
+
+static const struct tpm_t_io cf_io = { cf_r8, cf_w8, cf_r32, cf_w32 };
+
+static void cf_reset(void)
+{
+    cf_executed = 0;
+    cf_stuck_start = 0;
+    cf_ready = 0;
+    cf_goidle = 0;
+    cf_rsp_decl_size = 12u;        /* header(10) + 2 payload bytes */
+}
+
+static void test_tpm_crb_submit_fake(void)
+{
+    const struct tpm_t_io *prev;
+    struct tpm_t_crb_snapshot crb_snap;
+    uint8_t cmd[16], rsp[64];
+    int r;
+
+    /* A well-formed 12-byte command (crb_submit copies it verbatim). */
+    memset(cmd, 0, sizeof cmd);
+    cmd[0] = 0x80u; cmd[1] = 0x01u;               /* tag */
+    tpm2_be32_put(cmd + 2, 12u);                  /* size == cmd_len */
+    tpm2_be32_put(cmd + 6, TPM2_CC_GET_RANDOM);
+    cmd[10] = 0; cmd[11] = 1;
+
+    /* Happy path: ready -> start -> response copied out. */
+    cf_reset();
+    prev = tpm_t_test_install(&cf_io, TPM_T_IFACE_CRB, 1);
+    /* Snapshot the real CRB mapping (if any) so teardown restores it instead of
+     * clearing to NULL -- a real fTPM boot must survive the test build's suite. */
+    crb_snap = tpm_t_test_install_crb_buffers(cf_cmd, sizeof cf_cmd, cf_rsp, sizeof cf_rsp);
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    TEST_ASSERT_EQ(r, 12, "CRB submit returns the 12-byte response");
+    TEST_ASSERT(rsp[0] == 0x80u && rsp[1] == 0x01u, "CRB response tag copied");
+    TEST_ASSERT(rsp[10] == 0xA5u && rsp[11] == 0x5Au, "CRB response payload copied");
+    TEST_ASSERT(cf_cmd[6] == (uint8_t)(TPM2_CC_GET_RANDOM >> 24), "command reached CRB cmd buffer");
+    TEST_ASSERT(cf_ready == 1, "crb_submit requested cmdReady (REG_REQ handshake)");
+    TEST_ASSERT(cf_goidle == 1, "crb_submit returned to idle (goIdle) after success");
+
+    /* Oversized declared response (> rsp_cap and > buffer) rejected. */
+    cf_reset();
+    cf_rsp_decl_size = 5000u;
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_RESPONSE, "oversized CRB response -> ERR_RESPONSE");
+
+    /* Response smaller than the 10-byte header rejected. */
+    cf_reset();
+    cf_rsp_decl_size = 4u;
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_RESPONSE, "sub-header CRB response -> ERR_RESPONSE");
+
+    /* A command larger than the CRB command buffer is refused before submit. */
+    cf_reset();
+    {
+        uint8_t big[40];
+        memset(big, 0, sizeof big);
+        big[0] = 0x80u; big[1] = 0x01u;
+        tpm2_be32_put(big + 2, 40u);
+        tpm2_be32_put(big + 6, TPM2_CC_GET_RANDOM);
+        (void)tpm_t_test_install_crb_buffers(cf_cmd, 16u, cf_rsp, sizeof cf_rsp);
+        r = tpm2_submit(big, 40u, rsp, sizeof rsp);
+        TEST_ASSERT_EQ(r, TPM_T_ERR_ARG, "command exceeding CRB cmd buffer -> ERR_ARG");
+        (void)tpm_t_test_install_crb_buffers(cf_cmd, sizeof cf_cmd, cf_rsp, sizeof cf_rsp);
+    }
+
+    /* START bit never clears -> bounded timeout, no hang. Last: a TIMEOUT marks
+     * the transport sticky-failed, which a reinstall (teardown below) clears. */
+    cf_reset();
+    cf_stuck_start = 1;
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_TIMEOUT, "stuck CRB START -> ERR_TIMEOUT (bounded)");
+
+    tpm_t_test_restore_crb_buffers(crb_snap);   /* restore real CRB mapping, not NULL */
+    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+}
+
+/* ---- Degraded: transport-level no-TPM ---- */
+
+static void test_tpm_transport_no_tpm(void)
+{
+    const struct tpm_t_io *prev;
+    uint8_t cmd[16], rsp[32];
+    int r;
+    memset(cmd, 0, sizeof cmd);
+    cmd[0] = 0x80u; cmd[1] = 0x01u;
+    tpm2_be32_put(cmd + 2, 12u);
+    tpm2_be32_put(cmd + 6, TPM2_CC_GET_RANDOM);
+
+    /* io == NULL restores the unavailable pre-init state: a submit must report
+     * ERR_NODEV (no transport), not hang or fault. */
+    prev = tpm_t_test_install(0, TPM_T_IFACE_NONE, 0);
+    TEST_ASSERT_EQ(tpm_transport_available(), 0, "transport reports unavailable");
+    r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
+    TEST_ASSERT_EQ(r, TPM_T_ERR_NODEV, "submit with no transport -> ERR_NODEV");
+    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+}
+
 void test_register_tpm_transport(void)
 {
     test_suite_register_cat("tpm: transport marshaling",
         test_tpm2_marshal, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: CRB submit (fake CRB)",
+        test_tpm_crb_submit_fake, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: transport no-TPM degrade",
+        test_tpm_transport_no_tpm, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: transport submit (fake TIS)",
         test_tpm2_submit_fake, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: GetRandom marshal + parse",

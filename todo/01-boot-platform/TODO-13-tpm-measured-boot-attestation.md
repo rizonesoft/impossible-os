@@ -45,7 +45,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | ⭐ | 8 | Sealed-secret boot policy hooks | §7, §12 | [x] |
 | 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
-| 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [ ] |
+| 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [x] |
 | 💎 | 12 | PCR allocation table and policy masks | (foundational; consumed by §6/§8/§13) | [x] |
 | 💎 | 13 | Attestation key provisioning and TPM2 quote | §3, §7, §12 | [ ] |
 
@@ -265,14 +265,22 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 11. TPM Tests and Event-Log Fixtures
 
-- [ ] Add event-log parser fixtures for TPM 1.2 and TPM 2.0.
-- [ ] Add PCR replay known-vector tests.
-- [ ] Add QEMU swtpm test path.
-- [ ] Fake-CRB buffer seam + unit suite for `crb_submit()` in `src/kernel/tpm_transport.c` (cmdReady/START/goIdle, shared cmd/rsp buffer, oversized response) -- the §2 io seam covers TIS only; CRB is validated live via swtpm.
-- [ ] Add degraded tests for no TPM, truncated log, and inactive PCR banks.
-- [ ] Commit: `"test: TPM measured boot coverage"`
+- [x] Event-log parser fixtures for TPM 1.2 + TPM 2.0 -- `test_tpm_event_log.c` (`tpm12_two_events`, `tpm20_event2`) parse full known-good logs; 9 suites incl. truncation/cap/bad-header/partial-tail.
+- [x] PCR replay known-vector tests -- `test_tpm_replay.c` `test_replay_known_vector` (log -> independently-computed `H(H(0||d1)||d2)`) + `test_replay_legacy_sha1`.
+- [x] QEMU swtpm test path -- `scripts/test-swtpm.sh`: swtpm 2.0 on a unix socket + QEMU `tpm-crb`/`tpm-tis`; asserts boot-complete + TPM transport up; skips clean (exit 0) when swtpm absent.
+- [x] Fake-CRB buffer seam + unit suite for `crb_submit()` -- `tpm_t_test_install_crb_buffers()` + `test_tpm_crb_submit_fake` (ready/START/goIdle handshake, response copy, oversized + sub-header reject, stuck-START timeout, over-cap cmd -> ERR_ARG).
+- [x] Degraded tests -- transport-level no-TPM (`test_tpm_transport_no_tpm` -> ERR_NODEV) + existing truncated-log (event-log) + inactive-bank (replay absent-bank) coverage.
+- [ ] Follow-up (test-infra): harden `tpm_t_test_install` to snapshot/restore full transport state (iface/available/failed/fast); its `(prev, NONE, 0)` teardown can leave a real-fTPM transport mis-routed after a TPM suite. Affects all `test_tpm_*`.
+- [x] Commit: `"test: TPM measured boot coverage"`
 
 **Test checkpoint:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) runs the new TPM suites with 0 failures: TPM 1.2 + 2.0 event-log parser fixtures, PCR-replay known-vector tests, the fake-CRB buffer seam suite for `crb_submit()`, and degraded cases (no TPM, truncated log, inactive banks); the QEMU swtpm path boots green on KVM. Platforms: kernel unit tests + QEMU swtpm KVM; bare metal (test laptop fTPM).
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 787 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - Event-log fixtures (TPM 1.2 + 2.0) and PCR-replay known-vectors already existed in `test_tpm_event_log.c` / `test_tpm_replay.c`; this section adds the missing coverage.
+> - Fake-CRB seam: `tpm_t_test_install_crb_buffers()` points the CRB cmd/rsp buffers at test memory so `test_tpm_crb_submit_fake` exercises the CRB control-area handshake (the prior fake covered the TIS FIFO interface only).
+> - `scripts/test-swtpm.sh` is the live-validation path: swtpm 2.0 + QEMU `tpm-crb`/`tpm-tis`, asserts boot-complete + TPM transport up; exits 0 (skipped) when swtpm is not installed.
+> - Degraded coverage: added a transport-level no-TPM test (`ERR_NODEV`); truncated-log + inactive-bank cases already covered by the event-log / replay suites.
+> - Scope boundary: this section is test coverage for already-shipped TPM features (transport, event-log, replay); the swtpm script is the host/CI live-validation entry point, not a WSL unit test.
 
 ---
 

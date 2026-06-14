@@ -224,3 +224,28 @@ int tpm_t_test_budget_active(void);
  * transaction in flight on another CPU so the bounded-wait acquire path is
  * testable (BUSY-then-success) without real concurrency. 0 disarms. */
 void tpm_t_test_busy_ticks(uint32_t n);
+
+/* Snapshot of the CRB command/response buffer pointers + sizes, captured so a
+ * test can RESTORE whatever real CRB mapping a prior live init established
+ * (clearing them to NULL would corrupt a real CRB transport on a security-suite
+ * boot that ran after a real TPM came up). */
+struct tpm_t_crb_snapshot {
+    volatile uint8_t *cmd;
+    uint32_t cmd_size;
+    volatile uint8_t *rsp;
+    uint32_t rsp_size;
+};
+
+/* Point the CRB command/response buffers at test memory (kernel unit tests
+ * only) so the CRB submit path can be exercised without MMIO -- the io-ops fake
+ * drives the REG_REQ/REG_START handshake while these buffers stand in for the
+ * mapped CRB command/response areas. Pair with tpm_t_test_install(io,
+ * TPM_T_IFACE_CRB, fast). Returns the PRIOR buffer state; restore it at teardown
+ * via tpm_t_test_restore_crb_buffers() rather than clearing to NULL. */
+struct tpm_t_crb_snapshot tpm_t_test_install_crb_buffers(volatile uint8_t *cmd,
+                                                         uint32_t cmd_size,
+                                                         volatile uint8_t *rsp,
+                                                         uint32_t rsp_size);
+
+/* Restore CRB buffers captured by tpm_t_test_install_crb_buffers(). */
+void tpm_t_test_restore_crb_buffers(struct tpm_t_crb_snapshot snap);
