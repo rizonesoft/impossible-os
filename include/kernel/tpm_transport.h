@@ -163,6 +163,21 @@ int tpm2_get_random_bounded(uint8_t *out, uint32_t want,
 int tpm2_rsp_parse(const uint8_t *rsp, uint32_t len,
                    uint16_t *out_tag, uint32_t *out_size, uint32_t *out_rc);
 
+/* Locate the response PARAMETER area of a successful response (rc must be
+ * TPM2_RC_SUCCESS). The wire layout differs by tag:
+ *   ST_NO_SESSIONS: header(10) + parameters[...]                 (to size)
+ *   ST_SESSIONS:    header(10) + parameterSize(4) + parameters[parameterSize]
+ *                   + responseAuthArea[...]
+ * A session-tagged response that is parsed at the fixed offset 10 (as the
+ * non-session parsers do) would read the 4-byte parameterSize as the first
+ * parameter bytes -- so every session-authorized command (NV read/write) MUST
+ * locate its parameters through this helper, never at offset 10 directly.
+ * Returns 0 and sets *out_off / *out_len to the parameter span (bounded inside
+ * the header-declared size, with room left for the auth area on ST_SESSIONS);
+ * -1 on a malformed/failed/oversize response. Out pointers may be NULL. */
+int tpm2_rsp_params(const uint8_t *rsp, uint32_t len,
+                    uint32_t *out_off, uint32_t *out_len);
+
 /* ---- Test seam (kernel unit tests only) ----
  * The transport reads/writes interface registers through an io-ops
  * table so tests can substitute a fake register file (timeout, short

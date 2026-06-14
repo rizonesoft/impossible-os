@@ -40,8 +40,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 3 | PCR read API | §2 | [x] |
 | 💎 | 4 | PCR replay engine | §1, ../02-kernel-core/TODO-03 §3 | [x] |
 | 💎 | 5 | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3 | [x] |
-| 💎 | 6 | Baseline enrollment and storage | §3, §4 | [ ] |
-| 💎 | 7 | TPM NV index support | §2, §6 | [ ] |
+| 💎 | 6 | Baseline enrollment and storage | §3, §4, §7 | [ ] |
+| 💎 | 7 | TPM NV index support | §2 (transport); §12 (baseline mask) | [/] |
 | ⭐ | 8 | Sealed-secret boot policy hooks | §7 | [ ] |
 | 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
@@ -165,10 +165,10 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 6. Baseline Enrollment and Storage
 
-> **Deferred (updated 2026-06-14):** the §4 SHA + PCR-replay prerequisite has LANDED (kernel SHA-1/256/384 + `tpm_replay_verify` shipped), so image hashes and a replay-based verify path are now available. The remaining hard dependency is storage: a credible baseline persists golden PCRs + image hashes + Secure Boot state + firmware version in a TPM NV index (or UEFI authenticated variable), which §7 owns. Deferred until §7 (NV index storage MECHANISM) lands; §6 then owns the baseline CONTENT/enrollment that consumes it. -> XREF: §7 (item: "PCR-policy-protected baseline index" + "Migration from UEFI authenticated-variable storage to TPM NV").
+> **Deferred (updated 2026-06-14):** the §4 SHA + PCR-replay prerequisite has LANDED (kernel SHA-1/256/384 + `tpm_replay_verify` shipped), so image hashes and a replay-based verify path are now available. The storage MECHANISM has now landed: §7 shipped `tpm_nv_define_baseline/policy_write/policy_read` (PCR-policy-sealed NV index) + `tpm_nv_define_data/write/read` (owner-auth data index). §6 is UNBLOCKED -- it now owns the baseline CONTENT/enrollment (first-boot gate, golden PCRs + image/firmware metadata, rotation) that consumes §7's mechanism. -> XREF: §7 (`tpm_nv_*` wrappers; the UEFI-var -> TPM-NV migration item there is deferred to §6's baseline schema).
 
 - [ ] Add first-boot enrollment mode gated by physical-console confirmation.
-- [ ] Store golden PCR values in UEFI authenticated variable or TPM NV index (blocked on §7 storage).
+- [ ] Store golden PCR values in UEFI authenticated variable or TPM NV index (§7 NV storage mechanism now available: `tpm_nv_define_baseline` + `tpm_nv_policy_write/read`).
 - [ ] Include bootloader hash, kernel hash, Secure Boot state, and firmware version metadata (image hashes blocked on the §4 SHA prerequisite).
 - [ ] Support baseline rotation after trusted updates.
 - [ ] Commit: `"tpm: enroll measured boot baseline"`
@@ -182,10 +182,19 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] NV CRUD for one OWNER-auth OS data index: pure `tpm2_build_nv_{define,undefine,write,read}` seam + `tpm_nv_*` wrappers; password auth area (`TPM_RS_PW`). Owner-auth data index, distinct from the policy baseline.
 - [ ] Degraded states: format-first NV RC classification, exact-comparing format-0 warnings (`NV_LOCKED` 0x148, `NV_SPACE` 0x14B, `NV_DEFINED` 0x14C) to `tpm_nv_status_t`; never a wedge. Fixtures for raw 0x148-0x14C.
 - [ ] PCR-policy-protected baseline index: POLICYREAD/POLICYWRITE + `TPM2_StartAuthSession`/`TPM2_PolicyPCR` (trial computes authPolicy; real session satisfies read/write); owner auth only for define/undefine. -> XREF: §8.
-- [ ] Migration from UEFI authenticated-variable storage to TPM NV (lossless) -- consumes the §6 baseline format. -> XREF: §6 (item: "Store golden PCR values in UEFI authenticated variable or TPM NV index").
+- [ ] Migration from UEFI authenticated-variable storage to TPM NV (lossless): DEFERRED until §6 ships the baseline schema; §7 provides the chunked NV read/write it consumes. -> XREF: §6 (baseline storage item).
 - [ ] Commit: `"tpm: measured boot NV index storage"`
 
-**Test checkpoint:** Define / read / write / undefine round-trip on one OS-owned NV index against QEMU swtpm; where the TPM supports it the index is PCR-policy-protected (a read under the wrong PCR state is denied); no-space and locked-NV return explicit degraded states (not a wedge); the UEFI-variable -> TPM-NV migration path moves an existing baseline without loss. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
+**Test checkpoint:** Define / read / write / undefine round-trip on one OS-owned NV index against QEMU swtpm; where the TPM supports it the index is PCR-policy-protected (a read under the wrong PCR state is denied); no-space and locked-NV return explicit degraded states (not a wedge); the UEFI-variable -> TPM-NV migration path moves an existing baseline without loss. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM). The PCR-state-deny + live round-trip are swtpm/bare-metal validation; the kernel unit suites cover marshal/parse/classifier + session-lifecycle teardown via the fake-TIS seam.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 9 NV suites, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/tpm_nv.c` + `tpm_nv.h`: pure TPM2 NV builders/parsers, format-first `tpm_nv_classify_rc`, `tpm_nv_*` wrappers, plus `tpm2_rsp_params()` (session-aware response locator) in the transport. 9 suites in `test_tpm_nv.c`.
+> - Phase-1 transport via `tpm2_submit` (not ISR-safe); the trial/real PolicyPCR flow uses a single-cleanup teardown that best-effort `FlushContext`es the session on every post-start path (no handle leak on error/BUSY).
+> - Unblocks §6 baseline storage (define/read/write + policy-protected index) and §8 (reuses the policy-session machinery). Codex design + test-coverage adoptions in the section commit.
+> - Baseline policy is pinned to the allocation table: `tpm_nv_baseline_pcr_select()` derives the PolicyPCR selection from `tpm_pcr_baseline_mask()` (§12), no hard-coded PCR set.
+> - Scope: §7 owns the NV storage MECHANISM only; §6 owns baseline CONTENT/enrollment; the UEFI-var -> TPM-NV migration item is deferred to §6's schema.
 
 ## 8. Sealed-Secret Boot Policy Hooks
 
@@ -283,6 +292,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 | 💎 | TPM2 command transport (TIS/CRB) | tpm.sys TIS/CRB | tpm_tis/tpm_crb drivers | ✅ §2 burst-chunked TIS + CRB |
 | 💎 | Secure Boot PCR integration | Measured Boot | IMA/TPM tools | ⚠️ §5 structural SB var reconcile |
 | 💎 | PCR replay | internal/Defender | tpm2-tools | ✅ §4 SHA-1/256/384/512 replay + tamper verify |
+| 💎 | TPM NV index storage (PCR-sealed) | TBS NV / BitLocker | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index |
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |
 | 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | TODO-13 §13 (EK->AK + TPM2_Quote) |

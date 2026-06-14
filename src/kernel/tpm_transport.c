@@ -486,6 +486,36 @@ int tpm2_rsp_parse(const uint8_t *rsp, uint32_t len,
     return 0;
 }
 
+int tpm2_rsp_params(const uint8_t *rsp, uint32_t len,
+                    uint32_t *out_off, uint32_t *out_len)
+{
+    uint16_t tag;
+    uint32_t size, rc;
+
+    if (tpm2_rsp_parse(rsp, len, &tag, &size, &rc) != 0 ||
+        rc != TPM2_RC_SUCCESS)
+        return -1;
+    /* tpm2_rsp_parse proved size >= TPM2_RSP_HEADER_SIZE and size <= len. */
+    if (tag == TPM2_ST_SESSIONS) {
+        uint32_t psize;
+        /* header(10) + parameterSize(4), then the parameter span, then the
+         * response auth area. parameterSize must leave the auth area inside
+         * the declared size (auth area may be empty, so <= is correct). */
+        if (size < TPM2_RSP_HEADER_SIZE + 4u)
+            return -1;
+        psize = tpm2_be32_get(rsp + TPM2_RSP_HEADER_SIZE);
+        if (psize > size - TPM2_RSP_HEADER_SIZE - 4u)
+            return -1;
+        if (out_off) *out_off = TPM2_RSP_HEADER_SIZE + 4u;
+        if (out_len) *out_len = psize;
+    } else {
+        /* ST_NO_SESSIONS / ST_RSP_COMMAND: parameters run header..size. */
+        if (out_off) *out_off = TPM2_RSP_HEADER_SIZE;
+        if (out_len) *out_len = size - TPM2_RSP_HEADER_SIZE;
+    }
+    return 0;
+}
+
 /* ---- TIS transaction ---- */
 
 /* Read the current burstCount, waiting for it to go nonzero. Returns
