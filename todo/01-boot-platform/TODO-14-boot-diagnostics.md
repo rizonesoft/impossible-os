@@ -62,7 +62,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | ⭐  |   6   | Panic QR code                      | §5                            |  [ ]   |
 | 💎  |   7   | System-wide multi-instance spinner | 08-graphics-ui/TODO-06 §8     |  [ ]   |
 | ⭐  |   8   | Runtime vital signs strip          | §7                            |  [ ]   |
-| 💎  |   9   | Boot timeline visualization/import | §2                            |  [ ]   |
+| 💎  |   9   | Boot timeline visualization/import | §2                            |  [/]   |
 | ⭐  |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                |  [x]   |
 | 💎  |  11   | Boot load status log (ntbtlog parity)      | §2                         |  [/]   |
 
@@ -256,13 +256,19 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 
 **Files:** `docs/` (schema + tooling notes), optional `scripts/` or `user/` offline converter
 
-- [ ] Publish the v1 schema in `docs/boot-timeline-json.md`: `stage`/`phase`/`post`/`start_ms`/`duration_ms`/`target_ms`/`source` (`fpdt`|`tsc`)/`unreliable` -- `boot_timeline_dump_json()` already emits all of these; link from `CLAUDE.md`.
+- [x] Published v1 wire format `docs/boot/boot-timeline-schema.md` (8 fields, FPDT/TSC sources, anchoring + unreliable semantics, emit guards); linked from `docs/boot/black-box-artifacts.md`
 - [ ] The SVG + chrome://tracing converters MUST preserve `target_ms` and `unreliable` so the boot-blame / regression surfaces (→ XREF: [`01-boot-platform/TODO-29`](TODO-29-boot-perf-health-observability.md)) are not silently discarded.
 - [ ] Optional offline converter or in-kernel `boot_timeline_to_svg()` to produce Gantt-style SVG comparable to `systemd-analyze plot` output
 - [ ] Optional Chrome trace event JSON export for `chrome://tracing` import (competitive edge vs plain SVG)
-- [ ] Commit: `"docs: boot timeline JSON schema + optional trace export"`
+- [x] Commit: `"docs: boot timeline JSON schema (v1 wire format) -- docs/boot/boot-timeline-schema.md"`
 
-**Test checkpoint:** With §9 shipped: JSON from a real boot validates against schema; SVG or Chrome trace opens in target viewer without manual edits. QEMU WHPX + TCG smoke.
+**Test checkpoint:** With §9 shipped: JSON from a real boot validates against the schema; SVG or Chrome trace opens in target viewer without manual edits. The v1 schema doc is shipped; converters (items 2-4) remain open. QEMU WHPX + TCG smoke.
+> **Test runner:** N/A (docs-only -- schema documents the existing `boot_timeline_dump_json()` emitter) | validation: Codex consistency review of doc-vs-emitter, 2 medium drifts fixed
+> **Notes:**
+> - Shipped: `docs/boot/boot-timeline-schema.md` -- v1 wire format for `boot-timeline.json` (8-field record table, FPDT-prepend + TSC ordering, anchoring + `unreliable` reliability semantics, emit guards, 16 KiB buffer behavior).
+> - Structure / consumers: under `docs/boot/` with the `*-schema.md` siblings; linked from the BlackBox artifact catalog `docs/boot/black-box-artifacts.md`. Draft's root path + CLAUDE.md link corrected (detail in commit msg).
+> - Codex consistency review fixed 2 doc-vs-emitter drifts (TSC `post` variable-width hex; `duration_ms` source-local) before ship; per-finding detail in the commit message.
+> - Scope boundary: §9 owns the published schema; SVG / `chrome://tracing` converters (items 2-4) stay open; `target_ms`/`unreliable` preservation is consumed by → XREF: `01-boot-platform/TODO-29`.
 
 ---
 
@@ -327,14 +333,14 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 | 💎 | Named boot progress     | ✅ ETW boot trace           | ✅ dmesg systemd-analyze     | ✅ §2 serial STAGE ms lines       |
 | 💎 | Boot load/status log    | ✅ ntbtlog.txt driver log   | ✅ dmesg drivers loaded      | ✅ §11 boot-load-status.txt       |
 | ⭐ | Bootloader build identity | ⚠️ bcdedit/msinfo32        | ⚠️ /proc/version uname       | ✅ §10 boot-loader-identity.txt   |
-| 💎 | Boot timeline viewers   | ⚠️ Performance Toolkit      | ✅ systemd-analyze plot     | ⚠️ JSON §2; §9 viewers pending     |
+| 💎 | Boot timeline viewers   | ⚠️ Performance Toolkit      | ✅ systemd-analyze plot     | ⚠️ JSON+schema §9; viewers pending |
 | 💎 | Panic forensics         | ✅ WER minidump EventLog    | ✅ kdump pstore ramoops      | ✅ §5 0x80000 page last-panic.txt |
 | 💎 | Multi UI spinner        | ✅ WinUI ProgressRing       | ✅ GTK Qt spinners           | ⬜ §7 spinner_create pool         |
 | ⭐ | Panic BSOD QR           | ❌ Text URL BSOD only       | ❌ No kernel QR              | ⬜ §6 segno+phone-gated QR        |
 | ⭐ | Alive hang pixel        | ❌ No kernel hang pixel     | ❌ Not production default     | ⬜ §4 redesign safe FB path       |
 | ⭐ | Live vital overlay      | ⚠️ Task Manager separate    | ⚠️ htop conky third-party    | ⬜ §8 bottom metrics strip        |
 
-> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** exists (JSON) but **viewers** match Linux/Win tooling only after §9. ⬜ rows §5--§8 and §9 are open parity or stretch (⭐ rows). **Edges:** §6 QR and §8 always-on strip are planned differentiators once shipped.
+> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) but **viewers** match Linux/Win tooling only after the §9 converters land. ⬜ rows §5--§8 are open parity or stretch (⭐ rows); §9 converters pending. **Edges:** §6 QR and §8 always-on strip are planned differentiators once shipped.
 
 ---
 
