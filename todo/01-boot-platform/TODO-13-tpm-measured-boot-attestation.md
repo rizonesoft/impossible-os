@@ -199,9 +199,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Design (2026-06-14, Codex 2H+1M adopted pre-code):** §7 owns the NV storage + PCR-policy MECHANISM; §6 owns the baseline CONTENT/enrollment that consumes it (resolves the prior circular §6<->§7 ownership). Constraints for the implementor: a policy-protected index MUST use POLICYREAD/POLICYWRITE, NOT OWNERREAD/OWNERWRITE (owner auth is an operational bypass of any PCR policy; owner auth is for define/undefine only). NV response-code classification MUST branch by FORMAT first -- the NV warnings 0x148-0x14C are format-0 (RC_VER1) and must be exact-compared, never run through a format-1 handle/parameter mask (which would corrupt them and hide locked/no-space states). Do NOT mark §7 complete after CRUD-only; policy protection is part of §7's contract.
 
-- [ ] NV CRUD for one OWNER-auth OS data index: pure `tpm2_build_nv_{define,undefine,write,read}` seam + `tpm_nv_*` wrappers; password auth area (`TPM_RS_PW`). Owner-auth data index, distinct from the policy baseline.
-- [ ] Degraded states: format-first NV RC classification, exact-comparing format-0 warnings (`NV_LOCKED` 0x148, `NV_SPACE` 0x14B, `NV_DEFINED` 0x14C) to `tpm_nv_status_t`; never a wedge. Fixtures for raw 0x148-0x14C.
-- [ ] PCR-policy-protected baseline index: POLICYREAD/POLICYWRITE + `TPM2_StartAuthSession`/`TPM2_PolicyPCR` (trial computes authPolicy; real session satisfies read/write); owner auth only for define/undefine. -> XREF: §8.
+- [x] NV CRUD for one OWNER-auth OS data index: pure `tpm2_build_nv_{define,undefine,write,read,read_public}` + `tpm_nv_*` wrappers (`TPM_RS_PW` password auth) in `tpm_nv.{c,h}`; owner-auth data index distinct from the policy baseline.
+- [x] Degraded states: format-first `tpm_nv_classify_rc` exact-comparing format-0 warnings (`NV_LOCKED` 0x148, `NV_SPACE` 0x14B, `NV_DEFINED` 0x14C) to `tpm_nv_status_t`; never wedges. Raw 0x148-0x14C fixtures in `test_tpm_nv.c`.
+- [x] PCR-policy-protected baseline index: `TPMA_NV_POLICYREAD|POLICYWRITE` + `TPM2_StartAuthSession`/`TPM2_PolicyPCR` (trial computes authPolicy, real session satisfies r/w); owner auth only for define/undefine. -> XREF: §8.
 - [ ] Migration from UEFI authenticated-variable storage to TPM NV (lossless): DEFERRED until §6 ships the baseline schema; §7 provides the chunked NV read/write it consumes. -> XREF: §6 (baseline storage item).
 - [ ] Commit: `"tpm: measured boot NV index storage"`
 
