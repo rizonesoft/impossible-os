@@ -57,13 +57,14 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   1   | UEFI pre-kernel POST codes         | --                            |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1                            |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
-| 💎  |   4   | Alive blink / hang detection       | §2                            |  [ ]   |
+| 💎  |   4   | Alive blink / visual heartbeat     | §2 (visual only; hang=TODO-23) |  [ ]   |
 | 💎  |   5   | Panic forensic evidence            | §2                            |  [ ]   |
 | ⭐  |   6   | Panic QR code                      | §5                            |  [ ]   |
 | 💎  |   7   | System-wide multi-instance spinner | 08-graphics-ui/TODO-06 §8     |  [ ]   |
 | ⭐  |   8   | Runtime vital signs strip          | §7                            |  [ ]   |
 | 💎  |   9   | Boot timeline visualization/import | §2                            |  [ ]   |
 | ⭐  |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                |  [ ]   |
+| 💎  |  11   | Boot load status log (ntbtlog parity)      | §2                         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -135,8 +136,8 @@ Render a 4-digit hex POST code in the top-right framebuffer corner visible on ev
 
 ---
 
-## 4. Alive Blink / Hang Detection *(deferred -- ISR `fb_swap_rect` caused recursive interrupts on bare metal; redesign before ship)*
-A 4x4 px hang indicator once a timer-driven path can update the framebuffer without swapping from ISR context.
+## 4. Alive Blink / Visual Heartbeat Indicator *(deferred -- ISR `fb_swap_rect` caused recursive interrupts on bare metal; redesign before ship)*
+A 4x4 px VISUAL liveness indicator (a blinking pixel) once a timer-driven path can update the framebuffer without swapping from ISR context. This is a passive visual signal ONLY: it never detects a hang, times out, reboots, or pets a watchdog. Actual hang detection (LAPIC NMI / ACPI TCO watchdog, timeout, auto-reboot, A/B rollback) is owned by → XREF: [`01-boot-platform/TODO-23-boot-watchdog.md`](TODO-23-boot-watchdog.md) (Boot Watchdog & Hang Detection); the soft-signal boot-heartbeat telemetry is → XREF: [`01-boot-platform/TODO-29`](TODO-29-boot-perf-health-observability.md) §8.
 
 **Files:** `src/kernel/drivers/pit.c` (or `timer.c`), `src/kernel/main/boot_progress.c`
 
@@ -159,7 +160,9 @@ Capture a `panic_evidence` struct at fault time, survive across soft reboot via 
 > [!IMPORTANT]
 > The PMM page at `0x80000` must be reserved in `pmm_init()` before it can be used as the cross-boot evidence page. Coordinate with `02-kernel-core/TODO-27-crash-dump-generation.md` to avoid using the same fixed address for the minidump workspace.
 
-- [ ] Define `struct panic_evidence`: `uint32_t magic` (`0xDEADBEEF`), last 16 `boot_stage_history[]` entries, last 8 klog ring entries, last POST code byte, `uint64_t cr0/cr3/cr4` at fault, `uint32_t irq_mask`, `uint32_t pmm_free_pages`, `uint64_t fault_rip`, `char message[256]`
+- [ ] `struct panic_evidence` VERSIONED header `{magic 0xDEADBEEF, version, size, crc32, boot_seq}`; restore validates magic+crc32+version so stale `0x80000` contents are never misread as a valid crash.
+- [ ] `panic_evidence` crash identity: bugcheck code+4 params, fault vector + err_code, `cr2`, `cpu_id`, `interrupt_frame` GPRs (rip/rsp/rflags/cs/ss), `cr0/cr3/cr4`, `irq_mask`, `pmm_free_pages`, source file:line.
+- [ ] `panic_evidence` payload: last 16 `boot_stage_history[]` entries, last 8 klog ring entries, last POST code byte, `char message[256]`.
 - [ ] `panic_collect_evidence(rip, msg)`: copy data into `struct panic_evidence` at physical `0x80000`; called at the very start of `kernel_panic()` before any screen output or VFS access
 - [ ] Reserve physical page `0x80000` in `pmm_init()`: mark as `PMEM_RESERVED` so it is never handed out as a free page
 - [ ] In boot Phase 0 (`boot_hw_init`): check `*(uint32_t*)0x80000 == 0xDEADBEEF`; if so, copy evidence to kernel heap buffer, clear the magic, log `[PANIC] Previous crash evidence found`; after VFS is up, write to `X:\Crash\last-panic.txt` (BlackBox) or `C:\Impossible\System\Logs\` (fallback) -- → XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` §7 (`X:\Crash\` path owner)
@@ -229,7 +232,8 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 
 **Files:** `docs/` (schema + tooling notes), optional `scripts/` or `user/` offline converter
 
-- [ ] Publish JSON field schema (`stage`, `phase`, `post`, `start_ms`, `duration_ms`) in `docs/boot-timeline-json.md` and link from `CLAUDE.md` boot diagnostics pointer
+- [ ] Publish the v1 schema in `docs/boot-timeline-json.md`: `stage`/`phase`/`post`/`start_ms`/`duration_ms`/`target_ms`/`source` (`fpdt`|`tsc`)/`unreliable` -- `boot_timeline_dump_json()` already emits all of these; link from `CLAUDE.md`.
+- [ ] The SVG + chrome://tracing converters MUST preserve `target_ms` and `unreliable` so the boot-blame / regression surfaces (→ XREF: [`01-boot-platform/TODO-29`](TODO-29-boot-perf-health-observability.md)) are not silently discarded.
 - [ ] Optional offline converter or in-kernel `boot_timeline_to_svg()` to produce Gantt-style SVG comparable to `systemd-analyze plot` output
 - [ ] Optional Chrome trace event JSON export for `chrome://tracing` import (competitive edge vs plain SVG)
 - [ ] Commit: `"docs: boot timeline JSON schema + optional trace export"`
@@ -252,12 +256,28 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 
 ---
 
+## 11. Boot Load Status Log (ntbtlog Parity)
+
+Win11 `ntbtlog.txt` records every driver/service that loaded or failed during boot; Linux exposes the same via dmesg + `systemd-analyze`. §2 records only 15 coarse named stages, so a storage/input/network boot regression reads as generic `DRIVERS` progress instead of a diagnosable "this subsystem failed/degraded". This adds a durable per-subsystem boot load/status artifact (the observability surface boot triage actually needs).
+
+- [ ] Define `struct boot_load_entry` (capped 64-entry pool, no wrap): name[32], `class` enum (CORE/STORAGE/INPUT/NET/ACPI/GFX), `status` enum (ATTEMPTED/LOADED/SKIPPED/FAILED/DEGRADED), `err_code`/`post_code` u16, `start_ms`/`duration_ms` u32.
+- [ ] `boot_load_record(name, class, status, err, post)`: append an entry with elapsed-ms; call from each subsystem init (`boot_phase1/2/3`, driver probe, service start) on success AND failure/degrade. Reuse `boot_get_elapsed_ms()` (§2).
+- [ ] `boot_load_status_dump_to_blackbox()`: write `X:\Diag\boot-load-status.txt` (one line per entry: status, class, name, err, post, start_ms, duration_ms) next to the §10 identity dump; idempotent overwrite.
+- [ ] Surface a one-line summary on serial + the post-boot toast when any entry is FAILED/DEGRADED (e.g. `[BOOT-LOAD] 2 degraded: ahci(0x5), e1000(0x3)`).
+- [ ] Test: `test_boot_load_status` records a synthetic LOADED+FAILED+DEGRADED mix and asserts the in-memory format + the degraded-summary string; skip live VFS write (forbidden in tests).
+- [ ] Commit: `"diag: per-subsystem boot load/status log -> X:\Diag\boot-load-status.txt (ntbtlog parity)"`
+
+**Test checkpoint:** On a boot with an absent/failing device (e.g. no AHCI), `X:\Diag\boot-load-status.txt` lists that subsystem as FAILED/DEGRADED with an error code; a clean boot lists every core subsystem LOADED; serial shows the degraded summary only when something failed. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                 | 🪟 Win11                     | 🐧 Linux                     | 🚀 Impossible OS                  |
 | -- | ----------------------- | ---------------------------- | ---------------------------- | --------------------------------- |
 | 💎 | Boot POST codes         | ✅ Firmware boot mgr        | ✅ BIOS POST codes           | ✅ §1 §3 POST port 80 + FB hex    |
 | 💎 | Named boot progress     | ✅ ETW boot trace           | ✅ dmesg systemd-analyze     | ✅ §2 serial STAGE ms lines       |
+| 💎 | Boot load/status log    | ✅ ntbtlog.txt driver log   | ✅ dmesg drivers loaded      | ⬜ §11 boot-load-status.txt       |
 | 💎 | Boot timeline viewers   | ⚠️ Performance Toolkit      | ✅ systemd-analyze plot     | ⚠️ JSON §2; §9 viewers pending     |
 | 💎 | Panic forensics         | ✅ WER minidump EventLog    | ✅ kdump pstore ramoops      | ⬜ §5 PMM page last-panic txt     |
 | 💎 | Multi UI spinner        | ✅ WinUI ProgressRing       | ✅ GTK Qt spinners           | ⬜ §7 spinner_create pool         |
@@ -284,7 +304,9 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
   - `spinner_create(SPINNER_MEDIUM, 0x0078D4)` returns non-NULL; `spinner_destroy()` frees the slot; re-create succeeds
   - `spinner_create()` returns NULL after 8 allocations (pool exhausted)
   - Panic evidence struct at `0x80000`: `panic_collect_evidence()` writes magic `0xDEADBEEF`, readback matches
-  - After §9 schema lands: validate a captured `boot-timeline.json` against `docs/boot-timeline-json.md` (field names, numeric types)
+  - Panic evidence header (§5): a record with a bad `crc32` or wrong `version` is REJECTED on restore (not misread as valid); a well-formed header is accepted
+  - Boot load status (§11): `boot_load_record()` appends entries; the in-memory format + the FAILED/DEGRADED summary string are correct; an all-LOADED pool yields an empty degraded summary
+  - After §9 schema lands: validate a captured `boot-timeline.json` against `docs/boot-timeline-json.md` (field names incl `target_ms`/`source`/`unreliable`, numeric types)
 - [ ] Register in `test_runner_init()`: `test_register_boot_diag()`
 - [ ] Commit: `"test: add boot_diag test suite"`
 
