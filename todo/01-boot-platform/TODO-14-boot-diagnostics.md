@@ -81,7 +81,13 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 - [x] Commit: `"boot: UEFI pre-kernel POST codes to I/O port 0x80"`
 
 **Test checkpoint:** UEFI build; milestones emit `outb(0x80, code)` in order. QEMU WHPX, QEMU TCG, VirtualBox: no fault on port writes. Bare metal: POST card matches sequence if present.
+> **Notes:**
+> - Shipped: `post_code(uint8_t)` + `post_code16(uint16_t)` (high byte to port 0x80, full value on serial) in `bootx64.c`, emitted at bootloader milestones 0xB001 through 0xB070.
+> - Integration: QEMU ignores port 0x80 writes silently (no fault); a hardware POST-code reader card decodes the sequence on bare metal before the kernel starts.
+> - Scope boundary: bootloader-stage codes only; kernel-stage POST display is §2/§3.
 > **Verified:** 2026-04-12 -- Milestone table reconciled to `post_code16`; Codex: disarm watchdog on `init_gop` error return before firmware UI. Accepted: none.
+
+---
 
 ## 2. Boot Progress Named-Stage API
 High-level named-stage wrapper over the existing `boot_progress()` that adds a 32-entry stage history (capped, no wrap), elapsed-ms tracking, and `boot_splash_status()` forwarding.
@@ -100,7 +106,13 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 - [x] Commit: `"kernel: boot progress named-stage API + stage history + elapsed-ms tracking"` (exact subject varies across bring-up commits)
 
 **Test checkpoint:** Serial shows `[+NNNms]` lines with stage names for at least 8 transitions; `boot_stage_history_get()` does not fault when called from panic paths. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Notes:**
+> - Shipped: `boot_stage_report()` (15-stage `boot_stage_t`, 32-entry capped history, TSC + elapsed-ms) wrapping the existing `boot_progress()`, plus `boot_timeline_dump_json()` (FPDT + TSC step timeline) in `boot_progress.c`.
+> - Integration: serial `[+NNNms] STAGE: msg`; `boot_timeline_dump_json()` runs at desktop-ready (`boot_desktop.c`); `boot_stage_history_get()` feeds §5 panic forensics.
+> - Scope boundary: `boot_progress_poll()` has no in-tree caller yet (wire with splash/timer when the UI needs a refresh without new history rows).
 > **Verified:** 2026-04-12 -- Named-stage API + `boot_timeline_dump_json` wiring; Codex: safe TSC-to-ms when `freq < 1000`, close timeline parent dir after `create`. Accepted: none.
+
+---
 
 ## 3. POST-Style Hex Code Display
 Render a 4-digit hex POST code in the top-right framebuffer corner visible on every boot, cleared when the desktop is ready.
@@ -115,7 +127,13 @@ Render a 4-digit hex POST code in the top-right framebuffer corner visible on ev
 - [x] Commit: `"kernel: POST-style hex code display in framebuffer corner + I/O port 0x80"` (exact subject varies; see `git log -- src/kernel/main/boot_progress.c`)
 
 **Test checkpoint:** From kernel entry through desktop ready: four hex digits top-right; I/O port `0x80` high byte tracks the current 16-bit POST; digits clear on desktop ready. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Notes:**
+> - Shipped: 8x8 hex font (16 glyphs) + `post_display16()` rendering 4 hex digits top-right via direct VRAM (pre-`SUBSYS_FB`) or `fb_put_pixel()`+`fb_swap_rect()` (post-FB), in `boot_progress.c`.
+> - Integration: called from `boot_stage_report()` after the serial write; port 0x80 high byte tracks the 16-bit POST; cleared at `BOOT_STAGE_DESKTOP_READY` over the `POST16_*` geometry.
+> - Scope boundary: skips pixel writes when the framebuffer is unavailable or postcode=0 after config parse.
 > **Verified:** 2026-04-12 -- Desktop-ready clear uses `POST16_*` geometry; same TSC-ms guard as §2. Accepted: none.
+
+---
 
 ## 4. Alive Blink / Hang Detection *(deferred -- ISR `fb_swap_rect` caused recursive interrupts on bare metal; redesign before ship)*
 A 4x4 px hang indicator once a timer-driven path can update the framebuffer without swapping from ISR context.
@@ -130,6 +148,8 @@ A 4x4 px hang indicator once a timer-driven path can update the framebuffer with
 - [ ] Commit: `"kernel: alive blink hang indicator -- safe FB path, no ISR swap"`
 
 **Test checkpoint:** With §4 shipped: QEMU WHPX, QEMU TCG, VirtualBox: `heartbeat=1` shows stable blink, no lockup or FB corruption. Bare metal: same; confirm no recursive interrupt storm.
+
+---
 
 ## 5. Panic Forensic Evidence *(deferred -- needs stable boot first; crash evidence is useless if boot itself crashes)*
 Capture a `panic_evidence` struct at fault time, survive across soft reboot via a dedicated PMM page, and restore on next boot.
@@ -148,6 +168,8 @@ Capture a `panic_evidence` struct at fault time, survive across soft reboot via 
 
 **Test checkpoint:** Force `kernel_panic("test")`, reboot: serial shows `[PANIC] Previous crash evidence found`; `X:\Crash\last-panic.txt` contains fault RIP + POST code. QEMU WHPX, QEMU TCG, VirtualBox, bare metal: evidence survives warm reboot.
 
+---
+
 ## 6. Panic QR Code *(deferred -- depends on §5)*
 Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD corner.
 
@@ -160,6 +182,8 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 - [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
 
 **Test checkpoint:** With §5+§6 shipped: forced panic shows scannable QR bottom-right; URL resolves to docs panic page. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 7. System-Wide Multi-Instance Spinner *(deferred -- desktop polish, single spinner works)*
 Extend the existing single-instance `spinner.h` to support up to 8 simultaneous named spinner instances for use across the desktop.
@@ -181,6 +205,8 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 
 **Test checkpoint:** With §7 shipped: pool of 8; compositor ticks each active `spinner_t` per frame per → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8; boot splash still uses slot 0. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 8. Runtime Vital Signs Strip *(deferred -- developer tool, needs scheduler stats first)*
 An always-visible 20 px overlay strip at the bottom of the desktop showing live system metrics for developers.
 
@@ -195,6 +221,8 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 - [ ] Commit: `"desktop: runtime vital signs strip -- CPU/RAM/IRQ/FPS overlay for developers"`
 
 **Test checkpoint:** With §8 shipped: `VitalSigns=1` shows bottom strip updating ~500 ms; CPU, RAM, IRQ, uptime, FPS plausible. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 9. Boot Timeline Visualization and Import Parity *(deferred)*
 Linux `systemd-analyze plot` and Windows performance tooling expose boot as a human-readable timeline. This repo already emits machine-readable `boot-timeline.json` from `boot_timeline_dump_json()`; viewer parity is still open.
@@ -239,6 +267,8 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 
 > **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3; timeline **export** exists (JSON) but **viewers** match Linux/Win tooling only after §9. ⬜ rows §5--§8 and §9 are open parity or stretch (⭐ rows). **Edges:** §6 QR and §8 always-on strip are planned differentiators once shipped.
 
+---
+
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_boot_diag()` (pattern: `src/kernel/test/test_runner.c` and `test_suite_register_cat(..., TEST_CAT_BOOT)`; see `include/kernel/test/test.h`).
@@ -258,6 +288,8 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 - [ ] Register in `test_runner_init()`: `test_register_boot_diag()`
 - [ ] Commit: `"test: add boot_diag test suite"`
 
+---
+
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
@@ -271,6 +303,8 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 - [ ] Commit: `"kernel: boot-diagnostics verified -- POST codes, panic forensics, QR code, vital signs, multi-instance spinner"`
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- add `TEST_CAT_BOOT` suites when `test_boot_diag.c` lands (Unit Tests section).
+
+---
 
 ## History
 
