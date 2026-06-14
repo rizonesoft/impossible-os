@@ -170,7 +170,7 @@ A zero-dependency pixel font baked into a single header -- renders ASCII text di
 > - Review: Codex 3x -- consistency + perf clean (95 rows, both paths consistent); the raw header helpers have a latent unbounded-fb-write HIGH (uncalled, superseded by `_scaled`) -- deferred + a contract WARNING comment added.
 > - Scope boundary: §3 owns the font data + helpers; the bounded in-tree renderer is `vpd.c` (§4); bounding/retiring the raw helpers is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (contract warning) | 8/9 items | build OK | manual (smoke boot pending)
-> **Deferred:** [H] raw header render helpers write fb with no extent/NULL check (latent OOB, uncalled) -> XREF: 01-boot-platform/TODO-15 §3 (item: "Bound or retire the raw header render helpers" at line 150)
+> **Deferred:** [H] raw header render helpers write fb with no extent/NULL check (latent OOB, uncalled) -> XREF: 01-boot-platform/TODO-15 §3 (item: "Bound or retire the raw header render helpers" at line 162)
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+0M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 4. Tier 1: Pre-Splash VPD Renderer
@@ -205,7 +205,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 > - Review: Codex 3x fixed a HIGH (row-overflow left a stale active stage so a later `vpd_stage_fail` marked the wrong row -- now clears `s_has_current`) + a layout doc-drift (8px/7px not 4px/5x5); BGRX color packing deferred.
 > - Scope boundary: §4 owns the Tier 1 renderer; page-flip-after-splash handling is §10; format-aware color packing is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (HIGH + layout fixes) | 10/11 items | build OK | manual (on-screen pending)
-> **Deferred:** [M] VPD writes BGRX-assumed colors; RGBX framebuffers render swapped channels (red FAIL -> blue) -> XREF: 01-boot-platform/TODO-15 §4 (item: "Format-aware color packing" at line 164)
+> **Deferred:** [M] VPD writes BGRX-assumed colors; RGBX framebuffers render swapped channels (red FAIL -> blue) -> XREF: 01-boot-platform/TODO-15 §4 (item: "Format-aware color packing" at line 197)
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1M deferred | scope: kernel-code-quality
 
 ## 5. `boot.conf` `postbars` Configuration
@@ -301,7 +301,7 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 > - Review: Codex 3x fixed a stale "NVRAM written only twice" comment (`boot_init.c`); the panic-stage-loss finding is Deferred -- the "exact stage" promise is partial.
 > - Scope boundary: §8 owns the crash banner + NVRAM read; the panic-path NVRAM write lives in `panic.c` and is the subject of the Deferred follow-up below.
 > **Verified:** 2026-06-14 | ship `7b5711f9` (+ this review commit) | 7/8 items | build OK | manual (forced-panic reboot pending)
-> **Deferred:** [M] clean panic overwrites the NVRAM stage marker with generic POST16_BOOT_FAILED, so the banner shows a generic failure not the exact stage -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 226)
+> **Deferred:** [M] clean panic overwrites the NVRAM stage marker with generic POST16_BOOT_FAILED, so the banner shows a generic failure not the exact stage -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 293)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+1M+0L fixed, 1M deferred | scope: kernel-code-quality
 
 ## 9. Tier 2: Splash-Integrated Progress *(deferred)*
@@ -324,7 +324,7 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 > - Why now-deferred: building end-user boot UX before Tier 1 is hardware-proven would churn the design; the [!NOTE] records the revisit condition. `postbars=2` already drops the splash (§5) so Tier 1 stays authoritative.
 > - Scope boundary: §9 owns the Tier 2 splash integration; the Tier 1 renderer is §4; the raw-to-splash handoff is §10 (also deferred).
 > **Verified:** 2026-06-15 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (design-gated, revisit post-bare-metal)
-> **Deferred:** [M] Tier 2 splash-integrated VPD progress unimplemented (reason: end-user UX gated on finalized splash design + proven bare-metal boot reliability; Tier 1 is the shipped diagnostic path) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 319)
+> **Deferred:** [M] Tier 2 splash-integrated VPD progress unimplemented (reason: end-user UX gated on finalized splash design + proven bare-metal boot reliability; Tier 1 is the shipped diagnostic path) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 314)
 
 ## 10. Seamless Tier Transition *(deferred)*
 > [!NOTE] Deferred -- depends on §9 (Tier 2 splash integration). No transition needed until Tier 2 exists. Currently `vpd_stop_tier1()` is called before splash init and the splash background simply overwrites the VPD area.
@@ -347,7 +347,7 @@ When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 
 > - Partial today: the `postbars=2` no-splash aspect of this section already shipped in §5 (Tier 1 stays authoritative, splash never draws); the deferred remainder is the state-transferring Tier 1 to Tier 2 handoff.
 > - Scope boundary: §10 owns the tier handoff; Tier 2 itself is §9; the Tier 1 renderer + `vpd_stop_tier1` are §4/§5.
 > **Verified:** 2026-06-15 | deferred -- no code shipped (postbars=2 no-splash done in §5) | 0/6 items | build OK (no code change) | manual (depends on §9)
-> **Deferred:** [M] state-transferring Tier 1 to Tier 2 transition unimplemented (reason: depends on §9 Tier 2 which is deferred; the postbars=2 no-splash case already covered by §5) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 306)
+> **Deferred:** [M] state-transferring Tier 1 to Tier 2 transition unimplemented (reason: depends on §9 Tier 2 which is deferred; the postbars=2 no-splash case already covered by §5) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 314)
 
 ## 11. Phase Grouping and Diagnostic Layout *(done)*
 Full diagnostic layout with phase headers, visual separators, and structured stage grouping.
@@ -408,8 +408,8 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 > - Review: Codex 3x fixed the 0xFFFE info-header misclassification (now "FAILED (panic)" not "Phase 3") + a stale `boot_halt` NVRAM comment; exact-stage preservation deferred (shared with §8).
 > - Scope boundary: §13 owns the at-panic stage-red marking; the next-boot banner is §8; Tier 2 post-splash panic display is deferred to §9.
 > **Verified:** 2026-06-14 | this review commit (fixes in-commit) | 4/5 items | build OK | manual (forced-panic pending)
-> **Deferred:** [M] Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 303)
-> **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 226)
+> **Deferred:** [M] Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 400)
+> **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 293)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -450,17 +450,17 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] `postbars=0`: boot shows normal splash; no VPD bars or text visible at any point
-- [ ] `postbars=1`: Phase 0 shows Tier 1 bars with names; splash takes over in Phase 1; **splash status shows per-stage timing only after §9** (today generic `boot_splash_status()` text)
-- [ ] `postbars=2`: full Tier 1 diagnostic table throughout boot; **no splash art only after §5 diag gating + §9 TTF path** land; phase headers + timing + POST codes already on Tier 1
-- [ ] Crash test: force panic in Phase 1 → reboot → next boot shows "Last boot failed at: STAGE (0xNN)" banner at top regardless of `postbars` setting
-- [ ] Bare metal: VPD renders correctly on real hardware (i5-11600K confirmed platform)
-- [ ] QEMU WHPX, VBox, TCG: VPD renders correctly on all VM platforms
-- [ ] `include/kernel/hv_bar.h` deleted; no references to `HV_BAR` remain in codebase
-- [ ] Commit: `"boot: Visual POST Display complete -- two-tier diagnostics with NVRAM crash persistence"`
+- [x] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===` (2026-06-15; smoke PASS 2.540s)
+- [ ] `postbars=0`: boot shows normal splash; no VPD bars or text visible at any point (manual -- on-screen visual)
+- [ ] `postbars=1`: Phase 0 shows Tier 1 bars with names; splash takes over in Phase 1; **splash status shows per-stage timing only after §9** (today generic `boot_splash_status()` text) (manual -- on-screen visual)
+- [ ] `postbars=2`: full Tier 1 diagnostic table throughout boot; splash art skipped (§5 shipped); the richer TTF layout is §9 (deferred); phase headers + timing + POST codes already on Tier 1 (manual -- on-screen visual)
+- [ ] Crash test: force panic in Phase 1 → reboot → next boot shows "Last boot failed at: STAGE (0xNN)" banner at top regardless of `postbars` setting (manual -- forced-panic reboot)
+- [ ] Bare metal: VPD renders correctly on real hardware (i5-11600K confirmed platform) (manual -- bare metal)
+- [ ] QEMU WHPX, VBox, TCG: VPD renders correctly on all VM platforms (manual -- on-screen visual; TCG smoke boot PASS 2026-06-15)
+- [x] `include/kernel/hv_bar.h` deleted; no references to `HV_BAR` remain in codebase (verified 2026-06-15: file absent, `grep -rn HV_BAR src/ include/` empty)
+- [x] Commit: `"boot: Visual POST Display complete -- two-tier diagnostics with NVRAM crash persistence"` (file close-out 2026-06-15)
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- add `TEST_CAT_BOOT` suites when `test_vpd.c` lands (Unit Tests section).
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_vpd.c` landed (2 suites, 16 assertions); 2649 kernel + 16 user-mode PASS on TCG 2026-06-15.
 
 ## History
 
