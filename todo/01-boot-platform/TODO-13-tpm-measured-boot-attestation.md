@@ -187,7 +187,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 **Test checkpoint:** Define / read / write / undefine round-trip on one OS-owned NV index against QEMU swtpm; where the TPM supports it the index is PCR-policy-protected (a read under the wrong PCR state is denied); no-space and locked-NV return explicit degraded states (not a wedge); the UEFI-variable -> TPM-NV migration path moves an existing baseline without loss. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM). The PCR-state-deny + live round-trip are swtpm/bare-metal validation; the kernel unit suites cover marshal/parse/classifier + session-lifecycle teardown via the fake-TIS seam.
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 9 NV suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 10 NV suites, 0 failures
 
 > **Notes:**
 > - Shipped `src/kernel/tpm_nv.c` + `tpm_nv.h`: pure TPM2 NV builders/parsers, format-first `tpm_nv_classify_rc`, `tpm_nv_*` wrappers, plus `tpm2_rsp_params()` (session-aware response locator) in the transport. 9 suites in `test_tpm_nv.c`.
@@ -195,6 +195,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Unblocks §6 baseline storage (define/read/write + policy-protected index) and §8 (reuses the policy-session machinery). Codex design + test-coverage adoptions in the section commit.
 > - Baseline policy is pinned to the allocation table: `tpm_nv_baseline_pcr_select()` derives the PolicyPCR selection from `tpm_pcr_baseline_mask()` (§12), no hard-coded PCR set.
 > - Scope: §7 owns the NV storage MECHANISM only; §6 owns baseline CONTENT/enrollment; the UEFI-var -> TPM-NV migration item is deferred to §6's schema.
+> **Verified:** 2026-06-14 | commit `b7a9ec35` (impl) + review fixes | 3/4 items | build OK | tests 641 security + 4965 full PASS, smoke PASS (KVM 2.51s)
+> **Quality reviewed:** 2026-06-14 | Codex 11x (design + test-coverage + adversarial + consistency + perf + re-adversarial) | 5H+8M fixed, 0 open | scope: kernel-code-quality
 
 ## 8. Sealed-Secret Boot Policy Hooks
 

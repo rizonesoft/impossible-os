@@ -189,11 +189,18 @@ static void test_nv_parse_misc(void)
     tpm2_be16_put(rsp + 22, 0u);              /* authPolicy size */
     tpm2_be16_put(rsp + 24, 128u);            /* dataSize */
     tpm2_be16_put(rsp + 26, 0u);              /* TPM2B_NAME size */
-    TEST_ASSERT_EQ(tpm2_parse_nv_read_public(rsp, 28u, &sz, &attrs), 0,
-                   "NV_ReadPublic parses");
+    TEST_ASSERT_EQ(tpm2_parse_nv_read_public(rsp, 28u, TPM_NV_INDEX_BASELINE, &sz, &attrs), 0,
+                   "NV_ReadPublic parses (matching index)");
     TEST_ASSERT_EQ((uint32_t)sz, 128u, "ReadPublic dataSize 128");
     TEST_ASSERT_EQ(attrs, (uint32_t)(TPMA_NV_POLICYREAD | TPMA_NV_WRITTEN),
                    "ReadPublic attributes");
+    /* Index binding: the SAME response for a DIFFERENT requested index is rejected. */
+    TEST_ASSERT_EQ(tpm2_parse_nv_read_public(rsp, 28u, TPM_NV_INDEX_OS_DATA, &sz, &attrs), -1,
+                   "ReadPublic rejects mismatched nvIndex");
+    /* Trailing bytes (over-long TPM2B_NAME claim) -> exact-consumption reject. */
+    tpm2_be16_put(rsp + 26, 4u);              /* name claims 4 bytes, none present */
+    TEST_ASSERT_EQ(tpm2_parse_nv_read_public(rsp, 28u, TPM_NV_INDEX_BASELINE, &sz, &attrs), -1,
+                   "ReadPublic rejects non-exact TPM2B_NAME");
 
     /* StartAuthSession response: sessionHandle(4) + nonceTPM(2,0). */
     memset(rsp, 0, sizeof rsp);
@@ -511,14 +518,23 @@ static void test_nv_sas_parse_malformed(void)
     TEST_ASSERT_EQ(tpm2_parse_start_auth_session(rsp, 14u), 0u,
                    "handle-only response rejected (no nonceTPM)");
 
-    /* nonceTPM length runs past the parameter area -> reject. */
+    /* nonceTPM length not consuming the parameter area exactly -> reject. */
     tpm2_be32_put(rsp + 2, 16u);
     tpm2_be16_put(rsp + 14, 64u);   /* claims 64 nonce bytes, only 0 present */
     TEST_ASSERT_EQ(tpm2_parse_start_auth_session(rsp, 16u), 0u,
-                   "over-long nonceTPM rejected");
+                   "non-exact nonceTPM rejected");
+
+    /* A well-formed reply naming a NON-session handle (transient object 0x80...)
+     * must be rejected by the strict parser too -- the caller later flushes it. */
+    tpm2_be32_put(rsp + 6, TPM2_RC_SUCCESS);
+    tpm2_be32_put(rsp + 10, 0x80000000u);
+    tpm2_be16_put(rsp + 14, 0u);
+    TEST_ASSERT_EQ(tpm2_parse_start_auth_session(rsp, 16u), 0u,
+                   "non-session handle rejected by strict parser");
 
     /* A failed (error rc) response yields handle 0 regardless of shape. */
     tpm2_be32_put(rsp + 6, 0x0000018Bu);
+    tpm2_be32_put(rsp + 10, 0x03000001u);
     tpm2_be16_put(rsp + 14, 0u);
     TEST_ASSERT_EQ(tpm2_parse_start_auth_session(rsp, 16u), 0u,
                    "error-rc StartAuthSession -> handle 0");
@@ -651,6 +667,46 @@ static void test_nv_wrapper_status(void)
     TEST_ASSERT(!nvf_saw_cc(TPM2_CC_FLUSH_CONTEXT), "non-session handle NOT flushed (F-RE2)");
 }
 
+/* ---- Cleanup flush waits out a busy gate instead of leaking (F-RA) ---- */
+
+static void test_nv_flush_busy_wait(void)
+{
+    const struct tpm_t_io *prev;
+    tpm_nv_status_t st;
+    uint8_t out[8];
+    uint16_t got;
+
+    /* The gate is "held" for 3 waiting-acquire ticks (< FAST_TEST_ITERS=64): the
+     * session cleanup flush must WAIT it out, so FlushContext is still submitted
+     * (the session is not leaked). Only the flush uses tpm2_submit_waiting; the
+     * StartAuthSession/PolicyPCR/NV_Read commands use tpm2_submit and are
+     * unaffected by the busy-ticks seam. */
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    tpm_t_test_busy_ticks(3u);
+    memset(out, 0, sizeof out);
+    got = 0;
+    st = tpm_nv_policy_read(TPM_NV_INDEX_BASELINE, 0u, out, sizeof out, &got);
+    tpm_t_test_busy_ticks(0u);
+    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "policy_read succeeds under brief gate contention");
+    TEST_ASSERT(nvf_saw_cc(TPM2_CC_FLUSH_CONTEXT),
+                "session flushed after waiting out BUSY (no leak)");
+
+    /* If the gate never clears within the budget (100 > FAST_TEST_ITERS=64), the
+     * flush gives up WITHOUT hanging -- the wait is bounded, not infinite. */
+    nvf_reset(0u, 0u);
+    prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
+    tpm_t_test_busy_ticks(100u);
+    memset(out, 0, sizeof out);
+    got = 0;
+    st = tpm_nv_policy_read(TPM_NV_INDEX_BASELINE, 0u, out, sizeof out, &got);
+    tpm_t_test_busy_ticks(0u);
+    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
+                   "policy_read completes even when flush times out (bounded wait)");
+}
+
 void test_register_tpm_nv(void)
 {
     test_suite_register_cat("tpm: NV rc classification", test_nv_classify_rc, TEST_CAT_SECURITY);
@@ -662,4 +718,5 @@ void test_register_tpm_nv(void)
     test_suite_register_cat("tpm: NV session lifecycle", test_nv_session_lifecycle, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV StartAuthSession malformed parse", test_nv_sas_parse_malformed, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: NV wrapper status mapping", test_nv_wrapper_status, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: NV cleanup flush busy-wait", test_nv_flush_busy_wait, TEST_CAT_SECURITY);
 }

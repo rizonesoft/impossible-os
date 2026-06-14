@@ -100,6 +100,7 @@ static int s_available;        /* transport up (s_state_lock) */
 static int s_busy;             /* transaction in flight (s_state_lock) */
 static int s_failed;           /* sticky wedge flag (s_state_lock) */
 static int s_fast_timeouts;    /* unit tests only */
+static uint32_t s_test_busy_ticks; /* unit tests: report the gate busy for N waiting-acquire ticks */
 static uint64_t s_tsc_per_ms;  /* 0 = unknown frequency */
 
 static volatile uint8_t *s_tis_base;   /* mapped TIS locality 0 window */
@@ -842,6 +843,78 @@ int tpm2_submit(const uint8_t *cmd, uint32_t cmd_len,
     return rc;
 }
 
+/* Budget-free wait tick: like tpm_t_wait_tick but does NOT touch the sequence
+ * cumulative budget (s_budget_*), since the waiting-acquire below runs OUTSIDE
+ * any owned sequence and must not consume another sequence's budget. Returns 1
+ * while the wait may continue, 0 on expiry. */
+static int tpm_t_wait_tick_nobudget(struct tpm_t_wait *w)
+{
+    __asm__ volatile ("pause");
+    if (w->deadline)
+        return tpm_t_rdtsc() < w->deadline;
+    if (w->iters_left == 0)
+        return 0;
+    w->iters_left--;
+    return 1;
+}
+
+int tpm2_submit_waiting(const uint8_t *cmd, uint32_t cmd_len,
+                        uint8_t *rsp, uint32_t rsp_cap, uint32_t budget_ms)
+{
+    uint64_t irqf;
+    int rc, acquired = 0;
+    struct tpm_t_wait w;
+
+    rc = tpm_t_check_args(cmd, cmd_len, rsp, rsp_cap);
+    if (rc != 0)
+        return rc;
+
+    /* Acquire the busy gate, waiting up to budget_ms for an in-flight
+     * transaction on another CPU to finish. This is the non-ISR CLEANUP submit
+     * (FlushContext after a multi-command session flow): an immediate BUSY here
+     * would abandon the session handle and erode the TPM's small session pool,
+     * so a brief overlapping transaction is waited out instead of bounced. */
+    tpm_t_wait_begin(&w, budget_ms);
+    for (;;) {
+        spin_lock_irqsave(&s_state_lock, &irqf);
+        if (!s_available) {
+            spin_unlock_irqrestore(&s_state_lock, irqf);
+            return TPM_T_ERR_NODEV;
+        }
+        if (s_failed) {
+            spin_unlock_irqrestore(&s_state_lock, irqf);
+            return TPM_T_ERR_FAILED;
+        }
+        if (s_test_busy_ticks != 0u) {
+            /* Unit-test simulation of a gate held by another CPU. */
+            s_test_busy_ticks--;
+        } else if (!s_busy && !s_budget_active) {
+            s_busy = 1;
+            acquired = 1;
+        }
+        spin_unlock_irqrestore(&s_state_lock, irqf);
+        if (acquired)
+            break;
+        if (!tpm_t_wait_tick_nobudget(&w))
+            return TPM_T_ERR_BUSY;   /* deadline expired -- gate never cleared */
+    }
+
+    rc = tpm_t_submit_txn(cmd, cmd_len, rsp, rsp_cap);
+
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_busy = 0;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+    return rc;
+}
+
+void tpm_t_test_busy_ticks(uint32_t n)
+{
+    uint64_t irqf;
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_test_busy_ticks = n;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
+}
+
 int tpm_transport_available(void)
 {
     uint64_t irqf;
@@ -1133,6 +1206,7 @@ const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
         s_fast_timeouts = 0;
     }
     s_busy = 0;
+    s_test_busy_ticks = 0;
     spin_unlock_irqrestore(&s_state_lock, irqf);
     return old;
 }

@@ -83,6 +83,17 @@ int tpm_transport_iface(void);
 int tpm2_submit(const uint8_t *cmd, uint32_t cmd_len,
                 uint8_t *rsp, uint32_t rsp_cap);
 
+/* Like tpm2_submit, but if another transaction is in flight, wait up to
+ * budget_ms for the transport to become free instead of returning BUSY
+ * immediately. For the non-ISR CLEANUP path (e.g. FlushContext after a
+ * multi-command session flow) where an immediate BUSY would abandon a resource
+ * -- a leaked session handle erodes the TPM's small session pool until reboot.
+ * Returns the response length / TPM rc on submit, or a negative TPM_T_ERR_*
+ * (TPM_T_ERR_BUSY only when the gate never cleared within budget_ms). Never
+ * call from ISR context. */
+int tpm2_submit_waiting(const uint8_t *cmd, uint32_t cmd_len,
+                        uint8_t *rsp, uint32_t rsp_cap, uint32_t budget_ms);
+
 /* ---- Pure marshaling helpers (unit-testable, no MMIO) ---- */
 
 /* Big-endian field access (TPM2 wire format). */
@@ -207,3 +218,9 @@ void tpm_t_test_budget_iters(uint64_t iters);
  * lets tests prove a nested/racing caller did not clobber an active
  * sequence budget. */
 int tpm_t_test_budget_active(void);
+
+/* Make tpm2_submit_waiting() see the busy gate as held for the next N
+ * acquire ticks before it can take it (kernel unit tests only) -- simulates a
+ * transaction in flight on another CPU so the bounded-wait acquire path is
+ * testable (BUSY-then-success) without real concurrency. 0 disarms. */
+void tpm_t_test_busy_ticks(uint32_t n);

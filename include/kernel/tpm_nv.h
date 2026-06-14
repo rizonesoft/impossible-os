@@ -92,6 +92,11 @@
 #define TPM_NV_INDEX_OS_DATA  0x01800200u
 #define TPM_NV_INDEX_BASELINE 0x01800201u
 
+/* Wall-clock budget the session-cleanup FlushContext waits for the transport
+ * busy gate to clear (matches the longest contending sequence -- the RNG
+ * bounded-collect budget). Bounds the no-leak cleanup wait. */
+#define TPM_NV_FLUSH_BUDGET_MS 2000u
+
 /* Largest NV payload a single tpm_nv_write/read moves in one transaction.
  * A measured-boot baseline (golden PCRs + image hashes + metadata) fits well
  * under this; callers needing more chunk by `offset`. Bounds the wrapper stack
@@ -158,8 +163,11 @@ int tpm2_parse_nv_read(const uint8_t *rsp, uint32_t len,
 uint32_t tpm2_build_nv_read_public(uint8_t *buf, uint32_t cap, uint32_t nv_index);
 
 /* Parse a TPM2_NV_ReadPublic response: extracts dataSize + attributes from the
- * TPMS_NV_PUBLIC. Returns 0 + sets outs, or -1 on malformed/failed. */
-int tpm2_parse_nv_read_public(const uint8_t *rsp, uint32_t len,
+ * TPMS_NV_PUBLIC, binds the public area to the requested nv_index (rejects a
+ * response naming a different index), and requires exact parameter consumption
+ * (TPM2B_NV_PUBLIC + TPM2B_NAME, nothing else). Returns 0 + sets outs, or -1 on
+ * malformed/failed/index-mismatch. */
+int tpm2_parse_nv_read_public(const uint8_t *rsp, uint32_t len, uint32_t nv_index,
                               uint16_t *out_size, uint32_t *out_attrs);
 
 /* TPM2_StartAuthSession(tpmKey=NULL, bind=NULL, sym=NULL, authHash=SHA256).

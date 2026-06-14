@@ -180,11 +180,13 @@ int tpm2_parse_nv_read(const uint8_t *rsp, uint32_t len,
     uint16_t dsz;
     if (!out || tpm2_rsp_params(rsp, len, &poff, &plen) != 0)
         return -1;
-    /* parameters: TPM2B_MAX_NV_BUFFER = size(2) + data. */
+    /* parameters: TPM2B_MAX_NV_BUFFER = size(2) + data, and NOTHING else.
+     * Require exact consumption (2 + dsz == plen) so a malformed rc-success
+     * cannot hide extra parameter bytes and still be reported as OK. */
     if (plen < 2u)
         return -1;
     dsz = tpm2_be16_get(rsp + poff);
-    if ((uint32_t)dsz > plen - 2u || (uint32_t)dsz > out_cap)
+    if ((uint32_t)dsz != plen - 2u || (uint32_t)dsz > out_cap)
         return -1;
     for (i = 0; i < dsz; i++)
         out[i] = rsp[poff + 2u + i];
@@ -203,12 +205,13 @@ uint32_t tpm2_build_nv_read_public(uint8_t *buf, uint32_t cap, uint32_t nv_index
     return 14u;
 }
 
-int tpm2_parse_nv_read_public(const uint8_t *rsp, uint32_t len,
+int tpm2_parse_nv_read_public(const uint8_t *rsp, uint32_t len, uint32_t nv_index,
                               uint16_t *out_size, uint32_t *out_attrs)
 {
     uint32_t poff, plen, base;
-    uint16_t pubsize, policy_len, dsz;
-    /* params: TPM2B_NV_PUBLIC{ size(2) + TPMS_NV_PUBLIC } + TPM2B_NAME. */
+    uint16_t pubsize, policy_len, dsz, name_len;
+    /* params: TPM2B_NV_PUBLIC{ size(2) + TPMS_NV_PUBLIC } + TPM2B_NAME{ size(2)
+     * + name }, and NOTHING else. */
     if (tpm2_rsp_params(rsp, len, &poff, &plen) != 0 || plen < 2u)
         return -1;
     pubsize = tpm2_be16_get(rsp + poff);
@@ -219,11 +222,23 @@ int tpm2_parse_nv_read_public(const uint8_t *rsp, uint32_t len,
     if (pubsize < 14u)
         return -1;
     base = poff + 2u;                         /* start of TPMS_NV_PUBLIC */
+    /* Bind the public area to the REQUESTED index: a desynchronized/malicious
+     * TPM that echoes well-formed metadata for a DIFFERENT nvIndex must not be
+     * reported as success for the index the caller asked about. */
+    if (tpm2_be32_get(rsp + base) != nv_index)
+        return -1;
     policy_len = tpm2_be16_get(rsp + base + 10u);
     /* authPolicy + dataSize must fit inside pubsize. */
     if ((uint32_t)policy_len > (uint32_t)pubsize - 12u - 2u)
         return -1;
     dsz = tpm2_be16_get(rsp + base + 12u + policy_len);
+    /* Trailing TPM2B_NAME and exact parameter consumption: a malformed success
+     * with extra bytes or a missing name must be rejected. */
+    if (plen < 2u + (uint32_t)pubsize + 2u)
+        return -1;
+    name_len = tpm2_be16_get(rsp + poff + 2u + pubsize);
+    if (2u + (uint32_t)pubsize + 2u + (uint32_t)name_len != plen)
+        return -1;
     if (out_attrs) *out_attrs = tpm2_be32_get(rsp + base + 6u);
     if (out_size)  *out_size = dsz;
     return 0;
@@ -260,16 +275,23 @@ uint32_t tpm2_parse_start_auth_session(const uint8_t *rsp, uint32_t len)
 {
     uint32_t poff, plen, handle;
     uint16_t nonce_len;
-    /* params: sessionHandle(4) + nonceTPM TPM2B(2 + N). Validate the whole
-     * parameter area, not just the handle -- a response with a truncated or
-     * over-long nonceTPM is malformed and must not yield a "valid" session. */
+    uint8_t ht;
+    /* params: sessionHandle(4) + nonceTPM TPM2B(2 + N), and NOTHING else.
+     * Require EXACT consumption (no trailing bytes) and a real SESSION-type
+     * handle -- a corrupt rc-success reply naming a transient object handle
+     * (e.g. 0x80...) with a well-formed nonce must NOT be accepted, since the
+     * caller later FlushContext's whatever handle this returns (flushing a
+     * non-session object would evict unrelated TPM state). */
     if (tpm2_rsp_params(rsp, len, &poff, &plen) != 0 || plen < 6u)
         return 0;
     nonce_len = tpm2_be16_get(rsp + poff + 4u);
-    if ((uint32_t)nonce_len > plen - 6u)
+    if ((uint32_t)nonce_len != plen - 6u)   /* exact: 6 + nonce_len == plen */
         return 0;
     handle = tpm2_be32_get(rsp + poff);
-    return handle;   /* 0 is never a valid session handle */
+    ht = (uint8_t)(handle >> 24);
+    if (ht != 0x02u && ht != 0x03u)   /* HMAC / POLICY session types only */
+        return 0;
+    return handle;
 }
 
 uint32_t tpm2_rsp_session_handle(const uint8_t *rsp, uint32_t len)
@@ -337,7 +359,8 @@ int tpm2_parse_policy_get_digest(const uint8_t *rsp, uint32_t len,
     if (!out || tpm2_rsp_params(rsp, len, &poff, &plen) != 0 || plen < 2u)
         return -1;
     dsz = tpm2_be16_get(rsp + poff);
-    if (dsz == 0u || (uint32_t)dsz > plen - 2u || (uint32_t)dsz > out_cap)
+    /* policyDigest TPM2B is the only parameter: exact consumption. */
+    if (dsz == 0u || (uint32_t)dsz != plen - 2u || (uint32_t)dsz > out_cap)
         return -1;
     for (i = 0; i < dsz; i++)
         out[i] = rsp[poff + 2u + i];
@@ -440,14 +463,20 @@ static int nv_exec(const uint8_t *cmd, uint32_t n, uint8_t *rsp, uint32_t cap,
     return 0;
 }
 
-/* Best-effort FlushContext: the single teardown for every started session. A
- * flush failure is ignored -- the session is already lost to us either way. */
+/* The single teardown for every started session. FlushContext must not leak the
+ * session on transient contention: if another transaction holds the transport,
+ * an immediate-BUSY submit would abandon the handle (eroding the TPM's small
+ * session pool until reboot). tpm2_submit_waiting WAITS up to a bounded budget
+ * for the gate to clear -- waiting out a real ms-scale transaction that a tight
+ * retry could not. A permanently wedged transport is unrecoverable either way;
+ * the result is otherwise ignored (best-effort cleanup). */
 static void nv_flush(uint32_t handle)
 {
     uint8_t cmd[16], rsp[16];
     uint32_t n = tpm2_build_flush_context(cmd, sizeof cmd, handle);
-    if (n != 0u)
-        (void)tpm2_submit(cmd, n, rsp, sizeof rsp);
+    if (n == 0u)
+        return;
+    (void)tpm2_submit_waiting(cmd, n, rsp, sizeof rsp, TPM_NV_FLUSH_BUDGET_MS);
 }
 
 /* Compute the baseline authPolicy via a TRIAL PCR session over the baseline
@@ -670,7 +699,7 @@ tpm_nv_status_t tpm_nv_read_public(uint32_t nv_index, uint16_t *out_size,
         return TPM_NV_BADARG;
     if (nv_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
         return st;
-    if (tpm2_parse_nv_read_public(rsp, rlen, out_size, out_attrs) != 0)
+    if (tpm2_parse_nv_read_public(rsp, rlen, nv_index, out_size, out_attrs) != 0)
         return TPM_NV_TRANSPORT;
     return TPM_NV_OK;
 }

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-14T05:36:21+02:00",
-  "total_suites": 1265,
-  "total_assertions": 3757,
+  "timestamp": "2026-06-14T06:37:34+02:00",
+  "total_suites": 1266,
+  "total_assertions": 3763,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -63,7 +63,7 @@
     {"file": "test_swap.c", "suites": 1, "assertions": 3},
     {"file": "test_timer_tick_cb.c", "suites": 2, "assertions": 4},
     {"file": "test_tpm_event_log.c", "suites": 9, "assertions": 29},
-    {"file": "test_tpm_nv.c", "suites": 9, "assertions": 99},
+    {"file": "test_tpm_nv.c", "suites": 10, "assertions": 105},
     {"file": "test_tpm_pcr_alloc.c", "suites": 3, "assertions": 15},
     {"file": "test_tpm_replay.c", "suites": 9, "assertions": 45},
     {"file": "test_tpm_sb_reconcile.c", "suites": 2, "assertions": 30},
