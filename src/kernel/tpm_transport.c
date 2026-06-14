@@ -10,6 +10,7 @@
  * ============================================================================ */
 
 #include "kernel/tpm_transport.h"
+#include "kernel/tpm.h"          /* tpm_alg_digest_len_pub() for PCR_Read bind */
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_timing.h"
@@ -329,6 +330,82 @@ int tpm2_parse_get_random(const uint8_t *rsp, uint32_t len,
     for (i = 0; i < n; i++)
         out[i] = rsp[TPM2_RSP_HEADER_SIZE + 2u + i];
     return (int)n;
+}
+
+uint32_t tpm2_build_pcr_read(uint8_t *buf, uint32_t cap, uint16_t alg,
+                             uint32_t pcr_index)
+{
+    /* header(10) + TPML_PCR_SELECTION{ count(4) + hashAlg(2) + sizeofSelect(1)
+     * + pcrSelect[3] } = 20 bytes, single PCR. */
+    if (!buf || cap < 20u || pcr_index > 23u)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_NO_SESSIONS);
+    tpm2_be32_put(buf + 2, 20u);                 /* commandSize */
+    tpm2_be32_put(buf + 6, TPM2_CC_PCR_READ);
+    tpm2_be32_put(buf + 10, 1u);                 /* pcrSelectionIn count = 1 */
+    tpm2_be16_put(buf + 14, alg);                /* hashAlg */
+    buf[16] = 3u;                                /* sizeofSelect = 3 (PCR 0..23) */
+    buf[17] = 0u; buf[18] = 0u; buf[19] = 0u;    /* pcrSelect bitmap */
+    buf[17u + (pcr_index >> 3)] = (uint8_t)(1u << (pcr_index & 7u));
+    return 20u;
+}
+
+int tpm2_parse_pcr_read(const uint8_t *rsp, uint32_t len,
+                        uint16_t alg, uint32_t pcr_index,
+                        uint8_t *out, uint32_t out_cap)
+{
+    uint32_t size, rc, off, sel_count, dig_count, i;
+    uint16_t dsz, sel_alg;
+    uint8_t sos, byte_idx, bit_mask, requested_set;
+    uint16_t expect_len = tpm_alg_digest_len_pub(alg);
+
+    if (!out || expect_len == 0u || pcr_index >= 24u ||
+        tpm2_rsp_parse(rsp, len, 0, &size, &rc) != 0 ||
+        rc != TPM2_RC_SUCCESS)
+        return -1;
+    /* tpm2_rsp_parse proved size >= header and size <= len; every read below
+     * is bounded by `size`, so it stays inside the response buffer. */
+    off = TPM2_RSP_HEADER_SIZE;
+    if (size < off + 4u) return -1;            /* updateCounter */
+    off += 4u;
+
+    /* Echoed pcrSelectionOut: must be exactly the single bank+PCR we asked
+     * for. A desynchronized/malformed TPM that echoes a different alg or PCR
+     * (or more than one selection) must NOT have its digest cached under our
+     * (alg, pcr_index) key -- bind the response to the request here. */
+    if (size < off + 4u) return -1;
+    sel_count = tpm2_be32_get(rsp + off);
+    off += 4u;
+    if (sel_count != 1u) return -1;            /* single-PCR read -> one selection */
+    if (size < off + 3u) return -1;            /* hashAlg(2) + sizeofSelect(1) */
+    sel_alg = tpm2_be16_get(rsp + off);
+    sos = rsp[off + 2u];
+    if (sel_alg != alg || sos != 3u) return -1;
+    if (size < off + 3u + (uint32_t)sos) return -1;
+    byte_idx = (uint8_t)(pcr_index >> 3);      /* sos==3 covers PCR 0..23 */
+    bit_mask = (uint8_t)(1u << (pcr_index & 7u));
+    requested_set = (uint8_t)(rsp[off + 3u + byte_idx] & bit_mask);
+    off += 3u + (uint32_t)sos;
+
+    /* TPML_DIGEST: count(4) + count*TPM2B_DIGEST{ size(2) buffer[] }. */
+    if (size < off + 4u) return -1;
+    dig_count = tpm2_be32_get(rsp + off);
+    off += 4u;
+    if (!requested_set) {
+        /* TPM reports the requested PCR was not read: inactive bank. The
+         * value count must agree (no stray digest). */
+        return (dig_count == 0u) ? 0 : -1;
+    }
+    /* Requested PCR was read: exactly one digest of the bank's exact size. */
+    if (dig_count != 1u) return -1;
+    if (size < off + 2u) return -1;
+    dsz = tpm2_be16_get(rsp + off);
+    off += 2u;
+    if (dsz != expect_len || (uint32_t)dsz > size - off || (uint32_t)dsz > out_cap)
+        return -1;
+    for (i = 0; i < dsz; i++)
+        out[i] = rsp[off + i];
+    return (int)dsz;
 }
 
 int tpm2_get_random_bounded(uint8_t *out, uint32_t want, uint32_t budget_ms)

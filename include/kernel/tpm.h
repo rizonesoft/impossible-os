@@ -106,6 +106,25 @@ void tpm_evlog_export_cel(void);
  *   4. Secure storage for golden values (encrypted NVRAM or TPM NV index)
  * ---- */
 
+/* TCG hash algorithm IDs (TCG Algorithm Registry). Public API inputs for
+ * tpm_pcr_get() + the event-log metadata. */
+#define TPM_ALG_SHA1    0x0004u
+#define TPM_ALG_SHA256  0x000Bu
+#define TPM_ALG_SHA384  0x000Cu
+#define TPM_ALG_SHA512  0x000Du
+
+/* Digest length in bytes for a TCG algorithm id; 0 = unknown/unsupported. */
+static inline uint16_t tpm_alg_digest_len_pub(uint16_t alg_id)
+{
+    switch (alg_id) {
+        case TPM_ALG_SHA1:   return 20u;
+        case TPM_ALG_SHA256: return 32u;
+        case TPM_ALG_SHA384: return 48u;
+        case TPM_ALG_SHA512: return 64u;
+        default:             return 0u;
+    }
+}
+
 /* Standard PCR indices for the boot chain */
 #define TPM_PCR_FIRMWARE        0   /* Platform firmware code and data */
 #define TPM_PCR_FIRMWARE_CONFIG 1   /* Host platform configuration (BIOS settings) */
@@ -162,6 +181,48 @@ int tpm_integrity_verified(void);
 /* Returns the full boot integrity report for the System Settings UI.
  * Valid after tpm_integrity_init(). */
 const struct boot_integrity_report *tpm_integrity_report(void);
+
+/* ---- PCR Read API (measured-boot PCR access) ----
+ *
+ * tpm2_pcr_read() reads ONE PCR in one hash bank via TPM2_PCR_Read on the
+ * Phase-1 transport; it always issues a transaction. tpm_pcr_get() is the
+ * accessor for policy consumers: the measured-boot PCRs across active banks are
+ * eagerly pre-cached by tpm_pcr_cache_init() (Phase 1, single-threaded), so a
+ * read of one of those hits the lock-free cache with no transaction; any other
+ * valid (pcr_index, alg) falls back to an uncached tpm2_pcr_read(). Both run
+ * after tpm_transport_init() (Phase 1); a Phase-0 call returns TPM_PCR_TRANSPORT.
+ * An undersized out_cap is TPM_PCR_BADARG on BOTH calls (never collapsed into
+ * TPM_PCR_TRANSPORT). */
+typedef enum {
+    TPM_PCR_OK        = 0,  /* digest copied to out, *out_len set */
+    TPM_PCR_INACTIVE  = 1,  /* bank not active for this PCR (out_len 0) */
+    TPM_PCR_BADARG    = 2,  /* bad pcr_index/alg/buffer */
+    TPM_PCR_TRANSPORT = 3,  /* TPM transport error / no TPM / malformed response */
+    TPM_PCR_BUSY      = 4,  /* another TPM transaction in flight -- transient, retry */
+} tpm_pcr_status_t;
+
+/* Read a single PCR (index 0..23) in hash bank `alg` (TPM_ALG_*). On TPM_PCR_OK
+ * the digest is copied to out (bounded by out_cap) and *out_len is the length.
+ * Uncached -- issues a TPM transaction every call. Returns TPM_PCR_BUSY (not
+ * TPM_PCR_TRANSPORT) when another transaction is in flight, so a contended
+ * caller can retry rather than treat healthy contention as a TPM fault. */
+tpm_pcr_status_t tpm2_pcr_read(uint16_t alg, uint32_t pcr_index,
+                               uint8_t *out, uint32_t out_cap, uint32_t *out_len);
+
+/* PCR accessor for policy consumers. A measured-boot PCR in an active bank
+ * (pre-cached by tpm_pcr_cache_init()) returns the cached digest with no TPM
+ * transaction; any other valid (index, alg) falls back to an uncached
+ * tpm2_pcr_read(). Same status contract as tpm2_pcr_read(). The cache is
+ * read-only after Phase-1 init -- the fallback never writes it -- so this needs
+ * no lock. */
+tpm_pcr_status_t tpm_pcr_get(uint32_t pcr_index, uint16_t alg,
+                             uint8_t *out, uint32_t out_cap, uint32_t *out_len);
+
+/* Eagerly populate the PCR cache for the measured-boot PCRs across active hash
+ * banks. Call ONCE on the BSP in Phase 1 after tpm_transport_init() (single-
+ * threaded, before APs/policy consumers run); the cache is read-only after, so
+ * tpm_pcr_get() needs no lock. No-op when no TPM. */
+void tpm_pcr_cache_init(void);
 
 /* Record TPM RNG availability in the report. Called by the entropy
  * TPM collector AFTER tpm_integrity_init() (the transport and RNG

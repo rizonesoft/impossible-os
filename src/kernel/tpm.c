@@ -14,6 +14,7 @@
  * ============================================================================ */
 
 #include "kernel/tpm.h"
+#include "kernel/tpm_transport.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
@@ -42,11 +43,7 @@ struct tcg_spec_id_event {
     /* digest_sizes[] follows: pairs of (uint16_t alg_id, uint16_t digest_size) */
 };
 
-/* Hash algorithm IDs (TCG Algorithm Registry) */
-#define TPM_ALG_SHA1    0x0004
-#define TPM_ALG_SHA256  0x000B
-#define TPM_ALG_SHA384  0x000C
-#define TPM_ALG_SHA512  0x000D
+/* TPM_ALG_SHA1/256/384/512 now live in kernel/tpm.h (public API inputs). */
 
 /* Event type constants */
 #define EV_NO_ACTION                0x00000003
@@ -529,6 +526,149 @@ void tpm_evlog_export_cel(void)
  * ============================================================================ */
 
 static struct boot_integrity_report s_integrity_report;
+
+/* ---- PCR Read API (measured-boot PCR access) ---- */
+
+/* Cache 2nd-dimension index for a supported hash bank; -1 if unsupported. */
+static int tpm_bank_index(uint16_t alg)
+{
+    switch (alg) {
+        case TPM_ALG_SHA1:   return 0;
+        case TPM_ALG_SHA256: return 1;
+        case TPM_ALG_SHA384: return 2;
+        case TPM_ALG_SHA512: return 3;
+        default:             return -1;
+    }
+}
+
+tpm_pcr_status_t tpm2_pcr_read(uint16_t alg, uint32_t pcr_index,
+                               uint8_t *out, uint32_t out_cap, uint32_t *out_len)
+{
+    if (out_len) *out_len = 0;
+    if (!out || pcr_index >= 24u || tpm_bank_index(alg) < 0)
+        return TPM_PCR_BADARG;
+    /* An undersized output buffer is a CALLER bug, not a TPM fault. Reject it
+     * up front with TPM_PCR_BADARG (before issuing a transaction) so both this
+     * uncached path and the cached tpm_pcr_get() report the SAME status for the
+     * same mistake -- never collapsing it into TPM_PCR_TRANSPORT. */
+    if (out_cap < tpm_alg_digest_len_pub(alg))
+        return TPM_PCR_BADARG;
+
+    uint8_t cmd[20];
+    uint32_t cmd_len = tpm2_build_pcr_read(cmd, sizeof(cmd), alg, pcr_index);
+    if (cmd_len == 0u)
+        return TPM_PCR_BADARG;
+
+    /* A single-PCR TPM2_PCR_Read response is < 100 bytes (header + counter +
+     * one selection + one digest); 128 is ample and avoids a large stack
+     * buffer. tpm2_submit() rejects an over-cap response as malformed. */
+    uint8_t rsp[128];
+    int rlen = tpm2_submit(cmd, cmd_len, rsp, sizeof(rsp));
+    if (rlen < 0) {
+        /* A transient "another transaction in flight" is NOT a TPM fault: a
+         * contended consumer (esp. an uncached tpm_pcr_get() fallback racing
+         * another reader) must be able to distinguish it from a wedged/absent
+         * TPM and retry, instead of misreading healthy contention as failure. */
+        return (rlen == TPM_T_ERR_BUSY) ? TPM_PCR_BUSY : TPM_PCR_TRANSPORT;
+    }
+
+    int dlen = tpm2_parse_pcr_read(rsp, (uint32_t)rlen, alg, pcr_index,
+                                   out, out_cap);
+    if (dlen < 0)
+        return TPM_PCR_TRANSPORT;
+    if (dlen == 0)
+        return TPM_PCR_INACTIVE;
+    if (out_len) *out_len = (uint32_t)dlen;
+    return TPM_PCR_OK;
+}
+
+/* ---- PCR cache (eager Phase-1 populate, lock-free read) ----
+ *
+ * Populated once on the BSP by tpm_pcr_cache_init() (Phase 1, single-threaded,
+ * before APs/policy consumers run), then read-only -- so tpm_pcr_get() needs no
+ * lock (same model as s_events). Eager (not lazy) avoids holding a lock across
+ * the slow tpm2_submit() and avoids a scheduler dependency in early Phase 1.
+ * Only the measured-boot PCRs are pre-cached; tpm_pcr_get() falls back to an
+ * uncached tpm2_pcr_read() for any other (index, alg) so it stays correct for
+ * every valid PCR (the fallback never writes the cache -> read-only invariant
+ * preserved).
+ *
+ * Cost bound: the populate batch is up to ~|active banks| * |measured PCRs|
+ * transactions, but a wedged/absent TPM trips the sticky s_failed flag on the
+ * FIRST failed read (tpm2_submit() short-circuits every later call to
+ * TPM_T_ERR_FAILED), so a dead TPM costs one timeout, not the whole batch. The
+ * PCR-0 bank-activity probe result is reused (PCR 0 is not re-read). */
+#define TPM_PCR_BANKS 4u
+static const uint8_t s_pcr_measured[] = { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u };
+static const uint16_t s_pcr_bank_alg[TPM_PCR_BANKS] = {
+    TPM_ALG_SHA1, TPM_ALG_SHA256, TPM_ALG_SHA384, TPM_ALG_SHA512
+};
+struct pcr_cache_entry {
+    uint8_t  digest[64];
+    uint8_t  len;
+    uint8_t  status;   /* tpm_pcr_status_t */
+    uint8_t  valid;    /* 0 = not populated */
+};
+static struct pcr_cache_entry s_pcr_cache[24][TPM_PCR_BANKS];
+
+void tpm_pcr_cache_init(void)
+{
+    uint32_t b, k;
+    for (b = 0; b < TPM_PCR_BANKS; b++) {
+        uint16_t alg = s_pcr_bank_alg[b];
+        /* Probe PCR 0 to learn whether this hash bank is active, and KEEP the
+         * result as PCR 0's cache entry (no second read of PCR 0 below). */
+        struct pcr_cache_entry *e0 = &s_pcr_cache[0][b];
+        uint32_t p0len = 0;
+        tpm_pcr_status_t probe = tpm2_pcr_read(alg, 0u, e0->digest,
+                                               sizeof(e0->digest), &p0len);
+        if (probe == TPM_PCR_TRANSPORT)
+            return;             /* no TPM / transport down: leave cache empty */
+        if (probe != TPM_PCR_OK)
+            continue;           /* bank inactive (or bad-arg): skip */
+        e0->status = (uint8_t)probe;
+        e0->len    = (uint8_t)p0len;
+        e0->valid  = 1u;
+        for (k = 0; k < sizeof(s_pcr_measured); k++) {
+            uint32_t idx = s_pcr_measured[k];
+            struct pcr_cache_entry *e;
+            uint32_t dl = 0;
+            tpm_pcr_status_t st;
+            if (idx == 0u)
+                continue;       /* already populated from the activity probe */
+            e  = &s_pcr_cache[idx][b];
+            st = tpm2_pcr_read(alg, idx, e->digest, sizeof(e->digest), &dl);
+            e->status = (uint8_t)st;
+            e->len    = (st == TPM_PCR_OK) ? (uint8_t)dl : 0u;
+            e->valid  = 1u;
+        }
+    }
+    klog(LOG_INFO, "TPM", "PCR cache populated (measured-boot PCRs, active banks)");
+}
+
+tpm_pcr_status_t tpm_pcr_get(uint32_t pcr_index, uint16_t alg,
+                             uint8_t *out, uint32_t out_cap, uint32_t *out_len)
+{
+    int bank = tpm_bank_index(alg);
+    if (out_len) *out_len = 0;
+    if (!out || pcr_index >= 24u || bank < 0)
+        return TPM_PCR_BADARG;
+
+    struct pcr_cache_entry *e = &s_pcr_cache[pcr_index][bank];
+    if (!e->valid)
+        return tpm2_pcr_read(alg, pcr_index, out, out_cap, out_len);
+
+    tpm_pcr_status_t st = (tpm_pcr_status_t)e->status;
+    if (st == TPM_PCR_OK) {
+        uint32_t i;
+        if ((uint32_t)e->len > out_cap)
+            return TPM_PCR_BADARG;
+        for (i = 0; i < e->len; i++)
+            out[i] = e->digest[i];
+        if (out_len) *out_len = e->len;
+    }
+    return st;
+}
 
 boot_result_t tpm_integrity_init(void)
 {

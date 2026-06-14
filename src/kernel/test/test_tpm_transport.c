@@ -606,6 +606,92 @@ static void test_entropy_tpm_collect(void)
     entropy_staged_consume_zero();
 }
 
+static void test_tpm2_pcr_read(void)
+{
+    uint8_t buf[32], out[64], rsp[80];
+    uint32_t i;
+    int r;
+
+    /* Marshal: SHA-256, PCR 7. */
+    TEST_ASSERT_EQ(tpm2_build_pcr_read(buf, sizeof(buf), TPM_ALG_SHA256, 7u), 20u,
+                   "PCR_Read command is 20 bytes");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 6), TPM2_CC_PCR_READ, "PCR_Read command code");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 10), 1u, "single pcrSelection");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 14), TPM_ALG_SHA256, "hashAlg = SHA-256");
+    TEST_ASSERT_EQ(buf[16], 3u, "sizeofSelect = 3");
+    TEST_ASSERT_EQ(buf[17], 0x80u, "PCR 7 bit set (1<<7) in pcrSelect[0]");
+    TEST_ASSERT_EQ(tpm2_build_pcr_read(buf, sizeof(buf), TPM_ALG_SHA256, 24u), 0u,
+                   "PCR index > 23 refused");
+
+    /* Response: SHA-256 PCR 7 active, one 32-byte digest. The parser binds the
+     * reply to the requested (alg, pcr_index); this fixture echoes them. */
+    tpm2_be16_put(rsp + 0, 0x8001u);
+    tpm2_be32_put(rsp + 6, TPM2_RC_SUCCESS);
+    tpm2_be32_put(rsp + 10, 0u);              /* updateCounter */
+    tpm2_be32_put(rsp + 14, 1u);              /* pcrSelection count */
+    tpm2_be16_put(rsp + 18, TPM_ALG_SHA256);  /* hashAlg */
+    rsp[20] = 3u;                             /* sizeofSelect */
+    rsp[21] = 0x80u; rsp[22] = 0u; rsp[23] = 0u;  /* PCR 7 bit set */
+    tpm2_be32_put(rsp + 24, 1u);              /* digest count */
+    tpm2_be16_put(rsp + 28, 32u);             /* digest size */
+    for (i = 0; i < 32u; i++) rsp[30 + i] = (uint8_t)(0xA0u + i);
+    tpm2_be32_put(rsp + 2, 62u);              /* response size */
+    r = tpm2_parse_pcr_read(rsp, 62u, TPM_ALG_SHA256, 7u, out, sizeof(out));
+    TEST_ASSERT_EQ(r, 32, "active bank: 32-byte digest parsed");
+    TEST_ASSERT_EQ(out[0], 0xA0u, "digest byte 0");
+    TEST_ASSERT_EQ(out[31], (uint8_t)(0xA0u + 31u), "digest byte 31");
+
+    /* Binding: a response echoing the WRONG hash bank must be rejected so the
+     * digest is never cached under the requested (alg, pcr). */
+    tpm2_be16_put(rsp + 18, TPM_ALG_SHA1);
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 62u, TPM_ALG_SHA256, 7u, out, sizeof(out)),
+                   -1, "echoed wrong hashAlg rejected");
+    tpm2_be16_put(rsp + 18, TPM_ALG_SHA256);
+
+    /* Binding: requested PCR bit clear but a digest present -> desync -> -1. */
+    rsp[21] = 0x40u;                          /* PCR 6 bit, not the requested 7 */
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 62u, TPM_ALG_SHA256, 7u, out, sizeof(out)),
+                   -1, "digest for an unrequested PCR rejected");
+    rsp[21] = 0x80u;
+
+    /* Binding: more than one echoed selection rejected. */
+    tpm2_be32_put(rsp + 14, 2u);
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 62u, TPM_ALG_SHA256, 7u, out, sizeof(out)),
+                   -1, "multi-selection response rejected");
+    tpm2_be32_put(rsp + 14, 1u);
+
+    /* Binding: digest size != the bank's digest length rejected (SHA-256=32). */
+    tpm2_be16_put(rsp + 28, 20u);
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 50u, TPM_ALG_SHA256, 7u, out, sizeof(out)),
+                   -1, "wrong digest size for bank rejected");
+    tpm2_be16_put(rsp + 28, 32u);
+
+    /* Inactive bank: requested PCR bit clear AND digest count 0 -> 0, no error. */
+    rsp[21] = 0u;
+    tpm2_be32_put(rsp + 24, 0u);
+    tpm2_be32_put(rsp + 2, 28u);
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 28u, TPM_ALG_SHA256, 7u, out, sizeof(out)),
+                   0, "inactive bank reports 0 (not error)");
+    rsp[21] = 0x80u;
+
+    /* Malformed: digest size beyond response. */
+    tpm2_be32_put(rsp + 24, 1u);
+    tpm2_be16_put(rsp + 28, 33u);
+    tpm2_be32_put(rsp + 2, 62u);
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 62u, TPM_ALG_SHA256, 7u, out, sizeof(out)),
+                   -1, "digest size beyond response rejected");
+
+    /* Undersized out_cap (need 32, give 16) rejected. */
+    tpm2_be16_put(rsp + 28, 32u);
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 62u, TPM_ALG_SHA256, 7u, out, 16u),
+                   -1, "undersized out_cap rejected");
+
+    /* Nonzero rc rejected. */
+    tpm2_be32_put(rsp + 6, TPM2_RC_INITIALIZE);
+    TEST_ASSERT_EQ(tpm2_parse_pcr_read(rsp, 62u, TPM_ALG_SHA256, 7u, out, sizeof(out)),
+                   -1, "nonzero rc rejected");
+}
+
 void test_register_tpm_transport(void)
 {
     test_suite_register_cat("tpm: transport marshaling",
@@ -614,6 +700,8 @@ void test_register_tpm_transport(void)
         test_tpm2_submit_fake, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: GetRandom marshal + parse",
         test_tpm2_get_random, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: PCR_Read marshal + parse",
+        test_tpm2_pcr_read, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: RNG entropy collection (fake TIS)",
         test_entropy_tpm_collect, TEST_CAT_SECURITY);
 }

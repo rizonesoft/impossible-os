@@ -56,6 +56,7 @@
 #include "kernel/entropy.h"
 #include "kernel/csprng.h"
 #include "kernel/tpm_transport.h"
+#include "kernel/tpm.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
@@ -462,6 +463,9 @@ void boot_phase1(void)
      * bounded); staged so the first CSPRNG seed sees it. Absent or
      * wedged TPMs degrade and the entropy report shows tpm=none. */
     entropy_collect_tpm();
+    /* Eagerly populate the measured-boot PCR cache on the fresh transport
+     * (single-threaded here; lock-free reads afterward). No-op without a TPM. */
+    tpm_pcr_cache_init();
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);
 

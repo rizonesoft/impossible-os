@@ -45,6 +45,7 @@
 #define TPM2_CC_STARTUP          0x00000144u
 #define TPM2_CC_GET_CAPABILITY   0x0000017Au
 #define TPM2_CC_GET_RANDOM       0x0000017Bu
+#define TPM2_CC_PCR_READ         0x0000017Eu
 #define TPM2_SU_CLEAR            0x0000u
 #define TPM2_CAP_TPM_PROPERTIES  0x00000006u
 #define TPM2_PT_MANUFACTURER     0x00000105u
@@ -125,6 +126,26 @@ uint32_t tpm2_build_get_random(uint8_t *buf, uint32_t cap, uint16_t nbytes);
  * byte count (> 0) or -1 on any malformed/failed response. */
 int tpm2_parse_get_random(const uint8_t *rsp, uint32_t len,
                           uint8_t *out, uint32_t out_cap);
+
+/* Marshal TPM2_PCR_Read for a SINGLE PCR (pcr_index 0..23) in the given hash
+ * bank (alg = TPM_ALG_*). One PCR per call so the response TPML_DIGEST maps
+ * 1:1. Returns the command length, 0 if cap too small or pcr_index > 23. */
+uint32_t tpm2_build_pcr_read(uint8_t *buf, uint32_t cap, uint16_t alg,
+                             uint32_t pcr_index);
+
+/* Parse a TPM2_PCR_Read response for the SINGLE (alg, pcr_index) that was
+ * requested, and bind the response to that request: the echoed pcrSelectionOut
+ * must be exactly one selection naming `alg`, sizeofSelect 3, and the parser
+ * keys off whether the requested PCR bit is set. If set, exactly one digest of
+ * the bank's exact size (tpm_alg_digest_len_pub(alg)) is copied to out (bounded
+ * by out_cap) and its length (> 0) returned. If clear, the bank is INACTIVE for
+ * this PCR and 0 is returned (digest count must be 0). Any mismatch (wrong alg,
+ * wrong/missing PCR bit, extra selections/digests, wrong digest size) or a
+ * malformed/failed response returns -1 -- so a desynchronized TPM can never
+ * have a foreign digest cached under our key. All reads are bounds-checked. */
+int tpm2_parse_pcr_read(const uint8_t *rsp, uint32_t len,
+                        uint16_t alg, uint32_t pcr_index,
+                        uint8_t *out, uint32_t out_cap);
 
 /* Collect up to `want` random bytes via repeated TPM2_GetRandom calls,
  * the WHOLE sequence capped by one cumulative wall-clock budget (the
