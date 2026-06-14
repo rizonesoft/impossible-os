@@ -127,3 +127,47 @@ uint32_t tpm2_build_policy_secret(uint8_t *buf, uint32_t cap, uint32_t auth_hand
     tpm2_be32_put(buf + off, 0u); off += 4u;          /* expiration 0 (no timeout) */
     return off;
 }
+
+uint32_t tpm2_build_create_ak_signing(uint8_t *buf, uint32_t cap, uint32_t parent,
+                                      uint32_t auth_session)
+{
+    /* TPMT_PUBLIC (ECC P-256 restricted signing key):
+     *   type(2)+nameAlg(2)+attrs(4) + authPolicy(2,0)
+     *   + TPMS_ECC_PARMS{ symmetric=NULL(2) + scheme TPMT_ECC_SCHEME{ECDSA(2)
+     *     + hashAlg(2)} + curve(2) + kdf=NULL(2) }
+     *   + unique TPM2B_ECC_POINT{ x(2,0)+y(2,0) }
+     * = 8 + 2 + 10 + 4 = 24. A signing key has NO symmetric (alg NULL, 2 bytes),
+     * unlike the storage EK/SRK (AES, 6 bytes). */
+    const uint32_t pub_inner = 8u + 2u + 10u + 4u;
+    uint32_t insens = 2u + 2u;                         /* userAuth(2,0) + data(2,0) */
+    uint32_t total = 10u + 4u + 13u + (2u + insens) + (2u + pub_inner) + 2u + 4u;
+    uint32_t off;
+    if (!buf || cap < total)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_CREATE);
+    tpm2_be32_put(buf + 10, parent);                  /* parentHandle (loaded EK) */
+    off = at_put_auth(buf, 14u, auth_session);        /* EK auth = policy session */
+    /* inSensitive TPM2B_SENSITIVE_CREATE. */
+    tpm2_be16_put(buf + off, (uint16_t)insens); off += 2u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;          /* userAuth empty */
+    tpm2_be16_put(buf + off, 0u); off += 2u;          /* data empty (TPM-generated) */
+    /* inPublic TPM2B_PUBLIC. */
+    tpm2_be16_put(buf + off, (uint16_t)pub_inner); off += 2u;
+    tpm2_be16_put(buf + off, TPM_ALG_ECC); off += 2u;       /* type */
+    tpm2_be16_put(buf + off, TPM_ALG_SHA256); off += 2u;    /* nameAlg */
+    tpm2_be32_put(buf + off, TPM_AK_OBJECT_ATTRS); off += 4u;
+    tpm2_be16_put(buf + off, 0u); off += 2u;               /* authPolicy empty */
+    tpm2_be16_put(buf + off, TPM_ALG_NULL); off += 2u;     /* symmetric = NULL (sign key) */
+    tpm2_be16_put(buf + off, TPM_ALG_ECDSA); off += 2u;    /* scheme ECDSA */
+    tpm2_be16_put(buf + off, TPM_ALG_SHA256); off += 2u;   /* scheme hashAlg */
+    tpm2_be16_put(buf + off, TPM_ECC_NIST_P256); off += 2u;/* curveID */
+    tpm2_be16_put(buf + off, TPM_ALG_NULL); off += 2u;     /* kdf */
+    tpm2_be16_put(buf + off, 0u); off += 2u;               /* unique.x empty */
+    tpm2_be16_put(buf + off, 0u); off += 2u;               /* unique.y empty */
+    /* outsideInfo TPM2B_DATA(2,0) + creationPCR count=0. */
+    tpm2_be16_put(buf + off, 0u); off += 2u;
+    tpm2_be32_put(buf + off, 0u); off += 4u;
+    return off;
+}

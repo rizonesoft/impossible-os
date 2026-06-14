@@ -59,6 +59,12 @@
  * verifier expects. */
 #define TPM_EK_OBJECT_ATTRS       0x000300B2u
 
+/* Restricted ECDSA-P256 signing-AK attributes: fixedTPM | fixedParent |
+ * sensitiveDataOrigin | userWithAuth | noDA | restricted | sign. userWithAuth
+ * (not a policy) so the AK signs under an empty password; restricted + sign + a
+ * fixed ECDSA scheme is what makes it a valid quote-signing key. */
+#define TPM_AK_OBJECT_ATTRS       0x00050472u
+
 /* The well-known EK authPolicy (PolicyA) = TPM2_PolicySecret(TPM_RH_ENDORSEMENT)
  * digest under SHA-256, published in the TCG EK Credential Profile. The EK's
  * authorization is satisfied only by a policy session carrying this digest. */

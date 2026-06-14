@@ -77,8 +77,35 @@ static void test_attest_build_policy_secret(void)
                    0u, "PolicySecret refuses too-small buffer");
 }
 
+/* ---- AK signing-key Create byte-layout ---- */
+
+static void test_attest_build_ak(void)
+{
+    uint8_t buf[128];
+    uint32_t n;
+
+    n = tpm2_build_create_ak_signing(buf, sizeof buf, 0x80000001u, 0x03000000u);
+    TEST_ASSERT_EQ(n, 65u, "Create AK signing key is 65 bytes");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 6), TPM2_CC_CREATE, "AK CC Create");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 10), 0x80000001u, "AK parentHandle (loaded EK)");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 18), 0x03000000u, "AK parent auth = policy session");
+    TEST_ASSERT_EQ((uint32_t)buf[24], 1u, "AK policy-session attrs byte = continueSession");
+    /* inPublic inner at 10+4+13+6 = 33. */
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 33), 24u, "AK TPMT_PUBLIC inner size 24");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 35), TPM_ALG_ECC, "AK type ECC");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 39), (uint32_t)TPM_AK_OBJECT_ATTRS,
+                   "AK attrs restricted|sign|userWithAuth|noDA");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 43), 0u, "AK authPolicy empty");
+    /* params after empty authPolicy at 45: symmetric NULL, scheme ECDSA+SHA256. */
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 45), TPM_ALG_NULL, "AK symmetric NULL (sign key)");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 47), TPM_ALG_ECDSA, "AK scheme ECDSA");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 49), TPM_ALG_SHA256, "AK scheme hashAlg SHA256");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 51), TPM_ECC_NIST_P256, "AK curve P256");
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PolicySecret marshal", test_attest_build_policy_secret, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: AK signing-key marshal", test_attest_build_ak, TEST_CAT_SECURITY);
 }
