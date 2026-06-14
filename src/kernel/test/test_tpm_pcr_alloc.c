@@ -73,11 +73,38 @@ static void test_pcr_masks(void)
     }
 }
 
+/* The canonical measured-boot PCR list the baseline / replay / PCR-cache consumers
+ * derive instead of each hard-coding {0-7,11}. Pins the exact set + order. */
+static void test_pcr_baseline_list(void)
+{
+    static const uint8_t expect[] = { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u };
+    uint8_t pcrs[24];
+    uint8_t n = tpm_pcr_baseline_pcrs(pcrs, sizeof pcrs);
+    uint8_t i;
+    uint32_t m = 0;
+
+    TEST_ASSERT_EQ((uint32_t)n, 9u, "baseline PCR list has 9 entries (0-7 + 11)");
+    for (i = 0; i < n && i < (uint8_t)(sizeof expect); i++) {
+        TEST_ASSERT_EQ((uint32_t)pcrs[i], (uint32_t)expect[i], "baseline PCR list ascending {0-7,11}");
+        m |= (1u << pcrs[i]);
+    }
+    TEST_ASSERT_EQ(m, tpm_pcr_baseline_mask(), "enumerated list bits == baseline mask");
+
+    /* Overflow is detectable: a too-small buffer writes only `cap` entries but
+     * returns the FULL count (> cap), so a caller can fail closed instead of
+     * silently dropping PCRs. */
+    uint8_t small[3];
+    uint8_t ns = tpm_pcr_baseline_pcrs(small, sizeof small);
+    TEST_ASSERT_EQ((uint32_t)ns, 9u, "returns FULL count even when truncated (overflow detectable)");
+    TEST_ASSERT(small[0] == 0u && small[1] == 1u && small[2] == 2u, "wrote the cap-bounded prefix");
+}
+
 void test_register_tpm_pcr_alloc(void)
 {
     test_suite_register_cat("tpm: PCR owner layers", test_pcr_owner_layers, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PCR 11 multi-event", test_pcr11_multiple_events, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PCR policy masks", test_pcr_masks, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: PCR baseline list", test_pcr_baseline_list, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

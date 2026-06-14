@@ -78,3 +78,8 @@ int tpm_pcr_owner(uint32_t pcr_index);
 uint32_t tpm_pcr_seal_mask(void);
 uint32_t tpm_pcr_quote_mask(void);
 uint32_t tpm_pcr_baseline_mask(void);
+
+/* Canonical measured-boot PCR list (BASELINE policy), ascending order. Fills `out`
+ * (caller sizes it to the known max) and returns the count. Single source of truth
+ * for the baseline / replay / PCR-cache consumers; replaces their hard-coded {0-7,11}. */
+uint8_t tpm_pcr_baseline_pcrs(uint8_t *out, uint8_t cap);

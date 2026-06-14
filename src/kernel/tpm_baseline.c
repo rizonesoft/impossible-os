@@ -14,11 +14,7 @@
 #include "kernel/smbios.h"
 #include "kernel/fs/gpt.h"   /* gpt_crc32 (IEEE CRC32) */
 #include "libc/string.h"
-
-/* The measured-boot PCR set the baseline pins (matches tpm.c s_pcr_measured and
- * tpm_replay.c). Kept local; a divergence would only narrow what is compared. */
-static const uint8_t s_baseline_pcrs[TPM_BASELINE_MAX_PCRS] =
-    { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u };
+#include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical measured set) */
 
 /* ---- Pure core ---- */
 
@@ -55,10 +51,12 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
      * owner-writable). A baseline MUST pin the full measured PCR set in order;
      * a blob with pcr_count=0 or every slot present=0 would otherwise "verify"
      * without checking any PCR. */
-    if (out->pcr_count != TPM_BASELINE_MAX_PCRS)
+    uint8_t pcrs[TPM_BASELINE_MAX_PCRS];
+    uint8_t npcr = tpm_pcr_baseline_pcrs(pcrs, TPM_BASELINE_MAX_PCRS);
+    if (npcr != TPM_BASELINE_MAX_PCRS || out->pcr_count != npcr)
         return 0;
-    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
-        if (out->pcrs[i].index != s_baseline_pcrs[i])
+    for (i = 0; i < npcr; i++) {
+        if (out->pcrs[i].index != pcrs[i])
             return 0;
         /* A verifiable baseline must pin EVERY measured PCR. Accepting a partial
          * present-set would let a crafted/degraded baseline ignore changes in
@@ -69,7 +67,7 @@ int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
             return 0;
         present++;
     }
-    if (present != TPM_BASELINE_MAX_PCRS)
+    if (present != npcr)
         return 0;
     if (out->secure_boot > 1u || out->secure_boot_valid > 1u ||
         out->fw_hash_present > 1u || out->abi_manifest_present > 1u)
@@ -157,11 +155,15 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
     memset(out, 0, sizeof(*out));
     out->alg = alg;
 
-    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
+    uint8_t pcrs[TPM_BASELINE_MAX_PCRS];
+    uint8_t npcr = tpm_pcr_baseline_pcrs(pcrs, TPM_BASELINE_MAX_PCRS);
+    if (npcr != TPM_BASELINE_MAX_PCRS)   /* blob is sized for exactly the measured set */
+        return TPM_BASELINE_BADARG;
+    for (i = 0; i < npcr; i++) {
         uint32_t dl = 0;
-        tpm_pcr_status_t st = tpm_pcr_get(s_baseline_pcrs[i], alg,
+        tpm_pcr_status_t st = tpm_pcr_get(pcrs[i], alg,
                                           out->pcrs[i].digest, TPM_BASELINE_DIGEST, &dl);
-        out->pcrs[i].index = s_baseline_pcrs[i];
+        out->pcrs[i].index = pcrs[i];
         if (st == TPM_PCR_OK && dl == TPM_BASELINE_DIGEST) {
             out->pcrs[i].present = 1;
             present++;
@@ -170,11 +172,11 @@ tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *o
             memset(out->pcrs[i].digest, 0, TPM_BASELINE_DIGEST);
         }
     }
-    out->pcr_count = TPM_BASELINE_MAX_PCRS;
+    out->pcr_count = npcr;
     /* A baseline must pin the FULL measured set; a partial snapshot (some PCR
      * unreadable/inactive) cannot form a verifiable baseline -- report it as
      * NO_TPM (degraded) rather than enrolling/comparing a partial set. */
-    if (present != TPM_BASELINE_MAX_PCRS)
+    if (present != npcr)
         return TPM_BASELINE_NO_TPM;
 
     /* Secure Boot state from the honest Secure Boot reconciliation in the boot

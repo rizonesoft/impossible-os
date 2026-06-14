@@ -15,6 +15,7 @@
 
 #include "kernel/tpm.h"
 #include "kernel/tpm_transport.h"
+#include "kernel/tpm_pcr_alloc.h"   /* tpm_pcr_baseline_pcrs (canonical measured set) */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
@@ -591,7 +592,6 @@ tpm_pcr_status_t tpm2_pcr_read(uint16_t alg, uint32_t pcr_index,
  * TPM_T_ERR_FAILED), so a dead TPM costs one timeout, not the whole batch. The
  * PCR-0 bank-activity probe result is reused (PCR 0 is not re-read). */
 #define TPM_PCR_BANKS 4u
-static const uint8_t s_pcr_measured[] = { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u };
 static const uint16_t s_pcr_bank_alg[TPM_PCR_BANKS] = {
     TPM_ALG_SHA1, TPM_ALG_SHA256, TPM_ALG_SHA384, TPM_ALG_SHA512
 };
@@ -621,8 +621,10 @@ void tpm_pcr_cache_init(void)
         e0->status = (uint8_t)probe;
         e0->len    = (uint8_t)p0len;
         e0->valid  = 1u;
-        for (k = 0; k < sizeof(s_pcr_measured); k++) {
-            uint32_t idx = s_pcr_measured[k];
+        uint8_t measured[24];
+        uint8_t nmeasured = tpm_pcr_baseline_pcrs(measured, sizeof measured);
+        for (k = 0; k < nmeasured; k++) {
+            uint32_t idx = measured[k];
             struct pcr_cache_entry *e;
             uint32_t dl = 0;
             tpm_pcr_status_t st;

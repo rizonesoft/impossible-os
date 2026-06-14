@@ -10,6 +10,7 @@
 #include "kernel/types.h"
 #include "kernel/tpm_replay.h"
 #include "kernel/tpm.h"                 /* TPM_ALG_*, tpm_alg_digest_len_pub, tpm_event* */
+#include "kernel/tpm_pcr_alloc.h"       /* tpm_pcr_baseline_pcrs (canonical measured set) */
 #include "kernel/boot_info.h"           /* g_boot_info.tpm_event_log */
 #include "kernel/crypto/sha1.h"
 #include "kernel/crypto/sha256.h"
@@ -186,8 +187,9 @@ void tpm_replay_finalize(struct tpm_replay_report *r, int log_clean, int complet
 
 tpm_replay_status_t tpm_replay_verify(uint16_t alg, struct tpm_replay_report *out)
 {
-    /* The firmware + Secure Boot + kernel-ABI measured-boot PCRs. */
-    static const uint8_t measured[] = { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u };
+    /* The firmware + Secure Boot + kernel-ABI measured-boot PCRs (canonical set). */
+    uint8_t measured[24];
+    uint8_t nmeasured = tpm_pcr_baseline_pcrs(measured, sizeof measured);
     uint16_t dl = tpm_alg_digest_len_pub(alg);
     uint32_t readable = 0, i;
     int read_failure = 0;
@@ -207,7 +209,7 @@ tpm_replay_status_t tpm_replay_verify(uint16_t alg, struct tpm_replay_report *ou
         return TPM_REPLAY_OK;
     }
 
-    for (i = 0; i < sizeof(measured); i++) {
+    for (i = 0; i < nmeasured; i++) {
         uint8_t hw[64], rp[64];
         uint32_t hwlen = 0;
         tpm_pcr_status_t st = tpm_pcr_get(measured[i], alg, hw, sizeof(hw), &hwlen);
@@ -229,7 +231,7 @@ tpm_replay_status_t tpm_replay_verify(uint16_t alg, struct tpm_replay_report *ou
      * is incomplete coverage -> UNVERIFIABLE, never a false pass. */
     (void)readable;
     tpm_replay_finalize(out, 1 /*log_clean*/,
-                        (out->pcr_checked == (uint8_t)(sizeof(measured)) && !read_failure)
+                        (out->pcr_checked == nmeasured && !read_failure)
                         ? 1 : 0);
     return TPM_REPLAY_OK;
 }

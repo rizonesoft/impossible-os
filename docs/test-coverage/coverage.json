@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-14T13:25:26+02:00",
-  "total_suites": 1290,
-  "total_assertions": 4025,
+  "timestamp": "2026-06-14T14:34:24+02:00",
+  "total_suites": 1291,
+  "total_assertions": 4030,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -66,7 +66,7 @@
     {"file": "test_tpm_baseline.c", "suites": 3, "assertions": 27},
     {"file": "test_tpm_event_log.c", "suites": 9, "assertions": 29},
     {"file": "test_tpm_nv.c", "suites": 10, "assertions": 105},
-    {"file": "test_tpm_pcr_alloc.c", "suites": 3, "assertions": 15},
+    {"file": "test_tpm_pcr_alloc.c", "suites": 4, "assertions": 20},
     {"file": "test_tpm_replay.c", "suites": 9, "assertions": 45},
     {"file": "test_tpm_sb_reconcile.c", "suites": 2, "assertions": 30},
     {"file": "test_tpm_seal.c", "suites": 8, "assertions": 109},

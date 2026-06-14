@@ -103,3 +103,25 @@ static uint32_t tpm_pcr_mask_for(uint8_t flag)
 uint32_t tpm_pcr_seal_mask(void)     { return tpm_pcr_mask_for(TPM_PCR_POL_SEAL); }
 uint32_t tpm_pcr_quote_mask(void)    { return tpm_pcr_mask_for(TPM_PCR_POL_QUOTE); }
 uint32_t tpm_pcr_baseline_mask(void) { return tpm_pcr_mask_for(TPM_PCR_POL_BASELINE); }
+
+/* Enumerate the BASELINE-policy PCRs (ascending) -- the canonical measured-boot set
+ * derived from the allocation table (single source of truth). The baseline / replay /
+ * PCR-cache consumers each used to hard-code this as {0-7,11}; this derives it so a
+ * table change propagates everywhere. Writes up to `cap` indices into `out`, but
+ * returns the TOTAL matching count (NOT the number written) so a caller can detect
+ * overflow: a return > cap means the set did not fit and out holds only the prefix.
+ * This lets the baseline drift guard (`count != TPM_BASELINE_MAX_PCRS`) fail closed
+ * when the table grows past the v1 blob capacity instead of silently truncating. */
+uint8_t tpm_pcr_baseline_pcrs(uint8_t *out, uint8_t cap)
+{
+    uint32_t mask = tpm_pcr_mask_for(TPM_PCR_POL_BASELINE);
+    uint8_t total = 0;
+    for (uint8_t pcr = 0; pcr < 24u; pcr++) {
+        if (mask & (1u << pcr)) {
+            if (out && total < cap)
+                out[total] = pcr;
+            total++;
+        }
+    }
+    return total;
+}
