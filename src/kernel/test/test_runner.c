@@ -403,6 +403,7 @@ extern void test_register_tpm_transport(void);
 extern void test_register_tpm_event_log(void);
 extern void test_register_tpm_sb_reconcile(void);
 extern void test_register_tpm_pcr_alloc(void);
+extern void test_register_sha256(void);
 extern void test_register_boot_device(void);
 extern void test_register_x86(void);
 extern void test_register_ob(void);
@@ -481,6 +482,7 @@ void test_runner_init(void)
     test_register_tpm_event_log();
     test_register_tpm_sb_reconcile();
     test_register_tpm_pcr_alloc();
+    test_register_sha256();
     test_register_boot_device();
     test_register_harness();
 

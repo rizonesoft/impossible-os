@@ -123,7 +123,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Blocked (2026-06-14):** replaying PCR extends for *every active bank* requires SHA-1, SHA-256, and SHA-384 transforms. The kernel currently has only SHA-512 (monocypher `crypto_sha512`); SHA-256/SHA-1/SHA-384 do not exist. The raw transforms are a shared crypto-primitive concern (the CNG wrapper `cng_sha256` is owned by `09-desktop-shell/TODO-07 §1`, which lists SHA-256 as "missing" and has not shipped). §4 cannot credibly replay measured boot without the SHA-1/256/384 banks. Prerequisite items below own the gap; §3 PCR reads + §1 event-log parse are already in place to consume the replay output. Escalation: the raw SHA primitives should land in a kernel-core crypto location and be consumed by BOTH this replay engine and TODO-07 §1's `cng_sha256` wrapper (avoid duplicating the transform).
 
-- [ ] **Prerequisite:** kernel SHA-256 transform (`sha256_init/update/final`, FIPS 180-4) in a shared kernel crypto module + KAT vectors; later reused by `cng_sha256`. -> XREF: 09-desktop-shell/TODO-07 §1 (item: `cng_sha256` primitive).
+- [x] **Prerequisite:** kernel SHA-256 shipped -- `src/kernel/crypto/sha256.{c,h}` (FIPS 180-4), NIST KAT-validated; reusable by `cng_sha256`. -> XREF: 09-desktop-shell/TODO-07 §1 (item: `cng_sha256` primitive).
 - [ ] **Prerequisite:** kernel SHA-1 transform (legacy PCR bank) + SHA-384 (SHA-512 IV/truncation variant; SHA-512 already exists via monocypher); KAT vectors.
 - [ ] **Prerequisite:** `pcr_extend(bank_alg, pcr, measurement_digest)` helper computing `H(old || measurement)` per TPM PCR-extend semantics, dispatching on bank alg.
 - [ ] Replay PCR extend operations from parsed event log for every active bank (blocked on the SHA prerequisites above).
