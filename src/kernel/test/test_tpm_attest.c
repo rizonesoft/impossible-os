@@ -103,9 +103,46 @@ static void test_attest_build_ak(void)
     TEST_ASSERT_EQ(tpm2_be16_get(buf + 51), TPM_ECC_NIST_P256, "AK curve P256");
 }
 
+/* ---- TPM2_Quote byte-layout ---- */
+
+static void test_attest_build_quote(void)
+{
+    uint8_t buf[96];
+    uint8_t nonce[20];
+    uint32_t n, i;
+    for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0x40u + i);
+
+    /* total = 43 + nonce_len(20) = 63; PCR mask 0xFF (PCRs 0-7). */
+    n = tpm2_build_quote(buf, sizeof buf, 0x80000002u, TPM_RS_PW, TPM_ALG_ECDSA,
+                         nonce, 20u, 0xFFu);
+    TEST_ASSERT_EQ(n, 63u, "Quote (20-byte nonce, ECDSA) is 63 bytes");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 6), TPM2_CC_QUOTE, "Quote CC");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 10), 0x80000002u, "Quote signHandle (AK)");
+    /* qualifyingData at 10+4+13 = 27. */
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 27), 20u, "Quote qualifyingData (nonce) size 20");
+    TEST_ASSERT_EQ((uint32_t)buf[29], 0x40u, "Quote nonce first byte");
+    /* inScheme after the 20-byte nonce at 29+20 = 49. */
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 49), TPM_ALG_ECDSA, "Quote inScheme ECDSA");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 51), TPM_ALG_SHA256, "Quote inScheme hashAlg SHA256");
+    /* TPML_PCR_SELECTION at 53. */
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 53), 1u, "Quote PCR selection count 1");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 57), TPM_ALG_SHA256, "Quote PCR bank SHA256");
+    TEST_ASSERT_EQ((uint32_t)buf[59], 3u, "Quote sizeofSelect 3");
+    TEST_ASSERT_EQ((uint32_t)buf[60], 0xFFu, "Quote pcrSelect byte0 == mask 0xFF");
+
+    /* Reject too-short / absent nonce + an unsupported scheme. */
+    TEST_ASSERT_EQ(tpm2_build_quote(buf, sizeof buf, 0x80000002u, TPM_RS_PW,
+                                    TPM_ALG_ECDSA, nonce, 4u, 0xFFu),
+                   0u, "Quote rejects too-short nonce");
+    TEST_ASSERT_EQ(tpm2_build_quote(buf, sizeof buf, 0x80000002u, TPM_RS_PW,
+                                    TPM_ALG_NULL, nonce, 20u, 0xFFu),
+                   0u, "Quote rejects unsupported sig scheme");
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PolicySecret marshal", test_attest_build_policy_secret, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: AK signing-key marshal", test_attest_build_ak, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: Quote marshal", test_attest_build_quote, TEST_CAT_SECURITY);
 }

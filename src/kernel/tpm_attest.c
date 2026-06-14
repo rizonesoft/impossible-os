@@ -171,3 +171,39 @@ uint32_t tpm2_build_create_ak_signing(uint8_t *buf, uint32_t cap, uint32_t paren
     tpm2_be32_put(buf + off, 0u); off += 4u;
     return off;
 }
+
+uint32_t tpm2_build_quote(uint8_t *buf, uint32_t cap, uint32_t ak_handle,
+                          uint32_t auth_session, uint16_t sig_alg,
+                          const uint8_t *nonce, uint16_t nonce_len, uint32_t pcr_mask)
+{
+    /* TPM2_Quote(signHandle{auth}, qualifyingData=nonce, inScheme, PCRselect):
+     *   header(10) + signHandle(4) + authArea(13) + qualifyingData TPM2B(2 + N)
+     *   + inScheme TPMT_SIG_SCHEME{ scheme(2) + hashAlg(2) }
+     *   + TPML_PCR_SELECTION{ count(4)=1 + hashAlg(2) + sizeofSelect(1)=3
+     *     + pcrSelect[3] } = 43 + nonce_len. The verifier nonce in qualifyingData
+     * is what binds the quote to a fresh challenge (anti-replay). */
+    uint32_t total = 10u + 4u + 13u + (2u + (uint32_t)nonce_len) + 4u + (4u + 2u + 1u + 3u);
+    uint32_t off, i;
+    uint8_t sel[3];
+    if (!buf || cap < total || !nonce ||
+        nonce_len < TPM_QUOTE_NONCE_MIN || nonce_len > TPM_QUOTE_NONCE_MAX ||
+        (sig_alg != TPM_ALG_ECDSA && sig_alg != TPM_ALG_RSASSA))
+        return 0;
+    tpm_pcr_mask_to_select(pcr_mask, sel);
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_QUOTE);
+    tpm2_be32_put(buf + 10, ak_handle);               /* signHandle (AK) */
+    off = at_put_auth(buf, 14u, auth_session);        /* AK auth (TPM_RS_PW empty) */
+    tpm2_be16_put(buf + off, nonce_len); off += 2u;   /* qualifyingData = nonce */
+    for (i = 0; i < nonce_len; i++) buf[off + i] = nonce[i];
+    off += nonce_len;
+    tpm2_be16_put(buf + off, sig_alg); off += 2u;     /* inScheme scheme */
+    tpm2_be16_put(buf + off, TPM_ALG_SHA256); off += 2u; /* inScheme hashAlg */
+    tpm2_be32_put(buf + off, 1u); off += 4u;          /* TPML count = 1 */
+    tpm2_be16_put(buf + off, TPM_ALG_SHA256); off += 2u; /* bank */
+    buf[off] = 3u; off += 1u;                          /* sizeofSelect (PCR 0..23) */
+    buf[off] = sel[0]; buf[off + 1u] = sel[1]; buf[off + 2u] = sel[2];
+    off += 3u;
+    return off;
+}
