@@ -102,3 +102,28 @@ uint32_t tpm2_build_create_primary_ek(uint8_t *buf, uint32_t cap)
     tpm2_be32_put(buf + off, 0u); off += 4u;
     return off;
 }
+
+uint32_t tpm2_build_policy_secret(uint8_t *buf, uint32_t cap, uint32_t auth_handle,
+                                  uint32_t policy_session)
+{
+    /* TPM2_PolicySecret(authHandle{auth}, policySession): two handles (authHandle
+     * carries the auth area, policySession does not), then the parameters:
+     *   header(10) + authHandle(4) + policySession(4) + authArea(13: PW, empty
+     *   endorsement auth) + nonceTPM TPM2B(2,0) + cpHashA TPM2B(2,0) + policyRef
+     *   TPM2B(2,0) + expiration INT32(4) = 41. */
+    uint32_t total = 10u + 4u + 4u + 13u + 2u + 2u + 2u + 4u;
+    uint32_t off;
+    if (!buf || cap < total)
+        return 0;
+    tpm2_be16_put(buf + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(buf + 2, total);
+    tpm2_be32_put(buf + 6, TPM2_CC_POLICY_SECRET);
+    tpm2_be32_put(buf + 10, auth_handle);             /* authHandle (entity) */
+    tpm2_be32_put(buf + 14, policy_session);          /* policySession (no auth) */
+    off = at_put_auth(buf, 18u, TPM_RS_PW);           /* authHandle auth (empty) */
+    tpm2_be16_put(buf + off, 0u); off += 2u;          /* nonceTPM empty */
+    tpm2_be16_put(buf + off, 0u); off += 2u;          /* cpHashA empty */
+    tpm2_be16_put(buf + off, 0u); off += 2u;          /* policyRef empty */
+    tpm2_be32_put(buf + off, 0u); off += 4u;          /* expiration 0 (no timeout) */
+    return off;
+}

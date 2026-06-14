@@ -51,7 +51,34 @@ static void test_attest_build_ek(void)
                    "CreatePrimary EK refuses too-small buffer");
 }
 
+/* ---- PolicySecret(endorsement) byte-layout ---- */
+
+static void test_attest_build_policy_secret(void)
+{
+    uint8_t buf[64];
+    uint32_t n;
+
+    n = tpm2_build_policy_secret(buf, sizeof buf, TPM_RH_ENDORSEMENT, 0x03000000u);
+    TEST_ASSERT_EQ(n, 41u, "PolicySecret is 41 bytes");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 0), TPM2_ST_SESSIONS, "PolicySecret tag ST_SESSIONS");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 6), TPM2_CC_POLICY_SECRET, "PolicySecret CC");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 10), TPM_RH_ENDORSEMENT, "PolicySecret authHandle ENDORSEMENT");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 14), 0x03000000u, "PolicySecret policySession handle");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 18), 9u, "PolicySecret authorizationSize 9");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 22), TPM_RS_PW, "PolicySecret authHandle auth is PW");
+    /* params after the 13-byte auth area at 18+13 = 31: nonceTPM/cpHashA/policyRef
+     * empty TPM2Bs (2 each) + expiration(4). */
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 31), 0u, "PolicySecret nonceTPM empty");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 33), 0u, "PolicySecret cpHashA empty");
+    TEST_ASSERT_EQ(tpm2_be16_get(buf + 35), 0u, "PolicySecret policyRef empty");
+    TEST_ASSERT_EQ(tpm2_be32_get(buf + 37), 0u, "PolicySecret expiration 0");
+
+    TEST_ASSERT_EQ(tpm2_build_policy_secret(buf, 40u, TPM_RH_ENDORSEMENT, 0x03000000u),
+                   0u, "PolicySecret refuses too-small buffer");
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: PolicySecret marshal", test_attest_build_policy_secret, TEST_CAT_SECURITY);
 }
