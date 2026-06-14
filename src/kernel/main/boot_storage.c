@@ -24,6 +24,7 @@
 #include "kernel/cpu_security.h"   /* cpu_audit_ensure_bsp (S9 per-CPU audit) */
 #include "kernel/boot_halt.h"
 #include "kernel/boot_recovery.h"
+#include "kernel/boot_load_status.h"   /* ntbtlog-parity load/status log (section 11) */
 #include "kernel/acpi.h"
 #include "registry.h"
 #include "kernel/symtab.h"
@@ -54,11 +55,17 @@ static boot_result_t deferred_net_init(void)
     int nic = rtl8139_init();
     if (nic < 0) {
         POST16(POST16_DEFERRED_NET_OK);
+        /* Record the REAL deferred outcome (the blackbox dump runs after
+         * boot_run_deferred): no NIC -> DEGRADED, not a premature SKIPPED. */
+        boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_DEGRADED,
+                         (uint16_t)BOOT_DEGRADED, POST16_DEFERRED_NET_OK);
         return BOOT_DEGRADED;  /* no NIC found -- not fatal */
     }
     net_init();
     dhcp_discover();
     POST16(POST16_DEFERRED_NET_OK);
+    boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_LOADED,
+                     0u, POST16_DEFERRED_NET_OK);
     return BOOT_OK;
 }
 
@@ -99,11 +106,14 @@ static boot_result_t async_ahci_init(void)
 
 static boot_result_t async_nvme_init(void)
 {
-    int rc = nvme_init();
-    if (rc != 0) {
-        klog(LOG_WARN, "boot", "NVMe init failed (rc=%d)", (uint64_t)rc);
-        return BOOT_DEGRADED;
-    }
+    /* nvme_init() returns the COUNT of initialized controllers (>= 0), not a
+     * 0/-1 status: a positive count is SUCCESS, and zero (no NVMe present) is
+     * not a failure on a SATA/AHCI system -- same "absence is not failure"
+     * contract as async_ata_init. Treating nonzero as degraded falsely marked
+     * the whole storage span DEGRADED on a healthy multi-controller NVMe boot. */
+    int n = nvme_init();
+    if (n > 0)
+        klog(LOG_INFO, "boot", "NVMe: %d controller(s) ready", (uint64_t)n);
     return BOOT_OK;
 }
 
@@ -141,6 +151,8 @@ void boot_phase2(void)
         /* Defer non-critical peripherals until after desktop is up */
         boot_defer("network", deferred_net_init);
         boot_defer("input",   deferred_input_init);
+        /* network load-status is recorded from deferred_net_init() with the
+         * real post-defer outcome, not here at registration time. */
         boot_progress(2, "PCI_NET_DEFERRED", POST16_PCI_OK);
     } else {
         /* Legacy: all subsystems init in-phase */
@@ -151,6 +163,8 @@ void boot_phase2(void)
         POST16(POST16_NET);
         net_init();
         POST16(POST16_NET_OK);
+        boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_LOADED,
+                         0u, POST16_NET_OK);
         virtio_input_init();
         vbox_mouse_init();
         boot_progress(2, "PCI_NET", POST16_PCI_OK);
@@ -196,7 +210,15 @@ void boot_phase2(void)
     klog(LOG_DEBUG, "boot", "--- Phase: disk drivers ---");
     boot_splash_status("Initializing storage...");
 
+    /* Load/status log (section 11): measured-duration span around the storage
+     * probe block. begin..finish gives a real duration even when the async
+     * group fans the four drivers across CPUs in parallel. */
+    int storage_tok = boot_load_begin("storage", BOOT_LOAD_CLASS_STORAGE);
+    uint8_t  storage_state = BOOT_LOAD_LOADED;
+    uint16_t storage_err   = 0u;
+    uint16_t storage_post  = POST16_NVME_OK;   /* sequential terminal (last driver) */
     if (g_boot_info.config.async_init && smp_cpu_count() > 1) {
+        storage_post = POST16_ASYNC_DONE;      /* async group terminal */
         /* Async: probe storage drivers in parallel across CPUs */
         boot_async_step_t storage_steps[] = {
             { "ATA",       async_ata_init },
@@ -213,9 +235,14 @@ void boot_phase2(void)
             virtio_blk_init();
             ahci_init();
             nvme_init();
+            storage_state = BOOT_LOAD_DEGRADED;   /* async failed; recovered serially */
+            storage_err   = (uint16_t)BOOT_FATAL;
+            storage_post  = POST16_NVME_OK;       /* recovered via the sequential path */
         } else if (async_rc == BOOT_DEGRADED) {
             klog(LOG_WARN, "boot",
                  "Async storage init degraded -- some drivers may be unavailable");
+            storage_state = BOOT_LOAD_DEGRADED;
+            storage_err   = (uint16_t)BOOT_DEGRADED;
         }
     } else {
         /* Sequential: original order */
@@ -230,6 +257,8 @@ void boot_phase2(void)
         nvme_init();
         POST16(POST16_NVME_OK);
     }
+
+    boot_load_finish(storage_tok, storage_state, storage_err, storage_post);
 
     ahci_setup_interrupts();
     xhci_setup_interrupts();  /* After enumeration -- ISR would steal events from polling loops */

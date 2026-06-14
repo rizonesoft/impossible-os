@@ -17,6 +17,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_version.h"
+#include "kernel/boot_load_status.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/ahci.h"
@@ -273,6 +274,14 @@ void boot_phase3(void)
      * thread caused them to never execute (thread starved by compositor). */
     boot_run_deferred();
 
+    /* Surface FAILED/DEGRADED subsystem loads (section 11) AFTER deferred init
+     * so the summary reflects the COMPLETE record -- deferred network/input
+     * outcomes are recorded inside boot_run_deferred(). Serial klog is the
+     * authoritative triage channel; boot_splash_diag is best-effort (a no-op
+     * once the splash is inactive). The full per-entry log lands in
+     * X:\Diag\boot-load-status.txt below. */
+    boot_load_status_report_summary();
+
     /* NVRAM write: Phase 3 complete -- boot succeeded.
      * Must be here, not later -- on bare metal the compositor may crash
      * (timer interrupt issue), and we need this written before that.
@@ -358,6 +367,9 @@ void boot_phase3(void)
     /* Dump the healthy-boot bootloader build identity (git_sha + build time +
      * label) to X:\Diag\boot-loader-identity.txt for offline triage. */
     boot_loader_identity_dump_to_blackbox();
+
+    /* Per-subsystem boot load/status log (section 11, ntbtlog parity). */
+    boot_load_status_dump_to_blackbox();
 
     /* Per-boot policy audit JSONL publish + sticky-trigger ack. Reads
      * the v20 audit surface in g_boot_info, composes one line under

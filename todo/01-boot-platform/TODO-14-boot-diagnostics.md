@@ -64,7 +64,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | ⭐  |   8   | Runtime vital signs strip          | §7                            |  [ ]   |
 | 💎  |   9   | Boot timeline visualization/import | §2                            |  [ ]   |
 | ⭐  |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                |  [x]   |
-| 💎  |  11   | Boot load status log (ntbtlog parity)      | §2                         |  [ ]   |
+| 💎  |  11   | Boot load status log (ntbtlog parity)      | §2                         |  [/]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -269,14 +269,24 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 
 Win11 `ntbtlog.txt` records every driver/service that loaded or failed during boot; Linux exposes the same via dmesg + `systemd-analyze`. §2 records only 15 coarse named stages, so a storage/input/network boot regression reads as generic `DRIVERS` progress instead of a diagnosable "this subsystem failed/degraded". This adds a durable per-subsystem boot load/status artifact (the observability surface boot triage actually needs).
 
-- [ ] Define `struct boot_load_entry` (capped 64-entry pool, no wrap): name[32], `class` enum (CORE/STORAGE/INPUT/NET/ACPI/GFX), `status` enum (ATTEMPTED/LOADED/SKIPPED/FAILED/DEGRADED), `err_code`/`post_code` u16, `start_ms`/`duration_ms` u32.
-- [ ] `boot_load_record(name, class, status, err, post)`: append an entry with elapsed-ms; call from each subsystem init (`boot_phase1/2/3`, driver probe, service start) on success AND failure/degrade. Reuse `boot_get_elapsed_ms()` (§2).
-- [ ] `boot_load_status_dump_to_blackbox()`: write `X:\Diag\boot-load-status.txt` (one line per entry: status, class, name, err, post, start_ms, duration_ms) next to the §10 identity dump; idempotent overwrite.
-- [ ] Surface a one-line summary on serial + the post-boot toast when any entry is FAILED/DEGRADED (e.g. `[BOOT-LOAD] 2 degraded: ahci(0x5), e1000(0x3)`).
-- [ ] Test: `test_boot_load_status` records a synthetic LOADED+FAILED+DEGRADED mix and asserts the in-memory format + the degraded-summary string; skip live VFS write (forbidden in tests).
-- [ ] Commit: `"diag: per-subsystem boot load/status log -> X:\Diag\boot-load-status.txt (ntbtlog parity)"`
+- [x] `struct boot_load_entry` (64-entry pool, no wrap) + `boot_load_class`/`boot_load_state` enums in `include/kernel/boot_load_status.h`: name[32], err/post u16, start/duration ms u32, publish flag.
+- [x] Lock-free SMP-safe append (`atomic_fetch_add` claim + release/acquire publish; async storage probes fan across CPUs): `boot_load_record` point event + `boot_load_begin`/`boot_load_finish` measured span. Reuses `boot_get_elapsed_ms()` (§2).
+- [x] `boot_load_status_dump_to_blackbox()` -> `X:\Diag\boot-load-status.txt` (2-page pmm buffer; header `N recorded / 64 cap, D dropped [TRUNCATED]`); wired in `boot_desktop.c` after `boot_run_deferred()`.
+- [x] `boot_load_status_report_summary()`: serial `klog` (authoritative) + best-effort `boot_splash_diag()` FAILED/DEGRADED one-liner, emitted after `boot_run_deferred` so the summary reflects the complete record (incl. deferred network/input).
+- [x] Initial call sites: storage probe block (`begin`/`finish`, captures async DEGRADED/FATAL-fallback) + network (`deferred_net_init` real outcome or in-phase `net_init`).
+- [ ] Granular per-driver `boot_load_record`: storage (ata/ahci/nvme/virtio-blk), input (PS2/USB HID), ACPI, GFX -- each self-reports vs the single aggregate `storage` entry. Owner: this section.
+- [ ] NVMe per-controller status: expose attempted-vs-initialized count from `nvme_init` (today returns only the success count) so a partial multi-controller failure records DEGRADED, not BOOT_OK. Owner: this section / NVMe driver.
+- [x] Test `test_boot_load_status` (`test_boot_diag.c`, TEST_CAT_BOOT): mix + format + summary + all-LOADED + begin/finish + overflow + fail-closed + 64/65 boundary + pool-full token + name truncation; save/restore seam.
+- [x] Commit: `"diag: per-subsystem boot load/status log -> X:\Diag\boot-load-status.txt (ntbtlog parity)"`
 
 **Test checkpoint:** On a boot with an absent/failing device (e.g. no AHCI), `X:\Diag\boot-load-status.txt` lists that subsystem as FAILED/DEGRADED with an error code; a clean boot lists every core subsystem LOADED; serial shows the degraded summary only when something failed. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2601 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - Shipped: `boot_load_status.{c,h}` -- 64-entry lock-free pool, SMP-safe `boot_load_record`/`begin`/`finish`, pure `format` + `degraded_summary`, `dump_to_blackbox` (`X:\Diag\boot-load-status.txt`), `report_summary` (serial + splash).
+> - Integration: storage probe block + `deferred_net_init`/`net_init` record real outcomes; report + dump both run after `boot_run_deferred` so the record is complete; serial klog is authoritative (Codex adoptions in commit message).
+> - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- 37 asserts; full suite 2601 kernel + 16 user-mode 0 failures; smoke PASS 2.21s shows `[BOOT-LOAD] ... loaded clean` + dump (205 bytes).
+> - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
+> - Scope boundary: §11 ships infra + storage/network wiring; granular per-driver/input/ACPI/GFX `boot_load_record` coverage is the open `[ ]` item in this section.
 
 ---
 
@@ -286,7 +296,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 | -- | ----------------------- | ---------------------------- | ---------------------------- | --------------------------------- |
 | 💎 | Boot POST codes         | ✅ Firmware boot mgr        | ✅ BIOS POST codes           | ✅ §1 §3 POST port 80 + FB hex    |
 | 💎 | Named boot progress     | ✅ ETW boot trace           | ✅ dmesg systemd-analyze     | ✅ §2 serial STAGE ms lines       |
-| 💎 | Boot load/status log    | ✅ ntbtlog.txt driver log   | ✅ dmesg drivers loaded      | ⬜ §11 boot-load-status.txt       |
+| 💎 | Boot load/status log    | ✅ ntbtlog.txt driver log   | ✅ dmesg drivers loaded      | ✅ §11 boot-load-status.txt       |
 | ⭐ | Bootloader build identity | ⚠️ bcdedit/msinfo32        | ⚠️ /proc/version uname       | ✅ §10 boot-loader-identity.txt   |
 | 💎 | Boot timeline viewers   | ⚠️ Performance Toolkit      | ✅ systemd-analyze plot     | ⚠️ JSON §2; §9 viewers pending     |
 | 💎 | Panic forensics         | ✅ WER minidump EventLog    | ✅ kdump pstore ramoops      | ⬜ §5 PMM page last-panic txt     |
@@ -295,7 +305,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 | ⭐ | Alive hang pixel        | ❌ No kernel hang pixel     | ❌ Not production default     | ⬜ §4 redesign safe FB path       |
 | ⭐ | Live vital overlay      | ⚠️ Task Manager separate    | ⚠️ htop conky third-party    | ⬜ §8 bottom metrics strip        |
 
-> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3; timeline **export** exists (JSON) but **viewers** match Linux/Win tooling only after §9. ⬜ rows §5--§8 and §9 are open parity or stretch (⭐ rows). **Edges:** §6 QR and §8 always-on strip are planned differentiators once shipped.
+> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** exists (JSON) but **viewers** match Linux/Win tooling only after §9. ⬜ rows §5--§8 and §9 are open parity or stretch (⭐ rows). **Edges:** §6 QR and §8 always-on strip are planned differentiators once shipped.
 
 ---
 
