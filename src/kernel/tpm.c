@@ -110,7 +110,7 @@ static int tpm_event_record(struct tpm_event *out, uint32_t out_max, uint32_t id
                             uint32_t digest_count, uint16_t primary_alg_id,
                             uint8_t primary_digest_len, uint32_t primary_digest_off,
                             uint32_t payload_off, uint32_t payload_size,
-                            uint32_t digests_off)
+                            uint32_t digests_off, uint8_t legacy)
 {
     if (!out)            /* count-only caller: nothing to store, not an overflow */
         return 0;
@@ -122,7 +122,7 @@ static int tpm_event_record(struct tpm_event *out, uint32_t out_max, uint32_t id
     e->digest_count       = digest_count;
     e->primary_alg_id     = primary_alg_id;
     e->primary_digest_len = primary_digest_len;
-    e->pad                = 0;
+    e->legacy             = legacy;
     e->primary_digest_off = primary_digest_off;
     e->payload_off        = payload_off;
     e->payload_size       = payload_size;
@@ -162,7 +162,7 @@ tpm_evlog_status_t tpm_evlog_parse(const uint8_t *log, uint32_t log_size, int ve
         return TPM_EVLOG_TRUNCATED;
     }
     if (tpm_event_record(out, out_max, rec, first_pcr, first_type, 1u,
-                         TPM_ALG_SHA1, 20u, 8u, 32u, first_dsize, 8u)) {
+                         TPM_ALG_SHA1, 20u, 8u, 32u, first_dsize, 8u, 1u /*legacy*/)) {
         if (out_overflow)    *out_overflow = 1;
         if (out_fail_offset) *out_fail_offset = 0u;
         return TPM_EVLOG_CAP_EXCEEDED;   /* out!=NULL with out_max == 0 */
@@ -222,7 +222,7 @@ tpm_evlog_status_t tpm_evlog_parse(const uint8_t *log, uint32_t log_size, int ve
 
             if (tpm_event_record(out, out_max, rec, pcr, etype, dcount, primary_alg,
                                  primary_len, primary_off, payload_off, ev_data_size,
-                                 offset + 12u)) {
+                                 offset + 12u, 0u /*EVENT2 list*/)) {
                 status = TPM_EVLOG_CAP_EXCEEDED; fail_off = offset; overflow = 1; break;
             }
             rec++;
@@ -244,7 +244,8 @@ tpm_evlog_status_t tpm_evlog_parse(const uint8_t *log, uint32_t log_size, int ve
             uint32_t payload_off = offset + 32u;
             uint32_t entry_size  = 32u + ev_data_size;
             if (tpm_event_record(out, out_max, rec, pcr, etype, 1u, TPM_ALG_SHA1, 20u,
-                                 offset + 8u, payload_off, ev_data_size, offset + 8u)) {
+                                 offset + 8u, payload_off, ev_data_size, offset + 8u,
+                                 1u /*legacy*/)) {
                 status = TPM_EVLOG_CAP_EXCEEDED; fail_off = offset; overflow = 1; break;
             }
             rec++;

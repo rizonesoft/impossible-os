@@ -17,6 +17,44 @@
 #include "kernel/crypto/sha384.h"
 #include "libc/string.h"
 
+/* ---- fixture event-log builder (TPM 2.0 crypto-agile) ---- */
+static uint8_t s_log[256];
+static uint32_t s_log_len;
+
+static void log_put32(uint32_t off, uint32_t v)
+{
+    s_log[off] = (uint8_t)v;        s_log[off + 1u] = (uint8_t)(v >> 8);
+    s_log[off + 2u] = (uint8_t)(v >> 16); s_log[off + 3u] = (uint8_t)(v >> 24);
+}
+static void log_put16(uint32_t off, uint16_t v)
+{
+    s_log[off] = (uint8_t)v; s_log[off + 1u] = (uint8_t)(v >> 8);
+}
+
+/* Build: a leading TCG_PCR_EVENT (PCR 0, SHA-1, no data) + two EVENT2 records on
+ * PCR 4 each carrying one SHA-256 digest (d1 then d2). */
+static void build_fixture(const uint8_t *d1, const uint8_t *d2)
+{
+    uint32_t o;
+    memset(s_log, 0, sizeof(s_log));
+    /* TCG_PCR_EVENT: pcr(4)=0 type(4)=3 digest[20]=0 dsize(4)=0 -> 32 bytes. */
+    log_put32(0, 0u); log_put32(4, 3u); log_put32(28, 0u);
+    o = 32u;
+    /* EVENT2 #1 @32: pcr(4)=4 type(4) count(4)=1 alg(2)=SHA256 digest[32] dsize(4)=0. */
+    log_put32(o, 4u); log_put32(o + 4u, 0x80000003u); log_put32(o + 8u, 1u);
+    log_put16(o + 12u, (uint16_t)TPM_ALG_SHA256);
+    for (uint32_t i = 0; i < 32u; i++) s_log[o + 14u + i] = d1[i];
+    log_put32(o + 46u, 0u);
+    o += 50u;
+    /* EVENT2 #2 @82: same shape, digest d2. */
+    log_put32(o, 4u); log_put32(o + 4u, 0x80000003u); log_put32(o + 8u, 1u);
+    log_put16(o + 12u, (uint16_t)TPM_ALG_SHA256);
+    for (uint32_t i = 0; i < 32u; i++) s_log[o + 14u + i] = d2[i];
+    log_put32(o + 46u, 0u);
+    o += 50u;
+    s_log_len = o;
+}
+
 /* Extend a zero PCR with `digest` in `alg`, and assert it equals the directly
  * computed H_alg(zero_pcr || digest). `dl` is the bank digest length. */
 static void check_bank(uint16_t alg, uint32_t dl, uint8_t fill, const char *name)
@@ -77,11 +115,136 @@ static void test_pcr_extend_badargs(void)
                    TPM_REPLAY_BADARG, "unsupported bank alg rejected");
 }
 
+static void test_replay_known_vector(void)
+{
+    uint8_t d1[32], d2[32], input[64], pcr1[32], expect[32], out[32];
+    struct tpm_event ev[8];
+    uint32_t count = 0, overflow = 0, fail = 0, i;
+    tpm_evlog_status_t st;
+
+    for (i = 0; i < 32u; i++) { d1[i] = 0x11u; d2[i] = 0x22u; }
+    build_fixture(d1, d2);
+
+    /* Expected PCR 4 (SHA-256) computed INDEPENDENTLY of the replay path:
+     * H(H(zero||d1)||d2). */
+    for (i = 0; i < 32u; i++) input[i] = 0u;
+    for (i = 0; i < 32u; i++) input[32u + i] = d1[i];
+    sha256(input, 64u, pcr1);
+    for (i = 0; i < 32u; i++) input[i] = pcr1[i];
+    for (i = 0; i < 32u; i++) input[32u + i] = d2[i];
+    sha256(input, 64u, expect);
+
+    st = tpm_evlog_parse(s_log, s_log_len, 2, ev, 8, &count, &overflow, &fail);
+    TEST_ASSERT_EQ(st, TPM_EVLOG_OK, "fixture log parses clean");
+    TEST_ASSERT_EQ(count, 3u, "3 events (spec-ID + 2 EVENT2)");
+
+    TEST_ASSERT_EQ(tpm_replay_pcr_from(s_log, s_log_len, ev, count, TPM_ALG_SHA256, 4u,
+                                       out, 32u), TPM_REPLAY_OK, "replay PCR4 SHA-256 OK");
+    TEST_ASSERT(memcmp(out, expect, 32u) == 0, "replayed PCR4 == H(H(0||d1)||d2)");
+
+    /* PCR 4 has no SHA-384 digests in the log -> replays to the zero PCR. */
+    {
+        uint8_t out384[48], zero384[48];
+        for (i = 0; i < 48u; i++) zero384[i] = 0u;
+        TEST_ASSERT_EQ(tpm_replay_pcr_from(s_log, s_log_len, ev, count, TPM_ALG_SHA384, 4u,
+                                           out384, 48u), TPM_REPLAY_OK, "replay PCR4 SHA-384 OK");
+        TEST_ASSERT(memcmp(out384, zero384, 48u) == 0, "absent bank -> zero PCR");
+    }
+    /* PCR 0 has only the SHA-1 spec-ID event, no SHA-256 -> SHA-256 PCR0 is zero. */
+    {
+        uint8_t out0[32], zero0[32];
+        for (i = 0; i < 32u; i++) zero0[i] = 0u;
+        TEST_ASSERT_EQ(tpm_replay_pcr_from(s_log, s_log_len, ev, count, TPM_ALG_SHA256, 0u,
+                                           out0, 32u), TPM_REPLAY_OK, "replay PCR0 SHA-256 OK");
+        TEST_ASSERT(memcmp(out0, zero0, 32u) == 0, "PCR0 has no SHA-256 events -> zero");
+    }
+    /* The leading PCR0 event is EV_NO_ACTION (type 3, the spec-ID event); it must
+     * NOT extend even the SHA-1 bank, so SHA-1 PCR0 stays the zero reset value. */
+    {
+        uint8_t out0[20], zero0[20];
+        for (i = 0; i < 20u; i++) zero0[i] = 0u;
+        TEST_ASSERT_EQ(tpm_replay_pcr_from(s_log, s_log_len, ev, count, TPM_ALG_SHA1, 0u,
+                                           out0, 20u), TPM_REPLAY_OK, "replay PCR0 SHA-1 OK");
+        TEST_ASSERT(memcmp(out0, zero0, 20u) == 0, "EV_NO_ACTION not extended -> SHA-1 PCR0 zero");
+    }
+}
+
+/* Build a TPM 1.2 (legacy) log: two TCG_PCR_EVENT entries on PCR 4, each a raw
+ * 20-byte SHA-1 digest (NO {alg} prefix). */
+static void build_legacy_fixture(const uint8_t *d1, const uint8_t *d2)
+{
+    uint32_t o;
+    memset(s_log, 0, sizeof(s_log));
+    /* Event 0 @0: pcr(4)=4 type(4) digest[20]=d1 dsize(4)=0 -> 32 bytes. */
+    log_put32(0, 4u); log_put32(4, 8u);
+    for (uint32_t i = 0; i < 20u; i++) s_log[8u + i] = d1[i];
+    log_put32(28, 0u);
+    o = 32u;
+    /* Event 1 @32: same shape, d2. */
+    log_put32(o, 4u); log_put32(o + 4u, 9u);
+    for (uint32_t i = 0; i < 20u; i++) s_log[o + 8u + i] = d2[i];
+    log_put32(o + 28u, 0u);
+    s_log_len = o + 32u;
+}
+
+static void test_replay_legacy_sha1(void)
+{
+    /* Legacy SHA-1 digests that do NOT start with 0x0004 -- the pre-fix extractor
+     * would mis-read the leading bytes as an alg id and skip these events,
+     * underextending the SHA-1 PCR. */
+    uint8_t d1[20], d2[20], input[40], pcr1[20], expect[20], out[20];
+    struct tpm_event ev[8];
+    uint32_t count = 0, overflow = 0, fail = 0, i;
+
+    for (i = 0; i < 20u; i++) { d1[i] = 0xAAu; d2[i] = 0xBBu; }
+    build_legacy_fixture(d1, d2);
+
+    /* Independent expected: H_sha1(H_sha1(zero||d1)||d2). */
+    for (i = 0; i < 20u; i++) input[i] = 0u;
+    for (i = 0; i < 20u; i++) input[20u + i] = d1[i];
+    sha1(input, 40u, pcr1);
+    for (i = 0; i < 20u; i++) input[i] = pcr1[i];
+    for (i = 0; i < 20u; i++) input[20u + i] = d2[i];
+    sha1(input, 40u, expect);
+
+    TEST_ASSERT_EQ(tpm_evlog_parse(s_log, s_log_len, 1, ev, 8, &count, &overflow, &fail),
+                   TPM_EVLOG_OK, "legacy log parses clean");
+    TEST_ASSERT_EQ(count, 2u, "two legacy events");
+    TEST_ASSERT_EQ(ev[0].legacy, 1u, "event 0 tagged legacy");
+    TEST_ASSERT_EQ(tpm_replay_pcr_from(s_log, s_log_len, ev, count, TPM_ALG_SHA1, 4u,
+                                       out, 20u), TPM_REPLAY_OK, "legacy SHA-1 replay OK");
+    TEST_ASSERT(memcmp(out, expect, 20u) == 0,
+                "legacy SHA-1 replay == H(H(0||d1)||d2) (not underextended)");
+}
+
+static void test_replay_bank_digest_extract(void)
+{
+    uint8_t d1[32], d2[32];
+    struct tpm_event ev[8];
+    uint32_t count = 0, overflow = 0, fail = 0, i;
+    const uint8_t *dig = (const uint8_t *)0;
+
+    for (i = 0; i < 32u; i++) { d1[i] = 0xABu; d2[i] = 0xCDu; }
+    build_fixture(d1, d2);
+    tpm_evlog_parse(s_log, s_log_len, 2, ev, 8, &count, &overflow, &fail);
+
+    /* ev[1] is EVENT2 #1: its SHA-256 digest must be extracted == d1. */
+    TEST_ASSERT_EQ(tpm_event_bank_digest(s_log, s_log_len, &ev[1], TPM_ALG_SHA256, &dig), 32u,
+                   "SHA-256 digest extracted, len 32");
+    TEST_ASSERT(dig && memcmp(dig, d1, 32u) == 0, "extracted digest == d1");
+    /* The event has no SHA-1 digest in its list -> not found. */
+    TEST_ASSERT_EQ(tpm_event_bank_digest(s_log, s_log_len, &ev[1], TPM_ALG_SHA1, &dig), 0u,
+                   "absent bank -> 0");
+}
+
 void test_register_tpm_replay(void)
 {
     test_suite_register_cat("tpm: PCR extend banks", test_pcr_extend_banks, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PCR extend chain", test_pcr_extend_chain, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PCR extend bad args", test_pcr_extend_badargs, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: PCR replay known vector", test_replay_known_vector, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: PCR replay legacy SHA-1", test_replay_legacy_sha1, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: replay bank-digest extract", test_replay_bank_digest_extract, TEST_CAT_SECURITY);
 }
 
 #endif /* KERNEL_TESTS */

@@ -58,7 +58,10 @@ struct tpm_event {
     uint32_t digest_count;       /* number of digests in this event's bank list */
     uint16_t primary_alg_id;     /* TPM_ALG_* of the strongest digest present */
     uint8_t  primary_digest_len; /* 20/32/48/64 */
-    uint8_t  pad;
+    uint8_t  legacy;             /* 1 = legacy TCG_PCR_EVENT (a single RAW 20-byte
+                                  * SHA-1 digest at digests_off, no alg prefix);
+                                  * 0 = TCG_PCR_EVENT2 ({alg,digest} list). Tells
+                                  * replay how to read digests_off. */
     uint32_t primary_digest_off; /* byte offset of the primary digest in the log */
     uint32_t payload_off;        /* byte offset of event_data in the log */
     uint32_t payload_size;       /* event_data length */

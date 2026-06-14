@@ -9,7 +9,8 @@
 
 #include "kernel/types.h"
 #include "kernel/tpm_replay.h"
-#include "kernel/tpm.h"                 /* TPM_ALG_*, tpm_alg_digest_len_pub */
+#include "kernel/tpm.h"                 /* TPM_ALG_*, tpm_alg_digest_len_pub, tpm_event* */
+#include "kernel/boot_info.h"           /* g_boot_info.tpm_event_log */
 #include "kernel/crypto/sha1.h"
 #include "kernel/crypto/sha256.h"
 #include "kernel/crypto/sha384.h"
@@ -18,6 +19,10 @@
 
 /* Largest bank digest is SHA-512 (64 bytes); the concat input is 2x that. */
 #define TPM_REPLAY_MAX_DIGEST 64u
+
+/* TCG EV_NO_ACTION events (e.g. the leading TCG_EfiSpecIDEvent) are log metadata
+ * and are NOT measured into any PCR -- replay must skip them. */
+#define TPM_EV_NO_ACTION 0x00000003u
 
 tpm_replay_status_t tpm_pcr_extend(uint16_t alg, uint8_t *pcr, uint32_t pcr_len,
                                    const uint8_t *digest, uint32_t digest_len)
@@ -50,4 +55,103 @@ tpm_replay_status_t tpm_pcr_extend(uint16_t alg, uint8_t *pcr, uint32_t pcr_len,
     for (uint32_t i = 0; i < sizeof(input); i++)
         input[i] = 0u;
     return TPM_REPLAY_OK;
+}
+
+static uint16_t rd_le16(const uint8_t *p)
+{
+    return (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
+}
+
+uint32_t tpm_event_bank_digest(const uint8_t *log, uint32_t log_size,
+                               const struct tpm_event *e, uint16_t alg,
+                               const uint8_t **out_digest)
+{
+    uint16_t want = tpm_alg_digest_len_pub(alg);
+    uint32_t pos, d;
+    if (out_digest)
+        *out_digest = 0;
+    if (!log || !e || !out_digest || want == 0u)
+        return 0;
+
+    /* Legacy TCG_PCR_EVENT: a single RAW 20-byte SHA-1 digest sits at
+     * digests_off with NO {alg} prefix, so it must NOT be parsed as a tagged
+     * EVENT2 list. The only bank a legacy entry carries is SHA-1. */
+    if (e->legacy) {
+        if (alg != TPM_ALG_SHA1)
+            return 0;
+        if (e->digests_off > log_size || log_size - e->digests_off < 20u)
+            return 0;
+        *out_digest = log + e->digests_off;
+        return 20u;
+    }
+
+    pos = e->digests_off;
+    for (d = 0; d < e->digest_count; d++) {
+        uint16_t a, dl;
+        /* Bound the alg(2) field, then the digest, against the log -- the list
+         * came from an attacker-influenceable firmware buffer. */
+        if (pos > log_size || log_size - pos < 2u)
+            return 0;
+        a  = rd_le16(log + pos);
+        dl = tpm_alg_digest_len_pub(a);
+        if (dl == 0u)                       /* unknown alg -> cannot skip safely */
+            return 0;
+        if (log_size - pos < (uint32_t)(2u + dl))
+            return 0;
+        if (a == alg) {
+            *out_digest = log + pos + 2u;
+            return dl;
+        }
+        pos += 2u + (uint32_t)dl;
+    }
+    return 0;                               /* bank not present in this event */
+}
+
+tpm_replay_status_t tpm_replay_pcr_from(const uint8_t *log, uint32_t log_size,
+                                        const struct tpm_event *events, uint32_t n_events,
+                                        uint16_t alg, uint32_t pcr_index,
+                                        uint8_t *out, uint32_t out_cap)
+{
+    uint16_t dl = tpm_alg_digest_len_pub(alg);
+    uint32_t i;
+    if (!out || dl == 0u || out_cap < (uint32_t)dl || pcr_index >= 24u)
+        return TPM_REPLAY_BADARG;
+    if (n_events && (!events || !log))
+        return TPM_REPLAY_BADARG;
+
+    memset(out, 0, dl);                     /* all-zero PCR reset value */
+    for (i = 0; i < n_events; i++) {
+        const struct tpm_event *e = &events[i];
+        const uint8_t *digest = 0;
+        if (e->pcr_index != pcr_index)
+            continue;
+        if (e->event_type == TPM_EV_NO_ACTION)   /* metadata; not extended into the PCR */
+            continue;
+        if (tpm_event_bank_digest(log, log_size, e, alg, &digest) == (uint32_t)dl && digest)
+            tpm_pcr_extend(alg, out, (uint32_t)dl, digest, (uint32_t)dl);
+        /* An event with no digest in this bank is simply not extended into it. */
+    }
+    return TPM_REPLAY_OK;
+}
+
+tpm_replay_status_t tpm_replay_pcr(uint16_t alg, uint32_t pcr_index,
+                                   uint8_t *out, uint32_t out_cap)
+{
+    const uint8_t *log  = (const uint8_t *)g_boot_info.tpm_event_log;
+    uint32_t log_size   = g_boot_info.tpm_event_log_size;
+    uint32_t n          = tpm_event_count();
+    const struct tpm_event *base = (n > 0u) ? tpm_event_get(0) : 0;
+
+    /* tpm_event_count() is 0 unless the last parse was clean (s_events is then a
+     * contiguous, authoritative array), so a degraded/absent log replays to the
+     * all-zero PCR -- callers gate trust on tpm_evlog_status() separately. */
+    if (base)
+        return tpm_replay_pcr_from(log, log_size, base, n, alg, pcr_index, out, out_cap);
+    {
+        uint16_t dl = tpm_alg_digest_len_pub(alg);
+        if (!out || dl == 0u || out_cap < (uint32_t)dl || pcr_index >= 24u)
+            return TPM_REPLAY_BADARG;
+        memset(out, 0, dl);
+        return TPM_REPLAY_OK;
+    }
 }
