@@ -174,7 +174,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Follow-up: real physical-console keypress confirmation for enrollment (needs a Phase-1 console-input path; current gate is the config bit). -> owner: console-input infra (file when that domain lands).
 - [ ] Follow-up: actual bootloader + kernel image SHA-256 in the baseline -- bootloader must compute + carry them in `boot_info` (`.bootproto` sha is the ABI-manifest hash). -> XREF: §9 + `01-boot-platform/TODO-01`.
 - [ ] Follow-up (blocking for rollback-resistance claims): TPM NV write-lock / monotonic-counter anti-rollback so rotation cannot roll the baseline back to a tampered blob. -> XREF: §7 (`tpm_nv_*` NV mechanism).
-- [ ] Commit: `"tpm: enroll measured boot baseline"`
+- [x] Commit: `"tpm: enroll measured boot baseline"` (c7032e45)
 
 **Test checkpoint:** With the recovery-authorized `tpm_enroll` config bit set, enrollment assembles + stores the versioned baseline blob (golden PCRs per bank + Secure Boot state + firmware-version hash + `abi_manifest_sha256`) in the owner-auth NV DATA index; a normal second boot (no enroll bit) reads it via the Phase-1 verify step and reports `verified`; an injected PCR/SB change reports `baseline-mismatch` (not a false `verified`); a NO_BASELINE boot does NOT auto-enroll; a recovery-gated rotation overwrites the blob and rejects a lower generation. The marshal/compare/generation logic is fixture-tested; the live swtpm enroll->reboot->verify->rotate cycle is QEMU-swtpm/bare-metal validation. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
 
