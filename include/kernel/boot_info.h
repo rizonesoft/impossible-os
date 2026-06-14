@@ -1091,10 +1091,16 @@ struct boot_config {
      * damaged to trust with writes). Kernel-side consumer:
      * seed_file_phase3(). */
     uint8_t  seed_file;
+    /* Measured-boot baseline enrollment opt-in (measured-boot attestation).
+     * 1 = the kernel MAY enroll/rotate the golden baseline this boot, honored
+     * ONLY when boot_mode == 2 (recovery) so a normal boot can never silently
+     * become the golden baseline (no first-boot trust-on-first-use). boot.conf
+     * line `tpm_enroll=1`; default 0. */
+    uint8_t  tpm_enroll;
     /* Reserved -- new config fields go here without shifting cmdline.
      * Bootloader zero-fills the entire struct, so new fields default to 0
      * in older bootloaders that don't know about them. */
-    uint8_t  _reserved[6];
+    uint8_t  _reserved[5];
     /* Command line (offset 32 -- stable across versions) */
     char     cmdline[BOOT_CONF_CMDLINE_MAX];
     /* Status */

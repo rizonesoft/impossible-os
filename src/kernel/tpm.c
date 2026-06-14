@@ -787,3 +787,15 @@ void tpm_integrity_set_replay_verdict(uint8_t verdict)
     if (verdict == 1u)
         s_integrity_report.overall_status = BOOT_INTEGRITY_MISMATCH;
 }
+
+void tpm_integrity_set_overall_status(uint8_t status)
+{
+    /* The Phase-1 baseline verify (tpm_baseline_verify) publishes its golden-vs-
+     * current verdict here. A replay/hardware TAMPER (replay_verdict == 1) is a
+     * definitive integrity failure that pins MISMATCH -- NO later baseline status
+     * (VERIFIED, NO_BASELINE, ...) may overwrite it, or an overall_status
+     * consumer would lose the tamper signal. */
+    if (s_integrity_report.replay_verdict == 1u)
+        return;
+    s_integrity_report.overall_status = status;
+}

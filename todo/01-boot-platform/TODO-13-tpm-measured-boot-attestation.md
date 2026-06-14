@@ -40,7 +40,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 3 | PCR read API | §2 | [x] |
 | 💎 | 4 | PCR replay engine | §1, ../02-kernel-core/TODO-03 §3 | [x] |
 | 💎 | 5 | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3 | [x] |
-| 💎 | 6 | Baseline enrollment and storage | §3, §4, §7 | [ ] |
+| 💎 | 6 | Baseline enrollment and storage | §3, §4, §7 | [/] |
 | 💎 | 7 | TPM NV index support | §2 (transport); §12 (baseline mask) | [/] |
 | ⭐ | 8 | Sealed-secret boot policy hooks | §7 | [ ] |
 | 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
@@ -167,7 +167,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 > **Design (2026-06-14, Codex 3H+1M adopted pre-code):** §6 is UNBLOCKED (§4 SHA/replay + §7 NV storage landed) and owns the baseline CONTENT. Adopted constraints for the implementor: (1) the baseline VERIFY is a Phase-1 step in `boot_interrupts` AFTER `tpm_transport_init`/`tpm_pcr_cache_init`/SB-reconcile/`tpm_replay_verify` -- NOT `tpm_integrity_init` (Phase 0, before the transport/cache exist; the `tpm.c` "read golden values" placeholder is misleading). (2) Store the golden baseline in an OWNER-auth DATA index (`tpm_nv_define_data`/`tpm_nv_write`/`tpm_nv_read`), readable every boot -- NEVER the PCR-policy-sealed index (circular: you'd need the good PCR state to read the values that define it). (3) Enrollment is gated by an explicit recovery-authorized `tpm_enroll` config bit, NOT silent first-boot TOFU (a wrong/compromised first boot must not auto-become golden). (4) `.bootproto` sha is the ABI-manifest hash, not the kernel image -- store available identity (per-bank PCR digests + SB state + firmware-version hash + `abi_manifest_sha256`); real image hashes + console confirmation + NV anti-rollback are tracked follow-ups below. -> XREF: §7 (`tpm_nv_*`; the UEFI-var -> TPM-NV migration item there is deferred to §6's baseline schema).
 
-- [ ] Versioned baseline blob (`struct tpm_baseline`): per-bank golden PCR digests + Secure Boot state + firmware-version hash + `abi_manifest_sha256` (when available) + monotonic generation; one owner-auth NV DATA index blob.
+- [x] Versioned baseline blob (`struct tpm_baseline`, `tpm_baseline.{c,h}`): golden PCR digests {0-7,11} + SB state + firmware-version hash + `abi_manifest`(present=0) + generation + `gpt_crc32`; pure `tpm_baseline_finalize/validate/compare`.
 - [ ] Enrollment gated by a recovery-authorized `tpm_enroll` config bit (NOT silent first-boot TOFU): when set, assemble + store the blob via `tpm_nv_define_data`/`tpm_nv_write`; report it as config/recovery-authorized enrollment.
 - [ ] Phase-1 baseline verify step in `boot_interrupts` AFTER replay verify (NOT `tpm_integrity_init`): read the blob, compare current PCRs/SB/firmware-hash to golden -> set `boot_integrity_report.overall_status` VERIFIED / MISMATCH / NO_BASELINE.
 - [ ] Baseline rotation under the recovery gate + monotonic generation counter (overwrite the blob; reject a lower generation).
@@ -177,6 +177,15 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [ ] Commit: `"tpm: enroll measured boot baseline"`
 
 **Test checkpoint:** With the recovery-authorized `tpm_enroll` config bit set, enrollment assembles + stores the versioned baseline blob (golden PCRs per bank + Secure Boot state + firmware-version hash + `abi_manifest_sha256`) in the owner-auth NV DATA index; a normal second boot (no enroll bit) reads it via the Phase-1 verify step and reports `verified`; an injected PCR/SB change reports `baseline-mismatch` (not a false `verified`); a NO_BASELINE boot does NOT auto-enroll; a recovery-gated rotation overwrites the blob and rejects a lower generation. The marshal/compare/generation logic is fixture-tested; the live swtpm enroll->reboot->verify->rotate cycle is QEMU-swtpm/bare-metal validation. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM).
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 3 baseline suites, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/tpm_baseline.{c,h}`: versioned `struct tpm_baseline` (PCR digests + SB state + fw-hash + generation + `gpt_crc32`); pure `finalize/validate/compare/rotation_ok` + live `snapshot/enroll/verify`. 3 suites in `test_tpm_baseline.c`.
+> - Wired in `boot_interrupts.c` Phase-1 after `tpm_replay_verify`: recovery-gated enroll (`boot_mode==recovery && config.tpm_enroll`) else verify; `tpm_enroll` is a boot_config reserved-slot field (kernel+mirror+bootloader+manifest+doc).
+> - Consumes §7 NV (owner-auth data index) + §3 PCR cache + §5 SB state + §4 replay precedence; fills the old `tpm.c` "read golden values" gap as a Phase-1 step (not Phase-0).
+> - Canonical doc: the section "Design (2026-06-14...)" note above + `docs/boot/boot-info-fields.md` (`tpm_enroll`).
+> - Scope: §6 owns baseline CONTENT/enroll/verify/rotate; console confirmation, real image hashes, and NV write-lock anti-rollback are filed follow-up `[ ]` items (infra-blocked).
 
 ## 7. TPM NV Index Support
 
@@ -298,6 +307,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 | 💎 | Secure Boot PCR integration | Measured Boot | IMA/TPM tools | ⚠️ §5 structural SB var reconcile |
 | 💎 | PCR replay | internal/Defender | tpm2-tools | ✅ §4 SHA-1/256/384/512 replay + tamper verify |
 | 💎 | TPM NV index storage (PCR-sealed) | TBS NV / BitLocker | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index |
+| 💎 | Measured-boot baseline (enroll/verify) | Measured Boot baseline | IMA + systemd-pcrlock | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation |
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |
 | 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | TODO-13 §13 (EK->AK + TPM2_Quote) |

@@ -2583,6 +2583,14 @@ static void parse_conf_kv(struct boot_config *cfg,
         else if (ascii_streq(val, "on"))  cfg->seed_file = 1;
         else                              cfg->seed_file = (UINT8)ascii_atoi(val);
     }
+    else if (ascii_streq(key, "tpm_enroll")) {
+        /* Measured-boot baseline enrollment opt-in; the kernel honors it only
+         * in recovery mode (boot_mode=recovery) so a normal boot never silently
+         * becomes the golden baseline. */
+        if      (ascii_streq(val, "off")) cfg->tpm_enroll = 0;
+        else if (ascii_streq(val, "on"))  cfg->tpm_enroll = 1;
+        else                              cfg->tpm_enroll = (UINT8)ascii_atoi(val);
+    }
     else if (ascii_streq(key, "compositor")) {
         /* Desktop UI test framework, headless compositor section. */
         if      (ascii_streq(val, "headless")) cfg->compositor = 1;

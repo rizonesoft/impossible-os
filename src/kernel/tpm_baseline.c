@@ -1,0 +1,292 @@
+/* ============================================================================
+ * tpm_baseline.c -- measured-boot baseline blob (enroll / verify / rotate)
+ *
+ * The CONTENT layer of measured-boot attestation (see tpm_baseline.h). Pure
+ * format / validate / compare / generation logic + live snapshot / enroll /
+ * verify wrappers that drive tpm_pcr_get + the owner-auth NV DATA index.
+ * ============================================================================ */
+
+#include "kernel/types.h"
+#include "kernel/tpm.h"
+#include "kernel/tpm_baseline.h"
+#include "kernel/tpm_nv.h"
+#include "kernel/crypto/sha256.h"
+#include "kernel/smbios.h"
+#include "kernel/fs/gpt.h"   /* gpt_crc32 (IEEE CRC32) */
+#include "libc/string.h"
+
+/* The measured-boot PCR set the baseline pins (matches tpm.c s_pcr_measured and
+ * tpm_replay.c). Kept local; a divergence would only narrow what is compared. */
+static const uint8_t s_baseline_pcrs[TPM_BASELINE_MAX_PCRS] =
+    { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u };
+
+/* ---- Pure core ---- */
+
+uint32_t tpm_baseline_finalize(struct tpm_baseline *b)
+{
+    if (!b)
+        return 0;
+    b->magic = TPM_BASELINE_MAGIC;
+    b->version = TPM_BASELINE_VERSION;
+    b->size = (uint16_t)sizeof(*b);
+    b->crc32 = gpt_crc32(b, (uint32_t)__builtin_offsetof(struct tpm_baseline, crc32));
+    return (uint32_t)sizeof(*b);
+}
+
+int tpm_baseline_validate(const uint8_t *blob, uint32_t len,
+                          struct tpm_baseline *out)
+{
+    uint32_t crc, i;
+    uint32_t present = 0;
+    if (!out || !blob || len < sizeof(struct tpm_baseline))
+        return 0;
+    /* Copy the untrusted byte buffer into the ALIGNED struct before reading any
+     * field -- casting a uint8_t[] to struct* and reading uint32_t fields is UB
+     * and faults on strict-alignment targets (ARM64). */
+    memcpy(out, blob, sizeof(struct tpm_baseline));
+    if (out->magic != TPM_BASELINE_MAGIC ||
+        out->version != TPM_BASELINE_VERSION ||
+        out->size != (uint16_t)sizeof(struct tpm_baseline))
+        return 0;
+    crc = gpt_crc32(out, (uint32_t)__builtin_offsetof(struct tpm_baseline, crc32));
+    if (crc != out->crc32)
+        return 0;
+    /* Canonical structure (CRC is integrity, NOT authenticity -- the NV blob is
+     * owner-writable). A baseline MUST pin the full measured PCR set in order;
+     * a blob with pcr_count=0 or every slot present=0 would otherwise "verify"
+     * without checking any PCR. */
+    if (out->pcr_count != TPM_BASELINE_MAX_PCRS)
+        return 0;
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
+        if (out->pcrs[i].index != s_baseline_pcrs[i] || out->pcrs[i].present > 1u)
+            return 0;
+        if (out->pcrs[i].present)
+            present++;
+    }
+    if (present == 0u)
+        return 0;
+    if (out->secure_boot > 1u || out->secure_boot_valid > 1u ||
+        out->fw_hash_present > 1u || out->abi_manifest_present > 1u)
+        return 0;
+    return 1;
+}
+
+tpm_baseline_verdict_t tpm_baseline_compare(const struct tpm_baseline *golden,
+                                            const struct tpm_baseline *current)
+{
+    uint32_t i, j;
+    if (!golden || !current)
+        return TPM_BASELINE_CMP_BADARG;
+    /* Same hash bank, or the digests are not comparable. */
+    if (golden->alg != current->alg)
+        return TPM_BASELINE_MISMATCH;
+    /* Secure Boot state (validity included: a baseline enrolled with SB readable
+     * must not silently match a boot where SB became unreadable). */
+    if (golden->secure_boot_valid != current->secure_boot_valid ||
+        golden->secure_boot != current->secure_boot)
+        return TPM_BASELINE_MISMATCH;
+    /* Firmware-version hash (when the golden carries one). */
+    if (golden->fw_hash_present) {
+        if (!current->fw_hash_present ||
+            memcmp(golden->fw_hash, current->fw_hash, TPM_BASELINE_DIGEST) != 0)
+            return TPM_BASELINE_MISMATCH;
+    }
+    /* Kernel-ABI manifest identity (when the golden carries one). */
+    if (golden->abi_manifest_present) {
+        if (!current->abi_manifest_present ||
+            memcmp(golden->abi_manifest, current->abi_manifest, TPM_BASELINE_DIGEST) != 0)
+            return TPM_BASELINE_MISMATCH;
+    }
+    if (golden->pcr_count > TPM_BASELINE_MAX_PCRS ||
+        current->pcr_count > TPM_BASELINE_MAX_PCRS)
+        return TPM_BASELINE_CMP_BADARG;
+    /* A golden baseline that pins NO PCR cannot be a match -- it would otherwise
+     * "verify" the boot without checking any measured value. */
+    {
+        uint32_t k, gp = 0;
+        for (k = 0; k < golden->pcr_count; k++)
+            if (golden->pcrs[k].present)
+                gp++;
+        if (gp == 0u)
+            return TPM_BASELINE_MISMATCH;
+    }
+    /* Every golden PCR present at enroll must equal the current digest for that
+     * index in the same bank. A golden PCR that is no longer present/readable is
+     * a mismatch (the measured state changed). */
+    for (i = 0; i < golden->pcr_count; i++) {
+        const struct tpm_baseline_pcr *g = &golden->pcrs[i];
+        int found = 0;
+        if (!g->present)
+            continue;
+        for (j = 0; j < current->pcr_count; j++) {
+            const struct tpm_baseline_pcr *c = &current->pcrs[j];
+            if (c->index == g->index && c->present) {
+                if (memcmp(g->digest, c->digest, TPM_BASELINE_DIGEST) != 0)
+                    return TPM_BASELINE_MISMATCH;
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+            return TPM_BASELINE_MISMATCH;
+    }
+    return TPM_BASELINE_MATCH;
+}
+
+int tpm_baseline_rotation_ok(uint32_t old_gen, uint32_t new_gen)
+{
+    return (new_gen > old_gen) ? 1 : 0;
+}
+
+/* ---- Live wrappers ---- */
+
+tpm_baseline_status_t tpm_baseline_snapshot(uint16_t alg, struct tpm_baseline *out)
+{
+    const struct boot_integrity_report *rep;
+    const struct smbios_system_info *si;
+    uint32_t i;
+    int any = 0;
+
+    if (!out || tpm_alg_digest_len_pub(alg) != TPM_BASELINE_DIGEST)
+        return TPM_BASELINE_BADARG;
+    memset(out, 0, sizeof(*out));
+    out->alg = alg;
+
+    for (i = 0; i < TPM_BASELINE_MAX_PCRS; i++) {
+        uint32_t dl = 0;
+        tpm_pcr_status_t st = tpm_pcr_get(s_baseline_pcrs[i], alg,
+                                          out->pcrs[i].digest, TPM_BASELINE_DIGEST, &dl);
+        out->pcrs[i].index = s_baseline_pcrs[i];
+        if (st == TPM_PCR_OK && dl == TPM_BASELINE_DIGEST) {
+            out->pcrs[i].present = 1;
+            any = 1;
+        } else {
+            out->pcrs[i].present = 0;
+            memset(out->pcrs[i].digest, 0, TPM_BASELINE_DIGEST);
+        }
+    }
+    out->pcr_count = TPM_BASELINE_MAX_PCRS;
+    if (!any)
+        return TPM_BASELINE_NO_TPM;   /* no PCR readable -> nothing to baseline */
+
+    /* Secure Boot state from the honest Secure Boot reconciliation in the boot
+     * integrity report. */
+    rep = tpm_integrity_report();
+    if (rep) {
+        out->secure_boot = rep->secure_boot;
+        out->secure_boot_valid = rep->secure_boot_valid;
+    }
+
+    /* Firmware-version hash: SHA-256 over the SMBIOS BIOS version string. */
+    si = smbios_get_info();
+    if (si) {
+        uint32_t n = 0;
+        while (n < (uint32_t)sizeof(si->bios_version) && si->bios_version[n] != '\0')
+            n++;
+        if (n != 0u) {
+            sha256(si->bios_version, n, out->fw_hash);
+            out->fw_hash_present = 1;
+        }
+    }
+
+    /* abi_manifest (the .bootproto ABI-manifest sha256) is the only "available"
+     * image identity, but its kernel-side accessor is not yet exposed -- left
+     * absent (present=0). Real bootloader/kernel image hashes + this manifest
+     * hash are tracked follow-ups. */
+    out->abi_manifest_present = 0;
+    return TPM_BASELINE_OK;
+}
+
+/* Map a tpm_nv_status_t to a tpm_baseline_status_t for the NV-driven wrappers. */
+static tpm_baseline_status_t nv_to_baseline(tpm_nv_status_t st)
+{
+    switch (st) {
+        case TPM_NV_OK:        return TPM_BASELINE_OK;
+        case TPM_NV_NOTFOUND:
+        case TPM_NV_UNINIT:    return TPM_BASELINE_NO_BASELINE;
+        case TPM_NV_TRANSPORT: return TPM_BASELINE_NO_TPM;
+        default:               return TPM_BASELINE_TPMERR;
+    }
+}
+
+tpm_baseline_status_t tpm_baseline_enroll(uint32_t nv_index, uint16_t alg)
+{
+    struct tpm_baseline b;
+    uint8_t old_blob[sizeof(struct tpm_baseline)];
+    struct tpm_baseline old;
+    uint16_t got = 0;
+    uint32_t gen = 1u;
+    tpm_baseline_status_t st;
+    tpm_nv_status_t nv;
+
+    st = tpm_baseline_snapshot(alg, &b);
+    if (st != TPM_BASELINE_OK)
+        return st;
+
+    /* Monotonic generation: a valid existing baseline rotates to gen+1; a first
+     * enroll (or an unreadable/corrupt prior blob) starts at 1. This is the
+     * content-layer anti-rollback; NV write-lock/counter hardening is a tracked
+     * follow-up. */
+    if (tpm_nv_read(nv_index, 0u, old_blob, (uint16_t)sizeof(old_blob), &got) == TPM_NV_OK &&
+        got == (uint16_t)sizeof(old_blob) &&
+        tpm_baseline_validate(old_blob, got, &old)) {
+        /* Refuse to wrap the generation backward (UINT32_MAX -> 0). A baseline
+         * at the max generation cannot be rotated further without anti-rollback
+         * NV hardening. */
+        if (old.generation == 0xFFFFFFFFu)
+            return TPM_BASELINE_TPMERR;
+        gen = old.generation + 1u;
+        if (!tpm_baseline_rotation_ok(old.generation, gen))
+            return TPM_BASELINE_TPMERR;
+    }
+    b.generation = gen;
+    if (tpm_baseline_finalize(&b) == 0u)
+        return TPM_BASELINE_BADARG;
+
+    /* Define the owner-auth DATA index (idempotent: an already-defined index
+     * returns DEFINED, fine for re-enroll / rotation), then write the blob. */
+    nv = tpm_nv_define_data(nv_index, (uint16_t)sizeof(b));
+    if (nv != TPM_NV_OK && nv != TPM_NV_DEFINED)
+        return nv_to_baseline(nv);
+    nv = tpm_nv_write(nv_index, 0u, (const uint8_t *)&b, (uint16_t)sizeof(b));
+    return nv_to_baseline(nv);
+}
+
+tpm_baseline_status_t tpm_baseline_verify(uint32_t nv_index, uint16_t alg,
+                                          uint8_t *out_overall)
+{
+    uint8_t blob[sizeof(struct tpm_baseline)];
+    struct tpm_baseline current;
+    struct tpm_baseline golden;
+    uint16_t got = 0;
+    tpm_nv_status_t nv;
+    tpm_baseline_status_t st;
+    tpm_baseline_verdict_t v;
+
+    nv = tpm_nv_read(nv_index, 0u, blob, (uint16_t)sizeof(blob), &got);
+    if (nv != TPM_NV_OK) {
+        st = nv_to_baseline(nv);
+        if (st == TPM_BASELINE_NO_BASELINE && out_overall)
+            *out_overall = BOOT_INTEGRITY_NO_BASELINE;
+        return st;
+    }
+    if (got != (uint16_t)sizeof(blob) ||
+        !tpm_baseline_validate(blob, got, &golden)) {
+        /* A defined-but-corrupt baseline is not a silent pass: report it as a
+         * mismatch (the stored golden state cannot be trusted). */
+        if (out_overall)
+            *out_overall = BOOT_INTEGRITY_MISMATCH;
+        return TPM_BASELINE_CORRUPT;
+    }
+
+    st = tpm_baseline_snapshot(alg, &current);
+    if (st != TPM_BASELINE_OK)
+        return st;
+
+    v = tpm_baseline_compare(&golden, &current);
+    if (out_overall)
+        *out_overall = (v == TPM_BASELINE_MATCH)
+                           ? BOOT_INTEGRITY_VERIFIED
+                           : BOOT_INTEGRITY_MISMATCH;
+    return TPM_BASELINE_OK;
+}

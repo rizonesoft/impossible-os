@@ -89,7 +89,9 @@ struct boot_config {
     UINT8   seed_file;              /* 1 = kernel reads + rotates the random-seed
                                      * carryover file in Phase 3 (default);
                                      * 0 = seed_file=off escape hatch */
-    UINT8   _reserved[6];           /* future fields -- zero-filled by defaults */
+    UINT8   tpm_enroll;             /* 1 = allow measured-boot baseline enroll/rotate
+                                     * this boot (honored only in recovery mode) */
+    UINT8   _reserved[5];           /* future fields -- zero-filled by defaults */
     char    cmdline[BOOT_CONF_CMDLINE_MAX];
     UINT8   config_found;
     /* User-mode test launcher knobs (S4 of TODO-04). Mirror of kernel

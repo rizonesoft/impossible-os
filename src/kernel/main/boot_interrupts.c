@@ -58,6 +58,8 @@
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm.h"
 #include "kernel/tpm_replay.h"
+#include "kernel/tpm_nv.h"
+#include "kernel/tpm_baseline.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
@@ -481,6 +483,24 @@ void boot_phase1(void)
             if (rpt.verdict == TPM_REPLAY_TAMPER)
                 klog(LOG_WARN, "TPM", "PCR replay: event-log TAMPER at PCR %d",
                      (uint64_t)rpt.first_mismatch_pcr);
+        }
+        /* Measured-boot baseline. In recovery mode with the enroll opt-in,
+         * (re)enroll the golden baseline (config-gated; a normal boot can never
+         * silently auto-enroll). Otherwise verify the current state against the
+         * stored baseline and publish the verdict (the replay TAMPER above
+         * already outranks a baseline match). */
+        if (g_boot_info.config.boot_mode == 2u && g_boot_info.config.tpm_enroll) {
+            tpm_baseline_status_t bs =
+                tpm_baseline_enroll(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256);
+            klog(LOG_INFO, "TPM", "Baseline enroll (recovery-authorized): status %d",
+                 (uint64_t)bs);
+        } else {
+            uint8_t overall = 0;
+            tpm_baseline_status_t bs =
+                tpm_baseline_verify(TPM_NV_INDEX_BASELINE, TPM_ALG_SHA256, &overall);
+            if (bs == TPM_BASELINE_OK || bs == TPM_BASELINE_NO_BASELINE ||
+                bs == TPM_BASELINE_CORRUPT)
+                tpm_integrity_set_overall_status(overall);
         }
         klog(LOG_INFO, "TPM", "Boot integrity status: %s",
              tpm_integrity_status_label(tpm_integrity_report()));

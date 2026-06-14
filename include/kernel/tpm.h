@@ -255,6 +255,12 @@ void tpm_integrity_set_rng_available(int available);
  * hold). Called from the boot path after tpm_pcr_cache_init(). */
 void tpm_integrity_set_replay_verdict(uint8_t verdict);
 
+/* Publish the Phase-1 baseline-verify verdict (BOOT_INTEGRITY_VERIFIED /
+ * MISMATCH / NO_BASELINE) into the integrity report. A prior replay TAMPER
+ * (MISMATCH) is never downgraded to VERIFIED -- event-log tamper outranks a
+ * baseline match. Called from the boot path after the replay verify. */
+void tpm_integrity_set_overall_status(uint8_t status);
+
 /* ---- Secure Boot Variable Measurement Reconciliation (STRUCTURAL, UNAUTHENTICATED) ----
  *
  * Decodes EV_EFI_VARIABLE_* events from the parsed TCG event log and reconciles
