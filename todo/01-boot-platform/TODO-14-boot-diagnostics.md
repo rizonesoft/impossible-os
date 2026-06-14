@@ -11,7 +11,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 > **Goal:** The arc spinner and boot splash are done. This TODO builds the production diagnostics layer: a named-stage boot progress API that feeds the splash, POST-style hex codes visible on hardware debug cards, cross-boot panic forensics, a panic QR code, runtime vital-signs overlay, and a multi-instance compositor-integrated spinner -- turning the ad-hoc debug tooling into production-grade features. The former alive-blink visual heartbeat is permanently deferred; keep only the shipped safety invariant that forbids framebuffer swaps from ISR context.
 
 > [!IMPORTANT]
-> **Current state:** §1--§3, §5, §10, §11 are shipped/verified; §4 is permanently deferred (`[~]`, safety invariant only -- no blink feature is planned). §6--§9 remain open. `boot_progress_poll()` has **no in-tree callers** yet. `spinner_create` (§7) / `vital_signs` (§8) sources are not in the tree.
+> **Current state:** §1--§3, §5, §10, §11 are shipped/verified; §4 is permanently deferred (`[/]` + Deferred stamp, safety invariant only -- no blink feature is planned). §6--§9 remain open. `boot_progress_poll()` has **no in-tree callers** yet. `spinner_create` (§7) / `vital_signs` (§8) sources are not in the tree.
 
 > [!NOTE]
 > **Origin:** The HV_BAR colored pixel bars were added during Hyper-V Gen 2 debugging -- crude but instantly effective. This TODO formalises that approach as an opt-in production debug feature while replacing the unconditional hack with proper structured output.
@@ -57,7 +57,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   1   | UEFI pre-kernel POST codes         | --                            |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1                            |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
-| 💎  |   4   | Alive blink / visual heartbeat     | permanently deferred; hang=TODO-23 |  [~]   |
+| 💎  |   4   | Alive blink / visual heartbeat     | permanently deferred; hang=TODO-23 |  [/]   |
 | 💎  |   5   | Panic forensic evidence            | §2                            |  [/]   |
 | ⭐  |   6   | Panic QR code                      | §5; T03 §14 (QR seed)         |  [/]   |
 | 💎  |   7   | System-wide multi-instance spinner | D08 T08 §8 (compositor)       |  [/]   |
