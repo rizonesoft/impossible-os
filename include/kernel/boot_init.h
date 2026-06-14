@@ -331,6 +331,10 @@ void boot_post_nvram_write16(uint16_t code);
 /* Read last 16-bit POST code from NVRAM.  Returns code or -1. */
 int boot_post_read16(void);
 
+/* Fault-safe RAM shadow of the last POST code (no NVRAM/firmware). Use this,
+ * not boot_post_read16(), from panic/crash-collection context. */
+uint16_t boot_post_last_shadow(void);
+
 /* Convenience: write POST16 to I/O 0x80 + NVRAM + serial. */
 #define POST16(code) boot_post_write16(code)
 

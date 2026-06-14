@@ -410,8 +410,20 @@ static const uint16_t s_post_name[] = {
 
 /* ---- 16-bit POST code system --------------------------------------------- */
 
+/* Plain-RAM shadow of the last POST code. boot_post_read16() reads NVRAM (UEFI
+ * GetVariable, sleepable mutex + firmware), which is NOT safe from a faulted
+ * panic context; the panic collector reads this shadow instead. */
+static volatile uint16_t s_last_post16 = 0;
+
+uint16_t boot_post_last_shadow(void)
+{
+    return s_last_post16;
+}
+
 void boot_post_write16(uint16_t code)
 {
+    s_last_post16 = code;   /* fault-safe RAM shadow for the panic collector */
+
     /* I/O port 0x80: always write -- zero cost, works before anything */
     __asm__ volatile("outb %0, $0x80" :: "a"((uint8_t)(code >> 8)));
 

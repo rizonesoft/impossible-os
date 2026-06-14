@@ -879,6 +879,28 @@ uint64_t klog_get_seq(void)
     return klog_ring_seq;
 }
 
+uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max)
+{
+    /* Lock-free by design: a collector running at the top of a fault funnel may
+     * be on a CPU that already holds s_klog_lock inside klog(), so taking it
+     * here could self-deadlock. We read head/count without the lock and copy
+     * the last entries; a concurrent append on another CPU may yield a torn
+     * tail entry, which is acceptable for best-effort crash forensics. */
+    if (!out || max == 0u)
+        return 0u;
+    uint32_t head  = klog_ring_head;     /* next write slot */
+    uint32_t count = klog_ring_count;    /* valid entries, capped below */
+    if (count > KLOG_RING_SIZE)
+        count = KLOG_RING_SIZE;
+    uint32_t n = (count < max) ? count : max;
+    for (uint32_t i = 0u; i < n; i++) {
+        /* oldest-of-the-last-n first: ring index head-1-(n-1-i) = head-n+i */
+        uint32_t idx = (head + KLOG_RING_SIZE - n + i) % KLOG_RING_SIZE;
+        out[i] = klog_ring[idx];
+    }
+    return n;
+}
+
 void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 {
     va_list ap;

@@ -11,7 +11,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 > **Goal:** The arc spinner and boot splash are done. This TODO builds the production diagnostics layer: a named-stage boot progress API that feeds the splash, POST-style hex codes visible on hardware debug cards, cross-boot panic forensics, a panic QR code, runtime vital-signs overlay, alive-blink hang detection, and a multi-instance compositor-integrated spinner -- turning the ad-hoc debug tooling into production-grade features.
 
 > [!IMPORTANT]
-> **Current state:** §1--§3 are shipped and verified (UEFI `post_code16` milestones incl. boot-device `0xB090`/`0xB091`, kernel `boot_stage_report` + `post_display16`, port `0x80` high byte, `boot_timeline_dump_json()` wired from `boot_desktop.c` after desktop-ready). `boot_progress_poll()` has **no in-tree callers** yet. §4--§8, `test_boot_diag`, and §9 below remain open. `panic_collect_evidence` / `spinner_create` / `vital_signs` sources are not in the tree.
+> **Current state:** §1--§3, §5, §10, §11 are shipped/verified; §4 is deferred (`[/]`, safety invariant only -- the blink feature needs a bare-metal-validated safe FB path). §6--§9 remain open. `boot_progress_poll()` has **no in-tree callers** yet. `spinner_create` (§7) / `vital_signs` (§8) sources are not in the tree.
 
 > [!NOTE]
 > **Origin:** The HV_BAR colored pixel bars were added during Hyper-V Gen 2 debugging -- crude but instantly effective. This TODO formalises that approach as an opt-in production debug feature while replacing the unconditional hack with proper structured output.
@@ -58,7 +58,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   2   | Boot progress named-stage API      | §1                            |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
 | 💎  |   4   | Alive blink / visual heartbeat     | §2 (visual only; hang=TODO-23) |  [/]   |
-| 💎  |   5   | Panic forensic evidence            | §2                            |  [ ]   |
+| 💎  |   5   | Panic forensic evidence            | §2                            |  [x]   |
 | ⭐  |   6   | Panic QR code                      | §5                            |  [ ]   |
 | 💎  |   7   | System-wide multi-instance spinner | 08-graphics-ui/TODO-06 §8     |  [ ]   |
 | ⭐  |   8   | Runtime vital signs strip          | §7                            |  [ ]   |
@@ -159,24 +159,31 @@ A 4x4 px VISUAL liveness indicator (a blinking pixel) once a timer-driven path c
 
 ---
 
-## 5. Panic Forensic Evidence *(deferred -- needs stable boot first; crash evidence is useless if boot itself crashes)*
-Capture a `panic_evidence` struct at fault time, survive across soft reboot via a dedicated PMM page, and restore on next boot.
+## 5. Panic Forensic Evidence
+Capture a `panic_evidence` struct at fault time into a fixed physical page that survives a warm reboot (the Linux pstore/ramoops equivalent), and restore + emit it on the next boot.
 
-**Files:** `src/kernel/panic.c`, `include/kernel/panic.h`, `src/kernel/main/boot_hw.c`
+**Files:** `src/kernel/panic.c`, `include/kernel/panic.h`, `src/kernel/klog.c`, `src/kernel/main.c`, `src/kernel/main/boot_init.c`, `src/kernel/main/boot_desktop.c`
 
-> [!IMPORTANT]
-> The PMM page at `0x80000` must be reserved in `pmm_init()` before it can be used as the cross-boot evidence page. Coordinate with `02-kernel-core/TODO-27-crash-dump-generation.md` to avoid using the same fixed address for the minidump workspace.
+> [!NOTE]
+> The `0x80000` page is kept out of the allocator by the existing `pmm_init()` first-1-MiB low-memory reservation (verified). Coordinate with `02-kernel-core/TODO-27-crash-dump-generation.md` to avoid reusing that fixed address for the minidump workspace.
 
-- [ ] `struct panic_evidence` VERSIONED header `{magic 0xDEADBEEF, version, size, crc32, boot_seq}`; restore validates magic+crc32+version so stale `0x80000` contents are never misread as a valid crash.
-- [ ] `panic_evidence` crash identity: bugcheck code+4 params, fault vector + err_code, `cr2`, `cpu_id`, `interrupt_frame` GPRs (rip/rsp/rflags/cs/ss), `cr0/cr3/cr4`, `irq_mask`, `pmm_free_pages`, source file:line.
-- [ ] `panic_evidence` payload: last 16 `boot_stage_history[]` entries, last 8 klog ring entries, last POST code byte, `char message[256]`.
-- [ ] `panic_collect_evidence(rip, msg)`: copy data into `struct panic_evidence` at physical `0x80000`; called at the very start of `kernel_panic()` before any screen output or VFS access
-- [ ] Reserve physical page `0x80000` in `pmm_init()`: mark as `PMEM_RESERVED` so it is never handed out as a free page
-- [ ] In boot Phase 0 (`boot_hw_init`): check `*(uint32_t*)0x80000 == 0xDEADBEEF`; if so, copy evidence to kernel heap buffer, clear the magic, log `[PANIC] Previous crash evidence found`; after VFS is up, write to `X:\Crash\last-panic.txt` (BlackBox) or `C:\Impossible\System\Logs\` (fallback) -- → XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` §7 (`X:\Crash\` path owner)
-- [ ] After VFS write: show "System shut down unexpectedly" toast at desktop-ready (set `g_boot_info.had_panic = 1` flag; desktop init reads it)
-- [ ] Commit: `"kernel: panic forensic evidence -- cross-boot PMM page + last-panic.txt"`
+- [x] `struct panic_evidence` versioned header `{magic, version, size, crc32, boot_seq}` (`panic.h`); `panic_evidence_restore` validates magic+version+size+crc32 so stale `0x80000` is never misread. `_Static_assert`: fits 4 KiB, multiple-of-8.
+- [x] Crash identity: bugcheck code + params (params only when KeBugCheckEx-sourced), fault vector + err_code, cr0/cr2/cr3/cr4, cpu_id (CPUID APIC id), GPRs from `interrupt_frame`, irq_mask (PIC), pmm_free_pages, file:line.
+- [x] Payload: last 16 `boot_stage_history` + last 8 klog entries (both serialized INLINE / pointer-free), last POST code (RAM shadow `boot_post_last_shadow`, not NVRAM), `message[256]`.
+- [x] `panic_collect_evidence(frame, code, msg, file, line)`: raw physical writes to `0x80000`, no kmalloc/VFS/printk/lock; atomic first-caller-wins; hooked at the top of `panic_screen` after `cli`.
+- [x] `0x80000` kept out of the allocator by the existing pmm_init first-1-MiB reservation (identity-mapped, verified). -> XREF: D02 T27 crash-dump (minidump-addr coordination).
+- [x] `panic_evidence_restore_early()` (`kernel_main` after `boot_phase0`) restores/clears magic/logs; `panic_evidence_write_blackbox()` -> `X:\Crash\last-panic.txt` at desktop-ready. -> XREF: D01 T24 §7.
+- [x] Unexpected-shutdown notice: kernel-side `panic_had_previous_crash()` flag (NOT `g_boot_info` -- avoids the boot ABI change) -> `boot_splash_diag` + klog before `boot_splash_finish`.
+- [x] Commit: `"kernel: panic forensic evidence -- cross-boot PMM page + last-panic.txt"`
 
-**Test checkpoint:** Force `kernel_panic("test")`, reboot: serial shows `[PANIC] Previous crash evidence found`; `X:\Crash\last-panic.txt` contains fault RIP + POST code. QEMU WHPX, QEMU TCG, VirtualBox, bare metal: evidence survives warm reboot.
+**Test checkpoint:** Force a panic (`crash_test=1`), reboot: serial shows `[PANIC] Previous crash evidence found`; `X:\Crash\last-panic.txt` contains the fault RIP + POST code. QEMU WHPX, QEMU TCG, VirtualBox, bare metal: evidence survives warm reboot.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2631 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - Shipped: `panic_evidence` record + `panic_collect_evidence`/`_restore`/`_write_blackbox` (`panic.c`/`.h`), lock-free `klog_panic_snapshot` (`klog.c`), fault-safe `boot_post_last_shadow` (`boot_init.c`); cross-boot page at `0x80000`.
+> - Integration: collector hooked at the top of `panic_screen` (after `cli`); restore in `kernel_main` after `boot_phase0`; `X:\Crash\last-panic.txt` write + unexpected-shutdown notice at desktop-ready (Codex adoptions in commit message).
+> - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- crc32 canonical vector + restore magic/crc/version rejection + clear-after-read; full suite 2631 kernel + 16 user-mode 0 failures; smoke PASS.
+> - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` + `X:\Crash\` artifact index).
+> - Scope boundary: §5 is the warm-reboot evidence page; full minidump (MEMORY.DMP) generation is `02-kernel-core/TODO-27`; the `X:\Crash\` path is owned by TODO-24 §7.
 
 ---
 
@@ -311,7 +318,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 | 💎 | Boot load/status log    | ✅ ntbtlog.txt driver log   | ✅ dmesg drivers loaded      | ✅ §11 boot-load-status.txt       |
 | ⭐ | Bootloader build identity | ⚠️ bcdedit/msinfo32        | ⚠️ /proc/version uname       | ✅ §10 boot-loader-identity.txt   |
 | 💎 | Boot timeline viewers   | ⚠️ Performance Toolkit      | ✅ systemd-analyze plot     | ⚠️ JSON §2; §9 viewers pending     |
-| 💎 | Panic forensics         | ✅ WER minidump EventLog    | ✅ kdump pstore ramoops      | ⬜ §5 PMM page last-panic txt     |
+| 💎 | Panic forensics         | ✅ WER minidump EventLog    | ✅ kdump pstore ramoops      | ✅ §5 0x80000 page last-panic.txt |
 | 💎 | Multi UI spinner        | ✅ WinUI ProgressRing       | ✅ GTK Qt spinners           | ⬜ §7 spinner_create pool         |
 | ⭐ | Panic BSOD QR           | ❌ Text URL BSOD only       | ❌ No kernel QR              | ⬜ §6 phone URL QR matrix         |
 | ⭐ | Alive hang pixel        | ❌ No kernel hang pixel     | ❌ Not production default     | ⬜ §4 redesign safe FB path       |
@@ -335,8 +342,8 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
   - Alive blink toggle counter increments over 100 timer ticks when `heartbeat=1`
   - `spinner_create(SPINNER_MEDIUM, 0x0078D4)` returns non-NULL; `spinner_destroy()` frees the slot; re-create succeeds
   - `spinner_create()` returns NULL after 8 allocations (pool exhausted)
-  - Panic evidence struct at `0x80000`: `panic_collect_evidence()` writes magic `0xDEADBEEF`, readback matches
-  - Panic evidence header (§5): a record with a bad `crc32` or wrong `version` is REJECTED on restore (not misread as valid); a well-formed header is accepted
+  - Panic evidence (§5): `panic_crc32` returns the canonical IEEE check value (`crc32("123456789") == 0xCBF43926`); a well-formed record built at `0x80000` is restored, the magic is cleared, and a second restore returns nothing (idempotent)
+  - Panic evidence header (§5): a record with a bad `crc32`, wrong `version`, or absent magic is REJECTED on restore (not misread as valid) and its magic dropped
   - Boot load status (§11): `boot_load_record()` appends entries; the in-memory format + the FAILED/DEGRADED summary string are correct; an all-LOADED pool yields an empty degraded summary
   - After §9 schema lands: validate a captured `boot-timeline.json` against `docs/boot-timeline-json.md` (field names incl `target_ms`/`source`/`unreliable`, numeric types)
 - [ ] Register in `test_runner_init()`: `test_register_boot_diag()`

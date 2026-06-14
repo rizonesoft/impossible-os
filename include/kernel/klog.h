@@ -59,6 +59,12 @@ typedef struct {
 const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head);
 uint64_t klog_get_seq(void);
 
+/* Lock-free best-effort snapshot of the last `max` ring entries into `out`
+ * (oldest-first); returns the number copied. For the panic path ONLY: takes no
+ * lock (the faulting CPU may already hold s_klog_lock) and tolerates a torn
+ * entry. Never use outside a crash collector. */
+uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max);
+
 /* Set minimum level that appears on the framebuffer.
  * Default: LOG_INFO (i.e., DEBUG is serial-only).
  * Set to LOG_DEBUG to show everything on screen. */

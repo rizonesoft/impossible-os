@@ -7,6 +7,7 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
+#include "kernel/panic.h"          /* panic_evidence_restore_early (section 5) */
 #include "main/main_internal.h"
 
 /* Kernel entry point
@@ -20,6 +21,11 @@
 void kernel_main(uint64_t magic, uint64_t mbi)
 {
     boot_phase0(magic, mbi);    /* Critical init: serial, PMM/VMM/heap, CPUID */
+    /* Restore any cross-boot panic evidence now that PMM has reserved low
+     * memory (0x80000 out of the allocator) and klog is up. Phase-0 boundary;
+     * the record lands in kernel-side static storage, X:\Crash emission is
+     * deferred to desktop-ready. */
+    panic_evidence_restore_early();
     boot_phase1();              /* Platform services: GDT, IDT, APIC, timer, display */
     boot_phase2();              /* System services: PCI, storage, VFS, registry, SMP */
     boot_phase3();              /* User platform: scheduler, desktop, compositor (never returns) */

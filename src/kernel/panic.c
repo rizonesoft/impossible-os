@@ -33,6 +33,9 @@
 #include "kernel/sched/transition_ring.h" /* fast-path transition ring dump */
 #include "kernel/smp.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/boot_progress.h"   /* boot_stage_history_get (panic evidence) */
+#include "kernel/boot_info.h"       /* boot_history seq + g_boot_info.had_panic */
+#include "kernel/mm/pmm.h"          /* pmm_get_free_frames */
 #include "kernel/smp.h"
 #include "kernel/barrier.h"
 
@@ -687,9 +690,376 @@ static void write_crash_dump(struct interrupt_frame *frame,
 
 /* --- Main panic screen --- */
 
+/* ============================================================================
+ * Panic forensic evidence -- cross-boot crash record
+ * ========================================================================== */
+
+/* First-caller-wins guard: a nested fault during BSOD render must not overwrite
+ * the original crash record. Set on the first collect of this boot. */
+static volatile int s_evidence_collected = 0;
+
+/* Off-stack klog scratch: the collector may run on a small IST stack (#DF), so
+ * the snapshot lands in BSS, not on the panic stack. Panic is cli'd and
+ * first-caller-wins, so a single static buffer is not a reentrancy hazard. */
+static klog_entry_t s_panic_klog_scratch[PANIC_EVIDENCE_KLOGS];
+
+/* Fault-safe port read (no shared io.h in this tree; pic.c uses the same). */
+static inline uint8_t pe_inb(uint16_t port)
+{
+    uint8_t ret;
+    __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+static void pe_copy(char *dst, uint32_t cap, const char *src)
+{
+    uint32_t i = 0u;
+    if (src)
+        for (; i + 1u < cap && src[i]; i++)
+            dst[i] = src[i];
+    dst[i] = '\0';
+}
+
+uint32_t panic_crc32(const void *data, uint32_t len)
+{
+    /* Standard reflected IEEE CRC-32 (poly 0xEDB88320, init/xorout 0xFFFFFFFF);
+     * crc32("123456789") == 0xCBF43926. Same constants as klog.c crash_crc32. */
+    const uint8_t *p = (const uint8_t *)data;
+    uint32_t crc = 0xFFFFFFFFu;
+    for (uint32_t i = 0u; i < len; i++) {
+        crc ^= (uint32_t)p[i];
+        for (int b = 0; b < 8; b++) {
+            if (crc & 1u)
+                crc = (crc >> 1) ^ 0xEDB88320u;
+            else
+                crc = (crc >> 1);
+        }
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_code,
+                            const char *message, const char *file, uint32_t line)
+{
+    /* Atomic claim: on an SMP double-panic two CPUs must not both write the
+     * fixed 0x80000 page / shared scratch. The first to swap 1 in wins; the
+     * loser returns without touching any shared evidence state. */
+    if (__atomic_exchange_n(&s_evidence_collected, 1, __ATOMIC_ACQ_REL))
+        return;
+
+    /* The page at PANIC_EVIDENCE_ADDR is identity-mapped and reserved by PMM.
+     * Raw physical writes only -- no kmalloc / VFS / printk / spinlock here. */
+    struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+
+    /* Zero the record (8 bytes at a time; sizeof is a multiple of 8). */
+    for (uint32_t i = 0u; i < sizeof *ev / 8u; i++)
+        ((volatile uint64_t *)ev)[i] = 0u;
+
+    ev->version  = PANIC_EVIDENCE_VERSION;
+    ev->size     = (uint32_t)sizeof *ev;
+    ev->boot_seq = boot_history_kernel_phase3_committed_seq();
+
+    ev->bugcheck_code = bugcheck_code;
+    /* g_last_bugcheck params are only trustworthy when this panic actually came
+     * through KeBugCheckEx, i.e. its recorded code matches the code we are
+     * collecting. A raw exception (frame != NULL) or a direct panic_screen()
+     * caller (crash-test) leaves g_last_bugcheck stale, so the params stay zero
+     * and the fault_vector / bugcheck_code fields carry the identity. */
+    if (!frame && g_last_bugcheck.code == bugcheck_code) {
+        ev->bugcheck_params[0] = g_last_bugcheck.param1;
+        ev->bugcheck_params[1] = g_last_bugcheck.param2;
+        ev->bugcheck_params[2] = g_last_bugcheck.param3;
+        ev->bugcheck_params[3] = g_last_bugcheck.param4;
+    }
+    ev->fault_vector = frame ? frame->int_no  : 0u;
+    ev->err_code     = frame ? frame->err_code : 0u;
+
+    uint64_t cr0, cr2, cr3, cr4;
+    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+    __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+    ev->cr0 = cr0; ev->cr2 = cr2; ev->cr3 = cr3; ev->cr4 = cr4;
+
+    /* CPUID leaf 1 -> initial APIC id in EBX[31:24]; pure CPUID, fault-safe. */
+    {
+        uint32_t a, b, c, d;
+        __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1u));
+        ev->cpu_id = (b >> 24) & 0xFFu;
+    }
+    ev->line           = line;
+    ev->pmm_free_pages = pmm_get_free_frames();
+    /* Legacy PIC mask via port I/O (fault-safe); best-effort IRQ-state proxy. */
+    ev->irq_mask       = (uint64_t)pe_inb(0x21) | ((uint64_t)pe_inb(0xA1) << 8);
+
+    if (frame) {
+        ev->rip = frame->rip; ev->rsp = frame->rsp; ev->rflags = frame->rflags;
+        ev->cs  = frame->cs;  ev->ss  = frame->ss;
+        ev->rax = frame->rax; ev->rbx = frame->rbx; ev->rcx = frame->rcx;
+        ev->rdx = frame->rdx; ev->rsi = frame->rsi; ev->rdi = frame->rdi;
+        ev->rbp = frame->rbp;
+        ev->r8  = frame->r8;  ev->r9  = frame->r9;  ev->r10 = frame->r10;
+        ev->r11 = frame->r11; ev->r12 = frame->r12; ev->r13 = frame->r13;
+        ev->r14 = frame->r14; ev->r15 = frame->r15;
+    }
+    pe_copy(ev->file, sizeof ev->file, file);
+    pe_copy(ev->message, sizeof ev->message, message);
+
+    ev->post_code = (uint32_t)boot_post_last_shadow();
+
+    /* Boot-stage tail (inline strings copied here, while pointers are valid). */
+    {
+        uint32_t cnt = 0u;
+        const boot_stage_entry_t *h = boot_stage_history_get(&cnt);
+        uint32_t n = (cnt < PANIC_EVIDENCE_STAGES) ? cnt : PANIC_EVIDENCE_STAGES;
+        for (uint32_t i = 0u; i < n && h; i++) {
+            const boot_stage_entry_t *e = &h[cnt - n + i];
+            ev->stages[i].stage      = (uint32_t)e->stage;
+            ev->stages[i].elapsed_ms = e->elapsed_ms;
+            pe_copy(ev->stages[i].msg, sizeof ev->stages[i].msg, e->msg);
+        }
+        ev->stage_count = h ? n : 0u;
+    }
+
+    /* klog tail (lock-free snapshot into BSS scratch, then serialize inline). */
+    {
+        uint32_t n = klog_panic_snapshot(s_panic_klog_scratch, PANIC_EVIDENCE_KLOGS);
+        for (uint32_t i = 0u; i < n; i++) {
+            ev->klogs[i].level     = (uint32_t)s_panic_klog_scratch[i].level;
+            ev->klogs[i].timestamp = s_panic_klog_scratch[i].timestamp;
+            ev->klogs[i].cpu_id    = s_panic_klog_scratch[i].cpu_id;
+            pe_copy(ev->klogs[i].subsystem, sizeof ev->klogs[i].subsystem,
+                    s_panic_klog_scratch[i].subsystem);
+            pe_copy(ev->klogs[i].message, sizeof ev->klogs[i].message,
+                    s_panic_klog_scratch[i].message);
+        }
+        ev->klog_count = n;
+    }
+
+    /* crc32 over everything AFTER the crc32 field, then publish the magic last
+     * so a reader never sees a valid magic over a half-written record. */
+    {
+        uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
+        ev->crc32 = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+        ev->magic = PANIC_EVIDENCE_MAGIC;
+    }
+}
+
+int panic_evidence_restore(struct panic_evidence *out)
+{
+    struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    if (!out)
+        return 0;
+    if (ev->magic != PANIC_EVIDENCE_MAGIC)
+        return 0;                                  /* no record */
+    if (ev->version != PANIC_EVIDENCE_VERSION ||
+        ev->size != (uint32_t)sizeof *ev) {
+        ev->magic = 0u;                            /* stale/incompatible -> drop */
+        return 0;
+    }
+    {
+        uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
+        if (panic_crc32((const uint8_t *)ev + off, ev->size - off) != ev->crc32) {
+            ev->magic = 0u;                        /* corrupt -> drop */
+            return 0;
+        }
+    }
+    /* The page is cross-boot UNTRUSTED RAM and crc32 only proves byte integrity,
+     * not semantic validity. Reject out-of-range counts so a crc-consistent but
+     * bogus page cannot drive an out-of-bounds read in the artifact writer. */
+    if (ev->stage_count > PANIC_EVIDENCE_STAGES ||
+        ev->klog_count  > PANIC_EVIDENCE_KLOGS) {
+        ev->magic = 0u;
+        return 0;
+    }
+    /* Copy out, then clear the magic so the same crash is not re-reported. */
+    for (uint32_t i = 0u; i < sizeof *out / 8u; i++)
+        ((uint64_t *)out)[i] = ((volatile uint64_t *)ev)[i];
+    /* Force-terminate every fixed-size string from the untrusted page so a
+     * forged/corrupt-but-crc-consistent record whose strings lack a NUL cannot
+     * make a downstream reader (the artifact writer's NUL-seeking pe_put) read
+     * past the field. */
+    out->file[sizeof out->file - 1u] = '\0';
+    out->message[sizeof out->message - 1u] = '\0';
+    for (uint32_t i = 0u; i < PANIC_EVIDENCE_STAGES; i++)
+        out->stages[i].msg[sizeof out->stages[i].msg - 1u] = '\0';
+    for (uint32_t i = 0u; i < PANIC_EVIDENCE_KLOGS; i++) {
+        out->klogs[i].subsystem[sizeof out->klogs[i].subsystem - 1u] = '\0';
+        out->klogs[i].message[sizeof out->klogs[i].message - 1u] = '\0';
+    }
+    ev->magic = 0u;
+    return 1;
+}
+
+/* Phase-0 restored record + flag. Kept kernel-side (not in g_boot_info) so the
+ * boot_info ABI is untouched -- the desktop reads panic_had_previous_crash().
+ * The restore runs pre-heap, so the record lands in this BSS buffer; the
+ * X:\Crash\ emission is deferred to panic_evidence_write_blackbox() post-VFS. */
+static struct panic_evidence s_prev_crash;
+static int s_had_prev_crash = 0;
+
+void panic_evidence_restore_early(void)
+{
+    if (panic_evidence_restore(&s_prev_crash)) {
+        s_had_prev_crash = 1;
+        klog(LOG_ERROR, "panic",
+             "[PANIC] Previous crash evidence found (STOP 0x%x rip=0x%lx)",
+             (uint64_t)s_prev_crash.bugcheck_code, s_prev_crash.rip);
+    }
+}
+
+int panic_had_previous_crash(void)
+{
+    return s_had_prev_crash;
+}
+
+/* --- last-panic.txt text emission (post-VFS) ----------------------------- */
+
+static uint32_t pe_put(char *b, uint32_t pos, uint32_t cap, const char *s)
+{
+    if (s)
+        while (*s && pos + 1u < cap)
+            b[pos++] = *s++;
+    return pos;
+}
+
+static uint32_t pe_hex(char *b, uint32_t pos, uint32_t cap, uint64_t v, int digits)
+{
+    static const char hx[] = "0123456789abcdef";
+    for (int sh = (digits - 1) * 4; sh >= 0; sh -= 4)
+        pos = (pos + 1u < cap) ? (b[pos] = hx[(v >> sh) & 0xFu], pos + 1u) : pos;
+    return pos;
+}
+
+static uint32_t pe_dec(char *b, uint32_t pos, uint32_t cap, uint64_t v)
+{
+    char t[20];
+    int n = 0;
+    if (v == 0u)
+        return (pos + 1u < cap) ? (b[pos] = '0', pos + 1u) : pos;
+    while (v && n < 20) { t[n++] = (char)('0' + (v % 10u)); v /= 10u; }
+    while (n-- > 0)
+        pos = (pos + 1u < cap) ? (b[pos] = t[n], pos + 1u) : pos;
+    return pos;
+}
+
+static uint32_t pe_line(char *b, uint32_t pos, uint32_t cap, const char *k, uint64_t v)
+{
+    pos = pe_put(b, pos, cap, k);
+    pos = pe_put(b, pos, cap, "0x");
+    pos = pe_hex(b, pos, cap, v, 16);
+    pos = pe_put(b, pos, cap, "\n");
+    return pos;
+}
+
+/* Render the restored crash record to X:\Crash\last-panic.txt (BlackBox) or the
+ * C:\ fallback. Best-effort; no-op if no prior crash was restored. */
+void panic_evidence_write_blackbox(void)
+{
+    if (!s_had_prev_crash)
+        return;
+
+    const struct panic_evidence *e = &s_prev_crash;
+    const uint32_t pages = 2u;
+    uintptr_t phys = pmm_alloc_contiguous(pages);
+    if (!phys) {
+        klog(LOG_WARN, "panic", "last-panic: cannot alloc %u pages", (uint64_t)pages);
+        return;
+    }
+    char *b = (char *)phys;
+    const uint32_t cap = pages * 4096u;
+    uint32_t pos = 0u;
+
+    pos = pe_put(b, pos, cap, "Impossible OS -- Previous Crash Evidence\n");
+    pos = pe_put(b, pos, cap, "========================================\n");
+    pos = pe_put(b, pos, cap, "stop:    0x");
+    pos = pe_hex(b, pos, cap, e->bugcheck_code, 8);
+    pos = pe_put(b, pos, cap, "  ");
+    pos = pe_put(b, pos, cap, bugcheck_name(e->bugcheck_code));
+    pos = pe_put(b, pos, cap, "\nmessage: ");
+    pos = pe_put(b, pos, cap, e->message);
+    pos = pe_put(b, pos, cap, "\nsource:  ");
+    pos = pe_put(b, pos, cap, e->file);
+    pos = pe_put(b, pos, cap, ":");
+    pos = pe_dec(b, pos, cap, e->line);
+    pos = pe_put(b, pos, cap, "\nboot_seq=");
+    pos = pe_dec(b, pos, cap, e->boot_seq);
+    pos = pe_put(b, pos, cap, " cpu=");
+    pos = pe_dec(b, pos, cap, e->cpu_id);
+    pos = pe_put(b, pos, cap, " vector=");
+    pos = pe_dec(b, pos, cap, e->fault_vector);
+    pos = pe_put(b, pos, cap, " post=0x");
+    pos = pe_hex(b, pos, cap, e->post_code, 4);
+    pos = pe_put(b, pos, cap, "\n");
+    pos = pe_line(b, pos, cap, "rip:     ", e->rip);
+    pos = pe_line(b, pos, cap, "rsp:     ", e->rsp);
+    pos = pe_line(b, pos, cap, "rflags:  ", e->rflags);
+    pos = pe_line(b, pos, cap, "err:     ", e->err_code);
+    pos = pe_line(b, pos, cap, "cr2:     ", e->cr2);
+    pos = pe_line(b, pos, cap, "cr3:     ", e->cr3);
+    pos = pe_put(b, pos, cap, "free_pages=");
+    pos = pe_dec(b, pos, cap, e->pmm_free_pages);
+    /* Clamp the counts here too (defense in depth -- restore already rejects
+     * over-cap records, but never iterate an untrusted count past the arrays). */
+    uint32_t sc = e->stage_count > PANIC_EVIDENCE_STAGES ? PANIC_EVIDENCE_STAGES : e->stage_count;
+    uint32_t kc = e->klog_count  > PANIC_EVIDENCE_KLOGS  ? PANIC_EVIDENCE_KLOGS  : e->klog_count;
+    pos = pe_put(b, pos, cap, "\n\nboot stages:\n");
+    for (uint32_t i = 0u; i < sc; i++) {
+        pos = pe_put(b, pos, cap, "  +");
+        pos = pe_dec(b, pos, cap, e->stages[i].elapsed_ms);
+        pos = pe_put(b, pos, cap, "ms ");
+        pos = pe_put(b, pos, cap, e->stages[i].msg);
+        pos = pe_put(b, pos, cap, "\n");
+    }
+    pos = pe_put(b, pos, cap, "\nlast klog:\n");
+    for (uint32_t i = 0u; i < kc; i++) {
+        pos = pe_put(b, pos, cap, "  [");
+        pos = pe_put(b, pos, cap, e->klogs[i].subsystem);
+        pos = pe_put(b, pos, cap, "] ");
+        pos = pe_put(b, pos, cap, e->klogs[i].message);
+        pos = pe_put(b, pos, cap, "\n");
+    }
+    if (pos >= cap)
+        pos = cap - 1u;
+    b[pos] = '\0';
+
+    extern int klog_using_blackbox;
+    const char *path = klog_using_blackbox ? "X:\\Crash\\last-panic.txt"
+                                           : "C:\\Impossible\\System\\Logs\\last-panic.txt";
+    struct vfs_node *f = vfs_open(path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (f) {
+        int wrote = vfs_write(f, 0, pos, (const uint8_t *)b);
+        vfs_close(f);
+        if (wrote >= 0 && (uint32_t)wrote == pos)
+            klog(LOG_INFO, "panic", "previous crash written to %s (%u bytes)",
+                 (uint64_t)(uintptr_t)path, (uint64_t)pos);
+        else
+            klog(LOG_WARN, "panic", "last-panic: short write (%d of %u)",
+                 (uint64_t)wrote, (uint64_t)pos);
+    } else {
+        klog(LOG_WARN, "panic", "last-panic: vfs_open failed for %s",
+             (uint64_t)(uintptr_t)path);
+    }
+    for (uint32_t p = 0u; p < pages; p++)
+        pmm_free_frame(phys + p * 4096u);
+}
+
 void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
                   const char *description, const char *file, uint32_t line)
 {
+    /* Mask interrupts FIRST -- nothing may re-enter the panic path while the
+     * collector touches the fixed 0x80000 evidence page and shared log state.
+     * The faulting interrupt state is preserved in frame->rflags for forensics. */
+    __asm__ volatile ("cli");
+
+    /* Capture cross-boot forensic evidence before any other panic work (serial,
+     * async isolation, framebuffer, VFS) that could itself fault. The explicit
+     * error_code is the authoritative no-frame stop code (KeBugCheckEx passes
+     * its bugcheck code; direct callers like the crash-test pass theirs). For a
+     * raw exception (frame set) the fault_vector field carries identity. */
+    panic_collect_evidence(frame, frame ? 0u : (uint32_t)error_code,
+                           description, file, line);
+
     uint32_t screen_w;
     uint32_t screen_h;
     uint64_t cr2_val;
@@ -698,9 +1068,6 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     uint32_t depth;
     int32_t restart_secs = 0;
     uint32_t reg_restart;
-
-    /* Disable interrupts to prevent further exceptions */
-    __asm__ volatile ("cli");
 
     /* --- UNCONDITIONAL serial dump of the panic reason, FIRST ---
      *

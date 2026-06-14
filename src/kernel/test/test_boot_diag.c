@@ -6,8 +6,13 @@
 #include "kernel/boot_version.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_load_status.h"
+#include "kernel/panic.h"
+#include "kernel/klog.h"
 #include "kernel/time_iso.h"
 #include "libc/string.h"
+
+/* Off-stack restore target (struct panic_evidence is one 4 KiB page). */
+static struct panic_evidence s_pe_out;
 
 /* Off-stack fixture: the formatter buffer is 512 bytes. */
 static char s_fmt[512];
@@ -243,8 +248,129 @@ static void test_boot_load_status(void)
     boot_load_status_test_restore(&s_blsave);   /* restore the live boot log */
 }
 
+static void test_panic_evidence(void)
+{
+    struct panic_evidence *ev = (struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    uint32_t off = (uint32_t)__builtin_offsetof(struct panic_evidence, boot_seq);
+
+    /* Canonical IEEE CRC-32 check value: crc32("123456789") == 0xCBF43926. */
+    TEST_ASSERT_EQ(panic_crc32("123456789", 9u), 0xCBF43926u, "CRC-32 check value");
+    TEST_ASSERT_EQ(panic_crc32("", 0u), 0u, "CRC-32 of empty input is 0");
+    TEST_ASSERT_EQ(panic_crc32("a", 1u), 0xE8B7BE43u, "CRC-32 single-byte known vector");
+
+    /* Well-formed record built in place is restored, then the magic is cleared
+     * so the same crash is never reported twice. (Built manually -- not via the
+     * live collector -- to avoid mutating its first-caller-wins guard.) */
+    memset(ev, 0, sizeof *ev);
+    ev->version       = PANIC_EVIDENCE_VERSION;
+    ev->size          = (uint32_t)sizeof *ev;
+    ev->bugcheck_code = 0xABCDu;
+    ev->rip           = 0x1234u;
+    ev->crc32         = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->magic         = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 1, "valid record restored");
+    TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0xABCDu, "restored bugcheck_code matches");
+    TEST_ASSERT_EQ((uint32_t)s_pe_out.rip, 0x1234u, "restored rip matches");
+    TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "magic cleared after a successful restore");
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "second restore -> nothing (consumed)");
+
+    /* Bad crc32 is rejected (stale 0x80000 never misread as a valid crash). */
+    memset(ev, 0, sizeof *ev);
+    ev->version = PANIC_EVIDENCE_VERSION;
+    ev->size    = (uint32_t)sizeof *ev;
+    ev->crc32   = 0x0BADBAD0u;
+    ev->magic   = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "bad crc32 rejected");
+    TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "bad-crc record dropped");
+
+    /* Wrong version is rejected even with a self-consistent crc. */
+    memset(ev, 0, sizeof *ev);
+    ev->version = PANIC_EVIDENCE_VERSION + 99u;
+    ev->size    = (uint32_t)sizeof *ev;
+    ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->magic   = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "wrong version rejected");
+
+    /* Right version, WRONG size -> rejected (an old-layout record must never be
+     * misread; the size gate fires before the crc check). */
+    memset(ev, 0, sizeof *ev);
+    ev->version = PANIC_EVIDENCE_VERSION;
+    ev->size    = (uint32_t)sizeof *ev - 8u;
+    ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->magic   = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "size mismatch rejected");
+    TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "size-mismatch record dropped");
+
+    /* Over-cap counts with a VALID crc -> rejected: the cross-boot page is
+     * untrusted, so an in-range count is required before any consumer iterates
+     * stages[]/klogs[] (else an OOB read in the artifact writer). */
+    memset(ev, 0, sizeof *ev);
+    ev->version     = PANIC_EVIDENCE_VERSION;
+    ev->size        = (uint32_t)sizeof *ev;
+    ev->stage_count = PANIC_EVIDENCE_STAGES + 1u;
+    ev->crc32       = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->magic       = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "over-cap stage_count rejected");
+    TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "over-cap stage_count record dropped");
+    memset(ev, 0, sizeof *ev);
+    ev->version    = PANIC_EVIDENCE_VERSION;
+    ev->size       = (uint32_t)sizeof *ev;
+    ev->klog_count = PANIC_EVIDENCE_KLOGS + 1u;
+    ev->crc32      = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->magic      = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "over-cap klog_count rejected");
+
+    /* Untrusted unterminated strings: a valid-crc record whose message/file
+     * lack a NUL must be force-terminated on restore so no downstream reader
+     * over-reads. */
+    memset(ev, 0, sizeof *ev);
+    ev->version = PANIC_EVIDENCE_VERSION;
+    ev->size    = (uint32_t)sizeof *ev;
+    memset(ev->message, 'A', sizeof ev->message);   /* no NUL anywhere */
+    memset(ev->file,    'B', sizeof ev->file);
+    ev->crc32   = panic_crc32((const uint8_t *)ev + off, ev->size - off);
+    ev->magic   = PANIC_EVIDENCE_MAGIC;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 1, "valid record with unterminated strings restored");
+    TEST_ASSERT_EQ((uint32_t)s_pe_out.message[sizeof s_pe_out.message - 1u], 0u, "message force-terminated");
+    TEST_ASSERT_EQ((uint32_t)s_pe_out.file[sizeof s_pe_out.file - 1u], 0u, "file force-terminated");
+
+    /* No magic -> not a record. Leaves 0x80000 clean for a real panic. */
+    ev->magic = 0u;
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "absent magic -> no record");
+}
+
+static void test_klog_panic_snapshot(void)
+{
+    klog_entry_t s3[3], s2[2];
+    uint32_t n3, n2;
+
+    /* The boot ring already holds entries; klog() is suppressed under the test
+     * harness so the tail cannot be staged with known content. Instead verify
+     * the oldest-first index math by SELF-CONSISTENCY: snapshot(2) must equal
+     * the last 2 of snapshot(3) (the oldest of the three is the one dropped),
+     * compared by per-entry timestamp. Two adjacent calls read the same ring. */
+    /* BACK-TO-BACK with nothing between: a TEST_ASSERT logs via klog and would
+     * advance the ring, so both snapshots must be taken before any assertion. */
+    n3 = klog_panic_snapshot(s3, 3u);
+    n2 = klog_panic_snapshot(s2, 2u);
+    TEST_ASSERT(n3 <= 3u, "snapshot returns at most max (3)");
+    TEST_ASSERT(n2 <= 2u, "snapshot caps at max (2)");
+    if (n3 == 3u && n2 == 2u) {
+        TEST_ASSERT_EQ(s2[0].timestamp, s3[1].timestamp, "snapshot(2)[0] == snapshot(3)[1]");
+        TEST_ASSERT_EQ(s2[1].timestamp, s3[2].timestamp, "snapshot(2)[1] == snapshot(3)[2] (newest)");
+    }
+
+    /* Degenerate inputs fail closed. */
+    TEST_ASSERT_EQ(klog_panic_snapshot(s2, 0u), 0u, "max 0 -> 0");
+    TEST_ASSERT_EQ(klog_panic_snapshot((klog_entry_t *)0, 3u), 0u, "NULL out -> 0");
+}
+
 void test_register_boot_diag(void)
 {
+    test_suite_register_cat("boot: panic forensic evidence",
+                            test_panic_evidence, TEST_CAT_BOOT);
+    test_suite_register_cat("boot: klog panic snapshot",
+                            test_klog_panic_snapshot, TEST_CAT_BOOT);
     test_suite_register_cat("boot: loader identity format",
                             test_loader_identity_format, TEST_CAT_BOOT);
     test_suite_register_cat("boot: kdate_iso8601 formatter",

@@ -18,6 +18,7 @@
 #include "kernel/mm/boot_reserved.h"
 #include "kernel/boot_version.h"
 #include "kernel/boot_load_status.h"
+#include "kernel/panic.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/ahci.h"
@@ -256,6 +257,16 @@ void boot_phase3(void)
     if (csprng_credited_class() == ENTROPY_CLASS_DEGRADED)
         boot_splash_diag("WARNING: degraded randomness -- no hardware "
                          "entropy source credited");
+    /* Surface an unexpected-shutdown notice if the previous boot crashed
+     * (section 5). No toast infra exists; the splash diag line is the visible
+     * surface and serial klog is authoritative. The full record is written to
+     * X:\Crash\last-panic.txt below. */
+    if (panic_had_previous_crash()) {
+        boot_splash_diag("NOTICE: system shut down unexpectedly -- see "
+                         "X:\\Crash\\last-panic.txt");
+        klog(LOG_WARN, "boot",
+             "[PANIC] previous boot crashed; evidence -> X:\\Crash\\last-panic.txt");
+    }
     boot_splash_finish();
 
     /* Boot complete timing */
@@ -370,6 +381,9 @@ void boot_phase3(void)
 
     /* Per-subsystem boot load/status log (section 11, ntbtlog parity). */
     boot_load_status_dump_to_blackbox();
+
+    /* If the previous boot crashed, emit its forensic record (section 5). */
+    panic_evidence_write_blackbox();
 
     /* Per-boot policy audit JSONL publish + sticky-trigger ack. Reads
      * the v20 audit surface in g_boot_info, composes one line under
