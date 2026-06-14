@@ -417,7 +417,12 @@ void tpm_evlog_export_cel(void)
     struct vfs_node *dir = vfs_open("X:\\Diag\\", VFS_O_READ);
     if (dir && dir->ops && dir->ops->create)
         dir->ops->create(dir, "tpm-events.json", VFS_FILE);
-    struct vfs_node *f = vfs_open("X:\\Diag\\tpm-events.json", VFS_O_WRITE);
+    if (dir)
+        vfs_close(dir);
+    /* O_TRUNC: a shorter event log (fewer events than a prior boot) must not
+     * leave stale previous-boot tail bytes after the freshly written JSON. */
+    struct vfs_node *f = vfs_open("X:\\Diag\\tpm-events.json",
+                                  VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
     if (!f) {
         klog(LOG_WARN, "TPM", "CEL export: cannot open X:\\Diag\\tpm-events.json");
         return;
