@@ -129,6 +129,14 @@ static const uint8_t vpd_font_data[VPD_COUNT][VPD_GLYPH_H] = {
 
 /* ---- Rendering functions (all static inline) ----------------------------- */
 
+/* CONTRACT (load-bearing): these raw helpers take fb + pitch_px but NOT the
+ * framebuffer width/height, so they CANNOT clip -- the caller MUST guarantee
+ * x/y and the full string fit within the mapped framebuffer, or they write out
+ * of bounds. They are currently UNCALLED: the in-tree Tier 1 renderer uses the
+ * bounds-checked vpd_puts_scaled / vpd_putu32_scaled / vpd_puthex16_scaled in
+ * src/kernel/vpd.c instead. Bounding these (add width/height + NULL + clip) or
+ * retiring them in favor of the _scaled variants is a tracked follow-up. */
+
 /* Render one character at pixel position (x,y) on a raw framebuffer. */
 static inline void vpd_putchar(uint32_t *fb, uint32_t pitch_px,
                                 uint32_t x, uint32_t y,

@@ -56,7 +56,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 | --- | :---: | ------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | 4-digit POST code system (0x0000-0xFFFF)                 | --                  |  [/]   |
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1                  |  [x]   |
-| ⭐  |   3   | Embedded 5x7 bitmap micro-font                          | --                  |  [x]   |
+| ⭐  |   3   | Embedded 5x7 bitmap micro-font                          | --                  |  [/]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3              |  [/]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4                  |  [/]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4                  |  [x]   |
@@ -147,9 +147,19 @@ A zero-dependency pixel font baked into a single header -- renders ASCII text di
 - [x] `vpd_puthex16(fb, pitch_px, x, y, val, color)` -- 4-digit hex
 - [x] `vpd_puthex8(fb, pitch_px, x, y, val, color)` -- 2-digit hex
 - [x] All functions static inline in header -- no .c file, no linker dependency
+- [ ] Bound or retire the raw header render helpers -- `vpd_putchar`/`vpd_puts`/etc. write to `fb` with no extent/NULL check (latent OOB; uncalled). Add width/height + NULL + clip, or retire them (`vpd.c` `_scaled` is the bounded in-tree path)
 - [x] Commit: `"boot: embedded 5x7 bitmap micro-font for pre-splash VPD"`
 
 **Test checkpoint:** Build includes `vpd_font.h`; `VPD_COUNT` is 95 glyphs (`VPD_LAST` - `VPD_FIRST` + 1); smoke boot with `postbars=on` shows micro-font rows without fault. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired -- font exercised via the VPD render path) | validation: smoke boot with `postbars=on` (manual)
+> **Notes:**
+> - Shipped: `vpd_font.h` -- zero-dependency 5x7 micro-font (95 glyphs, ASCII 0x20-0x7E, `vpd_font_data[95][7]`) + static-inline render helpers; the foundation for Tier 1 VPD text.
+> - Integrates: the font DATA is consumed by the bounds-checked `vpd.c` `_scaled` render path; out-of-range chars map to `?`; 5px glyph + 1px gap = 6px cell advance.
+> - Review: Codex 3x -- consistency + perf clean (95 rows, both paths consistent); the raw header helpers have a latent unbounded-fb-write HIGH (uncalled, superseded by `_scaled`) -- deferred + a contract WARNING comment added.
+> - Scope boundary: §3 owns the font data + helpers; the bounded in-tree renderer is `vpd.c` (§4); bounding/retiring the raw helpers is the deferred item above.
+> **Verified:** 2026-06-15 | this review commit (contract warning) | 8/9 items | build OK | manual (smoke boot pending)
+> **Deferred:** [H] raw header render helpers write fb with no extent/NULL check (latent OOB, uncalled) -> XREF: 01-boot-platform/TODO-15 §3 (item: "Bound or retire the raw header render helpers" at line 150)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+0M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 4. Tier 1: Pre-Splash VPD Renderer
 Replace `HV_BAR` with a structured pre-splash renderer that draws named stage bars with text labels directly to VRAM. Active from the first instruction after `g_boot_info` is parsed until the splash takes over.
