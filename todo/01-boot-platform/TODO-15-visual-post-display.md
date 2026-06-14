@@ -54,7 +54,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 
 | ⭐  | Order | Deliverable                                             | Depends On          | Status |
 | --- | :---: | ------------------------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | 4-digit POST code system (0x0000-0xFFFF)                 | --                  |  [x]   |
+| 💎  |   1   | 4-digit POST code system (0x0000-0xFFFF)                 | --                  |  [/]   |
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1                  |  [x]   |
 | ⭐  |   3   | Embedded 5x7 bitmap micro-font                          | --                  |  [x]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3              |  [/]   |
@@ -82,7 +82,7 @@ Replace the current 2-digit POST codes (28 values in 0x10-0x63) with a 4-digit s
 > [!IMPORTANT]
 > POST codes must start in the **UEFI bootloader** before `ExitBootServices` -- this is the earliest possible diagnostic point. I/O port 0x80 is 8-bit on most hardware POST cards; write high byte to port 0x80. UEFI NVRAM stores the full 16-bit value. On-screen display renders all 4 hex digits once the framebuffer is available.
 
-- [x] Define `POST16(code)` macro: writes high byte to I/O 0x80, stores full 16-bit in UEFI NVRAM, updates on-screen display when available
+- [x] `POST16(code)` / `boot_post_write16()` -- volatile: writes high byte to I/O 0x80, updates the on-screen display, sets the `s_last_post16` RAM shadow. UEFI NVRAM persistence is `boot_post_nvram_write16()` (milestones only, flash endurance)
 - [x] Define POST code ranges:
 
 | Range | Phase | Example codes |
@@ -92,15 +92,26 @@ Replace the current 2-digit POST codes (28 values in 0x10-0x63) with a 4-digit s
 | 0x1000-0x1FFF | Phase 1 -- Platform | 0x1000=GDT, 0x1010=IDT, 0x1020=ACPI, 0x1030=LAPIC, 0x1040=timer |
 | 0x2000-0x2FFF | Phase 2 -- System | 0x2000=PCI, 0x2010=NIC, 0x2020=AHCI, 0x2060=VFS |
 | 0x3000-0x3FFF | Phase 3 -- Desktop | 0x3000=sched, 0x3010=fonts, 0x3020=compositor |
+| 0xD000-0xDFFF | Diagnostic (cross-phase) | live `POST16_*` diag codes 0xD000-0xDF13 in `boot_init.h` (not a single boot phase) |
 | 0xF000-0xFFFE | Reserved | 0xFF00=BOOT_OK, 0xFFFE=BOOT_FAILED |
 
-- [x] `boot_post_write16(uint16_t code)` -- stores 2 bytes in UEFI NVRAM (backward-compatible)
+- [x] `boot_post_nvram_write16()` stores 2 bytes in UEFI NVRAM at milestones + panic; `boot_post_write16()` is volatile (no NVRAM write)
 - [x] `boot_post_read16()` -- reads 2 bytes if available, 1 byte otherwise
 - [x] On-screen POST display: four hex digits at **native 8x8** px per glyph (38x10 px footprint, top-right; see `boot_progress.c` `POST16_GLYPH_W` / `POST16_TOTAL_W` / `post_display16`)
 - [x] Bootloader: replaced `post_code(uint8_t)` with `post_code16(uint16_t)` using 0xB000 range + serial output
+- [ ] Panic-path NVRAM write robustness -- `boot_post_nvram_write16()` uses the sleepable UEFI RT mutex; the panic path writes `POST16_BOOT_FAILED` through it and can block if RT services held. Use a no-sleep/trylock path or the RAM shadow
 - [x] Commit: `"boot: 4-digit POST code system with UEFI bootloader coverage"`
 
 **Test checkpoint:** QEMU: serial shows `[BOOT] POST 0xB001` before kernel entry. After kernel: `[PHASE0] PMM (0x0020)`. UEFI NVRAM stores 16-bit value. Bare metal: POST code reader shows high byte on port 0x80.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | POST16-uniqueness assertions in `test_boot_init.c` + `test_klog.c`; full corner-overlay validation is manual (serial + on-screen)
+> **Notes:**
+> - Shipped: 4-digit POST16 system -- `POST16`/`boot_post_write16` (volatile: I/O 0x80 + on-screen + RAM shadow), `boot_post_nvram_write16` (NVRAM milestones), `boot_post_read16`, `post_display16` corner overlay, bootloader `post_code16`.
+> - Integrates: POST16 is the earliest diagnostic (bootloader pre-ExitBS); `post_display16` draws the top-right corner (grayscale) until desktop-ready; ranges 0xB000 boot / 0x0-0x3FFF phase / 0xD000 diag / 0xF000 reserved.
+> - Review: Codex 3x fixed a HIGH (`post_display16` x0 underflow on undersized GOP -> OOB, guarded in both paths) + 3M (0xD000 range doc, VPD classifier extended, volatile-vs-NVRAM doc fixes); panic-NVRAM-hang deferred.
+> - Scope boundary: §1 owns the POST16 scheme + corner display; the VPD full-screen renderer is §4; panic-path NVRAM robustness is the deferred item above.
+> **Verified:** 2026-06-15 | this review commit (HIGH + 3M fixes) | 6/7 items | build OK | tests (POST16 uniqueness)
+> **Deferred:** [H] panic-path `boot_post_nvram_write16` can block on the sleepable UEFI RT mutex -> XREF: 01-boot-platform/TODO-15 §1 (item: "Panic-path NVRAM write robustness" at line 102)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+3M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 2. POST Codes in Every Boot Function
 
@@ -226,7 +237,7 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 > [!IMPORTANT]
 > NVRAM persists the last POST16 via `boot_post_nvram_write16()` / `boot_post_read16()` (`boot_init.c`). The on-screen banner resolves a human-readable name with **`vpd_post16_name(last_code)`** (`vpd.c`); there is **no separate stage-name variable** in NVRAM today. A future enhancement could store a short stage string if UEFI variable space and flash endurance allow.
 
-- [x] NVRAM already stores full 16-bit POST code via `boot_post_write16()` / `boot_post_read16()`
+- [x] NVRAM stores the full 16-bit POST code via `boot_post_nvram_write16()` (milestones + panic); `boot_post_read16()` reads it next boot
 - [x] `vpd_post16_name(code)` -- lookup table resolves POST16 code → stage name (55 entries)
 - [x] `vpd_crash_banner(last_postcode)` -- sets banner state and draws the failure banner: a standalone red line when `postbars==0`, or the info-header "Last Boot:" line when `postbars>=1` -- shown regardless of postbars
 - [x] Failure banner drawn independent of `postbars` -- `vpd_crash_banner()` draws the standalone red banner when `config_found && postbars==0` (the case `vpd_init()` skips the header); no double-draw when `postbars>=1`

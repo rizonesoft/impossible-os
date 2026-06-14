@@ -455,7 +455,12 @@ static void vpd_render_info_header(void)
             else if (pc < 0x1000)  phase_str = "FAILED Phase 0";
             else if (pc < 0x2000)  phase_str = "FAILED Phase 1";
             else if (pc < 0x3000)  phase_str = "FAILED Phase 2";
-            else                   phase_str = "FAILED Phase 3";
+            else if (pc < 0x4000)  phase_str = "FAILED Phase 3";
+            else if (pc >= 0xB000 && pc < 0xC000)
+                                   phase_str = "FAILED (bootloader)";
+            else if (pc >= 0xD000 && pc < 0xE000)
+                                   phase_str = "FAILED (diag)";
+            else                   phase_str = "FAILED (reserved)";
             vpd_puts_scaled(val_x, y, phase_str, VPD_COLOR_FAIL);
             sx = val_x + 15 * VPD_CHAR_W;
         } else {

@@ -137,7 +137,10 @@ void post_display16(uint16_t code)
         return;
 
     scr_w = use_fb_driver ? fb_get_width() : g_boot_info.fb.width;
-    if (scr_w == 0) return;
+    /* Reject undersized modes: the 4-digit overlay needs at least its footprint
+     * plus margin. A narrower mode would underflow x0 (unsigned wrap) and the
+     * post-fb_init fb_fill_rect / fb_put_pixel path would write out of bounds. */
+    if (scr_w <= POST16_TOTAL_W + POST16_MARGIN) return;
 
     x0 = scr_w - POST16_TOTAL_W - POST16_MARGIN;
     y0 = POST16_TOP;
@@ -466,11 +469,15 @@ void boot_stage_report(boot_stage_t stage, const char *msg)
     /* POST hex display on framebuffer + I/O port 0x80 */
     post_display16((uint16_t)m->postcode);
 
-    /* Desktop ready: clear POST display (match post_display16 footprint) */
+    /* Desktop ready: clear POST display (match post_display16 footprint).
+     * Guard against undersized modes -- same x0 underflow as post_display16. */
     if (stage == BOOT_STAGE_DESKTOP_READY && kernel_subsystem_ready(SUBSYS_FB)) {
-        uint32_t cx = fb_get_width() - POST16_TOTAL_W - POST16_MARGIN;
-        fb_fill_rect(cx, POST16_TOP, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
-        fb_swap_rect(cx, POST16_TOP, POST16_TOTAL_W, POST16_TOTAL_H);
+        uint32_t fbw = fb_get_width();
+        if (fbw > POST16_TOTAL_W + POST16_MARGIN) {
+            uint32_t cx = fbw - POST16_TOTAL_W - POST16_MARGIN;
+            fb_fill_rect(cx, POST16_TOP, POST16_TOTAL_W, POST16_TOTAL_H, 0x00000000);
+            fb_swap_rect(cx, POST16_TOP, POST16_TOTAL_W, POST16_TOTAL_H);
+        }
     }
 
     /* Forward to boot_progress (phase, step, postcode) */
