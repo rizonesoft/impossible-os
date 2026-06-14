@@ -355,6 +355,10 @@ void boot_phase3(void)
      * if no record exists. */
     boot_version_blackbox_transcribe();
 
+    /* Dump the healthy-boot bootloader build identity (git_sha + build time +
+     * label) to X:\Diag\boot-loader-identity.txt for offline triage. */
+    boot_loader_identity_dump_to_blackbox();
+
     /* Per-boot policy audit JSONL publish + sticky-trigger ack. Reads
      * the v20 audit surface in g_boot_info, composes one line under
      * X:\Boot\history.jsonl, and clears any consumed sticky triggers

@@ -21,6 +21,7 @@
 #include "kernel/boot_halt.h"
 #include "kernel/mm/heap.h"
 #include "kernel/fs/vfs.h"
+#include "kernel/time_iso.h"
 #include "libc/string.h"
 
 /* NVRAM GUID for the fault variable. Distinct from the POST16 GUID
@@ -314,7 +315,7 @@ static uint32_t hex_nibble(uint32_t v)
 static uint32_t append_str(char *buf, uint32_t pos, uint32_t max,
                            const char *s)
 {
-    while (*s && pos < max - 1u)
+    while (*s && pos + 1u < max)
         buf[pos++] = *s++;
     return pos;
 }
@@ -326,7 +327,7 @@ static uint32_t append_dec(char *buf, uint32_t pos, uint32_t max,
     int n = 0;
     if (v == 0u) tmp[n++] = '0';
     else while (v > 0u && n < 24) { tmp[n++] = (char)('0' + (v % 10u)); v /= 10u; }
-    while (n > 0 && pos < max - 1u) buf[pos++] = tmp[--n];
+    while (n > 0 && pos + 1u < max) buf[pos++] = tmp[--n];
     return pos;
 }
 
@@ -346,7 +347,7 @@ static uint32_t append_line(char *buf, uint32_t pos, uint32_t max,
                             const char *s)
 {
     pos = append_str(buf, pos, max, s);
-    if (pos < max - 1u) buf[pos++] = '\n';
+    if (pos + 1u < max) buf[pos++] = '\n';
     return pos;
 }
 
@@ -639,4 +640,115 @@ void boot_version_blackbox_transcribe(void)
         (void)uefi_set_variable(&s_fault_guid, s_fault_name,
                                 FAULT_ATTRS, 0u, (const void *)0);
     }
+}
+
+/* ---- Bootloader build-identity BlackBox dump ---------------------------- */
+
+/* Pure formatter (no VFS): render `id` into `buf` (NUL-terminated text) and
+ * return the byte length. The all-zero git_sha is the ABI "loader did not
+ * populate" sentinel (gen-loader-identity.sh emits zeros on no-git/fallback
+ * builds), so a zero sha/time/label is surfaced as "unavailable", never as a
+ * real commit. Separated from the dump so unit tests can assert the format. */
+uint32_t boot_loader_identity_format(const struct boot_loader_identity *id,
+                                     char *buf, uint32_t cap)
+{
+    static const char hexd[] = "0123456789abcdef";
+    uint32_t pos = 0u;
+    uint32_t i;
+    int populated = 0;
+
+    /* Fail closed: a 0-cap or NULL buffer cannot hold even a NUL terminator. */
+    if (!id || !buf || cap == 0u) {
+        if (buf && cap != 0u)
+            buf[0] = '\0';
+        return 0u;
+    }
+
+    pos = append_line(buf, pos, cap, "Impossible OS -- Bootloader Build Identity");
+    pos = append_line(buf, pos, cap, "==========================================");
+
+    for (i = 0; i < sizeof id->git_sha; i++)
+        if (id->git_sha[i]) { populated = 1; break; }
+
+    pos = append_str(buf, pos, cap, "git_sha:         ");
+    if (populated) {
+        char hexsha[41];
+        for (i = 0; i < 20u; i++) {
+            hexsha[i * 2u]      = hexd[(id->git_sha[i] >> 4) & 0x0Fu];
+            hexsha[i * 2u + 1u] = hexd[id->git_sha[i] & 0x0Fu];
+        }
+        hexsha[40] = '\0';
+        pos = append_str(buf, pos, cap, hexsha);
+        pos = append_line(buf, pos, cap, "");
+    } else {
+        pos = append_line(buf, pos, cap, "unavailable (loader did not populate)");
+    }
+
+    pos = append_str(buf, pos, cap, "build_unix_time: ");
+    if (id->build_unix_time != 0u) {
+        char iso[21];
+        pos = append_dec(buf, pos, cap, id->build_unix_time);
+        kdate_iso8601(id->build_unix_time, iso);
+        pos = append_str(buf, pos, cap, " (");
+        pos = append_str(buf, pos, cap, iso);
+        pos = append_line(buf, pos, cap, ")");
+    } else {
+        pos = append_line(buf, pos, cap, "unavailable");
+    }
+
+    pos = append_str(buf, pos, cap, "build_label:     ");
+    {
+        /* build_label[24] is NUL-terminated by the producer; bound the read so
+         * a malformed record without NUL still terminates. */
+        char label[25];
+        for (i = 0; i < 24u; i++)
+            label[i] = id->build_label[i];
+        label[24] = '\0';
+        pos = append_line(buf, pos, cap, label[0] ? label : "unavailable");
+    }
+    /* The hardened append_* helpers keep pos <= cap-1, so buf[pos] is in range;
+     * NUL-terminate so the documented C-string contract holds (the dump writes
+     * `pos` bytes, excluding the terminator). */
+    buf[pos] = '\0';
+    return pos;
+}
+
+/* Dump g_boot_info.loader_identity to X:\Diag\boot-loader-identity.txt so a
+ * healthy boot's bootloader identity is visible for offline triage without a
+ * registry query. Best-effort: mirrors boot_version_blackbox_transcribe's
+ * single-open create+truncate write. g_boot_info is immutable post-boot. */
+void boot_loader_identity_dump_to_blackbox(void)
+{
+    extern int klog_using_blackbox;
+    if (!klog_using_blackbox)
+        return;
+
+    const uint32_t max_sz = 512u;
+    char *buf = (char *)kmalloc(max_sz);
+    if (!buf) {
+        klog(LOG_WARN, "boot", "loader-identity dump: kmalloc(%u) failed",
+             (uint64_t)max_sz);
+        return;
+    }
+    uint32_t pos = boot_loader_identity_format(&g_boot_info.loader_identity,
+                                               buf, max_sz);
+
+    struct vfs_node *f = vfs_open("X:\\Diag\\boot-loader-identity.txt",
+                                  VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (f) {
+        int wrote = vfs_write(f, 0, pos, (const uint8_t *)buf);
+        vfs_close(f);
+        if (wrote >= 0 && (uint32_t)wrote == pos)
+            klog(LOG_INFO, "boot",
+                 "boot identity dumped to X:\\Diag\\boot-loader-identity.txt");
+        else
+            klog(LOG_ERROR, "boot",
+                 "loader-identity dump: short/error write (wrote=%d of %u)",
+                 (uint64_t)wrote, (uint64_t)pos);
+    } else {
+        klog(LOG_WARN, "boot",
+             "loader-identity dump: vfs_open failed for "
+             "X:\\Diag\\boot-loader-identity.txt");
+    }
+    kfree(buf);
 }

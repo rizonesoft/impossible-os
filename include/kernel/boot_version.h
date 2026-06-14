@@ -153,6 +153,19 @@ int boot_version_persist_nvram(const struct boot_version_fault *fault);
  * _reserved_blackbox_dump calls in Phase 3. */
 void boot_version_blackbox_transcribe(void);
 
+/* Render g_boot_info.loader_identity into a human-readable text dump. Pure (no
+ * VFS); returns the byte length written to buf. All-zero git_sha / zero time /
+ * empty label render as "unavailable" (the ABI no-loader sentinel), never as a
+ * real commit. Exposed for unit testing the format. */
+struct boot_loader_identity;
+uint32_t boot_loader_identity_format(const struct boot_loader_identity *id,
+                                     char *buf, uint32_t cap);
+
+/* Dump the bootloader build identity to X:\Diag\boot-loader-identity.txt on a
+ * healthy boot. Best-effort; no-op if BlackBox/VFS are not up. Called from
+ * boot_desktop.c next to boot_version_blackbox_transcribe in Phase 3. */
+void boot_loader_identity_dump_to_blackbox(void);
+
 /* Name of the human-readable fault transcript in BlackBox. */
 #define BOOT_VERSION_FAULT_BLACKBOX_FILE "boot-proto-fault.txt"
 

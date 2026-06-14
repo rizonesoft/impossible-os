@@ -32,6 +32,7 @@
  * ============================================================================ */
 
 #include "kernel/types.h"
+#include "kernel/time_iso.h"
 #include "kernel/firmware_tables.h"
 #include "kernel/firmware_platform.h"
 #include "kernel/firmware_quirks.h"
@@ -86,50 +87,11 @@ static const char *degraded_reason_name(uint8_t reason)
 
 static void jb_iso8601(struct json_builder *j, uint64_t unix_time)
 {
-    if (unix_time == 0) {
-        jb_str(j, "1970-01-01T00:00:00Z");
-        return;
-    }
-    int64_t z = (int64_t)(unix_time / 86400);
-    uint32_t sod = (uint32_t)(unix_time % 86400);
-    int64_t z_shift = z + 719468;
-    int64_t era = (z_shift >= 0 ? z_shift : z_shift - 146096) / 146097;
-    uint32_t doe = (uint32_t)(z_shift - era * 146097);
-    uint32_t yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
-    int64_t y = (int64_t)yoe + era * 400;
-    uint32_t doy = doe - (365*yoe + yoe/4 - yoe/100);
-    uint32_t mp = (5*doy + 2)/153;
-    uint32_t d = doy - (153*mp + 2)/5 + 1;
-    uint32_t m = mp < 10 ? mp + 3 : mp - 9;
-    if (m <= 2) y++;
-    uint32_t hh = sod / 3600;
-    uint32_t mm = (sod / 60) % 60;
-    uint32_t ss = sod % 60;
-    if (y < 1970) y = 1970;
-    if (y > 9999) y = 9999;
-    char buf[20];
-    buf[0] = '0' + (y / 1000) % 10;
-    buf[1] = '0' + (y / 100) % 10;
-    buf[2] = '0' + (y / 10) % 10;
-    buf[3] = '0' + y % 10;
-    buf[4] = '-';
-    buf[5] = '0' + (m / 10) % 10;
-    buf[6] = '0' + m % 10;
-    buf[7] = '-';
-    buf[8]  = '0' + (d / 10) % 10;
-    buf[9]  = '0' + d % 10;
-    buf[10] = 'T';
-    buf[11] = '0' + (hh / 10) % 10;
-    buf[12] = '0' + hh % 10;
-    buf[13] = ':';
-    buf[14] = '0' + (mm / 10) % 10;
-    buf[15] = '0' + mm % 10;
-    buf[16] = ':';
-    buf[17] = '0' + (ss / 10) % 10;
-    buf[18] = '0' + ss % 10;
-    buf[19] = 'Z';
+    char buf[21];
+    int i;
+    kdate_iso8601(unix_time, buf);   /* shared civil-date formatter, kernel/time_iso.h */
     jb_putc(j, '"');
-    for (int i = 0; i < 20; i++)
+    for (i = 0; i < 20; i++)
         jb_putc(j, buf[i]);
     jb_putc(j, '"');
 }
