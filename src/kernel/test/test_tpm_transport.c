@@ -247,7 +247,7 @@ static void test_tpm2_marshal(void)
 
 static void test_tpm2_submit_fake(void)
 {
-    const struct tpm_t_io *old;
+    struct tpm_t_test_state old;
     uint8_t cmd[24], rsp[64];
     uint32_t n, rc;
     int r;
@@ -395,7 +395,9 @@ static void test_tpm2_submit_fake(void)
                    "transport unavailable after test restore");
     r = tpm2_submit(cmd, n, rsp, sizeof(rsp));
     TEST_ASSERT_EQ(r, TPM_T_ERR_NODEV, "submit without device -> NODEV");
-    (void)old;
+    /* Restore the real pre-test transport so a live-fTPM host is not left
+     * unavailable for the following suites. */
+    tpm_t_test_restore(old);
 }
 
 /* Stage a canned GetRandom success response carrying an n-byte
@@ -413,6 +415,7 @@ static void test_tpm2_get_random(void)
 {
     uint8_t buf[24], out[64];
     uint8_t rsp[64];
+    struct tpm_t_test_state base;
     int r;
 
     /* Pure marshal/parse helpers. */
@@ -446,7 +449,7 @@ static void test_tpm2_get_random(void)
 
     /* Bounded loop protocol: 64-byte target with 32-byte canned
      * returns must request 48 (per-call cap) then 32 (remaining). */
-    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    base = tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
     fake_reset();
     fake_set_rsp_random(32u);
     fk_vary = 1;
@@ -493,17 +496,18 @@ static void test_tpm2_get_random(void)
                    "outer budget still armed after nested bounce");
     TEST_ASSERT_EQ(tpm_t_test_budget_active(), 0,
                    "budget disarmed once the outer sequence ends");
-    tpm_t_test_install((const struct tpm_t_io *)0, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(base);   /* restore live transport, not force-unavailable */
 }
 
 static void test_entropy_tpm_collect(void)
 {
     uint8_t out[ENTROPY_STAGE_CAP];
     uint32_t len;
+    struct tpm_t_test_state base;
 
     /* Happy path: 2x 32-byte varied GetRandom responses -> one staged
      * 64-byte src-2 record, HIGH credit, report flag set. */
-    tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    base = tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
     fake_reset();
     fake_set_rsp_random(32u);
     fk_vary = 1;
@@ -605,6 +609,9 @@ static void test_entropy_tpm_collect(void)
     entropy_record_source(ENTROPY_SRC_TPM_RNG, ENTROPY_Q_NONE);
     tpm_integrity_set_rng_available(0);
     entropy_staged_consume_zero();
+    /* Restore the real pre-test transport (the no-op subcase above forced it
+     * unavailable) so a live-fTPM host survives the suite. */
+    tpm_t_test_restore(base);
 }
 
 static void test_tpm2_pcr_read(void)
@@ -768,7 +775,7 @@ static void cf_reset(void)
 
 static void test_tpm_crb_submit_fake(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     struct tpm_t_crb_snapshot crb_snap;
     uint8_t cmd[16], rsp[64];
     int r;
@@ -828,14 +835,14 @@ static void test_tpm_crb_submit_fake(void)
     TEST_ASSERT_EQ(r, TPM_T_ERR_TIMEOUT, "stuck CRB START -> ERR_TIMEOUT (bounded)");
 
     tpm_t_test_restore_crb_buffers(crb_snap);   /* restore real CRB mapping, not NULL */
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
 }
 
 /* ---- Degraded: transport-level no-TPM ---- */
 
 static void test_tpm_transport_no_tpm(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     uint8_t cmd[16], rsp[32];
     int r;
     memset(cmd, 0, sizeof cmd);
@@ -849,13 +856,38 @@ static void test_tpm_transport_no_tpm(void)
     TEST_ASSERT_EQ(tpm_transport_available(), 0, "transport reports unavailable");
     r = tpm2_submit(cmd, 12u, rsp, sizeof rsp);
     TEST_ASSERT_EQ(r, TPM_T_ERR_NODEV, "submit with no transport -> ERR_NODEV");
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
+}
+
+/* The test seam restores the FULL prior state, not just the io pointer. The old
+ * io-pointer-only restore re-installed via (prev, NONE, 0), which forced
+ * available=1 -- leaving the transport mis-routed after a TPM suite. */
+static void test_tpm_t_restore_full_state(void)
+{
+    struct tpm_t_test_state base, snap;
+
+    /* Baseline: force unavailable and remember the real pre-test state. */
+    base = tpm_t_test_install((const struct tpm_t_io *)0, TPM_T_IFACE_NONE, 0);
+    TEST_ASSERT_EQ(tpm_transport_available(), 0, "baseline transport unavailable");
+
+    /* Install a fake (available=1), then restore the captured snapshot: the
+     * transport MUST return to unavailable, not stay available. */
+    snap = tpm_t_test_install(&fk_io, TPM_T_IFACE_TIS, 1);
+    TEST_ASSERT_EQ(tpm_transport_available(), 1, "fake install marks available");
+    tpm_t_test_restore(snap);
+    TEST_ASSERT_EQ(tpm_transport_available(), 0,
+                   "restore returns to unavailable (not stuck available)");
+
+    /* Leave the original pre-test state intact for sibling suites. */
+    tpm_t_test_restore(base);
 }
 
 void test_register_tpm_transport(void)
 {
     test_suite_register_cat("tpm: transport marshaling",
         test_tpm2_marshal, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: test-seam full-state restore",
+        test_tpm_t_restore_full_state, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: CRB submit (fake CRB)",
         test_tpm_crb_submit_fake, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: transport no-TPM degrade",

@@ -318,7 +318,7 @@ static void test_attest_build_evict(void)
 
 static void test_attest_no_tpm(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     struct tpm_quote_attest att;
     uint8_t nonce[16], sig[64], pub[64], cert[64];
     uint16_t got = 0;
@@ -332,7 +332,7 @@ static void test_attest_no_tpm(void)
                    (int)TPM_ATTEST_NO_TPM, "quote with no TPM -> NO_TPM");
     TEST_ASSERT_EQ((int)tpm_ek_cert_read(TPM_ALG_ECC, cert, sizeof cert, &got),
                    (int)TPM_ATTEST_NO_TPM, "EK cert read with no TPM -> NO_TPM");
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
 
     /* Bad args are rejected before any transaction. */
     TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, 4u, &att, sig, sizeof sig, &slen),
@@ -536,7 +536,7 @@ static void af_reset(void)
 
 static void test_attest_quote_lifecycle(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     struct tpm_quote_attest att;
     uint8_t nonce[20], sig[128], pub[128];
     uint16_t pub_len = 0;
@@ -551,7 +551,7 @@ static void test_attest_quote_lifecycle(void)
     /* The same provisioned AK serves a second query (no re-provision). */
     {
         tpm_attest_status_t r2 = tpm_ak_public_get(pub, sizeof pub, &pub_len);
-        tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+        tpm_t_test_restore(prev);
         TEST_ASSERT_EQ((int)r2, (int)TPM_ATTEST_OK, "ak_public_get returns cached AK pub");
         TEST_ASSERT_EQ((uint32_t)pub_len, 100u, "cached AK pub is the Create outPublic (100 bytes)");
     }
@@ -578,7 +578,7 @@ static void test_attest_quote_lifecycle(void)
  * rejected -- never published as a valid attestation (adversarial-review hardening). */
 static void test_attest_quote_bind_reject(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     struct tpm_quote_attest att;
     uint8_t nonce[20], sig[128];
     uint32_t slen = 0, i;
@@ -608,13 +608,13 @@ static void test_attest_quote_bind_reject(void)
     TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
                    (int)TPM_ATTEST_QUOTE_FAIL, "quote over wrong PCR bank rejected");
 
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     af_quote_pcr0 = 0xFFu; af_quote_hashalg = TPM_ALG_SHA256; af_quote_bankalg = TPM_ALG_SHA256;
 }
 
 static void test_attest_ek_cert_oversize(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     uint8_t cert[64];
     uint16_t got = 0;
     af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0; af_seen_n = 0;
@@ -623,7 +623,7 @@ static void test_attest_ek_cert_oversize(void)
      * NOT return OK with a truncated cert -- a verifier could trust a partial DER. */
     TEST_ASSERT_EQ((int)tpm_ek_cert_read(TPM_ALG_ECC, cert, sizeof cert, &got),
                    (int)TPM_ATTEST_BADARG, "oversized EK cert -> BADARG (no truncated OK)");
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((uint32_t)got, 2048u, "oversized EK cert reports the required size");
 }
 

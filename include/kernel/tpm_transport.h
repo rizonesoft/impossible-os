@@ -201,13 +201,32 @@ struct tpm_t_io {
     void     (*w32)(uint32_t off, uint32_t v);
 };
 
-/* Install a fake io + interface kind; returns the previous io so the
- * test can restore it. Also marks the transport available and clears
- * sticky failure. Passing io == NULL restores full pre-init state
- * (unavailable). Fast timeouts (fast != 0) shrink poll deadlines to
- * microsecond scale so timeout-path tests do not stall the suite. */
-const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
-                                          int iface, int fast);
+/* Full snapshot of the mutable transport routing state, so a test can restore
+ * EVERY field it perturbed (not just the io pointer). A bare io-pointer restore
+ * left iface/available/failed/fast at the test's values, which on a real-fTPM
+ * host mis-routed the live transport after a TPM suite. */
+struct tpm_t_test_state {
+    const struct tpm_t_io *io;
+    int iface;
+    int available;
+    int failed;
+    int fast;
+    int busy;
+    int test_busy_ticks;
+};
+
+/* Install a fake io + interface kind; returns a FULL snapshot of the prior
+ * transport state so the test can restore it via tpm_t_test_restore(). Also
+ * marks the transport available and clears sticky failure. Passing io == NULL
+ * sets full pre-init state (unavailable). Fast timeouts (fast != 0) shrink poll
+ * deadlines to microsecond scale so timeout-path tests do not stall the suite. */
+struct tpm_t_test_state tpm_t_test_install(const struct tpm_t_io *io,
+                                           int iface, int fast);
+
+/* Restore a snapshot captured by tpm_t_test_install(), putting back every
+ * mutated field (io/iface/available/failed/fast/busy). Use this at test
+ * teardown instead of re-installing with forced (NONE, 0) args. */
+void tpm_t_test_restore(struct tpm_t_test_state st);
 
 /* Arm the cumulative wait budget in iteration mode (kernel unit tests
  * only) -- mirrors the boot startup-probe budget so its expiry path is

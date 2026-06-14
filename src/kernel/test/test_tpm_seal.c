@@ -492,7 +492,7 @@ static void test_recovery_handler(const struct tpm_unseal_result *r)
 
 static void test_seal_lifecycle(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     struct tpm_sealed_blob blob;
     struct tpm_unseal_result res;
     uint8_t out[32];
@@ -509,7 +509,7 @@ static void test_seal_lifecycle(void)
         for (i = 0; i < 16; i++) secret[i] = (uint8_t)(0x11u + i);
         st = tpm_seal_secret(secret, 16u, &blob);
     }
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_OK, "seal_secret succeeds");
     TEST_ASSERT(sf_saw_cc(TPM2_CC_START_AUTH_SESSION), "seal computed trial policy");
     TEST_ASSERT(sf_saw_cc(TPM2_CC_CREATE_PRIMARY), "seal created SRK parent");
@@ -529,7 +529,7 @@ static void test_seal_lifecycle(void)
     memset(out, 0, sizeof out);
     got = 0;
     st = tpm_unseal_secret(&blob, TPM_SEAL_DOMAIN_GENERIC, out, sizeof out, &got, &res);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_OK, "unseal_secret succeeds while PCRs match");
     TEST_ASSERT_EQ((uint32_t)got, 16u, "unseal returns staged 16-byte secret");
     TEST_ASSERT(out[0] == 0xE0u && out[15] == 0xEFu, "unsealed data correct");
@@ -548,7 +548,7 @@ static void test_seal_lifecycle(void)
     memset(out, 0xCC, sizeof out);
     got = 0xFFFFu;
     st = tpm_unseal_secret(&blob, TPM_SEAL_DOMAIN_FDE, out, sizeof out, &got, &res);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     tpm_seal_set_recovery_handler(0);
     TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_POLICY_FAIL, "PCR drift -> POLICY_FAIL");
     TEST_ASSERT_EQ((uint32_t)got, 0u, "failed unseal returns no data");
@@ -570,7 +570,7 @@ static void test_seal_lifecycle(void)
     memset(out, 0xCC, sizeof out);
     got = 0xFFFFu;
     st = tpm_unseal_secret(&blob, TPM_SEAL_DOMAIN_GENERIC, out, sizeof out, &got, &res);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_TRANSPORT,
                    "Unseal success with no auth area -> TRANSPORT (never leaks outData)");
     TEST_ASSERT_EQ((uint32_t)got, 0u, "rejected unseal returns no data");
@@ -580,7 +580,7 @@ static void test_seal_lifecycle(void)
 
 static void test_seal_no_tpm(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     struct tpm_sealed_blob blob;
     struct tpm_unseal_result res;
     uint8_t out[32];
@@ -615,14 +615,14 @@ static void test_seal_no_tpm(void)
     TEST_ASSERT_EQ((int)tpm_unseal_fde_key(0, out, sizeof out, &got, 0),
                    (int)TPM_SEAL_BADARG, "fde unseal of null blob -> BADARG");
 
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
 }
 
 /* ---- Forged/degraded session responses (F-A1 + F-A2 hardening) ---- */
 
 static void test_seal_forged_responses(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     struct tpm_sealed_blob blob;
     struct tpm_unseal_result res;
     uint8_t out[32];
@@ -642,7 +642,7 @@ static void test_seal_forged_responses(void)
     memset(out, 0xCC, sizeof out);
     got = 0xFFFFu;
     st = tpm_unseal_secret(&blob, TPM_SEAL_DOMAIN_GENERIC, out, sizeof out, &got, &res);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_TRANSPORT,
                    "Unseal ST_NO_SESSIONS forged success -> TRANSPORT (never returns secret)");
     TEST_ASSERT_EQ((uint32_t)got, 0u, "forged unseal returns no data");
@@ -658,7 +658,7 @@ static void test_seal_forged_responses(void)
         for (i = 0; i < 16; i++) secret[i] = (uint8_t)i;
         st = tpm_seal_secret(secret, 16u, &blob);
     }
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_TRANSPORT, "malformed CreatePrimary success -> TRANSPORT");
     TEST_ASSERT(sf_was_flushed(0x80000001u),
                 "leaked transient handle from malformed CreatePrimary is flushed (no pool leak)");
@@ -673,7 +673,7 @@ static void test_seal_forged_responses(void)
     memset(out, 0xCC, sizeof out);
     got = 0xFFFFu;
     st = tpm_unseal_secret(&blob, TPM_SEAL_DOMAIN_GENERIC, out, sizeof out, &got, &res);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_SEAL_TRANSPORT,
                    "zero-length Unseal payload -> TRANSPORT (not a successful unlock)");
     TEST_ASSERT_EQ((uint32_t)got, 0u, "empty unseal returns no data");

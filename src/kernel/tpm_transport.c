@@ -1185,13 +1185,22 @@ void tpm_transport_init(void)
 
 /* ---- Test seam ---- */
 
-const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
-                                          int iface, int fast)
+struct tpm_t_test_state tpm_t_test_install(const struct tpm_t_io *io,
+                                           int iface, int fast)
 {
-    const struct tpm_t_io *old = s_io;
+    struct tpm_t_test_state old;
     uint64_t irqf;
 
     spin_lock_irqsave(&s_state_lock, &irqf);
+    /* Capture the FULL prior state before perturbing it, so a later restore
+     * puts back iface/available/failed/fast, not just the io pointer. */
+    old.io = s_io;
+    old.iface = s_iface;
+    old.available = s_available;
+    old.failed = s_failed;
+    old.fast = s_fast_timeouts;
+    old.busy = s_busy;
+    old.test_busy_ticks = s_test_busy_ticks;
     if (io) {
         s_io = io;
         s_iface = iface;
@@ -1209,6 +1218,21 @@ const struct tpm_t_io *tpm_t_test_install(const struct tpm_t_io *io,
     s_test_busy_ticks = 0;
     spin_unlock_irqrestore(&s_state_lock, irqf);
     return old;
+}
+
+void tpm_t_test_restore(struct tpm_t_test_state st)
+{
+    uint64_t irqf;
+
+    spin_lock_irqsave(&s_state_lock, &irqf);
+    s_io = st.io ? st.io : &s_mmio_io;   /* a zeroed snapshot -> safe not-available */
+    s_iface = st.iface;
+    s_available = st.available;
+    s_failed = st.failed;
+    s_fast_timeouts = st.fast;
+    s_busy = st.busy;
+    s_test_busy_ticks = st.test_busy_ticks;
+    spin_unlock_irqrestore(&s_state_lock, irqf);
 }
 
 struct tpm_t_crb_snapshot tpm_t_test_install_crb_buffers(volatile uint8_t *cmd,

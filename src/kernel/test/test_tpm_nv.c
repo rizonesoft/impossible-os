@@ -455,7 +455,7 @@ static int nvf_saw_cc(uint32_t cc)
 
 static void test_nv_session_lifecycle(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     tpm_nv_status_t st;
 
     /* Success path: trial session -> PolicyPCR -> PolicyGetDigest -> define.
@@ -463,7 +463,7 @@ static void test_nv_session_lifecycle(void)
     nvf_reset(0u, 0u);
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_define_baseline(TPM_NV_INDEX_BASELINE, 96u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "define_baseline succeeds");
     TEST_ASSERT(nvf_saw_cc(TPM2_CC_START_AUTH_SESSION), "trial session started");
     TEST_ASSERT(nvf_saw_cc(TPM2_CC_POLICY_GET_DIGEST), "trial policy digest read");
@@ -475,7 +475,7 @@ static void test_nv_session_lifecycle(void)
     nvf_reset(TPM2_CC_POLICY_PCR, 0x0000099Du /* POLICY_FAIL */);
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_define_baseline(TPM_NV_INDEX_BASELINE, 96u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_AUTH, "PolicyPCR failure -> AUTH");
     TEST_ASSERT(nvf_saw_cc(TPM2_CC_START_AUTH_SESSION), "session started before failure");
     TEST_ASSERT(!nvf_saw_cc(TPM2_CC_NV_DEFINE_SPACE), "define NOT attempted after policy fail");
@@ -489,7 +489,7 @@ static void test_nv_session_lifecycle(void)
         uint16_t got = 0;
         memset(out, 0, sizeof out);
         st = tpm_nv_policy_read(TPM_NV_INDEX_BASELINE, 0u, out, sizeof out, &got);
-        tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+        tpm_t_test_restore(prev);
         TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "policy_read succeeds");
         TEST_ASSERT_EQ((uint32_t)got, 4u, "policy_read returns 4 bytes");
         TEST_ASSERT(out[0] == 'D' && out[3] == 'A', "policy_read data correct");
@@ -544,7 +544,7 @@ static void test_nv_sas_parse_malformed(void)
 
 static void test_nv_wrapper_status(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     uint8_t buf[16];
     uint8_t out[8];
     uint16_t got;
@@ -558,7 +558,7 @@ static void test_nv_wrapper_status(void)
     nvf_malformed = 1;
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_write(TPM_NV_INDEX_OS_DATA, 0u, buf, 8u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT,
                    "malformed ST_SESSIONS write success -> TRANSPORT (not OK)");
 
@@ -566,7 +566,7 @@ static void test_nv_wrapper_status(void)
     nvf_malformed = 1;
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_define_data(TPM_NV_INDEX_OS_DATA, 64u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT,
                    "malformed ST_SESSIONS define success -> TRANSPORT");
 
@@ -574,19 +574,19 @@ static void test_nv_wrapper_status(void)
     nvf_reset(TPM2_CC_NV_DEFINE_SPACE, 0x0000014Cu /* NV_DEFINED */);
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_define_data(TPM_NV_INDEX_OS_DATA, 64u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_DEFINED, "define_data NV_DEFINED propagates");
 
     nvf_reset(TPM2_CC_NV_WRITE, 0x00000148u /* NV_LOCKED */);
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_write(TPM_NV_INDEX_OS_DATA, 0u, buf, 8u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_LOCKED, "write NV_LOCKED propagates");
 
     nvf_reset(TPM2_CC_NV_UNDEFINE_SPACE, 0x0000018Bu /* HANDLE */);
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_undefine(TPM_NV_INDEX_OS_DATA);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_NOTFOUND, "undefine HANDLE -> NOTFOUND");
 
     nvf_reset(TPM2_CC_NV_READ_PUBLIC, 0x0000018Bu /* HANDLE */);
@@ -594,7 +594,7 @@ static void test_nv_wrapper_status(void)
     {
         uint16_t sz = 0; uint32_t attrs = 0;
         st = tpm_nv_read_public(TPM_NV_INDEX_OS_DATA, &sz, &attrs);
-        tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+        tpm_t_test_restore(prev);
         TEST_ASSERT_EQ((int)st, (int)TPM_NV_NOTFOUND, "read_public HANDLE -> NOTFOUND");
     }
 
@@ -606,7 +606,7 @@ static void test_nv_wrapper_status(void)
     got = 0xFFFFu;
     memset(out, 0, sizeof out);
     st = tpm_nv_read(TPM_NV_INDEX_OS_DATA, 0u, out, sizeof out, &got);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT, "malformed NV_Read success -> TRANSPORT");
     TEST_ASSERT_EQ((uint32_t)got, 0u, "failed read leaves out_len 0");
 
@@ -618,7 +618,7 @@ static void test_nv_wrapper_status(void)
     got = 0xFFFFu;
     memset(out, 0, sizeof out);
     st = tpm_nv_read(TPM_NV_INDEX_OS_DATA, 0u, out, sizeof out, &got);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT, "over-max auth nonce length -> TRANSPORT");
 
     /* F-AD1: a session success with parameterSize but NO response auth area must
@@ -627,7 +627,7 @@ static void test_nv_wrapper_status(void)
     nvf_noauth = 1;
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_write(TPM_NV_INDEX_OS_DATA, 0u, buf, 8u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT,
                    "ST_SESSIONS success with no auth area -> TRANSPORT");
 
@@ -637,7 +637,7 @@ static void test_nv_wrapper_status(void)
     nvf_bad_auth = 1;
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_write(TPM_NV_INDEX_OS_DATA, 0u, buf, 8u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT,
                    "out-of-bounds auth-response length -> TRANSPORT");
 
@@ -649,7 +649,7 @@ static void test_nv_wrapper_status(void)
     nvf_session = 0x03000000u;   /* a real policy-session handle */
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_define_baseline(TPM_NV_INDEX_BASELINE, 96u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT, "malformed StartAuthSession -> TRANSPORT");
     TEST_ASSERT(nvf_saw_cc(TPM2_CC_START_AUTH_SESSION), "StartAuthSession was attempted");
     TEST_ASSERT(!nvf_saw_cc(TPM2_CC_POLICY_PCR), "no PolicyPCR after bad session handle");
@@ -662,7 +662,7 @@ static void test_nv_wrapper_status(void)
     nvf_session = 0x80000000u;   /* transient OBJECT handle, not a session */
     prev = tpm_t_test_install(&nvf_io, TPM_T_IFACE_TIS, 1);
     st = tpm_nv_define_baseline(TPM_NV_INDEX_BASELINE, 96u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_TRANSPORT, "non-session handle -> TRANSPORT");
     TEST_ASSERT(!nvf_saw_cc(TPM2_CC_FLUSH_CONTEXT), "non-session handle NOT flushed (F-RE2)");
 }
@@ -671,7 +671,7 @@ static void test_nv_wrapper_status(void)
 
 static void test_nv_flush_busy_wait(void)
 {
-    const struct tpm_t_io *prev;
+    struct tpm_t_test_state prev;
     tpm_nv_status_t st;
     uint8_t out[8];
     uint16_t got;
@@ -688,7 +688,7 @@ static void test_nv_flush_busy_wait(void)
     got = 0;
     st = tpm_nv_policy_read(TPM_NV_INDEX_BASELINE, 0u, out, sizeof out, &got);
     tpm_t_test_busy_ticks(0u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK, "policy_read succeeds under brief gate contention");
     TEST_ASSERT(nvf_saw_cc(TPM2_CC_FLUSH_CONTEXT),
                 "session flushed after waiting out BUSY (no leak)");
@@ -702,7 +702,7 @@ static void test_nv_flush_busy_wait(void)
     got = 0;
     st = tpm_nv_policy_read(TPM_NV_INDEX_BASELINE, 0u, out, sizeof out, &got);
     tpm_t_test_busy_ticks(0u);
-    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    tpm_t_test_restore(prev);
     TEST_ASSERT_EQ((int)st, (int)TPM_NV_OK,
                    "policy_read completes even when flush times out (bounded wait)");
 }

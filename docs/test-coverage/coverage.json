@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-14T16:07:11+02:00",
-  "total_suites": 1294,
-  "total_assertions": 4090,
+  "timestamp": "2026-06-14T16:31:35+02:00",
+  "total_suites": 1295,
+  "total_assertions": 4093,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -71,7 +71,7 @@
     {"file": "test_tpm_replay.c", "suites": 9, "assertions": 45},
     {"file": "test_tpm_sb_reconcile.c", "suites": 2, "assertions": 30},
     {"file": "test_tpm_seal.c", "suites": 8, "assertions": 109},
-    {"file": "test_tpm_transport.c", "suites": 7, "assertions": 115},
+    {"file": "test_tpm_transport.c", "suites": 8, "assertions": 118},
     {"file": "test_uefi_boot.c", "suites": 42, "assertions": 111},
     {"file": "test_usermode.c", "suites": 0, "assertions": 0},
     {"file": "test_usermode_launcher.c", "suites": 34, "assertions": 117},
