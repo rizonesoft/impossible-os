@@ -43,7 +43,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 6 | Baseline enrollment and storage | §3, §4, §7 | [/] |
 | 💎 | 7 | TPM NV index support | §2 (transport); §12 (baseline mask) | [/] |
 | ⭐ | 8 | Sealed-secret boot policy hooks | §7, §12 | [x] |
-| 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
+| 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [/] |
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
 | 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [x] |
 | 💎 | 12 | PCR allocation table and policy masks | (foundational; consumed by §6/§8/§13) | [x] |
@@ -246,7 +246,8 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > **Design (2026-06-14, Codex 3H+1M adopted pre-code):** build the report from §13's query APIs (`tpm2_quote`/`tpm_ak_public_get`/`tpm_ek_cert_read`) + §6's `boot_integrity_report`, reusing §1's streaming one-`vfs_write`-per-record JSON pattern; put the struct + builder in a NEW `tpm_attest_report.c` (`tpm.c`/`tpm_attest.c` are already 33-35 KB). Adopted constraints for the implementor: (1) snapshot the handoff triple as an IMMUTABLE Phase-0 copy taken right after `boot_info` validation, BEFORE any kernel caps refinement (`boot_caps_mark_present`, runtime-services degradation) -- the builder consumes that snapshot, NOT live `g_boot_info`, so the report reflects loader evidence not later kernel policy. (2) `BOOT_CAP_MANIFEST_PCR_BOUND` (1u<<10) is an IGNORED unknown bit today -- make it a validated capability FIRST (add to `BOOT_CAP_LIST` + bootloader mirror + `BOOT_CAP_MASK_KNOWN`, classify present/degraded in `bootx64.c`, regression that it validates exactly once) before the report's "PCR bound" claim can gate. -> XREF: TODO-01 §11. (3) `tpm2_quote` signs ONLY the SHA-256 bank -- the report schema MUST mark SHA-256 PCRs as quoted (TPM-signed) and all other banks diagnostic-only; never a mixed-trust report. (4) the bootloader PCR-11 manifest extend MUST run BEFORE `retrieve_tpm_event_log()` so the copied log includes it (else §4 replay reports false tamper), with a canonical binary event payload (magic/version + PCR index + manifest sha256 + label) and a typed `HashLogExtendEvent` prototype.
 
 - [ ] Prerequisite: make `BOOT_CAP_MANIFEST_PCR_BOUND` (1u<<10) a validated capability (`BOOT_CAP_LIST` + mirror + `BOOT_CAP_MASK_KNOWN` + classify in `bootx64.c` + regression). -> XREF: TODO-01 §11.
-- [ ] Build the TPM-rooted `boot_attestation_report_t` from an IMMUTABLE Phase-0 handoff snapshot: per-bank PCRs (SHA-256 quoted, others diagnostic), event digest, SB state, nonce, §13 `TPM2_Quote` + AK public + EK-cert chain.
+- [x] Immutable Phase-0 handoff snapshot: `struct boot_attest_handoff` + latched write-once `tpm_attest_handoff_snapshot_init`/`_get` in new `tpm_attest_report.c`, captured in `boot_hw.c` pre-caps-refinement (design constraint 1).
+- [ ] Build the TPM-rooted `boot_attestation_report_t` from the IMMUTABLE Phase-0 handoff snapshot: per-bank PCRs (SHA-256 quoted, others diagnostic), event digest, SB state, nonce, §13 `TPM2_Quote` + AK public + EK-cert chain.
 - [ ] Export to `X:\Diag\attestation.json`.
 - [ ] Add native query API for user-mode system settings.
 - [ ] Add remote-attestation placeholder for platform services.

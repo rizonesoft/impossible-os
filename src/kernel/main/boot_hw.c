@@ -25,6 +25,7 @@
 #include "kernel/uefi_runtime.h"
 #include "kernel/uefi_vars.h"
 #include "kernel/tpm.h"
+#include "kernel/tpm_attest_report.h"   /* Phase-0 handoff snapshot for attestation */
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
 #include "kernel/cpu_security.h"
@@ -192,6 +193,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
                  (uint64_t)g_boot_info.payload_count,
                  (uint64_t)g_boot_info.payload_total_bytes);
     }
+
+    /* Freeze the loader-to-kernel handoff snapshot for the attestation report
+     * BEFORE any capability refinement (boot_caps_mark_present, runtime-services
+     * degradation) mutates the live caps words, so the report attributes the
+     * loader handoff, not later kernel policy. */
+    tpm_attest_handoff_snapshot_init(&g_boot_info);
 
     /* Capability negotiation: reject stale-kernel-on-newer-loader
      * (unknown required bits) and producer contradictions (required &

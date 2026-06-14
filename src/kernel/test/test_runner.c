@@ -411,6 +411,7 @@ extern void test_register_tpm_nv(void);
 extern void test_register_tpm_baseline(void);
 extern void test_register_tpm_seal(void);
 extern void test_register_tpm_attest(void);
+extern void test_register_tpm_attest_report(void);
 extern void test_register_boot_device(void);
 extern void test_register_x86(void);
 extern void test_register_ob(void);
@@ -497,6 +498,7 @@ void test_runner_init(void)
     test_register_tpm_baseline();
     test_register_tpm_seal();
     test_register_tpm_attest();
+    test_register_tpm_attest_report();
     test_register_boot_device();
     test_register_harness();
 
