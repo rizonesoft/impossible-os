@@ -357,7 +357,11 @@ void boot_phase1(void)
     kernel_subsystem_set_ready(SUBSYS_FB, true);
     boot_progress(1, "FB", POST16_FB_OK);
     POST16(POST16_SPLASH);
-    {
+    /* postbars=diag (2): keep Tier 1 VPD authoritative -- do NOT stop it; the
+     * splash then suppresses itself (boot_splash_init early-returns) so the VPD
+     * diagnostic layout persists through boot. Any other mode stops Tier 1 and
+     * lets the splash background overwrite the VPD area. */
+    if (!(g_boot_info.config.config_found && g_boot_info.config.postbars == 2)) {
         extern void vpd_stop_tier1(void);
         vpd_stop_tier1();
     }

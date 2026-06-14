@@ -11,7 +11,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 > **Goal:** Replace the crude `HV_BAR` colored pixel bars with a production-grade Visual POST Display -- a two-tier boot progress visualization with embedded micro-font, TSC timing, status indicators, and UEFI NVRAM crash persistence. The VPD is the single visual diagnostic system for every boot: it owns the pre-splash black-screen phase, integrates seamlessly into the splash, and on crash-restart shows exactly where the previous boot failed -- all without serial, all configurable, all platforms.
 
 > [!IMPORTANT]
-> **Current state:** Tier 1 VPD ships (`src/kernel/vpd.c`, `include/kernel/vpd.h`, `include/kernel/vpd_font.h`): `vpd_init`, `vpd_stage_begin` / `done` / `fail`, `vpd_update_progress`, prior-boot banner via `vpd_crash_banner` from `boot_hw.c` (~185-201). `boot_init.c` calls `vpd_stage_begin` from `boot_progress()` when `vpd_is_active()` (~465-470). `postbars` is parsed in UEFI (`bootx64.c` ~2229) and stored in `boot_config` (`boot_info.h`); kernel `vpd_init` gates on nonzero `postbars` once config is found (`vpd.c` ~480-485). **`boot_splash_status()` does not branch on `postbars`** (`boot_splash.c` ~210-226) -- splash text is still generic strings; **Tier 2 §9** owns Plymouth-style status integration. **Corner POST overlay** is **8x8 px** glyphs, **38x10 px** footprint (`boot_progress.c` `POST16_GLYPH_W`/`H`, `post_display16`), not 16x16 doubled. **NVRAM** persists POST16 via `boot_post_nvram_write16`; stage labels on banner use **`vpd_post16_name`** table lookup (`vpd.c` ~649), not a separate name index variable in NVRAM. **`postbars==1` vs `==2`:** kernel treats both as "VPD on" only; **splash skip for diag** is still open (add §5 follow-up). **`test_vpd.c` / `test_register_vpd`:** not in tree.
+> **Current state:** Tier 1 VPD ships (`src/kernel/vpd.c`, `include/kernel/vpd.h`, `include/kernel/vpd_font.h`): `vpd_init`, `vpd_stage_begin` / `done` / `fail`, `vpd_update_progress`, prior-boot banner via `vpd_crash_banner` from `boot_hw.c` (~185-201). `boot_init.c` calls `vpd_stage_begin` from `boot_progress()` when `vpd_is_active()` (~465-470). `postbars` is parsed in UEFI (`bootx64.c` ~2229) and stored in `boot_config` (`boot_info.h`); kernel `vpd_init` gates on nonzero `postbars` once config is found (`vpd.c` ~480-485). **`boot_splash_status()` does not branch on `postbars`** (`boot_splash.c` ~210-226) -- splash text is still generic strings; **Tier 2 §9** owns Plymouth-style status integration. **Corner POST overlay** is **8x8 px** glyphs, **38x10 px** footprint (`boot_progress.c` `POST16_GLYPH_W`/`H`, `post_display16`), not 16x16 doubled. **NVRAM** persists POST16 via `boot_post_nvram_write16`; stage labels on banner use **`vpd_post16_name`** table lookup (`vpd.c` ~649), not a separate name index variable in NVRAM. **`postbars==1` vs `==2`:** `==2` (diag) now skips the splash so Tier 1 VPD stays authoritative -- `boot_splash_init()` early-returns + the `boot_interrupts.c` caller skips `vpd_stop_tier1()` (§5 shipped); the richer TTF diag layout is §9 (deferred). **`test_vpd.c` / `test_register_vpd`:** not in tree.
 
 > [!NOTE]
 > **Origin:** The `HV_BAR` bars were added during bare-metal debugging (2026-03-28) -- four colored lines on a black screen that pinpointed SMEP and HPET crashes in minutes. This TODO turns that hack into the coolest boot diagnostic feature in any OS.
@@ -45,7 +45,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 
 - `postbars=0` (default): VPD hidden entirely; normal splash only.
 - `postbars=1`: Tier 1 VPD on pre-splash / early boot; splash status text stays generic until **§9** wires `postbars` into `boot_splash_status()` (`boot_splash.c`).
-- `postbars=2`: Intended full diagnostic (skip splash art, larger layout per §9); **kernel today only gates VPD on/off** -- distinct diag mode vs `postbars=1` is still open (see §5 follow-up).
+- `postbars=2`: full diagnostic -- splash art is skipped so Tier 1 VPD stays authoritative for the whole boot (§5 shipped); the richer TTF diagnostic layout at this level is §9 (deferred).
 - On crash-restart: next boot shows "Last boot failed at: STAGE_NAME (0xNN)" regardless of `postbars` setting -- safety feature that's always active.
 - HV_BAR prototype fully replaced; `include/kernel/hv_bar.h` removed.
 - Works on all platforms: bare metal, QEMU WHPX, VirtualBox, QEMU TCG.
@@ -58,12 +58,12 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 | ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1                  |  [/]   |
 | ⭐  |   3   | Embedded 5x7 bitmap micro-font                          | --                  |  [/]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3              |  [/]   |
-| 💎  |   5   | `boot.conf` `postbars` configuration                    | §4                  |  [/]   |
+| 💎  |   5   | `boot.conf` `postbars` configuration                    | §4                  |  [x]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4                  |  [x]   |
 | 💎  |   7   | Status indicators and progress bar                      | §6                  |  [x]   |
 | ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6                  |  [/]   |
-| 💎  |   9   | Tier 2: Splash-integrated progress                      | §6, §7              |  [ ]   |
-| 💎  |  10   | Seamless tier transition                                | §4, §9              |  [ ]   |
+| 💎  |   9   | Tier 2: Splash-integrated progress                      | §6, §7              |  [/]   |
+| 💎  |  10   | Seamless tier transition                                | §4, §9              |  [/]   |
 | ⭐  |  11   | Phase grouping and diagnostic layout                    | §7                  |  [x]   |
 | 💎  |  12   | HV_BAR removal and migration                            | §4, §6              |  [x]   |
 | ⭐  |  13   | Panic integration and failure highlighting              | §8, §11             |  [/]   |
@@ -218,10 +218,18 @@ Add the `postbars` key to `boot.conf` parsing so the VPD can be configured witho
 - [x] Parse in `parse_conf_kv()`: `postbars=off` → 0, `postbars=on` → 1, `postbars=diag` → 2, numeric accepted
 - [x] `vpd_init()` checks `config.postbars` -- returns early if 0 after config parsed; always inits before config parsed (bare-metal safety)
 - [x] Add `postbars=off` to default `boot.conf` with comment
-- [ ] Distinct **`postbars==2` (diag)** behavior: skip splash artwork / early-return splash compositor while Tier 1 VPD stays authoritative (`boot_splash.c` + callers); **today** kernel treats any nonzero `postbars` as VPD on only (`vpd.c` ~480-485; **confirmed** `rg postbars` empty in `boot_splash.c`)
+- [x] **`postbars==2` (diag)** shipped: `boot_splash_init()` skips splash art, caller skips `vpd_stop_tier1()`, compositor locked + klog screen FATAL so Tier 1 VPD stays authoritative. TTF layout = §9 (deferred)
 - [x] Commit: `"boot: postbars boot.conf key for VPD configuration"`
 
 **Test checkpoint:** `postbars=off` leaves Tier 1 inactive after config + `vpd_stop_tier1`; UEFI `parse_conf_kv` maps off/on/diag/numeric. With diag item shipped: `postbars=2` must not run splash art path. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired -- file-wide Unit Tests gap) | validation: `postbars=diag` boot keeps VPD on-screen with no splash, on QEMU/hardware (manual)
+> **Notes:**
+> - Shipped: the `postbars` boot.conf key (off/on/diag/numeric) parsed in `bootx64.c` into `boot_config`; `postbars==2` (diag) now skips the splash so the Tier 1 VPD stays authoritative for the whole boot.
+> - Integrates: `boot_splash_init()` early-returns on `postbars==2` (locking the compositor + klog screen FATAL first); the `boot_interrupts.c` caller skips `vpd_stop_tier1()` in that mode; `vpd_init` already gated VPD on nonzero postbars.
+> - Review: Codex 4x (incl. re-adversarial) fixed 1H+1M -- diag early-return skipped display-ownership so later logs could swap over the raw-VRAM VPD (now suppressed before return); TODO diag-open text reconciled to shipped.
+> - Scope boundary: §5 owns the postbars key + diag splash-skip; the richer TTF diag layout at `postbars=2` is §9 (deferred); the Tier 1 renderer is §4.
+> **Verified:** 2026-06-15 | this review commit (diag splash-skip + display suppression) | 6/6 items | build OK | manual (postbars=diag on-screen pending)
+> **Quality reviewed:** 2026-06-15 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 0 open | scope: kernel-code-quality
 
 ## 6. Named Stages with TSC Timing
 Wire the VPD into `boot_stage_report()` so every named stage automatically appears in the VPD with millisecond timing from the TSC.
@@ -310,6 +318,13 @@ When `postbars=1`, the boot splash status text area shows VPD-style named stages
 - [ ] Commit: `"boot: Tier 2 splash-integrated VPD progress display"`
 
 **Test checkpoint:** With §9 shipped: `postbars=1` shows splash status with stage timing and recent history per checklist; `postbars=2` uses TTF diagnostic layout. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (deferred -- no code shipped; `test_vpd.c` file-wide gap) | validation: end-user Tier 2 splash UX on QEMU/hardware (manual, post-bare-metal)
+> **Notes:**
+> - Deferred: Tier 2 (splash-integrated VPD progress -- stage names, timing, history scroll, TTF diagnostic layout at `postbars=2`) is design-gated behind a finalized splash UX and proven bare-metal boot reliability.
+> - Why now-deferred: building end-user boot UX before Tier 1 is hardware-proven would churn the design; the [!NOTE] records the revisit condition. `postbars=2` already drops the splash (§5) so Tier 1 stays authoritative.
+> - Scope boundary: §9 owns the Tier 2 splash integration; the Tier 1 renderer is §4; the raw-to-splash handoff is §10 (also deferred).
+> **Verified:** 2026-06-15 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (design-gated, revisit post-bare-metal)
+> **Deferred:** [M] Tier 2 splash-integrated VPD progress unimplemented (reason: end-user UX gated on finalized splash design + proven bare-metal boot reliability; Tier 1 is the shipped diagnostic path) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 319)
 
 ## 10. Seamless Tier Transition *(deferred)*
 > [!NOTE] Deferred -- depends on §9 (Tier 2 splash integration). No transition needed until Tier 2 exists. Currently `vpd_stop_tier1()` is called before splash init and the splash background simply overwrites the VPD area.
@@ -326,6 +341,13 @@ When the splash starts, smoothly replace the Tier 1 raw VRAM bars with the Tier 
 - [ ] Commit: `"boot: seamless VPD tier transition from raw VRAM to splash"`
 
 **Test checkpoint:** With §10 shipped: Tier 1 stops before splash draws; no stale bars after fade-in; `postbars=2` skips splash background. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (deferred -- no code shipped; `test_vpd.c` file-wide gap) | validation: seamless Tier 1 to splash handoff on QEMU/hardware (manual, post-Tier-2)
+> **Notes:**
+> - Deferred: the glitch-free raw-VRAM-to-splash handoff (`vpd_transition_to_splash`, completed-stage/timing state transfer, `vpd_is_tier1`/`tier2` routing) depends on §9 (Tier 2), which is itself deferred -- no transition is needed until Tier 2 exists.
+> - Partial today: the `postbars=2` no-splash aspect of this section already shipped in §5 (Tier 1 stays authoritative, splash never draws); the deferred remainder is the state-transferring Tier 1 to Tier 2 handoff.
+> - Scope boundary: §10 owns the tier handoff; Tier 2 itself is §9; the Tier 1 renderer + `vpd_stop_tier1` are §4/§5.
+> **Verified:** 2026-06-15 | deferred -- no code shipped (postbars=2 no-splash done in §5) | 0/6 items | build OK (no code change) | manual (depends on §9)
+> **Deferred:** [M] state-transferring Tier 1 to Tier 2 transition unimplemented (reason: depends on §9 Tier 2 which is deferred; the postbars=2 no-splash case already covered by §5) -> XREF: 01-boot-platform/TODO-15 §9 (item: "boot_splash_status() in postbars=1 mode renders STAGE_NAME +NNNms" at line 306)
 
 ## 11. Phase Grouping and Diagnostic Layout *(done)*
 Full diagnostic layout with phase headers, visual separators, and structured stage grouping.
@@ -406,7 +428,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 | ⭐ | Boot info header        | ❌ Not shown                 | ❌ Not shown                  | ✅ §8 crash banner text          |
 | ⭐ | Phase-level failure     | ❌ Generic stop code         | ❌ No phase tracking          | ✅ §8 FAILED phase header        |
 
-> **Parity scan:** Win11 (bootmgr + ETW) and Linux (Plymouth initramfs + `systemd-analyze` plot/blame) cover polished splash text and post-boot timelines. Impossible OS matches **Tier 1** VPD (micro-font, TSC rows, `postbars` on/off, POST16 corner, NVRAM last-code banner) via §1--§4, §6--§8, §11--§13. **Gaps:** Plymouth-style **splash status shows per-stage timing** (needs §9 + `boot_splash_status` branch), **diag `postbars=2` without splash art** (§5 open item), **seamless firmware-to-OS handoff** (Plymouth BGRT/SimpleDRM themes per ArchWiki), **`systemd-analyze plot`-class export** (see `TODO-14` row 9), **`test_vpd.c`**. **Edge:** pre-splash kernel VPD on raw VRAM is stronger than default Win11 black screen / generic firmware spinner.
+> **Parity scan:** Win11 (bootmgr + ETW) and Linux (Plymouth initramfs + `systemd-analyze` plot/blame) cover polished splash text and post-boot timelines. Impossible OS matches **Tier 1** VPD (micro-font, TSC rows, `postbars` on/off, POST16 corner, NVRAM last-code banner) via §1--§4, §6--§8, §11--§13. **Gaps:** Plymouth-style **splash status shows per-stage timing** (§9 Tier 2, deferred), **seamless Tier 1 to Tier 2 handoff** (§10, deferred), **`systemd-analyze plot`-class export** (see `TODO-14` row 9), **`test_vpd.c`**. **Edge:** pre-splash kernel VPD on raw VRAM is stronger than default Win11 black screen / generic firmware spinner; **`postbars=2` diag** (splash skipped, Tier 1 authoritative all boot) shipped in §5.
 > **After §1--§8, §11--§13:** Named stages with ms timing from early boot, NVRAM crash banner on restart, HV_BAR removed. Tier 2 splash polish is still §9--§10.
 
 ## Unit Tests

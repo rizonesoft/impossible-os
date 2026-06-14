@@ -18,6 +18,7 @@
  * ============================================================================ */
 
 #include "kernel/boot_splash.h"
+#include "kernel/boot_info.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/timer.h"
 #include "kernel/types.h"
@@ -120,6 +121,25 @@ static void splash_draw_text(const char *text, uint32_t color)
 
 void boot_splash_init(void)
 {
+    /* postbars=diag (2): the Tier 1 VPD diagnostic layout is authoritative for
+     * the whole boot. Suppress the splash artwork entirely (no black-wipe, no
+     * icon/spinner/fade) so the VPD bars stay on screen. splash_on remains 0,
+     * so every boot_splash_* call becomes a no-op, and the caller also skips
+     * vpd_stop_tier1() in this mode so Tier 1 keeps rendering.
+     *
+     * Still take ownership of the display like the normal path does: stop
+     * screen klog (LOG_FATAL) and lock the compositor BEFORE returning, so
+     * later boot INFO/WARN logs cannot route through fb_putchar -> fb_swap and
+     * flip a stale back buffer over the raw-VRAM VPD. The compositor's first
+     * frame unlocks itself (compositor.c) so the desktop still comes up. Log
+     * the diag message only AFTER suppression so it is serial-only (no swap). */
+    if (g_boot_info.config.config_found && g_boot_info.config.postbars == 2) {
+        klog_set_screen_level(LOG_FATAL);
+        fb_lock_compositor();
+        klog(LOG_INFO, "SPLASH", "postbars=diag: splash suppressed, VPD Tier 1 authoritative");
+        return;
+    }
+
     scr_w = fb_get_width();
     scr_h = fb_get_height();
 
