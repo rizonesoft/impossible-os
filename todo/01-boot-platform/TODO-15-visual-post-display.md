@@ -321,6 +321,14 @@ Full diagnostic layout with phase headers, visual separators, and structured sta
 - [x] Commit: `"boot: remove hv_bar.h and migrate to VPD"`
 
 **Test checkpoint:** `hv_bar.h` absent; `rg HV_BAR` over `src/` and `include/` is empty; clean build. QEMU WHPX smoke.
+> **Test runner:** N/A (deletion section -- verified by `rg HV_BAR` empty + clean build) | validation: grep + build
+> **Notes:**
+> - Shipped: removed `include/kernel/hv_bar.h` + all `HV_BAR()` call sites and includes; VPD (`vpd.c`, §4) is the structured replacement for the ad-hoc colored-bar debug hack.
+> - Verified clean: `hv_bar.h` is absent on disk; `rg HV_BAR` over `src/` + `include/` returns zero matches; the tree builds clean (`=== BUILD OK ===`).
+> - Review: no reviewable code surface (the code is removed; the VPD replacement is reviewed under §4) -- adversarial/perf N/A; the meaningful check (no dangling HV_BAR reference) is the empty grep.
+> - Scope boundary: §12 owns the HV_BAR removal; the VPD renderer that replaced it is §4.
+> **Verified:** 2026-06-15 | this review commit | 4/4 items | build OK | grep HV_BAR empty
+> **Quality reviewed:** 2026-06-15 | Codex N/A (deletion section, no reviewable code surface) | 0 findings | scope: N/A (deletion-only; replacement reviewed under §4)
 
 ## 13. Panic Integration and Failure Highlighting
 On crash, the VPD marks the active stage as failed. On next boot, the failure is highlighted in the diagnostic display.
