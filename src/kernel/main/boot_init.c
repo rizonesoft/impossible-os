@@ -503,8 +503,7 @@ void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
     /* Don't pollute perf data with NULL-step test calls */
     if (step)
         boot_timing_record_step(phase, safe_step, postcode);
-    boot_post_write16(postcode);
-    post_display16(postcode);
+    boot_post_write16(postcode);  /* writes port 0x80 + RAM shadow + post_display16 */
 
     /* VPD Tier 1: show named stage with status indicator */
     {

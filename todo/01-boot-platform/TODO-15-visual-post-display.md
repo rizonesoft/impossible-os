@@ -55,7 +55,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 | ⭐  | Order | Deliverable                                             | Depends On          | Status |
 | --- | :---: | ------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | 4-digit POST code system (0x0000-0xFFFF)                 | --                  |  [/]   |
-| ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1                  |  [x]   |
+| ⭐  |   2   | POST codes in UEFI bootloader + every kernel function   | §1                  |  [/]   |
 | ⭐  |   3   | Embedded 5x7 bitmap micro-font                          | --                  |  [/]   |
 | 💎  |   4   | Tier 1: Pre-splash VPD renderer                         | §1, §3              |  [/]   |
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4                  |  [/]   |
@@ -87,7 +87,7 @@ Replace the current 2-digit POST codes (28 values in 0x10-0x63) with a 4-digit s
 
 | Range | Phase | Example codes |
 |-------|-------|---------------|
-| 0xB000-0xBFFF | UEFI Bootloader | 0xB001=efi_main, 0xB010=GOP, 0xB020=kernel_load, 0xB030=ExitBS, 0xB040=page_tables, 0xB050=kernel_jump |
+| 0xB000-0xBFFF | UEFI Bootloader | 0xB001=efi_main, 0xB010=GOP, 0xB020=kernel_open, 0xB030=RSDP, 0xB040=memmap, 0xB050=ExitBS, 0xB060=page_tables, 0xB070=kernel_jump |
 | 0x0000-0x0FFF | Phase 0 -- Critical Init | 0x0010=serial, 0x0020=PMM_enter, 0x0021=PMM_exit, 0x0030=VMM |
 | 0x1000-0x1FFF | Phase 1 -- Platform | 0x1000=GDT, 0x1010=IDT, 0x1020=ACPI, 0x1030=LAPIC, 0x1040=timer |
 | 0x2000-0x2FFF | Phase 2 -- System | 0x2000=PCI, 0x2010=NIC, 0x2020=AHCI, 0x2060=VFS |
@@ -124,12 +124,24 @@ Instrument the main boot path -- from UEFI `efi_main` through kernel `compositor
 
 - [x] UEFI Bootloader: `efi_main` (0xB001), `init_gop` (0xB010), `load_kernel` (0xB020/21), `ExitBS` (0xB050), `page_tables` (0xB060), `kernel_jump` (0xB070)
 - [x] Phase 0: `serial` (0x0010/11), `pmm` (0x0020/21), `vmm` (0x0030/31), `heap` (0x0040/41), `klog` (0x0050/51), `cpuid` (0x0060/61), `cpu_harden` (0x0070/71), `nx_policy` (0x0080/81), `simd` (0x0090/91)
-- [x] Phase 1: `gdt` (0x1000/01), `idt` (0x1010/11), `acpi` (0x1020/21), `lapic` (0x1030), `timer` (0x1040/41), `rtc` (0x1050/51), `kbd` (0x1060/61), `fb` (0x1080/81), `splash` (0x1090/91)
+- [x] Phase 1: `gdt` (0x1000/01), `idt` (0x1010/11), `acpi` (0x1020/21), `lapic` (0x1030), `timer` (0x1040/41), `rtc` (0x1050/51), `kbd` (0x1060/61), `mouse` (0x1070/71), `fb` (0x1080/81), `splash` (0x1090/91)
 - [x] Phase 2: `pci` (0x2000/01), `xhci` (0x2010/11), `nic` (0x2020/21), `net` (0x2030/31), `ata` (0x2040/41), `ahci` (0x2050/51), `vfs` (0x2060/61), `registry` (0x2080/81), `smp` (0x2090/91)
-- [x] Phase 3: `sched` (0x3000/01), `desktop` (0x3030/31), `compositor` (0x3040)
+- [x] Phase 3: `sched` (0x3000/01), `desktop` (0x3030/31), `compositor` (0x3040 -- marker added before `compositor_run()` in `boot_desktop.c`)
+- [ ] Phase 0 entry POST16 -- `boot_phase0()` runs `smp_early_bsp_init()` (`boot_hw.c`) before the first kernel POST16, so a fault there shows the bootloader handoff code. Emit a kernel-entry marker (port-only if full POST16 is too early) before it
+- [ ] boot_info-validation POST16 -- the UEFI handoff validation (`boot_hw.c`) only marks success; a malformed handoff shows the prior stage. Add an entry marker before `boot_info_validate_addr` + an OK marker after the validated copy
+- [ ] Async storage per-driver POST16 -- the async path (`boot_storage.c`) calls ata/ahci/nvme/virtio_blk_init without the per-driver POST16 the sequential path uses; wrap each so an async crash attributes to the failing driver
 - [x] Commit: `"boot: POST16 in every function from UEFI efi_main through compositor"`
 
-**Test checkpoint:** Force crash in `mouse_init`. Reboot. Serial shows "Last boot failed at: 0x1070 (mouse_init)". Bare metal: NVRAM contains 0x1070, next boot displays it. Pinpointed in seconds, not hours.
+**Test checkpoint:** Force a crash mid-boot. The panic evidence captures the exact last POST16 in the RAM shadow `s_last_post16` (every POST16 updates it); serial shows it. Cross-reboot, NVRAM holds the last *milestone* code (e.g. `0x1041` TIMER_OK -- only milestones are persisted via `boot_post_nvram_write16`, not every POST16), and the next-boot banner shows that milestone. QEMU WHPX, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | POST16-uniqueness assertions in `test_boot_init.c`; crash-attribution validation is manual (forced crash + serial)
+> **Notes:**
+> - Shipped: POST16 coverage across UEFI + Phase 0-3 boot/init functions (~40 codes), each marking its function so a crash attributes to the failing step; bootloader 0xB0xx through compositor 0x3040.
+> - Integrates: every POST16 sets the RAM shadow (panic evidence = exact last code); NVRAM persists only milestones (cross-reboot banner = phase-level); the POST16 mechanism is §1.
+> - Review: Codex 3x fixed 1H+3M -- compositor handoff marker added, redundant per-milestone `post_display16` redraw removed, bootloader 0xB0xx range (§1) + mouse/0x1070 checkpoint corrected; 3 HIGH early-boot/async coverage gaps deferred.
+> - Scope boundary: §2 owns POST16 coverage placement; the POST16 mechanism + corner display is §1; the deferred early-boot markers are tracked above.
+> **Verified:** 2026-06-15 | this review commit (compositor marker + perf + doc fixes) | 5/8 items | build OK | tests (POST16 uniqueness)
+> **Deferred:** [H] 3 boot-path POST16 coverage gaps (Phase 0 entry, boot_info validation, async storage) -- crashes there mis-attribute -> XREF: 01-boot-platform/TODO-15 §2 (items: "Phase 0 entry POST16" at line 130, "boot_info-validation POST16" at 131, "Async storage per-driver POST16" at 132)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+3M fixed, 3H deferred | scope: kernel-code-quality
 
 ## 3. Embedded 5x7 Bitmap Micro-Font
 A zero-dependency pixel font baked into a single header -- renders ASCII text directly to VRAM before any kernel subsystem exists. This is the foundation for all VPD text rendering in Tier 1.

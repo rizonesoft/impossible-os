@@ -600,6 +600,7 @@ void boot_phase3(void)
     }
 
     /* --- Compositor event loop (never returns) --- */
+    POST16(POST16_COMPOSITOR);  /* attribute a crash/hang entering the compositor */
     compositor_run();
 
     /* Unreachable under normal operation */
