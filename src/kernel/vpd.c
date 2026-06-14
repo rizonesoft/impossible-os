@@ -514,6 +514,27 @@ void vpd_init(void)
     vpd_render_info_header();
 }
 
+/* Safe TSC-delta-to-ms for VPD stage timing. Mirrors the guards in
+ * boot_progress.c (freq < 1000 refused) and boot_timing.c (multiply-overflow +
+ * uint32 saturation), and rejects a backwards TSC. Returns 1 + *ms on success;
+ * returns 0 (caller suppresses the row timing) rather than printing a
+ * plausible-but-false duration on implausible/corrupt timing input. */
+static int vpd_stage_elapsed_ms(uint64_t now, uint64_t then, uint32_t *ms)
+{
+    uint64_t freq = g_boot_info.timing.tsc_freq;
+    uint64_t delta, val;
+    if (freq < 1000 || then == 0 || now < then) /* uncalibrated/unset/backwards */
+        return 0;
+    delta = now - then;
+    if (delta > 0xFFFFFFFFFFFFFFFFull / 1000)  /* * 1000 would overflow u64 */
+        return 0;
+    val = (delta * 1000) / freq;
+    if (val > 0xFFFFFFFFull)                    /* would truncate -> suppress */
+        return 0;
+    *ms = (uint32_t)val;
+    return 1;
+}
+
 void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
 {
     if (!s_active)
@@ -525,11 +546,10 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
                        VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_BG);
         vpd_draw_check(VPD_LEFT_MARGIN, s_last_row_y, VPD_COLOR_DONE);
 
-        if (g_boot_info.timing.tsc_freq > 0 && s_stage_tsc > 0) {
-            uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
-            uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
-                                      g_boot_info.timing.tsc_freq);
-            vpd_render_timing(s_last_row_y, ms);
+        {
+            uint32_t ms;
+            if (vpd_stage_elapsed_ms(vpd_rdtsc(), s_stage_tsc, &ms))
+                vpd_render_timing(s_last_row_y, ms);
         }
     }
 
@@ -592,12 +612,11 @@ void vpd_stage_done(void)
     vpd_fill_rect(VPD_LEFT_MARGIN, s_last_row_y,
                    VPD_SQUARE_SIZE, VPD_SQUARE_SIZE, VPD_COLOR_DONE);
 
-    /* Render elapsed time */
-    if (g_boot_info.timing.tsc_freq > 0 && s_stage_tsc > 0) {
-        uint64_t elapsed_tsc = vpd_rdtsc() - s_stage_tsc;
-        uint32_t ms = (uint32_t)(elapsed_tsc * 1000 /
-                                  g_boot_info.timing.tsc_freq);
-        vpd_render_timing(s_last_row_y, ms);
+    /* Render elapsed time (suppressed on uncalibrated/backwards/overflow TSC) */
+    {
+        uint32_t ms;
+        if (vpd_stage_elapsed_ms(vpd_rdtsc(), s_stage_tsc, &ms))
+            vpd_render_timing(s_last_row_y, ms);
     }
 
     s_has_current = 0;

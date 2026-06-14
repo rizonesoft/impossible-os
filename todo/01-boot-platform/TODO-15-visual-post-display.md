@@ -225,7 +225,15 @@ Wire the VPD into `boot_stage_report()` so every named stage automatically appea
 - [x] Stage names passed directly from `boot_progress()` callers
 - [x] Commit: delivered as part of §4 implementation
 
-**Test checkpoint:** With `postbars=on`, VPD rows show `+NNNms` timing once `g_boot_info.timing.tsc_freq` is non-zero; stage names match `boot_progress()` step strings. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+**Test checkpoint:** With `postbars=on`, VPD rows show `NNNms` timing once `g_boot_info.timing.tsc_freq` is calibrated (>= 1000 Hz); timing is suppressed (no row) on uncalibrated/backwards TSC; stage names match `boot_progress()` step strings. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired -- timing exercised via the VPD render path) | validation: on-screen `NNNms` rows with `postbars=on` (manual)
+> **Notes:**
+> - Shipped: per-stage TSC timing -- `vpd_stage_done`/`begin` compute elapsed ms from `g_boot_info.timing.tsc_freq` and render right-aligned `NNNms`; stage names passed from `boot_progress()` callers. Delivered with §4.
+> - Integrates: timing is part of the `vpd_stage_begin`/`done` lifecycle (the renderer + stale-stage handling are reviewed under §4); uses the bootloader `tsc_freq` available from kernel entry.
+> - Review: Codex 3x fixed 2M -- the inline TSC-to-ms conversion lacked the freq<1000/overflow/backwards-TSC guards the other paths use; a shared `vpd_stage_elapsed_ms` helper now suppresses timing on implausible input. Fixed a `+NNNms` doc drift too.
+> - Scope boundary: §6 owns the TSC timing; the stage renderer + lifecycle are §4; `tsc_freq` calibration is the bootloader/`boot_timing`.
+> **Verified:** 2026-06-15 | this review commit (timing-guard helper) | 4/4 items | build OK | manual (on-screen pending)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 0 open | scope: kernel-code-quality
 
 ## 7. Status Indicators and Progress Bar
 Add visual status icons and a proportional progress bar below the stage list.
