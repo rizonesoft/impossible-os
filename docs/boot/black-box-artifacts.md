@@ -19,11 +19,15 @@ diagnostics-dump point unless noted otherwise.
 | `tpm-events.json` | `tpm_evlog_export_cel()` (`tpm.c`) | Parsed TCG measured-boot event log (CEL-JSON subset). |
 | `firmware-tables.json` | firmware-tables writer (`firmware_tables_json.c`) | ACPI/SMBIOS firmware-table inventory + conformance profile; `generated_at_utc` from the loader build time. |
 | `firmware-advisor.json` | firmware advisor (`firmware_advisor.c`) | Firmware quirk / advisory findings. |
-| `boot-health.json` | boot health/observability (TODO-29) | Per-phase perf budgets + threshold alarms (owner TODO-29). |
-| `entropy.json` | entropy diagnostics (TODO-12) | Early-entropy / seed diagnostics. |
-| `lvfs-metadata.json` | firmware update metadata | LVFS firmware metadata snapshot. |
+| `boot-health.json` | `boot_health_publish_json()` (`boot_health.c`) | Per-phase perf budgets + threshold alarms (owner TODO-29). |
+| `entropy.json` | `entropy_publish_json()` (`entropy_registry.c`) | Early-entropy / seed diagnostics (owner TODO-12). |
+| `lvfs-metadata.json` | (not kernel-written) input cache read by `firmware_advisor_init()` -> `fa_read_cache_text()` (`firmware_advisor.c`) | Offline LVFS firmware metadata cache the advisor CONSUMES; staged onto X:\Diag out-of-band, not produced by a boot writer. |
 | `boot-reserved.json` | `boot_reserved_blackbox_dump()` | Physical ranges the PMM kept reserved at boot. |
 | `hwdump.txt` | `hw_dump_write_file()` | Hardware inventory (PCI / ACPI / CPU). |
 
 > Adding a new `X:\Diag\` artifact: add its producer to the late-boot dump
 > sequence in `boot_desktop.c` and a row here in the same commit.
+>
+> `lvfs-metadata.json` is the one row that is an INPUT, not a kernel-written
+> output: the firmware advisor reads it as an offline cache. It is listed here
+> so a developer browsing `X:\Diag\` knows what wrote (or, here, what reads) it.

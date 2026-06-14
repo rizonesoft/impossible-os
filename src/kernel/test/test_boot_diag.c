@@ -47,6 +47,17 @@ static void test_loader_identity_format(void)
     TEST_ASSERT(!buf_has(s_fmt, n, "0000000000000000000000000000000000000000"),
                 "all-zero git_sha is NOT presented as a real commit");
 
+    /* Zero git_sha but a real build time + label (the no-git fallback record).
+     * The git_sha sentinel gates the WHOLE identity: no half-populated record
+     * that disagrees with the fault-transcript renderer. */
+    memset(&id, 0, sizeof id);
+    id.build_unix_time = 1700000000ull;
+    memcpy(id.build_label, "v9.9-fallback", 14);
+    n = boot_loader_identity_format(&id, s_fmt, sizeof s_fmt);
+    TEST_ASSERT(buf_has(s_fmt, n, "unavailable"), "zero sha gates whole identity");
+    TEST_ASSERT(!buf_has(s_fmt, n, "1700000000"), "no build_unix_time when sha is zero");
+    TEST_ASSERT(!buf_has(s_fmt, n, "v9.9-fallback"), "no build_label when sha is zero");
+
     /* Bounds contract: fail closed on cap 0, NUL-terminate at any cap. */
     TEST_ASSERT_EQ((uint32_t)boot_loader_identity_format(&id, s_fmt, 0u), 0u,
                    "cap 0 -> returns 0, no underflow/write");

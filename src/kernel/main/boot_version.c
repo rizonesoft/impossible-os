@@ -670,8 +670,22 @@ uint32_t boot_loader_identity_format(const struct boot_loader_identity *id,
     for (i = 0; i < sizeof id->git_sha; i++)
         if (id->git_sha[i]) { populated = 1; break; }
 
+    /* The all-zero git_sha is the ABI "loader did not populate" sentinel. Gate
+     * the WHOLE identity on it -- matching boot_version_blackbox_transcribe's
+     * fault-record renderer above -- so the no-git fallback record (zero sha,
+     * label "unknown", a real build time) is surfaced as a single
+     * "unavailable" line, never a half-populated identity that reads as a real
+     * build. Without this gate the two X:\Diag artifacts disagree on what a
+     * zero-sha record means. */
+    if (!populated) {
+        pos = append_line(buf, pos, cap,
+                          "loader identity: unavailable (loader did not populate)");
+        buf[pos] = '\0';
+        return pos;
+    }
+
     pos = append_str(buf, pos, cap, "git_sha:         ");
-    if (populated) {
+    {
         char hexsha[41];
         for (i = 0; i < 20u; i++) {
             hexsha[i * 2u]      = hexd[(id->git_sha[i] >> 4) & 0x0Fu];
@@ -680,8 +694,6 @@ uint32_t boot_loader_identity_format(const struct boot_loader_identity *id,
         hexsha[40] = '\0';
         pos = append_str(buf, pos, cap, hexsha);
         pos = append_line(buf, pos, cap, "");
-    } else {
-        pos = append_line(buf, pos, cap, "unavailable (loader did not populate)");
     }
 
     pos = append_str(buf, pos, cap, "build_unix_time: ");

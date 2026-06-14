@@ -260,6 +260,8 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 > - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- formatter populated/zero-sentinel/cap-bounds/NUL + `kdate_iso8601` vectors.
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (index of every `X:\Diag\*` artifact).
 > - Scope boundary: §10 dumps the healthy-boot bootloader identity only; the fault-path transcript is `boot_version_blackbox_transcribe` (boot-proto-fault.txt).
+> **Verified:** 2026-06-14 | ship `9f31c16a` (+ this review commit) | 4/4 items | build OK | tests 2561 kernel + 16 user-mode
+> **Quality reviewed:** 2026-06-14 | Codex 4x (design + adversarial + consistency + perf) | 2M fixed | scope: kernel-code-quality (re-adversarial skipped: formatter control-flow gate, <50 LOC, 1 fn, no lock/ISR/lifecycle)
 
 ---
 
