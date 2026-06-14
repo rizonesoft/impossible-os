@@ -12,14 +12,17 @@
 
 - **BlackBox present:** `X:\Perf\boot-timeline.json` (next to `boot-profile.log` under the perf dump tree).
 - **Fallback (no BlackBox partition):** `<klog_dir>\boot-timeline.json` (typically `C:\Impossible\System\Logs\`).
-- Rewritten with a single create + truncate every boot, so a later boot with fewer records never leaves stale tail bytes.
+- **When emission proceeds**, written with a single create + truncate (`O_WRITE | O_CREATE | O_TRUNC`), so a successful write never leaves stale tail bytes from a longer prior timeline.
+- **Freshness caveat:** the create + truncate happens only *after* the emit preconditions below pass and serialization begins. A boot that hits a no-write precondition leaves the **previous** boot's `boot-timeline.json` on disk unchanged -- the file is not guaranteed to reflect the current boot. Consumers MUST correlate it with a current-boot marker (the BlackBox boot sequence or `boot-profile.log` mtime) before treating it as live.
+- **Write-failure recovery (best-effort):** if the truncating open succeeds but the `vfs_write` is short or fails, the `O_TRUNC` has already destroyed the prior file, so the writer **attempts** to re-truncate to **zero length** ("no data this boot"). This recovery is best-effort: if the recovery open itself fails, a **malformed partial JSON prefix** can remain on disk. Consumers MUST therefore validate that the top-level array parses, and treat **both** an empty file and an unparseable file as no-data for this boot -- distinct from a stale prior-boot file.
 
 ## Emit preconditions
 
-The file is **not written** (the function returns early) when:
+The file is **not written** at all (the function returns early, leaving any prior file in place) when:
 
 - Fewer than 2 timing steps were recorded (`count < 2`) -- a timeline of one point is meaningless.
 - The TSC frequency is uncalibrated (`boot_timing_tsc_freq() < 1000`), so ms deltas cannot be computed.
+- The serialization buffer could not be allocated.
 
 The serialization buffer is 16 KiB (4 pages). If records would overflow it, the array is closed cleanly after the last record that fit (no partial record, no dangling trailing comma) rather than truncating mid-object.
 
@@ -35,7 +38,7 @@ The top level is a JSON array. Each element is one timeline record with exactly 
 
 | Field         | Type   | Description                                                                                                          |
 | ------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
-| `stage`       | string | Stage name. An FPDT phase label, or the kernel boot-step name truncated to 32 chars (`"` and `\` stripped for JSON safety). |
+| `stage`       | string | Stage name. An FPDT phase label, or the kernel boot-step name copied until the first of: 32 chars, NUL, `"`, or `\`. An embedded quote or backslash **truncates** the name at that byte (it is not escaped or skipped-over), so a label containing either renders only its prefix. |
 | `phase`       | int    | Boot phase number (0-3) for TSC records; always `0` for FPDT-sourced records.                                        |
 | `post`        | string | POST code as a lowercase hex string. `"0x0000"` for FPDT records. For TSC records it is the `uint16` step POST code formatted with a **minimum** width of 2 (`"0x%02x"`), so 16-bit codes such as `"0x1001"` render 4 digits -- do not assume a fixed 2-digit width. |
 | `start_ms`    | int    | Milliseconds from the timeline anchor to the start of this stage. See **Anchoring**.                                 |

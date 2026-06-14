@@ -70,9 +70,11 @@ void boot_progress_poll(void);
  * bootloader+kernel TSC steps (source="tsc"). Each record carries
  * {stage, phase, post, start_ms, duration_ms, target_ms, source,
  * unreliable}; target_ms is the per-step boot_perf_budget target
- * (0 when the step has no budget row). On a short write the file is
- * re-truncated to empty (fail closed) so consumers never see a
- * malformed JSON prefix.
+ * (0 when the step has no budget row). On a short write the writer
+ * attempts to re-truncate the file to empty (best-effort fail-closed);
+ * if that recovery open also fails a malformed JSON prefix can remain,
+ * so consumers must treat both an empty and an unparseable timeline
+ * file as no-data for that boot. See docs/boot/boot-timeline-schema.md.
  * When FPDT is reliable, all start_ms values are ms-since-firmware-reset
  * so FPDT and TSC entries form one monotonic timeline; when unreliable,
  * FPDT entries collapse to start_ms=0 with unreliable=true, and TSC

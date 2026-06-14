@@ -267,8 +267,10 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 > **Notes:**
 > - Shipped: `docs/boot/boot-timeline-schema.md` -- v1 wire format for `boot-timeline.json` (8-field record table, FPDT-prepend + TSC ordering, anchoring + `unreliable` reliability semantics, emit guards, 16 KiB buffer behavior).
 > - Structure / consumers: under `docs/boot/` with the `*-schema.md` siblings; linked from the BlackBox artifact catalog `docs/boot/black-box-artifacts.md`. Draft's root path + CLAUDE.md link corrected (detail in commit msg).
-> - Codex consistency review fixed 2 doc-vs-emitter drifts (TSC `post` variable-width hex; `duration_ms` source-local) before ship; per-finding detail in the commit message.
+> - Codex consistency review (7 rounds to convergence) fixed 7M+1L drifts across the emitter contract, schema doc, header comment, and artifact catalog (post width, duration source-locality, 4-outcome write-failure taxonomy, stage truncation, X:\Perf path); per-finding detail in the commit messages.
 > - Scope boundary: §9 owns the published schema; SVG / `chrome://tracing` converters (items 2-4) stay open; `target_ms`/`unreliable` preservation is consumed by → XREF: `01-boot-platform/TODO-29`.
+> **Verified:** 2026-06-14 | ship `24d41523` (+ this review commit) | 1/4 items | build OK | Codex 7x consistency: emitter+doc+header+catalog aligned
+> **Quality reviewed:** 2026-06-14 | Codex 7x (consistency) | 0H+7M+1L fixed, 0 open | scope: N/A (docs-only schema; adversarial/perf inapplicable to markdown)
 
 ---
 
