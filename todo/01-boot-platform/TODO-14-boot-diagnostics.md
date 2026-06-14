@@ -193,18 +193,22 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 
 ---
 
-## 6. Panic QR Code *(deferred -- depends on §5)*
-Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD corner.
+## 6. Panic QR Code *(deferred -- multi-version QR encoder needs segno module-diff + phone-scan validation, unavailable in the autonomous env; bootloader V3 encoder is the reuse seed)*
+Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD corner. §5 (the dependency) has shipped, but the encoder itself is gated on a validation capability boot-code-quality Gate 11 makes mandatory.
 
 **Files:** `src/kernel/qr_encode.c`, `include/kernel/qr_encode.h`, `src/kernel/panic.c`
 
-- [ ] Implement or embed a minimal MIT-licensed QR code encoder (~500 lines): `qr_encode(const char *text, uint8_t *matrix, int *size)` where `matrix` is a `size` by `size` bit grid (1=dark, 0=light); support QR version 3-6 (covers URLs up to ~150 chars); error correction level M
-- [ ] `panic_qr_url(buf, bufsize, message, post_code, os_version)`: format `https://docs.impossible-os.dev/panic?msg=<short>&post=0x{post}&v={ver}` (truncate message to 40 chars to keep URL under 120 chars)
-- [ ] In `kernel_panic()` BSOD renderer: after drawing the main panic screen, call `qr_encode(url, matrix, &qr_size)`; render QR module grid at bottom-right (12 px from corner), module size = 4 px, white modules on black background; quiet zone = 4 modules
+> [!IMPORTANT]
+> **Validation blocker (recorded, not skipped).** boot-code-quality Gate 11 makes segno module-for-module comparison plus a real phone scan **non-negotiable** for any QR encoder change. Neither `segno` (the Python reference) nor a scanning phone is available in this autonomous environment, so a new encoder cannot be proven correct here. A **V3/ECL-L** segno-verified encoder already exists at `src/boot/uefi/bootx64.c` (`qr_encode_data` / `qr_reed_solomon` / `qr_place_*`, shipped under the error-screen QR feature). That encoder is the reuse seed, but it is **not drop-in**: V3/ECL-L holds ~53 byte-mode bytes (it encodes the short `...co/err/XXXX`), whereas the panic URL below runs ~120 chars and needs **Version 5/6 plus ECL-M**, which adds multi-block Reed-Solomon interleaving and per-version alignment-pattern tables. Ship §6 only on a host with `segno` plus a scanning phone (or bare metal for the on-screen scan).
+
+- [ ] Extend the segno-verified bootloader V3/ECL-L encoder into freestanding `src/kernel/qr_encode.c`: `qr_encode(text, matrix, &size)` for QR **version 3-6 at ECL-M** (deltas from the V3 seed in the callout above)
+- [ ] `panic_qr_url(buf, bufsize, message, post_code, os_version)`: format `https://docs.impossible-os.dev/panic?msg=<short>&post=0x{post}&v={ver}` (message truncated to 40 chars; not shipped ahead of the encoder)
+- [ ] In `kernel_panic()` BSOD renderer: after the main panic screen, call `qr_encode(url, matrix, &qr_size)`; render at bottom-right (12 px from corner), module = 4 px, white-on-black, quiet zone = 4 modules
 - [ ] Ensure `qr_encode.c` is freestanding: no libc, no floating point; uses only `kernel/types.h` and `kernel/libc/string.h`
+- [ ] Validate before ship (Gate 11): diff each test URL against `segno.make(url, error='M', boost_error=False)` module-for-module (0 diffs), then phone-scan the rendered BSOD on bare metal
 - [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
 
-**Test checkpoint:** With §5+§6 shipped: forced panic shows scannable QR bottom-right; URL resolves to docs panic page. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** With §5+§6 shipped: forced panic shows scannable QR bottom-right; URL resolves to docs panic page; encoder matrix matches segno for every test URL. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -326,7 +330,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 | 💎 | Boot timeline viewers   | ⚠️ Performance Toolkit      | ✅ systemd-analyze plot     | ⚠️ JSON §2; §9 viewers pending     |
 | 💎 | Panic forensics         | ✅ WER minidump EventLog    | ✅ kdump pstore ramoops      | ✅ §5 0x80000 page last-panic.txt |
 | 💎 | Multi UI spinner        | ✅ WinUI ProgressRing       | ✅ GTK Qt spinners           | ⬜ §7 spinner_create pool         |
-| ⭐ | Panic BSOD QR           | ❌ Text URL BSOD only       | ❌ No kernel QR              | ⬜ §6 phone URL QR matrix         |
+| ⭐ | Panic BSOD QR           | ❌ Text URL BSOD only       | ❌ No kernel QR              | ⬜ §6 segno+phone-gated QR        |
 | ⭐ | Alive hang pixel        | ❌ No kernel hang pixel     | ❌ Not production default     | ⬜ §4 redesign safe FB path       |
 | ⭐ | Live vital overlay      | ⚠️ Task Manager separate    | ⚠️ htop conky third-party    | ⬜ §8 bottom metrics strip        |
 
