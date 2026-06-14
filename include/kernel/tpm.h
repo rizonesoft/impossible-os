@@ -171,6 +171,9 @@ struct boot_integrity_report {
     uint8_t  tpm_rng_available;        /* 1 once TPM2_GetRandom contributed entropy */
     uint8_t  secure_boot_valid;        /* 1 if the live SB state was readable; 0 = unknown
                                         * (so secure_boot==0 means "off" only when this is 1) */
+    uint8_t  replay_verdict;           /* tpm_replay_verdict_t from the Phase-1 replay-vs-
+                                        * hardware check (VERIFIED/TAMPER/UNVERIFIABLE);
+                                        * event-log integrity, distinct from baseline */
 };
 
 /* Initialize boot integrity verification.
@@ -238,6 +241,12 @@ void tpm_pcr_cache_init(void);
  * TPM collector AFTER tpm_integrity_init() (the transport and RNG
  * collection run in Phase 1; the report is built in Phase 0). */
 void tpm_integrity_set_rng_available(int available);
+
+/* Publish the Phase-1 PCR-replay-vs-hardware verdict (tpm_replay_verdict_t) into
+ * the integrity report. A TAMPER verdict also escalates overall_status to
+ * BOOT_INTEGRITY_MISMATCH (the event log replays to a value the TPM does not
+ * hold). Called from the boot path after tpm_pcr_cache_init(). */
+void tpm_integrity_set_replay_verdict(uint8_t verdict);
 
 /* ---- Secure Boot Variable Measurement Reconciliation (STRUCTURAL, UNAUTHENTICATED) ----
  *

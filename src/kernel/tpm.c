@@ -79,18 +79,6 @@ static inline uint32_t tpm_le32(const uint8_t *p)
          | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-/* Digest length in bytes for a TCG algorithm id; 0 means unknown/unsupported. */
-static uint16_t tpm_alg_digest_len(uint16_t alg_id)
-{
-    switch (alg_id) {
-        case TPM_ALG_SHA1:   return 20;
-        case TPM_ALG_SHA256: return 32;
-        case TPM_ALG_SHA384: return 48;
-        case TPM_ALG_SHA512: return 64;
-        default:             return 0;
-    }
-}
-
 /* Strength rank for "primary digest" selection (higher = stronger). */
 static int tpm_alg_rank(uint16_t alg_id)
 {
@@ -194,7 +182,7 @@ tpm_evlog_status_t tpm_evlog_parse(const uint8_t *log, uint32_t log_size, int ve
             for (d = 0; d < dcount; d++) {
                 if (dpos > log_size || (log_size - dpos) < 2u) { oob = 1; break; }
                 uint16_t alg_id = tpm_le16(log + dpos);
-                uint16_t dsz = tpm_alg_digest_len(alg_id);
+                uint16_t dsz = tpm_alg_digest_len_pub(alg_id);
                 if (dsz == 0u) { bad_alg = 1; break; }
                 if ((log_size - dpos) < (uint32_t)(2u + dsz)) { oob = 1; break; }
                 int r = tpm_alg_rank(alg_id);
@@ -761,4 +749,14 @@ const struct boot_integrity_report *tpm_integrity_report(void)
 void tpm_integrity_set_rng_available(int available)
 {
     s_integrity_report.tpm_rng_available = available ? 1u : 0u;
+}
+
+void tpm_integrity_set_replay_verdict(uint8_t verdict)
+{
+    s_integrity_report.replay_verdict = verdict;
+    /* A replay/hardware mismatch (event-log tamper) is a definitive integrity
+     * failure regardless of any golden baseline -- escalate the overall status.
+     * 1 == TPM_REPLAY_TAMPER (see kernel/tpm_replay.h). */
+    if (verdict == 1u)
+        s_integrity_report.overall_status = BOOT_INTEGRITY_MISMATCH;
 }

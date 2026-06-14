@@ -57,6 +57,7 @@
 #include "kernel/csprng.h"
 #include "kernel/tpm_transport.h"
 #include "kernel/tpm.h"
+#include "kernel/tpm_replay.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
 #include "kernel/uefi_config.h"
@@ -470,6 +471,18 @@ void boot_phase1(void)
      * EV_EFI_VARIABLE_* events + compare against live UEFI vars. Single-threaded;
      * report read-only afterward. Runs after integrity + secureboot init. */
     tpm_secureboot_reconcile();
+    /* Replay the measured-boot event log and compare to the live PCRs (SHA-256
+     * bank, the universal TPM2 bank); publish the tamper verdict into the boot
+     * integrity report. Single-threaded; uses the just-populated PCR cache. */
+    {
+        struct tpm_replay_report rpt;
+        if (tpm_replay_verify(TPM_ALG_SHA256, &rpt) == TPM_REPLAY_OK) {
+            tpm_integrity_set_replay_verdict(rpt.verdict);
+            if (rpt.verdict == TPM_REPLAY_TAMPER)
+                klog(LOG_WARN, "TPM", "PCR replay: event-log TAMPER at PCR %d",
+                     (uint64_t)rpt.first_mismatch_pcr);
+        }
+    }
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);
 

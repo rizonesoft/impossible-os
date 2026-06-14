@@ -141,7 +141,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Pure cores (KAT/known-vector/branch tested) with thin live wrappers: `tpm_replay_pcr`/`tpm_replay_verify` over `g_boot_info` + §3 `tpm_pcr_get`; handles legacy + EVENT2 log formats, skips EV_NO_ACTION, gates on a clean parse.
 > - Verdict taxonomy: VERIFIED / `TPM_REPLAY_TAMPER` (replay != hardware) / `UNVERIFIABLE` (degraded log or incomplete coverage). Per-finding review trail in the piece commit messages.
 > - Crypto trio also unblocks §6 image hashes + `09-desktop-shell/TODO-07 §1` `cng_sha256` (reuse, don't reimplement).
-> - Scope boundary: engine only -- §10 surfaces the verdict (VPD/boot diagnostics) and §6 owns the baseline-vs-golden comparison; this section does not yet wire the verify call into the boot flow (owned by §10).
+> - Scope boundary: §4 runs the replay verify at Phase 1 (`boot_interrupts.c`) + publishes the verdict to `boot_integrity_report.replay_verdict` (TAMPER escalates `overall_status`); §10 surfaces it in VPD/UI and §6 owns the baseline-vs-golden comparison.
+> **Verified:** 2026-06-14 | commit `72aaf2c2` | 9/9 items | build OK | smoke PASS (KVM 2.64s) + tests 530/530
+> **Quality reviewed:** 2026-06-14 | Codex 4x (adversarial + consistency + perf + re-adversarial) | 1H+2M fixed, 0 open | scope: kernel-code-quality
 
 ## 5. Secure Boot Variable Measurement Reconciliation
 

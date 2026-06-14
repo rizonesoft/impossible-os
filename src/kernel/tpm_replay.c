@@ -224,8 +224,12 @@ tpm_replay_status_t tpm_replay_verify(uint16_t alg, struct tpm_replay_report *ou
         }
         tpm_replay_report_pcr(out, measured[i], memcmp(rp, hw, dl) == 0 ? 1 : 0);
     }
-    /* VERIFIED only when every required PCR for an active bank was actually read
-     * + replayed (no read failures and at least one PCR covered). */
-    tpm_replay_finalize(out, 1 /*log_clean*/, (readable > 0u && !read_failure) ? 1 : 0);
+    /* VERIFIED only when EVERY measured PCR for the bank was read + replayed. A
+     * bank where some measured PCRs are inactive/unreadable (pcr_checked < all)
+     * is incomplete coverage -> UNVERIFIABLE, never a false pass. */
+    (void)readable;
+    tpm_replay_finalize(out, 1 /*log_clean*/,
+                        (out->pcr_checked == (uint8_t)(sizeof(measured)) && !read_failure)
+                        ? 1 : 0);
     return TPM_REPLAY_OK;
 }
