@@ -133,6 +133,18 @@ static void test_boot_load_status(void)
     TEST_ASSERT_EQ(count, 0u, "all-LOADED pool -> zero degraded");
     TEST_ASSERT_EQ((uint32_t)s_blbuf[0], 0u, "all-LOADED pool -> empty summary string");
 
+    /* SKIPPED (absent optional device, e.g. no NIC) is NOT degraded -- it must
+     * render in the log but never trip the degraded summary/warning. */
+    boot_load_status_test_restore(&empty);
+    boot_load_record("network", BOOT_LOAD_CLASS_NET,     BOOT_LOAD_SKIPPED, 0u, 0u);
+    boot_load_record("ahci",    BOOT_LOAD_CLASS_STORAGE, BOOT_LOAD_LOADED,  0u, 0u);
+    s_blbuf[0] = 'X';
+    count = boot_load_status_degraded_summary(s_blbuf, sizeof s_blbuf);
+    TEST_ASSERT_EQ(count, 0u, "SKIPPED absent device is not counted degraded");
+    TEST_ASSERT_EQ((uint32_t)s_blbuf[0], 0u, "SKIPPED -> empty degraded summary");
+    n = boot_load_status_format(s_blbuf, sizeof s_blbuf);
+    TEST_ASSERT(buf_has(s_blbuf, n, "SKIPPED"), "SKIPPED state rendered in the log");
+
     /* begin/finish: measured-duration span with a final state. */
     boot_load_status_test_restore(&empty);
     {
@@ -157,6 +169,15 @@ static void test_boot_load_status(void)
         sl = cstr_len(s_blbuf);
         TEST_ASSERT_EQ(count, 64u, "summary counts only the 64 recorded entries");
         TEST_ASSERT(buf_has(s_blbuf, sl, "dropped"), "summary notes the dropped overflow");
+        /* The dropped marker must survive a report-sized (256-byte) buffer even
+         * when 64 degraded names would otherwise fill it -- it is emitted before
+         * the variable-length name list (matches report_summary's sum[256]). */
+        {
+            char small[256];
+            (void)boot_load_status_degraded_summary(small, sizeof small);
+            TEST_ASSERT(buf_has(small, cstr_len(small), "dropped"),
+                        "dropped marker survives the 256-byte report buffer");
+        }
     }
 
     /* Fail-closed: NULL / zero-cap / cap-1 / tiny-cap on both pure helpers,

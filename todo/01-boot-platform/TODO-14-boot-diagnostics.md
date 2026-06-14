@@ -275,18 +275,23 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 - [x] `boot_load_status_report_summary()`: serial `klog` (authoritative) + best-effort `boot_splash_diag()` FAILED/DEGRADED one-liner, emitted after `boot_run_deferred` so the summary reflects the complete record (incl. deferred network/input).
 - [x] Initial call sites: storage probe block (`begin`/`finish`, captures async DEGRADED/FATAL-fallback) + network (`deferred_net_init` real outcome or in-phase `net_init`).
 - [ ] Granular per-driver `boot_load_record`: storage (ata/ahci/nvme/virtio-blk), input (PS2/USB HID), ACPI, GFX -- each self-reports vs the single aggregate `storage` entry. Owner: this section.
+- [ ] Probe-result aggregation (storage + network): split driver return codes so absent-vs-failed is distinguishable (rtl8139/ahci/virtio-blk return -1 for both; sequential storage always LOADED) for accurate SKIPPED/FAILED. Owner: this section.
 - [ ] NVMe per-controller status: expose attempted-vs-initialized count from `nvme_init` (today returns only the success count) so a partial multi-controller failure records DEGRADED, not BOOT_OK. Owner: this section / NVMe driver.
 - [x] Test `test_boot_load_status` (`test_boot_diag.c`, TEST_CAT_BOOT): mix + format + summary + all-LOADED + begin/finish + overflow + fail-closed + 64/65 boundary + pool-full token + name truncation; save/restore seam.
 - [x] Commit: `"diag: per-subsystem boot load/status log -> X:\Diag\boot-load-status.txt (ntbtlog parity)"`
 
 **Test checkpoint:** On a boot with an absent/failing device (e.g. no AHCI), `X:\Diag\boot-load-status.txt` lists that subsystem as FAILED/DEGRADED with an error code; a clean boot lists every core subsystem LOADED; serial shows the degraded summary only when something failed. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2601 kernel + 16 user-mode, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2605 kernel + 16 user-mode, 0 failures
 > **Notes:**
 > - Shipped: `boot_load_status.{c,h}` -- 64-entry lock-free pool, SMP-safe `boot_load_record`/`begin`/`finish`, pure `format` + `degraded_summary`, `dump_to_blackbox` (`X:\Diag\boot-load-status.txt`), `report_summary` (serial + splash).
 > - Integration: storage probe block + `deferred_net_init`/`net_init` record real outcomes; report + dump both run after `boot_run_deferred` so the record is complete; serial klog is authoritative (Codex adoptions in commit message).
-> - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- 37 asserts; full suite 2601 kernel + 16 user-mode 0 failures; smoke PASS 2.21s shows `[BOOT-LOAD] ... loaded clean` + dump (205 bytes).
+> - Tests: `test_boot_diag.c` (TEST_CAT_BOOT) -- 44 asserts; full suite 2605 kernel + 16 user-mode 0 failures; smoke PASS shows `[BOOT-LOAD] all subsystems loaded clean` (NIC absent -> SKIPPED) + dump.
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
-> - Scope boundary: §11 ships infra + storage/network wiring; granular per-driver/input/ACPI/GFX `boot_load_record` coverage is the open `[ ]` item in this section.
+> - Scope boundary: §11 ships infra + storage/network wiring; granular per-driver coverage + probe-result aggregation + NVMe per-controller status are the open `[ ]` items in this section.
+> **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 6/9 items | build OK | smoke PASS + tests 2605/2605
+> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 278)
+> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 279)
+> **Quality reviewed:** 2026-06-14 | Codex 8x (design + test-coverage + adversarial + re-adversarial + consistency + perf) | 3H+8M+2L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

@@ -281,8 +281,17 @@ uint32_t boot_load_status_degraded_summary(char *buf, uint32_t cap)
         return 0u;
     }
 
+    /* Emit the fixed-size overflow marker FIRST (right after the count), then
+     * the variable-length name list. A full degraded pool can fill a small
+     * report buffer (report_summary uses sum[256]); putting "D dropped" before
+     * the names guarantees the overflow signal is never the part truncated. */
     pos = put_u32(buf, pos, cap, count);
     pos = put_str(buf, pos, cap, " degraded");
+    if (drop) {
+        pos = put_str(buf, pos, cap, ", ");
+        pos = put_u32(buf, pos, cap, drop);
+        pos = put_str(buf, pos, cap, " dropped");
+    }
     if (count) {
         pos = put_str(buf, pos, cap, ": ");
         for (i = 0u; i < rec; i++) {
@@ -297,11 +306,6 @@ uint32_t boot_load_status_degraded_summary(char *buf, uint32_t cap)
             pos = put_char(buf, pos, cap, ')');
             emitted++;
         }
-    }
-    if (drop) {
-        pos = put_str(buf, pos, cap, count ? " +" : ", +");
-        pos = put_u32(buf, pos, cap, drop);
-        pos = put_str(buf, pos, cap, " dropped");
     }
     buf[pos] = '\0';
     return count;

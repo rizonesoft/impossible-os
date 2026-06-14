@@ -55,10 +55,13 @@ static boot_result_t deferred_net_init(void)
     int nic = rtl8139_init();
     if (nic < 0) {
         POST16(POST16_DEFERRED_NET_OK);
-        /* Record the REAL deferred outcome (the blackbox dump runs after
-         * boot_run_deferred): no NIC -> DEGRADED, not a premature SKIPPED. */
-        boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_DEGRADED,
-                         (uint16_t)BOOT_DEGRADED, POST16_DEFERRED_NET_OK);
+        /* rtl8139 is an OPTIONAL NIC; its absence (the common <0 case) is not a
+         * degraded boot -- record SKIPPED, not DEGRADED, so a NIC-less machine
+         * does not emit a spurious "[BOOT-LOAD] degraded" on every clean boot.
+         * (rtl8139_init returns -1 for absent AND found-but-failed; splitting
+         * those into SKIPPED vs FAILED is the granular-coverage follow-up.) */
+        boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_SKIPPED,
+                         0u, POST16_DEFERRED_NET_OK);
         return BOOT_DEGRADED;  /* no NIC found -- not fatal */
     }
     net_init();
@@ -158,12 +161,14 @@ void boot_phase2(void)
         /* Legacy: all subsystems init in-phase */
         boot_splash_status("Initializing network...");
         POST16(POST16_NIC);
-        rtl8139_init();
+        int nic = rtl8139_init();
         POST16(POST16_NIC_OK);
         POST16(POST16_NET);
         net_init();
         POST16(POST16_NET_OK);
-        boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_LOADED,
+        /* Absent optional NIC (rtl8139 <0) -> SKIPPED, not a fake LOADED. */
+        boot_load_record("network", BOOT_LOAD_CLASS_NET,
+                         nic < 0 ? BOOT_LOAD_SKIPPED : BOOT_LOAD_LOADED,
                          0u, POST16_NET_OK);
         virtio_input_init();
         vbox_mouse_init();
