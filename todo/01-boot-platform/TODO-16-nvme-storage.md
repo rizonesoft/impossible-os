@@ -37,7 +37,7 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 - Read/write sectors via I/O Queue
 - NVMe drive registered as block device, partitions scanned, filesystem mounted
 - Validation policy for emulated NVMe documents WHPX vs TCG expectations (see `CLAUDE.md` + §5)
-- SMART / Get Log / multi-namespace / discard parity tracked as backlog in §5 for `TODO-03`
+- SMART / Get Log / multi-namespace / discard parity tracked as backlog in §5 for `04-drivers-hardware/TODO-08`
 
 > [!WARNING]
 > **Boot-path impact:**
@@ -52,7 +52,7 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 | 💎 |   2   | Admin Queue setup and Identify commands       | §1         |  [x]   |
 | 💎 |   3   | I/O Queue creation and sector read/write      | §2         |  [x]   |
 | 💎 |   4   | Block device registration and VFS integration | §3         |  [x]   |
-| ⭐ |   5   | Advanced NVMe parity backlog (owned by TODO-03) | §1, §5 |  [ ]   |
+| ⭐ |   5   | Advanced NVMe parity backlog (owned by D04 T08) | §1, §2, §3, §4 |  [ ]   |
 
 ---
 
@@ -80,6 +80,8 @@ Find NVMe controllers on PCI and map BAR0 as UC for register access.
 
 **Regression risk:** LOW -- PCI scan is read-only enumeration. BAR mapping adds a new `vmm_map_mmio_uc()` call; if BAR address overlaps an existing mapping, VMM will detect and panic. Rollback: `#ifdef NVME_DRIVER` around the PCI class check to disable entirely.
 
+---
+
 ## 2. Admin Queue Setup and Identify Commands
 Create the Admin Submission/Completion Queue pair and execute Identify Controller + Identify Namespace.
 
@@ -100,6 +102,8 @@ Create the Admin Submission/Completion Queue pair and execute Identify Controlle
 - VirtualBox / QEMU (no NVMe): skipped (no controller from §1)
 
 **Regression risk:** LOW -- Admin Queue uses freshly allocated contiguous pages from `pmm_alloc_contiguous()`. No shared state modified. If Identify command times out, log warning and skip NVMe. Rollback: skip Identify, treat NVMe as not present.
+
+---
 
 ## 3. I/O Queue Creation and Sector Read/Write
 Create one I/O Submission/Completion Queue pair and implement read/write sector operations.
@@ -123,6 +127,8 @@ Create one I/O Submission/Completion Queue pair and implement read/write sector 
 
 **Regression risk:** MEDIUM -- DMA writes via PRP lists could corrupt memory if physical addresses are wrong. Mitigation: validate PRP alignment, use `pmm_alloc_contiguous()` for all DMA buffers, never reuse buffers across commands without completion check. Rollback: disable I/O queue creation; §1, §2 still work for diagnostics.
 
+---
+
 ## 4. Block Device Registration and VFS Integration
 Register NVMe namespaces as block devices for partition scanning and filesystem mount.
 
@@ -144,11 +150,11 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 
 ---
 
-## 5. Advanced NVMe parity backlog (TODO-03 owned)
+## 5. Advanced NVMe parity backlog (D04 T08 owned)
 
 > Items below are **not** boot-critical; they track parity with Windows 11 / Linux stacks documented in gap analysis (native multi-queue + MSI-X, SMART log page 0x02, namespace management, discard, APST, fabrics). Implementation belongs in `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` unless a future TODO splits NVMe maintenance further.
 
-**Regression risk:** LOW -- this section is documentation and ownership only until work migrates into `TODO-03`.
+**Regression risk:** LOW -- this section is documentation and ownership only until work migrates into `04-drivers-hardware/TODO-08`.
 
 - [ ] MSI-X (or MSI) completion path replacing polled CQ head spin (-> XREF `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` §3)
 - [ ] Host-side multi I/O queue / affinity model comparable to Linux `blk-mq` per-core queues (-> XREF same file §1)
@@ -160,6 +166,8 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 - [ ] Commit: `todo: NVMe advanced backlog tracked no kernel change`
 
 **Test checkpoint:** Each §5 bullet maps to a matching `[x]` in `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` §5 or §3 with proof: QEMU TCG `make run-nvme` shows no new `nvme: controller enable timeout` regressions; serial still shows POST16 `0x20A0` through `0x20A7` in order on reference image; `bash scripts/test.sh SUITE=storage` passes after the merged feature lands.
+
+---
 
 ## OS Comparison
 
@@ -173,6 +181,8 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 | ⭐ | Firmware ID at boot      | ❌ Not shown in boot UI     | ❌ dmesg after boot only     | ✅ §2 Identify strings in klog  |
 | ⭐ | Wear counters at boot    | ❌ Needs third party app    | ❌ Needs nvme userland       | ⬜ Planned wear field stretch   |
 | ⭐ | Thermal throttle at boot | ❌ Needs third party app    | ❌ Needs nvme userland       | ⬜ Planned CSTS plus SMART bit  |
+
+---
 
 ## Unit Tests
 
