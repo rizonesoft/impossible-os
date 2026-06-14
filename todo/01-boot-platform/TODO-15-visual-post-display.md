@@ -61,7 +61,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 | 💎  |   5   | `boot.conf` `postbars` configuration                    | §4                  |  [/]   |
 | 💎  |   6   | Named stages with TSC timing                            | §4                  |  [x]   |
 | 💎  |   7   | Status indicators and progress bar                      | §6                  |  [x]   |
-| ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6                  |  [x]   |
+| ⭐  |   8   | NVRAM crash persistence and "last boot failed" display  | §6                  |  [/]   |
 | 💎  |   9   | Tier 2: Splash-integrated progress                      | §6, §7              |  [ ]   |
 | 💎  |  10   | Seamless tier transition                                | §4, §9              |  [ ]   |
 | ⭐  |  11   | Phase grouping and diagnostic layout                    | §7                  |  [x]   |
@@ -202,12 +202,11 @@ Add visual status icons and a proportional progress bar below the stage list.
 **Files:** `src/kernel/vpd.c`, `include/kernel/vpd.h`
 
 - [x] Status indicators: ✓ checkmark (done/green), ■ square (in-progress/yellow), ■ square (failed/red) -- implemented in §4
-- [x] `vpd_update_progress(percent)` -- 4px-tall progress bar below stage list; accent blue (0x0078D4) on dark gray track
-- [x] Progress auto-calculated from stage count (~28 stages = 100%)
-- [x] Progress bar updates on every `vpd_stage_begin()` call
+- [x] Per-stage TSC-timed status rows are the progress indication (named stage + elapsed ms per row, §6); this replaces a proportional bar
+- [x] `vpd_update_progress(percent)` is a retained no-op -- the 4px proportional progress bar was intentionally removed (visual clutter); the per-stage rows convey progress
 - [x] Commit: `"boot: VPD status indicators + progress bar"`
 
-**Test checkpoint:** With `postbars=on`, bottom progress bar advances across boot; status squares transition yellow to green checkmarks. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+**Test checkpoint:** With `postbars=on`, status squares transition yellow to green checkmarks as stages complete and each row shows elapsed ms (no separate progress bar). QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
 
 ## 8. NVRAM Crash Persistence and "Last Boot Failed" Display
 On crash-restart, display exactly where the previous boot failed -- always active regardless of `postbars` setting. This is the killer feature: you crash, reboot, and the screen tells you what happened.
@@ -219,7 +218,8 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 
 - [x] NVRAM already stores full 16-bit POST code via `boot_post_write16()` / `boot_post_read16()`
 - [x] `vpd_post16_name(code)` -- lookup table resolves POST16 code → stage name (55 entries)
-- [x] `vpd_crash_banner(last_postcode)` -- renders "Last boot failed: NAME 0xNNNN" in red at 2x scale, always visible regardless of `postbars`
+- [/] `vpd_crash_banner(last_postcode)` -- sets banner state (`s_banner_shown` + postcode); the red 2x "Last boot failed: NAME 0xNNNN" draws via the VPD render path, so it currently appears only when VPD is active (`postbars>=1`)
+- [ ] Gap: draw the failure banner independent of `postbars` -- `vpd_crash_banner()` only sets `s_banner_shown`; the draw is gated on `vpd_init()` (early-returns when `postbars==0`), so a default-config crash shows nothing on screen
 - [x] Wired into `boot_phase0()` -- displays on both incomplete and failed prior boots
 - [x] Serial log already shows `[BOOT] Last POST code: 0xNNNN (incomplete/FAILED)`
 - [x] Banner auto-clears when splash composites over it
@@ -304,7 +304,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 | 💎 | Boot progress visual    | ✅ Spinning dots             | ✅ Plymouth splash            | ✅ §4 §7 VPD bars timing         |
 | ⭐ | Pre-splash diagnostics  | ❌ Black screen              | ⚠️ fbcon (if compiled in)     | ✅ §3 §4 micro-font Tier1        |
 | 💎 | Boot stage timing       | ⚠️ ETW (not visible)         | ✅ systemd-analyze (post)     | ✅ §4 live TSC ms text           |
-| ⭐ | NVRAM crash persistence | ⚠️ Generic error message      | ❌ No NVRAM persistence       | ✅ §8 last boot banner           |
+| ⭐ | NVRAM crash persistence | ⚠️ Generic error message      | ❌ No NVRAM persistence       | ⚠️ §8 banner postbars-gated      |
 | 💎 | POST code display       | ✅ Motherboard LED           | ❌ Not an OS feature          | ✅ §1 §2 POST16 port I/O         |
 | 💎 | Configurable diag       | ✅ bcdedit bootlog           | ✅ systemd.log_level          | ✅ §5 postbars cfg               |
 | ⭐ | Panic-aware progress    | ❌ No boot context in BSOD   | ❌ No boot context in oops    | ✅ §13 red fail stage            |
