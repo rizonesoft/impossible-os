@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-14T04:03:10+02:00",
-  "total_suites": 1245,
-  "total_assertions": 3605,
+  "timestamp": "2026-06-14T04:09:26+02:00",
+  "total_suites": 1247,
+  "total_assertions": 3611,
   "files": [
     {"file": "test_acpi_power.c", "suites": 7, "assertions": 10},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -56,6 +56,7 @@
     {"file": "test_security.c", "suites": 18, "assertions": 72},
     {"file": "test_sha1.c", "suites": 3, "assertions": 7},
     {"file": "test_sha256.c", "suites": 3, "assertions": 7},
+    {"file": "test_sha384.c", "suites": 2, "assertions": 6},
     {"file": "test_smbios.c", "suites": 4, "assertions": 13},
     {"file": "test_smbios_parse.c", "suites": 11, "assertions": 20},
     {"file": "test_storage.c", "suites": 2, "assertions": 2},

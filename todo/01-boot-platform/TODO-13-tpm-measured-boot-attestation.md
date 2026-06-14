@@ -125,7 +125,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 - [x] **Prerequisite:** kernel SHA-256 shipped -- `src/kernel/crypto/sha256.{c,h}` (FIPS 180-4), NIST KAT-validated; reusable by `cng_sha256`. -> XREF: 09-desktop-shell/TODO-07 §1 (item: `cng_sha256` primitive).
 - [x] **Prerequisite:** kernel SHA-1 (legacy PCR bank) shipped -- `src/kernel/crypto/sha1.{c,h}` (FIPS 180-4), NIST KAT-validated (`test_sha1.c`).
-- [ ] **Prerequisite:** kernel SHA-384 (SHA-512 IV/truncation variant; SHA-512 already exists via monocypher); KAT vectors.
+- [x] **Prerequisite:** kernel SHA-384 shipped -- `src/kernel/crypto/sha384.{c,h}` (SHA-384 IVs over monocypher SHA-512, layout pinned by `_Static_assert`), NIST KAT-validated. All replay banks now available (SHA-1/256/384 + SHA-512).
 - [ ] **Prerequisite:** `pcr_extend(bank_alg, pcr, measurement_digest)` helper computing `H(old || measurement)` per TPM PCR-extend semantics, dispatching on bank alg.
 - [ ] Replay PCR extend operations from parsed event log for every active bank (blocked on the SHA prerequisites above).
 - [ ] Compare replayed values against hardware PCR reads (uses §3 `tpm_pcr_get`).
