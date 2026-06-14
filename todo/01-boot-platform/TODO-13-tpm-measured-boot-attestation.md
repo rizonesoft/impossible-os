@@ -37,9 +37,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | --- | :---: | --- | --- | :---: |
 | 💎 | 1 | Harden TCG event-log parser | -- | [/] |
 | 💎 | 2 | TPM2 command transport | §1 (ordering-only; transport does not consume the parser) | [x] |
-| 💎 | 3 | PCR read API | §2 | [ ] |
+| 💎 | 3 | PCR read API | §2 | [x] |
 | 💎 | 4 | PCR replay engine | §1, ../02-kernel-core/TODO-03 §3 | [ ] |
-| 💎 | 5 | Secure Boot variable measurement reconciliation | §4, TODO-02 §3 | [ ] |
+| 💎 | 5 | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3 | [x] |
 | 💎 | 6 | Baseline enrollment and storage | §3, §4 | [ ] |
 | 💎 | 7 | TPM NV index support | §2, §6 | [ ] |
 | ⭐ | 8 | Sealed-secret boot policy hooks | §7 | [ ] |
@@ -136,13 +136,19 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 5. Secure Boot Variable Measurement Reconciliation
 
-- [ ] Decode EV_EFI_VARIABLE_* events for PK, KEK, db, dbx, SecureBoot, SetupMode.
-- [ ] Compare measured Secure Boot state with UEFI variables read by TODO-02.
-- [ ] Flag impossible combinations such as Secure Boot active but PCR7 missing policy events.
-- [ ] Feed results to `boot_integrity_report`.
-- [ ] Commit: `"tpm: reconcile Secure Boot measurements"`
+- [x] Decode EV_EFI_VARIABLE_DRIVER_CONFIG/AUTHORITY (PCR7) for PK/KEK/db/dbx/SecureBoot/SetupMode via the pure `uefi_var_data_parse` seam (TCG UEFI_VARIABLE_DATA, subtraction-form bounds) in `tpm_sb_reconcile.c`.
+- [x] Byte-compare each measured DRIVER_CONFIG payload against the live UEFI variable (`uefi_get_variable`), tri-state per-variable live-read status; bounded 16 KiB scratch reports PATHOLOGY (never a false match) on oversize.
+- [x] Flag impossible combinations via pure `sb_reconcile_classify` (enabled+no-PCR7 ONLY on a clean log, enabled+SetupMode, enabled+no-PK, state-unknown); a degraded/unavailable log is reported via `evlog_status`, never a false impossibility.
+- [x] Feed results to a SEPARATE versioned `sb_reconcile_report` (own accessor); honest `secure_boot`/`secure_boot_valid` land in `boot_integrity_report` (NEVER sets BOOT_INTEGRITY_VERIFIED -- structural/unauthenticated until PCR replay).
+- [x] Commit: `"tpm: reconcile Secure Boot measurements"`
 
-**Test checkpoint:** `EV_EFI_VARIABLE_*` events for PK / KEK / db / dbx / SecureBoot / SetupMode decode to the same values the UEFI variables report (read via TODO-02); an injected "SecureBoot active but PCR7 has no policy events" combination is flagged as impossible; the reconciliation result lands in `boot_integrity_report`. Platforms: QEMU swtpm + OVMF Secure Boot KVM; bare metal.
+**Test checkpoint:** `EV_EFI_VARIABLE_*` DRIVER_CONFIG payloads for PK/KEK/db/dbx/SecureBoot/SetupMode decode and byte-equal the live UEFI variables (`uefi_get_variable`); an injected "SecureBoot active + clean log + no PCR7 policy events" is flagged impossible while the SAME state with a degraded log is NOT; the reconciliation lands in the versioned `sb_reconcile_report` (marked unauthenticated) and the honest SB state in `boot_integrity_report`. Unit fixtures (`test_tpm_sb_reconcile.c`) cover the parser (valid, short, name/data overflow, uint64-wrap, >UINT32 data, cap-truncation) + the classify truth table. Platforms: QEMU swtpm + OVMF Secure Boot KVM; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 438 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - `tpm_sb_reconcile.c`: pure `uefi_var_data_parse` + `sb_reconcile_classify` seam + Phase-1 BSP driver `tpm_secureboot_reconcile` (write-once report, lock-free read like `s_events`); wired after `tpm_pcr_cache_init` in `boot_interrupts.c`.
+> - STRUCTURAL + UNAUTHENTICATED: byte-reconciles measured payloads vs live UEFI vars, never recomputes digests (no kernel SHA yet) and never sets BOOT_INTEGRITY_VERIFIED; the digest-honesty proof is owned by PCR replay.
+> - Codex design + adversarial adoptions (unauthenticated framing, honest tri-state SB state, separate versioned report, clean-log gating, subtraction-form parser bounds) -- per-finding trail in the commit message.
+> - Scope boundary: PCR replay (digest re-hash + hardware compare) is blocked on the absent SHA primitives; this section owns the structural diagnostic only.
 
 ## 6. Baseline Enrollment and Storage
 
@@ -247,7 +253,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 | ⭐ | Feature | Windows | Linux | Impossible OS |
 | --- | --- | --- | --- | --- |
 | 💎 | TPM2 command transport (TIS/CRB) | tpm.sys TIS/CRB | tpm_tis/tpm_crb drivers | ✅ §2 burst-chunked TIS + CRB |
-| 💎 | Secure Boot PCR integration | Measured Boot | IMA/TPM tools | TODO-13 |
+| 💎 | Secure Boot PCR integration | Measured Boot | IMA/TPM tools | ⚠️ §5 structural SB var reconcile |
 | 💎 | PCR replay | internal/Defender | tpm2-tools | TODO-13 §4 |
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |

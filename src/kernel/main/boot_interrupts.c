@@ -466,6 +466,10 @@ void boot_phase1(void)
     /* Eagerly populate the measured-boot PCR cache on the fresh transport
      * (single-threaded here; lock-free reads afterward). No-op without a TPM. */
     tpm_pcr_cache_init();
+    /* Structural (unauthenticated) Secure Boot variable reconciliation: decode
+     * EV_EFI_VARIABLE_* events + compare against live UEFI vars. Single-threaded;
+     * report read-only afterward. Runs after integrity + secureboot init. */
+    tpm_secureboot_reconcile();
     POST16(POST16_TPM_TRANSPORT_OK);
     boot_progress(1, "TPM-TRANSPORT", POST16_TPM_TRANSPORT_OK);
 

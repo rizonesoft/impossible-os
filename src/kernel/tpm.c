@@ -681,11 +681,20 @@ boot_result_t tpm_integrity_init(void)
     s_integrity_report.event_count = s_event_count;
     s_integrity_report.tpm_version = (uint8_t)s_version;
 
-    /* Check Secure Boot state (from.1) */
-    /* Forward declaration not needed -- we call uefi_secureboot_enabled()
-     * via its extern linkage.  But since we don't include uefi_runtime.h
-     * here to avoid circular deps, we just check boot_info. */
-    s_integrity_report.secure_boot = 0;  /* Updated below if SB detection ran */
+    /* Live Secure Boot state. Declared extern here because tpm.c deliberately
+     * does not include uefi_runtime.h (circular deps). NEVER collapse an
+     * unreadable SB state into "off": secure_boot is 1 only when the state is
+     * readable AND active; secure_boot_valid records readability so a consumer
+     * can tell genuine "off" from "unknown". (UEFI runtime + secureboot init
+     * run before this in the boot sequence.) */
+    {
+        extern int uefi_secureboot_state_valid(void);
+        extern int uefi_secureboot_enabled(void);
+        int sbv = uefi_secureboot_state_valid();
+        s_integrity_report.secure_boot_valid = (uint8_t)(sbv ? 1 : 0);
+        s_integrity_report.secure_boot =
+            (uint8_t)((sbv && uefi_secureboot_enabled()) ? 1 : 0);
+    }
 
     /* ---- No TPM: cannot verify ---- */
     if (!s_available) {

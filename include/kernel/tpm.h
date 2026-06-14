@@ -158,9 +158,12 @@ struct boot_integrity_report {
     struct pcr_check pcrs[8];          /* PCR[0], PCR[1], ..., PCR[7] */
     uint32_t event_count;              /* total measured events */
     uint8_t  tpm_version;              /* 0=none, 1=1.2, 2=2.0 */
-    uint8_t  secure_boot;              /* 1 if Secure Boot was active */
+    uint8_t  secure_boot;              /* 1 ONLY if SB state readable AND active; never
+                                        * collapses "unreadable" into "off" -- gate on
+                                        * secure_boot_valid before trusting this bit */
     uint8_t  tpm_rng_available;        /* 1 once TPM2_GetRandom contributed entropy */
-    uint8_t  pad2;
+    uint8_t  secure_boot_valid;        /* 1 if the live SB state was readable; 0 = unknown
+                                        * (so secure_boot==0 means "off" only when this is 1) */
 };
 
 /* Initialize boot integrity verification.
@@ -228,3 +231,103 @@ void tpm_pcr_cache_init(void);
  * TPM collector AFTER tpm_integrity_init() (the transport and RNG
  * collection run in Phase 1; the report is built in Phase 0). */
 void tpm_integrity_set_rng_available(int available);
+
+/* ---- Secure Boot Variable Measurement Reconciliation (STRUCTURAL, UNAUTHENTICATED) ----
+ *
+ * Decodes EV_EFI_VARIABLE_* events from the parsed TCG event log and reconciles
+ * the MEASURED Secure Boot variable payloads against the LIVE UEFI variables
+ * (UEFI runtime GetVariable), plus structural impossible-combination checks.
+ * This is a STRUCTURAL diagnostic ONLY: with no in-kernel SHA yet (SHA-256/1/384
+ * are blocked on the absent kernel hash primitives) it cannot prove the logged
+ * digest equals SHA-256(payload) or that the event was extended into PCR7. It
+ * therefore NEVER sets BOOT_INTEGRITY_VERIFIED and is reported as unauthenticated
+ * until PCR replay validates the log against hardware PCRs.
+ *
+ * SMP: tpm_secureboot_reconcile() runs once on the BSP in Phase 1 (single-
+ * threaded), then the report is read-only -- no lock (same model as s_events). */
+
+/* TCG PC Client event types for Secure Boot variable measurements. */
+#define EV_EFI_VARIABLE_DRIVER_CONFIG  0x80000001u  /* PK/KEK/db/dbx/SecureBoot config */
+#define EV_EFI_VARIABLE_AUTHORITY      0x800000E0u  /* authority that loaded an image */
+
+/* Tracked Secure Boot variables (index into sb_reconcile_report.vars[]). */
+typedef enum {
+    SB_VAR_PK = 0, SB_VAR_KEK, SB_VAR_DB, SB_VAR_DBX,
+    SB_VAR_SECUREBOOT, SB_VAR_SETUPMODE, SB_VAR_COUNT
+} sb_var_id_t;
+
+/* Live-variable read outcome (tri-state; never collapse unknown into "off"). */
+typedef enum {
+    SB_LIVE_UNREAD    = 0,  /* not looked up */
+    SB_LIVE_OK        = 1,  /* read succeeded */
+    SB_LIVE_NOT_FOUND = 2,  /* variable absent */
+    SB_LIVE_ERROR     = 3,  /* firmware read error / unreadable */
+    SB_LIVE_PATHOLOGY = 4,  /* size pathology (too large to reconcile this pass) */
+} sb_live_status_t;
+
+/* Per-variable measured-vs-live reconciliation outcome. */
+typedef enum {
+    SB_MATCH_NA        = 0,  /* not measured and/or not readable -> no comparison */
+    SB_MATCH_EQUAL     = 1,  /* measured payload bytes == live variable bytes */
+    SB_MATCH_DIFFER    = 2,  /* both present but bytes differ */
+    SB_MATCH_NOMEASURE = 3,  /* live present but no measurement event */
+    SB_MATCH_NOLIVE    = 4,  /* measured present but live unreadable/absent */
+} sb_match_t;
+
+/* Impossible-combination flags (bitmask). ENABLED_NO_PCR7 is set ONLY after a
+ * CLEAN event-log parse proves PCR7 policy events genuinely absent -- a
+ * degraded/unavailable log is reported via evlog_status, never as a false
+ * impossibility. */
+#define SB_IMPOSSIBLE_NONE              0x00u
+#define SB_IMPOSSIBLE_ENABLED_NO_PCR7   0x01u  /* SB active, clean log, no PCR7 events */
+#define SB_IMPOSSIBLE_ENABLED_SETUPMODE 0x02u  /* SB enabled while SetupMode active */
+#define SB_IMPOSSIBLE_ENABLED_NO_PK     0x04u  /* SB enabled but PK absent */
+#define SB_IMPOSSIBLE_STATE_UNKNOWN     0x08u  /* live SB state unreadable */
+
+#define SB_RECONCILE_VERSION 1u
+
+struct sb_var_reconcile {
+    uint8_t var_id;       /* sb_var_id_t */
+    uint8_t measured;     /* 1 if an EV_EFI_VARIABLE_* event named this var */
+    uint8_t live_status;  /* sb_live_status_t */
+    uint8_t match;        /* sb_match_t */
+};
+
+/* Versioned, self-describing reconciliation report (kept SEPARATE from the
+ * compact boot_integrity_report so UI/entropy consumers ignore it safely). */
+struct sb_reconcile_report {
+    uint16_t version;          /* SB_RECONCILE_VERSION */
+    uint16_t size;             /* sizeof(struct sb_reconcile_report) */
+    uint8_t  ran;              /* 1 if reconcile executed (TPM present) */
+    uint8_t  unauthenticated;  /* ALWAYS 1: structural only until PCR replay lands */
+    uint8_t  evlog_status;     /* tpm_evlog_status_t -- distinguishes clean vs degraded log */
+    uint8_t  pcr7_event_count; /* EV_EFI_VARIABLE_* events observed on PCR7 (clean log only) */
+    uint8_t  impossible_flags; /* SB_IMPOSSIBLE_* bitmask */
+    uint8_t  sb_enabled;       /* live: 1 if Secure Boot active (meaningful iff sb_state_valid) */
+    uint8_t  sb_state_valid;   /* live: 1 if SB state readable */
+    uint8_t  setup_mode;       /* live: 1 if SetupMode active */
+    struct sb_var_reconcile vars[SB_VAR_COUNT];
+};
+
+/* Pure, fixture-testable TCG UEFI_VARIABLE_DATA parser. Reads the 16-byte
+ * VariableName GUID, the UCS-2 variable name (UnicodeNameLength in CHAR16
+ * units), and locates the VariableData span. All reads bounds-checked against
+ * `size`. Returns 0 on success, -1 on malformed. out_data_off/out_data_len
+ * describe VariableData within payload. out_name receives up to name_cap UCS-2
+ * code units; *out_name_chars is the full name length (may exceed name_cap). */
+int uefi_var_data_parse(const uint8_t *payload, uint32_t size,
+                        uint8_t out_guid[16],
+                        uint16_t *out_name, uint32_t name_cap, uint32_t *out_name_chars,
+                        uint32_t *out_data_off, uint32_t *out_data_len);
+
+/* Pure impossible-combination classifier (testable without firmware). */
+uint8_t sb_reconcile_classify(int log_clean, int pcr7_events, int sb_state_valid,
+                              int sb_enabled, int setup_mode, int pk_present);
+
+/* Run the structural Secure Boot reconciliation. Phase 1, BSP, AFTER
+ * tpm_integrity_init() + uefi_secureboot_init(). Always records the live SB
+ * state; walks measured events only when the TPM/log is present + clean. */
+void tpm_secureboot_reconcile(void);
+
+/* The reconciliation report (valid after tpm_secureboot_reconcile()). */
+const struct sb_reconcile_report *tpm_sb_reconcile_report(void);
