@@ -64,21 +64,25 @@ tpm_nv_status_t tpm_nv_classify_rc(uint32_t rc)
 /* Append a one-session authorization area at off. Layout:
  *   authorizationSize(4) + sessionHandle(4) + nonce TPM2B(2 + nonce_len)
  *   + sessionAttributes(1) + hmac/password TPM2B(2 + auth_len).
- * continueSession (attrs bit 0) is set so the TPM keeps a real session alive
- * for our explicit FlushContext; harmless for the permanent TPM_RS_PW handle.
+ * continueSession (attrs bit 0) is set ONLY for a real HMAC/POLICY session (high
+ * byte 0x02/0x03), keeping it alive for our explicit FlushContext. For the
+ * permanent password handle TPM_RS_PW the attribute is 0x00: a password
+ * authorization is not a savable session, so continueSession is meaningless and
+ * a strict TPM can reject it as an attributes error (a bare-metal-only failure).
  * Returns the new offset. The caller guarantees buffer room. */
 static uint32_t put_auth_area(uint8_t *buf, uint32_t off, uint32_t session,
                               const uint8_t *nonce, uint16_t nonce_len,
                               const uint8_t *auth, uint16_t auth_len)
 {
     uint16_t i;
+    uint8_t ht = (uint8_t)(session >> 24);
     uint32_t area = 4u + 2u + (uint32_t)nonce_len + 1u + 2u + (uint32_t)auth_len;
     tpm2_be32_put(buf + off, area); off += 4u;       /* authorizationSize */
     tpm2_be32_put(buf + off, session); off += 4u;    /* sessionHandle */
     tpm2_be16_put(buf + off, nonce_len); off += 2u;  /* nonce size */
     for (i = 0; i < nonce_len; i++) buf[off + i] = nonce ? nonce[i] : 0u;
     off += nonce_len;
-    buf[off] = 0x01u; off += 1u;                     /* sessionAttributes: continue */
+    buf[off] = (ht == 0x02u || ht == 0x03u) ? 0x01u : 0u; off += 1u; /* attrs */
     tpm2_be16_put(buf + off, auth_len); off += 2u;   /* hmac/password size */
     for (i = 0; i < auth_len; i++) buf[off + i] = auth ? auth[i] : 0u;
     off += auth_len;

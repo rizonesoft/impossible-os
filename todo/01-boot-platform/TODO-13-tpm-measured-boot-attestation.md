@@ -236,6 +236,9 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 > - Forward-API: FDE + code-integrity domain-tagged hooks (stub consumers) plus a structured `tpm_unseal_result` + `tpm_seal_set_recovery_handler` recovery handoff (live-console prompt is the open follow-up, shared with §6 console infra).
 > - Session-response validation is STRUCTURAL (shared `tpm_session_auth_response_ok`, keyed off the command tag): a malformed / truncated / wrong-tag success can never return secret bytes or a bogus handle as OK. Cryptographic authenticity vs a bus interposer (response HMAC) is the filed HMAC-session follow-up.
 > - Scope boundary: this section owns the seal/unseal mechanism + forward hooks; the storage-encryption / CI-policy consumers and the live recovery prompt are tracked elsewhere.
+> **Verified:** 2026-06-14 | commit `f0712b77` | 5/7 items | build OK | tests 777/777
+> **Deferred:** [H] cryptographic response authenticity + parameter encryption vs a physical bus interposer (forged well-formed success / key sniffing); structural validation only today -> XREF: 01-boot-platform/TODO-13 §8 (item: "salted/bound HMAC sessions + parameter encryption" at line 228)
+> **Quality reviewed:** 2026-06-14 | Codex 11x (design + adversarial + adversarial-impl + re-adversarial + consistency + perf) | 5H+5M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 9. Attestation Report Export
 

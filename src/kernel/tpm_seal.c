@@ -29,15 +29,20 @@
 
 /* ---- Auth-area writers (one session) ----
  * authorizationSize(4) + sessionHandle(4) + nonce TPM2B(2,0) +
- * sessionAttributes(1)=continue + hmac TPM2B(2,0) = 13 bytes; authorizationSize
- * value is 9 (the per-session bytes after the size field). continueSession keeps
- * a real session alive for our explicit FlushContext (harmless for TPM_RS_PW). */
+ * sessionAttributes(1) + hmac TPM2B(2,0) = 13 bytes; authorizationSize value is 9
+ * (the per-session bytes after the size field). continueSession (attrs bit 0) is
+ * set ONLY for a real HMAC/POLICY session (high byte 0x02/0x03) -- it keeps that
+ * session alive for our explicit FlushContext. For the permanent password handle
+ * TPM_RS_PW the attribute is 0x00: a password authorization is not a savable
+ * session, so continueSession is meaningless and a strict TPM can reject it as an
+ * attributes error (a bare-metal-only failure the fakes would not catch). */
 static uint32_t seal_put_auth(uint8_t *buf, uint32_t off, uint32_t session)
 {
+    uint8_t ht = (uint8_t)(session >> 24);
     tpm2_be32_put(buf + off, 9u); off += 4u;        /* authorizationSize */
     tpm2_be32_put(buf + off, session); off += 4u;   /* sessionHandle */
     tpm2_be16_put(buf + off, 0u); off += 2u;        /* nonce size 0 */
-    buf[off] = 0x01u; off += 1u;                    /* sessionAttributes: continue */
+    buf[off] = (ht == 0x02u || ht == 0x03u) ? 0x01u : 0x00u; off += 1u; /* attrs */
     tpm2_be16_put(buf + off, 0u); off += 2u;        /* hmac size 0 */
     return off;
 }
@@ -332,7 +337,7 @@ static void seal_report_failure(struct tpm_unseal_result *result,
  * area) does NOT apply -- the fixed-offset handle parser is the validation, and
  * the rc is classified directly here. */
 static uint32_t seal_exec_handle(const uint8_t *cmd, uint32_t n,
-                                 tpm_nv_status_t *out_st)
+                                 tpm_nv_status_t *out_st, uint32_t *out_rc)
 {
     uint8_t rsp[512];
     uint16_t tag;
@@ -348,6 +353,7 @@ static uint32_t seal_exec_handle(const uint8_t *cmd, uint32_t n,
         *out_st = TPM_NV_TRANSPORT;
         return 0;
     }
+    if (out_rc) *out_rc = rc;                 /* raw rc for the structured report */
     if (rc != TPM2_RC_SUCCESS) {
         *out_st = tpm_nv_classify_rc(rc);
         return 0;
@@ -372,11 +378,11 @@ static uint32_t seal_exec_handle(const uint8_t *cmd, uint32_t n,
 }
 
 /* Deterministically (re)create the SRK storage parent and return its handle. */
-static uint32_t seal_create_primary(tpm_nv_status_t *out_st)
+static uint32_t seal_create_primary(tpm_nv_status_t *out_st, uint32_t *out_rc)
 {
     uint8_t cmd[96];
     uint32_t n = tpm2_build_create_primary_srk(cmd, sizeof cmd);
-    return seal_exec_handle(cmd, n, out_st);
+    return seal_exec_handle(cmd, n, out_st, out_rc);
 }
 
 tpm_seal_status_t tpm_seal_secret(const uint8_t *secret, uint16_t secret_len,
@@ -402,7 +408,7 @@ tpm_seal_status_t tpm_seal_secret(const uint8_t *secret, uint16_t secret_len,
     if (st != TPM_NV_OK)
         return map_nv_status(st);
 
-    primary = seal_create_primary(&st);
+    primary = seal_create_primary(&st, 0);   /* seal does not report; no rc needed */
     if (primary == 0u)
         return map_nv_status(st);
     /* From here ALL exits flush `primary`. */
@@ -461,7 +467,7 @@ tpm_seal_status_t tpm_unseal_secret(const struct tpm_sealed_blob *blob,
 {
     uint8_t cmd[TPM_SEAL_PRIV_MAX + TPM_SEAL_PUB_MAX + 64u];
     uint8_t sel[3];
-    uint32_t mask, primary, object, n;
+    uint32_t mask, primary, object, n, stage_rc = 0u;
     tpm_nv_status_t st;
     tpm_seal_status_t r;
     struct seal_unseal_ctx ctx;
@@ -484,21 +490,22 @@ tpm_seal_status_t tpm_unseal_secret(const struct tpm_sealed_blob *blob,
     }
     tpm_pcr_mask_to_select(mask, sel);
 
-    primary = seal_create_primary(&st);
+    primary = seal_create_primary(&st, &stage_rc);
     if (primary == 0u) {
         r = map_nv_status(st);
-        seal_report_failure(result, r, 0u, domain);
+        seal_report_failure(result, r, stage_rc, domain);  /* raw rc for diagnosis */
         return r;
     }
     /* Load the object under the parent, then drop the parent immediately -- the
      * loaded object is self-standing for Unseal. Load's response carries a
      * leading object-handle area (same shape as CreatePrimary). */
+    stage_rc = 0u;
     n = tpm2_build_load(cmd, sizeof cmd, primary, blob);
-    object = seal_exec_handle(cmd, n, &st);
+    object = seal_exec_handle(cmd, n, &st, &stage_rc);
     seal_flush(primary);                     /* parent no longer needed */
     if (object == 0u) {
         r = map_nv_status(st);
-        seal_report_failure(result, r, 0u, domain);
+        seal_report_failure(result, r, stage_rc, domain);
         return r;
     }
 
@@ -512,7 +519,14 @@ tpm_seal_status_t tpm_unseal_secret(const struct tpm_sealed_blob *blob,
     if (st == TPM_NV_OK)
         r = TPM_SEAL_OK;
     else if (st == TPM_NV_AUTH)
-        r = TPM_SEAL_POLICY_FAIL;            /* policy/unseal stage: PCR drift */
+        /* AUTH covers both TPM_RC_POLICY_FAIL and TPM_RC_AUTH_FAIL. Only a
+         * POLICY_FAIL raised by the Unseal command itself means PCR drift (the
+         * recoverable "boot a different config" case); an AUTH_FAIL, or an AUTH
+         * from the PolicyPCR setup stage (ctx.tpm_rc stays 0 there), is a
+         * different condition and must NOT be misdiagnosed as PCR drift to the
+         * recovery UX. Discriminate on the raw rc captured from the Unseal stage. */
+        r = ((ctx.tpm_rc & 0xBFu) == TPM2_RC_F1_POLICY_FAIL)
+                ? TPM_SEAL_POLICY_FAIL : TPM_SEAL_AUTH_FAIL;
     else
         r = map_nv_status(st);
     seal_report_failure(result, r, ctx.tpm_rc, domain);

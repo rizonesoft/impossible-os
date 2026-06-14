@@ -32,6 +32,9 @@ static void test_seal_build_create_primary(void)
     TEST_ASSERT_EQ(tpm2_be32_get(buf + 10), TPM_RH_OWNER, "primaryHandle OWNER");
     TEST_ASSERT_EQ(tpm2_be32_get(buf + 14), 9u, "authorizationSize 9 (PW session)");
     TEST_ASSERT_EQ(tpm2_be32_get(buf + 18), TPM_RS_PW, "owner password session");
+    /* sessionAttributes (offset 24, after authSize+handle+nonce-size) MUST be 0
+     * for TPM_RS_PW -- continueSession on a password auth is non-portable. */
+    TEST_ASSERT_EQ((uint32_t)buf[24], 0u, "TPM_RS_PW attrs byte is 0 (no continueSession)");
     /* inPublic inner at 10+4+13+6 = 33. */
     TEST_ASSERT_EQ(tpm2_be16_get(buf + 33), 26u, "TPMT_PUBLIC inner size 26");
     TEST_ASSERT_EQ(tpm2_be16_get(buf + 35), TPM_ALG_ECC, "SRK type ECC");
@@ -126,6 +129,9 @@ static void test_seal_build_load_unseal(void)
     TEST_ASSERT_EQ(tpm2_be32_get(buf + 10), 0x80000003u, "Unseal itemHandle");
     TEST_ASSERT_EQ(tpm2_be32_get(buf + 14), 9u, "Unseal authorizationSize 9");
     TEST_ASSERT_EQ(tpm2_be32_get(buf + 18), 0x03000000u, "Unseal policy session handle");
+    /* A real POLICY session (high byte 0x03) MUST carry continueSession=0x01 so
+     * the session survives for our explicit FlushContext. */
+    TEST_ASSERT_EQ((uint32_t)buf[24], 1u, "policy session attrs byte is 1 (continueSession)");
 }
 
 /* ---- Pure parse coverage ---- */
