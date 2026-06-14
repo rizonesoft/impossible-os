@@ -689,6 +689,32 @@ void vpd_crash_banner(uint16_t last_postcode)
     s_banner_shown = 1;
     s_last_boot_ok = (last_postcode == POST16_BOOT_OK) ? 1 : 0;
     s_last_boot_post = last_postcode;
+
+    /* When boot.conf parsed with postbars=0, vpd_init() early-returns and never
+     * renders the info-header "Last Boot:" line, so a crash-restart on the
+     * default config would show the failure on serial but nothing on screen.
+     * Draw a standalone failure banner here for exactly that case. When
+     * postbars>=1 (or config not yet parsed) vpd_init() renders the full header
+     * with the same information, so this standalone draw is skipped to avoid a
+     * redundant overlapping banner. */
+    if (s_last_boot_ok == 0 &&
+        g_boot_info.config.config_found && !g_boot_info.config.postbars) {
+        const char *name = vpd_post16_name(last_postcode);
+        uint32_t namelen = 0;
+        uint32_t x = VPD_LEFT_MARGIN;
+        uint32_t y = VPD_ROW_HEIGHT; /* one row below the top edge */
+        uint32_t sx;
+        if (!name) name = "?";
+        while (name[namelen]) namelen++;
+        vpd_puts_scaled(x, y, "Last boot failed: ", VPD_COLOR_FAIL);
+        sx = x + 18 * VPD_CHAR_W; /* width of the label above */
+        vpd_puts_scaled(sx, y, name, VPD_COLOR_FAIL);
+        sx += (namelen + 1) * VPD_CHAR_W;
+        vpd_puts_scaled(sx, y, "(0x", VPD_COLOR_FAIL);
+        vpd_puthex16_scaled(sx + 3 * VPD_CHAR_W, y, last_postcode,
+                             VPD_COLOR_FAIL);
+        vpd_puts_scaled(sx + 7 * VPD_CHAR_W, y, ")", VPD_COLOR_FAIL);
+    }
 }
 
 void vpd_stop_tier1(void)

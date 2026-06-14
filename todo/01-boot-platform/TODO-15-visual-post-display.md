@@ -218,8 +218,8 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 
 - [x] NVRAM already stores full 16-bit POST code via `boot_post_write16()` / `boot_post_read16()`
 - [x] `vpd_post16_name(code)` -- lookup table resolves POST16 code → stage name (55 entries)
-- [/] `vpd_crash_banner(last_postcode)` -- sets banner state (`s_banner_shown` + postcode); the red 2x "Last boot failed: NAME 0xNNNN" draws via the VPD render path, so it currently appears only when VPD is active (`postbars>=1`)
-- [ ] Gap: draw the failure banner independent of `postbars` -- `vpd_crash_banner()` only sets `s_banner_shown`; the draw is gated on `vpd_init()` (early-returns when `postbars==0`), so a default-config crash shows nothing on screen
+- [x] `vpd_crash_banner(last_postcode)` -- sets banner state and draws the failure banner: a standalone red line when `postbars==0`, or the info-header "Last Boot:" line when `postbars>=1` -- shown regardless of postbars
+- [x] Failure banner drawn independent of `postbars` -- `vpd_crash_banner()` draws the standalone red banner when `config_found && postbars==0` (the case `vpd_init()` skips the header); no double-draw when `postbars>=1`
 - [x] Wired into `boot_phase0()` -- displays on both incomplete and failed prior boots
 - [x] Serial log already shows `[BOOT] Last POST code: 0xNNNN (incomplete/FAILED)`
 - [x] Banner auto-clears when splash composites over it
@@ -304,7 +304,7 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 | 💎 | Boot progress visual    | ✅ Spinning dots             | ✅ Plymouth splash            | ✅ §4 §7 VPD bars timing         |
 | ⭐ | Pre-splash diagnostics  | ❌ Black screen              | ⚠️ fbcon (if compiled in)     | ✅ §3 §4 micro-font Tier1        |
 | 💎 | Boot stage timing       | ⚠️ ETW (not visible)         | ✅ systemd-analyze (post)     | ✅ §4 live TSC ms text           |
-| ⭐ | NVRAM crash persistence | ⚠️ Generic error message      | ❌ No NVRAM persistence       | ⚠️ §8 banner postbars-gated      |
+| ⭐ | NVRAM crash persistence | ⚠️ Generic error message      | ❌ No NVRAM persistence       | ✅ §8 banner any postbars        |
 | 💎 | POST code display       | ✅ Motherboard LED           | ❌ Not an OS feature          | ✅ §1 §2 POST16 port I/O         |
 | 💎 | Configurable diag       | ✅ bcdedit bootlog           | ✅ systemd.log_level          | ✅ §5 postbars cfg               |
 | ⭐ | Panic-aware progress    | ❌ No boot context in BSOD   | ❌ No boot context in oops    | ✅ §13 red fail stage            |
