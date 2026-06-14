@@ -57,7 +57,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   1   | UEFI pre-kernel POST codes         | --                            |  [x]   |
 | 💎  |   2   | Boot progress named-stage API      | §1                            |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
-| 💎  |   4   | Alive blink / visual heartbeat     | §2 (visual only; hang=TODO-23) |  [ ]   |
+| 💎  |   4   | Alive blink / visual heartbeat     | §2 (visual only; hang=TODO-23) |  [/]   |
 | 💎  |   5   | Panic forensic evidence            | §2                            |  [ ]   |
 | ⭐  |   6   | Panic QR code                      | §5                            |  [ ]   |
 | 💎  |   7   | System-wide multi-instance spinner | 08-graphics-ui/TODO-06 §8     |  [ ]   |
@@ -141,7 +141,7 @@ A 4x4 px VISUAL liveness indicator (a blinking pixel) once a timer-driven path c
 
 **Files:** `src/kernel/drivers/pit.c` (or `timer.c`), `src/kernel/main/boot_progress.c`
 
-- [ ] Remove or gate any path that calls `fb_swap_rect()` from `timer_tick_callback_fire()` / ISR (`alive_blink_tick` regression)
+- [x] Remove/gate any `fb_swap_rect()` from `timer_tick_callback_fire()` / ISR (`alive_blink_tick` regression): no `alive_blink_tick` tick callback exists (only `spinner_advance`); `fb_swap_rect` is ISR-free -- the hazard path is gone.
 - [ ] Design safe commit: compositor tick, DPC, or flag set in ISR plus deferred FB flush
 - [ ] Re-enable `heartbeat=` from `g_boot_info.config` (0=off, 1=on); optional `HKLM\SYSTEM\Boot\AliveBlink` after → XREF: `02-kernel-core/TODO-14-registry-completion.md`
 - [ ] 4x4 px green square at top-left (4,4); toggles ~0.5 s using the safe path only
@@ -149,6 +149,13 @@ A 4x4 px VISUAL liveness indicator (a blinking pixel) once a timer-driven path c
 - [ ] Commit: `"kernel: alive blink hang indicator -- safe FB path, no ISR swap"`
 
 **Test checkpoint:** With §4 shipped: QEMU WHPX, QEMU TCG, VirtualBox: `heartbeat=1` shows stable blink, no lockup or FB corruption. Bare metal: same; confirm no recursive interrupt storm.
+> **Test runner:** N/A (no kernel test surface yet -- the blink feature is deferred) | validation: serial-log + on-screen, pending the safe FB path
+> **Notes:**
+> - Shipped: only the safety invariant -- the `alive_blink_tick`/ISR `fb_swap_rect` regression path is confirmed absent (no such tick callback registered; `fb_swap_rect` is ISR-free).
+> - Deferred: the visual blink feature (safe FB-path design + `heartbeat=` re-enable + the 4x4 square) needs a deferred-flush path (compositor tick / DPC) and BARE-METAL validation ("no recursive interrupt storm") that cannot be proven on QEMU alone.
+> - Scope boundary: actual hang DETECTION (NMI/TCO watchdog, timeout, auto-reboot, A/B rollback) is owned by TODO-23; this section is the passive visual signal only.
+> **Verified:** 2026-06-14 | safety invariant only | 1/7 items | build OK (no code change) | manual (symbol audit)
+> **Deferred:** [M] alive-blink visual feature unimplemented (reason: needs safe deferred-FB path + bare-metal validation per bare-metal-first) -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (Boot Watchdog & Hang Detection)
 
 ---
 
