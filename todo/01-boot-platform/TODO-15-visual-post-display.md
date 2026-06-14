@@ -66,7 +66,7 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 | 💎  |  10   | Seamless tier transition                                | §4, §9              |  [ ]   |
 | ⭐  |  11   | Phase grouping and diagnostic layout                    | §7                  |  [x]   |
 | 💎  |  12   | HV_BAR removal and migration                            | §4, §6              |  [x]   |
-| ⭐  |  13   | Panic integration and failure highlighting              | §8, §11             |  [x]   |
+| ⭐  |  13   | Panic integration and failure highlighting              | §8, §11             |  [/]   |
 
 > 💎 = parity -- Windows has boot progress display (logo + dots); Linux has `plymouth` splash and `systemd-analyze blame`.
 > ⭐ = exclusive -- embedded micro-font pre-splash diagnostics, NVRAM crash persistence display, and full timing waterfall are not available in Windows or Linux at the kernel level without external tools.
@@ -304,6 +304,16 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 - [x] Commit: `"boot: VPD panic integration -- failure highlighting"`
 
 **Test checkpoint:** Forced panic shows Tier 1 failed stage in red; next boot shows last POST banner; Tier 2 panic path stays open until §9. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired -- file-wide Unit Tests gap) | validation: forced-panic on QEMU/hardware (manual)
+> **Notes:**
+> - Shipped: `vpd_stage_fail()` (`vpd.c:589`) marks the active VPD stage red + "FAIL" at panic time, called from `panic_screen()` (`panic.c:1205`) before the NVRAM write + BSOD; next-boot failure shows via the §8 crash banner / info-header.
+> - Integrates: panic ordering = mark-red -> `boot_post_nvram_write16(POST16_BOOT_FAILED)` -> subsystem dump -> BSOD; `vpd_stage_fail()` guards on `s_active && s_has_current` (no-op when VPD inactive, no NULL `s_fb` deref).
+> - Review: Codex 3x fixed the 0xFFFE info-header misclassification (now "FAILED (panic)" not "Phase 3") + a stale `boot_halt` NVRAM comment; exact-stage preservation deferred (shared with §8).
+> - Scope boundary: §13 owns the at-panic stage-red marking; the next-boot banner is §8; Tier 2 post-splash panic display is deferred to §9.
+> **Verified:** 2026-06-14 | this review commit (fixes in-commit) | 4/5 items | build OK | manual (forced-panic pending)
+> **Deferred:** [M] Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 303)
+> **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 226)
+> **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
 

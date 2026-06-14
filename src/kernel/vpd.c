@@ -445,7 +445,14 @@ static void vpd_render_info_header(void)
         } else if (s_last_boot_ok == 0) {
             uint16_t pc = s_last_boot_post;
             const char *phase_str;
-            if (pc < 0x1000)       phase_str = "FAILED Phase 0";
+            /* POST16_BOOT_FAILED is the generic panic sentinel (0xFFFE) -- it
+             * is not a phase code, so do not let it classify as Phase 3. The
+             * exact failing stage is lost when the panic path overwrites the
+             * NVRAM milestone; recovering it is the stage-preservation
+             * follow-up tracked in the VPD crash-persistence work. */
+            if (pc == POST16_BOOT_FAILED)
+                                   phase_str = "FAILED (panic)";
+            else if (pc < 0x1000)  phase_str = "FAILED Phase 0";
             else if (pc < 0x2000)  phase_str = "FAILED Phase 1";
             else if (pc < 0x3000)  phase_str = "FAILED Phase 2";
             else                   phase_str = "FAILED Phase 3";

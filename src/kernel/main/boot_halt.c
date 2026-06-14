@@ -251,7 +251,11 @@ static void blit_string(volatile uint32_t *fb, uint32_t pitch_px,
 
 void boot_halt(const char *reason)
 {
-    /* Write failure POST code to UEFI NVRAM before anything else */
+    /* Mark failure on the I/O-port 0x80 POST card + on-screen POST display
+     * first. boot_post_write16 is volatile (no NVRAM write -- see boot_init.c);
+     * next-boot failure detection instead relies on NVRAM still holding the
+     * last milestone (!= POST16_BOOT_OK), since boot_halt runs before the
+     * Phase 3 "succeeded" mark. */
     boot_post_write16(POST16_BOOT_FAILED);
 
     /* Always write to serial first -- works regardless of framebuffer state */
