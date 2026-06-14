@@ -392,17 +392,17 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Serial log shows `[+Nms] BOOT_PMM: Physical memory manager ready` style entries for at least 8 stages
-- [ ] POST code visible in top-right corner during QEMU boot; disappears when desktop loads
-- [ ] `AliveBlink=1` in `boot.conf` → 4x4 green square blinks in top-left corner during boot and desktop
-- [ ] Force `kernel_panic("test")` from shell → BSOD shows QR code in bottom-right corner
-- [ ] Force panic twice -> second boot finds `last-panic.txt` in `X:\Crash\` (-> XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` §7)
-- [ ] `VitalSigns=1` → bottom strip shows CPU/RAM/IRQ/uptime/FPS, updates every 500 ms
-- [ ] `spinner_create(SPINNER_MEDIUM, 0x0078D4)` in test harness → spinner renders in compositor frame
+- [x] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===` (clean build 2026-06-14, exit 0)
+- [ ] Serial log shows `[+Nms] BOOT_PMM: Physical memory manager ready` style entries for at least 8 stages (manual -- serial capture on QEMU/hardware)
+- [ ] POST code visible in top-right corner during QEMU boot; disappears when desktop loads (manual -- visual)
+- [ ] `AliveBlink=1` in `boot.conf` → 4x4 green square blinks in top-left corner during boot and desktop (deferred -- §4 not implemented)
+- [ ] Force `kernel_panic("test")` from shell → BSOD shows QR code in bottom-right corner (deferred -- §6 not implemented)
+- [ ] Force panic twice -> second boot finds `last-panic.txt` in `X:\Crash\` (-> XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` §7) (manual -- §5 shipped; needs forced-panic reboot on QEMU/hardware)
+- [ ] `VitalSigns=1` → bottom strip shows CPU/RAM/IRQ/uptime/FPS, updates every 500 ms (deferred -- §8 not implemented)
+- [ ] `spinner_create(SPINNER_MEDIUM, 0x0078D4)` in test harness → spinner renders in compositor frame (deferred -- §7 not implemented)
 - [ ] Commit: `"kernel: boot-diagnostics verified -- POST codes, panic forensics, QR code, vital signs, multi-instance spinner"`
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) -- add `TEST_CAT_BOOT` suites when `test_boot_diag.c` lands (Unit Tests section).
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_boot_diag.c` landed with 5 `TEST_CAT_BOOT` suites (boot stage/POST + panic evidence §5 + boot-load-status §11); deferred-feature tests (§4/§6/§7/§8) pending with their sections.
 
 ---
 
