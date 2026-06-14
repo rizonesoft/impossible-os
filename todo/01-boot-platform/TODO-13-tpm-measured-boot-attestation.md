@@ -247,7 +247,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 - [ ] Prerequisite: make `BOOT_CAP_MANIFEST_PCR_BOUND` (1u<<10) a validated capability (`BOOT_CAP_LIST` + mirror + `BOOT_CAP_MASK_KNOWN` + classify in `bootx64.c` + regression). -> XREF: TODO-01 §11.
 - [x] Immutable Phase-0 handoff snapshot: `struct boot_attest_handoff` + latched write-once `tpm_attest_handoff_snapshot_init`/`_get` in new `tpm_attest_report.c`, captured in `boot_hw.c` pre-caps-refinement (design constraint 1).
-- [ ] Build the TPM-rooted `boot_attestation_report_t` from the IMMUTABLE Phase-0 handoff snapshot: per-bank PCRs (SHA-256 quoted, others diagnostic), event digest, SB state, nonce, §13 `TPM2_Quote` + AK public + EK-cert chain.
+- [x] `boot_attestation_report_t` + `tpm_attest_report_build()`: Phase-0 snapshot + `.bootproto` manifest sha256 + integrity verdict + SHA-256-quoted PCR bank + Quote/AK/EK; pcrDigest coherence recompute; AK-EK binding UNVERIFIED; nonce MIN..MAX.
 - [ ] Export to `X:\Diag\attestation.json`.
 - [ ] Add native query API for user-mode system settings.
 - [ ] Add remote-attestation placeholder for platform services.

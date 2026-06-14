@@ -1,13 +1,18 @@
-/* Unit tests for the TPM-rooted boot attestation report export -- currently the
- * immutable bootloader-to-kernel handoff snapshot. */
+/* Unit tests for the TPM-rooted boot attestation report export: the immutable
+ * bootloader-to-kernel handoff snapshot and the report builder. */
 
 #include "kernel/test/test.h"
 #include "kernel/tpm_attest_report.h"
+#include "kernel/tpm.h"                   /* TPM_ALG_SHA256 */
 #include "kernel/boot_info.h"
+#include "kernel/boot_proto_descriptor.h" /* kernel_boot_proto identity check */
 #include "libc/string.h"
 
-/* Static fixture: struct boot_info is large, so keep it off the test stack. */
+extern const struct boot_proto_descriptor kernel_boot_proto;
+
+/* Static fixtures off the test stack: boot_info is large and the report is ~2.3 KB. */
 static struct boot_info s_fixture_bi;
+static struct boot_attestation_report s_report;
 
 static void test_attest_handoff_capture(void)
 {
@@ -62,8 +67,98 @@ static void test_attest_handoff_capture(void)
     }
 }
 
+/* The report builder. TPM-presence-independent: asserts the structural and
+ * invariant properties that hold whether or not the test host has a live TPM
+ * (the harness usually has none, so the quote/AK/EK paths return NO_TPM). */
+static void test_attest_report_build(void)
+{
+    const struct boot_attest_handoff *h;
+    uint8_t nonce[TPM_QUOTE_NONCE_MAX + 1];
+    uint8_t i;
+    tpm_attest_status_t st;
+
+    for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0xA0u + i);
+
+    /* NULL out -> BADARG, nothing else. */
+    st = tpm_attest_report_build(nonce, TPM_QUOTE_NONCE_MIN, 0);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_BADARG, "NULL out -> BADARG");
+
+    /* Malformed verifier challenges are caller errors (BADARG), never silently
+     * absorbed into a valid degraded report. */
+    st = tpm_attest_report_build(nonce, TPM_QUOTE_NONCE_MIN - 1u, &s_report);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_BADARG, "too-short nonce -> BADARG");
+    st = tpm_attest_report_build(nonce, TPM_QUOTE_NONCE_MAX + 1u, &s_report);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_BADARG, "over-max nonce -> BADARG");
+    st = tpm_attest_report_build(0, TPM_QUOTE_NONCE_MIN, &s_report);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_BADARG, "NULL nonce + nonzero len -> BADARG");
+
+    st = tpm_attest_report_build(nonce, TPM_QUOTE_NONCE_MIN, &s_report);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_OK, "build returns OK");
+    TEST_ASSERT_EQ((uint32_t)s_report.valid, 1u, "report assembled valid");
+    TEST_ASSERT_EQ(s_report.schema_version, ATTEST_REPORT_SCHEMA_VERSION, "schema version stamped");
+    TEST_ASSERT_EQ((uint32_t)s_report.quoted_bank_alg, (uint32_t)TPM_ALG_SHA256,
+                   "only the SHA-256 bank is TPM-quoted");
+
+    /* (1) Kernel-image identity sourced from the immutable .bootproto const. */
+    TEST_ASSERT_EQ(memcmp(s_report.manifest_sha256, kernel_boot_proto.sha256, 32), 0,
+                   "manifest sha256 == kernel_boot_proto.sha256");
+    TEST_ASSERT_EQ(s_report.manifest_version, kernel_boot_proto.version, "manifest version copied");
+    TEST_ASSERT_EQ(s_report.manifest_struct_size, kernel_boot_proto.struct_size,
+                   "manifest struct_size copied");
+
+    /* (2) Handoff provenance mirrors the immutable Phase-0 snapshot. */
+    h = tpm_attest_handoff_get();
+    TEST_ASSERT_EQ((uint32_t)s_report.handoff_valid, (uint32_t)h->valid, "handoff_valid mirrored");
+    TEST_ASSERT_EQ((uint32_t)s_report.caps_present, (uint32_t)h->caps_present, "caps_present mirrored");
+    TEST_ASSERT_EQ((uint32_t)s_report.boot_path, h->boot_path, "boot_path mirrored");
+
+    /* SHA-256 PCR bank: the full quote set {0-7,11} is enumerated in order. */
+    TEST_ASSERT_EQ((uint32_t)s_report.pcr_count, (uint32_t)ATTEST_REPORT_PCR_MAX,
+                   "all 9 quote-mask PCRs enumerated");
+    TEST_ASSERT_EQ((uint32_t)s_report.pcrs[0].pcr_index, 0u, "first quoted PCR is 0");
+    TEST_ASSERT_EQ((uint32_t)s_report.pcrs[8].pcr_index, 11u, "last quoted PCR is 11");
+
+    /* Nonce echoed into the report before the quote (exact, no truncation). */
+    TEST_ASSERT_EQ((uint32_t)s_report.nonce_len, (uint32_t)TPM_QUOTE_NONCE_MIN, "nonce length echoed");
+    TEST_ASSERT_EQ(memcmp(s_report.nonce, nonce, TPM_QUOTE_NONCE_MIN), 0, "nonce bytes echoed");
+
+    /* Quote/coherence invariants (hold regardless of TPM presence). */
+    TEST_ASSERT_EQ((uint32_t)s_report.quote_present,
+                   (uint32_t)(s_report.quote_status == (uint8_t)TPM_ATTEST_OK ? 1u : 0u),
+                   "quote_present iff quote_status OK");
+    if (!s_report.quote_present)
+        TEST_ASSERT_EQ((uint32_t)s_report.pcr_coherence, (uint32_t)ATTEST_COHERENCE_NA,
+                       "no quote -> coherence NA");
+
+    /* Trust model: AK<->EK binding is never auto-trusted by this build. */
+    TEST_ASSERT_EQ((uint32_t)s_report.ak_credential_status, (uint32_t)ATTEST_TRUST_UNVERIFIED,
+                   "AK credential binding stays UNVERIFIED");
+    TEST_ASSERT_EQ((uint32_t)s_report.qualified_signer_status, (uint32_t)ATTEST_TRUST_UNVERIFIED,
+                   "qualified-signer binding stays UNVERIFIED");
+    TEST_ASSERT_EQ((uint32_t)s_report.ek_cert_status,
+                   (uint32_t)(s_report.ek_status == (uint8_t)TPM_ATTEST_OK
+                                  ? ATTEST_TRUST_UNVERIFIED : ATTEST_TRUST_ABSENT),
+                   "EK cert UNVERIFIED when present, ABSENT otherwise");
+
+    /* Forward-compat DRTM slots zeroed (no SENTER/SKINIT today). */
+    TEST_ASSERT_EQ((uint32_t)s_report.drtm_entry_pcr, 0xFFu, "DRTM entry PCR = none");
+    TEST_ASSERT_EQ((uint32_t)s_report.drtm_measurement_type, 0u, "DRTM measurement type = none");
+
+    /* NULL/0 is the explicit unsigned self-test mode: builds OK, no nonce, no
+     * quote attempted (quote_present 0). */
+    st = tpm_attest_report_build(0, 0, &s_report);
+    TEST_ASSERT_EQ((uint32_t)st, (uint32_t)TPM_ATTEST_OK, "self-test (NULL nonce) builds");
+    TEST_ASSERT_EQ((uint32_t)s_report.valid, 1u, "self-test report valid");
+    TEST_ASSERT_EQ((uint32_t)s_report.nonce_len, 0u, "self-test -> zero nonce length");
+    TEST_ASSERT_EQ((uint32_t)s_report.quote_present, 0u, "self-test attempts no quote");
+    TEST_ASSERT_EQ((uint32_t)s_report.pcr_coherence, (uint32_t)ATTEST_COHERENCE_NA,
+                   "self-test -> coherence NA");
+}
+
 void test_register_tpm_attest_report(void)
 {
     test_suite_register_cat("tpm: attest handoff snapshot capture",
                             test_attest_handoff_capture, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest report build",
+                            test_attest_report_build, TEST_CAT_SECURITY);
 }
