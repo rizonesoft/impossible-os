@@ -53,7 +53,7 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 | 💎 |   2   | Admin Queue setup and Identify commands       | §1         |  [x]   |
 | 💎 |   3   | I/O Queue creation and sector read/write      | §2         |  [x]   |
 | 💎 |   4   | Block device registration and VFS integration | §3         |  [x]   |
-| ⭐ |   5   | Advanced NVMe parity backlog (owned by D04 T08) | §1, §2, §3, §4 |  [ ]   |
+| ⭐ |   5   | Advanced NVMe parity backlog (owned by D04 T08) | §1, §2, §3, §4 |  [/]   |
 | 💎 |   6   | Controller lifecycle: shutdown, flush, I/O validation | §2, §3, §4 |  [ ]   |
 
 ---
@@ -168,6 +168,13 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 - [ ] Commit: `todo: NVMe advanced backlog tracked no kernel change`
 
 **Test checkpoint:** Each §5 bullet maps to a matching `[x]` in `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` §5 or §3 with proof: QEMU TCG `make run-nvme` shows no new `nvme: controller enable timeout` regressions; serial still shows POST16 `0x20A0` through `0x20A7` in order on reference image; `bash scripts/test.sh SUITE=storage` passes after the merged feature lands.
+> **Test runner:** N/A (documentation/ownership only -- no kernel change) | validation: each bullet carries a per-item XREF into `04-drivers-hardware/TODO-08`
+> **Notes:**
+> - Deferred: tracking-only backlog of advanced NVMe parity (MSI-X/MSI completion, multi-queue, SMART log 0x02, multi-namespace, discard/TRIM, APST, fabrics); all implementation is owned by the post-boot `04-drivers-hardware/TODO-08`.
+> - Why deferred: TODO-16 is boot-critical scope only; these features are not needed to boot from NVMe and would bloat the boot-critical driver. No kernel change lands in this section.
+> - Scope boundary: §5 owns the cross-reference + parity tracking; the features ship in D04 T08. Boot-critical NVMe durability (flush/shutdown) is the separate §6, owned here.
+> **Verified:** 2026-06-15 | deferred -- no code shipped (tracking-only backlog) | 0/7 items | build OK (no code change) | manual (XREF audit)
+> **Deferred:** [M] advanced NVMe parity (MSI-X, multi-queue, SMART, namespaces, discard, APST, fabrics) unimplemented here; each bullet XREFs its owner -> XREF: 04-drivers-hardware/TODO-08 §5 (NVMe Storage Driver -- advanced bullets beyond the boot-critical reconcile item)
 
 ---
 
