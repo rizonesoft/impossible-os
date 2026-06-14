@@ -139,10 +139,99 @@ static void test_attest_build_quote(void)
                    0u, "Quote rejects unsupported sig scheme");
 }
 
+/* ---- TPMS_ATTEST quote-response parse ---- */
+
+/* Build a well-formed TPM2_Quote response into rsp; returns its total length. */
+static uint32_t build_quote_response(uint8_t *rsp)
+{
+    uint32_t i, attest_off, a, attest_size, sig_off, plen, total;
+    /* header */
+    tpm2_be16_put(rsp + 0, TPM2_ST_SESSIONS);
+    tpm2_be32_put(rsp + 6, TPM2_RC_SUCCESS);
+    /* TPM2B_ATTEST starts at params offset 14 (after parameterSize). */
+    attest_off = 16u;                 /* params@14 -> size(2) -> TPMS_ATTEST@16 */
+    a = attest_off;
+    tpm2_be32_put(rsp + a, TPM2_GENERATED_VALUE); a += 4u;   /* magic */
+    tpm2_be16_put(rsp + a, TPM2_ST_ATTEST_QUOTE); a += 2u;   /* type */
+    tpm2_be16_put(rsp + a, 4u); a += 2u;                     /* qualifiedSigner name(4) */
+    for (i = 0; i < 4u; i++) rsp[a + i] = (uint8_t)(0x11u + i);
+    a += 4u;
+    tpm2_be16_put(rsp + a, 20u); a += 2u;                    /* extraData = nonce(20) */
+    for (i = 0; i < 20u; i++) rsp[a + i] = (uint8_t)(0x40u + i);
+    a += 20u;
+    tpm2_be32_put(rsp + a, 0u); tpm2_be32_put(rsp + a + 4u, 0x0000ABCDu); a += 8u; /* clock */
+    tpm2_be32_put(rsp + a, 0x11223344u); a += 4u;            /* resetCount */
+    tpm2_be32_put(rsp + a, 0x55667788u); a += 4u;            /* restartCount */
+    rsp[a] = 1u; a += 1u;                                    /* safe */
+    tpm2_be32_put(rsp + a, 0u); tpm2_be32_put(rsp + a + 4u, 0x20u); a += 8u; /* fwVersion */
+    /* TPMS_QUOTE_INFO: TPML_PCR_SELECTION (1 bank, PCRs 0-7) + pcrDigest. */
+    tpm2_be32_put(rsp + a, 1u); a += 4u;                     /* count */
+    tpm2_be16_put(rsp + a, TPM_ALG_SHA256); a += 2u;
+    rsp[a] = 3u; a += 1u;                                    /* sizeofSelect */
+    rsp[a] = 0xFFu; rsp[a + 1u] = 0u; rsp[a + 2u] = 0u; a += 3u; /* PCRs 0-7 */
+    tpm2_be16_put(rsp + a, 32u); a += 2u;                    /* pcrDigest size */
+    for (i = 0; i < 32u; i++) rsp[a + i] = (uint8_t)(0xC0u + i);
+    a += 32u;
+    attest_size = a - attest_off;
+    tpm2_be16_put(rsp + 14, (uint16_t)attest_size);          /* TPM2B_ATTEST size */
+    /* TPMT_SIGNATURE (ECDSA): sigAlg + hashAlg + R(2+32) + S(2+32). */
+    sig_off = a;
+    tpm2_be16_put(rsp + a, TPM_ALG_ECDSA); a += 2u;
+    tpm2_be16_put(rsp + a, TPM_ALG_SHA256); a += 2u;
+    tpm2_be16_put(rsp + a, 32u); a += 2u;
+    for (i = 0; i < 32u; i++) rsp[a + i] = (uint8_t)(0x10u + i);
+    a += 32u;
+    tpm2_be16_put(rsp + a, 32u); a += 2u;
+    for (i = 0; i < 32u; i++) rsp[a + i] = (uint8_t)(0x90u + i);
+    a += 32u;
+    (void)sig_off;
+    plen = a - 14u;
+    tpm2_be32_put(rsp + 10, plen);                           /* parameterSize */
+    /* one-session auth area (5 bytes: nonceTPM(2,0)+attrs(1)+hmac(2,0)). */
+    rsp[a] = 0; rsp[a + 1u] = 0; rsp[a + 2u] = 0; rsp[a + 3u] = 0; rsp[a + 4u] = 0;
+    a += 5u;
+    total = a;
+    tpm2_be32_put(rsp + 2, total);
+    return total;
+}
+
+static void test_attest_parse_quote(void)
+{
+    uint8_t rsp[256], sig[128];
+    struct tpm_quote_attest att;
+    uint32_t n, sig_len = 0;
+
+    memset(rsp, 0, sizeof rsp);
+    n = build_quote_response(rsp);
+    memset(&att, 0, sizeof att);
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), 0,
+                   "valid quote response parses");
+    TEST_ASSERT_EQ((uint32_t)att.nonce_len, 20u, "attest nonce len 20");
+    TEST_ASSERT(att.nonce[0] == 0x40u && att.nonce[19] == 0x53u, "attest nonce bytes");
+    TEST_ASSERT_EQ(att.reset_count, 0x11223344u, "attest resetCount");
+    TEST_ASSERT_EQ(att.restart_count, 0x55667788u, "attest restartCount");
+    TEST_ASSERT_EQ((uint32_t)att.safe, 1u, "attest clock safe bit");
+    TEST_ASSERT_EQ(att.pcr_select, 0xFFu, "attest pcrSelect (PCRs 0-7)");
+    TEST_ASSERT_EQ((uint32_t)att.pcr_digest_len, 32u, "attest pcrDigest len 32");
+    TEST_ASSERT(att.pcr_digest[0] == 0xC0u, "attest pcrDigest bytes");
+    TEST_ASSERT_EQ(sig_len, 72u, "ECDSA signature blob 72 bytes (sigAlg+hash+R+S)");
+    TEST_ASSERT_EQ(tpm2_be16_get(sig + 0), TPM_ALG_ECDSA, "signature alg ECDSA");
+
+    /* Wrong magic / wrong type are rejected (not a TPM-generated quote). */
+    tpm2_be32_put(rsp + 16, 0xDEADBEEFu);
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "bad attest magic rejected");
+    n = build_quote_response(rsp);
+    tpm2_be16_put(rsp + 20, 0x8017u);   /* ATTEST_CERTIFY, not QUOTE */
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "non-quote attest type rejected");
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: PolicySecret marshal", test_attest_build_policy_secret, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: AK signing-key marshal", test_attest_build_ak, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: Quote marshal", test_attest_build_quote, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: quote-response (TPMS_ATTEST) parse", test_attest_parse_quote, TEST_CAT_SECURITY);
 }

@@ -207,3 +207,83 @@ uint32_t tpm2_build_quote(uint8_t *buf, uint32_t cap, uint32_t ak_handle,
     off += 3u;
     return off;
 }
+
+/* Read a big-endian UINT64 (the TPM2 wire has no inline 64-bit helper). */
+static uint64_t at_be64(const uint8_t *p)
+{
+    return ((uint64_t)tpm2_be32_get(p) << 32) | (uint64_t)tpm2_be32_get(p + 4u);
+}
+
+int tpm2_parse_quote(const uint8_t *rsp, uint32_t len, struct tpm_quote_attest *out,
+                     uint8_t *sig_out, uint32_t sig_cap, uint32_t *sig_len)
+{
+    uint32_t poff, plen, pend, a, end_a, attest_size, count, i, sig_off, slen;
+    uint16_t qn, en, pd, sos;
+    if (!out || !sig_out || tpm2_rsp_params(rsp, len, &poff, &plen) != 0 || plen < 2u)
+        return -1;
+    pend = poff + plen;
+    /* quoted: TPM2B_ATTEST{ size(2) + TPMS_ATTEST }. */
+    attest_size = tpm2_be16_get(rsp + poff);
+    a = poff + 2u;
+    if (attest_size < 6u || attest_size > pend - a)   /* must hold >= magic+type */
+        return -1;
+    end_a = a + attest_size;
+    /* TPMS_ATTEST: magic + type pin this as a TPM-generated quote. */
+    if (tpm2_be32_get(rsp + a) != TPM2_GENERATED_VALUE) return -1;
+    a += 4u;
+    if (tpm2_be16_get(rsp + a) != TPM2_ST_ATTEST_QUOTE) return -1;
+    a += 2u;
+    /* qualifiedSigner TPM2B_NAME (skip -- binds to the AK name; verifier checks). */
+    if (a + 2u > end_a) return -1;
+    qn = tpm2_be16_get(rsp + a); a += 2u;
+    if ((uint32_t)qn > end_a - a) return -1;
+    a += qn;
+    /* extraData = the echoed verifier nonce (anti-replay). */
+    if (a + 2u > end_a) return -1;
+    en = tpm2_be16_get(rsp + a); a += 2u;
+    if ((uint32_t)en > end_a - a || (uint32_t)en > TPM_QUOTE_NONCE_MAX) return -1;
+    for (i = 0; i < en; i++) out->nonce[i] = rsp[a + i];
+    out->nonce_len = en;
+    a += en;
+    /* clockInfo: clock(8) + resetCount(4) + restartCount(4) + safe(1) = 17. */
+    if (a + 17u > end_a) return -1;
+    out->clock = at_be64(rsp + a); a += 8u;
+    out->reset_count = tpm2_be32_get(rsp + a); a += 4u;
+    out->restart_count = tpm2_be32_get(rsp + a); a += 4u;
+    out->safe = rsp[a]; a += 1u;
+    /* firmwareVersion(8). */
+    if (a + 8u > end_a) return -1;
+    out->firmware_version = at_be64(rsp + a); a += 8u;
+    /* attested TPMS_QUOTE_INFO: TPML_PCR_SELECTION + pcrDigest. */
+    if (a + 4u > end_a) return -1;
+    count = tpm2_be32_get(rsp + a); a += 4u;
+    out->pcr_select = 0u;
+    for (i = 0; i < count; i++) {
+        if (a + 3u > end_a) return -1;
+        a += 2u;                                       /* hashAlg */
+        sos = rsp[a]; a += 1u;
+        if ((uint32_t)sos > end_a - a) return -1;
+        if (i == 0u) {                                 /* fold the first bank's bitmap */
+            uint32_t k;
+            for (k = 0; k < sos && k < 3u; k++)
+                out->pcr_select |= ((uint32_t)rsp[a + k]) << (8u * k);
+        }
+        a += sos;
+    }
+    if (a + 2u > end_a) return -1;
+    pd = tpm2_be16_get(rsp + a); a += 2u;
+    if ((uint32_t)pd > end_a - a || (uint32_t)pd > sizeof out->pcr_digest) return -1;
+    for (i = 0; i < pd; i++) out->pcr_digest[i] = rsp[a + i];
+    out->pcr_digest_len = pd;
+    a += pd;
+    if (a != end_a)                                    /* exact attest consumption */
+        return -1;
+    /* TPMT_SIGNATURE = the rest of the parameter area (raw, for the verifier). */
+    sig_off = end_a;                                   /* == poff + 2 + attest_size */
+    slen = pend - sig_off;
+    if (slen < 4u || slen > sig_cap)                   /* >= sigAlg(2) + hashAlg(2) */
+        return -1;
+    for (i = 0; i < slen; i++) sig_out[i] = rsp[sig_off + i];
+    if (sig_len) *sig_len = slen;
+    return 0;
+}
