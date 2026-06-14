@@ -154,9 +154,11 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 6. Baseline Enrollment and Storage
 
+> **Blocked (2026-06-14):** a credible measured-boot baseline requires the bootloader/kernel image hashes (SHA-256) and a verify loop (PCR replay), both blocked on the absent kernel SHA primitives (see §4). Golden PCR values (§3) + Secure Boot state (§5) + firmware version are available, but a baseline missing the image hashes and with no replay-based verify path is not a credible enrollment -- shipping it would be false completeness. Storage also wants the §7 TPM NV index (or a UEFI authenticated variable). Deferred until the SHA prerequisite (§4) lands; storage depends on §7. -> XREF: §4 (item: "Prerequisite: kernel SHA-256 transform") + §7 (TPM NV index).
+
 - [ ] Add first-boot enrollment mode gated by physical-console confirmation.
-- [ ] Store golden PCR values in UEFI authenticated variable or TPM NV index.
-- [ ] Include bootloader hash, kernel hash, Secure Boot state, and firmware version metadata.
+- [ ] Store golden PCR values in UEFI authenticated variable or TPM NV index (blocked on §7 storage).
+- [ ] Include bootloader hash, kernel hash, Secure Boot state, and firmware version metadata (image hashes blocked on the §4 SHA prerequisite).
 - [ ] Support baseline rotation after trusted updates.
 - [ ] Commit: `"tpm: enroll measured boot baseline"`
 
