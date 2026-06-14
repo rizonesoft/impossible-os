@@ -14,6 +14,33 @@ extern const struct boot_proto_descriptor kernel_boot_proto;
 static struct boot_info s_fixture_bi;
 static struct boot_attestation_report s_report;
 
+/* In-memory JSON sink so the serializer is tested without a live filesystem. */
+static uint8_t  s_json_buf[8192];
+static uint32_t s_json_len;
+
+static int json_mem_writer(void *ctx, uint32_t off, const uint8_t *data, uint32_t n)
+{
+    (void)ctx;
+    if (off > sizeof s_json_buf || n > (uint32_t)sizeof s_json_buf - off)
+        return -1;
+    memcpy(s_json_buf + off, data, n);
+    if (off + n > s_json_len)
+        s_json_len = off + n;
+    return 0;
+}
+
+static int buf_contains(const uint8_t *hay, uint32_t hlen, const char *needle)
+{
+    uint32_t nl = 0, i;
+    while (needle[nl]) nl++;
+    if (nl == 0u || nl > hlen)
+        return 0;
+    for (i = 0; i + nl <= hlen; i++)
+        if (memcmp(hay + i, needle, nl) == 0)
+            return 1;
+    return 0;
+}
+
 static void test_attest_handoff_capture(void)
 {
     struct boot_attest_handoff h;
@@ -155,10 +182,58 @@ static void test_attest_report_build(void)
                    "self-test -> coherence NA");
 }
 
+/* The JSON serializer, exercised through an in-memory write sink. */
+static void test_attest_report_json(void)
+{
+    uint8_t nonce[TPM_QUOTE_NONCE_MIN];
+    uint8_t i;
+    int rc;
+
+    for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0x10u + i);
+
+    /* NULL guards. */
+    TEST_ASSERT_EQ(tpm_attest_report_to_json(0, json_mem_writer, 0), -1, "NULL report -> -1");
+    rc = (int)tpm_attest_report_build(nonce, sizeof nonce, &s_report);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)TPM_ATTEST_OK, "report built for serialize");
+    TEST_ASSERT_EQ(tpm_attest_report_to_json(&s_report, 0, 0), -1, "NULL writer -> -1");
+
+    s_json_len = 0u;
+    memset(s_json_buf, 0, sizeof s_json_buf);
+    rc = tpm_attest_report_to_json(&s_report, json_mem_writer, 0);
+    TEST_ASSERT_EQ(rc, 0, "serialize ok");
+    TEST_ASSERT(s_json_len > 0u, "json non-empty");
+    TEST_ASSERT(s_json_len < sizeof s_json_buf, "json within buffer");
+
+    /* Well-formed envelope. */
+    TEST_ASSERT_EQ(memcmp(s_json_buf, "{\"schemaVersion\":1,", 19), 0, "json header prefix");
+    TEST_ASSERT_EQ((uint32_t)s_json_buf[s_json_len - 1u], (uint32_t)'\n', "trailing newline");
+    TEST_ASSERT_EQ((uint32_t)s_json_buf[s_json_len - 2u], (uint32_t)'}', "closes top object");
+
+    /* Required sections (all values are numbers or hex strings -- no escaping). */
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"manifest\":{\"sha256\":\""), "manifest section");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"quotedBank\":{"), "quoted-bank section");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"drtm\":{"), "drtm section");
+    /* The 8-byte nonce 0x10..0x17 must round-trip as lowercase hex. */
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"nonce\":\"1011121314151617\""),
+                "nonce hex echoed");
+
+    /* A malformed embedded length must be refused with ZERO bytes emitted, so a
+     * corrupt report can never drive an OOB read into the output file. */
+    rc = (int)tpm_attest_report_build(nonce, sizeof nonce, &s_report);
+    TEST_ASSERT_EQ((uint32_t)rc, (uint32_t)TPM_ATTEST_OK, "rebuild clean report");
+    s_report.ek_cert_len = (uint16_t)(sizeof s_report.ek_cert + 1u);
+    s_json_len = 0u;
+    rc = tpm_attest_report_to_json(&s_report, json_mem_writer, 0);
+    TEST_ASSERT_EQ(rc, -1, "overlong ek_cert_len -> -1");
+    TEST_ASSERT_EQ((uint32_t)s_json_len, 0u, "malformed report emits no bytes");
+}
+
 void test_register_tpm_attest_report(void)
 {
     test_suite_register_cat("tpm: attest handoff snapshot capture",
                             test_attest_handoff_capture, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attest report build",
                             test_attest_report_build, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attest report json export",
+                            test_attest_report_json, TEST_CAT_SECURITY);
 }

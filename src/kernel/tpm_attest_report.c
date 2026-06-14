@@ -14,6 +14,10 @@
 #include "kernel/tpm_pcr_alloc.h"        /* tpm_pcr_quote_mask */
 #include "kernel/boot_proto_descriptor.h"/* kernel_boot_proto (.bootproto manifest const) */
 #include "kernel/crypto/sha256.h"        /* recompute the quoted pcrDigest */
+#include "kernel/csprng.h"               /* fresh nonce for the exported quote */
+#include "kernel/fs/vfs.h"               /* X:\Diag\attestation.json export */
+#include "kernel/mm/heap.h"              /* kmalloc/kfree the ~2.3 KB report */
+#include "kernel/klog.h"                 /* best-effort export logging */
 #include "libc/string.h"
 
 /* The kernel-image ABI manifest descriptor, emitted as a compile-time const in
@@ -238,4 +242,252 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
 
     out->valid = 1u;
     return TPM_ATTEST_OK;
+}
+
+/* ----------------------------------------------------------------------------
+ * JSON serialization (streaming, bounded; no full-document buffer).
+ * ------------------------------------------------------------------------- */
+
+#define RPT_CHUNK 384u   /* largest single snprintf group below stays well under this */
+
+struct rpt_sink {
+    attest_json_write_fn wr;
+    void    *ctx;
+    uint32_t woff;       /* file offset of the next flush */
+    uint32_t alen;       /* bytes pending in acc[] */
+    int      err;        /* sticky: a write failure or snprintf overflow */
+    char     acc[512];   /* coalescing buffer -> one wr() per fill, not per token */
+};
+
+static void sink_raw(struct rpt_sink *s, const char *data, uint32_t n)
+{
+    while (!s->err && n > 0u) {
+        uint32_t room = (uint32_t)sizeof s->acc - s->alen;
+        uint32_t take = (n < room) ? n : room;
+        memcpy(s->acc + s->alen, data, take);
+        s->alen += take; data += take; n -= take;
+        if (s->alen == sizeof s->acc) {
+            if (s->wr(s->ctx, s->woff, (const uint8_t *)s->acc, s->alen) != 0) {
+                s->err = 1; return;
+            }
+            s->woff += s->alen; s->alen = 0u;
+        }
+    }
+}
+
+static void sink_flush(struct rpt_sink *s)
+{
+    if (s->err || s->alen == 0u)
+        return;
+    if (s->wr(s->ctx, s->woff, (const uint8_t *)s->acc, s->alen) != 0)
+        s->err = 1;
+    else { s->woff += s->alen; s->alen = 0u; }
+}
+
+static void sink_lit(struct rpt_sink *s, const char *str)
+{
+    uint32_t n = 0;
+    while (str[n]) n++;
+    sink_raw(s, str, n);
+}
+
+/* Commit an snprintf result; a non-positive or truncated length is a bug -> err. */
+static void sink_chunk(struct rpt_sink *s, const char *buf, int n)
+{
+    if (n <= 0 || (uint32_t)n >= RPT_CHUNK) { s->err = 1; return; }
+    sink_raw(s, buf, (uint32_t)n);
+}
+
+static void sink_hex(struct rpt_sink *s, const uint8_t *d, uint32_t n)
+{
+    static const char hx[] = "0123456789abcdef";
+    char tmp[64];
+    uint32_t t = 0, i;
+    for (i = 0; i < n; i++) {
+        tmp[t++] = hx[(d[i] >> 4) & 0x0Fu];
+        tmp[t++] = hx[d[i] & 0x0Fu];
+        if (t >= sizeof tmp) { sink_raw(s, tmp, t); t = 0u; }
+    }
+    if (t)
+        sink_raw(s, tmp, t);
+}
+
+/* A capability word as a quoted "0x...." 16-nibble hex string (big-endian). */
+static void sink_u64hex(struct rpt_sink *s, uint64_t v)
+{
+    uint8_t be[8];
+    int i;
+    for (i = 7; i >= 0; i--) { be[i] = (uint8_t)(v & 0xFFu); v >>= 8; }
+    sink_lit(s, "\"0x");
+    sink_hex(s, be, 8u);
+    sink_lit(s, "\"");
+}
+
+int tpm_attest_report_to_json(const struct boot_attestation_report *r,
+                              attest_json_write_fn write, void *ctx)
+{
+    struct rpt_sink s;
+    char chunk[RPT_CHUNK];
+    int n;
+    uint8_t i;
+
+    if (!r || !write)
+        return -1;
+
+    /* Defensive: this is a public serializer, so validate every embedded length
+     * against its backing array BEFORE any hex streaming. A corrupted/malformed
+     * report must not make sink_hex read past the struct into adjacent kernel
+     * memory and leak it into the file. Refuse to serialize, emitting nothing. */
+    if (r->pcr_count > ATTEST_REPORT_PCR_MAX ||
+        r->nonce_len > sizeof r->nonce ||
+        r->quote_sig_len > sizeof r->quote_sig ||
+        r->quote.attest_raw_len > sizeof r->quote.attest_raw ||
+        r->quote.pcr_digest_len > sizeof r->quote.pcr_digest ||
+        r->ak_pub_len > sizeof r->ak_pub ||
+        r->ek_cert_len > sizeof r->ek_cert)
+        return -1;
+    for (i = 0; i < r->pcr_count; i++)
+        if (r->pcrs[i].digest_len > sizeof r->pcrs[i].digest)
+            return -1;
+
+    s.wr = write; s.ctx = ctx; s.woff = 0u; s.alen = 0u; s.err = 0;
+
+    n = snprintf(chunk, sizeof chunk,
+        "{\"schemaVersion\":%u,\"valid\":%u,\"tpmVersion\":%u,\"overallStatus\":%u,"
+        "\"replayVerdict\":%u,\"secureBoot\":%u,\"secureBootValid\":%u,"
+        "\"pcrBound\":%u,\"quotePresent\":%u,\"eventCount\":%u,",
+        r->schema_version, r->valid, r->tpm_version, r->overall_status,
+        r->replay_verdict, r->secure_boot, r->secure_boot_valid,
+        r->pcr_bound, r->quote_present, r->event_count);
+    sink_chunk(&s, chunk, n);
+
+    /* Kernel-image identity. */
+    sink_lit(&s, "\"manifest\":{\"sha256\":\"");
+    sink_hex(&s, r->manifest_sha256, (uint32_t)sizeof r->manifest_sha256);
+    n = snprintf(chunk, sizeof chunk, "\",\"version\":%u,\"structSize\":%u},",
+                 r->manifest_version, r->manifest_struct_size);
+    sink_chunk(&s, chunk, n);
+
+    /* Handoff provenance. */
+    n = snprintf(chunk, sizeof chunk, "\"handoff\":{\"valid\":%u,\"capsRequired\":",
+                 r->handoff_valid);
+    sink_chunk(&s, chunk, n);
+    sink_u64hex(&s, r->caps_required);
+    sink_lit(&s, ",\"capsPresent\":");
+    sink_u64hex(&s, r->caps_present);
+    sink_lit(&s, ",\"capsDegraded\":");
+    sink_u64hex(&s, r->caps_degraded);
+    n = snprintf(chunk, sizeof chunk,
+        ",\"bootPath\":%u,\"bootReason\":%u,\"bootSourceFlags\":%u,\"bootFallbackDepth\":%u},",
+        r->boot_path, r->boot_reason, r->boot_source_flags, r->boot_fallback_depth);
+    sink_chunk(&s, chunk, n);
+
+    /* SHA-256 quoted PCR bank. */
+    n = snprintf(chunk, sizeof chunk,
+        "\"quotedBank\":{\"alg\":%u,\"pcrCoherence\":%u,\"pcrs\":[",
+        r->quoted_bank_alg, r->pcr_coherence);
+    sink_chunk(&s, chunk, n);
+    for (i = 0; i < r->pcr_count && i < ATTEST_REPORT_PCR_MAX; i++) {
+        n = snprintf(chunk, sizeof chunk, "%s{\"index\":%u,\"status\":%u,\"digest\":\"",
+                     (i ? "," : ""), r->pcrs[i].pcr_index, r->pcrs[i].status);
+        sink_chunk(&s, chunk, n);
+        sink_hex(&s, r->pcrs[i].digest, r->pcrs[i].digest_len);
+        sink_lit(&s, "\"}");
+    }
+    sink_lit(&s, "]},");
+
+    /* Verifier nonce. */
+    sink_lit(&s, "\"nonce\":\"");
+    sink_hex(&s, r->nonce, r->nonce_len);
+    sink_lit(&s, "\",");
+
+    /* Signed quote. */
+    n = snprintf(chunk, sizeof chunk,
+        "\"quote\":{\"present\":%u,\"status\":%u,\"pcrSelect\":%u,\"sig\":\"",
+        r->quote_present, r->quote_status, r->quote.pcr_select);
+    sink_chunk(&s, chunk, n);
+    sink_hex(&s, r->quote_sig, r->quote_sig_len);
+    sink_lit(&s, "\",\"attestRaw\":\"");
+    sink_hex(&s, r->quote.attest_raw, r->quote.attest_raw_len);
+    sink_lit(&s, "\",\"pcrDigest\":\"");
+    sink_hex(&s, r->quote.pcr_digest, r->quote.pcr_digest_len);
+    sink_lit(&s, "\"},");
+
+    /* AK public + binding status. */
+    n = snprintf(chunk, sizeof chunk,
+        "\"ak\":{\"status\":%u,\"credentialStatus\":%u,\"qualifiedSignerStatus\":%u,\"pub\":\"",
+        r->ak_status, r->ak_credential_status, r->qualified_signer_status);
+    sink_chunk(&s, chunk, n);
+    sink_hex(&s, r->ak_pub, r->ak_pub_len);
+    sink_lit(&s, "\"},");
+
+    /* EK certificate + status. */
+    n = snprintf(chunk, sizeof chunk,
+        "\"ek\":{\"status\":%u,\"certStatus\":%u,\"len\":%u,\"cert\":\"",
+        r->ek_status, r->ek_cert_status, r->ek_cert_len);
+    sink_chunk(&s, chunk, n);
+    sink_hex(&s, r->ek_cert, r->ek_cert_len);
+    sink_lit(&s, "\"},");
+
+    /* Forward-compat DRTM slots. */
+    n = snprintf(chunk, sizeof chunk,
+        "\"drtm\":{\"entryPcr\":%u,\"acmStatus\":%u,\"measurementType\":%u}}\n",
+        r->drtm_entry_pcr, r->drtm_acm_status, r->drtm_measurement_type);
+    sink_chunk(&s, chunk, n);
+
+    sink_flush(&s);
+    return s.err ? -1 : 0;
+}
+
+static int rpt_vfs_write(void *ctx, uint32_t off, const uint8_t *data, uint32_t n)
+{
+    struct vfs_node *f = (struct vfs_node *)ctx;
+    return (vfs_write(f, off, n, data) == (int)n) ? 0 : -1;
+}
+
+void tpm_attest_report_export(void)
+{
+    struct boot_attestation_report *r;
+    struct vfs_node *dir, *f;
+    uint8_t nonce[TPM_QUOTE_NONCE_MAX];
+    const uint8_t *np = 0;
+    uint16_t nl = 0;
+    int rc;
+
+    r = (struct boot_attestation_report *)kmalloc(sizeof *r);
+    if (!r) {
+        klog(LOG_WARN, "TPM", "attestation export: out of memory");
+        return;
+    }
+
+    /* A fresh CSPRNG challenge so the file carries a signed quote; fall back to an
+     * unsigned self-test report when the CSPRNG is not yet crypto-ready. */
+    if (csprng_crypto_ok()) {
+        csprng_fill(nonce, sizeof nonce);
+        np = nonce;
+        nl = (uint16_t)sizeof nonce;
+    }
+    tpm_attest_report_build(np, nl, r);
+
+    /* Create via the parent dir first (FAT32 dir-cache re-walk), then open. */
+    dir = vfs_open("X:\\Diag\\", VFS_O_READ);
+    if (dir && dir->ops && dir->ops->create)
+        dir->ops->create(dir, "attestation.json", VFS_FILE);
+    if (dir)
+        vfs_close(dir);
+    /* O_TRUNC: a shorter report (different nonce/quote/EK material) must not leave
+     * stale tail bytes from the previous boot after the fresh JSON object. */
+    f = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (!f) {
+        klog(LOG_WARN, "TPM", "attestation export: cannot open X:\\Diag\\attestation.json");
+        kfree(r);
+        return;
+    }
+
+    rc = tpm_attest_report_to_json(r, rpt_vfs_write, f);
+    vfs_close(f);
+    kfree(r);
+    klog(rc == 0 ? LOG_INFO : LOG_WARN, "TPM",
+         rc == 0 ? "attestation report exported: X:\\Diag\\attestation.json"
+                 : "attestation export: write error to X:\\Diag\\attestation.json");
 }

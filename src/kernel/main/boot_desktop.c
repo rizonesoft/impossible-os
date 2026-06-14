@@ -337,6 +337,13 @@ void boot_phase3(void)
         tpm_evlog_export_cel();
     }
 
+    /* Export the TPM-rooted boot attestation report (identity + handoff + the
+     * SHA-256 quoted PCR bank + quote/AK/EK) as X:\Diag\attestation.json. */
+    {
+        extern void tpm_attest_report_export(void);
+        tpm_attest_report_export();
+    }
+
     /* Boot protocol section 6: dump the boot_reserved region table to
      * X:\Diag\boot-reserved.json so a post-boot user can audit
      * exactly which physical ranges the PMM kept reserved. */

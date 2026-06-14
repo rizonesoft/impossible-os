@@ -192,3 +192,22 @@ struct boot_attestation_report {
  * (the report is left untouched so a bad challenge cannot masquerade as valid). */
 tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce_len,
                                             struct boot_attestation_report *out);
+
+/* Sequential write sink for the JSON serializer: called with a monotonically
+ * increasing `off` and the chunk to write there. Return 0 on success, non-zero
+ * to abort. Mirrors the (offset, len) shape of vfs_write so the file export is a
+ * thin adapter; a unit test can pass a memory-buffer writer instead. */
+typedef int (*attest_json_write_fn)(void *ctx, uint32_t off, const uint8_t *data, uint32_t len);
+
+/* Serialize a built report as a single JSON object via `write`. Every value is a
+ * number or a hex string (no free-text), so no JSON string escaping is required.
+ * Byte arrays (digests, signature, AK pub, EK cert) are lowercase hex. Streams in
+ * bounded chunks (no full-document buffer). Returns 0 on success, -1 on a NULL
+ * arg or a write-callback failure. */
+int tpm_attest_report_to_json(const struct boot_attestation_report *r,
+                              attest_json_write_fn write, void *ctx);
+
+/* Build a fresh report (with a CSPRNG nonce when the CSPRNG is crypto-ready, else
+ * an unsigned self-test report) and export it to X:\Diag\attestation.json. Best
+ * effort: logs and returns on any failure, never halts. Call once X:\ is mounted. */
+void tpm_attest_report_export(void);
