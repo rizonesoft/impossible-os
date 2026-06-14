@@ -62,6 +62,10 @@ struct tpm_event {
     uint32_t primary_digest_off; /* byte offset of the primary digest in the log */
     uint32_t payload_off;        /* byte offset of event_data in the log */
     uint32_t payload_size;       /* event_data length */
+    uint32_t digests_off;        /* byte offset of the FIRST {alg,digest} pair in the
+                                  * log (TPML_DIGEST_VALUES list start for EVENT2; the
+                                  * single SHA-1 digest for legacy). digest_count pairs
+                                  * follow, enabling per-bank replay digest extraction. */
 };
 
 /* Pure, side-effect-free TCG event-log parser (no globals, no klog) so it is

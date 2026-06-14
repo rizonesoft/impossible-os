@@ -80,6 +80,10 @@ static void test_tpm_evlog_tpm20_event2(void)
     /* digest bytes start after pcr(4)+type(4)+count(4)+alg(2) within event 1
      * at offset 52: 52 + 14 = 66. */
     TEST_ASSERT_EQ(ev[1].primary_digest_off, 66u, "EVENT2 primary digest offset");
+    /* Digest-list start = offset 52 + pcr(4)+type(4)+count(4) = 64 (the first
+     * {alg,digest} pair); per-bank replay iterates digest_count pairs from here. */
+    TEST_ASSERT_EQ(ev[1].digests_off, 64u, "EVENT2 digest-list offset");
+    TEST_ASSERT_EQ(ev[1].digest_count, 1u, "EVENT2 one digest in the list");
 }
 
 /* A final EVENT2 whose declared data_size overruns the buffer is rejected as

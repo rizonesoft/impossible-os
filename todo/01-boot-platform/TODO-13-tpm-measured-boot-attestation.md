@@ -127,7 +127,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] **Prerequisite:** kernel SHA-1 (legacy PCR bank) shipped -- `src/kernel/crypto/sha1.{c,h}` (FIPS 180-4), NIST KAT-validated (`test_sha1.c`).
 - [x] **Prerequisite:** kernel SHA-384 shipped -- `src/kernel/crypto/sha384.{c,h}` (SHA-384 IVs over monocypher SHA-512, layout pinned by `_Static_assert`), NIST KAT-validated. All replay banks now available (SHA-1/256/384 + SHA-512).
 - [x] **Prerequisite:** `tpm_pcr_extend(alg, pcr, digest)` shipped -- `src/kernel/tpm_replay.{c,h}`, `pcr := H_bank(pcr || digest)` dispatching on SHA-1/256/384/512; self-consistency + chaining + bad-arg tests (`test_tpm_replay.c`).
-- [ ] **Enabler:** add `digests_off` to `struct tpm_event` (= `offset+12` for EVENT2; SHA-1 digest offset for legacy) so replay can iterate `TPML_DIGEST_VALUES` per bank (§1 keeps only the primary digest today).
+- [x] **Enabler:** `digests_off` added to `struct tpm_event` (`offset+12` for EVENT2; SHA-1 digest offset for legacy), populated at all 3 §1 record sites; replay iterates `TPML_DIGEST_VALUES` from there. Fixture-asserted in `test_tpm_event_log.c`.
 - [ ] Replay PCR extends from the parsed event log for every active bank via `tpm_pcr_extend` (crypto prerequisites done; consumes the `digests_off` enabler).
 - [ ] Compare replayed values against hardware PCR reads (uses §3 `tpm_pcr_get`).
 - [ ] Mark event-log tampering separately from baseline mismatch.
