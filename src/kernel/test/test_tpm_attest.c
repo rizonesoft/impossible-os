@@ -270,6 +270,197 @@ static void test_attest_no_tpm(void)
                    (int)TPM_ATTEST_BADARG, "ak_public_get rejects null out");
 }
 
+/* ---- CC-dispatch fake-TIS: the full provision + quote lifecycle ---- */
+
+#define AF_CAP 512u
+static uint8_t  af_cmd[AF_CAP];
+static uint32_t af_cmd_len, af_cmd_expect;
+static uint8_t  af_rsp[AF_CAP];
+static uint32_t af_rsp_len, af_rsp_pos;
+static int      af_ready, af_executed;
+static uint32_t af_seen[32], af_seen_n, af_flush_n;
+static uint32_t af_policy_secret_n;   /* count PolicySecret calls (must be 2) */
+
+#define AF_REG_STS  0x018u
+#define AF_REG_FIFO 0x024u
+#define AF_STS_EXPECT 0x08u
+#define AF_STS_DATA_AVAIL 0x10u
+#define AF_STS_GO 0x20u
+#define AF_STS_CMD_READY 0x40u
+#define AF_STS_VALID 0x80u
+
+static uint32_t af_put_auth(uint32_t off)
+{
+    tpm2_be16_put(af_rsp + off, 0u); off += 2u;   /* nonceTPM */
+    af_rsp[off] = 0u; off += 1u;                  /* attributes */
+    tpm2_be16_put(af_rsp + off, 0u); off += 2u;   /* hmac */
+    return off;
+}
+
+static void af_build_response(void)
+{
+    uint32_t cc = tpm2_be32_get(af_cmd + 6);
+    uint32_t off, i;
+    uint16_t nlen;
+    if (af_seen_n < 32u) af_seen[af_seen_n++] = cc;
+    if (cc == TPM2_CC_FLUSH_CONTEXT) af_flush_n++;
+    if (cc == TPM2_CC_POLICY_SECRET) af_policy_secret_n++;
+    memset(af_rsp, 0, AF_CAP);
+
+    if (cc == TPM2_CC_CREATE_PRIMARY || cc == TPM2_CC_LOAD) {
+        /* leading objectHandle(4) + parameterSize(4)=0 + auth(5). */
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_SESSIONS);
+        tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
+        tpm2_be32_put(af_rsp + 10, (cc == TPM2_CC_CREATE_PRIMARY) ? 0x80000001u : 0x80000002u);
+        tpm2_be32_put(af_rsp + 14, 0u);
+        off = af_put_auth(18u);
+        tpm2_be32_put(af_rsp + 2, off);
+        af_rsp_len = off;
+    } else if (cc == TPM2_CC_START_AUTH_SESSION) {
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_NO_SESSIONS);
+        tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
+        tpm2_be32_put(af_rsp + 2, 32u);
+        tpm2_be32_put(af_rsp + 10, 0x03000000u);   /* policy session */
+        tpm2_be16_put(af_rsp + 14, 16u);           /* nonceTPM (16 zero) */
+        af_rsp_len = 32u;
+    } else if (cc == TPM2_CC_POLICY_SECRET) {
+        /* params: timeout TPM2B(2,0) + ticket{tag(2)+hierarchy(4)+digest(2,0)}=10. */
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_SESSIONS);
+        tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
+        tpm2_be32_put(af_rsp + 10, 10u);
+        /* timeout@14=0, ticket@16 (8 bytes zero) -> end @24. */
+        off = af_put_auth(24u);
+        tpm2_be32_put(af_rsp + 2, off);
+        af_rsp_len = off;
+    } else if (cc == TPM2_CC_CREATE) {
+        /* outPriv(2+16) + outPub(2+20) + creationData/Hash(2,0 each) + ticket(8). */
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_SESSIONS);
+        tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
+        tpm2_be32_put(af_rsp + 10, 52u);
+        tpm2_be16_put(af_rsp + 14, 16u);
+        for (i = 0; i < 16u; i++) af_rsp[16 + i] = (uint8_t)(0x70u + i);
+        tpm2_be16_put(af_rsp + 32, 20u);
+        for (i = 0; i < 20u; i++) af_rsp[34 + i] = (uint8_t)(0x80u + i);   /* AK pub */
+        off = af_put_auth(66u);                    /* cd@54/ch@56/ticket@58 zero */
+        tpm2_be32_put(af_rsp + 2, off);
+        af_rsp_len = off;
+    } else if (cc == TPM2_CC_QUOTE) {
+        /* Echo the command's qualifyingData nonce (at cmd offset 27) into the
+         * attest extraData, then a minimal ECDSA signature. */
+        uint32_t a, attest_off, sig_n;
+        nlen = tpm2_be16_get(af_cmd + 27);
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_SESSIONS);
+        tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
+        attest_off = 16u;                          /* params@14 -> size(2) -> attest@16 */
+        a = attest_off;
+        tpm2_be32_put(af_rsp + a, TPM2_GENERATED_VALUE); a += 4u;
+        tpm2_be16_put(af_rsp + a, TPM2_ST_ATTEST_QUOTE); a += 2u;
+        tpm2_be16_put(af_rsp + a, 0u); a += 2u;    /* qualifiedSigner empty */
+        tpm2_be16_put(af_rsp + a, nlen); a += 2u;  /* extraData = echoed nonce */
+        for (i = 0; i < nlen; i++) af_rsp[a + i] = af_cmd[29 + i];
+        a += nlen;
+        for (i = 0; i < 17u; i++) af_rsp[a + i] = 0u; a += 17u; /* clockInfo */
+        for (i = 0; i < 8u; i++) af_rsp[a + i] = 0u; a += 8u;   /* fwVersion */
+        tpm2_be32_put(af_rsp + a, 1u); a += 4u;    /* TPML count */
+        tpm2_be16_put(af_rsp + a, TPM_ALG_SHA256); a += 2u;
+        af_rsp[a] = 3u; a += 1u; af_rsp[a] = 0xFFu; af_rsp[a+1u] = 0u; af_rsp[a+2u] = 0u; a += 3u;
+        tpm2_be16_put(af_rsp + a, 32u); a += 2u;
+        for (i = 0; i < 32u; i++) af_rsp[a + i] = (uint8_t)(0xC0u + i); a += 32u;
+        tpm2_be16_put(af_rsp + 14, (uint16_t)(a - attest_off));  /* TPM2B_ATTEST size */
+        /* TPMT_SIGNATURE (ECDSA): sigAlg + hash + R(2+32) + S(2+32). */
+        tpm2_be16_put(af_rsp + a, TPM_ALG_ECDSA); a += 2u;
+        tpm2_be16_put(af_rsp + a, TPM_ALG_SHA256); a += 2u;
+        tpm2_be16_put(af_rsp + a, 32u); a += 2u;
+        for (i = 0; i < 32u; i++) af_rsp[a + i] = (uint8_t)(0x10u + i); a += 32u;
+        tpm2_be16_put(af_rsp + a, 32u); a += 2u;
+        for (i = 0; i < 32u; i++) af_rsp[a + i] = (uint8_t)(0x90u + i); a += 32u;
+        sig_n = a - 14u;
+        tpm2_be32_put(af_rsp + 10, sig_n);         /* parameterSize */
+        off = af_put_auth(a);
+        tpm2_be32_put(af_rsp + 2, off);
+        af_rsp_len = off;
+    } else {
+        tpm2_be16_put(af_rsp + 0, TPM2_ST_NO_SESSIONS);
+        tpm2_be32_put(af_rsp + 2, 10u);
+        tpm2_be32_put(af_rsp + 6, TPM2_RC_SUCCESS);
+        af_rsp_len = 10u;
+    }
+}
+
+static uint8_t af_r8(uint32_t o)
+{
+    if (o == AF_REG_FIFO && af_executed && af_rsp_pos < af_rsp_len) return af_rsp[af_rsp_pos++];
+    return 0;
+}
+static void af_w8(uint32_t o, uint8_t v)
+{
+    if (o != AF_REG_FIFO || af_executed) return;
+    if (af_cmd_len < AF_CAP) af_cmd[af_cmd_len] = v;
+    af_cmd_len++;
+    if (af_cmd_len == 6u) af_cmd_expect = tpm2_be32_get(af_cmd + 2);
+}
+static uint32_t af_r32(uint32_t o)
+{
+    uint8_t s;
+    if (o != AF_REG_STS) return 0;
+    s = AF_STS_VALID;
+    if (af_ready && !af_executed && af_cmd_len == 0) s |= AF_STS_CMD_READY;
+    if (!af_executed && af_cmd_len > 0 && af_cmd_len < af_cmd_expect) s |= AF_STS_EXPECT;
+    if (af_executed && af_rsp_pos < af_rsp_len) s |= AF_STS_DATA_AVAIL;
+    return (uint32_t)s | (32u << 8);
+}
+static void af_w32(uint32_t o, uint32_t v)
+{
+    if (o != AF_REG_STS) return;
+    if (v & AF_STS_CMD_READY) { af_ready = 1; af_executed = 0; af_cmd_len = 0; af_cmd_expect = 0; af_rsp_pos = 0; }
+    if ((v & AF_STS_GO) && af_cmd_len >= af_cmd_expect) { af_executed = 1; af_build_response(); }
+}
+static const struct tpm_t_io af_io = { af_r8, af_w8, af_r32, af_w32 };
+
+static int af_saw(uint32_t cc)
+{
+    uint32_t i;
+    for (i = 0; i < af_seen_n; i++) if (af_seen[i] == cc) return 1;
+    return 0;
+}
+
+static void test_attest_quote_lifecycle(void)
+{
+    const struct tpm_t_io *prev;
+    struct tpm_quote_attest att;
+    uint8_t nonce[20], sig[128], pub[64];
+    uint16_t pub_len = 0;
+    uint32_t slen = 0, i;
+    tpm_attest_status_t r;
+    for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0x55u + i);
+
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
+    af_seen_n = 0; af_flush_n = 0; af_policy_secret_n = 0;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    memset(&att, 0, sizeof att);
+    r = tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen);
+    /* The same provisioned AK serves a second query (no re-provision). */
+    {
+        tpm_attest_status_t r2 = tpm_ak_public_get(pub, sizeof pub, &pub_len);
+        tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+        TEST_ASSERT_EQ((int)r2, (int)TPM_ATTEST_OK, "ak_public_get returns cached AK pub");
+        TEST_ASSERT_EQ((uint32_t)pub_len, 20u, "cached AK pub is the Create outPublic (20 bytes)");
+    }
+    TEST_ASSERT_EQ((int)r, (int)TPM_ATTEST_OK, "provision + quote succeeds");
+    TEST_ASSERT(af_saw(TPM2_CC_CREATE_PRIMARY), "EK CreatePrimary issued");
+    TEST_ASSERT(af_saw(TPM2_CC_START_AUTH_SESSION), "policy session opened");
+    TEST_ASSERT_EQ(af_policy_secret_n, 2u, "PolicySecret run TWICE (re-satisfied before Load)");
+    TEST_ASSERT(af_saw(TPM2_CC_CREATE), "AK Create issued");
+    TEST_ASSERT(af_saw(TPM2_CC_LOAD), "AK Load issued");
+    TEST_ASSERT(af_saw(TPM2_CC_QUOTE), "Quote issued");
+    TEST_ASSERT(af_flush_n >= 2u, "EK + session flushed (AK kept loaded)");
+    /* Anti-replay: the parsed attest echoes our exact nonce. */
+    TEST_ASSERT_EQ((uint32_t)att.nonce_len, 20u, "attest echoes 20-byte nonce");
+    TEST_ASSERT(att.nonce[0] == 0x55u && att.nonce[19] == 0x68u, "attest nonce == supplied nonce");
+    TEST_ASSERT_EQ(att.pcr_select, 0xFFu, "attest pcrSelect PCRs 0-7");
+    TEST_ASSERT(slen == 72u, "ECDSA signature blob returned");
+}
+
 void test_register_tpm_attest(void)
 {
     test_suite_register_cat("tpm: EK CreatePrimary marshal", test_attest_build_ek, TEST_CAT_SECURITY);
@@ -279,4 +470,6 @@ void test_register_tpm_attest(void)
     test_suite_register_cat("tpm: quote-response (TPMS_ATTEST) parse", test_attest_parse_quote, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: EvictControl marshal", test_attest_build_evict, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attestation no-TPM degrade", test_attest_no_tpm, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: attestation provision+quote lifecycle",
+                            test_attest_quote_lifecycle, TEST_CAT_SECURITY);
 }
