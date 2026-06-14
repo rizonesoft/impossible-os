@@ -220,12 +220,25 @@ void tpm_nv_baseline_pcr_select(uint8_t out_sel[3]);
  * The single-cleanup PolicyPCR-session machinery, extracted so consumers do not
  * re-implement the session-handle-leak-on-error/BUSY hazard. Not ISR-safe. */
 
+/* Validate the trailing one-session TPMS_AUTH_RESPONSE of a session-tagged
+ * response (nonceTPM TPM2B + sessionAttributes + hmac TPM2B), starting at
+ * auth_off and consuming the response EXACTLY to `size`. Each TPM2B is bounded
+ * against the declared size and the TPM2B_HA 64-byte max, so a crafted auth area
+ * claiming bytes past the response is rejected. Returns 1 if well-formed, else 0.
+ * Shared by the session-command path and the CreatePrimary/Load handle parser so
+ * one validator gates every session-authorized success. */
+int tpm_session_auth_response_ok(const uint8_t *rsp, uint32_t size, uint32_t auth_off);
+
 /* Submit one session-authorized TPM2 command and classify the response. On
  * TPM_NV_OK leaves rsp intact (+ *out_rlen) for the caller to parse; validates
  * the response code AND, for ST_SESSIONS successes, the response auth area.
- * Returns 0 on success (with *out_st = TPM_NV_OK), -1 otherwise (*out_st set). */
+ * *out_rc (may be NULL) receives the raw TPM response code whenever a response
+ * header was parsed (success or TPM error); it is left untouched on a pre-parse
+ * transport/BUSY failure, so callers pre-initialize it. Returns 0 on success
+ * (with *out_st = TPM_NV_OK), -1 otherwise (*out_st set). */
 int tpm_session_cmd_exec(const uint8_t *cmd, uint32_t n, uint8_t *rsp, uint32_t cap,
-                         uint32_t *out_rlen, tpm_nv_status_t *out_st);
+                         uint32_t *out_rlen, tpm_nv_status_t *out_st,
+                         uint32_t *out_rc);
 
 /* Callback invoked under an open real PolicyPCR session: build + submit + parse
  * the authorized op using `session`; return its status. */

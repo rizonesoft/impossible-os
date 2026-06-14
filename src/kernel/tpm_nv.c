@@ -408,7 +408,7 @@ void tpm_nv_baseline_pcr_select(uint8_t out_sel[3])
  * A length that fits inside the response but exceeds this is malformed. */
 #define TPM2B_HA_MAX 64u
 
-static int nv_auth_response_ok(const uint8_t *rsp, uint32_t size, uint32_t auth_off)
+int tpm_session_auth_response_ok(const uint8_t *rsp, uint32_t size, uint32_t auth_off)
 {
     uint32_t off = auth_off;
     uint16_t nonce_n, hmac_n;
@@ -428,7 +428,7 @@ static int nv_auth_response_ok(const uint8_t *rsp, uint32_t size, uint32_t auth_
 /* Submit one command and classify the response code. On TPM_NV_OK leaves rsp
  * intact (and sets *out_rlen) for the caller to parse. */
 int tpm_session_cmd_exec(const uint8_t *cmd, uint32_t n, uint8_t *rsp, uint32_t cap,
-                   uint32_t *out_rlen, tpm_nv_status_t *out_st)
+                   uint32_t *out_rlen, tpm_nv_status_t *out_st, uint32_t *out_rc)
 {
     int r;
     uint16_t tag;
@@ -442,23 +442,37 @@ int tpm_session_cmd_exec(const uint8_t *cmd, uint32_t n, uint8_t *rsp, uint32_t 
         *out_st = TPM_NV_TRANSPORT;
         return -1;
     }
+    if (out_rc) *out_rc = rc;
     if (rc != TPM2_RC_SUCCESS) {
         *out_st = tpm_nv_classify_rc(rc);
         return -1;
     }
     /* A SUCCESS response to a session-authorized command (NV define/write/
-     * undefine/read) is ST_SESSIONS and MUST carry both a well-formed
-     * parameterSize AND a response auth area for the one session -- a minimal
-     * TPMS_AUTH_RESPONSE is nonceTPM(2,0) + sessionAttributes(1) + hmac(2,0) =
-     * 5 bytes. tpm2_rsp_parse only validates the header, and tpm2_rsp_params
-     * alone would accept parameterSize == size-14 (zero auth area). So a
-     * truncated ST_SESSIONS "success" (no parameterSize, or no auth area) would
-     * slip through as OK -- catastrophic after an irreversible NV write.
-     * Require the full structure on every session-tagged success. */
-    if (tag == TPM2_ST_SESSIONS) {
+     * undefine/read, Create, Unseal -- any command tagged ST_SESSIONS) MUST be
+     * ST_SESSIONS and carry a well-formed parameterSize AND a one-session
+     * response auth area (minimal TPMS_AUTH_RESPONSE = nonceTPM(2,0) +
+     * sessionAttributes(1) + hmac(2,0) = 5 bytes). Key the requirement off the
+     * COMMAND tag, not the response tag: a forged/degraded ST_NO_SESSIONS
+     * rc-success would otherwise skip auth validation entirely and let the
+     * caller's parser read attacker-controlled parameters from offset 10
+     * (tpm2_rsp_params accepts ST_NO_SESSIONS params at the fixed offset) --
+     * catastrophic after an irreversible NV write or when returning a sealed
+     * secret. tpm2_rsp_parse only validates the header.
+     *
+     * SCOPE: this validates response STRUCTURE (tag, parameterSize bound, a
+     * well-formed one-session TPMS_AUTH_RESPONSE), which rejects malformed /
+     * truncated / wrong-shape responses (the realistic local failure: bus
+     * glitch, firmware desync). It does NOT cryptographically AUTHENTICATE the
+     * response: these are unsalted password/policy sessions with no HMAC over
+     * the response, so a physical bus interposer that forges a well-formed
+     * ST_SESSIONS success is NOT defended here -- that needs salted/bound HMAC
+     * sessions + parameter encryption (BitLocker-style bus protection), a
+     * separate transport-wide feature tracked as a TODO-13 section-8 follow-up. */
+    if (tpm2_be16_get(cmd) == TPM2_ST_SESSIONS) {
         uint32_t poff, plen;
-        if (tpm2_rsp_params(rsp, (uint32_t)r, &poff, &plen) != 0 ||
-            !nv_auth_response_ok(rsp, size, poff + plen)) {
+        if (tag != TPM2_ST_SESSIONS ||
+            tpm2_rsp_params(rsp, (uint32_t)r, &poff, &plen) != 0 ||
+            !tpm_session_auth_response_ok(rsp, size, poff + plen)) {
             *out_st = TPM_NV_TRANSPORT;
             return -1;
         }
@@ -501,7 +515,7 @@ tpm_nv_status_t tpm_policy_pcr_digest(uint16_t alg, const uint8_t sel[3],
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u)
         return TPM_NV_BADARG;
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         return st;
     session = tpm2_parse_start_auth_session(rsp, rlen);
     if (session == 0u) {
@@ -515,11 +529,11 @@ tpm_nv_status_t tpm_policy_pcr_digest(uint16_t alg, const uint8_t sel[3],
     /* From here ALL exits flush `session`. */
     n = tpm2_build_policy_pcr(cmd, sizeof cmd, session, alg, sel);
     if (n == 0u) { st = TPM_NV_BADARG; goto out; }
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         goto out;
     n = tpm2_build_policy_get_digest(cmd, sizeof cmd, session);
     if (n == 0u) { st = TPM_NV_BADARG; goto out; }
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         goto out;
     st = (tpm2_parse_policy_get_digest(rsp, rlen, out, cap) == 32)
              ? TPM_NV_OK : TPM_NV_TRANSPORT;
@@ -542,7 +556,7 @@ tpm_nv_status_t tpm_policy_session_run(uint16_t alg, const uint8_t sel[3],
                                       TPM_ALG_SHA256, nonce, sizeof nonce);
     if (n == 0u)
         return TPM_NV_BADARG;
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         return st;
     session = tpm2_parse_start_auth_session(rsp, rlen);
     if (session == 0u) {
@@ -554,7 +568,7 @@ tpm_nv_status_t tpm_policy_session_run(uint16_t alg, const uint8_t sel[3],
     /* From here ALL exits flush `session` (including op errors). */
     n = tpm2_build_policy_pcr(cmd, sizeof cmd, session, alg, sel);
     if (n == 0u) { st = TPM_NV_BADARG; goto out; }
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         goto out;
     st = op(session, ctx);
 out:
@@ -603,7 +617,7 @@ static tpm_nv_status_t nv_policy_op_cb(uint32_t session, void *vctx)
                                c->cap, c->offset);
     if (n == 0u)
         return TPM_NV_BADARG;
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         return st;
     if (!c->is_write) {
         int dl = tpm2_parse_nv_read(rsp, rlen, c->out, c->cap);
@@ -638,7 +652,7 @@ tpm_nv_status_t tpm_nv_define_data(uint32_t nv_index, uint16_t data_size)
                              0, 0, data_size);
     if (n == 0u)
         return TPM_NV_BADARG;
-    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st);
+    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
     return st;
 }
 
@@ -658,7 +672,7 @@ tpm_nv_status_t tpm_nv_define_baseline(uint32_t nv_index, uint16_t data_size)
                              policy, (uint16_t)sizeof policy, data_size);
     if (n == 0u)
         return TPM_NV_BADARG;
-    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st);
+    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
     return st;
 }
 
@@ -670,7 +684,7 @@ tpm_nv_status_t tpm_nv_undefine(uint32_t nv_index)
     n = tpm2_build_nv_undefine(cmd, sizeof cmd, nv_index);
     if (n == 0u)
         return TPM_NV_BADARG;
-    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st);
+    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
     return st;
 }
 
@@ -686,7 +700,7 @@ tpm_nv_status_t tpm_nv_write(uint32_t nv_index, uint16_t offset,
                             offset, data, len);
     if (n == 0u)
         return TPM_NV_BADARG;
-    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st);
+    (void)tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0);
     return st;
 }
 
@@ -704,7 +718,7 @@ tpm_nv_status_t tpm_nv_read(uint32_t nv_index, uint16_t offset,
                            cap, offset);
     if (n == 0u)
         return TPM_NV_BADARG;
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         return st;
     dl = tpm2_parse_nv_read(rsp, rlen, out, cap);
     if (dl < 0)
@@ -739,7 +753,7 @@ tpm_nv_status_t tpm_nv_read_public(uint32_t nv_index, uint16_t *out_size,
     n = tpm2_build_nv_read_public(cmd, sizeof cmd, nv_index);
     if (n == 0u)
         return TPM_NV_BADARG;
-    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st) != 0)
+    if (tpm_session_cmd_exec(cmd, n, rsp, sizeof rsp, &rlen, &st, 0) != 0)
         return st;
     if (tpm2_parse_nv_read_public(rsp, rlen, nv_index, out_size, out_attrs) != 0)
         return TPM_NV_TRANSPORT;

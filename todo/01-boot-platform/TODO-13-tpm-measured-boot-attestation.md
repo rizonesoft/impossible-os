@@ -42,7 +42,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 5 | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3 | [x] |
 | 💎 | 6 | Baseline enrollment and storage | §3, §4, §7 | [/] |
 | 💎 | 7 | TPM NV index support | §2 (transport); §12 (baseline mask) | [/] |
-| ⭐ | 8 | Sealed-secret boot policy hooks | §7, §12 | [/] |
+| ⭐ | 8 | Sealed-secret boot policy hooks | §7, §12 | [x] |
 | 💎 | 9 | Attestation report export | §3-§6, §12, §13 | [ ] |
 | ⭐ | 10 | Recovery and mismatch UX | §6, TODO-22 | [ ] |
 | 💎 | 11 | TPM tests and event-log fixtures | §1-§10, §12, §13 | [ ] |
@@ -220,14 +220,22 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 ## 8. Sealed-Secret Boot Policy Hooks
 
 - [x] Prerequisite: shared policy-session seam in `tpm_nv.{c,h}` -- `tpm_policy_session_run` + `tpm_policy_pcr_digest` + `tpm_pcr_mask_to_select` + exposed `tpm_session_cmd_exec`; NV wrappers now thin, no behavior change (§6/§7 suites green).
-- [ ] Seal/unseal small secrets to `tpm_pcr_seal_mask()` (PCR 7, not the baseline mask): `CreatePrimary` parent + `Create` KEYEDHASH object (authPolicy = seal PolicyPCR) + `Load` + `Unseal` via a real POLICY session; single-cleanup handle teardown.
-- [ ] FDE key-unlock hook (callable forward-API; stub consumer until storage-encryption lands).
-- [ ] Code-integrity policy seal hook (callable forward-API; stub consumer until CI-policy lands).
-- [ ] Structured unseal-failure reporting + a callable recovery handoff (the live-console prompt is a follow-up below).
+- [x] Seal/unseal to `tpm_pcr_seal_mask()` (PCR 7, PCR 11 excluded) in `tpm_seal.{c,h}`: deterministic ECC-P256 SRK + KEYEDHASH object (PolicyPCR authPolicy, no userWithAuth) + Load + Unseal via real POLICY session; single-cleanup teardown.
+- [x] FDE key-unlock hook (`tpm_seal_fde_key`/`tpm_unseal_fde_key`, domain-tagged forward-API; stub consumer until storage-encryption lands).
+- [x] Code-integrity policy seal hook (`tpm_seal_ci_policy`/`tpm_unseal_ci_policy`, forward-API; stub consumer until CI-policy lands).
+- [x] Structured unseal-failure reporting (`struct tpm_unseal_result`: status + raw rc + domain) + callable recovery handoff (`tpm_seal_set_recovery_handler`, fired on every failure).
 - [ ] Follow-up: live-console recovery prompt on unseal failure (needs the Phase-1 console-input path). -> shared owner with the §6 console-input infra follow-up.
-- [ ] Commit: `"tpm: sealed boot policy hooks"`
+- [ ] Follow-up: salted/bound HMAC sessions + parameter encryption (response-HMAC authenticity + sealed-key bus confidentiality). `tpm_session_auth_response_ok` is structural-only; transport-wide (§7/§8/§13). Parity: BitLocker bus protection.
+- [x] Commit: `"tpm: sealed boot policy hooks"`
 
 **Test checkpoint:** Seal a small secret to the SEAL PCR policy (`tpm_pcr_seal_mask()`, PCR 7), then unseal succeeds while PCR 7 matches and is DENIED (`TPM_RC_POLICY_FAIL`, with structured failure reporting + a callable recovery handoff) after PCR 7 changes; a PCR 11 / kernel-manifest-only change does NOT break unseal (seal excludes PCR 11); the FDE key-unlock + code-integrity seal hooks are present + callable (stub consumers OK). The Create/Load/Unseal marshal/parse + policy selection are fixture-tested; the live seal->PCR-change->deny cycle is QEMU-swtpm/bare-metal validation. Platforms: QEMU swtpm KVM; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 761 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - `tpm_seal.{c,h}`: pure builders/parsers (CreatePrimary SRK, Create KEYEDHASH, Load, Unseal) + `tpm_seal_secret`/`tpm_unseal_secret` over the shared `tpm_nv.c` policy seam, single-cleanup teardown of primary/object/session on every path.
+> - Seal binds PCR 7 only (`tpm_pcr_seal_mask()`, PCR 11 excluded) so a kernel-ABI-manifest change does not brick FDE; a negative test asserts PCR 11 absent from the mask.
+> - Forward-API: FDE + code-integrity domain-tagged hooks (stub consumers) plus a structured `tpm_unseal_result` + `tpm_seal_set_recovery_handler` recovery handoff (live-console prompt is the open follow-up, shared with §6 console infra).
+> - Session-response validation is STRUCTURAL (shared `tpm_session_auth_response_ok`, keyed off the command tag): a malformed / truncated / wrong-tag success can never return secret bytes or a bogus handle as OK. Cryptographic authenticity vs a bus interposer (response HMAC) is the filed HMAC-session follow-up.
+> - Scope boundary: this section owns the seal/unseal mechanism + forward hooks; the storage-encryption / CI-policy consumers and the live recovery prompt are tracked elsewhere.
 
 ## 9. Attestation Report Export
 
@@ -317,7 +325,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 | 💎 | PCR replay | internal/Defender | tpm2-tools | ✅ §4 SHA-1/256/384/512 replay + tamper verify |
 | 💎 | TPM NV index storage (PCR-sealed) | TBS NV / BitLocker | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index |
 | 💎 | Measured-boot baseline (enroll/verify) | Measured Boot baseline | IMA + systemd-pcrlock | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation |
-| 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
+| 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |
 | 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | TODO-13 §13 (EK->AK + TPM2_Quote) |
 | 💎 | PCR allocation policy | PCR7+11 BitLocker seal | systemd-pcrlock CEL | ✅ §12 event-centric table + derived masks |
