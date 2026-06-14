@@ -284,7 +284,7 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 > NVRAM persists the last POST16 via `boot_post_nvram_write16()` / `boot_post_read16()` (`boot_init.c`). The on-screen banner resolves a human-readable name with **`vpd_post16_name(last_code)`** (`vpd.c`); there is **no separate stage-name variable** in NVRAM today. A future enhancement could store a short stage string if UEFI variable space and flash endurance allow.
 
 - [x] NVRAM stores the full 16-bit POST code via `boot_post_nvram_write16()` (milestones + panic); `boot_post_read16()` reads it next boot
-- [x] `vpd_post16_name(code)` -- lookup table resolves POST16 code → stage name (55 entries)
+- [x] `vpd_post16_name(code)` -- lookup table resolves POST16 code → stage name (99 entries, incl. all bootloader `POST16_BL_*` milestones)
 - [x] `vpd_crash_banner(last_postcode)` -- sets banner state and draws the failure banner: a standalone red line when `postbars==0`, or the info-header "Last Boot:" line when `postbars>=1` -- shown regardless of postbars
 - [x] Failure banner drawn independent of `postbars` -- `vpd_crash_banner()` draws the standalone red banner when `config_found && postbars==0` (the case `vpd_init()` skips the header); no double-draw when `postbars>=1`
 - [x] Wired into `boot_phase0()` -- displays on both incomplete and failed prior boots
@@ -297,7 +297,7 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 > **Test runner:** N/A (`test_vpd.c` not yet wired -- file-wide Unit Tests gap) | validation: forced-panic reboot on QEMU/hardware (manual)
 > **Notes:**
 > - Shipped: NVRAM POST persistence (`boot_post_nvram_write16` at boot milestones) + `vpd_crash_banner()` red "Last boot failed: NAME 0xNNNN", rendered independent of postbars (standalone draw when `postbars==0`, info-header line when `postbars>=1`).
-> - Integrates: `vpd_crash_banner()` runs in `boot_hw.c` before `vpd_init()`, reads NVRAM via `boot_post_read16()`, resolves the stage name via `vpd_post16_name()` (55-entry table, "UNKNOWN" fallback for unmapped/sentinel codes).
+> - Integrates: `vpd_crash_banner()` runs in `boot_hw.c` before `vpd_init()`, reads NVRAM via `boot_post_read16()`, resolves the stage name via `vpd_post16_name()` (99-entry table, "UNKNOWN" fallback for unmapped/sentinel codes).
 > - Review: Codex 3x fixed a stale "NVRAM written only twice" comment (`boot_init.c`); the panic-stage-loss finding is Deferred -- the "exact stage" promise is partial.
 > - Scope boundary: §8 owns the crash banner + NVRAM read; the panic-path NVRAM write lives in `panic.c` and is the subject of the Deferred follow-up below.
 > **Verified:** 2026-06-14 | ship `7b5711f9` (+ this review commit) | 7/8 items | build OK | manual (forced-panic reboot pending)
@@ -437,20 +437,16 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 > Boot tests run with `debug=1` or `test=1` in boot.conf.
 > VPD is primarily a visual/boot-level system -- most testing is via `scripts/test-smoke.sh` serial pattern matching and manual visual inspection. Kernel unit tests cover the data model, not pixel output.
 
-- [ ] Create `src/kernel/test/test_vpd.c` with:
-  - `POST16(0xTEST)` followed by `boot_post_read16()` returns the written value (POST code roundtrip)
-  - `vpd_post16_name(0x0020)` returns `"pmm"` (or matching stage name from lookup table)
-  - `vpd_post16_name(0xFFFF)` returns `"UNKNOWN"` or NULL for unmapped codes (no crash)
-  - `vpd_is_active()` returns 0 when `postbars=0` (VPD disabled)
-  - `vpd_putchar()` / `vpd_puts()` do not crash when framebuffer pointer is valid (smoke test)
-  - `boot_info.config.postbars` reflects parsed `boot.conf` value (0, 1, or 2)
-  - NVRAM crash persistence: `boot_post_write16(POST16_BOOT_FAILED)` followed by `boot_post_read16()` returns `POST16_BOOT_FAILED`
-- [ ] Add to `scripts/test-smoke.sh`:
-  - `postbars=on`: grep serial for `POST 0x0020` (PMM stage reported)
-  - `postbars=off`: grep serial confirms no `[VPD]` rendering lines
-  - Crash recovery: grep serial for `Last POST code:` or `Last boot failed` after forced panic + reboot
-- [ ] Register in `test_runner_init()`: `test_register_vpd()`
-- [ ] Commit: `"test: add vpd test suite"`
+- [x] `src/kernel/test/test_vpd.c` -- pure data-model coverage of the POST16 -> stage-name table (2 suites, `TEST_CAT_BOOT`):
+  - `vpd_post16_name()` known codes: `0x0020`->PMM, `0x0030`->VMM, `0x0018`->TPM, `0xB001`->BL_ENTRY, `0xB050`->BL_EXIT_BS
+  - `vpd_post16_name()` unmapped codes: `0x0000`/`0x7FFF`/`0xFFFF`->"UNKNOWN"; full 16-bit sweep asserts every code returns a non-NULL non-empty name (no banner null-deref)
+  - **Not unit-tested (Gate 8 -- live boot infra forbidden in tests):** POST16/NVRAM roundtrip (`boot_post_write16`/`read16`), framebuffer writes (`vpd_putchar`/`vpd_stage_*`); `vpd_is_active()` value is boot-state-dependent. Covered by `scripts/test-smoke.sh` serial matching + manual visual inspection.
+- [ ] `scripts/test-smoke.sh` VPD serial patterns -- **deferred:** smoke-stability policy avoids new patterns (Windows QEMU regression risk); existing POST / `Last POST code:` markers already exercise the path.
+- [x] Register in `test_runner_init()`: `test_register_vpd()` (2 suites, `TEST_CAT_BOOT`)
+- [x] Commit: `"test: add vpd test suite"`
+
+> **Done:** 2 suites, 16 assertions (`vpd_post16_name` known codes incl. all bootloader `POST16_BL_*` milestones + unmapped + full 16-bit sweep) -- registered in `test_runner_init()`, runs under `SUITE=boot` (2026-06-15; 2649 kernel + 16 user-mode PASS on TCG).
+> **Reconciled:** 1 item rewritten to match reality -- the POST16/NVRAM-roundtrip + `vpd_putchar` + `vpd_is_active` sub-items were dropped from the unit suite (Gate 8: live boot infra forbidden in tests) and routed to smoke/manual; 0 rejected.
 
 ## Verification
 
