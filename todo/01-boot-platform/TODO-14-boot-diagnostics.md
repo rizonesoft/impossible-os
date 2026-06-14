@@ -59,9 +59,9 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
 | 💎  |   4   | Alive blink / visual heartbeat     | §2 (visual only; hang=TODO-23) |  [/]   |
 | 💎  |   5   | Panic forensic evidence            | §2                            |  [/]   |
-| ⭐  |   6   | Panic QR code                      | §5                            |  [ ]   |
-| 💎  |   7   | System-wide multi-instance spinner | 08-graphics-ui/TODO-06 §8     |  [ ]   |
-| ⭐  |   8   | Runtime vital signs strip          | §7                            |  [ ]   |
+| ⭐  |   6   | Panic QR code                      | §5; T03 §14 (QR seed)         |  [/]   |
+| 💎  |   7   | System-wide multi-instance spinner | D08 T08 §8 (compositor)       |  [/]   |
+| ⭐  |   8   | Runtime vital signs strip          | D02 T25 §7 (CPU accounting)   |  [/]   |
 | 💎  |   9   | Boot timeline visualization/import | §2                            |  [/]   |
 | ⭐  |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                |  [x]   |
 | 💎  |  11   | Boot load status log (ntbtlog parity)      | §2                         |  [/]   |
@@ -209,6 +209,13 @@ Embed a minimal QR code encoder and render a phone-scannable URL in the BSOD cor
 - [ ] Commit: `"kernel: minimal QR encoder + panic BSOD QR code for phone-scannable troubleshooting"`
 
 **Test checkpoint:** With §5+§6 shipped: forced panic shows scannable QR bottom-right; URL resolves to docs panic page; encoder matrix matches segno for every test URL. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** N/A (deferred -- no code shipped; QR encoder needs segno reference + phone-scan validation) | validation: segno module-diff + phone-scan on bare metal, pending
+> **Notes:**
+> - Deferred (no code shipped): the panic BSOD QR encoder + render -- needs a multi-version V5/6 ECL-M encoder for the ~120-char URL plus segno + phone-scan validation (Gate 11), unavailable autonomously.
+> - Reuse seed: a segno-verified V3/ECL-L encoder exists in `src/boot/uefi/bootx64.c` (error-screen QR); extend it to V5/6 + ECL-M when validation is available (see the section's IMPORTANT callout).
+> - Scope boundary: §6 owns the kernel panic QR; the bootloader error-screen QR encoder is owned by → XREF: `01-boot-platform/TODO-03-bootloader-error-recovery.md` §14.
+> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (feasibility analysis)
+> **Deferred:** [M] panic BSOD QR encoder + render unimplemented (reason: needs V5/6 ECL-M encoder + segno reference + phone-scan validation per boot-code-quality Gate 11, unavailable autonomously) -> XREF: 01-boot-platform/TODO-03-bootloader-error-recovery.md §14 (segno-verified QR encoder reuse seed)
 
 ---
 
@@ -231,6 +238,13 @@ Extend the existing single-instance `spinner.h` to support up to 8 simultaneous 
 - [ ] Commit: `"kernel: multi-instance spinner_t pool for compositor-integrated loading indicators"`
 
 **Test checkpoint:** With §7 shipped: pool of 8; compositor ticks each active `spinner_t` per frame per → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8; boot splash still uses slot 0. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** N/A (deferred -- no code shipped; desktop-polish blocked on WM compositor integration) | validation: on-screen multi-spinner under the WM compositor loop, pending
+> **Notes:**
+> - Deferred (no code shipped): the multi-instance `spinner_t` pool + compositor integration. Single boot-splash spinner works; this is desktop polish (spinners across loading dialogs, Start Menu, etc.) needing WM compositor surfaces.
+> - Blocker: full delivery depends on the WM maintaining `g_active_spinners[]` and calling `spinner_tick()` per frame, owned cross-domain by → XREF: `08-graphics-ui/TODO-08-window-manager.md` §8 (Compositor Performance).
+> - Scope boundary: §7 owns the kernel `spinner_t` pool/render; the per-frame compositor tick wiring is owned by the WM TODO.
+> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/8 items | build OK (no code change) | manual (dependency analysis)
+> **Deferred:** [M] multi-instance spinner_t pool + compositor integration unimplemented (reason: desktop-polish; single boot spinner works; full delivery needs WM per-frame spinner_tick wiring) -> XREF: 08-graphics-ui/TODO-08-window-manager.md §8 (Compositor Performance)
 
 ---
 
@@ -248,6 +262,13 @@ An always-visible 20 px overlay strip at the bottom of the desktop showing live 
 - [ ] Commit: `"desktop: runtime vital signs strip -- CPU/RAM/IRQ/FPS overlay for developers"`
 
 **Test checkpoint:** With §8 shipped: `VitalSigns=1` shows bottom strip updating ~500 ms; CPU, RAM, IRQ, uptime, FPS plausible. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> **Test runner:** N/A (deferred -- no code shipped; blocked on scheduler CPU% accounting) | validation: on-screen overlay with live metrics, pending
+> **Notes:**
+> - Deferred (no code shipped): the vital-signs overlay strip (CPU/RAM/IRQ/uptime/FPS). The CPU% metric needs scheduler per-CPU CPU-time accounting, which does not exist yet.
+> - Blocker: per-process/per-thread CPU-time accounting (the CPU% source) is owned cross-domain by → XREF: `02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md` §7 (CPU, I/O, and Wakeup Accounting).
+> - Scope boundary: §8 owns the desktop overlay (`src/desktop/vital_signs.c`); the scheduler CPU-time accounting source is owned by TODO-25 §7.
+> **Verified:** 2026-06-14 | deferred -- no code shipped | 0/5 items | build OK (no code change) | manual (dependency analysis)
+> **Deferred:** [M] runtime vital-signs strip unimplemented (reason: needs scheduler per-CPU CPU% accounting) -> XREF: 02-kernel-core/TODO-25-kernel-resource-accounting-quotas.md §7 (item: "Track per-process and per-job CPU time with user/kernel split")
 
 ---
 
@@ -342,7 +363,7 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 | ⭐ | Alive hang pixel        | ❌ No kernel hang pixel     | ❌ Not production default     | ⬜ §4 redesign safe FB path       |
 | ⭐ | Live vital overlay      | ⚠️ Task Manager separate    | ⚠️ htop conky third-party    | ⬜ §8 bottom metrics strip        |
 
-> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) but **viewers** match Linux/Win tooling only after the §9 converters land. ⬜ rows §5--§8 are open parity or stretch (⭐ rows); §9 converters pending. **Edges:** §6 QR and §8 always-on strip are planned differentiators once shipped.
+> **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) but **viewers** match Linux/Win tooling only after the §9 converters land. The ⬜ rows §4/§6/§7/§8 are deferred with recorded blockers (§4 safe-FB path, §6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); §9 converters pending. **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
 
 ---
 
