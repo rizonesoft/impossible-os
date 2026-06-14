@@ -562,9 +562,14 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
         s_row += VPD_SEPARATOR_H + VPD_ROW_HEIGHT / 2;
     }
     if (phase != s_last_phase && phase < 4) {
-        vpd_puts_scaled(VPD_LEFT_MARGIN, s_row, s_phase_names[phase],
-                         VPD_COLOR_VALUE);
-        s_row += VPD_ROW_HEIGHT * 2;  /* heading + 1 blank line */
+        const char *hn = s_phase_names[phase];
+        uint32_t hlen = 0;
+        while (hn[hlen]) hlen++;
+        vpd_puts_scaled(VPD_LEFT_MARGIN, s_row, hn, VPD_COLOR_VALUE);
+        /* 2px underline directly below the heading text */
+        vpd_fill_rect(VPD_LEFT_MARGIN, s_row + VPD_GLYPH_H + 1,
+                       hlen * VPD_CHAR_W, 2, VPD_COLOR_VALUE);
+        s_row += VPD_ROW_HEIGHT * 2;  /* heading + underline + blank line */
     }
     s_last_phase = phase;
 
@@ -581,8 +586,29 @@ void vpd_stage_begin(uint8_t phase, const char *name, uint16_t postcode)
     vpd_fill_rect(VPD_LEFT_MARGIN, s_row, VPD_SQUARE_SIZE, VPD_SQUARE_SIZE,
                    VPD_COLOR_PROGRESS);
 
-    /* Draw stage name at fixed column */
-    vpd_puts_scaled(VPD_NAME_X, s_row, name, VPD_COLOR_TEXT);
+    /* Draw stage name at fixed column with dot leaders to the POST column.
+     * The name column is 14 cells wide (VPD_NAME_X to VPD_CODE_X). Render the
+     * name truncated to 13 cells so a long label like "PCI_NET_DEFERRED" cannot
+     * bleed into the fixed POST-code column, then fill the remainder with a dim
+     * space + dot leaders so the eye tracks name -> code. Tolerates NULL. */
+    {
+        char nbuf[14];
+        uint32_t ni = 0;
+        const char *nsrc = name ? name : "?";
+        while (ni < 13 && nsrc[ni]) { nbuf[ni] = nsrc[ni]; ni++; }
+        nbuf[ni] = '\0';
+        vpd_puts_scaled(VPD_NAME_X, s_row, nbuf, VPD_COLOR_TEXT);
+        if (ni < 13) {
+            char dots[14];
+            uint32_t total = 13 - ni;   /* cells to fill: space + dots */
+            uint32_t di = 0;
+            dots[di++] = ' ';
+            while (di < total) { dots[di++] = '.'; }
+            dots[di] = '\0';
+            vpd_puts_scaled(VPD_NAME_X + ni * VPD_CHAR_W, s_row, dots,
+                             VPD_COLOR_SEPARATOR);
+        }
+    }
 
     /* Draw POST code at fixed column */
     vpd_puthex16_scaled(VPD_CODE_X, s_row, postcode, VPD_COLOR_PENDING);

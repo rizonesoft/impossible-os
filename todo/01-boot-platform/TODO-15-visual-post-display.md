@@ -340,6 +340,14 @@ Full diagnostic layout with phase headers, visual separators, and structured sta
 - [x] Commit: `"boot: VPD phase grouping and diagnostic layout"`
 
 **Test checkpoint:** With `postbars=1` or `2`, phase headers and separators render; columns align. QEMU WHPX, VirtualBox, QEMU TCG, bare metal.
+> **Test runner:** N/A (`test_vpd.c` not yet wired -- file-wide Unit Tests gap) | validation: on-screen phase headers + underline + dot leaders on QEMU/hardware (manual)
+> **Notes:**
+> - Shipped: phase-grouped diagnostic layout in `vpd_stage_begin` -- bright-white phase headings (`s_phase_names[]`) with a 2px underline, 1px inter-group separators, fixed name/POST columns, and dim dot leaders from name to POST code.
+> - Integrates: drawn on phase transition via the `boot_progress()` hook; heading shown only for `phase < 4`; all draws bounds-clamped by `vpd_fill_rect` / `vpd_puts_scaled`.
+> - Review: Codex 3x fixed 2 mediums -- long labels (`PCI_NET_DEFERRED`) overran the fixed POST column (name now truncated to 13 cells + dot-filled) and the underline / dot-leader claims were unrendered (both now implemented).
+> - Scope boundary: §11 owns the diagnostic layout; the Tier 1 renderer is §4; format-aware color packing stays deferred to §4.
+> **Verified:** 2026-06-15 | this review commit (column overrun + underline + dot leaders) | 5/5 items | build OK | manual (on-screen pending)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 0 open | scope: kernel-code-quality
 
 ## 12. HV_BAR Removal and Migration *(done)*
 - [x] `include/kernel/hv_bar.h` deleted -- file no longer exists
