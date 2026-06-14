@@ -219,13 +219,15 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## 8. Sealed-Secret Boot Policy Hooks
 
-- [ ] Add API for sealing and unsealing small secrets to PCR policy.
-- [ ] Provide FDE key-unlock hook for future storage encryption.
-- [ ] Provide code-integrity policy seal hook.
-- [ ] Ensure recovery can prompt when unseal fails.
+- [ ] Prerequisite: extract a shared policy-session seam (trial authPolicy over a caller-supplied PCR mask + run-op-under-real-PolicyPCR-session, single-cleanup `FlushContext`) + a generic mask-to-PCR-select helper, from the static `tpm_nv.c` flow.
+- [ ] Seal/unseal small secrets to `tpm_pcr_seal_mask()` (PCR 7, not the baseline mask): `CreatePrimary` parent + `Create` KEYEDHASH object (authPolicy = seal PolicyPCR) + `Load` + `Unseal` via a real POLICY session; single-cleanup handle teardown.
+- [ ] FDE key-unlock hook (callable forward-API; stub consumer until storage-encryption lands).
+- [ ] Code-integrity policy seal hook (callable forward-API; stub consumer until CI-policy lands).
+- [ ] Structured unseal-failure reporting + a callable recovery handoff (the live-console prompt is a follow-up below).
+- [ ] Follow-up: live-console recovery prompt on unseal failure (needs the Phase-1 console-input path). -> shared owner with the §6 console-input infra follow-up.
 - [ ] Commit: `"tpm: sealed boot policy hooks"`
 
-**Test checkpoint:** Seal a small secret to a PCR policy, then unseal succeeds while PCRs match and is denied (with a recovery prompt) after a PCR changes; the FDE key-unlock hook and the code-integrity seal hook are present + callable (stub consumers OK until storage-encryption / CI policy land). Platforms: QEMU swtpm KVM (seal + PCR-change deny); bare metal.
+**Test checkpoint:** Seal a small secret to the SEAL PCR policy (`tpm_pcr_seal_mask()`, PCR 7), then unseal succeeds while PCR 7 matches and is DENIED (`TPM_RC_POLICY_FAIL`, with structured failure reporting + a callable recovery handoff) after PCR 7 changes; a PCR 11 / kernel-manifest-only change does NOT break unseal (seal excludes PCR 11); the FDE key-unlock + code-integrity seal hooks are present + callable (stub consumers OK). The Create/Load/Unseal marshal/parse + policy selection are fixture-tested; the live seal->PCR-change->deny cycle is QEMU-swtpm/bare-metal validation. Platforms: QEMU swtpm KVM; bare metal.
 
 ## 9. Attestation Report Export
 
