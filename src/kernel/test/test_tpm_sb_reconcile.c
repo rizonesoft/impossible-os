@@ -103,6 +103,17 @@ static void test_uefi_var_data_parse(void)
                                        &name_chars, &data_off, &data_len),
                    -1, "data length > UINT32_MAX rejected");
 
+    /* Zero-length data is VALID (e.g. empty dbx): parses, data_len = 0, the
+     * data offset still points past the name. The reconciler treats a 0==0
+     * length pair as EQUAL, not a missing measurement. */
+    vd_build("dbx", 3u, 0u, 0);
+    r = uefi_var_data_parse(s_vd, s_vd_len, guid, name, 16u, &name_chars,
+                            &data_off, &data_len);
+    TEST_ASSERT_EQ(r, 0, "zero-length VariableData parses");
+    TEST_ASSERT_EQ(name_chars, 3u, "name length = 3 for empty dbx");
+    TEST_ASSERT_EQ(data_off, 38u, "data offset = 32 + 3*2 for empty data");
+    TEST_ASSERT_EQ(data_len, 0u, "data length = 0 accepted");
+
     /* name_cap truncation: only 1 code unit copied, full count still reported. */
     vd_build("KEK", 3u, 1u, 0x00);
     name[1] = 0xEEEE;

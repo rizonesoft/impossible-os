@@ -219,7 +219,11 @@ void tpm_secureboot_reconcile(void)
      * compared against the full live variable. */
     uint32_t meas_off[SB_VAR_COUNT];
     uint32_t meas_len[SB_VAR_COUNT];
-    for (uint32_t v = 0; v < SB_VAR_COUNT; v++) { meas_off[v] = 0; meas_len[v] = 0; }
+    /* Presence is tracked separately from length: a valid VariableDataLength==0
+     * measurement (e.g. an empty dbx) is genuinely "measured" and must compare
+     * EQUAL to an empty live variable, not fall through to NOMEASURE. */
+    uint8_t meas_present[SB_VAR_COUNT];
+    for (uint32_t v = 0; v < SB_VAR_COUNT; v++) { meas_off[v] = 0; meas_len[v] = 0; meas_present[v] = 0; }
 
     uint32_t pcr7 = 0;
     if (log_clean && log) {
@@ -249,8 +253,10 @@ void tpm_secureboot_reconcile(void)
             if (v < 0)
                 continue;
             s_sb_report.vars[v].measured = 1u;
-            /* First DRIVER_CONFIG measurement for this variable wins. */
-            if (meas_len[v] == 0u && data_len != 0u) {
+            /* First DRIVER_CONFIG measurement for this variable wins; record the
+             * span even when data_len == 0 so an empty measurement is comparable. */
+            if (!meas_present[v]) {
+                meas_present[v] = 1u;
                 meas_off[v] = e->payload_off + data_off;
                 meas_len[v] = data_len;
             }
@@ -265,8 +271,9 @@ void tpm_secureboot_reconcile(void)
         s_sb_report.vars[v].live_status = live;
 
         uint8_t m = SB_MATCH_NA;
-        int measured = s_sb_report.vars[v].measured && meas_len[v] != 0u && log != 0;
+        int measured = meas_present[v] && log != 0;
         if (measured && live == SB_LIVE_OK) {
+            /* memcmp(.,.,0)==0 makes a 0==0 length pair compare EQUAL. */
             if (meas_len[v] == live_len &&
                 memcmp(log + meas_off[v], s_live_scratch, live_len) == 0)
                 m = SB_MATCH_EQUAL;
