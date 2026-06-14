@@ -196,7 +196,7 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
  * ========================================================================== */
 
 #define PANIC_EVIDENCE_MAGIC    0xDEADBEEFu
-#define PANIC_EVIDENCE_VERSION  1u
+#define PANIC_EVIDENCE_VERSION  2u   /* v2: klog entries carry pid/tid */
 #define PANIC_EVIDENCE_ADDR     0x80000u   /* fixed physical page; reserved by PMM */
 #define PANIC_EVIDENCE_STAGES   16u        /* last N boot-stage entries captured */
 #define PANIC_EVIDENCE_KLOGS    8u         /* last N klog ring entries captured */
@@ -214,6 +214,8 @@ struct panic_klog_entry {
     uint32_t timestamp;
     uint8_t  cpu_id;
     uint8_t  _pad[3];
+    uint32_t pid;
+    uint32_t tid;
     char     subsystem[16];
     char     message[176];
 };
@@ -286,5 +288,12 @@ void panic_evidence_restore_early(void);
 int panic_had_previous_crash(void);
 
 /* Post-VFS emission of the restored record to X:\Crash\last-panic.txt (BlackBox)
- * or the C:\ fallback. Best-effort; no-op when no prior crash was restored. */
+ * or the C:\ fallback. Best-effort; no-op when no prior crash was restored. On
+ * a successful write it calls panic_evidence_consume() so the same crash is not
+ * re-reported next boot; a failed/skipped write leaves the page for retry. */
 void panic_evidence_write_blackbox(void);
+
+/* Clear the evidence page magic. Called after a successful last-panic.txt write
+ * (the record is only consumed once durably persisted, so a boot that dies
+ * before the write retries on the next boot). */
+void panic_evidence_consume(void);

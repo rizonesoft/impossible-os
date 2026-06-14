@@ -828,6 +828,8 @@ void panic_collect_evidence(struct interrupt_frame *frame, uint32_t bugcheck_cod
             ev->klogs[i].level     = (uint32_t)s_panic_klog_scratch[i].level;
             ev->klogs[i].timestamp = s_panic_klog_scratch[i].timestamp;
             ev->klogs[i].cpu_id    = s_panic_klog_scratch[i].cpu_id;
+            ev->klogs[i].pid       = s_panic_klog_scratch[i].pid;
+            ev->klogs[i].tid       = s_panic_klog_scratch[i].tid;
             pe_copy(ev->klogs[i].subsystem, sizeof ev->klogs[i].subsystem,
                     s_panic_klog_scratch[i].subsystem);
             pe_copy(ev->klogs[i].message, sizeof ev->klogs[i].message,
@@ -887,7 +889,10 @@ int panic_evidence_restore(struct panic_evidence *out)
         out->klogs[i].subsystem[sizeof out->klogs[i].subsystem - 1u] = '\0';
         out->klogs[i].message[sizeof out->klogs[i].message - 1u] = '\0';
     }
-    ev->magic = 0u;
+    /* Do NOT clear the page magic here: the evidence is only durably persisted
+     * once last-panic.txt is written. If this boot dies before that write (or
+     * the write fails), the record must survive on 0x80000 for a next-boot
+     * retry. panic_evidence_consume() clears it after a successful write. */
     return 1;
 }
 
@@ -897,6 +902,21 @@ int panic_evidence_restore(struct panic_evidence *out)
  * X:\Crash\ emission is deferred to panic_evidence_write_blackbox() post-VFS. */
 static struct panic_evidence s_prev_crash;
 static int s_had_prev_crash = 0;
+
+/* Clear the evidence page once the record has been durably emitted, so the same
+ * crash is not re-reported next boot. Conditional: only clear if the page STILL
+ * holds the record we restored (boot_seq + crc identity) -- by Phase 3 the APs
+ * are up, and a new panic on another CPU may have overwritten 0x80000 with a
+ * fresh crash; that one must survive, not be erased here. */
+void panic_evidence_consume(void)
+{
+    volatile struct panic_evidence *ev =
+        (volatile struct panic_evidence *)(uintptr_t)PANIC_EVIDENCE_ADDR;
+    if (ev->magic == PANIC_EVIDENCE_MAGIC &&
+        ev->boot_seq == s_prev_crash.boot_seq &&
+        ev->crc32 == s_prev_crash.crc32)
+        ev->magic = 0u;
+}
 
 void panic_evidence_restore_early(void)
 {
@@ -1015,6 +1035,10 @@ void panic_evidence_write_blackbox(void)
     for (uint32_t i = 0u; i < kc; i++) {
         pos = pe_put(b, pos, cap, "  [");
         pos = pe_put(b, pos, cap, e->klogs[i].subsystem);
+        pos = pe_put(b, pos, cap, " p");
+        pos = pe_dec(b, pos, cap, e->klogs[i].pid);
+        pos = pe_put(b, pos, cap, "/t");
+        pos = pe_dec(b, pos, cap, e->klogs[i].tid);
         pos = pe_put(b, pos, cap, "] ");
         pos = pe_put(b, pos, cap, e->klogs[i].message);
         pos = pe_put(b, pos, cap, "\n");
@@ -1029,13 +1053,23 @@ void panic_evidence_write_blackbox(void)
     struct vfs_node *f = vfs_open(path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
     if (f) {
         int wrote = vfs_write(f, 0, pos, (const uint8_t *)b);
+        int full  = (wrote >= 0 && (uint32_t)wrote == pos);
+        /* Flush to stable storage BEFORE consuming the page -- vfs_close does
+         * NOT flush, so consuming after the write alone could lose the file on a
+         * reset. Only clear the evidence page once the bytes are durable. */
+        int flushed = full ? vfs_flush(f) : -1;
         vfs_close(f);
-        if (wrote >= 0 && (uint32_t)wrote == pos)
+        if (full && flushed == 0) {
+            panic_evidence_consume();   /* durable -> safe to clear the page */
             klog(LOG_INFO, "panic", "previous crash written to %s (%u bytes)",
                  (uint64_t)(uintptr_t)path, (uint64_t)pos);
-        else
+        } else if (full) {
+            klog(LOG_WARN, "panic",
+                 "last-panic: written but flush failed; retaining 0x80000 for retry");
+        } else {
             klog(LOG_WARN, "panic", "last-panic: short write (%d of %u)",
                  (uint64_t)wrote, (uint64_t)pos);
+        }
     } else {
         klog(LOG_WARN, "panic", "last-panic: vfs_open failed for %s",
              (uint64_t)(uintptr_t)path);

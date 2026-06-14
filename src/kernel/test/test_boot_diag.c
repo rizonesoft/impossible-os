@@ -271,8 +271,19 @@ static void test_panic_evidence(void)
     TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 1, "valid record restored");
     TEST_ASSERT_EQ(s_pe_out.bugcheck_code, 0xABCDu, "restored bugcheck_code matches");
     TEST_ASSERT_EQ((uint32_t)s_pe_out.rip, 0x1234u, "restored rip matches");
-    TEST_ASSERT_EQ((uint32_t)ev->magic, 0u, "magic cleared after a successful restore");
-    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "second restore -> nothing (consumed)");
+    /* Restore RETAINS the page (the record is durable only after the file
+     * write) so a boot that dies before emission retries; it is repeatable
+     * until panic_evidence_consume() clears it. */
+    TEST_ASSERT_EQ((uint32_t)ev->magic, PANIC_EVIDENCE_MAGIC, "magic retained after restore (retry)");
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 1, "restore is repeatable until consumed");
+    /* consume is conditional: it must NOT erase a page record that does not
+     * match the boot-restored s_prev_crash (a fresh crash from another CPU).
+     * This hand-built record does not match, so consume is a safe no-op. The
+     * matching-record clear is exercised by the crash_test smoke path. */
+    panic_evidence_consume();
+    TEST_ASSERT_EQ((uint32_t)ev->magic, PANIC_EVIDENCE_MAGIC, "consume does NOT erase a non-matching record");
+    ev->magic = 0u;   /* manual cleanup of the test record */
+    TEST_ASSERT_EQ(panic_evidence_restore(&s_pe_out), 0, "after manual clear -> nothing");
 
     /* Bad crc32 is rejected (stale 0x80000 never misread as a valid crash). */
     memset(ev, 0, sizeof *ev);
