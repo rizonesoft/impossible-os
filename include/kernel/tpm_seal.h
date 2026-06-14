@@ -47,6 +47,7 @@
 /* ---- Algorithm identifiers used by the SRK template + sealed object ---- */
 #define TPM_ALG_KEYEDHASH 0x0008u  /* sealed-data object type */
 #define TPM_ALG_AES       0x0006u  /* SRK symmetric algorithm */
+#define TPM_ALG_RSA       0x0001u  /* RSA key type (EK-cert NV-index selector) */
 #define TPM_ALG_ECC       0x0023u  /* SRK asymmetric algorithm */
 #define TPM_ALG_CFB       0x0043u  /* SRK symmetric mode */
 #define TPM_ECC_NIST_P256 0x0003u  /* SRK curve */

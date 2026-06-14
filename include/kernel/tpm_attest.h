@@ -76,6 +76,7 @@ extern const uint8_t TPM_EK_POLICY_A_SHA256[TPM_EK_POLICY_A_LEN];
 #define TPM_QUOTE_NONCE_MAX   64u   /* TPM2B_DATA / digest-sized */
 #define TPM_ATTEST_MAX        320u  /* a SHA-256 single-bank quote attest is well under this */
 #define TPM_SIG_MAX           288u  /* RSA-2048 sig (256) or ECDSA-P256 (r||s, 64) + tags */
+#define TPM_SIG_ECDSA_P256_MAX 72u  /* sigAlg(2)+hashAlg(2)+sigR(2+32)+sigS(2+32); only scheme tpm2_quote makes */
 #define TPM_AK_PUB_MAX        160u  /* marshaled AK TPMT_PUBLIC */
 #define TPM_EK_CERT_MAX       1024u /* DER EK cert chunk we read from NV */
 
@@ -105,6 +106,12 @@ struct tpm_quote_attest {
     uint32_t restart_count;              /* clockInfo.restartCount */
     uint8_t  safe;                       /* clockInfo.safe */
     uint64_t firmware_version;
+    /* The EXACT TPMS_ATTEST bytes the TPM signed (the verifier's signature
+     * input -- the signature is over these bytes, NOT over the parsed fields
+     * above). A remote verifier needs this raw blob + the AK public + the
+     * signature to verify the quote; it also carries qualifiedSigner (AK name). */
+    uint8_t  attest_raw[TPM_ATTEST_MAX];
+    uint16_t attest_raw_len;
 };
 
 /* ---- Pure marshaling seam (MMIO-free, fixture-tested) ----
@@ -163,3 +170,6 @@ tpm_attest_status_t tpm2_quote(uint32_t pcr_mask, const uint8_t *nonce,
 
 /* Marshaled AK public (TPMT_PUBLIC) captured at provisioning, for the verifier. */
 tpm_attest_status_t tpm_ak_public_get(uint8_t *out, uint16_t cap, uint16_t *out_len);
+
+/* Test seam: drop the cached AK so the next call re-provisions. Unit-test only. */
+void tpm_attest_test_reset(void);

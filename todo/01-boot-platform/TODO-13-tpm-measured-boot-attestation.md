@@ -322,18 +322,23 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 - [ ] Support `TPM2_MakeCredential` / `TPM2_ActivateCredential` for the credential-activation challenge (verifier confirms the AK is bound to a trusted EK). -> follow-up (not yet implemented).
 - [x] `tpm2_quote()` via `TPM2_CC_Quote`: signs the selected-PCR digest + nonce with the AK (ECDSA); parses + returns `struct tpm_quote_attest` + raw signature. Fixture + fake-TIS lifecycle tested.
 - [x] Anti-replay: rejects a too-short/absent nonce, returns `NONCE_STALE` unless the attest extraData echoes it; surfaces `clockInfo` (clock/resetCount/restartCount/safe) in `struct tpm_quote_attest`.
+- [x] Bind the quote response to the request: reject unless the parsed PCR selection (single SHA-256 bank, 32-byte digest) matches the mask, the scheme is ECDSA+SHA-256, and ECDSA r/s <= 32 bytes; out-of-range `pcr_mask` -> `BADARG`.
+- [ ] Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name before returning `OK` (needs EK-pub capture + TPM Name-algebra); today the remote verifier binds the signer via the exported AK public. -> follow-up (Codex re-adversarial [H]).
 - [ ] Wire the quote + AK public + EK-cert chain into §9's report (§13 exposes the query APIs; §9 owns integration). -> XREF: [`§9`](#9-attestation-report-export) (item: "Build the TPM-rooted `boot_attestation_report_t`"). Blocked on §9.
 - [x] Degraded: no TPM / no EK cert / AK fail -> classified `tpm_attest_status_t`; every entry point returns a status, NEVER gates boot. Fixture-tested.
 - [x] Commit: `"tpm: attestation key provisioning and TPM2 quote"`
 
 **Test checkpoint:** Against QEMU swtpm, `tpm2_quote(mask, nonce, ...)` returns a `TPMS_ATTEST` + signature that verifies under the AK public key and carries the supplied nonce; a credential-activation round-trip (`MakeCredential`/`ActivateCredential`) succeeds; a replayed quote (stale nonce) is rejected; with no TPM the path reports `attestation_unavailable` and boot continues. Platforms: QEMU swtpm KVM (quote + verify); bare metal (test laptop fTPM, real EK cert).
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 887 kernel + 16 user-mode, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 903 kernel + 16 user-mode, 0 failures (11 `test_tpm_attest.c` suites incl. signature-structure + request/response bind rejection)
 > **Notes:**
 > - `tpm_attest.{c,h}`: pure-marshal builders/parsers (EK CreatePrimary, PolicySecret, AK Create, Quote, TPMS_ATTEST parse, EvictControl) + live wrappers (EK-cert read, AK provision, `tpm2_quote`, AK-pub) over the `tpm_nv.c` policy seam.
 > - AK provision: deterministic ECC-P256 EK (endorsement) + restricted ECDSA-P256 signing AK; the policy-auth EK needs `PolicySecret` re-run before EACH EK-authorized command (Create + Load). AK cached per boot; atomic SMP gate, no lock over TPM I/O.
-> - `tpm2_quote` binds the verifier nonce (anti-replay -> `NONCE_STALE`) + surfaces `clockInfo`; every entry point degrades to a classified status and NEVER gates boot.
+> - `tpm2_quote` binds the response to the request (PCR selection == mask, SHA-256 bank, ECDSA+SHA-256 scheme) + the verifier nonce (anti-replay -> `NONCE_STALE`); every entry point degrades to a classified status and NEVER gates boot.
 > - Query APIs (`tpm2_quote`/`tpm_ak_public_get`/`tpm_ek_cert_read`) are what §9 consumes; report integration + the `MakeCredential`/`ActivateCredential` challenge are tracked follow-ups.
 > - Scope boundary: §13 owns the TPM-rooted signing mechanism; §9 owns the report export; live quote+verify + credential activation are swtpm/bare-metal validation.
+> **Verified:** 2026-06-14 | commit `c9ce7bcd` (ship) + review (request/response binding) | 6/9 items | build OK | tests 903/903 PASS (security)
+> **Deferred:** [H] `TPMS_ATTEST.qualifiedSigner` not bound to the AK Qualified Name -> XREF: 01-boot-platform/TODO-13 §13 (item: "Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name" at line 326) (reason: needs EK-pub capture + Name-algebra; verifier binds the signer via the exported AK pub)
+> **Quality reviewed:** 2026-06-14 | Codex 8x (adversarial, consistency, perf, re-adversarial) | 4H+4M fixed, 1H deferred | scope: kernel-code-quality
 
 ---
 

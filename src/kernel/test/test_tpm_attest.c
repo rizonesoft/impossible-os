@@ -141,6 +141,10 @@ static void test_attest_build_quote(void)
 
 /* ---- TPMS_ATTEST quote-response parse ---- */
 
+/* pcrDigest length build_quote_response emits (default = the SHA-256 size 32);
+ * a test sets this to forge a consistent but wrong-length digest. */
+static uint16_t bq_digest_len = 32u;
+
 /* Build a well-formed TPM2_Quote response into rsp; returns its total length. */
 static uint32_t build_quote_response(uint8_t *rsp)
 {
@@ -169,9 +173,9 @@ static uint32_t build_quote_response(uint8_t *rsp)
     tpm2_be16_put(rsp + a, TPM_ALG_SHA256); a += 2u;
     rsp[a] = 3u; a += 1u;                                    /* sizeofSelect */
     rsp[a] = 0xFFu; rsp[a + 1u] = 0u; rsp[a + 2u] = 0u; a += 3u; /* PCRs 0-7 */
-    tpm2_be16_put(rsp + a, 32u); a += 2u;                    /* pcrDigest size */
-    for (i = 0; i < 32u; i++) rsp[a + i] = (uint8_t)(0xC0u + i);
-    a += 32u;
+    tpm2_be16_put(rsp + a, bq_digest_len); a += 2u;          /* pcrDigest size */
+    for (i = 0; i < bq_digest_len; i++) rsp[a + i] = (uint8_t)(0xC0u + i);
+    a += bq_digest_len;
     attest_size = a - attest_off;
     tpm2_be16_put(rsp + 14, (uint16_t)attest_size);          /* TPM2B_ATTEST size */
     /* TPMT_SIGNATURE (ECDSA): sigAlg + hashAlg + R(2+32) + S(2+32). */
@@ -216,6 +220,12 @@ static void test_attest_parse_quote(void)
     TEST_ASSERT(att.pcr_digest[0] == 0xC0u, "attest pcrDigest bytes");
     TEST_ASSERT_EQ(sig_len, 72u, "ECDSA signature blob 72 bytes (sigAlg+hash+R+S)");
     TEST_ASSERT_EQ(tpm2_be16_get(sig + 0), TPM_ALG_ECDSA, "signature alg ECDSA");
+    /* attest_raw captures the EXACT signed TPMS_ATTEST bytes (the verifier's
+     * signature input -- not the parsed fields). */
+    TEST_ASSERT_EQ((uint32_t)att.attest_raw_len, (uint32_t)tpm2_be16_get(rsp + 14),
+                   "attest_raw_len == TPM2B_ATTEST size");
+    TEST_ASSERT_EQ(tpm2_be32_get(att.attest_raw), TPM2_GENERATED_VALUE,
+                   "attest_raw[0..3] == TPMS_ATTEST magic");
 
     /* Wrong magic / wrong type are rejected (not a TPM-generated quote). */
     tpm2_be32_put(rsp + 16, 0xDEADBEEFu);
@@ -225,6 +235,69 @@ static void test_attest_parse_quote(void)
     tpm2_be16_put(rsp + 20, 0x8017u);   /* ATTEST_CERTIFY, not QUOTE */
     TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
                    "non-quote attest type rejected");
+}
+
+/* The signature-structure validation rejects a crafted "successful" quote whose
+ * TPMT_SIGNATURE is malformed -- otherwise tpm2_parse_quote would hand the verifier
+ * an unverifiable signature reported as OK. The signature begins at offset
+ * 16 + TPM2B_ATTEST size (header 14 + size(2) -> attest -> signature). */
+static void test_attest_parse_quote_sig_reject(void)
+{
+    uint8_t rsp[256], sig[128];
+    struct tpm_quote_attest att;
+    uint32_t n, sig_len = 0, soff;
+
+    /* Unsupported signing scheme (neither ECDSA nor RSASSA). */
+    memset(rsp, 0, sizeof rsp);
+    n = build_quote_response(rsp);
+    soff = 16u + (uint32_t)tpm2_be16_get(rsp + 14);
+    tpm2_be16_put(rsp + soff, TPM_ALG_SHA256);       /* not a signature alg */
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "unsupported sig scheme rejected");
+
+    /* Zero-length sigR -- a degenerate ECDSA signature. */
+    n = build_quote_response(rsp);
+    soff = 16u + (uint32_t)tpm2_be16_get(rsp + 14);
+    tpm2_be16_put(rsp + soff + 4u, 0u);              /* sigR TPM2B size = 0 */
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "zero-length sigR rejected");
+
+    /* sigR length overruns the remaining parameter area. */
+    n = build_quote_response(rsp);
+    soff = 16u + (uint32_t)tpm2_be16_get(rsp + 14);
+    tpm2_be16_put(rsp + soff + 4u, 0xFFFFu);         /* sigR size huge */
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "overlong sigR rejected");
+
+    /* Non-exact consumption: declared sigS shorter than the bytes present, so the
+     * signature is not consumed to its exact end. */
+    n = build_quote_response(rsp);
+    soff = 16u + (uint32_t)tpm2_be16_get(rsp + 14);
+    tpm2_be16_put(rsp + soff + 38u, 16u);            /* sigS size 16 (32 bytes present) */
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "non-exact signature consumption rejected");
+
+    /* sigR longer than the P-256 curve parameter (32 bytes) -- a wrong-curve or
+     * malformed ECDSA component, even though it would otherwise fit the buffer. */
+    n = build_quote_response(rsp);
+    soff = 16u + (uint32_t)tpm2_be16_get(rsp + 14);
+    tpm2_be16_put(rsp + soff + 4u, 40u);             /* sigR size 40 > 32 */
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "overlong-for-P256 sigR rejected");
+
+    /* Wrong pcrDigest length: a SHA-256 quote's digest is exactly 32 bytes. A
+     * consistent-but-wrong-length digest (64 or 0) must be rejected, not reported
+     * as a valid quote. bq_digest_len keeps the rest of the response self-consistent
+     * so it is the digest-length check -- not exact-consumption -- that fires. */
+    bq_digest_len = 64u;
+    n = build_quote_response(rsp);
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "64-byte pcrDigest (not SHA-256) rejected");
+    bq_digest_len = 0u;
+    n = build_quote_response(rsp);
+    TEST_ASSERT_EQ(tpm2_parse_quote(rsp, n, &att, sig, sizeof sig, &sig_len), -1,
+                   "empty pcrDigest rejected");
+    bq_digest_len = 32u;                             /* restore default for later tests */
 }
 
 /* ---- EvictControl byte-layout ---- */
@@ -266,6 +339,10 @@ static void test_attest_no_tpm(void)
                    (int)TPM_ATTEST_BADARG, "quote rejects too-short nonce");
     TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, 0, 0u, &att, sig, sizeof sig, &slen),
                    (int)TPM_ATTEST_BADARG, "quote rejects null nonce");
+    /* A PCR bit >= 24 is not representable by the single 3-octet SHA-256 selection
+     * this path quotes; it must be rejected, never silently dropped + attested. */
+    TEST_ASSERT_EQ((int)tpm2_quote(0x01000000u, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_BADARG, "quote rejects out-of-range PCR bit (>= 24)");
     TEST_ASSERT_EQ((int)tpm_ak_public_get(0, sizeof pub, &got),
                    (int)TPM_ATTEST_BADARG, "ak_public_get rejects null out");
 }
@@ -281,6 +358,9 @@ static int      af_ready, af_executed;
 static uint32_t af_seen[32], af_seen_n, af_flush_n;
 static uint32_t af_policy_secret_n;   /* count PolicySecret calls (must be 2) */
 static uint32_t af_load_auth;         /* the auth handle the Load command carried */
+static uint8_t  af_quote_pcr0 = 0xFFu;             /* fake CC_QUOTE pcrSelect byte 0 (corrupt to test the bind check) */
+static uint16_t af_quote_hashalg = TPM_ALG_SHA256; /* fake CC_QUOTE sig hashAlg (corrupt to test the bind check) */
+static uint16_t af_quote_bankalg = TPM_ALG_SHA256; /* fake CC_QUOTE PCR-bank hashAlg (corrupt to test the bank bind) */
 
 #define AF_REG_STS  0x018u
 #define AF_REG_FIFO 0x024u
@@ -367,14 +447,14 @@ static void af_build_response(void)
         for (i = 0; i < 17u; i++) af_rsp[a + i] = 0u; a += 17u; /* clockInfo */
         for (i = 0; i < 8u; i++) af_rsp[a + i] = 0u; a += 8u;   /* fwVersion */
         tpm2_be32_put(af_rsp + a, 1u); a += 4u;    /* TPML count */
-        tpm2_be16_put(af_rsp + a, TPM_ALG_SHA256); a += 2u;
-        af_rsp[a] = 3u; a += 1u; af_rsp[a] = 0xFFu; af_rsp[a+1u] = 0u; af_rsp[a+2u] = 0u; a += 3u;
+        tpm2_be16_put(af_rsp + a, af_quote_bankalg); a += 2u;
+        af_rsp[a] = 3u; a += 1u; af_rsp[a] = af_quote_pcr0; af_rsp[a+1u] = 0u; af_rsp[a+2u] = 0u; a += 3u;
         tpm2_be16_put(af_rsp + a, 32u); a += 2u;
         for (i = 0; i < 32u; i++) af_rsp[a + i] = (uint8_t)(0xC0u + i); a += 32u;
         tpm2_be16_put(af_rsp + 14, (uint16_t)(a - attest_off));  /* TPM2B_ATTEST size */
         /* TPMT_SIGNATURE (ECDSA): sigAlg + hash + R(2+32) + S(2+32). */
         tpm2_be16_put(af_rsp + a, TPM_ALG_ECDSA); a += 2u;
-        tpm2_be16_put(af_rsp + a, TPM_ALG_SHA256); a += 2u;
+        tpm2_be16_put(af_rsp + a, af_quote_hashalg); a += 2u;
         tpm2_be16_put(af_rsp + a, 32u); a += 2u;
         for (i = 0; i < 32u; i++) af_rsp[a + i] = (uint8_t)(0x10u + i); a += 32u;
         tpm2_be16_put(af_rsp + a, 32u); a += 2u;
@@ -442,6 +522,18 @@ static int af_saw(uint32_t cc)
     return 0;
 }
 
+/* Reset the fake-TIS observers + corrupt-flag globals to defaults AND drop the
+ * production AK cache, so each attestation test runs the full provisioning path
+ * regardless of order (no reliance on a sibling test's cached AK). */
+static void af_reset(void)
+{
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
+    af_seen_n = 0; af_flush_n = 0; af_policy_secret_n = 0; af_load_auth = 0;
+    af_quote_pcr0 = 0xFFu; af_quote_hashalg = TPM_ALG_SHA256; af_quote_bankalg = TPM_ALG_SHA256;
+    bq_digest_len = 32u;
+    tpm_attest_test_reset();
+}
+
 static void test_attest_quote_lifecycle(void)
 {
     const struct tpm_t_io *prev;
@@ -452,8 +544,7 @@ static void test_attest_quote_lifecycle(void)
     tpm_attest_status_t r;
     for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0x55u + i);
 
-    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
-    af_seen_n = 0; af_flush_n = 0; af_policy_secret_n = 0; af_load_auth = 0;
+    af_reset();                          /* fresh provisioning, independent of test order */
     prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
     memset(&att, 0, sizeof att);
     r = tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen);
@@ -482,6 +573,45 @@ static void test_attest_quote_lifecycle(void)
     TEST_ASSERT(slen == 72u, "ECDSA signature blob returned");
 }
 
+/* The wrapper binds a reported-OK quote to the REQUEST: a response that parses but
+ * covers the wrong PCR selection, or carries the wrong signature hash, must be
+ * rejected -- never published as a valid attestation (adversarial-review hardening). */
+static void test_attest_quote_bind_reject(void)
+{
+    const struct tpm_t_io *prev;
+    struct tpm_quote_attest att;
+    uint8_t nonce[20], sig[128];
+    uint32_t slen = 0, i;
+    for (i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0x33u + i);
+
+    /* Wrong PCR selection: the TPM echoes PCRs 0-3 but the caller requested 0-7.
+     * af_reset() drops any cached AK so this test provisions on its own. */
+    af_reset();
+    af_quote_pcr0 = 0x0Fu;
+    prev = tpm_t_test_install(&af_io, TPM_T_IFACE_TIS, 1);
+    memset(&att, 0, sizeof att);
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_QUOTE_FAIL, "quote over wrong PCR set rejected");
+
+    /* Wrong signature hash: SHA-384 where SHA-256 was requested (parses, fails bind). */
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
+    af_quote_pcr0 = 0xFFu; af_quote_hashalg = 0x000Cu;   /* TPM_ALG_SHA384 */
+    memset(&att, 0, sizeof att);
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_QUOTE_FAIL, "quote with wrong sig hash rejected");
+
+    /* Wrong PCR bank: the TPM quotes a SHA-384 bank, not the requested SHA-256 -- a
+     * matching bitmap over the wrong bank must not be accepted. */
+    af_cmd_len = 0; af_rsp_len = 0; af_rsp_pos = 0; af_ready = 0; af_executed = 0;
+    af_quote_hashalg = TPM_ALG_SHA256; af_quote_bankalg = 0x000Cu;   /* TPM_ALG_SHA384 bank */
+    memset(&att, 0, sizeof att);
+    TEST_ASSERT_EQ((int)tpm2_quote(0xFFu, nonce, sizeof nonce, &att, sig, sizeof sig, &slen),
+                   (int)TPM_ATTEST_QUOTE_FAIL, "quote over wrong PCR bank rejected");
+
+    tpm_t_test_install(prev, TPM_T_IFACE_NONE, 0);
+    af_quote_pcr0 = 0xFFu; af_quote_hashalg = TPM_ALG_SHA256; af_quote_bankalg = TPM_ALG_SHA256;
+}
+
 static void test_attest_ek_cert_oversize(void)
 {
     const struct tpm_t_io *prev;
@@ -504,9 +634,13 @@ void test_register_tpm_attest(void)
     test_suite_register_cat("tpm: AK signing-key marshal", test_attest_build_ak, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: Quote marshal", test_attest_build_quote, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: quote-response (TPMS_ATTEST) parse", test_attest_parse_quote, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: quote signature-structure rejection",
+                            test_attest_parse_quote_sig_reject, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: EvictControl marshal", test_attest_build_evict, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attestation no-TPM degrade", test_attest_no_tpm, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: attestation provision+quote lifecycle",
                             test_attest_quote_lifecycle, TEST_CAT_SECURITY);
+    test_suite_register_cat("tpm: quote request/response bind rejection",
+                            test_attest_quote_bind_reject, TEST_CAT_SECURITY);
     test_suite_register_cat("tpm: EK cert oversize rejected", test_attest_ek_cert_oversize, TEST_CAT_SECURITY);
 }

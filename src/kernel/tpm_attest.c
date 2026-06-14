@@ -228,6 +228,13 @@ int tpm2_parse_quote(const uint8_t *rsp, uint32_t len, struct tpm_quote_attest *
     if (attest_size < 6u || attest_size > pend - a)   /* must hold >= magic+type */
         return -1;
     end_a = a + attest_size;
+    /* Capture the EXACT signed bytes: the TPM signs the TPMS_ATTEST, so a verifier
+     * needs this raw blob (not the parsed fields) as its signature input. */
+    if (attest_size > sizeof out->attest_raw)         /* TPM_ATTEST_MAX bound */
+        return -1;
+    for (i = 0; i < attest_size; i++)
+        out->attest_raw[i] = rsp[a + i];
+    out->attest_raw_len = (uint16_t)attest_size;
     /* TPMS_ATTEST: magic + type pin this as a TPM-generated quote. */
     if (tpm2_be32_get(rsp + a) != TPM2_GENERATED_VALUE) return -1;
     a += 4u;
@@ -257,32 +264,70 @@ int tpm2_parse_quote(const uint8_t *rsp, uint32_t len, struct tpm_quote_attest *
     /* attested TPMS_QUOTE_INFO: TPML_PCR_SELECTION + pcrDigest. */
     if (a + 4u > end_a) return -1;
     count = tpm2_be32_get(rsp + a); a += 4u;
+    /* This subsystem requests exactly one SHA-256 bank with a 3-octet selection
+     * (tpm2_build_quote). Bind the response shape to that: a desynchronized quote
+     * over a different bank (SHA-1/SHA-384), with extra banks, or a wider selection
+     * must NOT be accepted on a coincidentally matching bitmap. */
+    if (count != 1u) return -1;
     out->pcr_select = 0u;
     for (i = 0; i < count; i++) {
+        uint32_t k;
         if (a + 3u > end_a) return -1;
+        if (tpm2_be16_get(rsp + a) != TPM_ALG_SHA256) return -1;  /* requested bank */
         a += 2u;                                       /* hashAlg */
         sos = rsp[a]; a += 1u;
+        if (sos != 3u) return -1;                      /* PCRs 0-23 selection width */
         if ((uint32_t)sos > end_a - a) return -1;
-        if (i == 0u) {                                 /* fold the first bank's bitmap */
-            uint32_t k;
-            for (k = 0; k < sos && k < 3u; k++)
-                out->pcr_select |= ((uint32_t)rsp[a + k]) << (8u * k);
-        }
+        for (k = 0; k < sos; k++)
+            out->pcr_select |= ((uint32_t)rsp[a + k]) << (8u * k);
         a += sos;
     }
     if (a + 2u > end_a) return -1;
     pd = tpm2_be16_get(rsp + a); a += 2u;
-    if ((uint32_t)pd > end_a - a || (uint32_t)pd > sizeof out->pcr_digest) return -1;
+    /* SHA-256 bank (enforced above) -> pcrDigest is exactly a 32-byte SHA-256 digest.
+     * A 0/31/64-byte digest is malformed and must not be reported as a valid quote. */
+    if (pd != 32u || (uint32_t)pd > end_a - a) return -1;
     for (i = 0; i < pd; i++) out->pcr_digest[i] = rsp[a + i];
     out->pcr_digest_len = pd;
     a += pd;
     if (a != end_a)                                    /* exact attest consumption */
         return -1;
-    /* TPMT_SIGNATURE = the rest of the parameter area (raw, for the verifier). */
+    /* TPMT_SIGNATURE = the rest of the parameter area. Validate its STRUCTURE for
+     * the signing scheme (full-structure exact-consumption, like the sealed-object
+     * response parsers): a crafted "successful" quote carrying only a 4-byte
+     * sigAlg+hashAlg header and no R/S must NOT pass -- that would hand the
+     * verifier an unverifiable signature reported as OK. */
     sig_off = end_a;                                   /* == poff + 2 + attest_size */
     slen = pend - sig_off;
     if (slen < 4u || slen > sig_cap)                   /* >= sigAlg(2) + hashAlg(2) */
         return -1;
+    {
+        const uint8_t *s = rsp + sig_off;
+        uint16_t salg = tpm2_be16_get(s);
+        uint32_t so = 4u;                              /* past sigAlg(2) + hashAlg(2) */
+        uint16_t rl, sl;
+        if (salg == TPM_ALG_ECDSA) {                   /* sigR TPM2B + sigS TPM2B */
+            /* P-256 r and s are each <= 32 bytes (the AK is a restricted ECDSA-P256
+             * signing key); an overlong component is a malformed/wrong-curve sig. */
+            if (so + 2u > slen) return -1;
+            rl = tpm2_be16_get(s + so); so += 2u;
+            if (rl == 0u || rl > 32u || (uint32_t)rl > slen - so) return -1;
+            so += rl;
+            if (so + 2u > slen) return -1;
+            sl = tpm2_be16_get(s + so); so += 2u;
+            if (sl == 0u || sl > 32u || (uint32_t)sl > slen - so) return -1;
+            so += sl;
+        } else if (salg == TPM_ALG_RSASSA) {           /* single sig TPM2B */
+            if (so + 2u > slen) return -1;
+            rl = tpm2_be16_get(s + so); so += 2u;
+            if (rl == 0u || (uint32_t)rl > slen - so) return -1;
+            so += rl;
+        } else {
+            return -1;                                 /* unsupported signing scheme */
+        }
+        if (so != slen)                                /* exact signature consumption */
+            return -1;
+    }
     for (i = 0; i < slen; i++) sig_out[i] = rsp[sig_off + i];
     if (sig_len) *sig_len = slen;
     return 0;
@@ -360,7 +405,11 @@ static void at_flush(uint32_t handle)
  * incl. the malformed-handle recovery flush. */
 static uint32_t at_exec_handle(const uint8_t *cmd, uint32_t n, tpm_nv_status_t *out_st)
 {
-    uint8_t rsp[768];
+    /* Static (off-stack): at_exec_handle is reached ONLY from at_provision, which
+     * runs under the s_ak_busy mutual-exclusion gate (one CPU at a time), so a
+     * shared response buffer is race-free -- and it keeps this 768B off the deep
+     * tpm2_quote -> at_provision -> here chain on the 8 KiB kernel stack. */
+    static uint8_t rsp[768];
     uint16_t tag;
     uint32_t size, rc, h;
     int r;
@@ -429,7 +478,12 @@ static uint32_t at_build_load(uint8_t *buf, uint32_t cap, uint32_t parent,
  * EK + session are flushed on EVERY path; the AK stays loaded on success. */
 static tpm_attest_status_t at_provision(void)
 {
-    uint8_t cmd[256], rsp[768], nonce[16];
+    /* rsp is static (off-stack): at_provision runs only under the s_ak_busy gate
+     * (single CPU), so the shared response buffer is race-free and the deep
+     * tpm2_quote -> at_provision call chain stays well within the 8 KiB kernel
+     * stack (the Load step also stacks a blob-sized lcmd just below). */
+    static uint8_t rsp[768];
+    uint8_t cmd[256], nonce[16];
     uint32_t ek, session = 0, ak, n, rlen = 0, i;
     tpm_nv_status_t st;
     struct tpm_sealed_blob blob;
@@ -506,6 +560,15 @@ static tpm_attest_status_t at_ensure_ak(void)
         return TPM_ATTEST_OK;
     if (__atomic_exchange_n(&s_ak_busy, 1, __ATOMIC_ACQ_REL))
         return TPM_ATTEST_BUSY;            /* another CPU is provisioning */
+    /* Double-check ready UNDER the busy gate: a CPU that read ready==0 above can
+     * stall while another CPU fully provisions, publishes the AK (ready=1), and
+     * clears busy -- then this CPU wins the exchange and would re-enter
+     * at_provision(), overwriting the live cache (a torn handle/pub read for a
+     * third CPU + a leaked old AK transient handle). Re-checking closes that. */
+    if (__atomic_load_n(&s_ak_ready, __ATOMIC_ACQUIRE)) {
+        __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
+        return TPM_ATTEST_OK;
+    }
     r = at_provision();
     if (r == TPM_ATTEST_OK)
         __atomic_store_n(&s_ak_ready, 1, __ATOMIC_RELEASE);
@@ -524,8 +587,24 @@ tpm_attest_status_t tpm2_quote(uint32_t pcr_mask, const uint8_t *nonce,
     if (!nonce || nonce_len < TPM_QUOTE_NONCE_MIN || nonce_len > TPM_QUOTE_NONCE_MAX ||
         !out || !sig_out)
         return TPM_ATTEST_BADARG;
+    /* This path quotes a single SHA-256 bank (PCRs 0-23, a 3-octet selection); a
+     * pcr_mask bit >= 24 is not representable and would be silently dropped, then
+     * accepted by the bind check below over a quote that never covered it. Reject it
+     * up front as a caller error rather than attesting a different PCR set. */
+    if (pcr_mask & ~0xFFFFFFu)
+        return TPM_ATTEST_BADARG;
     if (!tpm_transport_available())
         return TPM_ATTEST_NO_TPM;
+    /* Preflight output capacity BEFORE the TPM side effect (provisioning + issuing
+     * the quote): this path always builds an ECDSA-P256/SHA256 quote, whose
+     * TPMT_SIGNATURE is at most TPM_SIG_ECDSA_P256_MAX bytes -- NOT the RSA-sized
+     * TPM_SIG_MAX. Requiring the RSA max rejected legitimate ECDSA callers (and the
+     * 64/128-byte test buffers). An undersized sig_out is a caller BADARG, never a
+     * post-quote QUOTE_FAIL that would make a buffer bug look like a TPM failure.
+     * NO_TPM still precedes this: probing attestation availability must not require
+     * a full-size signature buffer. */
+    if (sig_cap < TPM_SIG_ECDSA_P256_MAX)
+        return TPM_ATTEST_BADARG;
     pr = at_ensure_ak();
     if (pr != TPM_ATTEST_OK)
         return pr;
@@ -540,6 +619,18 @@ tpm_attest_status_t tpm2_quote(uint32_t pcr_mask, const uint8_t *nonce,
         return TPM_ATTEST_QUOTE_FAIL;
     }
     if (tpm2_parse_quote(rsp, rlen, out, sig_out, sig_cap, sig_len) != 0)
+        return TPM_ATTEST_QUOTE_FAIL;
+    /* Bind the response to the request: a quote reported OK MUST cover exactly the
+     * requested PCR selection and carry the requested ECDSA/SHA256 scheme. The
+     * parser only validates structure -- it accepts a structurally valid RSASSA or
+     * wrong-PCR quote. A desynchronized or malformed TPM response that parses but
+     * quotes the wrong PCRs / wrong alg must NOT be published as a valid attestation
+     * (the attestation-report exporter would otherwise claim PCRs the TPM never
+     * signed). The parser guarantees sig_out holds >= 4 bytes (sigAlg+hashAlg). */
+    if (out->pcr_select != (pcr_mask & 0xFFFFFFu))
+        return TPM_ATTEST_QUOTE_FAIL;
+    if (tpm2_be16_get(sig_out) != TPM_ALG_ECDSA ||
+        tpm2_be16_get(sig_out + 2u) != TPM_ALG_SHA256)
         return TPM_ATTEST_QUOTE_FAIL;
     /* Anti-replay: the attest MUST echo the supplied nonce exactly. */
     if (out->nonce_len != nonce_len)
@@ -575,7 +666,10 @@ tpm_attest_status_t tpm_ek_cert_read(uint16_t alg, uint8_t *out, uint16_t cap,
     uint32_t attrs = 0;
     tpm_nv_status_t st;
     if (out_len) *out_len = 0;
-    if (!out || cap == 0u)
+    /* Only the two real EK key types select an index; mapping every other alg to
+     * the RSA index would silently return the wrong trust chain (e.g. a caller
+     * passing TPM_ALG_SHA256 must not get the RSA EK cert reported as OK). */
+    if (!out || cap == 0u || (alg != TPM_ALG_ECC && alg != TPM_ALG_RSA))
         return TPM_ATTEST_BADARG;
     if (!tpm_transport_available())
         return TPM_ATTEST_NO_TPM;
@@ -611,4 +705,25 @@ tpm_attest_status_t tpm_ek_cert_read(uint16_t alg, uint8_t *out, uint16_t cap,
     /* OK only on a FULLY-read advertised-size cert -- never a truncated DER (a
      * verifier must not be fed a partial EK chain reported as success). */
     return (off == size) ? TPM_ATTEST_OK : TPM_ATTEST_TRANSPORT;
+}
+
+/* ---- Test seam ---- */
+
+/* Drop the cached AK so the next attestation entry point re-provisions from
+ * scratch. Lets each unit test exercise the full EK->AK provisioning path in any
+ * order instead of inheriting a sibling test's cache (mirrors tpm_t_test_install
+ * in the transport layer). Not on any production path.
+ *
+ * CONTRACT: quiescent, single-threaded unit-test setup ONLY -- the caller
+ * guarantees no attestation is in flight on any CPU (tests run sequentially on
+ * one CPU). It is NOT a concurrency-safe runtime reset: cache fields are cleared
+ * first and the s_ak_busy gate is RELEASEd last so no later store can publish a
+ * provisioned handle behind a freed gate, but a truly concurrent provisioner
+ * would still race -- which the quiescent contract forbids. */
+void tpm_attest_test_reset(void)
+{
+    s_ak_handle = 0u;
+    s_ak_pub_len = 0u;
+    __atomic_store_n(&s_ak_ready, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_ak_busy, 0, __ATOMIC_RELEASE);
 }
