@@ -38,7 +38,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎 | 1 | Harden TCG event-log parser | -- | [/] |
 | 💎 | 2 | TPM2 command transport | §1 (ordering-only; transport does not consume the parser) | [x] |
 | 💎 | 3 | PCR read API | §2 | [x] |
-| 💎 | 4 | PCR replay engine | §1, ../02-kernel-core/TODO-03 §3 | [ ] |
+| 💎 | 4 | PCR replay engine | §1, ../02-kernel-core/TODO-03 §3 | [x] |
 | 💎 | 5 | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3 | [x] |
 | 💎 | 6 | Baseline enrollment and storage | §3, §4 | [ ] |
 | 💎 | 7 | TPM NV index support | §2, §6 | [ ] |
@@ -132,9 +132,16 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] Compare replayed values against hardware PCR reads via `tpm_replay_verify` (replays measured PCRs 0-7/11, reads `tpm_pcr_get`, memcmp).
 - [x] `TPM_REPLAY_TAMPER` (replay != hardware) distinct from `UNVERIFIABLE` (degraded log / incomplete coverage -- never false tamper or false verified). Baseline-vs-golden mismatch owned by enrollment. -> XREF: §6.
 - [x] First mismatch in diagnostics: `tpm_replay_report.first_mismatch_pcr` (lowest mismatching PCR) + `mismatch_count`.
-- [ ] Commit: `"tpm: replay measured boot PCRs"`
+- [x] Commit: `"tpm: replay measured boot PCRs"`
 
-**Test checkpoint:** On a clean boot, replayed PCR values (extended from the parsed event log, every active bank) equal the hardware PCR reads from §3; a known-vector unit test replays a fixed log to expected digests; injecting one tampered event-log entry flags `event-log tamper` distinctly from `baseline mismatch` and diagnostics name the exact first-mismatch PCR index + offset. Platforms: kernel known-vector unit tests + QEMU swtpm KVM; bare metal.
+**Test checkpoint:** On a clean boot, replayed PCR values (extended from the parsed event log, every active bank) equal the hardware PCR reads from §3; a known-vector unit test replays a fixed log to expected digests; injecting one tampered event-log entry flags `event-log tamper` distinctly from `baseline mismatch` and diagnostics name the exact first-mismatch PCR index + offset. Unit tests cover the SHA-1/256/384 NIST KATs, `pcr_extend`, the replay known-vector (== independent H-chain) + legacy + EV_NO_ACTION cases, and the verify/finalize verdict logic; the live clean-boot replay==hardware comparison is QEMU-swtpm/bare-metal validation. Platforms: kernel unit tests + QEMU swtpm KVM; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 530 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - Shipped the measured-boot PCR replay engine: `src/kernel/crypto/{sha256,sha1,sha384}.c` (FIPS 180-4) + `src/kernel/tpm_replay.c` (`tpm_pcr_extend`, the event-log replay walk, replay-vs-hardware verify) + the `digests_off` parser enabler.
+> - Pure cores (KAT/known-vector/branch tested) with thin live wrappers: `tpm_replay_pcr`/`tpm_replay_verify` over `g_boot_info` + §3 `tpm_pcr_get`; handles legacy + EVENT2 log formats, skips EV_NO_ACTION, gates on a clean parse.
+> - Verdict taxonomy: VERIFIED / `TPM_REPLAY_TAMPER` (replay != hardware) / `UNVERIFIABLE` (degraded log or incomplete coverage). Per-finding review trail in the piece commit messages.
+> - Crypto trio also unblocks §6 image hashes + `09-desktop-shell/TODO-07 §1` `cng_sha256` (reuse, don't reimplement).
+> - Scope boundary: engine only -- §10 surfaces the verdict (VPD/boot diagnostics) and §6 owns the baseline-vs-golden comparison; this section does not yet wire the verify call into the boot flow (owned by §10).
 
 ## 5. Secure Boot Variable Measurement Reconciliation
 
@@ -273,7 +280,7 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 | --- | --- | --- | --- | --- |
 | 💎 | TPM2 command transport (TIS/CRB) | tpm.sys TIS/CRB | tpm_tis/tpm_crb drivers | ✅ §2 burst-chunked TIS + CRB |
 | 💎 | Secure Boot PCR integration | Measured Boot | IMA/TPM tools | ⚠️ §5 structural SB var reconcile |
-| 💎 | PCR replay | internal/Defender | tpm2-tools | TODO-13 §4 |
+| 💎 | PCR replay | internal/Defender | tpm2-tools | ✅ §4 SHA-1/256/384/512 replay + tamper verify |
 | 💎 | Sealed secrets | BitLocker | systemd-cryptenroll | TODO-13 §8 |
 | ⭐ | BlackBox attestation JSON | internal logs | external tools | TODO-13 §9 |
 | 💎 | Remote attestation (TPM2 Quote) | Device Health Attestation | Keylime AK quote | TODO-13 §13 (EK->AK + TPM2_Quote) |
