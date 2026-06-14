@@ -162,10 +162,17 @@ static void test_attest_report_build(void)
                    "AK credential binding stays UNVERIFIED");
     TEST_ASSERT_EQ((uint32_t)s_report.qualified_signer_status, (uint32_t)ATTEST_TRUST_UNVERIFIED,
                    "qualified-signer binding stays UNVERIFIED");
-    TEST_ASSERT_EQ((uint32_t)s_report.ek_cert_status,
-                   (uint32_t)(s_report.ek_status == (uint8_t)TPM_ATTEST_OK
-                                  ? ATTEST_TRUST_UNVERIFIED : ATTEST_TRUST_ABSENT),
-                   "EK cert UNVERIFIED when present, ABSENT otherwise");
+    /* EK cert trust: UNVERIFIED if present, ABSENT only for a clean no-cert,
+     * UNKNOWN for a read/transport failure (must not look like benign absence). */
+    {
+        uint32_t want_ek = (s_report.ek_status == (uint8_t)TPM_ATTEST_OK)
+                               ? ATTEST_TRUST_UNVERIFIED
+                               : (s_report.ek_status == (uint8_t)TPM_ATTEST_NO_EK_CERT)
+                                     ? ATTEST_TRUST_ABSENT
+                                     : ATTEST_TRUST_UNKNOWN;
+        TEST_ASSERT_EQ((uint32_t)s_report.ek_cert_status, want_ek,
+                       "EK cert: UNVERIFIED present / ABSENT no-cert / UNKNOWN on read error");
+    }
 
     /* Forward-compat DRTM slots zeroed (no SENTER/SKINIT today). */
     TEST_ASSERT_EQ((uint32_t)s_report.drtm_entry_pcr, 0xFFu, "DRTM entry PCR = none");
@@ -205,7 +212,7 @@ static void test_attest_report_json(void)
     TEST_ASSERT(s_json_len < sizeof s_json_buf, "json within buffer");
 
     /* Well-formed envelope. */
-    TEST_ASSERT_EQ(memcmp(s_json_buf, "{\"schemaVersion\":1,", 19), 0, "json header prefix");
+    TEST_ASSERT_EQ(memcmp(s_json_buf, "{\"schemaVersion\":2,", 19), 0, "json header prefix");
     TEST_ASSERT_EQ((uint32_t)s_json_buf[s_json_len - 1u], (uint32_t)'\n', "trailing newline");
     TEST_ASSERT_EQ((uint32_t)s_json_buf[s_json_len - 2u], (uint32_t)'}', "closes top object");
 
@@ -213,6 +220,10 @@ static void test_attest_report_json(void)
     TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"manifest\":{\"sha256\":\""), "manifest section");
     TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"quotedBank\":{"), "quoted-bank section");
     TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"drtm\":{"), "drtm section");
+    /* Quote freshness fields must be in the JSON schema, not only in attestRaw. */
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"echoedNonce\":\""), "quote echoed nonce");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"clock\":"), "quote clockInfo");
+    TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"resetCount\":"), "quote reset count");
     /* The 8-byte nonce 0x10..0x17 must round-trip as lowercase hex. */
     TEST_ASSERT(buf_contains(s_json_buf, s_json_len, "\"nonce\":\"1011121314151617\""),
                 "nonce hex echoed");

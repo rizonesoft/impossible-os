@@ -231,12 +231,16 @@ tpm_attest_status_t tpm_attest_report_build(const uint8_t *nonce, uint16_t nonce
         tpm_attest_status_t eks = tpm_ek_cert_read(TPM_ALG_RSA, out->ek_cert,
                                                    sizeof out->ek_cert, &eklen);
         out->ek_status = (uint8_t)eks;
+        out->ek_cert_len = 0u;
         if (eks == TPM_ATTEST_OK) {
             out->ek_cert_len    = eklen;
             out->ek_cert_status = ATTEST_TRUST_UNVERIFIED;  /* present, not yet credential-activated */
+        } else if (eks == TPM_ATTEST_NO_EK_CERT) {
+            out->ek_cert_status = ATTEST_TRUST_ABSENT;       /* benign: no EK cert provisioned */
         } else {
-            out->ek_cert_len    = 0u;
-            out->ek_cert_status = ATTEST_TRUST_ABSENT;
+            /* NO_TPM / TRANSPORT / BADARG / TPMERR: the read FAILED -- a verifier
+             * must not treat this like a clean vTPM/fTPM absence. */
+            out->ek_cert_status = ATTEST_TRUST_UNKNOWN;
         }
     }
 
@@ -340,6 +344,7 @@ int tpm_attest_report_to_json(const struct boot_attestation_report *r,
      * memory and leak it into the file. Refuse to serialize, emitting nothing. */
     if (r->pcr_count > ATTEST_REPORT_PCR_MAX ||
         r->nonce_len > sizeof r->nonce ||
+        r->quote.nonce_len > sizeof r->quote.nonce ||
         r->quote_sig_len > sizeof r->quote_sig ||
         r->quote.attest_raw_len > sizeof r->quote.attest_raw ||
         r->quote.pcr_digest_len > sizeof r->quote.pcr_digest ||
@@ -401,17 +406,27 @@ int tpm_attest_report_to_json(const struct boot_attestation_report *r,
     sink_hex(&s, r->nonce, r->nonce_len);
     sink_lit(&s, "\",");
 
-    /* Signed quote. */
+    /* Signed quote. Emit the parsed freshness fields (echoed nonce + clockInfo +
+     * firmwareVersion) explicitly so a verifier can do anti-replay/freshness
+     * checks from the schema, without re-parsing the raw TPM attest bytes. */
     n = snprintf(chunk, sizeof chunk,
-        "\"quote\":{\"present\":%u,\"status\":%u,\"pcrSelect\":%u,\"sig\":\"",
-        r->quote_present, r->quote_status, r->quote.pcr_select);
+        "\"quote\":{\"present\":%u,\"status\":%u,\"pcrSelect\":%u,"
+        "\"resetCount\":%u,\"restartCount\":%u,\"safe\":%u,\"sig\":\"",
+        r->quote_present, r->quote_status, r->quote.pcr_select,
+        r->quote.reset_count, r->quote.restart_count, r->quote.safe);
     sink_chunk(&s, chunk, n);
     sink_hex(&s, r->quote_sig, r->quote_sig_len);
     sink_lit(&s, "\",\"attestRaw\":\"");
     sink_hex(&s, r->quote.attest_raw, r->quote.attest_raw_len);
     sink_lit(&s, "\",\"pcrDigest\":\"");
     sink_hex(&s, r->quote.pcr_digest, r->quote.pcr_digest_len);
-    sink_lit(&s, "\"},");
+    sink_lit(&s, "\",\"echoedNonce\":\"");
+    sink_hex(&s, r->quote.nonce, r->quote.nonce_len);
+    sink_lit(&s, "\",\"clock\":");
+    sink_u64hex(&s, r->quote.clock);
+    sink_lit(&s, ",\"firmwareVersion\":");
+    sink_u64hex(&s, r->quote.firmware_version);
+    sink_lit(&s, "},");
 
     /* AK public + binding status. */
     n = snprintf(chunk, sizeof chunk,
@@ -454,9 +469,26 @@ void tpm_attest_report_export(void)
     uint16_t nl = 0;
     int rc;
 
+    /* Open the destination FIRST, before any live TPM work: on a boot where
+     * diagnostics storage is unavailable we must not pay the quote + AK/EK
+     * transaction latency only to discard the result. Create via the parent dir
+     * (FAT32 dir-cache re-walk). O_TRUNC: a shorter report must not leave stale
+     * previous-boot tail bytes. */
+    dir = vfs_open("X:\\Diag\\", VFS_O_READ);
+    if (dir && dir->ops && dir->ops->create)
+        dir->ops->create(dir, "attestation.json", VFS_FILE);
+    if (dir)
+        vfs_close(dir);
+    f = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+    if (!f) {
+        klog(LOG_WARN, "TPM", "attestation export: cannot open X:\\Diag\\attestation.json");
+        return;   /* no TPM work paid on unwritable storage */
+    }
+
     r = (struct boot_attestation_report *)kmalloc(sizeof *r);
     if (!r) {
         klog(LOG_WARN, "TPM", "attestation export: out of memory");
+        vfs_close(f);
         return;
     }
 
@@ -469,25 +501,28 @@ void tpm_attest_report_export(void)
     }
     tpm_attest_report_build(np, nl, r);
 
-    /* Create via the parent dir first (FAT32 dir-cache re-walk), then open. */
-    dir = vfs_open("X:\\Diag\\", VFS_O_READ);
-    if (dir && dir->ops && dir->ops->create)
-        dir->ops->create(dir, "attestation.json", VFS_FILE);
-    if (dir)
-        vfs_close(dir);
-    /* O_TRUNC: a shorter report (different nonce/quote/EK material) must not leave
-     * stale tail bytes from the previous boot after the fresh JSON object. */
-    f = vfs_open("X:\\Diag\\attestation.json", VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
-    if (!f) {
-        klog(LOG_WARN, "TPM", "attestation export: cannot open X:\\Diag\\attestation.json");
-        kfree(r);
-        return;
-    }
-
     rc = tpm_attest_report_to_json(r, rpt_vfs_write, f);
     vfs_close(f);
     kfree(r);
-    klog(rc == 0 ? LOG_INFO : LOG_WARN, "TPM",
-         rc == 0 ? "attestation report exported: X:\\Diag\\attestation.json"
-                 : "attestation export: write error to X:\\Diag\\attestation.json");
+
+    if (rc != 0) {
+        /* A mid-stream write failure may have left a partial JSON prefix on disk.
+         * Re-truncate to zero so a consumer sees a clear empty (absent) artifact,
+         * never a corrupt partial report. The cleanup reopen can ITSELF fail under
+         * the same storage fault -- only claim "zeroed" when it actually happened,
+         * else warn loudly that a partial file may remain. */
+        struct vfs_node *z = vfs_open("X:\\Diag\\attestation.json",
+                                      VFS_O_WRITE | VFS_O_TRUNC);
+        if (z) {
+            vfs_close(z);
+            klog(LOG_WARN, "TPM",
+                 "attestation export: write error -> zeroed partial X:\\Diag\\attestation.json");
+        } else {
+            klog(LOG_ERROR, "TPM",
+                 "attestation export: write error AND could not zero -> partial "
+                 "X:\\Diag\\attestation.json may remain");
+        }
+    } else {
+        klog(LOG_INFO, "TPM", "attestation report exported: X:\\Diag\\attestation.json");
+    }
 }

@@ -78,8 +78,9 @@ const struct boot_attest_handoff *tpm_attest_handoff_get(void);
  * ------------------------------------------------------------------------- */
 
 /* Report schema version -- bump on any field add/reorder so a serialized
- * consumer can tell v1 (zeroed DRTM slots) from a future populated variant. */
-#define ATTEST_REPORT_SCHEMA_VERSION   1u
+ * consumer can tell variants apart. v2 added the quote freshness fields
+ * (echoedNonce, clock, resetCount, restartCount, safe, firmwareVersion). */
+#define ATTEST_REPORT_SCHEMA_VERSION   2u
 
 /* Quoted PCR set == tpm_pcr_quote_mask() == PCR {0-7, 11} == 9 slots. */
 #define ATTEST_REPORT_PCR_MAX          9u
@@ -87,7 +88,8 @@ const struct boot_attest_handoff *tpm_attest_handoff_get(void);
 /* Trust status for the AK->EK binding and the quote signer identity. */
 #define ATTEST_TRUST_UNVERIFIED        0u  /* not proven by this build (default) */
 #define ATTEST_TRUST_VERIFIED          1u  /* proven (reserved; unreachable until ActivateCredential ships) */
-#define ATTEST_TRUST_ABSENT            2u  /* source material absent (e.g. no EK cert provisioned) */
+#define ATTEST_TRUST_ABSENT            2u  /* source material cleanly absent (e.g. vTPM/fTPM with no EK cert) */
+#define ATTEST_TRUST_UNKNOWN           3u  /* could not determine: a read/transport error, NOT a clean absence */
 
 /* Coherence between the separately-listed SHA-256 PCRs and the signed quote:
  * the builder recomputes H(selected PCR digests) and compares it to the TPM's
