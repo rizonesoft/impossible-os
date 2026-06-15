@@ -41,7 +41,7 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 
 | ⭐  | Order | Deliverable                                     | Depends On | Status |
 | --- | :---: | ----------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | xHCI interrupt endpoint setup                   | --          |  [ ]   |
+| 💎  |   1   | xHCI interrupt endpoint setup                   | --          |  [x]   |
 | 💎  |   2   | Interrupt transfer polling (periodic TRBs)       | §1         |  [ ]   |
 | 💎  |   3   | USB HID boot-protocol keyboard driver            | §2         |  [ ]   |
 | 💎  |   4   | USB HID boot-protocol mouse driver               | §2         |  [ ]   |
@@ -58,14 +58,24 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 
 Add interrupt endpoint support to the xHCI driver (currently only bulk endpoints for MSC).
 
-- [ ] In `xhci_dev.c`: after SET_CONFIGURATION, find interrupt IN endpoints in the interface descriptor
-- [ ] HID interfaces: class=0x03, subclass=0x01 (boot), protocol=0x01 (keyboard) or 0x02 (mouse)
-- [ ] Configure interrupt endpoint: allocate Transfer Ring, set interval from endpoint descriptor `bInterval`
-- [ ] Add endpoint to device's slot context via Configure Endpoint command
-- [ ] Log: `"[USB] HID %s found on port %u (EP%u, interval=%ums)"` with keyboard/mouse
-- [ ] Commit: `"drivers: xHCI interrupt endpoint setup for USB HID devices"`
+- [x] `xhci_hid_identify()` (`xhci_dev.c`) walks the config descriptor after SET_CONFIGURATION for the HID interface + its Interrupt-IN endpoint; wired into `xhci_enumerate_device` (probed when not MSC)
+- [x] HID interface match: class 0x03 / subclass 0x01 (boot) / protocol 0x01 keyboard | 0x02 mouse (`USB_CLASS_HID`/`USB_SUBCLASS_HID_BOOT`/`USB_PROTO_HID_*`); untrusted EP fields validated (reject EP0, mask wMaxPacketSize bits 10:0, cap 64)
+- [x] Configure Interrupt-IN endpoint: `ep0_ring_init` Transfer Ring + `xhci_hid_interval_encode()` (speed-correct EP-ctx Interval per xHCI 6.2.3.6: HS/SS=bInterval-1, FS/LS=floor(log2(bInterval))+3)
+- [x] Endpoint added to slot context via Configure Endpoint command (TRB type 12, EP type `XHCI_EP_TYPE_INTERRUPT_IN`); ring freed on failure (`ep0_ring_free`)
+- [x] Log: `usb-hid: HID <keyboard|mouse> found on port %u (EP%u, interval field=%u, MaxPkt=%u)` -- validated live (QEMU usb-kbd/usb-mouse)
+- [x] Commit: `"drivers: xHCI interrupt endpoint setup for USB HID devices"`
 
 **Test checkpoint:** QEMU with `-device usb-kbd` -- serial shows `"HID keyboard found on port X"`. No input yet.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_hid.c` interval-encoding (9 asserts); HID enumeration validated live via QEMU usb-kbd/usb-mouse.
+> **Notes:**
+> - Shipped: `xhci_hid_identify()` + `xhci_hid_interval_encode()` (`xhci_dev.c`) -- config-descriptor walk for a HID boot interface + Interrupt-IN endpoint, Configure Endpoint with a speed-correct EP-ctx Interval.
+> - Integrates: probed in `xhci_enumerate_device` when not MSC; new `struct xhci_device` HID fields + `XHCI_EP_TYPE_INTERRUPT_IN`; `ep0_ring_free` reclaims the ring on a definite Configure-Endpoint failure (quarantined on timeout).
+> - Hardening: untrusted descriptor fields validated -- reject EP0, high-bandwidth wMaxPacketSize bits, zero/oversized packet size (avoids EP0-context overwrite + DMA-visible UAF).
+> - Review: Codex 3x (design approve + adversarial + re-adversarial); 4H+2M fixed, 1M accepted (composite MSC+HID out of scope); live QEMU kbd+mouse enumerate (interval field=6).
+> - Scope boundary: §1 configures the interrupt endpoint; periodic report polling, keyboard/mouse report parsing, and PS/2 coexistence are later sections.
+> **Verified:** 2026-06-15 | this commit | 6/6 items | build OK | QEMU usb-kbd/usb-mouse PASS (kbd port5 + mouse port6 enumerated, boot 1.65s); smoke PASS 2.54s
+> **Accepted:** [M] composite MSC+HID device initializes as storage only (HID iface unconfigured) -- deliberate: boot keyboards/mice are HID-only; documented in `xhci_enumerate_device`
+> **Quality reviewed:** 2026-06-15 | Codex 3x (design, adversarial, re-adversarial) | 4H+2M fixed, 1M accepted | scope: kernel-code-quality
 
 ---
 
@@ -166,6 +176,7 @@ Comprehensive USB input status in serial log.
 
 | ⭐ | Feature                   | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS              |
 |----|---------------------------|--------------------------|---------------------------|----------------------------|
+| 💎 | USB HID interrupt EP      | ✅ usbxhci.sys           | ✅ xhci-hcd               | ✅ §1 Configure Endpoint   |
 | 💎 | USB keyboard in boot      | ✅ HID minidriver        | ✅ usbhid + usbkbd       | ⬜ §3                      |
 | 💎 | USB mouse in boot         | ✅ HID minidriver        | ✅ usbhid + usbmouse     | ⬜ §4                      |
 | 💎 | PS/2 + USB coexistence    | ✅ Automatic             | ✅ Automatic              | ⬜ §5                      |

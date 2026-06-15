@@ -196,6 +196,16 @@ static int ep0_ring_init(struct xhci_ring *ring)
     return 0;
 }
 
+/* Free a Transfer Ring allocated by ep0_ring_init (single contiguous page). */
+static void ep0_ring_free(struct xhci_ring *ring)
+{
+    if (ring->phys) {
+        pmm_free_frame(ring->phys);
+        ring->phys = 0;
+        ring->trbs = 0;
+    }
+}
+
 /* Enqueue a TRB on a Transfer Ring (no doorbell -- caller must ring it). */
 static int ep0_ring_enqueue(struct xhci_ring *ring, struct xhci_trb *trb)
 {
@@ -742,15 +752,25 @@ int xhci_enumerate_device(struct xhci_controller *hc,
     if (dev->is_msc) {
         if (usb_msc_init(hc, dev) == 0)
             g_usb_enum_stage = 8;  /* MSC init complete */
+    } else {
+        /* Not an MSC device -- probe for a HID boot keyboard/mouse and
+         * configure its Interrupt-IN endpoint (periodic report polling is
+         * added by the interrupt-transfer polling work). Boot keyboards/mice
+         * are HID-only; a composite MSC+HID device (a flash drive that is also
+         * a keyboard) is out of scope here -- it initializes as storage only,
+         * which is acceptable for boot input. */
+        xhci_hid_identify(hc, dev);
     }
 
     /* ---- Enumeration complete ---- */
     dev->active = 1;
     klog(LOG_INFO, "usb",
-         "Device %04x:%04x enumerated on port %u (slot %u)%s",
+         "Device %04x:%04x enumerated on port %u (slot %u)%s%s",
          (uint64_t)dev->vendor_id, (uint64_t)dev->product_id,
          (uint64_t)port, (uint64_t)slot_id,
-         dev->is_msc ? " [MSC]" : "");
+         dev->is_msc ? " [MSC]" : "",
+         dev->is_hid ? (dev->hid_proto == USB_PROTO_HID_KEYBOARD
+                        ? " [HID kbd]" : " [HID mouse]") : "");
 
     return 0;
 }
@@ -943,6 +963,207 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
          "BOT device ready: Bulk-IN EP%u, Bulk-OUT EP%u, MaxPkt=%u",
          (uint64_t)dev->bulk_in_ep, (uint64_t)dev->bulk_out_ep,
          (uint64_t)dev->bulk_in_max_pkt);
+
+    return 0;
+}
+
+/* ---- HID Identification & Interrupt Endpoint Configuration ------------- */
+
+/* Convert an endpoint descriptor bInterval to the xHCI EP-context Interval
+ * field. The Interval field expresses the polling period as 125us * 2^Interval
+ * (xHCI 6.2.3.6 Table 6-12), but bInterval itself is encoded differently by
+ * device speed:
+ *   - High/SuperSpeed interrupt: bInterval is a microframe exponent already,
+ *     so the period is 2^(bInterval-1) microframes -> Interval = bInterval-1.
+ *   - Full/Low speed interrupt: bInterval is a frame count (1ms = 8 microframes
+ *     = 2^3 * 125us) -> Interval = floor(log2(bInterval)) + 3.
+ * Exposed (non-static) so the encoding can be unit-tested without hardware. */
+uint8_t xhci_hid_interval_encode(uint8_t speed, uint8_t b_interval)
+{
+    if (b_interval < 1)
+        b_interval = 1;
+
+    if (speed == USB_SPEED_HIGH || speed == USB_SPEED_SUPER) {
+        if (b_interval > 16)
+            b_interval = 16;
+        return (uint8_t)(b_interval - 1);   /* 0..15 */
+    }
+
+    /* Full/Low speed: floor(log2(bInterval)) + 3, clamped to [3,15]. */
+    {
+        uint8_t log2 = 0;
+        uint32_t v = b_interval;
+        uint32_t field;
+        while (v > 1) { v >>= 1; log2++; }
+        field = (uint32_t)log2 + 3;
+        if (field > 15)
+            field = 15;
+        return (uint8_t)field;
+    }
+}
+
+int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
+{
+    const uint8_t *buf = dev->config_data;
+    uint16_t len = dev->config_len;
+    uint16_t offset = 0;
+    int found_hid = 0;
+    int found_int_in = 0;
+    int in_hid_iface = 0;
+    uint8_t hid_proto = 0;
+
+    dev->is_hid = 0;
+
+    /* Walk the config descriptor tree linearly (bLength/bDescriptorType) */
+    while (offset + 2 <= len) {
+        uint8_t desc_len  = buf[offset];
+        uint8_t desc_type = buf[offset + 1];
+
+        if (desc_len < 2)
+            break;
+        if (offset + desc_len > len)
+            break;
+
+        if (desc_type == USB_DESC_INTERFACE && desc_len >= 9) {
+            const struct usb_interface_descriptor *iface =
+                (const struct usb_interface_descriptor *)(buf + offset);
+
+            if (iface->bInterfaceClass    == USB_CLASS_HID &&
+                iface->bInterfaceSubClass == USB_SUBCLASS_HID_BOOT &&
+                (iface->bInterfaceProtocol == USB_PROTO_HID_KEYBOARD ||
+                 iface->bInterfaceProtocol == USB_PROTO_HID_MOUSE)) {
+                found_hid     = 1;
+                in_hid_iface  = 1;
+                hid_proto     = iface->bInterfaceProtocol;
+                dev->hid_iface = iface->bInterfaceNumber;
+                dev->hid_proto = hid_proto;
+                found_int_in  = 0;   /* search this interface's endpoints */
+            } else {
+                /* A different interface descriptor ends the HID EP list */
+                if (found_hid && found_int_in)
+                    break;
+                in_hid_iface = 0;
+            }
+        } else if (desc_type == USB_DESC_ENDPOINT && desc_len >= 7 && in_hid_iface) {
+            const struct usb_endpoint_descriptor *ep =
+                (const struct usb_endpoint_descriptor *)(buf + offset);
+            uint8_t xfer_type = ep->bmAttributes & USB_EP_ATTR_TYPE_MASK;
+            uint8_t is_in     = (ep->bEndpointAddress & USB_EP_DIR_IN) ? 1 : 0;
+
+            if (xfer_type == USB_EP_ATTR_INTERRUPT && is_in && !found_int_in) {
+                /* Validate untrusted descriptor fields before trusting them:
+                 * EP number 0 is the control endpoint (DCI 1) -- a HID
+                 * descriptor claiming it would overwrite EP0's context. The
+                 * wMaxPacketSize byte count is bits 10:0 (bits 12:11 are the
+                 * HS high-bandwidth transaction count, not used for boot HID);
+                 * boot reports are <= 8 bytes, so cap well below that range.
+                 * A bogus endpoint is skipped, not stored -- keep scanning. */
+                uint8_t  ep_num  = ep->bEndpointAddress & USB_EP_NUM_MASK;
+                uint16_t wmps    = ep->wMaxPacketSize;
+                uint16_t max_pkt = wmps & 0x07FF;
+                /* Reject high-bandwidth interrupt endpoints (bits 12:11 set):
+                 * boot HID is single-transaction and we do not program the
+                 * Mult / Max-ESIT-payload fields those bits imply. */
+                if (ep_num != 0 && (wmps & 0x1800) == 0 &&
+                    max_pkt != 0 && max_pkt <= 64) {
+                    dev->int_in_addr     = ep->bEndpointAddress;
+                    dev->int_in_ep       = ep_num;
+                    dev->int_in_max_pkt  = max_pkt;
+                    dev->int_in_interval =
+                        xhci_hid_interval_encode(dev->speed, ep->bInterval);
+                    found_int_in = 1;
+                }
+            }
+        }
+
+        offset += desc_len;
+    }
+
+    if (!found_hid || !found_int_in) {
+        klog(LOG_DEBUG, "usb",
+             "Slot %u: no HID boot interface (hid=%d, int_in=%d)",
+             (uint64_t)dev->slot_id, (uint64_t)found_hid, (uint64_t)found_int_in);
+        return -1;
+    }
+
+    /* ---- Allocate Transfer Ring for the Interrupt-IN endpoint ---- */
+    if (ep0_ring_init(&dev->int_in_ring) != 0) {
+        klog(LOG_ERROR, "usb-hid",
+             "Failed to allocate Interrupt-IN Transfer Ring");
+        return -1;
+    }
+
+    /* ---- Build Input Context with the Interrupt-IN endpoint ----
+     * Boot keyboards/mice are HID-only (no MSC), so the single Interrupt-IN
+     * endpoint plus the Slot context is the whole configuration. */
+    {
+        uint32_t csz = ctx_size(hc);
+        uint8_t *input_ctx = (uint8_t *)dev->input_ctx_phys;
+        struct xhci_input_ctrl_ctx *ctrl;
+        struct xhci_slot_ctx *slot_ctx;
+        struct xhci_ep_ctx *ep_in_ctx;
+        uint32_t dci_in = XHCI_DCI(dev->int_in_ep, 1);   /* Interrupt-IN DCI */
+        struct xhci_trb cmd;
+        uint8_t cc;
+
+        dev_zero(input_ctx, 33 * csz);
+
+        /* Input Control Context: add Slot + Interrupt-IN */
+        ctrl = (struct xhci_input_ctrl_ctx *)input_ctx;
+        ctrl->add_flags  = XHCI_INPUT_ADD_SLOT | (1u << dci_in);
+        ctrl->drop_flags = 0;
+
+        /* Slot Context: Context Entries up to the Interrupt-IN DCI */
+        slot_ctx = (struct xhci_slot_ctx *)(input_ctx + 1 * csz);
+        slot_ctx->field0 = XHCI_SCTX_ROUTE(0)
+                         | XHCI_SCTX_SPEED(dev->speed)
+                         | XHCI_SCTX_ENTRIES(dci_in);
+        slot_ctx->field1 = XHCI_SCTX_ROOT_PORT(dev->port);
+
+        /* Interrupt-IN Endpoint Context */
+        ep_in_ctx = (struct xhci_ep_ctx *)(input_ctx + (dci_in + 1) * csz);
+        ep_in_ctx->field0 = XHCI_EPCTX_INTERVAL(dev->int_in_interval);
+        ep_in_ctx->field1 = XHCI_EPCTX_CERR(3)
+                          | XHCI_EPCTX_TYPE(XHCI_EP_TYPE_INTERRUPT_IN)
+                          | XHCI_EPCTX_MAXPKT(dev->int_in_max_pkt);
+        ep_in_ctx->tr_dequeue = dev->int_in_ring.phys | 1; /* DCS = 1 */
+        ep_in_ctx->field4 = XHCI_EPCTX_AVG_TRB_LEN(dev->int_in_max_pkt);
+
+        /* Submit Configure Endpoint Command */
+        dev_zero(&cmd, sizeof(cmd));
+        cmd.parameter = dev->input_ctx_phys;
+        cmd.control   = (XHCI_TRB_CONFIG_EP << XHCI_TRB_TYPE_SHIFT)
+                      | ((uint32_t)dev->slot_id << XHCI_TRB_SLOT_SHIFT);
+
+        if (xhci_cmd_submit(hc, &cmd) != 0) {
+            klog(LOG_ERROR, "usb-hid",
+                 "Failed to submit Configure Endpoint command");
+            ep0_ring_free(&dev->int_in_ring);
+            return -1;
+        }
+
+        cc = xhci_wait_command(hc, NULL);
+        if (cc != XHCI_TRB_CC_SUCCESS) {
+            klog(LOG_ERROR, "usb-hid",
+                 "Configure Endpoint failed (slot %u, cc=%u)",
+                 (uint64_t)dev->slot_id, (uint64_t)cc);
+            /* On a definite error completion the command was rejected and the
+             * EP context was not applied, so the ring is safe to reclaim. On a
+             * timeout (0xFF sentinel) the command may still complete later and
+             * publish this ring's TR dequeue pointer into hardware -- leave the
+             * page quarantined rather than risk a DMA-visible use-after-free. */
+            if (cc != 0xFF)
+                ep0_ring_free(&dev->int_in_ring);
+            return -1;
+        }
+    }
+
+    dev->is_hid = 1;
+    klog(LOG_INFO, "usb-hid",
+         "HID %s found on port %u (EP%u, interval field=%u, MaxPkt=%u)",
+         hid_proto == USB_PROTO_HID_KEYBOARD ? "keyboard" : "mouse",
+         (uint64_t)dev->port, (uint64_t)dev->int_in_ep,
+         (uint64_t)dev->int_in_interval, (uint64_t)dev->int_in_max_pkt);
 
     return 0;
 }

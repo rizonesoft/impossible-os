@@ -59,10 +59,18 @@ struct xhci_controller;
 #define USB_SUBCLASS_SCSI       0x06  /* SCSI Transparent Command Set */
 #define USB_PROTO_BOT           0x50  /* Bulk-Only Transport */
 
+/* ---- USB Human Interface Device (HID) boot-protocol constants ------------ */
+
+#define USB_CLASS_HID           0x03
+#define USB_SUBCLASS_HID_BOOT   0x01  /* Boot interface subclass */
+#define USB_PROTO_HID_KEYBOARD  0x01  /* Boot-protocol keyboard */
+#define USB_PROTO_HID_MOUSE     0x02  /* Boot-protocol mouse */
+
 /* Endpoint address / attributes helpers */
 #define USB_EP_DIR_IN           0x80  /* bEndpointAddress bit 7 = IN */
 #define USB_EP_NUM_MASK         0x0F  /* bEndpointAddress bits 3:0 = EP number */
 #define USB_EP_ATTR_BULK        0x02  /* bmAttributes bits 1:0 = Bulk */
+#define USB_EP_ATTR_INTERRUPT   0x03  /* bmAttributes bits 1:0 = Interrupt */
 #define USB_EP_ATTR_TYPE_MASK   0x03  /* bmAttributes transfer type mask */
 
 /* xHCI DCI (Device Context Index) for a given endpoint:
@@ -160,12 +168,17 @@ struct xhci_ep_ctx {
 #define XHCI_EP_TYPE_CONTROL_BI  4   /* Control (bidirectional) */
 #define XHCI_EP_TYPE_BULK_OUT    2   /* Bulk OUT */
 #define XHCI_EP_TYPE_BULK_IN     6   /* Bulk IN */
+#define XHCI_EP_TYPE_INTERRUPT_IN 7  /* Interrupt IN (HID) */
 
 /* Endpoint Context field1 helpers */
 #define XHCI_EPCTX_CERR(n)        (((uint32_t)(n) & 0x3) << 1)
 #define XHCI_EPCTX_TYPE(t)        (((uint32_t)(t) & 0x7) << 3)
 #define XHCI_EPCTX_MAXPKT(s)      (((uint32_t)(s) & 0xFFFF) << 16)
 #define XHCI_EPCTX_MAXBURST(b)    (((uint32_t)(b) & 0xFF) << 8)
+
+/* Endpoint Context field0 helper: Interval (bits 23:16) -- the polling period
+ * as 125us * 2^Interval (xHCI 6.2.3.6). */
+#define XHCI_EPCTX_INTERVAL(i)    (((uint32_t)(i) & 0xFF) << 16)
 
 /* Endpoint Context field4 helpers */
 #define XHCI_EPCTX_AVG_TRB_LEN(l)  ((uint32_t)(l) & 0xFFFF)
@@ -224,6 +237,16 @@ struct xhci_device {
     struct xhci_ring bulk_in_ring;   /* Bulk-IN Transfer Ring */
     struct xhci_ring bulk_out_ring;  /* Bulk-OUT Transfer Ring */
 
+    /* HID boot-protocol fields (populated by xhci_hid_identify) */
+    uint8_t   is_hid;            /* 1 if a HID boot interface was found */
+    uint8_t   hid_iface;         /* bInterfaceNumber of the HID interface */
+    uint8_t   hid_proto;         /* USB_PROTO_HID_KEYBOARD or _MOUSE */
+    uint8_t   int_in_addr;       /* Interrupt-IN endpoint address (with dir bit) */
+    uint8_t   int_in_ep;         /* Interrupt-IN endpoint number (0-15) */
+    uint8_t   int_in_interval;   /* EP-context Interval field (125us * 2^N) */
+    uint16_t  int_in_max_pkt;    /* Interrupt-IN wMaxPacketSize */
+    struct xhci_ring int_in_ring;    /* Interrupt-IN Transfer Ring */
+
     /* Config descriptor inline storage (avoids separate allocation) */
     uint8_t   config_data[XHCI_CONFIG_BUF_MAX];
 };
@@ -244,6 +267,17 @@ int xhci_enumerate_device(struct xhci_controller *hc, uint8_t port, uint8_t spee
  * endpoints, allocate Transfer Rings, and issue Configure Endpoint command.
  * Returns 0 if MSC device identified and configured, -1 otherwise. */
 int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev);
+
+/* Walk config descriptor to find a HID boot-protocol keyboard/mouse interface,
+ * extract the Interrupt-IN endpoint, allocate its Transfer Ring, and issue a
+ * Configure Endpoint command. Returns 0 if a HID device was identified and
+ * configured, -1 otherwise. */
+int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev);
+
+/* Encode an endpoint descriptor bInterval into the xHCI EP-context Interval
+ * field (period = 125us * 2^Interval). Speed-dependent (xHCI 6.2.3.6):
+ * HS/SS -> bInterval-1; FS/LS -> floor(log2(bInterval))+3. Exposed for tests. */
+uint8_t xhci_hid_interval_encode(uint8_t speed, uint8_t b_interval);
 
 /* Perform a bulk transfer on a non-EP0 endpoint.
  * dir_in: 1 = bulk IN, 0 = bulk OUT.
