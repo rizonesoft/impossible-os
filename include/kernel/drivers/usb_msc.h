@@ -60,6 +60,8 @@ struct usb_csw {
 #include "kernel/drivers/scsi.h"
 
 #define SCSI_SENSE_LEN          18   /* fixed-format REQUEST SENSE allocation */
+#define SCSI_SENSE_MIN          14   /* min bytes for response/key/ASC/ASCQ (0,2,12,13) */
+#define SCSI_INQUIRY_MIN         5   /* standard INQUIRY header (through add'l length) */
 
 /* Error class returned by msc_sense_classify -- drives the retry policy in the
  * MSC BOT transient-error retry layer. */
@@ -147,3 +149,39 @@ const char *msc_sense_key_name(uint8_t key);
  * that the BOT transport recovers via the stall-recovery sequence. Pure;
  * exposed for tests. */
 int msc_cc_is_halt(uint8_t cc);
+
+/* SCSI whole-command retry outcome -- decided purely from a BOT command result
+ * (CSW status / transport) plus the REQUEST SENSE class, so the retry policy is
+ * unit-testable without a live controller. */
+typedef enum {
+    MSC_CMD_DONE = 0,     /* command completed successfully */
+    MSC_CMD_FAIL,         /* unrecoverable -- stop, fail */
+    MSC_CMD_RETRY,        /* transient -- retry the whole command now */
+    MSC_CMD_RETRY_WAIT,   /* transient (spin-up) -- wait then retry */
+    MSC_CMD_RESET_RETRY   /* transport desync -- BOT reset, then retry */
+} msc_cmd_action_t;
+
+/* True if a CSW data residue is a disallowed short transfer for this command:
+ * for an exact-length command (READ/WRITE/READ CAPACITY) any non-zero residue
+ * is a short transfer (fail-safe -- never advance an LBA on partial data); an
+ * allocation-length command tolerates a short reply. Pure; exposed for tests. */
+int msc_residue_short(int exact_len, uint32_t residue);
+
+/* Decide the whole-command retry action. `rc` is the primary BOT result (CSW
+ * status 0/1/2 or < 0 transport); `rs_rc` is the REQUEST SENSE BOT status
+ * (pass USB_CSW_STATUS_PASS when no REQUEST SENSE was issued, i.e. rc != FAIL);
+ * `cls` is the REQUEST SENSE class, consulted only on CSW FAIL; `exact_short` is
+ * msc_residue_short() for the PASS case. Routing:
+ *   PASS, not short             -> DONE
+ *   PASS, exact-length short    -> FAIL (fail-safe)
+ *   PHASE error (already reset)  -> RETRY
+ *   transport (< 0)             -> RESET_RETRY (unknown pipe -- reset first)
+ *   FAIL, REQUEST SENSE phase/transport (rs_rc not PASS/FAIL) -> RESET_RETRY
+ *                                  (the sense probe desynced the pipe)
+ *   FAIL + UNRECOVERABLE        -> FAIL
+ *   FAIL + NOT READY            -> RETRY_WAIT
+ *   FAIL + UNIT ATTN / NO SENSE / recovered -> RETRY (never DONE -- the command
+ *                                              failed even if the sense is benign)
+ * Pure; exposed for tests. */
+msc_cmd_action_t msc_scsi_retry_decide(int rc, int rs_rc, msc_err_class_t cls,
+                                       int exact_short);

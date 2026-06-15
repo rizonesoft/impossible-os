@@ -235,6 +235,90 @@ static void test_usb_boot_cc_is_halt(void)
     }
 }
 
+/* msc_residue_short: a CSW residue is a disallowed short transfer only for an
+ * exact-length command (residue != 0); allocation-length commands tolerate a
+ * short reply. Pure. */
+static void test_usb_boot_residue_short(void)
+{
+    TEST_ASSERT(!msc_residue_short(1, 0), "exact-len, residue 0 -> not short");
+    TEST_ASSERT(msc_residue_short(1, 1), "exact-len, residue 1 -> short");
+    TEST_ASSERT(msc_residue_short(1, 4096), "exact-len, large residue -> short");
+    TEST_ASSERT(!msc_residue_short(0, 0), "alloc-len, residue 0 -> not short");
+    TEST_ASSERT(!msc_residue_short(0, 8), "alloc-len, residue 8 -> tolerated");
+}
+
+/* msc_scsi_retry_decide(rc, rs_rc, cls, exact_short) maps a BOT result (+ the
+ * REQUEST SENSE status/class on FAIL) to the whole-command retry action. The
+ * `_OK` shorthand below means rs_rc = USB_CSW_STATUS_PASS (REQUEST SENSE not
+ * issued or read cleanly). Pure. */
+static void test_usb_boot_scsi_retry_decide(void)
+{
+    const int P = USB_CSW_STATUS_PASS;   /* rs_rc when no/clean REQUEST SENSE */
+
+    /* PASS: residue policy drives DONE vs fail-safe FAIL. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_PASS, P, MSC_ERR_OK, 0),
+                   MSC_CMD_DONE, "PASS, not short -> DONE");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_PASS, P, MSC_ERR_OK, 1),
+                   MSC_CMD_FAIL, "PASS, exact-short -> FAIL (fail-safe)");
+
+    /* Phase error: msc_bot_command already verified the BOT reset -> retry. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_PHASE, P, MSC_ERR_OK, 0),
+                   MSC_CMD_RETRY, "PHASE -> RETRY");
+
+    /* Transport / out-of-range: pipe state unknown -> reset before retry. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(-1, P, MSC_ERR_OK, 0),
+                   MSC_CMD_RESET_RETRY, "transport <0 -> RESET_RETRY");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(99, P, MSC_ERR_OK, 0),
+                   MSC_CMD_RESET_RETRY, "out-of-range -> RESET_RETRY");
+
+    /* CSW FAIL with a cleanly-read sense: the sense class drives the action. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, P, MSC_ERR_UNRECOVERABLE, 0),
+                   MSC_CMD_FAIL, "FAIL + UNRECOVERABLE -> FAIL");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, P, MSC_ERR_WAIT_RETRY, 0),
+                   MSC_CMD_RETRY_WAIT, "FAIL + NOT READY -> RETRY_WAIT");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, P, MSC_ERR_RETRY_NOW, 0),
+                   MSC_CMD_RETRY, "FAIL + UNIT ATTENTION -> RETRY");
+    /* The load-bearing case: a CSW FAIL whose sense is benign (NO SENSE /
+     * recovered) must RETRY, never report success. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, P, MSC_ERR_OK, 0),
+                   MSC_CMD_RETRY, "FAIL + NO SENSE -> RETRY (never DONE)");
+
+    /* CSW FAIL but the REQUEST SENSE probe itself hit a phase/transport failure
+     * (rs_rc neither PASS nor a framed FAIL) -> the pipe may be desynced, so
+     * RESET_RETRY regardless of the collapsed (unreadable) sense class. A framed
+     * REQUEST SENSE CSW FAIL (rs_rc == FAIL) keeps the pipe synced -> the class
+     * (UNRECOVERABLE) drives -> FAIL. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, USB_CSW_STATUS_PHASE,
+                                         MSC_ERR_UNRECOVERABLE, 0),
+                   MSC_CMD_RESET_RETRY, "FAIL + RS phase error -> RESET_RETRY");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, -1,
+                                         MSC_ERR_UNRECOVERABLE, 0),
+                   MSC_CMD_RESET_RETRY, "FAIL + RS transport fail -> RESET_RETRY");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, USB_CSW_STATUS_FAIL,
+                                         MSC_ERR_UNRECOVERABLE, 0),
+                   MSC_CMD_FAIL, "FAIL + RS framed FAIL (synced) -> FAIL");
+
+    /* Invariant: on PASS the sense class is IRRELEVANT -- only exact_short
+     * decides DONE vs FAIL (a regression that read cls before rc would break). */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_PASS, P, MSC_ERR_UNRECOVERABLE, 0),
+                   MSC_CMD_DONE, "PASS, UNRECOVERABLE sense ignored -> DONE");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_PASS, P, MSC_ERR_WAIT_RETRY, 1),
+                   MSC_CMD_FAIL, "PASS exact-short, sense ignored -> FAIL");
+
+    /* Invariant: on a non-FAIL status, rs_rc/cls/exact_short are IRRELEVANT. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_PHASE, -1, MSC_ERR_UNRECOVERABLE, 1),
+                   MSC_CMD_RETRY, "PHASE, other inputs ignored -> RETRY");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(-1, -1, MSC_ERR_UNRECOVERABLE, 1),
+                   MSC_CMD_RESET_RETRY, "transport, other inputs ignored -> RESET_RETRY");
+
+    /* Invariant: on CSW FAIL with a synced sense, exact_short is IRRELEVANT --
+     * the sense class drives the action. */
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, P, MSC_ERR_WAIT_RETRY, 1),
+                   MSC_CMD_RETRY_WAIT, "FAIL exact_short ignored -> RETRY_WAIT");
+    TEST_ASSERT_EQ(msc_scsi_retry_decide(USB_CSW_STATUS_FAIL, P, MSC_ERR_RETRY_NOW, 1),
+                   MSC_CMD_RETRY, "FAIL exact_short ignored -> RETRY");
+}
+
 void test_register_usb_boot(void)
 {
     test_suite_register_cat("usb: controller count + MSC geometry",
@@ -247,6 +331,10 @@ void test_register_usb_boot(void)
                             test_usb_boot_tur_decide, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-boot: stall completion-code classification",
                             test_usb_boot_cc_is_halt, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-boot: CSW residue short-transfer policy",
+                            test_usb_boot_residue_short, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-boot: SCSI whole-command retry decision",
+                            test_usb_boot_scsi_retry_decide, TEST_CAT_STORAGE);
 }
 
 #endif /* KERNEL_TESTS */

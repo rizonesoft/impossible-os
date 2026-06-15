@@ -52,7 +52,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | --- | :---: | ------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [/]   |
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [x]   |
-| 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2, §4    |  [ ]   |
+| 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2, §4    |  [x]   |
 | 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [x]   |
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [ ]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [ ]   |
@@ -91,7 +91,6 @@ Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 > - Hardening: REQUEST SENSE is non-recursive (transport failure reported, not re-sensed); `msc_sense_classify` defaults unknown/named-non-retry keys to UNRECOVERABLE so a future change can't silently retry write-protected/illegal/aborted failures.
 > - Scope boundary: §1 owns sense decode + classification; the retry LOOP is §3; boot-LUN probe is blocked on the GET_MAX_LUN owner (TODO-10 §7).
 > **Verified:** 2026-06-15 | review commit | 4/5 items | build OK | storage 98 kernel + 16 user-mode PASS (SCSI sense classify + key-name)
-> **Accepted:** [H] short REQUEST SENSE reply (`xhci_bulk_transfer` reports SHORT_PKT as success with no byte count) can leave key/ASC/ASCQ zero-filled; the `sense[0]` format gate is a partial guard -> XREF: 01-boot-platform/TODO-19 §5 (item: "Report ACTUAL transferred length from `xhci_bulk_transfer`" at line 171)
 > **Deferred:** [M] boot-LUN selection for composite/card-reader media blocked on GET_MAX_LUN (`xhci_control_transfer` is static) -> XREF: 04-drivers-hardware/TODO-10 §7 (item: "`usb_msc_get_max_lun(dev)`" at line 177)
 > **Quality reviewed:** 2026-06-15 | Codex 6x (design, test-coverage, adversarial x2, consistency, perf) | 1H+3M fixed, 1H accepted-XREF, 1M rejected | scope: kernel-code-quality
 
@@ -116,7 +115,6 @@ After BOT init, poll TEST UNIT READY until the device reports ready instead of s
 > - Hardening: ABORT vs GIVEUP split -- only a BOT pipe desync (TUR or REQUEST SENSE phase/transport failure) aborts init; a hard SCSI error on a healthy pipe warns and continues so INQUIRY/READ CAPACITY surface it. Codex review adoptions in the impl + review commits.
 > - Scope boundary: §2 owns the readiness poll; removing the separate `sleep_ms(2000)` is §6; BOT mass-storage reset / endpoint-stall recovery for the ABORT path is §4.
 > **Verified:** 2026-06-15 | review commit | 5/5 items | build OK | storage 109 kernel + 16 user-mode PASS (TUR poll decision matrix)
-> **Accepted:** [H] CSW residue unvalidated -- a SHORT_PKT data phase can read as complete on INQUIRY / READ(10) / REQUEST SENSE -> XREF: 01-boot-platform/TODO-19 §3 (item: "Residue check: compare `dCSWDataResidue` to the requested length even when `bCSWStatus==0`" at line 126)
 > **Accepted:** [M] `msc_info` keyed by per-controller `slot_id` collides across controllers -> XREF: 01-boot-platform/TODO-19 §11 (item: "Key MSC state by global device, not per-controller `slot_id`" at line 277)
 > **Quality reviewed:** 2026-06-15 | Codex 9x (design, test-coverage, adversarial x2, re-adversarial x3, consistency, perf) | 4H+1M+1L fixed, 1H rejected, 1H+1M accepted-XREF | scope: kernel-code-quality
 
@@ -126,18 +124,25 @@ After BOT init, poll TEST UNIT READY until the device reports ready instead of s
 
 Wrap `msc_bot_command()` with automatic retry for transient SCSI errors.
 
-- [ ] CSW validation BEFORE classifying status (BOT correctness, not just SCSI): verify `dCSWSignature==0x53425355` and `dCSWTag` matches the CBW tag; on signature/tag mismatch -> BOT mass-storage reset (§4), not a SCSI sense retry
-- [ ] Residue check: compare `dCSWDataResidue` to the requested length even when `bCSWStatus==0` (pass) -- a short data phase on a boot READ must FAIL SAFE (no silent partial read / corrupt filesystem input), not count as success
-- [ ] `bCSWStatus==2` (phase error) -> BOT mass-storage reset + Clear-Feature on both bulk endpoints (§4), then re-issue; never SCSI-sense-retry a phase error
-- [ ] After CSW returns error (`bCSWStatus==1`): call `REQUEST SENSE` → classify error
-- [ ] `UNIT_ATTENTION`: retry command immediately (device reset itself, normal after plug)
-- [ ] `NOT_READY`: wait 100ms + retry (drive spinning up)
-- [ ] `MEDIUM_ERROR`: fail immediately (bad sector, no retry will help)
-- [ ] Maximum 3 retries per command
-- [ ] Log: `"[USB] Retry %u/3: sense key=%u"` on each retry
-- [ ] Commit: `"drivers: USB MSC BOT automatic retry for transient SCSI errors"`
+- [x] CSW signature/tag validation BEFORE classifying status: `dCSWSignature` + `dCSWTag` checked in `msc_bot_command`; a mismatch is a desync -> BOT mass-storage reset (shipped in §4), not a SCSI sense retry
+- [x] Residue check: `msc_bot_command` exposes `dCSWDataResidue` (rejects residue > requested); pure `msc_residue_short` -- exact-length READ/WRITE/CAPACITY with any residue FAILs safe; short REQUEST SENSE / INQUIRY rejected via the residue minimum
+- [x] `bCSWStatus==2` (phase error) -> BOT mass-storage reset (shipped in §4); the reset result is checked so a failed reset returns transport-failure, never a retryable phase status
+- [x] `msc_scsi_command` wrapper: on CSW FAIL calls `REQUEST SENSE` -> classify; pure `msc_scsi_retry_decide(rc, rs_rc, cls, exact_short)` drives the action (a REQUEST SENSE phase/transport desync -> reset-before-retry)
+- [x] `UNIT_ATTENTION` (and benign NO SENSE on a CSW FAIL) -> retry now; a CSW FAIL never reports success off a benign sense
+- [x] `NOT_READY` -> wait `MSC_SCSI_WAIT_US`(100ms) + retry
+- [x] `MEDIUM_ERROR` / unrecoverable -> fail immediately (no retry will help)
+- [x] Maximum `MSC_SCSI_RETRIES`(3) attempts per command, then fail; transport (<0) desync does a BOT reset before each retry
+- [x] Log each retry (`klog` DEBUG: attempt, cdb, rc, sense class)
+- [x] Commit: `"drivers: USB MSC BOT automatic retry for transient SCSI errors"`
 
 **Test checkpoint:** Normal USB boot -- no retries needed, zero performance impact. Bare metal with slow USB 2.0 -- retries handle UNIT ATTENTION transparently.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` "CSW residue short-transfer policy" + "SCSI whole-command retry decision" (full `msc_residue_short` + `msc_scsi_retry_decide` matrices incl. REQUEST-SENSE-desync rows); live retry validated via QEMU run-usb + bare metal.
+> **Notes:**
+> - Shipped: `msc_scsi_command` retry wrapper + pure `msc_residue_short` / `msc_scsi_retry_decide` (`usb_msc.c`); `msc_bot_command` exposes `dCSWDataResidue`; `msc_request_sense`/`msc_inquiry` gained residue minimum-length checks.
+> - Integrates: `msc_inquiry`/`msc_read_capacity`/`usb_msc_read_sectors`/`usb_msc_write_sectors` now route through `msc_scsi_command` (READ/WRITE/CAPACITY exact-length, INQUIRY allocation-length); the sense-class retry sits above §4's transport recovery.
+> - Hardening: a CSW FAIL never advances on a benign sense; a short exact-length transfer fails safe; a REQUEST SENSE that itself desyncs the pipe forces a BOT reset before retry. Closes the §1/§2 short-REQUEST-SENSE + residue gaps via the CSW residue.
+> - Scope boundary: §3 owns the SCSI-sense retry + CSW-residue policy; §4 owns transport stall/BOT reset; §5 owns the xHCI per-transfer byte count; command-ring/BOT SMP serialization is §16.
+> **Verified:** 2026-06-15 | impl commit | 10/10 items | build OK | storage 394 kernel + 16 user-mode PASS (residue + retry-decision matrices)
 
 ---
 
@@ -388,7 +393,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 
 | ⭐ | Feature                      | 🪟 Win11                     | 🐧 Linux                      | 🚀 Impossible OS               |
 |----|------------------------------|---------------------------|----------------------------|-----------------------------|
-| 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ⬜ §1-§3                    |
+| 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ✅ §1-§3 sense retry + residue |
 | 💎 | Device readiness poll        | ✅ usbstor TUR wait      | ✅ sd spin-up poll         | ✅ §2 TUR poll, 2s budget   |
 | 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ✅ §4 reset EP + BOT reset  |
 | 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ⬜ §5                 |

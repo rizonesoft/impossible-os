@@ -167,15 +167,22 @@ static int msc_bot_xfer(struct xhci_controller *hc, struct xhci_device *dev,
 /* ---- BOT transport ---- */
 
 /* Execute a BOT command: send CBW, optional data phase, receive CSW.
- * Returns CSW status (0=pass, 1=fail, 2=phase error) or -1 on transport error. */
+ * Returns CSW status (0=pass, 1=fail, 2=phase error) or -1 on transport error.
+ * On a PASS CSW, `*residue_out` (when non-NULL) receives the CSW data residue
+ * (bytes NOT transferred); a residue greater than the requested length is a
+ * malformed CSW and is rejected as a transport failure with a BOT reset. */
 static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
                            const uint8_t *cdb, uint8_t cdb_len,
-                           void *data, uint32_t data_len, int dir_in)
+                           void *data, uint32_t data_len, int dir_in,
+                           uint32_t *residue_out)
 {
     struct usb_cbw cbw;
     struct usb_csw csw;
     uint32_t tag = cbw_tag++;
     int data_short = 0;   /* set if the data phase halted mid-transfer */
+
+    if (residue_out)
+        *residue_out = 0;
 
     /* Build CBW */
     msc_zero(&cbw, sizeof(cbw));
@@ -251,11 +258,14 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
 
     /* A CSW phase error (bCSWStatus == 2) means the device and host disagree on
      * the transfer framing -- BOT 1.0 section 6.7 mandates a mass-storage reset
-     * before any further command. */
+     * before any further command. If the reset itself fails the pipe is NOT
+     * re-synced, so report a transport failure (-1) rather than the retryable
+     * phase status -- a caller must never re-issue a CBW into an unreset pipe. */
     if (csw.bCSWStatus == USB_CSW_STATUS_PHASE) {
         klog(LOG_WARN, "usb-msc", "CSW phase error -- BOT reset (slot %u)",
              (uint64_t)dev->slot_id);
-        msc_bot_reset(hc, dev);
+        if (msc_bot_reset(hc, dev) != 0)
+            return -1;
     }
 
     /* A recovered data-phase stall means the data phase did not complete; even
@@ -264,6 +274,21 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
     if (data_short && csw.bCSWStatus == USB_CSW_STATUS_PASS) {
         klog(LOG_WARN, "usb-msc", "data phase short after stall recovery -- failing command");
         return -1;
+    }
+
+    /* Report the data residue on a PASS CSW so the SCSI layer can fail-safe on a
+     * short exact-length transfer. A residue larger than the requested length is
+     * a malformed CSW -- the device claims it skipped more than was asked, which
+     * means the framing is untrustworthy; reset and fail rather than trust it. */
+    if (csw.bCSWStatus == USB_CSW_STATUS_PASS) {
+        if (csw.dCSWDataResidue > data_len) {
+            klog(LOG_ERROR, "usb-msc", "CSW residue %u > requested %u -- BOT reset",
+                 (uint64_t)csw.dCSWDataResidue, (uint64_t)data_len);
+            msc_bot_reset(hc, dev);
+            return -1;
+        }
+        if (residue_out)
+            *residue_out = csw.dCSWDataResidue;
     }
 
     return csw.bCSWStatus;
@@ -276,7 +301,7 @@ static int msc_test_unit_ready(struct xhci_controller *hc, struct xhci_device *d
     uint8_t cdb[6];
     msc_zero(cdb, 6);
     cdb[0] = SCSI_TEST_UNIT_READY;
-    return msc_bot_command(hc, dev, cdb, 6, NULL, 0, 0);
+    return msc_bot_command(hc, dev, cdb, 6, NULL, 0, 0, NULL);
 }
 
 /* ---- SCSI REQUEST SENSE + error classification ---- */
@@ -342,15 +367,28 @@ static msc_err_class_t msc_request_sense(struct xhci_controller *hc,
     cdb[4] = SCSI_SENSE_LEN;          /* allocation length */
     msc_zero(sense, SCSI_SENSE_LEN);
 
-    rc = msc_bot_command(hc, dev, cdb, 6, sense, SCSI_SENSE_LEN, 1);
-    /* Report the BOT command status so callers can tell a transport-level
-     * REQUEST SENSE failure (pipe desync during recovery) apart from a
-     * successful sense read that merely classifies as unrecoverable. */
-    if (rs_rc)
-        *rs_rc = rc;
-    if (rc != USB_CSW_STATUS_PASS) {
-        klog(LOG_WARN, "usb-msc", "REQUEST SENSE failed (status=%d)", (uint64_t)rc);
-        return MSC_ERR_UNRECOVERABLE;
+    {
+        uint32_t residue = 0;
+        rc = msc_bot_command(hc, dev, cdb, 6, sense, SCSI_SENSE_LEN, 1, &residue);
+        /* Report the BOT command status so callers can tell a transport-level
+         * REQUEST SENSE failure (pipe desync during recovery) apart from a
+         * successful sense read that merely classifies as unrecoverable. */
+        if (rs_rc)
+            *rs_rc = rc;
+        if (rc != USB_CSW_STATUS_PASS) {
+            klog(LOG_WARN, "usb-msc", "REQUEST SENSE failed (status=%d)", (uint64_t)rc);
+            return MSC_ERR_UNRECOVERABLE;
+        }
+        /* The classification reads the response code (0), sense key (2), ASC
+         * (12), and ASCQ (13). If the device returned fewer than 14 bytes the
+         * key/ASC/ASCQ come from the zeroed tail and would misclassify as
+         * NO SENSE/OK -- reject a short sense (CSW residue is the actual length,
+         * available without the per-transfer byte count). */
+        if (SCSI_SENSE_LEN - residue < SCSI_SENSE_MIN) {
+            klog(LOG_WARN, "usb-msc", "REQUEST SENSE short (%u of %u bytes)",
+                 (uint64_t)(SCSI_SENSE_LEN - residue), (uint64_t)SCSI_SENSE_LEN);
+            return MSC_ERR_UNRECOVERABLE;
+        }
     }
     klog(LOG_INFO, "usb-msc", "Sense: key=%u ASC=0x%02x ASCQ=0x%02x (%s)",
          (uint64_t)(sense[2] & 0x0F), (uint64_t)sense[12], (uint64_t)sense[13],
@@ -450,6 +488,103 @@ static msc_poll_result_t msc_poll_unit_ready(struct xhci_controller *hc,
     return MSC_POLL_NOT_READY;
 }
 
+/* ---- SCSI whole-command retry (transient errors) ---- */
+
+#define MSC_SCSI_RETRIES   3        /* whole-command attempts before failing */
+#define MSC_SCSI_WAIT_US   100000   /* 100 ms NOT-READY (spin-up) retry wait */
+
+/* Pure: is a CSW residue a disallowed short transfer? See header. */
+int msc_residue_short(int exact_len, uint32_t residue)
+{
+    return exact_len && residue != 0;
+}
+
+/* Pure whole-command retry decision (exposed for tests). See header contract. */
+msc_cmd_action_t msc_scsi_retry_decide(int rc, int rs_rc, msc_err_class_t cls,
+                                       int exact_short)
+{
+    if (rc == USB_CSW_STATUS_PASS)
+        return exact_short ? MSC_CMD_FAIL : MSC_CMD_DONE;
+    if (rc == USB_CSW_STATUS_PHASE)
+        return MSC_CMD_RETRY;        /* msc_bot_command already BOT-reset */
+    if (rc != USB_CSW_STATUS_FAIL)
+        return MSC_CMD_RESET_RETRY;  /* transport (<0): pipe state unknown */
+    /* CSW FAIL: REQUEST SENSE was issued to read the sense. If the sense probe
+     * itself hit a phase/transport failure (rs_rc neither PASS nor a framed
+     * FAIL) the pipe may be desynced -- reset before retry rather than trust the
+     * unreadable sense class. */
+    if (rs_rc != USB_CSW_STATUS_PASS && rs_rc != USB_CSW_STATUS_FAIL)
+        return MSC_CMD_RESET_RETRY;
+    /* Sense read on a synced pipe -- the class drives the retry. */
+    if (cls == MSC_ERR_UNRECOVERABLE)
+        return MSC_CMD_FAIL;         /* MEDIUM/HARDWARE/short sense -- no retry */
+    if (cls == MSC_ERR_WAIT_RETRY)
+        return MSC_CMD_RETRY_WAIT;   /* NOT READY -- spin-up wait */
+    /* UNIT ATTENTION or NO SENSE/recovered: the command still FAILED, so retry
+     * (bounded) -- never report success off a benign sense. */
+    return MSC_CMD_RETRY;
+}
+
+/* Execute a SCSI command with whole-command retry on transient errors. Wraps
+ * msc_bot_command (which already does transport stall recovery + BOT reset on a
+ * desynced CSW): on a transient CSW FAIL it decodes the sense and retries per
+ * the class; on a transport failure it BOT-resets before re-issuing so a fresh
+ * CBW never goes into an unknown pipe state. `exact_len` = 1 for fixed-length
+ * commands (READ/WRITE/READ CAPACITY) where any CSW residue is a short transfer
+ * that must fail. Returns 0 on success, -1 after MSC_SCSI_RETRIES attempts or an
+ * unrecoverable error. */
+static int msc_scsi_command(struct xhci_controller *hc, struct xhci_device *dev,
+                            const uint8_t *cdb, uint8_t cdb_len,
+                            void *data, uint32_t data_len, int dir_in,
+                            int exact_len, uint32_t *actual_out)
+{
+    int attempt;
+
+    if (actual_out)
+        *actual_out = 0;
+
+    for (attempt = 0; attempt < MSC_SCSI_RETRIES; attempt++) {
+        uint32_t residue = 0;
+        int rc = msc_bot_command(hc, dev, cdb, cdb_len, data, data_len, dir_in,
+                                 &residue);
+        int exact_short = msc_residue_short(exact_len, residue);
+        int rs_rc = USB_CSW_STATUS_PASS;  /* REQUEST SENSE not issued unless FAIL */
+        msc_err_class_t cls = MSC_ERR_OK;
+
+        if (rc == USB_CSW_STATUS_FAIL) {
+            uint8_t sense[SCSI_SENSE_LEN];
+            cls = msc_request_sense(hc, dev, sense, &rs_rc);
+        }
+
+        switch (msc_scsi_retry_decide(rc, rs_rc, cls, exact_short)) {
+        case MSC_CMD_DONE:
+            /* Report the bytes actually transferred (requested - residue) so an
+             * allocation-length caller can enforce its own minimum-length. */
+            if (actual_out)
+                *actual_out = data_len - residue;
+            return 0;
+        case MSC_CMD_FAIL:
+            return -1;
+        case MSC_CMD_RETRY:
+            break;                   /* retry now */
+        case MSC_CMD_RETRY_WAIT:
+            msc_delay_us(MSC_SCSI_WAIT_US);
+            break;
+        case MSC_CMD_RESET_RETRY:
+        default:
+            if (msc_bot_reset(hc, dev) != 0)
+                return -1;           /* cannot re-sync the pipe -- give up */
+            break;
+        }
+        klog(LOG_DEBUG, "usb-msc", "Retry %d/%d: cdb 0x%02x (rc=%d, sense=%u)",
+             attempt + 1, MSC_SCSI_RETRIES, (uint64_t)cdb[0], (uint64_t)rc,
+             (uint64_t)cls);
+    }
+    klog(LOG_WARN, "usb-msc", "SCSI cdb 0x%02x failed after %d retries",
+         (uint64_t)cdb[0], MSC_SCSI_RETRIES);
+    return -1;
+}
+
 static int msc_inquiry(struct xhci_controller *hc, struct xhci_device *dev,
                        struct usb_msc_info *info)
 {
@@ -462,10 +597,21 @@ static int msc_inquiry(struct xhci_controller *hc, struct xhci_device *dev,
     cdb[4] = 36;  /* Allocation length */
 
     msc_zero(buf, 36);
-    rc = msc_bot_command(hc, dev, cdb, 6, buf, 36, 1);
-    if (rc != USB_CSW_STATUS_PASS) {
-        klog(LOG_ERROR, "usb-msc", "INQUIRY failed (status=%d)", (uint64_t)rc);
-        return -1;
+    /* INQUIRY is allocation-length (exact_len=0): a device may legitimately
+     * return fewer than 36 bytes. Require at least the standard 5-byte header so
+     * the device_type (byte 0) is real; the vendor/product fields (bytes 8-31)
+     * stay zero-filled (empty strings) on a short reply, which is cosmetic. */
+    {
+        uint32_t actual = 0;
+        rc = msc_scsi_command(hc, dev, cdb, 6, buf, 36, 1, 0, &actual);
+        if (rc != 0) {
+            klog(LOG_ERROR, "usb-msc", "INQUIRY failed");
+            return -1;
+        }
+        if (actual < SCSI_INQUIRY_MIN) {
+            klog(LOG_ERROR, "usb-msc", "INQUIRY too short (%u bytes)", (uint64_t)actual);
+            return -1;
+        }
     }
 
     info->device_type = buf[0] & 0x1F;
@@ -505,9 +651,10 @@ static int msc_read_capacity(struct xhci_controller *hc, struct xhci_device *dev
     cdb[0] = SCSI_READ_CAPACITY_10;
 
     msc_zero(buf, 8);
-    rc = msc_bot_command(hc, dev, cdb, 10, buf, 8, 1);
-    if (rc != USB_CSW_STATUS_PASS) {
-        klog(LOG_ERROR, "usb-msc", "READ CAPACITY failed (status=%d)", (uint64_t)rc);
+    /* exact_len=1: READ CAPACITY(10) returns exactly 8 bytes. */
+    rc = msc_scsi_command(hc, dev, cdb, 10, buf, 8, 1, 1, NULL);
+    if (rc != 0) {
+        klog(LOG_ERROR, "usb-msc", "READ CAPACITY failed");
         return -1;
     }
 
@@ -651,10 +798,12 @@ int usb_msc_read_sectors(struct xhci_controller *hc, struct xhci_device *dev,
         cdb[7] = (uint8_t)(chunk >> 8);
         cdb[8] = (uint8_t)(chunk);
 
-        rc = msc_bot_command(hc, dev, cdb, 10, out, data_len, 1);
-        if (rc != USB_CSW_STATUS_PASS) {
-            klog(LOG_ERROR, "usb-msc", "READ(10) failed: LBA=%u count=%u status=%d",
-                 (uint64_t)lba, (uint64_t)chunk, (uint64_t)rc);
+        /* exact_len=1: a short data phase on a boot READ must FAIL SAFE -- never
+         * advance the LBA / return partial sectors as if the read completed. */
+        rc = msc_scsi_command(hc, dev, cdb, 10, out, data_len, 1, 1, NULL);
+        if (rc != 0) {
+            klog(LOG_ERROR, "usb-msc", "READ(10) failed: LBA=%u count=%u",
+                 (uint64_t)lba, (uint64_t)chunk);
             return -1;
         }
 
@@ -711,10 +860,12 @@ int usb_msc_write_sectors(struct xhci_controller *hc, struct xhci_device *dev,
         cdb[7] = (uint8_t)(chunk >> 8);
         cdb[8] = (uint8_t)(chunk);
 
-        rc = msc_bot_command(hc, dev, cdb, 10, (void *)in, data_len, 0);
-        if (rc != USB_CSW_STATUS_PASS) {
-            klog(LOG_ERROR, "usb-msc", "WRITE(10) failed: LBA=%u count=%u status=%d",
-                 (uint64_t)lba, (uint64_t)chunk, (uint64_t)rc);
+        /* exact_len=1: a short WRITE data phase must fail rather than report a
+         * partial write as complete. */
+        rc = msc_scsi_command(hc, dev, cdb, 10, (void *)in, data_len, 0, 1, NULL);
+        if (rc != 0) {
+            klog(LOG_ERROR, "usb-msc", "WRITE(10) failed: LBA=%u count=%u",
+                 (uint64_t)lba, (uint64_t)chunk);
             return -1;
         }
 
