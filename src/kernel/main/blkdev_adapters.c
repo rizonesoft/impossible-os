@@ -117,6 +117,7 @@ static int blkdev_usb_msc_read(uint64_t lba, uint32_t count, void *buf,
     struct xhci_controller *hc = xhci_get_controller_mut(ci);
     struct xhci_device *dev = xhci_get_controller_mut(ci) ? xhci_get_device(di) : NULL;
     if (!hc || !dev) return -1;
+    if (lba > 0xFFFFFFFFull) return -1;   /* READ(10) carries a 32-bit LBA */
     return usb_msc_read_sectors(hc, dev, (uint32_t)lba, count, buf);
 }
 
@@ -128,6 +129,7 @@ static int blkdev_usb_msc_write(uint64_t lba, uint32_t count,
     struct xhci_controller *hc = xhci_get_controller_mut(ci);
     struct xhci_device *dev = xhci_get_controller_mut(ci) ? xhci_get_device(di) : NULL;
     if (!hc || !dev) return -1;
+    if (lba > 0xFFFFFFFFull) return -1;   /* WRITE(10) carries a 32-bit LBA */
     return usb_msc_write_sectors(hc, dev, (uint32_t)lba, count, buf);
 }
 

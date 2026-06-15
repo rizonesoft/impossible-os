@@ -654,7 +654,20 @@ int xhci_init(void)
 static uint8_t xhci_irq_vector = 0;
 
 /* Process Port Status Change events from the event ring.
- * Called from ISR context -- must not block. */
+ * Called from ISR context.
+ *
+ * INTERIM HAZARD (robust model owned by the USB hot-plug interrupt-handling
+ * work in todo/04-drivers-hardware/TODO-10-usb-stack.md): this drains the
+ * single shared event ring that the foreground command/transfer polling loops
+ * in xhci_dev.c also consume, and it calls xhci_enumerate_device() -- which
+ * issues commands and busy-waits -- directly from interrupt context. If a
+ * hot-plug MSI arrives while foreground USB MSC I/O is in flight, the ISR can
+ * swallow that I/O's completion and/or block the CPU for the full enumeration.
+ * The robust model (ack + record port change in the ISR, defer enumeration to
+ * a serialized worker, give each ring an owner that matches completions by
+ * slot/endpoint) lives in that USB-stack hot-plug work. MSI is enabled only
+ * after boot-time enumeration completes, so boot media I/O is not exposed; the
+ * window is post-boot hot-plug concurrent with USB I/O. */
 static void xhci_process_port_events(struct xhci_controller *hc)
 {
     struct xhci_trb evt;

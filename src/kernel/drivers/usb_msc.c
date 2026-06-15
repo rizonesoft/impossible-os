@@ -17,6 +17,11 @@
 
 /* ---- Static state ---- */
 
+/* Per-command transfer cap: one xHCI Normal TRB carries at most 64 KiB
+ * (17-bit TRB Transfer Length). READ(10)/WRITE(10) further cap the block
+ * count at 16 bits; both bounds are enforced by chunking in the sector ops. */
+#define MSC_MAX_XFER_BYTES   65536u
+
 static struct usb_msc_info msc_info[XHCI_MAX_DEVICES];
 static uint32_t cbw_tag = 1;
 
@@ -183,6 +188,21 @@ static int msc_read_capacity(struct xhci_controller *hc, struct xhci_device *dev
     uint32_t block_size = ((uint32_t)buf[4] << 24) | ((uint32_t)buf[5] << 16) |
                           ((uint32_t)buf[6] << 8)  | (uint32_t)buf[7];
 
+    /* Validate device-reported geometry before trusting it. last_lba ==
+     * 0xFFFFFFFF means the medium needs READ CAPACITY(16) (unsupported here);
+     * block_size must be a sane power-of-two sector size so downstream
+     * count * sector_size math and the chunking loop stay bounded. */
+    if (last_lba == 0xFFFFFFFFu) {
+        klog(LOG_ERROR, "usb-msc", "capacity exceeds 32-bit LBA -- unsupported");
+        return -1;
+    }
+    if (block_size != 512 && block_size != 1024 &&
+        block_size != 2048 && block_size != 4096) {
+        klog(LOG_ERROR, "usb-msc", "unsupported sector size %u",
+             (uint64_t)block_size);
+        return -1;
+    }
+
     info->sector_count = last_lba + 1;
     info->sector_size = block_size;
     info->capacity_bytes = (uint64_t)info->sector_count * info->sector_size;
@@ -246,35 +266,59 @@ int usb_msc_init(struct xhci_controller *hc, struct xhci_device *dev)
 int usb_msc_read_sectors(struct xhci_controller *hc, struct xhci_device *dev,
                          uint32_t lba, uint32_t count, void *buf)
 {
-    uint8_t cdb[10];
-    uint32_t data_len;
     struct usb_msc_info *info;
-    int rc;
+    uint8_t *out = (uint8_t *)buf;
+    uint32_t max_blocks;
 
     if (dev->slot_id >= XHCI_MAX_DEVICES)
         return -1;
     info = &msc_info[dev->slot_id];
-    if (!info->valid)
+    if (!info->valid || info->sector_size == 0)
         return -1;
 
-    data_len = count * info->sector_size;
-
-    msc_zero(cdb, 10);
-    cdb[0] = SCSI_READ_10;
-    /* LBA (big-endian) */
-    cdb[2] = (uint8_t)(lba >> 24);
-    cdb[3] = (uint8_t)(lba >> 16);
-    cdb[4] = (uint8_t)(lba >> 8);
-    cdb[5] = (uint8_t)(lba);
-    /* Transfer length in sectors (big-endian) */
-    cdb[7] = (uint8_t)(count >> 8);
-    cdb[8] = (uint8_t)(count);
-
-    rc = msc_bot_command(hc, dev, cdb, 10, buf, data_len, 1);
-    if (rc != USB_CSW_STATUS_PASS) {
-        klog(LOG_ERROR, "usb-msc", "READ(10) failed: LBA=%u count=%u status=%d",
-             (uint64_t)lba, (uint64_t)count, (uint64_t)rc);
+    if (count == 0)
+        return 0;
+    /* The chunk loop advances a 32-bit LBA; reject out-of-range requests so a
+     * count past end-of-device cannot wrap back to low sectors. */
+    if (lba >= info->sector_count || count > info->sector_count - lba)
         return -1;
+
+    /* A single xHCI Normal TRB carries at most 64 KiB (17-bit TRB Transfer
+     * Length) and READ(10) caps the block count at 16 bits; chunk the request
+     * so neither the TRB length field nor cdb[7..8] overflows. */
+    max_blocks = MSC_MAX_XFER_BYTES / info->sector_size;
+    if (max_blocks == 0)
+        max_blocks = 1;
+    if (max_blocks > 0xFFFF)
+        max_blocks = 0xFFFF;
+
+    while (count > 0) {
+        uint32_t chunk = count < max_blocks ? count : max_blocks;
+        uint32_t data_len = chunk * info->sector_size;
+        uint8_t cdb[10];
+        int rc;
+
+        msc_zero(cdb, 10);
+        cdb[0] = SCSI_READ_10;
+        /* LBA (big-endian) */
+        cdb[2] = (uint8_t)(lba >> 24);
+        cdb[3] = (uint8_t)(lba >> 16);
+        cdb[4] = (uint8_t)(lba >> 8);
+        cdb[5] = (uint8_t)(lba);
+        /* Transfer length in sectors (big-endian) */
+        cdb[7] = (uint8_t)(chunk >> 8);
+        cdb[8] = (uint8_t)(chunk);
+
+        rc = msc_bot_command(hc, dev, cdb, 10, out, data_len, 1);
+        if (rc != USB_CSW_STATUS_PASS) {
+            klog(LOG_ERROR, "usb-msc", "READ(10) failed: LBA=%u count=%u status=%d",
+                 (uint64_t)lba, (uint64_t)chunk, (uint64_t)rc);
+            return -1;
+        }
+
+        lba += chunk;
+        out += data_len;
+        count -= chunk;
     }
 
     return 0;
@@ -283,35 +327,58 @@ int usb_msc_read_sectors(struct xhci_controller *hc, struct xhci_device *dev,
 int usb_msc_write_sectors(struct xhci_controller *hc, struct xhci_device *dev,
                           uint32_t lba, uint32_t count, const void *buf)
 {
-    uint8_t cdb[10];
-    uint32_t data_len;
     struct usb_msc_info *info;
-    int rc;
+    const uint8_t *in = (const uint8_t *)buf;
+    uint32_t max_blocks;
 
     if (dev->slot_id >= XHCI_MAX_DEVICES)
         return -1;
     info = &msc_info[dev->slot_id];
-    if (!info->valid)
+    if (!info->valid || info->sector_size == 0)
         return -1;
 
-    data_len = count * info->sector_size;
-
-    msc_zero(cdb, 10);
-    cdb[0] = SCSI_WRITE_10;
-    /* LBA (big-endian) */
-    cdb[2] = (uint8_t)(lba >> 24);
-    cdb[3] = (uint8_t)(lba >> 16);
-    cdb[4] = (uint8_t)(lba >> 8);
-    cdb[5] = (uint8_t)(lba);
-    /* Transfer length in sectors (big-endian) */
-    cdb[7] = (uint8_t)(count >> 8);
-    cdb[8] = (uint8_t)(count);
-
-    rc = msc_bot_command(hc, dev, cdb, 10, (void *)buf, data_len, 0);
-    if (rc != USB_CSW_STATUS_PASS) {
-        klog(LOG_ERROR, "usb-msc", "WRITE(10) failed: LBA=%u count=%u status=%d",
-             (uint64_t)lba, (uint64_t)count, (uint64_t)rc);
+    if (count == 0)
+        return 0;
+    /* Reject out-of-range writes before the 32-bit LBA chunk loop -- a wrap
+     * here would overwrite the start of the medium. */
+    if (lba >= info->sector_count || count > info->sector_count - lba)
         return -1;
+
+    /* Same 64 KiB single-TRB + 16-bit WRITE(10) block-count limits as the
+     * read path; chunk so neither overflows. */
+    max_blocks = MSC_MAX_XFER_BYTES / info->sector_size;
+    if (max_blocks == 0)
+        max_blocks = 1;
+    if (max_blocks > 0xFFFF)
+        max_blocks = 0xFFFF;
+
+    while (count > 0) {
+        uint32_t chunk = count < max_blocks ? count : max_blocks;
+        uint32_t data_len = chunk * info->sector_size;
+        uint8_t cdb[10];
+        int rc;
+
+        msc_zero(cdb, 10);
+        cdb[0] = SCSI_WRITE_10;
+        /* LBA (big-endian) */
+        cdb[2] = (uint8_t)(lba >> 24);
+        cdb[3] = (uint8_t)(lba >> 16);
+        cdb[4] = (uint8_t)(lba >> 8);
+        cdb[5] = (uint8_t)(lba);
+        /* Transfer length in sectors (big-endian) */
+        cdb[7] = (uint8_t)(chunk >> 8);
+        cdb[8] = (uint8_t)(chunk);
+
+        rc = msc_bot_command(hc, dev, cdb, 10, (void *)in, data_len, 0);
+        if (rc != USB_CSW_STATUS_PASS) {
+            klog(LOG_ERROR, "usb-msc", "WRITE(10) failed: LBA=%u count=%u status=%d",
+                 (uint64_t)lba, (uint64_t)chunk, (uint64_t)rc);
+            return -1;
+        }
+
+        lba += chunk;
+        in += data_len;
+        count -= chunk;
     }
 
     return 0;

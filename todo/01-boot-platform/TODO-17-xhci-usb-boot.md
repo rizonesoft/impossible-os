@@ -59,6 +59,14 @@ Verify and fix the existing xHCI controller initialization. Currently logs "No x
 - [x] Commit: `"drivers: xHCI controller bring-up verified on QEMU + bare metal"`
 
 **Test checkpoint:** Serial shows `xhci: N ports, M devices attached`. POST code 0xD700. Test on: QEMU `run-usb`, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | live path via `make run-usb-ci` (TCG) + bare metal; `test_usb_boot.c` pending (Unit Tests).
+> **Notes:**
+> - Shipped: xHCI controller bring-up (`xhci.c`) -- PCI discovery (0x0C/0x03/0x30), halt/reset, DCBAA, command+event rings, BAR0 via `vmm_map_mmio_uc`, Intel XUSB2PR routing.
+> - Integrates: feeds §2 enumeration; per-controller state in `controllers[]`; bootloader DMA handover inherited (TODO-20 path).
+> - Review: no §1-specific defect; the §3/§4 transport hardening (64 KiB-boundary TRB split, LBA bounds) protects the path this section opens.
+> - Scope boundary: §1 owns controller bring-up + port scan; enumeration is §2; USBLEGSUP handoff is TODO-20 §2; non-Intel vendor matrix is §6.
+> **Verified:** 2026-06-15 | this review commit | 4/4 items | build OK | run-usb-ci PASS (xHCI 1b36:000d, 64 slots/8 ports)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 4H fixed, 1H deferred (ISR -> TODO-10 §8) | scope: kernel-code-quality
 
 ## 2. USB Device Enumeration and Configuration
 Complete the device enumeration path: slot enable → Address Device → GET_DESCRIPTOR → SET_CONFIGURATION.
@@ -73,6 +81,14 @@ Complete the device enumeration path: slot enable → Address Device → GET_DES
 - [x] Commit: `"drivers: USB device enumeration -- MSC interfaces detected"`
 
 **Test checkpoint:** Serial shows detected USB devices with class info. POST code 0xD701. Test on: QEMU `run-usb`, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | enumeration validated live via `make run-usb-ci` + bare metal.
+> **Notes:**
+> - Shipped: full 9-step enumeration (`xhci_dev.c`) -- port reset, Enable Slot, Address Device, GET_DESCRIPTOR (device+config, wTotalLength capped at 4096), SET_CONFIGURATION, Configure Endpoint.
+> - Integrates: parses class/subclass/VID:PID; finds the MSC interface (class 0x08) + allocates bulk-IN/OUT transfer rings for §3.
+> - Review: descriptor-walk bounds already guard `desc_len`/offset overrun; no §2-specific defect found.
+> - Scope boundary: §2 owns enumeration + MSC-interface detection; HID-interface handling is TODO-18/TODO-10 §5.
+> **Verified:** 2026-06-15 | this review commit | 5/5 items | build OK | run-usb-ci PASS (USB 3.00, VID=46f4 enumerated, config set)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 4H fixed, 1H deferred (ISR -> TODO-10 §8) | scope: kernel-code-quality
 
 ## 3. USB MSC BOT (Bulk-Only Transport) Driver
 Implement the SCSI-over-USB transport layer: CBW/CSW framing, INQUIRY, READ CAPACITY, READ(10), WRITE(10).
@@ -88,6 +104,14 @@ Implement the SCSI-over-USB transport layer: CBW/CSW framing, INQUIRY, READ CAPA
 - [x] Commit: `"drivers: USB MSC BOT -- SCSI READ/WRITE over bulk endpoints"`
 
 **Test checkpoint:** `usb_msc_read_capacity()` returns correct sector count. Read sector 0 matches expected MBR/GPT. POST code 0xD702. Test on: QEMU `run-usb`, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | BOT read/capacity validated live via `make run-usb-ci` + bare metal.
+> **Notes:**
+> - Shipped: SCSI-over-USB BOT (`usb_msc.c`) -- CBW/CSW framing, INQUIRY, READ CAPACITY(10), READ(10)/WRITE(10), CSW signature/tag validation, TEST UNIT READY retries.
+> - Review fixes: READ/WRITE(10) chunk by 16-bit block count; `xhci_bulk_transfer` splits each data phase at the 64 KiB physical TRB boundary; reject out-of-range LBA + bad sector size at capacity.
+> - Integrates: registered as the `usbN` blkdev read/write (§4); each BOT command stays within one Normal-TRB window.
+> - Scope boundary: §3 owns the BOT transport; stall/halt recovery + bounded timeouts are owned by D01 T19 (USB boot hardening).
+> **Verified:** 2026-06-15 | this review commit | 6/6 items | build OK | run-usb-ci PASS (INQUIRY "QEMU HARDDISK", READ CAPACITY 131072x512)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 4H fixed, 1H deferred (ISR -> TODO-10 §8) | scope: kernel-code-quality
 
 ## 4. Block Device Registration and VFS Integration
 Register USB MSC devices as block devices so VFS can mount filesystems from USB drives.
@@ -101,6 +125,14 @@ Register USB MSC devices as block devices so VFS can mount filesystems from USB 
 - [x] Commit: `"drivers: USB MSC block device registration -- USB drives mountable"`
 
 **Test checkpoint:** `bash scripts/build.sh run-usb` -- USB drive visible, partition scanned, filesystem mounted. Bare metal: boot from USB, C:\ accessible. POST code 0xD703.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | mount path validated live via `make run-usb-ci` + bare metal.
+> **Notes:**
+> - Shipped: USB MSC namespaces registered as `usb0`..`usbN` (`blkdev_adapters.c`) wired into `boot_storage.c`; `partition_scan_all()` + filesystem mount run automatically.
+> - Review fix: the blkdev USB read/write adapters now reject `lba > UINT32_MAX` before the 32-bit truncation into READ(10)/WRITE(10).
+> - Integrates: `xhci_get_device`/`xhci_msc_device_count`/`xhci_msc_device_index` accessors back the adapter loop; no-USB boot paths skip gracefully.
+> - Scope boundary: §4 owns blkdev registration + mount wiring; hot-plug lifecycle is §5/TODO-10 §8.
+> **Verified:** 2026-06-15 | this review commit | 4/4 items | build OK | run-usb-ci PASS (usb0 64 MiB registered, FAT32 mounted)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 4H fixed, 1H deferred (ISR -> TODO-10 §8) | scope: kernel-code-quality
 
 ## 5. Interrupt-Driven Hot-Plug and Post-Boot Lifecycle
 The baseline boot path in §1-§4 is already good enough to boot from USB media. What remains in the core xHCI roadmap is the runtime lifecycle after boot: MSI-backed hot-plug, clean removal, and consistent block-device registration. The zero-delay pre-ExitBootServices handover work that used to live here is now consolidated under TODO-20.
@@ -110,13 +142,23 @@ The baseline boot path in §1-§4 is already good enough to boot from USB media.
 - [x] TODO-20 now owns the pre-ExitBootServices firmware discovery, USBLEGSUP takeover, persistent DMA state, and kernel inherit path
 - [x] Register xHCI MSI interrupt handler (inline MSI setup, following AHCI pattern)
 - [x] If MSI not available: graceful fallback to event ring polling (no crash)
-- [x] ISR reads Event Ring for Port Status Change Events (TRB type 34)
-- [x] New device connected after boot → full enumeration (slot enable, address, etc.)
-- [ ] Device removed → clean up slot, unregister block device -- deferred to `04-drivers-hardware/TODO-10-usb-stack.md §8` (hot-plug lifecycle)
+- [/] ISR reads Event Ring for Port Status Change Events (TRB type 34) -- interim: drains the shared event ring that foreground I/O polls; robust event ownership owned by `04-drivers-hardware/TODO-10-usb-stack.md §8`
+- [/] New device connected after boot → full enumeration (slot enable, address, etc.) -- interim: enumerates from ISR context (blocking); deferred-worker model owned by `04-drivers-hardware/TODO-10-usb-stack.md §8`
+- [/] Device removed → clean up slot, unregister block device -- deferred to `04-drivers-hardware/TODO-10-usb-stack.md §8` (item: "CCS=0 path (disconnect)... call usb_device_detach(slot)... If MSC: call blkdev_unregister")
 - [x] `POST16(0xD752)` entry, `POST16(0xD753)` exit
 - [x] Commit: `"drivers: xHCI interrupt-driven hot-plug via MSI"`
 
 **Test checkpoint:** Boot from USB through the baseline §1-§4 path, then hot-plug a second USB drive after desktop boot. Device appears within 100ms. POST codes 0xD752/0xD753 cover the hot-plug path here; zero-delay handover POSTs live in TODO-20. Test on: bare metal, QEMU `run-usb`.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | MSI/polling path observed via `make run-usb-ci`; hot-plug demo is bare metal.
+> **Notes:**
+> - Shipped: MSI interrupt setup (`xhci_setup_interrupts`) with event-ring-polling fallback; Port Status Change ISR; interim connect-path enumeration.
+> - Deferred (interim): the ISR drains the shared event ring + enumerates from ISR context; the robust deferred-dispatch + ring-ownership model is owned by TODO-10 §8.
+> - Boundary: MSI is enabled only after boot enumeration, so boot media I/O is not exposed; the race window is post-boot hot-plug concurrent with USB I/O.
+> - Scope boundary: §5 owns the boot-baseline hot-plug; device removal + robust event loop are TODO-10 §8; zero-delay handover is TODO-20.
+> **Verified:** 2026-06-15 | this review commit | 4/7 items [x], 3 [/] deferred | build OK | run-usb-ci PASS (no MSI in QEMU -> polling path)
+> **Deferred:** [H] MSI ISR drains shared event ring + enumerates from ISR context (race + blocking) -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "Event-ring ownership: ISR only acks + records... defers enumeration to a serialized worker")
+> **Deferred:** [M] device removal slot cleanup + blkdev unregister -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "CCS=0 path (disconnect)... call usb_device_detach(slot)... If MSC: call blkdev_unregister")
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 4H fixed, 1H deferred (ISR -> TODO-10 §8) | scope: kernel-code-quality
 
 ## 6. Hardware Compatibility -- 95%+ of Systems
 Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI controllers, EHCI fallback, USB hubs, and BIOS/OS handoff. Currently only Intel with specific port routing is tested.
@@ -194,7 +236,7 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 | ⭐ | BIOS/OS handoff      | ✅ Automatic       | ✅ xhci-pci.c       | ✅ TODO-20 §2          |
 | ⭐ | EHCI fallback        | ✅ usbehci.sys     | ✅ ehci-hcd         | ⬜ §6 legacy HW        |
 | ⭐ | USB hub support      | ✅ usbhub.sys      | ✅ hub.c            | ⬜ §6 recursive        |
-| ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ✅ §5C MSI interrupt   |
+| ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ⚠️ §5 interim; robust T10 §8 |
 | ⭐ | USB boot timing VPD  | ❌ Not exposed     | ❌ Not exposed      | ⬜ TODO-20 latency     |
 
 ## Unit Tests

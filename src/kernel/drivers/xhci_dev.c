@@ -312,8 +312,16 @@ int xhci_bulk_transfer(struct xhci_controller *hc,
                        struct xhci_ring *ring,
                        void *buf, uint32_t len, int dir_in)
 {
-    struct xhci_trb trb;
-    uint8_t cc;
+    /* xHCI 4.11.7.1: a Normal TRB data buffer must fit in 64 KiB AND must not
+     * cross a 64 KiB physical-address boundary. The caller's buffer has no
+     * alignment guarantee, so split the request into per-TRB fragments bounded
+     * by the next 64 KiB boundary, transferring and waiting on each in turn.
+     * A bulk endpoint streams the bytes contiguously regardless of how many
+     * TRBs carry them, so this is transparent to the BOT data phase and avoids
+     * chained-TD Link-TRB handling. */
+    const uint32_t BOUNDARY = 0x10000u;   /* 64 KiB */
+    uintptr_t addr = (uintptr_t)buf;
+    uint32_t remaining = len;
     uint32_t dci;
 
     if (dir_in)
@@ -321,21 +329,31 @@ int xhci_bulk_transfer(struct xhci_controller *hc,
     else
         dci = XHCI_DCI(dev->bulk_out_ep, 0);
 
-    trb.parameter = (uint64_t)(uintptr_t)buf;
-    trb.status    = len;
-    trb.control   = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC;
+    do {
+        struct xhci_trb trb;
+        uint8_t cc;
+        uint32_t to_boundary = BOUNDARY - (uint32_t)(addr & (BOUNDARY - 1));
+        uint32_t frag = remaining < to_boundary ? remaining : to_boundary;
 
-    if (ep0_ring_enqueue(ring, &trb) != 0)
-        return -1;
+        trb.parameter = (uint64_t)addr;
+        trb.status    = frag;        /* 0 only when len==0: a valid zero-length TRB */
+        trb.control   = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC;
 
-    dev_write32(hc->db_base, dev->slot_id * 4, dci);
+        if (ep0_ring_enqueue(ring, &trb) != 0)
+            return -1;
 
-    cc = xhci_wait_transfer(hc, NULL);
-    if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
-        klog(LOG_ERROR, "usb", "Bulk %s failed (slot %u, cc=%u)",
-             dir_in ? "IN" : "OUT", (uint64_t)dev->slot_id, (uint64_t)cc);
-        return -1;
-    }
+        dev_write32(hc->db_base, dev->slot_id * 4, dci);
+
+        cc = xhci_wait_transfer(hc, NULL);
+        if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
+            klog(LOG_ERROR, "usb", "Bulk %s failed (slot %u, cc=%u)",
+                 dir_in ? "IN" : "OUT", (uint64_t)dev->slot_id, (uint64_t)cc);
+            return -1;
+        }
+
+        addr      += frag;
+        remaining -= frag;
+    } while (remaining > 0);
 
     return 0;
 }

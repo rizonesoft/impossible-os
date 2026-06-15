@@ -189,6 +189,7 @@ Process xHCI Port Status Change Events (TRB type `0x22`) from the event ring. On
 > [!NOTE]
 > Port Status Change Event TRB: `Port ID` field (bits 31:24) identifies the port. After receiving the event, read `PORTSC[Port ID - 1]` to determine current state: `CCS (bit 0)` = device present, `PED (bit 1)` = port enabled. A CCS=1 transition means a new device connected; CCS=0 means disconnect.
 
+- [ ] Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker (no ISR-context blocking); replaces the interim in-ISR enumeration in `01-boot-platform/TODO-17 §5`
 - [ ] In `xhci_event_loop()`: handle TRB type `0x22` (Port Status Change); extract port number; read `PORTSC`
 - [ ] CCS=1 path (connect): reset port via `PR` bit in PORTSC; wait for `PRC` (port reset complete); call `xhci_enumerate_device(hc, port)` which triggers HID or MSC probe
 - [ ] CCS=0 path (disconnect): find device slot by port number in `hc->slot_map[]`; call `usb_device_detach(slot)`
