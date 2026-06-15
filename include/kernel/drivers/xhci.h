@@ -154,6 +154,11 @@ struct xhci_controller *xhci_get_controller_mut(int index);
 /* Get number of active xHCI controllers. */
 int xhci_controller_count(void);
 
+/* Index of a controller in the controllers[] array (inverse of
+ * xhci_get_controller). Returns -1 if hc is not an active controller. Used to
+ * route block I/O to a USB device's owning controller (dev->owner). */
+int xhci_controller_index(const struct xhci_controller *hc);
+
 /* Set up MSI interrupt for hot-plug event detection.
  * Called after interrupts are enabled. */
 void xhci_setup_interrupts(void);

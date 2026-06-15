@@ -1821,6 +1821,33 @@ struct xhci_device *xhci_get_device(int index)
     return devices[index].active ? &devices[index] : NULL;
 }
 
+/* Global, controller-independent index of a device (its slot in the shared
+ * devices[] array). Unlike slot_id -- which xHCI assigns per-controller, so two
+ * controllers can both hold slot 1 -- this index is unique across all
+ * controllers. Per-device class state (e.g. usb_msc_info) must key off this, not
+ * slot_id, or a second controller's device aliases the first one's state.
+ * Returns -1 if dev does not point into devices[]. */
+int xhci_device_index(const struct xhci_device *dev)
+{
+    /* Integer (uintptr_t) bounds, not relational pointer comparison: comparing a
+     * pointer that is NOT inside devices[] with &devices[...] via < / >= is
+     * undefined in C (only same-array pointers may be ordered). This helper is a
+     * validation boundary for possibly-foreign pointers, so it must stay
+     * well-defined. The alignment check rejects a pointer into the middle of a
+     * struct. */
+    uintptr_t base = (uintptr_t)&devices[0];
+    uintptr_t end  = base + sizeof(devices);
+    uintptr_t p    = (uintptr_t)dev;
+    uintptr_t off;
+
+    if (!dev || p < base || p >= end)
+        return -1;
+    off = p - base;
+    if (off % sizeof(devices[0]) != 0)
+        return -1;
+    return (int)(off / sizeof(devices[0]));
+}
+
 int xhci_msc_device_count(void)
 {
     int count = 0;

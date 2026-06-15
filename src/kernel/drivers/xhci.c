@@ -889,6 +889,31 @@ struct xhci_controller *xhci_get_controller_mut(int index)
     return &controllers[index];
 }
 
+/* Inverse of xhci_get_controller(): the index of a controller in controllers[].
+ * Used to route block I/O to the OWNING controller of a USB device (dev->owner)
+ * instead of assuming controller 0. Returns -1 if hc is not a controllers[]
+ * entry or is past the active count. */
+int xhci_controller_index(const struct xhci_controller *hc)
+{
+    /* Integer (uintptr_t) bounds, not relational pointer comparison: ordering a
+     * possibly-foreign pointer against &controllers[...] with < / >= is undefined
+     * in C. This helper validates dev->owner (which may be stale/corrupt) before
+     * packing routing data, so it must stay well-defined. */
+    uintptr_t base = (uintptr_t)&controllers[0];
+    uintptr_t end  = base + sizeof(controllers);
+    uintptr_t p    = (uintptr_t)hc;
+    uintptr_t off;
+    int idx;
+
+    if (!hc || p < base || p >= end)
+        return -1;
+    off = p - base;
+    if (off % sizeof(controllers[0]) != 0)
+        return -1;
+    idx = (int)(off / sizeof(controllers[0]));
+    return idx < num_controllers ? idx : -1;
+}
+
 int xhci_controller_count(void)
 {
     return num_controllers;

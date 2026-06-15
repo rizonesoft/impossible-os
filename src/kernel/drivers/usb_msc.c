@@ -34,10 +34,25 @@
 #define MSC_TUR_POLL_US          50000u  /* 50 ms between readiness retries */
 #define MSC_TUR_MAX_ATTEMPTS     40u     /* backstop when no timer is available */
 
+/* Per-device MSC state. Keyed by the GLOBAL device index (xhci_device_index),
+ * NOT the controller-local slot_id: xHCI assigns slot IDs per controller, so two
+ * controllers can each enumerate a device at slot 1. Keying by slot_id would
+ * alias both into msc_info[1] and corrupt one device's geometry/LUN/retry state.
+ * The global index is unique across all controllers. */
 static struct usb_msc_info msc_info[XHCI_MAX_DEVICES];
 static uint32_t cbw_tag = 1;
 
 /* ---- Helpers ---- */
+
+/* Resolve a device to its msc_info slot via the global device index. Returns
+ * NULL if dev is not a tracked device. */
+static struct usb_msc_info *msc_state(struct xhci_device *dev)
+{
+    int idx = xhci_device_index(dev);
+    if (idx < 0 || idx >= XHCI_MAX_DEVICES)
+        return (struct usb_msc_info *)0;
+    return &msc_info[idx];
+}
 
 static void msc_zero(void *dst, uint64_t bytes)
 {
@@ -198,7 +213,10 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
     cbw.bmCBWFlags = dir_in ? USB_CBW_FLAG_IN : USB_CBW_FLAG_OUT;
     /* Address the device's currently-selected LUN (0 unless boot-LUN selection
      * picked another for composite media like card readers). */
-    cbw.bCBWLUN = msc_info[dev->slot_id].current_lun;
+    {
+        struct usb_msc_info *st = msc_state(dev);
+        cbw.bCBWLUN = st ? st->current_lun : 0;
+    }
     cbw.bCBWCBLength = cdb_len;
     msc_copy(cbw.CBWCB, cdb, cdb_len);
 
@@ -725,10 +743,9 @@ int usb_msc_init(struct xhci_controller *hc, struct xhci_device *dev)
         return -1;
     }
 
-    if (dev->slot_id >= XHCI_MAX_DEVICES)
+    info = msc_state(dev);
+    if (!info)
         return -1;
-
-    info = &msc_info[dev->slot_id];
     msc_zero(info, sizeof(*info));
 
     /* Wait for the device to report ready (replaces a fixed post-init sleep).
@@ -783,10 +800,8 @@ int usb_msc_read_sectors(struct xhci_controller *hc, struct xhci_device *dev,
     uint8_t *out = (uint8_t *)buf;
     uint32_t max_blocks;
 
-    if (dev->slot_id >= XHCI_MAX_DEVICES)
-        return -1;
-    info = &msc_info[dev->slot_id];
-    if (!info->valid || info->sector_size == 0)
+    info = msc_state(dev);
+    if (!info || !info->valid || info->sector_size == 0)
         return -1;
 
     if (count == 0)
@@ -846,10 +861,8 @@ int usb_msc_write_sectors(struct xhci_controller *hc, struct xhci_device *dev,
     const uint8_t *in = (const uint8_t *)buf;
     uint32_t max_blocks;
 
-    if (dev->slot_id >= XHCI_MAX_DEVICES)
-        return -1;
-    info = &msc_info[dev->slot_id];
-    if (!info->valid || info->sector_size == 0)
+    info = msc_state(dev);
+    if (!info || !info->valid || info->sector_size == 0)
         return -1;
 
     if (count == 0)
@@ -903,8 +916,8 @@ int usb_msc_write_sectors(struct xhci_controller *hc, struct xhci_device *dev,
 
 const struct usb_msc_info *usb_msc_get_info(struct xhci_device *dev)
 {
-    if (dev->slot_id >= XHCI_MAX_DEVICES)
+    struct usb_msc_info *info = msc_state(dev);
+    if (!info)
         return NULL;
-    struct usb_msc_info *info = &msc_info[dev->slot_id];
     return info->valid ? info : NULL;
 }

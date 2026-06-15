@@ -32,6 +32,7 @@
 #include "kernel/cpuid_platform.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/xhci.h"
+#include "kernel/drivers/usb_legacy.h"
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/rtl8139.h"
 #include "kernel/net/net.h"
@@ -153,9 +154,15 @@ void boot_phase2(void)
     POST16(POST16_PCI);
     pci_scan();
     POST16(POST16_PCI_OK);
+    /* Detect legacy USB host controllers (EHCI/UHCI/OHCI) for the no-xHCI
+     * fallback diagnostic below. Detection only -- the legacy HCD is pending. */
+    usb_legacy_scan();
     POST16(POST16_XHCI);
-    xhci_init();
+    int xhci_n = xhci_init();
     POST16(POST16_XHCI_OK);
+    /* If no xHCI but a legacy USB controller exists, log which one and skip
+     * gracefully (no hang) rather than silently leaving USB boot unavailable. */
+    usb_legacy_announce(xhci_n);
     if (g_boot_info.config.deferred) {
         /* Defer non-critical peripherals until after desktop is up */
         boot_defer("network", deferred_net_init);

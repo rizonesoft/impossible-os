@@ -368,6 +368,11 @@ int xhci_recover_endpoint(struct xhci_controller *hc, struct xhci_device *dev,
 /* Get a device by global array index. Returns NULL if inactive. */
 struct xhci_device *xhci_get_device(int index);
 
+/* Global (controller-independent) index of a device in the shared devices[]
+ * array. Unique across controllers, unlike the per-controller slot_id. Returns
+ * -1 if dev is not a devices[] entry. Per-device class state must key off this. */
+int xhci_device_index(const struct xhci_device *dev);
+
 /* Count of active MSC devices across all controllers. */
 int xhci_msc_device_count(void);
 

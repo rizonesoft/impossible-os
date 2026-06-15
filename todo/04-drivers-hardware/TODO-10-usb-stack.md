@@ -72,6 +72,9 @@ Define a transport-agnostic USB core API so class drivers (HID, MSC, hub, CDC-EC
 **Files:** `src/kernel/drivers/usb_core.c` (new), `include/kernel/drivers/usb_core.h` (new)
 
 > [!NOTE]
+> `01-boot-platform/TODO-19 §11` defers its EHCI/UHCI boot-storage fallback here: the "share `usb_msc.c` BOT layer" + "HCD-agnostic recovery" items cannot land until this section's `usb_hcd_ops_t` vtable + `usb_submit_*` error contract exist (today `usb_msc.c` is hardwired to `struct xhci_device`). TODO-19 §11 ships boot-time legacy-controller detection + graceful no-xHCI skip + the multi-controller MSC keying fix; the active HCD is owned here + §10.
+
+> [!NOTE]
 > Windows has USBD (USB Driver Interface) between class drivers and HCI miniport drivers. Linux has `struct usb_device` + `usb_submit_urb()` + `struct usb_hcd`. Both achieve the same goal: class drivers are HCI-agnostic. Our `usb_device_t` is simpler -- no URB queuing or async completion callbacks in v1, just synchronous wrappers that return success/error.
 
 - [ ] Define `usb_device_t`: `slot_id`, `port`, `speed` (LS/FS/HS/SS), `vid`, `pid`, `dev_class`, `dev_subclass`, `dev_protocol`, `max_packet_ep0`, `num_interfaces`, `hcd` pointer, `hcd_private` (opaque per-HCD data), `string_manufacturer[64]`, `string_product[64]`, `string_serial[64]`
@@ -223,6 +226,9 @@ Implement the USB hub class driver (interface class `0x09`). Issue GET_DESCRIPTO
 Implement an EHCI host controller driver for USB 2.0-only systems. PCI prog-if `0x20`. Async schedule (QH→QTD chain) for control/bulk; periodic schedule (256-entry frame list) for interrupt transfers. Register as a `usb_hcd_t` via §1's `usb_hcd_register()`; all class drivers (§5–§9, §13–§12) work automatically via the USB core abstraction layer.
 
 **Files:** `src/kernel/drivers/ehci.c` (new), `include/kernel/drivers/ehci.h` (new)
+
+> [!NOTE]
+> `01-boot-platform/TODO-19 §11` (USB boot hardening) defers its "minimal EHCI driver" + "EHCI/UHCI recovery at §4/§5 parity" items to this section; it already ships the boot-time detection (`usb_legacy_scan`) + graceful no-xHCI skip that this HCD plugs into. Boot-storage integration (mount the EHCI-backed device, run the §2-§5 MSC hardening through the shared BOT layer) is owned by TODO-19 §11 once this driver + §1 land.
 
 > [!NOTE]
 > EHCI MMIO: BAR0 offset 0 = capability registers (`CAPLENGTH`, `HCIVERSION`, `HCSPARAMS`, `HCCPARAMS`). Operational registers start at BAR0 + `CAPLENGTH`: `USBCMD`, `USBSTS`, `USBINTR`, `FRINDEX`, `CTRLDSSEGMENT`, `PERIODICLISTBASE`, `ASYNCLISTADDR`. Async schedule: QH (Queue Head) linked list; each QH has a QTD (Queue Transfer Descriptor) chain. Companion controllers (OHCI/UHCI) handle FS/LS devices via port release.

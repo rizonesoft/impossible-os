@@ -60,7 +60,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [/]   |
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [x]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [/]   |
-| 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
+| 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [/]   |
 | ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [ ]   |
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [ ]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [ ]   |
@@ -91,7 +91,7 @@ Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 > - Hardening: REQUEST SENSE is non-recursive (transport failure reported, not re-sensed); `msc_sense_classify` defaults unknown/named-non-retry keys to UNRECOVERABLE so a future change can't silently retry write-protected/illegal/aborted failures.
 > - Scope boundary: §1 owns sense decode + classification; the retry LOOP is §3; boot-LUN probe is blocked on the GET_MAX_LUN owner (TODO-10 §7).
 > **Verified:** 2026-06-15 | review commit | 4/5 items | build OK | storage 98 kernel + 16 user-mode PASS (SCSI sense classify + key-name)
-> **Deferred:** [M] boot-LUN selection for composite/card-reader media blocked on GET_MAX_LUN (`xhci_control_transfer` is static) -> XREF: 04-drivers-hardware/TODO-10 §7 (item: "`usb_msc_get_max_lun(dev)`" at line 177)
+> **Deferred:** [M] boot-LUN selection for composite/card-reader media blocked on GET_MAX_LUN (`xhci_control_transfer` is static) -> XREF: 04-drivers-hardware/TODO-10 §7 (item: "`usb_msc_get_max_lun(dev)`" at line 180)
 > **Quality reviewed:** 2026-06-15 | Codex 6x (design, test-coverage, adversarial x2, consistency, perf) | 1H+3M fixed, 1H accepted-XREF, 1M rejected | scope: kernel-code-quality
 
 ---
@@ -115,7 +115,7 @@ After BOT init, poll TEST UNIT READY until the device reports ready instead of s
 > - Hardening: ABORT vs GIVEUP split -- only a BOT pipe desync (TUR or REQUEST SENSE phase/transport failure) aborts init; a hard SCSI error on a healthy pipe warns and continues so INQUIRY/READ CAPACITY surface it. Codex review adoptions in the impl + review commits.
 > - Scope boundary: §2 owns the readiness poll; removing the separate `sleep_ms(2000)` is §6; BOT mass-storage reset / endpoint-stall recovery for the ABORT path is §4.
 > **Verified:** 2026-06-15 | review commit | 5/5 items | build OK | storage 109 kernel + 16 user-mode PASS (TUR poll decision matrix)
-> **Accepted:** [M] `msc_info` keyed by per-controller `slot_id` collides across controllers -> XREF: 01-boot-platform/TODO-19 §11 (item: "Key MSC state by global device, not per-controller `slot_id`" at line 277)
+> **Accepted:** [M] `msc_info` keyed by per-controller `slot_id` collides across controllers -> XREF: 01-boot-platform/TODO-19 §11 (item: "Key MSC state by global device, not per-controller `slot_id`" at line 118)
 > **Quality reviewed:** 2026-06-15 | Codex 9x (design, test-coverage, adversarial x2, re-adversarial x3, consistency, perf) | 4H+1M+1L fixed, 1H rejected, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -344,24 +344,31 @@ Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and
 
 ## 11. EHCI/UHCI Companion Controller Fallback
 
-For pre-2012 hardware without xHCI, provide basic USB storage via EHCI.
+For hardware without xHCI, detect legacy USB controllers (EHCI/UHCI/OHCI) and degrade gracefully without a hang. The active EHCI/UHCI boot-storage HCD is deferred to the USB-core abstraction (see note); this section ships the boot-integration detection + graceful skip + the multi-controller MSC keying fix.
 
 > [!NOTE]
-> EHCI ownership split: the full EHCI HCD (vtable + class-driver reuse) is owned by `04-drivers-hardware/TODO-10-usb-stack.md §10`. This section owns the minimal boot-storage EHCI/UHCI fallback + the OHCI-only graceful skip; if T10 §10 lands first, reuse that driver and own only boot integration + tests here. Routed from `01-boot-platform/TODO-17 §6` (non-Intel/legacy de-scope).
+> EHCI ownership split: the full EHCI HCD (vtable + class-driver reuse) is owned by `04-drivers-hardware/TODO-10-usb-stack.md §10`, which itself depends on that TODO's §1 usb_core HCD abstraction. `usb_msc.c` is hardwired to `struct xhci_device`/`struct xhci_ring`, so a CREDIBLE shared-BOT EHCI fallback cannot land until §1's `usb_hcd_ops_t` vtable exists; a standalone EHCI-MSC copy is the `if(xhci)...else if(ehci)` anti-pattern §1 exists to prevent. This section therefore owns boot-integration detection + the OHCI-only graceful skip + the multi-controller MSC fix; the HCD driver, shared BOT, and HCD-agnostic recovery are deferred to TODO-10 §1/§10. Routed from `01-boot-platform/TODO-17 §6` (non-Intel/legacy de-scope).
 
-- [ ] Detect EHCI controller: PCI class 0x0C/0x03/0x20
-- [ ] Minimal EHCI driver: port reset, bulk transfer, BOT SCSI -- enough for MSC storage
-- [ ] If xHCI not found: try EHCI; if EHCI not found: try UHCI (PCI class 0x0C/0x03/0x00)
-- [ ] OHCI-only hardware (PCI class 0x0C/0x03/0x10): no OHCI driver -- log `"USB: OHCI-only controller -- USB storage not supported on this hardware"` and skip gracefully (no hang)
-- [ ] Share the `usb_msc.c` BOT layer -- only the host controller interface differs
-- [ ] Key MSC state by global device, not per-controller `slot_id`: `msc_info[dev->slot_id]` (`usb_msc.c`) collides when two controllers each have slot N (xHCI + EHCI / multi-xHCI) -- embed `usb_msc_info` in `struct xhci_device` or index globally
-- [ ] EHCI/UHCI transport recovery + timeouts at §4/§5 parity (halted-qTD, ClearFeature, async cleanup, bounded timeouts) via an HCD-agnostic USB error contract -- the fallback must not hang where §4/§5 harden xHCI
-- [ ] Log: `"[USB] Using %s controller (xHCI not available)"` with EHCI/UHCI
-- [ ] Commit: `"drivers: EHCI fallback for USB storage on pre-xHCI hardware"`
+- [x] Detect EHCI/UHCI/OHCI via PCI (class 0x0C/0x03, prog-if 0x20/0x00/0x10): pure `usb_legacy_classify` + `usb_legacy_scan` count each class (`usb_legacy.{c,h}`)
+- [ ] Minimal EHCI driver (port reset, bulk, BOT SCSI) -> XREF: 04-drivers-hardware/TODO-10 §10 (item: "Async schedule: control/bulk via QH->QTD chain; `ehci_submit_control`/`ehci_submit_bulk`"); needs §1 usb_core HCD vtable
+- [x] No-xHCI fallback decision: `usb_legacy_announce` logs which legacy controller exists + that boot storage via it is pending the HCD, then skips gracefully (no hang); active EHCI->UHCI drive deferred with the HCD
+- [x] OHCI-only hardware (0x0C/0x03/0x10): `usb_legacy_announce` logs "OHCI-only controller -- USB storage not supported on this hardware" and skips (no hang); no OHCI driver planned
+- [ ] Share `usb_msc.c` BOT layer across HCDs (needs the usb_core abstraction) -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "Refactor `xhci_bulk_transfer()`/`xhci_control_transfer()` to `usb_hcd_ops_t`; `usb_msc.c` migrates to `usb_submit_bulk()`")
+- [x] Key MSC state by global device index not per-controller `slot_id`: `msc_state(dev)` keys `msc_info[]` by `xhci_device_index(dev)`; `blkdev_adapters` routes I/O to `dev->owner` via `xhci_controller_index`, not hardcoded ctrl 0
+- [ ] EHCI/UHCI transport recovery + timeouts at §4/§5 parity via an HCD-agnostic USB error contract -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "`usb_submit_*` return `USB_ERR_STALL`/`USB_ERR_TIMEOUT`/`USB_ERR_TRANSPORT`") + §10 (EHCI HCD)
+- [x] No-xHCI legacy diagnostic log shipped (`usb_legacy_announce`); the active "[USB] Using %s controller" log lands when the HCD drives storage -> XREF: 04-drivers-hardware/TODO-10 §10
+- [ ] Commit: `"drivers: USB legacy-controller detection + graceful no-xHCI skip; MSC multi-controller keying fix"`
 
-**Test checkpoint:** VirtualBox (which emulates EHCI by default) -- USB storage works via EHCI fallback. Serial shows `"Using EHCI controller"`.
+**Test checkpoint:** `usb_legacy_classify` unit test asserts the PCI-triple to UHCI/OHCI/EHCI/NONE mapping (incl. independent class gate). On hardware with a legacy USB controller but no xHCI, serial shows the `usb_legacy_announce` graceful-skip line and boot continues (no hang). Active EHCI storage (VirtualBox EHCI) validates once the TODO-10 HCD lands.
 
-**Regression risk:** HIGH -- new driver code. If EHCI driver corrupts USB state, system hangs. Test on VirtualBox first.
+**Regression note:** the deferred EHCI/UHCI HCD (HIGH risk -- new driver code, validate on VirtualBox) has not landed. What shipped touches the working xHCI MSC path only via the keying fix, which is behaviorally identical on single-controller systems (one controller -> `dev->owner` is ctrl 0 and the global index equals the unique slot_id), so it is provably a no-op on every current test platform and changes only the broken multi-xHCI case.
+
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` "usb-boot: legacy controller classification" (`usb_legacy_classify` PCI-triple matrix incl. independent class gate); the no-xHCI graceful-skip + MSC keying fix are live (validated on bare metal / VirtualBox legacy USB).
+> **Notes:**
+> - Shipped: `usb_legacy.{c,h}` (PCI detect + pure `usb_legacy_classify` + `usb_legacy_announce` no-xHCI/OHCI-only graceful-skip log) + multi-controller MSC fix (`msc_info` keyed by `xhci_device_index`; `blkdev` routes to `dev->owner`).
+> - How it runs: `usb_legacy_scan()` after `pci_scan()` and `usb_legacy_announce(xhci_count)` after `xhci_init()` in `boot_phase2`; detection + klog only, no MMIO / transfers / HCD.
+> - Deferred: active EHCI/UHCI HCD + shared BOT + HCD-agnostic recovery -> TODO-10 §1 (`usb_hcd_ops_t` vtable) + §10 (EHCI HCD); standalone EHCI-MSC copy rejected. Codex adoptions in the ship commit.
+> - Scope boundary: §11 owns boot-time legacy-controller detection + graceful skip + multi-controller MSC keying; TODO-10 §1/§10 own the transport abstraction + the EHCI host-controller driver.
 
 ---
 
@@ -462,7 +469,8 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ✅ §5 5s bound + Stop EP |
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ✅ No global xhci_init sleep |
 | 💎 | Intel EHCI->xHCI port routing | ✅ USB stack routes ports | ✅ xhci-pci Intel quirk    | ✅ §7 EHCI-gate + bounded settle |
-| 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
+| 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | 🔶 §11 detect + skip; HCD T10 |
+| 💎 | Multi-controller USB routing | ✅ per-HCD device objects | ✅ per-hcd usb_device      | ✅ §11 global dev idx + owner |
 | 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ✅ §8 seq-cursor + progress  |
 | 💎 | Deferred flush (slow media)  | ✅ Lazy writeback         | ✅ dirty_writeback_centisecs | ✅ §9 RAM batch + boot-end flush |
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ✅ §10 4KiB-probe classify  |
@@ -471,7 +479,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §14                      |
 | ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §15 🚀                   |
 
-After §1-§11, USB boot is as reliable as Windows and Linux across all USB generations and controller types -- including transport-level stall recovery and bounded timeouts that prevent hangs on flaky hardware. §12-§15 add diagnostic and I/O optimizations for slow media.
+After §1-§10 plus §11's detection + graceful skip, USB boot is as reliable as Windows and Linux on xHCI hardware -- transport-level stall recovery and bounded timeouts prevent hangs on flaky hardware, and it degrades cleanly (no hang) on legacy controllers. Active EHCI/UHCI boot storage lands with the TODO-10 §1/§10 usb_core HCD. §12-§15 add diagnostic and I/O optimizations for slow media.
 
 ---
 

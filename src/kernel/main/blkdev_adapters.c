@@ -369,6 +369,12 @@ void blkdev_register_all(void)
             info = usb_msc_get_info(dev);
             if (!info) continue;
 
+            /* Route block I/O to the device's OWNING controller, not a hardcoded
+             * controller 0: with two+ xHCI controllers a device on controller 1
+             * would otherwise have its reads/writes issued against controller 0. */
+            int ctrl_idx = xhci_controller_index(dev->owner);
+            if (ctrl_idx < 0) continue;
+
             bd = (struct blkdev){0};
             bd.name[0]='u'; bd.name[1]='s'; bd.name[2]='b';
             bd.name[3]='0' + (char)mi; bd.name[4]='\0';
@@ -376,8 +382,8 @@ void blkdev_register_all(void)
             bd.sector_count = info->sector_count;
             bd.read  = blkdev_usb_msc_read;
             bd.write = blkdev_usb_msc_write;
-            /* Pack controller 0 + device index into driver_data */
-            bd.driver_data = MSC_PACK(0, dev_idx);
+            /* Pack the owning controller + global device index into driver_data */
+            bd.driver_data = MSC_PACK(ctrl_idx, dev_idx);
             blkdev_register(&bd);
         }
     }

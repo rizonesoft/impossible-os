@@ -13,6 +13,7 @@
 #include "kernel/drivers/xhci.h"
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/usb_msc.h"
+#include "kernel/drivers/usb_legacy.h"
 
 /* Read-only query: safe with or without a controller. When a USB MSC device is
  * present, READ CAPACITY validation (usb_msc.c) guarantees an active device
@@ -333,8 +334,44 @@ static void test_usb_boot_scsi_retry_decide(void)
                    MSC_CMD_RETRY, "FAIL exact_short ignored -> RETRY");
 }
 
+/* usb_legacy_classify(cls, sub, prog_if) maps a PCI identity triple to the
+ * legacy USB controller class used for the no-xHCI fallback diagnostic. Pure.
+ * Class 0x0C / subclass 0x03 is the USB controller; prog-if selects the HCD
+ * kind (0x00 UHCI, 0x10 OHCI, 0x20 EHCI, 0x30 xHCI -> NONE). */
+static void test_usb_legacy_classify(void)
+{
+    TEST_ASSERT_EQ(usb_legacy_classify(0x0C, 0x03, USB_PROGIF_UHCI),
+                   USB_LEGACY_UHCI, "0C/03/00 -> UHCI");
+    TEST_ASSERT_EQ(usb_legacy_classify(0x0C, 0x03, USB_PROGIF_OHCI),
+                   USB_LEGACY_OHCI, "0C/03/10 -> OHCI");
+    TEST_ASSERT_EQ(usb_legacy_classify(0x0C, 0x03, USB_PROGIF_EHCI),
+                   USB_LEGACY_EHCI, "0C/03/20 -> EHCI");
+    /* xHCI is handled by the real driver, not the legacy fallback. */
+    TEST_ASSERT_EQ(usb_legacy_classify(0x0C, 0x03, USB_PROGIF_XHCI),
+                   USB_LEGACY_NONE, "0C/03/30 (xHCI) -> NONE");
+    /* Unknown prog-if under the USB subclass is not a known legacy HCD. */
+    TEST_ASSERT_EQ(usb_legacy_classify(0x0C, 0x03, 0xFE),
+                   USB_LEGACY_NONE, "0C/03/FE (unknown) -> NONE");
+    /* Wrong class / subclass is never a USB controller, even at a USB prog-if. */
+    TEST_ASSERT_EQ(usb_legacy_classify(0x01, 0x06, USB_PROGIF_EHCI),
+                   USB_LEGACY_NONE, "SATA (01/06) at EHCI prog-if -> NONE");
+    TEST_ASSERT_EQ(usb_legacy_classify(0x0C, 0x05, USB_PROGIF_EHCI),
+                   USB_LEGACY_NONE, "0C/05 (SMBus) at EHCI prog-if -> NONE");
+    /* Class gate enforced INDEPENDENTLY of subclass/prog-if: a non-USB class
+     * with the USB subclass + a legacy prog-if must still be NONE (guards a
+     * regression that keyed only on subclass + prog-if). */
+    TEST_ASSERT_EQ(usb_legacy_classify(0x01, 0x03, USB_PROGIF_EHCI),
+                   USB_LEGACY_NONE, "01/03/20 (wrong class, USB subclass) -> NONE");
+
+    /* Name mapping round-trips the four classes. */
+    TEST_ASSERT(usb_legacy_class_name(USB_LEGACY_EHCI)[0] == 'E', "EHCI name");
+    TEST_ASSERT(usb_legacy_class_name(USB_LEGACY_NONE)[0] == 'n', "NONE -> none");
+}
+
 void test_register_usb_boot(void)
 {
+    test_suite_register_cat("usb-boot: legacy controller classification",
+                            test_usb_legacy_classify, TEST_CAT_STORAGE);
     test_suite_register_cat("usb: controller count + MSC geometry",
                             test_usb_count_and_geometry, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-boot: SCSI sense classification",
