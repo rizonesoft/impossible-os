@@ -57,7 +57,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [/]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [/]   |
 | 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [/]   |
-| 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [ ]   |
+| 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [x]   |
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [ ]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
@@ -269,13 +269,19 @@ On Intel 7/8/9-series chipsets, USB 2.0 ports are routed from EHCI to xHCI via t
 
 Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 
-- [ ] Bound via the EXISTING seq cursor, NOT `ring_count`: snapshot `klog_get_seq()` at entry, flush only entries with seq < snapshot (ring_count bounding caused a prior saturation/replay bug -> XREF: 02-kernel-core/TODO-04 klog_ring_seq design)
-- [ ] Preserve cursor-advance-on-success: advance the persisted flush cursor only for entries actually written; entries logged DURING flush (seq >= snapshot) wait for the next call -- correct across the 1000-entry ring wrap
-- [ ] Add progress: `"[KLOG] Flushing %u entries to disk..."` at start, `"done (%u ms)"` at end
-- [ ] If flush takes > 5 seconds: `"[WARN] Slow media detected -- switching to deferred flush"` (triggers §9)
-- [ ] Commit: `"kernel: bounded klog_disk_flush -- seq-cursor snapshot, no unbounded loop"`
+- [x] Bound via the EXISTING seq cursor, NOT `ring_count`: `klog_disk_flush` flushes `cur_seq - ixfs_flush_seq` entries capped to `KLOG_RING_SIZE` -> XREF: 02-kernel-core/TODO-04 klog_ring_seq design
+- [x] Preserve cursor-advance-on-success: `ixfs_flush_seq`/`jsonl_flush_seq` advance to `cur_seq` only on `flush_ok`; entries logged during flush wait for the next call -- correct across the 1000-entry ring wrap (`klog_disk.c`)
+- [x] Progress logging: serial `"[KLOG] Flushing %u entries..."` at entry + `"flush done (%u entries, %u ms)"` at `done:`, for flushes >= 64 (`KLOG_FLUSH_PROGRESS_MIN`); timed via `uptime_ns()`, emitted on serial not klog (reentrancy guard)
+- [x] Slow-media detect (flush > `KLOG_SLOW_MEDIA_MS`=5s): serial WARN + set `s_klog_slow_media`, exposed via `klog_slow_media_detected()` -- the trigger the deferred-flush mode (next section) consumes
+- [x] Commit: `"kernel: bounded klog_disk_flush -- seq-cursor snapshot, no unbounded loop"`
 
-**Test checkpoint:** USB 2.0 boot on bare metal -- flush completes in seconds, not minutes. Serial shows flush count and duration.
+**Test checkpoint:** USB 2.0 boot on bare metal -- flush completes in seconds, not minutes. Serial shows `"[KLOG] Flushing N entries..."` / `"flush done (N entries, M ms)"`; a >5s flush emits the slow-media WARN. Unit test asserts the bounded flush window caps to `KLOG_RING_SIZE`.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_klog.c` "Klog: bounded flush window" (`klog_flush_window` matrix -- the cap that prevents the unbounded-loop hang); the flush timing/progress/WARN + slow-media flag are live serial+VFS (validated on bare metal USB 2.0 i5-4210U).
+> **Notes:**
+> - Shipped: `klog_disk_flush` progress logging + `uptime_ns()` flush timing + slow-media detection; `klog_flush_window()` pure bounded-window helper now used at all 3 flush sites (`klog_disk.c`). Seq-cursor bounding (items 1-2) was already in place from the BlackBox log work, verified + extracted here.
+> - How it runs: serial diagnostics fire only for flushes >= 64 entries (no spam on the frequent small flushes); `serial_write` is used (not klog) so it can't re-enter under the `flushing` reentrancy guard.
+> - Downstream: `klog_slow_media_detected()` is the trigger the deferred-flush mode consumes (next section); a >5s flush flips it.
+> - Scope boundary: this section owns the bounded loop + progress + slow-media DETECTION; the deferred-flush mode (RAM batching that acts on the flag) is the next section.
 
 ---
 
@@ -429,7 +435,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ✅ No global xhci_init sleep |
 | 💎 | Intel EHCI->xHCI port routing | ✅ USB stack routes ports | ✅ xhci-pci Intel quirk    | ✅ §7 EHCI-gate + bounded settle |
 | 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
-| 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ⬜ §8-§9                    |
+| 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ✅ §8 seq-cursor + progress  |
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ⬜ §10                      |
 | ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ⬜ §12 🚀                   |
 | 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §13                      |

@@ -18,6 +18,7 @@
 #include "kernel/drivers/rtc.h"
 #include "kernel/nt/filetime.h"
 #include "kernel/time/wall_clock.h"
+#include "kernel/timer.h"
 #include "libc/string.h"
 
 /* ---- Runtime log directory (BlackBox X:\ preferred, C:\ fallback) ---- */
@@ -115,6 +116,12 @@ static uint32_t  fat32_buf_size = 0;
 static int       fat32_inited   = 0;
 static int       live_enabled   = 0;
 static int       flushing       = 0;  /* reentrancy guard */
+
+/* Flush progress logging + slow-media detection. */
+#define KLOG_SLOW_MEDIA_MS       5000u  /* a flush slower than this = slow media */
+#define KLOG_FLUSH_PROGRESS_MIN  64u    /* only log progress for non-trivial flushes */
+static int       s_klog_slow_media = 0; /* set when a flush exceeds KLOG_SLOW_MEDIA_MS;
+                                         * the deferred-flush mode consumes it */
 
 /* Numbered serial log filename: "Serial_YYMMDDNN.log" */
 static char      log_filename[24];  /* "Serial_YYMMDDNN.log" + NUL */
@@ -619,6 +626,36 @@ void klog_disk_append(const klog_entry_t *e)
     buf_putc('\n');
 }
 
+/* Format an unsigned decimal directly to serial (no klog -- avoids re-entering
+ * the disk flush under the reentrancy guard). */
+static void serial_write_u32(uint32_t v)
+{
+    char tmp[12];
+    int t = 0;
+    if (v == 0) { serial_putchar('0'); return; }
+    while (v) { tmp[t++] = (char)('0' + (v % 10)); v /= 10; }
+    while (t) serial_putchar(tmp[--t]);
+}
+
+/* True once a disk flush has exceeded KLOG_SLOW_MEDIA_MS. The deferred-flush mode
+ * reads this to switch to batched RAM buffering on slow boot media. */
+int klog_slow_media_detected(void)
+{
+    return s_klog_slow_media;
+}
+
+/* Bounded flush window: how many unflushed ring entries to write this pass. The
+ * cap to KLOG_RING_SIZE is the core bound -- without it a saturated ring (cur_seq
+ * far ahead of the cursor) produced the 10-minute USB 2.0 flush hang. `cursor` is
+ * the persisted seq of the last successful flush; `cur_seq` is the live monotonic
+ * sequence. The cur_seq < cursor guard keeps the result sane under any reordering.
+ * Pure; exposed for tests. */
+uint32_t klog_flush_window(uint64_t cur_seq, uint64_t cursor)
+{
+    uint64_t pend = cur_seq > cursor ? cur_seq - cursor : 0;
+    return pend > KLOG_RING_SIZE ? KLOG_RING_SIZE : (uint32_t)pend;
+}
+
 void klog_disk_flush(void)
 {
     uint32_t ring_count, ring_head;
@@ -630,6 +667,24 @@ void klog_disk_flush(void)
     if (flushing)
         return;
     flushing = 1;
+
+    /* Flush timing + progress: measure wall-clock across the whole flush and, for
+     * non-trivial flushes, report start/done on serial so a slow USB 2.0 write is
+     * visibly progressing rather than appearing hung. `flush_pending` is the
+     * kernel.log unflushed count (seq cursor minus snapshot, capped to the ring).
+     * uptime_ns() is monotonic; if the timer HAL is not yet up both reads are
+     * equal so the elapsed-ms is 0 (no false slow-media trip). */
+    uint64_t flush_t0   = uptime_ns();
+    int      log_mounted = vfs_is_mounted('X') || vfs_is_mounted('C');
+    uint32_t flush_pending = 0;
+    if (log_mounted) {
+        flush_pending = klog_flush_window(klog_get_seq(), ixfs_flush_seq);
+        if (flush_pending >= KLOG_FLUSH_PROGRESS_MIN) {
+            serial_write("[KLOG] Flushing ");
+            serial_write_u32(flush_pending);
+            serial_write(" entries to disk...\n");
+        }
+    }
 
     /* ---- Flush to log directory (X:\ BlackBox or C:\ fallback) ---- */
     if (vfs_is_mounted('X') || vfs_is_mounted('C')) {
@@ -665,10 +720,8 @@ void klog_disk_flush(void)
         uint64_t cur_seq = klog_get_seq();
         ring = klog_get_ring(&ring_count, &ring_head);
 
-        /* Number of unflushed entries (capped to ring capacity) */
-        uint64_t unflushed = cur_seq - ixfs_flush_seq;
-        if (unflushed > KLOG_RING_SIZE)
-            unflushed = KLOG_RING_SIZE;  /* oldest entries overwritten */
+        /* Number of unflushed entries (bounded to ring capacity). */
+        uint64_t unflushed = klog_flush_window(cur_seq, ixfs_flush_seq);
 
         if (ring && unflushed > 0) {
             uint64_t start_seq = cur_seq - unflushed;
@@ -816,9 +869,7 @@ void klog_disk_flush(void)
         {
             uint64_t jcur_seq = klog_get_seq();
             ring = klog_get_ring(&ring_count, &ring_head);
-            uint64_t junflushed = jcur_seq - jsonl_flush_seq;
-            if (junflushed > KLOG_RING_SIZE)
-                junflushed = KLOG_RING_SIZE;
+            uint64_t junflushed = klog_flush_window(jcur_seq, jsonl_flush_seq);
 
             if (ring && junflushed > 0) {
                 /* Batch JSON lines into a 32 KB buffer */
@@ -1010,5 +1061,22 @@ free_tmp:
     }
 
 done:
+    /* Flush timing summary + slow-media detection (all goto paths converge here). */
+    if (log_mounted) {
+        uint32_t flush_ms = (uint32_t)((uptime_ns() - flush_t0) / 1000000ull);
+        if (flush_pending >= KLOG_FLUSH_PROGRESS_MIN) {
+            serial_write("[KLOG] flush done (");
+            serial_write_u32(flush_pending);
+            serial_write(" entries, ");
+            serial_write_u32(flush_ms);
+            serial_write(" ms)\n");
+        }
+        if (flush_ms > KLOG_SLOW_MEDIA_MS) {
+            serial_write("[WARN] [KLOG] Slow media detected (");
+            serial_write_u32(flush_ms);
+            serial_write(" ms) -- deferred flush recommended\n");
+            s_klog_slow_media = 1;
+        }
+    }
     flushing = 0;
 }

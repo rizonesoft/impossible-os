@@ -124,6 +124,8 @@ uint32_t klog_get_dropped(const char *subsystem);
 void klog_resolve_dir(void);           /* Resolve log dir: X:\ or C:\ fallback */
 void klog_disk_init(void);             /* Allocate buffer, scan for log number */
 void klog_disk_flush(void);            /* Write ring to C: + buffer to X: */
+int  klog_slow_media_detected(void);   /* 1 if a flush exceeded KLOG_SLOW_MEDIA_MS (slow boot media) */
+uint32_t klog_flush_window(uint64_t cur_seq, uint64_t cursor); /* bounded unflushed count (<= KLOG_RING_SIZE) */
 void klog_disk_set_live(int on);       /* Enable/disable per-entry live mode */
 int  klog_disk_live_active(void);      /* Returns 1 if live mode is on */
 void klog_disk_append(const klog_entry_t *e);  /* Append entry to FAT32 buffer */

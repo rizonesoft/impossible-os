@@ -477,10 +477,29 @@ static void test_klog_ctx_timestamp_advances(void)
                 "timestamp advances between log entries");
 }
 
+/* klog_flush_window(cur_seq, cursor): the bounded unflushed count that prevents
+ * the saturated-ring 10-minute USB 2.0 flush hang. Pure + deterministic (unlike
+ * the runtime slow-media flag, which boot legitimately mutates). */
+static void test_klog_flush_window(void)
+{
+    TEST_ASSERT_EQ(klog_flush_window(0, 0), 0u, "nothing logged -> 0");
+    TEST_ASSERT_EQ(klog_flush_window(100, 0), 100u, "100 unflushed from start -> 100");
+    TEST_ASSERT_EQ(klog_flush_window(100, 50), 50u, "cursor at 50 -> 50 remain");
+    TEST_ASSERT_EQ(klog_flush_window(100, 100), 0u, "caught up -> 0");
+    /* The load-bearing bound: a saturated ring (cur_seq far ahead) caps to the
+     * ring capacity rather than looping over an unbounded span. */
+    TEST_ASSERT_EQ(klog_flush_window(1000000, 0), (uint32_t)KLOG_RING_SIZE,
+                   "saturated ring caps to KLOG_RING_SIZE (no unbounded loop)");
+    TEST_ASSERT_EQ(klog_flush_window(0, 100), 0u,
+                   "cursor ahead of seq -> 0 (no underflow to a huge count)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
 {
+    test_suite_register_cat("Klog: bounded flush window",
+                            test_klog_flush_window, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring write", test_klog_ring_write, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level drop", test_klog_level_drop, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level pass", test_klog_level_pass, TEST_CAT_BOOT);
