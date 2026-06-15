@@ -21,6 +21,7 @@
 #define NVME_REG_INTMC          0x10    /* Interrupt Mask Clear (32-bit) */
 #define NVME_REG_CC             0x14    /* Controller Configuration (32-bit) */
 #define NVME_REG_CSTS           0x1C    /* Controller Status (32-bit) */
+#define NVME_REG_DOORBELL_BASE  0x1000  /* SQ0TDBL; queue y doorbell = base + (2y + is_cq) * (4 << DSTRD) */
 #define NVME_REG_AQA            0x24    /* Admin Queue Attributes (32-bit) */
 #define NVME_REG_ASQ            0x28    /* Admin Submission Queue Base (64-bit) */
 #define NVME_REG_ACQ            0x30    /* Admin Completion Queue Base (64-bit) */
@@ -104,6 +105,13 @@ struct nvme_cqe {
     uint16_t cid;       /* command identifier */
     uint16_t status;    /* phase bit[0], status[15:1] */
 };
+
+/* The submit/complete paths copy exactly 16 dwords (SQE) and read a 16-byte
+ * CQE; CC advertises 2^6=64-byte SQEs and 2^4=16-byte CQEs. Lock the binary
+ * layout so a later field/order/packing change cannot silently corrupt live
+ * controller commands or completions (NVMe 1.4 figures 4/24). */
+_Static_assert(sizeof(struct nvme_sqe) == 64, "NVMe SQE must be 64 bytes");
+_Static_assert(sizeof(struct nvme_cqe) == 16, "NVMe CQE must be 16 bytes");
 
 /* ---- Controller state ---- */
 struct nvme_controller {

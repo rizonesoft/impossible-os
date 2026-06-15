@@ -81,6 +81,14 @@ Find NVMe controllers on PCI and map BAR0 as UC for register access.
 - VirtualBox: graceful skip -- no NVMe controller emulation
 
 **Regression risk:** LOW -- PCI scan is read-only enumeration. BAR mapping adds a new `vmm_map_mmio_uc()` call; if BAR address overlaps an existing mapping, VMM will detect and panic. Rollback: `#ifdef NVME_DRIVER` around the PCI class check to disable entirely.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_nvme.c` skip-gated; discovery validated via `make run-nvme` + bare metal.
+> **Notes:**
+> - Shipped: NVMe controller discovery (`nvme.c`) -- PCI scan (class 0x01/0x08/0x02), 64-bit BAR0 decode + `vmm_map_mmio_uc` (16 KiB UC window), CAP/VS read, CC.EN disable/reset/enable with `CSTS.RDY` + `CSTS.CFS` checks.
+> - Integrates: per-controller via `nvme_init()`; ready controllers feed §4 blkdev registration.
+> - Review: Codex 3x fixed 2H -- a large `CAP.DSTRD` could push the QID-1 doorbell past the 16 KiB BAR map (now rejected); `CC.MPS=0` was set without checking `CAP.MPSMIN` (now rejects > 4 KiB-page controllers).
+> - Scope boundary: §1 owns discovery + BAR map; admin queue is §2; the I/O path is §3.
+> **Verified:** 2026-06-15 | this review commit | 8/8 items | build OK | smoke PASS 2.6s
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1C+2H+3M fixed, 2H accepted (§1-§4 consolidated) | scope: kernel-code-quality
 
 ---
 
@@ -104,6 +112,14 @@ Create the Admin Submission/Completion Queue pair and execute Identify Controlle
 - VirtualBox / QEMU (no NVMe): skipped (no controller from §1)
 
 **Regression risk:** LOW -- Admin Queue uses freshly allocated contiguous pages from `pmm_alloc_contiguous()`. No shared state modified. If Identify command times out, log warning and skip NVMe. Rollback: skip Identify, treat NVMe as not present.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_nvme.c` skip-gated; admin/Identify validated via `make run-nvme` + bare metal.
+> **Notes:**
+> - Shipped: admin queue (`nvme.c`) -- AQA/ASQ/ACQ setup, Identify Controller (serial/model parse), Identify Namespace (NSZE + FLBAS DS-validated to 512/4096).
+> - Integrates: polled admin completion; feeds §3 I/O queue creation + the namespace geometry §4 registers.
+> - Review: Codex 3x fixed 2M -- added `_Static_assert(sizeof SQE==64, CQE==16)` locking the binary layout the submit/complete paths assume; doorbell base `0x1000` moved to `NVME_REG_DOORBELL_BASE` (single source of truth).
+> - Scope boundary: §2 owns the admin queue + Identify; the I/O queue is §3; LBA-size reject + bounds are §3/§6.
+> **Verified:** 2026-06-15 | this review commit | 7/7 items | build OK | smoke PASS 2.6s
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1C+2H+3M fixed, 2H accepted (§1-§4 consolidated) | scope: kernel-code-quality
 
 ---
 
@@ -116,10 +132,10 @@ Create one I/O Submission/Completion Queue pair and implement read/write sector 
 - [x] Submit Create I/O Submission Queue command (opcode 0x01)
 - [x] `nvme_read_sectors(ctrl_idx, lba, count, buf)` per `nvme.h` -- submit Read command (opcode 0x02), wait for completion
 - [x] `nvme_write_sectors(ctrl_idx, lba, count, buf)` per `nvme.h` -- submit Write command (opcode 0x01), wait for completion
-- [x] PRP (Physical Region Page) list for multi-page transfers
+- [x] Single-page PRP1 transfer: one 4 KiB DMA page per command, chunked at `4096/ns_sector_size`. Multi-page PRP2 / PRP-list for large transfers deferred (perf) -> XREF §5 (advanced NVMe backlog)
 - [x] Polled completion (check CQ head) -- interrupt-based deferred to TODO-03
 - [x] `POST16(POST16_NVME_IO)` on entry, `POST16(POST16_NVME_IO_OK)` on exit
-- [x] Validate PRP list alignment before every DMA submit (must be page-aligned for multi-page)
+- [x] DMA buffer is a page-aligned single-page PRP1 (`pmm_alloc_contiguous(1)`, alignment inherent); LBA range bounds-checked against `ns_lba_count` before submit. Multi-page PRP-list alignment validation lands with the deferred multi-page work (§5)
 - [x] Commit: `"drivers: NVMe I/O Queue -- read/write sectors via polled completion"`
 
 **Test checkpoint:** Read sector 0, verify GPT/MBR header. Write + readback test on test partition only. POST code 0x20A4/0x20A5 (`POST16_NVME_IO`/`POST16_NVME_IO_OK`). Test on:
@@ -128,6 +144,17 @@ Create one I/O Submission/Completion Queue pair and implement read/write sector 
 - VirtualBox / QEMU (no NVMe): skipped (no controller from §1)
 
 **Regression risk:** MEDIUM -- DMA writes via PRP lists could corrupt memory if physical addresses are wrong. Mitigation: validate PRP alignment, use `pmm_alloc_contiguous()` for all DMA buffers, never reuse buffers across commands without completion check. Rollback: disable I/O queue creation; §1, §2 still work for diagnostics.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_nvme.c` skip-gated; I/O read/write validated via `make run-nvme` + bare metal.
+> **Notes:**
+> - Shipped: I/O queue pair (`nvme.c`) -- Create IOCQ/IOSQ, `nvme_read/write_sectors` (single-page PRP1, `4096/sector` chunking, `memcpy` DMA copy).
+> - Integrates: registered as the `nvmeN` blkdev read/write (§4); wrap uses the actual `io_queue_depth` (MQES+1), not a fixed 64; serialized by the §6 `io_busy` gate.
+> - Downstream: a poll timeout poisons the queue (`io_queue_active=0`) so a late completion cannot be misconsumed (§6).
+> - Review: Codex 3x fixed 1C+1M -- read/write bounds-check the LBA range against `ns_lba_count` (was unchecked -> wraparound overwrite); byte copy replaced with `memcpy`.
+> - Scope boundary: §3 owns the I/O queue + read/write; multi-page PRP + persistent DMA buffer are deferred perf (Accepted); io_busy/shutdown lifecycle is §6.
+> **Verified:** 2026-06-15 | this review commit | 8/8 items | build OK | smoke PASS 2.6s
+> **Accepted:** [H] large transfers chunked into many single-page PRP1 4 KiB commands with 1ms-poll latency -> XREF: 01-boot-platform/TODO-16 §5 (item: "Multi-page PRP2 / PRP-list transfers" at line 184)
+> **Accepted:** [M] per-read/write `pmm_alloc_contiguous`/free on the storage hot path -> XREF: 01-boot-platform/TODO-16 §5 (item: "Persistent per-controller DMA bounce buffer" at line 185)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1C+2H+3M fixed, 2H accepted (§1-§4 consolidated) | scope: kernel-code-quality
 
 ---
 
@@ -149,6 +176,15 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 - VirtualBox: boot completes without NVMe -- graceful skip
 
 **Regression risk:** MEDIUM -- modifies `boot_phase2()` in `boot_storage.c`, which runs on ALL boot paths. NVMe init is additive (inserted after AHCI, before `blkdev_register_all()`). If NVMe init hangs, all subsequent boot phases stall. Mitigation: 500 ms timeout on controller enable; if timeout, log `nvme: controller enable timeout -- skipping` and continue. Rollback: remove `nvme_init()` call from `boot_phase2()`.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_nvme.c` registers the NVMe blkdev; mount path validated via `make run-nvme`.
+> **Notes:**
+> - Shipped: NVMe namespaces registered as `nvme0`..`nvme3` blkdevs (`blkdev_adapters.c`) wired into `boot_phase2()`; partitions scanned + filesystem mounted (GPT + IXFS/FAT32/NTFS).
+> - Integrates: registration carries the §6 `flush`/`shutdown` callbacks so `blkdev_shutdown_all()` reaches NVMe; no-NVMe boot paths skip gracefully.
+> - Downstream: makes NVMe drives mountable as C:\; consumed by the storage-quiesce poweroff/reboot path (§6, D04 T03 §2).
+> - Review: Codex 3x -- registration loop bounds on `controllers[i].active`; adapter thunks match the `blkdev` fn-pointer ABI byte-for-byte.
+> - Scope boundary: §4 owns blkdev registration + mount wiring; the clean-shutdown flush lifecycle is §6.
+> **Verified:** 2026-06-15 | this review commit | 4/4 items | build OK | smoke PASS 2.6s
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1C+2H+3M fixed, 2H accepted (§1-§4 consolidated) | scope: kernel-code-quality
 
 ---
 
@@ -165,6 +201,8 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 - [ ] Dataset Management / Deallocate wired to `blkdev_discard` for filesystem TRIM (-> XREF same file §1)
 - [ ] Autonomous Power State Transitions for idle power on laptops (-> XREF same file §1)
 - [ ] NVMe over Fabrics transports deferred (no SCSI translation layer needed) (-> XREF same file once networking + RDMA prerequisites exist)
+- [ ] Multi-page PRP2 / PRP-list transfers so a large read/write is one command not many 4 KiB submissions + a bounded tight-spin before the `sleep_ms(1)` completion poll (boot/mount latency) (-> XREF same file §3/§5)
+- [ ] Persistent per-controller DMA bounce buffer allocated at I/O-queue setup, guarded by the `io_busy` gate -- avoids per-read/write `pmm_alloc_contiguous`/free on the hot path (-> XREF same file §5)
 - [ ] Commit: `todo: NVMe advanced backlog tracked no kernel change`
 
 **Test checkpoint:** Each §5 bullet maps to a matching `[x]` in `../04-drivers-hardware/TODO-08-core-driver-enhancements.md` §5 or §3 with proof: QEMU TCG `make run-nvme` shows no new `nvme: controller enable timeout` regressions; serial still shows POST16 `0x20A0` through `0x20A7` in order on reference image; `bash scripts/test.sh SUITE=storage` passes after the merged feature lands.
@@ -173,7 +211,7 @@ Register NVMe namespaces as block devices for partition scanning and filesystem 
 > - Deferred: tracking-only backlog of advanced NVMe parity (MSI-X/MSI completion, multi-queue, SMART log 0x02, multi-namespace, discard/TRIM, APST, fabrics); all implementation is owned by the post-boot `04-drivers-hardware/TODO-08`.
 > - Why deferred: TODO-16 is boot-critical scope only; these features are not needed to boot from NVMe and would bloat the boot-critical driver. No kernel change lands in this section.
 > - Scope boundary: §5 owns the cross-reference + parity tracking; the features ship in D04 T08. Boot-critical NVMe durability (flush/shutdown) is the separate §6, owned here.
-> **Verified:** 2026-06-15 | deferred -- no code shipped (tracking-only backlog) | 0/7 items | build OK (no code change) | manual (XREF audit)
+> **Verified:** 2026-06-15 | deferred -- no code shipped (tracking-only backlog) | 0/9 items | build OK (no code change) | manual (XREF audit)
 > **Deferred:** [M] advanced NVMe parity (MSI-X, multi-queue, SMART, namespaces, discard, APST, fabrics) unimplemented here; each bullet XREFs its owner -> XREF: 04-drivers-hardware/TODO-08 §5 (NVMe Storage Driver -- advanced bullets beyond the boot-critical reconcile item)
 
 ---

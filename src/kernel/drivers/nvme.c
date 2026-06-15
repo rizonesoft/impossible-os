@@ -14,6 +14,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/timer.h"
 #include "kernel/barrier.h"
+#include "libc/string.h"
 
 /* ---- Static state ---- */
 static struct nvme_controller controllers[NVME_MAX_CONTROLLERS];
@@ -83,7 +84,7 @@ static int nvme_submit_admin_cmd(struct nvme_controller *nc,
      * the barrier makes the contract explicit and portable). */
     nc->admin_sq_tail = (nc->admin_sq_tail + 1) % NVME_ADMIN_QUEUE_DEPTH;
     wmb();
-    nvme_write32(nc->mmio_base, 0x1000, nc->admin_sq_tail);
+    nvme_write32(nc->mmio_base, NVME_REG_DOORBELL_BASE, nc->admin_sq_tail);
 
     /* Poll CQ for completion (volatile CQE access prevents compiler CSE) */
     elapsed = 0;
@@ -114,7 +115,7 @@ done:
         nc->admin_cq_phase ^= 1;
 
     /* Ring CQ 0 head doorbell */
-    nvme_write32(nc->mmio_base, 0x1000 + db_stride, nc->admin_cq_head);
+    nvme_write32(nc->mmio_base, NVME_REG_DOORBELL_BASE + db_stride, nc->admin_cq_head);
 
     return (status >> 1) != 0 ? -1 : 0;
 }
@@ -382,7 +383,7 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
     nc->io_sq_tail = (nc->io_sq_tail + 1) % nc->io_queue_depth;
     wmb();  /* SQ entry visible before doorbell (NVMe spec) */
     /* SQ y tail doorbell: 0x1000 + (2y * db_stride), y=1 for I/O QID 1 */
-    nvme_write32(nc->mmio_base, 0x1000 + (2 * db_stride), nc->io_sq_tail);
+    nvme_write32(nc->mmio_base, NVME_REG_DOORBELL_BASE + (2 * db_stride), nc->io_sq_tail);
 
     /* Poll I/O CQ for completion (volatile CQE access prevents compiler CSE) */
     elapsed = 0;
@@ -418,7 +419,7 @@ done:
         nc->io_cq_phase ^= 1;
 
     /* Ring I/O CQ 1 head doorbell: 0x1000 + ((2*1+1) * db_stride) */
-    nvme_write32(nc->mmio_base, 0x1000 + (3 * db_stride), nc->io_cq_head);
+    nvme_write32(nc->mmio_base, NVME_REG_DOORBELL_BASE + (3 * db_stride), nc->io_cq_head);
 
     atomic_set(&nc->io_busy, 0);
     return (status >> 1) != 0 ? -1 : 0;
@@ -509,6 +510,30 @@ static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     klog(LOG_DEBUG, "nvme", "CAP: MQES=%u DSTRD=%u TO=%u CSS=0x%x MPSMIN=%u MPSMAX=%u",
          (uint64_t)nc->mqes, (uint64_t)nc->dstrd, (uint64_t)nc->to,
          (uint64_t)nc->css, (uint64_t)nc->mpsmin, (uint64_t)nc->mpsmax);
+
+    /* The mapped BAR window must cover the highest doorbell this driver writes:
+     * the I/O CQ-1 head doorbell at 0x1000 + 3*(4<<DSTRD). A controller with a
+     * large DSTRD would push it past the mapping and fault on a UC MMIO write;
+     * reject rather than scribble out of bounds. */
+    {
+        uint64_t max_db = (uint64_t)NVME_REG_DOORBELL_BASE + 3ull * (4ull << nc->dstrd) + sizeof(uint32_t);
+        if (max_db > nc->mmio_size) {
+            klog(LOG_ERROR, "nvme",
+                 "DSTRD=%u doorbell window exceeds BAR map -- skipping",
+                 (uint64_t)nc->dstrd);
+            return -1;
+        }
+    }
+
+    /* This host programs CC.MPS=0 (4 KiB) and allocates 4 KiB queues/buffers,
+     * so the controller must accept MPS=0 -- i.e. CAP.MPSMIN must be 0. Reject
+     * a controller that requires a larger minimum host page size. */
+    if (nc->mpsmin != 0) {
+        klog(LOG_ERROR, "nvme",
+             "MPSMIN=%u > 0 -- 4 KiB host pages unsupported, skipping",
+             (uint64_t)nc->mpsmin);
+        return -1;
+    }
 
     /* Validate NVM command set support */
     if (!(nc->css & NVME_CAP_CSS_NVM)) {
@@ -712,6 +737,14 @@ int nvme_read_sectors(int ctrl_idx, uint64_t lba, uint32_t count, void *buf)
         (nc->ns_sector_size != 512 && nc->ns_sector_size != 4096))
         return -1;
 
+    /* Bounds-check the LBA range against namespace capacity (overflow-safe):
+     * a filesystem/partition bug or direct caller must not submit I/O past the
+     * namespace or wrap lba+count, which risks wrong-sector overwrite. */
+    if (count == 0)
+        return 0;
+    if (lba >= nc->ns_lba_count || count > nc->ns_lba_count - lba)
+        return -1;
+
     timeout_ms = (uint32_t)nc->to * 500;
     if (timeout_ms < 500)
         timeout_ms = 500;
@@ -747,12 +780,7 @@ int nvme_read_sectors(int ctrl_idx, uint64_t lba, uint32_t count, void *buf)
         }
 
         /* Copy from DMA buffer to caller's buffer */
-        {
-            uint32_t bytes = chunk * nc->ns_sector_size;
-            uint32_t j;
-            for (j = 0; j < bytes; j++)
-                dst[j] = dma_buf[j];
-        }
+        memcpy(dst, dma_buf, (uint64_t)chunk * nc->ns_sector_size);
 
         dst += chunk * nc->ns_sector_size;
         sectors_done += chunk;
@@ -777,6 +805,14 @@ int nvme_write_sectors(int ctrl_idx, uint64_t lba, uint32_t count,
         (nc->ns_sector_size != 512 && nc->ns_sector_size != 4096))
         return -1;
 
+    /* Bounds-check the LBA range against namespace capacity (overflow-safe):
+     * a filesystem/partition bug or direct caller must not submit I/O past the
+     * namespace or wrap lba+count, which risks wrong-sector overwrite. */
+    if (count == 0)
+        return 0;
+    if (lba >= nc->ns_lba_count || count > nc->ns_lba_count - lba)
+        return -1;
+
     timeout_ms = (uint32_t)nc->to * 500;
     if (timeout_ms < 500)
         timeout_ms = 500;
@@ -794,12 +830,7 @@ int nvme_write_sectors(int ctrl_idx, uint64_t lba, uint32_t count,
             chunk = count - sectors_done;
 
         /* Copy from caller's buffer to DMA buffer */
-        {
-            uint32_t bytes = chunk * nc->ns_sector_size;
-            uint32_t j;
-            for (j = 0; j < bytes; j++)
-                dma_buf[j] = src[j];
-        }
+        memcpy(dma_buf, src, (uint64_t)chunk * nc->ns_sector_size);
 
         nvme_memset(&cmd, 0, sizeof(cmd));
         cmd.cdw0 = NVME_IO_WRITE;
