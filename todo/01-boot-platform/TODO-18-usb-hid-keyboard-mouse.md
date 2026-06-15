@@ -42,7 +42,7 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 | ⭐  | Order | Deliverable                                     | Depends On | Status |
 | --- | :---: | ----------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | xHCI interrupt endpoint setup                   | --          |  [x]   |
-| 💎  |   2   | Interrupt transfer polling (periodic TRBs)       | §1         |  [ ]   |
+| 💎  |   2   | Interrupt transfer polling (periodic TRBs)       | §1         |  [/]   |
 | 💎  |   3   | USB HID boot-protocol keyboard driver            | §2         |  [ ]   |
 | 💎  |   4   | USB HID boot-protocol mouse driver               | §2         |  [ ]   |
 | 💎  |   5   | Input source coexistence (PS/2 + USB)            | §3, §4     |  [ ]   |
@@ -89,7 +89,7 @@ Set up periodic interrupt transfers to receive HID reports from keyboard/mouse.
 
 - [ ] Dedicated HID interrupter: set up xHCI interrupter 1 with its own Event Ring + ERST so HID Transfer Events never touch the shared interrupter-0 ring (`xhci.c`/`xhci_ring.c`)
 - [ ] Target HID Interrupt-IN TRBs at interrupter 1 via the TRB Interrupter Target field so their completions land on the dedicated ring
-- [ ] BSP tick multiplexer: a small subscriber list replacing the single `timer_register_tick_callback` slot so the splash spinner and the HID poll coexist (`timer.c`) -- or register the HID poll post-`spinner_stop`
+- [x] BSP tick multiplexer (`timer.c` `timer_add/remove_tick_subscriber` + `tick_subs[4]`) -- additive to the singleton so the splash spinner + HID poll coexist; BSP-only writers, release/acquire ISR snapshot, status-returning remove
 - [ ] Per-HID-device report DMA buffer (`pmm_alloc_contiguous`); queue a Normal TRB pointing at it on `dev->int_in_ring` + ring the EP doorbell
 - [ ] HID poll (10 ms via the tick mux): drain the dedicated HID event ring for Transfer Events, extract the report bytes, log them, re-queue a TRB
 - [ ] Commit: `"drivers: xHCI dedicated HID interrupter + tick-mux interrupt polling"`

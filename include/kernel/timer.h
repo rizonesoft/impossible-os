@@ -82,6 +82,18 @@ void timer_register_tick_callback(void (*fn)(void), uint32_t every_n_ticks);
  * old callback or none. */
 void timer_unregister_tick_callback(void);
 
+/* Multi-subscriber tick callbacks, independent of the singleton above (so the
+ * boot-splash spinner on the singleton slot and other periodic consumers can
+ * coexist). Up to a small fixed cap; each fn fires every_n_ticks. Same BSP-only
+ * writer + release/acquire ISR-snapshot discipline as the singleton. Re-adding
+ * the same fn updates its cadence. Returns 0 on success, -1 on AP / full / bad
+ * args. timer_remove is a no-op if fn is not subscribed. */
+int  timer_add_tick_subscriber(void (*fn)(void), uint32_t every_n_ticks);
+/* Returns 0 if fn was removed (or was not subscribed), -1 if refused on an AP.
+ * Callers MUST check this before freeing subscriber-owned state: on an AP
+ * refusal the slot stays armed and the BSP ISR can still invoke fn. */
+int  timer_remove_tick_subscriber(void (*fn)(void));
+
 /* Called from PIT/LAPIC ISR to fire the registered callback at the
  * configured frequency.  Not for external use. */
 void timer_tick_callback_fire(void);

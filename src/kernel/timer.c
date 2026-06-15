@@ -158,6 +158,82 @@ void timer_unregister_tick_callback(void)
     spin_unlock_irqrestore(&s_tick_cb_lock, irqf);
 }
 
+/* ---- Multi-subscriber tick callbacks ------------------------------------
+ * A small fixed array of independent {fn, divisor, counter} subscribers that
+ * coexist with the singleton slot above (the splash spinner keeps the
+ * singleton; HID report polling and future periodic consumers use these). Same
+ * discipline as the singleton: BSP-only writers (the tick ISR is BSP-only, and
+ * irqsave on the BSP excludes it), the `active` flag published with release
+ * ordering AFTER fn/divisor are written and snapshotted with acquire in the
+ * ISR, so the ISR never pairs a live `active` with a stale fn. */
+#define TIMER_TICK_MAX_SUBS 4
+
+struct tick_sub {
+    void   (*fn)(void);
+    uint32_t divisor;
+    uint32_t counter;   /* ISR-owned (BSP); writers hold the lock + irqsave */
+    uint8_t  active;    /* release/acquire published */
+};
+
+static struct tick_sub tick_subs[TIMER_TICK_MAX_SUBS];
+static spinlock_t s_tick_subs_lock = SPINLOCK_INIT;
+
+int timer_add_tick_subscriber(void (*fn)(void), uint32_t every_n_ticks)
+{
+    uint64_t irqf;
+    int i, slot = -1;
+
+    if (tick_cb_writer_on_ap()) {
+        klog(LOG_WARN, "timer", "tick subscriber add refused on AP");
+        return -1;
+    }
+    if (!fn || every_n_ticks == 0)
+        return -1;
+
+    spin_lock_irqsave(&s_tick_subs_lock, &irqf);
+    for (i = 0; i < TIMER_TICK_MAX_SUBS; i++) {
+        if (tick_subs[i].active && tick_subs[i].fn == fn) {
+            slot = i;   /* re-add same fn -> update its cadence in place */
+            break;
+        }
+        if (slot < 0 && !tick_subs[i].active)
+            slot = i;
+    }
+    if (slot < 0) {
+        spin_unlock_irqrestore(&s_tick_subs_lock, irqf);
+        return -1;      /* table full */
+    }
+    /* Retract first so the ISR cannot pair a live slot with a half-written
+     * cadence, then publish active LAST with release ordering. */
+    __atomic_store_n(&tick_subs[slot].active, 0, __ATOMIC_RELEASE);
+    tick_subs[slot].fn      = fn;
+    tick_subs[slot].divisor = every_n_ticks;
+    tick_subs[slot].counter = 0;
+    __atomic_store_n(&tick_subs[slot].active, 1, __ATOMIC_RELEASE);
+    spin_unlock_irqrestore(&s_tick_subs_lock, irqf);
+    return 0;
+}
+
+int timer_remove_tick_subscriber(void (*fn)(void))
+{
+    uint64_t irqf;
+    int i;
+
+    if (tick_cb_writer_on_ap()) {
+        /* Refused: the slot stays armed. Returning -1 lets the caller avoid
+         * freeing fn-owned state that the BSP ISR can still invoke. */
+        klog(LOG_WARN, "timer", "tick subscriber remove refused on AP");
+        return -1;
+    }
+    spin_lock_irqsave(&s_tick_subs_lock, &irqf);
+    for (i = 0; i < TIMER_TICK_MAX_SUBS; i++) {
+        if (tick_subs[i].active && tick_subs[i].fn == fn)
+            __atomic_store_n(&tick_subs[i].active, 0, __ATOMIC_RELEASE);
+    }
+    spin_unlock_irqrestore(&s_tick_subs_lock, irqf);
+    return 0;
+}
+
 void timer_tick_callback_fire(void)
 {
     /* CR0/CR4 safety-bit periodic verify (TODO-09-boot S7). Own counter, NOT
@@ -179,11 +255,26 @@ void timer_tick_callback_fire(void)
      * between the NULL check and the indirect call. */
     void (*fn)(void) = __atomic_load_n(&tick_cb_fn, __ATOMIC_ACQUIRE);
     uint32_t divisor = tick_cb_divisor;
-    if (!fn || divisor == 0) return;
-    tick_cb_counter++;
-    if (tick_cb_counter >= divisor) {
-        tick_cb_counter = 0;
-        fn();
+    if (fn && divisor != 0) {
+        tick_cb_counter++;
+        if (tick_cb_counter >= divisor) {
+            tick_cb_counter = 0;
+            fn();
+        }
+    }
+
+    /* Fire any multi-subscriber tick callbacks. Snapshot `active` with acquire
+     * (pairs with the release store in add/remove); counter is BSP-ISR-owned. */
+    {
+        int i;
+        for (i = 0; i < TIMER_TICK_MAX_SUBS; i++) {
+            if (!__atomic_load_n(&tick_subs[i].active, __ATOMIC_ACQUIRE))
+                continue;
+            if (++tick_subs[i].counter >= tick_subs[i].divisor) {
+                tick_subs[i].counter = 0;
+                tick_subs[i].fn();
+            }
+        }
     }
 }
 
