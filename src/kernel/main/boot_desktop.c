@@ -560,6 +560,13 @@ void boot_phase3(void)
         boot_trend_publish_json();
     }
 
+    /* Forced final log flush -- the LAST pre-userland point: AFTER all Phase-3
+     * publishers and BEFORE task_create(cmd.exe)/scheduler_enable() so NO userland
+     * thread runs or races the drain. On slow media the per-subsystem flushes
+     * auto-switched to deferred (RAM batching); this single guard-aware forced flush
+     * drains the whole boot tail in one batched write and latches deferral off. */
+    klog_disk_flush_all();
+
     /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
     {
         extern void shell_loader_func(void);
@@ -598,13 +605,6 @@ void boot_phase3(void)
              "headless mode enabled via boot.conf (no fb_swap, no VSYNC)");
         compositor_set_headless(1);
     }
-
-    /* Forced final log flush -- the LAST pre-userland point, after ALL Phase-3
-     * publishers (entropy, boot timing, hw inventory, TPM, audit/health/trend, heap
-     * stats, compositor config). On slow media the per-subsystem flushes auto-switched
-     * to deferred (RAM batching); this single guard-aware forced flush drains the
-     * whole boot tail in one batched write before the compositor takes over. */
-    klog_disk_flush_all();
 
     /* --- Compositor event loop (never returns) --- */
     POST16(POST16_COMPOSITOR);  /* attribute a crash/hang entering the compositor */

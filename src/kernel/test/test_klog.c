@@ -508,6 +508,18 @@ static void test_klog_lost_count(void)
                    0xFFFFFFFFu, "loss past UINT32_MAX saturates (no wrap)");
 }
 
+/* klog_defer_active(state): effective deferral with DISABLED dominant -- once the
+ * boot-end drain latches DISABLED, no ACTIVE bit (even from an explicit setter) makes
+ * a flush no-op again, so post-drain logs can never be stranded. Pure. */
+static void test_klog_defer_active(void)
+{
+    TEST_ASSERT(!klog_defer_active(0), "no flags -> not deferred");
+    TEST_ASSERT(klog_defer_active(KLOG_DEFER_ACTIVE), "active, not disabled -> deferred");
+    TEST_ASSERT(!klog_defer_active(KLOG_DEFER_DISABLED), "disabled only -> not deferred");
+    TEST_ASSERT(!klog_defer_active(KLOG_DEFER_ACTIVE | KLOG_DEFER_DISABLED),
+                "active+disabled -> DISABLED dominates, not deferred (no re-defer post-drain)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
@@ -516,6 +528,8 @@ void test_register_klog(void)
                             test_klog_flush_window, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring-overflow lost count",
                             test_klog_lost_count, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: deferral DISABLED-dominant",
+                            test_klog_defer_active, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring write", test_klog_ring_write, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level drop", test_klog_level_drop, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level pass", test_klog_level_pass, TEST_CAT_BOOT);

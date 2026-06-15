@@ -298,7 +298,7 @@ For slow media, batch log entries in RAM and write once at boot end instead of p
 
 - [x] `klog_set_deferred(int enabled)` sets the atomic `s_klog_deferred` flag (`klog_disk.c`)
 - [x] During deferred mode `klog_disk_flush()` is a no-op (acquires the guard, sees the flag, releases + returns); entries accumulate in the 1000-entry ring
-- [x] `klog_disk_flush_all()` -- guard-AWARE forced flush (spin-acquires the guard; returns untouched on timeout; clears deferred AFTER `klog_disk_flush_locked()`); wired at the LAST pre-userland point in `boot_desktop.c` (before `compositor_run()`)
+- [x] `klog_disk_flush_all()` -- guard-AWARE forced flush (spin-acquires guard; returns untouched on timeout; clears deferred after the body); wired in `boot_desktop.c` before `task_create`/`scheduler_enable` (no userland races the drain)
 - [x] Combine into larger VFS writes -- the existing 32KB batch buffer already coalesces entries into few large `vfs_write`s; deferred mode defers WHEN, the batch handles HOW
 - [x] Auto-enable: the slow-media WARN block (flush > 5s) sets `s_klog_deferred=1` (one-way until `flush_all`); ring-overflow loss is counted via `klog_lost_count()` + logged so the persisted log is never silently incomplete
 - [x] Commit: `"kernel: klog deferred flush -- batch to RAM, single write at boot end"`
@@ -311,6 +311,9 @@ For slow media, batch log entries in RAM and write once at boot end instead of p
 > - Downstream: consumes §8's `klog_slow_media_detected()` infrastructure; the 32KB batch buffer (pre-existing) provides the "fewer USB transfers" coalescing.
 > - Codex design review adoptions (boot-end flush site, guard-aware flush_all, lost-count) in the ship commit.
 > - Scope boundary: §9 owns deferred mode + boot-end forced flush; the bounded loop + progress + slow-media detection are §8; the §8 truncate-rollback + per-subsystem durability follow-ups remain open.
+> - Hardening (review): deferred state is ONE atomic word (`s_klog_defer_state`, ACTIVE+DISABLED bits) with a CAS auto-enable and a DISABLED-dominant `klog_defer_active()` predicate -- once the boot-end drain latches DISABLED no flush can re-defer; the drain stays before `task_create` (moving it after fails smoke).
+> **Verified:** 2026-06-15 | commit `0448e6b8` | 6/6 items | build OK | smoke PASS (KVM 2.86s)
+> **Quality reviewed:** 2026-06-15 | Codex 12x (design, adversarial x2, re-adversarial x7, consistency, perf) | 7H+6M fixed, 1M rejected | scope: kernel-code-quality
 
 ---
 

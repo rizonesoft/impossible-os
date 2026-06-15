@@ -122,9 +122,12 @@ static int       flushing       = 0;  /* reentrancy guard */
 #define KLOG_FLUSH_PROGRESS_MIN  64u    /* only log progress for non-trivial flushes */
 static int       s_klog_slow_media = 0; /* set when a flush exceeds KLOG_SLOW_MEDIA_MS;
                                          * the deferred-flush mode consumes it */
-static int       s_klog_deferred = 0;   /* deferred-flush mode: klog_disk_flush() is a
-                                         * no-op; entries batch in RAM until the forced
-                                         * klog_disk_flush_all() at boot end */
+/* Deferred-flush state in ONE atomic word so the disabled-vs-active transition has a
+ * single modification order: once the boot-end forced drain latches DISABLED, the
+ * auto-enable CAS can never set ACTIVE again (a concurrent/late slow flush cannot
+ * re-arm deferral and strand post-drain logs in RAM). DISABLED is dominant -- see
+ * klog_defer_active(). Bit constants are in klog.h (shared with the unit test). */
+static uint32_t  s_klog_defer_state = 0;
 
 /* Numbered serial log filename: "Serial_YYMMDDNN.log" */
 static char      log_filename[24];  /* "Serial_YYMMDDNN.log" + NUL */
@@ -1156,9 +1159,19 @@ done:
             __atomic_store_n(&s_klog_slow_media, 1, __ATOMIC_RELAXED);
             /* Auto-enable deferred mode after the first slow flush: subsequent
              * per-subsystem flushes become no-ops and the accumulated entries are
-             * written once by the forced klog_disk_flush_all() at boot end. One-way
-             * until flush_all clears it. */
-            __atomic_store_n(&s_klog_deferred, 1, __ATOMIC_RELAXED);
+             * written once by the forced klog_disk_flush_all() at boot end. CAS so
+             * the set-ACTIVE is atomic with the DISABLED check on the SAME word: once
+             * the boot-end drain latches DISABLED, no auto-enable can re-arm ACTIVE. */
+            {
+                uint32_t old = __atomic_load_n(&s_klog_defer_state, __ATOMIC_RELAXED);
+                while (!(old & KLOG_DEFER_DISABLED)) {
+                    if (__atomic_compare_exchange_n(&s_klog_defer_state, &old,
+                            old | KLOG_DEFER_ACTIVE, 0,
+                            __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+                        break;
+                    /* old reloaded by the CAS on failure; retry unless now DISABLED. */
+                }
+            }
         }
     }
 }
@@ -1167,7 +1180,19 @@ done:
  * (entries accumulate in the ring) until the forced klog_disk_flush_all(). */
 void klog_set_deferred(int enabled)
 {
-    __atomic_store_n(&s_klog_deferred, enabled ? 1 : 0, __ATOMIC_RELAXED);
+    /* Explicit control (pre-drain / tests): toggle the ACTIVE bit, preserve DISABLED. */
+    if (enabled)
+        __atomic_fetch_or(&s_klog_defer_state, KLOG_DEFER_ACTIVE, __ATOMIC_RELAXED);
+    else
+        __atomic_fetch_and(&s_klog_defer_state, ~KLOG_DEFER_ACTIVE, __ATOMIC_RELAXED);
+}
+
+/* Effective deferral: ACTIVE set AND DISABLED clear. DISABLED is DOMINANT, so once
+ * the boot-end drain latches it, even an explicit klog_set_deferred(1) (which can
+ * leave ACTIVE|DISABLED) does not make flushes no-op again. Pure; exposed for tests. */
+int klog_defer_active(uint32_t state)
+{
+    return (state & KLOG_DEFER_ACTIVE) && !(state & KLOG_DEFER_DISABLED);
 }
 
 void klog_disk_flush(void)
@@ -1178,8 +1203,8 @@ void klog_disk_flush(void)
      * persist on the next call. */
     if (__atomic_exchange_n(&flushing, 1, __ATOMIC_ACQUIRE))
         return;
-    /* Deferred mode: no-op (release the guard we just took). */
-    if (__atomic_load_n(&s_klog_deferred, __ATOMIC_RELAXED)) {
+    /* Deferred mode: no-op (release the guard we just took). DISABLED-dominant. */
+    if (klog_defer_active(__atomic_load_n(&s_klog_defer_state, __ATOMIC_RELAXED))) {
         __atomic_store_n(&flushing, 0, __ATOMIC_RELEASE);
         return;
     }
@@ -1190,25 +1215,31 @@ void klog_disk_flush(void)
 /* Forced single flush of everything accumulated in deferred mode -- the one
  * boot-end write. Guard-AWARE: it spin-waits to ACQUIRE the flushing guard (so it
  * cannot silently no-op behind a concurrent flusher), then runs the flush body.
- * If the guard cannot be acquired within the bound it returns WITHOUT touching the
- * guard, deferred state, or the body -- it must never run _locked() or release a
- * guard it does not own. Deferred mode is cleared AFTER the body (a slow forced
- * flush would otherwise re-arm it via the auto-defer path inside _locked). */
+ * If the guard cannot be acquired within the bound it returns WITHOUT running the
+ * body or touching the guard -- it must never run _locked() or release a guard it
+ * does not own. The auto-defer latch + deferred clear are done UP FRONT (before the
+ * spin), not under the guard: they are independent atomic flags, and setting them
+ * first guarantees that even on the timeout path -- or a concurrent slow flush whose
+ * auto-defer runs while we spin -- deferred mode ends OFF and can never re-arm before
+ * userland. A concurrent flush's auto-defer sits at the END of its (slow) body, long
+ * after this store is visible, so it sees the latch and is suppressed. */
 void klog_disk_flush_all(void)
 {
     uint32_t spin = 10000000u;  /* bounded; boot-end is single-threaded so normally
                                  * acquires on the first try. */
+    /* Latch DISABLED and clear ACTIVE in ONE atomic store BEFORE the spin: a single
+     * modification order means even on the timeout path -- or against a concurrent
+     * auto-enable CAS -- deferral ends OFF and can never re-arm before userland. */
+    __atomic_store_n(&s_klog_defer_state, KLOG_DEFER_DISABLED, __ATOMIC_RELAXED);
     while (__atomic_exchange_n(&flushing, 1, __ATOMIC_ACQUIRE)) {
         if (spin-- == 0) {
-            /* Never acquired -- do NOT run the body or clear the guard we do not own. */
+            /* Never acquired -- do NOT run the body or clear the guard we do not own.
+             * Deferral is already latched off above, so userland is still safe. */
             serial_write("[WARN] [KLOG] flush_all: flush guard busy -- deferred logs not drained\n");
             return;
         }
         __asm__ volatile("pause" ::: "memory");
     }
     klog_disk_flush_locked();
-    /* Clear deferred AFTER the body, still under the guard: end deferred mode even
-     * if this forced flush itself was slow (which re-set the flag inside _locked). */
-    __atomic_store_n(&s_klog_deferred, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&flushing, 0, __ATOMIC_RELEASE);
 }
