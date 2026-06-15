@@ -52,10 +52,22 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/elf.h"
 #include "kernel/ipc/pipe.h"
+#include "libc/string.h"   /* snprintf for the flush-progress splash line */
 #include "kernel/ipc/alpc.h"
 #include "main/main_internal.h"
 
 /* ---- Phase 3 ------------------------------------------------------------ */
+
+/* Splash progress callback for the boot-end forced klog flush: shows
+ * "Writing boot log... N/M entries" on the splash diagnostic line so a slow USB
+ * drain looks alive. boot_splash_diag() no-ops once the splash is finished. */
+static void boot_flush_splash_progress(uint32_t written, uint32_t total)
+{
+    char msg[64];
+    if (snprintf(msg, sizeof(msg), "Writing boot log... %u/%u entries",
+                 (unsigned)written, (unsigned)total) > 0)
+        boot_splash_diag(msg);
+}
 
 void boot_phase3(void)
 {
@@ -565,7 +577,11 @@ void boot_phase3(void)
      * thread runs or races the drain. On slow media the per-subsystem flushes
      * auto-switched to deferred (RAM batching); this single guard-aware forced flush
      * drains the whole boot tail in one batched write and latches deferral off. */
+    /* Show flush progress on the splash diagnostic line during the slow-media drain,
+     * then clear the cb so post-boot live-mode flushes never touch the finished splash. */
+    klog_disk_set_flush_progress_cb(boot_flush_splash_progress);
     klog_disk_flush_all();
+    klog_disk_set_flush_progress_cb((klog_flush_progress_fn)0);
 
     /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
     {

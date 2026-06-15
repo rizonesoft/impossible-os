@@ -139,6 +139,24 @@ static int       flushing       = 0;  /* reentrancy guard */
 #define KLOG_FLUSH_PROGRESS_MIN  64u    /* only log progress for non-trivial flushes */
 static int       s_klog_slow_media = 0; /* set when a flush exceeds KLOG_SLOW_MEDIA_MS;
                                          * the deferred-flush mode consumes it */
+
+/* Optional splash-progress callback (registered around the boot-end forced flush).
+ * The flush path snapshots it with an atomic acquire load; the setter stores with an
+ * atomic release so a flusher on another CPU never sees a torn/transient pointer. */
+static klog_flush_progress_fn s_flush_progress_cb;
+
+void klog_disk_set_flush_progress_cb(klog_flush_progress_fn cb)
+{
+    __atomic_store_n(&s_flush_progress_cb, cb, __ATOMIC_RELEASE);
+}
+
+/* Pure: is a flush of `total` entries large enough to warrant a splash progress
+ * display? Small flushes finish fast and would only flicker the diagnostic line, so
+ * progress is reported only at/above KLOG_FLUSH_PROGRESS_MIN. */
+int klog_flush_progress_due(uint32_t total)
+{
+    return total >= KLOG_FLUSH_PROGRESS_MIN;
+}
 /* Deferred-flush state in ONE atomic word so the disabled-vs-active transition has a
  * single modification order: once the boot-end forced drain latches DISABLED, the
  * auto-enable CAS can never set ACTIVE again (a concurrent/late slow flush cannot
@@ -815,6 +833,22 @@ static void klog_disk_flush_locked(void)
                      * behavior -- a 1000-entry ring is lossy under extreme
                      * load. The alternative (locking during disk I/O) would
                      * block all klog() callers. */
+                    /* Splash progress: report entries actually PERSISTED so the count
+                     * never overstates what reached disk -- the cb fires after each
+                     * successful chunk write (and the final write), not as entries are
+                     * formatted (formatting is fast memory work; the blocking vfs_write
+                     * is the slow part). A failed chunk breaks out before reporting, so
+                     * the splash stays at the last persisted value, never a false high.
+                     * An initial 0/total shows "Writing boot log... N entries" while the
+                     * first slow write is in flight. The cb is snapshotted with an
+                     * acquire load to pair with the setter's release store. */
+                    klog_flush_progress_fn pcb =
+                        __atomic_load_n(&s_flush_progress_cb, __ATOMIC_ACQUIRE);
+                    uint32_t flush_total = (uint32_t)(cur_seq - start_seq);
+                    int report_progress = pcb && klog_flush_progress_due(flush_total);
+                    if (report_progress)
+                        pcb(0, flush_total);
+
                     for (uint64_t s = start_seq; s < cur_seq; s++) {
                         uint32_t idx = (uint32_t)(s % KLOG_RING_SIZE);
 
@@ -834,6 +868,10 @@ static void klog_disk_flush_locked(void)
                             }
                             write_offset += batch_pos;
                             batch_pos = 0;
+                            /* Entries start_seq..s-1 are now on disk (entry s is not yet
+                             * copied into the batch). Report the persisted count. */
+                            if (report_progress)
+                                pcb((uint32_t)(s - start_seq), flush_total);
                         }
 
                         {
@@ -849,6 +887,10 @@ static void klog_disk_flush_locked(void)
                                 != (int)batch_pos)
                             write_failed = 1;
                     }
+                    /* Final 100% tick once the whole range persisted. */
+                    if (report_progress && !write_failed)
+                        pcb(flush_total, flush_total);
+
                     /* Cursor-advance-on-success: only acknowledge the range when
                      * every write returned the requested byte count. */
                     flush_ok = !write_failed;

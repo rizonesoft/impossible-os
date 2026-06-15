@@ -560,12 +560,26 @@ static void test_klog_dispatch_slot(void)
     TEST_ASSERT_EQ(klog_dispatch_slot((const char *)0), -1, "NULL -> -1");
 }
 
+/* klog_flush_progress_due gates the splash progress display on flush size: only
+ * flushes of >= KLOG_FLUSH_PROGRESS_MIN (64) entries report progress, so a small
+ * fast flush does not flicker the diagnostic line. Pure; boundary-checked. */
+static void test_klog_flush_progress_due(void)
+{
+    TEST_ASSERT_EQ(klog_flush_progress_due(0), 0, "0 entries -> no progress display");
+    TEST_ASSERT_EQ(klog_flush_progress_due(1), 0, "1 entry -> no progress display");
+    TEST_ASSERT_EQ(klog_flush_progress_due(63), 0, "63 (one below MIN) -> no");
+    TEST_ASSERT_EQ(klog_flush_progress_due(64), 1, "64 (== MIN) -> show progress");
+    TEST_ASSERT_EQ(klog_flush_progress_due(400), 1, "400 (slow USB tail) -> show progress");
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
 {
     test_suite_register_cat("Klog: single-pass subsystem slot dispatch",
                             test_klog_dispatch_slot, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: flush progress-due cadence",
+                            test_klog_flush_progress_due, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: bounded flush window",
                             test_klog_flush_window, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring-overflow lost count",

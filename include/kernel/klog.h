@@ -125,6 +125,12 @@ void klog_resolve_dir(void);           /* Resolve log dir: X:\ or C:\ fallback *
 void klog_disk_init(void);             /* Allocate buffer, scan for log number */
 void klog_disk_flush(void);            /* Write ring to C: + buffer to X: (no-op in deferred mode) */
 void klog_disk_flush_all(void);        /* Forced single flush -- clears deferred mode (boot end) */
+/* Optional progress callback: invoked periodically during a flush with
+ * (entries_written, entries_total) so the boot splash can show "Writing boot
+ * log... N/M" on a slow USB drain instead of looking hung. NULL disables. */
+typedef void (*klog_flush_progress_fn)(uint32_t written, uint32_t total);
+void klog_disk_set_flush_progress_cb(klog_flush_progress_fn cb);
+int  klog_flush_progress_due(uint32_t total);  /* pure: flush big enough to show progress? tested */
 void klog_set_deferred(int enabled);   /* Deferred-flush mode: batch in RAM until flush_all */
 #define KLOG_DEFER_ACTIVE    0x1u      /* deferred-flush state: klog_disk_flush() no-op */
 #define KLOG_DEFER_DISABLED  0x2u      /* boot-end latch: dominant -- auto-enable suppressed */

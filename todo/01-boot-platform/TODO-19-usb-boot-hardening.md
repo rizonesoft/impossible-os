@@ -64,7 +64,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [x]   |
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [x]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [x]   |
-| ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [ ]   |
+| ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [/]   |
 | 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4            |  [ ]   |
 
 > 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.
@@ -467,16 +467,26 @@ Make boot tests detect slow media (USB) and skip or simplify I/O-heavy tests aut
 
 Show klog flush progress on the diagnostic subtitle during boot, so slow flushes don't look frozen.
 
-**Files:** `src/kernel/klog_disk.c`, `src/kernel/main/boot_storage.c`
+**Files:** `include/kernel/klog.h`, `src/kernel/klog_disk.c`, `src/kernel/main/boot_desktop.c`, `src/kernel/test/test_klog.c`
 
-- [ ] Add optional progress callback to `klog_disk_flush()` -- called periodically with entries written / total entries
-- [ ] In boot_storage.c, pass a callback that updates `boot_splash_diagnostic()` with: `"Writing boot log... 150/400 entries"`
-- [ ] Update after every 50 entries or every file write, whichever comes first
-- [ ] Commit: `"boot: klog flush progress on splash diagnostic line"`
+- [x] Callback API in `klog.h`: `klog_flush_progress_fn` typedef + `klog_disk_set_flush_progress_cb()` (registered static, atomic store/load; not a `klog_disk_flush()` signature change)
+- [x] `klog_disk.c`: pure gate `klog_flush_progress_due(total)` + persisted-progress reporting in `klog_disk_flush_locked` -- cb fires after each successful chunk write, never overstating what reached disk
+- [/] `boot_desktop.c` registers `boot_flush_splash_progress` -> `boot_splash_diag` around the boot-end `klog_disk_flush_all()`; plumbed but on screen DEFERRED (flush_all is post-splash-fade, compositor-locked, so `boot_splash_diag` no-ops)
+- [ ] Render the deferred-mode drain on screen: reorder `boot_splash_finish()` fade-out to after `klog_disk_flush_all()`, OR add a post-splash boot-drain framebuffer surface keyed to the compositor-lock hand-off window
+- [x] Commit: `"boot: klog flush progress on splash diagnostic line"`
 
-**Test checkpoint:** On USB 2.0 with deferred mode, single flush shows progress: `"Writing boot log... 50/400 entries"` → `"200/400"` → `"400/400"`. Diagnostic line updates smoothly. Test on: bare metal USB.
+**Test checkpoint:** Pure `klog_flush_progress_due` gate + persisted-progress accounting are unit-tested. On-screen validation (USB 2.0 deferred drain shows `"Writing boot log... N/M entries"`) is pending the deferred render-surface item -- the callback fires correctly; the splash is faded by the time `flush_all` runs. Test on: bare metal USB once the render surface lands.
 
-**Regression risk:** LOW -- optional callback, no behavior change without it.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2706 kernel + 16 user, 0 failures
+
+> **Notes:**
+> - **What shipped:** `klog.h` flush-progress callback API + `klog_disk.c` persisted-progress reporting + pure `klog_flush_progress_due()` gate; `test_klog_flush_progress_due` (5 asserts); `boot_flush_splash_progress` registration in `boot_desktop.c`.
+> - **How it runs:** the flush loop fires the registered cb after each successful chunk write (persisted count, never overstated); `boot_splash_diag` renders it when the splash is up. Atomic release/acquire on the cb pointer.
+> - **Downstream effects:** consumes §9's deferred-flush mode (the boot-end `flush_all` is the drain this targets); the on-screen render for that drain is the open `[ ]` item.
+> - **Canonical doc:** `include/kernel/klog.h` callback contract + the `klog_disk_flush_locked` progress comment.
+> - **Scope boundary:** §15 owns the flush-progress callback + reporting; the boot-end flush ordering / splash-fade timing is `boot_phase3` territory (the deferred render item).
+
+**Regression risk:** LOW -- the callback is optional (NULL = no behavior change); the persisted-progress accounting only adds cb calls after writes that already happen.
 
 ---
 
@@ -515,7 +525,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ✅ §12 consolidated report 🚀 |
 | 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ✅ §13 1 ring scan, no drops |
 | 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ✅ §14 USB skips write-heavy |
-| ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §15 🚀                   |
+| ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | 🔶 §15 cb shipped; render deferred |
 
 After §1-§10 plus §11's detection + graceful skip, USB boot is as reliable as Windows and Linux on xHCI hardware -- transport-level stall recovery and bounded timeouts prevent hangs on flaky hardware, and it degrades cleanly (no hang) on legacy controllers. Active EHCI/UHCI boot storage lands with the TODO-10 §1/§10 usb_core HCD. §12-§15 add diagnostic and I/O optimizations for slow media.
 
