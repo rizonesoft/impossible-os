@@ -473,6 +473,7 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 - [x] `klog_disk.c`: pure gate `klog_flush_progress_due(total)` + persisted-progress reporting in `klog_disk_flush_locked` -- cb fires after each successful chunk write, never overstating what reached disk
 - [/] `boot_desktop.c` registers `boot_flush_splash_progress` -> `boot_splash_diag` around the boot-end `klog_disk_flush_all()`; plumbed but on screen DEFERRED (flush_all is post-splash-fade, compositor-locked, so `boot_splash_diag` no-ops)
 - [ ] Render the deferred-mode drain on screen: reorder `boot_splash_finish()` fade-out to after `klog_disk_flush_all()`, OR add a post-splash boot-drain framebuffer surface keyed to the compositor-lock hand-off window
+- [ ] Fire the whole-drain 100% tick at the true `klog_disk_flush_locked` end (after subsystem-routing + events.jsonl + serial writes), not after `kernel.log` -- shipped accounting reports only kernel.log per-chunk liveness (no premature 100%)
 - [x] Commit: `"boot: klog flush progress on splash diagnostic line"`
 
 **Test checkpoint:** Pure `klog_flush_progress_due` gate + persisted-progress accounting are unit-tested. On-screen validation (USB 2.0 deferred drain shows `"Writing boot log... N/M entries"`) is pending the deferred render-surface item -- the callback fires correctly; the splash is faded by the time `flush_all` runs. Test on: bare metal USB once the render surface lands.
@@ -487,6 +488,10 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 > - **Scope boundary:** §15 owns the flush-progress callback + reporting; the boot-end flush ordering / splash-fade timing is `boot_phase3` territory (the deferred render item).
 
 **Regression risk:** LOW -- the callback is optional (NULL = no behavior change); the persisted-progress accounting only adds cb calls after writes that already happen.
+
+> **Verified:** 2026-06-15 | commit `d14e2cd4` | 3/6 items | build OK | smoke PASS (KVM 1.970s)
+> **Deferred:** [M] on-screen render of the boot-end drain + whole-drain 100% completion (flush_all runs after `boot_splash_finish()` in the compositor-locked hand-off) -> XREF: 01-boot-platform/TODO-19 §15 (item: "Render the deferred-mode drain on screen" + "Fire the whole-drain 100% tick at the true klog_disk_flush_locked end")
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: kernel-code-quality
 
 ---
 

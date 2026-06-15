@@ -887,9 +887,13 @@ static void klog_disk_flush_locked(void)
                                 != (int)batch_pos)
                             write_failed = 1;
                     }
-                    /* Final 100% tick once the whole range persisted. */
-                    if (report_progress && !write_failed)
-                        pcb(flush_total, flush_total);
+                    /* NB: no terminal 100% tick here. kernel.log is the durable copy
+                     * but klog_disk_flush_locked continues into per-subsystem routing +
+                     * events.jsonl + serial persistence below, so firing N/N now would
+                     * show "done" while the drain is still writing on slow media. The
+                     * per-chunk ticks above give kernel.log liveness; a whole-drain
+                     * completion tick lands with the splash flush-progress render
+                     * follow-up, where the true flush-end is the right place. */
 
                     /* Cursor-advance-on-success: only acknowledge the range when
                      * every write returned the requested byte count. */
