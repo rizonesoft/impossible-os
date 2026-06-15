@@ -502,15 +502,24 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 - [ ] Serialize command ring + correlate events: lock `xhci_cmd_submit`/`xhci_wait_command`; match each Command Completion AND Transfer Event to its submitted TRB pointer, not the first by type/CC (`xhci_wait_transfer`/abort drain)
 - [ ] Defer hot-plug enumeration out of the shared event-ring drain so it cannot steal a synchronous command/transfer completion while a command is in flight
 - [ ] Per-MSC-device BOT serialization: a sleepable mutex around `msc_bot_command` (CBW/data/CSW + recovery, `usb_msc.c`) so two CPUs can't interleave one device; Set TR Dequeue must not run while another caller has a queued TRB
-- [ ] Make `cbw_tag` atomic (`__atomic_fetch_add`) so concurrent commands cannot reuse or reorder CSW tags
+- [x] Made `cbw_tag` atomic -- `__atomic_fetch_add(&cbw_tag, 1, __ATOMIC_RELAXED)` in `usb_msc.c` `msc_bot_command`, so two CPUs cannot reuse/reorder a CSW tag (holds even before the deferred BOT serialization)
 - [ ] Timeout-tainted endpoint recovery: when `xhci_abort_endpoint` fails the stale TRB stays owned -- force a re-abort or slot-level reset (Reset Device / Disable+Enable Slot) before any retry enqueues behind it on that ring
 - [ ] Commit: `"drivers: serialize xHCI command ring + per-device BOT transport (SMP)"`
 
 **Test checkpoint:** SMP stress (concurrent USB MSC reads from 2 CPUs) shows no command-ring corruption, no CSW tag reuse, and a stall recovery during concurrent I/O never advances the endpoint past another caller's TRB. Verify on bare metal i5-4210U (USB 2.0) and a multi-core target.
 
+> **Test runner:** N/A (one-line atomic on a USB driver hot path; no pure kernel-test surface) | validation: SMP-stress on bare metal per the test checkpoint
+
+> **Notes:**
+> - **What shipped:** atomic `cbw_tag` -- `__atomic_fetch_add(&cbw_tag, 1, __ATOMIC_RELAXED)` in `usb_msc.c` `msc_bot_command` (item 4 of this section); items 1/2/3/5 are the deferred SMP-serialization refactor.
+> - **How it runs:** every BOT command now allocates its CSW tag with one atomic RMW, so two CPUs issuing commands cannot collide on the tag even before per-device BOT serialization lands.
+> - **Downstream effects:** down-payment on the forward-looking §16 SMP hardening; the command-ring/event-correlation + BOT-mutex + endpoint-recovery work stays deferred (Deferred stamp below).
+> - **Canonical doc:** `src/kernel/drivers/usb_msc.c` `msc_bot_command` tag comment.
+> - **Scope boundary:** §16 owns the xHCI/BOT SMP serialization; the atomic tag is the only piece shipped now -- the deadlock-prone command-ring + BOT-mutex refactor is deferred (forward-looking, not reachable until SMP USB block I/O exists).
+
 **Regression risk:** MEDIUM -- adds locking to the command + transfer hot path; a lock-order or hold-time mistake can deadlock against the recovery path. Hold no lock across the 500 ms transfer waits (snapshot under lock, release, then I/O).
 
-> **Deferred:** [M] xHCI/BOT SMP serialization is forward-looking and not reachable today (`xhci.c` enables MSI only after boot enumeration, so boot media I/O is never exposed; the window is post-boot hot-plug concurrent with SMP USB block I/O, which does not exist yet). It is a large, deadlock-prone 5-file refactor across 4 `xhci_event_poll` call sites (CLAUDE.md "stop and ask before large refactors"); recommended scope is coarse per-controller `io_mutex` serializing command/transfer/event-drain + per-device BOT mutex + atomic `cbw_tag` + endpoint-recovery hardening, with fine-grained per-TRB correlation + async hot-plug-out-of-drain as the concurrency follow-on -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events" + "Per-MSC-device BOT serialization")
+> **Deferred:** [M] the xHCI/BOT command-ring serialization (items 1/2/3/5) is forward-looking and not reachable today (`xhci.c` enables MSI only after boot enumeration, so boot media I/O is never exposed; the window is post-boot hot-plug concurrent with SMP USB block I/O, which does not exist yet). It is a large, deadlock-prone 5-file refactor across 4 `xhci_event_poll` call sites (CLAUDE.md "stop and ask before large refactors"); recommended scope is coarse per-controller `io_mutex` serializing command/transfer/event-drain + per-device BOT mutex + endpoint-recovery hardening, with fine-grained per-TRB correlation + async hot-plug-out-of-drain as the concurrency follow-on (atomic `cbw_tag` already shipped) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events" + "Per-MSC-device BOT serialization")
 
 ---
 

@@ -40,7 +40,7 @@
  * alias both into msc_info[1] and corrupt one device's geometry/LUN/retry state.
  * The global index is unique across all controllers. */
 static struct usb_msc_info msc_info[XHCI_MAX_DEVICES];
-static uint32_t cbw_tag = 1;
+static uint32_t cbw_tag = 1;   /* BOT CBW tag; atomically incremented per command */
 
 /* Best-effort SCSI retry diagnostics consumed by the USB boot diagnostic report.
  * Written from msc_scsi_command / msc_request_sense, which can run on multiple
@@ -204,7 +204,10 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
 {
     struct usb_cbw cbw;
     struct usb_csw csw;
-    uint32_t tag = cbw_tag++;
+    /* Atomic so two CPUs issuing a BOT command cannot read-modify-write the same
+     * cbw_tag and reuse/reorder a CSW tag. (Full per-device BOT serialization is the
+     * deferred SMP work; the unique-tag guarantee holds regardless.) */
+    uint32_t tag = __atomic_fetch_add(&cbw_tag, 1, __ATOMIC_RELAXED);
     int data_short = 0;       /* set if the data phase halted mid-transfer */
     uint32_t data_xfer = 0;   /* host-observed bytes moved in the data phase */
 
