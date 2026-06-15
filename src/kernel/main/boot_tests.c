@@ -223,8 +223,11 @@ void boot_tests_run(void)
     if (!reduced_io)
         ixfs_test_performance();
 
-    /* Directory tree dump */
-    if (klog_disk_live_active()) {
+    /* Directory tree dump -- dump_dir_tree() logs per entry, and in live-log mode
+     * each klog flushes to disk, so a populated volume is O(entries) small writes.
+     * Skip on USB media (reduced_io) so the dump's write cost cannot reintroduce the
+     * boot stall the CRUD/perf skips just removed. */
+    if (!reduced_io && klog_disk_live_active()) {
         klog(LOG_DEBUG, "TEST", "------------------------------------------------------------------------");
         klog(LOG_DEBUG, "TEST", "--- C:\\ Directory Tree ---");
         if (vfs_is_mounted('C')) {

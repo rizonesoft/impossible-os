@@ -451,12 +451,15 @@ Make boot tests detect slow media (USB) and skip or simplify I/O-heavy tests aut
 
 > **Notes:**
 > - **What shipped:** pure predicate `boot_media_is_usb_class()` in `boot_media.{h,c}` + `reduced_io` gating in `boot_tests.c` `boot_tests_run()` debug-integration block; `test_boot_media_is_usb_class` (4 asserts) in `test_boot_device.c`.
-> - **How it runs:** on USB media the write-heavy `debug=1` tests (IXFS CRUD mutation block + `ixfs_test_performance`) are skipped; the read-path smoke check + dir dump still run. Proactive `boot_media_speed()`, reactive `klog_slow_media_detected()`.
+> - **How it runs:** on USB media the write-heavy `debug=1` tests (IXFS CRUD block + `ixfs_test_performance` + live-log dir dump) are skipped; the read-path smoke check still runs. Proactive `boot_media_speed()`, reactive `klog_slow_media_detected()`.
 > - **Downstream effects:** complements the existing kernel-test-sweep skip (already `BOOT_MEDIA_SLOW`-gated) so both halves of a slow-USB boot avoid freezing; consumes §10's `boot_media` probe.
 > - **Canonical doc:** `include/kernel/boot_media.h` contract + the `boot_tests.c` reduced-IO comment.
 > - **Scope boundary:** §14 reduces the `debug=1` IXFS integration tests; the kernel `TEST_CAT_*` sweep skip is §9/§10-owned (`SLOW`-only); the speed probe is §10; IXFS read-path `i_atime`-write policy is IXFS-core territory.
 
 **Regression risk:** LOW -- tests are skipped not broken; full suite still runs on fast media; the reduced path leaves no IXFS test artifact (the whole mutation block is gated). Rollback: remove the `reduced_io` gate, run all tests unconditionally.
+
+> **Verified:** 2026-06-15 | commit `121df824` | 6/6 items | build OK | smoke PASS (KVM 2.430s)
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: kernel-code-quality
 
 ---
 
