@@ -168,7 +168,7 @@ Both PS/2 and USB input should work simultaneously without conflicts.
 
 - [x] Keyboard already source-merged at ONE ring (§3): PS/2 IRQ + USB `keyboard_inject_hid_key` both push to `kb_buffer`/terminal, so `keyboard_trygetchar` is source-blind -- no separate PS/2/USB buffers to order
 - [x] Mouse events merged: `compositor.c` feeds the active absolute source into `mouse_merge_absolute` (VirtIO) / `mouse_merge_absolute_position` (VBox) then reads `mouse_get_state` ONCE -- USB/PS2 relative deltas survive alongside an absolute source
-- [x] Per-source button state (`s_ps2_buttons|s_usb_buttons|s_abs_buttons`, OR-published under `mouse_lock`): a movement report from one device cannot release a button held on another; VBox position-only so its PS/2-echoed buttons never latch
+- [x] Per-source-class button state OR-published under `mouse_lock` (`s_ps2`/`s_usb`/`s_abs`): a report from one class cannot release a button held on another; PS/2 overflow still publishes buttons; VBox position-only (per-USB-device split is §6)
 - [x] PS/2 absent (no i8042): `mouse_init`/keyboard init gate on `acpi_hw_reduced` + port-0x64 probe -- no I/O to missing hardware; only USB input active
 - [x] USB HID absent: HID poll gated on `hid_intr_active`; PS/2 path unchanged
 - [x] VirtIO tablet continues to work: it is the button-bearing absolute source in the merge; cursor + clicks preserved
@@ -180,9 +180,11 @@ Both PS/2 and USB input should work simultaneously without conflicts.
 > - Shipped: cursor source-merge -- `mouse.c` `mouse_merge_absolute` (VirtIO, edge-trigger + OR buttons) + `mouse_merge_absolute_position` (VBox, pos-only) + per-source button slots; `compositor.c` reads one merged cursor.
 > - Integrates: keyboard was already merged at a single `kb_buffer` (§3); the mouse merge closes the §4 accepted compositor-cascade gap so USB relative motion + clicks survive alongside an absolute VirtIO/VBox source.
 > - Hardening: per-source button OR-merge stops cross-device button-release; VBox treated position-only (its buttons echo PS/2) so a held button cannot latch into the absolute slot.
-> - Review: Codex design + test-coverage + adversarial + consistency + perf; design 1H adopted (per-source buttons), test-coverage 1H+2M fixed (VBox feedback loop, button-only + PS/2 OR test gaps).
+> - Review: Codex 7x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial); H+M fixed across impl+review (per-source buttons, VBox button-latch x2, PS/2 overflow-release, test gaps), 1M accepted (per-USB-device slots -> §6).
 > - Scope boundary: §5 merges PS/2/USB/VirtIO/VBox into one cursor + buffer; hot-plug of new devices is §6; input diagnostics is §7.
-> **Verified:** 2026-06-15 | impl commit | 6/6 items | build OK | storage 55 kernel + 16 user-mode PASS; smoke PASS 2.52s
+> **Verified:** 2026-06-15 | review commit | 6/6 items | build OK | storage 55 kernel + 16 user-mode PASS; smoke PASS 2.52s
+> **Accepted:** [M] single USB-class button slot lets two simultaneous USB mice cross-release a held button (reason: needs per-device infra) -> XREF: 01-boot-platform/TODO-18 §6 (item: "Per-USB-device button slots in `mouse.c` ... so two USB mice don't cross-release a held button")
+> **Quality reviewed:** 2026-06-15 | Codex 7x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial) | 4H+2M fixed, 1M accepted | scope: kernel-code-quality + desktop-code-quality
 
 ---
 
@@ -193,6 +195,7 @@ Detect USB keyboard/mouse plugged in after boot.
 - [ ] xHCI Port Status Change Events (already in Event Ring) trigger port scan
 - [ ] New device on port: enumerate → if HID, configure interrupt endpoint → start polling
 - [ ] Device removed: stop polling, clean up endpoint ring
+- [ ] Per-USB-device button slots in `mouse.c` (aggregate USB buttons per device via a source id threaded through `mouse_update_relative`) so two USB mice don't cross-release a held button -- today `s_usb` is one shared USB-class slot (-> XREF: §5)
 - [ ] Log: `"[USB] Hot-plug: %s on port %u"` / `"[USB] Removed: port %u"`
 - [ ] Commit: `"drivers: USB HID hot-plug detection -- keyboard/mouse plug-and-play"`
 

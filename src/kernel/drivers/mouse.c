@@ -253,14 +253,16 @@ static void mouse_irq_callback(uint8_t vector, void *ctx)
         {
             int32_t dx = (int32_t)mouse_packet[1];
             int32_t dy = (int32_t)mouse_packet[2];
+            /* Overflow (byte-0 bits 6/7) invalidates ONLY the movement delta;
+             * byte 0 still carries the current button state, so a release that
+             * lands on an overflow packet must still update the PS/2 source
+             * slot -- otherwise the OR-merge would latch a stale press and mask
+             * releases from USB/VirtIO/VBox too. */
+            int overflow = (mouse_packet[0] & 0xC0) != 0;
 
             /* Sign-extend using bits 4 and 5 of byte 0 */
             if (mouse_packet[0] & 0x10) dx |= (int32_t)0xFFFFFF00;
             if (mouse_packet[0] & 0x20) dy |= (int32_t)0xFFFFFF00;
-
-            /* Discard if overflow */
-            if (mouse_packet[0] & 0xC0)
-                break;
 
             /* Clamp deltas to reject unreasonable jumps. */
             #define MOUSE_DELTA_MAX 127
@@ -272,10 +274,12 @@ static void mouse_irq_callback(uint8_t vector, void *ctx)
             {
                 uint64_t flags;
                 spin_lock_irqsave(&mouse_lock, &flags);
-                /* PS/2 Y-axis is inverted */
-                mouse_x += dx;
-                mouse_y -= dy;
-                mouse_clamp_locked();
+                if (!overflow) {
+                    /* PS/2 Y-axis is inverted */
+                    mouse_x += dx;
+                    mouse_y -= dy;
+                    mouse_clamp_locked();
+                }
                 s_ps2_buttons = mouse_packet[0] & 0x07;
                 mouse_publish_buttons_locked();
                 spin_unlock_irqrestore(&mouse_lock, flags);
