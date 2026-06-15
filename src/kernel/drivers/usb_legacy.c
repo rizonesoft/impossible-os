@@ -8,10 +8,19 @@
 
 #include "kernel/drivers/usb_legacy.h"
 #include "kernel/drivers/pci.h"
+#include "kernel/drivers/xhci.h"
 #include "kernel/klog.h"
 
 #define USB_PCI_CLASS     0x0Cu  /* Serial Bus Controller */
 #define USB_PCI_SUBCLASS  0x03u  /* USB Controller */
+
+/* The USB controller PCI identity is a single contract shared with the xHCI
+ * driver. Pin the legacy classifier's constants to xhci.h so the two symbol
+ * families cannot silently drift (these values are fixed by the PCI spec /
+ * USB-IF, so the asserts are permanent, not version-sensitive). */
+_Static_assert(USB_PCI_CLASS == XHCI_PCI_CLASS, "USB PCI class must match xhci.h");
+_Static_assert(USB_PCI_SUBCLASS == XHCI_PCI_SUBCLASS, "USB PCI subclass must match xhci.h");
+_Static_assert(USB_PROGIF_XHCI == XHCI_PCI_PROG_IF, "xHCI prog-if must match xhci.h");
 
 /* Per-class detected-controller counts, indexed by usb_legacy_class_t. Written
  * once during usb_legacy_scan() (boot Phase 2, single-threaded) and read after.
@@ -57,17 +66,21 @@ void usb_legacy_scan(void)
         return;
     s_scanned = 1;
 
+    /* Full bus walk (no bus-level "device 0 absent -> bus empty" fast skip): this
+     * scan is the no-xHCI safety net, so it must be at least as thorough as
+     * xhci_init's full walk -- a legacy controller on a bus whose device 0 is
+     * absent must still be found, or usb_legacy_announce would silently report no
+     * USB. Cost stays bounded by the per-device func-0-absent break below (PCI
+     * requires function 0 to exist for a device to be present). */
     for (bus = 0; bus < PCI_MAX_BUS; bus++) {
-        /* Bus-empty fast skip (mirrors pci_scan): if device 0 is absent the whole
-         * bus is empty -- avoids ~65K config reads on bare metal. */
-        if (pci_read16((uint8_t)bus, 0, 0, PCI_VENDOR_ID) == 0xFFFF)
-            continue;
-
         for (dev = 0; dev < PCI_MAX_DEV; dev++) {
             for (func = 0; func < PCI_MAX_FUNC; func++) {
                 uint16_t vid = pci_read16((uint8_t)bus, dev, func, PCI_VENDOR_ID);
-                if (vid == 0xFFFF)
-                    continue;
+                if (vid == 0xFFFF) {
+                    if (func == 0)
+                        break;     /* no function 0 -> no device here at all */
+                    continue;      /* this function absent; another may exist */
+                }
 
                 uint8_t cls     = pci_read8((uint8_t)bus, dev, func, PCI_CLASS);
                 uint8_t sub     = pci_read8((uint8_t)bus, dev, func, PCI_SUBCLASS);

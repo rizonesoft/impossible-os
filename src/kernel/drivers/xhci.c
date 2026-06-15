@@ -650,8 +650,11 @@ int xhci_init(void)
         for (dev = 0; dev < PCI_MAX_DEV; dev++) {
             for (func = 0; func < PCI_MAX_FUNC; func++) {
                 uint16_t vid = pci_read16((uint8_t)bus, dev, func, PCI_VENDOR_ID);
-                if (vid == 0xFFFF)
-                    continue;
+                if (vid == 0xFFFF) {
+                    if (func == 0)
+                        break;     /* no function 0 -> no device here at all */
+                    continue;      /* this function absent; another may exist */
+                }
 
                 uint8_t cls     = pci_read8((uint8_t)bus, dev, func, PCI_CLASS);
                 uint8_t sub     = pci_read8((uint8_t)bus, dev, func, PCI_SUBCLASS);
@@ -673,6 +676,17 @@ int xhci_init(void)
                     if (xhci_init_controller((uint8_t)bus, dev, func) != 0)
                         klog(LOG_ERROR, "xhci", "Controller init failed at %u:%u.%u",
                              (uint64_t)bus, (uint64_t)dev, (uint64_t)func);
+                }
+
+                /* Skip phantom functions on single-function devices (mirrors
+                 * pci_scan / usb_legacy_scan): only probe func 1-7 when the
+                 * multifunction header bit is set, so a controller that mirrors
+                 * its function-0 config onto inactive functions is not detected
+                 * and initialized more than once. */
+                if (func == 0) {
+                    uint8_t hdr = pci_read8((uint8_t)bus, dev, func, PCI_HEADER_TYPE);
+                    if (!(hdr & 0x80))
+                        break;
                 }
             }
         }
