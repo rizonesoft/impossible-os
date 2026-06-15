@@ -118,6 +118,9 @@ Modify the build system to create disk images with two root partitions.
 > - **Canonical doc:** `tools/make-system-disk.c` + the `<img>.info` offset contract.
 > - **Scope boundary:** §2 ships the GPT-writer layout; the Makefile production wiring (use `--ab`, 768M, source `.info`, format both slots) + the bootloader pre-EBS metadata read remain open §2 items.
 
+> **Verified:** 2026-06-15 | commit `de98d105` | 3/6 items | build OK | tool run: 768M valid, undersized/misaligned/failed-write rejected
+> **Quality reviewed:** 2026-06-15 | Codex 11x (design, adversarial, consistency, perf, re-adversarial) | 7M fixed, 0 open | scope: N/A (host build tool)
+
 ---
 
 ## 3. Bootloader Slot Selection

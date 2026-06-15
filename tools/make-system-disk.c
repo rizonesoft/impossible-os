@@ -137,6 +137,8 @@ int main(int argc, char *argv[])
      * is alignment-friendly overkill (the record is 60 bytes x2). */
     const uint64_t meta_sectors = (1ULL * 1024 * 1024) / SECTOR_SIZE;
     FILE *fp;
+    char info_path[512];
+    char tmp_path[520];
     int i;
 
     /* Parse arguments */
@@ -300,7 +302,7 @@ int main(int argc, char *argv[])
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
 
-    /* ---- LBA 2–33: Partition entry array ---- */
+    /* ---- LBA 2-33: Partition entry array ---- */
     entries = disk + 2 * SECTOR_SIZE;
 
     /* Entry 0: EFI System Partition */
@@ -385,44 +387,26 @@ int main(int argc, char *argv[])
         w32(backup_hdr + 16, hdr_crc);
     }
 
-    /* ---- Write partition info file for Makefile ---- */
+    /* ---- Compute the sidecar paths BEFORE the destructive image open, so
+     *      every failure after that open can also drop a stale prior .info
+     *      (never leave old offsets beside a new or partial image) ---- */
     {
-        char info_path[512];
-        FILE *info_fp;
-        snprintf(info_path, sizeof(info_path), "%s.info", output);
-        info_fp = fopen(info_path, "w");
-        if (info_fp) {
-            fprintf(info_fp, "EFI_OFFSET=%llu\n",
-                    (unsigned long long)(efi_start * SECTOR_SIZE));
-            fprintf(info_fp, "EFI_SIZE=%llu\n",
-                    (unsigned long long)efi_size);
-            fprintf(info_fp, "BB_OFFSET=%llu\n",
-                    (unsigned long long)(bb_start * SECTOR_SIZE));
-            fprintf(info_fp, "BB_SIZE=%llu\n",
-                    (unsigned long long)bb_size);
-            fprintf(info_fp, "IXFS_OFFSET=%llu\n",
-                    (unsigned long long)(ixfs_start * SECTOR_SIZE));
-            fprintf(info_fp, "IXFS_SIZE=%llu\n",
-                    (unsigned long long)((ixfs_end - ixfs_start + 1) *
-                                         SECTOR_SIZE));
-            if (ab_mode) {
-                fprintf(info_fp, "META_OFFSET=%llu\n",
-                        (unsigned long long)(meta_start * SECTOR_SIZE));
-                fprintf(info_fp, "META_SIZE=%llu\n",
-                        (unsigned long long)(meta_sectors * SECTOR_SIZE));
-                fprintf(info_fp, "IXFS_B_OFFSET=%llu\n",
-                        (unsigned long long)(ixfs_b_start * SECTOR_SIZE));
-                fprintf(info_fp, "IXFS_B_SIZE=%llu\n",
-                        (unsigned long long)((ixfs_b_end - ixfs_b_start + 1) *
-                                             SECTOR_SIZE));
-            }
-            fclose(info_fp);
+        int n = snprintf(info_path, sizeof(info_path), "%s.info", output);
+        if (n < 0 || (size_t)n >= sizeof(info_path)) {
+            fprintf(stderr, "make-system-disk: .info path too long\n");
+            free(disk);
+            return 1;
         }
     }
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", info_path);
 
-    /* ---- Write disk image ---- */
+    /* ---- Write disk image FIRST, so the .info sidecar never advertises
+     *      offsets for an image write that later failed. fopen("wb") truncates
+     *      on success; once it returns OK, any later failure must also drop the
+     *      now-stale prior .info and the partial image. ---- */
     fp = fopen(output, "wb");
     if (!fp) {
+        /* output untouched -- the old image+.info pair stays consistent */
         fprintf(stderr, "make-system-disk: cannot create '%s'\n", output);
         free(disk);
         return 1;
@@ -431,10 +415,76 @@ int main(int argc, char *argv[])
         fprintf(stderr, "make-system-disk: write error\n");
         fclose(fp);
         free(disk);
+        remove(output);
+        remove(info_path);
         return 1;
     }
-    fclose(fp);
+    if (fclose(fp) != 0) {
+        fprintf(stderr, "make-system-disk: close error on '%s'\n", output);
+        free(disk);
+        remove(output);
+        remove(info_path);
+        return 1;
+    }
     free(disk);
+
+    /* ---- Write the partition info sidecar transactionally. The Makefile and
+     *      the boot-metadata tooling source these offsets, so a missing, stale,
+     *      or partial .info must FAIL the build, not pass silently. Write to a
+     *      temp file, check every error, then atomically rename into place. ---- */
+    {
+        FILE *info_fp = fopen(tmp_path, "w");
+        if (!info_fp) {
+            fprintf(stderr, "make-system-disk: cannot create '%s'\n", tmp_path);
+            remove(info_path);  /* drop stale prior sidecar */
+            remove(output);     /* drop the new image so make retries cleanly */
+            return 1;
+        }
+        fprintf(info_fp, "EFI_OFFSET=%llu\n",
+                (unsigned long long)(efi_start * SECTOR_SIZE));
+        fprintf(info_fp, "EFI_SIZE=%llu\n", (unsigned long long)efi_size);
+        fprintf(info_fp, "BB_OFFSET=%llu\n",
+                (unsigned long long)(bb_start * SECTOR_SIZE));
+        fprintf(info_fp, "BB_SIZE=%llu\n", (unsigned long long)bb_size);
+        fprintf(info_fp, "IXFS_OFFSET=%llu\n",
+                (unsigned long long)(ixfs_start * SECTOR_SIZE));
+        fprintf(info_fp, "IXFS_SIZE=%llu\n",
+                (unsigned long long)((ixfs_end - ixfs_start + 1) * SECTOR_SIZE));
+        if (ab_mode) {
+            fprintf(info_fp, "META_OFFSET=%llu\n",
+                    (unsigned long long)(meta_start * SECTOR_SIZE));
+            fprintf(info_fp, "META_SIZE=%llu\n",
+                    (unsigned long long)(meta_sectors * SECTOR_SIZE));
+            fprintf(info_fp, "IXFS_B_OFFSET=%llu\n",
+                    (unsigned long long)(ixfs_b_start * SECTOR_SIZE));
+            fprintf(info_fp, "IXFS_B_SIZE=%llu\n",
+                    (unsigned long long)((ixfs_b_end - ixfs_b_start + 1) * SECTOR_SIZE));
+        }
+        {
+            /* Evaluate each step separately so fclose ALWAYS runs (no
+             * short-circuit fd leak). On any failure drop the temp AND any
+             * stale prior sidecar so a failed run never leaves old offset
+             * metadata beside the freshly written image. */
+            int werr = ferror(info_fp);
+            if (fflush(info_fp) != 0) werr = 1;
+            if (fclose(info_fp) != 0) werr = 1;
+            if (werr) {
+                fprintf(stderr, "make-system-disk: error writing '%s'\n", tmp_path);
+                remove(tmp_path);
+                remove(info_path);
+                remove(output);
+                return 1;
+            }
+        }
+        if (rename(tmp_path, info_path) != 0) {
+            fprintf(stderr, "make-system-disk: cannot rename '%s' -> '%s'\n",
+                    tmp_path, info_path);
+            remove(tmp_path);
+            remove(info_path);
+            remove(output);
+            return 1;
+        }
+    }
 
     printf("make-system-disk: created %s (%llu MiB GPT: EFI + BlackBox + IXFS%s)\n",
            output, (unsigned long long)(disk_size / (1024 * 1024)),
