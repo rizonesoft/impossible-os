@@ -61,7 +61,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [ ]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
-| ⭐  |  12   | USB boot diagnostic report                         | §1–§11        |  [ ]   |
+| ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [ ]   |
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [ ]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [ ]   |
 | ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [ ]   |
@@ -167,12 +167,12 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 
 ## 6. Remove sleep_ms(2000) Hack
 
-With proper SCSI retry (§1–§3) and USB transport recovery (§4–§5), the 2-second sleep after xhci_init is no longer needed.
+With proper SCSI retry (§1-§3) and USB transport recovery (§4-§5), the 2-second sleep after xhci_init is no longer needed.
 
 - [ ] Remove `sleep_ms(2000)` from `boot_storage.c` (or wherever it currently lives)
 - [ ] Verify USB boot works on: QEMU TCG, bare metal i5-11600K, bare metal i5-4210U
 - [ ] If any platform fails without the sleep: investigate root cause, don't add the sleep back
-- [ ] Verify: endpoint stalls and transfer timeouts (§4–§5) handle cases the sleep was masking
+- [ ] Verify: endpoint stalls and transfer timeouts (§4-§5) handle cases the sleep was masking
 - [ ] Commit: `"drivers: remove USB 2-second sleep hack -- SCSI retry + transport recovery handles readiness"`
 
 **Test checkpoint:** USB boot works on all tested platforms without the delay. Boot time improves by ~2 seconds.
@@ -229,7 +229,7 @@ For slow media, batch log entries in RAM and write once at boot end instead of p
 
 Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and adjust behavior.
 
-- [ ] At first disk I/O: time a 4 KiB read -- classify as fast (<1ms), medium (1–10ms), slow (>10ms)
+- [ ] At first disk I/O: time a 4 KiB read -- classify as fast (<1ms), medium (1-10ms), slow (>10ms)
 - [ ] Store in `boot_info.boot_media_speed` (0=unknown, 1=fast, 2=medium, 3=slow)
 - [ ] Kernel uses this to: enable deferred klog (slow), skip non-critical boot tests (slow), adjust timeouts
 - [ ] Log: `"[BOOT] Boot media speed: %s (%u µs/4KiB)"` with classification
@@ -334,19 +334,19 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 
 | ⭐ | Feature                      | 🪟 Win11                     | 🐧 Linux                      | 🚀 Impossible OS               |
 |----|------------------------------|---------------------------|----------------------------|-----------------------------|
-| 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ⬜ §1–§3                    |
+| 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ⬜ §1-§3                    |
 | 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ⬜ §4                       |
 | 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ⬜ §5                 |
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ⬜ §6                       |
 | 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
-| 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ⬜ §8–§9                    |
+| 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ⬜ §8-§9                    |
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ⬜ §10                      |
 | ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ⬜ §12 🚀                   |
 | 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §13                      |
 | 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §14                      |
 | ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §15 🚀                   |
 
-After §1–§11, USB boot is as reliable as Windows and Linux across all USB generations and controller types -- including transport-level stall recovery and bounded timeouts that prevent hangs on flaky hardware. §12–§15 add diagnostic and I/O optimizations for slow media.
+After §1-§11, USB boot is as reliable as Windows and Linux across all USB generations and controller types -- including transport-level stall recovery and bounded timeouts that prevent hangs on flaky hardware. §12-§15 add diagnostic and I/O optimizations for slow media.
 
 ---
 
