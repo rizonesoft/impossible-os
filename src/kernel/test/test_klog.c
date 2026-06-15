@@ -494,12 +494,28 @@ static void test_klog_flush_window(void)
                    "cursor ahead of seq -> 0 (no underflow to a huge count)");
 }
 
+/* klog_lost_count(cur_seq, cursor): entries overwritten in the ring before flush.
+ * Deferred-flush mode widens this window, so the count must be accurate. Pure. */
+static void test_klog_lost_count(void)
+{
+    TEST_ASSERT_EQ(klog_lost_count(0, 0), 0u, "nothing logged -> 0 lost");
+    TEST_ASSERT_EQ(klog_lost_count(KLOG_RING_SIZE, 0), 0u, "exactly ring size -> 0 lost");
+    TEST_ASSERT_EQ(klog_lost_count(KLOG_RING_SIZE + 500, 0), 500u, "500 over ring -> 500 lost");
+    TEST_ASSERT_EQ(klog_lost_count(KLOG_RING_SIZE + 500, 500), 0u, "cursor advanced -> within ring, 0 lost");
+    TEST_ASSERT_EQ(klog_lost_count(500, 1000), 0u, "cursor ahead of seq -> 0 (no underflow)");
+    /* 64-bit loss past UINT32_MAX must saturate, not wrap to a small/zero count. */
+    TEST_ASSERT_EQ(klog_lost_count(0x100000000ull + KLOG_RING_SIZE + 5, 0),
+                   0xFFFFFFFFu, "loss past UINT32_MAX saturates (no wrap)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
 {
     test_suite_register_cat("Klog: bounded flush window",
                             test_klog_flush_window, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: ring-overflow lost count",
+                            test_klog_lost_count, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring write", test_klog_ring_write, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level drop", test_klog_level_drop, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level pass", test_klog_level_pass, TEST_CAT_BOOT);

@@ -122,6 +122,9 @@ static int       flushing       = 0;  /* reentrancy guard */
 #define KLOG_FLUSH_PROGRESS_MIN  64u    /* only log progress for non-trivial flushes */
 static int       s_klog_slow_media = 0; /* set when a flush exceeds KLOG_SLOW_MEDIA_MS;
                                          * the deferred-flush mode consumes it */
+static int       s_klog_deferred = 0;   /* deferred-flush mode: klog_disk_flush() is a
+                                         * no-op; entries batch in RAM until the forced
+                                         * klog_disk_flush_all() at boot end */
 
 /* Numbered serial log filename: "Serial_YYMMDDNN.log" */
 static char      log_filename[24];  /* "Serial_YYMMDDNN.log" + NUL */
@@ -656,19 +659,27 @@ uint32_t klog_flush_window(uint64_t cur_seq, uint64_t cursor)
     return pend > KLOG_RING_SIZE ? KLOG_RING_SIZE : (uint32_t)pend;
 }
 
-void klog_disk_flush(void)
+/* Entries lost to ring overflow: unflushed entries beyond KLOG_RING_SIZE were
+ * overwritten in the ring and can never reach disk. Deferred mode (which stops
+ * advancing the cursor until boot end) widens this window, so the count is logged
+ * to keep the persisted log from looking complete. Pure; exposed for tests. */
+uint32_t klog_lost_count(uint64_t cur_seq, uint64_t cursor)
+{
+    uint64_t pend = cur_seq > cursor ? cur_seq - cursor : 0;
+    uint64_t lost = pend > KLOG_RING_SIZE ? pend - KLOG_RING_SIZE : 0;
+    /* Saturate rather than truncate: a 64-bit loss past UINT32_MAX must not wrap to
+     * a small (or zero) count and hide a catastrophic log-loss condition. */
+    return lost > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)lost;
+}
+
+/* Run the actual flush. The caller MUST already own the `flushing` guard (this is
+ * the shared body behind klog_disk_flush() and the forced klog_disk_flush_all()). */
+static void klog_disk_flush_locked(void)
 {
     uint32_t ring_count, ring_head;
     const klog_entry_t *ring;
     struct vfs_node *logfile;
     uint32_t i;
-
-    /* Guard: reentrancy (vfs_write → klog → klog_disk_flush) AND SMP -- an atomic
-     * test-and-set so two CPUs can never run the body (and mutate the shared
-     * cursors / FAT32 buffer) concurrently. A skipped flusher's entries stay in the
-     * ring and persist on the next call. */
-    if (__atomic_exchange_n(&flushing, 1, __ATOMIC_ACQUIRE))
-        return;
 
     /* Flush timing + progress: measure wall-clock across the whole flush and, for
      * non-trivial flushes, report start/done on serial so a slow USB 2.0 write is
@@ -683,7 +694,20 @@ void klog_disk_flush(void)
     int      flush_persisted = 1;
     uint32_t flush_pending = 0;
     if (log_mounted) {
-        flush_pending = klog_flush_window(klog_get_seq(), ixfs_flush_seq);
+        uint64_t cs = klog_get_seq();
+        flush_pending = klog_flush_window(cs, ixfs_flush_seq);
+        /* Ring-overflow loss: if more than KLOG_RING_SIZE entries went unflushed
+         * (deferred mode can accumulate a long boot tail), the oldest were
+         * overwritten in the ring and can never reach disk -- log the count so the
+         * persisted log is not silently incomplete. */
+        {
+            uint32_t lost = klog_lost_count(cs, ixfs_flush_seq);
+            if (lost) {
+                serial_write("[WARN] [KLOG] ");
+                serial_write_u32(lost);
+                serial_write(" early log entries lost (ring overflow before flush)\n");
+            }
+        }
         if (flush_pending >= KLOG_FLUSH_PROGRESS_MIN) {
             serial_write("[KLOG] Flushing ");
             serial_write_u32(flush_pending);
@@ -744,6 +768,23 @@ void klog_disk_flush(void)
                     uint32_t batch_pos = 0;
                     uint32_t write_offset = (uint32_t)logfile->size;
                     int      write_failed = 0;  /* any short/error vfs_write */
+
+                    /* Persist a gap marker AHEAD of the surviving tail when ring
+                     * overflow dropped older entries, so an offline reader of
+                     * kernel.log (the durable copy) sees the log is not complete --
+                     * the serial WARN alone is gone once the machine reboots. */
+                    {
+                        uint32_t lost = klog_lost_count(cur_seq, ixfs_flush_seq);
+                        if (lost) {
+                            char mk[80];
+                            int ml = snprintf(mk, sizeof(mk),
+                                "--- %u earlier log entries lost to ring overflow ---\n",
+                                (unsigned)lost);
+                            int mi;
+                            for (mi = 0; mi < ml && batch_pos < batch_size - 1; mi++)
+                                batch[batch_pos++] = (uint8_t)mk[mi];
+                        }
+                    }
 
                     /* Iterate from oldest unflushed to newest.
                      * Ring slot for sequence s is: s % KLOG_RING_SIZE.
@@ -1111,9 +1152,63 @@ done:
         if (flush_ms > KLOG_SLOW_MEDIA_MS) {
             serial_write("[WARN] [KLOG] Slow media detected (");
             serial_write_u32(flush_ms);
-            serial_write(" ms) -- deferred flush recommended\n");
+            serial_write(" ms) -- switching to deferred flush\n");
             __atomic_store_n(&s_klog_slow_media, 1, __ATOMIC_RELAXED);
+            /* Auto-enable deferred mode after the first slow flush: subsequent
+             * per-subsystem flushes become no-ops and the accumulated entries are
+             * written once by the forced klog_disk_flush_all() at boot end. One-way
+             * until flush_all clears it. */
+            __atomic_store_n(&s_klog_deferred, 1, __ATOMIC_RELAXED);
         }
     }
+}
+
+/* Enable/disable deferred-flush mode. When enabled, klog_disk_flush() is a no-op
+ * (entries accumulate in the ring) until the forced klog_disk_flush_all(). */
+void klog_set_deferred(int enabled)
+{
+    __atomic_store_n(&s_klog_deferred, enabled ? 1 : 0, __ATOMIC_RELAXED);
+}
+
+void klog_disk_flush(void)
+{
+    /* Guard: reentrancy (vfs_write → klog → klog_disk_flush) AND SMP -- an atomic
+     * test-and-set so two CPUs never run the body (and mutate the shared cursors /
+     * FAT32 buffer) concurrently. A skipped flusher's entries stay in the ring and
+     * persist on the next call. */
+    if (__atomic_exchange_n(&flushing, 1, __ATOMIC_ACQUIRE))
+        return;
+    /* Deferred mode: no-op (release the guard we just took). */
+    if (__atomic_load_n(&s_klog_deferred, __ATOMIC_RELAXED)) {
+        __atomic_store_n(&flushing, 0, __ATOMIC_RELEASE);
+        return;
+    }
+    klog_disk_flush_locked();
+    __atomic_store_n(&flushing, 0, __ATOMIC_RELEASE);
+}
+
+/* Forced single flush of everything accumulated in deferred mode -- the one
+ * boot-end write. Guard-AWARE: it spin-waits to ACQUIRE the flushing guard (so it
+ * cannot silently no-op behind a concurrent flusher), then runs the flush body.
+ * If the guard cannot be acquired within the bound it returns WITHOUT touching the
+ * guard, deferred state, or the body -- it must never run _locked() or release a
+ * guard it does not own. Deferred mode is cleared AFTER the body (a slow forced
+ * flush would otherwise re-arm it via the auto-defer path inside _locked). */
+void klog_disk_flush_all(void)
+{
+    uint32_t spin = 10000000u;  /* bounded; boot-end is single-threaded so normally
+                                 * acquires on the first try. */
+    while (__atomic_exchange_n(&flushing, 1, __ATOMIC_ACQUIRE)) {
+        if (spin-- == 0) {
+            /* Never acquired -- do NOT run the body or clear the guard we do not own. */
+            serial_write("[WARN] [KLOG] flush_all: flush guard busy -- deferred logs not drained\n");
+            return;
+        }
+        __asm__ volatile("pause" ::: "memory");
+    }
+    klog_disk_flush_locked();
+    /* Clear deferred AFTER the body, still under the guard: end deferred mode even
+     * if this forced flush itself was slow (which re-set the flag inside _locked). */
+    __atomic_store_n(&s_klog_deferred, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&flushing, 0, __ATOMIC_RELEASE);
 }

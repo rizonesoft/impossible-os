@@ -599,6 +599,13 @@ void boot_phase3(void)
         compositor_set_headless(1);
     }
 
+    /* Forced final log flush -- the LAST pre-userland point, after ALL Phase-3
+     * publishers (entropy, boot timing, hw inventory, TPM, audit/health/trend, heap
+     * stats, compositor config). On slow media the per-subsystem flushes auto-switched
+     * to deferred (RAM batching); this single guard-aware forced flush drains the
+     * whole boot tail in one batched write before the compositor takes over. */
+    klog_disk_flush_all();
+
     /* --- Compositor event loop (never returns) --- */
     POST16(POST16_COMPOSITOR);  /* attribute a crash/hang entering the compositor */
     compositor_run();

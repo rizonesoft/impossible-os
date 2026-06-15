@@ -58,7 +58,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [/]   |
 | 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [/]   |
 | 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [/]   |
-| 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [ ]   |
+| 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [x]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
 | ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [ ]   |
@@ -296,14 +296,21 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 
 For slow media, batch log entries in RAM and write once at boot end instead of per-subsystem.
 
-- [ ] Add `klog_set_deferred(int enabled)` -- switches to RAM-only buffering
-- [ ] During deferred mode: entries accumulate in ring buffer, `klog_disk_flush()` is a no-op
-- [ ] At boot complete: single `klog_disk_flush_all()` writes everything at once
-- [ ] Combine multiple entries into larger VFS writes (fewer USB transfers)
-- [ ] Automatically enable deferred mode if §8 detects slow media (>5s for first flush)
-- [ ] Commit: `"kernel: klog deferred flush -- batch to RAM, single write at boot end"`
+- [x] `klog_set_deferred(int enabled)` sets the atomic `s_klog_deferred` flag (`klog_disk.c`)
+- [x] During deferred mode `klog_disk_flush()` is a no-op (acquires the guard, sees the flag, releases + returns); entries accumulate in the 1000-entry ring
+- [x] `klog_disk_flush_all()` -- guard-AWARE forced flush (spin-acquires the guard; returns untouched on timeout; clears deferred AFTER `klog_disk_flush_locked()`); wired at the LAST pre-userland point in `boot_desktop.c` (before `compositor_run()`)
+- [x] Combine into larger VFS writes -- the existing 32KB batch buffer already coalesces entries into few large `vfs_write`s; deferred mode defers WHEN, the batch handles HOW
+- [x] Auto-enable: the slow-media WARN block (flush > 5s) sets `s_klog_deferred=1` (one-way until `flush_all`); ring-overflow loss is counted via `klog_lost_count()` + logged so the persisted log is never silently incomplete
+- [x] Commit: `"kernel: klog deferred flush -- batch to RAM, single write at boot end"`
 
-**Test checkpoint:** USB 2.0 boot -- all log entries appear in disk log file, written in one batch. Boot time comparable to no-disk-log scenario.
+**Test checkpoint:** USB 2.0 slow-media boot -- after the first >5s flush, subsequent per-subsystem flushes are no-ops; the single `klog_disk_flush_all()` at boot end writes everything in one batch; serial shows the ring-overflow lost-count if boot emitted >1000 entries. Unit test asserts the `klog_lost_count` overflow math.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_klog.c` "Klog: ring-overflow lost count" (`klog_lost_count` matrix); the deferred-mode flush/flush_all paths are live serial+VFS (validated on bare metal USB 2.0 i5-4210U).
+> **Notes:**
+> - Shipped: `klog_set_deferred()` + atomic `s_klog_deferred` + guard-aware `klog_disk_flush_all()` + extracted `klog_disk_flush_locked()` body + `klog_lost_count()` helper (`klog_disk.c`); boot-end forced flush wired in `boot_desktop.c`.
+> - How it runs: `klog_disk_flush()` no-ops under the flag; auto-enabled after a >5s flush; the single `flush_all` at boot end (post-deferred-init + summary) spin-acquires the guard and force-drains the RAM-batched entries.
+> - Downstream: consumes §8's `klog_slow_media_detected()` infrastructure; the 32KB batch buffer (pre-existing) provides the "fewer USB transfers" coalescing.
+> - Codex design review adoptions (boot-end flush site, guard-aware flush_all, lost-count) in the ship commit.
+> - Scope boundary: §9 owns deferred mode + boot-end forced flush; the bounded loop + progress + slow-media detection are §8; the §8 truncate-rollback + per-subsystem durability follow-ups remain open.
 
 ---
 
@@ -443,6 +450,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | Intel EHCI->xHCI port routing | ✅ USB stack routes ports | ✅ xhci-pci Intel quirk    | ✅ §7 EHCI-gate + bounded settle |
 | 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
 | 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ✅ §8 seq-cursor + progress  |
+| 💎 | Deferred flush (slow media)  | ✅ Lazy writeback         | ✅ dirty_writeback_centisecs | ✅ §9 RAM batch + boot-end flush |
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ⬜ §10                      |
 | ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ⬜ §12 🚀                   |
 | 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §13                      |
