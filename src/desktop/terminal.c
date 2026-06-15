@@ -27,6 +27,10 @@ static int      cursor_col;
 static char     input_ring[TERM_INPUT_BUF];
 static int      ring_head;   /* next write position */
 static int      ring_tail;   /* next read position */
+/* Guards head/tail/ring: written from interrupt context (PS/2 IRQ + USB HID
+ * tick-ISR poller both route here via terminal_key_input), drained from the
+ * shell thread; irqsave so an SMP read cannot race a keyboard ISR push. */
+static spinlock_t term_input_lock = SPINLOCK_INIT;
 
 /* Window handle */
 static int      term_handle = -1;
@@ -78,15 +82,17 @@ static void scroll_up(void)
 int terminal_open(void)
 {
     int r, c;
+    int new_handle;
+    uint64_t flags;
 
     if (term_handle >= 0)
         return 0;  /* already open */
 
-    term_handle = wm_create_window("Command Prompt",
-                                   50, 30,
-                                   TERM_PX_WIDTH, TERM_PX_HEIGHT,
-                                   WM_DEFAULT_FLAGS);
-    if (term_handle < 0) {
+    new_handle = wm_create_window("Command Prompt",
+                                  50, 30,
+                                  TERM_PX_WIDTH, TERM_PX_HEIGHT,
+                                  WM_DEFAULT_FLAGS);
+    if (new_handle < 0) {
         klog(LOG_ERROR, "TERM", "Failed to create window");
         return -1;
     }
@@ -98,9 +104,15 @@ int terminal_open(void)
 
     cursor_row = 0;
     cursor_col = 0;
+    /* Reset the input ring under the lock, THEN publish term_handle last: a
+     * keyboard IRQ / HID poll only routes to terminal_key_input once
+     * terminal_is_open() (term_handle >= 0), by which point the ring is ready. */
+    spin_lock_irqsave(&term_input_lock, &flags);
     ring_head = 0;
     ring_tail = 0;
+    spin_unlock_irqrestore(&term_input_lock, flags);
     term_dirty = 1;
+    term_handle = new_handle;
 
     /* Fill window background */
     wm_fill_rect(term_handle, 0, 0, TERM_PX_WIDTH, TERM_PX_HEIGHT, TERM_BG);
@@ -195,12 +207,7 @@ void terminal_puts(const char *s, int len)
     }
 }
 
-/* ---- Input ring buffer ----
- * Written from interrupt context (PS/2 IRQ and the USB HID tick-ISB poller both
- * route keystrokes here via terminal_key_input) and drained from the shell
- * thread. Guard head/tail/ring with an irqsave spinlock so an SMP shell read
- * cannot lose / duplicate / corrupt input against a keyboard ISR push. */
-static spinlock_t term_input_lock = SPINLOCK_INIT;
+/* ---- Input ring buffer (guarded by term_input_lock, declared above) ---- */
 
 void terminal_key_input(char c)
 {
@@ -299,9 +306,7 @@ int terminal_buffer_contains(const char *needle)
 void terminal_test_force_open(void)
 {
     int r, c;
-
-    /* Sentinel handle: anything >= 0 makes terminal_is_open() return 1. */
-    term_handle = 0x7FFFFFFE;
+    uint64_t flags;
 
     for (r = 0; r < TERM_ROWS; r++)
         for (c = 0; c < TERM_COLS; c++)
@@ -309,9 +314,14 @@ void terminal_test_force_open(void)
 
     cursor_row = 0;
     cursor_col = 0;
+    spin_lock_irqsave(&term_input_lock, &flags);
     ring_head = 0;
     ring_tail = 0;
+    spin_unlock_irqrestore(&term_input_lock, flags);
     term_dirty = 0;
+    /* Publish the sentinel handle last (>= 0 makes terminal_is_open() true),
+     * after the ring is reset -- same ordering as the real terminal_open. */
+    term_handle = 0x7FFFFFFE;
 }
 
 void terminal_test_force_close(void)

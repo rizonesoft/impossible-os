@@ -789,12 +789,17 @@ int xhci_enumerate_device(struct xhci_controller *hc,
      * already live from an earlier HID device, the first completion of THIS
      * device could otherwise be drained before the gate is set and dropped. */
     if (dev->is_hid && dev->int_in_report) {
-        dev->int_in_polling = 1;
-        /* Both the first queue AND a live poller are required; if either
-         * fails, roll back so the state never claims polling with no drainer. */
-        if (xhci_hid_queue_report(hc, dev) != 0 ||
-            xhci_hid_start_polling() != 0)
-            dev->int_in_polling = 0;
+        /* Confirm the poller is live BEFORE queuing the first report TRB, so a
+         * failed registration (AP caller / full subscriber table) can never
+         * leave a queued/completed transfer with no consumer. Publish
+         * int_in_polling before the doorbell (the queue) so a poller already
+         * live from an earlier HID device does not drop this one's first
+         * completion. */
+        if (xhci_hid_start_polling() == 0) {
+            dev->int_in_polling = 1;
+            if (xhci_hid_queue_report(hc, dev) != 0)
+                dev->int_in_polling = 0;
+        }
     }
 
     return 0;

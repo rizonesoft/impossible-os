@@ -130,10 +130,10 @@ Parse boot-protocol keyboard reports (8 bytes) into keystrokes.
 > - Shipped: HID boot-keyboard parsing -- `keyboard.c` `hid_normal`/`hid_shifted` tables + `keyboard_inject_hid_key` (own modifier handling); `xhci_dev.c` `xhci_hid_parse_keyboard` (new-key diff, rollover-skip) wired into the §2 poll.
 > - Integrates: routes to the shared `terminal_key_input`/`kb_buffer` path so `keyboard_trygetchar()` is source-blind (USB + PS/2); SET_PROTOCOL(0)/SET_IDLE(0) force boot protocol; report buffer zeroed per transfer.
 > - Hardening: the terminal input ring is now SMP-safe (irqsave spinlock -- fixes a pre-existing PS/2+USB ISR-vs-thread race); keyboard EP MaxPkt < 8 rejected; Caps Lock (0x39) toggles case.
-> - Review: Codex 2x (design no-ship redirect + adversarial); 1H+2M fixed + 3 design hazards adopted pre-code (stale bytes, modifier latch, rollover); validated live (typed `dir` at C:\> -> executed).
+> - Review: Codex 5x (design redirect + adversarial x2 + consistency + perf); 2H+3M fixed (terminal-init lock ordering, poller-register-before-queue) + 3 design hazards adopted pre-code; 1M rejected (capslock RMW is BSP-serialized); validated live (typed `dir` at C:\> -> executed).
 > - Scope boundary: §3 owns keyboard parsing; mouse parsing is §4, PS/2+USB coexistence is §5, non-boot report-protocol descriptor parsing is out of scope.
-> **Verified:** 2026-06-15 | this commit | 9/9 items | build OK | QEMU usb-kbd typed `dir` -> executed; smoke PASS; storage 22/22
-> **Quality reviewed:** 2026-06-15 | Codex 2x (design, adversarial) | 1H+2M fixed | scope: kernel-code-quality + desktop-code-quality
+> **Verified:** 2026-06-15 | review commit | 9/9 items | build OK | QEMU usb-kbd typed `dir` -> executed; smoke PASS 2.5s; storage 22/22
+> **Quality reviewed:** 2026-06-15 | Codex 5x (design, adversarial x2, consistency, perf) | 2H+3M fixed, 1M rejected | scope: kernel-code-quality + desktop-code-quality
 
 ---
 
