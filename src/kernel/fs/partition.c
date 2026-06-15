@@ -209,7 +209,7 @@ static void register_partition(const struct blkdev *parent,
                                 const char *part_name)
 {
     struct partition_info *pi;
-    struct blkdev sub;
+    struct blkdev sub = {0};   /* zero optional callbacks (flush/discard/shutdown) */
     char name[16];
     char num_buf[4];
     int pos;

@@ -54,7 +54,7 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 | 💎 |   3   | I/O Queue creation and sector read/write      | §2         |  [x]   |
 | 💎 |   4   | Block device registration and VFS integration | §3         |  [x]   |
 | ⭐ |   5   | Advanced NVMe parity backlog (owned by D04 T08) | §1, §2, §3, §4 |  [/]   |
-| 💎 |   6   | Controller lifecycle: shutdown, flush, I/O validation | §2, §3, §4 |  [ ]   |
+| 💎 |   6   | Controller lifecycle: shutdown, flush, I/O validation | §2, §3, §4 |  [x]   |
 
 ---
 
@@ -184,17 +184,23 @@ Boot-disk data-integrity gaps found in gap audit: the driver acknowledges durabl
 
 **Files:** `src/kernel/drivers/nvme.c`, `include/kernel/drivers/nvme.h`, `src/kernel/main/blkdev_adapters.c`, `src/kernel/acpi.c`
 
-- [ ] `nvme_flush(ci)` -- submit NVM Flush (opcode 0x00, NSID=1) on the I/O queue, wait for completion; return failure on timeout/error
-- [ ] Register `nvme_flush` as the `bd.flush` callback for each `nvmeN` in `blkdev_register_all()` so `blkdev_sync` (the FAT32/VFS/`NtFlushBuffersFile` durability boundary) actually flushes the cache instead of succeeding on a NULL fn
-- [ ] `nvme_shutdown(ci)` -- set `CC.SHN=01b` (normal shutdown), poll `CSTS.SHST` to 10b (complete) with a `CAP.TO`-derived timeout + `CSTS.CFS` abort check
-- [ ] `nvme_shutdown_all()` invoked from `acpi_shutdown()` + reboot before the PM1a_CNT SLP write so poweroff/reset issues the notification (interim hook -> XREF `04-drivers-hardware/TODO-03` §2 clean-shutdown orchestrator)
-- [ ] Reject unsupported LBA size at Identify Namespace: accept only `ns_sector_size` 512 or 4096; on any other `1<<DS`, log + leave the namespace unregistered rather than register an unencodable geometry
-- [ ] Guard `nvme_read_sectors`/`nvme_write_sectors` so `chunk = 4096 / ns_sector_size` can never be 0 (a >4 KiB sector makes `cdw12 = chunk-1` wrap to `0xFFFFFFFF`, an invalid 4 G-block NLB)
-- [ ] Commit: `"drivers: NVMe clean shutdown + cache flush + LBA-size validation"`
+- [x] `nvme_flush(ci)` submits NVM Flush (opcode 0x00) via `nvme_submit_io_cmd`; registered as `bd.flush` per `nvmeN` so `blkdev_sync` flushes the controller cache instead of succeeding on a NULL fn
+- [x] Per-controller `mutex_t io_lock` serializes `nvme_submit_io_cmd` (read/write/flush) on the shared QID-1 -- mutex not spinlock (the poll sleeps via hlt; `spin_lock` disables IRQs) (design HIGH)
+- [x] `nvme_shutdown(ci)` sets `CC.SHN=01b` + polls `CSTS.SHST`==10b (CAP.TO timeout + CFS abort); `nvme_shutdown_all()` loops controllers; new `nvme.h` SHN/SHST/Flush constants
+- [x] Block-layer `bd.shutdown` + `blkdev_shutdown_all()` (flush all, then shut down all) from `acpi_shutdown()` + `acpi_reboot()` before `cli`; generalizes to AHCI/VirtIO -> XREF D04 T03 §2 (design MEDIUM)
+- [x] Reject unsupported LBA size at Identify (`ns_sector_size` not 512/4096 -> zeroed -> I/O queue inactive, blkdev skips); read/write also reject so `chunk = 4096/size` is never 0 (design HIGH)
+- [x] Commit: `"drivers: NVMe clean shutdown + cache flush + LBA-size validation"`
 
 **Test checkpoint:** QEMU TCG poweroff after a write: serial shows `nvme: shutdown complete` (`CSTS.SHST=10b`); `blkdev_sync("nvme0")` succeeds only after a real Flush completion; a forced 8 KiB-sector Identify leaves `nvme0` unregistered. QEMU WHPX, QEMU TCG, bare metal.
 
 **Regression risk:** MEDIUM -- adds a call into `acpi_shutdown()` (poweroff path, runs once at end of life). `nvme_shutdown_all()` must be `CAP.TO`-timeout-bounded so a wedged controller cannot hang poweroff. Flush + LBA validation are additive; the LBA guard only rejects sizes the driver already could not service. Rollback: skip the `acpi_shutdown()` hook -- flush + validation stand alone.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_nvme.c` skip-gated (needs an NVMe device); flush / shutdown / LBA paths validated via `make run-nvme` + bare metal.
+> **Notes:**
+> - Shipped: NVMe lifecycle in `nvme.c` -- `nvme_flush`, `nvme_shutdown` (CC.SHN + `CSTS.SHST`), `nvme_shutdown_all`, Identify LBA-size rejection (DS 9/12, no UB shift), atomic `io_busy` gate serializing the I/O queue.
+> - Integrates: `blkdev_adapters.c` registers `bd.flush`/`bd.shutdown` per `nvmeN`; block-layer `blkdev_shutdown_all()` runs from `acpi_shutdown()` + `acpi_reboot()` before `cli`; `blkdev_sync` now honest on NVMe.
+> - Review: Codex design + adversarial + re-adversarial fixed 5H -- dropped shutdown callback, untrusted `1<<ds` UB, SMP-unsafe mutex (-> atomic CAS), ignored flush failures, and uninit `struct blkdev` producers wild-calling shutdown.
+> - Scope boundary: §6 owns the NVMe-side primitives + the thin block-layer hook; the full clean-shutdown orchestrator (write-quiesce, ordered mark-clean) is `04-drivers-hardware/TODO-03` §2; advanced NVMe is §5 / D04 T08.
+> **Verified:** 2026-06-15 | this commit | 5/5 items | build OK | smoke PASS 2.56s
 
 ---
 

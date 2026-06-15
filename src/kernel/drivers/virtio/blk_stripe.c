@@ -547,7 +547,7 @@ void stripe_init(void)
 
     /* Register as virtual blkdev */
     {
-        struct blkdev bdev;
+        struct blkdev bdev = {0};   /* zero optional callbacks (flush/discard/shutdown) */
         uint32_t si;
         const char *name = "virtio-stripe0";
 

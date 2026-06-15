@@ -51,6 +51,7 @@ int blkdev_register(const struct blkdev *dev)
     d->write        = dev->write;
     d->flush        = dev->flush;
     d->discard      = dev->discard;
+    d->shutdown     = dev->shutdown;
     d->driver_data  = dev->driver_data;
     d->active       = 1;
 
@@ -172,4 +173,34 @@ void blkdev_list(void)
                (uint64_t)devices[i].sector_count,
                (uint64_t)devices[i].sector_size);
     }
+}
+
+int blkdev_shutdown_all(void)
+{
+    int i, failures = 0;
+
+    /* Flush every device's write cache first so cached writes reach media
+     * before any controller stops accepting commands. A failed flush is a
+     * durability hazard -- count + log it so the caller does not advertise a
+     * clean shutdown. */
+    for (i = 0; i < num_devices; i++) {
+        if (devices[i].active && devices[i].flush) {
+            if (devices[i].flush(devices[i].driver_data) != 0) {
+                klog(LOG_ERROR, "blk", "%s: cache flush FAILED on shutdown",
+                     devices[i].name);
+                failures++;
+            }
+        }
+    }
+    /* Then issue each controller's clean-shutdown handshake. */
+    for (i = 0; i < num_devices; i++) {
+        if (devices[i].active && devices[i].shutdown) {
+            if (devices[i].shutdown(devices[i].driver_data) != 0) {
+                klog(LOG_WARN, "blk", "%s: controller shutdown FAILED",
+                     devices[i].name);
+                failures++;
+            }
+        }
+    }
+    return failures;
 }

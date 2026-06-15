@@ -423,6 +423,7 @@ extern void test_register_nt_types(void);
 extern void test_register_ipc(void);
 extern void test_register_alpc(void);
 extern void test_register_storage(void);
+extern void test_register_nvme(void);
 extern void test_register_ixfs(void);
 extern void test_register_bulletproof(void);
 extern void test_register_blackbox(void);
@@ -534,6 +535,7 @@ void test_runner_init(void)
 
     /* Storage */
     test_register_storage();
+    test_register_nvme();
     test_register_blackbox();
     test_register_acpi_power();
 

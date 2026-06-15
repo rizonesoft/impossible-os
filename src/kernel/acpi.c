@@ -926,6 +926,15 @@ void acpi_shutdown(void)
         }
     }
 
+    /* Flush + cleanly shut down storage controllers (device write-cache flush,
+     * NVMe CC.SHN handshake) BEFORE disabling interrupts -- the driver shutdown
+     * paths poll via hlt and require IRQs enabled. */
+    {
+        extern int blkdev_shutdown_all(void);
+        if (blkdev_shutdown_all() != 0)
+            printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
+    }
+
     /* Disable interrupts -- we're going down */
     __asm__ volatile("cli");
 
@@ -955,6 +964,14 @@ void acpi_shutdown(void)
 void acpi_reboot(void)
 {
     printk("[ACPI] Initiating reboot...\n");
+
+    /* Flush + shut down storage controllers before disabling interrupts, same
+     * as the poweroff path -- a reset leaves the NVMe cache dirty otherwise. */
+    {
+        extern int blkdev_shutdown_all(void);
+        if (blkdev_shutdown_all() != 0)
+            printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
+    }
 
     __asm__ volatile("cli");
 

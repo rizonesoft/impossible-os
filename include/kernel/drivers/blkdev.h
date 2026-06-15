@@ -23,6 +23,8 @@ typedef int (*blkdev_write_fn)(uint64_t lba, uint32_t count, const void *buf,
 typedef int (*blkdev_flush_fn)(void *driver_data);
 typedef int (*blkdev_discard_fn)(uint64_t sector, uint32_t num_sectors,
                                  void *driver_data);
+/* Controller-level clean shutdown (e.g. NVMe CC.SHN). NULL = nothing to do. */
+typedef int (*blkdev_shutdown_fn)(void *driver_data);
 
 /* Block device descriptor */
 struct blkdev {
@@ -33,6 +35,7 @@ struct blkdev {
     blkdev_write_fn write;       /* Driver write function */
     blkdev_flush_fn flush;       /* Driver flush function (NULL = no cache) */
     blkdev_discard_fn discard;   /* Driver discard/TRIM function (NULL = none) */
+    blkdev_shutdown_fn shutdown; /* Controller clean shutdown (NULL = none) */
     void        *driver_data;    /* Opaque pointer passed to callbacks */
     uint8_t      active;         /* 1 if registered and valid */
 };
@@ -82,3 +85,11 @@ int blkdev_update_capacity(const char *name, uint64_t new_sector_count);
 
 /* Print all registered block devices to serial/console. */
 void blkdev_list(void);
+
+/* Clean-shutdown the storage layer on poweroff/reboot: flush every device's
+ * write cache, then issue each controller's shutdown handshake. MUST be called
+ * with interrupts enabled (driver shutdown paths poll/sleep). Returns the count
+ * of flush/shutdown failures (0 = every device quiesced cleanly) so the caller
+ * can surface a non-clean shutdown. Does NOT quiesce in-flight writers -- that
+ * is the clean-shutdown orchestrator's job (04-drivers-hardware/TODO-03). */
+int blkdev_shutdown_all(void);

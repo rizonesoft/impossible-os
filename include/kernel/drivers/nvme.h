@@ -7,6 +7,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/atomic.h"
 
 /* ---- PCI class identification ---- */
 #define NVME_PCI_CLASS          0x01    /* Mass Storage Controller */
@@ -46,10 +47,16 @@
 #define NVME_CC_AMS_SHIFT       11                  /* bits 13:11 -- Arbitration Mechanism */
 #define NVME_CC_IOSQES_SHIFT    16                  /* bits 19:16 -- I/O SQ Entry Size (2^N) */
 #define NVME_CC_IOCQES_SHIFT    20                  /* bits 23:20 -- I/O CQ Entry Size (2^N) */
+#define NVME_CC_SHN_SHIFT       14                  /* bits 15:14 -- Shutdown Notification */
+#define NVME_CC_SHN_MASK        (3u << NVME_CC_SHN_SHIFT)
+#define NVME_CC_SHN_NORMAL      (1u << NVME_CC_SHN_SHIFT)  /* 01b = normal shutdown */
 
 /* ---- CSTS register fields (32-bit at offset 0x1C) ---- */
 #define NVME_CSTS_RDY           (1 << 0)            /* Ready */
 #define NVME_CSTS_CFS           (1 << 1)            /* Controller Fatal Status */
+#define NVME_CSTS_SHST_SHIFT    2                   /* bits 3:2 -- Shutdown Status */
+#define NVME_CSTS_SHST_MASK     (3u << NVME_CSTS_SHST_SHIFT)
+#define NVME_CSTS_SHST_COMPLETE (2u << NVME_CSTS_SHST_SHIFT)  /* 10b = shutdown complete */
 
 /* ---- Admin command opcodes ---- */
 #define NVME_ADMIN_IDENTIFY     0x06
@@ -59,6 +66,7 @@
 /* ---- NVM I/O command opcodes ---- */
 #define NVME_IO_READ            0x02
 #define NVME_IO_WRITE           0x01
+#define NVME_IO_FLUSH           0x00    /* Flush volatile write cache */
 
 /* ---- Identify CNS values ---- */
 #define NVME_IDENTIFY_CNS_CTRL  0x01
@@ -141,6 +149,7 @@ struct nvme_controller {
     uint16_t            io_cq_head;
     uint8_t             io_cq_phase;
     uint8_t             io_queue_active;
+    atomic_t            io_busy;        /* SMP-safe single-in-flight CAS gate; see nvme_submit_io_cmd */
 
     /*: Namespace info */
     uint64_t            ns_lba_count;
@@ -157,3 +166,6 @@ int                     nvme_read_sectors(int ctrl_idx, uint64_t lba,
                                           uint32_t count, void *buf);
 int                     nvme_write_sectors(int ctrl_idx, uint64_t lba,
                                            uint32_t count, const void *buf);
+int                     nvme_flush(int ctrl_idx);    /* NVM Flush -- flush volatile write cache */
+int                     nvme_shutdown(int ctrl_idx); /* CC.SHN normal shutdown + poll CSTS.SHST */
+void                    nvme_shutdown_all(void);     /* shutdown every active controller (poweroff/reboot) */

@@ -189,13 +189,26 @@ static void nvme_identify(struct nvme_controller *nc, uint32_t timeout_ms)
     /* NSZE: namespace size in LBAs (bytes 0–7, 64-bit LE) */
     nc->ns_lba_count = *(uint64_t *)&data[0];
 
-    /* FLBAS: formatted LBA size (byte 26, bits 3:0 = active format index) */
+    /* FLBAS: formatted LBA size (byte 26, bits 3:0 = active format index).
+     * DS is the LBA Data Size exponent from untrusted controller data; only
+     * DS=9 (512) and DS=12 (4096) are supported and PRP-encodable. Map those
+     * directly and reject everything else WITHOUT a 1<<ds shift -- ds can be
+     * >= 32, which is undefined behavior on a 32-bit shift. */
     {
         uint8_t flbas_idx = data[26] & 0x0F;
         /* LBAF[n] at offset 128 + n*4, DS field in bits 23:16 */
         uint32_t lbaf = *(uint32_t *)&data[128 + flbas_idx * 4];
         uint8_t ds = (uint8_t)((lbaf >> 16) & 0xFF);
-        nc->ns_sector_size = (ds > 0) ? (1u << ds) : 512;
+        if (ds == 9)
+            nc->ns_sector_size = 512;
+        else if (ds == 12)
+            nc->ns_sector_size = 4096;
+        else {
+            klog(LOG_ERROR, "nvme",
+                 "unsupported LBA data size DS=%u -- namespace not usable",
+                 (uint64_t)ds);
+            nc->ns_sector_size = 0;
+        }
     }
 
     /* Log summary */
@@ -206,6 +219,10 @@ static void nvme_identify(struct nvme_controller *nc, uint32_t timeout_ms)
              nc->model, gib, (uint64_t)nc->ns_sector_size,
              nc->ns_lba_count);
     }
+
+    /* ns_sector_size is now 512, 4096, or 0 (rejected above); a 0 leaves the
+     * I/O queue inactive and blkdev registration skips this namespace, instead
+     * of issuing a wrapped cdw12 = (4096/size)-1 = 0xFFFFFFFF (4 G-block). */
 
     POST16(POST16_NVME_ADMIN_OK);
 }
@@ -327,6 +344,14 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
 
     db_stride = 4u << nc->dstrd;
 
+    /* Serialize the whole submit-to-completion against concurrent read/write/
+     * flush on the shared I/O queue (QID 1). SMP-safe single-in-flight gate via
+     * atomic CAS: a spinlock would hlt-hang (spin_lock disables IRQs, the poll
+     * sleeps), and the kernel mutex wait-queue is not SMP-safe. Nothing is held
+     * across the sleep -- a loser just retries the CAS after sleeping. */
+    while (atomic_cmpxchg(&nc->io_busy, 0, 1) != 0)
+        sleep_ms(1);
+
     /* Write command into I/O SQ at tail */
     sqe = &nc->io_sq[nc->io_sq_tail];
     {
@@ -355,6 +380,7 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
         sleep_ms(1);
         elapsed++;
     }
+    atomic_set(&nc->io_busy, 0);
     return -1;  /* timeout */
 
 done:
@@ -371,6 +397,7 @@ done:
     /* Ring I/O CQ 1 head doorbell: 0x1000 + ((2*1+1) * db_stride) */
     nvme_write32(nc->mmio_base, 0x1000 + (3 * db_stride), nc->io_cq_head);
 
+    atomic_set(&nc->io_busy, 0);
     return (status >> 1) != 0 ? -1 : 0;
 }
 
@@ -390,6 +417,7 @@ static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     }
 
     nc = &controllers[num_controllers];
+    atomic_set(&nc->io_busy, 0);
 
     /* ---- Read 64-bit BAR0/BAR1 ---- */
     bar0 = pci_read32(bus, dev, func, PCI_BAR0);
@@ -570,8 +598,12 @@ static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
     /* ---- Identify Controller + Namespace ---- */
     nvme_identify(nc, timeout_ms);
 
-    /* ---- I/O Queue creation ---- */
-    nvme_create_io_queues(nc, timeout_ms);
+    /* ---- I/O Queue creation (only for a usable namespace) ---- */
+    if (nc->ns_sector_size == 512 || nc->ns_sector_size == 4096)
+        nvme_create_io_queues(nc, timeout_ms);
+    else
+        klog(LOG_WARN, "nvme",
+             "no usable namespace (sector size unsupported) -- I/O queue skipped");
 
     return 0;
 }
@@ -652,7 +684,8 @@ int nvme_read_sectors(int ctrl_idx, uint64_t lba, uint32_t count, void *buf)
     uint8_t *dst = (uint8_t *)buf;
 
     nc = nvme_get_controller(ctrl_idx);
-    if (!nc || !nc->io_queue_active)
+    if (!nc || !nc->io_queue_active ||
+        (nc->ns_sector_size != 512 && nc->ns_sector_size != 4096))
         return -1;
 
     timeout_ms = (uint32_t)nc->to * 500;
@@ -716,7 +749,8 @@ int nvme_write_sectors(int ctrl_idx, uint64_t lba, uint32_t count,
     const uint8_t *src = (const uint8_t *)buf;
 
     nc = nvme_get_controller(ctrl_idx);
-    if (!nc || !nc->io_queue_active)
+    if (!nc || !nc->io_queue_active ||
+        (nc->ns_sector_size != 512 && nc->ns_sector_size != 4096))
         return -1;
 
     timeout_ms = (uint32_t)nc->to * 500;
@@ -764,4 +798,80 @@ int nvme_write_sectors(int ctrl_idx, uint64_t lba, uint32_t count,
 
     pmm_free_frame(dma_phys);
     return 0;
+}
+
+/* ---- Cache flush + controller shutdown ---- */
+
+/* NVM Flush (opcode 0x00): commit the controller's volatile write cache to
+ * media. Registered as the blkdev `flush` callback so blkdev_sync() (the
+ * FAT32 / VFS / NtFlushBuffersFile durability boundary) is honest. */
+int nvme_flush(int ctrl_idx)
+{
+    struct nvme_controller *nc;
+    struct nvme_sqe cmd;
+    uint32_t timeout_ms;
+
+    nc = nvme_get_controller(ctrl_idx);
+    if (!nc || !nc->io_queue_active)
+        return -1;
+
+    timeout_ms = (uint32_t)nc->to * 500;
+    if (timeout_ms < 500)
+        timeout_ms = 500;
+
+    nvme_memset(&cmd, 0, sizeof(cmd));
+    cmd.cdw0 = NVME_IO_FLUSH;    /* opcode 0x00 */
+    cmd.nsid = 1;
+    /* nvme_submit_io_cmd serializes on nc->io_lock against read/write. */
+    return nvme_submit_io_cmd(nc, &cmd, timeout_ms);
+}
+
+/* Issue the NVMe normal-shutdown handshake: set CC.SHN=01b and poll CSTS.SHST
+ * for completion (10b), bounded by the CAP.TO timeout, with a CFS abort check.
+ * Controller-register only -- does not touch the I/O queue, so no io_lock.
+ * Must run with interrupts enabled (the poll sleeps via hlt). */
+int nvme_shutdown(int ctrl_idx)
+{
+    struct nvme_controller *nc;
+    uint32_t cc, csts, timeout_ms, elapsed;
+
+    nc = nvme_get_controller(ctrl_idx);
+    if (!nc || !nc->active)
+        return -1;
+
+    cc = nvme_read32(nc->mmio_base, NVME_REG_CC);
+    cc = (cc & ~NVME_CC_SHN_MASK) | NVME_CC_SHN_NORMAL;
+    nvme_write32(nc->mmio_base, NVME_REG_CC, cc);
+
+    timeout_ms = (uint32_t)nc->to * 500;
+    if (timeout_ms < 500)
+        timeout_ms = 500;
+
+    elapsed = 0;
+    while (elapsed < timeout_ms) {
+        csts = nvme_read32(nc->mmio_base, NVME_REG_CSTS);
+        if (csts & NVME_CSTS_CFS) {
+            klog(LOG_ERROR, "nvme", "controller fatal status during shutdown");
+            return -1;
+        }
+        if ((csts & NVME_CSTS_SHST_MASK) == NVME_CSTS_SHST_COMPLETE) {
+            klog(LOG_INFO, "nvme", "shutdown complete");
+            return 0;
+        }
+        sleep_ms(1);
+        elapsed++;
+    }
+    klog(LOG_WARN, "nvme", "shutdown notification timeout");
+    return -1;
+}
+
+/* Shut down every active controller. Called from the block-layer shutdown
+ * path on poweroff/reboot, BEFORE interrupts are disabled. */
+void nvme_shutdown_all(void)
+{
+    int i;
+    for (i = 0; i < num_controllers; i++) {
+        if (controllers[i].active)
+            (void)nvme_shutdown(i);
+    }
 }

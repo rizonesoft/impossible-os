@@ -147,6 +147,18 @@ static int blkdev_nvme_write(uint64_t lba, uint32_t count,
     return nvme_write_sectors(ctrl, lba, count, buf);
 }
 
+static int blkdev_nvme_flush(void *driver_data)
+{
+    int ctrl = (int)(uintptr_t)driver_data;
+    return nvme_flush(ctrl);
+}
+
+static int blkdev_nvme_shutdown(void *driver_data)
+{
+    int ctrl = (int)(uintptr_t)driver_data;
+    return nvme_shutdown(ctrl);
+}
+
 /* ---- Directory tree dump (serial-only) ---- */
 
 /* Format a uint64_t with comma separators (e.g. 604696 → "604,696"). */
@@ -385,6 +397,8 @@ void blkdev_register_all(void)
             bd.sector_count = nc->ns_lba_count;
             bd.read  = blkdev_nvme_read;
             bd.write = blkdev_nvme_write;
+            bd.flush = blkdev_nvme_flush;       /* NVM Flush -- honest blkdev_sync */
+            bd.shutdown = blkdev_nvme_shutdown; /* CC.SHN on poweroff/reboot */
             bd.driver_data  = (void *)(uintptr_t)ci;
             blkdev_register(&bd);
         }
