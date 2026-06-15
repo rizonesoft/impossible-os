@@ -885,6 +885,7 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
     }
     if (ep0_ring_init(&dev->bulk_out_ring) != 0) {
         klog(LOG_ERROR, "usb-msc", "Failed to allocate Bulk-OUT Transfer Ring");
+        ep0_ring_free(&dev->bulk_in_ring);   /* don't leak the IN ring */
         return -1;
     }
 
@@ -946,6 +947,9 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
         if (xhci_cmd_submit(hc, &cmd) != 0) {
             klog(LOG_ERROR, "usb-msc",
                  "Failed to submit Configure Endpoint command");
+            /* Command never reached hardware -- both rings are safe to free. */
+            ep0_ring_free(&dev->bulk_in_ring);
+            ep0_ring_free(&dev->bulk_out_ring);
             return -1;
         }
 
@@ -954,6 +958,12 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
             klog(LOG_ERROR, "usb-msc",
                  "Configure Endpoint failed (slot %u, cc=%u)",
                  (uint64_t)dev->slot_id, (uint64_t)cc);
+            /* Definite error -> reclaim; timeout (0xFF) may still publish the
+             * TR dequeue pointers, so quarantine then (same rule as HID). */
+            if (cc != 0xFF) {
+                ep0_ring_free(&dev->bulk_in_ring);
+                ep0_ring_free(&dev->bulk_out_ring);
+            }
             return -1;
         }
     }
@@ -1127,7 +1137,11 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
                           | XHCI_EPCTX_TYPE(XHCI_EP_TYPE_INTERRUPT_IN)
                           | XHCI_EPCTX_MAXPKT(dev->int_in_max_pkt);
         ep_in_ctx->tr_dequeue = dev->int_in_ring.phys | 1; /* DCS = 1 */
-        ep_in_ctx->field4 = XHCI_EPCTX_AVG_TRB_LEN(dev->int_in_max_pkt);
+        /* Interrupt endpoints are periodic: program the Max ESIT Payload so
+         * strict (bare-metal) controllers schedule a service budget. Boot HID
+         * is single-transaction, so the per-interval payload == wMaxPacketSize. */
+        ep_in_ctx->field4 = XHCI_EPCTX_AVG_TRB_LEN(dev->int_in_max_pkt)
+                          | XHCI_EPCTX_MAX_ESIT_LO(dev->int_in_max_pkt);
 
         /* Submit Configure Endpoint Command */
         dev_zero(&cmd, sizeof(cmd));

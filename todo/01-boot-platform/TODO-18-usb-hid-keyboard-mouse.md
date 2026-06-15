@@ -71,11 +71,12 @@ Add interrupt endpoint support to the xHCI driver (currently only bulk endpoints
 > - Shipped: `xhci_hid_identify()` + `xhci_hid_interval_encode()` (`xhci_dev.c`) -- config-descriptor walk for a HID boot interface + Interrupt-IN endpoint, Configure Endpoint with a speed-correct EP-ctx Interval.
 > - Integrates: probed in `xhci_enumerate_device` when not MSC; new `struct xhci_device` HID fields + `XHCI_EP_TYPE_INTERRUPT_IN`; `ep0_ring_free` reclaims the ring on a definite Configure-Endpoint failure (quarantined on timeout).
 > - Hardening: untrusted descriptor fields validated -- reject EP0, high-bandwidth wMaxPacketSize bits, zero/oversized packet size (avoids EP0-context overwrite + DMA-visible UAF).
-> - Review: Codex 3x (design approve + adversarial + re-adversarial); 4H+2M fixed, 1M accepted (composite MSC+HID out of scope); live QEMU kbd+mouse enumerate (interval field=6).
+> - Review: Codex 6x (design + adversarial x2 + re-adversarial + consistency + perf); 4H+3M fixed (incl Max ESIT Payload for bare-metal + MSC ring-cleanup consistency), 1H+1M accepted; live QEMU kbd+mouse enumerate (interval field=6).
 > - Scope boundary: §1 configures the interrupt endpoint; periodic report polling, keyboard/mouse report parsing, and PS/2 coexistence are later sections.
-> **Verified:** 2026-06-15 | this commit | 6/6 items | build OK | QEMU usb-kbd/usb-mouse PASS (kbd port5 + mouse port6 enumerated, boot 1.65s); smoke PASS 2.54s
+> **Verified:** 2026-06-15 | review commit | 6/6 items | build OK | QEMU usb-kbd/usb-mouse PASS (kbd port5 + mouse port6, boot 1.63s); smoke PASS 2.54s; storage 13/13 PASS
+> **Accepted:** [H] `xhci_enumerate_device` (-> `xhci_hid_identify`) callable from the hot-plug ISR (alloc + 500ms busy-wait, unlocked `devices[]`/rings) -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker")
 > **Accepted:** [M] composite MSC+HID device initializes as storage only (HID iface unconfigured) -- deliberate: boot keyboards/mice are HID-only; documented in `xhci_enumerate_device`
-> **Quality reviewed:** 2026-06-15 | Codex 3x (design, adversarial, re-adversarial) | 4H+2M fixed, 1M accepted | scope: kernel-code-quality
+> **Quality reviewed:** 2026-06-15 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted | scope: kernel-code-quality
 
 ---
 

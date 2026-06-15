@@ -182,6 +182,10 @@ struct xhci_ep_ctx {
 
 /* Endpoint Context field4 helpers */
 #define XHCI_EPCTX_AVG_TRB_LEN(l)  ((uint32_t)(l) & 0xFFFF)
+/* Max ESIT Payload Lo (field4 bits 31:16) -- per-service-interval byte budget
+ * for periodic (interrupt/isoch) endpoints. For single-transaction boot HID
+ * this equals wMaxPacketSize (<= 64), so the Hi field stays zero. */
+#define XHCI_EPCTX_MAX_ESIT_LO(p)  (((uint32_t)(p) & 0xFFFF) << 16)
 
 /* ---- xHCI Input Control Context (§6.2.5) -------------------------------- */
 
