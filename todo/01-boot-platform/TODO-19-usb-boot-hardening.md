@@ -62,7 +62,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |  10   | Boot media speed detection                         | §8            |  [/]   |
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [/]   |
 | ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [x]   |
-| 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [ ]   |
+| 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [x]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [ ]   |
 | ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [ ]   |
 | 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4            |  [ ]   |
@@ -407,15 +407,24 @@ Replace the 6-pass per-subsystem loop (one full ring scan per file) with a singl
 
 **Files:** `src/kernel/klog_disk.c`
 
-- [ ] Allocate the existing 32 KB batch buffer, divided into 6 slots (`batch_size / SUBSYS_LOG_COUNT` each)
-- [ ] Single loop through the ring: for each entry, match `dispatch_filename()` to the subsystem index, append to that slot's buffer region
-- [ ] After the loop, write only non-empty slots -- skip `vfs_open/write/close` for subsystems with zero entries
-- [ ] Track per-slot position in a `uint32_t sub_pos[SUBSYS_LOG_COUNT]` array
-- [ ] Commit: `"klog: single-pass subsystem routing -- 6 ring scans → 1"`
+- [x] `klog_dispatch_slot()` helper (`klog.h` / `klog_disk.c`): pure tag→slot classifier (0-5, or -1 for kernel.log-only), reused by the routing path and unit-tested
+- [x] Phase 1 single ring scan classifies each entry into `int8_t slot_of[KLOG_RING_SIZE]` + `sub_count[SUBSYS_LOG_COUNT]` -- the one expensive walk (ring read + dispatch), replacing the former 6 per-file scans
+- [x] Phase 2 writes only non-empty subsystems (`sub_count[si]==0` skips `vfs_open`); each reuses the FULL 32 KB batch, chunk-flushed at the `batch_size` boundary so a burst-heavy subsystem keeps its WHOLE view (no `batch_size/6` per-slot cap)
+- [x] Re-validate each entry's live tag immediately before `format_entry` (the ring is read without `s_klog_lock`) so a concurrent overwrite cannot misroute a newer entry into the wrong subsystem file
+- [x] Commit: `"klog: single-pass subsystem routing -- 6 ring scans → 1"`
 
-**Test checkpoint:** With 6 subsystem files and 200 ring entries, flush does 1 ring scan instead of 6. Files with no matching entries are never opened. Serial log shows reduced flush time. Test on: QEMU (fast), bare metal i5-4210U USB (slow), bare metal i5-11600K SATA.
+**Test checkpoint:** With 6 subsystem files and 200 ring entries, flush does 1 ring walk instead of 6 and only non-empty subsystems open files. A burst-heavy subsystem (>32 KB/flush) is chunk-written, not dropped. Serial log shows reduced flush time. Test on: QEMU (fast), bare metal i5-4210U USB (slow), bare metal i5-11600K SATA.
 
-**Regression risk:** LOW -- same data written, same files, fewer I/O operations. Rollback: restore the per-subsystem loop.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2697 kernel + 16 user, 0 failures
+
+> **Notes:**
+> - **What shipped:** `klog_disk.c` single-pass per-subsystem routing + pure helper `klog_dispatch_slot()` (decl `klog.h`): one ring scan bins entries into `slot_of[]`, Phase 2 reuses the full 32 KB batch per subsystem with chunked `vfs_write`.
+> - **How it runs:** fires in the existing IXFS flush after the durable `kernel.log` write; the expensive work (ring walk + `format_entry`) stays once-per-entry, the 6 Phase-2 passes only re-read the in-cache `slot_of[]` array.
+> - **Downstream effects:** removes the prior 6-scans-per-flush cost on slow USB boot media; Codex 3x review adoptions in commit fixed a `batch_size/6` capacity cap (busy-subsystem drops in deferred mode) and a classify-vs-format misroute race.
+> - **Canonical doc:** `src/kernel/klog_disk.c` header comment on the routing block.
+> - **Scope boundary:** §13 owns per-subsystem disk-log routing; `kernel.log` durability/cursor is §8, deferred-flush batching §9, splash flush-progress §15.
+
+**Regression risk:** LOW -- every entry kernel.log records is routed to its subsystem view (no `batch_size/6` cap, no silent drop); chunked writes keep a burst subsystem's whole window. Rollback: restore the per-subsystem loop.
 
 ---
 
@@ -488,7 +497,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | Deferred flush (slow media)  | ✅ Lazy writeback         | ✅ dirty_writeback_centisecs | ✅ §9 RAM batch + boot-end flush |
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ✅ §10 4KiB-probe classify  |
 | ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ✅ §12 consolidated report 🚀 |
-| 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §13                      |
+| 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ✅ §13 1 ring scan, no drops |
 | 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §14                      |
 | ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §15 🚀                   |
 
@@ -510,8 +519,8 @@ After §1-§10 plus §11's detection + graceful skip, USB boot is as reliable as
   - Bulk timeout: transfer with `timeout_ms=0` returns `USB_ERR_TIMEOUT` immediately (boundary test)
   - `boot_info.boot_media_speed` is a valid value (0-3)
   - klog bounded flush: ring snapshot count does not grow during flush
-  - Single-pass routing dispatches to correct subsystem slot (fill 3 entries across 2 subsystems, verify each slot has correct entries)
-  - Empty subsystem slots produce zero VFS writes (mock VFS, assert no open/write/close for empty slots)
+  - Single-pass routing classifier: `klog_dispatch_slot()` tag→slot mapping shipped in `test_klog.c` (TEST_CAT_BOOT) -- all aliases, prefix/case/`:`-qualifier boundaries, NULL/empty/unmatched → -1 (§13)
+  - **Note:** the live flush path (`klog_disk_flush_locked` empty-slot no-open, chunk-write, re-validate) is validated via boot-serial only -- driving it from a unit test would call live `vfs_open/write/close`, banned per `feedback_test_no_live_boot_calls` (WSL has no QEMU)
   - `blkdev_boot_media_type()` returns valid enum value (not out of range)
 - [ ] Register in `test_runner_init()`: `test_register_usb_boot()`
 - [ ] Add smoke test patterns to `scripts/test-smoke.sh` for QEMU `run-usb`:

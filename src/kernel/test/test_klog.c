@@ -520,10 +520,52 @@ static void test_klog_defer_active(void)
                 "active+disabled -> DISABLED dominates, not deferred (no re-defer post-drain)");
 }
 
+/* klog_dispatch_slot bins a log tag to its per-subsystem file slot (0-5) for the
+ * single-pass disk routing, or -1 when the entry routes only to kernel.log.
+ * Slots: 0 network 1 boot 2 fs 3 mm 4 drivers 5 security. Pure. */
+static void test_klog_dispatch_slot(void)
+{
+    TEST_ASSERT_EQ(klog_dispatch_slot("net"), 0, "net -> network.log (slot 0)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("boot"), 1, "boot -> boot.log (slot 1)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("fs"), 2, "fs -> fs.log (slot 2)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("mm"), 3, "mm -> mm.log (slot 3)");
+    /* drivers.log (slot 4): every storage/bus tag routes here. */
+    TEST_ASSERT_EQ(klog_dispatch_slot("drv"), 4, "drv -> drivers.log (slot 4)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("ahci"), 4, "ahci -> drivers.log (slot 4)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("pci"), 4, "pci -> drivers.log (slot 4)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("lapic"), 4, "lapic -> drivers.log (slot 4)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("ioapic"), 4, "ioapic -> drivers.log (slot 4)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("acpi"), 4, "acpi -> drivers.log (slot 4)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("blk"), 4, "blk -> drivers.log (slot 4)");
+    /* security.log (slot 5) + boot.log (slot 1) aliases. */
+    TEST_ASSERT_EQ(klog_dispatch_slot("sec"), 5, "sec -> security.log (slot 5)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("TPM"), 5, "TPM -> security.log (slot 5)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("smp"), 1, "smp -> boot.log (slot 1)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("UEFI"), 1, "UEFI -> boot.log (slot 1)");
+    /* fs.log (slot 2) aliases. */
+    TEST_ASSERT_EQ(klog_dispatch_slot("ixfs"), 2, "ixfs -> fs.log (slot 2)");
+    TEST_ASSERT_EQ(klog_dispatch_slot("fat32"), 2, "fat32 -> fs.log (slot 2)");
+    /* Tag with a trailing ':' qualifier still matches (dispatch matches up to ':'). */
+    TEST_ASSERT_EQ(klog_dispatch_slot("vfs:open"), 2, "vfs:... -> fs.log (slot 2)");
+    /* Boundary: a longer tag that merely PREFIXES a table tag must NOT match (the
+     * match requires the next char to be '\0' or ':', so "net0" is unmatched). */
+    TEST_ASSERT_EQ(klog_dispatch_slot("net0"), -1, "net0 (prefix, not exact) -> -1");
+    TEST_ASSERT_EQ(klog_dispatch_slot("bootstrap"), -1, "bootstrap (prefix) -> -1");
+    /* Boundary: matching is CASE-SENSITIVE. */
+    TEST_ASSERT_EQ(klog_dispatch_slot("NET"), -1, "NET (wrong case) -> -1");
+    TEST_ASSERT_EQ(klog_dispatch_slot("uefi"), -1, "uefi (wrong case) -> -1");
+    /* Unmatched / empty / NULL -> -1 (routes only to the durable kernel.log). */
+    TEST_ASSERT_EQ(klog_dispatch_slot("scheduler"), -1, "unmatched -> -1");
+    TEST_ASSERT_EQ(klog_dispatch_slot(""), -1, "empty -> -1");
+    TEST_ASSERT_EQ(klog_dispatch_slot((const char *)0), -1, "NULL -> -1");
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
 {
+    test_suite_register_cat("Klog: single-pass subsystem slot dispatch",
+                            test_klog_dispatch_slot, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: bounded flush window",
                             test_klog_flush_window, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring-overflow lost count",

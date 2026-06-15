@@ -103,6 +103,23 @@ static const char *dispatch_filename(const char *subsystem)
     return "kernel.log";
 }
 
+/* Subsystem-file slot index (0..SUBSYS_LOG_COUNT-1) for a log tag, or -1 when the
+ * entry routes only to kernel.log (unmatched tag). Used by single-pass routing to
+ * bin each ring entry without re-scanning the ring per file. Pure; exposed for
+ * tests (klog_dispatch_slot). */
+int klog_dispatch_slot(const char *subsystem)
+{
+    const char *fn = dispatch_filename(subsystem);
+    int i;
+    for (i = 0; i < SUBSYS_LOG_COUNT; i++) {
+        const char *a = fn, *b = s_subsys_filenames[i];
+        while (*a && *a == *b) { a++; b++; }
+        if (*a == '\0' && *b == '\0')
+            return i;
+    }
+    return -1;  /* "kernel.log" / unmatched -- no per-subsystem slot */
+}
+
 /* ---- State ---- */
 
 /* IXFS (C:) flush tracking -- monotonic sequence cursor */
@@ -841,55 +858,96 @@ static void klog_disk_flush_locked(void)
                 vfs_close(logfile);
             }
 
-            /* ---- Per-subsystem log routing (batched, BEST-EFFORT) ---- */
-            /* Uses the same seq range as kernel.log -- each entry is routed once
-             * to its subsystem file. These per-subsystem files are a convenience
-             * view; kernel.log (gated above) is the DURABLE copy of every entry, so
-             * the shared cursor advances on kernel.log success and subsystem write
-             * failures are tolerated (the data is not lost -- it is in kernel.log).
-             * A durable per-subsystem cursor is a tracked follow-up. */
+            /* ---- Per-subsystem log routing (single-pass classify, BEST-EFFORT) ---- */
+            /* ONE ring scan over the kernel.log seq range classifies each entry into
+             * its subsystem slot (slot_of[]) and counts per slot -- collapsing the
+             * former 6-scans-per-flush (one full ring walk + format per file) into a
+             * single classify scan. Phase 2 then writes only non-empty subsystems,
+             * each REUSING the full shared batch and chunk-flushing at the 32 KB
+             * boundary, so a burst-heavy subsystem (boot.log / drivers.log during a
+             * deferred slow-media flush) keeps its WHOLE view instead of being capped
+             * to batch_size/6. The expensive work (the ring walk + format_entry) runs
+             * once per entry; the per-slot Phase 2 passes only re-read the in-cache
+             * slot_of[] byte array, not the ring. NO VFS writes happen during the
+             * classify scan: the ring is read without s_klog_lock (best-effort views;
+             * kernel.log, gated above, is the DURABLE copy of every entry), so
+             * subsystem write failures are tolerated. */
             if (batch && flush_ok) {
-                uint32_t si;
+                int8_t   slot_of[KLOG_RING_SIZE];  /* per-entry slot, -1 = none */
+                uint32_t sub_count[SUBSYS_LOG_COUNT];
+                uint32_t window = (uint32_t)(cur_seq - start_seq);
+                uint32_t si, j;
+
+                if (window > KLOG_RING_SIZE)
+                    window = KLOG_RING_SIZE;  /* defensive: window is ring-bounded */
+                for (si = 0; si < SUBSYS_LOG_COUNT; si++)
+                    sub_count[si] = 0;
+
+                /* Phase 1: single ring scan -- classify each entry, count per slot. */
+                for (j = 0; j < window; j++) {
+                    uint32_t idx = (uint32_t)((start_seq + j) % KLOG_RING_SIZE);
+                    int slot = klog_dispatch_slot(ring[idx].subsystem);
+                    slot_of[j] = (int8_t)slot;  /* -1 -> kernel.log only */
+                    if (slot >= 0)
+                        sub_count[slot]++;
+                }
+
+                /* Phase 2: write only non-empty subsystems. Each reuses the full
+                 * batch, chunk-flushed at batch_size so nothing is dropped; empty
+                 * subsystems never trigger vfs_open. */
                 for (si = 0; si < SUBSYS_LOG_COUNT; si++) {
                     char spath[64];
                     uint32_t sp = 0;
                     struct vfs_node *sf;
                     const char *base = klog_dir;
                     const char *fname = s_subsys_filenames[si];
+                    uint32_t bp = 0, woff;
                     int k;
-                    uint32_t bp = 0;
+
+                    if (sub_count[si] == 0)
+                        continue;
 
                     for (k = 0; base[k]; k++) spath[sp++] = base[k];
                     for (k = 0; fname[k]; k++) spath[sp++] = fname[k];
                     spath[sp] = '\0';
 
                     sf = vfs_open(spath, VFS_O_WRITE);
-                    if (!sf) continue;
+                    if (!sf)
+                        continue;
+                    woff = (uint32_t)sf->size;
 
-                    /* Batch matching entries using same seq range */
-                    for (uint64_t s = start_seq; s < cur_seq; s++) {
-                        uint32_t idx = (uint32_t)(s % KLOG_RING_SIZE);
-                        const char *df, *a, *b;
+                    for (j = 0; j < window; j++) {
+                        uint32_t idx;
+                        char line[256];
+                        int pos;
 
-                        df = dispatch_filename(ring[idx].subsystem);
-                        a = df; b = fname;
-                        while (*a && *a == *b) { a++; b++; }
-                        if (*a != '\0' || *b != '\0')
+                        if (slot_of[j] != (int8_t)si)
                             continue;
+                        idx = (uint32_t)((start_seq + j) % KLOG_RING_SIZE);
+                        /* Re-validate against the entry's CURRENT tag: a concurrent
+                         * logger may have overwritten this ring slot since Phase 1
+                         * classified it (the ring is read without s_klog_lock). Only
+                         * route to si when the live entry still maps here -- otherwise
+                         * skip it from the subsystem view (kernel.log keeps it, and the
+                         * new occupant is flushed in its own window next call). This
+                         * narrows the classify-vs-format mismatch window back to the
+                         * adjacent re-check/format reads, matching the old per-pass loop. */
+                        if (klog_dispatch_slot(ring[idx].subsystem) != (int)si)
+                            continue;
+                        pos = format_entry(&ring[idx], line, 256);
 
-                        {
-                            char line[256];
-                            int pos = format_entry(&ring[idx], line, 256);
-                            if (bp + (uint32_t)pos < batch_size) {
-                                for (k = 0; k < pos; k++)
-                                    batch[bp++] = (uint8_t)line[k];
-                            }
+                        /* Chunk-flush when the next entry would overflow the batch;
+                         * a single entry (<= 256 bytes) always fits batch_size. */
+                        if (bp + (uint32_t)pos > batch_size) {
+                            vfs_write(sf, woff, bp, batch);
+                            woff += bp;
+                            bp = 0;
                         }
+                        for (k = 0; k < pos; k++)
+                            batch[bp++] = (uint8_t)line[k];
                     }
-
-                    /* Single write for all matching entries */
                     if (bp > 0)
-                        vfs_write(sf, (uint32_t)sf->size, bp, batch);
+                        vfs_write(sf, woff, bp, batch);
                     vfs_close(sf);
                 }
             }
