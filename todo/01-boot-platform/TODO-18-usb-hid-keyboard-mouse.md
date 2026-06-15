@@ -46,7 +46,7 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 | 💎  |   3   | USB HID boot-protocol keyboard driver            | §2         |  [x]   |
 | 💎  |   4   | USB HID boot-protocol mouse driver               | §2         |  [x]   |
 | 💎  |   5   | Input source coexistence (PS/2 + USB)            | §3, §4     |  [x]   |
-| ⭐  |   6   | Hot-plug keyboard/mouse detection                | §5         |  [ ]   |
+| ⭐  |   6   | Hot-plug keyboard/mouse detection                | §5         |  [/]   |
 | ⭐  |   7   | USB input diagnostic logging                     | §1-§5      |  [x]   |
 
 > 💎 = parity -- Windows HID minidriver and Linux usbhid both provide boot-protocol keyboard/mouse.
@@ -203,6 +203,13 @@ Detect USB keyboard/mouse plugged in after boot.
 - [ ] Commit: `"drivers: USB HID hot-plug detection -- keyboard/mouse plug-and-play"`
 
 **Test checkpoint:** Boot without USB keyboard. Plug in USB keyboard after desktop appears -- typing works within 1 second.
+> **Test runner:** N/A (deferred -- blocked on the usb-stack hot-plug-interrupt section) | validation: deferred with the implementation.
+> **Notes:**
+> - Deferred (no code shipped): the port-change-to-enumerate core needs the serialized-worker enumeration owned by the usb-stack hot-plug-interrupt section (still open); in-ISR enumeration here would re-introduce the accepted bare-metal hazard.
+> - Independent sub-item: per-USB-device button slots (`mouse.c`, the §5 accept target) does not depend on the hot-plug worker and can ship earlier.
+> - Scope boundary: §6 owns HID-specific hot-plug attach/detach; the event-ring ownership + serialized-worker enumeration is the usb-stack hot-plug-interrupt section.
+> **Verified:** 2026-06-15 | deferred | 0/5 items | build OK | no code shipped -- blocked, tracked
+> **Deferred:** [M] hot-plug enumerate/teardown blocked on serialized-worker event-ring ownership (reason: infra in another domain) -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker" at line 192)
 
 ---
 
