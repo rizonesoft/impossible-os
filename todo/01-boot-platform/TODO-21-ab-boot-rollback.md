@@ -48,7 +48,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | Boot metadata structure (GPT/disk wire ABI)     | --          |  [/]   |
-| 💎  |   2   | Dual-slot disk layout in build system           | §1         |  [ ]   |
+| 💎  |   2   | Dual-slot disk layout in build system           | §1         |  [/]   |
 | 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [ ]   |
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [ ]   |
@@ -99,15 +99,24 @@ Modify the build system to create disk images with two root partitions.
 > [!NOTE]
 > **Scope (design review):** for §2 BOTH `BOOTX64.EFI` AND `kernel.exe` live on the shared ESP (`load_kernel` is FAT/ESP-only, cannot mount IXFS), so a bad ESP update bricks before slot selection. §2 ships per-slot ROOTS only; true per-slot KERNEL rollback needs a bootloader IXFS reader (deferred). Signed bootloader/ESP self-update safety is recovery-owned -> XREF: [`TODO-22`](TODO-22-recovery-partition.md) + [`TODO-02 §1`](TODO-02-uefi-hardening-secureboot.md).
 
-- [ ] GPT layout (grow disk ~768 MiB): ESP 64M + BlackBox 128M (preserve, TODO-24) + a dedicated A/B-metadata partition + Slot A IXFS + Slot B IXFS at explicit sizes; fail closed if the disk cannot fit both slots + metadata
-- [ ] Wire `make-system-disk`'s existing `--ab` mode into the Makefile + consume generated offsets (drop the fixed LBA constants); run `mkfs-ixfs` twice -- Slot A = current root, Slot B identical
-- [ ] Dedicated A/B-metadata GPT partition (Impossible OS type GUID) holding the two 4 KiB-aligned §1 blocks; export both LBAs in the `.info`; bootloader reads it pre-EBS via `EFI_BLOCK_IO_PROTOCOL` (read-only; the atomic block write is §7)
-- [ ] Kernel stays on the SHARED ESP for §2 -- `load_kernel` (`bootx64.c`) is FAT/ESP-only and cannot mount IXFS; the slots are per-slot IXFS roots only
-- [ ] Bootloader loads Slot A until §3 selection ships (current root becomes Slot A; keeps smoke green)
+- [x] `make-system-disk --ab` builds the 5-partition layout (ESP + BlackBox + A/B-metadata + Slot A IXFS + Slot B IXFS) with a post-layout fail-closed invariant (all extents ordered/non-overlapping, both slots >= 96 MiB); verified on 768M
+- [ ] Wire `make-system-disk`'s `--ab` mode into the Makefile + consume the `.info` offsets (drop the fixed LBA constants); run `mkfs-ixfs` twice -- Slot A = current root, Slot B identical (grow `SYSTEM_DISK_SIZE` to 768M)
+- [/] Dedicated A/B-metadata GPT partition (type GUID `...4D44...`) holding the two §1 blocks shipped + `META_OFFSET`/`IXFS_B_OFFSET` exported in `.info`; the bootloader pre-EBS `EFI_BLOCK_IO` read is pending (atomic write is §7)
+- [x] Kernel stays on the SHARED ESP for §2 -- verified: `load_kernel` (`bootx64.c`) is FAT/ESP-only, cannot mount IXFS; slots are per-slot IXFS roots only
+- [x] Bootloader loads Slot A until §3 -- verified: `partition_scan_all` mounts the FIRST IXFS-GUID partition (Slot A) at C: and skips Slot B + the metadata partition; no boot change needed
 - [ ] **Deferred (per-slot kernel rollback):** kernel-inside-each-slot's-IXFS needs a bootloader IXFS reader + slot binding in `load_kernel` -> §3 or a follow-up; §2 ships shared-ESP kernel + per-slot roots
 - [ ] Commit: `"build: dual-slot disk layout -- grow disk, A/B metadata partition, Slot A+B IXFS"`
 
 **Test checkpoint:** Built image has 5 partitions (ESP, BlackBox, A/B-metadata, Slot A, Slot B) in `fdisk -l`; the metadata partition LBAs appear in the `.info`; smoke still boots from Slot A. Test on: host `fdisk -l` + QEMU smoke; bare metal i5-4210U / i5-11600K.
+
+> **Test runner:** N/A (host build tool; verified by running `make-system-disk --ab`: 768M valid, undersized/misaligned rejected) | validation: host run now, QEMU smoke once Makefile-wired
+
+> **Notes:**
+> - **What shipped:** `tools/make-system-disk.c` `--ab` now builds the 5-partition layout (ESP + BlackBox + A/B-metadata + Slot A + Slot B) + a post-layout fail-closed invariant + `META_OFFSET`/`IXFS_B_OFFSET` in the `.info`.
+> - **How it runs:** `--ab` is opt-in and DORMANT until the Makefile wires it -- the default build is unchanged (still 3-partition single-slot), so build + smoke stay green; verified by running the host tool directly.
+> - **Downstream effects:** the §1 metadata record now has an on-disk home; §3 selection reads it; the kernel's `partition_scan_all` mounts Slot A (first IXFS) with no boot change.
+> - **Canonical doc:** `tools/make-system-disk.c` + the `<img>.info` offset contract.
+> - **Scope boundary:** §2 ships the GPT-writer layout; the Makefile production wiring (use `--ab`, 768M, source `.info`, format both slots) + the bootloader pre-EBS metadata read remain open §2 items.
 
 ---
 

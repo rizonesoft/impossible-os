@@ -132,6 +132,10 @@ int main(int argc, char *argv[])
     uint64_t bb_start, bb_end;
     uint64_t ixfs_start, ixfs_end;
     uint64_t ixfs_b_start, ixfs_b_end;  /* Slot B (A/B mode only) */
+    uint64_t meta_start = 0, meta_end = 0;  /* A/B metadata partition (A/B mode only) */
+    /* Metadata partition holds the two redundant ab_boot_metadata blocks; 1 MiB
+     * is alignment-friendly overkill (the record is 60 bytes x2). */
+    const uint64_t meta_sectors = (1ULL * 1024 * 1024) / SECTOR_SIZE;
     FILE *fp;
     int i;
 
@@ -156,11 +160,12 @@ int main(int argc, char *argv[])
                    "  Partition 1: EFI System (FAT32, 64 MiB)\n"
                    "  Partition 2: BlackBox (FAT32, 128 MiB) -- logs, crash dumps, diagnostics\n"
                    "  Partition 3: IXFS (System) fills remaining space\n"
-                   "\nA/B layout (4 partitions):\n"
+                   "\nA/B layout (5 partitions):\n"
                    "  Partition 1: EFI System (FAT32, 64 MiB)\n"
                    "  Partition 2: BlackBox (FAT32, 128 MiB)\n"
                    "  Partition 3: IXFS Slot A (half remaining space)\n"
-                   "  Partition 4: IXFS Slot B (half remaining space)\n");
+                   "  Partition 4: IXFS Slot B (half remaining space)\n"
+                   "  Partition 5: A/B metadata (1 MiB)\n");
             return 0;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -173,13 +178,23 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Ensure disk is large enough for EFI + BlackBox + IXFS + GPT overhead */
-    if (disk_size < efi_size + bb_size + 64 * 1024 * 1024) {
-        fprintf(stderr, "make-system-disk: disk too small (%llu < EFI %llu + BB %llu + 64M)\n",
-                (unsigned long long)disk_size,
-                (unsigned long long)efi_size,
-                (unsigned long long)bb_size);
-        return 1;
+    /* Ensure disk is large enough. Standard: EFI + BlackBox + IXFS + GPT.
+     * A/B: also a 1 MiB metadata partition + two usable IXFS slots. Fail
+     * closed rather than silently producing undersized slots. */
+    {
+        uint64_t min_size = efi_size + bb_size + 64ULL * 1024 * 1024;
+        if (ab_mode)
+            min_size = efi_size + bb_size
+                     + (1ULL * 1024 * 1024)            /* metadata partition */
+                     + 2ULL * (96ULL * 1024 * 1024)    /* two usable IXFS slots */
+                     + (2ULL * 1024 * 1024);           /* GPT + alignment slack */
+        if (disk_size < min_size) {
+            fprintf(stderr, "make-system-disk: disk too small (%llu < %llu for %s layout)\n",
+                    (unsigned long long)disk_size,
+                    (unsigned long long)min_size,
+                    ab_mode ? "A/B" : "standard");
+            return 1;
+        }
     }
 
     crc32_init();
@@ -200,20 +215,46 @@ int main(int argc, char *argv[])
     /* BlackBox: 1 MiB-aligned after EFI */
     bb_start = ((efi_end + 1 + 2047) / 2048) * 2048;
     bb_end = bb_start + (bb_size / SECTOR_SIZE) - 1;
-    /* IXFS: 1 MiB-aligned after BlackBox */
-    ixfs_start = ((bb_end + 1 + 2047) / 2048) * 2048;
     ixfs_b_start = 0;
     ixfs_b_end = 0;
 
     if (ab_mode) {
-        /* A/B: split remaining space evenly between Slot A and Slot B */
+        /* A/B: a 1 MiB metadata partition sits after BlackBox; Slot A and
+         * Slot B then split the remaining space evenly (both 1 MiB aligned). */
+        meta_start = ((bb_end + 1 + 2047) / 2048) * 2048;
+        meta_end = meta_start + meta_sectors - 1;
+        ixfs_start = ((meta_end + 1 + 2047) / 2048) * 2048;
         uint64_t remaining = total_sectors - 34 - ixfs_start;
         uint64_t half = (remaining / 2 / 2048) * 2048;  /* 1 MiB aligned */
         ixfs_end = ixfs_start + half - 1;
         ixfs_b_start = ((ixfs_end + 1 + 2047) / 2048) * 2048;
         ixfs_b_end = total_sectors - 34 - 1;
     } else {
+        /* IXFS: 1 MiB-aligned after BlackBox, fills remaining space */
+        ixfs_start = ((bb_end + 1 + 2047) / 2048) * 2048;
         ixfs_end = total_sectors - 34 - 1;
+    }
+
+    if (ab_mode) {
+        /* Validate the REALIZED aligned layout (the pre-alloc size check budgets
+         * a fixed slack that a non-1MiB-aligned --efi-size can exceed): strict
+         * ordering + no overlap/wrap, within LastUsableLBA, both slots >= 96 MiB. */
+        uint64_t last_usable = total_sectors - 34;
+        uint64_t a_sec = (ixfs_end >= ixfs_start) ? (ixfs_end - ixfs_start + 1) : 0;
+        uint64_t b_sec = (ixfs_b_end >= ixfs_b_start) ? (ixfs_b_end - ixfs_b_start + 1) : 0;
+        uint64_t min_slot = (96ULL * 1024 * 1024) / SECTOR_SIZE;
+        if (!(efi_start <= efi_end && efi_end < bb_start &&
+              bb_start <= bb_end && bb_end < meta_start &&
+              meta_start <= meta_end && meta_end < ixfs_start &&
+              ixfs_start <= ixfs_end && ixfs_end < ixfs_b_start &&
+              ixfs_b_start <= ixfs_b_end && ixfs_b_end < last_usable &&
+              a_sec >= min_slot && b_sec >= min_slot)) {
+            fprintf(stderr, "make-system-disk: A/B layout invalid -- slots %llu/%llu MiB "
+                    "(need >= 96 MiB each); grow the disk or align --efi-size\n",
+                    (unsigned long long)(a_sec * SECTOR_SIZE / (1024 * 1024)),
+                    (unsigned long long)(b_sec * SECTOR_SIZE / (1024 * 1024)));
+            return 1;
+        }
     }
 
     printf("make-system-disk: %s -- %llu MiB (%s)\n", output,
@@ -231,6 +272,10 @@ int main(int argc, char *argv[])
            (unsigned long long)((ixfs_end - ixfs_start + 1) * SECTOR_SIZE /
                                 (1024 * 1024)));
     if (ab_mode) {
+        printf("  Part 5 (ABMeta):  LBA %llu - %llu (%llu KiB)\n",
+               (unsigned long long)meta_start, (unsigned long long)meta_end,
+               (unsigned long long)((meta_end - meta_start + 1) * SECTOR_SIZE /
+                                    1024));
         printf("  Part 4 (IXFS B):  LBA %llu - %llu (%llu MiB)\n",
                (unsigned long long)ixfs_b_start, (unsigned long long)ixfs_b_end,
                (unsigned long long)((ixfs_b_end - ixfs_b_start + 1) * SECTOR_SIZE /
@@ -283,6 +328,14 @@ int main(int argc, char *argv[])
             0xDA000000, 0x0000, 0x4978, 0x46, 0x53, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x02,
             ixfs_b_start, ixfs_b_end, "Impossible OS B");
+
+        /* Entry 4: A/B metadata partition. Distinct type GUID (...4D44... "MD"
+         * vs IXFS ...4653... "FS") so the kernel's IXFS scan never mounts it
+         * and the bootloader can locate the ab_boot_metadata blocks by type. */
+        write_partition_entry(entries + 4 * GPT_ENTRY_SIZE,
+            0xDA000000, 0x0000, 0x4978, 0x4D, 0x44, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01,
+            meta_start, meta_end, "Impossible OS ABMeta");
     }
 
     /* Compute CRC32 of the partition entry array */
@@ -352,6 +405,17 @@ int main(int argc, char *argv[])
             fprintf(info_fp, "IXFS_SIZE=%llu\n",
                     (unsigned long long)((ixfs_end - ixfs_start + 1) *
                                          SECTOR_SIZE));
+            if (ab_mode) {
+                fprintf(info_fp, "META_OFFSET=%llu\n",
+                        (unsigned long long)(meta_start * SECTOR_SIZE));
+                fprintf(info_fp, "META_SIZE=%llu\n",
+                        (unsigned long long)(meta_sectors * SECTOR_SIZE));
+                fprintf(info_fp, "IXFS_B_OFFSET=%llu\n",
+                        (unsigned long long)(ixfs_b_start * SECTOR_SIZE));
+                fprintf(info_fp, "IXFS_B_SIZE=%llu\n",
+                        (unsigned long long)((ixfs_b_end - ixfs_b_start + 1) *
+                                             SECTOR_SIZE));
+            }
             fclose(info_fp);
         }
     }
