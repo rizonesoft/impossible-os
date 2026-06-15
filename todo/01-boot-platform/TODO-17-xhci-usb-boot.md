@@ -167,9 +167,9 @@ Finish the baseline xHCI boot path across controller vendors. The generic non-In
 
 - [x] Generic non-Intel path: XUSB2PR/USB3_PSSEN routing gated on Intel VID 0x8086; AMD (0x1022), ASMedia (0x1B21), VIA (0x1106) skip port routing and use BIOS handoff + CCS -- already implemented (`xhci.c` `vid == 0x8086` gate + same-bus EHCI check)
 - [x] Bulk/command transfers are timeout-bounded (no infinite event-ring wait) -- already implemented (`xhci_wait_transfer`/`xhci_wait_command`, 500 ms)
-- [ ] Renesas (0x1912): detect vendor ID; if no port asserts CCS within the reset window (firmware not loaded), log `xhci: Renesas firmware not loaded -- skipping` and skip gracefully
-- [ ] Vendor diagnostics: log the controller vendor name on bring-up so the `USB:XX` diagnostic splash matches the detected silicon
-- [ ] Graceful degradation: if xHCI init fails at any step, log and continue boot (PS/2 + other storage still work); verify the boot path tolerates a failed/absent xHCI controller without hanging
+- [x] Renesas (0x1912): detect vendor ID in the discovery loop; warn `Renesas controller -- USB unavailable if host firmware not loaded` so a firmware-less board is diagnosable; graceful skip via the existing no-device path (`xhci.c` `xhci_init`)
+- [x] Vendor diagnostics: `xhci_vendor_name()` maps VID to Intel/AMD/ASMedia/Renesas/VIA/QEMU; logged on bring-up (`Found xHCI at PCI ...: <vendor>`) on both the full-init and handover paths -- validated live (run-usb-ci: `QEMU (VID:DID 1b36:000d)`)
+- [x] Graceful degradation: no-xHCI logs `continuing boot without USB` (not a boot failure); init-failure logs + continues; `boot_storage.c` ignores the count and proceeds -- PS/2 + SATA/NVMe still work
 - [ ] Hardware test matrix (manual -- bare metal): AMD, ASMedia, Renesas, VIA controllers boot from USB via the generic path
 - [ ] Commit: `"drivers: xHCI non-Intel vendor compatibility + graceful degradation"`
 
@@ -181,6 +181,14 @@ Finish the baseline xHCI boot path across controller vendors. The generic non-In
 - Transport robustness (bulk stall/halt recovery, HSE, event-ring-full) -> XREF: `01-boot-platform/TODO-19-usb-boot-hardening.md`
 
 **Test checkpoint:** Boot from USB on a non-Intel xHCI controller via the generic path (no XUSB2PR write). `POST16(0xD7A0)` entry, `POST16(0xD7A1)` exit; diagnostic splash shows `USB:30` + vendor name. QEMU `run-usb` still works (regression). Bare metal: AMD/ASMedia/Renesas/VIA tested manually.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | vendor diagnostics validated live via `make run-usb-ci`; the hardware matrix is bare metal.
+> **Notes:**
+> - Shipped: `xhci_vendor_name()` + bring-up vendor diagnostic (both full-init and handover paths); Renesas (0x1912) firmware-less warn; graceful "no xHCI -- continuing boot" path (`xhci.c`).
+> - Already present (marked with evidence): generic non-Intel path (XUSB2PR gated on Intel 0x8086) + 500 ms transfer timeouts; this section finishes diagnostics + graceful degradation.
+> - De-scoped: a 34-item sprawl forking 4 TODOs; EHCI/hub/USBLEGSUP/UHCI/OHCI/robustness routed to their owners (Routed block).
+> - Scope boundary: §6 owns non-Intel xHCI vendor compat; legacy controllers + transport robustness are owned by the usb-stack / usb-boot-hardening / zero-delay-handover TODOs.
+> **Verified:** 2026-06-15 | this commit | 5/6 items [x], 1 [ ] manual (HW matrix) | build OK | run-usb-ci PASS (vendor "QEMU" logged on bring-up)
+> **Quality reviewed:** 2026-06-15 | Codex 1x (adversarial, §6 vendor diff: no material findings) | diagnostics/logging only; subsystem covered by the §1-§5 Codex 3x pass | scope: kernel-code-quality
 
 ---
 

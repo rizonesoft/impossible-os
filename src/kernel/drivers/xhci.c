@@ -147,6 +147,23 @@ static void xhci_bios_handoff(struct xhci_controller *hc)
 
 /* ---- PCI discovery ------------------------------------------------------- */
 
+/* Map an xHCI controller PCI vendor ID to a human-readable name for the
+ * bring-up diagnostic. The generic path treats every non-Intel vendor the
+ * same (no XUSB2PR port routing); this is purely for the boot log / USB:XX
+ * diagnostic splash so the operator can see which silicon was detected. */
+static const char *xhci_vendor_name(uint16_t vid)
+{
+    switch (vid) {
+    case 0x8086: return "Intel";
+    case 0x1022: return "AMD";
+    case 0x1B21: return "ASMedia";
+    case 0x1912: return "Renesas";
+    case 0x1106: return "VIA";
+    case 0x1B36: return "QEMU";
+    default:     return "unknown";
+    }
+}
+
 /* Try to initialize an xHCI controller at the given PCI location.
  * Returns 0 on success, -1 on failure. */
 static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
@@ -631,9 +648,15 @@ int xhci_init(void)
                     sub     == XHCI_PCI_SUBCLASS &&
                     prog_if == XHCI_PCI_PROG_IF) {
                     uint16_t did = pci_read16((uint8_t)bus, dev, func, PCI_DEVICE_ID);
-                    klog(LOG_INFO, "xhci", "Found xHCI at PCI %u:%u.%u (VID:DID %04x:%04x)",
+                    /* Vendor diagnostics on bring-up (fires for both the full
+                     * init path and the bootloader-handover path) so the USB:XX
+                     * splash matches the detected silicon. */
+                    klog(LOG_INFO, "xhci", "Found xHCI at PCI %u:%u.%u: %s (VID:DID %04x:%04x)",
                          (uint64_t)bus, (uint64_t)dev, (uint64_t)func,
-                         (uint64_t)vid, (uint64_t)did);
+                         xhci_vendor_name(vid), (uint64_t)vid, (uint64_t)did);
+                    if (vid == 0x1912)
+                        klog(LOG_WARN, "xhci",
+                             "Renesas controller -- USB unavailable if host firmware not loaded");
                     if (xhci_init_controller((uint8_t)bus, dev, func) != 0)
                         klog(LOG_ERROR, "xhci", "Controller init failed at %u:%u.%u",
                              (uint64_t)bus, (uint64_t)dev, (uint64_t)func);
@@ -643,7 +666,11 @@ int xhci_init(void)
     }
 
     if (num_controllers == 0) {
-        klog(LOG_DEBUG, "xhci", "No xHCI controllers found");
+        /* Graceful degradation: no xHCI is not a boot failure -- PS/2 input and
+         * SATA/NVMe storage still work. Legacy-only USB (EHCI/UHCI/OHCI) is
+         * handled by the usb-boot-hardening fallback work, not here. */
+        klog(LOG_INFO, "xhci",
+             "No xHCI controller -- continuing boot without USB (PS/2 + disk still work)");
     }
 
     return num_controllers;
