@@ -76,16 +76,19 @@ Define where boot slot metadata is stored and the v1 wire format. Design review 
 - [/] Shared validator/default/CRC + newest-copy selector shipped in the header; `boot_meta_read()`/`boot_meta_write()` disk adapter (`ab_boot.c`) + kernel adapter land in §2/§5 (no disk blocks until §2's layout)
 - [x] Commit: `"boot: A/B boot metadata v1 wire ABI -- shared header + CRC + validator + tests"`
 
-**Test checkpoint:** `make test-boot` -- the 10 `ab_boot:` cases pass (default-valid, 5 reject paths, CRC-excludes-field, 3 newest-copy selections). The on-disk round-trip + the `"Slot A: tries=0 ..."` serial line land with §2's disk layout. Test on: TCG `make test-boot`; bare metal exercises the §2 disk path.
+**Test checkpoint:** `make test-boot` -- the 12 `ab_boot:` cases pass (default-valid, 7 reject paths incl. 2 per-slot domain checks, CRC-excludes-field, 3 newest-copy selections). The on-disk round-trip + the `"Slot A: tries=0 ..."` serial line land with §2's disk layout. Test on: TCG `make test-boot`; bare metal exercises the §2 disk path.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 `ab_boot` cases, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 12 `ab_boot` cases, 0 failures
 
 > **Notes:**
-> - **What shipped:** `include/boot/ab_boot_metadata.h` -- the A/B slot metadata v1 wire struct (60 bytes) + static-inline validate/default/finalize/compute_crc/select_newest; 10 unit tests in `test_ab_boot.c`.
+> - **What shipped:** `include/boot/ab_boot_metadata.h` -- the A/B slot metadata v1 wire struct (60 bytes) + static-inline validate/default/finalize/compute_crc/select_newest; 12 unit tests in `test_ab_boot.c`.
 > - **How it integrates:** shared static-inline so bootloader + kernel use one definition; CRC-32/IEEE-802.3 mirrors `boot_health_handoff.h`; full v1 layout pinned now (`_Static_assert`) so §7/§8 fields ship later without moving bytes.
 > - **Downstream effects:** §2 adds the GPT/disk read/write adapter; §3 selection, §4 counting, §5 mark-good, §7 redundancy, §8 floor all consume this struct.
 > - **Canonical doc:** `include/boot/ab_boot_metadata.h`.
 > - **Scope boundary:** §1 owns the struct + pure logic; disk transport is §2, increment/mark/select behavior is §3/§4/§5, redundancy is §7, the anti-rollback floor reuses `boot_rollback.c` (§8).
+
+> **Verified:** 2026-06-15 | commit `483f8982` | 5/6 items | build OK | tests 2725 PASS
+> **Quality reviewed:** 2026-06-15 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 2M+1L fixed, 0 open | scope: boot-code-quality
 
 ---
 

@@ -59,7 +59,12 @@ struct ab_boot_slot {
     unsigned int rollback_index; /* monotonic security version (sec 8) */
 };
 
+_Static_assert(sizeof(unsigned int) == 4u, "ab_boot wire ABI assumes 32-bit unsigned int");
 _Static_assert(sizeof(struct ab_boot_slot) == 16u, "ab_boot_slot must be 16 bytes");
+_Static_assert(__builtin_offsetof(struct ab_boot_slot, tries) == 0, "");
+_Static_assert(__builtin_offsetof(struct ab_boot_slot, successful) == 4, "");
+_Static_assert(__builtin_offsetof(struct ab_boot_slot, priority) == 8, "");
+_Static_assert(__builtin_offsetof(struct ab_boot_slot, rollback_index) == 12, "");
 
 struct ab_boot_metadata {
     unsigned int magic;                          /* AB_BOOT_META_MAGIC */
