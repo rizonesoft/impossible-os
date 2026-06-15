@@ -12,6 +12,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_media.h"
 #include "registry.h"
 
 /* ---- Boot device type (S3, S4) ---- */
@@ -273,10 +274,29 @@ static void test_registry_boot_path_detail(void)
     RegCloseKey(hKey);
 }
 
+/* boot_media_classify(us_per_4kib): the fast/medium/slow thresholds that drive the
+ * deferred-klog + test-skip adaptations. Pure; boundary-checked. */
+static void test_boot_media_classify(void)
+{
+    TEST_ASSERT_EQ(boot_media_classify(0), BOOT_MEDIA_FAST, "0us -> fast");
+    TEST_ASSERT_EQ(boot_media_classify(BOOT_MEDIA_FAST_MAX_US - 1),
+                   BOOT_MEDIA_FAST, "just under 1ms -> fast");
+    TEST_ASSERT_EQ(boot_media_classify(BOOT_MEDIA_FAST_MAX_US),
+                   BOOT_MEDIA_MEDIUM, "exactly 1ms -> medium");
+    TEST_ASSERT_EQ(boot_media_classify(BOOT_MEDIA_MEDIUM_MAX_US - 1),
+                   BOOT_MEDIA_MEDIUM, "just under 10ms -> medium");
+    TEST_ASSERT_EQ(boot_media_classify(BOOT_MEDIA_MEDIUM_MAX_US),
+                   BOOT_MEDIA_SLOW, "exactly 10ms -> slow");
+    TEST_ASSERT_EQ(boot_media_classify(50000), BOOT_MEDIA_SLOW,
+                   "50ms (USB 2.0) -> slow");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_device(void)
 {
+    test_suite_register_cat("Boot media: speed classify thresholds",
+        test_boot_media_classify, TEST_CAT_BOOT);
     test_suite_register_cat("Boot device: type valid",
         test_boot_device_type_valid, TEST_CAT_BOOT);
     test_suite_register_cat("Boot device: path non-empty",

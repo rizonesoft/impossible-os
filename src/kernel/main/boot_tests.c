@@ -12,6 +12,7 @@
 #include "kernel/fs/ixfs.h"
 #include "kernel/boot_splash.h"
 #include "kernel/boot_info.h"
+#include "kernel/boot_media.h"
 #include "kernel/test/test.h"
 #include "kernel/test/test_usermode.h"
 #include "main/main_internal.h"
@@ -37,6 +38,16 @@ void boot_tests_run(void)
                                  !g_boot_info.config.test_kernel_skip;
         int run_usermode_tests = g_boot_info.config.debug ||
                                  !g_boot_info.config.test_usermode_skip;
+
+        /* On slow USB media, skip the (long) kernel test sweep in debug mode to keep
+         * the boot usable -- but HONOR an explicit `test=1` (the user is testing on
+         * the slow target on purpose). */
+        if (run_kernel_tests && !g_boot_info.config.test &&
+            boot_media_speed() == BOOT_MEDIA_SLOW) {
+            klog(LOG_INFO, "boot",
+                 "Slow boot media -- skipping kernel test sweep (debug mode)");
+            run_kernel_tests = 0;
+        }
 
         /* Apply category filter and quiet mode from boot.conf */
         uint8_t suite_val = g_boot_info.config.test_suite;

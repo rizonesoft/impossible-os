@@ -59,7 +59,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [/]   |
 | 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [/]   |
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [x]   |
-| 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
+| 💎  |  10   | Boot media speed detection                         | §8            |  [/]   |
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
 | ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [ ]   |
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [ ]   |
@@ -321,13 +321,21 @@ For slow media, batch log entries in RAM and write once at boot end instead of p
 
 Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and adjust behavior.
 
-- [ ] At first disk I/O: time a 4 KiB read -- classify as fast (<1ms), medium (1-10ms), slow (>10ms)
-- [ ] Store in `boot_info.boot_media_speed` (0=unknown, 1=fast, 2=medium, 3=slow)
-- [ ] Kernel uses this to: enable deferred klog (slow), skip non-critical boot tests (slow), adjust timeouts
-- [ ] Log: `"[BOOT] Boot media speed: %s (%u µs/4KiB)"` with classification
-- [ ] Commit: `"kernel: boot media speed detection -- adjust behavior for slow USB"`
+- [x] `boot_media_probe()` times a 4 KiB `vfs_read` of the first openable boot file and `boot_media_classify()` maps it to fast (<1ms) / medium (1-10ms) / slow (>10ms) (`boot_media.c`); idempotent, UNKNOWN if no candidate readable
+- [x] Stored in a KERNEL global `s_boot_media_speed` + `boot_media_speed()` getter -- NOT a `boot_info` ABI field (it is a kernel-runtime measurement; avoids a BOOT_INFO_VERSION bump) -> design adoption
+- [x] Consumers: SLOW proactively calls `klog_set_deferred(1)` (§9) before per-subsystem flushes; the kernel test sweep is skipped on SLOW media in debug mode (honoring explicit `test=1`)
+- [x] Log: `"Boot media speed: %s (%u us/4KiB)"` with the classification + measured time
+- [ ] DEFERRED: "adjust timeouts" on slow media -- the bulk/control timeouts are already bounded (§5); a media-class-scaled timeout knob is a future refinement with no concrete consumer today
+- [x] Commit: `"kernel: boot media speed detection -- adjust behavior for slow USB"`
 
-**Test checkpoint:** SATA SSD → "fast", USB 3.0 stick → "medium", USB 2.0 stick → "slow".
+**Test checkpoint:** SATA SSD / NVMe → "fast" (QEMU emulated disk classifies fast); USB 3.0 stick → "medium"; USB 2.0 stick → "slow" (proactively enables deferred klog). Unit test asserts the `boot_media_classify` thresholds.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_boot_device.c` "Boot media: speed classify thresholds" (`boot_media_classify` boundary matrix); the live timed probe is validated on bare metal (SSD fast vs USB 2.0 slow).
+> **Notes:**
+> - Shipped: `boot_media.{h,c}` -- pure `boot_media_classify()` + `boot_media_speed_name()` + `s_boot_media_speed` global + `boot_media_probe()` (timed 4 KiB `vfs_read`, classify, log, deferred-on-slow); wired into `boot_phase2` after `klog_disk_enable`.
+> - How it runs: probes once (idempotent) right after klog disk is up so `klog_set_deferred(1)` takes effect before the slow per-subsystem flushes; UNKNOWN fallback leaves §8's reactive >5s-flush auto-enable to cover a mis-probe.
+> - Downstream: consumes §9's `klog_set_deferred` (proactive deferred mode) and gates the §8/§9 slow-media path; the boot-test-skip trims debug boots on slow USB.
+> - Codex design review adoptions (kernel global not boot_info field; timed-probe; proactive deferred) in the ship commit.
+> - Scope boundary: §10 owns media classification + the two adaptations (deferred-klog, test-skip); the deferred-flush machinery is §9, the bounded loop is §8; media-class-scaled timeouts are a deferred refinement.
 
 ---
 
@@ -454,7 +462,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
 | 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ✅ §8 seq-cursor + progress  |
 | 💎 | Deferred flush (slow media)  | ✅ Lazy writeback         | ✅ dirty_writeback_centisecs | ✅ §9 RAM batch + boot-end flush |
-| 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ⬜ §10                      |
+| 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ✅ §10 4KiB-probe classify  |
 | ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ⬜ §12 🚀                   |
 | 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §13                      |
 | 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §14                      |

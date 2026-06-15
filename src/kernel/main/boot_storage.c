@@ -11,6 +11,7 @@
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
+#include "kernel/boot_media.h"
 #include "kernel/printk.h"
 #include "kernel/hw_dump.h"
 #include "kernel/mm/heap.h"
@@ -564,6 +565,13 @@ void boot_phase2(void)
     }
 
     boot_splash_status("Checking boot flags...");
+
+    /* --- Boot media speed detection: BEFORE both the C:\DEBUG live-log enable AND
+     * klog_disk_enable, so a SLOW classification arms deferred klog (klog_set_deferred)
+     * before ANY disk-log flush -- live-mode klog() and klog_disk_enable()'s own first
+     * klog_disk_flush() -- pays the slow-media cost. VFS is mounted above; the timed
+     * 4 KiB probe read is clean here, free of klog disk activity. --- */
+    boot_media_probe();
 
     /* Check for debug boot flag on C:\ */
     if (vfs_is_mounted('C')) {
