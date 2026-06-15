@@ -14,6 +14,7 @@
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "kernel/klog.h"
+#include "kernel/sched/spinlock.h"
 
 /* ---- Internal state ---- */
 
@@ -194,24 +195,38 @@ void terminal_puts(const char *s, int len)
     }
 }
 
-/* ---- Input ring buffer ---- */
+/* ---- Input ring buffer ----
+ * Written from interrupt context (PS/2 IRQ and the USB HID tick-ISB poller both
+ * route keystrokes here via terminal_key_input) and drained from the shell
+ * thread. Guard head/tail/ring with an irqsave spinlock so an SMP shell read
+ * cannot lose / duplicate / corrupt input against a keyboard ISR push. */
+static spinlock_t term_input_lock = SPINLOCK_INIT;
 
 void terminal_key_input(char c)
 {
-    int next = (ring_head + 1) % TERM_INPUT_BUF;
-    if (next == ring_tail)
-        return;  /* buffer full, drop */
-    input_ring[ring_head] = c;
-    ring_head = next;
+    uint64_t flags;
+    int next;
+    spin_lock_irqsave(&term_input_lock, &flags);
+    next = (ring_head + 1) % TERM_INPUT_BUF;
+    if (next != ring_tail) {      /* drop on full */
+        input_ring[ring_head] = c;
+        ring_head = next;
+    }
+    spin_unlock_irqrestore(&term_input_lock, flags);
 }
 
 char terminal_trygetchar(void)
 {
     char c;
-    if (ring_tail == ring_head)
+    uint64_t flags;
+    spin_lock_irqsave(&term_input_lock, &flags);
+    if (ring_tail == ring_head) {
+        spin_unlock_irqrestore(&term_input_lock, flags);
         return 0;  /* empty */
+    }
     c = input_ring[ring_tail];
     ring_tail = (ring_tail + 1) % TERM_INPUT_BUF;
+    spin_unlock_irqrestore(&term_input_lock, flags);
     return c;
 }
 

@@ -98,6 +98,41 @@ static const char scancode_shifted[0x59] = {
     0,                                           /* 58 */
 };
 
+/* --- USB HID boot-protocol usage -> ASCII (US QWERTY) ---
+ * Indexed by HID usage ID 0x00-0x3F (the printable boot-protocol range).
+ * Independent of the PS/2 scancode tables and the shift_held latch -- the HID
+ * report carries its own modifier byte, so USB keys never mutate the shared
+ * PS/2 modifier state. */
+#define HID_USAGE_MAX 0x40
+
+static const char hid_normal[HID_USAGE_MAX] = {
+    0, 0, 0, 0, 'a', 'b', 'c', 'd',            /* 00-07 (01-03 = rollover/error) */
+    'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l',    /* 08-0F */
+    'm', 'n', 'o', 'p', 'q', 'r', 's', 't',    /* 10-17 */
+    'u', 'v', 'w', 'x', 'y', 'z', '1', '2',    /* 18-1F */
+    '3', '4', '5', '6', '7', '8', '9', '0',    /* 20-27 */
+    '\n', 27, '\b', '\t', ' ', '-', '=', '[',  /* 28-2F (28=Enter 29=Esc 2A=BS 2B=Tab 2C=Sp) */
+    ']', '\\', 0, ';', '\'', '`', ',', '.',    /* 30-37 (32=non-US# skip) */
+    '/', 0, 0, 0, 0, 0, 0, 0,                  /* 38-3F (39=CapsLock, 3A+=F-keys) */
+};
+
+static const char hid_shifted[HID_USAGE_MAX] = {
+    0, 0, 0, 0, 'A', 'B', 'C', 'D',
+    'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+    'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+    'U', 'V', 'W', 'X', 'Y', 'Z', '!', '@',
+    '#', '$', '%', '^', '&', '*', '(', ')',
+    '\n', 27, '\b', '\t', ' ', '_', '+', '{',
+    '}', '|', 0, ':', '"', '~', '<', '>',
+    '?', 0, 0, 0, 0, 0, 0, 0,
+};
+
+/* HID boot-protocol modifier byte bits */
+#define HID_MOD_LCTRL   0x01
+#define HID_MOD_LSHIFT  0x02
+#define HID_MOD_RCTRL   0x10
+#define HID_MOD_RSHIFT  0x20
+
 /* Scan code constants for modifier keys */
 #define SC_LSHIFT_PRESS   0x2A
 #define SC_LSHIFT_RELEASE 0xAA
@@ -400,6 +435,48 @@ void keyboard_inject_scancode(uint8_t scancode)
         else
             kb_buffer_push(c);
     }
+}
+
+/* Inject one newly-pressed USB HID boot-protocol key. Uses the report's
+ * modifier byte directly (NOT the PS/2 shift_held/ctrl_held latches), so USB
+ * and PS/2 input coexist without clobbering each other's modifier state. The
+ * caller (the HID report parser) supplies only freshly-pressed usages and
+ * filters error/rollover usages (0x01-0x03). Routes to the same Ctrl-C signal
+ * / terminal / kb_buffer path as the PS/2 driver. ISR-context-safe
+ * (kb_buffer_push + terminal_key_input take their own locks). */
+void keyboard_inject_hid_key(uint8_t usage, uint8_t hid_modifiers)
+{
+    char c;
+    int shift = (hid_modifiers & (HID_MOD_LSHIFT | HID_MOD_RSHIFT)) ? 1 : 0;
+    int ctrl  = (hid_modifiers & (HID_MOD_LCTRL | HID_MOD_RCTRL)) ? 1 : 0;
+
+    /* Caps Lock (HID usage 0x39) toggles the shared latch on each press, like
+     * the PS/2 path; it produces no character. */
+    if (usage == 0x39) {
+        capslock_on = !capslock_on;
+        return;
+    }
+
+    if (usage >= HID_USAGE_MAX)
+        return;
+    c = shift ? hid_shifted[usage] : hid_normal[usage];
+    if (c == 0)
+        return;
+
+    /* CapsLock toggles letter case (HID reports carry no caps state, so reuse
+     * the shared toggle the PS/2 path maintains -- a benign single-byte read). */
+    if (capslock_on && c >= 'a' && c <= 'z') c = (char)(c - 32);
+    else if (capslock_on && c >= 'A' && c <= 'Z') c = (char)(c + 32);
+
+    if (ctrl && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 1);
+    else if (ctrl && c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 1);
+
+    if (c == 3) { signal_ctrl_c(); return; }
+
+    if (terminal_is_open())
+        terminal_key_input(c);
+    else
+        kb_buffer_push(c);
 }
 
 void keyboard_reset_state(void)

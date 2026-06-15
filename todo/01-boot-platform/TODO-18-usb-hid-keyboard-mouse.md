@@ -43,7 +43,7 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 | --- | :---: | ----------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | xHCI interrupt endpoint setup                   | --          |  [x]   |
 | 💎  |   2   | Interrupt transfer polling (periodic TRBs)       | §1         |  [x]   |
-| 💎  |   3   | USB HID boot-protocol keyboard driver            | §2         |  [ ]   |
+| 💎  |   3   | USB HID boot-protocol keyboard driver            | §2         |  [x]   |
 | 💎  |   4   | USB HID boot-protocol mouse driver               | §2         |  [ ]   |
 | 💎  |   5   | Input source coexistence (PS/2 + USB)            | §3, §4     |  [ ]   |
 | ⭐  |   6   | Hot-plug keyboard/mouse detection                | §5         |  [ ]   |
@@ -112,19 +112,28 @@ Set up periodic interrupt transfers to receive HID reports from keyboard/mouse.
 
 Parse boot-protocol keyboard reports (8 bytes) into keystrokes.
 
-- [ ] Boot-protocol keyboard report format: `[modifier, reserved, key1, key2, key3, key4, key5, key6]`
-- [ ] Modifier byte: bits for L/R Ctrl, Shift, Alt, GUI
-- [ ] Key bytes: USB HID usage IDs (0x04=A, 0x05=B, ..., 0x27=0, 0x28=Enter, 0x2A=Backspace)
-- [ ] Convert USB HID usage IDs to ASCII via lookup table (same as PS/2 scancode→ASCII)
-- [ ] Feed characters into `keyboard_buffer[]` (same ring buffer as PS/2 keyboard)
-- [ ] `keyboard_trygetchar()` returns characters from either PS/2 or USB -- transparent to callers
-- [ ] SET_PROTOCOL(0) to force boot-protocol mode (some keyboards default to report-protocol)
-- [ ] SET_IDLE(0) to suppress duplicate reports when no keys change
-- [ ] Commit: `"drivers: USB HID boot-protocol keyboard -- type in shell via USB keyboard"`
+- [x] Boot report parsed in `xhci_hid_parse_keyboard` (`xhci_dev.c`): `[modifier, reserved, key1..key6]`, new-key diff vs `dev->hid_prev_report`, rollover (0x01-0x03) ignored
+- [x] Modifier byte handled in `keyboard_inject_hid_key` (`keyboard.c`): L/R Shift (0x02/0x20) + L/R Ctrl (0x01/0x10), independent of the PS/2 latch
+- [x] Key bytes = USB HID usage IDs; `hid_normal`/`hid_shifted[0x40]` tables cover the printable boot range (0x04-0x38) + Enter/Esc/BS/Tab/Space
+- [x] HID usage -> ASCII via the dedicated `hid_normal`/`hid_shifted` tables (own modifier handling, not the PS/2 `shift_held` latch); Caps Lock (0x39) toggles case
+- [x] Feeds the shared input path (`keyboard_inject_hid_key` -> `terminal_key_input` / `kb_buffer_push`, the SMP-safe ring) so input reaches the shell
+- [x] `keyboard_trygetchar()` is source-blind -- USB + PS/2 both land in the same buffer/terminal ring (now irqsave-locked)
+- [x] SET_PROTOCOL(0) issued in `xhci_hid_identify` to force boot protocol; keyboard failure logged
+- [x] SET_IDLE(0) issued so the device reports only on change (no duplicate held-key reports)
+- [x] Commit: `"drivers: USB HID boot-protocol keyboard -- type in shell via USB keyboard"`
 
 **Test checkpoint:** QEMU with `-device usb-kbd` -- type `dir` at the `C:\>` prompt, output appears. Also test on bare metal USB keyboard.
 
 **Regression risk:** LOW -- additive driver. PS/2 keyboard continues to work. If USB keyboard produces garbage, disconnect and use PS/2.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_hid.c` keyboard usage->ASCII (9 asserts: shift/caps/rollover); live typing via QEMU usb-kbd.
+> **Notes:**
+> - Shipped: HID boot-keyboard parsing -- `keyboard.c` `hid_normal`/`hid_shifted` tables + `keyboard_inject_hid_key` (own modifier handling); `xhci_dev.c` `xhci_hid_parse_keyboard` (new-key diff, rollover-skip) wired into the §2 poll.
+> - Integrates: routes to the shared `terminal_key_input`/`kb_buffer` path so `keyboard_trygetchar()` is source-blind (USB + PS/2); SET_PROTOCOL(0)/SET_IDLE(0) force boot protocol; report buffer zeroed per transfer.
+> - Hardening: the terminal input ring is now SMP-safe (irqsave spinlock -- fixes a pre-existing PS/2+USB ISR-vs-thread race); keyboard EP MaxPkt < 8 rejected; Caps Lock (0x39) toggles case.
+> - Review: Codex 2x (design no-ship redirect + adversarial); 1H+2M fixed + 3 design hazards adopted pre-code (stale bytes, modifier latch, rollover); validated live (typed `dir` at C:\> -> executed).
+> - Scope boundary: §3 owns keyboard parsing; mouse parsing is §4, PS/2+USB coexistence is §5, non-boot report-protocol descriptor parsing is out of scope.
+> **Verified:** 2026-06-15 | this commit | 9/9 items | build OK | QEMU usb-kbd typed `dir` -> executed; smoke PASS; storage 22/22
+> **Quality reviewed:** 2026-06-15 | Codex 2x (design, adversarial) | 1H+2M fixed | scope: kernel-code-quality + desktop-code-quality
 
 ---
 
@@ -191,7 +200,7 @@ Comprehensive USB input status in serial log.
 | ⭐ | Feature                   | 🪟 Win11                    | 🐧 Linux                     | 🚀 Impossible OS              |
 |----|---------------------------|--------------------------|---------------------------|----------------------------|
 | 💎 | USB HID interrupt EP      | ✅ usbxhci.sys           | ✅ xhci-hcd               | ✅ §1 Configure Endpoint   |
-| 💎 | USB keyboard in boot      | ✅ HID minidriver        | ✅ usbhid + usbkbd       | ⬜ §3                      |
+| 💎 | USB keyboard in boot      | ✅ HID minidriver        | ✅ usbhid + usbkbd       | ✅ §3 boot-proto parse     |
 | 💎 | USB mouse in boot         | ✅ HID minidriver        | ✅ usbhid + usbmouse     | ⬜ §4                      |
 | 💎 | PS/2 + USB coexistence    | ✅ Automatic             | ✅ Automatic              | ⬜ §5                      |
 | 💎 | USB HID hot-plug          | ✅ PnP Manager           | ✅ udev + usbhid          | ⬜ §6                      |

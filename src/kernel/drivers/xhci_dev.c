@@ -23,6 +23,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
 #include "kernel/timer.h"
+#include "kernel/drivers/keyboard.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
@@ -1016,6 +1017,11 @@ static int xhci_hid_queue_report(struct xhci_controller *hc,
     if (dev->int_in_report_phys == 0)
         return -1;
 
+    /* Zero the report buffer before each transfer so a short packet cannot
+     * leave stale key bytes that the parser would read as still-held keys. */
+    if (dev->int_in_report)
+        dev_zero(dev->int_in_report, dev->int_in_max_pkt);
+
     dev_zero(&trb, sizeof(trb));
     trb.parameter = dev->int_in_report_phys;
     /* status: TRB Transfer Length (16:0) | Interrupter Target (31:22) = IR1. */
@@ -1039,6 +1045,37 @@ static struct xhci_device *hid_dev_by_slot(struct xhci_controller *hc, uint8_t s
             devices[i].slot_id == slot)
             return &devices[i];
     return (struct xhci_device *)0;
+}
+
+/* Parse a boot-protocol keyboard report (8 bytes): emit each newly-pressed key
+ * (in this report's key slots 2..7 but not the previous report) via
+ * keyboard_inject_hid_key. Reports whose key array signals error/rollover
+ * (usage 0x01-0x03, set when >6 keys are held) are ignored and do NOT advance
+ * the previous-report state, so they cannot look like an all-keys-released
+ * event. Runs in the BSP tick-ISR context; keyboard_inject_hid_key is ISR-safe. */
+static void xhci_hid_parse_keyboard(struct xhci_device *dev)
+{
+    const uint8_t *r = dev->int_in_report;
+    uint8_t modifiers = r[0];
+    int i, j;
+
+    for (i = 2; i < 8; i++)
+        if (r[i] >= 0x01 && r[i] <= 0x03)
+            return;   /* rollover/error -- ignore, keep prev report */
+
+    for (i = 2; i < 8; i++) {
+        uint8_t key = r[i];
+        int was_held = 0;
+        if (key == 0)
+            continue;
+        for (j = 2; j < 8; j++)
+            if (dev->hid_prev_report[j] == key) { was_held = 1; break; }
+        if (!was_held)
+            keyboard_inject_hid_key(key, modifiers);
+    }
+
+    for (i = 0; i < 8; i++)
+        dev->hid_prev_report[i] = r[i];
 }
 
 /* Tick-mux callback (~10 ms): drain the dedicated HID event ring, deliver each
@@ -1083,8 +1120,13 @@ void xhci_hid_poll(void)
                 continue;
             }
 
-            /* The report is now in dev->int_in_report for the keyboard/mouse
-             * parsers. Re-queue for the next report; on enqueue failure stop. */
+            /* Parse the report into input. Boot keyboards feed the shared
+             * keyboard buffer; mouse parsing lands in the mouse driver section.
+             * (Parse BEFORE re-queue: re-queue zeroes the buffer.) */
+            if (dev->hid_proto == USB_PROTO_HID_KEYBOARD)
+                xhci_hid_parse_keyboard(dev);
+
+            /* Re-queue for the next report; on enqueue failure stop. */
             if (xhci_hid_queue_report(hc, dev) != 0)
                 dev->int_in_polling = 0;
         }
@@ -1226,6 +1268,15 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
         return -1;
     }
 
+    /* A boot keyboard report is a fixed 8 bytes; reject an endpoint too small
+     * to carry one so the parser never reads past a short report. */
+    if (hid_proto == USB_PROTO_HID_KEYBOARD && dev->int_in_max_pkt < 8) {
+        klog(LOG_WARN, "usb-hid",
+             "keyboard EP MaxPkt=%u < 8 -- not a boot keyboard, skipping",
+             (uint64_t)dev->int_in_max_pkt);
+        return -1;
+    }
+
     /* ---- Allocate Transfer Ring for the Interrupt-IN endpoint ---- */
     if (ep0_ring_init(&dev->int_in_ring) != 0) {
         klog(LOG_ERROR, "usb-hid",
@@ -1300,6 +1351,32 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
                 ep0_ring_free(&dev->int_in_ring);
             return -1;
         }
+    }
+
+    /* Force boot protocol (SET_PROTOCOL 0) so we get the fixed 8-byte report
+     * regardless of the device default, and SET_IDLE 0 so the device reports
+     * only on change (no duplicate reports while a key is held). HID class
+     * requests: bmRequestType 0x21 (host->device, class, interface). Best
+     * effort -- a device that NAKs these still works in its default mode. */
+    {
+        uint8_t setup[8];
+        int set_proto_rc;
+        setup[0] = 0x21; setup[1] = 0x0B;        /* SET_PROTOCOL */
+        setup[2] = 0x00; setup[3] = 0x00;        /* wValue = 0 (boot protocol) */
+        setup[4] = dev->hid_iface; setup[5] = 0; /* wIndex = interface */
+        setup[6] = 0x00; setup[7] = 0x00;        /* wLength = 0 */
+        set_proto_rc = xhci_control_transfer(hc, dev, setup, (void *)0, 0, 0);
+
+        setup[1] = 0x0A;                         /* SET_IDLE, wValue = 0 (infinite) */
+        xhci_control_transfer(hc, dev, setup, (void *)0, 0, 0);
+
+        /* The keyboard parser assumes the fixed 8-byte boot report. If
+         * SET_PROTOCOL(boot) was NAKed the device may stay in report protocol,
+         * so the 8-byte layout is not guaranteed -- warn loudly. Boot-subclass
+         * devices default to boot protocol, so this is usually still usable. */
+        if (set_proto_rc != 0 && hid_proto == USB_PROTO_HID_KEYBOARD)
+            klog(LOG_WARN, "usb-hid",
+                 "keyboard SET_PROTOCOL(boot) failed -- report layout may differ");
     }
 
     dev->is_hid = 1;

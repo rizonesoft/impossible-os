@@ -36,6 +36,12 @@ char keyboard_trygetchar(void);
  * exactly as if the scan code came from the PS/2 IRQ handler. */
 void keyboard_inject_scancode(uint8_t scancode);
 
+/* Inject one newly-pressed USB HID boot-protocol key (usage ID + the report's
+ * modifier byte). Independent of the PS/2 modifier latches; routes to the same
+ * Ctrl-C / terminal / kb_buffer path so keyboard_trygetchar() is source-blind.
+ * Caller filters error/rollover usages (0x01-0x03). */
+void keyboard_inject_hid_key(uint8_t usage, uint8_t hid_modifiers);
+
 /* Reset all latched keyboard state: ring buffer plus every modifier
  * (shift / ctrl / alt / capslock) and any pending 0xE0 prefix. Used by
  * test infrastructure between injection sequences so a stuck modifier

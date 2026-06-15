@@ -253,6 +253,7 @@ struct xhci_device {
     uint64_t  int_in_report_phys;    /* DMA buffer the controller writes reports to */
     uint8_t  *int_in_report;         /* virt alias of int_in_report_phys */
     uint8_t   int_in_polling;        /* 1 once a report TRB is queued + poller live */
+    uint8_t   hid_prev_report[8];    /* last keyboard boot report (new-key diff) */
     struct xhci_controller *owner;   /* owning controller (slot IDs are per-controller) */
 
     /* Config descriptor inline storage (avoids separate allocation) */
