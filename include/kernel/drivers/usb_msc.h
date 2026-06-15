@@ -108,5 +108,33 @@ const struct usb_msc_info *usb_msc_get_info(struct xhci_device *dev);
  * class. Pure: reads only the sense key (byte 2 bits 3:0). Exposed for tests. */
 msc_err_class_t msc_sense_classify(const uint8_t *sense);
 
+/* TEST UNIT READY readiness-poll action -- decided purely from a TUR result so
+ * the poll loop's branching is unit-testable without a live controller. The
+ * two non-retry stops are deliberately distinct: ABORT means the BOT pipe is
+ * desynced (sending another CBW is unsafe), GIVEUP means the pipe is healthy
+ * but the device reported a hard SCSI error that no wait will clear. */
+typedef enum {
+    MSC_TUR_READY = 0,   /* device reported ready -- stop polling, success */
+    MSC_TUR_WAIT,        /* transient (spin-up / post-plug) -- wait a slice, retry */
+    MSC_TUR_GIVEUP,      /* hard SCSI error, pipe healthy -- stop polling, continue */
+    MSC_TUR_ABORT        /* BOT pipe desync -- abort MSC init, do not send a CBW */
+} msc_tur_action_t;
+
+/* Decide the next readiness-poll action. `rc` is the TEST UNIT READY result
+ * (CSW status 0/1/2, or < 0 transport error). `rs_rc` is the REQUEST SENSE BOT
+ * command status (pass USB_CSW_STATUS_PASS when REQUEST SENSE was not issued,
+ * i.e. rc != FAIL). `cls` is the REQUEST SENSE classification, consulted only
+ * when `rc == USB_CSW_STATUS_FAIL`. Routing:
+ *   - rc PASS                              -> READY
+ *   - rc != FAIL (TUR phase/transport)     -> ABORT (BOT pipe desynced)
+ *   - rc FAIL, rs_rc != PASS               -> ABORT (pipe desynced during the
+ *                                             REQUEST SENSE recovery command)
+ *   - rc FAIL, rs_rc PASS, cls UNRECOV     -> GIVEUP (hard sense, pipe healthy:
+ *                                             init warns and continues)
+ *   - rc FAIL, rs_rc PASS, transient       -> WAIT
+ * ABORT must NOT receive another CBW until BOT mass-storage reset exists. Pure;
+ * exposed for tests. */
+msc_tur_action_t msc_tur_decide(int rc, int rs_rc, msc_err_class_t cls);
+
 /* Human-readable name for a SCSI sense key (0x0-0xF). Pure; for diagnostics. */
 const char *msc_sense_key_name(uint8_t key);

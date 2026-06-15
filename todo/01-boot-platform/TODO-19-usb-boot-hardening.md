@@ -51,7 +51,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | ⭐  | Order | Deliverable                                       | Depends On    | Status |
 | --- | :---: | ------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [/]   |
-| 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [ ]   |
+| 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [x]   |
 | 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2        |  [ ]   |
 | 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [ ]   |
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [ ]   |
@@ -100,13 +100,21 @@ Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 
 After BOT init, poll TEST UNIT READY until the device reports ready instead of sleeping.
 
-- [ ] Add `msc_test_unit_ready(dev)` -- sends TEST UNIT READY CDB (0x00)
-- [ ] Poll loop: send TUR → if error, `REQUEST SENSE` → if NOT_READY or UNIT_ATTENTION, wait 50ms + retry
-- [ ] Maximum 40 attempts (2 seconds total) -- same window as the current sleep hack but event-driven
-- [ ] If all attempts fail: log `"[WARN] USB drive not ready after 2s"` but continue (device may respond later)
-- [ ] Commit: `"drivers: TEST UNIT READY poll loop -- replace sleep hack with SCSI readiness"`
+- [x] `msc_test_unit_ready(hc, dev)` -- TEST UNIT READY CDB (0x00) via BOT; the single-command primitive the poll loop drives (added in §1, wired here)
+- [x] `msc_poll_unit_ready(hc, dev)` poll loop: send TUR; on CSW FAIL issue `REQUEST SENSE`; classify; NOT READY / UNIT ATTENTION / NO SENSE -> wait `MSC_TUR_POLL_US` (50ms) + retry
+- [x] Pure `msc_tur_decide(rc, rs_rc, cls)` -> {READY, WAIT, GIVEUP, ABORT}: TUR/REQUEST-SENSE desync -> ABORT (init returns -1, no INQUIRY into a desynced pipe); hard sense, healthy pipe -> GIVEUP (warn + continue)
+- [x] Real wall-clock budget `MSC_TUR_READY_BUDGET_MS` (2000ms) checked BEFORE each command via wrap-safe `uptime_ns()-start`; `MSC_TUR_MAX_ATTEMPTS` (40) backstops the pre-timer path; a ready drive returns on attempt 0
+- [x] On readiness timeout / hard error: `klog(LOG_WARN, ...)` "USB drive not ready within 2000 ms, continuing" and proceed; only a transport desync aborts
+- [x] Commit: `"drivers: TEST UNIT READY poll loop -- replace sleep hack with SCSI readiness"`
 
 **Test checkpoint:** USB 2.0 drive on i5-4210U bare metal boots without the sleep hack. Serial shows TUR poll count.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` "TEST UNIT READY poll decision" exercises the full `msc_tur_decide` matrix (READY / WAIT / GIVEUP / ABORT incl. TUR-desync + REQUEST-SENSE-desync rows); live poll validated via QEMU run-usb + bare metal.
+> **Notes:**
+> - Shipped: `msc_poll_unit_ready` + pure `msc_tur_decide` (`usb_msc.c`); `msc_request_sense` now reports its BOT status via an `rs_rc` out-param so a desync during recovery is distinguishable from a hard sense.
+> - Integrates: replaces the §1 inline 3-retry loop in `usb_msc_init` with an event-driven poll under a real `uptime_ns()` wall-clock budget; a ready drive proceeds with zero added latency.
+> - Hardening: ABORT vs GIVEUP split -- only a BOT pipe desync (TUR or REQUEST SENSE phase/transport failure) aborts init; a hard SCSI error on a healthy pipe warns and continues so INQUIRY/READ CAPACITY surface it. Codex 4x review adoptions in commit.
+> - Scope boundary: §2 owns the readiness poll; removing the separate `sleep_ms(2000)` is §6; BOT mass-storage reset / endpoint-stall recovery for the ABORT path is §4.
+> **Verified:** 2026-06-15 | impl commit | 5/5 items | build OK | storage 108 kernel + 16 user-mode PASS (TUR poll decision matrix)
 
 ---
 
@@ -351,6 +359,7 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 | ⭐ | Feature                      | 🪟 Win11                     | 🐧 Linux                      | 🚀 Impossible OS               |
 |----|------------------------------|---------------------------|----------------------------|-----------------------------|
 | 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ⬜ §1-§3                    |
+| 💎 | Device readiness poll        | ✅ usbstor TUR wait      | ✅ sd spin-up poll         | ✅ §2 TUR poll, 2s budget   |
 | 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ⬜ §4                       |
 | 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ⬜ §5                 |
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ⬜ §6                       |

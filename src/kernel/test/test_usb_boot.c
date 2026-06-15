@@ -151,6 +151,56 @@ static void test_usb_boot_sense_key_name(void)
     TEST_ASSERT(sk_streq(msc_sense_key_name(0x0F), "OTHER"), "unknown key -> OTHER");
 }
 
+/* msc_tur_decide(rc, rs_rc, cls) maps a TEST UNIT READY result (+ REQUEST SENSE
+ * status and sense class on FAIL) to the readiness-poll action. PASS -> READY;
+ * any non-FAIL TUR failure (phase 2, transport < 0, out-of-range) -> ABORT (BOT
+ * pipe desync); FAIL with a REQUEST SENSE that itself failed (rs_rc != PASS) ->
+ * ABORT (pipe desynced during recovery); FAIL + rs_rc PASS + UNRECOVERABLE ->
+ * GIVEUP (hard SCSI error, pipe healthy, init continues); FAIL + rs_rc PASS +
+ * transient -> WAIT. The ABORT/GIVEUP split is load-bearing: only a desynced
+ * pipe aborts init, a hard sense error must not strand a device whose pipe is
+ * still usable. Pure -- no hardware needed. */
+static void test_usb_boot_tur_decide(void)
+{
+    /* Ready: sense + rs_rc are irrelevant on PASS. */
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_PASS, USB_CSW_STATUS_PASS,
+                                  MSC_ERR_UNRECOVERABLE),
+                   MSC_TUR_READY, "CSW PASS -> READY (sense ignored)");
+
+    /* Non-FAIL TUR failures are a desynced BOT pipe -> ABORT, never a retry. */
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_PHASE, USB_CSW_STATUS_PASS,
+                                  MSC_ERR_OK),
+                   MSC_TUR_ABORT, "CSW PHASE error -> ABORT");
+    TEST_ASSERT_EQ(msc_tur_decide(-1, USB_CSW_STATUS_PASS, MSC_ERR_OK),
+                   MSC_TUR_ABORT, "transport error (rc<0) -> ABORT");
+    TEST_ASSERT_EQ(msc_tur_decide(99, USB_CSW_STATUS_PASS, MSC_ERR_WAIT_RETRY),
+                   MSC_TUR_ABORT, "out-of-range status -> ABORT");
+
+    /* TUR FAIL but REQUEST SENSE itself desynced the pipe (any non-PASS rs_rc)
+     * -> ABORT, even though the collapsed class reads UNRECOVERABLE. */
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_FAIL, USB_CSW_STATUS_PHASE,
+                                  MSC_ERR_UNRECOVERABLE),
+                   MSC_TUR_ABORT, "FAIL + REQUEST SENSE phase error -> ABORT");
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_FAIL, -1,
+                                  MSC_ERR_UNRECOVERABLE),
+                   MSC_TUR_ABORT, "FAIL + REQUEST SENSE transport fail -> ABORT");
+
+    /* FAIL + REQUEST SENSE PASS: the sense class drives the action. A hard
+     * error gives up but the pipe stays healthy (GIVEUP) so init continues. */
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_FAIL, USB_CSW_STATUS_PASS,
+                                  MSC_ERR_UNRECOVERABLE),
+                   MSC_TUR_GIVEUP, "FAIL + sense UNRECOVERABLE -> GIVEUP");
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_FAIL, USB_CSW_STATUS_PASS,
+                                  MSC_ERR_WAIT_RETRY),
+                   MSC_TUR_WAIT, "FAIL + NOT READY -> WAIT");
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_FAIL, USB_CSW_STATUS_PASS,
+                                  MSC_ERR_RETRY_NOW),
+                   MSC_TUR_WAIT, "FAIL + UNIT ATTENTION -> WAIT");
+    TEST_ASSERT_EQ(msc_tur_decide(USB_CSW_STATUS_FAIL, USB_CSW_STATUS_PASS,
+                                  MSC_ERR_OK),
+                   MSC_TUR_WAIT, "FAIL + NO SENSE/recovered -> WAIT");
+}
+
 void test_register_usb_boot(void)
 {
     test_suite_register_cat("usb: controller count + MSC geometry",
@@ -159,6 +209,8 @@ void test_register_usb_boot(void)
                             test_usb_boot_sense_classify, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-boot: SCSI sense key names",
                             test_usb_boot_sense_key_name, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-boot: TEST UNIT READY poll decision",
+                            test_usb_boot_tur_decide, TEST_CAT_STORAGE);
 }
 
 #endif /* KERNEL_TESTS */
