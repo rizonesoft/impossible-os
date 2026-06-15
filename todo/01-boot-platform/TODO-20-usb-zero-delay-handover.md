@@ -39,7 +39,7 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 | --- | :---: | ----------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | Bootloader allocates xHCI DMA structures              | --          |  [x]   |
 | ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
-| ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [-]   |
+| ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [/]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3, T01 §4 |  [ ]   |
 | ⭐  |   5   | Kernel inherits controller without halt/reset         | §1, §2     |  [x]   |
 | ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [ ]   |
@@ -70,6 +70,8 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 
 **Regression risk:** Allocating extra `EfiLoaderData` pages reduces available RAM. If allocation fails (low memory), fall back to not allocating and let kernel use TODO-17 path. Rollback: skip bootloader DMA allocation entirely.
 
+---
+
 ## 2. Bootloader Performs USBLEGSUP + Controller Takeover
 While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and configure the controller to use our persistent DMA structures.
 
@@ -92,6 +94,8 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 
 **Regression risk:** HIGH -- halting the firmware USB stack may break EFI services that depend on USB (e.g., EFI console on USB keyboard). Must happen late in bootloader, after kernel load and config table copy. Rollback: if takeover fails, don't modify controller and let kernel handle it.
 
+---
+
 ## 3. Bootloader Enumerates Devices with Persistent State
 Enumerate connected devices in the bootloader so slot contexts and endpoint rings are in persistent memory. This is the true Windows-style zero-delay -- devices have pre-configured slots when the kernel inherits.
 
@@ -111,6 +115,8 @@ Enumerate connected devices in the bootloader so slot contexts and endpoint ring
 
 **Regression risk:** MEDIUM -- USB enumeration is complex (9-step sequence). If any step fails, the device is skipped and kernel re-enumerates it via TODO-17 path. No system-level risk.
 
+---
+
 ## 4. boot_info Passes Controller + Device DMA State
 Extend boot_info to carry the full controller state: DCBAA physical address, scratchpad pointers, per-device slot contexts, transfer ring addresses.
 
@@ -125,6 +131,8 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 **Test checkpoint:** Kernel reads boot_info, logs controller state with matching physical addresses. POST code 0xD754. Test on: QEMU `run-usb`, bare metal i5-4210U (EHCI+xHCI), bare metal i5-11600K (xHCI only).
 
 **Regression risk:** LOW -- boot_info extension is additive. If `usb_handover_complete` is 0 (not set), kernel uses TODO-17 path unchanged. No existing fields affected.
+
+---
 
 ## 5. Kernel Inherits Controller Without Halt/Reset
 When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_init_controller() halt/reset/DCBAA/rings sequence and directly uses the bootloader's DMA structures.
@@ -142,6 +150,8 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 
 **Regression risk:** HIGH -- modifies xhci_init_controller() core path. If handover detection is wrong (false positive), controller has stale DMA pointers and all USB fails. Rollback: if `usb_handover_complete` check causes any issue, set it to 0 in kernel entry and the entire TODO-17 path runs unchanged.
 
+---
+
 ## 6. Kernel Registers MSC Devices from boot_info Geometry
 Skip INQUIRY + READ CAPACITY for MSC devices -- use sector count/size from Phase A's EFI_BLOCK_IO_PROTOCOL query.
 
@@ -153,6 +163,8 @@ Skip INQUIRY + READ CAPACITY for MSC devices -- use sector count/size from Phase
 - [ ] Commit: `"drivers: USB MSC instant registration from boot_info geometry"`
 
 **Test checkpoint:** `usb0` block device registered. Sector 0 read matches expected content. No INQUIRY/READ CAPACITY commands in serial log. POST code 0xD756. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
+
+---
 
 ## 7. Fallback: Detect Corrupt State, Revert to TODO-17 Path
 If any handover validation fails, transparently fall back to the proven halt/reset/enumerate path.
