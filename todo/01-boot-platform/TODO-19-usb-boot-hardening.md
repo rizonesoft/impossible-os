@@ -517,9 +517,11 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 > - **Canonical doc:** `src/kernel/drivers/usb_msc.c` `msc_bot_command` tag comment.
 > - **Scope boundary:** §16 owns the xHCI/BOT SMP serialization; the atomic tag is the only piece shipped now -- the deadlock-prone command-ring + BOT-mutex refactor is deferred (forward-looking, not reachable until SMP USB block I/O exists).
 
-**Regression risk:** MEDIUM -- adds locking to the command + transfer hot path; a lock-order or hold-time mistake can deadlock against the recovery path. Hold no lock across the 500 ms transfer waits (snapshot under lock, release, then I/O).
+**Regression risk:** Shipped (atomic `cbw_tag`): LOW -- a lock-free relaxed atomic RMW, no lock-order or hot-path locking introduced. Deferred (command-ring + BOT serialization): MEDIUM -- adds locking to the command/transfer hot path where a lock-order or hold-time mistake can deadlock against the recovery path; hold no lock across the 500 ms transfer waits (snapshot under lock, release, then I/O).
 
+> **Verified:** 2026-06-15 | commit `9ab80d4b` | 1/5 items | build OK | tests pass (SUITE=boot 2706+16)
 > **Deferred:** [M] the xHCI/BOT command-ring serialization (items 1/2/3/5) is forward-looking and not reachable today (`xhci.c` enables MSI only after boot enumeration, so boot media I/O is never exposed; the window is post-boot hot-plug concurrent with SMP USB block I/O, which does not exist yet). It is a large, deadlock-prone 5-file refactor across 4 `xhci_event_poll` call sites (CLAUDE.md "stop and ask before large refactors"); recommended scope is coarse per-controller `io_mutex` serializing command/transfer/event-drain + per-device BOT mutex + endpoint-recovery hardening, with fine-grained per-TRB correlation + async hot-plug-out-of-drain as the concurrency follow-on (atomic `cbw_tag` already shipped) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events" + "Per-MSC-device BOT serialization")
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: kernel-code-quality
 
 ---
 
