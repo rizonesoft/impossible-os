@@ -65,7 +65,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [x]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [x]   |
 | ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [/]   |
-| 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4            |  [ ]   |
+| 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4            |  [/]   |
 
 > 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.
 > ⭐ = exclusive -- comprehensive USB boot diagnostic report and splash flush progress.
@@ -509,6 +509,8 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 **Test checkpoint:** SMP stress (concurrent USB MSC reads from 2 CPUs) shows no command-ring corruption, no CSW tag reuse, and a stall recovery during concurrent I/O never advances the endpoint past another caller's TRB. Verify on bare metal i5-4210U (USB 2.0) and a multi-core target.
 
 **Regression risk:** MEDIUM -- adds locking to the command + transfer hot path; a lock-order or hold-time mistake can deadlock against the recovery path. Hold no lock across the 500 ms transfer waits (snapshot under lock, release, then I/O).
+
+> **Deferred:** [M] xHCI/BOT SMP serialization is forward-looking and not reachable today (`xhci.c` enables MSI only after boot enumeration, so boot media I/O is never exposed; the window is post-boot hot-plug concurrent with SMP USB block I/O, which does not exist yet). It is a large, deadlock-prone 5-file refactor across 4 `xhci_event_poll` call sites (CLAUDE.md "stop and ask before large refactors"); recommended scope is coarse per-controller `io_mutex` serializing command/transfer/event-drain + per-device BOT mutex + atomic `cbw_tag` + endpoint-recovery hardening, with fine-grained per-TRB correlation + async hot-plug-out-of-drain as the concurrency follow-on -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events" + "Per-MSC-device BOT serialization")
 
 ---
 
