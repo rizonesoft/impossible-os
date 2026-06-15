@@ -375,6 +375,7 @@ extern void test_register_boot_version(void);
 extern void test_register_boot_caps(void);
 extern void test_register_boot_decision(void);
 extern void test_register_boot_rollback(void);
+extern void test_register_ab_boot(void);
 extern void test_register_boot_warm_update(void);
 extern void test_register_boot_history(void);
 extern void test_register_boot_audit(void);
@@ -467,6 +468,7 @@ void test_runner_init(void)
     test_register_boot_caps();
     test_register_boot_decision();
     test_register_boot_rollback();
+    test_register_ab_boot();
     test_register_boot_warm_update();
     test_register_boot_history();
     test_register_boot_audit();

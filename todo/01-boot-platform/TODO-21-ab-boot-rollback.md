@@ -47,7 +47,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Boot metadata structure (UEFI NVRAM or GPT)     | --          |  [ ]   |
+| 💎  |   1   | Boot metadata structure (GPT/disk wire ABI)     | --          |  [/]   |
 | 💎  |   2   | Dual-slot disk layout in build system           | §1         |  [ ]   |
 | 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [ ]   |
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
@@ -68,15 +68,24 @@ Define where boot slot metadata is stored and the v1 wire format. Design review 
 > [!NOTE]
 > **Existing infra (do not duplicate):** `src/kernel/main/boot_rollback.c` already implements the security-version anti-rollback FLOOR -- `IPOSRequiredSecVersion` NVRAM var + `boot_rollback_mark_steady()`/`raise_if_steady()` (advance the floor only after the boot reaches steady state) + `boot_info.{os_loader_security_version, required_security_version}`. §8 INTEGRATES with this floor; §5 builds on `mark_steady`. The genuinely NEW work is the per-SLOT A/B metadata (tries/successful/priority per slot), which `boot_rollback.c` does not cover.
 
-- [ ] **Storage = GPT/disk primary, NVRAM hint-only** (design review): two fixed redundant on-disk blocks (per §7); EFI vars rejected for high-frequency `tries` per repo BootSticky doctrine; §8 floor stays in existing `boot_rollback.c` NVRAM
-- [ ] Define the FULL v1 wire struct now in shared `include/boot/ab_boot_metadata.h` -- all §1/§7/§8 fields (incl crc32, generation, rollback_index/floor) present + `_Static_assert` size pins, §7/§8 fields zero-init until wired
-- [ ] `tries`: incremented by bootloader before each boot attempt (0-3)
-- [ ] `successful`: set by kernel after the acceptance stage (via `mark_boot_successful()`, building on existing `boot_rollback_mark_steady()`)
-- [ ] `priority`: which slot is preferred when both are valid (higher = preferred)
-- [ ] `boot_meta_read()`/`boot_meta_write()` as thin wrappers over the shared header's validator + default-builder + CRC; pre-EBS disk adapter `src/boot/uefi/ab_boot.c` + kernel adapter for §5
-- [ ] Commit: `"boot: A/B boot metadata structure and NVRAM storage"`
+- [x] **Storage = GPT/disk primary, NVRAM hint-only** (design review): two fixed redundant on-disk blocks (per §7); EFI vars rejected for high-frequency `tries` per repo BootSticky doctrine; §8 floor stays in existing `boot_rollback.c` NVRAM
+- [x] Define the FULL v1 wire struct now in shared `include/boot/ab_boot_metadata.h` -- all §1/§7/§8 fields (incl crc32, generation, rollback_index/floor) present + `_Static_assert` size pins, §7/§8 fields zero-init until wired
+- [x] `tries` field defined (per-slot, 0..`AB_BOOT_MAX_TRIES`); the bootloader increment-before-boot behavior is §3/§4
+- [x] `successful` field defined (per-slot); the kernel set-after-acceptance behavior is §5 (`mark_boot_successful()`, building on `boot_rollback_mark_steady()`)
+- [x] `priority` field defined (per-slot, higher = preferred); the both-slots-valid selection is §3
+- [/] Shared validator/default/CRC + newest-copy selector shipped in the header; `boot_meta_read()`/`boot_meta_write()` disk adapter (`ab_boot.c`) + kernel adapter land in §2/§5 (no disk blocks until §2's layout)
+- [x] Commit: `"boot: A/B boot metadata v1 wire ABI -- shared header + CRC + validator + tests"`
 
-**Test checkpoint:** Bootloader reads/writes metadata. Serial shows `"Slot A: tries=0 successful=1 priority=1"`. Test on: QEMU smoke + bare metal -- UEFI NVRAM (SetVariable/GetVariable) persistence differs between QEMU OVMF and real firmware; a green QEMU result can mask a bare-metal NVRAM failure.
+**Test checkpoint:** `make test-boot` -- the 10 `ab_boot:` cases pass (default-valid, 5 reject paths, CRC-excludes-field, 3 newest-copy selections). The on-disk round-trip + the `"Slot A: tries=0 ..."` serial line land with §2's disk layout. Test on: TCG `make test-boot`; bare metal exercises the §2 disk path.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 10 `ab_boot` cases, 0 failures
+
+> **Notes:**
+> - **What shipped:** `include/boot/ab_boot_metadata.h` -- the A/B slot metadata v1 wire struct (60 bytes) + static-inline validate/default/finalize/compute_crc/select_newest; 10 unit tests in `test_ab_boot.c`.
+> - **How it integrates:** shared static-inline so bootloader + kernel use one definition; CRC-32/IEEE-802.3 mirrors `boot_health_handoff.h`; full v1 layout pinned now (`_Static_assert`) so §7/§8 fields ship later without moving bytes.
+> - **Downstream effects:** §2 adds the GPT/disk read/write adapter; §3 selection, §4 counting, §5 mark-good, §7 redundancy, §8 floor all consume this struct.
+> - **Canonical doc:** `include/boot/ab_boot_metadata.h`.
+> - **Scope boundary:** §1 owns the struct + pure logic; disk transport is §2, increment/mark/select behavior is §3/§4/§5, redundancy is §7, the anti-rollback floor reuses `boot_rollback.c` (§8).
 
 ---
 
