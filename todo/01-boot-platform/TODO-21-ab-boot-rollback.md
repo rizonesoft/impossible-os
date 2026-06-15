@@ -63,14 +63,17 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 
 ## 1. Boot Metadata Structure
 
-Define where boot slot metadata is stored. Two options: UEFI NVRAM variables or a dedicated GPT partition.
+Define where boot slot metadata is stored and the v1 wire format. Design review (Codex, 2H+2M adopted) resolved storage to GPT/disk-primary with a full ABI-stable v1 struct.
 
-- [ ] Choose storage: UEFI NVRAM (simpler) vs GPT metadata/attribute bits (ChromeOS-style: survives NVRAM reset + travels with the disk); either way the §7 integrity + redundancy rules apply
-- [ ] Define metadata format: `{ magic, version, active_slot (A/B), slot_a { tries, successful, priority }, slot_b { same } }`
+> [!NOTE]
+> **Existing infra (do not duplicate):** `src/kernel/main/boot_rollback.c` already implements the security-version anti-rollback FLOOR -- `IPOSRequiredSecVersion` NVRAM var + `boot_rollback_mark_steady()`/`raise_if_steady()` (advance the floor only after the boot reaches steady state) + `boot_info.{os_loader_security_version, required_security_version}`. §8 INTEGRATES with this floor; §5 builds on `mark_steady`. The genuinely NEW work is the per-SLOT A/B metadata (tries/successful/priority per slot), which `boot_rollback.c` does not cover.
+
+- [ ] **Storage = GPT/disk primary, NVRAM hint-only** (design review): two fixed redundant on-disk blocks (per §7); EFI vars rejected for high-frequency `tries` per repo BootSticky doctrine; §8 floor stays in existing `boot_rollback.c` NVRAM
+- [ ] Define the FULL v1 wire struct now in shared `include/boot/ab_boot_metadata.h` -- all §1/§7/§8 fields (incl crc32, generation, rollback_index/floor) present + `_Static_assert` size pins, §7/§8 fields zero-init until wired
 - [ ] `tries`: incremented by bootloader before each boot attempt (0-3)
-- [ ] `successful`: set by kernel after boot reaches desktop (via `mark_boot_successful()`)
+- [ ] `successful`: set by kernel after the acceptance stage (via `mark_boot_successful()`, building on existing `boot_rollback_mark_steady()`)
 - [ ] `priority`: which slot is preferred when both are valid (higher = preferred)
-- [ ] Implement read/write functions: `boot_meta_read()` / `boot_meta_write()` in bootloader
+- [ ] `boot_meta_read()`/`boot_meta_write()` as thin wrappers over the shared header's validator + default-builder + CRC; pre-EBS disk adapter `src/boot/uefi/ab_boot.c` + kernel adapter for §5
 - [ ] Commit: `"boot: A/B boot metadata structure and NVRAM storage"`
 
 **Test checkpoint:** Bootloader reads/writes metadata. Serial shows `"Slot A: tries=0 successful=1 priority=1"`. Test on: QEMU smoke + bare metal -- UEFI NVRAM (SetVariable/GetVariable) persistence differs between QEMU OVMF and real firmware; a green QEMU result can mask a bare-metal NVRAM failure.
@@ -181,6 +184,9 @@ Boot metadata is the single source of truth for slot selection; a torn write mus
 ## 8. Per-Slot Anti-Rollback Version Floor
 
 Prevent a security update from being rolled back to an older, vulnerable slot. Follow the Android `stored_rollback_index` model: a monotonic version floor that advances only after a slot is verified and marked good.
+
+> [!NOTE]
+> **Reuses `boot_rollback.c`:** the monotonic floor + advance-after-steady-state mechanism already exists (`IPOSRequiredSecVersion` NVRAM, `boot_rollback_mark_steady()`/`raise_if_steady()`, `boot_rollback_validate()`). §8's NEW work is the PER-SLOT `rollback_index` in the §1 metadata + the §3 below-floor rejection; the floor STORAGE + advance logic is the existing mechanism, not a parallel one.
 
 - [ ] Add a `rollback_index` (monotonic OS/security version) per slot to the metadata + a single stored `rollback_floor`
 - [ ] §3 selection rejects any slot whose `rollback_index < rollback_floor` even if otherwise bootable (treat as invalid, try the other slot)
