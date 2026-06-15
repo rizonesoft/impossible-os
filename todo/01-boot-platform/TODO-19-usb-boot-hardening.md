@@ -65,6 +65,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [ ]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [ ]   |
 | ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [ ]   |
+| 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4            |  [ ]   |
 
 > 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.
 > ⭐ = exclusive -- comprehensive USB boot diagnostic report and splash flush progress.
@@ -166,7 +167,9 @@ Handle USB transport-level stalls -- a separate layer from SCSI sense errors. A 
 > - Integrates: `xhci_bulk_transfer` now wraps a CC-returning `xhci_bulk_transfer_cc`; `msc_bot_command` recovers stalls at the BOT boundary and BOT-resets on a desynced CSW (bad signature/tag) or phase error.
 > - Hardening: state-aware recovery never Resets a non-Halted endpoint or leaves a Stopped ring un-armed; a stall-recovered short data phase fails the command so READ(10) can't advance the LBA on partial data.
 > - Scope boundary: §4 owns transport recovery; per-command CSW residue acceptance + SCSI-sense whole-command retry are §3; multi-TRB event-pointer dequeue validation is §5.
-> **Verified:** 2026-06-15 | impl commit | 8/8 items | build OK | storage 371 kernel + 16 user-mode PASS (exhaustive stall-CC matrix)
+> **Verified:** 2026-06-15 | review commit | 8/8 items | build OK | storage 371 kernel + 16 user-mode PASS (exhaustive stall-CC matrix)
+> **Accepted:** [H] xHCI command ring + BOT transport unserialized for SMP (concurrent recovery/enumeration race; non-atomic `cbw_tag`) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize the command ring: a controller-level lock around `xhci_cmd_submit` + `xhci_wait_command`" at line 373)
+> **Quality reviewed:** 2026-06-15 | Codex 8x (design, test-coverage, adversarial x2, re-adversarial x2, consistency, perf) | 4H+3M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 **Regression risk:** MEDIUM -- modifies the transfer completion path. If the recovery sequence issues incorrect xHCI commands, the endpoint may become permanently stuck. Rollback: disable recovery, return error immediately on stall (current behavior but with a timeout instead of infinite hang).
 
@@ -362,6 +365,22 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 **Test checkpoint:** On USB 2.0 with deferred mode, single flush shows progress: `"Writing boot log... 50/400 entries"` → `"200/400"` → `"400/400"`. Diagnostic line updates smoothly. Test on: bare metal USB.
 
 **Regression risk:** LOW -- optional callback, no behavior change without it.
+
+---
+
+## 16. xHCI Command Ring + BOT Transport SMP Serialization
+
+The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT transport (`msc_bot_command`) are unserialized: command enqueue mutates `hc->cmd_ring` with no lock and `xhci_wait_command` accepts the first completion event rather than matching the submitted command TRB, and two CPUs can enter the same MSC device concurrently. Single-threaded boot enumeration is safe today, but post-boot SMP block-layer I/O plus §4 stall recovery (which issues Reset Endpoint / Set TR Dequeue and re-arms the ring) makes a concurrent race destructive. Surfaced by the §4 adversarial review.
+
+- [ ] Serialize the command ring: a controller-level lock around `xhci_cmd_submit` + `xhci_wait_command` (`xhci_ring.c`/`xhci_dev.c`), and match each Command Completion Event to the submitted command-TRB pointer instead of accepting the first event
+- [ ] Defer hot-plug enumeration out of the shared event-ring drain so it cannot steal a synchronous command/transfer completion while a command is in flight
+- [ ] Per-MSC-device BOT serialization: a sleepable mutex around `msc_bot_command` (CBW/data/CSW + recovery, `usb_msc.c`) so two CPUs can't interleave one device; Set TR Dequeue must not run while another caller has a queued TRB
+- [ ] Make `cbw_tag` atomic (`__atomic_fetch_add`) so concurrent commands cannot reuse or reorder CSW tags
+- [ ] Commit: `"drivers: serialize xHCI command ring + per-device BOT transport (SMP)"`
+
+**Test checkpoint:** SMP stress (concurrent USB MSC reads from 2 CPUs) shows no command-ring corruption, no CSW tag reuse, and a stall recovery during concurrent I/O never advances the endpoint past another caller's TRB. Verify on bare metal i5-4210U (USB 2.0) and a multi-core target.
+
+**Regression risk:** MEDIUM -- adds locking to the command + transfer hot path; a lock-order or hold-time mistake can deadlock against the recovery path. Hold no lock across the 500 ms transfer waits (snapshot under lock, release, then I/O).
 
 ---
 

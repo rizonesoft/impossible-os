@@ -516,8 +516,15 @@ static int xhci_set_tr_dequeue(struct xhci_controller *hc, uint8_t slot_id,
 int xhci_recover_endpoint(struct xhci_controller *hc, struct xhci_device *dev,
                           uint32_t dci, uint8_t ep_addr, struct xhci_ring *ring)
 {
-    uint8_t state = xhci_ep_state(hc, dev, dci);
+    uint8_t state;
 
+    /* Recovery only applies to real non-EP0 endpoints (DCI 2..31). DCI 0/1
+     * are the slot context / EP0 -- never a bulk pipe (defense-in-depth against
+     * a malformed endpoint descriptor that slipped a zero endpoint number). */
+    if (dci < 2 || dci > 31)
+        return -1;
+
+    state = xhci_ep_state(hc, dev, dci);
     if (state != XHCI_EP_STATE_HALTED && state != XHCI_EP_STATE_STOPPED &&
         state != XHCI_EP_STATE_RUNNING) {
         klog(LOG_ERROR, "usb", "EP%u in unrecoverable state %u (slot=%u)",
@@ -1037,7 +1044,16 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
                 uint8_t ep_num = ep->bEndpointAddress & USB_EP_NUM_MASK;
                 uint8_t is_in  = (ep->bEndpointAddress & USB_EP_DIR_IN) ? 1 : 0;
 
-                if (is_in && !found_bulk_in) {
+                /* A BOT bulk endpoint must be a real non-EP0 endpoint (1..15)
+                 * with a non-zero max packet size. Endpoint 0 maps to DCI 0/1
+                 * and would collide with the slot context / EP0 during
+                 * Configure Endpoint and stall recovery -- reject a malformed
+                 * descriptor rather than corrupting the input context. */
+                if (ep_num == 0 || ep->wMaxPacketSize == 0) {
+                    klog(LOG_WARN, "usb",
+                         "MSC: ignoring invalid bulk EP (num=%u, maxpkt=%u)",
+                         (uint64_t)ep_num, (uint64_t)ep->wMaxPacketSize);
+                } else if (is_in && !found_bulk_in) {
                     dev->bulk_in_addr    = ep->bEndpointAddress;
                     dev->bulk_in_ep      = ep_num;
                     dev->bulk_in_max_pkt = ep->wMaxPacketSize;
