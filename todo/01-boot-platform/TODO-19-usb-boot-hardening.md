@@ -259,6 +259,9 @@ On Intel 7/8/9-series chipsets, USB 2.0 ports are routed from EHCI to xHCI via t
 > - Safety: no sub-500ms early-exit -- XUSB2PR-write-to-CCS latency has no USB/xHCI spec bound and boot-time MSC enumeration is synchronous, so a timed early-exit could miss a late routed boot drive; full 500ms is the proven-safe value.
 > - Deferred: spec-backed event-driven early-exit (route-capable port-identity tracking) kept as a `[ ]` item in this section; Codex design + 3x re-adversarial adoptions in the ship commit.
 > - Scope boundary: §7 owns the routing + bounded settle; §6 owns the (already-absent) global post-`xhci_init` sleep; per-port reset/enumeration stays in `xhci_enumerate_ports`.
+> **Verified:** 2026-06-15 | commit `c4f0e128` | 3/4 items | build OK | live-PCI/MMIO (validated bare metal i5-4210U + i5-11600K skip-path)
+> **Deferred:** [M] event-driven early-exit to shorten the 500ms on routing HW -- unsafe without spec-backed routed-port identity tracking -> XREF: 01-boot-platform/TODO-19 §7 (item: "DEFERRED: spec-backed event-driven early-exit" at line 251)
+> **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 1H+1M fixed, 0 open | scope: kernel-code-quality
 
 ---
 
