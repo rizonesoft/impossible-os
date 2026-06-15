@@ -177,11 +177,27 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 - [ ] Issue a No-Op command to verify command ring -- deferred (enumeration validates it implicitly)
 - [/] Reality is a PARTIAL inherit, not full zero-delay: the path still halts-to-sync, re-inits ring state via `xhci_rings_init()`, routes Intel USB2, and re-enumerates (`xhci.c:398-462`)
 - [ ] True zero-delay: skip halt + ring re-init + Intel routing + kernel enumeration -- requires §3 bootloader enumeration so the kernel inherits configured slots
+- [ ] **HIGH (controller identity):** inherit gate (`xhci.c:375-377`) matches only global caps, not `bc->pci_bus/dev/func`/`mmio_phys` -- a 2nd xHCI reuses the same DCBAA/rings. Require a pci/mmio match before inherit
+- [ ] **HIGH (validate before trust):** gate programs DCBAAP from `bc->dcbaa_phys` with no nonzero/aligned/<4GiB/reserved check (`xhci.c:375-427`); a stale boot_info starts xHCI on a bad DMA target. Validate first (overlaps §7)
+- [ ] **HIGH (Intel 500ms not saved):** handover still calls `xhci_route_intel_usb2_ports()` (`xhci.c:459`) = 500ms delay, so EHCI+xHCI (i5-4210U) is not zero-delay. Carry routing state in boot_info + skip XUSB2PR on inherit
 - [x] Commit: `"drivers: xHCI zero-delay handover -- inherit bootloader DMA state"`
 
 **Test checkpoint:** Serial shows "zero-delay handover: controller inherited". No halt/reset/500ms in log. USB device available within 1ms of kernel start. POST code 0xD755. If crash at 0xD755: controller state corrupt -- fall back to TODO-17 path. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
 **Regression risk:** HIGH -- modifies xhci_init_controller() core path. If handover detection is wrong (false positive), controller has stale DMA pointers and all USB fails. Rollback: if `usb_handover_complete` check causes any issue, set it to 0 in kernel entry and the entire TODO-17 path runs unchanged.
+
+> **Test runner:** N/A (handover path needs a real bootloader-configured xHCI; no in-memory test surface) | validation: serial on bare metal i5-4210U + i5-11600K
+
+> **Notes:**
+> - **What shipped:** §5 kernel handover-inherit path in `xhci.c:374-462` -- gated on `usb_handover_complete` + `BOOT_CAP_USB_HANDOVER`, copies the bootloader DCBAA/scratchpad phys, halt-syncs, falls back to `full_init` on failure.
+> - **Reality (partial):** inherits DCBAA/scratchpad only; `xhci_rings_init()` re-allocates fresh cmd/evt/ERST (leaking the bootloader rings), Intel routing still pays 500ms, kernel re-enumerates -- NOT zero-delay on EHCI+xHCI.
+> - **Downstream effects:** DONE-UNSTAMPED review filed 3 HIGH (controller-identity match, validate-before-trust, Intel-500ms) + the ring-realloc-leak; corrected the OS-Comparison overclaim from `✅` to `🔄 partial`.
+> - **Canonical doc:** `src/kernel/drivers/xhci.c` handover branch; the validate-before-trust check overlaps §7's fallback detection.
+> - **Scope boundary:** §5 owns the DMA inherit; true zero-delay (skip routing + enumeration) needs §3 + the §4 ABI schema.
+
+> **Verified:** 2026-06-15 | commit `a6de918f` | 2/8 items | build OK | DONE-UNSTAMPED review
+> **Deferred:** [H] inherit gate does not match the bootloader controller identity + trusts inherited DMA addrs unvalidated + still pays Intel 500ms; (M) re-allocated rings leak the inherited pages; true zero-delay blocked on §3/§4 -> XREF: 01-boot-platform/TODO-20 §5 (item: "HIGH (controller identity)" + "HIGH (validate before trust)" + "HIGH (Intel 500ms not saved)") + §3 + §4
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 3H+1M open | scope: kernel-code-quality
 
 ---
 
@@ -222,14 +238,14 @@ If any handover validation fails, transparently fall back to the proven halt/res
 | ⭐ | Feature             | 🪟 Win11             | 🐧 Linux            | 🚀 Impossible OS         |
 |----|---------------------|-------------------|------------------|-----------------------|
 | ⭐ | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot     | 🔄 §1-§2 DMA only   |
-| ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | ✅ §5 DMA inherit    |
+| ⭐ | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset    | 🔄 §5 partial (500ms+enum remain) |
 | ⭐ | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates   | ✅ §1 EfiLoaderData  |
 | 💎 | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c    | ✅ §2 done           |
 | ⭐ | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed   | ⬜ TODO-17 planned   |
 | 💎 | Handover fallback   | ✅ Automatic     | ✅ Always fresh  | ⬜ §7 planned        |
 | ⭐ | Handover + EHCI     | ✅ usbehci.sys   | ❌ Always reset  | ⬜ xHCI-only; EHCI -> T19 §11 |
 
-> Matches Windows USB boot speed, exceeds Linux. VPD timing visibility would be a competitive first.
+> §1-§2 + §5 DMA-inherit foundation shipped; full Windows-parity zero-delay still needs §3-§6 (bootloader enumeration + the §4 boot_info DMA-payload ABI). VPD timing visibility would be a competitive first.
 
 ## Unit Tests
 
