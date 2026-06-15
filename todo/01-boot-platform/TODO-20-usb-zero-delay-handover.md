@@ -64,8 +64,8 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 - [x] Mark allocated pages in `dma_pages[]` array; kernel PMM calls `pmm_mark_region_used()` for each
 - [x] PCI config space access added to bootloader (`bl_pci_read8/16/32` via 0xCF8/0xCFC)
 - [x] xHCI capability registers read (HCSPARAMS1/2, HCCPARAMS1, DBOFF, RTSOFF)
-- [ ] **HIGH (DMA cap):** `bootx64.c:10163-10333` uses `AllocateAnyPages` -- DMA can land above the 4 GiB kernel identity map (or violate `AC64=0`), faulting the kernel. Use `AllocateMaxAddress` capped at `0xFFFFFFFF`; fall back on failure
-- [ ] **HIGH (BAR decode):** `bootx64.c:10255-10262` treats BAR1 as BAR0's 64-bit high half unconditionally -- a 32-bit memory BAR fabricates a bogus MMIO base. Decode BAR0 type `(bar0&0x6)==0x4` before using BAR1; skip handover if invalid
+- [x] **HIGH (DMA cap):** `bootx64.c:10163-10333` uses `AllocateAnyPages` -- DMA can land above the 4 GiB kernel identity map (or violate `AC64=0`), faulting the kernel. Use `AllocateMaxAddress` capped at `0xFFFFFFFF`; fall back on failure
+- [x] **HIGH (BAR decode):** `bootx64.c:10255-10262` treats BAR1 as BAR0's 64-bit high half unconditionally -- a 32-bit memory BAR fabricates a bogus MMIO base. Decode BAR0 type `(bar0&0x6)==0x4` before using BAR1; skip handover if invalid
 - [ ] **HIGH (payload overlap):** `boot_payload_region_overlap()` (`boot_payload.c:203-214`) treats each `dma_pages[]` entry as one page, missing multi-page scratchpad spans. Use `boot_reserved_populate_from_info()` extents + add a 2nd-page test
 - [x] Commit: `"boot: allocate persistent xHCI DMA structures in EfiLoaderData"`
 
@@ -78,13 +78,13 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 > **Notes:**
 > - **What shipped:** §1 bootloader xHCI DMA allocation in `bootx64.c` (DCBAA + scratchpad `EfiLoaderData` pages, PCI config via 0xCF8/0xCFC, cap-register reads) + `boot_usb_controller` struct in `boot_info.h`.
 > - **How it runs:** pre-ExitBootServices; the kernel inherits the recorded phys addresses (§5) and PMM reserves `dma_pages[]`; `usb_handover_complete` gates the whole path.
-> - **Downstream effects:** foundation for §5's partial DMA inherit; this DONE-UNSTAMPED review filed 3 HIGH bare-metal bugs (DMA-above-4G, BAR mis-decode, payload-overlap) as open items, downgrading §1 to `[/]`.
+> - **Downstream effects:** foundation for §5's partial DMA inherit; DONE-UNSTAMPED review filed 3 HIGH bare-metal bugs -- 2 now fixed (DMA `AllocateMaxAddress` 4 GiB cap, BAR-width decode) via re-adversarial-converged patch; payload-overlap span check remains open.
 > - **Canonical doc:** `include/kernel/boot_info.h` `boot_usb_controller` + `docs/boot/boot-info-fields.md`.
 > - **Scope boundary:** §1 owns DMA allocation; device-context/ring alloc is §3; the typed-payload schema is §4.
 
-> **Verified:** 2026-06-15 | commit `832af15c` | 6/13 items | build OK | DONE-UNSTAMPED review
-> **Deferred:** [H] 3 shipped bare-metal bugs (DMA above the 4 GiB identity map; BAR1 mis-decoded as a 64-bit high half; payload-overlap validator misses multi-page scratchpad spans) -- contained UEFI fixes deferred for careful fresh-context implementation -> XREF: 01-boot-platform/TODO-20 §1 (item: "HIGH (DMA cap)" + "HIGH (BAR decode)" + "HIGH (payload overlap)")
-> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 3H open | scope: boot-code-quality
+> **Verified:** 2026-06-15 | commit `832af15c` | 8/13 items | build OK + smoke PASS (KVM 1.96s) | DONE-UNSTAMPED review + 2H fix
+> **Deferred:** [H] payload-overlap validator misses multi-page scratchpad spans (DMA-above-4G + BAR1 mis-decode RESOLVED 2026-06-15 by AllocateMaxAddress cap + BAR-width decode; re-adversarial converged 2 rounds) -> XREF: 01-boot-platform/TODO-20 §1 (item: "HIGH (payload overlap)")
+> **Quality reviewed:** 2026-06-15 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 2H+1M fixed, 1H open | scope: boot-code-quality
 
 ---
 
@@ -103,7 +103,7 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 - [x] `usb_handover_complete` set to 1 on success
 - [ ] **HIGH (USBLEGSUP timeout):** `bl_usblegsup_handoff()` (`bootx64.c:10456-10462`) force-clears BIOS-Owned + returns success on the 1s timeout, so takeover sets `usb_handover_complete=1` anyway. Return failure + abort on timeout
 - [ ] **MEDIUM (ext-cap MMIO bound):** the USBLEGSUP cap walk (`bootx64.c:10417-10428`) is iteration-bounded but not MMIO-bounded -- a malformed chain reads unrelated MMIO. Require `xecp_off+4 <= mmio_size` per read
-- [ ] **HIGH (BAR-decode consumer):** §2 derives op_base/rt_base from the §1 BAR decode and does destructive pre-EBS MMIO writes -- blocked on the §1 "HIGH (BAR decode)" fix
+- [x] **HIGH (BAR-decode consumer):** §2 derives op_base/rt_base from the §1 BAR decode and does destructive pre-EBS MMIO writes -- resolved by the §1 BAR-decode fix (32-bit BARs no longer fabricate a base)
 - [x] Commit: `"boot: USBLEGSUP handoff + controller takeover in bootloader"`
 
 > [!IMPORTANT]
@@ -122,9 +122,9 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 > - **Canonical doc:** `src/boot/uefi/bootx64.c` takeover block + `include/kernel/boot_info.h` `boot_usb_controller`.
 > - **Scope boundary:** §2 owns the USBLEGSUP/takeover; DMA allocation + BAR decode are §1; kernel inherit is §5.
 
-> **Verified:** 2026-06-15 | commit `cf7bd197` | 8/11 items | build OK | DONE-UNSTAMPED review
-> **Deferred:** [H] USBLEGSUP 1s timeout treated as success + unbounded ext-cap MMIO walk (M) + destructive consumption of the §1 BAR-decode bug -- contained UEFI fixes deferred for careful fresh-context work -> XREF: 01-boot-platform/TODO-20 §2 (item: "HIGH (USBLEGSUP timeout)" + "MEDIUM (ext-cap MMIO bound)")
-> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 2H+1M open | scope: boot-code-quality
+> **Verified:** 2026-06-15 | commit `cf7bd197` | 9/11 items | build OK | DONE-UNSTAMPED review
+> **Deferred:** [H] USBLEGSUP 1s timeout treated as success + unbounded ext-cap MMIO walk (M) (BAR-decode consumer RESOLVED 2026-06-15 by the §1 BAR-width decode fix) -> XREF: 01-boot-platform/TODO-20 §2 (item: "HIGH (USBLEGSUP timeout)" + "MEDIUM (ext-cap MMIO bound)")
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H fixed, 1H+1M open | scope: boot-code-quality
 
 ---
 

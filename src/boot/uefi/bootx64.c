@@ -10156,12 +10156,15 @@ static void discover_usb_devices(void)
 /* Helper: allocate one 4 KiB page as EfiLoaderData and track it */
 static UINT64 bl_alloc_dma_page(struct boot_usb_controller *ctrl)
 {
-    EFI_PHYSICAL_ADDRESS addr = 0;
+    EFI_PHYSICAL_ADDRESS addr = 0xFFFFFFFF;  /* ceiling: keep DMA below 4 GiB */
     EFI_STATUS status;
     UINTN i;
 
-    /* Use AllocatePages for page-aligned DMA memory */
-    status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, 1, &addr);
+    /* Page-aligned DMA memory, capped below 4 GiB. The bootloader identity
+     * map only covers the low 4 GiB and a 32-bit-only xHCI cannot address
+     * above it, so AllocateMaxAddress keeps every inherited DMA page reachable
+     * by both the controller and the pre-EBS identity map. */
+    status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData, 1, &addr);
     if (EFI_ERROR(status) || addr == 0) {
         ctrl->alloc_fail_status = (UINT32)(status & 0xFFFFFFFF);
         ctrl->alloc_fail_page   = ctrl->dma_page_count;
@@ -10251,14 +10254,31 @@ found_xhci:
     serial_early_print_uint((UINT32)func);
     serial_early_print("\n");
 
-    /* ---- Read BAR0/BAR1 to get MMIO base ---- */
+    /* ---- Read BAR0 to get MMIO base. Decode the BAR width before touching
+     *      BAR1: per PCI, memory-BAR bits [2:1] select width -- 00 = 32-bit
+     *      (BAR1 is an unrelated BAR), 10 = 64-bit (BAR1 is the high dword).
+     *      Treating a 32-bit BAR1 as the high half fabricates an MMIO base,
+     *      and the takeover then issues register writes at a bogus address. */
     bar0 = bl_pci_read32((UINT8)bus, dev, func, 0x10);
-    bar1 = bl_pci_read32((UINT8)bus, dev, func, 0x14);
     if (bar0 & 0x01) {
         serial_early_print("[BOOT] xHCI DMA: BAR0 is I/O -- skipping\n");
         return;
     }
-    mmio = (UINT64)(bar0 & 0xFFFFFFF0) | ((UINT64)bar1 << 32);
+    {
+        UINT32 bar_type = (bar0 >> 1) & 0x03;
+        if (bar_type == 0x02) {
+            /* 64-bit memory BAR: BAR1 holds the upper 32 bits */
+            bar1 = bl_pci_read32((UINT8)bus, dev, func, 0x14);
+            mmio = (UINT64)(bar0 & 0xFFFFFFF0) | ((UINT64)bar1 << 32);
+        } else if (bar_type == 0x00) {
+            /* 32-bit memory BAR: high half is zero; BAR1 is a separate BAR */
+            bar1 = 0;
+            mmio = (UINT64)(bar0 & 0xFFFFFFF0);
+        } else {
+            serial_early_print("[BOOT] xHCI DMA: BAR0 reserved type -- skipping\n");
+            return;
+        }
+    }
     if (mmio == 0) {
         serial_early_print("[BOOT] xHCI DMA: BAR0 is zero -- skipping\n");
         return;
@@ -10317,10 +10337,13 @@ found_xhci:
         UINT32 sp_count = ctrl->max_scratchpads;
 
         /* Scratchpad array: sp_count × 8 bytes (fits in 1 page for up to 512 entries) */
-        sp_status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+        sp_array_addr = 0xFFFFFFFF;  /* ceiling: keep DMA below 4 GiB */
+        sp_status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
                                        (sp_count * 8 + 4095) / 4096, &sp_array_addr);
         if (EFI_ERROR(sp_status) || sp_array_addr == 0) {
             serial_early_print("[BOOT] xHCI DMA: scratchpad array alloc failed\n");
+            ctrl->alloc_fail_status = (UINT32)(sp_status & 0xFFFFFFFF);
+            ctrl->alloc_fail_page   = ctrl->dma_page_count;
             return;
         }
         efi_memset((void *)(UINTN)sp_array_addr, 0, sp_count * 8);
@@ -10329,7 +10352,8 @@ found_xhci:
             ctrl->dma_pages[ctrl->dma_page_count++] = sp_array_addr;
 
         /* Scratchpad buffer pages: allocate all contiguously */
-        sp_status = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+        sp_base_addr = 0xFFFFFFFF;  /* ceiling: keep DMA below 4 GiB */
+        sp_status = gBS->AllocatePages(AllocateMaxAddress, EfiLoaderData,
                                        sp_count, &sp_base_addr);
         if (EFI_ERROR(sp_status) || sp_base_addr == 0) {
             serial_early_print("[BOOT] xHCI DMA: scratchpad pages alloc failed (");
