@@ -31,6 +31,11 @@ const char *boot_media_speed_name(boot_media_speed_t s)
     }
 }
 
+int boot_media_is_usb_class(boot_media_speed_t s)
+{
+    return s == BOOT_MEDIA_MEDIUM || s == BOOT_MEDIA_SLOW;
+}
+
 boot_media_speed_t boot_media_speed(void)
 {
     return s_boot_media_speed;

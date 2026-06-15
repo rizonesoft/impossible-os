@@ -148,6 +148,19 @@ void boot_tests_run(void)
 
     /* ---- debug=1-only integration tests below ---- */
 
+    /* On USB boot media the I/O-heavy IXFS tests (CRUD delete + the
+     * hundreds-of-writes performance suite) can stall the boot for many seconds,
+     * so reduce them to the read-path subset. Proactive signal: the boot_media
+     * speed probe classified MEDIUM (USB 3.0) or SLOW (USB 2.0). Reactive signal:
+     * klog_slow_media_detected() trips when a disk-log flush exceeded the slow
+     * threshold -- covers boots where the probe never landed a full 4 KiB read and
+     * stayed UNKNOWN. FAST (SSD/NVMe) runs the full suite. */
+    int reduced_io = boot_media_is_usb_class(boot_media_speed()) ||
+                     klog_slow_media_detected();
+    klog(LOG_DEBUG, "TEST", reduced_io
+         ? "test: IXFS tests: reduced (USB boot media)"
+         : "test: IXFS tests: full suite (fast media)");
+
     /* VFS smoke test: read a known file */
     if (vfs_is_mounted('C')) {
         struct vfs_node *f = vfs_open("C:\\hello.txt", VFS_O_READ);
@@ -162,8 +175,14 @@ void boot_tests_run(void)
         }
     }
 
-    /* IXFS CRUD demo */
-    if (vfs_is_mounted('C')) {
+    /* IXFS CRUD demo -- create/write/read/delete + directory create/rmdir, the
+     * write-heavy part of the boot tests (each step is a cache-deferred IXFS write).
+     * On USB boot media the WHOLE block is skipped so a reduced boot avoids the
+     * multi-second write stall and leaves no test artifact behind. The VFS read
+     * smoke test above + the directory dump below still run as the read-path checks;
+     * a read touches i_atime (one inode write), far below the slow-media freeze
+     * threshold the bulk-write tests hit. */
+    if (!reduced_io && vfs_is_mounted('C')) {
         struct vfs_node *c_root = vfs_get_drive_root('C');
         if (c_root && c_root->ops && c_root->ops->create) {
             c_root->ops->create(c_root, "test.txt", 0);
@@ -199,8 +218,10 @@ void boot_tests_run(void)
         }
     }
 
-    /* IXFS performance features test */
-    ixfs_test_performance();
+    /* IXFS performance features test (hash index + snapshot + scrub = hundreds of
+     * writes) -- skipped on USB media to avoid a multi-second boot stall. */
+    if (!reduced_io)
+        ixfs_test_performance();
 
     /* Directory tree dump */
     if (klog_disk_live_active()) {

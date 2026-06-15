@@ -291,12 +291,29 @@ static void test_boot_media_classify(void)
                    "50ms (USB 2.0) -> slow");
 }
 
+/* boot_media_is_usb_class(): drives the slow-media-aware boot-test reduction. USB-
+ * attached classes (MEDIUM = USB 3.0, SLOW = USB 2.0) -> 1; FAST (SSD/NVMe) and
+ * UNKNOWN -> 0. Pure. */
+static void test_boot_media_is_usb_class(void)
+{
+    TEST_ASSERT_EQ(boot_media_is_usb_class(BOOT_MEDIA_UNKNOWN), 0,
+                   "UNKNOWN -> not USB (full suite, reactive signal covers it)");
+    TEST_ASSERT_EQ(boot_media_is_usb_class(BOOT_MEDIA_FAST), 0,
+                   "FAST (SSD/NVMe) -> not USB (full suite)");
+    TEST_ASSERT_EQ(boot_media_is_usb_class(BOOT_MEDIA_MEDIUM), 1,
+                   "MEDIUM (USB 3.0) -> USB (reduced suite)");
+    TEST_ASSERT_EQ(boot_media_is_usb_class(BOOT_MEDIA_SLOW), 1,
+                   "SLOW (USB 2.0) -> USB (reduced suite)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_boot_device(void)
 {
     test_suite_register_cat("Boot media: speed classify thresholds",
         test_boot_media_classify, TEST_CAT_BOOT);
+    test_suite_register_cat("Boot media: USB-class reduce-IO decision",
+        test_boot_media_is_usb_class, TEST_CAT_BOOT);
     test_suite_register_cat("Boot device: type valid",
         test_boot_device_type_valid, TEST_CAT_BOOT);
     test_suite_register_cat("Boot device: path non-empty",

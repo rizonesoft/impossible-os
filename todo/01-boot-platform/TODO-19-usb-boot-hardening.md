@@ -63,7 +63,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [/]   |
 | ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [x]   |
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [x]   |
-| 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [ ]   |
+| 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [x]   |
 | ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [ ]   |
 | 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4            |  [ ]   |
 
@@ -435,18 +435,28 @@ Replace the 6-pass per-subsystem loop (one full ring scan per file) with a singl
 
 Make boot tests detect slow media (USB) and skip or simplify I/O-heavy tests automatically instead of hardcoded `#if 0` blocks.
 
-**Files:** `src/kernel/main/boot_tests.c`, `src/kernel/fs/ixfs/ixfs_test.c`
+**Files:** `src/kernel/main/boot_tests.c`, `src/kernel/main/boot_media.c`, `include/kernel/boot_media.h`, `src/kernel/test/test_boot_device.c`
 
-- [ ] At the start of `boot_tests_run()`, query `blkdev_boot_media_type()`
-- [ ] If `MEDIA_USB`: skip `ixfs_test_performance()` entirely (hash index + snapshot + scrub = hundreds of writes)
-- [ ] If `MEDIA_USB`: simplify IXFS CRUD test -- create + write + read only, skip delete test (delete triggers bitmap + inode writes)
-- [ ] If `MEDIA_SATA` or `MEDIA_NVME`: run full test suite (all tests complete in <5 seconds on fast media)
-- [ ] Log: `test: IXFS tests: full suite (SATA)` or `test: IXFS tests: reduced (USB boot media)`
-- [ ] Commit: `"boot: IXFS tests auto-skip heavy I/O on USB boot media"`
+- [x] Pure predicate `boot_media_is_usb_class(boot_media_speed_t)` in `boot_media.{h,c}` -- 1 for MEDIUM/SLOW (USB), 0 for FAST/UNKNOWN; uses §10's `boot_media_speed()` probe (`blkdev_boot_media_type()` was a never-existing draft name)
+- [x] In the `debug=1`-only integration block of `boot_tests_run()`: `reduced_io = boot_media_is_usb_class(boot_media_speed()) || klog_slow_media_detected()` (reactive klog detector covers an UNKNOWN-but-slow boot the probe missed)
+- [x] On `reduced_io`: skip `ixfs_test_performance()` entirely (hash index + snapshot + scrub = hundreds of writes)
+- [x] On `reduced_io`: skip the WHOLE IXFS CRUD mutation block (create/write/read/delete + `TestDir` create/rmdir) -- every step is a cache-deferred write; the read-path smoke check + directory dump still run, so no dirty test artifact is left behind
+- [x] FAST / UNKNOWN: full suite (all tests complete in <5 s on fast media)
+- [x] Log: `test: IXFS tests: reduced (USB boot media)` or `test: IXFS tests: full suite (fast media)`
+- [x] Commit: `"boot: IXFS tests auto-skip heavy I/O on USB boot media"`
 
-**Test checkpoint:** On USB boot: serial shows `test: IXFS tests: reduced (USB boot media)`, no freeze. On SATA/NVMe: serial shows `test: IXFS tests: full suite (SATA)`, all tests pass. Test on: bare metal i5-4210U USB, QEMU AHCI, bare metal i5-11600K SATA.
+**Test checkpoint:** On USB boot: serial shows `test: IXFS tests: reduced (USB boot media)`, no freeze. On SATA/NVMe: serial shows `test: IXFS tests: full suite (fast media)`, all tests pass. Test on: bare metal i5-4210U USB, QEMU AHCI, bare metal i5-11600K SATA.
 
-**Regression risk:** LOW -- tests are skipped not broken. Full suite still runs on fast media. Rollback: remove the media check, run all tests unconditionally.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2701 kernel + 16 user, 0 failures
+
+> **Notes:**
+> - **What shipped:** pure predicate `boot_media_is_usb_class()` in `boot_media.{h,c}` + `reduced_io` gating in `boot_tests.c` `boot_tests_run()` debug-integration block; `test_boot_media_is_usb_class` (4 asserts) in `test_boot_device.c`.
+> - **How it runs:** on USB media the write-heavy `debug=1` tests (IXFS CRUD mutation block + `ixfs_test_performance`) are skipped; the read-path smoke check + dir dump still run. Proactive `boot_media_speed()`, reactive `klog_slow_media_detected()`.
+> - **Downstream effects:** complements the existing kernel-test-sweep skip (already `BOOT_MEDIA_SLOW`-gated) so both halves of a slow-USB boot avoid freezing; consumes §10's `boot_media` probe.
+> - **Canonical doc:** `include/kernel/boot_media.h` contract + the `boot_tests.c` reduced-IO comment.
+> - **Scope boundary:** §14 reduces the `debug=1` IXFS integration tests; the kernel `TEST_CAT_*` sweep skip is §9/§10-owned (`SLOW`-only); the speed probe is §10; IXFS read-path `i_atime`-write policy is IXFS-core territory.
+
+**Regression risk:** LOW -- tests are skipped not broken; full suite still runs on fast media; the reduced path leaves no IXFS test artifact (the whole mutation block is gated). Rollback: remove the `reduced_io` gate, run all tests unconditionally.
 
 ---
 
@@ -501,7 +511,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ✅ §10 4KiB-probe classify  |
 | ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ✅ §12 consolidated report 🚀 |
 | 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ✅ §13 1 ring scan, no drops |
-| 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §14                      |
+| 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ✅ §14 USB skips write-heavy |
 | ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §15 🚀                   |
 
 After §1-§10 plus §11's detection + graceful skip, USB boot is as reliable as Windows and Linux on xHCI hardware -- transport-level stall recovery and bounded timeouts prevent hangs on flaky hardware, and it degrades cleanly (no hang) on legacy controllers. Active EHCI/UHCI boot storage lands with the TODO-10 §1/§10 usb_core HCD. §12-§15 add diagnostic and I/O optimizations for slow media.

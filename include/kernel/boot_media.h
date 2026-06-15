@@ -29,6 +29,11 @@ boot_media_speed_t boot_media_classify(uint32_t us_per_4kib);
 /* Human-readable class name ("fast"/"medium"/"slow"/"unknown"). Pure. */
 const char *boot_media_speed_name(boot_media_speed_t s);
 
+/* 1 when the class is USB-attached storage (MEDIUM = USB 3.0, SLOW = USB 2.0),
+ * 0 for FAST (SSD/NVMe) and UNKNOWN. Used to reduce I/O-heavy debug boot tests on
+ * USB media so a slow boot does not freeze. Pure; exposed for tests. */
+int boot_media_is_usb_class(boot_media_speed_t s);
+
 /* The probed boot-media speed (BOOT_MEDIA_UNKNOWN until boot_media_probe runs). */
 boot_media_speed_t boot_media_speed(void);
 
