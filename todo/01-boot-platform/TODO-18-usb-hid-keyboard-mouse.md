@@ -155,11 +155,12 @@ Parse boot-protocol mouse reports (3–4 bytes) into cursor movement.
 > - Shipped: HID boot-mouse parsing -- `xhci_dev.c` `xhci_hid_decode_mouse` (pure) + `xhci_hid_parse_mouse` wired into the §2 poll; `mouse.c` `mouse_update_relative` applies the delta to the shared PS/2 cursor state.
 > - Integrates: USB writes the same `mouse_x/y/buttons` the compositor already reads via `mouse_get_state`, so cursor movement is transparent on the relative-source path; SET_PROTOCOL(0) forces boot protocol; mouse `MaxPkt < 3` rejected.
 > - Hardening: a new irqsave `mouse_lock` guards every cursor reader/writer (PS/2 IRQ, USB tick-ISR, compositor) -- fixes a pre-existing unlocked RMW race; poll skips sub-boot-length reports; SET_PROTOCOL NAK warns for mice too.
-> - Review: Codex 5x (design + test-coverage + adversarial + consistency + perf); 2H accepted (absolute-source merge, cursor-state race), 2M fixed (boot-protocol gating, short-report length), 2M test gaps added.
+> - Review: Codex 10x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial x4); 1H+5M fixed across impl+review (boot-protocol gating, short-report length, cursor-state lock + seed ordering), 2H accepted (compositor merge + cursor-router -> §5), 2 test gaps added.
 > - Scope boundary: §4 drives the cursor on the relative-source path; merging USB with an absolute VirtIO/VBox source, and PS/2+USB buffer coexistence, are §5; hot-plug is §6.
-> **Verified:** 2026-06-15 | impl commit | 6/6 items | build OK | storage 37/37 + 16 user-mode PASS; smoke PASS 2.53s
+> **Verified:** 2026-06-15 | review commit | 6/6 items | build OK | storage 37 kernel + 16 user-mode PASS; smoke PASS 2.47s
 > **Accepted:** [H] compositor source cascade (`compositor.c` virtio/vbox -> else) overrides USB relative deltas when an absolute source is present -> XREF: 01-boot-platform/TODO-18 §5 (item: "Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source")
 > **Accepted:** [H] cursor-state race pre-dates this section (PS/2 IRQ + compositor thread on unlocked volatiles) -- fixed here via `mouse_lock`; broader input-router consolidation -> XREF: 01-boot-platform/TODO-18 §5 (item: "Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source")
+> **Quality reviewed:** 2026-06-15 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 1H+3M fixed, 2H accepted | scope: kernel-code-quality
 
 ---
 

@@ -157,6 +157,13 @@ static volatile int32_t mouse_x;
 static volatile int32_t mouse_y;
 static volatile uint8_t mouse_buttons;
 
+/* Set once the cursor position has been published by any input source. The USB
+ * HID poller (armed during xhci_init, which runs before deferred PS/2 init) can
+ * publish via mouse_update_relative before mouse_init runs; the seed there is
+ * conditional on this flag so deferred PS/2 init does not re-center a cursor a
+ * USB mouse already moved. Guarded by mouse_lock. */
+static volatile uint8_t mouse_seeded;
+
 /* Guards the compound read-modify-clamp-write of mouse_x/mouse_y/mouse_buttons.
  * Writers: PS/2 IRQ12 ISR, the USB HID tick-ISR poller (mouse_update_relative),
  * the compositor thread (mouse_set_position). Readers: mouse_get_state (every
@@ -269,6 +276,26 @@ void mouse_init(void)
 
     POST16(0xD503);
 
+    /* Seed the cursor at screen center FIRST -- before the i8042 presence
+     * checks below, which early-exit on no-i8042 / ACPI-hardware-reduced
+     * systems. Seeding here means a USB-only machine still shows a centered
+     * cursor at idle. Only seed if no source has published yet (a USB mouse can
+     * publish via mouse_update_relative before this deferred init runs); guard
+     * under mouse_lock so the check + stores cannot race the tick-ISR updater. */
+    {
+        int32_t cx = (int32_t)(fb_get_width() / 2);
+        int32_t cy = (int32_t)(fb_get_height() / 2);
+        uint64_t flags;
+        spin_lock_irqsave(&mouse_lock, &flags);
+        if (!mouse_seeded) {
+            mouse_x = cx;
+            mouse_y = cy;
+            mouse_buttons = 0;
+            mouse_seeded = 1;
+        }
+        spin_unlock_irqrestore(&mouse_lock, flags);
+    }
+
     /* Gate: never touch 0x60/0x64 unless an i8042 is actually present.
      * Hardware-reduced ACPI hard-skips; otherwise probe port 0x64 directly
      * (FADT IAPC_BOOT_ARCH.8042 is unreliable on QEMU WHPX). The probe runs
@@ -288,10 +315,6 @@ void mouse_init(void)
                  (uint32_t)probe);
     }
 
-    /* Start cursor at screen center */
-    mouse_x = (int32_t)(fb_get_width() / 2);
-    mouse_y = (int32_t)(fb_get_height() / 2);
-    mouse_buttons = 0;
     mouse_cycle = 0;
 
     /* Enable auxiliary (mouse) device */
@@ -454,13 +477,24 @@ void mouse_inject_state(int32_t x, int32_t y, uint8_t buttons)
     mouse_y = y;
     mouse_buttons = buttons;
     mouse_clamp_locked();
+    mouse_seeded = 1;   /* published: deferred PS/2 init must not re-center */
     spin_unlock_irqrestore(&mouse_lock, flags);
 }
 
 void mouse_update_relative(int32_t dx, int32_t dy, uint8_t buttons)
 {
+    int32_t cx = (int32_t)(fb_get_width() / 2);
+    int32_t cy = (int32_t)(fb_get_height() / 2);
     uint64_t flags;
     spin_lock_irqsave(&mouse_lock, &flags);
+    /* If a USB report arrives before deferred PS/2 init seeds the cursor, base
+     * this relative delta on screen center -- not the (0,0) origin -- and mark
+     * seeded so mouse_init keeps this position instead of re-centering. */
+    if (!mouse_seeded) {
+        mouse_x = cx;
+        mouse_y = cy;
+        mouse_seeded = 1;
+    }
     /* USB HID boot mouse reports +Y downward (screen-oriented), so apply dy
      * directly -- unlike the PS/2 wire byte which is +Y up (mouse_y -= dy). */
     mouse_x += dx;
