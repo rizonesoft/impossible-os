@@ -170,6 +170,13 @@ struct xhci_ep_ctx {
 #define XHCI_EP_TYPE_BULK_IN     6   /* Bulk IN */
 #define XHCI_EP_TYPE_INTERRUPT_IN 7  /* Interrupt IN (HID) */
 
+/* Endpoint Context EP State (field0 bits 2:0, xHCI 6.2.3.1) */
+#define XHCI_EP_STATE_MASK       0x7
+#define XHCI_EP_STATE_DISABLED   0
+#define XHCI_EP_STATE_RUNNING    1
+#define XHCI_EP_STATE_HALTED     2   /* stalled -- needs reset-endpoint recovery */
+#define XHCI_EP_STATE_STOPPED    3
+
 /* Endpoint Context field1 helpers */
 #define XHCI_EPCTX_CERR(n)        (((uint32_t)(n) & 0x3) << 1)
 #define XHCI_EPCTX_TYPE(t)        (((uint32_t)(t) & 0x7) << 3)
@@ -305,6 +312,38 @@ void xhci_hid_decode_mouse(const uint8_t *report, int32_t *dx, int32_t *dy,
 int xhci_bulk_transfer(struct xhci_controller *hc, struct xhci_device *dev,
                        struct xhci_ring *ring, void *buf, uint32_t len,
                        int dir_in);
+
+/* Like xhci_bulk_transfer but returns the raw xHCI Transfer Event completion
+ * code (XHCI_TRB_CC_*) instead of 0/-1, so the BOT transport layer can tell a
+ * recoverable endpoint halt (STALL/BABBLE/USB_TXN/DATA_BUFFER) from success.
+ * Returns 0xFF on a wait timeout. Does NOT perform recovery itself. */
+uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc, struct xhci_device *dev,
+                              struct xhci_ring *ring, void *buf, uint32_t len,
+                              int dir_in);
+
+/* Low-level control (EP0) transfer that returns 0 on success, -1 on failure and
+ * performs NO endpoint recovery -- the no-recovery primitive used by stall
+ * recovery (CLEAR_FEATURE) and the BOT mass-storage reset so recovery can never
+ * recurse through EP0. */
+int xhci_send_control(struct xhci_controller *hc, struct xhci_device *dev,
+                      const uint8_t setup[8], void *data, uint32_t data_len,
+                      int dir_in);
+
+/* Return 1 if the endpoint's output context EP State is Halted, else 0. */
+int xhci_endpoint_is_halted(struct xhci_controller *hc, struct xhci_device *dev,
+                            uint32_t dci);
+
+/* Send CLEAR_FEATURE(ENDPOINT_HALT) to `ep_addr` (with direction bit). Returns
+ * 0 on success, -1 on failure. No-recovery (uses xhci_send_control). */
+int xhci_clear_endpoint_halt(struct xhci_controller *hc, struct xhci_device *dev,
+                             uint8_t ep_addr);
+
+/* Recover a halted endpoint: CLEAR_FEATURE(ENDPOINT_HALT) -> Reset Endpoint
+ * command -> Set TR Dequeue Pointer (past the failed TRB) -> ready to re-ring.
+ * `dci` is the Device Context Index, `ep_addr` the USB endpoint address (with
+ * direction bit), `ring` the endpoint's transfer ring. Returns 0 on success. */
+int xhci_recover_endpoint(struct xhci_controller *hc, struct xhci_device *dev,
+                          uint32_t dci, uint8_t ep_addr, struct xhci_ring *ring);
 
 /* Get a device by global array index. Returns NULL if inactive. */
 struct xhci_device *xhci_get_device(int index);

@@ -141,3 +141,9 @@ msc_tur_action_t msc_tur_decide(int rc, int rs_rc, msc_err_class_t cls);
 
 /* Human-readable name for a SCSI sense key (0x0-0xF). Pure; for diagnostics. */
 const char *msc_sense_key_name(uint8_t key);
+
+/* True if an xHCI Transfer Event completion code (XHCI_TRB_CC_*) is a
+ * recoverable endpoint halt (STALL / BABBLE / USB transaction / data buffer)
+ * that the BOT transport recovers via the stall-recovery sequence. Pure;
+ * exposed for tests. */
+int msc_cc_is_halt(uint8_t cc);

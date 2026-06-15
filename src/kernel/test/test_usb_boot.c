@@ -208,6 +208,33 @@ static void test_usb_boot_tur_decide(void)
                    MSC_TUR_WAIT, "FAIL + NO SENSE/recovered -> WAIT");
 }
 
+/* msc_cc_is_halt flags exactly the four endpoint-halting xHCI completion codes
+ * (STALL, BABBLE, USB transaction, data buffer) as recoverable; everything else
+ * (success, short packet, the CC-5 hole, timeout, all other codes) is not.
+ * Exhaustive over the full 0..255 completion-code domain so a range-bug
+ * (e.g. cc >= DATA_BUFFER && cc <= STALL, which would wrongly include CC 5)
+ * cannot pass; the predicate gates whether endpoint halt recovery runs. Pure. */
+static void test_usb_boot_cc_is_halt(void)
+{
+    /* Named positives/negatives first for readability. */
+    TEST_ASSERT(msc_cc_is_halt(XHCI_TRB_CC_STALL), "STALL is a recoverable halt");
+    TEST_ASSERT(msc_cc_is_halt(XHCI_TRB_CC_BABBLE), "BABBLE is a recoverable halt");
+    TEST_ASSERT(msc_cc_is_halt(XHCI_TRB_CC_USB_TXN), "USB txn err is a recoverable halt");
+    TEST_ASSERT(msc_cc_is_halt(XHCI_TRB_CC_DATA_BUFFER),
+                "data buffer err is a recoverable halt");
+    TEST_ASSERT(!msc_cc_is_halt(XHCI_TRB_CC_SUCCESS), "SUCCESS is not a halt");
+    TEST_ASSERT(!msc_cc_is_halt(5), "CC 5 (between USB_TXN and STALL) is not a halt");
+
+    /* Exhaustive: assert the iff contract for every completion-code value. */
+    int cc;
+    for (cc = 0; cc <= 0xFF; cc++) {
+        int expected = (cc == XHCI_TRB_CC_STALL || cc == XHCI_TRB_CC_BABBLE ||
+                        cc == XHCI_TRB_CC_USB_TXN || cc == XHCI_TRB_CC_DATA_BUFFER);
+        TEST_ASSERT_EQ(msc_cc_is_halt((uint8_t)cc) ? 1 : 0, expected,
+                       "msc_cc_is_halt matches the halt-CC set over 0..255");
+    }
+}
+
 void test_register_usb_boot(void)
 {
     test_suite_register_cat("usb: controller count + MSC geometry",
@@ -218,6 +245,8 @@ void test_register_usb_boot(void)
                             test_usb_boot_sense_key_name, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-boot: TEST UNIT READY poll decision",
                             test_usb_boot_tur_decide, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-boot: stall completion-code classification",
+                            test_usb_boot_cc_is_halt, TEST_CAT_STORAGE);
 }
 
 #endif /* KERNEL_TESTS */

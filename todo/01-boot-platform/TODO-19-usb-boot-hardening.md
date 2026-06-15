@@ -53,7 +53,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [/]   |
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [x]   |
 | 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2, §4    |  [ ]   |
-| 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [ ]   |
+| 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [x]   |
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [ ]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [ ]   |
 | 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [ ]   |
@@ -149,17 +149,24 @@ Handle USB transport-level stalls -- a separate layer from SCSI sense errors. A 
 > [!NOTE]
 > xHCI Transfer Event TRB completion codes: `STALL_ERROR (6)` = endpoint halted by device, `USB_TRANSACTION_ERROR (4)` = CRC/bitstuff/bad PID, `BABBLE_DETECTED_ERROR (3)` = device sent more data than expected, `DATA_BUFFER_ERROR (2)` = host controller data buffer overrun/underrun. All of these leave the endpoint in the Halted state. Recovery requires: (1) `CLEAR_FEATURE(ENDPOINT_HALT)` USB control transfer to the device, (2) xHCI Reset Endpoint command to transition the endpoint from Halted to Stopped, (3) xHCI Set TR Dequeue Pointer command to advance past the failed TRB, (4) re-ring the doorbell.
 
-- [ ] `xhci_endpoint_is_halted(dev, ep_id)`: check endpoint context state field -- state `2` = Halted
-- [ ] `xhci_clear_endpoint_halt(dev, ep_id)`: send `CLEAR_FEATURE(ENDPOINT_HALT)` control transfer to the device (bmRequestType=`0x02`, bRequest=`0x01` CLEAR_FEATURE, wValue=`0x00` ENDPOINT_HALT, wIndex=endpoint address)
-- [ ] `xhci_reset_endpoint(hc, slot, ep_id)`: issue Reset Endpoint command (TRB type 14); wait for Command Completion Event with CC == SUCCESS
-- [ ] `xhci_set_tr_dequeue(hc, slot, ep_id, dequeue_ptr)`: issue Set TR Dequeue Pointer command (TRB type 10) pointing past the failed TRB; advance the transfer ring's dequeue pointer
-- [ ] `xhci_recover_endpoint(dev, ep_id)`: combined recovery sequence -- clear halt, reset endpoint, set dequeue, log `"[USB] EP%u recovered from stall (slot=%u)"`
-- [ ] In `xhci_bulk_transfer()` / `xhci_control_transfer()`: on completion code `STALL_ERROR`, `USB_TRANSACTION_ERROR`, `BABBLE_DETECTED_ERROR`, or `DATA_BUFFER_ERROR`, call `xhci_recover_endpoint()` and return a retriable error code
-- [ ] `msc_bot_reset(dev)`: send BOT mass-storage reset class request (bmRequestType=`0x21`, bRequest=`0xFF`, wValue=0, wIndex=interface, wLength=0); then `CLEAR_FEATURE(ENDPOINT_HALT)` on both bulk-IN and bulk-OUT endpoints; used after CSW phase error (`bCSWStatus == 2`)
-- [ ] Integrate with §3 retry: after `xhci_recover_endpoint()`, retry the failed BOT command (up to 3 attempts)
-- [ ] Commit: `"drivers: USB transport error recovery -- stall/halt clear, endpoint reset, BOT device reset"`
+- [x] `xhci_endpoint_is_halted(hc, dev, dci)` + static `xhci_ep_state` read the output endpoint context `field0` bits 2:0 (`XHCI_EP_STATE_HALTED=2`) from the identity-mapped DCBAA output context
+- [x] `xhci_clear_endpoint_halt(hc, dev, ep_addr)`: `CLEAR_FEATURE(ENDPOINT_HALT)` (bmRequestType `0x02`, bRequest `0x01`, wValue `0x00`, wIndex=ep_addr) via the no-recovery `xhci_send_control` primitive
+- [x] `xhci_reset_endpoint(hc, slot, dci)` (static): Reset Endpoint command (`XHCI_TRB_RESET_EP=14`); waits for Command Completion CC==SUCCESS
+- [x] `xhci_set_tr_dequeue(hc, slot, dci, ring)` (static): Set TR Dequeue Pointer (`XHCI_TRB_SET_TR_DEQUEUE=16`); dequeue = `ring->phys + ring->enqueue*16 | cycle` (DCS), syncs `ring->dequeue`
+- [x] `xhci_recover_endpoint(hc, dev, dci, ep_addr, ring)`: STATE-AWARE -- Halted: clear+reset+dequeue; Stopped: clear+dequeue; Running: clear only; Error/Disabled: fail (never leaves a Stopped/un-armed ring claimed recovered)
+- [x] `xhci_bulk_transfer_cc` returns the raw CC so STALL/USB_TXN/BABBLE/DATA_BUFFER reach the BOT boundary (`xhci_bulk_transfer` keeps 0/-1); recovery runs in `msc_bot_command`/`msc_bot_xfer`, never inside the EP0 primitive
+- [x] `msc_bot_reset(hc, dev)`: BOT mass-storage reset (`0x21`/`0xFF`, wIndex=iface) + state-aware re-sync of both bulk pipes; fails if class reset or either pipe fails; fires on CSW phase error / signature / tag mismatch
+- [x] Transport-level recover+retry in `msc_bot_xfer` (CBW/CSW, up to `MSC_STALL_RETRIES`=2); data-phase halt recovers then proceeds to CSW (no data re-send) and fails the command (`data_short`); SCSI-sense whole-command retry is §3
+- [x] Commit: `"drivers: USB transport error recovery -- stall/halt clear, endpoint reset, BOT device reset"`
 
-**Test checkpoint:** Force-stall a USB endpoint in QEMU (or encounter one naturally on bare metal USB 2.0) -- serial shows `"EP recovered from stall"`, boot continues without hang. If recovery fails after 3 retries, log error and mark device non-functional rather than hanging.
+**Test checkpoint:** Force-stall a USB endpoint in QEMU (or encounter one naturally on bare metal USB 2.0) -- serial shows `"EP%u recovered"`, boot continues without hang. If recovery fails, log error and mark device non-functional rather than hanging.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` "stall completion-code classification" exhaustively asserts `msc_cc_is_halt` over the 0..255 CC domain; live stall recovery validated via QEMU run-usb + bare metal.
+> **Notes:**
+> - Shipped: stall-recovery primitives in `xhci_dev.c` (`xhci_recover_endpoint`, Reset Endpoint/Set TR Dequeue cmds) + `usb_msc.c` BOT recovery (`msc_bot_xfer`, `msc_bot_reset`); new TRB/CC/EP-state constants.
+> - Integrates: `xhci_bulk_transfer` now wraps a CC-returning `xhci_bulk_transfer_cc`; `msc_bot_command` recovers stalls at the BOT boundary and BOT-resets on a desynced CSW (bad signature/tag) or phase error.
+> - Hardening: state-aware recovery never Resets a non-Halted endpoint or leaves a Stopped ring un-armed; a stall-recovered short data phase fails the command so READ(10) can't advance the LBA on partial data.
+> - Scope boundary: §4 owns transport recovery; per-command CSW residue acceptance + SCSI-sense whole-command retry are §3; multi-TRB event-pointer dequeue validation is §5.
+> **Verified:** 2026-06-15 | impl commit | 8/8 items | build OK | storage 371 kernel + 16 user-mode PASS (exhaustive stall-CC matrix)
 
 **Regression risk:** MEDIUM -- modifies the transfer completion path. If the recovery sequence issues incorrect xHCI commands, the endpoint may become permanently stuck. Rollback: disable recovery, return error immediately on stall (current behavior but with a timeout instead of infinite hang).
 
@@ -364,7 +371,7 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 |----|------------------------------|---------------------------|----------------------------|-----------------------------|
 | 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ⬜ §1-§3                    |
 | 💎 | Device readiness poll        | ✅ usbstor TUR wait      | ✅ sd spin-up poll         | ✅ §2 TUR poll, 2s budget   |
-| 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ⬜ §4                       |
+| 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ✅ §4 reset EP + BOT reset  |
 | 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ⬜ §5                 |
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ⬜ §6                       |
 | 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |

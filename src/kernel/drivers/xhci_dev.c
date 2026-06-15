@@ -76,6 +76,10 @@ static void dev_copy(void *dst, const void *src, uint64_t bytes)
         d[i] = s[i];
 }
 
+/* Forward declaration: context entry size (32 or 64 bytes per CSZ); used by the
+ * endpoint-state reader before its definition further down. */
+static uint32_t ctx_size(struct xhci_controller *hc);
+
 /* Simple microsecond-granularity busy wait */
 static void dev_delay_us(uint32_t us)
 {
@@ -324,13 +328,15 @@ static int xhci_control_transfer(struct xhci_controller *hc,
 
 /* ---- Bulk transfer ------------------------------------------------------- */
 
-/* Perform a bulk transfer on a non-EP0 endpoint.
- * dir_in: 1 = bulk IN (device to host), 0 = bulk OUT (host to device).
- * Returns 0 on success, -1 on failure. */
-int xhci_bulk_transfer(struct xhci_controller *hc,
-                       struct xhci_device *dev,
-                       struct xhci_ring *ring,
-                       void *buf, uint32_t len, int dir_in)
+/* Perform a bulk transfer on a non-EP0 endpoint, returning the raw xHCI
+ * Transfer Event completion code (XHCI_TRB_CC_*) so the BOT transport layer can
+ * tell a recoverable endpoint halt apart from success. dir_in: 1 = bulk IN,
+ * 0 = bulk OUT. Returns XHCI_TRB_CC_SUCCESS on full success, the failing CC on
+ * a transport error, or 0xFF on a wait timeout. Performs NO recovery. */
+uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc,
+                              struct xhci_device *dev,
+                              struct xhci_ring *ring,
+                              void *buf, uint32_t len, int dir_in)
 {
     /* xHCI 4.11.7.1: a Normal TRB data buffer must fit in 64 KiB AND must not
      * cross a 64 KiB physical-address boundary. The caller's buffer has no
@@ -360,7 +366,7 @@ int xhci_bulk_transfer(struct xhci_controller *hc,
         trb.control   = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC;
 
         if (ep0_ring_enqueue(ring, &trb) != 0)
-            return -1;
+            return 0xFF;             /* ring full -- treat as a transport failure */
 
         dev_write32(hc->db_base, dev->slot_id * 4, dci);
 
@@ -368,13 +374,168 @@ int xhci_bulk_transfer(struct xhci_controller *hc,
         if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
             klog(LOG_ERROR, "usb", "Bulk %s failed (slot %u, cc=%u)",
                  dir_in ? "IN" : "OUT", (uint64_t)dev->slot_id, (uint64_t)cc);
-            return -1;
+            return cc;               /* report the failing CC for recovery */
         }
 
         addr      += frag;
         remaining -= frag;
     } while (remaining > 0);
 
+    return XHCI_TRB_CC_SUCCESS;
+}
+
+/* 0/-1 wrapper preserving the public bulk-transfer contract for enumeration
+ * callers that do not need completion-code detail. */
+int xhci_bulk_transfer(struct xhci_controller *hc,
+                       struct xhci_device *dev,
+                       struct xhci_ring *ring,
+                       void *buf, uint32_t len, int dir_in)
+{
+    uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, buf, len, dir_in);
+    return (cc == XHCI_TRB_CC_SUCCESS || cc == XHCI_TRB_CC_SHORT_PKT) ? 0 : -1;
+}
+
+/* ---- Transport error recovery (stall/halt) ------------------------------- */
+
+/* Non-recovery control (EP0) transfer wrapper -- the primitive used by stall
+ * recovery and BOT reset. Kept distinct from xhci_control_transfer only to
+ * make the no-recovery contract explicit at the call site; recovery is driven
+ * by the BOT transport layer, never auto-run inside EP0 (which would recurse
+ * through CLEAR_FEATURE). */
+int xhci_send_control(struct xhci_controller *hc, struct xhci_device *dev,
+                      const uint8_t setup[8], void *data, uint32_t data_len,
+                      int dir_in)
+{
+    return xhci_control_transfer(hc, dev, setup, data, data_len, dir_in);
+}
+
+/* Read the raw output endpoint context EP State (0-7) for `dci`. The Output
+ * Device Context is identity-mapped at dev->output_ctx_phys; the controller
+ * writes EP state there. Returns XHCI_EP_STATE_DISABLED (0) if there is no
+ * context. */
+static uint8_t xhci_ep_state(struct xhci_controller *hc, struct xhci_device *dev,
+                             uint32_t dci)
+{
+    struct xhci_ep_ctx *ep;
+
+    if (!dev->output_ctx_phys || dci == 0 || dci > 31)
+        return XHCI_EP_STATE_DISABLED;
+    ep = (struct xhci_ep_ctx *)(uintptr_t)
+         (dev->output_ctx_phys + (uint64_t)dci * ctx_size(hc));
+    return (uint8_t)(ep->field0 & XHCI_EP_STATE_MASK);
+}
+
+/* Return 1 if the endpoint's output context EP State is Halted, else 0. */
+int xhci_endpoint_is_halted(struct xhci_controller *hc, struct xhci_device *dev,
+                            uint32_t dci)
+{
+    return xhci_ep_state(hc, dev, dci) == XHCI_EP_STATE_HALTED;
+}
+
+/* CLEAR_FEATURE(ENDPOINT_HALT) to `ep_addr` (USB endpoint address with the
+ * direction bit, e.g. 0x82). No-recovery. Returns 0 on success, -1 on failure. */
+int xhci_clear_endpoint_halt(struct xhci_controller *hc, struct xhci_device *dev,
+                             uint8_t ep_addr)
+{
+    uint8_t setup[8];
+    setup[0] = 0x02;  /* bmRequestType: Host-to-Device, Standard, Endpoint */
+    setup[1] = 0x01;  /* bRequest = CLEAR_FEATURE */
+    setup[2] = 0x00;  /* wValue = ENDPOINT_HALT (feature selector 0) */
+    setup[3] = 0x00;
+    setup[4] = ep_addr;  /* wIndex = endpoint address (with dir bit) */
+    setup[5] = 0x00;
+    setup[6] = 0x00;  /* wLength = 0 */
+    setup[7] = 0x00;
+    return xhci_send_control(hc, dev, setup, NULL, 0, 0);
+}
+
+/* Issue a Reset Endpoint command (Halted -> Stopped on the host side). */
+static int xhci_reset_endpoint(struct xhci_controller *hc, uint8_t slot_id,
+                               uint32_t dci)
+{
+    struct xhci_trb cmd;
+    uint8_t cc;
+
+    dev_zero(&cmd, sizeof(cmd));
+    cmd.control = (XHCI_TRB_RESET_EP << XHCI_TRB_TYPE_SHIFT)
+                | ((dci & 0x1Fu) << 16)            /* Endpoint ID (bits 20:16) */
+                | ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT);
+    if (xhci_cmd_submit(hc, &cmd) != 0)
+        return -1;
+    cc = xhci_wait_command(hc, NULL);
+    if (cc != XHCI_TRB_CC_SUCCESS) {
+        klog(LOG_ERROR, "usb", "Reset Endpoint failed (slot %u, dci %u, cc=%u)",
+             (uint64_t)slot_id, (uint64_t)dci, (uint64_t)cc);
+        return -1;
+    }
+    return 0;
+}
+
+/* Issue a Set TR Dequeue Pointer command pointing the endpoint's dequeue at the
+ * ring's current enqueue slot (past the failed TRB), with the producer cycle as
+ * the Dequeue Cycle State. Valid for the one-TRB-at-a-time synchronous transfer
+ * model: the failed TRB is the single in-flight TRB, so the next free slot is
+ * the correct resume point. Requires the endpoint be Stopped (post Reset EP). */
+static int xhci_set_tr_dequeue(struct xhci_controller *hc, uint8_t slot_id,
+                               uint32_t dci, struct xhci_ring *ring)
+{
+    struct xhci_trb cmd;
+    uint64_t dq;
+    uint8_t cc;
+
+    dq = ring->phys + (uint64_t)ring->enqueue * sizeof(struct xhci_trb);
+    dq |= (ring->cycle ? 1u : 0u);                 /* Dequeue Cycle State (bit 0) */
+
+    dev_zero(&cmd, sizeof(cmd));
+    cmd.parameter = dq;
+    cmd.control   = (XHCI_TRB_SET_TR_DEQUEUE << XHCI_TRB_TYPE_SHIFT)
+                  | ((dci & 0x1Fu) << 16)
+                  | ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT);
+    if (xhci_cmd_submit(hc, &cmd) != 0)
+        return -1;
+    cc = xhci_wait_command(hc, NULL);
+    if (cc != XHCI_TRB_CC_SUCCESS) {
+        klog(LOG_ERROR, "usb", "Set TR Dequeue failed (slot %u, dci %u, cc=%u)",
+             (uint64_t)slot_id, (uint64_t)dci, (uint64_t)cc);
+        return -1;
+    }
+    /* Sync the software dequeue index to the controller's new resume point. */
+    ring->dequeue = ring->enqueue;
+    return 0;
+}
+
+/* Recover an endpoint to a usable (Running-capable) state, doing only the steps
+ * the current EP State requires so the host ring is never left Stopped/un-armed:
+ *   - CLEAR_FEATURE(ENDPOINT_HALT) on the device always (resets the data toggle;
+ *     harmless on a Running endpoint).
+ *   - Reset Endpoint only when Halted (Halted -> Stopped). Issuing it on a
+ *     Stopped/Running endpoint would Context-State error.
+ *   - Set TR Dequeue when Halted or Stopped (re-arm the ring past the failed
+ *     TRB); a Running endpoint needs no host-side dequeue change.
+ * Error/Disabled states cannot be recovered here -> failure. Returns 0/-1. */
+int xhci_recover_endpoint(struct xhci_controller *hc, struct xhci_device *dev,
+                          uint32_t dci, uint8_t ep_addr, struct xhci_ring *ring)
+{
+    uint8_t state = xhci_ep_state(hc, dev, dci);
+
+    if (state != XHCI_EP_STATE_HALTED && state != XHCI_EP_STATE_STOPPED &&
+        state != XHCI_EP_STATE_RUNNING) {
+        klog(LOG_ERROR, "usb", "EP%u in unrecoverable state %u (slot=%u)",
+             (uint64_t)dci, (uint64_t)state, (uint64_t)dev->slot_id);
+        return -1;
+    }
+    if (xhci_clear_endpoint_halt(hc, dev, ep_addr) != 0)
+        return -1;
+    if (state == XHCI_EP_STATE_HALTED) {
+        if (xhci_reset_endpoint(hc, dev->slot_id, dci) != 0)
+            return -1;
+    }
+    if (state == XHCI_EP_STATE_HALTED || state == XHCI_EP_STATE_STOPPED) {
+        if (xhci_set_tr_dequeue(hc, dev->slot_id, dci, ring) != 0)
+            return -1;
+    }
+    klog(LOG_WARN, "usb", "EP%u recovered (state %u, slot=%u)",
+         (uint64_t)dci, (uint64_t)state, (uint64_t)dev->slot_id);
     return 0;
 }
 

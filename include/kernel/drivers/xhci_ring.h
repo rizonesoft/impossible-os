@@ -46,6 +46,8 @@ struct xhci_trb {
 #define XHCI_TRB_DISABLE_SLOT   10  /* Disable Slot Command */
 #define XHCI_TRB_ADDRESS_DEV    11  /* Address Device Command */
 #define XHCI_TRB_CONFIG_EP      12  /* Configure Endpoint Command */
+#define XHCI_TRB_RESET_EP       14  /* Reset Endpoint Command (stall recovery) */
+#define XHCI_TRB_SET_TR_DEQUEUE 16  /* Set TR Dequeue Pointer Cmd (NOT 10 = Disable Slot) */
 #define XHCI_TRB_NOOP_CMD       23  /* No Op Command */
 
 /* Event TRB types */
@@ -56,6 +58,12 @@ struct xhci_trb {
 /* Completion codes (status field bits 31:24) */
 #define XHCI_TRB_CC_SHIFT       24
 #define XHCI_TRB_CC_SUCCESS     1
+/* Endpoint-halting transport errors (xHCI 1.2 Table 6-90); all leave the
+ * endpoint in the Halted state and require the stall-recovery sequence. */
+#define XHCI_TRB_CC_DATA_BUFFER 2   /* Data Buffer Error (over/underrun) */
+#define XHCI_TRB_CC_BABBLE      3   /* Babble Detected Error */
+#define XHCI_TRB_CC_USB_TXN     4   /* USB Transaction Error (CRC/bitstuff/PID) */
+#define XHCI_TRB_CC_STALL       6   /* Stall Error (endpoint halted by device) */
 #define XHCI_TRB_CC_SHORT_PKT   13
 
 /* Command Completion Event: slot ID (control field bits 31:24) */

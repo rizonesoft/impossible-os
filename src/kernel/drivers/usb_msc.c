@@ -61,6 +61,109 @@ static void msc_delay_us(uint32_t us)
         __asm__ volatile("outb %%al, $0x80" ::: "memory");
 }
 
+/* ---- BOT transport-level recovery (stall/halt) ---- */
+
+/* Max endpoint-recovery retries for a single bulk transfer. */
+#define MSC_STALL_RETRIES   2
+
+/* Per-direction bulk pipe accessors. */
+static struct xhci_ring *msc_bulk_ring(struct xhci_device *dev, int dir_in)
+{
+    return dir_in ? &dev->bulk_in_ring : &dev->bulk_out_ring;
+}
+static uint32_t msc_bulk_dci(struct xhci_device *dev, int dir_in)
+{
+    return dir_in ? XHCI_DCI(dev->bulk_in_ep, 1) : XHCI_DCI(dev->bulk_out_ep, 0);
+}
+static uint8_t msc_bulk_addr(struct xhci_device *dev, int dir_in)
+{
+    return dir_in ? dev->bulk_in_addr : dev->bulk_out_addr;
+}
+
+/* True if a completion code is a recoverable endpoint halt (all leave the
+ * endpoint Halted and clear with the stall-recovery sequence). Exposed for
+ * tests. */
+int msc_cc_is_halt(uint8_t cc)
+{
+    return cc == XHCI_TRB_CC_STALL || cc == XHCI_TRB_CC_BABBLE ||
+           cc == XHCI_TRB_CC_USB_TXN || cc == XHCI_TRB_CC_DATA_BUFFER;
+}
+
+/* Re-sync one bulk pipe after a BOT reset. xhci_recover_endpoint reads the
+ * endpoint's actual EP State and does exactly the steps it needs: device-side
+ * CLEAR_FEATURE always, plus host-side Reset Endpoint (only if Halted) and Set
+ * TR Dequeue (Halted or Stopped) so a partially-recovered Stopped pipe is
+ * re-armed rather than silently left un-usable. Returns 0/-1. */
+static int msc_reset_bulk_pipe(struct xhci_controller *hc, struct xhci_device *dev,
+                               int dir_in)
+{
+    return xhci_recover_endpoint(hc, dev, msc_bulk_dci(dev, dir_in),
+                                 msc_bulk_addr(dev, dir_in),
+                                 msc_bulk_ring(dev, dir_in));
+}
+
+/* BOT mass-storage reset (BOT 1.0 section 5.3.4): class Reset request to the
+ * MSC interface, then re-sync BOTH bulk pipes (device CLEAR_FEATURE plus
+ * host-side Reset Endpoint + Set TR Dequeue when the endpoint context is still
+ * Halted). Fails if the class reset or either pipe re-sync fails -- a partial
+ * reset that claimed success would run later CBW/CSW against a halted pipe.
+ * Returns 0 on success, -1 on failure. */
+static int msc_bot_reset(struct xhci_controller *hc, struct xhci_device *dev)
+{
+    uint8_t setup[8];
+    int rc = 0;
+
+    setup[0] = 0x21;  /* bmRequestType: Host-to-Device, Class, Interface */
+    setup[1] = 0xFF;  /* bRequest = Bulk-Only Mass Storage Reset */
+    setup[2] = 0x00;  /* wValue = 0 */
+    setup[3] = 0x00;
+    setup[4] = dev->msc_iface;  /* wIndex = interface number */
+    setup[5] = 0x00;
+    setup[6] = 0x00;  /* wLength = 0 */
+    setup[7] = 0x00;
+    if (xhci_send_control(hc, dev, setup, NULL, 0, 0) != 0) {
+        klog(LOG_ERROR, "usb-msc", "BOT mass-storage reset failed (slot %u)",
+             (uint64_t)dev->slot_id);
+        return -1;
+    }
+    if (msc_reset_bulk_pipe(hc, dev, 1) != 0)   /* bulk-IN */
+        rc = -1;
+    if (msc_reset_bulk_pipe(hc, dev, 0) != 0)   /* bulk-OUT */
+        rc = -1;
+    if (rc != 0)
+        klog(LOG_ERROR, "usb-msc", "BOT reset: bulk pipe re-sync failed (slot %u)",
+             (uint64_t)dev->slot_id);
+    else
+        klog(LOG_WARN, "usb-msc", "BOT mass-storage reset (slot %u)",
+             (uint64_t)dev->slot_id);
+    return rc;
+}
+
+/* Bulk transfer with transport-level stall recovery. On a recoverable halt,
+ * recover the endpoint and retry the SAME transfer up to MSC_STALL_RETRIES
+ * times (safe for the idempotent CBW and CSW phases). Returns 0 on success
+ * (SUCCESS/SHORT_PKT), -1 if unrecoverable or a non-halt transport error. */
+static int msc_bot_xfer(struct xhci_controller *hc, struct xhci_device *dev,
+                        int dir_in, void *buf, uint32_t len)
+{
+    struct xhci_ring *ring = msc_bulk_ring(dev, dir_in);
+    uint32_t dci = msc_bulk_dci(dev, dir_in);
+    uint8_t ep_addr = msc_bulk_addr(dev, dir_in);
+    int attempt;
+
+    for (attempt = 0; attempt <= MSC_STALL_RETRIES; attempt++) {
+        uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, buf, len, dir_in);
+        if (cc == XHCI_TRB_CC_SUCCESS || cc == XHCI_TRB_CC_SHORT_PKT)
+            return 0;
+        if (!msc_cc_is_halt(cc))
+            return -1;        /* non-halt transport error -- not recoverable here */
+        if (xhci_recover_endpoint(hc, dev, dci, ep_addr, ring) != 0)
+            return -1;        /* recovery itself failed */
+        /* recovered -- loop to retry */
+    }
+    return -1;                /* still halted after retries */
+}
+
 /* ---- BOT transport ---- */
 
 /* Execute a BOT command: send CBW, optional data phase, receive CSW.
@@ -72,6 +175,7 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
     struct usb_cbw cbw;
     struct usb_csw csw;
     uint32_t tag = cbw_tag++;
+    int data_short = 0;   /* set if the data phase halted mid-transfer */
 
     /* Build CBW */
     msc_zero(&cbw, sizeof(cbw));
@@ -85,40 +189,80 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
     cbw.bCBWCBLength = cdb_len;
     msc_copy(cbw.CBWCB, cdb, cdb_len);
 
-    /* Send CBW via Bulk-OUT */
-    if (xhci_bulk_transfer(hc, dev, &dev->bulk_out_ring,
-                           &cbw, USB_MSC_CBW_SIZE, 0) != 0) {
+    /* Send CBW via Bulk-OUT (transport-level stall recovery + retry). */
+    if (msc_bot_xfer(hc, dev, 0, &cbw, USB_MSC_CBW_SIZE) != 0) {
         klog(LOG_ERROR, "usb-msc", "CBW send failed");
         return -1;
     }
 
-    /* Data phase (optional) */
+    /* Data phase (optional). BOT 1.0 section 6.7: a STALL during the data phase
+     * is recovered by clearing the endpoint halt and PROCEEDING to the CSW (the
+     * device reports the short/failed transfer in the CSW residue) -- the data
+     * is NOT re-sent, which would desync a WRITE. A non-halt transport error is
+     * unrecoverable here. */
     if (data && data_len > 0) {
-        struct xhci_ring *ring = dir_in ? &dev->bulk_in_ring : &dev->bulk_out_ring;
-        if (xhci_bulk_transfer(hc, dev, ring, data, data_len, dir_in) != 0) {
-            klog(LOG_ERROR, "usb-msc", "Data phase failed (%s, %u bytes)",
-                 dir_in ? "IN" : "OUT", (uint64_t)data_len);
-            return -1;
+        struct xhci_ring *ring = msc_bulk_ring(dev, dir_in);
+        uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, data, data_len, dir_in);
+        if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
+            if (!msc_cc_is_halt(cc)) {
+                klog(LOG_ERROR, "usb-msc", "Data phase failed (%s, %u bytes, cc=%u)",
+                     dir_in ? "IN" : "OUT", (uint64_t)data_len, (uint64_t)cc);
+                return -1;
+            }
+            /* Recover the halted data endpoint, then fall through to the CSW. */
+            if (xhci_recover_endpoint(hc, dev, msc_bulk_dci(dev, dir_in),
+                                      msc_bulk_addr(dev, dir_in), ring) != 0) {
+                klog(LOG_ERROR, "usb-msc", "Data-phase stall recovery failed");
+                return -1;
+            }
+            /* The data phase was demonstrably incomplete (halted mid-transfer).
+             * Read the CSW to re-sync the pipe, but never report this command as
+             * a complete transfer -- a caller (e.g. READ(10)) must not advance
+             * the LBA on partial data. Per-command residue acceptance (a short
+             * INQUIRY is legal) is the comprehensive owner's job. */
+            data_short = 1;
         }
     }
 
-    /* Receive CSW via Bulk-IN */
+    /* Receive CSW via Bulk-IN (transport-level stall recovery + retry). */
     msc_zero(&csw, sizeof(csw));
-    if (xhci_bulk_transfer(hc, dev, &dev->bulk_in_ring,
-                           &csw, USB_MSC_CSW_SIZE, 1) != 0) {
-        klog(LOG_ERROR, "usb-msc", "CSW receive failed");
+    if (msc_bot_xfer(hc, dev, 1, &csw, USB_MSC_CSW_SIZE) != 0) {
+        klog(LOG_ERROR, "usb-msc", "CSW receive failed -- BOT reset");
+        msc_bot_reset(hc, dev);
         return -1;
     }
 
-    /* Validate CSW */
+    /* Validate CSW. A bad signature or tag mismatch means the BOT pipe is
+     * desynced (the bytes are not a CSW for this command) -- a mass-storage
+     * reset re-syncs both pipes; returning -1 without it would leave every
+     * subsequent command misframed. */
     if (csw.dCSWSignature != USB_MSC_CSW_SIGNATURE) {
-        klog(LOG_ERROR, "usb-msc", "CSW bad signature: 0x%08x",
+        klog(LOG_ERROR, "usb-msc", "CSW bad signature: 0x%08x -- BOT reset",
              (uint64_t)csw.dCSWSignature);
+        msc_bot_reset(hc, dev);
         return -1;
     }
     if (csw.dCSWTag != tag) {
-        klog(LOG_ERROR, "usb-msc", "CSW tag mismatch: got %u, expected %u",
+        klog(LOG_ERROR, "usb-msc", "CSW tag mismatch: got %u, expected %u -- BOT reset",
              (uint64_t)csw.dCSWTag, (uint64_t)tag);
+        msc_bot_reset(hc, dev);
+        return -1;
+    }
+
+    /* A CSW phase error (bCSWStatus == 2) means the device and host disagree on
+     * the transfer framing -- BOT 1.0 section 6.7 mandates a mass-storage reset
+     * before any further command. */
+    if (csw.bCSWStatus == USB_CSW_STATUS_PHASE) {
+        klog(LOG_WARN, "usb-msc", "CSW phase error -- BOT reset (slot %u)",
+             (uint64_t)dev->slot_id);
+        msc_bot_reset(hc, dev);
+    }
+
+    /* A recovered data-phase stall means the data phase did not complete; even
+     * if the device returns CSW PASS, the transfer is short. Fail the command so
+     * no caller treats it as a full transfer. */
+    if (data_short && csw.bCSWStatus == USB_CSW_STATUS_PASS) {
+        klog(LOG_WARN, "usb-msc", "data phase short after stall recovery -- failing command");
         return -1;
     }
 
