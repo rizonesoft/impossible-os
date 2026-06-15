@@ -38,7 +38,7 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 | ⭐  | Order | Deliverable                                           | Depends On | Status |
 | --- | :---: | ----------------------------------------------------- | ---------- | :----: |
 | ⭐  |   1   | Bootloader allocates xHCI DMA structures              | --          |  [/]   |
-| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
+| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [/]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [/]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3, T01 §4 |  [ ]   |
 | ⭐  |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2 |  [/]   |
@@ -101,6 +101,9 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 - [x] Write DCBAAP, CRCR (with Link TRB + cycle=1), ERST, ERDP, ERSTBA, CONFIG
 - [x] Start controller (USBCMD.RS=1 + INTE=1, IMAN.IE=1)
 - [x] `usb_handover_complete` set to 1 on success
+- [ ] **HIGH (USBLEGSUP timeout):** `bl_usblegsup_handoff()` (`bootx64.c:10456-10462`) force-clears BIOS-Owned + returns success on the 1s timeout, so takeover sets `usb_handover_complete=1` anyway. Return failure + abort on timeout
+- [ ] **MEDIUM (ext-cap MMIO bound):** the USBLEGSUP cap walk (`bootx64.c:10417-10428`) is iteration-bounded but not MMIO-bounded -- a malformed chain reads unrelated MMIO. Require `xecp_off+4 <= mmio_size` per read
+- [ ] **HIGH (BAR-decode consumer):** §2 derives op_base/rt_base from the §1 BAR decode and does destructive pre-EBS MMIO writes -- blocked on the §1 "HIGH (BAR decode)" fix
 - [x] Commit: `"boot: USBLEGSUP handoff + controller takeover in bootloader"`
 
 > [!IMPORTANT]
@@ -109,6 +112,19 @@ While firmware USB stack is still active, take xHCI ownership via USBLEGSUP and 
 **Test checkpoint:** Controller running with bootloader-allocated DMA. POST code 0xB083. If halt/takeover fails, log error and skip (kernel falls back to TODO-17). Test on: QEMU `run-usb`, bare metal.
 
 **Regression risk:** HIGH -- halting the firmware USB stack may break EFI services that depend on USB (e.g., EFI console on USB keyboard). Must happen late in bootloader, after kernel load and config table copy. Rollback: if takeover fails, don't modify controller and let kernel handle it.
+
+> **Test runner:** N/A (pre-ExitBootServices UEFI bootloader takeover; no kernel test surface) | validation: serial on bare metal
+
+> **Notes:**
+> - **What shipped:** §2 USBLEGSUP handoff + controller halt/reset/takeover in `bootx64.c` (~10389-10520) -- walks extended caps for OS-Owned, programs DCBAAP/CRCR/ERST/ERDP/CONFIG, starts the controller, sets `usb_handover_complete`.
+> - **How it runs:** late in the bootloader after kernel load + config-table copy (EFI USB dies after the halt); the kernel inherits via §5.
+> - **Downstream effects:** this DONE-UNSTAMPED review filed 2 HIGH + 1 MEDIUM bare-metal bugs (USBLEGSUP-timeout-as-success, unbounded cap walk, destructive consumption of §1's BAR decode) + overlaps the §5 ring re-allocation; downgraded §2 to `[/]`.
+> - **Canonical doc:** `src/boot/uefi/bootx64.c` takeover block + `include/kernel/boot_info.h` `boot_usb_controller`.
+> - **Scope boundary:** §2 owns the USBLEGSUP/takeover; DMA allocation + BAR decode are §1; kernel inherit is §5.
+
+> **Verified:** 2026-06-15 | commit `cf7bd197` | 8/11 items | build OK | DONE-UNSTAMPED review
+> **Deferred:** [H] USBLEGSUP 1s timeout treated as success + unbounded ext-cap MMIO walk (M) + destructive consumption of the §1 BAR-decode bug -- contained UEFI fixes deferred for careful fresh-context work -> XREF: 01-boot-platform/TODO-20 §2 (item: "HIGH (USBLEGSUP timeout)" + "MEDIUM (ext-cap MMIO bound)")
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 2H+1M open | scope: boot-code-quality
 
 ---
 
