@@ -43,6 +43,10 @@ static volatile uint32_t kb_tail = 0;  /* read position  (thread side) */
  * lock is safe regardless of which context the caller runs in. */
 static spinlock_t kb_lock = SPINLOCK_INIT;
 
+/* Set 1 once keyboard_init reaches the success path (i8042 present); 0 on the
+ * early-exit (no-i8042 / ACPI-reduced) paths. For the input diag summary. */
+static volatile uint8_t s_kbd_present;
+
 static void kb_buffer_push(char c)
 {
     /* Called from IRQ context -- use irqsave (IRQs are already off here,
@@ -333,9 +337,15 @@ void keyboard_init(void)
         pic_unmask_irq(IRQ_KEYBOARD);
     }
 
+    s_kbd_present = 1;   /* reached only on the success path (not early-exits) */
     klog(LOG_INFO, "input", "PS/2 keyboard initialized (US QWERTY, IRQ %u)",
          ioapic_available() ? (uint32_t)ioapic_isa_to_gsi(IRQ_KEYBOARD)
                             : (uint32_t)IRQ_KEYBOARD);
+}
+
+int keyboard_is_present(void)
+{
+    return s_kbd_present ? 1 : 0;
 }
 
 char keyboard_getchar(void)

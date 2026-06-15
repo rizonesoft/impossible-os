@@ -14,6 +14,15 @@
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/drivers/usb_input_diag.h"
+
+/* Local dependency-free string compare (no kernel strcmp in the test layer). */
+static int diag_streq(const char *a, const char *b)
+{
+    int i = 0;
+    while (a[i] && a[i] == b[i]) i++;
+    return a[i] == b[i];
+}
 
 /* The EP-context Interval field encodes the polling period as 125us*2^Interval.
  * The encoding is speed-dependent (xHCI 6.2.3.6) and is the bare-metal-critical
@@ -228,6 +237,62 @@ static void test_usb_hid_mouse_coexist(void)
     TEST_ASSERT_EQ(s.buttons, 0, "PS/2 release clears merged buttons");
 }
 
+/* Input-source diagnostic summary formatter (usb_input_diag_format): pure
+ * yes/no rendering of the [INPUT] Sources line, plus bounded-buffer safety. */
+static void test_usb_input_diag_format(void)
+{
+    char buf[96];
+    char small[10];
+    int n;
+
+    n = usb_input_diag_format(buf, (int)sizeof(buf), 1, 0, 1, 0);
+    TEST_ASSERT(diag_streq(buf,
+                "[INPUT] Sources: PS/2=yes USB_KBD=no USB_MOUSE=yes VIRTIO=no"),
+                "diag line renders PS/2+USB_MOUSE present");
+    TEST_ASSERT_EQ(n, 60, "diag line length matches rendered string");
+
+    TEST_ASSERT(diag_streq(
+                (usb_input_diag_format(buf, (int)sizeof(buf), 0, 1, 0, 1), buf),
+                "[INPUT] Sources: PS/2=no USB_KBD=yes USB_MOUSE=no VIRTIO=yes"),
+                "diag line renders USB_KBD+VIRTIO present");
+
+    /* Realistic no-device (all-no, shortest) and all-device (all-yes) renders. */
+    TEST_ASSERT(diag_streq(
+                (usb_input_diag_format(buf, (int)sizeof(buf), 0, 0, 0, 0), buf),
+                "[INPUT] Sources: PS/2=no USB_KBD=no USB_MOUSE=no VIRTIO=no"),
+                "diag line all sources absent");
+    TEST_ASSERT(diag_streq(
+                (usb_input_diag_format(buf, (int)sizeof(buf), 1, 1, 1, 1), buf),
+                "[INPUT] Sources: PS/2=yes USB_KBD=yes USB_MOUSE=yes VIRTIO=yes"),
+                "diag line all sources present");
+
+    /* Bounded-buffer safety: a tiny cap must NUL-terminate within bounds. */
+    n = usb_input_diag_format(small, (int)sizeof(small), 1, 1, 1, 1);
+    TEST_ASSERT(n < (int)sizeof(small), "diag truncates within a small cap");
+    TEST_ASSERT_EQ(small[sizeof(small) - 1], 0, "diag NUL-terminates small buffer");
+
+    /* cap=1: nothing rendered, just the NUL, length 0. */
+    buf[0] = 'Z';
+    TEST_ASSERT_EQ(usb_input_diag_format(buf, 1, 1, 1, 1, 1), 0, "diag cap=1 length 0");
+    TEST_ASSERT_EQ(buf[0], 0, "diag cap=1 writes only NUL");
+
+    /* Exact-fit boundary: the 60-char line at cap=60 truncates one char and
+     * NUL-terminates at index 59; cap=61 renders the full 60-char string. */
+    n = usb_input_diag_format(buf, 60, 1, 0, 1, 0);
+    TEST_ASSERT_EQ(n, 59, "diag cap=full truncates by one");
+    TEST_ASSERT_EQ(buf[59], 0, "diag cap=full NUL at last byte");
+    n = usb_input_diag_format(buf, 61, 1, 0, 1, 0);
+    TEST_ASSERT_EQ(n, 60, "diag cap=full+1 renders full line");
+
+    /* Degenerate caps are rejected without touching the buffer. */
+    buf[0] = 'Z';
+    TEST_ASSERT_EQ(usb_input_diag_format(buf, 0, 1, 1, 1, 1), 0, "diag cap=0 writes nothing");
+    TEST_ASSERT_EQ(buf[0], 'Z', "diag cap=0 leaves buffer untouched");
+    buf[0] = 'Z';
+    TEST_ASSERT_EQ(usb_input_diag_format(buf, -5, 1, 1, 1, 1), 0, "diag negative cap rejected");
+    TEST_ASSERT_EQ(buf[0], 'Z', "diag negative cap leaves buffer untouched");
+}
+
 void test_register_usb_hid(void)
 {
     test_suite_register_cat("usb-hid: EP interval encoding",
@@ -238,6 +303,8 @@ void test_register_usb_hid(void)
                             test_usb_hid_mouse_decode, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-hid: input source coexistence merge",
                             test_usb_hid_mouse_coexist, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-hid: input diag source summary",
+                            test_usb_input_diag_format, TEST_CAT_STORAGE);
 }
 
 #endif /* KERNEL_TESTS */

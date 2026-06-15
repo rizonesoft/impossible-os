@@ -36,6 +36,7 @@
 #include "kernel/net/net.h"
 #include "kernel/drivers/virtio_input.h"
 #include "kernel/drivers/mouse.h"
+#include "kernel/drivers/usb_input_diag.h"
 #include "kernel/drivers/vbox_mouse.h"
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
@@ -83,6 +84,10 @@ static boot_result_t deferred_input_init(void)
     mouse_init();
     virtio_input_init();
     vbox_mouse_init();
+    /* All input sources are now up (keyboard in Phase 1, USB HID enumerated in
+     * xhci_init, PS/2 mouse + VirtIO + VBox just now) -- emit the diagnostic
+     * source summary + per-USB-HID identity + HID poll error stats. */
+    usb_input_diag_report();
     POST16(POST16_DEFERRED_INPUT_OK);
     return BOOT_OK;
 }
@@ -172,6 +177,7 @@ void boot_phase2(void)
                          0u, POST16_NET_OK);
         virtio_input_init();
         vbox_mouse_init();
+        usb_input_diag_report();   /* input-source summary (legacy in-phase path) */
         boot_progress(2, "PCI_NET", POST16_PCI_OK);
 
         /* DHCP fire-and-forget */

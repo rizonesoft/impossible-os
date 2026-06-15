@@ -27,6 +27,11 @@ void mouse_init(void);
 /* Get the current mouse state (position + buttons) */
 struct mouse_state mouse_get_state(void);
 uint32_t mouse_get_irq_count(void);
+
+/* 1 if the PS/2 mouse init reached the success path (i8042 present + ACKed),
+ * 0 on every early-exit (no i8042 / ACPI hardware-reduced / NACK). For the
+ * input-source diagnostic summary. */
+int mouse_is_present(void);
 void mouse_set_position(int32_t x, int32_t y);
 
 /* Inject absolute mouse state (used by Hyper-V synthetic mouse).

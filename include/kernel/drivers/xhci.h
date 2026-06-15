@@ -129,6 +129,12 @@ struct xhci_controller {
     uint64_t hid_erst_phys;
     uint8_t  hid_intr_active;       /* 1 if interrupter 1 was set up */
 
+    /* HID poll diagnostics (incremented in xhci_hid_poll, BSP tick-ISR only;
+     * 32-bit aligned so a thread-context diagnostic read is tear-free). */
+    uint32_t hid_ep_errors;         /* transfer-event completions != SUCCESS/SHORT */
+    uint32_t hid_requeue_fails;     /* re-queue enqueue failures (polling stopped) */
+    uint32_t hid_reports;           /* reports delivered to a device buffer */
+
     uint8_t  active;                /* 1 if initialized successfully */
 };
 

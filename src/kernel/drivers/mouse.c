@@ -172,6 +172,11 @@ static volatile int32_t s_last_abs_x;
 static volatile int32_t s_last_abs_y;
 static volatile uint8_t s_abs_valid;
 
+/* Set 1 once mouse_init reaches the success path (i8042 present + device ACKed
+ * + IRQ12 enabled). The early-exit (no-i8042 / ACPI-reduced / NACK) paths leave
+ * it 0. Exported via mouse_is_present for the input diagnostic summary. */
+static volatile uint8_t s_mouse_present;
+
 /* Set once the cursor position has been published by any input source. The USB
  * HID poller (armed during xhci_init, which runs before deferred PS/2 init) can
  * publish via mouse_update_relative before mouse_init runs; the seed there is
@@ -450,6 +455,7 @@ void mouse_init(void)
     }
 
     POST16(0xD504);
+    s_mouse_present = 1;   /* reached only on the success path (not early-exits) */
     klog(LOG_INFO, "input", "PS/2 mouse initialized (IRQ %u, 100 samples/sec, 4 counts/mm)",
          ioapic_available() ? (uint32_t)ioapic_isa_to_gsi(IRQ_MOUSE)
                             : (uint32_t)IRQ_MOUSE);
@@ -485,6 +491,11 @@ struct mouse_state mouse_get_state(void)
 uint32_t mouse_get_irq_count(void)
 {
     return mouse_irq_count;
+}
+
+int mouse_is_present(void)
+{
+    return s_mouse_present ? 1 : 0;
 }
 
 void mouse_set_position(int32_t x, int32_t y)

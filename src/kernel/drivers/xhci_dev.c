@@ -1150,9 +1150,11 @@ void xhci_hid_poll(void)
              * ISR context; the stop is observable via int_in_polling.) */
             cc = (uint8_t)((evt.status >> XHCI_TRB_CC_SHIFT) & 0xFF);
             if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
+                hc->hid_ep_errors++;   /* diag: endpoint error completion */
                 dev->int_in_polling = 0;
                 continue;
             }
+            hc->hid_reports++;         /* diag: a report was delivered */
 
             /* Only parse a report that carries at least the fixed boot-protocol
              * size. The Transfer Event TRB Transfer Length (status bits 23:0)
@@ -1181,8 +1183,10 @@ void xhci_hid_poll(void)
             }
 
             /* Re-queue for the next report; on enqueue failure stop. */
-            if (xhci_hid_queue_report(hc, dev) != 0)
+            if (xhci_hid_queue_report(hc, dev) != 0) {
+                hc->hid_requeue_fails++;   /* diag: re-queue failed */
                 dev->int_in_polling = 0;
+            }
         }
     }
 }
