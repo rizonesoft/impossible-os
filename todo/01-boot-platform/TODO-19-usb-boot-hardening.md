@@ -420,11 +420,14 @@ Replace the 6-pass per-subsystem loop (one full ring scan per file) with a singl
 > **Notes:**
 > - **What shipped:** `klog_disk.c` single-pass per-subsystem routing + pure helper `klog_dispatch_slot()` (decl `klog.h`): one ring scan bins entries into `slot_of[]`, Phase 2 reuses the full 32 KB batch per subsystem with chunked `vfs_write`.
 > - **How it runs:** fires in the existing IXFS flush after the durable `kernel.log` write; the expensive work (ring walk + `format_entry`) stays once-per-entry, the 6 Phase-2 passes only re-read the in-cache `slot_of[]` array.
-> - **Downstream effects:** removes the prior 6-scans-per-flush cost on slow USB boot media; Codex 3x review adoptions in commit fixed a `batch_size/6` capacity cap (busy-subsystem drops in deferred mode) and a classify-vs-format misroute race.
+> - **Downstream effects:** removes the prior 6-scans-per-flush cost on slow USB boot media; Codex review fixed a `batch_size/6` capacity cap, a classify-vs-format misroute race, and a short-write offset-hole in the chunk writer.
 > - **Canonical doc:** `src/kernel/klog_disk.c` header comment on the routing block.
 > - **Scope boundary:** §13 owns per-subsystem disk-log routing; `kernel.log` durability/cursor is §8, deferred-flush batching §9, splash flush-progress §15.
 
 **Regression risk:** LOW -- every entry kernel.log records is routed to its subsystem view (no `batch_size/6` cap, no silent drop); chunked writes keep a burst subsystem's whole window. Rollback: restore the per-subsystem loop.
+
+> **Verified:** 2026-06-15 | commit `c94ffc19` | 4/4 items | build OK | smoke PASS (KVM 1.990s)
+> **Quality reviewed:** 2026-06-15 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1M fixed | scope: kernel-code-quality
 
 ---
 

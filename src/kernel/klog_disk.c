@@ -937,15 +937,25 @@ static void klog_disk_flush_locked(void)
                         pos = format_entry(&ring[idx], line, 256);
 
                         /* Chunk-flush when the next entry would overflow the batch;
-                         * a single entry (<= 256 bytes) always fits batch_size. */
+                         * a single entry (<= 256 bytes) always fits batch_size. Stop
+                         * this file on the FIRST short/error write: advancing woff past
+                         * a partial chunk would place later chunks at fabricated offsets
+                         * and hole the best-effort view (mirrors the kernel.log
+                         * write_failed guard above). Drop the buffered chunk so the
+                         * post-loop final write does not re-attempt it. */
                         if (bp + (uint32_t)pos > batch_size) {
-                            vfs_write(sf, woff, bp, batch);
+                            if (vfs_write(sf, woff, bp, batch) != (int)bp) {
+                                bp = 0;
+                                break;
+                            }
                             woff += bp;
                             bp = 0;
                         }
                         for (k = 0; k < pos; k++)
                             batch[bp++] = (uint8_t)line[k];
                     }
+                    /* Final partial chunk: last write for this file, so a short write
+                     * here cannot hole a following chunk (none follows). */
                     if (bp > 0)
                         vfs_write(sf, woff, bp, batch);
                     vfs_close(sf);
