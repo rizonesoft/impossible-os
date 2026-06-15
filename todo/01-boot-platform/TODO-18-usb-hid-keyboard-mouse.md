@@ -44,7 +44,7 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 | 💎  |   1   | xHCI interrupt endpoint setup                   | --          |  [x]   |
 | 💎  |   2   | Interrupt transfer polling (periodic TRBs)       | §1         |  [x]   |
 | 💎  |   3   | USB HID boot-protocol keyboard driver            | §2         |  [x]   |
-| 💎  |   4   | USB HID boot-protocol mouse driver               | §2         |  [ ]   |
+| 💎  |   4   | USB HID boot-protocol mouse driver               | §2         |  [x]   |
 | 💎  |   5   | Input source coexistence (PS/2 + USB)            | §3, §4     |  [ ]   |
 | ⭐  |   6   | Hot-plug keyboard/mouse detection                | §5         |  [ ]   |
 | ⭐  |   7   | USB input diagnostic logging                     | §1–§6      |  [ ]   |
@@ -141,15 +141,25 @@ Parse boot-protocol keyboard reports (8 bytes) into keystrokes.
 
 Parse boot-protocol mouse reports (3–4 bytes) into cursor movement.
 
-- [ ] Boot-protocol mouse report format: `[buttons, dx, dy]` (3 bytes) or `[buttons, dx, dy, wheel]` (4 bytes)
-- [ ] buttons: bit 0=left, bit 1=right, bit 2=middle
-- [ ] dx/dy: signed 8-bit relative movement
-- [ ] Feed into mouse event system: `mouse_update_relative(dx, dy, buttons)`
-- [ ] Compositor picks up events the same way as PS/2 mouse -- transparent
-- [ ] SET_PROTOCOL(0) to force boot-protocol mode
-- [ ] Commit: `"drivers: USB HID boot-protocol mouse -- cursor movement via USB mouse"`
+- [x] Boot mouse report decoded in `xhci_hid_decode_mouse` (`xhci_dev.c`, pure): `[buttons, dx, dy]`; a 4-byte `[..., wheel]` report parses the same first 3 bytes (wheel/trailing ignored -- scroll is report-protocol, not boot)
+- [x] buttons = `report[0] & 0x07` (bit0=left/bit1=right/bit2=middle), 1:1 with `MOUSE_BTN_LEFT/RIGHT/MIDDLE`
+- [x] dx/dy = signed 8-bit (`(int8_t)report[1]`/`report[2]`) relative movement
+- [x] `mouse_update_relative(dx,dy,buttons)` (`mouse.c`) applies the delta to the shared cursor state under a new irqsave `mouse_lock`, clamped to fb; USB HID +Y is screen-down (dy applied directly). `xhci_hid_parse_mouse` wires it into the §2 poll
+- [x] Compositor reads the shared cursor via `mouse_get_state` -- transparent on the relative-source path (§4 `-device usb-mouse`); an absolute source (VirtIO/VBox) overrides USB via its cascade, merged in §5
+- [x] SET_PROTOCOL(0) issued for the mouse in `xhci_hid_identify`; a NAK now warns for mice too. Boot mouse EP `MaxPkt < 3` rejected; poll gates parse on the Transfer-Event actual length (`>= 3`)
+- [x] Commit: `"drivers: USB HID boot-protocol mouse -- cursor movement via USB mouse"`
 
 **Test checkpoint:** QEMU with `-device usb-mouse` -- mouse cursor moves on desktop. Click works on window title bars.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_hid.c` mouse report decode (5 reports: spec case, button mask, +/-127/-128 boundaries, leftward signed dx, 4-byte wheel-ignored); cursor movement validated live via QEMU usb-mouse.
+> **Notes:**
+> - Shipped: HID boot-mouse parsing -- `xhci_dev.c` `xhci_hid_decode_mouse` (pure) + `xhci_hid_parse_mouse` wired into the §2 poll; `mouse.c` `mouse_update_relative` applies the delta to the shared PS/2 cursor state.
+> - Integrates: USB writes the same `mouse_x/y/buttons` the compositor already reads via `mouse_get_state`, so cursor movement is transparent on the relative-source path; SET_PROTOCOL(0) forces boot protocol; mouse `MaxPkt < 3` rejected.
+> - Hardening: a new irqsave `mouse_lock` guards every cursor reader/writer (PS/2 IRQ, USB tick-ISR, compositor) -- fixes a pre-existing unlocked RMW race; poll skips sub-boot-length reports; SET_PROTOCOL NAK warns for mice too.
+> - Review: Codex 5x (design + test-coverage + adversarial + consistency + perf); 2H accepted (absolute-source merge, cursor-state race), 2M fixed (boot-protocol gating, short-report length), 2M test gaps added.
+> - Scope boundary: §4 drives the cursor on the relative-source path; merging USB with an absolute VirtIO/VBox source, and PS/2+USB buffer coexistence, are §5; hot-plug is §6.
+> **Verified:** 2026-06-15 | impl commit | 6/6 items | build OK | storage 37/37 + 16 user-mode PASS; smoke PASS 2.53s
+> **Accepted:** [H] compositor source cascade (`compositor.c` virtio/vbox -> else) overrides USB relative deltas when an absolute source is present -> XREF: 01-boot-platform/TODO-18 §5 (item: "Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source")
+> **Accepted:** [H] cursor-state race pre-dates this section (PS/2 IRQ + compositor thread on unlocked volatiles) -- fixed here via `mouse_lock`; broader input-router consolidation -> XREF: 01-boot-platform/TODO-18 §5 (item: "Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source")
 
 ---
 
@@ -158,7 +168,7 @@ Parse boot-protocol mouse reports (3–4 bytes) into cursor movement.
 Both PS/2 and USB input should work simultaneously without conflicts.
 
 - [ ] `keyboard_trygetchar()` checks PS/2 buffer first, then USB buffer -- returns first available
-- [ ] Mouse events merged: PS/2 and USB mouse both update the same cursor position
+- [ ] Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source (`compositor.c` cascade overrides USB today; route all sources through one cursor first)
 - [ ] If PS/2 is absent (no i8042): only USB input is active -- no probing of missing hardware
 - [ ] If USB HID is absent: only PS/2 input is active -- no change from current behavior
 - [ ] VirtIO tablet input (QEMU) continues to work alongside USB/PS/2
@@ -201,7 +211,7 @@ Comprehensive USB input status in serial log.
 |----|---------------------------|--------------------------|---------------------------|----------------------------|
 | 💎 | USB HID interrupt EP      | ✅ usbxhci.sys           | ✅ xhci-hcd               | ✅ §1 Configure Endpoint   |
 | 💎 | USB keyboard in boot      | ✅ HID minidriver        | ✅ usbhid + usbkbd       | ✅ §3 boot-proto parse     |
-| 💎 | USB mouse in boot         | ✅ HID minidriver        | ✅ usbhid + usbmouse     | ⬜ §4                      |
+| 💎 | USB mouse in boot         | ✅ HID minidriver        | ✅ usbhid + usbmouse     | ✅ §4 boot-proto cursor    |
 | 💎 | PS/2 + USB coexistence    | ✅ Automatic             | ✅ Automatic              | ⬜ §5                      |
 | 💎 | USB HID hot-plug          | ✅ PnP Manager           | ✅ udev + usbhid          | ⬜ §6                      |
 | ⭐ | Input source diagnostics  | ❌ Device Manager only   | ❌ dmesg only             | ⬜ §7 🚀                   |

@@ -24,6 +24,7 @@
 #include "kernel/klog.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/keyboard.h"
+#include "kernel/drivers/mouse.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
@@ -1083,6 +1084,34 @@ static void xhci_hid_parse_keyboard(struct xhci_device *dev)
         dev->hid_prev_report[i] = r[i];
 }
 
+/* Decode a boot-protocol mouse report into screen-oriented relative deltas and
+ * the three boot buttons. Report layout: [buttons, dx, dy] (+ optional wheel).
+ * buttons bit0=left/bit1=right/bit2=middle map 1:1 to MOUSE_BTN_*; dx/dy are
+ * signed 8-bit relative movement. Pure (no MMIO/state) so it is unit-testable
+ * without live hardware -- the wheel byte and any trailing bytes are ignored
+ * (boot protocol is movement + buttons only; scroll is report-protocol work). */
+void xhci_hid_decode_mouse(const uint8_t *report, int32_t *dx, int32_t *dy,
+                           uint8_t *buttons)
+{
+    *buttons = report[0] & 0x07;
+    *dx = (int32_t)(int8_t)report[1];
+    *dy = (int32_t)(int8_t)report[2];
+}
+
+/* Parse a boot-protocol mouse report and apply it to the shared cursor state.
+ * Runs in the BSP tick-ISR context; mouse_update_relative is ISR-safe (irqsave
+ * lock). The compositor consumes the result via mouse_get_state on the
+ * relative-source path -- when an absolute source (VirtIO tablet / VBox) is
+ * present the compositor overrides this; merging those is input-coexistence
+ * work in a later section. */
+static void xhci_hid_parse_mouse(struct xhci_device *dev)
+{
+    int32_t dx, dy;
+    uint8_t buttons;
+    xhci_hid_decode_mouse(dev->int_in_report, &dx, &dy, &buttons);
+    mouse_update_relative(dx, dy, buttons);
+}
+
 /* Tick-mux callback (~10 ms): drain the dedicated HID event ring, deliver each
  * report into the device's report buffer, and re-queue a TRB for continuous
  * polling. Runs in BSP timer-ISR context, so it does NO per-report serial
@@ -1125,11 +1154,31 @@ void xhci_hid_poll(void)
                 continue;
             }
 
-            /* Parse the report into input. Boot keyboards feed the shared
-             * keyboard buffer; mouse parsing lands in the mouse driver section.
-             * (Parse BEFORE re-queue: re-queue zeroes the buffer.) */
-            if (dev->hid_proto == USB_PROTO_HID_KEYBOARD)
-                xhci_hid_parse_keyboard(dev);
+            /* Only parse a report that carries at least the fixed boot-protocol
+             * size. The Transfer Event TRB Transfer Length (status bits 23:0)
+             * is the residual (bytes NOT transferred), so actual = requested
+             * (int_in_max_pkt) - residual. A SHORT_PKT that fell below the
+             * boot-report size is malformed; skip it (the buffer was zeroed
+             * pre-transfer, so a partial report would otherwise read as a
+             * spurious all-released keyboard report or a no-button/no-move
+             * mouse report) but keep polling. */
+            {
+                uint32_t residual = evt.status & 0x00FFFFFFu;
+                uint32_t actual = (residual <= dev->int_in_max_pkt)
+                                ? (uint32_t)dev->int_in_max_pkt - residual : 0;
+                uint32_t min_len =
+                    (dev->hid_proto == USB_PROTO_HID_KEYBOARD) ? 8u : 3u;
+
+                /* Parse the report into input. Boot keyboards feed the shared
+                 * keyboard buffer; mouse reports drive the shared cursor state.
+                 * (Parse BEFORE re-queue: re-queue zeroes the buffer.) */
+                if (actual >= min_len) {
+                    if (dev->hid_proto == USB_PROTO_HID_KEYBOARD)
+                        xhci_hid_parse_keyboard(dev);
+                    else if (dev->hid_proto == USB_PROTO_HID_MOUSE)
+                        xhci_hid_parse_mouse(dev);
+                }
+            }
 
             /* Re-queue for the next report; on enqueue failure stop. */
             if (xhci_hid_queue_report(hc, dev) != 0)
@@ -1282,6 +1331,16 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
         return -1;
     }
 
+    /* A boot mouse report is at least 3 bytes [buttons, dx, dy]; reject an
+     * endpoint too small to carry one so the parser never reads past a short
+     * report. */
+    if (hid_proto == USB_PROTO_HID_MOUSE && dev->int_in_max_pkt < 3) {
+        klog(LOG_WARN, "usb-hid",
+             "mouse EP MaxPkt=%u < 3 -- not a boot mouse, skipping",
+             (uint64_t)dev->int_in_max_pkt);
+        return -1;
+    }
+
     /* ---- Allocate Transfer Ring for the Interrupt-IN endpoint ---- */
     if (ep0_ring_init(&dev->int_in_ring) != 0) {
         klog(LOG_ERROR, "usb-hid",
@@ -1375,13 +1434,15 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
         setup[1] = 0x0A;                         /* SET_IDLE, wValue = 0 (infinite) */
         xhci_control_transfer(hc, dev, setup, (void *)0, 0, 0);
 
-        /* The keyboard parser assumes the fixed 8-byte boot report. If
-         * SET_PROTOCOL(boot) was NAKed the device may stay in report protocol,
-         * so the 8-byte layout is not guaranteed -- warn loudly. Boot-subclass
-         * devices default to boot protocol, so this is usually still usable. */
-        if (set_proto_rc != 0 && hid_proto == USB_PROTO_HID_KEYBOARD)
+        /* Both parsers assume the fixed boot report (keyboard 8 bytes, mouse
+         * [buttons, dx, dy]). If SET_PROTOCOL(boot) was NAKed the device may
+         * stay in report protocol, so that layout is not guaranteed -- warn
+         * loudly for either device type. Boot-subclass devices default to boot
+         * protocol, so this is usually still usable. */
+        if (set_proto_rc != 0)
             klog(LOG_WARN, "usb-hid",
-                 "keyboard SET_PROTOCOL(boot) failed -- report layout may differ");
+                 "%s SET_PROTOCOL(boot) failed -- report layout may differ",
+                 hid_proto == USB_PROTO_HID_KEYBOARD ? "keyboard" : "mouse");
     }
 
     dev->is_hid = 1;

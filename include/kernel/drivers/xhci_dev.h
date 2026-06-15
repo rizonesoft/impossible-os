@@ -292,6 +292,13 @@ void xhci_hid_poll(void);
  * HS/SS -> bInterval-1; FS/LS -> floor(log2(bInterval))+3. Exposed for tests. */
 uint8_t xhci_hid_interval_encode(uint8_t speed, uint8_t b_interval);
 
+/* Decode a boot-protocol mouse report [buttons, dx, dy] into screen-oriented
+ * relative deltas (signed) and the three boot buttons (MOUSE_BTN_* bit layout).
+ * Pure; exposed for tests. The optional wheel byte and trailing bytes are
+ * ignored (boot protocol is movement + buttons only). */
+void xhci_hid_decode_mouse(const uint8_t *report, int32_t *dx, int32_t *dy,
+                           uint8_t *buttons);
+
 /* Perform a bulk transfer on a non-EP0 endpoint.
  * dir_in: 1 = bulk IN, 0 = bulk OUT.
  * Returns 0 on success, -1 on failure. */

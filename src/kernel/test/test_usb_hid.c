@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/keyboard.h"
+#include "kernel/drivers/mouse.h"
 
 /* The EP-context Interval field encodes the polling period as 125us*2^Interval.
  * The encoding is speed-dependent (xHCI 6.2.3.6) and is the bare-metal-critical
@@ -86,12 +87,65 @@ static void test_usb_hid_keyboard_inject(void)
     TEST_ASSERT_EQ(keyboard_trygetchar(), 'a', "Caps Lock off: 0x04 -> 'a'");
 }
 
+/* Boot-protocol mouse report decode (xhci_hid_decode_mouse): [buttons, dx, dy]
+ * with dx/dy signed 8-bit and buttons bit0=L/bit1=R/bit2=M (1:1 MOUSE_BTN_*).
+ * Pure decode -- the screen clamp + Y orientation live in mouse_update_relative,
+ * which needs a live framebuffer and is validated via QEMU usb-mouse. */
+static void test_usb_hid_mouse_decode(void)
+{
+    int32_t dx, dy;
+    uint8_t buttons;
+
+    /* TODO-18 spec case: left button, dx=+10, dy=-10 (0xF6). */
+    const uint8_t r1[3] = { 0x01, 0x0A, 0xF6 };
+    xhci_hid_decode_mouse(r1, &dx, &dy, &buttons);
+    TEST_ASSERT_EQ(dx, 10, "mouse dx=0x0A -> +10");
+    TEST_ASSERT_EQ(dy, -10, "mouse dy=0xF6 -> -10 (sign-extended)");
+    TEST_ASSERT_EQ(buttons, MOUSE_BTN_LEFT, "mouse buttons 0x01 -> left");
+
+    /* Right + middle held, no movement. */
+    const uint8_t r2[3] = { 0x06, 0x00, 0x00 };
+    xhci_hid_decode_mouse(r2, &dx, &dy, &buttons);
+    TEST_ASSERT_EQ(dx, 0, "mouse dx=0 -> 0");
+    TEST_ASSERT_EQ(dy, 0, "mouse dy=0 -> 0");
+    TEST_ASSERT_EQ(buttons, MOUSE_BTN_RIGHT | MOUSE_BTN_MIDDLE,
+                   "mouse buttons 0x06 -> right|middle");
+
+    /* Extreme signed deltas + all three buttons; reserved/wheel bits masked. */
+    const uint8_t r3[3] = { 0xFF, 0x7F, 0x80 };
+    xhci_hid_decode_mouse(r3, &dx, &dy, &buttons);
+    TEST_ASSERT_EQ(dx, 127, "mouse dx=0x7F -> +127");
+    TEST_ASSERT_EQ(dy, -128, "mouse dy=0x80 -> -128");
+    TEST_ASSERT_EQ(buttons, MOUSE_BTN_LEFT | MOUSE_BTN_RIGHT | MOUSE_BTN_MIDDLE,
+                   "mouse buttons 0xFF masks to 3 boot buttons");
+
+    /* Negative dx (leftward) + positive dy in one report -- proves dx is signed
+     * (a uint8_t regression would break leftward motion but pass the cases
+     * above, which only exercise positive dx). dx=-128 boundary. */
+    const uint8_t r4[3] = { 0x00, 0x80, 0x7F };
+    xhci_hid_decode_mouse(r4, &dx, &dy, &buttons);
+    TEST_ASSERT_EQ(dx, -128, "mouse dx=0x80 -> -128 (leftward, signed)");
+    TEST_ASSERT_EQ(dy, 127, "mouse dy=0x7F -> +127");
+    TEST_ASSERT_EQ(buttons, 0, "mouse buttons 0x00 -> none");
+
+    /* 4-byte report: wheel + any trailing byte must NOT affect dx/dy/buttons
+     * (boot protocol is movement + buttons only). */
+    const uint8_t r5[5] = { 0x05, 0xFE, 0x02, 0x7F, 0xA5 };
+    xhci_hid_decode_mouse(r5, &dx, &dy, &buttons);
+    TEST_ASSERT_EQ(dx, -2, "4-byte report dx=0xFE -> -2 (wheel ignored)");
+    TEST_ASSERT_EQ(dy, 2, "4-byte report dy=0x02 -> +2");
+    TEST_ASSERT_EQ(buttons, MOUSE_BTN_LEFT | MOUSE_BTN_MIDDLE,
+                   "4-byte report buttons 0x05 -> left|middle");
+}
+
 void test_register_usb_hid(void)
 {
     test_suite_register_cat("usb-hid: EP interval encoding",
                             test_usb_hid_interval_encode, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-hid: keyboard usage->ASCII inject",
                             test_usb_hid_keyboard_inject, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-hid: mouse report decode",
+                            test_usb_hid_mouse_decode, TEST_CAT_STORAGE);
 }
 
 #endif /* KERNEL_TESTS */

@@ -32,3 +32,11 @@ void mouse_set_position(int32_t x, int32_t y);
 /* Inject absolute mouse state (used by Hyper-V synthetic mouse).
  * Sets position and button state directly -- no PS/2 parsing. */
 void mouse_inject_state(int32_t x, int32_t y, uint8_t buttons);
+
+/* Apply a relative cursor delta + button state (USB HID boot-protocol mouse).
+ * Shares the PS/2 cursor state so the compositor stays source-blind in the
+ * relative-source path. dx/dy are screen-oriented (+X right, +Y down -- USB
+ * HID reports Y downward already, no PS/2-style inversion). Clamps to the
+ * framebuffer. Cursor state is guarded by an irqsave lock (callable from the
+ * USB tick-ISR poller alongside the PS/2 IRQ and the compositor thread). */
+void mouse_update_relative(int32_t dx, int32_t dy, uint8_t buttons);

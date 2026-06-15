@@ -21,6 +21,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
 #include "kernel/boot_timing.h"
+#include "kernel/sched/spinlock.h"
 
 /* TSC sample helper for per-step profiling. */
 static inline uint64_t mouse_rdtsc(void)
@@ -156,6 +157,26 @@ static volatile int32_t mouse_x;
 static volatile int32_t mouse_y;
 static volatile uint8_t mouse_buttons;
 
+/* Guards the compound read-modify-clamp-write of mouse_x/mouse_y/mouse_buttons.
+ * Writers: PS/2 IRQ12 ISR, the USB HID tick-ISR poller (mouse_update_relative),
+ * the compositor thread (mouse_set_position). Readers: mouse_get_state (every
+ * compositor frame, IF=1). volatile alone keeps the three fields from being
+ * elided but does NOT make the RMW atomic or give a consistent x/y/buttons
+ * snapshot across an ISR boundary -- irqsave so an interrupt-context writer
+ * cannot deadlock against a thread-context holder on the same CPU. */
+static spinlock_t mouse_lock = SPINLOCK_INIT;
+
+/* Clamp mouse_x/mouse_y to the framebuffer. Caller MUST hold mouse_lock. */
+static void mouse_clamp_locked(void)
+{
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_y < 0) mouse_y = 0;
+    if ((uint32_t)mouse_x >= fb_get_width())
+        mouse_x = (int32_t)fb_get_width() - 1;
+    if ((uint32_t)mouse_y >= fb_get_height())
+        mouse_y = (int32_t)fb_get_height() - 1;
+}
+
 static volatile uint8_t  mouse_cycle;
 static volatile uint8_t  mouse_packet[3];
 
@@ -219,19 +240,16 @@ static void mouse_irq_callback(uint8_t vector, void *ctx)
             if (dy > MOUSE_DELTA_MAX)  dy = MOUSE_DELTA_MAX;
             if (dy < -MOUSE_DELTA_MAX) dy = -MOUSE_DELTA_MAX;
 
-            /* PS/2 Y-axis is inverted */
-            mouse_x += dx;
-            mouse_y -= dy;
-
-            /* Clamp to screen bounds */
-            if (mouse_x < 0) mouse_x = 0;
-            if (mouse_y < 0) mouse_y = 0;
-            if ((uint32_t)mouse_x >= fb_get_width())
-                mouse_x = (int32_t)fb_get_width() - 1;
-            if ((uint32_t)mouse_y >= fb_get_height())
-                mouse_y = (int32_t)fb_get_height() - 1;
-
-            mouse_buttons = mouse_packet[0] & 0x07;
+            {
+                uint64_t flags;
+                spin_lock_irqsave(&mouse_lock, &flags);
+                /* PS/2 Y-axis is inverted */
+                mouse_x += dx;
+                mouse_y -= dy;
+                mouse_clamp_locked();
+                mouse_buttons = mouse_packet[0] & 0x07;
+                spin_unlock_irqrestore(&mouse_lock, flags);
+            }
         }
         break;
     }
@@ -405,9 +423,12 @@ report:
 struct mouse_state mouse_get_state(void)
 {
     struct mouse_state s;
+    uint64_t flags;
+    spin_lock_irqsave(&mouse_lock, &flags);
     s.x = mouse_x;
     s.y = mouse_y;
     s.buttons = mouse_buttons;
+    spin_unlock_irqrestore(&mouse_lock, flags);
     return s;
 }
 
@@ -418,22 +439,34 @@ uint32_t mouse_get_irq_count(void)
 
 void mouse_set_position(int32_t x, int32_t y)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&mouse_lock, &flags);
     mouse_x = x;
     mouse_y = y;
+    spin_unlock_irqrestore(&mouse_lock, flags);
 }
 
 void mouse_inject_state(int32_t x, int32_t y, uint8_t buttons)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&mouse_lock, &flags);
     mouse_x = x;
     mouse_y = y;
     mouse_buttons = buttons;
+    mouse_clamp_locked();
+    spin_unlock_irqrestore(&mouse_lock, flags);
+}
 
-    /* Clamp to screen bounds */
-    if (mouse_x < 0) mouse_x = 0;
-    if (mouse_y < 0) mouse_y = 0;
-    if ((uint32_t)mouse_x >= fb_get_width())
-        mouse_x = (int32_t)fb_get_width() - 1;
-    if ((uint32_t)mouse_y >= fb_get_height())
-        mouse_y = (int32_t)fb_get_height() - 1;
+void mouse_update_relative(int32_t dx, int32_t dy, uint8_t buttons)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&mouse_lock, &flags);
+    /* USB HID boot mouse reports +Y downward (screen-oriented), so apply dy
+     * directly -- unlike the PS/2 wire byte which is +Y up (mouse_y -= dy). */
+    mouse_x += dx;
+    mouse_y += dy;
+    mouse_clamp_locked();
+    mouse_buttons = buttons;
+    spin_unlock_irqrestore(&mouse_lock, flags);
 }
 
