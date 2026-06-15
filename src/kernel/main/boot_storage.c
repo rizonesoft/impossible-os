@@ -175,6 +175,9 @@ void boot_phase2(void)
         boot_load_record("network", BOOT_LOAD_CLASS_NET,
                          nic < 0 ? BOOT_LOAD_SKIPPED : BOOT_LOAD_LOADED,
                          0u, POST16_NET_OK);
+        mouse_init();   /* legacy in-phase: init PS/2 mouse here (the deferred
+                         * path does it in deferred_input_init) so the diagnostic
+                         * runs after every input source, like the deferred path */
         virtio_input_init();
         vbox_mouse_init();
         usb_input_diag_report();   /* input-source summary (legacy in-phase path) */

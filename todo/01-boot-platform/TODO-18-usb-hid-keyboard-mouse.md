@@ -223,6 +223,8 @@ Comprehensive USB input status in serial log.
 > - Validated live: smoke boot emits `[INPUT] Sources: PS/2=yes USB_KBD=no USB_MOUSE=no VIRTIO=no` + `HID poll: reports=0 ep_errors=0 requeue_fails=0`.
 > - Parity: exclusive (Win/Linux expose this only via Device Manager / dmesg, not a structured boot summary).
 > - Scope boundary: §7 is diagnostic-only (no input behavior); hot-plug device add/remove is §6 (blocked on the usb-stack hot-plug-interrupt section).
+> **Verified:** 2026-06-15 | review commit | 3/3 items | build OK | storage 71 kernel + 16 user-mode PASS; smoke PASS 2.51s ([INPUT] line in log)
+> **Quality reviewed:** 2026-06-15 | Codex 6x (design, test-coverage, adversarial x2, consistency, perf) | 2M fixed, 1M rejected | scope: kernel-code-quality (re-adversarial skipped: surgical legacy-init + comment fixes)
 
 ---
 

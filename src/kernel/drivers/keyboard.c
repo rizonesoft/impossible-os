@@ -43,8 +43,10 @@ static volatile uint32_t kb_tail = 0;  /* read position  (thread side) */
  * lock is safe regardless of which context the caller runs in. */
 static spinlock_t kb_lock = SPINLOCK_INIT;
 
-/* Set 1 once keyboard_init reaches the success path (i8042 present); 0 on the
- * early-exit (no-i8042 / ACPI-reduced) paths. For the input diag summary. */
+/* Set 1 once keyboard_init reaches the success path: i8042 present and the
+ * device probed + IRQ registration attempted. 0 on the early-exit (no-i8042 /
+ * ACPI-reduced) paths. Means "found + configured", not "IRQ verified
+ * delivering" -- no driver gates on irq_request_gsi's return. For the diag. */
 static volatile uint8_t s_kbd_present;
 
 static void kb_buffer_push(char c)

@@ -173,8 +173,9 @@ static volatile int32_t s_last_abs_y;
 static volatile uint8_t s_abs_valid;
 
 /* Set 1 once mouse_init reaches the success path (i8042 present + device ACKed
- * + IRQ12 enabled). The early-exit (no-i8042 / ACPI-reduced / NACK) paths leave
- * it 0. Exported via mouse_is_present for the input diagnostic summary. */
+ * + IRQ12 registration attempted). The early-exit (no-i8042 / ACPI-reduced /
+ * NACK) paths leave it 0. Means "found + configured", not "IRQ verified
+ * delivering" -- no driver gates on irq_request_gsi's return. For the diag. */
 static volatile uint8_t s_mouse_present;
 
 /* Set once the cursor position has been published by any input source. The USB
