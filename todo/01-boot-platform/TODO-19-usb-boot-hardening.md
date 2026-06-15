@@ -55,8 +55,8 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2        |  [ ]   |
 | 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [ ]   |
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [ ]   |
-| 💎  |   6   | Remove sleep_ms(2000) hack                         | §2, §3, §4    |  [ ]   |
-| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §6            |  [ ]   |
+| 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [ ]   |
+| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [ ]   |
 | 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [ ]   |
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [ ]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
@@ -79,6 +79,7 @@ Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 - [ ] Parse sense data: sense key (byte 2), ASC (byte 12), ASCQ (byte 13)
 - [ ] Classify errors: `UNIT_ATTENTION` (key=6) → retry after reset, `NOT_READY` (key=2) → wait + retry, `MEDIUM_ERROR` (key=3) → unrecoverable
 - [ ] Log: `"[USB] Sense: key=%u ASC=%u ASCQ=%u (%s)"` with human-readable description
+- [ ] Boot-LUN selection for composite media (card readers; BOT hardcodes `bCBWLUN=0`): probe GET_MAX_LUN + per-LUN TUR to find the bootable LUN -> XREF: 04-drivers-hardware/TODO-10 §7 (item: "`usb_msc_get_max_lun(dev)`" at line 177)
 - [ ] Commit: `"drivers: SCSI REQUEST SENSE command with error classification"`
 
 **Test checkpoint:** Plug USB drive, boot. If drive returns UNIT ATTENTION on first command, serial shows sense data. Verify on bare metal i5-4210U.
@@ -103,7 +104,10 @@ After BOT init, poll TEST UNIT READY until the device reports ready instead of s
 
 Wrap `msc_bot_command()` with automatic retry for transient SCSI errors.
 
-- [ ] After CSW returns error: call `REQUEST SENSE` → classify error
+- [ ] CSW validation BEFORE classifying status (BOT correctness, not just SCSI): verify `dCSWSignature==0x53425355` and `dCSWTag` matches the CBW tag; on signature/tag mismatch -> BOT mass-storage reset (§4), not a SCSI sense retry
+- [ ] Residue check: compare `dCSWDataResidue` to the requested length even when `bCSWStatus==0` (pass) -- a short data phase on a boot READ must FAIL SAFE (no silent partial read / corrupt filesystem input), not count as success
+- [ ] `bCSWStatus==2` (phase error) -> BOT mass-storage reset + Clear-Feature on both bulk endpoints (§4), then re-issue; never SCSI-sense-retry a phase error
+- [ ] After CSW returns error (`bCSWStatus==1`): call `REQUEST SENSE` → classify error
 - [ ] `UNIT_ATTENTION`: retry command immediately (device reset itself, normal after plug)
 - [ ] `NOT_READY`: wait 100ms + retry (drive spinning up)
 - [ ] `MEDIUM_ERROR`: fail immediately (bad sector, no retry will help)
@@ -200,11 +204,11 @@ On Intel chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PC
 
 Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 
-- [ ] At `klog_disk_flush()` entry: snapshot `ring_count` -- flush exactly that many entries, no more
-- [ ] If new entries arrive during flush (from flush-triggered logging): ignore them until next flush call
+- [ ] Bound via the EXISTING seq cursor, NOT `ring_count`: snapshot `klog_get_seq()` at entry, flush only entries with seq < snapshot (ring_count bounding caused a prior saturation/replay bug -> XREF: 02-kernel-core/TODO-04 klog_ring_seq design)
+- [ ] Preserve cursor-advance-on-success: advance the persisted flush cursor only for entries actually written; entries logged DURING flush (seq >= snapshot) wait for the next call -- correct across the 1000-entry ring wrap
 - [ ] Add progress: `"[KLOG] Flushing %u entries to disk..."` at start, `"done (%u ms)"` at end
-- [ ] If flush takes > 5 seconds: `"[WARN] Slow media detected -- switching to deferred flush"`
-- [ ] Commit: `"kernel: bounded klog_disk_flush -- snapshot ring count, no unbounded loop"`
+- [ ] If flush takes > 5 seconds: `"[WARN] Slow media detected -- switching to deferred flush"` (triggers §9)
+- [ ] Commit: `"kernel: bounded klog_disk_flush -- seq-cursor snapshot, no unbounded loop"`
 
 **Test checkpoint:** USB 2.0 boot on bare metal -- flush completes in seconds, not minutes. Serial shows flush count and duration.
 
@@ -251,6 +255,7 @@ For pre-2012 hardware without xHCI, provide basic USB storage via EHCI.
 - [ ] If xHCI not found: try EHCI; if EHCI not found: try UHCI (PCI class 0x0C/0x03/0x00)
 - [ ] OHCI-only hardware (PCI class 0x0C/0x03/0x10): no OHCI driver -- log `"USB: OHCI-only controller -- USB storage not supported on this hardware"` and skip gracefully (no hang)
 - [ ] Share the `usb_msc.c` BOT layer -- only the host controller interface differs
+- [ ] EHCI/UHCI transport recovery + timeouts at §4/§5 parity (halted-qTD, ClearFeature, async cleanup, bounded timeouts) via an HCD-agnostic USB error contract -- the fallback must not hang where §4/§5 harden xHCI
 - [ ] Log: `"[USB] Using %s controller (xHCI not available)"` with EHCI/UHCI
 - [ ] Commit: `"drivers: EHCI fallback for USB storage on pre-xHCI hardware"`
 
