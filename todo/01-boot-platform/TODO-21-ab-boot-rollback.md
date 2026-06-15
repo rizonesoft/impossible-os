@@ -49,7 +49,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [ ]   |
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [ ]   |
-| ⭐  |   6   | Slot status in boot diagnostics                 | §1–§5      |  [ ]   |
+| ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [ ]   |
 
 > 💎 = parity -- Android/Chrome OS A/B and systemd-boot auto-assessment both provide this.
 > ⭐ = exclusive -- slot status integrated into VPD boot diagnostics.
@@ -62,13 +62,13 @@ Define where boot slot metadata is stored. Two options: UEFI NVRAM variables or 
 
 - [ ] Choose storage: UEFI NVRAM (simpler, survives partition changes) vs GPT metadata partition (survives NVRAM reset)
 - [ ] Define metadata format: `{ magic, version, active_slot (A/B), slot_a { tries, successful, priority }, slot_b { same } }`
-- [ ] `tries`: incremented by bootloader before each boot attempt (0–3)
+- [ ] `tries`: incremented by bootloader before each boot attempt (0-3)
 - [ ] `successful`: set by kernel after boot reaches desktop (via `mark_boot_successful()`)
 - [ ] `priority`: which slot is preferred when both are valid (higher = preferred)
 - [ ] Implement read/write functions: `boot_meta_read()` / `boot_meta_write()` in bootloader
 - [ ] Commit: `"boot: A/B boot metadata structure and NVRAM storage"`
 
-**Test checkpoint:** Bootloader reads/writes metadata. Serial shows `"Slot A: tries=0 successful=1 priority=1"`.
+**Test checkpoint:** Bootloader reads/writes metadata. Serial shows `"Slot A: tries=0 successful=1 priority=1"`. Test on: QEMU smoke + bare metal -- UEFI NVRAM (SetVariable/GetVariable) persistence differs between QEMU OVMF and real firmware; a green QEMU result can mask a bare-metal NVRAM failure.
 
 ---
 
@@ -134,7 +134,7 @@ Kernel-side API to tell the bootloader "this boot worked".
 - [ ] For NVRAM storage: use UEFI `SetVariable()` via runtime services
 - [ ] Commit: `"kernel: mark_boot_successful -- reset try counter after successful boot"`
 
-**Test checkpoint:** Normal boot → serial shows `"Boot marked successful (Slot A)"` after the configured acceptance stage is reached.
+**Test checkpoint:** Normal boot → serial shows `"Boot marked successful (Slot A)"` after the configured acceptance stage is reached. Test on: QEMU smoke + bare metal -- `SetVariable()` at runtime via UEFI runtime services must persist across reboot on real firmware, not just OVMF.
 
 ---
 
@@ -155,13 +155,13 @@ Integrate A/B slot status into the VPD and boot timing display.
 
 | ⭐ | Feature                   | 🪟 Win11                      | 🐧 Linux                    | 🚀 Impossible OS             |
 |----|---------------------------|----------------------------|--------------------------|---------------------------|
-| 💎 | Dual-slot boot            | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess   | ⬜ §1–§3                  |
+| 💎 | Dual-slot boot            | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess   | ⬜ §1-§3                  |
 | 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | ⬜ §4                     |
 | 💎 | Automatic rollback        | ⚠️ Manual repair needed   | ⚠️ Manual or auto        | ⬜ §4                     |
 | 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | ⬜ §5                     |
 | ⭐ | Slot status in boot UI    | ❌ Hidden                  | ❌ journalctl only       | ⬜ §6 🚀                  |
 
-After §1–§5, Impossible OS has stronger rollback than Windows (which requires manual Automatic Repair) and matches Chrome OS/Android A/B. §6 makes slot status visible during boot.
+After §1-§5, Impossible OS has stronger rollback than Windows (which requires manual Automatic Repair) and matches Chrome OS/Android A/B. §6 makes slot status visible during boot.
 
 ---
 
@@ -186,6 +186,8 @@ After §1–§5, Impossible OS has stronger rollback than Windows (which require
   - Assert 4th boot serial contains `"rolling back to Slot B"` (§4 -- automatic rollback)
 - [ ] Commit: `"test: add A/B boot rollback test suite"`
 
+---
+
 ## Verification
 
 - [ ] **Normal boot**: Slot A boots, try counter resets, `mark_boot_successful` logged.
@@ -193,3 +195,5 @@ After §1–§5, Impossible OS has stronger rollback than Windows (which require
 - [ ] **Both slots bad**: corrupt both → enters recovery mode (or shows error screen).
 - [ ] **Update simulation**: write new kernel to Slot B, mark pending, reboot → boots Slot B.
 - [ ] Commit: `"boot: A/B dual-slot boot complete -- automatic rollback, never unbootable"`
+
+**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) for `test_ab_boot.c` + `scripts/test-boot-rollback.sh` (rollback smoke) | suites TBD until §1-§5 land
