@@ -61,7 +61,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [x]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [/]   |
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [/]   |
-| ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [ ]   |
+| ⭐  |  12   | USB boot diagnostic report                         | §1-§11        |  [x]   |
 | 💎  |  13   | Single-pass per-subsystem log routing              | §8            |  [ ]   |
 | 💎  |  14   | IXFS boot tests: slow-media-aware                  | §10           |  [ ]   |
 | ⭐  |  15   | Flush progress on splash diagnostic line           | §9            |  [ ]   |
@@ -380,15 +380,22 @@ For hardware without xHCI, detect legacy USB controllers (EHCI/UHCI/OHCI) and de
 
 At end of USB enumeration, produce a comprehensive diagnostic summary.
 
-- [ ] Log all discovered USB devices with: port, speed (HS/SS/SS+), vendor/product, MSC/HID/other
-- [ ] Log controller type: xHCI (version), EHCI, UHCI
-- [ ] Log port routing status: XUSB2PR active, companion controller status
-- [ ] Log SCSI retry statistics: total retries, sense keys encountered
-- [ ] Log boot media speed classification
-- [ ] Format: `"[USB] === USB Boot Report ==="` section in serial log
-- [ ] Commit: `"drivers: USB boot diagnostic report -- full enumeration summary"`
+- [x] Log all discovered USB devices: port, speed (LS/FS/HS/SS/SS+ via `usb_speed_name`, raw PORTSC id kept for unknown), vendor:product, MSC/HID/other (`usb_boot_report.{c,h}`)
+- [x] Log controller type: xHCI (`hci_version`) + legacy EHCI/UHCI/OHCI counts via `usb_legacy_count`
+- [x] Log port routing status: `xhci_xusb2pr_routed_count` (Intel USB 2.0 routing applied) + the legacy-controller line covers companion status
+- [x] Log SCSI retry statistics: `usb_msc_total_retries` + `usb_msc_sense_keys_seen` (relaxed-atomic counters in `usb_msc.c`); each set sense key decoded by `msc_sense_key_name`
+- [x] Log boot media speed: `boot_media_speed_name` -- report emitted AFTER `boot_media_probe` so the class is real, not UNKNOWN
+- [x] Format: `"=== USB Boot Report ==="` klog block (subsystem tag `usb`), bracketed by an end marker
+- [x] Commit: `"drivers: USB boot diagnostic report -- full enumeration summary"`
 
-**Test checkpoint:** Serial output contains `"=== USB Boot Report ==="` with device list and statistics.
+**Test checkpoint:** Serial output contains `"=== USB Boot Report ==="` then the controller list, per-device lines (port/speed/VID:PID/class), XUSB2PR routing count, SCSI retry stats + decoded sense keys, and boot media speed. `test_usb_boot.c` asserts the pure field formatters (`usb_speed_name` incl. SS+/unknown, `usb_boot_report_device_class`) by exact string.
+
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` "usb-boot: report field formatters" (`usb_speed_name` + `usb_boot_report_device_class` exact-string matrix); the live report emission is validated on the serial log (QEMU run-usb + bare metal).
+> **Notes:**
+> - Shipped: `usb_boot_report.{c,h}` -- aggregator emitting the "=== USB Boot Report ===" block (controllers, devices, XUSB2PR routing, SCSI retry stats, boot media speed) + pure `usb_speed_name`/`usb_boot_report_device_class`.
+> - How it runs: called once in `boot_phase2` AFTER `boot_media_probe()` (so media speed is real); read-only, no MMIO. Reads getters from xHCI / MSC / `usb_legacy` / `boot_media`.
+> - New inputs: relaxed-atomic `usb_msc_total_retries`/`usb_msc_sense_keys_seen` (SMP-safe counters in `usb_msc.c`); `xhci_xusb2pr_routed_count`; `USB_SPEED_SUPER_PLUS` (id 5) added to the xhci speed enum + `speed_to_str`.
+> - Scope boundary: §12 owns the boot-storage report; the input-source (HID) diagnostic is `usb_input_diag.c` (TODO-18); single-pass log routing is §13.
 
 ---
 
@@ -478,7 +485,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ✅ §8 seq-cursor + progress  |
 | 💎 | Deferred flush (slow media)  | ✅ Lazy writeback         | ✅ dirty_writeback_centisecs | ✅ §9 RAM batch + boot-end flush |
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ✅ §10 4KiB-probe classify  |
-| ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ⬜ §12 🚀                   |
+| ⭐ | USB boot diagnostic report   | ❌ Hidden in Event Log    | ❌ dmesg only              | ✅ §12 consolidated report 🚀 |
 | 💎 | Single-pass log routing      | ✅ ETW channel            | ✅ /dev/kmsg               | ⬜ §13                      |
 | 💎 | Media-aware boot tests       | ✅ WinPE adapts           | ✅ initramfs skips          | ⬜ §14                      |
 | ⭐ | Flush progress display       | ❌ Not shown              | ❌ Not shown               | ⬜ §15 🚀                   |

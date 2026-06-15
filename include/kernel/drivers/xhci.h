@@ -154,6 +154,10 @@ struct xhci_controller *xhci_get_controller_mut(int index);
 /* Get number of active xHCI controllers. */
 int xhci_controller_count(void);
 
+/* Number of controllers on which Intel XUSB2PR USB 2.0 routing was applied
+ * (0 on modern Intel without an EHCI companion / non-Intel). For diagnostics. */
+int xhci_xusb2pr_routed_count(void);
+
 /* Index of a controller in the controllers[] array (inverse of
  * xhci_get_controller). Returns -1 if hc is not an active controller. Used to
  * route block I/O to a USB device's owning controller (dev->owner). */

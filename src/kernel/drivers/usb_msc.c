@@ -42,6 +42,14 @@
 static struct usb_msc_info msc_info[XHCI_MAX_DEVICES];
 static uint32_t cbw_tag = 1;
 
+/* Best-effort SCSI retry diagnostics consumed by the USB boot diagnostic report.
+ * Written from msc_scsi_command / msc_request_sense, which can run on multiple
+ * CPUs post-boot (block layer), so updated with RELAXED atomics; the boot report
+ * reads them once. Relaxed is sufficient: these are counters with no ordering
+ * dependency on other state. */
+static uint32_t s_msc_total_retries;    /* command re-issues after a failure */
+static uint16_t s_msc_sense_keys_seen;  /* bitmask of SCSI sense keys (0-15) observed */
+
 /* ---- Helpers ---- */
 
 /* Resolve a device to its msc_info slot via the global device index. Returns
@@ -419,6 +427,8 @@ static msc_err_class_t msc_request_sense(struct xhci_controller *hc,
             return MSC_ERR_UNRECOVERABLE;
         }
     }
+    __atomic_fetch_or(&s_msc_sense_keys_seen,
+                      (uint16_t)(1u << (sense[2] & 0x0F)), __ATOMIC_RELAXED);
     klog(LOG_INFO, "usb-msc", "Sense: key=%u ASC=0x%02x ASCQ=0x%02x (%s)",
          (uint64_t)(sense[2] & 0x0F), (uint64_t)sense[12], (uint64_t)sense[13],
          msc_sense_key_name(sense[2]));
@@ -579,6 +589,8 @@ static int msc_scsi_command(struct xhci_controller *hc, struct xhci_device *dev,
         *actual_out = 0;
 
     for (attempt = 0; attempt < MSC_SCSI_RETRIES; attempt++) {
+        if (attempt > 0)
+            __atomic_fetch_add(&s_msc_total_retries, 1, __ATOMIC_RELAXED);
         uint32_t residue = 0;
         uint32_t host_xfer = 0;
         int rc = msc_bot_command(hc, dev, cdb, cdb_len, data, data_len, dir_in,
@@ -920,4 +932,14 @@ const struct usb_msc_info *usb_msc_get_info(struct xhci_device *dev)
     if (!info)
         return NULL;
     return info->valid ? info : NULL;
+}
+
+uint32_t usb_msc_total_retries(void)
+{
+    return __atomic_load_n(&s_msc_total_retries, __ATOMIC_RELAXED);
+}
+
+uint16_t usb_msc_sense_keys_seen(void)
+{
+    return __atomic_load_n(&s_msc_sense_keys_seen, __ATOMIC_RELAXED);
 }

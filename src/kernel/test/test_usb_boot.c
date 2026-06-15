@@ -14,6 +14,7 @@
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/usb_msc.h"
 #include "kernel/drivers/usb_legacy.h"
+#include "kernel/drivers/usb_boot_report.h"
 
 /* Read-only query: safe with or without a controller. When a USB MSC device is
  * present, READ CAPACITY validation (usb_msc.c) guarantees an active device
@@ -368,8 +369,30 @@ static void test_usb_legacy_classify(void)
     TEST_ASSERT(usb_legacy_class_name(USB_LEGACY_NONE)[0] == 'n', "NONE -> none");
 }
 
+/* usb_speed_name + usb_boot_report_device_class are the pure field formatters
+ * for the USB boot diagnostic report. Pure -- no live controller needed. */
+static void test_usb_boot_report_fields(void)
+{
+    /* Speed names: EXACT tokens (a regression to "LOW"/"FULL"/etc must fail). */
+    TEST_ASSERT(sk_streq(usb_speed_name(USB_SPEED_LOW), "LS"), "LOW -> LS");
+    TEST_ASSERT(sk_streq(usb_speed_name(USB_SPEED_FULL), "FS"), "FULL -> FS");
+    TEST_ASSERT(sk_streq(usb_speed_name(USB_SPEED_HIGH), "HS"), "HIGH -> HS");
+    TEST_ASSERT(sk_streq(usb_speed_name(USB_SPEED_SUPER), "SS"), "SUPER -> SS");
+    TEST_ASSERT(sk_streq(usb_speed_name(USB_SPEED_SUPER_PLUS), "SS+"), "SUPER_PLUS -> SS+");
+    TEST_ASSERT(sk_streq(usb_speed_name(0), "?"), "0 (unset) -> ?");
+    TEST_ASSERT(sk_streq(usb_speed_name(99), "?"), "unknown -> ?");
+
+    /* Class tag: MSC wins over HID, then HID, then other. EXACT tokens. */
+    TEST_ASSERT(sk_streq(usb_boot_report_device_class(1, 0), "MSC"), "is_msc -> MSC");
+    TEST_ASSERT(sk_streq(usb_boot_report_device_class(0, 1), "HID"), "is_hid -> HID");
+    TEST_ASSERT(sk_streq(usb_boot_report_device_class(0, 0), "other"), "neither -> other");
+    TEST_ASSERT(sk_streq(usb_boot_report_device_class(1, 1), "MSC"), "msc+hid -> MSC (msc first)");
+}
+
 void test_register_usb_boot(void)
 {
+    test_suite_register_cat("usb-boot: report field formatters",
+                            test_usb_boot_report_fields, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-boot: legacy controller classification",
                             test_usb_legacy_classify, TEST_CAT_STORAGE);
     test_suite_register_cat("usb: controller count + MSC geometry",

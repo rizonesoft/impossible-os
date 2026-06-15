@@ -52,6 +52,7 @@ struct xhci_controller;
 #define USB_SPEED_LOW       2   /* Low Speed (1.5 Mbps)    -- max pkt   8 */
 #define USB_SPEED_HIGH      3   /* High Speed (480 Mbps)   -- max pkt  64 */
 #define USB_SPEED_SUPER     4   /* SuperSpeed (5 Gbps)     -- max pkt 512 */
+#define USB_SPEED_SUPER_PLUS 5  /* SuperSpeedPlus (USB 3.1+, 10 Gbps) -- xHCI PORTSC speed id 5 */
 
 /* ---- USB Descriptor types ------------------------------------------------ */
 

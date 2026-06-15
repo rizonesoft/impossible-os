@@ -106,6 +106,12 @@ int usb_msc_write_sectors(struct xhci_controller *hc, struct xhci_device *dev,
 /* Get MSC device info (valid after usb_msc_init). */
 const struct usb_msc_info *usb_msc_get_info(struct xhci_device *dev);
 
+/* Best-effort SCSI retry diagnostics for the USB boot report (relaxed atomics;
+ * read once at boot). Total command re-issues, and a bitmask of the SCSI sense
+ * keys (0-15) observed across all REQUEST SENSE responses. */
+uint32_t usb_msc_total_retries(void);
+uint16_t usb_msc_sense_keys_seen(void);
+
 /* Classify a fixed-format SCSI sense buffer (>= 18 bytes) into a retry policy
  * class. Pure: reads only the sense key (byte 2 bits 3:0). Exposed for tests. */
 msc_err_class_t msc_sense_classify(const uint8_t *sense);

@@ -685,6 +685,7 @@ static const char *speed_to_str(uint8_t speed)
     case USB_SPEED_FULL:  return "full";
     case USB_SPEED_HIGH:  return "high";
     case USB_SPEED_SUPER: return "super";
+    case USB_SPEED_SUPER_PLUS: return "super+";
     default:              return "unknown";
     }
 }

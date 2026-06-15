@@ -33,6 +33,7 @@
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/xhci.h"
 #include "kernel/drivers/usb_legacy.h"
+#include "kernel/drivers/usb_boot_report.h"
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/rtl8139.h"
 #include "kernel/net/net.h"
@@ -579,6 +580,11 @@ void boot_phase2(void)
      * klog_disk_flush() -- pays the slow-media cost. VFS is mounted above; the timed
      * 4 KiB probe read is clean here, free of klog disk activity. --- */
     boot_media_probe();
+
+    /* USB boot diagnostic report: emit AFTER boot_media_probe so the media-speed
+     * line is real, not BOOT_MEDIA_UNKNOWN. USB enumeration completed in
+     * xhci_init earlier this phase, so the device/controller data is stable. */
+    usb_boot_report();
 
     /* Check for debug boot flag on C:\ */
     if (vfs_is_mounted('C')) {

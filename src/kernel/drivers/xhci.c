@@ -24,6 +24,10 @@
 static struct xhci_controller controllers[XHCI_MAX_CONTROLLERS];
 static int num_controllers = 0;
 
+/* Count of controllers on which Intel XUSB2PR USB 2.0 routing was applied (set
+ * during boot-time enumeration; read by the USB boot diagnostic report). */
+static uint8_t s_xusb2pr_routed_count;
+
 /* ---- MMIO helpers -------------------------------------------------------- */
 
 static inline uint32_t xhci_read32(volatile uint8_t *base, uint32_t offset)
@@ -158,6 +162,11 @@ static void xhci_route_intel_usb2_ports(struct xhci_controller *hc,
          "XUSB2PR port routing settled (%u ms, %u USB 2.0 port(s) connected)",
          (uint64_t)(XHCI_XUSB2PR_ROUTE_MAX_US / 1000),
          (uint64_t)(after > before ? after - before : 0));
+
+    /* Record that Intel USB 2.0 routing was applied on this controller, for the
+     * USB boot diagnostic report. Boot-time single-threaded enumeration, so a
+     * plain count is safe. */
+    s_xusb2pr_routed_count++;
 }
 
 /* ---- BIOS/OS handoff (xHCI spec §4.22.1) -------------------------------- */
@@ -931,4 +940,9 @@ int xhci_controller_index(const struct xhci_controller *hc)
 int xhci_controller_count(void)
 {
     return num_controllers;
+}
+
+int xhci_xusb2pr_routed_count(void)
+{
+    return (int)s_xusb2pr_routed_count;
 }
