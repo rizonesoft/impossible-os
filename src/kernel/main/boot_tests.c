@@ -41,9 +41,13 @@ void boot_tests_run(void)
 
         /* On slow USB media, skip the (long) kernel test sweep in debug mode to keep
          * the boot usable -- but HONOR an explicit `test=1` (the user is testing on
-         * the slow target on purpose). */
+         * the slow target on purpose). Two independent slow-media signals are honored:
+         * the proactive probe (boot_media_speed) and the reactive klog detector
+         * (klog_slow_media_detected, armed when a disk-log flush exceeds the slow
+         * threshold). The reactive path covers boots where the probe never landed a
+         * full 4 KiB read and stayed UNKNOWN, so a slow USB target still skips. */
         if (run_kernel_tests && !g_boot_info.config.test &&
-            boot_media_speed() == BOOT_MEDIA_SLOW) {
+            (boot_media_speed() == BOOT_MEDIA_SLOW || klog_slow_media_detected())) {
             klog(LOG_INFO, "boot",
                  "Slow boot media -- skipping kernel test sweep (debug mode)");
             run_kernel_tests = 0;

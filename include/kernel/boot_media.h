@@ -32,7 +32,9 @@ const char *boot_media_speed_name(boot_media_speed_t s);
 /* The probed boot-media speed (BOOT_MEDIA_UNKNOWN until boot_media_probe runs). */
 boot_media_speed_t boot_media_speed(void);
 
-/* Probe once: time a 4 KiB boot-volume read, classify + store the result, log it,
- * and proactively enable deferred klog flushing on SLOW media. Idempotent (a second
- * call is a no-op once a class is set). Call after klog disk + VFS are up. */
+/* Probe once: time a FULL 4 KiB boot-volume read, classify + store the result, log
+ * it, and proactively enable deferred klog flushing on SLOW media. Idempotent (a
+ * second call is a no-op once a class is set). Call after VFS mount but BEFORE the
+ * klog disk / live-log enable, so a SLOW classification arms deferred mode before
+ * any disk-log flush pays the slow-media cost. */
 void boot_media_probe(void);

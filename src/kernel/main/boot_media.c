@@ -45,11 +45,13 @@ void boot_media_probe(void)
     /* Time a 4 KiB read of the first available boot-volume file. Best-effort: if no
      * candidate opens, leave UNKNOWN and let the reactive slow-media auto-enable
      * (the >5s-flush path) cover it -- no false adaptation on an unmeasured boot. */
+    /* Candidates must be >= 4 KiB so the timed read is a full 4 KiB sample (short
+     * EOF reads are skipped below). System binaries are reliably larger; small or
+     * late-created files (e.g. JSON diag) would only ever short-read to UNKNOWN. */
     static const char *candidates[] = {
         "C:\\Impossible\\System32\\cmd.exe",
-        "C:\\cmd.exe",
         "C:\\Impossible\\System32\\ntdll.dll",
-        "X:\\Diag\\boot-health.json",
+        "C:\\cmd.exe",
     };
     static uint8_t probe_buf[4096];
 
@@ -64,8 +66,11 @@ void boot_media_probe(void)
         uint64_t el_ns = uptime_ns() - t0;
         vfs_close(f);
 
-        if (n <= 0)
-            continue;  /* empty / error -- try the next candidate */
+        /* Only classify a FULL 4 KiB read -- a short/EOF read (file < 4 KiB or a
+         * clamped FAT32/IXFS read) would time a partial sample and mislabel slow
+         * media as fast, suppressing the deferred-klog + test-skip adaptations. */
+        if (n != (int)sizeof(probe_buf))
+            continue;  /* short / error -- try the next candidate */
 
         uint32_t us = (uint32_t)(el_ns / 1000ull);
         s_boot_media_speed = boot_media_classify(us);

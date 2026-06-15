@@ -323,7 +323,7 @@ Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and
 
 - [x] `boot_media_probe()` times a 4 KiB `vfs_read` of the first openable boot file and `boot_media_classify()` maps it to fast (<1ms) / medium (1-10ms) / slow (>10ms) (`boot_media.c`); idempotent, UNKNOWN if no candidate readable
 - [x] Stored in a KERNEL global `s_boot_media_speed` + `boot_media_speed()` getter -- NOT a `boot_info` ABI field (it is a kernel-runtime measurement; avoids a BOOT_INFO_VERSION bump) -> design adoption
-- [x] Consumers: SLOW proactively calls `klog_set_deferred(1)` (§9) before per-subsystem flushes; the kernel test sweep is skipped on SLOW media in debug mode (honoring explicit `test=1`)
+- [x] Consumers: SLOW calls `klog_set_deferred(1)` (§9) before the klog disk/live-log enable; the kernel test sweep skips on SLOW media in debug mode -- gated on probe-class OR §8 `klog_slow_media_detected()`, honoring `test=1`
 - [x] Log: `"Boot media speed: %s (%u us/4KiB)"` with the classification + measured time
 - [ ] DEFERRED: "adjust timeouts" on slow media -- the bulk/control timeouts are already bounded (§5); a media-class-scaled timeout knob is a future refinement with no concrete consumer today
 - [x] Commit: `"kernel: boot media speed detection -- adjust behavior for slow USB"`
@@ -331,11 +331,14 @@ Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and
 **Test checkpoint:** SATA SSD / NVMe → "fast" (QEMU emulated disk classifies fast); USB 3.0 stick → "medium"; USB 2.0 stick → "slow" (proactively enables deferred klog). Unit test asserts the `boot_media_classify` thresholds.
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_boot_device.c` "Boot media: speed classify thresholds" (`boot_media_classify` boundary matrix); the live timed probe is validated on bare metal (SSD fast vs USB 2.0 slow).
 > **Notes:**
-> - Shipped: `boot_media.{h,c}` -- pure `boot_media_classify()` + `boot_media_speed_name()` + `s_boot_media_speed` global + `boot_media_probe()` (timed 4 KiB `vfs_read`, classify, log, deferred-on-slow); wired into `boot_phase2` after `klog_disk_enable`.
-> - How it runs: probes once (idempotent) right after klog disk is up so `klog_set_deferred(1)` takes effect before the slow per-subsystem flushes; UNKNOWN fallback leaves §8's reactive >5s-flush auto-enable to cover a mis-probe.
+> - Shipped: `boot_media.{h,c}` -- pure `boot_media_classify()` + `boot_media_speed_name()` + `s_boot_media_speed` global + `boot_media_probe()` (timed full-4 KiB `vfs_read`, short reads skipped, classify, log, deferred-on-slow); wired into `boot_phase2` BEFORE the klog disk/live-log enable.
+> - How it runs: probes once (idempotent) before the klog disk/live-log enable so `klog_set_deferred(1)` lands before the first slow flush; UNKNOWN fallback leaves §8's reactive >5s-flush auto-enable AND the reactive-gated test-skip to cover a mis-probe.
 > - Downstream: consumes §9's `klog_set_deferred` (proactive deferred mode) and gates the §8/§9 slow-media path; the boot-test-skip trims debug boots on slow USB.
 > - Codex design review adoptions (kernel global not boot_info field; timed-probe; proactive deferred) in the ship commit.
 > - Scope boundary: §10 owns media classification + the two adaptations (deferred-klog, test-skip); the deferred-flush machinery is §9, the bounded loop is §8; media-class-scaled timeouts are a deferred refinement.
+> **Verified:** 2026-06-15 | commit `dbe7a293` | 4/5 items | build OK | smoke PASS (KVM 2.75s)
+> **Deferred:** [L] media-class-scaled timeout knob -- bulk/control timeouts already bounded (§5), no concrete consumer today -> XREF: 01-boot-platform/TODO-19 §10 (item: "DEFERRED: \"adjust timeouts\" on slow media" at line 328)
+> **Quality reviewed:** 2026-06-15 | Codex 7x (design, test-coverage, adversarial, consistency, perf, re-adversarial x2) | 1H+2M fixed, 0 open | scope: kernel-code-quality
 
 ---
 
