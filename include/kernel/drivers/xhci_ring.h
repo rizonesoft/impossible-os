@@ -47,6 +47,7 @@ struct xhci_trb {
 #define XHCI_TRB_ADDRESS_DEV    11  /* Address Device Command */
 #define XHCI_TRB_CONFIG_EP      12  /* Configure Endpoint Command */
 #define XHCI_TRB_RESET_EP       14  /* Reset Endpoint Command (stall recovery) */
+#define XHCI_TRB_STOP_EP        15  /* Stop Endpoint Command (abort a timed-out TRB) */
 #define XHCI_TRB_SET_TR_DEQUEUE 16  /* Set TR Dequeue Pointer Cmd (NOT 10 = Disable Slot) */
 #define XHCI_TRB_NOOP_CMD       23  /* No Op Command */
 
@@ -65,6 +66,10 @@ struct xhci_trb {
 #define XHCI_TRB_CC_USB_TXN     4   /* USB Transaction Error (CRC/bitstuff/PID) */
 #define XHCI_TRB_CC_STALL       6   /* Stall Error (endpoint halted by device) */
 #define XHCI_TRB_CC_SHORT_PKT   13
+/* Transfer Event posted for a TD aborted by a Stop Endpoint command. */
+#define XHCI_TRB_CC_STOPPED         26  /* Stopped */
+#define XHCI_TRB_CC_STOPPED_LEN_INV 27  /* Stopped -- Length Invalid */
+#define XHCI_TRB_CC_STOPPED_SHORT   28  /* Stopped -- Short Packet */
 
 /* Command Completion Event: slot ID (control field bits 31:24) */
 #define XHCI_TRB_SLOT_SHIFT     24

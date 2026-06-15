@@ -247,6 +247,20 @@ static void test_usb_boot_residue_short(void)
     TEST_ASSERT(!msc_residue_short(0, 8), "alloc-len, residue 8 -> tolerated");
 }
 
+/* msc_host_short: the host-observed byte count is the authoritative short-
+ * transfer guard for exact-length commands (transferred < requested), catching
+ * a flaky device that under-delivers data but misreports the CSW residue.
+ * Allocation-length commands tolerate a host short. Pure. */
+static void test_usb_boot_host_short(void)
+{
+    TEST_ASSERT(!msc_host_short(1, 512, 512), "exact-len, full transfer -> not short");
+    TEST_ASSERT(msc_host_short(1, 512, 256), "exact-len, half transfer -> short");
+    TEST_ASSERT(msc_host_short(1, 512, 0), "exact-len, nothing -> short");
+    TEST_ASSERT(!msc_host_short(0, 36, 18), "alloc-len, short transfer -> tolerated");
+    TEST_ASSERT(!msc_host_short(1, 0, 0), "exact-len, no-data command -> not short");
+    TEST_ASSERT(!msc_host_short(1, 512, 513), "exact-len, over-transfer -> not short");
+}
+
 /* msc_scsi_retry_decide(rc, rs_rc, cls, exact_short) maps a BOT result (+ the
  * REQUEST SENSE status/class on FAIL) to the whole-command retry action. The
  * `_OK` shorthand below means rs_rc = USB_CSW_STATUS_PASS (REQUEST SENSE not
@@ -333,6 +347,8 @@ void test_register_usb_boot(void)
                             test_usb_boot_cc_is_halt, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-boot: CSW residue short-transfer policy",
                             test_usb_boot_residue_short, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-boot: host-observed short-transfer policy",
+                            test_usb_boot_host_short, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-boot: SCSI whole-command retry decision",
                             test_usb_boot_scsi_retry_decide, TEST_CAT_STORAGE);
 }

@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-15T11:38:37+02:00",
-  "total_suites": 1316,
-  "total_assertions": 4341,
+  "timestamp": "2026-06-15T11:57:05+02:00",
+  "total_suites": 1317,
+  "total_assertions": 4347,
   "files": [
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
@@ -75,7 +75,7 @@
     {"file": "test_tpm_seal.c", "suites": 8, "assertions": 109},
     {"file": "test_tpm_transport.c", "suites": 8, "assertions": 118},
     {"file": "test_uefi_boot.c", "suites": 42, "assertions": 111},
-    {"file": "test_usb_boot.c", "suites": 7, "assertions": 71},
+    {"file": "test_usb_boot.c", "suites": 8, "assertions": 77},
     {"file": "test_usb_hid.c", "suites": 5, "assertions": 67},
     {"file": "test_usermode.c", "suites": 0, "assertions": 0},
     {"file": "test_usermode_launcher.c", "suites": 34, "assertions": 117},

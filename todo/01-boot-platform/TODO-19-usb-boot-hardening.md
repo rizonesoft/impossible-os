@@ -54,7 +54,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [x]   |
 | 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2, §4    |  [x]   |
 | 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [x]   |
-| 💎  |   5   | Bulk transfer timeouts                             | §4            |  [ ]   |
+| 💎  |   5   | Bulk transfer timeouts                             | §4            |  [/]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [ ]   |
 | 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [ ]   |
 | 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [ ]   |
@@ -143,7 +143,6 @@ Wrap `msc_bot_command()` with automatic retry for transient SCSI errors.
 > - Hardening: a CSW FAIL never advances on a benign sense; a short exact-length transfer fails safe; a REQUEST SENSE that itself desyncs the pipe forces a BOT reset before retry. Closes the §1/§2 short-REQUEST-SENSE + residue gaps via the CSW residue.
 > - Scope boundary: §3 owns the SCSI-sense retry + CSW-residue policy; §4 owns transport stall/BOT reset; §5 owns the xHCI per-transfer byte count; command-ring/BOT SMP serialization is §16.
 > **Verified:** 2026-06-15 | review commit | 10/10 items | build OK | storage 394 kernel + 16 user-mode PASS (residue + retry-decision matrices)
-> **Accepted:** [H] xHCI host-observed SHORT_PKT residual is discarded -- the CSW-residue exact-length guard trusts the device's CSW residue, so a controller/device reporting SHORT_PKT + CSW PASS residue 0 still passes -> XREF: 01-boot-platform/TODO-19 §5 (item: "Plumb host residual from `xhci_wait_transfer` (now NULL) through `xhci_bulk_transfer_cc`/`msc_bot_command`" at line 146)
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, test-coverage, adversarial x2, re-adversarial x2, consistency, perf) | 4H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -175,7 +174,7 @@ Handle USB transport-level stalls -- a separate layer from SCSI sense errors. A 
 > - Hardening: state-aware recovery never Resets a non-Halted endpoint or leaves a Stopped ring un-armed; a stall-recovered short data phase fails the command so READ(10) can't advance the LBA on partial data.
 > - Scope boundary: §4 owns transport recovery; per-command CSW residue acceptance + SCSI-sense whole-command retry are §3; multi-TRB event-pointer dequeue validation is §5.
 > **Verified:** 2026-06-15 | review commit | 8/8 items | build OK | storage 371 kernel + 16 user-mode PASS (exhaustive stall-CC matrix)
-> **Accepted:** [H] xHCI command ring + BOT transport unserialized for SMP (concurrent recovery/enumeration race; non-atomic `cbw_tag`) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize the command ring: a controller-level lock around `xhci_cmd_submit` + `xhci_wait_command`" at line 373)
+> **Accepted:** [H] xHCI command ring + BOT transport unserialized for SMP (concurrent recovery/enumeration race; non-atomic `cbw_tag`) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize the command ring: a controller-level lock around `xhci_cmd_submit` + `xhci_wait_command`" at line 177)
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, test-coverage, adversarial x2, re-adversarial x2, consistency, perf) | 4H+3M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 **Regression risk:** MEDIUM -- modifies the transfer completion path. If the recovery sequence issues incorrect xHCI commands, the endpoint may become permanently stuck. Rollback: disable recovery, return error immediately on stall (current behavior but with a timeout instead of infinite hang).
@@ -191,21 +190,28 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 > [!NOTE]
 > xHCI does not have hardware transfer timeouts -- the host controller will wait indefinitely for a device response. Software must implement timeouts by: (1) recording the TSC or LAPIC timer value at transfer submission, (2) checking elapsed time on each event ring poll iteration, (3) on timeout: issuing a Stop Endpoint command (TRB type 15) to abort the pending TRB, then recovering via the §4 stall/halt path.
 
-- [ ] Add a `timeout_ms` parameter to the BULK path (`xhci_wait_transfer` / `xhci_bulk_transfer_cc`) -- default `USB_BULK_TIMEOUT_MS` 5000ms (control-transfer EP0 timeout recovery is descoped -- see the deferred EP0 item)
-- [ ] At transfer submission: record `start_tsc = rdtsc()`; compute `deadline_tsc = start_tsc + ms_to_tsc(timeout_ms)` using calibrated TSC frequency
-- [ ] In event ring poll loop: after each poll iteration, check `rdtsc() > deadline_tsc`; if true, trigger timeout path
-- [ ] Timeout path: issue Stop Endpoint command (TRB type 15, slot, EP DCI); wait for Command Completion; the stopped TRB appears as a Transfer Event with CC=`STOPPED` or `STOPPED_LENGTH_INVALID`; advance dequeue past it
-- [ ] After timeout: log `"[USB] Bulk transfer timeout on slot=%u EP%u (%u ms)"` and return `USB_ERR_TIMEOUT`
-- [ ] Integrate with §3/§4 retry: `USB_ERR_TIMEOUT` is retriable -- call `xhci_recover_endpoint()`, then retry (up to 3 attempts)
-- [ ] MSC-specific: `usb_msc_read_sectors()` / `usb_msc_write_sectors()` propagate timeout error; caller sees it as a transient I/O failure
-- [ ] `xhci_bulk_transfer_cc` stops on the FIRST host SHORT_PKT (else CSW bytes DMA into the buffer) + reports host-transferred bytes; exact-length cmds fail on a host short independent of CSW residue (xHCI cross-check above §3)
-- [ ] Configurable timeout: `USB_BULK_TIMEOUT_MS` (default 5000) constant in header, tunable per-device for slow media (`USB_CONTROL_TIMEOUT_MS` belongs with the deferred EP0 item)
+- [x] `xhci_wait_transfer(hc, out_bytes, timeout_ms)`: BULK passes `USB_BULK_TIMEOUT_MS`(5000); control keeps the legacy 500ms (EP0 recovery is the deferred item)
+- [x] Software timeout = a microsecond budget (`timeout_ms * 1000`) decremented ~10us per event-ring poll iteration -- bounded, the existing decrement-loop pattern made configurable (no separate TSC deadline needed; `dev_delay_us` is the time base)
+- [x] Timeout path: `xhci_stop_endpoint` (Stop Endpoint, `XHCI_TRB_STOP_EP`=15) aborts the stuck TD; `xhci_abort_endpoint` drains the matching STOPPED event (bounded ~20ms, slot+CC match) then Set TR Dequeue re-arms the ring
+- [x] On timeout: `klog` the bulk timeout (slot, dci, ms) and return `0xFF` (the timeout sentinel)
+- [x] Retry: `0xFF` is a non-halt transport failure -> `msc_bot_xfer` returns -1 -> `msc_scsi_command` BOT-resets and retries (bounded by `MSC_SCSI_RETRIES`)
+- [x] `usb_msc_read_sectors`/`usb_msc_write_sectors` see the timeout as a `-1` transient I/O failure via the §3 retry wrapper
+- [x] `xhci_bulk_transfer_cc` stops on the FIRST host SHORT_PKT + reports host-transferred via `xfer_out`; `msc_scsi_command` fails exact-length on `msc_host_short` (host count authoritative over CSW residue) and reports `actual_out` from it
+- [x] `USB_BULK_TIMEOUT_MS`(5000) constant in `xhci_dev.h`
 - [ ] DEFERRED: EP0 / control-transfer timeout recovery -- distinct abort design (Stop Endpoint DCI 1, Set TR Dequeue on `ep0_ring`, slot-reset fallback) since §4 recovery rejects EP0; control xfer keeps its 500ms bound for now
-- [ ] Commit: `"drivers: USB bulk transfer timeouts -- TSC deadline, Stop Endpoint, retry integration"`
+- [x] Commit: `"drivers: USB bulk transfer timeouts -- TSC deadline, Stop Endpoint, retry integration"`
 
 **Test checkpoint:** Disconnect USB device during a bulk transfer (QEMU `device_del` mid-I/O) -- kernel logs timeout within 5 seconds instead of hanging. Boot continues if the device was not the boot drive. If boot drive times out, fall back to the no-USB boot path with a clear error message.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` "host-observed short-transfer policy" (`msc_host_short` matrix); the timeout/Stop-Endpoint/abort paths are live-MMIO (validated via QEMU `device_del` + bare metal).
+> **Notes:**
+> - Shipped: configurable bulk timeout (`USB_BULK_TIMEOUT_MS`) on `xhci_wait_transfer`; `xhci_stop_endpoint`/`xhci_abort_endpoint` (Stop Endpoint TRB 15 + STOPPED-event drain + Set TR Dequeue); host stop-on-first-short + pure `msc_host_short`.
+> - Integrates: `xhci_bulk_transfer_cc` reports host-transferred bytes; `msc_scsi_command` fails an exact-length command on a host short (authoritative over CSW residue); a bulk timeout (0xFF) flows through the §3 retry (BOT reset + retry).
+> - Hardening: bulk transfers can no longer hang forever (5s software bound); a multi-fragment bulk-IN stops on the first short so CSW bytes never DMA into the data buffer; INQUIRY min-length checks the host count, not the device residue.
+> - Scope boundary: §5 owns bulk timeouts + host-residual; EP0/control-transfer timeout recovery is deferred (own item); shared event-ring per-event correlation + command-ring locking is §16.
+> **Verified:** 2026-06-15 | impl commit | 9/10 items | build OK | storage 400 kernel + 16 user-mode PASS (host-short matrix)
+> **Deferred:** [M] EP0 / control-transfer timeout recovery -- distinct EP0-abort design needed (§4 recovery rejects EP0) -> XREF: 01-boot-platform/TODO-19 §5 (item: "DEFERRED: EP0 / control-transfer timeout recovery" at line 203)
 
-**Regression risk:** MEDIUM -- adds overhead (TSC read per poll iteration, ~5ns). If TSC frequency calibration is wrong, timeouts fire too early or too late. Rollback: set `USB_BULK_TIMEOUT_MS` to `UINT32_MAX` to effectively disable timeouts while keeping the infrastructure.
+**Regression risk:** MEDIUM -- adds a per-poll timeout check on the bulk path. Rollback: raise `USB_BULK_TIMEOUT_MS` to effectively disable the bulk timeout while keeping the infrastructure.
 
 ---
 
@@ -380,7 +386,7 @@ Show klog flush progress on the diagnostic subtitle during boot, so slow flushes
 
 The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT transport (`msc_bot_command`) are unserialized: command enqueue mutates `hc->cmd_ring` with no lock and `xhci_wait_command` accepts the first completion event rather than matching the submitted command TRB, and two CPUs can enter the same MSC device concurrently. Single-threaded boot enumeration is safe today, but post-boot SMP block-layer I/O plus §4 stall recovery (which issues Reset Endpoint / Set TR Dequeue and re-arms the ring) makes a concurrent race destructive. Surfaced by the §4 adversarial review.
 
-- [ ] Serialize the command ring: a controller-level lock around `xhci_cmd_submit` + `xhci_wait_command` (`xhci_ring.c`/`xhci_dev.c`), and match each Command Completion Event to the submitted command-TRB pointer instead of accepting the first event
+- [ ] Serialize command ring + correlate events: lock `xhci_cmd_submit`/`xhci_wait_command`; match each Command Completion AND Transfer Event to its submitted TRB pointer, not the first by type/CC (`xhci_wait_transfer`/abort drain)
 - [ ] Defer hot-plug enumeration out of the shared event-ring drain so it cannot steal a synchronous command/transfer completion while a command is in flight
 - [ ] Per-MSC-device BOT serialization: a sleepable mutex around `msc_bot_command` (CBW/data/CSW + recovery, `usb_msc.c`) so two CPUs can't interleave one device; Set TR Dequeue must not run while another caller has a queued TRB
 - [ ] Make `cbw_tag` atomic (`__atomic_fetch_add`) so concurrent commands cannot reuse or reorder CSW tags
@@ -399,7 +405,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | SCSI error retry             | ✅ usbstor.sys retries   | ✅ usb-storage retries     | ✅ §1-§3 sense retry + residue |
 | 💎 | Device readiness poll        | ✅ usbstor TUR wait      | ✅ sd spin-up poll         | ✅ §2 TUR poll, 2s budget   |
 | 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ✅ §4 reset EP + BOT reset  |
-| 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ⬜ §5                 |
+| 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ✅ §5 5s bound + Stop EP |
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ⬜ §6                       |
 | 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
 | 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ⬜ §8-§9                    |

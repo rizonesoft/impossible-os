@@ -152,7 +152,7 @@ static int msc_bot_xfer(struct xhci_controller *hc, struct xhci_device *dev,
     int attempt;
 
     for (attempt = 0; attempt <= MSC_STALL_RETRIES; attempt++) {
-        uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, buf, len, dir_in);
+        uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, buf, len, dir_in, NULL);
         if (cc == XHCI_TRB_CC_SUCCESS || cc == XHCI_TRB_CC_SHORT_PKT)
             return 0;
         if (!msc_cc_is_halt(cc))
@@ -170,19 +170,25 @@ static int msc_bot_xfer(struct xhci_controller *hc, struct xhci_device *dev,
  * Returns CSW status (0=pass, 1=fail, 2=phase error) or -1 on transport error.
  * On a PASS CSW, `*residue_out` (when non-NULL) receives the CSW data residue
  * (bytes NOT transferred); a residue greater than the requested length is a
- * malformed CSW and is rejected as a transport failure with a BOT reset. */
+ * malformed CSW and is rejected as a transport failure with a BOT reset.
+ * `*data_xfer_out` (when non-NULL) receives the HOST-observed bytes moved in the
+ * data phase (independent of the device's CSW residue), so an exact-length
+ * caller can fail-safe on a host short the CSW residue might not report. */
 static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
                            const uint8_t *cdb, uint8_t cdb_len,
                            void *data, uint32_t data_len, int dir_in,
-                           uint32_t *residue_out)
+                           uint32_t *residue_out, uint32_t *data_xfer_out)
 {
     struct usb_cbw cbw;
     struct usb_csw csw;
     uint32_t tag = cbw_tag++;
-    int data_short = 0;   /* set if the data phase halted mid-transfer */
+    int data_short = 0;       /* set if the data phase halted mid-transfer */
+    uint32_t data_xfer = 0;   /* host-observed bytes moved in the data phase */
 
     if (residue_out)
         *residue_out = 0;
+    if (data_xfer_out)
+        *data_xfer_out = 0;
 
     /* Build CBW */
     msc_zero(&cbw, sizeof(cbw));
@@ -209,7 +215,8 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
      * unrecoverable here. */
     if (data && data_len > 0) {
         struct xhci_ring *ring = msc_bulk_ring(dev, dir_in);
-        uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, data, data_len, dir_in);
+        uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, data, data_len, dir_in,
+                                           &data_xfer);
         if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
             if (!msc_cc_is_halt(cc)) {
                 klog(LOG_ERROR, "usb-msc", "Data phase failed (%s, %u bytes, cc=%u)",
@@ -290,6 +297,10 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
      * short exact-length transfer (residue <= data_len already validated above). */
     if (csw.bCSWStatus == USB_CSW_STATUS_PASS && residue_out)
         *residue_out = csw.dCSWDataResidue;
+    /* Report the host-observed data-phase byte count (authoritative xHCI-level
+     * length, independent of the device's CSW residue). */
+    if (data_xfer_out)
+        *data_xfer_out = data_xfer;
 
     return csw.bCSWStatus;
 }
@@ -301,7 +312,7 @@ static int msc_test_unit_ready(struct xhci_controller *hc, struct xhci_device *d
     uint8_t cdb[6];
     msc_zero(cdb, 6);
     cdb[0] = SCSI_TEST_UNIT_READY;
-    return msc_bot_command(hc, dev, cdb, 6, NULL, 0, 0, NULL);
+    return msc_bot_command(hc, dev, cdb, 6, NULL, 0, 0, NULL, NULL);
 }
 
 /* ---- SCSI REQUEST SENSE + error classification ---- */
@@ -369,7 +380,7 @@ static msc_err_class_t msc_request_sense(struct xhci_controller *hc,
 
     {
         uint32_t residue = 0;
-        rc = msc_bot_command(hc, dev, cdb, 6, sense, SCSI_SENSE_LEN, 1, &residue);
+        rc = msc_bot_command(hc, dev, cdb, 6, sense, SCSI_SENSE_LEN, 1, &residue, NULL);
         /* Report the BOT command status so callers can tell a transport-level
          * REQUEST SENSE failure (pipe desync during recovery) apart from a
          * successful sense read that merely classifies as unrecoverable. */
@@ -499,6 +510,12 @@ int msc_residue_short(int exact_len, uint32_t residue)
     return exact_len && residue != 0;
 }
 
+/* Pure: is the host-observed transfer short for an exact-length command? */
+int msc_host_short(int exact_len, uint32_t requested, uint32_t transferred)
+{
+    return exact_len && transferred < requested;
+}
+
 /* Pure whole-command retry decision (exposed for tests). See header contract. */
 msc_cmd_action_t msc_scsi_retry_decide(int rc, int rs_rc, msc_err_class_t cls,
                                        int exact_short)
@@ -545,9 +562,14 @@ static int msc_scsi_command(struct xhci_controller *hc, struct xhci_device *dev,
 
     for (attempt = 0; attempt < MSC_SCSI_RETRIES; attempt++) {
         uint32_t residue = 0;
+        uint32_t host_xfer = 0;
         int rc = msc_bot_command(hc, dev, cdb, cdb_len, data, data_len, dir_in,
-                                 &residue);
-        int exact_short = msc_residue_short(exact_len, residue);
+                                 &residue, &host_xfer);
+        /* Fail an exact-length command on EITHER a CSW residue short OR a
+         * host-observed short: the device's CSW residue can misreport a short
+         * data phase, so the host transfer count is the authoritative guard. */
+        int exact_short = msc_residue_short(exact_len, residue) ||
+                          msc_host_short(exact_len, data_len, host_xfer);
         int rs_rc = USB_CSW_STATUS_PASS;  /* REQUEST SENSE not issued unless FAIL */
         msc_err_class_t cls = MSC_ERR_OK;
 
@@ -558,10 +580,12 @@ static int msc_scsi_command(struct xhci_controller *hc, struct xhci_device *dev,
 
         switch (msc_scsi_retry_decide(rc, rs_rc, cls, exact_short)) {
         case MSC_CMD_DONE:
-            /* Report the bytes actually transferred (requested - residue) so an
-             * allocation-length caller can enforce its own minimum-length. */
+            /* Report the HOST-observed bytes transferred so an allocation-length
+             * caller (e.g. INQUIRY min-length) enforces its minimum on the
+             * authoritative xHCI count -- never on the device's CSW residue,
+             * which a flaky device can misreport (residue 0 on a short reply). */
             if (actual_out)
-                *actual_out = data_len - residue;
+                *actual_out = host_xfer;
             return 0;
         case MSC_CMD_FAIL:
             return -1;

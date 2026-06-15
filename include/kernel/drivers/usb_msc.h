@@ -167,6 +167,12 @@ typedef enum {
  * allocation-length command tolerates a short reply. Pure; exposed for tests. */
 int msc_residue_short(int exact_len, uint32_t residue);
 
+/* True if the HOST-observed transfer is short for an exact-length command
+ * (exact_len && transferred < requested). The xHCI host count is authoritative
+ * over the device's CSW residue, which a flaky device can misreport. Pure;
+ * exposed for tests. */
+int msc_host_short(int exact_len, uint32_t requested, uint32_t transferred);
+
 /* Decide the whole-command retry action. `rc` is the primary BOT result (CSW
  * status 0/1/2 or < 0 transport); `rs_rc` is the REQUEST SENSE BOT status
  * (pass USB_CSW_STATUS_PASS when no REQUEST SENSE was issued, i.e. rc != FAIL);

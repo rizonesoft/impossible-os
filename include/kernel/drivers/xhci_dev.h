@@ -313,13 +313,21 @@ int xhci_bulk_transfer(struct xhci_controller *hc, struct xhci_device *dev,
                        struct xhci_ring *ring, void *buf, uint32_t len,
                        int dir_in);
 
+/* Software bulk-transfer timeout (xHCI has no hardware transfer timeout). */
+#define USB_BULK_TIMEOUT_MS   5000u
+
 /* Like xhci_bulk_transfer but returns the raw xHCI Transfer Event completion
  * code (XHCI_TRB_CC_*) instead of 0/-1, so the BOT transport layer can tell a
  * recoverable endpoint halt (STALL/BABBLE/USB_TXN/DATA_BUFFER) from success.
- * Returns 0xFF on a wait timeout. Does NOT perform recovery itself. */
+ * Returns XHCI_TRB_CC_SHORT_PKT and STOPS on the first short packet (a further
+ * IN TD would DMA the CSW into the buffer); 0xFF on a timeout (after aborting
+ * the stuck endpoint). `*xfer_out` (when non-NULL) receives the host-observed
+ * bytes transferred (requested - residual), so a caller can fail an
+ * exact-length command on a host short independent of the CSW residue. Does
+ * NOT perform stall recovery itself. */
 uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc, struct xhci_device *dev,
                               struct xhci_ring *ring, void *buf, uint32_t len,
-                              int dir_in);
+                              int dir_in, uint32_t *xfer_out);
 
 /* Low-level control (EP0) transfer that returns 0 on success, -1 on failure and
  * performs NO endpoint recovery -- the no-recovery primitive used by stall

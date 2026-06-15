@@ -80,6 +80,12 @@ static void dev_copy(void *dst, const void *src, uint64_t bytes)
  * endpoint-state reader before its definition further down. */
 static uint32_t ctx_size(struct xhci_controller *hc);
 
+/* Forward declaration: abort a timed-out endpoint (Stop Endpoint + Set TR
+ * Dequeue) -- used by xhci_bulk_transfer_cc's timeout path before its
+ * definition alongside the other recovery helpers. */
+static int xhci_abort_endpoint(struct xhci_controller *hc, struct xhci_device *dev,
+                               uint32_t dci, struct xhci_ring *ring);
+
 /* Simple microsecond-granularity busy wait */
 static void dev_delay_us(uint32_t us)
 {
@@ -144,13 +150,15 @@ static uint8_t xhci_wait_command(struct xhci_controller *hc,
     return 0xFF; /* Timeout sentinel */
 }
 
-/* Wait for a Transfer Event (TRB type 32).
- * Returns completion code.  Sets *out_bytes if non-NULL (residual length). */
+/* Wait for a Transfer Event (TRB type 32), bounded by `timeout_ms` (software
+ * timeout -- xHCI has no hardware transfer timeout). Returns completion code,
+ * or 0xFF on timeout. Sets *out_bytes if non-NULL (Transfer Event residual:
+ * bytes NOT transferred, status bits 23:0). */
 static uint8_t xhci_wait_transfer(struct xhci_controller *hc,
-                                  uint32_t *out_bytes)
+                                  uint32_t *out_bytes, uint32_t timeout_ms)
 {
     struct xhci_trb evt;
-    uint32_t timeout = 500000; /* 500 ms max */
+    uint32_t timeout = timeout_ms * 1000u;  /* us budget */
     uint32_t trb_type;
     uint8_t cc;
 
@@ -314,8 +322,10 @@ static int xhci_control_transfer(struct xhci_controller *hc,
     /* Ring doorbell: Doorbell[slot_id] = 1 (DCI for EP0) */
     dev_ring_doorbell(hc, dev->slot_id, 1);
 
-    /* Wait for transfer completion */
-    cc = xhci_wait_transfer(hc, NULL);
+    /* Wait for transfer completion. EP0 keeps the legacy 500ms bound -- a
+     * configurable control timeout with proper EP0 abort recovery is the
+     * deferred EP0 item (the bulk timeout work does not cover EP0). */
+    cc = xhci_wait_transfer(hc, NULL, 500);
     if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
         klog(LOG_ERROR, "usb",
              "Control transfer failed (slot %u, cc=%u)",
@@ -336,7 +346,8 @@ static int xhci_control_transfer(struct xhci_controller *hc,
 uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc,
                               struct xhci_device *dev,
                               struct xhci_ring *ring,
-                              void *buf, uint32_t len, int dir_in)
+                              void *buf, uint32_t len, int dir_in,
+                              uint32_t *xfer_out)
 {
     /* xHCI 4.11.7.1: a Normal TRB data buffer must fit in 64 KiB AND must not
      * cross a 64 KiB physical-address boundary. The caller's buffer has no
@@ -348,7 +359,11 @@ uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc,
     const uint32_t BOUNDARY = 0x10000u;   /* 64 KiB */
     uintptr_t addr = (uintptr_t)buf;
     uint32_t remaining = len;
+    uint32_t transferred = 0;             /* host-observed bytes moved so far */
     uint32_t dci;
+
+    if (xfer_out)
+        *xfer_out = 0;
 
     if (dir_in)
         dci = XHCI_DCI(dev->bulk_in_ep, 1);
@@ -358,6 +373,7 @@ uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc,
     do {
         struct xhci_trb trb;
         uint8_t cc;
+        uint32_t residual = 0;
         uint32_t to_boundary = BOUNDARY - (uint32_t)(addr & (BOUNDARY - 1));
         uint32_t frag = remaining < to_boundary ? remaining : to_boundary;
 
@@ -370,12 +386,35 @@ uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc,
 
         dev_write32(hc->db_base, dev->slot_id * 4, dci);
 
-        cc = xhci_wait_transfer(hc, NULL);
+        cc = xhci_wait_transfer(hc, &residual, USB_BULK_TIMEOUT_MS);
+        if (cc == 0xFF) {
+            /* No transfer event within the budget: the endpoint is Running but
+             * stuck on a never-completing TRB (device gone / wedged). Abort it
+             * (Stop Endpoint + Set TR Dequeue) so the ring is re-armed, then
+             * report the timeout so the BOT layer can BOT-reset and retry. */
+            klog(LOG_ERROR, "usb", "Bulk %s timeout (slot %u, EP dci %u, %u ms)",
+                 dir_in ? "IN" : "OUT", (uint64_t)dev->slot_id, (uint64_t)dci,
+                 (uint64_t)USB_BULK_TIMEOUT_MS);
+            xhci_abort_endpoint(hc, dev, dci, ring);
+            return 0xFF;
+        }
         if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
             klog(LOG_ERROR, "usb", "Bulk %s failed (slot %u, cc=%u)",
                  dir_in ? "IN" : "OUT", (uint64_t)dev->slot_id, (uint64_t)cc);
             return cc;               /* report the failing CC for recovery */
         }
+
+        /* Host-observed bytes for this fragment = requested - residual. */
+        transferred += (residual <= frag) ? (frag - residual) : 0;
+        if (xfer_out)
+            *xfer_out = transferred;
+
+        /* A SHORT_PKT terminates the transfer: the device sent less than asked
+         * and has moved on (to the CSW). Issuing another IN TD would DMA the
+         * CSW bytes into this buffer and desync the pipe, so STOP here and let
+         * the caller compare transferred vs requested. */
+        if (cc == XHCI_TRB_CC_SHORT_PKT)
+            return XHCI_TRB_CC_SHORT_PKT;
 
         addr      += frag;
         remaining -= frag;
@@ -391,7 +430,7 @@ int xhci_bulk_transfer(struct xhci_controller *hc,
                        struct xhci_ring *ring,
                        void *buf, uint32_t len, int dir_in)
 {
-    uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, buf, len, dir_in);
+    uint8_t cc = xhci_bulk_transfer_cc(hc, dev, ring, buf, len, dir_in, NULL);
     return (cc == XHCI_TRB_CC_SUCCESS || cc == XHCI_TRB_CC_SHORT_PKT) ? 0 : -1;
 }
 
@@ -502,6 +541,78 @@ static int xhci_set_tr_dequeue(struct xhci_controller *hc, uint8_t slot_id,
     /* Sync the software dequeue index to the controller's new resume point. */
     ring->dequeue = ring->enqueue;
     return 0;
+}
+
+/* Issue a Stop Endpoint command (Running -> Stopped) to abort the TRB the
+ * endpoint is stuck on (a timed-out transfer to a wedged/absent device). */
+static int xhci_stop_endpoint(struct xhci_controller *hc, uint8_t slot_id,
+                              uint32_t dci)
+{
+    struct xhci_trb cmd;
+    uint8_t cc;
+
+    dev_zero(&cmd, sizeof(cmd));
+    cmd.control = (XHCI_TRB_STOP_EP << XHCI_TRB_TYPE_SHIFT)
+                | ((dci & 0x1Fu) << 16)
+                | ((uint32_t)slot_id << XHCI_TRB_SLOT_SHIFT);
+    if (xhci_cmd_submit(hc, &cmd) != 0)
+        return -1;
+    cc = xhci_wait_command(hc, NULL);
+    if (cc != XHCI_TRB_CC_SUCCESS) {
+        klog(LOG_ERROR, "usb", "Stop Endpoint failed (slot %u, dci %u, cc=%u)",
+             (uint64_t)slot_id, (uint64_t)dci, (uint64_t)cc);
+        return -1;
+    }
+    return 0;
+}
+
+/* Abort a timed-out endpoint: Stop Endpoint (Running -> Stopped), drain the
+ * aborted TD's stale Transfer Event so it cannot be mistaken for the next
+ * transfer's completion, then Set TR Dequeue to re-arm the ring past it.
+ * Leaves the endpoint Stopped and ready for the next doorbell. */
+static int xhci_abort_endpoint(struct xhci_controller *hc, struct xhci_device *dev,
+                               uint32_t dci, struct xhci_ring *ring)
+{
+    uint32_t drain = 20000;   /* ~20 ms best-effort wait for the STOPPED event */
+
+    if (xhci_stop_endpoint(hc, dev->slot_id, dci) != 0)
+        return -1;
+    /* The Stop Endpoint posts a Transfer Event (CC in the STOPPED family) for
+     * the aborted TD on THIS slot; consume specifically that event so the next
+     * xhci_wait_transfer cannot see it as a spurious completion. Match the
+     * STOPPED CC + slot (a non-STOPPED transfer event would belong to a
+     * different in-flight transfer -- precise event-TRB-pointer correlation
+     * across the shared event ring is owned by the command-ring/transfer
+     * serialization work). */
+    int stopped_seen = 0;
+    while (drain > 0) {
+        struct xhci_trb evt;
+        if (xhci_event_poll(hc, &evt)) {
+            uint32_t t = (evt.control & XHCI_TRB_TYPE_MASK) >> XHCI_TRB_TYPE_SHIFT;
+            uint8_t cc = (evt.status >> XHCI_TRB_CC_SHIFT) & 0xFF;
+            uint8_t slot = (evt.control >> XHCI_TRB_SLOT_SHIFT) & 0xFF;
+            if (t == XHCI_TRB_TRANSFER_EVT && slot == dev->slot_id &&
+                (cc == XHCI_TRB_CC_STOPPED || cc == XHCI_TRB_CC_STOPPED_LEN_INV ||
+                 cc == XHCI_TRB_CC_STOPPED_SHORT)) {
+                stopped_seen = 1;
+                break;
+            }
+            /* non-matching event consumed -- fall through to the delay so a
+             * noisy shared event ring cannot exhaust the wall-clock window. */
+        }
+        /* Every iteration (matching-miss, non-matching event, or no event)
+         * costs ~10us, so `drain` is a real ~20ms wall-clock bound, not just an
+         * iteration count. */
+        dev_delay_us(10);
+        drain -= 10;
+    }
+    if (!stopped_seen)
+        klog(LOG_WARN, "usb", "EP abort: STOPPED event not observed (slot %u dci %u)",
+             (uint64_t)dev->slot_id, (uint64_t)dci);
+    /* Set TR Dequeue re-arms the ring past the aborted TD regardless; precise
+     * stale-event correlation across the shared event ring is owned by the
+     * command-ring/transfer serialization work. */
+    return xhci_set_tr_dequeue(hc, dev->slot_id, dci, ring);
 }
 
 /* Recover an endpoint to a usable (Running-capable) state, doing only the steps
