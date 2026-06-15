@@ -32,7 +32,7 @@ title: "TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)"
 
 - USB boot drive mounts through the proven baseline xHCI path owned here; zero-delay kernel-start availability is tracked in TODO-20.
 - Hot-plug: USB devices connected after boot are detected via xHCI interrupts (§5).
-- Works on Intel, AMD, ASMedia, and EHCI-only hardware (§6)
+- Works on Intel + non-Intel xHCI (AMD, ASMedia, VIA, Renesas) via the generic vendor path (§6); EHCI/UHCI/OHCI-only legacy hardware is owned by T10 §10 + T19 §11
 
 ## Implementation Order
 
@@ -43,7 +43,7 @@ title: "TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)"
 | 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver       | §2         |  [x]   |
 | 💎  |   4   | Block device registration and VFS integration  | §3         |  [x]   |
 | 💎  |   5   | Interrupt-driven hot-plug and post-boot lifecycle | §1-§4   |  [/]   |
-| ⭐  |   6   | Hardware compatibility (95%+ of systems)       | §1, §5     |  [ ]   |
+| ⭐  |   6   | Non-Intel xHCI vendor compatibility (de-scoped) | §1         |  [/]   |
 
 ---
 
@@ -160,68 +160,27 @@ The baseline boot path in §1-§4 is already good enough to boot from USB media.
 > **Deferred:** [M] device removal slot cleanup + blkdev unregister -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "CCS=0 path (disconnect)... call usb_device_detach(slot)... If MSC: call blkdev_unregister")
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 4H fixed, 1H deferred (ISR -> TODO-10 §8) | scope: kernel-code-quality
 
-## 6. Hardware Compatibility -- 95%+ of Systems
-Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI controllers, EHCI fallback, USB hubs, and BIOS/OS handoff. Currently only Intel with specific port routing is tested.
+## 6. Hardware Compatibility -- Non-Intel xHCI Vendors
+Finish the baseline xHCI boot path across controller vendors. The generic non-Intel path -- skip Intel-only XUSB2PR port routing, rely on BIOS handoff + CCS -- is already implemented (`xhci.c` gates routing on Intel VID 0x8086). What remains here is the Renesas firmware-skip decision, vendor diagnostics, and graceful degradation. EHCI/UHCI/OHCI fallback, USB hubs, USBLEGSUP handoff, and transport stall/halt robustness are owned by other TODOs (Routed block below) -- TODO-17 does NOT own them. (Section de-scoped from a 34-item sprawl that forked ownership with T10/T19/T20.)
 
-**Files:** `src/kernel/drivers/xhci.c`, `src/kernel/drivers/ehci.c` (new)
+**Files:** `src/kernel/drivers/xhci.c`
 
-### BIOS/OS Handoff
-- [ ] Core USBLEGSUP handoff is owned by `TODO-20 §2` -- reuse that implementation for all controller types
-- [ ] Verify USBLEGSUP works identically on AMD, ASMedia, Renesas, VIA (same xHCI spec §4.22.1)
-- [ ] EHCI variant: USBLEGSUP is a PCI capability (not xHCI extended cap) -- same semaphore concept, different register offset
+- [x] Generic non-Intel path: XUSB2PR/USB3_PSSEN routing gated on Intel VID 0x8086; AMD (0x1022), ASMedia (0x1B21), VIA (0x1106) skip port routing and use BIOS handoff + CCS -- already implemented (`xhci.c` `vid == 0x8086` gate + same-bus EHCI check)
+- [x] Bulk/command transfers are timeout-bounded (no infinite event-ring wait) -- already implemented (`xhci_wait_transfer`/`xhci_wait_command`, 500 ms)
+- [ ] Renesas (0x1912): detect vendor ID; if no port asserts CCS within the reset window (firmware not loaded), log `xhci: Renesas firmware not loaded -- skipping` and skip gracefully
+- [ ] Vendor diagnostics: log the controller vendor name on bring-up so the `USB:XX` diagnostic splash matches the detected silicon
+- [ ] Graceful degradation: if xHCI init fails at any step, log and continue boot (PS/2 + other storage still work); verify the boot path tolerates a failed/absent xHCI controller without hanging
+- [ ] Hardware test matrix (manual -- bare metal): AMD, ASMedia, Renesas, VIA controllers boot from USB via the generic path
+- [ ] Commit: `"drivers: xHCI non-Intel vendor compatibility + graceful degradation"`
 
-### AMD xHCI Support
-- [ ] AMD chipsets (vendor 0x1022) route all ports to xHCI by default -- no XUSB2PR needed
-- [ ] Verify BIOS handoff works on AMD (same USBLEGSUP mechanism)
-- [ ] Test on AMD system if available
+**Routed to owning TODOs (NOT owned by TODO-17 §6):**
+- BIOS/OS USBLEGSUP handoff (all vendors) -> XREF: `01-boot-platform/TODO-20-usb-zero-delay-handover.md §2` (implemented + marked complete)
+- EHCI fallback HCD (USB 2.0, no-xHCI hardware) -> XREF: `04-drivers-hardware/TODO-10-usb-stack.md §10` (full HCD/vtable); boot-storage integration -> `01-boot-platform/TODO-19-usb-boot-hardening.md §11`
+- USB hub class driver (recursive enumeration, class 0x09) -> XREF: `04-drivers-hardware/TODO-10-usb-stack.md §9`
+- UHCI legacy (USB 1.x) + OHCI-only graceful skip -> XREF: `01-boot-platform/TODO-19-usb-boot-hardening.md §11`
+- Transport robustness (bulk stall/halt recovery, HSE, event-ring-full) -> XREF: `01-boot-platform/TODO-19-usb-boot-hardening.md`
 
-### Third-Party xHCI Controllers (ASMedia, Renesas, VIA)
-- [ ] ASMedia (vendor 0x1B21): no port routing, just BIOS handoff + standard init
-- [ ] Renesas (vendor 0x1912): may need firmware upload -- detect and skip if unsupported
-- [ ] VIA (vendor 0x1106): standard xHCI, BIOS handoff only
-- [ ] Generic path: if vendor != Intel, skip port routing, rely on BIOS handoff + CCS
-
-### EHCI Fallback Driver
-- [ ] For systems with NO xHCI controller (only EHCI, prog-if 0x20)
-- [ ] EHCI controller init: halt, reset, PERIODICLISTBASE, ASYNCLISTADDR
-- [ ] EHCI BIOS/OS handoff via `USBLEGSUP` (PCI capability, same concept as xHCI)
-- [ ] Async schedule: QH + qTD for control and bulk transfers
-- [ ] Port reset + device enumeration (same USB protocol, different transport)
-- [ ] Register as block device via same `usb_msc` layer
-- [ ] This is a significant driver (~1000-2000 lines) -- only implement if xHCI is absent
-
-### UHCI/OHCI Legacy Controllers (pre-2008 hardware)
-- [ ] UHCI (prog-if 0x00): Intel/VIA USB 1.x -- Frame List + Transfer Descriptors
-- [ ] OHCI (prog-if 0x10): AMD/NEC/others USB 1.x -- HCCA + Endpoint Descriptors
-- [ ] Both are USB 1.1 (12 Mbps max) -- sufficient for keyboards, mice, and slow storage
-- [ ] Detect at PCI scan: if no xHCI and no EHCI, try UHCI/OHCI
-- [ ] Shared USB device layer: same `usb_msc` + `usb_hid` code on top, different transport
-- [ ] Priority: LOW -- only needed for hardware older than ~2008. Log warning if only UHCI/OHCI found.
-- [ ] If not implemented: log `"USB: only UHCI/OHCI found -- USB not supported on this hardware"`
-
-### USB Hub Support
-- [ ] Detect hub devices (class 0x09) during enumeration
-- [ ] Hub descriptor: number of ports, power characteristics
-- [ ] Set port power, poll port status, reset ports with connected devices
-- [ ] Enumerate devices behind hubs (recursive, max 5 levels per USB spec)
-- [ ] Without this, devices plugged into USB hubs are invisible
-
-### Robustness
-- [ ] Timeout all bulk transfers (currently infinite wait on event ring)
-- [ ] Bulk reset recovery on stall (BOT spec §5.3.4: clear HALT + reset endpoint)
-- [ ] Handle controller errors: Host System Error (HSE), event ring full
-- [ ] Graceful degradation: if xHCI init fails, log and continue (don't hang boot)
-- [ ] Commit: `"drivers: xHCI hardware compatibility -- BIOS handoff, AMD, EHCI fallback"`
-
-**Test checkpoint:** POST codes: `POST16(0xD7A0)` entry, `POST16(0xD7A1)` exit. If crash at 0xD7A0: BIOS handoff or vendor-specific init failed -- check serial for vendor ID. Test matrix (diagnostic splash shows `USB:XX` prog-if codes):
-- `USB:30` Intel (i5-11600K): ✅ verified -- `TODO-20` handover replaces the old port-routing delay path
-- `USB:30` AMD: BIOS handoff only, no port routing needed
-- `USB:30,20` Intel (xHCI+EHCI): port routing moves EHCI ports to xHCI
-- `USB:20` EHCI only: EHCI fallback driver handles enumeration
-- `USB:00` UHCI only: log warning, graceful skip (low priority)
-- `USB:10` OHCI only: log warning, graceful skip (low priority)
-- USB hub: device behind hub enumerated
-- QEMU `run-usb`: still works (regression check)
+**Test checkpoint:** Boot from USB on a non-Intel xHCI controller via the generic path (no XUSB2PR write). `POST16(0xD7A0)` entry, `POST16(0xD7A1)` exit; diagnostic splash shows `USB:30` + vendor name. QEMU `run-usb` still works (regression). Bare metal: AMD/ASMedia/Renesas/VIA tested manually.
 
 ---
 
@@ -234,8 +193,8 @@ Make USB boot work on 95%+ of real hardware: Intel, AMD, third-party xHCI contro
 | 💎 | USB boot drive       | ✅ Automatic       | ✅ initramfs        | ✅ §4 bare metal       |
 | ⭐ | Pre-boot handover    | ✅ winload.efi     | ❌ Re-enumerates    | ⬜ TODO-20 zero-delay  |
 | ⭐ | BIOS/OS handoff      | ✅ Automatic       | ✅ xhci-pci.c       | ✅ TODO-20 §2          |
-| ⭐ | EHCI fallback        | ✅ usbehci.sys     | ✅ ehci-hcd         | ⬜ §6 legacy HW        |
-| ⭐ | USB hub support      | ✅ usbhub.sys      | ✅ hub.c            | ⬜ §6 recursive        |
+| ⭐ | EHCI fallback        | ✅ usbehci.sys     | ✅ ehci-hcd         | ⬜ T10 §10 + T19 §11   |
+| ⭐ | USB hub support      | ✅ usbhub.sys      | ✅ hub.c            | ⬜ T10 §9 recursive    |
 | ⭐ | Hot-plug             | ✅ Automatic       | ✅ Automatic        | ⚠️ §5 interim; robust T10 §8 |
 | ⭐ | USB boot timing VPD  | ❌ Not exposed     | ❌ Not exposed      | ⬜ TODO-20 latency     |
 

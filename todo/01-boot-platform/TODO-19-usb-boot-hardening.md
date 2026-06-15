@@ -243,9 +243,13 @@ Detect whether boot media is fast (SSD/NVMe) or slow (USB 2.0/USB 3.0 stick) and
 
 For pre-2012 hardware without xHCI, provide basic USB storage via EHCI.
 
+> [!NOTE]
+> EHCI ownership split: the full EHCI HCD (vtable + class-driver reuse) is owned by `04-drivers-hardware/TODO-10-usb-stack.md §10`. This section owns the minimal boot-storage EHCI/UHCI fallback + the OHCI-only graceful skip; if T10 §10 lands first, reuse that driver and own only boot integration + tests here. Routed from `01-boot-platform/TODO-17 §6` (non-Intel/legacy de-scope).
+
 - [ ] Detect EHCI controller: PCI class 0x0C/0x03/0x20
 - [ ] Minimal EHCI driver: port reset, bulk transfer, BOT SCSI -- enough for MSC storage
 - [ ] If xHCI not found: try EHCI; if EHCI not found: try UHCI (PCI class 0x0C/0x03/0x00)
+- [ ] OHCI-only hardware (PCI class 0x0C/0x03/0x10): no OHCI driver -- log `"USB: OHCI-only controller -- USB storage not supported on this hardware"` and skip gracefully (no hang)
 - [ ] Share the `usb_msc.c` BOT layer -- only the host controller interface differs
 - [ ] Log: `"[USB] Using %s controller (xHCI not available)"` with EHCI/UHCI
 - [ ] Commit: `"drivers: EHCI fallback for USB storage on pre-xHCI hardware"`
