@@ -97,16 +97,17 @@ Define where boot slot metadata is stored and the v1 wire format. Design review 
 Modify the build system to create disk images with two root partitions.
 
 > [!NOTE]
-> **Scope:** the shared `BOOTX64.EFI` on the ESP is a single point of brick -- a bad bootloader update bricks before slot selection runs. TODO-21 covers root/kernel-slot rollback only; signed bootloader/ESP self-update safety is recovery-owned -> XREF: [`TODO-22`](TODO-22-recovery-partition.md) + [`TODO-02 §1`](TODO-02-uefi-hardening-secureboot.md).
+> **Scope (design review):** for §2 BOTH `BOOTX64.EFI` AND `kernel.exe` live on the shared ESP (`load_kernel` is FAT/ESP-only, cannot mount IXFS), so a bad ESP update bricks before slot selection. §2 ships per-slot ROOTS only; true per-slot KERNEL rollback needs a bootloader IXFS reader (deferred). Signed bootloader/ESP self-update safety is recovery-owned -> XREF: [`TODO-22`](TODO-22-recovery-partition.md) + [`TODO-02 §1`](TODO-02-uefi-hardening-secureboot.md).
 
-- [ ] GPT layout: EFI System Partition (64 MiB) + Slot A IXFS (223 MiB) + Slot B IXFS (223 MiB)
-- [ ] Both slots contain identical initial OS image
-- [ ] Kernel is stored per-slot: `\boot\kernel.exe` in each slot's filesystem
-- [ ] Bootloader remains on EFI System Partition (shared, not duplicated)
-- [ ] `scripts/build.sh` updated to create dual-slot images
-- [ ] Commit: `"build: dual-slot disk layout -- EFI + Slot A + Slot B"`
+- [ ] GPT layout (grow disk ~768 MiB): ESP 64M + BlackBox 128M (preserve, TODO-24) + a dedicated A/B-metadata partition + Slot A IXFS + Slot B IXFS at explicit sizes; fail closed if the disk cannot fit both slots + metadata
+- [ ] Wire `make-system-disk`'s existing `--ab` mode into the Makefile + consume generated offsets (drop the fixed LBA constants); run `mkfs-ixfs` twice -- Slot A = current root, Slot B identical
+- [ ] Dedicated A/B-metadata GPT partition (Impossible OS type GUID) holding the two 4 KiB-aligned §1 blocks; export both LBAs in the `.info`; bootloader reads it pre-EBS via `EFI_BLOCK_IO_PROTOCOL` (read-only; the atomic block write is §7)
+- [ ] Kernel stays on the SHARED ESP for §2 -- `load_kernel` (`bootx64.c`) is FAT/ESP-only and cannot mount IXFS; the slots are per-slot IXFS roots only
+- [ ] Bootloader loads Slot A until §3 selection ships (current root becomes Slot A; keeps smoke green)
+- [ ] **Deferred (per-slot kernel rollback):** kernel-inside-each-slot's-IXFS needs a bootloader IXFS reader + slot binding in `load_kernel` -> §3 or a follow-up; §2 ships shared-ESP kernel + per-slot roots
+- [ ] Commit: `"build: dual-slot disk layout -- grow disk, A/B metadata partition, Slot A+B IXFS"`
 
-**Test checkpoint:** Built disk image has 3 partitions visible in `fdisk -l`.
+**Test checkpoint:** Built image has 5 partitions (ESP, BlackBox, A/B-metadata, Slot A, Slot B) in `fdisk -l`; the metadata partition LBAs appear in the `.info`; smoke still boots from Slot A. Test on: host `fdisk -l` + QEMU smoke; bare metal i5-4210U / i5-11600K.
 
 ---
 
