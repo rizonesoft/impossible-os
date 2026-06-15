@@ -125,13 +125,16 @@ typedef enum {
  * command status (pass USB_CSW_STATUS_PASS when REQUEST SENSE was not issued,
  * i.e. rc != FAIL). `cls` is the REQUEST SENSE classification, consulted only
  * when `rc == USB_CSW_STATUS_FAIL`. Routing:
- *   - rc PASS                              -> READY
- *   - rc != FAIL (TUR phase/transport)     -> ABORT (BOT pipe desynced)
- *   - rc FAIL, rs_rc != PASS               -> ABORT (pipe desynced during the
- *                                             REQUEST SENSE recovery command)
- *   - rc FAIL, rs_rc PASS, cls UNRECOV     -> GIVEUP (hard sense, pipe healthy:
- *                                             init warns and continues)
- *   - rc FAIL, rs_rc PASS, transient       -> WAIT
+ *   - rc PASS                                  -> READY
+ *   - rc != FAIL (TUR phase/transport)         -> ABORT (BOT pipe desynced)
+ *   - rc FAIL, rs_rc phase/transport (not FAIL)-> ABORT (pipe desynced during
+ *                                                 REQUEST SENSE recovery)
+ *   - rc FAIL, rs_rc FAIL                       -> GIVEUP (REQUEST SENSE itself
+ *                                                 command-failed but the pipe is
+ *                                                 framed/synced: continue)
+ *   - rc FAIL, rs_rc PASS, cls UNRECOV          -> GIVEUP (hard sense, pipe
+ *                                                 healthy: init warns, continues)
+ *   - rc FAIL, rs_rc PASS, transient            -> WAIT
  * ABORT must NOT receive another CBW until BOT mass-storage reset exists. Pure;
  * exposed for tests. */
 msc_tur_action_t msc_tur_decide(int rc, int rs_rc, msc_err_class_t cls);

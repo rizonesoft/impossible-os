@@ -112,9 +112,12 @@ After BOT init, poll TEST UNIT READY until the device reports ready instead of s
 > **Notes:**
 > - Shipped: `msc_poll_unit_ready` + pure `msc_tur_decide` (`usb_msc.c`); `msc_request_sense` now reports its BOT status via an `rs_rc` out-param so a desync during recovery is distinguishable from a hard sense.
 > - Integrates: replaces the §1 inline 3-retry loop in `usb_msc_init` with an event-driven poll under a real `uptime_ns()` wall-clock budget; a ready drive proceeds with zero added latency.
-> - Hardening: ABORT vs GIVEUP split -- only a BOT pipe desync (TUR or REQUEST SENSE phase/transport failure) aborts init; a hard SCSI error on a healthy pipe warns and continues so INQUIRY/READ CAPACITY surface it. Codex 4x review adoptions in commit.
+> - Hardening: ABORT vs GIVEUP split -- only a BOT pipe desync (TUR or REQUEST SENSE phase/transport failure) aborts init; a hard SCSI error on a healthy pipe warns and continues so INQUIRY/READ CAPACITY surface it. Codex review adoptions in the impl + review commits.
 > - Scope boundary: §2 owns the readiness poll; removing the separate `sleep_ms(2000)` is §6; BOT mass-storage reset / endpoint-stall recovery for the ABORT path is §4.
-> **Verified:** 2026-06-15 | impl commit | 5/5 items | build OK | storage 108 kernel + 16 user-mode PASS (TUR poll decision matrix)
+> **Verified:** 2026-06-15 | review commit | 5/5 items | build OK | storage 109 kernel + 16 user-mode PASS (TUR poll decision matrix)
+> **Accepted:** [H] CSW residue unvalidated -- a SHORT_PKT data phase can read as complete on INQUIRY / READ(10) / REQUEST SENSE -> XREF: 01-boot-platform/TODO-19 §3 (item: "Residue check: compare `dCSWDataResidue` to the requested length even when `bCSWStatus==0`" at line 126)
+> **Accepted:** [M] `msc_info` keyed by per-controller `slot_id` collides across controllers -> XREF: 01-boot-platform/TODO-19 §11 (item: "Key MSC state by global device, not per-controller `slot_id`" at line 277)
+> **Quality reviewed:** 2026-06-15 | Codex 9x (design, test-coverage, adversarial x2, re-adversarial x3, consistency, perf) | 4H+1M+1L fixed, 1H rejected, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -274,6 +277,7 @@ For pre-2012 hardware without xHCI, provide basic USB storage via EHCI.
 - [ ] If xHCI not found: try EHCI; if EHCI not found: try UHCI (PCI class 0x0C/0x03/0x00)
 - [ ] OHCI-only hardware (PCI class 0x0C/0x03/0x10): no OHCI driver -- log `"USB: OHCI-only controller -- USB storage not supported on this hardware"` and skip gracefully (no hang)
 - [ ] Share the `usb_msc.c` BOT layer -- only the host controller interface differs
+- [ ] Key MSC state by global device, not per-controller `slot_id`: `msc_info[dev->slot_id]` (`usb_msc.c`) collides when two controllers each have slot N (xHCI + EHCI / multi-xHCI) -- embed `usb_msc_info` in `struct xhci_device` or index globally
 - [ ] EHCI/UHCI transport recovery + timeouts at §4/§5 parity (halted-qTD, ClearFeature, async cleanup, bounded timeouts) via an HCD-agnostic USB error contract -- the fallback must not hang where §4/§5 harden xHCI
 - [ ] Log: `"[USB] Using %s controller (xHCI not available)"` with EHCI/UHCI
 - [ ] Commit: `"drivers: EHCI fallback for USB storage on pre-xHCI hardware"`

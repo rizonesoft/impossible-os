@@ -224,15 +224,18 @@ msc_tur_action_t msc_tur_decide(int rc, int rs_rc, msc_err_class_t cls)
      * let the transport-recovery layer reset the pipe. */
     if (rc != USB_CSW_STATUS_FAIL)
         return MSC_TUR_ABORT;
-    /* TUR returned CHECK CONDITION -> REQUEST SENSE was issued. If REQUEST
-     * SENSE itself failed at the transport level the pipe desynced DURING
-     * recovery -- that is a transport abort, not a safe hard-error continue. */
-    if (rs_rc != USB_CSW_STATUS_PASS)
+    /* TUR returned CHECK CONDITION -> REQUEST SENSE was issued. Only a REQUEST
+     * SENSE phase error / transport failure (not a plain CSW FAIL) means the
+     * pipe desynced DURING recovery: a CSW FAIL is a framed command-level
+     * failure delivered on a still-synced pipe, so it is a GIVEUP, not an
+     * ABORT. */
+    if (rs_rc != USB_CSW_STATUS_PASS && rs_rc != USB_CSW_STATUS_FAIL)
         return MSC_TUR_ABORT;
-    /* REQUEST SENSE succeeded with a hard sense (MEDIUM/HARDWARE/malformed):
-     * the pipe is still synced, so this is not an abort -- stop polling and let
-     * init warn and continue (INQUIRY/READ CAPACITY surface the real error). */
-    if (cls == MSC_ERR_UNRECOVERABLE)
+    /* REQUEST SENSE itself returned CSW FAIL (anomalous per SPC-4, but the pipe
+     * is synced), or it succeeded with a hard sense (MEDIUM/HARDWARE/malformed):
+     * either way stop polling and let init warn and continue (INQUIRY/READ
+     * CAPACITY surface the real error) rather than abort. */
+    if (rs_rc == USB_CSW_STATUS_FAIL || cls == MSC_ERR_UNRECOVERABLE)
         return MSC_TUR_GIVEUP;
     /* NOT READY (spin-up), UNIT ATTENTION (post-plug reset), or NO SENSE: a
      * transient condition that a short wait + retry can clear. */
@@ -253,13 +256,17 @@ typedef enum {
  * REQUEST SENSE so the sense class drives the wait. Bounded by a real elapsed
  * wall-clock budget (uptime_ns), checked BEFORE each command so no CBW is
  * issued past the budget; an attempt-count backstop bounds the path where no
- * timer is up yet (uptime_ns reads 0). Returns one of msc_poll_result_t. */
+ * timer is up yet (uptime_ns reads 0). `*polls_out` receives the number of TUR
+ * commands actually issued (for the serial poll-count diagnostic). Returns one
+ * of msc_poll_result_t. */
 static msc_poll_result_t msc_poll_unit_ready(struct xhci_controller *hc,
-                                             struct xhci_device *dev)
+                                             struct xhci_device *dev,
+                                             uint32_t *polls_out)
 {
     uint64_t start = uptime_ns();
     uint64_t budget_ns = (uint64_t)MSC_TUR_READY_BUDGET_MS * 1000000ull;
     uint32_t attempt;
+    uint32_t polls = 0;
 
     for (attempt = 0; attempt < MSC_TUR_MAX_ATTEMPTS; attempt++) {
         int rc;
@@ -274,16 +281,20 @@ static msc_poll_result_t msc_poll_unit_ready(struct xhci_controller *hc,
             break;
 
         rc = msc_test_unit_ready(hc, dev);
+        polls++;
         if (rc == USB_CSW_STATUS_FAIL) {
             uint8_t sense[SCSI_SENSE_LEN];
             cls = msc_request_sense(hc, dev, sense, &rs_rc);
         }
         switch (msc_tur_decide(rc, rs_rc, cls)) {
         case MSC_TUR_READY:
+            if (polls_out) *polls_out = polls;
             return MSC_POLL_READY;
         case MSC_TUR_ABORT:
+            if (polls_out) *polls_out = polls;
             return MSC_POLL_ABORT;
         case MSC_TUR_GIVEUP:
+            if (polls_out) *polls_out = polls;
             return MSC_POLL_NOT_READY;  /* hard error, pipe healthy -- continue */
         case MSC_TUR_WAIT:
         default:
@@ -291,6 +302,7 @@ static msc_poll_result_t msc_poll_unit_ready(struct xhci_controller *hc,
         }
         msc_delay_us(MSC_TUR_POLL_US);
     }
+    if (polls_out) *polls_out = polls;
     return MSC_POLL_NOT_READY;
 }
 
@@ -409,19 +421,24 @@ int usb_msc_init(struct xhci_controller *hc, struct xhci_device *dev)
      * under a wall-clock budget. A transport-level desync (phase error / bad
      * CSW) aborts MSC init -- sending INQUIRY into a desynced BOT pipe before
      * mass-storage reset exists only compounds the failure. */
-    switch (msc_poll_unit_ready(hc, dev)) {
+    uint32_t tur_polls = 0;
+    switch (msc_poll_unit_ready(hc, dev, &tur_polls)) {
     case MSC_POLL_READY:
+        if (tur_polls > 1)
+            klog(LOG_INFO, "usb-msc", "USB drive ready after %u TUR poll(s)",
+                 (uint64_t)tur_polls);
         break;
     case MSC_POLL_NOT_READY:
         klog(LOG_WARN, "usb-msc",
-             "USB drive not ready within %u ms, continuing (may respond later)",
-             (uint64_t)MSC_TUR_READY_BUDGET_MS);
+             "USB drive not ready within %u ms (%u TUR poll(s)), continuing",
+             (uint64_t)MSC_TUR_READY_BUDGET_MS, (uint64_t)tur_polls);
         break;
     case MSC_POLL_ABORT:
     default:
         klog(LOG_ERROR, "usb-msc",
-             "BOT transport desync during readiness poll -- aborting MSC init "
-             "(awaiting transport recovery)");
+             "BOT transport desync during readiness poll (%u TUR poll(s)) -- "
+             "aborting MSC init (awaiting transport recovery)",
+             (uint64_t)tur_polls);
         return -1;
     }
 
