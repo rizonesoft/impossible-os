@@ -100,7 +100,7 @@ Modify the build system to create disk images with two root partitions.
 > **Scope (design review):** for §2 BOTH `BOOTX64.EFI` AND `kernel.exe` live on the shared ESP (`load_kernel` is FAT/ESP-only, cannot mount IXFS), so a bad ESP update bricks before slot selection. §2 ships per-slot ROOTS only; true per-slot KERNEL rollback needs a bootloader IXFS reader (deferred). Signed bootloader/ESP self-update safety is recovery-owned -> XREF: [`TODO-22`](TODO-22-recovery-partition.md) + [`TODO-02 §1`](TODO-02-uefi-hardening-secureboot.md).
 
 - [x] `make-system-disk --ab` builds the 5-partition layout (ESP + BlackBox + A/B-metadata + Slot A IXFS + Slot B IXFS) with a post-layout fail-closed invariant (all extents ordered/non-overlapping, both slots >= 96 MiB); verified on 768M
-- [ ] Wire `make-system-disk`'s `--ab` mode into the Makefile + consume the `.info` offsets (drop the fixed LBA constants); run `mkfs-ixfs` twice -- Slot A = current root, Slot B identical (grow `SYSTEM_DISK_SIZE` to 768M)
+- [x] Wired `--ab` into the Makefile (768M; ESP FAT bounded to 64M via `-s 1`); Step 3 sources the `.info` offsets + runs `mkfs-ixfs` twice (Slot A = current root, Slot B identical). Smoke PASS -- kernel mounts Slot A
 - [/] Dedicated A/B-metadata GPT partition (type GUID `...4D44...`) holding the two §1 blocks shipped + `META_OFFSET`/`IXFS_B_OFFSET` exported in `.info`; the bootloader pre-EBS `EFI_BLOCK_IO` read is pending (atomic write is §7)
 - [x] Kernel stays on the SHARED ESP for §2 -- verified: `load_kernel` (`bootx64.c`) is FAT/ESP-only, cannot mount IXFS; slots are per-slot IXFS roots only
 - [x] Bootloader loads Slot A until §3 -- verified: `partition_scan_all` mounts the FIRST IXFS-GUID partition (Slot A) at C: and skips Slot B + the metadata partition; no boot change needed
@@ -118,8 +118,8 @@ Modify the build system to create disk images with two root partitions.
 > - **Canonical doc:** `tools/make-system-disk.c` + the `<img>.info` offset contract.
 > - **Scope boundary:** §2 ships the GPT-writer layout; the Makefile production wiring (use `--ab`, 768M, source `.info`, format both slots) + the bootloader pre-EBS metadata read remain open §2 items.
 
-> **Verified:** 2026-06-15 | commit `de98d105` | 3/6 items | build OK | tool run: 768M valid, undersized/misaligned/failed-write rejected
-> **Quality reviewed:** 2026-06-15 | Codex 11x (design, adversarial, consistency, perf, re-adversarial) | 7M fixed, 0 open | scope: N/A (host build tool)
+> **Verified:** 2026-06-16 | commit `de98d105` + Makefile wiring | 4/6 items | build OK | smoke PASS (KVM 1.95s -- dual-slot image boots Slot A, 29/29 POST16)
+> **Quality reviewed:** 2026-06-16 | Codex 13x (design, adversarial, consistency, perf, re-adversarial) | 1H+7M fixed, 0 open | scope: boot-code-quality (Makefile + GPT writer)
 
 ---
 

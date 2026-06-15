@@ -38,9 +38,9 @@
 | **Python** (`.py`)                |      86 |     32862 |
 | **JavaScript** (`.js`)            |       1 |       524 |
 | **Include fragments** (`.inc`)    |       7 |      3216 |
-| **Makefile**                      |       3 |      1619 |
+| **Makefile**                      |       3 |      1628 |
 | **Linker scripts** (`.ld`/`.lds`) |       2 |       160 |
-| **Subtotal**                      | **247** | **73229** |
+| **Subtotal**                      | **247** | **73238** |
 
 ## Documentation & Project Metadata
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        |  **901** | **340320** |
+| **Core code + tooling**        |  **901** | **340329** |
 | **Supporting text + metadata** |  **441** | **185245** |
-| **All counted text files**     | **1342** | **525565** |
+| **All counted text files**     | **1342** | **525574** |
 
 > Vendored code excluded: ~14034 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               340,320 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               340,329 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 3 month(s), 11 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 340,320
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 340,329
 > lines of core code and tooling would take **122 developers** working for **3 month(s), 11 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-06-15 23:49 · commit `71146ffb`*
+*Last updated: 2026-06-16 00:06 · commit `6887f4cc`*

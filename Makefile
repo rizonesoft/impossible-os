@@ -842,7 +842,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_h
 
 ## system-disk: Create bootable GPT system disk with EFI + IXFS partitions
 SYSTEM_DISK := $(BUILD_DIR)/system-disk.img
-SYSTEM_DISK_SIZE := 512M
+SYSTEM_DISK_SIZE := 768M
 EFI_SIZE := 64M
 # Shim binaries — built by bash scripts/secure-boot/build-shim.sh
 SHIM_DIR := shim
@@ -866,9 +866,12 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
 	@# Step 1: Create GPT image with partition table (EFI + BlackBox + IXFS)
-	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE)
+	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE) --ab
 	@# Step 2: Format EFI partition as FAT32 and copy boot files
-	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
+	@# Bound the ESP FAT to EFI_SIZE (the trailing block count); without it
+	@# mkfs.fat sizes the filesystem from offset-to-EOF, which on the grown A/B
+	@# disk would overrun BlackBox + the metadata + both slots.
+	. $@.info && mkfs.fat -F 32 -s 1 --offset $$(( $$EFI_OFFSET / 512 )) $@ $$(( $$EFI_SIZE / 1024 ))
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
 	@mkdir -p $(BUILD_DIR)/efi_staging/boot
 	@# --- EFI chain-load layout ---
@@ -912,16 +915,22 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	@printf "BlackBox-v1" > $(BUILD_DIR)/blackbox-marker.txt
 	mcopy -i $@@@$(BB_OFFSET) $(BUILD_DIR)/blackbox-marker.txt ::Diag/blackbox-marker.txt
 	@rm -f $(BUILD_DIR)/blackbox-marker.txt
-	@# Step 3: Format IXFS partition and populate with system files
+	@# Step 3: Format IXFS Slot A + Slot B from the GENERATED .info offsets.
+	@# A/B mode shifts IXFS past the metadata partition, so the offsets must come
+	@# from make-system-disk's .info, not the fixed non-A/B constants. Slot A =
+	@# current root; Slot B is an identical copy so a future update can write the
+	@# inactive slot. The metadata partition is left zero (the ab_boot_metadata
+	@# reader falls back to factory defaults -> Slot A boot) until the metadata
+	@# disk adapter lands.
 	@mkdir -p $(BUILD_DIR)/sysroot/Impossible/System/Logs/Serial
 	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym
-	$(BUILD_DIR)/tools/mkfs-ixfs \
-		-o $@ \
-		-s $(IXFS_PART_SIZE) \
-		-l "Impossible OS" \
-		--offset $(IXFS_OFFSET) \
-		--populate $(BUILD_DIR)/sysroot
-	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + BlackBox + IXFS)"
+	. $@.info && $(BUILD_DIR)/tools/mkfs-ixfs \
+		-o $@ -s $$IXFS_SIZE -l "Impossible OS" \
+		--offset $$IXFS_OFFSET --populate $(BUILD_DIR)/sysroot
+	. $@.info && $(BUILD_DIR)/tools/mkfs-ixfs \
+		-o $@ -s $$IXFS_B_SIZE -l "Impossible OS" \
+		--offset $$IXFS_B_OFFSET --populate $(BUILD_DIR)/sysroot
+	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + BlackBox + ABMeta + Slot A + Slot B)"
 
 ## run: Launch QEMU booting from system disk (UEFI via OVMF)
 run: all
