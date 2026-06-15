@@ -36,6 +36,9 @@ static void test_usb_hid_interval_encode(void)
                    "HS bInterval=4 -> Interval 3");
     TEST_ASSERT_EQ(xhci_hid_interval_encode(USB_SPEED_SUPER, 16), 15,
                    "SS bInterval=16 -> Interval 15");
+    /* SuperSpeedPlus uses the same microframe-exponent path as HS/SS. */
+    TEST_ASSERT_EQ(xhci_hid_interval_encode(USB_SPEED_SUPER_PLUS, 4), 3,
+                   "SS+ bInterval=4 -> Interval 3 (exponent path)");
 
     /* Full/Low speed: bInterval is frames -> field = floor(log2(bInterval))+3 */
     TEST_ASSERT_EQ(xhci_hid_interval_encode(USB_SPEED_FULL, 1), 3,

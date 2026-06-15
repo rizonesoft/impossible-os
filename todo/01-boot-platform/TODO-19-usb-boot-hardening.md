@@ -396,6 +396,8 @@ At end of USB enumeration, produce a comprehensive diagnostic summary.
 > - How it runs: called once in `boot_phase2` AFTER `boot_media_probe()` (so media speed is real); read-only, no MMIO. Reads getters from xHCI / MSC / `usb_legacy` / `boot_media`.
 > - New inputs: relaxed-atomic `usb_msc_total_retries`/`usb_msc_sense_keys_seen` (SMP-safe counters in `usb_msc.c`); `xhci_xusb2pr_routed_count`; `USB_SPEED_SUPER_PLUS` (id 5) added to the xhci speed enum + `speed_to_str`.
 > - Scope boundary: §12 owns the boot-storage report; the input-source (HID) diagnostic is `usb_input_diag.c` (TODO-18); single-pass log routing is §13.
+> **Verified:** 2026-06-15 | commit `34ff4d47` | 6/6 items | build OK | smoke PASS (KVM 1.98s)
+> **Quality reviewed:** 2026-06-15 | Codex 7x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial) | 2H+4M fixed | scope: kernel-code-quality
 
 ---
 

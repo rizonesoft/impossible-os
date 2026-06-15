@@ -674,6 +674,7 @@ static uint16_t speed_to_max_packet(uint8_t speed)
     case USB_SPEED_FULL:  return 8;    /* Start with 8, update after GET_DESCRIPTOR */
     case USB_SPEED_HIGH:  return 64;
     case USB_SPEED_SUPER: return 512;
+    case USB_SPEED_SUPER_PLUS: return 512;  /* SuperSpeedPlus uses the SS 512-byte EP0 */
     default:              return 64;
     }
 }
@@ -1520,7 +1521,8 @@ uint8_t xhci_hid_interval_encode(uint8_t speed, uint8_t b_interval)
     if (b_interval < 1)
         b_interval = 1;
 
-    if (speed == USB_SPEED_HIGH || speed == USB_SPEED_SUPER) {
+    if (speed == USB_SPEED_HIGH || speed == USB_SPEED_SUPER ||
+        speed == USB_SPEED_SUPER_PLUS) {
         if (b_interval > 16)
             b_interval = 16;
         return (uint8_t)(b_interval - 1);   /* 0..15 */
