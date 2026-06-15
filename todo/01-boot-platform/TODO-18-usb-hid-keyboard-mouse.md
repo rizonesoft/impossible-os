@@ -91,20 +91,20 @@ Set up periodic interrupt transfers to receive HID reports from keyboard/mouse.
 - [x] Target HID Interrupt-IN TRBs at interrupter 1 via the Normal-TRB Interrupter Target field (`status | (1<<22)`) so completions land on the dedicated ring
 - [x] BSP tick multiplexer (`timer.c` `timer_add/remove_tick_subscriber` + `tick_subs[4]`) -- additive to the singleton so the splash spinner + HID poll coexist; BSP-only writers, release/acquire ISR snapshot, status-returning remove
 - [x] Per-HID-device report DMA buffer (`pmm_alloc_contiguous`); `xhci_hid_queue_report` queues a Normal TRB on `dev->int_in_ring` + rings the EP doorbell (allocated in `xhci_hid_identify`)
-- [x] HID poll (`xhci_hid_poll`, ~10 ms via `timer_add_tick_subscriber`): drains the dedicated HID event ring, logs the report bytes, re-queues a TRB -- validated live (QEMU usb-kbd: a/b/space/enter usage codes)
+- [x] HID poll (`xhci_hid_poll`, ~10 ms via `timer_add_tick_subscriber`): drains the dedicated HID ring (bounded budget), delivers each report to `dev->int_in_report` (ISR-safe), re-queues -- validated live (QEMU usb-kbd usage codes)
 - [ ] Commit: `"drivers: xHCI dedicated HID interrupter + tick-mux interrupt polling"`
 
-**Test checkpoint:** Press keys on USB keyboard in QEMU -- Transfer Event TRBs arrive on the dedicated HID interrupter, raw report data logged to serial; the boot-splash spinner keeps animating (tick mux); no `usb`/`nvme`/`ahci` command timeouts (shared ring untouched).
+**Test checkpoint:** Press keys on USB keyboard in QEMU -- Transfer Event TRBs arrive on the dedicated HID interrupter and each report lands in `dev->int_in_report` (no per-tick serial log -- the poll runs in ISR context); the boot-splash spinner keeps animating (tick mux); no `usb`/`nvme`/`ahci` command timeouts (shared ring untouched).
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_hid.c` interval-encoding (pure); report polling is live-MMIO/ISR -- validated via QEMU usb-kbd + QMP send-key.
 > **Notes:**
 > - Shipped: dedicated HID interrupter (`xhci_ring.c` IR1 own Event Ring + `xhci_hid_event_poll`) + report polling (`xhci_dev.c` `xhci_hid_queue_report` + `xhci_hid_poll`) + per-device report DMA buffer; tick mux in `timer.c` (`448d78d2`).
 > - Integrates: HID Normal TRBs carry Interrupter Target=1 so completions land on IR1, never the shared ring; poller armed after the device is published active; coexists with the splash spinner via the tick subscriber list.
 > - Hardening: IR1 poll-only (no `IMAN.IE` -> no unacked interrupt storm); completion-code-gated re-queue (stops on halt/error/removal); events matched by owning controller + slot.
-> - Review: Codex 4x (design no-ship redirect + adversarial x2 + re-adversarial); 3H+3M fixed; validated live (QEMU usb-kbd usage codes on IR1, boot 1.8s).
+> - Review: Codex 6x (design no-ship redirect + adversarial x2 + re-adversarial + consistency + perf); 4H+4M fixed (incl ISR-context perf: no per-report serial log, per-tick event budget); validated live (QEMU usb-kbd usage codes on IR1, boot 1.7s).
 > - Scope boundary: §2 delivers raw report bytes; report PARSING is §3/§4; the IRQ-driven model + hot-unplug slot teardown are owned by `04-drivers-hardware/TODO-10-usb-stack.md §8`.
-> **Verified:** 2026-06-15 | this commit | 6/6 items | build OK | QEMU usb-kbd reports on IR1 (boot 1.8s); smoke PASS 2.5s; storage 13/13
+> **Verified:** 2026-06-15 | review commit | 6/6 items | build OK | QEMU usb-kbd IR1 setup + report delivery (boot 1.7s); smoke PASS; storage 13/13
 > **Accepted:** [H] `xhci_hid_poll` runs in BSP-tick-ISR context + `xhci_enumerate_device` reachable from the hot-plug ISR share device/ring state -> XREF: 04-drivers-hardware/TODO-10 §8 (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker")
-> **Quality reviewed:** 2026-06-15 | Codex 4x (design, adversarial x2, re-adversarial) | 3H+3M fixed, 1H accepted | scope: kernel-code-quality
+> **Quality reviewed:** 2026-06-15 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) | 4H+4M fixed, 1H accepted | scope: kernel-code-quality
 
 ---
 
