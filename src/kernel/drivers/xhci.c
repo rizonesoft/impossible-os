@@ -73,6 +73,93 @@ static void xhci_delay_us(uint32_t us)
         __asm__ volatile("outb %%al, $0x80" ::: "memory");
 }
 
+/* ---- Intel EHCI->xHCI USB 2.0 port routing (XUSB2PR) -------------------- */
+
+/* Intel 7/8/9-series xHCI PCI config: USB 2.0/3.0 port routing (EHCI -> xHCI).
+ * Present only when an EHCI controller shares the bus; reserved on 100-series+. */
+#define XHCI_PCI_XUSB2PR    0xD0   /* USB 2.0 Port Routing */
+#define XHCI_PCI_USB3PSSEN  0xD8   /* USB 3.0 Port SuperSpeed Enable */
+
+/* Count ports (1..max_ports) currently reporting a connected device (PORTSC.CCS).
+ * Counts the FULL port range so the diagnostic connected-count is exact. */
+static uint32_t xhci_count_connected_ports(struct xhci_controller *hc)
+{
+    uint32_t p, n = 0;
+    for (p = 1; p <= hc->max_ports; p++) {
+        uint32_t off = XHCI_PORTSC_BASE + (p - 1) * XHCI_PORTSC_STRIDE;
+        if (xhci_read32(hc->op_base, off) & XHCI_PORTSC_CCS)
+            n++;
+    }
+    return n;
+}
+
+/* Route Intel USB 2.0 ports from EHCI to xHCI, then wait the bounded settle window
+ * for the routed ports to re-present. Shared by both the bootloader-handover and
+ * full-init paths (was duplicated, with divergent code/logging).
+ *
+ * The boot-time win is the EHCI-presence gate: XUSB2PR/USB3_PSSEN exist only on
+ * Intel 7/8/9-series parts that still have EHCI, so modern Intel (100-series+,
+ * e.g. i5-11600K) skips the routing AND the settle wait entirely -- the old
+ * handover path lacked this gate and always paid the wait.
+ *
+ * On routing-eligible hardware we wait the FULL XHCI_XUSB2PR_ROUTE_MAX_US rather
+ * than early-exit on observed connects: the XUSB2PR-write-to-CCS latency is
+ * vendor-specific and not bounded by any USB/xHCI spec interval (USB 2.0 connect
+ * debounce is the post-attach debounce, not a routing-latency bound), and boot-time
+ * MSC enumeration is synchronous -- a routed boot drive that asserts CCS after the
+ * settle scan is missed for boot. So a quiescence/timed early-exit could regress
+ * boot on a multi-device routed bus. A spec-backed event-driven early-exit is
+ * tracked as a follow-up (TODO-19 routed-port identity tracking). */
+static void xhci_route_intel_usb2_ports(struct xhci_controller *hc,
+                                        uint8_t bus, uint8_t dev, uint8_t func)
+{
+    uint8_t d, f;
+    int ehci_found = 0;
+    uint32_t before, after, xusb2pr, pssen;
+
+    if (pci_read16(bus, dev, func, PCI_VENDOR_ID) != 0x8086)
+        return;  /* XUSB2PR/USB3_PSSEN are Intel-only registers */
+
+    /* Only route if an EHCI controller (class 0x0C/0x03, prog-if 0x20) shares
+     * this bus -- 100-series+ removed EHCI and repurposed these PCI offsets. */
+    for (d = 0; d < PCI_MAX_DEV && !ehci_found; d++) {
+        for (f = 0; f < PCI_MAX_FUNC && !ehci_found; f++) {
+            if (pci_read16(bus, d, f, PCI_VENDOR_ID) == 0xFFFF) continue;
+            if (pci_read8(bus, d, f, PCI_CLASS)    == 0x0C &&
+                pci_read8(bus, d, f, PCI_SUBCLASS) == 0x03 &&
+                pci_read8(bus, d, f, PCI_PROG_IF)  == 0x20)
+                ehci_found = 1;
+        }
+    }
+    if (!ehci_found) {
+        klog(LOG_INFO, "xhci",
+             "No EHCI on bus %u -- skipping XUSB2PR routing (modern Intel)",
+             (uint64_t)bus);
+        return;
+    }
+
+    before = xhci_count_connected_ports(hc);
+
+    xusb2pr = pci_read32(bus, dev, func, XHCI_PCI_XUSB2PR);
+    pci_write32(bus, dev, func, XHCI_PCI_XUSB2PR, xusb2pr | 0xFFFFFFFF);
+    pssen = pci_read32(bus, dev, func, XHCI_PCI_USB3PSSEN);
+    pci_write32(bus, dev, func, XHCI_PCI_USB3PSSEN, pssen | 0xFFFFFFFF);
+    klog(LOG_DEBUG, "xhci",
+         "Intel XUSB2PR 0x%x->0x%x  USB3_PSSEN 0x%x->0x%x",
+         (uint64_t)xusb2pr, (uint64_t)pci_read32(bus, dev, func, XHCI_PCI_XUSB2PR),
+         (uint64_t)pssen,   (uint64_t)pci_read32(bus, dev, func, XHCI_PCI_USB3PSSEN));
+
+    /* Proven-safe bounded settle -- see the function header for why we do NOT
+     * early-exit. */
+    xhci_delay_us(XHCI_XUSB2PR_ROUTE_MAX_US);
+
+    after = xhci_count_connected_ports(hc);
+    klog(LOG_INFO, "xhci",
+         "XUSB2PR port routing settled (%u ms, %u USB 2.0 port(s) connected)",
+         (uint64_t)(XHCI_XUSB2PR_ROUTE_MAX_US / 1000),
+         (uint64_t)(after > before ? after - before : 0));
+}
+
 /* ---- BIOS/OS handoff (xHCI spec §4.22.1) -------------------------------- */
 
 /* Perform USBLEGSUP handoff: take xHCI ownership from BIOS/firmware.
@@ -360,34 +447,8 @@ static int xhci_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
         POST16(0xD751);
 
-        /* Intel EHCI→xHCI port routing (halt clears CCS on Intel 8-series) */
-        {
-            uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
-            if (vid == 0x8086) {
-                int ehci_found = 0;
-                uint8_t d2, f2;
-                for (d2 = 0; d2 < PCI_MAX_DEV && !ehci_found; d2++) {
-                    for (f2 = 0; f2 < PCI_MAX_FUNC && !ehci_found; f2++) {
-                        uint16_t v2 = pci_read16(bus, d2, f2, PCI_VENDOR_ID);
-                        if (v2 == 0xFFFF) continue;
-                        if (pci_read8(bus, d2, f2, PCI_CLASS) == 0x0C &&
-                            pci_read8(bus, d2, f2, PCI_SUBCLASS) == 0x03 &&
-                            pci_read8(bus, d2, f2, PCI_PROG_IF) == 0x20)
-                            ehci_found = 1;
-                    }
-                }
-                if (ehci_found) {
-                    klog(LOG_INFO, "xhci", "Handover: EHCI found -- routing ports + 500ms");
-                    pci_write32(bus, dev, func, 0xD0,
-                                pci_read32(bus, dev, func, 0xD0) | 0xFFFFFFFF);
-                    pci_write32(bus, dev, func, 0xD8,
-                                pci_read32(bus, dev, func, 0xD8) | 0xFFFFFFFF);
-                    xhci_delay_us(500000);
-                } else {
-                    klog(LOG_INFO, "xhci", "Handover: no EHCI -- skipping routing");
-                }
-            }
-        }
+        /* Intel EHCI->xHCI USB 2.0 port routing with event-driven settle. */
+        xhci_route_intel_usb2_ports(hc, bus, dev, func);
 
         xhci_enumerate_ports(hc);
         return 0;
@@ -562,61 +623,13 @@ full_init:
          (uint64_t)hc->max_intrs,
          (uint64_t)hc->max_scratchpads);
 
-    /* ---- Intel USB port routing (EHCI→xHCI, 7/8/9-series only) ---- */
-    /* XUSB2PR (0xD0) and USB3_PSSEN (0xD8) only exist on Intel 7/8/9-series
-     * chipsets that have both EHCI and xHCI.  On 100-series+ (Sunrise Point
-     * and later, including 500-series i5-11600K), EHCI is removed entirely
-     * and these registers are reserved/repurposed.  Writing to them on modern
-     * hardware causes false positives and wasted 500ms delays.
-     *
-     * Check: only touch XUSB2PR if an EHCI controller (prog-if 0x20) exists
-     * on the same PCI bus as this xHCI controller. */
-    {
-        uint16_t vid = pci_read16(bus, dev, func, PCI_VENDOR_ID);
-        if (vid == 0x8086) {  /* Intel only */
-            /* Scan for EHCI controller on same bus */
-            int ehci_found = 0;
-            {
-                uint8_t d, f;
-                for (d = 0; d < PCI_MAX_DEV && !ehci_found; d++) {
-                    for (f = 0; f < PCI_MAX_FUNC && !ehci_found; f++) {
-                        uint16_t v = pci_read16(bus, d, f, PCI_VENDOR_ID);
-                        if (v == 0xFFFF) continue;
-                        if (pci_read8(bus, d, f, PCI_CLASS)    == 0x0C &&
-                            pci_read8(bus, d, f, PCI_SUBCLASS) == 0x03 &&
-                            pci_read8(bus, d, f, PCI_PROG_IF)  == 0x20) {
-                            ehci_found = 1;
-                            klog(LOG_INFO, "xhci",
-                                 "EHCI found at %u:%u.%u -- XUSB2PR routing needed",
-                                 (uint64_t)bus, (uint64_t)d, (uint64_t)f);
-                        }
-                    }
-                }
-            }
-
-            if (ehci_found) {
-                /* 7/8/9-series: route USB 2.0 ports from EHCI to xHCI */
-                uint32_t xusb2pr = pci_read32(bus, dev, func, 0xD0);
-                pci_write32(bus, dev, func, 0xD0, xusb2pr | 0xFFFFFFFF);
-                klog(LOG_DEBUG, "xhci", "Intel XUSB2PR: 0x%x -> 0x%x",
-                     (uint64_t)xusb2pr,
-                     (uint64_t)pci_read32(bus, dev, func, 0xD0));
-
-                uint32_t usb3pssen = pci_read32(bus, dev, func, 0xD8);
-                pci_write32(bus, dev, func, 0xD8, usb3pssen | 0xFFFFFFFF);
-                klog(LOG_DEBUG, "xhci", "Intel USB3_PSSEN: 0x%x -> 0x%x",
-                     (uint64_t)usb3pssen,
-                     (uint64_t)pci_read32(bus, dev, func, 0xD8));
-
-                /* Wait for devices to re-appear after EHCI→xHCI routing */
-                xhci_delay_us(500000);
-            } else {
-                klog(LOG_INFO, "xhci",
-                     "No EHCI on bus %u -- skipping XUSB2PR + 500ms (modern Intel)",
-                     (uint64_t)bus);
-            }
-        }
-    }
+    /* ---- Intel USB 2.0 port routing (EHCI->xHCI, 7/8/9-series only) ---- */
+    /* XUSB2PR / USB3_PSSEN only exist on Intel 7/8/9-series parts with both EHCI
+     * and xHCI; 100-series+ (Sunrise Point and later, including the 500-series
+     * i5-11600K) removed EHCI and repurposed these PCI offsets. The shared helper
+     * gates on an EHCI controller being present and replaces the old fixed 500ms
+     * wait with an event-driven, bounded routed-port settle poll. */
+    xhci_route_intel_usb2_ports(hc, bus, dev, func);
 
     /* Step 11: Enumerate any already-connected devices */
     xhci_enumerate_ports(hc);

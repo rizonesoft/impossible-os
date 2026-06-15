@@ -56,7 +56,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [x]   |
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [/]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [/]   |
-| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [ ]   |
+| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [/]   |
 | 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [ ]   |
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [ ]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
@@ -243,16 +243,22 @@ With proper SCSI retry (§1-§3) and USB transport recovery (§4-§5), the 2-sec
 
 ## 7. XUSB2PR Port-Ready Polling (Intel EHCI→xHCI)
 
-On Intel chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PCI register. The port switch takes time -- currently masked by a fixed `xhci_delay_us(500000)` (500 ms) wait in `xhci.c` after the XUSB2PR/USB3_PSSEN writes (this is separate from the §6 global sleep, which is already absent).
+On Intel 7/8/9-series chipsets, USB 2.0 ports are routed from EHCI to xHCI via the XUSB2PR PCI register, then need a settle window before the routed devices re-present. §7 unifies the two previously-duplicated routing paths into one helper, gates the routing+wait on EHCI presence (so modern Intel skips it entirely), and waits a bounded proven-safe window. A sub-500ms event-driven early-exit was evaluated and deferred as unsafe (deferred item below).
 
-- [ ] After writing XUSB2PR: poll port status registers until ports report connected/enabled
-- [ ] Maximum wait: 500ms (real hardware typically takes <100ms)
-- [ ] Log: `"[USB] XUSB2PR port routing complete (%u ms)"` with actual time
-- [ ] If timeout: `"[WARN] XUSB2PR port routing timeout -- some USB 2.0 ports may not work"`
-- [ ] Only applies to Intel chipsets with XUSB2PR capability (detect via PCI vendor/device)
-- [ ] Commit: `"drivers: XUSB2PR port-ready polling -- replace fixed delay with event-driven wait"`
+- [x] Shared `xhci_route_intel_usb2_ports` helper (`xhci.c`) dedups the two previously-divergent routing paths (handover + full-init); both now do EHCI-detect + routing-write + bounded settle + connected-count log
+- [x] EHCI-presence gate on BOTH paths: XUSB2PR(0xD0)/USB3_PSSEN(0xD8) written only when an EHCI controller (prog-if 0x20) shares the bus; modern Intel (100-series+, no EHCI) skips routing AND the settle wait (the old handover path always paid it)
+- [x] On routing-eligible hardware wait the bounded `XHCI_XUSB2PR_ROUTE_MAX_US` (500ms); log `"XUSB2PR port routing settled (%u ms, %u port(s) connected)"` with the before/after connected-port delta
+- [ ] DEFERRED: spec-backed event-driven early-exit to shorten the 500ms -- needs USB2 port-identity tracking (Supported Protocol caps); a timed early-exit is unsafe (no spec bound on XUSB2PR-to-CCS latency + synchronous boot enumeration)
+- [x] Commit: `"drivers: XUSB2PR routing -- unify both paths, EHCI-gate, bounded settle (early-exit deferred)"`
 
-**Test checkpoint:** i5-4210U bare metal with USB 2.0 drive -- port routing completes with logged time. Non-Intel systems skip this entirely.
+**Test checkpoint:** i5-4210U bare metal with USB 2.0 drive boots; the routing settle logs the connected-port delta. Modern Intel (i5-11600K, no EHCI) logs the EHCI-skip and pays no routing wait. Non-Intel skips entirely.
+> **Test runner:** N/A (live-PCI/MMIO -- EHCI-detect + XUSB2PR write + bounded settle; no pure decision surface after the event-driven early-exit was deferred) | validated on bare metal i5-4210U + i5-11600K skip-path.
+> **Notes:**
+> - Shipped: `xhci_route_intel_usb2_ports` (`xhci.c`) unifying the handover + full-init routing paths + `xhci_count_connected_ports` for the settle-delta log; `XHCI_XUSB2PR_ROUTE_MAX_US` (500ms) bounded wait.
+> - EHCI-gate is the win: routing + wait happen only when an EHCI controller shares the bus, so modern Intel (100-series+) skips both -- the old handover path always paid the 500ms.
+> - Safety: no sub-500ms early-exit -- XUSB2PR-write-to-CCS latency has no USB/xHCI spec bound and boot-time MSC enumeration is synchronous, so a timed early-exit could miss a late routed boot drive; full 500ms is the proven-safe value.
+> - Deferred: spec-backed event-driven early-exit (route-capable port-identity tracking) kept as a `[ ]` item in this section; Codex design + 3x re-adversarial adoptions in the ship commit.
+> - Scope boundary: §7 owns the routing + bounded settle; §6 owns the (already-absent) global post-`xhci_init` sleep; per-port reset/enumeration stays in `xhci_enumerate_ports`.
 
 ---
 
@@ -418,6 +424,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 | 💎 | USB stall/halt recovery      | ✅ usbstor.sys auto-reset | ✅ usb-storage ep reset   | ✅ §4 reset EP + BOT reset  |
 | 💎 | Bulk transfer timeouts       | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout | ✅ §5 5s bound + Stop EP |
 | 💎 | No sleep hacks               | ✅ Event-driven readiness | ✅ SCSI start-stop         | ✅ No global xhci_init sleep |
+| 💎 | Intel EHCI->xHCI port routing | ✅ USB stack routes ports | ✅ xhci-pci Intel quirk    | ✅ §7 EHCI-gate + bounded settle |
 | 💎 | EHCI/UHCI fallback           | ✅ Full USB stack         | ✅ ehci-hcd + uhci-hcd     | ⬜ §11                      |
 | 💎 | Bounded disk flush           | ✅ Async I/O              | ✅ Writeback cache          | ⬜ §8-§9                    |
 | 💎 | Media speed detection        | ✅ Performance tier       | ✅ readahead tuning        | ⬜ §10                      |

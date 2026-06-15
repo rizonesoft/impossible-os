@@ -34,6 +34,18 @@ struct xhci_controller;
 #define XHCI_PORTSC_PRESERVE_MASK  (~(uint32_t)(XHCI_PORTSC_CSC | XHCI_PORTSC_PEC | \
     XHCI_PORTSC_PRC | XHCI_PORTSC_PED | XHCI_PORTSC_OCA))
 
+/* ---- Intel EHCI->xHCI USB 2.0 port-routing settle (XUSB2PR) -------------- */
+
+/* After the Intel XUSB2PR / USB3_PSSEN routing writes, the routed USB 2.0 ports
+ * re-present onto xHCI. The controller-init helper waits this bounded window for
+ * the routed ports to settle. We do NOT early-exit on observed connects: the
+ * XUSB2PR-write-to-CCS latency is vendor-specific and not bounded by any USB/xHCI
+ * spec interval, and boot-time MSC enumeration is synchronous, so a timed/quiesced
+ * early-exit could enumerate before a routed boot drive asserts CCS. The boot-time
+ * win is the EHCI-presence gate (modern Intel skips routing + this wait entirely),
+ * not a shortened wait. */
+#define XHCI_XUSB2PR_ROUTE_MAX_US  500000u  /* bounded settle: 500ms (proven-safe value) */
+
 /* ---- USB speed constants (xHCI PORTSC encoding) -------------------------- */
 
 #define USB_SPEED_FULL      1   /* Full Speed (12 Mbps)    -- max pkt  64 */
