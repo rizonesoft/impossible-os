@@ -147,9 +147,11 @@ struct nvme_controller {
     volatile struct nvme_cqe *io_cq;
     uint16_t            io_sq_tail;
     uint16_t            io_cq_head;
+    uint16_t            io_queue_depth; /* actual depth = min(NVME_IO_QUEUE_DEPTH, MQES+1) */
     uint8_t             io_cq_phase;
     uint8_t             io_queue_active;
     atomic_t            io_busy;        /* SMP-safe single-in-flight CAS gate; see nvme_submit_io_cmd */
+    atomic_t            shutting_down;  /* set by nvme_shutdown; rejects new I/O before CC.SHN */
 
     /*: Namespace info */
     uint64_t            ns_lba_count;

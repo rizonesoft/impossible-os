@@ -101,6 +101,7 @@ Integrate ACPICA (Intel's open-source AML interpreter, Apache-2.0) as a static l
 - [ ] Per-step timeout: if step stalls > 10 s, log `[SHUTDOWN] step timed out, forcing` and continue
 - [ ] Registry key `HKLM\SYSTEM\Shutdown\TimeoutSeconds` (default 5 for WM_CLOSE wait)
 - [ ] Boot log: `[SHUTDOWN] Initiating %s -- reason: %s`; each step logged
+- [ ] Stop-the-world barrier before storage quiesce: global shutting-down state rejecting new FS/block I/O, drain writers, park other CPUs (IPI), halt ALL CPUs on poweroff failure -> XREF `01-boot-platform/TODO-16` §6
 - [ ] Commit: `"kernel: clean shutdown orchestrator -- WM_CLOSE, flush, unmount, acpi_poweroff"`
 
 ## 3. ACPI Power Button SCI `[Sonnet]`

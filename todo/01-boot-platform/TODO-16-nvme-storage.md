@@ -198,9 +198,12 @@ Boot-disk data-integrity gaps found in gap audit: the driver acknowledges durabl
 > **Notes:**
 > - Shipped: NVMe lifecycle in `nvme.c` -- `nvme_flush`, `nvme_shutdown` (CC.SHN + `CSTS.SHST`), `nvme_shutdown_all`, Identify LBA-size rejection (DS 9/12, no UB shift), atomic `io_busy` gate serializing the I/O queue.
 > - Integrates: `blkdev_adapters.c` registers `bd.flush`/`bd.shutdown` per `nvmeN`; block-layer `blkdev_shutdown_all()` runs from `acpi_shutdown()` + `acpi_reboot()` before `cli`; `blkdev_sync` now honest on NVMe.
-> - Review: Codex design + adversarial + re-adversarial fixed 5H -- dropped shutdown callback, untrusted `1<<ds` UB, SMP-unsafe mutex (-> atomic CAS), ignored flush failures, and uninit `struct blkdev` producers wild-calling shutdown.
+> - Review: Codex 11x across implement+review fixed 1C+9H+4M (SMP-unsafe mutex, uninit wild-calls, shutdown-races-I/O, gate ownership, timeout-CQ-poison, queue-depth wrap, S5 resume); 2H accepted -> D04 T03 §2 orchestrator.
 > - Scope boundary: §6 owns the NVMe-side primitives + the thin block-layer hook; the full clean-shutdown orchestrator (write-quiesce, ordered mark-clean) is `04-drivers-hardware/TODO-03` §2; advanced NVMe is §5 / D04 T08.
 > **Verified:** 2026-06-15 | this commit | 5/5 items | build OK | smoke PASS 2.56s
+> **Accepted:** [H] ACPI shutdown does not flush all mounted FS sector caches before device flush (only X: flushed) -> XREF: 04-drivers-hardware/TODO-03 §2 (item: "`vfs_cache_flush()` -- flush block cache" at line 95)
+> **Accepted:** [H] storage quiesce lacks a system-wide stop-the-world barrier (other CPUs can issue I/O during quiesce; only the caller halts) -> XREF: 04-drivers-hardware/TODO-03 §2 (item: "Stop-the-world barrier before storage quiesce" at line 104)
+> **Quality reviewed:** 2026-06-15 | Codex 8x (adversarial, consistency, perf, re-adversarial) | 1C+4H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
 

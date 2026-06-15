@@ -867,6 +867,17 @@ int acpi_enter_sleep_state(uint8_t state)
     uint16_t typa = acpi_get_slp_typa(state);
     uint16_t val;
 
+    /* S5 (soft-off) is NOT a resumable sleep state: it must run the storage
+     * durability barrier and then power off without ever returning. That is
+     * acpi_shutdown()'s job (quiesce + PM1 + fallback ports + halt forever).
+     * Reject S5 here so the generic S1-S4 resume tail (sti; hlt; return) can
+     * never run after storage has been quiesced, leaving a live kernel with
+     * shut-down storage. */
+    if (state == 5) {
+        klog(LOG_WARN, "acpi", "S5 must use acpi_shutdown(), not the sleep API");
+        return -1;
+    }
+
     if (typa == ACPI_SLP_TYPE_INVALID) {
         klog(LOG_DEBUG, "acpi", "S%u not supported by firmware", (uint64_t)state);
         return -1;
@@ -909,31 +920,40 @@ int acpi_enter_sleep_state(uint8_t state)
     return 0;
 }
 
+/* Pre-storage-quiesce shared by poweroff + reboot: flush the X: filesystem
+ * sector cache to the block device (so the clean bit + pending writes reach the
+ * controller cache), then flush + cleanly shut down every storage controller
+ * (NVMe CC.SHN). MUST run with interrupts enabled (driver shutdown paths poll
+ * via hlt). Multi-volume FS flush/unmount is the clean-shutdown orchestrator's
+ * job; this covers the BlackBox X: volume that ACPI itself marks clean. */
+static void acpi_storage_quiesce(void)
+{
+    extern int vfs_is_mounted(char letter);
+    extern struct vfs_node *vfs_get_drive_root(char letter);
+    extern int vfs_flush(struct vfs_node *node);
+    extern int blkdev_shutdown_all(void);
+
+    if (vfs_is_mounted('X')) {
+        struct vfs_node *x_root = vfs_get_drive_root('X');
+        if (x_root) {
+            struct fat32_volume *vol = fat32_volume_from_root(x_root);
+            if (vol) fat32_mark_clean(vol);
+            if (vfs_flush(x_root) != 0)
+                printk("[ACPI] WARNING: X: cache flush failed -- "
+                       "clean bit may not be durable\n");
+        }
+    }
+    if (blkdev_shutdown_all() != 0)
+        printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
+}
+
 void acpi_shutdown(void)
 {
     printk("[ACPI] Initiating shutdown...\n");
 
-    /* Clean unmount BlackBox (X:\) -- clears dirty bit */
-    {
-        extern int vfs_is_mounted(char letter);
-        extern struct vfs_node *vfs_get_drive_root(char letter);
-        if (vfs_is_mounted('X')) {
-            struct vfs_node *x_root = vfs_get_drive_root('X');
-            if (x_root) {
-                struct fat32_volume *vol = fat32_volume_from_root(x_root);
-                if (vol) fat32_mark_clean(vol);
-            }
-        }
-    }
-
-    /* Flush + cleanly shut down storage controllers (device write-cache flush,
-     * NVMe CC.SHN handshake) BEFORE disabling interrupts -- the driver shutdown
-     * paths poll via hlt and require IRQs enabled. */
-    {
-        extern int blkdev_shutdown_all(void);
-        if (blkdev_shutdown_all() != 0)
-            printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
-    }
+    /* Flush X: + cleanly shut down storage controllers BEFORE disabling
+     * interrupts (the driver shutdown paths poll via hlt). */
+    acpi_storage_quiesce();
 
     /* Disable interrupts -- we're going down */
     __asm__ volatile("cli");
@@ -965,13 +985,9 @@ void acpi_reboot(void)
 {
     printk("[ACPI] Initiating reboot...\n");
 
-    /* Flush + shut down storage controllers before disabling interrupts, same
-     * as the poweroff path -- a reset leaves the NVMe cache dirty otherwise. */
-    {
-        extern int blkdev_shutdown_all(void);
-        if (blkdev_shutdown_all() != 0)
-            printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
-    }
+    /* Flush X: + shut down storage controllers before disabling interrupts,
+     * same as the poweroff path -- a reset leaves the cache dirty otherwise. */
+    acpi_storage_quiesce();
 
     __asm__ volatile("cli");
 

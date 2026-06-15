@@ -78,6 +78,17 @@ static void test_acpi_enter_invalid_fails(void)
                 "acpi_enter_sleep_state(S6) returns -1 (invalid)");
 }
 
+static void test_acpi_enter_s5_rejected(void)
+{
+    /* S5 is soft-off, not a resumable sleep state. The generic sleep API must
+     * reject it (return -1 before any SLP write or storage quiesce) so the
+     * S1-S4 resume tail can never run after a storage quiesce. acpi_shutdown()
+     * is the only supported S5 path. */
+    int rc = acpi_enter_sleep_state(5);
+    TEST_ASSERT(rc == -1,
+                "acpi_enter_sleep_state(S5) returns -1 (use acpi_shutdown)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_acpi_power(void)
@@ -96,6 +107,8 @@ void test_register_acpi_power(void)
                             test_acpi_enter_unsupported_fails, TEST_CAT_BOOT);
     test_suite_register_cat("ACPI: enter invalid state fails",
                             test_acpi_enter_invalid_fails, TEST_CAT_BOOT);
+    test_suite_register_cat("ACPI: generic sleep API rejects S5",
+                            test_acpi_enter_s5_rejected, TEST_CAT_BOOT);
 }
 
 #else

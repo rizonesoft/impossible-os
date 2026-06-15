@@ -246,6 +246,7 @@ static int nvme_create_io_queues(struct nvme_controller *nc, uint32_t timeout_ms
     io_depth = NVME_IO_QUEUE_DEPTH;
     if (io_depth > (nc->mqes + 1))
         io_depth = nc->mqes + 1;
+    nc->io_queue_depth = (uint16_t)io_depth;   /* submit path wraps on this */
 
     /* Allocate I/O SQ and CQ pages */
     nc->io_sq_phys = pmm_alloc_contiguous(1);
@@ -348,9 +349,24 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
      * flush on the shared I/O queue (QID 1). SMP-safe single-in-flight gate via
      * atomic CAS: a spinlock would hlt-hang (spin_lock disables IRQs, the poll
      * sleeps), and the kernel mutex wait-queue is not SMP-safe. Nothing is held
-     * across the sleep -- a loser just retries the CAS after sleeping. */
-    while (atomic_cmpxchg(&nc->io_busy, 0, 1) != 0)
-        sleep_ms(1);
+     * across the sleep. Bounded by timeout_ms so acquisition counts against the
+     * deadline (a contended flush stays CAP.TO-bounded). */
+    {
+        uint32_t acq = 0;
+        while (atomic_cmpxchg(&nc->io_busy, 0, 1) != 0) {
+            if (acq++ >= timeout_ms)
+                return -1;   /* could not acquire the queue within the deadline */
+            sleep_ms(1);
+        }
+    }
+    /* Now that we hold the gate, refuse to submit into a controller that is
+     * shutting down (nvme_shutdown sets shutting_down then takes this same gate,
+     * so holding it here means no CC.SHN can race this command) or whose queue
+     * was poisoned by a prior timeout. */
+    if (atomic_read(&nc->shutting_down) || !nc->io_queue_active) {
+        atomic_set(&nc->io_busy, 0);
+        return -1;
+    }
 
     /* Write command into I/O SQ at tail */
     sqe = &nc->io_sq[nc->io_sq_tail];
@@ -363,7 +379,7 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
     }
 
     /* Advance tail and ring I/O SQ 1 tail doorbell */
-    nc->io_sq_tail = (nc->io_sq_tail + 1) % NVME_IO_QUEUE_DEPTH;
+    nc->io_sq_tail = (nc->io_sq_tail + 1) % nc->io_queue_depth;
     wmb();  /* SQ entry visible before doorbell (NVMe spec) */
     /* SQ y tail doorbell: 0x1000 + (2y * db_stride), y=1 for I/O QID 1 */
     nvme_write32(nc->mmio_base, 0x1000 + (2 * db_stride), nc->io_sq_tail);
@@ -380,6 +396,13 @@ static int nvme_submit_io_cmd(struct nvme_controller *nc,
         sleep_ms(1);
         elapsed++;
     }
+    /* Timeout: a completion may still arrive late for this command. With no
+     * per-command CID matching in this polled path (phase bit only), the next
+     * command would consume that stale CQE as its own. Poison the queue so all
+     * further I/O fails closed instead of corrupting; controller-reset recovery
+     * is future work tracked in the advanced NVMe backlog. */
+    nc->io_queue_active = 0;
+    klog(LOG_ERROR, "nvme", "I/O timeout -- queue poisoned, no further I/O");
     atomic_set(&nc->io_busy, 0);
     return -1;  /* timeout */
 
@@ -390,7 +413,7 @@ done:
     }
 
     /* Advance CQ head, flip phase on wrap */
-    nc->io_cq_head = (nc->io_cq_head + 1) % NVME_IO_QUEUE_DEPTH;
+    nc->io_cq_head = (nc->io_cq_head + 1) % nc->io_queue_depth;
     if (nc->io_cq_head == 0)
         nc->io_cq_phase ^= 1;
 
@@ -418,6 +441,7 @@ static int nvme_init_controller(uint8_t bus, uint8_t dev, uint8_t func)
 
     nc = &controllers[num_controllers];
     atomic_set(&nc->io_busy, 0);
+    atomic_set(&nc->shutting_down, 0);
 
     /* ---- Read 64-bit BAR0/BAR1 ---- */
     bar0 = pci_read32(bus, dev, func, PCI_BAR0);
@@ -839,29 +863,57 @@ int nvme_shutdown(int ctrl_idx)
     if (!nc || !nc->active)
         return -1;
 
-    cc = nvme_read32(nc->mmio_base, NVME_REG_CC);
-    cc = (cc & ~NVME_CC_SHN_MASK) | NVME_CC_SHN_NORMAL;
-    nvme_write32(nc->mmio_base, NVME_REG_CC, cc);
-
     timeout_ms = (uint32_t)nc->to * 500;
     if (timeout_ms < 500)
         timeout_ms = 500;
+
+    /* Close admission so no new read/write/flush starts, then drain any
+     * in-flight command by taking the I/O gate (bounded) -- CC.SHN must not
+     * race a command that is still submitting or polling the shared queue. */
+    atomic_set(&nc->shutting_down, 1);
+    {
+        uint32_t acq = 0;
+        int held = 0;
+        for (;;) {
+            if (atomic_cmpxchg(&nc->io_busy, 0, 1) == 0) { held = 1; break; }
+            if (acq++ >= timeout_ms) break;
+            sleep_ms(1);
+        }
+        /* If the gate never drained, an in-flight command still owns it. Do NOT
+         * write CC.SHN (it would race the still-polling submitter) and do NOT
+         * clear io_busy (it belongs to that command). Fail closed -- the caller
+         * logs an unclean shutdown. */
+        if (!held) {
+            klog(LOG_WARN, "nvme", "shutdown: I/O did not drain -- skipping CC.SHN");
+            return -1;
+        }
+    }
+    nc->io_queue_active = 0;   /* queue is no longer usable; we hold io_busy */
+
+    /* CC.SHN normal shutdown: the controller flushes its volatile write cache
+     * to media before reporting SHST=complete. */
+    cc = nvme_read32(nc->mmio_base, NVME_REG_CC);
+    cc = (cc & ~NVME_CC_SHN_MASK) | NVME_CC_SHN_NORMAL;
+    nvme_write32(nc->mmio_base, NVME_REG_CC, cc);
 
     elapsed = 0;
     while (elapsed < timeout_ms) {
         csts = nvme_read32(nc->mmio_base, NVME_REG_CSTS);
         if (csts & NVME_CSTS_CFS) {
             klog(LOG_ERROR, "nvme", "controller fatal status during shutdown");
+            atomic_set(&nc->io_busy, 0);
             return -1;
         }
         if ((csts & NVME_CSTS_SHST_MASK) == NVME_CSTS_SHST_COMPLETE) {
             klog(LOG_INFO, "nvme", "shutdown complete");
+            atomic_set(&nc->io_busy, 0);
             return 0;
         }
         sleep_ms(1);
         elapsed++;
     }
     klog(LOG_WARN, "nvme", "shutdown notification timeout");
+    atomic_set(&nc->io_busy, 0);
     return -1;
 }
 
