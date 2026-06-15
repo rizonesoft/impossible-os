@@ -107,6 +107,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 - [ ] HOTFIX: no restart; MINOR: `dialog_confirm()` restart prompt; MAJOR: mandatory restart dialog
 - [ ] `registry_set("HKLM\\SYSTEM\\Version", info->version)` + `registry_set("HKLM\\SYSTEM\\Update\\LastUpdate", timestamp)`
 - [ ] Cleanup: `vfs_unlink(ipkg_path)` + clean staging dir
+- [ ] **A/B-aware (TODO-21):** once A/B slots exist, a MAJOR/kernel update installs to the INACTIVE slot via the §1 metadata API, never in-place -> XREF: [`01-boot-platform/TODO-21`](../01-boot-platform/TODO-21-ab-boot-rollback.md)
 - [ ] Commit: `"kernel: update_apply -- restore point, ipkg extract, file replace, version bump, restart prompt"`
 
 ## 4. `wuapp.cpl` -- Windows Update Applet `[Sonnet]`

@@ -25,6 +25,8 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 - → XREF: `10-platform-services/TODO-03-updates-packages.md` -- update engine (downstream consumer)
 - → XREF: `../02-kernel-core/TODO-02-kernel-configuration-policy.md §4, §5, §10` -- LastKnownGood, Safe Mode recovery, and boot-status acceptance feed rollback decisions
 - → XREF: `TODO-07-boot-entry-store-menu-policy.md §9` -- A/B slot state from §1 + §3 + §4 here feeds the boot menu's slot/recovery entry generation + counter merge + auto-select-recovery (§9 deferred until those §§ land)
+- → XREF: `TODO-13-tpm-measured-boot-attestation.md §7` -- `tpm_nv_*` write-lock/monotonic-counter primitive backs the §8 anti-rollback floor
+- → XREF: `../02-kernel-core/TODO-19-code-integrity-trust-policy.md` + `TODO-02-uefi-hardening-secureboot.md §1` -- verified slot identity gates §5 mark-good + §8 floor advance
 
 ---
 
@@ -36,6 +38,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 - If boot fails (kernel panic before `mark_boot_successful()`), try count increments.
 - After 3 failed attempts, bootloader automatically rolls back to the other slot.
 - Update engine writes to inactive slot, marks it as `pending`, reboots.
+- Boot metadata is CRC-protected with redundant copies (no torn-write brick); anti-rollback blocks downgrade to a vulnerable slot.
 - User never sees a brick -- worst case is "previous version boots".
 
 ---
@@ -50,6 +53,8 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [ ]   |
 | ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [ ]   |
+| 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [ ]   |
+| 💎  |   8   | Per-slot anti-rollback version floor            | §1, §7     |  [ ]   |
 
 > 💎 = parity -- Android/Chrome OS A/B and systemd-boot auto-assessment both provide this.
 > ⭐ = exclusive -- slot status integrated into VPD boot diagnostics.
@@ -60,7 +65,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 
 Define where boot slot metadata is stored. Two options: UEFI NVRAM variables or a dedicated GPT partition.
 
-- [ ] Choose storage: UEFI NVRAM (simpler, survives partition changes) vs GPT metadata partition (survives NVRAM reset)
+- [ ] Choose storage: UEFI NVRAM (simpler) vs GPT metadata/attribute bits (ChromeOS-style: survives NVRAM reset + travels with the disk); either way the §7 integrity + redundancy rules apply
 - [ ] Define metadata format: `{ magic, version, active_slot (A/B), slot_a { tries, successful, priority }, slot_b { same } }`
 - [ ] `tries`: incremented by bootloader before each boot attempt (0-3)
 - [ ] `successful`: set by kernel after boot reaches desktop (via `mark_boot_successful()`)
@@ -75,6 +80,9 @@ Define where boot slot metadata is stored. Two options: UEFI NVRAM variables or 
 ## 2. Dual-Slot Disk Layout
 
 Modify the build system to create disk images with two root partitions.
+
+> [!NOTE]
+> **Scope:** the shared `BOOTX64.EFI` on the ESP is a single point of brick -- a bad bootloader update bricks before slot selection runs. TODO-21 covers root/kernel-slot rollback only; signed bootloader/ESP self-update safety is recovery-owned -> XREF: [`TODO-22`](TODO-22-recovery-partition.md) + [`TODO-02 §1`](TODO-02-uefi-hardening-secureboot.md).
 
 - [ ] GPT layout: EFI System Partition (64 MiB) + Slot A IXFS (223 MiB) + Slot B IXFS (223 MiB)
 - [ ] Both slots contain identical initial OS image
@@ -92,7 +100,8 @@ Modify the build system to create disk images with two root partitions.
 Bootloader reads metadata and mounts the correct slot's filesystem.
 
 - [ ] At boot: read boot metadata → determine active slot
-- [ ] If active slot `tries >= 3` and `successful == 0`: switch to other slot (rollback)
+- [ ] Select the highest-`priority` slot that is valid (passes §7 CRC + the §8 floor) and not `unbootable`; tie-break by `successful` then lower `tries`
+- [ ] Slot state = `successful` / `pending` (update written, unproven) / `unbootable` (tries exhausted); roll back when the active slot exhausts `tries` EVEN IF it was previously `successful`, as long as another viable slot exists
 - [ ] Increment `tries` for active slot before booting
 - [ ] Mount the active slot's partition (not EFI partition) for kernel loading
 - [ ] Pass `boot_info.active_slot = 'A'/'B'` to kernel
@@ -129,6 +138,8 @@ Kernel-side API to tell the bootloader "this boot worked".
 
 - [ ] Add syscall or kernel function: `mark_boot_successful()` -- writes `successful=1, tries=0` to boot metadata only after TODO-02 §10 marks the boot accepted
 - [ ] Called from `boot_phase3()` after the configured acceptance stage is satisfied, not a hard-coded "desktop visible" heuristic
+- [ ] Before marking good, require the slot kernel to have reported a verified identity (signature / code-integrity pass); refuse mark-good on an unverified slot -> XREF: `02-kernel-core/TODO-19` + `TODO-02 §1`
+- [ ] On mark-good, advance the §8 `rollback_floor` to the active slot's `rollback_index` (never lower it)
 - [ ] On success: `"[BOOT] Boot marked successful (Slot %c)"`
 - [ ] If metadata write fails: `"[WARN] Cannot mark boot successful -- rollback may trigger on next reboot"`
 - [ ] For NVRAM storage: use UEFI `SetVariable()` via runtime services
@@ -151,6 +162,37 @@ Integrate A/B slot status into the VPD and boot timing display.
 
 ---
 
+## 7. Boot Metadata Integrity and Atomic Writes
+
+Boot metadata is the single source of truth for slot selection; a torn write must never brick the box. Follow the Android libavb_ab pattern: magic + CRC-32 + redundant copies with a monotonic generation.
+
+- [ ] Add a `crc32` field over the metadata record + a monotonic `generation` counter; `boot_meta_read()` rejects any record with bad magic or CRC
+- [ ] Store TWO redundant copies (primary + backup); `boot_meta_read()` returns the valid copy with the highest `generation`
+- [ ] `boot_meta_write()` is power-fail-atomic: update the older (lower-generation) copy first, flush, then leave the other intact -- a crash always leaves one valid copy
+- [ ] If BOTH copies fail CRC: load compiled-in factory defaults (active=A, tries=0, successful=0) and log `"[BOOT] metadata corrupt -- factory defaults"`
+- [ ] NVRAM storage: two UEFI variables (`BootMetaA`/`BootMetaB`); GPT storage: two metadata blocks at fixed LBAs
+- [ ] Validate the `version` field; on an unknown future version fail safe to factory defaults rather than misparsing
+- [ ] Commit: `"boot: A/B metadata integrity -- CRC-32, generation counter, redundant copies"`
+
+**Test checkpoint:** Flip a byte in the primary copy -- bootloader reads the backup, logs the CRC recovery, boots normally. Corrupt both -- factory defaults load. Test on: QEMU smoke + bare metal (NVRAM torn-write behavior differs).
+
+---
+
+## 8. Per-Slot Anti-Rollback Version Floor
+
+Prevent a security update from being rolled back to an older, vulnerable slot. Follow the Android `stored_rollback_index` model: a monotonic version floor that advances only after a slot is verified and marked good.
+
+- [ ] Add a `rollback_index` (monotonic OS/security version) per slot to the metadata + a single stored `rollback_floor`
+- [ ] §3 selection rejects any slot whose `rollback_index < rollback_floor` even if otherwise bootable (treat as invalid, try the other slot)
+- [ ] Advance `rollback_floor` to the active slot's `rollback_index` ONLY after `mark_boot_successful()` AND a verified slot identity -> XREF: `02-kernel-core/TODO-19` + `TODO-02 §1`
+- [ ] Store `rollback_floor` in TPM NV (write-lock / monotonic counter) where available, else authenticated metadata -> XREF: [`TODO-13 §7`](TODO-13-tpm-measured-boot-attestation.md)
+- [ ] On rollback to an older slot NEVER lower `rollback_floor`; a slot below the floor is unbootable and routes to recovery -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
+- [ ] Commit: `"boot: A/B anti-rollback -- per-slot version floor, monotonic, TPM-NV backed"`
+
+**Test checkpoint:** `rollback_floor=5`, slot B `rollback_index=4`: selection skips B. Mark slot A good at index 6: floor advances to 6. Test on: QEMU smoke + bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                   | 🪟 Win11                      | 🐧 Linux                    | 🚀 Impossible OS             |
@@ -159,6 +201,8 @@ Integrate A/B slot status into the VPD and boot timing display.
 | 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | ⬜ §4                     |
 | 💎 | Automatic rollback        | ⚠️ Manual repair needed   | ⚠️ Manual or auto        | ⬜ §4                     |
 | 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | ⬜ §5                     |
+| 💎 | Metadata integrity (CRC)  | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual    | ⬜ §7                     |
+| 💎 | Anti-rollback floor       | ⚠️ WU rollback window      | ✅ Android stored index   | ⬜ §8                     |
 | ⭐ | Slot status in boot UI    | ❌ Hidden                  | ❌ journalctl only       | ⬜ §6 🚀                  |
 
 After §1-§5, Impossible OS has stronger rollback than Windows (which requires manual Automatic Repair) and matches Chrome OS/Android A/B. §6 makes slot status visible during boot.
@@ -178,6 +222,11 @@ After §1-§5, Impossible OS has stronger rollback than Windows (which requires 
   - Try counter increment: before boot, `tries` increments by 1
   - `mark_boot_successful()` resets `tries=0` and sets `successful=1` for active slot
   - `boot_info.active_slot` is valid (`'A'` or `'B'`)
+  - Metadata CRC (§7): corrupt primary copy → read returns the valid backup; corrupt both → factory defaults
+  - Metadata generation (§7): higher-`generation` copy wins on read
+  - Anti-rollback (§8): a slot with `rollback_index < rollback_floor` is skipped by selection
+  - Anti-rollback (§8): `mark_boot_successful()` advances `rollback_floor`, never lowers it
+  - State machine (§3): a `successful==1` slot with `tries` exhausted still rolls back when the other slot is viable
 - [ ] Register in `test_runner_init()`: `test_register_ab_boot()`
 - [ ] Create `scripts/test-boot-rollback.sh`:
   - Build dual-slot disk image
