@@ -641,7 +641,7 @@ static void serial_write_u32(uint32_t v)
  * reads this to switch to batched RAM buffering on slow boot media. */
 int klog_slow_media_detected(void)
 {
-    return s_klog_slow_media;
+    return __atomic_load_n(&s_klog_slow_media, __ATOMIC_RELAXED);
 }
 
 /* Bounded flush window: how many unflushed ring entries to write this pass. The
@@ -663,19 +663,24 @@ void klog_disk_flush(void)
     struct vfs_node *logfile;
     uint32_t i;
 
-    /* Reentrancy guard: vfs_write → klog → klog_disk_flush → infinite loop */
-    if (flushing)
+    /* Guard: reentrancy (vfs_write → klog → klog_disk_flush) AND SMP -- an atomic
+     * test-and-set so two CPUs can never run the body (and mutate the shared
+     * cursors / FAT32 buffer) concurrently. A skipped flusher's entries stay in the
+     * ring and persist on the next call. */
+    if (__atomic_exchange_n(&flushing, 1, __ATOMIC_ACQUIRE))
         return;
-    flushing = 1;
 
     /* Flush timing + progress: measure wall-clock across the whole flush and, for
      * non-trivial flushes, report start/done on serial so a slow USB 2.0 write is
      * visibly progressing rather than appearing hung. `flush_pending` is the
      * kernel.log unflushed count (seq cursor minus snapshot, capped to the ring).
      * uptime_ns() is monotonic; if the timer HAL is not yet up both reads are
-     * equal so the elapsed-ms is 0 (no false slow-media trip). */
+     * equal so the elapsed-ms is 0 (no false slow-media trip). `flush_persisted`
+     * tracks whether the kernel.log write actually succeeded so the done-path
+     * diagnostic never reports success over a failed/partial persistence. */
     uint64_t flush_t0   = uptime_ns();
     int      log_mounted = vfs_is_mounted('X') || vfs_is_mounted('C');
+    int      flush_persisted = 1;
     uint32_t flush_pending = 0;
     if (log_mounted) {
         flush_pending = klog_flush_window(klog_get_seq(), ixfs_flush_seq);
@@ -738,6 +743,7 @@ void klog_disk_flush(void)
                 if (batch) {
                     uint32_t batch_pos = 0;
                     uint32_t write_offset = (uint32_t)logfile->size;
+                    int      write_failed = 0;  /* any short/error vfs_write */
 
                     /* Iterate from oldest unflushed to newest.
                      * Ring slot for sequence s is: s % KLOG_RING_SIZE.
@@ -754,10 +760,17 @@ void klog_disk_flush(void)
                         char line[256];
                         int pos = format_entry(&ring[idx], line, 256);
 
-                        /* Flush batch if it would overflow */
+                        /* Flush batch if it would overflow. Stop on the FIRST
+                         * short/error write: continuing would place later chunks at
+                         * offsets computed as if the failed chunk landed, holing the
+                         * file. The cursor is retained (below) so the whole range
+                         * retries next call. */
                         if (batch_pos + (uint32_t)pos > batch_size - 1) {
-                            vfs_write(logfile, write_offset, batch_pos,
-                                      batch);
+                            if (vfs_write(logfile, write_offset, batch_pos,
+                                          batch) != (int)batch_pos) {
+                                write_failed = 1;
+                                break;
+                            }
                             write_offset += batch_pos;
                             batch_pos = 0;
                         }
@@ -769,20 +782,28 @@ void klog_disk_flush(void)
                         }
                     }
 
-                    /* Final flush of remaining data */
-                    if (batch_pos > 0) {
-                        vfs_write(logfile, write_offset, batch_pos, batch);
+                    /* Final flush of remaining data (skipped once a write failed). */
+                    if (!write_failed && batch_pos > 0) {
+                        if (vfs_write(logfile, write_offset, batch_pos, batch)
+                                != (int)batch_pos)
+                            write_failed = 1;
                     }
-                    flush_ok = 1;
+                    /* Cursor-advance-on-success: only acknowledge the range when
+                     * every write returned the requested byte count. */
+                    flush_ok = !write_failed;
                 }
 
                 kernel_log_size = (uint32_t)logfile->size;
                 vfs_close(logfile);
             }
 
-            /* ---- Per-subsystem log routing (batched) ---- */
-            /* Uses the same seq range as kernel.log -- each entry is
-             * routed exactly once to its subsystem file. */
+            /* ---- Per-subsystem log routing (batched, BEST-EFFORT) ---- */
+            /* Uses the same seq range as kernel.log -- each entry is routed once
+             * to its subsystem file. These per-subsystem files are a convenience
+             * view; kernel.log (gated above) is the DURABLE copy of every entry, so
+             * the shared cursor advances on kernel.log success and subsystem write
+             * failures are tolerated (the data is not lost -- it is in kernel.log).
+             * A durable per-subsystem cursor is a tracked follow-up. */
             if (batch && flush_ok) {
                 uint32_t si;
                 for (si = 0; si < SUBSYS_LOG_COUNT; si++) {
@@ -832,6 +853,7 @@ void klog_disk_flush(void)
             /* Only advance cursor after successful persistence */
             if (flush_ok)
                 ixfs_flush_seq = cur_seq;
+            flush_persisted = flush_ok;  /* drives the done-path diagnostic */
         }
 
         /* Free batch buffer after both kernel.log and subsystem files */
@@ -948,11 +970,14 @@ void klog_disk_flush(void)
                     if (jpos > 0) {
                         struct vfs_node *jf = vfs_open(jsonl_path, VFS_O_WRITE);
                         if (jf) {
-                            vfs_write(jf, (uint32_t)jf->size, jpos, jbuf);
+                            int jok = vfs_write(jf, (uint32_t)jf->size, jpos,
+                                                jbuf) == (int)jpos;
                             jsonl_file_size = (uint32_t)jf->size;
                             vfs_close(jf);
-                            /* Only advance cursor after successful write */
-                            jsonl_flush_seq = jcur_seq;
+                            /* Only advance cursor after a verified full write --
+                             * a short/error write leaves entries for retry. */
+                            if (jok)
+                                jsonl_flush_seq = jcur_seq;
                         }
                     } else {
                         /* No entries to write (all filtered/truncated) -- safe to advance */
@@ -1065,18 +1090,30 @@ done:
     if (log_mounted) {
         uint32_t flush_ms = (uint32_t)((uptime_ns() - flush_t0) / 1000000ull);
         if (flush_pending >= KLOG_FLUSH_PROGRESS_MIN) {
-            serial_write("[KLOG] flush done (");
-            serial_write_u32(flush_pending);
-            serial_write(" entries, ");
-            serial_write_u32(flush_ms);
-            serial_write(" ms)\n");
+            /* Report success only when kernel.log actually persisted; a failed or
+             * partial write left the cursor unadvanced (entries retried next call),
+             * so reporting "done" would hide the failure on the exact slow/degraded
+             * media this diagnostic targets. */
+            if (flush_persisted) {
+                serial_write("[KLOG] flush done (");
+                serial_write_u32(flush_pending);
+                serial_write(" entries, ");
+                serial_write_u32(flush_ms);
+                serial_write(" ms)\n");
+            } else {
+                serial_write("[WARN] [KLOG] flush FAILED (");
+                serial_write_u32(flush_pending);
+                serial_write(" entries retained for retry, ");
+                serial_write_u32(flush_ms);
+                serial_write(" ms)\n");
+            }
         }
         if (flush_ms > KLOG_SLOW_MEDIA_MS) {
             serial_write("[WARN] [KLOG] Slow media detected (");
             serial_write_u32(flush_ms);
             serial_write(" ms) -- deferred flush recommended\n");
-            s_klog_slow_media = 1;
+            __atomic_store_n(&s_klog_slow_media, 1, __ATOMIC_RELAXED);
         }
     }
-    flushing = 0;
+    __atomic_store_n(&flushing, 0, __ATOMIC_RELEASE);
 }

@@ -57,7 +57,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [/]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [/]   |
 | 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)       | §4            |  [/]   |
-| 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [x]   |
+| 💎  |   8   | klog_disk_flush bounded loop                       | --             |  [/]   |
 | 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8            |  [ ]   |
 | 💎  |  10   | Boot media speed detection                         | §8            |  [ ]   |
 | 💎  |  11   | EHCI/UHCI companion controller fallback            | --             |  [ ]   |
@@ -273,6 +273,8 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 - [x] Preserve cursor-advance-on-success: `ixfs_flush_seq`/`jsonl_flush_seq` advance to `cur_seq` only on `flush_ok`; entries logged during flush wait for the next call -- correct across the 1000-entry ring wrap (`klog_disk.c`)
 - [x] Progress logging: serial `"[KLOG] Flushing %u entries..."` at entry + `"flush done (%u entries, %u ms)"` at `done:`, for flushes >= 64 (`KLOG_FLUSH_PROGRESS_MIN`); timed via `uptime_ns()`, emitted on serial not klog (reentrancy guard)
 - [x] Slow-media detect (flush > `KLOG_SLOW_MEDIA_MS`=5s): serial WARN + set `s_klog_slow_media`, exposed via `klog_slow_media_detected()` -- the trigger the deferred-flush mode (next section) consumes
+- [ ] DEFERRED: all-or-nothing kernel.log retry -- a failed `vfs_write` now stops the loop + retains the cursor (no further-chunk corruption), but the retry re-appends; needs truncate-to-pre-flush-size rollback (a VFS truncate op) for a clean retry
+- [ ] DEFERRED: durable per-subsystem-file cursor -- subsystem routing is best-effort (kernel.log is the durable copy); a per-file cursor would make `boot.log`/`fs.log`/etc. survive a subsystem-only write failure
 - [x] Commit: `"kernel: bounded klog_disk_flush -- seq-cursor snapshot, no unbounded loop"`
 
 **Test checkpoint:** USB 2.0 boot on bare metal -- flush completes in seconds, not minutes. Serial shows `"[KLOG] Flushing N entries..."` / `"flush done (N entries, M ms)"`; a >5s flush emits the slow-media WARN. Unit test asserts the bounded flush window caps to `KLOG_RING_SIZE`.
@@ -281,7 +283,12 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 > - Shipped: `klog_disk_flush` progress logging + `uptime_ns()` flush timing + slow-media detection; `klog_flush_window()` pure bounded-window helper now used at all 3 flush sites (`klog_disk.c`). Seq-cursor bounding (items 1-2) was already in place from the BlackBox log work, verified + extracted here.
 > - How it runs: serial diagnostics fire only for flushes >= 64 entries (no spam on the frequent small flushes); `serial_write` is used (not klog) so it can't re-enter under the `flushing` reentrancy guard.
 > - Downstream: `klog_slow_media_detected()` is the trigger the deferred-flush mode consumes (next section); a >5s flush flips it.
+> - Hardening (review): the `flushing` guard is now an atomic test-and-set (SMP-safe, one CPU enters); the cursor advances only on verified full `vfs_write` returns (stop-on-first-failure); the done-path reports `flush FAILED` honestly when persistence did not complete.
 > - Scope boundary: this section owns the bounded loop + progress + slow-media DETECTION; the deferred-flush mode (RAM batching that acts on the flag) is the next section.
+> **Verified:** 2026-06-15 | commit `8ed6ca69` | 4/6 items | build OK | live serial+VFS (validated bare metal USB 2.0 i5-4210U)
+> **Deferred:** [H] all-or-nothing kernel.log retry (truncate-to-pre-flush-size rollback for clean retry) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: all-or-nothing kernel.log retry" at line 276)
+> **Deferred:** [M] durable per-subsystem-file cursor (subsystem routing currently best-effort) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: durable per-subsystem-file cursor" at line 277)
+> **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 3H+3M fixed, 2 deferred | scope: kernel-code-quality
 
 ---
 
