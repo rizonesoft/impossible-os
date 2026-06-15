@@ -13,6 +13,7 @@
 #include "kernel/drivers/xhci_dev.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/mouse.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* The EP-context Interval field encodes the polling period as 125us*2^Interval.
  * The encoding is speed-dependent (xHCI 6.2.3.6) and is the bare-metal-critical
@@ -138,6 +139,95 @@ static void test_usb_hid_mouse_decode(void)
                    "4-byte report buttons 0x05 -> left|middle");
 }
 
+/* Input source coexistence: a relative source (USB/PS2) and an absolute source
+ * (VirtIO/VBox) share one cursor. mouse_merge_absolute is edge-triggered so an
+ * unchanged absolute report does not clobber relative deltas, and buttons are
+ * OR-merged per source so an idle absolute report cannot release a held button.
+ * Runs in Phase 3 before the compositor thread, so mutating the shared cursor
+ * state is safe; the real input source overwrites it once the desktop runs. */
+static void test_usb_hid_mouse_coexist(void)
+{
+    struct mouse_state s;
+
+    if (fb_get_width() < 300 || fb_get_height() < 300) {
+        TEST_SKIP("framebuffer too small/not ready for cursor merge test");
+        return;
+    }
+
+    /* Absolute source positions the cursor. */
+    mouse_merge_absolute(200, 150, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.x, 200, "absolute merge sets x");
+    TEST_ASSERT_EQ(s.y, 150, "absolute merge sets y");
+
+    /* A relative USB delta applies on top of the absolute position. */
+    mouse_update_relative(5, -5, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.x, 205, "USB relative dx applies after absolute");
+    TEST_ASSERT_EQ(s.y, 145, "USB relative dy applies after absolute");
+
+    /* An UNCHANGED absolute report must NOT reset the USB-moved cursor. */
+    mouse_merge_absolute(200, 150, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.x, 205, "unchanged absolute does not shadow USB position");
+    TEST_ASSERT_EQ(s.y, 145, "unchanged absolute does not shadow USB position");
+
+    /* Button OR-merge: USB holds left; an idle absolute (buttons=0) report must
+     * not release it. */
+    mouse_update_relative(0, 0, MOUSE_BTN_LEFT);
+    mouse_merge_absolute(200, 150, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT,
+                   "idle absolute does not release a USB-held button");
+
+    /* A changed absolute report wins position; the held USB button survives. */
+    mouse_merge_absolute(250, 175, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.x, 250, "changed absolute moves the cursor");
+    TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT,
+                   "USB-held button survives an absolute move");
+
+    /* USB release clears the merged button. */
+    mouse_update_relative(0, 0, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, 0, "USB release clears the merged button state");
+
+    /* Absolute (VirtIO) button-only: a same-coordinate press publishes a button
+     * without moving the cursor; the matching release clears the absolute slot. */
+    mouse_merge_absolute(250, 175, MOUSE_BTN_RIGHT);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.x, 250, "absolute button-only press does not move cursor");
+    TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_RIGHT, "absolute button-only press publishes");
+    mouse_merge_absolute(250, 175, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, 0, "absolute button-only release clears");
+
+    /* VBox feedback guard: VBox is position-only (its buttons echo the PS/2
+     * mouse), so a USB-held button must NOT latch into the absolute slot. */
+    mouse_update_relative(0, 0, MOUSE_BTN_LEFT);
+    mouse_merge_absolute_position(250, 175);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT, "VBox position-only keeps USB button");
+    mouse_update_relative(0, 0, 0);
+    mouse_merge_absolute_position(250, 175);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, 0, "VBox position-only does not latch a released button");
+
+    /* PS/2 + USB cross-device button OR: independent holds; releasing one
+     * preserves the other (the explicit PS/2+USB coexistence requirement). */
+    mouse_test_set_ps2_buttons(MOUSE_BTN_LEFT);
+    mouse_update_relative(0, 0, MOUSE_BTN_RIGHT);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT | MOUSE_BTN_RIGHT,
+                   "PS/2 left + USB right OR-merge");
+    mouse_update_relative(0, 0, 0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, MOUSE_BTN_LEFT, "USB release preserves PS/2 hold");
+    mouse_test_set_ps2_buttons(0);
+    s = mouse_get_state();
+    TEST_ASSERT_EQ(s.buttons, 0, "PS/2 release clears merged buttons");
+}
+
 void test_register_usb_hid(void)
 {
     test_suite_register_cat("usb-hid: EP interval encoding",
@@ -146,6 +236,8 @@ void test_register_usb_hid(void)
                             test_usb_hid_keyboard_inject, TEST_CAT_STORAGE);
     test_suite_register_cat("usb-hid: mouse report decode",
                             test_usb_hid_mouse_decode, TEST_CAT_STORAGE);
+    test_suite_register_cat("usb-hid: input source coexistence merge",
+                            test_usb_hid_mouse_coexist, TEST_CAT_STORAGE);
 }
 
 #endif /* KERNEL_TESTS */

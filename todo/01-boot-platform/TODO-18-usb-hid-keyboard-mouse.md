@@ -45,7 +45,7 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 | 💎  |   2   | Interrupt transfer polling (periodic TRBs)       | §1         |  [x]   |
 | 💎  |   3   | USB HID boot-protocol keyboard driver            | §2         |  [x]   |
 | 💎  |   4   | USB HID boot-protocol mouse driver               | §2         |  [x]   |
-| 💎  |   5   | Input source coexistence (PS/2 + USB)            | §3, §4     |  [ ]   |
+| 💎  |   5   | Input source coexistence (PS/2 + USB)            | §3, §4     |  [x]   |
 | ⭐  |   6   | Hot-plug keyboard/mouse detection                | §5         |  [ ]   |
 | ⭐  |   7   | USB input diagnostic logging                     | §1–§6      |  [ ]   |
 
@@ -158,9 +158,7 @@ Parse boot-protocol mouse reports (3–4 bytes) into cursor movement.
 > - Review: Codex 10x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial x4); 1H+5M fixed across impl+review (boot-protocol gating, short-report length, cursor-state lock + seed ordering), 2H accepted (compositor merge + cursor-router -> §5), 2 test gaps added.
 > - Scope boundary: §4 drives the cursor on the relative-source path; merging USB with an absolute VirtIO/VBox source, and PS/2+USB buffer coexistence, are §5; hot-plug is §6.
 > **Verified:** 2026-06-15 | review commit | 6/6 items | build OK | storage 37 kernel + 16 user-mode PASS; smoke PASS 2.47s
-> **Accepted:** [H] compositor source cascade (`compositor.c` virtio/vbox -> else) overrides USB relative deltas when an absolute source is present -> XREF: 01-boot-platform/TODO-18 §5 (item: "Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source")
-> **Accepted:** [H] cursor-state race pre-dates this section (PS/2 IRQ + compositor thread on unlocked volatiles) -- fixed here via `mouse_lock`; broader input-router consolidation -> XREF: 01-boot-platform/TODO-18 §5 (item: "Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source")
-> **Quality reviewed:** 2026-06-15 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 1H+3M fixed, 2H accepted | scope: kernel-code-quality
+> **Quality reviewed:** 2026-06-15 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 1H+3M fixed, 2H accepted (both closed by §5 source-merge) | scope: kernel-code-quality
 
 ---
 
@@ -168,14 +166,23 @@ Parse boot-protocol mouse reports (3–4 bytes) into cursor movement.
 
 Both PS/2 and USB input should work simultaneously without conflicts.
 
-- [ ] `keyboard_trygetchar()` checks PS/2 buffer first, then USB buffer -- returns first available
-- [ ] Mouse events merged: compositor reads one merged cursor so USB relative motion survives alongside a VirtIO/VBox absolute source (`compositor.c` cascade overrides USB today; route all sources through one cursor first)
-- [ ] If PS/2 is absent (no i8042): only USB input is active -- no probing of missing hardware
-- [ ] If USB HID is absent: only PS/2 input is active -- no change from current behavior
-- [ ] VirtIO tablet input (QEMU) continues to work alongside USB/PS/2
-- [ ] Commit: `"drivers: input source coexistence -- PS/2, USB, VirtIO work together"`
+- [x] Keyboard already source-merged at ONE ring (§3): PS/2 IRQ + USB `keyboard_inject_hid_key` both push to `kb_buffer`/terminal, so `keyboard_trygetchar` is source-blind -- no separate PS/2/USB buffers to order
+- [x] Mouse events merged: `compositor.c` feeds the active absolute source into `mouse_merge_absolute` (VirtIO) / `mouse_merge_absolute_position` (VBox) then reads `mouse_get_state` ONCE -- USB/PS2 relative deltas survive alongside an absolute source
+- [x] Per-source button state (`s_ps2_buttons|s_usb_buttons|s_abs_buttons`, OR-published under `mouse_lock`): a movement report from one device cannot release a button held on another; VBox position-only so its PS/2-echoed buttons never latch
+- [x] PS/2 absent (no i8042): `mouse_init`/keyboard init gate on `acpi_hw_reduced` + port-0x64 probe -- no I/O to missing hardware; only USB input active
+- [x] USB HID absent: HID poll gated on `hid_intr_active`; PS/2 path unchanged
+- [x] VirtIO tablet continues to work: it is the button-bearing absolute source in the merge; cursor + clicks preserved
+- [x] Commit: `"drivers: input source coexistence -- PS/2, USB, VirtIO work together"`
 
 **Test checkpoint:** QEMU with VirtIO tablet + USB keyboard -- both work simultaneously. Bare metal with PS/2 keyboard + USB mouse -- both work.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_hid.c` input-source coexistence merge (edge-trigger, per-source button OR, VBox feedback guard, PS/2+USB cross-device hold); multi-source validated live via QEMU VirtIO tablet + USB mouse.
+> **Notes:**
+> - Shipped: cursor source-merge -- `mouse.c` `mouse_merge_absolute` (VirtIO, edge-trigger + OR buttons) + `mouse_merge_absolute_position` (VBox, pos-only) + per-source button slots; `compositor.c` reads one merged cursor.
+> - Integrates: keyboard was already merged at a single `kb_buffer` (§3); the mouse merge closes the §4 accepted compositor-cascade gap so USB relative motion + clicks survive alongside an absolute VirtIO/VBox source.
+> - Hardening: per-source button OR-merge stops cross-device button-release; VBox treated position-only (its buttons echo PS/2) so a held button cannot latch into the absolute slot.
+> - Review: Codex design + test-coverage + adversarial + consistency + perf; design 1H adopted (per-source buttons), test-coverage 1H+2M fixed (VBox feedback loop, button-only + PS/2 OR test gaps).
+> - Scope boundary: §5 merges PS/2/USB/VirtIO/VBox into one cursor + buffer; hot-plug of new devices is §6; input diagnostics is §7.
+> **Verified:** 2026-06-15 | impl commit | 6/6 items | build OK | storage 55 kernel + 16 user-mode PASS; smoke PASS 2.52s
 
 ---
 
@@ -213,7 +220,7 @@ Comprehensive USB input status in serial log.
 | 💎 | USB HID interrupt EP      | ✅ usbxhci.sys           | ✅ xhci-hcd               | ✅ §1 Configure Endpoint   |
 | 💎 | USB keyboard in boot      | ✅ HID minidriver        | ✅ usbhid + usbkbd       | ✅ §3 boot-proto parse     |
 | 💎 | USB mouse in boot         | ✅ HID minidriver        | ✅ usbhid + usbmouse     | ✅ §4 boot-proto cursor    |
-| 💎 | PS/2 + USB coexistence    | ✅ Automatic             | ✅ Automatic              | ⬜ §5                      |
+| 💎 | PS/2 + USB coexistence    | ✅ Automatic             | ✅ Automatic              | ✅ §5 one merged cursor    |
 | 💎 | USB HID hot-plug          | ✅ PnP Manager           | ✅ udev + usbhid          | ⬜ §6                      |
 | ⭐ | Input source diagnostics  | ❌ Device Manager only   | ❌ dmesg only             | ⬜ §7 🚀                   |
 

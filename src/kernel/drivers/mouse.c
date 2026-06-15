@@ -155,7 +155,22 @@ static int mouse_read_long(uint8_t *out)
 
 static volatile int32_t mouse_x;
 static volatile int32_t mouse_y;
-static volatile uint8_t mouse_buttons;
+static volatile uint8_t mouse_buttons;   /* published = OR of all sources */
+
+/* Per-source button state. The published mouse_buttons is the OR of these so a
+ * movement report from one device (buttons=0) cannot release a button still
+ * held on another (e.g. dragging with a USB mouse while a VirtIO tablet polls).
+ * All written + OR-published under mouse_lock. */
+static volatile uint8_t s_ps2_buttons;
+static volatile uint8_t s_usb_buttons;
+static volatile uint8_t s_abs_buttons;   /* VirtIO/VBox/Hyper-V absolute source */
+
+/* Last absolute report seen by mouse_merge_absolute -- edge detection so an
+ * unchanged absolute source does not overwrite relative (USB/PS2) deltas every
+ * frame. abs_valid=0 until the first absolute report. Guarded by mouse_lock. */
+static volatile int32_t s_last_abs_x;
+static volatile int32_t s_last_abs_y;
+static volatile uint8_t s_abs_valid;
 
 /* Set once the cursor position has been published by any input source. The USB
  * HID poller (armed during xhci_init, which runs before deferred PS/2 init) can
@@ -182,6 +197,13 @@ static void mouse_clamp_locked(void)
         mouse_x = (int32_t)fb_get_width() - 1;
     if ((uint32_t)mouse_y >= fb_get_height())
         mouse_y = (int32_t)fb_get_height() - 1;
+}
+
+/* Publish mouse_buttons as the union of all source button states. Caller MUST
+ * hold mouse_lock. */
+static void mouse_publish_buttons_locked(void)
+{
+    mouse_buttons = (uint8_t)(s_ps2_buttons | s_usb_buttons | s_abs_buttons);
 }
 
 static volatile uint8_t  mouse_cycle;
@@ -254,7 +276,8 @@ static void mouse_irq_callback(uint8_t vector, void *ctx)
                 mouse_x += dx;
                 mouse_y -= dy;
                 mouse_clamp_locked();
-                mouse_buttons = mouse_packet[0] & 0x07;
+                s_ps2_buttons = mouse_packet[0] & 0x07;
+                mouse_publish_buttons_locked();
                 spin_unlock_irqrestore(&mouse_lock, flags);
             }
         }
@@ -475,9 +498,54 @@ void mouse_inject_state(int32_t x, int32_t y, uint8_t buttons)
     spin_lock_irqsave(&mouse_lock, &flags);
     mouse_x = x;
     mouse_y = y;
-    mouse_buttons = buttons;
+    s_abs_buttons = buttons;   /* Hyper-V synthetic mouse is an absolute source */
+    mouse_publish_buttons_locked();
     mouse_clamp_locked();
     mouse_seeded = 1;   /* published: deferred PS/2 init must not re-center */
+    spin_unlock_irqrestore(&mouse_lock, flags);
+}
+
+/* Edge-triggered absolute position merge. Caller MUST hold mouse_lock. Only an
+ * absolute report whose coordinates CHANGED (or the first report) moves the
+ * cursor, so between absolute updates a relative mouse's deltas persist. */
+static void mouse_merge_pos_locked(int32_t x, int32_t y)
+{
+    if (!s_abs_valid || x != s_last_abs_x || y != s_last_abs_y) {
+        mouse_x = x;
+        mouse_y = y;
+        mouse_clamp_locked();
+        mouse_seeded = 1;
+        s_last_abs_x = x;
+        s_last_abs_y = y;
+        s_abs_valid = 1;
+    }
+}
+
+/* Merge a button-bearing absolute pointing source (VirtIO tablet) into the
+ * shared cursor. Position is edge-triggered (see mouse_merge_pos_locked).
+ * Absolute buttons are tracked in their own source slot and OR-published, so a
+ * button-only or idle absolute report never releases a button held on a
+ * relative device. Compositor-thread use. */
+void mouse_merge_absolute(int32_t x, int32_t y, uint8_t buttons)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&mouse_lock, &flags);
+    mouse_merge_pos_locked(x, y);
+    s_abs_buttons = buttons;
+    mouse_publish_buttons_locked();
+    spin_unlock_irqrestore(&mouse_lock, flags);
+}
+
+/* Merge a position-ONLY absolute source (VBox VMMDev) into the shared cursor.
+ * VBox provides absolute position but NOT buttons -- its button state is read
+ * back from the PS/2 mouse, so feeding it into the absolute button slot would
+ * echo (and then latch) a relative device's held button. Buttons therefore
+ * flow only through the PS/2 source slot here. Compositor-thread use. */
+void mouse_merge_absolute_position(int32_t x, int32_t y)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&mouse_lock, &flags);
+    mouse_merge_pos_locked(x, y);
     spin_unlock_irqrestore(&mouse_lock, flags);
 }
 
@@ -500,7 +568,19 @@ void mouse_update_relative(int32_t dx, int32_t dy, uint8_t buttons)
     mouse_x += dx;
     mouse_y += dy;
     mouse_clamp_locked();
-    mouse_buttons = buttons;
+    s_usb_buttons = buttons;
+    mouse_publish_buttons_locked();
     spin_unlock_irqrestore(&mouse_lock, flags);
 }
+
+#ifdef KERNEL_TESTS
+void mouse_test_set_ps2_buttons(uint8_t buttons)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&mouse_lock, &flags);
+    s_ps2_buttons = buttons;
+    mouse_publish_buttons_locked();
+    spin_unlock_irqrestore(&mouse_lock, flags);
+}
+#endif
 

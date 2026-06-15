@@ -147,24 +147,20 @@ void compositor_run(void)
         int32_t mx, my;
         uint8_t mb;
 
-        /* Get mouse state from the best available source:
-         *   1. VirtIO tablet (QEMU) -- absolute coordinates
-         *   2. VBox VMMDev mouse (VirtualBox) -- absolute coordinates
-         *   3. PS/2 mouse (fallback) -- relative deltas */
+        /* All pointing sources merge into ONE cursor (the shared mouse state)
+         * for input source coexistence:
+         *   - VirtIO tablet (QEMU) / VBox VMMDev -- absolute, edge-merged so a
+         *     simultaneous relative USB/PS2 mouse is not shadowed.
+         *   - USB HID + PS/2 mice -- relative deltas already in the shared state.
+         * Feed any active absolute source, then read the merged cursor once. */
         if (virtio_input_available()) {
             struct virtio_input_state vis = virtio_input_get_state();
-            mx = vis.x;
-            my = vis.y;
-            mb = vis.buttons;
-            /* Update PS/2 mouse state for cursor position tracking */
-            mouse_set_position(mx, my);
+            mouse_merge_absolute(vis.x, vis.y, vis.buttons);
         } else if (vbox_mouse_available()) {
             struct mouse_state vb = vbox_mouse_get_state();
-            mx = vb.x;
-            my = vb.y;
-            mb = vb.buttons;
-            mouse_set_position(mx, my);
-        } else {
+            mouse_merge_absolute_position(vb.x, vb.y);
+        }
+        {
             struct mouse_state ms = mouse_get_state();
             mx = ms.x;
             my = ms.y;
@@ -184,17 +180,16 @@ void compositor_run(void)
                 uint8_t nb;
                 /* Allow IRQs to fire */
                 __asm__ volatile ("sti; hlt");
-                /* Re-read */
+                /* Re-read the merged cursor (same source-merge as above) */
                 if (virtio_input_available()) {
                     struct virtio_input_state vis =
                         virtio_input_get_state();
-                    nx = vis.x; ny = vis.y; nb = vis.buttons;
-                    mouse_set_position(nx, ny);
+                    mouse_merge_absolute(vis.x, vis.y, vis.buttons);
                 } else if (vbox_mouse_available()) {
                     struct mouse_state vb = vbox_mouse_get_state();
-                    nx = vb.x; ny = vb.y; nb = vb.buttons;
-                    mouse_set_position(nx, ny);
-                } else {
+                    mouse_merge_absolute_position(vb.x, vb.y);
+                }
+                {
                     struct mouse_state ms = mouse_get_state();
                     nx = ms.x; ny = ms.y; nb = ms.buttons;
                 }
