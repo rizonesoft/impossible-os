@@ -40,10 +40,10 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 | ⭐  |   1   | Bootloader allocates xHCI DMA structures              | --          |  [/]   |
 | ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [/]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [/]   |
-| ⭐  |   4   | boot_info passes controller + device DMA state        | §3, T01 §4 |  [ ]   |
+| ⭐  |   4   | boot_info passes controller + device DMA state        | §3, T01 §4 |  [/]   |
 | ⭐  |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2 |  [/]   |
-| ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [ ]   |
-| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path  | §5         |  [ ]   |
+| ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [/]   |
+| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path  | §5         |  [/]   |
 
 > All ⭐ rows -- this is a competitive advantage over Linux (which always re-enumerates after kexec/boot). Windows does this via winload.efi but it's invisible to users. Making it visible in boot timing would be a first.
 
@@ -147,6 +147,18 @@ Enumerate connected devices in the bootloader so slot contexts and endpoint ring
 
 **Regression risk:** MEDIUM -- USB enumeration is complex (9-step sequence). If any step fails, the device is skipped and kernel re-enumerates it via TODO-17 path. No system-level risk.
 
+> **Test runner:** N/A (pre-ExitBootServices bootloader enumeration; deferred -- not started) | validation: serial on bare metal once implemented
+
+> **Notes:**
+> - **What shipped:** nothing -- §3 is deferred. The kernel still runs its own enumeration on the inherited DCBAA/rings (§5), so the feature degrades cleanly to "DMA-alloc saved" without §3.
+> - **Why deferred:** requires porting the ~350-line 9-step `xhci_dev.c` enumeration into the bootloader pre-EBS (best done by compiling `xhci_dev.c` for both contexts), and the per-device results must be carried via §4's `boot_info` schema.
+> - **Blocker:** gated on the §4 `boot_info` DMA-payload ABI decision (a stop-and-ask ABI change) -- without the per-device payload layout there is nowhere to record slot/EP-ring geometry for the kernel.
+> - **Canonical doc:** `src/boot/uefi/bootx64.c` (would host the port) + `src/kernel/drivers/xhci_dev.c` (the source enumeration).
+> - **Scope boundary:** §3 enumerates in the bootloader; §5 inherits; §4 carries the schema.
+
+> **Verified:** 2026-06-15 | commit `832af15c` | 0/5 items | deferred (design parked on §4 ABI) | gap-audit scoped
+> **Deferred:** [feature] bootloader device enumeration (per-device slot context + EP0/bulk rings) -- needs the ~350-line xhci_dev.c port + the §4 boot_info per-device payload schema -> XREF: 01-boot-platform/TODO-20 §4 (item: "DMA-shape design (blocks typed-payload item)")
+
 ---
 
 ## 4. boot_info Passes Controller + Device DMA State
@@ -154,9 +166,9 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 
 **Files:** `include/kernel/boot_info.h`, `src/boot/uefi/bootx64.c`
 
-- [ ] Add `struct boot_usb_controller` to boot_info: BAR0, DCBAA phys, scratchpad phys, ring addresses
+- [x] Add `struct boot_usb_controller` to boot_info: BAR0, DCBAA phys, scratchpad phys, ring addresses -- shipped in §1
 - [ ] Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses
-- [ ] Add `usb_handover_complete` flag -- 1 if bootloader successfully configured the controller
+- [x] Add `usb_handover_complete` flag -- 1 if bootloader successfully configured the controller -- shipped in §1
 - [ ] DMA-shape design (blocks typed-payload item): §1 allocates DCBAA/cmd/evt/ERST/scratchpad as disjoint pages, so one contiguous `BOOT_PAYLOAD_USB_HANDOVER` descriptor can't cover them -- pick a contiguous arena or scatter/gather descriptors
 - [ ] Publish one typed payload descriptor of type `BOOT_PAYLOAD_USB_HANDOVER` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) covering the contiguous xHCI DMA blob so TODO-01 §4's packed-prefix + overlap validator sees it alongside every other handoff region. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Commit: `"boot: extend boot_info with xHCI controller DMA state"`
@@ -164,6 +176,18 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 **Test checkpoint:** Kernel reads boot_info, logs controller state with matching physical addresses. POST code 0xD754. Test on: QEMU `run-usb`, bare metal i5-4210U (EHCI+xHCI), bare metal i5-11600K (xHCI only).
 
 **Regression risk:** LOW -- boot_info extension is additive. If `usb_handover_complete` is 0 (not set), kernel uses TODO-17 path unchanged. No existing fields affected.
+
+> **Test runner:** N/A (boot_info ABI schema; per-device payload deferred) | validation: kernel reads controller state, serial on bare metal
+
+> **Notes:**
+> - **What shipped:** the controller-level `struct boot_usb_controller` (BAR0, DCBAA, scratchpad, ring phys) + `usb_handover_complete` flag, both landed in §1 and consumed by §5.
+> - **Open (ABI decision):** the per-device payload (slot_id, output-context/EP0/bulk-ring phys) + the typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor are NOT done -- they require the DMA-shape design fork.
+> - **Blocker:** §1 allocates DCBAA/cmd/evt/ERST/scratchpad as DISJOINT pages, so one contiguous descriptor can't cover them -- the contiguous-vs-scatter choice is a `boot_info` ABI change (stop-and-ask) wiring into TODO-01 §4.
+> - **Canonical doc:** `include/kernel/boot_info.h` `boot_usb_controller` + `src/boot/uefi/boot_info_mirror.h`.
+> - **Scope boundary:** §4 owns the schema; §3 produces per-device data into it; §5/§6 consume it.
+
+> **Verified:** 2026-06-15 | commit `832af15c` | 2/5 items | build OK | controller-level fields shipped (§1)
+> **Deferred:** [feature] per-device DMA payload + typed `BOOT_PAYLOAD_USB_HANDOVER` descriptor + the contiguous-vs-scatter DMA-shape decision -- a stop-and-ask `boot_info` ABI change needing user sign-off -> XREF: 01-boot-platform/TODO-01 §4 (item: "Optional payload descriptor array") + TODO-20 §4 (item: "DMA-shape design")
 
 ---
 
@@ -213,6 +237,18 @@ Skip INQUIRY + READ CAPACITY for MSC devices -- use sector count/size from Phase
 
 **Test checkpoint:** `usb0` block device registered. Sector 0 read matches expected content. No INQUIRY/READ CAPACITY commands in serial log. POST code 0xD756. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
+> **Test runner:** N/A (deferred -- depends on §4 geometry) | validation: serial on bare metal once implemented
+
+> **Notes:**
+> - **What shipped:** nothing -- §6 is deferred. MSC devices still register via the full TODO-17 path (INQUIRY + READ CAPACITY), which works; §6 is purely the latency optimization.
+> - **Why deferred:** skipping INQUIRY/READ CAPACITY needs the sector count/size captured at Phase A (EFI_BLOCK_IO) and carried in §4's per-device `boot_info` payload -- which is the ABI-gated open part of §4.
+> - **Blocker:** §4 per-device DMA payload schema + a Phase A geometry capture step.
+> - **Canonical doc:** `src/kernel/drivers/usb_msc.c` + `src/kernel/main/blkdev_adapters.c`.
+> - **Scope boundary:** §6 consumes §4's geometry; §3 produces the per-device data.
+
+> **Verified:** 2026-06-15 | commit `832af15c` | 0/3 items | deferred (blocked on §4 ABI) | gap-audit scoped
+> **Deferred:** [feature] MSC instant registration from boot_info geometry -- blocked on the §4 per-device payload + a Phase A EFI_BLOCK_IO geometry capture -> XREF: 01-boot-platform/TODO-20 §4 (item: "Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses")
+
 ---
 
 ## 7. Fallback: Detect Corrupt State, Revert to TODO-17 Path
@@ -230,6 +266,18 @@ If any handover validation fails, transparently fall back to the proven halt/res
 **Test checkpoint:** Force-fail handover (corrupt boot_info), verify clean fallback to TODO-17 path with no crash. POST code 0xD757. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
 
 **Regression risk:** LOW -- fallback is the proven TODO-17 path. If fallback detection itself crashes, the issue is in the validation code, not the USB stack. Rollback: disable handover validation, always use TODO-17 path.
+
+> **Test runner:** N/A (deferred; validation gate overlaps §5) | validation: force-corrupt boot_info, serial on bare metal once implemented
+
+> **Notes:**
+> - **What shipped:** a coarse fallback only -- §5 already does `goto full_init` on halt/restart/ring-init failure (`xhci.c:411,427,440`). The explicit validation checks (HCH, No-Op completes, DCBAAP matches) are NOT implemented.
+> - **Why deferred:** the explicit validation gate is the same xHCI handover-validation surgery deferred for the §5 "validate before trust" HIGH -- consolidate both into one hardening pass rather than write it twice.
+> - **Blocker:** the IOMMU default-deny item is cross-blocked on `D04 T04 §4` (inherited DMA pages must be IOMMU-mapped before default-deny); the validation checks themselves are implementable now.
+> - **Canonical doc:** `src/kernel/drivers/xhci.c` handover branch.
+> - **Scope boundary:** §7 validates + recovers; the validation overlaps the §5 validate-before-trust item.
+
+> **Verified:** 2026-06-15 | commit `832af15c` | 0/5 items | deferred (consolidate with §5 validate-before-trust) | gap-audit scoped
+> **Deferred:** [feature] explicit handover validation (USBSTS.HCH, No-Op completes, DCBAAP matches) + IOMMU-map inherited DMA before default-deny -- validation overlaps the §5 HIGH; IOMMU cross-blocked -> XREF: 01-boot-platform/TODO-20 §5 (item: "HIGH (validate before trust)") + 04-drivers-hardware/TODO-04 §4
 
 ---
 
