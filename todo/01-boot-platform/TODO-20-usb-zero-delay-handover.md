@@ -41,7 +41,7 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 | ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [/]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3, T01 §4 |  [ ]   |
-| ⭐  |   5   | Kernel inherits controller without halt/reset         | §1, §2     |  [x]   |
+| ⭐  |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2 |  [/]   |
 | ⭐  |   6   | Kernel registers MSC devices from boot_info geometry  | §5         |  [ ]   |
 | 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path  | §5         |  [ ]   |
 
@@ -125,6 +125,7 @@ Extend boot_info to carry the full controller state: DCBAA physical address, scr
 - [ ] Add `struct boot_usb_controller` to boot_info: BAR0, DCBAA phys, scratchpad phys, ring addresses
 - [ ] Add per-device: slot_id, output context phys, EP0 ring phys, bulk ring phys addresses
 - [ ] Add `usb_handover_complete` flag -- 1 if bootloader successfully configured the controller
+- [ ] DMA-shape design (blocks typed-payload item): §1 allocates DCBAA/cmd/evt/ERST/scratchpad as disjoint pages, so one contiguous `BOOT_PAYLOAD_USB_HANDOVER` descriptor can't cover them -- pick a contiguous arena or scatter/gather descriptors
 - [ ] Publish one typed payload descriptor of type `BOOT_PAYLOAD_USB_HANDOVER` (enum in [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h)) covering the contiguous xHCI DMA blob so TODO-01 §4's packed-prefix + overlap validator sees it alongside every other handoff region. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Commit: `"boot: extend boot_info with xHCI controller DMA state"`
 
@@ -139,11 +140,11 @@ When `boot_info.usb_handover_complete` is set, the kernel skips the entire xhci_
 
 **Files:** `src/kernel/drivers/xhci.c`
 
-- [x] If `usb_handover_complete`: skip halt/reset/DCBAA alloc/ring init/Intel routing
-- [x] Point `xhci_controller` struct at boot_info's DMA addresses (DCBAA, cmd/evt rings, ERST, scratchpads)
-- [x] Verify controller is running (USBSTS.HCH=0) -- if HCH=1, fall back via `goto full_init`
+- [x] On `usb_handover_complete` + `boot_caps_require(BOOT_CAP_USB_HANDOVER)`: inherit the bootloader DCBAA / scratchpad / ERST / cmd+evt-ring PHYSICAL pages with no DMA re-allocation (`xhci.c:374-396`) -- saves the allocation cost
+- [x] Verify controller + fall back: on handover halt / restart / ring-init failure `goto full_init` (TODO-17 path) -- `xhci.c:411,427,440`
 - [ ] Issue a No-Op command to verify command ring -- deferred (enumeration validates it implicitly)
-- [x] Go straight to `xhci_enumerate_ports()` -- skip Intel routing entirely
+- [/] Reality is a PARTIAL inherit, not full zero-delay: the path still halts-to-sync, re-inits ring state via `xhci_rings_init()`, routes Intel USB2, and re-enumerates (`xhci.c:398-462`)
+- [ ] True zero-delay: skip halt + ring re-init + Intel routing + kernel enumeration -- requires §3 bootloader enumeration so the kernel inherits configured slots
 - [x] Commit: `"drivers: xHCI zero-delay handover -- inherit bootloader DMA state"`
 
 **Test checkpoint:** Serial shows "zero-delay handover: controller inherited". No halt/reset/500ms in log. USB device available within 1ms of kernel start. POST code 0xD755. If crash at 0xD755: controller state corrupt -- fall back to TODO-17 path. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
@@ -175,6 +176,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 - [ ] Check: No-Op command completes within 100ms
 - [ ] Check: DCBAAP matches boot_info value
 - [ ] If any check fails: log warning, halt/reset, full re-enumerate (TODO-17 §5-§1)
+- [ ] IOMMU default-deny: §5 inherits a DMA-capable controller, so before default-deny remapping the inherited DMA pages must be IOMMU-mapped for the xHCI function or the handover forces the TODO-17 fallback -> XREF: `04-drivers-hardware/TODO-04 §4`
 - [ ] Commit: `"drivers: xHCI handover fallback -- detect corrupt state and recover"`
 
 **Test checkpoint:** Force-fail handover (corrupt boot_info), verify clean fallback to TODO-17 path with no crash. POST code 0xD757. Test on: QEMU `run-usb`, bare metal i5-4210U, bare metal i5-11600K.
@@ -193,7 +195,7 @@ If any handover validation fails, transparently fall back to the proven halt/res
 | 💎 | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c    | ✅ §2 done           |
 | ⭐ | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed   | ⬜ TODO-17 planned   |
 | 💎 | Handover fallback   | ✅ Automatic     | ✅ Always fresh  | ⬜ §7 planned        |
-| ⭐ | Handover + EHCI     | ✅ usbehci.sys   | ❌ Always reset  | ⬜ §2 EHCI path      |
+| ⭐ | Handover + EHCI     | ✅ usbehci.sys   | ❌ Always reset  | ⬜ xHCI-only; EHCI -> T19 §11 |
 
 > Matches Windows USB boot speed, exceeds Linux. VPD timing visibility would be a competitive first.
 
