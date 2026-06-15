@@ -192,6 +192,9 @@ Both PS/2 and USB input should work simultaneously without conflicts.
 
 Detect USB keyboard/mouse plugged in after boot.
 
+> [!WARNING]
+> **Blocked on `04-drivers-hardware/TODO-10 §8` (Hot-Plug Interrupt Handling).** The "port-change event -> enumerate new device" core requires the serialized-worker enumeration that TODO-10 §8 owns (item: "Event-ring ownership: ISR only acks + records the port-change, defers enumeration to a serialized worker"). TODO-18 §1/§2 accepted exactly this ISR-context-enumeration hazard to TODO-10 §8; doing hot-plug enumeration here before §8 ships would re-introduce the in-ISR-enumerate bare-metal danger. Implement after TODO-10 §8. The per-USB-device button-slots item below is independent and can ship earlier.
+
 - [ ] xHCI Port Status Change Events (already in Event Ring) trigger port scan
 - [ ] New device on port: enumerate → if HID, configure interrupt endpoint → start polling
 - [ ] Device removed: stop polling, clean up endpoint ring
