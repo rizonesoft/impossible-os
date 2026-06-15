@@ -37,7 +37,7 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 
 | ⭐  | Order | Deliverable                                           | Depends On | Status |
 | --- | :---: | ----------------------------------------------------- | ---------- | :----: |
-| ⭐  |   1   | Bootloader allocates xHCI DMA structures              | --          |  [x]   |
+| ⭐  |   1   | Bootloader allocates xHCI DMA structures              | --          |  [/]   |
 | ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover   | §1         |  [x]   |
 | ⭐  |   3   | Bootloader enumerates devices with persistent state   | §2         |  [/]   |
 | ⭐  |   4   | boot_info passes controller + device DMA state        | §3, T01 §4 |  [ ]   |
@@ -64,11 +64,27 @@ Allocate DCBAA, device output contexts, and transfer rings using `gBS->AllocateP
 - [x] Mark allocated pages in `dma_pages[]` array; kernel PMM calls `pmm_mark_region_used()` for each
 - [x] PCI config space access added to bootloader (`bl_pci_read8/16/32` via 0xCF8/0xCFC)
 - [x] xHCI capability registers read (HCSPARAMS1/2, HCCPARAMS1, DBOFF, RTSOFF)
+- [ ] **HIGH (DMA cap):** `bootx64.c:10163-10333` uses `AllocateAnyPages` -- DMA can land above the 4 GiB kernel identity map (or violate `AC64=0`), faulting the kernel. Use `AllocateMaxAddress` capped at `0xFFFFFFFF`; fall back on failure
+- [ ] **HIGH (BAR decode):** `bootx64.c:10255-10262` treats BAR1 as BAR0's 64-bit high half unconditionally -- a 32-bit memory BAR fabricates a bogus MMIO base. Decode BAR0 type `(bar0&0x6)==0x4` before using BAR1; skip handover if invalid
+- [ ] **HIGH (payload overlap):** `boot_payload_region_overlap()` (`boot_payload.c:203-214`) treats each `dma_pages[]` entry as one page, missing multi-page scratchpad spans. Use `boot_reserved_populate_from_info()` extents + add a 2nd-page test
 - [x] Commit: `"boot: allocate persistent xHCI DMA structures in EfiLoaderData"`
 
 **Test checkpoint:** Serial shows allocated DMA addresses. POST code 0xB082. Verify `EfiLoaderData` pages survive ExitBootServices by reading back from kernel. Test on: QEMU `run-usb`, bare metal.
 
 **Regression risk:** Allocating extra `EfiLoaderData` pages reduces available RAM. If allocation fails (low memory), fall back to not allocating and let kernel use TODO-17 path. Rollback: skip bootloader DMA allocation entirely.
+
+> **Test runner:** N/A (pre-ExitBootServices UEFI bootloader DMA allocation; no kernel test surface -- the payload-overlap test is the open HIGH item) | validation: serial on bare metal
+
+> **Notes:**
+> - **What shipped:** §1 bootloader xHCI DMA allocation in `bootx64.c` (DCBAA + scratchpad `EfiLoaderData` pages, PCI config via 0xCF8/0xCFC, cap-register reads) + `boot_usb_controller` struct in `boot_info.h`.
+> - **How it runs:** pre-ExitBootServices; the kernel inherits the recorded phys addresses (§5) and PMM reserves `dma_pages[]`; `usb_handover_complete` gates the whole path.
+> - **Downstream effects:** foundation for §5's partial DMA inherit; this DONE-UNSTAMPED review filed 3 HIGH bare-metal bugs (DMA-above-4G, BAR mis-decode, payload-overlap) as open items, downgrading §1 to `[/]`.
+> - **Canonical doc:** `include/kernel/boot_info.h` `boot_usb_controller` + `docs/boot/boot-info-fields.md`.
+> - **Scope boundary:** §1 owns DMA allocation; device-context/ring alloc is §3; the typed-payload schema is §4.
+
+> **Verified:** 2026-06-15 | commit `832af15c` | 6/13 items | build OK | DONE-UNSTAMPED review
+> **Deferred:** [H] 3 shipped bare-metal bugs (DMA above the 4 GiB identity map; BAR1 mis-decoded as a 64-bit high half; payload-overlap validator misses multi-page scratchpad spans) -- contained UEFI fixes deferred for careful fresh-context implementation -> XREF: 01-boot-platform/TODO-20 §1 (item: "HIGH (DMA cap)" + "HIGH (BAR decode)" + "HIGH (payload overlap)")
+> **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 3H open | scope: boot-code-quality
 
 ---
 
