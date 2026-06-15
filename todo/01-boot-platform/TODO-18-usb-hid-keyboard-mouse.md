@@ -84,14 +84,17 @@ Add interrupt endpoint support to the xHCI driver (currently only bulk endpoints
 
 Set up periodic interrupt transfers to receive HID reports from keyboard/mouse.
 
-- [ ] Queue Normal TRBs on the interrupt endpoint's Transfer Ring
-- [ ] Poll the interrupt endpoint's completion: check Event Ring for Transfer Event TRBs matching the endpoint
-- [ ] Timer-driven polling: check every 10ms from the LAPIC timer tick callback
-- [ ] On completion: extract the HID report data from the TRB's data buffer
-- [ ] Re-queue a new TRB after processing each report (continuous polling)
-- [ ] Commit: `"drivers: xHCI interrupt transfer polling for HID report delivery"`
+> [!NOTE]
+> **Design review (2026-06-15) revised this section -- the original plan was a no-ship.** Two blockers: (1) `xhci_event_poll` (`xhci_ring.c`) *destructively* drains the SHARED interrupter-0 event ring -- a HID poller looping for its events would acknowledge command / MSC-transfer / hot-plug completions before their owners see them (the same shared-ring hazard the hot-plug ISR carries); (2) `timer_register_tick_callback` (`timer.h`) is a SINGLE global slot the boot-splash spinner owns until `spinner_stop()` (`spinner.c`), so HID polling registered during boot would overwrite the spinner, and registered after would lose boot-window input. Revised plan: a dedicated HID interrupter (own event ring) + a BSP tick multiplexer. The shared-ring fix overlaps the deferred event-ring-ownership work -> XREF: `04-drivers-hardware/TODO-10-usb-stack.md §8`.
 
-**Test checkpoint:** Press keys on USB keyboard in QEMU -- Transfer Event TRBs arrive, raw report data logged to serial.
+- [ ] Dedicated HID interrupter: set up xHCI interrupter 1 with its own Event Ring + ERST so HID Transfer Events never touch the shared interrupter-0 ring (`xhci.c`/`xhci_ring.c`)
+- [ ] Target HID Interrupt-IN TRBs at interrupter 1 via the TRB Interrupter Target field so their completions land on the dedicated ring
+- [ ] BSP tick multiplexer: a small subscriber list replacing the single `timer_register_tick_callback` slot so the splash spinner and the HID poll coexist (`timer.c`) -- or register the HID poll post-`spinner_stop`
+- [ ] Per-HID-device report DMA buffer (`pmm_alloc_contiguous`); queue a Normal TRB pointing at it on `dev->int_in_ring` + ring the EP doorbell
+- [ ] HID poll (10 ms via the tick mux): drain the dedicated HID event ring for Transfer Events, extract the report bytes, log them, re-queue a TRB
+- [ ] Commit: `"drivers: xHCI dedicated HID interrupter + tick-mux interrupt polling"`
+
+**Test checkpoint:** Press keys on USB keyboard in QEMU -- Transfer Event TRBs arrive on the dedicated HID interrupter, raw report data logged to serial; the boot-splash spinner keeps animating (tick mux); no `usb`/`nvme`/`ahci` command timeouts (shared ring untouched).
 
 ---
 
