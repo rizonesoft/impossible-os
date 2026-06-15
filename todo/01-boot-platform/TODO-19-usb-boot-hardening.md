@@ -208,8 +208,10 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 > - Integrates: `xhci_bulk_transfer_cc` reports host-transferred bytes; `msc_scsi_command` fails an exact-length command on a host short (authoritative over CSW residue); a bulk timeout (0xFF) flows through the §3 retry (BOT reset + retry).
 > - Hardening: bulk transfers can no longer hang forever (5s software bound); a multi-fragment bulk-IN stops on the first short so CSW bytes never DMA into the data buffer; INQUIRY min-length checks the host count, not the device residue.
 > - Scope boundary: §5 owns bulk timeouts + host-residual; EP0/control-transfer timeout recovery is deferred (own item); shared event-ring per-event correlation + command-ring locking is §16.
-> **Verified:** 2026-06-15 | impl commit | 9/10 items | build OK | storage 400 kernel + 16 user-mode PASS (host-short matrix)
+> **Verified:** 2026-06-15 | review commit | 9/10 items | build OK | storage 400 kernel + 16 user-mode PASS (host-short matrix)
+> **Accepted:** [H] a failed timeout abort (Stop Endpoint / Set TR Dequeue rejected) leaves the stale TRB owned, so a later retry could enqueue behind it -> XREF: 01-boot-platform/TODO-19 §16 (item: "Timeout-tainted endpoint recovery: when `xhci_abort_endpoint` fails the stale TRB stays owned" at line 393)
 > **Deferred:** [M] EP0 / control-transfer timeout recovery -- distinct EP0-abort design needed (§4 recovery rejects EP0) -> XREF: 01-boot-platform/TODO-19 §5 (item: "DEFERRED: EP0 / control-transfer timeout recovery" at line 203)
+> **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 4H+2M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 **Regression risk:** MEDIUM -- adds a per-poll timeout check on the bulk path. Rollback: raise `USB_BULK_TIMEOUT_MS` to effectively disable the bulk timeout while keeping the infrastructure.
 
@@ -390,6 +392,7 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 - [ ] Defer hot-plug enumeration out of the shared event-ring drain so it cannot steal a synchronous command/transfer completion while a command is in flight
 - [ ] Per-MSC-device BOT serialization: a sleepable mutex around `msc_bot_command` (CBW/data/CSW + recovery, `usb_msc.c`) so two CPUs can't interleave one device; Set TR Dequeue must not run while another caller has a queued TRB
 - [ ] Make `cbw_tag` atomic (`__atomic_fetch_add`) so concurrent commands cannot reuse or reorder CSW tags
+- [ ] Timeout-tainted endpoint recovery: when `xhci_abort_endpoint` fails the stale TRB stays owned -- force a re-abort or slot-level reset (Reset Device / Disable+Enable Slot) before any retry enqueues behind it on that ring
 - [ ] Commit: `"drivers: serialize xHCI command ring + per-device BOT transport (SMP)"`
 
 **Test checkpoint:** SMP stress (concurrent USB MSC reads from 2 CPUs) shows no command-ring corruption, no CSW tag reuse, and a stall recovery during concurrent I/O never advances the endpoint past another caller's TRB. Verify on bare metal i5-4210U (USB 2.0) and a multi-core target.

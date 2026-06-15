@@ -395,7 +395,15 @@ uint8_t xhci_bulk_transfer_cc(struct xhci_controller *hc,
             klog(LOG_ERROR, "usb", "Bulk %s timeout (slot %u, EP dci %u, %u ms)",
                  dir_in ? "IN" : "OUT", (uint64_t)dev->slot_id, (uint64_t)dci,
                  (uint64_t)USB_BULK_TIMEOUT_MS);
-            xhci_abort_endpoint(hc, dev, dci, ring);
+            /* If the abort fails, Stop Endpoint or Set TR Dequeue did not
+             * re-arm the ring: the stale TRB is still owned by the endpoint, so
+             * a later retry could enqueue behind it and a late completion could
+             * be misattributed. Log it loudly -- a forced slot-level reset
+             * fallback for this case is owned by the recovery-hardening work. */
+            if (xhci_abort_endpoint(hc, dev, dci, ring) != 0)
+                klog(LOG_ERROR, "usb",
+                     "Bulk timeout abort FAILED (slot %u dci %u) -- endpoint tainted",
+                     (uint64_t)dev->slot_id, (uint64_t)dci);
             return 0xFF;
         }
         if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {

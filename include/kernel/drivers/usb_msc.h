@@ -177,7 +177,10 @@ int msc_host_short(int exact_len, uint32_t requested, uint32_t transferred);
  * status 0/1/2 or < 0 transport); `rs_rc` is the REQUEST SENSE BOT status
  * (pass USB_CSW_STATUS_PASS when no REQUEST SENSE was issued, i.e. rc != FAIL);
  * `cls` is the REQUEST SENSE class, consulted only on CSW FAIL; `exact_short` is
- * msc_residue_short() for the PASS case. Routing:
+ * the combined PASS-case short predicate -- `msc_residue_short(exact_len, residue)
+ * || msc_host_short(exact_len, requested, transferred)` -- so a host-observed
+ * short fails an exact-length command even when the device CSW residue lies.
+ * Routing:
  *   PASS, not short             -> DONE
  *   PASS, exact-length short    -> FAIL (fail-safe)
  *   PHASE error (already reset)  -> RETRY
