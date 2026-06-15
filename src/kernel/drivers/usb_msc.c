@@ -178,6 +178,10 @@ static msc_err_class_t msc_request_sense(struct xhci_controller *hc,
 
     msc_zero(cdb, 6);
     cdb[0] = SCSI_REQUEST_SENSE;
+    /* cdb[1] bit 0 (DESC) stays 0 -> request FIXED-format sense (response code
+     * 0x70/0x71). A conformant target must not return descriptor format (0x72/
+     * 0x73) when DESC=0 (SPC-4 6.27), so the fixed-format-only parse is correct
+     * by contract for boot MSC. */
     cdb[4] = SCSI_SENSE_LEN;          /* allocation length */
     msc_zero(sense, SCSI_SENSE_LEN);
 

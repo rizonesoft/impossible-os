@@ -89,8 +89,10 @@ Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 > - Integrates: `usb_msc_init`'s TUR retry now decodes the failure and retries per the sense class (UNIT ATTENTION immediate, NOT READY waits, else stops) instead of a blind delay; `ahci.h` now includes the shared `scsi.h`.
 > - Hardening: REQUEST SENSE is non-recursive (transport failure reported, not re-sensed); `msc_sense_classify` defaults unknown/named-non-retry keys to UNRECOVERABLE so a future change can't silently retry write-protected/illegal/aborted failures.
 > - Scope boundary: §1 owns sense decode + classification; the retry LOOP is §3; boot-LUN probe is blocked on the GET_MAX_LUN owner (TODO-10 §7).
-> **Verified:** 2026-06-15 | impl commit | 4/5 items | build OK | storage 96 kernel + 16 user-mode PASS (SCSI sense classify + key-name)
+> **Verified:** 2026-06-15 | review commit | 4/5 items | build OK | storage 98 kernel + 16 user-mode PASS (SCSI sense classify + key-name)
+> **Accepted:** [H] short REQUEST SENSE reply (`xhci_bulk_transfer` reports SHORT_PKT as success with no byte count) can leave key/ASC/ASCQ zero-filled; the `sense[0]` format gate is a partial guard -> XREF: 01-boot-platform/TODO-19 §5 (item: "Report ACTUAL transferred length from `xhci_bulk_transfer`" at line 171)
 > **Deferred:** [M] boot-LUN selection for composite/card-reader media blocked on GET_MAX_LUN (`xhci_control_transfer` is static) -> XREF: 04-drivers-hardware/TODO-10 §7 (item: "`usb_msc_get_max_lun(dev)`" at line 177)
+> **Quality reviewed:** 2026-06-15 | Codex 6x (design, test-coverage, adversarial x2, consistency, perf) | 1H+3M fixed, 1H accepted-XREF, 1M rejected | scope: kernel-code-quality
 
 ---
 
@@ -168,6 +170,7 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 - [ ] After timeout: log `"[USB] Bulk transfer timeout on slot=%u EP%u (%u ms)"` and return `USB_ERR_TIMEOUT`
 - [ ] Integrate with §3/§4 retry: `USB_ERR_TIMEOUT` is retriable -- call `xhci_recover_endpoint()`, then retry (up to 3 attempts)
 - [ ] MSC-specific: `usb_msc_read_sectors()` / `usb_msc_write_sectors()` propagate timeout error; caller sees it as a transient I/O failure
+- [ ] Report ACTUAL transferred length from `xhci_bulk_transfer` (SHORT_PKT counts as success today); `msc_request_sense` (§1) must reject a fixed-format reply shorter than the key/ASC/ASCQ bytes, not classify a zero-filled tail as NO SENSE
 - [ ] Configurable timeout: `USB_BULK_TIMEOUT_MS` (default 5000), `USB_CONTROL_TIMEOUT_MS` (default 2000) -- constants in header, tunable per-device if needed for slow media
 - [ ] Commit: `"drivers: USB bulk transfer timeouts -- TSC deadline, Stop Endpoint, retry integration"`
 
