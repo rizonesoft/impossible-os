@@ -52,7 +52,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 | --- | :---: | ------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [/]   |
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [x]   |
-| 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2        |  [ ]   |
+| 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2, §4    |  [ ]   |
 | 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [ ]   |
 | 💎  |   5   | Bulk transfer timeouts                             | §4            |  [ ]   |
 | 💎  |   6   | Remove sleep_ms(2000) hack                         | §2-§5, §7     |  [ ]   |
