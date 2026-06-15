@@ -157,17 +157,8 @@
 #define SCSI_GET_CONFIGURATION 0x46  /* GET CONFIGURATION (MMC) */
 #define SCSI_READ_12          0xA8   /* READ (12) -- for >65535 block transfers */
 
-/* ---- SCSI Sense Keys ---- */
-#define SCSI_SK_NO_SENSE        0x00
-#define SCSI_SK_RECOVERED       0x01   /* Recovered error (success with warning) */
-#define SCSI_SK_NOT_READY       0x02
-#define SCSI_SK_MEDIUM_ERROR    0x03
-#define SCSI_SK_HARDWARE_ERROR  0x04
-#define SCSI_SK_ILLEGAL_REQUEST 0x05
-#define SCSI_SK_UNIT_ATTENTION  0x06
-#define SCSI_SK_DATA_PROTECT    0x07
-#define SCSI_SK_BLANK_CHECK     0x08
-#define SCSI_SK_ABORTED_COMMAND 0x0B
+/* ---- SCSI Sense Keys (shared single source of truth) ---- */
+#include "kernel/drivers/scsi.h"
 
 /* ---- Common ASC/ASCQ codes ---- */
 #define SCSI_ASC_NO_MEDIUM      0x3A   /* Medium not present */

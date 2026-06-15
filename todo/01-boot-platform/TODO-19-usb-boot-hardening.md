@@ -50,7 +50,7 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 
 | ⭐  | Order | Deliverable                                       | Depends On    | Status |
 | --- | :---: | ------------------------------------------------- | ------------- | :----: |
-| 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [ ]   |
+| 💎  |   1   | SCSI REQUEST SENSE and error classification        | --             |  [/]   |
 | 💎  |   2   | TEST UNIT READY poll loop after BOT init           | §1            |  [ ]   |
 | 💎  |   3   | MSC BOT retry on transient errors                  | §1, §2        |  [ ]   |
 | 💎  |   4   | USB transport error recovery (stall/halt)          | §1            |  [ ]   |
@@ -75,14 +75,22 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 
 Implement the SCSI REQUEST SENSE command to decode why a USB MSC command failed.
 
-- [ ] Add `msc_request_sense(dev, sense_data)` to `usb_msc.c` -- sends REQUEST SENSE CDB (0x03)
-- [ ] Parse sense data: sense key (byte 2), ASC (byte 12), ASCQ (byte 13)
-- [ ] Classify errors: `UNIT_ATTENTION` (key=6) → retry after reset, `NOT_READY` (key=2) → wait + retry, `MEDIUM_ERROR` (key=3) → unrecoverable
-- [ ] Log: `"[USB] Sense: key=%u ASC=%u ASCQ=%u (%s)"` with human-readable description
-- [ ] Boot-LUN selection for composite media (card readers; BOT hardcodes `bCBWLUN=0`): probe GET_MAX_LUN + per-LUN TUR to find the bootable LUN -> XREF: 04-drivers-hardware/TODO-10 §7 (item: "`usb_msc_get_max_lun(dev)`" at line 177)
+- [x] `msc_request_sense(hc, dev, sense)` in `usb_msc.c` -- REQUEST SENSE CDB (0x03, 18-byte fixed format) via the shared BOT transport; non-recursive (REQUEST SENSE itself raises no CHECK CONDITION per SPC-4)
+- [x] Parse sense: key (`sense[2]&0x0F`), ASC (`sense[12]`), ASCQ (`sense[13]`); SCSI sense keys moved to a shared `include/kernel/drivers/scsi.h` (was duplicated in `ahci.h`)
+- [x] `msc_sense_classify()` (pure) -> `msc_err_class_t` {OK, RETRY_NOW (UNIT ATTENTION), WAIT_RETRY (NOT READY), UNRECOVERABLE}; wired into `usb_msc_init`'s TUR loop so the sense class drives the retry
+- [x] Log `Sense: key=%u ASC=0x%02x ASCQ=0x%02x (%s)` with `msc_sense_key_name()` (all 10 named keys)
+- [ ] Boot-LUN selection for composite media (card readers; BOT now reads `info->current_lun`, default 0): probe GET_MAX_LUN + per-LUN TUR -- BLOCKED on `04-drivers-hardware/TODO-10 §7` (item: "`usb_msc_get_max_lun(dev)`" at line 177)
 - [ ] Commit: `"drivers: SCSI REQUEST SENSE command with error classification"`
 
 **Test checkpoint:** Plug USB drive, boot. If drive returns UNIT ATTENTION on first command, serial shows sense data. Verify on bare metal i5-4210U.
+> **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_boot.c` SCSI sense classification + key-name (every key class + retry policy + high-bit mask + NULL/unknown); live REQUEST SENSE validated via QEMU run-usb + bare metal.
+> **Notes:**
+> - Shipped: `msc_request_sense` + pure `msc_sense_classify` / `msc_sense_key_name` (`usb_msc.c`) + shared `scsi.h` sense keys; the BOT CBW now addresses `info->current_lun` (foundation for boot-LUN).
+> - Integrates: `usb_msc_init`'s TUR retry now decodes the failure and retries per the sense class (UNIT ATTENTION immediate, NOT READY waits, else stops) instead of a blind delay; `ahci.h` now includes the shared `scsi.h`.
+> - Hardening: REQUEST SENSE is non-recursive (transport failure reported, not re-sensed); `msc_sense_classify` defaults unknown/named-non-retry keys to UNRECOVERABLE so a future change can't silently retry write-protected/illegal/aborted failures.
+> - Scope boundary: §1 owns sense decode + classification; the retry LOOP is §3; boot-LUN probe is blocked on the GET_MAX_LUN owner (TODO-10 §7).
+> **Verified:** 2026-06-15 | impl commit | 4/5 items | build OK | storage 96 kernel + 16 user-mode PASS (SCSI sense classify + key-name)
+> **Deferred:** [M] boot-LUN selection for composite/card-reader media blocked on GET_MAX_LUN (`xhci_control_transfer` is static) -> XREF: 04-drivers-hardware/TODO-10 §7 (item: "`usb_msc_get_max_lun(dev)`" at line 177)
 
 ---
 

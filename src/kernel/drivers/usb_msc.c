@@ -67,7 +67,9 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
     cbw.dCBWTag = tag;
     cbw.dCBWDataTransferLength = data_len;
     cbw.bmCBWFlags = dir_in ? USB_CBW_FLAG_IN : USB_CBW_FLAG_OUT;
-    cbw.bCBWLUN = 0;
+    /* Address the device's currently-selected LUN (0 unless boot-LUN selection
+     * picked another for composite media like card readers). */
+    cbw.bCBWLUN = msc_info[dev->slot_id].current_lun;
     cbw.bCBWCBLength = cdb_len;
     msc_copy(cbw.CBWCB, cdb, cdb_len);
 
@@ -119,6 +121,75 @@ static int msc_test_unit_ready(struct xhci_controller *hc, struct xhci_device *d
     msc_zero(cdb, 6);
     cdb[0] = SCSI_TEST_UNIT_READY;
     return msc_bot_command(hc, dev, cdb, 6, NULL, 0, 0);
+}
+
+/* ---- SCSI REQUEST SENSE + error classification ---- */
+
+const char *msc_sense_key_name(uint8_t key)
+{
+    switch (key & 0x0F) {
+    case SCSI_SK_NO_SENSE:        return "NO SENSE";
+    case SCSI_SK_RECOVERED:       return "RECOVERED";
+    case SCSI_SK_NOT_READY:       return "NOT READY";
+    case SCSI_SK_MEDIUM_ERROR:    return "MEDIUM ERROR";
+    case SCSI_SK_HARDWARE_ERROR:  return "HARDWARE ERROR";
+    case SCSI_SK_ILLEGAL_REQUEST: return "ILLEGAL REQUEST";
+    case SCSI_SK_UNIT_ATTENTION:  return "UNIT ATTENTION";
+    case SCSI_SK_DATA_PROTECT:    return "DATA PROTECT";
+    case SCSI_SK_BLANK_CHECK:     return "BLANK CHECK";
+    case SCSI_SK_ABORTED_COMMAND: return "ABORTED COMMAND";
+    default:                      return "OTHER";
+    }
+}
+
+msc_err_class_t msc_sense_classify(const uint8_t *sense)
+{
+    if (!sense)
+        return MSC_ERR_UNRECOVERABLE;
+    /* Require a valid fixed-format response code (0x70 current / 0x71 deferred,
+     * with the top bit the VALID flag). A short or zero-filled REQUEST SENSE
+     * reply -- xhci_bulk_transfer reports SHORT_PKT as success without a byte
+     * count -- would otherwise misread as key 0 (NO SENSE / OK). */
+    if ((sense[0] & 0x7F) != 0x70 && (sense[0] & 0x7F) != 0x71)
+        return MSC_ERR_UNRECOVERABLE;
+    switch (sense[2] & 0x0F) {
+    case SCSI_SK_NO_SENSE:
+    case SCSI_SK_RECOVERED:
+        return MSC_ERR_OK;
+    case SCSI_SK_UNIT_ATTENTION:
+        return MSC_ERR_RETRY_NOW;   /* device reset itself; retry immediately */
+    case SCSI_SK_NOT_READY:
+        return MSC_ERR_WAIT_RETRY;  /* spinning up; wait + retry */
+    default:
+        return MSC_ERR_UNRECOVERABLE;
+    }
+}
+
+/* Issue REQUEST SENSE (fixed format, 18 bytes) after a failed command and log
+ * the decoded key/ASC/ASCQ. Per SPC, REQUEST SENSE itself does not raise a
+ * CHECK CONDITION, so there is no recursion: a transport failure here is just
+ * reported. Fills sense[SCSI_SENSE_LEN]; returns the classified error class
+ * (MSC_ERR_UNRECOVERABLE if the sense request itself failed). */
+static msc_err_class_t msc_request_sense(struct xhci_controller *hc,
+                                         struct xhci_device *dev, uint8_t *sense)
+{
+    uint8_t cdb[6];
+    int rc;
+
+    msc_zero(cdb, 6);
+    cdb[0] = SCSI_REQUEST_SENSE;
+    cdb[4] = SCSI_SENSE_LEN;          /* allocation length */
+    msc_zero(sense, SCSI_SENSE_LEN);
+
+    rc = msc_bot_command(hc, dev, cdb, 6, sense, SCSI_SENSE_LEN, 1);
+    if (rc != USB_CSW_STATUS_PASS) {
+        klog(LOG_WARN, "usb-msc", "REQUEST SENSE failed (status=%d)", (uint64_t)rc);
+        return MSC_ERR_UNRECOVERABLE;
+    }
+    klog(LOG_INFO, "usb-msc", "Sense: key=%u ASC=0x%02x ASCQ=0x%02x (%s)",
+         (uint64_t)(sense[2] & 0x0F), (uint64_t)sense[12], (uint64_t)sense[13],
+         msc_sense_key_name(sense[2]));
+    return msc_sense_classify(sense);
 }
 
 static int msc_inquiry(struct xhci_controller *hc, struct xhci_device *dev,
@@ -232,12 +303,29 @@ int usb_msc_init(struct xhci_controller *hc, struct xhci_device *dev)
     info = &msc_info[dev->slot_id];
     msc_zero(info, sizeof(*info));
 
-    /* TEST UNIT READY -- some devices need a few attempts */
+    /* TEST UNIT READY -- decode the failure via REQUEST SENSE and let the sense
+     * class drive the retry: UNIT ATTENTION (post-plug reset) retries at once,
+     * NOT READY (spin-up) waits, anything else is unrecoverable. */
     for (retries = 0; retries < 3; retries++) {
         rc = msc_test_unit_ready(hc, dev);
         if (rc == USB_CSW_STATUS_PASS)
             break;
-        msc_delay_us(100000);  /* 100ms between retries */
+        /* REQUEST SENSE is only meaningful for a SCSI command FAILURE (CSW
+         * status 1). A phase error (2), transport failure (<0), or any
+         * out-of-range status means the BOT pipe is desynced -- sending another
+         * CBW would compound it; that path needs BOT mass-storage reset
+         * (a later transport-recovery section), so stop here. */
+        if (rc != USB_CSW_STATUS_FAIL)
+            break;
+        {
+            uint8_t sense[SCSI_SENSE_LEN];
+            msc_err_class_t cls = msc_request_sense(hc, dev, sense);
+            if (cls == MSC_ERR_UNRECOVERABLE)
+                break;         /* MEDIUM/HARDWARE error -- retrying won't help */
+            if (cls == MSC_ERR_WAIT_RETRY)
+                msc_delay_us(100000);  /* 100ms -- drive spinning up */
+            /* MSC_ERR_RETRY_NOW (UNIT ATTENTION): loop again immediately */
+        }
     }
 
     if (rc != USB_CSW_STATUS_PASS)

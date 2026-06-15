@@ -50,10 +50,25 @@ struct usb_csw {
 /* ---- SCSI command opcodes ---- */
 
 #define SCSI_TEST_UNIT_READY  0x00
+#define SCSI_REQUEST_SENSE    0x03
 #define SCSI_INQUIRY          0x12
 #define SCSI_READ_CAPACITY_10 0x25
 #define SCSI_READ_10          0x28
 #define SCSI_WRITE_10         0x2A
+
+/* SCSI sense keys (SPC-4 4.5.6) -- shared single source of truth. */
+#include "kernel/drivers/scsi.h"
+
+#define SCSI_SENSE_LEN          18   /* fixed-format REQUEST SENSE allocation */
+
+/* Error class returned by msc_sense_classify -- drives the retry policy in the
+ * MSC BOT transient-error retry layer. */
+typedef enum {
+    MSC_ERR_OK = 0,        /* no error / recovered -- proceed */
+    MSC_ERR_RETRY_NOW,     /* UNIT ATTENTION: device reset itself, retry now */
+    MSC_ERR_WAIT_RETRY,    /* NOT READY: spinning up, wait + retry */
+    MSC_ERR_UNRECOVERABLE  /* MEDIUM/HARDWARE/etc: no retry will help */
+} msc_err_class_t;
 
 /* ---- MSC device info (populated after inquiry + read capacity) ---- */
 
@@ -65,6 +80,8 @@ struct usb_msc_info {
     uint32_t sector_count;       /* Total sectors (LBA count) */
     uint32_t sector_size;        /* Bytes per sector (usually 512) */
     uint64_t capacity_bytes;     /* Total capacity */
+    uint8_t  current_lun;        /* LUN written into every CBW for this device */
+    uint8_t  max_lun;            /* Highest LUN index (GET_MAX_LUN; 0 = single) */
 };
 
 /* ---- API ---- */
@@ -86,3 +103,10 @@ int usb_msc_write_sectors(struct xhci_controller *hc, struct xhci_device *dev,
 
 /* Get MSC device info (valid after usb_msc_init). */
 const struct usb_msc_info *usb_msc_get_info(struct xhci_device *dev);
+
+/* Classify a fixed-format SCSI sense buffer (>= 18 bytes) into a retry policy
+ * class. Pure: reads only the sense key (byte 2 bits 3:0). Exposed for tests. */
+msc_err_class_t msc_sense_classify(const uint8_t *sense);
+
+/* Human-readable name for a SCSI sense key (0x0-0xF). Pure; for diagnostics. */
+const char *msc_sense_key_name(uint8_t key);
