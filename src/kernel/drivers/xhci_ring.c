@@ -161,6 +161,122 @@ static int event_ring_init(struct xhci_controller *hc)
     return 0;
 }
 
+/* Interrupter 1 register base (each Interrupter Register Set is 32 bytes). */
+static volatile uint8_t *ir1_base(struct xhci_controller *hc)
+{
+    return hc->rt_base + XHCI_IR_OFFSET + 0x20;
+}
+
+/* Set up a dedicated Event Ring + ERST on interrupter 1 for HID Transfer
+ * Events, so the HID report poller drains its OWN ring and never consumes
+ * command / MSC-transfer / hot-plug completions from the shared interrupter-0
+ * ring. Requires the controller to advertise >= 2 interrupters; otherwise HID
+ * polling stays disabled (hid_intr_active = 0) and the caller skips it. */
+static int hid_event_ring_init(struct xhci_controller *hc)
+{
+    struct xhci_ring *ring = &hc->hid_evt_ring;
+    struct xhci_erst_entry *erst;
+    uintptr_t evt_phys, erst_phys;
+    uint32_t ring_bytes = XHCI_RING_SIZE * sizeof(struct xhci_trb);
+    volatile uint8_t *ir;
+
+    hc->hid_intr_active = 0;
+
+    if (hc->max_intrs < 2) {
+        klog(LOG_INFO, "xhci",
+             "Only %u interrupter(s) -- HID report polling disabled",
+             (uint64_t)hc->max_intrs);
+        return -1;
+    }
+
+    evt_phys = pmm_alloc_contiguous(1);
+    if (evt_phys == 0) {
+        klog(LOG_ERROR, "xhci", "Failed to allocate HID Event Ring");
+        return -1;
+    }
+    ring_map(evt_phys, ring_bytes);
+
+    ring->trbs    = (struct xhci_trb *)evt_phys;
+    ring->phys    = evt_phys;
+    ring->size    = XHCI_RING_SIZE;
+    ring->enqueue = 0;
+    ring->dequeue = 0;
+    ring->cycle   = 1;
+    ring_zero(ring->trbs, ring_bytes);
+
+    erst_phys = pmm_alloc_contiguous(1);
+    if (erst_phys == 0) {
+        klog(LOG_ERROR, "xhci", "Failed to allocate HID ERST");
+        pmm_free_frame(evt_phys);
+        ring->trbs = (struct xhci_trb *)0;
+        ring->phys = 0;
+        return -1;
+    }
+    ring_map(erst_phys, 0x1000);
+    ring_zero((void *)erst_phys, 0x1000);
+
+    erst = (struct xhci_erst_entry *)erst_phys;
+    erst->ring_base = evt_phys;
+    erst->ring_size = XHCI_RING_SIZE;
+    erst->reserved  = 0;
+
+    hc->hid_erst      = erst;
+    hc->hid_erst_phys = erst_phys;
+
+    /* Configure Interrupter 1 (ERSTBA last per spec). IMAN.IE is left CLEARED:
+     * this ring is drained by the timer-polled HID poller, NOT by an interrupt.
+     * The controller still posts events to the ring (ERSTBA/ERDP are what arm
+     * that); enabling IE would generate IR1 interrupts the MSI handler does not
+     * acknowledge (it only clears IR0), risking an interrupt storm. */
+    ir = ir1_base(hc);
+    ring_write32(ir, XHCI_IR_ERSTSZ, 1);
+    ring_write64(ir, XHCI_IR_ERDP,   evt_phys);
+    ring_write64(ir, XHCI_IR_ERSTBA, erst_phys);
+
+    hc->hid_intr_active = 1;
+    klog(LOG_DEBUG, "xhci", "HID Event Ring (IR1) at 0x%x, ERST at 0x%x",
+         evt_phys, erst_phys);
+    return 0;
+}
+
+/* Poll the dedicated HID Event Ring (interrupter 1). Mirrors xhci_event_poll
+ * but on hc->hid_evt_ring + IR1 ERDP -- this ring is consumed ONLY by the HID
+ * report poller, so there is no shared-ring ownership hazard. Returns 1 and
+ * fills *out when an event was consumed, 0 when the ring is empty. */
+int xhci_hid_event_poll(struct xhci_controller *hc, struct xhci_trb *out)
+{
+    struct xhci_ring *ring = &hc->hid_evt_ring;
+    struct xhci_trb *evt;
+    uint8_t evt_cycle;
+
+    if (!hc->hid_intr_active)
+        return 0;
+
+    evt = &ring->trbs[ring->dequeue];
+    evt_cycle = (evt->control & XHCI_TRB_CYCLE) ? 1 : 0;
+    if (evt_cycle != ring->cycle)
+        return 0;
+
+    out->parameter = evt->parameter;
+    out->status    = evt->status;
+    out->control   = evt->control;
+
+    ring->dequeue++;
+    if (ring->dequeue >= ring->size) {
+        ring->dequeue = 0;
+        ring->cycle ^= 1;
+    }
+
+    {
+        volatile uint8_t *ir = ir1_base(hc);
+        uint64_t erdp = ring->phys + (ring->dequeue * sizeof(struct xhci_trb));
+        erdp |= (1 << 3);  /* EHB -- clear Event Handler Busy */
+        ring_write64(ir, XHCI_IR_ERDP, erdp);
+    }
+
+    return 1;
+}
+
 /* ---- Public API ---------------------------------------------------------- */
 
 int xhci_rings_init(struct xhci_controller *hc)
@@ -184,6 +300,11 @@ int xhci_rings_init(struct xhci_controller *hc)
     /* Enable Interrupter 0: IMAN.IE = 1 */
     ir = ir0_base(hc);
     ring_write32(ir, XHCI_IR_IMAN, XHCI_IMAN_IE);
+
+    /* Dedicated HID interrupter (interrupter 1) -- best-effort; if the
+     * controller has only one interrupter, HID polling stays disabled and the
+     * baseline boot path is unaffected. */
+    hid_event_ring_init(hc);
 
     klog(LOG_DEBUG, "xhci", "TRB rings initialized, interrupts enabled");
     return 0;

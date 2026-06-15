@@ -116,9 +116,18 @@ struct xhci_controller {
 
     /* TRB rings (initialized by xhci_rings_init) */
     struct xhci_ring cmd_ring;      /* Command Ring */
-    struct xhci_ring evt_ring;      /* Event Ring */
+    struct xhci_ring evt_ring;      /* Event Ring (interrupter 0, shared) */
     struct xhci_erst_entry *erst;   /* Event Ring Segment Table */
     uint64_t erst_phys;             /* Physical address of ERST */
+
+    /* Dedicated HID interrupter (interrupter 1) -- HID Transfer Events are
+     * targeted here so the report poller never drains the shared interrupter-0
+     * ring that command / MSC-transfer / hot-plug completions use. Set up only
+     * when max_intrs >= 2; hid_intr_active gates the HID polling path. */
+    struct xhci_ring hid_evt_ring;  /* Event Ring (interrupter 1, HID only) */
+    struct xhci_erst_entry *hid_erst;
+    uint64_t hid_erst_phys;
+    uint8_t  hid_intr_active;       /* 1 if interrupter 1 was set up */
 
     uint8_t  active;                /* 1 if initialized successfully */
 };

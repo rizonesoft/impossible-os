@@ -111,3 +111,9 @@ int xhci_cmd_submit(struct xhci_controller *hc, struct xhci_trb *trb);
  * (cycle bit matches), copies it to *out, advances dequeue, writes ERDP.
  * Returns 1 if event read, 0 if none available. */
 int xhci_event_poll(struct xhci_controller *hc, struct xhci_trb *out);
+
+/* Poll the dedicated HID Event Ring (interrupter 1). Same contract as
+ * xhci_event_poll but on the HID-only ring -- consumed only by the HID report
+ * poller, so it never steals shared-ring (command/MSC/hot-plug) events.
+ * Returns 0 (no event) when the dedicated interrupter was not set up. */
+int xhci_hid_event_poll(struct xhci_controller *hc, struct xhci_trb *out);

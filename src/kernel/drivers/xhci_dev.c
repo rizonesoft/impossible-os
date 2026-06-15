@@ -22,10 +22,18 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
+#include "kernel/timer.h"
 
 /* ---- Static state -------------------------------------------------------- */
 
 static struct xhci_device devices[XHCI_MAX_DEVICES];
+
+/* HID report polling -- defined later but armed from xhci_enumerate_device
+ * (after the device is published active, so the poller never races a still-
+ * inactive device). */
+static int  xhci_hid_queue_report(struct xhci_controller *hc,
+                                  struct xhci_device *dev);
+static void xhci_hid_start_polling(void);
 
 /* Debug: tracks how far USB enumeration got (readable from diagnostic splash)
  * 0=no device, 1=CCS detected, 2=port reset, 3=slot enabled, 4=addressed,
@@ -500,6 +508,7 @@ int xhci_enumerate_device(struct xhci_controller *hc,
     dev->slot_id = slot_id;
     dev->port    = port;
     dev->speed   = speed;
+    dev->owner   = hc;   /* slot IDs are per-controller; bind the device here */
 
     /* ---- Step 3: Allocate Output Device Context ---- */
     /* Output Device Context: 1 Slot + 31 Endpoint contexts.
@@ -772,6 +781,20 @@ int xhci_enumerate_device(struct xhci_controller *hc,
          dev->is_hid ? (dev->hid_proto == USB_PROTO_HID_KEYBOARD
                         ? " [HID kbd]" : " [HID mouse]") : "");
 
+    /* Arm HID report polling AFTER the device is published active, so the tick
+     * poller (which can fire in ISR context the moment it is registered) can
+     * never drain a completion for a not-yet-active device and drop it.
+     * Publish int_in_polling BEFORE ringing the doorbell: with the poller
+     * already live from an earlier HID device, the first completion of THIS
+     * device could otherwise be drained before the gate is set and dropped. */
+    if (dev->is_hid && dev->int_in_report) {
+        dev->int_in_polling = 1;
+        if (xhci_hid_queue_report(hc, dev) == 0)
+            xhci_hid_start_polling();
+        else
+            dev->int_in_polling = 0;   /* queue failed -> not actually polling */
+    }
+
     return 0;
 }
 
@@ -977,6 +1000,110 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev)
     return 0;
 }
 
+/* ---- HID Interrupt Transfer Polling ----------------------------------- */
+
+/* Queue a Normal TRB on the HID Interrupt-IN ring pointing at the device's
+ * report DMA buffer, with the Interrupter Target field set to 1 so its
+ * completion lands on the dedicated HID event ring, then ring the endpoint
+ * doorbell. Returns 0 on success. */
+static int xhci_hid_queue_report(struct xhci_controller *hc,
+                                 struct xhci_device *dev)
+{
+    struct xhci_trb trb;
+    uint32_t dci = XHCI_DCI(dev->int_in_ep, 1);
+
+    if (dev->int_in_report_phys == 0)
+        return -1;
+
+    dev_zero(&trb, sizeof(trb));
+    trb.parameter = dev->int_in_report_phys;
+    /* status: TRB Transfer Length (16:0) | Interrupter Target (31:22) = IR1. */
+    trb.status    = (uint32_t)dev->int_in_max_pkt | (1u << 22);
+    trb.control   = (XHCI_TRB_NORMAL << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_IOC;
+
+    if (ep0_ring_enqueue(&dev->int_in_ring, &trb) != 0)
+        return -1;
+    dev_write32(hc->db_base, dev->slot_id * 4, dci);
+    return 0;
+}
+
+/* Find an active device by owning controller + slot id. Slot IDs are scoped
+ * per controller, so both must match or a multi-controller system could
+ * resolve an event to the wrong device's transfer ring / report buffer. */
+static struct xhci_device *hid_dev_by_slot(struct xhci_controller *hc, uint8_t slot)
+{
+    int i;
+    for (i = 0; i < XHCI_MAX_DEVICES; i++)
+        if (devices[i].active && devices[i].owner == hc &&
+            devices[i].slot_id == slot)
+            return &devices[i];
+    return (struct xhci_device *)0;
+}
+
+/* Tick-mux callback (~10 ms): drain the dedicated HID event ring on every
+ * controller, log each report, and re-queue a TRB for continuous polling.
+ * Report PARSING into keystrokes/movement is the keyboard/mouse sections. */
+void xhci_hid_poll(void)
+{
+    int ci, n = xhci_controller_count();
+
+    for (ci = 0; ci < n; ci++) {
+        struct xhci_controller *hc = xhci_get_controller_mut(ci);
+        struct xhci_trb evt;
+        if (!hc || !hc->active || !hc->hid_intr_active)
+            continue;
+        while (xhci_hid_event_poll(hc, &evt)) {
+            uint32_t type = (evt.control & XHCI_TRB_TYPE_MASK)
+                          >> XHCI_TRB_TYPE_SHIFT;
+            uint8_t  slot = (uint8_t)((evt.control >> XHCI_TRB_SLOT_SHIFT) & 0xFF);
+            uint8_t  cc;
+            struct xhci_device *dev;
+
+            if (type != XHCI_TRB_TRANSFER_EVT)
+                continue;
+            dev = hid_dev_by_slot(hc, slot);
+            if (!dev || !dev->is_hid || !dev->int_in_report || !dev->int_in_polling)
+                continue;
+
+            /* Only a successful (or short-packet) completion carries a valid
+             * report. On a halt / device-removed / error completion, stop
+             * polling this device instead of re-queueing forever to a dead
+             * endpoint -- proper slot teardown is the USB hot-plug lifecycle
+             * work in the usb-stack driver TODO. */
+            cc = (uint8_t)((evt.status >> XHCI_TRB_CC_SHIFT) & 0xFF);
+            if (cc != XHCI_TRB_CC_SUCCESS && cc != XHCI_TRB_CC_SHORT_PKT) {
+                klog(LOG_WARN, "usb-hid",
+                     "slot %u report transfer cc=%u -- stopping poll",
+                     (uint64_t)slot, (uint64_t)cc);
+                dev->int_in_polling = 0;
+                continue;
+            }
+
+            klog(LOG_DEBUG, "usb-hid",
+                 "report slot %u: %02x %02x %02x %02x %02x %02x %02x %02x",
+                 (uint64_t)slot,
+                 dev->int_in_report[0], dev->int_in_report[1],
+                 dev->int_in_report[2], dev->int_in_report[3],
+                 dev->int_in_report[4], dev->int_in_report[5],
+                 dev->int_in_report[6], dev->int_in_report[7]);
+            /* Re-queue for the next report; if enqueue fails, stop polling. */
+            if (xhci_hid_queue_report(hc, dev) != 0)
+                dev->int_in_polling = 0;
+        }
+    }
+}
+
+/* Register the HID report poller on the multi-subscriber tick (once). The tick
+ * runs at ~100 Hz, so every_n_ticks = 1 gives ~10 ms polling. */
+static void xhci_hid_start_polling(void)
+{
+    static uint8_t registered;
+    if (registered)
+        return;
+    if (timer_add_tick_subscriber(xhci_hid_poll, 1) == 0)
+        registered = 1;
+}
+
 /* ---- HID Identification & Interrupt Endpoint Configuration ------------- */
 
 /* Convert an endpoint descriptor bInterval to the xHCI EP-context Interval
@@ -1178,6 +1305,19 @@ int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev)
          hid_proto == USB_PROTO_HID_KEYBOARD ? "keyboard" : "mouse",
          (uint64_t)dev->port, (uint64_t)dev->int_in_ep,
          (uint64_t)dev->int_in_interval, (uint64_t)dev->int_in_max_pkt);
+
+    /* Allocate the report DMA buffer now (only when the dedicated HID
+     * interrupter is up). The first TRB queue + poller arm happen later in
+     * xhci_enumerate_device, AFTER dev->active is published, so an early tick
+     * poll cannot drain a completion for a still-inactive device. */
+    if (hc->hid_intr_active) {
+        dev->int_in_report_phys = pmm_alloc_contiguous(1);
+        if (dev->int_in_report_phys != 0) {
+            dev_map_page(dev->int_in_report_phys, 0x1000);
+            dev->int_in_report = (uint8_t *)dev->int_in_report_phys;
+            dev_zero(dev->int_in_report, 0x1000);
+        }
+    }
 
     return 0;
 }

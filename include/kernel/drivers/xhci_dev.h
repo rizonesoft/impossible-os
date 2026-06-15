@@ -250,6 +250,10 @@ struct xhci_device {
     uint8_t   int_in_interval;   /* EP-context Interval field (125us * 2^N) */
     uint16_t  int_in_max_pkt;    /* Interrupt-IN wMaxPacketSize */
     struct xhci_ring int_in_ring;    /* Interrupt-IN Transfer Ring */
+    uint64_t  int_in_report_phys;    /* DMA buffer the controller writes reports to */
+    uint8_t  *int_in_report;         /* virt alias of int_in_report_phys */
+    uint8_t   int_in_polling;        /* 1 once a report TRB is queued + poller live */
+    struct xhci_controller *owner;   /* owning controller (slot IDs are per-controller) */
 
     /* Config descriptor inline storage (avoids separate allocation) */
     uint8_t   config_data[XHCI_CONFIG_BUF_MAX];
@@ -277,6 +281,10 @@ int xhci_msc_identify(struct xhci_controller *hc, struct xhci_device *dev);
  * Configure Endpoint command. Returns 0 if a HID device was identified and
  * configured, -1 otherwise. */
 int xhci_hid_identify(struct xhci_controller *hc, struct xhci_device *dev);
+
+/* Drain the dedicated HID event ring(s) and log/re-queue reports. Registered on
+ * the timer tick multiplexer by HID enumeration; not for direct external use. */
+void xhci_hid_poll(void);
 
 /* Encode an endpoint descriptor bInterval into the xHCI EP-context Interval
  * field (period = 125us * 2^Interval). Speed-dependent (xHCI 6.2.3.6):
