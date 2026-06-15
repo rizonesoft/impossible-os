@@ -142,7 +142,9 @@ Wrap `msc_bot_command()` with automatic retry for transient SCSI errors.
 > - Integrates: `msc_inquiry`/`msc_read_capacity`/`usb_msc_read_sectors`/`usb_msc_write_sectors` now route through `msc_scsi_command` (READ/WRITE/CAPACITY exact-length, INQUIRY allocation-length); the sense-class retry sits above §4's transport recovery.
 > - Hardening: a CSW FAIL never advances on a benign sense; a short exact-length transfer fails safe; a REQUEST SENSE that itself desyncs the pipe forces a BOT reset before retry. Closes the §1/§2 short-REQUEST-SENSE + residue gaps via the CSW residue.
 > - Scope boundary: §3 owns the SCSI-sense retry + CSW-residue policy; §4 owns transport stall/BOT reset; §5 owns the xHCI per-transfer byte count; command-ring/BOT SMP serialization is §16.
-> **Verified:** 2026-06-15 | impl commit | 10/10 items | build OK | storage 394 kernel + 16 user-mode PASS (residue + retry-decision matrices)
+> **Verified:** 2026-06-15 | review commit | 10/10 items | build OK | storage 394 kernel + 16 user-mode PASS (residue + retry-decision matrices)
+> **Accepted:** [H] xHCI host-observed SHORT_PKT residual is discarded -- the CSW-residue exact-length guard trusts the device's CSW residue, so a controller/device reporting SHORT_PKT + CSW PASS residue 0 still passes -> XREF: 01-boot-platform/TODO-19 §5 (item: "Plumb host residual from `xhci_wait_transfer` (now NULL) through `xhci_bulk_transfer_cc`/`msc_bot_command`" at line 199)
+> **Quality reviewed:** 2026-06-15 | Codex 8x (design, test-coverage, adversarial x2, re-adversarial x2, consistency, perf) | 4H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -196,7 +198,7 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 - [ ] After timeout: log `"[USB] Bulk transfer timeout on slot=%u EP%u (%u ms)"` and return `USB_ERR_TIMEOUT`
 - [ ] Integrate with §3/§4 retry: `USB_ERR_TIMEOUT` is retriable -- call `xhci_recover_endpoint()`, then retry (up to 3 attempts)
 - [ ] MSC-specific: `usb_msc_read_sectors()` / `usb_msc_write_sectors()` propagate timeout error; caller sees it as a transient I/O failure
-- [ ] Report ACTUAL transferred length from `xhci_bulk_transfer` (SHORT_PKT counts as success today); `msc_request_sense` (§1) must reject a fixed-format reply shorter than the key/ASC/ASCQ bytes, not classify a zero-filled tail as NO SENSE
+- [ ] Plumb host residual from `xhci_wait_transfer` (now NULL) through `xhci_bulk_transfer_cc`/`msc_bot_command`; exact-length READ/WRITE/CAPACITY FAIL on a host SHORT_PKT independent of CSW residue (xHCI cross-check above §3)
 - [ ] Configurable timeout: `USB_BULK_TIMEOUT_MS` (default 5000), `USB_CONTROL_TIMEOUT_MS` (default 2000) -- constants in header, tunable per-device if needed for slow media
 - [ ] Commit: `"drivers: USB bulk transfer timeouts -- TSC deadline, Stop Endpoint, retry integration"`
 

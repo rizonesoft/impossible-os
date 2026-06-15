@@ -255,6 +255,16 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
         msc_bot_reset(hc, dev);
         return -1;
     }
+    /* A residue larger than the requested length is a malformed CSW for ANY
+     * status -- the device claims it skipped more than was asked, so the framing
+     * is untrustworthy. Reject (reset + fail) before any status-specific handling
+     * or REQUEST SENSE, so recovery never runs against a CSW the code distrusts. */
+    if (csw.dCSWDataResidue > data_len) {
+        klog(LOG_ERROR, "usb-msc", "CSW residue %u > requested %u -- BOT reset",
+             (uint64_t)csw.dCSWDataResidue, (uint64_t)data_len);
+        msc_bot_reset(hc, dev);
+        return -1;
+    }
 
     /* A CSW phase error (bCSWStatus == 2) means the device and host disagree on
      * the transfer framing -- BOT 1.0 section 6.7 mandates a mass-storage reset
@@ -277,19 +287,9 @@ static int msc_bot_command(struct xhci_controller *hc, struct xhci_device *dev,
     }
 
     /* Report the data residue on a PASS CSW so the SCSI layer can fail-safe on a
-     * short exact-length transfer. A residue larger than the requested length is
-     * a malformed CSW -- the device claims it skipped more than was asked, which
-     * means the framing is untrustworthy; reset and fail rather than trust it. */
-    if (csw.bCSWStatus == USB_CSW_STATUS_PASS) {
-        if (csw.dCSWDataResidue > data_len) {
-            klog(LOG_ERROR, "usb-msc", "CSW residue %u > requested %u -- BOT reset",
-                 (uint64_t)csw.dCSWDataResidue, (uint64_t)data_len);
-            msc_bot_reset(hc, dev);
-            return -1;
-        }
-        if (residue_out)
-            *residue_out = csw.dCSWDataResidue;
-    }
+     * short exact-length transfer (residue <= data_len already validated above). */
+    if (csw.bCSWStatus == USB_CSW_STATUS_PASS && residue_out)
+        *residue_out = csw.dCSWDataResidue;
 
     return csw.bCSWStatus;
 }
