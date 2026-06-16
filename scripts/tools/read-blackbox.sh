@@ -76,5 +76,15 @@ if mdir -i "$DISK@@$BB_OFFSET" ::/Logs/Serial > /dev/null 2>&1; then
     echo "  Logs/Serial/: $count file(s) extracted"
 fi
 
+# Also extract Crash/WER subdirectory (Windows Error Reporting reports the
+# kernel stages there via wer.c) if it exists -- the top-level Crash copy
+# above is non-recursive, so without this the WER subtree would be dropped.
+if mdir -i "$DISK@@$BB_OFFSET" ::/Crash/WER > /dev/null 2>&1; then
+    mkdir -p "$OUTDIR/Crash/WER"
+    mcopy -i "$DISK@@$BB_OFFSET" -n ::/Crash/WER/* "$OUTDIR/Crash/WER/" 2>/dev/null || true
+    count=$(find "$OUTDIR/Crash/WER" -type f 2>/dev/null | wc -l)
+    echo "  Crash/WER/: $count file(s) extracted"
+fi
+
 echo ""
 echo "=== Done: files extracted to $OUTDIR ==="

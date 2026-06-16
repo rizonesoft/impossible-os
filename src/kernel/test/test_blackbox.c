@@ -137,6 +137,19 @@ static void test_bb_free_space(void)
     TEST_ASSERT(free_bytes > 0, "BlackBox free space > 0");
 }
 
+/* ---- Idempotent skeleton creation (regression) ----
+ * The BlackBox skeleton is (re)created on every boot. fat32_create_dir_vol
+ * must refuse to create a directory that already exists; without the guard
+ * each boot allocated a fresh cluster + wrote a duplicate dirent, leaking
+ * space on X: behind false "created" logs. A refused create returns != 0
+ * and writes nothing, so re-running is a true no-op. */
+static void test_bb_mkdir_idempotent(void)
+{
+    if (!vfs_is_mounted('X')) { TEST_SKIP("no BlackBox"); return; }
+    TEST_ASSERT(vfs_create("X:\\Logs", VFS_DIRECTORY) != 0,
+                "re-creating existing X:\\Logs is refused (no duplicate leak)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_blackbox(void)
@@ -163,6 +176,8 @@ void test_register_blackbox(void)
                             test_bb_volume_label, TEST_CAT_FS);
     test_suite_register_cat("BB: free space > 0",
                             test_bb_free_space, TEST_CAT_FS);
+    test_suite_register_cat("BB: idempotent skeleton mkdir",
+                            test_bb_mkdir_idempotent, TEST_CAT_FS);
 }
 
 #else

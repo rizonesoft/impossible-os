@@ -85,6 +85,171 @@ int fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
     return 0;
 }
 
+/* Read the FAT entry for `cluster`, distinguishing a real value from an
+ * I/O failure: returns 0 and writes *out on success, -1 on FAT read
+ * error. fat32_get_fat_entry returns FAT32_EOC on read failure, which a
+ * tri-state chain walk MUST NOT confuse with a genuine end-of-chain --
+ * doing so would report "absent" on a degraded FAT read and let a
+ * duplicate dirent through. */
+static int fat32_next_cluster_checked(struct fat32_volume *vol,
+                                      uint32_t cluster, uint32_t *out)
+{
+    uint32_t fat_offset = cluster * 4;
+    uint32_t fat_sector = vol->bpb.first_fat_sector + (fat_offset / 512);
+    uint32_t entry_offset = fat_offset % 512;
+
+    if (fat32_read_sector(vol, fat_sector, vol->sector_buf) != 0)
+        return -1;
+    *out = (*(uint32_t *)&vol->sector_buf[entry_offset]) & 0x0FFFFFFF;
+    return 0;
+}
+
+/* Tri-state lookup of a child by name in parent_cluster.
+ *   1  = a child named `name` exists,
+ *   0  = it does not,
+ *  -1  = the scan could not complete (alloc/read failure or a malformed
+ *        FAT chain) -- i.e. absence could NOT be proven.
+ * Read-only full-chain LFN-aware scan modeled on fat32_delete_file_vol.
+ * Deliberately does NOT use the shared dir_files[] cache: that cache is
+ * lossy (fat32_read_dir is void, silently bails on I/O/alloc failure and
+ * caps at FAT32_MAX_DIR_ENTRIES) and side-effecting, so a cache-based
+ * existence check could wrongly report "absent" on a degraded path and
+ * let a duplicate dirent slip through. Walks the whole parent chain with
+ * the same bounded FAT iteration the write paths use. Caller holds
+ * vol->lock; device I/O under the lock matches the rest of the create
+ * path (the tracked FAT32 locking gap). */
+static int fat32_dir_find_child(struct fat32_volume *vol,
+                                uint32_t parent_cluster, const char *name)
+{
+    uint32_t bytes_per_cluster = vol->bpb.sectors_per_cluster * 512;
+    uint8_t *cluster_buf;
+    uint8_t short_name[11];
+    uint32_t cur_cluster = parent_cluster;
+    uint32_t spc = vol->bpb.sectors_per_cluster ? vol->bpb.sectors_per_cluster : 1u;
+    uint32_t data_sectors = (vol->bpb.total_sectors > vol->bpb.first_data_sector)
+                            ? (vol->bpb.total_sectors - vol->bpb.first_data_sector)
+                            : 0;
+    uint32_t last_valid_cluster = (data_sectors / spc) + 1u;
+    uint32_t max_iter;
+    uint32_t iter = 0;
+    int result = 0;          /* default: not found */
+    char lfn_name[FAT32_MAX_NAME];
+    int lfn_active = 0;
+    int lfn_expect_seq = 0;
+    uint8_t lfn_chk = 0;
+    int k;
+
+    if (last_valid_cluster > 0x0FFFFFEFu) last_valid_cluster = 0x0FFFFFEFu;
+    if (last_valid_cluster < 2) last_valid_cluster = 2;
+    max_iter = last_valid_cluster + 1u;
+
+    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cluster_buf)
+        return -1;           /* cannot prove absence */
+
+    /* An out-of-range parent means we cannot scan it -- refuse rather
+     * than report a bogus "absent". */
+    if (parent_cluster < 2 || parent_cluster > last_valid_cluster) {
+        kfree(cluster_buf);
+        return -1;
+    }
+
+    fat32_make_short_name(name, short_name);
+    for (k = 0; k < FAT32_MAX_NAME; k++)
+        lfn_name[k] = '\0';
+
+    while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
+        uint32_t sector;
+        uint32_t i;
+
+        if (++iter > max_iter || cur_cluster > last_valid_cluster) {
+            result = -1;     /* malformed / cyclic chain */
+            goto out;
+        }
+        sector = cluster_to_sector(vol, cur_cluster);
+        if (fat32_read_sectors_multi(vol, sector, vol->bpb.sectors_per_cluster,
+                                     cluster_buf) != 0) {
+            result = -1;     /* read failure -- cannot prove absence */
+            goto out;
+        }
+
+        for (i = 0; i < bytes_per_cluster; i += 32) {
+            struct fat32_dir_entry *de =
+                (struct fat32_dir_entry *)&cluster_buf[i];
+            char ename[FAT32_MAX_NAME];
+            int j, match;
+
+            if (de->name[0] == 0x00)
+                goto out;    /* end of directory -- not found (result=0) */
+            if (de->name[0] == 0xE5) { lfn_active = 0; continue; }
+            if (de->attr == FAT32_ATTR_LFN) {
+                struct fat32_lfn_entry *lfn =
+                    (struct fat32_lfn_entry *)&cluster_buf[i];
+                int seq = lfn->seq & LFN_SEQ_MASK;
+                if (lfn->seq & LFN_LAST_ENTRY) {
+                    for (k = 0; k < FAT32_MAX_NAME; k++)
+                        lfn_name[k] = '\0';
+                    lfn_active = 1;
+                    lfn_chk = lfn->checksum;
+                    lfn_expect_seq = seq;
+                }
+                if (lfn_active &&
+                    (seq != lfn_expect_seq || lfn->checksum != lfn_chk ||
+                     seq < 1 || seq > FAT32_LFN_MAX_ENTRIES)) {
+                    lfn_active = 0;
+                } else if (lfn_active) {
+                    lfn_extract_chars(lfn, lfn_name, seq - 1);
+                    lfn_expect_seq = seq - 1;
+                }
+                continue;
+            }
+            if (de->attr & FAT32_ATTR_VOLUME_ID) { lfn_active = 0; continue; }
+
+            if (lfn_active &&
+                (lfn_expect_seq != 0 ||
+                 fat32_lfn_checksum(de->name) != lfn_chk))
+                lfn_active = 0;
+
+            if (lfn_active && lfn_name[0] != '\0')
+                fat32_strcpy(ename, lfn_name, FAT32_MAX_NAME);
+            else
+                fat32_short_name_to_str(de->name, ename);
+
+            match = fat32_strcasecmp(ename, name);
+            if (!match) {
+                match = 1;
+                for (j = 0; j < 11; j++) {
+                    if (de->name[j] != short_name[j]) { match = 0; break; }
+                }
+            }
+            lfn_active = 0;
+            if (match) { result = 1; goto out; }
+        }
+
+        /* Advance with an I/O-checked FAT read so a read failure or a
+         * malformed continuation cannot masquerade as a clean end of
+         * chain (which would falsely prove absence). */
+        {
+            uint32_t next;
+            if (fat32_next_cluster_checked(vol, cur_cluster, &next) != 0) {
+                result = -1;            /* FAT read error */
+                goto out;
+            }
+            if (next >= FAT32_EOC)
+                goto out;               /* genuine end of chain (result=0) */
+            if (next < 2) {
+                result = -1;            /* FREE/reserved mid-chain == corrupt */
+                goto out;
+            }
+            cur_cluster = next;         /* reserved/BAD caught by bound check */
+        }
+    }
+
+out:
+    kfree(cluster_buf);
+    return result;
+}
+
 int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
                           const char *name)
 {
@@ -94,6 +259,19 @@ int fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
     int i;
 
     if (!name || !name[0])
+        return -1;
+
+    /* Idempotent guard: refuse to create a duplicate directory. Without
+     * this, re-running (e.g. the BlackBox X:\ skeleton on every boot)
+     * would allocate a fresh cluster and write a second dirent for an
+     * already-present name, leaking clusters and dir slots on the volume
+     * while logging false "created" success. A non-zero result means
+     * either the child already exists (1) or absence could not be proven
+     * (-1, I/O or malformed chain); in BOTH cases we refuse rather than
+     * risk a duplicate. Callers that re-run for self-healing rely on -1
+     * meaning "already there or could not create", never "created a
+     * duplicate". */
+    if (fat32_dir_find_child(vol, parent_cluster, name) != 0)
         return -1;
 
     new_cluster = fat32_alloc_cluster(vol);

@@ -150,14 +150,24 @@ Update `partition.c` to recognize the "BlackBox" GPT partition name and mount it
 
 Ensure the BlackBox directory structure exists on first boot and after format.
 
-- [x] After `partition_mount_filesystems()`, probe `X:\Logs` via `vfs_open()` to detect first boot
+- [x] After `partition_mount_filesystems()`, (re)create the 8-dir skeleton unconditionally every boot -- no probe-gate, so a partial skeleton (`Logs` survived but a sibling was lost) self-heals
 - [x] If missing, create all 8 directories: `Logs`, `Logs\Serial`, `Boot`, `Crash`, `Crash\WER`, `Perf`, `Diag`, `Tools` (`Logs\Serial` matches the host-built skeleton so kernel-formatted/repaired BlackBox keeps per-boot serial logs)
 - [x] Uses `vfs_create(path, VFS_DIRECTORY)` -- works on FAT32
 - [x] Logs each creation: `"BlackBox: created X:\Logs"` etc.
-- [x] Idempotent: second boot skips creation (probe finds `X:\Logs`)
+- [x] Idempotent: `fat32_create_dir_vol` refuses to recreate an existing dir (returns != 0, allocates nothing) via a read-only tri-state full-chain scan, so re-running every boot leaks no clusters (`test_bb_mkdir_idempotent`)
 - [x] Commit: `"kernel: create BlackBox directory skeleton on first boot"`
 
 **Test checkpoint:** On a BlackBox whose skeleton is incomplete, serial shows `"BlackBox: created X:\..."` for each of the 8 missing directories (Logs, Logs\Serial, Boot, Crash, Crash\WER, Perf, Diag, Tools); on a fully-populated BlackBox no creation messages appear (vfs_create is a no-op on existing dirs). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-blackbox-tests.bat` (SUITE=fs) | BlackBox suite incl. `test_bb_mkdir_idempotent` (re-create refused); kernel FS 114 + user-mode 16 PASS on TCG
+> **Notes:**
+> - The 8-dir BlackBox skeleton (Logs, Logs\Serial, Boot, Crash, Crash\WER, Perf, Diag, Tools) is (re)created unconditionally every boot in `boot_storage.c`, so a partial skeleton self-heals.
+> - `fat32_create_dir_vol` is now idempotent: a read-only tri-state full-chain scan (`fat32_dir_find_child`) refuses to recreate an existing dir, closing an every-boot cluster/dirent leak on X: that hid behind false "created" logs.
+> - The existence scan is fail-closed: I/O error, malformed FAT chain, or out-of-range parent return -1 (refuse) so a degraded read can never let a duplicate through.
+> - `read-blackbox.sh` now extracts `Crash\WER` (the non-recursive `Crash` copy dropped it), matching what `wer.c` writes there.
+> - Regression: `test_bb_mkdir_idempotent` asserts re-creating an existing `X:\Logs` is refused.
+> **Verified:** 2026-06-17 | commit `cb127f41` | 5/5 items | build OK | smoke PASS (TCG 2.65s)
+> **Quality reviewed:** 2026-06-17 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 3H+1M fixed | scope: kernel-code-quality
 
 ---
 
