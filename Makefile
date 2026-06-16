@@ -846,15 +846,12 @@ SYSTEM_DISK_SIZE := 768M
 EFI_SIZE := 64M
 # Shim binaries — built by bash scripts/secure-boot/build-shim.sh
 SHIM_DIR := shim
-# Partition offsets (must match make-system-disk defaults)
-# EFI:      LBA 2048     = byte 1048576,   size 64M
-# BlackBox: LBA 133120   = byte 68157440,  size 128M
-# IXFS:     LBA 395264   = byte 202375168, fills remaining space
+# Partition offsets: EFI is fixed at LBA 2048 (1 MiB, byte 1048576). The realized
+# BlackBox / IXFS / A/B-slot offsets are computed by make-system-disk and emitted
+# to $(SYSTEM_DISK).info; the mkfs/mmd/mcopy steps source them from there. The
+# --ab build shifts IXFS past BlackBox + ABMeta, so a hardcoded IXFS LBA would
+# address metadata, not IXFS -- do not reintroduce static BB/IXFS offset vars.
 EFI_OFFSET  := 1048576
-BB_OFFSET   := 68157440
-BB_SIZE     := 128M
-IXFS_OFFSET := 202375168
-IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 202375168 - 34*512) )) )
 
 system-disk: $(SYSTEM_DISK)
 
@@ -904,16 +901,19 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	@cp resources/boot/boot.conf $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS/boot.conf
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
-	@# Step 2b: Format BlackBox partition as FAT32 (128M = 131072 x 1024-byte blocks)
-	mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $(BB_OFFSET) / 512 )) $@ 131072
-	mmd -i $@@@$(BB_OFFSET) ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
-	mmd -i $@@@$(BB_OFFSET) ::Crash/WER ::Logs/Serial
+	@# Step 2b: Format BlackBox FAT32 from the GENERATED .info offset/size.
+	@# EFI + IXFS already source their realized offsets from .info; the Makefile
+	@# BB_OFFSET/BB_SIZE defaults only line up when --efi-size is unchanged, so a
+	@# non-default EFI_SIZE would otherwise format BlackBox at the wrong byte offset.
+	. $@.info && mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $$BB_OFFSET / 512 )) $@ $$(( $$BB_SIZE / 1024 ))
+	. $@.info && mmd -i $@@@$$BB_OFFSET ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
+	. $@.info && mmd -i $@@@$$BB_OFFSET ::Crash/WER ::Logs/Serial
 	@# Round-trip marker for test_fileio.exe. Static content built into the
 	@# FAT32 image; user-mode reads it back via X:\Diag\blackbox-marker.txt
 	@# to prove BPB validate + mount + dir-cache + file-open + read all
 	@# work end-to-end. 11 bytes, no NUL, no newline.
 	@printf "BlackBox-v1" > $(BUILD_DIR)/blackbox-marker.txt
-	mcopy -i $@@@$(BB_OFFSET) $(BUILD_DIR)/blackbox-marker.txt ::Diag/blackbox-marker.txt
+	. $@.info && mcopy -i $@@@$$BB_OFFSET $(BUILD_DIR)/blackbox-marker.txt ::Diag/blackbox-marker.txt
 	@rm -f $(BUILD_DIR)/blackbox-marker.txt
 	@# Step 3: Format IXFS Slot A + Slot B from the GENERATED .info offsets.
 	@# A/B mode shifts IXFS past the metadata partition, so the offsets must come

@@ -185,6 +185,11 @@ int main(int argc, char *argv[])
      * A/B: also a 1 MiB metadata partition + two usable IXFS slots. Fail
      * closed rather than silently producing undersized slots. */
     {
+        if (efi_size < SECTOR_SIZE || (efi_size % SECTOR_SIZE) != 0) {
+            fprintf(stderr, "make-system-disk: --efi-size must be a non-zero multiple of %u (got %llu)\n",
+                    SECTOR_SIZE, (unsigned long long)efi_size);
+            return 1;
+        }
         uint64_t min_size = efi_size + bb_size + 64ULL * 1024 * 1024;
         if (ab_mode)
             min_size = efi_size + bb_size
@@ -275,6 +280,18 @@ int main(int argc, char *argv[])
                     (unsigned long long)(a_sec * SECTOR_SIZE / (1024 * 1024)),
                     (unsigned long long)(b_sec * SECTOR_SIZE / (1024 * 1024)),
                     (unsigned long long)(rec_sec * SECTOR_SIZE / (1024 * 1024)));
+            return 1;
+        }
+    } else {
+        /* Validate the REALIZED standard layout the same way the A/B path does:
+         * strict ordering, no overlap/wrap, IXFS slot non-empty, within
+         * LastUsableLBA. Guards a non-1MiB-aligned or oversized --efi-size. */
+        uint64_t last_usable = total_sectors - 34;
+        if (!(efi_start <= efi_end && efi_end < bb_start &&
+              bb_start <= bb_end && bb_end < ixfs_start &&
+              ixfs_start <= ixfs_end && ixfs_end < last_usable)) {
+            fprintf(stderr, "make-system-disk: standard layout invalid -- "
+                    "partition ordering or bounds violated (grow the disk or align --efi-size)\n");
             return 1;
         }
     }
