@@ -1470,15 +1470,15 @@ static void test_boot_info_v20_tail(void)
      * v18 pinned 24056 with degraded_trust_flags as tail; v17 pinned
      * an earlier size with boot_media_role* as tail. */
     uint64_t off = (uint64_t)__builtin_offsetof(
-        struct boot_info, _loader_vars_pad);
+        struct boot_info, _ab_meta_pad);
     uint64_t end = off + (uint64_t)sizeof(
-        ((struct boot_info *)0)->_loader_vars_pad);
+        ((struct boot_info *)0)->_ab_meta_pad);
     TEST_ASSERT_EQ((uint64_t)(sizeof(struct boot_info) - end < 8u), 1u,
-                   "_loader_vars_pad must be the v21 tail field "
+                   "_ab_meta_pad must be the v22 tail field "
                    "(<= 7-byte alignment pad to next struct boundary)");
-    TEST_ASSERT_EQ((uint64_t)sizeof(struct boot_info), (uint64_t)28512u,
-                   "v21 struct size pinned at 28512 bytes "
-                   "(loader-vars surface appended to v20 tail)");
+    TEST_ASSERT_EQ((uint64_t)sizeof(struct boot_info), (uint64_t)28528u,
+                   "v22 struct size pinned at 28528 bytes "
+                   "(A/B-metadata range appended to the v21 loader-vars tail)");
 }
 
 /* loader_identity is no longer the tail (v14 appended UKI payload

@@ -437,6 +437,9 @@ Surface for the systemd-boot Boot Loader Interface compatibility feature (boot-e
 | `loader_vars_degraded` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` + diagnostics | persistent | boot-entry loader-vars | 1 if any `Loader*` SetVariable call failed (NVRAM quota, firmware refusal). Userland still boots; the kernel surfaces the flag in the boot audit JSONL so operators see degraded publication state. |
 | `active_slot` | bootx64 `select_active_slot()` | P0 | kernel `partition_mount_filesystems()` + mark-boot-successful | persistent | A/B dual-slot boot | A/B slot the bootloader selected pre-EBS from the on-disk `ab_boot_metadata` record. 0 = Slot A, 1 = Slot B (encoding mirrors `include/boot/ab_boot_metadata.h`). Default 0 -- single-slot/non-A/B/error paths resolve to Slot A. Kernel mounts EXACTLY this slot's IXFS as C: and refuses to mark a mismatched slot good. |
 | `_loader_vars_pad` | bootx64 boot policy | P0 | none | persistent | boot-entry loader-vars | reserved zero; 6-byte alignment pad (one byte carved for `active_slot`). |
+| `ab_meta_lba` | bootx64 `select_active_slot()` | P0 | kernel A/B metadata write path | persistent | A/B dual-slot boot | First absolute LBA of the reconciled A/B-metadata partition on the boot/parent disk (parent block units; matches `partition_info.start_lba`). 0 when no A/B metadata partition. Lets the kernel write path locate the partition WITHOUT re-deriving GPT state via the weaker kernel `gpt_parse`. v22. |
+| `ab_meta_block_count` | bootx64 `select_active_slot()` | P0 | kernel A/B metadata write path | persistent | A/B dual-slot boot | Size of the A/B-metadata partition in parent blocks (0 when absent). v22. |
+| `_ab_meta_pad` | bootx64 boot policy | P0 | none | persistent | A/B dual-slot boot | reserved zero; aligns the v22 A/B-metadata range to 8 bytes. |
 
 ## Nested struct: `boot_payload_desc`
 

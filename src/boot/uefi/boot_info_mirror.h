@@ -268,7 +268,7 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  21
+#define BOOT_INFO_VERSION  22
 #endif
 
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
@@ -736,6 +736,16 @@ struct boot_info {
      * mount + mark-good consume this; see include/kernel/boot_info.h. */
     UINT8    active_slot;
     UINT8    _loader_vars_pad[6];
+
+    /* v22: A/B-metadata partition range (TODO-21 atomic-write handoff). The
+     * bootloader publishes the reconciled MD-partition location so the kernel
+     * write path locates it without re-deriving GPT state. ab_meta_lba = first
+     * absolute LBA on the boot/parent disk; ab_meta_block_count = size in those
+     * blocks; both 0 when no A/B metadata partition. Mirrors
+     * include/kernel/boot_info.h. */
+    UINT64   ab_meta_lba;
+    UINT32   ab_meta_block_count;
+    UINT32   _ab_meta_pad;          /* reserved; zero (align to 8) */
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
@@ -846,6 +856,13 @@ _Static_assert(__builtin_offsetof(struct boot_info, degraded_trust_flags) == 240
 _Static_assert(__builtin_offsetof(struct boot_info, active_slot) ==
                __builtin_offsetof(struct boot_info, loader_vars_degraded) + 1,
     "boot_info.active_slot must immediately follow loader_vars_degraded -- "
+    "kernel + bootloader mirror out of sync");
+/* v22 A/B metadata range (TODO-21): mirror the kernel asserts exactly. */
+_Static_assert(__builtin_offsetof(struct boot_info, ab_meta_lba) % 8 == 0,
+    "boot_info.ab_meta_lba must be 8-byte aligned (uint64) -- mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_meta_block_count) ==
+               __builtin_offsetof(struct boot_info, ab_meta_lba) + 8,
+    "boot_info.ab_meta_block_count must immediately follow ab_meta_lba -- "
     "kernel + bootloader mirror out of sync");
 
 /* ============================================================================

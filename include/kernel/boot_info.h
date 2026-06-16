@@ -160,7 +160,7 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  21
+#define BOOT_INFO_VERSION  22
 #endif
 /* v21 adds loader_vars_degraded + loader_vars_pad: bootloader sets the
  * degraded flag if any systemd-boot-compatible LoaderXxx UEFI variable
@@ -1715,6 +1715,21 @@ struct boot_info {
      * BOOT_INFO_VERSION bump per the reserved-region rule. */
     uint8_t  active_slot;
     uint8_t  _loader_vars_pad[6];
+
+    /* v22: A/B-metadata partition range (TODO-21 atomic-write handoff). The
+     * bootloader reconciles the metadata partition (primary+backup GPT) in
+     * select_active_slot and publishes its location here so the kernel write
+     * path locates the partition WITHOUT re-deriving GPT state via the weaker
+     * kernel gpt_parse (which lacks the bootloader's primary+backup
+     * reconciliation -- a stale/split-brain primary would diverge). ab_meta_lba
+     * is the partition's first absolute LBA on the boot/parent disk (parent
+     * block units, matches partition_info.start_lba); ab_meta_block_count is its
+     * size in those blocks. Both 0 when no A/B metadata partition exists
+     * (non-A/B disk / non-GPT boot). The boot disk itself is identified by the
+     * existing boot_partition_guid. */
+    uint64_t ab_meta_lba;
+    uint32_t ab_meta_block_count;
+    uint32_t _ab_meta_pad;          /* reserved; zero (align to 8) */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -1847,6 +1862,15 @@ _Static_assert(__builtin_offsetof(struct boot_info, degraded_trust_flags) == 240
 _Static_assert(__builtin_offsetof(struct boot_info, active_slot) ==
                __builtin_offsetof(struct boot_info, loader_vars_degraded) + 1,
     "boot_info.active_slot must immediately follow loader_vars_degraded -- "
+    "update kernel + bootloader mirror");
+/* v22 A/B metadata range (TODO-21): 8-byte-aligned uint64 + uint32 + pad.
+ * Pinned relative + size so the bootloader mirror cannot drift; the manifest
+ * compare gate cross-checks absolute offsets kernel-vs-mirror at build. */
+_Static_assert(__builtin_offsetof(struct boot_info, ab_meta_lba) % 8 == 0,
+    "boot_info.ab_meta_lba must be 8-byte aligned (uint64)");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_meta_block_count) ==
+               __builtin_offsetof(struct boot_info, ab_meta_lba) + 8,
+    "boot_info.ab_meta_block_count must immediately follow ab_meta_lba -- "
     "update kernel + bootloader mirror");
 
 /* Global boot info -- populated by the UEFI bootloader (storage def in

@@ -425,3 +425,6 @@ F(loader_vars_degraded);
 F(active_slot);
 F(_loader_vars_pad);
 F(_loader_vars_pad[0]);
+F(ab_meta_lba);
+F(ab_meta_block_count);
+F(_ab_meta_pad);

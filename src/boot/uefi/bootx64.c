@@ -12282,6 +12282,14 @@ static void select_active_slot(EFI_HANDLE part_handle)
     /* ab_find_meta_partition either returns EFI_SUCCESS or boot_fatal()s on a
      * corrupt GPT; EFI_NOT_FOUND was handled above. */
 
+    /* Publish the reconciled MD-partition range so the kernel write path
+     * (mark-boot-successful) locates the partition without re-deriving GPT
+     * state via the weaker kernel gpt_parse. The location is authoritative even
+     * if the metadata record itself is uninitialized/corrupt. */
+    g_boot_info_ptr->ab_meta_lba = md_lba;
+    g_boot_info_ptr->ab_meta_block_count = (md_blocks > 0xFFFFFFFFull)
+                                           ? 0xFFFFFFFFu : (UINT32)md_blocks;
+
     struct ab_boot_metadata copy0, copy1;
     int got0 = ab_read_meta_copy(bio, md_lba, md_blocks,
                                  AB_META_COPY0_BYTE_OFF, &copy0);
