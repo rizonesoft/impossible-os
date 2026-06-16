@@ -95,6 +95,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [ ] Record policy digest in TPM PCR event log when TPM is present.
 - [ ] Refuse unsigned kernel drivers when Secure Boot is enabled.
 - [ ] Audit mismatch between bootloader trust state and kernel policy state.
+- [ ] Expose a slot-boot-verification query (was the active slot's kernel/root signature-verified this boot) so A/B mark-good + the anti-rollback floor refuse to bless an unverified slot -> XREF: [`01-boot-platform/TODO-21 §5`](../01-boot-platform/TODO-21-ab-boot-rollback.md) + `§8`.
 
 ## 8. Driver/Module Enforcement
 

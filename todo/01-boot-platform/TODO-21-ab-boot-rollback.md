@@ -204,11 +204,11 @@ Kernel-side API to tell the bootloader "this boot worked".
 
 - [x] `ab_boot_mark_slot_successful(active_slot)` (`partition.c`): power-fail-atomic single-copy blkdev RMW writing `successful=1, tries=0` (§7 helpers); refuses unless mounted slot == selected; durable (`blkdev_sync`-checked)
 - [/] Called at boot acceptance from the compositor first-frame steady-state; configured-acceptance-stage upgrade -> XREF: [`02-kernel-core/TODO-02 §10`](../02-kernel-core/TODO-02-kernel-configuration-policy.md)
-- [ ] Verified slot identity gate before mark-good (refuse unsigned/unverified slot); blocked on code-integrity infra -> XREF: [`02-kernel-core/TODO-19`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md) + `TODO-02 §1`
+- [ ] Verified slot identity gate before mark-good (refuse unsigned/unverified slot); blocked on code-integrity infra -> XREF: [`02-kernel-core/TODO-19 §7`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md) (slot-boot-verification query)
 - [ ] On mark-good, advance the §8 `rollback_floor` to the active slot's `rollback_index` (never lower it) -- lands with §8
 - [x] On success: `"A/B: boot marked successful (slot %d, copy %u, gen %u)"`; write/flush failure logs + returns -1 (boot proceeds)
 - [x] Storage = GPT/disk metadata blocks (NVRAM `SetVariable` rejected per BootSticky doctrine, §1) -- writes the MD partition, not a UEFI variable
-- [ ] Commit: `"kernel: mark_boot_successful -- reset try counter after successful boot"`
+- [x] Commit: `"kernel: mark_boot_successful -- reset try counter after successful boot"`
 
 **Test checkpoint:** Normal boot -> serial shows `"A/B: boot marked successful (slot 0, copy 0, gen 1)"` after the desktop first frame (smoke-validated). Refused when mounted slot != selected, or on flush failure. Test on: QEMU smoke + bare metal.
 
@@ -220,7 +220,13 @@ Kernel-side API to tell the bootloader "this boot worked".
 > - **Fail posture:** refuses unless mounted slot == selected slot; refuses on generation exhaustion or flush failure; no-op on non-A/B disks; rollback stays dormant until §4 increments tries (no brick).
 > - **Downstream effects:** initializes the on-disk metadata (gen 1) on first successful boot; §4 tries-increment + rollback builds on this reset.
 > - **Canonical doc:** `include/boot/ab_boot_metadata.h` + `docs/boot/boot-info-fields.md` (`ab_meta_lba`).
-> - **Scope boundary:** verified-identity gate (TODO-19) + configured-acceptance-stage upgrade (TODO-02 §10) + §8 floor-advance are tracked `[ ]` items here; §4 owns the tries-increment that activates rollback.
+> - **Scope boundary:** verified-identity gate (TODO-19 §7) + configured-acceptance-stage upgrade (TODO-02 §10) + §8 floor-advance are tracked `[ ]` items here; §4 owns the tries-increment that activates rollback.
+
+> **Verified:** 2026-06-16 | commit `b4370256` | 3/6 items | build OK | smoke PASS (mark-good gen1 round-trip, slot-mismatch refusal)
+> **Deferred:** [M] Verified slot-identity gate before mark-good (refuse unsigned/unverified slot) -> XREF: 02-kernel-core/TODO-19 §7 (item: "Expose a slot-boot-verification query ... so A/B mark-good + the anti-rollback floor refuse to bless an unverified slot")
+> **Deferred:** [M] Configured-acceptance-stage upgrade (mark-good fires at compositor first-frame; gate it on the typed acceptance ledger instead) -> XREF: 02-kernel-core/TODO-02 §10 (item: "Gate mark_boot_successful() ... on the configured acceptance stage instead of a hard-coded Phase 3 heuristic")
+> **Deferred:** [L] On mark-good, advance the rollback_floor to the active slot rollback_index -> XREF: 01-boot-platform/TODO-21 §8 (anti-rollback floor advance item)
+> **Quality reviewed:** 2026-06-16 | Codex adversarial (impl): 2H fixed (mark-good mounted==selected equality gate; durability blkdev_sync return-checked), 0 open | scope: kernel-code-quality
 
 ---
 
