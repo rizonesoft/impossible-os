@@ -4154,6 +4154,67 @@ fi
 
 
 # ============================================================================
+# bare_section_gate (bare section-ref drift gate -- Check 5 + edit-time hook parity)
+# ============================================================================
+#   Regression lock for the 2026-06-16 gate-hardening review: lint Check 5
+#   and .claude/hooks/bare_section_refs.py must both scan .ld/.lds/.inc +
+#   Makefile, catch spaced "section N" refs, and share the same path
+#   exemptions (scripts/todo-graph, scripts/test-ai-system.sh). The section
+#   glyph is generated via Python (chr 0xA7) so this script stays glyph-free
+#   (the hook blocks literal bare refs in .sh source).
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[bare_section_gate]${NC}"
+
+if [ ! -f "$REPO_ROOT/scripts/lint.sh" ] || [ ! -f "$REPO_ROOT/.claude/hooks/bare_section_refs.py" ]; then
+    t_fail "bare_section_gate: lint.sh or hook missing"
+else
+    BSG_TMP="$(mktemp -d)"
+    BSG_REPO="$BSG_TMP/repo"
+    mkdir -p "$BSG_REPO/scripts" "$BSG_REPO/tools" "$BSG_REPO/src/boot"
+    cp "$REPO_ROOT/scripts/lint.sh" "$BSG_REPO/scripts/lint.sh"
+    chmod +x "$BSG_REPO/scripts/lint.sh"
+    python3 - "$BSG_REPO" <<'PYEOF'
+import sys, pathlib
+repo = pathlib.Path(sys.argv[1]); S = chr(0xA7)
+(repo / "src" / "stub.c").write_text("/* stub */\n")
+(repo / "tools" / "desc.inc").write_text("/* typed payload (%s4) */\n" % S)
+(repo / "src" / "boot" / "linker.ld").write_text("/* layout (%s5) */\n" % S)
+(repo / "Makefile").write_text("# floor gate (%s12)\nall:\n" % S)
+(repo / "src" / "spaced.c").write_text("/* fallback (%s 5) */\n" % S)
+PYEOF
+    BSG_OUT="$(cd "$BSG_REPO" && bash scripts/lint.sh 2>&1)"
+    for fx in "tools/desc.inc" "src/boot/linker.ld" "Makefile" "src/spaced.c"; do
+        if echo "$BSG_OUT" | grep -q "$fx"; then
+            t_pass "bare_section_gate: lint Check 5 flags $fx"
+        else
+            t_fail "bare_section_gate: lint Check 5 missed $fx" "out: $(echo "$BSG_OUT" | tail -10)"
+        fi
+    done
+    rm -rf "$BSG_TMP"
+
+    bsg_hook() {
+        # $1=label $2=path $3=body (%S% -> section glyph) $4=want-exit
+        local json rc
+        json="$(python3 -c 'import json,sys; S=chr(0xA7); print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"new_string":sys.argv[2].replace("%S%",S)}}))' "$2" "$3")"
+        echo "$json" | python3 "$REPO_ROOT/.claude/hooks/bare_section_refs.py" >/dev/null 2>&1
+        rc=$?
+        if [ "$rc" = "$4" ]; then
+            t_pass "bare_section_gate: hook $1 (exit $rc)"
+        else
+            t_fail "bare_section_gate: hook $1" "want exit $4 got $rc"
+        fi
+    }
+    bsg_hook ".inc blocks"           "tools/x/foo.inc"             "/* desc (%S%4) */"        2
+    bsg_hook "Makefile blocks"       "Makefile"                    "# gate (%S%12)"           2
+    bsg_hook ".ld blocks"            "src/boot/linker.ld"          "/* layout (%S%5) */"      2
+    bsg_hook "spaced ref blocks"     "src/kernel/foo.c"            "/* fallback (%S% 5) */"   2
+    bsg_hook "todo-graph exempt"     "scripts/todo-graph/query.py" "# owner TODO-06 %S%4"     0
+    bsg_hook "test-ai-system exempt" "scripts/test-ai-system.sh"   "# %S%7 policy"            0
+    bsg_hook "spec qualifier legal"  "src/kernel/foo.c"            "/* xHCI spec %S%4.2 */"   0
+fi
+
+
+# ============================================================================
 # codex_prompt_scope (TODO-08 codex-dispatch-with-files wrapper)
 # ============================================================================
 #   - clean_tree_embeds: clean working tree + prompt naming a file ->

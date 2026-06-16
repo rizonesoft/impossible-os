@@ -280,7 +280,7 @@ fi
 #
 # Only runs on the default lint scope (whole repo).
 if [ "$#" -eq 0 ]; then
-    BARE_SECTION_RE='§[0-9]'
+    BARE_SECTION_RE='§ ?[0-9]'
     SPEC_TOKENS_RE='(UEFI|Intel|SDM|AMD|APM|RFC [0-9]|ACPI [0-9]|NTFS|FAT[0-9]|NVMe|PCIe?|PE/COFF|PE32|COFF|USB [0-9]|xHCI|EHCI|OHCI|UHCI|VirtIO|SMBIOS|IEEE|NIST|TCG|WHEA|HPET|MP Spec|spec |specification)'
 
     # Path-based spec-code exemption: files whose WHOLE JOB is implementing
@@ -342,6 +342,7 @@ if [ "$#" -eq 0 ]; then
             --include='*.sh' --include='*.bat' --include='*.ps1' --include='*.py' \
             --include='*.yml' --include='*.yaml' \
             --include='Makefile' --include='*.mk' \
+            --include='*.ld' --include='*.lds' --include='*.inc' \
             --exclude-dir='.git' --exclude-dir='build' --exclude-dir='node_modules' \
             "${TODO_XREF_EXISTING[@]}" 2>/dev/null \
         || true

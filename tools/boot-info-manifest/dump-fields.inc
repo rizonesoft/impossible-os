@@ -312,7 +312,7 @@ F(hv_flags);
 F(hv_vendor);
 F(hv_vendor[0]);                /* element-size sentinel */
 
-/* ---- Typed payload descriptor array (§4) ---- */
+/* ---- Typed payload descriptor array ---- */
 F(payload_descriptors);
 /* payload_descriptors[0].* leaves (boot_payload_desc): same-size-reorder
  * defense for the 48-byte descriptor. */

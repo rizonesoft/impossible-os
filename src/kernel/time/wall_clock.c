@@ -126,8 +126,8 @@ FILETIME KeQuerySystemTime(void)
 FILETIME KeQuerySystemTimePrecise(void)
 {
     /* Currently identical to KeQuerySystemTime() since both use mono_ns()
-     * for TSC/HPET interpolation. Will diverge when KUSER_SHARED_DATA (§12)
-     * adds a coarse tick-granular path for KeQuerySystemTime(). */
+     * for TSC/HPET interpolation. Will diverge once the KUSER_SHARED_DATA
+     * coarse tick-granular path for KeQuerySystemTime() lands. */
     return KeQuerySystemTime();
 }
 

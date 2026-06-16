@@ -33,8 +33,16 @@ if any(norm.startswith(pp) for pp in spec_code_prefixes):
     sys.exit(0)
 if norm in spec_code_exact:
     sys.exit(0)
-# Enforce only on code-ish files.
-if not p.endswith(('.c', '.h', '.asm', '.S', '.py', '.sh', '.bat', '.ps1', '.yml', '.yaml', '.mk')):
+# Path exemptions mirroring scripts/lint.sh Check 5 (files that legitimately
+# carry internal section refs by design). Keep in sync with lint's case block.
+if norm == 'scripts/test-ai-system.sh' or norm.startswith('scripts/todo-graph/'):
+    sys.exit(0)
+# Enforce only on code-ish files. Suffix set + Makefile basename mirror the
+# scripts/lint.sh Check 5 --include list (keep in sync).
+basename = norm.rsplit('/', 1)[-1]
+if basename != 'Makefile' and not p.endswith(
+        ('.c', '.h', '.asm', '.S', '.py', '.sh', '.bat', '.ps1',
+         '.yml', '.yaml', '.mk', '.ld', '.lds', '.inc')):
     sys.exit(0)
 texts = []
 if tn == 'Write':
@@ -47,7 +55,7 @@ elif tn == 'MultiEdit':
 if not texts:
     sys.exit(0)
 all_text = '\n'.join(texts)
-bare_re = re.compile('§[0-9]')
+bare_re = re.compile('§ ?[0-9]')
 spec_re = re.compile(r'UEFI|Intel|SDM|AMD|APM|RFC [0-9]|ACPI [0-9]|NTFS|FAT[0-9]|NVMe|PCIe?|PE/COFF|PE32|COFF|USB [0-9]|xHCI|EHCI|OHCI|UHCI|VirtIO|SMBIOS|IEEE|NIST|TCG|WHEA|HPET|MP Spec|spec |specification')
 hits = []
 for line in all_text.splitlines():
