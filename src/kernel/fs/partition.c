@@ -783,7 +783,9 @@ void partition_mount_filesystems(int active_slot)
     int i;
     /* C: = the active A/B slot's IXFS (system), D:+ = non-EFI FAT32 partitions.
      * EFI System Partitions are hidden (no drive letter), like Windows.
-     * Special case: partition named "Logs" mounts as X:. */
+     * Special case: partition named "BlackBox" mounts as X: -- X: is the
+     * reserved well-known letter for the diagnostics volume, never assigned
+     * to a sequential data volume even when no BlackBox partition exists. */
     char next_fat32_letter = 'D';
 
     /* Mount the bootloader-selected root slot as C: first; the inactive slot
@@ -845,10 +847,14 @@ void partition_mount_filesystems(int active_slot)
                 /* Mark dirty on mount (cleared on clean shutdown) */
                 fat32_mark_dirty(fat_vol);
 
-                vfs_mount('X', fat32_get_driver(),
-                          fat32_get_root(fat_vol));
-                klog(LOG_INFO, "blk",
-                     "BlackBox partition mounted as X:\\");
+                if (vfs_mount('X', fat32_get_driver(),
+                              fat32_get_root(fat_vol)) != 0)
+                    klog(LOG_WARN, "blk",
+                         "BlackBox: vfs_mount X: failed -- letter taken; "
+                         "diagnostics may target wrong volume");
+                else
+                    klog(LOG_INFO, "blk",
+                         "BlackBox partition mounted as X:\\");
             } else if (next_fat32_letter <= 'Z') {
                 vfs_mount(next_fat32_letter,
                           fat32_get_driver(),
@@ -898,6 +904,10 @@ void partition_mount_filesystems(int active_slot)
                     ntfs_run_self_test(ntfs_vol, ntfs_root);
 
                     next_fat32_letter++;
+                    /* Skip X if we reach it (reserved for BlackBox) --
+                     * same reservation the FAT32 path honors above. */
+                    if (next_fat32_letter == 'X')
+                        next_fat32_letter = 'Y';
                 }
             }
         }

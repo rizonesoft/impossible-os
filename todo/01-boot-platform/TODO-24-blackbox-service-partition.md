@@ -135,6 +135,15 @@ Update `partition.c` to recognize the "BlackBox" GPT partition name and mount it
 
 **Regression risk:** Partition mount order change could break C:\ IXFS mount. Rollback: revert the `gpt_name` check in `partition_mount_filesystems()`.
 
+> **Notes:**
+> - `part_streqi()` case-insensitive GPT-name match mounts the BlackBox FAT32 volume as `X:\`, the reserved diagnostics letter.
+> - X: reservation now honored by BOTH the FAT32 and NTFS sequential allocators -- the NTFS path previously could claim X: and shadow BlackBox.
+> - BlackBox `vfs_mount('X')` return is checked; a taken letter logs LOG_WARN instead of silently reporting success.
+> - X: stays reserved even on disks without a BlackBox partition, keeping the `X:\` == diagnostics contract stable.
+> - Dirty-bit fsck on mount + mark-dirty; cleared on clean shutdown.
+> **Verified:** 2026-06-17 | commit `ec307531` | 5/5 items | build OK | smoke PASS (TCG 2.63s)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- 15-line fix, no lock/ISR/lifecycle) | 2H+1L fixed, 1M rejected (X: reserved by design) | scope: kernel-code-quality
+
 ---
 
 ## 4. Directory Skeleton -- Create Dirs on First Boot
