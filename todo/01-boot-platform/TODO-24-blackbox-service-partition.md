@@ -84,6 +84,16 @@ Modify `make-system-disk.c` to create a 3-partition GPT: EFI + BlackBox + IXFS.
 
 **Test checkpoint:** `make-system-disk` produces a 3-partition disk image. `fdisk -l build/system-disk.img` shows EFI (64 MiB) + BlackBox (128 MiB) + IXFS (~316 MiB). BlackBox partition type is Microsoft Basic Data. GPT partition name is "BlackBox".
 
+> **Test runner:** N/A (host GPT image builder; no kernel test surface) | validation: clean build emits a valid GPT, `mdir` confirms BLACKBOX FAT32 + 6 dirs at the `.info` offset
+> **Notes:**
+> - `make-system-disk.c` builds the 3-partition (EFI + BlackBox + IXFS) and 4-partition `--ab` GPT; BlackBox is a 128 MiB Microsoft Basic Data partition named "BlackBox", 1 MiB-aligned after EFI.
+> - Realized partition offsets/sizes are emitted to `<image>.info`; the Makefile mkfs/mmd/mcopy steps source the BlackBox offset+size from there (no hardcoded LBA), matching the EFI/IXFS pattern.
+> - Backup GPT header + entry array written at `total_sectors-1` / `total_sectors-33` with recomputed CRC32; `GPT_NUM_ENTRIES=128`.
+> - Kernel-side mount reads the "BlackBox" GPT name in `partition.c` (§3); host tools read the partition via the `.info` offset (§9).
+> - Scope: GPT layout + `.info` contract only; FAT32 format/dir-skeleton is §2/§4, kernel mount is §3.
+> **Verified:** 2026-06-16 | commit `4252b021` | 9/9 items | build OK | host mdir: BLACKBOX + 6 dirs at .info offset
+> **Quality reviewed:** 2026-06-16 | Codex 3x (adversarial, consistency, perf; re-adv skipped: host-tool config, no locking/ISR/lifecycle) | 1H+2M fixed | scope: N/A (host build tool, no kernel domain skill)
+
 ---
 
 ## 2. Build Pipeline -- Format and Populate BlackBox
