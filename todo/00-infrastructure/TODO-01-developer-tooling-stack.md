@@ -72,6 +72,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [x]   |
 | 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [x]   |
 | ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
+| 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -394,6 +395,22 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 
 ---
 
+## 12. Enforce Required-Tool Version Floors
+
+`scripts/setup.sh --verify` is the hard pass/fail contract consumed by the host bootstrap and `scripts/tooling-doctor.sh`, but it only checks tool *presence* (`command -v`). The minimum floors declared in `VERSION_SPECS` (clang-19 >= 19.1.0, qemu-system-x86_64 >= 7.0, mtools, etc.) are computed only by `--versions` / `print_versions`, which deliberately exits 0 (advisory). A contributor whose required toolchain is below floor passes `--verify` and the doctor today, then hits opaque build / image / boot failures later. The Linux kernel enforces minimum tool versions at build time (`Documentation/process/changes.rst` + `scripts/min-tool-version.sh`); this section closes the same floor-parity gap for the repo-local host toolchain without regressing the optional-tool / patch-level nuance that made `--versions` advisory.
+
+- [ ] Add a hard required-floor gate (`setup.sh --check-versions` or `--verify --strict`) failing non-zero when any REQUIRED `VERSION_SPECS` tool is below `minimum` (reuse `version_ge`); optional `bear` stays advisory.
+- [ ] Keep `--versions` exit-0 advisory behavior intact (patch-level + optional-tool reporting) so existing UX is unchanged; the new gate is the separate enforcement path.
+- [ ] Wire `tooling-doctor.sh` to run the floor gate with an actionable `fix:` line (tool + observed-vs-floor + remediation) so a below-floor required tool reports a named failure, not PASS.
+- [ ] Wire the gate into `.github/workflows/build.yml` and `release.yml` after the existing `setup.sh --verify` step so CI fails on a below-floor required tool.
+- [ ] Add a `scripts/test-tooling.sh` assertion pair: a stubbed below-floor probe drives the gate non-zero naming the tool; an at/above-floor probe passes.
+- [ ] Update §2 (Notes + "minimum required versions" item) from "advisory only" to the new hard gate, and refresh the OS Comparison "Min tool-version floors" row to ✅.
+- [ ] Commit: `"tooling: enforce required-tool version floors in setup --verify gate"`
+
+**Test checkpoint:** On a healthy host, `bash scripts/setup.sh --check-versions` (or `--verify --strict`) exits 0 and `bash scripts/tooling-doctor.sh` still reports HEALTHY. With a required tool stubbed below its `VERSION_SPECS` floor, the gate exits non-zero naming the tool + observed-vs-floor, `tooling-doctor` reports the named failure with an actionable `fix:`, and `bash scripts/test-tooling.sh` records the negative assertion. Optional `bear` below floor never changes the exit code.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects          | 🚀 Impossible OS                                                                 |
@@ -409,6 +426,7 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 | ⭐ | Cross-reference drift gate    | ❌ Unenforced             | ❌ Unenforced              | ✅ §9 -- lint rejects numeric TODO shorthand outside `todo/`; CI-gated           |
 | ⭐ | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches      | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission          |
 | ⭐ | Bare section-sign drift gate  | ❌ Unenforced             | ❌ Unenforced              | ✅ §11 -- lint Check 5 + PreToolUse hook; allowlist drained to zero              |
+| 💎 | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ⬜ §12 -- planned: --verify hard-fails below-floor required tools                |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
 > **After §7-§11:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, and boot assertions that cannot silently regress when a contributor edits a printf.
