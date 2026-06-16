@@ -229,6 +229,103 @@ ab_boot_meta_choose_slot(const struct ab_boot_metadata *m)
     return best;
 }
 
+/* True when EVERY slot has exhausted its boot attempts (tries >= MAX). In this
+ * state choose_slot() can no longer roll forward to a healthy peer -- the caller
+ * must invoke the both-exhausted stopgap rather than treat choose_slot's return
+ * (the recorded active slot) as a normal selection. */
+static inline int
+ab_boot_meta_all_exhausted(const struct ab_boot_metadata *m)
+{
+    unsigned int s;
+    if (!m) return 0;
+    for (s = 0u; s < AB_BOOT_SLOT_COUNT; s++)
+        if (m->slot[s].tries < AB_BOOT_MAX_TRIES) return 0;
+    return 1;
+}
+
+/* Both-exhausted stopgap: when no slot is bootable, pick the LEAST-BAD slot to
+ * attempt anyway. A defined fallback beats an undefined terminal path while the
+ * recovery partition is unbuilt (the recovery-partition work owns the real
+ * recovery UI). Prefer a previously-successful slot, then higher priority, then
+ * fewer accumulated tries, else keep the recorded active slot. This boots the
+ * most-likely-recoverable root with a loud diagnostic instead of bricking.
+ * Pure logic, shared so the bootloader's stopgap and the test view agree. */
+static inline unsigned int
+ab_boot_meta_least_bad_slot(const struct ab_boot_metadata *m)
+{
+    unsigned int best, s;
+    if (!m) return AB_BOOT_SLOT_A;
+    best = (m->active_slot < AB_BOOT_SLOT_COUNT) ? m->active_slot : AB_BOOT_SLOT_A;
+    for (s = 0u; s < AB_BOOT_SLOT_COUNT; s++) {
+        const struct ab_boot_slot *sl = &m->slot[s];
+        const struct ab_boot_slot *b = &m->slot[best];
+        if (s == best) continue;
+        if (sl->successful != b->successful) {
+            if (sl->successful > b->successful) best = s;
+            continue;
+        }
+        if (sl->priority != b->priority) {
+            if (sl->priority > b->priority) best = s;
+            continue;
+        }
+        if (sl->tries != b->tries) {
+            if (sl->tries < b->tries) best = s;
+            continue;
+        }
+        /* fully tied -> keep current best (recorded active slot wins) */
+    }
+    return best;
+}
+
+/* Why the bootloader chose the slot it did -- drives user-facing diagnostics
+ * (a rollback serial line + an on-screen "reverting to previous version" notice)
+ * that choose_slot's bare index cannot express. */
+enum ab_boot_select_reason {
+    AB_BOOT_SEL_NORMAL = 0,         /* booting the preferred / active slot */
+    AB_BOOT_SEL_ROLLBACK = 1,       /* active slot exhausted; rolled back to peer */
+    AB_BOOT_SEL_BOTH_EXHAUSTED = 2  /* all slots exhausted; least-bad stopgap */
+};
+
+struct ab_boot_decision {
+    unsigned int slot;                   /* slot index to boot */
+    enum ab_boot_select_reason reason;
+    unsigned int from_slot;              /* the exhausted slot rolled away from */
+    unsigned int from_tries;             /* that slot's tries (for the diagnostic) */
+};
+
+/* Full selection decision: the slot to boot PLUS the reason it was chosen.
+ * Wraps choose_slot (whose contract is unchanged) and classifies the outcome so
+ * the bootloader can surface rollbacks. NORMAL when the active slot is still
+ * bootable (even if a higher-priority peer wins -- that is policy, not failure);
+ * ROLLBACK when the active slot is exhausted and a healthy peer takes over;
+ * BOTH_EXHAUSTED when no slot is bootable (least-bad stopgap). Pure + shared. */
+static inline struct ab_boot_decision
+ab_boot_meta_decide(const struct ab_boot_metadata *m)
+{
+    struct ab_boot_decision d;
+    unsigned int active;
+    d.slot = AB_BOOT_SLOT_A;
+    d.reason = AB_BOOT_SEL_NORMAL;
+    d.from_slot = 0u;
+    d.from_tries = 0u;
+    if (!m) return d;
+    active = (m->active_slot < AB_BOOT_SLOT_COUNT) ? m->active_slot : AB_BOOT_SLOT_A;
+    if (ab_boot_meta_all_exhausted(m)) {
+        d.slot = ab_boot_meta_least_bad_slot(m);
+        d.reason = AB_BOOT_SEL_BOTH_EXHAUSTED;
+        d.from_slot = active;
+        d.from_tries = m->slot[active].tries;
+        return d;
+    }
+    d.slot = ab_boot_meta_choose_slot(m);
+    if (d.slot != active && m->slot[active].tries >= AB_BOOT_MAX_TRIES) {
+        d.reason = AB_BOOT_SEL_ROLLBACK;
+        d.from_slot = active;
+        d.from_tries = m->slot[active].tries;
+    }
+    return d;
+}
+
 /* GPT-copy reconciliation for locating the A/B metadata partition. The
  * bootloader reads BOTH the primary and backup GPT raw (firmware's own CRC
  * validation is bypassed by a raw read), so the two copies must be reconciled

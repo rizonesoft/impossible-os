@@ -172,25 +172,29 @@ Automatic rollback after 3 consecutive boot failures.
 - [x] Bootloader increments `tries` before boot -- `ab_bl_increment_tries` (`bootx64.c`), pre-EBS after `load_kernel` OK, IoAlign-compliant `WriteBlocks` single-block RMW (§7 helpers), `FlushBlocks`-checked; no-op on non-A/B
 - [x] Boot success resets `tries` to 0 -- §5 `ab_boot_mark_slot_successful` at first-frame (smoke round-trip: increment gen1 -> mark-good gen2 tries=0)
 - [x] 3 boots without mark-good -> roll back on next boot -- §3 `ab_boot_meta_choose_slot` skips a slot at `tries >= AB_BOOT_MAX_TRIES`; the increment now drives it
-- [ ] On rollback: serial `"Slot %c failed N times -- rolling back to %c"` -- `select_active_slot` does not yet emit a rollback-detected diagnostic
-- [ ] On rollback: boot-splash notification "reverting to previous version" -- needs splash integration
-- [ ] Both slots `tries >= MAX` -> stopgap: boot the least-bad previously-successful slot + loud diagnostic (recovery not built) -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
-- [ ] Codebase-wide bootloader `ReadBlocks` IoAlign hardening -- the GPT/FAT/A/B readers use unaligned stack buffers (pre-existing idiom; the A/B WRITE path is aligned) -> XREF: [`TODO-02 §1`](TODO-02-uefi-hardening-secureboot.md)
+- [x] On rollback: serial `"Slot X failed N times -- rolling back to Slot Y"` -- `ab_boot_meta_decide` (shared header) classifies NORMAL / ROLLBACK / BOTH_EXHAUSTED; `select_active_slot` emits the rollback line with the failed slot + its try count
+- [x] On rollback: on-screen notice "Reverting to previous version (Slot Y)" -- `ab_draw_rollback_banner` paints a self-contained banner (own dark background so the AA text is legible over any firmware/splash backdrop) via `bsod_fill_rect` + `bsod_aa_string`; no-op headless
+- [x] Both slots `tries >= MAX` -> stopgap implemented: `decide` returns BOTH_EXHAUSTED + `ab_boot_meta_least_bad_slot` (prefer once-successful, then priority, then fewer tries) with a loud serial + on-screen diagnostic; the full recovery UI is still owned by -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
+- [ ] Codebase-wide bootloader `ReadBlocks` IoAlign hardening (GPT/FAT/A-B readers use unaligned stack buffers) -> XREF: [`TODO-02 §19`](TODO-02-uefi-hardening-secureboot.md)
 - [x] Commit: `"boot: automatic rollback after 3 failed boot attempts"`
 
 **Test checkpoint:** A fresh boot logs `"A/B: tries incremented"` then `"A/B: boot marked successful (gen 2)"` (smoke-validated round-trip). A slot that never reaches mark-good `AB_BOOT_MAX_TRIES` times rolls back (`choose_slot`). Test on: QEMU smoke + bare metal.
 
 **Regression risk:** MEDIUM -- co-shipped with §5's reset so a normal boot's increment is reset at acceptance (no healthy-slot rollback); smoke confirms the 0->1->0 round-trip.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | ab_boot pure-logic cases pass | the bootloader `ab_bl_increment_tries` (EFI_BLOCK_IO write) has no kernel unit surface -- validated via QEMU smoke (tries incremented + reset round-trip) + bare metal
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | ab_boot pure-logic cases pass (7 new: all_exhausted, least_bad, decide normal/rollback/priority/both-exhausted) | the bootloader `ab_bl_increment_tries` + `ab_draw_rollback_banner` (EFI_BLOCK_IO / GOP) have no kernel unit surface -- validated via QEMU smoke (tries incremented + reset round-trip) + bare metal
 
 > **Notes:**
-> - **What shipped:** `ab_bl_increment_tries()` (`bootx64.c`) -- pre-EBS tries-increment via an IoAlign-compliant `WriteBlocks` single-block RMW (§7 pure helpers + `boot_info.ab_meta_lba`), co-shipped with §5's reset.
-> - **How it runs:** fires after `load_kernel` OK + before ExitBootServices; the kernel mark-good resets it at first-frame acceptance -- smoke shows the 0->1->0 round-trip (gen1 copy0 -> gen2 copy1).
+> - **What shipped:** `ab_bl_increment_tries()` (pre-EBS tries-increment, IoAlign `WriteBlocks` RMW, co-shipped with §5's reset) + `ab_boot_meta_decide`/`ab_boot_meta_least_bad_slot` (shared header) + `select_active_slot` rollback/both-exhausted serial diagnostics + `ab_draw_rollback_banner` on-screen notice.
+> - **How it runs:** increment fires after `load_kernel` OK + before ExitBootServices; the kernel mark-good resets it at first-frame acceptance -- smoke shows the 0->1->0 round-trip (gen1 copy0 -> gen2 copy1).
 > - **Fail posture:** durable (`FlushBlocks` return-checked, no success on flush fail); rejects non-block-aligned geometry + generation exhaustion + unreadable copies; no-op on non-A/B.
-> - **Downstream effects:** activates the rollback loop (§3 `choose_slot` rolls back a slot stuck at `tries >= MAX`).
+> - **Rollback UX:** `decide` classifies NORMAL/ROLLBACK/BOTH_EXHAUSTED; rollback + both-exhausted emit a serial line and a self-contained framebuffer banner; both-exhausted boots the least-bad once-successful slot rather than an undefined terminal path.
 > - **Canonical doc:** `include/boot/ab_boot_metadata.h`.
-> - **Scope boundary:** rollback serial/splash diagnostics + both-exhausted recovery stopgap + the codebase-wide read-IoAlign hardening are tracked `[ ]` items here.
+> - **Scope boundary:** only the codebase-wide read-`ReadBlocks`-IoAlign hardening remains tracked `[ ]` here (owned by TODO-02 §19; a pre-existing idiom, not an A/B regression).
+
+> **Verified:** 2026-06-16 | commit `91234a8e` + diagnostics | 6/7 items | build OK | smoke PASS (KVM 2.0s, healthy-boot round-trip, no false rollback) | boot suite 2772 PASS (7 new ab_boot)
+> **Deferred:** [Low] Codebase-wide bootloader `ReadBlocks` IoAlign hardening (pre-existing idiom; A/B write path already aligned) -> XREF: 01-boot-platform/TODO-02 §19 (item: "Add a shared `bl_read_blocks_aligned()` helper")
+> **Quality reviewed:** 2026-06-16 | Codex 3x (adversarial, consistency, perf) | 0H+0M+0L fixed, 0 open | scope: boot-code-quality (re-adversarial n/a: all 3 approved, zero fix diff)
 
 ---
 

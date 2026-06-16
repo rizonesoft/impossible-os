@@ -228,6 +228,90 @@ static void test_ab_choose_both_exhausted_falls_back_to_active(void)
                    "both exhausted -> recorded active_slot");
 }
 
+/* ---- Selection decision + diagnostics (sec 4 ab_boot_meta_decide) ---- */
+
+static void test_ab_all_exhausted_true_when_both_at_max(void)
+{
+    struct ab_boot_metadata m;
+    ab_make_record(&m, AB_BOOT_SLOT_A, AB_BOOT_MAX_TRIES, 0u, 1u,
+                   AB_BOOT_MAX_TRIES, 1u, 1u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_all_exhausted(&m), 1u,
+                   "both slots at MAX tries -> all exhausted");
+}
+
+static void test_ab_all_exhausted_false_when_one_viable(void)
+{
+    struct ab_boot_metadata m;
+    ab_make_record(&m, AB_BOOT_SLOT_A, AB_BOOT_MAX_TRIES, 0u, 1u, 0u, 0u, 1u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_all_exhausted(&m), 0u,
+                   "one viable slot -> not all exhausted");
+}
+
+static void test_ab_least_bad_prefers_successful(void)
+{
+    struct ab_boot_metadata m;
+    /* Both exhausted; B was once successful, A never -> least-bad is B. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, AB_BOOT_MAX_TRIES, 0u, 1u,
+                   AB_BOOT_MAX_TRIES, 1u, 1u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_least_bad_slot(&m), AB_BOOT_SLOT_B,
+                   "least-bad prefers a previously-successful exhausted slot");
+}
+
+static void test_ab_decide_normal_reports_no_rollback(void)
+{
+    struct ab_boot_decision d;
+    struct ab_boot_metadata m;
+    /* Fresh: A viable + active -> NORMAL, slot A. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, 0u, 0u, 1u, 0u, 0u, 0u);
+    d = ab_boot_meta_decide(&m);
+    TEST_ASSERT_EQ((uint64_t)d.slot, AB_BOOT_SLOT_A, "decide normal -> slot A");
+    TEST_ASSERT_EQ((uint64_t)d.reason, (uint64_t)AB_BOOT_SEL_NORMAL,
+                   "viable active slot -> NORMAL reason");
+}
+
+static void test_ab_decide_classifies_rollback(void)
+{
+    struct ab_boot_decision d;
+    struct ab_boot_metadata m;
+    /* A active + exhausted, B viable -> ROLLBACK to B, from A at MAX tries. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, AB_BOOT_MAX_TRIES, 0u, 5u, 0u, 0u, 1u);
+    d = ab_boot_meta_decide(&m);
+    TEST_ASSERT_EQ((uint64_t)d.slot, AB_BOOT_SLOT_B, "decide rollback -> slot B");
+    TEST_ASSERT_EQ((uint64_t)d.reason, (uint64_t)AB_BOOT_SEL_ROLLBACK,
+                   "exhausted active slot -> ROLLBACK reason");
+    TEST_ASSERT_EQ((uint64_t)d.from_slot, AB_BOOT_SLOT_A,
+                   "rollback records the failed (active) slot");
+    TEST_ASSERT_EQ((uint64_t)d.from_tries, (uint64_t)AB_BOOT_MAX_TRIES,
+                   "rollback records the failed slot's try count");
+}
+
+static void test_ab_decide_priority_choice_is_not_rollback(void)
+{
+    struct ab_boot_decision d;
+    struct ab_boot_metadata m;
+    /* A active + viable, B higher priority + viable -> choose B but NORMAL,
+     * since the active slot did not fail (priority policy, not a rollback). */
+    ab_make_record(&m, AB_BOOT_SLOT_A, 0u, 1u, 1u, 0u, 1u, 9u);
+    d = ab_boot_meta_decide(&m);
+    TEST_ASSERT_EQ((uint64_t)d.slot, AB_BOOT_SLOT_B, "priority choice -> slot B");
+    TEST_ASSERT_EQ((uint64_t)d.reason, (uint64_t)AB_BOOT_SEL_NORMAL,
+                   "priority-driven choice of a viable active is NORMAL not ROLLBACK");
+}
+
+static void test_ab_decide_classifies_both_exhausted(void)
+{
+    struct ab_boot_decision d;
+    struct ab_boot_metadata m;
+    /* Both exhausted; B once successful -> BOTH_EXHAUSTED, least-bad slot B. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, AB_BOOT_MAX_TRIES, 0u, 1u,
+                   AB_BOOT_MAX_TRIES, 1u, 1u);
+    d = ab_boot_meta_decide(&m);
+    TEST_ASSERT_EQ((uint64_t)d.reason, (uint64_t)AB_BOOT_SEL_BOTH_EXHAUSTED,
+                   "no viable slot -> BOTH_EXHAUSTED reason");
+    TEST_ASSERT_EQ((uint64_t)d.slot, AB_BOOT_SLOT_B,
+                   "both-exhausted stopgap boots the least-bad (once-successful) slot");
+}
+
 /* ---- GPT primary/backup reconciliation (sec 3 ab_boot_meta_reconcile_gpt) ---- */
 
 static void test_ab_reconcile_primary_has_md(void)
@@ -397,6 +481,20 @@ void test_register_ab_boot(void)
                             test_ab_choose_lower_tries_breaks_tie, TEST_CAT_BOOT);
     test_suite_register_cat("ab_boot: choose slot -- both exhausted falls back to active",
                             test_ab_choose_both_exhausted_falls_back_to_active, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: all exhausted -- true when both at MAX",
+                            test_ab_all_exhausted_true_when_both_at_max, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: all exhausted -- false when one viable",
+                            test_ab_all_exhausted_false_when_one_viable, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: least-bad -- prefers once-successful slot",
+                            test_ab_least_bad_prefers_successful, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: decide -- normal reports no rollback",
+                            test_ab_decide_normal_reports_no_rollback, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: decide -- classifies rollback + failed slot",
+                            test_ab_decide_classifies_rollback, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: decide -- priority choice is not a rollback",
+                            test_ab_decide_priority_choice_is_not_rollback, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: decide -- classifies both-exhausted stopgap",
+                            test_ab_decide_classifies_both_exhausted, TEST_CAT_BOOT);
     test_suite_register_cat("ab_boot: reconcile GPT -- primary has metadata",
                             test_ab_reconcile_primary_has_md, TEST_CAT_BOOT);
     test_suite_register_cat("ab_boot: reconcile GPT -- backup recovers primary",

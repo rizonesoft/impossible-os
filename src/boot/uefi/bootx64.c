@@ -12245,6 +12245,49 @@ static int ab_read_meta_copy(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 md_lba,
     return 1;
 }
 
+/* Append a NUL-terminated string to buf at *p, bounded by cap, advancing *p.
+ * serial_early_print has no formatter, so the A/B diagnostics assemble lines by
+ * parts; this keeps that bounded-copy idiom in one place. */
+static void ab_append(char *buf, UINTN *p, UINTN cap, const char *s)
+{
+    UINTN i;
+    for (i = 0; s[i] && *p < cap - 1; i++) buf[(*p)++] = s[i];
+}
+
+/* On-screen rollback notice: a self-contained banner (own dark background, so
+ * it is legible over any firmware-logo / splash state -- the AA text blends
+ * against the banner fill, not an unknown backdrop) drawn near the bottom of
+ * the framebuffer when a slot rollback or the both-exhausted stopgap fires.
+ * No-op when there is no usable framebuffer (headless). The kernel repaints
+ * shortly after, so this is the brief boot-window notice; the persistent
+ * surface is the kernel boot-diagnostics slot-status view. */
+static void ab_draw_rollback_banner(unsigned int slot, int both_exhausted)
+{
+    if (!gFramebuffer || gFbWidth < 200 || gFbHeight < 120) return;
+    UINT32 bh = 40;
+    UINT32 by = (gFbHeight > bh + 24) ? (gFbHeight - bh - 24) : 0;
+    UINT32 bg = fb_pack_rgb(0x1F, 0x1F, 0x28);  /* dark slate banner */
+    bsod_fill_rect(0, by, gFbWidth, bh, bg);
+
+    char msg[64];
+    UINTN p = 0;
+    if (both_exhausted)
+        ab_append(msg, &p, sizeof msg,
+                  "Recovery: no verified slot -- attempting Slot ");
+    else
+        ab_append(msg, &p, sizeof msg, "Reverting to previous version (Slot ");
+    if (p < sizeof msg - 1) msg[p++] = ab_slot_char(slot);
+    if (!both_exhausted && p < sizeof msg - 1) msg[p++] = ')';
+    msg[p] = '\0';
+
+    UINT32 tw = bsod_aa_string_width(msg, bsod_aa_BODY);
+    UINT32 tx = (gFbWidth > tw) ? (gFbWidth - tw) / 2 : 8;
+    UINT32 ty = by + (bh > 18 ? (bh - 18) / 2 : 0);
+    bsod_aa_string(tx, ty, msg, bsod_aa_BODY, bsod_aa_BODY_data,
+                   BSOD_AA_BODY_ASCENT, 0xFF, 0xD0, 0x60,  /* amber text */
+                   0x1F, 0x1F, 0x28);                       /* match banner bg */
+}
+
 static void select_active_slot(EFI_HANDLE part_handle)
 {
     post_code16(POST16_BL_AB_SELECT);
@@ -12349,8 +12392,39 @@ static void select_active_slot(EFI_HANDLE part_handle)
                    "bypass rollback. Reflash or boot recovery media.");
     }
 
-    unsigned int slot = ab_boot_meta_choose_slot(winner);
+    struct ab_boot_decision dec = ab_boot_meta_decide(winner);
+    unsigned int slot = dec.slot;
     g_boot_info_ptr->active_slot = (UINT8)slot;
+
+    /* Rollback / both-exhausted diagnostics: serial always, on-screen banner
+     * when a framebuffer is available. tries <= AB_BOOT_MAX_TRIES so a single
+     * digit covers the count. */
+    if (dec.reason == AB_BOOT_SEL_ROLLBACK) {
+        char line[96];
+        UINTN p = 0;
+        ab_append(line, &p, sizeof line, "[BOOT] A/B: Slot ");
+        if (p < sizeof line - 1) line[p++] = ab_slot_char(dec.from_slot);
+        ab_append(line, &p, sizeof line, " failed ");
+        if (p < sizeof line - 1)
+            line[p++] = (char)('0' + (dec.from_tries % 10u));
+        ab_append(line, &p, sizeof line, " times -- rolling back to Slot ");
+        if (p < sizeof line - 1) line[p++] = ab_slot_char(slot);
+        if (p < sizeof line - 1) line[p++] = '\n';
+        line[p] = '\0';
+        serial_early_print(line);
+        ab_draw_rollback_banner(slot, 0);
+    } else if (dec.reason == AB_BOOT_SEL_BOTH_EXHAUSTED) {
+        char line[112];
+        UINTN p = 0;
+        ab_append(line, &p, sizeof line,
+                  "[BOOT] A/B: WARNING both slots exhausted (no verified slot) "
+                  "-- booting least-bad Slot ");
+        if (p < sizeof line - 1) line[p++] = ab_slot_char(slot);
+        if (p < sizeof line - 1) line[p++] = '\n';
+        line[p] = '\0';
+        serial_early_print(line);
+        ab_draw_rollback_banner(slot, 1);
+    }
 
     /* "[BOOT] Booting Slot %c (tries=%u, successful=%u)" -- serial_early_print
      * has no formatter, so assemble the line by parts. */
