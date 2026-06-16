@@ -63,6 +63,7 @@ Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disable
 - [ ] NMI handler is minimal: write to serial, set NVRAM "watchdog_triggered" flag, reboot
 - [ ] If LAPIC not available: fall back to PIT-based software watchdog (less reliable, maskable)
 - [ ] Nested-NMI safety prerequisite: per-CPU latch/replay (or drop) so a watchdog NMI during an existing NMI/MCE path cannot corrupt the shared IST2 stack (Linux `repeat_nmi` model); must land before enabling the watchdog NMI. → XREF: `D01 T10 §2`
+- [ ] AP-IST safety: arm the LAPIC NMI watchdog on the BSP ONLY until per-CPU AP TSS/IST lands -- the IST is BSP-only today, so a watchdog NMI reaching an AP post-SMP corrupts the shared IST. Add an AP-NMI boot test when it lands. → XREF: `T09 §10`
 - [ ] Commit: `"boot: software watchdog via LAPIC NMI -- detect hung boot phases"`
 
 **Test checkpoint:** Add `for(;;){}` in boot_phase2 (debug build only). Watchdog fires → serial shows `"WATCHDOG: boot hung at POST 0xNNNN, RIP=0xNNNN"` → system reboots.
@@ -107,26 +108,27 @@ When watchdog fires, produce useful diagnostics before rebooting.
 - [ ] NMI handler writes to serial: phase, last POST code, RIP, RSP, last 5 boot_progress entries
 - [ ] Set NVRAM flag: `watchdog_triggered = 1`, `watchdog_post = <last POST code>`
 - [ ] On next boot: bootloader reads NVRAM flag → `"[WARN] Previous boot hung at POST 0xNNNN"` on serial
-- [ ] Increment A/B try counter (→ XREF: TODO-21 §4) so 3 hangs → rollback
+- [ ] Do NOT write A/B metadata from the NMI path: TODO-21 §4 already increments tries pre-EBS + resets on mark-good, so a hung boot consumed its try and rollback follows; a watchdog-side increment double-counts. -> XREF: TODO-21 §4
+- [ ] Optional Windows-style consecutive-boot-failure counter is boot-status TELEMETRY (NVRAM `watchdog_fail_count`, cleared on a marked-good boot), never a second A/B try write
 - [ ] Boot failure screen (→ XREF: TODO-03 §2) shows hang location if available
 - [ ] Commit: `"boot: watchdog reboot with diagnostics -- POST code, RIP, NVRAM flag"`
 
-**Test checkpoint:** Intentional hang → watchdog fires → reboot → serial shows previous hang location → A/B counter incremented.
+**Test checkpoint:** Intentional hang → watchdog fires → reboot → serial shows previous hang location; the slot's pre-EBS try (TODO-21) is already consumed, so 3 hung boots roll back without any watchdog-side A/B write.
 
 ---
 
-## 5. ACPI TCO Hardware Watchdog
+## 5. ACPI WDAT + TCO Hardware Watchdog
 
-Intel TCO (Total Cost of Ownership) timer provides hardware-level reboot even if CPU is locked.
+A hardware watchdog provides a reboot even if the CPU is fully locked. Prefer the firmware-abstracted ACPI WDAT table (what Win11/Linux use); direct Intel TCO PCI is the fallback.
 
-- [ ] Detect TCO timer via ACPI FADT / Intel chipset PCI registers
-- [ ] If present: configure with boot-phase timeout, pet alongside LAPIC NMI watchdog
-- [ ] TCO fires a hardware reboot signal -- survives complete CPU lockup (unlike NMI which needs CPU)
-- [ ] If not present: LAPIC NMI watchdog is sufficient
-- [ ] Log: `"[BOOT] TCO watchdog: %s (%u seconds)"` with enabled/not-available
-- [ ] Commit: `"boot: ACPI TCO hardware watchdog -- hardware-level reboot on total lockup"`
+- [ ] Detect the ACPI WDAT (Watchdog Action Table) FIRST: validate `ACPI_SIG_WDAT`, map the firmware register-action resources, honor min/max `timer_period` bounds (Win11 uses WDAT exclusively; Linux `wdat_wdt` prefers it over iTCO)
+- [ ] WDAT actions: GET_STATUS/SET_STATUS, GET/SET_RUNNING_STATE, SET_COUNTDOWN, RESET; read + clear the boot-status (was-watchdog-reboot) flag; honor stopped-in-sleep semantics
+- [ ] Fall back to direct Intel iTCO chipset PCI (NO_REBOOT / SMI / second-timeout handling) ONLY when no usable WDAT exists
+- [ ] Configure with boot-phase timeout, pet alongside the LAPIC NMI watchdog; WDAT/TCO fires a hardware reboot that survives complete CPU lockup (unlike NMI which needs the CPU)
+- [ ] If neither WDAT nor iTCO present: LAPIC NMI watchdog is sufficient. Log `"[BOOT] HW watchdog: %s (%u seconds)"` (WDAT / iTCO / none)
+- [ ] Commit: `"boot: ACPI WDAT + iTCO hardware watchdog -- hardware-level reboot on total lockup"`
 
-**Test checkpoint:** On Intel bare metal (i5-11600K): TCO watchdog detected and configured. On QEMU: `"TCO: not available"` (expected).
+**Test checkpoint:** On Intel bare metal (i5-11600K): WDAT (if firmware exposes it) or iTCO detected + configured; serial shows `"[BOOT] HW watchdog: WDAT"` or `iTCO`. On QEMU: `"[BOOT] HW watchdog: none"` (no WDAT/TCO emulation) -- LAPIC NMI watchdog covers it.
 
 ---
 
@@ -163,7 +165,7 @@ Show watchdog countdown in the VPD display during boot.
   - Per-phase timeout lookup: Phase 0 returns 2s, Phase 1 returns 5s, Phase 2 returns 30s, Phase 3 returns 60s
   - `watchdog_pet()` resets countdown without firing (call pet, verify timer reloaded)
   - Timeout configuration: `boot_watchdog_timeouts[]` values are all > 0 and within sane range (1s-300s)
-  - TCO detection: `tco_watchdog_available()` returns 0 on QEMU (no TCO emulation)
+  - HW watchdog detection: `hw_watchdog_kind()` returns NONE on QEMU (no WDAT/TCO emulation); WDAT parse rejects a bad `ACPI_SIG_WDAT` signature
   - NVRAM flag read: `watchdog_triggered` flag readable from boot_info (0 on clean boot)
 - [ ] Register in `test_runner_init()`: `test_register_watchdog()`
 - [ ] Create `scripts/test-boot-watchdog.sh`:
