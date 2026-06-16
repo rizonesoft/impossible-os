@@ -174,6 +174,8 @@ Show watchdog countdown in the VPD display during boot.
 - [ ] Add smoke test pattern to `scripts/test-smoke.sh`: absence of `"WATCHDOG"` on normal boot (no false triggers)
 - [ ] Commit: `"test: add boot watchdog test suite with intentional-hang smoke test"`
 
+---
+
 ## Verification
 
 - [ ] **Hang detection**: intentional infinite loop in Phase 2 → watchdog fires, system reboots.
