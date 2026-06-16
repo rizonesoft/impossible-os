@@ -324,11 +324,11 @@ void boot_phase2(void)
      * mismatch between BlackBox builds). */
     {
         static const char *bb_dirs[] = {
-            "X:\\Logs", "X:\\Boot", "X:\\Crash", "X:\\Crash\\WER",
-            "X:\\Perf", "X:\\Diag", "X:\\Tools"
+            "X:\\Logs", "X:\\Logs\\Serial", "X:\\Boot", "X:\\Crash",
+            "X:\\Crash\\WER", "X:\\Perf", "X:\\Diag", "X:\\Tools"
         };
         uint32_t d;
-        for (d = 0; d < 7; d++) {
+        for (d = 0; d < sizeof(bb_dirs) / sizeof(bb_dirs[0]); d++) {
             if (vfs_create(bb_dirs[d], VFS_DIRECTORY) == 0)
                 klog(LOG_INFO, "boot", "BlackBox: created %s",
                      bb_dirs[d]);

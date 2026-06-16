@@ -853,6 +853,11 @@ SHIM_DIR := shim
 # address metadata, not IXFS -- do not reintroduce static BB/IXFS offset vars.
 EFI_OFFSET  := 1048576
 
+# The system-disk recipe mutates $@ in place across several mkfs/mmd/mcopy steps.
+# Without this, a failure mid-recipe leaves a newer-but-half-built image that make
+# treats as up-to-date next run. Delete the partial target on any recipe failure.
+.DELETE_ON_ERROR:
+
 system-disk: $(SYSTEM_DISK)
 
 $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
@@ -905,7 +910,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	@# EFI + IXFS already source their realized offsets from .info; the Makefile
 	@# BB_OFFSET/BB_SIZE defaults only line up when --efi-size is unchanged, so a
 	@# non-default EFI_SIZE would otherwise format BlackBox at the wrong byte offset.
-	. $@.info && mkfs.fat -F 32 -n "BLACKBOX" --offset $$(( $$BB_OFFSET / 512 )) $@ $$(( $$BB_SIZE / 1024 ))
+	. $@.info && mkfs.fat -F 32 -n "BLACKBOX" -s 1 --offset $$(( $$BB_OFFSET / 512 )) $@ $$(( $$BB_SIZE / 1024 ))
 	. $@.info && mmd -i $@@@$$BB_OFFSET ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools
 	. $@.info && mmd -i $@@@$$BB_OFFSET ::Crash/WER ::Logs/Serial
 	@# Round-trip marker for test_fileio.exe. Static content built into the
