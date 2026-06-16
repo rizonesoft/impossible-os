@@ -60,6 +60,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [x]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [x]   |
+| 💎 |  16   | Crash/WER report retention in partition cleanup       | §10, §13          |  [ ]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
 > S = scope -- internal project hygiene.
@@ -158,15 +159,15 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 
 Move crash-persistent log recovery output to `X:\Crash\`.
 
-- [x] `klog_crash_write_to_disk()` writes to `X:\Crash\crash_recovery.log` when BlackBox mounted, C:\ fallback
-- [x] Future: `MEMORY.DMP` crash dumps (TODO-23) will also target `X:\Crash\`
+- [x] `klog_crash_write_to_disk()` writes to `X:\Crash\crash_recovery.log` when BlackBox mounted, C:\ fallback (producer: reserved-RAM ring-buffer survival, owned by `02-kernel-core/TODO-04` §8)
+- [x] Binary `MEMORY.DMP` / minidump writers also target `X:\Crash\` -- owned by `02-kernel-core/TODO-27` §5-§8 (this section owns only the X:\Crash\ destination)
 - [x] Fallback path uses `klog_dir` (C:\ logs directory)
 - [x] Commit: `"kernel: move crash recovery log to X:\\Crash\\"`
 
 **Test checkpoint:** Force panic with `crash_test=1`; on next boot, `crash_recovery.log` appears in `X:\Crash\`, not `C:\Impossible\System\Logs\`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 > [!NOTE]
-> Handoff: `TODO-14-boot-diagnostics.md` §6 will write `X:\Crash\last-panic.txt` when implemented -- same `X:\Crash\` mount and BlackBox path rules as this section.
+> Handoff: `TODO-14-boot-diagnostics.md` §5 writes `X:\Crash\last-panic.txt` (shipped) -- same `X:\Crash\` mount and BlackBox path rules as this section. Retention of the unbounded `X:\Crash\WER\` reports is owned by §16.
 
 ## 8. Perf and Diag -- boot-profile, hwdump to X:\Perf\ and X:\Diag\
 
@@ -283,6 +284,20 @@ Update cross-references across affected TODOs.
 
 ---
 
+## 16. Crash/WER Report Retention in Partition Cleanup
+
+§10's low-space cleanup prunes `Boot\` sessions and rotated `Logs\` files but ignores `X:\Crash\WER\*.json`. §13 stages one unique `PID_YYYYMMDDHHMMSS.json` per unhandled exception with no cap, so a user-mode crash loop can fill the 128 MiB partition until klog falls back to C:\ and crash diagnostics split across volumes. WER reports need the same retention discipline as logs (Win11 WER age-out + size cap; Linux apport / `coredumpctl` MaxUse).
+
+- [ ] Extend the BlackBox low-space cleanup pass (`src/kernel/main/boot_storage.c`, the §10 `MinFreeMiB` path) to prune `X:\Crash\WER\*.json` oldest-first (filename timestamp order) beyond a `MaxWerReports` cap
+- [ ] `MaxWerReports` hardcoded default (e.g. 64), same wire-to-registry follow-up as `MaxBootSessions` / `MinFreeMiB`
+- [ ] Also age out `X:\Crash\crash_recovery.log` if it grows unbounded (rotate or truncate-with-marker); `.dmp` binary rotation stays owned by `02-kernel-core/TODO-27` §5-§8 (no overlap)
+- [ ] Extend the cleanup log line (`"BlackBox: cleanup freed N KiB"`) to report WER reports pruned
+- [ ] Commit: `"kernel: WER/crash-report retention in BlackBox partition cleanup"`
+
+**Test checkpoint:** Stage more than `MaxWerReports` dummy JSON files in `X:\Crash\WER\`; boot -> serial cleanup message reports WER pruning; count drops to the cap; partition free stays above `MinFreeMiB`. Verify on QEMU WHPX, TCG, VirtualBox.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS                    |
@@ -297,6 +312,7 @@ Update cross-references across affected TODOs.
 | 💎 | Named partition discovery  | ✅ Volume label match      | ✅ LABEL= in fstab         | ✅ §3 -- GPT name match X:\         |
 | 💎 | Structured diagnostics dir | ⚠️ Scattered in C:\Windows | ⚠️ /var/log + /sys         | ✅ §4+§8 -- Logs/Boot/Crash/Diag    |
 | 💎 | Log space management       | ✅ CBS.log 20 MB cap       | ✅ logrotate + journald    | ✅ §10 -- aging + quota + cleanup   |
+| 💎 | Crash-report retention     | ✅ WER age-out + size cap  | ✅ apport / coredumpctl    | ✅ §16 -- WER JSON + log prune      |
 | 💎 | Dirty-bit / fsck on mount  | ✅ chkdsk on dirty FAT32   | ✅ fsck.fat on mount       | ✅ §12 -- dirty+fsck on mount       |
 | ⭐ | Cross-platform WER staging | ⚠️ WER on NTFS only        | ⚠️ apport on ext4 only     | ✅ §13 -- FAT32 WER JSON reports    |
 | 💎 | A/B + diagnostic coexist   | ❌ Recovery only           | ⚠️ A/B without diag part   | ✅ §14 -- 4-partition --ab layout   |
