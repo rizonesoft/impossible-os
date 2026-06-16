@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-06-16T02:26:16+02:00",
-  "total_suites": 1352,
-  "total_assertions": 4463,
+  "timestamp": "2026-06-16T02:38:20+02:00",
+  "total_suites": 1357,
+  "total_assertions": 4478,
   "files": [
-    {"file": "test_ab_boot.c", "suites": 26, "assertions": 38},
+    {"file": "test_ab_boot.c", "suites": 31, "assertions": 53},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
     {"file": "test_blackbox.c", "suites": 11, "assertions": 9},

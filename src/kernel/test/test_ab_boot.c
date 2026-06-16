@@ -290,6 +290,73 @@ static void test_ab_gpt_ixfs_slot_non_ixfs(void)
                    (uint64_t)(int64_t)-1, "EFI System GUID -> not a slot (-1)");
 }
 
+/* ---- Power-fail-atomic write target + generation (sec 7) ---- */
+
+static void test_ab_write_target_overwrites_invalid_first(void)
+{
+    /* An invalid copy is safe to overwrite (carries no good state). */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_write_target(0, 0u, 1, 5u), 0u,
+                   "copy0 invalid -> overwrite copy0");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_write_target(1, 5u, 0, 0u), 1u,
+                   "copy1 invalid -> overwrite copy1");
+}
+
+static void test_ab_write_target_overwrites_older_when_both_valid(void)
+{
+    /* Both valid: overwrite the LOWER-generation copy so the newer survives. */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_write_target(1, 3u, 1, 7u), 0u,
+                   "copy0 older (gen 3 < 7) -> overwrite copy0");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_write_target(1, 9u, 1, 4u), 1u,
+                   "copy1 older (gen 4 < 9) -> overwrite copy1");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_write_target(1, 6u, 1, 6u), 0u,
+                   "generation tie -> deterministic copy0");
+}
+
+static void test_ab_next_generation_strictly_greater(void)
+{
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_next_generation(0, 0u, 0, 0u), 1u,
+                   "no valid copy (blank/corrupt) -> generation 1");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_next_generation(1, 4u, 0, 0u), 5u,
+                   "one valid gen 4 -> 5");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_next_generation(1, 4u, 1, 9u), 10u,
+                   "max(4,9)+1 = 10");
+}
+
+static void test_ab_next_generation_ceiling(void)
+{
+    /* hi == 0xFFFFFFFE is still writable: +1 = 0xFFFFFFFF, strictly greater. */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_next_generation(1, 0xFFFFFFFEu, 0, 0u),
+                   0xFFFFFFFFu, "gen 0xFFFFFFFE -> 0xFFFFFFFF (still writable)");
+    /* hi == 0xFFFFFFFF is exhausted: no strictly-greater value -> refuse (0). */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_next_generation(1, 0xFFFFFFFFu, 0, 0u),
+                   0u, "gen 0xFFFFFFFF exhausted -> refuse sentinel 0");
+    /* An INVALID copy at 0xFFFFFFFF is ignored (only valid copies bound hi). */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_next_generation(0, 0xFFFFFFFFu, 1, 3u),
+                   4u, "invalid copy ignored -> max(valid)=3 -> 4");
+}
+
+static void test_ab_write_compose_at_ceiling_wins(void)
+{
+    /* Interaction: copy0 valid gen 0xFFFFFFFE, copy1 invalid. write_target picks
+     * copy1; next_generation = 0xFFFFFFFF. select_newest must then pick the
+     * just-written copy1 (0xFFFFFFFF > 0xFFFFFFFE), not the preserved copy0. */
+    struct ab_boot_metadata c0, c1;
+    const struct ab_boot_metadata *win = (const struct ab_boot_metadata *)0;
+    ab_make_valid(&c0, 0xFFFFFFFEu);     /* valid, gen 0xFFFFFFFE */
+    for (unsigned int i = 0u; i < AB_BOOT_META_SIZE; i++)
+        ((unsigned char *)&c1)[i] = 0u;  /* copy1 invalid (magic 0) */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_write_target(1, 0xFFFFFFFEu, 0, 0u), 1u,
+                   "ceiling: overwrite the invalid copy1");
+    unsigned int ng = ab_boot_meta_next_generation(1, 0xFFFFFFFEu, 0, 0u);
+    TEST_ASSERT_EQ((uint64_t)ng, 0xFFFFFFFFu, "ceiling: new gen 0xFFFFFFFF");
+    /* Simulate the write landing in copy1 at the new generation. */
+    ab_make_valid(&c1, ng);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_select_newest(&c0, &c1, &win), 1u,
+                   "both valid after ceiling write");
+    TEST_ASSERT_EQ((uint64_t)(win == &c1), 1u,
+                   "just-written copy1 (0xFFFFFFFF) wins over preserved copy0");
+}
+
 void test_register_ab_boot(void)
 {
     test_suite_register_cat("ab_boot: default record is valid",
@@ -344,4 +411,14 @@ void test_register_ab_boot(void)
                             test_ab_gpt_ixfs_slot_b, TEST_CAT_BOOT);
     test_suite_register_cat("ab_boot: gpt_ixfs_slot -- non-IXFS GUID rejected",
                             test_ab_gpt_ixfs_slot_non_ixfs, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: write target -- overwrites invalid copy first",
+                            test_ab_write_target_overwrites_invalid_first, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: write target -- overwrites older copy when both valid",
+                            test_ab_write_target_overwrites_older_when_both_valid, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: next generation -- strictly greater than valid copies",
+                            test_ab_next_generation_strictly_greater, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: next generation -- ceiling (0xFFFFFFFE writable, 0xFFFFFFFF refused)",
+                            test_ab_next_generation_ceiling, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: write compose -- just-written copy wins at ceiling",
+                            test_ab_write_compose_at_ceiling_wins, TEST_CAT_BOOT);
 }

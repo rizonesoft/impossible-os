@@ -259,4 +259,48 @@ ab_boot_meta_reconcile_gpt(int p_valid, int p_has_md, int b_valid, int b_has_md)
     return AB_GPT_FATAL;
 }
 
+/* ---- Power-fail-atomic write support (sec 7) ----
+ * The two redundant copies are updated one at a time. To make an update
+ * power-fail-atomic, the writer overwrites the copy that is SAFE TO LOSE -- an
+ * invalid copy (carries no good state) or, when both are valid, the
+ * LOWER-generation (older) one -- so a crash mid-write always leaves the OTHER
+ * copy (the prior newest-valid record) intact. The new record is stamped with
+ * a generation strictly higher than both stored copies so it becomes the
+ * newest-valid on the next read (ab_boot_meta_select_newest). These are pure
+ * functions of the two copies' (valid, generation) state -- shared + testable;
+ * the disk read-modify-write adapters live in the bootloader + kernel. */
+
+/* Return the copy index (0 or 1) the writer must overwrite. Prefer an invalid
+ * copy (index 0 before 1); when both are valid, the lower-generation copy (tie
+ * -> copy 0, deterministic). c0_gen/c1_gen are ignored when the matching
+ * cN_valid is 0. */
+static inline unsigned int
+ab_boot_meta_write_target(int c0_valid, unsigned int c0_gen,
+                          int c1_valid, unsigned int c1_gen)
+{
+    if (!c0_valid) return 0u;
+    if (!c1_valid) return 1u;
+    return (c0_gen <= c1_gen) ? 0u : 1u;  /* overwrite the older (or tie) copy */
+}
+
+/* Return the generation to stamp on the new record: STRICTLY GREATER than
+ * every valid stored copy so the just-written copy wins ab_boot_meta_select_newest.
+ * With no valid copy (first write to a blank/corrupt partition) the new
+ * generation is 1. Returns 0 -- the "refuse the write" sentinel, which this
+ * function never returns legitimately -- ONLY when the highest valid generation
+ * is already 0xFFFFFFFF (UINT32_MAX), where no strictly-greater value exists;
+ * the caller MUST then fail the write rather than commit a non-winning record
+ * (a generation counter exhausting 2^32 metadata writes is not reachable in
+ * practice). hi == 0xFFFFFFFE is still writable -> 0xFFFFFFFF. */
+static inline unsigned int
+ab_boot_meta_next_generation(int c0_valid, unsigned int c0_gen,
+                             int c1_valid, unsigned int c1_gen)
+{
+    unsigned int hi = 0u;
+    if (c0_valid && c0_gen > hi) hi = c0_gen;
+    if (c1_valid && c1_gen > hi) hi = c1_gen;
+    if (hi == 0xFFFFFFFFu) return 0u;  /* exhausted -- caller must refuse the write */
+    return hi + 1u;
+}
+
 #endif /* AB_BOOT_METADATA_H */
