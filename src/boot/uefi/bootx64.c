@@ -11168,6 +11168,47 @@ static EFI_STATUS esp_read_harddrive_node(EFI_HANDLE part_handle,
     return EFI_NOT_FOUND;
 }
 
+/* IoAlign-compliant block read (UEFI 2.10 spec 13.9: the ReadBlocks data buffer
+ * must be aligned to Media->IoAlign). Most firmware reports IoAlign <= 1, where
+ * any buffer is legal -- the fast path reads directly into `out`, byte-identical
+ * to a bare ReadBlocks. When IoAlign > 1, read into an aligned bounce buffer and
+ * copy to `out` so a caller's naturally-aligned stack/pool buffer still complies
+ * on large-sector NVMe / RAID HBAs. `byte_count` must be a whole number of
+ * blocks (ReadBlocks requirement). The IoAlign sanity bound mirrors the
+ * ab_bl_increment_tries A/B-metadata write path: cap at 4096, reject
+ * non-power-of-two, and guard the byte_count + align allocation against overflow
+ * -- buggy firmware advertising an implausible IoAlign is rejected
+ * (EFI_UNSUPPORTED), never used to size an overflowing AllocatePool. Returns the
+ * ReadBlocks status, or EFI_OUT_OF_RESOURCES / EFI_UNSUPPORTED before the read. */
+static EFI_STATUS bl_read_blocks_aligned(EFI_BLOCK_IO_PROTOCOL *bio,
+                                         UINT32 media_id, UINT64 lba,
+                                         UINTN byte_count, VOID *out)
+{
+    UINT32 align = bio->Media->IoAlign;
+
+    if (align <= 1u)
+        return bio->ReadBlocks(bio, media_id, lba, byte_count, out);
+
+    /* Reject implausible / non-power-of-two alignment before sizing the alloc. */
+    if (align > 4096u || (align & (align - 1u)) != 0u)
+        return EFI_UNSUPPORTED;
+    if (byte_count > (UINTN)(~(UINTN)0) - (UINTN)align)
+        return EFI_UNSUPPORTED;   /* byte_count + align would overflow */
+
+    UINT8 *raw = (UINT8 *)0;   /* AllocatePool pointer (for FreePool) */
+    EFI_STATUS status = gBS->AllocatePool(EfiLoaderData, byte_count + align,
+                                          (VOID **)&raw);
+    if (EFI_ERROR(status) || !raw)
+        return EFI_OUT_OF_RESOURCES;
+
+    UINT8 *aligned = (UINT8 *)(((UINTN)raw + (align - 1u)) & ~((UINTN)align - 1u));
+    status = bio->ReadBlocks(bio, media_id, lba, byte_count, aligned);
+    if (!EFI_ERROR(status))
+        efi_memcpy(out, aligned, byte_count);
+    gBS->FreePool(raw);
+    return status;
+}
+
 /* Validate the GPT type GUID for our partition by reading the parent
  * disk's GPT header + partition entry table. Sets
  * g_boot_info_ptr->esp_type_guid_valid on success. Returns EFI_SUCCESS
@@ -11241,8 +11282,8 @@ static EFI_STATUS esp_check_gpt_type_guid(EFI_HANDLE part_handle)
                    "Cannot allocate stack buffer to hold one block; "
                    "GPT header read aborted.");
     }
-    status = parent_bio->ReadBlocks(parent_bio, pm->MediaId, 1,
-                                     pm->BlockSize, hdr_buf);
+    status = bl_read_blocks_aligned(parent_bio, pm->MediaId, 1,
+                                    pm->BlockSize, hdr_buf);
     if (EFI_ERROR(status)) {
         boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
                    "ESP integrity: GPT header read failed",
@@ -11327,9 +11368,9 @@ static EFI_STATUS esp_check_gpt_type_guid(EFI_HANDLE part_handle)
     }
 
     UINT8 entry_blk[4096];
-    status = parent_bio->ReadBlocks(parent_bio, pm->MediaId,
-                                     hdr.partition_entry_lba + block_index,
-                                     pm->BlockSize, entry_blk);
+    status = bl_read_blocks_aligned(parent_bio, pm->MediaId,
+                                    hdr.partition_entry_lba + block_index,
+                                    pm->BlockSize, entry_blk);
     if (EFI_ERROR(status)) {
         boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
                    "ESP integrity: GPT partition entry read failed",
@@ -11385,7 +11426,7 @@ static void esp_check_fat_bpb(EFI_BLOCK_IO_PROTOCOL *bio,
                    "Partition BlockSize must be 512..4096 to host a "
                    "FAT BPB at LBA 0; ESP cannot be verified.");
     }
-    status = bio->ReadBlocks(bio, m->MediaId, 0, m->BlockSize, lba0);
+    status = bl_read_blocks_aligned(bio, m->MediaId, 0, m->BlockSize, lba0);
     if (EFI_ERROR(status)) {
         boot_fatal(BOOT_ERR_ESP_BPB,
                    "ESP integrity: BPB read failed at LBA 0",
@@ -12008,7 +12049,7 @@ static EFI_STATUS ab_load_gpt_table(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 header_lb
 
     if (header_lba > pm->LastBlock)
         return EFI_NOT_FOUND;
-    status = bio->ReadBlocks(bio, pm->MediaId, header_lba, pm->BlockSize, hdr_buf);
+    status = bl_read_blocks_aligned(bio, pm->MediaId, header_lba, pm->BlockSize, hdr_buf);
     if (EFI_ERROR(status))
         return status;
 
@@ -12056,8 +12097,25 @@ static EFI_STATUS ab_load_gpt_table(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 header_lb
     status = gBS->AllocatePool(EfiLoaderData, (UINTN)alloc_bytes, (VOID **)&table);
     if (EFI_ERROR(status) || !table)
         return EFI_NOT_FOUND;
-    status = bio->ReadBlocks(bio, pm->MediaId, hdr.partition_entry_lba,
-                             (UINTN)alloc_bytes, table);
+    /* AllocatePool returns 8-byte-aligned memory (UEFI 2.10 spec 7.2), so the
+     * table already satisfies IoAlign <= 8 -- read the whole array directly.
+     * For IoAlign > 8 the pool table is under-aligned; read block-by-block
+     * through the small aligned bounce + copy into the table, avoiding a second
+     * full-size table allocation (peak memory matters on the A/B primary+backup
+     * path that holds both tables at once). */
+    if (pm->IoAlign <= 8u) {
+        status = bio->ReadBlocks(bio, pm->MediaId, hdr.partition_entry_lba,
+                                 (UINTN)alloc_bytes, table);
+    } else {
+        status = EFI_SUCCESS;
+        for (UINT64 b = 0; b < entry_blocks; b++) {
+            status = bl_read_blocks_aligned(bio, pm->MediaId,
+                         hdr.partition_entry_lba + b, pm->BlockSize,
+                         table + b * (UINT64)pm->BlockSize);
+            if (EFI_ERROR(status))
+                break;
+        }
+    }
     if (EFI_ERROR(status)) {
         gBS->FreePool(table);
         return status;
@@ -12238,7 +12296,7 @@ static int ab_read_meta_copy(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 md_lba,
     if (lba > pm->LastBlock)
         return 0;
 
-    status = bio->ReadBlocks(bio, pm->MediaId, lba, bs, blk);
+    status = bl_read_blocks_aligned(bio, pm->MediaId, lba, bs, blk);
     if (EFI_ERROR(status))
         return 0;
     efi_memcpy(out, &blk[in_blk], AB_BOOT_META_SIZE);

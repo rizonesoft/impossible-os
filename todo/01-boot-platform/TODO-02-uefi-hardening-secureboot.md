@@ -82,7 +82,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI | §11    |  [/]   |
 | 💎  |  17   | SBAT revocation metadata in boot artifacts | §9, §11    |  [x]   |
 | 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17 |  [/]   |
-| 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13      |  [ ]   |
+| 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13      |  [/]   |
 
 ---
 
@@ -631,14 +631,22 @@ The UKI pack step (`scripts/build.sh`) runs `objcopy --add-section ... "$UKI_STU
 
 UEFI 2.10 §13.9 (`EFI_BLOCK_IO_PROTOCOL.ReadBlocks`) requires the data buffer to be aligned to `Media->IoAlign`; an under-aligned buffer returns `EFI_INVALID_PARAMETER` or, on some firmware, silently corrupts via an unaligned DMA. The bootloader's block readers -- `esp_check_gpt_type_guid()` / `esp_check_fat_bpb()` (§13) and the A/B metadata READ path (`ab_read_meta_copy`, TODO-21 §3) -- read into plain stack buffers aligned only naturally (1/8/16 bytes), NOT to `Media->IoAlign`. This pre-existing codebase-wide idiom has booted on the tested firmware (which reports `IoAlign <= 1`, so any buffer is legal); it is a latent spec-compliance gap on firmware reporting `IoAlign > 8` (large-sector NVMe, some enterprise RAID HBAs). The A/B WRITE path (`ab_bl_increment_tries`, TODO-21 §4) already uses an aligned bounce buffer; the READ paths should match. Surfaced by Codex during the TODO-21 §4 review. Not an A/B regression (the GPT readers run unaligned on every boot today) -- a general bootloader robustness item.
 
-- [ ] Add a shared `bl_read_blocks_aligned()` helper in `bootx64.c`: query `Media->IoAlign`, read via an aligned bounce buffer (mirror the `raw`/`buf` pattern in `ab_bl_increment_tries`), no-op fast path when `IoAlign <= 1`.
-- [ ] Retrofit the bare-stack-buffer readers: `esp_check_gpt_type_guid`, `esp_check_fat_bpb` (§13), `ab_read_meta_copy` (TODO-21 §3) to use the aligned helper.
-- [ ] Verify on a QEMU NVMe 4K-block namespace (`IoAlign > 8`, TCG) that GPT/ESP/A-B reads still succeed; confirm the `IoAlign <= 1` fast path is unchanged via smoke.
-- [ ] Commit: `"boot: ReadBlocks IoAlign-compliant bounce buffers for GPT/FAT/A-B readers"`
+- [x] `bl_read_blocks_aligned()` in `bootx64.c`: `IoAlign <= 1` fast path reads direct (byte-identical); else aligned bounce + copy. IoAlign sanity bound (4096 cap, power-of-two, `byte_count + align` overflow guard) -> rejected firmware returns `EFI_UNSUPPORTED`; alloc failure -> `EFI_OUT_OF_RESOURCES`; callers stay fail-closed.
+- [x] Retrofitted the bare-stack-buffer readers: `esp_check_gpt_type_guid` (GPT header + entry block), `esp_check_fat_bpb` (LBA 0), `ab_read_meta_copy`, + `ab_load_gpt_table` header. The GPT entry-ARRAY read keeps the pool table (8-byte-aligned, satisfies `IoAlign <= 8` direct) + reads block-by-block via the helper only when `IoAlign > 8` -- no second full-size table bounce.
+- [/] `IoAlign <= 1` fast path smoke-validated unregressed (ESP GPT type-GUID + FAT BPB + A/B select pass, KVM 2.35s). The `IoAlign > 8` bounce path is not reachable under QEMU (virtual block devices report `IoAlign <= 1`); it mirrors the shipped `ab_bl_increment_tries` aligned path and needs a bare-metal large-sector disk.
+- [x] Commit: `"boot: ReadBlocks IoAlign-compliant bounce buffers for GPT/FAT/A-B readers"`
 
 **Test checkpoint:** On firmware reporting `IoAlign <= 1`, behavior is byte-identical (smoke PASS, no regression). On a `IoAlign > 8` device, the GPT/FAT/A-B reads succeed where an unaligned buffer would have returned `EFI_INVALID_PARAMETER`. Test on: QEMU TCG (NVMe 4K-block namespace), bare metal (large-sector disk if available).
 
-> **Test runner:** N/A (UEFI pre-EBS block-IO; no kernel unit surface) | validation: QEMU TCG NVMe-4K smoke + bare metal
+> **Test runner:** N/A (pre-EBS UEFI bootloader block I/O -- no kernel test surface) | the `IoAlign <= 1` fast path is smoke-validated unregressed (every retrofitted reader passes); the `IoAlign > 8` bounce path mirrors the shipped `ab_bl_increment_tries` aligned write + needs a bare-metal large-sector disk
+
+> **Notes:**
+> - **What shipped:** `bl_read_blocks_aligned()` in `bootx64.c` (IoAlign-aligned bounce read with a 4096/power-of-two/overflow sanity bound) + retrofits of `esp_check_gpt_type_guid`, `esp_check_fat_bpb`, `ab_read_meta_copy`, `ab_load_gpt_table`; `EFI_OUT_OF_RESOURCES` added to `efi.h`.
+> - **How it runs:** every bootloader block reader goes through the helper; on `IoAlign <= 1` (all tested firmware) it reads direct -- byte-identical; on `IoAlign > 1` it bounces through an aligned buffer. The large GPT entry-array read avoids a second full-size buffer (pool table is 8-byte-aligned for `IoAlign <= 8`; block-by-block bounce only above that).
+> - **Design adoptions:** the IoAlign sanity bound lives inside the helper (rejected firmware -> `EFI_UNSUPPORTED`, callers fail-closed); the GPT table is NOT double-allocated (peak memory matters on the A/B primary+backup path). Evidence in commit message.
+> - **Downstream effects:** closes the codebase-wide read-IoAlign gap filed from the TODO-21 §4 review; the A/B WRITE path was already aligned.
+> - **Canonical doc:** UEFI 2.10 spec 13.9 (`EFI_BLOCK_IO_PROTOCOL.ReadBlocks` IoAlign requirement) + `bl_read_blocks_aligned` in `bootx64.c`.
+> - **Scope boundary:** §19 owns the bootloader read alignment; the A/B write path is TODO-21 §4; ESP integrity gating is §13.
 
 ---
 
