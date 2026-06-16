@@ -42,11 +42,11 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | Software watchdog via LAPIC NMI timer           | D01 T10 §2 (nested-NMI), T09 §10 (AP IST) |  [/]   |
-| 💎  |   2   | Per-phase timeout configuration                 | §1         |  [ ]   |
-| 💎  |   3   | Watchdog pet at each boot_progress() call       | §1, §2     |  [ ]   |
-| 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T21 §4 |  [ ]   |
+| 💎  |   2   | Per-phase timeout configuration                 | §1         |  [/]   |
+| 💎  |   3   | Watchdog pet at each boot_progress() call       | §1, §2     |  [/]   |
+| 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T21 §4 |  [/]   |
 | 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --     |  [x]   |
-| ⭐  |   6   | Watchdog status in VPD display                  | §1–§5      |  [ ]   |
+| ⭐  |   6   | Watchdog status in VPD display                  | §1-§5      |  [/]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
 > ⭐ = exclusive -- watchdog countdown visible in VPD during boot.
@@ -95,6 +95,9 @@ Each boot phase gets a maximum allowed duration.
 
 **Test checkpoint:** Normal boot completes well within all timeouts. Serial shows `"Watchdog: Phase 2 timeout=30s"` at phase entry.
 
+> **Verified:** 2026-06-16 | 0/6 items (deferred) | build N/A | blocked on §1 (LAPIC NMI per-phase timer)
+> **Deferred:** [M] per-phase timeout enforcement needs a per-phase-reloadable watchdog; §1 (LAPIC NMI) is deferred and the shipped §5 WDAT is a single coarse boot-wide timeout. Unblock via §1, OR re-scope onto §5 by reprogramming WDAT SET_COUNTDOWN at each phase boundary -> XREF: 01-boot-platform/TODO-23 §1 (item: "watchdog_pet() reload LAPIC NMI timer with current phase's timeout")
+
 ---
 
 ## 3. Watchdog Pet at boot_progress()
@@ -108,6 +111,9 @@ Every `boot_progress()` / `POST16()` call resets the watchdog countdown.
 - [ ] Commit: `"boot: watchdog pet at every boot_progress -- reset countdown on progress"`
 
 **Test checkpoint:** Add POST codes around a slow operation. Watchdog doesn't fire (pet keeps resetting it).
+
+> **Verified:** 2026-06-16 | 0/5 items (deferred) | build N/A | NMI pet blocked on §1; WDAT pet shipped in §5
+> **Deferred:** [M] the boot_progress() pet hook for the HARDWARE WDAT already shipped in §5 (`hw_watchdog_pet()` runs from `boot_progress()`); this section's LAPIC-NMI-timer reload is what remains and is blocked on the deferred §1 -> XREF: 01-boot-platform/TODO-23 §1 (item: "watchdog_pet() reload LAPIC NMI timer with current phase's timeout")
 
 ---
 
@@ -124,6 +130,9 @@ When watchdog fires, produce useful diagnostics before rebooting.
 - [ ] Commit: `"boot: watchdog reboot with diagnostics -- POST code, RIP, NVRAM flag"`
 
 **Test checkpoint:** Intentional hang → watchdog fires → reboot → serial shows previous hang location; the slot's pre-EBS try (TODO-21) is already consumed, so 3 hung boots roll back without any watchdog-side A/B write.
+
+> **Verified:** 2026-06-16 | 0/7 items (deferred) | build N/A | NMI-handler diagnostics blocked on §1
+> **Deferred:** [M] rich hang diagnostics (phase, RIP, RSP, last POST entries) require a watchdog INTERRUPT handler; a HW WDAT reset (§5) reboots the board with no handler to run, so this is fundamentally §1-dependent. The was-watchdog-reset NVRAM flag has a partial WDAT path (a §5 boot-status-persistence follow-up) -> XREF: 01-boot-platform/TODO-23 §1 (item: "NMI handler is the watchdog ISR")
 
 ---
 
@@ -171,16 +180,19 @@ Show watchdog countdown in the VPD display during boot.
 
 **Test checkpoint:** Boot with `postbars=2` (diagnostic mode) -- watchdog countdown visible.
 
+> **Verified:** 2026-06-16 | 0/4 items (deferred) | build N/A | blocked on §1-§4 (per-phase + per-second NMI tick)
+> **Deferred:** [L] the per-phase / per-second countdown display is driven by the LAPIC timer tick and the per-phase model from §1-§4 (all deferred); the shipped §5 WDAT exposes only a coarse boot-wide countdown (GET_CURRENT_COUNTDOWN) with no per-phase breakdown -> XREF: 01-boot-platform/TODO-23 §2 (item: "Timeouts stored in boot_watchdog_timeouts[] -- configurable via boot.conf watchdog_timeout=")
+
 ---
 
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                      | 🚀 Impossible OS             |
 |----|----------------------------|-------------------------|----------------------------|---------------------------|
-| 💎 | Boot hang detection        | ✅ Boot watchdog        | ✅ systemd watchdog        | ⬜ §1–§3                  |
-| 💎 | Hardware watchdog          | ✅ ACPI WDT driver      | ✅ iTCO_wdt driver         | ✅ §5 WDAT (I/O, fail-closed disarm) |
-| 💎 | Hang → rollback            | ✅ Automatic Repair     | ⚠️ Manual intervention     | ⬜ §4 + T21               |
-| ⭐ | Watchdog in boot display   | ❌ Hidden               | ❌ Hidden                  | ⬜ §6 🚀                  |
+| 💎 | Boot hang detection        | ✅ Boot watchdog        | ✅ systemd watchdog        | ⚠️ §5 WDAT coarse; §1-§3 NMI deferred |
+| 💎 | Hardware watchdog          | ✅ ACPI WDT driver      | ✅ iTCO_wdt driver         | ✅ §5 WDAT (I/O, fail-closed disarm)  |
+| 💎 | Hang → rollback            | ✅ Automatic Repair     | ⚠️ Manual intervention     | ⚠️ T21 try-consume; §4 diag deferred  |
+| ⭐ | Watchdog in boot display   | ❌ Hidden               | ❌ Hidden                  | ⬜ §6 (deferred)                      |
 
 ---
 
