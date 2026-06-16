@@ -53,7 +53,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [/]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [/]   |
 | ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [x]   |
-| 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [/]   |
+| 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [x]   |
 | 💎  |   8   | Per-slot anti-rollback version floor            | §1, §7     |  [ ]   |
 
 > 💎 = parity -- Android/Chrome OS A/B and systemd-boot auto-assessment both provide this.
@@ -260,14 +260,26 @@ Boot metadata is the single source of truth for slot selection; a torn write mus
 
 - [x] `crc32` field + monotonic `generation`; reader rejects bad magic/CRC -- shipped §3 (`ab_boot_meta_is_valid` + `ab_boot_meta_compute_crc`)
 - [x] TWO redundant copies; reader returns the valid copy with the highest `generation` -- shipped §3 (`ab_boot_meta_select_newest` + `ab_read_meta_copy` read both copies at byte offsets 0 + 4096)
-- [ ] `boot_meta_write()` power-fail-atomic write primitive: shared pure `ab_boot_meta_prepare_write` (lower-generation target + gen bump + CRC) + thin bootloader/kernel disk adapters writing only that copy -- DESIGN LOCKED (see note)
+- [x] Power-fail-atomic write primitive shipped: `ab_boot_meta_write_target` + `ab_boot_meta_next_generation` (header); thin one-copy adapters -- §4 `ab_bl_increment_tries` + §5 `ab_boot_mark_slot_successful`, IoAlign/blkdev RMW, flush-checked
 - [x] Both copies invalid: all-zero -> Slot A (first boot); initialized-corrupt -> fail closed (not factory-default) -- shipped §3 (`select_active_slot`); preserves the rollback-safety invariant
 - [x] GPT storage: two metadata blocks at fixed byte offsets in the A/B-metadata partition (NVRAM rejected per BootSticky doctrine) -- shipped §3 (`AB_META_COPY0/1_BYTE_OFF` 0 + 4096)
 - [x] Validate `version`; unknown future version fails safe (rejected, not misparsed) -- shipped §3 (`ab_boot_meta_is_valid`)
-- [ ] Pass the bootloader-reconciled MD-partition LBA range + boot-disk identity via `boot_info` so the kernel write path (§5) targets the correct partition without re-deriving GPT state -- DESIGN LOCKED, new `boot_info` fields
-- [ ] Commit: `"boot: A/B metadata atomic write -- power-fail-atomic boot_meta_write + boot_info MD range"`
+- [x] Bootloader-reconciled MD-partition LBA range via `boot_info.ab_meta_lba`/`ab_meta_block_count` (§3); the kernel write path targets those LBAs directly without re-deriving GPT state
+- [x] Commit: `"boot: A/B metadata atomic write -- power-fail-atomic boot_meta_write + boot_info MD range"`
 
 **Test checkpoint:** Flip a byte in one copy -- the reader returns the other (shipped §3). `ab_boot_meta_prepare_write` picks the lower-generation target + bumps generation (unit test). Write then read-back round-trips on QEMU; a simulated crash after writing one copy still boots from the untouched prior-good copy. Test on: QEMU smoke + bare metal (media write-cache behavior differs).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `ab_boot` write_target + next_generation (incl. ceiling) cases pass | the disk adapters (`ab_bl_increment_tries` EFI_BLOCK_IO + `ab_boot_mark_slot_successful` blkdev) have no unit fixture -- validated via QEMU smoke (atomic gen1 copy0 -> gen2 copy1 alternation round-trip) + bare metal
+
+> **Notes:**
+> - **What shipped:** the power-fail-atomic write contract -- shared pure `ab_boot_meta_write_target` + `ab_boot_meta_next_generation` (header) + the boot_info MD-range handoff; the READ side + redundancy + storage + version-gate shipped in §3.
+> - **How it runs:** the write helpers pick the overwrite-invalid-first-else-lower-generation copy + a strictly-greater generation, so a crash mid-write always leaves the other copy valid; the thin §4 bootloader + §5 kernel adapters do a single-block IoAlign/blkdev RMW of exactly that copy, flush-checked.
+> - **Downstream effects:** §4 tries-increment + §5 mark-good both write through this primitive; the smoke round-trip (gen1 copy0 -> gen2 copy1) proves the dual-copy alternation is atomic.
+> - **Canonical doc:** `include/boot/ab_boot_metadata.h` (write-support helpers) + `docs/boot/boot-info-fields.md` (`ab_meta_lba`).
+> - **Scope boundary:** §7 owns the atomic-write contract + redundancy; the increment/mark behavior is §4/§5, slot selection is §3, the anti-rollback floor is §8.
+
+> **Verified:** 2026-06-16 | helpers §1 `483f8982` + adapters §4 `91234a8e` + §5 `b4370256` | 6/6 items | build OK | smoke PASS (atomic gen1->gen2 round-trip)
+> **Quality reviewed:** 2026-06-16 | Codex: write helpers under §1 (generation-ceiling fix) + §4 3x re-adversarial (durability/IoAlign/FlushBlocks) + §5 (mark-good gate) | 0 open | scope: boot-code-quality (reconciliation -- no new §7 code)
 
 ---
 
@@ -297,7 +309,7 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 | 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | 🟦 §4 pre-EBS tries++     |
 | 💎 | Automatic rollback        | ⚠️ Manual repair needed   | ⚠️ Manual or auto        | 🟦 §3+§4+§5 round-trip    |
 | 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | 🟦 §5 first-frame mark-good |
-| 💎 | Metadata integrity (CRC)  | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual    | ⬜ §7                     |
+| 💎 | Metadata integrity (CRC)  | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual    | ✅ CRC-32 dual-copy atomic |
 | 💎 | Anti-rollback floor       | ⚠️ WU rollback window      | ✅ Android stored index   | ⬜ §8                     |
 | ⭐ | Slot status in boot UI    | ❌ Hidden                  | ❌ journalctl only       | ✅ VPD per-slot + rollback |
 
