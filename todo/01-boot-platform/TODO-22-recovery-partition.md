@@ -45,10 +45,10 @@ title: "TODO-22 -- Recovery Partition & Self-Repair"
 | 💎  |   1   | Recovery partition in disk layout              | --                |  [/]   |
 | 💎  |   2   | Recovery load-path contract + kernel recovery-mode entry (entry-store model) | §1, T07 §4+§9 |  [/]   |
 | 💎  |   3   | Filesystem integrity check (IXFS fsck)         | §2 (recovery invocation) |  [x]   |
-| 💎  |   4   | Backup kernel restore                          | §2               |  [ ]   |
-| 💎  |   5   | Boot metadata reset                            | §2, T21 §1       |  [ ]   |
-| 💎  |   6   | NVRAM boot entry reconstruction                | §2               |  [ ]   |
-| ⭐  |   7   | Recovery UI with status display                | §2–§6            |  [ ]   |
+| 💎  |   4   | Backup kernel restore                          | §2               |  [/]   |
+| 💎  |   5   | Boot metadata reset                            | §2, T21 §1       |  [/]   |
+| 💎  |   6   | NVRAM boot entry reconstruction                | §2               |  [/]   |
+| ⭐  |   7   | Recovery UI with status display                | §2–§6            |  [/]   |
 
 > 💎 = parity -- Windows WinRE and Chrome OS recovery both provide these.
 > ⭐ = exclusive -- clear status display during recovery with step-by-step progress.
@@ -157,6 +157,14 @@ Restore a known-good kernel from recovery partition to the active slot.
 
 **Test checkpoint:** Corrupt Slot A kernel. Enter recovery. Restore backup. Reboot → Slot A boots successfully.
 
+> **Notes:**
+> - **Status:** deferred -- backup-kernel restore is a recovery-context VFS operation (copy `kernel.bak` between recovery-mounted partitions); no standalone pure surface.
+> - **Blocker:** needs the §2 recovery boot path + mounted slot/recovery partitions; the `kernel.bak` populate already lands in §1.
+> - **Scope boundary:** §4 owns the restore op; §2 owns the recovery flow that invokes it; the `kernel.bak` refresh-on-mark-good is TODO-21 §5.
+
+> **Verified:** 2026-06-16 | 0/4 items (deferred) | build N/A | blocked on §2 recovery flow
+> **Deferred:** [M] backup-kernel restore is a recovery-flow op blocked on the recovery boot path -> XREF: 01-boot-platform/TODO-22 §2 (item: "Kernel recovery-mode entry point: Phase-3 routes")
+
 ---
 
 ## 5. Boot Metadata Reset
@@ -167,6 +175,14 @@ Recovery can reset A/B boot metadata to a clean state.
 - [ ] Reset inactive slot to tries=0, successful=0
 - [ ] Clear any pending update flags
 - [ ] Commit: `"recovery: boot metadata reset -- clean A/B state"`
+
+> **Notes:**
+> - **Status:** deferred -- A/B metadata reset runs in the recovery context (writes the metadata partition); the clean-state computation reuses TODO-21 `ab_boot_metadata`.
+> - **Blocker:** needs the §2 recovery boot path + the metadata-write context; no standalone pure surface beyond TODO-21's factory-init.
+> - **Scope boundary:** §5 owns the reset op; §2 owns the recovery flow; TODO-21 §1 owns the `ab_boot_metadata` format.
+
+> **Verified:** 2026-06-16 | 0/3 items (deferred) | build N/A | blocked on §2 recovery flow
+> **Deferred:** [M] A/B metadata reset is a recovery-flow op blocked on the recovery boot path -> XREF: 01-boot-platform/TODO-22 §2 (item: "Kernel recovery-mode entry point: Phase-3 routes")
 
 ---
 
@@ -183,6 +199,14 @@ If UEFI NVRAM boot entries are lost (firmware reset, battery pull), rebuild them
 
 **Test checkpoint:** Clear all NVRAM boot entries. Reboot → fallback.efi triggers → NVRAM rebuilt → normal boot works.
 
+> **Notes:**
+> - **Status:** deferred -- NVRAM / PlatformRecovery reconstruction runs in the recovery bootloader (pre-EBS UEFI variable I/O) and consumes the TODO-07 entry store.
+> - **Blocker:** needs the §2 recovery boot path + the TODO-07 boot-entry store; UEFI var I/O has no standalone pure surface.
+> - **Scope boundary:** §6 owns the NVRAM rebuild; §2 owns the recovery loader; TODO-07 owns the entry store it registers against.
+
+> **Verified:** 2026-06-16 | 0/6 items (deferred) | build N/A | blocked on §2 + TODO-07 entry store
+> **Deferred:** [M] NVRAM/PlatformRecovery reconstruction is a recovery-bootloader op blocked on the recovery boot path -> XREF: 01-boot-platform/TODO-22 §2 (item: "Recovery entry REGISTRATION owned by TODO-07")
+
 ---
 
 ## 7. Recovery UI
@@ -196,6 +220,14 @@ User-visible recovery interface with clear status.
 - [ ] Commit: `"recovery: text-mode recovery UI with repair actions"`
 
 **Test checkpoint:** Enter recovery → menu displayed → select "Repair filesystem" → fsck runs with progress → reboot option.
+
+> **Notes:**
+> - **Status:** deferred -- the recovery UI dispatches §3 fsck / §4 restore / §5 reset / §6 NVRAM; it cannot exist without the recovery flow and those operations.
+> - **Blocker:** needs §2-§6 (the recovery flow + every operation the menu invokes) + keyboard/serial input (TODO-18).
+> - **Scope boundary:** §7 owns the menu + progress UI; §2-§6 own the operations; §3 fsck is the one already shipped.
+
+> **Verified:** 2026-06-16 | 0/4 items (deferred) | build N/A | blocked on §2-§6
+> **Deferred:** [M] recovery UI is blocked on the recovery flow + the operations it dispatches -> XREF: 01-boot-platform/TODO-22 §2 (item: "Shows `"Impossible OS Recovery Environment"`")
 
 ---
 
