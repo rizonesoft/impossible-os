@@ -12098,12 +12098,14 @@ static EFI_STATUS ab_load_gpt_table(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 header_lb
     if (EFI_ERROR(status) || !table)
         return EFI_NOT_FOUND;
     /* AllocatePool returns 8-byte-aligned memory (UEFI 2.10 spec 7.2), so the
-     * table already satisfies IoAlign <= 8 -- read the whole array directly.
-     * For IoAlign > 8 the pool table is under-aligned; read block-by-block
-     * through the small aligned bounce + copy into the table, avoiding a second
-     * full-size table allocation (peak memory matters on the A/B primary+backup
-     * path that holds both tables at once). */
-    if (pm->IoAlign <= 8u) {
+     * table satisfies any POWER-OF-TWO IoAlign <= 8 (0/1/2/4/8) -- read the
+     * whole array directly. A non-power-of-two IoAlign (3/5/6/7) is NOT
+     * satisfied by 8-byte alignment and is rejected by bl_read_blocks_aligned;
+     * route those (and IoAlign > 8) through the helper block-by-block so the
+     * single enforcement point fails closed (EFI_UNSUPPORTED) on bad alignment.
+     * Block-by-block also avoids a second full-size table allocation (peak
+     * memory matters on the A/B primary+backup path that holds both tables). */
+    if (pm->IoAlign <= 8u && (pm->IoAlign & (pm->IoAlign - 1u)) == 0u) {
         status = bio->ReadBlocks(bio, pm->MediaId, hdr.partition_entry_lba,
                                  (UINTN)alloc_bytes, table);
     } else {

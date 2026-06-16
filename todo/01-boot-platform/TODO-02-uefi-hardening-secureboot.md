@@ -648,6 +648,9 @@ UEFI 2.10 §13.9 (`EFI_BLOCK_IO_PROTOCOL.ReadBlocks`) requires the data buffer t
 > - **Canonical doc:** UEFI 2.10 spec 13.9 (`EFI_BLOCK_IO_PROTOCOL.ReadBlocks` IoAlign requirement) + `bl_read_blocks_aligned` in `bootx64.c`.
 > - **Scope boundary:** §19 owns the bootloader read alignment; the A/B write path is TODO-21 §4; ESP integrity gating is §13.
 
+> **Verified:** 2026-06-16 | commit `7292f79e` + pow2-guard fix | 2/3 items | build OK | smoke PASS (KVM 1.99s, every retrofitted reader unregressed on the IoAlign<=1 fast path)
+> **Quality reviewed:** 2026-06-16 | Codex 5x (design, adversarial, consistency, perf) | 1H+2M fixed, 0 open | scope: boot-code-quality (re-adversarial skipped: 1-line pow2-guard fix)
+
 ---
 
 ## OS Comparison
