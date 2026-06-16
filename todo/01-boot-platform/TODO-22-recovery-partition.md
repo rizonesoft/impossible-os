@@ -43,7 +43,7 @@ title: "TODO-22 -- Recovery Partition & Self-Repair"
 | ⭐  | Order | Deliverable                                   | Depends On       | Status |
 | --- | :---: | --------------------------------------------- | ---------------- | :----: |
 | 💎  |   1   | Recovery partition in disk layout              | --                |  [/]   |
-| 💎  |   2   | Recovery bootloader (minimal UEFI app)         | §1               |  [ ]   |
+| 💎  |   2   | Recovery load-path contract + kernel recovery-mode entry (entry-store model) | §1, T07 §4+§9 |  [/]   |
 | 💎  |   3   | Filesystem integrity check (IXFS fsck)         | §2               |  [ ]   |
 | 💎  |   4   | Backup kernel restore                          | §2               |  [ ]   |
 | 💎  |   5   | Boot metadata reset                            | §2, T21 §1       |  [ ]   |
@@ -86,17 +86,30 @@ Add a read-only recovery partition to the GPT disk layout.
 
 ## 2. Recovery Bootloader
 
-Minimal UEFI application that boots the recovery kernel.
+**Design-locked + deferred [/] 2026-06-16 (Codex design review, 3 HIGH + cross-TODO reconciliation).** The original "standalone `recovery.efi` at the `\EFI\BOOT\BOOTX64.EFI` fallback path loading `kernel.bak`" is architecturally rejected -- recovery boots through the existing bootloader + TODO-07 boot-entry store, NOT a forked binary. See NOTE for the three HIGH findings and the blocker chain.
 
-- [ ] Separate UEFI app: `recovery.efi` -- stripped down version of `bootx64.c`
-- [ ] Installed at both `\EFI\ImpossibleOS\recovery.efi` AND `\EFI\BOOT\BOOTx64.EFI` (UEFI fallback path)
-- [ ] Loads `recovery.exe` from recovery partition
-- [ ] Publish recovery-image descriptor and shared `boot_path=recovery` / reason codes through TODO-01 §4 and §12 so the kernel and diagnostics can distinguish recovery boot from a normal cold boot. Use `BOOT_PAYLOAD_RECOVERY_IMAGE` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h); the TODO-01 §4 validator retains the region through the overlap + packed-prefix check before recovery.efi's kernel dereferences the image. -> XREF: [`01-boot-platform/TODO-01 §4`](../01-boot-platform/TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
-- [ ] Shows: `"Impossible OS Recovery Environment"` on screen
-- [ ] Does NOT touch A/B slots -- operates only on recovery partition
-- [ ] Commit: `"boot: recovery bootloader -- minimal UEFI app at fallback path"`
+- [/] Recovery boots via a `kind=recovery` entry through the existing `bootx64.c` producer (flips `boot_path=BOOT_PATH_RECOVERY`); ALREADY SHIPPED by TODO-07 §4. -> XREF: [`01-boot-platform/TODO-07 §4`](TODO-07-boot-entry-store-menu-policy.md)
+- [ ] Kernel recovery-mode entry point: Phase-3 routes `boot_path==BOOT_PATH_RECOVERY` into the recovery flow (§3-§7) instead of normal desktop init. §2's real deliverable; non-hollow only once §3-§7 land.
+- [ ] Recovery-load-path contract: define `BOOT_ENTRY_KIND_RECOVERY` + the `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD` sentinel TODO-07 §9 consumes. -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md)
+- [ ] Recovery entry REGISTRATION owned by TODO-07 §9 (integration) + §16 (first-install seeding); §2 provides the load path they register against. -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md)
+- [ ] Shows `"Impossible OS Recovery Environment"` -- rendered by the §7 recovery UI on the recovery-mode entry path
+- [ ] Does NOT touch A/B slots -- recovery operates only on the recovery partition
+- [ ] DROPPED: standalone `recovery.efi` + `\EFI\BOOT\BOOTX64.EFI` fallback-path install (replaces NORMAL boot, HIGH; forked binary drifts vs boot_info validation, HIGH)
+- [ ] Commit: `"boot: recovery-mode kernel entry + load-path contract (entry-store model)"`
 
-**Test checkpoint:** Delete normal UEFI boot entry from NVRAM. System falls back to `\EFI\BOOT\BOOTx64.EFI` → recovery environment loads.
+**Test checkpoint (deferred):** a registered `kind=recovery` entry (TODO-07 §9) boots through the existing bootloader; the kernel logs `boot_path=RECOVERY` and enters the recovery flow; the normal boot entry is unaffected. Cannot run until TODO-07 §9 registration + §3-§7 recovery flow land.
+
+> **Test runner:** N/A (deferred -- design-locked, blocked on TODO-07 §9 registration + §3-§7 flow) | validation: §2 Test checkpoint once the load path is registered and the flow lands
+
+> **Notes:**
+> - **Why deferred:** 3 HIGH design findings reject the as-written §2 -- fallback-path install replaces NORMAL boot, `kernel.bak` load is a smoke target, forked binary BSS-zero producer hits `BOOT_FATAL` (detail in commit).
+> - **Corrected architecture:** recovery boots via the TODO-07 entry store through the EXISTING hardened `bootx64.c` producer (no forked binary, no producer drift); TODO-07 §4 already ships `kind=recovery -> boot_path=RECOVERY`.
+> - **§2 real scope (post-correction):** the kernel recovery-mode entry point + the `BOOT_ENTRY_KIND_RECOVERY`/`ALL_PATHS_BAD` load-path contract; the recovery FLOW is §3-§7.
+> - **Cross-TODO deadlock:** TODO-07 §9 (recovery entry integration, deferred) is blocked on "TODO-22 §2 (recovery load path)"; §2 defines + defers that contract so §9 has a concrete target.
+> - **Scope boundary:** §2 = load-path contract + kernel recovery-mode entry; TODO-07 §9/§16 own registration; §3-§7 own the flow.
+
+> **Verified:** 2026-06-16 | design-corrected, 0/7 functional items (deferred) | build N/A (no code shipped this pass) | Codex design review adopted (3 HIGH)
+> **Deferred:** [H] §2 credible form is a cross-TODO recovery subsystem (load-path contract + kernel recovery-mode entry + §3-§7 flow), entangled with deferred TODO-07 §9 and unvalidatable until a recovery entry is registered -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md) (item: "Widen `supported_kinds_mask` to include `BOOT_ENTRY_KIND_RECOVERY`")
 
 ---
 
