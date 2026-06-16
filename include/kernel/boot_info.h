@@ -1714,7 +1714,24 @@ struct boot_info {
      * good. Carved from _loader_vars_pad (reserved region) -- no
      * BOOT_INFO_VERSION bump per the reserved-region rule. */
     uint8_t  active_slot;
-    uint8_t  _loader_vars_pad[6];
+    /* A/B slot-status snapshot for kernel boot diagnostics (TODO-21 sec6).
+     * Published by the bootloader's select_active_slot from the
+     * ab_boot_meta_decide result AT SELECTION TIME -- authoritative because the
+     * on-disk metadata mutates during boot (ab_bl_increment_tries increments
+     * tries pre-EBS; the kernel mark-good resets it at first-frame), so a kernel
+     * re-read at VPD time would show a different state than was actually decided.
+     * ab_select_reason: 0=normal, 1=rollback, 2=both-exhausted (matches
+     * enum ab_boot_select_reason). ab_from_slot: the slot rolled away from
+     * (rollback) or the recorded active slot (both-exhausted); 0 when normal.
+     * ab_slot_tries[s]: per-slot tries consumed as selected (0..AB_BOOT_MAX_TRIES).
+     * ab_slot_flags: bit0 = Slot A successful, bit1 = Slot B successful.
+     * All zero on a non-A/B / single-slot / older-bootloader boot. Carved from
+     * _loader_vars_pad (reserved region) -- no BOOT_INFO_VERSION bump. */
+    uint8_t  ab_select_reason;
+    uint8_t  ab_from_slot;
+    uint8_t  ab_slot_tries[2];
+    uint8_t  ab_slot_flags;
+    uint8_t  _loader_vars_pad[1];
 
     /* v22: A/B-metadata partition range (TODO-21 atomic-write handoff). The
      * bootloader reconciles the metadata partition (primary+backup GPT) in
@@ -1863,6 +1880,19 @@ _Static_assert(__builtin_offsetof(struct boot_info, active_slot) ==
                __builtin_offsetof(struct boot_info, loader_vars_degraded) + 1,
     "boot_info.active_slot must immediately follow loader_vars_degraded -- "
     "update kernel + bootloader mirror");
+/* sec6 A/B slot-status snapshot: contiguous after active_slot so the kernel VPD
+ * and the bootloader publish agree byte-for-byte; carved from _loader_vars_pad
+ * so total struct size is unchanged (no BOOT_INFO_VERSION bump). */
+_Static_assert(__builtin_offsetof(struct boot_info, ab_select_reason) ==
+               __builtin_offsetof(struct boot_info, active_slot) + 1,
+    "boot_info.ab_select_reason must immediately follow active_slot -- "
+    "update kernel + bootloader mirror");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_slot_tries) ==
+               __builtin_offsetof(struct boot_info, ab_from_slot) + 1,
+    "boot_info.ab_slot_tries must immediately follow ab_from_slot");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_slot_flags) ==
+               __builtin_offsetof(struct boot_info, ab_slot_tries) + 2,
+    "boot_info.ab_slot_flags must follow the 2-byte ab_slot_tries array");
 /* v22 A/B metadata range (TODO-21): 8-byte-aligned uint64 + uint32 + pad.
  * Pinned relative + size so the bootloader mirror cannot drift; the manifest
  * compare gate cross-checks absolute offsets kernel-vs-mirror at build. */

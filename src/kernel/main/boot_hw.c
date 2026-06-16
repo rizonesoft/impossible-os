@@ -381,6 +381,13 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         vpd_init();
     }
 
+    /* A/B slot handoff milestone (TODO-21 sec6). The slot was selected pre-EBS
+     * in the bootloader (a different timing domain); this records when the
+     * kernel observed + surfaced the result, so the boot timeline shows the
+     * A/B resolution point. Only meaningful on an A/B disk. */
+    if (g_boot_info.ab_meta_lba != 0)
+        boot_timing_record_step(1, "ab-slot-handoff", 0);
+
     /* --- UEFI variable services (NVRAM enumeration) ---
      * Both readiness oracle channels are updated in lockstep via
      * kernel_subsystem_apply_result(): set_ready (gates BOOT_REQUIRE)

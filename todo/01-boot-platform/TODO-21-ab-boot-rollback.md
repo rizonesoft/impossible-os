@@ -52,7 +52,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [/]   |
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [/]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [/]   |
-| ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [ ]   |
+| ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [x]   |
 | 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [/]   |
 | 💎  |   8   | Per-slot anti-rollback version floor            | §1, §7     |  [ ]   |
 
@@ -228,12 +228,23 @@ Kernel-side API to tell the bootloader "this boot worked".
 
 Integrate A/B slot status into the VPD and boot timing display.
 
-- [ ] VPD shows: `"Slot A [active] tries=0 ok"` / `"Slot B [standby] tries=0 ok"`
-- [ ] If rollback occurred: VPD shows `"⚠ Rolled back from Slot X (3 failures)"`
-- [ ] boot_timing log includes slot selection time
-- [ ] Commit: `"boot: A/B slot status in VPD diagnostics"`
+- [x] VPD per-slot status `"Slot A [active] tries=N bootable/EXHAUSTED verified/pending"` -- `vpd_render_ab_slot`; health from `tries` vs `AB_BOOT_MAX_TRIES`, `successful` shown separately as verified/pending (not conflated)
+- [x] Rollback/both-exhausted VPD warning -- distinct `"Rolled back from Slot X failures=N"` vs `"Both slots exhausted -- booting least-bad"`, so a terminal state never reads as a simple rollback
+- [x] boot_timing logs the A/B resolution point -- `ab-slot-handoff` step in `boot_hw.c`, labeled a kernel handoff observation (real selection is pre-EBS, different TSC domain)
+- [x] Snapshot wiring: A/B status fields in `boot_info` carved from `_loader_vars_pad` (no version bump); `select_active_slot` publishes the as-selected `ab_boot_meta_decide` result + mirror/manifest/doc/`_Static_assert`
+- [x] Commit: `"boot: A/B slot status in VPD diagnostics"`
 
-**Test checkpoint:** Boot with `postbars=on` -- slot status visible in VPD display.
+**Test checkpoint:** Boot with `postbars=on` -- the VPD info-header shows two slot lines (active/standby, tries, bootable/EXHAUSTED, verified/pending); a rolled-back boot shows the rollback warning. The boot timeline includes `ab-slot-handoff` (smoke: `PHASE1 +62ms ab-slot-handoff`). Test on: QEMU smoke + bare metal.
+
+> **Test runner:** N/A (VPD rendering draws to the framebuffer + bootloader publish is pre-EBS -- no kernel runtime test surface) | the boot_info A/B snapshot layout is pinned by compile-time `_Static_assert` (kernel + mirror) + the manifest compare gate; validated via QEMU smoke (`ab-slot-handoff` in the timeline, no boot regression) + bare-metal visual
+
+> **Notes:**
+> - **What shipped:** `vpd_render_ab_slot` + the A/B block in `vpd_render_info_header` (`vpd.c`); a 5-byte `boot_info` A/B snapshot carved from `_loader_vars_pad`; bootloader publish in `select_active_slot`; `ab-slot-handoff` boot_timing step.
+> - **How it runs:** the bootloader snapshots the `ab_boot_meta_decide` result at selection time (authoritative -- the on-disk record mutates as tries increment/reset); the kernel VPD reads it (no re-read race) and renders the slot lines + warning.
+> - **Design adoptions:** health from `tries` vs `AB_BOOT_MAX_TRIES` (not the `successful` flag); both-exhausted as its own terminal message; the boot_timing step labeled a handoff observation, not pre-EBS latency.
+> - **Downstream effects:** complements the §4 pre-EBS on-screen banner with the persistent kernel diagnostic surface; non-A/B disks render "A/B Boot: single-slot".
+> - **Canonical doc:** `docs/boot/boot-info-fields.md` (the `ab_select_reason`/`ab_from_slot`/`ab_slot_tries`/`ab_slot_flags` rows).
+> - **Scope boundary:** §6 owns the kernel VPD + boot_timing surface; the pre-EBS banner is §4; the anti-rollback floor is §8.
 
 ---
 
@@ -285,7 +296,7 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 | 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | 🟦 §5 first-frame mark-good |
 | 💎 | Metadata integrity (CRC)  | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual    | ⬜ §7                     |
 | 💎 | Anti-rollback floor       | ⚠️ WU rollback window      | ✅ Android stored index   | ⬜ §8                     |
-| ⭐ | Slot status in boot UI    | ❌ Hidden                  | ❌ journalctl only       | ⬜ §6 🚀                  |
+| ⭐ | Slot status in boot UI    | ❌ Hidden                  | ❌ journalctl only       | ✅ VPD per-slot + rollback |
 
 After §1-§5, Impossible OS has stronger rollback than Windows (which requires manual Automatic Repair) and matches Chrome OS/Android A/B. §6 makes slot status visible during boot.
 

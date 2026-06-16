@@ -17,6 +17,7 @@
 #include "kernel/boot_init.h"
 #include "kernel/boot_timing.h"
 #include "kernel/uefi_runtime.h"
+#include "boot/ab_boot_metadata.h"  /* AB_BOOT_* slot/reason/try constants */
 
 /* ---- State --------------------------------------------------------------- */
 
@@ -276,6 +277,32 @@ static uint32_t vpd_total_ram_mb(void)
 }
 
 /* Render the info header block above the boot table */
+/* Render one A/B slot status line (TODO-21 sec6). Health is derived from
+ * tries vs AB_BOOT_MAX_TRIES (bootable/EXHAUSTED), NOT from the successful
+ * flag -- a fresh slot is bootable+pending, an exhausted once-good slot is
+ * unbootable. `successful` is surfaced separately as verified/pending. */
+static void vpd_render_ab_slot(uint32_t y, uint32_t label_x, uint32_t val_x,
+                               int slot, int active, uint32_t tries,
+                               int successful)
+{
+    char lbl[8] = "Slot A:";
+    lbl[5] = (char)('A' + slot);
+    vpd_puts_scaled(label_x, y, lbl, VPD_COLOR_LABEL);
+    vpd_puts_scaled(val_x, y, active ? "[active]" : "[standby]",
+                    active ? VPD_COLOR_VALUE : VPD_COLOR_LABEL);
+    vpd_puts_scaled(val_x + 10 * VPD_CHAR_W, y, "tries=", VPD_COLOR_LABEL);
+    vpd_putu32_scaled(val_x + 16 * VPD_CHAR_W, y, tries, VPD_COLOR_VALUE);
+    if (tries >= AB_BOOT_MAX_TRIES)
+        vpd_puts_scaled(val_x + 18 * VPD_CHAR_W, y, "EXHAUSTED",
+                         VPD_COLOR_FAIL);
+    else
+        vpd_puts_scaled(val_x + 18 * VPD_CHAR_W, y, "bootable",
+                         VPD_COLOR_DONE);
+    vpd_puts_scaled(val_x + 28 * VPD_CHAR_W, y,
+                    successful ? "verified" : "pending",
+                    successful ? VPD_COLOR_VALUE : VPD_COLOR_PENDING);
+}
+
 static void vpd_render_info_header(void)
 {
     uint32_t y = VPD_TOP_MARGIN;
@@ -475,6 +502,48 @@ static void vpd_render_info_header(void)
         }
     }
     y += VPD_ROW_HEIGHT;
+
+    /* Line 12+: A/B dual-slot status (sec6). Only when an A/B metadata
+     * partition exists (ab_meta_lba != 0); a single-slot disk shows one
+     * summary line. The snapshot is the bootloader's as-selected view
+     * (boot_info), authoritative vs the mutating on-disk record. */
+    if (g_boot_info.ab_meta_lba != 0) {
+        unsigned int active = g_boot_info.active_slot;
+        vpd_render_ab_slot(y, label_x, val_x, AB_BOOT_SLOT_A,
+                           active == AB_BOOT_SLOT_A,
+                           g_boot_info.ab_slot_tries[0],
+                           (g_boot_info.ab_slot_flags & 0x1u) != 0);
+        y += VPD_ROW_HEIGHT;
+        vpd_render_ab_slot(y, label_x, val_x, AB_BOOT_SLOT_B,
+                           active == AB_BOOT_SLOT_B,
+                           g_boot_info.ab_slot_tries[1],
+                           (g_boot_info.ab_slot_flags & 0x2u) != 0);
+        y += VPD_ROW_HEIGHT;
+        /* Distinct rollback vs both-exhausted messages: a terminal
+         * both-exhausted state must NOT read as a simple rollback. */
+        if (g_boot_info.ab_select_reason == AB_BOOT_SEL_ROLLBACK) {
+            uint32_t from = (g_boot_info.ab_from_slot < AB_BOOT_SLOT_COUNT)
+                            ? g_boot_info.ab_from_slot : 0u;
+            char msg[20] = "Rolled back from A";
+            msg[17] = (char)('A' + from);
+            vpd_puts_scaled(label_x, y, msg, VPD_COLOR_FAIL);
+            vpd_puts_scaled(label_x + 19 * VPD_CHAR_W, y, "failures=",
+                             VPD_COLOR_LABEL);
+            vpd_putu32_scaled(label_x + 28 * VPD_CHAR_W, y,
+                               g_boot_info.ab_slot_tries[from], VPD_COLOR_FAIL);
+            y += VPD_ROW_HEIGHT;
+        } else if (g_boot_info.ab_select_reason ==
+                   AB_BOOT_SEL_BOTH_EXHAUSTED) {
+            vpd_puts_scaled(label_x, y,
+                             "Both slots exhausted -- booting least-bad",
+                             VPD_COLOR_FAIL);
+            y += VPD_ROW_HEIGHT;
+        }
+    } else {
+        vpd_puts_scaled(label_x, y, "A/B Boot:", VPD_COLOR_LABEL);
+        vpd_puts_scaled(val_x, y, "single-slot", VPD_COLOR_PENDING);
+        y += VPD_ROW_HEIGHT;
+    }
 
     /* Empty row + separator below info header */
     y += VPD_ROW_HEIGHT;

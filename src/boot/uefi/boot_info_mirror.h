@@ -735,7 +735,19 @@ struct boot_info {
      * from _loader_vars_pad (reserved) so no BOOT_INFO_VERSION bump. Kernel
      * mount + mark-good consume this; see include/kernel/boot_info.h. */
     UINT8    active_slot;
-    UINT8    _loader_vars_pad[6];
+    /* A/B slot-status snapshot for kernel boot diagnostics (TODO-21 sec6).
+     * select_active_slot publishes these from the ab_boot_meta_decide result at
+     * selection time (authoritative; the on-disk record mutates during boot).
+     * ab_select_reason 0=normal/1=rollback/2=both-exhausted; ab_from_slot = the
+     * slot rolled away from / recorded active on both-exhausted; ab_slot_tries[s]
+     * per-slot tries as selected; ab_slot_flags bit0/bit1 = slot A/B successful.
+     * Carved from _loader_vars_pad (reserved) -- no BOOT_INFO_VERSION bump.
+     * See include/kernel/boot_info.h for the full contract. */
+    UINT8    ab_select_reason;
+    UINT8    ab_from_slot;
+    UINT8    ab_slot_tries[2];
+    UINT8    ab_slot_flags;
+    UINT8    _loader_vars_pad[1];
 
     /* v22: A/B-metadata partition range (TODO-21 atomic-write handoff). The
      * bootloader publishes the reconciled MD-partition location so the kernel
@@ -857,6 +869,17 @@ _Static_assert(__builtin_offsetof(struct boot_info, active_slot) ==
                __builtin_offsetof(struct boot_info, loader_vars_degraded) + 1,
     "boot_info.active_slot must immediately follow loader_vars_degraded -- "
     "kernel + bootloader mirror out of sync");
+/* sec6 A/B slot-status snapshot: mirror the kernel contiguity asserts exactly. */
+_Static_assert(__builtin_offsetof(struct boot_info, ab_select_reason) ==
+               __builtin_offsetof(struct boot_info, active_slot) + 1,
+    "boot_info.ab_select_reason must immediately follow active_slot -- "
+    "kernel + bootloader mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_slot_tries) ==
+               __builtin_offsetof(struct boot_info, ab_from_slot) + 1,
+    "boot_info.ab_slot_tries must immediately follow ab_from_slot -- mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_slot_flags) ==
+               __builtin_offsetof(struct boot_info, ab_slot_tries) + 2,
+    "boot_info.ab_slot_flags must follow the 2-byte ab_slot_tries array -- mirror out of sync");
 /* v22 A/B metadata range (TODO-21): mirror the kernel asserts exactly. */
 _Static_assert(__builtin_offsetof(struct boot_info, ab_meta_lba) % 8 == 0,
     "boot_info.ab_meta_lba must be 8-byte aligned (uint64) -- mirror out of sync");

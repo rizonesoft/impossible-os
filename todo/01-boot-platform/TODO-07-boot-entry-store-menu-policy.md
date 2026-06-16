@@ -319,7 +319,7 @@ Generate entries from runtime state; the user sees a single coherent menu instea
 - [ ] Merge A/B success/failure counters into entry labels. Blocked: TODO-21 §1+§4.
 - [ ] Auto-select recovery on double-fail with `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD`. Blocked: TODO-21 §4 + TODO-22 §2; sentinel enum value lands when TODO-22 §2 ships.
 - [ ] Demote-not-drop visual (greyed-out + `last_failure_reason` label). Partially unblocked: §6+§8 keep TRIES_EXHAUSTED rows visible; §7 adds `[FAIL]` indicator. The greyed style + label string remains §9 scope.
-- [ ] Display rollback reason in menu line + feed to VPD. Blocked: TODO-21 §6 (rollback-reason source) + VPD label hooks.
+- [ ] Display rollback reason in menu line. Partially unblocked: TODO-21 §6 ships the rollback-reason source (`boot_info.ab_select_reason`/`ab_from_slot`) + the VPD display already; the menu-line rendering remains §9 scope.
 - [ ] Widen `supported_kinds_mask` to include `BOOT_ENTRY_KIND_RECOVERY`. Blocked: TODO-22 §2 (recovery load path).
 - [ ] Commit: `"boot: integrate A/B and recovery entries"`
 

@@ -12396,6 +12396,19 @@ static void select_active_slot(EFI_HANDLE part_handle)
     unsigned int slot = dec.slot;
     g_boot_info_ptr->active_slot = (UINT8)slot;
 
+    /* Publish the as-selected slot-status snapshot for the kernel VPD (sec6).
+     * winner is the record read at selection time (pre tries-increment), so
+     * tries here is the accumulated prior-boot failure count -- the meaningful
+     * diagnostic value. Both-exhausted/rollback reason + from_slot let the kernel
+     * render the terminal vs rollback message without re-reading mutating disk. */
+    g_boot_info_ptr->ab_select_reason = (UINT8)dec.reason;
+    g_boot_info_ptr->ab_from_slot = (UINT8)dec.from_slot;
+    g_boot_info_ptr->ab_slot_tries[0] = (UINT8)winner->slot[AB_BOOT_SLOT_A].tries;
+    g_boot_info_ptr->ab_slot_tries[1] = (UINT8)winner->slot[AB_BOOT_SLOT_B].tries;
+    g_boot_info_ptr->ab_slot_flags =
+        (UINT8)((winner->slot[AB_BOOT_SLOT_A].successful ? 0x1u : 0u) |
+                (winner->slot[AB_BOOT_SLOT_B].successful ? 0x2u : 0u));
+
     /* Rollback / both-exhausted diagnostics: serial always, on-screen banner
      * when a framebuffer is available. tries <= AB_BOOT_MAX_TRIES so a single
      * digit covers the count. */
