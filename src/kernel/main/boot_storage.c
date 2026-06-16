@@ -311,7 +311,8 @@ void boot_phase2(void)
     POST16(POST16_PARTITION);
     partition_scan_all();
     boot_splash_status("Mounting filesystems...");
-    partition_mount_filesystems();
+    /* A/B dual-slot (TODO-21): mount the root slot the bootloader selected. */
+    partition_mount_filesystems((int)g_boot_info.active_slot);
 
     /* --- BlackBox directory skeleton (X:\) ---
      * Try every dir on every boot. vfs_create on an existing FAT32

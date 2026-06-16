@@ -84,6 +84,7 @@ extern const struct gpt_guid GPT_GUID_EFI_SYSTEM;
 extern const struct gpt_guid GPT_GUID_MS_BASIC_DATA;
 extern const struct gpt_guid GPT_GUID_LINUX_FS;
 extern const struct gpt_guid GPT_GUID_IXFS;
+extern const struct gpt_guid GPT_GUID_IXFS_B;
 extern const struct gpt_guid GPT_GUID_BIOS_BOOT;
 extern const struct gpt_guid GPT_GUID_MS_RESERVED;
 extern const struct gpt_guid GPT_GUID_MS_LDM_META;
@@ -130,6 +131,10 @@ int gpt_guid_equal(const struct gpt_guid *a, const struct gpt_guid *b);
 
 /* Return human-readable name for a known partition type GUID. */
 const char *gpt_type_name(const struct gpt_guid *guid);
+
+/* A/B dual-slot identity (TODO-21): 0 = Slot A IXFS, 1 = Slot B IXFS,
+ * -1 = not an IXFS-family type GUID. */
+int gpt_ixfs_slot(const struct gpt_guid *guid);
 
 /* Serialize a GUID to 16-byte on-disk mixed-endian format. */
 void write_guid(const struct gpt_guid *g, uint8_t *buf);

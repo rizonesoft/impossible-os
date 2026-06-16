@@ -529,6 +529,8 @@ Who creates the FIRST default entry on a freshly-installed system? Who creates t
 - [ ] First-boot self-seed (synthesize 3-entry default on missing store). Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md) + [`TODO-21 §2`](TODO-21-ab-boot-rollback.md).
 - [x] Image build path: `scripts/release/build-image.sh` ships the 3-entry seed; `kernel` path matches staged location per staged-vs-seeded contract.
 - [ ] Widen `supported_kinds_mask` to include INSTALLER once distinct installer-image load path exists AND first-install seeding is complete. Blocked: no distinct load path today.
+- [ ] Root-aware `load_kernel()`: honor a SPLIT entry's `payload.root` so a `slot-b` entry loads from Slot B (needs a bootloader IXFS reader) -> XREF: [`TODO-21 §3`](TODO-21-ab-boot-rollback.md). Blocked: no IXFS reader yet.
+- [ ] Flip the seeded `slot-b` entry inactive->active in `bootcfg.py` `_seed_store()` once root-aware `load_kernel` lands so the menu's Slot B entry is selectable -> XREF: [`TODO-21 §3`](TODO-21-ab-boot-rollback.md).
 - [x] Documented bootstrap order + ownership boundary in [`docs/boot/bootstrap.md`](../../docs/boot/bootstrap.md).
 - [x] Commit: `"boot: bootstrap and first-install entry seeding"`
 

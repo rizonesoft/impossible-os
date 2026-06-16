@@ -48,8 +48,12 @@
 #define AB_BOOT_MAX_TRIES     3u
 
 /* Per-slot record. tries/successful drive the sec 3 successful/pending/
- * unbootable state model (pending = !successful && tries < MAX; unbootable =
- * !successful && tries >= MAX; the state is derived, not a separate field).
+ * unbootable state model (the state is derived, not a separate field):
+ *   - unbootable = tries >= MAX (regardless of successful -- mark-good resets
+ *     tries to 0, so only a slot failing MAX times in a row gets here; sec 3
+ *     selection rolls back off it EVEN IF it was once successful),
+ *   - successful = the slot was marked good (tie-breaker among bootable slots),
+ *   - pending     = !successful && tries < MAX (update written, unproven).
  * rollback_index is the monotonic OS/security version checked against the
  * floor (sec 8). */
 struct ab_boot_slot {
@@ -177,6 +181,82 @@ ab_boot_meta_select_newest(const struct ab_boot_metadata *a,
     if (!va && vb) { if (winner) *winner = b; return 1; }
     if (winner) *winner = (b->generation > a->generation) ? b : a;
     return 1;
+}
+
+/* Selection state model: given a validated record, return the slot index the
+ * bootloader should boot. A slot is "unbootable" when it has exhausted its
+ * attempts (tries >= AB_BOOT_MAX_TRIES) -- this holds EVEN IF the slot was
+ * previously marked successful, because mark-boot-successful resets tries to 0,
+ * so a slot only reaches the exhaustion threshold by failing MAX times in a row
+ * without a fresh mark-good (a once-good slot that has since broken). Among the
+ * bootable slots, prefer the highest priority; tie-break successful-first, then
+ * lower tries. This rolls back away from a once-good slot that later broke, as
+ * long as another viable slot exists. If BOTH slots are unbootable, fall back
+ * to the record's recorded active_slot (both-exhausted -> recovery routing is
+ * owned by the failure-counting + recovery-partition work, not selection).
+ * Shared so the bootloader's choice and the kernel/test view are byte-identical. */
+static inline unsigned int
+ab_boot_meta_choose_slot(const struct ab_boot_metadata *m)
+{
+    unsigned int best;
+    int best_set = 0;
+    unsigned int s;
+    if (!m) return AB_BOOT_SLOT_A;
+    best = (m->active_slot < AB_BOOT_SLOT_COUNT) ? m->active_slot : AB_BOOT_SLOT_A;
+    for (s = 0u; s < AB_BOOT_SLOT_COUNT; s++) {
+        const struct ab_boot_slot *sl = &m->slot[s];
+        if (sl->tries >= AB_BOOT_MAX_TRIES)
+            continue;  /* unbootable -- exhausted, even if once-successful */
+        if (!best_set) { best = s; best_set = 1; continue; }
+        const struct ab_boot_slot *b = &m->slot[best];
+        if (sl->priority != b->priority) {
+            if (sl->priority > b->priority) best = s;
+            continue;
+        }
+        if (sl->successful != b->successful) {
+            if (sl->successful > b->successful) best = s;
+            continue;
+        }
+        if (sl->tries < b->tries) best = s;
+    }
+    return best;
+}
+
+/* GPT-copy reconciliation for locating the A/B metadata partition. The
+ * bootloader reads BOTH the primary and backup GPT raw (firmware's own CRC
+ * validation is bypassed by a raw read), so the two copies must be reconciled
+ * before trusting a "no metadata partition" conclusion. */
+enum ab_gpt_reconcile {
+    AB_GPT_USE_PRIMARY = 0,  /* primary GPT valid and carries the metadata */
+    AB_GPT_USE_BACKUP  = 1,  /* primary invalid; backup valid and carries it */
+    AB_GPT_NO_AB       = 2,  /* both GPTs valid and agree: no metadata (non-A/B) */
+    AB_GPT_FATAL       = 3   /* corrupt or inconsistent -- fail closed */
+};
+
+/* Map the primary/backup (valid, has-metadata) states to a decision. Inputs
+ * are 0/1. FAIL-CLOSED by construction -- the only non-fatal answers are:
+ *   USE_PRIMARY: primary valid + has MD, AND the backup does not CONTRADICT it
+ *                (backup invalid -> unreadable, primary is authoritative; or
+ *                 backup valid + also has MD -> the caller still verifies the
+ *                 two MD LBA ranges match and fatals on a range mismatch),
+ *   USE_BACKUP : primary invalid, backup valid + has MD (firmware-equiv recover),
+ *   NO_AB      : BOTH copies valid AND both lack the metadata (genuine non-A/B).
+ * Every other state is FATAL: both invalid; a presence disagreement (one copy
+ * has MD, the other validates without it -- split-brain); or a lone valid copy
+ * with no MD while its peer is unreadable. Guessing a slot from an inconsistent
+ * partition table could boot the wrong or rolled-back root. Pure logic, shared
+ * so it is unit-testable. */
+static inline int
+ab_boot_meta_reconcile_gpt(int p_valid, int p_has_md, int b_valid, int b_has_md)
+{
+    if (p_valid && p_has_md) {
+        if (!b_valid) return AB_GPT_USE_PRIMARY;       /* backup unreadable */
+        if (b_has_md) return AB_GPT_USE_PRIMARY;       /* caller checks LBA range */
+        return AB_GPT_FATAL;                           /* backup valid but lacks MD */
+    }
+    if (!p_valid && b_valid && b_has_md) return AB_GPT_USE_BACKUP;
+    if (p_valid && !p_has_md && b_valid && !b_has_md) return AB_GPT_NO_AB;
+    return AB_GPT_FATAL;
 }
 
 #endif /* AB_BOOT_METADATA_H */

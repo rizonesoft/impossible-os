@@ -435,7 +435,8 @@ Surface for the systemd-boot Boot Loader Interface compatibility feature (boot-e
 | Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `loader_vars_degraded` | bootx64 boot policy | P0 | kernel `boot_audit_publish()` + diagnostics | persistent | boot-entry loader-vars | 1 if any `Loader*` SetVariable call failed (NVRAM quota, firmware refusal). Userland still boots; the kernel surfaces the flag in the boot audit JSONL so operators see degraded publication state. |
-| `_loader_vars_pad` | bootx64 boot policy | P0 | none | persistent | boot-entry loader-vars | reserved zero; 7-byte alignment pad. |
+| `active_slot` | bootx64 `select_active_slot()` | P0 | kernel `partition_mount_filesystems()` + mark-boot-successful | persistent | A/B dual-slot boot | A/B slot the bootloader selected pre-EBS from the on-disk `ab_boot_metadata` record. 0 = Slot A, 1 = Slot B (encoding mirrors `include/boot/ab_boot_metadata.h`). Default 0 -- single-slot/non-A/B/error paths resolve to Slot A. Kernel mounts EXACTLY this slot's IXFS as C: and refuses to mark a mismatched slot good. |
+| `_loader_vars_pad` | bootx64 boot policy | P0 | none | persistent | boot-entry loader-vars | reserved zero; 6-byte alignment pad (one byte carved for `active_slot`). |
 
 ## Nested struct: `boot_payload_desc`
 

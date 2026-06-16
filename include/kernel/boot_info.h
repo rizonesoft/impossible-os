@@ -1703,7 +1703,18 @@ struct boot_info {
      * without complete Loader* observability. See docs/boot/loader-
      * vars.md. */
     uint8_t  loader_vars_degraded;
-    uint8_t  _loader_vars_pad[7];
+    /* A/B dual-slot boot (TODO-21): the slot the bootloader selected pre-EBS
+     * after reading the on-disk ab_boot_metadata record. Encoding matches
+     * include/boot/ab_boot_metadata.h: 0 = Slot A (AB_BOOT_SLOT_A), 1 = Slot B
+     * (AB_BOOT_SLOT_B). Default 0 so an older zero-filling bootloader, a
+     * single-slot disk, or a non-A/B boot path all resolve to Slot A. The
+     * kernel mounts EXACTLY this slot's IXFS as C: (partition_mount_filesystems)
+     * and records the slot it actually mounted; a selected-vs-mounted mismatch
+     * blocks the future mark-boot-successful path from marking the wrong slot
+     * good. Carved from _loader_vars_pad (reserved region) -- no
+     * BOOT_INFO_VERSION bump per the reserved-region rule. */
+    uint8_t  active_slot;
+    uint8_t  _loader_vars_pad[6];
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */
@@ -1829,6 +1840,14 @@ _Static_assert(__builtin_offsetof(struct boot_info, dbx_size) == 24044,
     "boot_info.dbx_size offset drift -- update kernel + bootloader mirror");
 _Static_assert(__builtin_offsetof(struct boot_info, degraded_trust_flags) == 24048,
     "boot_info.degraded_trust_flags offset drift -- update kernel + bootloader mirror");
+/* A/B dual-slot active_slot (TODO-21): pinned RELATIVE to loader_vars_degraded
+ * so it survives unrelated v22+ tail additions; carved from the reserved
+ * _loader_vars_pad so total struct size is unchanged. The bootloader mirror
+ * pins the identical relationship -- a drift on either side fails the build. */
+_Static_assert(__builtin_offsetof(struct boot_info, active_slot) ==
+               __builtin_offsetof(struct boot_info, loader_vars_degraded) + 1,
+    "boot_info.active_slot must immediately follow loader_vars_degraded -- "
+    "update kernel + bootloader mirror");
 
 /* Global boot info -- populated by the UEFI bootloader (storage def in
  * src/kernel/main/boot_hw.c). Alternate boot protocols are unsupported

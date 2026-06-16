@@ -49,7 +49,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | Boot metadata structure (GPT/disk wire ABI)     | --          |  [/]   |
 | 💎  |   2   | Dual-slot disk layout in build system           | §1         |  [/]   |
-| 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [ ]   |
+| 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [/]   |
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [ ]   |
 | ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [ ]   |
@@ -101,7 +101,7 @@ Modify the build system to create disk images with two root partitions.
 
 - [x] `make-system-disk --ab` builds the 5-partition layout (ESP + BlackBox + A/B-metadata + Slot A IXFS + Slot B IXFS) with a post-layout fail-closed invariant (all extents ordered/non-overlapping, both slots >= 96 MiB); verified on 768M
 - [x] Wired `--ab` into the Makefile (768M; ESP FAT bounded to 64M via `-s 1`); Step 3 sources the `.info` offsets + runs `mkfs-ixfs` twice (Slot A = current root, Slot B identical). Smoke PASS -- kernel mounts Slot A
-- [/] Dedicated A/B-metadata GPT partition (type GUID `...4D44...`) holding the two §1 blocks shipped + `META_OFFSET`/`IXFS_B_OFFSET` exported in `.info`; the bootloader pre-EBS `EFI_BLOCK_IO` read is pending (atomic write is §7)
+- [x] Dedicated A/B-metadata GPT partition (type GUID `...4D44...`) holding the two §1 blocks + `META_OFFSET`/`IXFS_B_OFFSET` in `.info`; the bootloader pre-EBS `EFI_BLOCK_IO` read landed in §3 (atomic write stays §7)
 - [x] Kernel stays on the SHARED ESP for §2 -- verified: `load_kernel` (`bootx64.c`) is FAT/ESP-only, cannot mount IXFS; slots are per-slot IXFS roots only
 - [x] Bootloader loads Slot A until §3 -- verified: `partition_scan_all` mounts the FIRST IXFS-GUID partition (Slot A) at C: and skips Slot B + the metadata partition; no boot change needed
 - [ ] **Deferred (per-slot kernel rollback):** kernel-inside-each-slot's-IXFS needs a bootloader IXFS reader + slot binding in `load_kernel` -> §3 or a follow-up; §2 ships shared-ESP kernel + per-slot roots
@@ -127,18 +127,36 @@ Modify the build system to create disk images with two root partitions.
 
 Bootloader reads metadata and mounts the correct slot's filesystem.
 
-- [ ] At boot: read boot metadata → determine active slot
-- [ ] Select the highest-`priority` slot that is valid (passes §7 CRC + the §8 floor) and not `unbootable`; tie-break by `successful` then lower `tries`
-- [ ] Slot state = `successful` / `pending` (update written, unproven) / `unbootable` (tries exhausted); roll back when the active slot exhausts `tries` EVEN IF it was previously `successful`, as long as another viable slot exists
-- [ ] Increment `tries` for active slot before booting
-- [ ] Mount the active slot's partition (not EFI partition) for kernel loading
-- [ ] Pass `boot_info.active_slot = 'A'/'B'` to kernel
-- [ ] Log: `"[BOOT] Booting Slot %c (tries=%u, successful=%u)"` with slot info
+> [!NOTE]
+> **Scope (design review):** §3 is READ + SELECT + PASS + the kernel-side MOUNT. The bootloader is the SOLE slot-selection authority; the read is read-only. The `tries` increment-WRITE belongs to §4 (logic) + §7 (power-fail-atomic write) -- a non-atomic write here would defeat §7's torn-write-brick protection. The two `load_kernel`/seed items below stay blocked on TODO-07 §16's root-aware lookup.
+
+- [x] At boot: read boot metadata -> determine active slot -- `select_active_slot()` (`bootx64.c`) reads the on-disk record from the A/B-metadata partition pre-EBS (`ab_find_meta_partition` + `ab_read_meta_copy`, EFI_BLOCK_IO)
+- [x] Select the highest-`priority` valid, not-`unbootable` slot; tie-break by `successful` then lower `tries` -- `ab_boot_meta_choose_slot()` in the shared header (passes the §7 CRC validator; the §8 floor is wired by §8)
+- [x] Slot state = `successful` / `pending` / `unbootable` (derived: `!successful && tries >= AB_BOOT_MAX_TRIES`); rolls back off an exhausted slot even if once-successful when another slot is viable -- unit-tested
+- [ ] Increment `tries` for active slot before booting -- **owned by §4 + §7** (atomic `boot_meta_write`; §3 read is read-only) -> XREF: §4 increment item + §7 atomic write
+- [x] Mount the active slot's partition (not EFI) for kernel loading -- kernel `partition_mount_filesystems(active_slot)` mounts the selected slot's IXFS as C: (`gpt_ixfs_slot` tells A from B), recording `ab_boot_mounted_slot`/`ab_boot_slot_mismatch`
+- [x] Pass `boot_info.active_slot` to kernel -- `uint8_t active_slot` (0=A, 1=B; logs render 'A'/'B') in header + mirror + manifest + doc, carved from the reserved tail (no `BOOT_INFO_VERSION` bump)
+- [x] Log: `"[BOOT] Booting Slot %c (tries=%u, successful=%u)"` -- emitted by `select_active_slot` on the metadata-valid path
 - [ ] Honor SPLIT `payload.root` in `load_kernel()` so the seeded slot-b entry resolves to its partition -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
 - [ ] Flip seeded `slot-b` from inactive to active in `bootcfg.py` `_seed_store()` once root-aware lookup ships -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
-- [ ] Commit: `"boot: slot selection -- boot from active slot, rollback on failure"`
+- [ ] Kernel GPT split-brain hardening: reconcile primary/backup slot-root entries in `gpt_parse()` (`src/kernel/fs/gpt.c`), or bind the kernel mount to a bootloader-passed authoritative root LBA. Not reachable single-disk.
+- [x] Commit: `"boot: slot selection -- boot from active slot, rollback on failure"`
 
-**Test checkpoint:** Normal boot shows `"Booting Slot A (tries=0, successful=1)"`. Manual metadata corruption triggers rollback to Slot B.
+**Test checkpoint:** Normal boot shows `"Booting Slot A (tries=0, successful=0)"` on a fresh disk (uninitialized metadata -> factory defaults -> Slot A) or `"... successful=1"` once mark-good lands; the kernel logs `A/B: mounted slot 0 as C:`. `make test-boot` covers the selection state machine (6 cases incl. rollback + tie-breaks) + `gpt_ixfs_slot` (A/B/non-IXFS). Manual metadata corruption / unreadable blocks fail closed (`boot_fatal`).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 21 ab_boot cases, 0 failures (9 new in §3) | bootloader `select_active_slot` validated via QEMU smoke + bare metal (no kernel test surface for UEFI BlockIO)
+
+> **Notes:**
+> - **What shipped:** bootloader pre-EBS `select_active_slot()`, shared-header `ab_boot_meta_choose_slot()`, `boot_info.active_slot` (0/1), kernel slot-aware mount (`gpt_ixfs_slot`, `partition_mount_filesystems(active_slot)`).
+> - **How it runs:** pre-EBS in `efi_main` between `boot_policy_invoke()` and `load_kernel` (POST16 `0xB0B9`/`0xB0BA`); kernel mounts EXACTLY the selected slot's IXFS as C: bound to the boot disk (no cross-slot/cross-disk fallback) + records `ab_boot_mounted_slot`/`ab_boot_slot_mismatch`.
+> - **Fail posture:** both GPT copies are CRC-validated (header + entry-array) and reconciled (primary authoritative, backup recovers, split-brain/corrupt -> `boot_fatal`); non-A/B / non-GPT / uninitialized -> Slot A; selected slot unavailable or multi-disk-ambiguous -> C: unmounted (rollback next boot).
+> - **Downstream effects:** closes §2's open pre-EBS `EFI_BLOCK_IO` read item; `active_slot` + mismatch flag feed §4 (rollback), §5 (mark-good gating), §6 (VPD slot status).
+> - **Canonical doc:** `docs/boot/boot-info-fields.md` (`active_slot` row) + `include/boot/ab_boot_metadata.h`.
+> - **Scope boundary:** §4 owns the `tries` write + rollback notice, §7 the atomic metadata write, §8 the floor check, TODO-07 §16 the boot-menu slot-b entry.
+
+> **Deferred:** §3 -> §4 + §7 (severity: medium, kind: cross-section): the `tries` increment-before-boot WRITE is owned by §4's failure-counting atop §7's power-fail-atomic `boot_meta_write`; §3 ships the read-only selection.
+> **Deferred:** §3 -> TODO-07 §16 (severity: low, kind: cross-TODO): SPLIT `payload.root` root-aware `load_kernel` lookup + flipping the seeded `slot-b` entry active both block on TODO-07 §16's root-aware entry resolution.
+> **Deferred:** §3 -> §3 follow-up (severity: low, kind: hardening): kernel-side GPT primary/backup slot-root reconciliation (split-brain vs the bootloader's reconciled view); not reachable on a single-disk valid-GPT install.
 
 ---
 
@@ -228,7 +246,7 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 
 | ⭐ | Feature                   | 🪟 Win11                      | 🐧 Linux                    | 🚀 Impossible OS             |
 |----|---------------------------|----------------------------|--------------------------|---------------------------|
-| 💎 | Dual-slot boot            | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess   | ⬜ §1-§3                  |
+| 💎 | Dual-slot boot            | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess   | 🟦 §1-§3 select+mount     |
 | 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | ⬜ §4                     |
 | 💎 | Automatic rollback        | ⚠️ Manual repair needed   | ⚠️ Manual or auto        | ⬜ §4                     |
 | 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | ⬜ §5                     |

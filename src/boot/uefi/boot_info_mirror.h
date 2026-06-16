@@ -728,7 +728,14 @@ struct boot_info {
      * loader_vars_degraded if any systemd-boot LoaderXxx SetVariable
      * fails (NVRAM quota / firmware refusal). Never halts. */
     UINT8    loader_vars_degraded;
-    UINT8    _loader_vars_pad[7];
+    /* A/B dual-slot boot (TODO-21): the slot select_active_slot() chose pre-EBS
+     * from the on-disk ab_boot_metadata record. 0 = Slot A, 1 = Slot B
+     * (encoding mirrors include/boot/ab_boot_metadata.h). Default 0 -- a
+     * single-slot disk or any non-A/B / error path resolves to Slot A. Carved
+     * from _loader_vars_pad (reserved) so no BOOT_INFO_VERSION bump. Kernel
+     * mount + mark-good consume this; see include/kernel/boot_info.h. */
+    UINT8    active_slot;
+    UINT8    _loader_vars_pad[6];
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */
@@ -834,6 +841,12 @@ _Static_assert(__builtin_offsetof(struct boot_info, dbx_size) == 24044,
     "boot_info.dbx_size offset drift -- kernel + bootloader mirror out of sync");
 _Static_assert(__builtin_offsetof(struct boot_info, degraded_trust_flags) == 24048,
     "boot_info.degraded_trust_flags offset drift -- kernel + bootloader mirror out of sync");
+/* A/B dual-slot active_slot (TODO-21): pinned relative to loader_vars_degraded,
+ * identical to the kernel header assert -- catches a one-sided edit at build. */
+_Static_assert(__builtin_offsetof(struct boot_info, active_slot) ==
+               __builtin_offsetof(struct boot_info, loader_vars_degraded) + 1,
+    "boot_info.active_slot must immediately follow loader_vars_degraded -- "
+    "kernel + bootloader mirror out of sync");
 
 /* ============================================================================
  * Boot Error History Ring -- producer mirror

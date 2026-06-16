@@ -32,6 +32,7 @@
 #include "../../../include/boot/boot_entries_parser.h"   /* boot entries parser + envelope */
 #include "../../../include/boot/boot_policy.h"           /* boot policy ladder + decision */
 #include "../../../include/boot/boot_entry_kind.h"        /* per-kind payload validators */
+#include "../../../include/boot/ab_boot_metadata.h"        /* A/B dual-slot metadata wire ABI + validators (TODO-21) */
 #include "../../../include/kernel/firmware_quirks_parse.inc" /* shared firmware_quirk_disable= tokenizer */
 
 /* Inline rdtsc for boot timing */
@@ -254,6 +255,8 @@ static inline void post_code16(UINT16 code);
 #define POST16_BL_MENU            0xB0B6  /* Boot menu rendered (interactive selector) */
 #define POST16_BL_KIND_VALIDATE   0xB0B7  /* Per-kind payload validation entry */
 #define POST16_BL_KIND_VALIDATE_OK 0xB0B8 /* Per-kind validation accepted (or demoted to fallback) */
+#define POST16_BL_AB_SELECT       0xB0B9  /* A/B dual-slot selection entry (TODO-21) */
+#define POST16_BL_AB_SELECT_OK    0xB0BA  /* A/B slot selected + active_slot published */
 
 /* --- Helper: memory ops ---
  * x86-64 `rep stosb` / `rep movsb` -- modern microarchitectures
@@ -11920,6 +11923,449 @@ static void esp_integrity_check(EFI_HANDLE part_handle,
     post_code16(POST16_BL_ESP_INTEGRITY_OK);
 }
 
+/* ===================================================================
+ * TODO-21 A/B dual-slot boot: pre-ExitBootServices slot selection.
+ *
+ * select_active_slot() reads the on-disk ab_boot_metadata record from the
+ * A/B-metadata GPT partition (type GUID below) and publishes the chosen
+ * root slot in g_boot_info_ptr->active_slot (0=A, 1=B). It is the SOLE
+ * authority for slot choice -- the kernel mounts EXACTLY this slot and
+ * refuses to mark a mismatched slot good. READ-ONLY: the tries increment
+ * and the power-fail-atomic metadata write are owned by the failure-counting
+ * and metadata-integrity work, not this section.
+ *
+ * Fail posture: a CORRUPT GPT structure or an unreadable located metadata
+ * partition on a GPT disk is fail-closed (boot_fatal), matching
+ * esp_check_gpt_type_guid -- guessing on a damaged A/B disk is worse than a
+ * clear operator error. A non-A/B disk (no metadata partition), a non-GPT /
+ * non-disk boot, or content-invalid metadata on a READABLE partition all
+ * resolve to Slot A so the common case always boots.
+ * =================================================================== */
+
+/* Metadata partition type GUID, written by tools/make-system-disk.c --ab.
+ * Raw on-disk byte order: Data1/Data2/Data3 little-endian, Data4 big-endian
+ * (same convention as g_esp_type_guid). DA000000-0000-4978-4D44-000000000001:
+ * "MD" in Data4[0..1] distinguishes it from the IXFS slot roots ("FS",
+ * ...4653...), so this scan never matches a bootable root slot. */
+static const UINT8 g_ab_meta_type_guid[16] = {
+    0x00, 0x00, 0x00, 0xDA,    /* Data1 LE: 0xDA000000 */
+    0x00, 0x00,                /* Data2 LE: 0x0000     */
+    0x78, 0x49,                /* Data3 LE: 0x4978     */
+    0x4D, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01   /* Data4 BE */
+};
+
+/* The two redundant ab_boot_metadata copies live at these fixed BYTE offsets
+ * within the metadata partition. The atomic metadata writer MUST honor the
+ * same offsets; this section only reads. */
+#define AB_META_COPY0_BYTE_OFF   0u
+#define AB_META_COPY1_BYTE_OFF   4096u
+
+/* Map the 0/1 slot encoding to a display character for serial logs. */
+static char ab_slot_char(unsigned int slot)
+{
+    return (slot == AB_BOOT_SLOT_B) ? 'B' : 'A';
+}
+
+/* The successful/pending/unbootable selection state model lives in the shared
+ * header (ab_boot_meta_choose_slot) so the bootloader's choice and the
+ * kernel/test view are byte-identical. */
+
+/* Standard GPT CRC-32 (IEEE 802.3, polynomial 0xEDB88320, init/final-xor
+ * 0xFFFFFFFF) over `len` bytes. This is NOT bl_crc32c() -- that is Castagnoli
+ * (CRC-32C) for a different purpose; GPT mandates the IEEE polynomial. */
+static UINT32 bl_gpt_crc32(const UINT8 *data, UINTN len)
+{
+    UINT32 crc = 0xFFFFFFFFu;
+    UINTN i;
+    int b;
+    for (i = 0; i < len; i++) {
+        crc ^= (UINT32)data[i];
+        for (b = 0; b < 8; b++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (UINT32)(-(INT32)(crc & 1u)));
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+/* Read + fully validate the GPT whose header sits at `header_lba` (primary=1 or
+ * backup=LastBlock). Validates signature, self-location (`current_lba`), all
+ * bounded shape fields, the header CRC (header_crc32 zeroed over header_size
+ * bytes), AND the partition-entry-array CRC over the exact declared table
+ * bytes. On success, AllocatePool()s the entry table, fills it (CRC-verified),
+ * and returns EFI_SUCCESS with *out_table (caller FreePool()s), *out_num,
+ * *out_entsize. On ANY failure returns an error WITHOUT a fatal and WITHOUT a
+ * leaked allocation, so the caller can try the alternate GPT before failing
+ * closed. */
+static EFI_STATUS ab_load_gpt_table(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 header_lba,
+                                    UINT8 **out_table, UINT32 *out_num,
+                                    UINT32 *out_entsize)
+{
+    EFI_BLOCK_IO_MEDIA *pm = bio->Media;
+    UINT8 hdr_buf[4096];
+    EFI_STATUS status;
+    UINTN i;
+
+    *out_table = (UINT8 *)0;
+    *out_num = 0;
+    *out_entsize = 0;
+
+    if (header_lba > pm->LastBlock)
+        return EFI_NOT_FOUND;
+    status = bio->ReadBlocks(bio, pm->MediaId, header_lba, pm->BlockSize, hdr_buf);
+    if (EFI_ERROR(status))
+        return status;
+
+    struct esp_gpt_header hdr;
+    efi_memcpy(&hdr, hdr_buf, sizeof(hdr));
+
+    static const UINT8 expected_sig[8] = { 'E','F','I',' ','P','A','R','T' };
+    for (i = 0; i < 8; i++)
+        if (hdr.signature[i] != expected_sig[i])
+            return EFI_NOT_FOUND;
+    if (hdr.current_lba != header_lba)
+        return EFI_NOT_FOUND;  /* a misplaced / mirror header -- not authoritative here */
+    if (hdr.header_size < 92 || hdr.header_size > pm->BlockSize)
+        return EFI_NOT_FOUND;
+
+    /* Header CRC: zero the header_crc32 field (offset 16, 4 bytes) over a copy
+     * of the first header_size bytes, then compare. */
+    {
+        UINT8 hc[4096];
+        efi_memcpy(hc, hdr_buf, hdr.header_size);
+        hc[16] = 0; hc[17] = 0; hc[18] = 0; hc[19] = 0;
+        if (bl_gpt_crc32(hc, hdr.header_size) != hdr.header_crc32)
+            return EFI_NOT_FOUND;
+    }
+
+    if (hdr.size_of_partition_entry < 128 || hdr.size_of_partition_entry > 4096 ||
+        (hdr.size_of_partition_entry & (hdr.size_of_partition_entry - 1)) != 0)
+        return EFI_NOT_FOUND;
+    if (hdr.num_partition_entries == 0 || hdr.num_partition_entries > 1024)
+        return EFI_NOT_FOUND;
+    UINT64 table_bytes = (UINT64)hdr.num_partition_entries *
+                         (UINT64)hdr.size_of_partition_entry;
+    if (table_bytes > 1024ULL * 1024ULL)
+        return EFI_NOT_FOUND;
+    if (hdr.partition_entry_lba < 2 || hdr.partition_entry_lba > pm->LastBlock)
+        return EFI_NOT_FOUND;
+    UINT64 entry_blocks = (table_bytes + (UINT64)pm->BlockSize - 1) /
+                          (UINT64)pm->BlockSize;
+    if (entry_blocks == 0 ||
+        hdr.partition_entry_lba + entry_blocks > pm->LastBlock + 1)
+        return EFI_NOT_FOUND;
+
+    UINT64 alloc_bytes = entry_blocks * (UINT64)pm->BlockSize;
+    UINT8 *table = (UINT8 *)0;
+    status = gBS->AllocatePool(EfiLoaderData, (UINTN)alloc_bytes, (VOID **)&table);
+    if (EFI_ERROR(status) || !table)
+        return EFI_NOT_FOUND;
+    status = bio->ReadBlocks(bio, pm->MediaId, hdr.partition_entry_lba,
+                             (UINTN)alloc_bytes, table);
+    if (EFI_ERROR(status)) {
+        gBS->FreePool(table);
+        return status;
+    }
+    /* Entry-array CRC is over the EXACT declared table bytes, not the block-
+     * rounded read. A mismatch means a torn/hostile table -- reject. */
+    if (bl_gpt_crc32(table, (UINTN)table_bytes) != hdr.partition_entry_array_crc32) {
+        gBS->FreePool(table);
+        return EFI_NOT_FOUND;
+    }
+
+    *out_table = table;
+    *out_num = hdr.num_partition_entries;
+    *out_entsize = hdr.size_of_partition_entry;
+    return EFI_SUCCESS;
+}
+
+/* Scan a CRC-validated, in-memory GPT entry table for the A/B-metadata type
+ * GUID. Returns 1 and fills out_lba + out_blocks when found, 0 when absent, and
+ * calls boot_fatal() (never returns) if the located entry's LBA range is
+ * outside the disk (the table is CRC-valid, so a bad range is real corruption). */
+static int ab_scan_table_for_md(const UINT8 *table, UINT32 num, UINT32 entsize,
+                                UINT64 last_block, UINT64 *out_lba,
+                                UINT64 *out_blocks)
+{
+    UINT32 e;
+    UINTN i;
+    for (e = 0; e < num; e++) {
+        const UINT8 *ent = table + (UINTN)e * (UINTN)entsize;
+        int match = 1;
+        for (i = 0; i < 16; i++)
+            if (ent[i] != g_ab_meta_type_guid[i]) { match = 0; break; }
+        if (!match)
+            continue;
+        UINT64 first_lba = 0, last_lba = 0;
+        for (i = 0; i < 8; i++) {
+            first_lba |= (UINT64)ent[32 + i] << (i * 8);
+            last_lba  |= (UINT64)ent[40 + i] << (i * 8);
+        }
+        if (first_lba < 2 || last_lba < first_lba || last_lba > last_block) {
+            boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                       "A/B select: metadata partition LBA range invalid",
+                       "Located the A/B metadata entry but its LBA range is "
+                       "outside the parent disk.");
+        }
+        *out_lba = first_lba;
+        *out_blocks = last_lba - first_lba + 1;
+        return 1;
+    }
+    return 0;
+}
+
+/* Locate the A/B-metadata partition on the parent disk and return its first
+ * LBA + size (in blocks) plus the open BlockIO. Returns EFI_SUCCESS when
+ * found, EFI_NOT_FOUND when the disk genuinely has no metadata partition (both
+ * the authoritative GPT and the redundant copy agree), and calls boot_fatal()
+ * (never returns) when BOTH GPTs fail validation OR the two CRC-valid GPTs
+ * DISAGREE on the metadata partition (split-brain corruption) -- guessing a
+ * slot from an inconsistent partition table could boot the wrong (or
+ * rolled-back) root. Each entry table is CRC-validated before the type-GUID
+ * scan, so a torn GPT cannot masquerade as a clean non-A/B disk, and a
+ * valid-but-stale primary cannot silently hide the metadata the backup holds. */
+static EFI_STATUS ab_find_meta_partition(EFI_HANDLE part_handle,
+                                          EFI_BLOCK_IO_PROTOCOL **out_bio,
+                                          UINT64 *out_md_lba,
+                                          UINT64 *out_md_blocks)
+{
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_HANDLE parent_handle = (EFI_HANDLE)0;
+    EFI_BLOCK_IO_PROTOCOL *bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+    EFI_STATUS status;
+
+    *out_bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+    *out_md_lba = 0;
+    *out_md_blocks = 0;
+
+    status = esp_find_parent_disk(part_handle, &parent_handle);
+    if (EFI_ERROR(status))
+        return EFI_NOT_FOUND;  /* PXE / RAM-disk / no parent -- not an A/B disk */
+
+    status = gBS->HandleProtocol(parent_handle, &bio_guid, (VOID **)&bio);
+    if (EFI_ERROR(status) || !bio || !bio->Media) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "A/B select: parent disk BlockIO missing",
+                   "Cannot read the GPT to locate the A/B metadata "
+                   "partition on a GPT-classified disk.");
+    }
+
+    EFI_BLOCK_IO_MEDIA *pm = bio->Media;
+    if (!pm->MediaPresent || pm->BlockSize < sizeof(struct esp_gpt_header) ||
+        pm->BlockSize > 4096 || pm->LastBlock < 2) {
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "A/B select: parent media geometry unusable",
+                   "BlockSize must be 92..4096 with media present and "
+                   "LastBlock >= 2 to host a GPT header.");
+    }
+
+    /* Load + CRC-validate BOTH the primary GPT (LBA 1) and the backup GPT
+     * (LastBlock) independently, then reconcile. Reading both unconditionally
+     * (even when the primary is fine) is what lets a CRC-valid-but-stale or
+     * contradictory backup be detected instead of silently trusting a primary
+     * that disagrees with its redundant copy. */
+    UINT8 *ptab = (UINT8 *)0, *btab = (UINT8 *)0;
+    UINT32 pnum = 0, pent = 0, bnum = 0, bent = 0;
+    int pvalid = !EFI_ERROR(ab_load_gpt_table(bio, 1, &ptab, &pnum, &pent));
+    int p_has = 0;
+    UINT64 p_lba = 0, p_blk = 0;
+    if (pvalid)
+        p_has = ab_scan_table_for_md(ptab, pnum, pent, pm->LastBlock, &p_lba, &p_blk);
+
+    int bvalid = !EFI_ERROR(ab_load_gpt_table(bio, pm->LastBlock, &btab, &bnum, &bent));
+    int b_has = 0;
+    UINT64 b_lba = 0, b_blk = 0;
+    if (bvalid)
+        b_has = ab_scan_table_for_md(btab, bnum, bent, pm->LastBlock, &b_lba, &b_blk);
+
+    if (pvalid) gBS->FreePool(ptab);
+    if (bvalid) gBS->FreePool(btab);
+
+    /* Reconcile the two copies (fail-closed). The only non-fatal "no A/B"
+     * answer is BOTH-valid-and-both-no-MD; any unrecoverable invalid copy or a
+     * presence disagreement is fatal. */
+    int decision = ab_boot_meta_reconcile_gpt(pvalid, p_has, bvalid, b_has);
+    if (decision == AB_GPT_USE_PRIMARY) {
+        /* If the backup ALSO carries the metadata, the two copies must point at
+         * the identical partition or the table is split-brained. */
+        if (bvalid && b_has && (b_lba != p_lba || b_blk != p_blk)) {
+            boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                       "A/B select: primary/backup GPT metadata range mismatch",
+                       "Both GPTs carry the A/B metadata partition but at "
+                       "different LBA ranges -- the partition table is "
+                       "inconsistent. Reflash or boot recovery media.");
+        }
+        *out_bio = bio;
+        *out_md_lba = p_lba;
+        *out_md_blocks = p_blk;
+        return EFI_SUCCESS;
+    }
+    if (decision == AB_GPT_USE_BACKUP) {
+        *out_bio = bio;
+        *out_md_lba = b_lba;
+        *out_md_blocks = b_blk;
+        return EFI_SUCCESS;
+    }
+    if (decision == AB_GPT_NO_AB)
+        return EFI_NOT_FOUND;  /* both copies validate and agree: non-A/B disk */
+
+    boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+               "A/B select: GPT corrupt or inconsistent",
+               "The primary and backup GPT are not both valid-and-agreeing on "
+               "the A/B metadata partition (a corrupt copy or a primary/backup "
+               "disagreement) -- cannot trust slot selection. Reflash or boot "
+               "recovery media.");
+    /* boot_fatal never returns; keeps the compiler happy about the return. */
+    return EFI_NOT_FOUND;
+}
+
+/* Read one ab_boot_metadata copy from the metadata partition at the given
+ * byte offset into *out. Returns 1 on a successful block read (the record
+ * still has to pass ab_boot_meta_is_valid), 0 on a read/geometry error. */
+static int ab_read_meta_copy(EFI_BLOCK_IO_PROTOCOL *bio, UINT64 md_lba,
+                             UINT64 md_blocks, UINT32 byte_off,
+                             struct ab_boot_metadata *out)
+{
+    EFI_BLOCK_IO_MEDIA *pm = bio->Media;
+    UINT32 bs = pm->BlockSize;
+    UINT64 lba = md_lba + (UINT64)(byte_off / bs);
+    UINT32 in_blk = byte_off % bs;
+    UINT8 blk[4096];
+    EFI_STATUS status;
+
+    /* The copy's record must fit entirely within the partition and within one
+     * block (AB_BOOT_META_SIZE is 60 bytes; both copies sit block-aligned). */
+    if (in_blk + AB_BOOT_META_SIZE > bs)
+        return 0;
+    if ((UINT64)(byte_off / bs) >= md_blocks)
+        return 0;
+    if (lba > pm->LastBlock)
+        return 0;
+
+    status = bio->ReadBlocks(bio, pm->MediaId, lba, bs, blk);
+    if (EFI_ERROR(status))
+        return 0;
+    efi_memcpy(out, &blk[in_blk], AB_BOOT_META_SIZE);
+    return 1;
+}
+
+static void select_active_slot(EFI_HANDLE part_handle)
+{
+    post_code16(POST16_BL_AB_SELECT);
+
+    /* Default Slot A: every early-return path below leaves this in place so a
+     * non-A/B disk, a non-disk boot, or an older zero-filling bootloader all
+     * boot the original root. */
+    g_boot_info_ptr->active_slot = AB_BOOT_SLOT_A;
+
+    if (!part_handle) {
+        serial_early_print("[BOOT] A/B select: no boot device handle -- "
+                           "Slot A\n");
+        post_code16(POST16_BL_AB_SELECT_OK);
+        return;
+    }
+    if (g_boot_info_ptr->boot_partition_style != 2) {
+        serial_early_print("[BOOT] A/B select: non-GPT boot device -- "
+                           "Slot A\n");
+        post_code16(POST16_BL_AB_SELECT_OK);
+        return;
+    }
+
+    EFI_BLOCK_IO_PROTOCOL *bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+    UINT64 md_lba = 0, md_blocks = 0;
+    EFI_STATUS status = ab_find_meta_partition(part_handle, &bio,
+                                               &md_lba, &md_blocks);
+    if (status == EFI_NOT_FOUND) {
+        serial_early_print("[BOOT] A/B select: no metadata partition "
+                           "(single-slot disk) -- Slot A\n");
+        post_code16(POST16_BL_AB_SELECT_OK);
+        return;
+    }
+    /* ab_find_meta_partition either returns EFI_SUCCESS or boot_fatal()s on a
+     * corrupt GPT; EFI_NOT_FOUND was handled above. */
+
+    struct ab_boot_metadata copy0, copy1;
+    int got0 = ab_read_meta_copy(bio, md_lba, md_blocks,
+                                 AB_META_COPY0_BYTE_OFF, &copy0);
+    int got1 = ab_read_meta_copy(bio, md_lba, md_blocks,
+                                 AB_META_COPY1_BYTE_OFF, &copy1);
+    if (!got0 && !got1) {
+        /* The partition was located via a clean GPT but its blocks cannot be
+         * read -- a damaged A/B disk. Fail closed rather than guess a slot. */
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "A/B select: metadata blocks unreadable",
+                   "Located the A/B metadata partition but neither redundant "
+                   "copy could be read -- the disk is damaged. Reflash or "
+                   "boot recovery media.");
+    }
+
+    const struct ab_boot_metadata *winner = (const struct ab_boot_metadata *)0;
+    int valid = ab_boot_meta_select_newest(
+                    got0 ? &copy0 : (const struct ab_boot_metadata *)0,
+                    got1 ? &copy1 : (const struct ab_boot_metadata *)0,
+                    &winner);
+    if (!valid || !winner) {
+        /* Both readable copies failed validation. A clearly UNINITIALIZED
+         * partition (first boot) factory-defaults to Slot A -- there is no
+         * prior state to roll back to. But a previously-written record that
+         * has since corrupted must NOT default to Slot A: that could bypass a
+         * legitimate rollback (Slot B may be the intended/good slot) and boot a
+         * stale, exhausted, or vulnerable root. Fail closed instead.
+         *
+         * "Uninitialized" requires BOTH copies readable AND every byte zero --
+         * a zeroed magic word with any other nonzero byte is a damaged record
+         * (not first boot), and an unreadable copy on a located partition is a
+         * fault, not a pristine disk. Either case -> fail closed. */
+        int uninit = got0 && got1;
+        if (uninit) {
+            const unsigned char *b0 = (const unsigned char *)&copy0;
+            const unsigned char *b1 = (const unsigned char *)&copy1;
+            UINTN z;
+            for (z = 0; z < AB_BOOT_META_SIZE; z++) {
+                if (b0[z] != 0u || b1[z] != 0u) { uninit = 0; break; }
+            }
+        }
+        if (uninit) {
+            serial_early_print("[BOOT] A/B select: metadata uninitialized "
+                               "(first boot) -- Slot A\n");
+            g_boot_info_ptr->active_slot = AB_BOOT_SLOT_A;
+            post_code16(POST16_BL_AB_SELECT_OK);
+            return;
+        }
+        boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
+                   "A/B select: metadata corrupt on both copies",
+                   "An initialized A/B metadata record failed validation on "
+                   "both redundant copies -- selecting a default slot could "
+                   "bypass rollback. Reflash or boot recovery media.");
+    }
+
+    unsigned int slot = ab_boot_meta_choose_slot(winner);
+    g_boot_info_ptr->active_slot = (UINT8)slot;
+
+    /* "[BOOT] Booting Slot %c (tries=%u, successful=%u)" -- serial_early_print
+     * has no formatter, so assemble the line by parts. */
+    {
+        char line[80];
+        UINTN p = 0;
+        const char *pfx = "[BOOT] Booting Slot ";
+        UINTN k;
+        for (k = 0; pfx[k] && p < sizeof(line) - 1; k++) line[p++] = pfx[k];
+        if (p < sizeof(line) - 1) line[p++] = ab_slot_char(slot);
+        const char *mid = " (tries=";
+        for (k = 0; mid[k] && p < sizeof(line) - 1; k++) line[p++] = mid[k];
+        if (p < sizeof(line) - 1)
+            line[p++] = (char)('0' + (winner->slot[slot].tries % 10u));
+        const char *mid2 = ", successful=";
+        for (k = 0; mid2[k] && p < sizeof(line) - 1; k++) line[p++] = mid2[k];
+        if (p < sizeof(line) - 1)
+            line[p++] = (char)('0' + (winner->slot[slot].successful ? 1u : 0u));
+        if (p < sizeof(line) - 1) line[p++] = ')';
+        if (p < sizeof(line) - 1) line[p++] = '\n';
+        line[p] = '\0';
+        serial_early_print(line);
+    }
+
+    post_code16(POST16_BL_AB_SELECT_OK);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -13060,6 +13506,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * the path/reason wiring is centralized. */
     watchdog_reset();
     boot_policy_invoke();
+
+    /* A/B dual-slot selection: read the on-disk metadata and publish the
+     * chosen root slot in boot_info.active_slot before handing off. Pre-EBS
+     * (BlockIO + Boot Services still live). READ-ONLY -- the tries write is
+     * owned by the failure-counting + atomic-write work. */
+    watchdog_reset();
+    select_active_slot(g_boot_device_handle);
 
     /* Load kernel ELF */
     post_code16(POST16_BL_KERNEL_OPEN);

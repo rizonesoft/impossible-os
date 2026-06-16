@@ -422,5 +422,6 @@ F(sticky_last_boot_seq);
 F(sticky_consumed_trigger_seq);
 F(_audit_pad);
 F(loader_vars_degraded);
+F(active_slot);
 F(_loader_vars_pad);
 F(_loader_vars_pad[0]);

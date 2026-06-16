@@ -14,6 +14,7 @@
 
 #include "kernel/test/test.h"
 #include "boot/ab_boot_metadata.h"
+#include "kernel/fs/gpt.h"   /* gpt_ixfs_slot + IXFS slot type GUIDs (TODO-21 sec 3) */
 
 static void ab_make_valid(struct ab_boot_metadata *m, unsigned int gen)
 {
@@ -141,6 +142,154 @@ static void test_ab_boot_validate_rejects_oob_successful(void)
     TEST_ASSERT_EQ((uint64_t)ab_boot_meta_is_valid(&m), 0u, "successful > 1 rejected");
 }
 
+/* ---- Selection state model (sec 3 ab_boot_meta_choose_slot) ---- */
+
+/* Build a finalized record with explicit per-slot state. */
+static void ab_make_record(struct ab_boot_metadata *m, unsigned int active,
+                           unsigned int a_tries, unsigned int a_succ, unsigned int a_pri,
+                           unsigned int b_tries, unsigned int b_succ, unsigned int b_pri)
+{
+    unsigned int i;
+    for (i = 0u; i < AB_BOOT_META_SIZE; i++) ((unsigned char *)m)[i] = 0u;
+    m->active_slot = active;
+    m->slot[AB_BOOT_SLOT_A].tries = a_tries;
+    m->slot[AB_BOOT_SLOT_A].successful = a_succ;
+    m->slot[AB_BOOT_SLOT_A].priority = a_pri;
+    m->slot[AB_BOOT_SLOT_B].tries = b_tries;
+    m->slot[AB_BOOT_SLOT_B].successful = b_succ;
+    m->slot[AB_BOOT_SLOT_B].priority = b_pri;
+    ab_boot_meta_finalize(m);
+}
+
+static void test_ab_choose_fresh_prefers_a(void)
+{
+    struct ab_boot_metadata m;
+    /* Factory shape: A pending priority 1, B blank. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, 0u, 0u, 1u, 0u, 0u, 0u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_choose_slot(&m), AB_BOOT_SLOT_A,
+                   "fresh metadata boots Slot A");
+}
+
+static void test_ab_choose_rolls_back_exhausted_slot(void)
+{
+    struct ab_boot_metadata m;
+    /* A exhausted (tries=MAX, never successful), B pending and viable.
+     * Even though A has higher priority, A is unbootable -> choose B. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, AB_BOOT_MAX_TRIES, 0u, 5u, 0u, 0u, 1u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_choose_slot(&m), AB_BOOT_SLOT_B,
+                   "exhausted active slot rolls back to the viable slot");
+}
+
+static void test_ab_choose_rolls_back_once_successful_exhausted(void)
+{
+    struct ab_boot_metadata m;
+    /* A was marked successful but has since failed MAX times (tries=MAX),
+     * B is viable. The exhausted slot must roll back EVEN THOUGH successful=1
+     * and A has higher priority -- a once-good slot that later broke. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, AB_BOOT_MAX_TRIES, 1u, 9u, 0u, 0u, 1u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_choose_slot(&m), AB_BOOT_SLOT_B,
+                   "exhausted once-successful slot still rolls back");
+}
+
+static void test_ab_choose_higher_priority_wins(void)
+{
+    struct ab_boot_metadata m;
+    /* Both viable + successful; B has higher priority. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, 0u, 1u, 1u, 0u, 1u, 9u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_choose_slot(&m), AB_BOOT_SLOT_B,
+                   "higher priority wins when both viable");
+}
+
+static void test_ab_choose_successful_breaks_priority_tie(void)
+{
+    struct ab_boot_metadata m;
+    /* Equal priority; A successful, B only pending -> prefer successful A. */
+    ab_make_record(&m, AB_BOOT_SLOT_B, 0u, 1u, 3u, 1u, 0u, 3u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_choose_slot(&m), AB_BOOT_SLOT_A,
+                   "successful slot beats pending at equal priority");
+}
+
+static void test_ab_choose_lower_tries_breaks_tie(void)
+{
+    struct ab_boot_metadata m;
+    /* Equal priority + both not-successful; A has more tries consumed. */
+    ab_make_record(&m, AB_BOOT_SLOT_A, 2u, 0u, 1u, 0u, 0u, 1u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_choose_slot(&m), AB_BOOT_SLOT_B,
+                   "lower-tries slot wins the final tie-break");
+}
+
+static void test_ab_choose_both_exhausted_falls_back_to_active(void)
+{
+    struct ab_boot_metadata m;
+    /* Both unbootable -> fall back to the recorded active_slot (B here). */
+    ab_make_record(&m, AB_BOOT_SLOT_B, AB_BOOT_MAX_TRIES, 0u, 1u,
+                   AB_BOOT_MAX_TRIES, 0u, 1u);
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_choose_slot(&m), AB_BOOT_SLOT_B,
+                   "both exhausted -> recorded active_slot");
+}
+
+/* ---- GPT primary/backup reconciliation (sec 3 ab_boot_meta_reconcile_gpt) ---- */
+
+static void test_ab_reconcile_primary_has_md(void)
+{
+    /* primary valid + has MD -> use primary regardless of backup. */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(1, 1, 1, 1),
+                   (uint64_t)AB_GPT_USE_PRIMARY, "primary valid+MD -> USE_PRIMARY");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(1, 1, 0, 0),
+                   (uint64_t)AB_GPT_USE_PRIMARY, "primary valid+MD, backup invalid -> USE_PRIMARY");
+}
+
+static void test_ab_reconcile_backup_recovers(void)
+{
+    /* primary invalid + backup valid+MD -> recover from backup. */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(0, 0, 1, 1),
+                   (uint64_t)AB_GPT_USE_BACKUP, "primary invalid, backup valid+MD -> USE_BACKUP");
+}
+
+static void test_ab_reconcile_both_valid_no_md(void)
+{
+    /* both valid + both no MD -> legitimate non-A/B disk. */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(1, 0, 1, 0),
+                   (uint64_t)AB_GPT_NO_AB, "both valid, both no-MD -> NO_AB");
+}
+
+static void test_ab_reconcile_corrupt_states_fail_closed(void)
+{
+    /* Every state that is not cleanly authoritative/recoverable/agreeing is
+     * FATAL -- the rollback-safety fail-closed contract. */
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(0, 0, 0, 0),
+                   (uint64_t)AB_GPT_FATAL, "both invalid -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(1, 0, 1, 1),
+                   (uint64_t)AB_GPT_FATAL, "primary no-MD, backup has-MD (split-brain) -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(1, 1, 1, 0),
+                   (uint64_t)AB_GPT_FATAL, "primary has-MD, backup valid no-MD (split-brain) -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(1, 0, 0, 0),
+                   (uint64_t)AB_GPT_FATAL, "primary valid no-MD, backup invalid -> FATAL");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_meta_reconcile_gpt(0, 0, 1, 0),
+                   (uint64_t)AB_GPT_FATAL, "primary invalid, backup valid no-MD -> FATAL");
+}
+
+/* ---- Slot identity from GPT type GUID (sec 3 gpt_ixfs_slot) ---- */
+
+static void test_ab_gpt_ixfs_slot_a(void)
+{
+    TEST_ASSERT_EQ((uint64_t)(int64_t)gpt_ixfs_slot(&GPT_GUID_IXFS), 0u,
+                   "Slot A IXFS GUID -> slot 0");
+}
+
+static void test_ab_gpt_ixfs_slot_b(void)
+{
+    TEST_ASSERT_EQ((uint64_t)(int64_t)gpt_ixfs_slot(&GPT_GUID_IXFS_B), 1u,
+                   "Slot B IXFS GUID -> slot 1");
+}
+
+static void test_ab_gpt_ixfs_slot_non_ixfs(void)
+{
+    /* A non-IXFS-family GUID returns -1 (not a slot). */
+    TEST_ASSERT_EQ((uint64_t)(int64_t)gpt_ixfs_slot(&GPT_GUID_EFI_SYSTEM),
+                   (uint64_t)(int64_t)-1, "EFI System GUID -> not a slot (-1)");
+}
+
 void test_register_ab_boot(void)
 {
     test_suite_register_cat("ab_boot: default record is valid",
@@ -167,4 +316,32 @@ void test_register_ab_boot(void)
                             test_ab_boot_select_newest_one_invalid, TEST_CAT_BOOT);
     test_suite_register_cat("ab_boot: select newest -- both invalid",
                             test_ab_boot_select_newest_both_invalid, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: choose slot -- fresh prefers A",
+                            test_ab_choose_fresh_prefers_a, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: choose slot -- rolls back exhausted slot",
+                            test_ab_choose_rolls_back_exhausted_slot, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: choose slot -- rolls back once-successful exhausted slot",
+                            test_ab_choose_rolls_back_once_successful_exhausted, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: choose slot -- higher priority wins",
+                            test_ab_choose_higher_priority_wins, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: choose slot -- successful breaks priority tie",
+                            test_ab_choose_successful_breaks_priority_tie, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: choose slot -- lower tries breaks tie",
+                            test_ab_choose_lower_tries_breaks_tie, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: choose slot -- both exhausted falls back to active",
+                            test_ab_choose_both_exhausted_falls_back_to_active, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: reconcile GPT -- primary has metadata",
+                            test_ab_reconcile_primary_has_md, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: reconcile GPT -- backup recovers primary",
+                            test_ab_reconcile_backup_recovers, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: reconcile GPT -- both valid no metadata",
+                            test_ab_reconcile_both_valid_no_md, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: reconcile GPT -- corrupt states fail closed",
+                            test_ab_reconcile_corrupt_states_fail_closed, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: gpt_ixfs_slot -- Slot A GUID",
+                            test_ab_gpt_ixfs_slot_a, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: gpt_ixfs_slot -- Slot B GUID",
+                            test_ab_gpt_ixfs_slot_b, TEST_CAT_BOOT);
+    test_suite_register_cat("ab_boot: gpt_ixfs_slot -- non-IXFS GUID rejected",
+                            test_ab_gpt_ixfs_slot_non_ixfs, TEST_CAT_BOOT);
 }

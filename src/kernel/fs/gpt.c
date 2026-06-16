@@ -43,10 +43,18 @@ const struct gpt_guid GPT_GUID_LINUX_FS = {
     {0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4}
 };
 
-/* DA000000-0000-4978-4653-000000000001 (custom IXFS GUID) */
+/* DA000000-0000-4978-4653-000000000001 (custom IXFS GUID -- A/B Slot A) */
 const struct gpt_guid GPT_GUID_IXFS = {
     0xDA000000, 0x0000, 0x4978,
     {0x46, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}
+};
+
+/* DA000000-0000-4978-4653-000000000002 (IXFS A/B Slot B). Same family as
+ * GPT_GUID_IXFS; only the trailing discriminator byte differs (01=A, 02=B)
+ * so the bootloader-selected slot can be matched at mount time (TODO-21). */
+const struct gpt_guid GPT_GUID_IXFS_B = {
+    0xDA000000, 0x0000, 0x4978,
+    {0x46, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02}
 };
 
 /* 21686148-6449-6E6F-744E-656564454649  -- BIOS Boot Partition */
@@ -340,12 +348,25 @@ int gpt_guid_equal(const struct gpt_guid *a, const struct gpt_guid *b)
     return 1;
 }
 
+/* A/B dual-slot identity (TODO-21): return 0 for the Slot A IXFS type GUID,
+ * 1 for Slot B, or -1 for any non-IXFS-family GUID. Filesystem detection is
+ * content-based (probe_ixfs), so both slots already mount as IXFS; this is the
+ * only way to tell which physical slot a partition is, so the kernel can mount
+ * EXACTLY the slot the bootloader selected. */
+int gpt_ixfs_slot(const struct gpt_guid *guid)
+{
+    if (gpt_guid_equal(guid, &GPT_GUID_IXFS))   return 0;
+    if (gpt_guid_equal(guid, &GPT_GUID_IXFS_B)) return 1;
+    return -1;
+}
+
 const char *gpt_type_name(const struct gpt_guid *guid)
 {
     if (gpt_guid_equal(guid, &GPT_GUID_EFI_SYSTEM))       return "EFI System";
     if (gpt_guid_equal(guid, &GPT_GUID_MS_BASIC_DATA))     return "Basic Data";
     if (gpt_guid_equal(guid, &GPT_GUID_LINUX_FS))          return "Linux";
     if (gpt_guid_equal(guid, &GPT_GUID_IXFS))              return "IXFS";
+    if (gpt_guid_equal(guid, &GPT_GUID_IXFS_B))            return "IXFS";
     if (gpt_guid_equal(guid, &GPT_GUID_BIOS_BOOT))         return "BIOS Boot";
     if (gpt_guid_equal(guid, &GPT_GUID_MS_RESERVED))       return "MS Reserved";
     if (gpt_guid_equal(guid, &GPT_GUID_MS_LDM_META))       return "MS LDM Metadata";
