@@ -33,7 +33,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 - Each boot phase has an expected max duration (Phase 0: 2s, Phase 1: 5s, Phase 2: 30s, Phase 3: 60s).
 - Watchdog is petted (reset) at each boot_progress() call -- stalled subsystem triggers NMI.
 - Combined with A/B boot: hang → watchdog reboot → try counter increments → 3 hangs → rollback.
-- Optional: ACPI hardware watchdog (TCO timer on Intel) for full hardware-level reset.
+- ACPI WDAT hardware watchdog (firmware-abstracted; direct iTCO deferred) for hardware-level reset on total lockup.
 
 ---
 
@@ -45,7 +45,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 | 💎  |   2   | Per-phase timeout configuration                 | §1         |  [ ]   |
 | 💎  |   3   | Watchdog pet at each boot_progress() call       | §1, §2     |  [ ]   |
 | 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T21 §4 |  [ ]   |
-| 💎  |   5   | ACPI TCO hardware watchdog (Intel platforms)     | --          |  [ ]   |
+| 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --     |  [ ]   |
 | ⭐  |   6   | Watchdog status in VPD display                  | §1–§5      |  [ ]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
@@ -127,18 +127,23 @@ When watchdog fires, produce useful diagnostics before rebooting.
 
 ---
 
-## 5. ACPI WDAT + TCO Hardware Watchdog
+## 5. ACPI WDAT Hardware Watchdog
 
-A hardware watchdog provides a reboot even if the CPU is fully locked. Prefer the firmware-abstracted ACPI WDAT table (what Win11/Linux use); direct Intel TCO PCI is the fallback.
+A hardware watchdog reboots the board even on a total CPU lockup. §5 is STANDALONE (the §1 LAPIC NMI software watchdog is deferred); WDAT-only first cut, direct iTCO is a tracked follow-up.
 
-- [ ] Detect the ACPI WDAT (Watchdog Action Table) FIRST: validate `ACPI_SIG_WDAT`, map the firmware register-action resources, honor min/max `timer_period` bounds (Win11 uses WDAT exclusively; Linux `wdat_wdt` prefers it over iTCO)
-- [ ] WDAT actions: GET_STATUS/SET_STATUS, GET/SET_RUNNING_STATE, SET_COUNTDOWN, RESET; read + clear the boot-status (was-watchdog-reboot) flag; honor stopped-in-sleep semantics
-- [ ] Fall back to direct Intel iTCO chipset PCI (NO_REBOOT / SMI / second-timeout handling) ONLY when no usable WDAT exists
-- [ ] Configure with boot-phase timeout, pet alongside the LAPIC NMI watchdog; WDAT/TCO fires a hardware reboot that survives complete CPU lockup (unlike NMI which needs the CPU)
-- [ ] If neither WDAT nor iTCO present: LAPIC NMI watchdog is sufficient. Log `"[BOOT] HW watchdog: %s (%u seconds)"` (WDAT / iTCO / none)
-- [ ] Commit: `"boot: ACPI WDAT + iTCO hardware watchdog -- hardware-level reboot on total lockup"`
+- [ ] Discover WDAT via the validated `acpi_get_raw_table("WDAT")` (gated by `acpi_is_ready()`), not the RSDT-only `find_table_rsdt`; validate header size + entry-count overflow + table length + action/instruction enums + GAS fields before any register access
+- [ ] Map WDAT register regions per GAS: system-memory via `vmm_map_mmio_uc()`, system-I/O via width-correct port I/O; execute all instruction entries for an action in order
+- [ ] WDAT actions: GET/SET_RUNNING_STATE, SET_COUNTDOWN, RESET (pet), GET/SET_BOOT_STATUS; clamp the boot-wide timeout into the min/max `timer_period` range (refuse + log if un-clampable)
+- [ ] Read + clear the WDAT boot-status (was-watchdog-reboot) flag into boot_info/NVRAM for the previous-boot-hung diagnostic; honor watchdog-stopped-in-sleep
+- [ ] Arm with a single generous boot-wide timeout (per-phase timeouts are the deferred §2); pet from `boot_progress()` ONLY while a HW watchdog is armed
+- [ ] `hw_watchdog_boot_handoff()`: disarm (SET_RUNNING_STATE=stopped) after the final boot-log flush + before `task_create()`/`scheduler_enable()`; never enter the desktop armed (no runtime petter yet); on disarm-failure do NOT proceed armed
+- [ ] If no usable WDAT: log `"[BOOT] HW watchdog: none"` -- NO reboot coverage until §1 (NMI) or the iTCO follow-up lands
+- [ ] DEFERRED follow-up: direct Intel iTCO PCI fallback (PCH-generation chipset allowlist, LPC/PMC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm)
+- [ ] Commit: `"boot: ACPI WDAT hardware watchdog -- WDAT-only, disarm at boot-handoff"`
 
-**Test checkpoint:** On Intel bare metal (i5-11600K): WDAT (if firmware exposes it) or iTCO detected + configured; serial shows `"[BOOT] HW watchdog: WDAT"` or `iTCO`. On QEMU: `"[BOOT] HW watchdog: none"` (no WDAT/TCO emulation) -- LAPIC NMI watchdog covers it.
+**Test checkpoint:** On Intel bare metal with firmware WDAT: detected + armed, serial `"[BOOT] HW watchdog: WDAT (Ns)"`, disarmed at boot-handoff (no mid-desktop reboot). On QEMU (no WDAT): `"[BOOT] HW watchdog: none"` -- clean, no hang-recovery claim (§1 NMI deferred).
+
+**Regression risk:** HIGH -- a HW watchdog that fails to disarm at boot-handoff reboots the board mid-desktop. The disarm path must be readback-verified before the scheduler starts.
 
 ---
 
