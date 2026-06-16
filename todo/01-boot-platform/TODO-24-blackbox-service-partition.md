@@ -283,18 +283,6 @@ Update cross-references across affected TODOs.
 
 ---
 
-## Unit Tests
-
-> Wire into `test_runner_init()` via `test_register_blackbox()` (XREF: `00-infrastructure/TODO-03-kernel-test-harness.md`).
-
-- [x] `test_blackbox.c`: 11 tests -- X:\ mounted, 7 directories exist, klog_dir resolved, volume label BLACKBOX, free space > 0
-- [x] All tests skip gracefully if BlackBox partition not present
-- [x] `fat32_get_label()` public API added for volume label access
-- [x] Registered in `test_runner_init()`: `test_register_blackbox()`
-- [x] Commit: `"test: add BlackBox partition tests"`
-
----
-
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS                    |
@@ -316,6 +304,20 @@ Update cross-references across affected TODOs.
 > After S1-S9, Impossible OS has a dedicated diagnostic partition more organized than both Windows (scattered C:\Windows files) and Linux (everything in /var/log). FAT32 universality means any OS can read the flight recorder.
 > S10-S12 add production-grade space management and partition health -- matching Win11 chkdsk and Linux logrotate.
 > S13 (WER staging on FAT32) is a competitive edge -- neither Win11 nor Linux stages crash reports on a universally readable partition.
+
+---
+
+## Unit Tests
+
+> Wire into `test_runner_init()` via `test_register_blackbox()` (XREF: `00-infrastructure/TODO-03-kernel-test-harness.md`).
+
+- [x] `test_blackbox.c`: 11 tests -- X:\ mounted, 7 directories exist, klog_dir resolved, volume label BLACKBOX, free space > 0
+- [x] All tests skip gracefully if BlackBox partition not present
+- [x] `fat32_get_label()` public API added for volume label access
+- [x] Registered in `test_runner_init()`: `test_register_blackbox()`
+- [x] Commit: `"test: add BlackBox partition tests"`
+
+---
 
 ## Verification
 
