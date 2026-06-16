@@ -95,6 +95,7 @@ Add a read-only recovery partition to the GPT disk layout.
 - [ ] Shows `"Impossible OS Recovery Environment"` -- rendered by the §7 recovery UI on the recovery-mode entry path
 - [ ] Does NOT touch A/B slots -- recovery operates only on the recovery partition
 - [ ] DROPPED: standalone `recovery.efi` + `\EFI\BOOT\BOOTX64.EFI` fallback-path install (replaces NORMAL boot, HIGH; forked binary drifts vs boot_info validation, HIGH)
+- [ ] Quiesce before invoking `ixfs_fsck`: run fsck pre-mount OR hold a per-volume repair lock excluding VFS mutators (active-volume fsck is quiesced-only by contract; §3 review HIGH). -> XREF: §3
 - [ ] Commit: `"boot: recovery-mode kernel entry + load-path contract (entry-store model)"`
 
 **Test checkpoint (deferred):** a registered `kind=recovery` entry (TODO-07 §9) boots through the existing bootloader; the kernel logs `boot_path=RECOVERY` and enters the recovery flow; the normal boot entry is unaffected. Cannot run until TODO-07 §9 registration + §3-§7 recovery flow land.
@@ -121,6 +122,8 @@ Recovery can verify and repair the IXFS filesystem on a slot.
 - [x] `struct ixfs_fsck_report` tallies each error class (orphan inodes, bad dirents, cross-links, bitmap/free-count/refcount/journal/data-checksum faults)
 - [x] Auto-repair (fix mode, SAFE subset): bitmap reconcile, free-count + refcount fix, single-owner orphan free, bad-dirent clear, validated journal replay; cross-links + snapshot-shared blocks stay report-only
 - [/] Log to serial (klog `fsck` category) done; on-screen display is the §7 recovery UI -> XREF: §7
+- [ ] Large-volume scalability (deferred): fuse the 3 inode scans (pass 3/6/8) via pass-3 allocated/dir-type bitsets + recorded free-inode count; chunked scratch to avoid the 8 MiB-contiguous refc alloc at the 32 GiB ceiling
+- [ ] Crash-atomic repair (deferred): route fsck repair writes through a transaction / fsck-repair journal; today repairs rely on idempotent re-run (e2fsck model; `IXFS_TXN_MAX_ENTRIES=8` too small to wrap a full repair)
 - [x] Commit: `"recovery: IXFS filesystem integrity check and auto-repair"`
 
 **Test checkpoint:** `ixfs_fsck_reconcile_bitmap` detects a flipped bitmap bit and (fix mode) sets the missing + clears the spurious bit; `test_ixfs_fsck.c` covers the superblock / bitmap / journal validators (24 assertions, TEST_CAT_FS); full fs suite 111 kernel + 16 user-mode PASS on TCG.
@@ -133,6 +136,12 @@ Recovery can verify and repair the IXFS filesystem on a slot.
 > - **Safety:** snapshot/refcount-aware (frees a block only when expected refcount<=1); corrupt journal discarded not replayed; a partial directory walk disables every freeing pass (no data wipe on transient OOM).
 > - **Scope boundary:** the live-volume orchestrator (orphan/journal-replay/free-count) is exercised by the §2 recovery flow + serial; unit tests cover the pure validators only. On-screen display + both-slots are §2/§7.
 > - **Canonical doc:** `src/kernel/fs/ixfs/ixfs_fsck.c` header + `struct ixfs_fsck_report` in `include/kernel/fs/ixfs.h`.
+
+> **Verified:** 2026-06-16 | commit `79096a4f` (+ review fixes) | 3/6 items | build OK | tests 113 kernel + 16 user-mode PASS (fs, TCG); lint clean
+> **Deferred:** [H] active-volume fsck has no enforced VFS-exclusion (quiesced-only by contract; only caller is the §2 recovery flow) -> XREF: 01-boot-platform/TODO-22 §2 (item: "Quiesce before invoking `ixfs_fsck`")
+> **Deferred:** [H] large-volume perf: 3 inode-table scans + per-dirent inode re-read + 8 MiB-contiguous refc scratch at the 32 GiB ceiling -> XREF: 01-boot-platform/TODO-22 §3 (item: "Large-volume scalability (deferred)")
+> **Deferred:** [H] fsck repair is not power-fail-atomic; relies on idempotent re-run (e2fsck model) -> XREF: 01-boot-platform/TODO-22 §3 (item: "Crash-atomic repair (deferred)")
+> **Quality reviewed:** 2026-06-16 | Codex 12x (design + adversarial + test-coverage + consistency + perf + re-adversarial) | 3C+12H+4M fixed, 4H+1M deferred | scope: kernel-code-quality
 
 ---
 

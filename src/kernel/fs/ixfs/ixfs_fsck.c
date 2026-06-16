@@ -105,6 +105,22 @@ static void fsck_free(void *p, uint32_t pages)
     }
 }
 
+/* A metadata range [start, start+blocks) is valid when it is absent
+ * (blocks == 0) or sits wholly below `limit` (s_data_start) with no overflow
+ * and does not claim the superblock at block 0. Every on-disk metadata region
+ * (bitmap, inode table, checksum/journal/refcount/snapshot tables) must pass
+ * this before fsck trusts the "mark every block below s_data_start used" rule. */
+static int fsck_meta_range_ok(uint64_t start, uint64_t blocks, uint64_t limit)
+{
+    if (blocks == 0)
+        return 1;                       /* region absent */
+    if (start == 0)
+        return 0;                       /* block 0 is the superblock */
+    if (start + blocks < start)
+        return 0;                       /* overflow */
+    return (start + blocks) <= limit;
+}
+
 /* ============================================================================
  * Pure validators (no I/O) -- exposed for unit tests.
  * ============================================================================ */
@@ -256,6 +272,7 @@ int ixfs_fsck_volume(struct ixfs_volume *vol, int fix,
     uint32_t ino;
     int traversal_failed = 0;
     int repair_failed = 0;
+    int incomplete = 0;            /* a verification pass could not complete */
     int rc = 0;
     uint32_t errors = 0;
 
@@ -346,6 +363,49 @@ int ixfs_fsck_volume(struct ixfs_volume *vol, int fix,
                  (uint64_t)total_blocks, (uint64_t)total_inodes);
             rc = -1;
             goto done;
+        }
+        /* Every metadata region must sit below s_data_start with no overflow;
+         * otherwise the "mark [0, s_data_start) used" rule would miss it and
+         * bitmap repair / journal write-through could clobber a data block. */
+        if (!fsck_meta_range_ok(vol->sb.s_bitmap_start, vol->sb.s_bitmap_blocks, data_start) ||
+            !fsck_meta_range_ok(vol->sb.s_inode_start, vol->sb.s_inode_blocks, data_start) ||
+            !fsck_meta_range_ok(vol->sb.s_checksum_start, vol->sb.s_checksum_blocks, data_start) ||
+            !fsck_meta_range_ok(vol->sb.s_journal_start, vol->sb.s_journal_blocks, data_start) ||
+            !fsck_meta_range_ok(vol->sb.s_refcount_start, vol->sb.s_refcount_blocks, data_start) ||
+            !fsck_meta_range_ok(vol->sb.s_snapshot_start,
+                                vol->sb.s_snapshot_start ? IXFS_SNAPSHOT_BLOCKS : 0,
+                                data_start)) {
+            report->structural_corruption = 1;
+            klog(LOG_ERROR, "fsck",
+                 "superblock metadata region out of bounds or in data area; refusing");
+            rc = -1;
+            goto done;
+        }
+        /* Metadata regions must also be pairwise non-overlapping (a crafted
+         * superblock could nest the journal inside the inode table, etc.). */
+        {
+            struct { uint64_t s, n; } mr[7];
+            int nmr = 0, a, b;
+#define FSCK_ADD_MR(cnt, start, blocks) \
+            do { if (cnt) { mr[nmr].s = (start); mr[nmr].n = (blocks); nmr++; } } while (0)
+            mr[nmr].s = 0; mr[nmr].n = 1; nmr++;  /* superblock at block 0 */
+            FSCK_ADD_MR(vol->sb.s_bitmap_blocks,   vol->sb.s_bitmap_start,   vol->sb.s_bitmap_blocks);
+            FSCK_ADD_MR(vol->sb.s_inode_blocks,    vol->sb.s_inode_start,    vol->sb.s_inode_blocks);
+            FSCK_ADD_MR(vol->sb.s_checksum_blocks, vol->sb.s_checksum_start, vol->sb.s_checksum_blocks);
+            FSCK_ADD_MR(vol->sb.s_journal_blocks,  vol->sb.s_journal_start,  vol->sb.s_journal_blocks);
+            FSCK_ADD_MR(vol->sb.s_refcount_blocks, vol->sb.s_refcount_start, vol->sb.s_refcount_blocks);
+            FSCK_ADD_MR(vol->sb.s_snapshot_start,  vol->sb.s_snapshot_start, IXFS_SNAPSHOT_BLOCKS);
+#undef FSCK_ADD_MR
+            for (a = 0; a < nmr; a++)
+                for (b = a + 1; b < nmr; b++)
+                    if (mr[a].s < mr[b].s + mr[b].n && mr[b].s < mr[a].s + mr[a].n) {
+                        report->structural_corruption = 1;
+                        report->superblock_errors++;
+                        klog(LOG_ERROR, "fsck",
+                             "superblock metadata regions overlap; refusing");
+                        rc = -1;
+                        goto done;
+                    }
         }
     }
 
@@ -583,23 +643,32 @@ int ixfs_fsck_volume(struct ixfs_volume *vol, int fix,
                 if (shared)
                     continue;           /* shared: report-only */
 
-                for (idx = 0; idx < nb; idx++) {
-                    uint32_t blk = ixfs_get_block(vol, &inode, idx);
-                    if (blk == 0 || (uint64_t)blk >= total_blocks)
-                        continue;
-                    if (blk >= data_start) {
-                        if (fsck_bit_test(expected, blk))
-                            expected[blk / 8] &= (uint8_t)~(1u << (blk % 8));
-                        if (refc[blk] > 0)
-                            refc[blk]--;
-                        ixfs_free_block(vol, blk);
+                /* Free the inode FIRST, then release its blocks from the
+                 * EXPECTED set + refcount (pass-7 reconcile is the single
+                 * bitmap writer and persists the result). If the inode write
+                 * fails, the blocks stay used: never mark a block free while
+                 * an allocated inode still references it. A pre-zero copy
+                 * keeps the extent list to walk after the inode is zeroed. */
+                {
+                    struct ixfs_inode freed = inode;
+                    fsck_zero(&inode, (uint32_t)sizeof(inode));
+                    if (ixfs_write_inode(vol, ino, &inode) != 0) {
+                        repair_failed = 1;
+                        continue;       /* inode not freed -> keep blocks used */
+                    }
+                    report->inodes_repaired++;
+                    for (idx = 0; idx < nb; idx++) {
+                        uint32_t blk = ixfs_get_block(vol, &freed, idx);
+                        if (blk == 0 || (uint64_t)blk >= total_blocks)
+                            continue;
+                        if (blk >= data_start) {
+                            if (fsck_bit_test(expected, blk))
+                                expected[blk / 8] &= (uint8_t)~(1u << (blk % 8));
+                            if (refc[blk] > 0)
+                                refc[blk]--;
+                        }
                     }
                 }
-                fsck_zero(&inode, (uint32_t)sizeof(inode));
-                if (ixfs_write_inode(vol, ino, &inode) != 0)
-                    repair_failed = 1;
-                else
-                    report->inodes_repaired++;
             }
         }
     }
@@ -737,8 +806,29 @@ int ixfs_fsck_volume(struct ixfs_volume *vol, int fix,
     /* ---- Pass 11: data-block checksums (delegated to scrub) ---- */
     if (vol == ixfs_get_active_volume()) {
         int scrub = ixfs_scrub();
-        if (scrub > 0)
+        if (scrub > 0) {
             report->data_checksum_errors = (uint32_t)scrub;
+        } else if (scrub < 0) {
+            /* The checksum pass did not run (missing state / OOM); an
+             * unexecuted pass is not evidence of a trustworthy volume. */
+            incomplete = 1;
+            klog(LOG_WARN, "fsck",
+                 "data-checksum scrub did not complete; result untrustworthy");
+        }
+    }
+
+    /* ---- Coherence: persist cached repairs, then drop stale cache entries ----
+     * Repairs land via a mix of cached writes (bitmap/superblock/refcount/inode)
+     * and raw writes (directory blocks, journal). Flush the cached ones to disk,
+     * then invalidate ALL cache entries so a stale clean copy of a raw-written
+     * block can never shadow the repaired on-disk image for a later reader. */
+    if (fix && !report->structural_corruption) {
+        /* A failed flush leaves dirty repairs unwritten; do NOT invalidate
+         * (that would drop them) -- mark the run untrustworthy instead. */
+        if (ixfs_cache_flush(vol) != 0)
+            repair_failed = 1;
+        else
+            ixfs_cache_init(vol);
     }
 
 done:
@@ -778,11 +868,25 @@ done:
      *   0  = consistent (clean, or fully repaired with every write OK).
      *   -1 = untrustworthy: structural corruption, partial walk, a torn
      *        repair write, or check-only mode that found errors. */
-    if (report->structural_corruption || traversal_failed ||
+    if (report->structural_corruption || traversal_failed || incomplete ||
         (fix && repair_failed))
         return -1;
     if (!fix && errors > 0)
         return -1;
+    if (fix) {
+        /* The safe-repair subset does NOT fix every class: cross-links,
+         * data-checksum mismatches, superblock/inode-field corruption, and
+         * snapshot-shared orphans / bad dirents left unrepaired all keep the
+         * volume untrustworthy even after a fix run. (inodes_repaired <=
+         * orphan_inodes and dirents_repaired <= bad_dirents by construction,
+         * so the subtractions never underflow.) */
+        uint32_t unrepaired = report->superblock_errors + report->inode_errors +
+            report->cross_links + report->data_checksum_errors +
+            (report->orphan_inodes - report->inodes_repaired) +
+            (report->bad_dirents - report->dirents_repaired);
+        if (unrepaired > 0)
+            return -1;
+    }
     return 0;
 }
 
