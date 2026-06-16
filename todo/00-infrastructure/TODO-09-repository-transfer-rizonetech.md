@@ -248,16 +248,16 @@ GitHub transfers repository data, but the project should not trust complex setti
 
 Stop relying on redirects for first-party content. Redirects are useful for old external links, but repo-owned files should name the new canonical owner.
 
-- [x] **README badges + links flipped** -- 9 references in `README.md` updated (build / release / commits / stargazers shields.io badges, build/release Actions badges, clone command, releases page link). Sponsor link `github.com/sponsors/rizonesoft` and copyright link `[Rizonesoft](https://github.com/rizonesoft)` PRESERVED (brand attribution).
+- [x] **README badges + links flipped** (badges, clone, releases link). Sponsor badge `sponsors/rizonesoft` held; copyright link later migrated to Rizonetech by rebrand `07d60796` (supersedes the original preserve-rizonesoft-brand rule).
 - [x] **Clone commands flipped:** `README.md`, `CONTRIBUTING.md`, `docs/infrastructure/development-tooling.md` all changed to `github.com/rizonetech/impossible-os.git`.
 - [x] **Actions badge / release / stars / commit / issue / source URLs flipped:** all `github.com/rizonesoft/impossible-os/...` URLs in README.md, docs/, gh-pages/, .github/ISSUE_TEMPLATE/ are now `github.com/rizonetech/impossible-os/...`.
 - [x] **`docs/infrastructure/github-setup.md` updated:** Overview narrative + Repository table active row + footer Repository link flipped. Bootloader sibling row + email rows preserved as brand-scoped.
 - [x] **`docs/infrastructure/development-tooling.md` workflow + Pages references flipped.**
-- [x] **`gh-pages/index.html` GitHub links flipped:** API call, footer GitHub/Releases links, hero CTA, view-source link. Lines with `https://rizonesoft.com` brand homepage PRESERVED.
+- [x] **`gh-pages/index.html` links flipped:** API call, footer, view-source. The `rizonesoft.com` brand homepage was later migrated to `rizonetech.com` by rebrand `07d60796` (supersedes the original preserve rule).
 - [x] **`gh-pages/err/**/*.html` GitHub nav links flipped** across all 14 err-page index.html files plus `err/index.html` and `err/errors.js`.
 - [x] **Generated TODO graph regenerated:** `scripts/todo-graph/render.py:42` flipped `REPO_URL_BASE` to `https://github.com/rizonetech/impossible-os/blob/main`; `make todo-graph-render-mermaid` regenerated `docs/infrastructure/todo-graph.md` with **229 `click ... github.com/rizonetech/...` lines** (zero residual `rizonesoft` URLs in the generated block).
 - [x] **Remaining `rizonesoft` references classified and retained:**
-  - **Brand:** `https://rizonesoft.com`, `https://github.com/rizonesoft` (user / sponsor / copyright), `Rizonesoft` (company name), `security@rizonesoft.com` / `conduct@rizonesoft.com` (email domain).
+  - **Brand (post-rebrand `07d60796`):** held as rizonesoft = Sponsor badge `github.com/sponsors/rizonesoft` + `security@`/`conduct@rizonesoft.com` emails (pending mailbox confirmation). Homepage, copyright link, and company name were migrated to Rizonetech / `rizonetech.com`.
   - **Sibling repos (out of TODO-09 scope):** `rizonesoft/impossible-os-bootloader`, `rizonesoft/impossible-os-updates`, `rizonesoft/impossible-os-packages`.
   - **Historical record:** `repository-transfer-preflight.md` and this TODO file document the move and intentionally retain pre-transfer references for §1 baseline + R-table audit trail.
   - **Inline rg-pattern strings:** lines that quote the regex pattern `rizonesoft/impossible-os|...` literally (in §1's "How to Re-Run" block, in §3's source-of-truth-changes table) are the search pattern itself, not repo references.
@@ -275,6 +275,7 @@ Stop relying on redirects for first-party content. Redirects are useful for old 
 > - Scope boundary: §6 owns first-party URL flip; §7 owns the validation suite; §8 owns the move-back runbook; §9 owns docs sync + closure.
 >
 > **Verified:** 2026-04-28 | commit `5097fbd3` | 12/12 items | build N/A (URL sweep + graph regen) | lint clean, todo-graph 8/8 | post-sweep test checkpoint: 0 residuals after filter
+> **Quality reviewed:** 2026-06-16 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 0 open | scope: N/A (docs/URL-sweep; re-adversarial skipped -- docs reconciliation, no code)
 
 ---
 
