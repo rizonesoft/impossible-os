@@ -12378,6 +12378,128 @@ static void select_active_slot(EFI_HANDLE part_handle)
     post_code16(POST16_BL_AB_SELECT_OK);
 }
 
+/* A/B tries-increment (TODO-21 sec4): increment the selected slot's tries
+ * pre-EBS, AFTER load_kernel succeeds (so a kernel-LOAD/firmware failure is not
+ * charged to the slot) and before ExitBootServices (EFI_BLOCK_IO still live). A
+ * crash before the kernel reaches mark-boot-successful leaves tries
+ * incremented; after AB_BOOT_MAX_TRIES the NEXT boot's selection rolls back.
+ * Power-fail-atomic single-copy WriteBlocks read-modify-write (sec7 helpers:
+ * overwrite the lower-generation copy with a strictly-greater generation, so a
+ * crash mid-write leaves the other copy valid). No-op when there is no A/B
+ * metadata partition; smoke-validated + reset by the kernel mark-good on every
+ * successful boot. */
+static void ab_bl_increment_tries(EFI_HANDLE part_handle)
+{
+    EFI_GUID bio_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+    EFI_HANDLE parent = (EFI_HANDLE)0;
+    EFI_BLOCK_IO_PROTOCOL *bio = (EFI_BLOCK_IO_PROTOCOL *)0;
+    UINT64 md_lba = g_boot_info_ptr->ab_meta_lba;
+    unsigned int slot = g_boot_info_ptr->active_slot;
+    EFI_BLOCK_IO_MEDIA *pm;
+    UINT32 bs;
+    UINT8 *raw = (UINT8 *)0;   /* AllocatePool pointer (for FreePool) */
+    UINT8 *buf = (UINT8 *)0;   /* IoAlign-aligned I/O buffer within raw */
+    UINTN align;
+    struct ab_boot_metadata c0, c1, rec;
+    const struct ab_boot_metadata *win = (const struct ab_boot_metadata *)0;
+    int got0 = 0, got1 = 0, v0 = 0, v1 = 0;
+    unsigned int next_gen, target;
+    UINT64 wlba;
+    UINT32 off;
+
+    if (md_lba == 0 || slot >= AB_BOOT_SLOT_COUNT)
+        return;   /* no A/B metadata partition / bad slot -- nothing to count */
+    if (esp_find_parent_disk(part_handle, &parent) != EFI_SUCCESS)
+        return;
+    if (EFI_ERROR(gBS->HandleProtocol(parent, &bio_guid, (VOID **)&bio)) ||
+        !bio || !bio->Media)
+        return;
+    pm = bio->Media;
+    bs = pm->BlockSize;
+    if (!pm->MediaPresent || bs < AB_BOOT_META_SIZE || bs > 4096)
+        return;
+    /* Both copies must be block-aligned for this single-block RMW (COPY0 at 0
+     * is always aligned; COPY1 at 4096 requires bs to divide 4096 -- true for
+     * every power-of-2 sector size, but reject anything else rather than write
+     * to the wrong offset). Mirrors the reader's in-block-offset guard. */
+    if (AB_META_COPY1_BYTE_OFF % bs != 0)
+        return;
+    /* IoAlign-compliant bounce buffer (UEFI 2.10: WriteBlocks buffers must meet
+     * Media->IoAlign). Real storage commonly advertises 512/1024/4096-byte I/O
+     * alignment; skipping those would silently disable try-counting (rollback
+     * never fires) -- exactly the bare-metal behavior the feature must survive.
+     * Over-allocate by `align` and align the I/O pointer up within it, keeping
+     * `raw` for FreePool. IoAlign 0/1 = no requirement. */
+    align = (pm->IoAlign > 1u) ? (UINTN)pm->IoAlign : 1u;
+    if (align > 4096u || (align & (align - 1u)) != 0u)
+        return;   /* implausible / non-power-of-2 alignment -- bound the alloc */
+    if (EFI_ERROR(gBS->AllocatePool(EfiLoaderData, (UINTN)bs + align,
+                                    (VOID **)&raw)) || !raw)
+        return;
+    buf = raw;
+    if (align > 1u)
+        buf = (UINT8 *)(((UINTN)raw + (align - 1u)) & ~(align - 1u));
+
+    if (bio->ReadBlocks(bio, pm->MediaId, md_lba + AB_META_COPY0_BYTE_OFF / bs,
+                        bs, buf) == EFI_SUCCESS) {
+        efi_memcpy(&c0, buf, AB_BOOT_META_SIZE); got0 = 1;
+        v0 = ab_boot_meta_is_valid(&c0);
+    }
+    if (bio->ReadBlocks(bio, pm->MediaId, md_lba + AB_META_COPY1_BYTE_OFF / bs,
+                        bs, buf) == EFI_SUCCESS) {
+        efi_memcpy(&c1, buf, AB_BOOT_META_SIZE); got1 = 1;
+        v1 = ab_boot_meta_is_valid(&c1);
+    }
+    if (!got0 || !got1) {            /* a copy block unreadable -- do not guess */
+        gBS->FreePool(raw);
+        return;
+    }
+
+    if (ab_boot_meta_select_newest(v0 ? &c0 : (const struct ab_boot_metadata *)0,
+                                   v1 ? &c1 : (const struct ab_boot_metadata *)0,
+                                   &win) && win)
+        rec = *win;
+    else
+        ab_boot_meta_default(&rec);
+    next_gen = ab_boot_meta_next_generation(v0, c0.generation, v1, c1.generation);
+    if (next_gen == 0u) {            /* generation exhausted -- refuse */
+        gBS->FreePool(raw);
+        return;
+    }
+    target = ab_boot_meta_write_target(v0, c0.generation, v1, c1.generation);
+
+    rec.active_slot = slot;
+    if (rec.slot[slot].tries < AB_BOOT_MAX_TRIES)
+        rec.slot[slot].tries += 1u;   /* saturate at MAX; never wrap */
+    rec.generation = next_gen;
+    ab_boot_meta_finalize(&rec);
+
+    off = (target == 0u) ? AB_META_COPY0_BYTE_OFF : AB_META_COPY1_BYTE_OFF;
+    wlba = md_lba + off / bs;
+    if (bio->ReadBlocks(bio, pm->MediaId, wlba, bs, buf) != EFI_SUCCESS) {
+        gBS->FreePool(raw);
+        return;
+    }
+    efi_memcpy(buf, &rec, AB_BOOT_META_SIZE);
+    if (bio->WriteBlocks(bio, pm->MediaId, wlba, bs, buf) != EFI_SUCCESS) {
+        serial_early_print("[WARN] A/B: tries-increment write failed\n");
+        gBS->FreePool(raw);
+        return;
+    }
+    /* Durability matters for rollback: if the write lives only in a volatile
+     * cache and the flush fails, a crashing slot may never consume a try.
+     * Treat a flush failure as a failed increment -- do not report success. */
+    if (bio->FlushBlocks && EFI_ERROR(bio->FlushBlocks(bio))) {
+        serial_early_print("[WARN] A/B: tries-increment flush failed "
+                           "(not durable)\n");
+        gBS->FreePool(raw);
+        return;
+    }
+    gBS->FreePool(raw);
+    serial_early_print("[BOOT] A/B: tries incremented for selected slot "
+                       "(reset by kernel mark-good on a successful boot)\n");
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -13539,6 +13661,13 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
     serial_early_print("[BOOT] load_kernel OK\n");
     post_code16(POST16_BL_KERNEL_LOAD);
+
+    /* A/B failure counting (TODO-21 sec4): now that the kernel is loaded and we
+     * are committed to booting the selected slot, charge one boot attempt to it
+     * (pre-EBS, BlockIO still live). The kernel resets this to 0 at acceptance
+     * (mark-boot-successful); a crash before then leaves it counted, so the next
+     * boot rolls back after AB_BOOT_MAX_TRIES. No-op on non-A/B disks. */
+    ab_bl_increment_tries(g_boot_device_handle);
 
     /* Step 4: Copy UEFI Configuration Table + find ACPI RSDP */
     post_code16(POST16_BL_RSDP);

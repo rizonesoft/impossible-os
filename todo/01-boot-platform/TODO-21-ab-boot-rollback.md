@@ -50,7 +50,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | 💎  |   1   | Boot metadata structure (GPT/disk wire ABI)     | --          |  [/]   |
 | 💎  |   2   | Dual-slot disk layout in build system           | §1         |  [/]   |
 | 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [/]   |
-| 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
+| 💎  |   4   | Boot failure counting and rollback              | §3         |  [/]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [/]   |
 | ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [ ]   |
 | 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [/]   |
@@ -169,17 +169,28 @@ Automatic rollback after 3 consecutive boot failures.
 > [!IMPORTANT]
 > **DESIGN LOCKED (Codex design review 2H+1M adopted).** §4 must NOT ship alone: (1) **Co-ship with §5's reset.** If `tries` is incremented (§4) without `mark_boot_successful()` resetting it (§5), every NORMAL successful reboot consumes a try and after `AB_BOOT_MAX_TRIES` §3 rolls a HEALTHY slot away. The minimal mark-good/reset path lands WITH the first tries-increment, or try-based rollback stays DISABLED until reset is implemented + covered by a normal-reboot test. (2) **Classify which failures count.** On the current shared-ESP layout (kernel.exe on the shared ESP, no per-slot kernel), a shared-ESP / kernel-load / firmware failure is NOT a slot failure and rolling roots cannot fix it -- only count failures attributable to the selected slot; pin the exact pre-EBS write point (after non-slot bootloader work, before EBS while EFI_BLOCK_IO is still live -- NOT after `jump_to_kernel`). (3) **Both-exhausted stopgap:** TODO-22 recovery is not built; define a concrete stopgap (boot the least-bad previously-successful slot with a loud diagnostic) rather than an undefined terminal path. The bootloader write uses §7's pure helpers (`ab_boot_meta_write_target`/`next_generation`) + a WriteBlocks IoAlign full-block RMW adapter + `boot_info.ab_meta_lba`.
 
-- [ ] Bootloader increments `tries` BEFORE attempting boot (so crash = tries counted)
-- [ ] If boot succeeds (kernel calls `mark_boot_successful()`), `tries` resets to 0
-- [ ] If 3 boots without `mark_boot_successful()`: switch active slot on next boot
-- [ ] On rollback: `"[BOOT] Slot %c failed 3 times -- rolling back to Slot %c"` on serial
-- [ ] On rollback: render brief notification on boot splash: `"Update failed -- reverting to previous version"`
-- [ ] If BOTH slots have `tries >= 3`: enter recovery mode (→ XREF: TODO-22)
-- [ ] Commit: `"boot: automatic rollback after 3 failed boot attempts"`
+- [x] Bootloader increments `tries` before boot -- `ab_bl_increment_tries` (`bootx64.c`), pre-EBS after `load_kernel` OK, IoAlign-compliant `WriteBlocks` single-block RMW (§7 helpers), `FlushBlocks`-checked; no-op on non-A/B
+- [x] Boot success resets `tries` to 0 -- §5 `ab_boot_mark_slot_successful` at first-frame (smoke round-trip: increment gen1 -> mark-good gen2 tries=0)
+- [x] 3 boots without mark-good -> roll back on next boot -- §3 `ab_boot_meta_choose_slot` skips a slot at `tries >= AB_BOOT_MAX_TRIES`; the increment now drives it
+- [ ] On rollback: serial `"Slot %c failed N times -- rolling back to %c"` -- `select_active_slot` does not yet emit a rollback-detected diagnostic
+- [ ] On rollback: boot-splash notification "reverting to previous version" -- needs splash integration
+- [ ] Both slots `tries >= MAX` -> stopgap: boot the least-bad previously-successful slot + loud diagnostic (recovery not built) -> XREF: [`TODO-22`](TODO-22-recovery-partition.md)
+- [ ] Codebase-wide bootloader `ReadBlocks` IoAlign hardening -- the GPT/FAT/A/B readers use unaligned stack buffers (pre-existing idiom; the A/B WRITE path is aligned) -> XREF: [`TODO-02 §1`](TODO-02-uefi-hardening-secureboot.md)
+- [x] Commit: `"boot: automatic rollback after 3 failed boot attempts"`
 
-**Test checkpoint:** Intentionally corrupt Slot A kernel. Boot 3 times → 4th boot automatically switches to Slot B.
+**Test checkpoint:** A fresh boot logs `"A/B: tries incremented"` then `"A/B: boot marked successful (gen 2)"` (smoke-validated round-trip). A slot that never reaches mark-good `AB_BOOT_MAX_TRIES` times rolls back (`choose_slot`). Test on: QEMU smoke + bare metal.
 
-**Regression risk:** MEDIUM -- if try counter logic has off-by-one, healthy boots get rolled back. Test thoroughly.
+**Regression risk:** MEDIUM -- co-shipped with §5's reset so a normal boot's increment is reset at acceptance (no healthy-slot rollback); smoke confirms the 0->1->0 round-trip.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | ab_boot pure-logic cases pass | the bootloader `ab_bl_increment_tries` (EFI_BLOCK_IO write) has no kernel unit surface -- validated via QEMU smoke (tries incremented + reset round-trip) + bare metal
+
+> **Notes:**
+> - **What shipped:** `ab_bl_increment_tries()` (`bootx64.c`) -- pre-EBS tries-increment via an IoAlign-compliant `WriteBlocks` single-block RMW (§7 pure helpers + `boot_info.ab_meta_lba`), co-shipped with §5's reset.
+> - **How it runs:** fires after `load_kernel` OK + before ExitBootServices; the kernel mark-good resets it at first-frame acceptance -- smoke shows the 0->1->0 round-trip (gen1 copy0 -> gen2 copy1).
+> - **Fail posture:** durable (`FlushBlocks` return-checked, no success on flush fail); rejects non-block-aligned geometry + generation exhaustion + unreadable copies; no-op on non-A/B.
+> - **Downstream effects:** activates the rollback loop (§3 `choose_slot` rolls back a slot stuck at `tries >= MAX`).
+> - **Canonical doc:** `include/boot/ab_boot_metadata.h`.
+> - **Scope boundary:** rollback serial/splash diagnostics + both-exhausted recovery stopgap + the codebase-wide read-IoAlign hardening are tracked `[ ]` items here.
 
 ---
 
@@ -265,8 +276,8 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 | ⭐ | Feature                   | 🪟 Win11                      | 🐧 Linux                    | 🚀 Impossible OS             |
 |----|---------------------------|----------------------------|--------------------------|---------------------------|
 | 💎 | Dual-slot boot            | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess   | 🟦 §1-§3 select+mount     |
-| 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | ⬜ §4                     |
-| 💎 | Automatic rollback        | ⚠️ Manual repair needed   | ⚠️ Manual or auto        | ⬜ §4                     |
+| 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | 🟦 §4 pre-EBS tries++     |
+| 💎 | Automatic rollback        | ⚠️ Manual repair needed   | ⚠️ Manual or auto        | 🟦 §3+§4+§5 round-trip    |
 | 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | 🟦 §5 first-frame mark-good |
 | 💎 | Metadata integrity (CRC)  | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual    | ⬜ §7                     |
 | 💎 | Anti-rollback floor       | ⚠️ WU rollback window      | ✅ Android stored index   | ⬜ §8                     |
