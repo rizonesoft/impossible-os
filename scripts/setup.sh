@@ -117,7 +117,7 @@ Usage:
 
 Required host tools (see "Host Bootstrap Contract" in canonical doc):
   clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19,
-  nasm, gcc, python3, qemu-system-x86_64,
+  nasm, gcc, python3, qemu-system-x86_64, qemu-img (qemu-utils),
   mtools (mcopy + mmd), dosfstools (mkfs.fat),
   /usr/share/OVMF/OVMF_CODE_4M.fd, /usr/share/OVMF/OVMF_VARS_4M.fd
 

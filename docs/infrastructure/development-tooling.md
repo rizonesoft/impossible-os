@@ -48,6 +48,7 @@ Unsupported distros: `setup-deps.sh` exits with the required package list printe
 | `gcc`                                     | `build-essential`       | `HOST_CC := gcc` (builds irespack, jpg2raw, mkfs-ixfs host tools) |
 | `python3`                                 | `python3`               | Asset pipeline (`validate-assets.py`, `convert_symmap.py`, `convert_icon.py`, `convert_bsod_icon.py`, `convert_boot_font.py`) |
 | `qemu-system-x86_64`                      | `qemu-system-x86`       | `QEMU := qemu-system-x86_64`             |
+| `qemu-img`                                | `qemu-utils`            | Release VM-format conversions (VHDX/VDI/qcow2) |
 | `mcopy` (mtools)                          | `mtools`                | FAT image population (EFI + logs parts)  |
 | `mmd` (mtools)                            | `mtools`                | BlackBox FAT directory creation (Makefile L391-L392) |
 | `mkfs.fat` (dosfstools)                   | `dosfstools`            | FAT32 partition formatting               |
@@ -192,7 +193,7 @@ sudo ln -sf /usr/share/OVMF/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd
 sudo ln -sf /usr/share/OVMF/OVMF_VARS.fd /usr/share/OVMF/OVMF_VARS_4M.fd
 ```
 
-After shimming, `bash scripts/setup.sh --verify` should report 14/14 OK.
+After shimming, `bash scripts/setup.sh --verify` should report all sentinels OK (presence + version floors).
 
 ---
 
@@ -948,7 +949,7 @@ Every build/test workflow must invoke the canonical wrappers. Inline `apt-get`, 
 
 | Workflow | Uses wrappers | Notes |
 | --- | --- | --- |
-| `build.yml` | `scripts/setup.sh --verify`, `scripts/lint.sh`, `scripts/test-tooling.sh`, `scripts/build.sh clean`, `make test-boot-info-abi`, `scripts/test.sh QUIET=1` | LLVM-19 install is inline + cached (apt.llvm.org repo) before `setup.sh --verify` runs; `--verify` then catches drift between the inline install and the 14-sentinel contract. `scripts/lint.sh` is a required PR gate (include-guards, line length, trailing whitespace, snake_case names, and numeric-TODO shorthand outside `todo/**`). |
+| `build.yml` | `scripts/setup.sh --verify`, `scripts/lint.sh`, `scripts/test-tooling.sh`, `scripts/build.sh clean`, `make test-boot-info-abi`, `scripts/test.sh QUIET=1` | LLVM-19 install is inline + cached (apt.llvm.org repo) before `setup.sh --verify` runs; `--verify` then catches drift between the inline install and the sentinel + version-floor contract. `scripts/lint.sh` is a required PR gate (include-guards, line length, trailing whitespace, snake_case names, and numeric-TODO shorthand outside `todo/**`). |
 | `release.yml` | `scripts/setup.sh --verify`, `scripts/lint.sh`, `scripts/build.sh clean`, `scripts/test.sh QUIET=1`, `scripts/generate-changelog.sh` | Lint gate runs before the build so a release cut that introduces any numeric-TODO shorthand outside `todo/**` fails before the release artifact builds. Tests run after build to catch any post-main regression. Release.yml does NOT run `scripts/test-tooling.sh` or `make test-boot-info-abi` -- those are PR-only gates (the boot_info drift harness exists to filter PRs; once a tagged build is cut, any drift regression would already have been caught upstream). |
 | `pages.yml` / `labeler.yml` / `stale.yml` | N/A | No build/test; purely docs or repo-metadata automation. |
 

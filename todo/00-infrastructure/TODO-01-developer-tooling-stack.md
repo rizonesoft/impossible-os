@@ -420,6 +420,8 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 > - **Downstream effects:** `tooling-doctor.sh` + CI (`build.yml`/`release.yml`) enforce floors via their existing `--verify` calls; closes the onboarding fail-open where a stale toolchain passed then failed opaquely.
 > - **Canonical doc:** [`docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments`](../../docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments).
 > - **Scope boundary:** owns host-tool floor enforcement only; SDK cross-compile toolchain is `D14 T01`, release signing/SBOM/reproducible builds are `D15 T01 §5/§6/§8`.
+> **Verified:** 2026-06-16 | commit `7942170c` | 7/7 items | build OK | lint 0, test-tooling 393/393, --verify exit 0
+> **Quality reviewed:** 2026-06-16 | Codex 6x (design, adversarial, consistency, perf) | 2H+5M fixed, 0 open | scope: N/A (host bash + CI + docs; re-adversarial skipped -- doc/config fixes, no code logic)
 
 ---
 
@@ -441,7 +443,7 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 | 💎 | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ✅ §12 -- --verify fails closed on below-floor required tools; drift-guarded     |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
-> **After §7-§11:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, and boot assertions that cannot silently regress when a contributor edits a printf.
+> **After §7-§12:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, boot assertions that cannot silently regress when a contributor edits a printf, and a hard required-tool version-floor gate that fails closed before the build.
 
 ## Unit Tests
 

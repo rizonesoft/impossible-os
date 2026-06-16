@@ -82,6 +82,7 @@ jobs:
             dosfstools \
             ovmf \
             qemu-system-x86 \
+            qemu-utils \
             gcc \
             python3-yaml
 
