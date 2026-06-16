@@ -380,7 +380,7 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 
 **Test checkpoint:** `bash scripts/lint.sh` exits 0 with zero errors AND zero warnings from Check 5 on a clean tree. A PR that introduces new bare `§N` in a code file fails the pre-commit lint AND the PreToolUse hook in the same session.
 
-> **Test runner:** N/A (host-side tooling; validated via `bash scripts/lint.sh` -> 0/0, `bash scripts/test-tooling.sh --quiet` -> 82/82, `bash scripts/test.sh QUIET=1` -> 2284 kernel + 16 user-mode PASS, `bash scripts/test-smoke.sh` -> PASS 2.24s).
+> **Test runner:** N/A (host-side tooling; validated via `bash scripts/lint.sh` -> 0 errors, `bash scripts/test-tooling.sh --quiet` -> 386/386 incl. the `[bare_section_gate]` group, `bash scripts/test.sh QUIET=1` -> 6009 kernel + 16 user-mode PASS).
 > **Notes:**
 > - **What shipped:** drained `BARE_SECTION_LEGACY_FILES` from 187 entries to `()`. 83 files touched in the bulk sweep (see `git log --grep='bare section'` for the batched history + this final commit). Two scope-gap source comments rewritten to drop both the bare `§N` AND the `TODO:` prefix so the scope-gap hook stops firing on them. Lint self-reference in `scripts/lint.sh` help text rephrased to describe the pattern without the glyph literal.
 > - **How it runs:** Check 5 in `scripts/lint.sh` + PreToolUse hook in `.claude/settings.json` are now the only gate. Hook blocks new edits at save-time with a recipe message; lint gates CI at PR time. Path-based spec-code exemption covers `src/kernel/fs/ntfs/` and `include/kernel/fs/ntfs.h` (NTFS on-disk format spec implementations).
@@ -392,6 +392,9 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 > - **Downstream effects:** closes the last warn-listed drift surface in the tree. Lint is now purely structural (0 warnings, 0 errors) which makes it a viable required CI gate without exceptions. Unblocks future additions to Check 5's external-spec allowlist (new spec-code dirs can be added to `is_bare_section_spec_code` without draining any legacy list).
 > - **Canonical doc:** this TODO section + [`scripts/lint.sh`](../../scripts/lint.sh) Check 5 + [CLAUDE.md "Comments -- No Bare Section Refs in Code"](../../CLAUDE.md#comments----no-bare-section-refs-in-code).
 > - **Scope boundary:** this section owns only the `§N` drift pattern. TODO anchor-link enforcement (`TODO-NN §M` shorthand in markdown) remains Check 4's territory; file-path-based vs content-based gating stays split (Check 4 = markdown drift, Check 5 = code drift).
+
+> **Verified:** 2026-06-16 | commit `9033e324` | 4/4 items | build OK | lint 0 err, test-tooling 386/386
+> **Quality reviewed:** 2026-06-16 | Codex 3x (adversarial, consistency, perf) | 4M fixed, 0 open | scope: N/A (host bash + python gate; re-adversarial skipped -- no kernel C/locking/ISR/lifecycle surface; perf-L rejected: dev-tool non-hot-path)
 
 ---
 
