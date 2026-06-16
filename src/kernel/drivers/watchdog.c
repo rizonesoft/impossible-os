@@ -53,6 +53,7 @@ static inline uint32_t wd_inl(uint16_t p)
 static const struct acpi_wdat *g_wdat = (const struct acpi_wdat *)0;
 static const struct acpi_wdat_entry *g_entries = (const struct acpi_wdat_entry *)0;
 static uint32_t g_entry_count = 0;
+static uint32_t g_countdown = 0;     /* configured reload count (WRITE_COUNTDOWN) */
 static enum hw_watchdog_kind g_kind = HW_WD_NONE;
 static int g_armed = 0;
 
@@ -88,55 +89,83 @@ static void gas_write(const struct acpi_gas *g, uint32_t v)
     else                          wd_outl(port, v);
 }
 
-/* Execute every WDAT instruction entry for `action`, in table order. `param`
- * supplies the value for WRITE_COUNTDOWN instructions. *out_read (if non-NULL)
- * receives the masked value of the LAST matching read entry. Returns the number
- * of matching entries that actually executed -- 0 means the action is absent or
- * had no usable register, so the caller must treat it as a failure, not a no-op
- * success. */
-static uint32_t wdat_run_action(uint8_t action, uint32_t param, uint32_t *out_read)
+/* Execute the WDAT instruction entries for `action`, in table order, running
+ * ONLY the entries whose direction matches `expect_write` (1 = SET/RESET write
+ * actions, 0 = GET read actions). Skipping the wrong direction is the execution
+ * guard: a stray write entry under a GET action must not poke a register during
+ * a readback, and a stray read under a SET must not be mistaken for the write.
+ *   - WRITE_VALUE writes the entry's own value; WRITE_COUNTDOWN writes the
+ *     configured reload count g_countdown (NOT a per-call param -- a 0 param
+ *     would zero the countdown and trip an immediate reset).
+ *   - For a READ entry the WDAT result is a compare: the action "matches" iff
+ *     (reg & mask) == (value & mask). *out_matched (if non-NULL) is set to 1
+ *     when the LAST executed read entry matched, else 0.
+ * Returns the number of entries that actually executed -- 0 means the action is
+ * absent / unusable / wrong-direction, so the caller treats it as a failure,
+ * not a no-op success. */
+static uint32_t wdat_run_action(uint8_t action, int expect_write, int *out_matched)
 {
     uint32_t i;
     uint32_t ran = 0;
 
-    if (out_read)
-        *out_read = 0;
+    if (out_matched)
+        *out_matched = 0;
 
     for (i = 0; i < g_entry_count; i++) {
         const struct acpi_wdat_entry *e = &g_entries[i];
         uint8_t instr;
+        int is_write;
         if (e->action != action)
             continue;
         if (!gas_usable(&e->register_region))
             continue;                          /* validated at init; belt+braces */
         instr = e->instruction & ACPI_WDAT_INSTRUCTION_MASK;
+        is_write = (instr == ACPI_WDAT_WRITE_VALUE ||
+                    instr == ACPI_WDAT_WRITE_COUNTDOWN);
+        if (is_write != (expect_write != 0))
+            continue;                          /* skip wrong-direction entries */
 
-        if (instr == ACPI_WDAT_WRITE_VALUE || instr == ACPI_WDAT_WRITE_COUNTDOWN) {
-            uint32_t x = (instr == ACPI_WDAT_WRITE_COUNTDOWN) ? param : e->value;
+        if (is_write) {
+            uint32_t x = (instr == ACPI_WDAT_WRITE_COUNTDOWN) ? g_countdown : e->value;
             uint32_t out = x & e->mask;
             if (e->instruction & ACPI_WDAT_PRESERVE_REGISTER) {
                 uint32_t cur = gas_read(&e->register_region);
                 out |= (cur & ~e->mask);
             }
             gas_write(&e->register_region, out);
-        } else { /* READ_VALUE / READ_COUNTDOWN */
+        } else { /* READ_VALUE / READ_COUNTDOWN: compare against the entry value */
             uint32_t r = gas_read(&e->register_region) & e->mask;
-            if (out_read)
-                *out_read = r;
+            if (out_matched)
+                *out_matched = (r == (e->value & e->mask)) ? 1 : 0;
         }
         ran++;
     }
     return ran;
 }
 
-/* True if at least one validated entry exists for `action`. */
-static int wdat_has_action(const struct acpi_wdat_entry *ent, uint32_t n, uint8_t action)
+/* True if `action` is implemented with the correct instruction CLASS: at least
+ * one usable entry has its instruction in [ilo, ihi] AND no usable entry for
+ * that action falls OUTSIDE [ilo, ihi]. The "no out-of-class entry" half is
+ * what makes execution safe: wdat_run_action runs every same-direction entry,
+ * so a stray wrong-operand entry (e.g. a WRITE_COUNTDOWN under SET_RUNNING_STATE
+ * that would clobber the state register with the reload count, or a WRITE_VALUE
+ * under SET_COUNTDOWN that would overwrite the programmed countdown) must make
+ * the whole table fail validation -> HW_WD_NONE rather than arm wrongly. */
+static int wdat_has_action_instr(const struct acpi_wdat_entry *ent, uint32_t n,
+                                 uint8_t action, uint8_t ilo, uint8_t ihi)
 {
     uint32_t i;
-    for (i = 0; i < n; i++)
-        if (ent[i].action == action && gas_usable(&ent[i].register_region))
-            return 1;
-    return 0;
+    int found = 0;
+    for (i = 0; i < n; i++) {
+        uint8_t instr;
+        if (ent[i].action != action || !gas_usable(&ent[i].register_region))
+            continue;
+        instr = ent[i].instruction & ACPI_WDAT_INSTRUCTION_MASK;
+        if (instr < ilo || instr > ihi)
+            return 0;                          /* wrong-class entry -> reject table */
+        found = 1;
+    }
+    return found;
 }
 
 int hw_watchdog_wdat_validate(const struct acpi_wdat *w, uint32_t size)
@@ -170,12 +199,27 @@ int hw_watchdog_wdat_validate(const struct acpi_wdat *w, uint32_t size)
         if (!gas_usable(&ent[i].register_region))
             return 0;                          /* unusable (or non-I/O) region */
     }
-    /* Every action init/pet/disarm/verify uses must be present + usable. */
-    return wdat_has_action(ent, w->entries, ACPI_WDAT_SET_RUNNING_STATE) &&
-           wdat_has_action(ent, w->entries, ACPI_WDAT_SET_STOPPED_STATE) &&
-           wdat_has_action(ent, w->entries, ACPI_WDAT_GET_RUNNING_STATE) &&
-           wdat_has_action(ent, w->entries, ACPI_WDAT_SET_COUNTDOWN) &&
-           wdat_has_action(ent, w->entries, ACPI_WDAT_RESET);
+    /* Every action init/pet/disarm/verify uses must be present, usable, AND
+     * implemented with the right instruction class (every entry for the action,
+     * not just one -- see wdat_has_action_instr):
+     *   SET_RUNNING_STATE / SET_STOPPED_STATE -- WRITE_VALUE only (the state
+     *     pattern lives in the entry value; WRITE_COUNTDOWN would write the
+     *     reload count to the state register instead).
+     *   RESET -- WRITE_VALUE or WRITE_COUNTDOWN (a reload writes either the
+     *     entry value or the configured countdown).
+     *   SET_COUNTDOWN -- WRITE_COUNTDOWN only (programs the reload count).
+     *   GET_RUNNING_STATE -- READ_VALUE / READ_COUNTDOWN (a write would never
+     *     produce a readback -> false disarm confirmation). */
+    return wdat_has_action_instr(ent, w->entries, ACPI_WDAT_SET_RUNNING_STATE,
+                                 ACPI_WDAT_WRITE_VALUE, ACPI_WDAT_WRITE_VALUE) &&
+           wdat_has_action_instr(ent, w->entries, ACPI_WDAT_SET_STOPPED_STATE,
+                                 ACPI_WDAT_WRITE_VALUE, ACPI_WDAT_WRITE_VALUE) &&
+           wdat_has_action_instr(ent, w->entries, ACPI_WDAT_RESET,
+                                 ACPI_WDAT_WRITE_VALUE, ACPI_WDAT_WRITE_COUNTDOWN) &&
+           wdat_has_action_instr(ent, w->entries, ACPI_WDAT_SET_COUNTDOWN,
+                                 ACPI_WDAT_WRITE_COUNTDOWN, ACPI_WDAT_WRITE_COUNTDOWN) &&
+           wdat_has_action_instr(ent, w->entries, ACPI_WDAT_GET_RUNNING_STATE,
+                                 ACPI_WDAT_READ_VALUE, ACPI_WDAT_READ_COUNTDOWN);
 }
 
 /* --- public API --- */
@@ -222,27 +266,38 @@ void hw_watchdog_init(void)
         return;
     }
 
-    /* boot-status: was the previous reset watchdog-triggered? (diagnostic). */
-    {
-        uint32_t status = 0;
-        if (wdat_run_action(ACPI_WDAT_GET_STATUS, 0, &status) && status)
+    g_countdown = (uint32_t)countdown;   /* WRITE_COUNTDOWN reload value */
+
+    /* boot-status: was the previous reset watchdog-triggered? (diagnostic).
+     * GET_STATUS/SET_STATUS are OPTIONAL and NOT covered by the required-action
+     * class validation, so gate each on its own instruction class before
+     * running it -- otherwise a SET_STATUS entry encoded as WRITE_COUNTDOWN
+     * would write the reload count into the status register. GET_STATUS is a
+     * compare-read: matched == the watchdog-reset condition. A class mismatch
+     * (or no such entry) just skips the diagnostic, which is the safe direction. */
+    if (wdat_has_action_instr(g_entries, g_entry_count, ACPI_WDAT_GET_STATUS,
+                              ACPI_WDAT_READ_VALUE, ACPI_WDAT_READ_COUNTDOWN)) {
+        int status_set = 0;
+        if (wdat_run_action(ACPI_WDAT_GET_STATUS, 0, &status_set) && status_set)
             klog(LOG_WARN, "watchdog",
-                 "previous boot was watchdog-reset (WDAT status=0x%x)",
-                 (uint64_t)status);
-        wdat_run_action(ACPI_WDAT_SET_STATUS, 0, (uint32_t *)0);  /* clear */
+                 "previous boot was watchdog-reset (WDAT status condition met)");
     }
+    if (wdat_has_action_instr(g_entries, g_entry_count, ACPI_WDAT_SET_STATUS,
+                              ACPI_WDAT_WRITE_VALUE, ACPI_WDAT_WRITE_VALUE))
+        wdat_run_action(ACPI_WDAT_SET_STATUS, 1, (int *)0);      /* clear (write) */
 
     /* Arm: program countdown, load it, start. Each action MUST execute (a
      * required action with no matching entry was rejected by validation, but
      * verify the run count so a silent no-op never reports "armed"). */
-    if (wdat_run_action(ACPI_WDAT_SET_COUNTDOWN, (uint32_t)countdown, (uint32_t *)0) == 0 ||
-        wdat_run_action(ACPI_WDAT_RESET, 0, (uint32_t *)0) == 0 ||
-        wdat_run_action(ACPI_WDAT_SET_RUNNING_STATE, 0, (uint32_t *)0) == 0) {
+    if (wdat_run_action(ACPI_WDAT_SET_COUNTDOWN, 1, (int *)0) == 0 ||
+        wdat_run_action(ACPI_WDAT_RESET, 1, (int *)0) == 0 ||
+        wdat_run_action(ACPI_WDAT_SET_RUNNING_STATE, 1, (int *)0) == 0) {
         klog(LOG_WARN, "watchdog",
              "HW watchdog: none (WDAT arm action did not execute)");
         g_wdat = (const struct acpi_wdat *)0;
         g_entries = (const struct acpi_wdat_entry *)0;
         g_entry_count = 0;
+        g_countdown = 0;
         return;
     }
 
@@ -256,30 +311,31 @@ void hw_watchdog_init(void)
 void hw_watchdog_pet(void)
 {
     if (g_armed && g_kind == HW_WD_WDAT)
-        wdat_run_action(ACPI_WDAT_RESET, 0, (uint32_t *)0);
+        wdat_run_action(ACPI_WDAT_RESET, 1, (int *)0);
 }
 
 int hw_watchdog_boot_handoff(void)
 {
-    uint32_t running = 0;
+    int matched = 0;                           /* GET_RUNNING_STATE: running? */
     uint32_t ran;
 
     if (!g_armed || g_kind != HW_WD_WDAT)
         return 0;                              /* nothing armed */
 
-    wdat_run_action(ACPI_WDAT_SET_STOPPED_STATE, 0, (uint32_t *)0);
+    wdat_run_action(ACPI_WDAT_SET_STOPPED_STATE, 1, (int *)0);
 
     /* Readback-verify the stop actually took. Only trust the readback if a
-     * GET_RUNNING_STATE entry executed (validation guarantees one exists). */
-    ran = wdat_run_action(ACPI_WDAT_GET_RUNNING_STATE, 0, &running);
-    if (ran == 0 || running) {
+     * GET_RUNNING_STATE entry executed (validation guarantees one exists);
+     * matched == the read matched the running pattern -> still running. */
+    ran = wdat_run_action(ACPI_WDAT_GET_RUNNING_STATE, 0, &matched);
+    if (ran == 0 || matched) {
         klog(LOG_ERROR, "watchdog",
-             "HW watchdog disarm not confirmed (ran=%u running=0x%x); retrying",
-             (uint64_t)ran, (uint64_t)running);
-        wdat_run_action(ACPI_WDAT_RESET, 0, (uint32_t *)0);  /* buy time */
-        wdat_run_action(ACPI_WDAT_SET_STOPPED_STATE, 0, (uint32_t *)0);
-        ran = wdat_run_action(ACPI_WDAT_GET_RUNNING_STATE, 0, &running);
-        if (ran == 0 || running) {
+             "HW watchdog disarm not confirmed (ran=%u running=%d); retrying",
+             (uint64_t)ran, matched);
+        wdat_run_action(ACPI_WDAT_RESET, 1, (int *)0);       /* buy time */
+        wdat_run_action(ACPI_WDAT_SET_STOPPED_STATE, 1, (int *)0);
+        ran = wdat_run_action(ACPI_WDAT_GET_RUNNING_STATE, 0, &matched);
+        if (ran == 0 || matched) {
             klog(LOG_FATAL, "watchdog",
                  "HW watchdog DISARM FAILED -- refusing to enter the desktop "
                  "armed (it would reboot with no runtime petter)");

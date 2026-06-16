@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-16T09:18:39+02:00",
-  "total_suites": 1403,
-  "total_assertions": 4543,
+  "timestamp": "2026-06-16T09:56:36+02:00",
+  "total_suites": 1407,
+  "total_assertions": 4547,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -84,6 +84,6 @@
     {"file": "test_vfs.c", "suites": 13, "assertions": 40},
     {"file": "test_vmm.c", "suites": 11, "assertions": 44},
     {"file": "test_vpd.c", "suites": 2, "assertions": 16},
-    {"file": "test_watchdog.c", "suites": 12, "assertions": 13}
+    {"file": "test_watchdog.c", "suites": 16, "assertions": 17}
   ]
 }

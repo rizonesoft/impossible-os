@@ -127,6 +127,10 @@ enum hw_watchdog_kind hw_watchdog_kind(void);
 /* Pure WDAT validator (no I/O) -- exposed for unit testing on crafted tables.
  * Returns 1 only when `w` (a `size`-byte buffer) is a usable WDAT: header
  * length + entry-count fit within size with no overflow, timer_period != 0,
- * min_count <= max_count, every entry has a known instruction + usable GAS, and
- * the SET_RUNNING_STATE / SET_STOPPED_STATE / RESET actions are all present. */
+ * min_count <= max_count, every entry has a known instruction + usable
+ * (I/O-space) GAS, and the arm/pet/disarm/verify actions are each present with
+ * the correct instruction class: SET_RUNNING_STATE / SET_STOPPED_STATE write
+ * a value, RESET writes (value or countdown), SET_COUNTDOWN writes the
+ * countdown, GET_RUNNING_STATE reads -- a mixed/wrong-class entry for any of
+ * these rejects the whole table. */
 int hw_watchdog_wdat_validate(const struct acpi_wdat *w, uint32_t size);

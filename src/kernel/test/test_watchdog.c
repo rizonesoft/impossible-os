@@ -155,6 +155,58 @@ static void test_wdat_unknown_instruction(void)
                    "unknown instruction code rejected");
 }
 
+static void test_wdat_get_running_wrong_class(void)
+{
+    struct wdat_fixture f;
+    wd_make_valid(&f);
+    f.e[2].instruction = ACPI_WDAT_WRITE_VALUE;  /* GET_RUNNING_STATE as a write */
+    TEST_ASSERT_EQ(hw_watchdog_wdat_validate(&f.hdr, (uint32_t)sizeof(f)), 0,
+                   "GET_RUNNING_STATE with a write instruction rejected (no readback)");
+}
+
+static void test_wdat_set_countdown_wrong_class(void)
+{
+    struct wdat_fixture f;
+    wd_make_valid(&f);
+    f.e[3].instruction = ACPI_WDAT_WRITE_VALUE;  /* not WRITE_COUNTDOWN */
+    TEST_ASSERT_EQ(hw_watchdog_wdat_validate(&f.hdr, (uint32_t)sizeof(f)), 0,
+                   "SET_COUNTDOWN without WRITE_COUNTDOWN rejected (param never written)");
+}
+
+static void test_wdat_reset_wrong_class(void)
+{
+    struct wdat_fixture f;
+    wd_make_valid(&f);
+    f.e[4].instruction = ACPI_WDAT_READ_VALUE;   /* RESET as a read -> pet no-op */
+    TEST_ASSERT_EQ(hw_watchdog_wdat_validate(&f.hdr, (uint32_t)sizeof(f)), 0,
+                   "RESET with a read instruction rejected (pet would no-op)");
+}
+
+static void test_wdat_mixed_class_rejected(void)
+{
+    /* A 6-entry table: the 5 valid actions PLUS a stray SET_COUNTDOWN entry
+     * encoded as WRITE_VALUE. One correctly-classed SET_COUNTDOWN exists, but
+     * the stray one would also execute (same direction) and clobber the
+     * programmed countdown -- the table must be rejected, not armed. */
+    struct wdat_fixture6 {
+        struct acpi_wdat hdr;
+        struct acpi_wdat_entry e[6];
+    } __attribute__((packed)) f;
+    struct wdat_fixture base;
+    uint32_t i;
+    wd_make_valid(&base);
+    base.hdr.entries = 6;
+    base.hdr.header_length = (uint32_t)sizeof(struct acpi_wdat);
+    f.hdr = base.hdr;
+    for (i = 0; i < 5; i++)
+        f.e[i] = base.e[i];
+    f.e[5] = base.e[3];                          /* another SET_COUNTDOWN... */
+    f.e[5].instruction = ACPI_WDAT_WRITE_VALUE;  /* ...but wrong class */
+    f.e[5].register_region.address = 0x500;
+    TEST_ASSERT_EQ(hw_watchdog_wdat_validate(&f.hdr, (uint32_t)sizeof(f)), 0,
+                   "SET_COUNTDOWN with a stray wrong-class entry rejects the whole table");
+}
+
 static void test_wdat_kind_none_before_init(void)
 {
     /* Without init (or on QEMU with no WDAT), the kind is NONE. */
@@ -175,6 +227,10 @@ void test_register_watchdog(void)
     test_suite_register_cat("WDAT: bad GAS", test_wdat_bad_gas, TEST_CAT_BOOT);
     test_suite_register_cat("WDAT: missing required action", test_wdat_missing_action, TEST_CAT_BOOT);
     test_suite_register_cat("WDAT: unknown instruction", test_wdat_unknown_instruction, TEST_CAT_BOOT);
+    test_suite_register_cat("WDAT: GET_RUNNING wrong class", test_wdat_get_running_wrong_class, TEST_CAT_BOOT);
+    test_suite_register_cat("WDAT: SET_COUNTDOWN wrong class", test_wdat_set_countdown_wrong_class, TEST_CAT_BOOT);
+    test_suite_register_cat("WDAT: RESET wrong class", test_wdat_reset_wrong_class, TEST_CAT_BOOT);
+    test_suite_register_cat("WDAT: mixed-class rejected", test_wdat_mixed_class_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("WDAT: kind none before arm", test_wdat_kind_none_before_init, TEST_CAT_BOOT);
 }
 

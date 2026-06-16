@@ -142,18 +142,21 @@ A hardware watchdog reboots the board even on a total CPU lockup. §5 is STANDAL
 - [ ] DEFERRED follow-up: MEM-space GAS support -- validate the firmware register address against the memory map (reject RAM) + cache a UC mapping at init (no per-pet remap); first cut is I/O-space only
 - [x] Commit: `"boot: ACPI WDAT hardware watchdog -- WDAT-only, disarm at boot-handoff"`
 
-**Test checkpoint:** `test_watchdog.c` (TEST_CAT_BOOT, 12 cases) validates the pure WDAT validator on crafted tables (valid 5-action I/O table + every guard: NULL, size, header_length, zero timer_period, min>max, entry overflow, zero entries, bad GAS, missing action, unknown instruction). QEMU smoke: `hw_watchdog_init` logs `"HW watchdog: none (no ACPI WDAT)"` and boot completes (2.03s) -- the init/pet/handoff wiring is a clean no-op without firmware WDAT. Bare-metal arm/pet/disarm validated on Intel hardware via serial.
+**Test checkpoint:** `test_watchdog.c` (TEST_CAT_BOOT, 16 cases / 17 assertions) validates the pure WDAT validator on crafted tables (valid 5-action I/O table + every guard: NULL, size, header_length, zero timer_period, min>max, entry overflow, zero entries, bad GAS, missing action, unknown instruction, wrong-instruction-class for GET_RUNNING_STATE / SET_COUNTDOWN / RESET, and a mixed-class rejection). QEMU smoke: `hw_watchdog_init` logs `"HW watchdog: none (no ACPI WDAT)"` and boot completes (~2.06s) -- the init/pet/handoff wiring is a clean no-op without firmware WDAT. Bare-metal arm/pet/disarm validated on Intel hardware via serial.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | WDAT validator 12 cases; boot suite 2790 kernel + 16 user-mode PASS, 0 failures; smoke PASS (KVM 2.03s, "HW watchdog: none")
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | WDAT validator 16 cases; boot suite 2794 kernel + 16 user-mode PASS, 0 failures; smoke PASS (KVM ~2.06s, "HW watchdog: none")
 
 > **Notes:**
-> - **What shipped:** `src/kernel/drivers/watchdog.c` + `watchdog.h` (WDAT ABI structs with `_Static_assert`s; `hw_watchdog_init/pet/boot_handoff/kind` + `hw_watchdog_wdat_validate`) + `test_watchdog.c` (12 cases).
+> - **What shipped:** `src/kernel/drivers/watchdog.c` + `watchdog.h` (WDAT ABI structs with `_Static_assert`s; `hw_watchdog_init/pet/boot_handoff/kind` + `hw_watchdog_wdat_validate`) + `test_watchdog.c` (16 cases). Validator enforces per-action instruction class (SET writes, SET_COUNTDOWN writes the countdown, GET reads) + WDAT read-compare semantics.
 > - **How it runs:** `hw_watchdog_init()` after `acpi_init` (Phase 1) discovers/validates/arms; `hw_watchdog_pet()` from `boot_progress()`; `hw_watchdog_boot_handoff()` disarms (fail-closed -> `boot_halt`) before the scheduler. No-op on QEMU.
 > - **Safety:** I/O-space GAS only (no firmware RAM map / per-pet leak); validate-before-access; arm refused below a 60s timeout floor; readback-verified fail-closed disarm. Codex adoptions in commit message.
 > - **Scope boundary:** §5 owns the WDAT-I/O hardware watchdog; direct-iTCO PCI + MEM-space GAS + boot_info boot-status persistence are deferred follow-ups (this section). §1-§4 (LAPIC NMI) blocked on nested-NMI + AP IST.
 > - **Canonical doc:** `src/kernel/drivers/watchdog.c` header + the WDAT ABI in `include/kernel/drivers/watchdog.h`.
 
 **Regression risk:** HIGH -- a HW watchdog that fails to disarm at boot-handoff would reboot mid-desktop; mitigated by the readback-verified, fail-closed handoff (`boot_halt` rather than enter the desktop armed).
+
+> **Verified:** 2026-06-16 | 7/9 items (2 deferred follow-ups) | build OK | tests 2794/2794 PASS, smoke PASS (KVM ~2.06s, "HW watchdog: none")
+> **Quality reviewed:** 2026-06-16 | Codex 8x (design, adversarial, re-adversarial, consistency, perf) | 4H+1M+1L fixed | scope: kernel-code-quality
 
 ---
 
