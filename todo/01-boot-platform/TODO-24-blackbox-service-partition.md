@@ -84,6 +84,8 @@ Modify `make-system-disk.c` to create a 3-partition GPT: EFI + BlackBox + IXFS.
 
 **Test checkpoint:** `make-system-disk` produces a 3-partition disk image. `fdisk -l build/system-disk.img` shows EFI (64 MiB) + BlackBox (128 MiB) + IXFS (~316 MiB). BlackBox partition type is Microsoft Basic Data. GPT partition name is "BlackBox".
 
+---
+
 ## 2. Build Pipeline -- Format and Populate BlackBox
 
 Update `scripts/build.sh` and Makefile to format the BlackBox partition as FAT32 and create the initial directory structure.
@@ -95,6 +97,8 @@ Update `scripts/build.sh` and Makefile to format the BlackBox partition as FAT32
 - [x] Commit: implemented as part of `"build: add BlackBox 128 MiB FAT32 partition to GPT layout"` (TODO-24 §1)
 
 **Test checkpoint:** `bash scripts/build.sh clean` produces a disk with BlackBox formatted as FAT32. `mcopy -i build/system-disk.img@@<offset> ::/ /tmp/bb-test` lists `Logs/`, `Boot/`, `Crash/`, `Perf/`, `Diag/`, `Tools/`.
+
+---
 
 ## 3. Kernel Mount -- Discover "BlackBox" GPT Name, Mount as X:\
 
@@ -111,6 +115,8 @@ Update `partition.c` to recognize the "BlackBox" GPT partition name and mount it
 
 **Regression risk:** Partition mount order change could break C:\ IXFS mount. Rollback: revert the `gpt_name` check in `partition_mount_filesystems()`.
 
+---
+
 ## 4. Directory Skeleton -- Create Dirs on First Boot
 
 Ensure the BlackBox directory structure exists on first boot and after format.
@@ -123,6 +129,8 @@ Ensure the BlackBox directory structure exists on first boot and after format.
 - [x] Commit: `"kernel: create BlackBox directory skeleton on first boot"`
 
 **Test checkpoint:** First boot after clean build: serial shows 7 `"BlackBox: created X:\..."` messages (Logs, Boot, Crash, Crash\WER, Perf, Diag, Tools). Second boot: no creation messages (directories already exist). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+---
 
 ## 5. Klog Migration -- Move All Log Output to X:\Logs\
 
@@ -142,6 +150,8 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 
 **Regression risk:** If klog_disk_enable() runs before X:\ is mounted, log writes fail silently. The fallback check must happen at enable time, not at init time.
 
+---
+
 ## 6. Boot Logs -- Per-Boot Session Files to X:\Boot\
 
 Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` originally landed here as well; TODO-04 FPDT and Boot Timing Normalization moved it to `X:\Perf\` when FPDT entries joined the timeline.)
@@ -154,6 +164,8 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 - [x] Commit: `"kernel: move per-boot session logs to X:\\Boot\\"`
 
 **Test checkpoint:** After boot, `X:\Boot\` contains the per-boot session files `26040501.LOG` and `26040501.json`; serial session logs stay at `X:\Logs\Serial\` (owned by §5, built from `klog_dir + "Serial\\"`). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+---
 
 ## 7. Crash Dump Path -- crash_recovery.log to X:\Crash\
 
@@ -169,6 +181,8 @@ Move crash-persistent log recovery output to `X:\Crash\`.
 > [!NOTE]
 > Handoff: `TODO-14-boot-diagnostics.md` §5 writes `X:\Crash\last-panic.txt` (shipped) -- same `X:\Crash\` mount and BlackBox path rules as this section. Retention of the unbounded `X:\Crash\WER\` reports is owned by §16.
 
+---
+
 ## 8. Perf and Diag -- boot-profile, hwdump to X:\Perf\ and X:\Diag\
 
 Move performance and diagnostic outputs to their BlackBox directories.
@@ -182,6 +196,8 @@ Move performance and diagnostic outputs to their BlackBox directories.
 
 **Test checkpoint:** After boot, `X:\Diag\hwdump.txt` and `X:\Perf\boot-profile.log` exist with valid content. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+---
+
 ## 9. Host Tools -- SDK Reads BlackBox from Disk Image
 
 Update host-side tools to locate and read the BlackBox partition from raw disk images.
@@ -193,6 +209,8 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [x] Commit: `"tools: SDK reads BlackBox partition from disk images"`
 
 **Test checkpoint:** `bash scripts/tools/read-blackbox.sh build/system-disk.img` extracts logs to a local directory. `mount` on Linux at the correct offset shows FAT32 with the directory structure.
+
+---
 
 ## 10. Disk Space Management -- Log Aging, Quota, Cleanup
 
@@ -208,6 +226,8 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 
 **Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.
 
+---
+
 ## 11. FAT32 Volume Label -- Set "BLACKBOX" at Format Time
 
 Windows and Linux identify FAT32 volumes by their 11-character volume label (stored in BPB and root directory). Setting it at format time ensures `vol` command and Disk Management show "BLACKBOX" instead of "NO NAME".
@@ -219,6 +239,8 @@ Windows and Linux identify FAT32 volumes by their 11-character volume label (sto
 - [x] Commit: `"build: set FAT32 volume label BLACKBOX at format time"`
 
 **Test checkpoint:** `mlabel` shows BLACKBOX. Windows Disk Management shows "BLACKBOX (X:)" when disk is attached. Serial shows volume label on mount.
+
+---
 
 ## 12. Partition Health -- fsck on Mount, Dirty-Bit Check
 
@@ -234,6 +256,8 @@ FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed
 **Test checkpoint:** Force unclean shutdown (kill QEMU mid-write). Next boot: serial shows "partition dirty" warning. After clean shutdown: no warning. Verify on QEMU WHPX, TCG.
 
 **Regression risk:** fsck on mount adds boot latency. Bound to max 2 seconds; skip if partition is clean. Rollback: disable fsck call, keep dirty-bit logging only.
+
+---
 
 ## 13. WER Staging Area -- Error Reports in X:\Crash\WER\
 
@@ -252,6 +276,8 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 
 **Test checkpoint:** Trigger a user-mode crash (NULL deref in cmd.exe test). `X:\Crash\WER\` contains a JSON report with PID, exception code, and stack trace. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+---
+
 ## 14. A/B Layout Compatibility -- 4+ Partition Coexistence
 
 TODO-21 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With BlackBox, the layout becomes 4 partitions: EFI + BlackBox + Slot A + Slot B. Ensure `make-system-disk.c` supports both layouts via a build flag.
@@ -264,6 +290,8 @@ TODO-21 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With Blac
 - [x] Commit: `"tools: make-system-disk A/B layout with BlackBox partition"`
 
 **Test checkpoint:** `make-system-disk --ab` produces 4-partition image. `fdisk -l` shows EFI + BlackBox + 2x IXFS. Kernel boots and mounts X:\ from either layout. Verify on QEMU WHPX.
+
+---
 
 ## 15. Boot Platform TODO Updates -- XREFs and Domain Sync
 
@@ -346,3 +374,5 @@ Update cross-references across affected TODOs.
 - [ ] Crash test: `crash_test=1` -> next boot recovery log appears in `X:\Crash\`
 - [ ] No-BlackBox fallback: remove BlackBox partition from disk -> logs go to `C:\` with warning
 - [ ] Commit: `"kernel: BlackBox service partition verified -- 3-partition GPT, X:\\ mount, log migration"`
+
+> **Test runner:** `scripts\debug\kernel\run-blackbox-tests.bat` (SUITE=fs) | 11 blackbox tests (X:\ mount, 7 dirs, klog_dir, volume label, free space), 0 failures
