@@ -72,7 +72,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [x]   |
 | 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [x]   |
 | ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
-| 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [ ]   |
+| 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -120,7 +120,7 @@ Setup is not complete until contributors know which hosts are supported, which a
 
 > **Notes:**
 > - Profile matrix lives in [`docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments`](../../docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments). Five fully-supported profiles (Ubuntu/Debian 24.04+, WSL2+Ubuntu, GHA `ubuntu-latest`, committed `.devcontainer`, Ubuntu container base), two best-effort (native Fedora, native Arch; both require the LLVM-19 + OVMF shim), two unsupported (native Windows, macOS).
-> - `scripts/setup.sh --versions` reports each installed tool's version alongside its documented minimum floor. **Always exits 0** (pure advisory); `--verify` remains the hard pass/fail contract.
+> - `scripts/setup.sh --versions` reports each installed tool's version alongside its documented minimum floor. **Always exits 0** (pure advisory). The hard pass/fail contract is `--verify`, which as of §12 enforces presence AND required version floors (`--check-versions` runs the floor gate standalone).
 > - `.devcontainer/devcontainer.json` defines a reproducible Ubuntu 24.04 environment. `postCreateCommand` runs `bash scripts/setup.sh`; ships the clangd extension for C intelligence; no privileged runArgs, no sshd feature (bootstrap profile only).
 > - Container/non-container boundary documented in the doc table: host bootstrap, static checks, and TCG tests reproduce inside a container; KVM/WHPX/VBox/bare-metal remain owned by §4.
 > - Unsupported-host policy stated explicitly. Native Windows contributors use WSL2; macOS has no tracked owner for a toolchain port.
@@ -402,15 +402,24 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 
 `scripts/setup.sh --verify` is the hard pass/fail contract consumed by the host bootstrap and `scripts/tooling-doctor.sh`, but it only checks tool *presence* (`command -v`). The minimum floors declared in `VERSION_SPECS` (clang-19 >= 19.1.0, qemu-system-x86_64 >= 7.0, mtools, etc.) are computed only by `--versions` / `print_versions`, which deliberately exits 0 (advisory). A contributor whose required toolchain is below floor passes `--verify` and the doctor today, then hits opaque build / image / boot failures later. The Linux kernel enforces minimum tool versions at build time (`Documentation/process/changes.rst` + `scripts/min-tool-version.sh`); this section closes the same floor-parity gap for the repo-local host toolchain without regressing the optional-tool / patch-level nuance that made `--versions` advisory.
 
-- [ ] Add a hard required-floor gate (`setup.sh --check-versions` or `--verify --strict`) failing non-zero when any REQUIRED `VERSION_SPECS` tool is below `minimum` (reuse `version_ge`); optional `bear` stays advisory.
-- [ ] Keep `--versions` exit-0 advisory behavior intact (patch-level + optional-tool reporting) so existing UX is unchanged; the new gate is the separate enforcement path.
-- [ ] Wire `tooling-doctor.sh` to run the floor gate with an actionable `fix:` line (tool + observed-vs-floor + remediation) so a below-floor required tool reports a named failure, not PASS.
-- [ ] Wire the gate into `.github/workflows/build.yml` and `release.yml` after the existing `setup.sh --verify` step so CI fails on a below-floor required tool.
-- [ ] Add a `scripts/test-tooling.sh` assertion pair: a stubbed below-floor probe drives the gate non-zero naming the tool; an at/above-floor probe passes.
-- [ ] Update §2 (Notes + "minimum required versions" item) from "advisory only" to the new hard gate, and refresh the OS Comparison "Min tool-version floors" row to ✅.
-- [ ] Commit: `"tooling: enforce required-tool version floors in setup --verify gate"`
+- [x] `check_versions()` + `--check-versions` in `scripts/setup.sh`: fails CLOSED on missing / unparseable / below-floor REQUIRED tools; optional tools (`OPTIONAL_VERSION_TOOLS`) reported but never affect the exit code.
+- [x] `--verify` now runs presence AND floors (the hard contract proves floors); added a `qemu-img` floor + a drift guard requiring every REQUIRED non-firmware sentinel to carry a `VERSION_SPECS` floor.
+- [x] `--versions` / `print_versions` unchanged: advisory, always exits 0 (patch-level + optional reporting).
+- [x] `tooling-doctor.sh` toolchain check delegates to `setup.sh --verify` (now floor-enforcing) with an actionable fix line naming `--check-versions`.
+- [x] CI: `build.yml` + `release.yml` `setup.sh --verify` steps now enforce floors (renamed "sentinels and version floors"); `--verify` IS the gate, so no separate step.
+- [x] `scripts/test-tooling.sh` `[version_floor_gate]` group: 7 assertions covering healthy / below-floor / unparseable / optional / `--verify` / `--versions` / drift-guard paths.
+- [x] Updated §2 (`--verify` now presence + floors) and the OS Comparison "Min tool-version floors" row to ✅.
+- [x] Commit: `"tooling: enforce required-tool version floors in setup --verify gate"`
 
-**Test checkpoint:** On a healthy host, `bash scripts/setup.sh --check-versions` (or `--verify --strict`) exits 0 and `bash scripts/tooling-doctor.sh` still reports HEALTHY. With a required tool stubbed below its `VERSION_SPECS` floor, the gate exits non-zero naming the tool + observed-vs-floor, `tooling-doctor` reports the named failure with an actionable `fix:`, and `bash scripts/test-tooling.sh` records the negative assertion. Optional `bear` below floor never changes the exit code.
+**Test checkpoint:** On a healthy host, `bash scripts/setup.sh --check-versions` exits 0 and `bash scripts/tooling-doctor.sh` still reports HEALTHY. With a required tool stubbed below its `VERSION_SPECS` floor (PATH shim), `--check-versions` AND `--verify` exit non-zero naming the tool + observed-vs-floor; `--versions` stays exit 0; optional `bear` below floor never changes the exit code; `bash scripts/test-tooling.sh` records all seven `[version_floor_gate]` assertions.
+
+> **Test runner:** `bash scripts/test-tooling.sh` (group `[version_floor_gate]`) | 393/393 PASS incl. 7 floor-gate assertions; `bash scripts/setup.sh --check-versions` exit 0 on this host.
+> **Notes:**
+> - **What shipped:** `check_versions()` + `--check-versions` mode in `scripts/setup.sh`; `--verify` upgraded to presence + floors (the hard contract now proves floors); `qemu-img` floor + a required-sentinel-coverage drift guard.
+> - **How it runs:** fails closed (missing / unparseable / below-floor required tool -> non-zero); optional tools (`OPTIONAL_VERSION_TOOLS`) advisory; the default `setup.sh` flow gates floors before the build; `--versions` stays exit-0 advisory.
+> - **Downstream effects:** `tooling-doctor.sh` + CI (`build.yml`/`release.yml`) enforce floors via their existing `--verify` calls; closes the onboarding fail-open where a stale toolchain passed then failed opaquely.
+> - **Canonical doc:** [`docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments`](../../docs/infrastructure/development-tooling.md#supported-host-profiles-and-reproducible-environments).
+> - **Scope boundary:** owns host-tool floor enforcement only; SDK cross-compile toolchain is `D14 T01`, release signing/SBOM/reproducible builds are `D15 T01 §5/§6/§8`.
 
 ---
 
@@ -429,7 +438,7 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 | ⭐ | Cross-reference drift gate    | ❌ Unenforced             | ❌ Unenforced              | ✅ §9 -- lint rejects numeric TODO shorthand outside `todo/`; CI-gated           |
 | ⭐ | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches      | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission          |
 | ⭐ | Bare section-sign drift gate  | ❌ Unenforced             | ❌ Unenforced              | ✅ §11 -- lint Check 5 + PreToolUse hook; allowlist drained to zero              |
-| 💎 | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ⬜ §12 -- planned: --verify hard-fails below-floor required tools                |
+| 💎 | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ✅ §12 -- --verify fails closed on below-floor required tools; drift-guarded     |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
 > **After §7-§11:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, and boot assertions that cannot silently regress when a contributor edits a printf.

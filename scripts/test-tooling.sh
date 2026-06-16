@@ -4215,6 +4215,94 @@ fi
 
 
 # ============================================================================
+# version_floor_gate (setup.sh required-tool version floors)
+# ============================================================================
+#   setup.sh --check-versions (and --verify) hard-fail closed when a REQUIRED
+#   tool is missing / unparseable / below its VERSION_SPECS floor; optional
+#   tools never affect the exit code; --versions stays advisory (exit 0); and
+#   every REQUIRED non-firmware sentinel must carry a VERSION_SPECS floor
+#   (drift guard). Fixtures stub a below-floor tool via a PATH shim.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[version_floor_gate]${NC}"
+
+if [ ! -f "$REPO_ROOT/scripts/setup.sh" ]; then
+    t_fail "version_floor_gate: scripts/setup.sh missing"
+else
+    # Healthy host: the gate and --verify both pass; --versions advisory.
+    if bash "$REPO_ROOT/scripts/setup.sh" --check-versions >/dev/null 2>&1; then
+        t_pass "version_floor_gate: --check-versions exit 0 on healthy host"
+    else
+        t_fail "version_floor_gate: --check-versions healthy" "expected exit 0"
+    fi
+
+    # PATH shim: a below-floor clang-19 must drive the gate non-zero by name.
+    VFG_SHIM="$(mktemp -d)"
+    printf '#!/bin/bash\necho "clang version 18.1.3"\n' > "$VFG_SHIM/clang-19"
+    chmod +x "$VFG_SHIM/clang-19"
+    VFG_OUT="$(PATH="$VFG_SHIM:$PATH" bash "$REPO_ROOT/scripts/setup.sh" --check-versions 2>&1)"
+    VFG_RC=$?
+    if [ "$VFG_RC" -ne 0 ] && echo "$VFG_OUT" | grep -q "clang-19"; then
+        t_pass "version_floor_gate: below-floor clang-19 -> non-zero naming the tool"
+    else
+        t_fail "version_floor_gate: below-floor clang-19" "rc=$VFG_RC out: $(echo "$VFG_OUT" | grep -i clang | head -2)"
+    fi
+    # --verify (presence + floors) must ALSO fail on the below-floor tool.
+    if ! PATH="$VFG_SHIM:$PATH" bash "$REPO_ROOT/scripts/setup.sh" --verify >/dev/null 2>&1; then
+        t_pass "version_floor_gate: --verify enforces floors (below-floor -> non-zero)"
+    else
+        t_fail "version_floor_gate: --verify enforces floors" "expected non-zero"
+    fi
+    # --versions stays advisory (exit 0) even with a below-floor tool present.
+    if PATH="$VFG_SHIM:$PATH" bash "$REPO_ROOT/scripts/setup.sh" --versions >/dev/null 2>&1; then
+        t_pass "version_floor_gate: --versions stays advisory (exit 0)"
+    else
+        t_fail "version_floor_gate: --versions advisory" "expected exit 0"
+    fi
+    rm -rf "$VFG_SHIM"
+
+    # Unparseable required tool must fail closed (floor cannot be proven).
+    VFG_SHIM2="$(mktemp -d)"
+    printf '#!/bin/bash\necho "nasm garbage no version"\n' > "$VFG_SHIM2/nasm"
+    chmod +x "$VFG_SHIM2/nasm"
+    if ! PATH="$VFG_SHIM2:$PATH" bash "$REPO_ROOT/scripts/setup.sh" --check-versions >/dev/null 2>&1; then
+        t_pass "version_floor_gate: unparseable required tool fails closed"
+    else
+        t_fail "version_floor_gate: unparseable fails closed" "expected non-zero"
+    fi
+    rm -rf "$VFG_SHIM2"
+
+    # Optional tool below its floor must NOT affect the exit code.
+    VFG_SHIM3="$(mktemp -d)"
+    printf '#!/bin/bash\necho "bear 2.0.0"\n' > "$VFG_SHIM3/bear"
+    chmod +x "$VFG_SHIM3/bear"
+    if PATH="$VFG_SHIM3:$PATH" bash "$REPO_ROOT/scripts/setup.sh" --check-versions >/dev/null 2>&1; then
+        t_pass "version_floor_gate: optional tool below floor does not fail the gate"
+    else
+        t_fail "version_floor_gate: optional below-floor non-fatal" "expected exit 0"
+    fi
+    rm -rf "$VFG_SHIM3"
+
+    # Drift guard: every REQUIRED non-firmware sentinel must carry a floor.
+    VFG_MISS="$(python3 - "$REPO_ROOT/scripts/setup.sh" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1]).read()
+def block(name):
+    m = re.search(name + r"=\(\s*(.*?)\)", text, re.S)
+    return re.findall(r'"([^":]+):', m.group(1)) if m else []
+req = [c for c in block("REQUIRED_SENTINELS") if not c.startswith("__OVMF")]
+floors = set(block("VERSION_SPECS"))
+print(",".join(c for c in req if c not in floors))
+PYEOF
+)"
+    if [ -z "$VFG_MISS" ]; then
+        t_pass "version_floor_gate: every required sentinel has a VERSION_SPECS floor"
+    else
+        t_fail "version_floor_gate: sentinel floor coverage" "no floor for: $VFG_MISS"
+    fi
+fi
+
+
+# ============================================================================
 # codex_prompt_scope (TODO-08 codex-dispatch-with-files wrapper)
 # ============================================================================
 #   - clean_tree_embeds: clean working tree + prompt naming a file ->

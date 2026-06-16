@@ -88,7 +88,7 @@ jobs:
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────────
       # If this fails, the inline apt install above and scripts/setup.sh have
       # drifted. Fix whichever side is out of sync -- do NOT mask with `|| true`.
-      - name: Verify toolchain sentinels
+      - name: Verify toolchain sentinels and version floors
         run: bash scripts/setup.sh --verify
 
       # ── Style lint (cheap, no build required) ─────────────────────────────

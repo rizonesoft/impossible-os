@@ -6,8 +6,9 @@
 #
 # Usage:
 #   bash scripts/setup.sh             Install deps + verification build
-#   bash scripts/setup.sh --verify    Read-only sentinel check (no install)
-#   bash scripts/setup.sh --versions  Print actual tool versions with minimum floors (advisory)
+#   bash scripts/setup.sh --verify    Read-only hard gate: presence + version floors (no install)
+#   bash scripts/setup.sh --check-versions  Read-only required-tool version-floor gate only
+#   bash scripts/setup.sh --versions  Advisory version report vs floors (always exits 0)
 #   bash scripts/setup.sh --help      Print usage and exit
 #
 # Canonical contract: docs/infrastructure/development-tooling.md
@@ -78,6 +79,7 @@ VERSION_SPECS=(
     "gcc:gcc:11.0:gcc --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "python3:python3:3.8:python3 --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1"
     "qemu-system-x86_64:qemu-system-x86_64:7.0:qemu-system-x86_64 --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
+    "qemu-img:qemu-img:7.0:qemu-img --version 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
     "mcopy:mtools mcopy:4.0:mcopy -V 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
     "mmd:mtools mmd:4.0:mmd -V 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
     "mkfs.fat:dosfstools mkfs.fat:4.0:mkfs.fat --help 2>&1 | tail -1 | grep -oE '[0-9]+\.[0-9]+' | head -1"
@@ -108,8 +110,9 @@ Impossible OS -- development environment setup
 
 Usage:
   bash scripts/setup.sh             Install dependencies, then run a verification build.
-  bash scripts/setup.sh --verify    Check required tools (read-only; no install, no build).
-  bash scripts/setup.sh --versions  Report installed tool versions vs documented minimum floors.
+  bash scripts/setup.sh --verify    Hard contract: required tools present AND meeting their version floors (read-only; no install, no build).
+  bash scripts/setup.sh --check-versions  Hard required-tool version-floor gate only (read-only).
+  bash scripts/setup.sh --versions  Advisory report of installed versions vs floors (always exits 0).
   bash scripts/setup.sh --help      Show this help.
 
 Required host tools (see "Host Bootstrap Contract" in canonical doc):
@@ -335,12 +338,111 @@ print_versions() {
     return 0
 }
 
+# ---- Optional tools (advisory floor only; never hard-fail) ----
+# Keyed by the VERSION_SPECS check-command. Everything else in VERSION_SPECS is
+# REQUIRED and is hard-gated by check_versions. Explicit set (not a display-name
+# substring) so a future rename cannot silently flip a tool's enforcement tier.
+OPTIONAL_VERSION_TOOLS=(
+    "bear"
+)
+
+is_optional_version_tool() {
+    local c="$1" t
+    for t in "${OPTIONAL_VERSION_TOOLS[@]}"; do
+        [ "$c" = "$t" ] && return 0
+    done
+    return 1
+}
+
+# Hard required-tool version-floor gate. Every REQUIRED tool in VERSION_SPECS
+# must be present, have a parseable version, AND meet its documented minimum.
+# Fails closed: MISSING, UNKNOWN (unparseable), and BELOW-floor required tools
+# all return non-zero -- a floor that cannot be proven is a failure. Optional
+# tools (OPTIONAL_VERSION_TOOLS) are reported but never affect the exit code.
+# Also drift-guards that every REQUIRED non-firmware sentinel carries a floor in
+# VERSION_SPECS, so a required tool can never silently escape the gate. Composed
+# into --verify (presence + floors = the hard contract) and exposed standalone
+# as --check-versions; --versions stays advisory.
+check_versions() {
+    local failed=0 spec
+    echo -e "${CYAN}==================================================${NC}"
+    echo -e "${CYAN}  Required-tool version floors (hard gate)${NC}"
+    echo -e "${CYAN}==================================================${NC}"
+    echo ""
+    for spec in "${VERSION_SPECS[@]}"; do
+        local check="${spec%%:*}"
+        local rest="${spec#*:}"
+        local name="${rest%%:*}"
+        rest="${rest#*:}"
+        local minimum="${rest%%:*}"
+        local probe="${rest#*:}"
+        local optional=0
+        is_optional_version_tool "$check" && optional=1
+        local have
+        if ! command -v "$check" >/dev/null 2>&1; then
+            if [ "$optional" -eq 1 ]; then
+                echo -e "  ${YELLOW}skip${NC}  $name (optional, not installed)"
+            else
+                echo -e "  ${RED}FAIL${NC}  $name: required tool missing"
+                echo -e "        fix: bash scripts/setup.sh"
+                failed=1
+            fi
+            continue
+        fi
+        have=$(eval "$probe" 2>/dev/null || echo "")
+        if [ -z "$have" ]; then
+            if [ "$optional" -eq 1 ]; then
+                echo -e "  ${YELLOW}warn${NC}  $name (optional): version unparseable"
+            else
+                echo -e "  ${RED}FAIL${NC}  $name: version unparseable, floor >= $minimum cannot be proven"
+                echo -e "        fix: run '$check --version'; update the probe in scripts/setup.sh if its output changed"
+                failed=1
+            fi
+            continue
+        fi
+        if version_ge "$have" "$minimum"; then
+            echo -e "  ${GREEN}OK${NC}    $name $have (>= $minimum)"
+        elif [ "$optional" -eq 1 ]; then
+            echo -e "  ${YELLOW}warn${NC}  $name $have (optional; below $minimum)"
+        else
+            echo -e "  ${RED}FAIL${NC}  $name $have below floor $minimum"
+            echo -e "        fix: upgrade $name to >= $minimum (bash scripts/setup.sh)"
+            failed=1
+        fi
+    done
+    # Drift guard: every REQUIRED non-firmware sentinel must carry a floor, else
+    # a required tool (e.g. qemu-img) escapes the loop above unchecked.
+    local sent check
+    for sent in "${REQUIRED_SENTINELS[@]}"; do
+        check="${sent%%:*}"
+        case "$check" in __OVMF_CODE__|__OVMF_VARS__) continue ;; esac
+        local found=0 vs
+        for vs in "${VERSION_SPECS[@]}"; do
+            [ "${vs%%:*}" = "$check" ] && { found=1; break; }
+        done
+        if [ "$found" -eq 0 ]; then
+            echo -e "  ${RED}FAIL${NC}  $check: required sentinel has no VERSION_SPECS floor (set drift)"
+            echo -e "        fix: add a $check version spec to VERSION_SPECS in scripts/setup.sh"
+            failed=1
+        fi
+    done
+    echo ""
+    if [ "$failed" -ne 0 ]; then
+        echo -e "  ${RED}One or more required tools are below the documented floor.${NC}"
+        echo -e "  Advisory report: ${CYAN}bash scripts/setup.sh --versions${NC}."
+        return 1
+    fi
+    echo -e "  ${GREEN}All required tools meet their minimum version floors.${NC}"
+    return 0
+}
+
 # ---- Arg parsing ----
 MODE="install"
 while [ $# -gt 0 ]; do
     case "$1" in
         --help|-h) MODE="help" ;;
         --verify) MODE="verify" ;;
+        --check-versions) MODE="check-versions" ;;
         --versions) MODE="versions" ;;
         *)
             echo "Unknown argument: $1" >&2
@@ -358,7 +460,15 @@ case "$MODE" in
         exit 0
         ;;
     verify)
-        verify_tools
+        # Hard contract = presence AND required version floors. Presence first
+        # (a missing tool has no version to check); floors second.
+        verify_tools || exit 1
+        echo ""
+        check_versions
+        exit $?
+        ;;
+    check-versions)
+        check_versions
         exit $?
         ;;
     versions)
@@ -373,13 +483,13 @@ echo -e "${CYAN}==================================================${NC}"
 echo ""
 
 # Step 1: Install system dependencies
-echo -e "${CYAN}[1/3]${NC} Installing system dependencies..."
+echo -e "${CYAN}[1/4]${NC} Installing system dependencies..."
 echo ""
 bash "$SCRIPT_DIR/setup-deps.sh"
 
 # Step 2: Sentinel check -- fail early if any required tool is missing.
 echo ""
-echo -e "${CYAN}[2/3]${NC} Verifying required tools..."
+echo -e "${CYAN}[2/4]${NC} Verifying required tools..."
 echo ""
 if ! verify_tools; then
     echo ""
@@ -388,9 +498,22 @@ if ! verify_tools; then
     exit 1
 fi
 
-# Step 3: Verification build
+# Step 3: Version-floor gate -- fail clearly on a below-floor required tool
+# BEFORE the expensive build, instead of letting it surface as an opaque
+# build/boot failure later.
 echo ""
-echo -e "${CYAN}[3/3]${NC} Verification build..."
+echo -e "${CYAN}[3/4]${NC} Checking required-tool version floors..."
+echo ""
+if ! check_versions; then
+    echo ""
+    echo -e "  ${RED}Host bootstrap incomplete (tool below documented floor).${NC}"
+    echo -e "  See: ${CYAN}docs/infrastructure/development-tooling.md${NC} (Supported Host Profiles)"
+    exit 1
+fi
+
+# Step 4: Verification build
+echo ""
+echo -e "${CYAN}[4/4]${NC} Verification build..."
 echo ""
 cd "$REPO_ROOT"
 bash scripts/build.sh clean

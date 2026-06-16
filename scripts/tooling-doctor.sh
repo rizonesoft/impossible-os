@@ -42,7 +42,7 @@ Exit codes:
   1 = one or more hard checks failed
 
 Checks (grouped):
-  toolchain    setup.sh --verify (clang-19, ld.lld-19, nasm, qemu, OVMF, ...)
+  toolchain    setup.sh --verify (presence + version floors: clang-19, ld.lld-19, nasm, qemu, OVMF, ...)
   wrappers     scripts/{build,test,lint,run-qemu,debug,test-smoke,
                         install-hooks,setup}.sh are executable and --help works
   hooks        core.hooksPath points at .githooks; pre-commit/post-commit
@@ -138,12 +138,12 @@ check_toolchain() {
     fi
     if timeout 30 bash "$SCRIPT_DIR/setup.sh" --verify >/dev/null 2>&1; then
         record toolchain pass "setup.sh --verify" \
-            "All 14 sentinels present" \
+            "All sentinels present and meeting version floors" \
             "-"
     else
         record toolchain fail "setup.sh --verify" \
-            "One or more required tools missing" \
-            "Run: bash scripts/setup.sh --verify   # to see the missing entries, then bash scripts/setup.sh to install them."
+            "A required tool is missing or below its documented version floor" \
+            "Run: bash scripts/setup.sh --verify   # presence + floors; bash scripts/setup.sh --check-versions for floors only, then bash scripts/setup.sh to install/upgrade."
     fi
 }
 

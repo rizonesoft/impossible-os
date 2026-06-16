@@ -13,7 +13,9 @@ The one-command setup contract for a new development machine. Parity work extend
 | Command                             | Purpose                                                       |
 | ----------------------------------- | ------------------------------------------------------------- |
 | `bash scripts/setup.sh`             | Install distro packages, verify required tools, verification build. |
-| `bash scripts/setup.sh --verify`    | Read-only sentinel check. No install, no build. Safe to re-run. |
+| `bash scripts/setup.sh --verify`    | Read-only hard gate: required tools present AND meeting their version floors. No install, no build. Safe to re-run. |
+| `bash scripts/setup.sh --check-versions` | Read-only required-tool version-floor gate only (fails closed on missing / unparseable / below-floor required tools). |
+| `bash scripts/setup.sh --versions`  | Advisory report of installed versions vs floors. Always exits 0. |
 | `bash scripts/setup.sh --help`      | Print usage, required tools, supported distros, and scope boundary. |
 | `bash scripts/setup-deps.sh`        | Dependency installer only (called by `setup.sh`; idempotent). |
 
@@ -116,7 +118,7 @@ The [Host Bootstrap Contract](#host-bootstrap-contract) above defines *what must
 
 ### Minimum Versions and Verification
 
-Each required-sentinel tool has an expected version floor. `bash scripts/setup.sh --versions` reports actual versions alongside expectations.
+Each required-sentinel tool has an expected version floor. `bash scripts/setup.sh --verify` (and the standalone `--check-versions`) hard-enforces these floors for required tools; `bash scripts/setup.sh --versions` reports actual versions alongside expectations without gating.
 
 | Tool                  | Minimum   | Verification command                                | Rationale                                                      |
 | --------------------- | --------- | --------------------------------------------------- | -------------------------------------------------------------- |
@@ -129,13 +131,14 @@ Each required-sentinel tool has an expected version floor. `bash scripts/setup.s
 | `gcc`                 | 11.0      | `gcc --version`                                     | `HOST_CC := gcc` needs C17 support for host tools.             |
 | `python3`             | 3.8       | `python3 --version`                                 | f-strings, `pathlib`, asset-pipeline tool scripts.             |
 | `qemu-system-x86_64`  | 7.0       | `qemu-system-x86_64 --version`                      | UEFI + AHCI + VirtIO + NVMe + HPET; WHPX accelerator on 7.0+.  |
+| `qemu-img`            | 7.0       | `qemu-img --version`                                | Release VM-format conversions (VHDX/VDI/qcow2); ships with qemu-utils. |
 | `mcopy`               | 4.0       | `mcopy -V`                                          | Offset syntax `image@@offset` for partition-local FAT writes.  |
 | `mmd`                 | 4.0       | `mmd -V`                                            | BlackBox FAT directory creation (Makefile L391-L392).          |
 | `mkfs.fat`            | 4.0       | `mkfs.fat --help \| tail -1`                        | `--offset` flag required for partition-local format.           |
 | OVMF `*_4M.fd`        | presence  | `ls -l /usr/share/OVMF/OVMF_{CODE,VARS}_4M.fd`      | 4M firmware layout. The Debian `ovmf` package since 2022.02 ships these exact paths; `--versions` only asserts presence and size since the firmware binaries expose no standardized version string. |
 | `bear`                | 3.0       | `bear --version`                                    | Optional; generates `compile_commands.json` for clangd.        |
 
-`bash scripts/setup.sh --versions` walks the sentinel set and reports version strings for anything that exposes `--version`/`-v`/`-V`. Output is **purely advisory**: the command always exits 0, so optional tools (`bear`) and below-floor entries do not gate wrappers or CI. `--verify` remains the hard pass/fail contract.
+`bash scripts/setup.sh --versions` walks the sentinel set and reports version strings for anything that exposes `--version`/`-v`/`-V`. Output is **purely advisory**: the command always exits 0, so optional tools (`bear`) and below-floor entries do not gate via this report. The hard pass/fail contract is `--verify`, which enforces presence AND required version floors (fails closed: a required tool that is missing, has an unparseable version, or is below its floor returns non-zero); `--check-versions` runs the floor gate standalone. Optional tools (the explicit `OPTIONAL_VERSION_TOOLS` set, currently `bear`) are reported but never gate. A drift guard inside the floor gate also fails if any required non-firmware sentinel lacks a `VERSION_SPECS` floor.
 
 ### Reproducible Environment (`.devcontainer`)
 
@@ -204,7 +207,7 @@ Five canonical bash wrappers form the stable developer interface to the repo. Ev
 | `scripts/lint.sh`        | `bash scripts/lint.sh [<path>]`           | stderr: `<file>:<line>:<type>:<msg>` | `LINT CLEAN` banner + `0 error(s)`; exit 0 OK, 1 errors                 |
 | `scripts/run-qemu.sh`    | `bash scripts/run-qemu.sh [--debug] [--headless] [--debug-tests] [--test-only] [--single-cpu]` | interactive QEMU session, serial to stdio | no sentinel (interactive); exit 1 if disk or OVMF missing               |
 | `scripts/debug.sh`       | `bash scripts/debug.sh [--breakpoint=<fn>] [--no-default-bp]` | `build/.gdbinit-kernel`, QEMU + GDB session | no sentinel (interactive); exit 0 on clean GDB detach                   |
-| `scripts/setup.sh`       | `bash scripts/setup.sh [--verify\|--versions]` | see [Host Bootstrap Contract](#host-bootstrap-contract) | install: build sentinel; `--verify` exit 0 OK, 1 drift; `--versions` always exit 0 (advisory) |
+| `scripts/setup.sh`       | `bash scripts/setup.sh [--verify\|--check-versions\|--versions]` | see [Host Bootstrap Contract](#host-bootstrap-contract) | install: build sentinel; `--verify` (presence + floors) / `--check-versions` (floors) exit 0 OK, 1 drift/below-floor; `--versions` always exit 0 (advisory) |
 
 ### Input and Output Paths
 
@@ -991,7 +994,7 @@ Read-only health check. Does not build the OS, does not mutate the repo. Runs ~3
 
 | Group | What it checks |
 | --- | --- |
-| toolchain | Delegates to `bash scripts/setup.sh --verify` (14 sentinels: clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19, nasm, gcc, python3, qemu-system-x86_64, mcopy, mmd, mkfs.fat, OVMF_CODE, OVMF_VARS). |
+| toolchain | Delegates to `bash scripts/setup.sh --verify` (presence + version floors; sentinels: clang-19, ld.lld-19, llvm-objcopy-19, llvm-ar-19, llvm-nm-19, nasm, gcc, python3, qemu-system-x86_64, qemu-img, mcopy, mmd, mkfs.fat, OVMF_CODE, OVMF_VARS). |
 | wrappers | Every canonical wrapper (`build.sh`, `test.sh`, `lint.sh`, `run-qemu.sh`, `debug.sh`, `test-smoke.sh`, `install-hooks.sh`, `setup.sh`) exists and `--help` exits 0 within 5s. |
 | hooks | Parses `bash scripts/install-hooks.sh --status`; verifies `core.hooksPath=.githooks`; reports pre-push sentinel state; confirms `.githooks/{pre-commit,post-commit,pre-push}` are executable. |
 | workflows | `.github/workflows/{build,release,pages,labeler,stale}.yml` parse as valid YAML; `build.yml` invokes `bash scripts/build.sh` and `bash scripts/test.sh`. |

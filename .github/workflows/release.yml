@@ -80,7 +80,7 @@ jobs:
             python3-yaml
 
       # ── Verify toolchain matches scripts/setup.sh sentinel contract ─────
-      - name: Verify toolchain sentinels
+      - name: Verify toolchain sentinels and version floors
         run: bash scripts/setup.sh --verify
 
       # ── Style lint (release gate) ───────────────────────────────────────
