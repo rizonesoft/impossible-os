@@ -42,6 +42,7 @@
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/pit.h"
+#include "kernel/drivers/watchdog.h"
 #include "kernel/timer.h"
 #include "kernel/drivers/rtc.h"
 #include "kernel/drivers/keyboard.h"
@@ -247,6 +248,9 @@ void boot_phase1(void)
         acpi_init();
         POST16(POST16_ACPI_OK);
         kernel_subsystem_set_ready(SUBSYS_ACPI, true);
+        /* Arm the ACPI WDAT hardware watchdog now that ACPI is parsed; no-op
+         * (HW_WD_NONE) when no usable WDAT exists, e.g. QEMU. */
+        hw_watchdog_init();
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
              (uint64_t)acpi_get_cpu_count());
         boot_progress(1, "ACPI", POST16_ACPI_OK);

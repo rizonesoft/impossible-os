@@ -13,6 +13,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/drivers/watchdog.h"
 #include "kernel/mm/pmm.h"
 
 /* ---- Stage metadata table ----------------------------------------------- */
@@ -502,6 +503,10 @@ const boot_stage_entry_t *boot_stage_history_get(uint32_t *out_count)
 
 void boot_progress_poll(void)
 {
+    /* Pet the hardware watchdog while a slow boot phase makes progress (no-op
+     * unless a WDAT watchdog is armed). The boot-wide timeout covers a normal
+     * boot; this keeps a legitimately-slow-but-progressing phase from rebooting. */
+    hw_watchdog_pet();
     if (s_history_count > 0 && boot_splash_active()) {
         const boot_stage_entry_t *last = &s_history[s_history_count - 1];
         boot_splash_status(last->msg ? last->msg : "");

@@ -14,6 +14,7 @@
 #include "kernel/klog.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/lapic.h"
+#include "kernel/drivers/watchdog.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/boot_info.h"
 
@@ -490,6 +491,11 @@ static void serial_write_hex16(uint16_t v)
 
 void boot_progress(uint8_t phase, const char *step, uint16_t postcode)
 {
+    /* Pet the hardware watchdog at every boot milestone (no-op unless a WDAT
+     * watchdog is armed). This is the primary pet path -- a boot phase that
+     * stops calling boot_progress() lets the timer expire and reboots. */
+    hw_watchdog_pet();
+
     /* "[PHASEn] step (0xNNNN)\n" */
     const char *safe_step = step ? step : "(null)";
     serial_write("[PHASE");

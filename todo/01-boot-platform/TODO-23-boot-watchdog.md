@@ -45,7 +45,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 | 💎  |   2   | Per-phase timeout configuration                 | §1         |  [ ]   |
 | 💎  |   3   | Watchdog pet at each boot_progress() call       | §1, §2     |  [ ]   |
 | 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T21 §4 |  [ ]   |
-| 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --     |  [ ]   |
+| 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --     |  [x]   |
 | ⭐  |   6   | Watchdog status in VPD display                  | §1–§5      |  [ ]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
@@ -131,19 +131,29 @@ When watchdog fires, produce useful diagnostics before rebooting.
 
 A hardware watchdog reboots the board even on a total CPU lockup. §5 is STANDALONE (the §1 LAPIC NMI software watchdog is deferred); WDAT-only first cut, direct iTCO is a tracked follow-up.
 
-- [ ] Discover WDAT via the validated `acpi_get_raw_table("WDAT")` (gated by `acpi_is_ready()`), not the RSDT-only `find_table_rsdt`; validate header size + entry-count overflow + table length + action/instruction enums + GAS fields before any register access
-- [ ] Map WDAT register regions per GAS: system-memory via `vmm_map_mmio_uc()`, system-I/O via width-correct port I/O; execute all instruction entries for an action in order
-- [ ] WDAT actions: GET/SET_RUNNING_STATE, SET_COUNTDOWN, RESET (pet), GET/SET_BOOT_STATUS; clamp the boot-wide timeout into the min/max `timer_period` range (refuse + log if un-clampable)
-- [ ] Read + clear the WDAT boot-status (was-watchdog-reboot) flag into boot_info/NVRAM for the previous-boot-hung diagnostic; honor watchdog-stopped-in-sleep
-- [ ] Arm with a single generous boot-wide timeout (per-phase timeouts are the deferred §2); pet from `boot_progress()` ONLY while a HW watchdog is armed
-- [ ] `hw_watchdog_boot_handoff()`: disarm (SET_RUNNING_STATE=stopped) after the final boot-log flush + before `task_create()`/`scheduler_enable()`; never enter the desktop armed (no runtime petter yet); on disarm-failure do NOT proceed armed
-- [ ] If no usable WDAT: log `"[BOOT] HW watchdog: none"` -- NO reboot coverage until §1 (NMI) or the iTCO follow-up lands
+- [x] Discover WDAT via the validated `acpi_get_raw_table("WDAT")` (gated by `acpi_is_ready()`); `hw_watchdog_wdat_validate()` checks size/header/entry-overflow/enums/GAS/required-actions before any register access
+- [x] I/O-space GAS register access (width-correct port I/O); `wdat_run_action()` runs all matching entries in order (PRESERVE = read-modify-write) + returns the run count (no silent no-op). MEM-space GAS deferred
+- [x] WDAT actions: SET/GET_RUNNING_STATE, SET_STOPPED_STATE, SET_COUNTDOWN, RESET (pet), GET/SET_STATUS; clamp the boot-wide timeout into [min,max] AND refuse to arm below a 60s representable-timeout floor (logs the ACTUAL timeout)
+- [x] Read + clear the WDAT boot-status (was-watchdog-reboot) flag at init + log the previous-boot-hung diagnostic (serial); boot_info/NVRAM persistence is a follow-up
+- [x] Arm with a single generous 120s boot-wide timeout (per-phase timeouts are the deferred §2); pet from `boot_progress()` while armed (no-op otherwise)
+- [x] `hw_watchdog_boot_handoff()` (int): disarm + readback-verify after the final log flush, before `task_create`/`scheduler_enable`; fail-closed -- unconfirmed disarm returns -1 and the caller `boot_halt`s (never enters the desktop armed)
+- [x] If no usable WDAT: log `"HW watchdog: none"` -- NO reboot coverage until §1 (NMI) or the iTCO follow-up lands (QEMU path)
 - [ ] DEFERRED follow-up: direct Intel iTCO PCI fallback (PCH-generation chipset allowlist, LPC/PMC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm)
-- [ ] Commit: `"boot: ACPI WDAT hardware watchdog -- WDAT-only, disarm at boot-handoff"`
+- [ ] DEFERRED follow-up: MEM-space GAS support -- validate the firmware register address against the memory map (reject RAM) + cache a UC mapping at init (no per-pet remap); first cut is I/O-space only
+- [x] Commit: `"boot: ACPI WDAT hardware watchdog -- WDAT-only, disarm at boot-handoff"`
 
-**Test checkpoint:** On Intel bare metal with firmware WDAT: detected + armed, serial `"[BOOT] HW watchdog: WDAT (Ns)"`, disarmed at boot-handoff (no mid-desktop reboot). On QEMU (no WDAT): `"[BOOT] HW watchdog: none"` -- clean, no hang-recovery claim (§1 NMI deferred).
+**Test checkpoint:** `test_watchdog.c` (TEST_CAT_BOOT, 12 cases) validates the pure WDAT validator on crafted tables (valid 5-action I/O table + every guard: NULL, size, header_length, zero timer_period, min>max, entry overflow, zero entries, bad GAS, missing action, unknown instruction). QEMU smoke: `hw_watchdog_init` logs `"HW watchdog: none (no ACPI WDAT)"` and boot completes (2.03s) -- the init/pet/handoff wiring is a clean no-op without firmware WDAT. Bare-metal arm/pet/disarm validated on Intel hardware via serial.
 
-**Regression risk:** HIGH -- a HW watchdog that fails to disarm at boot-handoff reboots the board mid-desktop. The disarm path must be readback-verified before the scheduler starts.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | WDAT validator 12 cases; boot suite 2790 kernel + 16 user-mode PASS, 0 failures; smoke PASS (KVM 2.03s, "HW watchdog: none")
+
+> **Notes:**
+> - **What shipped:** `src/kernel/drivers/watchdog.c` + `watchdog.h` (WDAT ABI structs with `_Static_assert`s; `hw_watchdog_init/pet/boot_handoff/kind` + `hw_watchdog_wdat_validate`) + `test_watchdog.c` (12 cases).
+> - **How it runs:** `hw_watchdog_init()` after `acpi_init` (Phase 1) discovers/validates/arms; `hw_watchdog_pet()` from `boot_progress()`; `hw_watchdog_boot_handoff()` disarms (fail-closed -> `boot_halt`) before the scheduler. No-op on QEMU.
+> - **Safety:** I/O-space GAS only (no firmware RAM map / per-pet leak); validate-before-access; arm refused below a 60s timeout floor; readback-verified fail-closed disarm. Codex adoptions in commit message.
+> - **Scope boundary:** §5 owns the WDAT-I/O hardware watchdog; direct-iTCO PCI + MEM-space GAS + boot_info boot-status persistence are deferred follow-ups (this section). §1-§4 (LAPIC NMI) blocked on nested-NMI + AP IST.
+> - **Canonical doc:** `src/kernel/drivers/watchdog.c` header + the WDAT ABI in `include/kernel/drivers/watchdog.h`.
+
+**Regression risk:** HIGH -- a HW watchdog that fails to disarm at boot-handoff would reboot mid-desktop; mitigated by the readback-verified, fail-closed handoff (`boot_halt` rather than enter the desktop armed).
 
 ---
 
@@ -165,7 +175,7 @@ Show watchdog countdown in the VPD display during boot.
 | ⭐ | Feature                    | 🪟 Win11                   | 🐧 Linux                      | 🚀 Impossible OS             |
 |----|----------------------------|-------------------------|----------------------------|---------------------------|
 | 💎 | Boot hang detection        | ✅ Boot watchdog        | ✅ systemd watchdog        | ⬜ §1–§3                  |
-| 💎 | Hardware watchdog          | ✅ ACPI WDT driver      | ✅ iTCO_wdt driver         | ⬜ §5                     |
+| 💎 | Hardware watchdog          | ✅ ACPI WDT driver      | ✅ iTCO_wdt driver         | ✅ §5 WDAT (I/O, fail-closed disarm) |
 | 💎 | Hang → rollback            | ✅ Automatic Repair     | ⚠️ Manual intervention     | ⬜ §4 + T21               |
 | ⭐ | Watchdog in boot display   | ❌ Hidden               | ❌ Hidden                  | ⬜ §6 🚀                  |
 

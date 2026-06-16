@@ -22,6 +22,7 @@
 #include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/ahci.h"
+#include "kernel/drivers/watchdog.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
@@ -582,6 +583,15 @@ void boot_phase3(void)
     klog_disk_set_flush_progress_cb(boot_flush_splash_progress);
     klog_disk_flush_all();
     klog_disk_set_flush_progress_cb((klog_flush_progress_fn)0);
+
+    /* Disarm the hardware watchdog at the boot->userland handoff: AFTER the
+     * final log flush, BEFORE task_create/scheduler_enable. No runtime petter
+     * exists yet, so the desktop must never run with the watchdog armed
+     * (no-op unless a WDAT watchdog was armed; readback-verified inside). If
+     * disarm cannot be confirmed, halt -- entering the desktop armed would
+     * reboot the machine with nothing to pet it. */
+    if (hw_watchdog_boot_handoff() != 0)
+        boot_halt("HW watchdog disarm failed at boot handoff");
 
     /* --- Load cmd.exe via task_exec (single PEB allocation path) --- */
     {
