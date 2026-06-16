@@ -930,7 +930,14 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	. $@.info && $(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ -s $$IXFS_B_SIZE -l "Impossible OS" \
 		--offset $$IXFS_B_OFFSET --populate $(BUILD_DIR)/sysroot
-	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + BlackBox + ABMeta + Slot A + Slot B)"
+	@# Step 4: Recovery partition (FAT32, so the firmware can later load the
+	@# recovery.exe UEFI app). Populated now with kernel.bak = the last
+	@# known-good kernel; recovery.exe + ixfs-fsck land with the recovery
+	@# bootloader + fsck tool. The GPT entry is marked read-only (attribute
+	@# bit 60) by make-system-disk; the FAT here is the on-disk content.
+	. $@.info && mkfs.fat -F 32 -n "RECOVERY" -s 1 --offset $$(( $$RECOVERY_OFFSET / 512 )) $@ $$(( $$RECOVERY_SIZE / 1024 ))
+	. $@.info && mcopy -i $@@@$$RECOVERY_OFFSET $(KERNEL_BIN) ::kernel.bak
+	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + BlackBox + ABMeta + Slot A + Slot B + Recovery)"
 
 ## run: Launch QEMU booting from system disk (UEFI via OVMF)
 run: all

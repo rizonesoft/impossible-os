@@ -132,6 +132,7 @@ int main(int argc, char *argv[])
     uint64_t bb_start, bb_end;
     uint64_t ixfs_start, ixfs_end;
     uint64_t ixfs_b_start, ixfs_b_end;  /* Slot B (A/B mode only) */
+    uint64_t recovery_start = 0, recovery_end = 0;  /* Recovery partition (A/B mode only) */
     uint64_t meta_start = 0, meta_end = 0;  /* A/B metadata partition (A/B mode only) */
     /* Metadata partition holds the two redundant ab_boot_metadata blocks; 1 MiB
      * is alignment-friendly overkill (the record is 60 bytes x2). */
@@ -226,11 +227,21 @@ int main(int argc, char *argv[])
         meta_start = ((bb_end + 1 + 2047) / 2048) * 2048;
         meta_end = meta_start + meta_sectors - 1;
         ixfs_start = ((meta_end + 1 + 2047) / 2048) * 2048;
-        uint64_t remaining = total_sectors - 34 - ixfs_start;
+        /* Recovery partition (read-only) carved at the very end; Slot A and
+         * Slot B split the space BEFORE it. Recovery start is aligned DOWN so
+         * the partition is at least this reserve. The reserve is 34 MiB, not a
+         * bare 32 MiB: the Makefile formats it FAT32 with 1 sector/cluster, and
+         * after reserved + FAT-table overhead a 32 MiB (65536-sector) volume
+         * yields ~64496 data clusters -- below the FAT32 floor of 65525, which
+         * UEFI firmware (OVMF) rejects. 34 MiB clears 65525 with margin. */
+        uint64_t recovery_sectors = (34ULL * 1024 * 1024) / SECTOR_SIZE;
+        recovery_end = total_sectors - 34 - 1;
+        recovery_start = ((recovery_end + 1 - recovery_sectors) / 2048) * 2048;
+        uint64_t remaining = recovery_start - ixfs_start;  /* both slots fit before recovery */
         uint64_t half = (remaining / 2 / 2048) * 2048;  /* 1 MiB aligned */
         ixfs_end = ixfs_start + half - 1;
         ixfs_b_start = ((ixfs_end + 1 + 2047) / 2048) * 2048;
-        ixfs_b_end = total_sectors - 34 - 1;
+        ixfs_b_end = recovery_start - 1;
     } else {
         /* IXFS: 1 MiB-aligned after BlackBox, fills remaining space */
         ixfs_start = ((bb_end + 1 + 2047) / 2048) * 2048;
@@ -244,17 +255,26 @@ int main(int argc, char *argv[])
         uint64_t last_usable = total_sectors - 34;
         uint64_t a_sec = (ixfs_end >= ixfs_start) ? (ixfs_end - ixfs_start + 1) : 0;
         uint64_t b_sec = (ixfs_b_end >= ixfs_b_start) ? (ixfs_b_end - ixfs_b_start + 1) : 0;
+        uint64_t rec_sec = (recovery_end >= recovery_start) ? (recovery_end - recovery_start + 1) : 0;
         uint64_t min_slot = (96ULL * 1024 * 1024) / SECTOR_SIZE;
+        /* FAT32 floor: the Makefile formats recovery FAT32 at 1 sector/cluster;
+         * after reserved + FAT-table overhead the data-cluster count must reach
+         * the FAT32 minimum of 65525, so the partition must hold >= 66581
+         * sectors. Fail closed rather than emit a firmware-hostile volume. */
+        uint64_t min_recovery = 66581;
         if (!(efi_start <= efi_end && efi_end < bb_start &&
               bb_start <= bb_end && bb_end < meta_start &&
               meta_start <= meta_end && meta_end < ixfs_start &&
               ixfs_start <= ixfs_end && ixfs_end < ixfs_b_start &&
-              ixfs_b_start <= ixfs_b_end && ixfs_b_end < last_usable &&
-              a_sec >= min_slot && b_sec >= min_slot)) {
+              ixfs_b_start <= ixfs_b_end && ixfs_b_end < recovery_start &&
+              recovery_start <= recovery_end && recovery_end < last_usable &&
+              a_sec >= min_slot && b_sec >= min_slot && rec_sec >= min_recovery)) {
             fprintf(stderr, "make-system-disk: A/B layout invalid -- slots %llu/%llu MiB "
-                    "(need >= 96 MiB each); grow the disk or align --efi-size\n",
+                    "(need >= 96 MiB each), recovery %llu MiB (need >= 34 MiB for FAT32); "
+                    "grow the disk or align --efi-size\n",
                     (unsigned long long)(a_sec * SECTOR_SIZE / (1024 * 1024)),
-                    (unsigned long long)(b_sec * SECTOR_SIZE / (1024 * 1024)));
+                    (unsigned long long)(b_sec * SECTOR_SIZE / (1024 * 1024)),
+                    (unsigned long long)(rec_sec * SECTOR_SIZE / (1024 * 1024)));
             return 1;
         }
     }
@@ -281,6 +301,10 @@ int main(int argc, char *argv[])
         printf("  Part 4 (IXFS B):  LBA %llu - %llu (%llu MiB)\n",
                (unsigned long long)ixfs_b_start, (unsigned long long)ixfs_b_end,
                (unsigned long long)((ixfs_b_end - ixfs_b_start + 1) * SECTOR_SIZE /
+                                    (1024 * 1024)));
+        printf("  Part 6 (Recovery): LBA %llu - %llu (%llu MiB, read-only)\n",
+               (unsigned long long)recovery_start, (unsigned long long)recovery_end,
+               (unsigned long long)((recovery_end - recovery_start + 1) * SECTOR_SIZE /
                                     (1024 * 1024)));
     }
 
@@ -338,6 +362,18 @@ int main(int argc, char *argv[])
             0xDA000000, 0x0000, 0x4978, 0x4D, 0x44, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x01,
             meta_start, meta_end, "Impossible OS ABMeta");
+
+        /* Entry 5: Recovery partition. Type GUID 49504F53-7265-636F-7665-
+         * 727900000001 ("IPOSrecovery" in the GUID bytes). Holds the last
+         * known-good kernel.bak now; recovery.exe + ixfs-fsck land with the
+         * recovery bootloader + fsck tool. Marked GPT read-only (attribute bit
+         * 60) so the recovery image is not mutated by a normal-mode mount. */
+        write_partition_entry(entries + 5 * GPT_ENTRY_SIZE,
+            0x49504F53, 0x7265, 0x636F, 0x76, 0x65, 0x72, 0x79, 0x00, 0x00,
+            0x00, 0x01,
+            recovery_start, recovery_end, "Impossible OS Recovery");
+        /* GPT read-only: attributes field at entry offset 48, bit 60. */
+        w64(entries + 5 * GPT_ENTRY_SIZE + 48, 1ULL << 60);
     }
 
     /* Compute CRC32 of the partition entry array */
@@ -459,6 +495,10 @@ int main(int argc, char *argv[])
                     (unsigned long long)(ixfs_b_start * SECTOR_SIZE));
             fprintf(info_fp, "IXFS_B_SIZE=%llu\n",
                     (unsigned long long)((ixfs_b_end - ixfs_b_start + 1) * SECTOR_SIZE));
+            fprintf(info_fp, "RECOVERY_OFFSET=%llu\n",
+                    (unsigned long long)(recovery_start * SECTOR_SIZE));
+            fprintf(info_fp, "RECOVERY_SIZE=%llu\n",
+                    (unsigned long long)((recovery_end - recovery_start + 1) * SECTOR_SIZE));
         }
         {
             /* Evaluate each step separately so fclose ALWAYS runs (no
