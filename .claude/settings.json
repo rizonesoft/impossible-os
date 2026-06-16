@@ -23,56 +23,56 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh .claude/hooks/wrap.sh .claude/hooks/domain_quality_router.py src/ include/kernel/ user/",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/domain_quality_router.py\" src/ include/kernel/ user/",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/unicode_dash_block.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/unicode_dash_block.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/numeric_todo_shorthand.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/numeric_todo_shorthand.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/scope_gap_marker.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/scope_gap_marker.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/test_side_effect_ban.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/test_side_effect_ban.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/bare_section_refs.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/bare_section_refs.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/citation_block.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/citation_block.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/notes_bloat_check.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/notes_bloat_check.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/todo_item_line_length.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/todo_item_line_length.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/design_review_required.py"
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/design_review_required.py\""
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/step5_quality_gate.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/step5_quality_gate.py\"",
             "timeout": 10
           }
         ]
@@ -82,22 +82,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/accepted_xref_block.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/accepted_xref_block.py\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/codex_model_flag_block.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/codex_model_flag_block.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/section_commit_gate.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/section_commit_gate.py\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/phase1_evidence_gate.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/phase1_evidence_gate.py\"",
             "timeout": 10
           }
         ]
@@ -107,7 +107,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh .claude/hooks/wrap.sh .claude/hooks/skill_pipeline_reminder.py implement-todo-section implement-ssdt-range review-todo-section quality-review-section create-todo complete-todo-file",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skill_pipeline_reminder.py\" implement-todo-section implement-ssdt-range review-todo-section quality-review-section create-todo complete-todo-file",
             "timeout": 5
           }
         ]
@@ -117,7 +117,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/section_review_required.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/section_review_required.py\"",
             "timeout": 5
           }
         ]
@@ -127,7 +127,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/skill_step_block.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skill_step_block.py\"",
             "timeout": 5
           }
         ]
@@ -137,7 +137,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/receiving_review_required.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/receiving_review_required.py\"",
             "timeout": 5
           }
         ]
@@ -147,7 +147,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/run_phase_guard.py pretool",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/run_phase_guard.py\" pretool",
             "timeout": 5
           }
         ]
@@ -158,12 +158,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/session_start.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/session_start.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/overnight_guard.py session-start",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/overnight_guard.py\" session-start",
             "timeout": 5
           }
         ]
@@ -174,12 +174,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/user_prompt_doctrine.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/user_prompt_doctrine.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/overnight_guard.py prompt",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/overnight_guard.py\" prompt",
             "timeout": 5
           }
         ]
@@ -190,17 +190,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/stop_audit.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/stop_audit.py\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/overnight_guard.py stop",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/overnight_guard.py\" stop",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/run_phase_guard.py stop",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/run_phase_guard.py\" stop",
             "timeout": 5
           }
         ]
@@ -211,7 +211,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/subagent_audit.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/subagent_audit.py\"",
             "timeout": 5
           }
         ]
@@ -222,7 +222,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/pre_compact_flush.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pre_compact_flush.py\"",
             "timeout": 5
           }
         ]
@@ -234,19 +234,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/post_commit_smoketest.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/post_commit_smoketest.py\"",
             "if": "Bash(git commit:*)",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/post_commit_smoketest_boot.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/post_commit_smoketest_boot.py\"",
             "if": "Bash(git commit:*)",
             "timeout": 90
           },
           {
             "type": "command",
-            "command": "sh .claude/hooks/wrap.sh .claude/hooks/codex_review_reception_reminder.py adversarial-review",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/codex_review_reception_reminder.py\" adversarial-review",
             "timeout": 5
           }
         ]
@@ -256,7 +256,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/codex_review_completed.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/codex_review_completed.py\"",
             "timeout": 5
           }
         ]
@@ -266,7 +266,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/skill_step_observer.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skill_step_observer.py\"",
             "timeout": 5
           }
         ]
@@ -276,7 +276,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/tool_history_writer.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/tool_history_writer.py\"",
             "timeout": 5
           }
         ]
@@ -286,47 +286,47 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh .claude/hooks/wrap.sh .claude/hooks/todo_edit_reminder.py todo/",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/todo_edit_reminder.py\" todo/",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/todo_format_check.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/todo_format_check.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "sh .claude/hooks/wrap.sh .claude/hooks/test_wiring_reminder.py src/kernel/test/",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/test_wiring_reminder.py\" src/kernel/test/",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/test_message_uniqueness.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/test_message_uniqueness.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/test_pending_reminder.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/test_pending_reminder.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "sh .claude/hooks/wrap.sh .claude/hooks/skill_claudemd_sync_reminder.py .claude/skills/",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skill_claudemd_sync_reminder.py\" .claude/skills/",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/scope_gap_dedup_check.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/scope_gap_dedup_check.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/accepted_xref_warn.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/accepted_xref_warn.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 .claude/hooks/todo_graph_auto_rewrite.py",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/todo_graph_auto_rewrite.py\"",
             "timeout": 20
           }
         ]
