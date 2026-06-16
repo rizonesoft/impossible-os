@@ -54,7 +54,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 | ⭐  | Order | Deliverable                        | Depends On                    | Status |
 | --- | :---: | ---------------------------------- | ----------------------------- | :----: |
-| 💎  |   1   | UEFI pre-kernel POST codes         | --                            |  [x]   |
+| 💎  |   1   | UEFI pre-kernel POST codes         | --                            |  [/]   |
 | 💎  |   2   | Boot progress named-stage API      | §1                            |  [x]   |
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
 | 💎  |   4   | Alive blink / visual heartbeat     | permanently deferred; hang=TODO-23 |  [/]   |
@@ -79,14 +79,17 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 - [x] Add `post_code(uint8_t code)` inline in `bootx64.c`: `outb(0x80, code)`; add `post_code16(uint16_t code)` (writes high byte to port `0x80`, logs full value on serial) plus legacy 8-bit names `POST_ENTRY` through `POST_KERNEL_JUMP` for reference
 - [x] Insert `post_code16()` at bootloader milestones: `0xB001` entry, `0xB090`/`0xB091` boot device (LoadedImage) before GOP, `0xB010` GOP init, `0xB020`/`0xB021` ELF open/load, `0xB030` RSDP, `0xB080`-`0xB085` USB discovery and xHCI DMA/takeover substeps, `0xB040` memory map, `0xB050` ExitBootServices, `0xB060` page tables, `0xB070` kernel jump
 - [x] QEMU ignores port 0x80 writes silently -- no fault, verified by clean build
+- [ ] **POST-card milestone discrimination (deferred):** `post_code16` writes the high byte `0xB0` to port 0x80, so an 8-bit card shows `0xB0` for every bootloader milestone. Evaluate low-byte/sequence emission -- architect call.
 - [x] Commit: `"boot: UEFI pre-kernel POST codes to I/O port 0x80"`
 
-**Test checkpoint:** UEFI build; milestones emit `outb(0x80, code)` in order. QEMU WHPX, QEMU TCG, VirtualBox: no fault on port writes. Bare metal: POST card matches sequence if present.
+**Test checkpoint:** UEFI build; milestones emit `outb(0x80, code)` in order. QEMU WHPX, QEMU TCG, VirtualBox: no fault on port writes. Bare metal: an 8-bit POST card shows the high byte `0xB0` (bootloader-range) if present; per-milestone detail is on serial (the low-byte improvement is the deferred item above).
 > **Notes:**
 > - Shipped: `post_code(uint8_t)` + `post_code16(uint16_t)` (high byte to port 0x80, full value on serial) in `bootx64.c`, emitted at bootloader milestones 0xB001 through 0xB070.
-> - Integration: QEMU ignores port 0x80 writes silently (no fault); a hardware POST-code reader card decodes the sequence on bare metal before the kernel starts.
+> - Integration: QEMU ignores port 0x80 writes silently (no fault); on bare metal an 8-bit POST card shows the high byte `0xB0` (bootloader range) -- per-milestone discrimination is on serial only (low-byte card emission is deferred).
 > - Scope boundary: bootloader-stage codes only; kernel-stage POST display is §2/§3.
 > **Verified:** 2026-04-12 -- Milestone table reconciled to `post_code16`; Codex: disarm watchdog on `init_gop` error return before firmware UI. Accepted: none.
+> **Deferred:** [M] 8-bit POST card shows only the high byte `0xB0`, no per-milestone discrimination (serial is per-milestone) -> XREF: 01-boot-platform/TODO-14 §1 (item: "POST-card milestone discrimination (deferred)" at line 82)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 1M deferred (card byte encoding), doc-overstatement fixed | scope: boot-code-quality (re-adversarial skipped -- doc-accuracy fix only, finding deferred not coded)
 
 ---
 
