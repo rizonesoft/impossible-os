@@ -174,15 +174,20 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 ## Enforcement & Scheduling
 
 This doctrine is not just guidance: it is hard-enforced. Architecture is
-**plugin schedules, repo decides** (`docs/superpowers/specs/2026-06-13-overnight-sequencer-design.md`):
+**repo schedules, repo decides** (`docs/superpowers/specs/2026-06-13-overnight-sequencer-design.md`):
 
-- **Scheduler (rizonetech `overnight-runner` plugin, generic, unchanged):**
-  systemd main + watchdog timers, headless `claude` launch, usage-limit snooze,
-  linger-survival, `flock`. The **watchdog is pure failover at `*:0/10`**: a tick
-  is a no-op if a run is alive (flock); it relaunches only when a run died
-  (crash / usage-limit / kill) and the run has not cleanly finished. On fixpoint
-  the runner **auto-disarms its own timers**, so it stops for good (no
-  spin-after-done).
+- **Scheduler (repo-vendored, `scripts/overnight/`):** systemd main + watchdog
+  timers, headless `claude` launch, usage-limit snooze, linger-survival,
+  `flock`. Vendored 2026-06-16 from the rizonetech `overnight-runner` plugin and
+  de-coupled from it -- the repo owns `overnight-arm.sh` + `overnight-launch.sh`
+  so there is exactly ONE armed path (no competing unguarded plugin flow), no
+  dependency on a user-cache plugin version, and ChromeMCP is gated off at the
+  source for kernel runs. The launcher bootstraps `Skill(overnight-sequencer)`
+  directly (no plugin slash command). The **watchdog is pure failover at
+  `*:0/10`**: a tick is a no-op if a run is alive (flock); it relaunches only
+  when a run died (crash / usage-limit / kill) and the run has not cleanly
+  finished. On an oracle-verified fixpoint the runner **auto-disarms its own
+  timers**, so it stops for good (no spin-after-done).
 - **Brain (this repo, `.claude/`):** `sequencer_triage.py` (cursor oracle),
   `run_phase_guard.py` (a PreToolUse + Stop hook that hard-blocks any tool call
   outside the current phase's allow-list, and blocks `AskUserQuestion` entirely --

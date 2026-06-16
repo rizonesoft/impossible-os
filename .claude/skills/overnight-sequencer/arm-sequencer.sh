@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # arm-sequencer.sh -- arm the unattended overnight sequencer for impossible-os.
 #
-# Wraps the rizonetech overnight-runner plugin (the generic scheduler) but:
+# Drives the REPO-VENDORED scheduler (scripts/overnight/overnight-arm.sh +
+# overnight-launch.sh -- no external plugin dependency since 2026-06-16) and:
 #   1. redirects the headless launch onto the repo-owned overnight-sequencer
 #      skill via the .claude/state/sequencer-armed marker (run_phase_guard.py
-#      hard-blocks anything else until overnight-sequencer is invoked), so the
-#      plugin is NOT edited;
+#      hard-blocks anything else until overnight-sequencer is invoked);
 #   2. forces --mode bypassPermissions + a 10-min pure-failover watchdog;
 #   3. turns ChromeMCP OFF at the systemd-unit level for THIS repo only (a
-#      per-unit env drop-in; other projects' overnight runs keep ChromeMCP).
+#      per-unit env drop-in; the vendored launcher honors OVERNIGHT_NO_CHROMEMCP
+#      and skips the lane logic entirely, so kernel runs make no browser noise).
 #
 # Usage:
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh [--at "<calendar>"]
+#   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --with-browser   # gh-pages
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm
 set -euo pipefail
 
@@ -22,8 +24,8 @@ UNIT="overnight-$(basename "$REPO_ROOT")"        # overnight-impossible-os
 DROPIN_BASE="$HOME/.config/systemd/user"
 MARKER=".claude/state/sequencer-armed"
 
-PLUGIN_ARM="$(ls -d "$HOME"/.claude/plugins/cache/rizonetech/overnight-runner/*/scripts/overnight-arm.sh 2>/dev/null | sort -V | tail -1)"
-[ -n "$PLUGIN_ARM" ] || { echo "FATAL: overnight-runner plugin not installed" >&2; exit 127; }
+LOCAL_ARM="$REPO_ROOT/scripts/overnight/overnight-arm.sh"
+[ -x "$LOCAL_ARM" ] || { echo "FATAL: vendored scheduler missing/not executable: $LOCAL_ARM" >&2; exit 127; }
 
 write_chromemcp_dropin() {
   for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
@@ -75,35 +77,26 @@ remove_sequencer_env_dropin() {
   done
 }
 
-# Idempotent reset of the plugin's advisory run state. The plugin sets these at
-# launch but only clears overnight-runner.json on a clean fixpoint; every other
-# ending (usage-limit kill, watchdog reap, manual systemctl stop, crash) leaves
-# active:true forever, which makes /overnight-runner:status falsely report a live
-# run. The launch.lock flock self-releases on holder death, but the file lingers;
-# .in_use/<pid> markers accumulate one per crashed/killed session. Nothing else
-# reaps these -- so disarm owns the full teardown regardless of how the run ended.
+# Idempotent teardown of run state. The launch.lock flock self-releases on
+# holder death but the file lingers; the fixpoint sentinel and any legacy plugin
+# overnight-runner.json (incl. a stale TERMINAL/user-decision blocker that would
+# read to the NEXT run as "the operator reserved this, stop" -- the 2026-06-16
+# self-disarm cause) are cleared so a re-arm always starts from a clean slate.
 reap_overnight_state() {
   python3 - <<'PY' || true
-import json, os
-p = ".claude/overnight/state/overnight-runner.json"
+import json
+p = ".claude/overnight/state/overnight-runner.json"   # legacy plugin state, if present
 try:
     d = json.load(open(p))
     changed = False
     if d.get("active") or d.get("status") not in (None, "cleared"):
-        d["active"] = False
-        d["status"] = "cleared"
-        changed = True
-    # Clear stale blockers. They are advisory plugin state; once the run is
-    # disarmed they are dead, but a leftover TERMINAL/user-decision blocker reads
-    # to the NEXT run as "the operator reserved this, stop" -- which is exactly
-    # how the 2026-06-16 self-disarm happened. A reserved decision belongs in the
-    # owning TODO section as a Deferred item, not in the runner's advisory state.
+        d["active"] = False; d["status"] = "cleared"; changed = True
     if d.get("blockers"):
         n = len(d["blockers"]); d["blockers"] = []; changed = True
         print(f"  cleared {n} stale blocker(s) from overnight-runner.json")
     if changed:
         json.dump(d, open(p, "w"), indent=2)
-        print("  reset overnight-runner.json -> active:false, blockers:[] (notes/cursor preserved)")
+        print("  reset legacy overnight-runner.json -> active:false, blockers:[]")
 except FileNotFoundError:
     pass
 except (ValueError, OSError) as e:
@@ -111,22 +104,12 @@ except (ValueError, OSError) as e:
 PY
   rm -f .claude/overnight/launch.lock && echo "  removed launch.lock" || true
   rm -f .claude/state/sequencer-fixpoint && echo "  removed stale fixpoint sentinel" || true
-  # Reap dead .in_use/<pid> markers in the newest plugin version dir.
-  local iu; iu="$(dirname "$(dirname "$PLUGIN_ARM")")/.in_use"
-  if [ -d "$iu" ]; then
-    for m in "$iu"/*; do
-      [ -e "$m" ] || continue
-      pid="$(basename "$m")"
-      case "$pid" in (*[!0-9]*) continue ;; esac   # skip non-PID names
-      kill -0 "$pid" 2>/dev/null || { rm -f "$m" && echo "  reaped dead in_use marker $pid"; }
-    done
-  fi
 }
 
 if [ "${1:-}" = "--disarm" ]; then
   rm -f "$MARKER"
   python3 .claude/hooks/run_phase_guard.py clear "disarmed via arm-sequencer.sh" >/dev/null 2>&1 || true
-  bash "$PLUGIN_ARM" "$DOCTRINE" --disarm || true
+  bash "$LOCAL_ARM" "$DOCTRINE" --disarm || true
   remove_chromemcp_dropin
   remove_sequencer_env_dropin
   reap_overnight_state
@@ -136,10 +119,11 @@ if [ "${1:-}" = "--disarm" ]; then
 fi
 
 # ChromeMCP policy for THIS repo: impossible-os is kernel/OS work for the vast
-# majority of runs, which never touch a browser -- so default to --no-browser
-# (skips the ChromeMCP lane churn + waives browser gates, no noise). The ONLY
-# impossible-os work that needs ChromeMCP is the gh-pages landing site; arm
-# those runs with --with-browser to keep ChromeMCP fully on.
+# majority of runs, which never touch a browser -- so default ChromeMCP OFF via
+# the OVERNIGHT_NO_CHROMEMCP env drop-in, which the vendored launcher reads to
+# skip the lane logic entirely (no lane churn, no spurious CDP errors). The ONLY
+# impossible-os work that needs ChromeMCP is the gh-pages landing site; arm those
+# runs with --with-browser to leave the env unset and let the lane logic run.
 WITH_BROWSER=0
 FORWARD_ARGS=()
 for a in "$@"; do
@@ -150,33 +134,22 @@ for a in "$@"; do
 done
 
 # Arm. Marker first, so the very first tool call of the headless run is already
-# redirected onto overnight-sequencer.
+# redirected onto overnight-sequencer. Drop-ins are written AFTER the transient
+# unit exists (systemd-run created it) and before it fires (--at is +2min), then
+# daemon-reload makes them effective for the scheduled start.
 mkdir -p .claude/state
 : > "$MARKER"
+bash "$LOCAL_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
+write_sequencer_env_dropin
 if [ "$WITH_BROWSER" = "1" ]; then
-  bash "$PLUGIN_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
   remove_chromemcp_dropin
-  write_sequencer_env_dropin
   systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP ON (gh-pages run)"
 else
-  # The plugin's --no-browser landed in overnight-runner 0.2.5. Older cached
-  # versions reject unknown args, so only pass it when the resolved plugin
-  # supports it; otherwise fall back to the env drop-in alone (still suppresses
-  # session-level ChromeMCP auto-launch, just not the plugin's lane churn/gates).
-  NB_FLAG=()
-  if grep -q -- '--no-browser)' "$PLUGIN_ARM"; then
-    NB_FLAG=(--no-browser)
-  else
-    echo "  NOTE: cached overnight-runner lacks --no-browser; relying on env drop-in only." >&2
-    echo "        Update the plugin to 0.2.5+ for full ChromeMCP quieting (lane + gates)." >&2
-  fi
-  bash "$PLUGIN_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${NB_FLAG[@]+"${NB_FLAG[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
   write_chromemcp_dropin
-  write_sequencer_env_dropin
   systemctl --user daemon-reload 2>/dev/null || true
-  echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP OFF (kernel run; --no-browser + drop-in)"
+  echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP OFF (kernel run)"
 fi
 echo "  launch redirects to Skill(overnight-sequencer); doctrine: $DOCTRINE"
-echo "  ChromeMCP: default OFF; arm with --with-browser for gh-pages landing-site runs"
+echo "  scheduler: repo-vendored (scripts/overnight/), no external plugin dependency"
 echo "  disarm: bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"
