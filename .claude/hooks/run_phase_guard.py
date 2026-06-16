@@ -9,8 +9,12 @@ sequence, ask a human, or stop before fixpoint.
 Roles (dispatched on argv[1]):
   pretool   PreToolUse hook: reads {tool_name, tool_input} on stdin.
             exit 0 = allow, exit 2 + stderr = BLOCK.
-  stop      Stop hook: while a run is active and not at FIXPOINT, exit 2 keeps
-            the headless run going (the watchdog handles real death).
+  stop      Stop hook: for the headless unattended run (env discriminator
+            OVERNIGHT_SEQUENCER_RUN=1) while ARMED and not at FIXPOINT, exit 2
+            keeps it going so it physically cannot voluntarily stop -- ONLY the
+            human's `--disarm` (which removes the armed marker) ends it. The
+            watchdog handles real death. Interactive sessions (env unset) are
+            never blocked, so the operator is never trapped in the repo.
   CLI       start / status / phase / cursor / progress / next-pass / fixpoint /
             clear / selftest -- the overnight-sequencer skill drives phase
             transitions through these.
@@ -45,10 +49,44 @@ def repo_root():
 
 STATE_PATH = repo_root() / ".claude/state/sequencer-run.json"
 # Written by arm-sequencer.sh; present means "an unattended sequencer run is
-# armed". Until the run is active (overnight-sequencer called `start`), the only
-# valid skill is overnight-sequencer -- this is how the headless launch is
-# redirected off the plugin's generic flow without editing the plugin.
+# armed". This is the PERSISTENT MASTER SWITCH: it stays on disk for the entire
+# run (it is NOT removed when the run goes active) and is cleared ONLY by the
+# human's `--disarm` or by an oracle-verified FIXPOINT. While armed, every fresh
+# watchdog-spawned agent is redirected onto overnight-sequencer and cannot
+# voluntarily stop. This is what makes the death-thrash impossible: even if the
+# run cursor (sequencer-run.json) is reset to inactive out from under the guard,
+# the marker keeps the headless run alive and guarded until the operator disarms.
 ARMED_MARKER = repo_root() / ".claude/state/sequencer-armed"
+
+
+def is_headless():
+    """True only inside the unattended systemd-launched run.
+
+    arm-sequencer.sh writes Environment=OVERNIGHT_SEQUENCER_RUN=1 into the
+    systemd unit drop-in, so the headless `claude -p` process and all its hook
+    subprocesses see it; an interactive operator session in the same repo does
+    NOT. This is the load-bearing discriminator: the guard governs ONLY the
+    headless run, so it can be absolute there (no stopping, no self-disarm)
+    while never trapping the human who shares the repo's settings.json hooks.
+    """
+    return os.environ.get("OVERNIGHT_SEQUENCER_RUN") == "1"
+
+
+# Bash command shapes that would let the headless run tear itself down. Only the
+# human (interactive session, env discriminator absent) may run these.
+def _is_self_teardown(cmd):
+    c = " ".join((cmd or "").split())
+    if "arm-sequencer.sh" in c and "--disarm" in c:
+        return True
+    if "overnight-arm.sh" in c and "--disarm" in c:
+        return True
+    if "run_phase_guard.py" in c and " clear" in c:
+        return True
+    if "rm " in c and "sequencer-armed" in c:
+        return True
+    if "systemctl" in c and "stop" in c and "overnight" in c:
+        return True
+    return False
 
 # Ordered phases of the per-file pipeline.
 PHASES = ["PREFLIGHT", "TRIAGE", "VALIDATE", "GAP_AUDIT", "SECTIONS",
@@ -103,13 +141,22 @@ def _skill_name(tool_input):
     return tool_input.get("skill") or tool_input.get("name") or ""
 
 
-def evaluate(tool_name, tool_input, state, armed=False):
-    """Return (allow: bool, message: str). Pure -- unit-testable."""
+def evaluate(tool_name, tool_input, state, armed=False, headless=False):
+    """Return (allow: bool, message: str). Pure -- unit-testable.
+
+    The guard governs ONLY the headless unattended run. An interactive operator
+    session (headless=False) is never constrained -- it can ask, stop, and run
+    --disarm freely. This is what lets the human share the repo's hooks without
+    being trapped by the run cursor on disk.
+    """
+    if not headless:
+        return True, ""
+
     active = bool(state.get("active"))
     if not active and not armed:
         return True, ""
 
-    # AskUserQuestion is never allowed while armed or active.
+    # AskUserQuestion is never allowed inside the unattended run.
     if tool_name == "AskUserQuestion":
         return False, (
             "[sequencer] AskUserQuestion is blocked during an unattended run. "
@@ -117,6 +164,17 @@ def evaluate(tool_name, tool_input, state, armed=False):
             "or DEFER the item (mark [/] + a Deferred stamp with an XREF) and "
             "advance. The run never stops to ask. "
             "(todo/TODO-Claude-Overnight-Runner.md hard rules.)")
+
+    # The unattended run must never tear itself down. Disarm/clear/stop is a
+    # human-only operation, performed from an interactive session (where the
+    # OVERNIGHT_SEQUENCER_RUN discriminator is absent and this guard is inert).
+    if tool_name == "Bash" and _is_self_teardown(tool_input.get("command", "")):
+        return False, (
+            "[sequencer] self-teardown blocked: the unattended run cannot "
+            "disarm, clear the guard, remove the armed marker, or stop its own "
+            "service. Only the human operator ends the run, from an interactive "
+            "session, via `bash .claude/skills/overnight-sequencer/"
+            "arm-sequencer.sh --disarm`. Keep going -- continue the pipeline.")
 
     # Armed but not yet started: force the redirect onto overnight-sequencer.
     if not active and armed:
@@ -160,7 +218,8 @@ def handle_pretool():
     except (json.JSONDecodeError, ValueError):
         return 0
     allow, msg = evaluate(d.get("tool_name", ""), d.get("tool_input", {}),
-                          load_state(), armed=ARMED_MARKER.exists())
+                          load_state(), armed=ARMED_MARKER.exists(),
+                          headless=is_headless())
     if allow:
         return 0
     sys.stderr.write(msg)
@@ -168,18 +227,30 @@ def handle_pretool():
 
 
 def handle_stop():
-    state = load_state()
-    if not state.get("active"):
+    # The guard governs ONLY the headless unattended run -- an interactive
+    # operator session is never trapped (it can stop and disarm freely).
+    if not is_headless():
         return 0
+    # While the master switch is armed, the headless run must not stop. This is
+    # keyed off the PERSISTENT marker, NOT the run cursor's `active` flag: even
+    # if the cursor is reset to inactive (crash, stale state, a clear that raced
+    # a relaunch), the marker keeps the run alive and guarded. The ONLY exits
+    # are the human's `--disarm` (removes the marker) or an oracle-verified
+    # FIXPOINT (genuine, machine-checked completion -- also removes the marker).
+    if not ARMED_MARKER.exists():
+        return 0
+    state = load_state()
     if state.get("phase") == "FIXPOINT":
         return 0
     sys.stderr.write(
-        "[sequencer] run is active and not at FIXPOINT. Do not stop: continue the "
-        "per-file pipeline (the work unit is the ENTIRE queue, not one section). "
+        "[sequencer] ARMED unattended run: do NOT stop. Continue the per-file "
+        "pipeline (the work unit is the ENTIRE queue, not one section). "
         f"pass={state.get('pass_no')} file={state.get('file')} "
-        f"phase={state.get('phase')}. Re-read todo/TODO-Claude-Overnight-Runner.md, "
-        "run `run_phase_guard.py status`, and continue. The watchdog only relaunches "
-        "after real death; a voluntary mid-queue exit defeats the runner.")
+        f"phase={state.get('phase')} active={state.get('active')}. Re-read "
+        "todo/TODO-Claude-Overnight-Runner.md, run `run_phase_guard.py status`, "
+        "and continue. If the cursor looks inactive after a relaunch, re-invoke "
+        "Skill(overnight-sequencer) to resume. Only the human's --disarm ends "
+        "this run; a voluntary exit just gets relaunched by the watchdog.")
     return 2
 
 
@@ -197,12 +268,14 @@ def cli(argv):
             "updated_at": argv[1] if len(argv) > 1 else "unknown",
         }
         save_state(state)
-        # The redirect served its purpose; the active run now governs.
-        try:
-            ARMED_MARKER.unlink()
-        except FileNotFoundError:
-            pass
-        print("[sequencer] started: pass 1, PREFLIGHT", file=sys.stderr)
+        # NOTE: the armed marker is intentionally NOT removed here. It is the
+        # persistent master switch -- it must outlive every watchdog relaunch so
+        # a fresh agent is always redirected back onto overnight-sequencer and
+        # can never voluntarily stop. Only `--disarm` or an oracle-verified
+        # FIXPOINT removes it. (Removing it on start was the death-thrash bug:
+        # once gone, a reset cursor left the guard fully inert.)
+        print("[sequencer] started: pass 1, PREFLIGHT (armed marker kept)",
+              file=sys.stderr)
         return 0
     if cmd == "status":
         print(json.dumps(state, indent=1))
@@ -265,8 +338,15 @@ def cli(argv):
         state["phase"] = "FIXPOINT"
         state["active"] = False
         save_state(state)
+        # Genuine, oracle-verified completion is the one self-terminating exit:
+        # remove the master switch so the headless run can stop cleanly and the
+        # next watchdog tick does not relaunch into a re-entry loop.
+        try:
+            ARMED_MARKER.unlink()
+        except FileNotFoundError:
+            pass
         print("[sequencer] FIXPOINT verified by oracle (no remaining work) -- "
-              "run complete", file=sys.stderr)
+              "run complete; armed marker removed", file=sys.stderr)
         return 0
     if cmd == "clear":
         save_state({"active": False})
@@ -285,49 +365,73 @@ def selftest():
         if not cond:
             fails.append(msg)
 
-    base = {"active": True, "phase": "VALIDATE"}
-    # AskUserQuestion always blocked when active.
+    H = True  # headless: the guard only governs the unattended run
+    # Interactive sessions (headless=False) are NEVER constrained -- this is the
+    # anti-trap invariant that lets the operator share the repo hooks.
+    a, _ = evaluate("AskUserQuestion", {}, {"active": True, "phase": "SECTIONS"}, headless=False)
+    check(a, "interactive AskUserQuestion blocked (must never trap the operator)")
+    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "VALIDATE"}, headless=False)
+    check(a, "interactive Skill phase-blocked (must never trap the operator)")
+    a, _ = evaluate("Bash", {"command": "bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"},
+                    {"active": True, "phase": "SECTIONS"}, headless=False)
+    check(a, "interactive --disarm blocked (the human MUST be able to disarm)")
+
+    # AskUserQuestion always blocked in the headless run.
     for ph in PHASES:
-        a, _ = evaluate("AskUserQuestion", {}, {"active": True, "phase": ph})
+        a, _ = evaluate("AskUserQuestion", {}, {"active": True, "phase": ph}, headless=H)
         check(not a, f"AskUserQuestion allowed in {ph}")
-    # Inactive run allows everything.
-    a, _ = evaluate("AskUserQuestion", {}, {"active": False})
-    check(a, "AskUserQuestion blocked while run inactive")
+    # Inactive + unarmed headless allows everything.
+    a, _ = evaluate("AskUserQuestion", {}, {"active": False}, headless=H)
+    check(a, "AskUserQuestion blocked while headless run inactive+unarmed")
+    # Headless self-teardown is blocked; legit guard CLI (fixpoint) is not.
+    for cmd in ("bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm",
+                "python3 .claude/hooks/run_phase_guard.py clear oops",
+                "rm -f .claude/state/sequencer-armed",
+                "systemctl --user stop overnight-impossible-os.service"):
+        a, _ = evaluate("Bash", {"command": cmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
+        check(not a, f"headless self-teardown allowed: {cmd}")
+    a, _ = evaluate("Bash", {"command": "python3 .claude/hooks/run_phase_guard.py fixpoint"},
+                    {"active": True, "phase": "SECTIONS"}, headless=H)
+    check(a, "headless fixpoint (legit completion) blocked as self-teardown")
     # implement-todo-section blocked in VALIDATE, allowed in SECTIONS.
-    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "VALIDATE"})
+    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "VALIDATE"}, headless=H)
     check(not a, "implement-todo-section allowed in VALIDATE")
-    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "SECTIONS"})
+    a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "SECTIONS"}, headless=H)
     check(a, "implement-todo-section blocked in SECTIONS")
     # validate-todo-file allowed in VALIDATE, blocked in SECTIONS.
-    a, _ = evaluate("Skill", {"name": "validate-todo-file"}, {"active": True, "phase": "VALIDATE"})
+    a, _ = evaluate("Skill", {"name": "validate-todo-file"}, {"active": True, "phase": "VALIDATE"}, headless=H)
     check(a, "validate-todo-file blocked in VALIDATE")
-    a, _ = evaluate("Skill", {"name": "validate-todo-file"}, {"active": True, "phase": "SECTIONS"})
+    a, _ = evaluate("Skill", {"name": "validate-todo-file"}, {"active": True, "phase": "SECTIONS"}, headless=H)
     check(not a, "validate-todo-file allowed in SECTIONS")
     # gap-audit-todo only in GAP_AUDIT.
-    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"}, {"active": True, "phase": "GAP_AUDIT"})
+    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"}, {"active": True, "phase": "GAP_AUDIT"}, headless=H)
     check(a, "gap-audit-todo blocked in GAP_AUDIT")
-    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"}, {"active": True, "phase": "SECTIONS"})
+    a, _ = evaluate("Skill", {"skill": "gap-audit-todo"}, {"active": True, "phase": "SECTIONS"}, headless=H)
     check(not a, "gap-audit-todo allowed in SECTIONS (should be GAP_AUDIT only)")
     # Non-sequence skill + Bash/Edit pass in SECTIONS.
-    a, _ = evaluate("Skill", {"skill": "kernel-code-quality"}, {"active": True, "phase": "SECTIONS"})
+    a, _ = evaluate("Skill", {"skill": "kernel-code-quality"}, {"active": True, "phase": "SECTIONS"}, headless=H)
     check(a, "inner-pipeline skill blocked in SECTIONS")
-    a, _ = evaluate("Bash", {"command": "git commit"}, {"active": True, "phase": "SECTIONS"})
+    a, _ = evaluate("Bash", {"command": "git commit"}, {"active": True, "phase": "SECTIONS"}, headless=H)
     check(a, "Bash blocked in SECTIONS")
     # legacy System A skill blocked everywhere active.
-    a, _ = evaluate("Skill", {"skill": "overnight-todo-runner"}, {"active": True, "phase": "SECTIONS"})
+    a, _ = evaluate("Skill", {"skill": "overnight-todo-runner"}, {"active": True, "phase": "SECTIONS"}, headless=H)
     check(not a, "legacy overnight-todo-runner allowed inside a sequencer run")
     # Armed-but-not-started: only overnight-sequencer skill allowed.
-    a, _ = evaluate("Skill", {"skill": "overnight-sequencer"}, {"active": False}, armed=True)
+    a, _ = evaluate("Skill", {"skill": "overnight-sequencer"}, {"active": False}, armed=True, headless=H)
     check(a, "overnight-sequencer blocked while armed")
-    a, _ = evaluate("Skill", {"name": "overnight-runner:start"}, {"active": False}, armed=True)
+    a, _ = evaluate("Skill", {"name": "overnight-runner:start"}, {"active": False}, armed=True, headless=H)
     check(not a, "generic overnight-runner:start allowed while armed (should redirect)")
     a, _ = evaluate("Bash", {"command": "python3 .claude/hooks/sequencer_triage.py --next"},
-                    {"active": False}, armed=True)
+                    {"active": False}, armed=True, headless=H)
     check(a, "Bash blocked while armed (setup needs it)")
-    a, _ = evaluate("AskUserQuestion", {}, {"active": False}, armed=True)
+    a, _ = evaluate("AskUserQuestion", {}, {"active": False}, armed=True, headless=H)
     check(not a, "AskUserQuestion allowed while armed")
-    # Not armed, not active: everything passes.
-    a, _ = evaluate("Skill", {"skill": "anything"}, {"active": False}, armed=False)
+    # Armed but cursor reset to inactive (the death-thrash condition): the run is
+    # still governed -- the redirect still fires off the persistent marker.
+    a, _ = evaluate("Skill", {"name": "overnight-runner:start"}, {"active": False}, armed=True, headless=H)
+    check(not a, "armed+inactive run went ungoverned (death-thrash regression)")
+    # Not armed, not active (headless): everything passes.
+    a, _ = evaluate("Skill", {"skill": "anything"}, {"active": False}, armed=False, headless=H)
     check(a, "skill blocked while neither armed nor active")
 
     if fails:

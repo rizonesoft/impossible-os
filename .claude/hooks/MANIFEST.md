@@ -48,6 +48,7 @@
 | Hook | File | Kind | Wrap.sh | Markers | Opt-out | Purpose |
 |---|---|---|---|---|---|---|
 | skill_pipeline_reminder | `.claude/hooks/skill_pipeline_reminder.py` | REMINDER | Y | `implement-todo-section`, `implement-ssdt-range`, `review-todo-section`, `quality-review-section`, `create-todo`, `complete-todo-file` | -- | On flagship-skill invocation, emits the "no corner cutting / completion-first" reminder. |
+| overnight_plugin_skill_block | `.claude/hooks/overnight_plugin_skill_block.py` | BLOCK | N | -- | `OVERNIGHT_PLUGIN_SKILL_OVERRIDE=1` | Rejects the unguarded plugin overnight skills (`overnight-runner:schedule`, `overnight-runner:start`) in this repo; overnight runs MUST arm via `.claude/skills/overnight-sequencer/arm-sequencer.sh` (run_phase_guard-protected, ChromeMCP-off, watchdog `*:0/10`). The plugin path arms no repo guard and thrashes on relaunch. |
 
 ## PostToolUse Hooks
 

@@ -109,6 +109,11 @@
             "type": "command",
             "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/skill_pipeline_reminder.py\" implement-todo-section implement-ssdt-range review-todo-section quality-review-section create-todo complete-todo-file",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/overnight_plugin_skill_block.py\"",
+            "timeout": 5
           }
         ]
       },

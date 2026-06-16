@@ -47,6 +47,34 @@ remove_chromemcp_dropin() {
   done
 }
 
+# The load-bearing headless discriminator. run_phase_guard.py governs ONLY a run
+# whose hook subprocesses see OVERNIGHT_SEQUENCER_RUN=1; an interactive operator
+# session in this same repo never sets it, so the guard (no-stop, no-self-disarm,
+# phase enforcement) engages absolutely on the unattended run while never
+# trapping the human. Written in BOTH browser and kernel arming paths, removed on
+# disarm. This is what makes the death-thrash impossible AND fixes the
+# interactive-session trap collision.
+write_sequencer_env_dropin() {
+  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
+    d="$DROPIN_BASE/$svc.d"
+    mkdir -p "$d"
+    cat > "$d/sequencer-run.conf" <<'EOF'
+[Service]
+# Headless-run discriminator consumed by .claude/hooks/run_phase_guard.py.
+# Present ONLY in the unattended systemd-launched run; absent in interactive
+# operator sessions -- this is how the guard binds to the headless run alone.
+Environment=OVERNIGHT_SEQUENCER_RUN=1
+EOF
+  done
+}
+
+remove_sequencer_env_dropin() {
+  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
+    rm -f "$DROPIN_BASE/$svc.d/sequencer-run.conf"
+    rmdir "$DROPIN_BASE/$svc.d" 2>/dev/null || true
+  done
+}
+
 # Idempotent reset of the plugin's advisory run state. The plugin sets these at
 # launch but only clears overnight-runner.json on a clean fixpoint; every other
 # ending (usage-limit kill, watchdog reap, manual systemctl stop, crash) leaves
@@ -88,6 +116,7 @@ if [ "${1:-}" = "--disarm" ]; then
   python3 .claude/hooks/run_phase_guard.py clear "disarmed via arm-sequencer.sh" >/dev/null 2>&1 || true
   bash "$PLUGIN_ARM" "$DOCTRINE" --disarm || true
   remove_chromemcp_dropin
+  remove_sequencer_env_dropin
   reap_overnight_state
   systemctl --user daemon-reload 2>/dev/null || true
   echo "disarmed overnight sequencer (timers + watchdog + chromemcp drop-in + run state)"
@@ -115,6 +144,7 @@ mkdir -p .claude/state
 if [ "$WITH_BROWSER" = "1" ]; then
   bash "$PLUGIN_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
   remove_chromemcp_dropin
+  write_sequencer_env_dropin
   systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP ON (gh-pages run)"
 else
@@ -131,6 +161,7 @@ else
   fi
   bash "$PLUGIN_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${NB_FLAG[@]+"${NB_FLAG[@]}"} ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
   write_chromemcp_dropin
+  write_sequencer_env_dropin
   systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP OFF (kernel run; --no-browser + drop-in)"
 fi
