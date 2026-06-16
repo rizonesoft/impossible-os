@@ -55,7 +55,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | ⭐  | Order | Deliverable                        | Depends On                    | Status |
 | --- | :---: | ---------------------------------- | ----------------------------- | :----: |
 | 💎  |   1   | UEFI pre-kernel POST codes         | --                            |  [/]   |
-| 💎  |   2   | Boot progress named-stage API      | §1                            |  [x]   |
+| 💎  |   2   | Boot progress named-stage API      | §1                            |  [/]   |
 | 💎  |   3   | POST-style hex code display        | §2                            |  [x]   |
 | 💎  |   4   | Alive blink / visual heartbeat     | permanently deferred; hang=TODO-23 |  [/]   |
 | 💎  |   5   | Panic forensic evidence            | §2                            |  [/]   |
@@ -107,6 +107,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 - [x] `boot_progress_poll()`: re-sends last stage to `boot_splash_status()` for timer-driven visual refresh (no in-tree caller yet -- wire with splash/timer when UI needs refresh without new history rows)
 - [x] `boot_timeline_dump_json()`: writes unified FPDT + TSC step timeline as JSON to `boot-timeline.json` (BlackBox `X:\Perf\` or klog dir fallback); uses `boot_timing_get_fpdt_entries()` + `boot_timing_get_steps()` + `boot_prog_tsc_delta_ms()` (`src/kernel/main/boot_progress.c`); path moved from `X:\Boot\` by TODO-04 FPDT and Boot Timing Normalization
 - [x] `boot_timeline_dump_json()` invoked after successful desktop-ready init (`src/kernel/main/boot_desktop.c` ~229, after NVRAM POST success + timing reports)
+- [ ] **Wire + harden the named-stage API (deferred):** `boot_stage_report`/`boot_progress_poll` have zero callers. Wire boot-path callers, map `s_meta`->`POST16_*`, saturate the tsc-delta, guard `s_meta` completeness, forward percent/splash.
 - [x] Commit: `"kernel: boot progress named-stage API + stage history + elapsed-ms tracking"` (exact subject varies across bring-up commits)
 
 **Test checkpoint:** Serial shows `[+NNNms]` lines with stage names for at least 8 transitions; `boot_stage_history_get()` does not fault when called from panic paths. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -115,6 +116,8 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 > - Integration: serial `[+NNNms] STAGE: msg`; `boot_timeline_dump_json()` runs at desktop-ready (`boot_desktop.c`); `boot_stage_history_get()` feeds §5 panic forensics.
 > - Scope boundary: `boot_progress_poll()` has no in-tree caller yet (wire with splash/timer when the UI needs a refresh without new history rows).
 > **Verified:** 2026-04-12 -- Named-stage API + `boot_timeline_dump_json` wiring; Codex: safe TSC-to-ms when `freq < 1000`, close timeline parent dir after `create`. Accepted: none.
+> **Deferred:** [H] named-stage API (`boot_stage_report`/`boot_progress_poll`/`boot_get_elapsed_ms`) is unwired (zero callers) + latent issues (stale `s_meta` postcodes, unsaturated tsc-delta, no completeness guard, percent/splash not forwarded) -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 110)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 2H+3M deferred (unwired API + latent fixes) | scope: kernel-code-quality (re-adversarial skipped -- findings deferred not coded; boot_timeline_dump_json live path unaffected in practice)
 
 ---
 
