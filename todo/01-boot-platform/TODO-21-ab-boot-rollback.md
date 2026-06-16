@@ -166,6 +166,9 @@ Bootloader reads metadata and mounts the correct slot's filesystem.
 
 Automatic rollback after 3 consecutive boot failures.
 
+> [!IMPORTANT]
+> **DESIGN LOCKED (Codex design review 2H+1M adopted).** §4 must NOT ship alone: (1) **Co-ship with §5's reset.** If `tries` is incremented (§4) without `mark_boot_successful()` resetting it (§5), every NORMAL successful reboot consumes a try and after `AB_BOOT_MAX_TRIES` §3 rolls a HEALTHY slot away. The minimal mark-good/reset path lands WITH the first tries-increment, or try-based rollback stays DISABLED until reset is implemented + covered by a normal-reboot test. (2) **Classify which failures count.** On the current shared-ESP layout (kernel.exe on the shared ESP, no per-slot kernel), a shared-ESP / kernel-load / firmware failure is NOT a slot failure and rolling roots cannot fix it -- only count failures attributable to the selected slot; pin the exact pre-EBS write point (after non-slot bootloader work, before EBS while EFI_BLOCK_IO is still live -- NOT after `jump_to_kernel`). (3) **Both-exhausted stopgap:** TODO-22 recovery is not built; define a concrete stopgap (boot the least-bad previously-successful slot with a loud diagnostic) rather than an undefined terminal path. The bootloader write uses §7's pure helpers (`ab_boot_meta_write_target`/`next_generation`) + a WriteBlocks IoAlign full-block RMW adapter + `boot_info.ab_meta_lba`.
+
 - [ ] Bootloader increments `tries` BEFORE attempting boot (so crash = tries counted)
 - [ ] If boot succeeds (kernel calls `mark_boot_successful()`), `tries` resets to 0
 - [ ] If 3 boots without `mark_boot_successful()`: switch active slot on next boot
