@@ -162,6 +162,27 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  * v12 added ESP integrity fields. */
 #define BOOT_INFO_VERSION  22
 #endif
+
+/* Producer-valid marker for the sec6 A/B slot-status snapshot (boot_info
+ * .ab_status_valid). Set by a bootloader that publishes the snapshot; the
+ * kernel renders detailed A/B diagnostics only when it matches. Distinguishes
+ * a real zero-state from an older same-version bootloader that never wrote the
+ * reserved-region snapshot bytes. Mirror keeps an identical define. */
+#ifndef AB_STATUS_VALID_MAGIC
+#define AB_STATUS_VALID_MAGIC  0xABu
+#endif
+
+/* True when the bootloader actually published the sec6 A/B slot-status
+ * snapshot. The kernel VPD gates detailed slot/rollback rendering on this:
+ * because the snapshot bytes were carved from a reserved region WITHOUT a
+ * BOOT_INFO_VERSION bump, an older same-version (v22) bootloader sets
+ * ab_meta_lba but leaves ab_status_valid zero -- rendering its zero-state as a
+ * healthy boot would mask a real rollback. Pure so the skew gate is testable. */
+static inline int ab_boot_status_published(uint64_t ab_meta_lba,
+                                           uint8_t ab_status_valid)
+{
+    return ab_meta_lba != 0 && ab_status_valid == AB_STATUS_VALID_MAGIC;
+}
 /* v21 adds loader_vars_degraded + loader_vars_pad: bootloader sets the
  * degraded flag if any systemd-boot-compatible LoaderXxx UEFI variable
  * write failed (NVRAM quota, firmware refusal). Kernel surfaces this in
@@ -1724,14 +1745,22 @@ struct boot_info {
      * enum ab_boot_select_reason). ab_from_slot: the slot rolled away from
      * (rollback) or the recorded active slot (both-exhausted); 0 when normal.
      * ab_slot_tries[s]: per-slot tries consumed as selected (0..AB_BOOT_MAX_TRIES).
-     * ab_slot_flags: bit0 = Slot A successful, bit1 = Slot B successful.
+     * ab_slot_flags: bit s = slot s successful (use ab_boot_slot_flag()).
      * All zero on a non-A/B / single-slot / older-bootloader boot. Carved from
-     * _loader_vars_pad (reserved region) -- no BOOT_INFO_VERSION bump. */
+     * _loader_vars_pad (reserved region) -- no BOOT_INFO_VERSION bump.
+     *
+     * ab_status_valid is the producer-valid marker: a bootloader that publishes
+     * this snapshot sets it to AB_STATUS_VALID_MAGIC. Because these bytes were
+     * carved from reserved space WITHOUT a version bump, an older same-version
+     * (v22) bootloader publishes ab_meta_lba but leaves the snapshot zero; the
+     * kernel MUST gate the detailed slot/rollback render on ab_status_valid
+     * (not merely ab_meta_lba != 0) or a real rollback could be silently
+     * rendered as a healthy zero-state ("snapshot unavailable" instead). */
     uint8_t  ab_select_reason;
     uint8_t  ab_from_slot;
     uint8_t  ab_slot_tries[2];
     uint8_t  ab_slot_flags;
-    uint8_t  _loader_vars_pad[1];
+    uint8_t  ab_status_valid;
 
     /* v22: A/B-metadata partition range (TODO-21 atomic-write handoff). The
      * bootloader reconciles the metadata partition (primary+backup GPT) in
@@ -1893,6 +1922,10 @@ _Static_assert(__builtin_offsetof(struct boot_info, ab_slot_tries) ==
 _Static_assert(__builtin_offsetof(struct boot_info, ab_slot_flags) ==
                __builtin_offsetof(struct boot_info, ab_slot_tries) + 2,
     "boot_info.ab_slot_flags must follow the 2-byte ab_slot_tries array");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_status_valid) ==
+               __builtin_offsetof(struct boot_info, ab_slot_flags) + 1,
+    "boot_info.ab_status_valid must immediately follow ab_slot_flags -- "
+    "update kernel + bootloader mirror");
 /* v22 A/B metadata range (TODO-21): 8-byte-aligned uint64 + uint32 + pad.
  * Pinned relative + size so the bootloader mirror cannot drift; the manifest
  * compare gate cross-checks absolute offsets kernel-vs-mirror at build. */

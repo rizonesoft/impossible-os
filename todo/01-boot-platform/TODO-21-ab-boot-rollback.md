@@ -240,11 +240,14 @@ Integrate A/B slot status into the VPD and boot timing display.
 
 > **Notes:**
 > - **What shipped:** `vpd_render_ab_slot` + the A/B block in `vpd_render_info_header` (`vpd.c`); a 5-byte `boot_info` A/B snapshot carved from `_loader_vars_pad`; bootloader publish in `select_active_slot`; `ab-slot-handoff` boot_timing step.
-> - **How it runs:** the bootloader snapshots the `ab_boot_meta_decide` result at selection time (authoritative -- the on-disk record mutates as tries increment/reset); the kernel VPD reads it (no re-read race) and renders the slot lines + warning.
+> - **How it runs:** the bootloader snapshots the `ab_boot_meta_decide` result at selection time (authoritative -- the on-disk record mutates as tries increment/reset) + sets `ab_status_valid`; the kernel VPD renders only when that marker is set (an older same-version loader -> "snapshot unavailable", never a false zero-state).
 > - **Design adoptions:** health from `tries` vs `AB_BOOT_MAX_TRIES` (not the `successful` flag); both-exhausted as its own terminal message; the boot_timing step labeled a handoff observation, not pre-EBS latency.
 > - **Downstream effects:** complements the §4 pre-EBS on-screen banner with the persistent kernel diagnostic surface; non-A/B disks render "A/B Boot: single-slot".
 > - **Canonical doc:** `docs/boot/boot-info-fields.md` (the `ab_select_reason`/`ab_from_slot`/`ab_slot_tries`/`ab_slot_flags` rows).
 > - **Scope boundary:** §6 owns the kernel VPD + boot_timing surface; the pre-EBS banner is §4; the anti-rollback floor is §8.
+
+> **Verified:** 2026-06-16 | commit `f5dfae76` + review fixes | 4/4 items | build OK | smoke PASS (KVM 2.33s) + boot 2777 PASS
+> **Quality reviewed:** 2026-06-16 | Codex 7x (design, adversarial, consistency, perf, re-adversarial x2) | 3M fixed, 0 open | scope: kernel-code-quality + boot-code-quality
 
 ---
 

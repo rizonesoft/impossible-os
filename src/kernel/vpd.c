@@ -507,17 +507,20 @@ static void vpd_render_info_header(void)
      * partition exists (ab_meta_lba != 0); a single-slot disk shows one
      * summary line. The snapshot is the bootloader's as-selected view
      * (boot_info), authoritative vs the mutating on-disk record. */
-    if (g_boot_info.ab_meta_lba != 0) {
+    if (ab_boot_status_published(g_boot_info.ab_meta_lba,
+                                 g_boot_info.ab_status_valid)) {
         unsigned int active = g_boot_info.active_slot;
         vpd_render_ab_slot(y, label_x, val_x, AB_BOOT_SLOT_A,
                            active == AB_BOOT_SLOT_A,
-                           g_boot_info.ab_slot_tries[0],
-                           (g_boot_info.ab_slot_flags & 0x1u) != 0);
+                           g_boot_info.ab_slot_tries[AB_BOOT_SLOT_A],
+                           (g_boot_info.ab_slot_flags &
+                            ab_boot_slot_flag(AB_BOOT_SLOT_A)) != 0);
         y += VPD_ROW_HEIGHT;
         vpd_render_ab_slot(y, label_x, val_x, AB_BOOT_SLOT_B,
                            active == AB_BOOT_SLOT_B,
-                           g_boot_info.ab_slot_tries[1],
-                           (g_boot_info.ab_slot_flags & 0x2u) != 0);
+                           g_boot_info.ab_slot_tries[AB_BOOT_SLOT_B],
+                           (g_boot_info.ab_slot_flags &
+                            ab_boot_slot_flag(AB_BOOT_SLOT_B)) != 0);
         y += VPD_ROW_HEIGHT;
         /* Distinct rollback vs both-exhausted messages: a terminal
          * both-exhausted state must NOT read as a simple rollback. */
@@ -539,6 +542,13 @@ static void vpd_render_info_header(void)
                              VPD_COLOR_FAIL);
             y += VPD_ROW_HEIGHT;
         }
+    } else if (g_boot_info.ab_meta_lba != 0) {
+        /* A/B disk but the loader did not publish the status snapshot (an
+         * older same-version bootloader) -- do NOT synthesize a healthy
+         * zero-state that could mask a real rollback. */
+        vpd_puts_scaled(label_x, y, "A/B Boot:", VPD_COLOR_LABEL);
+        vpd_puts_scaled(val_x, y, "snapshot unavailable", VPD_COLOR_PENDING);
+        y += VPD_ROW_HEIGHT;
     } else {
         vpd_puts_scaled(label_x, y, "A/B Boot:", VPD_COLOR_LABEL);
         vpd_puts_scaled(val_x, y, "single-slot", VPD_COLOR_PENDING);

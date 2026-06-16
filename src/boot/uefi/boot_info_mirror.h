@@ -271,6 +271,13 @@ struct boot_usb_controller {
 #define BOOT_INFO_VERSION  22
 #endif
 
+/* Mirror of include/kernel/boot_info.h -- producer-valid marker for the sec6
+ * A/B slot-status snapshot. select_active_slot writes this when it publishes
+ * the snapshot. */
+#ifndef AB_STATUS_VALID_MAGIC
+#define AB_STATUS_VALID_MAGIC  0xABu
+#endif
+
 /* Mirror of struct boot_loader_identity from include/kernel/boot_info.h.
  * 64 bytes, byte-for-byte. */
 struct __attribute__((packed)) boot_loader_identity {
@@ -747,7 +754,10 @@ struct boot_info {
     UINT8    ab_from_slot;
     UINT8    ab_slot_tries[2];
     UINT8    ab_slot_flags;
-    UINT8    _loader_vars_pad[1];
+    /* Producer-valid marker -- set to AB_STATUS_VALID_MAGIC when this loader
+     * publishes the snapshot, so a same-version older loader (zero here) does
+     * not let the kernel render a real rollback as a healthy zero-state. */
+    UINT8    ab_status_valid;
 
     /* v22: A/B-metadata partition range (TODO-21 atomic-write handoff). The
      * bootloader publishes the reconciled MD-partition location so the kernel
@@ -880,6 +890,9 @@ _Static_assert(__builtin_offsetof(struct boot_info, ab_slot_tries) ==
 _Static_assert(__builtin_offsetof(struct boot_info, ab_slot_flags) ==
                __builtin_offsetof(struct boot_info, ab_slot_tries) + 2,
     "boot_info.ab_slot_flags must follow the 2-byte ab_slot_tries array -- mirror out of sync");
+_Static_assert(__builtin_offsetof(struct boot_info, ab_status_valid) ==
+               __builtin_offsetof(struct boot_info, ab_slot_flags) + 1,
+    "boot_info.ab_status_valid must immediately follow ab_slot_flags -- mirror out of sync");
 /* v22 A/B metadata range (TODO-21): mirror the kernel asserts exactly. */
 _Static_assert(__builtin_offsetof(struct boot_info, ab_meta_lba) % 8 == 0,
     "boot_info.ab_meta_lba must be 8-byte aligned (uint64) -- mirror out of sync");

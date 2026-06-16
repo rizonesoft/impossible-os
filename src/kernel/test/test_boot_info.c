@@ -1501,6 +1501,27 @@ static void test_boot_info_loader_identity_offset_stable(void)
  * A real SHA-1 cannot be all-zero (collision-resistant; even
  * git's empty-tree hash 4b825... is nonzero), so zero is a safe
  * sentinel. */
+/* sec6 producer-valid gate: the kernel VPD must render detailed A/B status
+ * ONLY when the bootloader published the snapshot. The dangerous case is an
+ * older same-version (v22) bootloader that sets ab_meta_lba but leaves
+ * ab_status_valid zero -- rendering that as a healthy zero-state would mask a
+ * real rollback. ab_boot_status_published() is the gate. */
+static void test_ab_status_published_gate(void)
+{
+    TEST_ASSERT_EQ((uint64_t)ab_boot_status_published(0, 0), 0UL,
+                   "non-A/B disk (no meta, no marker) -> not published");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_status_published(0, AB_STATUS_VALID_MAGIC),
+                   0UL, "marker set but no metadata partition -> not published");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_status_published(0x800, 0), 0UL,
+                   "SKEW: A/B meta present but older loader left marker zero "
+                   "-> not published (must not synthesize healthy zero-state)");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_status_published(0x800, 0x01), 0UL,
+                   "wrong marker value -> not published");
+    TEST_ASSERT_EQ((uint64_t)ab_boot_status_published(0x800,
+                                                      AB_STATUS_VALID_MAGIC),
+                   1UL, "A/B meta + correct marker -> published");
+}
+
 static void test_boot_loader_identity_zero_default(void)
 {
     struct boot_info bi;
@@ -1642,6 +1663,8 @@ void test_register_boot_info(void)
                             test_boot_info_loader_identity_offset_stable, TEST_CAT_BOOT);
     test_suite_register_cat("boot_loader_identity: zero is loader-did-not-populate",
                             test_boot_loader_identity_zero_default, TEST_CAT_BOOT);
+    test_suite_register_cat("boot_info: A/B status-published gate (sec6 skew)",
+                            test_ab_status_published_gate, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -12382,6 +12382,18 @@ static void select_active_slot(EFI_HANDLE part_handle)
             serial_early_print("[BOOT] A/B select: metadata uninitialized "
                                "(first boot) -- Slot A\n");
             g_boot_info_ptr->active_slot = AB_BOOT_SLOT_A;
+            /* Publish a factory-default snapshot + set the producer-valid
+             * marker so the kernel VPD renders the real first-boot Slot A
+             * state (tries=0, pending) -- NOT "snapshot unavailable", which
+             * is reserved for an older loader that never wrote these bytes.
+             * The remaining fields stay 0 (= factory default: reason normal,
+             * from Slot A, both tries 0, neither successful). */
+            g_boot_info_ptr->ab_select_reason = (UINT8)AB_BOOT_SEL_NORMAL;
+            g_boot_info_ptr->ab_from_slot = AB_BOOT_SLOT_A;
+            g_boot_info_ptr->ab_slot_tries[AB_BOOT_SLOT_A] = 0;
+            g_boot_info_ptr->ab_slot_tries[AB_BOOT_SLOT_B] = 0;
+            g_boot_info_ptr->ab_slot_flags = 0;
+            g_boot_info_ptr->ab_status_valid = AB_STATUS_VALID_MAGIC;
             post_code16(POST16_BL_AB_SELECT_OK);
             return;
         }
@@ -12403,11 +12415,18 @@ static void select_active_slot(EFI_HANDLE part_handle)
      * render the terminal vs rollback message without re-reading mutating disk. */
     g_boot_info_ptr->ab_select_reason = (UINT8)dec.reason;
     g_boot_info_ptr->ab_from_slot = (UINT8)dec.from_slot;
-    g_boot_info_ptr->ab_slot_tries[0] = (UINT8)winner->slot[AB_BOOT_SLOT_A].tries;
-    g_boot_info_ptr->ab_slot_tries[1] = (UINT8)winner->slot[AB_BOOT_SLOT_B].tries;
-    g_boot_info_ptr->ab_slot_flags =
-        (UINT8)((winner->slot[AB_BOOT_SLOT_A].successful ? 0x1u : 0u) |
-                (winner->slot[AB_BOOT_SLOT_B].successful ? 0x2u : 0u));
+    g_boot_info_ptr->ab_slot_tries[AB_BOOT_SLOT_A] =
+        (UINT8)winner->slot[AB_BOOT_SLOT_A].tries;
+    g_boot_info_ptr->ab_slot_tries[AB_BOOT_SLOT_B] =
+        (UINT8)winner->slot[AB_BOOT_SLOT_B].tries;
+    g_boot_info_ptr->ab_slot_flags = (UINT8)(
+        (winner->slot[AB_BOOT_SLOT_A].successful
+             ? ab_boot_slot_flag(AB_BOOT_SLOT_A) : 0u) |
+        (winner->slot[AB_BOOT_SLOT_B].successful
+             ? ab_boot_slot_flag(AB_BOOT_SLOT_B) : 0u));
+    /* Producer-valid marker: tell the kernel this snapshot was actually
+     * published (an older same-version loader leaves it zero). */
+    g_boot_info_ptr->ab_status_valid = AB_STATUS_VALID_MAGIC;
 
     /* Rollback / both-exhausted diagnostics: serial always, on-screen banner
      * when a framebuffer is available. tries <= AB_BOOT_MAX_TRIES so a single

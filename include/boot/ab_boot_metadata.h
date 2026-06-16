@@ -47,6 +47,15 @@
 /* Max boot attempts before a slot is considered exhausted (sec 4 rollback). */
 #define AB_BOOT_MAX_TRIES     3u
 
+/* Per-slot "successful" bit in boot_info.ab_slot_flags (sec6 diagnostics
+ * snapshot): bit s == slot s was marked successful. Shared so the bootloader
+ * publish and the kernel VPD read use ONE convention instead of duplicated
+ * literal masks that could silently drift if the slot encoding changes. */
+static inline unsigned int ab_boot_slot_flag(unsigned int slot)
+{
+    return 1u << slot;
+}
+
 /* The two redundant copies live at these fixed BYTE offsets within the
  * A/B-metadata partition. Shared read/write contract: the bootloader reader
  * (sec 3) and BOTH writers (bootloader sec 4 + kernel sec 5) use these. The
