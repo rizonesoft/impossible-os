@@ -41,7 +41,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 
 | ⭐  | Order | Deliverable                                    | Depends On | Status |
 | --- | :---: | ---------------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Software watchdog via LAPIC NMI timer           | --          |  [ ]   |
+| 💎  |   1   | Software watchdog via LAPIC NMI timer           | D01 T10 §2 (nested-NMI), T09 §10 (AP IST) |  [/]   |
 | 💎  |   2   | Per-phase timeout configuration                 | §1         |  [ ]   |
 | 💎  |   3   | Watchdog pet at each boot_progress() call       | §1, §2     |  [ ]   |
 | 💎  |   4   | Watchdog-triggered reboot with diagnostics      | §3, T21 §4 |  [ ]   |
@@ -69,6 +69,16 @@ Use the LAPIC timer in NMI mode to detect hangs even when interrupts are disable
 **Test checkpoint:** Add `for(;;){}` in boot_phase2 (debug build only). Watchdog fires → serial shows `"WATCHDOG: boot hung at POST 0xNNNN, RIP=0xNNNN"` → system reboots.
 
 **Regression risk:** HIGH -- NMI watchdog fires during normal boot if timeout too aggressive. Start with generous timeouts (2x expected max).
+
+> **Notes:**
+> - **Status:** deferred -- the LAPIC NMI watchdog cannot be safely ENABLED until two safety prerequisites land; shipping it now would corrupt the shared IST2 stack on a nested NMI or on an AP, bricking under exactly the stress the watchdog diagnoses.
+> - **Blocker 1 (nested-NMI):** no `repeat_nmi`-style latch/replay exists (the IST2 NMI handler is only the fatal `panic_screen()` path). -> XREF: `D01 T10 §2`.
+> - **Blocker 2 (AP IST):** APs share one `kernel_tss`/IST (BSP-only, no AP `ltr`), so a watchdog NMI on an AP post-SMP is unsafe. -> XREF: `D01 T09 §10` (per-CPU TSS/IST).
+> - **PIT fallback note:** the maskable PIT software watchdog is safe (no IST/NMI hazard) but cannot catch interrupts-disabled (cli-region) hangs -- the common boot-hang case -- so it is not a credible standalone §1.
+> - **Scope boundary:** §5 (ACPI WDAT/TCO hardware watchdog) is INDEPENDENT of these blockers and is the next-implementable section; §2-§4/§6 cascade-block on §1.
+
+> **Verified:** 2026-06-16 | 0/7 items (deferred) | build N/A | blocked on nested-NMI replay + per-CPU AP IST
+> **Deferred:** [H] LAPIC NMI watchdog blocked on nested-NMI latch/replay + per-CPU AP TSS/IST (enabling it without them corrupts the shared IST2 stack) -> XREF: 01-boot-platform/TODO-10 §2 (item: "AP per-CPU TSS/IST") + 01-boot-platform/TODO-09 §10 (item: "Per-CPU TSS + IST")
 
 ---
 
