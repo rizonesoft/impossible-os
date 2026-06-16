@@ -33,7 +33,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 - 3-partition GPT: EFI (64 MiB) + BlackBox (128 MiB FAT32) + IXFS (~316 MiB).
 - BlackBox partition mounts as `X:\` by GPT name match, not by partition index.
 - All kernel logs, crash dumps, boot timelines, and diagnostics write to `X:\` instead of `C:\`.
-- Directory structure created on first boot: `Logs\`, `Boot\`, `Crash\`, `Perf\`, `Diag\`, `Tools\`.
+- Directory structure created on first boot: `Logs\`, `Logs\Serial\`, `Boot\`, `Crash\`, `Crash\WER\`, `Perf\`, `Diag\`, `Tools\`.
 - Host-side tools (SDK) can mount and read BlackBox from the raw disk image.
 - Windows auto-mounts BlackBox when the disk image or real disk is attached (Microsoft Basic Data GUID).
 - Log space managed automatically: boot session pruning, rotation cleanup, configurable quota.
@@ -100,13 +100,23 @@ Modify `make-system-disk.c` to create a 3-partition GPT: EFI + BlackBox + IXFS.
 
 Update `scripts/build.sh` and Makefile to format the BlackBox partition as FAT32 and create the initial directory structure.
 
-- [x] `mkfs.fat -F 32 -n "BLACKBOX" --offset $(BB_OFFSET/512)` formats BlackBox after GPT creation (Makefile line 376)
-- [x] `BB_OFFSET := 68157440` (LBA 133120 * 512) calculated from make-system-disk GPT layout
-- [x] `mmd -i $@@@$(BB_OFFSET) ::Logs ::Boot ::Crash ::Perf ::Diag ::Tools` creates all 6 directories (line 377)
-- [x] Verified: `mdir -i build/system-disk.img@@68157440 ::/` shows all 6 directories with volume label BLACKBOX
+- [x] `. $@.info && mkfs.fat -F 32 -n "BLACKBOX" -s 1` formats BlackBox from the generated `.info` offset/size (`-s 1` keeps the 128 MiB volume above the FAT32 65525-cluster floor, matching the ESP/recovery recipes)
+- [x] BlackBox offset/size sourced from `<image>.info` (`BB_OFFSET`/`BB_SIZE`), not a hardcoded Makefile constant (see §1)
+- [x] Two `mmd` calls create 8 directories: `::Logs ::Boot ::Crash ::Perf ::Diag ::Tools` then nested `::Crash/WER ::Logs/Serial`
+- [x] Verified: `mdir -i build/system-disk.img@@<.info BB_OFFSET> ::/` shows all directories with volume label BLACKBOX; FAT32 cluster-count warning cleared
 - [x] Commit: implemented as part of `"build: add BlackBox 128 MiB FAT32 partition to GPT layout"` (TODO-24 §1)
 
-**Test checkpoint:** `bash scripts/build.sh clean` produces a disk with BlackBox formatted as FAT32. `mcopy -i build/system-disk.img@@<offset> ::/ /tmp/bb-test` lists `Logs/`, `Boot/`, `Crash/`, `Perf/`, `Diag/`, `Tools/`.
+**Test checkpoint:** `bash scripts/build.sh clean` produces a disk with BlackBox formatted as spec-valid FAT32 (no cluster-count warning). `mdir -i build/system-disk.img@@<.info BB_OFFSET> ::/` lists `Logs/`, `Logs/Serial/`, `Boot/`, `Crash/`, `Crash/WER/`, `Perf/`, `Diag/`, `Tools/`.
+
+> **Test runner:** `scripts\debug\kernel\run-blackbox-tests.bat` (SUITE=fs) | marker round-trip (X:\Diag\blackbox-marker.txt) + FAT32 mount validate; clean build emits spec-valid FAT32 (cluster warning cleared)
+> **Notes:**
+> - Formats the BlackBox FAT32 volume + populates the directory skeleton in the system-disk Makefile recipe, sourcing the realized offset+size from the generated `.info`.
+> - `-s 1` (512-byte clusters) keeps the 128 MiB volume above the FAT32 65525-cluster floor, so strict readers (firmware, other OSes) accept `X:`.
+> - Two `mmd` calls create 8 dirs (6 top-level + `Crash/WER` + `Logs/Serial`); a `blackbox-marker.txt` is `mcopy`'d for the user-mode round-trip test.
+> - `.DELETE_ON_ERROR` makes the multi-step in-place disk build atomic: a partial image is deleted on any recipe failure so `make` cannot reuse a half-built disk.
+> - Scope: host-side format/populate only; kernel first-boot skeleton is §4, mount is §3.
+> **Verified:** 2026-06-16 | commit `64280239` | 4/4 items | build OK | smoke PASS 2.45s; FAT32 cluster warning cleared
+> **Quality reviewed:** 2026-06-16 | Codex 3x (adversarial, consistency, perf; re-adv skipped: static-const dir-list + Makefile config, no locking/ISR/lifecycle) | 2H+1M fixed | scope: kernel-code-quality (boot_storage skeleton)
 
 ---
 
@@ -132,13 +142,13 @@ Update `partition.c` to recognize the "BlackBox" GPT partition name and mount it
 Ensure the BlackBox directory structure exists on first boot and after format.
 
 - [x] After `partition_mount_filesystems()`, probe `X:\Logs` via `vfs_open()` to detect first boot
-- [x] If missing, create all 7 directories: `Logs`, `Boot`, `Crash`, `Crash\WER`, `Perf`, `Diag`, `Tools`
+- [x] If missing, create all 8 directories: `Logs`, `Logs\Serial`, `Boot`, `Crash`, `Crash\WER`, `Perf`, `Diag`, `Tools` (`Logs\Serial` matches the host-built skeleton so kernel-formatted/repaired BlackBox keeps per-boot serial logs)
 - [x] Uses `vfs_create(path, VFS_DIRECTORY)` -- works on FAT32
 - [x] Logs each creation: `"BlackBox: created X:\Logs"` etc.
 - [x] Idempotent: second boot skips creation (probe finds `X:\Logs`)
 - [x] Commit: `"kernel: create BlackBox directory skeleton on first boot"`
 
-**Test checkpoint:** First boot after clean build: serial shows 7 `"BlackBox: created X:\..."` messages (Logs, Boot, Crash, Crash\WER, Perf, Diag, Tools). Second boot: no creation messages (directories already exist). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+**Test checkpoint:** On a BlackBox whose skeleton is incomplete, serial shows `"BlackBox: created X:\..."` for each of the 8 missing directories (Logs, Logs\Serial, Boot, Crash, Crash\WER, Perf, Diag, Tools); on a fully-populated BlackBox no creation messages appear (vfs_create is a no-op on existing dirs). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ---
 
