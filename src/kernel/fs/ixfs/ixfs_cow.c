@@ -174,9 +174,13 @@ uint32_t ixfs_cow_block(struct ixfs_volume *vol,
         vol->sb.s_free_blocks++;
     }
 
-    /* Update the extent that references old_disk_block */
+    /* Update the extent that references old_disk_block. Bound the search
+     * by the clamped count so a corrupt i_extent_count cannot over-read;
+     * the loop returns after splitting the target extent. */
     offset = 0;
-    for (i = 0; i < inode->i_extent_count; i++) {
+    {
+    uint32_t cow_n = ixfs_extent_count_clamped(inode);
+    for (i = 0; i < cow_n; i++) {
         uint32_t ext_start = (uint32_t)inode->i_extents[i].e_start;
         uint32_t ext_count = inode->i_extents[i].e_count;
 
@@ -222,6 +226,7 @@ uint32_t ixfs_cow_block(struct ixfs_volume *vol,
             break;
         }
         offset += ext_count;
+    }
     }
 
     return new_blk;

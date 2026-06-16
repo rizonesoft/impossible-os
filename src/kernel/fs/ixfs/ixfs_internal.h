@@ -166,6 +166,10 @@ uint32_t ixfs_cow_block(struct ixfs_volume *vol, struct ixfs_inode *inode,
                          uint32_t file_block_idx, uint32_t old_disk_block);
 struct ixfs_volume *ixfs_get_active_volume(void);
 
+/* --- ixfs_fsck.c: Filesystem integrity check + repair --- */
+int ixfs_fsck_volume(struct ixfs_volume *vol, int fix,
+                     struct ixfs_fsck_report *report);
+
 /* --- ixfs_inode.c: Inode I/O, vnodes, dir hash index --- */
 int  ixfs_read_inode(struct ixfs_volume *vol, uint32_t ino,
                       struct ixfs_inode *inode);
@@ -179,6 +183,16 @@ uint32_t ixfs_hash_lookup(struct ixfs_volume *vol, struct ixfs_vnode *v,
 struct ixfs_vnode *ixfs_get_vnode(struct ixfs_volume *vol, uint32_t ino);
 
 /* --- ixfs_extent.c: Extent-based block lookup --- */
+
+/* Clamp the on-disk inline extent count to the array bound. A corrupt
+ * i_extent_count (> IXFS_INLINE_EXTENTS) must never be used to index
+ * i_extents[] -- every walker/mutator bounds its loop with this. */
+static inline uint32_t ixfs_extent_count_clamped(const struct ixfs_inode *inode)
+{
+    uint32_t ec = inode->i_extent_count;
+    return ec > IXFS_INLINE_EXTENTS ? IXFS_INLINE_EXTENTS : ec;
+}
+
 uint32_t ixfs_get_block(struct ixfs_volume *vol,
                          const struct ixfs_inode *inode, uint32_t index);
 uint32_t ixfs_add_block_to_extent(struct ixfs_volume *vol,

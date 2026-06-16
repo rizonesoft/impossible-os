@@ -428,6 +428,7 @@ extern void test_register_nvme(void);
 extern void test_register_usb_boot(void);
 extern void test_register_usb_hid(void);
 extern void test_register_ixfs(void);
+extern void test_register_ixfs_fsck(void);
 extern void test_register_bulletproof(void);
 extern void test_register_blackbox(void);
 extern void test_register_acpi_power(void);
@@ -452,6 +453,7 @@ void test_runner_init(void)
     /* FS */
     test_register_vfs();
     test_register_ixfs();
+    test_register_ixfs_fsck();
 
     /* Sched */
     test_register_sched();

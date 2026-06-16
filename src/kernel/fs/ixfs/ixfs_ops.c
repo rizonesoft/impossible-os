@@ -865,7 +865,10 @@ static int ixfs_vfs_truncate(struct vfs_node *node, uint64_t new_size)
         {
             uint32_t kept = 0;
             uint32_t ei;
-            for (ei = 0; ei < v->inode.i_extent_count; ei++) {
+            /* Clamp the bound: a corrupt i_extent_count must not index
+             * past the inline i_extents[] array. */
+            uint32_t ne = ixfs_extent_count_clamped(&v->inode);
+            for (ei = 0; ei < ne; ei++) {
                 uint32_t ext_count = v->inode.i_extents[ei].e_count;
                 if (kept + ext_count <= new_blocks) {
                     kept += ext_count;
@@ -874,7 +877,7 @@ static int ixfs_vfs_truncate(struct vfs_node *node, uint64_t new_size)
                     uint32_t keep = new_blocks - kept;
                     v->inode.i_extents[ei].e_count = keep;
                     /* Zero remaining extents */
-                    for (ei++; ei < v->inode.i_extent_count; ei++) {
+                    for (ei++; ei < ne; ei++) {
                         v->inode.i_extents[ei].e_start = 0;
                         v->inode.i_extents[ei].e_count = 0;
                     }

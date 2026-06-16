@@ -257,3 +257,49 @@ int ixfs_stat(struct vfs_node *node, uint32_t *logical_size,
 
 /* Scrub: full-volume integrity scan (verify all block checksums) */
 int ixfs_scrub(void);
+
+/* --- Filesystem integrity check (fsck) --- */
+
+/* Per-error-class tally filled by ixfs_fsck(). All counts are cumulative
+ * for one run; a clean volume reports every count == 0. */
+struct ixfs_fsck_report {
+    uint32_t superblock_errors;    /* magic/version/CRC/structural-bounds faults */
+    uint32_t inode_errors;         /* bad i_mode type bits or out-of-range extents */
+    uint32_t bitmap_mismatches;    /* blocks where expected-use != on-disk bitmap */
+    uint32_t free_count_errors;    /* s_free_blocks / s_free_inodes disagree w/ scan */
+    uint32_t orphan_inodes;        /* allocated but unreachable from root */
+    uint32_t bad_dirents;          /* d_inode out of range or -> a free inode */
+    uint32_t cross_links;          /* a data block claimed by 2+ live inodes (report-only) */
+    uint32_t refcount_mismatches;  /* on-disk refcount_table disagrees with scan */
+    uint32_t journal_errors;       /* journal header/entry validation failures */
+    uint32_t data_checksum_errors; /* data-block CRC32C mismatches (via ixfs_scrub) */
+    uint32_t blocks_repaired;      /* bitmap bits corrected (fix mode) */
+    uint32_t inodes_repaired;      /* orphan inodes freed (fix mode) */
+    uint32_t dirents_repaired;     /* bad dir entries cleared (fix mode) */
+    int      structural_corruption;/* 1 = layout broken; repair refused */
+    int      read_only;            /* 1 = volume read-only; repair skipped */
+    int      repaired;             /* 1 = at least one repair was applied */
+};
+
+/* Verify (and optionally repair) the active IXFS volume.
+ * fix=0: report-only (no writes). fix=1: apply the SAFE repair subset
+ * (bitmap reconcile, free-count fix, orphan free when single-owner +
+ * no snapshots, bad-dirent clear, clean-journal replay). `report` may be
+ * NULL. Returns 0 if the volume is consistent (clean, or fully repaired),
+ * -1 if state is untrustworthy (structural corruption, partial walk, torn
+ * repair, or report-only mode that found errors). Mirrors fat32_fsck(). */
+int ixfs_fsck(int fix, struct ixfs_fsck_report *report);
+
+/* Pure validators (no I/O) -- exposed for unit testing on crafted structs.
+ * ixfs_fsck_check_superblock: returns count of structural problems (0=ok).
+ * ixfs_fsck_reconcile_bitmap: returns mismatch count; if fix!=0, copies the
+ *   expected bits into `actual`. nbits = total blocks.
+ * ixfs_fsck_journal_entry_valid: 1 if the entry is well-formed, else 0. */
+int      ixfs_fsck_check_superblock(const struct ixfs_superblock *sb);
+uint32_t ixfs_fsck_reconcile_bitmap(const uint8_t *expected, uint8_t *actual,
+                                    uint32_t nbits, int fix);
+int      ixfs_fsck_journal_entry_valid(uint32_t je_type, uint32_t je_target,
+                                       uint32_t je_checksum,
+                                       const uint8_t *je_data,
+                                       uint32_t je_data_len,
+                                       uint64_t total_blocks);

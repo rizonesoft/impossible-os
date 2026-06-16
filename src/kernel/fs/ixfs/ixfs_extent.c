@@ -10,6 +10,7 @@ uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode *inode,
 {
     uint32_t i;
     uint32_t file_offset = 0;
+    uint32_t ec;
 
     (void)vol;  /* not needed for inline extents */
 
@@ -17,7 +18,9 @@ uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode *inode,
     if (inode->i_extent_flags & IXFS_INLINE)
         return 0;
 
-    for (i = 0; i < inode->i_extent_count; i++) {
+    ec = ixfs_extent_count_clamped(inode);  /* corrupt count must not over-read */
+
+    for (i = 0; i < ec; i++) {
         uint32_t count = inode->i_extents[i].e_count;
         if (count == 0) continue;
 
@@ -41,7 +44,7 @@ uint32_t ixfs_add_block_to_extent(struct ixfs_volume *vol,
                                           struct ixfs_inode *inode)
 {
     uint32_t new_blk;
-    uint32_t ec = inode->i_extent_count;
+    uint32_t ec = ixfs_extent_count_clamped(inode);  /* corrupt count safe */
     uint32_t last_end;
 
     /* Try to allocate near the end of the last extent for contiguity */
@@ -95,14 +98,17 @@ void ixfs_free_all_extents(struct ixfs_volume *vol,
         return;
     }
 
-    for (i = 0; i < inode->i_extent_count; i++) {
-        uint64_t start = inode->i_extents[i].e_start;
-        uint32_t count = inode->i_extents[i].e_count;
-        for (j = 0; j < count; j++) {
-            ixfs_free_block(vol, (uint32_t)(start + j));
+    {
+        uint32_t n = ixfs_extent_count_clamped(inode);  /* corrupt count safe */
+        for (i = 0; i < n; i++) {
+            uint64_t start = inode->i_extents[i].e_start;
+            uint32_t count = inode->i_extents[i].e_count;
+            for (j = 0; j < count; j++) {
+                ixfs_free_block(vol, (uint32_t)(start + j));
+            }
+            inode->i_extents[i].e_start = 0;
+            inode->i_extents[i].e_count = 0;
         }
-        inode->i_extents[i].e_start = 0;
-        inode->i_extents[i].e_count = 0;
     }
     inode->i_extent_count = 0;
     inode->i_blocks = 0;
