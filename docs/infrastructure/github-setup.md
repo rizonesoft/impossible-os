@@ -46,7 +46,9 @@ graph TD
 | Repository                            | Visibility | Purpose                                    |
 | ------------------------------------- | ---------- | ------------------------------------------ |
 | `rizonetech/impossible-os`            | Private    | Kernel, bootloader, desktop, drivers, apps |
-| `rizonesoft/impossible-os-bootloader` | Public     | Archived -- no longer maintained separately |
+| `rizonesoft/impossible-os-bootloader` | Public     | Superseded pre-release stopgap -- retire post-acceptance (see Secure Boot note) |
+
+> **Secure Boot release plan (decided 2026-06-16).** At public release, the shim-review / Microsoft 3rd-party UEFI CA submission uses the **main source** (`rizonetech/impossible-os`, which builds `BOOTX64.EFI` from `src/boot/uefi/`), NOT a separate bootloader repo. `rizonesoft/impossible-os-bootloader` was only ever a pre-release stopgap; it is not part of the future signing path. Retire it once the release main-source submission is accepted. Do not delete it while any upstream `rhboot/shim-review` submission referencing it is still open. The local `bootloader` git remote was removed 2026-06-16 (nothing syncs to it; the `BOOTLOADER_REPO_TOKEN` secret is orphaned with no consumer).
 
 ---
 
@@ -98,7 +100,7 @@ Vulnerability reporting policy:
 
 | Item               | Detail                                                  |
 | ------------------ | ------------------------------------------------------- |
-| Contact            | `security@rizonesoft.com` (not public issues)           |
+| Contact            | `derick@rizonetech.com` (not public issues)             |
 | Response timeline  | 48h acknowledge → 7d assess → 14–30d fix                |
 | Threat categories  | Bootloader bypass, privilege escalation, memory corrupt |
 | MOK key compromise | 6-step revoke/re-sign/release procedure                 |
@@ -108,7 +110,7 @@ Vulnerability reporting policy:
 
 ### CODE_OF_CONDUCT.md
 
-Contributor Covenant v2.1. Contact: `conduct@rizonesoft.com`.
+Contributor Covenant v2.1. Contact: `derick@rizonetech.com`.
 
 ### LICENSE
 

@@ -91,7 +91,7 @@ shows `Impossible OS 1.0 (Build 22000)`.
 - [ ] **`scripts/set-version.sh <major> <minor> <patch>`**: write `#define VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_PATCH` into `include/build_info.h`; leave `VERSION_BUILD` to be set by CI; commit `"build: bump version to {major}.{minor}.{patch}"` (no push; used by maintainer)
 - [ ] **`scripts/increment-build.sh`**: read `VERSION_BUILD` from `build_info.h`; increment by 1; write back; called by `scripts/build.sh` at the start of every build; commit-free (local update only)
 - [ ] **Registry baking at boot**: in `version_print()` (or kernel init, after Registry init): `reg_set_string(HKLM, "SOFTWARE\\Impossible\\Version", OS_VERSION_STRING)` + `reg_set_dword(HKLM, "SOFTWARE\\Impossible\\BuildNumber", VERSION_BUILD)`; sets the same key read by `winver.exe` and `sysinfo.exe`
-- [ ] **`winver.exe`** (`src/tools/winver.c`): small GUI app; `MessageBoxA(NULL, OS_VERSION_STRING "\n\nCopyright © 2026 Rizonesoft", "About Impossible OS", MB_OK | MB_ICONINFORMATION)` style dialog (or IxUI window); reads `HKLM\SOFTWARE\Impossible\Version` at runtime
+- [ ] **`winver.exe`** (`src/tools/winver.c`): small GUI app; `MessageBoxA(NULL, OS_VERSION_STRING "\n\nCopyright © 2026 Rizonetech (Pty) Ltd", "About Impossible OS", MB_OK | MB_ICONINFORMATION)` style dialog (or IxUI window); reads `HKLM\SOFTWARE\Impossible\Version` at runtime
 - [ ] **Kernel boot log**: `version_print()` already prints version; confirm it outputs `OS_VERSION_STRING` format to serial; visible in `build/serial.log`
 
 ---

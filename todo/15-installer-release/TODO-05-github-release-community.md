@@ -252,7 +252,7 @@ outsiders can track progress without reading 100+ TODO files.
 
   ## License
 
-  GPL-3.0 -- Copyright © 2026 [Rizonesoft](https://github.com/rizonesoft)
+  GPL-3.0 -- Copyright © 2026 [Rizonetech (Pty) Ltd](https://rizonetech.com)
   ```
 - [ ] **Desktop screenshot**: capture QEMU framebuffer at `1280×720` showing desktop with taskbar, wallpaper, and at least one open window; save as `docs/screenshots/desktop-v{version}.png`; script `scripts/take-screenshot.sh` (QEMU `-screenshot` option on a specific frame or `sendkey` sequence to open a window)
 - [ ] **CI status badge**: `[![CI](https://github.com/rizonetech/impossible-os/actions/workflows/build.yml/badge.svg)](...)` -- auto-shows green/red from GHA

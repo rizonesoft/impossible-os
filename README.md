@@ -268,4 +268,4 @@ Impossible OS wouldn't be possible (ironic, we know) without these amazing proje
 
 This project is licensed under **GPL-3.0-only**. See [LICENSE](LICENSE) for details.
 
-Copyright © 2026 [Rizonesoft](https://github.com/rizonesoft)
+Copyright © 2026 [Rizonetech (Pty) Ltd](https://rizonetech.com)

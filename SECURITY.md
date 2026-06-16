@@ -17,7 +17,7 @@
 
 **Do NOT open a public issue for security vulnerabilities.**
 
-Instead, please email: **security@rizonesoft.com**
+Instead, please email: **derick@rizonetech.com**
 
 Include as much detail as possible:
 
