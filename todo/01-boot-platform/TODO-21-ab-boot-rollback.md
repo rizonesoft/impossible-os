@@ -133,7 +133,7 @@ Bootloader reads metadata and mounts the correct slot's filesystem.
 - [x] At boot: read boot metadata -> determine active slot -- `select_active_slot()` (`bootx64.c`) reads the on-disk record from the A/B-metadata partition pre-EBS (`ab_find_meta_partition` + `ab_read_meta_copy`, EFI_BLOCK_IO)
 - [x] Select the highest-`priority` valid, not-`unbootable` slot; tie-break by `successful` then lower `tries` -- `ab_boot_meta_choose_slot()` in the shared header (passes the §7 CRC validator; the §8 floor is wired by §8)
 - [x] Slot state = `successful` / `pending` / `unbootable` (derived: `!successful && tries >= AB_BOOT_MAX_TRIES`); rolls back off an exhausted slot even if once-successful when another slot is viable -- unit-tested
-- [ ] Increment `tries` for active slot before booting -- **owned by §4 + §7** (atomic `boot_meta_write`; §3 read is read-only) -> XREF: §4 increment item + §7 atomic write
+- [x] Increment `tries` for active slot before booting -- shipped in §4 (`ab_bl_increment_tries`, pre-EBS atomic `WriteBlocks` RMW via §7 helpers); §3 read stays read-only
 - [x] Mount the active slot's partition (not EFI) for kernel loading -- kernel `partition_mount_filesystems(active_slot)` mounts the selected slot's IXFS as C: (`gpt_ixfs_slot` tells A from B), recording `ab_boot_mounted_slot`/`ab_boot_slot_mismatch`
 - [x] Pass `boot_info.active_slot` to kernel -- `uint8_t active_slot` (0=A, 1=B; logs render 'A'/'B') in header + mirror + manifest + doc, carved from the reserved tail (no `BOOT_INFO_VERSION` bump)
 - [x] Log: `"[BOOT] Booting Slot %c (tries=%u, successful=%u)"` -- emitted by `select_active_slot` on the metadata-valid path
@@ -154,8 +154,7 @@ Bootloader reads metadata and mounts the correct slot's filesystem.
 > - **Canonical doc:** `docs/boot/boot-info-fields.md` (`active_slot` row) + `include/boot/ab_boot_metadata.h`.
 > - **Scope boundary:** §4 owns the `tries` write + rollback notice, §7 the atomic metadata write, §8 the floor check, TODO-07 §16 the boot-menu slot-b entry.
 
-> **Verified:** 2026-06-16 | commit `46726a8a` (+review fixes) | 7/11 items (4 deferred: §4/§7 tries-write, 2x TODO-07 §16, kernel-GPT split-brain) | build OK | smoke PASS (KVM 1.96s) | 5925 kernel + 16 user PASS
-> **Deferred:** [M] §3 -> §4 + §7: the `tries` increment-before-boot WRITE is owned by §4's failure-counting atop §7's power-fail-atomic `boot_meta_write`; §3 ships the read-only selection -> XREF: 01-boot-platform/TODO-21 §4 (item: "Bootloader increments `tries` BEFORE attempting boot" at §4) + §7 (item: "`boot_meta_write()` is power-fail-atomic" at §7).
+> **Verified:** 2026-06-16 | commit `46726a8a` (+review fixes; tries-write since shipped in §4) | 8/11 items (3 deferred: 2x TODO-07 §16, kernel-GPT split-brain) | build OK | smoke PASS (KVM 1.96s) | 5925 kernel + 16 user PASS
 > **Deferred:** [L] §3 -> TODO-07 §16 (cross-TODO): SPLIT `payload.root` root-aware `load_kernel` + flipping the seeded `slot-b` active block on TODO-07 §16's root-aware lookup -> XREF: 01-boot-platform/TODO-07 §16 (item: "Root-aware `load_kernel()`: honor a SPLIT entry's `payload.root`" at §16).
 > **Deferred:** [L] §3 -> §3 follow-up (hardening): kernel-side GPT primary/backup slot-root reconciliation (split-brain vs the bootloader's reconciled view); not reachable single-disk -> XREF: 01-boot-platform/TODO-21 §3 (item: "Kernel GPT split-brain hardening" at §3).
 > **Quality reviewed:** 2026-06-16 | Codex 15x (design + adversarial + consistency + perf + re-adversarial) | 16H+1M fixed, 1H rejected (evidence), 1H deferred-XREF | scope: boot-code-quality + kernel-code-quality

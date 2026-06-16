@@ -316,7 +316,7 @@ Convert today's ad-hoc `boot.conf` booleans into structured entries with explici
 Generate entries from runtime state; the user sees a single coherent menu instead of two parallel mechanisms. Demote-not-drop on failure. **Section deferred 2026-05-09**: the runtime-state producers (TODO-21 A/B slot metadata + TODO-22 recovery partition) are not yet shipped; §9 has nothing to integrate until they land. See blocker XREFs per item below; re-enter §9 after the prerequisites land.
 
 - [ ] Generate entries for slot A, slot B, recovery, fallback. Blocked: TODO-21 §1+§3, TODO-22 §1.
-- [ ] Merge A/B success/failure counters into entry labels. Blocked: TODO-21 §1+§4.
+- [ ] Merge A/B success/failure counters into entry labels. Producers ready (TODO-21 §1 metadata + §4 tries + §6 `boot_info.ab_slot_tries`/`ab_slot_flags`); the label-merge is §9 work when this section re-enters.
 - [ ] Auto-select recovery on double-fail with `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD`. Blocked: TODO-21 §4 + TODO-22 §2; sentinel enum value lands when TODO-22 §2 ships.
 - [ ] Demote-not-drop visual (greyed-out + `last_failure_reason` label). Partially unblocked: §6+§8 keep TRIES_EXHAUSTED rows visible; §7 adds `[FAIL]` indicator. The greyed style + label string remains §9 scope.
 - [ ] Display rollback reason in menu line. Partially unblocked: TODO-21 §6 ships the rollback-reason source (`boot_info.ab_select_reason`/`ab_from_slot`) + the VPD display already; the menu-line rendering remains §9 scope.
