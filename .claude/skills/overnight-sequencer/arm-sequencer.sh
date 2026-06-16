@@ -88,17 +88,29 @@ import json, os
 p = ".claude/overnight/state/overnight-runner.json"
 try:
     d = json.load(open(p))
+    changed = False
     if d.get("active") or d.get("status") not in (None, "cleared"):
         d["active"] = False
         d["status"] = "cleared"
+        changed = True
+    # Clear stale blockers. They are advisory plugin state; once the run is
+    # disarmed they are dead, but a leftover TERMINAL/user-decision blocker reads
+    # to the NEXT run as "the operator reserved this, stop" -- which is exactly
+    # how the 2026-06-16 self-disarm happened. A reserved decision belongs in the
+    # owning TODO section as a Deferred item, not in the runner's advisory state.
+    if d.get("blockers"):
+        n = len(d["blockers"]); d["blockers"] = []; changed = True
+        print(f"  cleared {n} stale blocker(s) from overnight-runner.json")
+    if changed:
         json.dump(d, open(p, "w"), indent=2)
-        print("  reset overnight-runner.json -> active:false (notes/cursor preserved)")
+        print("  reset overnight-runner.json -> active:false, blockers:[] (notes/cursor preserved)")
 except FileNotFoundError:
     pass
 except (ValueError, OSError) as e:
     print(f"  WARN: could not reset overnight-runner.json: {e}")
 PY
   rm -f .claude/overnight/launch.lock && echo "  removed launch.lock" || true
+  rm -f .claude/state/sequencer-fixpoint && echo "  removed stale fixpoint sentinel" || true
   # Reap dead .in_use/<pid> markers in the newest plugin version dir.
   local iu; iu="$(dirname "$(dirname "$PLUGIN_ARM")")/.in_use"
   if [ -d "$iu" ]; then

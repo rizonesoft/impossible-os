@@ -113,17 +113,33 @@ later TODO, hardware-only validation); "hard" or "tedious" is not blocked.
 ## Hard Rules
 
 - **Session-exit policy: the work unit is the ENTIRE queue, not one
-  section.** Finishing a section (ship + review + push) is NOT a reason to
-  run `overnight-runner finish-check` / `handoff` or to final-answer. After
-  every section: update the cursor, then IMMEDIATELY start the next section
-  in the queue. A session may end ONLY on: (a) a user-decision blocker
-  (stop-and-ask boundary -- record the question in the cursor first), (b) a
-  hard failure per the halt-on-error rule below, (c) every remaining section
-  in every remaining domain blocked-with-XREF, or (d) external death (usage
-  limit / API error -- not a choice). `finish-check` + `handoff` run ONLY in
-  cases (a)-(c). Do NOT clear the overnight-guard state between sections.
-  The hourly watchdog timer relaunches the run after any death; mid-queue
-  voluntary exits defeat the runner's purpose.
+  section -- and the runner NEVER stops or disarms itself.** Finishing a
+  section (ship + review + push) is NOT a reason to run
+  `overnight-runner finish-check` / `handoff` or to final-answer. After every
+  section: update the cursor, then IMMEDIATELY start the next section in the
+  queue. There is NO voluntary session-exit on a blocker of ANY kind:
+  - A **user-decision / operator-reserved item** (a stop-and-ask boundary) is
+    NOT a stop and NOT a disarm. Record the question in the cursor, DEFER the
+    item (`[/]` + a Deferred stamp + an XREF naming the decision), and ADVANCE
+    to the next section/file. A single reserved decision in one section must
+    never strand the other 85 TODO files. (Incident 2026-06-16: the runner read
+    a stale "user reserved this" blocker and ran `--disarm`. Both the stale-state
+    and the self-disarm paths are now closed; the behavioral rule is: defer and
+    advance, full stop.)
+  - A **hard failure** is handled by the defer-and-escalate rule below (defer +
+    advance, never halt).
+  - **External death** (usage limit / API error) is not a choice; the watchdog
+    relaunches and the run resumes.
+  The runner must NEVER run `arm-sequencer.sh --disarm`,
+  `run_phase_guard.py clear`, `run_phase_guard.py phase FIXPOINT`,
+  `systemctl stop`, or otherwise tear down its own run -- disarm is a
+  HUMAN-ONLY operation, and `run_phase_guard.py` hard-blocks self-teardown from
+  the headless run. Do NOT clear the overnight-guard state between sections.
+  The ONLY permanent stop is an oracle-verified `run_phase_guard.py fixpoint`
+  (every section in every domain DONE or deferred-with-XREF; it writes the
+  FIXPOINT sentinel and auto-disarms the watchdog) or the human's `--disarm`.
+  The watchdog relaunches any death; mid-queue voluntary exits accomplish
+  nothing.
 - **NO ChromeMCP / browser automation. Ever.** Impossible OS has its own
   smoke-test infrastructure: `bash scripts/test-smoke.sh` (boot-to-userspace),
   `bash scripts/test.sh` (unit suites), `bash scripts/build.sh` (build).

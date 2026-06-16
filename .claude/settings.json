@@ -148,7 +148,7 @@
         ]
       },
       {
-        "matcher": "Skill|AskUserQuestion",
+        "matcher": "Skill|AskUserQuestion|Bash",
         "hooks": [
           {
             "type": "command",

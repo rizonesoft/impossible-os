@@ -57,6 +57,13 @@ STATE_PATH = repo_root() / ".claude/state/sequencer-run.json"
 # run cursor (sequencer-run.json) is reset to inactive out from under the guard,
 # the marker keeps the headless run alive and guarded until the operator disarms.
 ARMED_MARKER = repo_root() / ".claude/state/sequencer-armed"
+# Written ONLY by `run_phase_guard.py fixpoint` AFTER the triage oracle confirms
+# zero remaining work. The headless run's Stop is blocked unless this exists, so
+# the ONLY graceful self-stop is a machine-verified completion. The agent cannot
+# fabricate it: creating/editing it (or the cursor, or the marker) is a blocked
+# self-teardown, and `phase FIXPOINT` / `clear` are blocked too. The run cannot
+# talk itself into stopping on a reserved decision or a per-file blocker.
+FIXPOINT_SENTINEL = repo_root() / ".claude/state/sequencer-fixpoint"
 
 
 def is_headless():
@@ -72,19 +79,31 @@ def is_headless():
     return os.environ.get("OVERNIGHT_SEQUENCER_RUN") == "1"
 
 
-# Bash command shapes that would let the headless run tear itself down. Only the
-# human (interactive session, env discriminator absent) may run these.
+# Bash command shapes that would let the headless run tear itself down or fake a
+# completion. Only the human (interactive session, env discriminator absent) may
+# run these. NOTE: `run_phase_guard.py fixpoint` is intentionally NOT blocked --
+# it is the legitimate completion path and is itself oracle-gated (it REFUSES
+# unless the triage oracle reports zero remaining work), so it cannot be abused.
+_STATE_FILES = ("sequencer-armed", "sequencer-run.json", "sequencer-fixpoint")
+_MUTATE_OPS = ("rm ", "rm-", "mv ", "unlink", "truncate", "tee ", " > ", ">>",
+               "os.remove", "os.unlink", "rmtree", "shutil.")
+
+
 def _is_self_teardown(cmd):
     c = " ".join((cmd or "").split())
-    if "arm-sequencer.sh" in c and "--disarm" in c:
+    # Disarm via either wrapper.
+    if ("arm-sequencer.sh" in c or "overnight-arm.sh" in c) and "--disarm" in c:
         return True
-    if "overnight-arm.sh" in c and "--disarm" in c:
+    # Guard CLI used to fake completion or wipe the cursor (fixpoint excluded).
+    if "run_phase_guard.py" in c and (" clear" in c or "phase FIXPOINT" in c):
         return True
-    if "run_phase_guard.py" in c and " clear" in c:
+    # Direct tampering with any guard state file.
+    if any(f in c for f in _STATE_FILES) and any(op in c for op in _MUTATE_OPS):
         return True
-    if "rm " in c and "sequencer-armed" in c:
+    # Stopping/disabling the systemd units or killing the headless claude.
+    if "systemctl" in c and any(op in c for op in ("stop", "disable", "kill")) and "overnight" in c:
         return True
-    if "systemctl" in c and "stop" in c and "overnight" in c:
+    if any(k in c for k in ("pkill", "killall", "kill ")) and "claude" in c:
         return True
     return False
 
@@ -231,26 +250,31 @@ def handle_stop():
     # operator session is never trapped (it can stop and disarm freely).
     if not is_headless():
         return 0
-    # While the master switch is armed, the headless run must not stop. This is
-    # keyed off the PERSISTENT marker, NOT the run cursor's `active` flag: even
-    # if the cursor is reset to inactive (crash, stale state, a clear that raced
-    # a relaunch), the marker keeps the run alive and guarded. The ONLY exits
-    # are the human's `--disarm` (removes the marker) or an oracle-verified
-    # FIXPOINT (genuine, machine-checked completion -- also removes the marker).
+    # The ONLY graceful self-stop is an oracle-verified FIXPOINT, recorded by an
+    # exclusive sentinel that `run_phase_guard.py fixpoint` writes only after the
+    # triage oracle confirms zero remaining work. We key on the sentinel (and the
+    # immutable env discriminator), NOT on any value the agent can edit: it
+    # cannot fake the sentinel (creating it is a blocked self-teardown), cannot
+    # disarm itself, and cannot clear the cursor. So no reserved decision, stale
+    # blocker, or per-file block can ever talk the run into stopping.
+    if FIXPOINT_SENTINEL.exists():
+        return 0
+    # The human's --disarm removes the master switch (and kills the service); if
+    # the marker is already gone, the run has been disarmed -- allow the stop.
     if not ARMED_MARKER.exists():
         return 0
     state = load_state()
-    if state.get("phase") == "FIXPOINT":
-        return 0
     sys.stderr.write(
-        "[sequencer] ARMED unattended run: do NOT stop. Continue the per-file "
-        "pipeline (the work unit is the ENTIRE queue, not one section). "
+        "[sequencer] headless unattended run: do NOT stop. The work unit is the "
+        "ENTIRE queue, not one section or file. A user-reserved decision or a "
+        "per-file blocker is DEFERRED ([/] + Deferred stamp + XREF) and you "
+        "ADVANCE to the next file -- it is NEVER a reason to stop or disarm. "
         f"pass={state.get('pass_no')} file={state.get('file')} "
-        f"phase={state.get('phase')} active={state.get('active')}. Re-read "
-        "todo/TODO-Claude-Overnight-Runner.md, run `run_phase_guard.py status`, "
-        "and continue. If the cursor looks inactive after a relaunch, re-invoke "
-        "Skill(overnight-sequencer) to resume. Only the human's --disarm ends "
-        "this run; a voluntary exit just gets relaunched by the watchdog.")
+        f"phase={state.get('phase')}. Re-read todo/TODO-Claude-Overnight-Runner.md, "
+        "run `run_phase_guard.py status`, re-invoke Skill(overnight-sequencer), and "
+        "continue. The run ends ONLY on the human's --disarm or an oracle-verified "
+        "`run_phase_guard.py fixpoint` (all work done). The watchdog relaunches any "
+        "death, so a voluntary exit accomplishes nothing.")
     return 2
 
 
@@ -274,6 +298,12 @@ def cli(argv):
         # can never voluntarily stop. Only `--disarm` or an oracle-verified
         # FIXPOINT removes it. (Removing it on start was the death-thrash bug:
         # once gone, a reset cursor left the guard fully inert.)
+        # Clear any stale FIXPOINT sentinel from a prior run: a starting run is by
+        # definition not complete, and a leftover sentinel would let Stop succeed.
+        try:
+            FIXPOINT_SENTINEL.unlink()
+        except FileNotFoundError:
+            pass
         print("[sequencer] started: pass 1, PREFLIGHT (armed marker kept)",
               file=sys.stderr)
         return 0
@@ -339,14 +369,19 @@ def cli(argv):
         state["active"] = False
         save_state(state)
         # Genuine, oracle-verified completion is the one self-terminating exit:
-        # remove the master switch so the headless run can stop cleanly and the
+        # write the exclusive sentinel (this is the ONLY place it is created) so
+        # handle_stop will permit the stop, and remove the master switch so the
         # next watchdog tick does not relaunch into a re-entry loop.
+        FIXPOINT_SENTINEL.parent.mkdir(parents=True, exist_ok=True)
+        FIXPOINT_SENTINEL.write_text("oracle-verified: no remaining work\n",
+                                     encoding="utf-8")
         try:
             ARMED_MARKER.unlink()
         except FileNotFoundError:
             pass
         print("[sequencer] FIXPOINT verified by oracle (no remaining work) -- "
-              "run complete; armed marker removed", file=sys.stderr)
+              "run complete; sentinel written, armed marker removed",
+              file=sys.stderr)
         return 0
     if cmd == "clear":
         save_state({"active": False})
@@ -383,16 +418,27 @@ def selftest():
     # Inactive + unarmed headless allows everything.
     a, _ = evaluate("AskUserQuestion", {}, {"active": False}, headless=H)
     check(a, "AskUserQuestion blocked while headless run inactive+unarmed")
-    # Headless self-teardown is blocked; legit guard CLI (fixpoint) is not.
+    # Headless self-teardown is blocked across all known shapes; the legit
+    # oracle-gated `fixpoint` and ordinary phase transitions are NOT.
     for cmd in ("bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm",
+                "bash scripts/overnight-arm.sh todo/x.md --disarm",
                 "python3 .claude/hooks/run_phase_guard.py clear oops",
+                "python3 .claude/hooks/run_phase_guard.py phase FIXPOINT",
                 "rm -f .claude/state/sequencer-armed",
-                "systemctl --user stop overnight-impossible-os.service"):
+                "rm .claude/state/sequencer-run.json",
+                "echo '{}' > .claude/state/sequencer-run.json",
+                "python3 -c \"import os; os.remove('.claude/state/sequencer-fixpoint')\"",
+                "systemctl --user stop overnight-impossible-os.service",
+                "systemctl --user disable overnight-impossible-os-watchdog.timer",
+                "pkill -f 'claude -p'"):
         a, _ = evaluate("Bash", {"command": cmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
         check(not a, f"headless self-teardown allowed: {cmd}")
-    a, _ = evaluate("Bash", {"command": "python3 .claude/hooks/run_phase_guard.py fixpoint"},
-                    {"active": True, "phase": "SECTIONS"}, headless=H)
-    check(a, "headless fixpoint (legit completion) blocked as self-teardown")
+    for okcmd in ("python3 .claude/hooks/run_phase_guard.py fixpoint",
+                  "python3 .claude/hooks/run_phase_guard.py phase SECTIONS",
+                  "python3 .claude/hooks/run_phase_guard.py next-pass",
+                  "git commit -m 'x' && cat .claude/state/sequencer-run.json"):
+        a, _ = evaluate("Bash", {"command": okcmd}, {"active": True, "phase": "SECTIONS"}, headless=H)
+        check(a, f"legit guard/bash command blocked as self-teardown: {okcmd}")
     # implement-todo-section blocked in VALIDATE, allowed in SECTIONS.
     a, _ = evaluate("Skill", {"skill": "implement-todo-section"}, {"active": True, "phase": "VALIDATE"}, headless=H)
     check(not a, "implement-todo-section allowed in VALIDATE")
