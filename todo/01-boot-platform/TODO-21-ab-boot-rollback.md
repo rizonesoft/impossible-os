@@ -53,7 +53,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
 | 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [ ]   |
 | ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [ ]   |
-| 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [ ]   |
+| 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [/]   |
 | 💎  |   8   | Per-slot anti-rollback version floor            | §1, §7     |  [ ]   |
 
 > 💎 = parity -- Android/Chrome OS A/B and systemd-boot auto-assessment both provide this.
@@ -214,15 +214,19 @@ Integrate A/B slot status into the VPD and boot timing display.
 
 Boot metadata is the single source of truth for slot selection; a torn write must never brick the box. Follow the Android libavb_ab pattern: magic + CRC-32 + redundant copies with a monotonic generation.
 
-- [ ] Add a `crc32` field over the metadata record + a monotonic `generation` counter; `boot_meta_read()` rejects any record with bad magic or CRC
-- [ ] Store TWO redundant copies (primary + backup); `boot_meta_read()` returns the valid copy with the highest `generation`
-- [ ] `boot_meta_write()` is power-fail-atomic: update the older (lower-generation) copy first, flush, then leave the other intact -- a crash always leaves one valid copy
-- [ ] If BOTH copies fail CRC: load compiled-in factory defaults (active=A, tries=0, successful=0) and log `"[BOOT] metadata corrupt -- factory defaults"`
-- [ ] NVRAM storage: two UEFI variables (`BootMetaA`/`BootMetaB`); GPT storage: two metadata blocks at fixed LBAs
-- [ ] Validate the `version` field; on an unknown future version fail safe to factory defaults rather than misparsing
-- [ ] Commit: `"boot: A/B metadata integrity -- CRC-32, generation counter, redundant copies"`
+> [!NOTE]
+> **DESIGN LOCKED (Codex 2H+1M adopted).** The READ side shipped in §3; the remaining work is the power-fail-atomic WRITE primitive. Adopted: (1) initialized-corrupt both-invalid metadata FAILS CLOSED (does NOT factory-default to Slot A -- preserves the §3 rollback-safety invariant); only an all-zero uninitialized partition defaults to Slot A. (2) The bootloader passes its reconciled MD-partition LBA range + boot-disk identity via `boot_info`; the kernel writes those LBAs directly and MUST NOT re-derive the MD partition via the kernel `gpt_parse` (which lacks the bootloader's primary+backup reconciliation -- a stale/split-brain primary would diverge). (3) The write adapter does a full-media-block, IoAlign-compliant, read-modify-write of exactly one block (`WriteBlocks`/`FlushBlocks` errors = write failure), never serializing a bare 60-byte struct.
 
-**Test checkpoint:** Flip a byte in the primary copy -- bootloader reads the backup, logs the CRC recovery, boots normally. Corrupt both -- factory defaults load. Test on: QEMU smoke + bare metal (NVRAM torn-write behavior differs).
+- [x] `crc32` field + monotonic `generation`; reader rejects bad magic/CRC -- shipped §3 (`ab_boot_meta_is_valid` + `ab_boot_meta_compute_crc`)
+- [x] TWO redundant copies; reader returns the valid copy with the highest `generation` -- shipped §3 (`ab_boot_meta_select_newest` + `ab_read_meta_copy` read both copies at byte offsets 0 + 4096)
+- [ ] `boot_meta_write()` power-fail-atomic write primitive: shared pure `ab_boot_meta_prepare_write` (lower-generation target + gen bump + CRC) + thin bootloader/kernel disk adapters writing only that copy -- DESIGN LOCKED (see note)
+- [x] Both copies invalid: all-zero -> Slot A (first boot); initialized-corrupt -> fail closed (not factory-default) -- shipped §3 (`select_active_slot`); preserves the rollback-safety invariant
+- [x] GPT storage: two metadata blocks at fixed byte offsets in the A/B-metadata partition (NVRAM rejected per BootSticky doctrine) -- shipped §3 (`AB_META_COPY0/1_BYTE_OFF` 0 + 4096)
+- [x] Validate `version`; unknown future version fails safe (rejected, not misparsed) -- shipped §3 (`ab_boot_meta_is_valid`)
+- [ ] Pass the bootloader-reconciled MD-partition LBA range + boot-disk identity via `boot_info` so the kernel write path (§5) targets the correct partition without re-deriving GPT state -- DESIGN LOCKED, new `boot_info` fields
+- [ ] Commit: `"boot: A/B metadata atomic write -- power-fail-atomic boot_meta_write + boot_info MD range"`
+
+**Test checkpoint:** Flip a byte in one copy -- the reader returns the other (shipped §3). `ab_boot_meta_prepare_write` picks the lower-generation target + bumps generation (unit test). Write then read-back round-trips on QEMU; a simulated crash after writing one copy still boots from the untouched prior-good copy. Test on: QEMU smoke + bare metal (media write-cache behavior differs).
 
 ---
 
