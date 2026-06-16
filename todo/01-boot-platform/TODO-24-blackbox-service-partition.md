@@ -194,6 +194,13 @@ Redirect all kernel log output from `C:\Impossible\System\Logs\` to `X:\Logs\`.
 
 **Regression risk:** If klog_disk_enable() runs before X:\ is mounted, log writes fail silently. The fallback check must happen at enable time, not at init time.
 
+> **Notes:**
+> - klog output migrated from `C:\Impossible\System\Logs\` to `X:\Logs\` via the runtime `klog_dir` global (`KLOG_DIR_BLACKBOX` primary, `KLOG_DIR_FALLBACK` C:\), resolved at `klog_disk_init()`.
+> - All log paths (`kernel.log`, subsystem logs, `events.jsonl`, `crash_recovery.log`, `boot-profile.log`, `Serial\`) build from `klog_dir` at runtime; C:\ fallback with a warning when X: is unmounted.
+> - Two hardening items remain open and are DEFERRED below (latent reentrancy guard + durable-write honesty); the core migration is shipped and exercised (smoke shows `X:\Logs` active).
+> **Deferred:** [M] klog_disk_flush C:\-fallback re-entrancy guard is latent until the BlackBox-mount-fail (sole-C:\) path is reproduced with fault injection -> XREF: 01-boot-platform/TODO-24 §5 (item: "klog_disk_flush re-entrancy guard when C:\ fallback is active" at line 184); depends on 00-infrastructure/TODO-03 §1 (test_add_fault) + §6
+> **Deferred:** [H] durable-write/write-success honesty retrofit for X:\ diagnostic writers (health/audit/WER ack without vfs_flush); MarkGood-gating is an operator-reserved decision (line 190), retrofit is substantial follow-up -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 185)
+
 ---
 
 ## 6. Boot Logs -- Per-Boot Session Files to X:\Boot\
