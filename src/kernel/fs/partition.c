@@ -437,20 +437,28 @@ static void part_build_subdev_name(const struct partition_info *pi,
     part_strcpy(name + pos, num_buf, name_sz - pos);
 }
 
+/* Boot-disk lookup result sentinels (negative = no single disk identified). */
+#define AB_BOOT_DISK_NONE       (-1)  /* non-GPT / no match -> infer or legacy */
+#define AB_BOOT_DISK_AMBIGUOUS  (-2)  /* >1 GUID match (cloned disks) -> fail closed */
+
 /* Identify the boot disk's disk_index by matching the ESP unique GUID the
  * bootloader recorded in boot_info.boot_partition_guid (raw on-disk bytes, the
- * layout gpt.c parses). Returns the disk_index, or -1 when it can't be
- * identified (non-GPT boot, all-zero GUID, or no scanned partition matches).
- * A/B root selection is restricted to this disk so a same-slot IXFS on a
- * DIFFERENT physical disk cannot be mounted as the system root (TODO-21). */
+ * layout gpt.c parses). GPT unique GUIDs are untrusted disk data and disk
+ * CLONES routinely duplicate them, so this requires EXACTLY ONE match against
+ * an EFI System Partition (the boot partition is the ESP): returns that
+ * disk_index, AB_BOOT_DISK_AMBIGUOUS when more than one ESP carries the GUID
+ * (cloned/duplicated -> caller fails closed), or AB_BOOT_DISK_NONE when there
+ * is no GPT boot / all-zero GUID / no match. A/B root selection is restricted
+ * to the identified disk so a same-slot IXFS on a DIFFERENT physical disk
+ * cannot be mounted as the system root (TODO-21). */
 static int ab_boot_disk_index(void)
 {
     const uint8_t *p = g_boot_info.boot_partition_guid;
     struct gpt_guid bg;
-    int i, z;
+    int i, z, found = AB_BOOT_DISK_NONE, count = 0;
 
     if (g_boot_info.boot_partition_style != 2)
-        return -1;  /* non-GPT boot -- no GPT unique GUID to match against */
+        return AB_BOOT_DISK_NONE;  /* non-GPT boot -- no GPT unique GUID */
 
     bg.data1 = (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
                ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -463,12 +471,18 @@ static int ab_boot_disk_index(void)
     for (i = 0; z && i < 8; i++)
         if (bg.data4[i]) z = 0;
     if (z)
-        return -1;  /* all-zero -- not a real GPT GUID */
+        return AB_BOOT_DISK_NONE;  /* all-zero -- not a real GPT GUID */
 
-    for (i = 0; i < part_count; i++)
-        if (gpt_guid_equal(&part_store[i].unique_guid, &bg))
-            return part_store[i].disk_index;
-    return -1;
+    for (i = 0; i < part_count; i++) {
+        if (part_store[i].is_efi &&
+            gpt_guid_equal(&part_store[i].unique_guid, &bg)) {
+            found = part_store[i].disk_index;
+            count++;
+        }
+    }
+    if (count == 1) return found;
+    if (count > 1)  return AB_BOOT_DISK_AMBIGUOUS;  /* cloned/duplicated GUID */
+    return AB_BOOT_DISK_NONE;
 }
 
 /* Mount the active A/B slot's IXFS as C:. Prefer the partition whose
@@ -525,9 +539,16 @@ static void mount_active_ixfs(int active_slot)
      * legacy first-IXFS path (which could mount the wrong root and hide the
      * failure). The filesystem probe gates only whether the SELECTED slot is
      * actually mountable (try_mount_ixfs_as_c). */
-    int bind_disk = ab_boot_disk_index();   /* >=0 boot disk, -1 unknown */
+    int bind_disk = ab_boot_disk_index();   /* >=0 boot disk; NONE/AMBIGUOUS */
     int ab_ambiguous = 0;
-    if (bind_disk < 0) {
+    if (bind_disk == AB_BOOT_DISK_AMBIGUOUS) {
+        /* The boot partition GUID matched MORE THAN ONE ESP (cloned/duplicated
+         * disks) -- cannot trust which physical disk we booted from. */
+        ab_ambiguous = 1;
+    } else if (bind_disk == AB_BOOT_DISK_NONE) {
+        /* Boot disk not identifiable by GUID -- infer the SOLE disk carrying
+         * slot-tagged partitions. Slot-tagged partitions on MORE THAN ONE disk
+         * with no boot-disk match is ambiguous: fail closed. */
         int sole = -2;  /* -2 = none seen, -1 = multiple disks */
         for (i = 0; i < part_count; i++) {
             struct partition_info *pi = &part_store[i];
@@ -538,13 +559,13 @@ static void mount_active_ixfs(int active_slot)
         }
         if (sole >= 0) bind_disk = sole;        /* exactly one A/B disk */
         else if (sole == -1) ab_ambiguous = 1;  /* multiple A/B disks, boot disk unknown */
-        /* sole == -2: no slot-tagged partition at all -> legacy, bind_disk stays -1 */
+        /* sole == -2: no slot-tagged partition at all -> legacy, bind_disk stays NONE */
     }
     if (ab_ambiguous) {
         g_ab_slot_mismatch = 1;
         klog(LOG_WARN, "blk",
-             "A/B: boot disk unidentifiable with multiple A/B disks -- "
-             "C: not mounted (fail-closed)");
+             "A/B: boot disk ambiguous (duplicate GUID or multiple A/B disks) "
+             "-- C: not mounted (fail-closed)");
         return;
     }
 

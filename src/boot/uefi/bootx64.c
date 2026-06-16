@@ -12287,16 +12287,22 @@ static void select_active_slot(EFI_HANDLE part_handle)
                                  AB_META_COPY0_BYTE_OFF, &copy0);
     int got1 = ab_read_meta_copy(bio, md_lba, md_blocks,
                                  AB_META_COPY1_BYTE_OFF, &copy1);
-    if (!got0 && !got1) {
-        /* The partition was located via a clean GPT but its blocks cannot be
-         * read -- a damaged A/B disk. Fail closed rather than guess a slot. */
+    if (!got0 || !got1) {
+        /* BOTH redundant copies must be READABLE to trust slot selection. A
+         * torn write leaves one copy CRC-invalid but still readable (got==1)
+         * -> select_newest correctly picks the valid one (the redundant-copy
+         * integrity resilience path is preserved). But a BLOCK-unreadable copy
+         * (got==0) means we cannot see whether it held a NEWER generation than
+         * the readable copy -- selecting the lone readable record could boot a
+         * stale, exhausted, or rolled-back slot. Fail closed instead. */
         boot_fatal(BOOT_ERR_ESP_TYPE_GUID,
-                   "A/B select: metadata blocks unreadable",
-                   "Located the A/B metadata partition but neither redundant "
-                   "copy could be read -- the disk is damaged. Reflash or "
-                   "boot recovery media.");
+                   "A/B select: metadata block unreadable",
+                   "A redundant A/B metadata copy could not be read -- cannot "
+                   "prove which copy is newest, so slot selection is not "
+                   "trustworthy. Reflash or boot recovery media.");
     }
 
+    /* Both copies are readable here; select_newest compares both generations. */
     const struct ab_boot_metadata *winner = (const struct ab_boot_metadata *)0;
     int valid = ab_boot_meta_select_newest(
                     got0 ? &copy0 : (const struct ab_boot_metadata *)0,
