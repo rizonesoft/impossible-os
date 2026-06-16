@@ -210,6 +210,7 @@ static void register_partition(const struct blkdev *parent,
                                 const char *type_name,
                                 const char *part_name,
                                 int ixfs_slot,
+                                int is_recovery,
                                 const struct gpt_guid *unique_guid)
 {
     struct partition_info *pi;
@@ -245,6 +246,7 @@ static void register_partition(const struct blkdev *parent,
     pi->is_efi       = (type_name && type_name[0] == 'E' && type_name[1] == 'F'
                         && type_name[2] == 'I') ? 1 : 0;
     pi->ixfs_slot    = ixfs_slot;   /* A/B slot identity (-1 if not IXFS-family) */
+    pi->is_recovery  = is_recovery; /* read-only recovery partition (never mounted) */
     if (unique_guid)
         pi->unique_guid = *unique_guid;
     else
@@ -321,7 +323,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
             klog(LOG_DEBUG, "blk", "%s: no partition table, raw %s volume",
                    dev->name, partition_fs_name(fs));
             register_partition(dev, disk_idx, 1,
-                               0, dev->sector_count, "Raw Volume", NULL, -1, NULL);
+                               0, dev->sector_count, "Raw Volume", NULL, -1, 0, NULL);
         }
         return;
     }
@@ -341,6 +343,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
                                   gpt_type_name(&gtbl.parts[gi].type_guid),
                                   gtbl.parts[gi].name,
                                   gpt_ixfs_slot(&gtbl.parts[gi].type_guid),
+                                  gpt_is_recovery(&gtbl.parts[gi].type_guid),
                                   &gtbl.parts[gi].unique_guid);
             }
         }
@@ -360,7 +363,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
             register_partition(dev, disk_idx, i + 1,
                               (uint64_t)mtbl.parts[i].start_lba,
                               (uint64_t)mtbl.parts[i].sector_count,
-                              mbr_type_name(mtbl.parts[i].type), NULL, -1, NULL);
+                              mbr_type_name(mtbl.parts[i].type), NULL, -1, 0, NULL);
         }
 
         /* Walk EBR chain for each extended partition */
@@ -380,7 +383,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
                                           (uint64_t)logical[li].start_lba,
                                           (uint64_t)logical[li].sector_count,
                                           mbr_type_name(logical[li].type),
-                                          NULL, -1, NULL);
+                                          NULL, -1, 0, NULL);
                     }
                 }
             }
@@ -394,7 +397,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
             printk("[RAW] %s: no partition table, raw %s volume\n",
                    dev->name, partition_fs_name(fs));
             register_partition(dev, disk_idx, 1,
-                               0, dev->sector_count, "Raw Volume", NULL, -1, NULL);
+                               0, dev->sector_count, "Raw Volume", NULL, -1, 0, NULL);
         }
     }
 }
@@ -800,6 +803,14 @@ void partition_mount_filesystems(int active_slot)
          * here, independent of fs_type. Root mounting is mount_active_ixfs's
          * job (C: only). */
         if (pi->ixfs_slot >= 0)
+            continue;
+
+        /* The read-only Recovery partition (custom type GUID) NEVER gets a
+         * drive letter in normal mode -- the recovery bootloader reads it
+         * pre-EBS, and a normal-mode FAT32 mount would expose kernel.bak to
+         * mutation/deletion, defeating the never-unbootable guarantee + the
+         * GPT read-only attribute. Authoritative by type GUID, not name. */
+        if (pi->is_recovery)
             continue;
 
         /* IXFS roots are handled by mount_active_ixfs above; the inactive

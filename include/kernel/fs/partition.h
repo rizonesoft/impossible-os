@@ -33,6 +33,8 @@ struct partition_info {
     int      is_efi;                /* 1 if EFI System Partition (hidden) */
     int      ixfs_slot;             /* A/B dual-slot (TODO-21): 0=Slot A,
                                      * 1=Slot B, -1=not an IXFS-family GUID */
+    int      is_recovery;           /* 1 if the read-only Recovery partition
+                                     * (TODO-22); never drive-letter-mounted */
     struct gpt_guid unique_guid;    /* GPT unique partition GUID (zeroed for
                                      * MBR/raw); used to bind A/B root selection
                                      * to the boot disk (TODO-21) */

@@ -57,6 +57,14 @@ const struct gpt_guid GPT_GUID_IXFS_B = {
     {0x46, 0x53, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02}
 };
 
+/* 49504F53-7265-636F-7665-727900000001 ("IPOSrecovery") -- read-only Recovery
+ * partition (TODO-22). Distinct family from IXFS/ABMeta; the kernel excludes it
+ * from drive-letter mounting so a normal boot cannot mutate the recovery image. */
+const struct gpt_guid GPT_GUID_RECOVERY = {
+    0x49504F53, 0x7265, 0x636F,
+    {0x76, 0x65, 0x72, 0x79, 0x00, 0x00, 0x00, 0x01}
+};
+
 /* 21686148-6449-6E6F-744E-656564454649  -- BIOS Boot Partition */
 const struct gpt_guid GPT_GUID_BIOS_BOOT = {
     0x21686148, 0x6449, 0x6E6F,
@@ -358,6 +366,11 @@ int gpt_ixfs_slot(const struct gpt_guid *guid)
     if (gpt_guid_equal(guid, &GPT_GUID_IXFS))   return 0;
     if (gpt_guid_equal(guid, &GPT_GUID_IXFS_B)) return 1;
     return -1;
+}
+
+int gpt_is_recovery(const struct gpt_guid *guid)
+{
+    return gpt_guid_equal(guid, &GPT_GUID_RECOVERY) ? 1 : 0;
 }
 
 const char *gpt_type_name(const struct gpt_guid *guid)

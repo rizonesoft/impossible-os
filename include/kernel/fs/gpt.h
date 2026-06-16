@@ -85,6 +85,7 @@ extern const struct gpt_guid GPT_GUID_MS_BASIC_DATA;
 extern const struct gpt_guid GPT_GUID_LINUX_FS;
 extern const struct gpt_guid GPT_GUID_IXFS;
 extern const struct gpt_guid GPT_GUID_IXFS_B;
+extern const struct gpt_guid GPT_GUID_RECOVERY;
 extern const struct gpt_guid GPT_GUID_BIOS_BOOT;
 extern const struct gpt_guid GPT_GUID_MS_RESERVED;
 extern const struct gpt_guid GPT_GUID_MS_LDM_META;
@@ -135,6 +136,11 @@ const char *gpt_type_name(const struct gpt_guid *guid);
 /* A/B dual-slot identity (TODO-21): 0 = Slot A IXFS, 1 = Slot B IXFS,
  * -1 = not an IXFS-family type GUID. */
 int gpt_ixfs_slot(const struct gpt_guid *guid);
+
+/* 1 if the type GUID is the read-only Recovery partition (TODO-22). The kernel
+ * never mounts it in normal mode (the recovery bootloader reads it pre-EBS), so
+ * its read-only GPT attribute is honored by exclusion from drive-letter mount. */
+int gpt_is_recovery(const struct gpt_guid *guid);
 
 /* Serialize a GUID to 16-byte on-disk mixed-endian format. */
 void write_guid(const struct gpt_guid *g, uint8_t *buf);

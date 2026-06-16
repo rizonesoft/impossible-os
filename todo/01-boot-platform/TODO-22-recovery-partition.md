@@ -62,7 +62,7 @@ Add a read-only recovery partition to the GPT disk layout.
 - [x] GPT layout (make-system-disk `--ab`): EFI + BlackBox + ABMeta + Slot A + Slot B + Recovery (34 MiB, FAT32-floor-safe); slots split the space before Recovery (768M default -> ~270 MiB each, >= 96 MiB floor)
 - [x] Recovery type GUID `49504F53-7265-636F-7665-727900000001` ("IPOSrecovery") in the make-system-disk GPT writer (distinct from ESP/IXFS/ABMeta); the `bootcfg.py` placeholder + seed are -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
 - [/] Contents: `kernel.bak` (last known-good kernel) populated now via `mcopy`; `recovery.exe` (the §2 recovery bootloader) + `ixfs-fsck` (§3) deferred to those sections
-- [x] Recovery GPT entry marked read-only (attributes field offset 48, bit 60 -- Microsoft basic-data read-only convention)
+- [x] Recovery GPT entry read-only (attr bit 60) AND kernel-enforced: `gpt_is_recovery` + `partition_mount_filesystems` skip it, so a normal boot never drive-letter-mounts it (review HIGH: a FAT32 recovery would otherwise auto-mount writable as D: and expose `kernel.bak`)
 - [x] Build creates + FAT32-formats the recovery partition from the `.info` `RECOVERY_OFFSET`/`RECOVERY_SIZE` + populates `kernel.bak` (Makefile system-disk recipe)
 - [ ] First-boot self-seed (missing store + recovery + known-good slot -> synthesize 3-entry default) -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
 - [x] Commit: `"build: add recovery partition to GPT disk layout"`
@@ -74,10 +74,13 @@ Add a read-only recovery partition to the GPT disk layout.
 > **Notes:**
 > - **What shipped:** the Recovery GPT partition (34 MiB read-only) in `tools/make-system-disk.c` `--ab` layout (entry 5, type GUID 49504F53-..., attribute bit 60) + `RECOVERY_OFFSET`/`RECOVERY_SIZE` `.info` sidecar + Makefile FAT32 format + `kernel.bak` populate.
 > - **How it runs:** carved at the disk end (Slot A/B split the space before it); the build formats it FAT32 from the `.info` offsets and copies the built kernel as `kernel.bak`; the 6-partition image boots unregressed (smoke).
-> - **Design adoptions:** 34 MiB reserve (not 32) so the FAT32 volume clears the 65525 data-cluster floor that UEFI/OVMF requires; a layout-validation guard fails closed if the realized recovery is under that floor (review-caught). Evidence in commit message.
+> - **Design adoptions (review-caught):** 34 MiB reserve (not 32) so the FAT32 volume clears the 65525-cluster floor UEFI/OVMF requires + a fail-closed layout guard; the kernel skips the recovery GUID in `partition_mount_filesystems` so it is never drive-letter-mounted writable. Evidence in commit message.
 > - **Downstream effects:** the recovery slot is the target of TODO-21's both-slots-bad / ROLLBACK_BLOCKED recovery routing; §2-§7 build the recovery bootloader + fsck + restore + UI on top.
 > - **Canonical doc:** `tools/make-system-disk.c` (the `--ab` GPT layout) + the `<img>.info` `RECOVERY_OFFSET`/`SIZE` contract.
 > - **Scope boundary:** §1 ships the partition + read-only attr + `kernel.bak`; `recovery.exe` is §2, `ixfs-fsck` is §3, the first-boot self-seed is TODO-07 §16.
+
+> **Verified:** 2026-06-16 | commit `75d3915a` + recovery-mount-skip fix | 4/6 items | build OK | smoke PASS (KVM 2.11s, recovery NOT drive-letter-mounted; C: slot + X: BlackBox unregressed)
+> **Quality reviewed:** 2026-06-16 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 0 open | scope: kernel-code-quality + boot-code-quality (host disk tool + kernel mount path)
 
 ---
 
