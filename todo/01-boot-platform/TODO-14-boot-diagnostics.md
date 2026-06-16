@@ -130,7 +130,7 @@ Render a 4-digit hex POST code in the top-right framebuffer corner visible on ev
 - [x] `post_display16(code)`: renders 4 hex digits at native 8 px scale (gray on black) at top-right via direct VRAM before `SUBSYS_FB` or `fb_put_pixel()` + `fb_swap_rect()` after framebuffer init
 - [x] Port `0x80` is written from `boot_post_write16()` inside `boot_progress()` (also invoked by `boot_stage_report()`); `post_display16()` skips pixel writes when FB unavailable or `postcode=0` after config parse
 - [x] Called from `boot_stage_report()` after serial write (and again from `boot_progress()` / `boot_post_write16()` for the same stage)
-- [x] Cleared on `BOOT_STAGE_DESKTOP_READY` via `fb_fill_rect()` + `fb_swap_rect()` over the same width/height as `post_display16()` (`POST16_TOTAL_W` x `POST16_TOTAL_H`)
+- [x] Clear-on-`DESKTOP_READY` (`fb_fill_rect` + `fb_swap_rect`, `POST16_TOTAL_W` x `POST16_TOTAL_H`) lives in `boot_stage_report` (unwired -- see §2); the live `boot_progress` path relies on desktop overdraw to cover the digits.
 - [x] Commit: `"kernel: POST-style hex code display in framebuffer corner + I/O port 0x80"` (exact subject varies; see `git log -- src/kernel/main/boot_progress.c`)
 
 **Test checkpoint:** From kernel entry through desktop ready: four hex digits top-right; I/O port `0x80` high byte tracks the current 16-bit POST; digits clear on desktop ready. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -139,6 +139,8 @@ Render a 4-digit hex POST code in the top-right framebuffer corner visible on ev
 > - Integration: called from `boot_stage_report()` after the serial write; port 0x80 high byte tracks the 16-bit POST; cleared at `BOOT_STAGE_DESKTOP_READY` over the `POST16_*` geometry.
 > - Scope boundary: skips pixel writes when the framebuffer is unavailable or postcode=0 after config parse.
 > **Verified:** 2026-04-12 -- Desktop-ready clear uses `POST16_*` geometry; same TSC-ms guard as §2. Accepted: none.
+> **Accepted:** [M] explicit clear-on-DESKTOP_READY only runs via the unwired `boot_stage_report`; the live path relies on desktop overdraw -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 110)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1M accepted-XREF (clear-wiring owned by §2); doc-accuracy fixed | scope: kernel-code-quality (re-adversarial skipped -- doc fix, finding accepted to §2)
 
 ---
 
