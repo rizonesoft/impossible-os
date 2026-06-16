@@ -11954,11 +11954,9 @@ static const UINT8 g_ab_meta_type_guid[16] = {
     0x4D, 0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01   /* Data4 BE */
 };
 
-/* The two redundant ab_boot_metadata copies live at these fixed BYTE offsets
- * within the metadata partition. The atomic metadata writer MUST honor the
- * same offsets; this section only reads. */
-#define AB_META_COPY0_BYTE_OFF   0u
-#define AB_META_COPY1_BYTE_OFF   4096u
+/* The two redundant ab_boot_metadata copies live at fixed byte offsets
+ * AB_META_COPY0_BYTE_OFF / AB_META_COPY1_BYTE_OFF (shared read/write contract,
+ * defined in ab_boot_metadata.h). This section only reads. */
 
 /* Map the 0/1 slot encoding to a display character for serial logs. */
 static char ab_slot_char(unsigned int slot)

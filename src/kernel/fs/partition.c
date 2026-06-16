@@ -25,6 +25,7 @@
 #include "kernel/klog.h"
 #include "kernel/boot_info.h"   /* g_boot_info.boot_partition_guid -- A/B boot-disk binding */
 #include "kernel/printk.h"
+#include "boot/ab_boot_metadata.h"  /* A/B metadata write logic + validators (TODO-21 sec5/7) */
 
 /* ---- Partition storage ---- */
 static struct partition_info part_store[PART_MAX];
@@ -419,6 +420,166 @@ static int g_ab_slot_mismatch = 0;
 
 int ab_boot_mounted_slot(void) { return g_ab_mounted_slot; }
 int ab_boot_slot_mismatch(void) { return g_ab_slot_mismatch; }
+
+/* Defined later in this file; forward-declared for the mark-good path. */
+static int ab_boot_disk_index(void);
+static void part_build_subdev_name(const struct partition_info *pi,
+                                   char *name, int name_sz);
+
+/* Locate the A/B-metadata sub-blkdev by the bootloader-published range
+ * (boot_info.ab_meta_lba) on the boot disk -- NOT by re-deriving GPT state.
+ * Returns the sub-blkdev (and its disk_index via *out_disk) or NULL. */
+static const struct blkdev *ab_find_meta_blkdev(void)
+{
+    int boot_disk = ab_boot_disk_index();
+    uint64_t md_lba = g_boot_info.ab_meta_lba;
+    int i;
+    if (md_lba == 0)
+        return (const struct blkdev *)0;   /* no A/B metadata partition */
+    for (i = 0; i < part_count; i++) {
+        struct partition_info *pi = &part_store[i];
+        if (pi->start_lba != md_lba)
+            continue;
+        if (boot_disk >= 0 && pi->disk_index != boot_disk)
+            continue;   /* must be on the boot disk */
+        {
+            char name[16];
+            part_build_subdev_name(pi, name, (int)sizeof(name));
+            return blkdev_get(name);
+        }
+    }
+    return (const struct blkdev *)0;
+}
+
+/* Read one ab_boot_metadata copy at byte offset `byte_off` within the MD
+ * partition into *out. Returns 1 on a clean block read (record still must pass
+ * ab_boot_meta_is_valid), 0 on geometry/read error. */
+static int ab_read_meta_copy_k(const struct blkdev *dev, uint32_t byte_off,
+                               struct ab_boot_metadata *out)
+{
+    uint32_t bs = dev->sector_size;
+    uint8_t buf[4096];
+    if (bs < AB_BOOT_META_SIZE || bs > sizeof(buf))
+        return 0;
+    if (byte_off % bs != 0)
+        return 0;   /* copies are block-aligned by contract (0 and 4096) */
+    if (blkdev_read(dev, (uint64_t)(byte_off / bs), 1, buf) != 0)
+        return 0;
+    {
+        unsigned int i;
+        unsigned char *d = (unsigned char *)out;
+        for (i = 0; i < AB_BOOT_META_SIZE; i++)
+            d[i] = buf[i];
+    }
+    return 1;
+}
+
+/* A/B mark-boot-successful (TODO-21 sec5): reset the active slot's tries to 0
+ * and set successful=1, persisted to the A/B-metadata partition with a
+ * power-fail-atomic single-copy write (sec7 logic: overwrite the
+ * lower-generation/invalid copy with a strictly-greater generation; a crash
+ * leaves the other copy valid). Called once at boot acceptance (steady state).
+ * Returns 0 on success, -1 on refusal/failure (boot proceeds either way -- a
+ * failed mark-good just means the next boot may count a try). NOT marked good
+ * when the kernel mounted a DIFFERENT slot than the bootloader selected
+ * (g_ab_slot_mismatch) -- that would bless the wrong physical root. */
+int ab_boot_mark_slot_successful(int active_slot)
+{
+    const struct blkdev *dev;
+    struct ab_boot_metadata c0, c1, rec;
+    int got0, got1, v0, v1;
+    unsigned int target, next_gen, off;
+    uint32_t bs;
+    uint8_t buf[4096];
+
+    if (active_slot < 0 || (unsigned int)active_slot >= AB_BOOT_SLOT_COUNT)
+        return -1;
+    dev = ab_find_meta_blkdev();
+    if (!dev)
+        return 0;   /* non-A/B disk / no metadata partition -- nothing to mark */
+    /* This is an A/B disk (metadata partition present). Refuse UNLESS the
+     * kernel actually mounted EXACTLY the selected slot's root as C:. The
+     * g_ab_slot_mismatch flag alone is insufficient: a metadata-present disk
+     * whose slot-root tags are missing/corrupt falls to the legacy first-IXFS
+     * mount with g_ab_mounted_slot=-1 (or a wrong slot) and mismatch=0, so a
+     * boot from the wrong/untracked root could otherwise bless active_slot.
+     * The mounted==selected equality is the authoritative guard. */
+    if (g_ab_mounted_slot != active_slot) {
+        klog(LOG_WARN, "blk",
+             "A/B: mark-good refused -- mounted slot %d != selected slot %d",
+             (uint64_t)g_ab_mounted_slot, (uint64_t)active_slot);
+        return -1;
+    }
+    bs = dev->sector_size;
+    if (bs < AB_BOOT_META_SIZE || bs > sizeof(buf))
+        return -1;
+
+    got0 = ab_read_meta_copy_k(dev, AB_META_COPY0_BYTE_OFF, &c0);
+    got1 = ab_read_meta_copy_k(dev, AB_META_COPY1_BYTE_OFF, &c1);
+    if (!got0 || !got1) {
+        klog(LOG_WARN, "blk",
+             "A/B: mark-good -- metadata block unreadable, cannot mark good");
+        return -1;
+    }
+    v0 = ab_boot_meta_is_valid(&c0);
+    v1 = ab_boot_meta_is_valid(&c1);
+
+    /* Base the new record on the newest valid copy, else factory defaults. */
+    {
+        const struct ab_boot_metadata *win = (const struct ab_boot_metadata *)0;
+        if (ab_boot_meta_select_newest(v0 ? &c0 : (const struct ab_boot_metadata *)0,
+                                       v1 ? &c1 : (const struct ab_boot_metadata *)0,
+                                       &win) && win)
+            rec = *win;
+        else
+            ab_boot_meta_default(&rec);
+    }
+
+    next_gen = ab_boot_meta_next_generation(v0, c0.generation, v1, c1.generation);
+    if (next_gen == 0u) {
+        klog(LOG_WARN, "blk",
+             "A/B: mark-good -- generation exhausted, refusing write");
+        return -1;
+    }
+    target = ab_boot_meta_write_target(v0, c0.generation, v1, c1.generation);
+
+    /* Apply the mark-good mutation + the strictly-greater generation. */
+    rec.active_slot = (unsigned int)active_slot;
+    rec.slot[active_slot].tries = 0u;
+    rec.slot[active_slot].successful = 1u;
+    rec.generation = next_gen;
+    ab_boot_meta_finalize(&rec);
+
+    /* Power-fail-atomic single-copy read-modify-write of the target copy. */
+    off = (target == 0u) ? AB_META_COPY0_BYTE_OFF : AB_META_COPY1_BYTE_OFF;
+    if (off % bs != 0)
+        return -1;
+    if (blkdev_read(dev, (uint64_t)(off / bs), 1, buf) != 0)
+        return -1;
+    {
+        unsigned int i;
+        const unsigned char *s = (const unsigned char *)&rec;
+        for (i = 0; i < AB_BOOT_META_SIZE; i++)
+            buf[i] = s[i];
+    }
+    if (blkdev_write(dev, (uint64_t)(off / bs), 1, buf) != 0) {
+        klog(LOG_WARN, "blk", "A/B: mark-good -- metadata write failed");
+        return -1;
+    }
+    /* Durability is the whole point of the atomic write: a flush failure means
+     * the record may live only in a volatile device cache, so the next boot
+     * could read stale tries/successful and roll back a healthy slot. Treat a
+     * flush failure as a write failure -- do NOT report success. */
+    if (blkdev_sync(dev) != 0) {
+        klog(LOG_WARN, "blk",
+             "A/B: mark-good -- metadata flush failed (not durable)");
+        return -1;
+    }
+    klog(LOG_INFO, "blk",
+         "A/B: boot marked successful (slot %d, copy %u, gen %u)",
+         (uint64_t)active_slot, (uint64_t)target, (uint64_t)next_gen);
+    return 0;
+}
 
 /* Build the "disk<D>p<P>" sub-blkdev name for a partition. */
 static void part_build_subdev_name(const struct partition_info *pi,

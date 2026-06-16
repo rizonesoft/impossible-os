@@ -26,6 +26,7 @@
 #include "main/main_internal.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_info.h"
+#include "kernel/fs/partition.h"   /* ab_boot_mark_slot_successful (TODO-21 A/B mark-good) */
 
 /* Headless state + test seed. All reads/writes are plain volatile
  * because tests + compositor thread never race on them today:
@@ -335,6 +336,13 @@ void compositor_run(void)
                  * synchronous if sys_wq is unavailable so the raise
                  * still happens on every steady boot. */
                 (void)boot_rollback_request_raise();
+                /* A/B dual-slot mark-boot-successful (TODO-21): the desktop
+                 * reaching its first composited frame IS the boot-acceptance
+                 * signal. Reset the active slot's tries=0 + successful=1 so the
+                 * bootloader does not roll back a healthy slot. One-shot
+                 * (first_frame), fast local-disk write; a no-op on non-A/B
+                 * disks and refused when the mounted slot != the selected one. */
+                (void)ab_boot_mark_slot_successful((int)g_boot_info.active_slot);
             }
             first_frame = 0;
         } else if (cursor_moved) {

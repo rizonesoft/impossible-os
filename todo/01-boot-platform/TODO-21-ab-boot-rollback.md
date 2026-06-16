@@ -51,7 +51,7 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 | 💎  |   2   | Dual-slot disk layout in build system           | §1         |  [/]   |
 | 💎  |   3   | Bootloader slot selection logic                 | §1, §2     |  [/]   |
 | 💎  |   4   | Boot failure counting and rollback              | §3         |  [ ]   |
-| 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [ ]   |
+| 💎  |   5   | Kernel `mark_boot_successful()` syscall         | §4         |  [/]   |
 | ⭐  |   6   | Slot status in boot diagnostics                 | §1-§5      |  [ ]   |
 | 💎  |   7   | Boot metadata integrity + atomic writes         | §1         |  [/]   |
 | 💎  |   8   | Per-slot anti-rollback version floor            | §1, §7     |  [ ]   |
@@ -187,16 +187,25 @@ Automatic rollback after 3 consecutive boot failures.
 
 Kernel-side API to tell the bootloader "this boot worked".
 
-- [ ] Add syscall or kernel function: `mark_boot_successful()` -- writes `successful=1, tries=0` to boot metadata only after TODO-02 §10 marks the boot accepted
-- [ ] Called from `boot_phase3()` after the configured acceptance stage is satisfied, not a hard-coded "desktop visible" heuristic
-- [ ] Before marking good, require the slot kernel to have reported a verified identity (signature / code-integrity pass); refuse mark-good on an unverified slot -> XREF: `02-kernel-core/TODO-19` + `TODO-02 §1`
-- [ ] On mark-good, advance the §8 `rollback_floor` to the active slot's `rollback_index` (never lower it)
-- [ ] On success: `"[BOOT] Boot marked successful (Slot %c)"`
-- [ ] If metadata write fails: `"[WARN] Cannot mark boot successful -- rollback may trigger on next reboot"`
-- [ ] For NVRAM storage: use UEFI `SetVariable()` via runtime services
+- [x] `ab_boot_mark_slot_successful(active_slot)` (`partition.c`): power-fail-atomic single-copy blkdev RMW writing `successful=1, tries=0` (§7 helpers); refuses unless mounted slot == selected; durable (`blkdev_sync`-checked)
+- [/] Called at boot acceptance from the compositor first-frame steady-state; configured-acceptance-stage upgrade -> XREF: [`02-kernel-core/TODO-02 §10`](../02-kernel-core/TODO-02-kernel-configuration-policy.md)
+- [ ] Verified slot identity gate before mark-good (refuse unsigned/unverified slot); blocked on code-integrity infra -> XREF: [`02-kernel-core/TODO-19`](../02-kernel-core/TODO-19-code-integrity-trust-policy.md) + `TODO-02 §1`
+- [ ] On mark-good, advance the §8 `rollback_floor` to the active slot's `rollback_index` (never lower it) -- lands with §8
+- [x] On success: `"A/B: boot marked successful (slot %d, copy %u, gen %u)"`; write/flush failure logs + returns -1 (boot proceeds)
+- [x] Storage = GPT/disk metadata blocks (NVRAM `SetVariable` rejected per BootSticky doctrine, §1) -- writes the MD partition, not a UEFI variable
 - [ ] Commit: `"kernel: mark_boot_successful -- reset try counter after successful boot"`
 
-**Test checkpoint:** Normal boot → serial shows `"Boot marked successful (Slot A)"` after the configured acceptance stage is reached. Test on: QEMU smoke + bare metal -- `SetVariable()` at runtime via UEFI runtime services must persist across reboot on real firmware, not just OVMF.
+**Test checkpoint:** Normal boot -> serial shows `"A/B: boot marked successful (slot 0, copy 0, gen 1)"` after the desktop first frame (smoke-validated). Refused when mounted slot != selected, or on flush failure. Test on: QEMU smoke + bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | ab_boot pure write-logic cases pass | the kernel write adapter (`ab_boot_mark_slot_successful`, blkdev I/O) has no RAM-blkdev unit fixture -- validated via QEMU smoke (mark-good fires + writes gen 1) + bare metal
+
+> **Notes:**
+> - **What shipped:** `ab_boot_mark_slot_successful()` + `ab_find_meta_blkdev()` + `ab_read_meta_copy_k()` in `partition.c` (kernel A/B metadata write path) + the compositor first-frame hook.
+> - **How it runs:** fires once at the desktop first-frame steady-state; locates the MD sub-blkdev by `start_lba == boot_info.ab_meta_lba`; power-fail-atomic single-copy RMW; durable (`blkdev_sync`-checked).
+> - **Fail posture:** refuses unless mounted slot == selected slot; refuses on generation exhaustion or flush failure; no-op on non-A/B disks; rollback stays dormant until §4 increments tries (no brick).
+> - **Downstream effects:** initializes the on-disk metadata (gen 1) on first successful boot; §4 tries-increment + rollback builds on this reset.
+> - **Canonical doc:** `include/boot/ab_boot_metadata.h` + `docs/boot/boot-info-fields.md` (`ab_meta_lba`).
+> - **Scope boundary:** verified-identity gate (TODO-19) + configured-acceptance-stage upgrade (TODO-02 §10) + §8 floor-advance are tracked `[ ]` items here; §4 owns the tries-increment that activates rollback.
 
 ---
 
@@ -258,7 +267,7 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 | 💎 | Dual-slot boot            | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess   | 🟦 §1-§3 select+mount     |
 | 💎 | Boot failure counting     | ✅ 2-attempt detection     | ✅ systemd tries counter | ⬜ §4                     |
 | 💎 | Automatic rollback        | ⚠️ Manual repair needed   | ⚠️ Manual or auto        | ⬜ §4                     |
-| 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | ⬜ §5                     |
+| 💎 | Mark boot successful      | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | 🟦 §5 first-frame mark-good |
 | 💎 | Metadata integrity (CRC)  | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual    | ⬜ §7                     |
 | 💎 | Anti-rollback floor       | ⚠️ WU rollback window      | ✅ Android stored index   | ⬜ §8                     |
 | ⭐ | Slot status in boot UI    | ❌ Hidden                  | ❌ journalctl only       | ⬜ §6 🚀                  |

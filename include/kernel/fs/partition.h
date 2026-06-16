@@ -62,3 +62,10 @@ void partition_mount_filesystems(int active_slot);
  * the mark-boot-successful path must refuse to mark the selected slot good. */
 int  ab_boot_mounted_slot(void);
 int  ab_boot_slot_mismatch(void);
+
+/* A/B mark-boot-successful (TODO-21): reset the active slot's tries to 0 +
+ * set successful=1, persisted to the A/B-metadata partition with a power-fail-
+ * atomic single-copy write. Call once at boot acceptance (steady state).
+ * Returns 0 on success/no-op (non-A/B disk), -1 on refusal/failure. Refuses
+ * when the kernel mounted a different slot than the bootloader selected. */
+int  ab_boot_mark_slot_successful(int active_slot);

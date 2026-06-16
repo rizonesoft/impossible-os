@@ -47,6 +47,13 @@
 /* Max boot attempts before a slot is considered exhausted (sec 4 rollback). */
 #define AB_BOOT_MAX_TRIES     3u
 
+/* The two redundant copies live at these fixed BYTE offsets within the
+ * A/B-metadata partition. Shared read/write contract: the bootloader reader
+ * (sec 3) and BOTH writers (bootloader sec 4 + kernel sec 5) use these. The
+ * 4 KiB spacing keeps each copy in its own media block on 512B..4096B media. */
+#define AB_META_COPY0_BYTE_OFF   0u
+#define AB_META_COPY1_BYTE_OFF   4096u
+
 /* Per-slot record. tries/successful drive the sec 3 successful/pending/
  * unbootable state model (the state is derived, not a separate field):
  *   - unbootable = tries >= MAX (regardless of successful -- mark-good resets
