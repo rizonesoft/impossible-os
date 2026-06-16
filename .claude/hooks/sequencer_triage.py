@@ -3,19 +3,30 @@
 sequencer_triage.py -- triage/traversal oracle for the overnight sequencer.
 
 Pure read-only classifier over the todo-graph cache (build/todo-cache.json)
-plus a markdown scan for `> **Verified:**` stamps. The overnight-sequencer
-skill and run_phase_guard.py use it to decide, deterministically:
+plus a markdown scan for section review stamps. The overnight-sequencer skill
+and run_phase_guard.py use it to decide, deterministically:
 
   * which TODO file to work next (full-repo numeric traversal), and
-  * for a given file, which sections are DONE / DONE_UNSTAMPED / NEEDS_WORK.
+  * for a given file, which sections are DONE / NEEDS_WORK.
+
+A section is DONE only if it is genuinely finished by the operator's definition:
+either fully shipped-AND-reviewed (BOTH a `> **Verified:**` stamp AND a
+`> **Quality reviewed:**` stamp), or naturally deferred (a `> **Deferred:**`
+stamp parks it -- a deferred section legitimately carries neither Verified nor
+Quality-reviewed). Everything else is NEEDS_WORK.
 
 Classes
-  DONE           section [x] (or shipped-with-deferral [/]) AND Verified-stamped
-  DONE_UNSTAMPED section [x] but no Verified stamp (likely old-system work)
-  NEEDS_WORK     [ ] / blank, or a [/] with no Verified stamp (still in progress)
+  DONE        shipped [x]/[/] with BOTH Verified AND Quality-reviewed stamps,
+              OR a [x]/[/] section carrying a Deferred stamp (parked).
+  NEEDS_WORK  anything else -- [ ]/blank, an in-progress [/], OR a shipped [x]
+              that is missing either stamp (shipped-but-unreviewed is NOT done).
 
-File class = DONE if every section DONE; DONE_UNSTAMPED if every section is
-DONE/DONE_UNSTAMPED and at least one is unstamped; else NEEDS_WORK.
+There is deliberately no "DONE_UNSTAMPED" class: a shipped section with no
+review stamps is unreviewed work, not done. (Removed 2026-06-16 -- the prior
+oracle trusted unstamped [x] as "old-system work" and silently skipped its
+review; the operator's bar is shipped AND reviewed.)
+
+File class = DONE if every section is DONE; else NEEDS_WORK.
 
 Blocked-vs-runnable on a NEEDS_WORK section is intentionally NOT decided here:
 the implement/review skills already defer blocked-with-XREF items, and the
@@ -38,6 +49,8 @@ import sys
 
 SECTION_HEADING_RE = re.compile(r"^##\s+(\d+)\.")
 VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
+QUALITY_RE = re.compile(r"^>\s*\*\*Quality reviewed:\*\*")
+DEFERRED_RE = re.compile(r"^>\s*\*\*Deferred:\*\*")
 TODO_NUM_RE = re.compile(r"/TODO-(\d+)-")
 # An implementation TODO lives in a numbered domain dir and is named TODO-NN-*.
 # This excludes INDEX.md and non-TODO doctrine files (e.g. the runner-doctrine
@@ -49,7 +62,6 @@ def is_impl_todo(file_path):
     return bool(IMPL_TODO_RE.search(file_path.replace("\\", "/")))
 
 DONE = "DONE"
-DONE_UNSTAMPED = "DONE_UNSTAMPED"
 NEEDS_WORK = "NEEDS_WORK"
 
 
@@ -79,9 +91,13 @@ def load_cache(cache_path, root):
     return data
 
 
-def verified_sections(md_path):
-    """Return the set of section numbers (n) carrying a `> **Verified:**` stamp."""
-    out = set()
+def section_stamps(md_path):
+    """Map section number -> set of stamp kinds present: 'V', 'Q', 'D'.
+
+    V = `> **Verified:**`, Q = `> **Quality reviewed:**`, D = `> **Deferred:**`.
+    Stamps are attributed to the section heading they follow.
+    """
+    out = {}
     if not os.path.exists(md_path):
         return out
     cur = None
@@ -90,37 +106,49 @@ def verified_sections(md_path):
             m = SECTION_HEADING_RE.match(line)
             if m:
                 cur = int(m.group(1))
+                out.setdefault(cur, set())
                 continue
-            if cur is not None and VERIFIED_RE.match(line):
-                out.add(cur)
+            if cur is None:
+                continue
+            if VERIFIED_RE.match(line):
+                out[cur].add("V")
+            elif QUALITY_RE.match(line):
+                out[cur].add("Q")
+            elif DEFERRED_RE.match(line):
+                out[cur].add("D")
     return out
 
 
-def classify_section(section, verified):
+def classify_section(section, stamps):
+    """DONE iff shipped AND (Verified AND Quality-reviewed) OR Deferred-parked.
+
+    `stamps` maps section number -> set of stamp kinds (see section_stamps).
+    A bare [ ] is never done. A shipped [x]/[/] is done only with BOTH the
+    Verified and Quality-reviewed stamps; either alone (or none) is NEEDS_WORK.
+    A Deferred stamp parks a [x]/[/] section as done-for-now (it legitimately
+    carries neither Verified nor Quality-reviewed).
+    """
     st = (section.get("status") or "").strip()
     n = section.get("n")
-    if st == "x":
-        return DONE if n in verified else DONE_UNSTAMPED
-    if st == "/":
-        # A stamped [/] is shipped-with-a-deferral (done for now); an
-        # unstamped [/] is still in progress.
-        return DONE if n in verified else NEEDS_WORK
+    if st not in ("x", "/"):
+        return NEEDS_WORK
+    kinds = stamps.get(n, frozenset())
+    if "D" in kinds:
+        return DONE
+    if "V" in kinds and "Q" in kinds:
+        return DONE
     return NEEDS_WORK
 
 
 def classify_file(entry, root):
     md_path = os.path.join(root, entry["file_path"])
-    verified = verified_sections(md_path)
+    stamps = section_stamps(md_path)
     sections = entry.get("sections") or []
     if not sections:
         return NEEDS_WORK, []
-    per = [(s.get("n"), classify_section(s, verified)) for s in sections]
-    classes = [c for _, c in per]
-    if all(c == DONE for c in classes):
-        return DONE, per
-    if all(c in (DONE, DONE_UNSTAMPED) for c in classes):
-        return DONE_UNSTAMPED, per
-    return NEEDS_WORK, per
+    per = [(s.get("n"), classify_section(s, stamps)) for s in sections]
+    cls = DONE if all(c == DONE for _, c in per) else NEEDS_WORK
+    return cls, per
 
 
 def _todo_num(file_path):
@@ -172,20 +200,19 @@ def cmd_classify(cache, root, target):
 
 
 def cmd_summary(cache, root):
-    counts = {DONE: 0, DONE_UNSTAMPED: 0, NEEDS_WORK: 0}
+    counts = {DONE: 0, NEEDS_WORK: 0}
     for entry in traversal_order(cache):
         cls, _ = classify_file(entry, root)
         counts[cls] += 1
         print(f"{cls:14s} {entry['file_path']}")
-    print(f"\n-- {counts[DONE]} DONE | {counts[DONE_UNSTAMPED]} DONE_UNSTAMPED "
-          f"| {counts[NEEDS_WORK]} NEEDS_WORK --")
+    print(f"\n-- {counts[DONE]} DONE | {counts[NEEDS_WORK]} NEEDS_WORK --")
     return 0
 
 
 def cmd_selftest(cache, root):
     failures = []
     # 1. every entry classifies without raising and yields a known class.
-    valid = {DONE, DONE_UNSTAMPED, NEEDS_WORK}
+    valid = {DONE, NEEDS_WORK}
     for entry in cache:
         cls, per = classify_file(entry, root)
         if cls not in valid:
@@ -207,19 +234,28 @@ def cmd_selftest(cache, root):
     entry, cls = next_file(cache, root)
     if entry is not None and cls == DONE:
         failures.append("next_file returned a DONE file")
-    # 4. classify_section truth table.
+    # 4. classify_section truth table. stamps maps n -> set of 'V'/'Q'/'D'.
     tt = [
-        ({"n": 1, "status": "x"}, {1}, DONE),
-        ({"n": 1, "status": "x"}, set(), DONE_UNSTAMPED),
-        ({"n": 2, "status": "/"}, {2}, DONE),
-        ({"n": 2, "status": "/"}, set(), NEEDS_WORK),
-        ({"n": 3, "status": ""}, {3}, NEEDS_WORK),
-        ({"n": 3, "status": " "}, set(), NEEDS_WORK),
+        # shipped [x] needs BOTH stamps to be DONE
+        ({"n": 1, "status": "x"}, {1: {"V", "Q"}}, DONE),
+        ({"n": 1, "status": "x"}, {1: {"V"}}, NEEDS_WORK),       # verified-only is NOT done
+        ({"n": 1, "status": "x"}, {1: {"Q"}}, NEEDS_WORK),       # quality-only is NOT done
+        ({"n": 1, "status": "x"}, {}, NEEDS_WORK),               # unstamped shipped is NOT done
+        # shipped-with-deferral [/] needs both stamps too
+        ({"n": 2, "status": "/"}, {2: {"V", "Q"}}, DONE),
+        ({"n": 2, "status": "/"}, {2: {"V"}}, NEEDS_WORK),
+        ({"n": 2, "status": "/"}, {}, NEEDS_WORK),
+        # naturally-deferred section: Deferred stamp parks it, no V/Q needed
+        ({"n": 4, "status": "/"}, {4: {"D"}}, DONE),
+        ({"n": 4, "status": "x"}, {4: {"D"}}, DONE),
+        # bare [ ]/blank is never done, even with stray stamps
+        ({"n": 3, "status": ""}, {3: {"V", "Q"}}, NEEDS_WORK),
+        ({"n": 3, "status": " "}, {}, NEEDS_WORK),
     ]
-    for sec, ver, want in tt:
-        got = classify_section(sec, ver)
+    for sec, st, want in tt:
+        got = classify_section(sec, st)
         if got != want:
-            failures.append(f"truth-table {sec} ver={ver}: want {want} got {got}")
+            failures.append(f"truth-table {sec} stamps={st}: want {want} got {got}")
     if failures:
         for f in failures:
             print("FAIL:", f, file=sys.stderr)
