@@ -140,6 +140,17 @@ static boot_result_t async_virtio_blk_init(void)
 
 /* ---- Phase 2 ------------------------------------------------------------ */
 
+/* Substring test for the BlackBox cleanup's rotated-log matcher. */
+static int bb_name_contains(const char *s, const char *sub)
+{
+    for (; *s; s++) {
+        const char *a = s, *b = sub;
+        while (*a && *b && *a == *b) { a++; b++; }
+        if (!*b) return 1;
+    }
+    return 0;
+}
+
 void boot_phase2(void)
 {
     uint32_t i;
@@ -400,12 +411,19 @@ void boot_phase2(void)
                         uint32_t idx2 = 0;
                         struct vfs_dirent *de2;
                         while ((de2 = vfs_readdir(logs_dir, idx2)) != 0) {
-                            /* Match *.N pattern (rotated files) */
+                            /* Match only actual rotated logs: a regular file
+                             * named *.log.N or *.jsonl.N (the rotate_log_file
+                             * naming). Requiring VFS_FILE + the .log/.jsonl
+                             * infix avoids deleting unrelated artifacts (or a
+                             * directory) that merely end in ".<digit>". */
                             int len = 0;
                             while (de2->name[len]) len++;
-                            if (len >= 2 && de2->name[len-2] == '.'
+                            if (de2->type == VFS_FILE
+                                && len >= 2 && de2->name[len-2] == '.'
                                 && de2->name[len-1] >= '1'
-                                && de2->name[len-1] <= '9') {
+                                && de2->name[len-1] <= '9'
+                                && (bb_name_contains(de2->name, ".log")
+                                    || bb_name_contains(de2->name, ".jsonl"))) {
                                 char path[64];
                                 int p = 0, j;
                                 const char *pfx = "X:\\Logs\\";
@@ -426,7 +444,12 @@ void boot_phase2(void)
 
                 if (deleted > 0) {
                     uint64_t new_free = fat32_get_free_bytes(bb_vol);
-                    uint64_t freed = new_free - free_bytes;
+                    /* Clamp: concurrent klog writes to X:\Logs can consume
+                     * space during cleanup, so new_free may dip below the
+                     * pre-cleanup value -- avoid a uint64 underflow that
+                     * would report a nonsense freed amount. */
+                    uint64_t freed = (new_free >= free_bytes)
+                                   ? new_free - free_bytes : 0;
                     klog(LOG_WARN, "boot",
                          "BlackBox: cleanup freed %u KiB (%u files removed)",
                          (uint64_t)(freed / 1024), (uint64_t)deleted);

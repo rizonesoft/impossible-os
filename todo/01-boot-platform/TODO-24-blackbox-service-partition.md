@@ -54,7 +54,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | 💎 |   7   | Crash dump path -- crash_recovery.log to X:\Crash\    | §3, §4            |  [x]   |
 | 💎 |   8   | Perf and diag -- boot-profile, hwdump to X:\Perf\Diag\| §3, §4            |  [x]   |
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [x]   |
-| 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [x]   |
+| 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [/]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [x]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T09 §6        |  [x]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [x]   |
@@ -309,10 +309,23 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [x] If free < 10%: cleanup runs -- deletes oldest Boot\ files beyond 10 sessions, then rotated `.N` logs in Logs\
 - [x] MaxBootSessions = 10, MinFreeMiB = 16 (hardcoded defaults, TODO: wire to registry)
 - [x] Cleanup log: `"BlackBox: cleanup freed N KiB (N files removed)"`
-- [x] If critically low after cleanup: falls back to C:\ with LOG_ERROR
+- [/] If critically low after cleanup: LOG_ERROR fires, but the C:\ redirect (`klog_using_blackbox=0`) is defeated by `klog_resolve_dir()` at `boot_storage.c:607` re-setting the flag -- durable-fallback fix deferred below
+- [ ] Durable low-space C:\ fallback: add a sticky `klog_blackbox_forced_off` flag honored by `klog_resolve_dir` so the §10 critical-low redirect survives the later resolve (fixes the `[/]` item above). (`klog_disk.c`)
+- [ ] Boot\ retention precision: delete oldest by the `YYMMDDNN` filename, not `vfs_readdir` slot order (FAT32 slot reuse breaks monotonic age) -- collect into a bounded array, sort, prune the surplus. (`boot_storage.c` ~371)
+- [ ] Harden cleanup path builders: `path[64]` silently truncates long names (wrong `vfs_unlink` target) -- use `VFS_MAX_PATH` + fail-closed skip on overflow for both the Boot\ and Logs\ builders.
+- [ ] Wire `MaxBootSessions`/`MinFreeMiB` from registry `HKLM\SYSTEM\BlackBox` (hardcoded 10/16 at `boot_storage.c:357,438`); closes the item-310 deferral.
 - [x] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 
 **Test checkpoint:** Fill BlackBox with dummy files until < 10% free. Boot -> serial shows cleanup message with freed space. Boot sessions beyond 10 are pruned. Verify on QEMU WHPX, TCG, VirtualBox.
+
+> **Notes:**
+> - Disk-space cleanup runs when X:\ FAT32 is <10% free: prunes Boot\ sessions beyond MaxBootSessions(10) + rotated `*.log.N`/`*.jsonl.N` in Logs\, rechecks free, then aims to fall back to C:\ if still critical.
+> - Review hardened two hazards: the rotated-log matcher now requires `VFS_FILE` + a `.log`/`.jsonl` infix (was deleting any `.<digit>` name), and the freed-bytes display is clamped against uint64 underflow.
+> - Four refinements remain open (`[/]` -- items above): durable low-space C:\ fallback (redirect currently defeated by `klog_resolve_dir`), oldest-by-filename retention, path-builder hardening, registry-backed quota config.
+> **Deferred:** [M] §10 critical-low C:\ redirect is defeated by `klog_resolve_dir()` re-setting the flag -> XREF: 01-boot-platform/TODO-24 §10 (item: "Durable low-space C:\ fallback" at line 313)
+> **Deferred:** [M] Boot\ retention deletes `vfs_readdir` slot order, not oldest-by-filename -> XREF: 01-boot-platform/TODO-24 §10 (item: "Boot\ retention precision" at line 314)
+> **Deferred:** [M] cleanup path builders silently truncate long names (`path[64]`) -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 315)
+> **Deferred:** [M] `MaxBootSessions`/`MinFreeMiB` hardcoded, not registry-backed -> XREF: 01-boot-platform/TODO-24 §10 (item: "Wire `MaxBootSessions`/`MinFreeMiB`" at line 316)
 
 ---
 
