@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/klog.h"
+#include "kernel/fs/vfs.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/timer.h"
@@ -512,11 +513,11 @@ crash_alloc:
 
 void klog_crash_write_to_disk(void)
 {
-    extern struct vfs_node *vfs_open(const char *, uint32_t);
-    extern int32_t vfs_write(struct vfs_node *, uint64_t, uint32_t, const uint8_t *);
-    extern void vfs_close(struct vfs_node *);
-    extern int vfs_is_mounted(char drive);
-
+    /* vfs_open/vfs_write/vfs_close/vfs_is_mounted + the canonical VFS_O_*
+     * flags come from kernel/fs/vfs.h. The previous function-local externs
+     * and #defines had drifted: VFS_O_TRUNC was defined 0x08 (== canonical
+     * VFS_O_APPEND), so the crash log opened in APPEND mode and a shorter
+     * recovered log left stale bytes from an older crash. */
     if (s_recovered_count == 0)
         return;
 
@@ -524,10 +525,6 @@ void klog_crash_write_to_disk(void)
         klog(LOG_WARN, "CRASH", "Cannot write crash_recovery.log -- no writable volume");
         return;
     }
-
-    #define VFS_O_WRITE  0x02
-    #define VFS_O_CREATE 0x04
-    #define VFS_O_TRUNC  0x08
 
     /* Write to X:\Crash\ (BlackBox) or C:\Impossible\System\Logs\ (fallback) */
     const char *cr_dir = klog_using_blackbox ? "X:\\Crash\\" : klog_dir;
@@ -550,7 +547,18 @@ void klog_crash_write_to_disk(void)
     static const char file_hdr[] = "# Impossible OS Crash Recovery Log\n"
                                     "# Entries recovered from previous boot crash\n\n";
     uint32_t offset = 0;
-    vfs_write(file, offset, sizeof(file_hdr) - 1, (const uint8_t *)file_hdr);
+    int hw = vfs_write(file, offset, sizeof(file_hdr) - 1, (const uint8_t *)file_hdr);
+    if (hw < 0 || (uint32_t)hw != sizeof(file_hdr) - 1) {
+        /* Short/failed write: the artifact is now a partial header. Do NOT
+         * clear s_recovered_count -- keep the only in-memory copy so the
+         * evidence is not silently lost and a later attempt can retry. */
+        klog(LOG_WARN, "CRASH",
+             "crash_recovery.log header write failed (%d of %u); keeping %u recovered entries",
+             (int64_t)hw, (uint64_t)(sizeof(file_hdr) - 1),
+             (uint64_t)s_recovered_count);
+        vfs_close(file);
+        return;
+    }
     offset += sizeof(file_hdr) - 1;
 
     /* Write each recovered entry */
@@ -594,20 +602,43 @@ void klog_crash_write_to_disk(void)
         }
         line[pos++] = '\n';
 
-        vfs_write(file, offset, pos, (const uint8_t *)line);
+        int ew = vfs_write(file, offset, pos, (const uint8_t *)line);
+        if (ew < 0 || (uint32_t)ew != pos) {
+            /* Preserve recovered entries on a short/failed write rather
+             * than reporting a truncated log as complete. */
+            klog(LOG_WARN, "CRASH",
+                 "crash_recovery.log entry %u write failed (%d of %u); keeping recovered entries",
+                 (uint64_t)i, (int64_t)ew, (uint64_t)pos);
+            vfs_close(file);
+            return;
+        }
         offset += pos;
     }
 
-    vfs_close(file);
+    /* Durable boundary: flush to the device cache (FAT32 vfs_flush syncs)
+     * before discarding the only in-memory copy. A write accepted into the
+     * FS cache but not flushed could leave the artifact truncated/replaced
+     * while the evidence is lost. Same flush discipline panic.c uses for
+     * last-panic.txt. Preserve s_recovered_count unless write+flush+close
+     * all succeed. */
+    if (vfs_flush(file) != 0) {
+        klog(LOG_WARN, "CRASH",
+             "crash_recovery.log flush failed; keeping %u recovered entries",
+             (uint64_t)s_recovered_count);
+        vfs_close(file);
+        return;
+    }
+    if (vfs_close(file) != 0) {
+        klog(LOG_WARN, "CRASH",
+             "crash_recovery.log close failed; keeping %u recovered entries",
+             (uint64_t)s_recovered_count);
+        return;
+    }
     klog(LOG_INFO, "CRASH", "Crash recovery log: %u entries written to %scrash_recovery.log",
          (uint64_t)s_recovered_count, cr_dir);
 
-    /* Clear recovered buffer */
+    /* Clear recovered buffer only after a durable, fully successful write. */
     s_recovered_count = 0;
-
-    #undef VFS_O_WRITE
-    #undef VFS_O_CREATE
-    #undef VFS_O_TRUNC
 }
 
 /* ---- Per-subsystem verbosity ---- */

@@ -275,10 +275,22 @@ void boot_phase3(void)
      * surface and serial klog is authoritative. The full record is written to
      * X:\Crash\last-panic.txt below. */
     if (panic_had_previous_crash()) {
-        boot_splash_diag("NOTICE: system shut down unexpectedly -- see "
-                         "X:\\Crash\\last-panic.txt");
+        /* Point the operator at the SAME path panic.c actually wrote to:
+         * X:\Crash\ when BlackBox is mounted, else the C:\ fallback. A
+         * hardcoded X:\ hint would misdirect on a BlackBox-absent boot. */
+        extern int klog_using_blackbox;
+        const char *pp = klog_using_blackbox
+            ? "X:\\Crash\\last-panic.txt"
+            : "C:\\Impossible\\System\\Logs\\last-panic.txt";
+        char msg[96];
+        const char *pre = "NOTICE: system shut down unexpectedly -- see ";
+        int mp = 0, j;
+        for (j = 0; pre[j] && mp < (int)sizeof(msg) - 1; j++) msg[mp++] = pre[j];
+        for (j = 0; pp[j] && mp < (int)sizeof(msg) - 1; j++) msg[mp++] = pp[j];
+        msg[mp] = '\0';
+        boot_splash_diag(msg);
         klog(LOG_WARN, "boot",
-             "[PANIC] previous boot crashed; evidence -> X:\\Crash\\last-panic.txt");
+             "[PANIC] previous boot crashed; evidence -> %s", pp);
     }
     boot_splash_finish();
 

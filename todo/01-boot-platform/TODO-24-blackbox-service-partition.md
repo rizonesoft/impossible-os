@@ -242,6 +242,15 @@ Move crash-persistent log recovery output to `X:\Crash\`.
 > [!NOTE]
 > Handoff: `TODO-14-boot-diagnostics.md` §5 writes `X:\Crash\last-panic.txt` (shipped) -- same `X:\Crash\` mount and BlackBox path rules as this section. Retention of the unbounded `X:\Crash\WER\` reports is owned by §16.
 
+> **Notes:**
+> - `crash_recovery.log` routes to `X:\Crash\` when BlackBox is mounted, C:\ `klog_dir` fallback otherwise (`klog_crash_write_to_disk`); producer (reserved-RAM ring survival) owned by TODO-04 §8, binary dumps by TODO-27.
+> - Fixed flag-drift: `klog.c` locally defined `VFS_O_TRUNC` as `0x08` (= canonical `VFS_O_APPEND`), so the crash log opened APPEND not TRUNC and left stale bytes; now includes `kernel/fs/vfs.h` for canonical flags + signatures.
+> - Write path is now durable-honest: every `vfs_write` is length-checked, `vfs_flush` + `vfs_close` are checked, and `s_recovered_count` is preserved for retry on any failure instead of reporting a truncated log as complete.
+> - The previous-crash splash/klog hint (`boot_desktop.c`) now derives the `last-panic.txt` path from `klog_using_blackbox` to match `panic.c`'s writer (was a hardcoded `X:\` hint misdirecting on C:\ fallback).
+> - Test gap: `klog_crash_write_to_disk` failure paths (short write / flush-fail) need fault injection -> deferred to 00-infrastructure/TODO-03 §1/§6 (same dependency as §5's reentrancy test).
+> **Verified:** 2026-06-17 | commit `a6e06895` | 3/3 items | build OK | smoke PASS (TCG 2.88s)
+> **Quality reviewed:** 2026-06-17 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+1M fixed | scope: kernel-code-quality
+
 ---
 
 ## 8. Perf and Diag -- boot-profile, hwdump to X:\Perf\ and X:\Diag\
