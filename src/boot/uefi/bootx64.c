@@ -3519,6 +3519,15 @@ static void chainload_synthesize(boot_entries_parse_result_t *parse)
     UINTN i;
     if (!parse)
         return;
+    /* Hide store-provided chainload entries (Codex consistency): TODO-07 sec13's
+     * JSON chainload validator/dispatcher is deferred, so only synthesized
+     * entries are functional. Marking the rest kind_skipped keeps them out of
+     * the menu instead of admitting-then-demoting them on selection. */
+    for (i = 0; i < (UINTN)parse->entry_count; i++) {
+        if (parse->entries[i].kind == BOOT_ENTRY_KIND_CHAINLOAD &&
+            !(parse->entries[i].flags & BOOT_ENTRY_FLAG_SYNTHESIZED))
+            parse->entries[i].kind_skipped = 1;
+    }
     for (i = 0; i < g_chainload_count; i++) {
         boot_entry_envelope_t *e;
         const char *os;
@@ -3547,7 +3556,11 @@ static void chainload_synthesize(boot_entries_parse_result_t *parse)
             e->sort_key[j] = 0;
         }
         e->kind = BOOT_ENTRY_KIND_CHAINLOAD;
-        e->flags = BOOT_ENTRY_FLAG_ACTIVE | BOOT_ENTRY_FLAG_SYNTHESIZED;
+        /* TRUSTED_CHAINLOAD: synthesized entries pass the Secure-Boot chainload
+         * gate (boot_policy.c PATH_ESCAPE) because the firmware verifies the
+         * loader at LoadImage; SYNTHESIZED marks them as our own provenance. */
+        e->flags = BOOT_ENTRY_FLAG_ACTIVE | BOOT_ENTRY_FLAG_SYNTHESIZED |
+                   BOOT_ENTRY_FLAG_TRUSTED_CHAINLOAD;
         e->payload_present = 0;
         e->kind_skipped = 0;
         parse->entry_count++;
@@ -5436,6 +5449,24 @@ static void loader_set_var(const CHAR16 *name, UINTN payload_size,
     }
 }
 
+/* Delete a Loader* variable so a stale NON_VOLATILE value from a prior boot does
+ * not linger for systemd-BLI consumers when there is nothing to publish.
+ * EFI_NOT_FOUND (already absent) is success, not a degradation. */
+static void loader_clear_var(const CHAR16 *name)
+{
+    if (!gST || !gST->RuntimeServices || !gST->RuntimeServices->SetVariable)
+        return;
+    UINT32 attrs = EFI_VARIABLE_NON_VOLATILE
+                 | EFI_VARIABLE_BOOTSERVICE_ACCESS
+                 | EFI_VARIABLE_RUNTIME_ACCESS;
+    EFI_STATUS s = gST->RuntimeServices->SetVariable(
+        (CHAR16 *)name, (EFI_GUID *)&g_loader_systemd_guid, attrs, 0, (VOID *)0);
+    if (EFI_ERROR(s) && s != EFI_NOT_FOUND) {
+        g_boot_info_ptr->loader_vars_degraded = 1;
+        serial_early_print("[BOOT] loader-vars: clear failed -- degraded mode\n");
+    }
+}
+
 /* Write a UEFI variable from an ASCII string. */
 static void loader_set_var_ascii(const CHAR16 *name, const char *value)
 {
@@ -5537,8 +5568,15 @@ static void loader_set_entries(const boot_entries_parse_result_t *parse)
     UINTN p = 0;
     UINTN cap = sizeof(buf) / sizeof(buf[0]);
     for (unsigned int oi = 0; oi < n; oi++) {
-        const char *id = parse->entries[order[oi]].id;
+        const boot_entry_envelope_t *e = &parse->entries[order[oi]];
+        const char *id;
         UINTN j = 0;
+        /* Skip menu-hidden entries (kind_skipped / HIDDEN) so LoaderEntries
+         * mirrors the visible menu: a deferred-kind or store-provided hidden
+         * entry must not leak to systemd-BLI consumers (Codex re-adversarial). */
+        if (e->kind_skipped || (e->flags & BOOT_ENTRY_FLAG_HIDDEN))
+            continue;
+        id = e->id;
         while (id[j] && p < cap - 2u) {
             buf[p++] = (CHAR16)(unsigned char)id[j++];
         }
@@ -5584,16 +5622,27 @@ static void loader_publish_readonly_vars(
      * The policy ladder evaluates this at boot time; for the published
      * default we use the parsed entry whose sort_key sorts first. */
     if (parse && parse->entry_count > 0) {
-        UINTN best = 0;
-        for (UINTN i = 1; i < parse->entry_count; i++) {
-            /* Lexical compare on NUL-terminated sort_key. */
-            const char *a = parse->entries[best].sort_key;
-            const char *b = parse->entries[i].sort_key;
-            UINTN k = 0;
-            while (a[k] == b[k] && a[k] != 0) k++;
-            if ((unsigned char)b[k] < (unsigned char)a[k]) best = i;
+        UINTN best = (UINTN)-1;
+        for (UINTN i = 0; i < parse->entry_count; i++) {
+            const boot_entry_envelope_t *e = &parse->entries[i];
+            /* Never publish a menu-hidden entry as the default (Codex
+             * re-adversarial): a kind_skipped/HIDDEN store entry must not be
+             * advertised as LoaderEntryDefault to systemd-BLI consumers. */
+            if (e->kind_skipped || (e->flags & BOOT_ENTRY_FLAG_HIDDEN))
+                continue;
+            if (best == (UINTN)-1) { best = i; continue; }
+            {
+                const char *a = parse->entries[best].sort_key;
+                const char *b = e->sort_key;
+                UINTN k = 0;
+                while (a[k] == b[k] && a[k] != 0) k++;
+                if ((unsigned char)b[k] < (unsigned char)a[k]) best = i;
+            }
         }
-        loader_set_var_ascii(u"LoaderEntryDefault", parse->entries[best].id);
+        if (best != (UINTN)-1)
+            loader_set_var_ascii(u"LoaderEntryDefault", parse->entries[best].id);
+        else
+            loader_clear_var(u"LoaderEntryDefault");  /* nothing visible -> drop stale */
     }
 
     /* LoaderEntrySelected -- this boot's selected id (already in
@@ -6363,6 +6412,25 @@ static void boot_policy_invoke(void)
                                          &decision->selected);
         decision->reason = BOOT_SELECTION_FALLBACK_NO_VIABLE;
         g_policy_selected_kind = decision->selected.kind;
+        /* Mirror the FALLBACK_NO_VIABLE audit contract (Codex re-adversarial):
+         * the boot_info v19 selection fields were copied from the original
+         * chainload pick earlier, so without this the registry / policy audit /
+         * LoaderEntrySelected would report the (possibly forged) chainload id +
+         * stale reason while IPOS actually booted. Rewrite id + reason to the
+         * synthesized fallback so audit consumers see the truth. */
+        {
+            UINTN i;
+            for (i = 0; i < sizeof(decision->selected_entry_id) - 1u
+                        && decision->selected.id[i]; i++)
+                decision->selected_entry_id[i] = decision->selected.id[i];
+            decision->selected_entry_id[i] = 0;
+            for (i = 0; i < sizeof(g_boot_info_ptr->selected_entry_id) - 1u
+                        && decision->selected.id[i]; i++)
+                g_boot_info_ptr->selected_entry_id[i] = decision->selected.id[i];
+            g_boot_info_ptr->selected_entry_id[i] = 0;
+            g_boot_info_ptr->selection_reason =
+                (UINT32)BOOT_SELECTION_FALLBACK_NO_VIABLE;
+        }
     }
 
     /* Per-kind boot_config materialization. After the entry is

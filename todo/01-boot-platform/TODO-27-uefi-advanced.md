@@ -76,6 +76,9 @@ Detect other OS partitions from GPT and contribute chainload entries to the TODO
 > - Foreign loaders found by read-only ESP bootloader-path probe (not GPT type); trust = firmware Secure Boot at `LoadImage` (dbx = `EFI_SECURITY_VIOLATION` refused); a failed chainload demotes to the IPOS fallback.
 > - Scope boundary: the JSON-store chainload entry-kind validator stays TODO-07 §13 (synthesized entries built trusted, bypass it); W^X/multi-GPU/SecureBoot/SMBIOS/dbx are §3-§7.
 
+> **Verified:** 2026-06-17 | commit `19236366` | 6/6 items | build OK | smoke PASS (TCG 2.70s)
+> **Quality reviewed:** 2026-06-17 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 8H fixed | scope: boot-code-quality
+
 ## 2. Firmware Update Advisor (read-only LVFS-style)
 
 Surface what firmware updates exist for the host and tell the operator how to apply them via the **vendor's** update path. Impossible OS does NOT call `UpdateCapsule()`, does NOT write the `OsIndications` capsule bit, does NOT stage capsule images on the ESP, and does NOT trigger reboot-and-flash. Firmware writes are the single failure mode that turns a laptop into a paperweight; the OS-side risk surface for an actual capsule path is wider than its hobby-OS value, so this section is deliberately scoped as advisory only.
