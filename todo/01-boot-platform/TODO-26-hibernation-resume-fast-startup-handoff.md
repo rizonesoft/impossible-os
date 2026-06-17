@@ -31,12 +31,12 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
-| 💎 | 1 | Hibernation image metadata format | ../02-kernel-core/TODO-26 §4 | [ ] |
+| 💎 | 1 | Hibernation image metadata format | D02T26 §4 | [ ] |
 | 💎 | 2 | Bootloader image discovery | §1 | [ ] |
-| 💎 | 3 | Resume eligibility policy | §1, TODO-07 | [ ] |
-| 💎 | 4 | Integrity and version validation | §1, TODO-13 | [ ] |
-| 💎 | 5 | boot_info resume handoff | TODO-01 §4, §12 | [ ] |
-| 💎 | 6 | Resume failure fallback | §5, TODO-21 | [ ] |
+| 💎 | 3 | Resume eligibility policy | §1, T07 §10 | [ ] |
+| 💎 | 4 | Integrity and version validation | §1, T13 §4 | [ ] |
+| 💎 | 5 | boot_info resume handoff | T01 §4,§12 | [ ] |
+| 💎 | 6 | Resume failure fallback | §5, T21 §4 | [ ] |
 | 💎 | 7 | Fast startup mode | §1-§6 | [ ] |
 | 💎 | 8 | Diagnostics and BlackBox resume report | §2-§7 | [ ] |
 | 💎 | 9 | Resume tests | §1-§8 | [ ] |
@@ -49,6 +49,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Store metadata in a location readable before normal root mount.
 - [ ] Commit: `"boot: hibernation image metadata format"`
 
+**Test checkpoint:** A fixture hibernation metadata header parses at known offsets (magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags, resume type); a bad-magic or truncated header is rejected. Verify on QEMU WHPX/TCG (fixture parse).
+
+---
+
 ## 2. Bootloader Image Discovery
 
 - [ ] Locate hibernation metadata on system, A/B slot, or BlackBox partition.
@@ -56,6 +60,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Expose discovery failures on VPD and serial.
 - [ ] Add boot.conf override `resume=off|auto|force`.
 - [ ] Commit: `"boot: discover hibernation resume images"`
+
+**Test checkpoint:** With a hibernation image on the system / A/B slot / BlackBox partition, the bootloader locates the metadata and logs the source on serial + VPD; with no image it logs `no resume image` and cold-boots; `resume=off` skips discovery, `resume=force` selects it. Verify on QEMU WHPX.
+
+---
 
 ## 3. Resume Eligibility Policy
 
@@ -65,6 +73,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Record selected cold/resume reason.
 - [ ] Commit: `"boot: hibernation resume policy"`
 
+**Test checkpoint:** After a simulated kernel update / bootloader ABI mismatch / slot switch / Secure Boot db change / firmware or hardware-topology change, resume is REJECTED with the recorded cold/resume reason and cold boot proceeds; a recovery-menu one-time force overrides exactly once. Verify on QEMU WHPX.
+
+---
+
 ## 4. Integrity and Version Validation
 
 - [ ] Verify checksum/HMAC/signature over metadata and image.
@@ -72,6 +84,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Validate compressed image algorithm support.
 - [ ] Bind to measured boot state where TPM is available.
 - [ ] Commit: `"boot: validate hibernation image integrity"`
+
+**Test checkpoint:** A correct checksum/HMAC over metadata + image passes; a single flipped byte is rejected; image physical-memory ranges outside the current memory map are rejected; an unsupported compression algorithm is rejected; TPM-bound state mismatch rejects when measured boot is active. Verify on QEMU WHPX/TCG (fixture).
+
+---
 
 ## 5. boot_info Resume Handoff
 
@@ -81,6 +97,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] PMM reserves image ranges until resume code consumes them.
 - [ ] Commit: `"boot: hand off hibernation resume payload"`
 
+**Test checkpoint:** On an eligible resume, boot_info carries the `BOOT_PAYLOAD_HIBERNATION_META` descriptor (`BOOT_PAYLOAD_FLAG_REQUIRED` set, overlap-checked by the TODO-01 §4 validator) plus resume flags + decision-reason codes; the kernel consumes the handoff before Phase 0 destructive init; PMM reserves the image ranges until resume code consumes them. Verify on QEMU WHPX.
+
+---
+
 ## 6. Resume Failure Fallback
 
 - [ ] If resume fails, mark image invalid and cold boot once.
@@ -88,6 +108,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Preserve failure details in NVRAM and BlackBox.
 - [ ] Avoid infinite resume loops.
 - [ ] Commit: `"boot: hibernation resume failure fallback"`
+
+**Test checkpoint:** A forced resume failure marks the image invalid, cold-boots exactly once, increments the NVRAM failure counter, and after repeated failures feeds the A/B rollback policy; failure details are preserved in NVRAM + BlackBox; no infinite resume loop occurs. Verify on QEMU WHPX.
+
+---
 
 ## 7. Fast Startup Mode
 
@@ -97,6 +121,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Expose fast-startup status in boot diagnostics.
 - [ ] Commit: `"boot: fast startup handoff"`
 
+**Test checkpoint:** A fast-startup (kernel-session) image resumes the kernel session distinctly from a full user-session hibernate; a driver/hardware on the invalidation list forces cold boot; the power button + shutdown policy select fast startup; fast-startup status appears in boot diagnostics. Verify on QEMU WHPX.
+
+---
+
 ## 8. Diagnostics and BlackBox Resume Report
 
 - [ ] Write `X:\Diag\resume.json`.
@@ -104,6 +132,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Show resume progress in VPD.
 - [ ] Add QR failure payload for resume rejection.
 - [ ] Commit: `"boot: hibernation resume diagnostics"`
+
+**Test checkpoint:** Post-resume (or post-rejection), `X:\Diag\resume.json` exists with image version, validation status, failure reason, selected path, and duration; VPD shows resume progress; a resume rejection emits a host-decodable QR failure payload. Verify on QEMU WHPX/TCG.
+
+---
 
 ## 9. Resume Tests
 
@@ -113,14 +145,20 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Resume failure falls back to cold boot.
 - [ ] Commit: `"test: hibernation boot handoff"`
 
+**Test checkpoint:** The resume test suite passes: valid metadata accepted, bad checksum rejected, kernel-version mismatch rejected, and a resume failure falls back to cold boot. Verify via the `TEST_CAT_BOOT` suite.
+
+---
+
 ## OS Comparison
 
-| ⭐ | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | S4 resume selection | hiberfil.sys/winload | resume= kernel param | TODO-26 |
-| 💎 | Fast startup | hybrid boot | limited distro support | TODO-26 §7 |
-| 💎 | Resume invalidation | update/driver policy | initramfs logic | TODO-26 §3 |
-| ⭐ | BlackBox resume report | event logs | journal | TODO-26 §8 |
+| ⭐  | Feature                | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                |
+| --- | ---------------------- | ------------------------- | ------------------------- | ------------------------------- |
+| 💎  | S4 resume selection    | ✅ hiberfil.sys + winload | ✅ `resume=` kernel param | ⬜ Planned §1-§6                |
+| 💎  | Fast startup           | ✅ hybrid boot (hiberboot)| ⚠️ limited distro support | ⬜ Planned §7                   |
+| 💎  | Resume invalidation    | ✅ update/driver policy   | ⚠️ initramfs logic        | ⬜ Planned §3                   |
+| ⭐  | BlackBox resume report | ❌ event logs only        | ❌ journal only           | ⭐ Planned §8 (X:\Diag + QR)   |
+
+---
 
 ## Unit Tests
 
@@ -129,7 +167,11 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] `test_resume_kernel_mismatch_rejected`
 - [ ] `test_resume_loop_breaker`
 
+---
+
 ## Verification
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | N suites, 0 failures
 
 - [ ] QEMU hibernate image fixture
 - [ ] Failed resume cold-boot fallback
