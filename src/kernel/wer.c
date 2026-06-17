@@ -120,10 +120,29 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception)
     { const char *k = "\"pid\":"; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
     pos += dec32(buf + pos, t->pid);
 
-    /* ,"name":"xxx" */
+    /* ,"name":"xxx" -- JSON-escape so a crafted task name cannot break the
+     * report syntax or inject forged fields into post-mortem tooling. Cap at
+     * pos < 820 (not 890): worst case is a name ending at the cap (+6-byte
+     * escape ~826) followed by the unconditional fixed tail -- closing quote,
+     * exception/rip/rsp/error_code keys+values, "registers" key, the register
+     * loop (which self-skips once pos>900), cs, and closing braces/newline
+     * (~120 bytes) -- which together stay comfortably within buf[1024]. */
     { const char *k = ",\"name\":\""; for (j = 0; k[j]; j++) buf[pos++] = k[j]; }
     if (t->name) {
-        for (j = 0; t->name[j] && pos < 900; j++) buf[pos++] = t->name[j];
+        for (j = 0; t->name[j] && pos < 820; j++) {
+            unsigned char c = (unsigned char)t->name[j];
+            if (c == '"' || c == '\\') {
+                buf[pos++] = '\\'; buf[pos++] = (char)c;
+            } else if (c < 0x20) {
+                static const char hexd[] = "0123456789abcdef";
+                buf[pos++] = '\\'; buf[pos++] = 'u';
+                buf[pos++] = '0'; buf[pos++] = '0';
+                buf[pos++] = hexd[(c >> 4) & 0xF];
+                buf[pos++] = hexd[c & 0xF];
+            } else {
+                buf[pos++] = (char)c;
+            }
+        }
     }
     buf[pos++] = '"';
 

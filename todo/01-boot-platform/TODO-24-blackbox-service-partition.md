@@ -57,7 +57,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [/]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [x]   |
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T09 §6        |  [/]   |
-| ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [x]   |
+| ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [/]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [x]   |
 | 💎 |  16   | Crash/WER report retention in partition cleanup       | §10, §13          |  [ ]   |
@@ -394,9 +394,19 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 - [x] Wired into `isr_handler()` default exception path (before `panic_screen`)
 - [x] Filename: `PID_YYYYMMDDHHMMSS.json` (timestamp from wall clock)
 - [x] Falls back to C:\ when BlackBox not mounted
+- [ ] WER in exception path: `wer_write_crash_report` (idt.c:309) does vfs I/O in the ISR handler -- reentrancy/deadlock if the fault was in FS code; move off the exception path or make it lock-free + preallocated. [§13]
+- [ ] WER open-failure observability: on `vfs_open` NULL the writer returns silently -- emit a panic-safe serial-only diagnostic (normal `klog` may re-enter VFS here). [§13]
 - [x] Commit: `"kernel: WER-style crash report staging in X:\\Crash\\WER\\"`
 
 **Test checkpoint:** Trigger a user-mode crash (NULL deref in cmd.exe test). `X:\Crash\WER\` contains a JSON report with PID, exception code, and stack trace. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Notes:**
+> - `wer_write_crash_report` (wer.c) writes a JSON crash report (`{pid,name,exception,rip,rsp,error_code,registers,cs}`, filename `PID_YYYYMMDDHHMMSS.json`) to `X:\Crash\WER\` (C:\ fallback) from the ISR exception path (idt.c:309).
+> - Fixed a JSON-injection bug: `t->name` is now escaped (`"`,`\`,control -> `\u00XX`) with a `pos<820` bound, so a crafted/long name can't break the report or overflow `buf[1024]` (re-adversarial-confirmed margin).
+> - Two robustness items remain open (`[/]`): WER persistence runs in the exception path (FS-reentrancy/deadlock risk) and open-failure is silent; the write-honesty (flush/return-check) is owned by §5's durable-write retrofit.
+> **Accepted:** [M] WER writer ignores `vfs_write`/`vfs_close` returns + no `vfs_flush` (false success) -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write + write-success honesty retrofit for X:\ diagnostic writers" at line 185)
+> **Deferred:** [H] WER persistence does VFS I/O in the ISR exception path (reentrancy/deadlock if fault was in FS) -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER in exception path" at line 397)
+> **Deferred:** [M] WER open-failure is a silent drop with no panic-safe diagnostic -> XREF: 01-boot-platform/TODO-24 §13 (item: "WER open-failure observability" at line 398)
 
 ---
 
