@@ -93,11 +93,11 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 3. TFTP Kernel and boot.conf Load
 
-- [x] `net_tftp_download()` (`bootx64.c`): bounded TFTP RRQ via firmware PXE `Mtftp` (GET_FILE_SIZE early refusal + READ_FILE capped); sized EfiLoaderData buffer; shared `net_resolve_boot_pxe()` boot-NIC resolver (D2, refactors §2).
+- [x] `net_tftp_download()` (`bootx64.c`): bounded TFTP RRQ via PXE `Mtftp` -- a cap-sized `READ_FILE` buffer is the only transfer boundary (no GET_FILE_SIZE, which can download past the cap); shared `net_resolve_boot_pxe()` resolver (refactors §2).
 - [x] `net_tftp_probe()` downloads `boot.conf` at Step 1a as an end-to-end client proof then FREES it; kernel.exe fetch/stage/retention is owned by §7 (no §3 consumer, so no untrusted 64 MiB is pinned pre-EBS; Codex adversarial).
-- [x] Retry/backoff (`NET_TFTP_RETRIES`=4 + `gBS->Stall` on transient TIMEOUT/DEVICE_ERROR/NO_RESPONSE) + per-file caps; READ-side `EFI_BUFFER_TOO_SMALL` <= cap reallocs + retries (GET_SIZE/READ race), over-cap only when > cap.
+- [x] Retry/backoff (`NET_TFTP_RETRIES`=4 + `gBS->Stall` on transient TIMEOUT/DEVICE_ERROR/NO_RESPONSE/PROTOCOL_ERROR) + per-file caps; `EFI_BUFFER_TOO_SMALL` = over-cap; `EFI_TFTP_ERROR` server packet is deterministic, not retried.
 - [x] `BOOT_ERR_TFTP_*` codes + `net_tftp_boot_err()` mapping + UEFI status constants in `efi.h`; `net_tftp_download` returns a TYPED status -- boot_fatal QR vs local fallback is §7 policy (a failure stays local, never a hard fatal here).
-- [ ] Commit: `"boot: load kernel assets over TFTP"`
+- [x] Commit: `"boot: load kernel assets over TFTP"` (commit `3de6cf8d`)
 
 **Test checkpoint:** A QEMU TFTP server serves `kernel.exe` + `boot.conf`; serial shows a bounded RRQ download with retry/backoff and the per-file size cap enforced; a missing or oversized file produces a typed failure (`BOOT_ERR_TFTP_*`) and stays local, not a hang. Verify on QEMU TCG (TFTP), bare metal PXE.
 
@@ -105,9 +105,12 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > **Notes:**
 > - Shipped `net_tftp_download()` (bounded TFTP client) + `net_tftp_probe()` (boot.conf proof) + shared `net_resolve_boot_pxe()` (`bootx64.c`, efi_main Step 1a) + typed `Mtftp` / TFTP opcode / `MTFTP_INFO` + UEFI status codes + `BOOT_ERR_TFTP_*` in `efi.h`.
-> - GET_FILE_SIZE early-refusal then READ_FILE with capped BufferSize + retry/backoff + realloc-on-grow; the probe frees boot.conf (no consumer yet); local boot / no boot-NIC PXE is a clean no-op staying local.
+> - Cap-sized READ_FILE buffer is the only transfer boundary (no GET_FILE_SIZE) + retry/backoff; `EFI_TFTP_ERROR` is deterministic (-> `BOOT_ERR_TFTP_NOT_FOUND`); the probe frees boot.conf (no consumer yet); local boot / no boot-NIC PXE is a clean no-op.
 > - `net_tftp_download` returns a typed status (`net_tftp_boot_err()` -> `BOOT_ERR_TFTP_*`); boot_fatal-vs-fallback is §7, integrity §5, boot_info staging §6.
 > - Scope: §3 is the TFTP client + boot.conf proof; kernel fetch/stage/retention + booting from the staged kernel is §7, asset verification §5.
+
+> **Verified:** 2026-06-17 | commit `31067c28` | 4/4 items | build OK | smoke PASS (KVM 2.8s)
+> **Quality reviewed:** 2026-06-17 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed | scope: boot-code-quality
 
 ---
 

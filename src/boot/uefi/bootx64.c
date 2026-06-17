@@ -13090,16 +13090,20 @@ static EFI_PXE_BASE_CODE_PROTOCOL *net_resolve_boot_pxe(EFI_HANDLE dev_handle)
 /* True if a Mtftp status is a transient error worth retrying. */
 static int net_tftp_retryable(EFI_STATUS s)
 {
+    /* EFI_TFTP_ERROR is a server ERROR packet (missing-file/access-violation):
+     * deterministic, NOT transient -- excluded so it is not retried. */
     return s == EFI_TIMEOUT || s == EFI_DEVICE_ERROR ||
-           s == EFI_NO_RESPONSE || s == EFI_PROTOCOL_ERROR ||
-           s == EFI_TFTP_ERROR;
+           s == EFI_NO_RESPONSE || s == EFI_PROTOCOL_ERROR;
 }
 
 /* Map a fatal Mtftp/transfer status to a BOOT_ERR_TFTP_* code (for a caller
  * that decides to boot_fatal when there is no local fallback -- fallback-ordering policy). */
 static UINT32 net_tftp_boot_err(EFI_STATUS s)
 {
-    if (s == EFI_NOT_FOUND)         return BOOT_ERR_TFTP_NOT_FOUND;
+    /* A server TFTP ERROR packet during a fixed-path boot-asset fetch is
+     * overwhelmingly file-not-found (TFTP has no auth); the precise
+     * Mode->TftpError.ErrorCode split is a refinement owned downstream. */
+    if (s == EFI_NOT_FOUND || s == EFI_TFTP_ERROR) return BOOT_ERR_TFTP_NOT_FOUND;
     if (s == EFI_TIMEOUT || s == EFI_NO_RESPONSE) return BOOT_ERR_TFTP_TIMEOUT;
     if (s == EFI_BUFFER_TOO_SMALL)  return BOOT_ERR_TFTP_OVER_CAP;
     return BOOT_ERR_TFTP_DEVICE;
@@ -13119,7 +13123,7 @@ static EFI_STATUS net_tftp_download(EFI_PXE_BASE_CODE_PROTOCOL *pxe,
 {
     EFI_IP_ADDRESS server;
     UINT8 *sb = (UINT8 *)server.Addr;
-    UINT64 size = 0, alloc_size;
+    UINT64 size = 0;
     UINTN block = 512, pages;
     EFI_PHYSICAL_ADDRESS buf_phys = 0;
     VOID *buf;
@@ -13143,71 +13147,50 @@ static EFI_STATUS net_tftp_download(EFI_PXE_BASE_CODE_PROTOCOL *pxe,
     }
     for (i = 0; i < 4; i++) sb[i] = sip[i];
 
-    /* 1. Early-refusal sizing. If unsupported, fall back to the full cap. */
-    size = 0;
-    s = pxe->Mtftp(pxe, EFI_PXE_TFTP_GET_FILE_SIZE, (VOID *)0, 0,
-                   &size, &block, &server, (UINT8 *)filename,
-                   (EFI_PXE_BASE_CODE_MTFTP_INFO *)0, 0);
-    if (!EFI_ERROR(s) && size > cap)
-        return EFI_BUFFER_TOO_SMALL;       /* over-cap */
-    alloc_size = (!EFI_ERROR(s) && size > 0) ? size : cap;
-    if (alloc_size > cap)
-        alloc_size = cap;
-
-    pages = (UINTN)((alloc_size + 0xFFFu) / 0x1000u);
+    /* Allocate a cap-sized read buffer up front: this buffer IS the first and
+     * only transfer boundary against an untrusted server. We deliberately do
+     * NOT call GET_FILE_SIZE -- under the PXE Base Code contract it can download
+     * the whole object into a bit-bucket when the server lacks the tsize option,
+     * letting the server push past the cap before any refusal. cap is a page
+     * multiple, so BufferSize == cap exactly. */
+    pages = (UINTN)((cap + 0xFFFu) / 0x1000u);
     s = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, pages, &buf_phys);
     if (EFI_ERROR(s) || !buf_phys)
         return EFI_OUT_OF_RESOURCES;
     buf = (VOID *)(UINTN)buf_phys;
 
-    /* 2. READ_FILE with a capped BufferSize + retry/backoff. */
+    /* READ_FILE bounded by the cap-sized buffer + retry/backoff on transient
+     * errors. EFI_BUFFER_TOO_SMALL means the object exceeds the cap; a server
+     * ERROR packet (EFI_TFTP_ERROR) is returned directly, not retried. */
     for (attempt = 0; attempt < NET_TFTP_RETRIES; attempt++) {
-        size = (UINT64)pages * 0x1000u;    /* in: capacity; out: actual */
+        size = (UINT64)pages * 0x1000u;    /* in: capacity (== cap); out: actual */
         block = 512;
         s = pxe->Mtftp(pxe, EFI_PXE_TFTP_READ_FILE, buf, 0,
                        &size, &block, &server, (UINT8 *)filename,
                        (EFI_PXE_BASE_CODE_MTFTP_INFO *)0, 0);
         if (!EFI_ERROR(s)) {
-            if (size > cap) {              /* object grew past the cap */
+            if (size > cap) {              /* defensive: cannot exceed the buffer */
                 gBS->FreePages(buf_phys, pages);
                 return EFI_BUFFER_TOO_SMALL;
             }
             *out_buf = buf;
             *out_size = size;
-            *out_pages = pages;   /* the allocated count -- free exactly this */
+            *out_pages = pages;            /* free exactly this allocated count */
             return EFI_SUCCESS;
         }
-        if (s == EFI_BUFFER_TOO_SMALL) {
-            /* Firmware updated *size to the required length. If it still fits
-             * the cap, grow the buffer and retry (the object changed after the
-             * GET_FILE_SIZE probe); otherwise it is genuinely over-cap. */
-            UINTN need;
-            if (size > cap) {
-                gBS->FreePages(buf_phys, pages);
-                return EFI_BUFFER_TOO_SMALL;
-            }
-            need = (UINTN)((size + 0xFFFu) / 0x1000u);
-            if (need > pages) {
-                EFI_PHYSICAL_ADDRESS nb = 0;
-                gBS->FreePages(buf_phys, pages);
-                if (EFI_ERROR(gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
-                                                 need, &nb)) || !nb)
-                    return EFI_OUT_OF_RESOURCES;
-                buf_phys = nb;
-                buf = (VOID *)(UINTN)nb;
-                pages = need;
-            }
-            continue;                      /* retry with the larger buffer */
+        if (s == EFI_BUFFER_TOO_SMALL) {   /* object is larger than the cap */
+            gBS->FreePages(buf_phys, pages);
+            return EFI_BUFFER_TOO_SMALL;
         }
         if (!net_tftp_retryable(s)) {
             gBS->FreePages(buf_phys, pages);
-            return s;                      /* fatal -- caller maps + decides */
+            return s;                      /* deterministic failure -- caller maps */
         }
         if (gBS->Stall)
             gBS->Stall((UINTN)NET_TFTP_BACKOFF_MS * 1000u * (UINTN)(attempt + 1));
     }
     gBS->FreePages(buf_phys, pages);
-    return EFI_TIMEOUT;                     /* retries exhausted */
+    return EFI_TIMEOUT;                     /* transient retries exhausted */
 }
 
 /* Network-boot connectivity proof: on a network boot, download boot.conf over TFTP to
