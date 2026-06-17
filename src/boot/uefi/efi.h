@@ -1069,6 +1069,8 @@ _Static_assert(__builtin_offsetof(EFI_SIMPLE_NETWORK_PROTOCOL, Mode) == 120,
  * omitted -- access is via pointer and they are never dereferenced. */
 
 typedef struct { UINT32 Addr[4]; } EFI_IP_ADDRESS;   /* 16 bytes, 4-aligned */
+_Static_assert(sizeof(EFI_IP_ADDRESS) == 16, "EFI_IP_ADDRESS is 16 bytes");
+_Static_assert(__alignof__(EFI_IP_ADDRESS) == 4, "EFI_IP_ADDRESS is 4-aligned");
 
 typedef struct {
     UINT8  BootpOpcode;
@@ -1093,6 +1095,12 @@ _Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, BootpYiAddr) 
     "DHCPV4 BootpYiAddr offset");
 _Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, BootpBootFile) == 108,
     "DHCPV4 BootpBootFile offset");
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, BootpSiAddr) == 20,
+    "DHCPV4 BootpSiAddr offset (next-server)");
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, BootpGiAddr) == 24,
+    "DHCPV4 BootpGiAddr offset (relay/gateway)");
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, DhcpMagik) == 236,
+    "DHCPV4 DhcpMagik offset (magic cookie boundary)");
 _Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, DhcpOptions) == 240,
     "DHCPV4 DhcpOptions offset (after magic cookie)");
 

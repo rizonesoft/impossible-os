@@ -12964,7 +12964,7 @@ static UINT32 net_dhcp_find_option(const UINT8 *opts, UINT32 len, UINT8 tag,
     return 0;
 }
 
-/* TODO network-boot: capture DHCP/PXE provenance from the firmware PXE Base Code
+/* Capture DHCP/PXE provenance from the firmware PXE Base Code
  * cached DhcpAck. Binds to the BOOT NIC PXE handle (boot-handle preferred,
  * sole-handle fallback -- the wrong-NIC lesson from discovery), parses the BOOTP
  * fixed fields + DHCP options 3/54, preserves the raw packet, and logs redacted

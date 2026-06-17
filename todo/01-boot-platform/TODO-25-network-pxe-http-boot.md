@@ -73,7 +73,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [x] Redacted log: prints only IPs + boot filename; vendor option 43 + root-path option 17 stay in the raw copy, never logged.
 - [x] Stages `g_net_dhcp` + raw packet for the §6 boot_info handoff; Registry `HKLM\SYSTEM\Boot\Network` output owned by §6, BlackBox `X:\Diag\network-boot.json` by §9.
 - [ ] Best-effort residual: a child boot DeviceHandle without PXE on firmware lacking DevicePathUtilities skips the sole-handle fallback (`booted_from_network` unset); add a DevicePathUtilities-independent boot-NIC signal so capture is exact.
-- [ ] Commit: `"boot: capture PXE DHCP provenance"`
+- [x] Commit: `"boot: capture PXE DHCP provenance"` (commit `e230bda1`)
 
 **Test checkpoint:** Serial logs the captured DHCP/PXE provenance (MAC, assigned IP, gateway, DHCP + boot server, boot filename) with sensitive vendor options redacted; the raw packet blob is retained in the typed boot payload for diagnostics. Verify on QEMU WHPX (PXE).
 
@@ -84,6 +84,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Binds to the boot NIC's PXE handle (boot-handle preferred, sole-handle fallback); reads `Mode->DhcpAckReceived`, parses BOOTP fixed fields + DHCP options 3/54 bounded against the 1472-byte packet; local boot / no DhcpAck is a clean no-op.
 > - Parsed provenance in `g_net_dhcp`, raw packet in `g_net_dhcp_raw`; both seed §6 boot_info + §9 diagnostics.
 > - Scope: §2 captures + stages in the bootloader; boot_info handoff §6, Registry §6, BlackBox JSON §9.
+
+> **Verified:** 2026-06-17 | commit `7d32370a` | 4/5 items | build OK | smoke PASS (KVM 2.8s)
+> **Deferred:** [M] child boot DeviceHandle without PXE + firmware lacking DevicePathUtilities skips the sole-handle fallback (best-effort capture) -> XREF: 01-boot-platform/TODO-25 §2 (item: "Best-effort residual" at line 75)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: boot-code-quality
 
 ---
 
