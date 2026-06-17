@@ -13228,6 +13228,311 @@ static void net_tftp_probe(EFI_HANDLE dev_handle)
     gBS->FreePages((EFI_PHYSICAL_ADDRESS)(UINTN)cbuf, cpages);  /* no consumer yet */
 }
 
+#define NET_HTTP_MAX_REDIRECTS 4
+#define NET_HTTP_TIMEOUT_MS    20000u   /* per-request bound */
+#define NET_HTTP_WAIT_US       100000u  /* 100 ms poll granularity */
+
+/* Bounded wait on an HTTP token event: poll CheckEvent + Stall up to
+ * NET_HTTP_TIMEOUT_MS. Returns EFI_SUCCESS when signaled, EFI_TIMEOUT on cap. */
+static EFI_STATUS net_http_wait(EFI_EVENT ev)
+{
+    UINTN waited = 0;
+    for (;;) {
+        EFI_STATUS s = gBS->CheckEvent(ev);
+        if (s == EFI_SUCCESS)
+            return EFI_SUCCESS;
+        if (s != EFI_NOT_READY)
+            return s;
+        if (waited >= NET_HTTP_TIMEOUT_MS * 1000u)
+            return EFI_TIMEOUT;
+        if (gBS->Stall)
+            gBS->Stall(NET_HTTP_WAIT_US);
+        waited += NET_HTTP_WAIT_US;
+    }
+}
+
+/* ASCII -> CHAR16 URL (caller FreePool). */
+static CHAR16 *net_ascii_to_wide(const char *a)
+{
+    UINTN n = 0, i;
+    CHAR16 *w = (CHAR16 *)0;
+    while (a[n]) n++;
+    if (EFI_ERROR(gBS->AllocatePool(EfiLoaderData, (n + 1) * 2, (VOID **)&w)) || !w)
+        return (CHAR16 *)0;
+    for (i = 0; i < n; i++)
+        w[i] = (CHAR16)(UINT8)a[i];
+    w[n] = 0;
+    return w;
+}
+
+/* True if an HTTP status code is a redirect (3xx with a Location). */
+static int net_http_is_redirect(EFI_HTTP_STATUS_CODE c)
+{
+    return (c >= HTTP_STATUS_300_MULTIPLE_CHOICES &&
+            c <= HTTP_STATUS_307_TEMPORARY_REDIRECT) ||
+           c == HTTP_STATUS_308_PERMANENT_REDIRECT;
+}
+
+/* Find a response header value by (case-insensitive) field name; returns the
+ * firmware-owned value pointer (valid until the caller frees Headers), else 0. */
+static const char *net_http_header(const EFI_HTTP_HEADER *hdrs, UINTN n,
+                                   const char *name)
+{
+    UINTN i, j;
+    for (i = 0; i < n; i++) {
+        const CHAR8 *fn = hdrs[i].FieldName;
+        if (!fn)
+            continue;
+        for (j = 0; name[j] && fn[j]; j++) {
+            char a = name[j];
+            char b = (char)fn[j];
+            if (a >= 'A' && a <= 'Z') a = (char)(a + 32);
+            if (b >= 'A' && b <= 'Z') b = (char)(b + 32);
+            if (a != b)
+                break;
+        }
+        if (!name[j] && !fn[j])
+            return (const char *)hdrs[i].FieldValue;
+    }
+    return (const char *)0;
+}
+
+/* Download `url` over HTTP via EFI_HTTP_PROTOCOL on the firmware HTTP Boot
+ * service-binding handle, into a freshly allocated cap-sized EfiLoaderData
+ * buffer (the buffer is the transfer bound; Content-Length is not trusted).
+ * Follows up to NET_HTTP_MAX_REDIRECTS 3xx Location hops. On success returns
+ * EFI_SUCCESS + sets *out_buf (caller FreePages) + *out_size + *out_pages.
+ * Returns a typed status on failure -- caller decides fallback (no boot_fatal
+ * here). */
+static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
+                                    UINT64 cap, VOID **out_buf,
+                                    UINT64 *out_size, UINTN *out_pages)
+{
+    EFI_GUID sb_guid  = EFI_HTTP_SERVICE_BINDING_PROTOCOL_GUID;
+    EFI_GUID http_guid = EFI_HTTP_PROTOCOL_GUID;
+    EFI_SERVICE_BINDING_PROTOCOL *sb = (EFI_SERVICE_BINDING_PROTOCOL *)0;
+    EFI_HTTP_PROTOCOL *http = (EFI_HTTP_PROTOCOL *)0;
+    EFI_HANDLE child = (EFI_HANDLE)0;
+    EFI_HTTPv4_ACCESS_POINT ap;
+    EFI_HTTP_CONFIG_DATA cfg;
+    EFI_EVENT req_ev = (EFI_EVENT)0, resp_ev = (EFI_EVENT)0;
+    EFI_PHYSICAL_ADDRESS buf_phys = 0;
+    VOID *buf = (VOID *)0;
+    UINTN pages;
+    CHAR16 *wurl = (CHAR16 *)0;
+    EFI_STATUS s;
+    int redirects = 0;
+    char redir_buf[1024];
+
+    *out_buf = (VOID *)0;
+    *out_size = 0;
+    *out_pages = 0;
+    if (!dev_handle || !url || !cap)
+        return EFI_INVALID_PARAMETER;
+
+    /* The firmware HTTP Boot installs the HTTP service binding on the boot NIC
+     * handle; without it we cannot fetch (caller stays local). */
+    if (EFI_ERROR(gBS->HandleProtocol(dev_handle, &sb_guid, (VOID **)&sb)) || !sb)
+        return EFI_UNSUPPORTED;
+    if (EFI_ERROR(sb->CreateChild(sb, &child)) || !child)
+        return EFI_OUT_OF_RESOURCES;
+    if (EFI_ERROR(gBS->HandleProtocol(child, &http_guid, (VOID **)&http)) || !http) {
+        sb->DestroyChild(sb, child);
+        return EFI_UNSUPPORTED;
+    }
+
+    /* Configure HTTPv4 using the firmware-assigned address (HTTP Boot already
+     * ran DHCP). */
+    ap.UseDefaultAddress = 1;
+    ap.LocalAddress.Addr[0] = ap.LocalAddress.Addr[1] = 0;
+    ap.LocalAddress.Addr[2] = ap.LocalAddress.Addr[3] = 0;
+    ap.LocalSubnet.Addr[0] = ap.LocalSubnet.Addr[1] = 0;
+    ap.LocalSubnet.Addr[2] = ap.LocalSubnet.Addr[3] = 0;
+    ap.LocalPort = 0;
+    cfg.HttpVersion = HttpVersion11;
+    cfg.TimeOutMillisec = NET_HTTP_TIMEOUT_MS;
+    cfg.LocalAddressIsIPv6 = 0;
+    cfg.AccessPoint.IPv4Node = &ap;
+    s = http->Configure(http, &cfg);
+    if (EFI_ERROR(s))
+        goto cleanup;
+
+    /* Allocate the cap-sized body buffer: it is the transfer bound. */
+    pages = (UINTN)((cap + 0xFFFu) / 0x1000u);
+    if (EFI_ERROR(gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, pages,
+                                     &buf_phys)) || !buf_phys) {
+        s = EFI_OUT_OF_RESOURCES;
+        goto cleanup;
+    }
+    buf = (VOID *)(UINTN)buf_phys;
+
+    if (gBS->CreateEvent(0, 0 /* TPL_APPLICATION */, (EFI_EVENT_NOTIFY)0,
+                         (VOID *)0, &req_ev) != EFI_SUCCESS ||
+        gBS->CreateEvent(0, 0, (EFI_EVENT_NOTIFY)0, (VOID *)0, &resp_ev)
+            != EFI_SUCCESS) {
+        s = EFI_OUT_OF_RESOURCES;
+        goto cleanup;
+    }
+
+    for (;;) {
+        EFI_HTTP_REQUEST_DATA reqd;
+        EFI_HTTP_HEADER req_hdr;
+        EFI_HTTP_MESSAGE reqm;
+        EFI_HTTP_TOKEN reqt;
+        EFI_HTTP_RESPONSE_DATA respd;
+        EFI_HTTP_MESSAGE respm;
+        EFI_HTTP_TOKEN respt;
+        UINT64 total = 0;
+        const char *loc;
+
+        wurl = net_ascii_to_wide(url);
+        if (!wurl) { s = EFI_OUT_OF_RESOURCES; goto cleanup; }
+
+        /* GET request (Host header omitted: the firmware HTTP stack derives it
+         * from the absolute URL). */
+        reqd.Method = HttpMethodGet;
+        reqd.Url = wurl;
+        req_hdr.FieldName = (CHAR8 *)"Accept";
+        req_hdr.FieldValue = (CHAR8 *)"*/*";
+        reqm.Data.Request = &reqd;
+        reqm.HeaderCount = 1;
+        reqm.Headers = &req_hdr;
+        reqm.BodyLength = 0;
+        reqm.Body = (VOID *)0;
+        reqt.Event = req_ev;
+        reqt.Status = EFI_SUCCESS;
+        reqt.Message = &reqm;
+        s = http->Request(http, &reqt);
+        if (EFI_ERROR(s)) goto free_wurl;
+        s = net_http_wait(req_ev);
+        if (EFI_ERROR(s) || EFI_ERROR(reqt.Status)) {
+            /* On timeout the request is still in flight referencing wurl -- abort
+             * it (synchronous) before freeing, or the firmware could write to
+             * freed memory on a late async completion. */
+            http->Cancel(http, &reqt);
+            s = EFI_ERROR(s) ? s : reqt.Status;
+            goto free_wurl;
+        }
+
+        /* First Response: status line + headers + first body chunk. */
+        respd.StatusCode = HTTP_STATUS_UNSUPPORTED_STATUS;
+        respm.Data.Response = &respd;
+        respm.HeaderCount = 0;
+        respm.Headers = (EFI_HTTP_HEADER *)0;
+        respm.BodyLength = (UINTN)cap;
+        respm.Body = buf;
+        respt.Event = resp_ev;
+        respt.Status = EFI_SUCCESS;
+        respt.Message = &respm;
+        s = http->Response(http, &respt);
+        if (EFI_ERROR(s)) goto free_wurl;
+        s = net_http_wait(resp_ev);
+        if (EFI_ERROR(s) || EFI_ERROR(respt.Status)) {
+            http->Cancel(http, &respt);   /* abort in-flight before freeing buf */
+            s = EFI_ERROR(s) ? s : respt.Status;
+            if (respm.Headers) gBS->FreePool(respm.Headers);
+            goto free_wurl;
+        }
+
+        if (net_http_is_redirect(respd.StatusCode)) {
+            loc = net_http_header(respm.Headers, respm.HeaderCount, "Location");
+            if (loc && ++redirects <= NET_HTTP_MAX_REDIRECTS) {
+                /* Copy Location into a stable buffer BEFORE freeing Headers
+                 * (loc points into the firmware-owned header block). */
+                UINTN k = 0;
+                while (loc[k] && k < sizeof(redir_buf) - 1) {
+                    redir_buf[k] = loc[k]; k++;
+                }
+                redir_buf[k] = '\0';
+                url = redir_buf;
+                if (respm.Headers) gBS->FreePool(respm.Headers);
+                gBS->FreePool(wurl); wurl = (CHAR16 *)0;
+                continue;   /* re-issue GET against the redirect target */
+            }
+            if (respm.Headers) gBS->FreePool(respm.Headers);
+            s = EFI_NO_MAPPING;   /* too many redirects / no Location */
+            goto free_wurl;
+        }
+
+        if (respd.StatusCode != HTTP_STATUS_200_OK) {
+            if (respm.Headers) gBS->FreePool(respm.Headers);
+            s = EFI_NOT_FOUND;
+            goto free_wurl;
+        }
+        if (respm.Headers) gBS->FreePool(respm.Headers);
+        total = respm.BodyLength;   /* first chunk already in buf */
+
+        /* Remaining body chunks until the firmware reports 0 bytes or the cap. */
+        while (total < cap) {
+            respm.Data.Response = (EFI_HTTP_RESPONSE_DATA *)0;
+            respm.HeaderCount = 0;
+            respm.Headers = (EFI_HTTP_HEADER *)0;
+            respm.BodyLength = (UINTN)(cap - total);
+            respm.Body = (UINT8 *)buf + total;
+            respt.Status = EFI_SUCCESS;
+            s = http->Response(http, &respt);
+            if (EFI_ERROR(s)) {
+                if (s == EFI_NOT_FOUND) { s = EFI_SUCCESS; break; }  /* body done */
+                goto free_wurl;
+            }
+            s = net_http_wait(resp_ev);
+            if (EFI_ERROR(s)) {
+                http->Cancel(http, &respt);   /* abort in-flight body read */
+                goto free_wurl;
+            }
+            if (respm.BodyLength == 0)
+                break;
+            total += respm.BodyLength;
+        }
+        gBS->FreePool(wurl); wurl = (CHAR16 *)0;
+        *out_buf = buf;
+        *out_size = total;
+        *out_pages = pages;
+        buf = (VOID *)0;   /* ownership transferred */
+        s = EFI_SUCCESS;
+        goto cleanup;
+
+    free_wurl:
+        if (wurl) { gBS->FreePool(wurl); wurl = (CHAR16 *)0; }
+        goto cleanup;
+    }
+
+cleanup:
+    if (wurl) gBS->FreePool(wurl);
+    if (req_ev) gBS->CloseEvent(req_ev);
+    if (resp_ev) gBS->CloseEvent(resp_ev);
+    if (buf) gBS->FreePages(buf_phys, pages);
+    if (http) http->Configure(http, (EFI_HTTP_CONFIG_DATA *)0);  /* reset */
+    if (sb && child) sb->DestroyChild(sb, child);
+    return s;
+}
+
+/* Connectivity proof: on an HTTP boot, fetch boot.conf over HTTP to verify
+ * the client end-to-end, log it, then FREE it. kernel fetch/stage/retention is by
+ * the network-boot selection, final-URL persistence by the boot_info handoff
+ * -- no retention here (the TFTP-probe lesson). */
+static void net_http_probe(EFI_HANDLE dev_handle)
+{
+    VOID *cbuf = (VOID *)0;
+    UINT64 csize = 0;
+    UINTN cpages = 0;
+    EFI_STATUS s;
+
+    if (!g_net_discovery.booted_from_network || !g_net_discovery.http_boot)
+        return;
+    s = net_http_download(dev_handle, "http://boot/EFI/ImpossibleOS/boot.conf",
+                          NET_TFTP_BOOTCONF_CAP, &cbuf, &csize, &cpages);
+    if (EFI_ERROR(s)) {
+        serial_early_print("[NET] HTTP: boot.conf probe failed; staying local\n");
+        return;
+    }
+    serial_early_print("[NET] HTTP: boot.conf reachable (");
+    serial_early_print_uint((UINT32)csize);
+    serial_early_print(" B); kernel staging owned by network-boot selection\n");
+    boot_log_append("[NET] HTTP client verified (boot.conf)\n");
+    gBS->FreePages((EFI_PHYSICAL_ADDRESS)(UINTN)cbuf, cpages);
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -14141,6 +14446,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     network_boot_discover(g_boot_device_handle, g_boot_image_file_path);
     net_dhcp_capture(g_boot_device_handle);
     net_tftp_probe(g_boot_device_handle);
+    net_http_probe(g_boot_device_handle);
 
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();

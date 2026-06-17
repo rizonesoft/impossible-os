@@ -56,6 +56,8 @@ typedef UINTN               EFI_TPL;
 #define EFI_TFTP_ERROR              (23ULL | (1ULL << 63))
 #define EFI_PROTOCOL_ERROR          (24ULL | (1ULL << 63))
 #define EFI_SECURITY_VIOLATION      (26ULL | (1ULL << 63))
+#define EFI_NOT_READY               (6ULL  | (1ULL << 63))
+#define EFI_NO_MAPPING              (17ULL | (1ULL << 63))
 #define EFI_SECURITY_VIOLATION      (26ULL | (1ULL << 63))
 
 /* --- ResetSystem types (UEFI 2.10 Table 8-3 / EFI_RESET_TYPE) --- */
@@ -579,6 +581,25 @@ typedef EFI_STATUS (EFIAPI *EFI_LOCATE_HANDLE_BUFFER)(
     UINTN *NoHandles,
     EFI_HANDLE **Buffer);
 
+/* Event & timer services (UEFI 2.10 spec 7.1). Typed for the async HTTP
+ * client's bounded wait -- ad-hoc casts on the VOID* slots are a
+ * bare-metal crash risk. */
+#define EVT_TIMER          0x80000000u
+#define EVT_NOTIFY_SIGNAL  0x00000200u
+
+typedef VOID (EFIAPI *EFI_EVENT_NOTIFY)(EFI_EVENT Event, VOID *Context);
+typedef enum { TimerCancel, TimerPeriodic, TimerRelative } EFI_TIMER_DELAY;
+
+typedef EFI_STATUS (EFIAPI *EFI_CREATE_EVENT)(
+    UINT32 Type, EFI_TPL NotifyTpl, EFI_EVENT_NOTIFY NotifyFunction,
+    VOID *NotifyContext, EFI_EVENT *Event);
+typedef EFI_STATUS (EFIAPI *EFI_SET_TIMER)(
+    EFI_EVENT Event, EFI_TIMER_DELAY Type, UINT64 TriggerTime);
+typedef EFI_STATUS (EFIAPI *EFI_WAIT_FOR_EVENT)(
+    UINTN NumberOfEvents, EFI_EVENT *Event, UINTN *Index);
+typedef EFI_STATUS (EFIAPI *EFI_CLOSE_EVENT)(EFI_EVENT Event);
+typedef EFI_STATUS (EFIAPI *EFI_CHECK_EVENT)(EFI_EVENT Event);
+
 typedef struct EFI_BOOT_SERVICES {
     EFI_TABLE_HEADER        Hdr;
 
@@ -594,12 +615,12 @@ typedef struct EFI_BOOT_SERVICES {
     EFI_FREE_POOL           FreePool;           /* 6 */
 
     /* Event & Timer Services */
-    VOID                   *CreateEvent;        /* 7 */
-    VOID                   *SetTimer;           /* 8 */
-    VOID                   *WaitForEvent;       /* 9 */
+    EFI_CREATE_EVENT        CreateEvent;        /* 7 */
+    EFI_SET_TIMER           SetTimer;           /* 8 */
+    EFI_WAIT_FOR_EVENT      WaitForEvent;       /* 9 */
     VOID                   *SignalEvent;        /* 10 */
-    VOID                   *CloseEvent;         /* 11 */
-    VOID                   *CheckEvent;         /* 12 */
+    EFI_CLOSE_EVENT         CloseEvent;         /* 11 */
+    EFI_CHECK_EVENT         CheckEvent;         /* 12 */
 
     /* Protocol Handler Services */
     VOID                   *InstallProtocolInterface;   /* 13 */
@@ -1216,5 +1237,108 @@ typedef struct _EFI_PXE_BASE_CODE_PROTOCOL {
 
 _Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_PROTOCOL, Mode) == 104,
     "PXE protocol Mode offset (Revision + 12 callbacks)");
+
+/* --- HTTP Boot protocols (UEFI 2.10 spec 28.6 + 29.5) ----------------------
+ * Used by HTTP-boot asset loading. Async request/response uses the
+ * typed event ABI above. Only the fields/opcodes the client uses are modeled;
+ * the EFI_HTTP_STATUS_CODE enum is in exact spec order so the named 2xx/3xx
+ * constants carry the right values for redirect/success comparison. */
+
+typedef struct { UINT8 Addr[4]; } EFI_IPv4_ADDRESS;
+
+#define EFI_HTTP_SERVICE_BINDING_PROTOCOL_GUID \
+    { 0xbdc8e6af, 0xd9bc, 0x4379, \
+      { 0xa7, 0x2a, 0xe0, 0xc4, 0xe7, 0x5d, 0xae, 0x1c } }
+#define EFI_HTTP_PROTOCOL_GUID \
+    { 0x7a59b29b, 0x910b, 0x4171, \
+      { 0x82, 0x42, 0xa8, 0x5a, 0x0d, 0xf2, 0x5b, 0x5b } }
+
+typedef struct _EFI_SERVICE_BINDING_PROTOCOL EFI_SERVICE_BINDING_PROTOCOL;
+struct _EFI_SERVICE_BINDING_PROTOCOL {
+    EFI_STATUS (EFIAPI *CreateChild)(EFI_SERVICE_BINDING_PROTOCOL *This,
+                                     EFI_HANDLE *ChildHandle);
+    EFI_STATUS (EFIAPI *DestroyChild)(EFI_SERVICE_BINDING_PROTOCOL *This,
+                                      EFI_HANDLE ChildHandle);
+};
+
+typedef enum { HttpVersion10, HttpVersion11, HttpVersionUnsupported } EFI_HTTP_VERSION;
+
+typedef struct {
+    BOOLEAN          UseDefaultAddress;
+    EFI_IPv4_ADDRESS LocalAddress;
+    EFI_IPv4_ADDRESS LocalSubnet;
+    UINT16           LocalPort;
+} EFI_HTTPv4_ACCESS_POINT;
+
+typedef struct {
+    EFI_HTTP_VERSION HttpVersion;
+    UINT32           TimeOutMillisec;
+    BOOLEAN          LocalAddressIsIPv6;
+    union {
+        EFI_HTTPv4_ACCESS_POINT *IPv4Node;
+        VOID                    *IPv6Node;
+    } AccessPoint;
+} EFI_HTTP_CONFIG_DATA;
+
+typedef enum {
+    HttpMethodGet = 0, HttpMethodPost, HttpMethodPatch, HttpMethodOptions,
+    HttpMethodConnect, HttpMethodHead, HttpMethodPut, HttpMethodDelete,
+    HttpMethodTrace, HttpMethodMax
+} EFI_HTTP_METHOD;
+
+typedef enum {
+    HTTP_STATUS_UNSUPPORTED_STATUS = 0,
+    HTTP_STATUS_100_CONTINUE, HTTP_STATUS_101_SWITCHING_PROTOCOLS,
+    HTTP_STATUS_200_OK, HTTP_STATUS_201_CREATED, HTTP_STATUS_202_ACCEPTED,
+    HTTP_STATUS_203_NON_AUTHORITATIVE_INFORMATION, HTTP_STATUS_204_NO_CONTENT,
+    HTTP_STATUS_205_RESET_CONTENT, HTTP_STATUS_206_PARTIAL_CONTENT,
+    HTTP_STATUS_300_MULTIPLE_CHOICES, HTTP_STATUS_301_MOVED_PERMANENTLY,
+    HTTP_STATUS_302_FOUND, HTTP_STATUS_303_SEE_OTHER, HTTP_STATUS_304_NOT_MODIFIED,
+    HTTP_STATUS_305_USE_PROXY, HTTP_STATUS_307_TEMPORARY_REDIRECT,
+    HTTP_STATUS_400_BAD_REQUEST, HTTP_STATUS_401_UNAUTHORIZED,
+    HTTP_STATUS_402_PAYMENT_REQUIRED, HTTP_STATUS_403_FORBIDDEN,
+    HTTP_STATUS_404_NOT_FOUND, HTTP_STATUS_405_METHOD_NOT_ALLOWED,
+    HTTP_STATUS_406_NOT_ACCEPTABLE, HTTP_STATUS_407_PROXY_AUTHENTICATION_REQUIRED,
+    HTTP_STATUS_408_REQUEST_TIME_OUT, HTTP_STATUS_409_CONFLICT,
+    HTTP_STATUS_410_GONE, HTTP_STATUS_411_LENGTH_REQUIRED,
+    HTTP_STATUS_412_PRECONDITION_FAILED, HTTP_STATUS_413_REQUEST_ENTITY_TOO_LARGE,
+    HTTP_STATUS_414_REQUEST_URI_TOO_LARGE, HTTP_STATUS_415_UNSUPPORTED_MEDIA_TYPE,
+    HTTP_STATUS_416_REQUESTED_RANGE_NOT_SATISFIED, HTTP_STATUS_417_EXPECTATION_FAILED,
+    HTTP_STATUS_500_INTERNAL_SERVER_ERROR, HTTP_STATUS_501_NOT_IMPLEMENTED,
+    HTTP_STATUS_502_BAD_GATEWAY, HTTP_STATUS_503_SERVICE_UNAVAILABLE,
+    HTTP_STATUS_504_GATEWAY_TIME_OUT, HTTP_STATUS_505_HTTP_VERSION_NOT_SUPPORTED,
+    HTTP_STATUS_308_PERMANENT_REDIRECT
+} EFI_HTTP_STATUS_CODE;
+
+typedef struct { EFI_HTTP_METHOD Method; CHAR16 *Url; } EFI_HTTP_REQUEST_DATA;
+typedef struct { EFI_HTTP_STATUS_CODE StatusCode; } EFI_HTTP_RESPONSE_DATA;
+typedef struct { CHAR8 *FieldName; CHAR8 *FieldValue; } EFI_HTTP_HEADER;
+
+typedef struct {
+    union {
+        EFI_HTTP_REQUEST_DATA  *Request;
+        EFI_HTTP_RESPONSE_DATA *Response;
+    } Data;
+    UINTN            HeaderCount;
+    EFI_HTTP_HEADER *Headers;
+    UINTN            BodyLength;
+    VOID            *Body;
+} EFI_HTTP_MESSAGE;
+
+typedef struct {
+    EFI_EVENT         Event;
+    EFI_STATUS        Status;
+    EFI_HTTP_MESSAGE *Message;
+} EFI_HTTP_TOKEN;
+
+typedef struct _EFI_HTTP_PROTOCOL EFI_HTTP_PROTOCOL;
+struct _EFI_HTTP_PROTOCOL {
+    EFI_STATUS (EFIAPI *GetModeData)(EFI_HTTP_PROTOCOL *This, EFI_HTTP_CONFIG_DATA *Data);
+    EFI_STATUS (EFIAPI *Configure)(EFI_HTTP_PROTOCOL *This, EFI_HTTP_CONFIG_DATA *Data);
+    EFI_STATUS (EFIAPI *Request)(EFI_HTTP_PROTOCOL *This, EFI_HTTP_TOKEN *Token);
+    EFI_STATUS (EFIAPI *Cancel)(EFI_HTTP_PROTOCOL *This, EFI_HTTP_TOKEN *Token);
+    EFI_STATUS (EFIAPI *Response)(EFI_HTTP_PROTOCOL *This, EFI_HTTP_TOKEN *Token);
+    EFI_STATUS (EFIAPI *Poll)(EFI_HTTP_PROTOCOL *This);
+};
 
 #endif /* UEFI_EFI_H */

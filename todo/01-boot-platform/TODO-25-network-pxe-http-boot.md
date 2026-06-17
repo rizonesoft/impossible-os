@@ -35,7 +35,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | 💎 | 1 | UEFI SNP/PXE protocol discovery | TODO-05 §5 | [x] |
 | 💎 | 2 | DHCP/PXE provenance capture | §1 | [/] |
 | 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [x] |
-| 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [ ] |
+| 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [/] |
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [ ] |
 | 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [ ] |
 | 💎 | 7 | Fallback ordering with local media | TODO-05 §5, §6 | [ ] |
@@ -116,13 +116,22 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 4. UEFI HTTP Boot Load Path
 
-- [ ] Use EFI_HTTP_PROTOCOL or firmware HTTP Boot device path to fetch assets.
-- [ ] Support HTTPS only when firmware exposes TLS policy; otherwise require signature verification in §5.
-- [ ] Add URI parsing and redirect limits.
-- [ ] Persist final asset URLs in boot_info.
+- [x] `net_http_download()` (`bootx64.c`): HTTP GET via `EFI_HTTP_SERVICE_BINDING` + `EFI_HTTP_PROTOCOL` (CreateChild/Configure/async Request+Response/DestroyChild); typed event + HTTP ABI in `efi.h`. D2: the URI node is provenance only.
+- [x] Bounded async wait (`net_http_wait()` = `CheckEvent`+`Stall`); cap-sized body buffer is the transfer bound (Content-Length not trusted); multi-chunk body read; absolute-`Location` 3xx redirect limit (`NET_HTTP_MAX_REDIRECTS`=4).
+- [x] HTTP-only here (HTTPv4 config); HTTPS/TLS gating + plain-http / unsigned-asset refusal is §5 integrity.
+- [x] `net_http_probe()` fetches `boot.conf` over HTTP as an end-to-end client proof then FREES it; kernel fetch/stage/retention is §7, final-URL persistence in boot_info is §6 (D1: no §6/§7 behavior in the transport section).
+- [ ] Relative-redirect resolution: a relative `Location` (no scheme) currently fails the re-issued GET (-> stays local); add base-URL join (scheme://authority + path) so root-relative redirects are followed.
 - [ ] Commit: `"boot: load kernel assets over UEFI HTTP"`
 
-**Test checkpoint:** Firmware HTTP Boot (or `EFI_HTTP_PROTOCOL`) fetches the kernel + boot.conf; serial shows the parsed URI, an enforced redirect limit, and the final asset URLs persisted in `boot_info`. Verify on QEMU WHPX (OVMF HTTP Boot).
+**Test checkpoint:** On an OVMF HTTP Boot, `net_http_probe()` fetches `boot.conf` over `EFI_HTTP_PROTOCOL`; serial shows the reachable size, an enforced redirect limit, the cap-bounded body, and that the buffer is freed (no retention). Verify on QEMU WHPX (OVMF HTTP Boot).
+
+> **Test runner:** N/A (bootloader-only UEFI HTTP client, no kernel-side fields until §6) | validation: serial `[NET] HTTP:` line on a QEMU OVMF HTTP Boot; HTTP-boot test owned by §10 harness
+
+> **Notes:**
+> - Shipped `net_http_download()` + `net_http_probe()` + helpers (`bootx64.c`, efi_main Step 1a) + typed event ABI + `EFI_HTTP_PROTOCOL`/`SERVICE_BINDING` ABI in `efi.h`.
+> - EFI_HTTP service-binding child + HTTPv4 Configure (firmware DHCP address) + async GET token polled via CheckEvent; cap-sized body buffer is the bound; multi-chunk body read; cleanup frees events/headers/pages + DestroyChild on every path.
+> - `net_http_probe()` proves the client on an HTTP boot then frees boot.conf (no retention); `booted_from_network && http_boot` gates it; absolute-Location redirects only (relative tracked).
+> - Scope: §4 is the HTTP client + boot.conf proof; kernel fetch/stage/retention + boot-from-network is §7, final-URL persistence §6, integrity/TLS §5.
 
 ---
 
@@ -209,7 +218,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | ⭐  | Feature                       | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS                   |
 | --- | ----------------------------- | ------------------------- | -------------------------- | ---------------------------------- |
 | 💎  | PXE boot                      | ✅ WDS/MDT                | ✅ PXELINUX/iPXE           | ✅ §1-§3 discover + DHCP + TFTP     |
-| 💎  | HTTP boot                     | ✅ UEFI HTTP Boot         | ✅ iPXE/systemd-boot       | ⬜ Planned §4                      |
+| 💎  | HTTP boot                     | ✅ UEFI HTTP Boot         | ✅ iPXE/systemd-boot       | ✅ §4 EFI_HTTP client + probe       |
 | 💎  | Signed network manifest       | ✅ Secure Boot policies   | ✅ shim/grub signatures    | ⬜ Planned §5                      |
 | ⭐  | On-device network-boot report | ❌ event logs only        | ❌ external server logs     | ⭐ Planned §9 (X:\Diag JSON + QR)  |
 
