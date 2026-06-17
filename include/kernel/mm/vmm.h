@@ -189,6 +189,16 @@ int vmm_protect(uintptr_t virt, uint64_t new_flags);
  * Returns 0 on success, -1 if any page is not mapped. */
 int vmm_protect_range(uintptr_t addr, uint64_t size, uint64_t new_flags);
 
+/* W^X primitives (TODO-27 sec3): split-aware read-modify-write that preserves
+ * other PTE flags. vmm_set_nx sets PTE.NX (range stays R/W but non-exec);
+ * vmm_set_ro clears PTE.WRITABLE (range stays executable but read-only). Local
+ * TLB flush only -- caller must be single-CPU. Return 0 / -1. */
+int vmm_set_nx(uintptr_t virt, uint64_t size);
+int vmm_set_ro(uintptr_t virt, uint64_t size);
+
+/* PTE flag bits for the page at virt (0 if absent / unsplit huge). Read-only. */
+uint64_t vmm_query_flags(uintptr_t virt);
+
 /* Apply NX policy: mark all non-text kernel pages as non-executable.
  * Call after vmm_init() and cpu_enable_nx(). */
 void vmm_apply_nx_policy(void);

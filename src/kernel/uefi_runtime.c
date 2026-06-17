@@ -22,6 +22,8 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/zw.h"
 #include "kernel/cpu_security.h"
+#include "kernel/smp.h"
+#include "kernel/mm/vmm.h"
 #include "kernel/timer.h"
 #include "kernel/mm/heap.h"
 #include "kernel/ob/peb.h"
@@ -1432,6 +1434,115 @@ boot_result_t uefi_secureboot_init(void)
     uefi_secureboot_snapshot();
 
     return BOOT_OK;
+}
+
+/* Enforce write-XOR-execute on UEFI runtime memory regions by walking the
+ * EFI_MEMORY_ATTRIBUTES_TABLE (TODO-04 sec5 consumer API) and flipping kernel
+ * page-table permissions: DATA/RODATA -> NX, CODE -> RO. Runtime regions are
+ * identity-mapped (SetVirtualAddressMap virtual_start = phys_addr) so the MAT
+ * phys_addr is the virtual address. Runs ONCE, single-threaded, before SMP AP
+ * bring-up. TODO-27 sec3.
+ *
+ * Fail-closed accounting: the success log is a hard claim that
+ * every applicable runtime page is W^X. It is emitted ONLY when nothing failed
+ * and no firmware-declared W^X violation remains; otherwise the degraded
+ * accounting is logged. WX_VIOLATION regions are left intact (forcing them would
+ * break firmware) and counted as an unsafe residual.
+ *
+ * The static MAT freezes attributes at boot; the runtime
+ * EFI_MEMORY_ATTRIBUTE_PROTOCOL sync (TODO-27 sec3, deferred -- needs a boot_info
+ * ABI add) is absent, so this is static enforcement only. */
+/* True only if [phys, phys+bytes) lies fully within a single UEFI runtime region
+ * (g_boot_info.rt_mmap). The MAT should describe only runtime memory, but a
+ * malformed firmware table could point at arbitrary identity-mapped pages
+ * (kernel/heap/MMIO) -- flipping NX/RO there would crash the OS. Defense in
+ * depth: only mutate page tables for ranges proven runtime (TODO-27 sec3). */
+static int mat_range_is_runtime(uint64_t phys, uint64_t bytes)
+{
+    uint32_t i, n = g_boot_info.rt_mmap_count;
+    uint64_t end;
+    if (bytes == 0 || phys + bytes < phys)
+        return 0;
+    end = phys + bytes;
+    if (n > BOOT_RT_MMAP_MAX)
+        n = BOOT_RT_MMAP_MAX;
+    for (i = 0; i < n; i++) {
+        uint64_t rstart = g_boot_info.rt_mmap[i].phys_addr;
+        uint64_t rpages = g_boot_info.rt_mmap[i].num_pages;
+        uint64_t rend;
+        if (rpages == 0 || rpages > (0xFFFFFFFFFFFFFFFFull / 4096u))
+            continue;
+        rend = rstart + rpages * 4096u;
+        if (rend < rstart)
+            continue;
+        if (phys >= rstart && end <= rend)
+            return 1;
+    }
+    return 0;
+}
+
+void uefi_runtime_enforce_wx(void)
+{
+    uint32_t n, i;
+    uint32_t enforced = 0, skipped = 0, failed = 0, wxviol = 0, nonrt = 0;
+
+    /* Boot-order guard: the per-page vmm TLB flush is a local
+     * invlpg, correct only while a single CPU runs. Refuse enforcement once SMP
+     * is up rather than mutate page tables without a TLB shootdown. */
+    if (kernel_subsystem_ready(SUBSYS_SMP) || smp_cpu_count() > 1) {
+        klog(LOG_ERROR, "UEFI",
+             "W^X enforcement refused: SMP active (no TLB shootdown)");
+        return;
+    }
+
+    n = mat_get_count();
+    if (n == 0) {
+        klog(LOG_WARN, "UEFI",
+             "W^X: no EFI_MEMORY_ATTRIBUTES_TABLE -- enforcement skipped");
+        return;
+    }
+
+    for (i = 0; i < n; i++) {
+        mat_entry_t e;
+        uint64_t bytes;
+        int rc;
+        if (mat_get_entry(i, &e) == 0) { failed++; continue; }  /* 1 = success */
+        bytes = (uint64_t)e.num_pages * 4096u;
+        /* Reject a MAT entry that does not lie within a runtime region -- a
+         * malformed firmware table must not drive NX/RO on kernel/heap/MMIO. */
+        if (!mat_range_is_runtime(e.phys_addr, bytes)) {
+            nonrt++;
+            continue;
+        }
+        switch (e.cls) {
+        case MAT_CLASS_DATA:
+        case MAT_CLASS_RODATA:
+            rc = vmm_set_nx((uintptr_t)e.phys_addr, bytes);
+            if (rc == 0) enforced++; else failed++;
+            break;
+        case MAT_CLASS_CODE:
+            rc = vmm_set_ro((uintptr_t)e.phys_addr, bytes);
+            if (rc == 0) enforced++; else failed++;
+            break;
+        case MAT_CLASS_WX_VIOLATION:
+            wxviol++;                 /* firmware W+X: cannot fix without breaking it */
+            break;
+        case MAT_CLASS_GUARD:
+        default:
+            skipped++;                /* not-present / unknown: nothing to enforce */
+            break;
+        }
+    }
+
+    if (failed == 0 && wxviol == 0 && nonrt == 0) {
+        klog(LOG_INFO, "UEFI",
+             "W^X enforced on %u runtime memory regions (static MAT)", enforced);
+    } else {
+        klog(LOG_WARN, "UEFI",
+             "W^X DEGRADED: %u enforced, %u failed, %u W^X-violation, "
+             "%u non-runtime, %u skipped",
+             enforced, failed, wxviol, nonrt, skipped);
+    }
 }
 
 /* Called from registry_populate_defaults() after registry_init() -- writes

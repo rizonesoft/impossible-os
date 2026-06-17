@@ -389,6 +389,100 @@ int vmm_protect_range(uintptr_t addr, uint64_t size, uint64_t new_flags)
     return 0;
 }
 
+/* Read-modify-write the PTE flag bits for one 4 KiB page, splitting a covering
+ * huge page first and PRESERVING all other flags (unlike vmm_protect, which
+ * replaces them wholesale). or_bits are set; and_clear bits are cleared. Local
+ * TLB flush only -- the caller must guarantee single-CPU context. Returns 0, or
+ * -1 if the page is absent or a split fails. Used by the UEFI runtime W^X pass
+ * (TODO-27 sec3). */
+static int vmm_pte_rmw(uintptr_t virt, uint64_t or_bits, uint64_t and_clear)
+{
+    pte_t *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+
+    virt &= ~((uintptr_t)0xFFF);
+    if (vmm_split_huge_page(virt) != 0)         /* ensure a 4 KiB leaf PTE */
+        return -1;
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0, 0);
+    if (!pdpt) return -1;
+    pd = get_or_create_table(pdpt, pdpti, 0, 0);
+    if (!pd) return -1;
+    if (pd[pdi] & VMM_FLAG_HUGE)                 /* split should have cleared this */
+        return -1;
+    pt = get_or_create_table(pd, pdi, 0, 0);
+    if (!pt) return -1;
+    if (!(pt[pti] & VMM_FLAG_PRESENT))
+        return -1;
+    if (!cpu_has(CPU_FEATURE_NX))               /* never set NX without CPU support */
+        or_bits &= ~VMM_FLAG_NX;
+    pt[pti] = (pt[pti] & ~and_clear) | or_bits;
+    vmm_flush_tlb(virt);
+    return 0;
+}
+
+/* Range helper for vmm_set_nx / vmm_set_ro: walk every 4 KiB page in
+ * [virt, virt+size), applying the RMW. Overflow-checked. */
+static int vmm_rmw_range(uintptr_t virt, uint64_t size,
+                         uint64_t or_bits, uint64_t and_clear)
+{
+    uintptr_t addr, end;
+    if (size == 0) return 0;
+    /* Overflow-check + derive [addr, end) from the ORIGINAL virt (not the
+     * floored addr) so an unaligned start still covers its tail page -- e.g.
+     * virt=0x1001,size=0x1000 must protect pages 0x1000 AND 0x2000. */
+    if (size > 0x7FFFFFFFFFFFu || virt + size < virt)
+        return -1;
+    addr = virt & ~((uintptr_t)0xFFF);
+    end = (virt + size + 0xFFFu) & ~((uintptr_t)0xFFF);
+    if (end < addr) return -1;
+    while (addr < end) {
+        if (vmm_pte_rmw(addr, or_bits, and_clear) != 0)
+            return -1;
+        addr += VMM_PAGE_SIZE;
+    }
+    return 0;
+}
+
+/* Mark a virtual range No-eXecute (sets PTE.NX), preserving R/W. */
+int vmm_set_nx(uintptr_t virt, uint64_t size)
+{
+    return vmm_rmw_range(virt, size, VMM_FLAG_NX, 0);
+}
+
+/* Mark a virtual range read-only (clears PTE.WRITABLE), preserving NX/exec. */
+int vmm_set_ro(uintptr_t virt, uint64_t size)
+{
+    return vmm_rmw_range(virt, size, 0, VMM_FLAG_WRITABLE);
+}
+
+/* Return the PTE flag bits for the 4 KiB page containing virt (0 if not present
+ * or inside an unsplit huge page). Read-only; used by W^X tests (TODO-27 sec3)
+ * to confirm vmm_set_nx/vmm_set_ro flipped the right bits. */
+uint64_t vmm_query_flags(uintptr_t virt)
+{
+    pte_t *pdpt, *pd, *pt;
+    uint64_t pml4i, pdpti, pdi, pti;
+
+    virt &= ~((uintptr_t)0xFFF);
+    pml4i = pml4_index(virt);
+    pdpti = pdpt_index(virt);
+    pdi   = pd_index(virt);
+    pti   = pt_index(virt);
+    pdpt = get_or_create_table(kernel_pml4, pml4i, 0, 0);
+    if (!pdpt) return 0;
+    pd = get_or_create_table(pdpt, pdpti, 0, 0);
+    if (!pd) return 0;
+    if (pd[pdi] & VMM_FLAG_HUGE) return 0;
+    pt = get_or_create_table(pd, pdi, 0, 0);
+    if (!pt) return 0;
+    if (!(pt[pti] & VMM_FLAG_PRESENT)) return 0;
+    return pt[pti] & ~PTE_ADDR_MASK;        /* flag bits only */
+}
+
 uintptr_t vmm_get_physical(uintptr_t virt)
 {
     pte_t *pdpt, *pd, *pt;

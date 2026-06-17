@@ -389,6 +389,12 @@ void boot_phase1(void)
     }
     esrt_init();
     mat_init();
+    /* W^X enforcement on UEFI runtime regions (TODO-27 sec3). Pinned here in
+     * Phase 1 after mat_init (MAT ready) and SVAM (Phase 0), but BEFORE Phase 2
+     * smp_init -- the pass uses local TLB flushes valid only single-threaded
+     *. It self-guards against SMP-up and degrades cleanly when
+     * the MAT is absent. */
+    uefi_runtime_enforce_wx();
     uefi_conformance_init();
     {
         extern void firmware_tables_init(void);

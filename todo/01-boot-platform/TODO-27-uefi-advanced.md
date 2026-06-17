@@ -45,7 +45,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | --- | :---: | ---------------------------------------- | ------------------- | :----: |
 | ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [x]   |
 | 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6              |  [x]   |
-| 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [ ]   |
+| 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [/]   |
 | 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [ ]   |
 | 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [ ]   |
 | 💎  |   6   | SMBIOS extended type parsing             | T02 §4              |  [ ]   |
@@ -122,15 +122,24 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 > `01-boot-platform/TODO-04 §5 UEFI Memory Attributes and Runtime Properties Inventory` shipped the consumer API: `mat_get_count()` / `mat_get_entry(idx, *out)` returning `mat_entry_t {phys_addr, num_pages, attribute, cls}` with `cls` ∈ `{GUARD, CODE, DATA, RODATA, WX_VIOLATION}` from `include/kernel/uefi_config.h`. Iterate that instead of re-walking firmware tables. `mat_classify_attr()` is a pure test helper.
 
 - [x] Locate `EFI_MEMORY_ATTRIBUTES_TABLE` in UEFI config tables -- shipped by TODO-04 §1 catalog + §5 inventory; consume via `mat_get_count()`/`mat_get_entry()`.
-- [ ] Walk entries: for `MAT_CLASS_DATA` regions call `vmm_set_nx(virt, size)`; for `MAT_CLASS_CODE` regions call `vmm_set_ro(virt, size)`. (Iteration source switched to `mat_get_entry()` from `include/kernel/uefi_config.h`.)
-- [ ] Prerequisite: implement `vmm_set_nx()` and `vmm_set_ro()` in vmm.c (do not exist yet)
-- [ ] Graceful degradation: if table absent, log warning and continue
+- [x] `uefi_runtime_enforce_wx()` (`uefi_runtime.c`) walks `mat_get_entry()`: DATA/RODATA -> `vmm_set_nx`, CODE -> `vmm_set_ro` (identity-mapped). Fail-closed: success log fires only when nothing failed and no W^X violation remains.
+- [x] `vmm_set_nx()`/`vmm_set_ro()` + `vmm_query_flags()` (`vmm.c`): split-aware read-modify-write of one PTE bit (NX set / WRITABLE clear), preserving other flags; local TLB flush.
+- [x] Graceful degradation: MAT absent -> warn + skip; `MAT_CLASS_WX_VIOLATION` left intact + counted unsafe; a boot-order guard refuses enforcement once SMP is up. Pinned in Phase 1 after `mat_init`.
 - [ ] **EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync** (gap-audit 2026-05-01 H2, surfaced from TODO-02 review pipeline): the static `EFI_MEMORY_ATTRIBUTES_TABLE` (UEFI 2.6) freezes attributes at boot; UEFI 2.10 adds the runtime-callable `EFI_MEMORY_ATTRIBUTE_PROTOCOL` with `GetMemoryAttributes` / `SetMemoryAttributes` / `ClearMemoryAttributes` so firmware-backed permission flips can stay in sync with OS page-table flips. Linux 6.7+ uses this for the EFI stub. Add: (a) protocol discovery via `LocateProtocol(EFI_MEMORY_ATTRIBUTE_PROTOCOL_GUID, ...)` BEFORE ExitBootServices; cache the function pointers via `boot_info.uefi_runtime` mirror (UEFI 2.10 protocol survives EBS like the rest of RT). (b) When `vmm_set_nx`/`vmm_set_ro` modify a UEFI runtime page, ALSO call the protocol's `SetMemoryAttributes(EFI_MEMORY_XP)` / `EFI_MEMORY_RO` so firmware-internal page-table state matches the OS view -- avoids drift on systems where firmware re-asserts permissions after `SetVirtualAddressMap`. (c) Graceful degradation: when the protocol is absent (UEFI < 2.10 or stripped firmware), log `[UEFI] memory-attribute protocol absent; falling back to static MAT enforcement only` and continue. Tests: synthetic UEFI 2.10 fixture (protocol present) asserts both paths fire; synthetic UEFI 2.6 fixture (protocol absent) asserts the absence is logged and the static path still works. Owner: this section.
-- [ ] Commit: `"kernel: UEFI runtime W^X enforcement via EFI_MEMORY_ATTRIBUTES_TABLE"`
+- [x] Commit: `"kernel: UEFI runtime W^X enforcement via EFI_MEMORY_ATTRIBUTES_TABLE"`
 
 **Regression risk:** Modifies page table permissions on UEFI runtime regions. Rollback: skip enforcement (BOOT_DEGRADED path).
 
-**Test checkpoint:** Serial shows `[UEFI] W^X enforced on N runtime memory regions`. `uefi_get_time()` still works after enforcement.
+**Test checkpoint:** Serial shows `[UEFI] W^X enforced on N runtime memory regions (static MAT)` (or the `W^X DEGRADED: ...` accounting line when a region failed / a W^X violation remains); `uefi_get_time()` still works after enforcement. Verify on QEMU WHPX/TCG + bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | `test_vmm_set_nx` + `test_vmm_set_ro` | enforce_wx validated via serial `[UEFI] W^X` line (calls live boot infra)
+
+> **Notes:**
+> - Shipped `uefi_runtime_enforce_wx()` (`uefi_runtime.c`) + `vmm_set_nx`/`vmm_set_ro`/`vmm_query_flags` (`vmm.c`); walks the MAT (TODO-04 §5 API), DATA/RODATA->NX, CODE->RO, fail-closed accounting; wired Phase 1 after `mat_init`.
+> - `vmm_set_nx`/`vmm_set_ro` are split-aware PTE read-modify-write (preserve other flags, local TLB flush, single-CPU); a boot-order guard refuses enforcement once SMP is up (Codex design D1+D2 adoptions in commit).
+> - Scope boundary: the runtime `EFI_MEMORY_ATTRIBUTE_PROTOCOL` sync (item below, DEFERRED -- needs a boot_info ABI add, UEFI 2.10-only) stays this section; static MAT enforcement is the shipped core.
+
+> **Deferred:** [M] `EFI_MEMORY_ATTRIBUTE_PROTOCOL` runtime sync (firmware-page-table mirror of OS NX/RO flips) needs a boot_info ABI add + bootloader LocateProtocol pre-EBS; UEFI 2.10-only, absent on older firmware (Codex design review recommended defer) -> XREF: 01-boot-platform/TODO-27 §3 (item: "EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync" at line 128)
 
 ## 4. Multi-GPU GOP Handle Enumeration
 
@@ -206,7 +215,7 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 |----|---------------------------|-----------------------------|----------------------------|--------------------------------|
 | ⭐ | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate        | ✅ §1 detect + chainload menu |
 | ⭐ | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash      | ⬜ §2 read-only LVFS; no UpdateCapsule |
-| 💎 | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES   | ⬜ §3                         |
+| 💎 | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES   | ✅ §3 static MAT enforce      |
 | 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ⬜ §4                         |
 | 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ⬜ §5                         |
 | 💎 | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode    | ⬜ §5                         |

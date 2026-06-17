@@ -56,6 +56,11 @@ struct uefi_rt_properties_table {
 #include "kernel/boot_init.h"
 boot_result_t uefi_runtime_init(void);
 
+/* Enforce W^X on UEFI runtime regions via the MAT (TODO-27 sec3). Call ONCE,
+ * single-threaded, before SMP AP bring-up; no-op + degraded log if SMP is up or
+ * the MAT is absent. */
+void uefi_runtime_enforce_wx(void);
+
 /* Returns 1 if runtime services are usable. */
 int uefi_rt_available(void);
 

@@ -8,6 +8,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/user_range.h"
+#include "kernel/cpuid.h"
 
 static void test_vmm_map_roundtrip(void)
 {
@@ -341,12 +342,47 @@ static void test_vmm_set_user_page_sets_bit(void)
     vmm_destroy_user_pml4(cr3);
 }
 
+static void test_vmm_set_ro(void)
+{
+    /* W^X (TODO-27 sec3): vmm_set_ro clears WRITABLE, keeps PRESENT + phys. */
+    uintptr_t base = pmm_alloc_contiguous(1);
+    if (!base) { TEST_SKIP("pmm_alloc_contiguous(1) failed"); return; }
+    int rc = vmm_set_ro(base, 4096);
+    TEST_ASSERT(rc == 0, "vmm_set_ro succeeds on a mapped page");
+    uint64_t f = vmm_query_flags(base);
+    TEST_ASSERT((f & VMM_FLAG_PRESENT) != 0, "vmm_set_ro keeps the page present");
+    TEST_ASSERT((f & VMM_FLAG_WRITABLE) == 0, "vmm_set_ro clears the WRITABLE bit");
+    TEST_ASSERT(vmm_get_physical(base) == base, "vmm_set_ro preserves the mapping");
+    /* overflow / size rejection */
+    TEST_ASSERT(vmm_set_ro(base, 0x800000000000ULL) == -1, "vmm_set_ro rejects oversized range");
+}
+
+static void test_vmm_set_nx(void)
+{
+    /* W^X (TODO-27 sec3): vmm_set_nx sets NX (when the CPU supports it), keeps
+     * WRITABLE + PRESENT + phys. */
+    uintptr_t base = pmm_alloc_contiguous(1);
+    if (!base) { TEST_SKIP("pmm_alloc_contiguous(1) failed"); return; }
+    int rc = vmm_set_nx(base, 4096);
+    TEST_ASSERT(rc == 0, "vmm_set_nx succeeds on a mapped page");
+    uint64_t f = vmm_query_flags(base);
+    TEST_ASSERT((f & VMM_FLAG_PRESENT) != 0, "vmm_set_nx keeps the page present");
+    TEST_ASSERT((f & VMM_FLAG_WRITABLE) != 0, "vmm_set_nx preserves WRITABLE");
+    if (cpu_has(CPU_FEATURE_NX))
+        TEST_ASSERT((f & VMM_FLAG_NX) != 0, "vmm_set_nx sets the NX bit");
+    else
+        TEST_ASSERT((f & VMM_FLAG_NX) == 0, "vmm_set_nx no-ops NX when CPU lacks it");
+    TEST_ASSERT(vmm_get_physical(base) == base, "vmm_set_nx preserves the mapping");
+}
+
 void test_register_vmm(void)
 {
     test_suite_register_cat("VMM: map/read/unmap", test_vmm_map_roundtrip, TEST_CAT_MM);
     test_suite_register_cat("VMM: mmio_wc map/write", test_vmm_map_mmio_wc, TEST_CAT_MM);
     test_suite_register_cat("VMM: mmio map arg reject", test_vmm_map_mmio_reject, TEST_CAT_MM);
     test_suite_register_cat("VMM: split huge page", test_vmm_split_huge_page, TEST_CAT_MM);
+    test_suite_register_cat("VMM: set_ro clears WRITABLE", test_vmm_set_ro, TEST_CAT_MM);
+    test_suite_register_cat("VMM: set_nx sets NX", test_vmm_set_nx, TEST_CAT_MM);
     test_suite_register_cat("VMM: guard page install", test_vmm_guard_page_install, TEST_CAT_MM);
     test_suite_register_cat("VMM: map_user_page roundtrip",
                             test_vmm_map_user_page_roundtrip, TEST_CAT_MM);
