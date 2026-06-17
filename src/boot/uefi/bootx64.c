@@ -3400,8 +3400,8 @@ static EFI_STATUS chainload_build_devpath(EFI_HANDLE vol_handle,
         return EFI_NOT_FOUND;
 
     /* Measure the firmware-owned device path via GetDevicePathSize -- never
-     * self-walk past the object on a heuristic cap (Codex adversarial: a cap is
-     * not an object bound). 0 = utility absent or degenerate -> refuse. */
+     * self-walk past the object on a heuristic cap -- a cap is not an object
+     * bound. 0 = utility absent or degenerate -> refuse. */
     (void)gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
     measured = 0u;
     if (dpu && dpu->GetDevicePathSize) {
@@ -3519,7 +3519,7 @@ static void chainload_synthesize(boot_entries_parse_result_t *parse)
     UINTN i;
     if (!parse)
         return;
-    /* Hide store-provided chainload entries (Codex consistency): TODO-07 sec13's
+    /* Hide store-provided chainload entries: TODO-07 sec13's
      * JSON chainload validator/dispatcher is deferred, so only synthesized
      * entries are functional. Marking the rest kind_skipped keeps them out of
      * the menu instead of admitting-then-demoting them on selection. */
