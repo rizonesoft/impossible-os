@@ -38,7 +38,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [x] |
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [/] |
 | 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [/] |
-| 💎 | 7 | Fallback ordering with local media | TODO-05 §5, §6 | [ ] |
+| 💎 | 7 | Fallback ordering with local media | TODO-05 §5, §6 | [/] |
 | ⭐ | 8 | Recovery and installer over network | §3-§7, TODO-22 | [ ] |
 | 💎 | 9 | Network boot diagnostics and BlackBox report | §1-§8 | [ ] |
 | 💎 | 10 | PXE/HTTP boot tests | §1-§9 | [ ] |
@@ -196,6 +196,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 7. Fallback Ordering with Local Media
 
+> [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): §7's distinctly-new content is the NETWORK leg of the fallback chain ("fall back to network", `boot.conf` "prefer network", network-download-failure loop prevention), all gated on §5/§6 -- network cannot be a selectable fallback target while it is an untrusted, non-selected boot path. The local ordering (BootNext, boot device, A/B slot, recovery) is already owned: TODO-05 §5 (priority-based device fallback chain) + §6 (UEFI BootOrder/Current/Next) are DONE, TODO-21 owns the A/B slot leg, and `boot_fallback_depth`/`BOOT_FALLBACK_DEPTH_MAX` already cap runaway loops. No non-gated, non-duplicate work remains. See Deferred stamps below.
+
 - [ ] Extend fallback chain policy: BootNext, boot device, A/B slot, recovery, network.
 - [ ] Allow boot.conf to prefer local, removable, or network.
 - [ ] Prevent network fallback loops after repeated download failure.
@@ -203,6 +205,16 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Commit: `"boot: network fallback ordering"`
 
 **Test checkpoint:** With local + network sources present, the documented order (BootNext, boot device, A/B slot, recovery, network) is honored and `boot.conf` can re-prefer local/removable/network; after repeated download failures the boot falls back to local media without a network retry loop, interlocked with the watchdog + rollback counters. Verify on QEMU WHPX.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until network is a selectable boot path
+
+> **Notes:**
+> - Deferred, not implemented: the local fallback ordering is already shipped (TODO-05 §5/§6, TODO-21 A/B); §7's new content is the network leg, gated on §5/§6 making network a trusted selectable boot path.
+> - Loop prevention already exists structurally: `boot_decision.c` caps `boot_fallback_depth` at `BOOT_FALLBACK_DEPTH_MAX`; no network retry loop is currently possible because network is not a selected target.
+> - Owners: local order = TODO-05 §5/§6; A/B slot = TODO-21; network selectability gate = TODO-25 §5/§6.
+
+> **Deferred:** [H] network fallback leg + `boot.conf` prefer-network + network download-failure loop prevention require network to be a trusted selectable boot target -> XREF: 01-boot-platform/TODO-25 §5 (BLOCKER: trust model), §6 (authoritative network boot-source promotion)
+> **Deferred:** [M] local fallback ordering (BootNext / boot device / A/B slot / recovery) is already owned -> XREF: 01-boot-platform/TODO-05 §5 (Device Fallback Chain), §6 (UEFI Boot Variable Reading) + 01-boot-platform/TODO-21 §4 (Boot Failure Counting and Rollback)
 
 ---
 
