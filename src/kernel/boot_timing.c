@@ -413,11 +413,15 @@ void boot_postcode_write_log(void)
 
     struct vfs_node *f = vfs_open(path,
                                   VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
-    if (!f) return;
+    if (!f) {
+        klog(LOG_WARN, "BOOT", "postcode.log: cannot open %s for write", path);
+        return;
+    }
 
     char line[80];
     uint32_t offset = 0;
     uint64_t base = s_steps[0].tsc;
+    int write_ok = 1;
 
     for (uint32_t i = 0; i < s_step_count; i++) {
         uint64_t ms = (s_tsc_freq > 0) ? tsc_to_ms(s_steps[i].tsc - base) : 0;
@@ -426,14 +430,28 @@ void boot_postcode_write_log(void)
                            s_steps[i].postcode, s_steps[i].phase,
                            s_steps[i].step ? s_steps[i].step : "?");
         if (pos > 0) {
-            vfs_write(f, offset, (uint32_t)pos, (const uint8_t *)line);
+            int wr = vfs_write(f, offset, (uint32_t)pos, (const uint8_t *)line);
+            if (wr < 0 || wr != pos) {
+                klog(LOG_WARN, "BOOT",
+                     "postcode.log entry %u write failed (%d of %d)",
+                     (uint64_t)i, (int64_t)wr, (int64_t)pos);
+                write_ok = 0;
+                break;
+            }
             offset += (uint32_t)pos;
         }
     }
 
+    /* Durable boundary before declaring success (matches the X:\Crash and
+     * X:\Perf writers). */
+    if (write_ok && vfs_flush(f) != 0) {
+        klog(LOG_WARN, "BOOT", "postcode.log flush failed -- artifact may not be durable");
+        write_ok = 0;
+    }
     vfs_close(f);
-    klog(LOG_INFO, "BOOT", "POST code history: %u entries written to %s",
-         (uint64_t)s_step_count, path);
+    if (write_ok)
+        klog(LOG_INFO, "BOOT", "POST code history: %u entries written to %s",
+             (uint64_t)s_step_count, path);
 }
 
 /* ---- Boot performance regression detection ------------------------------- */

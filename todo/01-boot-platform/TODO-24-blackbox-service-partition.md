@@ -266,6 +266,16 @@ Move performance and diagnostic outputs to their BlackBox directories.
 
 **Test checkpoint:** After boot, `X:\Diag\hwdump.txt` and `X:\Perf\boot-profile.log` exist with valid content. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+> **Notes:**
+> - `hwdump.txt` (`hw_dump_write_file`) + `postcode.log` (`boot_postcode_write_log`) write to `X:\Diag\` when BlackBox is mounted, C:\ `klog_dir` fallback otherwise; both wired into Phase 3.
+> - `hwdump.txt` now opens with `VFS_O_CREATE|VFS_O_TRUNC` (was bare `VFS_O_WRITE`, leaving stale tail bytes on a shorter dump); `hw_dump.c` includes `kernel/fs/vfs.h` for canonical flags.
+> - Both writers are now write-honest: `vfs_write` length-checked, `vfs_flush` before declaring success, `LOG_WARN` on open/write/flush failure instead of false success.
+> - Fixed a parent-directory handle leak in the hwdump create-via-dir path (the `dir` node was never `vfs_close`'d).
+> - `firmware-tables.json` C:\ fallback gap accepted to TODO-29 §11 (below).
+> **Verified:** 2026-06-17 | commit `fb846f65` | 5/5 items | build OK | smoke PASS (TCG 2.61s)
+> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 325)
+> **Quality reviewed:** 2026-06-17 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 9. Host Tools -- SDK Reads BlackBox from Disk Image

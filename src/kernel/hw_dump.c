@@ -7,6 +7,7 @@
 
 #include "kernel/hw_dump.h"
 #include "kernel/klog.h"
+#include "kernel/fs/vfs.h"
 #include "kernel/cpuid.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
@@ -311,14 +312,27 @@ void hw_dump_write_file(void)
     /* Create file via parent dir to avoid FAT32 dir cache re-walk bug */
     {
         struct vfs_node *dir = vfs_open(diag_dir, VFS_O_READ);
-        if (dir && dir->ops && dir->ops->create)
-            dir->ops->create(dir, "hwdump.txt", VFS_FILE);
+        if (dir) {
+            if (dir->ops && dir->ops->create)
+                dir->ops->create(dir, "hwdump.txt", VFS_FILE);
+            vfs_close(dir);   /* release the parent-dir ref (was leaked) */
+        }
     }
-    f = vfs_open(path, VFS_O_WRITE);
+    /* Truncate-on-open so a shorter inventory cannot leave stale tail bytes
+     * from a prior longer boot's hwdump.txt. */
+    f = vfs_open(path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
     if (f) {
-        vfs_write(f, 0, pos, (const uint8_t *)buf);
+        int wr = vfs_write(f, 0, pos, (const uint8_t *)buf);
+        if (wr < 0 || (uint32_t)wr != pos || vfs_flush(f) != 0) {
+            klog(LOG_WARN, "hwdump",
+                 "hwdump.txt write/flush failed (%d of %u) -- artifact may be partial",
+                 (int64_t)wr, (uint64_t)pos);
+        } else {
+            klog(LOG_INFO, "hwdump", "Hardware inventory written to %s", path);
+        }
         vfs_close(f);
-        klog(LOG_INFO, "hwdump", "Hardware inventory written to %s", path);
+    } else {
+        klog(LOG_WARN, "hwdump", "hwdump.txt: cannot open %s for write", path);
     }
 
     kfree(buf);

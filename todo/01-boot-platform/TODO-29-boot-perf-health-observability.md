@@ -322,6 +322,7 @@ Boot writes 5 small JSON files to `X:\Diag` serially during late Phase 3: `firmw
 - [ ] Profile the 5-write Phase-3 sequence with `boot_progress` substeps; capture per-write ms.
 - [ ] Design `fat32_batch_begin()` / `fat32_batch_write_file()` / `fat32_batch_commit()` API: open parent dir once, all files in one cluster-bitmap pass, single dir + FAT flush.
 - [ ] Retrofit the 5 writers; keep per-file API for one-off writers (boot-error history, klog Serial_*.log).
+- [ ] `firmware-tables.json` C:\ fallback: `firmware_tables_json.c:505` hardcodes `X:\Diag\` -- use `klog_using_blackbox ? "X:\\Diag\\" : klog_dir` like the other writers. (TODO-24 §8)
 - [ ] Commit: `"fs: fat32 batched Phase-3 X:\Diag JSON writer (5 files in one transaction)"`
 
 **Test checkpoint:** Boot serial shows ~5x reduction in cumulative `boot_progress` delta for the X:\Diag write block. All 5 files persist with byte-identical content vs the per-file path. Smoke confirms no FAT32 cache regressions.
