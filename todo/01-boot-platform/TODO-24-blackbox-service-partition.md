@@ -56,7 +56,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | 💎 |   9   | Host tools -- SDK reads BlackBox from disk image      | §1, §2            |  [x]   |
 | 💎 |  10   | Disk space management -- log aging, quota, cleanup    | §5                |  [/]   |
 | 💎 |  11   | FAT32 volume label -- set "BLACKBOX" at format time   | §2                |  [x]   |
-| 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T09 §6        |  [x]   |
+| 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T09 §6        |  [/]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [x]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [x]   |
@@ -360,11 +360,24 @@ FAT32 has a "dirty" bit (byte 0x41 in BPB, bit 0 of the word). If the OS crashed
 - [x] `fat32_mark_dirty()` sets dirty on mount (new `fat32_set_dirty_marker()`)
 - [x] `fat32_mark_clean()` clears dirty in `acpi_shutdown()` before power-off
 - [x] Public API: `fat32_is_dirty/mark_dirty/mark_clean/run_fsck` in `fat32.h`
+- [ ] FAT[1] high-nibble preservation: dirty/clean markers (`fat32_core.c:224`) read FAT[1] 28-bit-masked then write it, zeroing reserved bits 28-31 -- read+write raw 32-bit, toggle only bit 27. [§12]
+- [ ] FAT marker write error propagation: `mark_dirty`/`mark_clean` are void + bail mid-mirror; a torn clean-marker reads false-clean next mount + skips fsck -- return status, fail not-clean. [§12]
+- [ ] fsck cycle guard (`fat32_fsck.c:154`): `walk_directory` recurses into a dir's first cluster with no visited-check -- a cycle drives unbounded recursion (stack exhaustion). [§12]
+- [ ] fsck BPB geometry validation (`fat32_fsck.c:227`): repair never checks `fat_size_sectors` covers the cluster range -- a forged tiny-FAT BPB writes data sectors as FAT. [§12]
 - [x] Commit: `"kernel: BlackBox FAT32 dirty-bit check and optional fsck on mount"`
 
 **Test checkpoint:** Force unclean shutdown (kill QEMU mid-write). Next boot: serial shows "partition dirty" warning. After clean shutdown: no warning. Verify on QEMU WHPX, TCG.
 
 **Regression risk:** fsck on mount adds boot latency. Bound to max 2 seconds; skip if partition is clean. Rollback: disable fsck call, keep dirty-bit logging only.
+
+> **Notes:**
+> - At BlackBox mount `fat32_is_dirty()` reads the FAT[1] clean-shutdown bit (27); a dirty volume runs `fat32_run_fsck(vol,1)`; `mark_dirty` on mount, `mark_clean` at `acpi_shutdown` (acpi.c:940).
+> - Consistency-verified happy path: the constant has one definition, shutdown reaches `mark_clean` for X:, and `is_dirty` is populated at init before §3's BlackBox dirty check.
+> - Four FAT32-robustness hardenings (open `[/]` items) are DEFERRED -- malformed/external-FAT defenses on shared `fat32_core.c`/`fat32_fsck.c`; the kernel-formatted BlackBox volume is trusted.
+> **Deferred:** [H] FAT[1] reserved high bits (28-31) zeroed by both marker writers -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT[1] high-nibble preservation" at line 363)
+> **Deferred:** [H] torn FAT-mirror marker write -> false-clean -> skips fsck (no error propagation) -> XREF: 01-boot-platform/TODO-24 §12 (item: "FAT marker write error propagation" at line 364)
+> **Deferred:** [H] fsck `walk_directory` recurses on directory cycles -> stack exhaustion -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck cycle guard" at line 365)
+> **Deferred:** [H] fsck repair writes outside FAT on forged BPB geometry -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck BPB geometry validation" at line 366)
 
 ---
 
