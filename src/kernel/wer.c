@@ -19,12 +19,157 @@
 
 #define WER_DIR_BB     "X:\\Crash\\WER\\"
 #define WER_DIR_FB     "C:\\Impossible\\System\\Logs\\"
-#define WER_MAX_REPORTS 50
+/* fat32 vfs_readdir surfaces at most this many entries per pass; the prune
+ * below loops to a fixed point so a crash loop exceeding it still converges. */
+#define WER_ENUM_CAP    128u
 
 static const char *wer_dir(void)
 {
     extern int klog_using_blackbox;
     return klog_using_blackbox ? WER_DIR_BB : WER_DIR_FB;
+}
+
+/* True if `name` ends with ".json" (case-sensitive, as the writer emits). */
+static int wer_name_is_json(const char *name)
+{
+    int len = 0;
+    while (name[len]) len++;
+    return len >= 5 && name[len-5] == '.' && name[len-4] == 'j'
+        && name[len-3] == 's' && name[len-2] == 'o' && name[len-1] == 'n';
+}
+
+/* Extract the 14-digit YYYYMMDDHHMMSS timestamp from a PID_<ts>.json report
+ * name into *out. Returns 1 only when exactly 14 digits followed by '.' come
+ * after the first '_'; the wall-clock-not-ready writer fallback
+ * (PID_<ticks>.json) has a non-14-digit tail and returns 0 so the caller
+ * treats it as oldest (pruned first). */
+static int wer_name_timestamp(const char *name, uint64_t *out)
+{
+    int i = 0;
+    uint64_t ts = 0;
+    int dgt;
+    while (name[i] && name[i] != '_') i++;
+    if (name[i] != '_') return 0;
+    i++;
+    for (dgt = 0; dgt < 14; dgt++) {
+        char c = name[i + dgt];
+        if (c < '0' || c > '9') return 0;
+        ts = ts * 10 + (uint64_t)(c - '0');
+    }
+    if (name[i + 14] != '.') return 0;   /* more digits == PID_<ticks> fallback */
+    *out = ts;
+    return 1;
+}
+
+/* FNV-1a hash of a report name, for the bounded failed-unlink set below
+ * (storing full names would blow the kernel stack). */
+static uint32_t wer_name_hash(const char *s)
+{
+    uint32_t h = 2166136261u;
+    while (*s) { h ^= (uint8_t)*s++; h *= 16777619u; }
+    return h;
+}
+
+/* WER retention: prune the WER report directory to at most `max` JSON reports,
+ * deleting oldest-first. Oldest = smallest 14-digit timestamp; a report whose
+ * name lacks a valid 14-digit timestamp sorts as oldest (key 0) so the writer's
+ * PID_<ticks> fallback reports are pruned first. Loops to a fixed point because
+ * vfs_readdir surfaces only WER_ENUM_CAP entries per pass: after deleting the
+ * oldest visible report it re-enumerates until a full pass reports <= max.
+ * NOT called from wer_write_crash_report (the ISR exception path) -- only at X:
+ * mount and in the BlackBox low-space disk cleanup, both non-exception
+ * contexts: adding VFS enumeration/deletion to the fault path would compound
+ * the deferred crash-report-writer reentrancy/deadlock risk. Returns the count. */
+uint32_t wer_prune_reports(const char *dir, uint32_t max)
+{
+    char dirpath[VFS_MAX_PATH];
+    int n = 0;
+    uint32_t total_deleted = 0;
+    int guard = 0;
+    uint32_t failed_h[32];   /* hashes of reports whose unlink failed; skipped */
+    int nfailed = 0;
+
+    /* Caller passes the WER directory explicitly (callers run before
+     * klog_resolve_dir(), so wer_dir()'s klog_using_blackbox is not yet set).
+     * Strip any trailing separator -- vfs_open of the directory wants none. */
+    while (dir[n] && n < (int)sizeof(dirpath) - 1) { dirpath[n] = dir[n]; n++; }
+    if (n > 0 && (dirpath[n-1] == '\\' || dirpath[n-1] == '/')) n--;
+    dirpath[n] = '\0';
+
+    for (;;) {
+        struct vfs_node *dir;
+        struct vfs_dirent *de;
+        uint32_t idx = 0, count = 0;
+        char oldest[VFS_MAX_NAME];
+        uint64_t oldest_key = 0;
+        int have_oldest = 0, cache_full = 0;
+
+        if (guard++ > 4096) break;   /* hard bound on passes */
+
+        dir = vfs_open(dirpath, VFS_O_READ);
+        if (!dir) break;
+
+        while ((de = vfs_readdir(dir, idx++)) != 0) {
+            uint64_t ts;
+            uint64_t key;
+            if (de->type != VFS_FILE || !wer_name_is_json(de->name))
+                continue;
+            count++;
+            {
+                uint32_t h = wer_name_hash(de->name);
+                int fi, skip = 0;
+                for (fi = 0; fi < nfailed; fi++)
+                    if (failed_h[fi] == h) { skip = 1; break; }
+                if (skip) continue;   /* a report we already failed to unlink */
+            }
+            key = wer_name_timestamp(de->name, &ts) ? ts : 0;
+            if (!have_oldest || key < oldest_key) {
+                int k = 0;
+                oldest_key = key;
+                while (de->name[k] && k < VFS_MAX_NAME - 1) {
+                    oldest[k] = de->name[k]; k++;
+                }
+                oldest[k] = '\0';
+                have_oldest = 1;
+            }
+            if (idx >= WER_ENUM_CAP) { cache_full = 1; break; }
+        }
+        vfs_close(dir);
+
+        /* Converged: a full enumeration (not cache-capped) saw <= max. */
+        if (count <= max && !cache_full)
+            break;
+        if (!have_oldest)
+            break;
+
+        {
+            char path[VFS_MAX_PATH];
+            int p = 0, j;
+            for (j = 0; dirpath[j] && p < (int)sizeof(path) - 2; j++) path[p++] = dirpath[j];
+            path[p++] = '\\';
+            for (j = 0; oldest[j] && p < (int)sizeof(path) - 1; j++) path[p++] = oldest[j];
+            path[p] = '\0';
+            if (vfs_unlink(path) != 0) {
+                /* Record this report so it cannot stall pruning of newer
+                 * deletable reports. When the failed set is full, stop rather
+                 * than burn the guard making no progress on a corrupt dir. */
+                if (nfailed >= (int)(sizeof(failed_h) / sizeof(failed_h[0]))) {
+                    klog(LOG_WARN, "wer",
+                         "WER retention: %d undeletable report(s); pruning stopped",
+                         nfailed);
+                    break;
+                }
+                failed_h[nfailed++] = wer_name_hash(oldest);
+                continue;
+            }
+            total_deleted++;
+        }
+    }
+
+    if (total_deleted)
+        klog(LOG_INFO, "wer", "WER retention: pruned %u old report(s) (cap %u)",
+             (uint64_t)total_deleted, (uint64_t)max);
+    return total_deleted;
 }
 
 /* ---- Hex formatting ----------------------------------------------------- */

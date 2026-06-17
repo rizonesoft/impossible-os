@@ -17,6 +17,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/mmap.h"
 #include "kernel/fs/vfs.h"
+#include "kernel/wer.h"
 #include "kernel/fs/fat32.h"
 #include "kernel/fs/partition.h"
 #include "kernel/smp.h"
@@ -362,6 +363,12 @@ void boot_phase2(void)
             klog(LOG_INFO, "boot", "BlackBox: %u MiB free (%u%%)",
                  (uint32_t)(free_bytes / (1024 * 1024)), (uint64_t)pct);
 
+            /* WER retention: always-enforced cap once per boot at mount
+             * (Win11 MaxArchiveCount style). Runs outside the low-space gate
+             * so a crash loop cannot accumulate reports between low-space
+             * events. Self-logs the pruned count. */
+            wer_prune_reports("X:\\Crash\\WER", WER_MAX_REPORTS);
+
             /* Cleanup if < 10% free */
             if (pct < 10) {
                 uint32_t deleted = 0;
@@ -441,6 +448,10 @@ void boot_phase2(void)
                         vfs_close(logs_dir);
                     }
                 }
+
+                /* Emergency WER prune in the low-space path (the mount-time
+                 * cap above usually already satisfied this). */
+                deleted += wer_prune_reports("X:\\Crash\\WER", WER_MAX_REPORTS);
 
                 if (deleted > 0) {
                     uint64_t new_free = fat32_get_free_bytes(bb_vol);

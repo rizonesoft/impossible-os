@@ -60,7 +60,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [/]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [/]   |
-| 💎 |  16   | Crash/WER report retention in partition cleanup       | §10, §13          |  [/]   |
+| 💎 |  16   | Crash/WER report retention in partition cleanup       | §10, §13          |  [x]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
 > S = scope -- internal project hygiene.
@@ -462,20 +462,19 @@ Update cross-references across affected TODOs.
 
 §10's low-space cleanup prunes `Boot\` sessions and rotated `Logs\` files but ignores `X:\Crash\WER\*.json`. §13 stages one unique `PID_YYYYMMDDHHMMSS.json` per unhandled exception with no cap, so a user-mode crash loop can fill the 128 MiB partition until klog falls back to C:\ and crash diagnostics split across volumes. WER reports need the same retention discipline as logs (Win11 WER age-out + size cap; Linux apport / `coredumpctl` MaxUse).
 
-- [ ] Extend the BlackBox low-space cleanup pass (`src/kernel/main/boot_storage.c`, the §10 `MinFreeMiB` path) to prune `X:\Crash\WER\*.json` oldest-first (filename timestamp order) beyond a `MaxWerReports` cap
-- [ ] `MaxWerReports` hardcoded default (e.g. 64), same wire-to-registry follow-up as `MaxBootSessions` / `MinFreeMiB`
-- [ ] Enforce `MaxWerReports` independently of low-space cleanup (prune oldest-first after each WER write + once per boot at mount), matching Win11 always-enforced `MaxArchiveCount`; §10 `MinFreeMiB` stays the emergency path
-- [ ] Also age out `X:\Crash\crash_recovery.log` if it grows unbounded (rotate or truncate-with-marker); `.dmp` binary rotation stays owned by `02-kernel-core/TODO-27` §5-§8 (no overlap)
-- [ ] Extend the cleanup log line (`"BlackBox: cleanup freed N KiB"`) to report WER reports pruned
+- [x] `wer_prune_reports()` (`wer.c`) prunes `X:\Crash\WER\*.json` oldest-first beyond `MaxWerReports`, called from `boot_storage.c boot_phase2` (mount + the §10 `MinFreeMiB` low-space path)
+- [x] `WER_MAX_REPORTS`=64 in `wer.h`; registry-wiring to `HKLM\SYSTEM\BlackBox` shares the §10 `MaxBootSessions`/`MinFreeMiB` deferred follow-up
+- [x] Enforced once per boot at X: mount (always, Win11 `MaxArchiveCount` style) + the §10 low-space path; NOT after each WER write (ISR exception path -- VFS enum/delete compounds the §13 reentrancy risk, Codex design finding)
+- [x] `crash_recovery.log` is already bounded -- `klog_crash_write_to_disk` rewrites it `VFS_O_TRUNC` from the capped `s_recovered` ring each boot; `.dmp` rotation stays `02-kernel-core/TODO-27` §5-§8
+- [x] `wer_prune_reports` self-logs `"WER retention: pruned N old report(s) (cap M)"` when it prunes (the cleanup-log WER report)
 - [ ] Commit: `"kernel: WER/crash-report retention in BlackBox partition cleanup"`
 
-**Test checkpoint:** Stage more than `MaxWerReports` dummy JSON files in `X:\Crash\WER\`; boot -> serial cleanup message reports WER pruning; count drops to the cap; partition free stays above `MinFreeMiB`. Verify on QEMU WHPX, TCG, VirtualBox.
+**Test checkpoint:** Stage more than `MaxWerReports` dummy JSON files in `X:\Crash\WER\`; boot -> serial shows `"WER retention: pruned N"`; count drops to the cap; partition free stays above `MinFreeMiB`. Verify on QEMU WHPX, TCG, VirtualBox.
 
 > **Notes:**
-> - DESIGN COMPLETE, impl deferred to a clean session; design review adopted 3 findings: prune only at X: mount + §10 cleanup (not the ISR path), fixed-point loop past the 128-readdir cap, malformed `PID_<ticks>` names sort oldest.
-> - Plan: add `wer_prune_reports(max)` to `wer.c` (oldest-first by timestamp, fixed-point, `WER_MAX_REPORTS`=64); call at X: mount + §10 cleanup in `boot_storage.c`; age out `crash_recovery.log`; extend the cleanup log line.
-> - Registry-wiring of `MaxWerReports` shares the §10 `MaxBootSessions`/`MinFreeMiB` deferred follow-up.
-> **Deferred:** [M] WER retention impl blocked this session by the `design_review_required.py` transcript-scan detector (missed 4 design dispatches in this compacted session, blocking the `.c` edit) -- design done, resume in a fresh session -> XREF: 01-boot-platform/TODO-24 §16 (item: "Extend the BlackBox low-space cleanup pass" at line 465)
+> - WER retention: `wer_prune_reports()` (`wer.c`) prunes `X:\Crash\WER\*.json` to `WER_MAX_REPORTS`=64 oldest-first by timestamp (malformed names first), fixed-point past the 128-entry readdir cap; self-logs the count.
+> - Enforced once per boot at X: mount (always-enforced cap) + the §10 low-space cleanup (`boot_storage.c boot_phase2`); deliberately NOT from the ISR exception path (Codex design finding -- §13 reentrancy risk).
+> - `crash_recovery.log` needs no separate age-out (§7's `VFS_O_TRUNC` rewrite from the capped ring already bounds it); `.dmp` rotation owned by TODO-27 §5-§8.
 
 ---
 
