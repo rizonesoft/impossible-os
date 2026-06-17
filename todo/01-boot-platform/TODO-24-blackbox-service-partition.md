@@ -412,16 +412,23 @@ Windows Error Reporting (WER) stages error reports in `C:\ProgramData\Microsoft\
 
 ## 14. A/B Layout Compatibility -- 4+ Partition Coexistence
 
-TODO-21 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With BlackBox, the layout becomes 4 partitions: EFI + BlackBox + Slot A + Slot B. Ensure `make-system-disk.c` supports both layouts via a build flag.
+TODO-21 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With BlackBox the realized A/B layout is EFI + BlackBox + ABMeta + Slot A + Slot B + Recovery (the ABMeta + Recovery partitions were added by the TODO-21 dual-slot + TODO-22 recovery work after this section first shipped). Ensure `make-system-disk.c` supports both layouts via a build flag.
 
-- [x] `--ab` flag: produces 4-partition layout (EFI + BlackBox + IXFS A + IXFS B)
+- [x] `--ab` flag: produces the A/B multi-partition layout (EFI + BlackBox + ABMeta + IXFS A + IXFS B + Recovery), emitting `META_*`/`RECOVERY_*` sidecar keys
 - [x] Default (no flag): 3-partition layout (EFI + BlackBox + IXFS)
 - [x] BlackBox 128 MiB in both layouts; IXFS slots split remaining space evenly (1 MiB aligned)
 - [x] Kernel mounts BlackBox as X:\ by GPT name -- works regardless of partition count
 - [x] GPT names: "Impossible OS A" / "Impossible OS B" in A/B mode
 - [x] Commit: `"tools: make-system-disk A/B layout with BlackBox partition"`
 
-**Test checkpoint:** `make-system-disk --ab` produces 4-partition image. `fdisk -l` shows EFI + BlackBox + 2x IXFS. Kernel boots and mounts X:\ from either layout. Verify on QEMU WHPX.
+**Test checkpoint:** `make-system-disk --ab` produces the A/B image; `fdisk -l` shows EFI + BlackBox + ABMeta + IXFS A + IXFS B + Recovery. Default (no `--ab`) shows EFI + BlackBox + IXFS. Kernel boots and mounts X:\ from either layout. Verify on QEMU WHPX.
+
+> **Notes:**
+> - `tools/make-system-disk.c` builds the GPT layout: default 3-partition (EFI + BlackBox + IXFS), `--ab` the A/B layout (EFI + BlackBox + ABMeta + IXFS A + IXFS B + Recovery); BlackBox is 128 MiB and layout-independent.
+> - A realized-layout validation fails closed on bad ordering/overlap/wrap, under-min slots (<96 MiB), or recovery below the FAT32 floor; the kernel mounts X: by GPT name regardless of partition count.
+> - This review corrected stale "4-partition" docs to the real layout (ABMeta + Recovery were added by the TODO-21 dual-slot + TODO-22 recovery work after §14 first shipped).
+> **Verified:** 2026-06-17 | commit `1b507d85` | 5/5 items | build OK | manual (host disk builder; realized layout fail-closed validated)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- docs-only fix) | 1M fixed | scope: N/A (host disk-build tool)
 
 ---
 
