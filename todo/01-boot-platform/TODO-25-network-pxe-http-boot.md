@@ -37,7 +37,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [x] |
 | 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [x] |
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [/] |
-| 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [ ] |
+| 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [/] |
 | 💎 | 7 | Fallback ordering with local media | TODO-05 §5, §6 | [ ] |
 | ⭐ | 8 | Recovery and installer over network | §3-§7, TODO-22 | [ ] |
 | 💎 | 9 | Network boot diagnostics and BlackBox report | §1-§8 | [ ] |
@@ -170,6 +170,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 6. boot_info Network Provenance
 
+> [!IMPORTANT] Deferred (2026-06-17, unattended sequencer + Codex design review, 2 HIGH): §6's authoritative outputs are blocked. (1) Promoting a selected network boot (`boot_device_type=network`, `boot_path=NETWORK`, selected `HKLM\SYSTEM\Boot\Network`, boot-decision record) while §5 verification + the insecure-override/console-confirm path are deferred would ship the exact insecure selected-boot state §5 forbids -- `boot_decision.c:269` already accepts `BOOT_REASON_NETWORK_INSECURE` as a valid `BOOT_PATH_NETWORK`. (2) `boot_media_role=network` is a closed inline-enum extension (`BOOT_MEDIA_ROLE_MAX=6`, pinned offset 23968) needing a `BOOT_INFO_VERSION` bump -- an ABI change to stop on. Non-authoritative provenance staging is the only unblocked sliver and is premature until §5+§7 make network a selected boot path. See Deferred stamps below.
+
 - [ ] Extend boot_info with network boot descriptor through TODO-01 §4 and the shared boot-path decision record through TODO-01 §12. Use `BOOT_PAYLOAD_NETWORK_CONFIG` from [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) for the TFTP/HTTP config blob pointer; the TODO-01 §4 validator rejects overlap with any other retained boot region before the kernel dereferences the MAC/IP/URI fields. -> XREF: [`01-boot-platform/TODO-01 §4`](TODO-01-boot-protocol-abi-handoff.md#4-optional-payload-descriptor-array)
 - [ ] Include MAC, IP, server URI, protocol, manifest digest, and insecure flag.
 - [ ] Expose `HKLM\SYSTEM\Boot\Network`.
@@ -179,6 +181,16 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Commit: `"boot: hand off network boot provenance"`
 
 **Test checkpoint:** After a network boot, `boot_info` carries the network descriptor (MAC, IP, server URI, protocol, manifest digest, insecure flag), `HKLM\SYSTEM\Boot\Network` is populated, `boot_device_type=network`, and `test_media_role_network_dhcp_option` passes. Verify on QEMU WHPX.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until §5 trust gate + ABI bump
+
+> **Notes:**
+> - Deferred, not implemented: §6's authoritative provenance (selected boot-source promotion + media-role) is gated on §5's trust model and a closed-enum `BOOT_INFO_VERSION` bump; Codex design review (2026-06-17) returned 2 HIGH confirming both blockers.
+> - Honest current state: the firmware may launch BOOTX64.EFI over the network, but the OS still loads from local trusted media (§3/§4 probes fetch-and-free); there is no authoritative network boot source to hand off yet.
+> - Owners: trust gate = TODO-25 §5; media-role enum + version bump = TODO-01 §7 (boot_info ABI); media-role precedence consumer = TODO-06 §11.
+
+> **Deferred:** [H] authoritative network boot-source promotion (boot_device_type=network, boot_path=NETWORK, selected HKLM\SYSTEM\Boot\Network, decision record) must stay fail-closed until §5 verification or the documented insecure-override + physical-console-confirm path exists (boot_decision.c:269 already treats BOOT_REASON_NETWORK_INSECURE as a valid selected BOOT_PATH_NETWORK) -> XREF: 01-boot-platform/TODO-25 §5 (BLOCKER: manifest signature trust model)
+> **Deferred:** [H] `boot_media_role=network` is a closed inline-enum extension (BOOT_MEDIA_ROLE_MAX=6, pinned offset 23968) needing a BOOT_INFO_VERSION bump + bootloader mirror + boot_media_role_name() + validator + skew tests -> XREF: 01-boot-platform/TODO-01 §7 (Version Negotiation and Stale-Loader Error Path) + consumer 01-boot-platform/TODO-06 §11
 
 ---
 
