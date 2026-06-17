@@ -26,6 +26,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - Kernel receives validated image metadata and can resume without rediscovering policy.
 - Resume failures fall back to cold boot and preserve diagnostics.
 - A/B updates and Secure Boot invalidate stale hibernation images.
+- Resume images are fresh (anti-replay generation) and confidential (AEAD-encrypted), not merely integrity-checked.
 
 ## Implementation Order
 
@@ -46,7 +47,9 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Define header with magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags.
 - [ ] Include resume type: full hibernate, fast startup, crash-test image.
 - [ ] Include required PCR/Secure Boot state when measured boot is active.
-- [ ] Store metadata in a location readable before normal root mount.
+- [ ] Anti-replay `resume_generation`: a monotonic counter in the header written by the D02 T26 writer from a TPM-NV / NVRAM monotonic primitive; the bootloader rejects any image whose generation is not current/highest. -> XREF: T13 §7, T01 §13
+- [ ] Encryption metadata: AEAD cipher id + TPM-sealed key id + nonce/tag fields so the bootloader can require an encrypted image and refuse plaintext (debug-only opt-out); the writer owns encryption. -> XREF: D02T26 §4
+- [ ] Store metadata in a location readable before normal root mount; this header is the single authoritative on-disk format the D02 T26 §4 writer produces (supersedes the legacy `HIBR_HEADER`). -> XREF: D02T26 §4
 - [ ] Commit: `"boot: hibernation image metadata format"`
 
 **Test checkpoint:** A fixture hibernation metadata header parses at known offsets (magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags, resume type); a bad-magic or truncated header is rejected. Verify on QEMU WHPX/TCG (fixture parse).
@@ -58,22 +61,22 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Locate hibernation metadata on system, A/B slot, or BlackBox partition.
 - [ ] Avoid scanning arbitrary large files before watchdog is armed.
 - [ ] Expose discovery failures on VPD and serial.
-- [ ] Add boot.conf override `resume=off|auto|force`.
+- [ ] Add boot.conf override `resume=off|auto|force`; `force` only REQUESTS resume and stays subject to §3 eligibility + §4 integrity (never an unconditional bypass).
 - [ ] Commit: `"boot: discover hibernation resume images"`
 
-**Test checkpoint:** With a hibernation image on the system / A/B slot / BlackBox partition, the bootloader locates the metadata and logs the source on serial + VPD; with no image it logs `no resume image` and cold-boots; `resume=off` skips discovery, `resume=force` selects it. Verify on QEMU WHPX.
+**Test checkpoint:** With a hibernation image on the system / A/B slot / BlackBox partition, the bootloader locates the metadata and logs the source on serial + VPD; with no image it logs `no resume image` and cold-boots; `resume=off` skips discovery, `resume=force` requests resume but §3 eligibility + §4 integrity still gate it. Verify on QEMU WHPX.
 
 ---
 
 ## 3. Resume Eligibility Policy
 
 - [ ] Reject resume after kernel update, bootloader ABI mismatch, slot switch, Secure Boot db change, firmware change, or hardware topology change.
-- [ ] Allow manual one-time force only from recovery/diagnostic menu.
+- [ ] Allow manual one-time force only from a recovery/diagnostic-menu-issued one-shot NVRAM token (or BootNext provenance); a plain boot.conf `resume=force` cannot override a hard rejection, and force still requires §4 integrity.
 - [ ] Integrate with BootNext and boot entry policy.
 - [ ] Record selected cold/resume reason.
 - [ ] Commit: `"boot: hibernation resume policy"`
 
-**Test checkpoint:** After a simulated kernel update / bootloader ABI mismatch / slot switch / Secure Boot db change / firmware or hardware-topology change, resume is REJECTED with the recorded cold/resume reason and cold boot proceeds; a recovery-menu one-time force overrides exactly once. Verify on QEMU WHPX.
+**Test checkpoint:** After a simulated kernel update / bootloader ABI mismatch / slot switch / Secure Boot db change / firmware or hardware-topology change, resume is REJECTED with the recorded cold/resume reason and cold boot proceeds; a recovery-menu one-shot-token force overrides exactly once (a plain boot.conf `resume=force` does NOT).  Verify on QEMU WHPX.
 
 ---
 
@@ -83,6 +86,8 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Validate image physical-memory ranges against current memory map.
 - [ ] Validate compressed image algorithm support.
 - [ ] Bind to measured boot state where TPM is available.
+- [ ] Reject a valid-but-STALE image: compare the header `resume_generation` against the current TPM-NV/NVRAM monotonic value; a lower/non-current generation is rejected even when checksum/HMAC/state all match. -> XREF: T13 §7, T01 §13
+- [ ] Require an encrypted image: validate the AEAD metadata (cipher/key-id/nonce) and decrypt-verify with the TPM-sealed key; refuse a plaintext image outside an explicit debug path. -> XREF: D02T26 §4
 - [ ] Commit: `"boot: validate hibernation image integrity"`
 
 **Test checkpoint:** A correct checksum/HMAC over metadata + image passes; a single flipped byte is rejected; image physical-memory ranges outside the current memory map are rejected; an unsupported compression algorithm is rejected; TPM-bound state mismatch rejects when measured boot is active. Verify on QEMU WHPX/TCG (fixture).
@@ -143,6 +148,9 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Bad checksum rejected.
 - [ ] Kernel version mismatch rejected.
 - [ ] Resume failure falls back to cold boot.
+- [ ] Stale image (lower `resume_generation`) rejected.
+- [ ] Plaintext / bad-AEAD-tag image rejected.
+- [ ] Plain boot.conf `resume=force` cannot override a hard rejection (kernel-update / ABI / slot / Secure Boot db).
 - [ ] Commit: `"test: hibernation boot handoff"`
 
 **Test checkpoint:** The resume test suite passes: valid metadata accepted, bad checksum rejected, kernel-version mismatch rejected, and a resume failure falls back to cold boot. Verify via the `TEST_CAT_BOOT` suite.
@@ -157,6 +165,8 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 | 💎  | Fast startup           | ✅ hybrid boot (hiberboot)| ⚠️ limited distro support | ⬜ Planned §7                   |
 | 💎  | Resume invalidation    | ✅ update/driver policy   | ⚠️ initramfs logic        | ⬜ Planned §3                   |
 | ⭐  | BlackBox resume report | ❌ event logs only        | ❌ journal only           | ⭐ Planned §8 (X:\Diag + QR)   |
+| ⭐  | Resume image anti-replay| ❌ none                   | ❌ none                   | ⭐ Planned §4 (TPM-NV gen)      |
+| ⭐  | Resume image encryption | ⚠️ only via BitLocker     | ⚠️ needs encrypted swap   | ⭐ Planned §4 + D02T26 (AEAD)   |
 
 ---
 
@@ -166,6 +176,9 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] `test_resume_bad_checksum_rejected`
 - [ ] `test_resume_kernel_mismatch_rejected`
 - [ ] `test_resume_loop_breaker`
+- [ ] `test_resume_stale_generation_rejected`
+- [ ] `test_resume_plaintext_rejected`
+- [ ] `test_resume_force_cannot_override`
 
 ---
 

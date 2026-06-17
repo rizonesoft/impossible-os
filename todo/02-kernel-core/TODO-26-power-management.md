@@ -190,6 +190,9 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 ---
 
 ## 4. S4: Hibernate to Disk
+
+> [!NOTE] Ownership boundary (TODO-26 gap-audit 2026-06-17): the bootloader (`01-boot-platform/TODO-26`) owns hibernation image DISCOVERY, eligibility policy (Secure Boot/db/topology/slot invalidation), anti-replay, integrity, and the boot_info handoff. This section owns image WRITING (`pm_hibernate_write`, AEAD encryption, the on-disk header per TODO-26 §1) and the kernel RESUME CONSUMER (`pm_hibernate_resume`) reached via the `BOOT_PAYLOAD_HIBERNATION_META` handoff -- NOT a Phase-1 partition scan + policy decision. The legacy `HIBR_HEADER` below is superseded by TODO-26 §1's authoritative metadata format (adds boot_info ABI version, root volume id, Secure Boot/PCR state, a `resume_generation` anti-replay counter, and AEAD encryption metadata). -> XREF: `01-boot-platform/TODO-26 §1,§2,§4,§5`.
+
 - [ ] Hibernation image header in `include/kernel/pm/hibernate.h`:
   ```c
   #define HIBER_MAGIC  0x4945424F524150 /* "RAPOBRIE" -- "Reboot Impossible" */
@@ -212,7 +215,8 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
   3. Walk PMM used-page list; for each page: compress 64-page chunk with LZ4; write to hibernation partition via DMA (must reach D0 device state first)
   4. Write `HIBR_HEADER` at offset 0 with final `image_pages` count and CRC32C
   5. Call `acpi_enter_sleep_state(4)` -- system powers off; same as S5 but firmware knows to look for hibernation image on next boot
-- [ ] In kernel init (→ XREF: `TODO-01-kernel-init-sequencing.md §3`), early in Phase 1: check the hibernation partition for a valid `HIBR_HEADER.magic`; if found and `kernel_version` matches: enter hibernation resume path
+- [ ] Encryption: AEAD-encrypt the image (AES-GCM) with a TPM-sealed key; write cipher/key-id/nonce/tag into the header so the bootloader can require it and refuse plaintext. -> XREF: `01-boot-platform/TODO-26 §4`
+- [ ] Resume ENTRY is the bootloader's job (supersedes the old Phase-1 scan): it discovers + validates + selects, then hands off via `BOOT_PAYLOAD_HIBERNATION_META`. -> XREF: `01-boot-platform/TODO-26 §2-§5`
 - [ ] `pm_hibernate_resume()`:
   1. Read all compressed chunks from the partition; decompress into a separate bounce buffer
   2. CRC32C verify the full image; halt with `KERNEL_HIBERNATE_CORRUPT` (→ XREF: `TODO-27-crash-dump-generation.md §1`) if mismatch
