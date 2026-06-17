@@ -75,6 +75,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
 | ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6                        |  [ ]   |
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4                   |  [ ]   |
+| 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -464,6 +465,25 @@ Register VBS/SGX enclave management and code signing verification syscalls in th
 
 ---
 
+## 16. Secure Boot Lockdown Enforcement
+
+Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns the `boot.conf` lockdown knob reserved at the top of this TODO. Consumes the canonical `uefi_secureboot_*` state API from `01-boot-platform/TODO-02 §5` (detection) + `§15` (drift); does NOT re-read SB variables. -> XREF: `01-boot-platform/TODO-27-uefi-advanced.md §5` (deferred here -- §5's enforcement-policy core blocks on the kernel lockdown mechanism, which is this section).
+
+**Files:** `src/kernel/uefi_runtime.c`, `src/kernel/uefi_vars.c`, `include/kernel/uefi_runtime.h`, `include/kernel/boot_info.h` (boot_config), `src/boot/uefi/bootx64.c` (boot.conf parse)
+
+- [ ] `SecureBootEnforce` `boot.conf` key (add to `struct boot_config` + bootloader parse + mirror): 0 = off (default), 1 = the kernel may enter lockdown when Secure Boot is active.
+- [ ] `kernel_lockdown_engage(reason)`: disable unsigned `.kmod` loading + raw MSR/IO port writes from user space, gated on `uefi_secureboot_enabled()`; idempotent; sets a sticky `g_system_state` lockdown flag.
+- [ ] `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` accessors over the existing `s_sb_deployed_mode` / `s_sb_audit_mode` statics in `uefi_runtime.c`.
+- [ ] DeployedMode write-protection: guard `uefi_var_set()` to refuse clearing/modifying PK/KEK/db/dbx when `deployed_mode==1` (returns `STATUS_ACCESS_DENIED`).
+- [ ] Audit-mode trap-and-log: when `audit_mode==1`, log every SB policy violation (signature verify fail, MOK miss) to `HKLM\SYSTEM\SecureBoot\AuditLog\` without halting; wire to the PE-loader verification call sites.
+- [ ] Drift-triggered lockdown: poll `uefi_secureboot_drift_detected()` from the revalidation worker; engage lockdown on the sticky 0->1 transition.
+- [ ] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u`.
+- [ ] Commit: `"kernel/security: Secure Boot lockdown enforcement consuming canonical state"`
+
+**Test checkpoint:** QEMU Setup Mode: `deployed_mode==0`, no write-protection. Enrolled PK + DeployedMode: `uefi_var_set(PK, empty)` returns `STATUS_ACCESS_DENIED`. `SecureBootEnforce=1` + SB active: `kernel_lockdown_engage` sets the lockdown flag; serial shows the policy line. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature              | 🪟 Win11     | 🐧 Linux       | 🚀 Impossible OS |
@@ -481,6 +501,7 @@ Register VBS/SGX enclave management and code signing verification syscalls in th
 | 💎   | KASLR kernel base    | ✅ Yes       | ✅ RANDOMIZE   | ⬜ §11           |
 | ⭐   | RDRAND canary KASLR  | ✅ Opaque    | ✅ pool        | ⬜ §9 §11        |
 | ⭐   | KASLR slide in dump  | ❌ Opaque    | ❌ Opaque      | ⬜ §11 + T27     |
+| 💎   | Secure Boot lockdown | ✅ HVCI lockdown | ✅ lockdown LSM | ⬜ §16          |
 
 After §1 through §10, parity with Win11/Linux mitigations for NX through stack guards; §11 and §12 add KASLR and syscall surface. Linux skips mitigations without config; Windows ties IBT to HVCI. Impossible OS targets ring-0 enforcement without VBS; RDRAND-first canary and crash-dump-visible slide are quality extras.
 

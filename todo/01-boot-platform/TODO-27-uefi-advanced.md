@@ -47,7 +47,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6              |  [x]   |
 | 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [/]   |
 | 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [x]   |
-| 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [ ]   |
+| 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [/]   |
 | 💎  |   6   | SMBIOS extended type parsing             | T02 §4              |  [ ]   |
 | 💎  |   7   | DBX revocation list sync                 | T02 §2, §5          |  [ ]   |
 
@@ -190,6 +190,11 @@ Provide a kernel-lockdown enforcement policy gated on the canonical Secure Boot 
 
 **Test checkpoint:** QEMU Setup Mode: `SetupMode=1`. Enrolled PK: `SetupMode=0`. `SecureBootEnforce=1`: `g_system_state.secure_boot_enforced == 1`.
 
+> [!NOTE]
+> **Deferred 2026-06-17 -- ownership moved to `02-kernel-core/TODO-10 §16` (Secure Boot Lockdown Enforcement).** The enforcement-policy core blocks on the kernel lockdown mechanism, which does not exist; TODO-10 reserves the `boot.conf` lockdown knob (its line 38) and now owns it via §16. The `g_system_state.secure_boot_enforced` / `audit_mode` / `deployed_mode` fields referenced in the items above do NOT exist -- TODO-10 §16 consumes the canonical `uefi_secureboot_*` accessor API instead (adding `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` over the existing `s_sb_*` statics). The genuinely-unblocked piece (DeployedMode `uefi_var_set` write-protection) ships there too, alongside the lockdown action it pairs with.
+
+> **Deferred:** [H] Secure Boot enforcement policy core blocks on the kernel lockdown mechanism (does not exist) + the `boot.conf` lockdown knob is reserved by TODO-10 -> XREF: 02-kernel-core/TODO-10 §16 (item: "`kernel_lockdown_engage(reason)`" -- owns SecureBootEnforce knob + lockdown + DeployedMode write-protection + audit-log + drift-triggered lockdown)
+
 ## 6. SMBIOS Extended Type Parsing
 
 Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 19 (Memory Mapped Address).
@@ -231,8 +236,8 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 | ⭐ | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash      | ⬜ §2 read-only LVFS; no UpdateCapsule |
 | 💎 | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES   | ✅ §3 static MAT enforce      |
 | 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ✅ §4 enum + ConOut primary   |
-| 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ⬜ §5                         |
-| 💎 | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode    | ⬜ §5                         |
+| 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ✅ T02 §5 state detection     |
+| 💎 | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode    | ⬜ §5 deferred -> D02 T10 §16 |
 | 💎 | SMBIOS extended types     | ✅ WMI BaseBoard/Enclosure | ✅ /sys/firmware/dmi full  | ⬜ §6                         |
 | 💎 | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool           | ⬜ §7                         |
 | ⭐ | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr| ⬜ §7 -- boot warning         |
