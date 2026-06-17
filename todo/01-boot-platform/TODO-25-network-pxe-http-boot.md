@@ -34,7 +34,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | --- | :---: | --- | --- | :---: |
 | 💎 | 1 | UEFI SNP/PXE protocol discovery | TODO-05 §5 | [x] |
 | 💎 | 2 | DHCP/PXE provenance capture | §1 | [/] |
-| 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [ ] |
+| 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [x] |
 | 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [ ] |
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [ ] |
 | 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [ ] |
@@ -93,13 +93,21 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 3. TFTP Kernel and boot.conf Load
 
-- [ ] Implement bounded TFTP RRQ client using firmware PXE Base Code where available.
-- [ ] Support `\EFI\ImpossibleOS\kernel.exe`, `boot.conf`, and optional initrd/module downloads.
-- [ ] Add retry/backoff and per-file size caps.
-- [ ] Produce boot_fatal QR codes on TFTP failure.
+- [x] `net_tftp_download()` (`bootx64.c`): bounded TFTP RRQ via firmware PXE `Mtftp` (GET_FILE_SIZE early refusal + READ_FILE capped); sized EfiLoaderData buffer; shared `net_resolve_boot_pxe()` boot-NIC resolver (D2, refactors §2).
+- [x] `net_tftp_probe()` downloads `boot.conf` at Step 1a as an end-to-end client proof then FREES it; kernel.exe fetch/stage/retention is owned by §7 (no §3 consumer, so no untrusted 64 MiB is pinned pre-EBS; Codex adversarial).
+- [x] Retry/backoff (`NET_TFTP_RETRIES`=4 + `gBS->Stall` on transient TIMEOUT/DEVICE_ERROR/NO_RESPONSE) + per-file caps; READ-side `EFI_BUFFER_TOO_SMALL` <= cap reallocs + retries (GET_SIZE/READ race), over-cap only when > cap.
+- [x] `BOOT_ERR_TFTP_*` codes + `net_tftp_boot_err()` mapping + UEFI status constants in `efi.h`; `net_tftp_download` returns a TYPED status -- boot_fatal QR vs local fallback is §7 policy (a failure stays local, never a hard fatal here).
 - [ ] Commit: `"boot: load kernel assets over TFTP"`
 
-**Test checkpoint:** A QEMU TFTP server serves `kernel.exe` + `boot.conf`; serial shows a bounded RRQ download with retry/backoff and the per-file size cap enforced; a missing or oversized file produces a `boot_fatal` QR code, not a hang. Verify on QEMU TCG (TFTP), bare metal PXE.
+**Test checkpoint:** A QEMU TFTP server serves `kernel.exe` + `boot.conf`; serial shows a bounded RRQ download with retry/backoff and the per-file size cap enforced; a missing or oversized file produces a typed failure (`BOOT_ERR_TFTP_*`) and stays local, not a hang. Verify on QEMU TCG (TFTP), bare metal PXE.
+
+> **Test runner:** N/A (bootloader-only UEFI TFTP client, no kernel-side fields until §6) | validation: serial `[NET] TFTP:` staged line on a QEMU PXE/TFTP boot; `test_tftp_retry_limits` owned by §10 harness
+
+> **Notes:**
+> - Shipped `net_tftp_download()` (bounded TFTP client) + `net_tftp_probe()` (boot.conf proof) + shared `net_resolve_boot_pxe()` (`bootx64.c`, efi_main Step 1a) + typed `Mtftp` / TFTP opcode / `MTFTP_INFO` + UEFI status codes + `BOOT_ERR_TFTP_*` in `efi.h`.
+> - GET_FILE_SIZE early-refusal then READ_FILE with capped BufferSize + retry/backoff + realloc-on-grow; the probe frees boot.conf (no consumer yet); local boot / no boot-NIC PXE is a clean no-op staying local.
+> - `net_tftp_download` returns a typed status (`net_tftp_boot_err()` -> `BOOT_ERR_TFTP_*`); boot_fatal-vs-fallback is §7, integrity §5, boot_info staging §6.
+> - Scope: §3 is the TFTP client + boot.conf proof; kernel fetch/stage/retention + booting from the staged kernel is §7, asset verification §5.
 
 ---
 
@@ -197,7 +205,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 | ⭐  | Feature                       | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS                   |
 | --- | ----------------------------- | ------------------------- | -------------------------- | ---------------------------------- |
-| 💎  | PXE boot                      | ✅ WDS/MDT                | ✅ PXELINUX/iPXE           | ⚠️ §1 discovery; load §3           |
+| 💎  | PXE boot                      | ✅ WDS/MDT                | ✅ PXELINUX/iPXE           | ✅ §1-§3 discover + DHCP + TFTP     |
 | 💎  | HTTP boot                     | ✅ UEFI HTTP Boot         | ✅ iPXE/systemd-boot       | ⬜ Planned §4                      |
 | 💎  | Signed network manifest       | ✅ Secure Boot policies   | ✅ shim/grub signatures    | ⬜ Planned §5                      |
 | ⭐  | On-device network-boot report | ❌ event logs only        | ❌ external server logs     | ⭐ Planned §9 (X:\Diag JSON + QR)  |

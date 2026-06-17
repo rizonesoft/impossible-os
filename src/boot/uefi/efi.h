@@ -46,6 +46,16 @@ typedef UINTN               EFI_TPL;
 #define EFI_OUT_OF_RESOURCES        (9ULL | (1ULL << 63))
 #define EFI_ACCESS_DENIED           (15ULL | (1ULL << 63))
 #define EFI_NOT_FOUND               (14ULL | (1ULL << 63))
+/* Additional UEFI status codes used by the PXE/TFTP network-boot path. */
+#define EFI_DEVICE_ERROR            (7ULL  | (1ULL << 63))
+#define EFI_OUT_OF_RESOURCES        (9ULL  | (1ULL << 63))
+#define EFI_NO_MEDIA                (12ULL | (1ULL << 63))
+#define EFI_NO_RESPONSE             (16ULL | (1ULL << 63))
+#define EFI_TIMEOUT                 (18ULL | (1ULL << 63))
+#define EFI_ABORTED                 (21ULL | (1ULL << 63))
+#define EFI_TFTP_ERROR              (23ULL | (1ULL << 63))
+#define EFI_PROTOCOL_ERROR          (24ULL | (1ULL << 63))
+#define EFI_SECURITY_VIOLATION      (26ULL | (1ULL << 63))
 #define EFI_SECURITY_VIOLATION      (26ULL | (1ULL << 63))
 
 /* --- ResetSystem types (UEFI 2.10 Table 8-3 / EFI_RESET_TYPE) --- */
@@ -85,6 +95,12 @@ typedef UINTN               EFI_TPL;
 #define BOOT_ERR_UKI_DISK_OVERRIDE  0x0013
 /* F10 firmware-setup ResetSystem returned (UEFI 2.10 spec violation; OsIndications was already written) */
 #define BOOT_ERR_FW_SETUP_RESET_RET 0x0014
+/* Network/TFTP boot failures (network-boot client). Keep BOOT_ERR_REGISTRY_MAX in
+ * bootx64.c in sync with the highest value here. */
+#define BOOT_ERR_TFTP_NOT_FOUND     0x0015  /* server has no such file */
+#define BOOT_ERR_TFTP_TIMEOUT       0x0016  /* no response after retries */
+#define BOOT_ERR_TFTP_OVER_CAP      0x0017  /* file exceeds the per-file cap */
+#define BOOT_ERR_TFTP_DEVICE        0x0018  /* device/protocol transfer failure */
 
 /* --- GUID --- */
 typedef struct {
@@ -1144,13 +1160,50 @@ _Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_MODE, DhcpAckReceived) == 9,
 _Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_MODE, DhcpAck) == 1524,
     "PXE mode DhcpAck offset (17 bool + TTL/ToS + pad + 2 IP + DhcpDiscover)");
 
+/* PXE Base Code TFTP types (UEFI 2.10 spec 24.3). Used by the bounded TFTP
+ * download client. Only the opcodes/fields the client uses are modeled. */
+struct _EFI_PXE_BASE_CODE_PROTOCOL;   /* forward decl for the Mtftp typedef */
+typedef UINT16 EFI_PXE_BASE_CODE_UDP_PORT;
+
+typedef enum {
+    EFI_PXE_TFTP_FIRST = 0,
+    EFI_PXE_TFTP_GET_FILE_SIZE = 1,
+    EFI_PXE_TFTP_READ_FILE = 2,
+    EFI_PXE_TFTP_WRITE_FILE = 3,
+    EFI_PXE_TFTP_READ_DIRECTORY = 4,
+    EFI_PXE_MTFTP_GET_FILE_SIZE = 5,
+    EFI_PXE_MTFTP_READ_FILE = 6,
+    EFI_PXE_MTFTP_READ_DIRECTORY = 7,
+    EFI_PXE_MTFTP_LAST = 8
+} EFI_PXE_BASE_CODE_TFTP_OPCODE;
+
+typedef struct {
+    EFI_IP_ADDRESS             MCastIp;
+    EFI_PXE_BASE_CODE_UDP_PORT CPort;
+    EFI_PXE_BASE_CODE_UDP_PORT SPort;
+    UINT16                     ListenTimeout;
+    UINT16                     TransmitTimeout;
+} EFI_PXE_BASE_CODE_MTFTP_INFO;
+
+typedef EFI_STATUS (EFIAPI *EFI_PXE_BASE_CODE_MTFTP)(
+    struct _EFI_PXE_BASE_CODE_PROTOCOL *This,
+    EFI_PXE_BASE_CODE_TFTP_OPCODE       Operation,
+    VOID                               *BufferPtr,
+    BOOLEAN                             Overwrite,
+    UINT64                             *BufferSize,
+    UINTN                              *BlockSize,
+    EFI_IP_ADDRESS                     *ServerIp,
+    UINT8                              *Filename,
+    EFI_PXE_BASE_CODE_MTFTP_INFO       *Info,
+    BOOLEAN                             DontUseBuffer);
+
 typedef struct _EFI_PXE_BASE_CODE_PROTOCOL {
     UINT64                   Revision;
     VOID                    *Start;
     VOID                    *Stop;
     VOID                    *Dhcp;
     VOID                    *Discover;
-    VOID                    *Mtftp;
+    EFI_PXE_BASE_CODE_MTFTP  Mtftp;
     VOID                    *UdpWrite;
     VOID                    *UdpRead;
     VOID                    *SetIpFilter;

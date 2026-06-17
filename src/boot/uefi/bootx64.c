@@ -112,6 +112,7 @@ static struct net_dhcp_provenance g_net_dhcp;
 static UINT8 g_net_dhcp_raw[1472];   /* preserved raw DhcpAck for the boot_info handoff */
 static int   g_net_dhcp_raw_valid;
 
+
 /* Boot info -- placed at a known physical address (64 KiB) */
 #define BOOT_INFO_PHYS_ADDR  0x10000
 static struct boot_info    *g_boot_info_ptr;
@@ -850,7 +851,7 @@ static void nvram_write_boot_error(UINT32 code)
  * the public Impossible OS GUID).  Keep this in sync with the registry
  * in efi.h: highest currently-defined code is BOOT_ERR_FW_SETUP_RESET_RET
  * (0x0014). */
-#define BOOT_ERR_REGISTRY_MAX 0x0014
+#define BOOT_ERR_REGISTRY_MAX 0x0018  /* highest BOOT_ERR_* in efi.h (TFTP codes) */
 
 static UINT32 nvram_read_boot_error(void)
 {
@@ -12970,13 +12971,11 @@ static UINT32 net_dhcp_find_option(const UINT8 *opts, UINT32 len, UINT8 tag,
  * fixed fields + DHCP options 3/54, preserves the raw packet, and logs redacted
  * provenance. Runs pre-ExitBootServices; a local boot or a NIC without a cached
  * DhcpAck is a clean no-op. */
+static EFI_PXE_BASE_CODE_PROTOCOL *net_resolve_boot_pxe(EFI_HANDLE dev_handle);
+
 static void net_dhcp_capture(EFI_HANDLE dev_handle)
 {
-    EFI_GUID pxe_guid = EFI_PXE_BASE_CODE_PROTOCOL_GUID;
-    EFI_PXE_BASE_CODE_PROTOCOL *pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
-    EFI_HANDLE *handles = (EFI_HANDLE *)0;
-    UINTN nhandles = 0;
-    EFI_STATUS s;
+    EFI_PXE_BASE_CODE_PROTOCOL *pxe;
     UINT32 i;
 
     /* Zero the result explicitly -- do not rely on .bss being cleared. */
@@ -12990,29 +12989,11 @@ static void net_dhcp_capture(EFI_HANDLE dev_handle)
     }
     g_net_dhcp.boot_file[0] = '\0';
 
-    /* The boot device handle is authoritative: if it exposes a PXE Base Code
-     * protocol with a cached DhcpAck, we network-booted from it -- regardless of
-     * the device-path-derived booted_from_network flag, which can be unset when
-     * the optional DevicePathUtilities protocol is absent. */
-    if (dev_handle &&
-        EFI_ERROR(gBS->HandleProtocol(dev_handle, &pxe_guid, (VOID **)&pxe)))
-        pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
-    /* Sole-handle fallback ONLY when discovery classified this as a network
-     * boot: on a local boot a stray NIC's cached DhcpAck must not be captured
-     * as ours. Limitation: if the boot DeviceHandle is a child without PXE AND
-     * the (otherwise universal) DevicePathUtilities protocol is absent,
-     * booted_from_network stays unset and this fallback is skipped -- DHCP
-     * provenance is then best-effort. Tracked for a DevicePathUtilities-
-     * independent boot-NIC signal. */
-    if (!pxe && g_net_discovery.booted_from_network) {
-        s = gBS->LocateHandleBuffer(ByProtocol, &pxe_guid, (VOID *)0,
-                                    &nhandles, &handles);
-        if (!EFI_ERROR(s) && handles && nhandles == 1 &&
-            EFI_ERROR(gBS->HandleProtocol(handles[0], &pxe_guid, (VOID **)&pxe)))
-            pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
-        if (handles)
-            gBS->FreePool(handles);
-    }
+    /* Resolve the boot-NIC PXE protocol (shared with the TFTP client). The boot device
+     * handle is authoritative; the sole-handle fallback applies only on a
+     * network-classified boot. Best-effort residual when the boot handle is a
+     * child without PXE and DevicePathUtilities is absent -- tracked. */
+    pxe = net_resolve_boot_pxe(dev_handle);
     if (!pxe || !pxe->Mode || !pxe->Mode->DhcpAckReceived)
         return;   /* no DHCP provenance available */
 
@@ -13072,6 +13053,196 @@ static void net_dhcp_capture(EFI_HANDLE dev_handle)
                        ? (const char *)g_net_dhcp.boot_file : "(none)");
     serial_early_print("\n");
     boot_log_append("[NET] DHCP provenance captured\n");
+}
+
+#define NET_TFTP_MAX_FILE      (64u * 1024u * 1024u)   /* kernel cap */
+#define NET_TFTP_BOOTCONF_CAP  (1u * 1024u * 1024u)        /* boot.conf cap */
+#define NET_TFTP_RETRIES       4
+#define NET_TFTP_BACKOFF_MS    250
+
+/* Shared boot-NIC PXE Base Code resolver (DHCP capture + TFTP client). Prefers the boot
+ * device handle's PXE protocol (authoritative); falls back to the sole NIC only
+ * when discovery classified a network boot. Returns NULL when no boot-NIC PXE
+ * can be identified (caller stays local rather than failing fatally). */
+static EFI_PXE_BASE_CODE_PROTOCOL *net_resolve_boot_pxe(EFI_HANDLE dev_handle)
+{
+    EFI_GUID pxe_guid = EFI_PXE_BASE_CODE_PROTOCOL_GUID;
+    EFI_PXE_BASE_CODE_PROTOCOL *pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
+    EFI_HANDLE *handles = (EFI_HANDLE *)0;
+    UINTN nhandles = 0;
+    EFI_STATUS s;
+
+    if (dev_handle &&
+        EFI_ERROR(gBS->HandleProtocol(dev_handle, &pxe_guid, (VOID **)&pxe)))
+        pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
+    if (!pxe && g_net_discovery.booted_from_network) {
+        s = gBS->LocateHandleBuffer(ByProtocol, &pxe_guid, (VOID *)0,
+                                    &nhandles, &handles);
+        if (!EFI_ERROR(s) && handles && nhandles == 1 &&
+            EFI_ERROR(gBS->HandleProtocol(handles[0], &pxe_guid, (VOID **)&pxe)))
+            pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
+        if (handles)
+            gBS->FreePool(handles);
+    }
+    return pxe;
+}
+
+/* True if a Mtftp status is a transient error worth retrying. */
+static int net_tftp_retryable(EFI_STATUS s)
+{
+    return s == EFI_TIMEOUT || s == EFI_DEVICE_ERROR ||
+           s == EFI_NO_RESPONSE || s == EFI_PROTOCOL_ERROR ||
+           s == EFI_TFTP_ERROR;
+}
+
+/* Map a fatal Mtftp/transfer status to a BOOT_ERR_TFTP_* code (for a caller
+ * that decides to boot_fatal when there is no local fallback -- fallback-ordering policy). */
+static UINT32 net_tftp_boot_err(EFI_STATUS s)
+{
+    if (s == EFI_NOT_FOUND)         return BOOT_ERR_TFTP_NOT_FOUND;
+    if (s == EFI_TIMEOUT || s == EFI_NO_RESPONSE) return BOOT_ERR_TFTP_TIMEOUT;
+    if (s == EFI_BUFFER_TOO_SMALL)  return BOOT_ERR_TFTP_OVER_CAP;
+    return BOOT_ERR_TFTP_DEVICE;
+}
+
+/* Download `filename` over TFTP into a freshly allocated EfiLoaderData buffer
+ * (sized from GET_FILE_SIZE, capped at `cap`). On success returns EFI_SUCCESS,
+ * sets *out_buf (caller FreePages) + *out_size. GET_FILE_SIZE is an early-refusal
+ * diagnostic only; READ_FILE still passes a capped BufferSize and treats a
+ * returned size > cap / EFI_BUFFER_TOO_SMALL as over-cap (the object can change
+ * between requests). Retries transient errors with backoff; returns a typed
+ * status on hard failure -- the CALLER decides boot_fatal vs local fallback. */
+static EFI_STATUS net_tftp_download(EFI_PXE_BASE_CODE_PROTOCOL *pxe,
+                                    const char *filename, UINT64 cap,
+                                    VOID **out_buf, UINT64 *out_size,
+                                    UINTN *out_pages)
+{
+    EFI_IP_ADDRESS server;
+    UINT8 *sb = (UINT8 *)server.Addr;
+    UINT64 size = 0, alloc_size;
+    UINTN block = 512, pages;
+    EFI_PHYSICAL_ADDRESS buf_phys = 0;
+    VOID *buf;
+    EFI_STATUS s;
+    int attempt, i;
+    const UINT8 *sip;
+
+    *out_buf = (VOID *)0;
+    *out_size = 0;
+    *out_pages = 0;
+    if (!pxe || !pxe->Mtftp || !cap)
+        return EFI_INVALID_PARAMETER;
+
+    /* Server IP: next-server (siaddr) preferred, DHCP server id fallback. */
+    server.Addr[0] = server.Addr[1] = server.Addr[2] = server.Addr[3] = 0;
+    sip = g_net_dhcp.next_server_ip;
+    {
+        int have = 0;
+        for (i = 0; i < 4; i++) if (sip[i]) have = 1;
+        if (!have) sip = g_net_dhcp.dhcp_server_ip;
+    }
+    for (i = 0; i < 4; i++) sb[i] = sip[i];
+
+    /* 1. Early-refusal sizing. If unsupported, fall back to the full cap. */
+    size = 0;
+    s = pxe->Mtftp(pxe, EFI_PXE_TFTP_GET_FILE_SIZE, (VOID *)0, 0,
+                   &size, &block, &server, (UINT8 *)filename,
+                   (EFI_PXE_BASE_CODE_MTFTP_INFO *)0, 0);
+    if (!EFI_ERROR(s) && size > cap)
+        return EFI_BUFFER_TOO_SMALL;       /* over-cap */
+    alloc_size = (!EFI_ERROR(s) && size > 0) ? size : cap;
+    if (alloc_size > cap)
+        alloc_size = cap;
+
+    pages = (UINTN)((alloc_size + 0xFFFu) / 0x1000u);
+    s = gBS->AllocatePages(AllocateAnyPages, EfiLoaderData, pages, &buf_phys);
+    if (EFI_ERROR(s) || !buf_phys)
+        return EFI_OUT_OF_RESOURCES;
+    buf = (VOID *)(UINTN)buf_phys;
+
+    /* 2. READ_FILE with a capped BufferSize + retry/backoff. */
+    for (attempt = 0; attempt < NET_TFTP_RETRIES; attempt++) {
+        size = (UINT64)pages * 0x1000u;    /* in: capacity; out: actual */
+        block = 512;
+        s = pxe->Mtftp(pxe, EFI_PXE_TFTP_READ_FILE, buf, 0,
+                       &size, &block, &server, (UINT8 *)filename,
+                       (EFI_PXE_BASE_CODE_MTFTP_INFO *)0, 0);
+        if (!EFI_ERROR(s)) {
+            if (size > cap) {              /* object grew past the cap */
+                gBS->FreePages(buf_phys, pages);
+                return EFI_BUFFER_TOO_SMALL;
+            }
+            *out_buf = buf;
+            *out_size = size;
+            *out_pages = pages;   /* the allocated count -- free exactly this */
+            return EFI_SUCCESS;
+        }
+        if (s == EFI_BUFFER_TOO_SMALL) {
+            /* Firmware updated *size to the required length. If it still fits
+             * the cap, grow the buffer and retry (the object changed after the
+             * GET_FILE_SIZE probe); otherwise it is genuinely over-cap. */
+            UINTN need;
+            if (size > cap) {
+                gBS->FreePages(buf_phys, pages);
+                return EFI_BUFFER_TOO_SMALL;
+            }
+            need = (UINTN)((size + 0xFFFu) / 0x1000u);
+            if (need > pages) {
+                EFI_PHYSICAL_ADDRESS nb = 0;
+                gBS->FreePages(buf_phys, pages);
+                if (EFI_ERROR(gBS->AllocatePages(AllocateAnyPages, EfiLoaderData,
+                                                 need, &nb)) || !nb)
+                    return EFI_OUT_OF_RESOURCES;
+                buf_phys = nb;
+                buf = (VOID *)(UINTN)nb;
+                pages = need;
+            }
+            continue;                      /* retry with the larger buffer */
+        }
+        if (!net_tftp_retryable(s)) {
+            gBS->FreePages(buf_phys, pages);
+            return s;                      /* fatal -- caller maps + decides */
+        }
+        if (gBS->Stall)
+            gBS->Stall((UINTN)NET_TFTP_BACKOFF_MS * 1000u * (UINTN)(attempt + 1));
+    }
+    gBS->FreePages(buf_phys, pages);
+    return EFI_TIMEOUT;                     /* retries exhausted */
+}
+
+/* Network-boot connectivity proof: on a network boot, download boot.conf over TFTP to
+ * verify the client works end-to-end, log reachability, then FREE it. The
+ * kernel.exe fetch + staging + retention is owned by the network-vs-local boot
+ * selection (the consumer): retaining a 64 MiB untrusted payload here with no
+ * consumer would pin pre-EBS memory and could starve the local fallback. */
+static void net_tftp_probe(EFI_HANDLE dev_handle)
+{
+    EFI_PXE_BASE_CODE_PROTOCOL *pxe;
+    VOID *cbuf = (VOID *)0;
+    UINT64 csize = 0;
+    UINTN cpages = 0;
+    EFI_STATUS s;
+
+    if (!g_net_discovery.booted_from_network || !g_net_dhcp.valid)
+        return;
+    pxe = net_resolve_boot_pxe(dev_handle);
+    if (!pxe) {
+        serial_early_print("[NET] TFTP: no boot-NIC PXE protocol; staying local\n");
+        return;
+    }
+    s = net_tftp_download(pxe, "\\EFI\\ImpossibleOS\\boot.conf",
+                          NET_TFTP_BOOTCONF_CAP, &cbuf, &csize, &cpages);
+    if (EFI_ERROR(s)) {
+        serial_early_print("[NET] TFTP: boot.conf probe failed (err 0x");
+        serial_early_print_hex16((UINT16)net_tftp_boot_err(s));
+        serial_early_print("); staying local\n");
+        return;
+    }
+    serial_early_print("[NET] TFTP: boot.conf reachable (");
+    serial_early_print_uint((UINT32)csize);
+    serial_early_print(" B); kernel staging owned by network-boot selection\n");
+    boot_log_append("[NET] TFTP client verified (boot.conf)\n");
+    gBS->FreePages((EFI_PHYSICAL_ADDRESS)(UINTN)cbuf, cpages);  /* no consumer yet */
 }
 
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
@@ -13986,6 +14157,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * network protocols are still live (network-boot discovery). */
     network_boot_discover(g_boot_device_handle, g_boot_image_file_path);
     net_dhcp_capture(g_boot_device_handle);
+    net_tftp_probe(g_boot_device_handle);
 
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();
