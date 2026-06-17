@@ -414,6 +414,15 @@ close:
             if (trunc)
                 vfs_close(trunc);
         }
+    } else {
+        /* Open failed outright -- X: is mounted (klog_using_blackbox) but
+         * the target dir (most likely X:\Perf, if the skeleton mkdir
+         * failed) is absent. Warn instead of silently leaving the previous
+         * boot's boot-timeline.json on disk to masquerade as fresh data.
+         * Mirrors boot-profile.log's open-failure warning in boot_timing.c. */
+        klog(LOG_WARN, "boot",
+             "boot-timeline.json: cannot open %s for write; no timeline this boot",
+             tl_path);
     }
 
     {

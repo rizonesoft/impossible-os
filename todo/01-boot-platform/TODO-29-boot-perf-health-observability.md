@@ -154,6 +154,8 @@ The §1 budget check catches absolute breaches, but a slow drift inside the budg
 - [x] 3-run median per phase (prior=`boots[3..5]`, newest=`boots[0..2]`); emits BOOT-TREND WARN when growth >15%; first 5 boots silent.
 - [x] CI hook stays owned by the boot-validation matrix (this section ships data file + warn line only).
 - [ ] Defer `boot_trend_publish_json()` (cJSON RMW + sync VFS I/O) to a post-DESKTOP_READY work item; record only fixed-size durations during boot -- takes the trend layer's own cost out of measured boot time
+- [ ] Linearize `boot_trend_publish_json()` traversal (`boot_trend.c:317`): replace indexed `json_array_get` (O(N^2) loop on dense/malformed file) with `json_array_first`/`json_array_next`; quarantine over-long `boots` arrays. (TODO-24 §6)
+- [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline, or gate BlackBox-only + document no fallback. (TODO-24 §6)
 - [x] Commit: `"boot: rolling boot-trend.json + regression alarms"`
 
 **Test checkpoint:** Synthetic 6-boot fixture with prior-3 `SMBIOS=[80,80,80]` and newest-3 `[150,150,150]` produces an 87% regression alarm. Same shape but newest-3 `[80,82,84]` stays silent (median 82 within 15% band). Unit test seeds the file with 16 fixture entries and asserts prepend+trim to 16. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

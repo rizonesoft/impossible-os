@@ -1165,7 +1165,8 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         fb_putchar('\n');
     }
 
-    /* ---- Live debug log: write to X:\BOOT_NNN.LOG immediately ---- */
+    /* ---- Live debug log: flush to X:\Logs\Serial\Serial_YYMMDDNN.log
+     * (klog_dir + "Serial\\") immediately ---- */
     if (klog_disk_live_active()) {
         klog_disk_append(&snapshot);
         klog_disk_flush();

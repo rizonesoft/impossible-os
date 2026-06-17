@@ -216,6 +216,16 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 
 **Test checkpoint:** After boot, `X:\Boot\` contains the per-boot session files `26040501.LOG` and `26040501.json`; serial session logs stay at `X:\Logs\Serial\` (owned by §5, built from `klog_dir + "Serial\\"`). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
+> **Notes:**
+> - Per-boot diagnostic artifacts route to `X:\Perf\` when BlackBox is mounted, C:\ `klog_dir` fallback otherwise: `boot-profile.log` (`boot_timing.c`), `boot-timeline.json` (`boot_progress.c`).
+> - `klog_using_blackbox` (extern in `klog.h`, defined in `klog_disk.c`) is the single runtime selector boot subsystems use to pick `X:\Perf\` vs the C:\ fallback dir.
+> - `boot-timeline.json` now warns (not silently drops) when its target dir is missing, matching `boot-profile.log`'s open-failure behavior.
+> - Serial session logs stay at `X:\Logs\Serial\` (owned by §5); `boot-trend.json` C:\ fallback + O(N^2) linearization are deferred to TODO-29 §3 (Accepted below).
+> **Verified:** 2026-06-17 | commit `994e9794` | 5/5 items | build OK | smoke PASS (TCG 2.66s)
+> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §3 (item: "C:\ fallback for `boot-trend.json`" at line 158)
+> **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> XREF: 01-boot-platform/TODO-29 §3 (item: "Linearize `boot_trend_publish_json()` traversal" at line 157)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- 9-line warn+comment fix) | 1M+1L fixed, 2M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 7. Crash Dump Path -- crash_recovery.log to X:\Crash\

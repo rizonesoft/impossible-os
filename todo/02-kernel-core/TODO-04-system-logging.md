@@ -288,7 +288,7 @@ These items are implemented and verified. Kept here for future correctness check
 ### Disk Logging 
 
 - [x] Batch flush to `X:\Logs\kernel.log` (IXFS, appendable) -- `klog_disk.c`
-- [x] Numbered boot session logs `X:\BOOT_NNN.LOG` on FAT32 partition -- one file per boot
+- [x] Numbered boot session logs under `X:\Boot\` (per-boot `YYMMDDNN.LOG` + `.json`) and serial sessions at `X:\Logs\Serial\Serial_YYMMDDNN.log` on the BlackBox FAT32 partition -- one set per boot
 - [x] Live mode -- every `klog()` entry appended and flushed immediately when enabled
 - [x] 256 KB flush buffer via `pmm_alloc_contiguous()` (identity-mapped)
 - [x] Reentrancy guard (`flushing` flag) prevents recursive flush
