@@ -341,6 +341,14 @@ Windows and Linux identify FAT32 volumes by their 11-character volume label (sto
 
 **Test checkpoint:** `mlabel` shows BLACKBOX. Windows Disk Management shows "BLACKBOX (X:)" when disk is attached. Serial shows volume label on mount.
 
+> **Notes:**
+> - The BlackBox FAT32 volume label `BLACKBOX` is set at format time via `mkfs.fat -n` (Makefile, in §1), written to both the BPB label field and the root volume-label dirent.
+> - `fat32_init` parses BS_VolLab (BPB offset 71, 11 bytes) into `vol->label` (space-trimmed) and logs it at mount (`fat32_ops.c:847`).
+> - The FAT label is an identifier independent of the GPT partition name `BlackBox` (mixed case) that `partition.c` keys X: mounting on; `read-blackbox.sh` (§9) + `test_blackbox.c` validate the FAT label, the kernel mount uses the GPT name.
+> **Verified:** 2026-06-17 | commit `afba47cd` | 4/4 items | build OK | manual (mlabel shows BLACKBOX)
+> **Accepted:** [M] bootloader `media_role_locate_blackbox_fs()` finds BlackBox by FAT label, not GPT identity (split-brain risk vs the kernel's GPT-name mount) -> XREF: 01-boot-platform/TODO-06 §6 (item: "Harden `media_role_locate_blackbox_fs()`" at line 203)
+> **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- no code fixes) | 1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 12. Partition Health -- fsck on Mount, Dirty-Bit Check

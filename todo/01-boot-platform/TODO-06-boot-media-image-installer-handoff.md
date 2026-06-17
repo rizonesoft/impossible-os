@@ -200,6 +200,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] Boot-path decision record reused: `BOOT_REASON_MEDIA_ROLE_MARKER` + Rule 8 path/role consistency in `boot_decision_validate()`. Shipped in §5.
 - [x] HKLM `Boot\Device\MediaRole` (REG_SZ) + `MediaRoleEnum`/`MediaRoleMismatch` DWORDs + `boot_media_role_name()` platform API in `boot_hw.c` + `boot_decision.c`.
 - [/] Installer/recovery shell launch -- kernel emits non-normal-role serial line pointing at owning TODO; actual shell binaries owned by separate TODOs.
+- [/] Harden `media_role_locate_blackbox_fs()` (`bootx64.c`): bind BlackBox by GPT name/GUID, not just FAT label + same-disk-as-ESP, so a duplicate-labelled volume can't feed pre-EBS seed/role data. (flagged: TODO-24 §11)
 - [x] Commit: `"boot: hand off boot media role"`
 
 **Test checkpoint:** After §6 ships, `HKLM\SYSTEM\Boot\Device\MediaRole == "normal"` post-boot on the default-normal smoke image (verified via serial: `Boot device Registry populated: ... media_role=normal`). Unit test `boot_decision: boot_media_role_name canonical strings` covers all 7 roles + out-of-range. ABI bump verified: kernel + bootloader mirror both `BOOT_INFO_VERSION = 17`, manifest dump compare passes.
