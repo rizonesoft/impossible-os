@@ -76,7 +76,7 @@ Detect other OS partitions from GPT and contribute chainload entries to the TODO
 > - Foreign loaders found by read-only ESP bootloader-path probe (not GPT type); trust = firmware Secure Boot at `LoadImage` (dbx = `EFI_SECURITY_VIOLATION` refused); a failed chainload demotes to the IPOS fallback.
 > - Scope boundary: the JSON-store chainload entry-kind validator stays TODO-07 §13 (synthesized entries built trusted, bypass it); W^X/multi-GPU/SecureBoot/SMBIOS/dbx are §3-§7.
 
-> **Verified:** 2026-06-17 | commit `19236366` | 6/6 items | build OK | smoke PASS (TCG 2.70s)
+> **Verified:** 2026-06-17 | commit `f259f12c` | 6/6 items | build OK | smoke PASS (TCG 2.70s)
 > **Quality reviewed:** 2026-06-17 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 8H fixed | scope: boot-code-quality
 
 ## 2. Firmware Update Advisor (read-only LVFS-style)
