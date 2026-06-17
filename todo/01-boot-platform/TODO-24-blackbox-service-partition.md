@@ -11,7 +11,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 > **Goal:** Add a 128 MiB FAT32 "BlackBox" partition to the GPT disk layout, mounted as `X:\`. All kernel logs, crash dumps, boot timelines, diagnostic snapshots, and portable tools live here -- separate from the IXFS system volume. FAT32 gives crash resilience (survives IXFS corruption), cross-platform readability (Windows/Linux/macOS mount it natively), and clean separation of OS files from diagnostic data.
 
 > [!IMPORTANT]
-> **Current state:** 3-partition GPT (64 MiB EFI + 128 MiB BlackBox FAT32 + ~316 MiB IXFS). All logs, crash reports, boot timelines, and diagnostics write to `X:\` (BlackBox). Falls back to `C:\Impossible\System\Logs\` if BlackBox is absent. A/B dual-slot layout supported via `--ab` flag (4 partitions).
+> **Current state:** 3-partition GPT (64 MiB EFI + 128 MiB BlackBox FAT32 + ~316 MiB IXFS). All logs, crash reports, boot timelines, and diagnostics write to `X:\` (BlackBox). Falls back to `C:\Impossible\System\Logs\` if BlackBox is absent. A/B dual-slot layout supported via `--ab` flag (6 partitions: EFI + BlackBox + ABMeta + IXFS A + IXFS B + Recovery).
 
 ## Inputs
 
@@ -59,7 +59,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | 💎 |  12   | Partition health -- fsck on mount, dirty-bit check    | §3, T09 §6        |  [/]   |
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [/]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
-| 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [x]   |
+| 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [/]   |
 | 💎 |  16   | Crash/WER report retention in partition cleanup       | §10, §13          |  [ ]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
@@ -436,18 +436,25 @@ TODO-21 (A/B dual-slot boot) defines: EFI + Slot A IXFS + Slot B IXFS. With Blac
 
 Update cross-references across affected TODOs.
 
-- [x] `TODO-04-system-logging.md`: XREF to TODO-24 already present (line 23)
+- [x] `TODO-04-system-logging.md`: XREF to TODO-24 already present (line 32, after the removed legacy-logger row)
 - [x] `TODO-10-bare-metal-hardening.md`: updated log path refs from C:\ to X:\, KLOG_DIR -> klog_dir
 - [x] `TODO-10-bare-metal-hardening.md`: follow-up ownership cleanup landed; TODO-10 now treats log, crash, perf, and diagnostic file paths as prerequisites owned here
 - [x] `TODO-14-boot-diagnostics.md`: crash dump paths updated to `X:\Crash\`
 - [x] `TODO-27-crash-dump-generation.md`: all `C:\Impossible\System\CrashDumps\` -> `X:\Crash\`
-- [x] `TODO-04-restore-recovery.md` (domain 10): crash dump paths updated to `X:\Crash\`
-- [x] `TODO-04-release-qa.md` (domain 15): crash dump collection path updated
+- [/] `TODO-04-restore-recovery.md` (domain 10): crash dump paths PARTLY updated -- lines 157/286 still describe dumps in `CrashDumps\` rather than `X:\Crash\` (deferred below)
+- [/] `TODO-04-release-qa.md` (domain 15): crash dump collection PARTLY updated -- line 356 still references `CrashDumps\` (deferred below)
 - [x] `TODO-24` current state block: updated from 2-partition to 3-partition
 - [x] CLAUDE.md: no stale references (does not mention partition layout)
+- [ ] Finish cross-domain crash-dump sync: `CrashDumps\` -> `X:\Crash\` in TODO-04-restore-recovery + TODO-04-release-qa; add reciprocal TODO-24 owner XREFs to TODO-27-crash-dump-generation (§7) + TODO-27-uefi-advanced (§8). [§15]
 - [x] Commit: `"docs: update XREFs for BlackBox partition migration"`
 
 **Test checkpoint:** All referenced TODO files have correct XREFs. No stale `C:\Impossible\System\Logs\` references remain in active TODO files.
+
+> **Notes:**
+> - Propagated the C:\ -> X:\ log/crash/perf/diag path migration across boot-platform + cross-domain TODOs (TODO-04 logging, TODO-10, TODO-14, TODO-27); fixed the current-state callout + a wrong evidence line-ref this review.
+> - Corrected the stale current-state A/B count (4 -> 6 partitions) to match §14's realized layout.
+> - Incomplete (open `[/]`/`[ ]`): two cross-domain TODOs still describe dumps in `CrashDumps\` and two TODO-27 consumers lack reciprocal TODO-24 ownership XREFs -- deferred below.
+> **Deferred:** [M] cross-domain crash-dump path sync incomplete + missing reciprocal TODO-24 owner XREFs -> XREF: 01-boot-platform/TODO-24 §15 (item: "Finish cross-domain crash-dump sync" at line 448)
 
 ---
 
