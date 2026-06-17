@@ -60,7 +60,7 @@ title: "TODO-24 -- BlackBox Service Partition"
 | ⭐ |  13   | WER staging area -- error reports in X:\Crash\WER\    | §4, §7            |  [/]   |
 | 💎 |  14   | A/B layout compatibility -- 4+ partition coexistence  | §1                |  [x]   |
 | 💎 |  15   | Boot platform TODO updates -- XREFs and domain sync   | §1-§14            |  [/]   |
-| 💎 |  16   | Crash/WER report retention in partition cleanup       | §10, §13          |  [ ]   |
+| 💎 |  16   | Crash/WER report retention in partition cleanup       | §10, §13          |  [/]   |
 
 > 💎 = parity -- Windows has a recovery/diagnostic partition; Linux has /var/log separation.
 > S = scope -- internal project hygiene.
@@ -470,6 +470,12 @@ Update cross-references across affected TODOs.
 - [ ] Commit: `"kernel: WER/crash-report retention in BlackBox partition cleanup"`
 
 **Test checkpoint:** Stage more than `MaxWerReports` dummy JSON files in `X:\Crash\WER\`; boot -> serial cleanup message reports WER pruning; count drops to the cap; partition free stays above `MinFreeMiB`. Verify on QEMU WHPX, TCG, VirtualBox.
+
+> **Notes:**
+> - DESIGN COMPLETE, impl deferred to a clean session; design review adopted 3 findings: prune only at X: mount + §10 cleanup (not the ISR path), fixed-point loop past the 128-readdir cap, malformed `PID_<ticks>` names sort oldest.
+> - Plan: add `wer_prune_reports(max)` to `wer.c` (oldest-first by timestamp, fixed-point, `WER_MAX_REPORTS`=64); call at X: mount + §10 cleanup in `boot_storage.c`; age out `crash_recovery.log`; extend the cleanup log line.
+> - Registry-wiring of `MaxWerReports` shares the §10 `MaxBootSessions`/`MinFreeMiB` deferred follow-up.
+> **Deferred:** [M] WER retention impl blocked this session by the `design_review_required.py` transcript-scan detector (missed 4 design dispatches in this compacted session, blocking the `.c` edit) -- design done, resume in a fresh session -> XREF: 01-boot-platform/TODO-24 §16 (item: "Extend the BlackBox low-space cleanup pass" at line 465)
 
 ---
 
