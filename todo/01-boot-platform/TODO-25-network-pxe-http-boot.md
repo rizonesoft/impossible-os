@@ -49,7 +49,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [x] `net_scan_device_path()` walks BOTH the DeviceHandle device path AND `LoadedImage->FilePath` for MESSAGING MAC/IPv4/IPv6/URI nodes -> `booted_from_network` (Codex design D1: URI/MAC nodes can live in the file path).
 - [x] HTTP Boot detection: a URI messaging node (`EFI_DP_MSG_URI` 0x18) sets `http_boot`.
 - [x] `[NET]` serial log: boot source, MAC (boot-path MAC node or SNP `CurrentAddress`, capped 6 bytes), link state (SNP `MediaPresent`), SNP/PXE/HTTPBoot availability; local launch logs `[NET] no network boot path`, no error.
-- [ ] Commit: `"boot: discover UEFI network boot protocols"`
+- [x] Commit: `"boot: discover UEFI network boot protocols"` (commit `6f6f474f`)
 
 **Test checkpoint:** On a firmware network launch, serial logs the client MAC, link state, and which protocols are available (SNP / PXE Base Code / HTTP Boot device path); on a local-media launch the discovery is skipped with no error. Verify on QEMU WHPX (PXE), bare metal.
 
@@ -60,6 +60,9 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - `booted_from_network` is authoritative from OUR boot path (DeviceHandle path + `LoadedImage->FilePath`), not SNP presence; result in file-static `g_net_discovery` seeding §2/§6.
 > - Codex design review (2 HIGH adopted, evidence in commit): D1 walk FilePath too; D2 layout-exact SNP struct with offset asserts + HwAddressSize cap.
 > - Scope: §1 is discovery + logging only; DHCP provenance §2, TFTP/HTTP load §3/§4, boot_info handoff + `boot_device_type=network` test §6.
+
+> **Verified:** 2026-06-17 | commit `a9f39862` | 4/4 items | build OK | smoke PASS (KVM 2.8s)
+> **Quality reviewed:** 2026-06-17 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed | scope: boot-code-quality
 
 ---
 

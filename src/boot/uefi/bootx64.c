@@ -78,8 +78,9 @@ static EFI_HANDLE g_boot_device_handle; /*: boot device from LoadedImage */
  * review D1). */
 static EFI_DEVICE_PATH_PROTOCOL *g_boot_image_file_path;
 
-/* TODO-25 §1: firmware network-boot discovery result. Seeds §2 provenance and
- * the §6 boot_info handoff. booted_from_network is driven by network messaging
+/* Firmware network-boot discovery result. Seeds the DHCP-provenance capture
+ * and the boot_info network handoff. booted_from_network is driven by network
+ * messaging
  * nodes in OUR boot path (authoritative), NOT by mere SNP presence (a NIC can
  * exist on a disk boot). MAC prefers the boot-path MAC node, falling back to the
  * SNP CurrentAddress. */
@@ -88,7 +89,8 @@ struct net_boot_discovery {
     int   http_boot;        /* URI node present -> UEFI HTTP Boot */
     int   snp_available;    /* EFI_SIMPLE_NETWORK_PROTOCOL handle found */
     int   pxe_available;    /* EFI_PXE_BASE_CODE_PROTOCOL handle found */
-    int   link_up;          /* SNP MediaPresent (or unknown-assumed-up) */
+    int   link_up;          /* SNP MediaPresent (valid only when link_known) */
+    int   link_known;       /* boot NIC identified -> link_up is meaningful */
     UINT8 mac[6];
     UINT8 mac_len;
 };
@@ -12687,12 +12689,12 @@ static void ab_bl_increment_tries(EFI_HANDLE part_handle)
                        "(reset by kernel mark-good on a successful boot)\n");
 }
 
-/* TODO-25 §1: validated length of a firmware device path. Prefers the canonical
+/* Validated length of a firmware device path. Prefers the canonical
  * EFI_DEVICE_PATH_UTILITIES_PROTOCOL->GetDevicePathSize (firmware measures its
  * own path); falls back to a self-bounded walk that returns 0 unless a real
  * END_ENTIRE node is found within NET_DP_MAX_WALK. A return of 0 means "do not
  * trust this path" -- the scanner then skips it rather than reading heuristically
- * past the allocation (Codex adversarial: a heuristic cap is not an object
+ * past the allocation (a heuristic cap is not an object
  * bound). */
 #define NET_DP_MAX_WALK 8192
 static UINTN net_dp_validated_size(const EFI_DEVICE_PATH_PROTOCOL *dp,
@@ -12715,7 +12717,7 @@ static UINTN net_dp_validated_size(const EFI_DEVICE_PATH_PROTOCOL *dp,
     return sz;
 }
 
-/* TODO-25 §1: scan a VALIDATED device-path buffer [dp, dp+size) for network
+/* Scan a VALIDATED device-path buffer (dp through dp+size) for network
  * messaging nodes. MAC / IPv4 / IPv6 mark a PXE-style launch; URI marks UEFI
  * HTTP Boot. Every read is bounded by `size` (the validated object length), so
  * a malformed node Length can never advance past the allocation. */
@@ -12768,7 +12770,7 @@ static void net_scan_device_path(const EFI_DEVICE_PATH_PROTOCOL *dp, UINTN size)
     }
 }
 
-/* TODO-25 §1: discover firmware network-boot provenance before ExitBootServices.
+/* Discover firmware network-boot provenance before ExitBootServices.
  * Classifies booted-from-network from OUR boot paths (DeviceHandle device path
  * + LoadedImage FilePath), then records SNP/PXE protocol availability and reads
  * the NIC MAC + link state from the Simple Network Protocol Mode (read-only --
@@ -12798,6 +12800,7 @@ static void network_boot_discover(EFI_HANDLE dev_handle,
     g_net_discovery.snp_available = 0;
     g_net_discovery.pxe_available = 0;
     g_net_discovery.link_up = 0;
+    g_net_discovery.link_known = 0;
     g_net_discovery.mac_len = 0;
     for (mi = 0; mi < 6; mi++)
         g_net_discovery.mac[mi] = 0;
@@ -12820,21 +12823,34 @@ static void network_boot_discover(EFI_HANDLE dev_handle,
         net_scan_device_path(file_path,
                              net_dp_validated_size(file_path, dpu));
 
-    /* 2. SNP availability + MAC/link from the first NIC handle. */
+    /* 2. SNP availability + MAC/link, bound to the BOOT NIC. */
     s = gBS->LocateHandleBuffer(ByProtocol, &snp_guid, (VOID *)0,
                                 &nhandles, &handles);
     if (!EFI_ERROR(s) && handles && nhandles) {
         EFI_SIMPLE_NETWORK_PROTOCOL *snp = (EFI_SIMPLE_NETWORK_PROTOCOL *)0;
         g_net_discovery.snp_available = 1;
-        if (!EFI_ERROR(gBS->HandleProtocol(handles[0], &snp_guid,
-                                           (VOID **)&snp)) && snp && snp->Mode) {
+        /* Prefer the SNP on OUR boot device handle: LocateHandleBuffer order is
+         * unspecified, so on a multi-NIC system handles[0] may be the wrong
+         * adapter. Fall back to the sole handle only when there is exactly one
+         * NIC (unambiguous); with several NICs and no boot-handle match, leave
+         * MAC/link unidentified rather than seed provenance from a guess. */
+        if (dev_handle &&
+            EFI_ERROR(gBS->HandleProtocol(dev_handle, &snp_guid, (VOID **)&snp)))
+            snp = (EFI_SIMPLE_NETWORK_PROTOCOL *)0;
+        if (!snp && nhandles == 1 &&
+            EFI_ERROR(gBS->HandleProtocol(handles[0], &snp_guid, (VOID **)&snp)))
+            snp = (EFI_SIMPLE_NETWORK_PROTOCOL *)0;
+        if (snp && snp->Mode) {
             EFI_SIMPLE_NETWORK_MODE *m = snp->Mode;
-            /* If firmware cannot report link state, assume up rather than
-             * falsely reporting a down link. */
-            g_net_discovery.link_up =
-                m->MediaPresentSupported ? (m->MediaPresent ? 1 : 0) : 1;
-            /* MAC fallback: only when the boot path carried no MAC node. Cap to
-             * the local 6-byte buffer regardless of HwAddressSize. */
+            /* Link state is reportable only when the NIC supports media-present
+             * detection; otherwise leave it unknown rather than claiming "up". */
+            if (m->MediaPresentSupported) {
+                g_net_discovery.link_up = m->MediaPresent ? 1 : 0;
+                g_net_discovery.link_known = 1;
+            }
+            /* MAC capture is independent of link-state availability: record the
+             * boot-NIC MAC even when link state is unknown. Cap to the local
+             * 6-byte buffer regardless of HwAddressSize. */
             if (!g_net_discovery.mac_len) {
                 UINT32 n = m->HwAddressSize, i;
                 if (n > 6)
@@ -12877,7 +12893,9 @@ static void network_boot_discover(EFI_HANDLE dev_handle,
             }
         }
         serial_early_print(" link=");
-        serial_early_print(g_net_discovery.link_up ? "up" : "down");
+        serial_early_print(g_net_discovery.link_known
+                           ? (g_net_discovery.link_up ? "up" : "down")
+                           : "unknown");
         serial_early_print(" SNP=");
         serial_early_print(g_net_discovery.snp_available ? "y" : "n");
         serial_early_print(" PXE=");
@@ -13028,7 +13046,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         if (!EFI_ERROR(li_status) && loaded_image) {
             /* Capture the image file path for network_boot_discover(): HTTP/PXE
              * URI/MAC/IP messaging nodes can live here rather than on the
-             * DeviceHandle path (Codex design review D1). Valid even when
+             * DeviceHandle path (HTTP/PXE nodes can live in the image file path). Valid even when
              * DeviceHandle is NULL (pure HTTP Boot). */
             g_boot_image_file_path =
                 (EFI_DEVICE_PATH_PROTOCOL *)loaded_image->FilePath;
@@ -13800,7 +13818,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Step 1a: discover firmware network-boot provenance (SNP/PXE/HTTP Boot).
      * Runs after boot-device identification (g_boot_device_handle +
      * g_boot_image_file_path set) and BEFORE ExitBootServices so the firmware
-     * network protocols are still live. TODO-25 §1. */
+     * network protocols are still live (network-boot discovery). */
     network_boot_discover(g_boot_device_handle, g_boot_image_file_path);
 
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
