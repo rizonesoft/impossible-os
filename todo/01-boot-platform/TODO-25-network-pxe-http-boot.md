@@ -299,12 +299,16 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## Unit Tests
 
+> **Gated:** these tests cover the deferred §5-§10 surface or UEFI-only transport parsers with no kernel test surface; they ship with §10 (PXE/HTTP boot tests), itself deferred behind the §5 trust model. `test_pxe_dhcp_provenance_parse` / `test_tftp_retry_limits` need `net_dhcp_find_option` / TFTP-retry extracted into kernel-testable pure helpers; `test_network_boot_device_type` needs §6; `test_network_manifest_rejects_bad_hash` needs §5.
+
 - [ ] `test_network_boot_device_type`
 - [ ] `test_pxe_dhcp_provenance_parse`
 - [ ] `test_tftp_retry_limits`
 - [ ] `test_network_manifest_rejects_bad_hash`
 
 ## Verification
+
+> **Gated:** §1-§4 (transport: discovery, DHCP provenance, TFTP, HTTP) are shipped + reviewed and validated by serial `[NET]` lines + the boot smoke test; the items below need a PXE/TFTP + HTTP-Boot server harness (manual) and exercise the deferred §5-§8 trust/provenance/fallback surface. They open as §5-§10 ship.
 
 - [ ] QEMU PXE with local TFTP server
 - [ ] QEMU HTTP Boot mock
