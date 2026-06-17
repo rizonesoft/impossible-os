@@ -133,7 +133,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - `net_http_probe()` proves the client on an HTTP boot then frees boot.conf (no retention); `booted_from_network && http_boot` gates it; absolute + relative `Location` redirects resolved (`net_http_resolve_redirect()`).
 > - Scope: §4 is the HTTP client + boot.conf proof; kernel fetch/stage/retention + boot-from-network is §7, final-URL persistence §6, integrity/TLS §5.
 
-> **Verified:** 2026-06-17 | commit `6f9ed6e8` | 6/6 items | build OK | smoke PASS (TCG 2.59s)
+> **Verified:** 2026-06-17 | commit `ad04ee2b` | 6/6 items | build OK | smoke PASS (TCG 2.59s)
 > **Quality reviewed:** 2026-06-17 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 5H fixed | scope: boot-code-quality
 
 ---
