@@ -209,6 +209,8 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 ## Unit Tests
 
+> **Gated:** all cases need an actual hibernation image (the 02-kernel-core/TODO-26 §4 writer, unimplemented) + the bootloader crypto/TPM-seal/anti-replay primitives; they ship with §1-§9, deferred whole-file. See the §1-§9 Deferred stamps.
+
 - [ ] `test_resume_metadata_valid`
 - [ ] `test_resume_bad_checksum_rejected`
 - [ ] `test_resume_kernel_mismatch_rejected`
@@ -222,6 +224,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 ## Verification
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | N suites, 0 failures
+> **Gated:** the items below need the 02-kernel-core/TODO-26 §4 hibernation writer to produce an image and the bootloader crypto/TPM-seal primitives; they open as §1-§9 ship.
 
 - [ ] QEMU hibernate image fixture
 - [ ] Failed resume cold-boot fallback
