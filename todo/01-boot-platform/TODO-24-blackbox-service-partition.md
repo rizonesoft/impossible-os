@@ -464,17 +464,24 @@ Update cross-references across affected TODOs.
 
 - [x] `wer_prune_reports()` (`wer.c`) prunes `X:\Crash\WER\*.json` oldest-first beyond `MaxWerReports`, called from `boot_storage.c boot_phase2` (mount + the §10 `MinFreeMiB` low-space path)
 - [x] `WER_MAX_REPORTS`=64 in `wer.h`; registry-wiring to `HKLM\SYSTEM\BlackBox` shares the §10 `MaxBootSessions`/`MinFreeMiB` deferred follow-up
-- [x] Enforced once per boot at X: mount (always, Win11 `MaxArchiveCount` style) + the §10 low-space path; NOT after each WER write (ISR exception path -- VFS enum/delete compounds the §13 reentrancy risk, Codex design finding)
+- [x] Best-effort cap (batched oldest-first delete) once per boot at X: mount (Win11 `MaxArchiveCount` style) + the §10 low-space path; NOT after each WER write (ISR exception path -- VFS enum/delete compounds the §13 reentrancy risk, Codex design finding)
 - [x] `crash_recovery.log` is already bounded -- `klog_crash_write_to_disk` rewrites it `VFS_O_TRUNC` from the capped `s_recovered` ring each boot; `.dmp` rotation stays `02-kernel-core/TODO-27` §5-§8
 - [x] `wer_prune_reports` self-logs `"WER retention: pruned N old report(s) (cap M)"` when it prunes (the cleanup-log WER report)
-- [ ] Commit: `"kernel: WER/crash-report retention in BlackBox partition cleanup"`
+- [x] Commit: `"kernel: WER/crash-report retention in BlackBox partition cleanup"` (commit `9dfb2307`)
 
 **Test checkpoint:** Stage more than `MaxWerReports` dummy JSON files in `X:\Crash\WER\`; boot -> serial shows `"WER retention: pruned N"`; count drops to the cap; partition free stays above `MinFreeMiB`. Verify on QEMU WHPX, TCG, VirtualBox.
 
+> **Test runner:** N/A (`wer_prune_reports` needs live `X:\` + staged reports; helpers are static) | validation: serial `"WER retention: pruned N"` on WHPX
+
 > **Notes:**
-> - WER retention: `wer_prune_reports()` (`wer.c`) prunes `X:\Crash\WER\*.json` to `WER_MAX_REPORTS`=64 oldest-first by timestamp (malformed names first), fixed-point past the 128-entry readdir cap; self-logs the count.
-> - Enforced once per boot at X: mount (always-enforced cap) + the §10 low-space cleanup (`boot_storage.c boot_phase2`); deliberately NOT from the ISR exception path (Codex design finding -- §13 reentrancy risk).
+> - WER retention: `wer_prune_reports()` (`wer.c`) prunes `X:\Crash\WER\*.json` toward `WER_MAX_REPORTS`=64 oldest-first by timestamp (malformed names first), deleting bounded batches per enumeration to amortize FAT32 dir-cache rebuilds; self-logs the count.
+> - Best-effort under FAT32's 128-entry readdir window (no truncation signal); exact for the WER dir since `wer_write_crash_report` is its sole writer (pure `PID_*.json`).
+> - Runs once per boot at X: mount + the §10 low-space cleanup (`boot_storage.c boot_phase2`); deliberately NOT from the ISR exception path (Codex design finding -- §13 reentrancy risk).
 > - `crash_recovery.log` needs no separate age-out (§7's `VFS_O_TRUNC` rewrite from the capped ring already bounds it); `.dmp` rotation owned by TODO-27 §5-§8.
+
+> **Verified:** 2026-06-17 | commit `92a05b47` | 5/5 items | build OK
+> **Deferred:** [M] >32 undeletable WER reports halt the prune (bounded FNV-1a failed-set, hash-collision skip); corruption-only -- fsck-on-mount repairs the directory before prune runs -> XREF: 01-boot-platform/TODO-24 §12 (item: "fsck cycle guard" at line 365)
+> **Quality reviewed:** 2026-06-17 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
 

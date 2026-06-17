@@ -19,9 +19,14 @@
 
 #define WER_DIR_BB     "X:\\Crash\\WER\\"
 #define WER_DIR_FB     "C:\\Impossible\\System\\Logs\\"
-/* fat32 vfs_readdir surfaces at most this many entries per pass; the prune
- * below loops to a fixed point so a crash loop exceeding it still converges. */
-#define WER_ENUM_CAP    128u
+/* WER retention prune tunables. WER_PRUNE_BATCH is how many of the oldest
+ * reports are deleted per directory enumeration: each unlink invalidates the
+ * FAT32 per-directory readdir cache, so batching amortizes the cache rebuild.
+ * WER_PRUNE_SCAN_GUARD bounds dirents walked per pass and is deliberately NOT
+ * tied to any filesystem cache size -- vfs_readdir returning NULL is the real
+ * end-of-enumeration signal; this is only a runaway backstop. */
+#define WER_PRUNE_BATCH         8u
+#define WER_PRUNE_SCAN_GUARD    8192u
 
 static const char *wer_dir(void)
 {
@@ -70,16 +75,53 @@ static uint32_t wer_name_hash(const char *s)
     return h;
 }
 
-/* WER retention: prune the WER report directory to at most `max` JSON reports,
- * deleting oldest-first. Oldest = smallest 14-digit timestamp; a report whose
- * name lacks a valid 14-digit timestamp sorts as oldest (key 0) so the writer's
- * PID_<ticks> fallback reports are pruned first. Loops to a fixed point because
- * vfs_readdir surfaces only WER_ENUM_CAP entries per pass: after deleting the
- * oldest visible report it re-enumerates until a full pass reports <= max.
+/* Keep the WER_PRUNE_BATCH oldest deletable candidates in vict/vkey,
+ * insertion-sorted ascending by timestamp key (oldest first). A new (name,key)
+ * is dropped when the batch is full and the candidate is not older than the
+ * youngest victim already held. */
+static void wer_victim_insert(char vict[][VFS_MAX_NAME], uint64_t *vkey,
+                              int *nvict, const char *name, uint64_t key)
+{
+    int cap = (int)WER_PRUNE_BATCH;
+    int pos, j;
+
+    if (*nvict >= cap && key >= vkey[cap - 1])
+        return;
+    pos = (*nvict < cap) ? *nvict : cap - 1;
+    while (pos > 0 && vkey[pos - 1] > key) {
+        int k;
+        vkey[pos] = vkey[pos - 1];
+        for (k = 0; k < VFS_MAX_NAME; k++) vict[pos][k] = vict[pos - 1][k];
+        pos--;
+    }
+    vkey[pos] = key;
+    for (j = 0; name[j] && j < VFS_MAX_NAME - 1; j++) vict[pos][j] = name[j];
+    vict[pos][j] = '\0';
+    if (*nvict < cap) (*nvict)++;
+}
+
+/* WER retention: prune the WER report directory toward at most `max` JSON
+ * reports, deleting oldest-first (oldest = smallest 14-digit timestamp; a name
+ * lacking a valid 14-digit timestamp sorts as key 0, so the writer's
+ * PID_<ticks> wall-clock-not-ready fallback reports are pruned first). Each
+ * pass enumerates the directory, collects the WER_PRUNE_BATCH oldest deletable
+ * reports, unlinks them, then re-enumerates until a full pass sees <= max
+ * reports. Batching bounds the FAT32 dir-cache rebuilds an unlink forces.
+ *
+ * Best-effort, not exact: FAT32 vfs_readdir surfaces only the first
+ * FAT32_MAX_DIR_ENTRIES live entries with no truncation signal, so a WER
+ * directory padded with that many *foreign* (non-report) files ahead of real
+ * reports can hide reports past the window and converge above the cap. In
+ * practice X:\Crash\WER holds only PID_*.json reports, so the window always
+ * exposes real reports and the loop drives the count to the cap; exact
+ * enforcement under arbitrary directory contents needs a VFS readdir
+ * truncation signal (owned by the FAT32 hardening TODO).
+ *
  * NOT called from wer_write_crash_report (the ISR exception path) -- only at X:
  * mount and in the BlackBox low-space disk cleanup, both non-exception
  * contexts: adding VFS enumeration/deletion to the fault path would compound
- * the deferred crash-report-writer reentrancy/deadlock risk. Returns the count. */
+ * the deferred crash-report-writer reentrancy/deadlock risk. Returns the
+ * number of reports deleted. */
 uint32_t wer_prune_reports(const char *dir, uint32_t max)
 {
     char dirpath[VFS_MAX_PATH];
@@ -97,75 +139,73 @@ uint32_t wer_prune_reports(const char *dir, uint32_t max)
     dirpath[n] = '\0';
 
     for (;;) {
-        struct vfs_node *dir;
+        struct vfs_node *dnode;
         struct vfs_dirent *de;
         uint32_t idx = 0, count = 0;
-        char oldest[VFS_MAX_NAME];
-        uint64_t oldest_key = 0;
-        int have_oldest = 0, cache_full = 0;
+        char vict[WER_PRUNE_BATCH][VFS_MAX_NAME];
+        uint64_t vkey[WER_PRUNE_BATCH];
+        int nvict = 0;
+        uint32_t surplus;
+        int batch, v, progressed = 0;
 
         if (guard++ > 4096) break;   /* hard bound on passes */
 
-        dir = vfs_open(dirpath, VFS_O_READ);
-        if (!dir) break;
+        dnode = vfs_open(dirpath, VFS_O_READ);
+        if (!dnode) break;
 
-        while ((de = vfs_readdir(dir, idx++)) != 0) {
-            uint64_t ts;
-            uint64_t key;
+        while ((de = vfs_readdir(dnode, idx++)) != 0) {
+            uint64_t ts, key;
+            uint32_t h;
+            int fi, skip = 0;
+
+            if (idx > WER_PRUNE_SCAN_GUARD) break;   /* runaway backstop */
             if (de->type != VFS_FILE || !wer_name_is_json(de->name))
                 continue;
             count++;
-            {
-                uint32_t h = wer_name_hash(de->name);
-                int fi, skip = 0;
-                for (fi = 0; fi < nfailed; fi++)
-                    if (failed_h[fi] == h) { skip = 1; break; }
-                if (skip) continue;   /* a report we already failed to unlink */
-            }
+            h = wer_name_hash(de->name);
+            for (fi = 0; fi < nfailed; fi++)
+                if (failed_h[fi] == h) { skip = 1; break; }
+            if (skip) continue;   /* a report we already failed to unlink */
             key = wer_name_timestamp(de->name, &ts) ? ts : 0;
-            if (!have_oldest || key < oldest_key) {
-                int k = 0;
-                oldest_key = key;
-                while (de->name[k] && k < VFS_MAX_NAME - 1) {
-                    oldest[k] = de->name[k]; k++;
-                }
-                oldest[k] = '\0';
-                have_oldest = 1;
-            }
-            if (idx >= WER_ENUM_CAP) { cache_full = 1; break; }
+            wer_victim_insert(vict, vkey, &nvict, de->name, key);
         }
-        vfs_close(dir);
+        vfs_close(dnode);
 
-        /* Converged: a full enumeration (not cache-capped) saw <= max. */
-        if (count <= max && !cache_full)
-            break;
-        if (!have_oldest)
-            break;
+        if (count <= max)
+            break;            /* visible report count within the cap -- done */
+        if (nvict == 0)
+            break;            /* over cap but nothing deletable (all failed) */
 
-        {
+        surplus = count - max;
+        batch = (surplus < (uint32_t)nvict) ? (int)surplus : nvict;
+        for (v = 0; v < batch; v++) {
             char path[VFS_MAX_PATH];
             int p = 0, j;
             for (j = 0; dirpath[j] && p < (int)sizeof(path) - 2; j++) path[p++] = dirpath[j];
             path[p++] = '\\';
-            for (j = 0; oldest[j] && p < (int)sizeof(path) - 1; j++) path[p++] = oldest[j];
+            for (j = 0; vict[v][j] && p < (int)sizeof(path) - 1; j++) path[p++] = vict[v][j];
             path[p] = '\0';
             if (vfs_unlink(path) != 0) {
-                /* Record this report so it cannot stall pruning of newer
-                 * deletable reports. When the failed set is full, stop rather
-                 * than burn the guard making no progress on a corrupt dir. */
+                /* Record so this report cannot stall pruning of newer deletable
+                 * reports. When the failed set is full, stop rather than burn
+                 * the pass guard making no progress on a corrupt directory. */
                 if (nfailed >= (int)(sizeof(failed_h) / sizeof(failed_h[0]))) {
                     klog(LOG_WARN, "wer",
                          "WER retention: %d undeletable report(s); pruning stopped",
                          nfailed);
-                    break;
+                    goto done;
                 }
-                failed_h[nfailed++] = wer_name_hash(oldest);
+                failed_h[nfailed++] = wer_name_hash(vict[v]);
                 continue;
             }
             total_deleted++;
+            progressed = 1;
         }
+        if (!progressed)
+            continue;   /* whole batch failed (recorded); re-enumerate */
     }
 
+done:
     if (total_deleted)
         klog(LOG_INFO, "wer", "WER retention: pruned %u old report(s) (cap %u)",
              (uint64_t)total_deleted, (uint64_t)max);
