@@ -43,7 +43,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 
 | ⭐  | Order | Deliverable                              | Depends On          | Status |
 | --- | :---: | ---------------------------------------- | ------------------- | :----: |
-| ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [ ]   |
+| ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [x]   |
 | 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6              |  [x]   |
 | 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [ ]   |
 | 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [ ]   |
@@ -59,13 +59,22 @@ Detect other OS partitions from GPT and contribute chainload entries to the TODO
 
 **Files:** `src/boot/uefi/bootx64.c`, `include/kernel/boot_info.h`
 
-- [ ] After GPT partition scan: check each partition type GUID for Linux, Windows, and other EFI system partitions
-- [ ] If any non-Impossible-OS partition found: add up to 8 UEFI chainload entries to the TODO-07 boot entry store
-- [ ] Let TODO-07 render the countdown boot menu and resolve keyboard input/policy
-- [ ] For non-Impossible entries: chainload via `LoadImage` + `StartImage` for EFI boot paths
-- [ ] Commit: `"boot: multi-OS GPT detection and countdown text-mode boot menu"`
+- [x] `chainload_detect()` (`bootx64.c`, Step 1a' pre-EBS): `LocateHandleBuffer(SFS)` enumerates non-boot volumes and read-only-probes the well-known foreign bootloader paths into `g_chainload_targets[8]`.
+- [x] Direct bootloader-file detection supersedes the GPT-type-GUID scan: the chainload target is the loader file on the ESP, not a data-partition type.
+- [x] `chainload_synthesize(parse)` appends up to 8 `BOOT_ENTRY_KIND_CHAINLOAD` envelopes (id `chainload-N`, title=OS, sort_key `zzz-` so they sort after IPOS) to the TODO-07 parse result, bounded by `BOOT_ENTRIES_MAX_ENTRIES`.
+- [x] TODO-07 §6 renders the countdown menu over the combined entries; IPOS stays the policy default (foreign entries carry no policy tags).
+- [x] `chainload_exec()` builds the volume device path + MEDIA/FILEPATH node, `LoadImage(BootPolicy=FALSE)` (firmware Secure-Boot-verifies; `EFI_SECURITY_VIOLATION` refused) + `StartImage`; a failed chainload demotes to the IPOS fallback.
+- [x] `efi.h` types `LoadImage`/`StartImage`/`UnloadImage` (`EFI_IMAGE_LOAD`/`_START`/`_UNLOAD`) for the chainload path.
+- [x] Commit: `"boot: multi-OS GPT detection and countdown text-mode boot menu"`
 
-**Test checkpoint:** QEMU with two GPT partitions: TODO-07 boot menu includes 2 entries, countdown from 3, auto-selects Impossible OS. Bare metal dual-boot: detects Windows/Linux, chainload works.
+**Test checkpoint:** On QEMU/bare-metal with a foreign UEFI bootloader on another volume, serial logs `[MULTIBOOT] detected <OS>`, the TODO-07 menu shows the foreign entry after the IPOS default, the countdown auto-selects IPOS, and selecting the foreign entry chainloads it (`[MULTIBOOT] chainloading <OS>`); with no foreign loader, serial logs `[MULTIBOOT] no foreign OS bootloaders found` and boots IPOS. Verify on QEMU WHPX/TCG + bare-metal dual-boot.
+
+> **Test runner:** N/A (UEFI bootloader-only; no kernel test surface) | validation: serial `[MULTIBOOT]` lines on QEMU + bare-metal dual-boot
+
+> **Notes:**
+> - Shipped `chainload_detect`/`_probe_volume`/`_build_devpath`/`_exec`/`_synthesize` (`bootx64.c`) + typed `LoadImage`/`StartImage`/`UnloadImage` (`efi.h`); detect at Step 1a', synthesize after the parse, dispatch after the menu.
+> - Foreign loaders found by read-only ESP bootloader-path probe (not GPT type); trust = firmware Secure Boot at `LoadImage` (dbx = `EFI_SECURITY_VIOLATION` refused); a failed chainload demotes to the IPOS fallback.
+> - Scope boundary: the JSON-store chainload entry-kind validator stays TODO-07 §13 (synthesized entries built trusted, bypass it); W^X/multi-GPU/SecureBoot/SMBIOS/dbx are §3-§7.
 
 ## 2. Firmware Update Advisor (read-only LVFS-style)
 
@@ -192,7 +201,7 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 
 | ⭐ | Feature                   | 🪟 Win11                   | 🐧 Linux                  | 🚀 Impossible OS              |
 |----|---------------------------|-----------------------------|----------------------------|--------------------------------|
-| ⭐ | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate        | ⬜ §1 -- integrated countdown |
+| ⭐ | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate        | ✅ §1 detect + chainload menu |
 | ⭐ | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash      | ⬜ §2 read-only LVFS; no UpdateCapsule |
 | 💎 | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES   | ⬜ §3                         |
 | 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ⬜ §4                         |

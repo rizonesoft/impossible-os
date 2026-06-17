@@ -120,6 +120,11 @@ typedef enum {
 #define BOOT_ENTRY_FLAG_ALLOW_EDITOR        (1u << 4)   /* user may edit cmdline at menu */
 
 #define BOOT_ENTRY_FLAG_MASK_KNOWN_V1       0x0000001Fu
+/* Bootloader-internal provenance bit (NOT a JSON flag): set only by
+ * chainload_synthesize() on detected foreign-OS entries. No flag_name maps to
+ * it, so a bootentries.json entry can never forge it (TODO-27 sec1 trust gate
+ * -- only synthesized entries may chainload, never a store-provided collision). */
+#define BOOT_ENTRY_FLAG_SYNTHESIZED         (1u << 5)
 
 /* Header carried at the top of bootentries.json. The parser and host validator both
  * compute CRC-32 over the file bytes with the crc32 field's 8 hex digits zeroed (see

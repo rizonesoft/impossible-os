@@ -3279,6 +3279,281 @@ static EFI_STATUS locate_boot_fs(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL **out_fs)
     return EFI_SUCCESS;
 }
 
+/* === Multi-OS chainload detection (TODO-27 sec1) =========================
+ * Enumerate every SimpleFileSystem volume except our own boot ESP, probe the
+ * well-known foreign UEFI bootloader paths, and record each as a chainload
+ * target. The TODO-07 menu renders them; chainload_exec() LoadImage+StartImage
+ * the selection (Secure Boot, when on, makes the firmware verify the foreign
+ * loader against db/dbx -- EFI_SECURITY_VIOLATION is skipped). The probe is
+ * read-only: nothing executes until the user selects an entry. */
+#define CHAINLOAD_MAX 8u
+
+struct chainload_target {
+    EFI_HANDLE    volume_handle;   /* SFS handle the loader lives on */
+    const CHAR16 *file_path;       /* \EFI\...\xxx.efi on that volume */
+    const char   *os_name;         /* menu title */
+};
+static struct chainload_target g_chainload_targets[CHAINLOAD_MAX];
+static UINTN g_chainload_count;
+
+/* Well-known foreign UEFI bootloader probe table. shim precedes grub (shim is
+ * the Secure-Boot first stage). The first hit on a volume wins. */
+struct chainload_probe { const CHAR16 *path; const char *os; };
+static const struct chainload_probe g_chainload_probes[] = {
+    { u"\\EFI\\Microsoft\\Boot\\bootmgfw.efi", "Windows Boot Manager" },
+    { u"\\EFI\\ubuntu\\shimx64.efi",             "Ubuntu" },
+    { u"\\EFI\\ubuntu\\grubx64.efi",             "Ubuntu" },
+    { u"\\EFI\\fedora\\shimx64.efi",             "Fedora" },
+    { u"\\EFI\\fedora\\grubx64.efi",             "Fedora" },
+    { u"\\EFI\\debian\\grubx64.efi",             "Debian" },
+    { u"\\EFI\\opensuse\\shim.efi",              "openSUSE" },
+};
+#define CHAINLOAD_PROBE_COUNT (sizeof(g_chainload_probes) / sizeof(g_chainload_probes[0]))
+
+/* Probe one volume's root for the first matching foreign bootloader. Returns
+ * the probe index on a hit, -1 on none / open failure. Read-only: opens the
+ * candidate READ then closes it immediately. */
+static int chainload_probe_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs)
+{
+    EFI_FILE_PROTOCOL *root = (EFI_FILE_PROTOCOL *)0;
+    UINTN i;
+    if (!fs || EFI_ERROR(fs->OpenVolume(fs, &root)) || !root)
+        return -1;
+    for (i = 0; i < CHAINLOAD_PROBE_COUNT; i++) {
+        EFI_FILE_PROTOCOL *f = (EFI_FILE_PROTOCOL *)0;
+        EFI_STATUS s = root->Open(root, &f, (CHAR16 *)g_chainload_probes[i].path,
+                                  EFI_FILE_MODE_READ, 0);
+        if (!EFI_ERROR(s) && f) {
+            f->Close(f);
+            root->Close(root);
+            return (int)i;
+        }
+    }
+    root->Close(root);
+    return -1;
+}
+
+/* Enumerate all SimpleFileSystem volumes (except our boot ESP) and record up to
+ * CHAINLOAD_MAX foreign bootloaders into g_chainload_targets. Logs each on
+ * serial. Called pre-EBS once the boot device is known; clean no-op when no
+ * foreign loaders exist. */
+static void chainload_detect(void)
+{
+    EFI_GUID sfs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_HANDLE *handles = (EFI_HANDLE *)0;
+    UINTN count = 0, i;
+    EFI_STATUS status;
+
+    g_chainload_count = 0;
+    status = gBS->LocateHandleBuffer(ByProtocol, &sfs_guid, (VOID *)0,
+                                     &count, &handles);
+    if (EFI_ERROR(status) || !handles || count == 0)
+        return;
+
+    for (i = 0; i < count && g_chainload_count < CHAINLOAD_MAX; i++) {
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *)0;
+        int pi;
+        if (handles[i] == g_boot_device_handle)
+            continue;   /* our own boot ESP is not a foreign chainload target */
+        if (EFI_ERROR(gBS->HandleProtocol(handles[i], &sfs_guid, (VOID **)&fs)) || !fs)
+            continue;
+        pi = chainload_probe_volume(fs);
+        if (pi < 0)
+            continue;
+        g_chainload_targets[g_chainload_count].volume_handle = handles[i];
+        g_chainload_targets[g_chainload_count].file_path = g_chainload_probes[pi].path;
+        g_chainload_targets[g_chainload_count].os_name = g_chainload_probes[pi].os;
+        g_chainload_count++;
+        serial_early_print("[MULTIBOOT] detected ");
+        serial_early_print(g_chainload_probes[pi].os);
+        serial_early_print("\n");
+    }
+    gBS->FreePool(handles);
+    if (g_chainload_count == 0)
+        serial_early_print("[MULTIBOOT] no foreign OS bootloaders found\n");
+}
+
+/* MEDIA_FILEPATH device-path subtype (UEFI 2.10 Table 10-58). */
+#define EFI_DP_MEDIA_FILEPATH 0x04
+
+/* Build a full device path = the volume's device path (END node dropped) + a
+ * FILEPATH node for `file_path` + END_ENTIRE. Caller FreePool()s *out_dp. Every
+ * size is bounded; *out_dp is NULL on failure. */
+static EFI_STATUS chainload_build_devpath(EFI_HANDLE vol_handle,
+                                          const CHAR16 *file_path,
+                                          EFI_DEVICE_PATH_PROTOCOL **out_dp)
+{
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_GUID dpu_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_PROTOCOL *vol_dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu = (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)0;
+    EFI_DEVICE_PATH_PROTOCOL *node;
+    UINTN measured, off = 0, vol_len = 0, name_chars = 0, fp_node_len, total, i;
+    UINT8 *out;
+    EFI_STATUS s;
+
+    *out_dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    if (!vol_handle || !file_path)
+        return EFI_INVALID_PARAMETER;
+    s = gBS->HandleProtocol(vol_handle, &dp_guid, (VOID **)&vol_dp);
+    if (EFI_ERROR(s) || !vol_dp)
+        return EFI_NOT_FOUND;
+
+    /* Measure the firmware-owned device path via GetDevicePathSize -- never
+     * self-walk past the object on a heuristic cap (Codex adversarial: a cap is
+     * not an object bound). 0 = utility absent or degenerate -> refuse. */
+    (void)gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
+    measured = 0u;
+    if (dpu && dpu->GetDevicePathSize) {
+        UINTN sz = dpu->GetDevicePathSize(vol_dp);
+        if (sz >= 4u && sz <= 65536u)        /* >64 KiB device path is absurd */
+            measured = sz;
+    }
+    if (measured == 0u)
+        return EFI_NOT_FOUND;
+
+    /* Find the END node strictly within the measured size; vol_len is the
+     * prefix before it. Every header/body access stays inside [0, measured). */
+    for (;;) {
+        UINTN nlen;
+        if (off + 4u > measured)
+            return EFI_INVALID_PARAMETER;          /* header would cross object */
+        node = (EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)vol_dp + off);
+        nlen = (UINTN)node->Length[0] | ((UINTN)node->Length[1] << 8);
+        if (nlen < 4u || off + nlen > measured)
+            return EFI_INVALID_PARAMETER;          /* node crosses object */
+        if (node->Type == EFI_DP_TYPE_END) {
+            vol_len = off;                          /* copy everything before END */
+            break;
+        }
+        off += nlen;
+    }
+
+    while (file_path[name_chars])
+        name_chars++;
+    if (name_chars == 0u || name_chars > 1024u)
+        return EFI_INVALID_PARAMETER;
+    fp_node_len = 4u + (name_chars + 1u) * 2u;      /* header + CHAR16 path + NUL */
+    total = vol_len + fp_node_len + 4u;             /* + END_ENTIRE */
+
+    s = gBS->AllocatePool(EfiLoaderData, total, (VOID **)&out);
+    if (EFI_ERROR(s) || !out)
+        return EFI_OUT_OF_RESOURCES;
+
+    for (i = 0; i < vol_len; i++)                   /* volume path, END dropped */
+        out[i] = ((UINT8 *)vol_dp)[i];
+    {                                               /* FILEPATH node */
+        UINT8 *fp = out + vol_len;
+        CHAR16 *pn = (CHAR16 *)(fp + 4);
+        fp[0] = EFI_DP_TYPE_MEDIA;
+        fp[1] = EFI_DP_MEDIA_FILEPATH;
+        fp[2] = (UINT8)(fp_node_len & 0xFFu);
+        fp[3] = (UINT8)((fp_node_len >> 8) & 0xFFu);
+        for (i = 0; i <= name_chars; i++)           /* include the NUL */
+            pn[i] = file_path[i];
+    }
+    {                                               /* END_ENTIRE node */
+        UINT8 *e = out + vol_len + fp_node_len;
+        e[0] = EFI_DP_TYPE_END;
+        e[1] = EFI_DP_SUBTYPE_END_ENTIRE;
+        e[2] = 4u;
+        e[3] = 0u;
+    }
+    *out_dp = (EFI_DEVICE_PATH_PROTOCOL *)out;
+    return EFI_SUCCESS;
+}
+
+/* Chainload a detected foreign UEFI bootloader. LoadImage with BootPolicy=FALSE
+ * so the firmware Secure-Boot-verifies the image against db/dbx
+ * (EFI_SECURITY_VIOLATION == dbx-revoked -> refuse + skip). On a clean StartImage
+ * control transfers to the foreign loader and does not return; a return means it
+ * exited without booting, so we reclaim the image and the caller falls back to
+ * the normal IPOS path. */
+static EFI_STATUS chainload_exec(const struct chainload_target *t)
+{
+    EFI_DEVICE_PATH_PROTOCOL *dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    EFI_HANDLE img = (EFI_HANDLE)0;
+    UINTN exit_data_size = 0;
+    CHAR16 *exit_data = (CHAR16 *)0;
+    EFI_STATUS s;
+
+    if (!t || !t->volume_handle || !t->file_path)
+        return EFI_INVALID_PARAMETER;
+    s = chainload_build_devpath(t->volume_handle, t->file_path, &dp);
+    if (EFI_ERROR(s) || !dp) {
+        serial_early_print("[MULTIBOOT] chainload: device-path build failed\n");
+        return EFI_ERROR(s) ? s : EFI_LOAD_ERROR;
+    }
+
+    serial_early_print("[MULTIBOOT] chainloading ");
+    serial_early_print(t->os_name);
+    serial_early_print("\n");
+
+    s = gBS->LoadImage((BOOLEAN)0, gImageHandle, (VOID *)dp, (VOID *)0, 0, &img);
+    gBS->FreePool(dp);
+    if (EFI_ERROR(s) || !img) {
+        if (s == EFI_SECURITY_VIOLATION)
+            serial_early_print("[MULTIBOOT] chainload REFUSED -- Secure Boot dbx\n");
+        else
+            serial_early_print("[MULTIBOOT] chainload LoadImage failed\n");
+        if (img)
+            gBS->UnloadImage(img);
+        return EFI_ERROR(s) ? s : EFI_LOAD_ERROR;
+    }
+
+    s = gBS->StartImage(img, &exit_data_size, &exit_data);
+    /* StartImage returned: the chainloaded loader exited without booting. */
+    serial_early_print("[MULTIBOOT] chainload target exited; falling back\n");
+    if (exit_data)
+        gBS->FreePool(exit_data);
+    gBS->UnloadImage(img);
+    return s;
+}
+
+/* Append each detected foreign-OS bootloader as a CHAINLOAD boot entry so the
+ * TODO-07 menu renders it. id "chainload-N" lets the post-menu dispatch recover
+ * the g_chainload_targets[] index; foreign OSes sort after IPOS entries. No-op
+ * when there are no targets or the entry array is full. */
+static void chainload_synthesize(boot_entries_parse_result_t *parse)
+{
+    UINTN i;
+    if (!parse)
+        return;
+    for (i = 0; i < g_chainload_count; i++) {
+        boot_entry_envelope_t *e;
+        const char *os;
+        UINTN j, k;
+        if ((UINTN)parse->entry_count >= BOOT_ENTRIES_MAX_ENTRIES)
+            break;
+        e = &parse->entries[parse->entry_count];
+        for (k = 0; k < sizeof(*e); k++) ((UINT8 *)e)[k] = 0;
+        /* id = "chainload-N" (i < CHAINLOAD_MAX == 8, single digit) */
+        {
+            const char *pfx = "chainload-";
+            j = 0;
+            while (pfx[j] && j < sizeof(e->id) - 2u) { e->id[j] = pfx[j]; j++; }
+            e->id[j++] = (char)('0' + (int)i);
+            e->id[j] = 0;
+        }
+        os = g_chainload_targets[i].os_name;
+        j = 0;
+        while (os[j] && j < sizeof(e->title) - 1u) { e->title[j] = os[j]; j++; }
+        e->title[j] = 0;
+        {
+            const char *sk = "zzz-chainload-";
+            j = 0;
+            while (sk[j] && j < sizeof(e->sort_key) - 2u) { e->sort_key[j] = sk[j]; j++; }
+            e->sort_key[j++] = (char)('0' + (int)i);
+            e->sort_key[j] = 0;
+        }
+        e->kind = BOOT_ENTRY_KIND_CHAINLOAD;
+        e->flags = BOOT_ENTRY_FLAG_ACTIVE | BOOT_ENTRY_FLAG_SYNTHESIZED;
+        e->payload_present = 0;
+        e->kind_skipped = 0;
+        parse->entry_count++;
+    }
+}
+
 static void load_staged_payloads(void)
 {
     if (g_staged_payload_count == 0 && g_staged_payload_overflow == 0) {
@@ -5571,6 +5846,9 @@ static void boot_policy_invoke(void)
         serial_early_print(" entries=");
         serial_early_print_uint((UINT32)parse->entry_count);
         serial_early_print("\n");
+        /* Append detected foreign-OS bootloaders as CHAINLOAD entries
+         * (TODO-27 sec1) so they render alongside the IPOS store entries. */
+        chainload_synthesize(parse);
     } else {
         /* Missing or unreadable -- synthesize a STORE_INVALID result so
          * the ladder writes FALLBACK_STORE_INVALID and the caller below
@@ -5705,6 +5983,14 @@ static void boot_policy_invoke(void)
     if (!inputs->invoked_via_uki) {
         inputs->supported_kinds_mask |= (1u << BOOT_ENTRY_KIND_SAFE);
     }
+    /* Multi-OS chainload (TODO-27 sec1): admit CHAINLOAD in BOTH modes when
+     * chainload_detect() found foreign loaders -- the loader chainloads them via
+     * pre-EBS LoadImage/StartImage regardless of UKI/split. Gated on a real
+     * detection so no stray chainload entry is admitted when none were found;
+     * the synthesized foreign-OS entries are the only functional chainload
+     * source (the JSON-store chainload validator is deferred to TODO-07 sec13). */
+    if (g_chainload_count > 0)
+        inputs->supported_kinds_mask |= (1u << BOOT_ENTRY_KIND_CHAINLOAD);
 
     /* hotkey / watchdog / A/B / recovery_requested are owned by
      * neighboring features (boot menu, watchdog audit, A/B integration,
@@ -6053,6 +6339,31 @@ static void boot_policy_invoke(void)
      * a menu-overridden pick, decision->selected was already updated
      * above so the kind reflects the user's choice. */
     g_policy_selected_kind = decision->selected.kind;
+
+    /* Multi-OS chainload dispatch (TODO-27 sec1): if the operator picked a
+     * synthesized foreign-OS entry, chainload it now (pre-EBS, gBS live).
+     * chainload_exec() transfers control on success and does not return; a
+     * return means LoadImage/StartImage failed (or Secure Boot dbx refused),
+     * so demote to the IPOS fallback envelope and keep booting IPOS. */
+    if (decision->selected.kind == BOOT_ENTRY_KIND_CHAINLOAD) {
+        const char *cid = decision->selected.id;
+        UINTN cidx = (UINTN)CHAINLOAD_MAX;
+        if (cid[0] == 'c' && cid[9] == '-' &&
+            cid[10] >= '0' && cid[10] <= '9' && cid[11] == 0)
+            cidx = (UINTN)(cid[10] - '0');
+        /* Trust gate (Codex re-adversarial): execute ONLY entries that
+         * chainload_synthesize() built -- a bootentries.json entry with a
+         * forged "chainload-N" id lacks BOOT_ENTRY_FLAG_SYNTHESIZED (no JSON
+         * flag maps to it), so it falls through to the IPOS fallback instead of
+         * hijacking a detected foreign loader. */
+        if ((decision->selected.flags & BOOT_ENTRY_FLAG_SYNTHESIZED) &&
+            cidx < g_chainload_count)
+            (void)chainload_exec(&g_chainload_targets[cidx]);
+        boot_entries_synthesize_fallback((g_uki_kernel_ptr != (UINT8 *)0) ? 1 : 0,
+                                         &decision->selected);
+        decision->reason = BOOT_SELECTION_FALLBACK_NO_VIABLE;
+        g_policy_selected_kind = decision->selected.kind;
+    }
 
     /* Per-kind boot_config materialization. After the entry is
      * picked (post-menu, pre-counter-decrement), translate the
@@ -14581,6 +14892,11 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     net_dhcp_capture(g_boot_device_handle);
     net_tftp_probe(g_boot_device_handle);
     net_http_probe(g_boot_device_handle);
+
+    /* Step 1a': detect foreign-OS UEFI bootloaders on other volumes for the
+     * multi-OS chainload menu (TODO-27 sec1). Pre-EBS so SimpleFileSystem
+     * handles are live; read-only probe (records g_chainload_targets, logs). */
+    chainload_detect();
 
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();

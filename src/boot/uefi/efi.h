@@ -517,6 +517,19 @@ typedef struct {
     VOID             *Unload;
 } EFI_LOADED_IMAGE_PROTOCOL;
 
+/* Image Services (UEFI 2.10 sec 7.4). DevicePath is EFI_DEVICE_PATH_PROTOCOL*
+ * per spec; declared VOID* here because that typedef is defined later in this
+ * header (the boot-services struct precedes it). Used by the multi-OS chainload
+ * path: LoadImage makes the firmware Secure-Boot-verify the foreign loader
+ * against db/dbx (EFI_SECURITY_VIOLATION on a dbx hit), StartImage transfers. */
+typedef EFI_STATUS (EFIAPI *EFI_IMAGE_LOAD)(
+    BOOLEAN BootPolicy, EFI_HANDLE ParentImageHandle,
+    VOID *DevicePath, VOID *SourceBuffer, UINTN SourceSize,
+    EFI_HANDLE *ImageHandle);
+typedef EFI_STATUS (EFIAPI *EFI_IMAGE_START)(
+    EFI_HANDLE ImageHandle, UINTN *ExitDataSize, CHAR16 **ExitData);
+typedef EFI_STATUS (EFIAPI *EFI_IMAGE_UNLOAD)(EFI_HANDLE ImageHandle);
+
 /* --- Boot Services --- */
 typedef EFI_STATUS (EFIAPI *EFI_GET_MEMORY_MAP)(
     UINTN *MemoryMapSize,
@@ -637,10 +650,10 @@ typedef struct EFI_BOOT_SERVICES {
     VOID                   *InstallConfigurationTable; /* 21 */
 
     /* Image Services */
-    VOID                   *LoadImage;          /* 22 */
-    VOID                   *StartImage;         /* 23 */
+    EFI_IMAGE_LOAD          LoadImage;          /* 22 */
+    EFI_IMAGE_START         StartImage;         /* 23 */
     VOID                   *Exit;               /* 24 */
-    VOID                   *UnloadImage;        /* 25 */
+    EFI_IMAGE_UNLOAD        UnloadImage;        /* 25 */
     EFI_EXIT_BOOT_SERVICES  ExitBootServices;   /* 26 */
 
     /* Miscellaneous Services */
