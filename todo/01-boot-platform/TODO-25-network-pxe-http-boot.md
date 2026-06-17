@@ -97,6 +97,9 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Verify kernel, boot.conf, initrd, and modules by digest.
 - [ ] Bind manifest to Secure Boot/TPM state when available.
 - [ ] Refuse unsigned network boot unless `network_boot_insecure=1` and physical console confirms.
+- [ ] Manifest anti-rollback: monotonic version counter (NVRAM/TPM-NV backed) refuses a signed-but-older manifest than the last booted, so a valid stale manifest cannot be replayed.
+- [ ] Key revocation + allowlist: SBAT-style revocation list + per-device key allowlist; refuse assets signed by a revoked or non-allowlisted key.
+- [ ] Attestation chain: extend a TPM PCR with the manifest identity + asset digests; tie §6 boot_info + §9 `network-boot.json` to that identity (verifiable chain, not bare hashes); fail closed to local when firmware TLS/time is unavailable.
 - [ ] Commit: `"boot: verify network boot assets"`
 
 **Test checkpoint:** A network asset with a bad/absent manifest digest is REFUSED with a serial refusal line (boot halts to local fallback) unless `network_boot_insecure=1` AND the physical console confirms; a correctly signed manifest boots and binds to Secure Boot/TPM state when available. Verify on QEMU WHPX, bare metal.
@@ -132,7 +135,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 ## 8. Recovery and Installer over Network
 
 - [ ] Allow recovery image download when local recovery partition is missing or corrupt.
-- [ ] Add installer network boot mode with explicit `InstallerMode`.
+- [ ] Add installer network boot mode: fetch assets over §3 TFTP/§4 HTTP (verified by §5), set `InstallerMode`; the same-kernel installer launches `installer.exe`. -> XREF: 10-platform-services/TODO-11-installer-iso.md §2
+- [ ] No separate WinPE/initramfs or netroot mount: Impossible OS deliberately reuses the §3/§4 transports + the installed kernel (TODO-11 decision), not a WDS boot.wim ramdisk or dracut NFS/iSCSI/NBD root.
 - [ ] Cache downloaded recovery assets to BlackBox when possible.
 - [ ] Add progress UI for large downloads.
 - [ ] Commit: `"recovery: network boot repair path"`

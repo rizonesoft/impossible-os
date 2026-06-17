@@ -102,7 +102,7 @@ Create `scripts/make-iso.sh` to produce a hybrid El Torito + EFI-bootable ISO fr
 
 ## 2. Installer Init Process `[Sonnet]`
 
-The installer runs as a user-mode PE process rather than a special kernel mode. The kernel detects installer mode via a registry flag baked into the ISO disk image.
+The installer runs as a user-mode PE process rather than a special kernel mode. The kernel detects installer mode via a registry flag baked into the ISO disk image. Network-boot entry into installer mode (fetch assets over TFTP/HTTP, verify, then set `InstallerMode`) is owned by `01-boot-platform/TODO-25 §8` -- the same-kernel installer, no separate WinPE/initramfs.
 
 - [ ] Pre-bake `HKLM\SYSTEM\InstallerMode = 1` (REG_DWORD) into the registry hive on the ISO image (set during `make-iso.sh` via a host-side registry tool or by including a pre-built hive)
 - [ ] In `src/kernel/main/kernel_main.c` (or desktop init path): after mounting root VFS, read `HKLM\SYSTEM\InstallerMode`; if `1` → launch `installer.exe` via `pe_exec("C:\\installer.exe")` instead of `explorer.exe`
