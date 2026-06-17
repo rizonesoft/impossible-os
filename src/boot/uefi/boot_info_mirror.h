@@ -794,8 +794,9 @@ struct boot_info {
     /* v23: Multi-GPU GOP handle enumeration (TODO-27 sec4). One record per GOP
      * handle found via LocateHandleBuffer (capped at BOOT_GOP_HANDLE_MAX);
      * exactly one has is_primary==1 and drives boot_info.fb. gop_handle_count==0
-     * on headless / single-LocateProtocol boots. Mirrors include/kernel/
-     * boot_info.h field-for-field. */
+     * ONLY when no GOP handle was exported (headless / no display / enumeration
+     * failed); a successful single-GPU boot publishes count==1. Mirrors
+     * include/kernel/boot_info.h field-for-field. */
     struct boot_gop_handle gop_handles[BOOT_GOP_HANDLE_MAX];
     UINT32   gop_handle_count;
     UINT32   _gop_handle_pad;       /* reserved; zero (align to 8) */

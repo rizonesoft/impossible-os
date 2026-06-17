@@ -33,7 +33,31 @@ Both halves of the ABI (the kernel header at `include/kernel/boot_info.h` and th
 
 ## Versions
 
-### v20 (current) -- Policy audit surface
+### v23 (current) -- Multi-GPU GOP handle enumeration
+
+- **Commit**: pending ([Multi-GPU GOP Handle Enumeration](../../todo/01-boot-platform/TODO-27-uefi-advanced.md#4-multi-gpu-gop-handle-enumeration))
+- **Fields added**: `gop_handles[4]` (each a 32-byte `boot_gop_handle`: `fb_addr`/`fb_size`/`width`/`height`/`pitch`/`pixel_format`/`is_primary`/`fb_valid`), `gop_handle_count` (`uint32_t`), `_gop_handle_pad` (`uint32_t`), appended at the v22 tail. Struct size 28664. Mirror updated atomically; `dump-fields.inc` + `check-doc-coverage.py` allow-list + `boot-info-fields.md` updated together.
+- **Why**: `init_gop()` now enumerates every GOP handle via `LocateHandleBuffer` (iGPU + dGPU, multiple panels) and publishes per-head geometry so the kernel multi-head driver (`04-drivers-hardware/TODO-17 sec6` `display_register_head()`) can register UEFI-discovered heads. The primary (ConsoleOut-attached display) still drives `boot_info.fb` unchanged.
+- **Producers / consumers**: bootloader's `gop_enumerate_and_select()` in `src/boot/uefi/bootx64.c` populates pre-EBS; the kernel multi-head driver consumes `gop_handles[]`. `gop_handle_count==0` only on headless / no-display / enumeration-failure; a single-GPU boot publishes `count==1`.
+- **Back-compat**: NONE -- requires rebuilding and reflashing BOTH `BOOTX64.EFI` and `kernel.exe` together (`boot_info_validate_header()` enforces an exact version + `header.size` match).
+
+### v22 -- A/B-metadata partition range
+
+- **Commit**: ([A/B dual-slot boot](../../todo/01-boot-platform/TODO-21-ab-dual-slot-boot.md))
+- **Fields added**: `ab_meta_lba` (`uint64_t`), `ab_meta_block_count` (`uint32_t`), `_ab_meta_pad` (`uint32_t`) appended at the v21 tail. Struct size 28528.
+- **Why**: lets the kernel A/B-metadata write path locate the reconciled metadata partition WITHOUT re-deriving GPT state via the weaker kernel `gpt_parse` (which lacks the bootloader's primary+backup reconciliation).
+- **Producers / consumers**: bootloader's `select_active_slot()` publishes; kernel A/B-metadata write path consumes. Both 0 when no A/B metadata partition.
+- **Back-compat**: NONE -- exact version + `header.size` match enforced at Phase 0.
+
+### v21 -- OS-visible Loader UEFI variables
+
+- **Commit**: ([Boot entry store / menu policy](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md))
+- **Fields added**: `loader_vars_degraded` (`uint8_t`) plus `active_slot` + the A/B slot-status snapshot (`ab_select_reason`, `ab_from_slot`, `ab_slot_tries[2]`, `ab_slot_flags`, `ab_status_valid`) carved from the reserved `_loader_vars_pad` region.
+- **Why**: systemd-boot Boot Loader Interface compatibility -- the bootloader publishes 11 read-only `Loader*` UEFI variables and flags degraded publication; the A/B snapshot surfaces the pre-EBS slot decision to kernel diagnostics.
+- **Producers / consumers**: bootloader boot policy publishes; kernel `boot_audit_publish()` + VPD slot diagnostics consume (`ab_status_valid == AB_STATUS_VALID_MAGIC` gates the detailed render).
+- **Back-compat**: NONE -- exact version + `header.size` match enforced at Phase 0.
+
+### v20 -- Policy audit surface
 
 - **Commit**: pending ([Policy Audit Trail and Rollback Reason Codes](../../todo/01-boot-platform/TODO-07-boot-entry-store-menu-policy.md#12-policy-audit-trail-and-rollback-reason-codes))
 - **Fields added**: ten fields appended after the v19 selection block -- `audit_degraded` (`uint8_t`), `sticky_present` (`uint8_t`), `sticky_recovery_trigger` (`uint8_t`), `sticky_watchdog_rollback_request` (`uint8_t`), `sticky_last_outcome` (`uint8_t`), `sticky_audit_degraded_last_boot` (`uint8_t`), `sticky_last_event_code` (`uint16_t`), `sticky_last_boot_seq` (`uint32_t`), `sticky_consumed_trigger_seq` (`uint32_t`), `_audit_pad` (`uint32_t`). Mirror updated atomically; manifest dumper + doc-coverage allow-list updated together.

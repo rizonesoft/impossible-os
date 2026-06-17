@@ -1812,10 +1812,12 @@ struct boot_info {
      * BOOT_GOP_HANDLE_MAX); exactly one has is_primary==1 and drives
      * boot_info.fb. Secondary heads carry geometry for the kernel multi-head
      * driver (04-drivers-hardware/TODO-17 sec6); each head's fb_addr is non-zero
-     * only when fb_valid==1. gop_handle_count==0 on headless boots and on
-     * firmware where only the single-handle LocateProtocol path ran -- in both
-     * cases boot_info.fb remains the authoritative primary framebuffer, so a
-     * count-0 consumer falls back to the existing single-head behavior. */
+     * only when fb_valid==1. gop_handle_count==0 ONLY when no GOP handle was
+     * exported (headless / no display / enumeration failed); a successful
+     * single-GPU boot publishes gop_handle_count==1 with gop_handles[0] as the
+     * primary. A count==0 consumer must fall back to boot_info.fb (which is
+     * itself zeroed on headless); it must NOT treat count==0 as the single-head
+     * case -- that is count==1. */
     struct boot_gop_handle gop_handles[BOOT_GOP_HANDLE_MAX];
     uint32_t gop_handle_count;
     uint32_t _gop_handle_pad;       /* reserved; zero (align to 8) */

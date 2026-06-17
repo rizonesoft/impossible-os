@@ -153,7 +153,7 @@ Enumerate all GOP handles via `LocateHandleBuffer` and select the active display
 > -> XREF: `04-drivers-hardware/TODO-17-gpu-display-drivers.md §6` -- kernel multi-head `display_register_head()` will consume `boot_info.gop_handles[]`.
 
 - [x] `struct boot_gop_handle` (32B) + `gop_handles[4]` + `gop_handle_count` appended at `boot_info` tail in `boot_info.h` + mirror; `BOOT_INFO_VERSION` 22->23; manifest + doc-coverage + `boot-info-fields.md` registered.
-- [x] `gop_enumerate_and_select()` (`bootx64.c`) replaces `LocateProtocol` with `LocateHandleBuffer(ByProtocol, GOP)`; records up to 4 handles, frees the handle buffer on every path; `init_gop()` negotiate + publish runs on the selected primary only.
+- [x] `gop_enumerate_and_select()` (`bootx64.c`) replaces `LocateProtocol` with `LocateHandleBuffer(ByProtocol, GOP)`; records up to 4 handles, frees the buffer on every path; `init_gop()` tries primary then valid candidates before headless.
 - [x] Primary selection (Codex design D2): `gST->ConsoleOutHandle` device-path prefix match first (`gop_handle_is_conout`, `GetDevicePathSize`-bounded), then `EFI_CONSOLE_OUT_DEVICE_GUID` tie-breaker, then largest `width*height`.
 - [x] `gop_record_handle()` per-head validation gauntlet (Codex design D1): `fb_addr`/`fb_valid` set only on full validation (base!=0, Info!=NULL, supported fmt, `pitch>=width`, no overflow, size covers); failing secondaries record geometry only.
 - [x] Commit: `"boot: enumerate all GOP handles -- LocateHandleBuffer, ConOut-path primary selection"`
@@ -168,6 +168,9 @@ Enumerate all GOP handles via `LocateHandleBuffer` and select the active display
 > - Downstream: `04-drivers-hardware/TODO-17 sec6` `display_register_head()` reads `gop_handles[]`; `gop_handle_count==0` falls back to single-head `boot_info.fb`.
 > - Canonical doc: [docs/boot/boot-info-fields.md](../../docs/boot/boot-info-fields.md) "Multi-GPU GOP handles (v23)" + nested `boot_gop_handle`.
 > - Scope boundary: this section owns bootloader enumeration + per-head ABI publish; kernel multi-head registration/compositing is TODO-17 sec6.
+
+> **Verified:** 2026-06-17 | commit `3662b910` | 4/4 items | build OK | smoke PASS (TCG 2.64s, 2 handles found, 1280x800 BGRX to C:\)
+> **Quality reviewed:** 2026-06-17 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 5H+2M+1L fixed | scope: boot-code-quality
 
 ## 5. Secure Boot Enforcement Policy
 

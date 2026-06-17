@@ -2292,7 +2292,12 @@ static void gop_record_handle(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop,
         UINTN required = (UINTN)info->VerticalResolution *
                          (UINTN)info->PixelsPerScanLine * 4u;
         UINTN fb_size = gop->Mode->FrameBufferSize;
-        if (required == 0 || (fb_size > 0 && required > fb_size))
+        /* Require a firmware-reported FrameBufferSize that covers the surface.
+         * fb_size==0 (firmware did not report a size) is treated as unusable:
+         * the dimension checks above are internally consistent but cannot bound
+         * the geometry against actual VRAM, so fb_size is the only VRAM-extent
+         * signal. UEFI 2.10 requires FrameBufferSize to be valid. */
+        if (required == 0 || fb_size < required)
             return;
         out->fb_addr  = (UINT64)gop->Mode->FrameBufferBase;
         out->fb_size  = (UINT64)fb_size;
@@ -2534,8 +2539,12 @@ static EFI_STATUS gop_publish_primary(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
             return EFI_UNSUPPORTED;
         }
         UINTN required_bytes = (UINTN)gFbHeight * (UINTN)gFbPitch * 4;
-        if (required_bytes == 0 ||
-            (fb_size > 0 && required_bytes > fb_size)) {
+        /* Require FrameBufferSize to cover the surface. fb_size==0 (firmware did
+         * not report a size) is unusable: the bootloader clears
+         * gFbHeight*gFbPitch pixels and the kernel maps the same extent, so an
+         * unbounded geometry would overwrite past actual VRAM. UEFI 2.10
+         * requires FrameBufferSize to be valid. */
+        if (required_bytes == 0 || fb_size < required_bytes) {
             serial_early_print("[BOOT] GOP: framebuffer size mismatch -- candidate unusable\n");
             gFramebuffer = (UINT32 *)0;
             gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
