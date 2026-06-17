@@ -10,6 +10,7 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 > **Goal:** Teach the boot platform how to resume from an S4 hibernation image or fast-startup image before doing a normal cold boot. Power management owns writing the hibernation image, but the boot path owns detecting it, validating it, selecting resume versus cold boot, and handing the image to the kernel safely.
 > **Current state:** Power-management TODOs describe S4 and fast startup, but the bootloader has no resume selection path, no hibernation image metadata contract, no resume-failure rollback, and no boot diagnostics for S4.
+> [!IMPORTANT] Deferred whole-file (2026-06-17, unattended sequencer + Codex design review): the entire resume boot-path is gated on (1) the kernel hibernation WRITER (02-kernel-core/TODO-26 §4 -- `pm_hibernate_write` + LZ4 + AES-GCM + the resume consumer) which is unimplemented, so no image exists to discover/validate/resume, and (2) bootloader AEAD/HMAC/TPM-seal + an anti-replay TPM-NV monotonic counter, none of which exist (same bootloader-crypto gap that deferred TODO-25 §5). Codex design review: §1 is unsafe as a standalone ABI (would freeze `resume_generation`/AEAD field layout before the cipher/TPM-NV/writer decisions), §5 is dead/false-fail-closed plumbing standalone; no must-ship-now core. Sections stay `[/]` with the shared Deferred stamp until the writer + trust primitives land.
 
 ## Inputs
 
@@ -32,15 +33,15 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
-| 💎 | 1 | Hibernation image metadata format | D02T26 §4 | [ ] |
-| 💎 | 2 | Bootloader image discovery | §1 | [ ] |
-| 💎 | 3 | Resume eligibility policy | §1, T07 §10 | [ ] |
-| 💎 | 4 | Integrity and version validation | §1, T13 §4 | [ ] |
-| 💎 | 5 | boot_info resume handoff | T01 §4,§12 | [ ] |
-| 💎 | 6 | Resume failure fallback | §5, T21 §4 | [ ] |
-| 💎 | 7 | Fast startup mode | §1-§6 | [ ] |
-| 💎 | 8 | Diagnostics and BlackBox resume report | §2-§7 | [ ] |
-| 💎 | 9 | Resume tests | §1-§8 | [ ] |
+| 💎 | 1 | Hibernation image metadata format | D02T26 §4 | [/] |
+| 💎 | 2 | Bootloader image discovery | §1 | [/] |
+| 💎 | 3 | Resume eligibility policy | §1, T07 §10 | [/] |
+| 💎 | 4 | Integrity and version validation | §1, T13 §4 | [/] |
+| 💎 | 5 | boot_info resume handoff | T01 §4,§12 | [/] |
+| 💎 | 6 | Resume failure fallback | §5, T21 §4 | [/] |
+| 💎 | 7 | Fast startup mode | §1-§6 | [/] |
+| 💎 | 8 | Diagnostics and BlackBox resume report | §2-§7 | [/] |
+| 💎 | 9 | Resume tests | §1-§8 | [/] |
 
 ## 1. Hibernation Image Metadata Format
 
@@ -54,6 +55,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 **Test checkpoint:** A fixture hibernation metadata header parses at known offsets (magic, version, kernel build id, boot_info ABI version, root volume id, image size, checksum, flags, resume type); a bad-magic or truncated header is rejected. Verify on QEMU WHPX/TCG (fixture parse).
 
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+
 ---
 
 ## 2. Bootloader Image Discovery
@@ -66,6 +71,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 **Test checkpoint:** With a hibernation image on the system / A/B slot / BlackBox partition, the bootloader locates the metadata and logs the source on serial + VPD; with no image it logs `no resume image` and cold-boots; `resume=off` skips discovery, `resume=force` requests resume but §3 eligibility + §4 integrity still gate it. Verify on QEMU WHPX.
 
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+
 ---
 
 ## 3. Resume Eligibility Policy
@@ -77,6 +86,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Commit: `"boot: hibernation resume policy"`
 
 **Test checkpoint:** After a simulated kernel update / bootloader ABI mismatch / slot switch / Secure Boot db change / firmware or hardware-topology change, resume is REJECTED with the recorded cold/resume reason and cold boot proceeds; a recovery-menu one-shot-token force overrides exactly once (a plain boot.conf `resume=force` does NOT).  Verify on QEMU WHPX.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -92,6 +105,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 **Test checkpoint:** A correct checksum/HMAC over metadata + image passes; a single flipped byte is rejected; image physical-memory ranges outside the current memory map are rejected; an unsupported compression algorithm is rejected; TPM-bound state mismatch rejects when measured boot is active. Verify on QEMU WHPX/TCG (fixture).
 
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+
 ---
 
 ## 5. boot_info Resume Handoff
@@ -103,6 +120,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Commit: `"boot: hand off hibernation resume payload"`
 
 **Test checkpoint:** On an eligible resume, boot_info carries the `BOOT_PAYLOAD_HIBERNATION_META` descriptor (`BOOT_PAYLOAD_FLAG_REQUIRED` set, overlap-checked by the TODO-01 §4 validator) plus resume flags + decision-reason codes; the kernel consumes the handoff before Phase 0 destructive init; PMM reserves the image ranges until resume code consumes them. Verify on QEMU WHPX.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -116,6 +137,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 **Test checkpoint:** A forced resume failure marks the image invalid, cold-boots exactly once, increments the NVRAM failure counter, and after repeated failures feeds the A/B rollback policy; failure details are preserved in NVRAM + BlackBox; no infinite resume loop occurs. Verify on QEMU WHPX.
 
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+
 ---
 
 ## 7. Fast Startup Mode
@@ -128,6 +153,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 **Test checkpoint:** A fast-startup (kernel-session) image resumes the kernel session distinctly from a full user-session hibernate; a driver/hardware on the invalidation list forces cold boot; the power button + shutdown policy select fast startup; fast-startup status appears in boot diagnostics. Verify on QEMU WHPX.
 
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
+
 ---
 
 ## 8. Diagnostics and BlackBox Resume Report
@@ -139,6 +168,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Commit: `"boot: hibernation resume diagnostics"`
 
 **Test checkpoint:** Post-resume (or post-rejection), `X:\Diag\resume.json` exists with image version, validation status, failure reason, selected path, and duration; VPD shows resume progress; a resume rejection emits a host-decodable QR failure payload. Verify on QEMU WHPX/TCG.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
@@ -154,6 +187,10 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 - [ ] Commit: `"test: hibernation boot handoff"`
 
 **Test checkpoint:** The resume test suite passes: valid metadata accepted, bad checksum rejected, kernel-version mismatch rejected, and a resume failure falls back to cold boot. Verify via the `TEST_CAT_BOOT` suite.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until the writer + trust primitives land
+
+> **Deferred:** [H] gated on the kernel hibernation WRITER (no image to resume) + bootloader AEAD/HMAC/TPM-seal + anti-replay TPM-NV (Codex design 2026-06-17: §1 unsafe standalone ABI, §5 dead plumbing) -> XREF: D02T26 §4 (image writer), 01-boot-platform/TODO-25 §5 (bootloader crypto/trust), 01-boot-platform/TODO-13 §7 (TPM-NV anti-replay) + TODO-01 §13 (anti-rollback)
 
 ---
 
