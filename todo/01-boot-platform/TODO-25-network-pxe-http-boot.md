@@ -51,6 +51,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Add boot log for MAC, link state, and protocol availability.
 - [ ] Commit: `"boot: discover UEFI network boot protocols"`
 
+**Test checkpoint:** On a firmware network launch, serial logs the client MAC, link state, and which protocols are available (SNP / PXE Base Code / HTTP Boot device path); on a local-media launch the discovery is skipped with no error. Verify on QEMU WHPX (PXE), bare metal.
+
+---
+
 ## 2. DHCP/PXE Provenance Capture
 
 - [ ] Capture client MAC, assigned IP, gateway, DHCP server, boot server, boot filename, and vendor options.
@@ -58,6 +62,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Redact sensitive options in normal logs.
 - [ ] Add Registry/BlackBox output after kernel handoff.
 - [ ] Commit: `"boot: capture PXE DHCP provenance"`
+
+**Test checkpoint:** Serial logs the captured DHCP/PXE provenance (MAC, assigned IP, gateway, DHCP + boot server, boot filename) with sensitive vendor options redacted; the raw packet blob is retained in the typed boot payload for diagnostics. Verify on QEMU WHPX (PXE).
+
+---
 
 ## 3. TFTP Kernel and boot.conf Load
 
@@ -67,6 +75,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Produce boot_fatal QR codes on TFTP failure.
 - [ ] Commit: `"boot: load kernel assets over TFTP"`
 
+**Test checkpoint:** A QEMU TFTP server serves `kernel.exe` + `boot.conf`; serial shows a bounded RRQ download with retry/backoff and the per-file size cap enforced; a missing or oversized file produces a `boot_fatal` QR code, not a hang. Verify on QEMU TCG (TFTP), bare metal PXE.
+
+---
+
 ## 4. UEFI HTTP Boot Load Path
 
 - [ ] Use EFI_HTTP_PROTOCOL or firmware HTTP Boot device path to fetch assets.
@@ -75,6 +87,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Persist final asset URLs in boot_info.
 - [ ] Commit: `"boot: load kernel assets over UEFI HTTP"`
 
+**Test checkpoint:** Firmware HTTP Boot (or `EFI_HTTP_PROTOCOL`) fetches the kernel + boot.conf; serial shows the parsed URI, an enforced redirect limit, and the final asset URLs persisted in `boot_info`. Verify on QEMU WHPX (OVMF HTTP Boot).
+
+---
+
 ## 5. Network Boot Asset Integrity
 
 - [ ] Require signed manifest for all network-booted assets.
@@ -82,6 +98,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Bind manifest to Secure Boot/TPM state when available.
 - [ ] Refuse unsigned network boot unless `network_boot_insecure=1` and physical console confirms.
 - [ ] Commit: `"boot: verify network boot assets"`
+
+**Test checkpoint:** A network asset with a bad/absent manifest digest is REFUSED with a serial refusal line (boot halts to local fallback) unless `network_boot_insecure=1` AND the physical console confirms; a correctly signed manifest boots and binds to Secure Boot/TPM state when available. Verify on QEMU WHPX, bare metal.
+
+---
 
 ## 6. boot_info Network Provenance
 
@@ -93,6 +113,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Test `test_media_role_network_dhcp_option` (mock DHCP option, pure data parser) wired under TEST_CAT_BOOT. Consumer: 01-boot-platform/TODO-06 §11.
 - [ ] Commit: `"boot: hand off network boot provenance"`
 
+**Test checkpoint:** After a network boot, `boot_info` carries the network descriptor (MAC, IP, server URI, protocol, manifest digest, insecure flag), `HKLM\SYSTEM\Boot\Network` is populated, `boot_device_type=network`, and `test_media_role_network_dhcp_option` passes. Verify on QEMU WHPX.
+
+---
+
 ## 7. Fallback Ordering with Local Media
 
 - [ ] Extend fallback chain policy: BootNext, boot device, A/B slot, recovery, network.
@@ -100,6 +124,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Prevent network fallback loops after repeated download failure.
 - [ ] Interlock with watchdog and rollback counters.
 - [ ] Commit: `"boot: network fallback ordering"`
+
+**Test checkpoint:** With local + network sources present, the documented order (BootNext, boot device, A/B slot, recovery, network) is honored and `boot.conf` can re-prefer local/removable/network; after repeated download failures the boot falls back to local media without a network retry loop, interlocked with the watchdog + rollback counters. Verify on QEMU WHPX.
+
+---
 
 ## 8. Recovery and Installer over Network
 
@@ -109,6 +137,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Add progress UI for large downloads.
 - [ ] Commit: `"recovery: network boot repair path"`
 
+**Test checkpoint:** With the local recovery partition missing/corrupt, a network recovery image downloads and boots; `InstallerMode` network boot enters the installer; downloaded recovery assets are cached to BlackBox when present, with progress UI for large downloads. Verify on QEMU WHPX (network recovery).
+
+---
+
 ## 9. Network Boot Diagnostics and BlackBox Report
 
 - [ ] Write `X:\Diag\network-boot.json` with DHCP, protocol, timings, retries, file hashes.
@@ -116,6 +148,10 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Add QR code payload for network failures.
 - [ ] Add host decoder support.
 - [ ] Commit: `"boot: network boot diagnostics"`
+
+**Test checkpoint:** Post-boot, `X:\Diag\network-boot.json` exists with DHCP, protocol, timings, retries, and per-file hashes; the network path appears in VPD + the boot timeline; a network failure emits a host-decodable QR payload. Verify on QEMU WHPX/TCG.
+
+---
 
 ## 10. PXE/HTTP Boot Tests
 
@@ -125,14 +161,18 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Test bare-metal firmware PXE where available.
 - [ ] Commit: `"test: PXE and HTTP boot coverage"`
 
+**Test checkpoint:** The QEMU PXE/TFTP harness + HTTP-Boot mock-server test pass; the missing-file, bad-manifest, timeout, retry, and fallback cases each assert the expected refusal/fallback behavior; bare-metal firmware PXE is exercised where available. Verify on QEMU WHPX/TCG, bare metal.
+
+---
+
 ## OS Comparison
 
-| ⭐ | Feature | Windows | Linux | Impossible OS |
-| --- | --- | --- | --- | --- |
-| 💎 | PXE boot | WDS/MDT | PXELINUX/iPXE | TODO-25 |
-| 💎 | HTTP boot | UEFI HTTP Boot | iPXE/systemd-boot | TODO-25 §4 |
-| 💎 | signed network manifest | Secure Boot policies | shim/grub signatures | TODO-25 §5 |
-| ⭐ | BlackBox network boot report | event logs | external server logs | TODO-25 §9 |
+| ⭐  | Feature                       | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS                   |
+| --- | ----------------------------- | ------------------------- | -------------------------- | ---------------------------------- |
+| 💎  | PXE boot                      | ✅ WDS/MDT                | ✅ PXELINUX/iPXE           | ⬜ Planned §1-§3                   |
+| 💎  | HTTP boot                     | ✅ UEFI HTTP Boot         | ✅ iPXE/systemd-boot       | ⬜ Planned §4                      |
+| 💎  | Signed network manifest       | ✅ Secure Boot policies   | ✅ shim/grub signatures    | ⬜ Planned §5                      |
+| ⭐  | On-device network-boot report | ❌ event logs only        | ❌ external server logs     | ⭐ Planned §9 (X:\Diag JSON + QR)  |
 
 ## Unit Tests
 
