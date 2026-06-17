@@ -72,6 +72,27 @@ EFI_SYSTEM_TABLE    *gST;
 static EFI_BOOT_SERVICES   *gBS;
 static EFI_HANDLE           gImageHandle;
 static EFI_HANDLE g_boot_device_handle; /*: boot device from LoadedImage */
+/* LoadedImage->FilePath captured in Step 0; network_boot_discover() walks it in
+ * addition to the DeviceHandle path because HTTP/PXE URI/MAC/IP messaging nodes
+ * can live in the image file path, not the controller handle path (Codex design
+ * review D1). */
+static EFI_DEVICE_PATH_PROTOCOL *g_boot_image_file_path;
+
+/* TODO-25 §1: firmware network-boot discovery result. Seeds §2 provenance and
+ * the §6 boot_info handoff. booted_from_network is driven by network messaging
+ * nodes in OUR boot path (authoritative), NOT by mere SNP presence (a NIC can
+ * exist on a disk boot). MAC prefers the boot-path MAC node, falling back to the
+ * SNP CurrentAddress. */
+struct net_boot_discovery {
+    int   booted_from_network;
+    int   http_boot;        /* URI node present -> UEFI HTTP Boot */
+    int   snp_available;    /* EFI_SIMPLE_NETWORK_PROTOCOL handle found */
+    int   pxe_available;    /* EFI_PXE_BASE_CODE_PROTOCOL handle found */
+    int   link_up;          /* SNP MediaPresent (or unknown-assumed-up) */
+    UINT8 mac[6];
+    UINT8 mac_len;
+};
+static struct net_boot_discovery g_net_discovery;
 
 /* Boot info -- placed at a known physical address (64 KiB) */
 #define BOOT_INFO_PHYS_ADDR  0x10000
@@ -12666,6 +12687,210 @@ static void ab_bl_increment_tries(EFI_HANDLE part_handle)
                        "(reset by kernel mark-good on a successful boot)\n");
 }
 
+/* TODO-25 §1: validated length of a firmware device path. Prefers the canonical
+ * EFI_DEVICE_PATH_UTILITIES_PROTOCOL->GetDevicePathSize (firmware measures its
+ * own path); falls back to a self-bounded walk that returns 0 unless a real
+ * END_ENTIRE node is found within NET_DP_MAX_WALK. A return of 0 means "do not
+ * trust this path" -- the scanner then skips it rather than reading heuristically
+ * past the allocation (Codex adversarial: a heuristic cap is not an object
+ * bound). */
+#define NET_DP_MAX_WALK 8192
+static UINTN net_dp_validated_size(const EFI_DEVICE_PATH_PROTOCOL *dp,
+                                   EFI_DEVICE_PATH_UTILITIES_PROTOCOL *utils)
+{
+    UINTN sz;
+
+    /* Only the firmware can safely measure its own device-path object, so we
+     * delegate to GetDevicePathSize and never self-walk firmware-owned memory.
+     * When the utility is absent (no UEFI core support) or returns a degenerate
+     * or implausibly large measure, return 0 so the caller SKIPS path-based
+     * classification rather than dereferencing past the allocation (Codex
+     * adversarial: a heuristic cap is not an object bound). SNP/PXE enumeration
+     * still classifies availability independently of the device path. */
+    if (!dp || !utils || !utils->GetDevicePathSize)
+        return 0;
+    sz = utils->GetDevicePathSize(dp);
+    if (sz < 4 || sz > NET_DP_MAX_WALK)
+        return 0;
+    return sz;
+}
+
+/* TODO-25 §1: scan a VALIDATED device-path buffer [dp, dp+size) for network
+ * messaging nodes. MAC / IPv4 / IPv6 mark a PXE-style launch; URI marks UEFI
+ * HTTP Boot. Every read is bounded by `size` (the validated object length), so
+ * a malformed node Length can never advance past the allocation. */
+static void net_scan_device_path(const EFI_DEVICE_PATH_PROTOCOL *dp, UINTN size)
+{
+    const UINT8 *p = (const UINT8 *)dp;
+    UINTN walked = 0;
+
+    if (!dp || size < 4)
+        return;
+    while (walked + 4 <= size) {
+        const EFI_DEVICE_PATH_PROTOCOL *node =
+            (const EFI_DEVICE_PATH_PROTOCOL *)(p + walked);
+        UINT16 len;
+
+        if (node->Type == EFI_DP_TYPE_END &&
+            node->SubType == EFI_DP_SUBTYPE_END_ENTIRE)
+            break;
+        len = (UINT16)node->Length[0] | ((UINT16)node->Length[1] << 8);
+        if (len < 4 || walked + len > size)
+            break;
+
+        if (node->Type == EFI_DP_TYPE_MESSAGING) {
+            switch (node->SubType) {
+            case EFI_DP_MSG_MAC:
+                g_net_discovery.booted_from_network = 1;
+                /* MAC node: header(4) + MacAddress(32) + IfType(1). Copy the
+                 * first 6 bytes (Ethernet) -- guarded by len so the read stays
+                 * within the validated buffer. */
+                if (len >= 4 + 6 && !g_net_discovery.mac_len) {
+                    UINT32 i;
+                    for (i = 0; i < 6; i++)
+                        g_net_discovery.mac[i] = p[walked + 4 + i];
+                    g_net_discovery.mac_len = 6;
+                }
+                break;
+            case EFI_DP_MSG_IPV4:
+            case EFI_DP_MSG_IPV6:
+                g_net_discovery.booted_from_network = 1;
+                break;
+            case EFI_DP_MSG_URI:
+                g_net_discovery.booted_from_network = 1;
+                g_net_discovery.http_boot = 1;
+                break;
+            default:
+                break;
+            }
+        }
+        walked += len;
+    }
+}
+
+/* TODO-25 §1: discover firmware network-boot provenance before ExitBootServices.
+ * Classifies booted-from-network from OUR boot paths (DeviceHandle device path
+ * + LoadedImage FilePath), then records SNP/PXE protocol availability and reads
+ * the NIC MAC + link state from the Simple Network Protocol Mode (read-only --
+ * no Start/Initialize needed; Mode is valid once the protocol is installed).
+ * Logs the result; a local-media launch is a clean no-network skip, not an
+ * error. */
+static void network_boot_discover(EFI_HANDLE dev_handle,
+                                  EFI_DEVICE_PATH_PROTOCOL *file_path)
+{
+    EFI_GUID snp_guid  = EFI_SIMPLE_NETWORK_PROTOCOL_GUID;
+    EFI_GUID pxe_guid  = EFI_PXE_BASE_CODE_PROTOCOL_GUID;
+    EFI_GUID dp_guid   = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_GUID dpu_guid  = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu = (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)0;
+    EFI_HANDLE *handles = (EFI_HANDLE *)0;
+    UINTN nhandles = 0;
+    EFI_STATUS s;
+    UINT32 mi;
+
+    /* Zero the result explicitly -- do NOT rely on .bss being cleared. The
+     * classification is conditional (net_scan only writes on a network node;
+     * the SNP MAC capture is gated on mac_len==0), so uninitialised fields would
+     * be read as garbage. OVMF pool-poisons freed pages with 0xAF, which a local
+     * SATA boot otherwise surfaced as a bogus "boot=network MAC=af:af:.." line. */
+    g_net_discovery.booted_from_network = 0;
+    g_net_discovery.http_boot = 0;
+    g_net_discovery.snp_available = 0;
+    g_net_discovery.pxe_available = 0;
+    g_net_discovery.link_up = 0;
+    g_net_discovery.mac_len = 0;
+    for (mi = 0; mi < 6; mi++)
+        g_net_discovery.mac[mi] = 0;
+
+    /* DevicePathUtilities measures each path so the scanner stays inside the
+     * real allocation; NULL is tolerated (the scanner falls back to a bounded
+     * END-finding walk and skips paths without a valid END). */
+    (void)gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
+
+    /* 1. Authoritative source classification: walk both boot-path components,
+     * each bounded by its validated length. */
+    if (dev_handle) {
+        EFI_DEVICE_PATH_PROTOCOL *dev_path = (EFI_DEVICE_PATH_PROTOCOL *)0;
+        if (!EFI_ERROR(gBS->HandleProtocol(dev_handle, &dp_guid,
+                                           (VOID **)&dev_path)) && dev_path)
+            net_scan_device_path(dev_path,
+                                 net_dp_validated_size(dev_path, dpu));
+    }
+    if (file_path)
+        net_scan_device_path(file_path,
+                             net_dp_validated_size(file_path, dpu));
+
+    /* 2. SNP availability + MAC/link from the first NIC handle. */
+    s = gBS->LocateHandleBuffer(ByProtocol, &snp_guid, (VOID *)0,
+                                &nhandles, &handles);
+    if (!EFI_ERROR(s) && handles && nhandles) {
+        EFI_SIMPLE_NETWORK_PROTOCOL *snp = (EFI_SIMPLE_NETWORK_PROTOCOL *)0;
+        g_net_discovery.snp_available = 1;
+        if (!EFI_ERROR(gBS->HandleProtocol(handles[0], &snp_guid,
+                                           (VOID **)&snp)) && snp && snp->Mode) {
+            EFI_SIMPLE_NETWORK_MODE *m = snp->Mode;
+            /* If firmware cannot report link state, assume up rather than
+             * falsely reporting a down link. */
+            g_net_discovery.link_up =
+                m->MediaPresentSupported ? (m->MediaPresent ? 1 : 0) : 1;
+            /* MAC fallback: only when the boot path carried no MAC node. Cap to
+             * the local 6-byte buffer regardless of HwAddressSize. */
+            if (!g_net_discovery.mac_len) {
+                UINT32 n = m->HwAddressSize, i;
+                if (n > 6)
+                    n = 6;
+                for (i = 0; i < n; i++)
+                    g_net_discovery.mac[i] = m->CurrentAddress.Addr[i];
+                g_net_discovery.mac_len = (UINT8)n;
+            }
+        }
+    }
+    if (handles) {
+        gBS->FreePool(handles);
+        handles = (EFI_HANDLE *)0;
+    }
+
+    /* 3. PXE Base Code availability. */
+    nhandles = 0;
+    s = gBS->LocateHandleBuffer(ByProtocol, &pxe_guid, (VOID *)0,
+                                &nhandles, &handles);
+    if (!EFI_ERROR(s) && handles && nhandles)
+        g_net_discovery.pxe_available = 1;
+    if (handles)
+        gBS->FreePool(handles);
+
+    /* 4. Log. A pure local boot with no NIC stays silent except one line. */
+    if (g_net_discovery.booted_from_network || g_net_discovery.snp_available) {
+        serial_early_print("[NET] boot=");
+        serial_early_print(g_net_discovery.booted_from_network ? "network" : "local");
+        if (g_net_discovery.mac_len) {
+            UINT32 i;
+            serial_early_print(" MAC=");
+            for (i = 0; i < g_net_discovery.mac_len; i++) {
+                /* 2 hex digits per byte -> standard "00:11:22:.." MAC form. */
+                static const char hx[] = "0123456789abcdef";
+                UINT8 b = g_net_discovery.mac[i];
+                if (i)
+                    serial_early_print(":");
+                serial_early_putchar(hx[(b >> 4) & 0xF]);
+                serial_early_putchar(hx[b & 0xF]);
+            }
+        }
+        serial_early_print(" link=");
+        serial_early_print(g_net_discovery.link_up ? "up" : "down");
+        serial_early_print(" SNP=");
+        serial_early_print(g_net_discovery.snp_available ? "y" : "n");
+        serial_early_print(" PXE=");
+        serial_early_print(g_net_discovery.pxe_available ? "y" : "n");
+        serial_early_print(" HTTPBoot=");
+        serial_early_print(g_net_discovery.http_boot ? "y" : "n");
+        serial_early_print("\n");
+        boot_log_append("[NET] network-boot discovery complete\n");
+    } else {
+        serial_early_print("[NET] no network boot path (local media)\n");
+    }
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -12801,6 +13026,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         li_status = gBS->HandleProtocol(gImageHandle, &li_guid,
                                          (VOID **)&loaded_image);
         if (!EFI_ERROR(li_status) && loaded_image) {
+            /* Capture the image file path for network_boot_discover(): HTTP/PXE
+             * URI/MAC/IP messaging nodes can live here rather than on the
+             * DeviceHandle path (Codex design review D1). Valid even when
+             * DeviceHandle is NULL (pure HTTP Boot). */
+            g_boot_image_file_path =
+                (EFI_DEVICE_PATH_PROTOCOL *)loaded_image->FilePath;
             /* DeviceHandle is OPTIONAL on the LoadedImage; UKI
              * detection is independent.  Gating UKI detection on
              * DeviceHandle would let a UKI invocation with NULL
@@ -13565,6 +13796,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
             post_code16(POST16_BL_BOOT_VAR_EXT_OK);
         }
     }
+
+    /* Step 1a: discover firmware network-boot provenance (SNP/PXE/HTTP Boot).
+     * Runs after boot-device identification (g_boot_device_handle +
+     * g_boot_image_file_path set) and BEFORE ExitBootServices so the firmware
+     * network protocols are still live. TODO-25 §1. */
+    network_boot_discover(g_boot_device_handle, g_boot_image_file_path);
 
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();

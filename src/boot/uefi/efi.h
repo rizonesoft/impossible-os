@@ -925,6 +925,11 @@ typedef struct {
 #define EFI_DP_MSG_IPV6          0x0D
 #define EFI_DP_MSG_SD            0x1A  /* UEFI 2.10 spec 10.3.4.24 -- Secure Digital */
 #define EFI_DP_MSG_EMMC          0x1D  /* UEFI 2.10 spec 10.3.4.27 -- eMMC */
+/* Messaging subtypes that signal a firmware NETWORK launch (UEFI 2.10 spec
+ * 10.3.4). MAC + IPv4/IPv6 (above) appear on PXE paths; URI marks HTTP Boot. */
+#define EFI_DP_MSG_MAC           0x0B  /* spec 10.3.4.11 -- MAC Address */
+#define EFI_DP_MSG_URI           0x18  /* spec 10.3.4.23 -- URI (HTTP Boot) */
+#define EFI_DP_MSG_DNS           0x1F  /* spec 10.3.4.31 -- DNS */
 
 /* Hardware path subtypes (UEFI 2.10 spec 10.3.2) */
 #define EFI_DP_TYPE_HW           0x01
@@ -959,10 +964,101 @@ typedef struct {
     { 0x0379BE4E, 0xD706, 0x437D, \
       { 0xB0, 0x37, 0xED, 0xB8, 0x2F, 0xB7, 0x72, 0xA4 } }
 
+/* GetDevicePathSize validates + measures a device path (END node included),
+ * UEFI 2.10 spec 10.2 -- used to bound the network-boot scanner to the real
+ * object length instead of a heuristic cap. Only GetDevicePathSize (the first
+ * vtable slot) is consumed; the rest are opaque. */
+typedef UINTN (EFIAPI *EFI_DEVICE_PATH_UTILS_GET_DEVICE_PATH_SIZE)(
+    const EFI_DEVICE_PATH_PROTOCOL *DevicePath);
+
+typedef struct {
+    EFI_DEVICE_PATH_UTILS_GET_DEVICE_PATH_SIZE GetDevicePathSize;
+    VOID *DuplicateDevicePath;
+    VOID *AppendDevicePath;
+    VOID *AppendDeviceNode;
+    VOID *AppendDevicePathInstance;
+    VOID *GetNextDevicePathInstance;
+    VOID *IsDevicePathMultiInstance;
+    VOID *CreateDeviceNode;
+} EFI_DEVICE_PATH_UTILITIES_PROTOCOL;
+
 /* --- Device Path From Handle (HandleProtocol with this GUID) --- */
 
 #define EFI_DEVICE_PATH_PROTOCOL_GUID \
     { 0x09576E91, 0x6D3F, 0x11D2, \
       { 0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B } }
+
+/* --- Network boot protocols (UEFI 2.10 spec 24) -----------------------------
+ * Used by TODO-25 network/PXE/HTTP boot discovery. The Simple Network Protocol
+ * layout MUST match the firmware ABI exactly up to the Mode pointer: the
+ * interface returned by HandleProtocol is real firmware memory, so a short or
+ * misaligned struct would read a function-pointer slot as Mode. All fields
+ * through Mode are declared in spec order (callbacks as opaque VOID *) and the
+ * _Static_asserts below pin the load-bearing offsets. */
+
+#define EFI_SIMPLE_NETWORK_PROTOCOL_GUID \
+    { 0xA19832B9, 0xAC25, 0x11D3, \
+      { 0x9A, 0x2D, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D } }
+
+#define EFI_PXE_BASE_CODE_PROTOCOL_GUID \
+    { 0x03C4E603, 0xAC28, 0x11D3, \
+      { 0x9A, 0x2D, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D } }
+
+/* 32-byte hardware address container (UEFI 2.10 spec 24.1). Only the first
+ * HwAddressSize bytes are significant (6 for Ethernet). */
+typedef struct { UINT8 Addr[32]; } EFI_MAC_ADDRESS;
+
+typedef struct {
+    UINT32          State;
+    UINT32          HwAddressSize;          /* significant MAC bytes */
+    UINT32          MediaHeaderSize;
+    UINT32          MaxPacketSize;
+    UINT32          NvRamSize;
+    UINT32          NvRamAccessSize;
+    UINT32          ReceiveFilterMask;
+    UINT32          ReceiveFilterSetting;
+    UINT32          MaxMCastFilterCount;
+    UINT32          MCastFilterCount;
+    EFI_MAC_ADDRESS MCastFilter[16];
+    EFI_MAC_ADDRESS CurrentAddress;
+    EFI_MAC_ADDRESS BroadcastAddress;
+    EFI_MAC_ADDRESS PermanentAddress;
+    UINT8           IfType;
+    BOOLEAN         MacAddressChangeable;
+    BOOLEAN         MultipleTxSupported;
+    BOOLEAN         MediaPresentSupported;  /* link detection is reliable */
+    BOOLEAN         MediaPresent;           /* cable/link is up */
+} EFI_SIMPLE_NETWORK_MODE;
+
+_Static_assert(__builtin_offsetof(EFI_SIMPLE_NETWORK_MODE, State) == 0,
+    "SNP mode State offset");
+_Static_assert(__builtin_offsetof(EFI_SIMPLE_NETWORK_MODE, HwAddressSize) == 4,
+    "SNP mode HwAddressSize offset");
+_Static_assert(__builtin_offsetof(EFI_SIMPLE_NETWORK_MODE, CurrentAddress) == 552,
+    "SNP mode CurrentAddress offset (10 u32 + 16 MAC)");
+_Static_assert(__builtin_offsetof(EFI_SIMPLE_NETWORK_MODE, MediaPresent) == 652,
+    "SNP mode MediaPresent offset");
+
+typedef struct _EFI_SIMPLE_NETWORK_PROTOCOL {
+    UINT64                   Revision;
+    VOID                    *Start;
+    VOID                    *Stop;
+    VOID                    *Initialize;
+    VOID                    *Reset;
+    VOID                    *Shutdown;
+    VOID                    *ReceiveFilters;
+    VOID                    *StationAddress;
+    VOID                    *Statistics;
+    VOID                    *MCastIpToMac;
+    VOID                    *NvData;
+    VOID                    *GetStatus;
+    VOID                    *Transmit;
+    VOID                    *Receive;
+    EFI_EVENT                WaitForPacket;
+    EFI_SIMPLE_NETWORK_MODE *Mode;
+} EFI_SIMPLE_NETWORK_PROTOCOL;
+
+_Static_assert(__builtin_offsetof(EFI_SIMPLE_NETWORK_PROTOCOL, Mode) == 120,
+    "SNP Mode pointer offset (Revision + 13 callbacks + WaitForPacket)");
 
 #endif /* UEFI_EFI_H */

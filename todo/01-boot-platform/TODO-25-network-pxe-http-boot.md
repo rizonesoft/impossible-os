@@ -32,7 +32,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
-| 💎 | 1 | UEFI SNP/PXE protocol discovery | TODO-05 §5 | [ ] |
+| 💎 | 1 | UEFI SNP/PXE protocol discovery | TODO-05 §5 | [x] |
 | 💎 | 2 | DHCP/PXE provenance capture | §1 | [ ] |
 | 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [ ] |
 | 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [ ] |
@@ -45,13 +45,21 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 1. UEFI SNP/PXE Protocol Discovery
 
-- [ ] Locate EFI_SIMPLE_NETWORK_PROTOCOL and EFI_PXE_BASE_CODE_PROTOCOL handles.
-- [ ] Match handles against LoadedImage device path when firmware launched us from network.
-- [ ] Detect firmware HTTP Boot device paths.
-- [ ] Add boot log for MAC, link state, and protocol availability.
+- [x] `network_boot_discover()` (`bootx64.c`) locates SNP + PXE Base Code handles via `gBS->LocateHandleBuffer(ByProtocol, ...)`; GUIDs + layout-exact `EFI_SIMPLE_NETWORK_PROTOCOL`/`EFI_SIMPLE_NETWORK_MODE` (offset-asserted) added to `efi.h`.
+- [x] `net_scan_device_path()` walks BOTH the DeviceHandle device path AND `LoadedImage->FilePath` for MESSAGING MAC/IPv4/IPv6/URI nodes -> `booted_from_network` (Codex design D1: URI/MAC nodes can live in the file path).
+- [x] HTTP Boot detection: a URI messaging node (`EFI_DP_MSG_URI` 0x18) sets `http_boot`.
+- [x] `[NET]` serial log: boot source, MAC (boot-path MAC node or SNP `CurrentAddress`, capped 6 bytes), link state (SNP `MediaPresent`), SNP/PXE/HTTPBoot availability; local launch logs `[NET] no network boot path`, no error.
 - [ ] Commit: `"boot: discover UEFI network boot protocols"`
 
 **Test checkpoint:** On a firmware network launch, serial logs the client MAC, link state, and which protocols are available (SNP / PXE Base Code / HTTP Boot device path); on a local-media launch the discovery is skipped with no error. Verify on QEMU WHPX (PXE), bare metal.
+
+> **Test runner:** N/A (bootloader-only UEFI discovery, no kernel-side fields until §6) | validation: serial `[NET]` line on QEMU WHPX/OVMF PXE + bare metal
+
+> **Notes:**
+> - Shipped `network_boot_discover()` + `net_scan_device_path()` (`bootx64.c`, efi_main Step 1a pre-EBS) + SNP/PXE GUIDs, layout-exact `EFI_SIMPLE_NETWORK_PROTOCOL`/`MODE` (offset asserts), `EFI_DP_MSG_MAC/URI/DNS` in `efi.h`.
+> - `booted_from_network` is authoritative from OUR boot path (DeviceHandle path + `LoadedImage->FilePath`), not SNP presence; result in file-static `g_net_discovery` seeding §2/§6.
+> - Codex design review (2 HIGH adopted, evidence in commit): D1 walk FilePath too; D2 layout-exact SNP struct with offset asserts + HwAddressSize cap.
+> - Scope: §1 is discovery + logging only; DHCP provenance §2, TFTP/HTTP load §3/§4, boot_info handoff + `boot_device_type=network` test §6.
 
 ---
 
@@ -173,7 +181,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 | ⭐  | Feature                       | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS                   |
 | --- | ----------------------------- | ------------------------- | -------------------------- | ---------------------------------- |
-| 💎  | PXE boot                      | ✅ WDS/MDT                | ✅ PXELINUX/iPXE           | ⬜ Planned §1-§3                   |
+| 💎  | PXE boot                      | ✅ WDS/MDT                | ✅ PXELINUX/iPXE           | ⚠️ §1 discovery; load §3           |
 | 💎  | HTTP boot                     | ✅ UEFI HTTP Boot         | ✅ iPXE/systemd-boot       | ⬜ Planned §4                      |
 | 💎  | Signed network manifest       | ✅ Secure Boot policies   | ✅ shim/grub signatures    | ⬜ Planned §5                      |
 | ⭐  | On-device network-boot report | ❌ event logs only        | ❌ external server logs     | ⭐ Planned §9 (X:\Diag JSON + QR)  |
