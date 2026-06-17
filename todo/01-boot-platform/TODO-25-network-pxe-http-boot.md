@@ -35,7 +35,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | 💎 | 1 | UEFI SNP/PXE protocol discovery | TODO-05 §5 | [x] |
 | 💎 | 2 | DHCP/PXE provenance capture | §1 | [/] |
 | 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [x] |
-| 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [/] |
+| 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [x] |
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [ ] |
 | 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [ ] |
 | 💎 | 7 | Fallback ordering with local media | TODO-05 §5, §6 | [ ] |
@@ -120,8 +120,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [x] Bounded async wait (`net_http_wait()` = `CheckEvent`+`Stall`); cap-sized body buffer is the transfer bound (Content-Length not trusted); multi-chunk body read; absolute-`Location` 3xx redirect limit (`NET_HTTP_MAX_REDIRECTS`=4).
 - [x] HTTP-only here (HTTPv4 config); HTTPS/TLS gating + plain-http / unsigned-asset refusal is §5 integrity.
 - [x] `net_http_probe()` fetches `boot.conf` over HTTP as an end-to-end client proof then FREES it; kernel fetch/stage/retention is §7, final-URL persistence in boot_info is §6 (D1: no §6/§7 behavior in the transport section).
-- [ ] Relative-redirect resolution: a relative `Location` (no scheme) currently fails the re-issued GET (-> stays local); add base-URL join (scheme://authority + path) so root-relative redirects are followed.
-- [ ] Commit: `"boot: load kernel assets over UEFI HTTP"`
+- [x] Relative-redirect resolution: `net_http_resolve_redirect()` joins a relative `Location` against the current absolute URL (root-relative + sibling-path), bounds-checked; dot-segment collapse left to the firmware HTTP stack.
+- [x] Commit: `"boot: load kernel assets over UEFI HTTP"`
 
 **Test checkpoint:** On an OVMF HTTP Boot, `net_http_probe()` fetches `boot.conf` over `EFI_HTTP_PROTOCOL`; serial shows the reachable size, an enforced redirect limit, the cap-bounded body, and that the buffer is freed (no retention). Verify on QEMU WHPX (OVMF HTTP Boot).
 
@@ -129,9 +129,12 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 > **Notes:**
 > - Shipped `net_http_download()` + `net_http_probe()` + helpers (`bootx64.c`, efi_main Step 1a) + typed event ABI + `EFI_HTTP_PROTOCOL`/`SERVICE_BINDING` ABI in `efi.h`.
-> - EFI_HTTP service-binding child + HTTPv4 Configure (firmware DHCP address) + async GET token polled via CheckEvent; cap-sized body buffer is the bound; multi-chunk body read; cleanup frees events/headers/pages + DestroyChild on every path.
-> - `net_http_probe()` proves the client on an HTTP boot then frees boot.conf (no retention); `booted_from_network && http_boot` gates it; absolute-Location redirects only (relative tracked).
+> - EFI_HTTP service-binding child + HTTPv4 Configure (firmware DHCP address) + async GET; tokens are `EVT_NOTIFY_SIGNAL` and `net_http_wait()` polls the callback-set completion flag while driving `http->Poll()` + Stall on a shared whole-transfer budget (CheckEvent rejects NOTIFY_SIGNAL events); cap-sized body buffer is the bound with EOF/over-cap detection; cleanup frees events/headers/pages + DestroyChild on every path.
+> - `net_http_probe()` proves the client on an HTTP boot then frees boot.conf (no retention); `booted_from_network && http_boot` gates it; absolute + relative `Location` redirects resolved (`net_http_resolve_redirect()`).
 > - Scope: §4 is the HTTP client + boot.conf proof; kernel fetch/stage/retention + boot-from-network is §7, final-URL persistence §6, integrity/TLS §5.
+
+> **Verified:** 2026-06-17 | commit `6f9ed6e8` | 6/6 items | build OK | smoke PASS (TCG 2.59s)
+> **Quality reviewed:** 2026-06-17 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 5H fixed | scope: boot-code-quality
 
 ---
 

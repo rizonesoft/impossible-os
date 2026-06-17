@@ -586,6 +586,9 @@ typedef EFI_STATUS (EFIAPI *EFI_LOCATE_HANDLE_BUFFER)(
  * bare-metal crash risk. */
 #define EVT_TIMER          0x80000000u
 #define EVT_NOTIFY_SIGNAL  0x00000200u
+#define TPL_APPLICATION    4
+#define TPL_CALLBACK       8
+#define TPL_NOTIFY         16
 
 typedef VOID (EFIAPI *EFI_EVENT_NOTIFY)(EFI_EVENT Event, VOID *Context);
 typedef enum { TimerCancel, TimerPeriodic, TimerRelative } EFI_TIMER_DELAY;

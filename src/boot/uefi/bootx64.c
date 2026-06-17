@@ -13229,25 +13229,41 @@ static void net_tftp_probe(EFI_HANDLE dev_handle)
 }
 
 #define NET_HTTP_MAX_REDIRECTS 4
-#define NET_HTTP_TIMEOUT_MS    20000u   /* per-request bound */
+#define NET_HTTP_TOTAL_MS      30000u   /* whole-transfer (all waits) deadline */
 #define NET_HTTP_WAIT_US       100000u  /* 100 ms poll granularity */
+#define NET_HTTP_MAX_CHUNKS    8192u    /* max body Response calls (tiny-chunk DoS) */
 
-/* Bounded wait on an HTTP token event: poll CheckEvent + Stall up to
- * NET_HTTP_TIMEOUT_MS. Returns EFI_SUCCESS when signaled, EFI_TIMEOUT on cap. */
-static EFI_STATUS net_http_wait(EFI_EVENT ev)
+/* No-op notify: EFI_HTTP tokens require an EVT_NOTIFY_SIGNAL event (the HTTP
+ * driver signals it on completion); the body is empty -- CheckEvent drives the
+ * wait. */
+static VOID EFIAPI net_http_notify(EFI_EVENT ev, VOID *ctx)
 {
-    UINTN waited = 0;
+    (void)ev;
+    if (ctx)
+        *(volatile int *)ctx = 1;   /* token completed */
+}
+
+/* Bounded wait for an HTTP token: the EVT_NOTIFY_SIGNAL callback sets *done; we
+ * poll it while driving http->Poll() + Stall, drawing from the shared
+ * whole-transfer budget (CheckEvent is invalid for NOTIFY_SIGNAL events).
+ * Returns EFI_SUCCESS when the token completes, EFI_TIMEOUT on deadline. */
+static EFI_STATUS net_http_wait(EFI_HTTP_PROTOCOL *http,
+                                volatile int *done, UINTN *budget_us)
+{
     for (;;) {
-        EFI_STATUS s = gBS->CheckEvent(ev);
-        if (s == EFI_SUCCESS)
+        UINTN step;
+        if (*done)
             return EFI_SUCCESS;
-        if (s != EFI_NOT_READY)
-            return s;
-        if (waited >= NET_HTTP_TIMEOUT_MS * 1000u)
-            return EFI_TIMEOUT;
+        if (http && http->Poll)
+            http->Poll(http);          /* drive the network stack to progress */
+        if (*done)
+            return EFI_SUCCESS;
+        if (*budget_us == 0)
+            return EFI_TIMEOUT;         /* whole-transfer deadline exhausted */
+        step = (*budget_us < NET_HTTP_WAIT_US) ? *budget_us : NET_HTTP_WAIT_US;
         if (gBS->Stall)
-            gBS->Stall(NET_HTTP_WAIT_US);
-        waited += NET_HTTP_WAIT_US;
+            gBS->Stall(step);
+        *budget_us -= step;
     }
 }
 
@@ -13297,6 +13313,72 @@ static const char *net_http_header(const EFI_HTTP_HEADER *hdrs, UINTN n,
     return (const char *)0;
 }
 
+/* Resolve a (possibly relative) Location against the absolute base URL of the
+ * request that produced it, into out[outsz]. Handles three forms:
+ *   - absolute ("scheme://...")      -> copied verbatim
+ *   - root-relative ("/path")        -> scheme://authority + loc
+ *   - path-relative ("p" / "a/b")    -> base up to its last '/', then loc
+ * Bounds every write; returns 0 on success, -1 on parse failure or overflow
+ * (never truncates). RFC 3986 dot-segment ("../") collapsing is left to the
+ * firmware HTTP stack -- asset servers use absolute/root-relative redirects. */
+static int net_http_resolve_redirect(const char *base, const char *loc,
+                                     char *out, UINTN outsz)
+{
+    UINTN i, n = 0, sa, p, prefix;
+    int has_scheme = 0, found_slash = 0;
+
+    if (!base || !loc || !out || outsz < 2)
+        return -1;
+
+    /* Absolute Location ("scheme://...") -> copy verbatim. Stop at the first
+     * ':' (scheme delimiter) or '/'; bound every lookahead so a value ending in
+     * ':' (e.g. "http:") cannot read past the firmware-owned NUL terminator:
+     * loc[i+1] is valid because loc[i]==':' is non-NUL, and loc[i+2] is read
+     * only after loc[i+1]=='/' proves another byte exists. */
+    for (i = 0; loc[i]; i++) {
+        if (loc[i] == '/')            /* path char before any ':' -> relative */
+            break;
+        if (loc[i] == ':') {
+            has_scheme = (loc[i + 1] == '/' && loc[i + 2] == '/');
+            break;
+        }
+    }
+    if (has_scheme) {
+        for (i = 0; loc[i]; i++) { if (n >= outsz - 1) return -1; out[n++] = loc[i]; }
+        out[n] = '\0';
+        return 0;
+    }
+
+    /* Relative: locate base "scheme://authority" (up to first '/' after "://").
+     * Same bounded-lookahead discipline as the loc scan above. */
+    p = 0;
+    while (base[p]) {
+        if (base[p] == ':' && base[p + 1] == '/' && base[p + 2] == '/')
+            break;
+        p++;
+    }
+    if (!base[p]) return -1;          /* base must itself be absolute */
+    p += 3;
+    while (base[p] && base[p] != '/') p++;
+    sa = p;                            /* base[0..sa) == scheme://authority */
+
+    if (loc[0] == '/') {               /* root-relative */
+        for (i = 0; i < sa; i++) { if (n >= outsz - 1) return -1; out[n++] = base[i]; }
+        for (i = 0; loc[i]; i++) { if (n >= outsz - 1) return -1; out[n++] = loc[i]; }
+        out[n] = '\0';
+        return 0;
+    }
+
+    /* path-relative: base up to and including its last '/', then loc. */
+    prefix = sa;
+    for (p = sa; base[p]; p++) if (base[p] == '/') { prefix = p + 1; found_slash = 1; }
+    for (i = 0; i < prefix; i++) { if (n >= outsz - 1) return -1; out[n++] = base[i]; }
+    if (!found_slash) { if (n >= outsz - 1) return -1; out[n++] = '/'; }
+    for (i = 0; loc[i]; i++) { if (n >= outsz - 1) return -1; out[n++] = loc[i]; }
+    out[n] = '\0';
+    return 0;
+}
+
 /* Download `url` over HTTP via EFI_HTTP_PROTOCOL on the firmware HTTP Boot
  * service-binding handle, into a freshly allocated cap-sized EfiLoaderData
  * buffer (the buffer is the transfer bound; Content-Length is not trusted).
@@ -13323,6 +13405,9 @@ static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
     EFI_STATUS s;
     int redirects = 0;
     char redir_buf[1024];
+    char redir_buf2[1024];   /* resolve target before aliasing redir_buf */
+    UINTN budget = NET_HTTP_TOTAL_MS * 1000u;   /* shared across all waits */
+    volatile int req_done = 0, resp_done = 0;   /* set by net_http_notify */
 
     *out_buf = (VOID *)0;
     *out_size = 0;
@@ -13350,7 +13435,7 @@ static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
     ap.LocalSubnet.Addr[2] = ap.LocalSubnet.Addr[3] = 0;
     ap.LocalPort = 0;
     cfg.HttpVersion = HttpVersion11;
-    cfg.TimeOutMillisec = NET_HTTP_TIMEOUT_MS;
+    cfg.TimeOutMillisec = NET_HTTP_TOTAL_MS;
     cfg.LocalAddressIsIPv6 = 0;
     cfg.AccessPoint.IPv4Node = &ap;
     s = http->Configure(http, &cfg);
@@ -13366,10 +13451,10 @@ static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
     }
     buf = (VOID *)(UINTN)buf_phys;
 
-    if (gBS->CreateEvent(0, 0 /* TPL_APPLICATION */, (EFI_EVENT_NOTIFY)0,
-                         (VOID *)0, &req_ev) != EFI_SUCCESS ||
-        gBS->CreateEvent(0, 0, (EFI_EVENT_NOTIFY)0, (VOID *)0, &resp_ev)
-            != EFI_SUCCESS) {
+    if (gBS->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, net_http_notify,
+                         (VOID *)&req_done, &req_ev) != EFI_SUCCESS ||
+        gBS->CreateEvent(EVT_NOTIFY_SIGNAL, TPL_CALLBACK, net_http_notify,
+                         (VOID *)&resp_done, &resp_ev) != EFI_SUCCESS) {
         s = EFI_OUT_OF_RESOURCES;
         goto cleanup;
     }
@@ -13402,9 +13487,10 @@ static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
         reqt.Event = req_ev;
         reqt.Status = EFI_SUCCESS;
         reqt.Message = &reqm;
+        req_done = 0;
         s = http->Request(http, &reqt);
         if (EFI_ERROR(s)) goto free_wurl;
-        s = net_http_wait(req_ev);
+        s = net_http_wait(http, &req_done, &budget);
         if (EFI_ERROR(s) || EFI_ERROR(reqt.Status)) {
             /* On timeout the request is still in flight referencing wurl -- abort
              * it (synchronous) before freeing, or the firmware could write to
@@ -13424,9 +13510,10 @@ static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
         respt.Event = resp_ev;
         respt.Status = EFI_SUCCESS;
         respt.Message = &respm;
+        resp_done = 0;
         s = http->Response(http, &respt);
         if (EFI_ERROR(s)) goto free_wurl;
-        s = net_http_wait(resp_ev);
+        s = net_http_wait(http, &resp_done, &budget);
         if (EFI_ERROR(s) || EFI_ERROR(respt.Status)) {
             http->Cancel(http, &respt);   /* abort in-flight before freeing buf */
             s = EFI_ERROR(s) ? s : respt.Status;
@@ -13437,15 +13524,23 @@ static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
         if (net_http_is_redirect(respd.StatusCode)) {
             loc = net_http_header(respm.Headers, respm.HeaderCount, "Location");
             if (loc && ++redirects <= NET_HTTP_MAX_REDIRECTS) {
-                /* Copy Location into a stable buffer BEFORE freeing Headers
-                 * (loc points into the firmware-owned header block). */
-                UINTN k = 0;
-                while (loc[k] && k < sizeof(redir_buf) - 1) {
-                    redir_buf[k] = loc[k]; k++;
-                }
-                redir_buf[k] = '\0';
-                url = redir_buf;
+                /* Resolve Location (absolute / root-relative / path-relative)
+                 * against the current absolute URL BEFORE freeing Headers --
+                 * loc points into the firmware-owned header block. Resolve into
+                 * redir_buf2 (distinct from base==url, which may be redir_buf),
+                 * then copy into the stable redir_buf. */
+                int rr = net_http_resolve_redirect(url, loc, redir_buf2,
+                                                   sizeof(redir_buf2));
                 if (respm.Headers) gBS->FreePool(respm.Headers);
+                if (rr != 0) { s = EFI_NO_MAPPING; goto free_wurl; }
+                {
+                    UINTN k = 0;
+                    while (redir_buf2[k] && k < sizeof(redir_buf) - 1) {
+                        redir_buf[k] = redir_buf2[k]; k++;
+                    }
+                    redir_buf[k] = '\0';
+                }
+                url = redir_buf;
                 gBS->FreePool(wurl); wurl = (CHAR16 *)0;
                 continue;   /* re-issue GET against the redirect target */
             }
@@ -13460,29 +13555,68 @@ static EFI_STATUS net_http_download(EFI_HANDLE dev_handle, const char *url,
             goto free_wurl;
         }
         if (respm.Headers) gBS->FreePool(respm.Headers);
+        if (respm.BodyLength > cap) {   /* firmware overran the buffer */
+            s = EFI_BUFFER_TOO_SMALL;
+            goto free_wurl;
+        }
         total = respm.BodyLength;   /* first chunk already in buf */
 
-        /* Remaining body chunks until the firmware reports 0 bytes or the cap. */
-        while (total < cap) {
-            respm.Data.Response = (EFI_HTTP_RESPONSE_DATA *)0;
-            respm.HeaderCount = 0;
-            respm.Headers = (EFI_HTTP_HEADER *)0;
-            respm.BodyLength = (UINTN)(cap - total);
-            respm.Body = (UINT8 *)buf + total;
-            respt.Status = EFI_SUCCESS;
-            s = http->Response(http, &respt);
-            if (EFI_ERROR(s)) {
-                if (s == EFI_NOT_FOUND) { s = EFI_SUCCESS; break; }  /* body done */
-                goto free_wurl;
+        /* Read remaining body chunks until a proven EOF (0-length or NOT_FOUND).
+         * The cap-sized buffer is the bound: if it fills before EOF the body is
+         * over-cap (a 1-byte scratch read distinguishes exact-cap EOF). Bounded
+         * by NET_HTTP_MAX_CHUNKS (tiny-chunk DoS) and the shared time budget. */
+        {
+            int eof = 0;
+            UINTN chunks = 0;
+            UINT8 scratch;
+            while (!eof) {
+                if (total >= cap) {
+                    /* Buffer full -- scratch-read one byte: 0/NOT_FOUND => the
+                     * body was exactly cap (EOF); any byte => over-cap. */
+                    respm.Data.Response = (EFI_HTTP_RESPONSE_DATA *)0;
+                    respm.HeaderCount = 0;
+                    respm.Headers = (EFI_HTTP_HEADER *)0;
+                    respm.BodyLength = 1;
+                    respm.Body = &scratch;
+                    respt.Status = EFI_SUCCESS;
+                    resp_done = 0;
+                    s = http->Response(http, &respt);
+                    if (s == EFI_NOT_FOUND) { eof = 1; break; }
+                    if (EFI_ERROR(s)) goto free_wurl;
+                    s = net_http_wait(http, &resp_done, &budget);
+                    if (EFI_ERROR(s)) { http->Cancel(http, &respt); goto free_wurl; }
+                    if (respm.BodyLength == 0) { eof = 1; break; }
+                    s = EFI_BUFFER_TOO_SMALL;   /* over-cap */
+                    goto free_wurl;
+                }
+                if (++chunks > NET_HTTP_MAX_CHUNKS) {
+                    s = EFI_TIMEOUT;            /* too many tiny chunks */
+                    goto free_wurl;
+                }
+                respm.Data.Response = (EFI_HTTP_RESPONSE_DATA *)0;
+                respm.HeaderCount = 0;
+                respm.Headers = (EFI_HTTP_HEADER *)0;
+                respm.BodyLength = (UINTN)(cap - total);
+                respm.Body = (UINT8 *)buf + total;
+                respt.Status = EFI_SUCCESS;
+                resp_done = 0;
+                s = http->Response(http, &respt);
+                if (EFI_ERROR(s)) {
+                    if (s == EFI_NOT_FOUND) { eof = 1; break; }   /* body done */
+                    goto free_wurl;
+                }
+                s = net_http_wait(http, &resp_done, &budget);
+                if (EFI_ERROR(s)) {
+                    http->Cancel(http, &respt);  /* abort in-flight body read */
+                    goto free_wurl;
+                }
+                if (respm.BodyLength == 0) { eof = 1; break; }
+                if (respm.BodyLength > cap - total) {   /* firmware overran */
+                    s = EFI_BUFFER_TOO_SMALL;
+                    goto free_wurl;
+                }
+                total += respm.BodyLength;
             }
-            s = net_http_wait(resp_ev);
-            if (EFI_ERROR(s)) {
-                http->Cancel(http, &respt);   /* abort in-flight body read */
-                goto free_wurl;
-            }
-            if (respm.BodyLength == 0)
-                break;
-            total += respm.BodyLength;
         }
         gBS->FreePool(wurl); wurl = (CHAR16 *)0;
         *out_buf = buf;
