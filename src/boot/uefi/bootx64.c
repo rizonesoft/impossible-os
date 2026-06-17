@@ -96,6 +96,22 @@ struct net_boot_discovery {
 };
 static struct net_boot_discovery g_net_discovery;
 
+/* DHCP/PXE provenance captured from the firmware PXE Base Code cached DhcpAck.
+ * Parsed fields seed the boot_info network handoff; the raw packet is preserved
+ * for offline diagnostics. Sensitive DHCP options (43 vendor, 17 root-path) are
+ * preserved in the raw copy but never printed to the boot log. */
+struct net_dhcp_provenance {
+    UINT8 client_ip[4];      /* BOOTP yiaddr */
+    UINT8 next_server_ip[4]; /* BOOTP siaddr */
+    UINT8 gateway_ip[4];     /* DHCP option 3 router, BOOTP giaddr fallback */
+    UINT8 dhcp_server_ip[4]; /* DHCP option 54 server id */
+    UINT8 boot_file[128];    /* BOOTP bootfile */
+    int   valid;
+};
+static struct net_dhcp_provenance g_net_dhcp;
+static UINT8 g_net_dhcp_raw[1472];   /* preserved raw DhcpAck for the boot_info handoff */
+static int   g_net_dhcp_raw_valid;
+
 /* Boot info -- placed at a known physical address (64 KiB) */
 #define BOOT_INFO_PHYS_ADDR  0x10000
 static struct boot_info    *g_boot_info_ptr;
@@ -12909,6 +12925,155 @@ static void network_boot_discover(EFI_HANDLE dev_handle,
     }
 }
 
+/* Log a dotted IPv4 address (4 bytes) to serial. */
+static void net_log_ipv4(const UINT8 *ip)
+{
+    UINT32 i;
+    for (i = 0; i < 4; i++) {
+        if (i)
+            serial_early_print(".");
+        serial_early_print_uint((UINT32)ip[i]);
+    }
+}
+
+/* Find DHCP option `tag` in the option TLV buffer [opts, opts+len), copying up
+ * to `cap` value bytes into `out`. Returns the option value length (0 if not
+ * found). Every access is bounded by `len` so a malformed firmware packet cannot
+ * drive a read past the buffer. */
+static UINT32 net_dhcp_find_option(const UINT8 *opts, UINT32 len, UINT8 tag,
+                                   UINT8 *out, UINT32 cap)
+{
+    UINT32 i = 0;
+    while (i < len) {
+        UINT8 t = opts[i];
+        UINT8 olen;
+        if (t == 0) { i++; continue; }   /* pad option, no length */
+        if (t == 255) break;             /* end option */
+        if (i + 1 >= len) break;         /* truncated -- no length byte */
+        olen = opts[i + 1];
+        if (i + 2u + olen > len) break;  /* value runs past the buffer */
+        if (t == tag) {
+            UINT32 n = (olen < cap) ? olen : cap;
+            UINT32 j;
+            for (j = 0; j < n; j++)
+                out[j] = opts[i + 2u + j];
+            return olen;
+        }
+        i += 2u + olen;
+    }
+    return 0;
+}
+
+/* TODO network-boot: capture DHCP/PXE provenance from the firmware PXE Base Code
+ * cached DhcpAck. Binds to the BOOT NIC PXE handle (boot-handle preferred,
+ * sole-handle fallback -- the wrong-NIC lesson from discovery), parses the BOOTP
+ * fixed fields + DHCP options 3/54, preserves the raw packet, and logs redacted
+ * provenance. Runs pre-ExitBootServices; a local boot or a NIC without a cached
+ * DhcpAck is a clean no-op. */
+static void net_dhcp_capture(EFI_HANDLE dev_handle)
+{
+    EFI_GUID pxe_guid = EFI_PXE_BASE_CODE_PROTOCOL_GUID;
+    EFI_PXE_BASE_CODE_PROTOCOL *pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
+    EFI_HANDLE *handles = (EFI_HANDLE *)0;
+    UINTN nhandles = 0;
+    EFI_STATUS s;
+    UINT32 i;
+
+    /* Zero the result explicitly -- do not rely on .bss being cleared. */
+    g_net_dhcp.valid = 0;
+    g_net_dhcp_raw_valid = 0;
+    for (i = 0; i < 4; i++) {
+        g_net_dhcp.client_ip[i] = 0;
+        g_net_dhcp.next_server_ip[i] = 0;
+        g_net_dhcp.gateway_ip[i] = 0;
+        g_net_dhcp.dhcp_server_ip[i] = 0;
+    }
+    g_net_dhcp.boot_file[0] = '\0';
+
+    /* The boot device handle is authoritative: if it exposes a PXE Base Code
+     * protocol with a cached DhcpAck, we network-booted from it -- regardless of
+     * the device-path-derived booted_from_network flag, which can be unset when
+     * the optional DevicePathUtilities protocol is absent. */
+    if (dev_handle &&
+        EFI_ERROR(gBS->HandleProtocol(dev_handle, &pxe_guid, (VOID **)&pxe)))
+        pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
+    /* Sole-handle fallback ONLY when discovery classified this as a network
+     * boot: on a local boot a stray NIC's cached DhcpAck must not be captured
+     * as ours. Limitation: if the boot DeviceHandle is a child without PXE AND
+     * the (otherwise universal) DevicePathUtilities protocol is absent,
+     * booted_from_network stays unset and this fallback is skipped -- DHCP
+     * provenance is then best-effort. Tracked for a DevicePathUtilities-
+     * independent boot-NIC signal. */
+    if (!pxe && g_net_discovery.booted_from_network) {
+        s = gBS->LocateHandleBuffer(ByProtocol, &pxe_guid, (VOID *)0,
+                                    &nhandles, &handles);
+        if (!EFI_ERROR(s) && handles && nhandles == 1 &&
+            EFI_ERROR(gBS->HandleProtocol(handles[0], &pxe_guid, (VOID **)&pxe)))
+            pxe = (EFI_PXE_BASE_CODE_PROTOCOL *)0;
+        if (handles)
+            gBS->FreePool(handles);
+    }
+    if (!pxe || !pxe->Mode || !pxe->Mode->DhcpAckReceived)
+        return;   /* no DHCP provenance available */
+
+    {
+        const EFI_PXE_BASE_CODE_PACKET *pkt = &pxe->Mode->DhcpAck;
+        const EFI_PXE_BASE_CODE_DHCPV4_PACKET *v4 = &pkt->Dhcpv4;
+        const UINT8 *raw = pkt->Raw;
+        const UINT32 opts_off = 240;   /* after the 4-byte magic cookie at 236 */
+        UINT8 opt[4];
+
+        /* BOOTP fixed fields are always within the 1472-byte packet. */
+        for (i = 0; i < 4; i++) {
+            g_net_dhcp.client_ip[i] = v4->BootpYiAddr[i];
+            g_net_dhcp.next_server_ip[i] = v4->BootpSiAddr[i];
+            g_net_dhcp.gateway_ip[i] = v4->BootpGiAddr[i];
+        }
+        /* Copy + sanitize the boot filename to printable ASCII: DHCP data is
+         * attacker-controlled, so a CR/LF/control byte could forge boot-log
+         * lines. The true bytes survive in g_net_dhcp_raw for forensics. */
+        for (i = 0; i < 127; i++) {
+            UINT8 c = v4->BootpBootFile[i];
+            if (c == 0)
+                break;
+            g_net_dhcp.boot_file[i] = (c >= 0x20 && c <= 0x7E) ? c : (UINT8)'?';
+        }
+        g_net_dhcp.boot_file[i] = '\0';
+
+        /* Parse DHCP options only when the BOOTP magic cookie (99.130.83.99,
+         * RFC 2132) is present at offset 236 -- otherwise the trailing bytes are
+         * not a DHCP option field and must not be walked as one. Options can
+         * extend past DhcpOptions[56] into the packet body, so walk from the
+         * cookie boundary to the full 1472 bytes (bounded). */
+        if (raw[236] == 0x63 && raw[237] == 0x82 &&
+            raw[238] == 0x53 && raw[239] == 0x63) {
+            if (net_dhcp_find_option(raw + opts_off, 1472u - opts_off, 3, opt, 4) >= 4)
+                for (i = 0; i < 4; i++) g_net_dhcp.gateway_ip[i] = opt[i];
+            if (net_dhcp_find_option(raw + opts_off, 1472u - opts_off, 54, opt, 4) >= 4)
+                for (i = 0; i < 4; i++) g_net_dhcp.dhcp_server_ip[i] = opt[i];
+        }
+
+        for (i = 0; i < 1472; i++)
+            g_net_dhcp_raw[i] = raw[i];
+        g_net_dhcp_raw_valid = 1;
+        g_net_dhcp.valid = 1;
+    }
+
+    /* Redacted log: standard provenance only. Vendor option 43 + root-path
+     * option 17 are preserved in g_net_dhcp_raw but NOT printed (credentials). */
+    serial_early_print("[NET] DHCP: client=");
+    net_log_ipv4(g_net_dhcp.client_ip);
+    serial_early_print(" gw=");
+    net_log_ipv4(g_net_dhcp.gateway_ip);
+    serial_early_print(" server=");
+    net_log_ipv4(g_net_dhcp.dhcp_server_ip);
+    serial_early_print(" file=");
+    serial_early_print(g_net_dhcp.boot_file[0]
+                       ? (const char *)g_net_dhcp.boot_file : "(none)");
+    serial_early_print("\n");
+    boot_log_append("[NET] DHCP provenance captured\n");
+}
+
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
@@ -13820,6 +13985,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
      * g_boot_image_file_path set) and BEFORE ExitBootServices so the firmware
      * network protocols are still live (network-boot discovery). */
     network_boot_discover(g_boot_device_handle, g_boot_image_file_path);
+    net_dhcp_capture(g_boot_device_handle);
 
     /* Step 1b: Parse boot.conf first -- Resolution= key needed by init_gop */
     g_boot_info_ptr->timing.conf_start = boot_rdtsc();

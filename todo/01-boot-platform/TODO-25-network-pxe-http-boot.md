@@ -33,7 +33,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
 | 💎 | 1 | UEFI SNP/PXE protocol discovery | TODO-05 §5 | [x] |
-| 💎 | 2 | DHCP/PXE provenance capture | §1 | [ ] |
+| 💎 | 2 | DHCP/PXE provenance capture | §1 | [/] |
 | 💎 | 3 | TFTP kernel and boot.conf load | §1, §2 | [ ] |
 | 💎 | 4 | UEFI HTTP Boot load path | §1, §2 | [ ] |
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [ ] |
@@ -68,13 +68,22 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 2. DHCP/PXE Provenance Capture
 
-- [ ] Capture client MAC, assigned IP, gateway, DHCP server, boot server, boot filename, and vendor options.
-- [ ] Preserve raw DHCP/PXE packets in a typed boot payload for diagnostics.
-- [ ] Redact sensitive options in normal logs.
-- [ ] Add Registry/BlackBox output after kernel handoff.
+- [x] `net_dhcp_capture()` (`bootx64.c`) reads firmware PXE `Mode->DhcpAck`: client IP (yiaddr), next-server (siaddr), gateway (opt 3 / giaddr), DHCP server (opt 54), boot filename; MAC from §1 `g_net_discovery`.
+- [x] Preserves the raw 1472-byte DhcpAck in `g_net_dhcp_raw` for diagnostics; the boot_info `BOOT_PAYLOAD_NETWORK_CONFIG` wiring is §6.
+- [x] Redacted log: prints only IPs + boot filename; vendor option 43 + root-path option 17 stay in the raw copy, never logged.
+- [x] Stages `g_net_dhcp` + raw packet for the §6 boot_info handoff; Registry `HKLM\SYSTEM\Boot\Network` output owned by §6, BlackBox `X:\Diag\network-boot.json` by §9.
+- [ ] Best-effort residual: a child boot DeviceHandle without PXE on firmware lacking DevicePathUtilities skips the sole-handle fallback (`booted_from_network` unset); add a DevicePathUtilities-independent boot-NIC signal so capture is exact.
 - [ ] Commit: `"boot: capture PXE DHCP provenance"`
 
 **Test checkpoint:** Serial logs the captured DHCP/PXE provenance (MAC, assigned IP, gateway, DHCP + boot server, boot filename) with sensitive vendor options redacted; the raw packet blob is retained in the typed boot payload for diagnostics. Verify on QEMU WHPX (PXE).
+
+> **Test runner:** N/A (bootloader-only UEFI capture, no kernel-side fields until §6) | validation: serial `[NET] DHCP:` line on a QEMU PXE boot; `test_pxe_dhcp_provenance_parse` owned by §10 harness
+
+> **Notes:**
+> - Shipped `net_dhcp_capture()` + `net_dhcp_find_option()` (`bootx64.c`, efi_main Step 1a) + layout-exact `EFI_PXE_BASE_CODE_MODE`/`DHCPV4_PACKET`/`PACKET` (offset asserts: DhcpAck@1524, Mode@104) in `efi.h`.
+> - Binds to the boot NIC's PXE handle (boot-handle preferred, sole-handle fallback); reads `Mode->DhcpAckReceived`, parses BOOTP fixed fields + DHCP options 3/54 bounded against the 1472-byte packet; local boot / no DhcpAck is a clean no-op.
+> - Parsed provenance in `g_net_dhcp`, raw packet in `g_net_dhcp_raw`; both seed §6 boot_info + §9 diagnostics.
+> - Scope: §2 captures + stages in the bootloader; boot_info handoff §6, Registry §6, BlackBox JSON §9.
 
 ---
 

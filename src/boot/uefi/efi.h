@@ -1061,4 +1061,99 @@ typedef struct _EFI_SIMPLE_NETWORK_PROTOCOL {
 _Static_assert(__builtin_offsetof(EFI_SIMPLE_NETWORK_PROTOCOL, Mode) == 120,
     "SNP Mode pointer offset (Revision + 13 callbacks + WaitForPacket)");
 
+/* --- PXE Base Code Mode/packets (UEFI 2.10 spec 24.3) ----------------------
+ * Read by TODO-25 DHCP/PXE provenance capture. Like the SNP struct above, the
+ * Mode pointer + DhcpAck packet are firmware memory, so the layout is replicated
+ * byte-for-byte against the spec up to the fields read (DhcpAckReceived, DhcpAck)
+ * and pinned with _Static_asserts. Trailing Mode fields (ProxyOffer onward) are
+ * omitted -- access is via pointer and they are never dereferenced. */
+
+typedef struct { UINT32 Addr[4]; } EFI_IP_ADDRESS;   /* 16 bytes, 4-aligned */
+
+typedef struct {
+    UINT8  BootpOpcode;
+    UINT8  BootpHwType;
+    UINT8  BootpHwAddrLen;
+    UINT8  BootpGateHops;
+    UINT32 BootpIdent;
+    UINT16 BootpSeconds;
+    UINT16 BootpFlags;
+    UINT8  BootpCiAddr[4];
+    UINT8  BootpYiAddr[4];      /* assigned client IP */
+    UINT8  BootpSiAddr[4];      /* next server IP */
+    UINT8  BootpGiAddr[4];      /* relay/gateway IP */
+    UINT8  BootpHwAddr[16];
+    UINT8  BootpSrvName[64];
+    UINT8  BootpBootFile[128];  /* boot filename */
+    UINT32 DhcpMagik;           /* 0x63825363 network order */
+    UINT8  DhcpOptions[56];
+} EFI_PXE_BASE_CODE_DHCPV4_PACKET;
+
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, BootpYiAddr) == 16,
+    "DHCPV4 BootpYiAddr offset");
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, BootpBootFile) == 108,
+    "DHCPV4 BootpBootFile offset");
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_DHCPV4_PACKET, DhcpOptions) == 240,
+    "DHCPV4 DhcpOptions offset (after magic cookie)");
+
+typedef union {
+    UINT8                           Raw[1472];
+    EFI_PXE_BASE_CODE_DHCPV4_PACKET Dhcpv4;
+} EFI_PXE_BASE_CODE_PACKET;
+
+_Static_assert(sizeof(EFI_PXE_BASE_CODE_PACKET) == 1472, "PXE packet is 1472 bytes");
+
+typedef struct {
+    BOOLEAN                  Started;
+    BOOLEAN                  Ipv6Available;
+    BOOLEAN                  Ipv6Supported;
+    BOOLEAN                  UsingIpv6;
+    BOOLEAN                  BisSupported;
+    BOOLEAN                  BisDetected;
+    BOOLEAN                  AutoArp;
+    BOOLEAN                  SendGUID;
+    BOOLEAN                  DhcpDiscoverValid;
+    BOOLEAN                  DhcpAckReceived;     /* DhcpAck is populated */
+    BOOLEAN                  ProxyOfferReceived;
+    BOOLEAN                  PxeDiscoverValid;
+    BOOLEAN                  PxeReplyReceived;
+    BOOLEAN                  PxeBisReplyReceived;
+    BOOLEAN                  IcmpErrorReceived;
+    BOOLEAN                  TftpErrorReceived;
+    BOOLEAN                  MakeCallbacks;
+    UINT8                    TTL;
+    UINT8                    ToS;
+    EFI_IP_ADDRESS           StationIp;
+    EFI_IP_ADDRESS           SubnetMask;
+    EFI_PXE_BASE_CODE_PACKET DhcpDiscover;
+    EFI_PXE_BASE_CODE_PACKET DhcpAck;            /* cached DHCP ACK */
+    /* ProxyOffer/PxeDiscover/PxeReply/PxeBisReply/IpFilter/ArpCache/RouteTable/
+     * IcmpError/TftpError follow in the firmware struct -- omitted (never read). */
+} EFI_PXE_BASE_CODE_MODE;
+
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_MODE, DhcpAckReceived) == 9,
+    "PXE mode DhcpAckReceived offset");
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_MODE, DhcpAck) == 1524,
+    "PXE mode DhcpAck offset (17 bool + TTL/ToS + pad + 2 IP + DhcpDiscover)");
+
+typedef struct _EFI_PXE_BASE_CODE_PROTOCOL {
+    UINT64                   Revision;
+    VOID                    *Start;
+    VOID                    *Stop;
+    VOID                    *Dhcp;
+    VOID                    *Discover;
+    VOID                    *Mtftp;
+    VOID                    *UdpWrite;
+    VOID                    *UdpRead;
+    VOID                    *SetIpFilter;
+    VOID                    *Arp;
+    VOID                    *SetParameters;
+    VOID                    *SetStationIp;
+    VOID                    *SetPackets;
+    EFI_PXE_BASE_CODE_MODE  *Mode;
+} EFI_PXE_BASE_CODE_PROTOCOL;
+
+_Static_assert(__builtin_offsetof(EFI_PXE_BASE_CODE_PROTOCOL, Mode) == 104,
+    "PXE protocol Mode offset (Revision + 12 callbacks)");
+
 #endif /* UEFI_EFI_H */
