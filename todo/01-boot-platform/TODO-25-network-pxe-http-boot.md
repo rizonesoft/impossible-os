@@ -39,9 +39,9 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 | 💎 | 5 | Network boot asset integrity | §3, §4, TODO-13 | [/] |
 | 💎 | 6 | boot_info network provenance | TODO-01 §4, §12 | [/] |
 | 💎 | 7 | Fallback ordering with local media | TODO-05 §5, §6 | [/] |
-| ⭐ | 8 | Recovery and installer over network | §3-§7, TODO-22 | [ ] |
-| 💎 | 9 | Network boot diagnostics and BlackBox report | §1-§8 | [ ] |
-| 💎 | 10 | PXE/HTTP boot tests | §1-§9 | [ ] |
+| ⭐ | 8 | Recovery and installer over network | §3-§7, TODO-22 | [/] |
+| 💎 | 9 | Network boot diagnostics and BlackBox report | §1-§8 | [/] |
+| 💎 | 10 | PXE/HTTP boot tests | §1-§9 | [/] |
 
 ## 1. UEFI SNP/PXE Protocol Discovery
 
@@ -220,6 +220,8 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## 8. Recovery and Installer over Network
 
+> [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): every item downloads and BOOTS executable assets (recovery image, installer kernel) over the §3/§4 network transports "verified by §5". With §5 verification deferred, executing network-fetched assets is exactly the insecure network boot §5's fail-closed contract forbids. Gated on §5. See Deferred stamp below.
+
 - [ ] Allow recovery image download when local recovery partition is missing or corrupt.
 - [ ] Add installer network boot mode: fetch assets over §3 TFTP/§4 HTTP (verified by §5), set `InstallerMode`; the same-kernel installer launches `installer.exe`. -> XREF: 10-platform-services/TODO-11-installer-iso.md §2
 - [ ] No separate WinPE/initramfs or netroot mount: Impossible OS deliberately reuses the §3/§4 transports + the installed kernel (TODO-11 decision), not a WDS boot.wim ramdisk or dracut NFS/iSCSI/NBD root.
@@ -229,9 +231,20 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 **Test checkpoint:** With the local recovery partition missing/corrupt, a network recovery image downloads and boots; `InstallerMode` network boot enters the installer; downloaded recovery assets are cached to BlackBox when present, with progress UI for large downloads. Verify on QEMU WHPX (network recovery).
 
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until §5 verification exists
+
+> **Notes:**
+> - Deferred, not implemented: booting network-fetched recovery/installer assets requires §5 asset verification; the items themselves say "verified by §5".
+> - Honest current state: recovery + installer still boot from local trusted media; no network repair path is wired.
+> - Owners: verification gate = TODO-25 §5; installer launch consumer = TODO-11 §2.
+
+> **Deferred:** [H] downloading + booting recovery image / installer over the network requires §5 asset verification; unverified network-fetched executable assets are exactly what §5's fail-closed contract forbids -> XREF: 01-boot-platform/TODO-25 §5 (BLOCKER: trust model) + consumer 10-platform-services/TODO-11 §2 (installer ISO)
+
 ---
 
 ## 9. Network Boot Diagnostics and BlackBox Report
+
+> [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): the kernel writes `X:\Diag\network-boot.json`, but its data source -- the network provenance -- is the §6 boot_info handoff (deferred), and per-file hashes come from §5 verification (deferred). A non-authoritative diagnostic provenance handoff (the §6 sliver Codex blessed) is the future unblock path. Gated on §6 -> §5. See Deferred stamp below.
 
 - [ ] Write `X:\Diag\network-boot.json` with DHCP, protocol, timings, retries, file hashes.
 - [ ] Include network path in VPD and boot timeline.
@@ -241,9 +254,20 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 **Test checkpoint:** Post-boot, `X:\Diag\network-boot.json` exists with DHCP, protocol, timings, retries, and per-file hashes; the network path appears in VPD + the boot timeline; a network failure emits a host-decodable QR payload. Verify on QEMU WHPX/TCG.
 
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until §6 provenance handoff exists
+
+> **Notes:**
+> - Deferred, not implemented: the network-boot diagnostic JSON needs the kernel-visible provenance handoff (§6) as its data source; per-file hashes need §5 verification.
+> - Unblock path: a non-authoritative diagnostic provenance descriptor (the §6 sliver) feeds this report without the §5 trust decision; tracked under §6.
+> - Owners: provenance handoff = TODO-25 §6; file hashes = TODO-25 §5; BlackBox X:\Diag writer infra = TODO-24.
+
+> **Deferred:** [H] `X:\Diag\network-boot.json` needs the §6 kernel-visible network-provenance handoff as its data source, and per-file hashes need §5 verification -> XREF: 01-boot-platform/TODO-25 §6 (boot_info network provenance handoff), §5 (manifest/file hashes)
+
 ---
 
 ## 10. PXE/HTTP Boot Tests
+
+> [!IMPORTANT] Deferred (2026-06-17, unattended sequencer): the PXE/TFTP + HTTP-Boot integration harness and the bad-manifest/fallback assertions depend on §5-§8 (trust, provenance, recovery, fallback), all deferred; and the §1-§4 transport parsers are UEFI-only (no kernel test surface, per their N/A test-runner notes) so they need extraction into kernel-testable pure helpers first. Gated on §5-§8. See Deferred stamp below.
 
 - [ ] Add QEMU PXE/TFTP test harness.
 - [ ] Add HTTP Boot mock server test.
@@ -252,6 +276,15 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 - [ ] Commit: `"test: PXE and HTTP boot coverage"`
 
 **Test checkpoint:** The QEMU PXE/TFTP harness + HTTP-Boot mock-server test pass; the missing-file, bad-manifest, timeout, retry, and fallback cases each assert the expected refusal/fallback behavior; bare-metal firmware PXE is exercised where available. Verify on QEMU WHPX/TCG, bare metal.
+
+> **Test runner:** N/A (deferred -- no code shipped) | validation: deferred until §5-§8 ship
+
+> **Notes:**
+> - Deferred, not implemented: the bad-manifest/fallback assertions need §5-§8 (trust, provenance, recovery, fallback); the §1-§4 transport parsers are UEFI-only and need extraction into kernel-testable helpers before a kernel suite can cover them.
+> - Unblock path: extract `net_dhcp_find_option` / TFTP-retry / redirect-resolver into pure helpers callable from a TEST_CAT_BOOT suite, then add the §5-§8 behavioral cases as those sections ship.
+> - Owners: behavioral surface = TODO-25 §5-§8; transport parser extraction = TODO-25 §1-§4 follow-up.
+
+> **Deferred:** [H] PXE/HTTP integration harness + bad-manifest/fallback assertions depend on §5-§8 and on extracting the UEFI-only transport parsers into kernel-testable helpers -> XREF: 01-boot-platform/TODO-25 §5 (trust), §6 (provenance), §8 (recovery)
 
 ---
 
