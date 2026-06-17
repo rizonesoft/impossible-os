@@ -2188,51 +2188,270 @@ static void gop_negotiate_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
     serial_early_print(")\n");
 }
 
-static EFI_STATUS init_gop(void)
+/* ---- Multi-GPU GOP enumeration (TODO-27 sec4) -----------------------------
+ * Firmware can expose more than one EFI_GRAPHICS_OUTPUT_PROTOCOL handle (iGPU +
+ * dGPU, or several connected panels). init_gop enumerates every GOP handle,
+ * records per-handle geometry into boot_info.gop_handles[] for the kernel
+ * multi-head driver (04-drivers-hardware/TODO-17 sec6), and drives the
+ * framebuffer publish on the single PRIMARY handle so boot_info.fb stays
+ * byte-identical to the single-GPU case. Primary selection prefers a
+ * device-path match against the firmware's gST->ConsoleOutHandle (the
+ * authoritative active console), then the EFI_CONSOLE_OUT_DEVICE_GUID marker as
+ * a tie-breaker, then largest resolution. ------------------------------------*/
+
+/* Bounded byte-equality (no CompareMem in freestanding UEFI). */
+static BOOLEAN gop_bytes_equal(const UINT8 *a, const UINT8 *b, UINTN n)
+{
+    UINTN i;
+    for (i = 0; i < n; i++)
+        if (a[i] != b[i])
+            return 0;
+    return 1;
+}
+
+/* TRUE when the device path of `h` is a prefix of (or equal to) the ConsoleOut
+ * device path -- i.e. `h` is the firmware's active console graphics device.
+ * Every access stays within the GetDevicePathSize-measured object; a degenerate
+ * or oversized path yields FALSE rather than a self-walk past the object. */
+static BOOLEAN gop_handle_is_conout(EFI_HANDLE h,
+                                    const EFI_DEVICE_PATH_PROTOCOL *conout_dp,
+                                    UINTN conout_sz,
+                                    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu)
+{
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_DEVICE_PATH_PROTOCOL *hdp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    UINTN hsz, off = 0, prefix_len = 0;
+
+    if (!h || !conout_dp || conout_sz < 4u || !dpu || !dpu->GetDevicePathSize)
+        return 0;
+    if (EFI_ERROR(gBS->HandleProtocol(h, &dp_guid, (VOID **)&hdp)) || !hdp)
+        return 0;
+    hsz = dpu->GetDevicePathSize(hdp);
+    if (hsz < 4u || hsz > 65536u)
+        return 0;
+    /* Find this handle's END node strictly inside [0, hsz); prefix_len is the
+     * span of real nodes before it (UEFI spec Table 10-1: END is Type 0x7F
+     * SubType 0xFF -- both checked, never Type alone). */
+    for (;;) {
+        UINTN nlen;
+        const EFI_DEVICE_PATH_PROTOCOL *node;
+        if (off + 4u > hsz)
+            return 0;
+        node = (const EFI_DEVICE_PATH_PROTOCOL *)((const UINT8 *)hdp + off);
+        nlen = (UINTN)node->Length[0] | ((UINTN)node->Length[1] << 8);
+        if (nlen < 4u || off + nlen > hsz)
+            return 0;
+        if (node->Type == EFI_DP_TYPE_END &&
+            node->SubType == EFI_DP_SUBTYPE_END_ENTIRE) {
+            prefix_len = off;
+            break;
+        }
+        off += nlen;
+    }
+    if (prefix_len == 0u || prefix_len > conout_sz)
+        return 0;
+    return gop_bytes_equal((const UINT8 *)hdp, (const UINT8 *)conout_dp, prefix_len);
+}
+
+/* Read one GOP handle's current mode into a boot_info.gop_handles[] entry.
+ * Geometry is always recorded when Mode->Info is present; fb_addr/fb_size/
+ * fb_valid are set ONLY when the framebuffer passes the SAME validation the
+ * primary publish path enforces -- a secondary head whose mode was never
+ * SetMode-configured must never hand the kernel a stale or non-display MMIO
+ * range to map. */
+static void gop_record_handle(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop,
+                              struct boot_gop_handle *out)
+{
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+    out->fb_addr = 0; out->fb_size = 0;
+    out->width = 0; out->height = 0; out->pitch = 0;
+    out->pixel_format = 2; out->is_primary = 0; out->fb_valid = 0; out->pad = 0;
+    if (!gop || !gop->Mode || !gop->Mode->Info)
+        return;
+    info = gop->Mode->Info;
+    out->width  = info->HorizontalResolution;
+    out->height = info->VerticalResolution;
+    out->pitch  = info->PixelsPerScanLine * 4u;
+    out->pixel_format = gop_pixel_format_code(info->PixelFormat);
+    /* Validation gauntlet -- mirror of init_gop's primary publish checks. */
+    if (gop->Mode->FrameBufferBase == 0)
+        return;
+    if (info->PixelFormat != PixelRedGreenBlueReserved &&
+        info->PixelFormat != PixelBlueGreenRedReserved)
+        return;
+    if (info->PixelsPerScanLine < info->HorizontalResolution ||
+        info->VerticalResolution == 0 || info->PixelsPerScanLine == 0 ||
+        info->VerticalResolution > (0xFFFFFFFFu / 4u) ||
+        info->PixelsPerScanLine > (0xFFFFFFFFu / 4u) ||
+        (UINTN)info->VerticalResolution >
+            ((UINTN)~(UINTN)0 / (UINTN)info->PixelsPerScanLine) ||
+        ((UINTN)info->VerticalResolution * (UINTN)info->PixelsPerScanLine) >
+            ((UINTN)~(UINTN)0 / 4u))
+        return;
+    {
+        UINTN required = (UINTN)info->VerticalResolution *
+                         (UINTN)info->PixelsPerScanLine * 4u;
+        UINTN fb_size = gop->Mode->FrameBufferSize;
+        if (required == 0 || (fb_size > 0 && required > fb_size))
+            return;
+        out->fb_addr  = (UINT64)gop->Mode->FrameBufferBase;
+        out->fb_size  = (UINT64)fb_size;
+        out->fb_valid = 1;
+    }
+}
+
+/* Enumerate all GOP handles, populate boot_info.gop_handles[], pick the primary.
+ * Returns the primary handle's GOP protocol via *out_primary and its index via
+ * *out_primary_idx; EFI_NOT_FOUND when no GOP handle exists (caller goes
+ * headless). Sets boot_info.gop_handle_count. */
+static EFI_STATUS gop_enumerate_and_select(EFI_GRAPHICS_OUTPUT_PROTOCOL *out_gops[],
+                                           UINT32 *out_count)
 {
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
-    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
-    EFI_STATUS status;
-    UINT32 i;
+    EFI_GUID dp_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+    EFI_GUID dpu_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
+    EFI_GUID con_guid = EFI_CONSOLE_OUT_DEVICE_GUID;
+    EFI_HANDLE *handles = (EFI_HANDLE *)0;
+    EFI_DEVICE_PATH_PROTOCOL *conout_dp = (EFI_DEVICE_PATH_PROTOCOL *)0;
+    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpu = (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)0;
+    UINTN count = 0, conout_sz = 0, i;
+    UINTN primary_i, conout_i, guidvalid_i, valid_i, any_i;
+    UINT64 guidvalid_area = 0, valid_area = 0, any_area = 0;
+    UINT32 n = 0;
+    EFI_STATUS s;
 
-    /* Locate GOP -- headless fallback if no display available (S5) */
-    status = gBS->LocateProtocol(&gop_guid, (VOID *)0, (VOID **)&gop);
-    if (EFI_ERROR(status)) {
-        serial_early_print("[BOOT] GOP: none found, headless boot\n");
-        g_boot_info_ptr->fb.addr = 0;
-        g_boot_info_ptr->fb.width = 0;
-        g_boot_info_ptr->fb.height = 0;
-        g_boot_info_ptr->fb_available = 0;
-        return EFI_SUCCESS;  /* Continue boot without display */
+    *out_count = 0;
+    g_boot_info_ptr->gop_handle_count = 0;
+
+    s = gBS->LocateHandleBuffer(ByProtocol, &gop_guid, (VOID *)0, &count, &handles);
+    if (EFI_ERROR(s) || !handles || count == 0) {
+        if (handles) gBS->FreePool(handles);
+        return EFI_NOT_FOUND;
     }
 
-    serial_early_print("[BOOT] GOP: 1 handle found\n");
+    /* ConsoleOut device path + DevicePathUtilities for the authoritative primary
+     * key. Both optional -- absence drops to the GUID / largest-resolution
+     * passes. */
+    if (gST->ConsoleOutHandle &&
+        !EFI_ERROR(gBS->HandleProtocol(gST->ConsoleOutHandle, &dp_guid,
+                                       (VOID **)&conout_dp)) && conout_dp) {
+        (void)gBS->LocateProtocol(&dpu_guid, (VOID *)0, (VOID **)&dpu);
+        if (dpu && dpu->GetDevicePathSize) {
+            UINTN sz = dpu->GetDevicePathSize(conout_dp);
+            if (sz >= 4u && sz <= 65536u) conout_sz = sz;
+        }
+    }
 
-    /* GOP NULL guard MUST run before any gop->Mode->* enumeration.
-     * Firmware can return a successful LocateProtocol with gop->Mode
-     * == NULL (uninitialized GOP); dereferencing MaxMode in the
-     * enumeration loop below would crash the bootloader before
-     * gop_negotiate_mode's recovery path ever runs.  Attempt
-     * SetMode(0) once to coax firmware into populating Mode; if it
-     * stays NULL, fall back to headless boot. */
+    /* Select the primary across ALL handles BEFORE truncating to the exported
+     * BOOT_GOP_HANDLE_MAX slots (a ConsoleOut GOP past the first four must still
+     * win). Priority, highest first:
+     *   1. ConsoleOut device-path match (firmware's active console),
+     *   2. EFI_CONSOLE_OUT_DEVICE_GUID marker AND a valid framebuffer,
+     *   3. valid framebuffer, largest area,
+     *   4. any GOP, largest area (last resort).
+     * Validity-awareness keeps a disconnected high-res GOP from beating a usable
+     * lower-res display. */
+    conout_i = count; guidvalid_i = count; valid_i = count; any_i = count;
+    for (i = 0; i < count; i++) {
+        EFI_GRAPHICS_OUTPUT_PROTOCOL *g = (EFI_GRAPHICS_OUTPUT_PROTOCOL *)0;
+        struct boot_gop_handle rec;
+        UINT64 area;
+        VOID *dummy = (VOID *)0;
+        if (EFI_ERROR(gBS->HandleProtocol(handles[i], &gop_guid, (VOID **)&g)) || !g)
+            continue;
+        gop_record_handle(g, &rec);
+        area = (UINT64)rec.width * (UINT64)rec.height;
+        if (any_i == count || area > any_area) { any_area = area; any_i = i; }
+        if (rec.fb_valid && (valid_i == count || area > valid_area)) {
+            valid_area = area; valid_i = i;
+        }
+        if (rec.fb_valid &&
+            !EFI_ERROR(gBS->HandleProtocol(handles[i], &con_guid, &dummy)) &&
+            (guidvalid_i == count || area > guidvalid_area)) {
+            guidvalid_area = area; guidvalid_i = i;
+        }
+        if (conout_i == count && conout_sz >= 4u &&
+            gop_handle_is_conout(handles[i], conout_dp, conout_sz, dpu)) {
+            conout_i = i;
+        }
+    }
+    if (any_i == count) {            /* no handle exposed a usable GOP protocol */
+        gBS->FreePool(handles);
+        return EFI_NOT_FOUND;
+    }
+    primary_i = (conout_i != count) ? conout_i
+              : (guidvalid_i != count) ? guidvalid_i
+              : (valid_i != count) ? valid_i
+              : any_i;
+
+    /* Export the primary at slot 0, then fill the remaining slots with the other
+     * GOP handles up to BOOT_GOP_HANDLE_MAX. is_primary is set by init_gop on the
+     * slot that actually publishes a framebuffer. */
+    {
+        EFI_GRAPHICS_OUTPUT_PROTOCOL *pg = (EFI_GRAPHICS_OUTPUT_PROTOCOL *)0;
+        if (!EFI_ERROR(gBS->HandleProtocol(handles[primary_i], &gop_guid,
+                                           (VOID **)&pg)) && pg) {
+            gop_record_handle(pg, &g_boot_info_ptr->gop_handles[0]);
+            out_gops[0] = pg;
+            n = 1;
+        }
+    }
+    if (n == 0) {                    /* primary handle lost its GOP (racy) */
+        gBS->FreePool(handles);
+        return EFI_NOT_FOUND;
+    }
+    /* Fill the remaining export/retry slots valid-candidates-first so a usable
+     * secondary is never truncated by an unusable handle earlier in the firmware
+     * list (Codex re-adversarial R1). pass 0 takes fb_valid handles, pass 1 takes
+     * the rest, both capped at BOOT_GOP_HANDLE_MAX. */
+    {
+        UINT32 pass;
+        for (pass = 0; pass < 2u && n < BOOT_GOP_HANDLE_MAX; pass++) {
+            for (i = 0; i < count && n < BOOT_GOP_HANDLE_MAX; i++) {
+                EFI_GRAPHICS_OUTPUT_PROTOCOL *g = (EFI_GRAPHICS_OUTPUT_PROTOCOL *)0;
+                struct boot_gop_handle rec;
+                if (i == primary_i)
+                    continue;
+                if (EFI_ERROR(gBS->HandleProtocol(handles[i], &gop_guid, (VOID **)&g)) || !g)
+                    continue;
+                gop_record_handle(g, &rec);
+                if ((pass == 0u) != (rec.fb_valid != 0u))
+                    continue;     /* pass 0 = valid only; pass 1 = the rest */
+                g_boot_info_ptr->gop_handles[n] = rec;
+                out_gops[n] = g;
+                n++;
+            }
+        }
+    }
+
+    g_boot_info_ptr->gop_handle_count = n;
+    *out_count = n;
+    gBS->FreePool(handles);
+    return EFI_SUCCESS;
+}
+
+/* Negotiate + publish the framebuffer for ONE candidate GOP into boot_info.fb +
+ * the gFb* globals. Returns EFI_SUCCESS when a usable framebuffer was published
+ * (fb_available set to 1), or EFI_UNSUPPORTED when this candidate is unusable
+ * (Mode/Info NULL, no framebuffer, unsupported format, bad dimensions) so the
+ * caller can try the next candidate before declaring headless. Failure paths do
+ * NOT commit headless state -- the caller owns the final headless decision. */
+static EFI_STATUS gop_publish_primary(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop)
+{
+    UINT32 i;
+
+    /* Mode NULL guard: coax firmware with SetMode(0); still NULL = unusable. */
     if (!gop || !gop->Mode) {
         serial_early_print("[BOOT] GOP: Mode NULL post-locate -- "
                            "attempting SetMode(0)\n");
-        if (gop) {
-            gop->SetMode(gop, 0);
-        }
+        if (gop) gop->SetMode(gop, 0);
         if (!gop || !gop->Mode) {
-            serial_early_print("[BOOT] GOP: Mode still NULL -- "
-                               "headless boot\n");
-            g_boot_info_ptr->fb.addr = 0;
-            g_boot_info_ptr->fb.width = 0;
-            g_boot_info_ptr->fb.height = 0;
-            g_boot_info_ptr->fb_available = 0;
-            return EFI_SUCCESS;
+            serial_early_print("[BOOT] GOP: Mode still NULL -- candidate unusable\n");
+            return EFI_UNSUPPORTED;
         }
     }
 
-    /* ── Enumerate all available modes into boot_info ──────────────────── */
+    /* Enumerate all available modes into boot_info. */
     g_boot_info_ptr->gop_mode_count = 0;
     g_boot_info_ptr->gop_mode_selected = 0;
     {
@@ -2242,18 +2461,14 @@ static EFI_STATUS init_gop(void)
             EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info = (EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *)0;
             if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) {
                 query_errors++;
-                /* Abort mode enumeration after 100 consecutive errors --
-                 * firmware may be returning garbage for remaining modes */
                 if (query_errors >= 100) {
                     serial_early_print("[BOOT] GOP: mode enum aborted after 100 errors\n");
                     break;
                 }
                 continue;
             }
-            query_errors = 0;  /* Reset on success */
+            query_errors = 0;
 
-            /* UEFI 12.9.2.4: callee allocates info; caller must free.
-             * Defense-in-depth NULL/size check before dereferencing. */
             if (!info || info_size < sizeof(*info)) {
                 if (info) gBS->FreePool(info);
                 continue;
@@ -2274,69 +2489,30 @@ static EFI_STATUS init_gop(void)
         }
     }
 
-    /* ── Negotiate best mode via boot.conf override or highest-res auto ── */
+    /* Negotiate best mode via boot.conf override or highest-res auto. */
     gop_negotiate_mode(gop);
 
-    /* ── Safety: if firmware framebuffer is still unusable, try mode 0 ── */
+    /* Safety: if firmware framebuffer is still unusable, try mode 0. */
     if (gop->Mode->FrameBufferBase == 0) {
         serial_early_print("[BOOT] GOP: FrameBufferBase=0 after negotiate -- trying mode 0\n");
         EFI_STATUS mode0_s = gop->SetMode(gop, 0);
         if (EFI_ERROR(mode0_s))
             serial_early_print("[BOOT] GOP: SetMode(0) failed in recovery\n");
     }
-
-    /* If framebuffer is STILL null after all retries, go headless */
     if (gop->Mode->FrameBufferBase == 0) {
-        serial_early_print("[BOOT] GOP: no usable framebuffer -- headless mode\n");
-        gFramebuffer = (UINT32 *)0;
-        gFbWidth = 0;
-        gFbHeight = 0;
-        gFbPitch = 0;
-        gFbPixelFormat = 2;
-        g_boot_info_ptr->fb_available = 0;
-        g_boot_info_ptr->hidpi = 0;
-        return EFI_SUCCESS;
+        serial_early_print("[BOOT] GOP: no usable framebuffer -- candidate unusable\n");
+        return EFI_UNSUPPORTED;
     }
-
-    /* Mode->Info NULL guard -- gop_negotiate_mode tries SetMode(0)
-     * when Info is NULL, but firmware can still leave it NULL.  Any
-     * dereference below (PixelFormat, HorizontalResolution, etc.)
-     * would fault in the bootloader; degrade headless instead. */
     if (!gop->Mode->Info) {
-        serial_early_print("[BOOT] GOP: Mode->Info NULL after "
-                           "negotiate -- headless boot\n");
-        gFramebuffer = (UINT32 *)0;
-        gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
-        gFbPixelFormat = 2;
-        g_boot_info_ptr->fb.addr = 0;
-        g_boot_info_ptr->fb.width = 0;
-        g_boot_info_ptr->fb.height = 0;
-        g_boot_info_ptr->fb_available = 0;
-        g_boot_info_ptr->hidpi = 0;
-        return EFI_SUCCESS;
+        serial_early_print("[BOOT] GOP: Mode->Info NULL after negotiate -- candidate unusable\n");
+        return EFI_UNSUPPORTED;
     }
-
-    /* Pixel format gate -- the kernel framebuffer driver only handles
-     * RGBX and BGRX 8-bit-per-component formats.  PixelBitMask /
-     * PixelBltOnly / out-of-range formats become a kernel halt at
-     * fb_init() if we publish them with fb_available=1.  Clear the
-     * framebuffer fields and degrade headless instead. */
     if (gop->Mode->Info->PixelFormat != PixelRedGreenBlueReserved &&
         gop->Mode->Info->PixelFormat != PixelBlueGreenRedReserved) {
-        serial_early_print("[BOOT] GOP: unsupported pixel format -- "
-                           "headless boot\n");
-        gFramebuffer = (UINT32 *)0;
-        gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
-        gFbPixelFormat = 2;
-        g_boot_info_ptr->fb.addr = 0;
-        g_boot_info_ptr->fb.width = 0;
-        g_boot_info_ptr->fb.height = 0;
-        g_boot_info_ptr->fb_available = 0;
-        g_boot_info_ptr->hidpi = 0;
-        return EFI_SUCCESS;
+        serial_early_print("[BOOT] GOP: unsupported pixel format -- candidate unusable\n");
+        return EFI_UNSUPPORTED;
     }
 
-    /* Validate framebuffer size against mode dimensions before touching VRAM */
     gFramebuffer = (UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
     gFbWidth  = gop->Mode->Info->HorizontalResolution;
     gFbHeight = gop->Mode->Info->VerticalResolution;
@@ -2345,40 +2521,30 @@ static EFI_STATUS init_gop(void)
 
     {
         UINTN fb_size = gop->Mode->FrameBufferSize;
-        /* Hostile-firmware overflow guard:
-         * UINT32 height * UINT32 pitch * 4 in UINTN can wrap to a small
-         * value if firmware reports both dimensions near 0xFFFFFFFF.
-         * Reject before any mul that could overflow. */
+        /* Hostile-firmware overflow guard before any height*pitch*4 mul. */
         if (gFbPitch < gFbWidth || gFbHeight == 0 || gFbPitch == 0 ||
             gFbHeight > (0xFFFFFFFFu / 4) ||
             gFbPitch  > (0xFFFFFFFFu / 4) ||
             (UINTN)gFbHeight > ((UINTN)~(UINTN)0 / (UINTN)gFbPitch) ||
             ((UINTN)gFbHeight * (UINTN)gFbPitch) > ((UINTN)~(UINTN)0 / 4)) {
-            serial_early_print("[BOOT] GOP: dimensions out of range -- headless\n");
+            serial_early_print("[BOOT] GOP: dimensions out of range -- candidate unusable\n");
             gFramebuffer = (UINT32 *)0;
             gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
             gFbPixelFormat = 2;
-            g_boot_info_ptr->fb_available = 0;
-            g_boot_info_ptr->hidpi = 0;
-            return EFI_SUCCESS;
+            return EFI_UNSUPPORTED;
         }
         UINTN required_bytes = (UINTN)gFbHeight * (UINTN)gFbPitch * 4;
         if (required_bytes == 0 ||
             (fb_size > 0 && required_bytes > fb_size)) {
-            serial_early_print("[BOOT] GOP: framebuffer size mismatch -- headless\n");
+            serial_early_print("[BOOT] GOP: framebuffer size mismatch -- candidate unusable\n");
             gFramebuffer = (UINT32 *)0;
             gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
             gFbPixelFormat = 2;
-            g_boot_info_ptr->fb_available = 0;
-            g_boot_info_ptr->hidpi = 0;
-            return EFI_SUCCESS;
+            return EFI_UNSUPPORTED;
         }
-        /* VRAM clear is owned by the caller (efi_main, after init_gop
-         * returns); a duplicate clear here would cost ~8 MB MMIO/WC
-         * writes at 1080p for no observable benefit. */
+        /* VRAM clear is owned by the caller (efi_main, after init_gop returns). */
     }
 
-    /* fb.pitch * 4 overflow check: gFbPitch <= 0xFFFFFFFFu/4 verified above */
     g_boot_info_ptr->fb.addr   = (UINT64)gop->Mode->FrameBufferBase;
     g_boot_info_ptr->fb.pitch  = gFbPitch * 4;
     g_boot_info_ptr->fb.width  = gFbWidth;
@@ -2388,19 +2554,14 @@ static EFI_STATUS init_gop(void)
     g_boot_info_ptr->fb.pixel_format =
         gop_pixel_format_code(gop->Mode->Info->PixelFormat);
     g_boot_info_ptr->fb.pad0 = 0;
-    /* gop_mode_selected is the ordinal into gop_modes[] (0..gop_mode_count-1),
-     * NOT the raw firmware mode id. We look up the active mode by matching
-     * width + height + pixels_per_scanline; if the selected raw mode was
-     * not enumerated into the bounded gop_modes[] table (firmware exposed
-     * more than BOOT_GOP_MODE_MAX modes and the negotiator picked an
-     * unenumerated one), we fall through to gop_mode_count as a sentinel
-     * meaning "off-table" -- consumers MUST check selected < count to
-     * avoid OOB reads on gop_modes[selected]. */
+    /* gop_mode_selected: ordinal into gop_modes[] (sentinel = gop_mode_count when
+     * the active raw mode was not enumerated). Consumers MUST check
+     * selected < count before indexing. */
     {
         UINT32 active_w   = gFbWidth;
         UINT32 active_h   = gFbHeight;
         UINT32 active_pps = gFbPitch;
-        UINT32 ord = g_boot_info_ptr->gop_mode_count; /* sentinel */
+        UINT32 ord = g_boot_info_ptr->gop_mode_count;
         UINT32 k;
         for (k = 0; k < g_boot_info_ptr->gop_mode_count; k++) {
             if (g_boot_info_ptr->gop_modes[k].width  == active_w &&
@@ -2413,7 +2574,100 @@ static EFI_STATUS init_gop(void)
         g_boot_info_ptr->gop_mode_selected = ord;
     }
     g_boot_info_ptr->fb_available = 1;
+    return EFI_SUCCESS;
+}
 
+static EFI_STATUS init_gop(void)
+{
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gops[BOOT_GOP_HANDLE_MAX];
+    UINT32 count = 0, order[BOOT_GOP_HANDLE_MAX], om = 0, t, j, c;
+    EFI_STATUS status;
+
+    /* Enumerate every GOP handle (multi-GPU), record per-handle geometry into
+     * boot_info.gop_handles[], and pick the primary (ConsoleOut-attached display,
+     * validity-aware, else largest resolution). Headless when no GOP handle
+     * exists (S5). */
+    status = gop_enumerate_and_select(gops, &count);
+    if (EFI_ERROR(status) || count == 0) {
+        serial_early_print("[BOOT] GOP: none found, headless boot\n");
+        g_boot_info_ptr->fb.addr = 0;
+        g_boot_info_ptr->fb.width = 0;
+        g_boot_info_ptr->fb.height = 0;
+        g_boot_info_ptr->fb_available = 0;
+        return EFI_SUCCESS;  /* Continue boot without display */
+    }
+
+    {
+        char nbuf[2];
+        nbuf[0] = (char)('0' + (count <= 9u ? count : 9u));
+        nbuf[1] = 0;
+        serial_early_print("[BOOT] GOP: ");
+        serial_early_print(nbuf);
+        serial_early_print(count == 1u ? " handle found\n" : " handles found\n");
+    }
+
+    /* Try the selected primary (slot 0), then the remaining valid candidates,
+     * then any remaining candidate, until one publishes a framebuffer -- never go
+     * headless while a usable GOP is still untried. */
+    order[om++] = 0;
+    for (j = 1; j < count; j++)
+        if (g_boot_info_ptr->gop_handles[j].fb_valid) order[om++] = j;
+    for (j = 1; j < count; j++)
+        if (!g_boot_info_ptr->gop_handles[j].fb_valid) order[om++] = j;
+
+    for (t = 0; t < om; t++) {
+        j = order[t];
+        if (gop_publish_primary(gops[j]) == EFI_SUCCESS) {
+            for (c = 0; c < count; c++)
+                g_boot_info_ptr->gop_handles[c].is_primary = (c == j) ? 1u : 0u;
+            /* Refresh the winning head from the published framebuffer (post
+             * negotiate). Other heads keep their gop_record_handle geometry. */
+            {
+                struct boot_gop_handle *ph = &g_boot_info_ptr->gop_handles[j];
+                ph->fb_addr      = g_boot_info_ptr->fb.addr;
+                ph->fb_size      = (UINT64)gops[j]->Mode->FrameBufferSize;
+                ph->width        = g_boot_info_ptr->fb.width;
+                ph->height       = g_boot_info_ptr->fb.height;
+                ph->pitch        = g_boot_info_ptr->fb.pitch;
+                ph->pixel_format = g_boot_info_ptr->fb.pixel_format;
+                ph->fb_valid     = 1;
+            }
+            return EFI_SUCCESS;
+        }
+        /* This candidate proved unusable after negotiate -- invalidate its
+         * advertised framebuffer so the kernel never maps a head we just failed
+         * to bring up (Codex re-adversarial R2). Geometry stays for diagnostics;
+         * fb_addr/fb_valid are cleared. */
+        g_boot_info_ptr->gop_handles[j].fb_addr = 0;
+        g_boot_info_ptr->gop_handles[j].fb_size = 0;
+        g_boot_info_ptr->gop_handles[j].fb_valid = 0;
+        g_boot_info_ptr->gop_handles[j].is_primary = 0;
+    }
+
+    /* Every candidate failed to publish -- headless. Clear ALL per-head state so
+     * a headless boot is unambiguous (Codex re-adversarial R2): no stale fb_valid
+     * entry survives and gop_handle_count drops to 0. */
+    serial_early_print("[BOOT] GOP: no candidate published a framebuffer -- headless boot\n");
+    gFramebuffer = (UINT32 *)0;
+    gFbWidth = 0; gFbHeight = 0; gFbPitch = 0;
+    gFbPixelFormat = 2;
+    g_boot_info_ptr->fb.addr = 0;
+    g_boot_info_ptr->fb.width = 0;
+    g_boot_info_ptr->fb.height = 0;
+    g_boot_info_ptr->fb_available = 0;
+    g_boot_info_ptr->hidpi = 0;
+    for (c = 0; c < BOOT_GOP_HANDLE_MAX; c++) {
+        g_boot_info_ptr->gop_handles[c].fb_addr = 0;
+        g_boot_info_ptr->gop_handles[c].fb_size = 0;
+        g_boot_info_ptr->gop_handles[c].width = 0;
+        g_boot_info_ptr->gop_handles[c].height = 0;
+        g_boot_info_ptr->gop_handles[c].pitch = 0;
+        g_boot_info_ptr->gop_handles[c].pixel_format = 2;
+        g_boot_info_ptr->gop_handles[c].is_primary = 0;
+        g_boot_info_ptr->gop_handles[c].fb_valid = 0;
+        g_boot_info_ptr->gop_handles[c].pad = 0;
+    }
+    g_boot_info_ptr->gop_handle_count = 0;
     return EFI_SUCCESS;
 }
 

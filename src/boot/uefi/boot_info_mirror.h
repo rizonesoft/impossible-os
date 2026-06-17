@@ -50,6 +50,26 @@ struct boot_gop_mode {
     UINT8   pad[3];
 };
 
+/* Per-GOP-handle record for multi-head display (TODO-27 sec4). Mirrors
+ * include/kernel/boot_info.h struct boot_gop_handle field-for-field. fb_addr is
+ * non-zero (fb_valid==1) ONLY when the handle's framebuffer passed the same
+ * validation as the primary; secondary heads record geometry only. */
+#define BOOT_GOP_HANDLE_MAX  4
+
+struct boot_gop_handle {
+    UINT64  fb_addr;        /* FrameBufferBase; 0 unless fb_valid==1 */
+    UINT64  fb_size;        /* FrameBufferSize reported by firmware (0 if unknown) */
+    UINT32  width;
+    UINT32  height;
+    UINT32  pitch;          /* bytes per scanline = PixelsPerScanLine * 4 */
+    UINT8   pixel_format;   /* GOP_PIXEL_* */
+    UINT8   is_primary;     /* 1 = selected primary head (drives boot_info.fb) */
+    UINT8   fb_valid;       /* 1 = fb_addr passed full validation, safe to map */
+    UINT8   pad;
+};
+_Static_assert(sizeof(struct boot_gop_handle) == 32,
+    "boot_gop_handle must be 32 bytes -- kernel + bootloader mirror ABI");
+
 /* Boot configuration from \EFI\ImpossibleOS\boot.conf
  * Must match struct boot_config in kernel/boot_info.h exactly. */
 #define BOOT_CONF_CMDLINE_MAX 256
@@ -268,7 +288,9 @@ struct boot_usb_controller {
  * v12 added ESP integrity fields populated by esp_integrity_check();
  * v10 added BOOT_FLAG_INVOKED_VIA_UKI;
  * v9 added flags + os_loader/required_security_version */
-#define BOOT_INFO_VERSION  22
+/* v23 appends gop_handles[]/gop_handle_count at the tail: multi-GPU GOP handle
+ *     enumeration (TODO-27 sec4). Mirrors include/kernel/boot_info.h. */
+#define BOOT_INFO_VERSION  23
 #endif
 
 /* Mirror of include/kernel/boot_info.h -- producer-valid marker for the sec6
@@ -768,6 +790,15 @@ struct boot_info {
     UINT64   ab_meta_lba;
     UINT32   ab_meta_block_count;
     UINT32   _ab_meta_pad;          /* reserved; zero (align to 8) */
+
+    /* v23: Multi-GPU GOP handle enumeration (TODO-27 sec4). One record per GOP
+     * handle found via LocateHandleBuffer (capped at BOOT_GOP_HANDLE_MAX);
+     * exactly one has is_primary==1 and drives boot_info.fb. gop_handle_count==0
+     * on headless / single-LocateProtocol boots. Mirrors include/kernel/
+     * boot_info.h field-for-field. */
+    struct boot_gop_handle gop_handles[BOOT_GOP_HANDLE_MAX];
+    UINT32   gop_handle_count;
+    UINT32   _gop_handle_pad;       /* reserved; zero (align to 8) */
 };
 
 /* ABI compile-time guards -- catch bootloader/kernel struct drift at build */

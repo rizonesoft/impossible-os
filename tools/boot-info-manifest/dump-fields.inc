@@ -433,3 +433,19 @@ F(ab_status_valid);
 F(ab_meta_lba);
 F(ab_meta_block_count);
 F(_ab_meta_pad);
+
+/* v23: multi-GPU GOP handle enumeration (TODO-27 sec4). */
+F(gop_handles);
+F(gop_handles[0]);              /* element-size sentinel (boot_gop_handle) */
+/* gop_handles[0].* leaves (boot_gop_handle): same-size-reorder defense. */
+F(gop_handles[0].fb_addr);
+F(gop_handles[0].fb_size);
+F(gop_handles[0].width);
+F(gop_handles[0].height);
+F(gop_handles[0].pitch);
+F(gop_handles[0].pixel_format);
+F(gop_handles[0].is_primary);
+F(gop_handles[0].fb_valid);
+F(gop_handles[0].pad);
+F(gop_handle_count);
+F(_gop_handle_pad);

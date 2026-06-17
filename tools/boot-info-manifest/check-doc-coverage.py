@@ -56,6 +56,7 @@ STRUCT_TO_PREFIX: dict[str, str] = {
     "boot_uefi_guid":         "config_table[0].guid.",
     "boot_rt_mem_entry":      "rt_mmap[0].",
     "boot_gop_mode":          "gop_modes[0].",
+    "boot_gop_handle":        "gop_handles[0].",
     "boot_usb_device":        "usb_devices[0].",
     "boot_usb_endpoint":      "usb_devices[0].endpoints[0].",
     "boot_payload_desc":      "payload_descriptors[0].",
@@ -71,7 +72,7 @@ NESTED_STRUCT_FIELD_NAMES = {
     # Members of struct boot_info that are themselves typed sub-structs:
     "header", "config", "fb", "usb_controller", "uefi_runtime", "timing",
     "mmap", "config_table", "rt_mmap", "gop_modes", "usb_devices",
-    "payload_descriptors",
+    "payload_descriptors", "gop_handles",
     # Sub-struct members inside other named structs (boot_uefi_guid lives
     # inside boot_uefi_config_entry; boot_usb_endpoint array lives inside
     # boot_usb_device):
@@ -138,6 +139,7 @@ TOPLEVEL_SECTIONS: list[str] = [
     "Boot policy selection (v19)",
     "Policy audit surface (v20)",
     "OS-visible Loader UEFI variables (v21)",
+    "Multi-GPU GOP handles (v23)",
     # NOTE: do NOT add `Legacy / Multiboot2-only fields` -- it is a
     # summary table only.
 ]
@@ -309,6 +311,7 @@ def resolve_element_sentinel_parent(field: str) -> str | None:
             "config_table":        "Nested struct: `boot_uefi_config_entry`",
             "rt_mmap":             "Nested struct: `boot_rt_mem_entry`",
             "gop_modes":           "Nested struct: `boot_gop_mode`",
+            "gop_handles":         "Nested struct: `boot_gop_handle`",
             "usb_devices":         "Nested struct: `boot_usb_device`",
             "payload_descriptors": "Nested struct: `boot_payload_desc`",
         }

@@ -161,6 +161,7 @@ Extend `display_device_t` registration to a per-head array. Compositor spans or 
 > → XREF: `07-graphics-ui` domain -- compositor layout across monitors is a window manager concern; this section provides the kernel API (`display_get_count()`, `display_get_head(n)`) and syscall stubs that the WM calls.
 
 - [ ] `display_register_head(n, display_device_t *dev)` -- register device at head index `n` (0 = primary); replace single-device `g_display_active` with `g_display_heads[MAX_HEADS]`
+- [ ] Boot-time head registration from `boot_info.gop_handles[]` (`gop_handle_count` entries, published by D01 T27 §4): register each `fb_valid` entry as a head, the `is_primary` one at head 0. -> XREF: `01-boot-platform/TODO-27-uefi-advanced.md §4`
 - [ ] `display_get_count()` -- number of registered heads
 - [ ] `display_get_head(n)` -- return device at head `n`; `NULL` if unpopulated
 - [ ] VMSVGA / VirtIO-GPU: detect multi-scanout capability; register additional heads if device reports >1 scanout

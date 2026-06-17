@@ -24,7 +24,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 - -> XREF: `TODO-03-bootloader-error-recovery.md §3` -- GOP timeout and headless fallback wrap enumeration from this file §6
 - -> XREF: `TODO-04-firmware-table-platform-inventory.md §8` -- ESRT inventory mirror feeds capsule policy in this file §4
 - -> XREF: `TODO-07-boot-entry-store-menu-policy.md §4` -- boot menu framework; this file §1 adds UEFI multi-OS discovery and chainload entries
-- -> XREF: `04-drivers-hardware/TODO-17-gpu-display-drivers.md §6` -- multi-head display consumes `boot_info.gop_handles[]` from §1
+- -> XREF: `04-drivers-hardware/TODO-17-gpu-display-drivers.md §6` -- multi-head display consumes `boot_info.gop_handles[]` from §4
 - -> XREF: `02-kernel-core/TODO-10-kernel-security-hardening.md` -- kernel lockdown triggered by §5 enforcement policy
 - -> XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md` -- chassis type from §4 distinguishes desktop vs laptop
 - -> XREF: `18-future-research/TODO-04-secureboot-tpm.md §3` -- PK/KEK/db key hierarchy builds on §5 and §1
@@ -46,7 +46,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [x]   |
 | 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6              |  [x]   |
 | 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [/]   |
-| 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [ ]   |
+| 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [x]   |
 | 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [ ]   |
 | 💎  |   6   | SMBIOS extended type parsing             | T02 §4              |  [ ]   |
 | 💎  |   7   | DBX revocation list sync                 | T02 §2, §5          |  [ ]   |
@@ -152,13 +152,22 @@ Enumerate all GOP handles via `LocateHandleBuffer` and select the active display
 > [!NOTE]
 > -> XREF: `04-drivers-hardware/TODO-17-gpu-display-drivers.md §6` -- kernel multi-head `display_register_head()` will consume `boot_info.gop_handles[]`.
 
-- [ ] Add `boot_gop_handle_t` struct and `gop_handles[4]` array to `boot_info.h`
-- [ ] Replace `LocateProtocol` with `LocateHandleBuffer` in `init_gop()`
-- [ ] Primary selection: compare each handle's device path against `ConOut` device path; fallback to largest resolution
-- [ ] Call `gop_negotiate_mode()` only on the selected primary handle; `boot_info.fb` unchanged
-- [ ] Commit: `"boot: enumerate all GOP handles -- LocateHandleBuffer, ConOut-path primary selection"`
+- [x] `struct boot_gop_handle` (32B) + `gop_handles[4]` + `gop_handle_count` appended at `boot_info` tail in `boot_info.h` + mirror; `BOOT_INFO_VERSION` 22->23; manifest + doc-coverage + `boot-info-fields.md` registered.
+- [x] `gop_enumerate_and_select()` (`bootx64.c`) replaces `LocateProtocol` with `LocateHandleBuffer(ByProtocol, GOP)`; records up to 4 handles, frees the handle buffer on every path; `init_gop()` negotiate + publish runs on the selected primary only.
+- [x] Primary selection (Codex design D2): `gST->ConsoleOutHandle` device-path prefix match first (`gop_handle_is_conout`, `GetDevicePathSize`-bounded), then `EFI_CONSOLE_OUT_DEVICE_GUID` tie-breaker, then largest `width*height`.
+- [x] `gop_record_handle()` per-head validation gauntlet (Codex design D1): `fb_addr`/`fb_valid` set only on full validation (base!=0, Info!=NULL, supported fmt, `pitch>=width`, no overflow, size covers); failing secondaries record geometry only.
+- [x] Commit: `"boot: enumerate all GOP handles -- LocateHandleBuffer, ConOut-path primary selection"`
 
-**Test checkpoint:** QEMU (single GPU): `[BOOT] GOP: 1 handle(s)`, unchanged. Bare metal iGPU+dGPU: `[BOOT] GOP: 2 handle(s)`.
+**Test checkpoint:** QEMU (single GPU): `[BOOT] GOP: 1 handle found`, `boot_info.fb` byte-identical to pre-change. Bare metal iGPU+dGPU: `[BOOT] GOP: 2 handles found`, primary = ConsoleOut-attached display.
+
+> **Test runner:** N/A (UEFI bootloader-only; no kernel test surface -- `init_gop` enumeration runs on live Boot Services protocols) | validation: serial `[BOOT] GOP: N handle(s)` on QEMU/WHPX + bare-metal multi-GPU; `boot_gop_handle` 32B layout is `_Static_assert`-pinned kernel+mirror.
+
+> **Notes:**
+> - Shipped `gop_enumerate_and_select()`/`gop_handle_is_conout()`/`gop_record_handle()` in `bootx64.c`; `init_gop()` enumerates all GOP handles, publishes `boot_info.gop_handles[4]` (v23 ABI), keeps the primary's `boot_info.fb` unchanged for single-GPU.
+> - Primary = ConsoleOut device-path match, then `EFI_CONSOLE_OUT_DEVICE_GUID` tie-breaker, then largest resolution; secondaries carry validated geometry only. Codex design D1+D2 adopted in commit.
+> - Downstream: `04-drivers-hardware/TODO-17 sec6` `display_register_head()` reads `gop_handles[]`; `gop_handle_count==0` falls back to single-head `boot_info.fb`.
+> - Canonical doc: [docs/boot/boot-info-fields.md](../../docs/boot/boot-info-fields.md) "Multi-GPU GOP handles (v23)" + nested `boot_gop_handle`.
+> - Scope boundary: this section owns bootloader enumeration + per-head ABI publish; kernel multi-head registration/compositing is TODO-17 sec6.
 
 ## 5. Secure Boot Enforcement Policy
 
@@ -218,7 +227,7 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 | ⭐ | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate        | ✅ §1 detect + chainload menu |
 | ⭐ | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash      | ⬜ §2 read-only LVFS; no UpdateCapsule |
 | 💎 | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES   | ✅ §3 static MAT enforce      |
-| 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ⬜ §4                         |
+| 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ✅ §4 enum + ConOut primary   |
 | 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ⬜ §5                         |
 | 💎 | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode    | ⬜ §5                         |
 | 💎 | SMBIOS extended types     | ✅ WMI BaseBoard/Enclosure | ✅ /sys/firmware/dmi full  | ⬜ §6                         |

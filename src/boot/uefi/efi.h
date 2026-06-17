@@ -709,6 +709,15 @@ typedef struct {
     { 0x9042a9de, 0x23dc, 0x4a38, \
       { 0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a } }
 
+/* Marker protocol installed on handles that are firmware console-output
+ * devices (UEFI 2.10 sec 12.3). Used ONLY as a tie-breaker when locating the
+ * primary GOP: the authoritative key is a device-path match against
+ * gST->ConsoleOutHandle, since a handle can carry this marker without being
+ * the firmware's actually-selected ConsoleOut. */
+#define EFI_CONSOLE_OUT_DEVICE_GUID \
+    { 0xd3b36f2c, 0xd551, 0x11d4, \
+      { 0x9a, 0x46, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
+
 #define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID \
     { 0x0964e5b22, 0x6459, 0x11d2, \
       { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } }

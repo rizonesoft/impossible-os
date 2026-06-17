@@ -1466,19 +1466,22 @@ static void test_boot_info_v20_tail(void)
      * <=7-byte tail-pad == struct size. The pinned struct size
      * catches accidental drift in either direction.
      *
-     * History: v19 pinned 28488 with rejected_entry_overflow as tail;
-     * v18 pinned 24056 with degraded_trust_flags as tail; v17 pinned
-     * an earlier size with boot_media_role* as tail. */
+     * History: v22 pinned 28528 with _ab_meta_pad as tail; v19 pinned
+     * 28488 with rejected_entry_overflow as tail; v18 pinned 24056 with
+     * degraded_trust_flags as tail; v17 pinned an earlier size with
+     * boot_media_role* as tail. v23 appended the multi-GPU GOP handle
+     * array (gop_handles[] + gop_handle_count + _gop_handle_pad) at the
+     * tail, so _gop_handle_pad is now the tail field. */
     uint64_t off = (uint64_t)__builtin_offsetof(
-        struct boot_info, _ab_meta_pad);
+        struct boot_info, _gop_handle_pad);
     uint64_t end = off + (uint64_t)sizeof(
-        ((struct boot_info *)0)->_ab_meta_pad);
+        ((struct boot_info *)0)->_gop_handle_pad);
     TEST_ASSERT_EQ((uint64_t)(sizeof(struct boot_info) - end < 8u), 1u,
-                   "_ab_meta_pad must be the v22 tail field "
+                   "_gop_handle_pad must be the v23 tail field "
                    "(<= 7-byte alignment pad to next struct boundary)");
-    TEST_ASSERT_EQ((uint64_t)sizeof(struct boot_info), (uint64_t)28528u,
-                   "v22 struct size pinned at 28528 bytes "
-                   "(A/B-metadata range appended to the v21 loader-vars tail)");
+    TEST_ASSERT_EQ((uint64_t)sizeof(struct boot_info), (uint64_t)28664u,
+                   "v23 struct size pinned at 28664 bytes "
+                   "(multi-GPU GOP handle array appended to the v22 tail)");
 }
 
 /* loader_identity is no longer the tail (v14 appended UKI payload

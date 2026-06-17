@@ -160,7 +160,11 @@ _Static_assert(__builtin_offsetof(struct boot_loader_identity, _pad) == 52,
  *     attribution (git_sha + build_unix_time + label), populated by
  *     the UEFI bootloader from compile-time constants.
  * v12 added ESP integrity fields. */
-#define BOOT_INFO_VERSION  22
+/* v23 appends gop_handles[]/gop_handle_count at the tail: multi-GPU GOP handle
+ *     enumeration (TODO-27 sec4). New fields (not a reserved-region carve), so
+ *     the version bumps. Single-GPU + headless boots leave gop_handle_count 0;
+ *     boot_info.fb stays the authoritative primary framebuffer. */
+#define BOOT_INFO_VERSION  23
 #endif
 
 /* Producer-valid marker for the sec6 A/B slot-status snapshot (boot_info
@@ -1006,6 +1010,32 @@ struct boot_gop_mode {
     uint8_t  pad[3];
 };
 
+/* Per-GOP-handle record for multi-head display (TODO-27 sec4). The bootloader
+ * enumerates every GOP handle via LocateHandleBuffer and records one entry per
+ * handle; the kernel multi-head driver consumes this
+ * (04-drivers-hardware/TODO-17 sec6 display_register_head). fb_addr is non-zero
+ * (and fb_valid==1) ONLY when the handle's framebuffer passed the SAME
+ * validation as the primary (non-NULL Mode->Info, supported pixel format,
+ * pitch>=width, no height*pitch*4 overflow, FrameBufferSize covers the
+ * surface); a secondary head whose mode was never SetMode-configured records
+ * geometry only with fb_addr=0/fb_valid=0 so the kernel never maps a stale or
+ * non-display MMIO range. Exactly one entry has is_primary==1. */
+#define BOOT_GOP_HANDLE_MAX  4
+
+struct boot_gop_handle {
+    uint64_t fb_addr;       /* FrameBufferBase; 0 unless fb_valid==1 */
+    uint64_t fb_size;       /* FrameBufferSize reported by firmware (0 if unknown) */
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;         /* bytes per scanline = PixelsPerScanLine * 4 */
+    uint8_t  pixel_format;  /* GOP_PIXEL_* */
+    uint8_t  is_primary;    /* 1 = selected primary head (drives boot_info.fb) */
+    uint8_t  fb_valid;      /* 1 = fb_addr passed full validation, safe to map */
+    uint8_t  pad;
+};
+_Static_assert(sizeof(struct boot_gop_handle) == 32,
+    "boot_gop_handle must be 32 bytes -- kernel + bootloader mirror ABI");
+
 /* Boot configuration from \EFI\ImpossibleOS\boot.conf */
 #define BOOT_CONF_CMDLINE_MAX 256
 
@@ -1776,6 +1806,19 @@ struct boot_info {
     uint64_t ab_meta_lba;
     uint32_t ab_meta_block_count;
     uint32_t _ab_meta_pad;          /* reserved; zero (align to 8) */
+
+    /* v23: Multi-GPU GOP handle enumeration (TODO-27 sec4). One record per GOP
+     * handle the bootloader found via LocateHandleBuffer (capped at
+     * BOOT_GOP_HANDLE_MAX); exactly one has is_primary==1 and drives
+     * boot_info.fb. Secondary heads carry geometry for the kernel multi-head
+     * driver (04-drivers-hardware/TODO-17 sec6); each head's fb_addr is non-zero
+     * only when fb_valid==1. gop_handle_count==0 on headless boots and on
+     * firmware where only the single-handle LocateProtocol path ran -- in both
+     * cases boot_info.fb remains the authoritative primary framebuffer, so a
+     * count-0 consumer falls back to the existing single-head behavior. */
+    struct boot_gop_handle gop_handles[BOOT_GOP_HANDLE_MAX];
+    uint32_t gop_handle_count;
+    uint32_t _gop_handle_pad;       /* reserved; zero (align to 8) */
 };
 
 /* Compile-time enforcement of ABI header layout (S15) */

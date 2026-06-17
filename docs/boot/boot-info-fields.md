@@ -445,6 +445,16 @@ Surface for the systemd-boot Boot Loader Interface compatibility feature (boot-e
 | `ab_meta_block_count` | bootx64 `select_active_slot()` | P0 | kernel A/B metadata write path | persistent | A/B dual-slot boot | Size of the A/B-metadata partition in parent blocks (0 when absent). v22. |
 | `_ab_meta_pad` | bootx64 boot policy | P0 | none | persistent | A/B dual-slot boot | reserved zero; aligns the v22 A/B-metadata range to 8 bytes. |
 
+## Multi-GPU GOP handles (v23)
+
+Per-GOP-handle enumeration appended at the struct tail (TODO-27 sec4). `init_gop()` enumerates every `EFI_GRAPHICS_OUTPUT_PROTOCOL` handle via `LocateHandleBuffer` (iGPU + dGPU, or multiple panels), records one `boot_gop_handle` per handle, and selects the PRIMARY by device-path match against `gST->ConsoleOutHandle` (then `EFI_CONSOLE_OUT_DEVICE_GUID` marker, then largest resolution). The primary drives `boot_info.fb` unchanged; secondaries carry geometry for the kernel multi-head driver (`04-drivers-hardware/TODO-17 sec6` `display_register_head()`). `gop_handle_count==0` on headless / single-`LocateProtocol` firmware -- consumers fall back to the single-head `boot_info.fb`.
+
+| Field | Producer | Phase | Consumer | Lifetime | Owning TODO | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `gop_handles` | bootx64 `gop_enumerate_and_select()` | P0 | kernel multi-head `display_register_head()` | handoff | multi-GPU GOP enumeration | One `boot_gop_handle` per enumerated GOP handle (max `BOOT_GOP_HANDLE_MAX`=4). Exactly one has `is_primary==1`. v23. |
+| `gop_handle_count` | bootx64 `gop_enumerate_and_select()` | P0 | kernel multi-head driver | handoff | multi-GPU GOP enumeration | Number of valid `gop_handles[]` entries; 0 on headless / single-`LocateProtocol` boots. v23. |
+| `_gop_handle_pad` | bootx64 | P0 | none | handoff | multi-GPU GOP enumeration | reserved zero; aligns the v23 cluster to 8 bytes. |
+
 ## Nested struct: `boot_payload_desc`
 
 48-byte ABI-pinned descriptor. Kernel enum `boot_payload_type` maps well-known values (MODULE, INITRD, RECOVERY_IMAGE, HIBERNATION_META, TPM_EVENT_LOG, NETWORK_CONFIG, RANDOM_SEED, USB_HANDOVER); unknown values are SKIPPED for type-specific validation unless `BOOT_PAYLOAD_FLAG_REQUIRED` is set on the descriptor (required-unknown forces a fatal boot failure).
@@ -562,6 +572,22 @@ One row per GOP mode enumerated pre-ExitBootServices.
 | `pixels_per_scanline` | bootx64 | P0 | same | boot | graphics-asset-foundation | `>= width`. |
 | `pixel_format`        | bootx64 | P0 | same | boot | graphics-asset-foundation | `GOP_PIXEL_*`. |
 | `pad[3]`              | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
+
+## Nested struct: `boot_gop_handle`
+
+32-byte ABI-pinned record (TODO-27 sec4). One per enumerated GOP handle. `fb_addr`/`fb_size`/`fb_valid` are set ONLY when the handle's framebuffer passed the full primary-publish validation (non-zero base, supported pixel format, `pitch>=width`, no `height*pitch*4` overflow, `FrameBufferSize` covers the surface); a secondary head whose mode was never SetMode-configured records geometry with `fb_addr=0`/`fb_valid=0` so the kernel never maps a stale or non-display MMIO range.
+
+| Field | Producer | First valid | Consumer | Lifetime | Owning roadmap | Validation |
+| --- | --- | --- | --- | --- | --- | --- |
+| `fb_addr`      | bootx64 | P0 | kernel multi-head driver | boot | multi-GPU GOP enumeration | FrameBufferBase; 0 unless `fb_valid==1`. |
+| `fb_size`      | bootx64 | P0 | same | boot | multi-GPU GOP enumeration | FrameBufferSize reported by firmware; 0 if unknown. |
+| `width`        | bootx64 | P0 | same | boot | multi-GPU GOP enumeration | `> 0` when present. |
+| `height`       | bootx64 | P0 | same | boot | multi-GPU GOP enumeration | `> 0` when present. |
+| `pitch`        | bootx64 | P0 | same | boot | multi-GPU GOP enumeration | bytes per scanline = `PixelsPerScanLine * 4`. |
+| `pixel_format` | bootx64 | P0 | same | boot | multi-GPU GOP enumeration | `GOP_PIXEL_*`. |
+| `is_primary`   | bootx64 | P0 | same | boot | multi-GPU GOP enumeration | 1 = selected primary head (drives `boot_info.fb`). |
+| `fb_valid`     | bootx64 | P0 | same | boot | multi-GPU GOP enumeration | 1 = `fb_addr` passed full validation, safe to map. |
+| `pad`          | bootx64 | P0 | none (alignment) | -- | -- | Zero. |
 
 ## Nested struct: `boot_config`
 
