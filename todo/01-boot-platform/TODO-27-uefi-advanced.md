@@ -49,7 +49,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [x]   |
 | 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [/]   |
 | 💎  |   6   | SMBIOS extended type parsing             | T02 §4              |  [x]   |
-| 💎  |   7   | DBX revocation list sync                 | T02 §2, §5          |  [ ]   |
+| 💎  |   7   | DBX revocation list sync                 | T02 §2, §5          |  [/]   |
 
 ---
 
@@ -236,7 +236,7 @@ Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 
 
 ## 7. DBX Revocation List Sync
 
-Detect when the installed UEFI dbx is missing revocations shipped with OS updates and warn proactively. Read-only freshness ships now; the authenticated write path is deferred (see below).
+Detect when the installed UEFI dbx is missing revocations shipped with OS updates and warn proactively. DEFERRED: the freshness check is a security signal and needs an integrity-bound official revocation-list baseline (see the deferral note below); the authenticated write path is separately deferred.
 
 **Files:** `src/kernel/uefi_runtime.c` (extend DB inventory), `src/kernel/secureboot_dbx.c` (new, freshness consumer), `resources/secureboot/dbx-latest.bin` (new)
 
@@ -248,16 +248,22 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 
 - [ ] Extend the DB inventory in `uefi_runtime.c`: full bounded dbx read (size from `GetVariable`, heap-backed, no 8192 truncation for the freshness path), reusing `count_sig_entries`
 - [ ] Export a dbx membership/identity API over the parsed buffer (`secureboot_dbx_contains(const uint8_t sha256[32])` + a version/last-entry checksum accessor); keep the count mirror as a summary
-- [ ] Ship `resources/secureboot/dbx-latest.bin` (signed UEFI revocation list) per release; parse its `EFI_SIGNATURE_LIST` at boot
-- [ ] `secureboot_dbx_check_freshness()`: stale iff a shipped-baseline revocation hash is absent from installed dbx or the dbx2-style version is older (see NOTE -- not a count compare)
-- [ ] If stale: `klog(LOG_WARN, ...)` boot warning + set `HKLM\SYSTEM\SecureBoot\DbxStale = 1` and store installed/shipped identity
-- [ ] -> XREF: `TODO-02-uefi-hardening-secureboot.md §17` -- SBAT generation-based revocation complements dbx hash lists; freshness covers both surfaces
-- [ ] Commit: `"kernel: DBX revocation freshness check (read-only, subset/version compare)"`
+- [ ] Ship `resources/secureboot/dbx-latest.bin` (official UEFI revocation list) per release, integrity-bound to a compiled-in SHA-256 digest (or signed manifest) so on-disk tampering cannot suppress/forge the stale signal
+- [ ] `secureboot_dbx_check_freshness()`: compare ALL baseline `EFI_SIGNATURE_LIST` entries by `(type, owner, bytes)` (SHA-256 + X.509 + other) -- subset, never count; `secureboot_esl_contains_sha256` is only a helper
+- [ ] Tri-state `current`/`stale`/`indeterminate` (baseline absent or digest-unverifiable -> indeterminate, not current)
+- [ ] If stale: `klog(LOG_WARN, ...)` + set `HKLM\SYSTEM\SecureBoot\DbxStale = 1` + store installed/shipped identity
+- [ ] Wire `secureboot_dbx_check_freshness()` at Phase 3 (`boot_desktop.c`) after VFS + registry ready; keep the firmware dbx read/cache in `secureboot_keys_init`
+- [ ] -> XREF: `TODO-02-uefi-hardening-secureboot.md §17` -- SBAT generation-based revocation complements dbx hash lists
+- [ ] Commit: `"kernel: DBX revocation freshness check (verified baseline, full-ESL subset compare)"`
 
-> [!WARNING]
-> **Deferred -- authenticated write path.** `secureboot_dbx_apply(path)` (authenticated `APPEND_WRITE` of a signed dbx update) is OUT of this section's shippable scope. `uefi_runtime.c` notes authenticated variable writes await the crypto stack, and an irreversible NVRAM dbx write with no bootloader/SBAT-compatibility preflight or rollback guard risks bricking (fwupd documents this). Implement only when authenticated UEFI variable write (`EFI_VARIABLE_AUTHENTICATION_2`) + a brick-safety preflight exist; until then this item is `[/]` + Deferred, owned by this section.
+- [ ] `secureboot_dbx_apply(path)` authenticated `APPEND_WRITE` of a signed dbx update -- deferred (see note below): needs `EFI_VARIABLE_AUTHENTICATION_2` write + SBAT-compat preflight + rollback guard (irreversible NVRAM write risks bricking)
 
-**Test checkpoint:** QEMU with OVMF: freshness check runs without crash when dbx is empty (logs `dbx: no baseline to compare` or `dbx: current`); with a synthetic installed dbx missing a shipped hash, `HKLM\SYSTEM\SecureBoot\DbxStale = 1` and a `LOG_WARN` fires. Verify on bare metal -- firmware dbx population differs from OVMF.
+**Test checkpoint:** QEMU with OVMF: freshness check runs without crash when dbx is empty (logs `dbx: indeterminate (no baseline)`); with a verified baseline missing from installed dbx, `HKLM\SYSTEM\SecureBoot\DbxStale = 1` and a `LOG_WARN` fires. Verify on bare metal -- firmware dbx population differs from OVMF.
+
+> [!NOTE]
+> **Deferred 2026-06-19 (Codex design review).** dbx freshness is a SECURITY signal (`DbxStale`), so it cannot ship as infrastructure-only: an absent or unverified on-disk baseline makes the check either a permanent no-op or tamperable (an attacker deletes the baseline to suppress detection, or injects hashes to force a false alarm). Shipping it that way is paper completion for a security feature. Authoritative operation requires (1) the official UEFI revocation-list baseline (external release data, not autonomously vendorable) integrity-bound to a compiled-in digest or signed release manifest; (2) full-`EFI_SIGNATURE_LIST`-type comparison (SHA-256 + X.509 + other), not SHA-256-only; (3) Phase-3 wiring after VFS + registry. None of the trust primitives (verified baseline + release-signing) exist yet. The authenticated `secureboot_dbx_apply` write additionally needs `EFI_VARIABLE_AUTHENTICATION_2` + a brick-safety preflight. The dbx read/parse/count surface already ships via [TODO-02 §9](TODO-02-uefi-hardening-secureboot.md#9-sbat-ops-secure-boot-db-registry-mirror-and-exitbootservices-retry).
+
+> **Deferred:** [H] dbx freshness check blocked on an integrity-bound official revocation-list baseline (external release data + compiled-in digest / release-signing) + full-ESL comparison; authenticated apply blocked on `EFI_VARIABLE_AUTHENTICATION_2` write + brick-safety preflight -> XREF: 01-boot-platform/TODO-27 §7 (item: "Ship `resources/secureboot/dbx-latest.bin` ... integrity-bound to a compiled-in SHA-256 digest" -- this section owns the verified-baseline + full-ESL freshness once the release-signing primitive lands)
 
 ---
 
@@ -272,8 +278,8 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 | 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ✅ T02 §5 state detection     |
 | 💎 | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode    | ⬜ §5 deferred -> D02 T10 §16 |
 | 💎 | SMBIOS extended types     | ✅ WMI BaseBoard/Enclosure | ✅ /sys/firmware/dmi full  | ✅ §6 Type 2/3/16/19 + ECC    |
-| 💎 | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool           | ⬜ §7                         |
-| ⭐ | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr| ⬜ §7 -- boot warning         |
+| 💎 | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool           | ⏸️ §7 deferred (baseline)     |
+| ⭐ | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr| ⏸️ §7 deferred (verified base)|
 
 ---
 
