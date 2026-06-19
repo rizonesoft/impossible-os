@@ -212,31 +212,39 @@ Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 
 **Files:** `src/kernel/smbios.c`, `include/kernel/smbios.h`
 
 - [ ] Type 2: manufacturer, product, version, serial, asset tag -> `HKLM\HARDWARE\Baseboard\*`
-- [ ] Type 3: manufacturer, type code, serial, asset tag -> `HKLM\HARDWARE\Chassis\*`; `smbios_get_chassis_type()` for desktop vs laptop distinction
-- [ ] Type 16: location, use, max capacity, device count -> `HKLM\HARDWARE\MemoryArray\*`
+- [ ] Type 3: manufacturer, type code (bit7 lock stripped), serial, asset tag -> `HKLM\HARDWARE\Chassis\*`; `smbios_get_chassis_type()` + `smbios_chassis_is_laptop()` recognizing modern mobile codes (8/9/10/11/14/30/31/32) for power/UI defaults
+- [ ] Type 16: location, use, max capacity, device count, error-correction type (offset 0x06: None/Parity/ECC/CRC) -> `HKLM\HARDWARE\MemoryArray\*` incl. `ErrorCorrection` (ECC-vs-non-ECC parity with Win11 + Linux)
 - [ ] Type 19: start/end address -> `HKLM\HARDWARE\MemoryArray\StartAddr`, `EndAddr`
 - [ ] Commit: `"kernel: SMBIOS Type 2/3/16/19 extended parsing -> Registry HARDWARE hives"`
 
-**Test checkpoint:** QEMU: `HKLM\HARDWARE\Baseboard\Manufacturer` non-empty. Bare metal laptop: `Chassis\Type` = 9 (Laptop).
+**Test checkpoint:** QEMU: `HKLM\HARDWARE\Baseboard\Manufacturer` non-empty; `MemoryArray\ErrorCorrection` holds a valid enum (Unknown/None/ECC). Bare metal laptop: `Chassis\Type` = 9 (Laptop) and `smbios_chassis_is_laptop()` returns 1. Verify on QEMU WHPX/TCG + bare metal (firmware SMBIOS tables differ from QEMU synthetic).
 
 ---
 
 ## 7. DBX Revocation List Sync
 
-Synchronize the UEFI dbx with the latest revocation list shipped with OS updates.
+Detect when the installed UEFI dbx is missing revocations shipped with OS updates and warn proactively. Read-only freshness ships now; the authenticated write path is deferred (see below).
 
-**Files:** `src/kernel/secureboot_dbx.c` (new)
+**Files:** `src/kernel/uefi_runtime.c` (extend DB inventory), `src/kernel/secureboot_dbx.c` (new, freshness consumer), `resources/secureboot/dbx-latest.bin` (new)
 
 > [!TIP]
-> **Competitive edge:** Neither Win11 nor Linux proactively validates dbx freshness from within the OS. Impossible OS can log a boot warning when dbx is stale and offer one-click update.
+> **Competitive edge:** Neither Win11 nor Linux proactively validates dbx freshness from within the OS. Impossible OS logs a boot warning when dbx is stale.
 
-- [ ] `secureboot_dbx_init()`: read `dbx` variable, parse `EFI_SIGNATURE_LIST`, count entries
-- [ ] Ship `resources/secureboot/dbx-latest.bin` with each release; compare installed vs shipped
-- [ ] If stale: log warning, set `HKLM\SYSTEM\SecureBoot\DbxStale = 1`
-- [ ] `secureboot_dbx_apply(path)`: write signed dbx update via `uefi_var_set` with `APPEND_WRITE`
-- [ ] Commit: `"kernel: DBX revocation list freshness check and update path"`
+> [!NOTE]
+> Do NOT add a second dbx parser. `src/kernel/uefi_runtime.c` already owns it: `secureboot_keys_init()` -> `read_security_db()` -> `count_sig_entries()` parse db/dbx/dbt and `secureboot_get_db_info()` exposes counts (mirrored to `HKLM\SYSTEM\SecureBoot\DbxEntries`/`DbxSha256`). But `read_security_db()` truncates dbx to an 8192-byte stack buffer and returns only counts, so freshness must EXTEND that owner, not fork it. Freshness uses subset/membership or a dbx2-style version compare -- NOT entry counts (dbx is APPEND_WRITE so installed is a superset; fwupd `org.uefi.dbx2` uses version, not count).
 
-**Test checkpoint:** QEMU with OVMF: `secureboot_dbx_init()` reads dbx (may be empty). After apply: entry count updated. Verify on bare metal -- firmware dbx population differs from OVMF and VM behavior differs.
+- [ ] Extend the DB inventory in `uefi_runtime.c`: full bounded dbx read (size from `GetVariable`, heap-backed, no 8192 truncation for the freshness path), reusing `count_sig_entries`
+- [ ] Export a dbx membership/identity API over the parsed buffer (`secureboot_dbx_contains(const uint8_t sha256[32])` + a version/last-entry checksum accessor); keep the count mirror as a summary
+- [ ] Ship `resources/secureboot/dbx-latest.bin` (signed UEFI revocation list) per release; parse its `EFI_SIGNATURE_LIST` at boot
+- [ ] `secureboot_dbx_check_freshness()`: stale iff a shipped-baseline revocation hash is absent from installed dbx or the dbx2-style version is older (see NOTE -- not a count compare)
+- [ ] If stale: `klog(LOG_WARN, ...)` boot warning + set `HKLM\SYSTEM\SecureBoot\DbxStale = 1` and store installed/shipped identity
+- [ ] -> XREF: `TODO-02-uefi-hardening-secureboot.md §17` -- SBAT generation-based revocation complements dbx hash lists; freshness covers both surfaces
+- [ ] Commit: `"kernel: DBX revocation freshness check (read-only, subset/version compare)"`
+
+> [!WARNING]
+> **Deferred -- authenticated write path.** `secureboot_dbx_apply(path)` (authenticated `APPEND_WRITE` of a signed dbx update) is OUT of this section's shippable scope. `uefi_runtime.c` notes authenticated variable writes await the crypto stack, and an irreversible NVRAM dbx write with no bootloader/SBAT-compatibility preflight or rollback guard risks bricking (fwupd documents this). Implement only when authenticated UEFI variable write (`EFI_VARIABLE_AUTHENTICATION_2`) + a brick-safety preflight exist; until then this item is `[/]` + Deferred, owned by this section.
+
+**Test checkpoint:** QEMU with OVMF: freshness check runs without crash when dbx is empty (logs `dbx: no baseline to compare` or `dbx: current`); with a synthetic installed dbx missing a shipped hash, `HKLM\SYSTEM\SecureBoot\DbxStale = 1` and a `LOG_WARN` fires. Verify on bare metal -- firmware dbx population differs from OVMF.
 
 ---
 
@@ -261,10 +269,10 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 > Wire into `test_runner_init()` via `test_register_uefi_advanced()`.
 
 - [ ] Create `src/kernel/test/test_uefi_advanced.c` with:
-  - §5: `HKLM\SYSTEM\SecureBoot\SetupMode` exists and is 0 or 1
-  - §6: `HKLM\HARDWARE\Chassis\Type` is valid (1-36) on real hardware
-  - §6: `HKLM\HARDWARE\MemoryArray\MaxCapacityMB` > 0 on real hardware
-  - §7: `secureboot_dbx_init()` does not crash when dbx variable is empty
+  - §5: `HKLM\SYSTEM\SecureBoot\SetupMode` exists and is 0 or 1 (owned by TODO-02 §5; assert presence only)
+  - §6: `HKLM\HARDWARE\Chassis\Type` is valid (1-36) on real hardware; `smbios_chassis_is_laptop()` matches the parsed code
+  - §6: `HKLM\HARDWARE\MemoryArray\MaxCapacityMB` > 0 and `ErrorCorrection` is a valid enum on real hardware
+  - §7: `secureboot_dbx_check_freshness()` does not crash when dbx is empty; `secureboot_dbx_contains()` returns 0 for a hash absent from a synthetic dbx and 1 for one present
 - [ ] Register in `test_runner_init()`: `test_register_uefi_advanced()`
 - [ ] Commit: `"test: add uefi_advanced test suite"`
 
