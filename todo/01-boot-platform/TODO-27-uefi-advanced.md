@@ -48,7 +48,7 @@ title: "TODO-27 -- UEFI Advanced Features"
 | 💎  |   3   | UEFI memory attributes (W^X)            | T02 §1, T24 §1      |  [/]   |
 | 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3              |  [x]   |
 | 💎  |   5   | Secure Boot extended state + enforcement | T02 §5              |  [/]   |
-| 💎  |   6   | SMBIOS extended type parsing             | T02 §4              |  [ ]   |
+| 💎  |   6   | SMBIOS extended type parsing             | T02 §4              |  [x]   |
 | 💎  |   7   | DBX revocation list sync                 | T02 §2, §5          |  [ ]   |
 
 ---
@@ -211,13 +211,23 @@ Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 
 
 **Files:** `src/kernel/smbios.c`, `include/kernel/smbios.h`
 
-- [ ] Type 2: manufacturer, product, version, serial, asset tag -> `HKLM\HARDWARE\Baseboard\*`
-- [ ] Type 3: manufacturer, type code (bit7 lock stripped), serial, asset tag -> `HKLM\HARDWARE\Chassis\*`; `smbios_get_chassis_type()` + `smbios_chassis_is_laptop()` recognizing modern mobile codes (8/9/10/11/14/30/31/32) for power/UI defaults
-- [ ] Type 16: location, use, max capacity, device count, error-correction type (offset 0x06: None/Parity/ECC/CRC) -> `HKLM\HARDWARE\MemoryArray\*` incl. `ErrorCorrection` (ECC-vs-non-ECC parity with Win11 + Linux)
-- [ ] Type 19: start/end address -> `HKLM\HARDWARE\MemoryArray\StartAddr`, `EndAddr`
-- [ ] Commit: `"kernel: SMBIOS Type 2/3/16/19 extended parsing -> Registry HARDWARE hives"`
+- [x] Type 2: manufacturer, product, version, serial, asset tag -> `HKLM\HARDWARE\Baseboard\*` (`parse_type2` extended; per-field length guards)
+- [x] Type 3: manufacturer, type code (bit7 lock stripped), serial, asset tag -> `HKLM\HARDWARE\Chassis\*`; `smbios_chassis_is_laptop()` over pure `smbios_chassis_type_is_mobile()` (codes 8/9/10/11/14/30/31/32)
+- [x] Type 16: location, use, max capacity, device count, error-correction (offset 0x06) -> `HKLM\HARDWARE\MemoryArray\*` incl. `ErrorCorrection` (`parse_type16` via pure `smbios_type16_decode`)
+- [x] Type 19: start/end address -> `HKLM\HARDWARE\MemoryArray\StartAddr`/`EndAddr` (`parse_type19` via pure `smbios_type19_decode`, min/max aggregation, end>=start reject)
+- [x] Commit: `"kernel: SMBIOS Type 2/3/16/19 extended parsing -> Registry HARDWARE hives"`
 
-**Test checkpoint:** QEMU: `HKLM\HARDWARE\Baseboard\Manufacturer` non-empty; `MemoryArray\ErrorCorrection` holds a valid enum (Unknown/None/ECC). Bare metal laptop: `Chassis\Type` = 9 (Laptop) and `smbios_chassis_is_laptop()` returns 1. Verify on QEMU WHPX/TCG + bare metal (firmware SMBIOS tables differ from QEMU synthetic).
+**Test checkpoint:** QEMU: serial shows `SMBIOS: Registry populated: ... Chassis, MemoryArray`; `HKLM\HARDWARE\MemoryArray\ErrorCorrection` holds a valid enum (Unknown/None/ECC). Bare metal laptop: `Chassis\Type` = 9 (Laptop) and `smbios_chassis_is_laptop()` returns 1. Verify on QEMU WHPX/TCG + bare metal (firmware SMBIOS tables differ from QEMU synthetic).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_uefi_advanced.c` 12 sub-tests (chassis codes, KB->byte wrap, Type16 capacity/sentinel/short, Type19 inclusive-end/extended/short-reject/reversed-reject) | live registry populate confirmed via serial
+
+> **Notes:**
+> - **What shipped** -- `parse_type2/3/16/19` + pure decoders (`smbios_type16_decode`/`smbios_type19_decode`/`smbios_kb_to_bytes`/`smbios_chassis_type_is_mobile`) + accessors; Baseboard/Chassis/MemoryArray registry hives.
+> - **How it runs** -- dispatch cases 3/16/19 in the existing single-pass walker; first-array-only Type 16, min-start/max-end aggregation over all Type 19; published at Phase 3 `smbios_populate_registry()`.
+> - **Downstream effects** -- `smbios_chassis_is_laptop()` feeds power/UI defaults (XREF `04-drivers-hardware/TODO-03`); `ErrorCorrection` gives Device Manager ECC-vs-non-ECC.
+> - **Canonical doc** -- [`include/kernel/smbios.h`](../../include/kernel/smbios.h) (`SMBIOS_ECC_*` + pure-decoder contracts).
+> - **Scope boundary** -- §6 owns Type 2/3/16/19 parse + HARDWARE hives; walker + Type 0/1/4/17 stay in `smbios.c` core; §7 owns dbx.
+> - **Codex** -- design 4x + test-coverage adoptions in this commit.
 
 ---
 
@@ -258,7 +268,7 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 | 💎 | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer      | ✅ §4 enum + ConOut primary   |
 | 💎 | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars    | ✅ T02 §5 state detection     |
 | 💎 | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode    | ⬜ §5 deferred -> D02 T10 §16 |
-| 💎 | SMBIOS extended types     | ✅ WMI BaseBoard/Enclosure | ✅ /sys/firmware/dmi full  | ⬜ §6                         |
+| 💎 | SMBIOS extended types     | ✅ WMI BaseBoard/Enclosure | ✅ /sys/firmware/dmi full  | ✅ §6 Type 2/3/16/19 + ECC    |
 | 💎 | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool           | ⬜ §7                         |
 | ⭐ | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr| ⬜ §7 -- boot warning         |
 

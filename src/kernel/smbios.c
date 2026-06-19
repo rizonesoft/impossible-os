@@ -150,6 +150,31 @@ static void smbios_copy_string(char *dst, uint32_t max,
     dst[i] = '\0';
 }
 
+/* ---- Pure helpers (no global state; unit-testable) ---- */
+
+uint64_t smbios_kb_to_bytes(uint32_t kb)
+{
+    /* 64-bit before the shift so values above 4 GiB do not wrap (Codex D2). */
+    return ((uint64_t)kb) << 10;
+}
+
+int smbios_chassis_type_is_mobile(uint8_t code)
+{
+    switch (code) {
+    case 0x08:  /* Portable */
+    case 0x09:  /* Laptop */
+    case 0x0A:  /* Notebook */
+    case 0x0B:  /* Hand Held */
+    case 0x0E:  /* Sub Notebook */
+    case 0x1E:  /* Tablet (30) */
+    case 0x1F:  /* Convertible (31) */
+    case 0x20:  /* Detachable (32) */
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* ---- Structure parsers ---- */
 
 static void parse_type0(const struct smbios_header *hdr)
@@ -183,10 +208,159 @@ static void parse_type1(const struct smbios_header *hdr)
 static void parse_type2(const struct smbios_header *hdr)
 {
     const uint8_t *d = (const uint8_t *)hdr;
-    if (hdr->length < 8) return;
+    /* Manufacturer (d[4]) + Product (d[5]) need length >= 6. The extended
+     * string fields each require their own offset to be inside the formatted
+     * area; reading them under a blanket length>=8 guard would treat the
+     * first string-table byte as a field index on short/older records
+     * (Codex design D4). Guard each field by its own offset. */
+    if (hdr->length < 6) return;
 
     smbios_copy_string(s_info.board_manufacturer, SMBIOS_STRING_MAX, hdr, d[4]);
     smbios_copy_string(s_info.board_product,      SMBIOS_STRING_MAX, hdr, d[5]);
+    if (hdr->length >= 7)
+        smbios_copy_string(s_info.board_version, SMBIOS_STRING_MAX, hdr, d[6]);
+    if (hdr->length >= 8)
+        smbios_copy_string(s_info.board_serial,  SMBIOS_STRING_MAX, hdr, d[7]);
+    if (hdr->length >= 9)
+        smbios_copy_string(s_info.board_asset,   SMBIOS_STRING_MAX, hdr, d[8]);
+}
+
+/* Type 3 -- System Enclosure / Chassis. Type code at offset 0x05 carries the
+ * "lock present" bit in bit7; strip it for the enclosure type per DMTF
+ * DSP0134 Table 17. */
+static void parse_type3(const struct smbios_header *hdr)
+{
+    const uint8_t *d = (const uint8_t *)hdr;
+    if (hdr->length < 9) return;  /* manufacturer..asset span offsets 4..8 */
+
+    smbios_copy_string(s_info.chassis_manufacturer, SMBIOS_STRING_MAX, hdr, d[4]);
+    s_info.chassis_type = (uint8_t)(d[5] & 0x7F);
+    smbios_copy_string(s_info.chassis_serial, SMBIOS_STRING_MAX, hdr, d[7]);
+    smbios_copy_string(s_info.chassis_asset,  SMBIOS_STRING_MAX, hdr, d[8]);
+    s_info.chassis_valid = 1;
+}
+
+/* Pure: decode a Type 16 formatted record's maximum capacity (handling the
+ * 0x80000000 -> 8-byte Extended Maximum Capacity sentinel) and device count.
+ * All KB->byte math is 64-bit (Codex design D2). Returns 1 if long enough. */
+int smbios_type16_decode(const uint8_t *rec, uint8_t length,
+                         uint64_t *out_capacity_bytes,
+                         uint16_t *out_device_count)
+{
+    if (out_capacity_bytes) *out_capacity_bytes = 0;
+    if (out_device_count)   *out_device_count = 0;
+    if (length < 0x0F) return 0;
+
+    uint32_t cap_kb = (uint32_t)(rec[7] | ((uint32_t)rec[8] << 8) |
+                      ((uint32_t)rec[9] << 16) | ((uint32_t)rec[0x0A] << 24));
+    if (cap_kb == 0x80000000u) {
+        /* Extended Maximum Capacity (8 bytes, in bytes) at offset 0x0F */
+        if (length >= 0x17) {
+            uint64_t ext = 0;
+            uint32_t i;
+            for (i = 0; i < 8; i++)
+                ext |= ((uint64_t)rec[0x0F + i]) << (8 * i);
+            if (out_capacity_bytes) *out_capacity_bytes = ext;
+        }
+    } else if (cap_kb != 0 && out_capacity_bytes) {
+        *out_capacity_bytes = smbios_kb_to_bytes(cap_kb);
+    }
+
+    if (out_device_count)
+        *out_device_count = (uint16_t)(rec[0x0D] | ((uint16_t)rec[0x0E] << 8));
+    return 1;
+}
+
+/* Pure: decode a Type 19 record's mapped address range into an inclusive byte
+ * [start, end]. 4-byte fields are KB; the 0xFFFFFFFF sentinel directs readers
+ * to the 8-byte Extended byte addresses at 0x0F/0x17 (SMBIOS 2.7+). Returns 1
+ * on a valid range, 0 if too short or malformed (end < start). */
+int smbios_type19_decode(const uint8_t *rec, uint8_t length,
+                         uint64_t *out_start, uint64_t *out_end,
+                         uint16_t *out_array_handle)
+{
+    if (length < 0x0F) return 0;
+
+    /* Memory Array Handle at offset 0x0C..0x0D (within the 0x0F base guard). */
+    if (out_array_handle)
+        *out_array_handle = (uint16_t)(rec[0x0C] | ((uint16_t)rec[0x0D] << 8));
+
+    uint32_t start_kb = (uint32_t)(rec[4] | ((uint32_t)rec[5] << 8) |
+                        ((uint32_t)rec[6] << 16) | ((uint32_t)rec[7] << 24));
+    uint32_t end_kb   = (uint32_t)(rec[8] | ((uint32_t)rec[9] << 8) |
+                        ((uint32_t)rec[0x0A] << 16) | ((uint32_t)rec[0x0B] << 24));
+
+    uint64_t start, end;
+    if (start_kb == 0xFFFFFFFFu || end_kb == 0xFFFFFFFFu) {
+        /* Both extended fields must be present together (8 bytes each). */
+        if (length < 0x1F) return 0;
+        uint64_t es = 0, ee = 0;
+        uint32_t i;
+        for (i = 0; i < 8; i++) {
+            es |= ((uint64_t)rec[0x0F + i]) << (8 * i);
+            ee |= ((uint64_t)rec[0x17 + i]) << (8 * i);
+        }
+        start = es;
+        end   = ee;  /* extended ending address is already an inclusive byte addr */
+    } else {
+        start = smbios_kb_to_bytes(start_kb);
+        /* ending address is the last KB of the range; inclusive byte end */
+        end   = smbios_kb_to_bytes(end_kb) + 1023u;
+    }
+
+    if (end < start) return 0;  /* reject malformed range */
+    if (out_start) *out_start = start;
+    if (out_end)   *out_end   = end;
+    return 1;
+}
+
+/* Type 16 -- Physical Memory Array (first array only). */
+static void parse_type16(const struct smbios_header *hdr)
+{
+    const uint8_t *d = (const uint8_t *)hdr;
+    if (hdr->length < 0x0F) return;
+    if (s_info.mem_array_valid) return;  /* first array only */
+
+    s_info.mem_array_location         = d[4];
+    s_info.mem_array_use              = d[5];
+    s_info.mem_array_error_correction = d[6];
+    s_info.mem_array_handle           = hdr->handle;
+    smbios_type16_decode(d, hdr->length,
+                         &s_info.mem_array_max_capacity_bytes,
+                         &s_info.mem_array_device_count);
+    s_info.mem_array_valid = 1;
+}
+
+/* Type 19 -- Memory Array Mapped Address. One structure per contiguous range;
+ * multiple ranges can map to one array (RAM split around MMIO holes). For the
+ * single StartAddr/EndAddr registry contract we aggregate min(start)/max(end)
+ * across the Type 19 records that belong to the SELECTED Type 16 array only
+ * (matched by Memory Array Handle), so a multi-array system cannot pair the
+ * first array's capacity with another array's ranges (Codex design D3 +
+ * adversarial A1). Requires the owning Type 16 to have been parsed first,
+ * which firmware always emits in order. */
+static void parse_type19(const struct smbios_header *hdr)
+{
+    const uint8_t *d = (const uint8_t *)hdr;
+    uint64_t start, end;
+    uint16_t array_handle = 0;
+    if (!smbios_type19_decode(d, hdr->length, &start, &end, &array_handle))
+        return;
+
+    /* Only associate ranges with the selected (first) Type 16 array. If no
+     * Type 16 has been seen yet (rare out-of-order firmware), skip rather than
+     * risk mixing another array's ranges into the summary. */
+    if (!s_info.mem_array_valid || array_handle != s_info.mem_array_handle)
+        return;
+
+    if (!s_info.mem_mapped_valid) {
+        s_info.mem_mapped_start = start;
+        s_info.mem_mapped_end   = end;
+        s_info.mem_mapped_valid = 1;
+    } else {
+        if (start < s_info.mem_mapped_start) s_info.mem_mapped_start = start;
+        if (end   > s_info.mem_mapped_end)   s_info.mem_mapped_end   = end;
+    }
 }
 
 static void parse_type4(const struct smbios_header *hdr)
@@ -462,8 +636,11 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
         case 0:  parse_type0(hdr);  break;
         case 1:  parse_type1(hdr);  break;
         case 2:  parse_type2(hdr);  break;
+        case 3:  parse_type3(hdr);  break;
         case 4:  parse_type4(hdr);  break;
+        case 16: parse_type16(hdr); break;
         case 17: parse_type17(hdr); break;
+        case 19: parse_type19(hdr); break;
         default: break;
         }
         uint64_t dt = smbios_rdtsc() - t0;
@@ -707,6 +884,18 @@ int smbios_get_system_uuid(uint8_t uuid[16])
     return 1;
 }
 
+int smbios_get_chassis_type(void)
+{
+    if (!s_info.valid || !s_info.chassis_valid) return -1;
+    return (int)s_info.chassis_type;
+}
+
+int smbios_chassis_is_laptop(void)
+{
+    if (!s_info.valid || !s_info.chassis_valid) return 0;
+    return smbios_chassis_type_is_mobile(s_info.chassis_type);
+}
+
 /* Format uuid[16] as "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" into buf (37 bytes). */
 static void uuid_to_string(const uint8_t uuid[16], char *buf)
 {
@@ -738,6 +927,21 @@ static void u32_to_str(uint32_t v, char *buf, uint32_t bufsize)
     uint32_t i;
     for (i = 0; i < len; i++) buf[i] = tmp[pos + 1 + i];
     buf[len] = '\0';
+}
+
+/* Human-readable name for a SMBIOS Type 16 error-correction code. */
+static const char *ecc_name(uint8_t code)
+{
+    switch (code) {
+    case SMBIOS_ECC_OTHER:      return "Other";
+    case SMBIOS_ECC_UNKNOWN:    return "Unknown";
+    case SMBIOS_ECC_NONE:       return "None";
+    case SMBIOS_ECC_PARITY:     return "Parity";
+    case SMBIOS_ECC_SINGLE_BIT: return "Single-bit ECC";
+    case SMBIOS_ECC_MULTI_BIT:  return "Multi-bit ECC";
+    case SMBIOS_ECC_CRC:        return "CRC";
+    default:                    return "Unknown";
+    }
 }
 
 void smbios_populate_registry(void)
@@ -827,8 +1031,67 @@ void smbios_populate_registry(void)
         }
     }
 
-    klog(LOG_INFO, "SMBIOS", "Registry populated: BIOS, System, %u CPU(s), %u DIMM(s)",
-         (uint32_t)s_info.cpu_count, (uint32_t)s_info.dimm_count);
+    /* ── HKLM\HARDWARE\Baseboard (Type 2) ────────────────────────────── */
+    if (s_info.board_manufacturer[0] || s_info.board_product[0]) {
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\Baseboard", 0,
+                           (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                           &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetString(hKey, "Manufacturer", s_info.board_manufacturer);
+            RegSetString(hKey, "Product",      s_info.board_product);
+            RegSetString(hKey, "Version",      s_info.board_version);
+            RegSetString(hKey, "Serial",       s_info.board_serial);
+            RegSetString(hKey, "AssetTag",     s_info.board_asset);
+            RegCloseKey(hKey);
+        }
+    }
+
+    /* ── HKLM\HARDWARE\Chassis (Type 3) ──────────────────────────────── */
+    if (s_info.chassis_valid) {
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\Chassis", 0,
+                           (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                           &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetString(hKey, "Manufacturer", s_info.chassis_manufacturer);
+            RegSetDword(hKey,  "Type",         (uint32_t)s_info.chassis_type);
+            RegSetDword(hKey,  "IsLaptop",
+                        (uint32_t)smbios_chassis_type_is_mobile(s_info.chassis_type));
+            RegSetString(hKey, "Serial",       s_info.chassis_serial);
+            RegSetString(hKey, "AssetTag",     s_info.chassis_asset);
+            RegCloseKey(hKey);
+        }
+    }
+
+    /* ── HKLM\HARDWARE\MemoryArray (Type 16 + Type 19) ───────────────── */
+    if (s_info.mem_array_valid || s_info.mem_mapped_valid) {
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\MemoryArray", 0,
+                           (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                           &hKey, &disp) == ERROR_SUCCESS) {
+            if (s_info.mem_array_valid) {
+                RegSetDword(hKey, "MaxCapacityMB",
+                    (uint32_t)(s_info.mem_array_max_capacity_bytes / (1024ULL * 1024ULL)));
+                RegSetQword(hKey, "MaxCapacityBytes",
+                            s_info.mem_array_max_capacity_bytes);
+                RegSetDword(hKey, "DeviceCount",
+                            (uint32_t)s_info.mem_array_device_count);
+                RegSetDword(hKey, "Location", (uint32_t)s_info.mem_array_location);
+                RegSetDword(hKey, "Use",      (uint32_t)s_info.mem_array_use);
+                RegSetDword(hKey, "ErrorCorrectionCode",
+                            (uint32_t)s_info.mem_array_error_correction);
+                RegSetString(hKey, "ErrorCorrection",
+                             ecc_name(s_info.mem_array_error_correction));
+            }
+            if (s_info.mem_mapped_valid) {
+                RegSetQword(hKey, "StartAddr", s_info.mem_mapped_start);
+                RegSetQword(hKey, "EndAddr",   s_info.mem_mapped_end);
+            }
+            RegCloseKey(hKey);
+        }
+    }
+
+    klog(LOG_INFO, "SMBIOS", "Registry populated: BIOS, System, %u CPU(s), %u DIMM(s)%s%s%s",
+         (uint32_t)s_info.cpu_count, (uint32_t)s_info.dimm_count,
+         s_info.board_manufacturer[0] ? ", Baseboard" : "",
+         s_info.chassis_valid ? ", Chassis" : "",
+         s_info.mem_array_valid ? ", MemoryArray" : "");
 }
 
 

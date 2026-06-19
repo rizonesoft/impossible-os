@@ -55,6 +55,30 @@ struct smbios_system_info {
     /* Type 2 -- Baseboard */
     char board_manufacturer[SMBIOS_STRING_MAX];
     char board_product[SMBIOS_STRING_MAX];
+    char board_version[SMBIOS_STRING_MAX];
+    char board_serial[SMBIOS_STRING_MAX];
+    char board_asset[SMBIOS_STRING_MAX];
+
+    /* Type 3 -- Chassis / System Enclosure */
+    char    chassis_manufacturer[SMBIOS_STRING_MAX];
+    char    chassis_serial[SMBIOS_STRING_MAX];
+    char    chassis_asset[SMBIOS_STRING_MAX];
+    uint8_t chassis_type;   /* enclosure type, bit7 (lock) stripped */
+    uint8_t chassis_valid;
+
+    /* Type 16 -- Physical Memory Array (first array only) */
+    uint64_t mem_array_max_capacity_bytes; /* 0 = absent/unknown */
+    uint16_t mem_array_handle;   /* structure handle; Type 19 ranges match this */
+    uint16_t mem_array_device_count;
+    uint8_t  mem_array_location;
+    uint8_t  mem_array_use;
+    uint8_t  mem_array_error_correction; /* SMBIOS_ECC_* (offset 0x06) */
+    uint8_t  mem_array_valid;
+
+    /* Type 19 -- Memory Array Mapped Address (first range only) */
+    uint64_t mem_mapped_start;  /* byte address; 0 = absent */
+    uint64_t mem_mapped_end;    /* byte address (inclusive end) */
+    uint8_t  mem_mapped_valid;
 
     /* Type 4 -- Processor (per socket; legacy single-socket summary kept) */
     char     cpu_manufacturer[SMBIOS_STRING_MAX];
@@ -90,6 +114,15 @@ struct smbios_system_info {
 #define SMBIOS_MEM_DDR5   34
 #define SMBIOS_MEM_LPDDR5 35
 
+/* Memory error-correction constants (SMBIOS Type 16 offset 0x06) */
+#define SMBIOS_ECC_OTHER       0x01
+#define SMBIOS_ECC_UNKNOWN     0x02
+#define SMBIOS_ECC_NONE        0x03
+#define SMBIOS_ECC_PARITY      0x04
+#define SMBIOS_ECC_SINGLE_BIT  0x05  /* Single-bit ECC */
+#define SMBIOS_ECC_MULTI_BIT   0x06  /* Multi-bit ECC */
+#define SMBIOS_ECC_CRC         0x07
+
 /* Initialize SMBIOS -- find tables via config table, parse, log summary.
  * Must be called after uefi_config_init(). */
 void smbios_init(void);
@@ -100,6 +133,44 @@ const struct smbios_system_info *smbios_get_info(void);
 /* Copy the raw 16-byte system UUID into uuid[16].
  * Returns 1 if SMBIOS was found and UUID is non-zero, 0 otherwise. */
 int smbios_get_system_uuid(uint8_t uuid[16]);
+
+/* Return the SMBIOS Type 3 chassis/enclosure type code (bit7 lock stripped),
+ * or -1 if no Type 3 record was parsed. Codes per DMTF SMBIOS 3.x Table 17. */
+int smbios_get_chassis_type(void);
+
+/* Return 1 if the chassis type indicates a mobile/portable form factor
+ * (Portable/Laptop/Notebook/Hand-Held/Sub-Notebook/Tablet/Convertible/
+ * Detachable), 0 for desktop/server/unknown. Drives power + UI defaults. */
+int smbios_chassis_is_laptop(void);
+
+/* Pure classifier: 1 if a SMBIOS Type 3 chassis code (bit7 already stripped)
+ * is a mobile/portable form factor, else 0. No global state; testable. */
+int smbios_chassis_type_is_mobile(uint8_t code);
+
+/* Pure helper: convert a SMBIOS kilobyte count to bytes in 64-bit, avoiding
+ * the 32-bit-multiply wrap that truncates addresses above 4 GiB. */
+uint64_t smbios_kb_to_bytes(uint32_t kb);
+
+/* Pure decoder for a SMBIOS Type 16 (Physical Memory Array) formatted record.
+ * `rec` points at the structure start (rec[0]=type, rec[1]=length, ...).
+ * Writes maximum capacity in bytes (0 = unknown/absent; handles the
+ * 0x80000000 sentinel -> 8-byte Extended Maximum Capacity) and the 2-byte
+ * device count. Returns 1 if the record was long enough to decode, else 0.
+ * No global state; testable from synthetic byte arrays. */
+int smbios_type16_decode(const uint8_t *rec, uint8_t length,
+                         uint64_t *out_capacity_bytes,
+                         uint16_t *out_device_count);
+
+/* Pure decoder for a SMBIOS Type 19 (Memory Array Mapped Address) record.
+ * Writes the inclusive byte range [*out_start, *out_end] (4-byte KB fields,
+ * or the 0xFFFFFFFF sentinel -> 8-byte Extended byte addresses at 0x0F/0x17).
+ * Also writes the Memory Array Handle (offset 0x0C) the range belongs to, so
+ * callers can associate ranges with the correct Type 16 array on multi-array
+ * firmware. Returns 1 on a valid range, 0 if the record is too short or
+ * malformed (end < start). No global state; testable from synthetic arrays. */
+int smbios_type19_decode(const uint8_t *rec, uint8_t length,
+                         uint64_t *out_start, uint64_t *out_end,
+                         uint16_t *out_array_handle);
 
 /* Write SMBIOS hardware data into the Registry.
  * Creates HKLM\HARDWARE\BIOS\*, HKLM\HARDWARE\System\*,
