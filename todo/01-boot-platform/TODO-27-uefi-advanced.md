@@ -287,23 +287,23 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 
 > Wire into `test_runner_init()` via `test_register_uefi_advanced()`.
 
-- [ ] Create `src/kernel/test/test_uefi_advanced.c` with:
-  - §5: `HKLM\SYSTEM\SecureBoot\SetupMode` exists and is 0 or 1 (owned by TODO-02 §5; assert presence only)
-  - §6: `HKLM\HARDWARE\Chassis\Type` is valid (1-36) on real hardware; `smbios_chassis_is_laptop()` matches the parsed code
-  - §6: `HKLM\HARDWARE\MemoryArray\MaxCapacityMB` > 0 and `ErrorCorrection` is a valid enum on real hardware
-  - §7: `secureboot_dbx_check_freshness()` does not crash when dbx is empty; `secureboot_dbx_contains()` returns 0 for a hash absent from a synthetic dbx and 1 for one present
-- [ ] Register in `test_runner_init()`: `test_register_uefi_advanced()`
-- [ ] Commit: `"test: add uefi_advanced test suite"`
+- [/] `src/kernel/test/test_uefi_advanced.c` created (TEST_CAT_BOOT, 13 sub-tests; shipped §6 commit `6f040b09`):
+  - [x] §6: `smbios_chassis_type_is_mobile()` codes 8/9/10/11/14/30/31/32 true, desktop/server/unknown false
+  - [x] §6: `smbios_kb_to_bytes()` incl. >4 GiB no-wrap; `smbios_type16_decode`/`smbios_type19_decode` sentinel/extended/inclusive-end/reject/handle fixtures
+  - [/] §5: `HKLM\SYSTEM\SecureBoot\SetupMode` presence -- deferred with §5 (owner TODO-10 §16)
+  - [/] §7: `secureboot_dbx_check_freshness()`/`secureboot_dbx_contains()` -- deferred with §7 (verified-baseline blocker)
+- [x] Register in `test_runner_init()`: `test_register_uefi_advanced()` (shipped §6)
+- [x] Commit: `"test: add uefi_advanced test suite"` (landed in §6 commit `6f040b09`)
 
 ---
 
 ## Verification
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | N suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 2836 kernel + 16 user-mode PASS (KVM 2026-06-19), 0 failures
 
-- [ ] Boot menu appears when two GPT partitions present; countdown works; default boots without input
-- [ ] `[UEFI] W^X enforced on N UEFI memory regions` in serial log (N > 0 on OVMF)
-- [ ] `[SecureBoot] SetupMode=N AuditMode=N DeployedMode=N Enforce=N` in serial log
-- [ ] `[SMBIOS] Baseboard: ... Chassis: ... MemArray: ...` in serial log
-- [ ] `[SecureBoot] dbx: N entries` in serial log
-- [ ] Commit: `"boot: uefi-advanced verified"`
+- [ ] Boot menu appears when two GPT partitions present; countdown works (manual -- needs dual-OS GPT setup; QEMU/bare-metal)
+- [ ] `[UEFI] W^X enforced on N runtime memory regions (static MAT)`, N > 0 (manual -- needs firmware exposing EFI_MEMORY_ATTRIBUTES_TABLE; this KVM OVMF lacks it so §3 logs the graceful enforcement-skipped path)
+- [/] `[SecureBoot] SetupMode=...` in serial log -- deferred with §5 (enforcement-policy owner TODO-10 §16)
+- [x] SMBIOS Chassis + MemoryArray populated: smoke 2026-06-19 logged `SMBIOS: Registry populated: BIOS, System, 1 CPU(s), 1 DIMM(s), Chassis, MemoryArray` (Baseboard absent on QEMU which omits Type 2 manufacturer)
+- [/] `[SecureBoot] dbx: N entries` in serial log -- deferred with §7 (verified-baseline blocker); dbx counts already surface via TODO-02 §9
+- [x] Commit: `"boot: uefi-advanced verified"` (this close-out commit)
