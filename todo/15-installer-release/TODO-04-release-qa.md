@@ -36,6 +36,7 @@ title: "TODO-04 -- Release QA & Platform Certification"
 
 ## Inputs
 
+- `01-boot-platform/TODO-28-boot-validation-certification-matrix.md` (-> XREF) -- boot-platform certification subset (boot-cert matrix schema, boot-path/firmware/Secure-Boot/recovery/network-boot gates, repeat-boot flake reliability); this TODO owns whole-OS release QA. VM launchers (§2-§4) + hardware checklist (§5) are the shared harness TODO-28 §2/§7 consume; the 30-min idle soak (§2) + crash-analytics soak (§8) stay here while TODO-28 owns repeat-BOOT flake detection.
 - `02-kernel-core/TODO-27-crash-dump-generation.md` (-> XREF) -- `X:\Crash\` (BlackBox, -> XREF: TODO-17 §8); minidump format; §6 crash triage
 - `03-memory-concurrency/TODO-10-concurrency-diagnostics.md` (→ XREF) -- `KASAN=1`, `LOCKDEP=1` build flags; stack guard pages; heap canaries; §9 QA build profile
 - `01-boot-platform/TODO-09-cpu-boot-sequencing.md §4` (→ XREF) -- `HV_TSC_ENLIGHTENMENT` detection; `boot_info.hv_flags`; §4 Hyper-V boot dependency
