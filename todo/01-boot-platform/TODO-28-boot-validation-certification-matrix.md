@@ -40,9 +40,9 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 | 💎 | 1 | Boot certification matrix schema | GAP-ANALYSIS | [x] |
 | 💎 | 2 | VM automation suite | §1 | [x] |
 | 💎 | 3 | Storage/media boot suite | §1, T16, T17, T06 | [/] |
-| 💎 | 4 | Security boot suite | §1, T02, T13, T12 | [ ] |
-| 💎 | 5 | Recovery and rollback suite | §1, T21, T22, T23, T26 | [ ] |
-| 💎 | 6 | Network boot suite | §1, T25 | [ ] |
+| 💎 | 4 | Security boot suite | §1, T02, T13, T12 | [/] |
+| 💎 | 5 | Recovery and rollback suite | §1, T21, T22, T23, T26 | [/] |
+| 💎 | 6 | Network boot suite | §1, T25 | [/] |
 | 💎 | 7 | Bare-metal lab inventory | §1 | [ ] |
 | ⭐ | 8 | Boot support bundle collector | §2-§7, TODO-24 | [ ] |
 | ⭐ | 9 | Release gate and dashboard | §1-§8 | [ ] |
@@ -131,6 +131,8 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 **Test checkpoint:** Secure Boot off/on, signed/unsigned bootloader, dbx mismatch, SBAT generation, and TPM present/absent each produce the expected pass/fail with attestation + entropy reports captured; an insecure unexpected-success fails the release gate.
 
+> **Deferred:** [H] Security suite needs the §3 storage-suite driver foundation (deferred) PLUS Secure Boot signing infra (signed/unsigned/dbx/SBAT artifacts) and TPM test infra -- crypto/signing infrastructure not yet available this pass. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- shared suite-driver foundation); 01-boot-platform/TODO-02-uefi-hardening-secureboot.md (Secure Boot / dbx / SBAT signing); 01-boot-platform/TODO-13-tpm-measured-boot.md (TPM present/absent + PCR replay).
+
 ---
 
 ## 5. Recovery and Rollback Suite
@@ -143,6 +145,8 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 **Test checkpoint:** A/B success, failed-slot rollback, recovery-partition fallback, watchdog reboot, and hibernation-failure fallback each hit the expected reason code + counter with no infinite loop; VPD/recovery screenshots captured.
 
+> **Deferred:** [H] Recovery suite needs the §3 storage-suite driver foundation (deferred) PLUS the A/B-slot, recovery-partition, watchdog, and hibernation runtime owned by the recovery/dual-slot/watchdog domains. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- shared suite-driver foundation); 01-boot-platform/TODO-21-ab-slot-dual-boot.md, TODO-22, TODO-23 (A/B + recovery + watchdog runtime).
+
 ---
 
 ## 6. Network Boot Suite
@@ -154,6 +158,8 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 - [ ] Commit: `"test: network boot certification suite"`
 
 **Test checkpoint:** with local DHCP/TFTP/HTTP fixtures, PXE + HTTP Boot + signed-manifest + missing-file + bad-hash + timeout + local-fallback each produce the expected result and capture `network-boot.json`; bare-metal PXE flagged manual when the lab lacks automation.
+
+> **Deferred:** [H] Network-boot suite needs the §3 storage-suite driver foundation (deferred) PLUS the UEFI PXE/HTTP-Boot client runtime + local DHCP/TFTP/HTTP fixtures owned by the network-boot domain. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- shared suite-driver foundation); 01-boot-platform/TODO-25-uefi-network-boot.md (PXE/HTTP Boot client + manifest verification).
 
 ---
 
