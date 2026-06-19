@@ -43,7 +43,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 | 💎 | 4 | Security boot suite | §1, T02, T13, T12 | [/] |
 | 💎 | 5 | Recovery and rollback suite | §1, T21, T22, T23, T26 | [/] |
 | 💎 | 6 | Network boot suite | §1, T25 | [/] |
-| 💎 | 7 | Bare-metal lab inventory | §1 | [ ] |
+| 💎 | 7 | Bare-metal lab inventory | §1 | [x] |
 | ⭐ | 8 | Boot support bundle collector | §2-§7, TODO-24 | [ ] |
 | ⭐ | 9 | Release gate and dashboard | §1-§8 | [ ] |
 | 💎 | 10 | Certification docs | §1-§9 | [ ] |
@@ -165,13 +165,21 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## 7. Bare-Metal Lab Inventory
 
-- [ ] Create `docs/hardware/boot-lab.md` with CPU, chipset, firmware, GPU, storage, USB controller, TPM, Secure Boot status.
-- [ ] Define minimum certification classes: desktop SATA, laptop NVMe, USB-only, Secure Boot+TPM, no-TPM.
-- [ ] Add manual run template and evidence checklist.
-- [ ] Track firmware quirks back to TODO-04 §9.
-- [ ] Commit: `"docs: boot bare-metal lab inventory"`
+- [x] `docs/hardware/boot-lab.md` per-machine inventory schema (CPU, chipset, firmware vendor/version, GPU, storage controller, USB controller, TPM, Secure Boot) + a reference Haswell-laptop block.
+- [x] 5 certification classes (desktop-SATA, laptop-NVMe, USB-only, SecureBoot+TPM, no-TPM) mapped to the `boot-cert.yml` `baremetal-*` platform classes + `boot_device_type` values.
+- [x] Manual run template (build/machine/class/result/artifacts) + per-run evidence checklist (serial, screenshot, BlackBox, firmware report, signed-image + PCR checks).
+- [x] Firmware-quirk tracking links back to `TODO-04` (firmware-table inventory owner; dedicated quirk-registry section not yet numbered there) feeding the §11 firmware-sanity gate.
+- [x] Commit: `"docs: boot bare-metal lab inventory"`
 
 **Test checkpoint:** `docs/hardware/boot-lab.md` lists the 5 certification classes (desktop SATA, laptop NVMe, USB-only, Secure Boot+TPM, no-TPM) with per-machine inventory + a manual run template + evidence checklist; firmware quirks link back to TODO-04 §9.
+
+> **Test runner:** N/A (docs-only) | validation: `docs/hardware/boot-lab.md` lists the 5 classes mapped to `boot-cert.yml` baremetal-* + run template + evidence checklist + TODO-04 §9 quirk XREF
+
+> **Notes:**
+> - **What shipped** -- `docs/hardware/boot-lab.md`: the manual-evidence half of the boot cert matrix (per-machine inventory schema, 5 cert classes, run template, per-run evidence checklist, firmware-quirk tracking).
+> - **Structure / consumers** -- the §9 release gate consumes per-run `result`; the §8 support bundle packages the named artifacts; the 5 classes mirror `tools/boot-cert/boot-cert.yml` `baremetal-*` + `boot_device_type` (boot-info-fields.md).
+> - **Canonical doc** -- [`docs/hardware/boot-lab.md`](../../docs/hardware/boot-lab.md).
+> - **Scope boundary** -- §7 is the manual bare-metal evidence inventory; firmware quirk registry is TODO-04 §9; the firmware-sanity gate that consumes it is §11; automated VM suites are §2-§6.
 
 ---
 
@@ -235,6 +243,7 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 | ⭐ | BlackBox support bundle   | ⚠️ WER/event logs         | ⚠️ journal/sosreport      | ⬜ §8 one-zip bundle          |
 | ⭐ | TODO-owner mapped matrix  | ❌ internal, opaque        | ❌ ad hoc                 | ✅ §1 boot-cert.yml + lint gate |
 | 💎 | Firmware sanity gate      | ✅ HLK firmware tests     | ✅ FWTS (ACPI/UEFI)       | ⬜ §11 consumes T04 inventory |
+| 💎 | Bare-metal cert lab       | ✅ WHQL/HLK lab           | ⚠️ per-distro HW labs     | ✅ §7 5-class lab inventory   |
 | 💎 | Repeat-boot reliability   | ✅ HLK MTBF               | ⚠️ KernelCI boot-to-shell | ✅ §2 cold/warm flake gate     |
 
 ---
