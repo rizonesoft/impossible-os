@@ -39,7 +39,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 | --- | :---: | --- | --- | :---: |
 | 💎 | 1 | Boot certification matrix schema | GAP-ANALYSIS | [x] |
 | 💎 | 2 | VM automation suite | §1 | [x] |
-| 💎 | 3 | Storage/media boot suite | §1, T16, T17, T06 | [ ] |
+| 💎 | 3 | Storage/media boot suite | §1, T16, T17, T06 | [/] |
 | 💎 | 4 | Security boot suite | §1, T02, T13, T12 | [ ] |
 | 💎 | 5 | Recovery and rollback suite | §1, T21, T22, T23, T26 | [ ] |
 | 💎 | 6 | Network boot suite | §1, T25 | [ ] |
@@ -104,13 +104,20 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## 3. Storage/Media Boot Suite
 
-- [ ] Test SATA/AHCI, NVMe, USB MSC, ISO, raw disk, VHD/VHDX, and VDI.
-- [ ] Validate boot device registry and BlackBox logs for each run.
-- [ ] Include slow-media tests for USB 2.0.
-- [ ] Archive artifact manifest and partition map.
+> [!NOTE]
+> Plan sharpened by Codex design review (2026-06-19). §3 is NOT host-tooling-only: it needs a kernel boot-path readback marker, typed QEMU storage topologies, per-format serial standardization, and a coverage schema. Deferred this pass (multi-commit + boot-path scope); the items below are the vetted implementation plan.
+
+- [ ] `boot-test-qemu.sh` typed `--storage` enum (sata-ahci, nvme, usb-msc, usb2-slow, raw-disk) with fixed QEMU device-arg sets (current launcher is AHCI-only, so untyped runs would all exercise one path).
+- [ ] Standardize `--serial-out` on `boot-test-{iso,vhdx,vbox}.sh` so the suite owns serial capture (today ISO writes serial to a private mktemp and deletes it).
+- [ ] Kernel boot-device readback gate in `src/kernel/main/boot_hw.c`: reopen `HKLM\SYSTEM\Boot\Device`, verify populated values, emit a dedicated pass/fail serial marker so the suite validates registry PERSISTENCE, not the populate-attempt log. -> XREF boot-device-discovery owner.
+- [ ] `tools/boot-cert/storage_suite.schema.json` -- coverage manifest enforcing the exact required storage-class set per row (result.schema.json stays the frozen single-run shape).
+- [ ] `tools/boot-cert/storage_suite.py` -- STORAGE_CLASSES registry driving the §2 launchers/gate per class; validates boot-device readback marker + BlackBox (`X:\`) presence; USB 2.0 slow-media case; archives artifact manifest + partition map (sgdisk/parted); emits per-class `result.schema.json` + the coverage manifest.
+- [ ] `tools/boot-cert/test_storage_suite.py` self-test (mock launchers, no live QEMU) wired into `scripts/test-tooling.sh`.
 - [ ] Commit: `"test: boot storage media suite"`
 
-**Test checkpoint:** each storage class (SATA/AHCI, NVMe, USB MSC, ISO, raw disk, VHD/VHDX, VDI) boots and archives its boot-device registry entry + BlackBox log + artifact manifest + partition map; USB 2.0 slow-media case completes.
+**Test checkpoint:** each storage class (SATA/AHCI, NVMe, USB MSC, USB2-slow, ISO, raw disk, VHD/VHDX, VDI) boots via its typed launcher and archives a boot-device readback-marker PASS + BlackBox log + artifact manifest + partition map; the coverage manifest fails if any required class is missing; `storage_suite.py --self-check` + `test_storage_suite.py` pass under `scripts/test-tooling.sh`.
+
+> **Deferred:** [H] Storage suite needs a kernel boot-device readback serial marker (boot-path work + smoke-test/kernel-quality gates), typed `--storage` QEMU topologies, per-format `--serial-out` standardization, and a coverage schema -- a multi-commit effort beyond this pass; Codex-vetted plan captured in the checklist above. -> XREF: 01-boot-platform/TODO-06-boot-media-image-installer-handoff.md §9 (item: "QEMU VHDX boot (KVM/TCG): delegates to scripts/release/boot-test-vhdx.sh") for the per-format launcher/serial standardization.
 
 ---
 
