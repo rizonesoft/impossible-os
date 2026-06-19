@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://impossible-os/tools/boot-cert/result.schema.json",
+  "title": "Boot Certification Result",
+  "description": "TODO-28 §1. A single certification-run result produced by the §2-§8 suites and consumed by the §9 release gate. One object per (row, platform_class, run).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["row_id", "status", "build_id", "machine_id", "tier", "platform_class", "ts"],
+  "properties": {
+    "row_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "matches boot-cert.yml rows[].id" },
+    "status": { "type": "string", "enum": ["pass", "fail", "skip", "degraded"] },
+    "build_id": { "type": "string", "minLength": 1 },
+    "artifact_id": { "type": ["string", "null"] },
+    "machine_id": { "type": "string", "minLength": 1 },
+    "tier": { "type": "string", "enum": ["nightly", "rc", "stable"] },
+    "platform_class": { "type": "string", "minLength": 1 },
+    "ts": { "type": "string", "description": "ISO-8601 UTC timestamp" },
+    "logs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "paths to captured serial / screenshot / BlackBox / firmware-report artifacts for this run"
+    },
+    "reason": { "type": ["string", "null"], "description": "human-readable reason for fail/skip/degraded" }
+  }
+}

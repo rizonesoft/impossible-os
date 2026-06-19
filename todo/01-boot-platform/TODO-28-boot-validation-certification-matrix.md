@@ -37,7 +37,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
-| 💎 | 1 | Boot certification matrix schema | GAP-ANALYSIS | [ ] |
+| 💎 | 1 | Boot certification matrix schema | GAP-ANALYSIS | [x] |
 | 💎 | 2 | VM automation suite | §1 | [ ] |
 | 💎 | 3 | Storage/media boot suite | §1, T16, T17, T06 | [ ] |
 | 💎 | 4 | Security boot suite | §1, T02, T13, T12 | [ ] |
@@ -51,13 +51,23 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## 1. Boot Certification Matrix Schema
 
-- [ ] Define `boot-cert.yml` with platforms, artifacts, features, required/optional gates, and owner TODO.
-- [ ] Each row encodes `required_for` (tier x platform-class), `automation_level`, `owner_todo`, and `source_artifact` (the owner output a gate consumes, e.g. TODO-29 boot-trend) so §9 computes required status from the schema
-- [ ] Define result JSON schema with pass/fail/skip/degraded, logs, build id, artifact id, and machine id.
-- [ ] Map every TODO-01..28 to >=1 row; the lint fails any row lacking an explicit `required_for`/platform applicability policy
-- [ ] Commit: `"test: boot certification matrix schema"`
+- [x] `tools/boot-cert/boot-cert.yml` (29 rows, every boot-platform TODO-01..29) + `boot-cert.schema.json` (row shape, JSON Schema draft 2020-12)
+- [x] Each row encodes `required_for` (tier x platform-class), `automation_level`, `owner_todo`, `source_artifact` (e.g. firmware-tables.json, boot-trend.json) so the release gate computes required status from the schema
+- [x] `tools/boot-cert/result.schema.json` -- per-run result (pass/fail/skip/degraded, logs, build/artifact/machine id, tier, platform_class, ts)
+- [x] `tools/boot-cert/lint.py` (release gate, wired into `scripts/test-tooling.sh`): maps every TODO via the live dir listing (not the cache); fails zero-row TODOs, required rows missing evidence, `required_for` classes outside `platforms[]`
+- [x] Commit: `"test: boot certification matrix schema"`
 
-**Test checkpoint:** `boot-cert.yml` parses + each result validates against the JSON schema; a CI lint fails when any TODO-01..28 maps to zero certification rows.
+**Test checkpoint:** `bash scripts/test-tooling.sh` runs `tools/boot-cert/lint.py` (exit 0: 29 rows, 29 TODOs covered) + `test_lint.py` (6 assertions: shipped matrix passes, coverage gap rejected, evidence-less required row rejected, required_for-subset rejected, result JSON valid/invalid).
+
+> **Test runner:** `bash scripts/test-tooling.sh` | boot-cert lint + self-test (3 aggregate assertions; 396/396 tooling tests PASS) -- host-side certification harness, no kernel `TEST_CAT_*` surface
+
+> **Notes:**
+> - **What shipped** -- `tools/boot-cert/`: `boot-cert.yml` (29-row matrix, every boot-platform TODO), `boot-cert.schema.json` + `result.schema.json` (draft 2020-12), `lint.py` (release gate), `test_lint.py` (6-assertion self-test).
+> - **How it runs** -- `scripts/test-tooling.sh` invokes `lint.py --quiet` (exit non-zero on schema/coverage/evidence failure) + `test_lint.py`; coverage set is the live `todo/01-boot-platform/TODO-NN-*.md` listing, never the cache.
+> - **Downstream effects** -- §2-§8 emit results validated against `result.schema.json`; §9 release gate reads `required_for`/`source_artifact`; §11 firmware gate is the `firmware-tables` row.
+> - **Canonical doc** -- [`tools/boot-cert/boot-cert.schema.json`](../../tools/boot-cert/boot-cert.schema.json) + the `boot-cert.yml` header.
+> - **Scope boundary** -- §1 owns the schema + coverage/evidence lint; the per-suite runners that PRODUCE results are §2-§8; the release dashboard is §9.
+> - **Codex** -- design 2x (D1 evidence binding for required rows, D2 live-dir coverage not cache) adopted in this commit.
 
 ---
 
@@ -193,7 +203,7 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 | 💎 | WHQL-style boot matrix    | ✅ WHQL/HLK               | ⚠️ per-distro CI          | ⬜ §1 cert matrix + gate      |
 | 💎 | VM boot automation        | ⚠️ internal only          | ⚠️ per-distro tests       | ⬜ §2 WHPX/TCG/VBox/Hyper-V   |
 | ⭐ | BlackBox support bundle   | ⚠️ WER/event logs         | ⚠️ journal/sosreport      | ⬜ §8 one-zip bundle          |
-| ⭐ | TODO-owner mapped matrix  | ❌ internal, opaque        | ❌ ad hoc                 | ⬜ §1 every TODO -> gate row  |
+| ⭐ | TODO-owner mapped matrix  | ❌ internal, opaque        | ❌ ad hoc                 | ✅ §1 boot-cert.yml + lint gate |
 | 💎 | Firmware sanity gate      | ✅ HLK firmware tests     | ✅ FWTS (ACPI/UEFI)       | ⬜ §11 consumes T04 inventory |
 | 💎 | Repeat-boot reliability   | ✅ HLK MTBF               | ⚠️ KernelCI boot-to-shell | ⬜ §2 N-boot flake gate       |
 

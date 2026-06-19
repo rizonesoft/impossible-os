@@ -5588,6 +5588,27 @@ fi
 
 
 # ============================================================================
+# Boot certification matrix (TODO-28 boot-validation)
+# ============================================================================
+# tools/boot-cert/lint.py is the release gate that proves boot-cert.yml is
+# schema-valid, every boot-platform TODO maps to a row, and every required row
+# carries machine-readable evidence. test_lint.py proves the gate rejects bad
+# input (not advisory). Both must exit 0 here so CI gates on the matrix.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[boot certification matrix]${NC}"
+BOOTCERT_DIR="$REPO_ROOT/tools/boot-cert"
+if [ -f "$BOOTCERT_DIR/boot-cert.yml" ]; then
+    t_pass "boot-cert.yml present"
+else
+    t_fail "boot-cert.yml present" "missing: $BOOTCERT_DIR/boot-cert.yml"
+fi
+assert_exit_zero "boot-cert lint passes (schema + coverage + evidence)" \
+    python3 "$BOOTCERT_DIR/lint.py" --quiet
+assert_exit_zero "boot-cert self-test passes (gate rejects bad input)" \
+    python3 "$BOOTCERT_DIR/test_lint.py"
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 

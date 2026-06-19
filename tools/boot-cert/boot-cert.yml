@@ -1,0 +1,284 @@
+# Boot Certification Matrix -- TODO-28 (boot certification matrix schema).
+# Every boot-platform TODO (01-29) maps to >=1 certification row binding its
+# boot promise to platforms, the release tiers it is required for, and the
+# machine-readable evidence the release gate reads. Validated by lint.py
+# (shape + cross-field invariants + every-TODO-has-a-row coverage).
+version: 1
+
+platform_classes:
+  - qemu-whpx
+  - qemu-tcg
+  - virtualbox
+  - hyperv
+  - baremetal-desktop-sata
+  - baremetal-laptop-nvme
+  - baremetal-usb-only
+  - baremetal-secureboot-tpm
+  - baremetal-no-tpm
+
+tiers: [nightly, rc, stable]
+
+# Shared shorthand: most automated rows run on the VM classes and gate stable on
+# qemu-whpx (the CI-gating platform), with broader nightly coverage. Bare-metal
+# and visual rows are manual with an evidence template.
+rows:
+  - id: boot-abi-handoff
+    feature: boot_info ABI handoff valid + magic/version accepted
+    owner_todo: TODO-01
+    gate_kind: boot
+    platforms: [qemu-whpx, qemu-tcg, virtualbox, hyperv]
+    required_for: { nightly: [qemu-whpx, qemu-tcg], rc: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: uefi-secureboot-state
+    feature: Secure Boot state + variable hardening
+    owner_todo: TODO-02
+    gate_kind: security
+    platforms: [qemu-whpx, baremetal-secureboot-tpm]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: bootloader-error-recovery
+    feature: bootloader degraded-path + fallback chains
+    owner_todo: TODO-03
+    gate_kind: recovery
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx, qemu-tcg], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: firmware-tables
+    feature: firmware-table sanity (ACPI/SMBIOS/MAT/RT) validation
+    owner_todo: TODO-04
+    gate_kind: firmware
+    platforms: [qemu-whpx, qemu-tcg, baremetal-desktop-sata, baremetal-laptop-nvme]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: firmware-tables.json
+
+  - id: boot-storage-stack
+    feature: boot-time storage stack bring-up
+    owner_todo: TODO-05
+    gate_kind: storage
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: boot-media-installer-handoff
+    feature: boot media + installer artifact handoff
+    owner_todo: TODO-06
+    gate_kind: storage
+    platforms: [qemu-whpx, qemu-tcg, hyperv]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: artifact-manifest.json
+
+  - id: boot-entry-menu
+    feature: boot entry store + countdown menu policy
+    owner_todo: TODO-07
+    gate_kind: boot
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: alternate-boot-protocols
+    feature: alternate boot protocol decision (Multiboot2 unsupported)
+    owner_todo: TODO-08
+    gate_kind: boot
+    platforms: [qemu-tcg]
+    required_for: {}
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: cpu-boot-sequencing
+    feature: SMP AP bring-up + CPU boot sequencing
+    owner_todo: TODO-09
+    gate_kind: boot
+    platforms: [qemu-whpx, virtualbox]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: bare-metal-hardening
+    feature: bare-metal boot hardening (W^X, guard pages, per-CPU MSRs)
+    owner_todo: TODO-10
+    gate_kind: boot
+    platforms: [baremetal-desktop-sata, baremetal-laptop-nvme, baremetal-no-tpm]
+    required_for: { stable: [baremetal-desktop-sata] }
+    automation_level: manual
+    manual_evidence: boot-lab.md hardening row + serial capture
+
+  - id: interrupt-timer-arch
+    feature: interrupt + LAPIC timer calibration
+    owner_todo: TODO-11
+    gate_kind: boot
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx, qemu-tcg], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: early-entropy-seed
+    feature: early entropy + random-seed carryover
+    owner_todo: TODO-12
+    gate_kind: security
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: entropy-report.json
+
+  - id: tpm-measured-boot
+    feature: TPM measured boot + PCR replay + attestation
+    owner_todo: TODO-13
+    gate_kind: security
+    platforms: [qemu-whpx, baremetal-secureboot-tpm]
+    required_for: { nightly: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: attestation-report.json
+
+  - id: boot-diagnostics
+    feature: boot diagnostics + stage timeline + BlackBox
+    owner_todo: TODO-14
+    gate_kind: boot
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: visual-post-display
+    feature: visual POST progress display
+    owner_todo: TODO-15
+    gate_kind: visual
+    platforms: [baremetal-desktop-sata, baremetal-laptop-nvme]
+    required_for: { stable: [baremetal-desktop-sata] }
+    automation_level: manual
+    manual_evidence: boot-lab.md visual-POST screenshot
+
+  - id: nvme-storage
+    feature: NVMe boot device bring-up
+    owner_todo: TODO-16
+    gate_kind: storage
+    platforms: [qemu-tcg, baremetal-laptop-nvme]
+    required_for: { nightly: [qemu-tcg] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: xhci-usb-boot
+    feature: xHCI USB boot device + handover
+    owner_todo: TODO-17
+    gate_kind: storage
+    platforms: [qemu-tcg, baremetal-usb-only]
+    required_for: { nightly: [qemu-tcg] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: usb-hid-input
+    feature: USB HID keyboard/mouse at boot
+    owner_todo: TODO-18
+    gate_kind: boot
+    platforms: [qemu-tcg, baremetal-usb-only]
+    required_for: { nightly: [qemu-tcg] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: usb-boot-hardening
+    feature: USB boot hardening (controller routing, retries)
+    owner_todo: TODO-19
+    gate_kind: storage
+    platforms: [qemu-tcg, baremetal-usb-only]
+    required_for: { nightly: [qemu-tcg] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: usb-zero-delay-handover
+    feature: zero-delay USB handover
+    owner_todo: TODO-20
+    gate_kind: boot
+    platforms: [qemu-tcg, baremetal-usb-only]
+    required_for: { nightly: [qemu-tcg] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: ab-boot-rollback
+    feature: A/B slot success + failed-slot rollback
+    owner_todo: TODO-21
+    gate_kind: recovery
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: recovery-partition
+    feature: recovery partition fallback
+    owner_todo: TODO-22
+    gate_kind: recovery
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: boot-watchdog
+    feature: boot watchdog reboot + reason codes
+    owner_todo: TODO-23
+    gate_kind: recovery
+    platforms: [qemu-whpx]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: blackbox-partition
+    feature: BlackBox service partition logs + crash capture
+    owner_todo: TODO-24
+    gate_kind: boot
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: network-boot
+    feature: PXE + HTTP boot + signed-manifest path
+    owner_todo: TODO-25
+    gate_kind: network
+    platforms: [qemu-tcg]
+    required_for: { nightly: [qemu-tcg] }
+    automation_level: auto
+    source_artifact: network-boot.json
+
+  - id: hibernation-resume
+    feature: hibernation resume + failure fallback
+    owner_todo: TODO-26
+    gate_kind: recovery
+    platforms: [qemu-whpx]
+    required_for: {}
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: uefi-advanced
+    feature: UEFI advanced (multi-GPU GOP, W^X, SMBIOS, dbx)
+    owner_todo: TODO-27
+    gate_kind: firmware
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: boot-cert-matrix
+    feature: boot certification matrix schema + release gate self-check
+    owner_todo: TODO-28
+    gate_kind: infra
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx], rc: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-cert-results.json
+
+  - id: boot-perf-health
+    feature: boot perf / health observability + trend regression
+    owner_todo: TODO-29
+    gate_kind: perf
+    platforms: [qemu-whpx, qemu-tcg]
+    required_for: { nightly: [qemu-whpx], stable: [qemu-whpx] }
+    automation_level: auto
+    source_artifact: boot-trend.json
