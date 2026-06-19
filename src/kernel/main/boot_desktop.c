@@ -116,12 +116,10 @@ void boot_phase3(void)
 
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
     /* pipe_create/shmem_create init lazily; explicit pipe_init gives the
-     * sequencing a uniform entry point. pipe is a global IPC invariant
-     * (fatal if it cannot init -- all userspace IPC would be unsafe); alpc
-     * is optional for boot because pipes/shmem already carry userspace, so
-     * a fatal ALPC degrades rather than halts. Entry POST is written before
-     * init so a hang/fault inside pipe_init/alpc_init shows the IPC stage
-     * rather than the prior SCHED milestone. */
+     * sequencing a uniform entry point. Entry POST is written before init so
+     * a hang/fault inside pipe_init/alpc_init shows the IPC stage rather than
+     * the prior SCHED milestone. Fatal-severity policy for both is documented
+     * at the ipc_rc computation below. */
     {
         POST16(POST16_IPC);
         boot_result_t pipe_rc = pipe_init();

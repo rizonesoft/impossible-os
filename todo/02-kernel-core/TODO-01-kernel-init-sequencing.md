@@ -56,7 +56,7 @@ title: "TODO-01 -- Kernel Init Sequencing"
 | 💎  |   2   | Phase 0 -- critical init                   | §1         |  [x]   |
 | 💎  |   3   | Phase 1 -- platform services               | §2         |  [/]   |
 | 💎  |   4   | Phase 2 -- system services                 | §3         |  [/]   |
-| 💎  |   5   | Phase 3 -- user platform                   | §4         |  [/]   |
+| 💎  |   5   | Phase 3 -- user platform                   | §4         |  [x]   |
 | 💎  |   6   | Dependency gates                           | §1--§5     |  [x]   |
 | 💎  |   7   | Failure policy                             | §6         |  [/]   |
 | 💎  |   8   | Code cleanup                               | §2--§5     |  [/]   |
@@ -209,7 +209,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] `compositor_run()` -- event loop (never returns under normal operation)
 - [x] Phase 3 fatal-path behavior uses recovery screen + `boot_halt()` on prerequisite guards (same pattern as Phase 2); §7 failure policy table updated to match (2026-04-10)
 - [x] Add `boot_progress(3, "step-name", postcode)` at each step
-- [ ] Move syscall/SSDT fast-path bootstrap (`ssdt_init`, `syscall_init_fast`, `syscall_init`) to Phase 1 OR document/accept Phase 3 ownership and update [TODO-12-native-api-ssdt.md](./TODO-12-native-api-ssdt.md) XREF contract
+- [x] Syscall/SSDT bootstrap (`ssdt_init`/`syscall_init_fast`/`syscall_init`, `boot_desktop.c:156-161`) accepted in Phase 3 (works as shipped, consistent with TODO-12 §4); reconciled TODO-12's stale "Phase 1" wording -> Phase 3
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | propagation mechanism covered by `test_subsys_apply_result_dual_channel`; §5 severity/branch logic runs inside `boot_phase3`/`exec_init` (live boot infra, not unit-testable) -- validated via smoke test (boot reaches `C:\>`)
 >
@@ -217,7 +217,10 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 > - IPC/exec typed-init propagation shipped: `boot_phase3` now captures `pipe_init`/`alpc_init`/`exec_init` `boot_result_t` instead of `(void)`-casting, closing the "fatal IPC/exec init silently swallowed" gap (Codex F3).
 > - Severity: pipe OR ALPC failure = FATAL -> recovery+halt (ALPC is all-or-nothing -- its partial state is non-recoverable per `alpc_port.h` and NtAlpc is published unconditionally, so a half-init ALPC must not be advertised ready; adversarial review overrode the design pass's demote-to-degraded); ELF-reg failure = FATAL, EIF/PE = DEGRADED.
 > - Named Phase-3 POST16 codes added (`POST16_IPC` 0x3012/_OK, `POST16_EXEC` 0x3014/_OK), entry code written before init so a fault inside init attributes to the right stage; mapped in `vpd.c` name table (replaces colliding raw 0x0061/0x0062).
-> - Still open: syscall/SSDT Phase-1-vs-Phase-3 ownership decision keeps §5 `[/]`; registry/vfs/exec-signature typed propagation owned by §4/§8 + TODO-06 §2/TODO-14 §8.
+> - Syscall/SSDT bootstrap accepted in Phase 3 (conservative -- works as shipped; TODO-12 §2/Inputs/Verification "Phase 1" wording reconciled to Phase 3). Registry/vfs/exec-signature typed propagation stays owned by §4/§8 + TODO-06 §2/TODO-14 §8.
+>
+> **Verified:** 2026-06-20 | commit `59469135` | 11/11 items | build OK | smoke PASS (KVM 2.58s)
+> **Quality reviewed:** 2026-06-20 | Codex 6x (design, adversarial, re-adversarial, consistency, perf) | 1H+1M fixed | scope: kernel-code-quality
 
 ---
 

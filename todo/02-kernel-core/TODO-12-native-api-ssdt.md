@@ -23,7 +23,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 - [`include/kernel/gdt.h`](../../include/kernel/gdt.h) -- GDT_KERNEL_CODE, GDT_USER_CODE selectors
 - → XREF: `TODO-05-object-manager.md` -- Ob-routed NtXxx functions (NtClose, NtDuplicateObject, NtQueryObject, NtOpenDirectoryObject, NtQueryDirectoryObject already implemented); SSDT entries for file/process/sync depend on TODO-05 §2–§10
 - → XREF: `TODO-11-peb-teb-user-abi.md §5–§8` -- `swapgs` in syscall entry/exit uses the TEB GS contract; KERNEL_GS_BASE per-task
-- → XREF: `TODO-01-kernel-init-sequencing.md §3` -- syscall fast path init belongs in Phase 1 (after GDT/IDT, before scheduler)
+- → XREF: `TODO-01-kernel-init-sequencing.md §5` -- syscall/SSDT fast path init runs in Phase 3 (`boot_desktop.c`, after scheduler, alongside `ssdt_init`); Phase-3 ownership accepted in TODO-01 §5 (consistent with §4 `ssdt_init` Phase-3)
 - → XREF: `TODO-08-time-filetime-management.md §8–§9` -- NtSetTimerResolution/NtQueryTimerResolution (§8), NtQuerySystemTime/NtSetSystemTime/NtQueryPerformanceCounter (§9); service numbers reserved in §2
 - → XREF: `TODO-23-exception-dispatch-seh.md §5` -- NtRaiseException and NtContinue; SSDT indices reserved in §4
 - → XREF: `TODO-15-security-reference-monitor.md §8,§12` -- §8 SeAccessCheck bypasses for kernel-mode (ZwXxx) callers; §12 wires NtAccessCheck, NtOpenProcessToken, etc. to SSDT
@@ -199,7 +199,7 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 - [x] INT 0x80 remains active as fallback (syscall_init() still called)
 - [x] Commit: `"kernel: nt -- SYSCALL/SYSRET fast path init"` + GDT swap commit
 
-**Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 1. `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
+**Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 3 (init runs in `boot_desktop.c`; see TODO-01 §5). `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
 
 ## 3. INT 0x2E Compatibility Path
 Windows NT's original software-interrupt syscall vector. Required for early ntdll and any code that does not use `SYSCALL`.
@@ -997,7 +997,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 ## Verification
 
 - [ ] `bash scripts/build.sh clean` → `tail -1 build/build.log` → `=== BUILD OK ===`
-- [ ] Headless QEMU serial log: Phase 1 shows `"syscall: fast path (SYSCALL/SYSRET) enabled"`
+- [ ] Headless QEMU serial log: Phase 3 shows `"syscall: fast path (SYSCALL/SYSRET) enabled"`
 - [ ] Serial log: `"ssdt: registered 470 services"` (or more)
 - [ ] `mov rax, 0x0000; syscall` from ring 3 reaches `NtClose` handler without a GPF
 - [ ] INT 0x2E from ring 3 reaches the same `syscall_dispatch` with correct register mapping
