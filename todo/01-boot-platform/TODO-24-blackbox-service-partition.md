@@ -273,7 +273,7 @@ Move performance and diagnostic outputs to their BlackBox directories.
 > - Fixed a parent-directory handle leak in the hwdump create-via-dir path (the `dir` node was never `vfs_close`'d).
 > - `firmware-tables.json` C:\ fallback gap accepted to TODO-29 §11 (below).
 > **Verified:** 2026-06-17 | commit `fb846f65` | 5/5 items | build OK | smoke PASS (TCG 2.61s)
-> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 326)
+> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 335)
 > **Quality reviewed:** 2026-06-17 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
