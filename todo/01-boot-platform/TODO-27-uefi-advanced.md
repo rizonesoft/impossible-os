@@ -79,6 +79,8 @@ Detect other OS partitions from GPT and contribute chainload entries to the TODO
 > **Verified:** 2026-06-17 | commit `f259f12c` | 6/6 items | build OK | smoke PASS (TCG 2.70s)
 > **Quality reviewed:** 2026-06-17 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 8H fixed | scope: boot-code-quality
 
+---
+
 ## 2. Firmware Update Advisor (read-only LVFS-style)
 
 Surface what firmware updates exist for the host and tell the operator how to apply them via the **vendor's** update path. Impossible OS does NOT call `UpdateCapsule()`, does NOT write the `OsIndications` capsule bit, does NOT stage capsule images on the ESP, and does NOT trigger reboot-and-flash. Firmware writes are the single failure mode that turns a laptop into a paperweight; the OS-side risk surface for an actual capsule path is wider than its hobby-OS value, so this section is deliberately scoped as advisory only.
@@ -112,6 +114,8 @@ Surface what firmware updates exist for the host and tell the operator how to ap
 > **Verified:** 2026-05-03 | this commit | 9/9 items | build OK | smoke PASS (KVM 2.55s) + 187-byte advisor JSON + sentinel symbols present
 > **Quality reviewed:** 2026-05-03 | Codex 7x (design + adversarial x2 + consistency x2 + perf + re-adversarial) | 1H+5M+1L fixed | scope: kernel-code-quality + userland-code-quality
 
+---
+
 ## 3. UEFI Memory Attributes (W^X)
 
 Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEMORY_ATTRIBUTES_TABLE`.
@@ -143,6 +147,8 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 > **Deferred:** [M] `EFI_MEMORY_ATTRIBUTE_PROTOCOL` runtime sync (firmware-page-table mirror of OS NX/RO flips) needs a boot_info ABI add + bootloader LocateProtocol pre-EBS; UEFI 2.10-only, absent on older firmware (Codex design review recommended defer) -> XREF: 01-boot-platform/TODO-27 §3 (item: "EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync" at line 128)
 > **Quality reviewed:** 2026-06-17 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 3H+1M fixed | scope: kernel-code-quality
 
+---
+
 ## 4. Multi-GPU GOP Handle Enumeration
 
 Enumerate all GOP handles via `LocateHandleBuffer` and select the active display using ConOut device path.
@@ -172,6 +178,8 @@ Enumerate all GOP handles via `LocateHandleBuffer` and select the active display
 > **Verified:** 2026-06-17 | commit `3662b910` | 4/4 items | build OK | smoke PASS (TCG 2.64s, 2 handles found, 1280x800 BGRX to C:\)
 > **Quality reviewed:** 2026-06-17 | Codex 8x (design, adversarial, consistency, perf, re-adversarial) | 5H+2M+1L fixed | scope: boot-code-quality
 
+---
+
 ## 5. Secure Boot Enforcement Policy
 
 Provide a kernel-lockdown enforcement policy gated on the canonical Secure Boot state. The state itself (SetupMode/AuditMode/DeployedMode + drift detection) is owned by [TODO-02 §5](TODO-02-uefi-hardening-secureboot.md#5-secure-boot-state-detection); this section is enforcement policy that CONSUMES the canonical state via the `uefi_secureboot_*` API, not duplicate variable reads.
@@ -195,6 +203,8 @@ Provide a kernel-lockdown enforcement policy gated on the canonical Secure Boot 
 
 > **Deferred:** [H] Secure Boot enforcement policy core blocks on the kernel lockdown mechanism (does not exist) + the `boot.conf` lockdown knob is reserved by TODO-10 -> XREF: 02-kernel-core/TODO-10 §16 (item: "`kernel_lockdown_engage(reason)`" -- owns SecureBootEnforce knob + lockdown + DeployedMode write-protection + audit-log + drift-triggered lockdown)
 
+---
+
 ## 6. SMBIOS Extended Type Parsing
 
 Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 19 (Memory Mapped Address).
@@ -208,6 +218,8 @@ Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 
 - [ ] Commit: `"kernel: SMBIOS Type 2/3/16/19 extended parsing -> Registry HARDWARE hives"`
 
 **Test checkpoint:** QEMU: `HKLM\HARDWARE\Baseboard\Manufacturer` non-empty. Bare metal laptop: `Chassis\Type` = 9 (Laptop).
+
+---
 
 ## 7. DBX Revocation List Sync
 
@@ -224,7 +236,7 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 - [ ] `secureboot_dbx_apply(path)`: write signed dbx update via `uefi_var_set` with `APPEND_WRITE`
 - [ ] Commit: `"kernel: DBX revocation list freshness check and update path"`
 
-**Test checkpoint:** QEMU with OVMF: `secureboot_dbx_init()` reads dbx (may be empty). After apply: entry count updated.
+**Test checkpoint:** QEMU with OVMF: `secureboot_dbx_init()` reads dbx (may be empty). After apply: entry count updated. Verify on bare metal -- firmware dbx population differs from OVMF and VM behavior differs.
 
 ---
 
@@ -242,6 +254,8 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 | 💎 | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool           | ⬜ §7                         |
 | ⭐ | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr| ⬜ §7 -- boot warning         |
 
+---
+
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_uefi_advanced()`.
@@ -254,7 +268,11 @@ Synchronize the UEFI dbx with the latest revocation list shipped with OS updates
 - [ ] Register in `test_runner_init()`: `test_register_uefi_advanced()`
 - [ ] Commit: `"test: add uefi_advanced test suite"`
 
+---
+
 ## Verification
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | N suites, 0 failures
 
 - [ ] Boot menu appears when two GPT partitions present; countdown works; default boots without input
 - [ ] `[UEFI] W^X enforced on N UEFI memory regions` in serial log (N > 0 on OVMF)
