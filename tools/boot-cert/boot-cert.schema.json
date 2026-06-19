@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://impossible-os/tools/boot-cert/boot-cert.schema.json",
   "title": "Boot Certification Matrix",
-  "description": "TODO-28 §1. The boot-platform certification matrix. Each row binds a boot promise (owner TODO) to the platforms it must pass on, the release tiers it is required for, and the machine-readable evidence a gate consumes. Shape-validated here; cross-field invariants (source_artifact required for auto/semi required rows, required_for platforms a subset of platforms) are enforced by lint.py beyond what JSON Schema can express.",
+  "description": "Boot certification matrix (TODO-28 boot validation). The boot-platform certification matrix. Each row binds a boot promise (owner TODO) to the platforms it must pass on, the release tiers it is required for, and the machine-readable evidence a gate consumes. Shape-validated here; cross-field invariants (source_artifact required for auto/semi required rows, required_for platforms a subset of platforms) are enforced by lint.py beyond what JSON Schema can express.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "platform_classes", "tiers", "rows"],

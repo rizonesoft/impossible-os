@@ -57,7 +57,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 - [x] `tools/boot-cert/lint.py` (release gate, wired into `scripts/test-tooling.sh`): maps every TODO via the live dir listing (not the cache); fails zero-row TODOs, required rows missing evidence, `required_for` classes outside `platforms[]`
 - [x] Commit: `"test: boot certification matrix schema"`
 
-**Test checkpoint:** `bash scripts/test-tooling.sh` runs `tools/boot-cert/lint.py` (exit 0: 29 rows, 29 TODOs covered) + `test_lint.py` (6 assertions: shipped matrix passes, coverage gap rejected, evidence-less required row rejected, required_for-subset rejected, result JSON valid/invalid).
+**Test checkpoint:** `bash scripts/test-tooling.sh` runs `tools/boot-cert/lint.py` (exit 0: 29 rows, 29 TODOs covered) + `test_lint.py` (18 assertions, each asserting the SPECIFIC diagnostic: coverage gap, evidence-less required row, required_for-subset, undeclared row platform, undeclared tier, duplicate YAML key incl. inline merge-source, cyclic merge alias, duplicate JSON key, out-of-matrix result platform, deeply-nested JSON, empty + present-but-empty `--results`; merge+override loads; result JSON valid/invalid).
 
 > **Test runner:** `bash scripts/test-tooling.sh` | boot-cert lint + self-test (3 aggregate assertions; 396/396 tooling tests PASS) -- host-side certification harness, no kernel `TEST_CAT_*` surface
 
@@ -67,7 +67,10 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 > - **Downstream effects** -- §2-§8 emit results validated against `result.schema.json`; §9 release gate reads `required_for`/`source_artifact`; §11 firmware gate is the `firmware-tables` row.
 > - **Canonical doc** -- [`tools/boot-cert/boot-cert.schema.json`](../../tools/boot-cert/boot-cert.schema.json) + the `boot-cert.yml` header.
 > - **Scope boundary** -- §1 owns the schema + coverage/evidence lint; the per-suite runners that PRODUCE results are §2-§8; the release dashboard is §9.
-> - **Codex** -- design 2x (D1 evidence binding for required rows, D2 live-dir coverage not cache) adopted in this commit.
+> - **Codex** -- design 2x + adversarial/consistency/perf + re-adversarial x9 convergence; finding evidence in commit history.
+
+> **Verified:** 2026-06-19 | this commit | 5/5 items | build OK | test_lint.py 18/18 + test-tooling 396/396 PASS
+> **Quality reviewed:** 2026-06-19 | Codex 20x (design, adversarial, consistency, perf, re-adversarial) | 2H+13M fixed | scope: N/A (host-side Python tooling; no domain code-quality skill)
 
 ---
 

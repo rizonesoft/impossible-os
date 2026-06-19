@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://impossible-os/tools/boot-cert/result.schema.json",
   "title": "Boot Certification Result",
-  "description": "TODO-28 §1. A single certification-run result produced by the §2-§8 suites and consumed by the §9 release gate. One object per (row, platform_class, run).",
+  "description": "Boot certification matrix (TODO-28 boot validation). A single certification-run result produced by the §2-§8 suites and consumed by the §9 release gate. One object per (row, platform_class, run).",
   "type": "object",
   "additionalProperties": false,
   "required": ["row_id", "status", "build_id", "machine_id", "tier", "platform_class", "ts"],
