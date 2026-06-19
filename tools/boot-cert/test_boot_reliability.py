@@ -224,6 +224,26 @@ _lsrc = open(_LAUNCHER, encoding="utf-8").read()
 check("launcher prompt literal is single-backslash C:\\>", "PROMPT_MARKER='C:\\>'" in _lsrc)
 check("launcher uses grep -qF fixed-string matching", "grep -qF" in _lsrc)
 
+# ---- POST16 core gate (consistency finding) + manifest parsing ----
+import tempfile as _tf2  # noqa: E402
+_fd, _man = _tf2.mkstemp(suffix=".env", dir=HERE)
+with os.fdopen(_fd, "w") as _fh:
+    _fh.write("POST16_REQUIRED=(a b)\nPOST16_REQUIRED_CODES=(0xdf20 0xDF21)\n")
+_mk = br.load_post16_markers(_man)
+os.remove(_man)
+check("load_post16_markers parses + uppercases codes",
+      _mk == ("[BOOT] POST 0xDF20", "[BOOT] POST 0xDF21"))
+check("load_post16_markers absent manifest -> empty",
+      br.load_post16_markers("/no/such/manifest.env") == ())
+
+_rs = br.REQUIRED_SIGNALS + ("[BOOT] POST 0xDF20",)
+st, why = br.classify_boot(GOOD, 0, False, required_signals=_rs)
+check("missing required POST16 marker -> degraded (matches smoke core gate)",
+      st == "degraded" and "0xDF20" in why)
+st, _ = br.classify_boot(GOOD + "\n[BOOT] POST 0xDF20", 0, False, required_signals=_rs)
+check("present required POST16 marker -> pass", st == "pass")
+
+
 # ---- orchestration via mock launchers (no QEMU) ----
 # Exercises run_reliability end-to-end: cold/warm sequencing, the first-warm
 # vars bootstrap, skip-as-failure, and the exit-code-only (VBox-style) path.
@@ -232,6 +252,9 @@ import stat  # noqa: E402
 import argparse  # noqa: E402
 
 _MOCK_DIR = tempfile.mkdtemp(prefix="boot-reliability-mock.")
+# Orchestration mocks do not emit POST16 codes; isolate the POST16 gate (pure-
+# tested above) so it does not degrade the orchestration fixtures.
+br.load_post16_markers = lambda *a, **k: ()
 
 # Faithful QEMU-style launcher: seeds --vars if missing (warm bootstrap),
 # writes a clean boot log to --serial-out, exits 0.
@@ -346,6 +369,49 @@ try:
     check("non-default --disk with --test-suite rejected", False)
 except SystemExit as e:
     check("non-default --disk with --test-suite rejected", e.code != 0)
+
+# Serial cap: a runaway log (> cap) is a bounded FAIL even with good markers,
+# instead of OOMing the host. Shrink the cap and emit good markers + padding.
+_orig_cap = br.SERIAL_READ_CAP
+br.SERIAL_READ_CAP = 200
+_mock_big = os.path.join(_MOCK_DIR, "mock-big.sh")
+with open(_mock_big, "w", encoding="utf-8") as fh:
+    fh.write('#!/usr/bin/env bash\nserial=""\n'
+             'while [ $# -gt 0 ]; do case "$1" in\n'
+             '  --serial-out) serial="$2"; shift 2;;\n'
+             '  --disk|--timeout|--vars|--screenshot) shift 2;;\n'
+             '  *) shift;; esac; done\n'
+             '{ printf "%s\\n" "[BOOT] ExitBootServices OK" "[PHASE0] BOOT_INFO" '
+             '"Boot complete in 1s" "C:\\\\>"; head -c 5000 /dev/zero | tr "\\0" "x"; } '
+             '> "$serial"\nexit 0\n')
+os.chmod(_mock_big, os.stat(_mock_big).st_mode | stat.S_IEXEC)
+rc = br.run_reliability(mk_args(launcher_cmd=["bash", _mock_big], cold=1, warm=0,
+                                out=os.path.join(_MOCK_DIR, "out-big")))
+relb = json.load(open(os.path.join(_MOCK_DIR, "out-big", "reliability.json"),
+                     encoding="utf-8"))
+check("runaway serial (> cap) -> bounded fail",
+      relb["iterations"][0]["status"] == "fail"
+      and "runaway" in (relb["iterations"][0]["reason"] or ""))
+br.SERIAL_READ_CAP = _orig_cap
+
+# Non-repo-cwd: --disk is relative, but the flock + launched image must both
+# resolve under REPO_ROOT, not the caller cwd (re-adversarial finding).
+_lockf = os.path.join(_REPO_ROOT, "build", "system-disk.img.boot-cert.lock")
+try:
+    os.remove(_lockf)
+except OSError:
+    pass
+_cwd0 = os.getcwd()
+_tmpcwd = tempfile.mkdtemp(prefix="boot-reliability-cwd.")
+try:
+    os.chdir(_tmpcwd)
+    br.run_reliability(mk_args(launcher_cmd=["bash", _MOCK_QEMU], cold=1, warm=0,
+                               out=os.path.join(_MOCK_DIR, "out-cwd")))
+finally:
+    os.chdir(_cwd0)
+check("relative --disk locks under REPO_ROOT regardless of cwd",
+      os.path.exists(_lockf))
+shutil_cwd = __import__("shutil"); shutil_cwd.rmtree(_tmpcwd, ignore_errors=True)
 
 import shutil  # noqa: E402
 shutil.rmtree(_MOCK_DIR, ignore_errors=True)

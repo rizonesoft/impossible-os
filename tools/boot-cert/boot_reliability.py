@@ -40,6 +40,37 @@ CLASSIFIER_VERSION = 1
 # --boot-conf-patch are only meaningful when the gate boots the same image.
 DEFAULT_DISK = "build/system-disk.img"
 
+# A broken guest can spam serial unboundedly; cap the in-memory read so a
+# runaway boot becomes a bounded `fail` instead of OOMing the host. 16 MiB is
+# far beyond any healthy boot log (~hundreds of KB) yet trivially affordable.
+SERIAL_READ_CAP = 16 * 1024 * 1024
+
+# Build-generated manifest of required bootloader POST16 codes (the CORE boot
+# assertion scripts/test-smoke.sh enforces). The reliability classifier folds
+# these into its required-signal set so a boot that reaches the prompt but skips
+# a required POST16 milestone is recorded `degraded`, never a clean `pass`.
+POST16_MANIFEST = "build/post16-manifest.env"
+_POST16_CODES_RE = re.compile(r"POST16_REQUIRED_CODES=\(([^)]*)\)", re.DOTALL)
+_HEX_RE = re.compile(r"0x[0-9A-Fa-f]+")
+
+
+def load_post16_markers(manifest_path):
+    """Parse POST16_REQUIRED_CODES from the build manifest into the serial
+    marker strings the bootloader emits (`[BOOT] POST 0xNNNN`, uppercase hex --
+    matching scripts/test-smoke.sh). Returns () if the manifest is absent or has
+    no codes (build not run yet) so the gate degrades to the residual-signal set
+    rather than hard-failing on a missing manifest."""
+    try:
+        with open(manifest_path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return ()
+    m = _POST16_CODES_RE.search(text)
+    if not m:
+        return ()
+    codes = _HEX_RE.findall(m.group(1))
+    return tuple(f"[BOOT] POST 0x{c[2:].upper()}" for c in codes)
+
 # Canonical boot-log contract -- mirrors scripts/test-smoke.sh. PASS requires
 # ALL of PASS_MARKERS (the shell prompt is gated by require_shell_prompt so an
 # ISO / headless row contract can drop it). FAIL_MARKERS and ABSENT_MARKERS
@@ -408,13 +439,18 @@ def _run_once(launcher_argv, accepts, disk, timeout_sec, serial_out, vars_path,
             proc.wait()
         raise
     serial = ""
+    oversized = False
     if captured:
         try:
-            with open(serial_out, encoding="utf-8", errors="replace") as fh:
-                serial = fh.read()
+            with open(serial_out, "rb") as fh:
+                data = fh.read(SERIAL_READ_CAP + 1)
+            if len(data) > SERIAL_READ_CAP:
+                oversized = True
+                data = data[:SERIAL_READ_CAP]
+            serial = data.decode("utf-8", errors="replace")
         except OSError:
             pass
-    return rc, timed_out, serial, captured
+    return rc, timed_out, serial, captured, oversized
 
 
 def _atomic_write_json(path, obj):
@@ -439,6 +475,14 @@ def run_reliability(args):
         return 3
     accepts = spec["accepts"]
 
+    # Canonicalize --disk against REPO_ROOT (the launcher's cwd) so a relative
+    # path means the SAME image for both the flock key and the launched VM,
+    # regardless of the caller's cwd. Without this, two CI jobs started from
+    # different cwds would lock different paths while booting the one repo image.
+    disk_abs = args.disk if os.path.isabs(args.disk) else os.path.join(
+        REPO_ROOT, args.disk)
+    disk_abs = os.path.abspath(disk_abs)
+
     # Default to a per-run (pid) namespace so two concurrent reliability runs do
     # not truncate/read the same serial logs, race on warm-vars.fd, or overwrite
     # each other's aggregate. An explicit --out is taken verbatim (caller owns
@@ -461,6 +505,30 @@ def run_reliability(args):
     if warm_vars and os.path.exists(warm_vars):
         os.remove(warm_vars)
 
+    # Fold the build's required POST16 codes into the required-signal set so the
+    # reliability classifier matches scripts/test-smoke.sh's CORE boot gate: a
+    # boot that reaches the prompt but skips a required POST16 milestone is
+    # `degraded`, never a clean `pass`.
+    req_signals = REQUIRED_SIGNALS + load_post16_markers(
+        os.path.join(REPO_ROOT, POST16_MANIFEST))
+
+    # Serialize runs that boot the same writable disk: two parallel
+    # platform/tier jobs patching/booting one raw image corrupt it or
+    # cross-contaminate boot.conf. An exclusive flock on a per-disk lock file
+    # makes concurrent runs queue. Best-effort: proceed with a warning if the
+    # lock file cannot be created (single-run dev case).
+    import fcntl
+    lock_fd = None
+    try:
+        lock_fd = open(disk_abs + ".boot-cert.lock", "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    except OSError as exc:
+        sys.stderr.write(f"boot-reliability: disk lock unavailable ({exc}); "
+                         f"proceeding without cross-run serialization\n")
+        if lock_fd is not None:
+            lock_fd.close()
+        lock_fd = None
+
     patched = bool(args.boot_conf_patch or args.test_suite)
     phases = [("cold", args.cold)] + ([("warm", args.warm)] if args.warm else [])
     try:
@@ -473,17 +541,21 @@ def run_reliability(args):
                 shot = (os.path.join(out_dir, f"screen-{idx:03d}-{phase}.ppm")
                         if args.screenshot and spec["caps"]["screenshot"] else None)
                 vars_path = warm_vars if (spec["cold_warm"] and phase == "warm") else None
-                rc, timed_out, serial, captured = _run_once(
-                    launcher, accepts, args.disk, args.timeout, serial_out,
+                rc, timed_out, serial, captured, oversized = _run_once(
+                    launcher, accepts, disk_abs, args.timeout, serial_out,
                     vars_path, shot)
                 if captured:
                     # rc==3 means host SKIP even for a serial-capturing launcher.
                     if rc == 3:
                         status, reason = "skip", "launcher reported host SKIP"
+                    elif oversized:
+                        status, reason = ("fail",
+                            f"serial exceeded {SERIAL_READ_CAP} bytes (runaway output)")
                     else:
                         status, reason = classify_boot(
                             serial, rc, timed_out,
-                            require_shell_prompt=require_prompt)
+                            require_shell_prompt=require_prompt,
+                            required_signals=req_signals)
                 else:
                     # Exit-code-only launcher (e.g. VBox): trust its verdict.
                     if timed_out:
@@ -501,6 +573,11 @@ def run_reliability(args):
         # crashed run can never leave the certified image patched for the next.
         if patched:
             _reset_boot_conf()
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            finally:
+                lock_fd.close()
 
     rel = build_reliability(
         args.row_id, args.platform, args.tier, args.build_id, args.machine_id,
