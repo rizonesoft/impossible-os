@@ -44,10 +44,10 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 | 💎 | 5 | Recovery and rollback suite | §1, T21, T22, T23, T26 | [/] |
 | 💎 | 6 | Network boot suite | §1, T25 | [/] |
 | 💎 | 7 | Bare-metal lab inventory | §1 | [x] |
-| ⭐ | 8 | Boot support bundle collector | §2-§7, TODO-24 | [ ] |
-| ⭐ | 9 | Release gate and dashboard | §1-§8 | [ ] |
-| 💎 | 10 | Certification docs | §1-§9 | [ ] |
-| 💎 | 11 | Firmware sanity certification gate | §1, T04 §2, §8 | [ ] |
+| ⭐ | 8 | Boot support bundle collector | §2-§7, TODO-24 | [/] |
+| ⭐ | 9 | Release gate and dashboard | §1-§8 | [/] |
+| 💎 | 10 | Certification docs | §1-§9 | [/] |
+| 💎 | 11 | Firmware sanity certification gate | §1, T04 §2, §8 | [/] |
 
 ## 1. Boot Certification Matrix Schema
 
@@ -188,13 +188,19 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## 8. Boot Support Bundle Collector
 
-- [ ] Collect serial log, boot timeline, firmware report, BlackBox files, artifact manifest, screenshots, and result JSON.
-- [ ] Compress into `boot-support-{build}-{machine}.zip`.
-- [ ] Redact serial numbers and secrets.
-- [ ] Add host tool command.
+> [!NOTE]
+> Plan sharpened by Codex design review (2026-06-19). §8 is a SECURITY-bearing collector (a shared bundle must leak nothing), so the design below is the vetted plan. Deferred this pass (depends on §2-§7 outputs + multi-commit redaction effort).
+
+- [ ] `tools/boot-cert/support_bundle.py`: discover serial logs + screenshots + reliability.json/results.json (§2) + BlackBox `X:\` export + firmware report + boot timeline from a `--in` dir.
+- [ ] Share-safe by DEFAULT: redact serials/secrets (SMBIOS/disk serial, NVMe EUI-64, UEFI key bytes, token-like blobs) in TEXT/JSON; QUARANTINE/omit opaque binaries (BlackBox blobs, screenshots) by default; `--private` opt-in for raw; manifest marks each omitted/private artifact + why.
+- [ ] Fail-closed validation: reject when `reliability.json`/`results.json` fail their schemas OR build/machine/tier/platform identities disagree with the CLI inputs; warn-only for optional missing artifacts (recorded in the manifest).
+- [ ] Tamper-evidence: in-bundle `bundle-manifest.json` (per-file sha256 + expected/omitted sections) PLUS an out-of-band top-level bundle digest printed to stdout; reproducible zip (sorted entries, fixed mtime) asserted byte-identical in the self-test.
+- [ ] `tools/boot-cert/test_support_bundle.py` self-test (mock `--in` dir, no live QEMU) wired into `scripts/test-tooling.sh`.
 - [ ] Commit: `"tools: boot support bundle collector"`
 
-**Test checkpoint:** the collector produces `boot-support-{build}-{machine}.zip` containing serial log + boot timeline + firmware report + BlackBox files + artifact manifest + screenshots + result JSON, with serial numbers and secrets redacted.
+**Test checkpoint:** `support_bundle.py --in <dir> --build-id B --machine-id M` produces a share-safe `boot-support-B-M.zip` (redacted text/JSON, opaque binaries omitted unless `--private`) + `bundle-manifest.json` with per-file sha256 + an out-of-band digest; invalid/identity-mismatched result JSON fails closed; `test_support_bundle.py` asserts redaction + fail-closed + reproducible bytes.
+
+> **Deferred:** [H] Support-bundle collector is a security-bearing share-safe/redaction effort (binary quarantine + private opt-in + fail-closed schema/identity validation + out-of-band tamper digest + reproducible zip) and consumes §2-§7 outputs (§3-§6 deferred) -- a multi-commit effort beyond this pass; Codex-vetted plan above. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §3 (item: "tools/boot-cert/storage_suite.py" -- produces packaged inputs); 01-boot-platform/TODO-24-blackbox-service-partition.md (`X:\` BlackBox exports the bundle packages).
 
 ---
 
@@ -208,6 +214,8 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 **Test checkpoint:** `build/reports/boot-cert.html` is generated from result JSON; a required-gate failure (per nightly / RC / stable tier) fails release packaging; prior-run history is retained so regressions are visible.
 
+> **Deferred:** [H] Release gate + dashboard consumes §1-§8 (the per-suite result JSON + support bundle); §3-§6 + §8 are deferred, so the gate has no complete result set to aggregate yet. Implement after the suites produce results. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §8 (item: "tools/boot-cert/support_bundle.py" -- bundle + manifest the dashboard links); §1 boot-cert.yml `required_for` drives the per-tier gate.
+
 ---
 
 ## 10. Certification Docs
@@ -219,6 +227,8 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 - [ ] Commit: `"docs: boot certification guide"`
 
 **Test checkpoint:** `docs/testing/boot-certification.md` documents running VM + bare-metal certification, maps common failure signatures to owner TODOs, and gives support-bundle upload instructions.
+
+> **Deferred:** [M] Certification guide caps §1-§9 (it documents running every suite + the release gate + support-bundle upload); writing the final guide while §3-§9 are deferred would document unshipped surface. Write once the suites + gate land. -> XREF: 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §9 (item: "Generate build/reports/boot-cert.html" -- the gate the guide explains); §8 support-bundle upload instructions.
 
 ---
 
@@ -234,6 +244,8 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 - [ ] Commit: `"test: firmware sanity certification gate"`
 
 **Test checkpoint:** a release whose `firmware-tables.json` marks an ACPI/SMBIOS table degraded fails the stable required gate and is recorded (not failed) on nightly; a clean firmware report passes.
+
+> **Deferred:** [M] Firmware-sanity gate consumes TODO-04 `firmware-tables.json` (producer = TODO-04 §2/§8) + the §9 release-gate pattern + the §8 support bundle for report capture; the producer artifact + §8/§9 are not yet shipped this pass. TODO-04 §9 Firmware Quirk Database is `[x]`, but the `firmware-tables.json` decoder/report it needs is TODO-04 §2/§8 (still open). -> XREF: 01-boot-platform/TODO-04-firmware-table-platform-inventory.md §2/§8 (firmware-tables.json producer); 01-boot-platform/TODO-28-boot-validation-certification-matrix.md §9 (release-gate consumer).
 
 ---
 
