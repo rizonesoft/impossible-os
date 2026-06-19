@@ -67,18 +67,18 @@ implements_after: TODO-04
 | 💎 |   4   | SMBIOS init profiling + optimization                | §1                                        |  [x]   |
 | 💎 |   5   | MAT W^X violation root-cause attribution            | T04 §5                                    |  [x]   |
 | 💎 |   6   | Mouse PS/2 init profiling + optimization            | §1                                        |  [x]   |
-| ⭐ |   7   | Async font/icon loader (post-desktop-ready)         | §1                                        |  [ ]   |
-| ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T23 (watchdog); T14 §4 permanently deferred |  [ ]   |
-| 💎 |   9   | EXEC step latency profile (13834ms FAIL; 11x regression) | §1                                   |  [ ]   |
-| ⭐ |  10   | UEFI RT SetVariable latency (>50ms threshold)       | §1, T04 §11                               |  [ ]   |
-| ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T27 §2 (advisor)                  |  [ ]   |
-| ⭐ |  12   | AVX-512 throttle policy when APERF/MPERF absent     | T19 §3                                    |  [ ]   |
-| ⭐ |  13   | Boot history ring depth + format (8 → 32+ entries)  | T01 §11                                   |  [ ]   |
-| ⭐ |  14   | FAT32 dirty-mount fsck cost in VFS step             | D05 T04                                   |  [ ]   |
-| ⭐ |  15   | User-mode binary spawn latency (~1s task_create→ELF)| T22 (sched / exec)                        |  [ ]   |
-| ⭐ |  16   | TSC frequency variability under hypervisor          | --                                        |  [ ]   |
-| ⭐ |  17   | PAT WC -> WT hypervisor trap quirk                  | §2 (consumer)                             |  [ ]   |
-| 💎 |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                            |  [ ]   |
+| ⭐ |   7   | Async font/icon loader (post-desktop-ready)         | §1                                        |  [/]   |
+| ⭐ |   8   | Boot heartbeat telemetry during long phases         | §1, T23 (watchdog); T14 §4 permanently deferred |  [/]   |
+| 💎 |   9   | EXEC step latency profile (13834ms FAIL; 11x regression) | §1                                   |  [/]   |
+| ⭐ |  10   | UEFI RT SetVariable latency (>50ms threshold)       | §1, T04 §11                               |  [/]   |
+| ⭐ |  11   | Phase-3 X:\Diag JSON writer batching                | T04 §8, T27 §2 (advisor)                  |  [/]   |
+| ⭐ |  12   | AVX-512 throttle policy when APERF/MPERF absent     | T19 §3                                    |  [/]   |
+| ⭐ |  13   | Boot history ring depth + format (8 → 32+ entries)  | T01 §11                                   |  [/]   |
+| ⭐ |  14   | FAT32 dirty-mount fsck cost in VFS step             | D05 T04                                   |  [/]   |
+| ⭐ |  15   | User-mode binary spawn latency (~1s task_create→ELF)| T22 (sched / exec)                        |  [/]   |
+| ⭐ |  16   | TSC frequency variability under hypervisor          | --                                        |  [/]   |
+| ⭐ |  17   | PAT WC -> WT hypervisor trap quirk                  | §2 (consumer)                             |  [/]   |
+| 💎 |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                            |  [/]   |
 
 ---
 
@@ -258,14 +258,20 @@ Observed: `MOUSE 2213ms 1149ms P1` -- 1.1s for PS/2 mouse init even though FADT 
 
 ## 7. Async Font and Icon Loader (Post-Desktop-Ready)
 
-Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase before `DESKTOP_READY` fires. The desktop is unusable for that 1.3s window. Async load: render a placeholder font + monochrome icons, then swap in the full set as each file completes.
+Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase before `DESKTOP_READY` fires. The desktop is unusable for that 1.3s window. Async load: open with a minimal face + icon placeholders, swap in the full set as each completes.
 
-- [ ] Define a "minimal boot face": single 18px atlas of ASCII (already 64KB, already loaded by Phase 1). Desktop opens with this face.
-- [ ] Move `font_init_full()` (selawk/CascadiaCode/selawksb/CascadiaCode-Bold/selawkb) to a deferred work-queue task spawned at `DESKTOP_READY`. The compositor uses the minimal face until each TTF slot completes; on completion, the face swaps in atomically.
-- [ ] Same pattern for icon fonts (Filled/Regular/Light/Resizable) and `icons.ires`. Show monochrome ASCII placeholders until each loads.
+> [!NOTE]
+> Plan sharpened by Codex design review (2026-06-20). §7 is a compositor + font-subsystem refactor, NOT simple deferral. Deferred this pass (multi-commit); items below are the vetted plan.
+
+- [ ] Compositor-polled incremental loader: state machine ticked once per presented frame after `DESKTOP_READY` (per-tick budget), one TTF/icon slot per tick. NO `thread_create`/sys_wq/DPC -- thread-deferred init starves behind the compositor (documented `boot_run_deferred` incident).
+- [ ] Immutable face-bundle publish in `gfx_text.c`: each face = immutable bundle (fontinfo/metrics/glyph-cache/atlases/ascent), built off-side, published via release-store + acquire-load in the draw path; remove `ttf_get` per-call pixel_size/scale mutation.
+- [ ] Boot-atlas fallback adapter: expose the Phase-1 18px ASCII atlas through the normal measure/draw API (first paint keeps titles/controls/labels); placeholders for bold/mono/non-ASCII + `icon_get`/`icon_draw_scaled` until each family publishes.
+- [ ] On each face/icon-family publish, invalidate + redraw the affected compositor surfaces (atomic swap visible, no torn glyph reads).
 - [ ] Commit: `"desktop: async font + icon load (1.3s -> <50ms blocking)"`
 
-**Test checkpoint:** `DESKTOP_READY` fires within 50ms of `boot_phase3()` start (excluding wallpaper + first compositor frame). All 4 TTFs + 4 icon fonts load within 2s post-desktop-ready, no visual glitch. Visual regression test (post-load screenshot) byte-identical to pre-async baseline.
+**Test checkpoint:** `DESKTOP_READY` fires within 50ms of `boot_phase3()` start; first paint renders fallback text (boot atlas) + icon placeholders (no blank labels); each TTF/icon family publishes within 2s post-desktop-ready via the compositor-polled loader (no kthread) and swaps in atomically with a surface redraw; no torn-glyph glitch. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] Async font/icon loader is a multi-commit compositor + font-subsystem refactor (compositor-polled loader state machine -- threads starve per the documented incident; immutable face-bundle publish replacing `ttf_get` per-call mutation; boot-atlas fallback adapter through the text API) beyond one-session scope; Codex-vetted plan above. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §7 (item: "Compositor-polled incremental loader" -- this section owns the multi-commit refactor).
 
 ---
 
@@ -281,6 +287,7 @@ A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the
 
 **Test checkpoint:** A 1342ms SMBIOS init with target 100ms emits 4-5 `[BOOT-HB] phase=SMBIOS elapsed=Xms target=100` lines. A <250ms phase emits zero heartbeats. Heartbeat ISR is harmless when LAPIC timer is the active scheduler tick (no double-fire, no priority inversion).
 
+> **Deferred:** [M] Heartbeat needs a `boot_info.heartbeat_seq` field (BOOT_INFO_VERSION bump via the ABI owner path) + TODO-23's LAPIC/NMI timer + ISR-safe serial drain (gap-audit constraint); multi-commit boot-path. -> XREF: 01-boot-platform/TODO-23-boot-watchdog.md (timer owner); §8 owns the soft serial-counter signal.
 ---
 
 ## 9. EXEC Step Latency Profile
@@ -297,6 +304,7 @@ Smoke (KVM, 2026-05-03 latest) records `EXEC took 13834ms (target 100ms)` -- a H
 
 **Test checkpoint:** Boot serial shows ~5 EXEC sub-step lines with ms deltas; the largest contributor is named in the perf summary; total EXEC drops below 500ms or the budget is justified in `boot_perf_budgets[]`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Deferred:** [M] EXEC 13834ms HARD breach: needs a git-bisect of the ~1.2s->13.8s regression THEN SSDT-registration optimization (470 main + ~1300 shadow slots) -- live-boot profiling + multi-commit kernel work. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §9 (this section owns the bisect + substep timing).
 ---
 
 ## 10. UEFI RT SetVariable Latency
@@ -312,6 +320,7 @@ Smoke (KVM, 2026-05-03) records `UEFI: RT SetVariable took 109 ms (threshold 50 
 
 **Test checkpoint:** Serial shows the variable name on every >50ms RT SetVariable WARN. Bare-metal RT SetVariable consistently <50ms (real flash). OVMF still warns but with the variable name + size for triage.
 
+> **Deferred:** [L] RT SetVariable >50ms: per-call name/size capture + bootperf single-blob write batching + OVMF-slow-NVRAM quirk gating -- validated only against live NVRAM-write timing on real flash + OVMF. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §10 (this section owns the batching).
 ---
 
 ## 11. Phase-3 X:\Diag JSON Writer Batching
@@ -328,6 +337,7 @@ Boot writes 5 small JSON files to `X:\Diag` serially during late Phase 3: `firmw
 
 **Test checkpoint:** Boot serial shows ~5x reduction in cumulative `boot_progress` delta for the X:\Diag write block. All 5 files persist with byte-identical content vs the per-file path. Smoke confirms no FAT32 cache regressions.
 
+> **Deferred:** [L] Phase-3 X:\Diag JSON batching: a `fat32_batch_*` transaction API (open-dir-once + one cluster-bitmap pass + single flush) retrofitted to 5 writers -- multi-commit fs work. -> XREF: 05-storage-filesystems/TODO-04 (FAT32 owner) for the batch primitive.
 ---
 
 ## 12. AVX-512 Throttle Policy When APERF/MPERF Unavailable
@@ -342,6 +352,7 @@ Smoke records `simd: MPERF/APERF unavailable; enabling AVX-512 without throttle 
 
 **Test checkpoint:** Hyper-V smoke shows LOG_INFO (no WARN). Synthetic bare-metal-no-MPERF fixture or real bare-metal Haswell test laptop shows LOG_WARN. `boot.conf simd_max_avx_level=avx2` clamps the runtime ceiling.
 
+> **Deferred:** [L] AVX-512 throttle: hypervisor-bit-aware logging + `boot.conf simd_max_avx_level` clamp -- validated only on bare-metal Intel where APERF/MPERF exist but a hypervisor hides them (not reproducible from WSL). -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §12 (this section owns AVX-512 throttle in cpu_security.c / gfx_simd.c; no external SIMD TODO exists).
 ---
 
 ## 13. Boot History Ring Depth + Format
@@ -357,6 +368,7 @@ Today `boot_error_history` rings 8 entries. After 8 boots the oldest rolls off; 
 
 **Test checkpoint:** Existing unit tests pass at the 32-entry size. Smoke shows no regression in `boot_history: Recent boot history (N attempts)` output. NVRAM bin file is 512 bytes (32 × 16); RegSetBinary handles the larger blob.
 
+> **Deferred:** [L] boot_history ring 8->32: NVRAM size bump + size-pin asserts + schema migration -- needs the NVRAM-blob migration decision + live RegSetBinary validation. -> XREF: 01-boot-platform/TODO-01 §11 (boot history owner).
 ---
 
 ## 14. FAT32 Dirty-Mount fsck Cost in VFS Step
@@ -372,6 +384,7 @@ Smoke (KVM, 2026-05-03) shows VFS step durations swinging by 4x depending on whe
 
 **Test checkpoint:** Boot serial shows 3 substep lines under VFS when fsck triggers; absent when volume was clean. Boot-health.json carries `fat32: { fsck_ran: bool, fsck_duration_ms: u32 }`. Graceful-shutdown smoke confirms the next boot skips fsck.
 
+> **Deferred:** [L] FAT32 dirty-mount fsck cost: substep timing + boot-health fsck fields + graceful-shutdown dirty-bit-clear -- needs live dirty-vs-clean mount timing + an ACPI-S5 shutdown hook. -> XREF: 05-storage-filesystems/TODO-04 (FAT32 fsck owner).
 ---
 
 ## 15. User-Mode Binary Spawn Latency (~1s task_create → ELF entry)
@@ -387,6 +400,7 @@ Smoke (KVM, 2026-05-03) shows a consistent ~1s gap between `sched: Task N ("cmd.
 
 **Test checkpoint:** Boot serial shows 6 substep lines per user-mode spawn. cmd.exe spawn drops below 200ms or the cost is justified in `boot_perf_budgets[]`. test=1 mode shows the same pattern for the 16 user-mode test binaries (16 × 200ms = 3.2s vs 16 × 1s = 16s today is the upper bound on the win).
 
+> **Deferred:** [L] User-mode spawn latency ~1s: SYS_EXEC substep timing + ELF segment-load batching + scheduler boot-starvation audit -- live-boot profiling + exec/sched multi-commit work. -> XREF: 02-kernel-core/TODO-22 (sched/exec owner).
 ---
 
 ## 16. TSC Frequency Variability Under Hypervisor
@@ -403,6 +417,7 @@ Smoke logs across boots show TSC frequency reported as 7056 MHz, 4939 MHz, 5000 
 
 **Test checkpoint:** Smoke shows one `[time] TSC freq locked: <N> MHz from <source>` line; no later line reports a different freq. Synthetic-drift fixture (mock MSR returning a different value on second read) triggers the LOG_WARN. boot-health.json carries `tsc: { freq_hz: u64, source: "hyperv-msr"|"cpuid-0x15"|"pit"|"hpet" }`.
 
+> **Deferred:** [L] TSC frequency variability: single-latch all consumers + drift self-check + CPUID 0x15/0x16 fallback -- validated only across real hypervisor restarts + bare-metal Intel. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §16 (this section owns the single-latch).
 ---
 
 ## 17. PAT WC -> WT Hypervisor Trap Quirk
@@ -419,6 +434,7 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 
 **Test checkpoint:** On KVM smoke, post-boot `boot-health.json` shows `"firmware_quirks_active": [..., "pat_wc_trapped", ...]`. On bare metal Intel where PAT writes succeed, the quirk is absent. The original WARN downgrades to a single INFO line. Test on: QEMU KVM, QEMU TCG, QEMU WHPX, VirtualBox, bare metal i5-4210U.
 
+> **Deferred:** [L] PAT WC-trap quirk: register on post-write readback != WC + INFO downgrade + boot-health surfacing -- validated only on PAT-trapping hypervisors (KVM/WHPX) vs PAT-honest bare metal. -> XREF: 01-boot-platform/TODO-29-boot-perf-health-observability.md §17 (this section owns the quirk).
 ---
 
 ## 18. Boot Critical-Path / Dependency / Resource-Wait Attribution
@@ -434,6 +450,7 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 
 **Test checkpoint:** Boot serial emits `[BOOT-CRIT]` lines naming the ordered longest-pole chain with per-step cause class; `boot-health.json` carries `critical_chain[]` (top-N) + a blame-sorted view. Pure-helper test covers the longest-pole walk + cause classifier. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Deferred:** [M] Boot critical-path attribution (new, gap-audit): per-step cause-class tagging in boot_progress + `boot_critical_chain()` + boot-health `critical_chain[]`/`blame[]` -- multi-commit boot-instrumentation + live-boot validation. -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §9 (visual consumer); §18 owns attribution.
 ---
 
 ## OS Comparison

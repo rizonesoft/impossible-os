@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-06-16T10:36:55+02:00",
-  "total_suites": 1407,
-  "total_assertions": 4547,
+  "timestamp": "2026-06-19T23:33:54+02:00",
+  "total_suites": 1423,
+  "total_assertions": 4601,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
     {"file": "test_alpc.c", "suites": 49, "assertions": 194},
-    {"file": "test_blackbox.c", "suites": 11, "assertions": 9},
+    {"file": "test_blackbox.c", "suites": 12, "assertions": 10},
     {"file": "test_boot_audit.c", "suites": 22, "assertions": 41},
     {"file": "test_boot_caps.c", "suites": 15, "assertions": 32},
     {"file": "test_boot_decision.c", "suites": 49, "assertions": 102},
@@ -76,13 +76,14 @@
     {"file": "test_tpm_sb_reconcile.c", "suites": 2, "assertions": 30},
     {"file": "test_tpm_seal.c", "suites": 8, "assertions": 109},
     {"file": "test_tpm_transport.c", "suites": 8, "assertions": 118},
+    {"file": "test_uefi_advanced.c", "suites": 13, "assertions": 42},
     {"file": "test_uefi_boot.c", "suites": 42, "assertions": 111},
     {"file": "test_usb_boot.c", "suites": 10, "assertions": 98},
     {"file": "test_usb_hid.c", "suites": 5, "assertions": 68},
     {"file": "test_usermode.c", "suites": 0, "assertions": 0},
     {"file": "test_usermode_launcher.c", "suites": 34, "assertions": 117},
     {"file": "test_vfs.c", "suites": 13, "assertions": 40},
-    {"file": "test_vmm.c", "suites": 11, "assertions": 44},
+    {"file": "test_vmm.c", "suites": 13, "assertions": 55},
     {"file": "test_vpd.c", "suites": 2, "assertions": 16},
     {"file": "test_watchdog.c", "suites": 16, "assertions": 17}
   ]
