@@ -71,6 +71,20 @@ struct smbios_header {
 
 static struct smbios_system_info s_info;
 
+/* Per-array min(start)/max(end) summaries accumulated during the walk, keyed by
+ * Memory Array Handle, then resolved against the finally-selected Type 16 handle
+ * in smbios_finalize_mem_mapped(). Summarizing per handle (rather than buffering
+ * raw ranges) makes the result independent of Type 16 / Type 19 emission order
+ * AND bounded by the number of distinct arrays (typically 1-4) rather than the
+ * range count -- so a flood of ranges can never evict the selected array's data.
+ * Only a brand-new distinct handle is dropped when the table is full, and the
+ * selected handle's summary is therefore always complete or entirely absent. */
+#define SMBIOS_ARRAY_MAP_MAX 8
+struct smbios_array_map { uint64_t min_start; uint64_t max_end; uint16_t handle; uint8_t used; };
+static struct smbios_array_map s_array_maps[SMBIOS_ARRAY_MAP_MAX];
+static uint32_t s_array_map_count;
+static uint32_t s_array_map_dropped;
+
 /* Table end pointer -- set by walk_structures, bounds all string scans.
  * Safe as file-scope static: SMBIOS init runs once, single-threaded. */
 static const uint8_t *s_table_end;
@@ -215,6 +229,15 @@ static void parse_type2(const struct smbios_header *hdr)
      * (Codex design D4). Guard each field by its own offset. */
     if (hdr->length < 6) return;
 
+    /* Clear all five fields first so a later (last-wins) Type 2 record that is
+     * shorter cannot leave stale version/serial/asset strings from an earlier
+     * record live. A malformed sub-6 record returns above without clobbering. */
+    s_info.board_manufacturer[0] = '\0';
+    s_info.board_product[0]      = '\0';
+    s_info.board_version[0]      = '\0';
+    s_info.board_serial[0]       = '\0';
+    s_info.board_asset[0]        = '\0';
+
     smbios_copy_string(s_info.board_manufacturer, SMBIOS_STRING_MAX, hdr, d[4]);
     smbios_copy_string(s_info.board_product,      SMBIOS_STRING_MAX, hdr, d[5]);
     if (hdr->length >= 7)
@@ -223,6 +246,13 @@ static void parse_type2(const struct smbios_header *hdr)
         smbios_copy_string(s_info.board_serial,  SMBIOS_STRING_MAX, hdr, d[7]);
     if (hdr->length >= 9)
         smbios_copy_string(s_info.board_asset,   SMBIOS_STRING_MAX, hdr, d[8]);
+    /* Valid iff this record left ANY field non-empty so sparse firmware
+     * (version/serial/asset only) still publishes; recomputed (set OR cleared)
+     * each record so a later all-empty Type 2 cannot leave a stale flag. */
+    s_info.board_valid =
+        (s_info.board_manufacturer[0] || s_info.board_product[0] ||
+         s_info.board_version[0] || s_info.board_serial[0] ||
+         s_info.board_asset[0]) ? 1 : 0;
 }
 
 /* Type 3 -- System Enclosure / Chassis. Type code at offset 0x05 carries the
@@ -290,22 +320,31 @@ int smbios_type19_decode(const uint8_t *rec, uint8_t length,
     uint32_t end_kb   = (uint32_t)(rec[8] | ((uint32_t)rec[9] << 8) |
                         ((uint32_t)rec[0x0A] << 16) | ((uint32_t)rec[0x0B] << 24));
 
+    /* Each 32-bit field independently signals "see extended" via its own
+     * 0xFFFFFFFF sentinel (DSP0134 7.20), so resolve start and end from their
+     * own source rather than treating one sentinel as switching both. A range
+     * that crosses 4 TiB legitimately has one 32-bit field and one extended. */
+    int start_ext = (start_kb == 0xFFFFFFFFu);
+    int end_ext   = (end_kb == 0xFFFFFFFFu);
+    if ((start_ext || end_ext) && length < 0x1F)
+        return 0;  /* an extended field is needed but absent */
+
     uint64_t start, end;
-    if (start_kb == 0xFFFFFFFFu || end_kb == 0xFFFFFFFFu) {
-        /* Both extended fields must be present together (8 bytes each). */
-        if (length < 0x1F) return 0;
-        uint64_t es = 0, ee = 0;
-        uint32_t i;
-        for (i = 0; i < 8; i++) {
-            es |= ((uint64_t)rec[0x0F + i]) << (8 * i);
-            ee |= ((uint64_t)rec[0x17 + i]) << (8 * i);
-        }
-        start = es;
-        end   = ee;  /* extended ending address is already an inclusive byte addr */
+    uint32_t i;
+    if (start_ext) {
+        uint64_t es = 0;
+        for (i = 0; i < 8; i++) es |= ((uint64_t)rec[0x0F + i]) << (8 * i);
+        start = es;  /* extended starting address is a byte address */
     } else {
         start = smbios_kb_to_bytes(start_kb);
+    }
+    if (end_ext) {
+        uint64_t ee = 0;
+        for (i = 0; i < 8; i++) ee |= ((uint64_t)rec[0x17 + i]) << (8 * i);
+        end = ee;  /* extended ending address is an inclusive byte address */
+    } else {
         /* ending address is the last KB of the range; inclusive byte end */
-        end   = smbios_kb_to_bytes(end_kb) + 1023u;
+        end = smbios_kb_to_bytes(end_kb) + 1023u;
     }
 
     if (end < start) return 0;  /* reject malformed range */
@@ -314,12 +353,26 @@ int smbios_type19_decode(const uint8_t *rec, uint8_t length,
     return 1;
 }
 
-/* Type 16 -- Physical Memory Array (first array only). */
+/* Type 16 -- Physical Memory Array. Prefer the System Memory array (Use==0x03)
+ * over video/flash/NVRAM/cache arrays: a non-system array emitted first must
+ * not become the registry's "the RAM array" and mis-filter Type 19 ranges.
+ * A non-system array is recorded only as a fallback and replaced when a
+ * system-memory array appears; on replace, ranges already aggregated against
+ * the old (wrong) handle are dropped. */
 static void parse_type16(const struct smbios_header *hdr)
 {
     const uint8_t *d = (const uint8_t *)hdr;
     if (hdr->length < 0x0F) return;
-    if (s_info.mem_array_valid) return;  /* first array only */
+
+    int this_is_system = (d[5] == SMBIOS_MEM_ARRAY_USE_SYSTEM);
+    if (s_info.mem_array_valid) {
+        int sel_is_system = (s_info.mem_array_use == SMBIOS_MEM_ARRAY_USE_SYSTEM);
+        /* Keep the current selection unless it is a non-system fallback and
+         * this record is the system-memory array. Type 19 ranges are buffered
+         * and aggregated after the walk against the final handle, so no
+         * inline range reset is needed when the selection changes. */
+        if (sel_is_system || !this_is_system) return;
+    }
 
     s_info.mem_array_location         = d[4];
     s_info.mem_array_use              = d[5];
@@ -332,35 +385,58 @@ static void parse_type16(const struct smbios_header *hdr)
 }
 
 /* Type 19 -- Memory Array Mapped Address. One structure per contiguous range;
- * multiple ranges can map to one array (RAM split around MMIO holes). For the
- * single StartAddr/EndAddr registry contract we aggregate min(start)/max(end)
- * across the Type 19 records that belong to the SELECTED Type 16 array only
- * (matched by Memory Array Handle), so a multi-array system cannot pair the
- * first array's capacity with another array's ranges (Codex design D3 +
- * adversarial A1). Requires the owning Type 16 to have been parsed first,
- * which firmware always emits in order. */
+ * multiple ranges can map to one array (RAM split around MMIO holes). Each
+ * decoded range is buffered with its owning Memory Array Handle; the final
+ * min(start)/max(end) aggregation against the selected Type 16 happens in
+ * smbios_finalize_mem_mapped() after the whole table is walked, so the result
+ * is independent of Type 16 / Type 19 emission order. */
 static void parse_type19(const struct smbios_header *hdr)
 {
     const uint8_t *d = (const uint8_t *)hdr;
     uint64_t start, end;
     uint16_t array_handle = 0;
+    uint32_t i;
     if (!smbios_type19_decode(d, hdr->length, &start, &end, &array_handle))
         return;
 
-    /* Only associate ranges with the selected (first) Type 16 array. If no
-     * Type 16 has been seen yet (rare out-of-order firmware), skip rather than
-     * risk mixing another array's ranges into the summary. */
-    if (!s_info.mem_array_valid || array_handle != s_info.mem_array_handle)
+    /* Fold the range into its array's running min/max (find-or-add by handle).
+     * Bounded by distinct arrays, so the selected array's summary is never
+     * evicted by ranges belonging to other arrays. */
+    for (i = 0; i < s_array_map_count; i++) {
+        if (s_array_maps[i].handle != array_handle) continue;
+        if (start < s_array_maps[i].min_start) s_array_maps[i].min_start = start;
+        if (end   > s_array_maps[i].max_end)   s_array_maps[i].max_end   = end;
         return;
-
-    if (!s_info.mem_mapped_valid) {
-        s_info.mem_mapped_start = start;
-        s_info.mem_mapped_end   = end;
-        s_info.mem_mapped_valid = 1;
-    } else {
-        if (start < s_info.mem_mapped_start) s_info.mem_mapped_start = start;
-        if (end   > s_info.mem_mapped_end)   s_info.mem_mapped_end   = end;
     }
+    if (s_array_map_count >= SMBIOS_ARRAY_MAP_MAX) { s_array_map_dropped++; return; }
+    s_array_maps[s_array_map_count].handle    = array_handle;
+    s_array_maps[s_array_map_count].min_start = start;
+    s_array_maps[s_array_map_count].max_end   = end;
+    s_array_maps[s_array_map_count].used      = 1;
+    s_array_map_count++;
+}
+
+/* Resolve the selected Type 16 array's per-handle min/max summary into
+ * mem_mapped_start/end. Called once after the table walk, so the selected
+ * handle is final regardless of record order. If the selected handle has no
+ * summary (its first range arrived after the distinct-array table filled, or
+ * it had no Type 19 records), mem_mapped stays invalid rather than publishing
+ * a partial map. */
+static void smbios_finalize_mem_mapped(void)
+{
+    uint32_t i;
+    if (!s_info.mem_array_valid) return;
+    for (i = 0; i < s_array_map_count; i++) {
+        if (s_array_maps[i].handle != s_info.mem_array_handle) continue;
+        s_info.mem_mapped_start = s_array_maps[i].min_start;
+        s_info.mem_mapped_end   = s_array_maps[i].max_end;
+        s_info.mem_mapped_valid = 1;
+        break;
+    }
+    if (s_array_map_dropped)
+        klog(LOG_WARN, "SMBIOS",
+             "Type 19: %u distinct array(s) beyond cap %u not summarized",
+             (uint64_t)s_array_map_dropped, (uint64_t)SMBIOS_ARRAY_MAP_MAX);
 }
 
 static void parse_type4(const struct smbios_header *hdr)
@@ -550,8 +626,30 @@ static void smbios_dump_top3(const struct smbios_type_profile *prof,
     }
 }
 
+/* Zero all parsed accumulators, preserving only the caller-set version. Called
+ * at the start of every walk AND on every failure return, so a rejected or
+ * truncated table never leaves partial fields readable in s_info (some
+ * consumers read smbios_get_info() fields without first checking .valid). */
+static void smbios_reset_info_keep_version(void)
+{
+    uint8_t saved_major = s_info.smbios_major;
+    uint8_t saved_minor = s_info.smbios_minor;
+    uint8_t *sp = (uint8_t *)&s_info;
+    uint32_t i;
+    for (i = 0; i < sizeof(s_info); i++) sp[i] = 0;
+    s_info.smbios_major = saved_major;
+    s_info.smbios_minor = saved_minor;
+}
+
 static int walk_structures(uintptr_t table_addr, uint32_t max_len)
 {
+    /* Reset parsed accumulators BEFORE any return so every exit path (bounds
+     * reject, overflow, no-terminator) leaves s_info clean -- a failed 3.x
+     * attempt cannot leak partial data into the 2.x fallback walk, and a
+     * re-walk starts fresh. The caller writes the version into s_info just
+     * before this call, so preserve it across the reset. */
+    smbios_reset_info_keep_version();
+
     /* Pointer arithmetic on firmware-supplied table_addr + max_len can
      * wrap UINTPTR_MAX.  Reject (rather than silently cap) so a malformed
      * entry never marks s_info.valid = 1 with a partial parse. */
@@ -608,6 +706,10 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
     }
     uint64_t total_ticks = 0;
     uint32_t parsed_count = 0;
+
+    /* Reset the per-array Type 19 summary table for this walk (idempotent). */
+    s_array_map_count = 0;
+    s_array_map_dropped = 0;
 
     while (p + 4 <= end) {
         const struct smbios_header *hdr = (const struct smbios_header *)p;
@@ -668,6 +770,9 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
         s_table_base = (const uint8_t *)0;
         s_table_size = 0;
         s_table_end  = (const uint8_t *)0;
+        /* Wipe any fields the partial parse populated so a consumer that
+         * reads s_info without checking .valid sees no rejected firmware. */
+        smbios_reset_info_keep_version();
         return 0;
     }
 
@@ -677,6 +782,10 @@ static int walk_structures(uintptr_t table_addr, uint32_t max_len)
     uint32_t consumed = (uint32_t)(p - parse_base);
     if (consumed > parsed_bytes_cap) consumed = parsed_bytes_cap;
     s_table_size = consumed < max_len ? consumed : max_len;
+
+    /* Aggregate buffered Type 19 ranges against the final selected Type 16
+     * handle now that the whole table is walked (order-independent). */
+    smbios_finalize_mem_mapped();
 
     klog(LOG_INFO, "SMBIOS",
          "parsed %u structures from %u-byte table (RAM copy)",
@@ -1032,7 +1141,7 @@ void smbios_populate_registry(void)
     }
 
     /* ── HKLM\HARDWARE\Baseboard (Type 2) ────────────────────────────── */
-    if (s_info.board_manufacturer[0] || s_info.board_product[0]) {
+    if (s_info.board_valid) {
         if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\Baseboard", 0,
                            (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
                            &hKey, &disp) == ERROR_SUCCESS) {
@@ -1089,7 +1198,7 @@ void smbios_populate_registry(void)
 
     klog(LOG_INFO, "SMBIOS", "Registry populated: BIOS, System, %u CPU(s), %u DIMM(s)%s%s%s",
          (uint32_t)s_info.cpu_count, (uint32_t)s_info.dimm_count,
-         s_info.board_manufacturer[0] ? ", Baseboard" : "",
+         s_info.board_valid ? ", Baseboard" : "",
          s_info.chassis_valid ? ", Chassis" : "",
          s_info.mem_array_valid ? ", MemoryArray" : "");
 }

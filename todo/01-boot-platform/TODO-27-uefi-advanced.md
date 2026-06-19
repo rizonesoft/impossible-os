@@ -219,15 +219,18 @@ Parse SMBIOS Type 2 (Baseboard), Type 3 (Chassis), Type 16 (Memory Array), Type 
 
 **Test checkpoint:** QEMU: serial shows `SMBIOS: Registry populated: ... Chassis, MemoryArray`; `HKLM\HARDWARE\MemoryArray\ErrorCorrection` holds a valid enum (Unknown/None/ECC). Bare metal laptop: `Chassis\Type` = 9 (Laptop) and `smbios_chassis_is_laptop()` returns 1. Verify on QEMU WHPX/TCG + bare metal (firmware SMBIOS tables differ from QEMU synthetic).
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_uefi_advanced.c` 12 sub-tests (chassis codes, KB->byte wrap, Type16 capacity/sentinel/short, Type19 inclusive-end/extended/short-reject/reversed-reject) | live registry populate confirmed via serial
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | `test_uefi_advanced.c` 13 sub-tests (chassis codes, KB->byte wrap, Type16 capacity/sentinel/short, Type19 inclusive/extended/mixed/reject + handle) | live registry populate confirmed via serial
 
 > **Notes:**
 > - **What shipped** -- `parse_type2/3/16/19` + pure decoders (`smbios_type16_decode`/`smbios_type19_decode`/`smbios_kb_to_bytes`/`smbios_chassis_type_is_mobile`) + accessors; Baseboard/Chassis/MemoryArray registry hives.
-> - **How it runs** -- dispatch cases 3/16/19 in the existing single-pass walker; first-array-only Type 16, min-start/max-end aggregation over all Type 19; published at Phase 3 `smbios_populate_registry()`.
+> - **How it runs** -- walker cases 3/16/19; Type 16 prefers the System-Memory array (Use==0x03); Type 19 folds into per-handle min/max summaries resolved against the selected array after the walk; `s_info` reset per walk.
 > - **Downstream effects** -- `smbios_chassis_is_laptop()` feeds power/UI defaults (XREF `04-drivers-hardware/TODO-03`); `ErrorCorrection` gives Device Manager ECC-vs-non-ECC.
 > - **Canonical doc** -- [`include/kernel/smbios.h`](../../include/kernel/smbios.h) (`SMBIOS_ECC_*` + pure-decoder contracts).
 > - **Scope boundary** -- §6 owns Type 2/3/16/19 parse + HARDWARE hives; walker + Type 0/1/4/17 stay in `smbios.c` core; §7 owns dbx.
-> - **Codex** -- design 4x + test-coverage adoptions in this commit.
+> - **Codex** -- design 4x + test-coverage + review (adversarial/consistency/perf + re-adversarial convergence); adoptions in commit history.
+
+> **Verified:** 2026-06-19 | this commit | 5/5 items | build OK | tests 2836/2836 PASS (boot) + live registry populate
+> **Quality reviewed:** 2026-06-19 | Codex 16x (design, test-coverage, adversarial, consistency, perf, re-adversarial) | 1H+9M+2L fixed | scope: kernel-code-quality
 
 ---
 

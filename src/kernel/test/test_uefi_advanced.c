@@ -156,8 +156,9 @@ static void test_type19_extended_sentinel(void)
     uint32_t i;
     for (i = 0; i < sizeof(rec); i++) rec[i] = 0;
     rec[0] = 19; rec[1] = 0x1F;
-    rec[4] = 0xFF; rec[5] = 0xFF; rec[6] = 0xFF; rec[7] = 0xFF;  /* sentinel start */
-    rec[8] = 0x00; rec[9] = 0x00; rec[0x0A] = 0x00; rec[0x0B] = 0x00;
+    /* BOTH 32-bit fields sentinel -> both extended fields used */
+    rec[4] = 0xFF; rec[5] = 0xFF; rec[6] = 0xFF; rec[7] = 0xFF;
+    rec[8] = 0xFF; rec[9] = 0xFF; rec[0x0A] = 0xFF; rec[0x0B] = 0xFF;
     /* extended start at 0x0F = 0x2000 bytes; extended end at 0x17 = 0x3FFF */
     rec[0x0F] = 0x00; rec[0x10] = 0x20;
     rec[0x17] = 0xFF; rec[0x18] = 0x3F;
@@ -166,6 +167,23 @@ static void test_type19_extended_sentinel(void)
     TEST_ASSERT_EQ((uint32_t)ok, 1u, "decode succeeds");
     TEST_ASSERT_EQ((uint32_t)start, 0x2000u, "extended start at 0x0F");
     TEST_ASSERT_EQ((uint32_t)end, 0x3FFFu, "extended end at 0x17");
+}
+
+static void test_type19_mixed_field_resolution(void)
+{
+    uint8_t rec[0x20];
+    uint32_t i;
+    for (i = 0; i < sizeof(rec); i++) rec[i] = 0;
+    rec[0] = 19; rec[1] = 0x1F;
+    /* start uses 32-bit KB (0x04 KB -> 0x1000 bytes); end uses extended */
+    rec[4] = 0x04;
+    rec[8] = 0xFF; rec[9] = 0xFF; rec[0x0A] = 0xFF; rec[0x0B] = 0xFF;  /* end sentinel */
+    rec[0x17] = 0x00; rec[0x18] = 0x00; rec[0x19] = 0x10;  /* ext end = 0x100000 */
+    uint64_t start = 0, end = 0; uint16_t handle = 0;
+    int ok = smbios_type19_decode(rec, rec[1], &start, &end, &handle);
+    TEST_ASSERT_EQ((uint32_t)ok, 1u, "mixed 32-bit start + extended end decodes");
+    TEST_ASSERT_EQ((uint32_t)start, 0x1000u, "32-bit start resolved from KB field");
+    TEST_ASSERT_EQ((uint32_t)end, 0x100000u, "extended end resolved from 0x17");
 }
 
 static void test_type19_sentinel_short_record_rejected(void)
@@ -217,6 +235,8 @@ void test_register_uefi_advanced(void)
         test_type19_kb_inclusive_end, TEST_CAT_BOOT);
     test_suite_register_cat("uefi_advanced: Type19 extended sentinel",
         test_type19_extended_sentinel, TEST_CAT_BOOT);
+    test_suite_register_cat("uefi_advanced: Type19 mixed field resolution",
+        test_type19_mixed_field_resolution, TEST_CAT_BOOT);
     test_suite_register_cat("uefi_advanced: Type19 sentinel short reject",
         test_type19_sentinel_short_record_rejected, TEST_CAT_BOOT);
     test_suite_register_cat("uefi_advanced: Type19 reversed range reject",

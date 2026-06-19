@@ -53,11 +53,12 @@ struct smbios_system_info {
     uint8_t sys_uuid[16];   /* raw UUID bytes in SMBIOS wire order */
 
     /* Type 2 -- Baseboard */
-    char board_manufacturer[SMBIOS_STRING_MAX];
-    char board_product[SMBIOS_STRING_MAX];
-    char board_version[SMBIOS_STRING_MAX];
-    char board_serial[SMBIOS_STRING_MAX];
-    char board_asset[SMBIOS_STRING_MAX];
+    char    board_manufacturer[SMBIOS_STRING_MAX];
+    char    board_product[SMBIOS_STRING_MAX];
+    char    board_version[SMBIOS_STRING_MAX];
+    char    board_serial[SMBIOS_STRING_MAX];
+    char    board_asset[SMBIOS_STRING_MAX];
+    uint8_t board_valid;   /* 1 if any Type 2 field was captured */
 
     /* Type 3 -- Chassis / System Enclosure */
     char    chassis_manufacturer[SMBIOS_STRING_MAX];
@@ -66,7 +67,7 @@ struct smbios_system_info {
     uint8_t chassis_type;   /* enclosure type, bit7 (lock) stripped */
     uint8_t chassis_valid;
 
-    /* Type 16 -- Physical Memory Array (first array only) */
+    /* Type 16 -- Physical Memory Array (selected: prefer Use==System Memory) */
     uint64_t mem_array_max_capacity_bytes; /* 0 = absent/unknown */
     uint16_t mem_array_handle;   /* structure handle; Type 19 ranges match this */
     uint16_t mem_array_device_count;
@@ -75,7 +76,8 @@ struct smbios_system_info {
     uint8_t  mem_array_error_correction; /* SMBIOS_ECC_* (offset 0x06) */
     uint8_t  mem_array_valid;
 
-    /* Type 19 -- Memory Array Mapped Address (first range only) */
+    /* Type 19 -- Memory Array Mapped Address (min start / max end of the
+     * selected array's ranges, aggregated by Memory Array Handle) */
     uint64_t mem_mapped_start;  /* byte address; 0 = absent */
     uint64_t mem_mapped_end;    /* byte address (inclusive end) */
     uint8_t  mem_mapped_valid;
@@ -113,6 +115,9 @@ struct smbios_system_info {
 #define SMBIOS_MEM_LPDDR4 27
 #define SMBIOS_MEM_DDR5   34
 #define SMBIOS_MEM_LPDDR5 35
+
+/* Physical Memory Array Use (SMBIOS Type 16 offset 0x05) */
+#define SMBIOS_MEM_ARRAY_USE_SYSTEM  0x03  /* System memory (vs video/flash/NVRAM/cache) */
 
 /* Memory error-correction constants (SMBIOS Type 16 offset 0x06) */
 #define SMBIOS_ECC_OTHER       0x01
