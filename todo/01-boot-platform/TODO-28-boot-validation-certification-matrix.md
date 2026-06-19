@@ -59,7 +59,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` runs `tools/boot-cert/lint.py` (exit 0: 29 rows, 29 TODOs covered) + `test_lint.py` (18 assertions, each asserting the SPECIFIC diagnostic: coverage gap, evidence-less required row, required_for-subset, undeclared row platform, undeclared tier, duplicate YAML key incl. inline merge-source, cyclic merge alias, duplicate JSON key, out-of-matrix result platform, deeply-nested JSON, empty + present-but-empty `--results`; merge+override loads; result JSON valid/invalid).
 
-> **Test runner:** `bash scripts/test-tooling.sh` | boot-cert lint + self-test (3 aggregate assertions; 396/396 tooling tests PASS) -- host-side certification harness, no kernel `TEST_CAT_*` surface
+> **Test runner:** `bash scripts/test-tooling.sh` | boot-cert lint + self-test (3 aggregate assertions; 398/398 tooling tests PASS as of §2) -- host-side certification harness, no kernel `TEST_CAT_*` surface
 
 > **Notes:**
 > - **What shipped** -- `tools/boot-cert/`: `boot-cert.yml` (29-row matrix, every boot-platform TODO), `boot-cert.schema.json` + `result.schema.json` (draft 2020-12), `lint.py` (release gate), `test_lint.py` (6-assertion self-test).
