@@ -47,7 +47,7 @@ static uint64_t elf_exec_wrapper(const uint8_t *data, uint64_t size)
 
 /* ---- Init --------------------------------------------------------------- */
 
-void exec_init(void)
+boot_result_t exec_init(void)
 {
     /* Register built-in ELF format */
     static const exec_format_t elf_fmt = {
@@ -74,12 +74,21 @@ void exec_init(void)
     };
 
     s_format_count = 0;
-    exec_register_format(&elf_fmt);
-    exec_register_format(&eif_fmt);
-    exec_register_format(&pe_fmt);
+
+    /* ELF is the native loader: failure to register it leaves no way to run
+     * any binary, so it is boot-fatal. EIF/PE are optional formats -- their
+     * absence degrades but still boots (ELF binaries remain runnable). */
+    boot_result_t rc = BOOT_OK;
+    if (exec_register_format(&elf_fmt) != 0)
+        rc = BOOT_FATAL;
+    if (exec_register_format(&eif_fmt) != 0 && rc != BOOT_FATAL)
+        rc = BOOT_DEGRADED;
+    if (exec_register_format(&pe_fmt) != 0 && rc != BOOT_FATAL)
+        rc = BOOT_DEGRADED;
 
     klog(LOG_INFO, "exec", "Exec subsystem initialized (%u format(s))",
          (uint64_t)s_format_count);
+    return rc;
 }
 
 /* ---- Registration -------------------------------------------------------

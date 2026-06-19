@@ -115,14 +115,41 @@ void boot_phase3(void)
     }
 
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
-    /* pipe_create/shmem_create already init lazily; the explicit pipe_init
-     * call here is idempotent but gives the init sequencing a uniform
-     * entry point. alpc_init emits the ABI-present marker for the ALPC
-     * header; port objects and syscalls arrive in later work. */
-    (void)pipe_init();
-    (void)alpc_init();
-    kernel_subsystem_set_ready(SUBSYS_IPC, true);
-    boot_progress(3, "IPC", 0x0061);
+    /* pipe_create/shmem_create init lazily; explicit pipe_init gives the
+     * sequencing a uniform entry point. pipe is a global IPC invariant
+     * (fatal if it cannot init -- all userspace IPC would be unsafe); alpc
+     * is optional for boot because pipes/shmem already carry userspace, so
+     * a fatal ALPC degrades rather than halts. Entry POST is written before
+     * init so a hang/fault inside pipe_init/alpc_init shows the IPC stage
+     * rather than the prior SCHED milestone. */
+    {
+        POST16(POST16_IPC);
+        boot_result_t pipe_rc = pipe_init();
+        boot_result_t alpc_rc = alpc_init();
+        /* pipe and ALPC are both all-or-nothing for boot: pipe is the global
+         * IPC invariant, and alpc_port_init() declares its failures
+         * non-recoverable (a partial ObpAlpcPortType / \RPC Control state
+         * that the NtAlpc handlers registered unconditionally below would
+         * then expose to callers). A fatal from either halts via the
+         * recovery screen rather than advertising a half-initialized IPC
+         * subsystem as ready. */
+        boot_result_t ipc_rc =
+            (pipe_rc == BOOT_FATAL || alpc_rc == BOOT_FATAL) ? BOOT_FATAL
+          : (pipe_rc == BOOT_DEGRADED || alpc_rc == BOOT_DEGRADED) ? BOOT_DEGRADED
+          : BOOT_OK;
+        if (ipc_rc == BOOT_FATAL) {
+            boot_recovery_info_t ri = { SUBSYS_IPC, POST16_IPC, BOOT_FATAL, 3 };
+            kernel_subsystem_dump();
+            boot_recovery_action_t act = boot_recovery_show(&ri);
+            if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+            boot_halt("IPC init failed -- pipe or ALPC unrecoverable");
+        }
+        if (ipc_rc == BOOT_DEGRADED)
+            klog(LOG_WARN, "boot", "IPC subsystem degraded");
+        kernel_subsystem_apply_result(SUBSYS_IPC, ipc_rc);
+    }
+    POST16(POST16_IPC_OK);
+    boot_progress(3, "IPC", POST16_IPC_OK);
 
     /* --- Syscall handler + SSDT --- */
     boot_splash_status("Initializing syscalls...");
@@ -206,13 +233,28 @@ void boot_phase3(void)
         uefi_register_ssdt();
     }
 
-    /* --- Exec loader (ELF/PE format handlers) --- */
+    /* --- Exec loader (ELF/PE/EIF format handlers) --- */
+    /* Entry POST before init so a fault inside exec_init attributes to the
+     * EXEC stage. ELF-registration failure is fatal (no native loader = no
+     * userspace); an optional-format failure (EIF/PE) only degrades. */
     {
-        extern void exec_init(void);
-        exec_init();
+        extern boot_result_t exec_init(void);
+        POST16(POST16_EXEC);
+        boot_result_t exec_rc = exec_init();
+        if (exec_rc == BOOT_FATAL) {
+            boot_recovery_info_t ri = { SUBSYS_EXEC, POST16_EXEC, BOOT_FATAL, 3 };
+            kernel_subsystem_dump();
+            boot_recovery_action_t act = boot_recovery_show(&ri);
+            if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+            boot_halt("exec init failed -- no binary loader available");
+        }
+        if (exec_rc == BOOT_DEGRADED)
+            klog(LOG_WARN, "boot",
+                 "exec subsystem degraded (some formats unavailable)");
+        kernel_subsystem_apply_result(SUBSYS_EXEC, exec_rc);
     }
-    kernel_subsystem_set_ready(SUBSYS_EXEC, true);
-    boot_progress(3, "EXEC", 0x0062);
+    POST16(POST16_EXEC_OK);
+    boot_progress(3, "EXEC", POST16_EXEC_OK);
 
     /* --- Boot tests (debug=1 only) --- */
     boot_tests_run();

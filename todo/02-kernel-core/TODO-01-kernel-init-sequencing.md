@@ -200,10 +200,8 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 **File:** `src/kernel/main/boot_desktop.c` (restructured as `boot_phase3`)
 
 - [x] `task_init()` starts preemptive scheduler; BOOT_FATAL prerequisite path checks `SUBSYS_HEAP` + `SUBSYS_TIMER`
-- [x] Phase 3 currently marks `SUBSYS_IPC` ready (implicit IPC bootstrap; no dedicated `ipc_init()` symbol wired here)
-- [ ] Capture `pipe_init()`/`alpc_init()` results in `boot_phase3` (both already return `boot_result_t`; currently `(void)`-cast at `boot_desktop.c:122-124`) and branch before setting `SUBSYS_IPC` ready. TODO-01-owned; no external dep
-- [x] Phase 3 currently marks `SUBSYS_EXEC` ready (no dedicated `exec_loader_init()` bootstrap symbol wired here)
-- [ ] Make `exec_init()` return `boot_result_t` (`exec.c:50`, currently `void`) and branch in `boot_phase3` before setting `SUBSYS_EXEC` ready (`boot_desktop.c:211` ignores it). TODO-01-owned co-located change
+- [x] `boot_phase3` captures `pipe_init`/`alpc_init` typed results: FATAL from either -> recovery+halt (both all-or-nothing; ALPC partial state non-recoverable, NtAlpc published unconditionally); else `apply_result(SUBSYS_IPC)`; POST16_IPC entry
+- [x] `exec_init()` returns `boot_result_t` (ELF-reg failure FATAL, EIF/PE DEGRADED); `boot_phase3` branches recovery+halt on FATAL else `apply_result(SUBSYS_EXEC)`; POST16_EXEC entry written before init
 - [x] `boot_tests_run()` executes only when `debug=1` or `test=1`; release path skips tests
 - [x] `boot_splash_finish()` dismisses splash once desktop is ready
 - [x] `ttf_mgr_init()` + `icon_store_init()` + `cursor_init()` load desktop assets
@@ -212,6 +210,14 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] Phase 3 fatal-path behavior uses recovery screen + `boot_halt()` on prerequisite guards (same pattern as Phase 2); §7 failure policy table updated to match (2026-04-10)
 - [x] Add `boot_progress(3, "step-name", postcode)` at each step
 - [ ] Move syscall/SSDT fast-path bootstrap (`ssdt_init`, `syscall_init_fast`, `syscall_init`) to Phase 1 OR document/accept Phase 3 ownership and update [TODO-12-native-api-ssdt.md](./TODO-12-native-api-ssdt.md) XREF contract
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | propagation mechanism covered by `test_subsys_apply_result_dual_channel`; §5 severity/branch logic runs inside `boot_phase3`/`exec_init` (live boot infra, not unit-testable) -- validated via smoke test (boot reaches `C:\>`)
+>
+> **Notes:**
+> - IPC/exec typed-init propagation shipped: `boot_phase3` now captures `pipe_init`/`alpc_init`/`exec_init` `boot_result_t` instead of `(void)`-casting, closing the "fatal IPC/exec init silently swallowed" gap (Codex F3).
+> - Severity: pipe OR ALPC failure = FATAL -> recovery+halt (ALPC is all-or-nothing -- its partial state is non-recoverable per `alpc_port.h` and NtAlpc is published unconditionally, so a half-init ALPC must not be advertised ready; adversarial review overrode the design pass's demote-to-degraded); ELF-reg failure = FATAL, EIF/PE = DEGRADED.
+> - Named Phase-3 POST16 codes added (`POST16_IPC` 0x3012/_OK, `POST16_EXEC` 0x3014/_OK), entry code written before init so a fault inside init attributes to the right stage; mapped in `vpd.c` name table (replaces colliding raw 0x0061/0x0062).
+> - Still open: syscall/SSDT Phase-1-vs-Phase-3 ownership decision keeps §5 `[/]`; registry/vfs/exec-signature typed propagation owned by §4/§8 + TODO-06 §2/TODO-14 §8.
 
 ---
 

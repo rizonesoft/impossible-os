@@ -257,6 +257,10 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_SCHED_OK         0x3001
 #define POST16_WQ               0x3010
 #define POST16_WQ_OK            0x3011
+#define POST16_IPC              0x3012
+#define POST16_IPC_OK           0x3013
+#define POST16_EXEC             0x3014
+#define POST16_EXEC_OK          0x3015
 #define POST16_FONTS            0x3020
 #define POST16_FONTS_OK         0x3021
 #define POST16_ICONS            0x3022

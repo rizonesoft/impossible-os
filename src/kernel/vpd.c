@@ -808,6 +808,8 @@ static const struct post16_entry s_post16_names[] = {
     { 0x2080, "REGISTRY" },     { 0x2081, "REGISTRY" },
     { 0x2090, "SMP" },          { 0x2091, "SMP" },
     { 0x3000, "SCHED" },        { 0x3001, "SCHED" },
+    { 0x3012, "IPC" },          { 0x3013, "IPC" },
+    { 0x3014, "EXEC" },         { 0x3015, "EXEC" },
     { 0x3030, "DESKTOP" },      { 0x3031, "DESKTOP" },
     { 0x3040, "COMPOSITOR" },
     { 0, (const char *)0 },  /* sentinel */

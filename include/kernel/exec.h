@@ -9,6 +9,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/boot_init.h"
 #include "kernel/ob/ob_process.h"
 
 /* process_t alias for the exec API. Wraps PROCESS_OBJECT from the Object
@@ -69,8 +70,11 @@ _Static_assert(sizeof(loaded_module_t) == 368,
 
 /* ---- Public API --------------------------------------------------------- */
 
-/* Initialize the exec subsystem. Called once during Phase 3 boot. */
-void exec_init(void);
+/* Initialize the exec subsystem. Called once during Phase 3 boot.
+ * Returns BOOT_FATAL if the native ELF loader cannot register (no usable
+ * userspace), BOOT_DEGRADED if only an optional format (EIF/PE) failed,
+ * BOOT_OK otherwise. */
+boot_result_t exec_init(void);
 
 /* Register a binary format handler. Returns 0 on success, -1 if table full. */
 int exec_register_format(const exec_format_t *fmt);
