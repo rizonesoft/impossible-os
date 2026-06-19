@@ -812,6 +812,7 @@ static const struct post16_entry s_post16_names[] = {
     { 0x3014, "EXEC" },         { 0x3015, "EXEC" },
     { 0x3030, "DESKTOP" },      { 0x3031, "DESKTOP" },
     { 0x3040, "COMPOSITOR" },
+    { 0xFF00, "BOOT_OK" },      { 0xFFFE, "BOOT_FAILED" },
     { 0, (const char *)0 },  /* sentinel */
 };
 

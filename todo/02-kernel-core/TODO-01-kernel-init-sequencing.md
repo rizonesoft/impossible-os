@@ -88,6 +88,20 @@ New header and source file providing the result type, readiness oracle, and prog
 - [x] Define `BOOT_STEP(subsys, fn)` macro -- calls `fn()`, marks subsystem ready iff result is `BOOT_OK` or `BOOT_DEGRADED` (caller invokes `boot_progress()` separately)
 - [x] Expose `boot_phase0()`, `boot_phase1()`, `boot_phase2()`, `boot_phase3()` in `main_internal.h`
 
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | oracle/enum/macros covered by `test_boot_init.c` (boot_result_t values, oracle round-trip, BOOT_REQUIRE, enum layout, apply_result dual-channel), 0 failures
+>
+> **Notes:**
+> - Boot init infra (`boot_init.h`/`boot_init.c`): `boot_result_t` (4 codes), `kernel_subsys_t` (SUBSYS_COUNT=27), `g_subsys_ready[]` oracle, `boot_progress()` serial+TSC emitter, `BOOT_REQUIRE`/`BOOT_STEP` macros, `kernel_subsystem_apply_result`.
+> - Readiness oracle is lock-free: `__atomic` acquire/release per uint8 slot; safe for AP + many-subsystem reads (BSP-only writes during init).
+> - Consumed by every phase (`boot_phase0-3`) + per-section `BOOT_REQUIRE` gates; dependency-chain enforcement lives in §6.
+> - Canonical contract: `include/kernel/boot_init.h` (`_Static_assert` pins the enum count + `degraded_mask` <= 32 width).
+> - Scope: §1 owns the result type / oracle / macros; `boot_async_group` lives in `boot_init.c` but is owned by §13 (carries this review's timeout-quiescence + DEFERRED-rank findings).
+>
+> **Verified:** 2026-06-20 | commit `0d72fce6` | 11/11 items | build OK
+> **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 377)
+> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 378)
+> **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 2. Phase 0 -- Critical Init (Interrupts Disabled)
@@ -374,6 +388,8 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 - [x] Logs `[ASYNC] <step> started on CPU<n>` and `[ASYNC] <step> completed on CPU<n> in <N>ms`
 - [x] POST codes: `POST16(0xDD00)` dispatch, `POST16(0xDD01)` AP entry, `POST16(0xDD02)` barrier, `POST16(0xDD03)` done
 - [x] 2 unit tests: async POST code uniqueness, IPI vector value (0xFC) and no collision with 0xFD/0xFE
+- [ ] Quiesce the AP on async timeout before sequential fallback (`boot_init.c:365`): timeout marks AP done+FATAL without stopping it, so `boot_phase2` re-runs storage init concurrently (driver corruption). (Codex §1 H; `async_init=1` only)
+- [ ] Explicit `boot_result_t` severity rank in `boot_async_group` worst-pick (`boot_init.c:383`): numeric max lets `BOOT_DEFERRED=3` outrank `BOOT_FATAL=2`, masking a fatal step (latent). (Codex §1 M)
 - [ ] Commit: `"kernel: async subsystem init -- SMP parallel Phase 2"`
 
 **Test checkpoint:** Boot with `async_init=1` → storage/input/network init on different CPUs → serial log shows `[ASYNC]` entries with different CPU numbers. Total Phase 2 time decreases vs sequential. Boot with `async_init=0` → sequential behavior unchanged. Verify on QEMU WHPX (2+ vCPUs), TCG, VirtualBox, bare metal. Bare metal is critical -- per-AP fault isolation must work on real hardware.
