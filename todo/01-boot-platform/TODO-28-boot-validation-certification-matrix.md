@@ -168,7 +168,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 - [x] `docs/hardware/boot-lab.md` per-machine inventory schema (CPU, chipset, firmware vendor/version, GPU, storage controller, USB controller, TPM, Secure Boot) + a reference Haswell-laptop block.
 - [x] 5 certification classes (desktop-SATA, laptop-NVMe, USB-only, SecureBoot+TPM, no-TPM) mapped to the `boot-cert.yml` `baremetal-*` platform classes + `boot_device_type` values.
 - [x] Manual run template (build/machine/class/result/artifacts) + per-run evidence checklist (serial, screenshot, BlackBox, firmware report, signed-image + PCR checks).
-- [x] Firmware-quirk tracking links back to `TODO-04` (firmware-table inventory owner; dedicated quirk-registry section not yet numbered there) feeding the §11 firmware-sanity gate.
+- [x] Firmware-quirk tracking links back to `TODO-04 §9` (Firmware Quirk Database) feeding the §11 firmware-sanity gate.
 - [x] Commit: `"docs: boot bare-metal lab inventory"`
 
 **Test checkpoint:** `docs/hardware/boot-lab.md` lists the 5 certification classes (desktop SATA, laptop NVMe, USB-only, Secure Boot+TPM, no-TPM) with per-machine inventory + a manual run template + evidence checklist; firmware quirks link back to TODO-04 §9.
@@ -180,6 +180,9 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 > - **Structure / consumers** -- the §9 release gate consumes per-run `result`; the §8 support bundle packages the named artifacts; the 5 classes mirror `tools/boot-cert/boot-cert.yml` `baremetal-*` + `boot_device_type` (boot-info-fields.md).
 > - **Canonical doc** -- [`docs/hardware/boot-lab.md`](../../docs/hardware/boot-lab.md).
 > - **Scope boundary** -- §7 is the manual bare-metal evidence inventory; firmware quirk registry is TODO-04 §9; the firmware-sanity gate that consumes it is §11; automated VM suites are §2-§6.
+
+> **Verified:** 2026-06-19 | this commit | 4/4 items | build OK | docs-only (concrete run example validates vs result.schema.json; 5 classes match boot-cert.yml baremetal-* enum)
+> **Quality reviewed:** 2026-06-19 | Codex 6x (adversarial-impl, adversarial, consistency, perf, re-adversarial) | 5M fixed | scope: N/A (docs-only)
 
 ---
 

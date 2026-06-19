@@ -50,20 +50,27 @@ classes_satisfied: <subset of the 5 classes above>
 
 ## Manual run template
 
-For each (build, machine, class), the operator records a **`result.schema.json`-shaped** object so the §9 release gate can consume it directly (the schema sets `additionalProperties: false`, so field names must match exactly and `status` must be one of `pass | fail | skip | degraded` -- a class this machine does not satisfy is `skip`, never a free-form `n/a`):
+For each (build, machine, class), the operator records a **`result.schema.json`-shaped** object (`additionalProperties: false`, so field names must match exactly). Field rules:
+
+- `status` is exactly ONE of `pass`, `fail`, `skip`, `degraded` -- a class this machine does not satisfy is `skip` (never a free-form `n/a`). `tier` is exactly ONE of `nightly`, `rc`, `stable`. `platform_class` is the bare-metal class from the table above.
+- `row_id` MUST name a `tools/boot-cert/boot-cert.yml` row whose `platforms[]` includes the recorded `platform_class`, or `tools/boot-cert/lint.py` rejects the result. Valid rows per class: desktop-SATA -> `bare-metal-hardening`; laptop-NVMe -> `nvme-storage`; USB-only -> `xhci-usb-boot`; SecureBoot+TPM -> `tpm-measured-boot` or `uefi-secureboot-state`; no-TPM -> `bare-metal-hardening`.
+
+Additionally, `platform_class` must be one of the selected machine's `classes_satisfied` (the schema/lint layer does NOT enforce this -- it only checks the `row_id` row lists the class -- so the operator owns the machine-satisfies-class invariant).
+
+Concrete example (laptop-NVMe cold boot on `lab-haswell-laptop`, which lists `baremetal-laptop-nvme` in `classes_satisfied`, using `nvme-storage` whose `platforms[]` includes that class):
 
 ```json
 {
-  "row_id": "<boot-cert.yml row id, e.g. boot-abi-handoff>",
-  "status": "pass | fail | skip | degraded",
-  "build_id": "<git short sha or release tag>",
-  "artifact_id": "<optional artifact id or null>",
-  "machine_id": "<from the inventory above>",
-  "tier": "nightly | rc | stable",
-  "platform_class": "baremetal-desktop-sata | baremetal-laptop-nvme | baremetal-usb-only | baremetal-secureboot-tpm | baremetal-no-tpm",
-  "ts": "<ISO-8601 UTC>",
+  "row_id": "nvme-storage",
+  "status": "pass",
+  "build_id": "1c2e9ccd",
+  "artifact_id": null,
+  "machine_id": "lab-haswell-laptop",
+  "tier": "stable",
+  "platform_class": "baremetal-laptop-nvme",
+  "ts": "2026-06-19T00:00:00Z",
   "logs": ["serial.log", "screen.ppm", "blackbox/", "firmware-report.json"],
-  "reason": "<required for fail/skip/degraded; e.g. boot_time, observed quirk>"
+  "reason": null
 }
 ```
 
@@ -84,4 +91,4 @@ This is the manual counterpart to the `tools/boot-cert/result.schema.json` objec
 
 Bare-metal firmware quirks (GOP timing, NVMe identify oddities, USB routing, ACPI/SMBIOS table defects, Secure Boot key handling) are owned by the firmware-table platform inventory. File each observed quirk there with the `machine_id`, firmware vendor/version, and the observed-vs-expected behavior, and link the run's evidence record.
 
--> XREF: [`TODO-04-firmware-table-platform-inventory.md`](../../todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md) -- the firmware-table & platform-inventory owner (a dedicated firmware-quirk registry section is not yet numbered there; file quirks against that TODO). The §11 firmware-sanity certification gate consumes the resulting `firmware-tables.json`; this lab inventory is where the human-observed quirks that feed it are first recorded.
+-> XREF: [`TODO-04-firmware-table-platform-inventory.md`](../../todo/01-boot-platform/TODO-04-firmware-table-platform-inventory.md) §9 (Firmware Quirk Database -- the `s_quirks[]` SMBIOS-keyed descriptor table). File a newly observed lab quirk there. The §11 firmware-sanity certification gate consumes the resulting `firmware-tables.json` (`quirks_active[]`); this lab inventory is where the human-observed quirks that feed §9 are first recorded.
