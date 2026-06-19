@@ -436,6 +436,7 @@ title: "TODO-14 -- Registry System Completion"
   - Triggered automatically when pool utilisation < 60% (many deletions have occurred) or by `chkregistry --fix`
   - Reclaims memory: a registry with 10 000 creations and 8 000 deletions compacts from 10 000 slots to 2 000 slots
 
+- [ ] Boot lifecycle: change `registry_init()` (`registry.c:272`) `void`→`boot_result_t`, return BOOT_FATAL on hive-mount/default-population failure so `boot_phase2` branches to recovery. -> XREF: `02-kernel-core/TODO-01 §4,§8`
 - [ ] Commit: `"kernel/registry: dual-log WAJ, incremental delta flush, chkregistry, hive compaction"`
 
 **Test checkpoint:** Dual-log: corrupt `SYSTEM.hive.log1` mid-write → `registry_init` mounts from `log2`; data intact. Delta flush: modify one value in 1 MiB hive → `hive_flush_incremental` writes exactly 4 KiB (one dirty page). `chkregistry SYSTEM.hive` → reports key/value counts, 0 errors. Compaction: create 10K keys, delete 8K → `hive_compact` reduces pool to ~2K slots. Serial log: `"[REG] Delta flush: %u dirty pages written"`. Test on: QEMU WHPX + TCG.

@@ -60,7 +60,7 @@ title: "TODO-01 -- Kernel Init Sequencing"
 | 💎  |   6   | Dependency gates                           | §1--§5     |  [x]   |
 | 💎  |   7   | Failure policy                             | §6         |  [/]   |
 | 💎  |   8   | Code cleanup                               | §2--§5     |  [/]   |
-| ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [x]   |
+| ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [/]   |
 | ⭐  |  10   | POST code + UEFI variable log              | §1         |  [/]   |
 | 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
 | ⭐  |  12   | Boot performance regression detection      | §10        |  [/]   |
@@ -189,7 +189,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 - [x] Add `boot_progress(2, "step-name", postcode)` at each step
 - [ ] Enforce typed fatal/degraded decisions from Phase 2 init return values (current gap: several Phase 2 init APIs are still `void` and have no boot_result_t propagation):
   - `vfs_init()` return-path ownership → [05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
-  - `registry_init()` return-path ownership → [TODO-14-registry-completion.md §2](./TODO-14-registry-completion.md)
+  - `registry_init()` return-path ownership → [TODO-14-registry-completion.md §8](./TODO-14-registry-completion.md) (Advanced Hive Features -- owns `registry_load_hives()` boot wiring + dual-log mount; the `void`→`boot_result_t` change belongs with hive-mount-failure semantics, not §2 Advanced Key Operations)
   - `partition_mount_filesystems()` root-mount success/failure must be validated explicitly before continuing to registry
 
 ---
@@ -201,9 +201,9 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 
 - [x] `task_init()` starts preemptive scheduler; BOOT_FATAL prerequisite path checks `SUBSYS_HEAP` + `SUBSYS_TIMER`
 - [x] Phase 3 currently marks `SUBSYS_IPC` ready (implicit IPC bootstrap; no dedicated `ipc_init()` symbol wired here)
-- [ ] Add explicit `ipc_init()` boot hook with `boot_result_t` error propagation before setting `SUBSYS_IPC` ready (→ XREF: [TODO-24-alpc-message-ports.md §1](./TODO-24-alpc-message-ports.md))
+- [ ] Capture `pipe_init()`/`alpc_init()` results in `boot_phase3` (both already return `boot_result_t`; currently `(void)`-cast at `boot_desktop.c:122-124`) and branch before setting `SUBSYS_IPC` ready. TODO-01-owned; no external dep
 - [x] Phase 3 currently marks `SUBSYS_EXEC` ready (no dedicated `exec_loader_init()` bootstrap symbol wired here)
-- [ ] Wire explicit exec-loader bootstrap before setting `SUBSYS_EXEC` ready (→ XREF: [TODO-17-binary-system.md §5](./TODO-17-binary-system.md))
+- [ ] Make `exec_init()` return `boot_result_t` (`exec.c:50`, currently `void`) and branch in `boot_phase3` before setting `SUBSYS_EXEC` ready (`boot_desktop.c:211` ignores it). TODO-01-owned co-located change
 - [x] `boot_tests_run()` executes only when `debug=1` or `test=1`; release path skips tests
 - [x] `boot_splash_finish()` dismisses splash once desktop is ready
 - [x] `ttf_mgr_init()` + `icon_store_init()` + `cursor_init()` load desktop assets
@@ -265,7 +265,7 @@ These are bugs and structural violations that must be fixed as part of this TODO
   - [x] `pipe_init()` → [TODO-24 §1](./TODO-24-alpc-message-ports.md)
   - [ ] `pmm/vmm/heap_init()` → [03-memory/TODO-01 §1](../03-memory-concurrency/TODO-01-vmm-memory-protection.md)
   - [ ] `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
-  - [ ] `registry_init()` → [TODO-14 §2](./TODO-14-registry-completion.md)
+  - [ ] `registry_init()` → [TODO-14 §8](./TODO-14-registry-completion.md) (Advanced Hive Features; §2 is Advanced Key Operations and does not own boot lifecycle)
 
 ---
 
@@ -277,7 +277,8 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 - [x] Design `boot_recovery_info_t` struct: failed subsystem, POST code, `boot_result_t`, phase number
 - [x] Implement `boot_recovery_show(boot_recovery_info_t *info)` -- draws panel on framebuffer using inline 8x8 font; no heap alloc
 - [x] Implement simple three-option menu: **[R] Retry**, **[C] Serial console**, **[P] Power off**; poll PS/2 keyboard via port 0x60/0x64
-- [x] Hook into Phase 2 failure path: VFS and Registry guards call `boot_recovery_show()` before `boot_halt()`
+- [x] Hook into Phase 2 missing-prerequisite path: VFS and Registry prereq guards call `boot_recovery_show()` before `boot_halt()` (`boot_storage.c:305`, `:731`)
+- [ ] Observe actual Phase 2 init FAILURE, not just missing prereq: today `SUBSYS_VFS`/`SUBSYS_REGISTRY` are set ready unconditionally (void/ignored inits) so recovery never fires on a real mount/registry failure. Blocked on §4 typed propagation
 - [x] Hook into Phase 3 failure path: Scheduler guard calls `boot_recovery_show()` before `boot_halt()`
 - [x] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
 - [x] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
