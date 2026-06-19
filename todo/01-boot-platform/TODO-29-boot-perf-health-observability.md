@@ -50,7 +50,7 @@ implements_after: TODO-04
 
 - Every boot phase has a documented target budget; breaching the budget emits a `[WARN] BOOT-BUDGET:` line at boot-end naming the phase, target, observed, and likely root cause.
 - `X:\Diag\boot-health.json` exists post-Phase-3 with one consolidated view: degraded caps, degraded subsystems, missing capabilities (TPM/USB/NVMe), perf-budget breaches, MAT W^X violations, firmware quirks, last 3 boot times.
-- `X:\Perf\boot-trend.json` rolls the last 16 boots; CI gate fails when median grows >15% over a 3-run window.
+- `X:\Perf\boot-trend.json` rolls the last 16 boots and emits a BOOT-TREND WARN when median grows >15% over a 3-run window; the release-blocking CI gate that consumes it is owned by TODO-28 §9 (deferred), not §3.
 - SMBIOS init drops from 1.3s to <100ms.
 - Mouse PS/2 init drops from 1.1s to <100ms.
 - Font/icon load drops from ~1.3s synchronous-blocking to <50ms post-desktop-ready (deferred async loader).
@@ -78,6 +78,7 @@ implements_after: TODO-04
 | ⭐ |  15   | User-mode binary spawn latency (~1s task_create→ELF)| T22 (sched / exec)                        |  [ ]   |
 | ⭐ |  16   | TSC frequency variability under hypervisor          | --                                        |  [ ]   |
 | ⭐ |  17   | PAT WC -> WT hypervisor trap quirk                  | §2 (consumer)                             |  [ ]   |
+| 💎 |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                            |  [ ]   |
 
 ---
 
@@ -152,7 +153,7 @@ The §1 budget check catches absolute breaches, but a slow drift inside the budg
 - [x] RMW cycle in `boot_trend_publish_json`: read+parse -> prepend current boot -> trim to 16 -> write `.tmp` -> `vfs_rename_ex(... VFS_RENAME_REPLACE_EXISTING)`.
 - [x] Top-level schema validation only; bad `schema_version` or non-array `boots` -> rename to `.corrupt-<seq>` + fresh v1 write.
 - [x] 3-run median per phase (prior=`boots[3..5]`, newest=`boots[0..2]`); emits BOOT-TREND WARN when growth >15%; first 5 boots silent.
-- [x] CI hook stays owned by the boot-validation matrix (this section ships data file + warn line only).
+- [x] CI hook stays owned by the boot-validation matrix (this section ships data file + warn line only). -> XREF: `TODO-28-boot-validation-certification-matrix.md §9` (release gate + dashboard; owns the median->fail CI gate that consumes `boot-trend.json`).
 - [ ] Defer `boot_trend_publish_json()` (cJSON RMW + sync VFS I/O) to a post-DESKTOP_READY work item; record only fixed-size durations during boot -- takes the trend layer's own cost out of measured boot time
 - [ ] Linearize `boot_trend_publish_json()` traversal (`boot_trend.c:317`): replace indexed `json_array_get` (O(N^2) loop on dense/malformed file) with `json_array_first`/`json_array_next`; quarantine over-long `boots` arrays. (TODO-24 §6)
 - [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline, or gate BlackBox-only + document no fallback. (TODO-24 §6)
@@ -272,9 +273,9 @@ Observed: ~1.3s of font + icon loading happens INSIDE the desktop boot phase bef
 
 A 1.3s SMBIOS init looks identical on serial to a hung boot until either (a) the next `boot_progress` line emits or (b) the watchdog fires (TODO-23). A 250ms heartbeat fills the gap with "still working" telemetry.
 
-- [ ] `boot_heartbeat_arm(phase_ms_target)` and `boot_heartbeat_pet()` in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h). When armed, every 250ms a LAPIC timer ISR emits `[BOOT-HB] phase=<step> elapsed=<ms> target=<target>` on serial and increments `boot_info.heartbeat_seq`.
+- [ ] `boot_heartbeat_arm(phase_ms_target)` and `boot_heartbeat_pet()` in [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h). ISR-SAFE ONLY: the 250ms LAPIC-timer ISR increments an in-memory counter + records elapsed; the `[BOOT-HB] phase=<step> elapsed=<ms> target=<target>` serial line is DRAINED outside interrupt context (next `boot_progress` entry/exit), never from the ISR -- TODO-14 §4 permanently deferred the in-ISR visual heartbeat after `fb_swap_rect` caused recursive interrupts on bare metal; serial writes carry the same risk. A new `boot_info.heartbeat_seq` field is a BOOT_INFO_VERSION bump -> add it via the boot_info ABI owner path (CLAUDE.md boot_info ABI), not ad hoc.
 - [ ] Wire arm/pet into `boot_progress`: every step entry arms (with the §1 budget as target), every step exit pets (cancels the next heartbeat). Long-running steps emit 4 heartbeats/sec; short steps emit zero.
-- [ ] Coordinate with TODO-23 (watchdog NMI on hard cap). TODO-14 §4 alive-blink / visual heartbeat is permanently deferred; the heartbeat is the soft serial signal, and the watchdog is the hard reset.
+- [ ] -> XREF: `TODO-23-boot-watchdog.md` owns the LAPIC/NMI timer + hard-cap reset; §8 is the SOFT serial-counter signal layered on TODO-23's timer (no duplicate timer ownership). TODO-14 §4 (in-ISR visual heartbeat) stays permanently deferred; §8 is serial-only + ISR-safe-drain.
 - [ ] Boot-health.json (§2) records the maximum heartbeat gap observed during the boot, surfacing pauses that stayed under the WARN threshold but were unusually slow.
 - [ ] Commit: `"boot: heartbeat telemetry during long phases"`
 
@@ -420,19 +421,35 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 
 ---
 
+## 18. Boot Critical-Path / Dependency / Resource-Wait Attribution
+
+§1-§3 expose per-phase durations + budgets + trend deltas, but a boot delay caused by ORDERING (step B waited on step A), a hardware WAIT (device poll), or scheduler STARVATION reads as "phase slow" with no actionable cause. Linux `systemd-analyze critical-chain` / `blame` / `dot` expose exactly this; this section adds the dependency + resource-wait attribution layer on top of the §1 timeline.
+
+- [ ] Tag each `boot_progress` step delta with a cause class (`COMPUTE`, `HW_WAIT`, `IO_WAIT`, `SCHED_WAIT`) so a slow step records WHY, not just how long.
+- [ ] `boot_critical_chain()` -- walk the §1 timeline, emit the ordered longest-pole chain (each step + dominant wait class) as `[BOOT-CRIT] <step> <ms> <cause>` lines (systemd-analyze critical-chain parity).
+- [ ] Add `critical_chain[]` (top-N longest poles + cause class) + a duration-sorted `blame[]` view to `boot-health.json` (§2) so the dashboard names the boot's longest pole + why.
+- [ ] Pure classifier `boot_cause_classify()` + longest-pole walk are data-only (no live boot calls) for unit test.
+- [ ] -> XREF: `TODO-14-boot-diagnostics.md §9` (Boot Timeline Visualization) -- the Gantt/SVG viewer consumes this critical-chain + cause-class data; §18 owns the attribution, §9 owns the visual.
+- [ ] Commit: `"boot: critical-path + resource-wait attribution (systemd-analyze critical-chain parity)"`
+
+**Test checkpoint:** Boot serial emits `[BOOT-CRIT]` lines naming the ordered longest-pole chain with per-step cause class; `boot-health.json` carries `critical_chain[]` (top-N) + a blame-sorted view. Pure-helper test covers the longest-pole walk + cause classifier. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                            | 🪟 Win11                          | 🐧 Linux                          | 🚀 Impossible OS                   |
 | -- | ---------------------------------- | --------------------------------- | --------------------------------- | ---------------------------------- |
 | 💎 | Per-phase boot perf budgets        | ⚠️ ETW boot trace (post-hoc)     | ⚠️ systemd-analyze (post-hoc)    | ⬜ §1 boot-time alarms             |
 | ⭐ | Consolidated boot health JSON      | ⚠️ msinfo32 + Event Viewer       | ⚠️ journalctl + scattered tools   | ✅ §2 single boot-health.json      |
-| ⭐ | Boot perf trend regression alarm   | ❌ no built-in                    | ❌ no built-in                    | ✅ §3 boot-trend.json + 15% gate   |
+| ⭐ | Boot perf trend regression alarm   | ❌ no built-in                    | ❌ no built-in                    | ⚠️ §3 trend+WARN; gate=T28 §9    |
 | 💎 | SMBIOS init speed                  | ⚠️ NT HAL parses lazily          | ⚠️ dmidecode-driven, scattered    | ✅ §4 51ms (was 1342ms; RAM copy)  |
 | ⭐ | MAT W^X root-cause attribution     | ❌ unsupported                    | ⚠️ /sys/firmware/efi/* raw       | ✅ §5 per-violation phys+attr      |
 | 💎 | PS/2 mouse init speed              | ⚠️ HAL probes serially            | ⚠️ atkbd serial probe             | ✅ §6 100ms (was 1149ms; split TO) |
 | ⭐ | Async font / icon load             | ✅ Win11 SystemAssets fade-in     | ⚠️ DE-dependent (KDE/GNOME async)| ⬜ §7 minimal face + swap          |
 | 💎 | Boot heartbeat telemetry           | ✅ ETW Microsoft-Windows-Boot     | ⚠️ printk timestamps only         | ⬜ §8 250ms HB + LAPIC ISR         |
 | ⭐ | PAT WC-trap hypervisor surfacing   | ❌ silent WT fallback             | ❌ silent WT fallback             | ⬜ §17 firmware_quirks_active[]   |
+| 💎 | Boot critical-path attribution     | ⚠️ WPA stack (post-hoc)          | ✅ systemd-analyze critical-chain | ⬜ §18 [BOOT-CRIT] + cause class  |
 
 ---
 

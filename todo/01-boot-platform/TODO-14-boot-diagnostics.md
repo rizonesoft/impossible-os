@@ -286,7 +286,7 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 **Files:** `docs/` (schema + tooling notes), optional `scripts/` or `user/` offline converter
 
 - [x] Published v1 wire format `docs/boot/boot-timeline-schema.md` (8 fields, FPDT/TSC sources, anchoring + unreliable semantics, emit guards); linked from `docs/boot/black-box-artifacts.md`
-- [ ] The SVG + chrome://tracing converters MUST preserve `target_ms` and `unreliable` so the boot-blame / regression surfaces (→ XREF: [`01-boot-platform/TODO-29`](TODO-29-boot-perf-health-observability.md)) are not silently discarded.
+- [ ] Converters MUST preserve `target_ms`, `unreliable`, and §18 critical-chain/cause-class fields (→ XREF: [`TODO-29 §18`](TODO-29-boot-perf-health-observability.md) owns attribution; §9 owns the visual).
 - [ ] Optional offline converter or in-kernel `boot_timeline_to_svg()` to produce Gantt-style SVG comparable to `systemd-analyze plot` output
 - [ ] Optional Chrome trace event JSON export for `chrome://tracing` import (competitive edge vs plain SVG)
 - [x] Commit: `"docs: boot timeline JSON schema (v1 wire format) -- docs/boot/boot-timeline-schema.md"`
