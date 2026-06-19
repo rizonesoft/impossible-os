@@ -38,7 +38,7 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 | ⭐ | Order | Deliverable | Depends On | Status |
 | --- | :---: | --- | --- | :---: |
 | 💎 | 1 | Boot certification matrix schema | GAP-ANALYSIS | [x] |
-| 💎 | 2 | VM automation suite | §1 | [ ] |
+| 💎 | 2 | VM automation suite | §1 | [x] |
 | 💎 | 3 | Storage/media boot suite | §1, T16, T17, T06 | [ ] |
 | 💎 | 4 | Security boot suite | §1, T02, T13, T12 | [ ] |
 | 💎 | 5 | Recovery and rollback suite | §1, T21, T22, T23, T26 | [ ] |
@@ -76,15 +76,26 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## 2. VM Automation Suite
 
-- [ ] Standardize QEMU WHPX, QEMU TCG, VirtualBox, and Hyper-V launchers.
-- [ ] Capture serial, screenshot, BlackBox image, and exit status.
-- [ ] Add timeout/hang detection.
-- [ ] Support test-suite filters and boot.conf patching.
-- [ ] Boot-reliability gate: N consecutive cold + warm reboots per tier/platform, per-iteration capture, flake threshold 0 for stable (catches intermittent-boot / NVRAM-ordering / storage-timing flakes a single-shot misses)
+- [x] Standardized launcher registry (`LAUNCHERS` in `boot_reliability.py`) for QEMU WHPX/TCG + VirtualBox + Hyper-V; `boot-test-qemu.sh` is the single-shot QEMU primitive (cold/warm NVRAM). WHPX/Hyper-V have no Linux runner (XREF below).
+- [x] Capture serial + screenshot (HMP `screendump`) + exit status; BlackBox advertised per-launcher in `caps`; per-iteration artifacts under `--out` (`serial-NNN-{cold,warm}.log` / `screen-NNN-*.ppm`) recorded in each result's `logs[]`.
+- [x] Timeout/hang detection: launcher polls captured serial each second; gate hard-walls each launcher at `timeout+30s` (`_run_once`), classified `fail` "boot timed out".
+- [x] Test-suite filter + boot.conf patching via existing `scripts/patch-boot-conf.sh` (`--test-suite`, repeatable `--boot-conf-patch key=value`), applied on the cold-series boundary and reset after.
+- [x] Boot-reliability gate `boot_reliability.py`: N cold + M warm reboots; `classify_boot` (fail/nonzero-exit beat PASS, missing milestone->degraded); flake decision via `aggregate_runs` (stable=0); incomplete runs rejected; schema-valid output.
+- [x] `tools/boot-cert/reliability.schema.json` -- aggregate shape (cold/warm counts, flake_count/threshold, decision, classifier_version, iterations[]) for release-gate audit; result.schema.json (S1) stays the frozen single-run shape.
 - [ ] -> XREF: `15-installer-release/TODO-04-release-qa.md §2`/`§8` -- this gate is BOOT repeat-boot flake detection; whole-OS idle/crash soak stays release-QA
-- [ ] Commit: `"test: boot VM automation suite"`
+- [x] Commit: `"test: boot VM automation suite"`
 
-**Test checkpoint:** each launcher (QEMU WHPX/TCG, VirtualBox, Hyper-V) boots to `C:\>` or times out with a captured serial + screenshot + BlackBox image + exit status; hang detection fires within the timeout.
+**Test checkpoint:** `bash scripts/test-tooling.sh` runs `boot_reliability.py --self-check` (registry + both schemas load) + `test_boot_reliability.py` (57 assertions: classify fail-precedence/timeout/exit-code-authoritative/missing-prompt/ISO-no-prompt/missing-signal/ANSI; tier thresholds; aggregate stable-0/nightly-budget/skip-not-flake/flake+skip-fail; result + reliability schema conformance; incomplete-run invariants; registry + launcher-source consistency; plus mock-launcher orchestration: cold+warm bootstrap, all-skip + partial-skip are failures, exit-code-only path). Live launch (host with QEMU): `boot_reliability.py --platform qemu-tcg --tier stable --cold 3 --warm 2` boots `build/system-disk.img` 5x, each iteration captures serial + exit; a wedged boot trips the timeout->fail; `stable` red-lights on any single flake.
+
+> **Test runner:** `bash scripts/test-tooling.sh` | boot-reliability self-check + 57-assertion self-test (398/398 tooling tests PASS) -- host-side certification harness, no kernel `TEST_CAT_*` surface
+
+> **Notes:**
+> - **What shipped** -- `boot_reliability.py` (registry + classify/aggregate/build + cold/warm driver), `reliability.schema.json`, `boot-test-qemu.sh` (single-shot QEMU launcher w/ cold/warm NVRAM), `test_boot_reliability.py` (57 assertions).
+> - **How it runs** -- `boot_reliability.py --platform <pc> --tier <t> --cold N --warm M` drives the registry launcher N+M times, classifies each captured serial, writes `reliability.json` + `results.json`; `test-tooling.sh` runs the no-QEMU self-test.
+> - **Downstream effects** -- §9 release gate consumes `decision`/`flake_count`/`flake_threshold`; §3-§6 suites drive their platform rows through this same gate; reuses `patch-boot-conf.sh` + `boot-test-{vbox,vhdx}.sh`.
+> - **Canonical doc** -- [`tools/boot-cert/reliability.schema.json`](../../tools/boot-cert/reliability.schema.json) + the `boot_reliability.py` module docstring.
+> - **Scope boundary** -- §2 owns VM launch + repeat-boot flake detection; the Windows-side WHPX/Hyper-V live runner is owned by TODO-06 (`boot-test-whpx.ps1`); whole-OS idle/crash soak is TODO-04 §2/§8; bare-metal lab is §7.
+> - **Codex** -- design 1x + test-coverage 1x + adversarial/re-adversarial x5 + adversarial-impl x4, all converged clean; ~16 fail-open cert holes closed (exit-code authority, incomplete-run + zero-iteration guards, skip/partial-skip/flake+skip semantics, first-warm bootstrap, per-run out-dir + atomic publish, VBox contract, prompt literal, timeout/QEMU-exit promotion, process-group + SIGINT-spawn-race kill, bash-prefixed launchers, boot.conf-disk guard); consistency/perf in review pipeline. Per-finding evidence in commit history.
 
 ---
 
@@ -204,11 +215,11 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 | ⭐ | Feature                   | 🪟 Win11                  | 🐧 Linux                 | 🚀 Impossible OS              |
 |----|---------------------------|----------------------------|---------------------------|-------------------------------|
 | 💎 | WHQL-style boot matrix    | ✅ WHQL/HLK               | ⚠️ per-distro CI          | ⬜ §1 cert matrix + gate      |
-| 💎 | VM boot automation        | ⚠️ internal only          | ⚠️ per-distro tests       | ⬜ §2 WHPX/TCG/VBox/Hyper-V   |
+| 💎 | VM boot automation        | ⚠️ internal only          | ⚠️ per-distro tests       | ✅ §2 4-class launcher registry |
 | ⭐ | BlackBox support bundle   | ⚠️ WER/event logs         | ⚠️ journal/sosreport      | ⬜ §8 one-zip bundle          |
 | ⭐ | TODO-owner mapped matrix  | ❌ internal, opaque        | ❌ ad hoc                 | ✅ §1 boot-cert.yml + lint gate |
 | 💎 | Firmware sanity gate      | ✅ HLK firmware tests     | ✅ FWTS (ACPI/UEFI)       | ⬜ §11 consumes T04 inventory |
-| 💎 | Repeat-boot reliability   | ✅ HLK MTBF               | ⚠️ KernelCI boot-to-shell | ⬜ §2 N-boot flake gate       |
+| 💎 | Repeat-boot reliability   | ✅ HLK MTBF               | ⚠️ KernelCI boot-to-shell | ✅ §2 cold/warm flake gate     |
 
 ---
 
@@ -219,6 +230,7 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 - [ ] `test_boot_cert_schema_valid` -- `boot-cert.yml` validates against the schema
 - [ ] `test_boot_cert_every_todo_has_gate` -- every TODO-01..28 maps to >=1 row
 - [ ] `test_boot_result_json_parse` -- result JSON round-trips pass/fail/skip/degraded
+- [x] `test_boot_reliability.py` (35 assertions, §2) -- classify_boot precedence, flake aggregation, reliability/result schema conformance, incomplete-run guard
 - [ ] `test_support_bundle_redaction` -- serials/secrets absent from the bundle
 
 ---

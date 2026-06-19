@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://impossible-os/tools/boot-cert/reliability.schema.json",
+  "title": "Boot Reliability Aggregate",
+  "description": "Boot certification matrix (TODO-28 boot validation). The aggregate a boot-reliability run emits: N cold + M warm reboot iterations of one launcher on one (row, platform_class, tier), classified per iteration and reduced to a flake decision. Each iterations[] entry mirrors a result.schema.json run plus its iteration index and cold/warm phase. The release gate (S9) consumes decision + flake_count + flake_threshold; result.schema.json (S1) is the single-run shape and stays frozen.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["row_id", "platform_class", "tier", "build_id", "machine_id", "ts", "cold_count", "warm_count", "timeout_sec", "flake_count", "flake_threshold", "decision", "classifier_version", "iterations"],
+  "properties": {
+    "row_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "matches boot-cert.yml rows[].id" },
+    "platform_class": { "type": "string", "minLength": 1 },
+    "tier": { "type": "string", "enum": ["nightly", "rc", "stable"] },
+    "build_id": { "type": "string", "minLength": 1 },
+    "machine_id": { "type": "string", "minLength": 1 },
+    "ts": { "type": "string", "description": "ISO-8601 UTC timestamp" },
+    "cold_count": { "type": "integer", "minimum": 0, "description": "cold-boot iterations requested (fresh firmware NVRAM + reset boot.conf)" },
+    "warm_count": { "type": "integer", "minimum": 0, "description": "warm-reboot iterations requested (firmware NVRAM + disk state reused from the series)" },
+    "timeout_sec": { "type": "integer", "minimum": 1 },
+    "pass_count": { "type": "integer", "minimum": 0 },
+    "fail_count": { "type": "integer", "minimum": 0 },
+    "degraded_count": { "type": "integer", "minimum": 0 },
+    "skip_count": { "type": "integer", "minimum": 0 },
+    "flake_count": { "type": "integer", "minimum": 0, "description": "iterations that ran but did not pass (fail + degraded + timeout); skips excluded" },
+    "flake_threshold": { "type": "integer", "minimum": 0, "description": "max tolerated flakes for this tier; 0 for stable" },
+    "decision": { "type": "string", "enum": ["pass", "fail", "skip", "degraded"], "description": "release-gate verdict the dashboard consumes" },
+    "reason": { "type": ["string", "null"] },
+    "classifier_version": { "type": "integer", "minimum": 1, "description": "boot-log classifier contract version; bump when PASS/FAIL/required semantics change so old aggregates are not silently re-interpreted" },
+    "iterations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/iteration" },
+      "description": "one entry per executed iteration in run order"
+    }
+  },
+  "$defs": {
+    "iteration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["iteration", "phase", "status"],
+      "properties": {
+        "iteration": { "type": "integer", "minimum": 0 },
+        "phase": { "type": "string", "enum": ["cold", "warm"] },
+        "status": { "type": "string", "enum": ["pass", "fail", "skip", "degraded"] },
+        "reason": { "type": ["string", "null"] },
+        "logs": { "type": "array", "items": { "type": "string" }, "description": "captured serial / screenshot / BlackBox artifact paths for this iteration" }
+      }
+    }
+  }
+}

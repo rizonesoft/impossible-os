@@ -188,7 +188,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 > - Scope: §5 owns marker producers + bootloader detection + boot_path coupling; per-role policy enforcement lives in separate domain TODOs.
 
 > **Verified:** 2026-05-06 | commit `1318e314` | 5/5 items | build OK | tests 1207/1207 PASS + smoke PASS (KVM 2.4s)
-> **Accepted:** [M] Bootloader smoke fixtures for installer/recovery/diagnostics + ESP/BlackBox mismatch + oversize role.txt -> XREF: 15-installer-release/TODO-04 §2 (item: "Media-role boot matrix" at line 121)
+> **Accepted:** [M] Bootloader smoke fixtures for installer/recovery/diagnostics + ESP/BlackBox mismatch + oversize role.txt -> XREF: 15-installer-release/TODO-04 §2 (item: "Media-role boot matrix" at line 122)
 > **Quality reviewed:** 2026-05-06 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 3H+4M+0L fixed, 1M accepted-XREF | scope: kernel-code-quality + boot-code-quality
 
 ---
@@ -280,7 +280,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] QEMU raw disk boot (KVM + TCG fallback): inline driver in `scripts/ci/boot-matrix.sh` boots `build/system-disk.img`; PASS = `Boot complete in` + `C:\>`.
 - [x] QEMU ISO boot: delegates to `scripts/release/boot-test-iso.sh`; PASS = `Boot complete in` only (no IXFS9660 driver yet).
 - [x] QEMU VHDX boot (KVM/TCG): delegates to `scripts/release/boot-test-vhdx.sh`; validates VHDX-driver path independent of host accelerator.
-- [ ] Hyper-V VHDX boot under WHPX: blocked on new `scripts/machines/boot-test-whpx.ps1` (`--disk` + timeout + serial polling). Matrix `whpx` slot always SKIPs today; KVM/TCG VHDX is NOT a substitute.
+- [ ] Hyper-V VHDX boot under WHPX: blocked on new `scripts/machines/boot-test-whpx.ps1` (`--disk`+timeout+serial polling); KVM/TCG VHDX is NOT a substitute. -> XREF: D01 T28 §2 registers `qemu-whpx`/`hyperv` (`launcher: None`) pending this runner.
 - [x] VirtualBox VDI boot: delegates to `scripts/release/boot-test-vbox.sh`; SKIPs when VBoxManage absent.
 - [x] USB image loopback smoke (`losetup` + qemu): inline driver; PASS = `Boot complete in` + `C:\>`; SKIPs when not-root or losetup absent. Manual bare-metal gate stays a release-checklist item.
 - [x] Commit: `"ci: boot every release artifact"` (commit pending)

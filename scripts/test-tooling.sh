@@ -5606,6 +5606,11 @@ assert_exit_zero "boot-cert lint passes (schema + coverage + evidence)" \
     python3 "$BOOTCERT_DIR/lint.py" --quiet
 assert_exit_zero "boot-cert self-test passes (gate rejects bad input)" \
     python3 "$BOOTCERT_DIR/test_lint.py"
+# Boot-reliability gate (S2): flake-detection verdict logic + schema conformance.
+assert_exit_zero "boot-reliability self-check (registry + schemas load)" \
+    python3 "$BOOTCERT_DIR/boot_reliability.py" --self-check --platform qemu-tcg --tier stable
+assert_exit_zero "boot-reliability self-test (classify/aggregate/schema)" \
+    python3 "$BOOTCERT_DIR/test_boot_reliability.py"
 
 
 # ============================================================================
