@@ -324,6 +324,7 @@ Wrap every Phase 1--3 subsystem init in a protective pattern: emit POST code, ca
 - [ ] Add `SUBSYS_*` slots + `s_subsys_names[]` for the non-critical subsystems the callout lists but the enum lacks (keyboard, mouse, AHCI, NIC, SMBIOS, splash, DHCP) so degraded_mask can represent them
 - [ ] Wire Phase 1-3 non-critical inits through `apply_result`: `rtc/keyboard/mouse/fb_init` are void and `ahci_init` return is ignored, so failures never set degraded_mask -- make them return `boot_result_t` and wrap
 - [ ] Forced-failure regression: force one non-critical init to fail -> boot reaches Phase 3 -> degraded summary lists it (the Test checkpoint below is non-functional until then)
+- [ ] Harden boot_phase0 handoff (Codex §2 review, defense-in-depth): pin pointer to canonical `BOOT_INFO_PHYS_ADDR`; validate `g_boot_info.fb` geometry before pre-`fb_init` VRAM writes; bulk-copy `boot_info`. -> XREF: 02-kernel-core/TODO-01 §2
 - [x] Commit: `"boot: resilient init with BOOT_TRY -- non-critical failures degrade, never crash"`
 
 **Test checkpoint:** Disable a non-critical subsystem (e.g., force `rtc_init()` to fail). Boot completes. Desktop shows degraded notification. Serial log shows `[WARN] RTC: init failed -- degraded`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

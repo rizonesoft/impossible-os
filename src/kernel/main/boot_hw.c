@@ -477,9 +477,13 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
     kernel_subsystem_set_ready(SUBSYS_VMM, true);
     boot_progress(0, "VMM", POST16_VMM_OK);
 
-    /* Validate vmm_map_mmio_uc: map LAPIC base as UC, compare with identity-mapped read */
-    POST16(0xD100);
-    {
+    /* Validate vmm_map_mmio_uc: map LAPIC base as UC, compare with identity-mapped
+     * read. Development smoke test for the MMIO mapping path, not required init --
+     * gated behind debug so production boots skip the extra pre-sti page-table
+     * churn (map/flush/unmap). The 0xD1xx POST states are dev-range and never
+     * surface on a production POST card. */
+    if (g_boot_info.config.debug) {
+        POST16(0xD100);
         volatile uint32_t *lapic_id = (volatile uint32_t *)0xFEE00020;
         uint32_t id_identity = *lapic_id;
         void *uc = vmm_map_mmio_uc(0xFEE00000, 4096);
