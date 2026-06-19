@@ -49,6 +49,20 @@ LOCKFILE="$PROJECT_DIR/.claude/overnight/launch.lock"
 exec 9>"$LOCKFILE"
 flock -n 9 || { echo "run already active, launch skipped $(date -Is)"; exit 0; }
 
+# Report-log rotation: the watchdog relaunches every 10 min, so over many nights
+# (and especially a usage-limit retry that mis-snoozed) the reports dir grows
+# without bound. Keep only the most recent $OVERNIGHT_REPORT_KEEP run logs; prune
+# the rest right before we add this launch's log. The process-substitution read
+# keeps the inner pipeline's exit out of set -e, and the wrapper is belt-and-
+# suspenders so a prune failure never aborts an otherwise-healthy launch.
+prune_reports() {
+  local keep="${OVERNIGHT_REPORT_KEEP:-40}" old
+  while IFS= read -r old; do
+    [ -n "$old" ] && rm -f "$old"
+  done < <(ls -1t "$REPORT_DIR"/run-*.log 2>/dev/null | tail -n +"$((keep + 1))")
+}
+prune_reports || true
+
 REPORT="$REPORT_DIR/run-$(date +%Y%m%d-%H%M%S).log"
 
 # systemd user units don't inherit the login shell's PATH; resolve claude
@@ -143,38 +157,57 @@ fi
 
 # Usage-limit detection: parse the reset hint from the report tail and write the
 # snooze file the pre-flight honors. Session limits give a time of day ("resets
-# 8:10pm (Area/City)"); weekly limits give a date. Best-effort: unparseable
-# hints snooze 30 minutes (one watchdog tick); parses are capped at 8 days.
-tail -40 "$REPORT" | python3 - "$SNOOZE_FILE" <<'PYEOF' >> "$REPORT" 2>&1 || true
+# 8:10pm (Area/City)"); weekly limits give a DATE AND a time ("resets Jun 19,
+# 9am (Area/City)"). The time may omit minutes ("9am"), so minutes are optional
+# in the time regex -- the old colon-required pattern missed "9am", snoozed only
+# until midnight-ish, and relaunched ~9h early straight back into the limit,
+# spamming one retry log per watchdog tick. A +3 min margin keeps the relaunch
+# just after the real reset; unparseable hints snooze 30 min; cap is 8 days.
+tail -60 "$REPORT" | python3 - "$SNOOZE_FILE" <<'PYEOF' >> "$REPORT" 2>&1 || true
 import re, sys, time, datetime
 text = sys.stdin.read()
-m = re.search(r"hit your .{0,30}limit.{0,10}resets ([^\n]*)", text, re.I)
+m = re.search(r"hit your .{0,40}limit.{0,12}resets ([^\n]*)", text, re.I)
 if not m:
     sys.exit(0)
 hint = m.group(1).strip()
 now = datetime.datetime.now()
-until = None
-tm = re.search(r"(\d{1,2}):(\d{2})\s*(am|pm)", hint, re.I)
+
+# time-of-day with OPTIONAL minutes: "9am", "8:10pm", "12 am"
+tm = re.search(r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)", hint, re.I)
+hour = minute = None
 if tm:
-    h, mn = int(tm.group(1)) % 12, int(tm.group(2))
+    hour = int(tm.group(1)) % 12
+    minute = int(tm.group(2) or 0)
     if tm.group(3).lower() == "pm":
-        h += 12
-    until = now.replace(hour=h, minute=mn, second=0, microsecond=0)
+        hour += 12
+
+# date ("Jun 19") accompanies a weekly limit; a session limit omits it.
+dm = re.search(r"([A-Z][a-z]{2,8})\s+(\d{1,2})", hint)
+
+until = None
+if dm:
+    try:
+        month = datetime.datetime.strptime(dm.group(1)[:3], "%b").month
+        until = now.replace(month=month, day=int(dm.group(2)),
+                            hour=(hour if hour is not None else 9),
+                            minute=(minute if minute is not None else 0),
+                            second=0, microsecond=0)
+        if until <= now:
+            until = until.replace(year=until.year + 1)
+    except ValueError:
+        until = None
+elif hour is not None:
+    until = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if until <= now:
         until += datetime.timedelta(days=1)
-else:
-    dm = re.search(r"([A-Z][a-z]{2,8})\s+(\d{1,2})", hint)
-    if dm:
-        try:
-            month = datetime.datetime.strptime(dm.group(1)[:3], "%b").month
-            until = now.replace(month=month, day=int(dm.group(2)),
-                                hour=0, minute=15, second=0, microsecond=0)
-            if until <= now:
-                until = until.replace(year=until.year + 1)
-        except ValueError:
-            pass
+
 if until is None:
     until = now + datetime.timedelta(minutes=30)
+
+# land the relaunch just AFTER the real reset, never a minute early (early =
+# re-hit the same limit and write yet another report).
+until += datetime.timedelta(minutes=3)
+
 cap = now + datetime.timedelta(days=8)
 if until > cap:
     until = cap
