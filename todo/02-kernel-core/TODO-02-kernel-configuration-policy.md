@@ -56,7 +56,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [/] |
 | 💎 | 6 | Runtime tunable registry                        | §2                                  | [/] |
 | ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [/] |
-| 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [ ] |
+| 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [/] |
 | ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [ ] |
 | 💎 | 10 | Boot status policy and boot success ledger     | §4, §5, D01 T21 §5, T30 §7         | [ ] |
 | 💎 | 11 | Config dump, tests, and docs                   | §1-10, T11 §11, T31 §2             | [ ] |
@@ -243,14 +243,23 @@ Make feature flags discoverable, auditable, and safe enough for staged rollout i
 
 Expose the effective configuration through stable NT contracts once the SSDT surface is ready.
 
-- [ ] Add `SystemKernelConfigInformation` to `NtQuerySystemInformation`.
-- [ ] Add `NtQuerySystemConfiguration` and `NtSetSystemConfiguration` contracts plus shared structs in NT headers before wiring SSDT handlers.
-- [ ] Enforce `SeSystemProfilePrivilege` or administrator token for writes.
-- [ ] Return provenance, effective value, and mutability state.
-- [ ] If T12 §10 is not ready yet, land the kernel-side marshalling and unit coverage first and keep the syscall ABI checks as `TEST_PENDING` instead of silently dropping them.
-- [ ] Commit: `"kernel: add native configuration query and set syscalls"`
+- [x] Add `SystemKernelConfigInformation` (0x1000) to `NtQuerySystemInformation`: `nt_query_kernel_config_information` marshals the snapshot + tunable/feature counts + lock phase (Probe + `copy_to_user`, two-pass length).
+- [/] Shared ABI struct `SYSTEM_KERNEL_CONFIG_INFORMATION` (size/offset asserts) in `nt/sysconfig_info.h`; set/write contract rides `NtSetSystemInformation`, deferred with the privilege gate. -> XREF: 02-kernel-core/TODO-15 §8
+- [/] Enforce `SeSystemProfilePrivilege` for writes -- deferred: an SMP-safe check needs the SRM's `SeSinglePrivilegeCheck` + per-token lock. -> XREF: 02-kernel-core/TODO-15 §8
+- [/] Return provenance, effective value, mutability -- snapshot fields shipped in the query class; per-key provenance ships with the set path. -> XREF: 02-kernel-core/TODO-15 §8
+- [x] Read-path marshalling + unit coverage landed (`test_cfg_query_syscall`); write-path privilege/ACCESS_DENIED ABI checks deferred with the set path, not dropped.
+- [x] Commit: `"kernel: add native configuration query and set syscalls"`
 
-**Test checkpoint:** `NtQuerySystemInformation(SystemKernelConfigInformation)` returns snapshot version and size, an unprivileged write returns `STATUS_PRIVILEGE_NOT_HELD`, a boot-only tunable write returns `STATUS_ACCESS_DENIED`, and an undersized output buffer returns `STATUS_INFO_LENGTH_MISMATCH`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `NtQuerySystemInformation(SystemKernelConfigInformation)` returns snapshot version and size, and an undersized output buffer returns `STATUS_INFO_LENGTH_MISMATCH`. The write-path checks (unprivileged write `STATUS_PRIVILEGE_NOT_HELD`, boot-only write `STATUS_ACCESS_DENIED`) ship with the deferred set path once the SRM provides `SeSinglePrivilegeCheck` + the per-token lock. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | CONF config query syscall suite, 0 failures
+
+> **Notes:**
+> - Read path: `SystemKernelConfigInformation` (0x1000) on `NtQuerySystemInformation` -> `nt_query_kernel_config_information` marshals the snapshot + tunable/feature counts + lock phase; ABI in `nt/sysconfig_info.h` (28-byte static-asserted).
+> - User pointers go through `ProbeForWriteIfUser` + `copy_to_user`; reserved padding zeroed (no kernel-stack leak); two-pass `return_length` / `STATUS_INFO_LENGTH_MISMATCH` contract.
+> - Set path (`NtSetSystemInformation` config-set) + the `SeSystemProfilePrivilege` gate are deferred: an unlocked `Privileges[]` scan races `NtAdjustPrivilegesToken`, so a sound check needs the SRM's `SeSinglePrivilegeCheck` + per-token lock.
+> - Tests exercise the marshaller at CPL 0 (IfUser probes no-op): undersized/NULL/exact/oversized-canary + every field mirrored + optional `return_length`.
+> - Owns the read/query surface only; write path + per-key provenance owned by the deferred set path. Codex review adoptions in the section ship commit.
 
 ---
 
@@ -309,7 +318,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | 💎 | Safe and recovery boot modes       | ✅ `safeboot=minimal|network` plus recovery    | ✅ `single`, rescue, emergency, and recovery menu  | ✅ `safe_mode_t` object, monotonic floor, KUSD mirror |
 | 💎 | Control-set style rollback state   | ⚠️ `Current` and `LastKnownGood` semantics     | ⚠️ Distro snapshots or boot fallback, not kernel   | ⬜ Planned - §4         |
 | 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
-| 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⚠️ §6 typed registry + clamp + provenance; §3,§8 |
+| 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⚠️ §6 registry + §8 query syscall; set path §8/§3 |
 | 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ⚠️ §2 snapshot done; §8,§9 |
 | 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ⬜ Planned - §9         |
 | ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⚠️ §7 cohorts + owner tags; §3,§9 provenance |

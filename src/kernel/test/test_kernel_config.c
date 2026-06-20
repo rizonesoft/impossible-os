@@ -13,6 +13,7 @@
 #include "kernel/config.h"
 #include "kernel/tunables.h"
 #include "kernel/feature.h"
+#include "kernel/nt/sysconfig_info.h"
 #include "kernel/sched/irql.h"
 #include "kernel/boot_info.h"
 #include "libc/string.h"
@@ -913,6 +914,62 @@ static void test_feature_secure_boot_guard(void)
         g_boot_info.config.cmdline[i] = saved_cl[i];
 }
 
+/* ---- Native Query Config Syscall (read path) ---------------------------- */
+/* SYSTEM_KERNEL_CONFIG_INFORMATION marshaller, exercised directly: at CPL 0 the
+ * IfUser probes are no-ops and copy_to_user to a kernel buffer works. The SET
+ * path (NtSetSystemInformation config write) is deferred until the security
+ * reference monitor provides SeSinglePrivilegeCheck + the per-token lock. */
+extern NTSTATUS nt_query_kernel_config_information(void *buffer, uint32_t buf_size,
+                                                   uint32_t *return_length);
+
+static void test_cfg_query_syscall(void)
+{
+    SYSTEM_KERNEL_CONFIG_INFORMATION out;
+    uint32_t need = 0;
+    const uint32_t want = (uint32_t)sizeof(SYSTEM_KERNEL_CONFIG_INFORMATION);
+
+    /* Undersized buffer -> INFO_LENGTH_MISMATCH, required size reported. */
+    NTSTATUS rc = nt_query_kernel_config_information(&out, 4, &need);
+    TEST_ASSERT_EQ(rc, STATUS_INFO_LENGTH_MISMATCH, "undersized buffer rejected");
+    TEST_ASSERT_EQ(need, want, "required size reported");
+    /* NULL buffer with zero size -> INFO_LENGTH_MISMATCH. */
+    TEST_ASSERT_EQ(nt_query_kernel_config_information((void *)0, 0, &need),
+                   STATUS_INFO_LENGTH_MISMATCH, "NULL/zero buffer rejected");
+
+    /* Adequate buffer -> success, every field mirrors the published snapshot. */
+    rc = nt_query_kernel_config_information(&out, want, &need);
+    TEST_ASSERT_EQ(rc, STATUS_SUCCESS, "query succeeds with adequate buffer");
+    const kernel_config_t *kc = kernel_config_get();
+    TEST_ASSERT_NOT_NULL(kc, "snapshot present");
+    TEST_ASSERT_EQ(out.Version, kc->version, "queried version mirrors snapshot");
+    TEST_ASSERT_EQ(out.Size, kc->size, "queried size mirrors snapshot");
+    TEST_ASSERT_EQ(out.BootMode, kc->boot_mode, "queried boot_mode mirrors snapshot");
+    TEST_ASSERT_EQ(out.SafeMode, kc->safe_mode, "queried safe_mode mirrors snapshot");
+    TEST_ASSERT_EQ(out.SafeModeReason, kc->safe_mode_reason, "queried safe_mode_reason");
+    TEST_ASSERT_EQ(out.DebugEnabled, kc->debug_enabled, "queried debug_enabled");
+    TEST_ASSERT_EQ(out.TestMode, kc->test_mode, "queried test_mode");
+    TEST_ASSERT_EQ(out.LockPhase, (uint8_t)kernel_tunable_lock_phase_get(), "queried lock phase");
+    TEST_ASSERT_EQ(out.Reserved[0], 0, "reserved[0] zeroed (no stack leak)");
+    TEST_ASSERT_EQ(out.Reserved[1], 0, "reserved[1] zeroed (no stack leak)");
+    TEST_ASSERT_EQ(out.BootReason, kc->boot_reason, "queried boot_reason");
+    TEST_ASSERT_EQ(out.SelectionReason, kc->selection_reason, "queried selection_reason");
+    TEST_ASSERT_EQ(out.TunableCount, kernel_tunable_count(), "queried tunable count");
+    TEST_ASSERT_EQ(out.FeatureCount, kernel_feature_count(), "queried feature count");
+
+    /* Optional return_length omitted -> still succeeds. */
+    TEST_ASSERT_EQ(nt_query_kernel_config_information(&out, want, (uint32_t *)0),
+                   STATUS_SUCCESS, "query succeeds without return_length");
+
+    /* Oversized buffer -> success, only the required bytes are written. */
+    struct { SYSTEM_KERNEL_CONFIG_INFORMATION body; uint8_t canary; } wrap;
+    wrap.canary = 0xA5;
+    need = 0;
+    rc = nt_query_kernel_config_information(&wrap, (uint32_t)sizeof(wrap), &need);
+    TEST_ASSERT_EQ(rc, STATUS_SUCCESS, "oversized buffer accepted");
+    TEST_ASSERT_EQ(need, want, "oversized: required size still the struct size");
+    TEST_ASSERT_EQ(wrap.canary, 0xA5, "only the required bytes written (canary intact)");
+}
+
 void test_register_kernel_config(void)
 {
     test_suite_register_cat("CONF: tunable register+get",  test_tunable_register_get,      TEST_CAT_BOOT);
@@ -934,6 +991,7 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: feature cmdline aliases", test_feature_cmdline_aliases, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: feature cmdline boundary", test_feature_cmdline_boundary, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: feature secure-boot guard", test_feature_secure_boot_guard, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: config query syscall",  test_cfg_query_syscall,         TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode floor resolver", test_cfg_safe_mode_floor,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode gating",         test_cfg_safe_mode_gating,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode accessors",      test_cfg_safe_mode_accessors,  TEST_CAT_BOOT);

@@ -25,6 +25,10 @@
 #include "kernel/smbios.h"
 #include "kernel/nt/zw.h"
 #include "kernel/cpu_security.h"
+#include "kernel/config.h"     /* SystemKernelConfigInformation snapshot source */
+#include "kernel/tunables.h"   /* tunable count + lock phase for the config query */
+#include "kernel/feature.h"    /* feature count for the config query */
+#include "kernel/nt/sysconfig_info.h" /* SYSTEM_KERNEL_CONFIG_INFORMATION ABI */
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
 #include "kernel/ipc/pipe.h"
@@ -722,6 +726,7 @@ static NTSTATUS NtQueryDirectoryFile(uint64_t a1, uint64_t a2, uint64_t a3,
 #define SystemExceptionInformation          33
 #define SystemRegistryQuotaInformation      37
 #define SystemFirmwareTableInformation      76    /* GetSystemFirmwareTable / EnumSystemFirmwareTables */
+/* SystemKernelConfigInformation (0x1000) is defined in nt/sysconfig_info.h. */
 
 /* SYSTEM_FIRMWARE_TABLE_ACTION values per Win32 SDK winternl.h.  */
 #define SystemFirmwareTable_Enumerate       0
@@ -750,6 +755,58 @@ struct raw_smbios_data {
  * a1 = info class, a2 = buffer, a3 = buffer size,
  * a4 = return length pointer.
  * ----------------------------------------------------------------------- */
+/* SYSTEM_KERNEL_CONFIG_INFORMATION marshaller (Impossible OS extension): a
+ * read-only summary of the immutable kernel_config_t snapshot plus the runtime
+ * tunable / feature counts and the policy lock phase. Read-only -- no privilege
+ * required. Non-static so the config syscall unit tests exercise the marshalling
+ * directly (at CPL 0 the IfUser probes are no-ops and copy_to_user to a kernel
+ * buffer works). The set path is owned by NtSetSystemInformation and gated on
+ * the security reference monitor's SeSinglePrivilegeCheck + per-token lock. */
+NTSTATUS nt_query_kernel_config_information(void *buffer, uint32_t buf_size,
+                                            uint32_t *return_length)
+{
+    SYSTEM_KERNEL_CONFIG_INFORMATION info;
+    const uint32_t need = (uint32_t)sizeof(info);
+
+    const kernel_config_t *kc = kernel_config_get();
+    if (!kc)
+        return STATUS_UNSUCCESSFUL;   /* snapshot not published yet */
+
+    /* Report the required size to a two-pass caller before the capacity check
+     * (return_length is itself a user pointer). */
+    if (return_length) {
+        NTSTATUS pst = ProbeForWriteIfUser(return_length,
+                                           (uint32_t)sizeof(uint32_t), 4);
+        if (pst != STATUS_SUCCESS)
+            return pst;
+        if (copy_to_user(return_length, &need, (uint32_t)sizeof(uint32_t)) != 0)
+            return STATUS_ACCESS_VIOLATION;
+    }
+    if (!buffer || buf_size < need)
+        return STATUS_INFO_LENGTH_MISMATCH;
+
+    info.Version        = kc->version;
+    info.Size           = kc->size;
+    info.BootMode       = kc->boot_mode;
+    info.SafeMode       = kc->safe_mode;
+    info.SafeModeReason = kc->safe_mode_reason;
+    info.DebugEnabled   = kc->debug_enabled;
+    info.TestMode       = kc->test_mode;
+    info.LockPhase      = (uint8_t)kernel_tunable_lock_phase_get();
+    info.Reserved[0] = info.Reserved[1] = 0;
+    info.BootReason      = kc->boot_reason;
+    info.SelectionReason = kc->selection_reason;
+    info.TunableCount    = kernel_tunable_count();
+    info.FeatureCount    = kernel_feature_count();
+
+    NTSTATUS pst = ProbeForWriteIfUser(buffer, need, 4);
+    if (pst != STATUS_SUCCESS)
+        return pst;
+    if (copy_to_user(buffer, &info, need) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
                                          uint64_t a4, uint64_t a5, uint64_t a6)
 {
@@ -1097,6 +1154,8 @@ static NTSTATUS NtQuerySystemInformation(uint64_t a1, uint64_t a2, uint64_t a3,
 
         return STATUS_INVALID_PARAMETER;
     }
+    case SystemKernelConfigInformation:
+        return nt_query_kernel_config_information(buffer, buf_size, return_length);
     default:
         /* SCOPE-GAP-ALLOWED: NT API contract default for unrecognized
          * SystemInformationClass values; Windows ntoskrnl returns the
