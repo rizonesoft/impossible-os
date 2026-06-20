@@ -14,6 +14,8 @@
 #include "kernel/tunables.h"
 #include "kernel/feature.h"
 #include "kernel/nt/sysconfig_info.h"
+#include "kernel/nt/ssdt.h"
+#include "kernel/nt/service_numbers.h"
 #include "kernel/sched/irql.h"
 #include "kernel/boot_info.h"
 #include "libc/string.h"
@@ -970,6 +972,33 @@ static void test_cfg_query_syscall(void)
     TEST_ASSERT_EQ(wrap.canary, 0xA5, "only the required bytes written (canary intact)");
 }
 
+/* Exercise the FULL NtQuerySystemInformation route via ssdt_dispatch, not just
+ * the marshaller, so a class value / switch-case / SSDT-registration regression
+ * is caught (at CPL 0 the IfUser probes are no-ops; copy_to_user to a kernel
+ * buffer works). */
+static void test_cfg_query_syscall_route(void)
+{
+    TEST_ASSERT_EQ((uint32_t)SystemKernelConfigInformation, 0x1000u,
+                   "config info class value pinned at 0x1000");
+    SYSTEM_KERNEL_CONFIG_INFORMATION out;
+    uint32_t need = 0;
+    NTSTATUS rc = ssdt_dispatch(SSDT_NtQuerySystemInformation,
+                                (uint64_t)SystemKernelConfigInformation,
+                                (uint64_t)&out, (uint64_t)sizeof(out),
+                                (uint64_t)&need, 0, 0);
+    TEST_ASSERT_EQ(rc, STATUS_SUCCESS, "config query routes through NtQuerySystemInformation");
+    TEST_ASSERT_EQ(need, (uint32_t)sizeof(out), "routed query reports full length");
+    const kernel_config_t *kc = kernel_config_get();
+    TEST_ASSERT_NOT_NULL(kc, "snapshot present");
+    TEST_ASSERT_EQ(out.Version, kc->version, "routed query mirrors snapshot version");
+    TEST_ASSERT_EQ(out.TunableCount, kernel_tunable_count(), "routed query mirrors tunable count");
+    /* Undersized buffer through the route -> INFO_LENGTH_MISMATCH. */
+    rc = ssdt_dispatch(SSDT_NtQuerySystemInformation,
+                       (uint64_t)SystemKernelConfigInformation,
+                       (uint64_t)&out, 4, (uint64_t)&need, 0, 0);
+    TEST_ASSERT_EQ(rc, STATUS_INFO_LENGTH_MISMATCH, "routed undersized buffer rejected");
+}
+
 void test_register_kernel_config(void)
 {
     test_suite_register_cat("CONF: tunable register+get",  test_tunable_register_get,      TEST_CAT_BOOT);
@@ -992,6 +1021,7 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: feature cmdline boundary", test_feature_cmdline_boundary, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: feature secure-boot guard", test_feature_secure_boot_guard, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: config query syscall",  test_cfg_query_syscall,         TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: config query route",    test_cfg_query_syscall_route,   TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode floor resolver", test_cfg_safe_mode_floor,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode gating",         test_cfg_safe_mode_gating,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode accessors",      test_cfg_safe_mode_accessors,  TEST_CAT_BOOT);
