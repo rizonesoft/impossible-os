@@ -117,6 +117,14 @@ int base64_decode(void *dst, size_t dst_cap, const char *src, size_t src_len, in
         }
         if (quad == 4) {
             int nbytes = 3 - pad;       /* pad 0->3, 1->2, 2->1 bytes */
+            /* Canonical-form check (RFC 4648 section 3.5): the bits of the final
+             * data sextet(s) that fall past the emitted bytes MUST be zero, else
+             * one byte string has multiple base64 encodings. pad 1 -> low 2 bits
+             * (acc & 0xFF), pad 2 -> low 4 bits + 8 always-zero (acc & 0xFFFF). */
+            if (pad == 1 && (acc & 0xFFu))
+                return -1;
+            if (pad == 2 && (acc & 0xFFFFu))
+                return -1;
             if ((size_t)nbytes > dst_cap - o)
                 return -1;
             if (nbytes >= 1) out[o++] = (uint8_t)(acc >> 16);

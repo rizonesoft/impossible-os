@@ -352,6 +352,9 @@ One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompat
 > - `ixfs_crc32c`/`entropy_crc32c`/registry `hive_crc32` migrated to thin wrappers; outputs byte-identical so on-disk checksums are unchanged.
 > - Test `klibs: checksum + codec` proves IEEE/Castagnoli vectors, hw==sw parity, split-vector continuation, base64/hex round-trip + malformed-input rejection.
 > - Consumer migration (TLS PEM, SSH/SMTP/MIME) deferred to §7 + 07-networking; codec API is canonical and ready.
+> **Verified:** 2026-06-20 | commit `f91239e3` | 5/6 items | build OK | tests 419 exec + 152 x86 PASS (KVM)
+> **Deferred:** [L] Canonical codec consumer migration (TLS PEM, SSH/SMTP/MIME) deferred until consumers exist; codec API is ready (reason: scope -- no consumer code today) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS 3.x source into `src/libs/mbedtls/`" at line 307)
+> **Quality reviewed:** 2026-06-20 | Codex 6x (design, adversarial-impl, adversarial, consistency, perf, re-adversarial) | 2H+2M fixed | scope: kernel-code-quality
 
 ---
 

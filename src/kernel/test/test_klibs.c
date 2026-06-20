@@ -1027,6 +1027,8 @@ static void test_checksum_codec(void)
     TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zg=A", 4, 0) == -1, "base64 rejects data after pad");
     TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zm9", 3, 0) == -1, "base64 rejects len%%4");
     TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zg=*", 4, 0) == -1, "base64 rejects invalid char");
+    TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zh==", 4, 0) == -1, "base64 rejects non-canonical pad (2)");
+    TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zm9=", 4, 0) == -1, "base64 rejects non-canonical pad (1)");
     /* MIME mode skips whitespace */
     n = base64_decode(dec, sizeof(dec), "Zm9v\nYmFy", 9, 1);
     TEST_ASSERT(n == 6 && memcmp(dec, "foobar", 6) == 0, "base64 MIME skips whitespace");
