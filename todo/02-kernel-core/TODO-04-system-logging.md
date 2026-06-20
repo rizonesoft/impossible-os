@@ -11,7 +11,7 @@ title: "TODO-04 -- System Logging"
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
 > [!IMPORTANT]
-> **Current state:** `klog.c` (~580 lines) + `klog_disk.c` (912 lines) + `etw.c`. §1-§9 complete. Remaining: §10 (log integrity, blocked on TODO-03 §3 Monocypher). Remote syslog moved to `07-networking/TODO-11`.
+> **Current state:** `klog.c` (~580 lines) + `klog_disk.c` (912 lines) + `etw.c`. §1-§9 complete (old-system; pending dual-stamp review). Remaining: §10 (log integrity) -- now UNBLOCKED, TODO-03 §5 Monocypher + kernel CSPRNG shipped (`crypto_blake2b` + `csprng_fill`). Remote syslog moved to `07-networking/TODO-11`.
 
 ## Inputs
 
@@ -28,11 +28,15 @@ title: "TODO-04 -- System Logging"
 - → XREF: `TODO-12-native-api-ssdt.md §5` -- SSDT indices 0x01D0–0x01D6 reserved for ETW tracing syscalls; §7 of this TODO wires them into the SSDT
 - → XREF: `TODO-27-crash-dump-generation.md §2,§7` -- crash dump raw-partition sink bypasses VFS; §8 of this TODO captures ring buffer to reserved physical memory on panic (complementary -- TODO-27 captures binary state, §8 captures text log)
 - → XREF: `TODO-28-bsod-ux-enhancements.md` §3: BSOD last N klog lines at panic (`klog_get_recent`); §8 persists ring for next boot replay. Panic reads stay memcpy only when `klog_entry_t` grows (T04 §9).
-- → XREF: `TODO-03-kernel-libraries.md §3` -- Monocypher Blake2b + kernel CSPRNG required by §7 (HMAC-chain log integrity)
+- → XREF: `TODO-03-kernel-libraries.md §5` -- Monocypher Blake2b + kernel CSPRNG required by §10 (HMAC-chain log integrity)
 - → XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` -- BlackBox X:\ partition; log paths migrate from C:\ to X:\Logs\
 - → XREF: `14-host-tools/TODO-08-blackbox-log-extractor.md` -- host-side log viewer/extractor; solves "not verifiable from serial log" verification items
 - → XREF: [`TODO-32-kernel-logging-v2-lockless.md`](./TODO-32-kernel-logging-v2-lockless.md) -- v2 architecture: per-CPU lockless rings, priority lanes, fail-proof FATAL, native structured fields. SUPERSEDES this TODO's §5 (rate limit) and reorganises §9 (per-entry context); retains §1-§4, §6, §7, §8, §10 unchanged.
 - → XREF: [`TODO-02-kernel-configuration-policy.md §9`](./TODO-02-kernel-configuration-policy.md) -- policy tamper/security audit events persist as durable structured events via §7 ETW
+- → XREF: [`TODO-23-exception-dispatch-seh.md`](./TODO-23-exception-dispatch-seh.md) -- `RtlCaptureStackBackTrace` required by §12 ETW stack-walk
+- → XREF: [`TODO-18-kernel-image-module-registry.md §4`](./TODO-18-kernel-image-module-registry.md) -- symbol provider required by §12 to symbolize ETW stack frames
+- → XREF: [`TODO-03-kernel-libraries.md §3`](./TODO-03-kernel-libraries.md) -- LZ4 block compression required by §13 rotated-log compression
+- → XREF: `TODO-15-security-reference-monitor.md` + `10-platform-services` (SACL audit generation deferred there) + `TODO-12 §24` (syscall audit hook) -- own security-event CONTENT (threat-intel provider, object-access audit); §7/§11 ETW is the transport, not the owner
 
 ## Outcome
 
@@ -44,6 +48,9 @@ title: "TODO-04 -- System Logging"
 - On panic, the last N ring buffer entries survive reboot via reserved physical memory and are recovered into `X:\Crash\crash_recovery.log`.
 - Every log entry carries CPU number, PID, and TID for SMP and multi-process debugging.
 - `events.jsonl` entries are HMAC-chained -- tampering is mathematically detectable without external tools.
+- ETW providers register stable GUIDs and sessions filter by keyword + level, so events route only to interested sessions.
+- ETW captures per-event call stacks, runs a boot-persistent autologger, and self-describes event schemas.
+- Rotated log files are LZ4-compressed, keeping more history in the same disk budget.
 
 ## Implementation Order
 
@@ -59,6 +66,9 @@ title: "TODO-04 -- System Logging"
 | 💎  |   8   | Crash-persistent log capture        | §1             |  [x]   |
 | 💎  |   9   | Per-entry context metadata          | §2             |  [x]   |
 | ⭐  |  10   | Log integrity verification (HMAC)   | §6, T03 §5     |  [ ]   |
+| 💎  |  11   | ETW provider registration + filtering | §7, T12 §5   |  [ ]   |
+| 💎  |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 | [ ] |
+| 💎  |  13   | Rotated-log compression (LZ4)       | §4, T03 §3     |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -202,10 +212,10 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 > Neither Win11 nor Linux provides out-of-the-box tamper-evident text-format logging. Win11 Event Log is binary XML with no cryptographic sealing. Linux journald's FSS is optional, complex to set up, and uses a binary journal format. Impossible OS's HMAC-chained JSON Lines is human-readable AND cryptographically verifiable -- readable by `jq`, verifiable by `klog_verify_chain()`.
 
 > [!IMPORTANT]
-> **Blocked:** Requires both `crypto_blake2b()` (HMAC computation) and `csprng_fill()` (key generation) from TODO-03 §3 (Monocypher). Neither exists in the codebase. No cryptographic hash is available -- CRC32 in `gpt.c`/`ixfs_core.c` is not cryptographically secure and would be trivially forgeable. Implement §10-§2 first; return to §7 after TODO-03 §3 is complete.
+> **Unblocked (2026-06-20):** Requires `crypto_blake2b()` (HMAC computation) and `csprng_fill()` (key generation) from TODO-03 §5 (Monocypher + kernel CSPRNG), now shipped (`src/libs/monocypher/` + `src/kernel/csprng.c`). CRC32 in `gpt.c`/`ixfs_core.c` is NOT cryptographically secure and must not be used for integrity sealing -- use the keyed `crypto_blake2b` HMAC.
 
 - [ ] Define `klog_integrity_ctx_t`: previous HMAC (32 bytes), session key (32 bytes), initialized flag
-- [ ] At `klog_disk_enable()`: initialize session HMAC key from `csprng_fill()` (→ XREF: TODO-03 §3 Monocypher CSPRNG); store in `klog_integrity_ctx_t`
+- [ ] At `klog_disk_enable()`: initialize session HMAC key from `csprng_fill()` (→ XREF: TODO-03 §5 Monocypher CSPRNG); store in `klog_integrity_ctx_t`
 - [ ] In JSON Lines flush: compute HMAC-Blake2b(key, previous_hmac || entry_json) for each entry; append `"hmac":"<64-hex-chars>"` field
 - [ ] Store session key in Registry `HKLM\SYSTEM\Logs\IntegrityKey` (write-once per boot session) for post-boot verification
 - [ ] Implement `klog_verify_chain(const char *jsonl_path)`: reads `events.jsonl` line by line, verifies each HMAC against the chain; returns first corrupted line number or 0 if all valid
@@ -215,6 +225,46 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 - [ ] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+## 11. ETW Provider Registration and Session Filtering
+
+§7 wires the 7 `NtTrace*` session syscalls but ETW is not yet usable by real providers: there is no provider registry (GUID to name to channel), and no per-session filtering, so every `NtTraceEvent` writes to every running session. Windows registers providers via `EtwRegister` + manifest and applies a 64-bit keyword bitmask + level kernel-side before the buffer write. This section adds the missing provider/consumer bridge. (→ XREF: TODO-12 §5 SSDT ETW range; §7 of this TODO.)
+
+- [ ] Define `etw_provider_t` in `etw.h` (GUID, name[64], channel id, registering pid) + a global provider registry table guarded by `s_etw_lock`
+- [ ] Provider registration path: register GUID to name to channel; resolve GUID to human name; enumerate registered providers via `NtQueryTrace`
+- [ ] Add `match_any_keyword`/`match_all_keyword` (64-bit) + `max_level` per provider-into-session enablement in `etw_session_t`
+- [ ] Kernel-side filter in `NtTraceEvent`: deliver to a session only when keyword match_any/match_all both satisfied AND `event_level <= max_level`
+- [ ] Persist provider manifest under Registry `HKLM\SYSTEM\Logs\ETW\Providers\<guid>` (name, channel, last keyword mask)
+- [ ] `klog(LOG_INFO, "etw", ...)` trace on provider register/unregister (observable; ETW is post-boot, no POST16)
+- [ ] Unit tests in `test_klog.c`: provider register + enumerate roundtrip; non-matching keyword dropped; matching keyword + level passes
+- [ ] Commit: `"kernel: ETW provider registration + per-session keyword/level filtering"`
+
+**Test checkpoint:** Register a provider GUID, enumerate it by name via `NtQueryTrace`. Enable it into a session with a keyword mask; `NtTraceEvent` with a non-matching keyword does not appear in that session's buffer; a matching event does. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+## 12. ETW Advanced Capture -- Stack-Walk, Autologger, Self-Describing Schema
+
+Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (used by profilers and security root-cause), a boot-persistent autologger session that captures init events before user-mode, and self-describing (TraceLogging-style) event schemas so consumers decode payloads without out-of-band manifests.
+
+- [ ] Stack-walk: per-provider stack-trace flag; capture frames via `RtlCaptureStackBackTrace` (→ XREF: TODO-23), symbolize via the symbol provider (→ XREF: TODO-18 §4), append to the event record
+- [ ] Autologger: registry-configured boot-persistent session (`HKLM\...\WMI\Autologger`) started Phase 2 before first user-mode, capturing init/driver-load events (gate behind config; boot must survive absent/corrupt config)
+- [ ] Self-describing schema: provider declares a field name/type array at registration; events carry a schema id so consumers decode payload fields without an external manifest
+- [ ] `klog(LOG_INFO, "etw", ...)` trace on autologger start + stack-capture enable (observable)
+- [ ] Unit tests: stack-walk produces >= 1 resolvable frame; autologger config parse + session start; schema register + field decode roundtrip
+- [ ] Commit: `"kernel: ETW stack-walk, autologger, and self-describing event schema"`
+
+**Test checkpoint:** Enable stack capture on a provider; a logged event carries a non-empty frame array with at least one image+offset resolved. A registry-declared autologger session is active at first user-mode entry. A self-describing event decodes its field names without an external manifest. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+## 13. Rotated-Log Compression
+
+The OS Comparison row "Rotated log compress" is listed as planned (LZ4) but no section owns the wiring. Linux logrotate gzip-compresses rotated logs and journald LZ4-compresses its journal; Win11 does not compress rotated logs. Impossible OS has none yet. Compress rotated `.N` files so long-running systems keep more history in the same disk budget. (→ XREF: TODO-03 §3 LZ4 block compression primitive.)
+
+- [ ] In `rotate_log_file()` (§4): after shifting `.N`, LZ4-block-compress the rotated file to `.N.lz4` and delete the plain `.N` (→ XREF: TODO-03 §3 LZ4)
+- [ ] LZ4 output buffer via `pmm_alloc_contiguous()` per the TODO-03 memory rule (output can exceed 4 KiB; never `kmalloc`)
+- [ ] Gate behind `boot.conf` option `log_compress=1` (default enabled in release); when disabled, rotation keeps plain `.N` files
+- [ ] Decompression helper `klog_decompress_rotated()` for the in-OS viewer + host extractor (→ XREF: 14-host-tools/TODO-08)
+- [ ] `klog(LOG_INFO, "klog", ...)` trace on compress (observable)
+- [ ] Unit test: write a rotated file, compress it, decompress, assert byte-identical roundtrip
+- [ ] Commit: `"kernel: LZ4 compression for rotated log files"`
 
 ---
 
@@ -235,11 +285,17 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 | ⭐ | Human-readable struct | ❌ XML verbose      | ❌ Binary journal    | ✅ §6 -- JSON Lines        |
 | 💎 | Remote forwarding     | ✅ WEF              | ✅ rsyslog UDP       | ⬜ → net/TODO-11           |
 | 💎 | ETW tracing API       | ✅ NtTraceEvent     | ✅ ftrace/perf_event | ✅ §7 -- 7 NtTrace* SSDT   |
+| 💎 | ETW provider registry | ✅ EtwRegister      | ⚠️ tracefs           | ⬜ §11 -- GUID registry    |
+| 💎 | ETW session filtering | ✅ keyword/level    | ⚠️ filter exprs      | ⬜ §11 -- keyword+level    |
+| 💎 | ETW stack-walk        | ✅ stack trace      | ✅ perf/eBPF         | ⬜ §12 -- RtlCapture stack |
+| 💎 | ETW autologger        | ✅ boot session     | ⚠️ early ftrace      | ⬜ §12 -- boot-persistent  |
+| ⭐ | Self-describing events| ✅ TraceLogging     | ❌ none              | ⬜ §12 -- schema id        |
+| 💎 | Log channel tiers     | ✅ Admin/Op/etc     | ⚠️ facilities        | ⬜ deferred refinement     |
 | ⭐ | Serial timestamps     | ❌ Not standard     | ❌ Not standard      | ✅ Every entry             |
 | 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
 | 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ✅ §9 -- cpu/pid/tid       |
 | ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
-| ⭐ | Rotated log compress  | ❌ Not built-in     | ❌ Not built-in      | ⬜ Planned (LZ4, T03 §3)   |
+| 💎 | Rotated log compress  | ❌ Not built-in     | ✅ logrotate gzip    | ⬜ §13 -- LZ4 rotated      |
 
 > After §1-§9, Impossible OS matches or exceeds Windows and Linux on all core logging features.
 > §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges. §7 wires 7 ETW syscalls. §9 closes the per-entry context parity gap.
@@ -268,7 +324,10 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 - [x] Crash-persistent log tests in `test_klog.c` (§8): crash entry layout, header field roundtrip, region allocation sanity, capacity bounds
 - [x] Per-entry context metadata tests in `test_klog.c` (§9): cpu_id == 0 (BSP), pid/tid populated, subsystem matches "TEST", message matches logged text, timestamp advances
-- [ ] Log integrity verification tests (§10): blocked on Monocypher (TODO-03 §3) -- `klog_verify_chain()` not yet implemented
+- [ ] Log integrity verification tests (§10): TODO-03 §5 Monocypher now shipped -- implement alongside §10; `klog_verify_chain()` not yet implemented
+- [ ] ETW provider/filtering tests (§11): provider register+enumerate roundtrip; non-matching keyword dropped; matching keyword+level delivered
+- [ ] ETW advanced-capture tests (§12): stack-walk >=1 resolvable frame; autologger config parse+start; self-describing schema field decode
+- [ ] Rotated-log compression tests (§13): LZ4 compress+decompress byte-identical roundtrip on a rotated file
 - [x] Commit: `"test: add crash-persist, context metadata tests to klog suite (TODO-04 §7-§9)"`
 
 ---
