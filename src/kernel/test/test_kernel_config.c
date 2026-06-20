@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/config.h"
 #include "kernel/tunables.h"
+#include "kernel/feature.h"
 #include "kernel/sched/irql.h"
 #include "kernel/boot_info.h"
 #include "libc/string.h"
@@ -636,6 +637,272 @@ static void test_tunable_malformed_and_capacity(void)
     TEST_ASSERT_EQ(kernel_tunable_count(), before, "count restored after capacity unregister");
 }
 
+/* ---- Feature Flag Gates and Experiment Cohorts -------------------------- */
+
+static void test_feature_namespace(void)
+{
+    /* Names outside the reserved namespaces are rejected. */
+    TEST_ASSERT_EQ(kernel_feature_register("badname", 1, 0, 0, 0), -1,
+                   "non-namespaced feature name rejected");
+    TEST_ASSERT_EQ(kernel_feature_register("kpti", 0, 0, 0, 0), -1,
+                   "bare name (no namespace) rejected");
+    TEST_ASSERT_EQ(kernel_feature_register("feature.ns_ok", 1, 0, 0, 0), 0,
+                   "feature. namespace accepted");
+    TEST_ASSERT_EQ(kernel_feature_register("experiment.ns_exp", 0, 0, 0, 0), 0,
+                   "experiment. namespace accepted");
+    /* Anonymous prefix-only names are rejected (no flag after the namespace). */
+    TEST_ASSERT_EQ(kernel_feature_register("feature.", 1, 0, 0, 0), -1,
+                   "prefix-only feature. rejected");
+    TEST_ASSERT_EQ(kernel_feature_register("experiment.", 0, 0, 0, 0), -1,
+                   "prefix-only experiment. rejected");
+    /* Duplicate + out-of-range percent rejected. */
+    TEST_ASSERT_EQ(kernel_feature_register("feature.ns_ok", 1, 0, 0, 0), -1,
+                   "duplicate feature name rejected");
+    TEST_ASSERT_EQ(kernel_feature_register("feature.badpct", 1, 0, 101, 0), -1,
+                   "rollout_percent > 100 rejected");
+    /* >255 must be rejected, not truncated (300 % 256 == 44 would slip a u8). */
+    TEST_ASSERT_EQ(kernel_feature_register("feature.bigpct", 1, 0, 300, 0), -1,
+                   "rollout_percent > 255 rejected, not truncated");
+    TEST_ASSERT_EQ(kernel_feature_register((const char *)0, 1, 0, 0, 0), -1,
+                   "NULL feature name rejected");
+    /* Length boundary: 47-char name accepted, 48-char (== cap) rejected.
+     * Build the names so the lengths are exact (no literal miscount). */
+    {
+        char nm[64];
+        const char *pfx = "feature.";   /* 8 chars */
+        uint32_t p = 0;
+        for (; pfx[p]; p++) nm[p] = pfx[p];
+        uint32_t base = p;
+        for (uint32_t j = 0; j < 39; j++) nm[base + j] = 'a';  /* 8+39 = 47 */
+        nm[base + 39] = 0;
+        TEST_ASSERT_EQ(kernel_feature_register(nm, 1, 0, 0, 0), 0, "47-char name accepted");
+        for (uint32_t j = 0; j < 40; j++) nm[base + j] = 'b';  /* 8+40 = 48 */
+        nm[base + 40] = 0;
+        TEST_ASSERT_EQ(kernel_feature_register(nm, 1, 0, 0, 0), -1,
+                       "48-char name (== cap) rejected");
+    }
+}
+
+static void test_feature_default(void)
+{
+    kernel_feature_register("feature.def_on", 1, 0, 0, 0);
+    kernel_feature_register("feature.def_off", 0, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.def_on"), 1,
+                   "default-on feature resolves enabled");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.def_off"), 0,
+                   "default-off feature resolves disabled");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.absent"), 0,
+                   "unknown feature resolves disabled");
+}
+
+static void test_feature_cmdline_override(void)
+{
+    /* Inject a raw cmdline; restore it after. */
+    char saved[BOOT_CONF_CMDLINE_MAX];
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        saved[i] = g_boot_info.config.cmdline[i];
+
+    const char *inj = "quiet feature.ovr_off=off feature.ovr_on=on splash";
+    uint32_t k = 0;
+    for (; inj[k] && k < BOOT_CONF_CMDLINE_MAX - 1; k++)
+        g_boot_info.config.cmdline[k] = inj[k];
+    g_boot_info.config.cmdline[k] = 0;
+
+    /* Override beats the registered default in both directions. */
+    kernel_feature_register("feature.ovr_off", 1, 0, 0, 0);
+    kernel_feature_register("feature.ovr_on", 0, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.ovr_off"), 0,
+                   "cmdline =off overrides default-on");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.ovr_on"), 1,
+                   "cmdline =on overrides default-off");
+
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        g_boot_info.config.cmdline[i] = saved[i];
+}
+
+static void test_feature_cohort_deterministic(void)
+{
+    /* Cohort resolution is cached + deterministic: same feature, same answer. */
+    kernel_feature_register("experiment.coh", 0, 0, 50, 0);
+    int a = kernel_feature_enabled("experiment.coh");
+    int b = kernel_feature_enabled("experiment.coh");
+    TEST_ASSERT_EQ(a, b, "cohort resolution is stable across calls");
+    /* rollout_percent 0 ignores cohort and uses the default. */
+    kernel_feature_register("experiment.no_roll", 0, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("experiment.no_roll"), 0,
+                   "rollout 0 uses the registered default");
+}
+
+static int feature_find_row(const char *name, feature_snapshot_t *out)
+{
+    feature_snapshot_t rows[64];
+    uint32_t n = kernel_feature_dump(rows, 64);
+    for (uint32_t i = 0; i < n; i++)
+        if (strcmp(rows[i].name, name) == 0) { *out = rows[i]; return 1; }
+    return 0;
+}
+
+static void test_feature_audit(void)
+{
+    feature_snapshot_t row;
+    uint32_t before = kernel_feature_count();
+    TEST_ASSERT_EQ(kernel_feature_register("experiment.aud", 1, 0, 25, 7), 0,
+                   "register audit feature");
+    TEST_ASSERT_EQ(kernel_feature_count(), before + 1, "count increments on register");
+    TEST_ASSERT_EQ(kernel_feature_register("experiment.aud", 1, 0, 25, 7), -1,
+                   "duplicate register fails");
+    TEST_ASSERT_EQ(kernel_feature_count(), before + 1,
+                   "failed register leaves count unchanged");
+    TEST_ASSERT_EQ(kernel_feature_dump((feature_snapshot_t *)0, 1), 0u, "dump NULL -> 0");
+    TEST_ASSERT_EQ(kernel_feature_dump(&row, 0), 0u, "dump 0 rows -> 0");
+    TEST_ASSERT_EQ(kernel_feature_dump(&row, 1), 1u, "dump respects max_rows cap");
+    TEST_ASSERT_EQ(feature_find_row("experiment.aud", &row), 1, "audit feature in dump");
+    TEST_ASSERT(row.flags & FEATURE_EXPERIMENT, "experiment.* row carries FEATURE_EXPERIMENT");
+    TEST_ASSERT_EQ(row.default_enabled, 1, "dump exposes default");
+    TEST_ASSERT_EQ(row.rollout_percent, 25, "dump exposes rollout");
+    TEST_ASSERT_EQ(row.owner, 7, "dump exposes owner");
+}
+
+static void test_feature_locked(void)
+{
+    char saved[BOOT_CONF_CMDLINE_MAX];
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        saved[i] = g_boot_info.config.cmdline[i];
+    const char *inj = "feature.lock_x=on";
+    uint32_t k = 0;
+    for (; inj[k] && k < BOOT_CONF_CMDLINE_MAX - 1; k++)
+        g_boot_info.config.cmdline[k] = inj[k];
+    g_boot_info.config.cmdline[k] = 0;
+
+    /* A locked feature ignores the cmdline override; default is authoritative. */
+    kernel_feature_register("feature.lock_x", 0, FEATURE_LOCKED, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.lock_x"), 0,
+                   "locked feature ignores cmdline override");
+    feature_snapshot_t row;
+    if (feature_find_row("feature.lock_x", &row))
+        TEST_ASSERT_EQ(row.source, FEATURE_SRC_DEFAULT, "locked feature resolves from default");
+
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        g_boot_info.config.cmdline[i] = saved[i];
+}
+
+static void test_feature_cmdline_aliases(void)
+{
+    char saved[BOOT_CONF_CMDLINE_MAX];
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        saved[i] = g_boot_info.config.cmdline[i];
+    const char *inj =
+        "feature.t1=true feature.t2=1 feature.t3=yes feature.t4=enabled "
+        "feature.f1=false feature.f2=0 feature.f3=no feature.f4=disabled "
+        "feature.badv=enable";
+    uint32_t k = 0;
+    for (; inj[k] && k < BOOT_CONF_CMDLINE_MAX - 1; k++)
+        g_boot_info.config.cmdline[k] = inj[k];
+    g_boot_info.config.cmdline[k] = 0;
+
+    kernel_feature_register("feature.t1", 0, 0, 0, 0);
+    kernel_feature_register("feature.t2", 0, 0, 0, 0);
+    kernel_feature_register("feature.t3", 0, 0, 0, 0);
+    kernel_feature_register("feature.t4", 0, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.t1"), 1, "alias true -> on");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.t2"), 1, "alias 1 -> on");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.t3"), 1, "alias yes -> on");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.t4"), 1, "alias enabled -> on");
+    kernel_feature_register("feature.f1", 1, 0, 0, 0);
+    kernel_feature_register("feature.f2", 1, 0, 0, 0);
+    kernel_feature_register("feature.f3", 1, 0, 0, 0);
+    kernel_feature_register("feature.f4", 1, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.f1"), 0, "alias false -> off");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.f2"), 0, "alias 0 -> off");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.f3"), 0, "alias no -> off");
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.f4"), 0, "alias disabled -> off");
+    /* Unrecognized value falls back to the default (not misparsed). */
+    kernel_feature_register("feature.badv", 1, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.badv"), 1,
+                   "invalid override value falls back to default");
+    feature_snapshot_t row;
+    if (feature_find_row("feature.badv", &row))
+        TEST_ASSERT_EQ(row.source, FEATURE_SRC_DEFAULT, "invalid value resolves from default");
+    /* Override source is recorded as cmdline. */
+    if (feature_find_row("feature.t1", &row))
+        TEST_ASSERT_EQ(row.source, FEATURE_SRC_CMDLINE, "override source is cmdline");
+
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        g_boot_info.config.cmdline[i] = saved[i];
+}
+
+static void test_feature_cmdline_boundary(void)
+{
+    char saved[BOOT_CONF_CMDLINE_MAX];
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        saved[i] = g_boot_info.config.cmdline[i];
+    /* None of these tokens is an EXACT "feature.bnd=" match. */
+    const char *inj = "xfeature.bnd=off feature.bnd.extra=off feature.bndx=off";
+    uint32_t k = 0;
+    for (; inj[k] && k < BOOT_CONF_CMDLINE_MAX - 1; k++)
+        g_boot_info.config.cmdline[k] = inj[k];
+    g_boot_info.config.cmdline[k] = 0;
+
+    kernel_feature_register("feature.bnd", 1, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.bnd"), 1,
+                   "substring/prefix tokens do not false-match the feature");
+
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        g_boot_info.config.cmdline[i] = saved[i];
+}
+
+static void test_feature_secure_boot_guard(void)
+{
+    uint8_t saved_sb = g_boot_info.secure_boot_enabled;
+    uint32_t saved_dt = g_boot_info.degraded_trust_flags;
+    char saved_cl[BOOT_CONF_CMDLINE_MAX];
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        saved_cl[i] = g_boot_info.config.cmdline[i];
+
+    const char *inj = "feature.sec_a=off feature.sec_b=off";
+    uint32_t k = 0;
+    for (; inj[k] && k < BOOT_CONF_CMDLINE_MAX - 1; k++)
+        g_boot_info.config.cmdline[k] = inj[k];
+    g_boot_info.config.cmdline[k] = 0;
+
+    /* Secure Boot ACTIVE: a security feature cannot be disabled (fail closed). */
+    g_boot_info.secure_boot_enabled = 1;
+    g_boot_info.degraded_trust_flags = 0;
+    kernel_feature_register("feature.sec_a", 1, FEATURE_SECURITY, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.sec_a"), 1,
+                   "security feature disable refused under active Secure Boot");
+    {
+        feature_snapshot_t r;
+        if (feature_find_row("feature.sec_a", &r))
+            TEST_ASSERT_EQ(r.source, FEATURE_SRC_SB_GUARD,
+                           "blocked override records Secure Boot guard source");
+    }
+
+    /* Secure Boot KNOWN-OFF (readable + inactive): disable is allowed. */
+    g_boot_info.secure_boot_enabled = 0;
+    g_boot_info.degraded_trust_flags = 0;
+    kernel_feature_register("feature.sec_b", 1, FEATURE_SECURITY, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.sec_b"), 0,
+                   "security feature disable allowed when Secure Boot known-off");
+
+    /* Secure Boot UNREADABLE (unknown): fail closed even with sb_enabled==0. */
+    const char *inj2 = "feature.sec_c=off";
+    k = 0;
+    for (; inj2[k] && k < BOOT_CONF_CMDLINE_MAX - 1; k++)
+        g_boot_info.config.cmdline[k] = inj2[k];
+    g_boot_info.config.cmdline[k] = 0;
+    g_boot_info.secure_boot_enabled = 0;
+    g_boot_info.degraded_trust_flags = BOOT_DEGRADED_TRUST_SECURE_BOOT_UNREADABLE;
+    kernel_feature_register("feature.sec_c", 1, FEATURE_SECURITY, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.sec_c"), 1,
+                   "security feature disable refused when Secure Boot state unknown");
+
+    g_boot_info.secure_boot_enabled = saved_sb;
+    g_boot_info.degraded_trust_flags = saved_dt;
+    for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
+        g_boot_info.config.cmdline[i] = saved_cl[i];
+}
+
 void test_register_kernel_config(void)
 {
     test_suite_register_cat("CONF: tunable register+get",  test_tunable_register_get,      TEST_CAT_BOOT);
@@ -648,6 +915,15 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: tunable reuse name hygiene", test_tunable_reuse_name_hygiene, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: tunable malformed+capacity", test_tunable_malformed_and_capacity, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: tunable phase seal",    test_tunable_phase_seal,        TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature namespace",     test_feature_namespace,         TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature default",       test_feature_default,           TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature cmdline override", test_feature_cmdline_override, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature cohort stable", test_feature_cohort_deterministic, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature audit + dump",  test_feature_audit,             TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature locked",        test_feature_locked,            TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature cmdline aliases", test_feature_cmdline_aliases, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature cmdline boundary", test_feature_cmdline_boundary, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: feature secure-boot guard", test_feature_secure_boot_guard, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode floor resolver", test_cfg_safe_mode_floor,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode gating",         test_cfg_safe_mode_gating,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode accessors",      test_cfg_safe_mode_accessors,  TEST_CAT_BOOT);

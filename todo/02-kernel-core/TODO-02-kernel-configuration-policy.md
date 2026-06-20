@@ -55,7 +55,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | 💎 | 4 | ControlSet and LastKnownGood selection          | §2, §10, T14 §12, D01 T21 §4, §5   | [/] |
 | 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [/] |
 | 💎 | 6 | Runtime tunable registry                        | §2                                  | [/] |
-| ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [ ] |
+| ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [/] |
 | 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [ ] |
 | ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [ ] |
 | 💎 | 10 | Boot status policy and boot success ledger     | §4, §5, D01 T21 §5, T30 §7         | [ ] |
@@ -215,14 +215,23 @@ Give subsystems one typed registration surface for mutable policy instead of one
 
 Make feature flags discoverable, auditable, and safe enough for staged rollout instead of ad-hoc ifdefs and hidden globals.
 
-- [ ] Implement `kernel_feature_enabled(feature_id)` with boot and registry providers.
-- [ ] Support cohort hashing by machine ID for staged rollout of risky features.
-- [ ] Add forced-on/forced-off audit events.
-- [ ] Ensure security features cannot be cohort-disabled on Secure Boot systems.
-- [ ] Reserve explicit `feature.<name>` and `experiment.<name>` namespaces with owner tags so anonymous flags cannot accumulate.
-- [ ] Commit: `"kernel: add feature flag gates and rollout cohorts"`
+- [/] Implement `kernel_feature_enabled(name)` in `feature.c` with the boot provider (bounded raw-cmdline scan of `feature.<name>=on/off`, resolve-once cached). The registry-backed override provider is deferred to the registry merge. -> XREF: §3
+- [x] Cohort hashing by machine ID for staged rollout: `bucket = sha256(machine_uuid || name) % 100 < rollout_percent`; stable per machine, falls back to the registered default when no valid machine UUID exists (never hashes a sentinel).
+- [x] Forced-on/forced-off audit events: `kernel_feature_enabled` logs `[CONF] feature <name> forced <on/off>` for a cmdline override and `[CONF] secure feature override blocked: <name>` for a refused security override.
+- [x] Security features cannot be disabled under Secure Boot: a `FEATURE_SECURITY` flag's disable override/cohort-off is refused unless Secure Boot is known-off (state readable AND inactive) -- active or unreadable fails closed.
+- [x] Reserve `feature.<name>` / `experiment.<name>` namespaces with owner tags; `kernel_feature_register` rejects non-namespaced and anonymous prefix-only names so flags cannot accumulate untagged.
+- [x] Commit: `"kernel: add feature flag gates and rollout cohorts"`
 
 **Test checkpoint:** The same machine id lands in the same cohort on repeated boots, `feature.debug_menu=off` disables only that feature, and `feature.kpti=off` under Secure Boot is rejected with `"[CONF] secure feature override blocked: kpti"`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | CONF feature suites (10), 0 failures
+
+> **Notes:**
+> - `feature.c` -- 64-entry feature registry: `kernel_feature_register/enabled/count/dump` + `register_core` (feature.kpti, feature.debug_menu), wired in `boot_desktop.c` after the tunable registry.
+> - Resolution (cached once per boot): cmdline override > cohort rollout > default; `FEATURE_LOCKED` bypasses override/cohort; the Secure Boot guard then fails closed on any security-feature disable unless Secure Boot is known-off.
+> - Cohort is `sha256(machine_uuid || name) % 100 < rollout_percent`, stable per machine; no valid UUID falls back to the default; consumers query `kernel_feature_enabled(name)` at their gate.
+> - Boot-arg overrides use a feature-owned bounded raw-cmdline scanner because the boot-argument schema parser drops unknown dynamic keys.
+> - Registry-backed override provider is owned by the registry-merge feature (§3); §7 ships the boot provider. Codex review adoptions in the section ship commit.
 
 ---
 
@@ -299,7 +308,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⚠️ §6 typed registry + clamp + provenance; §3,§8 |
 | 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ⚠️ §2 snapshot done; §8,§9 |
 | 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ⬜ Planned - §9         |
-| ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⬜ Planned - §3, §7, §9 |
+| ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⚠️ §7 cohorts + owner tags; §3,§9 provenance |
 
 > **After §1-§6:** Impossible OS reaches the same baseline the major platforms already have: typed boot policy, safe/recovery modes, and persistent tunables.
 > **After §7-§10:** Impossible OS pulls ahead with kernel-native provenance, explicit boot acceptance, rollout cohorts, and tamper-aware lock phases instead of scattered tooling.

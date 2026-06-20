@@ -119,6 +119,13 @@ void boot_phase3(void)
      * queue exists (deferred tunable callbacks enqueue onto sys_wq). */
     kernel_tunables_register_core();
 
+    /* Register the core feature flags (resolution uses the cmdline + cohort +
+     * Secure Boot state, all available by this point). */
+    {
+        extern void kernel_features_register_core(void);
+        kernel_features_register_core();
+    }
+
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
     /* pipe_create/shmem_create init lazily; explicit pipe_init gives the
      * sequencing a uniform entry point. Entry POST is written before init so
