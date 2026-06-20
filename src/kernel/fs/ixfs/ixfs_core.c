@@ -3,6 +3,7 @@
  * ============================================================================ */
 
 #include "ixfs_internal.h"
+#include "kernel/kchecksum.h"
 
 /* --- Internal: string helpers --- */
 
@@ -198,24 +199,15 @@ int ixfs_zero_block(struct ixfs_volume *vol, uint32_t block)
     return ixfs_write_block(vol, block, vol->blk_buf);
 }
 
-/* --- CRC32C (software, Castagnoli polynomial 0x82F63B78) --- */
+/* --- CRC32C (Castagnoli) -- delegates to the shared kernel checksum layer
+ * (kcrc32c), which selects the SSE4.2 hardware path when uniformly available
+ * and is byte-identical to the former bitwise loop. Kept as a thin alias so the
+ * many ixfs call sites and the on-disk superblock/block checksums are
+ * unchanged. --- */
 
 uint32_t ixfs_crc32c(const void *data, uint32_t len)
 {
-    const uint8_t *p = (const uint8_t *)data;
-    uint32_t crc = 0xFFFFFFFF;
-    uint32_t i, j;
-
-    for (i = 0; i < len; i++) {
-        crc ^= p[i];
-        for (j = 0; j < 8; j++) {
-            if (crc & 1)
-                crc = (crc >> 1) ^ 0x82F63B78;
-            else
-                crc = crc >> 1;
-        }
-    }
-    return crc ^ 0xFFFFFFFF;
+    return kcrc32c(data, len);
 }
 
 /* --- Per-block checksum table --- */

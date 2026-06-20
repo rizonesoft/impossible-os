@@ -386,10 +386,11 @@ uint64_t cpuid_probe_ap_features(void)
     cpuid_raw(0x00000000, 0, &max_leaf, &ebx, &ecx, &edx);
     if (max_leaf >= 0x01) {
         cpuid_raw(0x01, 0, &eax, &ebx, &ecx, &edx);
-        set_flag_if(&m, CPU_FEATURE_SSE2,  edx, 26);
-        set_flag_if(&m, CPU_FEATURE_XSAVE, ecx, 26);
-        set_flag_if(&m, CPU_FEATURE_AVX,   ecx, 28);
-        set_flag_if(&m, CPU_FEATURE_PCID,  ecx, 17);
+        set_flag_if(&m, CPU_FEATURE_SSE2,   edx, 26);
+        set_flag_if(&m, CPU_FEATURE_SSE4_2, ecx, 20);
+        set_flag_if(&m, CPU_FEATURE_XSAVE,  ecx, 26);
+        set_flag_if(&m, CPU_FEATURE_AVX,    ecx, 28);
+        set_flag_if(&m, CPU_FEATURE_PCID,   ecx, 17);
     }
     if (max_leaf >= 0x07) {
         cpuid_raw(0x07, 0, &eax, &ebx, &ecx, &edx);

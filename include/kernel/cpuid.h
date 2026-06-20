@@ -134,7 +134,7 @@ enum cpu_feature {
      (1ULL << CPU_FEATURE_UMIP) | (1ULL << CPU_FEATURE_PKU)  | \
      (1ULL << CPU_FEATURE_AVX)  | (1ULL << CPU_FEATURE_AVX512F) | \
      (1ULL << CPU_FEATURE_PCID) | (1ULL << CPU_FEATURE_XSAVE) | \
-     (1ULL << CPU_FEATURE_RDTSCP))
+     (1ULL << CPU_FEATURE_RDTSCP) | (1ULL << CPU_FEATURE_SSE4_2))
 
 /* --- Global CPU feature structure --- */
 

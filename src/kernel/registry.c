@@ -17,6 +17,7 @@
  * ============================================================================ */
 
 #include "registry.h"
+#include "kernel/kchecksum.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
 #include "kernel/boot_info.h"
@@ -1927,22 +1928,13 @@ extern void      pmm_free_frame(uintptr_t addr);
 #define HIVE_VFS_O_READ  VFS_O_READ
 #define HIVE_VFS_O_WRITE VFS_O_WRITE
 
-/* ---- CRC32 (table-less, bit-by-bit) ---- */
+/* ---- CRC32 (IEEE) -- delegates to the shared kcrc32 (byte-identical to the
+ * former bitwise loop; ~crc == crc ^ 0xFFFFFFFF), so existing hive checksums
+ * still validate. ---- */
 
 static uint32_t hive_crc32(const uint8_t *data, uint32_t len)
 {
-    uint32_t crc = 0xFFFFFFFF;
-    uint32_t i, j;
-    for (i = 0; i < len; i++) {
-        crc ^= data[i];
-        for (j = 0; j < 8; j++) {
-            if (crc & 1)
-                crc = (crc >> 1) ^ 0xEDB88320;
-            else
-                crc >>= 1;
-        }
-    }
-    return ~crc;
+    return kcrc32(data, len);
 }
 
 /* ---- Serialization buffer helpers ---- */

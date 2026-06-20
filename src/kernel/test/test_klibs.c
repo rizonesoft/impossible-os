@@ -24,6 +24,9 @@
 #include "libc/string.h"
 #include "libc/math.h"
 #include "kernel/json.h"
+#include "kernel/kchecksum.h"
+#include "kernel/kcodec.h"
+#include "kernel/cpuid.h"
 #include "kernel/mm/heap.h"
 #include "libs/monocypher/monocypher.h"
 #include "libs/monocypher/monocypher-ed25519.h"
@@ -991,6 +994,63 @@ static void test_json_lib(void)
     TEST_ASSERT(json_parse(deep) == (struct cJSON *)0, "json_parse rejects >32-deep nesting");
 }
 
+/* Shared checksum (CRC-32 / CRC-32C, table + SSE4.2 paths) + base64/hex codec. */
+static void test_checksum_codec(void)
+{
+    /* CRC vectors */
+    TEST_ASSERT_EQ(kcrc32("123456789", 9), 0xCBF43926u, "kcrc32 IEEE vector");
+    TEST_ASSERT_EQ(kcrc32c("123456789", 9), 0xE3069283u, "kcrc32c Castagnoli vector");
+    TEST_ASSERT_EQ(kcrc32c_sw_test("123456789", 9), 0xE3069283u, "kcrc32c table path");
+    if (cpu_has(CPU_FEATURE_SSE4_2)) {
+        TEST_ASSERT_EQ(kcrc32c_hw_test("123456789", 9), 0xE3069283u, "kcrc32c SSE4.2 path");
+        TEST_ASSERT_EQ(kcrc32c_hw_test("123456789", 9), kcrc32c_sw_test("123456789", 9),
+                       "CRC32C hw==sw byte-identical");
+    }
+    /* continuation == one-shot (split-vector) */
+    TEST_ASSERT_EQ(kcrc32_cont(kcrc32("123", 3), "456789", 6), 0xCBF43926u,
+                   "kcrc32_cont split == one-shot");
+    TEST_ASSERT_EQ(kcrc32c_cont(kcrc32c("123", 3), "456789", 6), 0xE3069283u,
+                   "kcrc32c_cont split == one-shot");
+
+    /* base64 (RFC 4648) */
+    char b64[24];
+    int n = base64_encode(b64, sizeof(b64), "foobar", 6);
+    TEST_ASSERT(n == 8, "base64_encode foobar len");
+    if (n > 0) { b64[n] = 0; TEST_ASSERT(strcmp(b64, "Zm9vYmFy") == 0, "base64_encode foobar"); }
+    n = base64_encode(b64, sizeof(b64), "f", 1);
+    if (n > 0) { b64[n] = 0; TEST_ASSERT(strcmp(b64, "Zg==") == 0, "base64_encode 1-byte padding"); }
+    uint8_t dec[16];
+    n = base64_decode(dec, sizeof(dec), "Zm9vYmFy", 8, 0);
+    TEST_ASSERT(n == 6 && memcmp(dec, "foobar", 6) == 0, "base64_decode round-trip");
+    n = base64_decode(dec, sizeof(dec), "Zg==", 4, 0);
+    TEST_ASSERT(n == 1 && dec[0] == 'f', "base64_decode padded");
+    TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zg=A", 4, 0) == -1, "base64 rejects data after pad");
+    TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zm9", 3, 0) == -1, "base64 rejects len%%4");
+    TEST_ASSERT(base64_decode(dec, sizeof(dec), "Zg=*", 4, 0) == -1, "base64 rejects invalid char");
+    /* MIME mode skips whitespace */
+    n = base64_decode(dec, sizeof(dec), "Zm9v\nYmFy", 9, 1);
+    TEST_ASSERT(n == 6 && memcmp(dec, "foobar", 6) == 0, "base64 MIME skips whitespace");
+
+    /* hex */
+    char hx[8];
+    n = hex_encode(hx, sizeof(hx), "\xDE\xAD", 2);
+    if (n > 0) { hx[n] = 0; TEST_ASSERT(strcmp(hx, "dead") == 0, "hex_encode lowercase"); }
+    uint8_t hd[4];
+    n = hex_decode(hd, sizeof(hd), "DeAd", 4);
+    TEST_ASSERT(n == 2 && hd[0] == 0xDE && hd[1] == 0xAD, "hex_decode mixed case");
+    TEST_ASSERT(hex_decode(hd, sizeof(hd), "abc", 3) == -1, "hex rejects odd length");
+    TEST_ASSERT(hex_decode(hd, sizeof(hd), "xy", 2) == -1, "hex rejects non-hex");
+
+    /* Overflow guards: the bound checks return -1 BEFORE dereferencing src, so a
+     * bogus oversized length with a valid (un-read) pointer is safe to assert. */
+    TEST_ASSERT(base64_encode(b64, sizeof(b64), "x", (size_t)0x7FFFFFFF * 3) == -1,
+                "base64_encode rejects length that would wrap output");
+    TEST_ASSERT(hex_encode(hx, sizeof(hx), "x", (size_t)0x7FFFFFFF) == -1,
+                "hex_encode rejects length over INT_MAX/2");
+    TEST_ASSERT(hex_decode(hd, sizeof(hd), "00", (size_t)0x100000000ULL) == -1,
+                "hex_decode rejects out_len over INT_MAX");
+}
+
 void test_register_klibs(void)
 {
     test_suite_register_cat("klibs: string lib edges",
@@ -999,6 +1059,8 @@ void test_register_klibs(void)
                             test_math_lib, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: cjson wrapper",
                             test_json_lib, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: checksum + codec",
+                            test_checksum_codec, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: blake2b vector",
                             test_blake2b_vector, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: chacha20-poly1305 AEAD",

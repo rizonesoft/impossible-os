@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/entropy.h"
+#include "kernel/kchecksum.h"
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/tpm.h"
@@ -338,18 +339,11 @@ uint32_t entropy_external_oneshot(uint8_t *src, uint32_t len,
  * bl_crc32c() in bootx64.c (mirror pattern -- the bootloader cannot share
  * kernel objects); ixfs_crc32c() is the same polynomial but owned by the
  * IXFS block layer. */
+/* Delegates to the shared kcrc32c (byte-identical to the former bitwise loop);
+ * the const-table path is safe at the Phase-1 boot point this runs in. */
 static uint32_t entropy_crc32c(const uint8_t *data, uint64_t len)
 {
-    uint32_t crc = 0xFFFFFFFFu;
-    uint64_t i;
-    int b;
-
-    for (i = 0; i < len; i++) {
-        crc ^= data[i];
-        for (b = 0; b < 8; b++)
-            crc = (crc >> 1) ^ (0x82F63B78u & (0u - (crc & 1u)));
-    }
-    return crc ^ 0xFFFFFFFFu;
+    return kcrc32c(data, (size_t)len);
 }
 
 entropy_seed_status_t entropy_seed_parse(

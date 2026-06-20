@@ -70,7 +70,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [x]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [/]   |
-| 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [ ]   |
+| 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [x]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -335,15 +335,23 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompatible variants. Win11 exposes `RtlCrc32`/`RtlCrc64`; Linux centralizes `lib/crc32` + `lib/base64`. Today GPT, IXFS, entropy, and the bootloader each carry a private CRC32/CRC32C, and TLS/SSH/SMTP/registry would each invent base64/hex.
 
-- [ ] `uint32_t kcrc32(const void *data, size_t len)` IEEE 802.3 (reflected poly `0xEDB88320`) + continuable `kcrc32_cont(crc, data, len)`; reuse the existing `gpt_crc32` table as the shared implementation.
-- [ ] `uint32_t kcrc32c(const void *data, size_t len)` Castagnoli (poly `0x1EDC6F41`); SSE4.2 `crc32` fast path gated on `cpu_has(CPU_FEATURE_SSE42)`, table fallback otherwise (TCG/pre-SSE4.2 must match byte-for-byte).
-- [ ] `include/kernel/kchecksum.h` dispatch header; migrate IXFS WAJ, entropy, and registry-hive CRC32C call sites to it (GPT + bootloader pre-EBS mirrors may keep their local copies, noted in the header).
-- [ ] `base64_encode`/`base64_decode` (strict + MIME-whitespace-tolerant modes, padding-validated, bounds-checked, `-1` on overflow/invalid) in `include/kernel/kcodec.h`.
-- [ ] `hex_encode`/`hex_decode` (decode accepts lower+upper, rejects odd-length/invalid) for registry `.reg` binary values, PEM/TLS, PDF ASCIIHex.
-- [ ] Expose as the canonical codec for TLS PEM (§7) + SSH/SMTP/MIME/BSOD-QR consumers; replace the planned net-local `base64_decode` with this.
-- [ ] Commit: `"libs: kernel checksum (CRC32/CRC32C) + base64/hex codec dispatch"`
+- [x] `kcrc32`/`kcrc32_cont` IEEE 802.3 (reflected `0xEDB88320`, finalized-in/out) via `const k_crc32_ieee[256]` rodata table (no lazy init, SMP-safe) in `src/kernel/kchecksum.c`; GPT keeps its own copy.
+- [x] `kcrc32c`/`kcrc32c_cont` Castagnoli (reflected `0x82F63B78`); SSE4.2 `crc32q/b` path (`target("sse4.2")`) gated on `cpu_has(CPU_FEATURE_SSE4_2)` (now in `CPU_FEATURES_AP_PROBE_MASK`), `k_crc32c_tab[256]` fallback; hw==sw unit-tested.
+- [x] `include/kernel/kchecksum.h` dispatch header; migrated `ixfs_crc32c`, `entropy_crc32c`, registry `hive_crc32` to byte-identical wrappers (on-disk checksums unchanged); GPT + bootloader mirrors keep local copies.
+- [x] `base64_encode`/`base64_decode` (strict + MIME modes, padding-validated, bounds-checked, `-1` on overflow/invalid, `KCODEC_INT_MAX` guards) in `include/kernel/kcodec.h` + `src/kernel/kcodec.c`.
+- [x] `hex_encode`/`hex_decode` (decode accepts lower+upper, rejects odd-length/invalid) for registry `.reg`, PEM/TLS, PDF ASCIIHex.
+- [/] Canonical codec API shipped; consumer migration deferred until consumers exist (PEM gated on §7; SSH/SMTP/MIME owned by 07-networking). -> XREF: 02-kernel-core/TODO-03 §7 (item: "Clone Mbed TLS 3.x source into `src/libs/mbedtls/`" at line 307)
+- [x] Commit: `"libs: kernel checksum (CRC32/CRC32C) + base64/hex codec dispatch"`
 
 **Test checkpoint:** `kcrc32("123456789",9) == 0xCBF43926` (IEEE vector); `kcrc32c("123456789",9) == 0xE3069283` (Castagnoli vector) on BOTH the SSE4.2 path and the table fallback; base64 round-trips RFC 4648 vectors and rejects bad padding; hex round-trips and rejects odd-length/invalid input. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 414 kernel + 16 user-mode, 0 failures
+> **Notes:**
+> - `kcrc32`/`kcrc32c` (+ `_cont`) and base64/hex codec in `src/kernel/kchecksum.c` + `src/kernel/kcodec.c`; headers `include/kernel/kchecksum.h`, `include/kernel/kcodec.h`.
+> - CRC tables are `const` rodata (no lazy init) so first-use across CPUs cannot race; CRC32C SSE4.2 path gated on the all-online-CPU `cpu_has(CPU_FEATURE_SSE4_2)` intersection.
+> - `ixfs_crc32c`/`entropy_crc32c`/registry `hive_crc32` migrated to thin wrappers; outputs byte-identical so on-disk checksums are unchanged.
+> - Test `klibs: checksum + codec` proves IEEE/Castagnoli vectors, hw==sw parity, split-vector continuation, base64/hex round-trip + malformed-input rejection.
+> - Consumer migration (TLS PEM, SSH/SMTP/MIME) deferred to §7 + 07-networking; codec API is canonical and ready.
 
 ---
 
@@ -366,8 +374,8 @@ One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompat
 | 💎 | getrandom syscall          | ✅ BCryptGenRandom | ✅ getrandom(2) | ✅ §5 NtGetRandom 0x03D8 |
 | 💎 | JSON in kernel             | ❌ user COM   | ❌ none std   | ✅ §6 cJSON      |
 | 💎 | TLS record crypto          | ✅ SChannel   | ✅ ktls       | ⬜ §7 mbed       |
-| 💎 | CRC32 / CRC32C dispatch    | ✅ RtlCrc32   | ✅ lib/crc32  | ⬜ §8 kcrc32/kcrc32c |
-| 💎 | base64 / hex codec         | ✅ Crypt32    | ✅ lib/base64 | ⬜ §8 kcodec     |
+| 💎 | CRC32 / CRC32C dispatch    | ✅ RtlCrc32   | ✅ lib/crc32  | ✅ §8 kcrc32/kcrc32c (SSE4.2+table) |
+| 💎 | base64 / hex codec         | ✅ Crypt32    | ✅ lib/base64 | ✅ §8 kcodec (strict+MIME) |
 | 💎 | UTF-16<->UTF-8 conversion  | ✅ RtlUnicode | ✅ nls/utf8   | ⬜ owned by T13 NLS |
 | ⭐ | One ring-0 CSPRNG façade (TLS seed + hiber + dumps + klog HMAC) | ⚠️ many BCrypt entry points | ⚠️ `get_random_bytes` + drivers | ✅ §5 `csprng_fill`/`csprng_add_entropy` |
 
@@ -394,8 +402,8 @@ After §1 through §8, freestanding libc and these libs unblock LZ4, miniz, cryp
   - CRC32: known input -> matches precomputed CRC
   - SHA-256: `"abc"` -> known hash `ba7816bf...`
   - AES-128-ECB: encrypt + decrypt round-trip -> plaintext matches
-  - `kcrc32("123456789", 9)` -> `0xCBF43926` (IEEE vector); `kcrc32c("123456789", 9)` -> `0xE3069283` (Castagnoli) on BOTH the SSE4.2 path and the table fallback
-  - base64 encode/decode round-trips RFC 4648 vectors; `base64_decode` rejects bad padding; `hex_decode` rejects odd-length/invalid input
+  - [x] `kcrc32("123456789", 9)` -> `0xCBF43926` (IEEE); `kcrc32c("123456789", 9)` -> `0xE3069283` (Castagnoli) on SSE4.2 (`kcrc32c_hw_test`) + table (`kcrc32c_sw_test`) paths, plus split-vector continuation -- `test_checksum_codec` in `test_klibs.c`
+  - [x] base64 encode/decode round-trips RFC 4648 vectors + MIME-whitespace mode; rejects bad padding/data-after-pad/len%4; `hex_encode`/`hex_decode` round-trip, reject odd-length/non-hex -- `test_checksum_codec`
 - [x] Add `extern void test_register_klibs(void);` in `test_runner.c`, call `test_register_klibs()` from `test_runner_init()`
 - [ ] Until §3 exists: register LZ4 round-trip test as `TEST_SKIP` or behind `#if 0`; until §4/§5 ship crypto: skip CRC32 / SHA-256 / AES bullets or use `TEST_SKIP` with explicit reason (avoid linking missing symbols)
 - [ ] Commit: `"test: add kernel libraries test suite"`
@@ -413,7 +421,7 @@ After §1 through §8, freestanding libc and these libs unblock LZ4, miniz, cryp
 - [ ] **CSPRNG**: `csprng_fill(buf1, 32)` and `csprng_fill(buf2, 32)` must produce different outputs; `csprng_u64()` called 1000 times must show no repeated values (birthday bound test).
 - [ ] **cJSON**: parse `{"build": 1024, "name": "Impossible OS", "debug": false}`; `json_int(json_get(root, "build")) == 1024`; `strcmp(json_str(json_get(root, "name")), "Impossible OS") == 0`.
 - [ ] **Mbed TLS selftest**: `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` both return 0 in the boot log.
-- [ ] **Checksum/codec**: `kcrc32`/`kcrc32c` match the IEEE/Castagnoli vectors on both SSE4.2 and table paths; base64 + hex round-trip RFC 4648 vectors and reject malformed input.
+- [x] **Checksum/codec**: `kcrc32`/`kcrc32c` match the IEEE/Castagnoli vectors on both SSE4.2 and table paths; base64 + hex round-trip RFC 4648 vectors and reject malformed input. (`test_checksum_codec`)
 - [ ] **Build check**: `bash scripts/build.sh clean` -> `=== BUILD OK ===` with all library files compiled under `-ffreestanding -nostdlib`.
 - [ ] **Platforms:** run verification matrix on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 - [ ] Commit: `"libs: snprintf/vsnprintf, kmath, LZ4, miniz, Monocypher/CSPRNG, cJSON, Mbed TLS freestanding ports"`
