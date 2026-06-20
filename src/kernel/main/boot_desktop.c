@@ -27,6 +27,7 @@
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/tunables.h"
+#include "kernel/policy_lock.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/pe.h"
 #include "kernel/boot_halt.h"
@@ -125,6 +126,16 @@ void boot_phase3(void)
         extern void kernel_features_register_core(void);
         kernel_features_register_core();
     }
+
+    /* Register the core security policies and seal the phases whose boot
+     * milestones have already passed by Phase 3: the security reference monitor
+     * and the registry-sourced policy merge are both complete here, so lockdown
+     * level, KASLR/SMEP-SMAP/KPTI, Secure Boot, CI mode, and the boot verifier
+     * become immutable (downgrade-blocked). The debugger lockout seals later at
+     * POST_USER_MODE, just before the compositor reaches user mode. */
+    kernel_policy_register_core();
+    kernel_policy_lock_phase_advance(POLICY_PHASE_POST_SECURITY_INIT);
+    kernel_policy_lock_phase_advance(POLICY_PHASE_POST_REGISTRY);
 
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
     /* pipe_create/shmem_create init lazily; explicit pipe_init gives the
@@ -698,6 +709,10 @@ void boot_phase3(void)
 
     /* Boot init complete: seal boot-only tunables before steady state. */
     kernel_tunable_lock_phase_advance(TUNABLE_PHASE_RUNTIME);
+
+    /* User mode is now reachable via the compositor: seal the final policy
+     * phase so the debugger lockout and any POST_USER_MODE policies freeze. */
+    kernel_policy_lock_phase_advance(POLICY_PHASE_POST_USER_MODE);
 
     /* --- Compositor event loop (never returns) --- */
     POST16(POST16_COMPOSITOR);  /* attribute a crash/hang entering the compositor */

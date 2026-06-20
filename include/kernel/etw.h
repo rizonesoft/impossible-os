@@ -150,6 +150,19 @@ NTSTATUS NtFlushTrace(uint64_t trace_handle, uint64_t instance_name,
  * header so providers and consumers share the enum; values are
  * stable once shipped. */
 #define ETW_EVT_WM_FRAME_PRESENTED  0x1001
+#define ETW_EVT_POLICY_TAMPER       0x1100  /* security: blocked/panicked policy mutation */
+
+/* Byte layout of the ETW_EVT_POLICY_TAMPER payload (policy_lock.c). Append-only;
+ * bump the layout version if fields are added. */
+#define ETW_POLICY_TAMPER_LAYOUT_VERSION  1u
+typedef struct {
+    char     policy[40];    /* POLICY_NAME_CAP -- full "policy.<name>" */
+    uint64_t attempted;     /* attempted value */
+    uint8_t  caller;        /* policy_caller_mode_t */
+    uint8_t  phase;         /* policy_lock_phase_t at the attempt */
+    uint8_t  result;        /* policy_result_t */
+    uint8_t  _pad;
+} etw_policy_tamper_payload_t;
 
 /* Byte layout of `struct wm_frame_stats` (include/desktop/wm.h). This
  * is the on-wire schema for both the ETW_EVT_WM_FRAME_PRESENTED payload

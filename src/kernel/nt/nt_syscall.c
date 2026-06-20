@@ -29,6 +29,7 @@
 #include "kernel/tunables.h"   /* tunable count + lock phase for the config query */
 #include "kernel/feature.h"    /* feature count for the config query */
 #include "kernel/nt/sysconfig_info.h" /* SYSTEM_KERNEL_CONFIG_INFORMATION ABI */
+#include "kernel/policy_lock.h"       /* kernel_lockdown_level_get */
 
 extern void *memcpy(void *dst, const void *src, uint64_t n);
 #include "kernel/ipc/pipe.h"
@@ -793,7 +794,8 @@ NTSTATUS nt_query_kernel_config_information(void *buffer, uint32_t buf_size,
     info.DebugEnabled   = kc->debug_enabled;
     info.TestMode       = kc->test_mode;
     info.LockPhase      = (uint8_t)kernel_tunable_lock_phase_get();
-    info.Reserved[0] = info.Reserved[1] = 0;
+    info.LockdownLevel  = (uint8_t)kernel_lockdown_level_get();
+    info.Reserved[0]    = 0;
     info.BootReason      = kc->boot_reason;
     info.SelectionReason = kc->selection_reason;
     info.TunableCount    = kernel_tunable_count();

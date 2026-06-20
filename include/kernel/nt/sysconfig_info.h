@@ -29,7 +29,8 @@ typedef struct _SYSTEM_KERNEL_CONFIG_INFORMATION {
     uint8_t  DebugEnabled;
     uint8_t  TestMode;
     uint8_t  LockPhase;        /* tunable_phase_t */
-    uint8_t  Reserved[2];      /* zeroed before copy_to_user */
+    uint8_t  LockdownLevel;    /* kernel_lockdown_level_t (policy_lock.c) */
+    uint8_t  Reserved[1];      /* zeroed before copy_to_user */
     uint32_t BootReason;       /* boot_reason_code */
     uint32_t SelectionReason;  /* boot_selection_reason */
     uint32_t TunableCount;
@@ -38,6 +39,8 @@ typedef struct _SYSTEM_KERNEL_CONFIG_INFORMATION {
 
 _Static_assert(sizeof(SYSTEM_KERNEL_CONFIG_INFORMATION) == 28,
     "SYSTEM_KERNEL_CONFIG_INFORMATION ABI size pinned at 28 bytes");
+_Static_assert(__builtin_offsetof(SYSTEM_KERNEL_CONFIG_INFORMATION, LockdownLevel) == 10,
+    "SYSTEM_KERNEL_CONFIG_INFORMATION.LockdownLevel ABI offset pinned at 10");
 _Static_assert(__builtin_offsetof(SYSTEM_KERNEL_CONFIG_INFORMATION, BootReason) == 12,
     "SYSTEM_KERNEL_CONFIG_INFORMATION.BootReason ABI offset pinned at 12");
 _Static_assert(__builtin_offsetof(SYSTEM_KERNEL_CONFIG_INFORMATION, TunableCount) == 20,

@@ -13,6 +13,7 @@
 #include "kernel/config.h"
 #include "kernel/tunables.h"
 #include "kernel/feature.h"
+#include "kernel/policy_lock.h"
 #include "kernel/nt/sysconfig_info.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
@@ -951,8 +952,8 @@ static void test_cfg_query_syscall(void)
     TEST_ASSERT_EQ(out.DebugEnabled, kc->debug_enabled, "queried debug_enabled");
     TEST_ASSERT_EQ(out.TestMode, kc->test_mode, "queried test_mode");
     TEST_ASSERT_EQ(out.LockPhase, (uint8_t)kernel_tunable_lock_phase_get(), "queried lock phase");
+    TEST_ASSERT_EQ(out.LockdownLevel, (uint8_t)kernel_lockdown_level_get(), "queried lockdown level mirrors policy");
     TEST_ASSERT_EQ(out.Reserved[0], 0, "reserved[0] zeroed (no stack leak)");
-    TEST_ASSERT_EQ(out.Reserved[1], 0, "reserved[1] zeroed (no stack leak)");
     TEST_ASSERT_EQ(out.BootReason, kc->boot_reason, "queried boot_reason");
     TEST_ASSERT_EQ(out.SelectionReason, kc->selection_reason, "queried selection_reason");
     TEST_ASSERT_EQ(out.TunableCount, kernel_tunable_count(), "queried tunable count");
@@ -999,6 +1000,255 @@ static void test_cfg_query_syscall_route(void)
     TEST_ASSERT_EQ(rc, STATUS_INFO_LENGTH_MISMATCH, "routed undersized buffer rejected");
 }
 
+/* ---- Section 9: policy lock phases + tamper audit ----------------------- *
+ * The policy registry and lock phase are global singletons; by test time the
+ * boot has already advanced s_phase. Tests therefore register policies that
+ * seal at PRE_MEMORY (always sealed regardless of current phase) and NEVER
+ * advance the phase forward (that would seal real boot policies). The
+ * KernelMode SB/CI downgrade -> KeBugCheckEx path is deliberately NOT exercised
+ * (it would halt the kernel); it is validated by the on-hardware serial-log
+ * test checkpoint. The UserMode downgrade-of-hard-class path IS exercised to
+ * prove an untrusted caller cannot trigger the bugcheck. */
+static void test_policy_register_validation(void)
+{
+    TEST_ASSERT_EQ(kernel_policy_register((const char *)0, 0, 100,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "NULL name rejected");
+    TEST_ASSERT_EQ(kernel_policy_register("bad.name", 0, 100,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "non-policy namespace rejected");
+    TEST_ASSERT_EQ(kernel_policy_register("policy.", 0, 100,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "prefix-only name rejected");
+    TEST_ASSERT_EQ(kernel_policy_register("policy.t9.overdomain", 9, 5,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "initial value above max_value rejected");
+    TEST_ASSERT_EQ(kernel_policy_register("policy.t9.valid", 7, 100,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_SUCCESS, "valid policy registered");
+    TEST_ASSERT_EQ(kernel_policy_register("policy.t9.valid", 9, 100,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_OBJECT_NAME_COLLISION, "duplicate rejected");
+    uint64_t v = 0;
+    TEST_ASSERT_EQ(kernel_policy_get("policy.t9.valid", &v), 0, "registered policy readable");
+    TEST_ASSERT_EQ(v, 7u, "registered value preserved (collision did not overwrite)");
+    TEST_ASSERT_EQ(kernel_policy_get("policy.t9.missing", &v), -1, "unknown policy returns -1");
+}
+
+static void test_policy_ratchet_seal(void)
+{
+    /* Sealed-from-birth ratchet policy (seals at PRE_MEMORY). */
+    TEST_ASSERT_EQ(kernel_policy_register("policy.t9.rat", 1, 2,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_SUCCESS, "ratchet policy registered");
+    uint64_t before = kernel_policy_tamper_count();
+
+    /* A value above the domain is rejected before any ratchet logic, so it can
+     * never poison the row (the lockdown-truncation bypass class). */
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.rat", 256, POLICY_CALLER_KERNEL),
+                   STATUS_INVALID_PARAMETER, "out-of-domain value rejected, not ratcheted");
+    uint64_t dv = 0; kernel_policy_get("policy.t9.rat", &dv);
+    TEST_ASSERT_EQ(dv, 1u, "out-of-domain write did not enter the row");
+
+    /* Upward (strictly more restrictive) accepted. */
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.rat", 2, POLICY_CALLER_KERNEL),
+                   STATUS_SUCCESS, "ratchet upgrade allowed");
+    uint64_t v = 0; kernel_policy_get("policy.t9.rat", &v);
+    TEST_ASSERT_EQ(v, 2u, "ratchet upgrade applied");
+
+    /* Equal value -> allowed no-op, NOT counted as tamper. */
+    uint64_t mid = kernel_policy_tamper_count();
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.rat", 2, POLICY_CALLER_KERNEL),
+                   STATUS_SUCCESS, "equal-value write is an allowed no-op");
+    TEST_ASSERT_EQ(kernel_policy_tamper_count(), mid, "no-op does not count as tamper");
+
+    /* Downward (downgrade) denied, value unchanged, tamper counted + sticky. */
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.rat", 1, POLICY_CALLER_KERNEL),
+                   STATUS_ACCESS_DENIED, "ratchet downgrade denied");
+    kernel_policy_get("policy.t9.rat", &v);
+    TEST_ASSERT_EQ(v, 2u, "denied downgrade did not change value");
+    TEST_ASSERT(kernel_policy_tamper_count() > before, "downgrade counted as tamper");
+    TEST_ASSERT_EQ(kernel_policy_tamper_sticky(), 1, "sticky tamper flag set");
+}
+
+static void test_policy_hard_user_downgrade_no_panic(void)
+{
+    /* A hard-class (Secure Boot) policy: a UserMode downgrade after seal MUST
+     * return ACCESS_DENIED and NOT bugcheck -- the no-DoS guarantee. */
+    TEST_ASSERT_EQ(kernel_policy_register("policy.t9.sb", 1, 1,
+                       POLICY_PHASE_PRE_MEMORY,
+                       POLICY_CLASS_SECURE_BOOT | POLICY_CLASS_RATCHET, 0),
+                   STATUS_SUCCESS, "hard-class policy registered");
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.sb", 0, POLICY_CALLER_USER),
+                   STATUS_ACCESS_DENIED, "UserMode hard downgrade denied, not paniced");
+    uint64_t v = 0; kernel_policy_get("policy.t9.sb", &v);
+    TEST_ASSERT_EQ(v, 1u, "UserMode hard downgrade did not change value");
+}
+
+static void test_policy_nonratchet_locked(void)
+{
+    /* Non-ratchet sealed policy refuses ANY differing write (even upward). */
+    TEST_ASSERT_EQ(kernel_policy_register("policy.t9.lk", 5, 100,
+                       POLICY_PHASE_PRE_MEMORY, 0 /* no ratchet */, 0),
+                   STATUS_SUCCESS, "non-ratchet policy registered");
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.lk", 6, POLICY_CALLER_KERNEL),
+                   STATUS_ACCESS_DENIED, "non-ratchet sealed: any change denied");
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.lk", 5, POLICY_CALLER_KERNEL),
+                   STATUS_SUCCESS, "non-ratchet sealed: equal value allowed");
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.missing", 1, POLICY_CALLER_KERNEL),
+                   STATUS_INVALID_PARAMETER, "set on unknown policy rejected");
+}
+
+static void test_policy_phase_and_lockdown(void)
+{
+    /* Forward-only phase advance: advancing to the current level or below is a
+     * no-op (we never advance forward in tests to avoid sealing boot policy). */
+    policy_lock_phase_t cur = kernel_policy_lock_phase_get();
+    kernel_policy_lock_phase_advance(cur);
+    TEST_ASSERT_EQ(kernel_policy_lock_phase_get(), cur, "advance to current is a no-op");
+    if (cur > POLICY_PHASE_PRE_MEMORY) {
+        kernel_policy_lock_phase_advance((policy_lock_phase_t)(cur - 1));
+        TEST_ASSERT_EQ(kernel_policy_lock_phase_get(), cur, "backward advance ignored");
+    }
+    /* Out-of-range phase rejected (does not publish an undefined phase). */
+    kernel_policy_lock_phase_advance((policy_lock_phase_t)(POLICY_PHASE_POST_USER_MODE + 1));
+    TEST_ASSERT_EQ(kernel_policy_lock_phase_get(), cur, "out-of-range advance ignored");
+
+    /* Core registration is idempotent and publishes the lockless lockdown
+     * scalar in sync with the "policy.lockdown" row. */
+    kernel_policy_register_core();
+    TEST_ASSERT(kernel_policy_count() >= 8u, "core policies registered");
+    uint64_t ld = 0;
+    TEST_ASSERT_EQ(kernel_policy_get("policy.lockdown", &ld), 0, "lockdown policy present");
+    TEST_ASSERT_EQ((uint64_t)kernel_lockdown_level_get(), ld,
+                   "lockless lockdown scalar mirrors the policy row");
+
+    /* policy.lockdown cannot be (re)registered outside its enum domain -- the
+     * guard fires before the dup check, so an out-of-domain value/max can never
+     * poison the narrowing-published scalar. */
+    kernel_lockdown_level_t ld_before = kernel_lockdown_level_get();
+    TEST_ASSERT_EQ(kernel_policy_register("policy.lockdown", 256, 256,
+                       POLICY_PHASE_POST_SECURITY_INIT, POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "out-of-domain lockdown registration rejected");
+    TEST_ASSERT_EQ(kernel_lockdown_level_get(), ld_before,
+                   "rejected lockdown registration left the scalar unchanged");
+
+    /* Ratchet the lockdown level upward (more restrictive): both the row and
+     * the lockless scalar must reflect the new value. policy.lockdown seals at
+     * POST_SECURITY_INIT, which the boot has passed, so this exercises the
+     * sealed-ratchet upgrade path on a live core policy. */
+    NTSTATUS lr = kernel_policy_set("policy.lockdown",
+                                    (uint64_t)KERNEL_LOCKDOWN_CONFIDENTIALITY,
+                                    POLICY_CALLER_KERNEL);
+    TEST_ASSERT_EQ(lr, STATUS_SUCCESS, "lockdown ratchet to confidentiality allowed");
+    TEST_ASSERT_EQ((uint64_t)kernel_lockdown_level_get(),
+                   (uint64_t)KERNEL_LOCKDOWN_CONFIDENTIALITY,
+                   "lockless scalar updated after ratchet upgrade");
+    kernel_policy_get("policy.lockdown", &ld);
+    TEST_ASSERT_EQ(ld, (uint64_t)KERNEL_LOCKDOWN_CONFIDENTIALITY,
+                   "policy row updated after ratchet upgrade");
+}
+
+static void test_policy_audit_ring(void)
+{
+    /* A fresh denied attempt must be the newest audit record. */
+    kernel_policy_register("policy.t9.aud", 3, 100, POLICY_PHASE_PRE_MEMORY,
+                           POLICY_CLASS_RATCHET, 0);
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.aud", 1, POLICY_CALLER_USER),
+                   STATUS_ACCESS_DENIED, "downgrade denied (for audit)");
+    policy_audit_record_t recs[POLICY_AUDIT_RING + 8];
+    uint32_t n = kernel_policy_audit_dump(recs, 4);
+    TEST_ASSERT(n >= 1u, "audit ring has records");
+    TEST_ASSERT_EQ(recs[0].result, (uint8_t)POLICY_RESULT_DENIED_RATCHET,
+                   "newest record is the denied downgrade");
+    TEST_ASSERT_EQ(recs[0].attempted, 1u, "newest record carries attempted value");
+    TEST_ASSERT_EQ(recs[0].caller, (uint8_t)POLICY_CALLER_USER, "newest record carries caller");
+    TEST_ASSERT_EQ(kernel_policy_audit_dump((policy_audit_record_t *)0, 4), 0u,
+                   "NULL out yields zero");
+
+    /* Wrap the 64-entry ring: a high-value ratchet policy downgraded with
+     * distinct attempted values floods the ring past capacity. Verify the dump
+     * caps at POLICY_AUDIT_RING, newest-first ordering survives the wrap, the
+     * retained-oldest is correct, and tamper_count advances by the exact count.
+     * The attempts stay below the current value so each is a denied downgrade
+     * (no KeBugCheckEx: this is a plain ratchet, not a hard class). */
+    kernel_policy_register("policy.t9.wrap", 5000, 10000, POLICY_PHASE_PRE_MEMORY,
+                           POLICY_CLASS_RATCHET, 0);
+    const uint32_t floods = POLICY_AUDIT_RING + 5u;  /* 69 denied writes */
+    uint64_t tc0 = kernel_policy_tamper_count();
+    for (uint32_t i = 0; i < floods; i++) {
+        /* attempted = 1000 + i: strictly increasing but always < 5000, so each
+         * is a downgrade relative to the unchanged stored value -> denied. */
+        kernel_policy_set("policy.t9.wrap", 1000u + i, POLICY_CALLER_KERNEL);
+    }
+    TEST_ASSERT_EQ(kernel_policy_tamper_count() - tc0, (uint64_t)floods,
+                   "every denied flood write counted as tamper");
+    n = kernel_policy_audit_dump(recs, POLICY_AUDIT_RING + 8u);
+    TEST_ASSERT_EQ(n, (uint32_t)POLICY_AUDIT_RING, "dump caps at ring capacity after wrap");
+    TEST_ASSERT_EQ(recs[0].attempted, 1000u + (floods - 1u),
+                   "newest record is the last flood attempt");
+    /* recs[POLICY_AUDIT_RING-1] is the retained-oldest: floods-64 entries were
+     * overwritten, so the oldest surviving attempt is index (floods-64). */
+    TEST_ASSERT_EQ(recs[POLICY_AUDIT_RING - 1u].attempted,
+                   1000u + (floods - (uint32_t)POLICY_AUDIT_RING),
+                   "retained-oldest record correct after wrap");
+}
+
+/* Fixed-capacity + bounded-name boundaries. Registered LAST among policy tests
+ * because the overflow check permanently fills the global registry. */
+static void test_policy_capacity_boundary(void)
+{
+    /* Public bad-phase path. */
+    TEST_ASSERT_EQ(kernel_policy_register("policy.t9.badphase", 0, 1,
+                       (policy_lock_phase_t)99, POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "out-of-range seal phase rejected");
+
+    /* Name boundary: "policy." (7) + 32 chars = 39 (< POLICY_NAME_CAP) valid;
+     * + 33 chars = 40 (== cap, no room for NUL) rejected. */
+    char ok_name[POLICY_NAME_CAP];   /* 39 chars + NUL */
+    char big_name[POLICY_NAME_CAP + 2];
+    memcpy(ok_name, "policy.", 7);
+    for (uint32_t i = 7; i < POLICY_NAME_CAP - 1u; i++) ok_name[i] = 'a';
+    ok_name[POLICY_NAME_CAP - 1u] = 0;
+    memcpy(big_name, "policy.", 7);
+    for (uint32_t i = 7; i < POLICY_NAME_CAP + 1u; i++) big_name[i] = 'b';
+    big_name[POLICY_NAME_CAP + 1u] = 0;
+    TEST_ASSERT_EQ(kernel_policy_register(ok_name, 1, 1, POLICY_PHASE_PRE_MEMORY,
+                                          POLICY_CLASS_RATCHET, 0),
+                   STATUS_SUCCESS, "max-length name accepted");
+    TEST_ASSERT_EQ(kernel_policy_register(big_name, 1, 1, POLICY_PHASE_PRE_MEMORY,
+                                          POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "over-cap name rejected");
+
+    /* Unterminated exactly-POLICY_NAME_CAP-byte buffer: name_len must stop at
+     * the cap and never read byte [POLICY_NAME_CAP]; registration rejects it. */
+    char raw_cap[POLICY_NAME_CAP];   /* "policy." + 33 non-NUL = 40 bytes, no NUL */
+    memcpy(raw_cap, "policy.", 7);
+    for (uint32_t i = 7; i < POLICY_NAME_CAP; i++) raw_cap[i] = 'c';
+    TEST_ASSERT_EQ(kernel_policy_register(raw_cap, 1, 1, POLICY_PHASE_PRE_MEMORY,
+                                          POLICY_CLASS_RATCHET, 0),
+                   STATUS_INVALID_PARAMETER, "unterminated cap-length name rejected (no overread)");
+
+    /* Fill to capacity, then assert overflow returns INSUFFICIENT_RESOURCES and
+     * the count does not move on a failed registration. */
+    char nm[24];
+    memcpy(nm, "policy.fill.", 12);
+    NTSTATUS rc = STATUS_SUCCESS;
+    for (uint32_t i = 0; i < POLICY_MAX + 4u && rc == STATUS_SUCCESS; i++) {
+        nm[12] = (char)('A' + (i / 26));
+        nm[13] = (char)('a' + (i % 26));
+        nm[14] = 0;
+        rc = kernel_policy_register(nm, 0, 1, POLICY_PHASE_PRE_MEMORY,
+                                    POLICY_CLASS_RATCHET, 0);
+    }
+    TEST_ASSERT_EQ(rc, STATUS_INSUFFICIENT_RESOURCES, "registry overflow rejected");
+    uint32_t full = kernel_policy_count();
+    TEST_ASSERT_EQ(kernel_policy_register("policy.fill.zz", 0, 1,
+                       POLICY_PHASE_PRE_MEMORY, POLICY_CLASS_RATCHET, 0),
+                   STATUS_INSUFFICIENT_RESOURCES, "second overflow also rejected");
+    TEST_ASSERT_EQ(kernel_policy_count(), full, "count stable on failed registration");
+}
+
 void test_register_kernel_config(void)
 {
     test_suite_register_cat("CONF: tunable register+get",  test_tunable_register_get,      TEST_CAT_BOOT);
@@ -1039,6 +1289,13 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: descriptor lookup",        test_cfg_descriptor_lookup,       TEST_CAT_BOOT);
     test_suite_register_cat("CONF: empty cmdline",            test_cfg_empty_cmdline,           TEST_CAT_BOOT);
     test_suite_register_cat("CONF: unterminated cmdline",     test_cfg_unterminated_cmdline,    TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy register validation", test_policy_register_validation, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy ratchet seal",      test_policy_ratchet_seal,         TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy hard user no-panic", test_policy_hard_user_downgrade_no_panic, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy non-ratchet locked", test_policy_nonratchet_locked,   TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy phase + lockdown",  test_policy_phase_and_lockdown,   TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy audit ring",        test_policy_audit_ring,           TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy capacity boundary", test_policy_capacity_boundary,    TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

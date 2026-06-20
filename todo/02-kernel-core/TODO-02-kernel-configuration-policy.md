@@ -57,7 +57,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | 💎 | 6 | Runtime tunable registry                        | §2                                  | [/] |
 | ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [/] |
 | 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [/] |
-| ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [ ] |
+| ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [/] |
 | 💎 | 10 | Boot status policy and boot success ledger     | §4, §5, D01 T21 §5, T30 §7         | [ ] |
 | 💎 | 11 | Config dump, tests, and docs                   | §1-10, T11 §11, T31 §2             | [ ] |
 
@@ -272,15 +272,23 @@ Expose the effective configuration through stable NT contracts once the SSDT sur
 
 Define when policy stops being mutable and make every blocked mutation observable.
 
-- [ ] Define lock phases: pre-memory, post-security-init, post-registry, post-user-mode.
-- [ ] Lock code integrity, KASLR, SMEP/SMAP/KPTI, debugger enablement, and boot verifier flags at the earliest safe phase.
-- [ ] Define `kernel_lockdown_level_t` { none, integrity, confidentiality } as first-class config (Linux `lockdown=` parity): map Secure Boot to a default level, expose via `config_dump`/query, classify confidentiality-class restrictions.
-- [ ] Emit a tamper audit event (policy name, attempted value, caller mode, phase, result) and route it to the kernel notification facility (D02 T16) for fanout and to ETW/system logging (D02 T04 §7) for durable security-event persistence.
-- [ ] Panic on attempted downgrade of Secure Boot or CI policy after lock.
-- [ ] Allow post-lock changes only when the policy class explicitly marks the new value as strictly more restrictive than the old one.
-- [ ] Commit: `"kernel: add policy lock phases and tamper audit"`
+- [x] `policy_lock_phase_t` { PRE_MEMORY, POST_SECURITY_INIT, POST_REGISTRY, POST_USER_MODE } monotonic forward-only advance (out-of-range rejected); `policy_lock.c` fixed registry of `policy.<name>` rows, each sealing at a `seal_phase`.
+- [x] Core security policies registered + sealed in `boot_desktop.c` Phase 3: KASLR/SMEP-SMAP/KPTI + lockdown at POST_SECURITY_INIT; Secure Boot, CI mode, boot verifier at POST_REGISTRY; debugger lockout at POST_USER_MODE.
+- [x] `kernel_lockdown_level_t` { none, integrity, confidentiality } (Linux `lockdown=` parity) as `policy.lockdown` ratchet; Secure Boot maps to default `integrity`; lockless getter + §8 query `LockdownLevel`; `config_dump` in §11.
+- [/] Tamper-audit record { policy, attempted, caller, phase, result } -> 64-entry ring; emitted via `etw_emit_kernel_event(ETW_EVT_POLICY_TAMPER)` + `klog(LOG_WARN, "CONF", ...)`. Notification fanout deferred -> XREF: 02-kernel-core/TODO-16.
+- [x] KernelMode downgrade of a SECURE_BOOT/CODE_INTEGRITY policy after seal panics via `KeBugCheckEx`; UserMode downgrade returns `STATUS_ACCESS_DENIED` + sticky tamper (never bugchecks) so untrusted callers cannot weaponize the panic.
+- [x] Post-lock writes accepted only when strictly more restrictive (ratchet `new > old`); equal value is an audited no-op; ratchet-encoding invariant (higher numeric = more restrictive) makes downgrade exactly `new < old`.
+- [x] Commit: `"kernel: add policy lock phases and tamper audit"`
 
 **Test checkpoint:** Attempting to change locked `ci.mode` after the lock phase returns `STATUS_ACCESS_DENIED` and logs `"[CONF] tamper blocked: ci.mode"`. Attempting to downgrade Secure Boot or CI policy after lock triggers the configured panic path instead of silently continuing. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 7 policy suites, 0 failures
+> **Notes:**
+> - **What shipped:** `policy_lock.c`/`.h` (32-row security-policy registry, 4-phase monotonic seal machine, ratchet comparator, 64-entry tamper-audit ring) + `ETW_EVT_POLICY_TAMPER` (0x1100) in `etw.h`.
+> - **How it integrates:** registered + phase-advanced from `boot_desktop.c` Phase 3; one global spinlock guards mutation/audit; lockdown level + lock phase are lockless scalars; `kernel_policy_set()` decides seal under the lock.
+> - **Downstream effects:** `kernel_lockdown_level_get()` surfaces in the §8 query (`LockdownLevel` reuses a reserved byte, offset 10 unchanged); `config_dump` owed in §11. Codex adoptions (design 4x, test-coverage 3x) in the ship commit.
+> - **Canonical doc:** `include/kernel/policy_lock.h` header contract (ratchet-encoding invariant, panic policy, locking).
+> - **Scope boundary:** §9 owns policy lock state + tamper audit; notification fanout owned by TODO-16; ETW durable persistence by TODO-04 §7; mechanism enforcement of KASLR/SMEP/KPTI lives in vmm/cpu_security.
 
 ---
 
@@ -324,9 +332,10 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | 💎 | Control-set style rollback state   | ⚠️ `Current` and `LastKnownGood` semantics     | ⚠️ Distro snapshots or boot fallback, not kernel   | ⬜ Planned - §4         |
 | 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
 | 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⚠️ §6 registry + §8 query syscall; set path §8/§3 |
-| 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ⚠️ §2 snapshot done; §8,§9 |
-| 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ⬜ Planned - §9         |
-| ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⚠️ §7 cohorts + owner tags; §3,§9 provenance |
+| 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ✅ §9 phase-sealed ratchet, panic-on-downgrade |
+| 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ✅ §9 none/integrity/confidentiality, SB-mapped |
+| ⭐ | Tamper-audit of blocked policy mutation | ⚠️ ETW security events, no ratchet plane   | ⚠️ Audit subsystem, scattered LSM hooks            | ✅ §9 ring + ETW, every blocked write observable |
+| ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⚠️ §7 cohorts + owner tags; §3 provenance |
 
 > **After §1-§6:** Impossible OS reaches the same baseline the major platforms already have: typed boot policy, safe/recovery modes, and persistent tunables.
 > **After §7-§10:** Impossible OS pulls ahead with kernel-native provenance, explicit boot acceptance, rollout cohorts, and tamper-aware lock phases instead of scattered tooling.
