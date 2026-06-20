@@ -114,16 +114,20 @@ static int parse_bool(const char *v, uint32_t vlen, int *out)
  * schema parser only stores known + unknown KEY names (not dynamic key=value),
  * so the feature subsystem owns this bounded scan. Returns 1 if found + parsed
  * (sets *out_enabled), 0 otherwise. */
+static int is_sep(char c) { return c == ' ' || c == '\t'; }
+
 static int cmdline_override(const char *fullname, int *out_enabled)
 {
     const char *cl = g_boot_info.config.cmdline;
     uint32_t max = BOOT_CONF_CMDLINE_MAX;
     uint32_t nl = name_len(fullname);
     uint32_t i = 0;
+    /* Match the boot-argument parser's whitespace: space AND tab separate
+     * tokens (the bootloader preserves internal tabs in cmdline=). */
     while (i < max && cl[i]) {
-        while (i < max && cl[i] == ' ') i++;          /* skip separators */
+        while (i < max && is_sep(cl[i])) i++;             /* skip separators */
         uint32_t ts = i;
-        while (i < max && cl[i] && cl[i] != ' ') i++;  /* token [ts,i) */
+        while (i < max && cl[i] && !is_sep(cl[i])) i++;    /* token [ts,i) */
         uint32_t tlen = i - ts;
         if (tlen > nl + 1 && cl[ts + nl] == '=') {
             uint32_t k = 0;
@@ -220,46 +224,67 @@ int kernel_feature_enabled(const char *name)
         spin_unlock_irqrestore(&s_lock, irq);
         return v;
     }
+    /* Snapshot the inputs under the lock, then compute the (deterministic)
+     * resolution OUTSIDE the lock -- cmdline scan + SHA-256 cohort hashing must
+     * not run with IRQs disabled (spinlock hold-time discipline). Features are
+     * never unregistered, so the entry pointer/index stay valid. */
+    char namebuf[FEATURE_NAME_CAP];
+    for (uint32_t i = 0; i < FEATURE_NAME_CAP; i++) namebuf[i] = f->name[i];
+    uint8_t flags   = f->flags;
+    uint8_t deflt   = f->default_enabled;
+    uint8_t rollout = f->rollout_percent;
+    spin_unlock_irqrestore(&s_lock, irq);
 
     int val; uint8_t src;
     int ov;
-    if (f->flags & FEATURE_LOCKED) {
+    if (flags & FEATURE_LOCKED) {
         /* Locked: no override or cohort provider is honored -- the registered
          * default is authoritative (still subject to the Secure Boot guard). */
-        val = f->default_enabled; src = (uint8_t)FEATURE_SRC_DEFAULT;
-    } else if (cmdline_override(f->name, &ov)) {
+        val = deflt; src = (uint8_t)FEATURE_SRC_DEFAULT;
+    } else if (cmdline_override(namebuf, &ov)) {
         val = ov; src = (uint8_t)FEATURE_SRC_CMDLINE;
-    } else if (f->rollout_percent > 0) {
+    } else if (rollout > 0) {
         uint32_t b;
-        if (cohort_bucket(f->name, &b)) {
-            val = (b < f->rollout_percent) ? 1 : 0; src = (uint8_t)FEATURE_SRC_COHORT;
+        if (cohort_bucket(namebuf, &b)) {
+            val = (b < rollout) ? 1 : 0; src = (uint8_t)FEATURE_SRC_COHORT;
         } else {
-            val = f->default_enabled; src = (uint8_t)FEATURE_SRC_DEFAULT;
+            val = deflt; src = (uint8_t)FEATURE_SRC_DEFAULT;
         }
     } else {
-        val = f->default_enabled; src = (uint8_t)FEATURE_SRC_DEFAULT;
+        val = deflt; src = (uint8_t)FEATURE_SRC_DEFAULT;
     }
 
     /* Secure Boot guard: refuse disabling a security feature unless Secure Boot
      * is known-off. Fail closed (keep enabled) otherwise. */
     int blocked = 0;
-    if ((f->flags & FEATURE_SECURITY) && val == 0 && !security_disable_allowed()) {
+    if ((flags & FEATURE_SECURITY) && val == 0 && !security_disable_allowed()) {
         val = 1; src = (uint8_t)FEATURE_SRC_SB_GUARD; blocked = 1;
     }
 
-    f->cur_state = (uint8_t)val; f->source = src; f->resolved = 1;
-    /* Snapshot what we need to log outside the lock. */
-    char shortbuf[FEATURE_NAME_CAP];
-    const char *sn = short_name(f->name);
-    uint32_t sl = 0; while (sn[sl] && sl < FEATURE_NAME_CAP - 1) { shortbuf[sl] = sn[sl]; sl++; }
-    shortbuf[sl] = 0;
+    /* Publish under the lock. A concurrent first call on another CPU computes
+     * the same deterministic result; the first to publish wins, and we only
+     * emit the audit line if WE published (no double-log). */
+    int i_published = 0, result;
+    spin_lock_irqsave(&s_lock, &irq);
+    if (f->resolved) {
+        result = f->cur_state;
+    } else {
+        f->cur_state = (uint8_t)val; f->source = src; f->resolved = 1;
+        result = val; i_published = 1;
+    }
     spin_unlock_irqrestore(&s_lock, irq);
 
-    if (blocked)
-        klog(LOG_WARN, "CONF", "[CONF] secure feature override blocked: %s", shortbuf);
-    else if (src == (uint8_t)FEATURE_SRC_CMDLINE)
-        klog(LOG_INFO, "CONF", "[CONF] feature %s forced %s", shortbuf, val ? "on" : "off");
-    return val;
+    if (i_published) {
+        char shortbuf[FEATURE_NAME_CAP];
+        const char *sn = short_name(namebuf);
+        uint32_t sl = 0; while (sn[sl] && sl < FEATURE_NAME_CAP - 1) { shortbuf[sl] = sn[sl]; sl++; }
+        shortbuf[sl] = 0;
+        if (blocked)
+            klog(LOG_WARN, "CONF", "[CONF] secure feature override blocked: %s", shortbuf);
+        else if (src == (uint8_t)FEATURE_SRC_CMDLINE)
+            klog(LOG_INFO, "CONF", "[CONF] feature %s forced %s", shortbuf, val ? "on" : "off");
+    }
+    return result;
 }
 
 uint32_t kernel_feature_count(void)

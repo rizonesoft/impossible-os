@@ -231,7 +231,11 @@ Make feature flags discoverable, auditable, and safe enough for staged rollout i
 > - Resolution (cached once per boot): cmdline override > cohort rollout > default; `FEATURE_LOCKED` bypasses override/cohort; the Secure Boot guard then fails closed on any security-feature disable unless Secure Boot is known-off.
 > - Cohort is `sha256(machine_uuid || name) % 100 < rollout_percent`, stable per machine; no valid UUID falls back to the default; consumers query `kernel_feature_enabled(name)` at their gate.
 > - Boot-arg overrides use a feature-owned bounded raw-cmdline scanner because the boot-argument schema parser drops unknown dynamic keys.
-> - Registry-backed override provider is owned by the registry-merge feature (§3); §7 ships the boot provider. Codex review adoptions in the section ship commit.
+> - Registry-backed override provider is owned by the registry-merge feature (§3); §7 ships the boot provider. Codex review adoptions in the section ship + review commits.
+
+> **Verified:** 2026-06-20 | commit `e8238fc2` | 4/5 items | build OK | tests 3028/3028 PASS
+> **Deferred:** [M] Registry-backed feature-override provider (item 1, `[/]`) needs the registry merge -> XREF: 02-kernel-core/TODO-02 §3 (item: "Merge precedence: compiled defaults < boot entry defaults < registry policy < boot command line < firmware-enforced policy" at line 126)
+> **Quality reviewed:** 2026-06-20 | Codex 8x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 3H+8M fixed | scope: kernel-code-quality
 
 ---
 

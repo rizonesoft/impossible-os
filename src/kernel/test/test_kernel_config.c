@@ -847,6 +847,16 @@ static void test_feature_cmdline_boundary(void)
     TEST_ASSERT_EQ(kernel_feature_enabled("feature.bnd"), 1,
                    "substring/prefix tokens do not false-match the feature");
 
+    /* Tab-delimited overrides parse like the boot-arg parser (space AND tab). */
+    const char *inj2 = "foo=bar\tfeature.tabd=off\tquiet";
+    k = 0;
+    for (; inj2[k] && k < BOOT_CONF_CMDLINE_MAX - 1; k++)
+        g_boot_info.config.cmdline[k] = inj2[k];
+    g_boot_info.config.cmdline[k] = 0;
+    kernel_feature_register("feature.tabd", 1, 0, 0, 0);
+    TEST_ASSERT_EQ(kernel_feature_enabled("feature.tabd"), 0,
+                   "tab-delimited override is parsed");
+
     for (uint32_t i = 0; i < BOOT_CONF_CMDLINE_MAX; i++)
         g_boot_info.config.cmdline[i] = saved[i];
 }
