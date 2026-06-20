@@ -28,6 +28,7 @@
 #include "kernel/tpm_attest_report.h"   /* Phase-0 handoff snapshot for attestation */
 #include "kernel/boot_init.h"
 #include "kernel/boot_halt.h"
+#include "kernel/config.h"
 #include "kernel/cpu_security.h"
 #include "kernel/smp.h"
 #include "kernel/msr.h"
@@ -173,6 +174,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             }
         }
     }
+
+    /* Parse + validate the boot-argument schema before any Phase-0 consumer
+     * reads raw config. An unknown kernel.* key (without boot.allow_unknown=1)
+     * or a malformed value halts here -- Phase 0 has no degraded-continue. */
+    if (boot_args_init(&g_boot_info.config) != BOOT_OK)
+        boot_halt("boot args: unknown or invalid kernel boot key");
 
     /* typed payload descriptor array: validate the packed-prefix,
      * overlap, range, alignment, total-bytes, and unknown-required

@@ -49,7 +49,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 
 | ⭐ | Order | Deliverable                                 | Depends On                          | Status |
 | --- | :---: | ------------------------------------------- | ----------------------------------- | :----: |
-| 💎 | 1 | Boot argument schema and parser                 | D01 T07 §3, §5                      | [ ] |
+| 💎 | 1 | Boot argument schema and parser                 | D01 T07 §3, §5                      | [x] |
 | 💎 | 2 | `kernel_config_t` immutable Phase 0 snapshot    | §1, T01 §2, §6                      | [ ] |
 | 💎 | 3 | Registry-backed policy merge                    | §2, T14 §8, §12, §13               | [ ] |
 | 💎 | 4 | ControlSet and LastKnownGood selection          | §3, D01 T07 §7, D01 T21 §4, §5     | [ ] |
@@ -70,15 +70,23 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 
 Parse the bootloader handoff into typed, validated keys before any Phase 0 consumer reads raw strings.
 
-- [ ] Define `boot_arg_desc_t`: name, type, default, min/max, phase, security class, help text.
-- [ ] Support bool, integer, string, enum, duration, byte-size, and CSV-list values.
-- [ ] Normalize aliases: `debug=1`, `/debug`, `safemode=minimal`, `safemode=network`, `testsigning=on`, `nointegritychecks`, `bootstatuspolicy=IgnoreAllFailures|DisplayAllFailures`, `recoveryenabled=no`, `nogui`, `noacpi`, `verifier=*`.
-- [ ] Reject unknown `kernel.` namespace keys unless `boot.allow_unknown=1`.
-- [ ] Preserve the original command line, selected boot-entry id, and boot-selection reason from `boot_info` for crash dump and diagnostics output.
-- [ ] Keep on-disk boot-entry parsing in D01 T07 §2-§5; this section only consumes the bootloader-selected payload after handoff.
-- [ ] Commit: `"kernel: define boot argument schema and parser"`
+- [x] Define `boot_arg_desc_t` (name, type, min/max, default, phase, security class, help) + per-value `boot_arg_value_t` with `source`/`present`/`raw` provenance (`config.h`).
+- [x] Support bool, integer, string, enum, duration, byte-size, and CSV-list values (`validate_value`, overflow-guarded numeric parse).
+- [x] Normalize aliases: `/debug`->`debug=1`, bare BOOL keys, `safemode=minimal|network`, `testsigning=on`, `nointegritychecks`, `bootstatuspolicy=...`, `recoveryenabled=no`, `nogui`, `noacpi`, `verifier=*`.
+- [x] Reject unknown `kernel.` namespace keys unless `boot.allow_unknown=1` (BOOT_FATAL -> `boot_halt` at Phase 0).
+- [x] Preserve the original command line, selected boot-entry id, and boot-selection reason from `boot_info` (`boot_args_cmdline`/`_entry_id`/`_selection_reason`).
+- [x] Keep on-disk boot-entry parsing in D01 T07 §2-§5; this section only consumes the bootloader-selected payload after handoff.
+- [x] Commit: `"kernel: define boot argument schema and parser"`
 
-**Test checkpoint:** Boot with `debug=1 safemode=network verifier=*`: serial shows `"[CONF] parsed boot args: debug=1 safemode=network verifier=*"` before Phase 0 consumers run. Boot with `kernel.unknown=1` and no override: serial shows `"[CONF] unknown boot key: kernel.unknown"` and degraded boot policy follows T01 §7. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot with `debug=1 safemode=network verifier=*`: serial shows `"[CONF] parsed boot args: debug=1 safemode=network verifier=*"` before Phase 0 consumers run. Boot with `kernel.unknown=1` and no override: serial shows `"[CONF] unknown boot key: kernel.unknown"` then `boot_halt()` (Phase 0 has no degraded-continue per T01 §7); `boot.allow_unknown=1` downgrades it to a logged warning. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 11 CONF suites, 0 failures
+> **Notes:**
+> - Shipped `config.h` + `config.c`: static 12-key descriptor table + pure `boot_args_parse_cmdline_n` (7 value types, alias normalization) + Phase-0 `boot_args_init` wired into `boot_phase0`.
+> - Fully static/fixed-size (no kmalloc); 256-byte handoff `cmdline` is length-bounded + rejected if unterminated; unknown `kernel.*` / bad value halts at Phase 0.
+> - `boot_config` fields project as the BOOTCFG layer; cmdline overrides per §3 precedence with `source`/`present`/`raw` provenance. Codex 4x adoptions in commit.
+> - Tests: `test_kernel_config.c`, 11 suites under `TEST_CAT_BOOT` (alias, unknown-key halt, allow_unknown, CSV, bad-value, bounded/unterminated cmdline).
+> - Scope: §1 owns schema + cmdline parser + provenance; §2 owns the `kernel_config_t` snapshot; §3 owns the registry precedence merge + BOOTCFG explicit-vs-default.
 
 ---
 
@@ -106,6 +114,7 @@ Merge persisted policy without letting malformed registry data silently reshape 
 - [ ] Produce per-key provenance for `config_dump`.
 - [ ] Log every override with previous value, new value, and source.
 - [ ] Reject malformed security-sensitive values with an explicit `"[CONF] rejected policy override"` log and keep the last valid value instead of silently coercing.
+- [ ] Resolve boot_config explicit-vs-default in the merge: the struct has no per-key presence bit. Add a producer presence bitset (BOOT_INFO_VERSION bump) or define boot.conf-default == compiled-default. (Codex §1 design H)
 - [ ] Commit: `"kernel: merge registry-backed policy into effective configuration"`
 
 **Test checkpoint:** Registry sets `debug=0`, command line sets `debug=1`, and `config_dump` reports `effective=1 source=cmdline`. Invalid `panic.timeout=-1` logs a rejection and leaves the compiled default in place. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -240,7 +249,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 
 | ⭐ | Feature                            | 🪟 Win11                                       | 🐧 Linux                                           | 🚀 Impossible OS        |
 | --- | ---------------------------------- | ---------------------------------------------- | --------------------------------------------------- | ----------------------- |
-| 💎 | Boot entry policy store            | ✅ BCD plus boot menu and recovery entries     | ✅ GRUB or systemd-boot plus kernel cmdline        | ⬜ Planned - §1, §3, §4 |
+| 💎 | Boot entry policy store            | ✅ BCD plus boot menu and recovery entries     | ✅ GRUB or systemd-boot plus kernel cmdline        | ⚠️ §1 parser done; §3,§4 |
 | 💎 | Safe and recovery boot modes       | ✅ `safeboot=minimal|network` plus recovery    | ✅ `single`, rescue, emergency, and recovery menu  | ⬜ Planned - §5         |
 | 💎 | Control-set style rollback state   | ⚠️ `Current` and `LastKnownGood` semantics     | ⚠️ Distro snapshots or boot fallback, not kernel   | ⬜ Planned - §4         |
 | 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
