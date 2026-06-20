@@ -65,3 +65,15 @@ Every live skill below has a matching row in [`../../CLAUDE.md`](../../CLAUDE.md
 | -------------------------------------------- | --------------------------------------------------------------------------------- |
 | [`debug-session`](debug-session/)            | Structured hypothesis-driven debugging with Codex validation                      |
 | [`diagnose-serial-log`](diagnose-serial-log/)| Serial log audit: crashes, bugs, races, leaks, perf, POLICY/ACCURACY/REGRESSION   |
+
+## Specialist agents (advisory, read-only)
+
+Subagents in [`../agents/`](../agents/) that the skills above delegate ANALYSIS to. Read-only (no `Edit`/`Write`/`Bash`/`Skill`), they return findings as text; the main session does all edits, builds, commits, and Codex dispatches. The read-only `tools:` allowlist is enforced by `scripts/lint.sh` Check 14. Design: [`../../docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md`](../../docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
+
+| Agent | Model | Dispatched by |
+| ----- | ----- | ------------- |
+| [`kernel-explorer`](../agents/kernel-explorer.md) | opus | `implement-todo-section` step 3 |
+| [`kernel-quality-auditor`](../agents/kernel-quality-auditor.md) | opus | `review-todo-section` step 7 |
+| [`boot-quality-auditor`](../agents/boot-quality-auditor.md) | sonnet | `review-todo-section` step 7 |
+| [`parity-research-analyst`](../agents/parity-research-analyst.md) | opus / sonnet (gap-audit) | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 |
+| [`review-evidence-mapper`](../agents/review-evidence-mapper.md) | sonnet | `review-todo-section` Phase 1 |

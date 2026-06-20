@@ -19,7 +19,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
 ### Phase 1: Evidence + Verify
 
-1. **Evidence map** -- for each `[x]` item, prove via Grep/Read: "claim -> file:line". Downgrade on regression.
+1. **Evidence map** -- for each `[x]` item, prove via Grep/Read: "claim -> file:line". Downgrade on regression. **For large sections, first dispatch `Agent(subagent_type="review-evidence-mapper", ...)`** (read-only, Sonnet) to build the breadth of the map -- claim->code, surrounding surface, risk hotspots -- in a separate context. Then do your own >=2 `src`/`include` `Read`/`Grep` calls on its top-listed spots to verify them: those MAIN-SESSION reads are what satisfy the Phase-1 evidence gate (`phase1_evidence_gate.py` counts only this session's reads, NOT a subagent's), and they double as verification of the mapper's claims. The mapper only removes the long-tail reading from this loop; never bypass the gate via `SKIP_PHASE1_BLOCK`.
 2. **Scope-gap audit** -- grep for `TODO`, `FIXME`, `HACK`, `STATUS_NOT_IMPLEMENTED`. Standalone stubs: implement. Infrastructure stubs: Accept with XREF.
 3. **Test checkpoint verification** -- read the Test checkpoint paragraph. Grep source for each expected serial/klog message.
 4. **Build** -- `bash scripts/build.sh`, confirm `=== BUILD OK ===`.
@@ -37,11 +37,15 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
 ### Phase 3: Quality Audit
 
-7. **Domain code quality gates** -- INVOKE the domain-appropriate skill and walk its gates against the code:
+7. **Domain code quality gates** -- **First, for `src/kernel/` or `src/boot/` sections, dispatch the matching read-only auditor agent as a pre-pass** -- it walks the gates against the diff in a separate context and returns findings; triage them per `superpowers:receiving-code-review`:
+   - `src/kernel/`, `include/kernel/` -> `Agent(subagent_type="kernel-quality-auditor", ...)` (Opus; SMP/lock-order/bare-metal lead)
+   - `src/boot/` -> `Agent(subagent_type="boot-quality-auditor", ...)` (Sonnet; UEFI/EBS/ABI/POST16 gates)
+
+   **Then still INVOKE** the domain-appropriate skill and walk its gates against the code yourself -- the auditor is an additive net, not a replacement, and the Codex quality dispatch in step 8 is the authority:
    - `src/boot/` -> read and walk `boot-code-quality` (all 10 gates)
    - `src/kernel/` -> read and walk `kernel-code-quality` (all 10 gates)
    - `src/desktop/` -> `desktop-code-quality` | `src/shell/` -> `shell-code-quality` | `user/` -> `userland-code-quality`
-   Record any gate failures as findings.
+   Record any gate failures (yours + the auditor's) as findings.
 
 8. **MANDATORY Codex quality review -- TWO separate focused dispatches.** No exceptions, no combining. A combined "both in one prompt" dispatch is rejected: Codex's attention budget gets diluted across the angles and depth drops. Each dispatch focuses entirely on its named angle with file:line prompts specific to that angle's class of bugs. **Run the two dispatches in PARALLEL** (not sequentially): they share zero state, target the same diff, and cut total wall-clock review time roughly in half. Use the `superpowers:dispatching-parallel-agents` discipline -- send the two `Bash` calls in a single message with multiple tool_use blocks, then triage findings from each independently per `superpowers:receiving-code-review`. Sequential ordering is acceptable as a fallback when one dispatch is hitting Bash's 10-min wall and you need its output to scope the next prompt; the default is parallel.
 
@@ -66,7 +70,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
    **Rationale for separate dispatches instead of one combined.** The one-dispatch combined prompt was valid until ~2026-04-24; observed failure mode was that Codex would deep-dive whichever angle had the most text in the prompt and skim the others. Focused per-angle dispatches give each one its own attention budget, lower the probability of missed findings, and make `Codex 3x` (adversarial + consistency + perf) the scannable baseline counter in the Quality reviewed stamp.
 
-9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references.
+9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references. **Optionally dispatch `Agent(subagent_type="parity-research-analyst", ...)` in implemented-code mode** (Opus frontmatter default here -- the review-mode backstop is thinner than gap-audit's Codex red-team) to research Win11/Linux behavior and surface parity + false-completeness gaps on the shipped code; fold its sourced findings into this step and step 10. Advisory only -- you decide what to fix now or file as a concrete owner item.
 
 10. **Feature completeness + adjacent completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises, and the "one missing piece away from real" pattern:
     - Did the section technically land, but miss the next obvious adjacent capability a real user or caller would hit?

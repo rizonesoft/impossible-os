@@ -256,6 +256,20 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 
 > Adding, editing, or retiring a skill: see [docs/infrastructure/skill-authoring.md](docs/infrastructure/skill-authoring.md) for the lifecycle, template, and catalog hygiene rules. Every live skill has a row here AND in [.claude/skills/README.md](.claude/skills/README.md); a directory without matching rows is drift.
 
+### Specialist agents -- advisory, read-only
+
+Five subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate ANALYSIS to. They are **sensors, not actuators**: read-only (tools restricted to `Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the parity analyst), they return findings as text and never edit, build, commit, dispatch Codex, or invoke skills. The main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
+
+| Agent | Model | Dispatched by |
+|---|---|---|
+| `kernel-explorer` | opus | `implement-todo-section` step 3 (kernel/boot exploration) |
+| `kernel-quality-auditor` | opus | `review-todo-section` step 7 (SMP/bare-metal gate walk) |
+| `boot-quality-auditor` | sonnet | `review-todo-section` step 7 (UEFI gate walk) |
+| `parity-research-analyst` | opus; sonnet via per-call override in gap-audit | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 |
+| `review-evidence-mapper` | sonnet | `review-todo-section` Phase 1 (pre-Codex evidence map; supplements, does not replace, the main session's >=2 gate reads) |
+
+Model follows backstop strength: sonnet only where a second net (Codex red-team, main-loop re-walk, or main-loop verification) catches a miss; opus on the thin/sole nets. The read-only tool allowlist is enforced by `scripts/lint.sh` Check 14.
+
 ### Plugin skills -- usage notes
 
 The three installed Claude Code plugins (`superpowers`, `feature-dev`, `explanatory-output-style`) ship their own skills + commands + agents that are NOT in the table above. Treat them as helpers, not replacements:

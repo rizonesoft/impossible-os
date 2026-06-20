@@ -940,6 +940,68 @@ elif [ "$#" -eq 0 ]; then
 fi
 
 # ============================================================================
+# Check 14: Agent tool-allowlist invariant (specialist-agents design 2026-06-20)
+# ============================================================================
+# Every .claude/agents/*.md must restrict `tools:` to the read-only allowlist
+# {Read, Grep, Glob, WebSearch, WebFetch}. These advisory agents are sensors,
+# not actuators: the main session is the only thing that edits, builds, commits,
+# or dispatches Codex. Granting Bash/Edit/Write/Skill/Agent to one would reopen
+# the mutation + evidence-desync paths the design closes by capability. A missing
+# `tools:` line (the agent would inherit ALL tools) is also a violation.
+# Per-file opt-out for a deliberately-broader future agent: an HTML comment
+# `<!-- agent-tools-exempt: <reason> -->` on its own line. Whole-check skip:
+# SKIP_LINT_AGENT_TOOLS=1 (prints an auditable WARN).
+if [ "${SKIP_LINT_AGENT_TOOLS:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 14 (agent tool-allowlist) skipped via SKIP_LINT_AGENT_TOOLS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ "$#" -eq 0 ]; then
+    AGENT_TOOLS_OUT=$(python3 - "$REPO_ROOT" <<'PY'
+import sys, glob, os, re
+root = sys.argv[1]
+allowed = {"Read", "Grep", "Glob", "WebSearch", "WebFetch"}
+viol = []
+for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
+    rel = os.path.relpath(path, root)
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    if re.search(r'^<!--\s*agent-tools-exempt:\s*\S', text, re.M):
+        continue
+    m = re.search(r'^tools:\s*(.*)$', text, re.M)
+    if not m:
+        viol.append((rel, 1, "no `tools:` allowlist (agent would inherit ALL tools; restrict to read-only set)"))
+        continue
+    inline = m.group(1).strip().strip('[]')
+    toks = []
+    if inline:
+        toks = [t.strip().strip('"').strip("'") for t in inline.split(',') if t.strip()]
+    else:
+        for line in text[m.end():].splitlines():
+            lm = re.match(r'\s*-\s*(.+?)\s*$', line)
+            if lm:
+                toks.append(lm.group(1).strip('"').strip("'"))
+            elif line.strip() == "":
+                continue
+            else:
+                break
+    bad = [t for t in toks if t not in allowed]
+    ln = text[:m.start()].count('\n') + 1
+    if not toks:
+        viol.append((rel, ln, "empty `tools:` allowlist (could not parse a read-only tool set)"))
+    elif bad:
+        viol.append((rel, ln, "tools not in read-only allowlist {Read,Grep,Glob,WebSearch,WebFetch}: " + ", ".join(bad)))
+for rel, ln, msg in viol:
+    print(f"{rel}\t{ln}\t{msg}")
+PY
+)
+    if [ -n "$AGENT_TOOLS_OUT" ]; then
+        while IFS=$'\t' read -r at_rel at_ln at_msg; do
+            [ -z "$at_rel" ] && continue
+            error "$at_rel" "$at_ln" "$at_msg"
+        done <<< "$AGENT_TOOLS_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

@@ -35,6 +35,8 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
 
 ### Phase 2 -- Internet Research (critical -- do not skip)
 
+> **Delegate the research + inventory to a read-only agent (the biggest token + context offload in the pipeline).** Dispatch `Agent(subagent_type="parity-research-analyst", model="sonnet", ...)` in **todo-plan mode** to perform steps 7-11 (Win11 / Linux / emerging research + merged feature inventory + gap classification + compare-against-current-sections) in a separate Sonnet context, returning the structured inventory + coverage-gap list + sources. The `model="sonnet"` per-call override is deliberate and safe: gap mode is backstopped by the MANDATORY Phase 3.5 `codex-gap-audit` red-team. You (main session) then do step 12 (cross-TODO overlap), apply all resulting TODO edits, and run Phase 3.5 -- the agent never edits the TODO. If you prefer to run the research inline, follow steps 7-11 directly instead.
+
 7. **Research Windows 11 features in this domain.**
    - Use WebSearch with queries like: `"Windows 11 <topic> internals"`, `"Windows NT <topic> architecture"`, `"Win32 <topic> API"`, `"Windows <topic> features 2025 2026"`.
    - Run at least 3 targeted searches. Follow promising results with WebFetch to read documentation pages, blog posts, and Microsoft Learn articles.
