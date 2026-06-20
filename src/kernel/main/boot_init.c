@@ -447,19 +447,28 @@ void boot_post_write16(uint16_t code)
 
 void boot_post_nvram_write16(uint16_t code)
 {
-    uint32_t lvt_saved = 0;
-    int need_mask = lapic_available() &&
-                    kernel_subsystem_ready(SUBSYS_TIMER);
-    if (need_mask) {
-        lvt_saved = lapic_read(LAPIC_REG_LVT_TIMER);
-        lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved | LVT_MASKED);
-    }
+    /* boot.conf postcode=0 disables POST persistence: skip the NVRAM write
+     * entirely (flash endurance is ~100K cycles, and the user opted out).
+     * Mirrors the on-screen POST display gate in boot_progress.c. When no
+     * boot.conf was found, default behavior (persist) is preserved. */
+    if (g_boot_info.config.config_found && !g_boot_info.config.postcode)
+        return;
 
-    uefi_set_variable(&s_post_guid, s_post_name,
-                       POST_ATTRS, sizeof(code), &code);
+    /* No per-call LAPIC timer mask here: uefi_set_variable() serializes on the
+     * RT mutex and quiesces the timer INSIDE that lock (timer_hal_quiesce in
+     * uefi_runtime.c), bounding the mask to the firmware call. An outer mask
+     * here would instead span the (sleepable) mutex wait and stall scheduling. */
+    uint64_t status = uefi_set_variable(&s_post_guid, s_post_name,
+                                        POST_ATTRS, sizeof(code), &code);
 
-    if (need_mask)
-        lapic_write(LAPIC_REG_LVT_TIMER, lvt_saved);
+    /* A silently-dropped write leaves the OLD ImpossiblePOST in NVRAM, which
+     * the next boot reads as authoritative -- so a failed success-mark can
+     * masquerade as a prior failure (or vice versa). Surface it on serial.
+     * Skip the panic POST-FAILED mark: serial_write() takes g_serial_lock and
+     * the panic-path NVRAM write itself is the panic-safe-fatal follow-up
+     * (Failure Policy section). */
+    if (status != 0 && code != POST16_BOOT_FAILED)
+        serial_write("[POST] NVRAM SetVariable failed -- prior code may be stale\n");
 }
 
 int boot_post_read16(void)
@@ -470,10 +479,17 @@ int boot_post_read16(void)
 
     uint64_t status = uefi_get_variable(&s_post_guid, s_post_name,
                                         &attrs, &sz, &val);
+    /* Only trust a value that WE wrote: name+GUID alone can collide with an
+     * externally-created or stale variable that has different attributes, and
+     * UEFI SetVariable cannot rewrite attributes in place (it would need a
+     * delete+recreate), so a wrong-attr value could be reported as the prior
+     * boot outcome indefinitely. Require the canonical POST_ATTRS. */
+    if (status != 0 || attrs != POST_ATTRS)
+        return -1;
     /* Backward-compatible: if only 1 byte was stored, treat as high byte */
-    if (status == 0 && sz == 1)
+    if (sz == 1)
         return (int)((uint16_t)(*(uint8_t *)&val) << 8);
-    if (status == 0 && sz == 2)
+    if (sz == 2)
         return (int)val;
     return -1;
 }

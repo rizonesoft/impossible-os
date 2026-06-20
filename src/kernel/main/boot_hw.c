@@ -357,8 +357,14 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
      *   4. Phase 2 complete (POST16_REGISTRY_OK)
      *   5. Phase 3 complete (POST16_BOOT_OK) */
     {
-        int last_post = boot_post_read16();
-        boot_post_nvram_write16(POST16_SERIAL);  /* NVRAM: booting */
+        /* When boot.conf postcode=0 disables POST persistence, do NOT consume
+         * the prior NVRAM value either: the write is gated off below, so a
+         * stale code would otherwise be reported as the previous boot outcome
+         * on every later boot. Read/banner only when persistence is enabled. */
+        int post_persist = !(g_boot_info.config.config_found &&
+                             !g_boot_info.config.postcode);
+        int last_post = post_persist ? boot_post_read16() : -1;
+        boot_post_nvram_write16(POST16_SERIAL);  /* NVRAM: booting (gated inside) */
         POST16(POST16_UEFI_RT_OK);
 
         if (last_post >= 0) {

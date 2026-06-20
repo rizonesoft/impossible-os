@@ -61,7 +61,7 @@ title: "TODO-01 -- Kernel Init Sequencing"
 | 💎  |   7   | Failure policy                             | §6         |  [/]   |
 | 💎  |   8   | Code cleanup                               | §2--§5     |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [/]   |
-| ⭐  |  10   | POST code + UEFI variable log              | §1         |  [/]   |
+| ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
 | 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
 | ⭐  |  12   | Boot performance regression detection      | §10        |  [/]   |
 | ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [/]   |
@@ -419,14 +419,30 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 **Files:** `src/kernel/boot_timing.c`, `include/kernel/boot_timing.h`, `src/kernel/uefi_runtime.c`
 
 - [x] Define UEFI variable name: `ImpossiblePOST` in namespace GUID `{494D504F-5354-4F53-504F-535447554944}`
-- [/] Implement 16-bit POST persistence helpers: `boot_post_write16()`, `boot_post_nvram_write16()` (runtime-availability handling is wired; `postcode=0` NVRAM gating still needs explicit handling)
+- [x] Implement 16-bit POST persistence helpers: `boot_post_write16()`, `boot_post_nvram_write16()` (runtime-availability handling wired; `postcode=0` now gates both the NVRAM write and the prior-value read/banner)
 - [x] `boot_progress()` path writes POST via `boot_post_write16(postcode)` for phase progress tracking
 - [x] On successful boot completion, write final 16-bit code `0xFF00` (`POST16_BOOT_OK`) in `boot_phase3()`
 - [x] On `boot_halt()` / `panic()`, write final 16-bit failure code `0xFFFE` (`POST16_BOOT_FAILED`) before halting
 - [x] Implement `boot_post_read16()` -- reads last stored value; returns -1 if unavailable
 - [x] Log prior POST code to serial at Phase 0 start: `[POST] Last boot code: 0xNN` with status interpretation
 - [x] Add `boot_progress(10, "post-code-log", 0x11)` call after `uefi_runtime_init()` in Phase 0
-- [ ] Add explicit `boot_post_nvram_write16()` gating for `boot.conf postcode=0` (currently only on-screen POST display is gated)
+- [x] Add explicit `boot_post_nvram_write16()` gating for `boot.conf postcode=0` -- write skips when `config_found && !postcode`; `boot_hw.c` gates the prior-value read/banner with the same predicate
+
+**Test checkpoint:** Boot with `postcode=1` (default) -> serial shows `[POST] Last boot ...` + `ImpossiblePOST` written at each phase boundary; next boot reads `POST16_BOOT_OK`. Boot with `postcode=0` -> no NVRAM write AND no prior-value banner. Verify on QEMU WHPX, TCG, VirtualBox, bare metal (real UEFI NVRAM).
+
+> **Test runner:** No dedicated unit test (the path is `uefi_set_variable`/`uefi_get_variable`-bound, validated against real firmware) -- boot-path validated via smoke test (boot reaches `C:\>`); NVRAM round-trip verified on WHPX/bare metal serial.
+>
+> **Notes:**
+> - POST persistence (`boot_init.c` `boot_post_write16`/`boot_post_nvram_write16`/`boot_post_read16`): writes `ImpossiblePOST` to UEFI NVRAM at phase boundaries for next-boot post-mortem (final `0xFF00` success / `0xFFFE` fail).
+> - Implemented the §10 open item: `boot.conf postcode=0` now gates BOTH the NVRAM write and the prior-value read/banner, so a persistence-off boot neither writes nor reports a stale code.
+> - Review fix (consistency M): `boot_post_read16` rejects values with non-canonical attributes (untrusted/stale); a failed `SetVariable` now warns on serial (skipping the panic mark).
+> - Review fix (perf M): removed the redundant per-call LAPIC mask -- `uefi_set_variable` quiesces the timer after the RT mutex, so the outer mask only spanned the mutex wait.
+> - Accepted: the panic-path `boot_post_nvram_write16` blocking-RT-mutex hazard is owned by the panic-safe-fatal rewrite (Failure Policy section).
+> - Scope: §10 owns POST persistence; panic-path NVRAM safety is the Failure Policy section's panic-safe primitive.
+>
+> **Verified:** 2026-06-20 | commit `b54714ab` | 10/10 items | build OK | smoke PASS (KVM 2.92s)
+> **Accepted:** [H] panic-path `boot_post_nvram_write16` takes the blocking RT mutex after `cli` (can hang the panic owner) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Panic fatal path must not call blocking firmware `SetVariable`" at line 332)
+> **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 5M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
