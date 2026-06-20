@@ -629,11 +629,11 @@ int kernel_safe_mode_allows(safe_mode_component_t component)
 
 /* ---- config_dump (operator/support diagnostic) -------------------------- */
 
-/* Mirrors the tunable registry capacity (TUNABLE_MAX in tunables.c). The dump
- * scratch lives in .bss, NOT on the caller stack: at ~80 bytes/row x 64 rows it
- * would consume most of an 8 KiB kernel stack. */
-#define CONFIG_DUMP_TUNABLE_MAX 64u
-static tunable_snapshot_t s_dump_rows[CONFIG_DUMP_TUNABLE_MAX];
+/* Bound to the public tunable registry capacity so the scratch cannot silently
+ * under-size if the registry grows (tunables.h _Static_asserts it == the
+ * internal cap). The dump scratch lives in .bss, NOT on the caller stack: at
+ * ~80 bytes/row it would consume most of an 8 KiB kernel stack. */
+static tunable_snapshot_t s_dump_rows[KERNEL_TUNABLE_CAPACITY];
 /* Non-reentrant guard for the shared scratch (atomic, not a spinlock, so no
  * lock is held across the klog serial writes -- a concurrent dumper backs off). */
 static volatile int s_dump_busy;
@@ -692,13 +692,13 @@ void config_dump(void)
     /* Runtime tunable registry. Privileged tunables are the secret class: their
      * current value is redacted so a shared dump / support bundle cannot leak
      * sensitive tuning. Name, bounds, flags, and source stay visible. */
-    uint32_t n = kernel_tunable_dump(s_dump_rows, CONFIG_DUMP_TUNABLE_MAX);
+    uint32_t n = kernel_tunable_dump(s_dump_rows, KERNEL_TUNABLE_CAPACITY);
     uint32_t total = kernel_tunable_count();
     /* If the registry ever outgrows the dump scratch, say so explicitly rather
      * than emit a complete-looking but truncated support artifact. */
     if (n < total)
         klog(LOG_WARN, "CONF",
-             "[CONF] dump: %u of %u tunables (TRUNCATED -- raise CONFIG_DUMP_TUNABLE_MAX)",
+             "[CONF] dump: %u of %u tunables (TRUNCATED -- raise KERNEL_TUNABLE_CAPACITY)",
              n, total);
     else
         klog(LOG_INFO, "CONF", "[CONF] dump: %u tunables", n);
@@ -714,6 +714,27 @@ void config_dump(void)
                  t->name, (int64_t)t->cur, (int64_t)t->def,
                  (int64_t)t->min, (int64_t)t->max,
                  (uint32_t)t->flags, (uint32_t)t->source);
+    }
+
+    /* Boot-arg schema: every recognized key with its phase, default, range, and
+     * its effective parsed value + provenance. This is the operator-facing
+     * "supported keys / defaults / ranges / lock phases" surface the section
+     * promises, so a key's effective-vs-default and source are auditable from
+     * the dump without reverse-engineering the parser. */
+    uint32_t ac = 0;
+    const boot_arg_desc_t *at = boot_arg_table(&ac);
+    const boot_args_t *pa = boot_args_parsed();
+    klog(LOG_INFO, "CONF", "[CONF] dump: %u boot-arg keys", ac);
+    for (uint32_t i = 0; at && i < ac; i++) {
+        const boot_arg_desc_t *d = &at[i];
+        const boot_arg_value_t *v = pa ? boot_args_get(pa, d->name) : (const boot_arg_value_t *)0;
+        klog(LOG_INFO, "CONF",
+             "[CONF]   %s: phase=%u class=%u def=%ld range=[%ld,%ld] value=%ld src=%u present=%u",
+             d->name, (uint32_t)d->phase, (uint32_t)d->security_class,
+             (int64_t)d->default_val, (int64_t)d->min_val, (int64_t)d->max_val,
+             v ? (int64_t)v->ival : (int64_t)d->default_val,
+             v ? (uint32_t)v->source : (uint32_t)BOOT_ARG_SRC_DEFAULT,
+             v ? (uint32_t)v->present : 0u);
     }
 
     __atomic_store_n(&s_dump_busy, 0, __ATOMIC_RELEASE);

@@ -20,6 +20,8 @@
 #include "kernel/ob/handle_table.h"
 
 #define TUNABLE_MAX        64u   /* registry capacity */
+_Static_assert(TUNABLE_MAX == KERNEL_TUNABLE_CAPACITY,
+    "public KERNEL_TUNABLE_CAPACITY must track the internal registry capacity");
 #define TUNABLE_PENDING    32u   /* deferred-callback slot pool */
 #define TUNABLE_NAME_CAP   48u   /* incl. NUL */
 

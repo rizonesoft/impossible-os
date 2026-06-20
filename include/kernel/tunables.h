@@ -29,6 +29,11 @@ typedef enum {
     TUNABLE_ENUM = 3,   /* small enumerated set, gated by [min,max] */
 } tunable_type_t;
 
+/* Public registry capacity. Consumers that snapshot the whole table (e.g.
+ * config_dump) size their scratch from this; tunables.c _Static_asserts it
+ * equals the internal TUNABLE_MAX so the two cannot drift. */
+#define KERNEL_TUNABLE_CAPACITY 64u
+
 /* Access flags (bitmask). */
 #define TUNABLE_READONLY    0x0001u  /* never externally settable */
 #define TUNABLE_BOOT_ONLY   0x0002u  /* settable only before the boot lock phase ends */

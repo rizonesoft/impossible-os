@@ -343,6 +343,9 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 > - **Downstream effects:** closes the TODO-02 config-plane loop; the `kernel_config_t` `_Static_assert` invariants in `config.h` are tracked for full 5-layer coverage by TODO-31 §2.
 > - **Canonical doc:** `include/kernel/config.h` contract + the `k_arg_table` schema in `config.c`.
 > - **Scope boundary:** §11 owns `config_dump` + docs + existing-test wiring; the LastKnownGood state-machine + failed-boot rollback tests are owned by §4; the full 5-layer config-invariant tracking is owned by TODO-31 §2.
+> **Verified:** 2026-06-20 | commit `e81e3b45` | 3/5 items | build OK | smoke PASS (KVM 3.1s)
+> **Deferred:** [M] LastKnownGood state-machine + failed-boot rollback tests are in-scope but blocked on §4's deferred control-set impl -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`" at line 143)
+> **Quality reviewed:** 2026-06-20 | Codex 5x (design, adversarial, consistency, perf; re-adversarial skipped: review-fix diff <50 LOC, no locking/atomics/lifecycle) | 2H+4M+1L fixed | scope: kernel-code-quality
 
 ---
 
