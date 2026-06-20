@@ -43,6 +43,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 - Boot acceptance policy and the success ledger are explicit, auditable, and shared with rollback/recovery consumers.
 - Runtime tunables are validated, range-clamped, versioned, and exposed through native query/set syscalls.
 - Security-sensitive fields are immutable after their lock phase.
+- A unified lockdown level (none/integrity/confidentiality) and module-owned tunables extend the plane beyond per-policy locks and core globals.
 
 ## Implementation Order
 
@@ -151,6 +152,7 @@ Give subsystems one typed registration surface for mutable policy instead of one
 - [ ] Add core tunables for klog, panic timeout, timer resolution policy, ALPC message caps, handle quota defaults, and verifier flags.
 - [ ] Record owner subsystem, lock phase, and provenance metadata for every tunable so audit output can explain who registered it.
 - [ ] Invoke callbacks at PASSIVE_LEVEL only; queue work if set from syscall, DPC, or interrupt context, and reject recursive self-write loops with an explicit error.
+- [ ] Let loadable modules register tunables via `kernel_tunable_register` under a `module.<name>.` namespace with provenance (Linux `module_param` + `/sys/module` parity); the loader supplies metadata. -> XREF: D04 T05.
 - [ ] Commit: `"kernel: add runtime tunable registry"`
 
 **Test checkpoint:** Writing `panic.timeout=9999` clamps to the declared max and logs `"[CONF] tunable clamp: panic.timeout"`. A read-only tunable write returns `STATUS_ACCESS_DENIED`, and a callback requested from syscall context runs later at PASSIVE_LEVEL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -193,7 +195,8 @@ Define when policy stops being mutable and make every blocked mutation observabl
 
 - [ ] Define lock phases: pre-memory, post-security-init, post-registry, post-user-mode.
 - [ ] Lock code integrity, KASLR, SMEP/SMAP/KPTI, debugger enablement, and boot verifier flags at the earliest safe phase.
-- [ ] Emit a local tamper audit event with policy name, attempted value, caller mode, phase, and result; downstream log and notification consumers can mirror that event later.
+- [ ] Define `kernel_lockdown_level_t` { none, integrity, confidentiality } as first-class config (Linux `lockdown=` parity): map Secure Boot to a default level, expose via `config_dump`/query, classify confidentiality-class restrictions.
+- [ ] Emit a tamper audit event (policy name, attempted value, caller mode, phase, result) and route it to the kernel notification facility (D02 T16) for fanout and to ETW/system logging (D02 T04 §7) for durable security-event persistence.
 - [ ] Panic on attempted downgrade of Secure Boot or CI policy after lock.
 - [ ] Allow post-lock changes only when the policy class explicitly marks the new value as strictly more restrictive than the old one.
 - [ ] Commit: `"kernel: add policy lock phases and tamper audit"`
@@ -243,6 +246,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
 | 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⬜ Planned - §3, §6, §8 |
 | 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ⬜ Planned - §2, §8, §9 |
+| 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ⬜ Planned - §9         |
 | ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⬜ Planned - §3, §7, §9 |
 
 > **After §1-§6:** Impossible OS reaches the same baseline the major platforms already have: typed boot policy, safe/recovery modes, and persistent tunables.
@@ -265,6 +269,8 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
   - `kernel_select_control_set(Current=2, Default=1, LastKnownGood=3, boot_failed=true)` returns `3`
   - `kernel_policy_try_set_locked(KERNEL_POLICY_CI, 0)` returns `STATUS_ACCESS_DENIED`
   - `kernel_query_system_config(NULL, 0, &needed)` returns `STATUS_INFO_LENGTH_MISMATCH`
+  - `kernel_lockdown_level()` returns `LOCKDOWN_INTEGRITY` or stricter when Secure Boot is enabled in the test fixture
+  - `kernel_tunable_register("module.testmod.depth", ...)` registers under the module namespace and records the owning-module provenance
 - [ ] Register in `src/kernel/test/test_runner.c`: `test_register_kernel_config()`
 - [ ] Add boot-path assertions to the existing boot suite so Safe Mode, rollback, and unknown-key rejection are exercised from real boot logs.
 - [ ] Commit: `"test: add kernel configuration policy test suite"`

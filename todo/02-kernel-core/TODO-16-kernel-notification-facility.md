@@ -22,6 +22,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - → XREF: [`TODO-12-native-api-ssdt.md`](./TODO-12-native-api-ssdt.md) -- native notification syscalls
 - → XREF: [`TODO-15-security-reference-monitor.md`](./TODO-15-security-reference-monitor.md) -- ACLs and privilege checks
 - → XREF: [`09-desktop-shell/TODO-03-service-manager.md`](../09-desktop-shell/TODO-03-service-manager.md) -- service/UI consumers
+- → XREF: [`TODO-02-kernel-configuration-policy.md §9`](./TODO-02-kernel-configuration-policy.md) -- policy tamper/security audit events publish through this facility for fanout
 
 ## Outcome
 

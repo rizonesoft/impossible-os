@@ -152,6 +152,7 @@ After IXFS mounts `C:\`, scan `C:\Impossible\System\Drivers\` and load every `.k
 - [ ] In `kernel_main()`: insert `module_load_all("C:\\Impossible\\System\\Drivers")` immediately after `vfs_mount("C:", ...)` succeeds
 - [ ] `module_list` shell command -- prints loaded modules: name, base address, size, license
 - [ ] Boot log summary: `[OK] Modules: %u loaded, %u failed`
+- [ ] Parse `module_param` declarations from `.modinfo`, accept `module.<name>.<param>=` boot-arg injection, and register each as a `module.<name>.` tunable. -> XREF: D02 T02 §6.
 - [ ] Commit: `"kernel: auto-load modules at boot -- module_load_all, .modinfo parse, non-fatal scan"`
 
 ## 6. RTL8139 as First Loadable Module `[Sonnet]`

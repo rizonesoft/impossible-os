@@ -32,6 +32,7 @@ title: "TODO-04 -- System Logging"
 - → XREF: `01-boot-platform/TODO-24-blackbox-service-partition.md` -- BlackBox X:\ partition; log paths migrate from C:\ to X:\Logs\
 - → XREF: `14-host-tools/TODO-08-blackbox-log-extractor.md` -- host-side log viewer/extractor; solves "not verifiable from serial log" verification items
 - → XREF: [`TODO-32-kernel-logging-v2-lockless.md`](./TODO-32-kernel-logging-v2-lockless.md) -- v2 architecture: per-CPU lockless rings, priority lanes, fail-proof FATAL, native structured fields. SUPERSEDES this TODO's §5 (rate limit) and reorganises §9 (per-entry context); retains §1-§4, §6, §7, §8, §10 unchanged.
+- → XREF: [`TODO-02-kernel-configuration-policy.md §9`](./TODO-02-kernel-configuration-policy.md) -- policy tamper/security audit events persist as durable structured events via §7 ETW
 
 ## Outcome
 
