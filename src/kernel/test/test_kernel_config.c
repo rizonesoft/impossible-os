@@ -191,6 +191,10 @@ static void test_cfg_snapshot_consistent(void)
                    "snapshot boot_reason mirrors validated boot decision");
     TEST_ASSERT_EQ(k->selection_reason, g_boot_info.selection_reason,
                    "snapshot selection_reason mirrors the boot-entry ladder reason");
+    /* The boot-arg provenance accessor returns the ladder selection_reason,
+     * not boot_reason. */
+    TEST_ASSERT_EQ(boot_args_selection_reason(), g_boot_info.selection_reason,
+                   "boot_args_selection_reason returns the ladder reason field");
     /* debug_enabled is the resolved boot-arg value (cmdline over boot_config). */
     const boot_args_t *a = boot_args_parsed();
     if (a) {

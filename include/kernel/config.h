@@ -227,7 +227,9 @@ boot_result_t boot_args_init(const struct boot_config *cfg);
  * reason are preserved for crash-dump and diagnostic output. */
 const char            *boot_args_cmdline(void);
 const char            *boot_args_entry_id(void);
-enum boot_reason_code  boot_args_selection_reason(void);
+/* The boot-ENTRY ladder reason (enum boot_selection_reason as uint32), the
+ * field paired with selected_entry_id -- NOT boot_reason (the policy reason). */
+uint32_t               boot_args_selection_reason(void);
 
 /* The parsed result published by boot_args_init() (NULL before it runs). */
 const boot_args_t *boot_args_parsed(void);

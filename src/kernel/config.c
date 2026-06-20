@@ -451,9 +451,11 @@ const char *boot_args_entry_id(void)
     return g_boot_info.selected_entry_id;
 }
 
-enum boot_reason_code boot_args_selection_reason(void)
+uint32_t boot_args_selection_reason(void)
 {
-    return (enum boot_reason_code)g_boot_info.boot_reason;
+    /* The boot-ENTRY ladder reason (enum boot_selection_reason), distinct from
+     * boot_reason (the policy reason). The accessor name promises this field. */
+    return g_boot_info.selection_reason;
 }
 
 /* ---- Section 2: immutable kernel_config_t snapshot ----------------------- */
@@ -513,12 +515,12 @@ void kernel_config_publish(const struct boot_config *cfg)
     }
     k->cmdline_override_count = a ? a->overridden_count : 0;
 
-    /* Publish: every field is written above; the ready flag is released LAST so
-     * a concurrent reader (AP / late consumer) never observes a half-filled
-     * snapshot. */
-    smp_mb();
-    g_kernel_config_ready = 1;
-    smp_mb();
+    /* Publish: every field is written above; the ready flag is RELEASE-stored
+     * last so a concurrent reader (AP / late consumer) that observes ready via
+     * an acquire load is guaranteed to see the fully-written snapshot. A C
+     * atomic release/acquire (not a plain int + smp_mb) is the sound, repo-
+     * standard publication contract. */
+    __atomic_store_n(&g_kernel_config_ready, 1, __ATOMIC_RELEASE);
 
     klog(LOG_INFO, "CONF", "[CONF] snapshot ready: version=%u phase=0",
          (uint32_t)k->version);
@@ -526,8 +528,7 @@ void kernel_config_publish(const struct boot_config *cfg)
 
 const kernel_config_t *kernel_config_get(void)
 {
-    if (!g_kernel_config_ready)
+    if (!__atomic_load_n(&g_kernel_config_ready, __ATOMIC_ACQUIRE))
         return (void *)0;
-    smp_mb();                       /* acquire: pair the publish release */
     return &g_kernel_config;
 }

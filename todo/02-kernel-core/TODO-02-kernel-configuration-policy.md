@@ -113,6 +113,8 @@ Publish one read-only snapshot that all later phases consume instead of rereadin
 > - `boot_args_t` stays the private parser input; consumers read the flattened typed fields, never re-deriving defaults/enums. Codex 4x adoptions in commit.
 > - ABI guard: `KERNEL_CONFIG_SIZE_V1` exact-size `_Static_assert` + 4 offset pins (a `<=N` guard would miss reorder/repack).
 > - Scope: §2 owns the immutable snapshot; §3 owns the registry precedence merge; §4 owns the control-set target; §6 owns panic/runtime tunables.
+> **Verified:** 2026-06-20 | commit `pending` | 6/6 items | build OK | smoke PASS (KVM 2.71s)
+> **Quality reviewed:** 2026-06-20 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial x2) | 2H+2M fixed | scope: kernel-code-quality
 
 ---
 
