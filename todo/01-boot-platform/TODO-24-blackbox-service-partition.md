@@ -313,6 +313,7 @@ Update host-side tools to locate and read the BlackBox partition from raw disk i
 - [ ] Durable low-space C:\ fallback: add a sticky `klog_blackbox_forced_off` flag honored by `klog_resolve_dir` so the §10 critical-low redirect survives the later resolve (fixes the `[/]` item above). (`klog_disk.c`)
 - [ ] Boot\ retention precision: delete oldest by the `YYMMDDNN` filename, not `vfs_readdir` slot order (FAT32 slot reuse breaks monotonic age) -- collect into a bounded array, sort, prune the surplus. (`boot_storage.c` ~371)
 - [ ] Harden cleanup path builders: `path[64]` silently truncates long names (wrong `vfs_unlink` target) -- use `VFS_MAX_PATH` + fail-closed skip on overflow for both the Boot\ and Logs\ builders.
+- [ ] Budget + batch the unbounded Logs\ delete loop (`boot_storage.c` ~414): bounded victim list, cap per-boot deletes/bytes/time, pet `boot_progress()` between batches -- a full volume can stall boot past the WDAT watchdog.
 - [ ] Wire `MaxBootSessions`/`MinFreeMiB` from registry `HKLM\SYSTEM\BlackBox` (hardcoded 10/16 at `boot_storage.c:357,438`); closes the item-310 deferral.
 - [x] Commit: `"kernel: BlackBox disk space management -- log aging and quota enforcement"`
 

@@ -65,6 +65,7 @@ title: "TODO-13 -- Storage Controller & Removable Media Drivers"
 
 - [ ] Register VirtIO-blk through the central PnP driver model.
 - [ ] Expose feature negotiation, queue count, flush/discard/zoned support, and health state.
+- [ ] Gate VirtIO-blk registry exposure + tuning reads (`blk_init.c` Reg* calls) behind a post-`registry_init()` `SUBSYS_REGISTRY` hook -- they run in Phase 2 before the registry exists, losing HKLM exposure (consumer: `02-kernel-core/TODO-01 §4`).
 - [ ] Commit: `"drivers/virtio-blk: PnP integration"`
 
 ## 5. SDHCI/eMMC/SD Card Driver

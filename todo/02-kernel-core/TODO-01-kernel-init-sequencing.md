@@ -235,6 +235,26 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
   - `registry_init()` return-path ownership → [TODO-14-registry-completion.md §8](./TODO-14-registry-completion.md) (Advanced Hive Features -- owns `registry_load_hives()` boot wiring + dual-log mount; the `void`→`boot_result_t` change belongs with hive-mount-failure semantics, not §2 Advanced Key Operations)
   - `partition_mount_filesystems()` root-mount success/failure must be validated explicitly before continuing to registry
 
+**Test checkpoint:** Boot reaches Phase 2 -- serial shows `[PHASE2]` progress lines `PCI_NET`/`STORAGE_DRV`/`VFS`/`PARTITION`/`BLACKBOX`/`KLOG_DISK`/`OB`/`REGISTRY`/`SYS_SVC`, `C:`/`X:` mount, `[PHASE2] complete`; desktop follows. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** boot suite `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, 2836 kernel tests) + per-subsystem storage/fs/registry suites; `boot_phase2` integration validated via smoke test (boot reaches `C:\>`).
+>
+> **Notes:**
+> - Phase 2 system services (`boot_storage.c` `boot_phase2`): PCI, OB gate, storage drivers, VFS, partition mount, BlackBox `X:\`, registry, symtab/mmap/time, SMP, network, ACPI power.
+> - Review fix (consistency+perf M): added 4 `boot_progress(2,...)` WDAT-watchdog pets across the unpetted slow VFS->OB + post-registry windows; closes starvation gaps + makes the per-step claim true.
+> - Deferred (in-scope): typed fatal/degraded from `void` Phase 2 inits + root-mount gate; A/B mark-good-refused-on-mismatch already forces next-boot rollback, §9 owns recovery-fire.
+> - Accepted (owned elsewhere): VirtIO registry-before-init (TODO-13 §4), BlackBox path-truncation + unbounded cleanup (TODO-24 §10), FAT32 `cli` `vol->lock` across disk I/O (TODO-04 §17).
+> - re-adversarial skipped: fix is 4 additive `boot_progress` pets, no locking/ISR/lifecycle surface.
+> - Scope: §4 owns Phase 2 init order; `void`->`boot_result_t` signatures owned by 05-storage/TODO-06 §2 + TODO-14 §8.
+>
+> **Verified:** 2026-06-20 | commit `e51737a0` | 20/22 items | build OK | smoke PASS (KVM 2.69s)
+> **Accepted:** [M] VirtIO-blk registry exposure/tuning runs before `registry_init` (silent HKLM loss) -> XREF: 04-drivers-hardware/TODO-13 §4 (item: "Gate VirtIO-blk registry exposure + tuning reads" at line 68)
+> **Accepted:** [M] BlackBox cleanup `path[64]` truncation can unlink wrong file -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 315)
+> **Accepted:** [H] BlackBox low-space cleanup unbounded -> WDAT watchdog starvation -> XREF: 01-boot-platform/TODO-24 §10 (item: "Budget + batch the unbounded Logs\ delete loop" at line 316)
+> **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 428)
+> **Deferred:** [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits; rootless boot reaches desktop (A/B rollback mitigates) -> XREF: 02-kernel-core/TODO-01 §4 (item: "Enforce typed fatal/degraded decisions from Phase 2 init return values" at line 233)
+> **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 2H+2M accepted-XREF, 1H deferred | scope: kernel-code-quality
+
 ---
 
 ## 5. Phase 3 -- User Platform

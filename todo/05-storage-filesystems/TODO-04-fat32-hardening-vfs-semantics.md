@@ -63,6 +63,7 @@ title: "TODO-04 -- FAT32 Hardening & VFS Win32 Semantics"
 | 💎  |  14   | §14 VFS opportunistic locks -- Level 1/2, Batch, Read/Read-Write/Read-Handle          | §8 (share-mode per-handle state)                         |  [x]   |
 | 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13)       |  [/]   |
 | 💎  |  16   | §16 VFS rename replace-existing -- atomic temp-file durable-write primitive          | §4 (LFN write), §15 (truncate path)                      |  [/]   |
+| 💎  |  17   | §17 FAT32 volume-lock hold time -- no blocking disk I/O under the `cli` `vol->lock`   | §3, §4 (FAT/dir write + delete paths)                    |  [ ]   |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -415,6 +416,19 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > **Accepted:** [H] open-handle gate runs outside FAT32 vol->lock (TOCTOU window) -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "VFS per-vnode share-mode locking" at line 354 -- inherited from existing `vfs_unlink` race; dormant on BSP-only Phase-3)
 > **Accepted:** [H] FAT32 dir-cache eviction can detach the node tracked by VFS gate -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 355 -- dormant on sequential writers)
 > **Quality reviewed:** 2026-05-03 | Codex 7x (design + adversarial + 3x re-adversarial + consistency + perf) | 5H+2M+1L fixed, 3H accepted-XREF | scope: kernel-code-quality
+
+---
+
+## 17. FAT32 Volume-Lock Hold Time -- No Blocking Disk I/O Under the `cli` `vol->lock`
+
+`fat32_vfs_unlink`/`fat32_vfs_rename`/the write path take `spin_lock(&vol->lock)` (an **unconditional `cli`** spinlock per [`include/kernel/sched/spinlock.h`](../../include/kernel/sched/spinlock.h)) and then call `fat32_delete_file_vol()` (scans + rewrites directory sectors) + `scache_flush()` **with interrupts disabled**. Each block read/write spins the disabled-interrupt window across real device I/O. In a tight caller (e.g. the BlackBox low-space cleanup loop in `02-kernel-core/TODO-01 §4` Phase 2 boot, which unlinks many files) this repeats dozens-to-hundreds of times and suppresses timer/watchdog progress on the degraded full-disk path -- a bare-metal hazard (CLAUDE.md "no MMIO/long work under cli").
+
+**Files:** [`src/kernel/fs/fat32/fat32_ops.c`](../../src/kernel/fs/fat32/fat32_ops.c), [`src/kernel/fs/fat32/fat32_write.c`](../../src/kernel/fs/fat32/fat32_write.c), [`src/kernel/fs/fat32/fat32_internal.h`](../../src/kernel/fs/fat32/fat32_internal.h) (lock type).
+
+- [ ] Restructure FAT32 unlink/rename/write/fsck so the `cli` `vol->lock` covers only in-memory FAT/dirent/cache mutation; sector read/write + `scache_flush()` run with interrupts enabled (sleepable fs mutex, or stage I/O outside the spinlock).
+- [ ] Commit: `"fs/fat32: drop blocking disk I/O out of the cli vol->lock window"`
+
+**Test checkpoint:** Delete a large directory on a FAT32 volume and confirm interrupts (timer tick / WDAT pet) keep firing during the operation; no watchdog reset on a full-volume BlackBox cleanup. Test on: QEMU TCG (device emulation), bare metal.
 
 ---
 

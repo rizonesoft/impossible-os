@@ -325,6 +325,10 @@ void boot_phase2(void)
     boot_splash_status("Mounting filesystems...");
     /* A/B dual-slot (TODO-21): mount the root slot the bootloader selected. */
     partition_mount_filesystems((int)g_boot_info.active_slot);
+    /* Pet the watchdog after the (disk-I/O-bound) mount and before the
+     * BlackBox X:\ skeleton + low-space cleanup, which can do further slow
+     * FAT32 I/O on a full volume. boot_progress() is the primary WDAT pet. */
+    boot_progress(2, "PARTITION", POST16_PARTITION_OK);
 
     /* --- BlackBox directory skeleton (X:\) ---
      * Try every dir on every boot. vfs_create on an existing FAT32
@@ -488,7 +492,11 @@ void boot_phase2(void)
         }
     }
 
-    POST16(POST16_PARTITION_OK);
+    /* End of the BlackBox X:\ skeleton + cleanup window -- pet the watchdog
+     * (boot_progress supersets the raw POST16 port-0x80 write with a WDAT pet
+     * + timing record), so a slow full-volume cleanup is not mistaken for a
+     * hung boot by an armed watchdog. */
+    boot_progress(2, "BLACKBOX", POST16_PARTITION_OK);
 
     /* --- Debug diagnostic (shows storage state on serial + optionally splash) ---
      * diag_splash=1: render each message on the splash diag line and pause.
@@ -642,6 +650,7 @@ void boot_phase2(void)
     if (!platform_is_tcg())
         klog_disk_enable();
     boot_splash_tick();
+    boot_progress(2, "KLOG_DISK", POST16_KLOG_OK);
 
     /* --- System summary --- */
     boot_splash_status("Configuring system...");
@@ -783,6 +792,11 @@ void boot_phase2(void)
         acpi_enable_fixed_events();
         acpi_register_sci();
     }
+
+    /* Pet after the post-registry system-services tail (symtab, mmap, time,
+     * ACPI power/DSDT S-state parse) so the gap to Phase 3 does not leave the
+     * watchdog unpetted across acpi_power_init's DSDT walk. */
+    boot_progress(2, "SYS_SVC", POST16_REGISTRY_OK);
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "[PHASE2] complete -- VFS, registry, SMP, network ready");
