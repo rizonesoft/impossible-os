@@ -1445,8 +1445,8 @@ $(BUILD_DIR)/kernel/icon_store.o: $(SRC_DIR)/kernel/icon_store.c | $(GENERATED_H
 # cJSON + json wrapper: need SSE2 for float (JSON number values use double)
 $(BUILD_DIR)/libs/cjson/cJSON.o: $(SRC_DIR)/libs/cjson/cJSON.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
-	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -Wno-float-conversion -Wno-implicit-float-conversion -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
-	@echo "[CC/SSE2] $< (cJSON)"
+	$(CC) $(SIMD_CFLAGS) -DCJSON_NESTING_LIMIT=32 -Wno-unused-function -Wno-sign-compare -Wno-float-conversion -Wno-implicit-float-conversion -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (cJSON, nesting limit 32)"
 
 $(BUILD_DIR)/kernel/json.o: $(SRC_DIR)/kernel/json.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)

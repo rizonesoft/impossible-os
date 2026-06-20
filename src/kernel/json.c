@@ -18,9 +18,64 @@ void json_init(void)
      * macros handle allocation redirection at compile time. */
 }
 
+struct cJSON *json_parse_len(const char *text, size_t len)
+{
+    if (!text || len == 0 || len > JSON_MAX_INPUT)
+        return (struct cJSON *)0;
+
+    /* Whole-buffer raw-control-byte reject BEFORE parsing: cJSON's whitespace
+     * skipper treats every byte <= 32 (incl NUL) as whitespace and its string
+     * parser accepts raw control bytes by length, so an embedded NUL/control
+     * byte (e.g. "{\0}", a NUL inside a string) would otherwise be consumed
+     * silently. JSON forbids raw control bytes anyway (they must be \u-escaped),
+     * so reject any byte < 0x20 that is not JSON whitespace. */
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)text[i];
+        if (c < 0x20 && c != '\t' && c != '\n' && c != '\r')
+            return (struct cJSON *)0;
+    }
+
+    /* ParseWithLengthOpts bounds reads to `len` (safe on non-NUL-terminated
+     * untrusted buffers) and reports where parsing stopped via `end`. */
+    const char *end = (const char *)0;
+    cJSON *root = cJSON_ParseWithLengthOpts(text, len, &end, 0);
+    if (!root)
+        return (struct cJSON *)0;
+
+    /* require_null_terminated=0 does not require the whole buffer be consumed,
+     * so a valid top-level value followed by appended junk would otherwise pass.
+     * Reject any trailing non-whitespace (a NUL cleanly ends the buffer). */
+    if (end) {
+        const char *stop = text + len;
+        for (const char *p = end; p < stop; p++) {
+            char c = *p;
+            /* Only JSON whitespace is allowed after the value. An embedded NUL
+             * is NOT an out-of-band terminator here -- treating it as one would
+             * let "{}\0JUNK" (len covering JUNK) hide trailing garbage. */
+            if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                cJSON_Delete(root);
+                return (struct cJSON *)0;
+            }
+        }
+    }
+    return (struct cJSON *)root;
+}
+
 struct cJSON *json_parse(const char *text)
 {
-    return (struct cJSON *)cJSON_Parse(text);
+    if (!text)
+        return (struct cJSON *)0;
+    /* Owned NUL-terminated string: find the terminator within the cap. Reading
+     * text[len] is in-bounds for a NUL-terminated string (the NUL itself). */
+    size_t len = 0;
+    while (len < JSON_MAX_INPUT && text[len] != '\0')
+        len++;
+    /* If we stopped at the cap, the terminator was NOT found within the first
+     * JSON_MAX_INPUT bytes. Reject WITHOUT reading text[len] -- probing one byte
+     * past an owned, unterminated buffer could fault on a guard/page boundary. */
+    if (len == JSON_MAX_INPUT)
+        return (struct cJSON *)0;
+    return json_parse_len(text, len);
 }
 
 struct cJSON *json_get(struct cJSON *obj, const char *key)

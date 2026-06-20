@@ -23,6 +23,8 @@
 #include "kernel/nt/service_numbers.h"
 #include "libc/string.h"
 #include "libc/math.h"
+#include "kernel/json.h"
+#include "kernel/mm/heap.h"
 #include "libs/monocypher/monocypher.h"
 #include "libs/monocypher/monocypher-ed25519.h"
 
@@ -933,12 +935,70 @@ static void test_math_lib(void)
     TEST_ASSERT(kmath_round(-big) == -big, "round(-(2^52+3)) unchanged");
 }
 
+/* cJSON wrapper: parse/extract + malformed-input hardening (depth cap,
+ * length-bounded parse, trailing-garbage rejection). */
+static void test_json_lib(void)
+{
+    struct cJSON *o = json_parse("{\"os\":\"Impossible\",\"build\":1024,\"debug\":true}");
+    TEST_ASSERT(o != (struct cJSON *)0, "json_parse sample doc");
+    if (o) {
+        const char *os = json_str(json_get(o, "os"));
+        TEST_ASSERT(os && strcmp(os, "Impossible") == 0, "json_str os=Impossible");
+        TEST_ASSERT_EQ(json_int(json_get(o, "build")), 1024, "json_int build=1024");
+        TEST_ASSERT_EQ(json_bool(json_get(o, "debug")), 1, "json_bool debug=true");
+        char *p = json_print(o);
+        TEST_ASSERT(p != (char *)0, "json_print non-null");
+        if (p) {
+            struct cJSON *o2 = json_parse(p);
+            TEST_ASSERT(o2 && json_int(json_get(o2, "build")) == 1024,
+                        "json_print round-trip stable");
+            json_free(o2);
+            kfree(p);                /* json_print result is a kmalloc'd string */
+        }
+        json_free(o);
+    }
+
+    /* NULL / empty rejected */
+    TEST_ASSERT(json_parse((const char *)0) == (struct cJSON *)0, "json_parse(NULL)=NULL");
+    TEST_ASSERT(json_parse_len("{}", 0) == (struct cJSON *)0, "json_parse_len len=0=NULL");
+    TEST_ASSERT(json_parse_len((const char *)0, 4) == (struct cJSON *)0, "json_parse_len(NULL)=NULL");
+
+    /* length-bounded parse on a NON-NUL-terminated window: only the first 2
+     * bytes ("{}") are in-bounds; the trailing "JUNK" is outside len. */
+    struct cJSON *b = json_parse_len("{}JUNK", 2);
+    TEST_ASSERT(b != (struct cJSON *)0, "json_parse_len bounds read to len");
+    json_free(b);
+
+    /* trailing non-whitespace after a valid value is rejected (no prefix+junk) */
+    TEST_ASSERT(json_parse_len("{} xyz", 6) == (struct cJSON *)0, "json_parse_len rejects trailing junk");
+    /* an embedded NUL is not an out-of-band terminator -- junk after it is still junk */
+    TEST_ASSERT(json_parse_len("{}\0JUNK", 7) == (struct cJSON *)0, "json_parse_len rejects post-NUL junk");
+    /* raw control bytes anywhere in the length-bounded buffer are rejected pre-parse */
+    TEST_ASSERT(json_parse_len("{\0}", 3) == (struct cJSON *)0, "json_parse_len rejects structural NUL");
+    TEST_ASSERT(json_parse_len("\0{}", 3) == (struct cJSON *)0, "json_parse_len rejects leading NUL");
+    TEST_ASSERT(json_parse_len("[\x01]", 3) == (struct cJSON *)0, "json_parse_len rejects raw control byte");
+    struct cJSON *w = json_parse("{}  \n\t");
+    TEST_ASSERT(w != (struct cJSON *)0, "trailing whitespace ok");
+    json_free(w);
+
+    /* depth cap: deeper than CJSON_NESTING_LIMIT (32) rejected without
+     * exhausting heap/stack. */
+    char deep[96];
+    int n = 0;
+    for (int i = 0; i < 40; i++) deep[n++] = '[';
+    for (int i = 0; i < 40; i++) deep[n++] = ']';
+    deep[n] = '\0';
+    TEST_ASSERT(json_parse(deep) == (struct cJSON *)0, "json_parse rejects >32-deep nesting");
+}
+
 void test_register_klibs(void)
 {
     test_suite_register_cat("klibs: string lib edges",
                             test_string_lib_edges, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: math lib",
                             test_math_lib, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: cjson wrapper",
+                            test_json_lib, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: blake2b vector",
                             test_blake2b_vector, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: chacha20-poly1305 AEAD",

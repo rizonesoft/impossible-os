@@ -68,7 +68,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   3   | LZ4 block compressor                                 | --                   |  [/]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [/]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
-| 💎  |   6   | cJSON DOM parser                                     | §1                   |  [/]   |
+| 💎  |   6   | cJSON DOM parser                                     | §1                   |  [x]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [ ]   |
 | 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [ ]   |
 
@@ -274,24 +274,22 @@ title: "TODO-03 -- Kernel Embedded Libraries"
   cJSON_Hooks hooks = { .malloc_fn = kmalloc, .free_fn = kfree };
   cJSON_InitHooks(&hooks);
   ```
-- [ ] Max-depth guard: cJSON has NO runtime SetMaxDepth -- lower compile-time `CJSON_NESTING_LIMIT` (default 1000) to 32 via -D/header patch + a wrapper node-count budget before parse to avoid heap/stack exhaustion on malformed input.
-
-- [ ] Expose a thin kernel wrapper `src/kernel/json.c` / `include/kernel/json.h`:
-  ```c
-  cJSON *json_parse(const char *text);         /* wrapper over cJSON_Parse */
-  cJSON *json_get(cJSON *obj, const char *key); /* cJSON_GetObjectItem */
-  const char *json_str(cJSON *item);            /* cJSON_GetStringValue */
-  int    json_int(cJSON *item);                 /* cJSON_GetNumberValue as int */
-  char  *json_print(cJSON *obj);               /* cJSON_PrintUnformatted */
-  void   json_free(cJSON *obj);                /* cJSON_Delete */
-  ```
-- [x] Kernel wrapper API created: `json_parse()`, `json_get()`, `json_str()`, `json_int()`, `json_double()`, `json_bool()`, `json_print()`, `json_free()` in `src/kernel/json.c` + `include/kernel/json.h`
-- [ ] Use for: desktop theme files (`theme.json`), settings persistence, update manifests, NTP server list
-- [ ] Test: parse `{"os": "Impossible", "build": 1024, "debug": true}`; verify all fields extract correctly
+- [x] Malformed-input hardening: `-DCJSON_NESTING_LIMIT=32` (was 1000, no vendored edit); `json_parse_len` bounds untrusted reads (`cJSON_ParseWithLengthOpts`) + rejects trailing garbage; `JSON_MAX_INPUT` 1 MiB input cap (= node bound).
+- [x] Kernel wrapper `src/kernel/json.c` + `include/kernel/json.h`: `json_parse`/`json_parse_len`/`get`/`str`/`int`/`u32`/`u64`/`double`/`bool`/`is_array`/`array_size`/`array_get`/`array_first`/`array_next`/`print`/`free`.
+- [x] In use by `src/kernel/firmware_advisor.c` + `src/kernel/main/boot_trend.c`; theme.json/settings/manifests/NTP are future consumers owned by their domains.
+- [x] Test: `test_json_lib` parses the sample doc + extracts fields, and checks the hardening (depth>32 rejected, length-bounded parse, trailing-garbage rejected, print round-trip).
 
 - [x] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper"`
 
 **Test checkpoint:** Sample JSON parses; `json_int`/`json_str` match literals; a document nested deeper than `CJSON_NESTING_LIMIT` is rejected without heap/stack exhaustion; `json_print` round-trip stable. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 1 suite (klibs: cjson wrapper), 0 failures
+> **Notes:**
+> - cJSON v1.7.18 was already vendored (`src/libs/cjson/`) with kmalloc allocator macros + SSE2 rule; this section adds the malformed-input hardening + a unit test.
+> - Hardening: `-DCJSON_NESTING_LIMIT=32` on the `cJSON.o` rule (no vendored edit); `json_parse_len` for untrusted/non-NUL buffers (`cJSON_ParseWithLengthOpts` + trailing-garbage reject); `JSON_MAX_INPUT` 1 MiB cap = node bound.
+> - In use by `firmware_advisor.c` + `boot_trend.c`; theme.json/settings/manifests/NTP are future consumers owned by their domains.
+> - Canonical doc: `include/kernel/json.h`.
+> - Scope boundary: cJSON internals stay vendored (`src/libs/cjson/`); crypto/TLS in §5/§7, compression in §3/§4.
 
 ---
 

@@ -11,6 +11,15 @@
 
 #include "kernel/types.h"
 
+/* Hard ceiling on JSON input length (1 MiB). The input length bounds the node
+ * count (every node needs several bytes), which is the practical bound on parse
+ * heap growth -- cJSON allocates a node per array element / object member, so a
+ * flat document stays at depth 1 and the compile-time CJSON_NESTING_LIMIT (32)
+ * never fires for it. Untrusted/file-backed callers should use json_parse_len()
+ * with their own (already-bounded) read length; json_parse() applies this cap
+ * to NUL-terminated owned strings. */
+#define JSON_MAX_INPUT (1u << 20)
+
 /* Forward declaration -- avoids exposing cJSON internals to all includers */
 struct cJSON;
 
@@ -18,9 +27,17 @@ struct cJSON;
  * Call once in Phase 2 after heap is ready. */
 void json_init(void);
 
-/* Parse a JSON string. Returns root node, or NULL on error.
- * Caller must call json_free() when done. */
+/* Parse a NUL-terminated owned JSON string. Scans at most JSON_MAX_INPUT bytes
+ * for the terminator; rejects (returns NULL) if longer or NULL. Returns root
+ * node, or NULL on error. Caller must call json_free() when done. */
 struct cJSON *json_parse(const char *text);
+
+/* Parse exactly `len` bytes of a possibly NON-NUL-terminated buffer (the safe
+ * path for untrusted / file-backed / network input). Bounds the read to `len`,
+ * rejects len == 0, NULL, or len > JSON_MAX_INPUT, and rejects trailing
+ * non-whitespace after a valid top-level value (no valid-prefix-plus-garbage).
+ * Returns root node, or NULL on error. Caller must call json_free(). */
+struct cJSON *json_parse_len(const char *text, size_t len);
 
 /* Get an object member by key. Returns NULL if not found. */
 struct cJSON *json_get(struct cJSON *obj, const char *key);
