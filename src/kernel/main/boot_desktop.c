@@ -78,7 +78,7 @@ void boot_phase3(void)
         boot_recovery_info_t ri = { SUBSYS_SCHED, POST16_SCHED_OK, BOOT_FATAL, 3 };
         kernel_subsystem_dump();
         boot_recovery_action_t act = boot_recovery_show(&ri);
-        if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+        boot_recovery_act(act);   /* POWEROFF->shutdown, RETRY->reboot; CONSOLE/other fall to halt */
         boot_halt("HEAP or TIMER not ready -- cannot init scheduler");
     }
     /* --- DPC subsystem: per-CPU queues for deferred ISR work --- */
@@ -139,7 +139,7 @@ void boot_phase3(void)
             boot_recovery_info_t ri = { SUBSYS_IPC, POST16_IPC, BOOT_FATAL, 3 };
             kernel_subsystem_dump();
             boot_recovery_action_t act = boot_recovery_show(&ri);
-            if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+            boot_recovery_act(act);   /* POWEROFF->shutdown, RETRY->reboot; CONSOLE/other fall to halt */
             boot_halt("IPC init failed -- pipe or ALPC unrecoverable");
         }
         if (ipc_rc == BOOT_DEGRADED)
@@ -243,7 +243,7 @@ void boot_phase3(void)
             boot_recovery_info_t ri = { SUBSYS_EXEC, POST16_EXEC, BOOT_FATAL, 3 };
             kernel_subsystem_dump();
             boot_recovery_action_t act = boot_recovery_show(&ri);
-            if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+            boot_recovery_act(act);   /* POWEROFF->shutdown, RETRY->reboot; CONSOLE/other fall to halt */
             boot_halt("exec init failed -- no binary loader available");
         }
         if (exec_rc == BOOT_DEGRADED)

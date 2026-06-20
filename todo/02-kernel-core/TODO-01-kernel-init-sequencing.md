@@ -385,12 +385,31 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 
 - [x] Design `boot_recovery_info_t` struct: failed subsystem, POST code, `boot_result_t`, phase number
 - [x] Implement `boot_recovery_show(boot_recovery_info_t *info)` -- draws panel on framebuffer using inline 8x8 font; no heap alloc
-- [x] Implement simple three-option menu: **[R] Retry**, **[C] Serial console**, **[P] Power off**; poll PS/2 keyboard via port 0x60/0x64
+- [x] Implement three-option menu **[R] Retry** / **[C] Halt to serial log** / **[P] Power off**; bounded PS/2 poll + drain so a headless boot cannot hang; render to the FB back buffer so `fb_swap()` presents it
+- [x] Wire recovery actions via one `boot_recovery_act()` dispatcher: **[R]** -> `acpi_reset_now()`, **[P]** -> `acpi_poweroff_now()` (IF-off-safe, quiesce-free -- the screen runs under `cli`), **[C]** -> serial-banner halt
+- [ ] Implement the interactive **[C]** degraded-boot serial console (read-eval over serial); today `RECOVERY_CONSOLE` halts with a banner
 - [x] Hook into Phase 2 missing-prerequisite path: VFS and Registry prereq guards call `boot_recovery_show()` before `boot_halt()` (`boot_storage.c:305`, `:731`)
 - [ ] Observe actual Phase 2 init FAILURE, not just missing prereq: today `SUBSYS_VFS`/`SUBSYS_REGISTRY` are set ready unconditionally (void/ignored inits) so recovery never fires on a real mount/registry failure. Blocked on §4 typed propagation
 - [x] Hook into Phase 3 failure path: Scheduler guard calls `boot_recovery_show()` before `boot_halt()`
 - [x] Ensure `boot_recovery_show()` is a no-op (falls through to `boot_halt()`) if `SUBSYS_FB` is not ready
 - [x] Add `boot_progress(9, "recovery-screen", 0xE0)` call on entry
+
+**Test checkpoint:** No automated test surface -- the recovery screen only renders on a Phase 2/3 BOOT_FATAL, which the smoke test never triggers. Validation is by fault injection + serial/bare-metal: force a Phase 2 prereq fail, confirm the panel is visible (back buffer), `[R]`/`[P]` reset/poweroff, headless boot halts (no hang) with `[RECOVERY] no keyboard input`. Verify on QEMU WHPX/TCG + bare metal.
+
+> **Test runner:** No kernel test surface (fatal-path graphical UI) -- validation via serial log + fault injection on WHPX/bare metal; build + smoke confirm the normal `acpi_reboot`/`acpi_shutdown` wrappers and boot path are unregressed.
+>
+> **Notes:**
+> - In-kernel graphical recovery UI (`boot_recovery.c`): GOP-framebuffer panel, inline font, three-option menu, PS/2 polling, Phase 2/3 fatal hooks, `SUBSYS_FB` no-op fall-through.
+> - Review fix (adversarial 3H): renders to the FB back buffer (was hidden by `fb_swap`); bounded PS/2 poll + drain (was an infinite headless hang); `[R]`/`[P]` wired via one `boot_recovery_act()` dispatcher.
+> - Review fix (re-adversarial H): `[R]`/`[P]` use new IF-off-safe `acpi_reset_now()`/`acpi_poweroff_now()` -- the old `acpi_reboot`/`acpi_shutdown` quiesce `hlt`-hangs under `cli`.
+> - Review fix (consistency M + perf M): `[C]` menu relabeled "Halt to serial log"; `kbd_poll_begin` drain bounded to 64 reads.
+> - Deferred (in-TODO): interactive `[C]` serial console; observe a real Phase 2 init failure (blocked on §4 typed propagation).
+> - Scope: §9 owns the recovery UI; firing-on-real-failure needs §4's `void`->`boot_result_t` propagation.
+>
+> **Verified:** 2026-06-20 | commit `bc60dac7` | 8/10 items | build OK | smoke PASS (KVM 2.72s)
+> **Deferred:** [M] interactive `[C]` degraded-boot serial console not implemented (halts with a banner today) -> XREF: 02-kernel-core/TODO-01 §9 (item: "Implement the interactive **[C]** degraded-boot serial console" at line 390)
+> **Deferred:** [H] recovery never fires on a real Phase 2 mount/registry failure (void inits set SUBSYS_VFS/REGISTRY ready unconditionally) -> XREF: 02-kernel-core/TODO-01 §9 (item: "Observe actual Phase 2 init FAILURE" at line 392)
+> **Quality reviewed:** 2026-06-20 | Codex 9x (adversarial x2, consistency x2, perf x2, re-adversarial x3) | 4H+4M fixed | scope: kernel-code-quality
 
 ---
 

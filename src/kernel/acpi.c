@@ -947,14 +947,11 @@ static void acpi_storage_quiesce(void)
         printk("[ACPI] WARNING: storage did not cleanly quiesce\n");
 }
 
-void acpi_shutdown(void)
+/* Power off WITHOUT the (interrupt-requiring) storage quiesce -- IF-off-safe,
+ * for callers already running under cli (the degraded-boot recovery screen).
+ * Everything below is port writes. Does not return on success. */
+void acpi_poweroff_now(void)
 {
-    printk("[ACPI] Initiating shutdown...\n");
-
-    /* Flush X: + cleanly shut down storage controllers BEFORE disabling
-     * interrupts (the driver shutdown paths poll via hlt). */
-    acpi_storage_quiesce();
-
     /* Disable interrupts -- we're going down */
     __asm__ volatile("cli");
 
@@ -981,14 +978,24 @@ void acpi_shutdown(void)
         __asm__ volatile("hlt");
 }
 
-void acpi_reboot(void)
+void acpi_shutdown(void)
 {
-    printk("[ACPI] Initiating reboot...\n");
-
-    /* Flush X: + shut down storage controllers before disabling interrupts,
-     * same as the poweroff path -- a reset leaves the cache dirty otherwise. */
+    printk("[ACPI] Initiating shutdown...\n");
+    /* Flush X: + cleanly shut down storage controllers BEFORE the poweroff (the
+     * quiesce sleeps, so it needs interrupts enabled). The recovery screen runs
+     * under cli and uses acpi_poweroff_now() directly instead. */
     acpi_storage_quiesce();
+    acpi_poweroff_now();
+}
 
+/* Reset the machine WITHOUT the storage quiesce. acpi_storage_quiesce() sleeps
+ * via sleep_ms()/hlt and so requires interrupts enabled; the degraded-boot
+ * recovery screen reaches a reset with interrupts already disabled (the keypress
+ * poll runs under cli), so it calls this directly. Everything below is port
+ * writes + triple-fault -- all IF-off-safe. A dirty cache on a fatal-boot reset
+ * is acceptable (A/B slot tries-counter + journaling recover). */
+void acpi_reset_now(void)
+{
     __asm__ volatile("cli");
 
     /* Method 1: ACPI reset register (FADT 2.0+).
@@ -1003,15 +1010,17 @@ void acpi_reboot(void)
         fadt_ptr->reset_reg.address != 0) {
 
         if (fadt_ptr->reset_reg.address_space == 1) {
-            /* System I/O space */
+            /* System I/O space -- a plain port write, always safe. */
             outb_acpi((uint16_t)fadt_ptr->reset_reg.address,
                       fadt_ptr->reset_value);
-        } else if (fadt_ptr->reset_reg.address_space == 0) {
-            /* System memory */
-            volatile uint8_t *addr =
-                (volatile uint8_t *)(uintptr_t)fadt_ptr->reset_reg.address;
-            *addr = fadt_ptr->reset_value;
         }
+        /* SystemMemory (address_space == 0) reset registers are intentionally
+         * NOT used here: writing one means a raw MMIO store through the
+         * firmware physical address, which is not mapped UC at this point (and
+         * this path runs with interrupts disabled, e.g. the degraded-boot
+         * recovery [R] escape) -- a #PF/wedge risk that violates the "no MMIO
+         * through unmapped/WB pages" rule. Fall through to the keyboard-
+         * controller reset + triple-fault below, which need no mapping. */
 
         /* Give it a moment */
         {
@@ -1054,6 +1063,18 @@ void acpi_reboot(void)
     /* Should never reach here */
     for (;;)
         __asm__ volatile("hlt");
+}
+
+void acpi_reboot(void)
+{
+    printk("[ACPI] Initiating reboot...\n");
+
+    /* Flush X: + shut down storage controllers before the reset (the quiesce
+     * sleeps, so it needs interrupts enabled -- callers in the normal,
+     * interrupts-enabled path use this; the degraded-boot recovery screen,
+     * which runs under cli, calls acpi_reset_now() directly instead). */
+    acpi_storage_quiesce();
+    acpi_reset_now();
 }
 
 /* ---- SMP discovery API ---- */

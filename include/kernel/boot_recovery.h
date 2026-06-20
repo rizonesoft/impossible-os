@@ -20,8 +20,8 @@ typedef struct {
 
 /* Recovery action returned by the screen */
 typedef enum {
-    RECOVERY_RETRY    = 0,  /* user pressed [R] -- retry boot */
-    RECOVERY_CONSOLE  = 1,  /* user pressed [C] -- drop to serial console */
+    RECOVERY_RETRY    = 0,  /* user pressed [R] -- reboot (retry boot) */
+    RECOVERY_CONSOLE  = 1,  /* user pressed [C] -- halt to serial log (interactive console pending) */
     RECOVERY_POWEROFF = 2,  /* user pressed [P] -- power off */
 } boot_recovery_action_t;
 
@@ -29,3 +29,11 @@ typedef enum {
  * Returns the chosen action. Falls through to boot_halt() if FB is not ready.
  * Safe to call from Phase 2 or Phase 3 -- no heap allocation. */
 boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info);
+
+/* Execute a recovery action. RECOVERY_POWEROFF -> acpi_poweroff_now(),
+ * RECOVERY_RETRY -> acpi_reset_now() (both no-return; the IF-off-safe,
+ * quiesce-free ACPI variants -- the recovery screen runs under cli, where
+ * acpi_shutdown()/acpi_reboot()'s storage quiesce would hlt-hang). For
+ * RECOVERY_CONSOLE this returns (the degraded-boot serial console is not
+ * implemented yet) so the caller halts. One dispatcher, all call sites. */
+void boot_recovery_act(boot_recovery_action_t act);

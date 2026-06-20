@@ -57,16 +57,30 @@ static void kbd_poll_begin(void)
         uint32_t gsi = ioapic_isa_to_gsi(1);
         ioapic_mask_irq(gsi);
     }
-    /* Drain any pending scancodes */
-    while (inb(0x64) & 0x01)
-        (void)inb(0x60);
+    /* Drain any pending scancodes, bounded so a stuck/absent PS/2 controller
+     * that always reports output-buffer-full cannot spin here forever before
+     * the bounded keypress poll below ever runs. The 8042 output buffer is a
+     * single byte, so 64 reads is far more than a real controller ever holds. */
+    {
+        uint32_t drain = 64;
+        while ((inb(0x64) & 0x01) && drain--)
+            (void)inb(0x60);
+    }
 }
 
-/* Poll PS/2 keyboard for a single keypress. Blocks until a key is pressed.
- * Caller must have called kbd_poll_begin() first. */
-static char kbd_poll_char(void)
+/* Coarse can't-hang-forever backstop for the recovery keypress poll. Each
+ * iteration does two port-0x64/0x60 reads (~1us each on real hardware), so
+ * this is roughly a tens-of-seconds-to-minutes wait on bare metal and shorter
+ * under a VM -- NOT a precise wall-clock timeout, just a guarantee that a
+ * headless / keyboard-less machine does not spin here forever with IRQs off. */
+#define RECOVERY_KBD_POLL_SPINS 200000000ULL
+
+/* Poll PS/2 keyboard for a single keypress, bounded by `spin_budget`
+ * iterations. Caller must have called kbd_poll_begin() first. Returns the
+ * pressed character, or 0 if the budget expired with no recognized keypress. */
+static char kbd_poll_char(uint64_t spin_budget)
 {
-    for (;;) {
+    while (spin_budget--) {
         if (inb(0x64) & 0x01) {
             uint8_t sc = inb(0x60);
             if (!(sc & 0x80)) {  /* ignore break codes */
@@ -76,6 +90,7 @@ static char kbd_poll_char(void)
         }
         __asm__ volatile ("pause");
     }
+    return 0;  /* timeout -- no input */
 }
 
 /* ---- Inline 8x8 bitmap font (minimal subset for recovery text) ---------- */
@@ -225,12 +240,17 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
         for (;;) __asm__ volatile ("hlt");
     }
 
-    /* Unlock compositor and get direct FB access */
+    /* Unlock the compositor and render into the driver's BACK buffer using its
+     * stride, then fb_swap() presents it to the visible VRAM page. Drawing
+     * straight to g_boot_info.fb.addr would be overwritten by the stale back
+     * buffer whenever a separate back buffer is allocated (fb_swap copies
+     * back_buf -> VRAM); when no back buffer exists, fb_get_backbuffer() == the
+     * hardware address and fb_swap() is a no-op, so this is correct either way. */
     fb_unlock_compositor();
     w     = fb_get_width();
     h     = fb_get_height();
-    pitch = g_boot_info.fb.pitch / 4;  /* bytes -> pixels */
-    fb    = (volatile uint32_t *)(uintptr_t)g_boot_info.fb.addr;
+    pitch = fb_get_stride();                          /* back-buffer pixels/row */
+    fb    = (volatile uint32_t *)fb_get_backbuffer();
 
     if (!fb || !w || !h) {
         boot_halt("Recovery screen: invalid framebuffer");
@@ -277,7 +297,7 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
 
     draw_string(fb, pitch, w, h, 60, y, "[R]  Retry boot", 0x0080FF80);
     y += FONT_H + 4;
-    draw_string(fb, pitch, w, h, 60, y, "[C]  Serial console", 0x0080CCFF);
+    draw_string(fb, pitch, w, h, 60, y, "[C]  Halt to serial log", 0x0080CCFF);
     y += FONT_H + 4;
     draw_string(fb, pitch, w, h, 60, y, "[P]  Power off", 0x00FF8080);
 
@@ -287,13 +307,51 @@ boot_recovery_action_t boot_recovery_show(const boot_recovery_info_t *info)
     /* Disable keyboard IRQ and drain pending scancodes before polling */
     kbd_poll_begin();
 
-    /* Poll keyboard for user choice */
+    /* Poll keyboard for user choice, bounded so a headless / keyboard-less
+     * machine cannot spin here forever with IRQs disabled. On budget expiry
+     * with no input, halt with a serial banner so an operator or hardware
+     * watchdog can power-cycle (the failure was already printed to serial
+     * above). Unrecognized keys re-poll with a fresh budget. */
     for (;;) {
-        char ch = kbd_poll_char();
+        char ch = kbd_poll_char(RECOVERY_KBD_POLL_SPINS);
         switch (ch) {
             case 'r': return RECOVERY_RETRY;
             case 'c': return RECOVERY_CONSOLE;
             case 'p': return RECOVERY_POWEROFF;
+            case 0:
+                serial_write("[RECOVERY] no keyboard input -- halting "
+                             "(power-cycle to retry)\n");
+                boot_halt("Recovery: no input");
+                for (;;) __asm__ volatile ("hlt");
         }
     }
+}
+
+/* Centralized recovery-action dispatch so all call sites behave identically
+ * (the per-caller `if (act == RECOVERY_POWEROFF)` pattern previously left
+ * [R]etry and [C]onsole as no-ops that silently fell through to boot_halt). */
+void boot_recovery_act(boot_recovery_action_t act)
+{
+    extern void acpi_poweroff_now(void);
+    extern void acpi_reset_now(void);
+    /* The recovery screen reached here under cli (kbd_poll_begin), so use the
+     * quiesce-free ACPI primitives: acpi_shutdown()/acpi_reboot() run
+     * acpi_storage_quiesce() first, which sleeps via hlt and would hang
+     * forever with interrupts disabled. */
+    switch (act) {
+        case RECOVERY_POWEROFF:
+            acpi_poweroff_now();   /* does not return */
+            break;
+        case RECOVERY_RETRY:
+            /* "Retry boot" = reset the machine; the bootloader A/B tries
+             * counter bounds reset loops on a persistently-failing slot. */
+            acpi_reset_now();      /* does not return */
+            break;
+        case RECOVERY_CONSOLE:
+            /* The degraded-boot serial console is not implemented yet; tell
+             * the operator via serial and return so the caller halts. */
+            serial_write("[RECOVERY] serial console not available -- halting\n");
+            break;
+    }
+    /* RECOVERY_CONSOLE (or an unhandled value): return; caller falls to halt. */
 }

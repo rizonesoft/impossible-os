@@ -214,9 +214,18 @@ uint16_t acpi_get_slp_typa(uint8_t state);
  * Does not return on success. */
 void acpi_shutdown(void);
 
+/* Power off WITHOUT the (interrupt-requiring) storage quiesce -- for callers
+ * already running with interrupts disabled. Does not return on success. */
+void acpi_poweroff_now(void);
+
 /* Reboot the machine via ACPI reset register or keyboard controller.
- * Does not return on success. */
+ * Runs the storage quiesce first (needs interrupts enabled). Does not return. */
 void acpi_reboot(void);
+
+/* Reset the machine WITHOUT the (interrupt-requiring) storage quiesce -- for
+ * callers already running with interrupts disabled (e.g. the degraded-boot
+ * recovery screen). Does not return on success. */
+void acpi_reset_now(void);
 
 /* ---- Consolidated MADT info ---- */
 

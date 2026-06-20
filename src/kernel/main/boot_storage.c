@@ -322,7 +322,7 @@ void boot_phase2(void)
         boot_recovery_info_t ri = { SUBSYS_VFS, POST16_VFS_OK, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
         boot_recovery_action_t act = boot_recovery_show(&ri);
-        if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+        boot_recovery_act(act);   /* POWEROFF->shutdown, RETRY->reboot; CONSOLE/other fall to halt */
         boot_halt("HEAP not ready -- cannot init VFS");
     }
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
@@ -739,7 +739,7 @@ void boot_phase2(void)
             boot_recovery_info_t ri = { SUBSYS_OB, POST16_OB_OK, BOOT_FATAL, 2 };
             kernel_subsystem_dump();
             boot_recovery_action_t act = boot_recovery_show(&ri);
-            if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+            boot_recovery_act(act);   /* POWEROFF->shutdown, RETRY->reboot; CONSOLE/other fall to halt */
             boot_halt("Object Manager init failed");
         }
     }
@@ -758,7 +758,7 @@ void boot_phase2(void)
         boot_recovery_info_t ri = { SUBSYS_REGISTRY, POST16_REGISTRY_OK, BOOT_FATAL, 2 };
         kernel_subsystem_dump();
         boot_recovery_action_t act = boot_recovery_show(&ri);
-        if (act == RECOVERY_POWEROFF) { acpi_shutdown(); }
+        boot_recovery_act(act);   /* POWEROFF->shutdown, RETRY->reboot; CONSOLE/other fall to halt */
         boot_halt("VFS not ready -- cannot init registry");
     }
     klog(LOG_DEBUG, "", "");
