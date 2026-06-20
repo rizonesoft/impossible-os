@@ -62,7 +62,7 @@ title: "TODO-01 -- Kernel Init Sequencing"
 | 💎  |   8   | Code cleanup                               | §2--§5     |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [/]   |
 | ⭐  |  10   | POST code + UEFI variable log              | §1         |  [x]   |
-| 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [x]   |
+| 💎  |  11   | Deferred init for non-critical subsystems  | §5         |  [/]   |
 | ⭐  |  12   | Boot performance regression detection      | §10        |  [/]   |
 | ⭐  |  13   | Async subsystem init (SMP parallel)        | §6, §11    |  [/]   |
 
@@ -461,9 +461,23 @@ Move non-critical subsystem init out of the blocking boot path so the desktop ap
 - [x] If a deferred init fails, log `klog(WARN)` -- no halt, no BSOD
 - [x] Add `deferred=0` boot.conf option to disable deferral (all subsystems init in-phase, old behavior) for debugging
 - [x] Add 3 unit tests: BOOT_DEFERRED value, boot_defer registration, deferred POST codes
+- [ ] Run `boot_run_deferred()` from a compositor one-shot after the first frame (not inline before `compositor_run`) so `mouse_init()`'s 300ms-2s PS/2 BAT no longer delays the first desktop frame (`boot_desktop.c:351`). (Codex §11 perf H)
 - [x] Commit: `"kernel: deferred init -- non-critical subsystems after desktop"`
 
 **Test checkpoint:** Boot with default config → desktop appears → deferred inits run → `[DEFERRED]` lines appear in serial log after `[PHASE3] desktop_init`. Boot with `deferred=0` → no `[DEFERRED]` lines, all subsystems init in-phase. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 3 deferred-init tests (BOOT_DEFERRED value, boot_defer registration, deferred POST codes) in `test_boot_init.c`; boot-path validated via smoke test.
+>
+> **Notes:**
+> - Deferred-init machinery (`boot_init.c`: `g_deferred[]`/`boot_defer`/`boot_run_deferred`) moves non-critical net + input init out of blocking Phase 2 to Phase 3 post-desktop, inline (NOT threaded -- the compositor starves threads, F3 revert).
+> - Review fix (adversarial M): `boot_run_deferred` is now idempotent (run-once `g_deferred_ran` latch; `boot_defer` rejects post-run registration) so a retry/diagnostic call cannot double-init drivers (IRQ re-registration, device reset).
+> - Review fix (adversarial M): `deferred_input_init` records a `BOOT_LOAD_CLASS_INPUT` status (LOADED/SKIPPED) instead of unconditional `BOOT_OK`, so input outcomes surface in the boot-load summary.
+> - Deferred (perf H): the inline placement still runs before the first compositor frame, so `mouse_init`'s PS/2 BAT delays it -- moving to a post-first-frame compositor one-shot is filed.
+> - Scope: §11 owns the deferred-init mechanism; the placement-vs-first-frame latency is the filed enhancement.
+>
+> **Verified:** 2026-06-20 | commit `a29bf210` | 10/11 items | build OK | smoke PASS (KVM 2.67s)
+> **Deferred:** [H] deferred init runs inline before the first compositor frame, so `mouse_init`'s 300ms-2s PS/2 BAT delays it -> XREF: 02-kernel-core/TODO-01 §11 (item: "Run `boot_run_deferred()` from a compositor one-shot after the first frame" at line 464)
+> **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H deferred | scope: kernel-code-quality
 
 ---
 

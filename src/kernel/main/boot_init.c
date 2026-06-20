@@ -137,11 +137,20 @@ typedef struct {
 
 static deferred_entry_t g_deferred[BOOT_DEFERRED_MAX];
 static uint32_t         g_deferred_count;
+static int              g_deferred_ran;   /* run-once latch (idempotent) */
 
 int boot_defer(const char *name, boot_result_t (*fn)(void))
 {
     if (!fn) {
         klog(LOG_DEBUG, "boot", "deferred init: NULL function for '%s'",
+             name ? name : "?");
+        return -1;
+    }
+    if (g_deferred_ran) {
+        /* boot_run_deferred() already executed -- a registration now would
+         * never run. Reject so a late caller fails loudly instead of silently
+         * registering a subsystem that never initializes. */
+        klog(LOG_WARN, "boot", "deferred init already ran -- cannot defer %s",
              name ? name : "?");
         return -1;
     }
@@ -162,6 +171,13 @@ void boot_run_deferred(void)
 {
     extern uint64_t system_get_ticks(void);
     uint32_t i;
+
+    /* Idempotent: each deferred fn re-initializes a driver (IRQ registration,
+     * device reset), so a second call (retry / diagnostic / refactor) would
+     * double-init. Latch on first entry; later calls are a no-op. */
+    if (g_deferred_ran)
+        return;
+    g_deferred_ran = 1;
 
     if (g_deferred_count == 0)
         return;

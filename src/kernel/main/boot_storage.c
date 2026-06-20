@@ -85,9 +85,17 @@ static boot_result_t deferred_input_init(void)
      * (Basic Assurance Test) takes 300ms-2s on real hardware, which
      * froze the splash spinner. Running it here means the splash
      * is already animating when the wait happens. */
-    mouse_init();
-    virtio_input_init();
-    vbox_mouse_init();
+    mouse_init();                  /* PS/2 (void): the always-attempted baseline */
+    int vi = virtio_input_init();  /* 0 = up, <0 = absent-or-failed (optional) */
+    int vb = vbox_mouse_init();    /* 0 = up, <0 = absent-or-failed (optional) */
+    /* Record the input load status so it is no longer silently reported as a
+     * blanket success: the optional absolute-pointer devices are SKIPPED when
+     * both are absent/failed (PS/2 mouse is the baseline, so never fatal),
+     * LOADED when either came up. Distinguishing absent vs detected-but-failed
+     * needs per-driver granularity -- the same follow-up as the rtl8139 path. */
+    boot_load_record("input", BOOT_LOAD_CLASS_INPUT,
+                     (vi == 0 || vb == 0) ? BOOT_LOAD_LOADED : BOOT_LOAD_SKIPPED,
+                     0u, POST16_DEFERRED_INPUT_OK);
     /* All input sources are now up (keyboard in Phase 1, USB HID enumerated in
      * xhci_init, PS/2 mouse + VirtIO + VBox just now) -- emit the diagnostic
      * source summary + per-USB-HID identity + HID poll error stats. */
