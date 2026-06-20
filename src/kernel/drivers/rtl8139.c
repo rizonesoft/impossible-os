@@ -126,6 +126,7 @@ static uint8_t *tx_buffers[TX_DESC_COUNT]; /* Tx buffers */
 static uint8_t  tx_cur;              /* Current Tx descriptor index */
 static uint8_t  irq_line;            /* PCI IRQ line */
 static volatile uint32_t rx_ready;   /* Packets waiting flag */
+static int      s_nic_ready;         /* 1 only after rtl8139_init() fully succeeds */
 
 /* Spinlocks protecting shared NIC state.
  * nic_rx_lock: rx_offset + rx_ready -- shared between IRQ handler and
@@ -245,6 +246,12 @@ int rtl8139_init(void)
     struct pci_device pci;
     int i;
 
+    /* Clear readiness up front so any failure return below (NIC absent,
+     * BAR/reset/alloc/IRQ failure) leaves the guard false even if a prior
+     * init had succeeded -- rtl8139_send() must never transmit through a
+     * half-reinitialized NIC. Set to 1 only on the full-success tail. */
+    s_nic_ready = 0;
+
     /* Find the RTL8139 on the PCI bus */
     pci = pci_find_device(RTL8139_VENDOR_ID, RTL8139_DEVICE_ID);
     if (!pci.found) {
@@ -353,6 +360,7 @@ int rtl8139_init(void)
     }
 
     rx_ready = 0;
+    s_nic_ready = 1;   /* tx_buffers + io_base are now valid */
 
     klog(LOG_DEBUG, "net", "RTL8139 NIC initialized (IRQ %u)", (uint64_t)irq_line);
     return 0;
@@ -362,6 +370,12 @@ int rtl8139_send(const void *data, uint32_t len)
 {
     uint8_t desc;
     uint64_t flags;
+
+    /* Refuse to transmit through an uninitialized NIC: on a NIC-less boot
+     * rtl8139_init() returned before allocating tx_buffers[]/io_base, so a
+     * send would be a wild write. Guards every caller, not just the boot path. */
+    if (!s_nic_ready)
+        return -1;
 
     if (len > TX_BUF_SIZE)
         return -1;

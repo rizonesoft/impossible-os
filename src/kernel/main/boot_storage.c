@@ -189,13 +189,26 @@ void boot_phase2(void)
         POST16(POST16_NIC);
         int nic = rtl8139_init();
         POST16(POST16_NIC_OK);
-        POST16(POST16_NET);
-        net_init();
-        POST16(POST16_NET_OK);
-        /* Absent optional NIC (rtl8139 <0) -> SKIPPED, not a fake LOADED. */
-        boot_load_record("network", BOOT_LOAD_CLASS_NET,
-                         nic < 0 ? BOOT_LOAD_SKIPPED : BOOT_LOAD_LOADED,
-                         0u, POST16_NET_OK);
+        /* Only bring up the network stack when a NIC is actually present.
+         * net_init()/dhcp_discover() reach rtl8139_send(), which transmits
+         * through tx_buffers[] -- on a NIC-less machine (nic < 0) those
+         * buffers were never allocated, so transmitting is a wild write.
+         * The deferred path gates identically (deferred_net_init early-returns
+         * on nic < 0). Absent optional NIC -> SKIPPED, not a fake LOADED. */
+        if (nic >= 0) {
+            POST16(POST16_NET);
+            net_init();
+            POST16(POST16_NET_OK);
+            boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_LOADED,
+                             0u, POST16_NET_OK);
+        } else {
+            /* Emit the terminal network POST before recording (mirrors the
+             * deferred path's POST-then-record order); net_init()/dhcp are
+             * skipped entirely on a NIC-less boot. */
+            POST16(POST16_NET_OK);
+            boot_load_record("network", BOOT_LOAD_CLASS_NET, BOOT_LOAD_SKIPPED,
+                             0u, POST16_NET_OK);
+        }
         mouse_init();   /* legacy in-phase: init PS/2 mouse here (the deferred
                          * path does it in deferred_input_init) so the diagnostic
                          * runs after every input source, like the deferred path */
@@ -204,9 +217,13 @@ void boot_phase2(void)
         usb_input_diag_report();   /* input-source summary (legacy in-phase path) */
         boot_progress(2, "PCI_NET", POST16_PCI_OK);
 
-        /* DHCP fire-and-forget */
-        dhcp_discover();
-        boot_progress(2, "DHCP", POST16_NET_OK);
+        /* DHCP fire-and-forget -- only when a NIC actually came up. Do not
+         * claim a DHCP milestone on a NIC-less boot (it would post a code for
+         * work that never ran). */
+        if (nic >= 0) {
+            dhcp_discover();
+            boot_progress(2, "DHCP", POST16_NET_OK);
+        }
     }
 
     /* --- SMP: moved before storage so async init can use APs --- */

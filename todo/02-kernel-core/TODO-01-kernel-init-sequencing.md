@@ -361,6 +361,21 @@ These are bugs and structural violations that must be fixed as part of this TODO
   - [ ] `vfs_init()` → [05-storage/TODO-06 §2](../05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md)
   - [ ] `registry_init()` → [TODO-14 §8](./TODO-14-registry-completion.md) (Advanced Hive Features; §2 is Advanced Key Operations and does not own boot lifecycle)
 
+**Test checkpoint:** Grep confirms zero `HV_BAR` in `src/kernel/`, no `fs/vfs.h`/`fs/partition.h` in `boot_interrupts.c`, `kernel_main` = phase0->1->2->3; boot reaches `C:\>` (smoke). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** boot suite `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, 2836 kernel tests); structural cleanup is grep/Read-verified + `boot_phase2` network path validated via smoke test.
+>
+> **Notes:**
+> - §8 structural boot-path cleanup: `HV_BAR` removal, stale-include removal, ACPI Phase 1/2 split, subsystem relocation (boot_interrupts/boot_hw <-> boot_storage), `main.c` phase0->3 shape, `boot_tests_run` debug/test-gated.
+> - Review fix (adversarial H): NIC-less `deferred=0` boots transmitted through an uninitialized NIC; gated `net_init`/`dhcp_discover` on `nic >= 0` + added an `rtl8139` `s_nic_ready` send guard.
+> - Review fix (consistency 2M): NIC-less branch now emits a truthful terminal POST + suppresses the DHCP milestone when DHCP did not run; `s_nic_ready` cleared at `rtl8139_init` entry so a failed re-init cannot leave a stale ready flag.
+> - re-adversarial skipped: fix is a NIC-presence gate + a readiness flag, no locking/ISR/lifecycle/state-machine surface, 3 functions.
+> - Scope: §8 owns the structural cleanup; the `void`->`boot_result_t` typed-init signatures are distributed to per-subsystem owner TODOs.
+>
+> **Verified:** 2026-06-20 | commit `dc3054a7` | 10/11 items | build OK | smoke PASS (KVM 2.73s)
+> **Deferred:** [M] init functions still `void` (typed `boot_result_t` propagation distributed to 03-memory/TODO-01 §1 + 05-storage/TODO-06 §2 + TODO-14 §8) -> XREF: 02-kernel-core/TODO-01 §8 (item: "Update init functions to return `boot_result_t`" at line 357)
+> **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 1H+2M fixed | scope: kernel-code-quality
+
 ---
 
 ## 9. Degraded-Boot Recovery Screen
