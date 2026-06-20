@@ -163,7 +163,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - IEEE-complete: NaN/inf/over-underflow/domain, signed zero at every entry point, atan2 C99 quadrants, `cosf` no-hang; few-ULP within `|x| < 2^20*pi/2` (NaN above); per-finding hardening in the ship + review commits.
 > - Canonical doc: `include/libc/math.h` banner.
 > - Scope boundary: double `cos/acos/pow/sqrt` stay font-grade in `kmath.h` (unification deferred, this section); LZ4/miniz/crypto/checksum in §3-§8.
-> **Verified:** 2026-06-20 | commit `PENDINGHASH` | 13/14 items | build OK | tests 377 kernel + 16 user PASS (TCG)
+> **Verified:** 2026-06-20 | commit `77eec81d` | 13/14 items | build OK | tests 377 kernel + 16 user PASS (TCG)
 > **Deferred:** [M] hardened float cosf/acosf/sqrtf/powf diverge from font-grade kmath.h double cos/acos/pow/sqrt on special values (reason: kmath.h ODR ownership; promoting the doubles needs a stb golden-raster baseline) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §2 (item: "Unify float/double special values" at line 153)
 > **Quality reviewed:** 2026-06-20 | Codex 20x (design, adversarial-impl, adversarial, consistency, perf, re-adversarial, test-coverage) | 9H+11M fixed, 1M deferred | scope: kernel-code-quality
 
