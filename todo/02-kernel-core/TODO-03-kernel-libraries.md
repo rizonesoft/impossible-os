@@ -69,7 +69,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [/]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [x]   |
-| 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [ ]   |
+| 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [/]   |
 | 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
@@ -326,6 +326,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [ ] Commit: `"libs: Mbed TLS 3.x freestanding port, AES/SHA256/TLS1.3 config, CSPRNG entropy hook"`
 
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] Mbed TLS needs the official Apache-2.0 source operator-vendored into `src/libs/mbedtls/` like Monocypher (§5) / cJSON -- the agent environment cannot clone/vendor verbatim upstream, and TLS record-layer + AES/SHA wire-format interop cannot be proven without the reference library. The freestanding config, entropy hook, and CSPRNG wiring follow once vendored; `07-networking/TODO-03 §3` (HTTPS) depends on this. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS 3.x source into `src/libs/mbedtls/`" at line 307)
 
 ---
 
