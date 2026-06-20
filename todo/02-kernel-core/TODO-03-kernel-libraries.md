@@ -65,7 +65,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | --- | :---: | ---------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | --                   |  [x]   |
 | 💎  |   2   | Complete floating-point math library                 | --                   |  [x]   |
-| 💎  |   3   | LZ4 block compressor                                 | --                   |  [ ]   |
+| 💎  |   3   | LZ4 block compressor                                 | --                   |  [/]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [ ]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [/]   |
@@ -192,6 +192,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [ ] Commit: `"libs: LZ4 block compressor, freestanding port, wired to crash dump + hibernate"`
 
 **Test checkpoint:** 64 KiB random buffer round-trip through `lz4_compress` / `lz4_decompress` matches; `lz4_compress_bound` >= actual compressed size; TODO-27 writer calls real LZ4 API without placeholder. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] LZ4 needs official `lz4.c`/`lz4.h`/`lz4frame.c` (BSD-2) operator-vendored into `src/libs/lz4/` like monocypher/cJSON -- the agent environment cannot fetch verbatim upstream, and reference-format interop for OFF-BOX crash-dump decode (WinDbg/host) cannot be proven without the reference codec, so a hand-rolled substitute is unsafe for that consumer. Block API + frame layer + TODO-26/27/20 wiring follow once vendored. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §3 (item: "Vendor `lz4.c` + `lz4.h` from the official LZ4 repository" at line 174)
 
 ---
 
