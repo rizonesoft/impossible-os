@@ -51,8 +51,8 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | --- | :---: | ------------------------------------------- | ----------------------------------- | :----: |
 | 💎 | 1 | Boot argument schema and parser                 | D01 T07 §3, §5                      | [x] |
 | 💎 | 2 | `kernel_config_t` immutable Phase 0 snapshot    | §1, T01 §2, §6                      | [x] |
-| 💎 | 3 | Registry-backed policy merge                    | §2, T14 §8, §12, §13               | [ ] |
-| 💎 | 4 | ControlSet and LastKnownGood selection          | §3, D01 T07 §7, D01 T21 §4, §5     | [ ] |
+| 💎 | 3 | Registry-backed policy merge                    | §2, §4, T14 §8, §12, §13           | [/] |
+| 💎 | 4 | ControlSet and LastKnownGood selection          | §2, D01 T07 §7, D01 T21 §4, §5     | [ ] |
 | 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [ ] |
 | 💎 | 6 | Runtime tunable registry                        | §2                                  | [ ] |
 | ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [ ] |
@@ -131,6 +131,8 @@ Merge persisted policy without letting malformed registry data silently reshape 
 - [ ] Commit: `"kernel: merge registry-backed policy into effective configuration"`
 
 **Test checkpoint:** Registry sets `debug=0`, command line sets `debug=1`, and `config_dump` reports `effective=1 source=cmdline`. Invalid `panic.timeout=-1` logs a rejection and leaves the compiled default in place. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] §3 registry merge requires §4 control-set selection FIRST (which `ControlSetNNN` is authoritative for this boot, incl. Failed/LastKnownGood/rollback) -- the §3-before-§4 order is inverted, and a Phase-2 merge cannot authoritatively affect already-consumed Phase-0/1 keys (debug/safemode/CI/verifier), so it must publish a SEPARATE runtime-phase effective-policy object rather than mutate the immutable §2 snapshot. Operator-reserved ordering/architecture decision (reorder §3/§4 + scope the registry layer to runtime keys). When unblocked, add `BOOT_ARG_SRC_REGISTRY` (between BOOTCFG and CMDLINE) + reuse the §1 `validate_value` for one descriptor-driven merge + a static `Control\Kernel`-name->descriptor map. -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`" at line 141)
 
 ---
 
