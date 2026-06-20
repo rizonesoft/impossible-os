@@ -104,6 +104,11 @@ build_exclude_args() {
     for pat in "${EXCLUDE_PATTERNS[@]}"; do
         args="$args ! -name '*${pat}*'"
     done
+    # Vendored third-party libraries under src/libs/ carry their own upstream
+    # style and line lengths -- we do not own them, so exclude the whole tree
+    # (monocypher, cjson, lz4, miniz, mbedtls). Our kernel-side wrappers live in
+    # src/kernel/ and are still linted.
+    args="$args ! -path '*/src/libs/*'"
     echo "$args"
 }
 
@@ -293,6 +298,9 @@ if [ "$#" -eq 0 ]; then
         case "$path" in
             # NTFS on-disk format spec (Linux-NTFS + Microsoft NTFS reference).
             src/kernel/fs/ntfs/*|include/kernel/fs/ntfs.h) return 0 ;;
+            # Vendored third-party libraries cite RFC/standard sections with the
+            # section glyph; we do not own their comments (lz4, miniz, mbedtls).
+            src/libs/*) return 0 ;;
         esac
         return 1
     }

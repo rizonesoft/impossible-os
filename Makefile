@@ -133,8 +133,12 @@ AP_TRAMPOLINE_BIN := $(BUILD_DIR)/kernel/smp/ap_trampoline.bin
 AP_TRAMPOLINE_OBJ := $(BUILD_DIR)/kernel/smp/ap_trampoline.o
 
 # C sources (kernel + libc + vendored libs)
+# lz4 / miniz / mbedtls are vendored verbatim but NOT yet wired into the build:
+# the lz4 and miniz freestanding ports + build rules land via the system-logging
+# and library-layer work; mbedtls is a larger TLS port. Excluded from the
+# auto-glob until each library is ported (the work that wires a lib re-adds it).
 LIBS_DIR   := $(SRC_DIR)/libs
-C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(LIBS_DIR) $(DESKTOP_DIR) -name '*.c' 2>/dev/null)
+C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(LIBS_DIR) $(DESKTOP_DIR) -name '*.c' ! -path '*/libs/lz4/*' ! -path '*/libs/miniz/*' ! -path '*/libs/mbedtls/*' 2>/dev/null)
 C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 
 # All objects

@@ -11,7 +11,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > **Goal:** Build the complete freestanding library layer the rest of the kernel depends on: `snprintf`/`vsnprintf` in `libc` (§1; `panic.c` / klog migration still deferred), full floating-point math beyond `kmath.h` (§2), LZ4 (§3; assumed by TODO-26/TODO-27), miniz deflate/ZIP (§4), Monocypher + kernel CSPRNG (§5), cJSON (§6), and Mbed TLS record layer (§7) for HTTPS/FTPS consumers. All ports compile with `-ffreestanding -nostdlib` and route heap through `kmalloc`/`kfree` with `pmm_alloc_contiguous` for buffers > 4 KiB.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-06-12):** `src/libc/string.c` + `include/libc/string.h` ship `snprintf`/`vsnprintf` and string/memory ops (§1 core done; `panic.c` still hand-rolls crash text). `include/kernel/kmath.h` already inlines `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` for stb; §2 `src/libc/math.c` trig/log suite not started. `src/libs/cjson/` + `src/kernel/json.c` implement §6 parser + thin wrappers; `cJSON_SetMaxDepth` / production call sites still open. `src/libs/monocypher/` + `src/kernel/csprng.c` ship §5 (crypto + CSPRNG + `NtGetRandom`); `test_register_klibs` is wired in `test_runner.c` with 15 crypto/CSPRNG suites. No `src/libs/lz4`, `miniz`, or `mbedtls` trees yet.
+> **Current state (code-truth 2026-06-12):** `src/libc/string.c` + `include/libc/string.h` ship `snprintf`/`vsnprintf` and string/memory ops (§1 core done; `panic.c` still hand-rolls crash text). `include/kernel/kmath.h` already inlines `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` for stb; §2 `src/libc/math.c` trig/log suite not started. `src/libs/cjson/` + `src/kernel/json.c` implement §6 parser + thin wrappers; `cJSON_SetMaxDepth` / production call sites still open. `src/libs/monocypher/` + `src/kernel/csprng.c` ship §5 (crypto + CSPRNG + `NtGetRandom`); `test_register_klibs` is wired in `test_runner.c` with 15 crypto/CSPRNG suites. `src/libs/lz4/` (LZ4 v1.10.0), `src/libs/miniz/` (3.0.2), and `src/libs/mbedtls/` (3.6.2 LTS) source vendored 2026-06-20 but NOT yet wired (excluded from the C-source auto-glob); §3/§4 freestanding ports are ready to implement, §7 (Mbed TLS) deferred on port effort.
 > **Already done -- do NOT re-implement:**
 > - `stb_truetype` -> `src/kernel/gfx/stb_truetype_impl.c` [done]
 > - `stb_image` -> `include/stb_image.h` + `src/kernel/image.c` [done]
@@ -171,7 +171,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 ## 3. LZ4 Block Compressor
 
-- [ ] Vendor `lz4.c` + `lz4.h` from the official LZ4 repository (BSD-2 license, ~2000 lines) into `src/libs/lz4/`
+- [x] Vendor `lz4.c` + `lz4.h` from the official LZ4 repository (BSD-2 license) into `src/libs/lz4/` -- LZ4 v1.10.0 (lz4/lz4hc/lz4frame/xxhash + LICENSE) vendored 2026-06-20
 - [ ] Compile with `-ffreestanding -nostdlib`; LZ4 has no `malloc` calls in its core API -- it operates entirely on caller-provided buffers
 - [ ] Expose the block API:
   ```c
@@ -186,20 +186,20 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [ ] Wire into TODO-26 hibernation image writer (-> XREF `TODO-26-power-management.md §4`)
 - [ ] Wire into `TODO-20-eif-full-implementation.md` §6 EIF compressed segments (-> XREF `TODO-20-eif-full-implementation.md` §6)
 
-- [ ] For streaming use cases (large IXFS extents), vendor `lz4frame.c` from the same repository; provides the standard `.lz4` framing layer with content checksum (XXH32) and block independence flag
+- [x] For streaming use cases (large IXFS extents), vendor `lz4frame.c` from the same repository; provides the standard `.lz4` framing layer with content checksum (XXH32) and block independence flag -- vendored (lz4frame.c/.h + xxhash.c/.h)
 - [ ] `lz4f_compress_begin / update / end` / `lz4f_decompress` API
 
 - [ ] Commit: `"libs: LZ4 block compressor, freestanding port, wired to crash dump + hibernate"`
 
 **Test checkpoint:** 64 KiB random buffer round-trip through `lz4_compress` / `lz4_decompress` matches; `lz4_compress_bound` >= actual compressed size; TODO-27 writer calls real LZ4 API without placeholder. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] LZ4 needs official `lz4.c`/`lz4.h`/`lz4frame.c` (BSD-2) operator-vendored into `src/libs/lz4/` like monocypher/cJSON -- the agent environment cannot fetch verbatim upstream, and reference-format interop for OFF-BOX crash-dump decode (WinDbg/host) cannot be proven without the reference codec, so a hand-rolled substitute is unsafe for that consumer. Block API + frame layer + TODO-26/27/20 wiring follow once vendored. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §3 (item: "Vendor `lz4.c` + `lz4.h` from the official LZ4 repository" at line 174)
+> **Source vendored (2026-06-20):** LZ4 v1.10.0 (BSD-2) is now in `src/libs/lz4/` (`lz4`, `lz4hc`, `lz4frame`, `xxhash` + LICENSE), fetched verbatim from an interactive session -- the fetch-blocker that forced the prior deferral (headless runner has no network) is cleared. Remaining (ready to implement): freestanding port (`-ffreestanding`, kernel `string.h`; block API has no `malloc`), the `lz4_compress`/`lz4_decompress`/`lz4_compress_bound` wrapper, the `.lz4` frame layer for off-box decode, the Makefile build rule (the tree is currently excluded from the C-source auto-glob), the TODO-26/27/20 consumer wiring, and tests.
 
 ---
 
 ## 4. miniz Deflate / Inflate + ZIP
 
-- [ ] Vendor `miniz.h` / `miniz.c` (MIT, ~6000 lines) into `src/libs/miniz/`
+- [x] Vendor `miniz.h` / `miniz.c` (MIT) into `src/libs/miniz/` -- miniz 3.0.2 amalgamation (miniz.c/.h + LICENSE) vendored 2026-06-20
 - [ ] Compile with `-ffreestanding -nostdlib -msse2`
 - [ ] Redirect `malloc`/`free` -> `kmalloc`/`kfree` via `#define` overrides for the internal `tinfl` decompressor state struct (<= 4 KiB -- kmalloc safe)
 - [ ] For decompression output buffers > 4 KiB: override the output buffer allocation callback to use `pmm_alloc_contiguous()`
@@ -227,7 +227,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 **Test checkpoint:** 8 KiB gzip round-trip identity; ZIP in-memory extract matches golden hash; no `kmalloc` for output >4 KiB without `pmm_alloc_contiguous`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] miniz needs official `miniz.h`/`miniz.c` (MIT) operator-vendored into `src/libs/miniz/` like Monocypher (§5) and cJSON -- the agent environment cannot fetch verbatim upstream, and deflate/gzip/ZIP wire-format interop (HTTP gzip responses, off-box ZIP archives) cannot be proven without the reference codec, so a hand-rolled DEFLATE substitute is unsafe. malloc->kmalloc shims, ZIP API, and HTTP gzip wiring follow once vendored. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §4 (item: "Vendor `miniz.h` / `miniz.c` (MIT, ~6000 lines) into `src/libs/miniz/`" at line 202)
+> **Source vendored (2026-06-20):** miniz 3.0.2 (MIT) amalgamation is now in `src/libs/miniz/` (`miniz.c`/`miniz.h` + LICENSE), fetched verbatim from an interactive session -- the fetch-blocker that forced the prior deferral is cleared. Remaining (ready to implement): freestanding port (`MINIZ_NO_STDIO`/`MINIZ_NO_TIME`, `malloc`/`free`/`realloc` -> `kmalloc` for <=4 KiB state, `pmm_alloc_contiguous()` for output >4 KiB), the `mz_compress`/`mz_uncompress` + read-only ZIP wrappers, the Makefile build rule (the tree is currently excluded from the C-source auto-glob), HTTP gzip wiring, and tests.
 
 ---
 
@@ -304,7 +304,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > [!IMPORTANT]
 > **Scope overlap -- `07-networking/TODO-03-http-tls.md` §3** also claims "Mbed TLS Kernel Port". This §7 is the canonical freestanding port; `07-networking/TODO-03 §3` must depend on this section being complete and should not re-implement the library itself. When `07-networking/TODO-03` is next validated, update its §3 to reference this TODO-03 §7 as its prerequisite.
 
-- [ ] Clone Mbed TLS 3.x source into `src/libs/mbedtls/` (Apache-2.0); create a `mbedtls_config.h` that enables only the required subset:
+- [/] Clone Mbed TLS source into `src/libs/mbedtls/` (Apache-2.0) -- Mbed TLS 3.6.2 LTS vendored 2026-06-20 (`library/` + `include/` + LICENSE); freestanding `mbedtls_config.h` enabling only the required subset still remains:
   - `MBEDTLS_AES_C` + `MBEDTLS_GCM_C` -- AES-128-GCM / AES-256-GCM
   - `MBEDTLS_SHA256_C` + `MBEDTLS_SHA512_C` -- hash primitives
   - `MBEDTLS_RSA_C` + `MBEDTLS_PKCS1_V21` -- RSA-OAEP for certificate public key operations
@@ -327,7 +327,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 **Test checkpoint:** `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` return 0; kernel links with `src/libs/mbedtls/` objects only via this port; serial shows entropy hook OK. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] Mbed TLS needs the official Apache-2.0 source operator-vendored into `src/libs/mbedtls/` like Monocypher (§5) / cJSON -- the agent environment cannot clone/vendor verbatim upstream, and TLS record-layer + AES/SHA wire-format interop cannot be proven without the reference library. The freestanding config, entropy hook, and CSPRNG wiring follow once vendored; `07-networking/TODO-03 §3` (HTTPS) depends on this. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS 3.x source into `src/libs/mbedtls/`" at line 307)
+> **Deferred:** [H] Source now vendored 2026-06-20 (Mbed TLS 3.6.2 LTS in `src/libs/mbedtls/`), so the prior fetch-blocker is cleared -- but the freestanding TLS port is large (config trim to the required subset, entropy hook to `csprng_fill`, CSPRNG/AES/SHA wiring, record-layer interop tests) and has no in-tree consumer until networking. Deferred on scope/effort, not on a blocker; pull forward when `07-networking/TODO-03 §3` (HTTPS) needs it. The tree is excluded from the C-source auto-glob until ported. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §7 (item: "Clone Mbed TLS source into `src/libs/mbedtls/`" at line 307)
 
 ---
 
