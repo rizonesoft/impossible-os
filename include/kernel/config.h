@@ -352,6 +352,7 @@ typedef enum {
     SAFE_MODE_MINIMAL  = 1,   /* core drivers/services only */
     SAFE_MODE_NETWORK  = 2,   /* minimal + networking */
     SAFE_MODE_DSREPAIR = 3,   /* directory-services-repair equivalent */
+    SAFE_MODE_COUNT,          /* sentinel: name-table length guard, not a level */
 } safe_mode_t;
 
 typedef enum {
@@ -359,6 +360,7 @@ typedef enum {
     SAFE_REASON_OPERATOR    = 1,   /* operator set safemode= on the command line */
     SAFE_REASON_BOOT_POLICY = 2,   /* bootloader/boot-entry requested safe boot */
     SAFE_REASON_RECOVERY    = 3,   /* repeated-failure / recovery boot path */
+    SAFE_REASON_COUNT,             /* sentinel: name-table length guard, not a reason */
 } safe_mode_reason_t;
 
 /* Components gated by safe mode. kernel_safe_mode_allows() answers whether each

@@ -478,16 +478,24 @@ static int64_t resolved_ival(const boot_args_t *a, const char *name)
 void safe_mode_resolve(uint8_t boot_mode, uint8_t sm_arg, int operator_set,
                        uint8_t *out_level, uint8_t *out_reason)
 {
-    /* boot_mode safe(1)/recovery(2) floors the level to MINIMAL; the operator
-     * may escalate above the floor but a lower-precedence safemode=off can
-     * never drop below it. */
-    uint8_t floor = (boot_mode == 1 || boot_mode == 2)
+    /* boot_mode: 0=normal, 1=safe, 2=recovery. Any OTHER value is a corrupt or
+     * unrecognized handoff -- fail SAFE (floor to MINIMAL), never fail open to
+     * normal mode. recovery(2)/safe(1)/unknown all floor the level to MINIMAL;
+     * the operator may escalate above the floor but a lower-precedence
+     * safemode=off can never drop below it. */
+    int is_recovery = (boot_mode == 2);
+    int is_safe_policy = (boot_mode != 0);   /* 1, 2, or any unknown value */
+    uint8_t floor = is_safe_policy
                         ? (uint8_t)SAFE_MODE_MINIMAL : (uint8_t)SAFE_MODE_OFF;
     uint8_t level = sm_arg > floor ? sm_arg : floor;
+    /* A corrupt safemode= arg can exceed the highest defined level; clamp to
+     * DSREPAIR (most restrictive) so gating + name-table stay in range. */
+    if (level >= (uint8_t)SAFE_MODE_COUNT)
+        level = (uint8_t)SAFE_MODE_DSREPAIR;
     uint8_t reason;
     if (level == SAFE_MODE_OFF)
         reason = (uint8_t)SAFE_REASON_NONE;
-    else if (boot_mode == 2)
+    else if (is_recovery)
         reason = (uint8_t)SAFE_REASON_RECOVERY;
     else if (operator_set && sm_arg > floor)
         reason = (uint8_t)SAFE_REASON_OPERATOR;   /* operator ESCALATED above the floor */
@@ -552,6 +560,26 @@ void kernel_config_publish(const struct boot_config *cfg)
 
     klog(LOG_INFO, "CONF", "[CONF] snapshot ready: version=%u phase=0",
          (uint32_t)k->version);
+
+    /* Surface the resolved safe-mode policy so the boot serial log shows the
+     * effective level + why it is in effect (test-checkpoint observable). */
+    if (k->safe_mode != SAFE_MODE_OFF) {
+        static const char *const sm_name[] = {
+            "off", "minimal", "network", "dsrepair" };
+        static const char *const rsn_name[] = {
+            "none", "operator", "boot-policy", "recovery" };
+        /* Name tables must stay length-synced with the enums they serialize;
+         * an added enum value fails the build instead of aliasing a string. */
+        _Static_assert(sizeof(sm_name) / sizeof(sm_name[0]) == SAFE_MODE_COUNT,
+            "sm_name[] out of sync with safe_mode_t");
+        _Static_assert(sizeof(rsn_name) / sizeof(rsn_name[0]) == SAFE_REASON_COUNT,
+            "rsn_name[] out of sync with safe_mode_reason_t");
+        const char *sm = k->safe_mode < SAFE_MODE_COUNT
+                             ? sm_name[k->safe_mode] : "invalid";
+        const char *rsn = k->safe_mode_reason < SAFE_REASON_COUNT
+                              ? rsn_name[k->safe_mode_reason] : "invalid";
+        klog(LOG_INFO, "CONF", "[CONF] safe_mode=%s reason=%s", sm, rsn);
+    }
 }
 
 const kernel_config_t *kernel_config_get(void)

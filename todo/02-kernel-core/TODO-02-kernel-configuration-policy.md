@@ -165,7 +165,7 @@ Represent safe mode as a first-class kernel policy object, not a scattered colle
 - [x] Distinguish operator-requested from repeated-failure recovery safe mode: recovery-first, escalation-above-floor->OPERATOR, floor->BOOT_POLICY, preserved in `kernel_config_t.safe_mode_reason`.
 - [x] Commit: `"kernel: add Safe Mode and recovery policy object"`
 
-**Test checkpoint:** Boot with `safemode=network`: serial shows `"[CONF] safe_mode=network reason=boot-policy"` and GUI-only services stay disabled while networking remains enabled. Repeated-failure recovery boot shows a distinct `reason=recovery` code and cannot be downgraded by registry state. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot with cmdline `safemode=network`: serial shows `"[CONF] safe_mode=network reason=operator"` (operator-requested via command line) and GUI-only services stay disabled while networking remains enabled. A boot-entry-forced safe boot instead shows `reason=boot-policy`, and a repeated-failure recovery boot shows a distinct `reason=recovery` code that cannot be downgraded by registry state or `safemode=off`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | CONF safe-mode suites, 0 failures
 
@@ -175,6 +175,10 @@ Represent safe mode as a first-class kernel policy object, not a scattered colle
 > - Reason matrix: recovery-first -> `RECOVERY`; escalation above floor -> `OPERATOR`; floor -> `BOOT_POLICY`.
 > - Control-set surfacing through `kernel_config_get()` deferred to §4 (ControlSet selection owns the field).
 > - Codex review adoptions + per-finding evidence in the section ship commit.
+
+> **Verified:** 2026-06-20 | commit `4b3ba505` | 5/6 items | build OK | tests 2915/2915 PASS
+> **Deferred:** [M] Surface selected control set through `kernel_config_get()` -- depends on the §4 control-set field (item 3 of this section is `[/]`) -> XREF: 02-kernel-core/TODO-02 §4 (item: "persist the chosen control set id in `kernel_config_t`" at line 144)
+> **Quality reviewed:** 2026-06-20 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 1H+3M fixed | scope: kernel-code-quality
 
 ---
 

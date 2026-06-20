@@ -240,6 +240,16 @@ static void test_cfg_safe_mode_floor(void)
     safe_mode_resolve(1, SAFE_MODE_MINIMAL, 1, &lvl, &rsn);
     TEST_ASSERT_EQ(lvl, SAFE_MODE_MINIMAL, "safe boot + safemode=minimal stays minimal");
     TEST_ASSERT_EQ(rsn, SAFE_REASON_BOOT_POLICY, "equal-to-floor is boot-policy, not operator");
+
+    /* Corrupt/unknown boot_mode must FAIL SAFE, never collapse to normal mode. */
+    safe_mode_resolve(99, SAFE_MODE_OFF, 0, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_MINIMAL, "unknown boot_mode floors to minimal (fail-safe)");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_BOOT_POLICY, "unknown boot_mode reads boot-policy reason");
+
+    /* Corrupt safemode= arg above the highest level clamps to DSREPAIR. */
+    safe_mode_resolve(0, 99, 1, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_DSREPAIR, "out-of-range safemode arg clamps to dsrepair");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_OPERATOR, "operator-set out-of-range arg reads operator reason");
 }
 
 static void test_cfg_safe_mode_gating(void)
