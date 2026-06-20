@@ -11,7 +11,10 @@
 
 #include "kernel/test/test.h"
 #include "kernel/config.h"
+#include "kernel/boot_info.h"
 #include "libc/string.h"
+
+extern struct boot_info g_boot_info;
 
 /* boot_args_t is several KB; keep one file-static fixture rather than a stack
  * temporary per test. Each test re-parses into it (parse memsets it first). */
@@ -161,8 +164,46 @@ static void test_cfg_unterminated_cmdline(void)
     TEST_ASSERT_EQ(st, BOOT_ARGS_ERR_OVERFLOW, "over-long value token rejected");
 }
 
+/* ---- Section 2: kernel_config_t immutable snapshot ----------------------- */
+
+static void test_cfg_snapshot_published(void)
+{
+    /* boot_args_init + kernel_config_publish ran in Phase 0, so by test time the
+     * snapshot must be published with a valid header. */
+    const kernel_config_t *k = kernel_config_get();
+    TEST_ASSERT_NOT_NULL(k, "kernel_config_get returns the published snapshot");
+    TEST_ASSERT_EQ(k->magic, KERNEL_CONFIG_MAGIC, "snapshot magic is CFG1");
+    TEST_ASSERT_EQ(k->version, KERNEL_CONFIG_VERSION, "snapshot version matches header");
+    TEST_ASSERT_EQ(k->size, sizeof(kernel_config_t), "snapshot size self-describes the struct");
+}
+
+static void test_cfg_snapshot_consistent(void)
+{
+    /* The flattened fields must agree with the authoritative sources the
+     * snapshot was built from -- the snapshot is a faithful read-only view. */
+    const kernel_config_t *k = kernel_config_get();
+    TEST_ASSERT_NOT_NULL(k, "snapshot present for consistency check");
+    TEST_ASSERT_EQ(k->boot_mode, g_boot_info.config.boot_mode,
+                   "snapshot boot_mode mirrors boot_config");
+    TEST_ASSERT_EQ(k->serial_debug, g_boot_info.config.serial_debug,
+                   "snapshot serial_debug mirrors boot_config");
+    TEST_ASSERT_EQ(k->boot_reason, g_boot_info.boot_reason,
+                   "snapshot boot_reason mirrors validated boot decision");
+    TEST_ASSERT_EQ(k->selection_reason, g_boot_info.selection_reason,
+                   "snapshot selection_reason mirrors the boot-entry ladder reason");
+    /* debug_enabled is the resolved boot-arg value (cmdline over boot_config). */
+    const boot_args_t *a = boot_args_parsed();
+    if (a) {
+        const boot_arg_value_t *v = boot_args_get(a, "debug");
+        uint8_t want = v ? (uint8_t)v->ival : (uint8_t)g_boot_info.config.debug;
+        TEST_ASSERT_EQ(k->debug_enabled, want, "snapshot debug_enabled = resolved boot arg");
+    }
+}
+
 void test_register_kernel_config(void)
 {
+    test_suite_register_cat("CONF: snapshot published",      test_cfg_snapshot_published,      TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: snapshot consistent",     test_cfg_snapshot_consistent,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: boot arg basic parse",     test_cfg_basic_parse,             TEST_CAT_BOOT);
     test_suite_register_cat("CONF: unknown kernel key fatal", test_cfg_unknown_kernel_key_fatal, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: allow_unknown downgrade",  test_cfg_allow_unknown_downgrades, TEST_CAT_BOOT);

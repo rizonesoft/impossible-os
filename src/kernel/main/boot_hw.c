@@ -306,6 +306,12 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
         }
     }
 
+    /* Publish the immutable kernel configuration snapshot now that the boot
+     * decision provenance (boot_reason / selected_entry_id) has been validated.
+     * Later phases consume kernel_config_get() instead of re-reading boot_args /
+     * boot_config / boot_info. */
+    kernel_config_publish(&g_boot_info.config);
+
     /* Anti-rollback: sanity-check flags + security-version fields.
      * The downgrade refusal itself was enforced pre-jump by the
      * bootloader; this validator catches producer bugs (unknown flag

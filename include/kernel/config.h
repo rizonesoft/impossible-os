@@ -231,3 +231,99 @@ enum boot_reason_code  boot_args_selection_reason(void);
 
 /* The parsed result published by boot_args_init() (NULL before it runs). */
 const boot_args_t *boot_args_parsed(void);
+
+/* ============================================================================
+ * Section 2: kernel_config_t -- immutable Phase 0 configuration snapshot.
+ *
+ * One read-only typed snapshot that every later phase consumes instead of
+ * re-reading the mutable boot_args / boot_config / boot_info structures. Every
+ * Phase-0-resolved boot argument is FLATTENED into a plain scalar/enum field
+ * here (boot_args_t stays a private parser/provenance input, never the public
+ * consumption contract) so consumers never re-derive defaults, enum meanings,
+ * or provenance.
+ *
+ * Publication ordering: published once, on the BSP, AFTER boot_decision_validate
+ * has accepted the boot-decision provenance (boot_reason / selected_entry_id) --
+ * NOT right after boot_args_init, whose decision inputs are still unvalidated.
+ * kernel_config_get() returns NULL before that point. The `ready` flag is
+ * written LAST, behind an smp_mb release, so an AP/late reader never observes a
+ * half-filled snapshot.
+ *
+ * The control-set target + LastKnownGood are NOT fields here: they are resolved
+ * only after Select-value validation, which is ControlSet/LastKnownGood selection
+ * work, and a zero placeholder in an immutable object would be permanently
+ * false. That section owns the resolved control-set policy and how it is
+ * published.
+ * ============================================================================ */
+
+#define KERNEL_CONFIG_MAGIC    0x43464731u   /* "CFG1" -- layout sanity guard */
+#define KERNEL_CONFIG_VERSION  1u            /* logged/layout guard; bump on field change */
+
+typedef struct {
+    /* Header -- T31 bulletproofing sanity (magic/version/size verified at use). */
+    uint32_t magic;                 /* KERNEL_CONFIG_MAGIC */
+    uint16_t version;               /* KERNEL_CONFIG_VERSION */
+    uint16_t size;                  /* sizeof(kernel_config_t) */
+
+    /* Boot mode + safe-mode profile. */
+    uint8_t  boot_mode;             /* 0=normal, 1=safe, 2=recovery (boot_config.boot_mode) */
+    uint8_t  safe_mode;             /* safemode enum index (0=off..3=dsrepair) */
+
+    /* Init flags. */
+    uint8_t  async_init;            /* parallel subsystem init on APs */
+    uint8_t  deferred_init;         /* defer non-critical inits */
+
+    /* Debug / logging transports. */
+    uint8_t  debug_enabled;         /* debug=1 */
+    uint8_t  serial_debug;          /* COM1 serial output */
+    uint8_t  test_mode;             /* run unit tests then halt */
+
+    /* Code-integrity / verifier policy. */
+    uint8_t  testsigning;           /* allow test-signed kernel code */
+    uint8_t  nointegritychecks;     /* CI enforcement disabled */
+    uint8_t  noacpi;                /* skip ACPI bring-up */
+    uint8_t  nogui;                 /* graphical shell disabled */
+
+    /* Graphics mode (from the validated boot_info framebuffer). */
+    uint8_t  fb_valid;              /* 1 = a usable framebuffer was handed off */
+    uint8_t  pixel_format;          /* GOP_PIXEL_* */
+    uint32_t fb_width;
+    uint32_t fb_height;
+
+    /* Boot-decision provenance (valid only post boot_decision_validate). The
+     * boot-entry ladder pairs selected_entry_id with selection_reason: a later
+     * phase needs BOTH to explain why an entry was chosen and to detect the
+     * empty-id FALLBACK_STORE_INVALID sentinel without re-reading boot_info. */
+    uint32_t boot_reason;           /* enum boot_reason_code (policy reason) */
+    uint32_t selection_reason;      /* enum boot_selection_reason (ladder reason) */
+    char     entry_id[64];          /* selected boot-entry id ("" = fallback sentinel) */
+
+    /* Verifier flags (CSV) + a provenance summary. */
+    char     verifier[BOOT_ARG_STRVAL_MAX];   /* verifier= CSV, empty if unset */
+    uint8_t  cmdline_override_count;           /* CMDLINE keys that beat a BOOTCFG key */
+    uint8_t  _pad[3];
+} kernel_config_t;
+
+/* Exact ABI size for version 1. Any field add/remove/reorder/repack changes
+ * this -- bump KERNEL_CONFIG_VERSION and KERNEL_CONFIG_SIZE_V1 together (a <=N
+ * guard would let layout drift silently while the accessor contract changed). */
+#define KERNEL_CONFIG_SIZE_V1 172u
+_Static_assert(sizeof(kernel_config_t) == KERNEL_CONFIG_SIZE_V1,
+    "kernel_config_t layout changed: bump KERNEL_CONFIG_VERSION + KERNEL_CONFIG_SIZE_V1");
+/* Load-bearing field offsets -- catch a silent reorder/repack of the contract. */
+_Static_assert(__builtin_offsetof(kernel_config_t, magic) == 0,
+    "magic must lead the snapshot for the layout-sanity guard");
+_Static_assert(__builtin_offsetof(kernel_config_t, boot_reason) == 32,
+    "boot_reason offset pinned for the v1 ABI");
+_Static_assert(__builtin_offsetof(kernel_config_t, selection_reason) == 36,
+    "selection_reason offset pinned for the v1 ABI");
+_Static_assert(__builtin_offsetof(kernel_config_t, entry_id) == 40,
+    "entry_id offset pinned for the v1 ABI");
+
+/* Build + publish the immutable snapshot from the validated handoff. Call once
+ * on the BSP after boot_decision_validate succeeds. Writes the `ready` flag last
+ * behind a release barrier; logs `[CONF] snapshot ready: version=1 phase=0`. */
+void kernel_config_publish(const struct boot_config *cfg);
+
+/* The published snapshot, or NULL before kernel_config_publish() runs. */
+const kernel_config_t *kernel_config_get(void);

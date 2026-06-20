@@ -10,6 +10,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"
 #include "kernel/boot_halt.h"
+#include "kernel/barrier.h"
 #include "libc/string.h"
 
 extern struct boot_info g_boot_info;
@@ -453,4 +454,80 @@ const char *boot_args_entry_id(void)
 enum boot_reason_code boot_args_selection_reason(void)
 {
     return (enum boot_reason_code)g_boot_info.boot_reason;
+}
+
+/* ---- Section 2: immutable kernel_config_t snapshot ----------------------- */
+
+static kernel_config_t g_kernel_config;
+static int             g_kernel_config_ready;   /* release-published last */
+
+/* Resolved value of a boot-arg key: the parsed value if present, else the
+ * descriptor default. Flattening every key through this means consumers of
+ * kernel_config_t never re-derive a default or re-interpret an enum. */
+static int64_t resolved_ival(const boot_args_t *a, const char *name)
+{
+    const boot_arg_value_t *v = a ? boot_args_get(a, name) : (void *)0;
+    if (v)
+        return v->ival;
+    const boot_arg_desc_t *d = boot_arg_find(name);
+    return d ? d->default_val : 0;
+}
+
+void kernel_config_publish(const struct boot_config *cfg)
+{
+    const boot_args_t *a = boot_args_parsed();
+    kernel_config_t *k = &g_kernel_config;
+    memset(k, 0, sizeof(*k));
+    k->magic   = KERNEL_CONFIG_MAGIC;
+    k->version = (uint16_t)KERNEL_CONFIG_VERSION;
+    k->size    = (uint16_t)sizeof(*k);
+
+    k->boot_mode        = cfg ? cfg->boot_mode : 0;
+    k->safe_mode        = (uint8_t)resolved_ival(a, "safemode");
+    k->async_init       = (uint8_t)resolved_ival(a, "async_init");
+    k->deferred_init    = cfg ? cfg->deferred : 0;   /* not a schema key; raw cfg field */
+    k->debug_enabled    = (uint8_t)resolved_ival(a, "debug");
+    k->serial_debug     = cfg ? cfg->serial_debug : 0;
+    k->test_mode        = (uint8_t)resolved_ival(a, "test");
+    k->testsigning      = (uint8_t)resolved_ival(a, "testsigning");
+    k->nointegritychecks = (uint8_t)resolved_ival(a, "nointegritychecks");
+    k->noacpi           = (uint8_t)resolved_ival(a, "noacpi");
+    k->nogui            = (uint8_t)resolved_ival(a, "nogui");
+
+    /* Graphics mode from the validated framebuffer handoff. */
+    k->fb_valid     = (uint8_t)(g_boot_info.fb_available && g_boot_info.fb.addr ? 1 : 0);
+    k->pixel_format = g_boot_info.fb.pixel_format;
+    k->fb_width     = g_boot_info.fb.width;
+    k->fb_height    = g_boot_info.fb.height;
+
+    /* Boot-decision provenance (valid: caller publishes after boot_decision_validate). */
+    k->boot_reason      = g_boot_info.boot_reason;
+    k->selection_reason = g_boot_info.selection_reason;
+    strncpy(k->entry_id, g_boot_info.selected_entry_id, sizeof(k->entry_id) - 1);
+    k->entry_id[sizeof(k->entry_id) - 1] = 0;
+
+    const boot_arg_value_t *vf = a ? boot_args_get(a, "verifier") : (void *)0;
+    if (vf) {
+        strncpy(k->verifier, vf->sval, BOOT_ARG_STRVAL_CAP);
+        k->verifier[BOOT_ARG_STRVAL_CAP] = 0;
+    }
+    k->cmdline_override_count = a ? a->overridden_count : 0;
+
+    /* Publish: every field is written above; the ready flag is released LAST so
+     * a concurrent reader (AP / late consumer) never observes a half-filled
+     * snapshot. */
+    smp_mb();
+    g_kernel_config_ready = 1;
+    smp_mb();
+
+    klog(LOG_INFO, "CONF", "[CONF] snapshot ready: version=%u phase=0",
+         (uint32_t)k->version);
+}
+
+const kernel_config_t *kernel_config_get(void)
+{
+    if (!g_kernel_config_ready)
+        return (void *)0;
+    smp_mb();                       /* acquire: pair the publish release */
+    return &g_kernel_config;
 }

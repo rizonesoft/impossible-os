@@ -50,7 +50,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | ⭐ | Order | Deliverable                                 | Depends On                          | Status |
 | --- | :---: | ------------------------------------------- | ----------------------------------- | :----: |
 | 💎 | 1 | Boot argument schema and parser                 | D01 T07 §3, §5                      | [x] |
-| 💎 | 2 | `kernel_config_t` immutable Phase 0 snapshot    | §1, T01 §2, §6                      | [ ] |
+| 💎 | 2 | `kernel_config_t` immutable Phase 0 snapshot    | §1, T01 §2, §6                      | [x] |
 | 💎 | 3 | Registry-backed policy merge                    | §2, T14 §8, §12, §13               | [ ] |
 | 💎 | 4 | ControlSet and LastKnownGood selection          | §3, D01 T07 §7, D01 T21 §4, §5     | [ ] |
 | 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [ ] |
@@ -97,14 +97,22 @@ Parse the bootloader handoff into typed, validated keys before any Phase 0 consu
 
 Publish one read-only snapshot that all later phases consume instead of rereading mutable boot structures.
 
-- [ ] Add `include/kernel/config.h` with `kernel_config_t` and `kernel_config_get()`.
-- [ ] Publish a read-only snapshot after bootloader config validation.
-- [ ] Include boot mode, graphics mode, debug transports, logging mode, init flags, panic policy, CI policy, and verifier flags.
-- [ ] Include selected boot-entry id, control-set target, selection reason, and policy provenance summary fields needed by later phases.
-- [ ] Add static asserts for struct version and size, plus a boot-time version log when the snapshot becomes visible.
-- [ ] Commit: `"kernel: publish immutable Phase 0 configuration snapshot"`
+- [x] Add `include/kernel/config.h` with `kernel_config_t`, `kernel_config_get()`, and `kernel_config_publish()`.
+- [x] Publish a read-only snapshot AFTER `boot_decision_validate`; `ready` flag released last behind `smp_mb`; `kernel_config_get()` returns NULL before then.
+- [x] Flatten boot mode, graphics (fb), debug transports, logging, init flags, CI policy (testsigning/nointegritychecks/noacpi/nogui), verifier CSV. Panic policy is a §6 runtime tunable.
+- [x] Include selected boot-entry id + `selection_reason` + `boot_reason` + cmdline-override provenance. Control-set target is §4-owned, not in this immutable snapshot.
+- [x] `_Static_assert` exact `KERNEL_CONFIG_SIZE_V1` + magic/boot_reason/selection_reason/entry_id offsets; `[CONF] snapshot ready: version=1 phase=0` log.
+- [x] Commit: `"kernel: publish immutable Phase 0 configuration snapshot"`
 
 **Test checkpoint:** First Phase 0 consumer sees non-NULL `kernel_config_get()` and serial shows `"[CONF] snapshot ready: version=1 phase=0"`. Build or boot fails if the declared size/version drifts from the published accessor contract. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 15 CONF suites, 0 failures
+> **Notes:**
+> - Shipped `kernel_config_t` + `kernel_config_publish`/`kernel_config_get` (config.h/config.c): a flattened read-only Phase-0 snapshot built from the resolved §1 boot args + validated `boot_info` (fb/boot_reason/selection_reason/entry_id).
+> - Published once on the BSP after `boot_decision_validate` in `boot_phase0`; `ready` flag released last behind `smp_mb`, acquire on `get()` -- write-once-before-SMP, no half-filled read.
+> - `boot_args_t` stays the private parser input; consumers read the flattened typed fields, never re-deriving defaults/enums. Codex 4x adoptions in commit.
+> - ABI guard: `KERNEL_CONFIG_SIZE_V1` exact-size `_Static_assert` + 4 offset pins (a `<=N` guard would miss reorder/repack).
+> - Scope: §2 owns the immutable snapshot; §3 owns the registry precedence merge; §4 owns the control-set target; §6 owns panic/runtime tunables.
 
 ---
 
@@ -257,7 +265,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | 💎 | Control-set style rollback state   | ⚠️ `Current` and `LastKnownGood` semantics     | ⚠️ Distro snapshots or boot fallback, not kernel   | ⬜ Planned - §4         |
 | 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
 | 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⬜ Planned - §3, §6, §8 |
-| 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ⬜ Planned - §2, §8, §9 |
+| 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ⚠️ §2 snapshot done; §8,§9 |
 | 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ⬜ Planned - §9         |
 | ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⬜ Planned - §3, §7, §9 |
 
