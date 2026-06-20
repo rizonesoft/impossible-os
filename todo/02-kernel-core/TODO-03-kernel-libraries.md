@@ -66,7 +66,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | --                   |  [x]   |
 | 💎  |   2   | Complete floating-point math library                 | --                   |  [x]   |
 | 💎  |   3   | LZ4 block compressor                                 | --                   |  [/]   |
-| 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [ ]   |
+| 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [/]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [/]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [ ]   |
@@ -226,6 +226,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [ ] Commit: `"libs: miniz deflate/inflate, ZIP archive reading"`
 
 **Test checkpoint:** 8 KiB gzip round-trip identity; ZIP in-memory extract matches golden hash; no `kmalloc` for output >4 KiB without `pmm_alloc_contiguous`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] miniz needs official `miniz.h`/`miniz.c` (MIT) operator-vendored into `src/libs/miniz/` like Monocypher (§5) and cJSON -- the agent environment cannot fetch verbatim upstream, and deflate/gzip/ZIP wire-format interop (HTTP gzip responses, off-box ZIP archives) cannot be proven without the reference codec, so a hand-rolled DEFLATE substitute is unsafe. malloc->kmalloc shims, ZIP API, and HTTP gzip wiring follow once vendored. -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §4 (item: "Vendor `miniz.h` / `miniz.c` (MIT, ~6000 lines) into `src/libs/miniz/`" at line 202)
 
 ---
 
