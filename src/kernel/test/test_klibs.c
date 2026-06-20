@@ -695,8 +695,74 @@ static void test_nt_get_random_dispatch(void)
                    "dispatched NtGetRandom validates parameters");
 }
 
+/* Freestanding-libc string hardening edge cases: precision-bounded %s, %zd
+ * 64-bit, INT64_MIN magnitude, strlcat on an unterminated dst, and
+ * strtoul/strtol overflow clamp + invalid base. */
+static void test_string_lib_edges(void)
+{
+    char b[40];
+
+    /* Messages are intentionally reused (identical literals merge in .rodata)
+     * to keep the test-build image under the 0x800000 user-base ceiling. */
+    #define FE "fmt edge"
+    #define SE "strto edge"
+
+    snprintf(b, sizeof(b), "%zd", (long)0x100000000L);
+    TEST_ASSERT(strcmp(b, "4294967296") == 0, FE);          /* %zd reads 64-bit */
+    snprintf(b, sizeof(b), "%lld", (long long)(-9223372036854775807LL - 1));
+    TEST_ASSERT(strcmp(b, "-9223372036854775808") == 0, FE);/* %lld INT64_MIN */
+    snprintf(b, sizeof(b), "%.3s", "abcdef");
+    TEST_ASSERT(strcmp(b, "abc") == 0, FE);                 /* %.3s bounds output */
+
+    TEST_ASSERT_EQ(snprintf(b, 0, "%d", 42), 2, FE);        /* size=0 -> would-be len */
+    /* Truncation in the MIDDLE of a number must not spin: PUTC must still
+     * evaluate its side-effecting `tmp[--n]` argument once the buffer fills. */
+    TEST_ASSERT_EQ(snprintf(b, 3, "%d", 12345), 5, FE);     /* mid-number trunc len */
+    TEST_ASSERT(strcmp(b, "12") == 0, FE);                  /* mid-number trunc + NUL */
+    TEST_ASSERT_EQ(snprintf(b, 4, "hello"), 5, FE);         /* trunc returns full len */
+    TEST_ASSERT(strcmp(b, "hel") == 0, FE);                 /* trunc + NUL */
+
+    char d[4]; d[0]='a'; d[1]='b'; d[2]='c'; d[3]='d';
+    TEST_ASSERT_EQ(strlcat(d, "xy", 4), 6u, SE);            /* unterminated dst -> n+slen */
+
+    TEST_ASSERT_EQ(strtoul("99999999999999999999999", (char **)0, 10),
+                   0xFFFFFFFFFFFFFFFFUL, SE);               /* overflow clamps */
+    char *e = (char *)0;
+    TEST_ASSERT_EQ(strtoul("10", &e, 99), 0u, SE);          /* invalid base -> 0 */
+    TEST_ASSERT_EQ(strtol("-99999999999999999999", (char **)0, 10),
+                   (-9223372036854775807L - 1L), SE);       /* underflow -> LONG_MIN */
+
+    /* Integer precision: min digit count, leading zeros, prec overrides `0`. */
+    snprintf(b, sizeof(b), "%.5d", 42);
+    TEST_ASSERT(strcmp(b, "00042") == 0, FE);               /* zero-extend to precision */
+    snprintf(b, sizeof(b), "[%.0d]", 0);
+    TEST_ASSERT(strcmp(b, "[]") == 0, FE);                  /* %.0d of 0 -> no digits */
+    snprintf(b, sizeof(b), "[%08.3u]", 42u);
+    TEST_ASSERT(strcmp(b, "[     042]") == 0, FE);          /* prec disables 0, width pads */
+    snprintf(b, sizeof(b), "[%8p]", (void *)0x1234);
+    TEST_ASSERT(strcmp(b, "[  0x1234]") == 0, FE);          /* %p honors width */
+
+    /* strtoul sign + guarded 0x prefix. */
+    char *p = (char *)0;
+    TEST_ASSERT_EQ(strtoul("+10", &p, 10), 10u, SE);        /* consumes leading + */
+    TEST_ASSERT_EQ(strtoul("-1", (char **)0, 10), 0xFFFFFFFFFFFFFFFFUL, SE); /* negate */
+    p = (char *)0;
+    TEST_ASSERT_EQ(strtoul("0xg", &p, 0), 0u, SE);          /* 0x w/o hex digit -> 0 */
+    TEST_ASSERT(p && *p == 'x', SE);                        /* endptr after leading 0 */
+    TEST_ASSERT_EQ(strtoul("-18446744073709551616", (char **)0, 10),
+                   0xFFFFFFFFFFFFFFFFUL, SE);               /* neg overflow -> sentinel, not 1 */
+    char *q = (char *)0;
+    TEST_ASSERT_EQ(strtol("++1", &q, 10), 0L, SE);          /* doubled sign -> no conversion */
+    TEST_ASSERT(q == (char *)0 || *q == '+', SE);           /* endptr at original start */
+
+    #undef FE
+    #undef SE
+}
+
 void test_register_klibs(void)
 {
+    test_suite_register_cat("klibs: string lib edges",
+                            test_string_lib_edges, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: blake2b vector",
                             test_blake2b_vector, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: chacha20-poly1305 AEAD",

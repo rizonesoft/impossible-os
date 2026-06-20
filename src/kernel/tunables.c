@@ -421,13 +421,19 @@ uint32_t kernel_tunable_count(void)
     return c;
 }
 
-uint32_t kernel_tunable_dump(tunable_snapshot_t *out, uint32_t max_rows)
+uint32_t kernel_tunable_dump(tunable_snapshot_t *out, uint32_t max_rows, uint32_t *cursor)
 {
-    if (!out || max_rows == 0) return 0;
+    if (!out || max_rows == 0 || !cursor) return 0;
     uint32_t n = 0;
     uint64_t irq;
     spin_lock_irqsave(&s_lock, &irq);
-    for (uint32_t i = 0; i < TUNABLE_MAX && n < max_rows; i++) {
+    /* Resume from the RAW slot index in *cursor. A slot's index is stable across
+     * register/unregister between pages (unregister frees a slot in place;
+     * register reuses a free slot), so raw-slot pagination never drops or
+     * duplicates an entry that is present throughout the dump -- unlike an
+     * ordinal cursor, whose namespace shifts on any mutation. */
+    uint32_t i = *cursor;
+    for (; i < TUNABLE_MAX && n < max_rows; i++) {
         if (!s_tunables[i].used) continue;
         tunable_entry_t *t = &s_tunables[i];
         tunable_snapshot_t *r = &out[n++];
@@ -437,6 +443,7 @@ uint32_t kernel_tunable_dump(tunable_snapshot_t *out, uint32_t max_rows)
         r->owner_subsys = t->owner_subsys; r->source = t->source;
         r->_pad[0] = r->_pad[1] = r->_pad[2] = 0;
     }
+    *cursor = i;                                /* next raw slot to examine */
     spin_unlock_irqrestore(&s_lock, irq);
     return n;
 }

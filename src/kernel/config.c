@@ -629,11 +629,12 @@ int kernel_safe_mode_allows(safe_mode_component_t component)
 
 /* ---- config_dump (operator/support diagnostic) -------------------------- */
 
-/* Bound to the public tunable registry capacity so the scratch cannot silently
- * under-size if the registry grows (tunables.h _Static_asserts it == the
- * internal cap). The dump scratch lives in .bss, NOT on the caller stack: at
- * ~80 bytes/row it would consume most of an 8 KiB kernel stack. */
-static tunable_snapshot_t s_dump_rows[KERNEL_TUNABLE_CAPACITY];
+/* Small paginated scratch in .bss, NOT on the caller stack (~88 bytes/row would
+ * consume an 8 KiB kernel stack at full capacity, and a full-capacity static
+ * pushed kernel BSS into the user base). config_dump streams the whole tunable
+ * registry through this chunk via kernel_tunable_dump()'s start index. */
+#define CONFIG_DUMP_CHUNK 8u
+static tunable_snapshot_t s_dump_rows[CONFIG_DUMP_CHUNK];
 /* Non-reentrant guard for the shared scratch (atomic, not a spinlock, so no
  * lock is held across the klog serial writes -- a concurrent dumper backs off). */
 static volatile int s_dump_busy;
@@ -692,29 +693,26 @@ void config_dump(void)
     /* Runtime tunable registry. Privileged tunables are the secret class: their
      * current value is redacted so a shared dump / support bundle cannot leak
      * sensitive tuning. Name, bounds, flags, and source stay visible. */
-    uint32_t n = kernel_tunable_dump(s_dump_rows, KERNEL_TUNABLE_CAPACITY);
-    uint32_t total = kernel_tunable_count();
-    /* If the registry ever outgrows the dump scratch, say so explicitly rather
-     * than emit a complete-looking but truncated support artifact. */
-    if (n < total)
-        klog(LOG_WARN, "CONF",
-             "[CONF] dump: %u of %u tunables (TRUNCATED -- raise KERNEL_TUNABLE_CAPACITY)",
-             n, total);
-    else
-        klog(LOG_INFO, "CONF", "[CONF] dump: %u tunables", n);
-    for (uint32_t i = 0; i < n; i++) {
-        const tunable_snapshot_t *t = &s_dump_rows[i];
-        if (t->flags & TUNABLE_PRIVILEGED)
-            klog(LOG_INFO, "CONF",
-                 "[CONF]   %s = **** (privileged; def/min/max redacted) flags=0x%x src=%u",
-                 t->name, (uint32_t)t->flags, (uint32_t)t->source);
-        else
-            klog(LOG_INFO, "CONF",
-                 "[CONF]   %s = %ld (def=%ld min=%ld max=%ld) flags=0x%x src=%u",
-                 t->name, (int64_t)t->cur, (int64_t)t->def,
-                 (int64_t)t->min, (int64_t)t->max,
-                 (uint32_t)t->flags, (uint32_t)t->source);
-    }
+    klog(LOG_INFO, "CONF", "[CONF] dump: %u tunables", kernel_tunable_count());
+    /* Stream the whole registry through the small chunk (no truncation). The
+     * cursor is a raw slot index, stable if the registry mutates mid-dump. */
+    uint32_t cursor = 0, got;
+    do {
+        got = kernel_tunable_dump(s_dump_rows, CONFIG_DUMP_CHUNK, &cursor);
+        for (uint32_t i = 0; i < got; i++) {
+            const tunable_snapshot_t *t = &s_dump_rows[i];
+            if (t->flags & TUNABLE_PRIVILEGED)
+                klog(LOG_INFO, "CONF",
+                     "[CONF]   %s = **** (privileged; def/min/max redacted) flags=0x%x src=%u",
+                     t->name, (uint32_t)t->flags, (uint32_t)t->source);
+            else
+                klog(LOG_INFO, "CONF",
+                     "[CONF]   %s = %ld (def=%ld min=%ld max=%ld) flags=0x%x src=%u",
+                     t->name, (int64_t)t->cur, (int64_t)t->def,
+                     (int64_t)t->min, (int64_t)t->max,
+                     (uint32_t)t->flags, (uint32_t)t->source);
+        }
+    } while (got == CONFIG_DUMP_CHUNK);
 
     /* Boot-arg schema: every recognized key with its phase, default, range, and
      * its effective parsed value + provenance. This is the operator-facing

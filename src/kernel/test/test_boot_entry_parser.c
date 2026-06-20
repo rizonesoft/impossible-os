@@ -422,38 +422,43 @@ static int bls_streq(const char *a, const char *b)
 /* sort_key is the primary key; empty sort_key (the "match any"/unset value)
  * sorts before any non-empty key. id breaks ties when sort_key is equal. The
  * entries[] array is deliberately built out of display order. */
+/* One shared fixture for the (sequentially-run) bls sort tests: the struct is
+ * ~36 KB, so two function-local statics cost 72 KB of test-build BSS and push
+ * the image over the 0x800000 user-base ceiling. Sharing reclaims 36 KB. */
+static boot_entries_parse_result_t s_bls_fixture;
+
 static void test_bls_sort_by_sort_key_then_id(void)
 {
-    static boot_entries_parse_result_t r;
-    bls_set(&r.entries[0], "zeta",  "20", "m1");
-    bls_set(&r.entries[1], "alpha", "10", "m1");
-    bls_set(&r.entries[2], "beta",  "20", "m1");
-    bls_set(&r.entries[3], "gamma", "",   "m1");
-    r.entry_count = 4;
+    boot_entries_parse_result_t *const r = &s_bls_fixture;
+    bls_set(&r->entries[0], "zeta",  "20", "m1");
+    bls_set(&r->entries[1], "alpha", "10", "m1");
+    bls_set(&r->entries[2], "beta",  "20", "m1");
+    bls_set(&r->entries[3], "gamma", "",   "m1");
+    r->entry_count = 4;
 
     unsigned int idx[4] = {0, 1, 2, 3};
-    boot_entries_bls_sort(&r, idx, 4u);
+    boot_entries_bls_sort(r, idx, 4u);
 
-    TEST_ASSERT(bls_streq(r.entries[idx[0]].id, "gamma"), "empty sort_key sorts first");
-    TEST_ASSERT(bls_streq(r.entries[idx[1]].id, "alpha"), "sort_key 10 second");
-    TEST_ASSERT(bls_streq(r.entries[idx[2]].id, "beta"),  "sort_key 20 tiebreak id beta before zeta");
-    TEST_ASSERT(bls_streq(r.entries[idx[3]].id, "zeta"),  "sort_key 20 tiebreak id zeta last");
+    TEST_ASSERT(bls_streq(r->entries[idx[0]].id, "gamma"), "empty sort_key sorts first");
+    TEST_ASSERT(bls_streq(r->entries[idx[1]].id, "alpha"), "sort_key 10 second");
+    TEST_ASSERT(bls_streq(r->entries[idx[2]].id, "beta"),  "sort_key 20 tiebreak id beta before zeta");
+    TEST_ASSERT(bls_streq(r->entries[idx[3]].id, "zeta"),  "sort_key 20 tiebreak id zeta last");
 }
 
 /* machine_id is the secondary key: equal sort_key falls through to machine_id
  * before id. */
 static void test_bls_sort_machine_id_tiebreak(void)
 {
-    static boot_entries_parse_result_t r;
-    bls_set(&r.entries[0], "id-a", "10", "mb");
-    bls_set(&r.entries[1], "id-b", "10", "ma");
-    r.entry_count = 2;
+    boot_entries_parse_result_t *const r = &s_bls_fixture;
+    bls_set(&r->entries[0], "id-a", "10", "mb");
+    bls_set(&r->entries[1], "id-b", "10", "ma");
+    r->entry_count = 2;
 
     unsigned int idx[2] = {0, 1};
-    boot_entries_bls_sort(&r, idx, 2u);
+    boot_entries_bls_sort(r, idx, 2u);
 
-    TEST_ASSERT(bls_streq(r.entries[idx[0]].machine_id, "ma"), "machine_id tiebreak: ma first");
-    TEST_ASSERT(bls_streq(r.entries[idx[1]].machine_id, "mb"), "machine_id tiebreak: mb second");
+    TEST_ASSERT(bls_streq(r->entries[idx[0]].machine_id, "ma"), "machine_id tiebreak: ma first");
+    TEST_ASSERT(bls_streq(r->entries[idx[1]].machine_id, "mb"), "machine_id tiebreak: mb second");
 }
 
 /* ---- health_check_subset (per-entry health-gate override) ------------- */

@@ -123,7 +123,11 @@ typedef struct {
     uint8_t          _pad[3];
 } tunable_snapshot_t;
 
-/* Copy up to max_rows snapshots into out; returns the number written. */
-uint32_t kernel_tunable_dump(tunable_snapshot_t *out, uint32_t max_rows);
+/* Copy up to max_rows snapshots into out, resuming from the RAW slot index in
+ * *cursor (init to 0; the function advances it to the next slot to examine).
+ * Pagination by raw slot is stable under concurrent register/unregister between
+ * pages -- an ordinal cursor would shift and drop/duplicate rows. Returns the
+ * number written this call; 0 means no further used slots (done). */
+uint32_t kernel_tunable_dump(tunable_snapshot_t *out, uint32_t max_rows, uint32_t *cursor);
 
 #endif /* KERNEL_TUNABLES_H */

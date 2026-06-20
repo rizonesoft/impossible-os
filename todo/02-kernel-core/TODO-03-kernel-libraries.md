@@ -114,6 +114,16 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 **Test checkpoint:** `snprintf(buf, 64, "%lld %p", (long long)-1, (void *)0x1000)` returns expected length; `strcmp`/`memcmp` unit vectors pass; link includes `libc/string.c` without duplicate weak symbols from `image.c`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Notes:**
+> - Freestanding string lib shipped: `mem*`/`str*`/`strl*` + `snprintf`/`vsnprintf` (full flag/width/precision/length-modifier support); weak-symbol dupes removed from `image.c` + `stb_truetype_impl.c`.
+> - Fixed a serious `vsnprintf` infinite loop: `PUTC` skipped evaluating side-effecting args (`tmp[--n]`, `*fmt++`) once the buffer filled, spinning forever on size=0 or mid-number truncation. Now binds the arg to a local first.
+> - Hardened formatter/conversions: integer precision, `%p` width/flags, `FMT_FIELD_MAX` cap, `%s`/`strlcat` overread bounds, `INT64_MIN`-safe, `strtoul`/`strtol` sign + guarded `0x` + overflow-before-negate (shared sign-less core).
+> - `memcpy`/`memmove`/`memset` word-at-a-time (`may_alias`) scalar fast path; `strstr` first-char skip; `config_dump` tunable pagination uses a stable raw-slot cursor; `boot_timing` clamps `snprintf` return before `vfs_write`.
+> - 2 items deferred: `panic.c` + `klog`/`printk` migration onto `snprintf` (boot-path regression risk). Reclaimed 36 KB test BSS (shared bls fixture) to fit the test build under the 0x800000 ceiling.
+> **Verified:** 2026-06-20 | commit `PENDINGHASH` | 10/12 items | build OK | tests 6458 kernel + 16 user PASS (TCG)
+> **Deferred:** [L] panic.c + klog/printk still use hand-rolled formatters, not snprintf/vsnprintf (reason: cosmetic dedup, no functional gap; migration during active dev risks boot regression) -> XREF: TODO-03 §1 (items "Update panic.c to use snprintf" + "Update klog / printk to use vsnprintf internally" at lines 110-111)
+> **Quality reviewed:** 2026-06-20 | Codex 11x (adversarial, consistency, perf, re-adversarial, design, test-coverage) | 4H+11M fixed, 0 open, 1 perf rejected (SIMD memcpy: -mno-sse2) | scope: kernel-code-quality
+
 ---
 
 ## 2. Complete Floating-Point Math Library

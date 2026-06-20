@@ -528,11 +528,15 @@ static void test_tunable_audit(void)
     TEST_ASSERT_EQ(kernel_tunable_count(), before + 1, "count tracks registration");
 
     /* dump edge cases */
-    TEST_ASSERT_EQ(kernel_tunable_dump((tunable_snapshot_t *)0, 1), 0u,
+    uint32_t cur = 0;
+    TEST_ASSERT_EQ(kernel_tunable_dump((tunable_snapshot_t *)0, 1, &cur), 0u,
                    "dump rejects NULL buffer");
-    TEST_ASSERT_EQ(kernel_tunable_dump(rows, 0), 0u, "dump rejects zero rows");
+    TEST_ASSERT_EQ(kernel_tunable_dump(rows, 0, &cur), 0u, "dump rejects zero rows");
+    TEST_ASSERT_EQ(kernel_tunable_dump(rows, 1, (uint32_t *)0), 0u,
+                   "dump rejects NULL cursor");
 
-    uint32_t n = kernel_tunable_dump(rows, 64);
+    cur = 0;
+    uint32_t n = kernel_tunable_dump(rows, 64, &cur);
     int found = 0;
     for (uint32_t i = 0; i < n; i++) {
         if (strcmp(rows[i].name, "test.audit") != 0) continue;
@@ -548,6 +552,19 @@ static void test_tunable_audit(void)
                        "dump row flags");
     }
     TEST_ASSERT_EQ(found, 1, "registered tunable appears in audit dump");
+
+    /* Chunked (raw-slot cursor) pagination must visit exactly the same set as a
+     * single full dump -- no drop, no duplicate across page boundaries. */
+    uint32_t paged = 0, pc = 0, got2, found_paged = 0;
+    do {
+        tunable_snapshot_t chunk[3];
+        got2 = kernel_tunable_dump(chunk, 3, &pc);
+        for (uint32_t i = 0; i < got2; i++)
+            if (strcmp(chunk[i].name, "test.audit") == 0) found_paged++;
+        paged += got2;
+    } while (got2 == 3);
+    TEST_ASSERT_EQ(paged, n, "chunked dump visits same row count as full dump");
+    TEST_ASSERT_EQ(found_paged, 1u, "chunked dump yields test.audit exactly once");
 
     /* get_u64 helper: returns value, fallback on unknown, fallback on negative. */
     TEST_ASSERT_EQ(kernel_tunable_get_u64("test.audit", 99), 5u,
@@ -577,7 +594,8 @@ static void test_tunable_reuse_name_hygiene(void)
     kernel_tunable_register("test.s", TUNABLE_UINT, TUNABLE_RUNTIME,
                             0, 1, 0, (tunable_cb_t)0, (void *)0,
                             T_OWN_H, TUNABLE_SRC_BUILTIN);
-    uint32_t n = kernel_tunable_dump(rows, 64);
+    uint32_t cur = 0;
+    uint32_t n = kernel_tunable_dump(rows, 64, &cur);
     int found = 0;
     for (uint32_t i = 0; i < n; i++) {
         if (strcmp(rows[i].name, "test.s") != 0) continue;

@@ -430,15 +430,20 @@ void boot_postcode_write_log(void)
                            s_steps[i].postcode, s_steps[i].phase,
                            s_steps[i].step ? s_steps[i].step : "?");
         if (pos > 0) {
-            int wr = vfs_write(f, offset, (uint32_t)pos, (const uint8_t *)line);
-            if (wr < 0 || wr != pos) {
+            /* snprintf returns the would-be length; on truncation only
+             * sizeof(line)-1 bytes are actually resident in `line`. Clamp so
+             * vfs_write never reads past the stack buffer. */
+            uint32_t wlen = (pos < (int)sizeof(line)) ? (uint32_t)pos
+                                                      : (uint32_t)(sizeof(line) - 1);
+            int wr = vfs_write(f, offset, wlen, (const uint8_t *)line);
+            if (wr < 0 || wr != (int)wlen) {
                 klog(LOG_WARN, "BOOT",
-                     "postcode.log entry %u write failed (%d of %d)",
-                     (uint64_t)i, (int64_t)wr, (int64_t)pos);
+                     "postcode.log entry %u write failed (%d of %u)",
+                     (uint64_t)i, (int64_t)wr, (uint64_t)wlen);
                 write_ok = 0;
                 break;
             }
-            offset += (uint32_t)pos;
+            offset += wlen;
         }
     }
 
