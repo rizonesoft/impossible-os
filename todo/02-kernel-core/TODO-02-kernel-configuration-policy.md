@@ -188,7 +188,7 @@ Give subsystems one typed registration surface for mutable policy instead of one
 
 - [x] Implement `kernel_tunable_register(name, type, flags, min, max, def, callback, ctx, owner, source)` in `tunables.c`; typed (INT/UINT/BOOL/ENUM), rejects dup name + full table + malformed descriptor.
 - [x] Support read-only, boot-only, runtime, privileged, and debug-only tunables via `TUNABLE_{READONLY,BOOT_ONLY,RUNTIME,PRIVILEGED,DEBUG_ONLY}` flags enforced in `kernel_tunable_set`.
-- [x] Add core tunables (klog.level, panic.timeout, timer.resolution_us, alpc.max_message, handle.quota_default, verifier.flags) in `kernel_tunables_register_core`. klog.level + panic.timeout live-wired; rest read via `kernel_tunable_get_u64`.
+- [x] Add core tunables in `kernel_tunables_register_core`, each wired to a real consumer: klog.level, panic.timeout, handle.quota_default. Speculative timer/ALPC/verifier knobs dropped (hard hw/security caps, not operator defaults).
 - [x] Record owner subsystem, lock phase, and `source` provenance per tunable; `kernel_tunable_dump()` exposes them for audit.
 - [x] Callbacks run at PASSIVE only -- inline when caller is passive (IRQL sampled before the lock), else deferred to `sys_wq`; recursive self-writes refused; deferred dispatch atomic + monotonic via write-generation.
 - [/] Loadable modules register under a `module.<name>.` namespace (`TUNABLE_SRC_MODULE`); `kernel_tunable_unregister_owner()` quiesces callbacks then drops the module's tunables. Loader-side call owned elsewhere. -> XREF: D04 T05
@@ -201,9 +201,13 @@ Give subsystems one typed registration surface for mutable policy instead of one
 > **Notes:**
 > - `tunables.c` -- 64-entry typed registry; `kernel_tunable_register/set/get/get_u64/unregister_owner/lock_phase_*/dump`, wired in `boot_desktop.c` (`register_core` after `sys_wq`, `lock_phase_advance(RUNTIME)` before the compositor).
 > - Callbacks run at PASSIVE: inline when the caller is passive (IRQL sampled before the lock), else deferred to `sys_wq`; write-generation makes deferred writes monotonic; `unregister_owner` quiesces in-flight callbacks (module-unload safety).
-> - Live consumers: `klog.level` -> `klog_set_level`; `panic.timeout` -> panic auto-restart (lockless `volatile` read on the panic path). timer/alpc/handle/verifier are policy source-of-truth read via `kernel_tunable_get_u64`.
+> - Three wired core tunables: `klog.level` -> `klog_set_level`; `panic.timeout` -> panic auto-restart (lockless `volatile` read); `handle.quota_default` -> per-process handle limit (`handle_table.c` reads `kernel_tunable_get_u64`).
 > - Lock phases are a minimal monotonic substrate; the tamper-audit lock-phase model + the module-loader register/unregister call are owned elsewhere (policy lock phases feature; kernel module system).
-> - Codex review adoptions (design + adversarial + test-coverage) in the section ship commit.
+> - Codex review adoptions (design + adversarial + test-coverage + consistency + perf + re-adversarial) in the section ship + review commits.
+
+> **Verified:** 2026-06-20 | commit `692c3d1b` | 5/6 items | build OK | tests 2978/2978 PASS
+> **Accepted:** [M] module-namespace loader register/unregister call (item 6, `[/]`) is owned by the kernel module system -> XREF: 04-drivers-hardware/TODO-05 §5 (item: "Parse `module_param` declarations ... register each as a `module.<name>.` tunable" at line 155)
+> **Quality reviewed:** 2026-06-20 | Codex 12x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 8H+14M fixed | scope: kernel-code-quality
 
 ---
 

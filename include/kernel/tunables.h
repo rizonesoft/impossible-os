@@ -72,9 +72,9 @@ NTSTATUS kernel_tunable_register(const char *name, tunable_type_t type,
  * access flags, and dispatches the callback. Returns STATUS_SUCCESS (applied
  * inline), STATUS_PENDING (callback deferred to the workqueue), STATUS_NOT_FOUND,
  * STATUS_ACCESS_DENIED (read-only / unprivileged / boot-only-after-seal /
- * debug-only), STATUS_UNSUCCESSFUL (recursive self-write), or
+ * debug-only), STATUS_UNSUCCESSFUL (recursive self-write),
  * STATUS_INSUFFICIENT_RESOURCES (deferred dispatch could not be scheduled -- the
- * stored value is left unchanged). */
+ * stored value is left unchanged), or STATUS_INVALID_PARAMETER (NULL name). */
 NTSTATUS kernel_tunable_set(const char *name, int64_t value, uint32_t set_flags);
 
 /* Read the current value. STATUS_NOT_FOUND if the name is unknown. */
@@ -86,10 +86,10 @@ uint64_t kernel_tunable_get_u64(const char *name, uint64_t fallback);
 /* Remove every tunable owned by owner_subsys. Called by the module loader
  * during module unload BEFORE the module image is unmapped, so a stale callback
  * pointer can never be invoked. Quiesces in-flight callbacks before freeing
- * (spins until none are executing), so the loader should flush the system work
+ * (yields until none are executing), so the loader should flush the system work
  * queue first to drain deferred trampolines. MUST NOT be called from the work
- * queue worker thread itself (it would wait on its own callback). Returns the
- * count removed. */
+ * queue worker thread NOR from inside a tunable change callback (either would
+ * wait on its own callback forever). Returns the count removed. */
 uint32_t kernel_tunable_unregister_owner(uint8_t owner_subsys);
 
 /* Lock-phase accessors. advance() is monotonic (a request to a lower phase is

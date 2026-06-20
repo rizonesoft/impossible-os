@@ -6,6 +6,7 @@
  * ============================================================================ */
 
 #include "kernel/ob/handle_table.h"
+#include "kernel/tunables.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_callback.h"
 #include "kernel/ob/ob_trace.h"
@@ -30,7 +31,10 @@ int ob_handle_table_init(HANDLE_TABLE *table)
     memset(table->entries, 0, sz);
     table->capacity = HANDLE_TABLE_INIT_CAP;
     table->count = 0;
-    table->handle_limit = HANDLE_TABLE_DEFAULT_LIMIT;
+    /* Per-process handle limit is operator-tunable (handle.quota_default);
+     * falls back to the compiled default before the registry is up. */
+    table->handle_limit = (uint32_t)kernel_tunable_get_u64(
+        "handle.quota_default", HANDLE_TABLE_DEFAULT_LIMIT);
     return 0;
 }
 

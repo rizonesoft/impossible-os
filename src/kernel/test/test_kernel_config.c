@@ -501,6 +501,13 @@ static void test_tunable_phase_seal(void)
     kernel_tunable_lock_phase_advance(TUNABLE_PHASE_BOOT);
     TEST_ASSERT_EQ(kernel_tunable_lock_phase_get(), TUNABLE_PHASE_RUNTIME,
                    "phase advance is monotonic; downgrade refused");
+    /* Out-of-range phase requests are rejected (cannot escape the model),
+     * including values whose low byte aliases a valid phase (257, 258). */
+    kernel_tunable_lock_phase_advance((tunable_phase_t)99);
+    kernel_tunable_lock_phase_advance((tunable_phase_t)257);
+    kernel_tunable_lock_phase_advance((tunable_phase_t)258);
+    TEST_ASSERT_EQ(kernel_tunable_lock_phase_get(), TUNABLE_PHASE_RUNTIME,
+                   "out-of-range phase requests (99/257/258) ignored");
     kernel_tunable_unregister_owner(T_OWN_F);
 }
 
@@ -549,6 +556,34 @@ static void test_tunable_audit(void)
 
     kernel_tunable_unregister_owner(T_OWN_H);
     TEST_ASSERT_EQ(kernel_tunable_count(), before, "count restored after unregister");
+}
+
+/* Slot reuse must not leak stale name tail bytes into the audit dump. */
+static void test_tunable_reuse_name_hygiene(void)
+{
+    tunable_snapshot_t rows[64];
+    /* Register a long name, then drop it so its slot becomes free. */
+    kernel_tunable_register("test.reuse.long.name.xyz", TUNABLE_UINT,
+                            TUNABLE_RUNTIME, 0, 1, 0, (tunable_cb_t)0, (void *)0,
+                            T_OWN_H, TUNABLE_SRC_BUILTIN);
+    kernel_tunable_unregister_owner(T_OWN_H);
+    /* A short name reuses the freed slot; its dumped name must be NUL-clean. */
+    kernel_tunable_register("test.s", TUNABLE_UINT, TUNABLE_RUNTIME,
+                            0, 1, 0, (tunable_cb_t)0, (void *)0,
+                            T_OWN_H, TUNABLE_SRC_BUILTIN);
+    uint32_t n = kernel_tunable_dump(rows, 64);
+    int found = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (strcmp(rows[i].name, "test.s") != 0) continue;
+        found = 1;
+        /* Every byte at/after the terminator must be zero (no stale suffix). */
+        int clean = 1;
+        for (uint32_t j = 6 /* len("test.s") */; j < sizeof(rows[i].name); j++)
+            if (rows[i].name[j] != 0) clean = 0;
+        TEST_ASSERT_EQ(clean, 1, "reused slot name tail is zeroed in dump");
+    }
+    TEST_ASSERT_EQ(found, 1, "reused short-name tunable present in dump");
+    kernel_tunable_unregister_owner(T_OWN_H);
 }
 
 static void test_tunable_malformed_and_capacity(void)
@@ -610,6 +645,7 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: tunable recursive guard", test_tunable_recursive_guard, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: tunable callback semantics", test_tunable_callback_semantics, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: tunable audit + helpers", test_tunable_audit,           TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable reuse name hygiene", test_tunable_reuse_name_hygiene, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: tunable malformed+capacity", test_tunable_malformed_and_capacity, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: tunable phase seal",    test_tunable_phase_seal,        TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode floor resolver", test_cfg_safe_mode_floor,     TEST_CAT_BOOT);

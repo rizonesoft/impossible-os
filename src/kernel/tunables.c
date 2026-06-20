@@ -12,9 +12,12 @@
 #include "kernel/sched/irql.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/workqueue.h"
+#include "kernel/sched/task.h"   /* yield() for the unregister quiesce wait */
 
 /* boot_init.h supplies kernel_subsys_t (owner ids for core tunables). */
 #include "kernel/boot_init.h"
+/* HANDLE_TABLE_DEFAULT_LIMIT: the handle.quota_default tunable's default. */
+#include "kernel/ob/handle_table.h"
 
 #define TUNABLE_MAX        64u   /* registry capacity */
 #define TUNABLE_PENDING    32u   /* deferred-callback slot pool */
@@ -187,11 +190,13 @@ NTSTATUS kernel_tunable_register(const char *name, tunable_type_t type,
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     tunable_entry_t *t = &s_tunables[slot];
-    for (uint32_t i = 0; i < TUNABLE_NAME_CAP; i++) {
-        t->name[i] = name[i];
+    /* Zero the whole name buffer first: a reused slot must not leak stale tail
+     * bytes from a prior (longer) name into kernel_tunable_dump output. */
+    for (uint32_t i = 0; i < TUNABLE_NAME_CAP; i++) t->name[i] = 0;
+    for (uint32_t i = 0; i < TUNABLE_NAME_CAP - 1; i++) {
         if (name[i] == 0) break;
+        t->name[i] = name[i];
     }
-    t->name[TUNABLE_NAME_CAP - 1] = 0;
     t->cur = def; t->def = def; t->min = min; t->max = max;
     t->callback = callback; t->cb_ctx = cb_ctx;
     t->flags = flags; t->type = (uint8_t)type;
@@ -342,17 +347,20 @@ uint32_t kernel_tunable_unregister_owner(uint8_t owner_subsys)
     uint32_t removed = 0;
     uint64_t irq;
 
-    /* Quiesce first: spin until no change callback is executing, so no copied
+    /* Quiesce first: wait until no change callback is executing, so no copied
      * callback pointer for the owner can still be invoked once we free its
      * entries. A new dispatch cannot slip in during the free below because it
-     * must take s_lock (held here) to increment s_active_cb. MUST NOT be called
-     * from the workqueue worker thread -- it would wait on its own callback. */
+     * must take s_lock (held here) to increment s_active_cb. Yields rather than
+     * busy-spins so a concurrent callback makes progress. PRECONDITION: must NOT
+     * be called from the workqueue worker thread NOR from inside a tunable
+     * change callback -- either would wait on its own callback forever; the
+     * module loader flushes the work queue and calls this from a normal thread. */
     for (;;) {
         spin_lock_irqsave(&s_lock, &irq);
         if (s_active_cb == 0)
             break;
         spin_unlock_irqrestore(&s_lock, irq);
-        __asm__ volatile("pause" ::: "memory");
+        yield();
     }
 
     for (uint32_t i = 0; i < TUNABLE_MAX; i++) {
@@ -380,13 +388,26 @@ tunable_phase_t kernel_tunable_lock_phase_get(void)
 
 void kernel_tunable_lock_phase_advance(tunable_phase_t to)
 {
+    /* Ignore any value that is not exactly one of the defined phases -- check
+     * the full enum value (not the narrowed low byte) so a bad cast like
+     * (tunable_phase_t)257 cannot alias a valid phase and seal the registry. */
+    if (to != TUNABLE_PHASE_BOOT && to != TUNABLE_PHASE_RUNTIME &&
+        to != TUNABLE_PHASE_LOCKED)
+        return;
+
     uint64_t irq;
+    int advanced = 0;
     spin_lock_irqsave(&s_lock, &irq);
     if ((uint8_t)to > s_phase) {
         s_phase = (uint8_t)to;
-        klog(LOG_INFO, "CONF", "[CONF] tunable lock phase -> %u", (uint32_t)to);
+        advanced = 1;
     }
     spin_unlock_irqrestore(&s_lock, irq);
+
+    /* klog AFTER unlock: it writes serial/framebuffer/disk and must never run
+     * under the registry spinlock with IRQs disabled. */
+    if (advanced)
+        klog(LOG_INFO, "CONF", "[CONF] tunable lock phase -> %u", (uint32_t)to);
 }
 
 uint32_t kernel_tunable_count(void)
@@ -455,21 +476,11 @@ void kernel_tunables_register_core(void)
                             0, 3600, 30, cb_panic_timeout, (void *)0,
                             TUNABLE_OWNER_CORE, TUNABLE_SRC_BUILTIN);
 
-    /* Policy source-of-truth knobs; owning subsystems read via
-     * kernel_tunable_get_u64() at their own PASSIVE init/use points. */
-    kernel_tunable_register("timer.resolution_us", TUNABLE_UINT, TUNABLE_RUNTIME,
-                            500, 100000, 1000, (tunable_cb_t)0, (void *)0,
-                            TUNABLE_OWNER_CORE, TUNABLE_SRC_BUILTIN);
-    kernel_tunable_register("alpc.max_message", TUNABLE_UINT, TUNABLE_RUNTIME,
-                            64, 65536, 4096, (tunable_cb_t)0, (void *)0,
-                            TUNABLE_OWNER_CORE, TUNABLE_SRC_BUILTIN);
+    /* Per-process default handle-table limit. Consumed by handle_table_init()
+     * via kernel_tunable_get_u64() when a process handle table is created. */
     kernel_tunable_register("handle.quota_default", TUNABLE_UINT, TUNABLE_RUNTIME,
-                            64, 1048576, 16384, (tunable_cb_t)0, (void *)0,
-                            TUNABLE_OWNER_CORE, TUNABLE_SRC_BUILTIN);
-    /* Verifier flags are boot-only + privileged (security-relevant). */
-    kernel_tunable_register("verifier.flags", TUNABLE_UINT,
-                            TUNABLE_BOOT_ONLY | TUNABLE_PRIVILEGED,
-                            0, 0xFFFF, 0, (tunable_cb_t)0, (void *)0,
+                            64, 1048576, HANDLE_TABLE_DEFAULT_LIMIT,
+                            (tunable_cb_t)0, (void *)0,
                             TUNABLE_OWNER_CORE, TUNABLE_SRC_BUILTIN);
 
     klog(LOG_INFO, "CONF", "[CONF] tunable registry: %u core tunables",
