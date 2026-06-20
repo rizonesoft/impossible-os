@@ -269,6 +269,22 @@ void boot_async_init(void)
          (uint32_t)IPI_VECTOR_ASYNC_INIT);
 }
 
+/* Severity order for the async-group worst-pick. The boot_result_t enum is NOT
+ * monotonically severity-ordered (BOOT_DEFERRED=3 numerically outranks
+ * BOOT_FATAL=2), so a plain `r > worst` lets a DEFERRED step mask a FATAL one.
+ * Rank explicitly: FATAL must halt > DEGRADED continues > DEFERRED retries
+ * later > OK. */
+static int boot_result_severity(boot_result_t r)
+{
+    switch (r) {
+        case BOOT_FATAL:    return 3;
+        case BOOT_DEGRADED: return 2;
+        case BOOT_DEFERRED: return 1;
+        case BOOT_OK:
+        default:            return 0;
+    }
+}
+
 boot_result_t boot_async_group(const char *group_name,
                                boot_async_step_t *steps, uint32_t count)
 {
@@ -294,7 +310,7 @@ boot_result_t boot_async_group(const char *group_name,
             uint64_t elapsed_ms = (system_get_ticks() - t0) * 10;
             klog(LOG_INFO, "ASYNC", "[ASYNC] %s completed in %ums",
                  steps[i].name, (uint32_t)elapsed_ms);
-            if (r > worst) worst = r;
+            if (boot_result_severity(r) > boot_result_severity(worst)) worst = r;
         }
         POST16(POST16_ASYNC_DONE);
         return worst;
@@ -366,13 +382,20 @@ boot_result_t boot_async_group(const char *group_name,
     for (uint32_t i = 1 + n_workers; i < count; i++) {
         klog(LOG_INFO, "ASYNC", "[ASYNC] %s (overflow, BSP)", steps[i].name);
         boot_result_t r = steps[i].fn();
-        if (r > bsp_result) bsp_result = r;
+        if (boot_result_severity(r) > boot_result_severity(bsp_result)) bsp_result = r;
     }
 
     /* Barrier: wait for all APs to complete */
     POST16(POST16_ASYNC_BARRIER);
     uint32_t timeout_ms = 10000;  /* 10 second timeout */
     uint64_t deadline = system_get_ticks() + timeout_ms / 10;
+
+    /* BSP-local, authoritative record of which workers the BSP timed out. A
+     * timed-out AP is still running and may later overwrite its async_result
+     * with BOOT_OK/DEGRADED before the collect loop reads it; deriving the
+     * result from this local flag (not the shared async_result) makes the
+     * timeout sticky, so a late AP completion cannot make the FATAL vanish. */
+    uint8_t timed_out[MAX_CPUS] = {0};
 
     for (uint32_t w = 0; w < n_workers; w++) {
         struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
@@ -384,6 +407,7 @@ boot_result_t boot_async_group(const char *group_name,
                      "[ASYNC] TIMEOUT: %s on CPU%u did not complete in %ums",
                      ap->async_name ? ap->async_name : "?",
                      ap->cpu_id, timeout_ms);
+                timed_out[w] = 1;
                 ap->async_result = (uint8_t)BOOT_FATAL;
                 ap->async_done = 1;
                 break;
@@ -392,12 +416,23 @@ boot_result_t boot_async_group(const char *group_name,
         }
     }
 
-    /* Collect results */
+    /* Acquire barrier: pair the AP-side release (store result -> smp_mb ->
+     * store async_done) so the BSP cannot observe async_done=1 with a stale
+     * async_result and mask an AP FATAL/DEGRADED in the worst-pick below. */
+    smp_mb();
+
+    /* Collect results. A timed-out worker is forced to BOOT_FATAL from the
+     * BSP-local flag regardless of any value a late AP completion may have
+     * stored, so a fired timeout always drives the worst-pick (and the
+     * async-fatal fallback) rather than silently disappearing. */
     boot_result_t worst = bsp_result;
     for (uint32_t w = 0; w < n_workers; w++) {
         struct per_cpu_data *ap = smp_get_cpu(online_aps[w]);
-        if (ap && (boot_result_t)ap->async_result > worst)
-            worst = (boot_result_t)ap->async_result;
+        if (!ap) continue;
+        boot_result_t r = timed_out[w] ? BOOT_FATAL
+                                       : (boot_result_t)ap->async_result;
+        if (boot_result_severity(r) > boot_result_severity(worst))
+            worst = r;
     }
 
     POST16(POST16_ASYNC_DONE);

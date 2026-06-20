@@ -539,10 +539,20 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 - [x] POST codes: `POST16(0xDD00)` dispatch, `POST16(0xDD01)` AP entry, `POST16(0xDD02)` barrier, `POST16(0xDD03)` done
 - [x] 2 unit tests: async POST code uniqueness, IPI vector value (0xFC) and no collision with 0xFD/0xFE
 - [ ] Quiesce the AP on async timeout before sequential fallback (`boot_init.c:365`): timeout marks AP done+FATAL without stopping it, so `boot_phase2` re-runs storage init concurrently (driver corruption). (Codex §1 H; `async_init=1` only)
-- [ ] Explicit `boot_result_t` severity rank in `boot_async_group` worst-pick (`boot_init.c:383`): numeric max lets `BOOT_DEFERRED=3` outrank `BOOT_FATAL=2`, masking a fatal step (latent). (Codex §1 M)
-- [ ] Commit: `"kernel: async subsystem init -- SMP parallel Phase 2"`
+- [x] Explicit `boot_result_t` severity rank in `boot_async_group` worst-pick: added `boot_result_severity()` (FATAL>DEGRADED>DEFERRED>OK) used at all 3 worst-pick sites, so a `BOOT_DEFERRED` step no longer masks a `BOOT_FATAL` one (`boot_init.c`)
+- [ ] Run async AP storage init in an IF-enabled worker, not from `async_ipi_handler` (`boot_init.c:243`): the IPI gate clears IF so NVMe `sleep_ms`/`hlt` hangs the AP into the 10s timeout. Keep `async_init=1` experimental. (Codex §13 H)
+- [ ] Define async-group `BOOT_DEFERRED` aggregation: it ranks below DEGRADED and `boot_phase2` has no DEFERRED branch, so a not-ready async step records LOADED. Latent (no step returns DEFERRED yet); add aggregation tests. (Codex §13 M)
+- [x] Commit: `"kernel: async subsystem init -- SMP parallel Phase 2"`
 
 **Test checkpoint:** Boot with `async_init=1` → storage/input/network init on different CPUs → serial log shows `[ASYNC]` entries with different CPU numbers. Total Phase 2 time decreases vs sequential. Boot with `async_init=0` → sequential behavior unchanged. Verify on QEMU WHPX (2+ vCPUs), TCG, VirtualBox, bare metal. Bare metal is critical -- per-AP fault isolation must work on real hardware.
+
+> **Verified:** 2026-06-20 | commit `308eb661` | 10/13 items | build OK | tests 2836+16 PASS
+> **Deferred:** [H] async timeout marks the AP done+FATAL without quiescing it, so `boot_phase2` reruns storage concurrently (driver corruption) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 541)
+> **Deferred:** [H] async storage init runs inside `async_ipi_handler` (interrupt gate, IF cleared), so a sleepable driver (NVMe `sleep_ms`/`hlt`) hangs the AP into the 10s timeout -> XREF: 02-kernel-core/TODO-01 §13 (item: "Run async AP storage init in an IF-enabled worker" at line 543)
+> **Deferred:** [M] async-group `BOOT_DEFERRED` aggregation ranks below DEGRADED with no `boot_phase2` DEFERRED branch, so a not-ready async step records LOADED (latent; no async step returns DEFERRED yet) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Define async-group `BOOT_DEFERRED` aggregation" at line 544)
+> **Quality reviewed:** 2026-06-20 | Codex 6x (adversarial x2, consistency, perf, re-adversarial x2) | 1H+2M fixed, 2H+1M deferred | scope: kernel-code-quality
+
+The default `async_init=0` path (sequential, shipped + tested) is unaffected; all three deferred items gate only the experimental `async_init=1` parallel path. The timeout-publication race (a late AP completion overwriting a fired timeout's FATAL) was fixed this pass with a BSP-local sticky `timed_out` flag.
 
 ---
 

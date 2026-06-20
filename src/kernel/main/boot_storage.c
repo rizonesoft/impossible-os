@@ -290,11 +290,19 @@ void boot_phase2(void)
         if (async_rc == BOOT_FATAL) {
             klog(LOG_ERROR, "boot",
                  "Async storage init FATAL -- falling back to sequential");
-            /* Fall through to sequential path */
+            /* Fall through to sequential path. Emit the same per-driver POST
+             * sequence as the sequential branch so crash/recovery telemetry
+             * reflects the path that actually ran (not a bare terminal code). */
+            POST16(POST16_ATA);
             ata_init();
+            POST16(POST16_ATA_OK);
             virtio_blk_init();
+            POST16(POST16_AHCI);
             ahci_init();
+            POST16(POST16_AHCI_OK);
+            POST16(POST16_NVME);
             nvme_init();
+            POST16(POST16_NVME_OK);
             storage_state = BOOT_LOAD_DEGRADED;   /* async failed; recovered serially */
             storage_err   = (uint16_t)BOOT_FATAL;
             storage_post  = POST16_NVME_OK;       /* recovered via the sequential path */
