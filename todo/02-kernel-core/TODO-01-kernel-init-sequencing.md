@@ -98,8 +98,8 @@ New header and source file providing the result type, readiness oracle, and prog
 > - Scope: §1 owns the result type / oracle / macros; `boot_async_group` lives in `boot_init.c` but is owned by §13 (carries this review's timeout-quiescence + DEFERRED-rank findings).
 >
 > **Verified:** 2026-06-20 | commit `0d72fce6` | 11/11 items | build OK
-> **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 377)
-> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 378)
+> **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 541) (still deferred -- `async_init=1`-only, see §13 Deferred stamp)
+> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 542) (RESOLVED 2026-06-20 by §13 commit 308eb661: `boot_result_severity()` FATAL>DEGRADED>DEFERRED>OK applied at all 3 worst-pick sites)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -645,4 +645,4 @@ The default `async_init=0` path (sequential, shipped + tested) is unaffected; al
 - [ ] Bare metal: all phases complete, POST codes visible on VPD -- (manual: requires physical hardware)
 - [ ] Commit: `"kernel: init-sequencing verified -- phases, readiness oracle, dependency gates"`
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | boot suite registered via `test_register_boot_init()`, 0 failures (TCG 2026-04-03: 135 tests, 0 failed, 1 skipped)
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | boot suite registered via `test_register_boot_init()`, 0 failures (KVM 2026-06-20: 2836 kernel + 16 user-mode PASS, exit=0; historical TCG 2026-04-03: 135 tests, 0 failed, 1 skipped)
