@@ -150,9 +150,22 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] `kmath_trunc` -- toward zero; `>= 2^52` and `+/-0` pass through
 - [x] `kmath_cbrt` -- `exp(log/3)` seed + 2 Newton steps; preserves sign, zero, +/-inf
 
+- [ ] Unify float/double special values: hardened float cosf/acosf/sqrtf/powf diverge from font-grade kmath.h double cos/acos/pow/sqrt; promote the doubles (or add hardened non-overlapping names), gated on a stb golden-raster baseline.
+
 - [x] Commit: `"libc: floating-point math -- sin/tan/asin/atan/atan2/exp/log/cbrt + float variants"`
 
-**Test checkpoint:** `kmath_sin(0)==0`, `kmath_cos(0)==1`, `kmath_atan2(1,1)` within 1e-9 of pi/4; `kmath_exp(1)` within 1e-9 of e; spot-check stb_truetype glyph raster unchanged vs baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `kmath_sin(0)==0`, `kmath_cos(0)==1`, `kmath_atan2(1,1)` within 1e-9 of pi/4; `kmath_exp(1)` within 1e-9 of e; IEEE edges hold (sin/exp/log of NaN -> NaN, exp overflow -> +inf, log(0) -> -inf, asin domain -> NaN, signed zero preserved, `cosf(inf)` does not hang); spot-check stb_truetype glyph raster unchanged vs baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 1 suite (klibs: math lib), 0 failures
+> **Notes:**
+> - Shipped `include/libc/math.h` (header-only, all `KM_AI` always-inline): trig + `exp/log/log2/log10` + `round/trunc/cbrt` + 16 float variants; Cody-Waite (33-bit pio2_1) + fdlibm kernels.
+> - All static-inline by ABI necessity (`-mno-sse2`: no `xmm` for extern `double`); declares only names absent from `kmath.h` so a TU may include both; sin/cosf use single-kernel reducers, tan uses the shared `km_sincos_`.
+> - IEEE-complete: NaN/inf/over-underflow/domain, signed zero at every entry point, atan2 C99 quadrants, `cosf` no-hang; few-ULP within `|x| < 2^20*pi/2` (NaN above); per-finding hardening in the ship + review commits.
+> - Canonical doc: `include/libc/math.h` banner.
+> - Scope boundary: double `cos/acos/pow/sqrt` stay font-grade in `kmath.h` (unification deferred, this section); LZ4/miniz/crypto/checksum in §3-§8.
+> **Verified:** 2026-06-20 | commit `PENDINGHASH` | 13/14 items | build OK | tests 377 kernel + 16 user PASS (TCG)
+> **Deferred:** [M] hardened float cosf/acosf/sqrtf/powf diverge from font-grade kmath.h double cos/acos/pow/sqrt on special values (reason: kmath.h ODR ownership; promoting the doubles needs a stb golden-raster baseline) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §2 (item: "Unify float/double special values" at line 153)
+> **Quality reviewed:** 2026-06-20 | Codex 20x (design, adversarial-impl, adversarial, consistency, perf, re-adversarial, test-coverage) | 9H+11M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
 

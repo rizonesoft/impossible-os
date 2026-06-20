@@ -879,6 +879,8 @@ static void test_math_lib(void)
     TEST_ASSERT(km_close((double)kmath_acosf(0.5f), PI / 3, 1e-6), "acosf(0.5)=pi/3");
     TEST_ASSERT(kmath_acosf(2.0f) != kmath_acosf(2.0f), "acosf(2)=NaN (domain)");
     TEST_ASSERT(kmath_sqrtf(-1.0f) != kmath_sqrtf(-1.0f), "sqrtf(-1)=NaN");
+    /* km_sqrt_ stays accurate on a subnormal double (scale result by 2^537) */
+    TEST_ASSERT(km_close(km_sqrt_(0x1p-1074) * 0x1p537, 1.0, 1e-9), "km_sqrt_ subnormal accurate");
     TEST_ASSERT(km_isinf_((double)kmath_sqrtf((float)pinf)) && kmath_sqrtf((float)pinf) > 0.0f,
                 "sqrtf(+inf)=+inf");
 

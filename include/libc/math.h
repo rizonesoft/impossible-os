@@ -14,9 +14,13 @@
  * reason kernel/kmath.h is all static inline.
  *
  * Symbol-set rule: this header defines ONLY names NOT in kernel/kmath.h, so a
- * translation unit may include both without an ODR clash. Float variants of
- * functions already in kmath.h (cosf/acosf/powf/sqrtf) are new names and
- * delegate to the kmath.h inlines.
+ * translation unit may include both without an ODR clash. NOTE: the float
+ * variants cosf/acosf/sqrtf/powf are HARDENED (full IEEE special values) and
+ * intentionally DIVERGE from the legacy font-grade kmath.h double cos/acos/
+ * sqrt/pow (which clamp or return 0 on error and stay as-is for stb_truetype).
+ * Unifying the double API onto the hardened path is tracked in
+ * 02-kernel-core/TODO-03-kernel-libraries.md (gated on a stb golden-raster
+ * baseline so glyph rendering is provably unchanged).
  *
  * Accuracy: a documented FEW-ULP bound over the supported finite range, NOT a
  * 1-ULP guarantee. sin/tan use Cody-Waite range reduction with a split pi/2 and
@@ -107,7 +111,12 @@ KM_AI double km_sqrt_(double x)
     if (x < 0.0) return km_nan_();     /* domain error */
     if (km_isinf_(x)) return x;        /* sqrt(+inf) = +inf */
     union { double d; uint64_t u; } v;
+    int sub = 0;
     v.d = x;
+    /* The bit seed assumes a normal exponent field; subnormals (exp field 0)
+     * would seed at the wrong scale. Scale up by 2^54 first, then bring the
+     * result back down by 2^27 (= sqrt(2^54)). */
+    if (((v.u >> 52) & 0x7ff) == 0) { x *= 0x1p54; v.d = x; sub = 1; }
     v.u = 0x1ff7a3bea91d9b1bULL + (v.u >> 1);   /* seed within ~3.5% of sqrt(x) */
     double y = v.d;
     y = 0.5 * (y + x / y);
@@ -115,6 +124,7 @@ KM_AI double km_sqrt_(double x)
     y = 0.5 * (y + x / y);
     y = 0.5 * (y + x / y);
     y = 0.5 * (y + x / y);
+    if (sub) y *= 0x1p-27;
     return y;
 }
 
@@ -185,6 +195,41 @@ KM_AI void km_sincos_(double x, double *sp, double *cp)
     }
 }
 
+/* sin-only / cos-only reducers: evaluate just the one kernel the quadrant needs
+ * (km_sincos_ computes both -- only tan wants that). Saves a Horner chain per
+ * single-output sin/cosf call. */
+KM_AI double km_sin_reduce_(double x)
+{
+    double ax = kmath_fabs(x);
+    if (ax < KM_PIO4) return km_ksin_(x);
+    double z = x * KM_2_OVER_PI;
+    long long n = (long long)(z >= 0.0 ? z + 0.5 : z - 0.5);
+    double nd = (double)n;
+    double y = (x - nd * KM_PIO2_HI) - nd * KM_PIO2_LO;
+    switch ((int)(n & 3)) {
+    case 0:  return km_ksin_(y);
+    case 1:  return km_kcos_(y);
+    case 2:  return -km_ksin_(y);
+    default: return -km_kcos_(y);
+    }
+}
+
+KM_AI double km_cos_reduce_(double x)
+{
+    double ax = kmath_fabs(x);
+    if (ax < KM_PIO4) return km_kcos_(x);
+    double z = x * KM_2_OVER_PI;
+    long long n = (long long)(z >= 0.0 ? z + 0.5 : z - 0.5);
+    double nd = (double)n;
+    double y = (x - nd * KM_PIO2_HI) - nd * KM_PIO2_LO;
+    switch ((int)(n & 3)) {
+    case 0:  return km_kcos_(y);
+    case 1:  return -km_ksin_(y);
+    case 2:  return -km_kcos_(y);
+    default: return km_ksin_(y);
+    }
+}
+
 /* ---- trigonometric ------------------------------------------------------ */
 
 KM_AI double kmath_sin(double x)
@@ -194,9 +239,7 @@ KM_AI double kmath_sin(double x)
     /* +/-inf and the unsupported huge-argument range both return NaN -- avoids
      * an out-of-range float->integer cast in the reduction. */
     if (kmath_fabs(x) >= KMATH_TRIG_REDUCE_MAX) return km_nan_();
-    double s, c;
-    km_sincos_(x, &s, &c);
-    return s;
+    return km_sin_reduce_(x);
 }
 
 KM_AI double kmath_tan(double x)
@@ -430,9 +473,7 @@ KM_AI float kmath_cosf(float x)
     double d = (double)x;
     if (d != d) return (float)d;
     if (kmath_fabs(d) >= KMATH_TRIG_REDUCE_MAX) return (float)km_nan_();
-    double s, c;
-    km_sincos_(d, &s, &c);
-    return (float)c;
+    return (float)km_cos_reduce_(d);
 }
 KM_AI float kmath_tanf(float x)            { return (float)kmath_tan((double)x); }
 KM_AI float kmath_asinf(float x)           { return (float)kmath_asin((double)x); }
