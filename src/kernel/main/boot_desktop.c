@@ -26,6 +26,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
+#include "kernel/tunables.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/pe.h"
 #include "kernel/boot_halt.h"
@@ -113,6 +114,10 @@ void boot_phase3(void)
         else
             klog(LOG_ERROR, "wq", "sys_wq creation FAILED");
     }
+
+    /* Register the runtime tunable registry's core knobs now that the work
+     * queue exists (deferred tunable callbacks enqueue onto sys_wq). */
+    kernel_tunables_register_core();
 
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
     /* pipe_create/shmem_create init lazily; explicit pipe_init gives the
@@ -683,6 +688,9 @@ void boot_phase3(void)
              "headless mode enabled via boot.conf (no fb_swap, no VSYNC)");
         compositor_set_headless(1);
     }
+
+    /* Boot init complete: seal boot-only tunables before steady state. */
+    kernel_tunable_lock_phase_advance(TUNABLE_PHASE_RUNTIME);
 
     /* --- Compositor event loop (never returns) --- */
     POST16(POST16_COMPOSITOR);  /* attribute a crash/hang entering the compositor */

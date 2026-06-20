@@ -54,7 +54,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | 💎 | 3 | Registry-backed policy merge                    | §2, §4, T14 §8, §12, §13           | [/] |
 | 💎 | 4 | ControlSet and LastKnownGood selection          | §2, §10, T14 §12, D01 T21 §4, §5   | [/] |
 | 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [/] |
-| 💎 | 6 | Runtime tunable registry                        | §2                                  | [ ] |
+| 💎 | 6 | Runtime tunable registry                        | §2                                  | [/] |
 | ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [ ] |
 | 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [ ] |
 | ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [ ] |
@@ -186,15 +186,24 @@ Represent safe mode as a first-class kernel policy object, not a scattered colle
 
 Give subsystems one typed registration surface for mutable policy instead of one-off globals and parser branches.
 
-- [ ] Implement `kernel_tunable_register(name, type, flags, min, max, default, callback)`.
-- [ ] Support read-only, boot-only, runtime, privileged, and debug-only tunables.
-- [ ] Add core tunables for klog, panic timeout, timer resolution policy, ALPC message caps, handle quota defaults, and verifier flags.
-- [ ] Record owner subsystem, lock phase, and provenance metadata for every tunable so audit output can explain who registered it.
-- [ ] Invoke callbacks at PASSIVE_LEVEL only; queue work if set from syscall, DPC, or interrupt context, and reject recursive self-write loops with an explicit error.
-- [ ] Let loadable modules register tunables via `kernel_tunable_register` under a `module.<name>.` namespace with provenance (Linux `module_param` + `/sys/module` parity); the loader supplies metadata. -> XREF: D04 T05.
-- [ ] Commit: `"kernel: add runtime tunable registry"`
+- [x] Implement `kernel_tunable_register(name, type, flags, min, max, def, callback, ctx, owner, source)` in `tunables.c`; typed (INT/UINT/BOOL/ENUM), rejects dup name + full table + malformed descriptor.
+- [x] Support read-only, boot-only, runtime, privileged, and debug-only tunables via `TUNABLE_{READONLY,BOOT_ONLY,RUNTIME,PRIVILEGED,DEBUG_ONLY}` flags enforced in `kernel_tunable_set`.
+- [x] Add core tunables (klog.level, panic.timeout, timer.resolution_us, alpc.max_message, handle.quota_default, verifier.flags) in `kernel_tunables_register_core`. klog.level + panic.timeout live-wired; rest read via `kernel_tunable_get_u64`.
+- [x] Record owner subsystem, lock phase, and `source` provenance per tunable; `kernel_tunable_dump()` exposes them for audit.
+- [x] Callbacks run at PASSIVE only -- inline when caller is passive (IRQL sampled before the lock), else deferred to `sys_wq`; recursive self-writes refused; deferred dispatch atomic + monotonic via write-generation.
+- [/] Loadable modules register under a `module.<name>.` namespace (`TUNABLE_SRC_MODULE`); `kernel_tunable_unregister_owner()` quiesces callbacks then drops the module's tunables. Loader-side call owned elsewhere. -> XREF: D04 T05
+- [x] Commit: `"kernel: add runtime tunable registry"`
 
 **Test checkpoint:** Writing `panic.timeout=9999` clamps to the declared max and logs `"[CONF] tunable clamp: panic.timeout"`. A read-only tunable write returns `STATUS_ACCESS_DENIED`, and a callback requested from syscall context runs later at PASSIVE_LEVEL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | CONF tunable suites (9), 0 failures
+
+> **Notes:**
+> - `tunables.c` -- 64-entry typed registry; `kernel_tunable_register/set/get/get_u64/unregister_owner/lock_phase_*/dump`, wired in `boot_desktop.c` (`register_core` after `sys_wq`, `lock_phase_advance(RUNTIME)` before the compositor).
+> - Callbacks run at PASSIVE: inline when the caller is passive (IRQL sampled before the lock), else deferred to `sys_wq`; write-generation makes deferred writes monotonic; `unregister_owner` quiesces in-flight callbacks (module-unload safety).
+> - Live consumers: `klog.level` -> `klog_set_level`; `panic.timeout` -> panic auto-restart (lockless `volatile` read on the panic path). timer/alpc/handle/verifier are policy source-of-truth read via `kernel_tunable_get_u64`.
+> - Lock phases are a minimal monotonic substrate; the tamper-audit lock-phase model + the module-loader register/unregister call are owned elsewhere (policy lock phases feature; kernel module system).
+> - Codex review adoptions (design + adversarial + test-coverage) in the section ship commit.
 
 ---
 
@@ -283,7 +292,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | 💎 | Safe and recovery boot modes       | ✅ `safeboot=minimal|network` plus recovery    | ✅ `single`, rescue, emergency, and recovery menu  | ✅ `safe_mode_t` object, monotonic floor, KUSD mirror |
 | 💎 | Control-set style rollback state   | ⚠️ `Current` and `LastKnownGood` semantics     | ⚠️ Distro snapshots or boot fallback, not kernel   | ⬜ Planned - §4         |
 | 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
-| 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⬜ Planned - §3, §6, §8 |
+| 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⚠️ §6 typed registry + clamp + provenance; §3,§8 |
 | 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ⚠️ §2 snapshot done; §8,§9 |
 | 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ⬜ Planned - §9         |
 | ⭐ | Per-key provenance plus cohorts    | ❌ No kernel-owned provenance plus cohorts     | ⚠️ Partial in userspace tooling, not kernel-native | ⬜ Planned - §3, §7, §9 |

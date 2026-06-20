@@ -11,6 +11,8 @@
 
 #include "kernel/test/test.h"
 #include "kernel/config.h"
+#include "kernel/tunables.h"
+#include "kernel/sched/irql.h"
 #include "kernel/boot_info.h"
 #include "libc/string.h"
 
@@ -283,8 +285,333 @@ static void test_cfg_safe_mode_accessors(void)
                    "kernel_safe_mode_reason mirrors snapshot");
 }
 
+/* ---- Runtime Tunable Registry ------------------------------------------- */
+/* Test tunables use a distinct owner id and self-clean via
+ * kernel_tunable_unregister_owner() so re-runs never collide. */
+#define T_OWN_A 0xA0u
+#define T_OWN_B 0xA1u
+#define T_OWN_C 0xA2u
+#define T_OWN_D 0xA3u
+#define T_OWN_E 0xA4u
+#define T_OWN_F 0xA5u
+#define T_OWN_G 0xA6u   /* callback semantics */
+#define T_OWN_H 0xA7u   /* audit / dump */
+#define T_OWN_I 0xA8u   /* capacity exhaustion */
+
+static void test_tunable_register_get(void)
+{
+    int64_t v = 0;
+    NTSTATUS rc = kernel_tunable_register("test.depth", TUNABLE_UINT, TUNABLE_RUNTIME,
+                                          0, 100, 7, (tunable_cb_t)0, (void *)0,
+                                          T_OWN_A, TUNABLE_SRC_BUILTIN);
+    TEST_ASSERT_EQ(rc, STATUS_SUCCESS, "register a tunable");
+    TEST_ASSERT_EQ(kernel_tunable_get("test.depth", &v), STATUS_SUCCESS, "get registered tunable");
+    TEST_ASSERT_EQ(v, 7, "get returns the registered default");
+    /* duplicate name is rejected */
+    rc = kernel_tunable_register("test.depth", TUNABLE_UINT, TUNABLE_RUNTIME,
+                                 0, 100, 1, (tunable_cb_t)0, (void *)0,
+                                 T_OWN_A, TUNABLE_SRC_BUILTIN);
+    TEST_ASSERT_EQ(rc, STATUS_OBJECT_NAME_COLLISION, "duplicate name rejected");
+    kernel_tunable_unregister_owner(T_OWN_A);
+    TEST_ASSERT_EQ(kernel_tunable_get("test.depth", &v), STATUS_NOT_FOUND,
+                   "unregister_owner removed the tunable");
+}
+
+static void test_tunable_clamp(void)
+{
+    int64_t v = 0;
+    kernel_tunable_register("test.timeout", TUNABLE_UINT, TUNABLE_RUNTIME,
+                            0, 3600, 30, (tunable_cb_t)0, (void *)0,
+                            T_OWN_B, TUNABLE_SRC_BUILTIN);
+    /* over-max clamps to max, not stored verbatim */
+    NTSTATUS rc = kernel_tunable_set("test.timeout", 9999, TUNABLE_SET_PRIVILEGED);
+    TEST_ASSERT_EQ(rc, STATUS_SUCCESS, "set over-max succeeds (clamped)");
+    kernel_tunable_get("test.timeout", &v);
+    TEST_ASSERT_EQ(v, 3600, "over-max value clamped to declared max");
+    /* below-min clamps to min */
+    kernel_tunable_set("test.timeout", -5, TUNABLE_SET_PRIVILEGED);
+    kernel_tunable_get("test.timeout", &v);
+    TEST_ASSERT_EQ(v, 0, "below-min value clamped to declared min");
+    kernel_tunable_unregister_owner(T_OWN_B);
+}
+
+static void test_tunable_access(void)
+{
+    int64_t v = 0;
+    kernel_tunable_register("test.ro", TUNABLE_UINT, TUNABLE_READONLY,
+                            0, 10, 5, (tunable_cb_t)0, (void *)0,
+                            T_OWN_C, TUNABLE_SRC_BUILTIN);
+    TEST_ASSERT_EQ(kernel_tunable_set("test.ro", 3, TUNABLE_SET_PRIVILEGED),
+                   STATUS_ACCESS_DENIED, "read-only write denied");
+    kernel_tunable_get("test.ro", &v);
+    TEST_ASSERT_EQ(v, 5, "read-only denied write leaves value unchanged");
+
+    kernel_tunable_register("test.priv", TUNABLE_UINT, TUNABLE_PRIVILEGED,
+                            0, 10, 1, (tunable_cb_t)0, (void *)0,
+                            T_OWN_C, TUNABLE_SRC_BUILTIN);
+    TEST_ASSERT_EQ(kernel_tunable_set("test.priv", 4, 0),
+                   STATUS_ACCESS_DENIED, "privileged write without privilege denied");
+    kernel_tunable_get("test.priv", &v);
+    TEST_ASSERT_EQ(v, 1, "unprivileged denied write leaves value unchanged");
+    TEST_ASSERT_EQ(kernel_tunable_set("test.priv", 4, TUNABLE_SET_PRIVILEGED),
+                   STATUS_SUCCESS, "privileged write with privilege allowed");
+
+    /* DEBUG_ONLY: outcome tracks the live debug_enabled config flag. */
+    kernel_tunable_register("test.debugonly", TUNABLE_UINT, TUNABLE_DEBUG_ONLY,
+                            0, 10, 0, (tunable_cb_t)0, (void *)0,
+                            T_OWN_C, TUNABLE_SRC_BUILTIN);
+    const kernel_config_t *kc = kernel_config_get();
+    NTSTATUS dbg = kernel_tunable_set("test.debugonly", 7, TUNABLE_SET_PRIVILEGED);
+    if (kc && kc->debug_enabled) {
+        TEST_ASSERT_EQ(dbg, STATUS_SUCCESS, "debug-only write allowed when debug enabled");
+    } else {
+        TEST_ASSERT_EQ(dbg, STATUS_ACCESS_DENIED, "debug-only write denied without debug");
+        kernel_tunable_get("test.debugonly", &v);
+        TEST_ASSERT_EQ(v, 0, "debug-only denied write leaves value unchanged");
+    }
+
+    TEST_ASSERT_EQ(kernel_tunable_set("test.absent", 1, TUNABLE_SET_PRIVILEGED),
+                   STATUS_NOT_FOUND, "set on unknown name returns not-found");
+    kernel_tunable_unregister_owner(T_OWN_C);
+}
+
+static void test_tunable_module_namespace(void)
+{
+    int64_t v = 0;
+    NTSTATUS rc = kernel_tunable_register("module.testmod.depth", TUNABLE_UINT,
+                                          TUNABLE_RUNTIME, 0, 64, 8,
+                                          (tunable_cb_t)0, (void *)0,
+                                          T_OWN_D, TUNABLE_SRC_MODULE);
+    TEST_ASSERT_EQ(rc, STATUS_SUCCESS, "module-namespace tunable registers");
+    TEST_ASSERT_EQ(kernel_tunable_get("module.testmod.depth", &v), STATUS_SUCCESS,
+                   "module tunable is gettable");
+    /* unregister_owner mimics module unload: the tunable disappears. */
+    TEST_ASSERT_EQ(kernel_tunable_unregister_owner(T_OWN_D), 1u,
+                   "module unload removes exactly its tunable");
+    TEST_ASSERT_EQ(kernel_tunable_get("module.testmod.depth", &v), STATUS_NOT_FOUND,
+                   "module tunable gone after unload");
+}
+
+/* Recursive self-write guard: a change callback that tries to set its own
+ * tunable must be refused with STATUS_UNSUCCESSFUL. */
+static volatile NTSTATUS s_recursive_rc;
+static void cb_recursive(const char *name, int64_t v, void *ctx)
+{
+    (void)v; (void)ctx;
+    s_recursive_rc = kernel_tunable_set(name, 1, TUNABLE_SET_PRIVILEGED);
+}
+
+static void test_tunable_recursive_guard(void)
+{
+    /* The callback only runs inline (synchronously) at PASSIVE_LEVEL; above it
+     * the dispatch defers to a workqueue that the scheduler-disabled boot-test
+     * context never drains. Force PASSIVE for the duration of this check so the
+     * guard is exercised deterministically, then restore the prior level. */
+    KIRQL saved = KeGetCurrentIrql();
+    if (saved != PASSIVE_LEVEL)
+        KeLowerIrql(PASSIVE_LEVEL);
+
+    s_recursive_rc = STATUS_SUCCESS;
+    kernel_tunable_register("test.recurse", TUNABLE_UINT, TUNABLE_RUNTIME,
+                            0, 10, 0, cb_recursive, (void *)0,
+                            T_OWN_E, TUNABLE_SRC_BUILTIN);
+    KIRQL at_set = KeGetCurrentIrql();
+    NTSTATUS outer = kernel_tunable_set("test.recurse", 5, TUNABLE_SET_PRIVILEGED);
+    TEST_ASSERT_EQ(at_set, PASSIVE_LEVEL, "set runs at PASSIVE after lower");
+    TEST_ASSERT_EQ(outer, STATUS_SUCCESS, "inline set returns success");
+    TEST_ASSERT_EQ(s_recursive_rc, STATUS_UNSUCCESSFUL,
+                   "recursive self-write refused inside callback");
+    kernel_tunable_unregister_owner(T_OWN_E);
+
+    if (saved != PASSIVE_LEVEL) {
+        KIRQL old;
+        KeRaiseIrql(saved, &old);
+    }
+}
+
+/* Callback contract: the inline callback receives the right name/value/ctx at
+ * PASSIVE_LEVEL, sees the published current value, and the guard clears after. */
+static volatile int      s_cb_count;
+static volatile int64_t  s_cb_value;
+static volatile void    *s_cb_ctx;
+static volatile KIRQL    s_cb_irql;
+static volatile int64_t  s_cb_seen_cur;
+static void cb_record(const char *name, int64_t v, void *ctx)
+{
+    s_cb_count++;
+    s_cb_value = v;
+    s_cb_ctx = ctx;
+    s_cb_irql = KeGetCurrentIrql();
+    kernel_tunable_get(name, (int64_t *)&s_cb_seen_cur);
+}
+
+static void test_tunable_callback_semantics(void)
+{
+    int marker = 0;
+    s_cb_count = 0; s_cb_value = -1; s_cb_ctx = (void *)0;
+    s_cb_irql = 0xFF; s_cb_seen_cur = -1;
+
+    KIRQL saved = KeGetCurrentIrql();
+    if (saved != PASSIVE_LEVEL) KeLowerIrql(PASSIVE_LEVEL);
+
+    kernel_tunable_register("test.cb", TUNABLE_UINT, TUNABLE_RUNTIME,
+                            0, 100, 0, cb_record, &marker, T_OWN_G, TUNABLE_SRC_BUILTIN);
+    NTSTATUS r = kernel_tunable_set("test.cb", 6, TUNABLE_SET_PRIVILEGED);
+    TEST_ASSERT_EQ(r, STATUS_SUCCESS, "inline callback set succeeds");
+    TEST_ASSERT_EQ(s_cb_count, 1, "callback invoked exactly once");
+    TEST_ASSERT_EQ(s_cb_value, 6, "callback received the new value");
+    TEST_ASSERT_EQ((void *)s_cb_ctx, (void *)&marker, "callback received its ctx");
+    TEST_ASSERT_EQ(s_cb_irql, PASSIVE_LEVEL, "callback runs at PASSIVE_LEVEL");
+    TEST_ASSERT_EQ(s_cb_seen_cur, 6, "current value published before callback runs");
+    /* Guard cleared: a second set must succeed, not be refused as recursive. */
+    TEST_ASSERT_EQ(kernel_tunable_set("test.cb", 7, TUNABLE_SET_PRIVILEGED),
+                   STATUS_SUCCESS, "in_callback guard cleared after callback returns");
+    kernel_tunable_unregister_owner(T_OWN_G);
+
+    if (saved != PASSIVE_LEVEL) { KIRQL o; KeRaiseIrql(saved, &o); }
+}
+
+/* Lock-phase sealing: BOOT_ONLY writable in BOOT, sealed at RUNTIME, runtime
+ * tunable still writable, and the advance is monotonic (no downgrade). LOCKED
+ * is deliberately NOT exercised in-process: it is terminal + monotonic, so
+ * advancing to it here would seal the registry for the whole boot session and
+ * neuter every runtime tunable -- validated instead by the access-flag paths. */
+static void test_tunable_phase_seal(void)
+{
+    kernel_tunable_register("test.bo", TUNABLE_UINT, TUNABLE_BOOT_ONLY,
+                            0, 10, 0, (tunable_cb_t)0, (void *)0,
+                            T_OWN_F, TUNABLE_SRC_BUILTIN);
+    kernel_tunable_register("test.rt", TUNABLE_UINT, TUNABLE_RUNTIME,
+                            0, 10, 0, (tunable_cb_t)0, (void *)0,
+                            T_OWN_F, TUNABLE_SRC_BUILTIN);
+
+    if (kernel_tunable_lock_phase_get() == TUNABLE_PHASE_BOOT)
+        TEST_ASSERT_EQ(kernel_tunable_set("test.bo", 3, TUNABLE_SET_PRIVILEGED),
+                       STATUS_SUCCESS, "boot-only writable during BOOT phase");
+
+    kernel_tunable_lock_phase_advance(TUNABLE_PHASE_RUNTIME);
+    TEST_ASSERT_EQ(kernel_tunable_lock_phase_get(), TUNABLE_PHASE_RUNTIME,
+                   "phase advanced to RUNTIME");
+    TEST_ASSERT_EQ(kernel_tunable_set("test.bo", 4, TUNABLE_SET_PRIVILEGED),
+                   STATUS_ACCESS_DENIED, "boot-only sealed at RUNTIME");
+    TEST_ASSERT_EQ(kernel_tunable_set("test.rt", 4, TUNABLE_SET_PRIVILEGED),
+                   STATUS_SUCCESS, "runtime tunable still writable at RUNTIME");
+
+    /* Monotonic: a downgrade request is ignored. */
+    kernel_tunable_lock_phase_advance(TUNABLE_PHASE_BOOT);
+    TEST_ASSERT_EQ(kernel_tunable_lock_phase_get(), TUNABLE_PHASE_RUNTIME,
+                   "phase advance is monotonic; downgrade refused");
+    kernel_tunable_unregister_owner(T_OWN_F);
+}
+
+static void test_tunable_audit(void)
+{
+    tunable_snapshot_t rows[64];
+    uint32_t before = kernel_tunable_count();
+    kernel_tunable_register("test.audit", TUNABLE_ENUM,
+                            TUNABLE_RUNTIME | TUNABLE_PRIVILEGED,
+                            2, 9, 5, (tunable_cb_t)0, (void *)0,
+                            T_OWN_H, TUNABLE_SRC_MODULE);
+    TEST_ASSERT_EQ(kernel_tunable_count(), before + 1, "count tracks registration");
+
+    /* dump edge cases */
+    TEST_ASSERT_EQ(kernel_tunable_dump((tunable_snapshot_t *)0, 1), 0u,
+                   "dump rejects NULL buffer");
+    TEST_ASSERT_EQ(kernel_tunable_dump(rows, 0), 0u, "dump rejects zero rows");
+
+    uint32_t n = kernel_tunable_dump(rows, 64);
+    int found = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        if (strcmp(rows[i].name, "test.audit") != 0) continue;
+        found = 1;
+        TEST_ASSERT_EQ(rows[i].cur, 5, "dump row current value");
+        TEST_ASSERT_EQ(rows[i].def, 5, "dump row default");
+        TEST_ASSERT_EQ(rows[i].min, 2, "dump row min");
+        TEST_ASSERT_EQ(rows[i].max, 9, "dump row max");
+        TEST_ASSERT_EQ(rows[i].type, TUNABLE_ENUM, "dump row type");
+        TEST_ASSERT_EQ(rows[i].owner_subsys, T_OWN_H, "dump row owner");
+        TEST_ASSERT_EQ(rows[i].source, TUNABLE_SRC_MODULE, "dump row provenance");
+        TEST_ASSERT_EQ(rows[i].flags, TUNABLE_RUNTIME | TUNABLE_PRIVILEGED,
+                       "dump row flags");
+    }
+    TEST_ASSERT_EQ(found, 1, "registered tunable appears in audit dump");
+
+    /* get_u64 helper: returns value, fallback on unknown, fallback on negative. */
+    TEST_ASSERT_EQ(kernel_tunable_get_u64("test.audit", 99), 5u,
+                   "get_u64 returns current value");
+    TEST_ASSERT_EQ(kernel_tunable_get_u64("test.nope", 99), 99u,
+                   "get_u64 returns fallback for unknown name");
+    kernel_tunable_register("test.neg", TUNABLE_INT, TUNABLE_RUNTIME,
+                            -10, 10, -3, (tunable_cb_t)0, (void *)0,
+                            T_OWN_H, TUNABLE_SRC_BUILTIN);
+    TEST_ASSERT_EQ(kernel_tunable_get_u64("test.neg", 99), 99u,
+                   "get_u64 returns fallback for negative value");
+
+    kernel_tunable_unregister_owner(T_OWN_H);
+    TEST_ASSERT_EQ(kernel_tunable_count(), before, "count restored after unregister");
+}
+
+static void test_tunable_malformed_and_capacity(void)
+{
+    /* Malformed descriptors are rejected. */
+    TEST_ASSERT_EQ(kernel_tunable_register((const char *)0, TUNABLE_UINT,
+                   TUNABLE_RUNTIME, 0, 1, 0, (tunable_cb_t)0, (void *)0, T_OWN_I,
+                   TUNABLE_SRC_BUILTIN), STATUS_INVALID_PARAMETER, "NULL name rejected");
+    TEST_ASSERT_EQ(kernel_tunable_register("", TUNABLE_UINT, TUNABLE_RUNTIME,
+                   0, 1, 0, (tunable_cb_t)0, (void *)0, T_OWN_I, TUNABLE_SRC_BUILTIN),
+                   STATUS_INVALID_PARAMETER, "empty name rejected");
+    TEST_ASSERT_EQ(kernel_tunable_register(
+                   "test.this.name.is.way.too.long.for.the.forty.eight.cap",
+                   TUNABLE_UINT, TUNABLE_RUNTIME, 0, 1, 0, (tunable_cb_t)0, (void *)0,
+                   T_OWN_I, TUNABLE_SRC_BUILTIN), STATUS_INVALID_PARAMETER,
+                   "over-length name rejected");
+    TEST_ASSERT_EQ(kernel_tunable_register("test.badrange", TUNABLE_UINT,
+                   TUNABLE_RUNTIME, 10, 5, 7, (tunable_cb_t)0, (void *)0, T_OWN_I,
+                   TUNABLE_SRC_BUILTIN), STATUS_INVALID_PARAMETER, "min>max rejected");
+    TEST_ASSERT_EQ(kernel_tunable_register("test.deflow", TUNABLE_UINT,
+                   TUNABLE_RUNTIME, 0, 10, -1, (tunable_cb_t)0, (void *)0, T_OWN_I,
+                   TUNABLE_SRC_BUILTIN), STATUS_INVALID_PARAMETER, "default below min rejected");
+    TEST_ASSERT_EQ(kernel_tunable_register("test.defhigh", TUNABLE_UINT,
+                   TUNABLE_RUNTIME, 0, 10, 11, (tunable_cb_t)0, (void *)0, T_OWN_I,
+                   TUNABLE_SRC_BUILTIN), STATUS_INVALID_PARAMETER, "default above max rejected");
+
+    /* Capacity exhaustion: register until the table is full, then assert the
+     * first non-success is STATUS_INSUFFICIENT_RESOURCES; unregister restores. */
+    uint32_t before = kernel_tunable_count();
+    char name[24];
+    NTSTATUS last = STATUS_SUCCESS;
+    int registered = 0;
+    for (int i = 0; i < 128 && last == STATUS_SUCCESS; i++) {
+        /* name = "test.cap.<i>" */
+        int p = 0;
+        const char *pfx = "test.cap.";
+        while (pfx[p]) { name[p] = pfx[p]; p++; }
+        if (i >= 10) name[p++] = (char)('0' + (i / 10));
+        name[p++] = (char)('0' + (i % 10));
+        name[p] = 0;
+        last = kernel_tunable_register(name, TUNABLE_UINT, TUNABLE_RUNTIME,
+                                       0, 1, 0, (tunable_cb_t)0, (void *)0,
+                                       T_OWN_I, TUNABLE_SRC_BUILTIN);
+        if (last == STATUS_SUCCESS) registered++;
+    }
+    TEST_ASSERT_EQ(last, STATUS_INSUFFICIENT_RESOURCES,
+                   "registration fails with insufficient-resources when full");
+    TEST_ASSERT(registered > 0, "at least one capacity tunable registered");
+    kernel_tunable_unregister_owner(T_OWN_I);
+    TEST_ASSERT_EQ(kernel_tunable_count(), before, "count restored after capacity unregister");
+}
+
 void test_register_kernel_config(void)
 {
+    test_suite_register_cat("CONF: tunable register+get",  test_tunable_register_get,      TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable clamp",         test_tunable_clamp,             TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable access control", test_tunable_access,           TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable module namespace", test_tunable_module_namespace, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable recursive guard", test_tunable_recursive_guard, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable callback semantics", test_tunable_callback_semantics, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable audit + helpers", test_tunable_audit,           TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable malformed+capacity", test_tunable_malformed_and_capacity, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: tunable phase seal",    test_tunable_phase_seal,        TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode floor resolver", test_cfg_safe_mode_floor,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode gating",         test_cfg_safe_mode_gating,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: safe-mode accessors",      test_cfg_safe_mode_accessors,  TEST_CAT_BOOT);

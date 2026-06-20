@@ -1407,6 +1407,15 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
         }
     }
 
+    /* Runtime tunable override (panic.timeout). Read locklessly -- a plain
+     * aligned 32-bit load is panic-path safe (no spinlock acquire). When the
+     * operator set panic.timeout at runtime it wins over the registry value. */
+    {
+        extern volatile int32_t g_panic_tunable_restart_secs;
+        int32_t t = g_panic_tunable_restart_secs;
+        if (t >= 0) restart_secs = t;
+    }
+
     if (restart_secs > 0) {
         /* Countdown loop using PIT ticks */
         int32_t secs_left = restart_secs;
