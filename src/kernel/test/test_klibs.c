@@ -22,6 +22,7 @@
 #include "kernel/nt/ntstatus.h"
 #include "kernel/nt/service_numbers.h"
 #include "libc/string.h"
+#include "libc/math.h"
 #include "libs/monocypher/monocypher.h"
 #include "libs/monocypher/monocypher-ed25519.h"
 
@@ -759,10 +760,183 @@ static void test_string_lib_edges(void)
     #undef SE
 }
 
+/* Reference-vector check for the freestanding math library (libc/math.h).
+ * Tolerances are a few ULP scaled to magnitude, per the documented few-ULP
+ * (not 1-ULP) contract. */
+static int km_close(double a, double b, double tol)
+{
+    return kmath_fabs(a - b) <= tol;
+}
+
+static void test_math_lib(void)
+{
+    const double PI = 3.14159265358979311600;
+    const double E  = 2.71828182845904509080;
+    const double T  = 1e-9;                       /* checkpoint tolerance */
+
+    /* sin/cos/tan */
+    TEST_ASSERT(km_close(kmath_sin(0.0), 0.0, T), "sin(0)=0");
+    TEST_ASSERT(km_close(kmath_sin(PI / 2), 1.0, T), "sin(pi/2)=1");
+    TEST_ASSERT(km_close(kmath_sin(PI / 6), 0.5, T), "sin(pi/6)=0.5");
+    TEST_ASSERT(km_close(kmath_sin(100.0 * PI), 0.0, 1e-6), "sin(100pi)~0 (range reduction)");
+    TEST_ASSERT(km_close(kmath_tan(PI / 4), 1.0, T), "tan(pi/4)=1");
+
+    /* atan / atan2 / asin */
+    TEST_ASSERT(km_close(kmath_atan(1.0), PI / 4, T), "atan(1)=pi/4");
+    TEST_ASSERT(km_close(kmath_atan2(1.0, 1.0), PI / 4, T), "atan2(1,1)=pi/4");
+    TEST_ASSERT(km_close(kmath_atan2(1.0, -1.0), 3.0 * PI / 4, T), "atan2(1,-1)=3pi/4");
+    TEST_ASSERT(km_close(kmath_atan2(-1.0, -1.0), -3.0 * PI / 4, T), "atan2(-1,-1)=-3pi/4");
+    TEST_ASSERT(km_close(kmath_asin(0.5), PI / 6, T), "asin(0.5)=pi/6");
+    TEST_ASSERT(km_close(kmath_asin(1.0), PI / 2, T), "asin(1)=pi/2");
+
+    /* exp / log / log2 / log10 */
+    TEST_ASSERT(km_close(kmath_exp(0.0), 1.0, T), "exp(0)=1");
+    TEST_ASSERT(km_close(kmath_exp(1.0), E, T), "exp(1)=e");
+    TEST_ASSERT(km_close(kmath_exp(-1.0), 1.0 / E, T), "exp(-1)=1/e");
+    TEST_ASSERT(km_close(kmath_log(E), 1.0, T), "log(e)=1");
+    TEST_ASSERT(km_close(kmath_log(1.0), 0.0, T), "log(1)=0");
+    TEST_ASSERT(km_close(kmath_exp(kmath_log(12345.0)), 12345.0, 1e-4), "exp(log(x))=x");
+    TEST_ASSERT(km_close(kmath_log2(8.0), 3.0, T), "log2(8)=3");
+    TEST_ASSERT(km_close(kmath_log10(1000.0), 3.0, T), "log10(1000)=3");
+
+    /* round / trunc / cbrt */
+    TEST_ASSERT(kmath_round(2.5) == 3.0, "round(2.5)=3 (half away)");
+    TEST_ASSERT(kmath_round(-2.5) == -3.0, "round(-2.5)=-3");
+    TEST_ASSERT(kmath_round(0.49) == 0.0, "round(0.49)=0");
+    TEST_ASSERT(kmath_trunc(2.7) == 2.0, "trunc(2.7)=2");
+    TEST_ASSERT(kmath_trunc(-2.7) == -2.0, "trunc(-2.7)=-2");
+    TEST_ASSERT(km_close(kmath_cbrt(27.0), 3.0, T), "cbrt(27)=3");
+    TEST_ASSERT(km_close(kmath_cbrt(-8.0), -2.0, T), "cbrt(-8)=-2");
+
+    /* negative-argument symmetry */
+    TEST_ASSERT(km_close(kmath_sin(-PI / 6), -0.5, T), "sin(-pi/6)=-0.5");
+    TEST_ASSERT(km_close(kmath_tan(-PI / 4), -1.0, T), "tan(-pi/4)=-1");
+    TEST_ASSERT(km_close(kmath_atan(-1.0), -PI / 4, T), "atan(-1)=-pi/4");
+    TEST_ASSERT(km_close(kmath_atan2(-1.0, 1.0), -PI / 4, T), "atan2(-1,1)=-pi/4");
+
+    /* float variants (delegate to double / kmath.h inlines) */
+    TEST_ASSERT(km_close((double)kmath_sinf(0.0f), 0.0, 1e-6), "sinf(0)=0");
+    TEST_ASSERT(km_close((double)kmath_sqrtf(16.0f), 4.0, 1e-5), "sqrtf(16)=4");
+    TEST_ASSERT(km_close((double)kmath_cosf(0.0f), 1.0, 1e-6), "cosf(0)=1");
+    TEST_ASSERT(km_close((double)kmath_powf(2.0f, 10.0f), 1024.0, 1e-2), "powf(2,10)=1024");
+
+    /* IEEE special values + domain edges */
+    double qnan = km_nan_(), pinf = km_inf_(0), ninf = km_inf_(1);
+    TEST_ASSERT(kmath_sin(qnan) != kmath_sin(qnan), "sin(NaN)=NaN");
+    TEST_ASSERT(kmath_exp(qnan) != kmath_exp(qnan), "exp(NaN)=NaN");
+    TEST_ASSERT(kmath_log(qnan) != kmath_log(qnan), "log(NaN)=NaN");
+    TEST_ASSERT(kmath_sin(pinf) != kmath_sin(pinf), "sin(+inf)=NaN");
+    TEST_ASSERT(kmath_tan(pinf) != kmath_tan(pinf), "tan(+inf)=NaN");
+    TEST_ASSERT(km_isinf_(kmath_exp(711.0)) && kmath_exp(711.0) > 0.0, "exp(711)=+inf");
+    TEST_ASSERT(kmath_exp(-746.0) == 0.0, "exp(-746)=0");
+    TEST_ASSERT(km_isinf_(kmath_log(0.0)) && kmath_log(0.0) < 0.0, "log(0)=-inf");
+    TEST_ASSERT(kmath_log(-1.0) != kmath_log(-1.0), "log(-1)=NaN");
+    TEST_ASSERT(km_isinf_(kmath_log(pinf)) && kmath_log(pinf) > 0.0, "log(+inf)=+inf");
+    TEST_ASSERT(km_close(kmath_log(0x1p-1074), -1074.0 * 0.69314718055994530942, 1e-6),
+                "log(min subnormal) ~ -1074*ln2");
+    TEST_ASSERT(kmath_asin(2.0) != kmath_asin(2.0), "asin(2)=NaN (domain)");
+    TEST_ASSERT(kmath_asin(-2.0) != kmath_asin(-2.0), "asin(-2)=NaN (domain)");
+    TEST_ASSERT(km_close(kmath_atan2(pinf, pinf), PI / 4, T), "atan2(inf,inf)=pi/4");
+    TEST_ASSERT(km_close(kmath_atan2(pinf, ninf), 3.0 * PI / 4, T), "atan2(inf,-inf)=3pi/4");
+    TEST_ASSERT(km_isinf_(kmath_cbrt(pinf)) && kmath_cbrt(pinf) > 0.0, "cbrt(+inf)=+inf");
+    TEST_ASSERT(kmath_cbrt(0.0) == 0.0, "cbrt(0)=0");
+
+    /* atan2 signed-zero quadrants (C99 edge semantics) */
+    double nzero = -0.0;
+    double r1 = kmath_atan2(nzero, pinf);
+    TEST_ASSERT(r1 == 0.0 && km_signbit_(r1), "atan2(-0,+inf)=-0");
+    TEST_ASSERT(km_close(kmath_atan2(nzero, ninf), -PI, T), "atan2(-0,-inf)=-pi");
+    TEST_ASSERT(km_close(kmath_atan2(0.0, nzero), PI, T), "atan2(+0,-0)=+pi");
+    TEST_ASSERT(km_close(kmath_atan2(nzero, nzero), -PI, T), "atan2(-0,-0)=-pi");
+    double r2 = kmath_atan2(nzero, 1.0);
+    TEST_ASSERT(r2 == 0.0 && km_signbit_(r2), "atan2(-0,+finite)=-0");
+    double r3 = kmath_atan2(0.0, 1.0);
+    TEST_ASSERT(r3 == 0.0 && !km_signbit_(r3), "atan2(+0,+finite)=+0");
+    TEST_ASSERT(km_close(kmath_atan2(nzero, -1.0), -PI, T), "atan2(-0,-finite)=-pi");
+    TEST_ASSERT(km_close(kmath_atan2(0.0, -1.0), PI, T), "atan2(+0,-finite)=+pi");
+    double r4 = kmath_atan(nzero);
+    TEST_ASSERT(r4 == 0.0 && km_signbit_(r4), "atan(-0)=-0");
+    double r5 = kmath_atan2(-0x1p-1074, 0x1p1023);   /* y/x underflows to -0 */
+    TEST_ASSERT(r5 == 0.0 && km_signbit_(r5), "atan2(-tiny,+huge)=-0");
+
+    /* signed zero preserved at every entry point */
+    double sn = kmath_sin(nzero), tn = kmath_tan(nzero);
+    double rn = kmath_round(nzero), tr = kmath_trunc(nzero);
+    TEST_ASSERT(sn == 0.0 && km_signbit_(sn), "sin(-0)=-0");
+    TEST_ASSERT(tn == 0.0 && km_signbit_(tn), "tan(-0)=-0");
+    TEST_ASSERT(rn == 0.0 && km_signbit_(rn), "round(-0)=-0");
+    TEST_ASSERT(tr == 0.0 && km_signbit_(tr), "trunc(-0)=-0");
+    /* narrowed domain: finite |x| >= KMATH_TRIG_REDUCE_MAX returns NaN (documented) */
+    TEST_ASSERT(kmath_sin(KMATH_TRIG_REDUCE_MAX) != kmath_sin(KMATH_TRIG_REDUCE_MAX),
+                "sin(>=reduce_max)=NaN (narrowed domain)");
+    /* asin near +/-1: km_sqrt_ keeps the tiny endpoint radicand accurate */
+    TEST_ASSERT(km_close(kmath_asin(1.0 - 0x1p-52), PI / 2, 1e-7), "asin(1-2^-52) ~ pi/2");
+    TEST_ASSERT(km_close(kmath_asin(-(1.0 - 0x1p-52)), -PI / 2, 1e-7), "asin(-(1-2^-52)) ~ -pi/2");
+
+    /* acosf accurate endpoints + domain; sqrtf special values */
+    TEST_ASSERT(km_close((double)kmath_acosf(1.0f), 0.0, 1e-6), "acosf(1)=0");
+    TEST_ASSERT(km_close((double)kmath_acosf(-1.0f), PI, 1e-6), "acosf(-1)=pi");
+    TEST_ASSERT(km_close((double)kmath_acosf(0.5f), PI / 3, 1e-6), "acosf(0.5)=pi/3");
+    TEST_ASSERT(kmath_acosf(2.0f) != kmath_acosf(2.0f), "acosf(2)=NaN (domain)");
+    TEST_ASSERT(kmath_sqrtf(-1.0f) != kmath_sqrtf(-1.0f), "sqrtf(-1)=NaN");
+    TEST_ASSERT(km_isinf_((double)kmath_sqrtf((float)pinf)) && kmath_sqrtf((float)pinf) > 0.0f,
+                "sqrtf(+inf)=+inf");
+
+    /* cosf must NOT hang on inf / huge finite (guarded path, not kmath_cos) */
+    TEST_ASSERT(kmath_cosf((float)pinf) != kmath_cosf((float)pinf), "cosf(+inf)=NaN (no hang)");
+    TEST_ASSERT(kmath_cosf(1e30f) != kmath_cosf(1e30f), "cosf(huge)=NaN (no hang)");
+
+    /* powf hardened special values */
+    TEST_ASSERT(km_isinf_((double)kmath_powf(0.0f, -1.0f)) && kmath_powf(0.0f, -1.0f) > 0.0f,
+                "powf(0,-1)=+inf");
+    TEST_ASSERT(kmath_powf(-1.0f, 0.5f) != kmath_powf(-1.0f, 0.5f), "powf(-1,0.5)=NaN");
+    TEST_ASSERT(km_close((double)kmath_powf(-2.0f, 3.0f), -8.0, 1e-3), "powf(-2,3)=-8");
+    TEST_ASSERT(kmath_powf(3.14f, 0.0f) == 1.0f, "powf(x,0)=1");
+    double pz = (double)kmath_powf(-0.0f, 3.0f);
+    TEST_ASSERT(pz == 0.0 && km_signbit_(pz), "powf(-0,3)=-0");
+    TEST_ASSERT(kmath_powf(1.0f, (float)qnan) == 1.0f, "powf(1,NaN)=1");
+    TEST_ASSERT(km_isinf_((double)kmath_powf(2.0f, (float)pinf)) && kmath_powf(2.0f, (float)pinf) > 0.0f,
+                "powf(2,+inf)=+inf (no UB)");
+    TEST_ASSERT(kmath_powf(2.0f, (float)ninf) == 0.0f, "powf(2,-inf)=0");
+    /* large finite integer exponent: parity must not cast a huge double to int */
+    TEST_ASSERT(kmath_powf(-0.0f, 1e20f) == 0.0f && !km_signbit_((double)kmath_powf(-0.0f, 1e20f)),
+                "powf(-0,1e20)=+0 (even, no UB)");
+    TEST_ASSERT(km_isinf_((double)kmath_powf((float)ninf, 1e20f)) && kmath_powf((float)ninf, 1e20f) > 0.0f,
+                "powf(-inf,1e20)=+inf (even, no UB)");
+    TEST_ASSERT(km_isinf_((double)kmath_powf(-0.0f, -3.0f)) && kmath_powf(-0.0f, -3.0f) < 0.0f,
+                "powf(-0,-3)=-inf");
+    TEST_ASSERT(kmath_powf((float)pinf, -2.0f) == 0.0f, "powf(+inf,-2)=+0");
+    double pno = (double)kmath_powf((float)ninf, -3.0f);
+    TEST_ASSERT(pno == 0.0 && km_signbit_(pno), "powf(-inf,-3)=-0");
+    TEST_ASSERT(kmath_powf(-1.0f, (float)pinf) == 1.0f, "powf(-1,+inf)=1");
+    TEST_ASSERT(kmath_powf(-1.0f, (float)ninf) == 1.0f, "powf(-1,-inf)=1");
+
+    /* atan2 infinity matrix: y-inf/x-finite + negative-y both-infinite */
+    TEST_ASSERT(km_close(kmath_atan2(pinf, 1.0), PI / 2, T), "atan2(+inf,1)=pi/2");
+    TEST_ASSERT(km_close(kmath_atan2(ninf, 1.0), -PI / 2, T), "atan2(-inf,1)=-pi/2");
+    TEST_ASSERT(km_close(kmath_atan2(ninf, pinf), -PI / 4, T), "atan2(-inf,+inf)=-pi/4");
+    TEST_ASSERT(km_close(kmath_atan2(ninf, ninf), -3.0 * PI / 4, T), "atan2(-inf,-inf)=-3pi/4");
+
+    /* quadrant II of the shared reducer (n&3 == 2) */
+    TEST_ASSERT(km_close(kmath_tan(3.0 * PI / 4), -1.0, T), "tan(3pi/4)=-1 (quadrant II)");
+    TEST_ASSERT(km_close(kmath_sin(3.0 * PI / 4), 0.70710678118654752440, T), "sin(3pi/4)=sqrt2/2");
+
+    /* large-but-in-range reduction accuracy (n exact below the 2^20 cutoff) */
+    TEST_ASSERT(km_close(kmath_sin(100000.0 * PI), 0.0, 1e-6), "sin(100000pi)~0 (in-range reduction)");
+
+    /* values with no fractional bits pass through round/trunc unchanged */
+    double big = 0x1p52 + 3.0;
+    TEST_ASSERT(kmath_round(big) == big, "round(2^52+3) unchanged");
+    TEST_ASSERT(kmath_trunc(big) == big, "trunc(2^52+3) unchanged");
+    TEST_ASSERT(kmath_round(-big) == -big, "round(-(2^52+3)) unchanged");
+}
+
 void test_register_klibs(void)
 {
     test_suite_register_cat("klibs: string lib edges",
                             test_string_lib_edges, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: math lib",
+                            test_math_lib, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: blake2b vector",
                             test_blake2b_vector, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: chacha20-poly1305 AEAD",

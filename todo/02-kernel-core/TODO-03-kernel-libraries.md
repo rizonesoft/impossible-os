@@ -64,7 +64,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | ⭐  | Order | Deliverable                                          | Depends On          | Status |
 | --- | :---: | ---------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | --                   |  [x]   |
-| 💎  |   2   | Complete floating-point math library                 | --                   |  [ ]   |
+| 💎  |   2   | Complete floating-point math library                 | --                   |  [x]   |
 | 💎  |   3   | LZ4 block compressor                                 | --                   |  [ ]   |
 | 💎  |   4   | miniz deflate/inflate + ZIP                          | §1                   |  [ ]   |
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
@@ -128,32 +128,29 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 ## 2. Complete Floating-Point Math Library
 
-- [ ] Reconcile with existing `include/kernel/kmath.h` inlines today: `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` (used by stb_truetype); avoid duplicate symbols when promoting or moving APIs into `src/libc/math.c` (confirmed `include/kernel/kmath.h:36-135`).
+- [x] Reconciled with `include/kernel/kmath.h`: new lib declares ONLY non-overlapping names (no ODR clash); the 8 inlines `kmath_fabs/floor/ceil/fmod/sqrt/pow/cos/acos` (used by stb_truetype + cJSON) stay put -- TrueType raster precision unchanged.
+- [x] Header-only, all `KM_AI` (`static inline __attribute__((always_inline))`): `-mno-sse2` gives no legal `xmm` return for an extern `double`, so no `src/libc/math.c` -- everything inlines into callers.
+- [x] Documented `kmath.h`-provided set + callers (stb STBTT_* macros; cJSON floor/fabs/pow) in the header banner.
 
-- [ ] Document which functions `kmath.h` already provides: `kmath_fabs`, `kmath_floor`, `kmath_ceil`, `kmath_fmod`, `kmath_sqrt`
-- [ ] Identify callers across the codebase to understand which new functions are urgently needed (stb_truetype, compositor, future audio synthesis)
+- [x] `include/libc/math.h` -- few-ULP (not 1-ULP) software math; Cody-Waite range reduction with split pi/2 + fdlibm minimax kernels; IEEE special values + signed zero at every entry point:
+  - `kmath_sin`/`kmath_tan` -- octant reduction + fdlibm kernels; NaN for NaN/+-inf and (narrowed domain) finite `|x| >= KMATH_TRIG_REDUCE_MAX`; signed zero preserved
+  - `kmath_asin` -- `atan2(x, km_sqrt_(1-x^2))`; NaN for `|x|>1`/inf, `+/-pi/2` only at exactly +/-1
+  - `kmath_atan` -- 1/x + pi/6 breakpoint (minimax arg `<= 2-sqrt(3)`); `atan(+/-0)=+/-0`
+  - `kmath_atan2` -- four-quadrant; full C99 infinity + signed-zero handling
+  - (`cos`/`acos` double remain the `kmath.h` inlines)
+- [x] `float` variants `kmath_sinf`..`kmath_truncf` (double then narrow): `cosf` uses the guarded reduction (`kmath_cos` hangs on inf), `acosf` = `pi/2-asin` + domain check, `sqrtf` uses seeded `km_sqrt_`, `powf` uses hardened `km_pow_`.
 
-- [ ] Add to `src/libc/math.c` and expose in `include/libc/math.h`; use polynomial approximations accurate to <= 1 ULP for the double range `[-pi, pi]`:
-  - `double kmath_sin(double x)` -- Taylor series with range reduction
-  - `double kmath_cos(double x)` -- `sin(pi/2 - x)` or paired Clenshaw
-  - `double kmath_tan(double x)` -- `sin/cos` with infinity guard
-  - `double kmath_asin(double x)` -- valid for `|x| <= 1`
-  - `double kmath_acos(double x)` -- `pi/2 - asin(x)`
-  - `double kmath_atan(double x)` -- Padé approximation
-  - `double kmath_atan2(double y, double x)` -- four-quadrant atan
-- [ ] `float` variants (`kmath_sinf`, etc.) -- cast to double, compute, cast back; sufficient for all current kernel uses
+- [x] `kmath_exp` -- split-ln2 reduction + 14-term Taylor on `|r|<=ln2/2`, reconstruct `2^k` via the IEEE exponent field (musl `scalbn`); overflow -> +inf, underflow -> 0, NaN-safe
+- [x] `kmath_log` -- exponent/mantissa via bit-cast, centered around 1, `2*atanh((m-1)/(m+1))` series; `log(0)=-inf`, `log(<0)=NaN`, `log(+inf)=+inf`, subnormal scale-up
+- [x] `kmath_log2` -- `log(x)*log2(e)`
+- [x] `kmath_log10` -- `log(x)*log10(e)`
+- [x] `pow` -- double stays the `kmath.h` inline (ODR); hardened `km_pow_` (full C99 special values, parity via bounded low-bit test, no `fmod`/`floor` UB) backs `kmath_powf`.
 
-- [ ] `double kmath_exp(double x)` -- `e^x` via Horner polynomial + range reduction by `ln2`
-- [ ] `double kmath_log(double x)` -- natural log via `atanh` identity
-- [ ] `double kmath_log2(double x)` -- `log(x) / log(2)`
-- [ ] `double kmath_log10(double x)` -- `log(x) / log(10)`
-- [ ] `double kmath_pow(double base, double exp)` -- `exp(exp * log(base))` with special-case handling for integer exponents
+- [x] `kmath_round` -- round half away from zero; `>= 2^52` and `+/-0` pass through
+- [x] `kmath_trunc` -- toward zero; `>= 2^52` and `+/-0` pass through
+- [x] `kmath_cbrt` -- `exp(log/3)` seed + 2 Newton steps; preserves sign, zero, +/-inf
 
-- [ ] `double kmath_round(double x)` -- round half-away-from-zero
-- [ ] `double kmath_trunc(double x)` -- truncate toward zero
-- [ ] `double kmath_cbrt(double x)` -- cube root via Newton-Raphson
-
-- [ ] Commit: `"libc: floating-point math -- sin/cos/tan/atan2/exp/log/pow, float variants"`
+- [x] Commit: `"libc: floating-point math -- sin/tan/asin/atan/atan2/exp/log/cbrt + float variants"`
 
 **Test checkpoint:** `kmath_sin(0)==0`, `kmath_cos(0)==1`, `kmath_atan2(1,1)` within 1e-9 of pi/4; `kmath_exp(1)` within 1e-9 of e; spot-check stb_truetype glyph raster unchanged vs baseline. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -333,7 +330,7 @@ One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompat
 | --- | -------------------------- | ------------- | ------------- | ---------------- |
 | 💎 | snprintf safe              | ✅ Rtl safe   | ✅ vsprintf   | ✅ §1 libc       |
 | 💎 | Core string ops            | ✅ Rtl mem    | ✅ string.c   | ✅ §1 libc       |
-| 💎 | Float math lib             | ✅ CRT        | ✅ libm       | ⚠️ §2 partial (`kmath.h` cos/pow/sqrt; no `libm`) |
+| 💎 | Float math lib             | ✅ CRT        | ✅ libm       | ✅ §2 libc (trig/exp/log/cbrt, few-ULP, IEEE) |
 | 💎 | LZ4 in kernel              | ⚠️ Xpress     | ✅ lib/lz4    | ⬜ §3            |
 | 💎 | Deflate zlib               | ✅ Rtl LZNT1 | ✅ zlib       | ⬜ §4 miniz      |
 | 💎 | ZIP read                   | ✅ Shell      | ✅ unzip      | ⬜ §4            |
