@@ -37,10 +37,11 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - -> XREF: `TODO-26-power-management.md §4` -- S4 hibernation image write uses LZ4 block compression; requires §3 of this TODO to be complete first
 - -> XREF: `TODO-27-crash-dump-generation.md §5, §6` -- crash dump minidump/kernel dump use LZ4 compression; requires §3
 - -> XREF: `TODO-10-kernel-security-hardening.md §12` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
-- -> XREF: `TODO-15-security-reference-monitor.md §14` -- AppContainer / package SID hashing uses Monocypher (T03 §8; T15 §14)
-- -> XREF: `TODO-14-registry-completion.md §5` -- registry hive WAJ uses CRC32C; separate from Monocypher but benefits from a consistent hash dispatch layer (§6)
+- -> XREF: `TODO-15-security-reference-monitor.md §14` -- AppContainer / package SID hashing uses Monocypher (T03 §5; T15 §14)
+- -> XREF: `TODO-14-registry-completion.md §5` -- registry hive WAJ uses CRC32C; provided by the §8 checksum/codec dispatch (not Monocypher)
+- -> XREF: `TODO-13-atom-nls-locale-subsystem.md` -- CANONICAL owner of Unicode case-folding + UTF-16<->UTF-8/code-page conversion (the `RtlUnicodeToUTF8N` equivalent); this TODO does NOT add a UTF section, consumers (env vars D02 T22, clipboard D09 T01, exFAT/NTFS) use T13's converter
 - -> XREF: `TODO-04-system-logging.md §10` -- HMAC-Blake2b chain for tamper-evident `events.jsonl`; requires Monocypher Blake2b + kernel CSPRNG (§5)
-- -> XREF: `07-networking/TODO-03-http-tls.md` §3 -- Mbed TLS Kernel Port in networking depends on this §8 freestanding port being complete first
+- -> XREF: `07-networking/TODO-03-http-tls.md` §3 -- Mbed TLS Kernel Port in networking depends on this §7 freestanding port being complete first
 - -> XREF: `TODO-28-bsod-ux-enhancements.md` §4 -- BSOD smart QR may zlib-compress or LZ4-compress crash payloads using §4 miniz or §3 LZ4 once those subsystems are merged (panic path obeys T03 allocator rules)
 
 ---
@@ -54,6 +55,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - Monocypher provides production-grade ChaCha20, Poly1305, Blake2b, Argon2id, X25519, and Ed25519 with a RDRAND-seeded CSPRNG (`csprng_fill()`).
 - cJSON parses and serialises JSON for theme files, settings, update manifests, and NTP server lists.
 - Mbed TLS 3.x compiles freestanding in a minimal configuration (TLS 1.3 record layer + AES-GCM + RSA/ECDSA) ready for use by the networking layer.
+- A kernel checksum dispatch (`kcrc32` IEEE + `kcrc32c` Castagnoli with an SSE4.2 fast path) and base64/hex codecs give every subsystem one bounds-checked implementation instead of scattered local CRC/codec copies.
 
 ---
 
@@ -68,6 +70,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1                   |  [x]   |
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [/]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [ ]   |
+| 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -247,7 +250,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
   cJSON_Hooks hooks = { .malloc_fn = kmalloc, .free_fn = kfree };
   cJSON_InitHooks(&hooks);
   ```
-- [ ] Memory note: parsed JSON trees can grow large; add a max-depth guard (`cJSON_SetMaxDepth(32)`) and validate total node count before full parse to avoid heap exhaustion from malformed documents
+- [ ] Max-depth guard: cJSON has NO runtime SetMaxDepth -- lower compile-time `CJSON_NESTING_LIMIT` (default 1000) to 32 via -D/header patch + a wrapper node-count budget before parse to avoid heap/stack exhaustion on malformed input.
 
 - [ ] Expose a thin kernel wrapper `src/kernel/json.c` / `include/kernel/json.h`:
   ```c
@@ -264,14 +267,14 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 - [x] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper"`
 
-**Test checkpoint:** Sample JSON parses; `json_int`/`json_str` match literals; `cJSON_SetMaxDepth` enforced on fuzz input without heap exhaustion; `json_print` round-trip stable. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Sample JSON parses; `json_int`/`json_str` match literals; a document nested deeper than `CJSON_NESTING_LIMIT` is rejected without heap/stack exhaustion; `json_print` round-trip stable. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
 ## 7. Mbed TLS Freestanding Port
 
 > [!IMPORTANT]
-> **Scope overlap -- `07-networking/TODO-03-http-tls.md` §3** also claims "Mbed TLS Kernel Port". This §8 is the canonical freestanding port; `07-networking/TODO-03 §3` must depend on this section being complete and should not re-implement the library itself. When `07-networking/TODO-03` is next validated, update its §3 to reference this TODO-03 §8 as its prerequisite.
+> **Scope overlap -- `07-networking/TODO-03-http-tls.md` §3** also claims "Mbed TLS Kernel Port". This §7 is the canonical freestanding port; `07-networking/TODO-03 §3` must depend on this section being complete and should not re-implement the library itself. When `07-networking/TODO-03` is next validated, update its §3 to reference this TODO-03 §7 as its prerequisite.
 
 - [ ] Clone Mbed TLS 3.x source into `src/libs/mbedtls/` (Apache-2.0); create a `mbedtls_config.h` that enables only the required subset:
   - `MBEDTLS_AES_C` + `MBEDTLS_GCM_C` -- AES-128-GCM / AES-256-GCM
@@ -298,6 +301,22 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 ---
 
+## 8. Checksum and Codec Dispatch (CRC32 / CRC32C / base64 / hex)
+
+One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompatible variants. Win11 exposes `RtlCrc32`/`RtlCrc64`; Linux centralizes `lib/crc32` + `lib/base64`. Today GPT, IXFS, entropy, and the bootloader each carry a private CRC32/CRC32C, and TLS/SSH/SMTP/registry would each invent base64/hex.
+
+- [ ] `uint32_t kcrc32(const void *data, size_t len)` IEEE 802.3 (reflected poly `0xEDB88320`) + continuable `kcrc32_cont(crc, data, len)`; reuse the existing `gpt_crc32` table as the shared implementation.
+- [ ] `uint32_t kcrc32c(const void *data, size_t len)` Castagnoli (poly `0x1EDC6F41`); SSE4.2 `crc32` fast path gated on `cpu_has(CPU_FEATURE_SSE42)`, table fallback otherwise (TCG/pre-SSE4.2 must match byte-for-byte).
+- [ ] `include/kernel/kchecksum.h` dispatch header; migrate IXFS WAJ, entropy, and registry-hive CRC32C call sites to it (GPT + bootloader pre-EBS mirrors may keep their local copies, noted in the header).
+- [ ] `base64_encode`/`base64_decode` (strict + MIME-whitespace-tolerant modes, padding-validated, bounds-checked, `-1` on overflow/invalid) in `include/kernel/kcodec.h`.
+- [ ] `hex_encode`/`hex_decode` (decode accepts lower+upper, rejects odd-length/invalid) for registry `.reg` binary values, PEM/TLS, PDF ASCIIHex.
+- [ ] Expose as the canonical codec for TLS PEM (§7) + SSH/SMTP/MIME/BSOD-QR consumers; replace the planned net-local `base64_decode` with this.
+- [ ] Commit: `"libs: kernel checksum (CRC32/CRC32C) + base64/hex codec dispatch"`
+
+**Test checkpoint:** `kcrc32("123456789",9) == 0xCBF43926` (IEEE vector); `kcrc32c("123456789",9) == 0xE3069283` (Castagnoli vector) on BOTH the SSE4.2 path and the table fallback; base64 round-trips RFC 4648 vectors and rejects bad padding; hex round-trips and rejects odd-length/invalid input. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11      | 🐧 Linux      | 🚀 Impossible OS |
@@ -317,9 +336,12 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎 | getrandom syscall          | ✅ BCryptGenRandom | ✅ getrandom(2) | ✅ §5 NtGetRandom 0x03D8 |
 | 💎 | JSON in kernel             | ❌ user COM   | ❌ none std   | ✅ §6 cJSON      |
 | 💎 | TLS record crypto          | ✅ SChannel   | ✅ ktls       | ⬜ §7 mbed       |
+| 💎 | CRC32 / CRC32C dispatch    | ✅ RtlCrc32   | ✅ lib/crc32  | ⬜ §8 kcrc32/kcrc32c |
+| 💎 | base64 / hex codec         | ✅ Crypt32    | ✅ lib/base64 | ⬜ §8 kcodec     |
+| 💎 | UTF-16<->UTF-8 conversion  | ✅ RtlUnicode | ✅ nls/utf8   | ⬜ owned by T13 NLS |
 | ⭐ | One ring-0 CSPRNG façade (TLS seed + hiber + dumps + klog HMAC) | ⚠️ many BCrypt entry points | ⚠️ `get_random_bytes` + drivers | ✅ §5 `csprng_fill`/`csprng_add_entropy` |
 
-After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, crypto, JSON, and the TLS record layer for hibernation, dumps, IXFS, and `07-networking` HTTPS.
+After §1 through §8, freestanding libc and these libs unblock LZ4, miniz, crypto, JSON, the TLS record layer, and a shared checksum/codec dispatch for hibernation, dumps, IXFS, registry, and `07-networking` HTTPS.
 
 ---
 
@@ -342,6 +364,8 @@ After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, cryp
   - CRC32: known input -> matches precomputed CRC
   - SHA-256: `"abc"` -> known hash `ba7816bf...`
   - AES-128-ECB: encrypt + decrypt round-trip -> plaintext matches
+  - `kcrc32("123456789", 9)` -> `0xCBF43926` (IEEE vector); `kcrc32c("123456789", 9)` -> `0xE3069283` (Castagnoli) on BOTH the SSE4.2 path and the table fallback
+  - base64 encode/decode round-trips RFC 4648 vectors; `base64_decode` rejects bad padding; `hex_decode` rejects odd-length/invalid input
 - [x] Add `extern void test_register_klibs(void);` in `test_runner.c`, call `test_register_klibs()` from `test_runner_init()`
 - [ ] Until §3 exists: register LZ4 round-trip test as `TEST_SKIP` or behind `#if 0`; until §4/§5 ship crypto: skip CRC32 / SHA-256 / AES bullets or use `TEST_SKIP` with explicit reason (avoid linking missing symbols)
 - [ ] Commit: `"test: add kernel libraries test suite"`
@@ -359,6 +383,7 @@ After §1 through §7, freestanding libc and these libs unblock LZ4, miniz, cryp
 - [ ] **CSPRNG**: `csprng_fill(buf1, 32)` and `csprng_fill(buf2, 32)` must produce different outputs; `csprng_u64()` called 1000 times must show no repeated values (birthday bound test).
 - [ ] **cJSON**: parse `{"build": 1024, "name": "Impossible OS", "debug": false}`; `json_int(json_get(root, "build")) == 1024`; `strcmp(json_str(json_get(root, "name")), "Impossible OS") == 0`.
 - [ ] **Mbed TLS selftest**: `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` both return 0 in the boot log.
+- [ ] **Checksum/codec**: `kcrc32`/`kcrc32c` match the IEEE/Castagnoli vectors on both SSE4.2 and table paths; base64 + hex round-trip RFC 4648 vectors and reject malformed input.
 - [ ] **Build check**: `bash scripts/build.sh clean` -> `=== BUILD OK ===` with all library files compiled under `-ffreestanding -nostdlib`.
 - [ ] **Platforms:** run verification matrix on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 - [ ] Commit: `"libs: snprintf/vsnprintf, kmath, LZ4, miniz, Monocypher/CSPRNG, cJSON, Mbed TLS freestanding ports"`
