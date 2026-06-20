@@ -89,13 +89,17 @@ int boot_health_check_register(const char *name,
 void boot_health_check_register_defaults(void);
 
 /* Run the gate. Reads ImpossibleOS-CurBootCtr + (optional) ImpossibleOS-
- * HealthSubset UEFI vars, executes every relevant registered check,
- * writes a one-line JSONL report to X:\Boot\health.jsonl, and on
- * BOOT_HEALTH_AGG_PASS calls mark_entry_successful() to write the
- * ImpossibleOS-MarkGood handoff record.
+ * HealthSubset UEFI vars, executes every relevant registered check, and
+ * writes a one-line JSONL report to X:\Boot\health.jsonl. On
+ * BOOT_HEALTH_AGG_PASS it records the verdict via boot_status_note_health_pass()
+ * but does NOT write the ImpossibleOS-MarkGood handoff itself -- the boot-status
+ * acceptance ledger owns the single bless: its accepted transition performs the
+ * per-entry MarkGood (only when health passed) alongside the A/B mark-good and
+ * durable record. A health PASS alone is therefore necessary but not sufficient
+ * to retire boot-entry tries; the boot must also reach its acceptance stage.
  *
- * Single-shot: a second call within the same boot returns the cached
- * aggregate without re-running. */
+ * Single-shot: a second call within the same boot returns the cached aggregate
+ * without re-running (SMP-safe atomic latch). */
 enum boot_health_aggregate boot_health_check_run(void);
 
 /* Query the cached aggregate after boot_health_check_run() has been

@@ -54,8 +54,10 @@ Kernel Phase 3
   boot_health_check_register_defaults()
   boot_health_check_run()              <- iterate registry, write JSONL
     -> aggregate == PASS
-      -> mark_entry_successful(entry_id)
-         <- writes ImpossibleOS-MarkGood (NV+BS+RT) with state-bound triple
+      -> boot_status_note_health_pass()  <- records the verdict only
+         <- the boot-status accepted transition later calls
+            mark_entry_successful(entry_id) -> ImpossibleOS-MarkGood, but only
+            once the boot also reaches its acceptance stage (single bless owner)
 
 Next bootloader
   policy_consume_mark_good_var() reads MarkGood, finds matching counter,
@@ -205,9 +207,10 @@ treated as best-effort:
 - UEFI variable write failure -- WARN, no mark-good is written; the
   counter stays decremented and the next boot retries.
 - JSONL write failure -- WARN, the in-kernel aggregate is still
-  cached and `mark_entry_successful` still fires.
-- CurBootCtr absent -- WARN, the gate runs but cannot mark good
-  (no state-bound triple available).
+  cached and the health PASS verdict is still recorded for the ledger.
+- CurBootCtr absent -- WARN, the gate runs and records the verdict, but the
+  later accepted-transition mark-good cannot bind the entry (no state-bound
+  triple available).
 
 Userland entry is never blocked by a failure in this module.
 

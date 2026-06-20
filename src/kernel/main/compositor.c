@@ -133,6 +133,12 @@ void compositor_run(void)
                  "(shipped=%u required=%u); opt-in has no effect",
                  (uint64_t)shipped, (uint64_t)required);
         }
+        /* Headless has no first composited frame, but reaching the idle loop
+         * after the Phase-3 health gate IS the boot-acceptance signal for this
+         * mode. Drive the ledger to UI_READY so the accepted transition still
+         * blesses the boot (A/B mark-good + per-entry MarkGood + durable record);
+         * otherwise a healthy headless boot would leave rollback state pending. */
+        (void)boot_status_accept_advance(BOOT_ACCEPT_UI_READY);
         for (;;)
             __asm__ volatile ("sti; hlt");
     }

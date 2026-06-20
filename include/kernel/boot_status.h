@@ -42,9 +42,9 @@
 
 /* Monotonic, forward-only acceptance stages. Higher = closer to accepted; the
  * ledger never moves backward (a late lower-stage advance is a no-op). The
- * "console-or-desktop ready" milestone is one stage (UI_READY): on a GUI boot
- * the compositor's first composited frame raises it; on a nogui boot the
- * console-ready milestone raises it. */
+ * "console-or-desktop ready" milestone is one stage (UI_READY): a GUI boot
+ * raises it at the compositor's first composited frame; a headless boot raises
+ * it when the compositor enters its idle loop after the Phase-3 health gate. */
 typedef enum {
     BOOT_ACCEPT_PENDING          = 0,  /* boot in progress, not yet blessable */
     BOOT_ACCEPT_UI_READY         = 1,  /* console-or-desktop reached first output */
@@ -94,11 +94,12 @@ typedef struct {
 
 /* Pure resolver (unit-testable, no live state). Maps the validated boot-arg
  * values to the effective policy. `bsp_arg` = bootstatuspolicy enum index,
- * `recovery_arg` = recoveryenabled bool, `from_cmdline` = either came from the
- * command line (vs default/BOOTCFG). Writes the resolved policy to `out`.
- * Out-of-domain inputs clamp to safe defaults (never trust untrusted args). */
+ * `recovery_arg` = recoveryenabled bool, `source` = the bootstatuspolicy arg's
+ * boot_arg_source_t (DEFAULT/BOOTCFG/CMDLINE) recorded as the policy provenance.
+ * Writes the resolved policy to `out`. Out-of-domain inputs clamp to safe
+ * defaults (never trust untrusted args). */
 void boot_status_policy_resolve(uint8_t bsp_arg, uint8_t recovery_arg,
-                                int from_cmdline, boot_status_policy_t *out);
+                                uint8_t source, boot_status_policy_t *out);
 
 /* Pure CRC helper for the durable record (testable). Computes the CRC32 over
  * every field EXCEPT crc32 itself. */
@@ -147,7 +148,18 @@ void boot_status_note_health_pass(void);
 int boot_status_health_passed(void);
 
 /* Copy the prior-boot durable record into `out`. Returns 1 if a valid record
- * was loaded from NVRAM at init, 0 if absent/corrupt (out zeroed). */
+ * was loaded from NVRAM at init, 0 if absent/corrupt (out zeroed).
+ *
+ * TRUST: this record is integrity-checked (CRC + exact size + schema version +
+ * canonical NV|BS|RT attributes + per-field domain bounds) but NOT authenticated
+ * -- the CRC is not a MAC, so any agent with UEFI variable-write access could
+ * forge a record with a valid CRC (the same posture as Win11 BCD / Linux
+ * bless-boot NVRAM state). Treat the result as an untrusted DIAGNOSTIC HINT, not
+ * trusted security policy: the rollback / recovery consumers MUST corroborate it
+ * against authoritative live state (A/B slot metadata, observed boot outcome)
+ * before acting on last_stage / recovery_suppressed. Cryptographic sealing
+ * (TPM-bound MAC) is a future hardening owned by the measured-boot trust
+ * primitives. */
 int boot_status_last_record(boot_status_record_t *out);
 
 /* Stage name for logs/diagnostics ("pending", "ui-ready", ...). */

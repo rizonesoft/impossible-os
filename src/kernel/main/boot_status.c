@@ -27,6 +27,7 @@
 #include "kernel/boot_health_check.h"
 #include "kernel/fs/gpt.h"
 #include "kernel/fs/partition.h"
+#include "kernel/sched/workqueue.h"
 #include "libc/string.h"
 
 extern struct boot_info g_boot_info;
@@ -62,6 +63,9 @@ static struct boot_uefi_guid s_status_guid = {
 static const uint16_t s_status_name[] = {
     'I','P','O','S','B','o','o','t','S','t','a','t','u','s', 0
 };
+/* Canonical UEFI variable attributes: NV | BS | RT. A read whose attributes
+ * differ is treated as untrusted (externally-created / stale). */
+#define BOOT_STATUS_VAR_ATTRS  0x7u
 
 uint32_t boot_status_record_crc(const boot_status_record_t *r)
 {
@@ -80,6 +84,12 @@ static int load_record(boot_status_record_t *out)
     uint64_t st = uefi_get_variable(&s_status_guid, s_status_name, &attrs, &sz, &r);
     if (st != 0 || sz != sizeof(r))
         return 0;                       /* absent / wrong size */
+    /* Reject any variable whose attributes are not the canonical NV|BS|RT that
+     * store_record() writes. name+GUID alone can match an externally-created or
+     * stale variable; UEFI cannot rewrite attributes in place, so a wrong-attr
+     * record must not be trusted as the prior boot status. */
+    if (attrs != BOOT_STATUS_VAR_ATTRS)
+        return 0;
     if (r.schema_version != BOOT_STATUS_RECORD_VERSION)
         return 0;                       /* version mismatch -- ignore */
     if (r.crc32 != boot_status_record_crc(&r))
@@ -104,11 +114,40 @@ static int load_record(boot_status_record_t *out)
 static void store_record(const boot_status_record_t *r)
 {
     if (!r) return;
-    uint64_t st = uefi_set_variable(&s_status_guid, s_status_name, 0x7u,
-                                    sizeof(*r), r);
-    if (st != 0)
+    uint64_t st = uefi_set_variable(&s_status_guid, s_status_name,
+                                    BOOT_STATUS_VAR_ATTRS, sizeof(*r), r);
+    if (st == 0)
+        return;                         /* wrote fine */
+
+    /* The write failed. The ONLY case worth a destructive repair is a
+     * pre-existing variable whose attributes are non-canonical: UEFI forbids
+     * changing a variable's attributes in place, so the write can never succeed
+     * until that variable is deleted. Probe the existing attributes first --
+     * GetVariable populates `cur_attrs` iff the variable exists (it stays 0 when
+     * absent or when the firmware did not report attributes, which keeps the
+     * repair from firing). Repair ONLY a wrong-attr variable; for any other
+     * failure (transient / resource) preserve the prior record rather than
+     * deleting a possibly-valid one. */
+    boot_status_record_t probe;
+    uint32_t cur_attrs = 0;
+    uint64_t cur_sz = sizeof(probe);
+    (void)uefi_get_variable(&s_status_guid, s_status_name, &cur_attrs,
+                            &cur_sz, &probe);
+    if (cur_attrs != 0u && cur_attrs != BOOT_STATUS_VAR_ATTRS) {
+        /* Delete using the variable's CURRENT attributes (required to remove it),
+         * then recreate canonical. */
+        uint64_t dst = uefi_set_variable(&s_status_guid, s_status_name,
+                                         cur_attrs, 0, (const void *)0);
+        st = uefi_set_variable(&s_status_guid, s_status_name,
+                               BOOT_STATUS_VAR_ATTRS, sizeof(*r), r);
         klog(LOG_WARN, "CONF",
-             "[CONF] boot-status NVRAM write failed (0x%lx)", (uint64_t)st);
+             "[CONF] boot-status wrong-attr repair (del=0x%lx set=0x%lx)",
+             (uint64_t)dst, (uint64_t)st);
+        return;
+    }
+    klog(LOG_WARN, "CONF",
+         "[CONF] boot-status NVRAM write failed (0x%lx); prior record kept",
+         (uint64_t)st);
 }
 
 /* ---- pure helpers ------------------------------------------------------- */
@@ -127,7 +166,7 @@ const char *boot_status_stage_name(boot_accept_stage_t stage)
 }
 
 void boot_status_policy_resolve(uint8_t bsp_arg, uint8_t recovery_arg,
-                                int from_cmdline, boot_status_policy_t *out)
+                                uint8_t source, boot_status_policy_t *out)
 {
     if (!out) return;
     memset(out, 0, sizeof(*out));
@@ -144,8 +183,10 @@ void boot_status_policy_resolve(uint8_t bsp_arg, uint8_t recovery_arg,
      * pin acceptance to an unreachable stage and stall every boot's bless. */
     out->accept_stage = (uint8_t)BOOT_ACCEPT_UI_READY;
     out->failed_threshold = 3u;     /* recovery-escalation default (T30 consumes) */
-    out->provenance = from_cmdline ? (uint8_t)BOOT_STATUS_PROV_CMDLINE
-                                   : (uint8_t)BOOT_STATUS_PROV_DEFAULT;
+    out->provenance =
+        (source == (uint8_t)BOOT_ARG_SRC_CMDLINE) ? (uint8_t)BOOT_STATUS_PROV_CMDLINE :
+        (source == (uint8_t)BOOT_ARG_SRC_BOOTCFG) ? (uint8_t)BOOT_STATUS_PROV_BOOTCFG :
+                                                    (uint8_t)BOOT_STATUS_PROV_DEFAULT;
 }
 
 int boot_status_ledger_step(boot_accept_stage_t cur, boot_accept_stage_t req,
@@ -189,6 +230,14 @@ static void do_accept_bless(void)
          boot_status_stage_name(BOOT_ACCEPT_ACCEPTED));
 }
 
+/* sys_wq worker: runs the bless I/O off the caller's thread (typically the
+ * compositor first-frame thread). */
+static void bless_worker(void *arg)
+{
+    (void)arg;
+    do_accept_bless();
+}
+
 int boot_status_accept_advance(boot_accept_stage_t stage)
 {
     if (!s_policy_ready)
@@ -216,8 +265,15 @@ int boot_status_accept_advance(boot_accept_stage_t stage)
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
         return 0;                       /* another caller already won */
 
-    do_accept_bless();
+    /* Publish the terminal stage first, then defer the bless I/O (A/B disk RMW +
+     * firmware SetVariable, 10-100ms on real hardware) to sys_wq so it never
+     * stalls the caller -- typically the compositor first-frame thread. Fall
+     * back to a synchronous bless only if the workqueue is not up yet, so the
+     * boot is still durably blessed. Mirrors boot_rollback_request_raise(). */
     __atomic_store_n(&s_stage, (int)BOOT_ACCEPT_ACCEPTED, __ATOMIC_RELEASE);
+    if (sys_wq == (workqueue_t *)0 ||
+        !workqueue_enqueue(sys_wq, bless_worker, (void *)0))
+        do_accept_bless();
     return 1;
 }
 
@@ -264,24 +320,24 @@ void boot_status_init(void)
     static int s_done;
     if (s_done) return;
 
-    /* Resolve the effective policy from the validated boot args. */
+    /* Resolve the effective policy from the validated boot args. Provenance
+     * tracks the bootstatuspolicy arg's source (the primary policy knob);
+     * BOOTCFG vs CMDLINE vs the compiled default are all distinguishable. */
     uint8_t bsp = (uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES;
     uint8_t rec = 1u;
-    int from_cmd = 0;
+    uint8_t src = (uint8_t)BOOT_ARG_SRC_DEFAULT;
     const boot_args_t *a = boot_args_parsed();
     if (a) {
         const boot_arg_value_t *vp = boot_args_get(a, "bootstatuspolicy");
         if (vp) {
             bsp = (uint8_t)vp->ival;
-            if (vp->source == BOOT_ARG_SRC_CMDLINE) from_cmd = 1;
+            src = (uint8_t)vp->source;
         }
         const boot_arg_value_t *vr = boot_args_get(a, "recoveryenabled");
-        if (vr) {
+        if (vr)
             rec = vr->ival ? 1u : 0u;
-            if (vr->source == BOOT_ARG_SRC_CMDLINE) from_cmd = 1;
-        }
     }
-    boot_status_policy_resolve(bsp, rec, from_cmd, &s_policy);
+    boot_status_policy_resolve(bsp, rec, src, &s_policy);
 
     /* Defensive clamp: never require an acceptance stage with no live advancer
      * (a higher bar would leave every boot pending -> rollback storm). */

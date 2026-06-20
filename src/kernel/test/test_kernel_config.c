@@ -1301,8 +1301,9 @@ static void test_boot_status_policy_resolve(void)
 {
     boot_status_policy_t p;
 
-    /* Defaults: show failures, recovery on, accept at UI_READY. */
-    boot_status_policy_resolve((uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES, 1, 0, &p);
+    /* Defaults: show failures, recovery on, accept at UI_READY, default source. */
+    boot_status_policy_resolve((uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES, 1,
+                               (uint8_t)BOOT_ARG_SRC_DEFAULT, &p);
     TEST_ASSERT_EQ(p.failure_display, (uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES,
                    "default failure display = show");
     TEST_ASSERT_EQ(p.recovery_enabled, 1u, "recovery enabled");
@@ -1311,14 +1312,20 @@ static void test_boot_status_policy_resolve(void)
     TEST_ASSERT_EQ(p.provenance, (uint8_t)BOOT_STATUS_PROV_DEFAULT, "default provenance");
 
     /* IgnoreAllFailures + recovery off + cmdline provenance. */
-    boot_status_policy_resolve((uint8_t)BOOT_STATUS_IGNORE_ALL_FAILURES, 0, 1, &p);
+    boot_status_policy_resolve((uint8_t)BOOT_STATUS_IGNORE_ALL_FAILURES, 0,
+                               (uint8_t)BOOT_ARG_SRC_CMDLINE, &p);
     TEST_ASSERT_EQ(p.failure_display, (uint8_t)BOOT_STATUS_IGNORE_ALL_FAILURES,
                    "ignore-all-failures honored");
     TEST_ASSERT_EQ(p.recovery_enabled, 0u, "recovery disabled");
     TEST_ASSERT_EQ(p.provenance, (uint8_t)BOOT_STATUS_PROV_CMDLINE, "cmdline provenance");
 
+    /* BOOTCFG source maps to BOOTCFG provenance (not collapsed to default). */
+    boot_status_policy_resolve((uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES, 1,
+                               (uint8_t)BOOT_ARG_SRC_BOOTCFG, &p);
+    TEST_ASSERT_EQ(p.provenance, (uint8_t)BOOT_STATUS_PROV_BOOTCFG, "bootcfg provenance");
+
     /* Out-of-domain display enum clamps to the safe default (show). */
-    boot_status_policy_resolve(200, 1, 0, &p);
+    boot_status_policy_resolve(200, 1, (uint8_t)BOOT_ARG_SRC_DEFAULT, &p);
     TEST_ASSERT_EQ(p.failure_display, (uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES,
                    "out-of-domain display clamps to show");
 }
