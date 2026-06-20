@@ -79,6 +79,8 @@ Parse the bootloader handoff into typed, validated keys before any Phase 0 consu
 
 **Test checkpoint:** Boot with `debug=1 safemode=network verifier=*`: serial shows `"[CONF] parsed boot args: debug=1 safemode=network verifier=*"` before Phase 0 consumers run. Boot with `kernel.unknown=1` and no override: serial shows `"[CONF] unknown boot key: kernel.unknown"` and degraded boot policy follows T01 §7. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 2. `kernel_config_t` Immutable Phase 0 Snapshot
 
 Publish one read-only snapshot that all later phases consume instead of rereading mutable boot structures.
@@ -91,6 +93,8 @@ Publish one read-only snapshot that all later phases consume instead of rereadin
 - [ ] Commit: `"kernel: publish immutable Phase 0 configuration snapshot"`
 
 **Test checkpoint:** First Phase 0 consumer sees non-NULL `kernel_config_get()` and serial shows `"[CONF] snapshot ready: version=1 phase=0"`. Build or boot fails if the declared size/version drifts from the published accessor contract. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 3. Registry-Backed Policy Merge
 
@@ -105,6 +109,8 @@ Merge persisted policy without letting malformed registry data silently reshape 
 
 **Test checkpoint:** Registry sets `debug=0`, command line sets `debug=1`, and `config_dump` reports `effective=1 source=cmdline`. Invalid `panic.timeout=-1` logs a rejection and leaves the compiled default in place. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 4. ControlSet and LastKnownGood Selection
 
 Turn `Select` values and boot outcomes into deterministic control-set choice instead of ad-hoc registry reads.
@@ -117,6 +123,8 @@ Turn `Select` values and boot outcomes into deterministic control-set choice ins
 - [ ] Commit: `"kernel: add control-set and LastKnownGood selection policy"`
 
 **Test checkpoint:** With `Current=2`, `Default=1`, and `LastKnownGood=3`, a failed boot before ready logs `"[CONF] control set rollback: ControlSet002 -> ControlSet003"` and the next boot selects `ControlSet003`. Successful boot updates `LastKnownGood` only after registry flush succeeds. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 5. Safe Mode and Recovery Policy Object
 
@@ -132,6 +140,8 @@ Represent safe mode as a first-class kernel policy object, not a scattered colle
 
 **Test checkpoint:** Boot with `safemode=network`: serial shows `"[CONF] safe_mode=network reason=boot-policy"` and GUI-only services stay disabled while networking remains enabled. Repeated-failure recovery boot shows a distinct `reason=recovery` code and cannot be downgraded by registry state. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 6. Runtime Tunable Registry
 
 Give subsystems one typed registration surface for mutable policy instead of one-off globals and parser branches.
@@ -144,6 +154,8 @@ Give subsystems one typed registration surface for mutable policy instead of one
 - [ ] Commit: `"kernel: add runtime tunable registry"`
 
 **Test checkpoint:** Writing `panic.timeout=9999` clamps to the declared max and logs `"[CONF] tunable clamp: panic.timeout"`. A read-only tunable write returns `STATUS_ACCESS_DENIED`, and a callback requested from syscall context runs later at PASSIVE_LEVEL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 7. Feature Flag Gates and Experiment Cohorts
 
@@ -158,6 +170,8 @@ Make feature flags discoverable, auditable, and safe enough for staged rollout i
 
 **Test checkpoint:** The same machine id lands in the same cohort on repeated boots, `feature.debug_menu=off` disables only that feature, and `feature.kpti=off` under Secure Boot is rejected with `"[CONF] secure feature override blocked: kpti"`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 8. Native Query/Set Config Syscalls
 
 Expose the effective configuration through stable NT contracts once the SSDT surface is ready.
@@ -170,6 +184,8 @@ Expose the effective configuration through stable NT contracts once the SSDT sur
 - [ ] Commit: `"kernel: add native configuration query and set syscalls"`
 
 **Test checkpoint:** `NtQuerySystemInformation(SystemKernelConfigInformation)` returns snapshot version and size, an unprivileged write returns `STATUS_PRIVILEGE_NOT_HELD`, a boot-only tunable write returns `STATUS_ACCESS_DENIED`, and an undersized output buffer returns `STATUS_INFO_LENGTH_MISMATCH`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 9. Policy Lock Phases and Tamper Audit
 
@@ -184,6 +200,8 @@ Define when policy stops being mutable and make every blocked mutation observabl
 
 **Test checkpoint:** Attempting to change locked `ci.mode` after the lock phase returns `STATUS_ACCESS_DENIED` and logs `"[CONF] tamper blocked: ci.mode"`. Attempting to downgrade Secure Boot or CI policy after lock triggers the configured panic path instead of silently continuing. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 10. Boot Status Policy and Boot Success Ledger
 
 Turn boot success into an explicit policy-controlled state machine so rollback, LastKnownGood, and recovery decisions do not hinge on one ad-hoc ready bit.
@@ -197,6 +215,8 @@ Turn boot success into an explicit policy-controlled state machine so rollback, 
 - [ ] Commit: `"kernel: add boot status policy and success ledger"`
 
 **Test checkpoint:** Boot with `bootstatuspolicy=IgnoreAllFailures recoveryenabled=no`: serial shows `"[CONF] boot_accept=pending policy=IgnoreAllFailures recovery=off"` and rollback counters do not reset until the configured acceptance stage is reached. A successful boot advances through the ledger in order and only then logs `"[CONF] boot accepted"` before D01 T21 §5 resets tries. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 11. Config Dump, Tests, and Docs
 
@@ -228,6 +248,8 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 > **After §1-§6:** Impossible OS reaches the same baseline the major platforms already have: typed boot policy, safe/recovery modes, and persistent tunables.
 > **After §7-§10:** Impossible OS pulls ahead with kernel-native provenance, explicit boot acceptance, rollout cohorts, and tamper-aware lock phases instead of scattered tooling.
 
+---
+
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_kernel_config()` and register the suite under `TEST_CAT_BOOT`.
@@ -246,6 +268,8 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 - [ ] Register in `src/kernel/test/test_runner.c`: `test_register_kernel_config()`
 - [ ] Add boot-path assertions to the existing boot suite so Safe Mode, rollback, and unknown-key rejection are exercised from real boot logs.
 - [ ] Commit: `"test: add kernel configuration policy test suite"`
+
+---
 
 ## Verification
 
