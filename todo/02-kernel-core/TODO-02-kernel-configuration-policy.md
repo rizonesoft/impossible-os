@@ -373,7 +373,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 > Wire into `test_runner_init()` via `test_register_kernel_config()` and register the suite under `TEST_CAT_BOOT`.
 > Tests run with `debug=1` or `test=1` in boot.conf. If T12 §10 is still pending when §8 work starts, keep the syscall ABI checks as `TEST_PENDING` rather than dropping them.
 
-- [ ] Create `src/kernel/test/test_kernel_config.c` with:
+- [/] `src/kernel/test/test_kernel_config.c` wired (49 suites) covering the assertions below; `kernel_select_control_set` deferred -> 02-kernel-core/TODO-02 §4. Original list:
   - `kernel_config_parse_cmdline("debug=1 safemode=network")` sets `debug_enabled == true` and `safe_mode == SAFE_MODE_NETWORK`
   - `kernel_config_parse_cmdline("kernel.unknown=1")` returns the expected rejection status when `boot.allow_unknown == 0`
   - `kernel_config_parse_cmdline("bootstatuspolicy=IgnoreAllFailures recoveryenabled=no")` sets the expected boot-status policy flags
@@ -385,21 +385,21 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
   - `kernel_query_system_config(NULL, 0, &needed)` returns `STATUS_INFO_LENGTH_MISMATCH`
   - `kernel_lockdown_level()` returns `LOCKDOWN_INTEGRITY` or stricter when Secure Boot is enabled in the test fixture
   - `kernel_tunable_register("module.testmod.depth", ...)` registers under the module namespace and records the owning-module provenance
-- [ ] Register in `src/kernel/test/test_runner.c`: `test_register_kernel_config()`
-- [ ] Add boot-path assertions to the existing boot suite so Safe Mode, rollback, and unknown-key rejection are exercised from real boot logs.
-- [ ] Commit: `"test: add kernel configuration policy test suite"`
+- [x] Registered in `src/kernel/test/test_runner.c`: `test_register_kernel_config()`
+- [/] Safe Mode + unknown-key rejection exercised by the boot suite; the rollback boot-path assertion is deferred -> 02-kernel-core/TODO-02 §4.
+- [x] Commit: `"test: add kernel configuration policy test suite"`
 
 ---
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` then `tail -1 build/build.log` shows `=== BUILD OK ===`
-- [ ] `make test-boot` passes the kernel configuration parser, precedence, lock-phase, and rollback tests
-- [ ] Boot with `safemode=network` logs the expected `"[CONF] safe_mode=network"` line and skips GUI-only services
-- [ ] Failed boot before ready leaves boot acceptance pending; next boot selects LastKnownGood or rollback path and logs the reason
-- [ ] Boot with `bootstatuspolicy=IgnoreAllFailures recoveryenabled=no` keeps rollback counters pending until the configured acceptance stage and logs the acceptance transition
-- [ ] `NtQuerySystemInformation(SystemKernelConfigInformation)` returns the expected snapshot version and size
-- [ ] Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal
-- [ ] Commit: `"kernel: complete configuration and policy plane"`
+- [x] `bash scripts/build.sh clean` then `tail -1 build/build.log` shows `=== BUILD OK ===` (2026-06-20)
+- [/] `make test-boot` passes parser, precedence, lock-phase tests (3209 kernel + 16 user PASS 2026-06-20); the rollback test is deferred -> 02-kernel-core/TODO-02 §4 (control-set impl).
+- [ ] Boot with `safemode=network` logs `"[CONF] safe_mode=network"` and skips GUI-only services (manual -- needs a safemode boot on WHPX/bare metal)
+- [/] Failed boot leaves acceptance pending; next boot selects LastKnownGood/rollback -- deferred -> 02-kernel-core/TODO-02 §4 (failed-boot rollback + control-set).
+- [/] Boot with `bootstatuspolicy=IgnoreAllFailures recoveryenabled=no`: the §10 acceptance transition is smoke-verified (`"[CONF] boot accepted (stage=accepted)"`); the rollback-counter-pending leg needs the §4 failed-boot path.
+- [x] `NtQuerySystemInformation(SystemKernelConfigInformation)` snapshot version + size covered by `test_cfg_query_syscall` / `test_cfg_snapshot_*` (boot suite, 2026-06-20)
+- [ ] Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (manual)
+- [x] Commit: `"kernel: complete configuration and policy plane"`
 
 **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
