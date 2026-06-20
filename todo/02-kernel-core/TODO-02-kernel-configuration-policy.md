@@ -52,7 +52,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | 💎 | 1 | Boot argument schema and parser                 | D01 T07 §3, §5                      | [x] |
 | 💎 | 2 | `kernel_config_t` immutable Phase 0 snapshot    | §1, T01 §2, §6                      | [x] |
 | 💎 | 3 | Registry-backed policy merge                    | §2, §4, T14 §8, §12, §13           | [/] |
-| 💎 | 4 | ControlSet and LastKnownGood selection          | §2, D01 T07 §7, D01 T21 §4, §5     | [ ] |
+| 💎 | 4 | ControlSet and LastKnownGood selection          | §2, §10, T14 §12, D01 T21 §4, §5   | [/] |
 | 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [ ] |
 | 💎 | 6 | Runtime tunable registry                        | §2                                  | [ ] |
 | ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [ ] |
@@ -148,6 +148,8 @@ Turn `Select` values and boot outcomes into deterministic control-set choice ins
 - [ ] Commit: `"kernel: add control-set and LastKnownGood selection policy"`
 
 **Test checkpoint:** With `Current=2`, `Default=1`, and `LastKnownGood=3`, a failed boot before ready logs `"[CONF] control set rollback: ControlSet002 -> ControlSet003"` and the next boot selects `ControlSet003`. Successful boot updates `LastKnownGood` only after registry flush succeeds. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] §4 is blocked on three prerequisites: (a) `registry_init` creates only `HKLM\SYSTEM` -- the `SYSTEM\Select` / `ControlSetNNN` / `CurrentControlSet`-link substrate §4 must read does not exist yet (T14 §12); (b) LastKnownGood update, boot-pending, failed-boot writeback, and D01 T21 rollback-hint all gate on the §10 acceptance ledger (unimplemented); (c) persisting the chosen control-set id cannot go into the immutable §2 `kernel_config_t` -- it needs the SAME Phase-2 effective-policy object §3 also needs (operator-reserved architecture). The clean slice (validate Select, resolve `CurrentControlSet`->`ControlSetNNN`, publish selected id+reason in a Phase-2 object) unblocks §3 but still requires (a). -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`" at line 234); -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion" at line 519)
 
 ---
 
