@@ -1116,7 +1116,8 @@ static void test_policy_phase_and_lockdown(void)
 
     /* Core registration is idempotent and publishes the lockless lockdown
      * scalar in sync with the "policy.lockdown" row. */
-    kernel_policy_register_core();
+    TEST_ASSERT_EQ(kernel_policy_register_core(), 0,
+                   "core registration succeeds (idempotent, all required rows present)");
     TEST_ASSERT(kernel_policy_count() >= 8u, "core policies registered");
     uint64_t ld = 0;
     TEST_ASSERT_EQ(kernel_policy_get("policy.lockdown", &ld), 0, "lockdown policy present");
@@ -1192,6 +1193,46 @@ static void test_policy_audit_ring(void)
     TEST_ASSERT_EQ(recs[POLICY_AUDIT_RING - 1u].attempted,
                    1000u + (floods - (uint32_t)POLICY_AUDIT_RING),
                    "retained-oldest record correct after wrap");
+
+    /* Allowed writes must NOT evict tamper evidence: record one blocked write,
+     * then flood the ring's worth of allowed equal-value no-ops, and confirm the
+     * blocked record is still the newest (allowed writes never enter the ring). */
+    kernel_policy_register("policy.t9.eko", 2, 100, POLICY_PHASE_PRE_MEMORY,
+                           POLICY_CLASS_RATCHET, 0);
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.eko", 1, POLICY_CALLER_USER),
+                   STATUS_ACCESS_DENIED, "downgrade blocked (the tamper record to protect)");
+    for (uint32_t k = 0; k < POLICY_AUDIT_RING + 5u; k++)
+        TEST_ASSERT_EQ(kernel_policy_set("policy.t9.eko", 2, POLICY_CALLER_KERNEL),
+                       STATUS_SUCCESS, "equal-value allowed no-op");
+    n = kernel_policy_audit_dump(recs, 2);
+    TEST_ASSERT(n >= 1u, "ring still holds the blocked record");
+    TEST_ASSERT_EQ(recs[0].result, (uint8_t)POLICY_RESULT_DENIED_RATCHET,
+                   "blocked record survived the allowed-write flood (not evicted)");
+    TEST_ASSERT_EQ(recs[0].attempted, 1u, "surviving record is the blocked downgrade");
+}
+
+/* Pre-seal free-write path including the equal no-op. A policy sealing at the
+ * FINAL phase is unsealed iff the global phase has not yet reached it; the test
+ * skips when the boot has already sealed everything. */
+static void test_policy_preseal_writes(void)
+{
+    policy_lock_phase_t cur = kernel_policy_lock_phase_get();
+    kernel_policy_register("policy.t9.pre", 4, 100, POLICY_PHASE_POST_USER_MODE,
+                           POLICY_CLASS_RATCHET, 0);
+    if (cur >= POLICY_PHASE_POST_USER_MODE) {
+        TEST_SKIP("global phase already POST_USER_MODE -- pre-seal path unreachable");
+        return;
+    }
+    uint64_t tc = kernel_policy_tamper_count();
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.pre", 4, POLICY_CALLER_KERNEL),
+                   STATUS_SUCCESS, "pre-seal equal write is an allowed no-op");
+    uint64_t v = 0; kernel_policy_get("policy.t9.pre", &v);
+    TEST_ASSERT_EQ(v, 4u, "pre-seal equal write left value unchanged");
+    TEST_ASSERT_EQ(kernel_policy_set("policy.t9.pre", 2, POLICY_CALLER_KERNEL),
+                   STATUS_SUCCESS, "pre-seal real write applies freely (even a downgrade)");
+    kernel_policy_get("policy.t9.pre", &v);
+    TEST_ASSERT_EQ(v, 2u, "pre-seal real write changed value");
+    TEST_ASSERT_EQ(kernel_policy_tamper_count(), tc, "pre-seal writes are never tamper");
 }
 
 /* Fixed-capacity + bounded-name boundaries. Registered LAST among policy tests
@@ -1295,6 +1336,7 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: policy non-ratchet locked", test_policy_nonratchet_locked,   TEST_CAT_BOOT);
     test_suite_register_cat("CONF: policy phase + lockdown",  test_policy_phase_and_lockdown,   TEST_CAT_BOOT);
     test_suite_register_cat("CONF: policy audit ring",        test_policy_audit_ring,           TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: policy pre-seal writes",   test_policy_preseal_writes,       TEST_CAT_BOOT);
     test_suite_register_cat("CONF: policy capacity boundary", test_policy_capacity_boundary,    TEST_CAT_BOOT);
 }
 

@@ -118,7 +118,9 @@ uint32_t kernel_policy_count(void);          /* registered policies */
 uint64_t kernel_policy_tamper_count(void);   /* total denied + panic attempts */
 int      kernel_policy_tamper_sticky(void);  /* 1 if any tamper blocked since boot */
 
-/* Tamper-audit ring record (oldest dropped on wrap). */
+/* Tamper-audit ring record (oldest dropped on wrap). Only BLOCKED attempts
+ * (denied/panic) are recorded, so a stream of allowed writes can never evict
+ * tamper evidence; allowed state changes are observable via ETW, not the ring. */
 typedef struct {
     char     policy[POLICY_NAME_CAP];
     uint64_t attempted;     /* attempted value */
@@ -132,7 +134,11 @@ typedef struct {
 uint32_t kernel_policy_audit_dump(policy_audit_record_t *out, uint32_t max);
 
 /* Register the built-in core security policies and seed the lockdown level from
- * the Secure Boot state. Idempotent; call once at Phase 3. */
-void kernel_policy_register_core(void);
+ * the Secure Boot state. Idempotent; call once at Phase 3. Returns 0 when every
+ * core policy registered, -1 if any failed (registry full / collision) -- the
+ * caller MUST NOT advance/seal the policy phases on a failure, since required
+ * rows (e.g. policy.ci.mode, policy.secure_boot) could be absent and the
+ * documented post-lock ACCESS_DENIED/panic behavior would silently degrade. */
+int kernel_policy_register_core(void);
 
 #endif /* KERNEL_POLICY_LOCK_H */

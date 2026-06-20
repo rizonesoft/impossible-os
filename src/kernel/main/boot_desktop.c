@@ -133,7 +133,8 @@ void boot_phase3(void)
      * level, KASLR/SMEP-SMAP/KPTI, Secure Boot, CI mode, and the boot verifier
      * become immutable (downgrade-blocked). The debugger lockout seals later at
      * POST_USER_MODE, just before the compositor reaches user mode. */
-    kernel_policy_register_core();
+    if (kernel_policy_register_core() != 0)
+        boot_halt("policy lock core registration failed -- refusing to seal an incomplete policy plane");
     kernel_policy_lock_phase_advance(POLICY_PHASE_POST_SECURITY_INIT);
     kernel_policy_lock_phase_advance(POLICY_PHASE_POST_REGISTRY);
 

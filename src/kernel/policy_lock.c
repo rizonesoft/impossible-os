@@ -45,6 +45,12 @@ static uint32_t s_ring_count;    /* valid records, capped at POLICY_AUDIT_RING *
 static uint64_t s_tamper_count;  /* total denied + panic attempts */
 static volatile int s_tamper_sticky;
 
+/* Monotonic per-boot audit sequence, assigned under s_lock to every emitted
+ * audit event (blocked tamper OR applied change). Events are emitted after the
+ * lock drops, so two CPUs can apply in lock order A,B but emit B,A; the seq
+ * lets a consumer reconstruct the true application order. */
+static uint64_t s_audit_seq;
+
 /* ---- bounded string helpers (no libc strcmp; never read past NUL) -------- */
 
 static uint32_t name_len(const char *s)
@@ -111,7 +117,12 @@ static void audit_append(const char *name, uint64_t attempted, uint8_t caller,
 
 /* ---- registration ------------------------------------------------------- */
 
-NTSTATUS kernel_policy_register(const char *name, uint64_t value,
+/* Insert one policy row. REQUIRES s_lock held by the caller. Touches the lock
+ * never itself, so a batch (e.g. kernel_policy_register_core) can install all of
+ * its rows atomically with respect to every other registration -- no other CPU
+ * can interleave a registration between two core rows, consume capacity, or
+ * collide with a later core name. */
+static NTSTATUS register_locked(const char *name, uint64_t value,
                                 uint64_t max_value,
                                 policy_lock_phase_t seal_phase,
                                 uint16_t class_flags, uint8_t owner)
@@ -147,24 +158,17 @@ NTSTATUS kernel_policy_register(const char *name, uint64_t value,
     /* The published lockdown scalar is a narrowing uint8 cast, so policy.lockdown
      * MUST be domain-bound independent of the caller's max_value -- otherwise a
      * pre-core registration with value=max_value=256 would store 256 and publish
-     * (uint8)256 == NONE. Decided on the snapshot, before the lock. */
+     * (uint8)256 == NONE. Decided on the snapshot. */
     int is_lockdown = names_eq(nm, "policy.lockdown");
     if (is_lockdown &&
         (value > (uint64_t)KERNEL_LOCKDOWN_CONFIDENTIALITY ||
          max_value > (uint64_t)KERNEL_LOCKDOWN_CONFIDENTIALITY))
         return STATUS_INVALID_PARAMETER;
 
-    uint64_t flags;
-    spin_lock_irqsave(&s_lock, &flags);
-
-    if (find_index(nm) >= 0) {
-        spin_unlock_irqrestore(&s_lock, flags);
+    if (find_index(nm) >= 0)
         return STATUS_OBJECT_NAME_COLLISION;
-    }
-    if (s_count >= POLICY_MAX) {
-        spin_unlock_irqrestore(&s_lock, flags);
+    if (s_count >= POLICY_MAX)
         return STATUS_INSUFFICIENT_RESOURCES;
-    }
 
     policy_entry_t *p = &s_policies[s_count];
     for (uint32_t c = 0; c < nl; c++) p->name[c] = nm[c];
@@ -185,9 +189,20 @@ NTSTATUS kernel_policy_register(const char *name, uint64_t value,
         s_lockdown_idx = idx;
         s_lockdown = (uint8_t)value;
     }
-
-    spin_unlock_irqrestore(&s_lock, flags);
     return STATUS_SUCCESS;
+}
+
+NTSTATUS kernel_policy_register(const char *name, uint64_t value,
+                                uint64_t max_value,
+                                policy_lock_phase_t seal_phase,
+                                uint16_t class_flags, uint8_t owner)
+{
+    uint64_t flags;
+    spin_lock_irqsave(&s_lock, &flags);
+    NTSTATUS r = register_locked(name, value, max_value, seal_phase,
+                                 class_flags, owner);
+    spin_unlock_irqrestore(&s_lock, flags);
+    return r;
 }
 
 /* ---- set / get ---------------------------------------------------------- */
@@ -226,7 +241,10 @@ NTSTATUS kernel_policy_set(const char *name, uint64_t value,
     int applied = 0, need_panic = 0;
 
     if (!sealed) {
-        p->value = value; applied = 1; result = (uint8_t)POLICY_RESULT_ALLOWED;
+        /* Free write pre-seal, but an equal value is still a no-op (no
+         * applied=1) so it emits no POLICY_CHANGE event. */
+        if (value != old) { p->value = value; applied = 1; }
+        result = (uint8_t)POLICY_RESULT_ALLOWED;
     } else if (value == old) {
         result = (uint8_t)POLICY_RESULT_ALLOWED;            /* idempotent no-op */
     } else if (value > old) {
@@ -254,13 +272,22 @@ NTSTATUS kernel_policy_set(const char *name, uint64_t value,
     if (applied && idx == s_lockdown_idx)
         s_lockdown = (uint8_t)value;
 
-    audit_append(p->name, value, (uint8_t)caller, ph, result);
-
+    /* Record ONLY blocked attempts in the tamper ring so a stream of allowed
+     * writes can never evict tamper evidence. Allowed state changes are
+     * observable through ETW, not this fixed ring. */
     int blocked = (result != (uint8_t)POLICY_RESULT_ALLOWED);
     if (blocked) {
+        audit_append(p->name, value, (uint8_t)caller, ph, result);
         s_tamper_count++;
         s_tamper_sticky = 1;
     }
+
+    /* Assign the monotonic audit sequence UNDER the lock for every emitted event
+     * (blocked tamper or applied change) so the post-unlock ETW emit order does
+     * not have to match application order -- the consumer sorts by seq. An equal
+     * no-op (applied==0, not blocked) emits nothing and consumes no sequence. */
+    int emit = (blocked || applied);
+    uint64_t seq = emit ? ++s_audit_seq : 0;
 
     /* Snapshot for the outside-lock emit + panic. */
     char snap[POLICY_NAME_CAP];
@@ -270,7 +297,13 @@ NTSTATUS kernel_policy_set(const char *name, uint64_t value,
 
     spin_unlock_irqrestore(&s_lock, flags);
 
-    if (blocked) {
+    /* Emit for a blocked attempt (tamper) OR a real applied change; an equal
+     * no-op (applied==0, not blocked) produces no event. Blocked attempts also
+     * land in the ring; applied changes are ETW-only. Allowed changes do NOT
+     * take the serial/framebuffer/disk klog path -- only blocked attempts log a
+     * WARN (the security signal) so a future stream of authorized policy writes
+     * cannot flood the boot/runtime log; allowed changes are ETW-observable. */
+    if (emit) {
         etw_policy_tamper_payload_t pl;
         memset(&pl, 0, sizeof(pl));
         uint32_t j = 0;
@@ -279,9 +312,12 @@ NTSTATUS kernel_policy_set(const char *name, uint64_t value,
         pl.caller = (uint8_t)caller;
         pl.phase = ph;
         pl.result = result;
-        etw_emit_kernel_event(ETW_EVT_POLICY_TAMPER, 2 /* warning */,
+        pl.seq = seq;
+        etw_emit_kernel_event(blocked ? ETW_EVT_POLICY_TAMPER : ETW_EVT_POLICY_CHANGE,
+                              blocked ? 2 /* warning */ : 4 /* informational */,
                               &pl, (uint32_t)sizeof(pl));
-        klog(LOG_WARN, "CONF", "[CONF] tamper blocked: %s", short_name(snap));
+        if (blocked)
+            klog(LOG_WARN, "CONF", "[CONF] tamper blocked: %s", short_name(snap));
     }
 
     if (need_panic) {
@@ -378,11 +414,25 @@ uint32_t kernel_policy_audit_dump(policy_audit_record_t *out, uint32_t max)
 
 /* ---- core registration -------------------------------------------------- */
 
-void kernel_policy_register_core(void)
+int kernel_policy_register_core(void)
 {
     static int s_done;
-    if (s_done) return;
-    s_done = 1;
+    static int s_result;
+
+    /* Hold s_lock across the ENTIRE core batch so the rows install atomically
+     * with respect to every other registration: register_locked never re-takes
+     * the lock, so no other CPU can interleave a kernel_policy_register() between
+     * two core rows, consume capacity, or collide with a later core name. The
+     * one-shot s_done/s_result are published under the same lock, so a concurrent
+     * second caller either waits and reads the finished result or sees it done.
+     * s_lock is the single serialization point -- no separate core lock. */
+    uint64_t flags;
+    spin_lock_irqsave(&s_lock, &flags);
+    if (s_done) {
+        int r = s_result;
+        spin_unlock_irqrestore(&s_lock, flags);
+        return r;
+    }
 
     /* Secure Boot active maps to a default lockdown level: integrity. When
      * Secure Boot is off/unknown the default is none (Linux lockdown= parity:
@@ -391,43 +441,60 @@ void kernel_policy_register_core(void)
     uint64_t default_lockdown = sb_on ? (uint64_t)KERNEL_LOCKDOWN_INTEGRITY
                                       : (uint64_t)KERNEL_LOCKDOWN_NONE;
 
+    /* Every core registration result is checked: a silent failure here would
+     * leave a required row absent while the boot still seals the phases, so the
+     * documented post-lock ACCESS_DENIED/panic guarantees would degrade. */
+    int failed = 0;
+
     /* Lockdown level: ratchet, sealed after the security reference monitor.
      * Domain { none=0, integrity=1, confidentiality=2 }. */
-    kernel_policy_register("policy.lockdown", default_lockdown,
-                           (uint64_t)KERNEL_LOCKDOWN_CONFIDENTIALITY,
-                           POLICY_PHASE_POST_SECURITY_INIT,
-                           POLICY_CLASS_RATCHET, 0);
+    failed |= (register_locked("policy.lockdown", default_lockdown,
+                   (uint64_t)KERNEL_LOCKDOWN_CONFIDENTIALITY,
+                   POLICY_PHASE_POST_SECURITY_INIT,
+                   POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
 
     /* Secure Boot state: hard class; downgrade after registry merge panics for
      * KernelMode callers. Higher = more restrictive (off=0 < on=1). */
-    kernel_policy_register("policy.secure_boot", sb_on, 1,
-                           POLICY_PHASE_POST_REGISTRY,
-                           POLICY_CLASS_SECURE_BOOT | POLICY_CLASS_RATCHET, 0);
+    failed |= (register_locked("policy.secure_boot", sb_on, 1,
+                   POLICY_PHASE_POST_REGISTRY,
+                   POLICY_CLASS_SECURE_BOOT | POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
 
     /* Code Integrity mode: hard class (off=0 < audit=1 < enforce=2). Defaults
      * to enforce when Secure Boot is on, audit otherwise. */
-    kernel_policy_register("policy.ci.mode", sb_on ? 2u : 1u, 2,
-                           POLICY_PHASE_POST_REGISTRY,
-                           POLICY_CLASS_CODE_INTEGRITY | POLICY_CLASS_RATCHET, 0);
+    failed |= (register_locked("policy.ci.mode", sb_on ? 2u : 1u, 2,
+                   POLICY_PHASE_POST_REGISTRY,
+                   POLICY_CLASS_CODE_INTEGRITY | POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
 
     /* Memory-protection policies: ratchet, sealed at the earliest safe phase
      * (post-security-init). enabled=1 is more restrictive than disabled=0. */
-    kernel_policy_register("policy.kaslr", 1, 1,
-                           POLICY_PHASE_POST_SECURITY_INIT, POLICY_CLASS_RATCHET, 0);
-    kernel_policy_register("policy.smep_smap", 1, 1,
-                           POLICY_PHASE_POST_SECURITY_INIT, POLICY_CLASS_RATCHET, 0);
-    kernel_policy_register("policy.kpti", 1, 1,
-                           POLICY_PHASE_POST_SECURITY_INIT, POLICY_CLASS_RATCHET, 0);
+    failed |= (register_locked("policy.kaslr", 1, 1,
+                   POLICY_PHASE_POST_SECURITY_INIT, POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
+    failed |= (register_locked("policy.smep_smap", 1, 1,
+                   POLICY_PHASE_POST_SECURITY_INIT, POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
+    failed |= (register_locked("policy.kpti", 1, 1,
+                   POLICY_PHASE_POST_SECURITY_INIT, POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
 
     /* Debugger lockout: stored as lockout sense (0 = debugger allowed,
      * 1 = debugger blocked). Sealed after user mode is reachable. */
-    kernel_policy_register("policy.debug.lockout", sb_on, 1,
-                           POLICY_PHASE_POST_USER_MODE, POLICY_CLASS_RATCHET, 0);
+    failed |= (register_locked("policy.debug.lockout", sb_on, 1,
+                   POLICY_PHASE_POST_USER_MODE, POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
 
     /* Boot-verifier enforcement: enforced=1 is more restrictive. */
-    kernel_policy_register("policy.boot_verifier", sb_on, 1,
-                           POLICY_PHASE_POST_REGISTRY, POLICY_CLASS_RATCHET, 0);
+    failed |= (register_locked("policy.boot_verifier", sb_on, 1,
+                   POLICY_PHASE_POST_REGISTRY, POLICY_CLASS_RATCHET, 0) != STATUS_SUCCESS);
 
+    s_result = failed ? -1 : 0;
+    s_done = 1;                 /* published under s_lock: no stale read */
+    int r = s_result;
+    uint32_t cnt = s_count;     /* read directly: we already hold s_lock */
+    uint8_t  ld  = s_lockdown;
+    spin_unlock_irqrestore(&s_lock, flags);
+
+    /* klog touches serial -- emit outside the lock. */
+    if (r != 0)
+        klog(LOG_ERROR, "CONF",
+             "[CONF] policy core registration FAILED -- a required policy row is absent");
     klog(LOG_INFO, "CONF", "[CONF] policy registry: %u core policies, lockdown=%u",
-         kernel_policy_count(), (uint32_t)s_lockdown);
+         cnt, (uint32_t)ld);
+    return r;
 }

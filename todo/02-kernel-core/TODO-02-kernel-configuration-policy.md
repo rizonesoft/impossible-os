@@ -275,20 +275,23 @@ Define when policy stops being mutable and make every blocked mutation observabl
 - [x] `policy_lock_phase_t` { PRE_MEMORY, POST_SECURITY_INIT, POST_REGISTRY, POST_USER_MODE } monotonic forward-only advance (out-of-range rejected); `policy_lock.c` fixed registry of `policy.<name>` rows, each sealing at a `seal_phase`.
 - [x] Core security policies registered + sealed in `boot_desktop.c` Phase 3: KASLR/SMEP-SMAP/KPTI + lockdown at POST_SECURITY_INIT; Secure Boot, CI mode, boot verifier at POST_REGISTRY; debugger lockout at POST_USER_MODE.
 - [x] `kernel_lockdown_level_t` { none, integrity, confidentiality } (Linux `lockdown=` parity) as `policy.lockdown` ratchet; Secure Boot maps to default `integrity`; lockless getter + §8 query `LockdownLevel`; `config_dump` in §11.
-- [/] Tamper-audit record { policy, attempted, caller, phase, result } -> 64-entry ring; emitted via `etw_emit_kernel_event(ETW_EVT_POLICY_TAMPER)` + `klog(LOG_WARN, "CONF", ...)`. Notification fanout deferred -> XREF: 02-kernel-core/TODO-16.
+- [/] Three-way audit: BLOCKED -> tamper ring + `ETW_EVT_POLICY_TAMPER` + klog WARN; APPLIED -> `ETW_EVT_POLICY_CHANGE` only (no ring/klog flood); equal -> silent. Shared payload v2 + monotonic `seq`. Fanout deferred -> XREF: 02-kernel-core/TODO-16.
 - [x] KernelMode downgrade of a SECURE_BOOT/CODE_INTEGRITY policy after seal panics via `KeBugCheckEx`; UserMode downgrade returns `STATUS_ACCESS_DENIED` + sticky tamper (never bugchecks) so untrusted callers cannot weaponize the panic.
-- [x] Post-lock writes accepted only when strictly more restrictive (ratchet `new > old`); equal value is an audited no-op; ratchet-encoding invariant (higher numeric = more restrictive) makes downgrade exactly `new < old`.
+- [x] Post-lock writes accepted only when strictly more restrictive (ratchet `new > old`); equal value is a silent no-op; ratchet-encoding invariant (higher numeric = more restrictive) makes downgrade exactly `new < old`.
 - [x] Commit: `"kernel: add policy lock phases and tamper audit"`
 
 **Test checkpoint:** Attempting to change locked `ci.mode` after the lock phase returns `STATUS_ACCESS_DENIED` and logs `"[CONF] tamper blocked: ci.mode"`. Attempting to downgrade Secure Boot or CI policy after lock triggers the configured panic path instead of silently continuing. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 7 policy suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 8 policy suites, 0 failures
 > **Notes:**
-> - **What shipped:** `policy_lock.c`/`.h` (32-row security-policy registry, 4-phase monotonic seal machine, ratchet comparator, 64-entry tamper-audit ring) + `ETW_EVT_POLICY_TAMPER` (0x1100) in `etw.h`.
+> - **What shipped:** `policy_lock.c`/`.h` (32-row security-policy registry, 4-phase monotonic seal machine, ratchet comparator, 64-entry tamper ring) + `ETW_EVT_POLICY_TAMPER` (0x1100, blocked) / `ETW_EVT_POLICY_CHANGE` (0x1101, applied) sharing `etw_policy_tamper_payload_t` v2 in `etw.h`.
 > - **How it integrates:** registered + phase-advanced from `boot_desktop.c` Phase 3; one global spinlock guards mutation/audit; lockdown level + lock phase are lockless scalars; `kernel_policy_set()` decides seal under the lock.
 > - **Downstream effects:** `kernel_lockdown_level_get()` surfaces in the §8 query (`LockdownLevel` reuses a reserved byte, offset 10 unchanged); `config_dump` owed in §11. Codex adoptions (design 4x, test-coverage 3x) in the ship commit.
 > - **Canonical doc:** `include/kernel/policy_lock.h` header contract (ratchet-encoding invariant, panic policy, locking).
 > - **Scope boundary:** §9 owns policy lock state + tamper audit; notification fanout owned by TODO-16; ETW durable persistence by TODO-04 §7; mechanism enforcement of KASLR/SMEP/KPTI lives in vmm/cpu_security.
+> **Verified:** 2026-06-20 | commit `8494805d` | 5/6 items | build OK | tests 3192/3192 PASS
+> **Accepted:** [M] policy-tamper/change notification fanout out of §9 scope (the `[/]` audit item) -> XREF: 02-kernel-core/TODO-16 §5 (item: "Security: ... policy-lock tamper/change" at line 84 -- `policy_lock.c` publishes `ETW_EVT_POLICY_TAMPER`/`POLICY_CHANGE` via `knf_publish` once the facility lands)
+> **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M fixed, 0 open, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

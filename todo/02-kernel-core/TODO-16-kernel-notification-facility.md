@@ -81,7 +81,7 @@ title: "TODO-16 -- Kernel Notification Facility"
 - [ ] Power: AC/DC, battery percentage, thermal level, suspend/resume, lid state.
 - [ ] Device: storage arrival/removal, network up/down, display mode change.
 - [ ] Session: logon/logoff, shell ready, foreground session, lock/unlock.
-- [ ] Security: token elevation, CI allow/deny, audit policy update, credential change.
+- [ ] Security: token elevation, CI allow/deny, audit policy update, credential change, policy-lock tamper/change (TODO-02 §9 `policy_lock.c` publishes `ETW_EVT_POLICY_TAMPER`/`POLICY_CHANGE` via `knf_publish`).
 - [ ] System: time changed, timezone changed, config changed, safe mode, degraded mode, crash recovered.
 - [ ] Registry: key policy changed, hive loaded/unloaded, transaction committed.
 
