@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-20T08:26:19+02:00",
-  "total_suites": 1437,
-  "total_assertions": 4654,
+  "timestamp": "2026-06-20T08:47:21+02:00",
+  "total_suites": 1440,
+  "total_assertions": 4676,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -46,7 +46,7 @@
     {"file": "test_ixfs.c", "suites": 17, "assertions": 25},
     {"file": "test_ixfs_fsck.c", "suites": 26, "assertions": 34},
     {"file": "test_json_builder.c", "suites": 10, "assertions": 23},
-    {"file": "test_kernel_config.c", "suites": 14, "assertions": 53},
+    {"file": "test_kernel_config.c", "suites": 17, "assertions": 75},
     {"file": "test_klibs.c", "suites": 16, "assertions": 79},
     {"file": "test_klog.c", "suites": 32, "assertions": 103},
     {"file": "test_mat_violation.c", "suites": 6, "assertions": 15},

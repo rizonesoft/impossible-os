@@ -269,7 +269,8 @@ typedef struct {
 
     /* Boot mode + safe-mode profile. */
     uint8_t  boot_mode;             /* 0=normal, 1=safe, 2=recovery (boot_config.boot_mode) */
-    uint8_t  safe_mode;             /* safemode enum index (0=off..3=dsrepair) */
+    uint8_t  safe_mode;             /* safe_mode_t (0=off..3=dsrepair), boot-policy floored */
+    uint8_t  safe_mode_reason;      /* safe_mode_reason_t: why safe mode is in effect */
 
     /* Init flags. */
     uint8_t  async_init;            /* parallel subsystem init on APs */
@@ -329,3 +330,68 @@ void kernel_config_publish(const struct boot_config *cfg);
 
 /* The published snapshot, or NULL before kernel_config_publish() runs. */
 const kernel_config_t *kernel_config_get(void);
+
+/* ============================================================================
+ * Section 5: Safe Mode policy object.
+ *
+ * A first-class safe-mode level + reason, resolved from the immutable Phase-0
+ * snapshot. Boot-policy safe mode (boot_config.boot_mode safe/recovery) is a
+ * MONOTONIC FLOOR over the safemode boot arg -- a lower-precedence cmdline
+ * `safemode=off` can never downgrade a safe boot the bootloader/recovery entry
+ * requested. Because the level lives in the immutable snapshot, no (lower-
+ * precedence) registry value can disable it either.
+ *
+ * The selected-control-set surface (control-set selection feature) and the
+ * recovery-trigger surface (boot-status acceptance ledger feature) are NOT
+ * exposed here -- those are deferred to their owning sections' Phase-2
+ * effective-policy / acceptance-ledger objects.
+ * ============================================================================ */
+
+typedef enum {
+    SAFE_MODE_OFF      = 0,
+    SAFE_MODE_MINIMAL  = 1,   /* core drivers/services only */
+    SAFE_MODE_NETWORK  = 2,   /* minimal + networking */
+    SAFE_MODE_DSREPAIR = 3,   /* directory-services-repair equivalent */
+} safe_mode_t;
+
+typedef enum {
+    SAFE_REASON_NONE        = 0,   /* not in safe mode */
+    SAFE_REASON_OPERATOR    = 1,   /* operator set safemode= on the command line */
+    SAFE_REASON_BOOT_POLICY = 2,   /* bootloader/boot-entry requested safe boot */
+    SAFE_REASON_RECOVERY    = 3,   /* repeated-failure / recovery boot path */
+} safe_mode_reason_t;
+
+/* Components gated by safe mode. kernel_safe_mode_allows() answers whether each
+ * is permitted at the current level. Consumed by the kernel module loader, the
+ * desktop service manager, and the code-integrity-relaxation gate. */
+typedef enum {
+    SAFE_COMP_NETWORK,            /* network stack + NIC drivers */
+    SAFE_COMP_GUI,                /* graphical shell / compositor */
+    SAFE_COMP_THIRD_PARTY_MODULE, /* non-core loadable modules */
+    SAFE_COMP_NONESSENTIAL_SVC,   /* non-essential auto-start services */
+    SAFE_COMP_CI_RELAX,           /* code-integrity relaxation (test-signing etc.) */
+} safe_mode_component_t;
+
+/* Effective safe-mode level + reason, valid after kernel_config_publish().
+ * Return SAFE_MODE_OFF / SAFE_REASON_NONE before publish. */
+safe_mode_t        kernel_safe_mode(void);
+safe_mode_reason_t kernel_safe_mode_reason(void);
+
+/* 1 = `component` is permitted at the current safe-mode level, 0 = gated off.
+ * The single gating contract every safe-mode consumer reads (no scattered
+ * boot_mode checks). CI relaxations are NEVER auto-allowed under boot-policy or
+ * recovery safe mode. */
+int kernel_safe_mode_allows(safe_mode_component_t component);
+
+/* Pure safe-mode floor resolver (unit-testable; no live state). `boot_mode` is
+ * the boot_config value (0=normal,1=safe,2=recovery); `sm_arg` is the resolved
+ * safemode boot-arg level (0..3); `operator_set` = the level came explicitly
+ * from the command line. Writes the floored level + reason: boot_mode safe(1)/
+ * recovery(2) floors the level to at least SAFE_MODE_MINIMAL so a lower-
+ * precedence cmdline cannot downgrade a boot-policy safe boot. */
+void safe_mode_resolve(uint8_t boot_mode, uint8_t sm_arg, int operator_set,
+                       uint8_t *out_level, uint8_t *out_reason);
+
+/* Pure gating decision (unit-testable): is `component` permitted at safe-mode
+ * `level`? kernel_safe_mode_allows() is this evaluated at the live level. */
+int safe_mode_component_allowed(safe_mode_t level, safe_mode_component_t component);

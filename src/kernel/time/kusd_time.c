@@ -8,6 +8,7 @@
  * ============================================================================ */
 
 #include "kernel/nt/kusd.h"
+#include "kernel/config.h"     /* kernel_config_get() for the policy mirror */
 #include "kernel/abi_hash.h"   /* IMPOSSIBLE_OS_ABI_HASH for -18 AbiLayoutHash */
 #include "libc/string.h"
 #include "kernel/mm/pmm.h"
@@ -158,6 +159,27 @@ void kusd_init(void)
 
     /* Security cookie (RDRAND-seeded) */
     g_kusd->Cookie = kusd_rdrand32();
+
+    /* Kernel policy mirror: SafeBootMode + debugger + mitigation summary from
+     * the immutable kernel_config snapshot, for user-mode policy consumers.
+     * Written before AbiMagic so a crt_init that gates on the magic sees them. */
+    {
+        const kernel_config_t *kc = kernel_config_get();
+        if (kc) {
+            g_kusd->SafeBootMode      = kc->safe_mode;             /* 0..3 */
+            g_kusd->KdDebuggerEnabled = kc->debug_enabled ? 1 : 0;
+            /* Publish EFFECTIVE CI policy, not raw boot args: safe mode gates CI
+             * relaxation off, so a safe boot must not advertise CI-disabled /
+             * test-signing-allowed to user-mode (the single gating contract). */
+            int relax_ok = safe_mode_component_allowed(
+                (safe_mode_t)kc->safe_mode, SAFE_COMP_CI_RELAX);
+            uint8_t eff_noci   = relax_ok ? kc->nointegritychecks : 0;
+            uint8_t eff_tsign  = relax_ok ? kc->testsigning : 0;
+            /* bit0 = code-integrity enforced; bit1 = test-signing allowed. */
+            g_kusd->MitigationPolicies =
+                (uint8_t)((eff_noci ? 0 : 0x1) | (eff_tsign ? 0x2 : 0));
+        }
+    }
 
     /* -18 self-describing ABI header at 0x340. Written AFTER every
      * Windows-compatible field above so user-mode readers see a

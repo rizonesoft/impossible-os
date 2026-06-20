@@ -204,8 +204,80 @@ static void test_cfg_snapshot_consistent(void)
     }
 }
 
+/* ---- Section 5: Safe Mode policy object ---------------------------------- */
+
+static void test_cfg_safe_mode_floor(void)
+{
+    uint8_t lvl, rsn;
+    /* The H1 fix: boot-policy safe (boot_mode=1) + cmdline safemode=off must
+     * NOT downgrade -- the floor holds at MINIMAL, reason boot-policy. */
+    safe_mode_resolve(1, SAFE_MODE_OFF, 1, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_MINIMAL, "boot-policy safe floors over cmdline off");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_BOOT_POLICY, "floored level reads boot-policy reason");
+
+    /* Normal boot, no safemode arg -> off. */
+    safe_mode_resolve(0, SAFE_MODE_OFF, 0, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_OFF, "normal boot resolves off");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_NONE, "off has no reason");
+
+    /* Operator escalates above the floor (boot_mode=1 + safemode=network). */
+    safe_mode_resolve(1, SAFE_MODE_NETWORK, 1, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_NETWORK, "operator escalates above the floor");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_OPERATOR, "operator-chosen level reads operator reason");
+
+    /* Recovery boot floors to minimal with recovery reason. */
+    safe_mode_resolve(2, SAFE_MODE_OFF, 0, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_MINIMAL, "recovery boot floors to minimal");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_RECOVERY, "recovery boot reads recovery reason");
+
+    /* Operator sets safemode on a normal boot. */
+    safe_mode_resolve(0, SAFE_MODE_MINIMAL, 1, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_MINIMAL, "operator safemode on normal boot");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_OPERATOR, "operator reason on normal boot");
+
+    /* Boot-policy safe + safemode=minimal (== floor): the operator did NOT
+     * escalate, so boot policy is the cause -- reason must be boot-policy. */
+    safe_mode_resolve(1, SAFE_MODE_MINIMAL, 1, &lvl, &rsn);
+    TEST_ASSERT_EQ(lvl, SAFE_MODE_MINIMAL, "safe boot + safemode=minimal stays minimal");
+    TEST_ASSERT_EQ(rsn, SAFE_REASON_BOOT_POLICY, "equal-to-floor is boot-policy, not operator");
+}
+
+static void test_cfg_safe_mode_gating(void)
+{
+    /* Off level allows everything. */
+    TEST_ASSERT_EQ(safe_mode_component_allowed(SAFE_MODE_OFF, SAFE_COMP_NETWORK), 1,
+                   "normal boot allows networking");
+    TEST_ASSERT_EQ(safe_mode_component_allowed(SAFE_MODE_OFF, SAFE_COMP_GUI), 1,
+                   "normal boot allows the GUI");
+    /* Minimal gates network + GUI + third-party + CI relax. */
+    TEST_ASSERT_EQ(safe_mode_component_allowed(SAFE_MODE_MINIMAL, SAFE_COMP_NETWORK), 0,
+                   "minimal safe mode gates networking");
+    TEST_ASSERT_EQ(safe_mode_component_allowed(SAFE_MODE_MINIMAL, SAFE_COMP_GUI), 0,
+                   "minimal safe mode gates the GUI");
+    /* Network level allows networking but still gates GUI + CI relax. */
+    TEST_ASSERT_EQ(safe_mode_component_allowed(SAFE_MODE_NETWORK, SAFE_COMP_NETWORK), 1,
+                   "network safe mode allows networking");
+    TEST_ASSERT_EQ(safe_mode_component_allowed(SAFE_MODE_NETWORK, SAFE_COMP_CI_RELAX), 0,
+                   "CI relaxation never auto-allowed in safe mode");
+    TEST_ASSERT_EQ(safe_mode_component_allowed(SAFE_MODE_NETWORK, SAFE_COMP_GUI), 0,
+                   "network safe mode still gates the full GUI");
+}
+
+static void test_cfg_safe_mode_accessors(void)
+{
+    /* Accessors must agree with the published snapshot. */
+    const kernel_config_t *k = kernel_config_get();
+    TEST_ASSERT_NOT_NULL(k, "snapshot present for safe-mode accessors");
+    TEST_ASSERT_EQ(kernel_safe_mode(), k->safe_mode, "kernel_safe_mode mirrors snapshot");
+    TEST_ASSERT_EQ(kernel_safe_mode_reason(), k->safe_mode_reason,
+                   "kernel_safe_mode_reason mirrors snapshot");
+}
+
 void test_register_kernel_config(void)
 {
+    test_suite_register_cat("CONF: safe-mode floor resolver", test_cfg_safe_mode_floor,     TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: safe-mode gating",         test_cfg_safe_mode_gating,     TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: safe-mode accessors",      test_cfg_safe_mode_accessors,  TEST_CAT_BOOT);
     test_suite_register_cat("CONF: snapshot published",      test_cfg_snapshot_published,      TEST_CAT_BOOT);
     test_suite_register_cat("CONF: snapshot consistent",     test_cfg_snapshot_consistent,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: boot arg basic parse",     test_cfg_basic_parse,             TEST_CAT_BOOT);

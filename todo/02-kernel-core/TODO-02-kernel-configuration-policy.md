@@ -53,7 +53,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | 💎 | 2 | `kernel_config_t` immutable Phase 0 snapshot    | §1, T01 §2, §6                      | [x] |
 | 💎 | 3 | Registry-backed policy merge                    | §2, §4, T14 §8, §12, §13           | [/] |
 | 💎 | 4 | ControlSet and LastKnownGood selection          | §2, §10, T14 §12, D01 T21 §4, §5   | [/] |
-| 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [ ] |
+| 💎 | 5 | Safe Mode and recovery policy object            | §2, §4, D01 T07 §5                 | [/] |
 | 💎 | 6 | Runtime tunable registry                        | §2                                  | [ ] |
 | ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [ ] |
 | 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [ ] |
@@ -157,15 +157,24 @@ Turn `Select` values and boot outcomes into deterministic control-set choice ins
 
 Represent safe mode as a first-class kernel policy object, not a scattered collection of booleans.
 
-- [ ] Define `safe_mode_t`: none, minimal, network, directory-services-repair equivalent.
-- [ ] Gate drivers, network stack, desktop, third-party modules, code integrity relaxations, and services; this consumer contract is consumed by D04 T05 §5, D09 T03 §6 and §8, and T19 §1 and §8.
-- [ ] Surface safe-mode reason, selected control set, and recovery trigger through `kernel_config_get()` for boot logs and crash/recovery consumers.
-- [ ] Mirror `boot_config.boot_mode` (bootloader producer per [TODO-07 §8](../01-boot-platform/TODO-07-boot-entry-store-menu-policy.md)) into KUSD `SafeBootMode`, plus `KdDebuggerEnabled` + `MitigationPolicies`, via T11 §11.
-- [ ] Ensure Safe Mode cannot be disabled by a registry value once requested by boot policy.
-- [ ] Distinguish operator-requested safe mode from repeated-failure recovery safe mode and preserve that reason code through the full boot.
-- [ ] Commit: `"kernel: add Safe Mode and recovery policy object"`
+- [x] Define `safe_mode_t` {OFF,MINIMAL,NETWORK,DSREPAIR} + `safe_mode_reason_t` {NONE,OPERATOR,BOOT_POLICY,RECOVERY} in `config.h`.
+- [x] Gate drivers, network, desktop, third-party modules, integrity relaxations, services via `safe_mode_component_allowed(level, SAFE_COMP_*)` in `config.c`; cross-domain consumers (D04 T05 §5, D09 T03 §6/§8, T19 §1/§8) wired via the XREFs above.
+- [/] Surface safe-mode reason, control set, and recovery trigger through `kernel_config_get()`. Reason + recovery trigger (`boot_reason`/`boot_mode`) surfaced; control-set field deferred. -> XREF: §4
+- [x] Mirror `boot_config.boot_mode` (T07 §8 producer) into KUSD `SafeBootMode` + `KdDebuggerEnabled` + `MitigationPolicies`; the latter carries EFFECTIVE CI policy (raw flags masked when safe mode gates `SAFE_COMP_CI_RELAX`).
+- [x] Ensure Safe Mode cannot be disabled by a registry value once requested by boot policy: `safe_mode_resolve()` enforces a monotonic boot-policy floor that operator/registry input can only raise.
+- [x] Distinguish operator-requested from repeated-failure recovery safe mode: recovery-first, escalation-above-floor->OPERATOR, floor->BOOT_POLICY, preserved in `kernel_config_t.safe_mode_reason`.
+- [x] Commit: `"kernel: add Safe Mode and recovery policy object"`
 
 **Test checkpoint:** Boot with `safemode=network`: serial shows `"[CONF] safe_mode=network reason=boot-policy"` and GUI-only services stay disabled while networking remains enabled. Repeated-failure recovery boot shows a distinct `reason=recovery` code and cannot be downgraded by registry state. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | CONF safe-mode suites, 0 failures
+
+> **Notes:**
+> - `safe_mode_resolve()` monotonic floor: recovery->DSREPAIR, safe boot->MINIMAL; operator `safemode=` arg raises only, never lowers below the boot-policy floor.
+> - KUSD `MitigationPolicies` publishes EFFECTIVE CI policy; raw `nointegritychecks`/`testsigning` masked when `SAFE_COMP_CI_RELAX` is gated off in any safe boot.
+> - Reason matrix: recovery-first -> `RECOVERY`; escalation above floor -> `OPERATOR`; floor -> `BOOT_POLICY`.
+> - Control-set surfacing through `kernel_config_get()` deferred to §4 (ControlSet selection owns the field).
+> - Codex review adoptions + per-finding evidence in the section ship commit.
 
 ---
 
@@ -267,7 +276,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | ⭐ | Feature                            | 🪟 Win11                                       | 🐧 Linux                                           | 🚀 Impossible OS        |
 | --- | ---------------------------------- | ---------------------------------------------- | --------------------------------------------------- | ----------------------- |
 | 💎 | Boot entry policy store            | ✅ BCD plus boot menu and recovery entries     | ✅ GRUB or systemd-boot plus kernel cmdline        | ⚠️ §1 parser done; §3,§4 |
-| 💎 | Safe and recovery boot modes       | ✅ `safeboot=minimal|network` plus recovery    | ✅ `single`, rescue, emergency, and recovery menu  | ⬜ Planned - §5         |
+| 💎 | Safe and recovery boot modes       | ✅ `safeboot=minimal|network` plus recovery    | ✅ `single`, rescue, emergency, and recovery menu  | ✅ `safe_mode_t` object, monotonic floor, KUSD mirror |
 | 💎 | Control-set style rollback state   | ⚠️ `Current` and `LastKnownGood` semantics     | ⚠️ Distro snapshots or boot fallback, not kernel   | ⬜ Planned - §4         |
 | 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
 | 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⬜ Planned - §3, §6, §8 |

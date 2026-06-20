@@ -475,6 +475,28 @@ static int64_t resolved_ival(const boot_args_t *a, const char *name)
     return d ? d->default_val : 0;
 }
 
+void safe_mode_resolve(uint8_t boot_mode, uint8_t sm_arg, int operator_set,
+                       uint8_t *out_level, uint8_t *out_reason)
+{
+    /* boot_mode safe(1)/recovery(2) floors the level to MINIMAL; the operator
+     * may escalate above the floor but a lower-precedence safemode=off can
+     * never drop below it. */
+    uint8_t floor = (boot_mode == 1 || boot_mode == 2)
+                        ? (uint8_t)SAFE_MODE_MINIMAL : (uint8_t)SAFE_MODE_OFF;
+    uint8_t level = sm_arg > floor ? sm_arg : floor;
+    uint8_t reason;
+    if (level == SAFE_MODE_OFF)
+        reason = (uint8_t)SAFE_REASON_NONE;
+    else if (boot_mode == 2)
+        reason = (uint8_t)SAFE_REASON_RECOVERY;
+    else if (operator_set && sm_arg > floor)
+        reason = (uint8_t)SAFE_REASON_OPERATOR;   /* operator ESCALATED above the floor */
+    else
+        reason = (uint8_t)SAFE_REASON_BOOT_POLICY; /* boot policy forced the effective level */
+    if (out_level)  *out_level = level;
+    if (out_reason) *out_reason = reason;
+}
+
 void kernel_config_publish(const struct boot_config *cfg)
 {
     const boot_args_t *a = boot_args_parsed();
@@ -485,7 +507,13 @@ void kernel_config_publish(const struct boot_config *cfg)
     k->size    = (uint16_t)sizeof(*k);
 
     k->boot_mode        = cfg ? cfg->boot_mode : 0;
-    k->safe_mode        = (uint8_t)resolved_ival(a, "safemode");
+    {
+        uint8_t sm_arg = (uint8_t)resolved_ival(a, "safemode");
+        const boot_arg_value_t *sm_v = a ? boot_args_get(a, "safemode") : (void *)0;
+        int operator_set = sm_v && sm_v->source == BOOT_ARG_SRC_CMDLINE && sm_v->present;
+        safe_mode_resolve(cfg ? cfg->boot_mode : 0, sm_arg, operator_set,
+                          &k->safe_mode, &k->safe_mode_reason);
+    }
     k->async_init       = (uint8_t)resolved_ival(a, "async_init");
     k->deferred_init    = cfg ? cfg->deferred : 0;   /* not a schema key; raw cfg field */
     k->debug_enabled    = (uint8_t)resolved_ival(a, "debug");
@@ -531,4 +559,39 @@ const kernel_config_t *kernel_config_get(void)
     if (!__atomic_load_n(&g_kernel_config_ready, __ATOMIC_ACQUIRE))
         return (void *)0;
     return &g_kernel_config;
+}
+
+/* ---- Section 5: Safe Mode policy accessors ------------------------------- */
+
+safe_mode_t kernel_safe_mode(void)
+{
+    const kernel_config_t *k = kernel_config_get();
+    return k ? (safe_mode_t)k->safe_mode : SAFE_MODE_OFF;
+}
+
+safe_mode_reason_t kernel_safe_mode_reason(void)
+{
+    const kernel_config_t *k = kernel_config_get();
+    return k ? (safe_mode_reason_t)k->safe_mode_reason : SAFE_REASON_NONE;
+}
+
+int safe_mode_component_allowed(safe_mode_t level, safe_mode_component_t component)
+{
+    if (level == SAFE_MODE_OFF)
+        return 1;                       /* normal boot -- nothing gated */
+    switch (component) {
+    case SAFE_COMP_NETWORK:
+        return level == SAFE_MODE_NETWORK ? 1 : 0;  /* networking only at the network level */
+    case SAFE_COMP_GUI:                  /* basic graphics only; full shell disabled */
+    case SAFE_COMP_THIRD_PARTY_MODULE:   /* core modules only */
+    case SAFE_COMP_NONESSENTIAL_SVC:     /* essential services only */
+    case SAFE_COMP_CI_RELAX:             /* CI relaxation never auto-allowed in safe mode */
+        return 0;
+    }
+    return 0;
+}
+
+int kernel_safe_mode_allows(safe_mode_component_t component)
+{
+    return safe_mode_component_allowed(kernel_safe_mode(), component);
 }
