@@ -100,6 +100,10 @@ uint32_t boot_timing_get_fpdt_entries(boot_timing_fpdt_entry_t *out, uint32_t ca
 #define BOOT_PERF_MAX_RECORDS  32
 #define BOOT_PERF_NAME_LEN     16  /* truncated step name stored in NVRAM */
 #define BOOT_PERF_MAGIC        0x50455246  /* "PERF" */
+/* Sanity ceiling for a per-step elapsed_ms (10 minutes). Applied identically on
+ * save, compare, and read so a corrupt/saturated tsc_to_ms() value cannot make
+ * the NVRAM record non-round-trippable or overflow the regression math. */
+#define BOOT_PERF_MS_SANITY_CAP 600000u
 
 /* Per-step performance record stored in UEFI NVRAM across reboots.
  * Fixed-size so the NVRAM variable is a flat array with no pointers. */

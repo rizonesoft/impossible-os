@@ -494,7 +494,8 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 - [x] On next boot, `boot_perf_read_prev()` reads `ImpossibleBootPerf` from NVRAM into `s_prev_records[]` (called in Phase 0 after uefi_runtime_init)
 - [x] `boot_perf_compare()` compares current vs previous: if >200% OR >500ms regression, logs `[PERF] WARNING: <step> init regressed: <prev>ms -> <cur>ms`
 - [x] `boot_perf_dump()` prints all step durations as a sorted-by-time table to serial
-- [/] Add `bootperf` shell command -- deferred until `TODO-12-native-api-ssdt.md §10` implements `NtQuerySystemInformation(SystemBootPerformanceInformation)` for user-mode NVRAM access
+- [/] Add `bootperf` shell command -- blocked on a user-mode boot-perf query path (`NtQuerySystemInformationEx` 0x0313 in `TODO-A-SSDT-Master-Table.md`, still `[ ]`); the data is already on serial + `boot_perf_dump()` today.
+- [ ] Wear-budget the unconditional `ImpossibleBootPerf` write (`boot_timing.c:630`): add a `boot.conf bootperf=0` opt-out (mirroring `postcode=0`) and/or skip-unchanged so reboot/test cycles do not burn the ~100K-cycle variable store. (Codex §12 M)
 - [x] Add debug POST codes: `POST16(0xDC00)` entry, `POST16(0xDC01)` NVRAM read, `POST16(0xDC02)` comparison done, `POST16(0xDC03)` NVRAM write
 - [x] Add 3 unit tests: perf record size (24 bytes), BOOT_PERF_MAGIC value, bootperf POST code uniqueness
 - [x] Commit: `"kernel: boot performance regression detection via UEFI NVRAM"`
@@ -502,7 +503,21 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 **Test checkpoint:** Boot twice → second boot serial log shows `[PERF]` comparison lines. Inject a `sleep_ms(1000)` in a subsystem init → second boot shows `[PERF] WARNING` for that subsystem. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. On bare metal, verify NVRAM read/write works with real UEFI firmware.
 
 > [!NOTE]
-> UEFI NVRAM has limited write endurance (~100K cycles). Current successful-boot path writes `ImpossiblePOST` 5 times (`POST16_SERIAL`, `POST16_SIMD_OK`, `POST16_TIMER_OK`, `POST16_REGISTRY_OK`, `POST16_BOOT_OK`) plus `ImpossibleBootPerf` once, for 6 writes/boot. This should be reduced or explicitly budgeted.
+> UEFI NVRAM has limited write endurance (~100K cycles). Current successful-boot path writes `ImpossiblePOST` 5 times (`POST16_SERIAL`, `POST16_SIMD_OK`, `POST16_TIMER_OK`, `POST16_REGISTRY_OK`, `POST16_BOOT_OK`) plus `ImpossibleBootPerf` once, for 6 writes/boot. This should be reduced or explicitly budgeted. (`postcode=0` now disables the 5 POST writes; the `ImpossibleBootPerf` wear budget is filed above.)
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 3 boot-perf tests (record size 24 bytes, `BOOT_PERF_MAGIC`, bootperf POST-code uniqueness) in `test_boot_init.c`; NVRAM round-trip validated against real firmware on WHPX/bare metal.
+>
+> **Notes:**
+> - Boot-perf regression detection (`boot_timing.c`): per-step timings to NVRAM `ImpossibleBootPerf` after Phase 3, compared next boot (>200% OR >500ms -> `[PERF] WARNING`). Gated on `boot_perf_enabled`.
+> - Review fix (adversarial 2M): `boot_perf_read_prev` NUL-terminates imported names (`str_eq` overread risk on untrusted NVRAM); `boot_perf_compare` math promoted to 64-bit (overflow on untrusted values).
+> - Review fix (consistency M): the `elapsed_ms` ceiling is now a shared `BOOT_PERF_MS_SANITY_CAP` applied on save/read/compare so NVRAM records round-trip.
+> - Deferred: `ImpossibleBootPerf` wear budget (M); the `bootperf` user-mode shell command (L, blocked on `NtQuerySystemInformationEx`).
+> - Scope: §12 owns the kernel-side boot-perf NVRAM machinery; the user-mode query API + wear budget are filed follow-ups.
+>
+> **Verified:** 2026-06-20 | commit `76b076f6` | 8/10 items | build OK | smoke PASS (KVM 2.67s)
+> **Deferred:** [M] `ImpossibleBootPerf` is an unconditional 1 write/normal-boot with no wear budget -> XREF: 02-kernel-core/TODO-01 §12 (item: "Wear-budget the unconditional `ImpossibleBootPerf` write" at line 498)
+> **Deferred:** [L] `bootperf` shell command blocked on a user-mode boot-perf query API -> XREF: 02-kernel-core/TODO-01 §12 (item: "Add `bootperf` shell command" at line 497)
+> **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M fixed, 1M+1L deferred | scope: kernel-code-quality
 
 ---
 

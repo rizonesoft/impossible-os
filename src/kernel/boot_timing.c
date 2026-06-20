@@ -540,8 +540,17 @@ void boot_perf_read_prev(void)
     }
 
     boot_perf_record_t *recs = (boot_perf_record_t *)(buf + sizeof(boot_perf_header_t));
-    for (uint32_t i = 0; i < count; i++)
+    for (uint32_t i = 0; i < count; i++) {
         s_prev_records[i] = recs[i];
+        /* NVRAM is untrusted: a corrupt/external record can fill all 16 name
+         * bytes without a terminator (str_eq in the compare would then overread
+         * past name[] into elapsed_ms/phase) and carry an implausible
+         * elapsed_ms that overflows the regression arithmetic. Force a NUL
+         * terminator and clamp elapsed_ms to a sane ceiling (10 minutes). */
+        s_prev_records[i].name[BOOT_PERF_NAME_LEN - 1] = '\0';
+        if (s_prev_records[i].elapsed_ms > BOOT_PERF_MS_SANITY_CAP)
+            s_prev_records[i].elapsed_ms = BOOT_PERF_MS_SANITY_CAP;
+    }
     s_prev_count = count;
 
     klog(LOG_INFO, "PERF", "Previous boot: %u step(s) loaded from NVRAM", count);
@@ -563,6 +572,8 @@ void boot_perf_compare(void)
 
     for (uint32_t i = 0; i < s_step_count; i++) {
         uint32_t cur_ms = tsc_to_ms(s_steps[i].tsc - base);
+        if (cur_ms > BOOT_PERF_MS_SANITY_CAP)
+            cur_ms = BOOT_PERF_MS_SANITY_CAP;   /* same ceiling save/read enforce */
         const char *name = s_steps[i].step;
 
         /* Find matching step in previous boot */
@@ -570,20 +581,26 @@ void boot_perf_compare(void)
             if (!str_eq(s_prev_records[j].name, name))
                 continue;
 
-            uint32_t prev_ms = s_prev_records[j].elapsed_ms;
-            int32_t delta = (int32_t)cur_ms - (int32_t)prev_ms;
+            /* 64-bit math throughout: prev_ms is imported NVRAM data (clamped
+             * to 600000 above) and cur_ms is current-boot elapsed, but compute
+             * in uint64 so prev_ms*2 / cur_ms*100 cannot wrap and the delta
+             * cannot hit signed-overflow UB. Only flag a real slowdown
+             * (cur >= prev), never a speed-up. */
+            uint64_t prev_ms = s_prev_records[j].elapsed_ms;
+            uint64_t cur64   = cur_ms;
+            int64_t  delta   = (int64_t)cur64 - (int64_t)prev_ms;
 
             /* Regression threshold: >200% of previous OR >500ms absolute */
-            if (prev_ms > 0 && cur_ms > prev_ms * 2) {
+            if (prev_ms > 0 && cur64 > prev_ms * 2) {
                 klog(LOG_WARN, "PERF",
                      "[PERF] WARNING: %s init regressed: %ums -> %ums (+%ums, %u%%)",
-                     name, prev_ms, cur_ms,
+                     name, (uint32_t)prev_ms, cur_ms,
                      (uint32_t)delta,
-                     prev_ms > 0 ? (cur_ms * 100 / prev_ms) : 0);
+                     (uint32_t)(cur64 * 100 / prev_ms));
             } else if (delta > 500) {
                 klog(LOG_WARN, "PERF",
                      "[PERF] WARNING: %s init regressed: %ums -> %ums (+%ums)",
-                     name, prev_ms, cur_ms, (uint32_t)delta);
+                     name, (uint32_t)prev_ms, cur_ms, (uint32_t)delta);
             }
             break;
         }
@@ -617,8 +634,11 @@ void boot_perf_save(void)
     uint64_t base = s_steps[0].tsc;
 
     for (uint32_t i = 0; i < count; i++) {
+        uint32_t ms = tsc_to_ms(s_steps[i].tsc - base);
+        if (ms > BOOT_PERF_MS_SANITY_CAP)
+            ms = BOOT_PERF_MS_SANITY_CAP;   /* same ceiling the reader enforces */
         str_copy_trunc(recs[i].name, s_steps[i].step, BOOT_PERF_NAME_LEN);
-        recs[i].elapsed_ms = tsc_to_ms(s_steps[i].tsc - base);
+        recs[i].elapsed_ms = ms;
         recs[i].phase      = s_steps[i].phase;
         recs[i]._pad[0]    = 0;
         recs[i]._pad[1]    = 0;
