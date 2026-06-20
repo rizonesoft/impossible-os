@@ -390,6 +390,19 @@ void esrt_init(void)
         return;
     }
 
+    /* Validate the header extent against the firmware UEFI memory map
+     * BEFORE the first dereference. uefi_find_config_table() returns a
+     * firmware-supplied pointer; reading fw_resource_count out of the
+     * header before this check is the same trust boundary the MAT and
+     * conformance paths close with firmware_table_mmap_contains(). */
+    if (!firmware_table_mmap_contains(table_addr,
+            sizeof(struct esrt_table_header))) {
+        klog(LOG_WARN, "ESRT",
+             "header at 0x%lx not in firmware mmap -- table rejected",
+             (uint64_t)table_addr);
+        return;
+    }
+
     const struct esrt_table_header *hdr =
         (const struct esrt_table_header *)table_addr;
 
@@ -405,6 +418,20 @@ void esrt_init(void)
     if (count == 0) {
         klog(LOG_INFO, "ESRT", "Present but empty (0 entries)");
         return;
+    }
+
+    /* Validate the full table extent (header + count entries) against the
+     * firmware memory map before dereferencing any entry. count is clamped
+     * to ESRT_MAX_ENTRIES above so the multiply cannot wrap. */
+    {
+        uint64_t total = (uint64_t)sizeof(struct esrt_table_header)
+                       + (uint64_t)count * (uint64_t)sizeof(struct esrt_entry);
+        if (!firmware_table_mmap_contains(table_addr, total)) {
+            klog(LOG_WARN, "ESRT",
+                 "extent [0x%lx +%lu] not in firmware mmap -- table rejected",
+                 (uint64_t)table_addr, (uint64_t)total);
+            return;
+        }
     }
 
     /* ESRT entries follow immediately after the header.

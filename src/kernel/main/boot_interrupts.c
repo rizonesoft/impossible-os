@@ -546,12 +546,13 @@ void boot_phase1(void)
     keyboard_init();
     POST16(POST16_KBD_OK);
     boot_progress(1, "KEYBOARD", POST16_KBD_OK);
-    /* PS/2 mouse init deferred to boot_run_deferred() -- the PS/2 BAT
-     * self-test takes 300ms-2s on real hardware, freezing the splash
-     * spinner. Mouse init now runs after the desktop is live. */
-    POST16(POST16_MOUSE);
-    POST16(POST16_MOUSE_OK);
-    boot_progress(1, "MOUSE", POST16_MOUSE_OK);
+    /* PS/2 mouse init is NOT done in Phase 1 -- the PS/2 BAT self-test
+     * takes 300ms-2s on real hardware and would freeze the splash spinner.
+     * mouse_init() runs in deferred_input_init() via boot_run_deferred()
+     * after the desktop is live (boot_storage.c), which owns the real
+     * POST16_DEFERRED_INPUT[_OK] progress. Do NOT emit POST16_MOUSE_OK
+     * here: that would falsely certify mouse readiness in the Phase 1 POST
+     * / progress stream before the device is actually probed. */
 
     boot_splash_status("Setting up hardware...");
 

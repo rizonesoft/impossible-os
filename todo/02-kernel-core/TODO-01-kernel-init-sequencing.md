@@ -170,7 +170,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `timer_hal_init()` -- select LAPIC or PIT backend, calibrate; BOOT_FATAL; BOOT_REQUIRE(SUBSYS_IDT)
 - [x] DPC bootstrap split: `dpc_init_queues()` in Phase 1 before `sti`, and `dpc_init()`/`dpc_start_threads()` in Phase 3 after scheduler start (→ XREF: [TODO-07 §4](./TODO-07-irql-model-dpcs.md))
 - [x] `rtc_init()` -- BOOT_DEGRADED if unavailable; BOOT_REQUIRE(SUBSYS_IDT)
-- [x] `keyboard_init()` + `mouse_init()` -- BOOT_DEGRADED if unavailable
+- [x] `keyboard_init()` -- BOOT_DEGRADED if unavailable (PS/2 `mouse_init()` is deferred to `boot_run_deferred()`, not Phase 1; owned by [§11](#11-deferred-init-for-non-critical-subsystems))
 - [x] `smbios_init()` -- POST code 0x40; BOOT_DEGRADED if unavailable; move here from Phase 0
 - [x] `esrt_init()` + `mat_init()` + `uefi_conformance_init()` + `uefi_capsule_init()` + `uefi_crypto_agility_init()` -- BOOT_DEGRADED; move here from Phase 0
 - [x] `secureboot_keys_init()` -- BOOT_DEGRADED; move here from Phase 0
@@ -185,6 +185,22 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] Remove SMP AP bringup from Phase 1 -- move to Phase 2 (already in boot_storage.c)
 - [x] Remove all `HV_BAR` macro definitions and usages -- already removed in prior commit
 - [x] Replace every `HV_BAR` site with `boot_progress(1, "step-name", postcode)` -- already done
+
+**Test checkpoint:** Boot reaches Phase 1 -- serial shows `[GDT]`, `[IDT]`, `[ACPI]`, `[LAPIC_IOAPIC]`, `[TIMER]` progress lines, `sti` enables interrupts, splash spinner animates, `[KEYBOARD]` ready; `[PHASE1] complete` logs before Phase 2. PS/2 mouse comes up later via `[DEFERRED]` input after desktop. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** boot suite `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot, 2836 kernel tests) + per-subsystem driver suites; `boot_phase1` integration validated via smoke test (boot reaches `C:\>`, POST16 core 31/31).
+>
+> **Notes:**
+> - Phase 1 HAL bring-up (`boot_interrupts.c` `boot_phase1`): GDT/IDT/IRQ, ACPI MADT/FADT, LAPIC/IOAPIC-vs-PIC policy, `timer_hal_init` + `dpc_init_queues`, then `sti`, then post-`sti` TPM transport + CSPRNG seed + keyboard.
+> - Review fix (adversarial M): `esrt_init()` now bounds the firmware ESRT config-table header + entry-span read via `firmware_table_mmap_contains()`, matching the MAT/conformance paths -- closes a Phase-1 firmware overread/`#PF`.
+> - Review fix (consistency M): removed the false Phase-1 `POST16_MOUSE_OK` / `boot_progress(1,"MOUSE")` emission -- PS/2 `mouse_init()` runs in `deferred_input_init()` (§11), so Phase 1 no longer certifies mouse readiness before the device is probed.
+> - re-adversarial skipped: fix diff is a bounds-check mirroring the existing MAT pattern + removal of a misleading POST emission; no locking/ISR/lifecycle/state-machine surface, < 50 lines.
+> - Scope: §3 owns Phase 1 init order + `sti` placement; per-subsystem typed fatal/degraded propagation is §2/§4, deferred PS/2 mouse is §11.
+>
+> **Verified:** 2026-06-20 | commit `840d0ea8` | 23/25 items | build OK | smoke PASS (KVM 2.66s)
+> **Accepted:** [M] `except_init()` Phase-1 wiring blocked -- callee absent from tree -> XREF: 02-kernel-core/TODO-23 §1 (item: "`except_init()` -- register all handlers; call from kernel init phase 1" at line 153)
+> **Accepted:** [M] `kd_init()` Phase-1 wiring blocked -- callee absent from tree -> XREF: 02-kernel-core/TODO-29 §4 (item: "`kd_init()` -- called from Phase 1 kernel init" at line 186)
+> **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed | scope: kernel-code-quality
 
 ---
 
