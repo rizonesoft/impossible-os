@@ -153,10 +153,11 @@ static void fa_compose_path(char out[ADV_PATH_CAP], const char *subkey)
  * *out_pages records the page count so the caller can release without
  * re-tracking it.  *out_state captures the load disposition. */
 static char *fa_read_cache_text(enum firmware_advisor_cache_state *out_state,
-                                uint32_t *out_pages)
+                                uint32_t *out_pages, uint32_t *out_size)
 {
     *out_state = FW_ADVISOR_CACHE_MISSING;
     *out_pages = 0;
+    *out_size = 0;
 
     struct vfs_node *f = vfs_open(ADV_CACHE_PATH, VFS_O_READ);
     if (!f)
@@ -190,6 +191,7 @@ static char *fa_read_cache_text(enum firmware_advisor_cache_state *out_state,
     }
     buf[size] = '\0';
     *out_pages = pages;
+    *out_size = size;            /* exact content length for json_parse_len() */
     return buf;
 }
 
@@ -546,13 +548,17 @@ void firmware_advisor_init(void)
      *   file present, valid             -> CACHE_LOADED,    classify each
      */
     uint32_t text_pages = 0;
-    char *text = fa_read_cache_text(&s_cache_state, &text_pages);
+    uint32_t text_size = 0;
+    char *text = fa_read_cache_text(&s_cache_state, &text_pages, &text_size);
     struct cJSON *root = (struct cJSON *)0;
     struct cJSON *components = (struct cJSON *)0;
     uint64_t fetched_unix_time = 0;
 
     if (text) {
-        root = json_parse(text);
+        /* File-backed input: parse the exact byte length so the length-bounded
+         * control-byte + trailing-garbage rejection applies (json_parse would
+         * stop at an embedded NUL and silently ignore appended junk). */
+        root = json_parse_len(text, text_size);
         if (!root) {
             s_cache_state = FW_ADVISOR_CACHE_MALFORMED;
         } else {

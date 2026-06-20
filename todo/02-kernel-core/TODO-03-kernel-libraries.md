@@ -278,6 +278,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] Kernel wrapper `src/kernel/json.c` + `include/kernel/json.h`: `json_parse`/`json_parse_len`/`get`/`str`/`int`/`u32`/`u64`/`double`/`bool`/`is_array`/`array_size`/`array_get`/`array_first`/`array_next`/`print`/`free`.
 - [x] In use by `src/kernel/firmware_advisor.c` + `src/kernel/main/boot_trend.c`; theme.json/settings/manifests/NTP are future consumers owned by their domains.
 - [x] Test: `test_json_lib` parses the sample doc + extracts fields, and checks the hardening (depth>32 rejected, length-bounded parse, trailing-garbage rejected, print round-trip).
+- [ ] Make kernel cJSON parse reentrant: cJSON's `global_error` is written per parse (SMP race); add per-CPU error state or strip global-error publication. Benign today (no wrapper consumer reads `cJSON_GetErrorPtr`). Consumer: `json_parse_len`.
+- [ ] Bound parse heap for untrusted JSON: a near-cap flat doc of many small nodes can transiently pressure the 2 MiB heap; add a per-parse PMM allocation budget. Today bounded by kmalloc's 4 KiB per-alloc ceiling + graceful failure.
 
 - [x] Commit: `"libs: cJSON DOM parser, json_parse/get/print wrapper"`
 
@@ -290,6 +292,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - In use by `firmware_advisor.c` + `boot_trend.c`; theme.json/settings/manifests/NTP are future consumers owned by their domains.
 > - Canonical doc: `include/kernel/json.h`.
 > - Scope boundary: cJSON internals stay vendored (`src/libs/cjson/`); crypto/TLS in §5/§7, compression in §3/§4.
+> **Verified:** 2026-06-20 | commit `PENDINGHASH` | 7/9 items | build OK | tests 394 kernel + 16 user PASS (TCG)
+> **Deferred:** [M] cJSON writes shared `global_error` per parse (SMP race, not reentrant) (reason: benign today -- no wrapper consumer reads the cJSON error pointer; locking across a kmalloc-heavy parse is worse) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Make kernel cJSON parse reentrant" at line 281)
+> **Deferred:** [M] near-cap JSON of many small nodes can transiently pressure the 2 MiB heap (reason: per-alloc bounded by kmalloc 4 KiB ceiling + graceful failure; only file consumer is self-written boot-time cache) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §6 (item: "Bound parse heap for untrusted JSON" at line 282)
+> **Quality reviewed:** 2026-06-20 | Codex 8x (design, adversarial-impl, adversarial, consistency, perf, re-adversarial) | 2H+3M fixed, 2M deferred | scope: kernel-code-quality
 
 ---
 

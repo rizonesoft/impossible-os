@@ -27,16 +27,21 @@ struct cJSON;
  * Call once in Phase 2 after heap is ready. */
 void json_init(void);
 
-/* Parse a NUL-terminated owned JSON string. Scans at most JSON_MAX_INPUT bytes
- * for the terminator; rejects (returns NULL) if longer or NULL. Returns root
- * node, or NULL on error. Caller must call json_free() when done. */
+/* Parse a NUL-terminated owned JSON string. Scans for the terminator within
+ * JSON_MAX_INPUT bytes; a string with no NUL before the cap is rejected WITHOUT
+ * probing one byte past the buffer, so json_parse's effective payload limit is
+ * JSON_MAX_INPUT - 1. For an exactly-JSON_MAX_INPUT-byte payload, or any
+ * non-NUL-terminated buffer, use json_parse_len(). Returns root node or NULL;
+ * caller must json_free(). */
 struct cJSON *json_parse(const char *text);
 
 /* Parse exactly `len` bytes of a possibly NON-NUL-terminated buffer (the safe
  * path for untrusted / file-backed / network input). Bounds the read to `len`,
- * rejects len == 0, NULL, or len > JSON_MAX_INPUT, and rejects trailing
- * non-whitespace after a valid top-level value (no valid-prefix-plus-garbage).
- * Returns root node, or NULL on error. Caller must call json_free(). */
+ * rejects len == 0, NULL, or len > JSON_MAX_INPUT (len up to and INCLUDING
+ * JSON_MAX_INPUT is accepted), rejects any raw control byte (< 0x20 except
+ * tab/nl/cr) anywhere in the buffer, and rejects trailing non-whitespace after
+ * a valid top-level value (no valid-prefix-plus-garbage). Returns root node, or
+ * NULL on error. Caller must call json_free(). */
 struct cJSON *json_parse_len(const char *text, size_t len);
 
 /* Get an object member by key. Returns NULL if not found. */
