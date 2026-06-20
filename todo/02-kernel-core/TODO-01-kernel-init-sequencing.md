@@ -288,7 +288,20 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 - [x] Ensure `panic()` full BSOD path triggers only after FB is ready (end of Phase 1) -- guards on `kernel_subsystem_ready(SUBSYS_FB)`
 - [x] Add `kernel_subsystem_dump()` call inside `boot_halt()` and `panic()` -- done in §6
 - [x] Define and document which BOOT_FATAL events trigger auto-restart vs permanent halt based on `boot.conf` restart policy -- documented in boot_halt.c
-- [x] Align failure-policy matrix with implemented code paths -- updated §7 table to match actual behavior: Phase 1 uses `boot_halt()` (FB may not be ready), Phase 2 uses recovery screen + `boot_halt()`, Phase 3 uses recovery screen + `boot_halt()` (same as Phase 2). Updated 2026-04-10.
+- [x] Align failure-policy matrix with implemented code paths -- Phase 1 `boot_halt()`, Phase 2/3 recovery screen + `boot_halt()`. Updated 2026-04-10.
+- [ ] Centralize fatal halts behind one panic-safe primitive (lockless serial, pre/post-FB modes); route `klog(LOG_FATAL)`, ISR-integrity, `gdt_init`, `compositor_run`-return through it with dump + POST16_BOOT_FAILED. (Codex §7 4H)
+- [ ] Pre-FB halt strictly serial-only: gate `boot_halt`/`panic_screen` fb+vpd writes on `SUBSYS_FB`; panic serial dump must be lockless + not re-enter klog lock (`panic.c:1126`,`:1212`). (Codex §7 2H+2M)
+- [ ] Phase-1 `cpu_pcid_enable` BOOT_FATAL must `boot_halt` (or reclassify DEGRADED in code+matrix) -- currently downgraded to continue (`boot_interrupts.c:176`). (Codex §7 H)
+- [ ] `boot.conf restart_on_halt`: implement (field + parser + ABI mirror + bounded restart) or remove the §7 claim -- no field exists today (`boot_halt.c:240`). (Codex §7 M)
+- [ ] Panic fatal path must not call blocking firmware `SetVariable` (`panic.c:1210` POST-NVRAM write after `cli` -> `uefi_set_variable` mutex, no deadline); use port/RAM POST shadow or bounded emergency trylock. (Codex §7 perf H)
+- [ ] Panic BSOD path must not do live VFS crash-dump writes after `cli` (`write_crash_dump` `vfs_*`, no deadline -> FS/storage/heap deadlock); persist to reserved RAM + write next boot, or nonblocking best-effort. (Codex §7 perf H)
+
+> **Notes:**
+> - Failure-policy matrix + central halts (`boot_halt`/`panic`/`panic_screen` + recovery screen) shipped and matrix-aligned (2026-04-10); degraded paths klog-WARN + continue.
+> - §7 review (Codex adversarial + consistency + perf) found the matrix bypassed by several fatal paths, a panic-path lock-reentry hazard, and blocking firmware/VFS I/O in the panic path; deferred to a dedicated panic-safe-fatal fix pass (6 items above).
+> - Scope: §7 owns the failure-policy contract; per-phase recovery-screen wiring is §9, the readiness dump is §6.
+>
+> **Deferred:** [H] failure-policy false-completeness: pre-FB fb/vpd writes, panic-path serial/klog lock-reentry, blocking firmware SetVariable + VFS crash-dump in panic path, LOG_FATAL/ISR/raw-hlt bypass matrix+dump, PCID-fatal downgrade, boot.conf restart unimplemented (Codex §7 adversarial+consistency+perf) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Centralize fatal halts behind one panic-safe primitive" at line 292)
 
 ---
 
