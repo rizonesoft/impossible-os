@@ -254,10 +254,20 @@ static void record_unknown(boot_args_t *out, const char *key)
 
 static void fail(boot_args_t *out, boot_args_status_t st, const char *key)
 {
-    if (out->status == BOOT_ARGS_OK) {     /* keep the FIRST failure */
+    const char *k = key ? key : "?";
+    if (out->status == BOOT_ARGS_OK) {     /* first failure wins (status/err_key) */
         out->status = st;
-        strncpy(out->err_key, key ? key : "?", BOOT_ARG_NAME_CAP);
+        strncpy(out->err_key, k, BOOT_ARG_NAME_CAP);
         out->err_key[BOOT_ARG_NAME_CAP] = 0;
+    }
+    /* Separately remember the first hard (non-downgradeable) error so the
+     * end-of-parse allow_unknown downgrade can promote it instead of erasing a
+     * real malformed-value failure. */
+    if ((st == BOOT_ARGS_ERR_BAD_VALUE || st == BOOT_ARGS_ERR_OVERFLOW) &&
+        out->hard_status == BOOT_ARGS_OK) {
+        out->hard_status = st;
+        strncpy(out->hard_key, k, BOOT_ARG_NAME_CAP);
+        out->hard_key[BOOT_ARG_NAME_CAP] = 0;
     }
 }
 
@@ -295,7 +305,7 @@ boot_args_status_t boot_args_parse_cmdline_n(const char *cmdline, uint32_t max_l
         char tok[BOOT_ARG_NAME_MAX + BOOT_ARG_RAWVAL_MAX + 2];
         uint32_t tn = 0;
         while (*p && *p != ' ' && *p != '\t') {
-            if (tn + 1 >= sizeof(tok)) { fail(out, BOOT_ARGS_ERR_OVERFLOW, "?"); return out->status; }
+            if (tn + 1 >= sizeof(tok)) { fail(out, BOOT_ARGS_ERR_OVERFLOW, "?"); goto done; }
             tok[tn++] = *p++;
         }
         tok[tn] = 0;
@@ -309,11 +319,11 @@ boot_args_status_t boot_args_parse_cmdline_n(const char *cmdline, uint32_t max_l
         const char *val;
         char *eq = strchr(t, '=');
         uint32_t klen = eq ? (uint32_t)(eq - t) : (uint32_t)strlen(t);
-        if (klen > BOOT_ARG_NAME_CAP) { fail(out, BOOT_ARGS_ERR_OVERFLOW, "?"); return out->status; }
+        if (klen > BOOT_ARG_NAME_CAP) { fail(out, BOOT_ARGS_ERR_OVERFLOW, "?"); goto done; }
         memcpy(key, t, klen);
         key[klen] = 0;
         val = eq ? eq + 1 : "1";
-        if (strlen(val) > BOOT_ARG_RAWVAL_CAP) { fail(out, BOOT_ARGS_ERR_OVERFLOW, key); return out->status; }
+        if (strlen(val) > BOOT_ARG_RAWVAL_CAP) { fail(out, BOOT_ARGS_ERR_OVERFLOW, key); goto done; }
 
         const boot_arg_desc_t *d = boot_arg_find(key);
         if (!d) {
@@ -327,7 +337,7 @@ boot_args_status_t boot_args_parse_cmdline_n(const char *cmdline, uint32_t max_l
         }
 
         boot_arg_value_t *v = result_slot(out, d);
-        if (!v) { fail(out, BOOT_ARGS_ERR_OVERFLOW, key); return out->status; }
+        if (!v) { fail(out, BOOT_ARGS_ERR_OVERFLOW, key); goto done; }
         boot_args_status_t vs = validate_value(d, val, v);
         if (vs != BOOT_ARGS_OK) { fail(out, vs, key); continue; }
         v->source = BOOT_ARG_SRC_CMDLINE;
@@ -338,9 +348,22 @@ boot_args_status_t boot_args_parse_cmdline_n(const char *cmdline, uint32_t max_l
             out->allow_unknown = 1;
     }
 
-    /* allow_unknown downgrades a recorded unknown-key fatal to a warning. */
-    if (out->status == BOOT_ARGS_ERR_UNKNOWN_KEY && out->allow_unknown)
-        out->status = BOOT_ARGS_OK;
+done:
+    /* Single finalization point -- every post-parse-start exit (normal end or an
+     * early overflow `goto done`) runs this so the downgrade/promotion is never
+     * bypassed. allow_unknown downgrades a leading UNKNOWN_KEY, but only to a
+     * clean OK when NO hard error occurred; a malformed known value/overflow is
+     * promoted to the reported status so the reject-invalid-arg contract holds.
+     * With allow_unknown absent the first failure is kept verbatim. */
+    if (out->status == BOOT_ARGS_ERR_UNKNOWN_KEY && out->allow_unknown) {
+        if (out->hard_status != BOOT_ARGS_OK) {
+            out->status = out->hard_status;
+            strncpy(out->err_key, out->hard_key, BOOT_ARG_NAME_CAP);
+            out->err_key[BOOT_ARG_NAME_CAP] = 0;
+        } else {
+            out->status = BOOT_ARGS_OK;
+        }
+    }
     return out->status;
 }
 

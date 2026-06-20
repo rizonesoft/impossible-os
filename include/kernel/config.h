@@ -177,6 +177,12 @@ typedef struct {
     /* Count of CMDLINE tokens that overrode a BOOTCFG-projected key (logged at
      * boot_args_init time -- the audit trail for the precedence rule). */
     uint8_t            overridden_count;
+    /* First hard (BAD_VALUE/OVERFLOW) error seen, tracked separately from the
+     * first-failure `status`. A hard error is NEVER downgradeable, so when
+     * boot.allow_unknown=1 downgrades a leading UNKNOWN_KEY this surviving hard
+     * error is promoted instead of letting the parse pass as OK. */
+    boot_args_status_t hard_status;
+    char               hard_key[BOOT_ARG_NAME_MAX];
 } boot_args_t;
 
 /* ---- Pure parser (unit-testable; no live boot infrastructure) ------------ */

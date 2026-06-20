@@ -49,6 +49,34 @@ static void test_cfg_allow_unknown_downgrades(void)
     TEST_ASSERT_EQ(s_args.unknown_count, 1, "unknown key still recorded for audit");
 }
 
+static void test_cfg_allow_unknown_never_masks_bad_value(void)
+{
+    /* boot.allow_unknown downgrades the UNKNOWN_KEY error, but it must NEVER
+     * mask a later malformed KNOWN key -- a hard BAD_VALUE/OVERFLOW always
+     * survives so the schema's reject-invalid-arg promise still holds. */
+    boot_args_status_t st =
+        boot_args_parse_cmdline("boot.allow_unknown=1 kernel.foo=1 testsigning=maybe", &s_args);
+    TEST_ASSERT_EQ(st, BOOT_ARGS_ERR_BAD_VALUE, "bad value survives allow_unknown downgrade");
+
+    st = boot_args_parse_cmdline(
+        "boot.allow_unknown=1 kernel.foo=1 verifier=a,b,c,d,e,f,g,h,i", &s_args);
+    TEST_ASSERT_EQ(st, BOOT_ARGS_ERR_OVERFLOW, "CSV overflow survives allow_unknown downgrade");
+
+    /* Without allow_unknown both are fatal; the FIRST failure (the unknown key)
+     * is reported, preserving the original unknown-key diagnostic + err_key. */
+    st = boot_args_parse_cmdline("kernel.foo=1 testsigning=maybe", &s_args);
+    TEST_ASSERT_EQ(st, BOOT_ARGS_ERR_UNKNOWN_KEY, "no allow_unknown: first failure (unknown key) kept");
+    TEST_ASSERT(strcmp(s_args.err_key, "kernel.foo") == 0, "err_key names the unknown key");
+
+    /* An EARLY-RETURN overflow (over-long value) after an unknown key must still
+     * route through the allow_unknown promotion -- not bypass it via early exit. */
+    st = boot_args_parse_cmdline(
+        "boot.allow_unknown=1 kernel.foo=1 debug=000000000000000000000000000000000000000000000000",
+        &s_args);
+    TEST_ASSERT_EQ(st, BOOT_ARGS_ERR_OVERFLOW, "early-overflow promoted past allow_unknown downgrade");
+    TEST_ASSERT(strcmp(s_args.err_key, "debug") == 0, "err_key names the overflowing key");
+}
+
 static void test_cfg_non_kernel_unknown_ignored(void)
 {
     /* An unknown key OUTSIDE the kernel.* namespace is silently ignored, not
@@ -138,6 +166,7 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: boot arg basic parse",     test_cfg_basic_parse,             TEST_CAT_BOOT);
     test_suite_register_cat("CONF: unknown kernel key fatal", test_cfg_unknown_kernel_key_fatal, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: allow_unknown downgrade",  test_cfg_allow_unknown_downgrades, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: allow_unknown no-mask", test_cfg_allow_unknown_never_masks_bad_value, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: non-kernel unknown ignored", test_cfg_non_kernel_unknown_ignored, TEST_CAT_BOOT);
     test_suite_register_cat("CONF: alias normalization",      test_cfg_alias_normalization,     TEST_CAT_BOOT);
     test_suite_register_cat("CONF: bool word forms",          test_cfg_bool_word_forms,         TEST_CAT_BOOT);

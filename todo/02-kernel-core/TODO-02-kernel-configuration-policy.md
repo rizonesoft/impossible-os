@@ -87,6 +87,9 @@ Parse the bootloader handoff into typed, validated keys before any Phase 0 consu
 > - `boot_config` fields project as the BOOTCFG layer; cmdline overrides per §3 precedence with `source`/`present`/`raw` provenance. Codex 4x adoptions in commit.
 > - Tests: `test_kernel_config.c`, 11 suites under `TEST_CAT_BOOT` (alias, unknown-key halt, allow_unknown, CSV, bad-value, bounded/unterminated cmdline).
 > - Scope: §1 owns schema + cmdline parser + provenance; §2 owns the `kernel_config_t` snapshot; §3 owns the registry precedence merge + BOOTCFG explicit-vs-default.
+> **Verified:** 2026-06-20 | commit `pending` | 7/7 items | build OK | smoke PASS (KVM 2.65s)
+> **Deferred:** [M] BOOTCFG explicit-vs-default provenance needs a `boot_config` presence bitset (BOOT_INFO_VERSION bump) -> XREF: 02-kernel-core/TODO-02 §3 (item: "Resolve boot_config explicit-vs-default in the merge" at line 117)
+> **Quality reviewed:** 2026-06-20 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 1H+2M fixed | scope: kernel-code-quality
 
 ---
 
