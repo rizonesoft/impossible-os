@@ -57,7 +57,7 @@ title: "TODO-01 -- Kernel Init Sequencing"
 | 💎  |   3   | Phase 1 -- platform services               | §2         |  [/]   |
 | 💎  |   4   | Phase 2 -- system services                 | §3         |  [/]   |
 | 💎  |   5   | Phase 3 -- user platform                   | §4         |  [x]   |
-| 💎  |   6   | Dependency gates                           | §1--§5     |  [x]   |
+| 💎  |   6   | Dependency gates                           | §1--§5     |  [/]   |
 | 💎  |   7   | Failure policy                             | §6         |  [/]   |
 | 💎  |   8   | Code cleanup                               | §2--§5     |  [/]   |
 | ⭐  |   9   | Degraded-boot recovery screen              | §7         |  [/]   |
@@ -260,6 +260,15 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
   - `vfs_init` requires HEAP; `registry_init` requires VFS (Phase 2)
   - `sched_init` requires HEAP + TIMER (Phase 3)
 - [x] Call `kernel_subsystem_dump()` on every BOOT_FATAL before halting -- added to `boot_halt()` and `panic_screen()`
+- [ ] Enforce lapic<-acpi gate: `boot_phase1` ignores `acpi_init()` return, marks `SUBSYS_ACPI` ready unconditionally (`boot_interrupts.c:247`); capture via `apply_result`, gate `lapic_init` on `kernel_subsystem_ready(SUBSYS_ACPI)`. (Codex §6 2H)
+- [ ] `klog(LOG_FATAL)` must dump readiness before halting (`klog.c:1206`): `gdt_init` + `compositor_run`-return fatal paths skip `kernel_subsystem_dump()`; route through `boot_halt()` or dump first. (Codex §6 H/M)
+
+> **Notes:**
+> - Dependency-gate enforcement: inline `BOOT_REQUIRE`/readiness guards in phase orchestrators + `kernel_subsystem_dump()` on `boot_halt()`/`panic_screen()`. Most chains (pmm/vmm/heap, klog, timer/idt, vfs/registry, sched) enforced.
+> - Two confirmed false-completeness gaps remain (Codex §6, 2 reviewers), deferred to a fresh-context fix: lapic<-acpi gate not enforced; `klog(LOG_FATAL)` halts without the dump.
+> - Scope: §6 owns cross-phase dependency enforcement; per-subsystem typed-init propagation lives in §2/§4/§5.
+>
+> **Deferred:** [H] dependency-gate false-completeness (lapic<-acpi gate unenforced + LOG_FATAL halt skips dump) -> XREF: 02-kernel-core/TODO-01 §6 (item: "Enforce lapic<-acpi gate" at line 263)
 
 ---
 
