@@ -14,6 +14,7 @@
 #include "kernel/tunables.h"
 #include "kernel/feature.h"
 #include "kernel/policy_lock.h"
+#include "kernel/boot_status.h"
 #include "kernel/nt/sysconfig_info.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
@@ -1290,6 +1291,85 @@ static void test_policy_capacity_boundary(void)
     TEST_ASSERT_EQ(kernel_policy_count(), full, "count stable on failed registration");
 }
 
+/* ---- boot status policy + acceptance ledger (TODO-02 boot-status section) -- */
+
+/* Pure policy resolver: enum mapping, recovery flag, default + clamped accept
+ * stage, provenance. The live accept_advance / init paths touch NVRAM + A/B
+ * disk + per-entry MarkGood and are boot-path (validated on QEMU/bare metal),
+ * not unit-testable in WSL, so only the pure helpers are exercised here. */
+static void test_boot_status_policy_resolve(void)
+{
+    boot_status_policy_t p;
+
+    /* Defaults: show failures, recovery on, accept at UI_READY. */
+    boot_status_policy_resolve((uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES, 1, 0, &p);
+    TEST_ASSERT_EQ(p.failure_display, (uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES,
+                   "default failure display = show");
+    TEST_ASSERT_EQ(p.recovery_enabled, 1u, "recovery enabled");
+    TEST_ASSERT_EQ(p.accept_stage, (uint8_t)BOOT_ACCEPT_UI_READY,
+                   "default accept stage = UI_READY");
+    TEST_ASSERT_EQ(p.provenance, (uint8_t)BOOT_STATUS_PROV_DEFAULT, "default provenance");
+
+    /* IgnoreAllFailures + recovery off + cmdline provenance. */
+    boot_status_policy_resolve((uint8_t)BOOT_STATUS_IGNORE_ALL_FAILURES, 0, 1, &p);
+    TEST_ASSERT_EQ(p.failure_display, (uint8_t)BOOT_STATUS_IGNORE_ALL_FAILURES,
+                   "ignore-all-failures honored");
+    TEST_ASSERT_EQ(p.recovery_enabled, 0u, "recovery disabled");
+    TEST_ASSERT_EQ(p.provenance, (uint8_t)BOOT_STATUS_PROV_CMDLINE, "cmdline provenance");
+
+    /* Out-of-domain display enum clamps to the safe default (show). */
+    boot_status_policy_resolve(200, 1, 0, &p);
+    TEST_ASSERT_EQ(p.failure_display, (uint8_t)BOOT_STATUS_DISPLAY_ALL_FAILURES,
+                   "out-of-domain display clamps to show");
+}
+
+/* Monotonic max-advance + exactly-once accept-crossing detection. */
+static void test_boot_status_ledger_step(void)
+{
+    boot_accept_stage_t nw = BOOT_ACCEPT_PENDING;
+
+    /* Advance forward crosses the accept threshold exactly once. */
+    int fired = boot_status_ledger_step(BOOT_ACCEPT_PENDING, BOOT_ACCEPT_UI_READY,
+                                        BOOT_ACCEPT_UI_READY, &nw);
+    TEST_ASSERT_EQ(nw, BOOT_ACCEPT_UI_READY, "advanced to UI_READY");
+    TEST_ASSERT_EQ(fired, 1, "crossing accept stage fires once");
+
+    /* Re-advancing at/above accept does not fire again. */
+    fired = boot_status_ledger_step(BOOT_ACCEPT_UI_READY, BOOT_ACCEPT_UI_READY,
+                                    BOOT_ACCEPT_UI_READY, &nw);
+    TEST_ASSERT_EQ(fired, 0, "no re-fire once already at accept stage");
+
+    /* A lower requested stage is a no-op (monotonic): stays at current. */
+    fired = boot_status_ledger_step(BOOT_ACCEPT_CRITICAL_READY, BOOT_ACCEPT_UI_READY,
+                                    BOOT_ACCEPT_UI_READY, &nw);
+    TEST_ASSERT_EQ(nw, BOOT_ACCEPT_CRITICAL_READY, "monotonic: lower request held");
+    TEST_ASSERT_EQ(fired, 0, "already past accept -> no fire");
+
+    /* Below-accept advance does not fire. */
+    fired = boot_status_ledger_step(BOOT_ACCEPT_PENDING, BOOT_ACCEPT_UI_READY,
+                                    BOOT_ACCEPT_REGISTRY_FLUSHED, &nw);
+    TEST_ASSERT_EQ(fired, 0, "advance below accept stage does not fire");
+}
+
+/* Durable-record CRC: round-trips clean, detects a tampered field. */
+static void test_boot_status_record_crc(void)
+{
+    boot_status_record_t r;
+    r.schema_version = BOOT_STATUS_RECORD_VERSION;
+    r.last_stage = (uint8_t)BOOT_ACCEPT_ACCEPTED;
+    r.failure_bucket = 0;
+    r.recovery_suppressed = 1;
+    r.rollback_hint = 0;
+    r.crc32 = boot_status_record_crc(&r);
+
+    TEST_ASSERT_EQ(r.crc32, boot_status_record_crc(&r), "crc recompute stable");
+
+    boot_status_record_t t = r;
+    t.recovery_suppressed = 0;   /* tamper one field */
+    TEST_ASSERT(boot_status_record_crc(&t) != r.crc32,
+                "crc changes when a covered field is tampered");
+}
+
 void test_register_kernel_config(void)
 {
     test_suite_register_cat("CONF: tunable register+get",  test_tunable_register_get,      TEST_CAT_BOOT);
@@ -1338,6 +1418,9 @@ void test_register_kernel_config(void)
     test_suite_register_cat("CONF: policy audit ring",        test_policy_audit_ring,           TEST_CAT_BOOT);
     test_suite_register_cat("CONF: policy pre-seal writes",   test_policy_preseal_writes,       TEST_CAT_BOOT);
     test_suite_register_cat("CONF: policy capacity boundary", test_policy_capacity_boundary,    TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: boot-status policy resolve", test_boot_status_policy_resolve, TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: boot-status ledger step",  test_boot_status_ledger_step,     TEST_CAT_BOOT);
+    test_suite_register_cat("CONF: boot-status record crc",   test_boot_status_record_crc,      TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

@@ -30,6 +30,7 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_health_check.h"
+#include "kernel/boot_status.h"
 #include "kernel/boot_info.h"
 #include "kernel/boot_init.h"
 #include "kernel/klog.h"
@@ -521,15 +522,23 @@ boot_health_check_run(void)
     struct json_builder                    j;
     enum boot_health_aggregate             agg;
 
-    if (s_ran_once) {
-        return s_cached_aggregate;
+    /* Exactly-once latch (SMP-safe): the first caller wins and runs the gate;
+     * concurrent losers wait for the published aggregate rather than re-running
+     * the checks and re-emitting the success side effects. s_ran_once states:
+     * 0 = idle, 1 = running, 2 = aggregate published. */
+    int prev = 0;
+    if (!__atomic_compare_exchange_n(&s_ran_once, &prev, 1, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        while (__atomic_load_n(&s_ran_once, __ATOMIC_ACQUIRE) != 2)
+            ;   /* await the winner's publish (no concurrent caller today) */
+        return __atomic_load_n(&s_cached_aggregate, __ATOMIC_ACQUIRE);
     }
-    s_ran_once = 1;
 
     if (s_check_count == 0u) {
         klog(LOG_WARN, "BOOT",
              "health: no checks registered -- aggregate=indeterminate");
         s_cached_aggregate = BOOT_HEALTH_AGG_INDETERMINATE;
+        __atomic_store_n(&s_ran_once, 2, __ATOMIC_RELEASE);
         return s_cached_aggregate;
     }
 
@@ -637,17 +646,17 @@ boot_health_check_run(void)
          (uint64_t)want_ok, (uint64_t)want_soft,
          (uint64_t)want_hard, (uint64_t)want_skipped);
 
-    if (agg == BOOT_HEALTH_AGG_PASS && have_ctr) {
-        /* Use the already-validated record from the gate's read; the
-         * public mark_entry_successful would re-read CurBootCtr,
-         * forcing a second RT-mutex-serialized firmware call we
-         * already paid for. */
-        (void)mark_entry_successful_from_ctr(&ctr);
-    } else if (agg == BOOT_HEALTH_AGG_PASS && !have_ctr) {
-        klog(LOG_WARN, "BOOT",
-             "health: gate passed but CurBootCtr absent -- cannot mark good");
-    }
+    /* Route the health verdict through the boot-status ledger instead of
+     * marking the boot good here. The single accepted transition owns the
+     * per-entry MarkGood (plus the A/B mark + durable record), exactly once,
+     * so the gate and the compositor no longer bless from two independent
+     * authorities. The verdict alone is recorded; the actual MarkGood (which
+     * re-reads + validates CurBootCtr, handling an absent counter itself) fires
+     * when the boot reaches its acceptance stage. */
+    if (agg == BOOT_HEALTH_AGG_PASS)
+        boot_status_note_health_pass();
 
+    __atomic_store_n(&s_ran_once, 2, __ATOMIC_RELEASE);   /* aggregate published */
     return agg;
 }
 

@@ -28,6 +28,7 @@
 #include "kernel/sched/syscall.h"
 #include "kernel/tunables.h"
 #include "kernel/policy_lock.h"
+#include "kernel/boot_status.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/pe.h"
 #include "kernel/boot_halt.h"
@@ -135,6 +136,11 @@ void boot_phase3(void)
      * POST_USER_MODE, just before the compositor reaches user mode. */
     if (kernel_policy_register_core() != 0)
         boot_halt("policy lock core registration failed -- refusing to seal an incomplete policy plane");
+    /* Resolve the boot-status policy + acceptance ledger and register its
+     * policy rows BEFORE the POST_REGISTRY seal so they lock with the rest of
+     * the boot-critical policy (stricter-only at runtime). Loads the prior-boot
+     * durable record for the rollback / recovery-escalation consumers. */
+    boot_status_init();
     kernel_policy_lock_phase_advance(POLICY_PHASE_POST_SECURITY_INIT);
     kernel_policy_lock_phase_advance(POLICY_PHASE_POST_REGISTRY);
 

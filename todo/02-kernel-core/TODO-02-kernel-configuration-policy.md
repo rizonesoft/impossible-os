@@ -58,7 +58,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | ⭐ | 7 | Feature flag gates and experiment cohorts       | §6                                  | [/] |
 | 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [/] |
 | ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [/] |
-| 💎 | 10 | Boot status policy and boot success ledger     | §4, §5, D01 T21 §5, T30 §7         | [ ] |
+| 💎 | 10 | Boot status policy and boot success ledger     | §4, §5, D01 T21 §5, T30 §7         | [/] |
 | 💎 | 11 | Config dump, tests, and docs                   | §1-10, T11 §11, T31 §2             | [ ] |
 
 > 💎 = parity work: matches what Windows 11 and Linux already ship.
@@ -149,7 +149,7 @@ Turn `Select` values and boot outcomes into deterministic control-set choice ins
 
 **Test checkpoint:** With `Current=2`, `Default=1`, and `LastKnownGood=3`, a failed boot before ready logs `"[CONF] control set rollback: ControlSet002 -> ControlSet003"` and the next boot selects `ControlSet003`. Successful boot updates `LastKnownGood` only after registry flush succeeds. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] §4 is blocked on three prerequisites: (a) `registry_init` creates only `HKLM\SYSTEM` -- the `SYSTEM\Select` / `ControlSetNNN` / `CurrentControlSet`-link substrate §4 must read does not exist yet (T14 §12); (b) LastKnownGood update, boot-pending, failed-boot writeback, and D01 T21 rollback-hint all gate on the §10 acceptance ledger (unimplemented); (c) persisting the chosen control-set id cannot go into the immutable §2 `kernel_config_t` -- it needs the SAME Phase-2 effective-policy object §3 also needs (operator-reserved architecture). The clean slice (validate Select, resolve `CurrentControlSet`->`ControlSetNNN`, publish selected id+reason in a Phase-2 object) unblocks §3 but still requires (a). -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`" at line 234); -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion" at line 519)
+> **Deferred:** [H] §4 is blocked on three prerequisites: (a) `registry_init` creates only `HKLM\SYSTEM` -- the `SYSTEM\Select` / `ControlSetNNN` / `CurrentControlSet`-link substrate §4 must read does not exist yet (T14 §12); (b) LastKnownGood update, boot-pending, failed-boot writeback, and D01 T21 rollback-hint all gate on the §10 acceptance ledger (unimplemented); (c) persisting the chosen control-set id cannot go into the immutable §2 `kernel_config_t` -- it needs the SAME Phase-2 effective-policy object §3 also needs (operator-reserved architecture). The clean slice (validate Select, resolve `CurrentControlSet`->`ControlSetNNN`, publish selected id+reason in a Phase-2 object) unblocks §3 but still requires (a). -> XREF: 02-kernel-core/TODO-02 §10 (item: "Define `boot_status_policy_t`" at line 152); -> XREF: 02-kernel-core/TODO-14 §12 (item: "Registry Symlink Completion" at line 519)
 
 ---
 
@@ -299,15 +299,23 @@ Define when policy stops being mutable and make every blocked mutation observabl
 
 Turn boot success into an explicit policy-controlled state machine so rollback, LastKnownGood, and recovery decisions do not hinge on one ad-hoc ready bit.
 
-- [ ] Define `boot_status_policy_t`: acceptance stage, failure-display policy, recovery-enabled flag, failed-boot thresholds, and persisted failure bucket.
-- [ ] Parse `bootstatuspolicy`, `recoveryenabled`, and bootloader-provided bless-boot metadata into typed fields with provenance.
-- [ ] Track a per-boot acceptance ledger: pending -> console-or-desktop-ready -> critical-services-ready -> registry-flushed -> accepted.
-- [ ] Gate `mark_boot_successful()`, LastKnownGood update, and rollback-counter reset on the configured acceptance stage instead of a hard-coded Phase 3 heuristic.
-- [ ] Preserve the last failure bucket, rollback hint, and recovery-suppression reason for D01 T21 §4-§5 and T30 §7 consumers on the next boot.
-- [ ] Lock boot-status policy after the same phase boundary as other boot-critical policy; permit only stricter runtime changes.
-- [ ] Commit: `"kernel: add boot status policy and success ledger"`
+- [x] `boot_status_policy_t` Phase-3 effective-policy (accept stage, failure-display, recovery-enabled, escalation threshold) + versioned CRC32 `boot_status_record_t` for the persisted failure bucket -- `boot_status.c`/`.h`.
+- [x] `boot_status_init()` resolves `bootstatuspolicy`/`recoveryenabled` from the validated boot args into typed fields with provenance (default/cmdline); bless-boot metadata flows via the existing health-gate MarkGood handoff.
+- [x] Monotonic forward-only atomic acceptance ledger `boot_accept_stage_t` (PENDING -> UI_READY -> CRITICAL_READY -> REGISTRY_FLUSHED -> ACCEPTED) advanced by `boot_status_accept_advance()` CAS max-advance.
+- [/] Accepted transition fires A/B mark-good + per-entry MarkGood exactly-once at the accept stage (default UI_READY), replacing the compositor + health-gate direct marks; LastKnownGood copy deferred -> 02-kernel-core/TODO-02 §4.
+- [/] Durable NVRAM record (`IPOSBootStatus`) + `boot_status_last_record()` preserve last stage, recovery-suppression, and rollback hint for next boot; failure-bucket classification deferred -> 02-kernel-core/TODO-30 §7.
+- [x] `policy.recovery_lockout` + `policy.boot_accept_stage` registered as restrictive-sense ratchet rows sealed at POST_REGISTRY (stricter-only runtime changes).
+- [x] Commit: `"kernel: add boot status policy and success ledger"`
 
-**Test checkpoint:** Boot with `bootstatuspolicy=IgnoreAllFailures recoveryenabled=no`: serial shows `"[CONF] boot_accept=pending policy=IgnoreAllFailures recovery=off"` and rollback counters do not reset until the configured acceptance stage is reached. A successful boot advances through the ledger in order and only then logs `"[CONF] boot accepted"` before D01 T21 §5 resets tries. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Boot logs `"[CONF] boot-status policy: accept=ui-ready display=show recovery=on"` at Phase 3 init; with `bootstatuspolicy=IgnoreAllFailures recoveryenabled=no` it logs `display=ignore recovery=off`. A successful boot reaches the accept stage at the first composited frame and logs `"[CONF] boot accepted (stage=accepted)"` exactly once; the A/B tries reset and per-entry MarkGood happen only at that transition, never from a failed boot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 3 boot-status suites (resolve, ledger step, record crc), 0 failures
+> **Notes:**
+> - **What shipped:** `boot_status.c`/`.h` -- `boot_status_policy_t` Phase-3 effective-policy, a monotonic atomic acceptance ledger, and a versioned CRC32 NVRAM record (`IPOSBootStatus`); 3 pure-function unit tests.
+> - **How it integrates:** `boot_status_init()` runs at Phase 3; the compositor first frame and health gate route through `boot_status_accept_advance()`, whose exactly-once accepted transition does the A/B mark + MarkGood + durable record write.
+> - **Downstream effects:** `boot_status_last_record()` feeds the LastKnownGood (§4) and recovery-escalation (TODO-30 §7) consumers; the health-gate run-once latch is now an SMP-safe atomic.
+> - **Canonical doc:** `include/kernel/boot_status.h` header contract (stage model, exactly-once bless, durable record).
+> - **Scope boundary:** §10 owns the ledger + policy + durable record + mark-good gate; the LastKnownGood control-set copy is owned by §4; failure-bucket classification + escalation are owned by TODO-30 §7.
 
 ---
 
@@ -333,7 +341,7 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 | 💎 | Boot entry policy store            | ✅ BCD plus boot menu and recovery entries     | ✅ GRUB or systemd-boot plus kernel cmdline        | ⚠️ §1 parser done; §3,§4 |
 | 💎 | Safe and recovery boot modes       | ✅ `safeboot=minimal|network` plus recovery    | ✅ `single`, rescue, emergency, and recovery menu  | ✅ `safe_mode_t` object, monotonic floor, KUSD mirror |
 | 💎 | Control-set style rollback state   | ⚠️ `Current` and `LastKnownGood` semantics     | ⚠️ Distro snapshots or boot fallback, not kernel   | ⬜ Planned - §4         |
-| 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ⬜ Planned - §10        |
+| 💎 | Boot success and failure ledger    | ✅ `bootstatuspolicy` plus recovery policy      | ✅ boot counting plus bless-boot style acceptance  | ✅ §10 acceptance ledger, exactly-once bless, durable record |
 | 💎 | Runtime tunables and query surface | ✅ Registry, Group Policy, and BCD knobs       | ✅ `sysctl`, `/proc`, `/sys`, and module params    | ⚠️ §6 registry + §8 query syscall; set path §8/§3 |
 | 💎 | Early immutable security policy    | ✅ Debug, NX, integrity, and boot-policy gates | ✅ Lockdown, cmdline policy, and Secure Boot gates | ✅ §9 phase-sealed ratchet, panic-on-downgrade |
 | 💎 | Unified kernel lockdown level      | ⚠️ HVCI and VBS, no single named level         | ✅ `lockdown=integrity` or `confidentiality`       | ✅ §9 none/integrity/confidentiality, SB-mapped |
