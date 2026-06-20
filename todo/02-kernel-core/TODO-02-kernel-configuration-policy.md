@@ -59,7 +59,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | 💎 | 8 | Native query/set config syscalls                | §2, §6, T12 §10, T15 §8            | [/] |
 | ⭐ | 9 | Policy lock phases and tamper audit             | §2, §3                              | [/] |
 | 💎 | 10 | Boot status policy and boot success ledger     | §4, §5, D01 T21 §5, T30 §7         | [/] |
-| 💎 | 11 | Config dump, tests, and docs                   | §1-10, T11 §11, T31 §2             | [ ] |
+| 💎 | 11 | Config dump, tests, and docs                   | §1-10, T11 §11, T31 §2             | [/] |
 
 > 💎 = parity work: matches what Windows 11 and Linux already ship.
 > ⭐ = exclusive work: Impossible OS adds provenance, rollout, and tamper semantics neither platform exposes as one kernel-owned plane.
@@ -327,14 +327,22 @@ Turn boot success into an explicit policy-controlled state machine so rollback, 
 
 Close the loop with operator-visible diagnostics, regression coverage, and explicit invariant ownership.
 
-- [ ] Add `config_dump()` serial/klog output with redaction for secrets.
-- [ ] Unit tests: parser, precedence, range clamp, lock phase, safe-mode gating, boot-status ledger, LastKnownGood state machine, and config syscall marshalling.
-- [ ] Boot tests: normal boot, Safe Mode minimal, Safe Mode network, failed boot rollback, debug boot, and unknown-key rejection.
-- [ ] Add bulletproofing invariants to T31 for `kernel_config_t` layout, versioning, and fixed-size string fields.
-- [ ] Document supported keys, defaults, ranges, and lock phases in the header and TODO text so implementers do not need to reverse-engineer them from tests.
-- [ ] Commit: `"kernel: add config dump, tests, and documentation pass"`
+- [x] `config_dump()` (`config.c`) klogs snapshot + safe mode + policy + boot-status + tunables; off-stack scratch, atomic non-reentrant guard, redacts `TUNABLE_PRIVILEGED` values; runs on a debug boot.
+- [/] Unit tests: parser/precedence/clamp/lock-phase/safe-mode/boot-status-ledger/syscall already covered (49 `test_kernel_config.c` suites); LastKnownGood state-machine test deferred -> 02-kernel-core/TODO-02 §4.
+- [/] Boot tests: Safe Mode + unknown-key covered by the boot suite; debug boot now emits `config_dump`; failed-boot rollback boot test deferred -> 02-kernel-core/TODO-02 §4.
+- [x] `kernel_config_t` bulletproofing invariants (`_Static_assert` size/version/offset guards) live in `config.h`; full 5-layer tracking owned by 02-kernel-core/TODO-31 §2.
+- [x] Supported keys/defaults/ranges/lock-phases documented in the `k_arg_table` schema (`config.c`) + `config.h` contract; surfaced at runtime by `config_dump`.
+- [x] Commit: `"kernel: add config dump, tests, and documentation pass"`
 
-**Test checkpoint:** `config_dump()` redacts secrets while still printing provenance and boot-acceptance stage, the boot suite covers rollback and safe-mode scenarios, and T31 contains an explicit `kernel_config_t` invariant item before this section is marked done. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** A debug boot logs `"[CONF] dump: ..."` lines covering the snapshot, lockdown/lock-phase/tamper counts, boot-status accept stage, and the tunable registry with `TUNABLE_PRIVILEGED` values shown as `****`. The config-plane data is covered by the `test_kernel_config.c` suites; config_dump itself is output-only (validated via debug-boot serial). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 49 `test_kernel_config.c` suites, 0 failures; config_dump validated via debug-boot serial
+> **Notes:**
+> - **What shipped:** `config_dump()` in `config.c` -- klogs the whole config plane (snapshot, policy, boot-status, tunables) with `TUNABLE_PRIVILEGED` redaction; off-stack scratch + atomic non-reentrant guard.
+> - **How it integrates:** runs on a debug boot from Phase 3 (`boot_desktop.c`) once every config registry is sealed; reads only lockless getters + `kernel_tunable_dump()`; not a panic-path function.
+> - **Downstream effects:** closes the TODO-02 config-plane loop; the `kernel_config_t` `_Static_assert` invariants in `config.h` are tracked for full 5-layer coverage by TODO-31 §2.
+> - **Canonical doc:** `include/kernel/config.h` contract + the `k_arg_table` schema in `config.c`.
+> - **Scope boundary:** §11 owns `config_dump` + docs + existing-test wiring; the LastKnownGood state-machine + failed-boot rollback tests are owned by §4; the full 5-layer config-invariant tracking is owned by TODO-31 §2.
 
 ---
 

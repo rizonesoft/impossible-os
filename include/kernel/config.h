@@ -331,6 +331,16 @@ void kernel_config_publish(const struct boot_config *cfg);
 /* The published snapshot, or NULL before kernel_config_publish() runs. */
 const kernel_config_t *kernel_config_get(void);
 
+/* Operator/support diagnostic: klog the full config plane -- the immutable
+ * snapshot, the resolved safe mode, the policy-lock state (lockdown level, lock
+ * phase, registered/tamper counts), the boot-status policy + acceptance stage,
+ * and the runtime tunable registry. Secret-class values (TUNABLE_PRIVILEGED
+ * tunables) are redacted. NOT a panic-path function: it formats + writes serial
+ * via klog and serializes concurrent callers with an atomic busy flag. Safe to
+ * call any time after Phase 3 (reads only lockless snapshots / self-locked
+ * getters). */
+void config_dump(void);
+
 /* ============================================================================
  * Section 5: Safe Mode policy object.
  *

@@ -29,6 +29,7 @@
 #include "kernel/tunables.h"
 #include "kernel/policy_lock.h"
 #include "kernel/boot_status.h"
+#include "kernel/config.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/pe.h"
 #include "kernel/boot_halt.h"
@@ -143,6 +144,15 @@ void boot_phase3(void)
     boot_status_init();
     kernel_policy_lock_phase_advance(POLICY_PHASE_POST_SECURITY_INIT);
     kernel_policy_lock_phase_advance(POLICY_PHASE_POST_REGISTRY);
+
+    /* On a debug boot, dump the whole config plane (snapshot + policy + boot
+     * status + tunables, secrets redacted) now that every config registry is up
+     * and sealed -- gives the operator a single serial-visible config picture. */
+    {
+        const kernel_config_t *cfg_snap = kernel_config_get();
+        if (cfg_snap && cfg_snap->debug_enabled)
+            config_dump();
+    }
 
     /* --- IPC init (pipe, shmem, signal, alpc) --- */
     /* pipe_create/shmem_create init lazily; explicit pipe_init gives the

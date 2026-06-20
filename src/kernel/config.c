@@ -11,6 +11,9 @@
 #include "kernel/klog.h"
 #include "kernel/boot_halt.h"
 #include "kernel/barrier.h"
+#include "kernel/policy_lock.h"
+#include "kernel/boot_status.h"
+#include "kernel/tunables.h"
 #include "libc/string.h"
 
 extern struct boot_info g_boot_info;
@@ -622,4 +625,96 @@ int safe_mode_component_allowed(safe_mode_t level, safe_mode_component_t compone
 int kernel_safe_mode_allows(safe_mode_component_t component)
 {
     return safe_mode_component_allowed(kernel_safe_mode(), component);
+}
+
+/* ---- config_dump (operator/support diagnostic) -------------------------- */
+
+/* Mirrors the tunable registry capacity (TUNABLE_MAX in tunables.c). The dump
+ * scratch lives in .bss, NOT on the caller stack: at ~80 bytes/row x 64 rows it
+ * would consume most of an 8 KiB kernel stack. */
+#define CONFIG_DUMP_TUNABLE_MAX 64u
+static tunable_snapshot_t s_dump_rows[CONFIG_DUMP_TUNABLE_MAX];
+/* Non-reentrant guard for the shared scratch (atomic, not a spinlock, so no
+ * lock is held across the klog serial writes -- a concurrent dumper backs off). */
+static volatile int s_dump_busy;
+
+static const char *const k_dump_safe_names[] = {
+    "off", "minimal", "network", "dsrepair",
+};
+_Static_assert(sizeof(k_dump_safe_names) / sizeof(k_dump_safe_names[0]) == SAFE_MODE_COUNT,
+    "safe-mode dump-name table must match safe_mode_t (enum/name-table drift)");
+
+void config_dump(void)
+{
+    int expected = 0;
+    if (!__atomic_compare_exchange_n(&s_dump_busy, &expected, 1, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        klog(LOG_INFO, "CONF", "[CONF] config_dump: already in progress -- skipped");
+        return;
+    }
+
+    const kernel_config_t *c = kernel_config_get();
+    if (!c) {
+        klog(LOG_INFO, "CONF", "[CONF] config_dump: snapshot not yet published");
+    } else {
+        safe_mode_t sm = kernel_safe_mode();
+        klog(LOG_INFO, "CONF",
+             "[CONF] dump: boot_mode=%u safe_mode=%s(reason=%u) debug=%u testsigning=%u nointegrity=%u nogui=%u",
+             (uint32_t)c->boot_mode,
+             (sm < SAFE_MODE_COUNT) ? k_dump_safe_names[sm] : "?",
+             (uint32_t)kernel_safe_mode_reason(),
+             (uint32_t)c->debug_enabled, (uint32_t)c->testsigning,
+             (uint32_t)c->nointegritychecks, (uint32_t)c->nogui);
+        klog(LOG_INFO, "CONF",
+             "[CONF] dump: boot_reason=%u selection_reason=%u entry_id=\"%s\" cmdline_overrides=%u",
+             (uint32_t)c->boot_reason, (uint32_t)c->selection_reason,
+             c->entry_id, (uint32_t)c->cmdline_override_count);
+    }
+
+    /* Policy-lock plane (lockless getters). */
+    klog(LOG_INFO, "CONF",
+         "[CONF] dump: lockdown=%u lock_phase=%u policies=%u tamper=%lu",
+         (uint32_t)kernel_lockdown_level_get(),
+         (uint32_t)kernel_policy_lock_phase_get(),
+         kernel_policy_count(), (uint64_t)kernel_policy_tamper_count());
+
+    /* Boot-status policy + acceptance ledger. */
+    const boot_status_policy_t *bs = boot_status_policy_get();
+    if (bs)
+        klog(LOG_INFO, "CONF",
+             "[CONF] dump: boot_status accept=%s display=%u recovery=%u stage=%s",
+             boot_status_stage_name((boot_accept_stage_t)bs->accept_stage),
+             (uint32_t)bs->failure_display, (uint32_t)bs->recovery_enabled,
+             boot_status_stage_name(boot_status_stage()));
+    else
+        klog(LOG_INFO, "CONF", "[CONF] dump: boot_status not yet initialized");
+
+    /* Runtime tunable registry. Privileged tunables are the secret class: their
+     * current value is redacted so a shared dump / support bundle cannot leak
+     * sensitive tuning. Name, bounds, flags, and source stay visible. */
+    uint32_t n = kernel_tunable_dump(s_dump_rows, CONFIG_DUMP_TUNABLE_MAX);
+    uint32_t total = kernel_tunable_count();
+    /* If the registry ever outgrows the dump scratch, say so explicitly rather
+     * than emit a complete-looking but truncated support artifact. */
+    if (n < total)
+        klog(LOG_WARN, "CONF",
+             "[CONF] dump: %u of %u tunables (TRUNCATED -- raise CONFIG_DUMP_TUNABLE_MAX)",
+             n, total);
+    else
+        klog(LOG_INFO, "CONF", "[CONF] dump: %u tunables", n);
+    for (uint32_t i = 0; i < n; i++) {
+        const tunable_snapshot_t *t = &s_dump_rows[i];
+        if (t->flags & TUNABLE_PRIVILEGED)
+            klog(LOG_INFO, "CONF",
+                 "[CONF]   %s = **** (privileged; def/min/max redacted) flags=0x%x src=%u",
+                 t->name, (uint32_t)t->flags, (uint32_t)t->source);
+        else
+            klog(LOG_INFO, "CONF",
+                 "[CONF]   %s = %ld (def=%ld min=%ld max=%ld) flags=0x%x src=%u",
+                 t->name, (int64_t)t->cur, (int64_t)t->def,
+                 (int64_t)t->min, (int64_t)t->max,
+                 (uint32_t)t->flags, (uint32_t)t->source);
+    }
+
+    __atomic_store_n(&s_dump_busy, 0, __ATOMIC_RELEASE);
 }
