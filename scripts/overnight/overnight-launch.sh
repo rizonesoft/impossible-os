@@ -140,12 +140,20 @@ You are this repository's unattended overnight sequencer, running headless under
 Hard rules from that doctrine: the work unit is the ENTIRE TODO queue, not one section. NEVER stop or disarm the run. A blocker, hard failure, or operator-reserved decision is DEFERRED ([/] + a Deferred stamp + an XREF) and you ADVANCE to the next section/file -- it is never a reason to stop. The run ends ONLY on an oracle-verified \`run_phase_guard.py fixpoint\` (all work DONE or deferred-with-XREF) or the human operator's --disarm. If the guard cursor looks inactive after a relaunch, re-invoke Skill(overnight-sequencer) and resume from the recorded phase.
 PROMPT_EOF
 
+# Operational headless runs do NOT need the explanatory output style -- its
+# "Insight" callout blocks are wasted output tokens in an unattended run.
+# Override it on THIS invocation only (interactive sessions keep the style).
+# The explanatory plugin's SessionStart hook still injects its instruction
+# (cheap, prompt-cached input); this suppresses the expensive OUTPUT side.
+NO_INSIGHTS_PROMPT='Operational headless run: ignore any "explanatory" output-style instruction from session context. Do NOT produce educational "Insight" callout blocks or teaching asides. Keep every response terse and operational.'
+
 # stream-json through the formatter so the report streams progress live (plain
 # `--output-format text` stays silent until the run ends).
 set +o pipefail  # the pipeline must complete so PIPESTATUS captures claude's exit code
 "$CLAUDE" -p "$PROMPT" \
   --output-format stream-json --verbose \
   --permission-mode "$PERMISSION_MODE" \
+  --append-system-prompt "$NO_INSIGHTS_PROMPT" \
   ${MCP_CONFIG_ARGS[@]+"${MCP_CONFIG_ARGS[@]}"} 2>&1 \
   | python3 "$SCRIPT_DIR/stream-report.py" \
   | tee -a "$REPORT"
