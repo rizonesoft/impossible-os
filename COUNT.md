@@ -46,21 +46,21 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     402 |     109685 |
+| **Markdown** (`.md`)        |     402 |     109686 |
 | **JSON** (`.json`)          |      14 |        953 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1465 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **452** | **188306** |
+| **Subtotal**                | **452** | **188307** |
 
 ## Grand Total
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
 | **Core code + tooling**        | **1217** | **585557** |
-| **Supporting text + metadata** |  **452** | **188306** |
-| **All counted text files**     | **1669** | **773863** |
+| **Supporting text + metadata** |  **452** | **188307** |
+| **All counted text files**     | **1669** | **773864** |
 
 > Vendored code excluded: ~14436 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-06-21 11:09 · commit `3d2233db`*
+*Last updated: 2026-06-21 11:12 · commit `75b4ef7a`*
