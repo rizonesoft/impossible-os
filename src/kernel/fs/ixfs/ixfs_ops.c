@@ -834,7 +834,7 @@ static int ixfs_vfs_truncate(struct vfs_node *node, uint64_t new_size)
 
     /* Find the volume */
     vol = (struct ixfs_volume *)0;
-    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+    for (vi = 0; volumes && vi < IXFS_MAX_VOLUMES; vi++) {
         if (volumes[vi].in_use) {
             vol = &volumes[vi];
             break;

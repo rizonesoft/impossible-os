@@ -3,9 +3,38 @@
  * ============================================================================ */
 
 #include "ixfs_internal.h"
+#include "kernel/mm/pmm.h"
+#include "libc/string.h"
 
-/* Global volume table */
-struct ixfs_volume volumes[IXFS_MAX_VOLUMES];
+/* Global volume table. Large (IXFS_MAX_VOLUMES * sizeof(struct ixfs_volume),
+ * ~1.4 MB) so it is PMM-backed rather than kernel BSS: a static array this big
+ * pushes the kernel image into the user-mode base at 0x800000 and fails the
+ * build.sh BSS guard. See TODO-33 for the permanent higher-half fix. Allocated
+ * once on the first format/mount; never freed; read-only after publication. */
+struct ixfs_volume *volumes = NULL;
+
+/* Allocate + zero the volume table on first use. IXFS format/mount is
+ * serialized at boot (the volume-slot scans below are likewise unlocked), so
+ * no lock is taken; the table is published only AFTER it is zeroed, so any
+ * concurrent query reader sees either NULL or a fully in_use=0 table. */
+static int ixfs_volumes_ensure(void)
+{
+    struct ixfs_volume *p;
+    uint64_t bytes, frames;
+
+    if (volumes)
+        return 0;
+    bytes  = (uint64_t)IXFS_MAX_VOLUMES * sizeof(struct ixfs_volume);
+    frames = (bytes + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    p = (struct ixfs_volume *)(uintptr_t)pmm_alloc_contiguous(frames);
+    if (!p) {
+        klog(LOG_ERROR, "ixfs", "IXFS: volume table allocation failed");
+        return -1;
+    }
+    memset(p, 0, bytes);
+    volumes = p;            /* publish only after the table is zeroed */
+    return 0;
+}
 
 /* --- FS driver descriptor --- */
 static struct vfs_fs_driver ixfs_driver = {
@@ -18,6 +47,9 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
 {
     struct ixfs_volume *vol;
     uint32_t vi;
+
+    if (ixfs_volumes_ensure() != 0)
+        return -1;
 
     /* Find a free volume slot */
     vol = (struct ixfs_volume *)0;
@@ -221,6 +253,9 @@ int ixfs_init(const struct blkdev *dev)
     struct ixfs_volume *vol;
     uint32_t vi;
 
+    if (ixfs_volumes_ensure() != 0)
+        return -1;
+
     /* Find a free volume slot */
     vol = (struct ixfs_volume *)0;
     for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
@@ -368,7 +403,7 @@ struct vfs_node *ixfs_get_root(void)
 {
     uint32_t vi;
     struct ixfs_volume *vol = (struct ixfs_volume *)0;
-    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+    for (vi = 0; volumes && vi < IXFS_MAX_VOLUMES; vi++) {
         if (volumes[vi].in_use) {
             vol = &volumes[vi];
             break;

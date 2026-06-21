@@ -236,7 +236,7 @@ uint32_t ixfs_cow_block(struct ixfs_volume *vol,
 struct ixfs_volume *ixfs_get_active_volume(void)
 {
     uint32_t vi;
-    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+    for (vi = 0; volumes && vi < IXFS_MAX_VOLUMES; vi++) {
         if (volumes[vi].in_use)
             return &volumes[vi];
     }

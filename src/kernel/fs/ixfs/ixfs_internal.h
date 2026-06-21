@@ -113,8 +113,11 @@ struct ixfs_journal_entry {
     uint8_t  je_data[4080];          /* first 4080 bytes of target block */
 } __attribute__((packed));
 
-/* --- Global volume table (defined in ixfs_format.c) --- */
-extern struct ixfs_volume volumes[IXFS_MAX_VOLUMES];
+/* --- Global volume table (defined in ixfs_format.c) ---
+ * PMM-backed pointer (allocated on first format/mount), not a static array:
+ * IXFS_MAX_VOLUMES * sizeof(struct ixfs_volume) is ~1.4 MB, which as kernel
+ * BSS collides with the user-mode base at 0x800000. See TODO-33. */
+extern struct ixfs_volume *volumes;
 
 /* --- ixfs_core.c: String helpers, disk I/O, buffer cache --- */
 void ixfs_strcpy(char *dst, const char *src, uint32_t max);
