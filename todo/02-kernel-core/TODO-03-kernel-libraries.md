@@ -447,7 +447,7 @@ After §1 through §8, freestanding libc and these libs unblock LZ4, miniz, cryp
 > Wire into `test_runner_init()` via `test_register_klibs()` (see `src/kernel/test/test_runner.c` and `include/kernel/test/test.h`). Use `test_suite_register_cat(..., TEST_CAT_EXEC)` for each case.
 > Boot tests run with `debug=1` or `test=1` in `boot.conf`.
 
-- [/] Create `src/kernel/test/test_klibs.c` -- EXISTS with 15 crypto/CSPRNG suites (§5 coverage: Monocypher vectors, CSPRNG core/golden/absorb, NtGetRandom dispatch + chunks); the §1-§4 cases below still to add:
+- [x] `src/kernel/test/test_klibs.c` covers every shipped section (§1/§2/§3/§5/§6/§8/§10; 6800 kernel + 16 user PASS, TCG 2026-06-21); only deferred §4/§7/§9 lack tests. Draft sub-bullets below are historical:
   - `snprintf(buf, 32, "%d", 42)` -> `"42"`, returns 2
   - `snprintf(buf, 32, "%s %s", "hello", "world")` -> `"hello world"`
   - `snprintf(buf, 32, "0x%x", 0xDEAD)` -> `"0xdead"`
@@ -466,26 +466,27 @@ After §1 through §8, freestanding libc and these libs unblock LZ4, miniz, cryp
   - [x] `kcrc32("123456789", 9)` -> `0xCBF43926` (IEEE); `kcrc32c("123456789", 9)` -> `0xE3069283` (Castagnoli) on SSE4.2 (`kcrc32c_hw_test`) + table (`kcrc32c_sw_test`) paths, plus split-vector continuation -- `test_checksum_codec` in `test_klibs.c`
   - [x] base64 encode/decode round-trips RFC 4648 vectors + MIME-whitespace mode; rejects bad padding/data-after-pad/len%4; `hex_encode`/`hex_decode` round-trip, reject odd-length/non-hex -- `test_checksum_codec`
 - [x] Add `extern void test_register_klibs(void);` in `test_runner.c`, call `test_register_klibs()` from `test_runner_init()`
-- [ ] Until §3 exists: register LZ4 round-trip test as `TEST_SKIP` or behind `#if 0`; until §4/§5 ship crypto: skip CRC32 / SHA-256 / AES bullets or use `TEST_SKIP` with explicit reason (avoid linking missing symbols)
-- [ ] Commit: `"test: add kernel libraries test suite"`
+- [x] Skip-gating resolved: every shipped section wired real tests as it landed (no TEST_SKIP needed); only deferred §4/§7/§9 remain unwired.
+- [x] Commit: kernel libraries test suite committed incrementally per section (latest §10 in `1d1098b2`).
 
 ---
 
 ## Verification
 
-- [ ] **snprintf**: `snprintf(buf, sizeof buf, "%08x %s %d", 0xDEAD, "os", 42)` -> `"0000dead os 42"` byte-for-byte; truncation test: `snprintf(buf, 5, "hello world")` -> `"hell\0"`, returns `11`.
-- [ ] **Math**: `kmath_sin(0) == 0.0`, `kmath_cos(0) == 1.0`, `kmath_atan2(1.0, 1.0)` ~ `0.7854` (pi/4 +/- 1e-9), `kmath_exp(1.0)` ~ `2.71828` (+/- 1e-9), `kmath_sqrt(4.0) == 2.0`.
-- [ ] **LZ4**: compress a 64 KiB zeroed buffer; verify compressed size < original; decompress; byte-for-byte equal; `lz4_compress_bound(65536)` is the upper bound on compressed size.
-- [ ] **miniz deflate**: compress 8 KiB string; decompress; verify identity.
-- [ ] **miniz ZIP**: open a 3-file ZIP from memory; enumerate entries; extract one file; verify content.
-- [ ] **Monocypher AEAD**: encrypt `"hello kernel"` with a random key; decrypt; verify plaintext matches; flip one byte in ciphertext -- `crypto_aead_unlock` must return -1 (authentication failure).
-- [ ] **CSPRNG**: `csprng_fill(buf1, 32)` and `csprng_fill(buf2, 32)` must produce different outputs; `csprng_u64()` called 1000 times must show no repeated values (birthday bound test).
-- [ ] **cJSON**: parse `{"build": 1024, "name": "Impossible OS", "debug": false}`; `json_int(json_get(root, "build")) == 1024`; `strcmp(json_str(json_get(root, "name")), "Impossible OS") == 0`.
-- [ ] **Mbed TLS selftest**: `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` both return 0 in the boot log.
+- [x] **snprintf**: width/precision/flags + truncation covered by `test_string_lib_edges` (`test_klibs.c`); 6800 kernel PASS on TCG 2026-06-21.
+- [x] **Math**: `kmath_sin/cos/atan2/exp/sqrt` + IEEE edges covered by `test_math_lib` (`test_klibs.c`); PASS.
+- [x] **LZ4**: compress/decompress round-trip + bound + malformed-frame + size-boundary covered by `test_lz4_block` (`test_klibs.c`); PASS.
+- [ ] **miniz deflate**: compress 8 KiB string; decompress; verify identity. (§4 DEFERRED -- port blocked on consumer-owned workspace; no test yet.)
+- [ ] **miniz ZIP**: open a 3-file ZIP from memory; enumerate entries; extract one file; verify content. (§4 DEFERRED.)
+- [x] **Monocypher AEAD**: round-trip + tamper-reject covered by `test_aead_roundtrip` (`test_klibs.c`); PASS.
+- [x] **CSPRNG**: distinct-output + core/golden-vector coverage in the `klibs: csprng *` suites (`test_klibs.c`); PASS.
+- [x] **cJSON**: parse + field-extract + hardening covered by `test_json_lib` (`test_klibs.c`); PASS.
+- [ ] **Mbed TLS selftest**: `mbedtls_aes_self_test(1)` and `mbedtls_sha256_self_test(1)` both return 0. (§7 DEFERRED -- port not started.)
 - [x] **Checksum/codec**: `kcrc32`/`kcrc32c` match the IEEE/Castagnoli vectors on both SSE4.2 and table paths; base64 + hex round-trip RFC 4648 vectors and reject malformed input. (`test_checksum_codec`)
-- [ ] **Build check**: `bash scripts/build.sh clean` -> `=== BUILD OK ===` with all library files compiled under `-ffreestanding -nostdlib`.
-- [ ] **Platforms:** run verification matrix on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
-- [ ] Commit: `"libs: snprintf/vsnprintf, kmath, LZ4, miniz, Monocypher/CSPRNG, cJSON, Mbed TLS freestanding ports"`
+- [x] **SHA-3/SHAKE (§10)**: NIST FIPS 202 KATs + independent boundary vectors + multi-block SHAKE + dispatch covered by `test_sha3_kat`/`test_sha3_streaming`/`test_crypto_hash_dispatch` (`test_klibs.c`); PASS.
+- [x] **Build check**: `bash scripts/build.sh clean` -> `=== BUILD OK ===` 2026-06-21 (all library files under `-ffreestanding -nostdlib`; BSS end 0x7ff000 < 0x800000).
+- [ ] **Platforms:** run verification matrix on QEMU WHPX, QEMU TCG, VirtualBox, bare metal. (manual -- TCG covered 2026-06-21 6800/6800 + 16/16; WHPX/VirtualBox/bare metal pending user rig.)
+- [x] Commit: `"libs: snprintf/vsnprintf, kmath, LZ4, Monocypher/CSPRNG, cJSON, CRC/codec, SHA-3 freestanding ports"`
 
 **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec)
 
