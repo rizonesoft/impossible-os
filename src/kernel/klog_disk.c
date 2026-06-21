@@ -336,73 +336,81 @@ static void ensure_log_dirs(void)
  *
  * Returns the new file size (0 after rotation, or current_size if no rotation). */
 
+/* Build "<dir><filename>[.<gen>]" into out[cap] with a hard bound. gen 0 = no
+ * suffix (the current file); gen 1..9 = ".N" rotated generation; gen 255 = ".tmp"
+ * staging suffix. Returns 1 on success, 0 if it would overflow (caller skips the
+ * op rather than smashing the stack -- the dir is runtime-resolved by
+ * klog_resolve_dir, so an explicit bound + hard-fail is the disk-sourced-config
+ * rule, not an implicit "it fits today"). */
+static int __attribute__((noinline)) klog_build_log_path(char *out, uint32_t cap,
+                          const char *dir, const char *filename, uint8_t gen)
+{
+    uint32_t p = 0, j;
+    for (j = 0; dir[j]; j++)      { if (p + 1 >= cap) return 0; out[p++] = dir[j]; }
+    for (j = 0; filename[j]; j++) { if (p + 1 >= cap) return 0; out[p++] = filename[j]; }
+    if (gen == 255) {
+        const char *t = ".tmp";
+        for (j = 0; t[j]; j++)    { if (p + 1 >= cap) return 0; out[p++] = t[j]; }
+    } else if (gen >= 1) {
+        if (p + 2 >= cap) return 0;
+        out[p++] = '.';
+        out[p++] = '0' + (char)(gen % 10);
+    }
+    out[p] = '\0';
+    return 1;
+}
+
 static uint32_t rotate_log_file(const char *dir, const char *filename,
                                 uint32_t current_size)
 {
-    char old_path[80], new_path[80];
+    char cur_path[80], tmp_path[80], a_path[80], b_path[80];
     uint32_t n;
-    int j, dp;
 
     if (current_size < rot_max_size)
         return current_size;
 
-    /* Delete the oldest rotated file: foo.log.N */
-    {
-        dp = 0;
-        for (j = 0; dir[j]; j++) old_path[dp++] = dir[j];
-        for (j = 0; filename[j]; j++) old_path[dp++] = filename[j];
-        old_path[dp++] = '.';
-        old_path[dp++] = '0' + (char)(rot_max_rotated % 10);
-        old_path[dp] = '\0';
-        vfs_unlink(old_path);
+    if (!klog_build_log_path(cur_path, sizeof cur_path, dir, filename, 0) ||
+        !klog_build_log_path(tmp_path, sizeof tmp_path, dir, filename, 255))
+        return current_size;  /* path too long -- skip rather than overflow */
+
+    /* Phase 1 -- stage the LIVE log aside BEFORE any destructive op. Clear any
+     * stale staging from an interrupted prior rotation, then rename current->.tmp.
+     * If this rename fails (the persistent failure mode: read-only / full media),
+     * NOTHING destructive has run, so the existing rotated generations are
+     * untouched and a retry next flush does not churn or discard them. The live log
+     * is still at its current path. Safe to klog here: the flush body runs under
+     * the `flushing` reentrancy guard, so a klog->klog_disk_flush recursion no-ops
+     * rather than deadlocks. */
+    vfs_unlink(tmp_path);
+    if (vfs_rename(cur_path, tmp_path) != 0) {
+        klog(LOG_WARN, "klog",
+             "log rotation: stage '%s' failed; rotations untouched, keeping current",
+             filename);
+        return current_size;
     }
 
-    /* Shift existing rotated files: .N-1 -> .N, .N-2 -> .N-1, etc. */
+    /* Phase 2 -- the live data is now safe in .tmp, so the destructive generation
+     * shuffle runs only here. Delete oldest (.N), shift .N-1 -> .N down to .1 -> .2.
+     * These are best-effort: an intermediate generation legitimately may not exist. */
+    if (klog_build_log_path(a_path, sizeof a_path, dir, filename, (uint8_t)rot_max_rotated))
+        vfs_unlink(a_path);
     for (n = rot_max_rotated; n >= 2; n--) {
-        int sp;
-        dp = 0;
-        for (j = 0; dir[j]; j++) old_path[dp++] = dir[j];
-        for (j = 0; filename[j]; j++) old_path[dp++] = filename[j];
-        old_path[dp++] = '.';
-        old_path[dp++] = '0' + (char)((n - 1) % 10);
-        old_path[dp] = '\0';
-
-        sp = 0;
-        for (j = 0; dir[j]; j++) new_path[sp++] = dir[j];
-        for (j = 0; filename[j]; j++) new_path[sp++] = filename[j];
-        new_path[sp++] = '.';
-        new_path[sp++] = '0' + (char)(n % 10);
-        new_path[sp] = '\0';
-
-        vfs_rename(old_path, new_path);
+        if (klog_build_log_path(a_path, sizeof a_path, dir, filename, (uint8_t)(n - 1)) &&
+            klog_build_log_path(b_path, sizeof b_path, dir, filename, (uint8_t)n))
+            vfs_rename(a_path, b_path);
     }
 
-    /* Rename current file to .1 */
+    /* Archive the staged log to .1. If even this same-dir rename fails the data is
+     * still in .tmp (not lost) and a later rotation's stale-staging unlink reclaims
+     * it; recreate the current file so logging continues regardless. */
+    if (klog_build_log_path(a_path, sizeof a_path, dir, filename, 1) &&
+        vfs_rename(tmp_path, a_path) != 0)
+        klog(LOG_WARN, "klog",
+             "log rotation: archive '%s' staged copy to .1 failed", filename);
+
+    /* Fresh empty current file. */
     {
-        int sp;
-        dp = 0;
-        for (j = 0; dir[j]; j++) old_path[dp++] = dir[j];
-        for (j = 0; filename[j]; j++) old_path[dp++] = filename[j];
-        old_path[dp] = '\0';
-
-        sp = 0;
-        for (j = 0; dir[j]; j++) new_path[sp++] = dir[j];
-        for (j = 0; filename[j]; j++) new_path[sp++] = filename[j];
-        new_path[sp++] = '.';
-        new_path[sp++] = '1';
-        new_path[sp] = '\0';
-
-        vfs_rename(old_path, new_path);
-    }
-
-    /* Create fresh empty file */
-    {
-        dp = 0;
-        for (j = 0; dir[j]; j++) new_path[dp++] = dir[j];
-        for (j = 0; filename[j]; j++) new_path[dp++] = filename[j];
-        new_path[dp] = '\0';
-
-        struct vfs_node *f = vfs_open(new_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+        struct vfs_node *f = vfs_open(cur_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
         if (f) vfs_close(f);
     }
 
@@ -422,7 +430,7 @@ static void load_rotation_config(void)
     if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
                         "SYSTEM\\Logs", "MaxSize",
                         &val_type, (uint8_t *)&val, &val_size) == 0 &&
-        val_type == 4 && val > 0)  /* REG_DWORD = 4 */
+        val_type == 4 && val_size == sizeof(val) && val > 0)  /* REG_DWORD = 4 */
         rot_max_size = val;
 
     val_size = sizeof(val);
@@ -430,7 +438,7 @@ static void load_rotation_config(void)
     if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
                         "SYSTEM\\Logs", "MaxRotated",
                         &val_type, (uint8_t *)&val, &val_size) == 0 &&
-        val_type == 4 && val > 0 && val <= 9)
+        val_type == 4 && val_size == sizeof(val) && val > 0 && val <= 9)
         rot_max_rotated = val;
 }
 
@@ -777,15 +785,21 @@ static void klog_disk_flush_locked(void)
             ixfs_inited = 1;
             ixfs_flush_seq = 0;
 
-            /* Create kernel.log via klog_dir path */
+            /* Create kernel.log via klog_dir path AND seed kernel_log_size from its
+             * real on-disk size: a warm reboot can leave an already-oversized
+             * kernel.log; seeding from 0 would skip the first-flush rotate and let
+             * it grow past MaxSize until the post-write size update catches up. */
             {
                 char kl_path[64];
                 int kp = 0, kj;
+                struct vfs_node *kf;
                 for (kj = 0; klog_dir[kj]; kj++) kl_path[kp++] = klog_dir[kj];
                 { const char *fn = "kernel.log";
                   for (kj = 0; fn[kj]; kj++) kl_path[kp++] = fn[kj]; }
                 kl_path[kp] = '\0';
                 vfs_create(kl_path, VFS_FILE);
+                kf = vfs_open(kl_path, VFS_O_WRITE | VFS_O_CREATE);
+                if (kf) { kernel_log_size = (uint32_t)kf->size; vfs_close(kf); }
             }
         }
 
@@ -980,6 +994,21 @@ static void klog_disk_flush_locked(void)
                     sf = vfs_open(spath, VFS_O_WRITE | VFS_O_CREATE);
                     if (!sf)
                         continue;
+
+                    /* Rotate this split log when it exceeds MaxSize, same policy as
+                     * kernel.log -- a high-volume subsystem (boot/drivers.log) must
+                     * not grow unbounded. The size is read from the freshly-opened
+                     * handle (no cached state to go stale across reboots), and
+                     * rotate_log_file renames by path, so close before rotating and
+                     * reopen the now-fresh file. */
+                    if ((uint32_t)sf->size >= rot_max_size) {
+                        uint32_t cursz = (uint32_t)sf->size;
+                        vfs_close(sf);
+                        rotate_log_file(klog_dir, fname, cursz);
+                        sf = vfs_open(spath, VFS_O_WRITE | VFS_O_CREATE);
+                        if (!sf)
+                            continue;
+                    }
                     woff = (uint32_t)sf->size;
 
                     for (j = 0; j < window; j++) {
