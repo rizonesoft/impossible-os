@@ -374,6 +374,15 @@ function Invoke-CmdBuild {
     }
 
     $bl = 'build/tools/BOOTX64.EFI'
+    # Approach A: a signed build ships + attests the SIGNED artifact at a distinct
+    # path; bind the manifest's bootloader hash to THAT, not the unsigned canonical.
+    if ((Get-SecureBootStatus) -eq 'signed') {
+        $bl = 'build/tools/BOOTX64.signed.efi'
+        if (-not (Test-Path -LiteralPath $bl -PathType Leaf)) {
+            Write-Err "secure_boot_status=signed but $bl missing -- run scripts/build.sh"
+            exit 1
+        }
+    }
     $kr = 'build/kernel.exe'
     foreach ($f in @($bl, $kr)) {
         if (-not (Test-Path -LiteralPath $f -PathType Leaf)) {

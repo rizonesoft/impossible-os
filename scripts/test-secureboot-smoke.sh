@@ -32,6 +32,11 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EFI="$REPO_ROOT/build/tools/BOOTX64.EFI"
 UKI="$REPO_ROOT/build/tools/BOOTX64.UKI.efi"
+# Approach A (build idempotency): signatures live at DISTINCT paths; the
+# canonical EFI/UKI stay UNSIGNED so the incremental UKI objcopy is idempotent.
+# The signed artifacts (shipped to the ESP) are what must carry a valid sig.
+EFI_SIGNED="${EFI_SIGNED:-$REPO_ROOT/build/tools/BOOTX64.signed.efi}"
+UKI_SIGNED="${UKI_SIGNED:-$REPO_ROOT/build/tools/BOOTX64.UKI.signed.efi}"
 MOK_CRT="${MOK_CRT:-$REPO_ROOT/keys/MOK.cer}"
 
 PASS=0
@@ -65,21 +70,36 @@ if [ ! -f "$MOK_CRT" ]; then
     echo "  signature verification skipped; UKI structural checks still run"
 fi
 
-# 1. BOOTX64.EFI signature verifies against MOK
-if [ -f "$EFI" ] && [ -f "$MOK_CRT" ]; then
-    if sbverify --cert "$MOK_CRT" "$EFI" 2>&1 | grep -q "Signature verification OK"; then
-        t_ok "BOOTX64.EFI signature verifies against keys/MOK.cer"
+# 1. Signed BOOTX64.signed.efi verifies against MOK -- this is the artifact the
+#    system-disk recipe ships to the ESP. When keys are present it MUST exist.
+if [ -f "$MOK_CRT" ]; then
+    if [ ! -f "$EFI_SIGNED" ]; then
+        t_fail "BOOTX64.signed.efi missing" "MOK key present but signing produced no signed loader"
+    elif sbverify --cert "$MOK_CRT" "$EFI_SIGNED" 2>&1 | grep -q "Signature verification OK"; then
+        t_ok "BOOTX64.signed.efi signature verifies against keys/MOK.cer"
     else
-        t_fail "BOOTX64.EFI signature does NOT verify against MOK.cer"
+        t_fail "BOOTX64.signed.efi signature does NOT verify against MOK.cer"
     fi
 fi
 
-# 2. BOOTX64.UKI.efi signature verifies against MOK
-if [ -f "$UKI" ] && [ -f "$MOK_CRT" ]; then
-    if sbverify --cert "$MOK_CRT" "$UKI" 2>&1 | grep -q "Signature verification OK"; then
-        t_ok "BOOTX64.UKI.efi signature verifies against keys/MOK.cer"
+# 1b. The canonical (unsigned) BOOTX64.EFI must still carry a dumpable .sbat so
+#     the incremental UKI objcopy stays idempotent (TODO-02 build idempotency).
+if [ -f "$EFI" ]; then
+    if llvm-objdump-19 -h "$EFI" 2>/dev/null | grep -qE "[[:space:]]\.sbat([[:space:]]|$)"; then
+        t_ok "canonical BOOTX64.EFI carries a dumpable .sbat (unsigned, idempotent input)"
     else
-        t_fail "BOOTX64.UKI.efi signature does NOT verify against MOK.cer"
+        t_fail "canonical BOOTX64.EFI missing dumpable .sbat" "input may have been signed in place"
+    fi
+fi
+
+# 2. Signed BOOTX64.UKI.signed.efi verifies against MOK.
+if [ -f "$MOK_CRT" ]; then
+    if [ ! -f "$UKI_SIGNED" ]; then
+        t_fail "BOOTX64.UKI.signed.efi missing" "MOK key present but signing produced no signed UKI"
+    elif sbverify --cert "$MOK_CRT" "$UKI_SIGNED" 2>&1 | grep -q "Signature verification OK"; then
+        t_ok "BOOTX64.UKI.signed.efi signature verifies against keys/MOK.cer"
+    else
+        t_fail "BOOTX64.UKI.signed.efi signature does NOT verify against MOK.cer"
     fi
 fi
 

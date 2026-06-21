@@ -236,6 +236,13 @@ SIGN_STAMP := $(BUILD_DIR)/.signed-artifacts.stamp
 SIGN_FINGERPRINT := $(BUILD_DIR)/.signed-artifacts.fingerprint
 UKI_BIN_PATH := $(BUILD_DIR)/tools/BOOTX64.UKI.efi
 
+# Approach A (TODO-02 build idempotency): sign-efi.sh publishes signatures to
+# these DISTINCT paths and leaves $(UEFI_EFI)/$(UKI_BIN_PATH) UNSIGNED, so the
+# incremental UKI objcopy stays idempotent. system-disk ships the signed
+# artifacts when MOK keys are present, else the unsigned originals (dev builds).
+UEFI_EFI_SIGNED := $(BUILD_DIR)/tools/BOOTX64.signed.efi
+UKI_BIN_SIGNED  := $(BUILD_DIR)/tools/BOOTX64.UKI.signed.efi
+
 # Codex round-5 H1 fix 2026-05-01: stamp-identity binding for key
 # rotation. mtime-only invalidation is fooled by a CI run that
 # swaps in a different MOK_CRT with an OLDER mtime than the
@@ -303,6 +310,7 @@ $(SIGN_STAMP): $(UEFI_EFI) $(UKI_BIN_PATH) scripts/sign-efi.sh \
 		exit 0; \
 	fi
 	@MOK_KEY="$(MOK_KEY)" MOK_CRT="$(MOK_CRT)" EFI_BIN="$(UEFI_EFI)" \
+		EFI_SIGNED="$(UEFI_EFI_SIGNED)" UKI_SIGNED="$(UKI_BIN_SIGNED)" \
 		SIGN_FINGERPRINT_FILE="$(SIGN_FINGERPRINT)" \
 		bash scripts/sign-efi.sh
 	@touch $@
@@ -888,27 +896,36 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) $(SIGN_STAMP) \
 	@# --- EFI chain-load layout ---
 	@# Shim chain-load (Secure Boot path): shim -> grubx64.efi -> kernel
 	@# Fallback (dev/no-shim builds):      BOOTX64.EFI directly -> kernel
+	@# Approach A: BOOTX64.EFI staged here is the UNSIGNED stub; ship the SIGNED loader from its distinct path when MOK keys exist, else the unsigned stub (dev) -- a missing signed loader in a keyed build is a hard error (never stage unsigned behind shim).
 	@SHIM="$(SHIM_DIR)/shimx64.efi"; MM="$(SHIM_DIR)/mmx64.efi"; \
-	if [ -f "$$SHIM" ] && [ -f "$$MM" ]; then \
-		echo "[DISK] Shim found -- using Secure Boot chain-load layout"; \
+	EFI_TO_SHIP="$(UEFI_EFI)"; \
+	if [ -f "$(MOK_KEY)" ]; then \
+		if [ -f "$(UEFI_EFI_SIGNED)" ]; then EFI_TO_SHIP="$(UEFI_EFI_SIGNED)"; \
+		else echo "[ERROR] MOK key present but signed loader missing ($(UEFI_EFI_SIGNED)) -- refusing to stage an unsigned loader for a signed build"; exit 1; fi; \
+	fi; \
+	if [ -f "$$SHIM" ] && [ -f "$$MM" ] && [ -f "$(MOK_KEY)" ]; then \
+		echo "[DISK] Shim + MOK key found -- using Secure Boot chain-load layout (signed grubx64.efi)"; \
 		if [ -f "$(SHIM_DIR)/SHA256SUMS" ]; then \
 			(cd $(SHIM_DIR) && sha256sum -c SHA256SUMS) \
 				|| { echo "[ERROR] Shim hash verification FAILED"; exit 1; }; \
 		fi; \
 		cp $$SHIM $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
-		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/grubx64.efi; \
+		cp $$EFI_TO_SHIP $(BUILD_DIR)/efi_staging/EFI/BOOT/grubx64.efi; \
 		cp $$MM $(BUILD_DIR)/efi_staging/EFI/BOOT/mmx64.efi; \
 		cp $$MM $(BUILD_DIR)/efi_staging/mmx64.efi; \
 		if [ -f "$(MOK_CRT)" ]; then \
 			openssl x509 -in $(MOK_CRT) -outform DER -out $(BUILD_DIR)/efi_staging/MOK.cer; \
 			echo "[DISK] MOK.cer (DER) copied to ESP root (for MokManager enrollment)"; \
 		fi; \
+	elif [ -f "$$SHIM" ] && [ -f "$$MM" ]; then \
+		echo "[DISK] Shim present but no MOK key -- keyless dev build uses direct (unsigned) boot, not the shim chain (shim would reject an unsigned grubx64.efi)"; \
+		cp $$EFI_TO_SHIP $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
 	elif [ -f "$$SHIM" ] || [ -f "$$MM" ]; then \
 		echo "[ERROR] Partial shim directory -- need both shimx64.efi and mmx64.efi"; \
 		exit 1; \
 	else \
 		echo "[DISK] No shim -- using direct boot (run scripts/secure-boot/build-shim.sh for Secure Boot)"; \
-		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
+		cp $$EFI_TO_SHIP $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
 	fi
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS

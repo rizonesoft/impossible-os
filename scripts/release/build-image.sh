@@ -42,7 +42,21 @@ export TZ=UTC
 export LC_ALL=C
 
 # ---- Inputs -----------------------------------------------------------------
+# Approach A (build idempotency): build/tools/BOOTX64.EFI is the UNSIGNED stub;
+# signatures live at distinct .signed.efi paths. Ship the MOK-signed loader when
+# it exists (keys/MOK.key present); a key-present build missing it is a hard
+# error (never ship an unsigned loader from a signed build). Keyless dev builds
+# ship the unsigned stub. NOTE: signing uses the self-signed MOK DEV cert today;
+# the production cert is a future (~2yr) rotation, so "signed" == MOK-signed.
 BL_PATH="build/tools/BOOTX64.EFI"
+BL_SIGNED="build/tools/BOOTX64.signed.efi"
+if [ -f "keys/MOK.key" ]; then
+    if [ -f "$BL_SIGNED" ]; then
+        BL_PATH="$BL_SIGNED"
+    else
+        err "MOK key present but signed loader $BL_SIGNED missing -- run scripts/build.sh"; exit 1
+    fi
+fi
 KR_PATH="build/kernel.exe"
 BOOT_CONF="resources/boot/boot.conf"
 OUT_DIR="build/release"

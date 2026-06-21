@@ -67,8 +67,17 @@ else
 fi
 
 # 2. Required file presence + hash.
+# Approach A (build idempotency): build/tools/BOOTX64.EFI is the UNSIGNED stub;
+# the ESP ships the MOK-signed loader (distinct .signed.efi path) when keys are
+# present. Expect that signed artifact at the ESP's BOOTX64.EFI when signing is
+# configured, else the unsigned stub. (Shim chain-load layouts stage shim as
+# BOOTX64.EFI; verifying that layout's grubx64.efi is a separate concern.)
+ESP_BOOTLOADER_SRC="build/tools/BOOTX64.EFI"
+if [ -f "keys/MOK.key" ] && [ -f "build/tools/BOOTX64.signed.efi" ]; then
+    ESP_BOOTLOADER_SRC="build/tools/BOOTX64.signed.efi"
+fi
 declare -A REQUIRED
-REQUIRED["EFI/BOOT/BOOTX64.EFI"]="build/tools/BOOTX64.EFI"
+REQUIRED["EFI/BOOT/BOOTX64.EFI"]="$ESP_BOOTLOADER_SRC"
 REQUIRED["boot/kernel.exe"]="build/kernel.exe"
 REQUIRED["EFI/ImpossibleOS/boot.conf"]="resources/boot/boot.conf"
 

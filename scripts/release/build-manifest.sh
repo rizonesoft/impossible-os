@@ -164,6 +164,18 @@ cmd_build() {
     local bootloader_path="build/tools/BOOTX64.EFI"
     local kernel_path="build/kernel.exe"
 
+    # Approach A: when the build is signed, the shipped + attested bootloader is
+    # the SIGNED artifact at a distinct path (build/tools/BOOTX64.signed.efi).
+    # Bind the manifest's bootloader hash to THAT, not the unsigned canonical, so
+    # manifest-based ESP verification certifies the file that actually ships.
+    if [ "$(detect_secure_boot_status)" = "signed" ]; then
+        bootloader_path="build/tools/BOOTX64.signed.efi"
+        if [ ! -f "$bootloader_path" ]; then
+            err "secure_boot_status=signed but $bootloader_path missing -- run scripts/build.sh"
+            exit 1
+        fi
+    fi
+
     for f in "$bootloader_path" "$kernel_path"; do
         if [ ! -f "$f" ]; then
             err "missing required build artifact: $f (run scripts/build.sh first)"

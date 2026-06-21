@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# sign-efi.sh -- Sign BOOTX64.EFI with the MOK private key.
+# sign-efi.sh -- Sign BOOTX64.EFI + BOOTX64.UKI.efi with the MOK private key.
 #
-# Signs to a temporary file, verifies the signature, then atomically
-# replaces the original. This prevents corruption if sbsign fails mid-write.
+# Signs to a temporary file, verifies the signature, then atomically publishes
+# the signed output to a DISTINCT path (build/tools/BOOTX64.signed.efi /
+# BOOTX64.UKI.signed.efi), leaving the unsigned inputs in place so the build's
+# incremental UKI objcopy stays idempotent (TODO-02 build idempotency).
 #
 # Usage:
 #   bash scripts/sign-efi.sh
@@ -92,15 +94,27 @@ if [ ! -f "$EFI_BIN" ]; then
     exit 1
 fi
 
-# Two-phase atomic dual-sign: sign + verify BOTH artifacts to temp
-# files first, then replace BOTH originals only after every step
-# succeeded. On any failure, both originals stay untouched. Codex
-# consistency H1 fix 2026-04-29: the previous one-at-a-time helper
-# could leave BOOTX64.EFI freshly signed alongside an unsigned/stale/
-# absent BOOTX64.UKI.efi, violating the dual-artifact consistency
-# contract for releases.
+# Two-phase atomic dual-sign: sign + verify BOTH artifacts to temp files
+# first, then publish BOTH signed outputs (at distinct paths) only after
+# every step succeeded. On any failure, both unsigned inputs stay untouched.
+# Codex consistency H1 fix 2026-04-29: the previous one-at-a-time helper could
+# leave one artifact freshly signed alongside an unsigned/stale/absent other,
+# violating the dual-artifact consistency contract for releases.
 
 UKI_BIN="${UKI_BIN:-$REPO_ROOT/build/tools/BOOTX64.UKI.efi}"
+
+# Approach A -- non-destructive UKI signing for build idempotency (the UKI SBAT
+# section must survive an incremental rebuild). Publish signatures to DISTINCT
+# output paths and leave the unsigned inputs (EFI_BIN/UKI_BIN) untouched.
+# scripts/build.sh runs `objcopy --add-section` against build/tools/BOOTX64.EFI
+# on every build; if that input were signed in place (the old Phase 2b behavior),
+# an incremental rebuild would run objcopy on an Authenticode-signed PE, corrupt
+# the PE section table, and the [sbat] gate could no longer dump .sbat. Keeping
+# the input unsigned makes every rebuild idempotent. The Makefile system-disk
+# recipe ships these signed outputs to the ESP (falling back to the unsigned
+# originals for keyless dev builds). `%.*` strips the extension regardless of case.
+EFI_SIGNED="${EFI_SIGNED:-${EFI_BIN%.*}.signed.efi}"
+UKI_SIGNED="${UKI_SIGNED:-${UKI_BIN%.*}.signed.efi}"
 
 # Both artifacts MUST exist when the UKI pipeline ran -- the build
 # script's `Pack BOOTX64.UKI.efi` step produces both before we sign.
@@ -135,34 +149,31 @@ sbverify --cert "$MOK_CRT" "$UKI_TMP" \
     && echo "[SIGN] BOOTX64.UKI.efi signature verification OK" \
     || { echo "[SIGN] ERROR: BOOTX64.UKI.efi signature verification FAILED" >&2; exit 1; }
 
-# Phase 2: replace both originals atomically. Codex re-adversarial
-# H1 fix 2026-04-29: per-file mv is atomic, but the window between
-# mv #1 and mv #2 can leave EFI signed-fresh next to a stale UKI if
-# mv #2 fails or the script is killed between the two. Use a
-# backup-and-rollback pattern so any failure restores BOTH originals
-# to the pre-Phase-2 state.
-EFI_BAK="${EFI_BIN}.signing.bak"
-UKI_BAK="${UKI_BIN}.signing.bak"
-trap 'rm -f "$EFI_TMP" "$UKI_TMP" "$EFI_BAK" "$UKI_BAK"' EXIT
-
-echo "[SIGN] Phase 2a: backing up originals..."
-cp -f "$EFI_BIN" "$EFI_BAK"
-cp -f "$UKI_BIN" "$UKI_BAK"
-
-echo "[SIGN] Phase 2b: replacing originals..."
-if ! mv "$EFI_TMP" "$EFI_BIN"; then
-    echo "[SIGN] ERROR: mv to $EFI_BIN failed -- both originals untouched (backups stay until trap fires)" >&2
+# Phase 2: publish both signed outputs at their DISTINCT paths. The unsigned
+# inputs EFI_BIN/UKI_BIN are NEVER modified (approach A), so the next incremental
+# build's objcopy still runs on an unsigned PE. Preserve the dual-artifact
+# contract (Codex H1 2026-04-29): publish both or neither -- if the second mv
+# fails, remove the first so the system-disk recipe falls back to the unsigned
+# originals rather than shipping a half-signed pair. No backup of the inputs is
+# needed because they are never overwritten; the Phase-1 EXIT trap still cleans
+# any leftover temp on failure.
+echo "[SIGN] Phase 2: publishing signed outputs (unsigned inputs untouched)..."
+# Remove any prior-generation signed outputs first, then arm a trap that wipes
+# BOTH on any failure or INT/TERM during the publish window (Codex re-adversarial
+# M1 2026-06-21: a kill between the two mvs, or a second-mv failure leaving a
+# stale prior UKI_SIGNED, could otherwise expose a mixed-generation pair).
+rm -f "$EFI_SIGNED" "$UKI_SIGNED"
+trap 'rm -f "$EFI_TMP" "$UKI_TMP" "$EFI_SIGNED" "$UKI_SIGNED"' EXIT INT TERM
+if ! mv -f "$EFI_TMP" "$EFI_SIGNED"; then
+    echo "[SIGN] ERROR: mv to $EFI_SIGNED failed -- inputs untouched" >&2
     exit 1
 fi
-if ! mv "$UKI_TMP" "$UKI_BIN"; then
-    echo "[SIGN] ERROR: mv to $UKI_BIN failed -- restoring $EFI_BIN from backup" >&2
-    if ! mv "$EFI_BAK" "$EFI_BIN"; then
-        echo "[SIGN] CRITICAL: rollback of $EFI_BIN FAILED -- manual intervention required; backup at $EFI_BAK" >&2
-    fi
+if ! mv -f "$UKI_TMP" "$UKI_SIGNED"; then
+    echo "[SIGN] ERROR: mv to $UKI_SIGNED failed -- both signed outputs wiped by trap" >&2
     exit 1
 fi
-trap - EXIT
-rm -f "$EFI_BAK" "$UKI_BAK"
+# Both landed: drop the signed outputs from the cleanup trap so they survive.
+trap 'rm -f "$EFI_TMP" "$UKI_TMP"' EXIT INT TERM
 
 # Stamp-identity binding for key rotation (Codex round-5 H1 fix
 # 2026-04-29). The Makefile previously trusted MOK_CRT mtime to
@@ -193,4 +204,4 @@ if [ -n "${SIGN_FINGERPRINT_FILE:-}" ]; then
         echo "[SIGN] cert fingerprint recorded: ${FP:0:16}... -> $SIGN_FINGERPRINT_FILE"
     fi
 fi
-echo "[SIGN] BOOTX64.EFI + BOOTX64.UKI.efi: dual-artifact signing complete"
+echo "[SIGN] signed outputs published: $EFI_SIGNED + $UKI_SIGNED (unsigned inputs left in place)"
