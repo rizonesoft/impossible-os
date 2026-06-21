@@ -18,6 +18,28 @@
 extern void *memset(void *s, int c, size_t n);
 extern void *memcpy(void *dst, const void *src, size_t n);
 
+/* Free the entry array with the SAME allocator that produced it. The array is
+ * kmalloc'd while its byte size fits in a frame and pmm_alloc_contiguous'd once
+ * it grows past that (see handle_table_grow). Freeing a PMM-backed array with
+ * kfree corrupts the heap, so the free path must branch on the size the same
+ * way the alloc path did. NULL entries is a no-op. */
+static void handle_table_free_entries(HANDLE_TABLE_ENTRY *entries,
+                                      uint32_t capacity)
+{
+    size_t sz = (size_t)capacity * sizeof(HANDLE_TABLE_ENTRY);
+
+    if (!entries)
+        return;
+
+    if (sz <= PMM_FRAME_SIZE) {
+        kfree(entries);
+    } else {
+        uint64_t frames = (sz + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+        for (uint64_t i = 0; i < frames; i++)
+            pmm_free_frame((uintptr_t)entries + i * PMM_FRAME_SIZE);
+    }
+}
+
 /* --- ob_handle_table_init ------------------------------------------------ */
 
 int ob_handle_table_init(HANDLE_TABLE *table)
@@ -55,7 +77,7 @@ void ob_handle_table_destroy(HANDLE_TABLE *table)
         }
     }
 
-    kfree(table->entries);
+    handle_table_free_entries(table->entries, table->capacity);
     table->entries = NULL;
     table->capacity = 0;
     table->count = 0;
@@ -91,8 +113,10 @@ static int handle_table_grow(HANDLE_TABLE *table)
     memset(&new_entries[table->capacity], 0,
            (new_cap - table->capacity) * sizeof(HANDLE_TABLE_ENTRY));
 
-    /* Free old array (always was kmalloc'd if capacity <= PMM_FRAME_SIZE/entry_size) */
-    kfree(table->entries);
+    /* Free the old array with the allocator that produced it (kmalloc vs PMM
+     * depends on the OLD capacity's byte size; once past one frame the old
+     * array was pmm_alloc_contiguous'd and must not be kfree'd). */
+    handle_table_free_entries(table->entries, table->capacity);
 
     table->entries = new_entries;
     table->capacity = new_cap;
@@ -213,6 +237,11 @@ int ObpFreeHandle(HANDLE_TABLE *table, HANDLE handle)
     if (handle < 0 || !table->entries)
         return -1;
 
+    /* Reject non-canonical handles: low 2 bits are reserved and must be zero,
+     * else handle/4 aliases a real slot (see ObpLookupHandle). */
+    if (handle & 3)
+        return -1;
+
     idx = (uint32_t)handle / 4;
     if (idx >= table->capacity)
         return -1;
@@ -267,6 +296,12 @@ HANDLE_TABLE_ENTRY *ObpLookupHandle(HANDLE_TABLE *table, HANDLE handle)
 
     /* Pseudo-handles are resolved by the caller (syscall layer) */
     if (handle < 0)
+        return NULL;
+
+    /* HANDLE values are slot_index * 4 -- the low 2 bits are reserved and MUST
+     * be zero. Without this check a non-canonical handle (e.g. 0x5) divides down
+     * to the same slot index as a real handle (0x4) and aliases it. */
+    if (handle & 3)
         return NULL;
 
     if (!table->entries)

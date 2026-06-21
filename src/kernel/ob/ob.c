@@ -6,6 +6,7 @@
  * ============================================================================ */
 
 #include "kernel/ob/ob.h"
+#include "kernel/nt/nt_types.h"
 #include "kernel/ob/ob_callback.h"
 #include "kernel/ob/ob_trace.h"
 #include "kernel/ob/ob_ns.h"
@@ -352,8 +353,14 @@ int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
                       uint32_t options)
 {
     HANDLE_TABLE_ENTRY *entry;
+    void *src_obj;
+    const OBJECT_TYPE *src_type;
+    uint32_t src_granted;
+    uint32_t src_attrs;
     HANDLE new_h;
     uint32_t access;
+    uint32_t request_ceiling;
+    uint32_t final_access;
 
     if (!src_ht || !dst_ht || !dst_handle)
         return -1;
@@ -362,38 +369,135 @@ int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
     if (!entry)
         return -1;
 
-    access = (options & DUPLICATE_SAME_ACCESS)
-           ? entry->granted_access : desired_access;
+    /* Snapshot object / access / type up front, then NEVER touch `entry`
+     * again. ObpAllocateHandle below grows (reallocs) the destination table
+     * when it is full; if src_ht == dst_ht that frees the array `entry` points
+     * into, so any later `entry->object` read is a use-after-free. The residual
+     * concurrent-close lookup race (another CPU freeing the object between the
+     * lookup and this snapshot) is owned by the per-handle-table lock /
+     * ObpReferenceObjectByHandle pinned-lookup work. */
+    src_obj     = entry->object;
+    src_granted = entry->granted_access;
+    src_attrs   = entry->attributes;
+    if (!src_obj)
+        return -1;
+    src_type = OB_HEADER_FROM_BODY(src_obj)->type;
 
-    /* Object callbacks (S13): pre-callbacks for HANDLE_DUPLICATE.
-     * Callbacks may strip access bits; if zeroed, deny the duplicate. */
+    /* Atomic-transfer pre-check fast path: a source protected from close
+     * (OBJ_PROTECT_CLOSE) can never be transferred, so fail before doing any
+     * work. (A re-entrant callback that protects the source after this point is
+     * caught by the close attempt below.) */
+    if ((options & DUPLICATE_CLOSE_SOURCE) && (src_attrs & OBJ_PROTECT_CLOSE))
+        return -1;
+
+    /* Compute the request ceiling: a duplicate must never mint access bits the
+     * source never held. DUPLICATE_SAME_ACCESS copies the source mask verbatim;
+     * MAXIMUM_ALLOWED means "every right the source actually holds" (a request
+     * sentinel, not a real bit, so it must not be AND-masked to zero); otherwise
+     * the caller's desired_access is intersected with the source mask.
+     * `request_ceiling` is the IMMUTABLE cap -- callbacks may strip below it but
+     * never raise above it (neither above the source nor above what the caller
+     * asked for). Full SD re-authorization of the raw desired_access lands with
+     * SeAccessCheck in the security reference monitor. */
+    if (options & DUPLICATE_SAME_ACCESS)
+        access = src_granted;
+    else if (desired_access & MAXIMUM_ALLOWED)
+        access = src_granted;
+    else
+        access = desired_access & src_granted;
+    request_ceiling = access;
+
+    /* Pin the source object across the callbacks, allocation, and source close.
+     * A duplicate pre-callback is kernel code that can re-enter the handle table
+     * and close the source's LAST handle; without this reference that would free
+     * `src_obj` before ObpAllocateHandle reads it (re-entrant UAF). Released on
+     * every exit below. */
+    ObReferenceObject(src_obj);
+
+    /* Pre-callbacks for HANDLE_DUPLICATE: may strip access bits; a zeroed mask
+     * denies the duplicate. Atomic-transfer contract: a denial means the
+     * transfer never happened, so the source is left OPEN -- this deliberately
+     * does NOT follow Win32's "close regardless of error", because closing a
+     * source for a duplicate that did not occur is a footgun. */
+    if (src_type
+        && ob_invoke_pre_callbacks(OB_OPERATION_HANDLE_DUPLICATE,
+                                   src_obj, src_type, &access) != 0) {
+        ObDereferenceObject(src_obj);
+        return -1;
+    }
+
+    /* Re-clamp to the request ceiling: a callback may strip access but must not
+     * raise it above what the caller requested AND the source held. */
+    access &= request_ceiling;
+
+    /* Re-validate the source after the pre-callback. A re-entrant pre-callback
+     * (kernel code) may have closed or protected the source handle. If it closed
+     * the source's last handle, the type on_close already ran inside the
+     * callback, so we must not hand back a destination to a torn-down object --
+     * fail the duplicate. A genuine cross-CPU mutation in this same window is the
+     * unlocked-lookup race owned by the per-handle-table lock /
+     * ObpReferenceObjectByHandle work. */
     {
-        OBJECT_HEADER *dup_hdr = OB_HEADER_FROM_BODY(entry->object);
-        if (dup_hdr->type) {
-            if (ob_invoke_pre_callbacks(OB_OPERATION_HANDLE_DUPLICATE,
-                                        entry->object, dup_hdr->type,
-                                        &access) != 0)
-                return -1;
+        HANDLE_TABLE_ENTRY *re = ObpLookupHandle(src_ht, src_handle);
+        if (!re || re->object != src_obj
+            || ((options & DUPLICATE_CLOSE_SOURCE)
+                && (re->attributes & OBJ_PROTECT_CLOSE))) {
+            ObDereferenceObject(src_obj);
+            return -1;
         }
     }
 
-    new_h = ObpAllocateHandle(dst_ht, entry->object, access, attrs);
-    if (new_h == INVALID_HANDLE_VALUE)
+    /* Allocate the destination BEFORE closing the source so the object's
+     * handle_count never transiently reaches 0 -- otherwise ObpFreeHandle would
+     * fire the type on_close (File nulls its backing, Timer detaches) and we
+     * would hand back a live handle to a torn-down object. With the dest created
+     * first, closing the source leaves handle_count >= 1 throughout. */
+    new_h = ObpAllocateHandle(dst_ht, src_obj, access, attrs);
+    if (new_h == INVALID_HANDLE_VALUE) {
+        ObDereferenceObject(src_obj);
         return -1;
-
-    *dst_handle = new_h;
-
-    /* Object callbacks (S13): post-callbacks for HANDLE_DUPLICATE */
-    {
-        OBJECT_HEADER *dup_hdr = OB_HEADER_FROM_BODY(entry->object);
-        if (dup_hdr->type)
-            ob_invoke_post_callbacks(OB_OPERATION_HANDLE_DUPLICATE,
-                                     entry->object, dup_hdr->type, access);
     }
 
-    if (options & DUPLICATE_CLOSE_SOURCE)
-        ObpFreeHandle(src_ht, src_handle);
+    /* Hard-cap the STORED grant to the request ceiling -- covers
+     * ObpAllocateHandle's own HANDLE_CREATE pre-callback raising `access`. The
+     * stored value is the non-bypassable ceiling; capture it for the
+     * post-callback so observers see the real grant. */
+    {
+        HANDLE_TABLE_ENTRY *de = ObpLookupHandle(dst_ht, new_h);
+        if (de) {
+            de->granted_access &= request_ceiling;
+            final_access = de->granted_access;
+        } else {
+            final_access = access & request_ceiling;
+        }
+    }
 
+    /* Atomic-transfer close of the source. The deterministic protected-source
+     * case already failed in the pre-check; the only residual close failure is a
+     * re-entrant pre-callback or another CPU protecting/closing the source after
+     * our snapshot. In that race, roll the destination back (force-free, clearing
+     * any protect bit the caller set on it) so we never leave both handles open
+     * or return success for a transfer whose source could not be closed. The
+     * transient HANDLE_CREATE callback fired for that rolled-back dest is the
+     * non-transactional-primitive limit owned by the per-handle-table lock /
+     * ObpReferenceObjectByHandle work. */
+    if ((options & DUPLICATE_CLOSE_SOURCE)
+        && ObpFreeHandle(src_ht, src_handle) != 0) {
+        HANDLE_TABLE_ENTRY *de = ObpLookupHandle(dst_ht, new_h);
+        if (de)
+            de->attributes &= ~(uint32_t)OBJ_PROTECT_CLOSE;
+        ObpFreeHandle(dst_ht, new_h);
+        ObDereferenceObject(src_obj);
+        return -1;
+    }
+
+    /* Transfer committed: publish, fire the post-callback with the stored grant,
+     * then release the pin. */
+    *dst_handle = new_h;
+    if (src_type)
+        ob_invoke_post_callbacks(OB_OPERATION_HANDLE_DUPLICATE,
+                                 src_obj, src_type, final_access);
+    ObDereferenceObject(src_obj);
     return 0;
 }
 

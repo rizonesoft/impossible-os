@@ -151,6 +151,104 @@ static void test_ob_duplicate_handle(void)
     ob_handle_table_destroy(&dst_ht);
 }
 
+/* ---- Non-canonical handle values must not alias real slots ---- */
+
+static void test_ob_handle_low_bits_rejected(void)
+{
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+    void *body = ob_alloc_object(&test_type);
+    HANDLE h = ObpAllocateHandle(&ht, body, 0x1, 0);  /* always a multiple of 4 */
+
+    /* The low 2 bits are reserved; a handle with them set must not divide down
+     * to the same slot as the real handle. */
+    TEST_ASSERT(ObpLookupHandle(&ht, h | 1) == (void *)0,
+                "handle with low bit set does not resolve to a slot");
+    TEST_ASSERT(NtClose(&ht, h | 2) != 0,
+                "NtClose of a non-canonical handle fails (no slot aliasing)");
+    TEST_ASSERT(ObpLookupHandle(&ht, h) != (void *)0,
+                "real handle still open after the aliased-close attempt");
+
+    ObpFreeHandle(&ht, h);
+    ObDereferenceObject(body);
+    ob_handle_table_destroy(&ht);
+}
+
+/* ---- NtDuplicateObject access capping ---- */
+
+static void test_ob_duplicate_access_cap(void)
+{
+    HANDLE_TABLE src_ht, dst_ht;
+    ob_handle_table_init(&src_ht);
+    ob_handle_table_init(&dst_ht);
+
+    void *body = ob_alloc_object(&test_type);
+    /* Source handle holds only a single right (0x0001). */
+    HANDLE src_h = ObpAllocateHandle(&src_ht, body, 0x0001, 0);
+
+    /* Without DUPLICATE_SAME_ACCESS, a request for full access must be masked
+     * down to what the source actually holds -- never escalate. */
+    HANDLE dst_h = INVALID_HANDLE_VALUE;
+    int rc = NtDuplicateObject(&src_ht, src_h, &dst_ht, &dst_h, 0x1F01FF, 0, 0);
+    TEST_ASSERT(rc == 0, "NtDuplicateObject (capped) succeeds");
+    HANDLE_TABLE_ENTRY *de = ObpLookupHandle(&dst_ht, dst_h);
+    TEST_ASSERT(de != (void *)0 && de->granted_access == 0x0001,
+                "duplicate access capped to source granted_access");
+    if (dst_h != INVALID_HANDLE_VALUE) ObpFreeHandle(&dst_ht, dst_h);
+
+    /* DUPLICATE_SAME_ACCESS copies the source mask verbatim. */
+    HANDLE same_h = INVALID_HANDLE_VALUE;
+    rc = NtDuplicateObject(&src_ht, src_h, &dst_ht, &same_h, 0,
+                           0, DUPLICATE_SAME_ACCESS);
+    TEST_ASSERT(rc == 0, "NtDuplicateObject (same-access) succeeds");
+    HANDLE_TABLE_ENTRY *se = ObpLookupHandle(&dst_ht, same_h);
+    TEST_ASSERT(se != (void *)0 && se->granted_access == 0x0001,
+                "same-access duplicate copies source granted_access");
+    if (same_h != INVALID_HANDLE_VALUE) ObpFreeHandle(&dst_ht, same_h);
+
+    ObpFreeHandle(&src_ht, src_h);
+    ObDereferenceObject(body);
+    ob_handle_table_destroy(&src_ht);
+    ob_handle_table_destroy(&dst_ht);
+}
+
+/* ---- NtDuplicateObject + DUPLICATE_CLOSE_SOURCE on a protected source ---- */
+
+static void test_ob_duplicate_close_protected(void)
+{
+    HANDLE_TABLE src_ht, dst_ht;
+    ob_handle_table_init(&src_ht);
+    ob_handle_table_init(&dst_ht);
+
+    void *body = ob_alloc_object(&test_type);
+    /* Source handle is protected from close (OBJ_PROTECT_CLOSE). */
+    HANDLE src_h = ObpAllocateHandle(&src_ht, body, 0x1F01FF, OBJ_PROTECT_CLOSE);
+
+    /* DUPLICATE_CLOSE_SOURCE cannot close a protected source: the dup must fail
+     * atomically -- no destination handle leaked, source still open. */
+    /* Also request a protected destination (attrs=OBJ_PROTECT_CLOSE): the
+     * rollback must force-free the dest even though it too is protected, so the
+     * dst table is left with no leaked entry. */
+    uint32_t dst_before = dst_ht.count;
+    HANDLE dst_h = INVALID_HANDLE_VALUE;
+    int rc = NtDuplicateObject(&src_ht, src_h, &dst_ht, &dst_h, 0,
+                               OBJ_PROTECT_CLOSE, DUPLICATE_CLOSE_SOURCE);
+    TEST_ASSERT(rc != 0, "duplicate-close of protected source fails");
+    TEST_ASSERT(dst_h == INVALID_HANDLE_VALUE, "no destination handle leaked");
+    TEST_ASSERT(dst_ht.count == dst_before,
+                "destination table has no leaked entry after rollback");
+    TEST_ASSERT(ObpLookupHandle(&src_ht, src_h) != (void *)0,
+                "protected source handle still open after refused close");
+
+    /* Drop protection and clean up. */
+    HANDLE_TABLE_ENTRY *se = ObpLookupHandle(&src_ht, src_h);
+    if (se) se->attributes = 0;
+    ObpFreeHandle(&src_ht, src_h);
+    ObDereferenceObject(body);
+    ob_handle_table_destroy(&src_ht);
+    ob_handle_table_destroy(&dst_ht);
+}
+
 /* ---- ob_handle_table_inherit ---- */
 
 static void test_ob_handle_inherit(void)
@@ -368,6 +466,122 @@ static void test_ob_callbacks(void)
     ObpFreeHandle(&ht, h2);
     ObDereferenceObject(obj);
     ob_handle_table_destroy(&ht);
+}
+
+/* ---- NtDuplicateObject access cap is callback-proof ---- */
+
+static void test_pre_raise_access(OB_PRE_OPERATION_INFORMATION *info)
+{
+    /* Misbehaving callback: OR in a right outside the source mask (0x10000000)
+     * AND a source-held right above what the caller requested (0x0002). The
+     * NtDuplicateObject request_ceiling must strip BOTH back out of the stored
+     * grant -- callbacks may only reduce access, never elevate it. */
+    *info->desired_access |= 0x10000002u;
+}
+
+static void test_ob_duplicate_cap_callback_proof(void)
+{
+    OBJECT_TYPE cb_tmpl = {
+        .name = "DupCapCb", .body_size = 32,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *ctype = ob_create_type(&cb_tmpl);
+    TEST_ASSERT(ctype != (void *)0, "ob_create_type for dup-cap-cb");
+    if (!ctype) return;
+
+    OB_CALLBACK_REGISTRATION reg;
+    reg.version = OB_CALLBACK_VERSION;
+    reg.operation_count = 1;
+    reg.altitude = 101;
+    reg.context = (void *)0;
+    reg.operations[0].object_type   = ctype;
+    reg.operations[0].operations    = (uint32_t)OB_OPERATION_HANDLE_DUPLICATE;
+    reg.operations[0].pre_callback  = test_pre_raise_access;
+    reg.operations[0].post_callback = test_post_record;
+    OB_CALLBACK_HANDLE cbh = OB_INVALID_CALLBACK_HANDLE;
+    int rc = ObRegisterCallbacks(&reg, &cbh);
+    TEST_ASSERT(rc == 0, "ObRegisterCallbacks (dup raise) succeeds");
+
+    void *obj = ob_alloc_object(ctype);
+    HANDLE_TABLE src_ht, dst_ht;
+    ob_handle_table_init(&src_ht);
+    ob_handle_table_init(&dst_ht);
+    /* Source holds 0x0003; the caller requests only 0x0001. */
+    HANDLE src_h = ObpAllocateHandle(&src_ht, obj, 0x0003, 0);
+
+    g_post_cb_called = 0;
+    g_post_cb_granted = 0xFFFFFFFFu;
+    HANDLE dst_h = INVALID_HANDLE_VALUE;
+    rc = NtDuplicateObject(&src_ht, src_h, &dst_ht, &dst_h, 0x0001, 0, 0);
+    TEST_ASSERT(rc == 0, "dup with raising callback still succeeds");
+    HANDLE_TABLE_ENTRY *de = ObpLookupHandle(&dst_ht, dst_h);
+    /* request_ceiling = desired(0x0001) & src(0x0003) = 0x0001: the callback's
+     * 0x10000000 (outside source) and 0x0002 (source-held but above request)
+     * must both be stripped. */
+    TEST_ASSERT(de != (void *)0 && de->granted_access == 0x0001,
+                "stored dup access capped to request ceiling, not src mask");
+    TEST_ASSERT(de != (void *)0 && (de->granted_access & 0x10000002u) == 0,
+                "callback-raised bits (outside-source + above-request) clamped out");
+    TEST_ASSERT((g_post_cb_granted & 0x10000002u) == 0,
+                "dup post-callback sees the clamped stored access");
+
+    ObUnRegisterCallbacks(cbh);
+    if (dst_h != INVALID_HANDLE_VALUE) ObpFreeHandle(&dst_ht, dst_h);
+    ObpFreeHandle(&src_ht, src_h);
+    ObDereferenceObject(obj);
+    ob_handle_table_destroy(&src_ht);
+    ob_handle_table_destroy(&dst_ht);
+}
+
+/* ---- DUPLICATE_CLOSE_SOURCE does not prematurely tear down a last handle ---- */
+
+static volatile uint32_t g_onclose_count = 0;
+static void test_on_close_count(void *body, uint32_t handle_count)
+{
+    (void)body; (void)handle_count;
+    g_onclose_count++;
+}
+
+static void test_ob_duplicate_close_no_premature_onclose(void)
+{
+    OBJECT_TYPE tmpl = {
+        .name = "DupOnClose", .body_size = 32,
+        .on_close = test_on_close_count, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *t = ob_create_type(&tmpl);
+    TEST_ASSERT(t != (void *)0, "ob_create_type for dup-onclose");
+    if (!t) return;
+
+    void *obj = ob_alloc_object(t);
+    HANDLE_TABLE src_ht, dst_ht;
+    ob_handle_table_init(&src_ht);
+    ob_handle_table_init(&dst_ht);
+    /* The source handle is the object's ONLY handle. */
+    HANDLE src_h = ObpAllocateHandle(&src_ht, obj, 0x1, 0);
+
+    g_onclose_count = 0;
+    HANDLE dst_h = INVALID_HANDLE_VALUE;
+    int rc = NtDuplicateObject(&src_ht, src_h, &dst_ht, &dst_h, 0x1,
+                               0, DUPLICATE_CLOSE_SOURCE);
+    TEST_ASSERT(rc == 0, "duplicate-close of last handle succeeds");
+    /* Dest is allocated before the source close, so handle_count never hits 0
+     * and on_close must NOT have fired -- the object is not torn down. */
+    TEST_ASSERT(g_onclose_count == 0,
+                "on_close NOT fired during dup (dest keeps handle_count >= 1)");
+    TEST_ASSERT(dst_h != INVALID_HANDLE_VALUE
+                && ObpLookupHandle(&dst_ht, dst_h) != (void *)0,
+                "destination handle is live after source close");
+
+    /* Closing the dest (now the true last handle) DOES fire on_close once. */
+    ObpFreeHandle(&dst_ht, dst_h);
+    TEST_ASSERT(g_onclose_count == 1,
+                "on_close fires exactly when the true last handle closes");
+
+    ObDereferenceObject(obj);
+    ob_handle_table_destroy(&src_ht);
+    ob_handle_table_destroy(&dst_ht);
 }
 
 /* ---- Tagged reference tracing (S15) ---- */
@@ -1596,7 +1810,13 @@ void test_register_ob(void)
     test_suite_register_cat("OB: refcount lifecycle", test_ob_refcount_lifecycle, TEST_CAT_OB);
     test_suite_register_cat("OB: handle table", test_ob_handle_table, TEST_CAT_OB);
     test_suite_register_cat("OB: namespace lookup", test_ob_namespace_lookup, TEST_CAT_OB);
+    test_suite_register_cat("OB: handle low-bits rejected", test_ob_handle_low_bits_rejected, TEST_CAT_OB);
     test_suite_register_cat("OB: duplicate handle", test_ob_duplicate_handle, TEST_CAT_OB);
+    test_suite_register_cat("OB: duplicate access cap", test_ob_duplicate_access_cap, TEST_CAT_OB);
+    test_suite_register_cat("OB: duplicate-close protected", test_ob_duplicate_close_protected, TEST_CAT_OB);
+    test_suite_register_cat("OB: duplicate cap callback-proof", test_ob_duplicate_cap_callback_proof, TEST_CAT_OB);
+    test_suite_register_cat("OB: dup-close no premature on_close",
+                            test_ob_duplicate_close_no_premature_onclose, TEST_CAT_OB);
     test_suite_register_cat("OB: handle inherit", test_ob_handle_inherit, TEST_CAT_OB);
     test_suite_register_cat("OB: query directory", test_ob_query_directory, TEST_CAT_OB);
     test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
