@@ -11,7 +11,12 @@
 #include "libc/string.h"
 
 #define KECCAK_STATE_BYTES 200u  /* 25 lanes * 8 bytes = 1600 bits */
-#define KECCAK_ROUNDS      24
+#define KECCAK_ROUNDS      24    /* Keccak-f permutation rounds */
+#define KECCAK_LANE_STEPS  24    /* rho/pi lane-permutation cycle length (distinct concept, also 24) */
+
+/* SHA-3 fixed-output domain delimiter (FIPS 202); SHAKE uses 0x1F. */
+#define SHA3_DOMAIN_DELIM  0x06u
+#define SHAKE_DOMAIN_DELIM 0x1Fu
 
 /* Sponge rates (bytes) = 200 - 2*(security strength in bytes). SHAKE256 shares
  * SHA3-256's 136-byte rate. These are the ONLY legal rates; sha3_ctx_valid()
@@ -37,11 +42,11 @@ static const uint64_t k_rndc[KECCAK_ROUNDS] = {
 };
 
 /* Rho rotation offsets and Pi lane permutation (FIPS 202). */
-static const uint32_t k_rotc[KECCAK_ROUNDS] = {
+static const uint32_t k_rotc[KECCAK_LANE_STEPS] = {
     1, 3, 6, 10, 15, 21, 28, 36, 45, 55, 2, 14,
     27, 41, 56, 8, 25, 43, 62, 18, 39, 61, 20, 44,
 };
-static const uint32_t k_piln[KECCAK_ROUNDS] = {
+static const uint32_t k_piln[KECCAK_LANE_STEPS] = {
     10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4,
     15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1,
 };
@@ -68,7 +73,7 @@ static void keccakf(uint64_t st[25])
         }
         /* Rho + Pi */
         t = st[1];
-        for (i = 0; i < KECCAK_ROUNDS; i++) {
+        for (i = 0; i < KECCAK_LANE_STEPS; i++) {
             j = k_piln[i];
             bc[0] = st[j];
             st[j] = ROTL64(t, k_rotc[i]);
@@ -108,6 +113,7 @@ static void sha3_init_internal(struct sha3_ctx *ctx, uint32_t rate, uint8_t deli
     memset(ctx->st, 0, sizeof(ctx->st));
     ctx->rate = rate;
     ctx->pos = 0;
+    ctx->digest_len = (KECCAK_STATE_BYTES - rate) / 2u;
     ctx->delim = delim;
 }
 
@@ -131,9 +137,29 @@ static int sha3_ctx_valid(const struct sha3_ctx *ctx)
     return ctx->pos < ctx->rate;
 }
 
-void sha3_256_init(struct sha3_ctx *ctx) { sha3_init_internal(ctx, SHA3_256_RATE, 0x06); }
-void sha3_384_init(struct sha3_ctx *ctx) { sha3_init_internal(ctx, SHA3_384_RATE, 0x06); }
-void sha3_512_init(struct sha3_ctx *ctx) { sha3_init_internal(ctx, SHA3_512_RATE, 0x06); }
+/* A FIXED-output (SHA3-256/384/512) context: a SHA-3 rate (NOT a SHAKE rate)
+ * with the SHA-3 domain delimiter. sha3_final() uses this so a context whose
+ * rate is corrupted to a SHAKE rate (168) -- which would otherwise produce a
+ * nonstandard 16-byte digest the SHA3_* API never advertises -- is rejected. */
+static int sha3_ctx_valid_fixed(const struct sha3_ctx *ctx)
+{
+    if (!sha3_ctx_valid(ctx) || ctx->delim != SHA3_DOMAIN_DELIM) {
+        return 0;
+    }
+    if (ctx->rate != SHA3_256_RATE && ctx->rate != SHA3_384_RATE &&
+        ctx->rate != SHA3_512_RATE) {
+        return 0;
+    }
+    /* Redundancy cross-check: the digest length stored at init must still match
+     * the rate-derived length. A single corrupted field (rate flipped to
+     * another legal SHA-3 rate, or digest_len alone) breaks this equality, so a
+     * digest is never produced for state absorbed under a mismatched rate. */
+    return ctx->digest_len == (KECCAK_STATE_BYTES - ctx->rate) / 2u;
+}
+
+void sha3_256_init(struct sha3_ctx *ctx) { sha3_init_internal(ctx, SHA3_256_RATE, SHA3_DOMAIN_DELIM); }
+void sha3_384_init(struct sha3_ctx *ctx) { sha3_init_internal(ctx, SHA3_384_RATE, SHA3_DOMAIN_DELIM); }
+void sha3_512_init(struct sha3_ctx *ctx) { sha3_init_internal(ctx, SHA3_512_RATE, SHA3_DOMAIN_DELIM); }
 
 void sha3_update(struct sha3_ctx *ctx, const void *data, uint32_t len)
 {
@@ -194,10 +220,10 @@ int sha3_final(struct sha3_ctx *ctx, uint8_t *out, uint32_t out_cap)
 {
     uint32_t digest_len;
 
-    /* Reject a NULL out or a malformed/uninitialized context before deriving
-     * digest_len from ctx->rate (a corrupted rate would underflow / over-long
-     * the squeeze). */
-    if (out == NULL || !sha3_ctx_valid(ctx)) {
+    /* Reject a NULL out or a non-fixed-output / malformed context before
+     * deriving digest_len from ctx->rate -- this finalizer produces only the
+     * SHA3-256/384/512 digests, never a SHAKE-rate (16-byte) output. */
+    if (out == NULL || !sha3_ctx_valid_fixed(ctx)) {
         return -1;
     }
     /* Fixed-output digest length for a SHA-3 variant is capacity/2 =
@@ -214,9 +240,21 @@ int sha3_final(struct sha3_ctx *ctx, uint8_t *out, uint32_t out_cap)
     return (int)digest_len;
 }
 
+/* The void one-shot wrappers cannot report an error, so on bad arguments they
+ * leave `out` untouched rather than write the empty-message digest for input
+ * that was never read (NULL data with non-zero len). The bounds-checked
+ * crypto_hash() dispatch is the path that returns an explicit -1. */
+static int sha3_oneshot_args_ok(const void *data, uint32_t len, const uint8_t *out)
+{
+    return out != NULL && !(data == NULL && len != 0);
+}
+
 void sha3_256(const void *data, uint32_t len, uint8_t out[SHA3_256_DIGEST_LEN])
 {
     struct sha3_ctx ctx;
+    if (!sha3_oneshot_args_ok(data, len, out)) {
+        return;
+    }
     sha3_256_init(&ctx);
     sha3_update(&ctx, data, len);
     sha3_final(&ctx, out, SHA3_256_DIGEST_LEN);
@@ -225,6 +263,9 @@ void sha3_256(const void *data, uint32_t len, uint8_t out[SHA3_256_DIGEST_LEN])
 void sha3_384(const void *data, uint32_t len, uint8_t out[SHA3_384_DIGEST_LEN])
 {
     struct sha3_ctx ctx;
+    if (!sha3_oneshot_args_ok(data, len, out)) {
+        return;
+    }
     sha3_384_init(&ctx);
     sha3_update(&ctx, data, len);
     sha3_final(&ctx, out, SHA3_384_DIGEST_LEN);
@@ -233,6 +274,9 @@ void sha3_384(const void *data, uint32_t len, uint8_t out[SHA3_384_DIGEST_LEN])
 void sha3_512(const void *data, uint32_t len, uint8_t out[SHA3_512_DIGEST_LEN])
 {
     struct sha3_ctx ctx;
+    if (!sha3_oneshot_args_ok(data, len, out)) {
+        return;
+    }
     sha3_512_init(&ctx);
     sha3_update(&ctx, data, len);
     sha3_final(&ctx, out, SHA3_512_DIGEST_LEN);
@@ -249,7 +293,7 @@ static int shake_oneshot(uint32_t rate, const void *data, uint32_t len,
     if (data == NULL && len != 0) {
         return -1;
     }
-    sha3_init_internal(&ctx, rate, 0x1F);
+    sha3_init_internal(&ctx, rate, SHAKE_DOMAIN_DELIM);
     sha3_update(&ctx, data, len);
     sha3_pad(&ctx);
     sha3_squeeze(&ctx, out, out_len);

@@ -34,12 +34,17 @@
 #define SHAKE_MAX_OUTPUT 4096u
 
 /* Keccak sponge context. `rate` (bytes) + `delim` select the variant; the
- * caller never sets these directly -- the per-variant init wrappers do. */
+ * caller never sets these directly -- the per-variant init wrappers do.
+ * `digest_len` is a redundant copy of the fixed-output length, set at init and
+ * cross-checked against the rate-derived length in sha3_final, so a single
+ * corrupted field (e.g. rate flipped to another legal rate) is caught instead
+ * of silently producing a digest for state absorbed under the wrong rate. */
 struct sha3_ctx {
-    uint64_t st[25];   /* 1600-bit Keccak state, 25 lanes */
-    uint32_t rate;     /* sponge rate in bytes (block size) */
-    uint32_t pos;      /* bytes absorbed into the current block (< rate) */
-    uint8_t  delim;    /* domain-separation byte (0x06 SHA-3, 0x1F SHAKE) */
+    uint64_t st[25];      /* 1600-bit Keccak state, 25 lanes */
+    uint32_t rate;        /* sponge rate in bytes (block size) */
+    uint32_t pos;         /* bytes absorbed into the current block (< rate) */
+    uint32_t digest_len;  /* fixed-output digest length (redundant w/ rate) */
+    uint8_t  delim;       /* domain-separation byte (0x06 SHA-3, 0x1F SHAKE) */
 };
 
 /* Streaming fixed-output API: <variant>_init -> sha3_update* -> sha3_final.
@@ -55,7 +60,10 @@ void sha3_512_init(struct sha3_ctx *ctx);
 void sha3_update(struct sha3_ctx *ctx, const void *data, uint32_t len);
 int  sha3_final(struct sha3_ctx *ctx, uint8_t *out, uint32_t out_cap);
 
-/* One-shot fixed-output convenience. */
+/* One-shot fixed-output convenience. These are void, so on bad arguments
+ * (NULL out, or NULL data with non-zero len) they leave out untouched rather
+ * than write the empty-message digest for input that was never read. Use
+ * crypto_hash() (kernel/crypto/hash.h) for an explicit -1 on bad arguments. */
 void sha3_256(const void *data, uint32_t len, uint8_t out[SHA3_256_DIGEST_LEN]);
 void sha3_384(const void *data, uint32_t len, uint8_t out[SHA3_384_DIGEST_LEN]);
 void sha3_512(const void *data, uint32_t len, uint8_t out[SHA3_512_DIGEST_LEN]);

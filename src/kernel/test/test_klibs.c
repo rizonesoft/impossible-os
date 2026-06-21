@@ -1280,6 +1280,16 @@ static void test_sha3_kat(void)
     TEST_ASSERT_EQ(shake128(NULL, 8, xof, 16), -1,
                    "shake128 rejects NULL data with non-zero len");
 
+    /* One-shot fixed wrappers leave out untouched on bad args (do NOT write the
+     * empty-message digest for input that was never read). */
+    uint8_t os[32];
+    memset(os, 0xC3, sizeof(os));
+    sha3_256(NULL, 8, os);
+    TEST_ASSERT(os[0] == 0xC3, "sha3_256(NULL,8) leaves out untouched");
+    sha3_256("", 0, os);
+    TEST_ASSERT_EQ(memcmp(os, k_sha3_256_empty, 32), 0,
+                   "sha3_256(NULL/empty,0) still hashes the empty message");
+
     /* Direct fixed-output API fails closed on bad args (matches SHA-2): a
      * NULL/zero-length update is a no-op, NULL ctx/out are no-ops. */
     struct sha3_ctx g;
@@ -1317,6 +1327,33 @@ static void test_sha3_kat(void)
                    "sha3_final rejects when corrupted rate digest > out_cap");
     for (uint32_t i = 0; i < sizeof(sentinel); i++) {
         TEST_ASSERT(sentinel[i] == 0xCC, "no byte written past out_cap on reject");
+    }
+
+    /* Corruption to a SHAKE rate (168) yields a 16-byte digest that FITS a
+     * 32-byte buffer -- out_cap alone would not catch it, but sha3_final only
+     * accepts the three fixed SHA-3 rates, so it still rejects. */
+    struct sha3_ctx sv;
+    sha3_256_init(&sv);
+    sha3_update(&sv, "abc", 3);
+    sv.rate = 168u; /* SHAKE128 rate -> would be a 16-byte (non-SHA3) digest */
+    memset(sentinel, 0xCC, sizeof(sentinel));
+    TEST_ASSERT_EQ(sha3_final(&sv, sentinel, sizeof(sentinel)), -1,
+                   "sha3_final rejects a SHAKE-rate fixed-output context");
+    TEST_ASSERT(sentinel[0] == 0xCC, "no write on SHAKE-rate reject");
+
+    /* Cross-fixed rate corruption with a LARGE (64-byte) buffer: out_cap alone
+     * would NOT catch 136->72 (64-byte digest fits) or 136->104 (48-byte fits),
+     * but the digest_len redundancy cross-check rejects the mismatched rate. */
+    const uint32_t corrupt_rates[] = { 72u, 104u };
+    for (uint32_t r = 0; r < 2; r++) {
+        struct sha3_ctx fv;
+        sha3_256_init(&fv); /* digest_len stays 32 from init */
+        sha3_update(&fv, "abc", 3);
+        fv.rate = corrupt_rates[r]; /* rate now disagrees with digest_len */
+        memset(sentinel, 0xCC, sizeof(sentinel));
+        TEST_ASSERT_EQ(sha3_final(&fv, sentinel, sizeof(sentinel)), -1,
+                       "sha3_final rejects cross-fixed rate corruption (64B buf)");
+        TEST_ASSERT(sentinel[0] == 0xCC, "no write on cross-fixed rate reject");
     }
 }
 

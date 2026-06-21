@@ -407,6 +407,8 @@ SHA-3 (FIPS 202, Keccak) is a both-platform baseline the §5 Monocypher set (Bla
 > - Validated against NIST + independent (Python hashlib) KATs across the pad10*1 rate boundary and a multi-block SHAKE squeeze; SHAKE capped at one page (`SHAKE_MAX_OUTPUT`).
 > - Canonical doc: `include/kernel/crypto/sha3.h` banner.
 > - Scope boundary: §10 owns SHA-3/SHAKE + the hash dispatch; SHA-2 stays in `sha256.c`/`sha384.c`, Blake2b in §5 Monocypher; streaming SHAKE XOF deferred to its first consumer (KMAC / ML-DSA).
+> **Verified:** 2026-06-21 | commit `7f064ed8` | 5/5 items | build OK | tests 6798 kernel + 16 user PASS (TCG)
+> **Quality reviewed:** 2026-06-21 | Codex 13x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 7H+4M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
 
