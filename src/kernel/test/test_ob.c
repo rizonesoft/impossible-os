@@ -684,6 +684,45 @@ static void test_nt_query_symlink_wrong_type(void)
                 "NtQuerySymbolicLinkObject rejects directory handle");
 }
 
+/* Test: a symbolic-link cycle cannot exhaust the kernel stack -- the cumulative
+ * OB_SYMLINK_DEPTH budget bounds resolution. CycleA -> ...\CycleB and
+ * CycleB -> ...\CycleA; looking up a path THROUGH CycleA must RETURN failure
+ * (not hang / stack-overflow). The test completing at all is the proof. */
+static void test_ob_symlink_cycle_bounded(void)
+{
+    void *bno = NULL;
+    void *sa, *sb, *result = NULL;
+    int rc;
+
+    if (ObLookupObjectByName("\\BaseNamedObjects", ObpDirectoryType, 0, &bno) != 0
+        || !bno) {
+        TEST_SKIP("BaseNamedObjects root not available for symlink-cycle test");
+        return;
+    }
+
+    sa = ob_ns_create_symlink("\\BaseNamedObjects\\ObCycleB");
+    sb = ob_ns_create_symlink("\\BaseNamedObjects\\ObCycleA");
+    TEST_ASSERT(sa && sb, "two cycle symlinks allocated");
+    if (!sa || !sb) { ObDereferenceObject(bno); return; }
+
+    TEST_ASSERT(ObInsertObject(sa, "ObCycleA", bno) == 0, "ObCycleA inserted");
+    TEST_ASSERT(ObInsertObject(sb, "ObCycleB", bno) == 0, "ObCycleB inserted");
+    /* ObInsertObject took the directory's reference; drop our creation refs so
+     * the cleanup unlink frees the symlink bodies (no leak). */
+    ObDereferenceObject(sa);
+    ObDereferenceObject(sb);
+
+    /* Resolve a path that walks INTO the cycle (trailing component forces the
+     * symlinks to be followed, not returned as leaves). Must return non-zero. */
+    rc = ObLookupObjectByName("\\BaseNamedObjects\\ObCycleA\\Leaf", NULL, 0, &result);
+    TEST_ASSERT(rc != 0, "symlink cycle lookup fails instead of recursing forever");
+
+    /* Cleanup: clear the flag so the named symlinks can be removed + freed. */
+    test_ob_cleanup_named("ObCycleA", ObpSymlinkType);
+    test_ob_cleanup_named("ObCycleB", ObpSymlinkType);
+    ObDereferenceObject(bno);
+}
+
 /* Test: all 6 SSDT slots are registered (not stubs) */
 static void test_nt_namespace_ssdt_registered(void)
 {
@@ -1568,6 +1607,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: NT open directory not found", test_nt_open_directory_not_found, TEST_CAT_OB);
     test_suite_register_cat("OB: NT symlink roundtrip", test_nt_symlink_roundtrip, TEST_CAT_OB);
     test_suite_register_cat("OB: NT query symlink wrong type", test_nt_query_symlink_wrong_type, TEST_CAT_OB);
+    test_suite_register_cat("OB: symlink cycle bounded", test_ob_symlink_cycle_bounded, TEST_CAT_OB);
     test_suite_register_cat("OB: NT namespace SSDT registered", test_nt_namespace_ssdt_registered, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section anon roundtrip", test_nt_section_anon_roundtrip, TEST_CAT_OB);
     test_suite_register_cat("OB: NT section file-backed", test_nt_section_file_backed, TEST_CAT_OB);

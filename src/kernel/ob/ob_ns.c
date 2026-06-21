@@ -210,11 +210,11 @@ int ObInsertObject(void *object, const char *name, void *directory)
  * new reference on the child under the parent's lock, then drops the
  * old `cur_dir` reference after unlock.
  */
-void *ObpLookupDirectory(const char *path, const char **remaining)
+static void *obp_lookup_directory_d(const char *path, const char **remaining,
+                                    uint32_t *depth)
 {
     void *cur_dir = ObpRootDirectory;
     const char *p = path;
-    uint32_t symlink_count = 0;
     uint64_t irqf;
 
     if (!cur_dir || !path) {
@@ -286,17 +286,19 @@ void *ObpLookupDirectory(const char *path, const char **remaining)
                 if (remaining) *remaining = seg_start;
                 return cur_dir;
             }
-            if (++symlink_count > OB_SYMLINK_DEPTH) {
+            if (*depth >= OB_SYMLINK_DEPTH) {
                 ObDereferenceObject(entry_object);
                 if (remaining) *remaining = seg_start;
                 return cur_dir;
             }
+            (*depth)++;  /* one shared budget across directory + leaf resolution */
             /* Resolve the symlink target from root. MUST be outside
              * the parent dir's lock -- the recursive walk locks other
              * directories, and holding one lock across a recursive
              * acquisition would deadlock. */
             const char *sym_rem = NULL;
-            void *target_dir = ObpLookupDirectory(sym_target, &sym_rem);
+            void *target_dir = obp_lookup_directory_d(sym_target, &sym_rem,
+                                                      depth);
             ObDereferenceObject(entry_object); /* symlink body done with */
             if (!target_dir) {
                 if (remaining) *remaining = seg_start;
@@ -334,10 +336,20 @@ void *ObpLookupDirectory(const char *path, const char **remaining)
     return cur_dir;
 }
 
+void *ObpLookupDirectory(const char *path, const char **remaining)
+{
+    uint32_t depth = 0;
+    return obp_lookup_directory_d(path, remaining, &depth);
+}
+
 /* --- ObLookupObjectByName ------------------------------------------------ */
 
-int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
-                         uint32_t access, void **result)
+/* Depth-carrying resolver. `depth` is the cumulative symlink-redirect budget
+ * shared across BOTH the directory walk (obp_lookup_directory_d) and leaf
+ * symlink recursion below, so a symlink cycle (A -> \B\X, B -> \A\X) can never
+ * recurse past OB_SYMLINK_DEPTH frames and exhaust the kernel stack. */
+static int ob_lookup_by_name_d(const char *path, const OBJECT_TYPE *type,
+                               uint32_t access, void **result, uint32_t *depth)
 {
     const char *remaining = NULL;
     void *dir;
@@ -356,7 +368,7 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
     /* ObpLookupDirectory returns a REF-OWNED dir; we MUST deref before
      * returning (except when we hand the ref off to the caller, which
      * happens only in the "path resolves to this directory" case). */
-    dir = ObpLookupDirectory(path, &remaining);
+    dir = obp_lookup_directory_d(path, &remaining, depth);
     if (!dir)
         return -1;
 
@@ -423,11 +435,26 @@ int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
 
         if (!entry || type_mismatch)
             return -1;
-        if (is_leaf_symlink)
-            return ObLookupObjectByName(sym_target, type, access, result);
+        if (is_leaf_symlink) {
+            /* Bound leaf-symlink chains by the SAME cumulative budget as the
+             * directory walk (one shared *depth counter) so a self-referential
+             * or cyclic leaf symlink cannot recurse the kernel stack and the
+             * total redirect count across both phases stays <= OB_SYMLINK_DEPTH. */
+            if (*depth >= OB_SYMLINK_DEPTH)
+                return -1;
+            (*depth)++;
+            return ob_lookup_by_name_d(sym_target, type, access, result, depth);
+        }
         *result = entry_object;
         return 0;
     }
+}
+
+int ObLookupObjectByName(const char *path, const OBJECT_TYPE *type,
+                         uint32_t access, void **result)
+{
+    uint32_t depth = 0;
+    return ob_lookup_by_name_d(path, type, access, result, &depth);
 }
 
 /* --- Helper: create and insert a sub-directory --------------------------- */

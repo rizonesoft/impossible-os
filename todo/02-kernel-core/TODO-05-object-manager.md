@@ -54,7 +54,7 @@ title: "TODO-05 -- Object Manager"
 | 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | --             |  [x]   |
 | 💎  |   2   | Reference counting and object lifetime                        | §1             |  [x]   |
 | 💎  |   3   | Per-process handle table                                      | §2             |  [/]   |
-| 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [x]   |
+| 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [/]   |
 | 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [x]   |
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
@@ -178,6 +178,17 @@ A hierarchical in-memory namespace rooted at `\`. Directories hold named object 
 - [x] `C:` → `\Device\HardDisk0\Partition0` via symlink in `\DosDevices`
 - [x] Commit: `"kernel: ob -- object namespace directory and symlinks"`
 - [ ] **Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup.** Today `ob_thread_mark_dead()` ([`src/kernel/ob/ob_thread.c:90-113`](../../src/kernel/ob/ob_thread.c)) and `ob_process_mark_dead()` ([`src/kernel/ob/ob_process.c:89-108`](../../src/kernel/ob/ob_process.c)) do `ObLookupObjectByName()` (path walk over `\KernelObjects\Thread<pid>.<tid>`) plus `ObpLookupDirectory()` plus `ObpRemoveFromDirectory()` linear walk -- two O(n) namespace scans under IRQ-off spinlock on every thread exit. `thread_exit()` calls this on the scheduler hot path; cost scales with namespace size and pushes IRQ-off latency up under kthread churn. Fix: add two fields to `OBJECT_HEADER` -- `OBJECT_DIRECTORY *name_dir` and `OBJECT_DIRECTORY_ENTRY *name_entry` -- populated by `ObInsertObject()` and cleared by `ObpRemoveFromDirectory()`. `mark_dead` paths then unlink directly in O(1) without any path/list walk. Codex quality 2026-04-22 M finding from D00 T03 §9 review.
+
+> **Notes:**
+> - In-memory hierarchical namespace (`ob_ns.c`): `OBJECT_DIRECTORY` (per-dir spinlock + entry list) + `OBJECT_SYMBOLIC_LINK`; insert/lookup take the directory ref under the lock before publishing and return a referenced object.
+> - Symlink resolution is now cycle-safe: one shared `OB_SYMLINK_DEPTH` (8) budget threaded (in/out `*depth`) across the directory walk AND leaf recursion, so a symlink cycle fails instead of exhausting the kernel stack.
+> - Root + standard dirs built at `ob_ns_init` (`\`, `\Device`, `\KernelObjects`, `\DosDevices`, `\BaseNamedObjects`, `\Sessions\0`); `C:` -> `\Device\HardDisk0\Partition0` symlink.
+> - Validation: `test_ob.c` (`TEST_CAT_OB`) incl. new `test_ob_symlink_cycle_bounded`; `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
+> - Open: O(1) teardown caching (deferred perf item below) still `[ ]`; namespace functionality is complete.
+> **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 8/9 items | build OK | tests 327/327 PASS (SUITE=ob)
+> **Deferred:** [M] thread/process teardown does two O(n) namespace scans under an IRQ-off lock on every exit (scheduler hot path) -> XREF: 02-kernel-core/TODO-05 §4 (item: "Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup" at line 180)
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H+1M+2L fixed | scope: kernel-code-quality
+
 Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
 
 - [x] Register `ObpFileType` -- body wraps a `vfs_node *`; `on_close` calls `vfs_close`; `on_delete` frees the VFS node wrapper; `on_parse` defers remaining path to VFS

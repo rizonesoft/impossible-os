@@ -160,7 +160,7 @@ static NTSTATUS NtCreateDirectoryObject_handler(uint64_t a1, uint64_t a2,
 
     if (split_path(path, parent_path, sizeof(parent_path), &leaf) < 0)
         return STATUS_INVALID_PARAMETER;
-    if (leaf[0] == '\0' || bounded_strlen(leaf, OB_NAME_MAX + 1) > OB_NAME_MAX)
+    if (leaf[0] == '\0' || bounded_strlen(leaf, OB_NAME_MAX + 1) >= OB_NAME_MAX)
         return STATUS_INVALID_PARAMETER;
 
     /* Resolve parent directory */
@@ -373,7 +373,7 @@ static NTSTATUS NtCreateSymbolicLinkObject_handler(uint64_t a1, uint64_t a2,
 
     if (split_path(path, parent_path, sizeof(parent_path), &leaf) < 0)
         return STATUS_INVALID_PARAMETER;
-    if (leaf[0] == '\0' || bounded_strlen(leaf, OB_NAME_MAX + 1) > OB_NAME_MAX)
+    if (leaf[0] == '\0' || bounded_strlen(leaf, OB_NAME_MAX + 1) >= OB_NAME_MAX)
         return STATUS_INVALID_PARAMETER;
 
     parent_dir = (void *)0;
