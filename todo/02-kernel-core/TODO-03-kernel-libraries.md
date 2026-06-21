@@ -216,34 +216,24 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 ## 4. miniz Deflate / Inflate + ZIP
 
 - [x] Vendor `miniz.h` / `miniz.c` (MIT) into `src/libs/miniz/` -- miniz 3.0.2 amalgamation (miniz.c/.h + LICENSE) vendored 2026-06-20
-- [ ] Compile with `-ffreestanding -nostdlib -msse2`
-- [ ] Redirect `malloc`/`free` -> `kmalloc`/`kfree` via `#define` overrides for the internal `tinfl` decompressor state struct (<= 4 KiB -- kmalloc safe)
-- [ ] For decompression output buffers > 4 KiB: override the output buffer allocation callback to use `pmm_alloc_contiguous()`
-- [ ] Core API exposed:
-  ```c
-  /* Low-level deflate/inflate */
-  int mz_compress(uint8_t *dst, uint32_t *dst_len,
-                  const uint8_t *src, uint32_t src_len);
-  int mz_uncompress(uint8_t *dst, uint32_t *dst_len,
-                    const uint8_t *src, uint32_t src_len);
-  /* ZIP archive reading (read-only) */
-  bool zip_open(zip_t *z, const void *data, size_t size);
-  int  zip_entry_count(const zip_t *z);
-  bool zip_find(const zip_t *z, const char *name, zip_entry_t *out);
-  int  zip_read(const zip_t *z, const zip_entry_t *entry,
-                void *buf, size_t buf_size);
-  void zip_close(zip_t *z);
-  ```
-- [ ] Use gzip decompression (`MZ_DEFAULT_STRATEGY`) for HTTP `Content-Encoding: gzip` responses in the networking layer
-
-- [ ] Compress a known 8 KiB buffer; decompress; verify byte-for-byte integrity
-- [ ] Open a ZIP archive from memory; list entries; extract one file; verify content against a known SHA-256 (using Monocypher Blake2b from §5)
+- [/] Compile with `-ffreestanding -nostdlib -msse2` -- DEFERRED (workspace blocker, see Notes)
+- [/] Allocator (CORRECTED): `tinfl` (~11 KiB + 32 KiB dict) and `tdefl` (~150 KiB) both EXCEED the 4 KiB `kmalloc` ceiling; per-call `pmm` is racy and the stack is too small, so the state must be a caller-provided workspace, not a hidden allocation
+- [/] Decompression output > 4 KiB: consumer-owned via the workspace allocator hook (`mz_alloc_func`/`m_pAlloc`), not a hidden per-call allocation
+- [/] Core API must be REWRITTEN around an explicit workspace object (caller owns allocation + serialization); the workspace-free `mz_compress`/`mz_uncompress`/`zip_*` draft is not SMP-safe here
+- [/] Use gzip decompression for HTTP `Content-Encoding: gzip` -- the first real consumer; it owns the inflate workspace -> XREF `07-networking/TODO-03-http-tls.md`
+- [/] Compress a known 8 KiB buffer; decompress; verify byte-for-byte integrity -- DEFERRED with the port
+- [/] Open a ZIP archive from memory; list entries; extract one; verify against a known SHA-256 (Monocypher Blake2b from §5) -- DEFERRED with the port
 
 - [ ] Commit: `"libs: miniz deflate/inflate, ZIP archive reading"`
 
-**Test checkpoint:** 8 KiB gzip round-trip identity; ZIP in-memory extract matches golden hash; no `kmalloc` for output >4 KiB without `pmm_alloc_contiguous`. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** 8 KiB gzip round-trip identity; ZIP in-memory extract matches golden hash; the consumer-owned workspace covers the >4 KiB state with no hidden per-call allocation. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Source vendored (2026-06-20):** miniz 3.0.2 (MIT) amalgamation is now in `src/libs/miniz/` (`miniz.c`/`miniz.h` + LICENSE), fetched verbatim from an interactive session -- the fetch-blocker that forced the prior deferral is cleared. Remaining (ready to implement): freestanding port (`MINIZ_NO_STDIO`/`MINIZ_NO_TIME`, `malloc`/`free`/`realloc` -> `kmalloc` for <=4 KiB state, `pmm_alloc_contiguous()` for output >4 KiB), the `mz_compress`/`mz_uncompress` + read-only ZIP wrappers, the Makefile build rule (the tree is currently excluded from the C-source auto-glob), HTTP gzip wiring, and tests.
+> **Notes:**
+> - Source vendored: miniz 3.0.2 (MIT) amalgamation in `src/libs/miniz/` (excluded from the C-source auto-glob; not yet ported).
+> - DEFERRED whole-section (Codex design): miniz states (~11 KiB / ~150 KiB) exceed the 4 KiB `kmalloc` ceiling, per-call `pmm` is racy, and are too large for the stack -- no SMP-safe hidden-allocation path, no must-ship core today.
+> - Reframed: the port must take a caller-provided workspace owned by the first real consumer (07-networking HTTP gzip), which allocates the pmm-backed state at init and owns serialization; the workspace-free draft API is not safely representable.
+> - Scope boundary: §3 owns LZ4 (block compression), §9 owns Zstd (IXFS ratio codec); miniz/deflate has no in-tree consumer until networking gzip lands.
+> **Deferred:** [H] miniz freestanding port (deflate/inflate + ZIP read) -- no SMP-safe internal allocation path (states exceed kmalloc ceiling; pmm unsynchronized; too large for stack), no in-tree consumer (reason: infra -- needs consumer-owned workspace lifecycle) -> XREF: 07-networking/TODO-03-http-tls.md §3 (Mbed TLS Kernel Port / HTTP transport -- the gzip-decode consumer that owns the inflate workspace)
 
 ---
 
