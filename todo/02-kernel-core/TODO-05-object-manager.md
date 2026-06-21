@@ -56,7 +56,7 @@ title: "TODO-05 -- Object Manager"
 | 💎  |   3   | Per-process handle table                                      | §2             |  [/]   |
 | 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [/]   |
 | 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [/]   |
-| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
+| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [/]   |
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T15 §1,§3  |  [x]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T15 §4     |  [x]   |
@@ -235,7 +235,22 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
 - [x] `NtCreateEvent`, `NtOpenEvent`, `NtCreateMutex`, `NtOpenMutex`, `NtCreateSemaphore`, `NtCreateTimer` stubs -- resolve name via Ob namespace, allocate or open, return HANDLE (→ XREF: TODO-12 §7)
 - [x] Update `SYS_PIPE` to wrap the pipe read/write ends as two File objects in the handle table so pipes are closeable with `NtClose` like any other handle
 - [x] Commit: `"kernel: ob -- event, mutex, semaphore, timer object types"`
-- [ ] **Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)**: `src/kernel/nt/nt_timer.c` currently keeps `s_armed_head` as an unsorted singly-linked list; `nt_timer_tick()` walks every entry on every ISR call and NtSetTimer/NtCancelTimer do linear search. This is fine for tens of armed timers but becomes O(N * ticks/sec) work in ISR context at scale. Swap the list for either (a) a min-heap keyed by `due_ns` stored in an array attached to `static struct nt_timer_queue g_tq[MAX_CPUS]` (per-CPU to eliminate the global lock), or (b) a classic timing wheel with O(1) arm/cancel/tick for common cases. Preserve the two-phase ISR signal-outside-lock pattern. Add a stress test in `test_ob.c` that arms 1024 one-shot timers with staggered `DueTime` and asserts wake fan-out under 1ms of slack. This auto-closes TODO-12 §19 Accepted (linear armed-list scan at scale).
+- [ ] **Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)**: `src/kernel/nt/nt_timer.c` currently keeps `s_armed_head` as an unsorted singly-linked list; `nt_timer_tick()` walks every entry on every ISR call and NtSetTimer/NtCancelTimer do linear search. This is fine for tens of armed timers but becomes O(N * ticks/sec) work in ISR context at scale. Swap the list for either (a) a min-heap keyed by `due_ns` stored in an array attached to `static struct nt_timer_queue g_tq[MAX_CPUS]` (per-CPU to eliminate the global lock), or (b) a classic timing wheel with O(1) arm/cancel/tick for common cases. Preserve the two-phase ISR signal-outside-lock pattern. Add a stress test in `test_ob.c` that arms 1024 one-shot timers with staggered `DueTime` and asserts wake fan-out under 1ms of slack. This auto-closes TODO-12 §19 Accepted (linear armed-list scan at scale). Also move periodic `event_set` and the Phase-B final deref OUT of `nt_timer_tick` onto a deferred chain so no `event_set`/`kfree` runs under `s_armed_lock` or in the tick path.
+- [ ] **Normalize `NtOpen{Event,Mutex,Semaphore}` names** through `\BaseNamedObjects\%s` (like create + `ObOpenTimer`) in `nt_sync.c`, so a named sync object is reopenable by leaf name (today only timer does this)
+- [ ] **Lock the event/mutex/semaphore waiter queues**: `sched/event.c`/`mutex.c`/`semaphore.c` mutate `num_waiters` + waiter arrays unlocked, raced between timer-ISR `event_set` and thread-context wait (torn array / lost wakeup on SMP)
+
+> **Notes:**
+> - Event/Mutex/Semaphore/Timer registered as OB types wrapping the existing `event_t`/`mutex_t`/`semaphore_t`/timer primitives; named in `\BaseNamedObjects`, handle-managed, `on_delete` frees the state (mutex signals `MUTEX_ABANDONED` on owner death).
+> - Review fix (Critical): `nt_timer_tick` now `ObReferenceObject`s a one-shot timer under `s_armed_lock` before the deferred `event_set` and drops it after, closing a use-after-free where a concurrent last-handle close freed the timer mid-signal.
+> - Review fix (High): named create (`ob_event`/`mutex`/`semaphore`) handles the `ObInsertObject` duplicate-race by redirecting to the namespace winner + freeing the loser (matches `ObCreateTimerEx`), so one name maps to one object.
+> - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
+> - Open (deferred items above): NtOpen leaf-name normalization, sync-primitive waiter-queue locking, timer-tick latency rework; section is functional but the wait/timer paths are not fully SMP-hardened.
+> **Verified:** 2026-06-21 | ship `d91153f5` + review fixes | 7/10 items | build OK | tests 327/327 PASS (SUITE=ob)
+> **Accepted:** [H] `wait_on_handle` blocks on an embedded sync primitive without pinning the object, so a concurrent last-handle close can free it under the waiter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Deferred:** [H] `NtOpen{Event,Mutex,Semaphore}` do not normalize leaf names to `\BaseNamedObjects\%s`, so a named object is not reopenable by leaf name -> XREF: 02-kernel-core/TODO-05 §6 (item: "Normalize `NtOpen{Event,Mutex,Semaphore}` names" at line 239)
+> **Deferred:** [H] the event/mutex/semaphore waiter queues are mutated unlocked, raced between timer-ISR `event_set` and thread-context wait -> XREF: 02-kernel-core/TODO-05 §6 (item: "Lock the event/mutex/semaphore waiter queues" at line 240)
+> **Deferred:** [M] periodic `event_set` runs under `s_armed_lock` and the Phase-B final deref can free in the tick path -> XREF: 02-kernel-core/TODO-05 §6 (item: "Replace the flat NT timer armed list" at line 238)
+> **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Critical+1H fixed, 1H accepted-XREF, 2H+1M deferred | scope: kernel-code-quality
 
 ---
 

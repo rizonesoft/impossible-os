@@ -134,10 +134,14 @@ void nt_timer_tick(void)
                 pp = &to->next_armed;
             } else {
                 /* One-shot: unlink from armed list, clear active, push
-                 * onto local signal chain for deferred wake. */
+                 * onto local signal chain for deferred wake. Take a reference
+                 * (safe under the lock -- a concurrent close's nt_timer_detach
+                 * also takes s_armed_lock) so the deferred event_set in Phase B
+                 * cannot race a last-handle close freeing the TIMER_OBJECT. */
                 *pp = to->next_armed;
                 to->on_queue = 0;
                 to->active = 0;
+                ObReferenceObject(to);
                 to->next_armed = signal_chain;
                 signal_chain = to;
                 /* pp unchanged: continue at our former successor. */
@@ -151,12 +155,14 @@ void nt_timer_tick(void)
 
     spin_unlock_irqrestore(&s_armed_lock, irqf);
 
-    /* Phase B: wake one-shot fire chain OUTSIDE the spinlock. */
+    /* Phase B: wake one-shot fire chain OUTSIDE the spinlock, then drop the
+     * Phase-A pin (which may now free the timer if its last handle closed). */
     while (signal_chain) {
         TIMER_OBJECT *fired = signal_chain;
         signal_chain = fired->next_armed;
         fired->next_armed = (TIMER_OBJECT *)0;
         event_set(&fired->event);
+        ObDereferenceObject(fired);
     }
 }
 

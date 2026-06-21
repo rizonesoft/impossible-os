@@ -7,8 +7,11 @@
 
 #include "kernel/ob/ob_mutex.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
+
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 
 /* --- Callbacks ----------------------------------------------------------- */
 
@@ -105,7 +108,23 @@ HANDLE NtCreateMutex(HANDLE_TABLE *ht, const char *name, int initial_owner)
         void *bno_dir = NULL;
         if (ObLookupObjectByName("\\BaseNamedObjects", ObpDirectoryType, 0,
                                  &bno_dir) == 0 && bno_dir) {
-            ObInsertObject(mo, name, bno_dir);
+            if (ObInsertObject(mo, name, bno_dir) < 0) {
+                /* Name-collision race: redirect to the winner, free our loser
+                 * so one name == one mutex (mirrors ObCreateTimerEx). */
+                void *winner = NULL;
+                char wpath[128];
+                ObDereferenceObject(bno_dir);
+                snprintf(wpath, sizeof(wpath), "\\BaseNamedObjects\\%s", name);
+                if (ObLookupObjectByName(wpath, ObpMutexType, 0, &winner) == 0
+                    && winner) {
+                    h = ObpAllocateHandle(ht, winner, 0, 0);
+                    ObDereferenceObject(winner);
+                    ObDereferenceObject(mo);
+                    return h;
+                }
+                ObDereferenceObject(mo);
+                return INVALID_HANDLE_VALUE;
+            }
             ObDereferenceObject(bno_dir);
         }
     }

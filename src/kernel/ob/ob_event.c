@@ -6,8 +6,11 @@
 
 #include "kernel/ob/ob_event.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
+
+extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 
 /* --- Callbacks ----------------------------------------------------------- */
 
@@ -76,7 +79,25 @@ HANDLE NtCreateEvent(HANDLE_TABLE *ht, const char *name,
         void *bno_dir = NULL;
         if (ObLookupObjectByName("\\BaseNamedObjects", ObpDirectoryType, 0,
                                  &bno_dir) == 0 && bno_dir) {
-            ObInsertObject(eo, name, bno_dir);
+            if (ObInsertObject(eo, name, bno_dir) < 0) {
+                /* Name-collision race: another thread inserted the same name
+                 * between our lookup-miss and this insert. Redirect the caller
+                 * to the winner and free our loser so one name == one object
+                 * (mirrors ObCreateTimerEx). */
+                void *winner = NULL;
+                char wpath[128];
+                ObDereferenceObject(bno_dir);
+                snprintf(wpath, sizeof(wpath), "\\BaseNamedObjects\\%s", name);
+                if (ObLookupObjectByName(wpath, ObpEventType, 0, &winner) == 0
+                    && winner) {
+                    h = ObpAllocateHandle(ht, winner, 0, 0);
+                    ObDereferenceObject(winner);
+                    ObDereferenceObject(eo);
+                    return h;
+                }
+                ObDereferenceObject(eo);
+                return INVALID_HANDLE_VALUE;
+            }
             ObDereferenceObject(bno_dir);
         }
     }
