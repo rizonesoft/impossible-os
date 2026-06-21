@@ -8,10 +8,12 @@ title: "TODO-04 -- System Logging"
 
 # TODO-04 -- System Logging
 
+> **Validated:** 2026-06-21 | validate-todo-file clean (structure / IO table / XREF / test wiring; inter-section `---` separators added)
+
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
 > [!IMPORTANT]
-> **Current state:** `klog.c` (~580 lines) + `klog_disk.c` (912 lines) + `etw.c`. §1-§9 complete (old-system; pending dual-stamp review). Remaining: §10 (log integrity) -- now UNBLOCKED, TODO-03 §5 Monocypher + kernel CSPRNG shipped (`crypto_blake2b` + `csprng_fill`). Remote syslog moved to `07-networking/TODO-11`.
+> **Current state:** `klog.c` (~580 lines) + `klog_disk.c` (912 lines) + `etw.c`. §1-§9 complete (old-system; pending dual-stamp review). Remaining: §10 (log integrity) -- UNBLOCKED, TODO-03 §5 Monocypher + kernel CSPRNG shipped (`crypto_blake2b` + `csprng_fill`); §11-§13 (ETW provider/session filtering, ETW stack-walk/autologger, rotated-log compression) added by the 2026-06-21 gap-audit -- §13 LZ4 compression now also unblocked by TODO-03 §3. Remote syslog moved to `07-networking/TODO-11`.
 
 ## Inputs
 
@@ -85,6 +87,8 @@ The current `klog_disk.c` assumes VFS is available when it initialises. After TO
 - [x] Update `boot_hw.c` (Phase 0) to call `klog_early_init()` and `boot_storage.c` (Phase 2) to call `klog_disk_enable()`
 - [x] Commit: `"kernel: split klog early-init from disk-enable"`
 
+---
+
 ## 2. Per-Subsystem Log Splitting
 Route log entries to dedicated per-subsystem log files based on the subsystem tag. Entries with no matching tag continue to go to `kernel.log`.
 
@@ -98,6 +102,8 @@ Route log entries to dedicated per-subsystem log files based on the subsystem ta
 - [x] Boot-session numbered logs (`YYMMDDN.LOG`) on X: continue to contain all subsystems combined
 - [x] Commit: `"kernel: per-subsystem log files"`
 
+---
+
 ## 3. Per-Subsystem Verbosity Control
 Allow silencing verbose subsystems in release builds without recompiling.
 
@@ -107,6 +113,8 @@ Allow silencing verbose subsystems in release builds without recompiling.
 - [x] `klog_load_levels_from_registry()`: reads `HKLM\SYSTEM\Logs\Levels\<tag>` for 16 known subsystems via `RegReadKeyValue()`
 - [x] Default: all subsystems at `LOG_DEBUG` (global min); adjustable via `klog_set_level(NULL, level)` or per-tag
 - [x] Commit: `"kernel: per-subsystem log verbosity control"`
+
+---
 
 ## 4. Log Rotation
 Prevent log files growing unbounded on long-running or repeatedly booted systems.
@@ -119,6 +127,8 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 - [x] Reads `MaxRotated` (default: 3, max: 9) from `HKLM\SYSTEM\Logs\MaxRotated`
 - [x] O(1) check: `kernel_log_size` tracked in static var, updated from `logfile->size` after each flush
 - [x] Commit: `"kernel: log rotation"`
+
+---
 
 ## 5. Rate Limiting
 Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
@@ -133,6 +143,8 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 - [x] Dropped count tracked in `klog_rate_slot_t.dropped` for future `events.jsonl` integration (§6)
 - [x] Commit: `"kernel: log rate limiting"`
 
+---
+
 ## 6. Structured JSON Log Events
 Emit machine-parseable events alongside plain-text logs. Implemented with manual JSON string formatting in `klog_disk.c` -- no cJSON dependency.
 
@@ -145,6 +157,8 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 - [ ] Event viewer reads `events.jsonl` for colour-coded filtering -- → XREF: [13-tools-accessories/TODO-02](../13-tools-accessories/TODO-02-event-viewer.md)
 - [ ] When TODO-27 §7 first writes DUMP_PARTITION_HEADER: add JSON keys dump_encryption_state and dump_present_on_raw for panic or flush paths (names from TODO-27 §10 doc)
 - [x] Commit: `"kernel: structured JSON log events"`
+
+---
 
 ## 7. ETW Tracing Syscalls Wired to SSDT
 Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. This section wires the tracing control syscalls into the SSDT. (→ XREF: TODO-12-native-api-ssdt.md §5, §22)
@@ -162,6 +176,8 @@ Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. T
 > **Implementation notes:** `etw.c` + `etw.h` (new files). Up to 8 concurrent trace sessions with 4 KB circular buffers. SMP-safe via `s_etw_lock` (irqsave spinlock). Registered in `boot_desktop.c` Phase 3 after `ssdt_init()`. 7 unit tests in `test_klog.c` cover struct sizes, SSDT registration, session lifecycle, and event writing.
 
 **Test checkpoint:** `NtCreateTrace` returns valid session handle. `NtTraceEvent` writes event visible via `NtTraceControl` query. `NtStopTrace` + `NtFlushTrace` drain the buffer. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+---
 
 ## 8. Crash-Persistent Log Capture
 
@@ -186,6 +202,8 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 
 **Test checkpoint:** Force a panic with `test=1 crash_test=1` in boot.conf; on next boot, serial shows `[CRASH-PREV]` entries from the previous crash. `crash_recovery.log` contains recovered entries with timestamps. CRC32 mismatch on corrupted region produces `[CRASH-PREV] recovery failed: CRC32 mismatch` on serial. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 9. Per-Entry Context Metadata
 
 Add CPU number, process ID, and thread ID to every klog entry. Windows ETW includes `ProcessId`, `ThreadId`, `ProcessorNumber` on every event. Linux journald stores `_PID`, `_UID`, `_COMM`, `_SYSTEMD_UNIT`. Impossible OS's `klog_entry_t` currently has only `level`, `subsystem`, `timestamp`, `message` -- no process/CPU context. This metadata is essential for diagnosing SMP races and multi-process issues.
@@ -203,6 +221,8 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 - [x] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":0` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 10. Log Integrity Verification
 
@@ -226,6 +246,8 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 11. ETW Provider Registration and Session Filtering
 
 §7 wires the 7 `NtTrace*` session syscalls but ETW is not yet usable by real providers: there is no provider registry (GUID to name to channel), and no per-session filtering, so every `NtTraceEvent` writes to every running session. Windows registers providers via `EtwRegister` + manifest and applies a 64-bit keyword bitmask + level kernel-side before the buffer write. This section adds the missing provider/consumer bridge. (→ XREF: TODO-12 §5 SSDT ETW range; §7 of this TODO.)
@@ -241,6 +263,8 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 **Test checkpoint:** Register a provider GUID, enumerate it by name via `NtQueryTrace`. Enable it into a session with a keyword mask; `NtTraceEvent` with a non-matching keyword does not appear in that session's buffer; a matching event does. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+---
+
 ## 12. ETW Advanced Capture -- Stack-Walk, Autologger, Self-Describing Schema
 
 Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (used by profilers and security root-cause), a boot-persistent autologger session that captures init events before user-mode, and self-describing (TraceLogging-style) event schemas so consumers decode payloads without out-of-band manifests.
@@ -253,6 +277,8 @@ Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (us
 - [ ] Commit: `"kernel: ETW stack-walk, autologger, and self-describing event schema"`
 
 **Test checkpoint:** Enable stack capture on a provider; a logged event carries a non-empty frame array with at least one image+offset resolved. A registry-declared autologger session is active at first user-mode entry. A self-describing event decodes its field names without an external manifest. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
 
 ## 13. Rotated-Log Compression
 
