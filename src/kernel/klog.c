@@ -314,6 +314,7 @@ int klog_disk_enable(void)
 
 #include "kernel/boot_init.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/mm/user_range.h"   /* USER_ELF_END (0x900000) crash-region floor */
 
 /* Serialized entry: no pointers, fixed-size for physical memory layout */
 typedef struct {
@@ -325,7 +326,13 @@ typedef struct {
     uint32_t tid;
     char     subsystem[16];
     char     message[128];
-} klog_crash_entry_t;  /* 160 bytes */
+} klog_crash_entry_t;  /* 164 bytes */
+/* Pin the serialized crash-entry layout: it is the physical-memory format read
+ * back by the next boot's klog_crash_recover, and the persist/recover capacity
+ * math (region_max) divides the region size by this sizeof. A silent field add
+ * would change the on-region format and the entry count without warning. */
+_Static_assert(sizeof(klog_crash_entry_t) == 164,
+               "klog_crash_entry_t serialized layout must stay 164 bytes");
 
 /* Reserved physical memory region for crash log persistence */
 static uint8_t *s_crash_region;       /* phys addr, identity-mapped */
@@ -449,14 +456,17 @@ void klog_crash_recover(void)
             uefi_set_variable(&s_crash_guid, s_crash_varname,
                               CRASH_NVRAM_ATTRS, 0, (const void *)0);
 
-            /* Sanity check: crash region from pmm_alloc_contiguous is
-             * always page-aligned and above the kernel+heap+user area.
-             * Anything below USER_ELF_END (0x900000) overlaps the
-             * kernel image, heap, guard pages, or user ELF range --
-             * stale from a previous build with different memory layout. */
-            if ((prev_phys & 0xFFF) != 0 || prev_phys < 0x900000) {
+            /* Sanity check the NVRAM-supplied physical address before
+             * dereferencing it: a crash region from pmm_alloc_contiguous is
+             * page-aligned, above the kernel+heap+user area (>= USER_ELF_END
+             * 0x900000), and the WHOLE [prev_phys, prev_phys + 128 KiB) range
+             * must sit inside the boot identity map (< BOOT_INFO_EARLY_MAP_END,
+             * no overflow). A stale/crafted value outside that window would fault
+             * or hit MMIO/unowned memory in Phase 0 before any header/CRC check. */
+            if ((prev_phys & 0xFFF) != 0 || prev_phys < USER_ELF_END ||
+                prev_phys > BOOT_INFO_EARLY_MAP_END - (uint64_t)KLOG_CRASH_PAGES * 4096) {
                 klog(LOG_WARN, "boot",
-                     "crash recovery: stale NVRAM address %p -- skipped",
+                     "crash recovery: stale/out-of-range NVRAM address %p -- skipped",
                      prev_phys);
                 goto crash_alloc;
             }
@@ -467,7 +477,15 @@ void klog_crash_recover(void)
 
             if (prev_hdr->magic == KLOG_CRASH_MAGIC) {
                 uint32_t count = prev_hdr->entry_count;
-                if (count > 0 && count <= KLOG_RING_SIZE) {
+                /* Bound by the REGION capacity, not just KLOG_RING_SIZE: a
+                 * 128 KiB region holds fewer than KLOG_RING_SIZE 160-byte
+                 * entries, so a corrupt count in (region_max, KLOG_RING_SIZE]
+                 * would make crash_crc32 read past the reserved region. Must
+                 * match the persist-side clamp (klog_crash_persist max_entries). */
+                uint32_t region_max = (uint32_t)
+                    ((KLOG_CRASH_PAGES * 4096u - sizeof(klog_crash_header_t)) /
+                     sizeof(klog_crash_entry_t));
+                if (count > 0 && count <= KLOG_RING_SIZE && count <= region_max) {
                     klog_crash_entry_t *src = (klog_crash_entry_t *)
                         ((uint8_t *)(uintptr_t)prev_phys + sizeof(klog_crash_header_t));
                     uint32_t expected_crc = prev_hdr->crc32;

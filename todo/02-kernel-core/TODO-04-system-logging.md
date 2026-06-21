@@ -281,13 +281,23 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 - [x] Clears magic cookie after successful recovery; zeros fresh region for new boot
 - [x] POST codes: `POST16(0xDE00)` entry, `POST16(0xDE01)` region allocated, `POST16(0xDE02)` recovery check, `POST16(0xDE03)` done
 - [x] 3 unit tests: KLOG_CRASH_MAGIC value, header size bounds, POST code uniqueness
-- [ ] Verified-persistence flag in `klog_disk_flush()` (set after `kernel.log` open + first non-short `vfs_write`), surfaced via `klog_disk_active()`, gating `POST16_KLOG_DISK_OK` on real persistence not buffer+mount (§1-review gap)
+- [/] Verified-persistence flag gating `POST16_KLOG_DISK_OK` on a real `kernel.log` write (not just buffer+mount) -- deferred: needs a verification-flush flow in `klog_disk_enable()`, a separable boot diagnostic (§1-review gap)
 - [x] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
 
 > [!NOTE]
 > Complementary to TODO-27 crash dumps: TODO-27 captures binary CPU/memory state for WinDbg. §8 captures the text log ring buffer -- the human-readable context most useful for first-pass triage. Both write to physical memory without VFS dependency.
 
 **Test checkpoint:** Force a panic with `test=1 crash_test=1` in boot.conf; on next boot, serial shows `[CRASH-PREV]` entries from the previous crash. `crash_recovery.log` contains recovered entries with timestamps. CRC32 mismatch on corrupted region produces `[CRASH-PREV] recovery failed: CRC32 mismatch` on serial. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_klog crash suite, 0 failures
+> **Notes:**
+> - Crash-persistent ring capture in `src/kernel/klog.c`: `klog_crash_persist` (panic path, no kmalloc/VFS, phys write + CRC32), `klog_crash_recover` (Phase 0 NVRAM+magic+CRC32 validate + replay), `klog_crash_write_to_disk` (Phase 2 -> `X:\Crash`).
+> - 128 KiB region from `pmm_alloc_contiguous`, addr in UEFI NVRAM `ImpossibleCrashLog`; 164-byte fixed entries (`_Static_assert`-pinned); recover bounds entry_count by region capacity + checks the phys addr in `[USER_ELF_END, 4 GiB)` before deref.
+> - Complementary to TODO-27 binary crash dumps; this captures the human-readable text ring for first-pass triage.
+> - Scope: `POST16_KLOG_DISK_OK` real-persistence gating deferred ([/] above) -- needs a verification-flush flow, not crash-persist correctness.
+> **Verified:** 2026-06-21 | ship `62f0a171` + review fixes | 9/10 items | build OK | smoke PASS (TCG 2.69s); 6800 kernel + 16 user PASS
+> **Deferred:** [M] `POST16_KLOG_DISK_OK` is gated on buffer+mount, not a verified `kernel.log` write -> XREF: 02-kernel-core/TODO-04-system-logging.md §8 (item: "Verified-persistence flag gating `POST16_KLOG_DISK_OK`" at line 284)
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
 

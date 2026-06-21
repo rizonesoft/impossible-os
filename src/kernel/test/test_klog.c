@@ -349,9 +349,9 @@ static void test_etw_ssdt_registered(void)
 
 static void test_klog_crash_entry_layout(void)
 {
-    /* Crash entry is 160 bytes (internal type klog_crash_entry_t):
-     * 4 (level) + 4 (timestamp) + 1 (cpu_id) + 3 (pad) +
-     * 4 (pid) + 4 (tid) + 16 (subsystem) + 128 (message) = 164 -> padded */
+    /* Crash entry is 164 bytes (internal type klog_crash_entry_t, pinned by a
+     * _Static_assert in klog.c): 4 (level) + 4 (timestamp) + 1 (cpu_id) + 3 (pad)
+     * + 4 (pid) + 4 (tid) + 16 (subsystem) + 128 (message) = 164 (4-byte aligned) */
     /* We verify indirectly through capacity math */
     uint32_t region_bytes = KLOG_CRASH_PAGES * 4096;
     TEST_ASSERT(region_bytes > sizeof(klog_crash_header_t),
@@ -388,8 +388,8 @@ static void test_klog_crash_region_allocated(void)
     TEST_ASSERT(KLOG_CRASH_PAGES > 0, "KLOG_CRASH_PAGES > 0");
     TEST_ASSERT(KLOG_CRASH_PAGES <= 64,
                 "KLOG_CRASH_PAGES reasonable (<= 64 = 256 KiB)");
-    TEST_ASSERT(KLOG_CRASH_PAGES * 4096 >= sizeof(klog_crash_header_t) + 160,
-                "crash region fits at least header + 1 entry (160 bytes)");
+    TEST_ASSERT(KLOG_CRASH_PAGES * 4096 >= sizeof(klog_crash_header_t) + 164,
+                "crash region fits at least header + 1 entry (164 bytes)");
 }
 
 static void test_klog_crash_capacity(void)
@@ -397,7 +397,7 @@ static void test_klog_crash_capacity(void)
     /* Verify how many entries fit in the crash region */
     uint32_t region_size = KLOG_CRASH_PAGES * 4096;
     uint32_t usable = region_size - (uint32_t)sizeof(klog_crash_header_t);
-    uint32_t max_entries = usable / 160;  /* klog_crash_entry_t = 160 bytes */
+    uint32_t max_entries = usable / 164;  /* klog_crash_entry_t = 164 bytes */
 
     TEST_ASSERT(max_entries >= 10,
                 "crash region fits >= 10 entries");
