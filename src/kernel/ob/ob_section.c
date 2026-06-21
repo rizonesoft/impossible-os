@@ -360,6 +360,16 @@ uintptr_t ObMapViewOfSectionFull(HANDLE_TABLE *ht, HANDLE section_handle,
         return 0;
     }
 
+    /* Require a page-aligned section offset (NT requires SectionOffset aligned
+     * to allocation granularity; page alignment is the floor). vmm_share_user_page
+     * maps page-aligned physical frames, so an unaligned offset would silently
+     * map bytes BEFORE the requested offset and omit the tail -- a wrong-span /
+     * out-of-bounds map of the backing frames. */
+    if (section_offset_bytes & (PMM_FRAME_SIZE - 1)) {
+        spin_unlock_irqrestore(&so->lk, irqf);
+        return 0;
+    }
+
     if (view_size_bytes == 0)
         span = so->size - (uint32_t)section_offset_bytes;
     else {
@@ -436,10 +446,16 @@ uintptr_t ObMapViewOfSectionFull(HANDLE_TABLE *ht, HANDLE section_handle,
                               + (uintptr_t)section_offset_bytes
                               + (uintptr_t)pi * PMM_FRAME_SIZE;
             if (vmm_share_user_page(t->cr3, va_pi, phys_pi) != 0) {
-                /* Partial mapping failure -- roll back installed PTEs.
-                 * Leave already-mapped entries; caller will sys_unmapview
-                 * eventually. The bump pointer stays advanced (simple,
-                 * bounded loss). */
+                /* Partial mapping failure -- UNSHARE the PTEs already installed
+                 * before returning. The view is never recorded (in_use stays 0)
+                 * and the section is never pinned on this path, so nothing else
+                 * can ever tear these down; leaving them mapped would strand user
+                 * PTEs onto frames that section_on_delete is free to release ==
+                 * a cross-process use-after-free / info-leak boundary. */
+                uint32_t pj;
+                for (pj = 0; pj < pi; pj++)
+                    vmm_unshare_user_page(t->cr3,
+                        user_va + (uintptr_t)pj * PMM_FRAME_SIZE);
                 so->views[i].in_use = 0;
                 spin_unlock_irqrestore(&so->lk, irqf);
                 klog(LOG_WARN, "ob",

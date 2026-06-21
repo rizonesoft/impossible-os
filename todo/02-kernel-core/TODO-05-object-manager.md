@@ -57,7 +57,7 @@ title: "TODO-05 -- Object Manager"
 | 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [/]   |
 | 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [/]   |
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [/]   |
-| 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
+| 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [/]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T15 §1,§3  |  [x]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T15 §4     |  [x]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
@@ -263,6 +263,21 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 - [x] `ObUnmapViewOfSection(process, base_address)` -- removes VMM mappings; does not free physical pages until refcount drops to 0
 - [x] Re-implement `SYS_SHMEM_CREATE` / `SYS_SHMEM_MAP` as thin wrappers over the Ob section API
 - [x] Commit: `"kernel: ob -- section object type and view mapping"`
+- [ ] **Move section PTE install/teardown outside `so->lk`**: the map loop holds the per-section spinlock across up to 64K `vmm_share_user_page` calls (alloc/split/flush) -- snapshot under lock, do PTE work after unlock, reacquire to commit
+- [ ] **`ObUnmapViewOfSection` (handle path) must clear user PTEs** like `ObUnmapViewOfSectionByBase`: today it drops the section pin without `vmm_unshare_user_page`, so frames can be freed while still mapped (shared teardown helper)
+- [ ] **Resolve section views without a live handle**: a view outlives its handle (per-view pin), so map -> close-handle -> unmap-by-base leaks the view + frames; track views task-side by base (XREF: §4 view-base index)
+
+> **Notes:**
+> - `ObpSectionType` (`ob_section.c`): contiguous frames (`pmm_alloc_contiguous`), per-section `so->lk`, `SECTION_MAX_VIEWS` view table; map installs per-task user PTEs (`vmm_share_user_page`) at a bump VA; `section_on_delete` frees frames at last ref.
+> - Review fix (Critical): a partial map failure now `vmm_unshare_user_page`s the PTEs already installed before returning, instead of stranding user mappings onto frames `section_on_delete` could free.
+> - Review fix (Medium): `section_offset_bytes` rejected if not page-aligned, closing the unaligned-offset wrong-span map.
+> - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
+> - Open (deferred above): map holds `so->lk` across PTE install, handle-path unmap lacks PTE teardown, base-unmap can't find a view after handle close -- focused mapping rework; create/map/unmap-by-base work.
+> **Verified:** 2026-06-21 | ship `4bca949c` + review fixes | 5/8 items | build OK | tests 327/327 PASS (SUITE=ob)
+> **Deferred:** [H] the map path holds the per-section `so->lk` across up to 64K `vmm_share_user_page` calls (long IRQ-off hold, lock-order risk) -> XREF: 02-kernel-core/TODO-05 §7 (item: "Move section PTE install/teardown outside `so->lk`" at line 266)
+> **Deferred:** [H] `ObUnmapViewOfSection` (handle path) drops the section pin without clearing user PTEs, so frames can be freed while still mapped -> XREF: 02-kernel-core/TODO-05 §7 (item: "`ObUnmapViewOfSection` (handle path) must clear user PTEs" at line 267)
+> **Deferred:** [M] a view outlives its section handle, so base-unmap (handle-table scan) can't find it -> XREF: 02-kernel-core/TODO-05 §7 (item: "Resolve section views without a live handle" at line 268)
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Critical+1M fixed, 2H+1M deferred | scope: kernel-code-quality
 
 ---
 
