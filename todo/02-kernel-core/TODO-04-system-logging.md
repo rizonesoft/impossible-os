@@ -60,7 +60,7 @@ title: "TODO-04 -- System Logging"
 | ⭐  | Order | Deliverable                         | Depends On     | Status |
 | --- | :---: | ----------------------------------- | -------------- | :----: |
 | 💎  |   1   | Boot-phase aware klog init          | T01 §1         |  [x]   |
-| 💎  |   2   | Per-subsystem log splitting         | §1             |  [x]   |
+| 💎  |   2   | Per-subsystem log splitting         | §1             |  [/]   |
 | 💎  |   3   | Per-subsystem verbosity control     | §2             |  [x]   |
 | 💎  |   4   | Log rotation                        | §2             |  [x]   |
 | 💎  |   5   | Rate limiting                       | §2             |  [x]   |
@@ -112,7 +112,23 @@ Route log entries to dedicated per-subsystem log files based on the subsystem ta
 - [x] Route entries in the flush loop: after writing to `kernel.log`, iterate each subsystem file and append matching entries
 - [x] Fall back to `kernel.log` for unknown tags -- `dispatch_filename()` returns "kernel.log" for unmatched
 - [x] Boot-session numbered logs (`YYMMDDN.LOG`) on X: continue to contain all subsystems combined
+- [x] Per-subsystem files now created on first write (`vfs_open ... VFS_O_CREATE`) so the X:\Logs BlackBox path (dirs-only skeleton) gets the split logs, not just `kernel.log` (§2 review fixed silent-skip)
+- [ ] Live-mode (C:\DEBUG) runs per-subsystem routing on every per-line `klog_disk_flush()` -- batch it to periodic/final drains (needs `klog_disk_flush_all` to clear `live_enabled` so the drain still routes) (§2 review perf)
 - [x] Commit: `"kernel: per-subsystem log files"`
+
+**Test checkpoint:** after a flush, `X:\Logs\network.log` / `boot.log` / `fs.log` / `mm.log` / `drivers.log` / `security.log` exist and contain their tagged entries (not just `kernel.log`); an unknown tag routes to `kernel.log`; the numbered boot log keeps all subsystems combined. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Notes:**
+> - Shipped per-subsystem log splitting in `klog_disk.c`: `s_dispatch[]` tag-to-file table + `dispatch_filename`/`klog_dispatch_slot` (kernel.log fallback), single-pass `slot_of[]` routing in the flush.
+> - §2 review fixed a [H] false-completeness bug: split files were never created on the primary X:\Logs BlackBox path (dirs-only skeleton + `VFS_O_WRITE` open), leaving only kernel.log; now opened `VFS_O_WRITE | VFS_O_CREATE`.
+> - Routing is lock-free (ring read without s_klog_lock; no ring lock across VFS I/O), serialized by the `flushing` guard.
+> - Canonical doc: `src/kernel/klog_disk.c` dispatch/flush banner.
+> - Scope boundary: §2 owns routing + file creation; rotation of split files is §4, the raw-subsystem-pointer lifetime is §9, rate limiting is §5.
+> **Verified:** 2026-06-21 | ship `c055339f` + review fixes | 6/7 items | build OK | smoke PASS (TCG 2.75s); 6800 kernel + 16 user PASS
+> **Accepted:** [M] per-subsystem split logs bypass rotation (grow past MaxSize) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "Rotate the per-subsystem split logs")
+> **Accepted:** [M] ring stores the raw caller `subsystem` pointer (delayed-routing lifetime hazard) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Store the subsystem tag as a bounded `char[16]` copy")
+> **Deferred:** [M] live-mode (C:\DEBUG) runs per-subsystem routing on every per-line flush (VFS churn) (reason: in-scope perf, needs live_enabled-clear semantics) -> XREF: 02-kernel-core/TODO-04-system-logging.md §2 (item: "Live-mode (C:\DEBUG) runs per-subsystem routing")
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf) + auditor | 1H fixed, 3M deferred | scope: kernel-code-quality
 
 ---
 
@@ -138,6 +154,7 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 - [x] `load_rotation_config()` reads `MaxSize` (default: 4 MB) from `HKLM\SYSTEM\Logs\MaxSize` via `RegReadKeyValue()`
 - [x] Reads `MaxRotated` (default: 3, max: 9) from `HKLM\SYSTEM\Logs\MaxRotated`
 - [x] O(1) check: `kernel_log_size` tracked in static var, updated from `logfile->size` after each flush
+- [ ] Rotate the per-subsystem split logs: `klog_disk_flush_locked`'s subsystem loop appends to `network/boot/fs/mm/drivers/security.log` without `rotate_log_file()`, so a high-volume subsystem grows past MaxSize (§2 review)
 - [x] Commit: `"kernel: log rotation"`
 
 ---
@@ -231,6 +248,7 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 - [x] Update serial output format: append `[cpu:N]` after the timestamp when SMP is ready or cpu_id > 0 (skipped during single-CPU early boot)
 - [x] Update `klog_crash_persist()` (§8): `klog_crash_entry_t` extended with cpu_id/pid/tid fields (160 bytes); serialization copies new fields
 - [x] Add debug POST codes: `POST16_KLOG_CTX` (0xDE10), `POST16_KLOG_CTX_STRUCT` (0xDE11), `POST16_KLOG_CTX_SERIAL` (0xDE12), `POST16_KLOG_CTX_JSON` (0xDE13) -- range 0xDE1x confirmed free
+- [ ] Store the subsystem tag as a bounded `char[16]` copy (like the crash-snapshot path) in `klog_entry_t` instead of the raw caller pointer (`klog.c` `e->subsystem = subsystem`), so delayed disk routing cannot deref a freed tag (§2 review)
 - [x] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":0` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.

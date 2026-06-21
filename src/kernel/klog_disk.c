@@ -973,7 +973,11 @@ static void klog_disk_flush_locked(void)
                     for (k = 0; fname[k]; k++) spath[sp++] = fname[k];
                     spath[sp] = '\0';
 
-                    sf = vfs_open(spath, VFS_O_WRITE);
+                    /* VFS_O_CREATE: the X:\Logs BlackBox skeleton creates only
+                     * directories, so the per-subsystem files must be created
+                     * on first write or every split log is silently skipped
+                     * (kernel.log alone would persist). */
+                    sf = vfs_open(spath, VFS_O_WRITE | VFS_O_CREATE);
                     if (!sf)
                         continue;
                     woff = (uint32_t)sf->size;
