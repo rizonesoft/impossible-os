@@ -368,15 +368,21 @@ One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompat
 
 Zstandard is now a first-class compression baseline on both platforms: Linux ships `lib/zstd` in-kernel (btrfs/squashfs/zram/kernel image since 4.14) and Windows 11 24H2 ReFS volume compression offers selectable LZ4 **and** ZSTD levels. zstd delivers a deflate-class (or better) ratio at LZ4-class decompression speed, the right codec where ratio matters more than the raw write throughput LZ4 targets. This section owns the freestanding zstd codec; consumers select per-use between LZ4 (§3, speed) and zstd (§9, ratio). Source is NOT yet vendored (the headless runner has no network); the first item follows the same operator-fetch path that unblocked §3/§4.
 
-- [ ] Vendor zstd source (BSD-3 / dual GPLv2) into `src/libs/zstd/`: official single-file amalgamation (`zstd.c`/`zstd.h` from `contrib/single_file_libs`), or `zstddeclib` if decoder-first; record version + LICENSE
-- [ ] Compile `-ffreestanding -nostdlib`; route `ZSTD_customMem` alloc/free to `kmalloc`/`kfree` for state (<= 4 KiB) and `pmm_alloc_contiguous()` for window/output buffers > 4 KiB
-- [ ] Expose the single-shot block API in `include/libs/zstd.h`: `zstd_compress(src, len, dst, cap, level)`, `zstd_decompress(src, len, dst, cap)`, `zstd_compress_bound(len)` (all return size or -1)
-- [ ] Untrusted-frame hardening: reject a frame whose declared content size exceeds `dst_cap`; cap the decode window to a kernel-safe maximum; return -1 (never panic) on malformed input
-- [ ] Makefile build rule for `src/libs/zstd/` (the tree stays excluded from the C-source auto-glob until ported, matching the LZ4/miniz pattern)
-- [ ] Wire into IXFS transparent compression as the `algo=2` (Zstd) path -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
+- [/] Vendor zstd source (BSD-3 / dual GPLv2) into `src/libs/zstd/` -- BLOCKED: source not vendored and the headless runner has no network; needs the same operator interactive-fetch that vendored LZ4/miniz/mbedtls
+- [/] Compile `-ffreestanding -nostdlib`; route `ZSTD_customMem` alloc/free -- same allocator blocker as §4 (zstd CCtx + decode window far exceed the 4 KiB `kmalloc` ceiling; per-call `pmm` is racy), so state must be a caller-provided workspace
+- [/] Expose the single-shot block API in `include/libs/zstd.h` -- DEFERRED with the port
+- [/] Untrusted-frame hardening (reject declared content size > `dst_cap`; cap decode window; never panic) -- DEFERRED with the port
+- [/] Makefile build rule for `src/libs/zstd/` -- DEFERRED with the port
+- [/] Wire into IXFS transparent compression as the `algo=2` (Zstd) path -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
 - [ ] Commit: `"libs: Zstandard freestanding port -- zstd_compress/decompress/bound, kmalloc+pmm allocator hooks"`
 
 **Test checkpoint:** 64 KiB structured buffer round-trips through `zstd_compress` (level 3) / `zstd_decompress` byte-for-byte; `zstd_compress_bound(65536)` >= actual compressed size; a frame declaring content size larger than `dst_cap` is rejected without overrun; decode of a malformed frame returns -1 without panic; `klog(LOG_INFO, "zstd", ...)` selftest line on boot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Notes:**
+> - DEFERRED whole-section: zstd source is NOT vendored and the headless runner has no network to fetch it -- needs an operator interactive-fetch (the path that vendored LZ4/miniz/mbedtls).
+> - Second blocker: zstd's CCtx + multi-MB decode window far exceed the 4 KiB `kmalloc` ceiling and per-call `pmm` is unsynchronized (the §3/§4 allocator blocker), so the port needs a caller-provided workspace owned by the IXFS consumer.
+> - Scope boundary: §3 owns LZ4 (speed codec); §9 owns the zstd ratio codec; IXFS §3 selects `algo=2` once both source + workspace land.
+> **Deferred:** [H] zstd freestanding port -- source not vendored (headless no network) + no SMP-safe allocation path (CCtx/window exceed kmalloc ceiling, pmm unsynchronized) + no consumer-owned workspace yet (reason: infra -- operator fetch + consumer workspace) -> XREF: 05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3 (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
 
 ---
 
