@@ -27,6 +27,8 @@
 #include "kernel/kchecksum.h"
 #include "kernel/kcodec.h"
 #include "libs/lz4.h"
+#include "kernel/crypto/sha3.h"
+#include "kernel/crypto/hash.h"
 #include "kernel/cpuid.h"
 #include "kernel/mm/heap.h"
 #include "libs/monocypher/monocypher.h"
@@ -1128,12 +1130,289 @@ static void test_lz4_block(void)
                    "lz4_compress_bound returns 0 for oversized input");
 }
 
+/* ---- SHA-3 / SHAKE (section 10), NIST FIPS 202 known-answer vectors ---- */
+
+static const uint8_t k_sha3_256_empty[32] = {
+    0xa7, 0xff, 0xc6, 0xf8, 0xbf, 0x1e, 0xd7, 0x66,
+    0x51, 0xc1, 0x47, 0x56, 0xa0, 0x61, 0xd6, 0x62,
+    0xf5, 0x80, 0xff, 0x4d, 0xe4, 0x3b, 0x49, 0xfa,
+    0x82, 0xd8, 0x0a, 0x4b, 0x80, 0xf8, 0x43, 0x4a };
+static const uint8_t k_sha3_256_abc[32] = {
+    0x3a, 0x98, 0x5d, 0xa7, 0x4f, 0xe2, 0x25, 0xb2,
+    0x04, 0x5c, 0x17, 0x2d, 0x6b, 0xd3, 0x90, 0xbd,
+    0x85, 0x5f, 0x08, 0x6e, 0x3e, 0x9d, 0x52, 0x5b,
+    0x46, 0xbf, 0xe2, 0x45, 0x11, 0x43, 0x15, 0x32 };
+static const uint8_t k_sha3_512_abc[64] = {
+    0xb7, 0x51, 0x85, 0x0b, 0x1a, 0x57, 0x16, 0x8a,
+    0x56, 0x93, 0xcd, 0x92, 0x4b, 0x6b, 0x09, 0x6e,
+    0x08, 0xf6, 0x21, 0x82, 0x74, 0x44, 0xf7, 0x0d,
+    0x88, 0x4f, 0x5d, 0x02, 0x40, 0xd2, 0x71, 0x2e,
+    0x10, 0xe1, 0x16, 0xe9, 0x19, 0x2a, 0xf3, 0xc9,
+    0x1a, 0x7e, 0xc5, 0x76, 0x47, 0xe3, 0x93, 0x40,
+    0x57, 0x34, 0x0b, 0x4c, 0xf4, 0x08, 0xd5, 0xa5,
+    0x65, 0x92, 0xf8, 0x27, 0x4e, 0xec, 0x53, 0xf0 };
+static const uint8_t k_sha3_384_abc[48] = {
+    0xec, 0x01, 0x49, 0x82, 0x88, 0x51, 0x6f, 0xc9,
+    0x26, 0x45, 0x9f, 0x58, 0xe2, 0xc6, 0xad, 0x8d,
+    0xf9, 0xb4, 0x73, 0xcb, 0x0f, 0xc0, 0x8c, 0x25,
+    0x96, 0xda, 0x7c, 0xf0, 0xe4, 0x9b, 0xe4, 0xb2,
+    0x98, 0xd8, 0x8c, 0xea, 0x92, 0x7a, 0xc7, 0xf5,
+    0x39, 0xf1, 0xed, 0xf2, 0x28, 0x37, 0x6d, 0x25 };
+static const uint8_t k_shake128_empty16[16] = {
+    0x7f, 0x9c, 0x2b, 0xa4, 0xe8, 0x8f, 0x82, 0x7d,
+    0x61, 0x60, 0x45, 0x50, 0x76, 0x05, 0x85, 0x3e };
+static const uint8_t k_shake256_empty32[32] = {
+    0x46, 0xb9, 0xdd, 0x2b, 0x0b, 0xa8, 0x8d, 0x13,
+    0x23, 0x3b, 0x3f, 0xeb, 0x74, 0x3e, 0xeb, 0x24,
+    0x3f, 0xcd, 0x52, 0xea, 0x62, 0xb8, 0x1b, 0x82,
+    0xb5, 0x0c, 0x27, 0x64, 0x6e, 0xd5, 0x76, 0x2f };
+
+/* Independent SHA3-256 vectors (computed with Python hashlib, a separate
+ * implementation) for the boundary message lengths around the rate (136):
+ * 135 puts the domain delimiter at pos rate-1 (same byte as 0x80), 136 fills a
+ * whole block, 137 spills one byte into a second block. These prove the
+ * pad10*1 logic against an external reference, not just self-consistency.
+ * msg[i] = (uint8_t)(i * 131 + 17), matching test_sha3_streaming's fixture. */
+static const uint8_t k_sha3_256_msg135[32] = {
+    0x7d, 0xe7, 0x58, 0x58, 0x33, 0xb3, 0xfa, 0x0a,
+    0x7b, 0xfd, 0xfd, 0x08, 0xe1, 0x78, 0xfa, 0x02,
+    0x6b, 0xd3, 0x01, 0xe1, 0x51, 0xb0, 0x7b, 0x8e,
+    0x2a, 0x43, 0x04, 0xd1, 0x3b, 0x27, 0x23, 0xb5 };
+static const uint8_t k_sha3_256_msg136[32] = {
+    0xa0, 0xcf, 0x25, 0xdf, 0xe0, 0x9b, 0x49, 0xb6,
+    0x36, 0x09, 0xa1, 0x77, 0x9d, 0xc9, 0xe6, 0x40,
+    0xd6, 0xf8, 0x09, 0xde, 0xbc, 0x8d, 0x2c, 0x8a,
+    0xbc, 0x19, 0xac, 0x79, 0x82, 0x9b, 0x47, 0x15 };
+static const uint8_t k_sha3_256_msg137[32] = {
+    0x2d, 0xb9, 0x9a, 0xaf, 0xa8, 0x56, 0x72, 0x39,
+    0x98, 0xc7, 0xe9, 0x2b, 0x4e, 0xd2, 0x93, 0xc0,
+    0x1a, 0xce, 0x3a, 0xab, 0x3f, 0x61, 0xb0, 0xf4,
+    0xf8, 0xb2, 0x40, 0x2c, 0xfe, 0xdd, 0x64, 0x10 };
+
+/* SHAKE128/256("") squeezed to 200 bytes (Python hashlib): crosses the rate
+ * block (168 / 136) so the squeeze-permute branch is exercised. */
+static const uint8_t k_shake128_empty200[200] = {
+    0x7f, 0x9c, 0x2b, 0xa4, 0xe8, 0x8f, 0x82, 0x7d, 0x61, 0x60, 0x45, 0x50, 0x76, 0x05, 0x85, 0x3e,
+    0xd7, 0x3b, 0x80, 0x93, 0xf6, 0xef, 0xbc, 0x88, 0xeb, 0x1a, 0x6e, 0xac, 0xfa, 0x66, 0xef, 0x26,
+    0x3c, 0xb1, 0xee, 0xa9, 0x88, 0x00, 0x4b, 0x93, 0x10, 0x3c, 0xfb, 0x0a, 0xee, 0xfd, 0x2a, 0x68,
+    0x6e, 0x01, 0xfa, 0x4a, 0x58, 0xe8, 0xa3, 0x63, 0x9c, 0xa8, 0xa1, 0xe3, 0xf9, 0xae, 0x57, 0xe2,
+    0x35, 0xb8, 0xcc, 0x87, 0x3c, 0x23, 0xdc, 0x62, 0xb8, 0xd2, 0x60, 0x16, 0x9a, 0xfa, 0x2f, 0x75,
+    0xab, 0x91, 0x6a, 0x58, 0xd9, 0x74, 0x91, 0x88, 0x35, 0xd2, 0x5e, 0x6a, 0x43, 0x50, 0x85, 0xb2,
+    0xba, 0xdf, 0xd6, 0xdf, 0xaa, 0xc3, 0x59, 0xa5, 0xef, 0xbb, 0x7b, 0xcc, 0x4b, 0x59, 0xd5, 0x38,
+    0xdf, 0x9a, 0x04, 0x30, 0x2e, 0x10, 0xc8, 0xbc, 0x1c, 0xbf, 0x1a, 0x0b, 0x3a, 0x51, 0x20, 0xea,
+    0x17, 0xcd, 0xa7, 0xcf, 0xad, 0x76, 0x5f, 0x56, 0x23, 0x47, 0x4d, 0x36, 0x8c, 0xcc, 0xa8, 0xaf,
+    0x00, 0x07, 0xcd, 0x9f, 0x5e, 0x4c, 0x84, 0x9f, 0x16, 0x7a, 0x58, 0x0b, 0x14, 0xaa, 0xbd, 0xef,
+    0xae, 0xe7, 0xee, 0xf4, 0x7c, 0xb0, 0xfc, 0xa9, 0x76, 0x7b, 0xe1, 0xfd, 0xa6, 0x94, 0x19, 0xdf,
+    0xb9, 0x27, 0xe9, 0xdf, 0x07, 0x34, 0x8b, 0x19, 0x66, 0x91, 0xab, 0xae, 0xb5, 0x80, 0xb3, 0x2d,
+    0xef, 0x58, 0x53, 0x8b, 0x8d, 0x23, 0xf8, 0x77 };
+static const uint8_t k_shake256_empty200[200] = {
+    0x46, 0xb9, 0xdd, 0x2b, 0x0b, 0xa8, 0x8d, 0x13, 0x23, 0x3b, 0x3f, 0xeb, 0x74, 0x3e, 0xeb, 0x24,
+    0x3f, 0xcd, 0x52, 0xea, 0x62, 0xb8, 0x1b, 0x82, 0xb5, 0x0c, 0x27, 0x64, 0x6e, 0xd5, 0x76, 0x2f,
+    0xd7, 0x5d, 0xc4, 0xdd, 0xd8, 0xc0, 0xf2, 0x00, 0xcb, 0x05, 0x01, 0x9d, 0x67, 0xb5, 0x92, 0xf6,
+    0xfc, 0x82, 0x1c, 0x49, 0x47, 0x9a, 0xb4, 0x86, 0x40, 0x29, 0x2e, 0xac, 0xb3, 0xb7, 0xc4, 0xbe,
+    0x14, 0x1e, 0x96, 0x61, 0x6f, 0xb1, 0x39, 0x57, 0x69, 0x2c, 0xc7, 0xed, 0xd0, 0xb4, 0x5a, 0xe3,
+    0xdc, 0x07, 0x22, 0x3c, 0x8e, 0x92, 0x93, 0x7b, 0xef, 0x84, 0xbc, 0x0e, 0xab, 0x86, 0x28, 0x53,
+    0x34, 0x9e, 0xc7, 0x55, 0x46, 0xf5, 0x8f, 0xb7, 0xc2, 0x77, 0x5c, 0x38, 0x46, 0x2c, 0x50, 0x10,
+    0xd8, 0x46, 0xc1, 0x85, 0xc1, 0x51, 0x11, 0xe5, 0x95, 0x52, 0x2a, 0x6b, 0xcd, 0x16, 0xcf, 0x86,
+    0xf3, 0xd1, 0x22, 0x10, 0x9e, 0x3b, 0x1f, 0xdd, 0x94, 0x3b, 0x6a, 0xec, 0x46, 0x8a, 0x2d, 0x62,
+    0x1a, 0x7c, 0x06, 0xc6, 0xa9, 0x57, 0xc6, 0x2b, 0x54, 0xda, 0xfc, 0x3b, 0xe8, 0x75, 0x67, 0xd6,
+    0x77, 0x23, 0x13, 0x95, 0xf6, 0x14, 0x72, 0x93, 0xb6, 0x8c, 0xea, 0xb7, 0xa9, 0xe0, 0xc5, 0x8d,
+    0x86, 0x4e, 0x8e, 0xfd, 0xe4, 0xe1, 0xb9, 0xa4, 0x6c, 0xbe, 0x85, 0x47, 0x13, 0x67, 0x2f, 0x5c,
+    0xaa, 0xae, 0x31, 0x4e, 0xd9, 0x08, 0x3d, 0xab };
+/* SHA-256("") and SHA-384("abc") -- dispatch-table SHA-2 anchors. */
+static const uint8_t k_sha256_empty[32] = {
+    0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
+    0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+    0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
+    0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55 };
+static const uint8_t k_sha384_abc[48] = {
+    0xcb, 0x00, 0x75, 0x3f, 0x45, 0xa3, 0x5e, 0x8b,
+    0xb5, 0xa0, 0x3d, 0x69, 0x9a, 0xc6, 0x50, 0x07,
+    0x27, 0x2c, 0x32, 0xab, 0x0e, 0xde, 0xd1, 0x63,
+    0x1a, 0x8b, 0x60, 0x5a, 0x43, 0xff, 0x5b, 0xed,
+    0x80, 0x86, 0x07, 0x2b, 0xa1, 0xe7, 0xcc, 0x23,
+    0x58, 0xba, 0xec, 0xa1, 0x34, 0xc8, 0x25, 0xa7 };
+
+static void test_sha3_kat(void)
+{
+    uint8_t out[64];
+
+    sha3_256("", 0, out);
+    TEST_ASSERT_EQ(memcmp(out, k_sha3_256_empty, 32), 0, "SHA3-256(\"\") NIST KAT");
+    sha3_256("abc", 3, out);
+    TEST_ASSERT_EQ(memcmp(out, k_sha3_256_abc, 32), 0, "SHA3-256(\"abc\") NIST KAT");
+    sha3_384("abc", 3, out);
+    TEST_ASSERT_EQ(memcmp(out, k_sha3_384_abc, 48), 0, "SHA3-384(\"abc\") NIST KAT");
+    sha3_512("abc", 3, out);
+    TEST_ASSERT_EQ(memcmp(out, k_sha3_512_abc, 64), 0, "SHA3-512(\"abc\") NIST KAT");
+
+    uint8_t xof[32];
+    TEST_ASSERT_EQ(shake128("", 0, xof, 16), 16, "shake128 returns out_len");
+    TEST_ASSERT_EQ(memcmp(xof, k_shake128_empty16, 16), 0, "SHAKE128(\"\") NIST KAT");
+    TEST_ASSERT_EQ(shake256("", 0, xof, 32), 32, "shake256 returns out_len");
+    TEST_ASSERT_EQ(memcmp(xof, k_shake256_empty32, 32), 0, "SHAKE256(\"\") NIST KAT");
+
+    /* Multi-block squeeze (200 bytes > rate 168/136) exercises the
+     * permute-between-output-blocks path against an independent vector. The
+     * SHAKE_MAX_OUTPUT cap test needs a full page, so use pmm (keeps the test
+     * BSS under the 0x800000 user base) rather than a 4 KiB static buffer. */
+    uintptr_t big_phys = pmm_alloc_contiguous(1);
+    TEST_ASSERT(big_phys != 0, "test alloc page for SHAKE squeeze");
+    uint8_t *big = (uint8_t *)big_phys;
+    TEST_ASSERT_EQ(shake128("", 0, big, 200), 200, "shake128 200B returns len");
+    TEST_ASSERT_EQ(memcmp(big, k_shake128_empty200, 200), 0, "SHAKE128 200B KAT");
+    TEST_ASSERT_EQ(shake256("", 0, big, 200), 200, "shake256 200B returns len");
+    TEST_ASSERT_EQ(memcmp(big, k_shake256_empty200, 200), 0, "SHAKE256 200B KAT");
+
+    /* Cap boundary: exactly SHAKE_MAX_OUTPUT succeeds, +1 fails; the first 200
+     * bytes of the max squeeze still match the independent stream. */
+    TEST_ASSERT_EQ(shake128("", 0, big, SHAKE_MAX_OUTPUT), (int)SHAKE_MAX_OUTPUT,
+                   "shake128 accepts out_len == SHAKE_MAX_OUTPUT");
+    TEST_ASSERT_EQ(memcmp(big, k_shake128_empty200, 200), 0,
+                   "SHAKE128 max-squeeze prefix matches stream");
+    pmm_free_frame(big_phys);
+
+    /* SHAKE over-cap + bad-arg rejection. */
+    TEST_ASSERT_EQ(shake128("", 0, xof, SHAKE_MAX_OUTPUT + 1), -1,
+                   "shake128 rejects over-cap out_len");
+    TEST_ASSERT_EQ(shake256("", 0, NULL, 16), -1, "shake256 rejects NULL out");
+    TEST_ASSERT_EQ(shake128("", 0, xof, 0), -1, "shake128 rejects zero out_len");
+    TEST_ASSERT_EQ(shake128(NULL, 8, xof, 16), -1,
+                   "shake128 rejects NULL data with non-zero len");
+
+    /* Direct fixed-output API fails closed on bad args (matches SHA-2): a
+     * NULL/zero-length update is a no-op, NULL ctx/out are no-ops. */
+    struct sha3_ctx g;
+    sha3_256_init(&g);
+    sha3_update(&g, NULL, 0);          /* no-op separator, must not fault */
+    sha3_update(&g, "abc", 3);
+    TEST_ASSERT_EQ(sha3_final(&g, out, sizeof(out)), 32, "sha3_final returns 32");
+    TEST_ASSERT_EQ(memcmp(out, k_sha3_256_abc, 32), 0,
+                   "NULL/0 update is a no-op (digest still SHA3-256(abc))");
+
+    /* Malformed / uninitialized context fails closed -- a zeroed rate (0) would
+     * underflow rate-1 into an OOB index; the validator rejects it with no
+     * write and no state touch. */
+    struct sha3_ctx bad;
+    memset(&bad, 0, sizeof(bad)); /* rate == 0 -> invalid */
+    uint8_t sentinel[64];
+    memset(sentinel, 0xCC, sizeof(sentinel));
+    TEST_ASSERT_EQ(sha3_final(&bad, sentinel, sizeof(sentinel)), -1,
+                   "sha3_final on zeroed ctx rejects");
+    TEST_ASSERT(sentinel[0] == 0xCC, "sha3_final on zeroed ctx writes nothing");
+    bad.rate = 99u; /* unknown (non-Keccak) rate */
+    bad.pos = 5u;
+    sha3_update(&bad, "x", 1);
+    TEST_ASSERT_EQ(bad.pos, 5u, "sha3_update on invalid-rate ctx is a no-op");
+
+    /* Cross-variant corruption: a SHA3-256 ctx (32-byte buffer) whose rate is
+     * overwritten to a valid-but-larger-digest rate (72 -> 64-byte digest) must
+     * NOT write past the caller's 32-byte capacity -- out_cap bounds it. */
+    struct sha3_ctx cv;
+    sha3_256_init(&cv);
+    sha3_update(&cv, "abc", 3);
+    cv.rate = 72u; /* corrupted 136 -> 72 (SHA3-512 rate; digest would be 64) */
+    memset(sentinel, 0xCC, sizeof(sentinel));
+    TEST_ASSERT_EQ(sha3_final(&cv, sentinel, 32), -1,
+                   "sha3_final rejects when corrupted rate digest > out_cap");
+    for (uint32_t i = 0; i < sizeof(sentinel); i++) {
+        TEST_ASSERT(sentinel[i] == 0xCC, "no byte written past out_cap on reject");
+    }
+}
+
+/* Streaming == one-shot across rate boundaries -- exercises the pad10*1 block
+ * edge (SHA3-256 rate 136: lengths 135/136/137 put the domain delimiter at
+ * pos rate-1 / 0 / 1) and multi-block absorb, fed in odd chunk sizes. */
+static void test_sha3_streaming(void)
+{
+    static uint8_t msg[280];
+    uint8_t one[32], strm[32];
+    const uint32_t lens[] = { 1, 135, 136, 137, 168, 271, 272 };
+    const uint32_t chunks[] = { 1, 7, 64, 136 };
+
+    for (uint32_t i = 0; i < sizeof(msg); i++) {
+        msg[i] = (uint8_t)(i * 131u + 17u);
+    }
+
+    /* Anchor the boundary lengths against independent (Python hashlib) vectors
+     * so a shared pad bug cannot pass via self-comparison alone. */
+    sha3_256(msg, 135, one);
+    TEST_ASSERT_EQ(memcmp(one, k_sha3_256_msg135, 32), 0, "SHA3-256 len=135 (pad pos rate-1) KAT");
+    sha3_256(msg, 136, one);
+    TEST_ASSERT_EQ(memcmp(one, k_sha3_256_msg136, 32), 0, "SHA3-256 len=136 (full block) KAT");
+    sha3_256(msg, 137, one);
+    TEST_ASSERT_EQ(memcmp(one, k_sha3_256_msg137, 32), 0, "SHA3-256 len=137 (spill) KAT");
+
+    for (uint32_t li = 0; li < sizeof(lens) / sizeof(lens[0]); li++) {
+        uint32_t len = lens[li];
+        sha3_256(msg, len, one);
+        for (uint32_t ci = 0; ci < sizeof(chunks) / sizeof(chunks[0]); ci++) {
+            struct sha3_ctx ctx;
+            sha3_256_init(&ctx);
+            for (uint32_t off = 0; off < len; off += chunks[ci]) {
+                uint32_t n = chunks[ci];
+                if (off + n > len) n = len - off;
+                sha3_update(&ctx, msg + off, n);
+            }
+            TEST_ASSERT_EQ(sha3_final(&ctx, strm, sizeof(strm)), 32,
+                           "sha3_final returns digest len");
+            TEST_ASSERT_EQ(memcmp(one, strm, 32), 0,
+                           "SHA3-256 streaming == one-shot across rate boundary");
+        }
+    }
+}
+
+static void test_crypto_hash_dispatch(void)
+{
+    /* Table-driven across every advertised algorithm so a swapped/missing arm
+     * or wrong digest_len for any of the five fails the suite. */
+    struct { crypto_hash_alg_t alg; const char *in; uint32_t inlen;
+             uint32_t dlen; const uint8_t *kat; } cases[] = {
+        { CRYPTO_HASH_SHA256,   "",    0, 32, k_sha256_empty },
+        { CRYPTO_HASH_SHA384,   "abc", 3, 48, k_sha384_abc },
+        { CRYPTO_HASH_SHA3_256, "",    0, 32, k_sha3_256_empty },
+        { CRYPTO_HASH_SHA3_384, "abc", 3, 48, k_sha3_384_abc },
+        { CRYPTO_HASH_SHA3_512, "abc", 3, 64, k_sha3_512_abc },
+    };
+    uint8_t out[64];
+
+    for (uint32_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        TEST_ASSERT_EQ(crypto_hash_digest_len(cases[i].alg), cases[i].dlen,
+                       "dispatch digest_len matches alg");
+        TEST_ASSERT_EQ(crypto_hash(cases[i].alg, cases[i].in, cases[i].inlen,
+                                   out, sizeof(out)), (int)cases[i].dlen,
+                       "dispatch returns digest len");
+        TEST_ASSERT_EQ(memcmp(out, cases[i].kat, cases[i].dlen), 0,
+                       "dispatch digest matches KAT");
+    }
+
+    /* Insufficient capacity, NULL message with len, unknown alg rejected. */
+    TEST_ASSERT_EQ(crypto_hash(CRYPTO_HASH_SHA3_512, "abc", 3, out, 32), -1,
+                   "dispatch rejects out_cap < digest");
+    TEST_ASSERT_EQ(crypto_hash(CRYPTO_HASH_SHA3_256, NULL, 8, out, sizeof(out)), -1,
+                   "dispatch rejects NULL data with non-zero len");
+    TEST_ASSERT_EQ(crypto_hash(CRYPTO_HASH_SHA3_256, NULL, 0, out, sizeof(out)), 32,
+                   "dispatch allows NULL data with zero len (empty message)");
+    TEST_ASSERT_EQ(memcmp(out, k_sha3_256_empty, 32), 0,
+                   "dispatch NULL/0 == SHA3-256(\"\")");
+    TEST_ASSERT_EQ(crypto_hash((crypto_hash_alg_t)999, "", 0, out, sizeof(out)), -1,
+                   "dispatch rejects unknown alg");
+    TEST_ASSERT_EQ(crypto_hash_digest_len((crypto_hash_alg_t)999), 0u,
+                   "dispatch digest len 0 for unknown alg");
+}
+
 void test_register_klibs(void)
 {
     test_suite_register_cat("klibs: string lib edges",
                             test_string_lib_edges, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: lz4 block roundtrip",
                             test_lz4_block, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: sha3 NIST KAT",
+                            test_sha3_kat, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: sha3 streaming boundary",
+                            test_sha3_streaming, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: crypto_hash dispatch",
+                            test_crypto_hash_dispatch, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: math lib",
                             test_math_lib, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: cjson wrapper",

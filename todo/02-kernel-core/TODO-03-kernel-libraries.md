@@ -78,7 +78,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [/]   |
 | 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [x]   |
 | 💎  |   9   | Zstandard (zstd) freestanding port                  | §1                   |  [ ]   |
-| 💎  |  10   | SHA-3 / SHAKE (Keccak) hash family                  | §1                   |  [ ]   |
+| 💎  |  10   | SHA-3 / SHAKE (Keccak) hash family                  | §1                   |  [x]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -390,14 +390,23 @@ Zstandard is now a first-class compression baseline on both platforms: Linux shi
 
 SHA-3 (FIPS 202, Keccak) is a both-platform baseline the §5 Monocypher set (Blake2b only) and the existing `src/kernel/crypto/` SHA-2 family (SHA-1/256/384) do not cover: Windows 11 24H2 added `BCRYPT_SHA3_256/384/512` to CNG, and Linux ships `crypto/sha3_generic.c` in the kernel Crypto API. This section owns the freestanding SHA-3 fixed-output hashes plus the SHAKE128/256 extendable-output functions (XOFs) future post-quantum signatures (ML-DSA/SLH-DSA) and KMAC consume. Implemented in `src/kernel/crypto/sha3.c` alongside the existing `sha256.c`/`sha384.c`. (The 2026-04-13 gap-analysis noted "SHA3 24H2" but never filed an owner; this section closes that.)
 
-- [ ] Vendor/port a compact public-domain Keccak-f[1600] core (e.g. tiny_sha3, MIT/CC0) into `src/kernel/crypto/sha3.c` + `include/kernel/crypto/sha3.h`; integer-only, `-ffreestanding -nostdlib`, zero heap (fixed sponge state)
-- [ ] Fixed-output API: `sha3_256`/`sha3_384`/`sha3_512(in, len, out)` one-shot + `sha3_init`/`update`/`final` streaming, matching the existing `sha256.c` shape
-- [ ] SHAKE XOF API: `shake128`/`shake256(in, in_len, out, out_len)` arbitrary-length squeeze; bound `out_len` and document the per-call cap
-- [ ] NIST FIPS 202 KAT validation: SHA3-256("") + SHA3-512("abc") vectors + a SHAKE128/256 squeeze vector, wired as `test_*` in `test_klibs.c` (TEST_CAT_EXEC)
-- [ ] Expose via a kernel hash dispatch so consumers select SHA-2 (`src/kernel/crypto`) or SHA-3 by algorithm id; document in the header banner
-- [ ] Commit: `"crypto: SHA-3 (FIPS 202) SHA3-256/384/512 + SHAKE128/256 XOF, NIST KAT"`
+- [x] Keccak-f[1600] core written from the FIPS 202 spec (public-domain, no fetch) in `src/kernel/crypto/sha3.c` + `sha3.h`; integer-only, zero heap (200-byte sponge in the caller context), endianness-neutral arithmetic lane access (ARM-port safe)
+- [x] Fixed-output API: `sha3_256/384/512(in,len,out)` one-shot + per-variant `sha3_256_init/384_init/512_init` + `sha3_update`/`sha3_final` streaming (typed init wrappers over an internal common init; no exposed invalid-rate path)
+- [x] SHAKE XOF API: `shake128`/`shake256(in,in_len,out,out_len)` one-shot squeeze; returns `int`, rejects `out_len > SHAKE_MAX_OUTPUT` (4096) / NULL / 0; streaming SHAKE deferred to its first consumer
+- [x] NIST FIPS 202 KAT in `test_klibs.c` (TEST_CAT_EXEC): SHA3-256/384/512 + SHAKE128/256 vectors, independent hashlib boundary KATs (135/136/137), 200-byte multi-block SHAKE, streaming==one-shot, cap/NULL rejection
+- [x] Kernel hash dispatch `crypto_hash`/`crypto_hash_digest_len` in `src/kernel/crypto/hash.c` + `hash.h`: selects SHA-256/384 or SHA3-256/384/512 by `crypto_hash_alg_t`, bounds-checked (unknown alg, undersized out, NULL+nonzero-len rejected)
+- [x] Commit: `"crypto: SHA-3 (FIPS 202) SHA3-256/384/512 + SHAKE128/256 XOF, NIST KAT"`
 
-**Test checkpoint:** `sha3_256("")` == NIST `a7ffc6f8...` vector; `sha3_512("abc")` == NIST vector; SHAKE128/256 squeeze matches a known-answer prefix; streaming `update` in chunks equals the one-shot digest; `klog(LOG_INFO, "sha3", ...)` selftest on boot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** `sha3_256("")` == NIST `a7ffc6f8...`; `sha3_512("abc")` == NIST vector; SHAKE128/256 squeeze matches the known-answer prefix (incl. a 200-byte multi-block squeeze); streaming `update` equals the one-shot digest and independent boundary vectors; `crypto_hash` dispatch returns the matching digest for all 5 algorithms. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 3 suites (klibs: sha3 NIST KAT / sha3 streaming boundary / crypto_hash dispatch), 0 failures
+> **Notes:**
+> - Shipped `src/kernel/crypto/sha3.c` + `sha3.h`: FIPS 202 Keccak-f[1600], SHA3-256/384/512 (one-shot + streaming) + SHAKE128/256 XOF; pure, caller-owned 200-byte context -> SMP-safe by construction, zero heap.
+> - Endianness-neutral: sponge lanes are read/written by arithmetic shift (never byte-aliased), so absorb/squeeze are correct on big-endian too (ARM64 port safety).
+> - Shipped `src/kernel/crypto/hash.c` + `hash.h`: `crypto_hash` dispatch selecting SHA-2 or SHA-3 by `crypto_hash_alg_t`, bounds-checked; the kernel-wide hash selector CNG/TLS consumers bind to.
+> - Validated against NIST + independent (Python hashlib) KATs across the pad10*1 rate boundary and a multi-block SHAKE squeeze; SHAKE capped at one page (`SHAKE_MAX_OUTPUT`).
+> - Canonical doc: `include/kernel/crypto/sha3.h` banner.
+> - Scope boundary: §10 owns SHA-3/SHAKE + the hash dispatch; SHA-2 stays in `sha256.c`/`sha384.c`, Blake2b in §5 Monocypher; streaming SHAKE XOF deferred to its first consumer (KMAC / ML-DSA).
 
 ---
 
@@ -414,7 +423,7 @@ SHA-3 (FIPS 202, Keccak) is a both-platform baseline the §5 Monocypher set (Bla
 | 💎 | ZIP read                   | ✅ Shell      | ✅ unzip      | ⬜ §4            |
 | 💎 | ChaCha Poly AEAD           | ✅ BCrypt     | ✅ chacha     | ✅ §5 Monocypher |
 | 💎 | Blake2b                    | ✅ no native  | ✅ blake2b    | ✅ §5 Monocypher |
-| 💎 | SHA-3 / SHAKE              | ✅ CNG 24H2   | ✅ sha3_generic | ⬜ §10 Keccak  |
+| 💎 | SHA-3 / SHAKE              | ✅ CNG 24H2   | ✅ sha3_generic | ✅ §10 Keccak (SHA3-256/384/512 + SHAKE128/256 + dispatch) |
 | 💎 | Argon2id                   | ✅ KDF API    | ✅ argon2     | ✅ §5 Monocypher |
 | 💎 | X25519 ECDH                | ✅ BCrypt     | ✅ ecdh       | ✅ §5 Monocypher |
 | 💎 | Ed25519                    | ✅ BCrypt     | ✅ eddsa      | ✅ §5 std + Blake2b EdDSA |
