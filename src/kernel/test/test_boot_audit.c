@@ -201,7 +201,12 @@ static void test_audit_event_name_unknown(void)
 static void test_audit_compose_line_worst_case(void)
 {
     static struct boot_info bi;
-    static char line[16u * 1024u];
+    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
+     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
+     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
+     * test-build BSS footprint (image is at its user-base page budget). The
+     * non-truncation assertion below is the real gate. */
+    static char line[12u * 1024u];
 
     /* Zero the synthetic boot_info so we control every field. Use
      * static storage so a 28+ KiB struct does not blow the test stack. */
@@ -279,7 +284,12 @@ static int contains_substring(const char *haystack, size_t len, const char *need
 static void test_audit_compose_audit_degraded_override(void)
 {
     static struct boot_info bi;
-    static char line[16u * 1024u];
+    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
+     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
+     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
+     * test-build BSS footprint (image is at its user-base page budget). The
+     * non-truncation assertion below is the real gate. */
+    static char line[12u * 1024u];
 
     uint8_t *bp = (uint8_t *)&bi;
     for (size_t i = 0; i < sizeof(bi); i++) bp[i] = 0;
@@ -309,7 +319,12 @@ static void test_audit_compose_audit_degraded_override(void)
 static void test_audit_compose_first_boot_override(void)
 {
     static struct boot_info bi;
-    static char line[16u * 1024u];
+    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
+     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
+     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
+     * test-build BSS footprint (image is at its user-base page budget). The
+     * non-truncation assertion below is the real gate. */
+    static char line[12u * 1024u];
 
     uint8_t *bp = (uint8_t *)&bi;
     for (size_t i = 0; i < sizeof(bi); i++) bp[i] = 0;
@@ -336,7 +351,12 @@ static void test_audit_compose_first_boot_override(void)
 static void test_audit_compose_first_boot_gated_on_present(void)
 {
     static struct boot_info bi;
-    static char line[16u * 1024u];
+    /* 12 KiB: the worst-case audit line (max selected id + 64 max-length rejected
+     * entries) composes to ~8.4 KiB (see boot_audit.c BOOT_AUDIT_JSON_LINE_CAP
+     * rationale), so 12 KiB keeps a >1.4x margin while trimming the kernel
+     * test-build BSS footprint (image is at its user-base page budget). The
+     * non-truncation assertion below is the real gate. */
+    static char line[12u * 1024u];
 
     uint8_t *bp = (uint8_t *)&bi;
     for (size_t i = 0; i < sizeof(bi); i++) bp[i] = 0;

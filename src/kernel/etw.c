@@ -15,6 +15,8 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
+#include "kernel/nt/zw.h"            /* ProbeForRead/WriteIfUser */
+#include "kernel/cpu_security.h"     /* copy_from_user / copy_to_user */
 
 extern void *memcpy(void *dst, const void *src, size_t n);
 extern void *memset(void *s, int c, size_t n);
@@ -48,6 +50,32 @@ static etw_session_t *alloc_session(void)
     return (etw_session_t *)0;
 }
 
+/* Validate a user source range and copy `len` bytes into kernel `dst`. noinline:
+ * one shared copy keeps the kernel image under its BSS page budget and gives every
+ * ETW handler the same probe+copy_from_user contract. */
+static NTSTATUS __attribute__((noinline))
+etw_copy_in(void *dst, uint64_t user_src, uint32_t len, uint32_t align)
+{
+    NTSTATUS st = ProbeForReadIfUser((const void *)user_src, len, align);
+    if (!NT_SUCCESS(st))
+        return st;
+    if (copy_from_user(dst, (const void *)user_src, len) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
+/* Validate a user destination range and copy `len` bytes from kernel `src`. */
+static NTSTATUS __attribute__((noinline))
+etw_copy_out(uint64_t user_dst, const void *src, uint32_t len, uint32_t align)
+{
+    NTSTATUS st = ProbeForWriteIfUser((void *)user_dst, len, align);
+    if (!NT_SUCCESS(st))
+        return st;
+    if (copy_to_user((void *)user_dst, src, len) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
 /* ---- NtCreateTrace (SSDT 0x01D2) ---------------------------------------- */
 
 NTSTATUS NtCreateTrace(uint64_t out_handle, uint64_t desired_access,
@@ -61,6 +89,19 @@ NTSTATUS NtCreateTrace(uint64_t out_handle, uint64_t desired_access,
 
     if (!out_handle)
         return STATUS_INVALID_PARAMETER;
+
+    /* Copy the GUID in BEFORE allocating a session so no user pointer is
+     * dereferenced under the IRQ-off spinlock or used to read kernel memory. The
+     * out-handle is validated by etw_copy_out at the end (a bad handle there tears
+     * the session back down). */
+    ETW_GUID local_guid;
+    if (trace_guid) {
+        NTSTATUS pst = etw_copy_in(&local_guid, trace_guid, sizeof(ETW_GUID), 1);
+        if (!NT_SUCCESS(pst))
+            return pst;
+    } else {
+        memset(&local_guid, 0, sizeof(ETW_GUID));
+    }
 
     uint64_t irq_flags;
     spin_lock_irqsave(&s_etw_lock, &irq_flags);
@@ -92,19 +133,29 @@ NTSTATUS NtCreateTrace(uint64_t out_handle, uint64_t desired_access,
     sess->events_dropped = 0;
     sess->flags          = 0;
 
-    /* Copy GUID if provided */
-    if (trace_guid) {
-        const ETW_GUID *g = (const ETW_GUID *)trace_guid;
-        memcpy(&sess->guid, g, sizeof(ETW_GUID));
-    } else {
-        memset(&sess->guid, 0, sizeof(ETW_GUID));
-    }
+    /* GUID was already validated + copied into local_guid before the lock. */
+    memcpy(&sess->guid, &local_guid, sizeof(ETW_GUID));
 
     uint64_t h = sess->handle;
     spin_unlock_irqrestore(&s_etw_lock, irq_flags);
 
-    /* Write handle to caller */
-    *(uint64_t *)out_handle = h;
+    /* Return the handle via copy_to_user (probed above). If the write still
+     * faults (e.g. the page was unmapped after the probe), tear the just-created
+     * session down so it does not leak. */
+    NTSTATUS cs = etw_copy_out(out_handle, &h, sizeof(uint64_t), 8);
+    if (cs != STATUS_SUCCESS) {
+        uint8_t *tofree;
+        spin_lock_irqsave(&s_etw_lock, &irq_flags);
+        etw_session_t *s2 = find_session(h);
+        tofree = s2 ? s2->buffer : (uint8_t *)0;
+        if (s2) { s2->buffer = (uint8_t *)0; s2->magic = 0; }  /* magic=0 frees the slot */
+        spin_unlock_irqrestore(&s_etw_lock, irq_flags);
+        if (tofree)
+            kfree(tofree);
+        /* Propagate the real status (probe alignment/range failure vs copy fault)
+         * so it matches the nt_alpc / nt_timer probe-status contract. */
+        return cs;
+    }
 
     klog(LOG_DEBUG, "etw", "NtCreateTrace: session %u created", (uint64_t)h);
     return STATUS_SUCCESS;
@@ -122,6 +173,20 @@ NTSTATUS NtTraceEvent(uint64_t trace_handle, uint64_t flags,
 
     if (field_size > ETW_MAX_EVENT_SIZE)
         return STATUS_INVALID_PARAMETER;
+    if (field_size > 0 && !fields)
+        return STATUS_INVALID_PARAMETER;
+
+    /* Copy the user payload into a bounded kernel bounce buffer BEFORE taking the
+     * IRQ-off spinlock: a user pointer must never be dereferenced under the lock
+     * (a fault there would be in IRQ-disabled context with the global ETW lock
+     * held), and it must be validated as a readable user-range buffer first so a
+     * caller cannot copy kernel memory into the trace buffer. */
+    uint8_t bounce[ETW_MAX_EVENT_SIZE];
+    if (field_size > 0) {
+        NTSTATUS pst = etw_copy_in(bounce, fields, (uint32_t)field_size, 1);
+        if (!NT_SUCCESS(pst))
+            return pst;
+    }
 
     uint64_t irq_flags;
     spin_lock_irqsave(&s_etw_lock, &irq_flags);
@@ -161,10 +226,10 @@ NTSTATUS NtTraceEvent(uint64_t trace_handle, uint64_t flags,
     hdr->pid          = 0;  /* same as above */
     hdr->payload_size = (uint32_t)field_size;
 
-    /* Copy payload */
-    if (field_size > 0 && fields) {
+    /* Copy payload from the pre-validated bounce buffer (no user deref here). */
+    if (field_size > 0) {
         memcpy(sess->buffer + sess->buf_head + sizeof(etw_event_header_t),
-               (const void *)fields, (size_t)field_size);
+               bounce, (size_t)field_size);
     }
 
     sess->buf_head += record_size;
@@ -180,14 +245,23 @@ NTSTATUS NtTraceControl(uint64_t function_code, uint64_t in_buffer,
                         uint64_t in_len, uint64_t out_buffer,
                         uint64_t out_len, uint64_t ret_len)
 {
-    (void)in_len;
-    (void)out_len;
     (void)ret_len;
 
-    if (!in_buffer)
+    if (!in_buffer || in_len < sizeof(uint64_t))
         return STATUS_INVALID_PARAMETER;
 
-    uint64_t trace_handle = *(uint64_t *)in_buffer;
+    /* Validate + copy the handle out of the user input buffer before touching
+     * session state (in_len was previously ignored, allowing an 8-byte overread;
+     * a raw deref also let a kernel address be read as a handle). */
+    uint64_t trace_handle;
+    NTSTATUS pst = etw_copy_in(&trace_handle, in_buffer, sizeof(uint64_t), 8);
+    if (!NT_SUCCESS(pst))
+        return pst;
+
+    /* Query output is built into a local under the lock, then copied to the user
+     * buffer after the lock drops (no user write under the IRQ-off spinlock). */
+    etw_basic_info_t q_info;
+    int q_copy = 0;
 
     uint64_t irq_flags;
     spin_lock_irqsave(&s_etw_lock, &irq_flags);
@@ -255,12 +329,12 @@ NTSTATUS NtTraceControl(uint64_t function_code, uint64_t in_buffer,
 
     case ETW_FUNC_QUERY:
         if (out_buffer && out_len >= sizeof(etw_basic_info_t)) {
-            etw_basic_info_t *info = (etw_basic_info_t *)out_buffer;
-            memcpy(&info->guid, &sess->guid, sizeof(ETW_GUID));
-            info->state          = sess->state;
-            info->buf_size       = sess->buf_size;
-            info->events_written = sess->events_written;
-            info->events_dropped = sess->events_dropped;
+            memcpy(&q_info.guid, &sess->guid, sizeof(ETW_GUID));
+            q_info.state          = sess->state;
+            q_info.buf_size       = sess->buf_size;
+            q_info.events_written = sess->events_written;
+            q_info.events_dropped = sess->events_dropped;
+            q_copy = 1;  /* copy_to_user after the lock drops */
         } else {
             status = STATUS_BUFFER_TOO_SMALL;
         }
@@ -286,6 +360,14 @@ NTSTATUS NtTraceControl(uint64_t function_code, uint64_t in_buffer,
      * declaration comment). NULL when no release was needed. */
     if (release_buf)
         kfree(release_buf);
+
+    /* Copy the query result to the user buffer outside the lock, with a write
+     * probe so a kernel/invalid out_buffer cannot be used as a write primitive. */
+    if (q_copy && NT_SUCCESS(status)) {
+        pst = etw_copy_out(out_buffer, &q_info, sizeof(etw_basic_info_t), 4);
+        if (!NT_SUCCESS(pst))
+            return pst;
+    }
     return status;
 }
 
@@ -311,29 +393,38 @@ NTSTATUS NtQueryTrace(uint64_t trace_handle, uint64_t info_class,
     }
 
     NTSTATUS status = STATUS_SUCCESS;
+    /* Build the output into locals under the lock, then copy_to_user after the
+     * lock drops -- never write through a user-controlled pointer under the
+     * IRQ-off spinlock, and probe it first so it cannot be a write primitive. */
+    etw_basic_info_t out_basic;
+    uint32_t out_stats[2];
+    uint32_t out_len = 0;   /* nonzero => copy that many bytes after unlock */
+    const void *out_src = (const void *)0;
 
     switch ((uint32_t)info_class) {
     case ETW_INFO_BASIC:
         if (length < sizeof(etw_basic_info_t)) {
             status = STATUS_BUFFER_TOO_SMALL;
         } else {
-            etw_basic_info_t *info = (etw_basic_info_t *)buffer;
-            memcpy(&info->guid, &sess->guid, sizeof(ETW_GUID));
-            info->state          = sess->state;
-            info->buf_size       = sess->buf_size;
-            info->events_written = sess->events_written;
-            info->events_dropped = sess->events_dropped;
+            memcpy(&out_basic.guid, &sess->guid, sizeof(ETW_GUID));
+            out_basic.state          = sess->state;
+            out_basic.buf_size       = sess->buf_size;
+            out_basic.events_written = sess->events_written;
+            out_basic.events_dropped = sess->events_dropped;
+            out_src = &out_basic;
+            out_len = sizeof(etw_basic_info_t);
         }
         break;
 
     case ETW_INFO_STATISTICS:
-        /* Statistics: write event counts to first two uint32_t slots */
+        /* Statistics: event counts in the first two uint32_t slots */
         if (length < sizeof(uint32_t) * 2) {
             status = STATUS_BUFFER_TOO_SMALL;
         } else {
-            uint32_t *stats = (uint32_t *)buffer;
-            stats[0] = sess->events_written;
-            stats[1] = sess->events_dropped;
+            out_stats[0] = sess->events_written;
+            out_stats[1] = sess->events_dropped;
+            out_src = out_stats;
+            out_len = sizeof(uint32_t) * 2;
         }
         break;
 
@@ -343,6 +434,12 @@ NTSTATUS NtQueryTrace(uint64_t trace_handle, uint64_t info_class,
     }
 
     spin_unlock_irqrestore(&s_etw_lock, irq_flags);
+
+    if (NT_SUCCESS(status) && out_len > 0) {
+        NTSTATUS pst = etw_copy_out(buffer, out_src, out_len, 4);
+        if (!NT_SUCCESS(pst))
+            return pst;
+    }
     return status;
 }
 

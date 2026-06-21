@@ -263,7 +263,7 @@ static void test_etw_trace_event(void)
     /* Start session via NtTraceControl */
     uint64_t ctrl_buf = handle;
     s = ssdt_dispatch(SSDT_NtTraceControl,
-                      ETW_FUNC_START, (uint64_t)&ctrl_buf, 0, 0, 0, 0);
+                      ETW_FUNC_START, (uint64_t)&ctrl_buf, sizeof(ctrl_buf), 0, 0, 0);
     TEST_ASSERT_EQ(s, STATUS_SUCCESS, "NtTraceControl START succeeds");
 
     /* Write an event */

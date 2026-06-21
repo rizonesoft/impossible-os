@@ -252,9 +252,16 @@ Event Tracing for Windows (ETW) provides high-performance kernel/user tracing. T
 - [x] All functions return `NTSTATUS`; use codes from `include/kernel/nt/ntstatus.h` (TODO-12 §1)
 - [x] Commit: `"kernel: klog -- wire ETW tracing syscalls to SSDT (0x01D0-0x01D6)"`
 
-> **Implementation notes:** `etw.c` + `etw.h` (new files). Up to 8 concurrent trace sessions with 4 KB circular buffers. SMP-safe via `s_etw_lock` (irqsave spinlock). Registered in `boot_desktop.c` Phase 3 after `ssdt_init()`. 7 unit tests in `test_klog.c` cover struct sizes, SSDT registration, session lifecycle, and event writing.
+**Test checkpoint:** `NtCreateTrace` returns a valid session handle; `NtTraceEvent` writes an event visible via `NtTraceControl`/`NtQueryTrace`; `NtStopTrace` + `NtFlushTrace` drain/release the buffer. User-reachable handlers validate every user pointer and never deref one under `s_etw_lock`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
-**Test checkpoint:** `NtCreateTrace` returns valid session handle. `NtTraceEvent` writes event visible via `NtTraceControl` query. `NtStopTrace` + `NtFlushTrace` drain the buffer. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_klog ETW suite, 0 failures
+> **Notes:**
+> - 7 ETW trace-control syscalls wired to SSDT 0x01D0-0x01D6 in `src/kernel/etw.c`; 8 sessions, 4 KB circular buffers, SMP-safe via `s_etw_lock`, registered in `boot_desktop.c` Phase 3.
+> - User-reachable handlers validate every user pointer via `etw_copy_in`/`etw_copy_out` (probe + copy_from/to_user): inputs copied before the lock, outputs built in locals + copied after -- no user deref under the spinlock.
+> - Review hardened 3 Critical + 1 High raw-user-pointer derefs (kernel read/write primitives) into probe+copy; `NtCreateTrace` tears the session down + propagates the probe status on a copy-out fault.
+> - Kernel-internal `etw_emit_kernel_event` unaffected (probes no-op for kernel mode); the test build reclaimed 16 KB BSS (audit-line fixtures 16->12 KiB) to stay under the user-base page budget.
+> **Verified:** 2026-06-21 | ship `de5fd1f9` + review fixes | 8/8 items | build OK | smoke PASS (TCG 3.12s); 6800 kernel + 16 user PASS
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 3 Critical+1H+1M fixed | scope: kernel-code-quality
 
 ---
 
