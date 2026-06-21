@@ -77,7 +77,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [x]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [/]   |
 | 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [x]   |
-| 💎  |   9   | Zstandard (zstd) freestanding port                  | §1                   |  [ ]   |
+| 💎  |   9   | Zstandard (zstd) freestanding port                  | §1                   |  [/]   |
 | 💎  |  10   | SHA-3 / SHAKE (Keccak) hash family                  | §1                   |  [x]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
