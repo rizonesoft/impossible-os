@@ -151,7 +151,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 > - Review fixes: replaced a lock-free count-publish (then a hand-rolled gen) with `seqlock_t`; added `ioapic`/`blk` registry tags; validated REG_DWORD `val_size`.
 > - Sub-threshold drops never enter the ring buffer (filtered before store), bounding disk-log volume; `s_global_min` is a separate atomic for the `klog_set_level(NULL, ...)` default.
 > **Verified:** 2026-06-21 | ship `3bc86ce1` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.69s); 3212 kernel + 16 user PASS
-> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 264)
+> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 154)
 > **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial x2) | 1H+3M fixed, 1M accepted | scope: kernel-code-quality
 
 ---
@@ -310,16 +310,27 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 
 - [x] Extend `klog_entry_t` in `klog.h`: add `uint8_t cpu_id`, `uint32_t pid`, `uint32_t tid` -- with 3-byte alignment padding
 - [x] In `klog()`: populate `cpu_id` from `smp_this_cpu()->cpu_id` (NULL-safe, defaults to 0 before `smp_early_bsp_init()`)
-- [x] In `klog()`: populate `pid`/`tid` from `task_current()->pid` gated on `kernel_subsystem_ready(SUBSYS_SCHED)`; defaults to 0/0 during boot
+- [x] In `klog()`: populate `pid` from `task_current()->pid` and `tid` from `thread_current()->id`, gated on `kernel_subsystem_ready(SUBSYS_SCHED)`; defaults to 0/0 during boot (global-cursor best-effort -- per-CPU accuracy in TODO-32 §2)
 - [x] Update JSON Lines serialization in `klog_disk.c`: add `"cpu":N,"pid":N,"tid":N` fields to each JSON object in `events.jsonl`
 - [x] Update serial output format: append `[cpu:N]` after the timestamp when SMP is ready or cpu_id > 0 (skipped during single-CPU early boot)
-- [x] Update `klog_crash_persist()` (§8): `klog_crash_entry_t` extended with cpu_id/pid/tid fields (160 bytes); serialization copies new fields
+- [x] Update `klog_crash_persist()` (§8): `klog_crash_entry_t` extended with cpu_id/pid/tid fields (164 bytes, `_Static_assert`-pinned); serialization copies new fields
 - [x] Add debug POST codes: `POST16_KLOG_CTX` (0xDE10), `POST16_KLOG_CTX_STRUCT` (0xDE11), `POST16_KLOG_CTX_SERIAL` (0xDE12), `POST16_KLOG_CTX_JSON` (0xDE13) -- range 0xDE1x confirmed free
-- [ ] Store the `klog_entry_t` subsystem tag as a bounded `char[16]` copy (like the crash-snapshot path) instead of the raw caller pointer (`klog.c` `e->subsystem = subsystem`), so delayed disk routing cannot deref a freed tag (§2 review)
-- [ ] Copy the verbosity override-table tag into a bounded `char[16]` instead of storing the raw `const char*` (`klog.c` `s_overrides[].tag`), so a non-literal tag passed to `klog_set_level` cannot dangle (§3 review)
+- [/] Bound-copy the `klog_entry_t` subsystem tag instead of the raw caller pointer (`klog.c` `e->subsystem`) -- superseded by TODO-32 §2 tag interning; no live bug (all v1 callers pass literals) (§2 review)
+- [/] Bound-copy the verbosity override-table tag instead of the raw `const char*` (`klog.c` `s_overrides[].tag`) -- superseded by TODO-32 §2 tag interning; v1 callers pass literals (§3 review)
 - [x] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
-**Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":0` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":N` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_klog context suite, 0 failures
+> **Notes:**
+> - `klog()` stamps each ring entry with `cpu_id` (`smp_this_cpu()`), `pid` (`task_current()`), `tid` (`thread_current()->id`), gated on `SUBSYS_SCHED`; serial shows `[cpu:N]`, `events.jsonl` + the crash entry carry cpu/pid/tid.
+> - All captures are best-effort reads of the scheduler's GLOBAL `(current_task, current_thread)` cursor under `s_klog_lock`: bounded (never OOB), per-CPU-accurate only on the scheduling context.
+> - Review fix: `tid` was hardcoded 0; now the real `thread_current()->id`.
+> - Scope: per-CPU-accurate attribution + raw-tag-pointer storage are both reorganized by TODO-32 v2 (Accepted XREFs), not v1 struct changes.
+> **Verified:** 2026-06-21 | ship `98460514` + review fixes | 7/9 items | build OK | smoke PASS (TCG 2.77s); 6800 kernel + 16 user PASS
+> **Accepted:** [M] pid/tid reflect the global scheduler cursor, not per-CPU-accurate attribution -> XREF: 02-kernel-core/TODO-32-kernel-logging-v2-lockless.md §2 (item: "Implement `void klog_v2(...)` ... fills pid/tid from current task" at line 88)
+> **Accepted:** [M] `klog_entry_t`/override-table tags store raw caller pointers (no copy) -> XREF: 02-kernel-core/TODO-32-kernel-logging-v2-lockless.md §2 (item: "Tag interning: `tag_id` is a 16-bit index into a static `s_tag_table[256]`" at line 91)
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 1M+1L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 ---
 

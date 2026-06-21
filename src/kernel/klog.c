@@ -478,7 +478,7 @@ void klog_crash_recover(void)
             if (prev_hdr->magic == KLOG_CRASH_MAGIC) {
                 uint32_t count = prev_hdr->entry_count;
                 /* Bound by the REGION capacity, not just KLOG_RING_SIZE: a
-                 * 128 KiB region holds fewer than KLOG_RING_SIZE 160-byte
+                 * 128 KiB region holds fewer than KLOG_RING_SIZE 164-byte
                  * entries, so a corrupt count in (region_max, KLOG_RING_SIZE]
                  * would make crash_crc32 read past the reserved region. Must
                  * match the persist-side clamp (klog_crash_persist max_entries). */
@@ -1080,15 +1080,17 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
             struct per_cpu_data *cpu = smp_this_cpu();
             e->cpu_id = cpu ? cpu->cpu_id : 0;
         }
+        /* pid/tid come from the scheduler's current task/thread cursor. The
+         * scheduler today is a single GLOBAL cursor (task.c current_task /
+         * current_thread), so these are accurate for the scheduling context and
+         * best-effort otherwise; true per-CPU attribution awaits per-CPU run
+         * queues (see the Accepted limitation in the section stamp). tid is the
+         * real thread id (was previously hardcoded 0). */
         if (kernel_subsystem_ready(SUBSYS_SCHED)) {
-            struct task *t = task_current();
-            if (t) {
-                e->pid = t->pid;
-                e->tid = 0;
-            } else {
-                e->pid = 0;
-                e->tid = 0;
-            }
+            struct task   *t  = task_current();
+            struct thread *th = thread_current();
+            e->pid = t  ? t->pid : 0;
+            e->tid = th ? th->id : 0;
         } else {
             e->pid = 0;
             e->tid = 0;
