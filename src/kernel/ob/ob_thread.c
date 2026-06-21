@@ -76,14 +76,25 @@ void ob_thread_create(struct thread *thr, uint32_t task_pid)
 
     if (ObLookupObjectByName("\\KernelObjects", ObpDirectoryType, 0, &ko_dir) == 0
         && ko_dir) {
-        ObInsertObject(to, name_buf, ko_dir);
+        if (ObInsertObject(to, name_buf, ko_dir) != 0) {
+            /* Insert failed (namespace full / name collision): the object has no
+             * namespace reference, so clear OB_FLAG_PERMANENT first -- otherwise
+             * the creation-ref drop below would restore the refcount to 1 and
+             * leave an unreachable permanent object that mark_dead can never free. */
+            OB_HEADER_FROM_BODY(to)->flags &= ~OB_FLAG_PERMANENT;
+            klog(LOG_WARN, "ob", "Thread%u.%u not inserted -- namespace full?",
+                 (uint64_t)task_pid, (uint64_t)thr->id);
+        }
         ObDereferenceObject(ko_dir);
     } else {
+        /* No \KernelObjects: same reasoning -- drop permanence so the deref frees. */
+        OB_HEADER_FROM_BODY(to)->flags &= ~OB_FLAG_PERMANENT;
         klog(LOG_WARN, "ob", "\\KernelObjects not found -- Thread%u.%u not inserted",
              (uint64_t)task_pid, (uint64_t)thr->id);
     }
 
-    /* Drop the creation ref -- namespace holds its own */
+    /* Drop the creation ref -- the namespace holds its own (or, on insert
+     * failure with PERMANENT cleared above, this is the final ref and frees). */
     ObDereferenceObject(to);
 }
 

@@ -75,14 +75,23 @@ void ob_process_create(struct task *t)
 
     if (ObLookupObjectByName("\\KernelObjects", ObpDirectoryType, 0, &ko_dir) == 0
         && ko_dir) {
-        ObInsertObject(po, name_buf, ko_dir);
+        if (ObInsertObject(po, name_buf, ko_dir) != 0) {
+            /* Insert failed: clear OB_FLAG_PERMANENT so the creation-ref drop
+             * below frees the object instead of restoring a refcount on an
+             * unreachable permanent object that mark_dead can never reclaim. */
+            OB_HEADER_FROM_BODY(po)->flags &= ~OB_FLAG_PERMANENT;
+            klog(LOG_WARN, "ob", "Process%u not inserted -- namespace full?",
+                 (uint64_t)t->pid);
+        }
         ObDereferenceObject(ko_dir);
     } else {
+        OB_HEADER_FROM_BODY(po)->flags &= ~OB_FLAG_PERMANENT;
         klog(LOG_WARN, "ob", "\\KernelObjects not found -- Process%u not inserted",
              (uint64_t)t->pid);
     }
 
-    /* Drop the creation ref -- namespace holds its own */
+    /* Drop the creation ref -- the namespace holds its own (or, on insert
+     * failure with PERMANENT cleared above, this is the final ref and frees). */
     ObDereferenceObject(po);
 }
 

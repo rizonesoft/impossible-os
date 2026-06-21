@@ -55,7 +55,7 @@ title: "TODO-05 -- Object Manager"
 | 💎  |   2   | Reference counting and object lifetime                        | §1             |  [x]   |
 | 💎  |   3   | Per-process handle table                                      | §2             |  [/]   |
 | 💎  |   4   | Object namespace (directory + symbolic link)                  | §2             |  [/]   |
-| 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [x]   |
+| 💎  |   5   | File, Process, Thread object types                            | §3, §4         |  [/]   |
 | 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4         |  [x]   |
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [x]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T15 §1,§3  |  [x]   |
@@ -207,6 +207,20 @@ Implemented across the owning subsystems (VFS, `task.c`, `thread.c`), each regis
 - [x] `FileObject` type: owned by VFS; close callback releases `vnode` reference.
 - [x] `ProcessObject` type: owned by `task.c`; delete callback tears down address space.
 - [x] `ThreadObject` type: owned by `thread.c`; delete callback frees kernel + user stacks.
+- [ ] **Fix PEB/TEB dir name collision** (`task.c:1974`): the `Process<PID>` dir collides with `ob_process_create`'s process-object name, so PEB/TEB go unreachable + `proc_dir` leaks -- distinct dir name + check/free on insert failure
+- [ ] **Scale process/thread namespace beyond the flat 128-entry `\KernelObjects` cap**: per-type sub-dirs (or hashed dirs) so >128 live objects stay enumerable
+
+> **Notes:**
+> - `ObpFileType` (`ob_file.c`): wraps a VFS node OR a pipe end (mutually exclusive); `file_on_close` releases the resource, `file_on_delete` is an idempotent safety net (both null the handle so no double-close).
+> - `ObpProcessType`/`ObpThreadType` (`ob_process.c`/`ob_thread.c`): wrap `task_t`/`thread`, registered permanent while alive, named under `\KernelObjects`, torn down by `*_mark_dead` (`ObMakeTemporaryObject` + namespace removal).
+> - Review fix: `ob_process_create`/`ob_thread_create` now clear `OB_FLAG_PERMANENT` on namespace-insert failure before the creation-ref drop, so a failed insert frees the object instead of leaking an unreachable permanent one.
+> - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
+> - Open: process handles still allocate from raw `task_t*` (Critical, owned by §9 migration) and the flat-namespace/PEB-TEB-collision items above; section is functional but not fully hardened.
+> **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 3/5 items | build OK | tests 327/327 PASS (SUITE=ob)
+> **Accepted:** [Critical] process handles are allocated from raw `task_t*` not PROCESS_OBJECT bodies (ObpAllocateHandle mis-reads memory before the task as an OBJECT_HEADER on close) -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 268)
+> **Deferred:** [H] `task_exec` PEB/TEB `Process<PID>` dir collides with the process-object name (PEB/TEB unreachable + `proc_dir` leak) -> XREF: 02-kernel-core/TODO-05 §5 (item: "Fix PEB/TEB dir name collision" at line 210)
+> **Deferred:** [M] flat `\KernelObjects` 128-entry cap drops process/thread objects under churn -> XREF: 02-kernel-core/TODO-05 §5 (item: "Scale process/thread namespace beyond the flat 128-entry" at line 211)
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H fixed, 1Critical accepted-XREF, 1H+1M deferred, 1M rejected (NT tagged-handle low bits) | scope: kernel-code-quality
 
 ---
 
