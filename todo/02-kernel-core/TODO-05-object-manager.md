@@ -117,6 +117,16 @@ Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are 
 - [x] All existing code that stores raw `vfs_node *` pointers must be audited and wrapped in ObRef/ObDeref pairs -- track this as a follow-up checklist in §5
 - [x] Commit: `"kernel: ob -- reference counting and object lifetime"`
 
+> **Notes:**
+> - `ObReferenceObject` is the blind atomic_inc fast path for callers that already hold a reference; `ObReferenceObjectSafe` (added in review) is the cmpxchg-if-nonzero primitive for lookup paths that may race a last-ref close.
+> - `ObReferenceObjectByPointer` type-checks then safe-references; `-1` now means type-mismatch OR dead object.
+> - `ObDereferenceObject` always decrements first (so it never leaks or under-decrements a reference), frees at 0 via `on_delete` + `ob_free_object`, and restores the standing reference for `OB_FLAG_PERMANENT` objects so they never underflow.
+> - Permanent objects (namespace roots, info files, process/thread pseudo-objects) are torn down by `ObMakeTemporaryObject` + a final deref; the brief ref_count==0 restore window is benign (only at teardown).
+> - Full lookup-then-reference atomicity (the memory-validity half) lands with the handle-table lock; validated by `test_ob.c` (`TEST_CAT_OB`).
+> **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 5/5 items | build OK | tests 323/323 PASS (SUITE=ob)
+> **Deferred:** [Critical] handle lookup-then-reference is not atomic (ObpLookupHandle returns an unreferenced entry; a concurrent ObpFreeHandle can free the object before ObReferenceObject runs -- the safe-ref primitive closes count-0 resurrection but not the freed-memory window) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(...)` primitive" at line 127)
+> **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1H+2M fixed, 1Critical+2L deferred | scope: kernel-code-quality
+
 ---
 
 ## 3. Per-Process Handle Table

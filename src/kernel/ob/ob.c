@@ -208,6 +208,23 @@ void ObReferenceObject(void *body)
     atomic_inc(&hdr->ref_count);
 }
 
+/* Reference only if still alive (ref_count > 0). Closes the resurrection race:
+ * a blind atomic_inc on an object whose count is concurrently hitting 0 in
+ * ObDereferenceObject would touch a header that is about to be freed. The
+ * caller must still ensure the header memory itself is valid for the duration
+ * (the handle-table lock holds that invariant for lookup-then-ref paths). */
+int ObReferenceObjectSafe(void *body)
+{
+    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
+    int32_t cur = __atomic_load_n(&hdr->ref_count.val, __ATOMIC_RELAXED);
+    while (cur > 0) {
+        if (__atomic_compare_exchange_n(&hdr->ref_count.val, &cur, cur + 1, 0,
+                                        __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+            return 0;
+    }
+    return -1;  /* object already at count 0 -- do not resurrect */
+}
+
 /* --- ObDereferenceObject ------------------------------------------------- */
 
 static void ob_free_object(OBJECT_HEADER *hdr)
@@ -244,10 +261,23 @@ int32_t ObDereferenceObject(void *body)
 {
     OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
 
+    /* ALWAYS decrement first so this deref unconditionally CONSUMES the caller's
+     * reference -- reaching 0 therefore means this really is the last reference
+     * (any concurrent holder, including a make-temporary teardown, keeps the
+     * count above 0), so neither a reference leak nor a use-after-free is
+     * possible here even if OB_FLAG_PERMANENT is cleared concurrently. */
     if (atomic_dec_and_test(&hdr->ref_count)) {
-        /* Refcount hit 0 */
-        if (hdr->flags & OB_FLAG_PERMANENT)
-            return 0;  /* permanent objects stay alive */
+        /* Count hit 0. Re-check permanence AFTER the decrement: if still
+         * permanent, restore the standing reference instead of freeing so a
+         * later make-temporary + deref frees exactly once and never underflows.
+         * The brief ref_count==0 window before the restore is benign: a
+         * permanent object only reaches 0 here as it is being torn down (its
+         * namespace pin already dropped), so a racing ObReferenceObjectSafe that
+         * transiently observes 0 correctly declines a dying object. */
+        if (hdr->flags & OB_FLAG_PERMANENT) {
+            atomic_set(&hdr->ref_count, 1);
+            return 1;
+        }
 
         if (hdr->type->on_delete)
             hdr->type->on_delete(body);
@@ -270,8 +300,9 @@ int ObReferenceObjectByPointer(void *body, const OBJECT_TYPE *expected_type,
     if (hdr->type != expected_type)
         return -1;
 
-    atomic_inc(&hdr->ref_count);
-    return 0;
+    /* Safe-reference: this path is reached from lookups that may not already
+     * hold a reference, so a blind inc could resurrect a count-0 object. */
+    return ObReferenceObjectSafe(body);
 }
 
 /* --- ObMakeTemporaryObject ----------------------------------------------- */

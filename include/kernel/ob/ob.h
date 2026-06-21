@@ -97,6 +97,23 @@ void *ob_alloc_object(const OBJECT_TYPE *type);
 void ObReferenceObject(void *body);
 
 /*
+ * ObReferenceObjectSafe -- reference an object ONLY if it is still alive
+ * (ref_count > 0). Returns 0 on success, -1 if the object is already at count 0
+ * (being torn down). Use this (not the blind ObReferenceObject) on any path that
+ * obtains a body pointer it does NOT already hold a reference for -- e.g. a
+ * lookup that may race a concurrent last-handle close. The cmpxchg-if-nonzero
+ * loop is the NT ObReferenceObjectSafe pattern.
+ *
+ * PRECONDITION: the caller must keep the header ALLOCATION valid for the
+ * duration of the call (the safe-ref protects only against count-0 resurrection,
+ * not against the memory already being freed). For handle-table lookups this is
+ * the per-handle-table lock that the future `ObpReferenceObjectByHandle`
+ * primitive will hold; for namespace lookups it is the parent directory lock
+ * plus the directory entry's own reference.
+ */
+int ObReferenceObjectSafe(void *body);
+
+/*
  * ObDereferenceObject -- decrement the reference count
  *
  * When the count reaches 0 and OB_FLAG_PERMANENT is not set:
@@ -107,10 +124,13 @@ void ObReferenceObject(void *body);
 int32_t ObDereferenceObject(void *body);
 
 /*
- * ObReferenceObjectByPointer -- validate type, then increment ref count
+ * ObReferenceObjectByPointer -- validate type, then safe-reference
  *
- * Returns 0 on success, -1 if the object's type does not match the
- * expected type (body is not referenced in that case).
+ * Returns 0 on success. Returns -1 if EITHER the object's type does not match
+ * the expected type OR the object is already at count 0 (being torn down); in
+ * both cases the body is not referenced. Uses ObReferenceObjectSafe, so the
+ * same header-allocation-validity precondition applies (the caller pins the
+ * object's existence, e.g. via the handle-table or directory lock).
  */
 int ObReferenceObjectByPointer(void *body, const OBJECT_TYPE *expected_type,
                                uint32_t access);
