@@ -9,6 +9,7 @@ title: "TODO-05 -- Object Manager"
 # TODO-05 -- Object Manager
 
 > **Validated:** 2026-06-21 | validate-todo-file clean (structure / IO table / XREF / test wiring); sections §1-§15 implemented + unstamped (review pending in SECTIONS)
+> **Gap-audited:** 2026-06-21 | mature TODO, confirmatory parity pass (Win11 24H2/25H2 + Linux 6.x) -- no new baseline gaps; code-truth audit confirms §1-§15 implemented + wired; codex-gap-audit skipped (zero new sections/ownership/parity claims)
 
 > **Goal:** Implement the kernel Object Manager (ObXxx layer) -- the unified substrate that gives every kernel resource (files, processes, threads, events, mutexes, semaphores, registry keys, sections) a typed header, reference-counted lifetime, named namespace entry, security descriptor, and per-process handle-table slot. Without this, Win32 `HANDLE` semantics are impossible and resource leaks are unavoidable. This is the single most foundational Win32 prerequisite in the kernel.
 
