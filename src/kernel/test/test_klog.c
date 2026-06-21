@@ -572,6 +572,69 @@ static void test_klog_flush_progress_due(void)
     TEST_ASSERT_EQ(klog_flush_progress_due(400), 1, "400 (slow USB tail) -> show progress");
 }
 
+/* klog_compress_buffer + klog_decompress_rotated form the rotated-log .N.lz4
+ * codec: compress writes [20-byte header | LZ4 block]; decompress validates
+ * magic/version/bounds/CRC32 and the exact recorded size. Roundtrip restores
+ * byte-identical data; every malformed input (bad magic, flipped byte ->
+ * CRC mismatch, truncation, undersized dst) is rejected with -1. Stack buffers
+ * only -- no BSS, no live boot infra. */
+static void test_klog_lz4_roundtrip(void)
+{
+    uint8_t src[256], arc[512], dst[256];
+    uint32_t i;
+    int total, n, identical;
+
+    for (i = 0; i < sizeof(src); i++) src[i] = (uint8_t)('A' + (i & 7));
+
+    total = klog_compress_buffer(src, sizeof(src), arc, sizeof(arc));
+    TEST_ASSERT(total > 0, "klog_compress_buffer produces an archive");
+    TEST_ASSERT(total >= 20, "archive carries the 20-byte LZ4 header");
+
+    n = klog_decompress_rotated(arc, (uint32_t)total, dst, sizeof(dst));
+    TEST_ASSERT_EQ((uint32_t)n, sizeof(src), "decompress restores the original size");
+    identical = 1;
+    for (i = 0; i < sizeof(src); i++) if (dst[i] != src[i]) { identical = 0; break; }
+    TEST_ASSERT(identical, "decompressed bytes are byte-identical to the source");
+
+    arc[0] ^= 0xFF;  /* corrupt the magic */
+    TEST_ASSERT_EQ(klog_decompress_rotated(arc, (uint32_t)total, dst, sizeof(dst)), -1,
+                   "bad magic rejected");
+    arc[0] ^= 0xFF;  /* restore */
+
+    arc[total - 1] ^= 0xFF;  /* flip a compressed byte */
+    TEST_ASSERT_EQ(klog_decompress_rotated(arc, (uint32_t)total, dst, sizeof(dst)), -1,
+                   "CRC32 mismatch on a flipped block byte rejected");
+    arc[total - 1] ^= 0xFF;  /* restore */
+
+    TEST_ASSERT_EQ(klog_decompress_rotated(arc, (uint32_t)total - 1, dst, sizeof(dst)), -1,
+                   "truncated archive rejected");
+    TEST_ASSERT_EQ(klog_decompress_rotated(arc, (uint32_t)total, dst, 8), -1,
+                   "dst too small for the uncompressed size rejected");
+
+    /* dst_cap below the header is a compress-side reject. */
+    TEST_ASSERT_EQ(klog_compress_buffer(src, sizeof(src), arc, 8), -1,
+                   "compress rejects a dst smaller than the header");
+
+    /* Over-expansion guard: a valid-CRC archive that DECLARES a smaller
+     * uncompressed_size than its block actually decodes to must be rejected
+     * without clobbering caller bytes past the declared size. The CRC covers
+     * only the compressed block, so patching the header's uncompressed_size
+     * (little-endian uint32 at byte offset 8) keeps the CRC valid while making
+     * the block over-expand relative to the recorded size. */
+    {
+        uint8_t scratch[256];
+        for (i = 0; i < sizeof(scratch); i++) scratch[i] = 0xAB;
+        total = klog_compress_buffer(src, sizeof(src), arc, sizeof(arc));
+        TEST_ASSERT(total > 0, "rebuild archive for the over-expansion guard");
+        arc[8] = 100; arc[9] = 0; arc[10] = 0; arc[11] = 0;  /* declare 100 < 256 */
+        TEST_ASSERT_EQ(klog_decompress_rotated(arc, (uint32_t)total, scratch, sizeof(scratch)), -1,
+                       "block decoding past the declared uncompressed_size rejected");
+        identical = 1;
+        for (i = 100; i < sizeof(scratch); i++) if (scratch[i] != 0xAB) { identical = 0; break; }
+        TEST_ASSERT(identical, "bytes past the declared size are left unclobbered");
+    }
+}
+
 /* ---- Registration ---- */
 
 void test_register_klog(void)
@@ -580,6 +643,8 @@ void test_register_klog(void)
                             test_klog_dispatch_slot, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: flush progress-due cadence",
                             test_klog_flush_progress_due, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: LZ4 rotated-log compress/decompress roundtrip",
+                            test_klog_lz4_roundtrip, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: bounded flush window",
                             test_klog_flush_window, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring-overflow lost count",

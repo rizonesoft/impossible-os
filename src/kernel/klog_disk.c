@@ -19,6 +19,8 @@
 #include "kernel/nt/filetime.h"
 #include "kernel/time/wall_clock.h"
 #include "kernel/timer.h"
+#include "kernel/kchecksum.h"     /* kcrc32 for the .lz4 header integrity check */
+#include "libs/lz4.h"            /* lz4_compress / lz4_decompress / lz4_compress_bound */
 #include "libc/string.h"
 
 /* ---- Runtime log directory (BlackBox X:\ preferred, C:\ fallback) ---- */
@@ -170,6 +172,7 @@ static char      log_filename[24];  /* "Serial_YYMMDDNN.log" + NUL */
 /* Log rotation config (loaded from Registry, or defaults) */
 static uint32_t  rot_max_size    = 4 * 1024 * 1024;  /* 4 MB default */
 static uint32_t  rot_max_rotated = 3;                  /* keep .1, .2, .3 */
+static int       rot_compress    = 1;                  /* LZ4-compress rotated .N to .N.lz4 (boot.conf log_compress) */
 
 /* Per-file size tracking for O(1) rotation check */
 static uint32_t  kernel_log_size;  /* tracked across flushes */
@@ -364,11 +367,347 @@ static int __attribute__((noinline)) klog_build_log_path(char *out, uint32_t cap
     return 1;
 }
 
+/* Self-describing header prefixing every `.N.lz4` rotated archive. A raw LZ4
+ * block carries no size/integrity metadata, so the on-disk format pins magic,
+ * version, the uncompressed/compressed sizes (so the decompressor can size its
+ * output and reject truncation), and a CRC32 over the compressed block. */
+#define KLOG_LZ4_MAGIC    0x345A4C4Bu   /* "KLZ4" */
+#define KLOG_LZ4_VERSION  1u
+typedef struct {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t hdr_size;            /* sizeof(klog_lz4_hdr_t) */
+    uint32_t uncompressed_size;
+    uint32_t compressed_size;
+    uint32_t crc32;              /* kcrc32 over the compressed block */
+} klog_lz4_hdr_t;
+_Static_assert(sizeof(klog_lz4_hdr_t) == 20, "klog_lz4_hdr_t on-disk layout pinned at 20 bytes");
+
+/* Build "<dir><filename>.<gen>.lz4" (dot_tmp -> append ".tmp" staging suffix). */
+static int klog_build_lz4_path(char *out, uint32_t cap, const char *dir,
+                               const char *fn, uint8_t gen, int dot_tmp)
+{
+    uint32_t p;
+    if (!klog_build_log_path(out, cap, dir, fn, gen))
+        return 0;
+    for (p = 0; out[p]; p++) {}
+    {
+        const char *sfx = dot_tmp ? ".lz4.tmp" : ".lz4";
+        uint32_t j;
+        for (j = 0; sfx[j]; j++) { if (p + 1 >= cap) return 0; out[p++] = (char)sfx[j]; }
+    }
+    out[p] = '\0';
+    return 1;
+}
+
+/* Compress `src` into a self-describing [klog_lz4_hdr_t + LZ4 block] archive in
+ * dst. Returns the total archive size (header + block), or -1 if dst is too small
+ * or compression fails. dst_cap must be >= sizeof(klog_lz4_hdr_t) +
+ * lz4_compress_bound(src_size). Pure in-memory half of klog_compress_archive,
+ * exposed for the decompress roundtrip unit test. */
+int klog_compress_buffer(const void *src, uint32_t src_size,
+                         uint8_t *dst, uint32_t dst_cap)
+{
+    klog_lz4_hdr_t *h = (klog_lz4_hdr_t *)dst;
+    int csize;
+
+    if (!src || !dst || dst_cap < sizeof(klog_lz4_hdr_t))
+        return -1;
+    csize = lz4_compress(src, src_size, dst + sizeof(*h),
+                         dst_cap - (uint32_t)sizeof(*h));
+    if (csize <= 0)
+        return -1;
+    h->magic = KLOG_LZ4_MAGIC;
+    h->version = (uint16_t)KLOG_LZ4_VERSION;
+    h->hdr_size = (uint16_t)sizeof(*h);
+    h->uncompressed_size = src_size;
+    h->compressed_size = (uint32_t)csize;
+    h->crc32 = kcrc32(dst + sizeof(*h), (size_t)csize);
+    return (int)((uint32_t)sizeof(*h) + (uint32_t)csize);
+}
+
+/* Read `src_path`, LZ4-compress it behind a klog_lz4_hdr_t, and write the result
+ * ATOMICALLY to <dir><fn>.1.lz4 (write to .1.lz4.tmp, verify the full write/close,
+ * then rename into place). Returns 0 iff a durable compressed archive now exists
+ * (the caller may delete src_path); -1 on ANY failure (alloc / read / compress /
+ * write), in which case the caller keeps src_path as the plain .1 generation so a
+ * rotation never loses the only copy. */
+static int klog_compress_archive(const char *dir, const char *fn, const char *src_path)
+{
+    struct vfs_node *sf = vfs_open(src_path, VFS_O_READ);
+    uint32_t usize, in_pages, out_pages, out_bytes;
+    size_t   bound;
+    uint8_t *in, *out;
+    int rc = -1, rd;
+
+    if (!sf)
+        return -1;
+    /* sf->size is 64-bit; reject empty and anything above the LZ4 single-block
+     * maximum BEFORE narrowing to uint32_t. A stale/corrupt oversized staging
+     * file must not silently truncate (compressing only a low-32-bit prefix and
+     * then deleting the complete .tmp) nor balloon in_pages on a doomed alloc.
+     * On rejection the caller keeps the plain .tmp -> .1 path (no data loss). */
+    if (sf->size == 0 || sf->size > (uint64_t)LZ4_BLOCK_INPUT_MAX) {
+        vfs_close(sf);
+        return -1;
+    }
+    usize = (uint32_t)sf->size;
+
+    in_pages  = (usize + 4095u) / 4096u;
+    bound     = lz4_compress_bound(usize);
+    out_bytes = (uint32_t)(sizeof(klog_lz4_hdr_t) + bound);
+    out_pages = (out_bytes + 4095u) / 4096u;
+    in  = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(in_pages);
+    out = in ? (uint8_t *)(uintptr_t)pmm_alloc_contiguous(out_pages) : (uint8_t *)0;
+    if (!in || !out) {
+        uint32_t p;
+        if (in)  for (p = 0; p < in_pages;  p++) pmm_free_frame((uintptr_t)in  + p * 4096);
+        if (out) for (p = 0; p < out_pages; p++) pmm_free_frame((uintptr_t)out + p * 4096);
+        vfs_close(sf);
+        return -1;  /* low memory -> fall back to plain .N (no data loss) */
+    }
+
+    rd = vfs_read(sf, 0, usize, in);
+    vfs_close(sf);
+    if (rd == (int)usize) {
+        int total = klog_compress_buffer(in, usize, out, out_bytes);
+        if (total > 0) {
+            char tmp_path[96], final_path[96];
+
+            if (klog_build_lz4_path(final_path, sizeof final_path, dir, fn, 1, 0) &&
+                klog_build_lz4_path(tmp_path,   sizeof tmp_path,   dir, fn, 1, 1)) {
+                struct vfs_node *af;
+                vfs_unlink(tmp_path);
+                af = vfs_open(tmp_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
+                if (af) {
+                    int wr = vfs_write(af, 0, total, out);
+                    vfs_close(af);
+                    if (wr == (int)total) {
+                        vfs_unlink(final_path);  /* clear any stale .1.lz4 */
+                        if (vfs_rename(tmp_path, final_path) == 0)
+                            rc = 0;  /* durable compressed archive committed */
+                    }
+                    if (rc != 0)
+                        vfs_unlink(tmp_path);  /* drop the partial staging file */
+                }
+            }
+        }
+    }
+    {
+        uint32_t p;
+        for (p = 0; p < in_pages;  p++) pmm_free_frame((uintptr_t)in  + p * 4096);
+        for (p = 0; p < out_pages; p++) pmm_free_frame((uintptr_t)out + p * 4096);
+    }
+    return rc;
+}
+
+/* Decompress a `.N.lz4` archive (header + LZ4 block) into dst. Validates magic,
+ * version, header size, bounds, the CRC32 of the compressed block, and that the
+ * decode produced exactly uncompressed_size bytes. Returns the decompressed byte
+ * count, or -1 on any malformed/corrupt/truncated input. For the in-OS viewer and
+ * the host extractor (-> XREF: 14-host-tools/TODO-08). */
+int klog_decompress_rotated(const void *src, uint32_t src_size,
+                            uint8_t *dst, uint32_t dst_cap)
+{
+    const klog_lz4_hdr_t *h;
+    const uint8_t *block;
+    int n;
+
+    if (!src || !dst || src_size < sizeof(klog_lz4_hdr_t))
+        return -1;
+    h = (const klog_lz4_hdr_t *)src;
+    if (h->magic != KLOG_LZ4_MAGIC || h->version != KLOG_LZ4_VERSION ||
+        h->hdr_size != sizeof(klog_lz4_hdr_t))
+        return -1;
+    if ((uint64_t)h->hdr_size + (uint64_t)h->compressed_size > (uint64_t)src_size)
+        return -1;
+    if (h->uncompressed_size > dst_cap)
+        return -1;
+    block = (const uint8_t *)src + h->hdr_size;
+    if (kcrc32(block, h->compressed_size) != h->crc32)
+        return -1;
+    /* Bound the decode by the archive-declared uncompressed_size, NOT the
+     * caller's (possibly larger) scratch capacity. A valid-CRC but hostile
+     * block could declare a small uncompressed_size yet expand toward dst_cap;
+     * capping at uncompressed_size makes that over-expansion a clean
+     * LZ4_decompress_safe failure instead of clobbering bytes past the recorded
+     * payload in a larger viewer/extractor buffer. */
+    n = lz4_decompress(block, h->compressed_size, dst, h->uncompressed_size);
+    if (n < 0 || (uint32_t)n != h->uncompressed_size)
+        return -1;
+    return n;
+}
+
+/* Existence probe: open read-only, close, report whether it was there. The flush
+ * body is single-threaded (the `flushing` reentrancy guard), so TOCTOU between
+ * this probe and the follow-up rename/unlink is not a concern here. */
+static int klog_path_exists(const char *path)
+{
+    struct vfs_node *n = vfs_open(path, VFS_O_READ);
+    if (n) { vfs_close(n); return 1; }
+    return 0;
+}
+
+/* Is generation slot 1 occupied in EITHER family (.1 or .1.lz4)? Used to gate the
+ * generation shift so orphan recovery is idempotent: an interruption AFTER the
+ * shift already freed slot 1 must NOT shift a second time (that would age out an
+ * extra generation). Shift only when slot 1 actually needs freeing. */
+static int klog_slot1_occupied(const char *dir, const char *filename)
+{
+    char p[80];
+    if (klog_build_log_path(p, sizeof p, dir, filename, 1) && klog_path_exists(p))
+        return 1;
+    if (klog_build_lz4_path(p, sizeof p, dir, filename, 1, 0) && klog_path_exists(p))
+        return 1;
+    return 0;
+}
+
+/* Distinguish reset window W3 (compress committed .1.lz4 but the stage delete was
+ * lost to a reset, so slot 1 ALREADY holds this orphan) from W1 (the stage is a
+ * genuinely new orphan and slot 1 is an OLDER generation). Returns 1 only when
+ * generation slot 1 holds a byte-exact copy of the log at stage_path (a .1.lz4 is
+ * decompressed first). On ANY read/alloc failure returns 0 -- the safe bias:
+ * recovery then preserves the orphan (shift + re-archive, at worst one bounded
+ * duplicate) instead of risking deletion of still-un-archived data. Recovery-only
+ * and rare (a crash mid-rotation), so the transient double buffer is acceptable.
+ *
+ * Identity by bytes (not a transaction id) is deliberate and lossless: the W3
+ * unlink only fires when the orphan is byte-for-byte equal to slot 1, so the
+ * identical bytes are already retained there -- dropping the orphan loses zero log
+ * INFORMATION even in the (practically unreachable for monotonic-timestamped logs)
+ * case of two distinct rotations producing identical content. A per-rotation nonce
+ * would buy nothing here and would force a header onto the plain .N family + the
+ * host extractor, so byte equality is the right check. */
+static int klog_orphan_already_archived(const char *dir, const char *filename,
+                                        const char *stage_path)
+{
+    struct vfs_node *sf, *af;
+    char path[80];
+    uint8_t *sbuf = 0, *cbuf = 0, *dbuf = 0;
+    uint32_t ssize, spages = 0, cpages = 0;
+    int match = 0, rd = -1;
+
+    sf = vfs_open(stage_path, VFS_O_READ);
+    if (!sf)
+        return 0;
+    if (sf->size == 0 || sf->size > (uint64_t)LZ4_BLOCK_INPUT_MAX) {
+        vfs_close(sf);
+        return 0;
+    }
+    ssize  = (uint32_t)sf->size;
+    spages = (ssize + 4095u) / 4096u;
+    sbuf   = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(spages);
+    if (sbuf)
+        rd = vfs_read(sf, 0, ssize, sbuf);
+    vfs_close(sf);
+    if (rd != (int)ssize)
+        goto out;
+
+    /* Compressed slot 1: read the whole archive, decompress into dbuf (<= ssize),
+     * byte-compare. */
+    if (klog_build_lz4_path(path, sizeof path, dir, filename, 1, 0) &&
+        (af = vfs_open(path, VFS_O_READ)) != 0) {
+        uint32_t csize = (uint32_t)af->size;
+        if (af->size > (uint64_t)sizeof(klog_lz4_hdr_t) &&
+            af->size <= (uint64_t)LZ4_BLOCK_INPUT_MAX) {
+            cpages = (csize + 4095u) / 4096u;
+            cbuf   = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(cpages);
+            dbuf   = cbuf ? (uint8_t *)(uintptr_t)pmm_alloc_contiguous(spages) : 0;
+            if (cbuf && dbuf && vfs_read(af, 0, csize, cbuf) == (int)csize) {
+                int dn = klog_decompress_rotated(cbuf, csize, dbuf, ssize);
+                if (dn == (int)ssize && memcmp(dbuf, sbuf, ssize) == 0)
+                    match = 1;
+            }
+        }
+        vfs_close(af);
+        goto out;
+    }
+    /* Plain slot 1: same size + direct byte compare (cbuf is the read buffer). */
+    if (klog_build_log_path(path, sizeof path, dir, filename, 1) &&
+        (af = vfs_open(path, VFS_O_READ)) != 0) {
+        if ((uint64_t)af->size == (uint64_t)ssize) {
+            cbuf   = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(spages);
+            cpages = cbuf ? spages : 0;
+            if (cbuf && vfs_read(af, 0, ssize, cbuf) == (int)ssize &&
+                memcmp(cbuf, sbuf, ssize) == 0)
+                match = 1;
+        }
+        vfs_close(af);
+    }
+out:
+    {
+        uint32_t p;
+        if (sbuf) for (p = 0; p < spages; p++) pmm_free_frame((uintptr_t)sbuf + p * 4096);
+        if (cbuf) for (p = 0; p < cpages; p++) pmm_free_frame((uintptr_t)cbuf + p * 4096);
+        if (dbuf) for (p = 0; p < spages; p++) pmm_free_frame((uintptr_t)dbuf + p * 4096);
+    }
+    return match;
+}
+
+/* Shift the rotated-generation chain down one slot, freeing slot 1. Drops the
+ * oldest generation of BOTH families (.N and .N.lz4) and renames each .N-1 ->
+ * .N for both. Shifting both families keeps a Compress toggle between boots from
+ * stranding generations outside the retention chain. Best-effort: a generation
+ * legitimately may not exist in a given family. */
+static void klog_shift_generations(const char *dir, const char *filename)
+{
+    char a_path[80], b_path[80];
+    uint32_t n;
+
+    if (klog_build_log_path(a_path, sizeof a_path, dir, filename, (uint8_t)rot_max_rotated))
+        vfs_unlink(a_path);
+    if (klog_build_lz4_path(a_path, sizeof a_path, dir, filename, (uint8_t)rot_max_rotated, 0))
+        vfs_unlink(a_path);
+    for (n = rot_max_rotated; n >= 2; n--) {
+        if (klog_build_log_path(a_path, sizeof a_path, dir, filename, (uint8_t)(n - 1)) &&
+            klog_build_log_path(b_path, sizeof b_path, dir, filename, (uint8_t)n))
+            vfs_rename(a_path, b_path);
+        if (klog_build_lz4_path(a_path, sizeof a_path, dir, filename, (uint8_t)(n - 1), 0) &&
+            klog_build_lz4_path(b_path, sizeof b_path, dir, filename, (uint8_t)n, 0))
+            vfs_rename(a_path, b_path);
+    }
+}
+
+/* Commit the staged log at `stage_path` into generation slot 1 (assumed empty
+ * after a shift). With compression on, klog_compress_archive writes .1.lz4
+ * ATOMICALLY; on ANY compression failure it returns -1 and we fall back to
+ * renaming the stage to a plain .1. Returns 0 iff the staged data now lives
+ * durably in slot 1 AND `stage_path` has been consumed; -1 iff `stage_path` is
+ * still the only complete copy (caller MUST keep it).
+ *
+ * Strict post-condition (no orphan ambiguity): on return 0 exactly one copy
+ * exists, in slot 1, and the stage is gone; on return -1 exactly one copy
+ * exists, at `stage_path`, and slot 1 holds no NEW copy. The compress path
+ * enforces this: if .1.lz4 committed but the stage will not delete (rare FS
+ * error), it ROLLS BACK the .1.lz4 so the sole copy stays at `stage_path` --
+ * never leaving the same log in both places for Phase 0 to re-archive as a
+ * duplicate. The plain path's rename is atomic, so it cannot leave a leftover. */
+static int klog_archive_stage(const char *dir, const char *filename,
+                              const char *stage_path)
+{
+    char a_path[80];
+
+    if (rot_compress && klog_compress_archive(dir, filename, stage_path) == 0) {
+        vfs_unlink(stage_path);            /* drop the staged plain copy */
+        if (!klog_path_exists(stage_path))
+            return 0;                      /* .1.lz4 durable AND stage consumed */
+        /* .1.lz4 committed but the stage would not delete. Roll the archive back
+         * so the only copy stays in `stage_path`; a later pass retries cleanly
+         * rather than duplicating the generation. */
+        if (klog_build_lz4_path(a_path, sizeof a_path, dir, filename, 1, 0))
+            vfs_unlink(a_path);
+        return -1;
+    }
+    if (klog_build_log_path(a_path, sizeof a_path, dir, filename, 1) &&
+        vfs_rename(stage_path, a_path) == 0)
+        return 0;  /* plain .1 committed (rename consumed the stage) */
+    return -1;     /* nothing committed -- stage_path is the only copy, keep it */
+}
+
 static uint32_t rotate_log_file(const char *dir, const char *filename,
                                 uint32_t current_size)
 {
-    char cur_path[80], tmp_path[80], a_path[80], b_path[80];
-    uint32_t n;
+    char cur_path[80], tmp_path[80];
 
     if (current_size < rot_max_size)
         return current_size;
@@ -377,15 +716,42 @@ static uint32_t rotate_log_file(const char *dir, const char *filename,
         !klog_build_log_path(tmp_path, sizeof tmp_path, dir, filename, 255))
         return current_size;  /* path too long -- skip rather than overflow */
 
-    /* Phase 1 -- stage the LIVE log aside BEFORE any destructive op. Clear any
-     * stale staging from an interrupted prior rotation, then rename current->.tmp.
-     * If this rename fails (the persistent failure mode: read-only / full media),
-     * NOTHING destructive has run, so the existing rotated generations are
-     * untouched and a retry next flush does not churn or discard them. The live log
-     * is still at its current path. Safe to klog here: the flush body runs under
-     * the `flushing` reentrancy guard, so a klog->klog_disk_flush recursion no-ops
-     * rather than deadlocks. */
-    vfs_unlink(tmp_path);
+    /* Phase 0 -- recover an orphaned stage from an interrupted prior rotation.
+     * A reset (or compression interruption) between staging current->.tmp and
+     * committing slot 1 can leave the ONLY complete copy of that log in .tmp.
+     * Earlier this path unconditionally unlinked the stale .tmp, discarding it.
+     * Instead, fold it into the retention chain (shift, then archive .tmp->.1)
+     * before starting a new rotation. If recovery cannot commit (archive fails:
+     * full / read-only media), KEEP .tmp and skip this rotation -- the live log
+     * keeps growing but no rotated log is lost; a later flush retries. Safe to
+     * klog here: the flush body runs under the `flushing` reentrancy guard. */
+    if (klog_path_exists(tmp_path)) {
+        if (klog_orphan_already_archived(dir, filename, tmp_path)) {
+            /* W3: the orphan is ALREADY durably archived in slot 1 -- a reset lost
+             * only the stage delete. Drop the duplicate stage; do NOT shift or
+             * re-archive (that would duplicate the log and age out a generation). */
+            vfs_unlink(tmp_path);
+        } else {
+            /* W1/W2: a genuinely un-archived orphan. Shift ONLY if slot 1 is still
+             * occupied -- an interruption AFTER the shift already freed it, and
+             * shifting again would age out an extra generation; archive straight
+             * into the empty slot 1 in that case. */
+            if (klog_slot1_occupied(dir, filename))
+                klog_shift_generations(dir, filename);
+            if (klog_archive_stage(dir, filename, tmp_path) != 0) {
+                klog(LOG_WARN, "klog",
+                     "log rotation: orphan stage of '%s' kept; recovery retried later",
+                     filename);
+                return current_size;
+            }
+        }
+    }
+
+    /* Phase 1 -- stage the LIVE log aside BEFORE any destructive op by renaming
+     * current->.tmp (no orphan remains after Phase 0). If this rename fails (the
+     * persistent failure mode: read-only / full media), NOTHING destructive has
+     * run, so the existing rotated generations are untouched and a retry next
+     * flush does not churn or discard them; the live log is still at its path. */
     if (vfs_rename(cur_path, tmp_path) != 0) {
         klog(LOG_WARN, "klog",
              "log rotation: stage '%s' failed; rotations untouched, keeping current",
@@ -393,24 +759,15 @@ static uint32_t rotate_log_file(const char *dir, const char *filename,
         return current_size;
     }
 
-    /* Phase 2 -- the live data is now safe in .tmp, so the destructive generation
-     * shuffle runs only here. Delete oldest (.N), shift .N-1 -> .N down to .1 -> .2.
-     * These are best-effort: an intermediate generation legitimately may not exist. */
-    if (klog_build_log_path(a_path, sizeof a_path, dir, filename, (uint8_t)rot_max_rotated))
-        vfs_unlink(a_path);
-    for (n = rot_max_rotated; n >= 2; n--) {
-        if (klog_build_log_path(a_path, sizeof a_path, dir, filename, (uint8_t)(n - 1)) &&
-            klog_build_log_path(b_path, sizeof b_path, dir, filename, (uint8_t)n))
-            vfs_rename(a_path, b_path);
-    }
-
-    /* Archive the staged log to .1. If even this same-dir rename fails the data is
-     * still in .tmp (not lost) and a later rotation's stale-staging unlink reclaims
-     * it; recreate the current file so logging continues regardless. */
-    if (klog_build_log_path(a_path, sizeof a_path, dir, filename, 1) &&
-        vfs_rename(tmp_path, a_path) != 0)
+    /* Phase 2 -- live data is safe in .tmp, so the destructive shift + archive
+     * run only here. Shift only to free an occupied slot 1 (same idempotent gate
+     * as Phase 0). On archive failure the data stays in .tmp (recovered by the
+     * next rotation's Phase 0), so a rotation NEVER loses the only copy. */
+    if (klog_slot1_occupied(dir, filename))
+        klog_shift_generations(dir, filename);
+    if (klog_archive_stage(dir, filename, tmp_path) != 0)
         klog(LOG_WARN, "klog",
-             "log rotation: archive '%s' staged copy to .1 failed", filename);
+             "log rotation: archive staged copy of '%s' to slot 1 failed", filename);
 
     /* Fresh empty current file. */
     {
@@ -444,6 +801,16 @@ static void load_rotation_config(void)
                         &val_type, (uint8_t *)&val, &val_size) == 0 &&
         val_type == 4 && val_size == sizeof(val) && val > 0 && val <= 9)
         rot_max_rotated = val;
+
+    /* log_compress: LZ4-compress rotated generations to .N.lz4 (default on). 0
+     * keeps plain .N. Registry-driven like MaxSize/MaxRotated (HKLM\SYSTEM\Logs). */
+    val_size = sizeof(val);
+    val_type = 0;
+    if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
+                        "SYSTEM\\Logs", "Compress",
+                        &val_type, (uint8_t *)&val, &val_size) == 0 &&
+        val_type == 4 && val_size == sizeof(val))
+        rot_compress = (val != 0);
 }
 
 /* ---- Date-stamped log files on X: (FAT32) ----

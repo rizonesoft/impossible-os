@@ -71,7 +71,7 @@ title: "TODO-04 -- System Logging"
 | ⭐  |  10   | Log integrity verification (HMAC)   | §6, T03 §5     |  [/]   |
 | 💎  |  11   | ETW provider registration + filtering | §7, T12 §5   |  [/]   |
 | 💎  |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 | [/] |
-| 💎  |  13   | Rotated-log compression (LZ4)       | §4, T03 §3     |  [ ]   |
+| 💎  |  13   | Rotated-log compression (LZ4)       | §4, T03 §3     |  [x]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -408,13 +408,23 @@ Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (us
 
 The OS Comparison row "Rotated log compress" is listed as planned (LZ4) but no section owns the wiring. Linux logrotate gzip-compresses rotated logs and journald LZ4-compresses its journal; Win11 does not compress rotated logs. Impossible OS has none yet. Compress rotated `.N` files so long-running systems keep more history in the same disk budget. (→ XREF: TODO-03 §3 LZ4 block compression primitive.)
 
-- [ ] In `rotate_log_file()` (§4): after shifting `.N`, LZ4-block-compress the rotated file to `.N.lz4` and delete the plain `.N` (→ XREF: TODO-03 §3 LZ4)
-- [ ] LZ4 output buffer via `pmm_alloc_contiguous()` per the TODO-03 memory rule (output can exceed 4 KiB; never `kmalloc`)
-- [ ] Gate behind `boot.conf` option `log_compress=1` (default enabled in release); when disabled, rotation keeps plain `.N` files
-- [ ] Decompression helper `klog_decompress_rotated()` for the in-OS viewer + host extractor (→ XREF: 14-host-tools/TODO-08)
-- [ ] `klog(LOG_INFO, "klog", ...)` trace on compress (observable)
-- [ ] Unit test: write a rotated file, compress it, decompress, assert byte-identical roundtrip
-- [ ] Commit: `"kernel: LZ4 compression for rotated log files"`
+- [x] `klog_compress_archive()` (klog_disk.c): LZ4-compresses the staged log behind a 20-byte `klog_lz4_hdr_t`, atomic `.1.lz4.tmp`->`.1.lz4`; any failure falls back to plain `.1`. Pure half factored as `klog_compress_buffer()` (→ XREF: TODO-03 §3)
+- [x] LZ4 in/out buffers via `pmm_alloc_contiguous()` (TODO-03 memory rule, sized from `lz4_compress_bound`); staged size validated `>0 && <= LZ4_BLOCK_INPUT_MAX` before the uint32 narrow (no silent truncation)
+- [x] Gate via Registry `HKLM\SYSTEM\Logs\Compress` REG_DWORD (default 1; Registry-driven like MaxSize/MaxRotated). `rotate_log_file()` shifts BOTH families (.N and .N.lz4) so a Compress toggle never strands a generation
+- [x] `klog_decompress_rotated()` for the in-OS viewer + host extractor: validates magic/version/bounds/CRC32 and bounds the decode by the recorded `uncompressed_size` so a hostile block cannot over-expand (→ XREF: 14-host-tools/TODO-08)
+- [x] Crash-safe recovery: `rotate_log_file()` Phase 0 recovers an orphaned `.tmp` -- idempotent shift + `klog_orphan_already_archived()` byte-compare drops a cross-reset duplicate; never loses or duplicates a generation
+- [x] `klog(LOG_WARN, "klog", ...)` traces on rotation/recovery failure paths (observable)
+- [x] Unit test `test_klog_lz4_roundtrip` (TEST_CAT_BOOT): roundtrip + negatives (bad magic, CRC mismatch, truncation, undersized dst, over-expanding valid-CRC block leaves caller bytes unclobbered)
+- [x] Commit: `"kernel: LZ4 compression for rotated log files"`
+
+> **Test checkpoint:** boot suite runs `test_klog_lz4_roundtrip`; on a Compress=1 system, rotated logs appear as `X:\Logs\*.1.lz4` and `klog_decompress_rotated()` restores them byte-identical. A Compress toggle between boots keeps both `.N` and `.N.lz4` generations in the chain.
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | 1 suite added, 0 failures
+> **Notes:**
+> - LZ4 rotated-log compression: `klog_compress_archive()` writes a self-describing `[klog_lz4_hdr_t | LZ4 block]` `.N.lz4` via atomic `.tmp`->rename; `klog_decompress_rotated()` validates magic/version/CRC32 and caps the decode at the recorded size.
+> - Registry `Compress` gates it (default 1, like MaxSize/MaxRotated); `rotate_log_file()` shifts both `.N` and `.N.lz4` families so a Compress toggle never strands a generation.
+> - No-data-loss rotation: stage current->`.tmp`, shift only when slot 1 is occupied; Phase 0 + `klog_orphan_already_archived()` recover an orphaned `.tmp` across all interruption windows without loss or duplication.
+> - Codex: design + adversarial + 3 re-adversarial rounds (1-2 fixed High over-expansion/truncation/double-shift; round 3 rejected a byte-identity medium as lossless). Detail in the commit message.
+> - Buffers: `pmm_alloc_contiguous()` per the TODO-03 LZ4 rule; staged size validated `<= LZ4_BLOCK_INPUT_MAX` before narrowing. Host extractor consumes the same format (→ 14-host-tools/TODO-08).
 
 ---
 
@@ -445,7 +455,7 @@ The OS Comparison row "Rotated log compress" is listed as planned (LZ4) but no s
 | 💎 | Crash-persistent log  | ✅ Minidump + WER   | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
 | 💎 | Per-entry CPU/PID/TID | ✅ ETW metadata     | ✅ journald _PID     | ✅ §9 -- cpu/pid/tid       |
 | ⭐ | Tamper-evident log    | ❌ No integrity     | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
-| 💎 | Rotated log compress  | ❌ Not built-in     | ✅ logrotate gzip    | ⬜ §13 -- LZ4 rotated      |
+| 💎 | Rotated log compress  | ❌ Not built-in     | ✅ logrotate gzip    | ✅ §13 -- LZ4, atomic+CRC  |
 
 > After §1-§9, Impossible OS matches or exceeds Windows and Linux on all core logging features.
 > §6 (JSON Lines), per-boot files, and serial timestamps are exclusive edges. §7 wires 7 ETW syscalls. §9 closes the per-entry context parity gap.
@@ -478,7 +488,7 @@ The OS Comparison row "Rotated log compress" is listed as planned (LZ4) but no s
 - [ ] Log integrity verification tests (§10): TODO-03 §5 Monocypher now shipped -- implement alongside §10; `klog_verify_chain()` not yet implemented
 - [ ] ETW provider/filtering tests (§11): provider register+enumerate roundtrip; non-matching keyword dropped; matching keyword+level delivered
 - [ ] ETW advanced-capture tests (§12): stack-walk >=1 resolvable frame; autologger config parse+start; self-describing schema field decode
-- [ ] Rotated-log compression tests (§13): LZ4 compress+decompress byte-identical roundtrip on a rotated file
+- [x] Rotated-log compression tests (§13): `test_klog_lz4_roundtrip` -- roundtrip + negatives (bad magic, CRC mismatch, truncation, undersized dst, over-expansion). Rotation-recovery windows validated via boot (no pure-test VFS surface)
 - [x] Commit: `"test: add crash-persist, context metadata tests to klog suite (TODO-04 §7-§9)"`
 
 ---

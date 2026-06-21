@@ -136,6 +136,17 @@ int  klog_slow_media_detected(void);   /* 1 if a flush exceeded KLOG_SLOW_MEDIA_
 uint32_t klog_flush_window(uint64_t cur_seq, uint64_t cursor); /* bounded unflushed count (<= KLOG_RING_SIZE) */
 uint32_t klog_lost_count(uint64_t cur_seq, uint64_t cursor);   /* entries lost to ring overflow (> KLOG_RING_SIZE) */
 int  klog_dispatch_slot(const char *subsystem);  /* subsystem log slot, or -1 (kernel.log only); pure */
+/* Decompress a `.N.lz4` rotated-log archive (klog_lz4_hdr_t + LZ4 block) into dst.
+ * Validates magic/version/bounds/CRC32 and that the decode is exactly the recorded
+ * uncompressed size. Returns the decompressed byte count, or -1 on malformed/
+ * corrupt/truncated input. For the in-OS viewer + host extractor. */
+int  klog_decompress_rotated(const void *src, uint32_t src_size,
+                             uint8_t *dst, uint32_t dst_cap);
+/* Compress src into a [header + LZ4 block] rotated-log archive (the in-memory half
+ * of the .N.lz4 writer). Returns total archive size, or -1. dst_cap must be >=
+ * 20 + lz4_compress_bound(src_size). Pure; exposed for the roundtrip test. */
+int  klog_compress_buffer(const void *src, uint32_t src_size,
+                          uint8_t *dst, uint32_t dst_cap);
 void klog_disk_set_live(int on);       /* Enable/disable per-entry live mode */
 int  klog_disk_live_active(void);      /* Returns 1 if live mode is on */
 void klog_disk_append(const klog_entry_t *e);  /* Append entry to FAT32 buffer */
