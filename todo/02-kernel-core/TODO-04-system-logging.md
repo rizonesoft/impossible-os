@@ -69,8 +69,8 @@ title: "TODO-04 -- System Logging"
 | 💎  |   8   | Crash-persistent log capture        | §1             |  [x]   |
 | 💎  |   9   | Per-entry context metadata          | §2             |  [x]   |
 | ⭐  |  10   | Log integrity verification (HMAC)   | §6, T03 §5     |  [/]   |
-| 💎  |  11   | ETW provider registration + filtering | §7, T12 §5   |  [ ]   |
-| 💎  |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 | [ ] |
+| 💎  |  11   | ETW provider registration + filtering | §7, T12 §5   |  [/]   |
+| 💎  |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 | [/] |
 | 💎  |  13   | Rotated-log compression (LZ4)       | §4, T03 §3     |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
@@ -368,16 +368,22 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 §7 wires the 7 `NtTrace*` session syscalls but ETW is not yet usable by real providers: there is no provider registry (GUID to name to channel), and no per-session filtering, so every `NtTraceEvent` writes to every running session. Windows registers providers via `EtwRegister` + manifest and applies a 64-bit keyword bitmask + level kernel-side before the buffer write. This section adds the missing provider/consumer bridge. (→ XREF: TODO-12 §5 SSDT ETW range; §7 of this TODO.)
 
-- [ ] Define `etw_provider_t` in `etw.h` (GUID, name[64], channel id, registering pid) + a global provider registry table guarded by `s_etw_lock`
-- [ ] Provider registration path: register GUID to name to channel; resolve GUID to human name; enumerate registered providers via `NtQueryTrace`
-- [ ] Add `match_any_keyword`/`match_all_keyword` (64-bit) + `max_level` per provider-into-session enablement in `etw_session_t`
-- [ ] Kernel-side filter in `NtTraceEvent`: deliver to a session only when keyword match_any/match_all both satisfied AND `event_level <= max_level`
-- [ ] Persist provider manifest under Registry `HKLM\SYSTEM\Logs\ETW\Providers\<guid>` (name, channel, last keyword mask)
-- [ ] `klog(LOG_INFO, "etw", ...)` trace on provider register/unregister (observable; ETW is post-boot, no POST16)
-- [ ] Unit tests in `test_klog.c`: provider register + enumerate roundtrip; non-matching keyword dropped; matching keyword + level passes
+> [!WARNING]
+> **Design review 2026-06-21 -- corrected design before implementing.** The original plan would silently misroute events. Four constraints the implementer MUST honor: (1) NtTraceEvent only carries `(trace_handle, flags, field_size, fields)` and the 16-byte `etw_event_header_t` has no provider GUID or keyword -- §11 needs a VERSIONED event-metadata ABI (provider id/GUID + uint64 keyword + event_id + level), copied via the §7 `etw_copy_in` probe pattern, before any filter can work. (2) The §7 write-to-one-session-by-handle model conflicts with ETW provider-to-all-enabled-sessions semantics -- adopt the BROADCAST model (provider identity is the routing key; iterate sessions, write only matching ones), keeping any legacy explicit-session write as a separate compat path. (3) Scalar `match_any/match_all/max_level` on `etw_session_t` CANNOT represent two providers enabled into one session with different policies -- use a bounded per-session provider-enable TABLE keyed by provider id `{provider, match_any, match_all, max_level, enabled}`. (4) Registration MUST be two-phase: copy/validate user input + update the in-memory provider table under `s_etw_lock`, DROP the lock, THEN persist to registry (never call registry/VFS/heap under the irqsave `s_etw_lock`). This is a security-sensitive ETW ABI redesign extending the syscall surface §7 just hardened -- it warrants a focused implementation pass.
+
+- [/] Define `etw_provider_t` in `etw.h` (GUID, name[64], channel id, registering pid) + a global provider registry table guarded by `s_etw_lock` (deferred -- see Design-review WARNING)
+- [/] Define a VERSIONED event-metadata wire ABI (provider id/GUID + uint64 keyword + event_id + level) copied via `etw_copy_in`; extend the stored event record prefix to carry provider+keyword (NtTraceEvent cannot filter without it)
+- [/] Provider registration path: register GUID->name->channel; resolve GUID->name; enumerate via `NtQueryTrace`; two-phase (in-memory under `s_etw_lock`, then persist OUTSIDE the lock)
+- [/] Per-session provider-enable TABLE keyed by provider id `{provider, match_any, match_all (64-bit), max_level, enabled}` -- scalar per-session masks cannot hold two providers with different policies
+- [/] BROADCAST filter: a provider event routes to ALL sessions that enabled it; deliver to a session only when keyword match_any/match_all both satisfied AND `event_level <= max_level` (keep legacy write-to-handle as a compat path)
+- [/] Persist provider manifest under Registry `HKLM\SYSTEM\Logs\ETW\Providers\<guid>` AFTER dropping `s_etw_lock`; never call registry/VFS/heap under the irqsave lock
+- [/] `klog(LOG_INFO, "etw", ...)` trace on provider register/unregister (observable; ETW is post-boot, no POST16)
+- [/] Unit tests in `test_klog.c`: provider register + enumerate roundtrip; two sessions enabling one provider; one session enabling two providers with different masks; non-matching keyword dropped; bad/non-NUL-terminated name rejected
 - [ ] Commit: `"kernel: ETW provider registration + per-session keyword/level filtering"`
 
 **Test checkpoint:** Register a provider GUID, enumerate it by name via `NtQueryTrace`. Enable it into a session with a keyword mask; `NtTraceEvent` with a non-matching keyword does not appear in that session's buffer; a matching event does. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] §11 needs an ETW ABI redesign before code -- the Codex design review (2026-06-21) found the plan misroutes events (no event-metadata wire ABI for provider/keyword, single-session-vs-broadcast conflict, scalar masks cannot hold multiple providers, registry-under-irqsave-lock); the corrected design (versioned metadata + broadcast routing + per-session provider table + two-phase registration) extends the §7-hardened syscall surface and warrants a focused pass -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define a VERSIONED event-metadata wire ABI" at line 375)
 
 ---
 
@@ -385,14 +391,16 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (used by profilers and security root-cause), a boot-persistent autologger session that captures init events before user-mode, and self-describing (TraceLogging-style) event schemas so consumers decode payloads without out-of-band manifests.
 
-- [ ] Stack-walk: per-provider stack-trace flag; capture frames via `RtlCaptureStackBackTrace` (→ XREF: TODO-23), symbolize via the symbol provider (→ XREF: TODO-18 §4), append to the event record
-- [ ] Autologger: registry-configured boot-persistent session (`HKLM\...\WMI\Autologger`) started Phase 2 before first user-mode, capturing init/driver-load events (gate behind config; boot must survive absent/corrupt config)
-- [ ] Self-describing schema: provider declares a field name/type array at registration; events carry a schema id so consumers decode payload fields without an external manifest
-- [ ] `klog(LOG_INFO, "etw", ...)` trace on autologger start + stack-capture enable (observable)
-- [ ] Unit tests: stack-walk produces >= 1 resolvable frame; autologger config parse + session start; schema register + field decode roundtrip
+- [/] Stack-walk: per-provider stack-trace flag; capture frames via `RtlCaptureStackBackTrace` (→ XREF: TODO-23), symbolize via the symbol provider (→ XREF: TODO-18 §4), append to the event record (blocked on §11 provider model)
+- [/] Autologger: registry-configured boot-persistent session (`HKLM\...\WMI\Autologger`) started Phase 2 before first user-mode, capturing init/driver-load events (gate behind config; boot must survive absent/corrupt config)
+- [/] Self-describing schema: provider declares a field name/type array at registration; events carry a schema id so consumers decode payload fields without an external manifest (built on §11 registration)
+- [/] `klog(LOG_INFO, "etw", ...)` trace on autologger start + stack-capture enable (observable)
+- [/] Unit tests: stack-walk produces >= 1 resolvable frame; autologger config parse + session start; schema register + field decode roundtrip
 - [ ] Commit: `"kernel: ETW stack-walk, autologger, and self-describing event schema"`
 
 **Test checkpoint:** Enable stack capture on a provider; a logged event carries a non-empty frame array with at least one image+offset resolved. A registry-declared autologger session is active at first user-mode entry. A self-describing event decodes its field names without an external manifest. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] blocked on the §11 ETW provider model (stack-walk flag, autologger session, and self-describing schema all build on provider registration + per-session enablement) -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define `etw_provider_t`" at line 374)
 
 ---
 
