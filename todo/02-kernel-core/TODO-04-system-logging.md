@@ -68,7 +68,7 @@ title: "TODO-04 -- System Logging"
 | 💎  |   7   | ETW tracing syscalls wired to SSDT  | §4, T12 §4     |  [x]   |
 | 💎  |   8   | Crash-persistent log capture        | §1             |  [x]   |
 | 💎  |   9   | Per-entry context metadata          | §2             |  [x]   |
-| ⭐  |  10   | Log integrity verification (HMAC)   | §6, T03 §5     |  [ ]   |
+| ⭐  |  10   | Log integrity verification (HMAC)   | §6, T03 §5     |  [/]   |
 | 💎  |  11   | ETW provider registration + filtering | §7, T12 §5   |  [ ]   |
 | 💎  |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 | [ ] |
 | 💎  |  13   | Rotated-log compression (LZ4)       | §4, T03 §3     |  [ ]   |
@@ -342,19 +342,25 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 > Neither Win11 nor Linux provides out-of-the-box tamper-evident text-format logging. Win11 Event Log is binary XML with no cryptographic sealing. Linux journald's FSS is optional, complex to set up, and uses a binary journal format. Impossible OS's HMAC-chained JSON Lines is human-readable AND cryptographically verifiable -- readable by `jq`, verifiable by `klog_verify_chain()`.
 
 > [!IMPORTANT]
-> **Unblocked (2026-06-20):** Requires `crypto_blake2b()` (HMAC computation) and `csprng_fill()` (key generation) from TODO-03 §5 (Monocypher + kernel CSPRNG), now shipped (`src/libs/monocypher/` + `src/kernel/csprng.c`). CRC32 in `gpt.c`/`ixfs_core.c` is NOT cryptographically secure and must not be used for integrity sealing -- use the keyed `crypto_blake2b` HMAC.
+> **Unblocked (2026-06-20):** Requires `crypto_blake2b_keyed()` (keyed MAC, like `seed_file.c`) and `csprng_fill()` + `csprng_crypto_ok()` (key generation) from TODO-03 §5 (Monocypher + kernel CSPRNG), now shipped (`src/libs/monocypher/` + `src/kernel/csprng.c`). CRC32 in `gpt.c`/`ixfs_core.c` is NOT cryptographically secure and must not be used for integrity sealing -- use the keyed `crypto_blake2b_keyed` MAC.
 
-- [ ] Define `klog_integrity_ctx_t`: previous HMAC (32 bytes), session key (32 bytes), initialized flag
-- [ ] At `klog_disk_enable()`: initialize session HMAC key from `csprng_fill()` (→ XREF: TODO-03 §5 Monocypher CSPRNG); store in `klog_integrity_ctx_t`
-- [ ] In JSON Lines flush: compute HMAC-Blake2b(key, previous_hmac || entry_json) for each entry; append `"hmac":"<64-hex-chars>"` field
-- [ ] Store session key in Registry `HKLM\SYSTEM\Logs\IntegrityKey` (write-once per boot session) for post-boot verification
-- [ ] Implement `klog_verify_chain(const char *jsonl_path)`: reads `events.jsonl` line by line, verifies each HMAC against the chain; returns first corrupted line number or 0 if all valid
-- [ ] Wire into `dmpanalyze.exe` (-> XREF: TODO-27 §9): `dmpanalyze /verifylog` reads key from Registry and verifies the chain
-- [ ] Gate behind `boot.conf` option `log_integrity=1` (default: enabled in release, can be disabled for performance-sensitive debug runs)
-- [ ] Add debug POST codes: `POST16(0xDE20)` entry, `POST16(0xDE21)` HMAC key generated, `POST16(0xDE22)` first entry sealed, `POST16(0xDE23)` verification API ready -- range `0xDE2x` confirmed free
+> [!WARNING]
+> **Design review 2026-06-21 -- operator-reserved before implementing.** The naive plan (store the HMAC key in `HKLM\SYSTEM\Logs\IntegrityKey`) is a FALSE integrity guarantee: an attacker who can rewrite `events.jsonl` can also rewrite that registry value and recompute every `hmac`. The verifier key MUST be anchored OUTSIDE the mutable log trust domain (TPM NVRAM sealed to PCRs, or a protected UEFI NVRAM variable) -- this threat-model/key-anchoring choice is an OPERATOR-RESERVED security-architecture decision. Three more design constraints the implementer must honor: (1) `klog_disk_enable()` runs at `boot_storage.c:691` BEFORE `registry_init()` at line 800, so split key MINT (Phase 2, CSPRNG) from key PUBLISH (after registry/TPM is up) and hard-WARN/disable on publish failure; (2) the HMAC chain tail MUST follow the EXACT three-way state machine of the §6 `events.jsonl` flush -- per-line tails, a committed tail advanced only when `jcommitted` finalizes, AND a salvage tail for complete records that landed when `vfs_truncate` failed -- or a chunk-rollback replay forks the chain and breaks verification; (3) rotation (`events.jsonl`->`.1`) and per-boot key epochs are undefined -- define an authenticated per-file epoch header (boot id, generation, key id, previous-file tail) so a reset point cannot mask truncation/splicing.
+
+- [/] Define `klog_integrity_ctx_t`: previous HMAC (32B), session key (32B), key-id/epoch, init flag (deferred -- see Design-review WARNING)
+- [/] At `klog_disk_enable()`: MINT the session key via `csprng_fill()` gated on `csprng_crypto_ok()` (skip+WARN on degraded entropy); split MINT from PUBLISH (→ XREF: TODO-03 §5 CSPRNG)
+- [/] In JSON Lines flush: append `"hmac":"<64hex>"` = `crypto_blake2b_keyed(key, prev_hmac || json_body)`; chain tail MUST mirror the §6 commit/rollback/salvage state machine; bump `line[512]` to >=640
+- [/] Anchor the verifier key OUTSIDE the mutable log domain (TPM/protected UEFI NVRAM, NOT `HKLM`); publish after the registry/TPM subsystem is up; WARN+disable on failure (operator-reserved)
+- [/] Implement `klog_verify_chain(const char *jsonl_path)`: recompute each HMAC against the chain (constant-time `crypto_verify32`); per-file epoch header so a rotation reset cannot mask truncation
+- [ ] Wire into `dmpanalyze.exe` (-> XREF: TODO-27 §9): `dmpanalyze /verifylog` verifies the chain -- BLOCKED: `dmpanalyze.exe` (TODO-27 §9) not implemented
+- [/] Gate behind `boot.conf` `log_integrity=1` (typed `boot_arg_desc_t` row in `config.c`; default enabled, disablable for perf debug)
+- [/] Add Phase-2 key-mint POST codes only (`POST16(0xDE20)` entry, `POST16(0xDE21)` key minted; range `0xDE2x` free); runtime seal/verify are post-Phase-3 (no POST16)
 - [ ] Commit: `"kernel: HMAC-chain integrity verification for events.jsonl"`
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** [Critical] HMAC verifier-key anchoring is an operator-reserved security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the whole section is blocked on the threat-model/key-anchor choice (TPM vs UEFI NVRAM) plus the §6-mirroring chain state machine and rotation epochs -> XREF: 02-kernel-core/TODO-04-system-logging.md §10 (item: "Anchor the verifier key OUTSIDE the mutable log domain" at line 353)
+> **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 285)
 
 ---
 
