@@ -33,6 +33,7 @@ title: "TODO-01 -- Boot Protocol ABI & Handoff Contract"
 - -> XREF: `T12 §7` -- random-seed payload descriptor and early CSPRNG handoff
 - -> XREF: `T13 §2` -- TPM event-log ownership, PCR metadata, and measured-boot consumers
 - -> XREF: `T20 §4` -- USB controller/device DMA state in `boot_info`
+- -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §5` -- higher-half kernel relocation translates `boot_info` pointers across the high-half switch; its handoff/ABI change is recorded in the §8 schema changelog here
 - -> XREF: `T22 §2` -- recovery environment payload consumer and recovery boot path
 - -> XREF: `T25 §6` -- network provenance and config payload descriptors
 - -> XREF: `T26 §5` -- typed hibernation/resume payload descriptor
@@ -176,7 +177,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 > **Re-verified:** 2026-04-23 | commit `cef7233d` | 5/5 items | build OK | drift harness 7/7 (5 mutations + control + sha256 canonicality invariant), test-tooling 82/82; host-arch gate added to dumper recipes + phony entry points + harness startup
 > **Re-reviewed:** 2026-04-30 | 4/6 items | build OK | drift harness 8/8 (added duplicate-row trust-root fixture); compare.sh now refuses duplicated F() names BEFORE the row-for-row diff so a typo cannot silently shrink coverage
 > **Deferred:** [H] header -> manifest coverage gate -- omission half of trust-root (an F() row missing from dump-fields.inc silently shrinks coverage; today's row-for-row diff + canonical-sha cannot detect a row that never existed) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Header -> manifest coverage gate" at line 157)
-> **Deferred:** [M] parallelize fixture compiles (reason: perf scaling, today 32s/8 fixtures within budget) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Parallelize fixture compiles in test-drift-detection.sh" at line 179)
+> **Deferred:** [M] parallelize fixture compiles (reason: perf scaling, today 32s/8 fixtures within budget) -> XREF: 01-boot-platform/TODO-01 §3 (item: "Parallelize fixture compiles in test-drift-detection.sh" at line 180)
 > **Quality reviewed:** 2026-04-17 | Codex 2x (adversarial + quality) | 3M fixed, 0 open | scope: N/A (host shell tooling)
 > **Quality re-reviewed:** 2026-04-23 | Codex 4x (adversarial + 3 quality rounds for iterative hardening) | 1H fixed, 0 open | scope: N/A (host tools -- Makefile + shell)
 > **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 1H+1M fixed, 1H+1M deferred | scope: N/A (host tools)
@@ -347,7 +348,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 > **Verified:** 2026-04-23 | commit `3ec06bb3` + §19 closures | 6/6 items | build OK | 472 kernel + 16 user-mode PASS on KVM (2 new fuzz suites: addr sweep 256 iters, header perturb 32 iters); end-to-end stale-image harness PASS on KVM in 32s via `make stale-abi-fixtures`
 > **Re-reviewed:** 2026-04-30 | 6/6 items | build OK | lint clean | fuzz tests still wired in test_register_boot_info() under TEST_CAT_BOOT; harness scripts present; CI step still gated on §19 follow-up
-> **Accepted:** [H] Fixture failures do not block CI today; concrete deferred owner item exists -> XREF: 01-boot-platform/TODO-01 §19 (item: "three consecutive CI runs have shown clean [PASS] for both fixtures" at line 350)
+> **Accepted:** [H] Fixture failures do not block CI today; concrete deferred owner item exists -> XREF: 01-boot-platform/TODO-01 §19 (item: "three consecutive CI runs have shown clean [PASS] for both fixtures" at line 351)
 > **Quality reviewed:** 2026-04-23 | Codex 2x (implement-adversarial + review-quality) | 2M fixed, 0 open | scope: kernel-code-quality
 > **Quality re-reviewed:** 2026-04-30 | Codex 3x (adversarial + consistency + perf) | 0 fixed, 1H accepted-XREF | scope: kernel-code-quality
 

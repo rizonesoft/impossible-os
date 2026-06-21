@@ -50,6 +50,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 - [`src/kernel/drivers/framebuffer.c`](../../src/kernel/drivers/framebuffer.c) -- `fb_swap`/`fb_swap_rect` cli/sti
 - [`src/kernel/acpi.c`](../../src/kernel/acpi.c) -- FADT parsing, MADT, PM Timer
 - -> XREF: `02-kernel-core/TODO-20-eif-full-implementation.md §9` -- EIF per-process dispatch-table isolation consumes the per-process PML4 base from §8
+- -> XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §6` -- higher-half kernel relocation builds the kernel-high/user-low shared-PML4 split on the §8 per-process page-table base
 - [`include/kernel/boot_init.h`](../../include/kernel/boot_init.h) -- `BOOT_TRY`, `g_boot_info.degraded_mask`, subsystem IDs
 - → XREF: `TODO-14-boot-diagnostics.md §6` -- panic forensic evidence struct (deferred; this TODO validates it works on bare metal when implemented)
 - → XREF: `TODO-11-interrupt-timer-arch.md` -- UTS / LAPIC calibration / `hpet_read_ns()` owner; bare-metal ISR path fixed in this file §5 (`clac` removal)

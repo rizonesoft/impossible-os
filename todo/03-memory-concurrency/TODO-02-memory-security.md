@@ -25,6 +25,7 @@ title: "TODO-02 -- Memory Security Hardening"
 - → XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §2` -- W^X enforcement; §5 NX/DEP and W^X are complementary layers
 - → XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md §5` -- `swapgs` on syscall entry/exit; §8 `stac`/`clac` framing must nest correctly inside syscall entry
 - → XREF: `02-kernel-core/TODO-14-registry-completion.md` -- `HKLM\SYSTEM\Security\*` keys written in §9
+- → XREF: `02-kernel-core/TODO-33-higher-half-kernel-relocation.md §6` -- FOUNDATION: the higher-half kernel + kernel-high/user-low PML4 split is the structural prerequisite for §4/§5 (SMEP/SMAP clean split) and §6 (KPTI); KASLR §2 also gains the high-half range it randomizes within
 
 ## Outcome
 
