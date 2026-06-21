@@ -23,6 +23,7 @@ typedef struct security_descriptor SECURITY_DESCRIPTOR;
 #define OB_FLAG_KERNEL_ONLY  (1u << 1)  /* not accessible from user mode */
 #define OB_FLAG_NAMED        (1u << 2)  /* object has a namespace entry */
 #define OB_FLAG_PMM_ALLOC    (1u << 3)  /* allocated via pmm_alloc_contiguous (not kmalloc) */
+#define OB_FLAG_TAIL_SD      (1u << 4)  /* alloc block has a tail-packed creator SD; count it when freeing pmm frames */
 
 /* --- OBJECT_HEADER ------------------------------------------------------- */
 

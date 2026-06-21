@@ -23,6 +23,7 @@
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/spinlock.h"
 #include "kernel/security/default_sds.h"
 #include "kernel/security/token.h"
 
@@ -32,6 +33,11 @@ extern void *memset(void *s, int c, size_t n);
 
 static OBJECT_TYPE g_ob_types[OB_MAX_TYPES];
 static uint32_t    g_ob_type_count = 0;
+/* Serialises ob_create_type: the registry is a global the SMP-by-default
+ * invariant forbids mutating with an unlocked check-then-increment. Built-in
+ * types register on the BSP during boot, but the API is also reachable from
+ * ALPC/test registration paths, so the slot reservation must be atomic. */
+static DEFINE_SPINLOCK(s_type_lock);
 
 /* --- Built-in type singleton pointers ------------------------------------ */
 
@@ -53,35 +59,78 @@ const OBJECT_TYPE *ObpTebType       = NULL;
 
 const OBJECT_TYPE *ob_create_type(const OBJECT_TYPE *tmpl)
 {
+    OBJECT_TYPE *slot;
+    uint64_t irqf;
+
+    spin_lock_irqsave(&s_type_lock, &irqf);
     if (g_ob_type_count >= OB_MAX_TYPES) {
+        spin_unlock_irqrestore(&s_type_lock, irqf);
         klog(LOG_ERROR, "ob", "type table full (%u/%u) -- cannot register '%s'",
              (uint64_t)g_ob_type_count, (uint64_t)OB_MAX_TYPES,
              tmpl->name ? tmpl->name : "?");
         return NULL;
     }
 
-    OBJECT_TYPE *slot = &g_ob_types[g_ob_type_count++];
+    /* Fully initialise the slot BEFORE publishing the new count: an unlocked
+     * reader (ob_get_types -> NtQueryObject(ObjectTypesInformation)) that sees
+     * the incremented count must never observe a half-written row. The release
+     * store pairs with the acquire load in ob_get_types so the slot writes are
+     * visible before the count bump. */
+    slot = &g_ob_types[g_ob_type_count];
     slot->name      = tmpl->name;
     slot->body_size = tmpl->body_size;
     slot->on_close  = tmpl->on_close;
     slot->on_delete = tmpl->on_delete;
     slot->on_open   = tmpl->on_open;
     slot->on_parse  = tmpl->on_parse;
+    __atomic_store_n(&g_ob_type_count, g_ob_type_count + 1, __ATOMIC_RELEASE);
+    spin_unlock_irqrestore(&s_type_lock, irqf);
     return slot;
 }
 
 const OBJECT_TYPE *ob_get_types(uint32_t *out_count)
 {
-    if (out_count) *out_count = g_ob_type_count;
+    /* Acquire-load the count so the table rows the writer published before the
+     * count bump are visible to this (lockfree) reader. */
+    if (out_count) *out_count = __atomic_load_n(&g_ob_type_count, __ATOMIC_ACQUIRE);
     return g_ob_types;
 }
 
 /* --- ob_alloc_object ----------------------------------------------------- */
 
+/* Tail-packed per-object creator security descriptor. When the allocating task
+ * carries a token, this private SD+DACL rides in the SAME allocation block as
+ * the object (just past header+body). One allocation, per-object (no shared
+ * static aliasing/race across objects), freed with the object -- no second
+ * heap node on the universal object hot path. OB_FLAG_TAIL_SD records that the
+ * block carries it so the pmm free path counts the extra bytes. */
+struct ob_creator_sd { SECURITY_DESCRIPTOR sd; uint8_t dacl[128]; };
+
 void *ob_alloc_object(const OBJECT_TYPE *type)
 {
-    size_t total = sizeof(OBJECT_HEADER) + type->body_size;
+    size_t total, sd_off = 0;
+    int want_creator_sd;
+    struct task *cur;
     void *block;
+
+    /* Reject a NULL type and a body_size that would wrap the header+body sum.
+     * body_size is copied verbatim from the registering template, so a malformed
+     * or future dynamic type must not be able to wrap `total` to a small value,
+     * take the kmalloc path, and hand back a body that callers treat as
+     * body_size bytes (heap/page corruption). */
+    if (!type || type->body_size > (size_t)-1 - sizeof(OBJECT_HEADER))
+        return NULL;
+    total = sizeof(OBJECT_HEADER) + type->body_size;
+
+    /* Reserve tail space for the creator SD when the caller has a token. */
+    cur = task_current();
+    want_creator_sd = (cur && cur->token);
+    if (want_creator_sd) {
+        if (sizeof(struct ob_creator_sd) > (size_t)-1 - total)
+            return NULL;
+        sd_off = total;
+        total += sizeof(struct ob_creator_sd);
+    }
 
     if (total <= PMM_FRAME_SIZE) {
         block = kmalloc(total);
@@ -104,39 +153,48 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
     hdr->type = type;
     if (total > PMM_FRAME_SIZE)
         hdr->flags |= OB_FLAG_PMM_ALLOC;
+    /* Flag the reserved tail whenever tail space was allocated -- NOT only when
+     * the SD build succeeds. The free path sizes the block from this flag, so it
+     * must match what was allocated even on the SeCreateCreatorSD fallback path
+     * (otherwise a pmm object whose tail crossed a frame boundary leaks it). */
+    if (want_creator_sd)
+        hdr->flags |= OB_FLAG_TAIL_SD;
 
-    /* Attach security descriptor: if the current task has a token, build
-     * a creator SD with the user's SID; otherwise use the kernel default. */
-    {
-        struct task *cur = task_current();
-        if (cur && cur->token) {
-            /* Use a stack-local absolute SD + DACL workspace.
-             * The SD pointers reference static SIDs so they remain valid. */
-            static SECURITY_DESCRIPTOR s_creator_sd;
-            static uint8_t s_creator_dacl[128];
-            ACCESS_TOKEN *tok = (ACCESS_TOKEN *)cur->token;
-            if (SeCreateCreatorSD(&s_creator_sd, tok->UserSid,
-                                  s_creator_dacl, sizeof(s_creator_dacl)) == 0)
-                hdr->security = &s_creator_sd;
-            else
-                hdr->security = (SECURITY_DESCRIPTOR *)SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
-        } else {
+    /* Attach the security descriptor. A token-bearing creator gets the per-object
+     * tail-packed creator SD; everyone else (and the SD-build fallback) shares the
+     * immutable kernel-default SD (a static, never freed). */
+    if (want_creator_sd) {
+        struct ob_creator_sd *csd = (struct ob_creator_sd *)((uint8_t *)block + sd_off);
+        ACCESS_TOKEN *tok = (ACCESS_TOKEN *)cur->token;
+        if (SeCreateCreatorSD(&csd->sd, tok->UserSid, csd->dacl, sizeof(csd->dacl)) == 0)
+            hdr->security = &csd->sd;
+        else
             hdr->security = (SECURITY_DESCRIPTOR *)SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
-        }
+    } else {
+        hdr->security = (SECURITY_DESCRIPTOR *)SeCreateDefaultSD(SE_SD_TYPE_DEFAULT);
     }
 
     /* Per-type tracing (S15): allocate trace log if type tracing is enabled */
     if (type->tracing_enabled) {
         extern OB_TRACE_INFO *ob_trace_alloc(void);
         hdr->trace = ob_trace_alloc();
+        if (!hdr->trace)
+            klog(LOG_WARN, "ob",
+                 "trace alloc failed for type '%s'; this object untraced",
+                 type->name ? type->name : "?");
     }
 
-    /* Per-type statistics: increment live object count */
+    /* Per-type statistics: increment live object count and lift the high-water
+     * mark with an atomic compare-exchange max so two CPUs allocating the same
+     * type concurrently cannot lose a peak update (the plain RMW raced). */
     {
         OBJECT_TYPE *mtype = (OBJECT_TYPE *)type;
-        int32_t cur = atomic_fetch_add(&mtype->total_objects, 1) + 1;
-        if ((uint32_t)cur > mtype->peak_objects)
-            mtype->peak_objects = (uint32_t)cur;
+        uint32_t cur_n = (uint32_t)(atomic_fetch_add(&mtype->total_objects, 1) + 1);
+        uint32_t peak = __atomic_load_n(&mtype->peak_objects, __ATOMIC_RELAXED);
+        while (cur_n > peak &&
+               !__atomic_compare_exchange_n(&mtype->peak_objects, &peak, cur_n, 0,
+                                            __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            ;  /* peak reloaded by the CAS on failure */
     }
 
     return OB_BODY_FROM_HEADER(hdr);
@@ -166,9 +224,14 @@ static void ob_free_object(OBJECT_HEADER *hdr)
         hdr->trace = (void *)0;
     }
 
+    /* The creator SD (if any) is tail-packed in this same block, so it is freed
+     * with the object -- no separate free. The pmm path must count its bytes. */
     if (hdr->flags & OB_FLAG_PMM_ALLOC) {
         size_t total = sizeof(OBJECT_HEADER) + hdr->type->body_size;
-        uint64_t frames = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+        uint64_t frames;
+        if (hdr->flags & OB_FLAG_TAIL_SD)
+            total += sizeof(struct ob_creator_sd);
+        frames = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
         uint64_t i;
         for (i = 0; i < frames; i++)
             pmm_free_frame((uintptr_t)hdr + i * PMM_FRAME_SIZE);
@@ -225,6 +288,10 @@ void ObSetSecurityDescriptor(void *body, SECURITY_DESCRIPTOR *sd)
 {
     if (body) {
         OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(body);
+        /* Replacing the SD pointer is safe even when a tail-packed creator SD is
+         * present: that tail region lives in the object block and is reclaimed
+         * with the object (OB_FLAG_TAIL_SD stays set so the pmm free still counts
+         * it), so there is nothing to free here. */
         hdr->security = sd;
     }
 }

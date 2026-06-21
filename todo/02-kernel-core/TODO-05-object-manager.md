@@ -96,6 +96,17 @@ Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are 
 - [x] Register built-in type singletons at ObInit time: `ObpFileType`, `ObpProcessType`, `ObpThreadType`, `ObpDirectoryType`, `ObpSymlinkType`, `ObpEventType`, `ObpMutexType`, `ObpSemaphoreType`, `ObpSectionType`, `ObpTimerType`
 - [x] Commit: `"kernel: ob -- OBJECT_HEADER and OBJECT_TYPE infrastructure"`
 
+> **Notes:**
+> - `OBJECT_HEADER` (`ob.h`) + `OBJECT_TYPE` (`ob_type.h`) are the typed-header substrate: `ob_create_type` registers type singletons, `ob_alloc_object` combined-allocates header+body, `OB_HEADER_FROM_BODY`/`OB_BODY_FROM_HEADER` convert.
+> - `ob_alloc_object` tail-packs a per-object creator SD into the same allocation block for token tasks (one allocation, freed with the object); kernel-default objects share the immutable static default SD.
+> - Type registration is serialised by `s_type_lock` and publishes the count via release/acquire so an unlocked `NtQueryObject(ObjectTypesInformation)` reader never observes a half-written row.
+> - 13 built-in type singletons register at `ob_init` (File/Process/Thread/Directory/Symlink/Event/Mutex/Semaphore/Section/Timer/Peb/Teb + Info).
+> - Validation: `test_ob.c` (`TEST_CAT_OB`), `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
+> **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 6/6 items | build OK | tests 323/323 PASS (SUITE=ob)
+> **Deferred:** [M] `hdr->security` holds both absolute (creator) and self-relative (default) SDs with no discriminator -- the access checker must branch on `SE_SELF_RELATIVE` before dereferencing Owner/Dacl -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(...)`" sub-bullet 0 SD-format normalize at line 324)
+> **Deferred:** [M] `SeCreateCreatorSD` stores `tok->UserSid` by pointer (no copy); latent dangle if a non-static SID-backed token is freed while the object lives -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(...)`" sub-bullet 0 owner-SID handling at line 324)
+> **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Critical+2H+3M+2L fixed, 2M deferred | scope: kernel-code-quality
+
 ---
 
 ## 2. Reference Counting and Object Lifetime

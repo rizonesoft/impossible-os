@@ -321,6 +321,7 @@ title: "TODO-15 -- Security Reference Monitor"
 - [ ] Declare mappings for: File (standard Unix rwx mapping), Process, Thread, Token, Registry Key, Event, Mutex, Semaphore, Waitable Timer
 - [ ] `RtlMapGenericMask(access, mapping)` -- replaces `GENERIC_READ`/`WRITE`/ `EXECUTE`/`ALL` bits with type-specific masks in-place
 - [ ] Implement `SeAccessCheck(sd, ctx, ctx_locked, desired, prev_granted, privs, mapping, mode, granted, status)`:
+  0. **SD-format normalize**: `ob_alloc_object` stores BOTH formats in `hdr->security` -- absolute creator SDs (`SeCreateCreatorSD`) and self-relative default SDs (`SeCreateDefaultSD`). Branch on the `SE_SELF_RELATIVE` control bit before dereferencing `Owner`/`Dacl` (self-relative fields are byte offsets, not pointers); reading one as the other is a wild access. Owned from TODO-05 §1 review.
   1. **Kernel bypass**: if `mode == KernelMode` → `*granted = desired`, return `TRUE`
   2. **Owner bypass**: if `ctx->PrimaryToken->UserSid` == SD owner → set `READ_CONTROL | WRITE_DAC` bits in accumulated access without DACL check
   3. **DACL absent**: if `sd->Dacl == NULL` → grant all; if DACL present but empty (AceCount=0) → deny all
