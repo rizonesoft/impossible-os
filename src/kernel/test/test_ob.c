@@ -253,23 +253,62 @@ static void test_ob_duplicate_close_protected(void)
 
 static void test_ob_handle_inherit(void)
 {
+    /* Dedicated type so per-type handle stats are not perturbed by other tests. */
+    OBJECT_TYPE tmpl = {
+        .name = "InhStat", .body_size = 32,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    OBJECT_TYPE *t = (OBJECT_TYPE *)ob_create_type(&tmpl);
+    TEST_ASSERT(t != (void *)0, "ob_create_type for inherit-stats");
+    if (!t) return;
+
+    HANDLE_TABLE parent, child;
+    ob_handle_table_init(&parent);
+    ob_handle_table_init(&child);
+
+    void *body = ob_alloc_object(t);
+    HANDLE h = ObpAllocateHandle(&parent, body, 0x1F01FF, OBJ_INHERIT);
+    TEST_ASSERT(atomic_read(&t->total_handles) == 1,
+                "one open handle after parent alloc");
+
+    int inherited = ob_handle_table_inherit(&parent, &child);
+    TEST_ASSERT(inherited == 1, "exactly 1 handle inherited");
+
+    HANDLE_TABLE_ENTRY *child_entry = ObpLookupHandle(&child, h);
+    TEST_ASSERT(child_entry != (void *)0 && child_entry->object == body,
+                "inherited handle at same index points to same object");
+    TEST_ASSERT(atomic_read(&t->total_handles) == 2,
+                "inherited handle counted in per-type total_handles");
+
+    ObpFreeHandle(&parent, h);
+    ObpFreeHandle(&child, h);
+    TEST_ASSERT(atomic_read(&t->total_handles) == 0,
+                "total_handles back to 0 after both closes (no undercount)");
+
+    ObDereferenceObject(body);
+    ob_handle_table_destroy(&parent);
+    ob_handle_table_destroy(&child);
+}
+
+/* ---- Inheritance with no inheritable handles is success, not OOM ---- */
+
+static void test_ob_inherit_none(void)
+{
     HANDLE_TABLE parent, child;
     ob_handle_table_init(&parent);
     ob_handle_table_init(&child);
 
     void *body = ob_alloc_object(&test_type);
-    HANDLE h = ObpAllocateHandle(&parent, body, 0x1F01FF, OBJ_INHERIT);
+    /* Parent holds a handle WITHOUT OBJ_INHERIT. */
+    HANDLE h = ObpAllocateHandle(&parent, body, 0x1, 0);
 
-    uint32_t inherited = ob_handle_table_inherit(&parent, &child);
-    TEST_ASSERT(inherited >= 1, "at least 1 handle inherited");
-
-    HANDLE_TABLE_ENTRY *child_entry = ObpLookupHandle(&child, h);
-    TEST_ASSERT(child_entry != (void *)0 && child_entry->object == body,
-                "inherited handle at same index points to same object");
+    int n = ob_handle_table_inherit(&parent, &child);
+    TEST_ASSERT(n == 0, "no inheritable handles -> returns 0 (not -1/OOM)");
+    TEST_ASSERT(ObpLookupHandle(&child, h) == (void *)0,
+                "non-inheritable handle not copied to child");
 
     ObpFreeHandle(&parent, h);
-    ObpFreeHandle(&child, h);
-    /* -9 LEAK retrofit. */
     ObDereferenceObject(body);
     ob_handle_table_destroy(&parent);
     ob_handle_table_destroy(&child);
@@ -1818,6 +1857,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: dup-close no premature on_close",
                             test_ob_duplicate_close_no_premature_onclose, TEST_CAT_OB);
     test_suite_register_cat("OB: handle inherit", test_ob_handle_inherit, TEST_CAT_OB);
+    test_suite_register_cat("OB: inherit none -> 0", test_ob_inherit_none, TEST_CAT_OB);
     test_suite_register_cat("OB: query directory", test_ob_query_directory, TEST_CAT_OB);
     test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
     test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);

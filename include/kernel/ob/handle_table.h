@@ -71,8 +71,10 @@ HANDLE_TABLE_ENTRY *ObpLookupHandle(HANDLE_TABLE *table, HANDLE handle);
  * OBJ_INHERIT attribute, preserving slot indices (HANDLE values match).
  * Calls ObReferenceObject for each inherited handle.
  * Child table must be freshly initialized (empty).
- * Returns the number of handles inherited. */
-uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child);
+ * Best-effort under memory pressure: grows the child to cover the highest
+ * inheritable slot; if a grow fails it inherits what fits and logs a warning.
+ * Returns the number of handles inherited (>= 0), or -1 for invalid arguments. */
+int ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child);
 
 /* Set per-process handle limit. Clamped to HANDLE_TABLE_ABSOLUTE_MAX. */
 void ob_handle_table_set_limit(HANDLE_TABLE *table, uint32_t new_limit);

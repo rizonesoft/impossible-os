@@ -71,7 +71,13 @@ static NTSTATUS NtCreateProcess_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (pid < 0)
         return STATUS_NO_MEMORY;
 
-    /* Inherit handles from parent if requested */
+    /* Inherit handles from parent if requested. Best-effort: ob_handle_table_inherit
+     * grows the child to cover all inheritable handles and warns if memory
+     * pressure forced it to drop some. We do NOT fail here -- the child task is
+     * already created with no teardown path, so failing would leak it, whereas a
+     * partially-inherited process runs and frees its task on exit. Atomic
+     * all-or-fail (which needs a child-task teardown helper) is a tracked
+     * Handle-Inheritance follow-up item. */
     if (inherit) {
         struct task *child = task_get_by_pid((uint32_t)pid);
         if (child)

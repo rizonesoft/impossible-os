@@ -319,21 +319,42 @@ HANDLE_TABLE_ENTRY *ObpLookupHandle(HANDLE_TABLE *table, HANDLE handle)
 
 /* --- ob_handle_table_inherit --------------------------------------------- */
 
-uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
+int ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
 {
-    uint32_t i, count = 0;
+    uint32_t i, count = 0, max_inherit_idx = 0;
+    int any_inheritable = 0;
     OBJECT_HEADER *hdr;
 
     if (!parent || !child || !parent->entries || !child->entries)
-        return 0;
+        return -1;
 
-    /* Grow child table to match parent capacity if needed */
-    while (child->capacity < parent->capacity) {
+    /* Find the highest parent slot that actually carries an inheritable handle.
+     * Only that index has to fit in the child -- growing to the full parent
+     * capacity (which may have expanded for NON-inheritable handles) would turn
+     * a fits-fine inheritance into a false OOM. */
+    for (i = 0; i < parent->capacity; i++) {
+        if (parent->entries[i].object
+            && (parent->entries[i].attributes & OBJ_INHERIT)) {
+            max_inherit_idx = i;
+            any_inheritable = 1;
+        }
+    }
+    if (!any_inheritable)
+        return 0;  /* nothing to inherit -- success, no growth needed */
+
+    /* Grow the child toward covering the highest inheritable index. Best-effort
+     * under memory pressure: if a grow fails, inherit what already fits and warn
+     * rather than failing process creation. Failing here would be worse -- the
+     * child task is already created and there is no teardown path yet, so a
+     * failed CreateProcess would LEAK the task (a partially-inherited process
+     * instead runs and frees its task normally on exit). Atomic all-or-fail with
+     * proper child teardown is tracked as a Handle-Inheritance follow-up item. */
+    while (child->capacity <= max_inherit_idx) {
         if (handle_table_grow(child) < 0)
-            break;  /* can't grow further -- inherit what fits */
+            break;
     }
 
-    for (i = 0; i < parent->capacity && i < child->capacity; i++) {
+    for (i = 0; i <= max_inherit_idx && i < child->capacity; i++) {
         if (!parent->entries[i].object)
             continue;
         if (!(parent->entries[i].attributes & OBJ_INHERIT))
@@ -350,10 +371,30 @@ uint32_t ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
         hdr = OB_HEADER_FROM_BODY(parent->entries[i].object);
         hdr->handle_count++;
 
+        /* Mirror ObpAllocateHandle's per-type handle statistics. ObpFreeHandle
+         * decrements type->total_handles for EVERY closed handle, inherited
+         * ones included, so without this bump the signed counter is driven
+         * negative on close and NtQueryObject(ObjectTypesInformation) reports a
+         * bogus huge open-handle count. */
+        if (hdr->type) {
+            OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
+            int32_t cur = atomic_fetch_add(&mtype->total_handles, 1) + 1;
+            if ((uint32_t)cur > mtype->peak_handles)
+                mtype->peak_handles = (uint32_t)cur;
+        }
+
         count++;
     }
 
-    return count;
+    /* If the child could not be grown to cover the highest inheritable slot,
+     * some inheritable handles were dropped -- surface it instead of silently
+     * shipping a process missing handles it was supposed to inherit. */
+    if (child->capacity <= max_inherit_idx)
+        klog(LOG_WARN, "ob",
+             "handle inheritance incomplete: child table OOM (got %u handles)",
+             (uint64_t)count);
+
+    return (int)count;
 }
 
 /* --- ob_handle_table_set_limit (S14) ------------------------------------- */

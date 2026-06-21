@@ -60,7 +60,7 @@ title: "TODO-05 -- Object Manager"
 | 💎  |   7   | Section (shared memory) object type                           | §3, §4         |  [/]   |
 | 💎  |   8   | Security descriptor integration                               | §1, T15 §1,§3  |  [x]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T15 §4     |  [/]   |
-| 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [x]   |
+| 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [/]   |
 | ⭐  |  11   | Unified kernel-user namespace browser API                     | §4             |  [x]   |
 | 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [x]   |
 | 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [x]   |
@@ -352,6 +352,23 @@ Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles int
 - [x] Inherited handle indices in the child match the parent (Win32 contract -- same HANDLE value)
 - [x] On child `NtClose`, child's references are released independently of the parent's
 - [x] Commit: `"kernel: ob -- handle inheritance across CreateProcess"`
+- [ ] **Atomic CreateProcess teardown on failure**: `NtCreateProcess_handler` leaks the child task on post-`task_create` failure (inherit/alloc); add a `task_destroy(pid)` for unstarted tasks, then make inheritance all-or-fail with teardown.
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=ob` -- `OB: handle inherit` asserts an `OBJ_INHERIT` handle copies to the child at the same index with `total_handles` rising 1->2 then back to 0 on close; `OB: inherit none -> 0` asserts a non-inheritable parent yields 0 inherited (not OOM).
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 355 kernel suites, 0 failures
+
+> **Notes:**
+> - `ob_handle_table_inherit` (`handle_table.c`) copies every `OBJ_INHERIT` parent handle to the same child slot (HANDLE values match), takes an independent `ObReferenceObject` per handle; child closes are independent of the parent.
+> - Runs from `NtCreateProcess_handler` when `bInheritHandles` is set.
+> - Review fix: inherited handles now bump `type->total_handles`/`peak_handles` like `ObpAllocateHandle` (was undercounting -- `ObpFreeHandle` decrements them on close, driving the signed counter negative and corrupting `NtQueryObject` stats).
+> - Review fix: the child grows only to cover the highest inheritable slot (avoids false-OOM from non-inheritable handles) and inherits best-effort with a `klog` warning if memory pressure drops some.
+> - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_handle_inherit` (stats 1->2->0) + `test_ob_inherit_none`; 355 OB tests pass.
+> - Scope: atomic all-or-fail process creation needs a child-task teardown helper (deferred above); the unlocked-handle-table race is the shared §3 gap.
+> **Verified:** 2026-06-21 | core ship -- review fixes | 5/6 items | build OK | tests 355 ob PASS
+> **Deferred:** [H] CreateProcess leaks the created child task on any post-`task_create` failure (inheritance OOM / handle alloc); needs a `task_destroy` helper for atomic teardown -> XREF: 02-kernel-core/TODO-05 §10 (item: "Atomic CreateProcess teardown on failure" at line 355)
+> **Accepted:** [M] the parent handle table is read without a lock during inheritance (concurrent mutation race) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2M fixed, 1H+1M deferred-XREF | scope: kernel-code-quality
 
 ---
 
