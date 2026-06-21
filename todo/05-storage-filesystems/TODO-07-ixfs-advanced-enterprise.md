@@ -21,7 +21,7 @@ title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
 - `src/kernel/fs/ixfs/ixfs_journal.c` -- WAL journal; all destructive operations must be journaled
 - `src/kernel/drivers/blkdev.c` -- `blkdev_discard(dev, lba, count)` already exists; §6 wires IXFS into it
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` -- v3 inode with `i_compress_type`, `i_encrypt_key_id`, `i_flags` (sparse/immutable), `i_access_count` (tiering) must be in place
-- Future dependency (no stable XREF target yet -- kernel-libraries work may land as a new TODO): LZ4 frame encoder/decoder and Zstd single-frame decompressor; Monocypher for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing; until that TODO completes, stub §1 and §10 behind compile-time feature flags
+- -> XREF: `02-kernel-core/TODO-03-kernel-libraries.md` §3 (LZ4) + §9 (Zstd) -- the kernel-libraries codecs §1 compression depends on; LZ4 source is vendored, Zstd §9 is filed and source-pending. Monocypher (D02 T03 §5) for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing (vendored with LZ4). Until §3/§9 ship, stub §1 and §10 behind compile-time feature flags
 - → XREF: `08-desktop-shell` domain -- Disk Manager UI panels (§14 health dashboard, §4 defrag button, §9 Previous Versions, §12 quota panel, §13 tier config) are desktop components; coordinate on the IPC/message interface used to query IXFS stats
 - → XREF: `04-drivers-hardware/TODO-13-storage-controller-device-drivers.md §7` -- AHCI SMART data feeds the health dashboard (§14) disk temperature + error count fields
 
@@ -108,7 +108,7 @@ Per-4KiB compression unit on the write path. Skip compression if ratio < 10%. De
 **Files:** `src/kernel/fs/ixfs/ixfs_compress.c` (new), `include/kernel/fs/ixfs.h` (extend)
 
 > [!NOTE]
-> Compression unit header (8 bytes prepended to each compressed block): `uint16_t compressed_size`; `uint8_t algo` (1=LZ4, 2=Zstd); `uint8_t flags`; `uint32_t original_size`. If `compressed_size >= original_size * 0.90` (less than 10% savings): store uncompressed with `flags |= IXFS_COMP_STORED`. The compressed data + header replaces the 4 KiB extent block; if compressed ≤ 4080 bytes, it fits in one block; else store uncompressed. Requires LZ4 and Zstd from kernel-libraries TODO. Until available: stub behind `#ifdef IXFS_COMPRESSION_ENABLED`; compile-time disabled by default.
+> Compression unit header (8 bytes prepended to each compressed block): `uint16_t compressed_size`; `uint8_t algo` (1=LZ4, 2=Zstd); `uint8_t flags`; `uint32_t original_size`. If `compressed_size >= original_size * 0.90` (less than 10% savings): store uncompressed with `flags |= IXFS_COMP_STORED`. The compressed data + header replaces the 4 KiB extent block; if compressed ≤ 4080 bytes, it fits in one block; else store uncompressed. Requires LZ4 and Zstd from kernel-libraries TODO (-> XREF: `02-kernel-core/TODO-03-kernel-libraries.md` §3 LZ4 + §9 Zstd). Until available: stub behind `#ifdef IXFS_COMPRESSION_ENABLED`; compile-time disabled by default.
 
 - [ ] `ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)` → compress with LZ4 or Zstd; return compressed length or -1 if would expand
 - [ ] `ixfs_decompress_block(algo, in_buf, in_len, out_buf, out_max)` → decompress; return original size

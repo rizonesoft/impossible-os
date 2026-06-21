@@ -8,6 +8,9 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 # TODO-03 -- Kernel Embedded Libraries
 
+> **Validated:** 2026-06-21 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+> **Gap-audited:** 2026-06-21 | confirmatory parity pass (mature TODO) + codex-gap-audit; 2 new baselines filed -- §9 Zstandard (Win11 24H2 ReFS + Linux lib/zstd; closes IXFS §3 dangling dep), §10 SHA-3/SHAKE (Win11 24H2 CNG + Linux sha3_generic; Codex-caught)
+
 > **Goal:** Build the complete freestanding library layer the rest of the kernel depends on: `snprintf`/`vsnprintf` in `libc` (§1; `panic.c` / klog migration still deferred), full floating-point math beyond `kmath.h` (§2), LZ4 (§3; assumed by TODO-26/TODO-27), miniz deflate/ZIP (§4), Monocypher + kernel CSPRNG (§5), cJSON (§6), and Mbed TLS record layer (§7) for HTTPS/FTPS consumers. All ports compile with `-ffreestanding -nostdlib` and route heap through `kmalloc`/`kfree` with `pmm_alloc_contiguous` for buffers > 4 KiB.
 
 > [!IMPORTANT]
@@ -34,6 +37,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - `src/kernel/gfx/stb_truetype_impl.c` -- example of a correctly integrated freestanding stb library; use as the pattern for all new ports
 - `src/kernel/image.c` -- example of tiered kmalloc/pmm allocator delegation for stb_image; replicate the pattern for miniz/monocypher/Mbed TLS
 - -> XREF: `12-user-platform-sdk/TODO-03-kernel-libraries.md` -- COMPLEMENT: ZIP writer + stream deflate after D02 T03 §6 reader/port; do not re-vendor miniz here
+- -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` -- CONSUMER: IXFS transparent compression selects LZ4 (§3) or Zstd (§9) per file; this TODO owns both codecs (IXFS §3 was the dangling consumer that justified §9)
 - -> XREF: `TODO-26-power-management.md §4` -- S4 hibernation image write uses LZ4 block compression; requires §3 of this TODO to be complete first
 - -> XREF: `TODO-27-crash-dump-generation.md §5, §6` -- crash dump minidump/kernel dump use LZ4 compression; requires §3
 - -> XREF: `TODO-10-kernel-security-hardening.md §12` -- `__stack_chk_guard` canary seeded with RDRAND; the full CSPRNG (§5) is a superset of that; share the seed path
@@ -52,6 +56,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - A complete floating-point math library (`kmath.h` + `src/libc/math.c`) provides sin/cos/tan/atan2/exp/log/pow with SSE2 precision; no libm needed.
 - LZ4 block compression is available for crash dumps, hibernation images, and any other kernel subsystem that needs fast in-kernel compression.
 - miniz provides zlib-compatible deflate/inflate and ZIP archive reading, unblocking IXFS transparent compression and HTTP gzip.
+- Zstandard (zstd) provides a deflate-class ratio at LZ4-class decode speed for IXFS transparent compression (the ratio-favoring codec alongside LZ4) -- the kernel-libraries owner IXFS §3 was waiting on.
+- SHA-3 / SHAKE (FIPS 202 Keccak) gives the kernel the both-platform hash baseline (Win11 24H2 CNG + Linux sha3_generic) that the SHA-2 family and Monocypher Blake2b did not cover, plus the SHAKE XOF future post-quantum signatures need.
 - Monocypher provides production-grade ChaCha20, Poly1305, Blake2b, Argon2id, X25519, and Ed25519 with a RDRAND-seeded CSPRNG (`csprng_fill()`).
 - cJSON parses and serialises JSON for theme files, settings, update manifests, and NTP server lists.
 - Mbed TLS 3.x compiles freestanding in a minimal configuration (TLS 1.3 record layer + AES-GCM + RSA/ECDSA) ready for use by the networking layer.
@@ -71,6 +77,8 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 | 💎  |   6   | cJSON DOM parser                                     | §1                   |  [x]   |
 | 💎  |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5            |  [/]   |
 | 💎  |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1                   |  [x]   |
+| 💎  |   9   | Zstandard (zstd) freestanding port                  | §1                   |  [ ]   |
+| 💎  |  10   | SHA-3 / SHAKE (Keccak) hash family                  | §1                   |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -358,6 +366,37 @@ One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompat
 
 ---
 
+## 9. Zstandard (zstd) Compression
+
+Zstandard is now a first-class compression baseline on both platforms: Linux ships `lib/zstd` in-kernel (btrfs/squashfs/zram/kernel image since 4.14) and Windows 11 24H2 ReFS volume compression offers selectable LZ4 **and** ZSTD levels. zstd delivers a deflate-class (or better) ratio at LZ4-class decompression speed, the right codec where ratio matters more than the raw write throughput LZ4 targets. This section owns the freestanding zstd codec; consumers select per-use between LZ4 (§3, speed) and zstd (§9, ratio). Source is NOT yet vendored (the headless runner has no network); the first item follows the same operator-fetch path that unblocked §3/§4.
+
+- [ ] Vendor zstd source (BSD-3 / dual GPLv2) into `src/libs/zstd/`: official single-file amalgamation (`zstd.c`/`zstd.h` from `contrib/single_file_libs`), or `zstddeclib` if decoder-first; record version + LICENSE
+- [ ] Compile `-ffreestanding -nostdlib`; route `ZSTD_customMem` alloc/free to `kmalloc`/`kfree` for state (<= 4 KiB) and `pmm_alloc_contiguous()` for window/output buffers > 4 KiB
+- [ ] Expose the single-shot block API in `include/libs/zstd.h`: `zstd_compress(src, len, dst, cap, level)`, `zstd_decompress(src, len, dst, cap)`, `zstd_compress_bound(len)` (all return size or -1)
+- [ ] Untrusted-frame hardening: reject a frame whose declared content size exceeds `dst_cap`; cap the decode window to a kernel-safe maximum; return -1 (never panic) on malformed input
+- [ ] Makefile build rule for `src/libs/zstd/` (the tree stays excluded from the C-source auto-glob until ported, matching the LZ4/miniz pattern)
+- [ ] Wire into IXFS transparent compression as the `algo=2` (Zstd) path -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
+- [ ] Commit: `"libs: Zstandard freestanding port -- zstd_compress/decompress/bound, kmalloc+pmm allocator hooks"`
+
+**Test checkpoint:** 64 KiB structured buffer round-trips through `zstd_compress` (level 3) / `zstd_decompress` byte-for-byte; `zstd_compress_bound(65536)` >= actual compressed size; a frame declaring content size larger than `dst_cap` is rejected without overrun; decode of a malformed frame returns -1 without panic; `klog(LOG_INFO, "zstd", ...)` selftest line on boot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
+## 10. SHA-3 / SHAKE (Keccak) Hash Family
+
+SHA-3 (FIPS 202, Keccak) is a both-platform baseline the §5 Monocypher set (Blake2b only) and the existing `src/kernel/crypto/` SHA-2 family (SHA-1/256/384) do not cover: Windows 11 24H2 added `BCRYPT_SHA3_256/384/512` to CNG, and Linux ships `crypto/sha3_generic.c` in the kernel Crypto API. This section owns the freestanding SHA-3 fixed-output hashes plus the SHAKE128/256 extendable-output functions (XOFs) future post-quantum signatures (ML-DSA/SLH-DSA) and KMAC consume. Implemented in `src/kernel/crypto/sha3.c` alongside the existing `sha256.c`/`sha384.c`. (The 2026-04-13 gap-analysis noted "SHA3 24H2" but never filed an owner; this section closes that.)
+
+- [ ] Vendor/port a compact public-domain Keccak-f[1600] core (e.g. tiny_sha3, MIT/CC0) into `src/kernel/crypto/sha3.c` + `include/kernel/crypto/sha3.h`; integer-only, `-ffreestanding -nostdlib`, zero heap (fixed sponge state)
+- [ ] Fixed-output API: `sha3_256`/`sha3_384`/`sha3_512(in, len, out)` one-shot + `sha3_init`/`update`/`final` streaming, matching the existing `sha256.c` shape
+- [ ] SHAKE XOF API: `shake128`/`shake256(in, in_len, out, out_len)` arbitrary-length squeeze; bound `out_len` and document the per-call cap
+- [ ] NIST FIPS 202 KAT validation: SHA3-256("") + SHA3-512("abc") vectors + a SHAKE128/256 squeeze vector, wired as `test_*` in `test_klibs.c` (TEST_CAT_EXEC)
+- [ ] Expose via a kernel hash dispatch so consumers select SHA-2 (`src/kernel/crypto`) or SHA-3 by algorithm id; document in the header banner
+- [ ] Commit: `"crypto: SHA-3 (FIPS 202) SHA3-256/384/512 + SHAKE128/256 XOF, NIST KAT"`
+
+**Test checkpoint:** `sha3_256("")` == NIST `a7ffc6f8...` vector; `sha3_512("abc")` == NIST vector; SHAKE128/256 squeeze matches a known-answer prefix; streaming `update` in chunks equals the one-shot digest; `klog(LOG_INFO, "sha3", ...)` selftest on boot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                    | 🪟 Win11      | 🐧 Linux      | 🚀 Impossible OS |
@@ -367,9 +406,11 @@ One kernel-owned checksum + codec layer so subsystems stop hand-rolling incompat
 | 💎 | Float math lib             | ✅ CRT        | ✅ libm       | ✅ §2 libc (trig/exp/log/cbrt, few-ULP, IEEE) |
 | 💎 | LZ4 in kernel              | ⚠️ Xpress     | ✅ lib/lz4    | ⬜ §3            |
 | 💎 | Deflate zlib               | ✅ Rtl LZNT1 | ✅ zlib       | ⬜ §4 miniz      |
+| 💎 | Zstandard zstd             | ⚠️ ReFS 24H2 | ✅ lib/zstd   | ⬜ §9            |
 | 💎 | ZIP read                   | ✅ Shell      | ✅ unzip      | ⬜ §4            |
 | 💎 | ChaCha Poly AEAD           | ✅ BCrypt     | ✅ chacha     | ✅ §5 Monocypher |
 | 💎 | Blake2b                    | ✅ no native  | ✅ blake2b    | ✅ §5 Monocypher |
+| 💎 | SHA-3 / SHAKE              | ✅ CNG 24H2   | ✅ sha3_generic | ⬜ §10 Keccak  |
 | 💎 | Argon2id                   | ✅ KDF API    | ✅ argon2     | ✅ §5 Monocypher |
 | 💎 | X25519 ECDH                | ✅ BCrypt     | ✅ ecdh       | ✅ §5 Monocypher |
 | 💎 | Ed25519                    | ✅ BCrypt     | ✅ eddsa      | ✅ §5 std + Blake2b EdDSA |
@@ -402,6 +443,8 @@ After §1 through §8, freestanding libc and these libs unblock LZ4, miniz, cryp
   - `memset(buf, 0xAA, 64)` -> all bytes are 0xAA
   - `memcmp(a, a, 32)` -> 0; `memcmp(a, b, 32)` -> non-zero when different
   - LZ4 compress/decompress round-trip: 1 KiB input -> compressed -> decompressed matches original
+  - zstd compress/decompress round-trip (§9): 64 KiB input -> compressed -> decompressed matches; malformed frame rejected (-1, no panic) -- `TEST_SKIP`/`TEST_PENDING` until §9 source is vendored
+  - SHA-3 (§10): `sha3_256("")` + `sha3_512("abc")` NIST FIPS 202 KAT; SHAKE128/256 squeeze prefix; streaming == one-shot -- `TEST_SKIP`/`TEST_PENDING` until §10 Keccak core lands
   - CRC32: known input -> matches precomputed CRC
   - SHA-256: `"abc"` -> known hash `ba7816bf...`
   - AES-128-ECB: encrypt + decrypt round-trip -> plaintext matches
