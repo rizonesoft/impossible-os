@@ -14,7 +14,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > **Goal:** Build the complete freestanding library layer the rest of the kernel depends on: `snprintf`/`vsnprintf` in `libc` (§1; `panic.c` / klog migration still deferred), full floating-point math beyond `kmath.h` (§2), LZ4 (§3; assumed by TODO-26/TODO-27), miniz deflate/ZIP (§4), Monocypher + kernel CSPRNG (§5), cJSON (§6), and Mbed TLS record layer (§7) for HTTPS/FTPS consumers. All ports compile with `-ffreestanding -nostdlib` and route heap through `kmalloc`/`kfree` with `pmm_alloc_contiguous` for buffers > 4 KiB.
 
 > [!IMPORTANT]
-> **Current state (code-truth 2026-06-12):** `src/libc/string.c` + `include/libc/string.h` ship `snprintf`/`vsnprintf` and string/memory ops (§1 core done; `panic.c` still hand-rolls crash text). `include/kernel/kmath.h` already inlines `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` for stb; §2 `src/libc/math.c` trig/log suite not started. `src/libs/cjson/` + `src/kernel/json.c` implement §6 parser + thin wrappers; `cJSON_SetMaxDepth` / production call sites still open. `src/libs/monocypher/` + `src/kernel/csprng.c` ship §5 (crypto + CSPRNG + `NtGetRandom`); `test_register_klibs` is wired in `test_runner.c` with 15 crypto/CSPRNG suites. `src/libs/lz4/` (LZ4 v1.10.0), `src/libs/miniz/` (3.0.2), and `src/libs/mbedtls/` (3.6.2 LTS) source vendored 2026-06-20 but NOT yet wired (excluded from the C-source auto-glob); §3/§4 freestanding ports are ready to implement, §7 (Mbed TLS) deferred on port effort.
+> **Current state (code-truth 2026-06-12):** `src/libc/string.c` + `include/libc/string.h` ship `snprintf`/`vsnprintf` and string/memory ops (§1 core done; `panic.c` still hand-rolls crash text). `include/kernel/kmath.h` already inlines `kmath_cos`, `kmath_acos`, `kmath_pow`, `kmath_sqrt` for stb; §2 `src/libc/math.c` trig/log suite not started. `src/libs/cjson/` + `src/kernel/json.c` implement §6 parser + thin wrappers; `cJSON_SetMaxDepth` / production call sites still open. `src/libs/monocypher/` + `src/kernel/csprng.c` ship §5 (crypto + CSPRNG + `NtGetRandom`); `test_register_klibs` is wired in `test_runner.c` with 15 crypto/CSPRNG suites. `src/libs/lz4/` (LZ4 v1.10.0) block codec is ported + wired (§3: `src/kernel/lz4.c` + `include/libs/lz4.h`, on-stack state via `LZ4_MEMORY_USAGE=11`, scoped dead-strip); `src/libs/miniz/` (3.0.2) and `src/libs/mbedtls/` (3.6.2 LTS) source vendored 2026-06-20 but NOT yet wired (excluded from the C-source auto-glob); §4 (miniz) freestanding port is ready to implement, §7 (Mbed TLS) deferred on port effort.
 > **Already done -- do NOT re-implement:**
 > - `stb_truetype` -> `src/kernel/gfx/stb_truetype_impl.c` [done]
 > - `stb_image` -> `include/stb_image.h` + `src/kernel/image.c` [done]
@@ -180,28 +180,34 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 ## 3. LZ4 Block Compressor
 
 - [x] Vendor `lz4.c` + `lz4.h` from the official LZ4 repository (BSD-2 license) into `src/libs/lz4/` -- LZ4 v1.10.0 (lz4/lz4hc/lz4frame/xxhash + LICENSE) vendored 2026-06-20
-- [ ] Compile with `-ffreestanding -nostdlib`; LZ4 has no `malloc` calls in its core API -- it operates entirely on caller-provided buffers
-- [ ] Expose the block API:
+- [x] Compile freestanding via `LZ4_FREESTANDING=1` (block-only; `LZ4_mem*` as clang builtins, `-isystem include/freestanding`); the block API is zero-allocation on caller buffers
+- [x] Expose the size-safe block API in `include/libs/lz4.h` + `src/kernel/lz4.c` (`size_t` lengths bounds-rejected before narrowing to the vendored int core):
   ```c
-  int lz4_compress(const void *src, int src_size,
-                   void *dst, int dst_capacity);      /* returns compressed size */
-  int lz4_decompress(const void *src, int src_size,
-                     void *dst, int dst_capacity);    /* returns original size */
-  int lz4_compress_bound(int input_size);             /* worst-case output size */
+  size_t lz4_compress_bound(size_t input_size);                                         /* 0 if oversized */
+  int lz4_compress(const void *src, size_t src_size, void *dst, size_t dst_capacity);   /* >0 size, or LZ4_ERR_* */
+  int lz4_decompress(const void *src, size_t src_size, void *dst, size_t dst_capacity); /* >=0 size, or LZ4_ERR_* (safe decoder) */
   ```
-- [ ] Buffer allocation responsibility: callers provide pre-allocated buffers; for output buffers > 4 KiB use `pmm_alloc_contiguous()`; document this in `include/libs/lz4.h`
-- [ ] Wire into TODO-27 crash dump writer: replace the placeholder LZ4 call with the actual implementation (-> XREF `TODO-27-crash-dump-generation.md §6`)
-- [ ] Wire into TODO-26 hibernation image writer (-> XREF `TODO-26-power-management.md §4`)
-- [ ] Wire into `TODO-20-eif-full-implementation.md` §6 EIF compressed segments (-> XREF `TODO-20-eif-full-implementation.md` §6)
+- [x] Buffer allocation responsibility (callers own buffers; `pmm_alloc_contiguous()` for output > 4 KiB) documented in the `include/libs/lz4.h` banner
+- [/] Wire into TODO-27 crash dump writer -- BLOCKED: crash-dump compression is itself deferred; codec ready. -> XREF `TODO-27-crash-dump-generation.md §6`
+- [/] Wire into TODO-26 hibernation image writer -- BLOCKED: kernel hibernation writer unimplemented; codec ready. -> XREF `TODO-26-power-management.md §4`
+- [/] Wire into TODO-20 EIF compressed segments -- BLOCKED: EIF compressed-segment support unimplemented; codec ready. -> XREF `TODO-20-eif-full-implementation.md` §6
 
 - [x] For streaming use cases (large IXFS extents), vendor `lz4frame.c` from the same repository; provides the standard `.lz4` framing layer with content checksum (XXH32) and block independence flag -- vendored (lz4frame.c/.h + xxhash.c/.h)
-- [ ] `lz4f_compress_begin / update / end` / `lz4f_decompress` API
+- [/] `lz4f_compress_begin / update / end` / `lz4f_decompress` API -- DEFERRED: heap-backed frame layer (LZ4F context > 4 KiB kmalloc ceiling) with no in-tree consumer. -> XREF `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3`
 
-- [ ] Commit: `"libs: LZ4 block compressor, freestanding port, wired to crash dump + hibernate"`
+- [x] Commit: `"libs: LZ4 block compressor freestanding port -- size-safe wrapper, scoped dead-strip"`
 
-**Test checkpoint:** 64 KiB random buffer round-trip through `lz4_compress` / `lz4_decompress` matches; `lz4_compress_bound` >= actual compressed size; TODO-27 writer calls real LZ4 API without placeholder. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** compressible-buffer round-trip through `lz4_compress` / `lz4_decompress` matches byte-for-byte; `lz4_compress_bound` >= actual compressed size; malformed frame and oversized/undersized lengths rejected with `LZ4_ERR_*`, never overrun. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Source vendored (2026-06-20):** LZ4 v1.10.0 (BSD-2) is now in `src/libs/lz4/` (`lz4`, `lz4hc`, `lz4frame`, `xxhash` + LICENSE), fetched verbatim from an interactive session -- the fetch-blocker that forced the prior deferral (headless runner has no network) is cleared. Remaining (ready to implement): freestanding port (`-ffreestanding`, kernel `string.h`; block API has no `malloc`), the `lz4_compress`/`lz4_decompress`/`lz4_compress_bound` wrapper, the `.lz4` frame layer for off-box decode, the Makefile build rule (the tree is currently excluded from the C-source auto-glob), the TODO-26/27/20 consumer wiring, and tests.
+> **Test runner:** `scripts\debug\kernel\run-exec-tests.bat` (SUITE=exec) | 1 suite (klibs: lz4 block roundtrip), 0 failures
+> **Notes:**
+> - Shipped `include/libs/lz4.h` + `src/kernel/lz4.c`: size-safe block wrapper (`lz4_compress`/`lz4_decompress`/`lz4_compress_bound`) over vendored LZ4 v1.10.0 built `LZ4_FREESTANDING=1` (block-only, zero allocation).
+> - Build: scoped dead-strip (`ld -r --gc-sections` + `lz4_merge.ld`) drops ~50 KiB of unused LZ4 variants so the kernel image stays under the 0x800000 user base without a global `--gc-sections`.
+> - `size_t` API rejects NULL / zero / `> LZ4_BLOCK_INPUT_MAX` / `> INT_MAX` before narrowing to the int core; `lz4_decompress` uses the bounds-checked safe decoder for untrusted/off-box frames.
+> - Canonical doc: `include/libs/lz4.h` banner.
+> - Scope boundary: §3 owns the block codec; the `.lz4` frame/streaming layer and the TODO-26/27/20 + IXFS consumer wiring are deferred (no in-tree consumer yet), Zstd ratio codec is §9.
+> **Deferred:** [M] `.lz4` frame/streaming layer (`lz4f_*`) -- heap-backed (LZ4F context > 4 KiB kmalloc ceiling), no in-tree consumer (reason: block API is the must-ship core; frame layer pulls forward when IXFS streaming needs it) -> XREF: 05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3 (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
+> **Deferred:** [L] Consumer wiring (crash dump / hibernation / EIF) -- codec ready, consumers unimplemented (reason: TODO-27 §6, TODO-26 §4, TODO-20 §6 all unimplemented/deferred) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §3 (items "Wire into TODO-27/26/20")
 
 ---
 
@@ -404,7 +410,7 @@ SHA-3 (FIPS 202, Keccak) is a both-platform baseline the §5 Monocypher set (Bla
 | 💎 | snprintf safe              | ✅ Rtl safe   | ✅ vsprintf   | ✅ §1 libc       |
 | 💎 | Core string ops            | ✅ Rtl mem    | ✅ string.c   | ✅ §1 libc       |
 | 💎 | Float math lib             | ✅ CRT        | ✅ libm       | ✅ §2 libc (trig/exp/log/cbrt, few-ULP, IEEE) |
-| 💎 | LZ4 in kernel              | ⚠️ Xpress     | ✅ lib/lz4    | ⬜ §3            |
+| 💎 | LZ4 in kernel              | ⚠️ Xpress     | ✅ lib/lz4    | ✅ §3 block codec (size-safe, frame deferred) |
 | 💎 | Deflate zlib               | ✅ Rtl LZNT1 | ✅ zlib       | ⬜ §4 miniz      |
 | 💎 | Zstandard zstd             | ⚠️ ReFS 24H2 | ✅ lib/zstd   | ⬜ §9            |
 | 💎 | ZIP read                   | ✅ Shell      | ✅ unzip      | ⬜ §4            |

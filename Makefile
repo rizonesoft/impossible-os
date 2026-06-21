@@ -141,8 +141,13 @@ LIBS_DIR   := $(SRC_DIR)/libs
 C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(LIBS_DIR) $(DESKTOP_DIR) -name '*.c' ! -path '*/libs/lz4/*' ! -path '*/libs/miniz/*' ! -path '*/libs/mbedtls/*' 2>/dev/null)
 C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 
+# Vendored LZ4 block compressor (kernel embedded libraries). Built block-only with
+# LZ4_FREESTANDING=1; excluded from the C-source auto-glob (above) so only
+# lz4.c lands -- the .lz4 frame layer (lz4frame/lz4hc/xxhash) stays unported.
+LZ4_OBJ  := $(BUILD_DIR)/libs/lz4/lz4.o
+
 # All objects
-OBJS     := $(ASM_OBJS) $(C_OBJS) $(AP_TRAMPOLINE_OBJ)
+OBJS     := $(ASM_OBJS) $(C_OBJS) $(AP_TRAMPOLINE_OBJ) $(LZ4_OBJ)
 
 # Generated headers — must exist before any C compilation starts (-j safe)
 GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_icon.h src/kernel/boot_splash_font_data.h $(BUILD_DIR)/boot_proto_sha.h $(BUILD_DIR)/boot_loader_identity.h
@@ -1456,6 +1461,54 @@ $(BUILD_DIR)/kernel/json.o: $(SRC_DIR)/kernel/json.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (json wrapper)"
+
+# LZ4 vendored core: freestanding block-only build. LZ4_FREESTANDING=1 disables
+# the heap-backed stream + frame APIs (the only callers of malloc/calloc/free,
+# which the freestanding stdlib shim does not provide) and requires the three
+# LZ4_mem* macros to be defined before lz4.h is processed -- supply them as
+# clang builtins. -isystem include/freestanding resolves <stddef.h>/<stdint.h>.
+#
+# Two-step build so only the three block functions we call (plus their callees)
+# land in the image. lz4.c is one translation unit holding the full public API
+# (~58 KiB: streaming, dictionary, partial, and fast-decode variants we never
+# use). The kernel link does NOT use --gc-sections (the linker script keeps all
+# input sections; enabling it globally would risk dropping runtime-registered or
+# asm-referenced symbols across 500 objects). Instead we scope dead-stripping to
+# THIS object: compile with -ffunction-sections, then partial-relink (ld -r)
+# with --gc-sections rooted on the three entry points. That drops ~50 KiB of
+# unreferenced LZ4 code and keeps the kernel image under the 0x800000 user base,
+# without touching the global link.
+LZ4_FULL_OBJ := $(BUILD_DIR)/libs/lz4/lz4_full.o
+LZ4_BLOCK_ROOTS := -u LZ4_compress_default -u LZ4_decompress_safe -u LZ4_compressBound
+
+# LZ4_MEMORY_USAGE=11 shrinks the compress hash-table state to ~2 KiB so it fits
+# on the kernel stack (LZ4_compress_default keeps it on the caller stack), which
+# is the only SMP-reentrant option given the kernel's unsynchronized allocators.
+# -Wframe-larger-than (hard error under -Werror) pins that stack budget: a future
+# LZ4_MEMORY_USAGE bump that grows the frame past 2560 bytes fails the build.
+$(LZ4_FULL_OBJ): $(SRC_DIR)/libs/lz4/lz4.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -isystem include/freestanding \
+	  -DLZ4_FREESTANDING=1 -DLZ4_MEMORY_USAGE=11 -Wframe-larger-than=2560 \
+	  '-DLZ4_memcpy(d,s,n)=__builtin_memcpy((d),(s),(n))' \
+	  '-DLZ4_memmove(d,s,n)=__builtin_memmove((d),(s),(n))' \
+	  '-DLZ4_memset(d,c,n)=__builtin_memset((d),(c),(n))' \
+	  -Wno-unused-function -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
+	@echo "[CC] $< (LZ4 freestanding, block-only)"
+
+LZ4_MERGE_LD := $(SRC_DIR)/libs/lz4/lz4_merge.ld
+
+$(BUILD_DIR)/libs/lz4/lz4.o: $(LZ4_FULL_OBJ) $(LZ4_MERGE_LD)
+	@mkdir -p $(dir $@)
+	$(LD) -r --gc-sections $(LZ4_BLOCK_ROOTS) -T $(LZ4_MERGE_LD) $(LZ4_FULL_OBJ) -o $@
+	@echo "[LD -r/gc] $@ (LZ4 block API dead-strip)"
+
+# LZ4 kernel wrapper: includes the vendored lz4.h (needs <stddef.h>), so it also
+# gets the freestanding shim on the include path.
+$(BUILD_DIR)/kernel/lz4.o: $(SRC_DIR)/kernel/lz4.c | $(GENERATED_HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
+	@echo "[CC] $< (LZ4 wrapper)"
 
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(GENERATED_HDRS)

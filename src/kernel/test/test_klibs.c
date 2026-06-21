@@ -26,6 +26,7 @@
 #include "kernel/json.h"
 #include "kernel/kchecksum.h"
 #include "kernel/kcodec.h"
+#include "libs/lz4.h"
 #include "kernel/cpuid.h"
 #include "kernel/mm/heap.h"
 #include "libs/monocypher/monocypher.h"
@@ -1053,10 +1054,86 @@ static void test_checksum_codec(void)
                 "hex_decode rejects out_len over INT_MAX");
 }
 
+/* ---- LZ4 block compressor (section 3) ---- */
+
+/* Modest, compressible fixture kept small to respect the kernel test BSS
+ * budget (image must stay under the 0x800000 user base). A repeating pattern
+ * with embedded variation exercises both literal runs and back-references. */
+static void test_lz4_block(void)
+{
+    static uint8_t src[2048];
+    static uint8_t comp[2048 + 2048 / 255 + 16]; /* >= lz4_compress_bound(2048) */
+    static uint8_t out[2048];
+
+    for (size_t i = 0; i < sizeof(src); i++) {
+        src[i] = (uint8_t)((i & 0x1F) ? (i / 17) : 0xA5);
+    }
+
+    size_t bound = lz4_compress_bound(sizeof(src));
+    TEST_ASSERT(bound >= sizeof(src) && bound <= sizeof(comp),
+                "lz4_compress_bound sane for 2 KiB");
+
+    int clen = lz4_compress(src, sizeof(src), comp, sizeof(comp));
+    TEST_ASSERT(clen > 0 && (size_t)clen <= bound,
+                "lz4_compress within bound");
+    TEST_ASSERT((size_t)clen < sizeof(src),
+                "lz4_compress actually shrinks compressible input");
+
+    int dlen = lz4_decompress(comp, (size_t)clen, out, sizeof(out));
+    TEST_ASSERT_EQ(dlen, (int)sizeof(src), "lz4_decompress restores length");
+    TEST_ASSERT_EQ(memcmp(out, src, sizeof(src)), 0, "lz4 round-trip identity");
+
+    /* Insufficient dst capacity -> clean failure, not overrun. */
+    uint8_t tiny[8];
+    TEST_ASSERT_EQ(lz4_compress(src, sizeof(src), tiny, sizeof(tiny)),
+                   LZ4_ERR_FAIL, "lz4_compress rejects undersized dst");
+
+    /* Malformed compressed input -> negative, never a panic/overrun. The safe
+     * decoder is bounds-checked against out capacity. */
+    static const uint8_t junk[16] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    TEST_ASSERT(lz4_decompress(junk, sizeof(junk), out, sizeof(out)) < 0,
+                "lz4_decompress rejects malformed frame");
+
+    /* Valid block but undersized dst -> LZ4_ERR_FAIL (distinct from the
+     * malformed-frame path): the safe decoder reports capacity exhaustion, the
+     * wrapper maps it to a clean error, never an overrun. */
+    TEST_ASSERT_EQ(lz4_decompress(comp, (size_t)clen, tiny, sizeof(tiny)),
+                   LZ4_ERR_FAIL, "lz4_decompress rejects undersized dst");
+
+    /* Argument + size-boundary guards reject BEFORE touching the buffers, so a
+     * bogus oversized size_t with an un-read pointer is safe to assert. This is
+     * the size_t-truncation guard: a length above LZ4_BLOCK_INPUT_MAX / INT_MAX
+     * must be rejected, never narrowed into the int-based core. */
+    TEST_ASSERT_EQ(lz4_compress(NULL, 16, comp, sizeof(comp)), LZ4_ERR_ARG,
+                   "lz4_compress rejects NULL src");
+    TEST_ASSERT_EQ(lz4_compress(src, 0, comp, sizeof(comp)), LZ4_ERR_ARG,
+                   "lz4_compress rejects zero length");
+    TEST_ASSERT_EQ(lz4_compress(src, (size_t)LZ4_BLOCK_INPUT_MAX + 1, comp, sizeof(comp)),
+                   LZ4_ERR_RANGE, "lz4_compress rejects oversized src_size");
+    TEST_ASSERT_EQ(lz4_compress(src, sizeof(src), comp, (size_t)0x100000000ULL),
+                   LZ4_ERR_RANGE, "lz4_compress rejects dst_capacity over INT_MAX");
+    TEST_ASSERT_EQ(lz4_decompress(NULL, (size_t)clen, out, sizeof(out)), LZ4_ERR_ARG,
+                   "lz4_decompress rejects NULL src");
+    TEST_ASSERT_EQ(lz4_decompress(comp, 0, out, sizeof(out)), LZ4_ERR_ARG,
+                   "lz4_decompress rejects zero length");
+    TEST_ASSERT_EQ(lz4_decompress(comp, (size_t)clen, NULL, sizeof(out)), LZ4_ERR_ARG,
+                   "lz4_decompress rejects NULL dst");
+    TEST_ASSERT_EQ(lz4_decompress(comp, (size_t)0x100000000ULL, out, sizeof(out)),
+                   LZ4_ERR_RANGE, "lz4_decompress rejects src_size over INT_MAX");
+    TEST_ASSERT_EQ(lz4_decompress(comp, (size_t)clen, out, (size_t)0x100000000ULL),
+                   LZ4_ERR_RANGE, "lz4_decompress rejects dst_capacity over INT_MAX");
+    TEST_ASSERT_EQ(lz4_compress_bound((size_t)LZ4_BLOCK_INPUT_MAX + 1), (size_t)0,
+                   "lz4_compress_bound returns 0 for oversized input");
+}
+
 void test_register_klibs(void)
 {
     test_suite_register_cat("klibs: string lib edges",
                             test_string_lib_edges, TEST_CAT_EXEC);
+    test_suite_register_cat("klibs: lz4 block roundtrip",
+                            test_lz4_block, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: math lib",
                             test_math_lib, TEST_CAT_EXEC);
     test_suite_register_cat("klibs: cjson wrapper",
