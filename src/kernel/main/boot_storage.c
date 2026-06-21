@@ -801,6 +801,10 @@ void boot_phase2(void)
     POST16(POST16_REGISTRY_OK);
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
+    /* Apply admin-configured per-subsystem log verbosity + rate limits now that the
+     * registry is up (HKLM\SYSTEM\Logs\Levels\<tag> + \RateLimit\<tag>). No-op until
+     * an admin sets the keys; without this call the registry log config never loads. */
+    klog_load_levels_from_registry();
     kernel_subsystem_set_ready(SUBSYS_REGISTRY, true);
     boot_progress(2, "REGISTRY", POST16_REGISTRY_OK);
 

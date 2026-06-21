@@ -233,7 +233,7 @@ void bugcheck_keyboard_check(uint8_t scancode, int ctrl_held)
                                   "SYSTEM\\CrashControl",
                                   "CrashOnCtrlScroll", &vtype,
                                   (uint8_t *)&enabled, &vsize);
-        if (rc == 0 && vtype == 4 && enabled) {
+        if (rc == 0 && vtype == 4 && vsize == sizeof(enabled) && enabled) {  /* REG_DWORD */
             KeBugCheckEx(BUGCHECK_MANUALLY_INITIATED_CRASH,
                          0, 0, 0, 0);
         }

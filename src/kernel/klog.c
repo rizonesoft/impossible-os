@@ -725,14 +725,20 @@ static klog_rate_slot_t *rate_slot(const char *subsystem)
         }
     }
 
-    /* New slot */
+    /* New slot: fill all fields THEN publish the incremented count with a RELEASE
+     * store, so the lock-free reader (klog_get_dropped) that ACQUIRE-loads the count
+     * never indexes a slot whose tag pointer is still unwritten (str_eq on a NULL
+     * tag would fault). Writers are serialized by s_klog_lock; only the reader is
+     * lock-free. */
     if (s_rate_count < KLOG_RATE_SLOTS) {
-        klog_rate_slot_t *s = &s_rate[s_rate_count++];
+        uint32_t n = s_rate_count;
+        klog_rate_slot_t *s = &s_rate[n];
         s->tag = subsystem;
         s->count = 0;
         s->dropped = 0;
         s->window_start = now;
         s->max_rate = 0;
+        __atomic_store_n(&s_rate_count, n + 1, __ATOMIC_RELEASE);
         return s;
     }
     return (klog_rate_slot_t *)0;  /* table full, no limiting */
@@ -912,15 +918,24 @@ void klog_load_levels_from_registry(void)
         }
     }
 
-    /* Also load per-subsystem rate limits from HKLM\SYSTEM\Logs\RateLimit\<tag> */
+    /* Also load per-subsystem rate limits from HKLM\SYSTEM\Logs\RateLimit\<tag>.
+     * rate_slot() mutates the shared s_rate table (creates slots, resets windows);
+     * it is normally called with s_klog_lock held (from klog()). This loader runs in
+     * Phase 2 with APs already up, so take s_klog_lock around the rate-slot mutation
+     * to serialize against a concurrent klog() on another CPU. (The level loop above
+     * uses klog_set_level, which is independently seqlock-synchronized.) */
     for (i = 0; i < tag_count; i++) {
         uint32_t val = 0, val_type = 0, val_size = sizeof(val);
         if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
                             "SYSTEM\\Logs\\RateLimit",
                             tags[i], &val_type, (uint8_t *)&val, &val_size) == 0 &&
             val_type == 4 && val_size == sizeof(uint32_t) && val > 0) {  /* REG_DWORD */
-            klog_rate_slot_t *sl = rate_slot(tags[i]);
+            unsigned long flags;
+            klog_rate_slot_t *sl;
+            spin_lock_irqsave(&s_klog_lock, &flags);
+            sl = rate_slot(tags[i]);
             if (sl) sl->max_rate = val;
+            spin_unlock_irqrestore(&s_klog_lock, flags);
         }
     }
 }
@@ -930,8 +945,16 @@ void klog_load_levels_from_registry(void)
 uint32_t klog_get_dropped(const char *subsystem)
 {
     uint32_t i;
+    /* ACQUIRE-load the count (paired with the RELEASE store in rate_slot's new-slot
+     * publish) so a fully-initialized tag is visible before this slot is scanned.
+     * Lock-free: called once per JSON event during the events.jsonl flush, so a
+     * per-call s_klog_lock would land on the live-mode logging path. `dropped` is a
+     * best-effort aligned uint32 read (a concurrent ++/window-reset gives a stale
+     * but non-torn value -- fine for a stats field). */
+    uint32_t n = __atomic_load_n(&s_rate_count, __ATOMIC_ACQUIRE);
+
     if (!subsystem || !subsystem[0]) return 0;
-    for (i = 0; i < s_rate_count; i++) {
+    for (i = 0; i < n; i++) {
         if (s_rate[i].tag == subsystem || str_eq(s_rate[i].tag, subsystem))
             return s_rate[i].dropped;
     }

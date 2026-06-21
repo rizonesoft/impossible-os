@@ -190,11 +190,24 @@ Prevent a misbehaving subsystem from flooding the log and starving disk I/O.
 > **Superseded by TODO-32 §5** (configurable per-subsystem rate limits + diagnostic-tag exemption). The v1 design here treats every subsystem identically with a single global table and a recursive `klog()` from the rate-limit summary path -- both are real freeze risks documented in TODO-32's Goal. v1 is preserved unchanged until TODO-32 §10 retires it; this section's `[x]` items remain a correct record of the v1 implementation.
 
 - [x] Track per-subsystem message count within a 100-tick sliding window (100 Hz = 1 second); 32-slot table
-- [x] When a subsystem exceeds the rate: drop entries and emit one summary: `"[<tag>] rate limit active (>N msgs/sec)"`
-- [x] Reset the counter at window expiry (checked on each `klog()` call via `system_get_ticks()`)
+- [x] When a subsystem exceeds the rate: drop entries; the dropped count surfaces via the `dropped` field in `events.jsonl` (§6), not a recursive `klog()` line (that emit was removed as a freeze risk -- TODO-32 §5)
+- [x] Reset the counter at window expiry (1000 ms monotonic window from `uptime_ns()/1e6`, checked on each `klog()` call so a wall-clock change cannot shrink/extend the window)
 - [x] Rate limit thresholds configurable per subsystem via Registry: `HKLM\SYSTEM\Logs\RateLimit\<tag>` (REG_DWORD)
 - [x] Dropped count tracked in `klog_rate_slot_t.dropped` for future `events.jsonl` integration (§6)
 - [x] Commit: `"kernel: log rate limiting"`
+
+**Test checkpoint:** a subsystem exceeding its per-second budget has further entries dropped (not stored in the ring); `klog_get_dropped(tag)` returns the count and it appears as the `dropped` field in `events.jsonl`. `klog_get_dropped` for an unknown tag returns 0. Registry config (`HKLM\SYSTEM\Logs\Levels` + `RateLimit`) is applied at boot.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_klog rate-limit-api suite, 0 failures
+> **Notes:**
+> - v1 per-subsystem rate limiter in `src/kernel/klog.c`: 32-slot table, 1000 ms monotonic window (`uptime_ns()`), default 100 msgs/window; `rate_check()` runs under `s_klog_lock` on the `klog()` path.
+> - `klog_load_levels_from_registry()` is now actually called at boot (`boot_storage.c`, after `registry_populate_defaults()`) -- it was dead before, so the per-subsystem verbosity (§3) AND rate-limit registry config never loaded.
+> - `dropped` count surfaces via the `events.jsonl` field (§6); `klog_get_dropped` is lock-free (rate_slot release-publishes the slot count, reader acquire-loads) so it adds no lock on the per-entry JSON flush path.
+> - v1 is intentionally superseded by TODO-32 §5 (per-CPU lockless redesign): the global-table fail-open on exhaustion and the per-window drop-summary are owned there, preserved unchanged here.
+> **Verified:** 2026-06-21 | ship `fcd203c2` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.57s); 3212 kernel + 16 user PASS
+> **Accepted:** [H] 32-slot rate table fails open on exhaustion (caller-controlled tags can disable limiting) -> XREF: 02-kernel-core/TODO-32-kernel-logging-v2-lockless.md §5 (item: "`klog_rate_v2_t` per CPU ... `s_rate[KLOG_RATE_V2_SLOTS=64]` per CPU" at line 133)
+> **Accepted:** [M] window reset clears `dropped` without a per-window summary, so cross-window drop evidence is lost -> XREF: 02-kernel-core/TODO-32-kernel-logging-v2-lockless.md §5 (item: "Drop summary: when rate limit drops a message, increment `tag_drops[tag_id]`" at line 137)
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H+2M fixed, 1H+1M accepted | scope: kernel-code-quality
 
 ---
 
