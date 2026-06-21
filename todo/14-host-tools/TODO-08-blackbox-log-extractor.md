@@ -101,7 +101,7 @@ Quick single-file viewer without full extraction.
 - [ ] Path is relative to BlackBox root (no `X:\` prefix needed, but accept it if given)
 - [ ] Output to stdout (pipeable to `grep`, `less`, `head`, etc.)
 - [ ] `--tail N` flag: show last N lines only
-- [ ] `--follow` flag: not applicable for disk images (note in help)
+- [ ] Decompress `.N.lz4` rotated logs: parse `klog_lz4_hdr_t` by explicit little-endian offsets (big-endian-host-safe), CRC32-validate, LZ4-decompress -- mirrors `klog_decompress_rotated` (XREF: TODO-04 §13 byte-order owner)
 - [ ] Commit: `"tools: blackbox cat -- view log file from disk image"`
 
 **Test checkpoint:** `blackbox cat build/system-disk.img Logs/kernel.log | head -20` shows the first 20 lines of the kernel log. `blackbox cat build/system-disk.img Logs/events.jsonl | jq .` parses correctly.

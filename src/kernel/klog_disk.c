@@ -382,6 +382,25 @@ typedef struct {
     uint32_t crc32;              /* kcrc32 over the compressed block */
 } klog_lz4_hdr_t;
 _Static_assert(sizeof(klog_lz4_hdr_t) == 20, "klog_lz4_hdr_t on-disk layout pinned at 20 bytes");
+/* Pin every field offset, not just the size: the .N.lz4 format is shared with the
+ * host extractor (-> 14-host-tools/TODO-08), so a same-size field reorder must
+ * fail the build rather than silently break archive compatibility. Byte order is
+ * native little-endian (kernel is permanently x86-64; cross-arch readers are the
+ * host extractor's concern, tracked in 14-host-tools/TODO-08). */
+_Static_assert(__builtin_offsetof(klog_lz4_hdr_t, magic)             == 0,  "magic at 0");
+_Static_assert(__builtin_offsetof(klog_lz4_hdr_t, version)           == 4,  "version at 4");
+_Static_assert(__builtin_offsetof(klog_lz4_hdr_t, hdr_size)          == 6,  "hdr_size at 6");
+_Static_assert(__builtin_offsetof(klog_lz4_hdr_t, uncompressed_size) == 8,  "uncompressed_size at 8");
+_Static_assert(__builtin_offsetof(klog_lz4_hdr_t, compressed_size)   == 12, "compressed_size at 12");
+_Static_assert(__builtin_offsetof(klog_lz4_hdr_t, crc32)             == 16, "crc32 at 16");
+/* The compress path sizes out_bytes (uint32) as header + lz4_compress_bound(usize)
+ * with usize <= LZ4_BLOCK_INPUT_MAX. Pin the worst case under UINT32_MAX so the
+ * uint32 narrow + page-count math can never wrap: lz4_compress_bound(n) =
+ * n + n/255 + 16 (mirrors LZ4_COMPRESSBOUND). If LZ4_BLOCK_INPUT_MAX is ever
+ * raised toward UINT32_MAX this fails the build instead of silently overflowing. */
+_Static_assert((uint64_t)sizeof(klog_lz4_hdr_t) + (uint64_t)LZ4_BLOCK_INPUT_MAX +
+               (uint64_t)LZ4_BLOCK_INPUT_MAX / 255u + 16u <= 0xFFFFFFFFu,
+    "max .N.lz4 archive (header + LZ4 worst-case bound) must fit uint32 out_bytes");
 
 /* Build "<dir><filename>.<gen>.lz4" (dot_tmp -> append ".tmp" staging suffix). */
 static int klog_build_lz4_path(char *out, uint32_t cap, const char *dir,
@@ -481,8 +500,23 @@ static int klog_compress_archive(const char *dir, const char *fn, const char *sr
                 af = vfs_open(tmp_path, VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC);
                 if (af) {
                     int wr = vfs_write(af, 0, total, out);
+                    /* Durable boundary: the .1.lz4 bytes exist nowhere else, and
+                     * klog_archive_stage deletes the staged plain copy on rc==0,
+                     * so the archive must reach stable storage BEFORE it becomes
+                     * the sole copy. A write left in the FS cache could leave
+                     * .1.lz4 truncated/replaced after a reset while the stage is
+                     * already gone -- same flush discipline as klog.c
+                     * crash_recovery.log and panic.c last-panic.txt. The rename
+                     * then publishes those durable bytes under the final name at
+                     * the SAME metadata-durability level as the plain-.N
+                     * fallback's stage->.1 rename (pre-existing rotation
+                     * convention), so no second flush is needed: this function
+                     * never deletes src_path, so any post-flush commit failure
+                     * falls back to a plain .1 from the intact stage with zero
+                     * data loss. */
+                    int fl = vfs_flush(af);
                     vfs_close(af);
-                    if (wr == (int)total) {
+                    if (wr == (int)total && fl == 0) {
                         vfs_unlink(final_path);  /* clear any stale .1.lz4 */
                         if (vfs_rename(tmp_path, final_path) == 0)
                             rc = 0;  /* durable compressed archive committed */
@@ -608,8 +642,14 @@ static int klog_orphan_already_archived(const char *dir, const char *filename,
     if (klog_build_lz4_path(path, sizeof path, dir, filename, 1, 0) &&
         (af = vfs_open(path, VFS_O_READ)) != 0) {
         uint32_t csize = (uint32_t)af->size;
-        if (af->size > (uint64_t)sizeof(klog_lz4_hdr_t) &&
-            af->size <= (uint64_t)LZ4_BLOCK_INPUT_MAX) {
+        /* A genuine same-log archive decompresses to ssize, so its on-disk size
+         * is at most header + lz4_compress_bound(ssize). Bound by THAT, not the
+         * raw input ceiling LZ4_BLOCK_INPUT_MAX: for a near-ceiling incompressible
+         * log the worst-case archive exceeds LZ4_BLOCK_INPUT_MAX, and the input
+         * ceiling would wrongly reject a legal archive this writer can produce --
+         * making recovery miss a committed-but-stage-not-deleted (W3) duplicate. */
+        uint64_t max_arc = (uint64_t)sizeof(klog_lz4_hdr_t) + lz4_compress_bound(ssize);
+        if (af->size > (uint64_t)sizeof(klog_lz4_hdr_t) && af->size <= max_arc) {
             cpages = (csize + 4095u) / 4096u;
             cbuf   = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(cpages);
             dbuf   = cbuf ? (uint8_t *)(uintptr_t)pmm_alloc_contiguous(spages) : 0;
@@ -791,8 +831,15 @@ static void load_rotation_config(void)
     if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
                         "SYSTEM\\Logs", "MaxSize",
                         &val_type, (uint8_t *)&val, &val_size) == 0 &&
-        val_type == 4 && val_size == sizeof(val) && val > 0)  /* REG_DWORD = 4 */
-        rot_max_size = val;
+        val_type == 4 && val_size == sizeof(val) && val > 0) {  /* REG_DWORD = 4 */
+        /* Clamp to the LZ4 single-block input ceiling (also well under the
+         * uint32 VFS offset limit). The append path uses uint32 offsets and the
+         * compress path rejects a staged log above LZ4_BLOCK_INPUT_MAX, so an
+         * unclamped MaxSize near UINT32_MAX would let the log grow toward the
+         * 4 GiB FAT32 boundary AND force the compress path into its plain-.N
+         * fallback. Bounding the rotation trigger keeps both paths in range. */
+        rot_max_size = (val > LZ4_BLOCK_INPUT_MAX) ? LZ4_BLOCK_INPUT_MAX : val;
+    }
 
     val_size = sizeof(val);
     val_type = 0;

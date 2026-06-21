@@ -425,6 +425,9 @@ The OS Comparison row "Rotated log compress" is listed as planned (LZ4) but no s
 > - No-data-loss rotation: stage current->`.tmp`, shift only when slot 1 is occupied; Phase 0 + `klog_orphan_already_archived()` recover an orphaned `.tmp` across all interruption windows without loss or duplication.
 > - Codex: design + adversarial + 3 re-adversarial rounds (1-2 fixed High over-expansion/truncation/double-shift; round 3 rejected a byte-identity medium as lossless). Detail in the commit message.
 > - Buffers: `pmm_alloc_contiguous()` per the TODO-03 LZ4 rule; staged size validated `<= LZ4_BLOCK_INPUT_MAX` before narrowing. Host extractor consumes the same format (→ 14-host-tools/TODO-08).
+> **Verified:** 2026-06-21 | ship `d9df4bd2` + review fixes | 7/7 items | build OK | smoke PASS (TCG 2.64s); 3224 kernel + 16 user PASS
+> **Accepted:** [M] `.N.lz4` header is native-endian (correct on x86-64; a big-endian host extractor would misread fields) -> XREF: 14-host-tools/TODO-08 §4 (item: "Decompress `.N.lz4` rotated logs: parse `klog_lz4_hdr_t` by explicit little-endian offsets")
+> **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 1H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
