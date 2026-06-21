@@ -27,6 +27,8 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/security/default_sds.h"
 #include "kernel/security/token.h"
+#include "kernel/cpu_security.h"
+#include "kernel/nt/zw.h"
 
 extern void *memset(void *s, int c, size_t n);
 
@@ -622,6 +624,12 @@ int NtOpenDirectoryObject(HANDLE_TABLE *ht, const char *name,
     return 0;
 }
 
+/* Kernel bounce-buffer depth: rows assembled per call under the directory lock
+ * before being copied to the caller. The browser API is context-iterative, so a
+ * larger directory is enumerated across several calls. 16 * 96 B = 1536 B keeps
+ * the buffer comfortably on the kernel stack. */
+#define OBQDIR_BOUNCE_ROWS 16
+
 int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
                            OBJECT_DIRECTORY_INFORMATION *buffer,
                            uint32_t buffer_count,
@@ -633,6 +641,7 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
     OBJECT_DIRECTORY *dir;
     OBJECT_DIRECTORY_ENTRY *e;
     uint32_t skip, filled, idx;
+    OBJECT_DIRECTORY_INFORMATION local[OBQDIR_BOUNCE_ROWS];
 
     if (!ht || !buffer || !context || !return_count || buffer_count == 0)
         return -1;
@@ -646,6 +655,15 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
         return -1;
 
     dir = (OBJECT_DIRECTORY *)entry->object;
+
+    /* Cap to the kernel bounce-buffer depth; the caller resumes via *context. */
+    if (buffer_count > OBQDIR_BOUNCE_ROWS)
+        buffer_count = OBQDIR_BOUNCE_ROWS;
+
+    /* Zero the whole bounce buffer so trailing name/type_name padding never
+     * leaks uninitialized kernel-stack bytes to the caller. */
+    memset(local, 0, sizeof(local));
+
     skip = *context;
     filled = 0;
     idx = 0;
@@ -657,11 +675,11 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
      * The extra ref is dropped on every exit path. */
     ObReferenceObject(dir);
 
-    /* Hold dir->lock for the full enumeration so the list cannot be
-     * mutated underneath us by a concurrent ObInsertObject /
-     * ObpRemoveFromDirectory on another CPU. buffer_count is bounded
-     * at the Win32 syscall layer (typically a single entry), so the
-     * lock hold time stays short. */
+    /* Build the rows into the kernel-local bounce buffer under dir->lock -- NOT
+     * the caller buffer. Writing a caller (user) pointer under the IRQ-off
+     * spinlock would let a faulting / invalid / kernel-range pointer #PF with
+     * the lock held. The lock also keeps the list stable against a concurrent
+     * ObInsertObject / ObpRemoveFromDirectory. */
     {
         uint64_t irqf;
         spin_lock_irqsave(&dir->lock, &irqf);
@@ -673,8 +691,8 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
             {
                 uint32_t i;
                 for (i = 0; i < 63 && e->name[i]; i++)
-                    buffer[filled].name[i] = e->name[i];
-                buffer[filled].name[i] = '\0';
+                    local[filled].name[i] = e->name[i];
+                local[filled].name[i] = '\0';
             }
 
             /* Copy type name from object header */
@@ -684,8 +702,8 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
                                   ? obj_hdr->type->name : "Unknown";
                 uint32_t i;
                 for (i = 0; i < 31 && tname[i]; i++)
-                    buffer[filled].type_name[i] = tname[i];
-                buffer[filled].type_name[i] = '\0';
+                    local[filled].type_name[i] = tname[i];
+                local[filled].type_name[i] = '\0';
             }
 
             filled++;
@@ -694,6 +712,18 @@ int NtQueryDirectoryObject(HANDLE_TABLE *ht, HANDLE dir_handle,
     }
 
     ObDereferenceObject(dir);
+
+    /* Copy the assembled rows to the caller buffer AFTER releasing the lock,
+     * through the user-copy path: probe the destination when the caller is
+     * user-mode, then do the SMAP-gated copy. A bad pointer now fails cleanly
+     * instead of faulting under the lock or writing kernel memory. */
+    if (filled) {
+        uint32_t bytes = filled * (uint32_t)sizeof(OBJECT_DIRECTORY_INFORMATION);
+        if (ProbeForWriteIfUser(buffer, bytes, 1) != STATUS_SUCCESS)
+            return -1;
+        if (copy_to_user(buffer, local, bytes) != 0)
+            return -1;
+    }
 
     *context = idx;
     *return_count = filled;

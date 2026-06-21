@@ -11,6 +11,7 @@
 #include "kernel/idt.h"
 #include "kernel/vectors.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/nt/zw.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
@@ -605,11 +606,24 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     case SYS_QUERYDIROBJ: {
         HANDLE dh = (HANDLE)(int32_t)arg1;
         OBJECT_DIRECTORY_INFORMATION *buf = (OBJECT_DIRECTORY_INFORMATION *)arg2;
-        uint32_t count = (uint32_t)(arg3 & 0xFFFF);
+        /* This legacy ABI carries no byte-length for `buf`, so it cannot tell
+         * how big the caller's buffer is. Force single-entry enumeration: the
+         * write is then exactly one 96-byte row and the caller iterates by
+         * advancing the packed context. (The SSDT NtQueryDirectoryObject handler
+         * carries a real buf_len and is the path for multi-row reads.) */
         uint32_t ctx = (uint32_t)(arg3 >> 16);
         uint32_t ret_count = 0;
+        /* The INT 0x80 dispatcher does not set previous-mode to UserMode, so the
+         * ProbeForWriteIfUser inside NtQueryDirectoryObject would no-op. This
+         * path is always from ring 3, so probe the single-row destination here
+         * before the kernel writes it -- a kernel-range `buf` is rejected. */
+        if (!buf || ProbeForWrite(buf, sizeof(OBJECT_DIRECTORY_INFORMATION), 1)
+                        != STATUS_SUCCESS) {
+            ret = -1;
+            break;
+        }
         if (NtQueryDirectoryObject(&task_current()->handle_table, dh,
-                                   buf, count, &ctx, &ret_count) == 0)
+                                   buf, 1, &ctx, &ret_count) == 0)
             ret = (int64_t)((uint64_t)ctx << 16 | ret_count);
         else
             ret = -1;

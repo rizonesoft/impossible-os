@@ -61,7 +61,7 @@ title: "TODO-05 -- Object Manager"
 | 💎  |   8   | Security descriptor integration                               | §1, T15 §1,§3  |  [x]   |
 | 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T15 §4     |  [/]   |
 | 💎  |  10   | Handle inheritance across CreateProcess                       | §3, §5         |  [/]   |
-| ⭐  |  11   | Unified kernel-user namespace browser API                     | §4             |  [x]   |
+| ⭐  |  11   | Unified kernel-user namespace browser API                     | §4             |  [/]   |
 | 💎  |  12   | Per-type object and handle statistics                         | §1, §2, §3     |  [x]   |
 | 💎  |  13   | Object callbacks -- handle operation filtering                | §3, §9         |  [x]   |
 | 💎  |  14   | Per-process handle quota                                      | §3             |  [x]   |
@@ -381,6 +381,24 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
   - Each entry: name string + type name string (OBJECT_DIRECTORY_INFORMATION)
 - [x] Syscalls: SYS_OPENDIROBJ (42), SYS_QUERYDIROBJ (43) -- user-mode can walk `\` and enumerate all named objects
 - [x] Commit: `"kernel: ob -- NtOpenDirectoryObject and NtQueryDirectoryObject (public API)"`
+- [ ] **`NtQueryDirectoryObject` `ReturnLength` in bytes**: the SSDT handler (`nt_namespace.c`) returns `*ret_len` as entry COUNT; Win32 wants bytes (count * 96). Multiply when writing the caller's ReturnLength.
+
+**Test checkpoint:** `bash scripts/test.sh SUITE=ob` -- `OB: NtQueryDirectoryObject: enumerate root` opens `\` and enumerates its entries (each row = name + type name, 96-byte `OBJECT_DIRECTORY_INFORMATION`) without fault.
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 355 kernel suites, 0 failures
+
+> **Notes:**
+> - `NtOpenDirectoryObject` / `NtQueryDirectoryObject` (`ob.c`) expose the Ob namespace tree to user-mode via `SYS_OPENDIROBJ`/`SYS_QUERYDIROBJ` (`syscall.c`) + SSDT handlers (`nt_namespace.c`).
+> - Enumeration pins the directory and holds `dir->lock` across the list walk.
+> - Review fix (Critical): rows are assembled into a zeroed kernel-local bounce buffer under `dir->lock`, then copied out via `ProbeForWriteIfUser` + `copy_to_user` AFTER unlock -- no `#PF` under the lock, no kernel-memory write, no stack-padding leak.
+> - Review fix (High): the legacy `SYS_QUERYDIROBJ` (no byte-length, and the INT 0x80 path never sets UserMode so the in-function `IfUser` probe no-ops) is forced to single-entry and now `ProbeForWrite`s the one 96-byte row explicitly; multi-row reads use the SSDT handler (`buf_len`).
+> - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_query_directory`; 355 OB tests pass.
+> - Scope: `ReturnLength`-in-bytes is deferred above; the lookup-then-ref race is the shared §3 handle-table-lock gap.
+> **Verified:** 2026-06-21 | core ship -- review fixes | 4/5 items | build OK | tests 355 ob PASS
+> **Deferred:** [M] SSDT `NtQueryDirectoryObject` returns `ReturnLength` as an entry count, not bytes -> XREF: 02-kernel-core/TODO-05 §11 (item: "`NtQueryDirectoryObject` `ReturnLength` in bytes" at line 384)
+> **Accepted:** [H] the directory handle is pinned AFTER an unlocked `ObpLookupHandle` (the lookup-then-ref window races a concurrent `NtClose`) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Accepted:** [H] `ProbeForWrite` is range-check-only (no page touch) and `copy_to_user` has no fault fixup, so a probe-passing-but-unmapped user page #PFs in the copy -- a kernel-wide user-access gap, not §11-specific -> XREF: 02-kernel-core/TODO-23 §13 (item: "`include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`" at line 376)
+> **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Crit+2H fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
