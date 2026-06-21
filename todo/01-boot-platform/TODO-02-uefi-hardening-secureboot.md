@@ -612,7 +612,8 @@ The UKI pack step (`scripts/build.sh`) runs `objcopy --add-section ... "$UKI_STU
 - [x] Implemented: `sign-efi.sh` publishes the signed pair (both-or-neither + INT/TERM trap); Makefile `SYSTEM_DISK`, `build-image.sh`, `build-manifest.sh`/`.ps1`, `verify-esp.sh` select the signed artifact when keyed. Same key/cert/SB policy.
 - [x] BOTH modes verified: clean + incremental both `=== BUILD OK ===` + `[sbat] OK`; `sbverify` OK on the signed pair; canonical = `No signature table present`; SB smoke 8/8; manifest binds its bootloader hash to the signed artifact.
 - [ ] Verify the signed UKI boots + the SB chain validates on bare metal / a Secure-Boot-enrolled VM (human-gated; cannot be validated in WSL TCG/KVM).
-- [ ] Commit: `"build: TODO-02 §18 -- UKI SBAT survives incremental rebuild (approach A: distinct signed-output paths)"`
+- [ ] Unify the signed-artifact selection predicate (`build-image.sh`/`verify-esp.sh` file-existence vs `build-manifest` stamp-staleness -- stale-artifact drift) + regression tests (external `MOK_KEY`, stale-rejection, keyed-signed-missing).
+- [x] Commit: `"build: TODO-02 §18 -- UKI SBAT survives incremental rebuild (approach A: distinct signed-output paths)"`
 
 **Test checkpoint:** `bash scripts/build.sh && bash scripts/build.sh` (two builds, no `clean` between) both end `=== BUILD OK ===` with `[sbat] OK: BOOTX64.EFI + UKI carry .sbat`. `scripts/test.sh SUITE=boot` runs without a build failure. On bare metal with Secure Boot enrolled, the incremental-built UKI boots and the firmware accepts the signature. Test on: WSL TCG (build idempotency only); bare metal (SB-chain acceptance).
 
@@ -625,7 +626,10 @@ The UKI pack step (`scripts/build.sh`) runs `objcopy --add-section ... "$UKI_STU
 > - **Canonical doc:** this section + memory `project-uki-sbat-incremental-build-bug` + `project-secureboot-mok-dev-cert`.
 > - **Scope boundary:** bare-metal SB-chain sign-off is human-gated (WSL cannot run it); signing uses the MOK dev cert (production cert is a ~2yr future rotation).
 
+> **Verified:** 2026-06-21 | commit `aa3c20db` | 3/5 items | build OK | SB smoke 8/8
 > **Deferred:** [M] bare-metal / Secure-Boot-enrolled-VM SB-chain acceptance (firmware accepts the signed grubx64.efi behind shim) -- cannot be validated in WSL TCG/KVM -> XREF: 01-boot-platform/TODO-02 §18 (item: "Verify the signed UKI boots + the SB chain validates on bare metal / a Secure-Boot-enrolled VM")
+> **Deferred:** [M] signed-artifact selection predicate not unified (build-image.sh/verify-esp.sh file-existence vs build-manifest stamp-staleness; stale-artifact drift) + missing signing-state regression tests -> XREF: 01-boot-platform/TODO-02 §18 (item: "Unify the signed-artifact selection predicate")
+> **Quality reviewed:** 2026-06-21 | Codex 3x (adversarial, consistency, perf) | 2M deferred (XREF) | scope: N/A (build-infra; not src/boot or src/kernel)
 
 ---
 
