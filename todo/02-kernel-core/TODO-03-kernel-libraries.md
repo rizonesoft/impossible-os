@@ -206,8 +206,10 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - `size_t` API rejects NULL / zero / `> LZ4_BLOCK_INPUT_MAX` / `> INT_MAX` before narrowing to the int core; `lz4_decompress` uses the bounds-checked safe decoder for untrusted/off-box frames.
 > - Canonical doc: `include/libs/lz4.h` banner.
 > - Scope boundary: §3 owns the block codec; the `.lz4` frame/streaming layer and the TODO-26/27/20 + IXFS consumer wiring are deferred (no in-tree consumer yet), Zstd ratio codec is §9.
+> **Verified:** 2026-06-21 | commit `de381ef1` | 5/9 items | build OK | tests 6623 kernel + 16 user PASS (TCG)
 > **Deferred:** [M] `.lz4` frame/streaming layer (`lz4f_*`) -- heap-backed (LZ4F context > 4 KiB kmalloc ceiling), no in-tree consumer (reason: block API is the must-ship core; frame layer pulls forward when IXFS streaming needs it) -> XREF: 05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3 (item: "ixfs_compress_block(algo, in_buf, in_len, out_buf, out_size)")
 > **Deferred:** [L] Consumer wiring (crash dump / hibernation / EIF) -- codec ready, consumers unimplemented (reason: TODO-27 §6, TODO-26 §4, TODO-20 §6 all unimplemented/deferred) -> XREF: 02-kernel-core/TODO-03-kernel-libraries.md §3 (items "Wire into TODO-27/26/20")
+> **Quality reviewed:** 2026-06-21 | Codex 9x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 3H+1M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

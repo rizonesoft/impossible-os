@@ -26,8 +26,9 @@
  * allocator dependency. (Both pmm and the kmalloc heap are unsynchronized in
  * this kernel, so an allocator-backed state could not be made reentrant; an
  * on-stack state is the only genuinely concurrent-safe option.) The Makefile
- * caps the LZ4 frame with -Wframe-larger-than so a future LZ4_MEMORY_USAGE bump
- * cannot silently overflow the 8 KiB kernel task stacks. */
+ * caps the dominant LZ4 frame with -Wframe-larger-than; the whole compress
+ * call chain peaks near 2.5 KiB, well under the 8 KiB kernel task stacks, and a
+ * future LZ4_MEMORY_USAGE bump would trip that build-time cap. */
 
 size_t lz4_compress_bound(size_t input_size)
 {

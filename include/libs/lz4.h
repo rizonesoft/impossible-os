@@ -35,17 +35,18 @@
  * 0 return means "input too large to compress as one block"). */
 size_t lz4_compress_bound(size_t input_size);
 
-/* Compress src[0, src_size) into dst[0, dst_capacity). Returns the compressed
- * byte count (> 0) on success, or a negative LZ4_ERR_* code. No allocation; dst
- * must be at least lz4_compress_bound(src_size) to guarantee success.
+/* Compress the first src_size bytes of src into dst (capacity dst_capacity).
+ * Returns the compressed byte count (> 0) on success, or a negative LZ4_ERR_*
+ * code. No allocation; dst must be at least lz4_compress_bound(src_size) to
+ * guarantee success.
  *
  * SMP-reentrant: the ~2 KiB LZ4 hash-table state (built with LZ4_MEMORY_USAGE=11
  * so it fits the kernel stack) lives on the caller's stack -- no shared state,
  * no allocator. Needs ~2.5 KiB of stack; safe on the 8 KiB kernel task stacks. */
 int lz4_compress(const void *src, size_t src_size, void *dst, size_t dst_capacity);
 
-/* Decompress src[0, src_size) into dst[0, dst_capacity). Bounds-checked
- * (LZ4_decompress_safe): never reads or writes outside the supplied buffers
+/* Decompress the first src_size bytes of src into dst (capacity dst_capacity).
+ * Bounds-checked (LZ4_decompress_safe): never reads or writes outside the buffers
  * even on malformed/hostile input. Returns the decompressed byte count (>= 0)
  * or a negative LZ4_ERR_* code. Use this -- not the unsafe fast path -- for
  * any off-box or untrusted frame (crash dumps, hibernation images). */
