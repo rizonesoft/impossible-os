@@ -8,6 +8,9 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 
 # TODO-10 -- Bare Metal Boot Hardening
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Make the kernel boot reliably on any x86-64 bare-metal hardware. After this TODO, the boot sequence is robust against absent hardware, misconfigured firmware, and platform-specific quirks through correct gating, fallback behavior, and bare-metal-first validation. Rich POST/VPD diagnostics stay owned by the dedicated diagnostics TODOs referenced below.
 
 > [!IMPORTANT]
@@ -420,7 +423,7 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 > - NX policy now hard-fails (LOG_ERROR + `boot_halt`) instead of silently leaving a text-overlapping huge page executable on a split OOM -- NX is REQUIRED and verify only reads EFER.
 > - Verified on KVM serial: `NX enabled`, `SMEP/SMAP skipped (needs KPTI)`, `UMIP enabled`, CR4=0x40e68 (SMEP/SMAP bits clear).
 > **Verified:** 2026-06-08 | commit `e194e646` | 5/5 items | build OK | security 79+16 PASS, smoke PASS (KVM 2.6s; NX enabled + SMEP/SMAP skipped confirmed in serial)
-> **Accepted:** [M] `cpu_enable_pku` publishes per-CPU PKU as global `pku_enabled` -- an AP lacking PKU/XCR0.9 could run PKRU without CR4.PKE -> XREF: 01-boot-platform/TODO-09 §6 (item: "PKU global skew" at line 262)
+> **Accepted:** [M] `cpu_enable_pku` publishes per-CPU PKU as global `pku_enabled` -- an AP lacking PKU/XCR0.9 could run PKRU without CR4.PKE -> XREF: 01-boot-platform/TODO-09 §6 (item: "PKU global skew" at line 265)
 > **Quality reviewed:** 2026-06-08 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -447,7 +450,7 @@ Formalize the boot order lessons learned: timer is the last thing initialized be
 > - Emergency reset (`uefi_reset`) now masks the timer regardless of firmware-mutex contention; the init-order contract + `uefi_runtime.c` header were corrected to match the real code (DPC-before-sti, input-after-sti, sleepable mutex).
 > - Scope boundary: PIT-backend (TCG) timer masking is backend-aware UTS work owned by `01-boot-platform/TODO-11 §6`; LAPIC-backend (bare metal / WHPX) is masked here.
 > **Verified:** 2026-06-08 | commit `483ff06c` | 4/4 items | build OK | boot 1723+16 PASS, smoke PASS (KVM 2.57s)
-> **Accepted:** [L] panic/emergency reset keeps LAPIC-only masking on the PIT backend (reason: ioapic_lock is panic-unsafe, deliberate) -- the normal rt_call PIT gap is CLOSED by `timer_hal_quiesce()` -> XREF: 01-boot-platform/TODO-11 §6 (item: "Backend-aware `timer_hal_quiesce()`/`resume()`" at line 250)
+> **Accepted:** [L] panic/emergency reset keeps LAPIC-only masking on the PIT backend (reason: ioapic_lock is panic-unsafe, deliberate) -- the normal rt_call PIT gap is CLOSED by `timer_hal_quiesce()` -> XREF: 01-boot-platform/TODO-11 §6 (item: "Backend-aware `timer_hal_quiesce()`/`resume()`" at line 253)
 > **Quality reviewed:** 2026-06-08 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M+2L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -553,7 +556,7 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > - re-adversarial skipped: docs-only fixes, no C/H lines changed.
 > **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
-> **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 96)
+> **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 99)
 > **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 669)
 > **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 668)
 > **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)

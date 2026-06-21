@@ -35,6 +35,16 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
 
 ### Phase 2 -- Internet Research (critical -- do not skip)
 
+**Phase 2.0 -- Maturity gate (set research DEPTH before you dispatch).** Deep parity research is the right tool for a greenfield or partially-built TODO; it is the WRONG tool for one already shipped and validated, where an unbounded survey just burns tokens chasing tangents. (Incident 2026-06-21: a parity dispatch on a mature kernel-libraries TODO ran 90+ web fetches into network-stack hash-table history before it was stopped.) Classify this TODO from concrete signals BEFORE choosing a dispatch:
+
+- **MATURE / multiply-validated** = every `## N.` section's Implementation Order row is `[x]` DONE (or the only open rows are `[/]` + Deferred-stamped), AND the file carries a recent close-for-pass / completion run-log entry or sits in documentation/maintenance state.
+- **GREENFIELD / partial** = anything else (open `[ ]` sections, no close-out, active build-out).
+
+Then choose the dispatch by verdict:
+
+- **GREENFIELD / partial -> FULL research** (the blockquote below): the `parity-research-analyst` todo-plan dispatch performing steps 7-11 as written.
+- **MATURE -> CONFIRMATORY only.** Do NOT run the full Win11 / Linux / emerging triple-survey. Either spot-check inline (a few targeted lookups confirming no NEW baseline capability has appeared since the TODO closed), or dispatch the agent with `[maturity: mature -- confirmatory-only, cap ~6 lookups]` leading the prompt so its mature-bias research budget binds. The goal is to catch a genuinely new gap, not to re-derive an inventory the closed sections already cover. If the confirmatory pass surfaces nothing new, record "mature TODO, confirmatory parity pass, no new baseline gaps" in the Phase 5 report and proceed -- a near-empty parity result on a closed TODO is the expected, correct outcome, not a reason to widen the search.
+
 > **Delegate the research + inventory to a read-only agent (the biggest token + context offload in the pipeline).** Dispatch `Agent(subagent_type="parity-research-analyst", model="sonnet", ...)` in **todo-plan mode** to perform steps 7-11 (Win11 / Linux / emerging research + merged feature inventory + gap classification + compare-against-current-sections) in a separate Sonnet context, returning the structured inventory + coverage-gap list + sources. The `model="sonnet"` per-call override is deliberate and safe: gap mode is backstopped by the MANDATORY Phase 3.5 `codex-gap-audit` red-team. You (main session) then do step 12 (cross-TODO overlap), apply all resulting TODO edits, and run Phase 3.5 -- the agent never edits the TODO. If you prefer to run the research inline, follow steps 7-11 directly instead.
 
 7. **Research Windows 11 features in this domain.**
@@ -273,9 +283,13 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
 
 23. **Do NOT add a `## History` section or row.** Gap-analysis activity is already captured by the written report (step 22), the git commit, and any section stamps that get added. A separate History table just duplicates that trail and grows without bound across review passes. Leave existing History sections alone (don't delete prior entries) but don't append new ones.
 
+24. **Write the file-level Gap-audited stamp (lifecycle marker).** Once Phase 4 filing and the mandatory `codex-gap-audit` pass are complete, write/refresh the file-preamble stamp immediately under the H1 and above `> **Goal:**`:
+    `> **Gap-audited:** YYYY-MM-DD | gap-audit + codex-gap-audit; N findings filed (or none)`.
+    For a Phase 2.0 confirmatory pass on a mature TODO, the basis line says so (e.g. "confirmatory pass, no new baseline gaps"). One stamp line, not a History block; refresh the date each run. The oracle `.claude/hooks/sequencer_triage.py` reads this stamp as the other half of `stages_1_2_done`, and Stage 0 of the per-file pipeline uses both to skip a redundant re-audit.
+
 ## Research Quality Standards
 
-- **Minimum 6 web searches** per analysis (3 Win11 + 3 Linux). More for complex domains.
+- **Depth follows the Phase 2.0 maturity gate, within its ~15-lookup budget.** For a FULL (greenfield / partial) analysis, aim for roughly 3 targeted searches each across Win11 / Linux / emerging. A MATURE-TODO confirmatory pass is explicitly exempt from any search floor -- a handful of targeted lookups is the correct depth, not a quota to clear.
 - **Follow at least 2 links** with WebFetch to get detailed feature descriptions, not just search summaries.
 - **Save source URLs** for the written report (schema item 22) -- not as `<!-- Sources: ... -->` in the TODO file.
 - **Distinguish fact from inference.** If a feature's existence is inferred from documentation rather than confirmed, note it as "likely" rather than "confirmed."

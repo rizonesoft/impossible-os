@@ -8,6 +8,9 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 
 # TODO-07 -- Boot Entry Store, Menu & Policy
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Provide a complete boot-entry model: multiple OS entries, multiple entry kinds (split-kernel, UKI, chainload, network, hibernation resume), A/B slots, recovery, safe mode, test mode, BootNext one-shot reading, deterministic OS-side policy merge, a user-visible boot menu, per-entry health-gated mark-good, OS-visible loader UEFI variables, and idempotent first-install seeding.
 
 > [!IMPORTANT]

@@ -139,6 +139,10 @@ description: Validate a TODO file for structural completeness, Implementation Or
 
 16. **Do NOT add a `## History` section or row.** The git log and per-section stamps already carry the audit trail; a History table just repeats the same dates with less detail and grows without bound. Leave existing History sections alone (don't delete prior entries) but do not append new rows.
 
+17. **Write the file-level Validated stamp (lifecycle marker).** When the structural pass is clean (all findings fixed, or none found), write/refresh the file-preamble stamp immediately under the H1 and above `> **Goal:**`:
+    `> **Validated:** YYYY-MM-DD | validate-todo-file clean (structure / IO table / XREF / test wiring)`.
+    One stamp line, not a History block; refresh the date on each clean run. If a structural blocker cannot be resolved this pass, do NOT write the stamp -- report the blocker instead. (An absent stamp correctly tells the overnight sequencer's Stage 0 to re-run validation next pass; the oracle `.claude/hooks/sequencer_triage.py` reads this stamp as half of `stages_1_2_done`.)
+
 ## Guardrails
 
 - **Unicode en/em dash vs. prose:** Tracked files must not contain U+2013 (en) or U+2014 (em). **Do not** paste ASCII `--` as a typographic substitute in running text; it reads as minus, decrement, or noise (especially in C comments). **Rewrite** instead: colon, semicolon, parentheses, a short lead-in clause, or split into two sentences. Reserve `--` for meanings readers already expect (CLI flags in examples, markdown `---` rules, minus/range in formulas). See `CLAUDE.md` (No Unicode Dashes).

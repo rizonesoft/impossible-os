@@ -8,6 +8,9 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 
 # TODO-11 -- Interrupt Architecture & Unified Timer Subsystem
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Define the authoritative Phase 1 interrupt and timer architecture: ACPI MADT first, LAPIC/IOAPIC before legacy PIC enable paths where applicable, full 256-vector IDT coverage, dynamic GSI/vector registration (`irq_request_gsi`), and a unified timer HAL (`uptime_ns()`) choosing HPET, LAPIC, or PIT. Historical bug class: PIT before IOAPIC routing on PCAT_COMPAT machines; that init order is fixed in tree. Remaining work: UTS high-res reads via the `mono_clock` contract, one-shot/TSC-deadline mode, IRQ affinity + GSI validation + shared INTx handlers + storm quarantine, driver migration to `irq_request_gsi`, AP LAPIC timers, shell tools (`irq list`, `boot-timeline`), and unit tests below.
 
 > [!IMPORTANT]
@@ -384,7 +387,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 > **Verified:** 2026-06-12 | commit `7ea3a01f` | 4/5 items | build OK | smoke PASS (KVM 2.590s)
 > **Accepted:** [H] `platform_is_tcg()` timer-backend gate is identity-based; proper fix is a clocksource quality watchdog (reason: TCG test platform depends on PIT today) -> XREF: 02-kernel-core/TODO-08 §2 (item: "Clocksource quality watchdog" at line 104)
-> **Accepted:** [M] AP bringup serializes 10ms INIT settle + 1ms SIPI per AP (reason: INIT/SIPI restructure needs bare-metal validation) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Phase-split INIT settle + 200us SIPI wait" at line 397)
+> **Accepted:** [M] AP bringup serializes 10ms INIT settle + 1ms SIPI per AP (reason: INIT/SIPI restructure needs bare-metal validation) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Phase-split INIT settle + 200us SIPI wait" at line 400)
 > **Accepted:** [L] direct `lapic_send_ipi()` callers pending arch-neutral wrapper (reason: scope) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "irq_send_ipi(cpu, vector) arch-neutral wrapper" at line 98)
 > **Quality reviewed:** 2026-06-12 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+4M+1L fixed, 0 open, 1H+1M+1L accepted-XREF | scope: kernel-code-quality
 

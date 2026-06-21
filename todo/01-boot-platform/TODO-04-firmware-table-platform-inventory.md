@@ -8,6 +8,9 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 # TODO-04 -- Firmware Table & Platform Inventory
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Make firmware-provided platform data complete, validated, and queryable. The bootloader already copies UEFI configuration-table entries and the kernel has helpers for ACPI, SMBIOS, memory attributes, runtime properties, conformance profiles, ESRT, DTB, and FPDT. This TODO owns the generic firmware inventory layer that discovers, validates, logs, and publishes those tables without mixing policy into each consumer.
 
 > [!IMPORTANT]
@@ -103,7 +106,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Scope boundary** -- §2 marks status only; full DTB header parsing in §3; ESRT mirror in §6; Registry/JSON in §8; SMBIOS constant consolidation closed by §12.
 
 > **Verified:** 2026-04-30 | commit `789b572f` | 5/5 items | build OK | smoke PASS (KVM 2.35s, "17 cataloged, 9 validated, 0 degraded") | tests 710/710 PASS
-> **Accepted:** [L] SMBIOS3/2 entry-point wire-format length constants duplicated between `smbios.c` (`SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_*`) and `firmware_tables.c` (`FW_SMBIOS3_EP_LEN` / `FW_SMBIOS2_EP_LEN_*`); future-spec drift hazard (reason: scope -- consolidating into a shared internal header touches `src/kernel/smbios.c` private types) -> XREF: 01-boot-platform/TODO-04 §12 (item: "Consolidate SMBIOS entry-point wire-format constants" at line 106)
+> **Accepted:** [L] SMBIOS3/2 entry-point wire-format length constants duplicated between `smbios.c` (`SMBIOS3_EP_LEN` / `SMBIOS2_EP_LEN_*`) and `firmware_tables.c` (`FW_SMBIOS3_EP_LEN` / `FW_SMBIOS2_EP_LEN_*`); future-spec drift hazard (reason: scope -- consolidating into a shared internal header touches `src/kernel/smbios.c` private types) -> XREF: 01-boot-platform/TODO-04 §12 (item: "Consolidate SMBIOS entry-point wire-format constants" at line 109)
 > **Quality reviewed:** 2026-04-30 | Codex 5x (design + adversarial + re-adversarial x2 + consistency + perf) | 2M+2L fixed, 1L accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -176,7 +179,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Scope boundary** -- §5 detects/classifies/logs only; W^X enforcement in TODO-27 §3; RT header_size validation closed by §11.
 
 > **Verified:** 2026-04-30 | commit `c2d12aba` | 5/5 items | build OK | smoke PASS (KVM 2.41s) | tests 764/764 PASS
-> **Accepted:** [H] RT services per-offset header_size validation gap in pre-existing call_set_virtual_address_map() and 5-pointer init path (reason: scope -- pre-existing init code outside §5 inventory work) -> XREF: 01-boot-platform/TODO-04 §11 (item: "Validate `s_rt->hdr.header_size` per function-pointer offset" at line 179)
+> **Accepted:** [H] RT services per-offset header_size validation gap in pre-existing call_set_virtual_address_map() and 5-pointer init path (reason: scope -- pre-existing init code outside §5 inventory work) -> XREF: 01-boot-platform/TODO-04 §11 (item: "Validate `s_rt->hdr.header_size` per function-pointer offset" at line 182)
 > **Quality reviewed:** 2026-04-30 | Codex 12x (design + adversarial-impl x9 + adversarial + consistency + perf) | 1H+9M+1L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -236,7 +239,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Scope boundary** -- §7 owns detection + primitives + catalog integration; per-profile fixture blobs in §10; ARM/Microsoft profiles wait for published GUIDs.
 
 > **Verified:** 2026-05-02 | this commit | 8/8 items | build OK | smoke PASS (KVM 2.31s) + ECPT-absent path observed
-> **Accepted:** [H] firmware_table_mmap_contains accepts UEFI_MMAP_BOOT_SERVICES_* which PMM reclaims before firmware_tables_init runs (reason: scope -- pre-existing oracle predates §7, affects §1/§2/§3/§5 equally) -> XREF: 01-boot-platform/TODO-04 §11 (item: "Tighten `firmware_table_mmap_contains` to reject `UEFI_MMAP_BOOT_SERVICES_CODE/DATA`" at line 239)
+> **Accepted:** [H] firmware_table_mmap_contains accepts UEFI_MMAP_BOOT_SERVICES_* which PMM reclaims before firmware_tables_init runs (reason: scope -- pre-existing oracle predates §7, affects §1/§2/§3/§5 equally) -> XREF: 01-boot-platform/TODO-04 §11 (item: "Tighten `firmware_table_mmap_contains` to reject `UEFI_MMAP_BOOT_SERVICES_CODE/DATA`" at line 242)
 > **Quality reviewed:** 2026-05-02 | Codex 7x (design + adversarial-impl + adversarial × 2 + consistency + perf + re-adversarial) | 2H+5M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -285,7 +288,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 > - **Scope boundary** -- §9 owns detection + override + publication; per-quirk workaround consumers live in TODO-22 / TODO-25 / TODO-15 / §5 / TODO-16. Tokenizer dedup closed by §12.
 
 > **Verified:** 2026-05-02 | this commit | 5/5 items | build OK | smoke PASS (KVM 2.39s) + `[OK] FW: quirks: 0 active` observed
-> **Accepted:** [M] Bootloader `firmware_quirk_disable=` tokenizer is duplicated from `firmware_quirks_parse_disable()` (reason: shared static-inline tokenizer needs new .inc plumbing across kernel/bootloader idiom boundary; X-macro already covers `{name, bit}` drift) -> XREF: 01-boot-platform/TODO-04 §12 (item: "Consolidate `firmware_quirk_disable=` tokenizer between kernel and bootloader" at line 288)
+> **Accepted:** [M] Bootloader `firmware_quirk_disable=` tokenizer is duplicated from `firmware_quirks_parse_disable()` (reason: shared static-inline tokenizer needs new .inc plumbing across kernel/bootloader idiom boundary; X-macro already covers `{name, bit}` drift) -> XREF: 01-boot-platform/TODO-04 §12 (item: "Consolidate `firmware_quirk_disable=` tokenizer between kernel and bootloader" at line 291)
 > **Quality reviewed:** 2026-05-02 | Codex 12x (design + adversarial + consistency x3 + perf x3 + re-adversarial x2 + test-coverage x3) | 4H+3M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---

@@ -8,6 +8,9 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 # TODO-08 -- Alternate Boot Protocols & Compatibility Boundary
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Decide and enforce how non-primary boot protocols work. CLOSED with `unsupported` policy committed: UEFI/GPT/ESP is the only supported boot path; Multiboot2 / GRUB / Limine / legacy BIOS / Linux x86 boot protocol / EFI stub direct boot / kexec are explicit non-goals.
 
 > [!IMPORTANT]

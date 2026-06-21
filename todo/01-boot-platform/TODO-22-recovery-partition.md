@@ -8,6 +8,9 @@ title: "TODO-22 -- Recovery Partition & Self-Repair"
 
 # TODO-22 -- Recovery Partition & Self-Repair
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** A read-only recovery partition that can repair a broken system without external media. If both A/B slots fail, the system boots into a minimal recovery environment that can: rebuild boot metadata, verify filesystem integrity, restore a known-good kernel from backup, and recreate UEFI NVRAM boot entries. Modeled after Windows Recovery Environment (WinRE), Chrome OS recovery, and Linux's fallback.efi NVRAM repair.
 
 > [!IMPORTANT]

@@ -8,6 +8,9 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 # TODO-14 -- Boot Diagnostics, Heartbeat & Spinner
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** The arc spinner and boot splash are done. This TODO builds the production diagnostics layer: a named-stage boot progress API that feeds the splash, POST-style hex codes visible on hardware debug cards, cross-boot panic forensics, a panic QR code, runtime vital-signs overlay, and a multi-instance compositor-integrated spinner -- turning the ad-hoc debug tooling into production-grade features. The former alive-blink visual heartbeat is permanently deferred; keep only the shipped safety invariant that forbids framebuffer swaps from ISR context.
 
 > [!IMPORTANT]

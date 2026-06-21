@@ -8,6 +8,9 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 # TODO-03 -- Bootloader Error Recovery & ELF Hardening
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Eliminate every silent failure in `bootx64.c`. The bootloader currently has 15+ fragility points where errors cause infinite HLT loops with no visible output, corrupt memory from unchecked ELF segments, or silently use wrong defaults. After this TODO: every failure produces a visible error message on screen and serial with actionable information, serial port detection uses ACPI SPCR when available, the UEFI watchdog timer guards against hangs, memory map descriptors are validated for consistency, boot errors persist in NVRAM for cross-boot diagnostics, and the error screen includes a QR code for recovery. The bootloader never hangs silently -- it either boots or tells you exactly why it can't.
 
 > [!IMPORTANT]
@@ -179,7 +182,7 @@ If `\boot\kernel.exe` is not found, search alternative paths before giving up.
 > - POST16 sequence: `POST16_BL_FALLBACK` (0xB094) on entry to all-volumes search; `POST16_BL_FALLBACK_OK` (0xB095) only on success; left at 0xB094 on total failure so a POST card shows fallback-failed.
 > - Scope boundary: `parse_boot_conf()` and `locate_boot_fs()` still use the silent LocateProtocol pattern; consistency follow-ups filed in §7 and TODO-02 §16 to mirror the §3 hardening.
 > **Verified:** 2026-05-01 | commit `2bf210cd` | 5/5 items | build OK | smoke PASS (KVM 2.45s)
-> **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 182)
+> **Accepted:** [H] Silent LocateProtocol fallback in `parse_boot_conf()` (reason: scope -- §7 owns boot.conf reads) -> XREF: 01-boot-platform/TODO-03 §7 (item: "Eliminate silent LocateProtocol fallback in `parse_boot_conf()`" at line 185)
 > **Accepted:** [H] Silent LocateProtocol fallback in `locate_boot_fs()` (RESOLVED 2026-06-13 by TODO-02 §16 commit `46eb95bc`: split-path payload provenance hardening -- `locate_boot_fs()` is HandleProtocol-only and `load_kernel()`'s non-boot fallback fails closed when staged payloads are present).
 > **Quality reviewed:** 2026-05-01 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+2M fixed, 2H accepted-XREF | scope: boot-code-quality
 

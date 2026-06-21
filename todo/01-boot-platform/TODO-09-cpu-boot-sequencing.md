@@ -8,6 +8,9 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 
 # TODO-09 -- CPU Boot Sequencing & AP Hardening
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Establish the correct activation order for CPU security and context features during boot phases 0 and 1, replicate that activation on every Application Processor (AP), validate AP feature consistency, pin safety-critical CR4 bits against post-boot modification, synchronize MTRR/PAT cache policy on each AP, and provide a comprehensive CPU register state audit trail. The feature implementations themselves live in `02-kernel-core/TODO-10-kernel-security-hardening.md` (security hardening) and `02-kernel-core/TODO-09-x86-64-architecture.md` (x86-64 architecture); this TODO owns the boot-sequencing contract between them -- what activates, in what phase, who ensures APs match the BSP, and what happens when they don't.
 
 > [!IMPORTANT]
@@ -273,7 +276,7 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 > - Scope boundary: §6 owns DETECTION (validate + intersection + bug-check); §10 owns AP-local CR4-enable gating; `02-kernel-core/TODO-09 §9` owns topology core_type consumption; TODO-08 §3 owns TSC sync.
 > **Verified:** 2026-05-24 | commit `eeba36a1` | 9/9 items | build OK | smoke PASS (KVM 2.45s); SMP -smp 2 AP1 online + validation OK
 > **Accepted:** [H] optional CR4/MSR skew (CR4.UMIP via cpu_enable_umip, TSC_AUX MSR) still BSP-global-gated in cpu_harden/ap_apply_msr_profile -> #GP on a genuinely feature-skewed AP (pre-existing from §4; not a homogeneous/real-HW case; §6 detects + excludes from the global mask) -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP-local gate `ap_cpu_harden()` enables: `cpu_enable_umip/pku/smep/smap` + TSC_AUX" at line 350)
-> **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 276)
+> **Accepted:** [H] a slow AP can publish is_online AFTER cpu_features_finalize_global() runs, so the global mask may omit it (pre-existing degraded-bringup race; finalize is correct over the at-the-time online set) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Degraded-bringup: a timed-out AP still completes `ap_entry()` ... add a per-AP accept/abandon state" at line 279)
 > **Quality reviewed:** 2026-05-24 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -340,7 +343,7 @@ Both Windows and Linux synchronize the PAT (Page Attribute Table) MSR on each AP
 > - Scope boundary: §8 owns PAT sync + MTRR parity AUDIT; divergent-AP MTRR reprogram + runtime PAT re-broadcast need an IPI rendezvous (`smp_call_function`, deferred). MMIO cache correctness owned by PAT (TODO-01 §11).
 
 > **Verified:** 2026-05-24 | commit `27124dca` | 6/7 items | build OK | smoke PASS (KVM 2.640s); PAT WC active, MTRR audit wired
-> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 343)
+> **Deferred:** [M] runtime PAT re-broadcast + divergent-AP MTRR reprogram -- needs an all-CPU IPI rendezvous (`smp_call_function` absent); warn-only audit ships correctness-complete -> XREF: 01-boot-platform/TODO-09 §8 (item: "DEFERRED (needs SMP IPI rendezvous): runtime PAT re-broadcast + divergent-AP MTRR reprogram" at line 346)
 > **Quality reviewed:** 2026-05-24 | Codex 10x (design, adversarial, consistency, perf, re-adversarial, test-coverage) | 2H+4M+1L fixed, 1M deferred | scope: kernel-code-quality
 
 ---

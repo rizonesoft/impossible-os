@@ -8,6 +8,9 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 # TODO-25 -- Network / PXE / HTTP Boot
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Boot from the network when local media is absent, intentionally bypassed, or used only as a thin bootstrap. The boot device enum already reserves `network`, and fallback-chain prose mentions network devices, but there is no PXE/HTTP/TFTP implementation. This TODO covers firmware-assisted network boot, bootloader network clients, kernel handoff of network provenance, and recovery integration.
 > **Current state:** Local ESP/FAT boot is the only real bootloader path. The kernel has an RTL8139 driver and networking work elsewhere, but bootloader network protocols are not implemented. `boot_device_type = 4` exists as a placeholder.
 

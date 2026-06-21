@@ -8,6 +8,9 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 # TODO-28 -- Boot Validation & Hardware Certification Matrix
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Turn the boot platform from a set of feature TODOs into a certified boot surface. Every boot promise needs an automated or manual gate: QEMU WHPX/TCG, VirtualBox, Hyper-V, USB 2/3, NVMe, SATA, Secure Boot, TPM, network boot, A/B rollback, recovery, watchdog, hibernation, and bare-metal classes.
 > **Current state:** Many TODOs mention platform verification individually, and several scripts exist. There is no single boot certification matrix, no result schema, no release gate, no bare-metal lab inventory, and no consolidated support bundle.
 

@@ -8,6 +8,9 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 
 # TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** USB keyboards and mice work during boot and at the desktop on systems without PS/2 hardware. Most modern laptops and desktops (post-2015) have only USB input. Without this, the OS is unusable on real hardware. This TODO implements USB HID boot-protocol drivers for keyboard and mouse, interrupt endpoint polling, and input source coexistence with existing PS/2 drivers. The result: type commands, move the cursor, and click on any system with USB input.
 
 > [!IMPORTANT]

@@ -62,13 +62,18 @@ short human punch-list (bare-metal / WHPX sign-off, genuine product decisions).
   when an XREF from active work lands a concrete item there.
 - **Resume rule:** the cursor is computed, not hand-maintained. On session start
   the runner runs the triage oracle `python3 .claude/hooks/sequencer_triage.py
-  --next` (graph-truth over `build/todo-cache.json` + Verified stamps), which
-  returns the first NEEDS-WORK / DONE-UNSTAMPED file in traversal order; within
-  it, `--classify <file>` gives the first section not shipped-and-reviewed.
-  DONE files (all sections `[x]`/stamped-`[/]` + Verified) are skipped;
-  DONE-UNSTAMPED files (old-system work without stamps) get a `review-todo-section`
-  pass per section. The Cursor block below is a human-readable convenience log,
-  NOT the source of truth -- the oracle is.
+  --next` (graph-truth over `build/todo-cache.json` + section review stamps),
+  which returns the first NEEDS_WORK file in traversal order; within
+  it, `--classify <file>` gives the first section not shipped-and-reviewed,
+  plus a `stages_1_2_done` flag (from the file-preamble `> **Validated:**` /
+  `> **Gap-audited:**` stamps) that Stage 0 of the per-file pipeline uses to
+  skip re-validating / re-gap-auditing an already-processed file.
+  DONE files (every section `[x]`/`[/]` with BOTH Verified + Quality-reviewed,
+  or Deferred-parked) are skipped. A shipped `[x]` section missing either stamp
+  is NOT done -- the oracle classes it NEEDS_WORK (there is deliberately no
+  DONE_UNSTAMPED class), and Stage 3 runs `review-todo-section` on it via the
+  already-complete-section branch. The Cursor block below is a human-readable
+  convenience log, NOT the source of truth -- the oracle is.
 
 ## Traversal Order
 
@@ -89,11 +94,25 @@ short human punch-list (bare-metal / WHPX sign-off, genuine product decisions).
 
 For each TODO file at the cursor:
 
+0. **Lifecycle check (skip Stages 1-2 when already done).** Run
+   `python3 .claude/hooks/sequencer_triage.py --classify <file>` and read its
+   `stages_1_2_done` field. The file-preamble stamps `> **Validated:**` and
+   `> **Gap-audited:**` (above `> **Goal:**`) record that Stages 1-2 already
+   ran on a prior pass. If `stages_1_2_done` is true AND no `## N.` section has
+   been ADDED since (a new XREF'd `[ ]` item inside an EXISTING section does
+   NOT count -- it already came from a gap-audit elsewhere), SKIP Stages 1-2
+   and go straight to Stage 3. This is the guard against the fixpoint loop
+   re-validating / re-gap-auditing a mature file every sweep (incident
+   2026-06-21). Re-run Stages 1-2 only when the stamps are absent or a
+   genuinely new section appeared.
 1. **Validate** -- `Skill(validate-todo-file)` on the file. Fix structural
-   findings before proceeding.
+   findings before proceeding. On completion, write/refresh the file-preamble
+   stamp `> **Validated:** <date> | <one-line basis>`.
 2. **Gap analysis** -- `Skill(gap-audit-todo)` on the file (includes the
-   mandatory `codex-gap-audit` secondary pass). Land the resulting TODO edits
-   before touching code.
+   mandatory `codex-gap-audit` secondary pass; its Phase 2.0 maturity gate keys
+   off these same signals). Land the resulting TODO edits before touching code.
+   On completion, write/refresh the file-preamble stamp
+   `> **Gap-audited:** <date> | <one-line basis>`.
 3. **Sections, in order.** For each `## N.` implementation section, first to
    last:
    - Section already complete (all items `[x]`, marked `[x]` in the

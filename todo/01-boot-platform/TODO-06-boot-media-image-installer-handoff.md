@@ -8,6 +8,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 # TODO-06 -- Boot Media, Image Pipeline & Installer Handoff
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Make every bootable artifact reproducible, validated, and understood by the boot platform: raw disk, USB image, VHD/VHDX, hybrid ISO, recovery image, installer image, and signed release media. The bootloader should know when it is running from installer/recovery media and hand that state to the kernel cleanly.
 
 > [!IMPORTANT]

@@ -8,6 +8,9 @@ title: "TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)"
 
 # TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** USB boot that works on 95%+ of hardware. This TODO owns the baseline xHCI controller path, MSC transport, block-device registration, post-boot hot-plug, and broad hardware compatibility. The pre-ExitBootServices persistent-DMA handover path is consolidated under [TODO-20](TODO-20-usb-zero-delay-handover.md).
 
 > [!IMPORTANT]

@@ -8,6 +8,9 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 
 # TODO-06 -- TODO Metadata Layer and Derived Graph
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Keep markdown TODO files canonical, but add a stable-ID frontmatter layer + a derived index (JSON cache) so cross-TODO dependencies, backlinks, and "ready / blocked / orphaned" queries work without line-number fragility or manual grep sweeps. Markdown stays git-friendly and editor-native; the cache is a read-only projection that the generator rebuilds from the source files.
 
 > [!IMPORTANT]

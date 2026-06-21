@@ -8,6 +8,9 @@ title: "TODO-24 -- BlackBox Service Partition"
 
 # TODO-24 -- BlackBox Service Partition
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Add a 128 MiB FAT32 "BlackBox" partition to the GPT disk layout, mounted as `X:\`. All kernel logs, crash dumps, boot timelines, diagnostic snapshots, and portable tools live here -- separate from the IXFS system volume. FAT32 gives crash resilience (survives IXFS corruption), cross-platform readability (Windows/Linux/macOS mount it natively), and clean separation of OS files from diagnostic data.
 
 > [!IMPORTANT]
@@ -222,8 +225,8 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 > - `boot-timeline.json` now warns (not silently drops) when its target dir is missing, matching `boot-profile.log`'s open-failure behavior.
 > - Serial session logs stay at `X:\Logs\Serial\` (owned by §5); `boot-trend.json` C:\ fallback + O(N^2) linearization are deferred to TODO-29 §3 (Accepted below).
 > **Verified:** 2026-06-17 | commit `994e9794` | 5/5 items | build OK | smoke PASS (TCG 2.66s)
-> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §3 (item: "C:\ fallback for `boot-trend.json`" at line 159)
-> **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> XREF: 01-boot-platform/TODO-29 §3 (item: "Linearize `boot_trend_publish_json()` traversal" at line 158)
+> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §3 (item: "C:\ fallback for `boot-trend.json`" at line 162)
+> **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> XREF: 01-boot-platform/TODO-29 §3 (item: "Linearize `boot_trend_publish_json()` traversal" at line 161)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- 9-line warn+comment fix) | 1M+1L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -273,7 +276,7 @@ Move performance and diagnostic outputs to their BlackBox directories.
 > - Fixed a parent-directory handle leak in the hwdump create-via-dir path (the `dir` node was never `vfs_close`'d).
 > - `firmware-tables.json` C:\ fallback gap accepted to TODO-29 §11 (below).
 > **Verified:** 2026-06-17 | commit `fb846f65` | 5/5 items | build OK | smoke PASS (TCG 2.61s)
-> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 335)
+> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 338)
 > **Quality reviewed:** 2026-06-17 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -347,7 +350,7 @@ Windows and Linux identify FAT32 volumes by their 11-character volume label (sto
 > - `fat32_init` parses BS_VolLab (BPB offset 71, 11 bytes) into `vol->label` (space-trimmed) and logs it at mount (`fat32_ops.c:847`).
 > - The FAT label is an identifier independent of the GPT partition name `BlackBox` (mixed case) that `partition.c` keys X: mounting on; `read-blackbox.sh` (§9) + `test_blackbox.c` validate the FAT label, the kernel mount uses the GPT name.
 > **Verified:** 2026-06-17 | commit `afba47cd` | 4/4 items | build OK | manual (mlabel shows BLACKBOX)
-> **Accepted:** [M] bootloader `media_role_locate_blackbox_fs()` finds BlackBox by FAT label, not GPT identity (split-brain risk vs the kernel's GPT-name mount) -> XREF: 01-boot-platform/TODO-06 §6 (item: "Harden `media_role_locate_blackbox_fs()`" at line 203)
+> **Accepted:** [M] bootloader `media_role_locate_blackbox_fs()` finds BlackBox by FAT label, not GPT identity (split-brain risk vs the kernel's GPT-name mount) -> XREF: 01-boot-platform/TODO-06 §6 (item: "Harden `media_role_locate_blackbox_fs()`" at line 206)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- no code fixes) | 1M accepted-XREF | scope: kernel-code-quality
 
 ---

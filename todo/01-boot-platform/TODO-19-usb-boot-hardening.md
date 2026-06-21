@@ -8,6 +8,9 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 
 # TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Make USB boot bulletproof. The current USB boot path has a 2-second sleep hack masking a timing race, REQUEST SENSE retry logic that's partially wired, klog_disk_flush that hangs 10+ minutes on USB 2.0, no USB transport error recovery (stall/halt handling), no bulk transfer timeouts, and no EHCI/UHCI fallback for legacy hardware. This TODO is the single fail-safe pipeline for all USB boot fragility: proper SCSI retry, USB transport stall recovery, bounded bulk transfer timeouts, bounded klog flush with single-pass routing and deferred mode, boot media speed detection, slow-media-aware IXFS tests, EHCI fallback, and flush progress display. Works on USB 2.0 (EHCI), 3.0 (xHCI), 3.1, and 3.2 with zero sleep hacks and zero hangs.
 
 > [!IMPORTANT]
@@ -115,7 +118,7 @@ After BOT init, poll TEST UNIT READY until the device reports ready instead of s
 > - Hardening: ABORT vs GIVEUP split -- only a BOT pipe desync (TUR or REQUEST SENSE phase/transport failure) aborts init; a hard SCSI error on a healthy pipe warns and continues so INQUIRY/READ CAPACITY surface it. Codex review adoptions in the impl + review commits.
 > - Scope boundary: §2 owns the readiness poll; removing the separate `sleep_ms(2000)` is §6; BOT mass-storage reset / endpoint-stall recovery for the ABORT path is §4.
 > **Verified:** 2026-06-15 | review commit | 5/5 items | build OK | storage 109 kernel + 16 user-mode PASS (TUR poll decision matrix)
-> **Accepted:** [M] `msc_info` keyed by per-controller `slot_id` collides across controllers -> XREF: 01-boot-platform/TODO-19 §11 (item: "Key MSC state by global device, not per-controller `slot_id`" at line 118)
+> **Accepted:** [M] `msc_info` keyed by per-controller `slot_id` collides across controllers -> XREF: 01-boot-platform/TODO-19 §11 (item: "Key MSC state by global device, not per-controller `slot_id`" at line 121)
 > **Quality reviewed:** 2026-06-15 | Codex 9x (design, test-coverage, adversarial x2, re-adversarial x3, consistency, perf) | 4H+1M+1L fixed, 1H rejected, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -174,7 +177,7 @@ Handle USB transport-level stalls -- a separate layer from SCSI sense errors. A 
 > - Hardening: state-aware recovery never Resets a non-Halted endpoint or leaves a Stopped ring un-armed; a stall-recovered short data phase fails the command so READ(10) can't advance the LBA on partial data.
 > - Scope boundary: §4 owns transport recovery; per-command CSW residue acceptance + SCSI-sense whole-command retry are §3; multi-TRB event-pointer dequeue validation is §5.
 > **Verified:** 2026-06-15 | review commit | 8/8 items | build OK | storage 371 kernel + 16 user-mode PASS (exhaustive stall-CC matrix)
-> **Accepted:** [H] xHCI command ring + BOT transport unserialized for SMP (concurrent recovery/enumeration race; non-atomic `cbw_tag`) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize the command ring: a controller-level lock around `xhci_cmd_submit` + `xhci_wait_command`" at line 177)
+> **Accepted:** [H] xHCI command ring + BOT transport unserialized for SMP (concurrent recovery/enumeration race; non-atomic `cbw_tag`) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize the command ring: a controller-level lock around `xhci_cmd_submit` + `xhci_wait_command`" at line 180)
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, test-coverage, adversarial x2, re-adversarial x2, consistency, perf) | 4H+3M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 **Regression risk:** MEDIUM -- modifies the transfer completion path. If the recovery sequence issues incorrect xHCI commands, the endpoint may become permanently stuck. Rollback: disable recovery, return error immediately on stall (current behavior but with a timeout instead of infinite hang).
@@ -370,7 +373,7 @@ For hardware without xHCI, detect legacy USB controllers (EHCI/UHCI/OHCI) and de
 > - Deferred: active EHCI/UHCI HCD + shared BOT + HCD-agnostic recovery -> TODO-10 §1 (`usb_hcd_ops_t` vtable) + §10 (EHCI HCD); standalone EHCI-MSC copy rejected. Codex adoptions in the ship commit.
 > - Scope boundary: §11 owns boot-time legacy-controller detection + graceful skip + multi-controller MSC keying; TODO-10 §1/§10 own the transport abstraction + the EHCI host-controller driver.
 > **Verified:** 2026-06-15 | commit `5b924aa0` | 5/8 items | build OK | smoke PASS (KVM 2.02s)
-> **Accepted:** [H] xHCI event-ring completion-stealing + non-atomic `cbw_tag` under concurrent MSC I/O (reason: pre-existing, not introduced by §11) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events ... match each ... Transfer Event to its submitted TRB pointer" at line 373)
+> **Accepted:** [H] xHCI event-ring completion-stealing + non-atomic `cbw_tag` under concurrent MSC I/O (reason: pre-existing, not introduced by §11) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events ... match each ... Transfer Event to its submitted TRB pointer" at line 376)
 > **Deferred:** [M] EHCI/UHCI HCD driver + shared BOT layer + HCD-agnostic recovery (reason: needs usb_core abstraction) -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "Refactor `xhci_bulk_transfer()`/`xhci_control_transfer()` to `usb_hcd_ops_t`; `usb_msc.c` migrates to `usb_submit_bulk()`") + §10 (EHCI HCD)
 > **Quality reviewed:** 2026-06-15 | Codex 7x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial) | 1H+5M+2L fixed, 1H accepted-XREF | scope: kernel-code-quality
 

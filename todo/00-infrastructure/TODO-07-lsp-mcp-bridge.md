@@ -8,6 +8,9 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 
 # TODO-07 -- LSP to MCP Bridge
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Build a host-side MCP server that proxies five language servers -- clangd (C/H), asm-lsp (NASM), bash-language-server (.sh), pyright (.py), PowerShellEditorServices (.ps1) -- and exposes their capabilities (hover, go-to-definition, find-references, diagnostics, workspace-symbol, document-symbol, code-actions) as six read-only MCP tools. Lets Claude Code, Cursor, Aider, and any MCP-aware agent get compiler-grade code intelligence across every language the repo uses, instead of falling back to grep-and-hope.
 
 > [!IMPORTANT]

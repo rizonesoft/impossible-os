@@ -8,6 +8,9 @@ title: "TODO-01 -- Kernel Init Sequencing"
 
 # TODO-01 -- Kernel Init Sequencing
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Replace the ad-hoc 5-phase boot sequence with a formal, dependency-gated init model. Every subsystem declares prerequisites, returns a typed result, and the kernel halts or degrades gracefully on failure. Phase boundaries are explicit, testable, and match the hardware bring-up contract expected by a production OS.
 
 > [!IMPORTANT]
@@ -150,7 +153,7 @@ Runs with interrupts off. Only serial, memory, and logging. No drivers, VFS, or 
 > - Scope: §2 owns Phase-0 init order + readiness propagation (CLAUDE.md "boot_info ABI"); handoff defense-in-depth hardening is owned by TODO-10 §7.
 >
 > **Verified:** 2026-06-20 | commit `e8a8069b` | 21/21 items | build OK | smoke PASS (KVM 2.65s)
-> **Accepted:** [H] boot_phase0 handoff hardening beyond the documented 2-stage validate (canonical addr-pin, fb-geometry validation, bulk-copy) -> XREF: 01-boot-platform/TODO-10 §7 (item: "Harden boot_phase0 handoff" at line 327)
+> **Accepted:** [H] boot_phase0 handoff hardening beyond the documented 2-stage validate (canonical addr-pin, fb-geometry validation, bulk-copy) -> XREF: 01-boot-platform/TODO-10 §7 (item: "Harden boot_phase0 handoff" at line 330)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -250,7 +253,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 > **Verified:** 2026-06-20 | commit `e51737a0` | 20/22 items | build OK | smoke PASS (KVM 2.69s)
 > **Accepted:** [M] VirtIO-blk registry exposure/tuning runs before `registry_init` (silent HKLM loss) -> XREF: 04-drivers-hardware/TODO-13 §4 (item: "Gate VirtIO-blk registry exposure + tuning reads" at line 68)
 > **Accepted:** [M] BlackBox cleanup `path[64]` truncation can unlink wrong file -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 315)
-> **Accepted:** [H] BlackBox low-space cleanup unbounded -> WDAT watchdog starvation -> XREF: 01-boot-platform/TODO-24 §10 (item: "Budget + batch the unbounded Logs\ delete loop" at line 316)
+> **Accepted:** [H] BlackBox low-space cleanup unbounded -> WDAT watchdog starvation -> XREF: 01-boot-platform/TODO-24 §10 (item: "Budget + batch the unbounded Logs\ delete loop" at line 319)
 > **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 428)
 > **Deferred:** [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits; rootless boot reaches desktop (A/B rollback mitigates) -> XREF: 02-kernel-core/TODO-01 §4 (item: "Enforce typed fatal/degraded decisions from Phase 2 init return values" at line 233)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 2H+2M accepted-XREF, 1H deferred | scope: kernel-code-quality

@@ -8,6 +8,9 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 # TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Teach the boot platform how to resume from an S4 hibernation image or fast-startup image before doing a normal cold boot. Power management owns writing the hibernation image, but the boot path owns detecting it, validating it, selecting resume versus cold boot, and handing the image to the kernel safely.
 > **Current state:** Power-management TODOs describe S4 and fast startup, but the bootloader has no resume selection path, no hibernation image metadata contract, no resume-failure rollback, and no boot diagnostics for S4.
 > [!IMPORTANT] Deferred whole-file (2026-06-17, unattended sequencer + Codex design review): the entire resume boot-path is gated on (1) the kernel hibernation WRITER (02-kernel-core/TODO-26 §4 -- `pm_hibernate_write` + LZ4 + AES-GCM + the resume consumer) which is unimplemented, so no image exists to discover/validate/resume, and (2) bootloader AEAD/HMAC/TPM-seal + an anti-replay TPM-NV monotonic counter, none of which exist (same bootloader-crypto gap that deferred TODO-25 §5). Codex design review: §1 is unsafe as a standalone ABI (would freeze `resume_generation`/AEAD field layout before the cipher/TPM-NV/writer decisions), §5 is dead/false-fail-closed plumbing standalone; no must-ship-now core. Sections stay `[/]` with the shared Deferred stamp until the writer + trust primitives land.

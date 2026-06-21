@@ -51,6 +51,11 @@ SECTION_HEADING_RE = re.compile(r"^##\s+(\d+)\.")
 VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*")
 QUALITY_RE = re.compile(r"^>\s*\*\*Quality reviewed:\*\*")
 DEFERRED_RE = re.compile(r"^>\s*\*\*Deferred:\*\*")
+# File-level lifecycle stamps -- live in the preamble (before the first
+# `## N.` section) and record that the per-file pipeline Stages 1-2 ran:
+# validate-todo-file and gap-audit-todo (+ its mandatory codex-gap-audit).
+VALIDATED_RE = re.compile(r"^>\s*\*\*Validated:\*\*")
+GAP_AUDITED_RE = re.compile(r"^>\s*\*\*Gap-audited:\*\*")
 TODO_NUM_RE = re.compile(r"/TODO-(\d+)-")
 # An implementation TODO lives in a numbered domain dir and is named TODO-NN-*.
 # This excludes INDEX.md and non-TODO doctrine files (e.g. the runner-doctrine
@@ -119,6 +124,31 @@ def section_stamps(md_path):
     return out
 
 
+def file_lifecycle(md_path):
+    """File-level lifecycle: did the per-file pipeline Stages 1-2 run?
+
+    Scans only the preamble (everything before the first `## N.` section
+    heading) for `> **Validated:**` and `> **Gap-audited:**` stamps. Returns
+    {'validated': bool, 'gap_audited': bool}. The sequencer uses this to SKIP
+    re-running validate-todo-file / gap-audit-todo on a file that already
+    carries both stamps -- the root-cause guard against the fixpoint loop
+    re-auditing a mature file every sweep. Orthogonal to section DONE-ness:
+    a file can be validated+gap-audited while sections are still in progress.
+    """
+    out = {"validated": False, "gap_audited": False}
+    if not os.path.exists(md_path):
+        return out
+    with open(md_path, encoding="utf-8") as fh:
+        for line in fh:
+            if SECTION_HEADING_RE.match(line):
+                break  # lifecycle stamps live in the preamble only
+            if VALIDATED_RE.match(line):
+                out["validated"] = True
+            elif GAP_AUDITED_RE.match(line):
+                out["gap_audited"] = True
+    return out
+
+
 def classify_section(section, stamps):
     """DONE iff shipped AND (Verified AND Quality-reviewed) OR Deferred-parked.
 
@@ -179,7 +209,14 @@ def cmd_next(cache, root):
     if entry is None:
         print(json.dumps({"status": "DONE", "file": None}))
         return 0
-    print(json.dumps({"status": cls, "file": entry["file_path"], "domain": entry["domain"]}))
+    lc = file_lifecycle(os.path.join(root, entry["file_path"]))
+    print(json.dumps({
+        "status": cls,
+        "file": entry["file_path"],
+        "domain": entry["domain"],
+        "lifecycle": lc,
+        "stages_1_2_done": lc["validated"] and lc["gap_audited"],
+    }))
     return 0
 
 
@@ -191,9 +228,12 @@ def cmd_classify(cache, root, target):
         return 1
     entry = match[0]
     cls, per = classify_file(entry, root)
+    lc = file_lifecycle(os.path.join(root, entry["file_path"]))
     print(json.dumps({
         "file": entry["file_path"],
         "file_class": cls,
+        "lifecycle": lc,
+        "stages_1_2_done": lc["validated"] and lc["gap_audited"],
         "sections": [{"n": n, "class": c} for n, c in per],
     }, indent=1))
     return 0

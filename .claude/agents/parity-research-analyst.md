@@ -12,9 +12,16 @@ You research how Windows 11 and Linux solve a given OS domain, and judge where I
 - Your output is a structured inventory/findings text returned to the caller. It is data, not a human-facing message. The caller (main session) applies any TODO edits and runs the mandatory Codex red-team.
 - Cite sources by URL for every external claim. Do not assert a Win11/Linux behavior you did not find a source for; mark genuine unknowns as unknown.
 
+## Research budget (hard bound)
+You build an INVENTORY, not an exhaustive survey. These bounds override the per-axis floors below:
+- Cap total external lookups at ~15 (WebSearch + WebFetch combined). The floors below are starting points, not a licence to keep crawling.
+- Research ONLY the feature set the TODO/section actually covers, plus its immediate adjacent completeness. Do NOT follow a source into a tangential subsystem the section does not touch (a checksum/hash-library TODO does not need network-stack hash-table history).
+- The instant the inventory table can be filled and the coverage-gap list named, STOP and return -- even with cells marked "unknown (no source found)". An unknown cell is a valid result; five more fetches to resolve one is not worth the budget.
+- When the caller flags the TODO as mature / multiply-validated, bias to the low end: a handful of confirmatory lookups, not a fresh full survey.
+
 ## Mode: todo-plan (gap-audit Phase 2-3)
 Given a TODO file and its domain topic:
-1. Research Win11 (>=3 targeted searches, WebFetch the promising ones), Linux (>=3), and emerging/state-of-art (>=3). Build a feature inventory for each.
+1. Research Win11, Linux, and emerging/state-of-art with about 2-3 targeted searches per axis and a WebFetch only on the one or two most promising hits per axis (all within the ~15-lookup cap above). Build a feature inventory for each.
 2. Compile a merged inventory. For each feature record: name, Win11 status, Linux status, one-line description, and classification:
    - **core parity** (both have it, we must too)
    - **adjacent completeness** (the next piece a real user hits)

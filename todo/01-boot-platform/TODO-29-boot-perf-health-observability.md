@@ -10,6 +10,9 @@ implements_after: TODO-04
 
 # TODO-29 -- Boot Performance & Health Observability
 
+> **Validated:** 2026-06-21 | backfill -- todo-graph structural validate clean; all sections shipped + reviewed
+> **Gap-audited:** 2026-06-21 | backfill -- triage DONE (sections shipped + quality-reviewed / deferred); Stages 1-2 predate this marker
+
 > **Goal:** Turn the per-phase boot timing already collected by `boot_progress` into actionable observability. Every phase has a target budget; budget breaches are alarmed at boot. A single `boot-health.json` artifact consolidates degraded subsystems, missing capabilities, perf-budget breaches, MAT W^X violations, and firmware quirks into one operator-facing dashboard. A rolling `boot-trend.json` accumulates the last N boots so a regression in SMBIOS init or mouse probe shows up as a flagged delta, not as silent slowdown. Concrete latency targets land on the slowest phases observed today (SMBIOS 1.3s, Mouse 1.1s, font/icon load ~1.3s).
 
 > **Scope boundary:** This TODO covers **observability + the perf optimizations its data exposes as outliers**. It does NOT own:
