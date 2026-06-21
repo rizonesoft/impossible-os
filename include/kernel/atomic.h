@@ -104,3 +104,21 @@ static inline int32_t atomic_fetch_add(atomic_t *a, int32_t delta) {
 static inline int64_t atomic64_fetch_add(atomic64_t *a, int64_t delta) {
     return __atomic_fetch_add(&a->val, delta, __ATOMIC_ACQ_REL);
 }
+
+/* ---------------------------------------------------------------------------
+ * Relaxed RMW -- returns the NEW value, no ordering
+ *
+ * For diagnostic counters that never publish or protect shared state (e.g. the
+ * per-type object/handle statistics in OBJECT_TYPE). Relaxed avoids paying the
+ * acquire/release compiler barrier the ACQ_REL variants impose; on x86 the LOCK
+ * prefix required for atomicity is still emitted, but on non-x86 targets this is
+ * a genuine cost saving. Never use these where the counter gates a free(), a
+ * publish, or a lock handoff -- use the ACQ_REL variants for those.
+ * ------------------------------------------------------------------------- */
+static inline int32_t atomic_add_fetch_relaxed(atomic_t *a, int32_t delta) {
+    return __atomic_add_fetch(&a->val, delta, __ATOMIC_RELAXED);
+}
+
+static inline int32_t atomic_sub_fetch_relaxed(atomic_t *a, int32_t delta) {
+    return __atomic_sub_fetch(&a->val, delta, __ATOMIC_RELAXED);
+}

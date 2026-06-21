@@ -414,6 +414,69 @@ static void test_ob_type_stats(void)
     ob_handle_table_destroy(&ht);
 }
 
+/* Regression for per-type handle-statistics export: the NtQueryObject export
+ * path must floor a transient-negative total_handles to 0 (never surface ~4
+ * billion), and ObjectTypesInformation must enumerate the global type table
+ * with NO valid object handle. */
+extern int strncmp(const char *a, const char *b, size_t n);
+static void test_ob_stat_export_clamp(void)
+{
+    static const OBJECT_TYPE clamp_tmpl = {
+        .name      = "ClampTest",
+        .body_size = 16,
+        .on_close  = (void *)0,
+        .on_delete = (void *)0,
+        .on_open   = (void *)0,
+        .on_parse  = (void *)0,
+    };
+    OBJECT_TYPE *ctype = (OBJECT_TYPE *)ob_create_type(&clamp_tmpl);
+    TEST_ASSERT(ctype != (void *)0, "ob_create_type for clamp test");
+
+    void *o1 = ob_alloc_object(ctype);
+    TEST_ASSERT(o1 != (void *)0, "clamp obj allocated");
+
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+    HANDLE h1 = ObpAllocateHandle(&ht, o1, 0x1F0FFF, 0);
+    TEST_ASSERT(h1 >= 0, "clamp handle allocated");
+
+    /* Simulate the S3 unserialized-slot transient: drive total_handles below 0.
+     * The export path floors it; it must NOT surface as a huge unsigned value. */
+    atomic_set(&ctype->total_handles, -3);
+
+    OBJECT_TYPE_INFORMATION ti;
+    uint32_t rlen = 0;
+    int rc = NtQueryObject(&ht, h1, ObjectTypeInformation, &ti, sizeof(ti), &rlen);
+    TEST_ASSERT(rc == 0, "NtQueryObject(ObjectTypeInformation) succeeds");
+    TEST_ASSERT_EQ(ti.total_handles, 0u,
+                   "negative total_handles floored to 0 on export");
+
+    /* ObjectTypesInformation enumerates global types with NO object handle. */
+    OBJECT_TYPES_INFORMATION oti;
+    uint32_t rlen2 = 0;
+    int rc2 = NtQueryObject(&ht, 0, ObjectTypesInformation,
+                            &oti, sizeof(oti), &rlen2);
+    TEST_ASSERT(rc2 == 0, "ObjectTypesInformation succeeds with no object handle");
+
+    int found = 0;
+    for (uint32_t i = 0; i < oti.number_of_types; i++) {
+        if (strncmp(oti.types[i].type_name, "ClampTest", sizeof("ClampTest")) == 0) {
+            found = 1;
+            TEST_ASSERT_EQ(oti.types[i].total_handles, 0u,
+                           "enumerated ClampTest total_handles floored to 0");
+            break;
+        }
+    }
+    TEST_ASSERT(found, "ClampTest present in ObjectTypesInformation enumeration");
+
+    /* Restore a sane count so teardown math is not skewed by the injected value */
+    atomic_set(&ctype->total_handles, 1);
+
+    ObpFreeHandle(&ht, h1);
+    ObDereferenceObject(o1);
+    ob_handle_table_destroy(&ht);
+}
+
 /* ---- Object callbacks -- handle operation filtering (S13) ---- */
 
 /* Local test constant matching Win32 spec (TODO-05 S7 will define canonical) */
@@ -1860,6 +1923,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: inherit none -> 0", test_ob_inherit_none, TEST_CAT_OB);
     test_suite_register_cat("OB: query directory", test_ob_query_directory, TEST_CAT_OB);
     test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
+    test_suite_register_cat("OB: stat export clamp + no-handle types", test_ob_stat_export_clamp, TEST_CAT_OB);
     test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);
     test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
     test_suite_register_cat("OB: trace", test_ob_trace, TEST_CAT_OB);

@@ -151,7 +151,7 @@ The handle table maps opaque `HANDLE` integer values to (object pointer + grante
 
 > [!WARNING]
 > **Handle-table lock contract (from the 2026-06-21 Codex design review -- implement `ObpReferenceObjectByHandle` to THIS spec, a naive "lock everything" deadlocks):**
-> - **Never run `type->on_close` / `type->on_delete` / `ObDereferenceObject` under the table lock.** Those callbacks take VFS/pipe/timer/ALPC locks, `kfree`, and can re-enter the handle table. Under the lock: validate the handle, clear the slot, decrement the table count, and CAPTURE `body` + a last-handle boolean. Release the lock, THEN call `on_close` and `ObDereferenceObject`.
+> - **Never run `type->on_close` / `type->on_delete` / `ObDereferenceObject` under the table lock.** Those callbacks take VFS/pipe/timer/ALPC locks, `kfree`, and can re-enter the handle table. Under the lock: validate the handle, clear the slot, decrement the table count, update the per-type handle statistics (`OBJECT_TYPE.total_handles` / `peak_handles` via the `handle_stat_lift_peak` CAS-max), and CAPTURE `body` + a last-handle boolean. Release the lock, THEN call `on_close` and `ObDereferenceObject`. The per-type handle-stat increment/decrement MUST live inside the same serialized region as the slot claim/clear so each logical handle create/close accounts exactly once -- today the stats are atomic but the slot mutation is not, so concurrent same-table create/close can double-count or drive `total_handles` negative (§12 review 2026-06-22; export path floors at 0 via `ob_stat_export` as a stopgap).
 > - **`OBJECT_HEADER.handle_count` must become atomic** (it lives in the shared header and is mutated by every table holding the object via duplicate/inherit/open). The last-handle transition must be a single atomic fetch-sub so exactly one closer observes old==1 and fires `on_close`; a per-table lock alone cannot serialise it.
 > - **Do not allocate/copy/free in the grow path under the spinlock** (`handle_table_grow` calls `kmalloc`/`pmm_alloc_contiguous`). Use retry-growth: observe full under lock, drop lock, allocate the replacement, reacquire, revalidate capacity, swap, free the old storage after unlock.
 > - **`NtDuplicateObject` must not hold two table locks** (ABBA deadlock on dup A->B vs B->A). Pin the source object via `ObpReferenceObjectByHandle` (releases the source lock), allocate the destination handle, then drop the temporary pin; handle `src_ht == dst_ht` specially.
@@ -403,7 +403,7 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 ---
 
 ## 12. Per-Type Object and Handle Statistics
-Track per-type creation counts, live object counts, live handle counts, and peak (high-water) values so `NtQueryObject(ObjectTypeInformation)` can return the full `OBJECT_TYPE_INFORMATION` structure that Win11 provides. Currently `NtQueryObject` only returns the type name string.
+Track per-type creation counts, live object counts, live handle counts, and peak (high-water) values, exposed through `NtQueryObject(ObjectTypeInformation|ObjectTypesInformation)`. This section owns the **counters** (the data source); the kernel returns them in an internal `OBJECT_TYPE_INFORMATION` representation. The Win11 NT-compatible ABI shape for the user-facing syscall (`UNICODE_STRING TypeName`, pool-usage fields, canonical field order) is owned by the SSDT exposure in TODO-12 §30 -- no NT-ABI consumer exists yet, so the internal struct is sufficient until that lands.
 
 > [!WARNING]
 > Modifies `ob_alloc_object()`, `ob_free_object()`, `ObpAllocateHandle()`, and `ObpFreeHandle()` -- all core Ob paths used by every kernel subsystem. Test incrementally: add counters to `ob_alloc_object` first, verify boot still works, then proceed to handle-side counters. Rollback: revert counter increments if boot regresses.
@@ -423,6 +423,19 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 - [x] Commit: `"kernel: ob -- per-type object and handle statistics"`
 
 **Test checkpoint:** `ob_alloc_object(ObpEventType)` increments `ObpEventType->total_objects`; `ObDereferenceObject` decrements it. After creating 100 events and freeing 50, `total_objects == 50` and `peak_objects == 100`. `NtQueryObject(ObjectTypeInformation)` returns correct counters. Verify on QEMU WHPX + TCG + VirtualBox. Bare metal follow-up (no hardware interaction, low risk). `POST16(0xD900)`-`POST16(0xD903)` (range `0xD9xx` confirmed free -- `0xDBxx` used by `TODO-19-usb-boot-hardening.md`).
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 363 kernel suites, 0 failures
+
+> **Notes:**
+> - `OBJECT_TYPE` holds per-type live/peak object+handle counts (`ob_type.h`); bumped in alloc/handle/inherit, dropped in free/close, surfaced by `NtQueryObject(ObjectTypeInformation|ObjectTypesInformation)`.
+> - Stat RMWs use relaxed atomics (pure diagnostics, never gate free/publish/lock); peak lift via the shared guarded `ob_stat_lift_peak` CAS-max (`cur<=0` ignored so a transient-negative never poisons a peak to ~UINT32_MAX).
+> - Export floors `total_handles` silently (expected handle-table transient) and reports a negative `total_objects` loudly via `klog` (accounting bug); `ObjectTypesInformation` enumerates global types with no object handle.
+> - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_type_stats` + `test_ob_stat_export_clamp`; 363 OB tests pass.
+> - Scope: counters are SMP-atomic; exactly-once handle-stat accounting needs the §3 per-handle-table lock; Win11 NT-ABI struct shape owned by TODO-12 §30.
+> **Verified:** 2026-06-22 | ship `44db565a` + review fixes | 8/8 items | build OK | tests 363 ob PASS
+> **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 855)
+> **Quality reviewed:** 2026-06-22 | Codex 6x (adversarial, consistency, perf, re-adversarial) | 1H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
 

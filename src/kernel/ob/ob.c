@@ -188,16 +188,12 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
     }
 
     /* Per-type statistics: increment live object count and lift the high-water
-     * mark with an atomic compare-exchange max so two CPUs allocating the same
-     * type concurrently cannot lose a peak update (the plain RMW raced). */
+     * mark via the shared guarded CAS-max (ob_stat_lift_peak). Relaxed ordering:
+     * these counters are pure diagnostics, they never publish or protect state. */
     {
         OBJECT_TYPE *mtype = (OBJECT_TYPE *)type;
-        uint32_t cur_n = (uint32_t)(atomic_fetch_add(&mtype->total_objects, 1) + 1);
-        uint32_t peak = __atomic_load_n(&mtype->peak_objects, __ATOMIC_RELAXED);
-        while (cur_n > peak &&
-               !__atomic_compare_exchange_n(&mtype->peak_objects, &peak, cur_n, 0,
-                                            __ATOMIC_RELAXED, __ATOMIC_RELAXED))
-            ;  /* peak reloaded by the CAS on failure */
+        int32_t cur = atomic_add_fetch_relaxed(&mtype->total_objects, 1);
+        ob_stat_lift_peak(&mtype->peak_objects, cur);
     }
 
     return OB_BODY_FROM_HEADER(hdr);
@@ -232,10 +228,10 @@ int ObReferenceObjectSafe(void *body)
 
 static void ob_free_object(OBJECT_HEADER *hdr)
 {
-    /* Per-type statistics: decrement live object count */
+    /* Per-type statistics: decrement live object count (relaxed -- diagnostic) */
     if (hdr->type) {
         OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-        atomic_dec(&mtype->total_objects);
+        atomic_sub_fetch_relaxed(&mtype->total_objects, 1);
     }
 
     /* Free trace log if allocated (S15) */
@@ -503,21 +499,55 @@ int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
     return 0;
 }
 
+/* Export a live HANDLE-count statistic as an unsigned field with a floor at 0.
+ * The per-type handle counters can transiently read negative because the
+ * handle-table slot claim/free is not yet serialized (the exactly-once
+ * accounting fix is the per-handle-table lock owned by S3 item
+ * "ObpReferenceObjectByHandle"); a negative transient must NOT surface to
+ * callers as a ~4-billion garbage count. Handle live counts are unsigned by
+ * definition, so flooring is the correct export semantics for this diagnostic,
+ * not a mask of the S3 race (which stays tracked there). The floor is SILENT
+ * because a negative here is the EXPECTED transient, not a bug. */
+static inline uint32_t ob_stat_export(int32_t v)
+{
+    return v > 0 ? (uint32_t)v : 0;
+}
+
+/* Export a live OBJECT-count statistic. Unlike handles, total_objects is only
+ * touched by balanced ob_alloc_object/ob_free_object (refcount-driven, no slot
+ * race), so a negative is NOT an expected transient -- it signals an alloc/free
+ * or refcount accounting bug. LOUDLY report it before flooring, so the bug is
+ * not hidden behind a clean-looking empty count (Codex re-adversarial [M]). */
+static inline uint32_t ob_stat_export_object(int32_t v, const char *type_name)
+{
+    if (v < 0) {
+        klog(LOG_ERROR, "ob",
+             "type '%s' total_objects is %d (<0) -- alloc/free accounting bug",
+             type_name ? type_name : "?", (int64_t)v);
+        return 0;
+    }
+    return (uint32_t)v;
+}
+
 int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
                   OBJECT_INFORMATION_CLASS info_class,
                   void *buffer, uint32_t size, uint32_t *return_length)
 {
-    HANDLE_TABLE_ENTRY *entry;
-    OBJECT_HEADER *hdr;
+    HANDLE_TABLE_ENTRY *entry = NULL;
+    OBJECT_HEADER *hdr = NULL;
 
     if (!ht || !buffer)
         return -1;
 
-    entry = ObpLookupHandle(ht, handle);
-    if (!entry)
-        return -1;
-
-    hdr = OB_HEADER_FROM_BODY(entry->object);
+    /* ObjectTypesInformation enumerates the GLOBAL registered-type table and
+     * needs no per-object handle (a Win11-style caller queries the type list
+     * with a NULL/zero handle). Every other class resolves the handle first. */
+    if (info_class != ObjectTypesInformation) {
+        entry = ObpLookupHandle(ht, handle);
+        if (!entry)
+            return -1;
+        hdr = OB_HEADER_FROM_BODY(entry->object);
+    }
 
     switch (info_class) {
 
@@ -556,8 +586,8 @@ int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
                 ti->type_name[nlen] = tname[nlen]; nlen++;
             }
             ti->type_name[nlen] = '\0';
-            ti->total_objects = (uint32_t)atomic_read(&hdr->type->total_objects);
-            ti->total_handles = (uint32_t)atomic_read(&hdr->type->total_handles);
+            ti->total_objects = ob_stat_export_object(atomic_read(&hdr->type->total_objects), hdr->type->name);
+            ti->total_handles = ob_stat_export(atomic_read(&hdr->type->total_handles));
             ti->peak_objects  = hdr->type->peak_objects;
             ti->peak_handles  = hdr->type->peak_handles;
             ti->body_size     = (uint32_t)hdr->type->body_size;
@@ -584,8 +614,8 @@ int NtQueryObject(HANDLE_TABLE *ht, HANDLE handle,
                 ti->type_name[nlen] = tname[nlen]; nlen++;
             }
             ti->type_name[nlen] = '\0';
-            ti->total_objects = (uint32_t)atomic_read(&types[t].total_objects);
-            ti->total_handles = (uint32_t)atomic_read(&types[t].total_handles);
+            ti->total_objects = ob_stat_export_object(atomic_read(&types[t].total_objects), types[t].name);
+            ti->total_handles = ob_stat_export(atomic_read(&types[t].total_handles));
             ti->peak_objects  = types[t].peak_objects;
             ti->peak_handles  = types[t].peak_handles;
             ti->body_size     = (uint32_t)types[t].body_size;

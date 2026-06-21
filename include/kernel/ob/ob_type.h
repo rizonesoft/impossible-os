@@ -37,3 +37,23 @@ typedef struct object_type {
     uint8_t     tracing_enabled; /* 1 = allocate OB_TRACE_INFO for new objects */
     uint8_t     _trace_pad[3];
 } OBJECT_TYPE;
+
+/* Lift a uint32 high-water mark to `cur` with a lock-free CAS-max so two CPUs
+ * updating the same type's stats concurrently cannot lose a peak update (a plain
+ * read-compare-store RMW races and undercounts). `cur` is the SIGNED post-update
+ * live count; values <= 0 are ignored so a transient negative -- which the not-
+ * yet-serialized handle-table slot claim/free (S3 "ObpReferenceObjectByHandle")
+ * can momentarily produce -- never poisons the peak to ~UINT32_MAX (peaks are
+ * never decremented, so a single bad lift would stick forever). Shared by the
+ * object-alloc (peak_objects) and handle-alloc/inherit (peak_handles) paths. */
+static inline void ob_stat_lift_peak(uint32_t *peak, int32_t cur)
+{
+    if (cur <= 0)
+        return;
+    uint32_t c = (uint32_t)cur;
+    uint32_t p = __atomic_load_n(peak, __ATOMIC_RELAXED);
+    while (c > p &&
+           !__atomic_compare_exchange_n(peak, &p, c, 0,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+        ;  /* p reloaded by the CAS on failure */
+}

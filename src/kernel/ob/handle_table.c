@@ -193,12 +193,13 @@ found:
     hdr = OB_HEADER_FROM_BODY(object);
     hdr->handle_count++;
 
-    /* Per-type handle statistics */
+    /* Per-type handle statistics (relaxed -- pure diagnostics; the cur<=0 guard
+     * in ob_stat_lift_peak protects the peak from a transient negative produced
+     * by the not-yet-serialized slot claim/free, owned by S3). */
     if (hdr->type) {
         OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-        int32_t cur = atomic_fetch_add(&mtype->total_handles, 1) + 1;
-        if ((uint32_t)cur > mtype->peak_handles)
-            mtype->peak_handles = (uint32_t)cur;
+        int32_t cur = atomic_add_fetch_relaxed(&mtype->total_handles, 1);
+        ob_stat_lift_peak(&mtype->peak_handles, cur);
     }
 
     /* Object callbacks (S13): post-callbacks with granted access */
@@ -277,10 +278,10 @@ int ObpFreeHandle(HANDLE_TABLE *table, HANDLE handle)
     if (hdr->handle_count == 0 && hdr->type->on_close)
         hdr->type->on_close(body, 0);
 
-    /* Per-type handle statistics */
+    /* Per-type handle statistics (relaxed -- diagnostic) */
     if (hdr->type) {
         OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-        atomic_dec(&mtype->total_handles);
+        atomic_sub_fetch_relaxed(&mtype->total_handles, 1);
     }
 
     /* Drop the reference taken by ObpAllocateHandle */
@@ -378,9 +379,8 @@ int ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
          * bogus huge open-handle count. */
         if (hdr->type) {
             OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-            int32_t cur = atomic_fetch_add(&mtype->total_handles, 1) + 1;
-            if ((uint32_t)cur > mtype->peak_handles)
-                mtype->peak_handles = (uint32_t)cur;
+            int32_t cur = atomic_add_fetch_relaxed(&mtype->total_handles, 1);
+            ob_stat_lift_peak(&mtype->peak_handles, cur);
         }
 
         count++;

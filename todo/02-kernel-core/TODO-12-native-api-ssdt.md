@@ -852,6 +852,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] `NtMakePermanentObject(Handle)` → SSDT 0x0004: sets `OB_FLAG_PERMANENT` (kernel-mode caller only; requires `SeCreatePermanentPrivilege`)
 - [ ] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005: writable counterpart to `NtQueryObject`; supports `ObjectHandleFlagInformation` (set `OBJ_INHERIT` / `OBJ_PROTECT_CLOSE` on the HANDLE_TABLE_ENTRY)
 - [ ] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: returns `STATUS_SUCCESS` if both handles refer to the same underlying object body, else `STATUS_NOT_SAME_OBJECT`
+- [ ] **Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI** (`UNICODE_STRING TypeName` + canonical field order + offset asserts), replacing the internal `char[32]`+counters struct in `ob.c`/`ob.h`. XREF: TODO-05 §12.
 - [ ] Commit: `"kernel: nt -- generic object management syscalls (make-temp/perm, set-info, compare)"`
 
 **Test checkpoint:** `NtMakePermanentObject` on an event handle prevents deletion when last reference released. `NtMakeTemporaryObject` re-enables deletion. `NtSetInformationObject(ObjectHandleFlagInformation)` toggles `OBJ_INHERIT` on a handle. `NtCompareObjects` with two duplicate handles returns `STATUS_SUCCESS`; with handles to different objects returns `STATUS_NOT_SAME_OBJECT`.
