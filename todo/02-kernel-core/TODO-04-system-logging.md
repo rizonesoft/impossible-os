@@ -81,12 +81,23 @@ title: "TODO-04 -- System Logging"
 ## 1. Boot-Phase Aware klog Init
 The current `klog_disk.c` assumes VFS is available when it initialises. After TODO-01, the kernel has explicit Phase 0 (no VFS) and Phase 2 (VFS ready) gates. `klog` must split into a Phase 0 ring-buffer-only mode and a Phase 2 disk-enable step.
 
-- [x] Add `klog_early_init()` -- Phase 0 safe; resets ring buffer, serial output only; no VFS
-- [x] Add `klog_disk_enable()` -- Phase 2 safe; calls `klog_disk_init()` + `klog_disk_flush()` to open log files and flush ring to disk
+- [x] Add `klog_early_init()` -- Phase 0 safe; ring + serial only, no VFS. A no-op contract marker that PRESERVES Phase 0 ring entries (the §1 review removed a ring reset that wiped 30 boot_phase0 klog lines)
+- [x] Add `klog_disk_enable()` -- Phase 2 safe; `klog_disk_init()` (now idempotent, no C:\DEBUG 256 KiB double-init leak) + crash-write + flush; returns `int` (1 iff disk logging is live = buffer + mounted target)
 - [x] Remove any VFS calls from the path triggered during Phase 0 (klog ring + serial are static; no VFS calls before Phase 2)
 - [x] Register `SUBSYS_KLOG` as ready after `klog_early_init()` in Phase 0
-- [x] Update `boot_hw.c` (Phase 0) to call `klog_early_init()` and `boot_storage.c` (Phase 2) to call `klog_disk_enable()`
+- [x] Update `boot_hw.c` (Phase 0) to call `klog_early_init()` and `boot_storage.c` (Phase 2) to call `klog_disk_enable()`, POST16-bracketed and gated on the live-status return
 - [x] Commit: `"kernel: split klog early-init from disk-enable"`
+
+**Test checkpoint:** boot reaches `C:\>` (smoke); Phase 0 klog lines (boot_info / UEFI / TPM) survive into the on-disk log (not wiped by early_init); on real media `POST16_KLOG_DISK_OK` (0x0053) appears only when disk logging is live; C:\DEBUG boot does not double-allocate the FAT32 buffer. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Notes:**
+> - Shipped the Phase 0 / Phase 2 klog split: `klog_early_init()` (ring + serial, no VFS) + `klog_disk_enable()` (Phase 2 VFS-backed), wired at `boot_hw.c` (Phase 0) + `boot_storage.c` (Phase 2).
+> - §1 review fixed 3 real bugs (detail in commit message): klog_early_init ring-reset wiped Phase 0 history, klog_disk_init double-init leaked 256 KiB on C:\DEBUG, boot POST16 over-reported disk-log success.
+> - Canonical doc: `include/kernel/klog.h` (split-init contract banner).
+> - Scope boundary: §1 owns the boot-phase init split + its POST16 telemetry; §8 owns crash-persistent capture (and the verified-first-flush-persistence follow-up); per-subsystem splitting/verbosity are §2/§3.
+> **Verified:** 2026-06-21 | ship `c4a453d8` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.5s); 6800 kernel + 16 user PASS
+> **Deferred:** [M] boot POST16_KLOG_DISK_OK still reports success on mounted-but-unwritable media (flush open/write failure) -- needs a verified-first-flush-persistence flag (reason: in-scope, owned by the disk-flush path) -> XREF: 02-kernel-core/TODO-04-system-logging.md §8 (item: "Verified-persistence flag in `klog_disk_flush()`")
+> **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial) | 1H+3M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
 
@@ -196,6 +207,7 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 - [x] Clears magic cookie after successful recovery; zeros fresh region for new boot
 - [x] POST codes: `POST16(0xDE00)` entry, `POST16(0xDE01)` region allocated, `POST16(0xDE02)` recovery check, `POST16(0xDE03)` done
 - [x] 3 unit tests: KLOG_CRASH_MAGIC value, header size bounds, POST code uniqueness
+- [ ] Verified-persistence flag in `klog_disk_flush()` (set after `kernel.log` open + first non-short `vfs_write`), surfaced via `klog_disk_active()`, gating `POST16_KLOG_DISK_OK` on real persistence not buffer+mount (§1-review gap)
 - [x] Commit: `"kernel: crash-persistent klog capture via reserved physical memory"`
 
 > [!NOTE]

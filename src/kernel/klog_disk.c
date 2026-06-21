@@ -586,6 +586,13 @@ fallback:
 
 void klog_disk_init(void)
 {
+    /* Idempotent: the C:\DEBUG path runs klog_disk_set_live(1) (which inits when
+     * fat32_buf is absent) BEFORE the Phase 2 klog_disk_enable() that also calls
+     * here. Without this guard the second call would overwrite fat32_buf,
+     * leaking the first 256 KiB buffer and discarding the replayed live log. */
+    if (fat32_buf)
+        return;
+
     /* Allocate FAT32 buffer: 64 pages = 256 KB */
     uint32_t pages = 64;
     fat32_buf = (uint8_t *)pmm_alloc_contiguous(pages);
@@ -646,6 +653,15 @@ void klog_disk_set_live(int on)
 int klog_disk_live_active(void)
 {
     return live_enabled;
+}
+
+/* 1 iff disk logging is actually persisting: the FAT32 buffer is allocated AND
+ * a log-target volume (X: BlackBox or C:) is mounted. Lets the boot-path
+ * distinguish "klog_disk_enable attempted" from "disk logging is live" so a
+ * silent alloc-fail / no-mount does not get reported as success. */
+int klog_disk_active(void)
+{
+    return fat32_buf != NULL && (vfs_is_mounted('X') || vfs_is_mounted('C'));
 }
 
 void klog_disk_append(const klog_entry_t *e)

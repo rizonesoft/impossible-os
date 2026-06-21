@@ -115,7 +115,8 @@ void klog_load_levels_from_registry(void);
  * klog_early_init(): Phase 0 safe -- ring buffer + serial only, no VFS.
  * klog_disk_enable(): Phase 2 safe -- opens log files, starts disk flushing. */
 void klog_early_init(void);            /* Phase 0: ring buffer ready */
-void klog_disk_enable(void);           /* Phase 2: VFS-backed disk logging */
+int  klog_disk_enable(void);           /* Phase 2: VFS-backed disk logging; 1 iff live */
+int  klog_disk_active(void);           /* 1 iff disk log buffer + mounted target */
 
 /* Get rate-limited dropped count for a subsystem (0 if no drops). */
 uint32_t klog_get_dropped(const char *subsystem);

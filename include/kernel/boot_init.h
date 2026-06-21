@@ -169,6 +169,8 @@ _Static_assert(SUBSYS_COUNT <= 32,
 #define POST16_HEAP_OK          0x0041
 #define POST16_KLOG             0x0050
 #define POST16_KLOG_OK          0x0051
+#define POST16_KLOG_DISK        0x0052  /* Phase 2: VFS-backed klog disk enable (can hang on slow media) */
+#define POST16_KLOG_DISK_OK     0x0053
 #define POST16_CPUID            0x0060
 #define POST16_CPUID_OK         0x0061
 #define POST16_CPU_HARDEN       0x0070

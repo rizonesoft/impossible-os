@@ -680,10 +680,21 @@ void boot_phase2(void)
 
     /* --- klog disk enable: Phase 2 VFS-backed logging --- */
     klog_resolve_dir();  /* always resolve X:\ vs C:\ -- even on TCG */
-    if (!platform_is_tcg())
-        klog_disk_enable();
+    if (!platform_is_tcg()) {
+        /* POST16 bracket so a hang/triple-fault inside the first disk flush
+         * (slow/degraded media) leaves a breadcrumb at POST16_KLOG_DISK. The
+         * _OK code + boot_progress fire only when disk logging is ACTUALLY live
+         * (klog_disk_enable returns 1: buffer allocated + log target mounted);
+         * a silent alloc-fail / no-mount keeps the breadcrumb at the entry code
+         * instead of falsely reporting success. */
+        POST16(POST16_KLOG_DISK);
+        int disk_live = klog_disk_enable();
+        POST16(disk_live ? POST16_KLOG_DISK_OK : POST16_KLOG_DISK);
+        boot_progress(2, "KLOG_DISK", disk_live ? POST16_KLOG_DISK_OK : POST16_KLOG_DISK);
+    } else {
+        boot_progress(2, "KLOG_DISK", POST16_KLOG_OK); /* TCG: ring+serial only, no disk */
+    }
     boot_splash_tick();
-    boot_progress(2, "KLOG_DISK", POST16_KLOG_OK);
 
     /* --- System summary --- */
     boot_splash_status("Configuring system...");

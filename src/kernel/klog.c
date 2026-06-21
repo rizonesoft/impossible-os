@@ -274,20 +274,27 @@ static const uint32_t level_color[] = {
 
 void klog_early_init(void)
 {
-    /* Ring buffer and serial output are static -- nothing to allocate.
-     * This function exists to formalize the Phase 0 init contract. */
-    klog_ring_head  = 0;
-    klog_ring_count = 0;
-    klog_ring_seq   = 0;
+    /* Ring buffer and serial output are static (BSS zero-init), so there is
+     * nothing to allocate. This function formalizes the Phase 0 init contract
+     * and is the named point SUBSYS_KLOG readiness is registered against.
+     *
+     * It MUST NOT reset the ring: boot_phase0 emits klog() lines (boot_info /
+     * config / UEFI / TPM diagnostics) BEFORE this is called, and those early
+     * entries are the highest-value records for an early-boot failure. Zeroing
+     * head/count/seq here would silently discard them before the first disk
+     * flush and before crash recovery -- the opposite of the contract. */
 }
 
-void klog_disk_enable(void)
+int klog_disk_enable(void)
 {
     /* Phase 2 disk init: allocate FAT32 buffer and open log files.
-     * Triggers the first flush of accumulated ring entries to disk. */
+     * Triggers the first flush of accumulated ring entries to disk. Returns 1
+     * iff disk logging is actually live (buffer + mounted log target) so the
+     * boot path does not report a silent alloc-fail / no-mount as success. */
     klog_disk_init();
     klog_crash_write_to_disk();
     klog_disk_flush();
+    return klog_disk_active();
 }
 
 /* ---- Crash-persistent log capture ---------------------------------------- */
