@@ -9,6 +9,7 @@ title: "TODO-04 -- System Logging"
 # TODO-04 -- System Logging
 
 > **Validated:** 2026-06-21 | validate-todo-file clean (structure / IO table / XREF / test wiring; inter-section `---` separators added)
+> **Gap-audited:** 2026-06-21 | codex-gap-audit + parity-research-analyst (9 Win11/Linux gaps) in commit e5c56d54 -- §10 dep-drift fix + §11 ETW provider/session filtering, §12 ETW stack-walk/autologger/schema, §13 rotated-log LZ4 compression added (Codex-endorsed TODO-04 ownership of etw.c)
 
 > **Goal:** Complete the klog system from its current working foundation to a production-grade logging stack: per-subsystem log splitting, log rotation, structured JSON events, rate limiting, and remote syslog forwarding. The core klog infrastructure (ring buffer, disk flush, serial/framebuffer output, numbered boot logs, user-mode syscall) is already implemented and is documented in the Completed section below for reference.
 
