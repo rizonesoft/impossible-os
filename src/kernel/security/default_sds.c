@@ -152,15 +152,29 @@ int SeCreateCreatorSD(SECURITY_DESCRIPTOR *sd_out,
                       void *dacl_buf, uint32_t dacl_buf_size)
 {
     ACL *dacl;
+    uint32_t ace_fixed = sizeof(ACE_HEADER) + sizeof(uint32_t); /* ACE header + Mask */
+    uint32_t need;
 
-    if (!sd_out || !creator_sid || !dacl_buf || dacl_buf_size < 64)
+    if (!sd_out || !creator_sid || !dacl_buf)
+        return -1;
+
+    /* Require room for the ACL header + ALL THREE ACEs. A too-small buffer would
+     * make RtlAddAccessAllowedAce silently drop the trailing (World) ACE while we
+     * still returned success -- a DACL missing a documented grant. Size it from
+     * the actual SID lengths and reject undersized buffers up front. */
+    need = (uint32_t)sizeof(ACL)
+         + ace_fixed + RtlLengthSid(creator_sid)
+         + ace_fixed + RtlLengthSid(SeLocalSystemSid)
+         + ace_fixed + RtlLengthSid(SeWorldSid);
+    if (dacl_buf_size < need)
         return -1;
 
     dacl = (ACL *)dacl_buf;
     RtlCreateAcl(dacl, (uint16_t)dacl_buf_size, ACL_REVISION);
-    RtlAddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, creator_sid);
-    RtlAddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, SeLocalSystemSid);
-    RtlAddAccessAllowedAce(dacl, ACL_REVISION, READ_CONTROL, SeWorldSid);
+    if (RtlAddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, creator_sid) != 0 ||
+        RtlAddAccessAllowedAce(dacl, ACL_REVISION, GENERIC_ALL, SeLocalSystemSid) != 0 ||
+        RtlAddAccessAllowedAce(dacl, ACL_REVISION, READ_CONTROL, SeWorldSid) != 0)
+        return -1;  /* incomplete DACL -- never publish a partial grant set */
 
     RtlCreateSecurityDescriptor(sd_out, SECURITY_DESCRIPTOR_REVISION);
     RtlSetOwnerSecurityDescriptor(sd_out, (SID *)creator_sid, 0);

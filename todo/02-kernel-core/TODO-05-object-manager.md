@@ -292,6 +292,16 @@ Attach DACL/SACL/Owner/Group to named objects so the Security Reference Monitor 
 - [x] Default SD for user-created named objects: DACL granting `GENERIC_ALL` to creator SID (via `SeCreateCreatorSD` using `task->token->UserSid`)
 - [x] Commit: `"kernel: ob -- security descriptor storage and access check hook"`
 
+> **Notes:**
+> - SD storage: `ObSetSecurityDescriptor`/`ObGetSecurityDescriptor` (`ob.c`) attach/return `header->security`; `ob_alloc_object` assigns a default (shared static, self-relative) SD or a per-object tail-packed creator SD (`SeCreateCreatorSD`).
+> - `SeCreateCreatorSD` builds a 3-ACE absolute DACL (creator + SYSTEM `GENERIC_ALL`, World `READ_CONTROL`); `SeCreateDefaultSD` returns a cached static blob.
+> - Review fix (Medium): `SeCreateCreatorSD` now sizes the DACL from the actual SID lengths, rejects undersized buffers, and checks every ACE-add return -- a 64-byte buffer previously dropped the World ACE silently while reporting success.
+> - Validation: `test_ob.c` + `test_security.c` (982 SUITE=security + 327 SUITE=ob pass).
+> - Scope: SD STORAGE + the `on_open` hook only; the hook is NULL for all types today, so DACLs are not yet ENFORCED at handle open -- that is `SeAccessCheck` (TODO-15 §5), accepted below.
+> **Verified:** 2026-06-21 | ship `8845b6ba` + review fixes | 6/6 items | build OK | tests 982 security + 327 ob PASS
+> **Accepted:** [H] the `on_open` access hook is NULL for every object type, so stored SD DACLs are not enforced at handle open (storage-complete, enforcement deferred) -> XREF: 02-kernel-core/TODO-15 §5 (item: "In `ObpReferenceObjectByHandle` ... call `SeAccessCheck(...)`; return `STATUS_ACCESS_DENIED` if check fails" at line 343)
+> **Quality reviewed:** 2026-06-21 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 1H accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 9. NtClose / NtDuplicateObject / NtQueryObject
