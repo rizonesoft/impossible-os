@@ -216,13 +216,26 @@ Emit machine-parseable events alongside plain-text logs. Implemented with manual
 
 - [x] Define JSON event format: `{"ts":<ms>,"lvl":"WARN","sub":"net","msg":"DHCP timeout","dropped":0}`
 - [x] JSON Lines flush integrated into `klog_disk_flush()` -- serializes ring buffer entries to `X:\Logs\events.jsonl`
-- [x] JSON Lines format -- one JSON object per line; append-only; batched into 16 KB buffer for single `vfs_write()`
+- [x] JSON Lines format -- one JSON object per line; append-only; batched into a 16 KB buffer that chunk-flushes at the boundary, and `jsonl_flush_seq` advances only after every line in the window is written (kernel.log durability)
 - [x] `events.jsonl` created at first flush; file size tracked for rotation
 - [x] §4 log rotation applied to `events.jsonl` via `rotate_log_file()`
 - [x] `"dropped"` field included from §5 rate limiter via `klog_get_dropped()` public API
-- [ ] Event viewer reads `events.jsonl` for colour-coded filtering -- → XREF: [13-tools-accessories/TODO-02](../13-tools-accessories/TODO-02-event-viewer.md)
-- [ ] When TODO-27 §7 first writes DUMP_PARTITION_HEADER: add JSON keys dump_encryption_state and dump_present_on_raw for panic or flush paths (names from TODO-27 §10 doc)
+- [/] Event viewer reads `events.jsonl` for colour-coded filtering -- owned by the eventview.exe tool -- → XREF: [13-tools-accessories/TODO-02](../13-tools-accessories/TODO-02-event-viewer.md)
+- [/] When TODO-27 §7 first writes DUMP_PARTITION_HEADER: add JSON keys dump_encryption_state and dump_present_on_raw (blocked on the dump sink existing) -- → XREF: D02 TODO-27-crash-dump-generation §7
 - [x] Commit: `"kernel: structured JSON log events"`
+
+**Test checkpoint:** each ring entry serializes to one JSON object per line in `events.jsonl` (`ts`/`lvl`/`sub`/`cpu`/`pid`/`tid`/`msg`/`dropped`); `"` `\` and control chars are escaped so the output is valid JSONL. A window larger than the 16 KB batch chunk-flushes without dropping entries, and `jsonl_flush_seq` advances only after every line is durably written (no drop, duplicate, or merged line across a write/truncate failure).
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_klog suite, 0 failures
+> **Notes:**
+> - Structured JSON Lines event log in `src/kernel/klog_disk.c`: 8-field objects, manual formatting + dual JSON-escaping (subsystem + message), serialized from the ring in `klog_disk_flush_locked`.
+> - Chunk-flushed into a 16 KB batch and rotated via `rotate_log_file` (§4); the `dropped` field comes from the §5 rate limiter via lock-free `klog_get_dropped`; timestamp is 64-bit ms (`uptime ticks x 10`, no 5-day wrap).
+> - Durability matches kernel.log: a committed-seq cursor + partial-commit record salvage + a resync-newline on degraded media guarantee no dropped, duplicated, or merged JSONL record across `vfs_write`/`vfs_truncate` failures.
+> - Scope boundary: the `eventview.exe` viewer and the crash-dump JSON keys are owned by other TODOs (see Accepted XREFs).
+> **Verified:** 2026-06-21 | ship `8956eb92` + review fixes | 6/8 items | build OK | smoke PASS (TCG 2.63s); 3212 kernel + 16 user PASS
+> **Accepted:** [L] no in-OS viewer for `events.jsonl` (raw file / serial only) -> XREF: 13-tools-accessories/TODO-02-event-viewer.md (item: "Open and parse `X:\Logs\events.jsonl` line by line" at line 57)
+> **Accepted:** [L] dump-partition JSON keys (`dump_encryption_state`, `dump_present_on_raw`) not emitted -- blocked on the dump sink existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §7 (item: "`DUMP_PARTITION_HEADER` at physical sector 0 of the dump partition" at line 237)
+> **Quality reviewed:** 2026-06-21 | Codex 9x (adversarial, consistency, perf, re-adversarial x6) + auditor | 5H+3M+3L fixed | scope: kernel-code-quality
 
 ---
 

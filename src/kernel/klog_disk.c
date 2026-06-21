@@ -178,6 +178,10 @@ static uint32_t  kernel_log_size;  /* tracked across flushes */
 static uint64_t  jsonl_flush_seq;    /* ring entries already flushed */
 static uint32_t  jsonl_file_size;    /* tracked for rotation */
 static int       jsonl_inited;
+static int       jsonl_resync_nl;    /* a prior degraded-media flush left an
+                                      * unterminated partial record -- write a
+                                      * newline before the next replay so it
+                                      * becomes one skipped line, not a merge */
 
 /* ---- Helpers ---- */
 
@@ -1101,7 +1105,7 @@ static void klog_disk_flush_locked(void)
             uint64_t junflushed = klog_flush_window(jcur_seq, jsonl_flush_seq);
 
             if (ring && junflushed > 0) {
-                /* Batch JSON lines into a 32 KB buffer */
+                /* Batch JSON lines into a 16 KB buffer */
                 uint32_t jpages = 4;
                 uint8_t *jbuf = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(jpages);
                 if (jbuf) {
@@ -1111,6 +1115,43 @@ static void klog_disk_flush_locked(void)
                         "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
                     };
                     uint64_t jstart = jcur_seq - junflushed;
+                    /* Open once and chunk-flush at the batch boundary so a window
+                     * larger than jsize (up to KLOG_RING_SIZE entries x hundreds of
+                     * bytes) is never silently dropped. This matches kernel.log's
+                     * durable verified-write contract: jsonl_flush_seq advances only
+                     * after EVERY line in the window is written, so a short/error
+                     * write leaves entries for the next flush. (The per-subsystem
+                     * split logs are deliberately best-effort -- kernel.log is the
+                     * durable copy -- so they are NOT the precedent here.) */
+                    struct vfs_node *jf = vfs_open(jsonl_path, VFS_O_WRITE);
+                    uint32_t woff = jf ? (uint32_t)jf->size : 0;  /* last fully-committed offset */
+                    int jwrite_ok = (jf != (struct vfs_node *)0);
+                    uint64_t jcommitted = jstart;  /* seq durably written so far */
+                    /* A prior degraded-media flush left an unterminated partial
+                     * record at EOF. Terminate it with a newline so it is one
+                     * skipped malformed line and the replayed records below start
+                     * clean on their own JSONL lines (no <partial><full> merge). */
+                    if (jf && jsonl_resync_nl) {
+                        if (woff == 0) {
+                            /* File was rotated/recreated since the partial tail: the
+                             * partial now lives in events.jsonl.1 and this fresh file
+                             * has none, so no separator is needed. */
+                            jsonl_resync_nl = 0;
+                        } else {
+                            uint8_t nl = (uint8_t)'\n';
+                            if (vfs_write(jf, woff, 1, &nl) == 1) {
+                                woff += 1;
+                                jsonl_resync_nl = 0;
+                            } else {
+                                /* Cannot write the separator -> cannot safely replay
+                                 * (records would merge onto the partial tail). Abort
+                                 * this flush entirely: skip the replay loop, do not
+                                 * advance the cursor, and keep the flag so the next
+                                 * flush retries the separator first. */
+                                jwrite_ok = 0;
+                            }
+                        }
+                    }
 
                     for (uint64_t s = jstart; s < jcur_seq; s++) {
                         uint32_t idx = (uint32_t)(s % KLOG_RING_SIZE);
@@ -1156,10 +1197,10 @@ static void klog_disk_flush_locked(void)
 
                         char line[512];
                         int len = snprintf(line, sizeof(line),
-                            "{\"ts\":%u,\"lvl\":\"%s\",\"sub\":\"%s\","
+                            "{\"ts\":%llu,\"lvl\":\"%s\",\"sub\":\"%s\","
                             "\"cpu\":%u,\"pid\":%u,\"tid\":%u,"
                             "\"msg\":\"%s\",\"dropped\":%u}\n",
-                            (unsigned)e->timestamp * 10,
+                            (uint64_t)e->timestamp * 10ull,  /* ticks->ms in 64-bit (32-bit wraps at ~5 days) */
                             lvl, esc_sub,
                             (unsigned)e->cpu_id,
                             (unsigned)e->pid,
@@ -1167,29 +1208,86 @@ static void klog_disk_flush_locked(void)
                             esc_msg,
                             (unsigned)klog_get_dropped(e->subsystem));
 
-                        if (len > 0 && jpos + (uint32_t)len < jsize) {
+                        if (!jwrite_ok || len <= 0)
+                            continue;
+                        /* snprintf returns the would-be length (C99); clamp to the
+                         * bytes actually present in line[] so the copy never
+                         * overreads the stack buffer. */
+                        if ((uint32_t)len >= sizeof(line))
+                            len = (int)sizeof(line) - 1;
+                        /* Chunk-flush when this line would overflow jbuf; a single
+                         * line (<= 512) always fits the 16 KB buffer afterward. */
+                        if (jpos + (uint32_t)len > jsize) {
+                            if (vfs_write(jf, woff, jpos, jbuf) != (int)jpos) {
+                                jwrite_ok = 0;
+                                break;
+                            }
+                            woff += jpos;
+                            jpos = 0;
+                            jcommitted = s;  /* entries [..s-1] are now durable */
+                        }
+                        {
                             uint32_t k;
                             for (k = 0; k < (uint32_t)len; k++)
                                 jbuf[jpos++] = (uint8_t)line[k];
                         }
                     }
 
-                    if (jpos > 0) {
-                        struct vfs_node *jf = vfs_open(jsonl_path, VFS_O_WRITE);
-                        if (jf) {
-                            int jok = vfs_write(jf, (uint32_t)jf->size, jpos,
-                                                jbuf) == (int)jpos;
-                            jsonl_file_size = (uint32_t)jf->size;
-                            vfs_close(jf);
-                            /* Only advance cursor after a verified full write --
-                             * a short/error write leaves entries for retry. */
-                            if (jok)
-                                jsonl_flush_seq = jcur_seq;
-                        }
-                    } else {
-                        /* No entries to write (all filtered/truncated) -- safe to advance */
-                        jsonl_flush_seq = jcur_seq;
+                    /* Final partial chunk; a short write here cannot hole a later
+                     * chunk (none follows). */
+                    if (jwrite_ok && jpos > 0) {
+                        if (vfs_write(jf, woff, jpos, jbuf) != (int)jpos)
+                            jwrite_ok = 0;
+                        else
+                            woff += jpos;
                     }
+                    /* If no write failed, the whole window is handled (every line
+                     * either written or legitimately empty) -- commit to jcur_seq. */
+                    if (jwrite_ok)
+                        jcommitted = jcur_seq;
+                    if (jf) {
+                        uint32_t real_size = (uint32_t)jf->size;  /* incl. any partial */
+                        vfs_close(jf);
+                        if (jwrite_ok) {
+                            jsonl_file_size = woff;
+                        } else if (vfs_truncate(jsonl_path, woff) == 0) {
+                            /* Rolled the partial failed chunk back: file is clean at
+                             * the last committed offset, tail replays from jcommitted. */
+                            jsonl_file_size = woff;
+                        } else {
+                            /* Degraded media: truncate rejected. The failed vfs_write
+                             * (FAT32/IXFS return -1 on error but can side-effect
+                             * partial clusters onto disk, growing node->size) left
+                             * (real_size - woff) bytes of this chunk on disk. jbuf
+                             * still holds the chunk, so count the COMPLETE
+                             * newline-terminated records in that landed prefix and
+                             * advance jcommitted past them -- the replay then never
+                             * duplicates an already-durable line; only the trailing
+                             * partial record (if any) survives as one skippable
+                             * malformed JSONL line. Safe to klog -- the `flushing`
+                             * guard no-ops a recursive flush. */
+                            uint32_t landed = (real_size > woff) ? (real_size - woff) : 0;
+                            uint32_t b, lines = 0;
+                            if (landed > jpos) landed = jpos;
+                            for (b = 0; b < landed; b++)
+                                if (jbuf[b] == (uint8_t)'\n') lines++;
+                            jcommitted += lines;
+                            jsonl_file_size = real_size;
+                            /* If the landed prefix ends mid-record (no trailing
+                             * newline), the next flush must emit a separator first
+                             * so the replayed record does not merge onto this
+                             * partial line. */
+                            if (landed > 0 && jbuf[landed - 1] != (uint8_t)'\n')
+                                jsonl_resync_nl = 1;
+                            klog(LOG_WARN, "klog",
+                                 "events.jsonl: write+rollback failed; %u rec(s) salvaged, partial may remain",
+                                 (unsigned)lines);
+                        }
+                    }
+                    /* Advance to the last fully-committed chunk (== jcur_seq on full
+                     * success); a mid-window failure retries only the uncommitted
+                     * tail rather than replaying already-durable lines. */
+                    jsonl_flush_seq = jcommitted;
                     {
                         uint32_t pg;
                         for (pg = 0; pg < jpages; pg++)
