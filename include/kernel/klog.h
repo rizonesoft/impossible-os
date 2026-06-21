@@ -94,16 +94,12 @@ int klog_has_override(const char *subsystem);
  * the global default again. No-op if no override exists. NULL / "" is
  * a no-op (the global default cannot be removed).
  *
- * SMP note: the removal does a swap-with-last + decrement (not a
- * shift) so a concurrent unlocked klog() reader sees either the old
- * tag at the removed slot or the swapped-in replacement, never
- * partial-shift corruption. A reader looking up the just-removed tag
- * may still observe the old override for a tiny window if its scan
- * crossed the decrement -- bounded, benign, matches the existing
- * pre-lock contract of klog_set_level. Callers that need stricter
- * guarantees should pair with a future spinlock around klog()'s
- * filter path. Intended caller today: test_add_action drain at
- * suite exit, sequential single-CPU -- no concurrent readers. */
+ * SMP note: the override table is a seqlock (include/kernel/sched/seqlock.h).
+ * Writers serialize on the seqlock's internal spinlock and bracket every
+ * mutation with the odd/even sequence; the hot lock-free reader (the klog()
+ * verbosity filter) and the cold query APIs (klog_get_level / klog_has_override)
+ * use the seqlock retry loop, so none ever observes a torn {tag, level} pair
+ * during the swap-with-last + decrement. */
 void klog_remove_override(const char *subsystem);
 
 /* Load per-subsystem log levels from Registry.

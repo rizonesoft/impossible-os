@@ -138,9 +138,21 @@ Allow silencing verbose subsystems in release builds without recompiling.
 - [x] Add `klog_set_level(const char *subsystem, log_level_t min_level)` to `klog.h`/`klog.c`
 - [x] Store per-subsystem min levels in a 32-entry override table keyed by tag string (pointer + strcmp)
 - [x] In `klog()`: look up `subsys_min_level()` before writing to ring buffer; drop entries below threshold
-- [x] `klog_load_levels_from_registry()`: reads `HKLM\SYSTEM\Logs\Levels\<tag>` for 16 known subsystems via `RegReadKeyValue()`
+- [x] `klog_load_levels_from_registry()`: reads `HKLM\SYSTEM\Logs\Levels\<tag>` (REG_SZ level) + `HKLM\SYSTEM\Logs\RateLimit\<tag>` (REG_DWORD, validated `val_size == 4`) for 18 known subsystems (added `ioapic`, `blk`) via `RegReadKeyValue()`
 - [x] Default: all subsystems at `LOG_DEBUG` (global min); adjustable via `klog_set_level(NULL, level)` or per-tag
 - [x] Commit: `"kernel: per-subsystem log verbosity control"`
+
+**Test checkpoint:** `klog_set_level("net", LOG_ERROR)` then a `klog(LOG_INFO, "net", ...)` is dropped (not in ring); `klog_get_level("net")` returns `LOG_ERROR`; `klog_remove_override("net")` restores the global default. SMP: the override table is a seqlock -- a concurrent reader never observes a torn `{tag, min_level}` pair during add/edit/remove.
+
+> **Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot) | test_klog suite, 0 failures
+> **Notes:**
+> - `klog_set_level` / `klog_get_level` / `klog_has_override` / `klog_remove_override` + 18-tag registry loader in `src/kernel/klog.c`; 32-entry override table keyed by tag pointer + `str_eq` fallback.
+> - Override table is the repo canonical seqlock (`include/kernel/sched/seqlock.h`): writers serialize on its spinlock; hot per-`klog()` reader + cold query APIs use `seqlock_read_begin/retry` -- no torn read during swap-with-last removal.
+> - Review fixes: replaced a lock-free count-publish (then a hand-rolled gen) with `seqlock_t`; added `ioapic`/`blk` registry tags; validated REG_DWORD `val_size`.
+> - Sub-threshold drops never enter the ring buffer (filtered before store), bounding disk-log volume; `s_global_min` is a separate atomic for the `klog_set_level(NULL, ...)` default.
+> **Verified:** 2026-06-21 | ship `3bc86ce1` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.69s); 3212 kernel + 16 user PASS
+> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 264)
+> **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial x2) | 1H+3M fixed, 1M accepted | scope: kernel-code-quality
 
 ---
 
@@ -248,7 +260,8 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 - [x] Update serial output format: append `[cpu:N]` after the timestamp when SMP is ready or cpu_id > 0 (skipped during single-CPU early boot)
 - [x] Update `klog_crash_persist()` (§8): `klog_crash_entry_t` extended with cpu_id/pid/tid fields (160 bytes); serialization copies new fields
 - [x] Add debug POST codes: `POST16_KLOG_CTX` (0xDE10), `POST16_KLOG_CTX_STRUCT` (0xDE11), `POST16_KLOG_CTX_SERIAL` (0xDE12), `POST16_KLOG_CTX_JSON` (0xDE13) -- range 0xDE1x confirmed free
-- [ ] Store the subsystem tag as a bounded `char[16]` copy (like the crash-snapshot path) in `klog_entry_t` instead of the raw caller pointer (`klog.c` `e->subsystem = subsystem`), so delayed disk routing cannot deref a freed tag (§2 review)
+- [ ] Store the `klog_entry_t` subsystem tag as a bounded `char[16]` copy (like the crash-snapshot path) instead of the raw caller pointer (`klog.c` `e->subsystem = subsystem`), so delayed disk routing cannot deref a freed tag (§2 review)
+- [ ] Copy the verbosity override-table tag into a bounded `char[16]` instead of storing the raw `const char*` (`klog.c` `s_overrides[].tag`), so a non-literal tag passed to `klog_set_level` cannot dangle (§3 review)
 - [x] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":0` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.

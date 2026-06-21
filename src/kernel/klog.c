@@ -16,6 +16,7 @@
 #include "kernel/smp.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/seqlock.h"
 #include "kernel/boot_init.h"
 
 
@@ -40,6 +41,18 @@ typedef struct {
 static klog_level_override_t s_overrides[KLOG_MAX_OVERRIDES];
 static uint32_t              s_override_count;
 static log_level_t           s_global_min = LOG_DEBUG;  /* default: keep all */
+/* The override table is read-mostly: writers (klog_set_level / klog_remove_override)
+ * run at runtime on a live SMP system (tunables live-consumer, klog_suppress, the
+ * boot registry load) while every klog() call reads the table on its verbosity
+ * path. A canonical seqlock gives the hot reader a lock-free, internally-consistent
+ * {tag, min_level, count} snapshot -- it retries rather than observing a slot
+ * mid-add / mid-edit / mid-swap-remove. seqlock_write_lock serializes writers and
+ * publishes the odd->even sequence with RELEASE; seqlock_read_retry carries the
+ * rmb() that orders the slot loads before the final sequence sample. Writers must
+ * NOT klog() while holding the write lock (the reader spins on odd -> deadlock);
+ * the table-full warning below is emitted AFTER seqlock_write_unlock.
+ * s_override_count is plain data covered by the seqlock (no separate atomic). */
+static DEFINE_SEQLOCK(s_override_seq);
 
 /* Rate limiting: per-subsystem message count within a 1-second window */
 #define KLOG_RATE_SLOTS     32
@@ -658,16 +671,31 @@ static int str_eq(const char *a, const char *b)
 
 static log_level_t subsys_min_level(const char *subsystem)
 {
-    uint32_t i;
+    log_level_t gmin = __atomic_load_n(&s_global_min, __ATOMIC_ACQUIRE);
+    log_level_t result;
+    uint64_t seq;
+
     if (!subsystem || !subsystem[0])
-        return s_global_min;
-    for (i = 0; i < s_override_count; i++) {
-        if (s_overrides[i].tag == subsystem)  /* fast pointer compare */
-            return s_overrides[i].min_level;
-        if (str_eq(s_overrides[i].tag, subsystem))
-            return s_overrides[i].min_level;
-    }
-    return s_global_min;
+        return gmin;
+
+    /* Lock-free seqlock read: scan the table, retry if a writer intervened so a
+     * torn {tag, min_level} pair is never USED. Config writes are rare, so this
+     * almost always runs the loop body exactly once. */
+    do {
+        uint32_t i, n;
+        seq = seqlock_read_begin(&s_override_seq);
+        n = s_override_count;
+        result = gmin;
+        for (i = 0; i < n; i++) {
+            if (s_overrides[i].tag == subsystem ||
+                str_eq(s_overrides[i].tag, subsystem)) {
+                result = s_overrides[i].min_level;
+                break;
+            }
+        }
+    } while (seqlock_read_retry(&s_override_seq, seq));
+
+    return result;
 }
 
 /* ---- Rate limiting ---- */
@@ -731,100 +759,121 @@ static int rate_check(const char *subsystem)
 
 void klog_set_level(const char *subsystem, log_level_t min_level)
 {
-    uint32_t i;
+    uint32_t i, n;
 
-    /* NULL or "" sets the global default */
+    /* NULL or "" sets the global default (atomic so the lock-free reader sees a
+     * whole value, not a torn one). */
     if (!subsystem || !subsystem[0]) {
-        s_global_min = min_level;
+        __atomic_store_n(&s_global_min, min_level, __ATOMIC_RELEASE);
         return;
     }
 
-    /* Update existing override */
-    for (i = 0; i < s_override_count; i++) {
+    seqlock_write_lock(&s_override_seq);
+    n = s_override_count;
+
+    /* Update existing override in place. The seqlock makes a concurrent lock-free
+     * reader retry rather than observe the level mid-store. */
+    for (i = 0; i < n; i++) {
         if (str_eq(s_overrides[i].tag, subsystem)) {
             s_overrides[i].min_level = min_level;
+            seqlock_write_unlock(&s_override_seq);
             return;
         }
     }
 
-    /* Add new override */
-    if (s_override_count < KLOG_MAX_OVERRIDES) {
-        s_overrides[s_override_count].tag = subsystem;
-        s_overrides[s_override_count].min_level = min_level;
-        s_override_count++;
+    /* Add a new override: fill the slot fully, bump the count, then close the
+     * write section. A reader either sees the whole new entry or retries. */
+    if (n < KLOG_MAX_OVERRIDES) {
+        s_overrides[n].tag = subsystem;
+        s_overrides[n].min_level = min_level;
+        s_override_count = n + 1;
+        seqlock_write_unlock(&s_override_seq);
+    } else {
+        /* Emit the warning OUTSIDE the write section -- klog() -> subsys_min_level
+         * would spin forever on the odd sequence if called while we hold it. */
+        seqlock_write_unlock(&s_override_seq);
+        klog(LOG_WARN, "klog",
+             "verbosity override table full (%u) -- '%s' level not applied",
+             (uint64_t)KLOG_MAX_OVERRIDES, subsystem);
     }
 }
 
 log_level_t klog_get_level(const char *subsystem)
 {
-    uint32_t i;
+    log_level_t gmin = __atomic_load_n(&s_global_min, __ATOMIC_ACQUIRE);
+    log_level_t result;
+    uint64_t seq;
 
     if (!subsystem || !subsystem[0])
-        return s_global_min;
+        return gmin;
 
-    /* Return existing override if one is active. */
-    for (i = 0; i < s_override_count; i++) {
-        if (str_eq(s_overrides[i].tag, subsystem))
-            return s_overrides[i].min_level;
-    }
-
-    /* No per-subsystem override -- fall back to the global default. */
-    return s_global_min;
+    /* Same lock-free seqlock read as the hot path (test save/restore caller). */
+    do {
+        uint32_t i, n;
+        seq = seqlock_read_begin(&s_override_seq);
+        n = s_override_count;
+        result = gmin;
+        for (i = 0; i < n; i++) {
+            if (str_eq(s_overrides[i].tag, subsystem)) {
+                result = s_overrides[i].min_level;
+                break;
+            }
+        }
+    } while (seqlock_read_retry(&s_override_seq, seq));
+    return result;
 }
 
 int klog_has_override(const char *subsystem)
 {
-    uint32_t i;
+    int found;
+    uint64_t seq;
 
     if (!subsystem || !subsystem[0])
         return 0;
-    for (i = 0; i < s_override_count; i++) {
-        if (str_eq(s_overrides[i].tag, subsystem))
-            return 1;
-    }
-    return 0;
+
+    do {
+        uint32_t i, n;
+        seq = seqlock_read_begin(&s_override_seq);
+        n = s_override_count;
+        found = 0;
+        for (i = 0; i < n; i++) {
+            if (str_eq(s_overrides[i].tag, subsystem)) {
+                found = 1;
+                break;
+            }
+        }
+    } while (seqlock_read_retry(&s_override_seq, seq));
+    return found;
 }
 
 void klog_remove_override(const char *subsystem)
 {
-    uint32_t i;
+    uint32_t i, n;
 
     if (!subsystem || !subsystem[0])
         return;
-    for (i = 0; i < s_override_count; i++) {
+    seqlock_write_lock(&s_override_seq);
+    n = s_override_count;
+    for (i = 0; i < n; i++) {
         if (str_eq(s_overrides[i].tag, subsystem)) {
-            /* Swap-with-last + decrement (NOT shift).
-             *
-             * The klog() hot path walks s_overrides without locking
-             * on the assumption the table is append-only plus
-             * in-place level edits. A mid-walk SHIFT would let a
-             * reader observe slot i with tag A's value then slot i+1
-             * with tag A's (shifted) value, effectively returning
-             * the wrong min_level for the tag the reader is looking
-             * up. Swap-with-last exchanges ONE struct (slot i <- last
-             * slot) and then decrements the count. A concurrent
-             * reader sees either the original tag at slot i or the
-             * swapped-in tag -- both are VALID entries that pass the
-             * str_eq compare correctly for their own lookups; a
-             * reader looking up the removed tag either finds it at
-             * slot i (old pre-swap view) and returns its level, or
-             * does not find it and falls back to global default.
-             *
-             * The residual race window (reader reads old count then
-             * misses the swapped-in tag at slot count-1) is bounded
-             * and benign: at worst the reader sees stale data for
-             * one entry in one concurrent emission, matching the
-             * existing pre-lock contract of klog_set_level.
-             *
-             * True removal with concurrent-reader correctness would
-             * need a shared spinlock covering klog()'s filter path,
-             * which is a klog-wide refactor outside this section's scope. */
-            s_override_count--;
-            if (i != s_override_count)
-                s_overrides[i] = s_overrides[s_override_count];
+            /* Swap-with-last + decrement (NOT shift), inside the seqlock write
+             * section. The hot reader (subsys_min_level) walks s_overrides
+             * lock-free; the two field stores below are not a single atomic
+             * publish, but a concurrent reader either snapshots the odd sequence
+             * and spins, or detects the sequence change straddling its scan and
+             * retries -- so it never USES the swapped-in tag paired with the
+             * removed tag's stale level. Overwrite slot i first, then drop the
+             * count, so a reader using the new count never indexes the dead slot. */
+            if (i != n - 1) {
+                s_overrides[i].tag = s_overrides[n - 1].tag;
+                s_overrides[i].min_level = s_overrides[n - 1].min_level;
+            }
+            s_override_count = n - 1;
+            seqlock_write_unlock(&s_override_seq);
             return;
         }
     }
+    seqlock_write_unlock(&s_override_seq);
 }
 
 void klog_load_levels_from_registry(void)
@@ -832,7 +881,8 @@ void klog_load_levels_from_registry(void)
     /* Known subsystem tags to check in registry */
     static const char *tags[] = {
         "net", "boot", "fs", "mm", "drv", "sec", "ahci", "pci",
-        "lapic", "acpi", "smp", "UEFI", "TPM", "vfs", "ixfs", "fat32"
+        "lapic", "ioapic", "acpi", "smp", "UEFI", "TPM", "vfs", "ixfs",
+        "fat32", "blk"
     };
     uint32_t i;
     uint32_t tag_count = sizeof(tags) / sizeof(tags[0]);
@@ -868,7 +918,7 @@ void klog_load_levels_from_registry(void)
         if (RegReadKeyValue((void *)(uintptr_t)0x80000002,
                             "SYSTEM\\Logs\\RateLimit",
                             tags[i], &val_type, (uint8_t *)&val, &val_size) == 0 &&
-            val_type == 4 && val > 0) {  /* REG_DWORD */
+            val_type == 4 && val_size == sizeof(uint32_t) && val > 0) {  /* REG_DWORD */
             klog_rate_slot_t *sl = rate_slot(tags[i]);
             if (sl) sl->max_rate = val;
         }
