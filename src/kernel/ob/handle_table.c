@@ -2,7 +2,8 @@
  * handle_table.c -- Per-process handle table
  *
  * HANDLE values = slot_index * 4 (low 2 bits reserved for future use).
- * The table grows by doubling when full, up to HANDLE_TABLE_MAX_CAP.
+ * The table grows by doubling on demand, bounded by the per-process quota
+ * (handle_limit) and the hard HANDLE_TABLE_ABSOLUTE_MAX ceiling (S14).
  * ============================================================================ */
 
 #include "kernel/ob/handle_table.h"
@@ -57,6 +58,7 @@ int ob_handle_table_init(HANDLE_TABLE *table)
      * falls back to the compiled default before the registry is up. */
     table->handle_limit = (uint32_t)kernel_tunable_get_u64(
         "handle.quota_default", HANDLE_TABLE_DEFAULT_LIMIT);
+    table->quota_warned = 0;
     return 0;
 }
 
@@ -91,8 +93,21 @@ static int handle_table_grow(HANDLE_TABLE *table)
     size_t new_sz;
     HANDLE_TABLE_ENTRY *new_entries;
 
-    if (new_cap > HANDLE_TABLE_MAX_CAP)
+    /* S14: the per-process quota (handle_limit) governs table size -- not a fixed
+     * array cap. The capacity ceiling is the slots that quota needs: handle_limit
+     * handles plus the reserved slot 0 (so a quota of N is fully reachable, incl.
+     * N == ABSOLUTE_MAX), bounded by the hard kernel ceiling for unlimited tables.
+     * Clamping the final growth to that ceiling (instead of blindly doubling)
+     * avoids requesting a 2x-oversized contiguous run that pmm_alloc_contiguous
+     * could fail below quota. Replaces the old fixed 4096 cap that made the 16384
+     * default (and the 1M absolute max) unreachable. */
+    uint32_t cap_ceiling = (table->handle_limit > 0)
+                           ? table->handle_limit + 1u
+                           : HANDLE_TABLE_ABSOLUTE_MAX + 1u;
+    if (table->capacity >= cap_ceiling)
         return -1;
+    if (new_cap > cap_ceiling)
+        new_cap = cap_ceiling;
 
     new_sz = new_cap * sizeof(HANDLE_TABLE_ENTRY);
 
@@ -155,12 +170,19 @@ static HANDLE obp_allocate_handle_inner(HANDLE_TABLE *table, void *object,
             return INVALID_HANDLE_VALUE;  /* access denied */
     }
 
-    /* Per-process handle quota (S14): deny if at limit */
+    /* Per-process handle quota (S14): deny if at limit. Log at LOG_WARN (an
+     * unexpected-but-handled degraded path per the klog severity contract), but
+     * ONCE per exhaustion episode -- the one-shot quota_warned guard keeps a
+     * process that hammers a full table from turning every denial into klog
+     * spinlock + serial/disk I/O (cleared in ObpFreeHandle when count drops). */
     if (table->handle_limit > 0 && table->count >= table->handle_limit) {
-        struct task *cur = task_current();
-        klog(LOG_DEBUG, "ob", "PID %u handle quota exhausted (%u/%u)",
-             cur ? (uint64_t)cur->pid : 0,
-             (uint64_t)table->count, (uint64_t)table->handle_limit);
+        if (!table->quota_warned) {
+            struct task *cur = task_current();
+            klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)",
+                 cur ? (uint64_t)cur->pid : 0,
+                 (uint64_t)table->count, (uint64_t)table->handle_limit);
+            table->quota_warned = 1;
+        }
         return INVALID_HANDLE_VALUE;
     }
 
@@ -290,6 +312,11 @@ int ObpFreeHandle(HANDLE_TABLE *table, HANDLE handle)
     entry->granted_access = 0;
     entry->attributes = 0;
     table->count--;
+
+    /* S14: re-arm the one-shot quota warning once the table is back below its
+     * limit, so a later re-exhaustion is reported again (one WARN per episode). */
+    if (table->count < table->handle_limit)
+        table->quota_warned = 0;
 
     /* Decrement handle count; call on_close if it drops to 0 */
     if (hdr->handle_count > 0)
@@ -425,4 +452,8 @@ void ob_handle_table_set_limit(HANDLE_TABLE *table, uint32_t new_limit)
     if (new_limit > HANDLE_TABLE_ABSOLUTE_MAX)
         new_limit = HANDLE_TABLE_ABSOLUTE_MAX;
     table->handle_limit = new_limit;
+    /* A limit change starts a fresh quota policy: re-arm the one-shot warning so
+     * the first exhaustion under the NEW limit is reported (otherwise raising the
+     * limit after an episode would suppress the next real exhaustion). */
+    table->quota_warned = 0;
 }

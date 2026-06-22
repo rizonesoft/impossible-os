@@ -152,7 +152,7 @@ struct task {
     struct signal_state signals;         /* per-task signal handlers + pending mask */
     /* --- Object Manager handle table --- */
     HANDLE_TABLE handle_table; /* per-process handle table */
-    uint32_t total_handles_created; /* cumulative handle allocs for diagnostics */
+    uint64_t total_handles_created; /* cumulative handle allocs, diagnostics (64-bit: no wrap) */
     /* --- Security token --- */
     void *token;                         /* ACCESS_TOKEN * (NULL until SRM assigns one) */
     /* --- User-mode ABI --- */

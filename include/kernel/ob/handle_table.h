@@ -21,13 +21,16 @@
 /* HANDLE type -- always a multiple of 4 */
 typedef int32_t HANDLE;
 
-/* Initial and maximum capacity */
+/* Initial capacity. The table grows by doubling on demand; the hard ceiling is
+ * HANDLE_TABLE_ABSOLUTE_MAX and the per-process quota (handle_limit) is the soft
+ * cap enforced before each grow (S14 replaced the old fixed 4096 grow cap, which
+ * made the 16384 default quota unreachable). */
 #define HANDLE_TABLE_INIT_CAP       64
-#define HANDLE_TABLE_MAX_CAP        4096
 
 /* Per-process handle quota (S14) */
 #define HANDLE_TABLE_DEFAULT_LIMIT  16384       /* default per-process handle limit */
 #define HANDLE_TABLE_ABSOLUTE_MAX   (1 << 20)   /* 1M handles -- absolute ceiling */
+#define HANDLE_TABLE_LIMIT_UNLIMITED 0u         /* handle_limit sentinel: no quota (still bounded by ABSOLUTE_MAX) */
 
 /* --- HANDLE_TABLE_ENTRY -------------------------------------------------- */
 
@@ -43,7 +46,8 @@ typedef struct handle_table {
     HANDLE_TABLE_ENTRY *entries;      /* array of entries */
     uint32_t            capacity;     /* current allocated slots */
     uint32_t            count;        /* number of occupied slots */
-    uint32_t            handle_limit; /* per-process quota (S14) */
+    uint32_t            handle_limit; /* per-process quota (S14); 0 = unlimited */
+    uint8_t             quota_warned; /* S14: one-shot -- exhaustion logs once per episode, not per denial */
 } HANDLE_TABLE;
 
 /* --- API ----------------------------------------------------------------- */

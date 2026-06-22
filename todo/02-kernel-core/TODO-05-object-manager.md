@@ -149,6 +149,8 @@ The handle table maps opaque `HANDLE` integer values to (object pointer + grante
 - [ ] **Add per-task view-base index** to eliminate full handle-table walks on unmap and mapped-file-compare. `ObUnmapViewOfSectionByBase` (`src/kernel/ob/ob_section.c:414`) and `ObAreMappedFilesTheSame` (`ob_section.c:604,652`) both iterate every handle-table entry and then every SECTION_MAX_VIEWS slot per section -- O(handle_capacity × SECTION_MAX_VIEWS) per call. Add a small hash or sorted array keyed by `(task_pid, base_addr)` -> `{SECTION_OBJECT *, view_index}` attached to `struct task` (or installed at task creation beside `handle_table`). Update on `ObMapViewOfSectionFull` (insert) and `ObUnmapViewOfSection`/`ObUnmapViewOfSectionByBase` (remove). Both callers become near-O(1). This auto-closes TODO-12 §18 Accepted (handle-table scan scalability).
 - [ ] **Walk section views on task_cleanup to drop leaked view pins.** `task_cleanup` in [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) destroys the handle table but does NOT walk per-task section views, so any task that dies without calling `ObUnmapViewOfSectionByBase` (or `sys_unmapview` on the INT 0x80 path) leaks the `ObReferenceObject(so)` pin that `ObMapViewOfSectionFull` took, keeping the section backing PMM frames pinned until reboot. Additionally, `ObUnmapViewOfSectionByBase` today finds the view by scanning the HANDLE TABLE for live section handles -- once the caller closes the section handle, the view becomes unreachable even though its pin still exists. Add a per-task view index (either the one from the preceding bullet, or a separate array) that `task_cleanup` walks after `ob_handle_table_destroy`, calling `ObUnmapViewOfSectionByBase` (or an inner helper that takes the SECTION_OBJECT pointer directly) for each still-mapped view. XREFs: `00-infrastructure/TODO-04-usermode-test-framework.md §11` introduced `SYS_UNMAPVIEW` (46) and explicitly documents the "must unmap before close" ordering as a workaround for this gap. Codex quality 2026-04-21 M2.
 
+- [ ] **Give `HANDLE_TABLE` an owning-task back-pointer** so `ObpAllocateHandle` charges `total_handles_created` to the table owner, not `task_current()` (cross-process `NtDuplicateObject` mis-attributes; §14). Lands with the item-17 lock pass.
+
 > [!WARNING]
 > **Handle-table lock contract (from the 2026-06-21 Codex design review -- implement `ObpReferenceObjectByHandle` to THIS spec, a naive "lock everything" deadlocks):**
 > - **Never run `type->on_close` / `type->on_delete` / `ObDereferenceObject` under the table lock.** Those callbacks take VFS/pipe/timer/ALPC locks, `kfree`, and can re-enter the handle table. Under the lock: validate the handle, clear the slot, decrement the table count, update the per-type handle statistics (`OBJECT_TYPE.total_handles` / `peak_handles` via the `handle_stat_lift_peak` CAS-max), and CAPTURE `body` + a last-handle boolean. Release the lock, THEN call `on_close` and `ObDereferenceObject`. The per-type handle-stat increment/decrement MUST live inside the same serialized region as the slot claim/clear so each logical handle create/close accounts exactly once -- today the stats are atomic but the slot mutation is not, so concurrent same-table create/close can double-count or drive `total_handles` negative (§12 review 2026-06-22; export path floors at 0 via `ob_stat_export` as a stopgap).
@@ -434,7 +436,7 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 > - Scope: counters are SMP-atomic; exactly-once handle-stat accounting needs the §3 per-handle-table lock; Win11 NT-ABI struct shape owned by TODO-12 §30.
 > **Verified:** 2026-06-22 | ship `44db565a` + review fixes | 8/8 items | build OK | tests 363 ob PASS
 > **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 855)
+> **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 856)
 > **Quality reviewed:** 2026-06-22 | Codex 6x (adversarial, consistency, perf, re-adversarial) | 1H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -490,21 +492,36 @@ Allow kernel-mode drivers to register pre- and post-operation callbacks on handl
 ---
 
 ## 14. Per-Process Handle Quota
-Enforce a configurable per-process handle limit to prevent resource exhaustion from buggy or malicious processes. Win11 enforces pool quota charges per handle with a theoretical 16M limit. Linux enforces `RLIMIT_NOFILE` per process. Currently `HANDLE_TABLE_MAX_CAP` is a hard compile-time 4096 with no per-process configurability.
+Enforce a configurable per-process handle limit to prevent resource exhaustion from buggy or malicious processes. Win11 enforces pool quota charges per handle with a theoretical 16M limit. Linux enforces `RLIMIT_NOFILE` per process. This section replaced the old hard compile-time 4096 grow cap with the configurable per-process quota: the table now grows on demand up to the quota (default 16384, ceiling 1M), bounded by `HANDLE_TABLE_ABSOLUTE_MAX`.
 
 > [!NOTE]
-> The `NtSetInformationProcess(ProcessHandleQuota)` SSDT wiring depends on `TODO-12 §10` which is not yet implemented. Core quota enforcement in `ObpAllocateHandle()` works independently -- the SSDT entry is a user-mode convenience, not a blocker.
+> The `NtSetInformationProcess(ProcessHandleQuota)` SSDT wiring (TODO-12 §7, the `NtSetInformationProcess` 0x0035 owner) needs the privilege-check primitive `SeSinglePrivilegeCheck`/`SeIncreaseQuotaPrivilege` to gate raising the quota above the default -- not yet implemented, so raising-without-privilege would be a security hole. Core quota enforcement in `ObpAllocateHandle()` works independently; the SSDT setter is a user-mode convenience, not a blocker.
 
-- [x] Add `uint32_t handle_limit` to `HANDLE_TABLE` -- default `HANDLE_TABLE_DEFAULT_LIMIT` (16384); set in `ob_handle_table_init()`
-- [x] In `ObpAllocateHandle()`: if `table->count >= table->handle_limit`, return `INVALID_HANDLE_VALUE` (quota exceeded) before slot search
+- [x] Add `uint32_t handle_limit` to `HANDLE_TABLE` -- default from the `handle.quota_default` tunable (falls back to `HANDLE_TABLE_DEFAULT_LIMIT` 16384); set in `ob_handle_table_init()`
+- [x] In `ObpAllocateHandle()`: if `table->count >= table->handle_limit`, return `INVALID_HANDLE_VALUE` (quota exceeded) before slot search; `handle_limit == 0` (`HANDLE_TABLE_LIMIT_UNLIMITED`) means no quota
+- [x] `handle_table_grow()` honors the quota, not a fixed cap: grows up to `HANDLE_TABLE_ABSOLUTE_MAX` (the retired `HANDLE_TABLE_MAX_CAP` 4096 made the 16384 default unreachable)
 - [x] Add `ob_handle_table_set_limit(table, new_limit)` -- clamps to `HANDLE_TABLE_ABSOLUTE_MAX` (1 << 20 = 1M handles)
-- [ ] Wire into `NtSetInformationProcess(ProcessHandleQuota)` (→ XREF: `TODO-12 §10`) -- requires `SeIncreaseQuotaPrivilege` to raise above default
-- [x] Track cumulative handle allocations per process in `task_t.total_handles_created` -- incremented in `ObpAllocateHandle()`
-- [x] On quota exhaustion: `klog(LOG_WARN, "ob", "PID %u handle quota exhausted (%u/%u)")` with PID, count, limit
-- [x] 8 test assertions: set limit, 3 allocs succeed, 4th denied, free+retry succeeds, clamp to ABSOLUTE_MAX
+- [/] Wire into `NtSetInformationProcess(ProcessHandleQuota)` -- needs the `SeSinglePrivilegeCheck`/`SeIncreaseQuotaPrivilege` gate for raise-above-default (security) -> XREF: `02-kernel-core/TODO-12-native-api-ssdt.md §7`
+- [x] Track cumulative handle allocations per process in `task_t.total_handles_created` (`uint64`) -- incremented in `ObpAllocateHandle()`
+- [x] On quota exhaustion: `klog(LOG_WARN, ...)` once per episode via the `HANDLE_TABLE.quota_warned` one-shot guard (re-armed in `ObpFreeHandle` when count drops below limit) -- no per-denial log flood
+- [x] Tests: set-limit + 3-allocs + 4th-denied + free+retry + ABSOLUTE_MAX clamp; one-shot warn set/clear; grow-past-old-4096-cap; zero-limit unlimited
 - [x] Commit: `"kernel: ob -- per-process handle quota enforcement"`
 
-**Test checkpoint:** Set handle limit to 100 for a test process. Allocate 100 handles successfully. 101st allocation returns `INVALID_HANDLE_VALUE`. Free 1 handle, allocate again succeeds. `klog` warning emitted on exhaustion. Default limit (16384) works for normal boot. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD920)`-`POST16(0xD923)`.
+**Test checkpoint:** Set handle limit to 100 for a test process. Allocate 100 handles successfully. 101st allocation returns `INVALID_HANDLE_VALUE`. Free 1 handle, allocate again succeeds. `klog` warning emitted once on exhaustion. Default limit (16384) works for normal boot and a process can hold >4096 handles. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD920)`-`POST16(0xD923)`.
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | OB suite 399 kernel PASS, 0 failures
+
+> **Notes:**
+> - **What shipped** -- per-process handle quota in `handle_table.c`: tunable-default `handle_limit` (16384, 1M ceiling), enforcement in `ObpAllocateHandle`, `ob_handle_table_set_limit`; the table now grows up to the quota (retired the fixed 4096 cap).
+> - **How it integrates** -- the quota check runs before the slot scan; exhaustion logs `LOG_WARN` once per episode via the `quota_warned` one-shot (re-armed on free-below-limit); `total_handles_created` (uint64) is bumped per alloc.
+> - **Tests** -- `test_ob_handle_quota` (limit/deny/free/clamp + one-shot warn) + `test_ob_handle_quota_grows_past_old_cap` (>4096 handles + zero-limit unlimited).
+> - **Scope boundary** -- §14 owns the per-table quota mechanism; the user-mode `NtSetInformationProcess(ProcessHandleQuota)` setter is `TODO-12 §7` (needs privilege-check infra); the unlocked `count` SMP race is owned by §3's per-handle-table lock work.
+
+> **Verified:** 2026-06-22 | ship `e0361301` + review fixes | 7/8 items | build OK | tests 6892 kernel + 16 user PASS
+> **Accepted:** [H] the quota check + `count++`/`count--` are unsynchronized, so same-process concurrent allocs can overshoot the limit (bounded, self-correcting) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Accepted:** [L] `total_handles_created` is charged to `task_current()`, so cross-process `NtDuplicateObject` mis-attributes the diagnostic counter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Give `HANDLE_TABLE` an owning-task back-pointer" at line 152)
+> **Deferred:** [M] `NtSetInformationProcess(ProcessHandleQuota)` user-mode setter not wired (needs `SeSinglePrivilegeCheck` for the privileged raise-above-default) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "`NtSetInformationProcess(0x0035)` ProcessHandleQuota" at line 298)
+> **Quality reviewed:** 2026-06-22 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 2H+4M+1L fixed, 1H+1L accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---
 
@@ -574,7 +591,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [x] Commit: `"test: add object manager test suite"`
 - [ ] §12 tests: `ObpEventType->total_objects` tracks create/delete; `peak_objects` high-water; `NtQueryObject(ObjectTypeInformation)` returns counters; `NtQueryObject(ObjectTypesInformation)` enumerates all types
 - [x] §13 tests: pre-callback strips TERMINATE, post-callback invoked, unregister restores access; hardening (ceiling/stable-id/chain-monotonicity), dup-create-only-not-fired, zero-access-noop-allowed (`test_ob.c`)
-- [x] §14 tests: handle limit set to 3, allocs 0-2 succeed, 3rd denied, free+retry succeeds, clamp to ABSOLUTE_MAX (8 assertions in `test_ob.c`)
+- [x] §14 tests: limit/allocs/deny/free-retry/ABSOLUTE_MAX clamp + one-shot exhaustion warn; grow-past-old-4096-cap + zero-limit unlimited (`test_ob_handle_quota`, `test_ob_handle_quota_grows_past_old_cap`)
 - [x] §15 tests: enable/disable tracing, trace info allocated, tagged ref/deref, trace log count, refcount verified (7 assertions in `test_ob.c`)
 
 ---

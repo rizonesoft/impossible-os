@@ -295,6 +295,7 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] `NtSetInformationThread(0x003F)`: ThreadPriority, ThreadBasePriority (via thread_set_priority), ThreadAffinityMask, ThreadIdealProcessor (accepted, enforcement deferred)
 - [x] `NtQueryInformationProcess(0x0034)`: ProcessBasicInformation (PEB, affinity, parent PID), ProcessPriorityClass
 - [x] `NtSetInformationProcess(0x0035)`: ProcessPriorityClass, ProcessDefaultHardErrorMode (accepted)
+- [ ] `NtSetInformationProcess(0x0035)` ProcessHandleQuota: call `ob_handle_table_set_limit`; gate raise-above-default on `SeSinglePrivilegeCheck(SeIncreaseQuotaPrivilege)`, reject a 0 quota -> XREF: `02-kernel-core/TODO-05-object-manager.md §14`
 - [x] `NtAlertThread(0x0040)`: returns SUCCESS (APC delivery deferred to TODO-17 §11)
 - [x] `NtAlertResumeThread(0x0041)`: alert + NtResumeThread
 - [x] `NtTestAlert(0x0046)`: returns SUCCESS (APC check deferred to TODO-17 §11)

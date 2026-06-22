@@ -12,6 +12,7 @@
 #include "kernel/test/test.h"
 #include "kernel/atomic.h"
 #include "kernel/ob/ob.h"
+#include "kernel/mm/heap.h"
 
 /* snprintf is not in freestanding kernel headers; declared extern here at
  * file scope so all test functions below can build per-iteration assertion
@@ -997,9 +998,15 @@ static void test_ob_handle_quota(void)
     HANDLE h3 = ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
     TEST_ASSERT_EQ(h3, INVALID_HANDLE_VALUE,
                    "4th handle denied by quota (3/3)");
+    /* One-shot exhaustion warning armed on first denial. */
+    TEST_ASSERT_EQ(ht.quota_warned, 1, "quota_warned set on first exhaustion");
+    /* A second denial does not re-arm (stays 1, no per-denial log flood). */
+    (void)ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
+    TEST_ASSERT_EQ(ht.quota_warned, 1, "quota_warned stays one-shot on repeat denial");
 
-    /* Free 1 handle and retry -- should succeed */
+    /* Free 1 handle and retry -- should succeed, and re-arm the warning. */
     ObpFreeHandle(&ht, h0);
+    TEST_ASSERT_EQ(ht.quota_warned, 0, "quota_warned re-armed once back below limit");
     HANDLE h4 = ObpAllocateHandle(&ht, obj, 0x1F0FFF, 0);
     TEST_ASSERT(h4 >= 0, "handle succeeds after freeing one within quota");
 
@@ -1012,6 +1019,81 @@ static void test_ob_handle_quota(void)
     ObpFreeHandle(&ht, h1);
     ObpFreeHandle(&ht, h2);
     ObpFreeHandle(&ht, h4);
+    ObDereferenceObject(obj);
+    ob_handle_table_destroy(&ht);
+}
+
+/* ---- S14: the quota (not the old fixed 4096 cap) governs table growth ---- */
+
+static void test_ob_handle_quota_grows_past_old_cap(void)
+{
+    static const OBJECT_TYPE g_tmpl = {
+        .name = "QuotaGrow", .body_size = 16,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *t = ob_create_type(&g_tmpl);
+    TEST_ASSERT(t != (void *)0, "ob_create_type for quota-grow");
+    if (!t) return;
+
+    void *obj = ob_alloc_object(t);
+    TEST_ASSERT(obj != (void *)0, "alloc object for quota-grow");
+    if (!obj) return;
+
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+    /* Default limit (16384) is well above the retired 4096 grow cap. Allocate
+     * 4097 handles to a single object: the 4097th can only succeed if the table
+     * grew past the old HANDLE_TABLE_MAX_CAP (4096) -- i.e. the quota, not a
+     * fixed array cap, now governs how large the table becomes. */
+    enum { N = 4097 };
+    HANDLE *hs = (HANDLE *)kmalloc(sizeof(HANDLE) * N);
+    TEST_ASSERT(hs != (void *)0, "scratch handle array allocated");
+    if (!hs) { ObDereferenceObject(obj); ob_handle_table_destroy(&ht); return; }
+
+    int all_ok = 1;
+    uint32_t got = 0;
+    for (uint32_t i = 0; i < N; i++) {
+        hs[i] = ObpAllocateHandle(&ht, obj, 0x1, 0);
+        if (hs[i] < 0) { all_ok = 0; break; }
+        got++;
+    }
+    TEST_ASSERT(all_ok, "all 4097 handles allocated (table grew past old 4096 cap)");
+    TEST_ASSERT(ht.capacity > 4096, "table capacity grew beyond the retired 4096 cap");
+
+    for (uint32_t i = 0; i < got; i++)
+        ObpFreeHandle(&ht, hs[i]);
+    kfree(hs);
+
+    /* Exact reachability at a non-power-of-2 limit: with slot 0 reserved, a quota
+     * of N must yield exactly N handles (the grow ceiling is N+1, not 2*cap). */
+    HANDLE_TABLE et;
+    ob_handle_table_init(&et);
+    ob_handle_table_set_limit(&et, 100);
+    uint32_t ok = 0;
+    for (uint32_t i = 0; i < 100; i++) {
+        HANDLE h = ObpAllocateHandle(&et, obj, 0x1, 0);
+        if (h < 0) break;
+        ok++;
+    }
+    TEST_ASSERT_EQ(ok, 100, "all 100 handles reachable at a non-power-of-2 limit");
+    HANDLE over = ObpAllocateHandle(&et, obj, 0x1, 0);
+    TEST_ASSERT_EQ(over, INVALID_HANDLE_VALUE, "101st denied (quota exactly 100)");
+    TEST_ASSERT_EQ(et.quota_warned, 1, "quota_warned armed at exhaustion");
+    /* Raising the limit re-arms the one-shot so a later episode is reported. */
+    ob_handle_table_set_limit(&et, 200);
+    TEST_ASSERT_EQ(et.quota_warned, 0, "set_limit re-arms quota_warned");
+    ob_handle_table_destroy(&et);
+
+    /* Zero-limit sentinel: HANDLE_TABLE_LIMIT_UNLIMITED disables the quota. */
+    ob_handle_table_set_limit(&ht, HANDLE_TABLE_LIMIT_UNLIMITED);
+    TEST_ASSERT_EQ(ht.handle_limit, 0, "set_limit(UNLIMITED) leaves handle_limit 0");
+    HANDLE u0 = ObpAllocateHandle(&ht, obj, 0x1, 0);
+    HANDLE u1 = ObpAllocateHandle(&ht, obj, 0x1, 0);
+    TEST_ASSERT(u0 >= 0 && u1 >= 0, "unlimited (0) quota does not deny allocations");
+    if (u0 >= 0) ObpFreeHandle(&ht, u0);
+    if (u1 >= 0) ObpFreeHandle(&ht, u1);
+
     ObDereferenceObject(obj);
     ob_handle_table_destroy(&ht);
 }
@@ -2152,6 +2234,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: dup create-only cb skip", test_ob_callbacks_dup_create_only_unaffected, TEST_CAT_OB);
     test_suite_register_cat("OB: zero-access no-op cb", test_ob_callbacks_zero_access_noop_allowed, TEST_CAT_OB);
     test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
+    test_suite_register_cat("OB: quota grows past old cap", test_ob_handle_quota_grows_past_old_cap, TEST_CAT_OB);
     test_suite_register_cat("OB: trace", test_ob_trace, TEST_CAT_OB);
     test_suite_register_cat("OB: NT create+open directory", test_nt_create_open_directory, TEST_CAT_OB);
     test_suite_register_cat("OB: NT open directory not found", test_nt_open_directory_not_found, TEST_CAT_OB);
