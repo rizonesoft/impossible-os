@@ -570,6 +570,125 @@ static void test_ob_callbacks(void)
     ob_handle_table_destroy(&ht);
 }
 
+/* ---- Object-callback hardening: CREATE-path access ceiling + stable handle id ---- */
+
+static void test_pre_raise_access(OB_PRE_OPERATION_INFORMATION *info);  /* defined below */
+
+static void test_pre_strip_bit1(OB_PRE_OPERATION_INFORMATION *info)
+{
+    *info->desired_access &= ~0x2u;   /* strip bit 0x2 only */
+}
+
+static void test_pre_readd_bit1(OB_PRE_OPERATION_INFORMATION *info)
+{
+    *info->desired_access |= 0x2u;    /* try to RE-ADD bit 0x2 a prior cb stripped */
+}
+
+static void test_ob_callbacks_hardening(void)
+{
+    static const OBJECT_TYPE hb_tmpl = {
+        .name = "CbHarden", .body_size = 16,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *ctype = ob_create_type(&hb_tmpl);
+    TEST_ASSERT(ctype != (void *)0, "ob_create_type for cb-harden");
+    if (!ctype) return;
+
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+    void *obj = ob_alloc_object(ctype);
+    TEST_ASSERT(obj != (void *)0, "alloc object for cb-harden");
+
+    /* (1) CREATE-path ceiling: a callback that ORs in a bit ABOVE the requested
+     * mask must not mint unrequested access. Request 0x0001; callback ORs
+     * 0x10000002; ob_invoke_pre_callbacks clamps to the request ceiling. */
+    OB_CALLBACK_REGISTRATION raise_reg;
+    raise_reg.version = OB_CALLBACK_VERSION;
+    raise_reg.operation_count = 1;
+    raise_reg.altitude = 100;
+    raise_reg.context = (void *)0;
+    raise_reg.operations[0].object_type   = ctype;
+    raise_reg.operations[0].operations    = (uint32_t)OB_OPERATION_HANDLE_CREATE;
+    raise_reg.operations[0].pre_callback  = test_pre_raise_access;  /* ORs 0x10000002 */
+    raise_reg.operations[0].post_callback = (void *)0;
+    OB_CALLBACK_HANDLE rh = OB_INVALID_CALLBACK_HANDLE;
+    TEST_ASSERT(ObRegisterCallbacks(&raise_reg, &rh) == 0, "register raise cb");
+
+    HANDLE he = ObpAllocateHandle(&ht, obj, 0x0001, 0);
+    TEST_ASSERT(he >= 0, "create-path handle allocated");
+    HANDLE_TABLE_ENTRY *ee = ObpLookupHandle(&ht, he);
+    TEST_ASSERT(ee && ee->granted_access == 0x0001,
+                "CREATE-path access clamped to request ceiling (no elevation)");
+    ObpFreeHandle(&ht, he);
+    ObUnRegisterCallbacks(rh);
+
+    /* (2) Stable handle identity across an altitude-shift insertion. Register
+     * cb_hi (altitude 200) -> h_hi; then cb_lo (altitude 100) inserts BEFORE it
+     * and shifts the array. h_hi must still identify cb_hi, not cb_lo's slot. */
+    OB_CALLBACK_REGISTRATION hi, lo;
+    hi = raise_reg;  /* reuse fields */
+    hi.altitude = 200;
+    hi.operations[0].pre_callback  = test_pre_strip_terminate;  /* strips 0x1 */
+    hi.operations[0].post_callback = (void *)0;
+    lo = hi;
+    lo.altitude = 100;
+    lo.operations[0].pre_callback  = test_pre_strip_bit1;       /* strips 0x2 */
+
+    OB_CALLBACK_HANDLE h_hi = OB_INVALID_CALLBACK_HANDLE;
+    OB_CALLBACK_HANDLE h_lo = OB_INVALID_CALLBACK_HANDLE;
+    TEST_ASSERT(ObRegisterCallbacks(&hi, &h_hi) == 0, "register hi-altitude cb");
+    TEST_ASSERT(ObRegisterCallbacks(&lo, &h_lo) == 0, "register lo-altitude cb");
+    TEST_ASSERT(h_hi != h_lo, "callback handles are distinct identities");
+
+    /* Remove cb_hi by its handle. If handles were array positions, the shift
+     * from inserting cb_lo would make h_hi remove the wrong node. */
+    ObUnRegisterCallbacks(h_hi);
+
+    /* Only cb_lo (strips 0x2) should remain. Request 0x3 -> 0x2 stripped, 0x1 kept. */
+    HANDLE hs = ObpAllocateHandle(&ht, obj, 0x3, 0);
+    TEST_ASSERT(hs >= 0, "handle allocated after selective unregister");
+    HANDLE_TABLE_ENTRY *es = ObpLookupHandle(&ht, hs);
+    TEST_ASSERT(es && (es->granted_access & 0x2) == 0,
+                "lo-altitude cb still active (bit 0x2 stripped)");
+    TEST_ASSERT(es && (es->granted_access & 0x1) != 0,
+                "hi-altitude cb correctly removed by stable id (bit 0x1 kept)");
+
+    ObpFreeHandle(&ht, hs);
+    ObUnRegisterCallbacks(h_lo);
+
+    /* (3) Chain monotonicity: a later (higher-altitude) callback must NOT be
+     * able to re-add a right an earlier (lower-altitude) callback stripped.
+     * cb_strip (altitude 100) strips 0x2; cb_readd (altitude 200) ORs 0x2 back.
+     * The monotonic ceiling clamps cb_readd back to the pre-callback mask, so
+     * 0x2 stays stripped -- the earlier anti-tamper filter wins. */
+    OB_CALLBACK_REGISTRATION cstrip, creadd;
+    cstrip = lo;   /* altitude 100, strips 0x2 */
+    cstrip.operations[0].pre_callback = test_pre_strip_bit1;
+    creadd = lo;
+    creadd.altitude = 200;
+    creadd.operations[0].pre_callback = test_pre_readd_bit1;   /* ORs 0x2 back */
+
+    OB_CALLBACK_HANDLE h_s = OB_INVALID_CALLBACK_HANDLE;
+    OB_CALLBACK_HANDLE h_r = OB_INVALID_CALLBACK_HANDLE;
+    TEST_ASSERT(ObRegisterCallbacks(&cstrip, &h_s) == 0, "register strip cb");
+    TEST_ASSERT(ObRegisterCallbacks(&creadd, &h_r) == 0, "register re-add cb");
+
+    HANDLE hc = ObpAllocateHandle(&ht, obj, 0x3, 0);
+    TEST_ASSERT(hc >= 0, "handle allocated through strip+readd chain");
+    HANDLE_TABLE_ENTRY *ec = ObpLookupHandle(&ht, hc);
+    TEST_ASSERT(ec && (ec->granted_access & 0x2) == 0,
+                "later cb cannot re-add a right an earlier cb stripped (monotonic)");
+    TEST_ASSERT(ec && (ec->granted_access & 0x1) != 0,
+                "unrelated requested bit 0x1 preserved through the chain");
+
+    ObpFreeHandle(&ht, hc);
+    ObUnRegisterCallbacks(h_r);
+    ObUnRegisterCallbacks(h_s);
+    ObDereferenceObject(obj);
+    ob_handle_table_destroy(&ht);
+}
+
 /* ---- NtDuplicateObject access cap is callback-proof ---- */
 
 static void test_pre_raise_access(OB_PRE_OPERATION_INFORMATION *info)
@@ -1925,6 +2044,7 @@ void test_register_ob(void)
     test_suite_register_cat("OB: type stats", test_ob_type_stats, TEST_CAT_OB);
     test_suite_register_cat("OB: stat export clamp + no-handle types", test_ob_stat_export_clamp, TEST_CAT_OB);
     test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);
+    test_suite_register_cat("OB: callback hardening (ceiling + stable id)", test_ob_callbacks_hardening, TEST_CAT_OB);
     test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
     test_suite_register_cat("OB: trace", test_ob_trace, TEST_CAT_OB);
     test_suite_register_cat("OB: NT create+open directory", test_nt_create_open_directory, TEST_CAT_OB);

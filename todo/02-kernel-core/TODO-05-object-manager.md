@@ -459,18 +459,29 @@ Allow kernel-mode drivers to register pre- and post-operation callbacks on handl
 - [x] Define `OB_CALLBACK_REGISTRATION` -- `{version, altitude, context, operation_count, operations[]}`
 - [x] Implement `ObRegisterCallbacks(registration, &handle)`:
   - Validates all fields; inserts into 16-slot array sorted by altitude; irqsave spinlock
-  - Returns a registration handle (array index) for later unregistration
-- [x] Implement `ObUnRegisterCallbacks(handle)` -- removes callback node, shifts array down, frees slot
+  - Returns a **stable monotonic `int32` id** (`g_next_cb_id` from 1) as the handle, decoupled from array position so altitude-sort shifts never invalidate it; refuses cleanly at `INT32_MAX`
+- [x] Implement `ObUnRegisterCallbacks(handle)` -- finds node by **id-scan** (not array index; the altitude-sorted array shifts so a slot can later hold a different registration), shifts down, zeroes freed slot
 - [x] In `ObpAllocateHandle()`: `ob_invoke_pre_callbacks(HANDLE_CREATE)` before security check; denies if access zeroed
 - [x] In `NtDuplicateObject()`: `ob_invoke_pre_callbacks(HANDLE_DUPLICATE)` before `ObpAllocateHandle`
 - [x] After successful handle creation/duplication: `ob_invoke_post_callbacks()` with granted access
-- [x] 10 test assertions: register, strip TERMINATE, post-callback invoked, unregister restores full access
+- [x] **Snapshot-under-lock, invoke-outside-lock** (`ob_dispatch_pre`/`ob_dispatch_post`, `noinline`; relaxed-load `count==0` fast path) so a callback that allocates/logs/re-enters can't deadlock with `s_cb_lock` held + IRQs off
+- [x] **Monotonically-decreasing access ceiling** (`*access &= prior` per pre-callback): a callback can only STRIP rights, never mint unrequested ones or re-add a right an earlier filter removed; deny if fully stripped
+- [x] 16 test assertions: base callbacks (`test_ob_callbacks`); CREATE-path elevation clamp, stable-id survives altitude-shift, chain-monotonicity re-add rejected (`test_ob_callbacks_hardening`)
+- [/] **Drain in-flight invokes before `ObUnRegisterCallbacks` returns** so a freed `context` can't UAF a live invoke; harmless today (static callbacks). -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md §4`
 - [x] Commit: `"kernel: ob -- ObRegisterCallbacks handle operation filtering"`
 
 > [!NOTE]
 > Linux uses LSM (Linux Security Modules) hooks at a different layer. The Ob callback approach matches Win32 driver compatibility requirements and enables anti-tamper protection for critical processes (→ XREF: `TODO-15-security-reference-monitor.md` for PPL integration).
 
 **Test checkpoint:** Register a callback for `ObpProcessType` that strips `PROCESS_TERMINATE` from `desired_access`. Open a handle to a process -- verify `granted_access` lacks `PROCESS_TERMINATE`. Unregister callback -- verify full access is restored. Multiple callbacks at different altitudes invoked in order. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD910)`-`POST16(0xD913)`.
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | N suites, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `ObRegisterCallbacks`/`ObUnRegisterCallbacks` + pre/post invoke in `ob_callback.c`, hardened with stable monotonic `int32` ids, snapshot-under-lock/invoke-outside-lock dispatch, and a strip-only monotonic access ceiling.
+> - **How it integrates** -- pre-callbacks fire in `ObpAllocateHandle` (CREATE) and `NtDuplicateObject` (DUP) before the security check; post-callbacks fire with granted access; `s_cb_lock` is held only over the snapshot, never over driver code.
+> - **Tests** -- 16 assertions across `test_ob_callbacks` + `test_ob_callbacks_hardening` (elevation clamp, stable-id-across-shift, chain re-add rejected).
+> - **Scope boundary** -- §13 owns the registry + dispatch; in-flight-invoke drain on unregister is deferred to `04-drivers-hardware/TODO-05 §4`; PPL anti-tamper integration is `TODO-15-security-reference-monitor.md`.
 
 ---
 

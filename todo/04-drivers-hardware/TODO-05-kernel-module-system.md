@@ -136,6 +136,7 @@ Parse an `ET_REL`/`EM_X86_64` ELF file from disk, allocate PMM-backed executable
   - [ ] Locate `module_init` symbol; call it
   - [ ] Append `loaded_module_t` to `g_modules` list
 - [ ] `module_unload(name)`: find module in list; call `cleanup()`; `vmm_unmap(base, size)`; `pmm_free(base)`
+- [ ] Before `pmm_free(base)`, unregister + **drain** any Ob handle-op callbacks the module registered (pages hold the callback fn + `context`) -> XREF: `02-kernel-core/TODO-05-object-manager.md §13`
 - [ ] Test: load a trivial `.kmod` that calls `klog(LOG_INFO, "TEST", "Hello from module")` -- verify serial output
 - [ ] Commit: `"kernel: ELF module loader -- ET_REL parser, R_X86_64_* relocations, ksym resolution"`
 
