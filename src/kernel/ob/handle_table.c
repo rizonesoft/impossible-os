@@ -125,8 +125,9 @@ static int handle_table_grow(HANDLE_TABLE *table)
 
 /* --- ObpAllocateHandle --------------------------------------------------- */
 
-HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
-                         uint32_t access, uint32_t attrs)
+static HANDLE obp_allocate_handle_inner(HANDLE_TABLE *table, void *object,
+                                        uint32_t access, uint32_t attrs,
+                                        int fire_create_cb)
 {
     uint32_t i;
     OBJECT_HEADER *hdr;
@@ -135,9 +136,12 @@ HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
         return INVALID_HANDLE_VALUE;
 
     /* Object callbacks (S13): pre-callbacks can strip access bits or deny.
-     * Runs before the security check so callbacks filter first. */
+     * Runs before the security check so callbacks filter first. Suppressed on
+     * the duplicate path (fire_create_cb == 0) -- NtDuplicateObject fires its
+     * own HANDLE_DUPLICATE callbacks, so a CREATE-only callback must not also
+     * filter the duplicate (operation mask stays authoritative). */
     hdr = OB_HEADER_FROM_BODY(object);
-    if (hdr->type) {
+    if (fire_create_cb && hdr->type) {
         if (ob_invoke_pre_callbacks(OB_OPERATION_HANDLE_CREATE,
                                     object, hdr->type, &access) != 0)
             return INVALID_HANDLE_VALUE;  /* callback denied */
@@ -202,8 +206,9 @@ found:
         ob_stat_lift_peak(&mtype->peak_handles, cur);
     }
 
-    /* Object callbacks (S13): post-callbacks with granted access */
-    if (hdr->type)
+    /* Object callbacks (S13): post-callbacks with granted access. Suppressed on
+     * the duplicate path (see the pre-callback note above). */
+    if (fire_create_cb && hdr->type)
         ob_invoke_post_callbacks(OB_OPERATION_HANDLE_CREATE,
                                  object, hdr->type, access);
 
@@ -224,6 +229,20 @@ found:
     }
 
     return (HANDLE)(i * 4);
+}
+
+HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
+                         uint32_t access, uint32_t attrs)
+{
+    return obp_allocate_handle_inner(table, object, access, attrs,
+                                     /* fire_create_cb */ 1);
+}
+
+HANDLE ObpAllocateHandleNoCreateCb(HANDLE_TABLE *table, void *object,
+                                   uint32_t access, uint32_t attrs)
+{
+    return obp_allocate_handle_inner(table, object, access, attrs,
+                                     /* fire_create_cb */ 0);
 }
 
 /* --- ObpFreeHandle ------------------------------------------------------- */

@@ -466,7 +466,7 @@ Allow kernel-mode drivers to register pre- and post-operation callbacks on handl
 - [x] After successful handle creation/duplication: `ob_invoke_post_callbacks()` with granted access
 - [x] **Snapshot-under-lock, invoke-outside-lock** (`ob_dispatch_pre`/`ob_dispatch_post`, `noinline`; relaxed-load `count==0` fast path) so a callback that allocates/logs/re-enters can't deadlock with `s_cb_lock` held + IRQs off
 - [x] **Monotonically-decreasing access ceiling** (`*access &= prior` per pre-callback): a callback can only STRIP rights, never mint unrequested ones or re-add a right an earlier filter removed; deny if fully stripped
-- [x] 16 test assertions: base callbacks (`test_ob_callbacks`); CREATE-path elevation clamp, stable-id survives altitude-shift, chain-monotonicity re-add rejected (`test_ob_callbacks_hardening`)
+- [x] Tests: base callbacks (`test_ob_callbacks`); ceiling clamp + stable-id-across-shift + chain-monotonicity (`test_ob_callbacks_hardening`); CREATE-only cb not fired on a duplicate; zero-access request not denied by a no-op cb
 - [/] **Drain in-flight invokes before `ObUnRegisterCallbacks` returns** so a freed `context` can't UAF a live invoke; harmless today (static callbacks). -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md §4`
 - [x] Commit: `"kernel: ob -- ObRegisterCallbacks handle operation filtering"`
 
@@ -475,13 +475,17 @@ Allow kernel-mode drivers to register pre- and post-operation callbacks on handl
 
 **Test checkpoint:** Register a callback for `ObpProcessType` that strips `PROCESS_TERMINATE` from `desired_access`. Open a handle to a process -- verify `granted_access` lacks `PROCESS_TERMINATE`. Unregister callback -- verify full access is restored. Multiple callbacks at different altitudes invoked in order. Verify on QEMU WHPX + TCG + VirtualBox. `POST16(0xD910)`-`POST16(0xD913)`.
 
-> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | N suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | OB suite 389 kernel PASS, 0 failures
 
 > **Notes:**
 > - **What shipped** -- `ObRegisterCallbacks`/`ObUnRegisterCallbacks` + pre/post invoke in `ob_callback.c`, hardened with stable monotonic `int32` ids, snapshot-under-lock/invoke-outside-lock dispatch, and a strip-only monotonic access ceiling.
-> - **How it integrates** -- pre-callbacks fire in `ObpAllocateHandle` (CREATE) and `NtDuplicateObject` (DUP) before the security check; post-callbacks fire with granted access; `s_cb_lock` is held only over the snapshot, never over driver code.
-> - **Tests** -- 16 assertions across `test_ob_callbacks` + `test_ob_callbacks_hardening` (elevation clamp, stable-id-across-shift, chain re-add rejected).
+> - **How it integrates** -- CREATE callbacks fire in `ObpAllocateHandle`; `NtDuplicateObject` fires DUPLICATE callbacks and allocs the dest via `ObpAllocateHandleNoCreateCb`, so a CREATE-only cb never sees a duplicate (operation mask authoritative).
+> - **Tests** -- `test_ob_callbacks` + `test_ob_callbacks_hardening` (ceiling / stable-id / chain-monotonicity) + dup-create-only-not-fired + zero-access-noop-allowed.
 > - **Scope boundary** -- §13 owns the registry + dispatch; in-flight-invoke drain on unregister is deferred to `04-drivers-hardware/TODO-05 §4`; PPL anti-tamper integration is `TODO-15-security-reference-monitor.md`.
+
+> **Verified:** 2026-06-22 | ship `3e466f86` + review fixes | 12/13 items | build OK | tests 6878 kernel + 16 user PASS
+> **Deferred:** [H] in-flight-invoke drain on `ObUnRegisterCallbacks` -- a driver freeing `context` post-unregister could UAF a snapshotted invoke (no dynamic registrants / free path today) -> XREF: 04-drivers-hardware/TODO-05-kernel-module-system.md §4 (item: "Before `pmm_free(base)`, unregister + drain any Ob handle-op callbacks the module registered" at line 139)
+> **Quality reviewed:** 2026-06-22 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) + auditor | 2H+1M+2L fixed, 1H deferred | scope: kernel-code-quality
 
 ---
 
@@ -569,7 +573,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [x] Registered in `test_runner_init()`: `test_register_ob()`
 - [x] Commit: `"test: add object manager test suite"`
 - [ ] §12 tests: `ObpEventType->total_objects` tracks create/delete; `peak_objects` high-water; `NtQueryObject(ObjectTypeInformation)` returns counters; `NtQueryObject(ObjectTypesInformation)` enumerates all types
-- [x] §13 tests: `ObRegisterCallbacks` pre-callback strips TERMINATE; post-callback invoked; `ObUnRegisterCallbacks` restores full access (10 assertions in `test_ob.c`)
+- [x] §13 tests: pre-callback strips TERMINATE, post-callback invoked, unregister restores access; hardening (ceiling/stable-id/chain-monotonicity), dup-create-only-not-fired, zero-access-noop-allowed (`test_ob.c`)
 - [x] §14 tests: handle limit set to 3, allocs 0-2 succeed, 3rd denied, free+retry succeeds, clamp to ABSOLUTE_MAX (8 assertions in `test_ob.c`)
 - [x] §15 tests: enable/disable tracing, trace info allocated, tagged ref/deref, trace log count, refcount verified (7 assertions in `test_ob.c`)
 

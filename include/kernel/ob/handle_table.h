@@ -55,10 +55,19 @@ int ob_handle_table_init(HANDLE_TABLE *table);
 /* Destroy a handle table: close all handles and free the entry array. */
 void ob_handle_table_destroy(HANDLE_TABLE *table);
 
-/* Allocate a handle for an object. Calls ObReferenceObject.
+/* Allocate a handle for an object. Calls ObReferenceObject and fires the
+ * OB_OPERATION_HANDLE_CREATE pre/post callbacks (S13).
  * Returns HANDLE (>= 0) on success, INVALID_HANDLE_VALUE on failure. */
 HANDLE ObpAllocateHandle(HANDLE_TABLE *table, void *object,
                          uint32_t access, uint32_t attrs);
+
+/* Same as ObpAllocateHandle but does NOT fire HANDLE_CREATE object callbacks.
+ * For the duplicate path (NtDuplicateObject), which fires its own
+ * OB_OPERATION_HANDLE_DUPLICATE callbacks -- so a CREATE-only callback must not
+ * also see the duplicate (the operation mask stays authoritative, matching
+ * Win11 ObRegisterCallbacks). XREF: 02-kernel-core/TODO-05-object-manager.md S13. */
+HANDLE ObpAllocateHandleNoCreateCb(HANDLE_TABLE *table, void *object,
+                                   uint32_t access, uint32_t attrs);
 
 /* Free a handle. Calls on_close (if handle_count drops to 0) and
  * ObDereferenceObject. Returns 0 on success, -1 on invalid handle. */

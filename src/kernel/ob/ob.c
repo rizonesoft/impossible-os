@@ -450,14 +450,19 @@ int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
      * fire the type on_close (File nulls its backing, Timer detaches) and we
      * would hand back a live handle to a torn-down object. With the dest created
      * first, closing the source leaves handle_count >= 1 throughout. */
-    new_h = ObpAllocateHandle(dst_ht, src_obj, access, attrs);
+    /* No-CREATE-callback variant: this is a DUPLICATE, and the HANDLE_DUPLICATE
+     * callbacks already fired above. Firing HANDLE_CREATE here too would let a
+     * CREATE-only callback wrongly filter (or deny, or be notified of) the
+     * duplicate -- the operation mask must stay authoritative (Win11 parity). */
+    new_h = ObpAllocateHandleNoCreateCb(dst_ht, src_obj, access, attrs);
     if (new_h == INVALID_HANDLE_VALUE) {
         ObDereferenceObject(src_obj);
         return -1;
     }
 
-    /* Hard-cap the STORED grant to the request ceiling -- covers
-     * ObpAllocateHandle's own HANDLE_CREATE pre-callback raising `access`. The
+    /* Hard-cap the STORED grant to the request ceiling (defense-in-depth: the
+     * dup destination no longer fires a HANDLE_CREATE pre-callback that could
+     * raise `access`, but `access` is already clamped to request_ceiling). The
      * stored value is the non-bypassable ceiling; capture it for the
      * post-callback so observers see the real grant. */
     {
@@ -476,7 +481,8 @@ int NtDuplicateObject(HANDLE_TABLE *src_ht, HANDLE src_handle,
      * our snapshot. In that race, roll the destination back (force-free, clearing
      * any protect bit the caller set on it) so we never leave both handles open
      * or return success for a transfer whose source could not be closed. The
-     * transient HANDLE_CREATE callback fired for that rolled-back dest is the
+     * rolled-back dest fires no spurious HANDLE_CREATE callback (allocated via
+     * the no-create-callback variant); the residual atomicity gap is the
      * non-transactional-primitive limit owned by the per-handle-table lock /
      * ObpReferenceObjectByHandle work. */
     if ((options & DUPLICATE_CLOSE_SOURCE)

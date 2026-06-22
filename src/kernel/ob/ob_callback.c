@@ -19,6 +19,9 @@
 /* ---- Callback registry -------------------------------------------------- */
 
 #define OB_MAX_CALLBACKS  16
+/* Highest issuable registration id. g_next_cb_id is refused here so the
+ * subsequent ++ can never signed-overflow (UB) and no handle is ever <= 0. */
+#define OB_CB_ID_MAX      0x7FFFFFFF
 /* Upper bound on (type, op) matches for one invoke: every node can carry up to
  * OB_MAX_CALLBACK_OPS entries that match. Snapshots are taken into a local array
  * of this size so driver callbacks run OUTSIDE the lock (see invoke helpers). */
@@ -72,7 +75,7 @@ int ObRegisterCallbacks(const OB_CALLBACK_REGISTRATION *reg,
     /* Refuse before the id counter would overflow int32 (UB) or issue a
      * non-positive handle that ObUnRegisterCallbacks rejects. 2^31 is far
      * beyond any real register/unregister churn; fail cleanly if ever reached. */
-    if (g_next_cb_id == 0x7FFFFFFF) {
+    if (g_next_cb_id == OB_CB_ID_MAX) {
         spin_unlock_irqrestore(&s_cb_lock, irq_flags);
         klog(LOG_ERROR, "ob", "ObRegisterCallbacks: id space exhausted");
         return -1;
@@ -101,7 +104,10 @@ int ObRegisterCallbacks(const OB_CALLBACK_REGISTRATION *reg,
     for (uint16_t k = 0; k < reg->operation_count; k++)
         node->ops[k] = reg->operations[k];
 
-    g_callback_count++;
+    /* Atomic store pairs with the lockless relaxed load in the invoke fast
+     * path (ob_invoke_pre/post_callbacks); under the lock here, so the RMW
+     * atomicity is belt-and-suspenders but keeps the load/store well-formed. */
+    __atomic_fetch_add(&g_callback_count, 1, __ATOMIC_RELAXED);
     OB_CALLBACK_HANDLE handle = (OB_CALLBACK_HANDLE)node->id;
 
     spin_unlock_irqrestore(&s_cb_lock, irq_flags);
@@ -142,11 +148,14 @@ void ObUnRegisterCallbacks(OB_CALLBACK_HANDLE handle)
     for (uint32_t j = pos; j + 1 < g_callback_count; j++)
         g_callbacks[j] = g_callbacks[j + 1];
 
-    g_callback_count--;
+    /* Atomic store pairs with the lockless relaxed load in the invoke fast
+     * path; __atomic_sub_fetch returns the post-decrement count = index of the
+     * now-freed last slot. */
+    uint32_t freed = __atomic_sub_fetch(&g_callback_count, 1, __ATOMIC_RELAXED);
 
     /* Zero the freed slot */
-    g_callbacks[g_callback_count].active = 0;
-    g_callbacks[g_callback_count].id = 0;
+    g_callbacks[freed].active = 0;
+    g_callbacks[freed].id = 0;
 
     spin_unlock_irqrestore(&s_cb_lock, irq_flags);
 
@@ -211,8 +220,13 @@ static int ob_dispatch_pre(OB_OPERATION op, void *object,
         };
         snap[i].pre(&info);
         *access &= prior;       /* strip-only: cannot exceed the pre-callback mask */
-        if (*access == 0)
-            return -1;          /* fully stripped -> deny */
+        /* Deny only when THIS callback zeroed a previously-nonzero mask -- i.e.
+         * a filter actively stripped the last right (the header's "desired_access
+         * was zeroed" deny contract). A request that ENTERED this callback at 0
+         * (prior == 0) was never granted anything to strip, so a no-op callback
+         * on a legitimately zero-access request must not flip it to a denial. */
+        if (*access == 0 && prior != 0)
+            return -1;          /* callback stripped the last right -> deny */
     }
     return 0;
 }

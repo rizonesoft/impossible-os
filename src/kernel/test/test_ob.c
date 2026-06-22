@@ -755,6 +755,110 @@ static void test_ob_duplicate_cap_callback_proof(void)
     ob_handle_table_destroy(&dst_ht);
 }
 
+/* ---- A CREATE-only callback must NOT fire on a duplicate (operation mask is authoritative) ---- */
+
+static void test_pre_noop(OB_PRE_OPERATION_INFORMATION *info)
+{
+    (void)info;   /* inspect-only: never mutates desired_access */
+}
+
+static void test_ob_callbacks_dup_create_only_unaffected(void)
+{
+    OBJECT_TYPE tmpl = {
+        .name = "DupCreOnly", .body_size = 32,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *t = ob_create_type(&tmpl);
+    TEST_ASSERT(t != (void *)0, "ob_create_type for dup-create-only");
+    if (!t) return;
+
+    void *obj = ob_alloc_object(t);
+    HANDLE_TABLE src_ht, dst_ht;
+    ob_handle_table_init(&src_ht);
+    ob_handle_table_init(&dst_ht);
+    /* Create the source BEFORE registering the callback, so its own grant keeps
+     * the full 0x3 (the source is a real create but the cb isn't active yet). */
+    HANDLE src_h = ObpAllocateHandle(&src_ht, obj, 0x3, 0);
+    TEST_ASSERT(src_h >= 0, "source handle allocated");
+
+    /* Register a callback for HANDLE_CREATE ONLY that strips 0x1. */
+    OB_CALLBACK_REGISTRATION reg;
+    reg.version = OB_CALLBACK_VERSION;
+    reg.operation_count = 1;
+    reg.altitude = 90;
+    reg.context = (void *)0;
+    reg.operations[0].object_type   = t;
+    reg.operations[0].operations    = (uint32_t)OB_OPERATION_HANDLE_CREATE;  /* CREATE only */
+    reg.operations[0].pre_callback  = test_pre_strip_terminate;              /* strips 0x1 */
+    reg.operations[0].post_callback = (void *)0;
+    OB_CALLBACK_HANDLE cbh = OB_INVALID_CALLBACK_HANDLE;
+    TEST_ASSERT(ObRegisterCallbacks(&reg, &cbh) == 0, "register create-only strip cb");
+
+    /* Duplicate. No HANDLE_DUPLICATE callback is registered, and the CREATE-only
+     * callback must NOT fire on the duplicate path -> bit 0x1 must survive. */
+    HANDLE dst_h = INVALID_HANDLE_VALUE;
+    int rc = NtDuplicateObject(&src_ht, src_h, &dst_ht, &dst_h, 0x3, 0, 0);
+    TEST_ASSERT(rc == 0, "duplicate succeeds with create-only cb registered");
+    HANDLE_TABLE_ENTRY *de = ObpLookupHandle(&dst_ht, dst_h);
+    TEST_ASSERT(de != (void *)0 && (de->granted_access & 0x1) != 0,
+                "CREATE-only callback did NOT strip the duplicate (operation mask authoritative)");
+    TEST_ASSERT(de != (void *)0 && de->granted_access == 0x3,
+                "duplicate retains full requested access (no spurious create-cb filtering)");
+
+    ObUnRegisterCallbacks(cbh);
+    if (dst_h != INVALID_HANDLE_VALUE) ObpFreeHandle(&dst_ht, dst_h);
+    ObpFreeHandle(&src_ht, src_h);
+    ObDereferenceObject(obj);
+    ob_handle_table_destroy(&src_ht);
+    ob_handle_table_destroy(&dst_ht);
+}
+
+/* ---- A no-op callback must not turn a legitimately zero-access request into a denial ---- */
+
+static void test_ob_callbacks_zero_access_noop_allowed(void)
+{
+    OBJECT_TYPE tmpl = {
+        .name = "ZeroAcc", .body_size = 16,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *t = ob_create_type(&tmpl);
+    TEST_ASSERT(t != (void *)0, "ob_create_type for zero-access");
+    if (!t) return;
+
+    /* Inspect-only CREATE callback that never mutates desired_access. */
+    OB_CALLBACK_REGISTRATION reg;
+    reg.version = OB_CALLBACK_VERSION;
+    reg.operation_count = 1;
+    reg.altitude = 90;
+    reg.context = (void *)0;
+    reg.operations[0].object_type   = t;
+    reg.operations[0].operations    = (uint32_t)OB_OPERATION_HANDLE_CREATE;
+    reg.operations[0].pre_callback  = test_pre_noop;
+    reg.operations[0].post_callback = (void *)0;
+    OB_CALLBACK_HANDLE cbh = OB_INVALID_CALLBACK_HANDLE;
+    TEST_ASSERT(ObRegisterCallbacks(&reg, &cbh) == 0, "register no-op create cb");
+
+    void *obj = ob_alloc_object(t);
+    HANDLE_TABLE ht;
+    ob_handle_table_init(&ht);
+
+    /* A zero-access request with a no-op callback must NOT be denied: the deny
+     * contract fires only when a callback ZEROES a previously-nonzero mask, not
+     * when the request entered the callback already at 0. */
+    HANDLE h = ObpAllocateHandle(&ht, obj, 0x0, 0);
+    TEST_ASSERT(h >= 0, "zero-access request allowed through no-op callback (not denied)");
+    HANDLE_TABLE_ENTRY *e = ObpLookupHandle(&ht, h);
+    TEST_ASSERT(e != (void *)0 && e->granted_access == 0x0,
+                "zero-access handle granted exactly zero rights");
+
+    ObUnRegisterCallbacks(cbh);
+    if (h >= 0) ObpFreeHandle(&ht, h);
+    ObDereferenceObject(obj);
+    ob_handle_table_destroy(&ht);
+}
+
 /* ---- DUPLICATE_CLOSE_SOURCE does not prematurely tear down a last handle ---- */
 
 static volatile uint32_t g_onclose_count = 0;
@@ -2045,6 +2149,8 @@ void test_register_ob(void)
     test_suite_register_cat("OB: stat export clamp + no-handle types", test_ob_stat_export_clamp, TEST_CAT_OB);
     test_suite_register_cat("OB: callbacks", test_ob_callbacks, TEST_CAT_OB);
     test_suite_register_cat("OB: callback hardening (ceiling + stable id)", test_ob_callbacks_hardening, TEST_CAT_OB);
+    test_suite_register_cat("OB: dup create-only cb skip", test_ob_callbacks_dup_create_only_unaffected, TEST_CAT_OB);
+    test_suite_register_cat("OB: zero-access no-op cb", test_ob_callbacks_zero_access_noop_allowed, TEST_CAT_OB);
     test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
     test_suite_register_cat("OB: trace", test_ob_trace, TEST_CAT_OB);
     test_suite_register_cat("OB: NT create+open directory", test_nt_create_open_directory, TEST_CAT_OB);
