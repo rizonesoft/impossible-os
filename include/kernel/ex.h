@@ -135,6 +135,53 @@ SLIST_ENTRY *ExInterlockedFlushSList(SLIST_HEADER *head);
 /* Current depth (0..SLIST_DEPTH_MAX). Coherent single-snapshot read. */
 uint16_t ExQueryDepthSList(SLIST_HEADER *head);
 
+/* ===========================================================================
+ * S3 -- Rundown Protection (EX_RUNDOWN_REF)
+ *
+ * A reference barrier for safe teardown: short-lived users take a rundown
+ * reference around their access to a shared object; the owner calls
+ * ExWaitForRundownProtectionRelease before freeing, which rejects new
+ * references and blocks until all outstanding ones drain. Matches the Windows
+ * EX_RUNDOWN_REF surface.
+ *
+ * Single pointer-sized atomic: bit 0 = rundown-active, bits 1+ = refcount (each
+ * outstanding reference is +2). Lock-free acquire/release; the wait is a
+ * cooperative PASSIVE_LEVEL poll (the kernel event_t has a lost-wakeup race
+ * between its state-read and enqueue, so rundown polls Count instead). No
+ * allocation -- the EX_RUNDOWN_REF is caller-owned.
+ *
+ * IRQL: acquire/release/query are DISPATCH-safe (lock-free, no block); WAIT is
+ * PASSIVE_LEVEL only (it yields).
+ * =========================================================================== */
+
+typedef struct _EX_RUNDOWN_REF {
+    volatile uint64_t Count;   /* bit0 = rundown-active; bits1+ = refcount << 1 */
+} EX_RUNDOWN_REF;
+
+/* Arm an empty rundown ref (no refs, not running down). */
+void ExInitializeRundownProtection(EX_RUNDOWN_REF *r);
+
+/* Re-arm a ref after a completed rundown so it can be reused. */
+void ExReInitializeRundownProtection(EX_RUNDOWN_REF *r);
+
+/* Take a rundown reference. Returns true if acquired; false if rundown has
+ * already begun (caller must NOT touch the protected object). DISPATCH-safe. */
+bool ExAcquireRundownProtection(EX_RUNDOWN_REF *r);
+
+/* Drop a rundown reference taken by a successful acquire. DISPATCH-safe. */
+void ExReleaseRundownProtection(EX_RUNDOWN_REF *r);
+
+/* Begin rundown: reject new acquires, then block until all outstanding refs
+ * release. PASSIVE_LEVEL only (cooperative yield poll). */
+void ExWaitForRundownProtectionRelease(EX_RUNDOWN_REF *r);
+
+/* Mark rundown complete immediately (no outstanding refs); subsequent acquires
+ * fail. Use when the owner knows no references are live. */
+void ExRundownCompleted(EX_RUNDOWN_REF *r);
+
+/* True once rundown has begun (acquire would fail). */
+bool ExIsRundownActive(EX_RUNDOWN_REF *r);
+
 /* ex_ready -- true once the Executive support runtime is marked ready.
  *
  * Delegates to the subsystem readiness oracle (kernel_subsystem_ready(

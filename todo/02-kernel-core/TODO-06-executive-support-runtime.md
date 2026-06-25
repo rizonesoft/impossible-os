@@ -45,7 +45,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | -- | :---: | ----------- | ---------- | :----: |
 | 💎 | 1 | Executive headers and namespace | -- | [x] |
 | 💎 | 2 | Interlocked SLIST | §1, atomics | [x] |
-| 💎 | 3 | Rundown protection | §1, atomics, events | [ ] |
+| 💎 | 3 | Rundown protection | §1, atomics, events | [x] |
 | 💎 | 4 | Callback objects | §1, §3, T05, T07 | [ ] |
 | 💎 | 5 | Lookaside lists (NPaged/Paged/Ex) | §2, D03 T03 | [ ] |
 | 💎 | 6 | Fast references | §1, T05 | [ ] |
@@ -118,13 +118,23 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 
 ## 3. Rundown Protection
 
-- [ ] Implement `EX_RUNDOWN_REF` with acquire, release, wait, reinitialize, and completed query.
-- [ ] Guarantee acquire fails after rundown begins.
-- [ ] Wait path must block only at PASSIVE_LEVEL.
-- [ ] Convert ALPC ports, section views, process objects, and object callbacks to use rundown where teardown races exist.
-- [ ] Commit: `"kernel: ex -- rundown protection"`
+- [x] Implement `EX_RUNDOWN_REF` (single `volatile uint64_t Count`: bit0 = rundown-active, bits1+ = refcount<<1) in `src/kernel/ex/ex_rundown.c`.
+  - APIs: `ExInitializeRundownProtection`, `ExAcquireRundownProtection`, `ExReleaseRundownProtection`, `ExWaitForRundownProtectionRelease`, `ExReInitializeRundownProtection`, `ExRundownCompleted`, `ExIsRundownActive`.
+- [x] Guarantee `ExAcquireRundownProtection` returns FALSE once the rundown bit is set (CAS rejects acquire after wait begins).
+- [x] Wait blocks only at PASSIVE_LEVEL via a cooperative `while(refcount>0) yield()` poll, NOT the kernel `event_t` (lost-wakeup race between state-read and enqueue). Caller-owned, no allocation.
+- [/] Convert teardown races -- DEFERRED to owning consumers (primitive ships here):
+  - object callbacks `ob_callback.c` unregister-vs-dispatch race -> XREF TODO-05 §13; Ex callback objects -> §4; ALPC ports -> XREF TODO-24; section/process objects -> XREF TODO-05 §6/§7.
+- [x] Commit: `"kernel: ex -- rundown protection"`
 
-**Test checkpoint:** Acquire after rundown begins returns FALSE; `ExWaitForRundownProtectionRelease` unblocks only after every outstanding ref releases; reinitialize re-arms a completed ref. Verify on bare metal -- SMP acquire/release race timing differs from VMs.
+**Test checkpoint:** `ex` suite proves acquire/nested-acquire/release; `ExRundownCompleted` + post-wait acquire return FALSE; `ExReInitialize` re-arms; and a concurrent kthread holding a ref makes `ExWaitForRundownProtectionRelease` block until the worker releases. Verify on bare metal -- SMP acquire/release race timing differs from VMs.
+
+> **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 9 suites, 0 failures
+> **Notes:**
+> - What shipped: `src/kernel/ex/ex_rundown.c` (`EX_RUNDOWN_REF` acquire/release/wait/reinit/completed/active) + the type/decls in `ex.h`; 4 rundown test suites in `test_ex.c` (incl. concurrent drain).
+> - How it runs / integrates: single atomic word (bit0 active, bits1+ refcount); lock-free CAS acquire (fails once active), atomic-subtract release; wait is a cooperative PASSIVE poll avoiding the `event_t` lost-wakeup race. DISPATCH-safe except wait.
+> - Downstream effects: the drain primitive for teardown-race consumers; resolves the mechanism gap in TODO-05 §13 (ob_callback drain), reciprocally XREF'd.
+> - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h) S3 block.
+> - Scope boundary: §3 owns only the primitive + test; consumer conversions (ob_callback, Ex callbacks §4, ALPC TODO-24, section/process TODO-05 §6/§7) are owner-deferred.
 
 ---
 
@@ -278,7 +288,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | ⭐ | Feature                    | 🪟 Win11                            | 🐧 Linux               | 🚀 Impossible OS          |
 | -- | -------------------------- | ----------------------------------- | ---------------------- | ------------------------- |
 | 💎 | Interlocked SLIST          | ✅ SLIST_HEADER                     | ✅ llist_head          | ✅ §2 cmpxchg16b DCAS     |
-| 💎 | Rundown protection         | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU      | ⬜ Planned -- §3          |
+| 💎 | Rundown protection         | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU      | ✅ §3 atomic + poll-drain |
 | 💎 | Callback objects           | ✅ ExCreateCallback                 | ⚠️ notifier chains     | ⬜ Planned -- §4          |
 | 💎 | Lookaside lists            | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache     | ⬜ Planned -- §5          |
 | 💎 | Fast references            | ✅ EX_FAST_REF                      | ❌ none                | ⬜ Planned -- §6          |

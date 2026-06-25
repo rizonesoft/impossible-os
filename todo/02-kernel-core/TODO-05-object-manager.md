@@ -469,7 +469,8 @@ Allow kernel-mode drivers to register pre- and post-operation callbacks on handl
 - [x] **Snapshot-under-lock, invoke-outside-lock** (`ob_dispatch_pre`/`ob_dispatch_post`, `noinline`; relaxed-load `count==0` fast path) so a callback that allocates/logs/re-enters can't deadlock with `s_cb_lock` held + IRQs off
 - [x] **Monotonically-decreasing access ceiling** (`*access &= prior` per pre-callback): a callback can only STRIP rights, never mint unrequested ones or re-add a right an earlier filter removed; deny if fully stripped
 - [x] Tests: base callbacks (`test_ob_callbacks`); ceiling clamp + stable-id-across-shift + chain-monotonicity (`test_ob_callbacks_hardening`); CREATE-only cb not fired on a duplicate; zero-access request not denied by a no-op cb
-- [/] **Drain in-flight invokes before `ObUnRegisterCallbacks` returns** so a freed `context` can't UAF a live invoke; harmless today (static callbacks). -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md §4`
+- [/] **Drain in-flight invokes before `ObUnRegisterCallbacks` returns** so a freed `context` can't UAF a live invoke; harmless today (static callbacks).
+  - Drain mechanism shipped: `EX_RUNDOWN_REF` -> XREF `02-kernel-core/TODO-06-executive-support-runtime.md §3`; needs per-registration stable rundown storage (array shifts) -> XREF `04-drivers-hardware/TODO-05-kernel-module-system.md §4`
 - [x] Commit: `"kernel: ob -- ObRegisterCallbacks handle operation filtering"`
 
 > [!NOTE]

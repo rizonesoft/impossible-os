@@ -186,6 +186,102 @@ static void test_ex_slist_smp_stress(void)
                    "list drained (depth 0) after balanced stress");
 }
 
+/* ---- S3: Rundown Protection --------------------------------------------- */
+
+static void test_ex_rundown_acquire_release(void)
+{
+    EX_RUNDOWN_REF r;
+    ExInitializeRundownProtection(&r);
+    TEST_ASSERT(!ExIsRundownActive(&r), "fresh ref not active");
+    TEST_ASSERT(ExAcquireRundownProtection(&r), "acquire 1 succeeds");
+    TEST_ASSERT(ExAcquireRundownProtection(&r), "acquire 2 succeeds (nested)");
+    ExReleaseRundownProtection(&r);
+    ExReleaseRundownProtection(&r);
+    TEST_ASSERT(!ExIsRundownActive(&r), "still not active after balanced rel");
+}
+
+static void test_ex_rundown_completed_rejects(void)
+{
+    EX_RUNDOWN_REF r;
+    ExInitializeRundownProtection(&r);
+    ExRundownCompleted(&r);
+    TEST_ASSERT(ExIsRundownActive(&r), "rundown active after Completed");
+    TEST_ASSERT(!ExAcquireRundownProtection(&r), "acquire fails once run down");
+    ExReInitializeRundownProtection(&r);
+    TEST_ASSERT(!ExIsRundownActive(&r), "reinit clears active");
+    TEST_ASSERT(ExAcquireRundownProtection(&r), "acquire succeeds after reinit");
+    ExReleaseRundownProtection(&r);
+}
+
+static void test_ex_rundown_wait_no_refs(void)
+{
+    EX_RUNDOWN_REF r;
+    ExInitializeRundownProtection(&r);
+    /* No outstanding refs: wait returns immediately and arms rundown. */
+    ExWaitForRundownProtectionRelease(&r);
+    TEST_ASSERT(ExIsRundownActive(&r), "wait with no refs arms rundown");
+    TEST_ASSERT(!ExAcquireRundownProtection(&r), "acquire fails after wait begins");
+}
+
+/* Concurrent drain: a worker holds a reference across several yields, then
+ * releases; the main thread's ExWaitForRundownProtectionRelease must block
+ * until that release lands (proving the wait drains outstanding refs and that
+ * acquire is rejected once the wait has begun). */
+static EX_RUNDOWN_REF g_rd_ref;
+static volatile uint32_t g_rd_acquired;
+static volatile uint32_t g_rd_released;
+
+static void rundown_worker(void *arg)
+{
+    (void)arg;
+    if (!ExAcquireRundownProtection(&g_rd_ref))
+        return;                              /* should not happen: armed empty */
+    __atomic_store_n(&g_rd_acquired, 1, __ATOMIC_RELEASE);
+    for (uint32_t i = 0; i < 50; i++)
+        yield();                             /* hold the ref a while */
+    /* Release THEN publish the marker, so a main-thread wait that returns
+     * before the actual release cannot pass the post-wait assertion. */
+    ExReleaseRundownProtection(&g_rd_ref);
+    __atomic_store_n(&g_rd_released, 1, __ATOMIC_RELEASE);
+}
+
+static void test_ex_rundown_concurrent_drain(void)
+{
+    ExInitializeRundownProtection(&g_rd_ref);
+    g_rd_acquired = 0;
+    g_rd_released = 0;
+
+    int tid = kthread_create(rundown_worker, (void *)0, 0);
+    TEST_ASSERT(tid >= 0, "rundown worker kthread_create succeeds");
+    if (tid < 0)
+        return;
+
+    /* Wait until the worker holds the reference, so the drain actually blocks. */
+    uint32_t spins = 0;
+    while (!__atomic_load_n(&g_rd_acquired, __ATOMIC_ACQUIRE)) {
+        if (++spins > 1000000u) break;
+        yield();
+    }
+    TEST_ASSERT(__atomic_load_n(&g_rd_acquired, __ATOMIC_ACQUIRE),
+                "worker acquired the reference");
+
+    ExWaitForRundownProtectionRelease(&g_rd_ref);
+    /* The wait drains at refcount 0, i.e. inside the worker's release, which is
+     * immediately before the worker publishes g_rd_released. Bounded-spin for
+     * the marker so the assertion proves a real release happened (not just an
+     * early return) without racing that publish window. */
+    spins = 0;
+    while (!__atomic_load_n(&g_rd_released, __ATOMIC_ACQUIRE)) {
+        if (++spins > 1000000u) break;
+        yield();
+    }
+    TEST_ASSERT(__atomic_load_n(&g_rd_released, __ATOMIC_ACQUIRE),
+                "wait drained the worker's reference (release observed)");
+    TEST_ASSERT(!ExAcquireRundownProtection(&g_rd_ref),
+                "acquire rejected after rundown began");
+    thread_join((uint32_t)tid);
+}
+
 void test_register_ex(void)
 {
     test_suite_register_cat("ex: SLIST init/empty edges",
@@ -198,6 +294,14 @@ void test_register_ex(void)
                             test_ex_slist_reuse_after_drain, TEST_CAT_EX);
     test_suite_register_cat("ex: SLIST concurrent push/pop (no loss/dup)",
                             test_ex_slist_smp_stress, TEST_CAT_EX);
+    test_suite_register_cat("ex: rundown acquire/release/nested",
+                            test_ex_rundown_acquire_release, TEST_CAT_EX);
+    test_suite_register_cat("ex: rundown completed rejects acquire",
+                            test_ex_rundown_completed_rejects, TEST_CAT_EX);
+    test_suite_register_cat("ex: rundown wait with no refs arms",
+                            test_ex_rundown_wait_no_refs, TEST_CAT_EX);
+    test_suite_register_cat("ex: rundown concurrent drain",
+                            test_ex_rundown_concurrent_drain, TEST_CAT_EX);
 }
 
 #endif /* KERNEL_TESTS */
