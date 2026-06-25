@@ -59,9 +59,13 @@ _Static_assert(EX_CALLBACK_MAX_SLOTS <= 256, "slot index must fit in 8 cookie bi
 static void callback_on_delete(void *body)
 {
     EX_CALLBACK_OBJECT *cb = (EX_CALLBACK_OBJECT *)body;
-    /* Defensive: a live registration at teardown is a consumer bug, but make
-     * sure no slot is left mid-rundown (object teardown implies no notifiers). */
-    (void)cb;
+    /* A callback object reaching refcount 0 with a live registration is a
+     * consumer lifetime bug (it should have unregistered first). Surface it
+     * instead of silently dropping the registration's context/rundown. */
+    if (cb->active_count != 0)
+        klog(LOG_WARN, "ex",
+             "callback object deleted with %u live registration(s)",
+             (uint64_t)cb->active_count);
 }
 
 void ex_callback_init(void)
@@ -133,6 +137,12 @@ EX_CALLBACK_OBJECT *ExCreateCallback(const char *name, bool create,
             && existing)
             return (EX_CALLBACK_OBJECT *)existing;   /* lookup ref kept alive */
         if (!create)
+            return (EX_CALLBACK_OBJECT *)0;
+        /* Fail closed: a named create needs the \Callback\ directory to back
+         * it. Without it the object could not be inserted, so returning an
+         * un-inserted (effectively anonymous) object under a name would let a
+         * later opener miss it and silently lose notifications. */
+        if (!s_callback_dir)
             return (EX_CALLBACK_OBJECT *)0;
     }
 

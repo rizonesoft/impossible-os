@@ -224,8 +224,9 @@ typedef void (*EX_CALLBACK_ROUTINE)(void *context, void *arg1, void *arg2);
 
 typedef struct _EX_CALLBACK_OBJECT EX_CALLBACK_OBJECT;   /* OM-allocated body */
 
-/* Registration cookie = (slot << 32) | generation; generation >= 1 so a valid
- * cookie is never 0. Treat as opaque. */
+/* Registration cookie = (generation << 8) | slot: an 8-bit slot index in the
+ * low byte and a 56-bit generation above it. generation >= 1 so a valid cookie
+ * is never 0. Treat as opaque (layout documented only for the verifier/debug). */
 typedef uint64_t EX_CALLBACK_COOKIE;
 
 /* Create or open a callback object. `name` non-NULL -> created/opened under

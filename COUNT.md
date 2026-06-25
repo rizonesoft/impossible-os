@@ -15,10 +15,10 @@
 
 |                       |   Files |      Lines |
 | --------------------- | ------: | ---------: |
-| **C sources** (`.c`)  |     512 |     379227 |
-| **Headers** (`.h`)    |     438 |     130029 |
+| **C sources** (`.c`)  |     512 |     379237 |
+| **Headers** (`.h`)    |     438 |     130030 |
 | **Assembly** (`.asm`) |       8 |        781 |
-| **Subtotal**          | **958** | **510037** |
+| **Subtotal**          | **958** | **510048** |
 
 ## SDK Tools
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |      Lines |
 | ------------------------------ | -------: | ---------: |
-| **Core code + tooling**        | **1224** | **588695** |
+| **Core code + tooling**        | **1224** | **588706** |
 | **Supporting text + metadata** |  **454** | **189114** |
-| **All counted text files**     | **1678** | **777809** |
+| **All counted text files**     | **1678** | **777820** |
 
 > Vendored code excluded: ~14436 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |         Impossible OS |
 | ----------------------------- | ------------: | ----------: | --------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               588,695 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |               588,706 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                     1 |
 | **Time span**                 |      33 years |    40 years | 3 month(s), 21 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 588,695
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 588,706
 > lines of core code and tooling would take **193 developers** working for **3 month(s), 21 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-06-26 00:32 · commit `ac3cfc44`*
+*Last updated: 2026-06-26 00:40 · commit `8747b486`*

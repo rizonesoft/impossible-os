@@ -170,8 +170,8 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 > - Downstream effects: named notification points for the deferred producers (process/image/registry/power/CI); the OB-callback drain mechanism reciprocally referenced in TODO-05 §13.
 > - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h) S4 block.
 > - Scope boundary: §4 owns the callback OBJECTS + dispatch; PRODUCERS owned by D02 T21/T18/T14/T26/T19; self-unregister misuse detection owned by §14; PI-correct drain by §3.
-
----
+> **Verified:** 2026-06-26 | commit `3d67711e` | 7/8 items | build OK | smoke PASS (TCG 2.55s)
+> **Quality reviewed:** 2026-06-26 | Codex 8x (design x2, adversarial x2, re-adversarial x2, consistency, perf) | 7H+4M+1L fixed | scope: kernel-code-quality
 
 ## 5. Lookaside Lists (NPaged, Paged, and Ex)
 
