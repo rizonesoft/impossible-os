@@ -84,7 +84,7 @@ struct boot_config {
     UINT8   postcode;
     UINT8   postbars;
     UINT8   test;              /* 1 = run unit tests only, then shutdown */
-    UINT8   test_suite;        /* category filter: 0-8 = specific, 0xFF = all */
+    UINT8   test_suite;        /* category filter: 0..TEST_CAT_COUNT-1 = specific, 0xFF = all */
     UINT8   test_quiet;        /* 1 = suppress PASS lines, show FAIL + summary */
     UINT8   diag_delay;        /* seconds to pause on each diag screen (0 = skip) */
     UINT8   diag_splash;       /* 1 = show diag on splash (bare metal, no serial) */

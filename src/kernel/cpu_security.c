@@ -908,7 +908,11 @@ void cpu_features_check_ap_faults(void)
     uint32_t c = __atomic_load_n(&s_ap_fault_cpu, __ATOMIC_ACQUIRE);
     if (!c)
         return;
-    klog(LOG_FATAL, "smp",
+    /* LOG_ERROR, NOT LOG_FATAL: LOG_FATAL halts in an hlt loop (klog.c), which
+     * would pre-empt the KeBugCheckEx below and lose the structured 0x3E
+     * bugcheck payload. KeBugCheckEx owns the fatal path. (Reachable for a
+     * genuinely-absent required feature like CX16, not just long-mode prereqs.) */
+    klog(LOG_ERROR, "smp",
          "[AP%u] validation FAILED (reason %u: 1=vendor 2=LongMode 3=required 4=PCID-CR3; feat/cr3=0x%lx)",
          (uint64_t)(c - 1), (uint64_t)s_ap_fault_reason, s_ap_fault_feat);
     KeBugCheckEx(BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED,

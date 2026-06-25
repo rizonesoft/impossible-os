@@ -579,7 +579,7 @@ void boot_phase0(uint64_t magic, uint64_t mbi)
             }
         }
         if (missing)
-            boot_halt("CPU does not meet minimum requirements (NX + SSE2 + LM + SYSCALL)");
+            boot_halt("CPU does not meet minimum requirements (see MINIMUM lines on serial)");
 
         /* Recommended features: warn if missing, continue */
         if (!cpu_has(CPU_FEATURE_SMEP))

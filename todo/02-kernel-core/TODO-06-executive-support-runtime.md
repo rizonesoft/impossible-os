@@ -111,6 +111,8 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 > - Downstream effects: free-list spine for §5 lookaside lists; gated CMPXCHG16B as a real boot CPU requirement (`CPU_FEATURE_CX16`), fixing a latent wrong assumption that it is a long-mode prereq.
 > - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h) S2 block.
 > - Scope boundary: §2 owns the SLIST primitive + CX16 gate; lookaside consumption is §5; the higher-half pointer-safety assumption is owned by D02 T33.
+> **Verified:** 2026-06-25 | commit `576eb413` | 5/5 items | build OK | smoke PASS (TCG 2.53s)
+> **Quality reviewed:** 2026-06-25 | Codex 7x (design, adversarial x2, re-adversarial x2, consistency, perf) | 3H+4M+2L fixed | scope: kernel-code-quality
 
 ---
 
