@@ -254,6 +254,102 @@ void ExNotifyCallback(EX_CALLBACK_OBJECT *cb, void *arg1, void *arg2);
  * returns the count written (capped at max). For the verifier (S14)/debug. */
 uint32_t ExpEnumerateCallback(EX_CALLBACK_OBJECT *cb, void **out, uint32_t max);
 
+/* ============================================================================
+ * S5 -- Lookaside Lists (NPaged, Paged, and unified Ex)
+ *
+ * Fixed-size block cache layered over a backing allocator. The fast paths
+ * (alloc-from-cache, free-to-cache) are the S2 interlocked SLIST and are fully
+ * lock-free and DISPATCH/SMP-safe. The cold backing paths (grow on a cache
+ * miss, drain an over-cap free) call the backing allocator (kmalloc by default)
+ * ONLY at <= APC_LEVEL and serialize it under one global executive-pool
+ * spinlock -- the kernel heap is itself unsynchronized today (-> retrofit to
+ * the synchronized tagged pool ExAllocatePoolWithTag, owned by
+ * 03-memory-concurrency/TODO-03 advanced-allocator). A nonpaged miss at
+ * > APC_LEVEL returns NULL (a legal "lookaside empty" outcome) rather than
+ * touch the heap unsafely; a paged op at > APC_LEVEL is rejected (paged memory
+ * may fault) -- NULL normally, bugcheck in verifier mode.
+ *
+ * SMP NOTE: the lock-free SLIST hot paths are fully SMP-safe. The kmalloc
+ * backing is only as SMP-safe as the kernel heap, which is globally
+ * unsynchronized today, so the executive-pool spinlock serializes lookaside
+ * backing against itself but NOT against unrelated kmalloc callers -- that gap
+ * closes when the synchronized tagged pool lands (advanced-allocator).
+ *
+ * STORAGE: the embedded SLIST_HEADER needs 16-byte alignment for cmpxchg16b,
+ * but kmalloc does not honor type alignment, so the control block carries an
+ * over-provisioned raw buffer and init points free_list at the aligned slot
+ * inside it. An initialized lookaside list therefore must NOT be relocated /
+ * copied (free_list points into its own storage).
+ * ============================================================================ */
+
+#define EX_LOOKASIDE_DEFAULT_DEPTH  256u    /* default cache cap (entries) */
+#define EX_LOOKASIDE_MIN_ALLOC      (sizeof(SLIST_ENTRY))  /* entry holds the link while cached */
+#define EX_LOOKASIDE_MAX_ALLOC      4096u   /* per-entry cap: bounds kmalloc + verifier scan, no (size+15) wrap */
+#define EX_LOOKASIDE_POISON_BYTE    0xA5u   /* verifier free-poison fill */
+
+/* Custom backing allocator for LOOKASIDE_LIST_EX (NULL pair -> kmalloc/kfree).
+ * The custom allocator owns its own SMP-safety; only the kmalloc fallback is
+ * serialized by the executive-pool lock. */
+typedef void *(*EX_LOOKASIDE_ALLOC)(size_t size, uint32_t tag, void *ctx);
+typedef void  (*EX_LOOKASIDE_FREE)(void *block, void *ctx);
+
+/* Common control block embedded by all three public list types. */
+typedef struct _EX_LOOKASIDE {
+    uint8_t            _slist_raw[sizeof(SLIST_HEADER) + 16]; /* over-provision for 16-align */
+    SLIST_HEADER      *free_list;     /* aligned into _slist_raw at init */
+    size_t             size;          /* per-entry size (>= EX_LOOKASIDE_MIN_ALLOC) */
+    uint32_t           tag;           /* 4-char pool tag (stats + future kmalloc_tag) */
+    uint16_t           max_depth;     /* cache cap; over-cap frees drain to backing */
+    bool               paged;         /* paged variant -> <= APC_LEVEL ceiling for ALL ops */
+    bool               initialized;
+    EX_LOOKASIDE_ALLOC alloc_fn;      /* EX custom alloc (NULL -> kmalloc) */
+    EX_LOOKASIDE_FREE  free_fn;       /* EX custom free  (NULL -> kfree)  */
+    void              *ctx;           /* private context for the custom pair */
+    uint64_t           total_allocs;  /* atomic stat counters */
+    uint64_t           total_frees;
+    uint64_t           alloc_hits;    /* served from cache */
+    uint64_t           alloc_misses;  /* served from backing */
+    uint64_t           free_hits;     /* returned to cache */
+    uint64_t           free_drains;   /* drained to backing (over cap) */
+} __attribute__((aligned(16))) EX_LOOKASIDE;
+
+typedef struct _NPAGED_LOOKASIDE_LIST { EX_LOOKASIDE L; } NPAGED_LOOKASIDE_LIST;
+typedef struct _PAGED_LOOKASIDE_LIST  { EX_LOOKASIDE L; } PAGED_LOOKASIDE_LIST;
+typedef struct _LOOKASIDE_LIST_EX     { EX_LOOKASIDE L; } LOOKASIDE_LIST_EX;
+
+/* Nonpaged: usable at <= DISPATCH_LEVEL on the cache fast path; a miss above
+ * APC_LEVEL returns NULL (no heap growth at high IRQL). `depth` 0 -> default. */
+void  ExInitializeNPagedLookasideList(NPAGED_LOOKASIDE_LIST *l, size_t size,
+                                      uint32_t tag, uint16_t depth);
+void *ExAllocateFromNPagedLookasideList(NPAGED_LOOKASIDE_LIST *l);
+void  ExFreeToNPagedLookasideList(NPAGED_LOOKASIDE_LIST *l, void *entry);
+void  ExDeleteNPagedLookasideList(NPAGED_LOOKASIDE_LIST *l);
+
+/* Paged: all operations legal at <= APC_LEVEL only; a DISPATCH_LEVEL caller is
+ * rejected (NULL normally, IRQL bugcheck in verifier mode). */
+void  ExInitializePagedLookasideList(PAGED_LOOKASIDE_LIST *l, size_t size,
+                                     uint32_t tag, uint16_t depth);
+void *ExAllocateFromPagedLookasideList(PAGED_LOOKASIDE_LIST *l);
+void  ExFreeToPagedLookasideList(PAGED_LOOKASIDE_LIST *l, void *entry);
+void  ExDeletePagedLookasideList(PAGED_LOOKASIDE_LIST *l);
+
+/* Unified modern variant (MS-recommended for new code). `alloc_fn`/`free_fn`
+ * NULL -> kmalloc/kfree backing; non-NULL -> caller backing with `ctx`. Returns
+ * 0 on success, non-zero on bad args. */
+int   ExInitializeLookasideListEx(LOOKASIDE_LIST_EX *l, EX_LOOKASIDE_ALLOC alloc_fn,
+                                  EX_LOOKASIDE_FREE free_fn, void *ctx, bool paged,
+                                  size_t size, uint32_t tag, uint16_t depth);
+void *ExAllocateFromLookasideListEx(LOOKASIDE_LIST_EX *l);
+void  ExFreeToLookasideListEx(LOOKASIDE_LIST_EX *l, void *entry);
+void  ExFlushLookasideListEx(LOOKASIDE_LIST_EX *l);   /* drain cache, keep usable */
+void  ExDeleteLookasideListEx(LOOKASIDE_LIST_EX *l);
+
+/* Verifier seam (S14 owns the broader verifier). When enabled, freed entry
+ * bodies are poisoned and re-checked on the next alloc; a detected
+ * use-after-free increments the UAF counter (LOG_ERROR; S14 escalates). */
+void     ExpSetLookasideVerifier(bool on);
+uint64_t ExpLookasideUafCount(void);
+
 /* ex_ready -- true once the Executive support runtime is marked ready.
  *
  * Delegates to the subsystem readiness oracle (kernel_subsystem_ready(

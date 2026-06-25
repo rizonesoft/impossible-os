@@ -15,6 +15,8 @@
 #include "kernel/test/test.h"
 #include "kernel/ex.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/irql.h"   /* KeRaiseIrql/KeLowerIrql -- paged-lookaside IRQL gate test */
+#include "kernel/mm/heap.h"      /* kmalloc/kfree -- LOOKASIDE_LIST_EX custom backing test */
 #include "kernel/ob/ob.h"   /* ObDereferenceObject -- release caller-owned callback objects */
 
 /* ---- S2: Interlocked SLIST ---------------------------------------------- */
@@ -395,6 +397,269 @@ static void test_ex_callback_builtin_named(void)
     if (cb) ObDereferenceObject(cb);
 }
 
+/* ---- S5: Lookaside lists ------------------------------------------------ */
+
+static void test_ex_lookaside_cache_hit(void)
+{
+    NPAGED_LOOKASIDE_LIST la;
+    ExInitializeNPagedLookasideList(&la, 64, 0x4C4B5453u /* 'STKL' */, 8);
+
+    void *p1 = ExAllocateFromNPagedLookasideList(&la);
+    TEST_ASSERT(p1 != (void *)0, "first alloc (cache miss) returns a block");
+    TEST_ASSERT_EQ(la.L.alloc_misses, 1ull, "first alloc counted as a miss");
+    TEST_ASSERT_EQ(la.L.alloc_hits, 0ull, "no cache hit yet");
+
+    ExFreeToNPagedLookasideList(&la, p1);
+    TEST_ASSERT_EQ(la.L.free_hits, 1ull, "free under cap cached (not drained)");
+
+    void *p2 = ExAllocateFromNPagedLookasideList(&la);
+    TEST_ASSERT(p2 == p1, "free-then-alloc returns the cached block (LIFO)");
+    TEST_ASSERT_EQ(la.L.alloc_hits, 1ull, "second alloc served from cache");
+
+    ExFreeToNPagedLookasideList(&la, p2);
+    ExDeleteNPagedLookasideList(&la);
+}
+
+static void test_ex_lookaside_depth_cap(void)
+{
+    NPAGED_LOOKASIDE_LIST la;
+    ExInitializeNPagedLookasideList(&la, 48, 0x50414331u /* 'CAP1' */, 2);
+
+    void *p[5];
+    for (int i = 0; i < 5; i++) {
+        p[i] = ExAllocateFromNPagedLookasideList(&la);
+        TEST_ASSERT(p[i] != (void *)0, "alloc returns a block");
+    }
+    for (int i = 0; i < 5; i++)
+        ExFreeToNPagedLookasideList(&la, p[i]);
+
+    /* depth cap 2: first two frees cache, the next three each push-then-drain. */
+    TEST_ASSERT_EQ(la.L.free_drains, 3ull, "3 over-cap frees drained to backing");
+    TEST_ASSERT_EQ(la.L.free_hits, 2ull, "2 frees retained in cache");
+    TEST_ASSERT(ExQueryDepthSList(la.L.free_list) <= 2u, "cache depth honored at cap");
+
+    ExDeleteNPagedLookasideList(&la);
+}
+
+static void test_ex_lookaside_paged_rejects_dispatch(void)
+{
+    PAGED_LOOKASIDE_LIST la;
+    ExInitializePagedLookasideList(&la, 64, 0x47504431u /* '1DPG' */, 4);
+
+    /* Verifier OFF: a DISPATCH_LEVEL caller must be refused with NULL, not a
+     * bugcheck (paged memory may fault above APC_LEVEL). */
+    KIRQL old;
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    void *p = ExAllocateFromPagedLookasideList(&la);
+    KeLowerIrql(old);
+
+    TEST_ASSERT(p == (void *)0, "paged alloc at DISPATCH_LEVEL returns NULL");
+
+    /* At PASSIVE_LEVEL it works. */
+    p = ExAllocateFromPagedLookasideList(&la);
+    TEST_ASSERT(p != (void *)0, "paged alloc at PASSIVE_LEVEL succeeds");
+    ExFreeToPagedLookasideList(&la, p);
+    ExDeletePagedLookasideList(&la);
+}
+
+struct la_ctx { uint32_t allocs; uint32_t frees; };
+
+static void *la_test_alloc(size_t size, uint32_t tag, void *ctx)
+{
+    (void)tag;
+    struct la_ctx *c = (struct la_ctx *)ctx;
+    c->allocs++;
+    return kmalloc(size);
+}
+
+static void la_test_free(void *block, void *ctx)
+{
+    struct la_ctx *c = (struct la_ctx *)ctx;
+    c->frees++;
+    kfree(block);
+}
+
+static void test_ex_lookaside_ex_custom_backing(void)
+{
+    struct la_ctx ctx = { 0, 0 };
+    LOOKASIDE_LIST_EX la;
+    int rc = ExInitializeLookasideListEx(&la, la_test_alloc, la_test_free, &ctx,
+                                         false, 80, 0x5453554Cu /* 'LUST' */, 4);
+    TEST_ASSERT_EQ((uint64_t)rc, 0ull, "EX init with custom backing succeeds");
+
+    void *p = ExAllocateFromLookasideListEx(&la);   /* miss -> custom alloc */
+    TEST_ASSERT(p != (void *)0, "EX alloc returns a block via custom allocator");
+    TEST_ASSERT_EQ((uint64_t)ctx.allocs, 1ull, "custom alloc invoked with private context");
+
+    ExFreeToLookasideListEx(&la, p);                /* cached, custom free NOT called */
+    TEST_ASSERT_EQ((uint64_t)ctx.frees, 0ull, "cached free does not hit custom free");
+
+    ExDeleteLookasideListEx(&la);                   /* drains cache -> custom free */
+    TEST_ASSERT_EQ((uint64_t)ctx.frees, 1ull, "delete drains cache via custom free");
+}
+
+static void test_ex_lookaside_nonpaged_dispatch(void)
+{
+    NPAGED_LOOKASIDE_LIST la;
+    ExInitializeNPagedLookasideList(&la, 64, 0x50534944u /* 'DISP' */, 8);
+
+    /* Prewarm one cached entry at PASSIVE_LEVEL. */
+    void *p = ExAllocateFromNPagedLookasideList(&la);
+    TEST_ASSERT(p != (void *)0, "prewarm alloc succeeds");
+    ExFreeToNPagedLookasideList(&la, p);
+
+    KIRQL old;
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    void *hit = ExAllocateFromNPagedLookasideList(&la);   /* cache hit: legal at DISPATCH */
+    void *miss = ExAllocateFromNPagedLookasideList(&la);  /* empty: must NOT touch heap */
+    KeLowerIrql(old);
+
+    TEST_ASSERT(hit == p, "nonpaged cache hit succeeds at DISPATCH_LEVEL");
+    TEST_ASSERT(miss == (void *)0, "nonpaged miss at DISPATCH_LEVEL returns NULL (no heap)");
+
+    ExFreeToNPagedLookasideList(&la, hit);
+    ExDeleteNPagedLookasideList(&la);
+}
+
+static void test_ex_lookaside_paged_free_rejects_dispatch(void)
+{
+    PAGED_LOOKASIDE_LIST la;
+    ExInitializePagedLookasideList(&la, 64, 0x46474450u /* 'PDGF' */, 4);
+
+    void *p = ExAllocateFromPagedLookasideList(&la);   /* PASSIVE: succeeds */
+    TEST_ASSERT(p != (void *)0, "paged alloc at PASSIVE succeeds");
+    uint64_t frees_before = la.L.total_frees;
+
+    KIRQL old;
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    ExFreeToPagedLookasideList(&la, p);                /* rejected: paged > APC */
+    KIRQL depth_at_dispatch = (KIRQL)ExQueryDepthSList(la.L.free_list);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ(la.L.total_frees, frees_before,
+                   "paged free at DISPATCH_LEVEL did not touch the list");
+    TEST_ASSERT_EQ((uint64_t)depth_at_dispatch, 0ull,
+                   "paged free at DISPATCH_LEVEL did not cache the entry");
+
+    ExFreeToPagedLookasideList(&la, p);               /* PASSIVE: now legal */
+    ExDeletePagedLookasideList(&la);
+}
+
+static void test_ex_lookaside_ex_badargs_and_flush(void)
+{
+    struct la_ctx ctx = { 0, 0 };
+    LOOKASIDE_LIST_EX la;
+
+    TEST_ASSERT(ExInitializeLookasideListEx((LOOKASIDE_LIST_EX *)0, 0, 0, 0,
+                                            false, 64, 0, 0) != 0,
+                "EX init rejects NULL list");
+    TEST_ASSERT(ExInitializeLookasideListEx(&la, 0, 0, 0, false, 0, 0, 0) != 0,
+                "EX init rejects zero size");
+    TEST_ASSERT(ExInitializeLookasideListEx(&la, la_test_alloc, 0, &ctx,
+                                            false, 64, 0, 0) != 0,
+                "EX init rejects alloc-only custom pair");
+    TEST_ASSERT(ExInitializeLookasideListEx(&la, 0, la_test_free, &ctx,
+                                            false, 64, 0, 0) != 0,
+                "EX init rejects free-only custom pair");
+    TEST_ASSERT(ExInitializeLookasideListEx(&la, 0, 0, 0, false,
+                                            EX_LOOKASIDE_MAX_ALLOC + 1, 0, 0) != 0,
+                "EX init rejects oversized entry (kmalloc overflow guard)");
+
+    /* Valid init with default depth + min-size clamp (request below the link). */
+    int rc = ExInitializeLookasideListEx(&la, la_test_alloc, la_test_free, &ctx,
+                                         false, 4, 0x48534C46u /* 'FLSH' */, 0);
+    TEST_ASSERT_EQ((uint64_t)rc, 0ull, "EX init with valid args succeeds");
+    TEST_ASSERT(la.L.size >= sizeof(SLIST_ENTRY), "size clamped to >= SLIST link");
+    TEST_ASSERT_EQ((uint64_t)la.L.max_depth, (uint64_t)EX_LOOKASIDE_DEFAULT_DEPTH,
+                   "depth 0 -> default cap");
+
+    void *p = ExAllocateFromLookasideListEx(&la);   /* miss -> custom alloc */
+    ExFreeToLookasideListEx(&la, p);                /* cached */
+    TEST_ASSERT(ExQueryDepthSList(la.L.free_list) == 1u, "one entry cached before flush");
+
+    ExFlushLookasideListEx(&la);                    /* drains cache, keeps usable */
+    TEST_ASSERT_EQ((uint64_t)ctx.frees, 1ull, "flush drained the cached entry via custom free");
+    TEST_ASSERT(ExQueryDepthSList(la.L.free_list) == 0u, "cache empty after flush");
+    TEST_ASSERT(la.L.initialized, "list still initialized after flush");
+
+    void *p2 = ExAllocateFromLookasideListEx(&la);  /* still usable */
+    TEST_ASSERT(p2 != (void *)0, "alloc succeeds after flush");
+    ExFreeToLookasideListEx(&la, p2);
+    ExDeleteLookasideListEx(&la);
+}
+
+static void test_ex_lookaside_failed_init_inert(void)
+{
+    /* Pre-dirty the storage so a failed init that forgot to zero would leave a
+     * non-zero `initialized` and a garbage free_list. */
+    NPAGED_LOOKASIDE_LIST la;
+    for (size_t i = 0; i < sizeof(la); i++)
+        ((volatile uint8_t *)&la)[i] = 0xCCu;
+
+    /* Oversized request: the void initializer discards the return, so the list
+     * must be forced inert. */
+    ExInitializeNPagedLookasideList(&la, EX_LOOKASIDE_MAX_ALLOC + 1, 0x44414231u, 8);
+    TEST_ASSERT(!la.L.initialized, "failed oversized init leaves list inert");
+
+    /* All API calls on the inert list must be safe no-ops (never touch a bogus
+     * SLIST head). */
+    TEST_ASSERT(ExAllocateFromNPagedLookasideList(&la) == (void *)0,
+                "alloc on inert list returns NULL");
+    ExFreeToNPagedLookasideList(&la, (void *)0x1000);   /* no-op: not initialized */
+    ExDeleteNPagedLookasideList(&la);                   /* no-op: not initialized */
+    TEST_ASSERT(!la.L.initialized, "inert list stays inert");
+}
+
+static void test_ex_lookaside_delete_at_dispatch_recovers(void)
+{
+    NPAGED_LOOKASIDE_LIST la;
+    ExInitializeNPagedLookasideList(&la, 64, 0x4C454444u /* 'DDEL' */, 8);
+
+    void *p = ExAllocateFromNPagedLookasideList(&la);
+    ExFreeToNPagedLookasideList(&la, p);            /* cached */
+    TEST_ASSERT(ExQueryDepthSList(la.L.free_list) == 1u, "one entry cached");
+
+    /* Delete at DISPATCH_LEVEL cannot drain (backing free is <= APC_LEVEL); the
+     * list must stay intact and recoverable, not strand the cached entry. */
+    KIRQL old;
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    ExDeleteNPagedLookasideList(&la);
+    KeLowerIrql(old);
+
+    TEST_ASSERT(la.L.initialized, "delete at DISPATCH left list initialized");
+    TEST_ASSERT(ExQueryDepthSList(la.L.free_list) == 1u, "cached entry still reachable");
+
+    /* A legal delete at PASSIVE_LEVEL drains and invalidates. */
+    ExDeleteNPagedLookasideList(&la);
+    TEST_ASSERT(!la.L.initialized, "delete at PASSIVE invalidated the list");
+}
+
+static void test_ex_lookaside_verifier_uaf(void)
+{
+    ExpSetLookasideVerifier(true);
+
+    NPAGED_LOOKASIDE_LIST la;
+    ExInitializeNPagedLookasideList(&la, 64, 0x46414C56u /* 'VLAF' */, 8);
+
+    void *p = ExAllocateFromNPagedLookasideList(&la);
+    TEST_ASSERT(p != (void *)0, "alloc returns a block");
+    ExFreeToNPagedLookasideList(&la, p);            /* body poisoned past the link */
+
+    uint64_t before = ExpLookasideUafCount();
+    /* Simulate a write-after-free into the cached entry body (past the SLIST
+     * link in the first 8 bytes, inside the poisoned region). */
+    ((volatile uint8_t *)p)[16] = 0xFFu;
+
+    void *p2 = ExAllocateFromNPagedLookasideList(&la);  /* hit -> poison re-check */
+    TEST_ASSERT(p2 == p, "verifier alloc still returns the cached block");
+    TEST_ASSERT_EQ(ExpLookasideUafCount(), before + 1ull,
+                   "verifier detected the use-after-free on the poisoned body");
+
+    ExFreeToNPagedLookasideList(&la, p2);
+    ExDeleteNPagedLookasideList(&la);
+    ExpSetLookasideVerifier(false);
+}
+
 void test_register_ex(void)
 {
     test_suite_register_cat("ex: SLIST init/empty edges",
@@ -427,6 +692,26 @@ void test_register_ex(void)
                             test_ex_callback_stale_cookie_noop, TEST_CAT_EX);
     test_suite_register_cat("ex: callback built-in named resolvable",
                             test_ex_callback_builtin_named, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside free-then-alloc cache hit",
+                            test_ex_lookaside_cache_hit, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside depth cap drains excess",
+                            test_ex_lookaside_depth_cap, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside paged rejects DISPATCH_LEVEL",
+                            test_ex_lookaside_paged_rejects_dispatch, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside EX custom backing + context",
+                            test_ex_lookaside_ex_custom_backing, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside nonpaged hit/miss at DISPATCH",
+                            test_ex_lookaside_nonpaged_dispatch, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside paged free rejects DISPATCH",
+                            test_ex_lookaside_paged_free_rejects_dispatch, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside EX bad-args + flush keeps usable",
+                            test_ex_lookaside_ex_badargs_and_flush, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside failed init leaves inert",
+                            test_ex_lookaside_failed_init_inert, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside delete at DISPATCH recovers",
+                            test_ex_lookaside_delete_at_dispatch_recovers, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside verifier detects UAF",
+                            test_ex_lookaside_verifier_uaf, TEST_CAT_EX);
 }
 
 #endif /* KERNEL_TESTS */

@@ -47,7 +47,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 2 | Interlocked SLIST | §1, atomics | [x] |
 | 💎 | 3 | Rundown protection | §1, atomics, events | [x] |
 | 💎 | 4 | Callback objects | §1, §3, T05, T07 | [x] |
-| 💎 | 5 | Lookaside lists (NPaged/Paged/Ex) | §2, D03 T03 | [ ] |
+| 💎 | 5 | Lookaside lists (NPaged/Paged/Ex) | §2, D03 T03 | [x] |
 | 💎 | 6 | Fast references | §1, T05 | [ ] |
 | 💎 | 7 | Generic tables and bitmaps | §1 | [ ] |
 | 💎 | 8 | Push locks | §1, T07 | [ ] |
@@ -175,15 +175,23 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 
 ## 5. Lookaside Lists (NPaged, Paged, and Ex)
 
-- [ ] Implement `NPAGED_LOOKASIDE_LIST` with depth, allocate/free counters, hit/miss stats, and tag; back the free-list with the §2 interlocked SLIST.
-- [ ] Add `ExInitializeNPagedLookasideList`, `ExAllocateFromNPagedLookasideList`, `ExFreeToNPagedLookasideList`, `ExDeleteNPagedLookasideList`.
-- [ ] Add the paged variant (`PAGED_LOOKASIDE_LIST` + `ExInitialize/Allocate/Free/DeletePagedLookasideList`), constrained to <= APC_LEVEL callers.
-- [ ] Add the modern unified `LOOKASIDE_LIST_EX` (`ExInitializeLookasideListEx`, paged-or-nonpaged, custom alloc/free with private context) -- MS-recommended over the older pair for new code.
-- [ ] Refill/drain uses the tagged pool API, never a hidden hot-path `kmalloc` (-> XREF D03 T03 pool-tag); enforce fixed-size allocations and poison freed entries in verifier mode.
-- [ ] Consumers: registry notification records, ALPC messages, object namespace entries, klog v2 drain buffers.
-- [ ] Commit: `"kernel: ex -- lookaside lists (npaged/paged/ex)"`
+- [x] `NPAGED_LOOKASIDE_LIST` over a shared `EX_LOOKASIDE` block (`ex_lookaside.c`): size/tag/max_depth + atomic stats; §2 SLIST free-list, SLIST_HEADER aligned in an over-provisioned buffer.
+- [x] `ExInitialize/Allocate/Free/DeleteNPagedLookasideList`: cache hit/free are SLIST-only (DISPATCH/SMP-safe); a nonpaged miss above APC_LEVEL returns NULL rather than touch the unsynchronized heap.
+- [x] Paged variant (`PAGED_LOOKASIDE_LIST` + `ExInitialize/Allocate/Free/DeletePagedLookasideList`): all ops legal only at <= APC_LEVEL; a DISPATCH_LEVEL caller is rejected (NULL/no-op; IRQL bugcheck in verifier mode).
+- [x] Unified `LOOKASIDE_LIST_EX` (`ExInitialize/Allocate/Free/Flush/DeleteLookasideListEx`): paged-or-nonpaged, optional custom alloc/free pair + `ctx`; bad args return non-zero; flush keeps the list usable.
+- [x] Backing: cold-path kmalloc/kfree only at <= APC_LEVEL under a global exec-pool spinlock; verifier poisons freed bodies. Tagged-pool retrofit -> XREF: 03-memory-concurrency/TODO-03 §6 (item: "Migrate lookaside backing to tagged pool").
+- [/] Consumers (registry notification records, ALPC messages, OB namespace entries, klog drain buffers): API is consumer-ready; adoption owned by each consuming subsystem, not a §5 deliverable.
+- [x] Commit: `"kernel: ex -- lookaside lists (npaged/paged/ex)"`
 
 **Test checkpoint:** Free-then-allocate returns a cached block (hit counter increments); depth cap honored (excess frees go to backing pool, miss counter increments); paged variant rejects DISPATCH_LEVEL callers; `LOOKASIDE_LIST_EX` invokes the custom alloc/free with the private context; verifier mode detects use-after-free on a poisoned entry.
+
+> **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 8 lookaside suites, 0 failures
+> **Notes:**
+> - What shipped: `src/kernel/ex/ex_lookaside.c` (NPaged/Paged/Ex lookaside over a shared `EX_LOOKASIDE` control block) + types/decls in `ex.h`; 8 lookaside suites added to `test_ex.c`.
+> - How it integrates: hot paths are the §2 interlocked SLIST (lock-free, DISPATCH/SMP-safe); the cold backing (grow/drain) calls kmalloc/kfree only at <= APC_LEVEL under one global executive-pool spinlock.
+> - Verifier seam: `ExpSetLookasideVerifier` + `ExpLookasideUafCount` poison/re-check freed bodies; broader verifier escalation owned by §14.
+> - Retrofit owed: kmalloc backing -> synchronized tagged pool when 03-memory-concurrency/TODO-03 §6 ships `ExAllocatePoolWithTag`; Codex design+adversarial+test-coverage adoptions in the commit message.
+> - Scope boundary: §5 owns the lookaside OBJECTS + backing discipline; consumers (registry/ALPC/OB/klog) adopt the API in their own sections; kernel-wide heap SMP-safety owned by 03-memory-concurrency/TODO-03.
 
 ---
 
@@ -311,7 +319,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Interlocked SLIST          | ✅ SLIST_HEADER                     | ✅ llist_head          | ✅ §2 cmpxchg16b DCAS     |
 | 💎 | Rundown protection         | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU      | ✅ §3 atomic + poll-drain |
 | 💎 | Callback objects           | ✅ ExCreateCallback                 | ⚠️ notifier chains     | ✅ §4 \Callback\ + rundown |
-| 💎 | Lookaside lists            | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache     | ⬜ Planned -- §5          |
+| 💎 | Lookaside lists            | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache     | ✅ NPaged/Paged/Ex + verifier |
 | 💎 | Fast references            | ✅ EX_FAST_REF                      | ❌ none                | ⬜ Planned -- §6          |
 | 💎 | Ordered tables + bitmaps   | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap       | ⬜ Planned -- §7          |
 | 💎 | Push locks                 | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU           | ⬜ Planned -- §8          |
