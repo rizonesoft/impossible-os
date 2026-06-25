@@ -124,6 +124,8 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 - [x] Wait blocks only at PASSIVE_LEVEL via a cooperative `while(refcount>0) yield()` poll, NOT the kernel `event_t` (lost-wakeup race between state-read and enqueue). Caller-owned, no allocation.
 - [/] Convert teardown races -- DEFERRED to owning consumers (primitive ships here):
   - object callbacks `ob_callback.c` unregister-vs-dispatch race -> XREF TODO-05 §13; Ex callback objects -> §4; ALPC ports -> XREF TODO-24; section/process objects -> XREF TODO-05 §6/§7.
+- [/] Priority-inheritance-correct wait (DEFERRED, in-scope): poll-wait requires holders run at >= the waiter priority (precondition in `ex.h`).
+  - A PI-correct wait needs per-reference holder identity to boost holders; not functional-blocking today (no live rundown consumers).
 - [x] Commit: `"kernel: ex -- rundown protection"`
 
 **Test checkpoint:** `ex` suite proves acquire/nested-acquire/release; `ExRundownCompleted` + post-wait acquire return FALSE; `ExReInitialize` re-arms; and a concurrent kthread holding a ref makes `ExWaitForRundownProtectionRelease` block until the worker releases. Verify on bare metal -- SMP acquire/release race timing differs from VMs.
@@ -135,6 +137,9 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 > - Downstream effects: the drain primitive for teardown-race consumers; resolves the mechanism gap in TODO-05 §13 (ob_callback drain), reciprocally XREF'd.
 > - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h) S3 block.
 > - Scope boundary: §3 owns only the primitive + test; consumer conversions (ob_callback, Ex callbacks §4, ALPC TODO-24, section/process TODO-05 §6/§7) are owner-deferred.
+> **Verified:** 2026-06-25 | commit `5fc1b61b` | 3/5 items | build OK | tests 9 suites PASS
+> **Deferred:** [H] poll-wait priority inversion: a strictly-higher-priority waiter starves a strictly-lower-priority holder (reason: not-functional-today, no live rundown consumers; precondition documented in `ex.h`) -> XREF: 02-kernel-core/TODO-06-executive-support-runtime.md §3 (item: "Priority-inheritance-correct wait" at line 127)
+> **Quality reviewed:** 2026-06-25 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) | 1H+1M fixed, 1H deferred | scope: kernel-code-quality
 
 ---
 

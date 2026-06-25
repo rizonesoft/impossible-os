@@ -84,7 +84,17 @@ void ExWaitForRundownProtectionRelease(EX_RUNDOWN_REF *r)
 
     /* Cooperative poll until every outstanding reference drains. Re-reads Count
      * each iteration, so no release can be missed (unlike a state-then-block
-     * event wait). PASSIVE_LEVEL only (yields). */
+     * event wait whose state-read/enqueue window loses wakeups).
+     *
+     * PRECONDITION: reference holders must run at >= the waiter's scheduler
+     * priority. The scheduler always runs the highest-priority READY thread, so
+     * a strictly-higher-priority waiter polling here would starve a strictly-
+     * lower-priority holder and never observe the drain (priority inversion). A
+     * priority-inheritance-correct rundown wait that boosts the holders is
+     * tracked as a separate enhancement (it needs per-reference holder identity
+     * rundown does not record today). The typical teardown pattern -- a PASSIVE
+     * owner waiting on equal/higher-priority short-lived users -- satisfies the
+     * precondition. PASSIVE_LEVEL only (yields). */
     while ((__atomic_load_n(&r->Count, __ATOMIC_ACQUIRE) >> 1) != 0)
         yield();
 }

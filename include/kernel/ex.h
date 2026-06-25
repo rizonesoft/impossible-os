@@ -172,7 +172,12 @@ bool ExAcquireRundownProtection(EX_RUNDOWN_REF *r);
 void ExReleaseRundownProtection(EX_RUNDOWN_REF *r);
 
 /* Begin rundown: reject new acquires, then block until all outstanding refs
- * release. PASSIVE_LEVEL only (cooperative yield poll). */
+ * release. PASSIVE_LEVEL only (cooperative yield poll).
+ * PRECONDITION: reference holders must run at >= the waiter's scheduler
+ * priority -- a strictly-higher-priority waiter would starve a strictly-lower-
+ * priority holder (priority inversion). A priority-inheritance-correct wait is
+ * a tracked enhancement; the typical PASSIVE-owner-waits-on-equal/higher-users
+ * teardown pattern satisfies the precondition. */
 void ExWaitForRundownProtectionRelease(EX_RUNDOWN_REF *r);
 
 /* Mark rundown complete immediately (no outstanding refs); subsequent acquires
