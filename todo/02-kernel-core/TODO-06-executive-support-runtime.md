@@ -145,12 +145,19 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 
 ## 4. Callback Objects
 
-- [ ] Add `ExCreateCallback`, `ExRegisterCallback`, `ExUnregisterCallback`, `ExNotifyCallback`.
-- [ ] Back callback objects with Object Manager type `Callback`.
-- [ ] Support named callbacks under `\Callback\`.
-- [ ] Built-in callbacks: process create, thread create, image load, registry change, power setting, code integrity decision.
-- [ ] Dispatch callbacks under rundown protection (§3) so unregister can wait safely; document the IRQL ceiling and forbidden reentrancy (-> XREF T07 for APC/DISPATCH rules).
-- [ ] Add `ExEnumerateCallback`-style introspection so the verifier (§14) and debugging can list registered routines without racing dispatch.
+- [ ] Add `ExCreateCallback`/`ExRegisterCallback`/`ExUnregisterCallback`/`ExNotifyCallback` in `src/kernel/ex/ex_callback.c`, backed by OM type `Callback` (`ObpCallbackType` via `ob_create_type`, like `ob_event.c`).
+- [ ] Slot lifecycle + cookie identity (design F1):
+  - Fixed registration array, explicit active -> unregistering -> free states; cookie packs object identity + a monotonic per-slot generation, validated under the spinlock so a stale cookie can't hit a reused slot.
+- [ ] Dispatch under per-slot rundown (§3):
+  - `ExNotifyCallback` snapshots active slots + acquires each slot's `EX_RUNDOWN_REF` under the lock, invokes outside the lock, releases; `ExUnregisterCallback` marks unregistering then `ExWaitForRundownProtectionRelease` drains before the caller frees context.
+- [ ] Self-unregister safety (design F2):
+  - A per-CPU dispatching-slot marker lets `ExUnregisterCallback` detect unregister-from-its-own-callback and DEFER the final drain (the dispatch's own release completes it) instead of deadlocking on its own in-flight reference.
+- [ ] Support named callbacks under `\Callback\` (created at `ex_init` via `ob_ns_create_directory` + `ObInsertObject`, name-collision handling like `ob_event.c`).
+- [ ] Built-in callback OBJECTS only (named `\Callback\` points; PRODUCERS owned by subsystems):
+  - ProcessCreate/ThreadCreate -> XREF D02 T21; ImageLoad -> XREF D02 T18; RegistryChange -> XREF D02 T14; PowerState -> XREF D02 T26; CodeIntegrity -> XREF D02 T19.
+- [ ] Add `ExpEnumerateCallback`-style introspection (snapshot under the spinlock) for the verifier (§14) + debugging.
+- [/] Priority-inversion precondition (design F3):
+  - `ExUnregisterCallback` drain inherits the §3 poll-wait precondition (notifier priority >= unregister), documented in the header. Not functional-blocking (all producers deferred -> no live notifiers); PI-correct wait is the §3 deferred item.
 - [ ] Commit: `"kernel: ex -- callback objects"`
 
 **Test checkpoint:** Named callback resolvable under `\Callback\`; `ExNotifyCallback` invokes every registered routine in order; concurrent `ExNotifyCallback` + `ExUnregisterCallback` from different CPUs proves unregister blocks until in-flight dispatch drains (no use-after-free, no missed routine); enumeration during churn returns a consistent snapshot. Verify on bare metal -- dispatch/unregister race window differs from VMs.
