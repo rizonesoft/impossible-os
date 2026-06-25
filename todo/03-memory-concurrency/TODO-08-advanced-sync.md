@@ -55,7 +55,7 @@ title: "TODO-08 -- Advanced Synchronisation Primitives"
 | 💎  |   7   | §7 Thread cancellation (`pthread_cancel`)                 | §4, §3                               |  [ ]   |
 | ⭐  |   8   | §8 `WaitForMultipleObjects` (`waitable_t` + `wait_any`)   | §4, §9                               |  [ ]   |
 | ⭐  |   9   | §6 `pthread_barrier_t` -- kernel-level, reusable           | §8 or §9 (timeout variant)           |  [ ]   |
-| 💎  |  10   | Sync syscalls wired to SSDT (keyed events, alerts)        | §4, §8, TODO-06 §4                   |  [ ]   |
+| 💎  |  10   | Sync syscalls wired to SSDT (keyed events, alerts)        | §4, §8, D02 T06 §5                   |  [ ]   |
 | ⭐  |  11   | §11 Mutex wait-queue SMP-safety backfill                  | --                                   |  [ ]   |
 
 > 💎 = parity -- ticket locks, preemption count, TLS, futexes, timeout API, pthread_once, and thread cancellation all have direct Linux or Windows NT equivalents.
