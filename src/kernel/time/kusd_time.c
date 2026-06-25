@@ -75,7 +75,7 @@ static void kusd_populate_processor_features(volatile uint8_t *pf)
     pf[PF_RDTSC_INSTRUCTION_AVAILABLE]     = cpu_has(CPU_FEATURE_TSC)   ? 1 : 0;
     pf[PF_XMMI64_INSTRUCTIONS_AVAILABLE]   = cpu_has(CPU_FEATURE_SSE2)  ? 1 : 0;
     pf[PF_SSE3_INSTRUCTIONS_AVAILABLE]     = cpu_has(CPU_FEATURE_SSE3)  ? 1 : 0;
-    pf[PF_COMPARE_EXCHANGE128]             = 1;  /* x86-64 has CMPXCHG16B */
+    pf[PF_COMPARE_EXCHANGE128]             = cpu_has(CPU_FEATURE_CX16) ? 1 : 0;
     pf[PF_RDRAND_INSTRUCTION_AVAILABLE]    = cpu_has(CPU_FEATURE_RDRAND)? 1 : 0;
     pf[PF_SSSE3_INSTRUCTIONS_AVAILABLE]    = cpu_has(CPU_FEATURE_SSSE3) ? 1 : 0;
     pf[PF_SSE4_1_INSTRUCTIONS_AVAILABLE]   = cpu_has(CPU_FEATURE_SSE4_1)? 1 : 0;

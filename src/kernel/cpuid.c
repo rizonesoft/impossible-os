@@ -127,6 +127,7 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_RDRAND,  ecx, 30);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_PCID,    ecx, 17);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_TSC_DL,  ecx, 24);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_CX16,    ecx, 13);
     }
 
     /* ---- Leaf 0x07 ECX=0: Extended features ---- */
@@ -391,6 +392,7 @@ uint64_t cpuid_probe_ap_features(void)
         set_flag_if(&m, CPU_FEATURE_XSAVE,  ecx, 26);
         set_flag_if(&m, CPU_FEATURE_AVX,    ecx, 28);
         set_flag_if(&m, CPU_FEATURE_PCID,   ecx, 17);
+        set_flag_if(&m, CPU_FEATURE_CX16,   ecx, 13);
     }
     if (max_leaf >= 0x07) {
         cpuid_raw(0x07, 0, &eax, &ebx, &ecx, &edx);

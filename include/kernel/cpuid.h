@@ -98,17 +98,24 @@ enum cpu_feature {
     /* CPUID Leaf 0x01 EDX */
     CPU_FEATURE_MTRR      = 54,   /* Memory Type Range Registers (EDX bit 12) */
 
-    CPU_FEATURE_COUNT     = 55    /* total features tracked */
+    /* CPUID Leaf 0x01 ECX */
+    CPU_FEATURE_CX16      = 55,   /* CMPXCHG16B (ECX bit 13) -- 16-byte DCAS */
+
+    CPU_FEATURE_COUNT     = 56    /* total features tracked */
 };
 
 /* --- AP feature consistency masks (TODO-09-boot S6) --------------------- */
 
 /* Architectural baseline every CPU (BSP + every AP) MUST share. A CPU missing
  * any of these cannot run the kernel safely -> BUGCHECK_MULTIPROCESSOR_
- * CONFIGURATION_NOT_SUPPORTED. PAE/PGE/LAHF/CMPXCHG16B are NOT separately
- * tracked here: they are prerequisites of x86-64 long mode itself, so a CPU
- * lacking them never reaches kernel C code (it could not have entered long
- * mode). LM is included as the explicit Linux verify_cpu.S-style guard. */
+ * CONFIGURATION_NOT_SUPPORTED. PAE/PGE/LAHF are NOT separately tracked here:
+ * they are prerequisites of x86-64 long mode itself, so a CPU lacking them
+ * never reaches kernel C code (it could not have entered long mode). LM is
+ * included as the explicit Linux verify_cpu.S-style guard. CMPXCHG16B (CX16)
+ * IS tracked and required: it is NOT a long-mode prerequisite (the earliest
+ * AMD K8 x86-64 steppings lacked it), and the Executive interlocked SLIST
+ * issues cmpxchg16b on a hot path, so a CX16-less CPU must halt early with a
+ * clear minimum-requirements message rather than #UD at runtime. */
 /* X-macro list: the SINGLE canonical source for the required baseline.
  * Generates CPU_FEATURES_REQUIRED_MASK (AP validation, cpu_security.c)
  * AND the BSP minimum-requirements gate table (boot_hw.c). Adding a
@@ -117,7 +124,8 @@ enum cpu_feature {
     X(CPU_FEATURE_NX,      "NX (No-Execute) not available -- cannot boot safely") \
     X(CPU_FEATURE_SSE2,    "SSE2 not available -- required for kernel math") \
     X(CPU_FEATURE_LM,      "Long Mode not reported -- CPUID inconsistent with 64-bit execution") \
-    X(CPU_FEATURE_SYSCALL, "SYSCALL/SYSRET not available -- required for the syscall fast path")
+    X(CPU_FEATURE_SYSCALL, "SYSCALL/SYSRET not available -- required for the syscall fast path") \
+    X(CPU_FEATURE_CX16,    "CMPXCHG16B not available -- required for Executive SLIST/DCAS")
 
 #define CPU_FEATURE_REQ_BIT_(feat, diag) | (1ULL << (feat))
 #define CPU_FEATURES_REQUIRED_MASK (0ULL CPU_FEATURES_REQUIRED_LIST(CPU_FEATURE_REQ_BIT_))

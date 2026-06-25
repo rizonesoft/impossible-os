@@ -69,6 +69,72 @@
  */
 boot_result_t ex_init(void);
 
+/* ===========================================================================
+ * S2 -- Interlocked SLIST (lock-free LIFO singly-linked list)
+ *
+ * The free-list spine the lookaside lists (S5) sit on, plus a standalone
+ * interlocked queue for drivers. Matches the Windows x64 SLIST surface.
+ *
+ * Storage contract (NO HIDDEN ALLOCATION): the caller owns every SLIST_ENTRY.
+ * An entry must stay MAPPED while the list is live -- a popper may read
+ * `entry->Next` from an entry another CPU just popped, so the storage must not
+ * be returned to the pmm (freed/unmapped) until the whole list is drained. The
+ * value-level ABA hazard is defeated by the sequence counter in SeqDepth; this
+ * mapped-while-live rule covers the read-from-reused-memory hazard.
+ *
+ * Header is a full 16-byte {Next, SeqDepth} swung atomically by cmpxchg16b, so
+ * Next is a FULL 64-bit pointer (no 48-bit packing -- higher-half-relocation
+ * safe) and Depth is linearizable with the pointer swap (not a side counter).
+ * SeqDepth = (seq << 16) | depth16. Requires CPU_FEATURE_CX16 (gated at boot).
+ * IRQL: any (lock-free, no blocking, no allocation -- DISPATCH-safe).
+ *
+ * ALIGNMENT: the head MUST be 16-byte aligned (cmpxchg16b #GPs otherwise). The
+ * type carries aligned(16), but kmalloc does NOT honor type alignment, so a
+ * header in dynamic storage must be placed on a 16-byte boundary;
+ * ExInitializeSListHead bugchecks a misaligned head.
+ *
+ * DEPTH: 16-bit, EXACT up to SLIST_DEPTH_MAX (65535) entries. Push saturates at
+ * MAX so the 65536th push never wraps the count to 0 (which would corrupt the
+ * seq field and depth consumers). Beyond 65535 entries the count is an
+ * approximate, bounded [0..MAX] value (pops past the cap under-report), so a
+ * consumer needing an exact count must keep the list under 65535 -- which every
+ * real consumer (lookaside trims long before that) does. The list itself stays
+ * valid at any depth; only the reported count degrades past the cap.
+ * =========================================================================== */
+
+typedef struct _SLIST_ENTRY {
+    struct _SLIST_ENTRY *Next;
+} SLIST_ENTRY;
+
+typedef struct _SLIST_HEADER {
+    SLIST_ENTRY *Next;       /* current head (full 64-bit pointer) */
+    uint64_t     SeqDepth;   /* (ABA_seq << 16) | depth16 */
+} __attribute__((aligned(16))) SLIST_HEADER;
+
+_Static_assert(sizeof(SLIST_HEADER) == 16,
+               "SLIST_HEADER must be 16 bytes for cmpxchg16b");
+_Static_assert(_Alignof(SLIST_HEADER) >= 16,
+               "SLIST_HEADER must be 16-byte aligned for cmpxchg16b");
+
+#define SLIST_DEPTH_MAX 0xFFFFu  /* depth field is 16 bits */
+
+/* Initialize an empty list head. */
+void ExInitializeSListHead(SLIST_HEADER *head);
+void InitializeSListHead(SLIST_HEADER *head);   /* alias */
+
+/* Push `entry` on the head; returns the PREVIOUS head (NULL if list was empty). */
+SLIST_ENTRY *ExInterlockedPushEntrySList(SLIST_HEADER *head, SLIST_ENTRY *entry);
+
+/* Pop the head entry; returns it, or NULL if the list was empty. */
+SLIST_ENTRY *ExInterlockedPopEntrySList(SLIST_HEADER *head);
+
+/* Detach the whole chain and reset the list to empty; returns the old head
+ * (NULL if already empty). The returned chain is walkable via ->Next. */
+SLIST_ENTRY *ExInterlockedFlushSList(SLIST_HEADER *head);
+
+/* Current depth (0..SLIST_DEPTH_MAX). Coherent single-snapshot read. */
+uint16_t ExQueryDepthSList(SLIST_HEADER *head);
+
 /* ex_ready -- true once the Executive support runtime is marked ready.
  *
  * Delegates to the subsystem readiness oracle (kernel_subsystem_ready(

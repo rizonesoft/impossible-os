@@ -44,7 +44,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | ⭐ | Order | Deliverable | Depends On | Status |
 | -- | :---: | ----------- | ---------- | :----: |
 | 💎 | 1 | Executive headers and namespace | -- | [x] |
-| 💎 | 2 | Interlocked SLIST | §1, atomics | [ ] |
+| 💎 | 2 | Interlocked SLIST | §1, atomics | [x] |
 | 💎 | 3 | Rundown protection | §1, atomics, events | [ ] |
 | 💎 | 4 | Callback objects | §1, §3, T05, T07 | [ ] |
 | 💎 | 5 | Lookaside lists (NPaged/Paged/Ex) | §2, D03 T03 | [ ] |
@@ -91,13 +91,26 @@ title: "TODO-06 -- Executive Support Runtime"
 
 Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the lookaside lists in §5 sit on, and a standalone interlocked queue for drivers.
 
-- [ ] Define `SLIST_HEADER` (16-byte aligned on x64) and `SLIST_ENTRY` in `include/kernel/ex.h` per the Windows SLIST layout.
-- [ ] Implement `ExInitializeSListHead`/`InitializeSListHead`, `ExInterlockedPushEntrySList`, `ExInterlockedPopEntrySList`, `ExInterlockedFlushSList`, `ExQueryDepthSList`.
-- [ ] Use a CAS loop (128-bit `cmpxchg16b` on x64, or aligned 64-bit pack) so push/pop are correct under SMP without a lock; assert 16-byte alignment of the header.
-- [ ] No hidden allocation: callers own the `SLIST_ENTRY` storage.
-- [ ] Commit: `"kernel: ex -- interlocked SLIST"`
+- [x] Define `SLIST_HEADER` (16-byte aligned `{SLIST_ENTRY *Next; uint64_t SeqDepth}`) + `SLIST_ENTRY` in `include/kernel/ex.h`.
+  - `Next` is a FULL 64-bit pointer (no packing/truncation -- higher-half-relocation safe, D02 T33); `SeqDepth = (ABA_seq << 16) | depth16`; `_Static_assert(sizeof==16 && _Alignof>=16)`.
+- [x] Implement `ExInitializeSListHead`/`InitializeSListHead`, `ExInterlockedPushEntrySList`, `ExInterlockedPopEntrySList`, `ExInterlockedFlushSList`, `ExQueryDepthSList` in `src/kernel/ex/ex_slist.c`.
+- [x] Push/pop/flush use a single 16-byte `cmpxchg16b` DCAS so `Next` AND `SeqDepth` swap atomically (depth linearizable, NOT a side counter; ABA defeated by the seq bump). Arch-marked RBX-preserving `dcas16b()` inline-asm helper.
+- [x] Gate CMPXCHG16B as a CPU requirement:
+  - Added `CPU_FEATURE_CX16` (CPUID.01H:ECX[13]) to `cpuid.h` enum + `cpuid.c` BSP+AP detection + the `CPU_FEATURES_REQUIRED_LIST` X-macro (BSP minimum gate `boot_hw.c` + AP mask `cpu_security.c` fail-closed-halt on a CX16-less CPU).
+  - Fixed the stale `cpuid.h` comment calling CMPXCHG16B a long-mode prereq; `kusd_time.c` `PF_COMPARE_EXCHANGE128` now from `cpu_has(CPU_FEATURE_CX16)`.
+- [x] No hidden allocation: callers own the `SLIST_ENTRY` storage (documented contract in `ex.h`).
+- [x] Commit: `"kernel: ex -- interlocked SLIST"`
 
-**Test checkpoint:** Concurrent push/pop from multiple CPUs preserves every entry (no lost/duplicated nodes across N iterations); `ExQueryDepthSList` matches the net push-minus-pop count; flush returns the whole chain and resets depth to 0. Verify on bare metal -- `cmpxchg16b` ABA behavior and alignment faults differ from VMs.
+**Test checkpoint:** `ex` suite (`test_ex.c`, `TEST_CAT_EX`) proves push/pop LIFO order, depth linearization (push++/pop--), pop/flush empty-edge returns NULL, and flush detaches the full chain + resets depth to 0. Verify on bare metal -- `cmpxchg16b` ABA behavior and alignment faults differ from VMs.
+
+> **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 5 suites, 0 failures
+> **Notes:**
+> - What shipped: `src/kernel/ex/ex_slist.c` (SLIST push/pop/flush/depth + arch-marked `dcas16b()` cmpxchg16b helper) + `SLIST_HEADER`/`SLIST_ENTRY` in `ex.h`; new `TEST_CAT_EX` + `test_ex.c` (5 suites incl. a 4-kthread concurrent stress).
+> - How it runs / integrates: lock-free, DISPATCH-safe, no allocation; 16-byte header swung by one DCAS so depth is linearizable; ABA defeated by the seq counter. `make test-ex` / `SUITE=ex`.
+> - Adversarial hardening (commit message): init bugchecks a misaligned head (cmpxchg16b #GP guard), depth saturates at 65535 (no wrap-to-0), SMP stress fails-by-assertion not hang.
+> - Downstream effects: free-list spine for §5 lookaside lists; gated CMPXCHG16B as a real boot CPU requirement (`CPU_FEATURE_CX16`), fixing a latent wrong assumption that it is a long-mode prereq.
+> - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h) S2 block.
+> - Scope boundary: §2 owns the SLIST primitive + CX16 gate; lookaside consumption is §5; the higher-half pointer-safety assumption is owned by D02 T33.
 
 ---
 
@@ -262,7 +275,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 
 | ⭐ | Feature                    | 🪟 Win11                            | 🐧 Linux               | 🚀 Impossible OS          |
 | -- | -------------------------- | ----------------------------------- | ---------------------- | ------------------------- |
-| 💎 | Interlocked SLIST          | ✅ SLIST_HEADER                     | ✅ llist_head          | ⬜ Planned -- §2          |
+| 💎 | Interlocked SLIST          | ✅ SLIST_HEADER                     | ✅ llist_head          | ✅ §2 cmpxchg16b DCAS     |
 | 💎 | Rundown protection         | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU      | ⬜ Planned -- §3          |
 | 💎 | Callback objects           | ✅ ExCreateCallback                 | ⚠️ notifier chains     | ⬜ Planned -- §4          |
 | 💎 | Lookaside lists            | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache     | ⬜ Planned -- §5          |

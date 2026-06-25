@@ -34,6 +34,7 @@ static const char *cat_names[] = {
     [TEST_CAT_EXEC]     = "exec",
     [TEST_CAT_X86]      = "x86",
     [TEST_CAT_DESKTOP]  = "desktop",
+    [TEST_CAT_EX]       = "ex",
 };
 
 static const char *cat_labels[] = {
@@ -49,6 +50,7 @@ static const char *cat_labels[] = {
     [TEST_CAT_EXEC]     = "Binary System",
     [TEST_CAT_X86]      = "x86-64 Architecture",
     [TEST_CAT_DESKTOP]  = "Desktop UI",
+    [TEST_CAT_EX]       = "Executive Support",
 };
 
 /* ---- Global test state ---- */
@@ -441,6 +443,7 @@ extern void test_register_fastpath_hardening(void);
 extern void test_register_crashdump(void);
 extern void test_register_harness(void);
 extern void test_register_desktop(void);
+extern void test_register_ex(void);
 
 void test_runner_init(void)
 {
@@ -555,6 +558,9 @@ void test_runner_init(void)
 
     /* Desktop UI */
     test_register_desktop();
+
+    /* Executive support runtime */
+    test_register_ex();
 
     klog(LOG_INFO, test_tag(), "%u suite(s) registered",
          (uint64_t)g_test_state.suite_count);
