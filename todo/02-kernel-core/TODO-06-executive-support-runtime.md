@@ -82,6 +82,8 @@ title: "TODO-06 -- Executive Support Runtime"
 > - Downstream effects: establishes the boot point + ownership boundary all of §2-§14 build on; `ex_ready()` delegates to the atomic subsystem oracle (Codex adversarial fix -- no duplicate flag/race).
 > - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h).
 > - Scope boundary: §1 owns only the scaffold + init hook; the primitives (SLIST..verifier) are §2-§14; pool/time/exception utilities owned by D03 T03 / T08 / T23.
+> **Verified:** 2026-06-25 | commit `7b6f5b00` | 5/5 items | build OK | smoke PASS (TCG 2.5s)
+> **Quality reviewed:** 2026-06-25 | Codex 6x (design, adversarial x2, re-adversarial, consistency, perf) | 1H+2M fixed | scope: kernel-code-quality
 
 ---
 

@@ -43,6 +43,15 @@ static void test_vpd_post16_name_known(void)
                 "0xB0B6 -> BL_MENU");
     TEST_ASSERT(strcmp(vpd_post16_name(0xB0B8), "BL_KIND_VALIDATE_OK") == 0,
                 "0xB0B8 -> BL_KIND_VALIDATE_OK");
+
+    /* Phase-2 OB + Executive support runtime markers must resolve so a crash
+     * in those windows names the stage instead of UNKNOWN (TODO-06 S1). */
+    TEST_ASSERT(strcmp(vpd_post16_name(0x20B0), "OB") == 0,
+                "0x20B0 -> OB");
+    TEST_ASSERT(strcmp(vpd_post16_name(0x20C0), "EX") == 0,
+                "0x20C0 -> EX");
+    TEST_ASSERT(strcmp(vpd_post16_name(0x20C1), "EX") == 0,
+                "0x20C1 -> EX (exit marker)");
 }
 
 /* Unmapped codes fall through to "UNKNOWN"; the lookup never returns NULL,

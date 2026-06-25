@@ -807,6 +807,8 @@ static const struct post16_entry s_post16_names[] = {
     { 0x2060, "VFS" },          { 0x2061, "VFS" },
     { 0x2080, "REGISTRY" },     { 0x2081, "REGISTRY" },
     { 0x2090, "SMP" },          { 0x2091, "SMP" },
+    { 0x20B0, "OB" },           { 0x20B1, "OB" },
+    { 0x20C0, "EX" },           { 0x20C1, "EX" },
     { 0x3000, "SCHED" },        { 0x3001, "SCHED" },
     { 0x3012, "IPC" },          { 0x3013, "IPC" },
     { 0x3014, "EXEC" },         { 0x3015, "EXEC" },
