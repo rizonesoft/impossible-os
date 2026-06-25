@@ -402,20 +402,26 @@ int ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
     }
 
     for (i = 0; i <= max_inherit_idx && i < child->capacity; i++) {
-        if (!parent->entries[i].object)
+        /* Snapshot the parent slot's object ONCE: the broader close-vs-inherit
+         * race (no table lock yet) is owned by the handle-table locking
+         * follow-up, but the copy, reference, stats, and INHERIT trace below
+         * must all act on the SAME body, or the trace could log a different (or
+         * NULL) object than the child actually inherited. */
+        void *obj = parent->entries[i].object;
+        if (!obj)
             continue;
         if (!(parent->entries[i].attributes & OBJ_INHERIT))
             continue;
 
         /* Copy entry at the same slot index (preserves HANDLE value) */
-        child->entries[i].object         = parent->entries[i].object;
+        child->entries[i].object         = obj;
         child->entries[i].granted_access = parent->entries[i].granted_access;
         child->entries[i].attributes     = parent->entries[i].attributes;
         child->count++;
 
         /* Child holds its own reference */
-        ObReferenceObject(parent->entries[i].object);
-        hdr = OB_HEADER_FROM_BODY(parent->entries[i].object);
+        ObReferenceObject(obj);
+        hdr = OB_HEADER_FROM_BODY(obj);
         hdr->handle_count++;
 
         /* Mirror ObpAllocateHandle's per-type handle statistics. ObpFreeHandle
@@ -427,6 +433,18 @@ int ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
             OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
             int32_t cur = atomic_add_fetch_relaxed(&mtype->total_handles, 1);
             ob_stat_lift_peak(&mtype->peak_handles, cur);
+        }
+
+        /* Handle event tracing (S15): inheritance is a third handle-creation
+         * path (alongside ObpAllocateHandle) -- emit a create-side INHERIT event
+         * so every later HANDLE FREE has a matching create-side trace. No PID:
+         * the child table has no owning-task back-pointer yet (handle-table
+         * owning-task pointer follow-up) and task_current() here is the creator,
+         * not the child owner. */
+        if (g_ob_handle_trace) {
+            klog(LOG_DEBUG, "ob", "HANDLE INHERIT H=0x%x obj=%p type=%s",
+                 (uint64_t)(i * 4), obj,
+                 hdr->type && hdr->type->name ? hdr->type->name : "?");
         }
 
         count++;

@@ -61,6 +61,13 @@ typedef struct ob_trace_info {
     spinlock_t         lock;         /* IRQ-safe; serializes trace_record + dump snapshot */
 } OB_TRACE_INFO;
 
+/* ob_trace_alloc() uses kmalloc (<= 4 KiB allocator). OB_TRACE_RING_SIZE and
+ * OB_TRACE_LIFE_TAGS are tunable above; this pins the size contract so raising
+ * them past the kmalloc ceiling fails at compile time, not silently as a NULL
+ * alloc that degrades all tracing to off at runtime. */
+_Static_assert(sizeof(OB_TRACE_INFO) <= 4096,
+    "OB_TRACE_INFO must fit the kmalloc (<= 4 KiB) allocator used by ob_trace_alloc");
+
 /* ---- Per-type tracing control ------------------------------------------- */
 
 /* Enable/disable tagged reference tracing for a type.

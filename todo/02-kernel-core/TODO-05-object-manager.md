@@ -538,7 +538,8 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [x] `ob_enable_type_tracing(type)` / `ob_disable_type_tracing(type)` -- sets `OBJECT_TYPE.tracing_enabled` flag; `ob_alloc_object()` checks it and allocates trace info
 - [x] `ob_dump_trace(body)` (+ `ob_dump_trace_hdr`) -- snapshots under lock, klogs outside (Gate 2): net LIFETIME verdict + ring-truncation note + ledger-overflow warning + per-tag `IMBALANCE` lines that catch a net-balanced mis-tag leak
 - [x] Auto-dump on teardown: `ob_free_object` calls `ob_dump_trace_hdr` before freeing the ring -- 0 refcount, sole owner, emitted exactly once
-- [x] Handle event tracing: `ObpAllocateHandle` and `ObpFreeHandle` emit `klog(LOG_DEBUG, "ob", "HANDLE CREATE/FREE PID=%u H=0x%x ...")` when `g_ob_handle_trace` is set
+- [x] Handle event tracing: CREATE/FREE/INHERIT klog from all three handle alloc/inherit/close paths when `g_ob_handle_trace` set (INHERIT closes the free-only gap); subject to klog's per-subsystem rate limit + dropped-count summary
+- [/] No-drop handle-trace path: opt-in loss-accounted ring (or rate-limit bypass) so handle-heavy leak reconstruction keeps every event under churn instead of relying on klog's per-subsystem 1s budget
 - [x] `g_ob_handle_trace` flag: set from `boot.conf` `ob_handle_trace=1`; wired in Phase 2 after OB init
 - [x] Tests: `test_ob_trace` (tagged ref/deref + imbalance dump), `test_ob_trace_wrap_and_tags` (ring wrap past 64 + lifetime net survives wrap), `test_ob_trace_mistag_lifetime` (net-balanced mis-tag leak caught by per-tag ledger after wrap)
 - [x] Commit: `"kernel: ob -- tagged reference tracing and handle leak detection"`
@@ -553,6 +554,11 @@ Provide tagged reference tracking and optional per-handle event recording for di
 > - **Leak detection is wrap-proof** -- ring-independent net counters give the authoritative "any leak?" verdict; the per-tag ledger pins a net-balanced mis-tag leak after the ring wraps; `life_overflow` flags partial attribution past 32 distinct tags.
 > - **Canonical doc** -- TODO-05 §15; klog-integrated, no external tooling unlike Win11 ETW / Linux strace.
 > - **Scope boundary** -- §15 owns object-ref + handle-event tracing; the handle-table `count` SMP race + owning-task back-pointer stay §3's; `NtSetInformationProcess(ProcessHandleQuota)` stays TODO-12 §7.
+
+> **Verified:** 2026-06-25 | commit `bc16df2d` + review fixes | 10/11 items | build OK | tests 6913 kernel + 16 user PASS, smoke PASS (TCG 2.43s)
+> **Accepted:** [M] `ob_handle_table_inherit` reads the parent slot without a table lock, so the broader close-vs-inherit race can still inherit a stale/NULL object (the INHERIT trace itself now snapshots `obj` so it cannot diverge) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Deferred:** [M] handle-event tracing rides normal klog, so the per-subsystem rate limit can drop individual CREATE/FREE/INHERIT lines under churn (klog dropped-count summary accounts the loss) -> XREF: 02-kernel-core/TODO-05 §15 (item: "No-drop handle-trace path: opt-in loss-accounted ring" at line 542)
+> **Quality reviewed:** 2026-06-25 | Codex 8x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 6M+1L fixed, 1M accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---
 

@@ -202,8 +202,9 @@ void ob_dump_trace_hdr(struct object_header *hdr_)
      * this per-tag ledger catches. */
     if (life_of)
         klog(LOG_WARN, "ob",
-             "[TRACE]   per-tag ledger OVERFLOWED (> %u distinct tags) -- "
-             "per-tag attribution partial; net verdict above is authoritative",
+             "[TRACE]   per-tag ledger OVERFLOWED (> %u distinct tags) -- per-tag "
+             "attribution INCOMPLETE; a net-balanced result CANNOT rule out a "
+             "mis-tag leak among the dropped tags (a net LEAK above is still real)",
              (uint64_t)OB_TRACE_LIFE_TAGS);
 
     for (uint32_t i = 0; i < life_n && i < OB_TRACE_LIFE_TAGS; i++) {
