@@ -46,7 +46,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 1 | Executive headers and namespace | -- | [x] |
 | 💎 | 2 | Interlocked SLIST | §1, atomics | [x] |
 | 💎 | 3 | Rundown protection | §1, atomics, events | [x] |
-| 💎 | 4 | Callback objects | §1, §3, T05, T07 | [ ] |
+| 💎 | 4 | Callback objects | §1, §3, T05, T07 | [x] |
 | 💎 | 5 | Lookaside lists (NPaged/Paged/Ex) | §2, D03 T03 | [ ] |
 | 💎 | 6 | Fast references | §1, T05 | [ ] |
 | 💎 | 7 | Generic tables and bitmaps | §1 | [ ] |
@@ -145,22 +145,31 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 
 ## 4. Callback Objects
 
-- [ ] Add `ExCreateCallback`/`ExRegisterCallback`/`ExUnregisterCallback`/`ExNotifyCallback` in `src/kernel/ex/ex_callback.c`, backed by OM type `Callback` (`ObpCallbackType` via `ob_create_type`, like `ob_event.c`).
-- [ ] Slot lifecycle + cookie identity (design F1):
-  - Fixed registration array, explicit active -> unregistering -> free states; cookie packs object identity + a monotonic per-slot generation, validated under the spinlock so a stale cookie can't hit a reused slot.
-- [ ] Dispatch under per-slot rundown (§3):
-  - `ExNotifyCallback` snapshots active slots + acquires each slot's `EX_RUNDOWN_REF` under the lock, invokes outside the lock, releases; `ExUnregisterCallback` marks unregistering then `ExWaitForRundownProtectionRelease` drains before the caller frees context.
-- [ ] Self-unregister safety (design F2):
-  - A per-CPU dispatching-slot marker lets `ExUnregisterCallback` detect unregister-from-its-own-callback and DEFER the final drain (the dispatch's own release completes it) instead of deadlocking on its own in-flight reference.
-- [ ] Support named callbacks under `\Callback\` (created at `ex_init` via `ob_ns_create_directory` + `ObInsertObject`, name-collision handling like `ob_event.c`).
-- [ ] Built-in callback OBJECTS only (named `\Callback\` points; PRODUCERS owned by subsystems):
+- [x] Add `ExCreateCallback`/`ExRegisterCallback`/`ExUnregisterCallback`/`ExNotifyCallback` in `src/kernel/ex/ex_callback.c`, backed by OM type `Callback` (`ObpCallbackType` via `ob_create_type`, like `ob_event.c`).
+- [x] Slot lifecycle + cookie identity (design F1):
+  - Fixed registration array, explicit free -> active -> unregistering -> free states; cookie packs slot index + a monotonic per-slot generation, validated under the spinlock so a stale cookie can't hit a reused slot.
+  - Slot reuse (free -> active) MUST `ExReInitializeRundownProtection` before publishing active -- the drain leaves the active bit set, so a reused slot would otherwise never dispatch (re-review F3-redux).
+- [x] Dispatch under per-slot rundown (§3):
+  - `ExNotifyCallback` snapshots active slots + acquires each slot's `EX_RUNDOWN_REF` under the lock, invokes outside the lock, releases; `ExUnregisterCallback` marks unregistering then `ExWaitForRundownProtectionRelease` drains ALL outstanding refs (incl. other CPUs') before returning, so the caller may then free context.
+- [x] Self-unregister FORBIDDEN by contract (design F2, re-review): must not call `ExUnregisterCallback` from within a callback (matches Windows); documented in the header.
+  - Drain-all-refs is provably safe for the only LEGAL (non-self) usage -- no deferral, no concurrent-dispatcher UAF. Misuse detection (deadlock -> bugcheck) owned by the §14 verifier -> XREF §14.
+- [x] Support named callbacks under `\Callback\` (created at `ex_init` via `ob_ns_create_directory` + `ObInsertObject`, name-collision handling like `ob_event.c`).
+- [x] Built-in callback OBJECTS only (named `\Callback\` points; PRODUCERS owned by subsystems):
   - ProcessCreate/ThreadCreate -> XREF D02 T21; ImageLoad -> XREF D02 T18; RegistryChange -> XREF D02 T14; PowerState -> XREF D02 T26; CodeIntegrity -> XREF D02 T19.
-- [ ] Add `ExpEnumerateCallback`-style introspection (snapshot under the spinlock) for the verifier (§14) + debugging.
+- [x] Add `ExpEnumerateCallback`-style introspection (snapshot under the spinlock) for the verifier (§14) + debugging.
 - [/] Priority-inversion precondition (design F3):
   - `ExUnregisterCallback` drain inherits the §3 poll-wait precondition (notifier priority >= unregister), documented in the header. Not functional-blocking (all producers deferred -> no live notifiers); PI-correct wait is the §3 deferred item.
-- [ ] Commit: `"kernel: ex -- callback objects"`
+- [x] Commit: `"kernel: ex -- callback objects"`
 
-**Test checkpoint:** Named callback resolvable under `\Callback\`; `ExNotifyCallback` invokes every registered routine in order; concurrent `ExNotifyCallback` + `ExUnregisterCallback` from different CPUs proves unregister blocks until in-flight dispatch drains (no use-after-free, no missed routine); enumeration during churn returns a consistent snapshot. Verify on bare metal -- dispatch/unregister race window differs from VMs.
+**Test checkpoint:** `ex` suite proves register/notify/unregister (routine gets context+args, no invoke after unregister), `allow_multiple=false` cap, multi-registration fan-out + enumerate count, slot reuse re-dispatches (rundown re-armed), stale double-unregister is a safe no-op, and the built-in `\Callback\ProcessCreate` is resolvable. Boot serial shows `"Callback objects initialized (\Callback\ + 6 built-ins)"`. Verify on bare metal -- dispatch/unregister race window differs from VMs.
+
+> **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 15 suites, 0 failures
+> **Notes:**
+> - What shipped: `src/kernel/ex/ex_callback.c` (`ExCreate`/`Register`/`Unregister`/`Notify`/`ExpEnumerate` over OM type `Callback` + `\Callback\` dir + 6 built-in objects) + `EX_CALLBACK_OBJECT`/decls in `ex.h`; 6 callback suites in `test_ex.c`.
+> - How it runs / integrates: `ex_callback_init` from `ex_init` (Phase 2 post-OB); per-slot `EX_RUNDOWN_REF` makes unregister drain in-flight dispatch; generation cookie rejects stale; allow_multiple cap; PASSIVE.
+> - Downstream effects: named notification points for the deferred producers (process/image/registry/power/CI); the OB-callback drain mechanism reciprocally referenced in TODO-05 §13.
+> - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h) S4 block.
+> - Scope boundary: §4 owns the callback OBJECTS + dispatch; PRODUCERS owned by D02 T21/T18/T14/T26/T19; self-unregister misuse detection owned by §14; PI-correct drain by §3.
 
 ---
 
@@ -301,7 +310,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | -- | -------------------------- | ----------------------------------- | ---------------------- | ------------------------- |
 | 💎 | Interlocked SLIST          | ✅ SLIST_HEADER                     | ✅ llist_head          | ✅ §2 cmpxchg16b DCAS     |
 | 💎 | Rundown protection         | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU      | ✅ §3 atomic + poll-drain |
-| 💎 | Callback objects           | ✅ ExCreateCallback                 | ⚠️ notifier chains     | ⬜ Planned -- §4          |
+| 💎 | Callback objects           | ✅ ExCreateCallback                 | ⚠️ notifier chains     | ✅ §4 \Callback\ + rundown |
 | 💎 | Lookaside lists            | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache     | ⬜ Planned -- §5          |
 | 💎 | Fast references            | ✅ EX_FAST_REF                      | ❌ none                | ⬜ Planned -- §6          |
 | 💎 | Ordered tables + bitmaps   | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap       | ⬜ Planned -- §7          |

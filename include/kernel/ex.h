@@ -187,6 +187,72 @@ void ExRundownCompleted(EX_RUNDOWN_REF *r);
 /* True once rundown has begun (acquire would fail). */
 bool ExIsRundownActive(EX_RUNDOWN_REF *r);
 
+/* ===========================================================================
+ * S4 -- Callback Objects (Ex callback objects; \Callback\ namespace)
+ *
+ * A named notification point: a producer creates/opens an EX_CALLBACK_OBJECT
+ * (optionally named under \Callback\), consumers register routines on it, and
+ * the producer fires them all via ExNotifyCallback. Matches the Windows
+ * ExCreateCallback surface. DISTINCT from the Object Manager operation
+ * callbacks (ObRegisterCallbacks in ob_callback.c).
+ *
+ * Lifetime safety: each registration slot carries its own EX_RUNDOWN_REF (S3).
+ * ExNotifyCallback acquires a slot's rundown before invoking it (outside the
+ * lock); ExUnregisterCallback marks the slot unregistering and drains ALL
+ * outstanding references (including other CPUs') before returning, so a
+ * consumer can free its context with no UAF. A monotonic per-slot generation
+ * in the cookie prevents a stale cookie from touching a reused slot.
+ *
+ * CONTRACT: ExUnregisterCallback MUST NOT be called from within a callback
+ * routine of the same object (matches Windows) -- it would deadlock waiting on
+ * its own in-flight rundown reference. The drain-all-refs path is provably safe
+ * for the only legal (non-self) usage. Misuse detection (turning that deadlock
+ * into a bugcheck) is owned by the executive verifier (S14).
+ *
+ * PRECONDITION (inherited from S3 rundown wait): a callback notifier must run
+ * at >= the unregistering thread's scheduler priority. Not functional-blocking
+ * today (no live producers fire ExNotifyCallback yet).
+ *
+ * IRQL: PASSIVE_LEVEL (registration, notify dispatch, unregister drain).
+ * =========================================================================== */
+
+/* Callback routine: invoked with the registration context + the two notify
+ * arguments the producer passes to ExNotifyCallback. */
+typedef void (*EX_CALLBACK_ROUTINE)(void *context, void *arg1, void *arg2);
+
+#define EX_CALLBACK_MAX_SLOTS 8   /* registrations per callback object */
+
+typedef struct _EX_CALLBACK_OBJECT EX_CALLBACK_OBJECT;   /* OM-allocated body */
+
+/* Registration cookie = (slot << 32) | generation; generation >= 1 so a valid
+ * cookie is never 0. Treat as opaque. */
+typedef uint64_t EX_CALLBACK_COOKIE;
+
+/* Create or open a callback object. `name` non-NULL -> created/opened under
+ * \Callback\<name>; `allow_multiple` false caps it at one active registration.
+ * Returns the object body or NULL. PASSIVE. */
+EX_CALLBACK_OBJECT *ExCreateCallback(const char *name, bool create,
+                                     bool allow_multiple);
+
+/* Register `routine`(`context`) on `cb`. Returns a non-zero cookie, or 0 if no
+ * slot is free or allow_multiple is violated. PASSIVE. */
+EX_CALLBACK_COOKIE ExRegisterCallback(EX_CALLBACK_OBJECT *cb,
+                                      EX_CALLBACK_ROUTINE routine, void *context);
+
+/* Unregister the routine identified by `cookie`, draining in-flight dispatch
+ * before returning (caller may then free context). No-op on a stale/invalid
+ * cookie. MUST NOT be called from within a callback routine (would deadlock; the
+ * S14 verifier detects + bugchecks the misuse). PASSIVE. */
+void ExUnregisterCallback(EX_CALLBACK_OBJECT *cb, EX_CALLBACK_COOKIE cookie);
+
+/* Invoke every active registration on `cb` with (context, arg1, arg2), each
+ * under its slot's rundown so a concurrent unregister drains safely. PASSIVE. */
+void ExNotifyCallback(EX_CALLBACK_OBJECT *cb, void *arg1, void *arg2);
+
+/* Snapshot active registrations into out[] (each = the registered context);
+ * returns the count written (capped at max). For the verifier (S14)/debug. */
+uint32_t ExpEnumerateCallback(EX_CALLBACK_OBJECT *cb, void **out, uint32_t max);
+
 /* ex_ready -- true once the Executive support runtime is marked ready.
  *
  * Delegates to the subsystem readiness oracle (kernel_subsystem_ready(

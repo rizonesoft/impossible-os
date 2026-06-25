@@ -18,6 +18,13 @@ boot_result_t ex_init(void)
      * boot_phase2() calls kernel_subsystem_set_ready(SUBSYS_EX, ...) right
      * after this returns, which uses a release store readable cross-CPU. */
     klog(LOG_INFO, "ex", "Executive support runtime initialized");
+
+    /* Bring up the Ex callback objects (\Callback\ namespace + built-ins).
+     * Runs after ob_init (we are in Phase 2 post-OB) so ObpCallbackType and the
+     * namespace root are available. */
+    extern void ex_callback_init(void);
+    ex_callback_init();
+
     return BOOT_OK;
 }
 

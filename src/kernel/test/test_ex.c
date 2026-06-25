@@ -15,6 +15,7 @@
 #include "kernel/test/test.h"
 #include "kernel/ex.h"
 #include "kernel/sched/task.h"
+#include "kernel/ob/ob.h"   /* ObDereferenceObject -- release caller-owned callback objects */
 
 /* ---- S2: Interlocked SLIST ---------------------------------------------- */
 
@@ -282,6 +283,118 @@ static void test_ex_rundown_concurrent_drain(void)
     thread_join((uint32_t)tid);
 }
 
+/* ---- S4: Callback Objects ----------------------------------------------- */
+
+static volatile uint32_t g_cb_calls;
+static void *g_cb_last_ctx;
+static void *g_cb_last_a1;
+static void *g_cb_last_a2;
+
+static void cb_test_routine(void *ctx, void *a1, void *a2)
+{
+    __atomic_fetch_add(&g_cb_calls, 1, __ATOMIC_ACQ_REL);
+    g_cb_last_ctx = ctx;
+    g_cb_last_a1 = a1;
+    g_cb_last_a2 = a2;
+}
+
+static void test_ex_callback_register_notify(void)
+{
+    EX_CALLBACK_OBJECT *cb = ExCreateCallback((const char *)0, true, true);
+    TEST_ASSERT(cb != (EX_CALLBACK_OBJECT *)0, "anonymous create returns object");
+    if (!cb) return;
+
+    g_cb_calls = 0;
+    EX_CALLBACK_COOKIE c = ExRegisterCallback(cb, cb_test_routine, (void *)0x1234);
+    TEST_ASSERT(c != 0, "register returns non-zero cookie");
+    ExNotifyCallback(cb, (void *)0xAA, (void *)0xBB);
+    TEST_ASSERT_EQ(g_cb_calls, 1u, "notify invoked the routine once");
+    TEST_ASSERT(g_cb_last_ctx == (void *)0x1234, "routine got its context");
+    TEST_ASSERT(g_cb_last_a1 == (void *)0xAA && g_cb_last_a2 == (void *)0xBB,
+                "routine got both notify args");
+
+    ExUnregisterCallback(cb, c);
+    ExNotifyCallback(cb, 0, 0);
+    TEST_ASSERT_EQ(g_cb_calls, 1u, "no invoke after unregister");
+    ObDereferenceObject(cb);
+}
+
+static void test_ex_callback_allow_multiple_false(void)
+{
+    EX_CALLBACK_OBJECT *cb = ExCreateCallback((const char *)0, true, false);
+    if (!cb) { TEST_ASSERT(0, "create"); return; }
+    EX_CALLBACK_COOKIE c1 = ExRegisterCallback(cb, cb_test_routine, 0);
+    TEST_ASSERT(c1 != 0, "first register succeeds");
+    EX_CALLBACK_COOKIE c2 = ExRegisterCallback(cb, cb_test_routine, 0);
+    TEST_ASSERT_EQ(c2, 0u, "second register capped (allow_multiple=false)");
+    ExUnregisterCallback(cb, c1);
+    EX_CALLBACK_COOKIE c3 = ExRegisterCallback(cb, cb_test_routine, 0);
+    TEST_ASSERT(c3 != 0, "register succeeds again after unregister");
+    ExUnregisterCallback(cb, c3);
+    ObDereferenceObject(cb);
+}
+
+static void test_ex_callback_multiple_and_enumerate(void)
+{
+    EX_CALLBACK_OBJECT *cb = ExCreateCallback((const char *)0, true, true);
+    if (!cb) { TEST_ASSERT(0, "create"); return; }
+    EX_CALLBACK_COOKIE a = ExRegisterCallback(cb, cb_test_routine, (void *)0x1);
+    EX_CALLBACK_COOKIE b = ExRegisterCallback(cb, cb_test_routine, (void *)0x2);
+    EX_CALLBACK_COOKIE c = ExRegisterCallback(cb, cb_test_routine, (void *)0x3);
+    TEST_ASSERT(a && b && c, "three registrations succeed");
+
+    g_cb_calls = 0;
+    ExNotifyCallback(cb, 0, 0);
+    TEST_ASSERT_EQ(g_cb_calls, 3u, "notify fired all three");
+
+    void *out[EX_CALLBACK_MAX_SLOTS];
+    uint32_t n = ExpEnumerateCallback(cb, out, EX_CALLBACK_MAX_SLOTS);
+    TEST_ASSERT_EQ(n, 3u, "enumerate returns 3 active");
+    ExUnregisterCallback(cb, a);
+    ExUnregisterCallback(cb, b);
+    ExUnregisterCallback(cb, c);
+    ObDereferenceObject(cb);
+}
+
+static void test_ex_callback_slot_reuse(void)
+{
+    /* design re-review F3-redux: a reused slot must re-arm its rundown or it
+     * would never dispatch. */
+    EX_CALLBACK_OBJECT *cb = ExCreateCallback((const char *)0, true, true);
+    if (!cb) { TEST_ASSERT(0, "create"); return; }
+    EX_CALLBACK_COOKIE c1 = ExRegisterCallback(cb, cb_test_routine, (void *)0x9);
+    ExUnregisterCallback(cb, c1);
+    EX_CALLBACK_COOKIE c2 = ExRegisterCallback(cb, cb_test_routine, (void *)0xA);
+    TEST_ASSERT(c2 != 0 && c2 != c1, "reused slot gets a fresh cookie");
+    g_cb_calls = 0;
+    ExNotifyCallback(cb, 0, 0);
+    TEST_ASSERT_EQ(g_cb_calls, 1u, "reused slot dispatches (rundown re-armed)");
+    ExUnregisterCallback(cb, c2);
+    ObDereferenceObject(cb);
+}
+
+static void test_ex_callback_stale_cookie_noop(void)
+{
+    EX_CALLBACK_OBJECT *cb = ExCreateCallback((const char *)0, true, true);
+    if (!cb) { TEST_ASSERT(0, "create"); return; }
+    EX_CALLBACK_COOKIE c1 = ExRegisterCallback(cb, cb_test_routine, 0);
+    ExUnregisterCallback(cb, c1);
+    ExUnregisterCallback(cb, c1);   /* stale: must be a safe no-op */
+    g_cb_calls = 0;
+    ExNotifyCallback(cb, 0, 0);
+    TEST_ASSERT_EQ(g_cb_calls, 0u, "stale double-unregister left nothing live");
+    ObDereferenceObject(cb);
+}
+
+static void test_ex_callback_builtin_named(void)
+{
+    /* The built-in well-known objects are created at ex_init. */
+    EX_CALLBACK_OBJECT *cb = ExCreateCallback("ProcessCreate", false, true);
+    TEST_ASSERT(cb != (EX_CALLBACK_OBJECT *)0,
+                "built-in \\Callback\\ProcessCreate resolvable");
+    if (cb) ObDereferenceObject(cb);
+}
+
 void test_register_ex(void)
 {
     test_suite_register_cat("ex: SLIST init/empty edges",
@@ -302,6 +415,18 @@ void test_register_ex(void)
                             test_ex_rundown_wait_no_refs, TEST_CAT_EX);
     test_suite_register_cat("ex: rundown concurrent drain",
                             test_ex_rundown_concurrent_drain, TEST_CAT_EX);
+    test_suite_register_cat("ex: callback register/notify/unregister",
+                            test_ex_callback_register_notify, TEST_CAT_EX);
+    test_suite_register_cat("ex: callback allow_multiple=false cap",
+                            test_ex_callback_allow_multiple_false, TEST_CAT_EX);
+    test_suite_register_cat("ex: callback multiple + enumerate",
+                            test_ex_callback_multiple_and_enumerate, TEST_CAT_EX);
+    test_suite_register_cat("ex: callback slot reuse re-arms rundown",
+                            test_ex_callback_slot_reuse, TEST_CAT_EX);
+    test_suite_register_cat("ex: callback stale cookie no-op",
+                            test_ex_callback_stale_cookie_noop, TEST_CAT_EX);
+    test_suite_register_cat("ex: callback built-in named resolvable",
+                            test_ex_callback_builtin_named, TEST_CAT_EX);
 }
 
 #endif /* KERNEL_TESTS */
