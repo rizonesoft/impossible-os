@@ -960,6 +960,148 @@ static void test_ob_trace(void)
     ObDereferenceObject(obj);
 }
 
+/* ---- S15: trace ring wrap + >16 distinct tags + explicit dump (no crash) ---- */
+
+static void test_ob_trace_wrap_and_tags(void)
+{
+    static const OBJECT_TYPE wt_tmpl = {
+        .name = "TraceWrap", .body_size = 16,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *t = ob_create_type(&wt_tmpl);
+    TEST_ASSERT(t != (void *)0, "ob_create_type for trace-wrap");
+    if (!t) return;
+    ob_enable_type_tracing(t);
+
+    void *obj = ob_alloc_object(t);
+    TEST_ASSERT(obj != (void *)0, "alloc object for trace-wrap");
+    if (!obj) { ob_disable_type_tracing(t); return; }
+    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(obj);
+    TEST_ASSERT(hdr->trace != (void *)0, "trace info allocated for wrap test");
+
+    /* 35 balanced ref/deref PAIRS = 70 ring entries (> OB_TRACE_RING_SIZE 64, so
+     * the ring wraps and count exceeds ring size) using 20 distinct tags (> the
+     * old MAX_TAGS 16, so the summary must NOT drop any). ref_count returns to
+     * its baseline after each pair. */
+    for (uint32_t i = 0; i < 35; i++) {
+        uint32_t tag = TAG4('T', 'w', (char)('0' + (i % 20) / 10), (char)('0' + (i % 20) % 10));
+        ObReferenceObjectWithTag(obj, tag);
+        ObDereferenceObjectWithTag(obj, tag);
+    }
+    TEST_ASSERT_EQ((uint32_t)hdr->trace->count, 70,
+                   "70 trace entries recorded (count is 64-bit, no wrap)");
+    TEST_ASSERT_EQ(atomic_read(&hdr->ref_count), 1,
+                   "ref_count balanced back to baseline after 35 pairs");
+    /* Lifetime tallies survive ring wrap even though the ring overwrote the
+     * first 6 entries (70 written, 64-slot ring). */
+    TEST_ASSERT_EQ((uint32_t)hdr->trace->total_refs, 35,
+                   "lifetime total_refs == 35 (ring-independent)");
+    TEST_ASSERT_EQ((uint32_t)hdr->trace->total_derefs, 35,
+                   "lifetime total_derefs == 35 (ring-independent)");
+
+    /* A leak burst of 70 single-tag tagged refs (no matching deref) overruns the
+     * 64-entry ring, so the per-tag summary scans only the last 64 'Leak' refs
+     * and the 35 earlier balanced pairs are GONE from the ring -- but the
+     * lifetime counters still record the true totals, so the dump's LIFETIME
+     * verdict reports the leak that the truncated per-tag view would understate. */
+    for (uint32_t i = 0; i < 70; i++)
+        ObReferenceObjectWithTag(obj, TAG4('L', 'e', 'a', 'k'));
+    TEST_ASSERT_EQ((uint32_t)hdr->trace->total_refs, 105,
+                   "lifetime total_refs == 105 after 70-ref leak burst");
+    TEST_ASSERT_EQ((uint32_t)hdr->trace->total_derefs, 35,
+                   "lifetime total_derefs unchanged at 35 (leak outstanding)");
+    TEST_ASSERT_EQ((int32_t)(hdr->trace->total_refs - hdr->trace->total_derefs), 70,
+                   "lifetime leak verdict = 70 outstanding (survives ring wrap)");
+
+    /* Explicit dump must traverse the wrapped ring + truncation note + lifetime
+     * leak line without crashing (klog output is not unit-assertable). */
+    ob_dump_trace(obj);
+
+    /* Rebalance the 70 leaked refs so the object can free cleanly. */
+    for (uint32_t i = 0; i < 70; i++)
+        ObDereferenceObjectWithTag(obj, TAG4('L', 'e', 'a', 'k'));
+    TEST_ASSERT_EQ(atomic_read(&hdr->ref_count), 1,
+                   "ref_count back to baseline after rebalancing leak burst");
+
+    ob_disable_type_tracing(t);
+    ObDereferenceObject(obj);   /* frees object + trace log (dumps once more) */
+}
+
+/* ---- S15: per-tag lifetime ledger catches a net-balanced mis-tag leak ---- */
+
+/* Find a tag's lifetime slot in the per-tag ledger; returns -1 if absent. */
+static int trace_life_index(OB_TRACE_INFO *ti, uint32_t tag)
+{
+    for (uint32_t i = 0; i < ti->life_ntags && i < OB_TRACE_LIFE_TAGS; i++)
+        if (ti->life_tags[i].tag == tag)
+            return (int)i;
+    return -1;
+}
+
+static void test_ob_trace_mistag_lifetime(void)
+{
+    static const OBJECT_TYPE mt_tmpl = {
+        .name = "TraceMistag", .body_size = 16,
+        .on_close = (void *)0, .on_delete = (void *)0,
+        .on_open = (void *)0, .on_parse = (void *)0,
+    };
+    const OBJECT_TYPE *t = ob_create_type(&mt_tmpl);
+    TEST_ASSERT(t != (void *)0, "ob_create_type for mistag");
+    if (!t) return;
+    ob_enable_type_tracing(t);
+
+    void *obj = ob_alloc_object(t);
+    TEST_ASSERT(obj != (void *)0, "alloc object for mistag");
+    if (!obj) { ob_disable_type_tracing(t); return; }
+    OBJECT_HEADER *hdr = OB_HEADER_FROM_BODY(obj);
+    TEST_ASSERT(hdr->trace != (void *)0, "trace info allocated for mistag");
+
+    /* Mis-tag leak: 10 refs tagged 'Aaaa', 10 derefs tagged 'Bbbb' -- net
+     * balanced (ref_count returns to baseline) but tag A over-refs and tag B
+     * over-derefs. (Refs before derefs so ref_count never hits 0 mid-test.) */
+    for (uint32_t i = 0; i < 10; i++)
+        ObReferenceObjectWithTag(obj, TAG4('A', 'a', 'a', 'a'));
+    for (uint32_t i = 0; i < 10; i++)
+        ObDereferenceObjectWithTag(obj, TAG4('B', 'b', 'b', 'b'));
+
+    /* 30 balanced 'Cccc' pairs = 60 ops; total 80 ops > 64-entry ring, so the
+     * ring wraps and the A/B events are overwritten -- the ring-only view would
+     * now look balanced and hide the mis-tag. */
+    for (uint32_t i = 0; i < 30; i++) {
+        ObReferenceObjectWithTag(obj, TAG4('C', 'c', 'c', 'c'));
+        ObDereferenceObjectWithTag(obj, TAG4('C', 'c', 'c', 'c'));
+    }
+
+    TEST_ASSERT_EQ((uint32_t)hdr->trace->count, 80, "80 events recorded (ring wrapped)");
+    TEST_ASSERT_EQ(atomic_read(&hdr->ref_count), 1, "ref_count net balanced after mis-tag");
+    /* Net counters report balanced -- this is exactly where the per-tag ledger
+     * must rescue the verdict. */
+    TEST_ASSERT_EQ((int32_t)(hdr->trace->total_refs - hdr->trace->total_derefs), 0,
+                   "net lifetime balanced (mis-tag hidden from net verdict)");
+
+    /* Per-tag ledger survived the wrap and pins the mis-tag. */
+    TEST_ASSERT_EQ(hdr->trace->life_overflow, 0, "ledger not overflowed (3 tags < 32)");
+    int ia = trace_life_index(hdr->trace, TAG4('A', 'a', 'a', 'a'));
+    int ib = trace_life_index(hdr->trace, TAG4('B', 'b', 'b', 'b'));
+    TEST_ASSERT(ia >= 0 && ib >= 0, "tags A and B present in lifetime ledger");
+    if (ia >= 0) {
+        TEST_ASSERT_EQ((int32_t)(hdr->trace->life_tags[ia].refs -
+                                 hdr->trace->life_tags[ia].derefs), 10,
+                       "tag A lifetime imbalance = +10 (survives ring wrap)");
+    }
+    if (ib >= 0) {
+        TEST_ASSERT_EQ((int32_t)(hdr->trace->life_tags[ib].refs -
+                                 hdr->trace->life_tags[ib].derefs), -10,
+                       "tag B lifetime imbalance = -10 (survives ring wrap)");
+    }
+
+    ob_dump_trace(obj);   /* exercises net-balanced + per-tag-imbalanced path */
+
+    ob_disable_type_tracing(t);
+    ObDereferenceObject(obj);
+}
+
 /* ---- Per-process handle quota (S14) ---- */
 
 static void test_ob_handle_quota(void)
@@ -2236,6 +2378,8 @@ void test_register_ob(void)
     test_suite_register_cat("OB: handle quota", test_ob_handle_quota, TEST_CAT_OB);
     test_suite_register_cat("OB: quota grows past old cap", test_ob_handle_quota_grows_past_old_cap, TEST_CAT_OB);
     test_suite_register_cat("OB: trace", test_ob_trace, TEST_CAT_OB);
+    test_suite_register_cat("OB: trace wrap + tags", test_ob_trace_wrap_and_tags, TEST_CAT_OB);
+    test_suite_register_cat("OB: trace mis-tag lifetime", test_ob_trace_mistag_lifetime, TEST_CAT_OB);
     test_suite_register_cat("OB: NT create+open directory", test_nt_create_open_directory, TEST_CAT_OB);
     test_suite_register_cat("OB: NT open directory not found", test_nt_open_directory_not_found, TEST_CAT_OB);
     test_suite_register_cat("OB: NT symlink roundtrip", test_nt_symlink_roundtrip, TEST_CAT_OB);

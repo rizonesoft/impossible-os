@@ -179,7 +179,6 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
 
     /* Per-type tracing (S15): allocate trace log if type tracing is enabled */
     if (type->tracing_enabled) {
-        extern OB_TRACE_INFO *ob_trace_alloc(void);
         hdr->trace = ob_trace_alloc();
         if (!hdr->trace)
             klog(LOG_WARN, "ob",
@@ -234,8 +233,11 @@ static void ob_free_object(OBJECT_HEADER *hdr)
         atomic_sub_fetch_relaxed(&mtype->total_objects, 1);
     }
 
-    /* Free trace log if allocated (S15) */
+    /* Free trace log if allocated (S15). Dump first: refcount is 0 and this is
+     * the sole owner, so the per-tag leak summary is emitted exactly once,
+     * race-free, right before the ring is freed. */
     if (hdr->trace) {
+        ob_dump_trace_hdr((struct object_header *)hdr);
         kfree(hdr->trace);
         hdr->trace = (void *)0;
     }

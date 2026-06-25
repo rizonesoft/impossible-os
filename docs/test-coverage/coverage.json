@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-22T16:14:35+02:00",
-  "total_suites": 1493,
-  "total_assertions": 5233,
+  "timestamp": "2026-06-22T16:58:59+02:00",
+  "total_suites": 1495,
+  "total_assertions": 5254,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -53,7 +53,7 @@
     {"file": "test_mmap.c", "suites": 1, "assertions": 2},
     {"file": "test_nt_types.c", "suites": 52, "assertions": 187},
     {"file": "test_nvme.c", "suites": 1, "assertions": 2},
-    {"file": "test_ob.c", "suites": 46, "assertions": 242},
+    {"file": "test_ob.c", "suites": 48, "assertions": 263},
     {"file": "test_peb_teb.c", "suites": 25, "assertions": 93},
     {"file": "test_pmm.c", "suites": 7, "assertions": 23},
     {"file": "test_registry.c", "suites": 14, "assertions": 38},

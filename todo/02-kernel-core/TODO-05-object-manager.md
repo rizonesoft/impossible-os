@@ -532,18 +532,27 @@ Provide tagged reference tracking and optional per-handle event recording for di
 > Neither Windows nor Linux provides built-in, always-available handle leak detection at the kernel level without external tooling (ETW requires WPR setup; Linux requires strace/lsof). Impossible OS's klog-integrated tracing means `debug=1` in `boot.conf` automatically captures handle leaks -- zero setup required.
 
 - [x] Implement `ObReferenceObjectWithTag(body, tag)` -- calls `ObReferenceObject` and records `{tag, +1, caller_rip}` in trace log via `__builtin_return_address(0)`
-- [x] Implement `ObDereferenceObjectWithTag(body, tag)` -- records `{tag, -1, caller_rip}`, calls `ob_dump_trace` when refcount will hit 0, then `ObDereferenceObject`
+- [x] Implement `ObDereferenceObjectWithTag(body, tag)` -- records `{tag, -1, caller_rip}` then `ObDereferenceObject`; leak dump fires from `ob_free_object` at true 0-refcount (race-free), not off a speculative refcount==1 read (TOCTOU)
 - [x] Define `OB_REF_TRACE_ENTRY` -- `{uint32_t tag, int8_t delta, uintptr_t caller, uint64_t timestamp}` in `ob_trace.h`
-- [x] Per-object trace log: circular buffer of 64 `OB_REF_TRACE_ENTRY` in `OB_TRACE_INFO` (`struct ob_trace_info`); allocated by `ob_trace_alloc()` when type tracing enabled; attached to `OBJECT_HEADER.trace` pointer
+- [x] `OB_TRACE_INFO` (`ob_trace_alloc()`, on `OBJECT_HEADER.trace`, IRQ-safe `spinlock_t`): 64-entry recent-caller ring + net `total_refs`/`total_derefs` + per-tag ledger `life_tags[32]`+`life_overflow` (attribution survives ring wrap)
 - [x] `ob_enable_type_tracing(type)` / `ob_disable_type_tracing(type)` -- sets `OBJECT_TYPE.tracing_enabled` flag; `ob_alloc_object()` checks it and allocates trace info
-- [x] `ob_dump_trace(body)` -- emits per-tag ref/deref summary to klog; `LOG_WARN` for imbalanced tags, `LOG_DEBUG` for balanced
-- [x] In `ObDereferenceObjectWithTag`: when refcount == 1 (about to hit 0) and tracing enabled, calls `ob_dump_trace` automatically before final deref
+- [x] `ob_dump_trace(body)` (+ `ob_dump_trace_hdr`) -- snapshots under lock, klogs outside (Gate 2): net LIFETIME verdict + ring-truncation note + ledger-overflow warning + per-tag `IMBALANCE` lines that catch a net-balanced mis-tag leak
+- [x] Auto-dump on teardown: `ob_free_object` calls `ob_dump_trace_hdr` before freeing the ring -- 0 refcount, sole owner, emitted exactly once
 - [x] Handle event tracing: `ObpAllocateHandle` and `ObpFreeHandle` emit `klog(LOG_DEBUG, "ob", "HANDLE CREATE/FREE PID=%u H=0x%x ...")` when `g_ob_handle_trace` is set
 - [x] `g_ob_handle_trace` flag: set from `boot.conf` `ob_handle_trace=1`; wired in Phase 2 after OB init
-- [x] 7 test assertions: enable tracing, alloc gets trace info, tagged ref/deref, trace log entries, disable tracing
+- [x] Tests: `test_ob_trace` (tagged ref/deref + imbalance dump), `test_ob_trace_wrap_and_tags` (ring wrap past 64 + lifetime net survives wrap), `test_ob_trace_mistag_lifetime` (net-balanced mis-tag leak caught by per-tag ledger after wrap)
 - [x] Commit: `"kernel: ob -- tagged reference tracing and handle leak detection"`
 
 **Test checkpoint:** Enable tracing for `ObpEventType`. Create event, ref with tag `"Lk01"`, ref with tag `"Lk02"`, deref with tag `"Lk01"`, deref (untagged). On final deref (refcount 0), `ob_dump_trace` reports tag `"Lk02"` has 1 ref / 0 deref = over-reference by 1. `ob_handle_trace=1`: every `ObpAllocateHandle` / `ObpFreeHandle` emits a klog entry with PID, handle value, object pointer, and type name. Verify on QEMU WHPX + TCG. `POST16(0xD930)`-`POST16(0xD933)`.
+
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | OB suite PASS, 0 failures (6913 kernel + 16 user TCG)
+
+> **Notes:**
+> - **What shipped** -- `ob_trace.c`/`.h`: tagged ref/deref API, per-object `OB_TRACE_INFO` (64-entry ring + net lifetime counters + 32-slot per-tag ledger), `ob_dump_trace`, plus `g_ob_handle_trace` handle CREATE/FREE event tracing from `boot.conf`.
+> - **How it integrates** -- opt-in (`ob_enable_type_tracing`, off by default); `ob_alloc_object` attaches the log, `ob_free_object` dumps once at true 0-refcount; ring SMP-serialized by an IRQ-safe spinlock, klog emitted outside the lock.
+> - **Leak detection is wrap-proof** -- ring-independent net counters give the authoritative "any leak?" verdict; the per-tag ledger pins a net-balanced mis-tag leak after the ring wraps; `life_overflow` flags partial attribution past 32 distinct tags.
+> - **Canonical doc** -- TODO-05 §15; klog-integrated, no external tooling unlike Win11 ETW / Linux strace.
+> - **Scope boundary** -- §15 owns object-ref + handle-event tracing; the handle-table `count` SMP race + owning-task back-pointer stay §3's; `NtSetInformationProcess(ProcessHandleQuota)` stays TODO-12 §7.
 
 ---
 

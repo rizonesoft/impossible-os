@@ -49,6 +49,7 @@
 #include "kernel/drivers/blkdev.h"
 #include "kernel/timer.h"
 #include "kernel/ob/ob.h"
+#include "kernel/ob/ob_trace.h"
 #include "main/main_internal.h"
 
 /* ---- Deferred init wrappers --------------------------------------------- */
@@ -774,11 +775,8 @@ void boot_phase2(void)
     boot_progress(2, "OB", POST16_OB_OK);
 
     /* Wire OB handle event tracing from boot.conf (S15) */
-    {
-        extern int g_ob_handle_trace;
-        if (g_boot_info.config.ob_handle_trace)
-            g_ob_handle_trace = 1;
-    }
+    if (g_boot_info.config.ob_handle_trace)
+        g_ob_handle_trace = 1;
 
     /* --- Registry: requires VFS --- */
     if (!kernel_subsystem_ready(SUBSYS_VFS)) {
