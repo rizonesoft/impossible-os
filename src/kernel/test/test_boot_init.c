@@ -157,8 +157,9 @@ static void test_subsys_enum_layout(void)
     TEST_ASSERT_EQ(SUBSYS_SECUREBOOT,23, "SUBSYS_SECUREBOOT == 23");
     TEST_ASSERT_EQ(SUBSYS_TPM,       24, "SUBSYS_TPM == 24");
     TEST_ASSERT_EQ(SUBSYS_XSAVE,     25, "SUBSYS_XSAVE == 25");
-    TEST_ASSERT_EQ(SUBSYS_PCID,      26, "SUBSYS_PCID == 26 (last named slot)");
-    TEST_ASSERT_EQ(SUBSYS_COUNT,     27, "SUBSYS_COUNT == 27 (sentinel)");
+    TEST_ASSERT_EQ(SUBSYS_PCID,      26, "SUBSYS_PCID == 26");
+    TEST_ASSERT_EQ(SUBSYS_EX,        27, "SUBSYS_EX == 27 (last named slot)");
+    TEST_ASSERT_EQ(SUBSYS_COUNT,     28, "SUBSYS_COUNT == 28 (sentinel)");
 }
 
 /* ---- BOOT_STEP readiness mapping ----

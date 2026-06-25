@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-06-25T20:52:25+02:00",
+  "timestamp": "2026-06-25T21:48:46+02:00",
   "total_suites": 1495,
-  "total_assertions": 5254,
+  "total_assertions": 5255,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -18,7 +18,7 @@
     {"file": "test_boot_health_check.c", "suites": 35, "assertions": 46},
     {"file": "test_boot_history.c", "suites": 13, "assertions": 28},
     {"file": "test_boot_info.c", "suites": 66, "assertions": 128},
-    {"file": "test_boot_init.c", "suites": 24, "assertions": 85},
+    {"file": "test_boot_init.c", "suites": 24, "assertions": 86},
     {"file": "test_boot_perf_budget.c", "suites": 15, "assertions": 22},
     {"file": "test_boot_policy.c", "suites": 50, "assertions": 196},
     {"file": "test_boot_reserved.c", "suites": 15, "assertions": 48},

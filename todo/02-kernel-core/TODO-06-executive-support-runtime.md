@@ -43,7 +43,7 @@ title: "TODO-06 -- Executive Support Runtime"
 
 | ⭐ | Order | Deliverable | Depends On | Status |
 | -- | :---: | ----------- | ---------- | :----: |
-| 💎 | 1 | Executive headers and namespace | -- | [ ] |
+| 💎 | 1 | Executive headers and namespace | -- | [x] |
 | 💎 | 2 | Interlocked SLIST | §1, atomics | [ ] |
 | 💎 | 3 | Rundown protection | §1, atomics, events | [ ] |
 | 💎 | 4 | Callback objects | §1, §3, T05, T07 | [ ] |
@@ -60,20 +60,28 @@ title: "TODO-06 -- Executive Support Runtime"
 
 ## 1. Executive Headers and Namespace
 
-- [ ] Add `include/kernel/ex.h` and `src/kernel/ex/`.
-- [ ] Prefix exported APIs with `Ex`, internal helpers with `Exp`.
-- [ ] Document the IRQL contract for every API (PASSIVE/APC/DISPATCH ceiling) in the header.
-- [ ] Add `ex_init()` boot hook in Phase 2 after Object Manager and before registry/security consumers.
-- [ ] Record the RTL/Ex utility include/exclude boundary in the header doc-comment so the layer is not falsely "complete":
+- [x] Add `include/kernel/ex.h` and `src/kernel/ex/` (`ex.c`). `ex.h` carries the layer doc + `ex_init`/`ex_ready` decls.
+- [x] Prefix exported APIs with `Ex`, internal helpers with `Exp` -- documented as the namespace convention in `ex.h`.
+- [x] Document the IRQL contract convention for every API (PASSIVE/APC/DISPATCH ceiling) in `ex.h`.
+- [x] Add `ex_init()` boot hook in `boot_phase2()` (`boot_storage.c`) after `ob_init()` and before `registry_init()`; `SUBSYS_EX`=27 + `POST16_EX`/`POST16_EX_OK` 0x20C0/0x20C1 + `s_subsys_names` "EX" row.
+- [x] Record the RTL/Ex utility include/exclude boundary in the `ex.h` doc-comment so the layer is not falsely "complete":
   - Owned here: SLIST (§2), lookaside (§5), generic tables/dynamic hash/RTL_BITMAP (§7), push locks (§8), fast/guarded mutexes (§9), ERESOURCE (§10), run-once (§11).
   - Owned elsewhere: pool/tag allocation -> XREF D03 T03 (item: "`ExAllocatePool2(pool_type, size, tag)` Win32 wrapper"); system-time helpers (`ExSystemTimeToLocalTime`) -> XREF T08; status/exception raise (`ExRaiseStatus`) -> XREF T23.
   - Deferred: UUID generation (`ExUuidCreate`) until an RPC/ALPC consumer needs it.
-- [ ] Commit: `"kernel: ex -- executive headers and namespace"`
+- [x] Commit: `"kernel: ex -- executive headers and namespace"`
 
 > [!WARNING]
 > **No hidden dynamic allocation on hot/SMP paths.** The kernel `pmm`/`kmalloc` allocators are unsynchronized (same constraint that shaped D02 T03 kernel-libraries). Every `Ex*` primitive that needs backing memory must use caller-provided storage, a pre-reserved pool, or the tagged pool API once synchronized -- never a silent `kmalloc` in an acquire/dispatch/refill path. Document each primitive's allocation policy in its header contract.
 
 **Test checkpoint:** Build links the new `src/kernel/ex/` objects; `ex_init()` logs `"ex: initialized"` on serial at Phase 2 (after `ob_init`, before registry/security); POST16 entry/exit codes appear in order.
+
+> **Test runner:** N/A (boot-path init; `ex_init` is a live-boot call, `ex_ready` reflects the subsystem oracle) | validation: smoke test serial `"ex: Executive support runtime initialized"` at 1.190s + `[PHASE2] EX (0x20C1)`; primitive suites land with `test_ex.c` in §2+.
+> **Notes:**
+> - What shipped: `include/kernel/ex.h` (layer doctrine: Ex*/Exp* namespace, per-API IRQL convention, no-hidden-allocation contract, ownership boundary) + `src/kernel/ex/ex.c` (`ex_init`, `ex_ready`).
+> - How it runs / integrates: `ex_init()` called once on BSP in `boot_phase2()` between `ob_init()` and `registry_init()`; `SUBSYS_EX`=27, `POST16_EX` 0x20C0; build auto-discovers `src/kernel/ex/*.c`.
+> - Downstream effects: establishes the boot point + ownership boundary all of §2-§14 build on; `ex_ready()` delegates to the atomic subsystem oracle (Codex adversarial fix -- no duplicate flag/race).
+> - Canonical doc: [`include/kernel/ex.h`](../../include/kernel/ex.h).
+> - Scope boundary: §1 owns only the scaffold + init hook; the primitives (SLIST..verifier) are §2-§14; pool/time/exception utilities owned by D03 T03 / T08 / T23.
 
 ---
 

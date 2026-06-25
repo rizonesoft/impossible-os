@@ -50,6 +50,7 @@
 #include "kernel/timer.h"
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_trace.h"
+#include "kernel/ex.h"
 #include "main/main_internal.h"
 
 /* ---- Deferred init wrappers --------------------------------------------- */
@@ -777,6 +778,23 @@ void boot_phase2(void)
     /* Wire OB handle event tracing from boot.conf (S15) */
     if (g_boot_info.config.ob_handle_trace)
         g_ob_handle_trace = 1;
+
+    /* --- Executive Support Runtime: after OB (callback objects bind an OM
+     * type), before registry/security (they consume ERESOURCE/push locks). --- */
+    POST16(POST16_EX);
+    {
+        boot_result_t r = ex_init();
+        kernel_subsystem_set_ready(SUBSYS_EX, r != BOOT_FATAL);
+        if (r == BOOT_FATAL) {
+            boot_recovery_info_t ri = { SUBSYS_EX, POST16_EX_OK, BOOT_FATAL, 2 };
+            kernel_subsystem_dump();
+            boot_recovery_action_t act = boot_recovery_show(&ri);
+            boot_recovery_act(act);
+            boot_halt("Executive support runtime init failed");
+        }
+    }
+    POST16(POST16_EX_OK);
+    boot_progress(2, "EX", POST16_EX_OK);
 
     /* --- Registry: requires VFS --- */
     if (!kernel_subsystem_ready(SUBSYS_VFS)) {
