@@ -607,7 +607,7 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [ ] §12 tests: `ObpEventType->total_objects` tracks create/delete; `peak_objects` high-water; `NtQueryObject(ObjectTypeInformation)` returns counters; `NtQueryObject(ObjectTypesInformation)` enumerates all types
 - [x] §13 tests: pre-callback strips TERMINATE, post-callback invoked, unregister restores access; hardening (ceiling/stable-id/chain-monotonicity), dup-create-only-not-fired, zero-access-noop-allowed (`test_ob.c`)
 - [x] §14 tests: limit/allocs/deny/free-retry/ABSOLUTE_MAX clamp + one-shot exhaustion warn; grow-past-old-4096-cap + zero-limit unlimited (`test_ob_handle_quota`, `test_ob_handle_quota_grows_past_old_cap`)
-- [x] §15 tests: enable/disable tracing, trace info allocated, tagged ref/deref, trace log count, refcount verified (7 assertions in `test_ob.c`)
+- [x] §15 tests (`test_ob.c`): `test_ob_trace` (tracing + tagged ref/deref + imbalance dump), `test_ob_trace_wrap_and_tags` (ring wrap + lifetime net survives wrap), `test_ob_trace_mistag_lifetime` (mis-tag leak caught by per-tag ledger after wrap)
 
 ---
 
@@ -627,4 +627,4 @@ Provide tagged reference tracking and optional per-handle event recording for di
 - [ ] §12-§15: per-type stats, callbacks, quota, tracing verified after implementation
 - [x] All §1-§11 committed individually (12 commits across OB §5-§11, security §1-§4, OB §8)
 
-> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 1 suite, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | OB suite 424 kernel PASS, 0 failures (TCG 2026-06-25)
