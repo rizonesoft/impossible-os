@@ -34,8 +34,10 @@ static uint32_t  s_pmtmr_mask;       /* 0xFFFFFFFF (32-bit) or 24-bit mask */
  * below any prior return. Guards both a chipset read glitch (a low outlier
  * masks as a near-full-wrap forward jump, then the next read steps back) and a
  * missed wrap across a long tick quiesce. Forward runaway is prevented by the
- * glitch-filtered (median-of-3) read feeding mono_ns. */
-static uint64_t  s_pmtmr_floor;
+ * glitch-filtered (median-of-3) read feeding mono_ns. Cacheline-isolated: it is
+ * hit (atomic load) by every coarse read while the ISR writes the epoch above,
+ * so they must not false-share. */
+static uint64_t  s_pmtmr_floor __attribute__((aligned(64)));
 
 static uint64_t pmtmr_mono_floor(uint64_t cand)
 {
@@ -112,16 +114,22 @@ void mono_clock_init(void)
          * this runs in Phase 2, so a concurrent ISR/AP reader entering the
          * PMTMR case must not observe a BSS-zero epoch. Seed under the seqlock,
          * then a release fence, then publish s_source last. */
+        /* Seed the epoch from the time already elapsed on the tick fallback so
+         * uptime_ns()/mono_ns() are CONTINUOUS across the source switch (a
+         * zero-based epoch would make uptime jump backward and elapsed-time
+         * subtraction underflow for callers that sampled before this runs). */
+        extern uint64_t uptime_ns(void);
+        uint64_t base_ns = uptime_ns();
         uint32_t mask = acpi_pmtimer_is_32bit() ? 0xFFFFFFFFu : PMTMR_24BIT_MASK;
         s_freq_hz        = PMTMR_FREQ_HZ;
         s_ns_per_tick_num = 1000000000ULL;
         s_ns_per_tick_den = PMTMR_FREQ_HZ;
         seqlock_write_lock(&s_pmtmr_lock);
         s_pmtmr_mask     = mask;
-        s_pmtmr_epoch_ns = 0;
+        s_pmtmr_epoch_ns = base_ns;
         s_pmtmr_last_raw = acpi_pmtimer_read_value() & mask;
         seqlock_write_unlock(&s_pmtmr_lock);
-        __atomic_store_n(&s_pmtmr_floor, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&s_pmtmr_floor, base_ns, __ATOMIC_RELAXED);
         __atomic_thread_fence(__ATOMIC_RELEASE);
         __atomic_store_n(&s_source, MONO_SRC_PMTMR, __ATOMIC_RELEASE);
         klog(LOG_INFO, "time",
@@ -299,7 +307,7 @@ void mono_clock_pmtmr_advance(void)
     static uint32_t s_skip;
     uint32_t now;
 
-    if (s_source != MONO_SRC_PMTMR)
+    if (__atomic_load_n(&s_source, __ATOMIC_ACQUIRE) != MONO_SRC_PMTMR)
         return;
     if (++s_skip < PMTMR_ADVANCE_TICKS)
         return;
@@ -315,7 +323,9 @@ uint64_t mono_ns(void)
 {
     uint64_t ticks;
 
-    switch (s_source) {
+    /* Acquire-load pairs with the RELEASE publish in mono_clock_init, so a
+     * reader that sees MONO_SRC_PMTMR also sees the fully-seeded epoch. */
+    switch (__atomic_load_n(&s_source, __ATOMIC_ACQUIRE)) {
     case MONO_SRC_TSC:
         ticks = rdtsc_read();
         /* Apply per-CPU TSC offset for SMP coherence */
@@ -396,7 +406,7 @@ uint64_t mono_ns_coarse(void)
      * the cached epoch ns instead -- accurate to the ISR advance interval,
      * monotonic (the epoch only banks positive masked deltas), and free of port
      * I/O. Other sources are already cheap, so fall through to mono_ns(). */
-    if (s_source == MONO_SRC_PMTMR) {
+    if (__atomic_load_n(&s_source, __ATOMIC_ACQUIRE) == MONO_SRC_PMTMR) {
         uint64_t seq, ns;
         do {
             seq = seqlock_read_begin(&s_pmtmr_lock);

@@ -779,13 +779,16 @@ static int cal_try_hpet(void)
     return 1;
 }
 
-/* ACPI PM Timer frequency: exactly 3.579545 MHz (ACPI spec §4.8.3.3) */
-#define PMTIMER_FREQ     3579545
+/* ACPI PM Timer frequency + 24-bit mask are canonical in mono_clock.h
+ * (PMTMR_FREQ_HZ / PMTMR_24BIT_MASK); do not redefine here. */
 /* 10ms worth of PM Timer ticks */
-#define PMTIMER_10MS     (PMTIMER_FREQ / 100)   /* ≈ 35795 */
-#define PMTIMER_24BIT_MASK  0x00FFFFFF
+#define PMTIMER_10MS     (PMTMR_FREQ_HZ / 100)   /* ~35795 */
 
-/* Read the ACPI PM Timer counter (32-bit I/O read) */
+/* Raw single PM Timer read for the calibration spin loop (the loop measures
+ * elapsed ticks over a 10 ms window and self-corrects a transient glitch). The
+ * one-shot start/end reference reads instead go through the centralized
+ * glitch-filtered acpi_pmtimer_read_value() so a single bad latch cannot skew
+ * the LAPIC rate on this no-TSC/no-HPET path. */
 static inline uint32_t pmtimer_read(uint16_t port)
 {
     uint32_t ret;
@@ -809,15 +812,17 @@ static int cal_try_pmtimer(void)
         return 0;
 
     is_32bit = acpi_pmtimer_is_32bit();
-    mask = is_32bit ? 0xFFFFFFFF : PMTIMER_24BIT_MASK;
+    mask = is_32bit ? 0xFFFFFFFF : PMTMR_24BIT_MASK;
 
     /* Start LAPIC timer from max (one-shot, masked) */
     lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT | 0xFF);
     lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
 
-    /* Wait 10ms worth of PM Timer ticks (with spin timeout) */
-    start_pm = pmtimer_read(port) & mask;
+    /* Wait 10ms worth of PM Timer ticks (with spin timeout). The start
+     * reference goes through the glitch-filtered centralized read so a single
+     * bad latch cannot offset the whole calibration window. */
+    start_pm = acpi_pmtimer_read_value() & mask;
     {
         uint32_t spin = 200000000;
         uint64_t deadline = cal_deadline();
