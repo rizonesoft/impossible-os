@@ -566,6 +566,13 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 
 **Files:** `include/kernel/sched/kworker.h` (new), `src/kernel/sched/kworker.c` (new), `src/kernel/test/test_kworker.c` (new)
 
+> [!NOTE]
+> **Design (Codex design review adopted -- resolve before coding):**
+> - **Rundown/cancellation (H):** token = slot index + generation. The worker, UNDER the slot spinlock and in the SAME critical section that checks `active` + `deadline_ns`, sets `running=1`, snapshots `callback`+`ctx`, releases the lock, calls the callback, re-locks, sets `running=0`, advances `deadline_ns`. `kworker_unregister` under the lock sets `active=0` + bumps the slot generation, then waits until `running==0`. This guarantees: no fire after unregister returns, no stale-snapshot call, no use of a freed `ctx`.
+> - **Single worker is a documented limit (H):** ONE kthread runs all entries serially, so a slow/hung callback delays every other entry past its deadline. Callbacks MUST be bounded and non-hanging; a per-callback duration watchdog klog-warns past `KWORKER_CALLBACK_WARN_MS`. This is a single-worker background-monitor primitive, NOT a full N-thread workqueue -- do not claim full NT/Linux workqueue parity.
+> - **Self-unregister guard (H):** record the kworker thread; `kworker_unregister` called FROM the worker thread (a callback unregistering its own/any token) sets `active=0` and SKIPS the drain-wait (else it deadlocks waiting for itself). `kworker_unregister` returns `int` status (so self-unregister can be signalled).
+> - **Consumer signatures (M):** the callback type is `void (*)(void *ctx)`; an `int`/no-arg consumer like `uefi_secureboot_revalidate_tick` needs a `void(void*)` wrapper (e.g. `secureboot_revalidate_worker`).
+
 - [ ] Define `kworker_callback_t` typedef (`void (*)(void *ctx)`) + `struct kworker_entry` (callback, ctx, period_ms, last_fire_ns, deadline_ns, active flag) in [`include/kernel/sched/kworker.h`](../../include/kernel/sched/kworker.h).
 - [ ] Define worker-pool API: `int kworker_register(kworker_callback_t fn, void *ctx, uint32_t period_ms)` returns a token (>= 0) or negative on failure (no slots, NULL fn). `void kworker_unregister(int token)` cancels and waits for any in-flight call to drain.
 - [ ] Static slot table sized to `KWORKER_MAX_ENTRIES` (start with 16; grow if real consumer pressure demands). Spinlock-protected for register/unregister; the worker thread reads under the same lock or a snapshot copy.
