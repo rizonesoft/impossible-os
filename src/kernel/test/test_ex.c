@@ -1306,6 +1306,124 @@ static void test_ex_s7_overflow_guards(void)
     }
 }
 
+/* ---- S12: Worker Items -------------------------------------------------- */
+
+static volatile uint32_t g_wi_count;       /* target routine run count */
+static volatile uint32_t g_wi_block_run;   /* blocker routine is running */
+static volatile uint32_t g_wi_release;     /* tell the blocker to finish */
+/* File-scope so a spin-budget timeout can never let sys_wq write a freed stack
+ * frame: the storage outlives any test return. */
+static EX_WORK_ITEM g_wi_item;
+static EX_WORK_ITEM g_wi_blocker;
+static EX_WORK_ITEM g_wi_target;
+
+static void wi_target_fn(void *ctx) { (void)ctx; __atomic_fetch_add(&g_wi_count, 1, __ATOMIC_ACQ_REL); }
+
+static void wi_block_fn(void *ctx)
+{
+    uint32_t spins = 0;
+    (void)ctx;
+    __atomic_store_n(&g_wi_block_run, 1, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&g_wi_release, __ATOMIC_ACQUIRE)) {
+        if (++spins > 2000000u) break;
+        yield();
+    }
+}
+
+static void test_ex_workitem_run_and_requeue(void)
+{
+    uint32_t spins = 0;
+    EX_WORK_ITEM *wip = &g_wi_item;
+
+    g_wi_count = 0;
+    ExInitializeWorkItem(wip, wi_target_fn, (void *)0);
+    TEST_ASSERT_EQ(ExpWorkItemState(wip), EX_WI_IDLE, "fresh item is IDLE");
+
+    TEST_ASSERT_EQ(ExQueueWorkItem(wip), 0, "queue succeeds");
+    /* Wait for the TERMINAL state, not just the count -- the routine bumps the
+     * count BEFORE the trampoline stores DONE, so the stack item must reach DONE
+     * before it goes out of scope / is reused (else the worker writes a freed
+     * frame). */
+    while (ExpWorkItemState(wip) != EX_WI_DONE) {
+        if (++spins > 2000000u) break;
+        yield();
+    }
+    TEST_ASSERT_EQ(g_wi_count, 1u, "worker ran the routine once");
+    TEST_ASSERT_EQ(ExpWorkItemState(wip), EX_WI_DONE, "item is DONE after run");
+
+    /* Re-queue a completed item (terminal state -> QUEUED). */
+    TEST_ASSERT_EQ(ExQueueWorkItem(wip), 0, "re-queue a DONE item succeeds");
+    spins = 0;
+    while (ExpWorkItemState(wip) != EX_WI_DONE) {
+        if (++spins > 2000000u) break;
+        yield();
+    }
+    TEST_ASSERT_EQ(g_wi_count, 2u, "re-queued item ran again");
+
+    /* Bad args. */
+    TEST_ASSERT_EQ(ExQueueWorkItem((EX_WORK_ITEM *)0), -1, "queue NULL item fails");
+    TEST_ASSERT(!ExCancelWorkItem((EX_WORK_ITEM *)0), "cancel NULL item is false");
+}
+
+static void test_ex_workitem_cancel_before_dispatch(void)
+{
+    uint32_t spins = 0;
+    EX_WORK_ITEM *blocker = &g_wi_blocker, *target = &g_wi_target;
+
+    g_wi_count = 0; g_wi_block_run = 0; g_wi_release = 0;
+
+    /* Occupy the single sys_wq worker with a blocker so the next item stays
+     * QUEUED (deterministic cancel-before-dispatch). */
+    ExInitializeWorkItem(blocker, wi_block_fn, (void *)0);
+    ExInitializeWorkItem(target, wi_target_fn, (void *)0);
+    TEST_ASSERT_EQ(ExQueueWorkItem(blocker), 0, "queue blocker");
+    while (!__atomic_load_n(&g_wi_block_run, __ATOMIC_ACQUIRE)) {
+        if (++spins > 2000000u) break;
+        yield();
+    }
+    TEST_ASSERT(__atomic_load_n(&g_wi_block_run, __ATOMIC_ACQUIRE), "blocker occupies the worker");
+
+    /* The target queues behind the busy worker and must still be cancellable. */
+    TEST_ASSERT_EQ(ExQueueWorkItem(target), 0, "queue target behind the blocker");
+    TEST_ASSERT(ExCancelWorkItem(target), "cancel wins while still QUEUED");
+    TEST_ASSERT_EQ(ExpWorkItemState(target), EX_WI_CANCELLED, "target is CANCELLED");
+    /* A second cancel (already cancelled) loses. */
+    TEST_ASSERT(!ExCancelWorkItem(target), "second cancel of a cancelled item fails");
+    /* A CANCELLED item is NOT re-queueable yet -- its stale node has not drained,
+     * so re-queueing (which would create a second node) must be rejected. */
+    TEST_ASSERT_EQ(ExQueueWorkItem(target), -1, "cannot re-queue a not-yet-drained CANCELLED item");
+
+    /* Release the blocker; the worker drains. The cancelled target must NOT run,
+     * and its stale node must drain it from CANCELLED back to IDLE. */
+    __atomic_store_n(&g_wi_release, 1, __ATOMIC_RELEASE);
+    spins = 0;
+    while (ExpWorkItemState(blocker) != EX_WI_DONE) {
+        if (++spins > 2000000u) break;
+        yield();
+    }
+    TEST_ASSERT_EQ(ExpWorkItemState(blocker), EX_WI_DONE, "blocker completed");
+    /* The worker now drains the cancelled target's stale node: CANCELLED -> IDLE. */
+    spins = 0;
+    while (ExpWorkItemState(target) != EX_WI_IDLE) {
+        if (++spins > 2000000u) break;
+        yield();
+    }
+    TEST_ASSERT_EQ(ExpWorkItemState(target), EX_WI_IDLE,
+                   "cancelled item drains to IDLE (free/re-queue-safe)");
+    TEST_ASSERT_EQ(g_wi_count, 0u, "cancelled target never ran");
+    /* After draining, the item is re-queueable again. Wait for the TERMINAL DONE
+     * (not just the count) so the stack item is not reused while the worker is
+     * still about to write its DONE state. */
+    TEST_ASSERT_EQ(ExQueueWorkItem(target), 0, "drained item re-queues");
+    spins = 0;
+    while (ExpWorkItemState(target) != EX_WI_DONE) {
+        if (++spins > 2000000u) break;
+        yield();
+    }
+    TEST_ASSERT_EQ(g_wi_count, 1u, "re-queued drained item runs");
+    TEST_ASSERT_EQ(ExpWorkItemState(target), EX_WI_DONE, "target DONE before test returns");
+}
+
 void test_register_ex(void)
 {
     test_suite_register_cat("ex: SLIST init/empty edges",
@@ -1388,6 +1506,10 @@ void test_register_ex(void)
                             test_ex_hashtable_drain_chain, TEST_CAT_EX);
     test_suite_register_cat("ex: S7 overflow-boundary guards",
                             test_ex_s7_overflow_guards, TEST_CAT_EX);
+    test_suite_register_cat("ex: work item run + re-queue",
+                            test_ex_workitem_run_and_requeue, TEST_CAT_EX);
+    test_suite_register_cat("ex: work item cancel before dispatch",
+                            test_ex_workitem_cancel_before_dispatch, TEST_CAT_EX);
 }
 
 #endif /* KERNEL_TESTS */

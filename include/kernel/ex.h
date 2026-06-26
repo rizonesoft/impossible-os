@@ -735,6 +735,73 @@ uint32_t RtlNumberOfEntriesHashTable(const RTL_DYNAMIC_HASH_TABLE *t);
  * and untouched). The table is empty/unusable afterward. */
 void RtlDeleteDynamicHashTable(RTL_DYNAMIC_HASH_TABLE *t);
 
+/* ============================================================================
+ * S12 -- Worker Items (immediate work; delayed work + EX_TIMER deferred)
+ *
+ * An EX_WORK_ITEM queues a routine to run on the system worker thread (sys_wq)
+ * at PASSIVE_LEVEL. The lock-free state machine gives a cancel-vs-fire contract
+ * the bare workqueue cannot (it has no dequeue): ExCancelWorkItem wins ONLY if
+ * the item is still QUEUED (not yet picked up by the worker); once the worker
+ * has transitioned it to RUNNING the cancel fails ("already running").
+ *
+ * LIFETIME (the workqueue has no dequeue, so a cancelled item's node is still
+ * pending): ExCancelWorkItem returning true means the routine will NOT run, but
+ * the stale node still references the item and the worker must drain it. The
+ * item is free/re-queue-safe ONLY after a DRAINED state: DONE (ran) or IDLE (the
+ * worker drained the cancelled node back to IDLE). A CANCELLED item is NOT
+ * re-queueable and must NOT be freed -- poll ExpWorkItemState() for IDLE/DONE
+ * first. (workqueue_flush() is NOT sufficient: it returns when the queue is
+ * empty, which can be after the worker dequeued the node but before the
+ * trampoline finished reading the item.) ExQueueWorkItem accepts only IDLE/DONE.
+ * No allocation -- the EX_WORK_ITEM is caller-owned.
+ *
+ * State is accessed exclusively via __atomic (acquire-load / release-store /
+ * ACQ_REL CAS), never plain reads, so a terminal observation on another CPU has
+ * an acquire edge to the routine's side effects.
+ *
+ * DEFERRED (no multi-deadline timer queue exists -- the timer layer is a
+ * singleton one-shot that replaces the periodic tick): ExQueueDelayedWorkItem
+ * and the EX_TIMER object set (ExAllocateTimer/ExSetTimer/ExCancelTimer/
+ * ExDeleteTimer) -> owned by the T07 KTIMER/timer-queue work.
+ * IRQL: ExQueueWorkItem/ExCancelWorkItem are DISPATCH-safe; the routine runs at
+ * PASSIVE_LEVEL on the worker.
+ * =========================================================================== */
+
+typedef void (*EX_WORKER_ROUTINE)(void *context);   /* matches work_fn_t */
+
+/* Work-item lifecycle states (treat as opaque; exposed for the test/verifier). */
+typedef enum _EX_WORK_ITEM_STATE {
+    EX_WI_IDLE = 0,      /* initialized, not queued */
+    EX_WI_QUEUED = 1,    /* on the worker queue, not yet running */
+    EX_WI_RUNNING = 2,   /* the worker is executing the routine */
+    EX_WI_DONE = 3,      /* routine completed (free/re-queue-safe) */
+    EX_WI_CANCELLED = 4, /* cancel-pending; NOT free/re-queue-safe until the stale
+                          * node drains it back to IDLE */
+} EX_WORK_ITEM_STATE;
+
+typedef struct _EX_WORK_ITEM {
+    EX_WORKER_ROUTINE Routine;
+    void             *Context;
+    int32_t           State;   /* EX_WORK_ITEM_STATE, __atomic-accessed */
+} EX_WORK_ITEM;
+
+/* Bind a work item to its routine + context (state IDLE). Call ONCE before first
+ * use. It unconditionally resets State, so it must NOT be called on an item that
+ * is QUEUED/RUNNING/CANCELLED -- a pending node still references it, and resetting
+ * to IDLE would hand the caller a false "drained" signal. To REUSE a completed
+ * item just call ExQueueWorkItem again (it accepts the drained DONE/IDLE state);
+ * re-initialization is only for changing the routine/context after a drain. */
+void ExInitializeWorkItem(EX_WORK_ITEM *wi, EX_WORKER_ROUTINE routine, void *context);
+/* Queue the item on the system worker (sys_wq). Returns 0 on success; -1 if the
+ * item is already active (QUEUED/RUNNING), args are bad, or the worker queue is
+ * full -- on a full-queue failure the item is rolled back to IDLE (re-queueable). */
+int ExQueueWorkItem(EX_WORK_ITEM *wi);
+/* Cancel a queued item before the worker picks it up. Returns true if it was
+ * cancelled in time; false if it is already RUNNING/DONE or not queued. */
+bool ExCancelWorkItem(EX_WORK_ITEM *wi);
+/* Current state snapshot (acquire-load). For tests/verifier. */
+EX_WORK_ITEM_STATE ExpWorkItemState(const EX_WORK_ITEM *wi);
+
 /* ex_ready -- true once the Executive support runtime is marked ready.
  *
  * Delegates to the subsystem readiness oracle (kernel_subsystem_ready(

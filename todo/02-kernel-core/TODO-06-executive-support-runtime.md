@@ -54,7 +54,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 9 | Fast and guarded mutexes | §1, T07 | [/] |
 | 💎 | 10 | Executive resource wrapper | §1, T07, D03 T08 | [/] |
 | 💎 | 11 | Run-once initialization | §1 | [/] |
-| ⭐ | 12 | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue | [ ] |
+| ⭐ | 12 | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue | [/] |
 | 💎 | 13 | Bugcheck reason callbacks | §3, T27 | [ ] |
 | ⭐ | 14 | Executive verifier hooks | §2..§13 | [ ] |
 
@@ -328,14 +328,24 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 
 ## 12. Worker Items, Delayed Work, and Ex Timers
 
-- [ ] Add `ExInitializeWorkItem`, `ExQueueWorkItem`, `ExQueueDelayedWorkItem`, `ExCancelWorkItem`; work items run at PASSIVE_LEVEL.
-- [ ] Route immediate work to the existing workqueue; route delayed work through timer/DPC handoff (-> XREF T07 for DPC).
-- [ ] Expose the `EX_TIMER` object API drivers call directly: `ExAllocateTimer`, `ExSetTimer`, `ExCancelTimer`, `ExDeleteTimer` (object-manager-backed, distinct from the raw KTIMER/DPC path).
-- [ ] Honor the cancel-vs-fire contract: `ExCancelWorkItem`/`ExCancelTimer` may fail if the item already dequeued/fired; document and test that window rather than assuming cancel always wins.
+- [x] Add immediate-work `EX_WORK_ITEM` (`ExInitializeWorkItem`/`ExQueueWorkItem`/`ExCancelWorkItem`) on `sys_wq` at PASSIVE_LEVEL; lock-free `__atomic` state machine, enqueue-failure rolls QUEUED->IDLE. `ex_workitem.c`.
+- [x] Route immediate work to the existing workqueue (`sys_wq`). `ExQueueDelayedWorkItem` deferred -- no multi-deadline timer queue (see Deferred stamp).
+- [/] Expose the `EX_TIMER` object API (`ExAllocateTimer`/`ExSetTimer`/`ExCancelTimer`/`ExDeleteTimer`). DEFERRED: needs a KTIMER/timer-queue (the timer layer is a singleton one-shot).
+- [x] Honor the cancel-vs-fire contract: `ExCancelWorkItem` wins only while QUEUED; once the worker flips to RUNNING it returns false ("already running"), no double-free. Tested deterministically (blocker occupies the single worker).
 - [ ] Use in config tunable callbacks, notification fanout, and health probes.
-- [ ] Commit: `"kernel: ex -- worker items, delayed work, ex timers"`
+- [x] Commit: `"kernel: ex -- worker items, delayed work, ex timers"`
 
-**Test checkpoint:** Immediate work runs on the workqueue at PASSIVE_LEVEL; delayed work and `ExSetTimer` fire after the elapsed interval; `ExCancelWorkItem`/`ExCancelTimer` before dispatch prevents the routine from running AND the in-flight case (cancel after dequeue) returns "already running" without double-free; `ExDeleteTimer` after cancel is safe.
+**Test checkpoint:** Immediate work runs on the workqueue at PASSIVE_LEVEL; `ExCancelWorkItem` before dispatch prevents the routine from running AND the in-flight case (worker already flipped to RUNNING) returns "already running" without double-free; a DONE work item re-queues. (Delayed work / `ExSetTimer` / `ExDeleteTimer` deferred -- see stamp.)
+
+> **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 1 suite, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `ex_workitem.c` (immediate `EX_WORK_ITEM` on `sys_wq` + lock-free cancel-vs-fire state machine) + ex.h S12 block; 2 test cases incl. a deterministic cancel-before-dispatch.
+> - **How it integrates** -- caller-owned item, no allocation; `ExQueueWorkItem` trampolines through `sys_wq`; the workqueue has no dequeue so cancel is a state-flag the trampoline re-checks; enqueue-failure (full 64-node pool) rolls back to IDLE.
+> - **Scope boundary** -- §12 ships immediate work items; delayed work + the `EX_TIMER` object set are deferred on a multi-deadline timer queue (KTIMER), owned by T07.
+> - **Canonical doc** -- `include/kernel/ex.h` S12 header block.
+
+> **Deferred:** [M] delayed work (`ExQueueDelayedWorkItem`) + the `EX_TIMER` object set need a multi-deadline cancellable timer queue; the timer layer is only a singleton one-shot -> XREF: 02-kernel-core/TODO-07 §6 (item: "Timer/APIC Scheduling Path for DPC Dispatch")
 
 ---
 
@@ -380,7 +390,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Fast/guarded mutexes       | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex               | ⬜ §9 deferred (per-thread APC) |
 | 💎 | Shared/exclusive resource  | ✅ ERESOURCE                        | ✅ rw_semaphore        | ⬜ §10 deferred (SMP rwlock) |
 | 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ §11 deferred (keyed events) |
-| 💎 | Worker items + Ex timers   | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer   | ⬜ Planned -- §12         |
+| 💎 | Worker items + Ex timers   | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer   | ✅ §12 work items (timers deferred) |
 | 💎 | Bugcheck reason callbacks  | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers     | ⬜ Planned -- §13         |
 | ⭐ | Scoped executive verifier  | ⚠️ Driver Verifier (heavy)         | ⚠️ KASAN/lockdep       | ⬜ Planned -- §14 scoped  |
 
