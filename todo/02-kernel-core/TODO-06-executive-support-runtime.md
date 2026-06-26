@@ -52,7 +52,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 7 | Generic tables and bitmaps | §1 | [x] |
 | 💎 | 8 | Push locks | §1, T07 | [/] |
 | 💎 | 9 | Fast and guarded mutexes | §1, T07 | [/] |
-| 💎 | 10 | Executive resource wrapper | §1, T07, D03 T08 | [ ] |
+| 💎 | 10 | Executive resource wrapper | §1, T07, D03 T08 | [/] |
 | 💎 | 11 | Run-once initialization | §1 | [ ] |
 | ⭐ | 12 | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue | [ ] |
 | 💎 | 13 | Bugcheck reason callbacks | §3, T27 | [ ] |
@@ -287,14 +287,22 @@ Exclusive-only fast mutexes (`FAST_MUTEX`, `KGUARDED_MUTEX`) for the common sing
 
 ## 10. Executive Resource Wrapper
 
-- [ ] Provide `ERESOURCE`-style shared/exclusive resource wrapper over the owning synchronization primitives.
-- [ ] Support recursive exclusive acquisition only when explicitly initialized with that flag.
-- [ ] Add owner tracking in verifier mode; document the `ExInitializeResourceLite` vs `ExReinitializeResource` vs `ExDeleteResourceLite` lifecycle.
-- [ ] Add a writer-preference / anti-starvation policy so a continuous read stream (e.g. registry hive lock) cannot starve an exclusive acquirer indefinitely (the documented ERESOURCE/rwsem hazard); record the policy in the header.
+- [/] Provide `ERESOURCE`-style shared/exclusive resource wrapper over the owning synchronization primitives. BLOCKED: the underlying `rwlock_t` is not SMP-linearizable (see Deferred stamp), so a wrapper would inherit a non-exclusive lock.
+- [/] Support recursive exclusive acquisition only when explicitly initialized with that flag.
+- [/] Add owner tracking in verifier mode; document the `ExInitializeResourceLite` vs `ExReinitializeResource` vs `ExDeleteResourceLite` lifecycle.
+- [/] Add a writer-preference / anti-starvation policy so a continuous read stream (e.g. registry hive lock) cannot starve an exclusive acquirer indefinitely; record the policy in the header.
 - [ ] Consumers: registry hive locks, NLS table reload locks, image registry lock.
 - [ ] Commit: `"kernel: ex -- executive resource wrapper"`
 
 **Test checkpoint:** N concurrent shared acquires succeed; an exclusive acquire blocks until all readers release; recursive exclusive succeeds only when initialized with the recursion flag; under a continuous reader stream a pending exclusive acquirer is granted within a bounded number of subsequent shared acquisitions (no indefinite starvation); verifier mode records the owning thread. Verify on bare metal -- SMP reader/writer contention differs.
+
+> **Notes:**
+> - **Why deferred** -- `rwlock_t`'s acquire paths are not SMP-linearizable (read_lock check-then-inc; write_lock atomic_set-not-CAS), so wrapping it would inherit a lock that admits a reader+writer or two writers concurrently.
+> - **Blocked on** -- `03-memory-concurrency/TODO-08 §11` (rwlock_t acquire linearizability) for the core lock; `02-kernel-core/TODO-07 §11` (critical-region precondition) for the verifier owner-tracking assert.
+> - **Scope boundary** -- §10 owns the ERESOURCE Ex-API + recursion/owner tracking; the SMP-safe rwlock is owned by advanced-sync (fixing core scheduler locks is out of §10's scope).
+
+> **Deferred:** [H] ERESOURCE needs an SMP-linearizable shared/exclusive lock; `rwlock_t` admits concurrent reader+writer / two writers -> XREF: 03-memory-concurrency/TODO-08 §11 (item: "rwlock_t acquire linearizability" -- gate the state transition with a spinlock/CAS)
+> **Deferred:** [M] verifier owner-tracking assert needs the critical-region precondition -> XREF: 02-kernel-core/TODO-07 §11 (item: "Add critical/guarded region support: KeEnterCriticalRegion()/KeLeaveCriticalRegion()" at line 239)
 
 ---
 
@@ -363,7 +371,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Ordered tables + bitmaps   | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap       | ✅ §7 AVL + dyn-hash + bitmap |
 | 💎 | Push locks                 | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU           | ⬜ §8 deferred (keyed events) |
 | 💎 | Fast/guarded mutexes       | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex               | ⬜ §9 deferred (per-thread APC) |
-| 💎 | Shared/exclusive resource  | ✅ ERESOURCE                        | ✅ rw_semaphore        | ⬜ Planned -- §10         |
+| 💎 | Shared/exclusive resource  | ✅ ERESOURCE                        | ✅ rw_semaphore        | ⬜ §10 deferred (SMP rwlock) |
 | 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ Planned -- §11         |
 | 💎 | Worker items + Ex timers   | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer   | ⬜ Planned -- §12         |
 | 💎 | Bugcheck reason callbacks  | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers     | ⬜ Planned -- §13         |
