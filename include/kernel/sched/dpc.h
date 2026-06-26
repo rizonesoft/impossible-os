@@ -53,6 +53,7 @@ typedef struct _KDPC {
     struct _KDPC       *next;           /* intrusive queue link (NULL = not queued) */
     volatile uint32_t   queued;         /* 1 if currently in a CPU's DPC queue */
     uint32_t            cpu_target;     /* target CPU (0xFFFFFFFF = current CPU) */
+    uint32_t            queued_cpu;     /* CPU this DPC lives on (valid iff queued==1; for cross-CPU remove) */
     KDPC_IMPORTANCE     importance;     /* queue insertion priority */
     uint8_t             threaded;      /* 1 = run at PASSIVE_LEVEL in DPC thread */
 } KDPC;
@@ -69,10 +70,17 @@ typedef struct _KDPC {
  *   context:  opaque context passed to every invocation */
 void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
 
-/* Queue a DPC for execution at DISPATCH_LEVEL on the current CPU.
+/* Queue a DPC for execution at DISPATCH_LEVEL on the current (or targeted) CPU.
  * ISR-safe: does not block, does not allocate memory.
  * If the DPC is already queued, updates arg1/arg2 and returns 0 (no-op).
  * Returns 1 if newly queued, 0 if already queued (args still updated).
+ *
+ * Precondition (NT contract): a single KDPC must not be inserted concurrently
+ * from more than one CPU. Like Windows ("a driver must not queue the same DPC
+ * object more than once"), the caller owns DPC single-ownership. Sequential
+ * cross-CPU operations are safe -- the DPC records the CPU it lives on
+ * (queued_cpu), so KeRemoveQueueDpc and a re-insert from a different CPU find
+ * the right queue. Concurrent same-DPC inserts from two CPUs are caller misuse.
  *
  * May be called at any IRQL up to DIRQL. */
 int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2);

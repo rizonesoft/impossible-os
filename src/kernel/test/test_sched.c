@@ -8,6 +8,8 @@
 #include "kernel/test/race_barrier.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"
+#include "kernel/sched/dpc.h"
+#include "kernel/smp.h"
 #include "kernel/types.h"
 
 /* Shared flag set by test thread to prove it ran */
@@ -311,9 +313,103 @@ static void test_vector_to_irql_boundaries(void)
     TEST_ASSERT_EQ(vector_to_irql(0xFF), HIGH_LEVEL, "spurious 0xFF -> HIGH");
 }
 
+/* ---- DPC object + per-CPU queue tests ---- */
+
+static void dpc_noop_routine(struct _KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+}
+
+/* Test: KeInitializeDpc sets all KDPC fields to documented defaults. */
+static void test_dpc_init_fields(void)
+{
+    KDPC dpc;
+    KeInitializeDpc(&dpc, dpc_noop_routine, (void *)0x1234);
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)dpc.routine,
+                   (uint64_t)(uintptr_t)dpc_noop_routine, "routine stored");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)dpc.deferred_ctx, 0x1234u, "context stored");
+    TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u, "not queued initially");
+    TEST_ASSERT_EQ((uint64_t)dpc.cpu_target, (uint64_t)DPC_TARGET_CURRENT,
+                   "target defaults to current CPU");
+    TEST_ASSERT_EQ((uint64_t)dpc.importance, (uint64_t)MediumImportance,
+                   "default importance is Medium");
+    TEST_ASSERT_EQ((uint64_t)dpc.threaded, 0u, "not threaded by default");
+}
+
+/* Test: insert/remove return codes, depth accounting, and queued_cpu binding.
+ * Runs at HIGH_LEVEL to block this CPU's timer-tick DPC drain so the live
+ * per-CPU queue state is observed deterministically (per-CPU queue: no other
+ * CPU touches it). */
+static void test_dpc_insert_remove(void)
+{
+    KDPC dpc;
+    struct dpc_queue *q = dpc_this_cpu_queue();
+    KIRQL old;
+    uint32_t my_cpu = smp_this_cpu()->cpu_id;
+    int r1, r2, rm1, rm2;
+    uint32_t qf1, qf2, qcpu, d0, d1, d2, d3;
+
+    KeInitializeDpc(&dpc, dpc_noop_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    d0   = q->depth;
+    r1   = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    qf1  = dpc.queued;
+    qcpu = dpc.queued_cpu;
+    d1   = q->depth;
+    r2   = KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    d2   = q->depth;
+    rm1  = KeRemoveQueueDpc(&dpc);
+    qf2  = dpc.queued;
+    d3   = q->depth;
+    rm2  = KeRemoveQueueDpc(&dpc);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)r1, 1u, "first insert returns 1 (newly queued)");
+    TEST_ASSERT_EQ((uint64_t)qf1, 1u, "queued flag set");
+    TEST_ASSERT_EQ((uint64_t)qcpu, (uint64_t)my_cpu, "queued_cpu bound to inserting CPU");
+    TEST_ASSERT_EQ((uint64_t)d1, (uint64_t)(d0 + 1), "depth incremented");
+    TEST_ASSERT_EQ((uint64_t)r2, 0u, "re-insert returns 0 (already queued)");
+    TEST_ASSERT_EQ((uint64_t)d2, (uint64_t)(d0 + 1), "depth unchanged on re-insert");
+    TEST_ASSERT_EQ((uint64_t)rm1, 1u, "remove returns 1");
+    TEST_ASSERT_EQ((uint64_t)qf2, 0u, "queued flag cleared");
+    TEST_ASSERT_EQ((uint64_t)d3, (uint64_t)d0, "depth restored");
+    TEST_ASSERT_EQ((uint64_t)rm2, 0u, "remove un-queued returns 0");
+}
+
+/* Test: HighImportance DPC is head-inserted ahead of an earlier queued DPC. */
+static void test_dpc_high_importance_head(void)
+{
+    KDPC dpc_med, dpc_high;
+    struct dpc_queue *q = dpc_this_cpu_queue();
+    KIRQL old;
+    void *head_after;
+
+    KeInitializeDpc(&dpc_med, dpc_noop_routine, (void *)0);
+    KeInitializeDpc(&dpc_high, dpc_noop_routine, (void *)0);
+    KeSetImportanceDpc(&dpc_high, HighImportance);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeInsertQueueDpc(&dpc_med, (void *)0, (void *)0);    /* tail */
+    KeInsertQueueDpc(&dpc_high, (void *)0, (void *)0);   /* HighImportance -> head */
+    head_after = (void *)q->head;
+    KeRemoveQueueDpc(&dpc_high);
+    KeRemoveQueueDpc(&dpc_med);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)head_after, (uint64_t)(uintptr_t)&dpc_high,
+                   "HighImportance DPC head-inserted ahead of queued Medium");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
+    test_suite_register_cat("Sched: DPC init fields",
+                            test_dpc_init_fields, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: DPC insert/remove + queued_cpu",
+                            test_dpc_insert_remove, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: DPC HighImportance head-insert",
+                            test_dpc_high_importance_head, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

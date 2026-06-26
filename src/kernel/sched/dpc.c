@@ -98,6 +98,7 @@ void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context)
     dpc->next         = (KDPC *)0;
     dpc->queued       = 0;
     dpc->cpu_target   = DPC_TARGET_CURRENT;
+    dpc->queued_cpu   = MAX_CPUS;            /* invalid until queued */
     dpc->importance   = MediumImportance;
     dpc->threaded     = 0;
 }
@@ -133,68 +134,108 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
     uint32_t cpu_id;
     struct dpc_queue *q;
     uint64_t irq_flags;
+    int warn_depth = 0;
 
-    /* Determine target CPU */
-    if (dpc->cpu_target == DPC_TARGET_CURRENT)
-        cpu_id = smp_this_cpu()->cpu_id;
-    else
-        cpu_id = dpc->cpu_target;
-
-    if (cpu_id >= MAX_CPUS)
-        return 0;
-
-    q = &cpu_queues[cpu_id];
-
-    /* Lock the queue -- ISR-safe (saves RFLAGS + cli) */
-    spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
-
-    /* Always update arguments (even if already queued -- NT behavior) */
-    dpc->system_arg1 = arg1;
-    dpc->system_arg2 = arg2;
-
-    /* If already queued, just update args and return */
-    if (dpc->queued) {
-        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
-        return 0;
-    }
-
-    /* Insert: HighImportance -> head, otherwise -> tail (FIFO) */
-    dpc->next   = (KDPC *)0;
-    dpc->queued = 1;
-
-    if (dpc->importance == HighImportance) {
-        /* Head insert -- runs before existing DPCs */
-        dpc->next = q->head;
-        q->head   = dpc;
-        if (!q->tail)
-            q->tail = dpc;
-    } else {
-        /* Tail insert (default FIFO) */
-        if (q->tail) {
-            q->tail->next = dpc;
-            q->tail       = dpc;
-        } else {
-            q->head = dpc;
-            q->tail = dpc;
+    for (;;) {
+        /* If already queued, the DPC lives on dpc->queued_cpu (resolved from
+         * DPC_TARGET_CURRENT at insert time). NT keeps a queued DPC on its
+         * original CPU; a re-insert only refreshes the arguments -- under the
+         * lock of the queue it actually lives on, not the caller's current CPU.
+         * This is the cross-CPU-correct re-insert path. */
+        if (dpc->queued) {
+            uint32_t qc = dpc->queued_cpu;
+            if (qc >= MAX_CPUS) {
+                /* Transient: a remove/drain on the owning CPU is mid-clear
+                 * (queued_cpu invalidated, queued not yet 0). Spin until it
+                 * settles rather than treating it as an insert we can drop --
+                 * the clear runs under that CPU's lock with interrupts off and
+                 * completes promptly. */
+                __asm__ volatile("pause" ::: "memory");
+                continue;
+            }
+            spin_lock_irqsave(&queue_locks[qc], &irq_flags);
+            if (dpc->queued && dpc->queued_cpu == qc) {
+                dpc->system_arg1 = arg1;
+                dpc->system_arg2 = arg2;
+                spin_unlock_irqrestore(&queue_locks[qc], irq_flags);
+                return 0;
+            }
+            spin_unlock_irqrestore(&queue_locks[qc], irq_flags);
+            continue;   /* state changed under us -- re-evaluate from the top */
         }
+
+        /* Resolve the concrete target CPU for a fresh insert. */
+        if (dpc->cpu_target == DPC_TARGET_CURRENT)
+            cpu_id = smp_this_cpu()->cpu_id;
+        else
+            cpu_id = dpc->cpu_target;
+        if (cpu_id >= MAX_CPUS)
+            return 0;
+
+        q = &cpu_queues[cpu_id];
+
+        /* Lock the target queue -- ISR-safe (saves RFLAGS + cli). */
+        spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
+
+        /* Recheck under the lock. If the DPC became queued concurrently:
+         *  - on THIS CPU (the common ISR-vs-thread race): refresh args, return 0;
+         *  - on ANOTHER CPU, or transiently clearing (queued_cpu==MAX_CPUS):
+         *    release and re-evaluate from the top. We never double-link and never
+         *    drop the insert -- a transient clear settles on retry, and a genuine
+         *    concurrent same-DPC insert from a different CPU (caller misuse, see
+         *    the header precondition) resolves to the already-queued path. */
+        if (dpc->queued) {
+            if (dpc->queued_cpu == cpu_id) {
+                dpc->system_arg1 = arg1;
+                dpc->system_arg2 = arg2;
+                spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+                return 0;
+            }
+            spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+            continue;
+        }
+
+        /* Confirmed not-queued under the lock -- link it and record its CPU. */
+        dpc->system_arg1 = arg1;
+        dpc->system_arg2 = arg2;
+        dpc->next        = (KDPC *)0;
+        dpc->queued_cpu  = cpu_id;
+        dpc->queued      = 1;
+
+        if (dpc->importance == HighImportance) {
+            /* Head insert -- runs before existing DPCs */
+            dpc->next = q->head;
+            q->head   = dpc;
+            if (!q->tail)
+                q->tail = dpc;
+        } else {
+            /* Tail insert (default FIFO) */
+            if (q->tail) {
+                q->tail->next = dpc;
+                q->tail       = dpc;
+            } else {
+                q->head = dpc;
+                q->tail = dpc;
+            }
+        }
+
+        q->depth++;
+        if (q->depth > q->max_depth)
+            q->max_depth = q->depth;
+        if (q->depth == DPC_QUEUE_WARN_DEPTH)
+            warn_depth = 1;
+
+        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+
+        /* Log the depth warning AFTER releasing the lock: klog does serial I/O
+         * (busy-waits on UART under its own lock) which must never run while
+         * holding the queue spinlock with interrupts disabled. */
+        if (warn_depth)
+            klog(LOG_WARN, "dpc",
+                 "CPU %u DPC queue depth reached %u (possible starvation)",
+                 (uint64_t)cpu_id, (uint64_t)DPC_QUEUE_WARN_DEPTH);
+        return 1;
     }
-
-    q->depth++;
-
-    /* Track high-water mark */
-    if (q->depth > q->max_depth)
-        q->max_depth = q->depth;
-
-    /* Warn on excessive queue depth (but don't block) */
-    if (q->depth == DPC_QUEUE_WARN_DEPTH) {
-        klog(LOG_WARN, "dpc",
-             "CPU %u DPC queue depth reached %u (possible starvation)",
-             (uint64_t)cpu_id, (uint64_t)q->depth);
-    }
-
-    spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
-
-    return 1;
 }
 
 /* ---- KeRemoveQueueDpc ---------------------------------------------------- */
@@ -211,15 +252,12 @@ int KeRemoveQueueDpc(KDPC *dpc)
     if (!dpc->queued)
         return 0;
 
-    /* Determine which CPU's queue this DPC is in.
-     * We check the target CPU; if DPC_TARGET_CURRENT was used at insert
-     * time, the DPC is on the CPU that called KeInsertQueueDpc. Since we
-     * can't know which CPU that was, scan the current CPU first (most
-     * common case), then fall through. For targeted DPCs, go direct. */
-    if (dpc->cpu_target != DPC_TARGET_CURRENT)
-        cpu_id = dpc->cpu_target;
-    else
-        cpu_id = smp_this_cpu()->cpu_id;
+    /* The DPC lives on dpc->queued_cpu (recorded at insert time, resolving
+     * DPC_TARGET_CURRENT to the concrete CPU that queued it). Remove from
+     * THAT queue regardless of which CPU calls KeRemoveQueueDpc -- the old
+     * code re-resolved DPC_TARGET_CURRENT to the remover's CPU and silently
+     * failed for cross-CPU cancellation. */
+    cpu_id = dpc->queued_cpu;
 
     if (cpu_id >= MAX_CPUS)
         return 0;
@@ -227,6 +265,12 @@ int KeRemoveQueueDpc(KDPC *dpc)
     q = &cpu_queues[cpu_id];
 
     spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
+
+    /* Recheck under lock: it may have drained or moved since the unlocked read. */
+    if (!dpc->queued || dpc->queued_cpu != cpu_id) {
+        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+        return 0;
+    }
 
     /* Walk the queue to find and unlink */
     prev = (KDPC *)0;
@@ -243,8 +287,9 @@ int KeRemoveQueueDpc(KDPC *dpc)
             if (q->tail == cur)
                 q->tail = prev;
 
-            cur->next   = (KDPC *)0;
-            cur->queued = 0;
+            cur->next       = (KDPC *)0;
+            cur->queued_cpu = MAX_CPUS;   /* invalidate before clearing queued */
+            cur->queued     = 0;
             q->depth--;
             found = 1;
             break;
@@ -320,6 +365,7 @@ static uint32_t drain_queue(uint32_t cpu_id)
         KDPC *dpc;
         KDEFERRED_ROUTINE routine;
         void *ctx, *a1, *a2;
+        uint8_t threaded;
         uint64_t irq_flags;
 
         spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
@@ -335,23 +381,28 @@ static uint32_t drain_queue(uint32_t cpu_id)
             q->tail = (KDPC *)0;
         q->depth--;
 
-        routine = dpc->routine;
-        ctx     = dpc->deferred_ctx;
-        a1      = dpc->system_arg1;
-        a2      = dpc->system_arg2;
+        routine  = dpc->routine;
+        ctx      = dpc->deferred_ctx;
+        a1       = dpc->system_arg1;
+        a2       = dpc->system_arg2;
+        threaded = dpc->threaded;   /* snapshot under the lock */
 
-        dpc->next   = (KDPC *)0;
-        dpc->queued = 0;
+        dpc->next       = (KDPC *)0;
+        dpc->queued_cpu = MAX_CPUS;   /* invalidate before clearing queued */
+        dpc->queued     = 0;
+        q->executed++;                /* stats under the lock (was outside) */
 
         spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
 
-        /* Threaded DPCs: move to threaded list instead of executing inline */
-        if (dpc->threaded) {
+        /* Threaded DPCs: move to the threaded list instead of executing inline.
+         * NOTE: this hand-off writes dpc->next after the DPC is marked un-queued,
+         * which races a concurrent re-insert -- tracked for the threaded-DPC
+         * pending-state fix in the threaded-DPC list-synchronization section. */
+        if (threaded) {
             dpc->next = threaded_head[cpu_id];
             threaded_head[cpu_id] = dpc;
             __atomic_store_n(&threaded_pending[cpu_id], 1, __ATOMIC_RELEASE);
             dispatched++;
-            q->executed++;
             continue;
         }
 
@@ -359,7 +410,6 @@ static uint32_t drain_queue(uint32_t cpu_id)
             routine(dpc, ctx, a1, a2);
 
         dispatched++;
-        q->executed++;
     }
 
     return dispatched;

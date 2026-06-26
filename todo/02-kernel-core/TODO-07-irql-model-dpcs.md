@@ -58,7 +58,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [x]   |
-| 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [x]   |
+| 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [/]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [ ]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [ ]   |
@@ -151,7 +151,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 ## 4. DPC Object Type and Per-CPU Queue
 
-- [x] `dpc.h` + `dpc.c`: `KDPC` struct with routine, context, args, intrusive queue link, queued flag, cpu_target
+- [x] `dpc.h` + `dpc.c`: `KDPC` struct with routine, context, args, intrusive queue link, queued flag, cpu_target, queued_cpu (the CPU a queued DPC lives on, for cross-CPU remove/re-insert)
 - [x] `KeInitializeDpc()`, `KeInsertQueueDpc()` (ISR-safe, zero alloc), `KeRemoveQueueDpc()` -- all implemented
 - [x] Per-CPU DPC queues (static `cpu_queues[MAX_CPUS]`) with irqsave spinlocks, FIFO, depth warning at 64
 - [x] `dpc_init_queues()` wired into Phase 1 before `sti`; `dpc_init()` remains the Phase 3 full-ready hook before `task_init()`
@@ -159,6 +159,19 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Commit: `"kernel: sched -- wire DPC init + timer resolution into boot path"`
 
 **Test checkpoint:** `KeInitializeDpc(&dpc, routine, ctx)` sets all fields. `KeInsertQueueDpc` from `DISPATCH_LEVEL` returns 1 (newly queued). Second `KeInsertQueueDpc` for same DPC returns 0 (no-op). `KeRemoveQueueDpc` returns 1 for queued DPC, 0 for un-queued. `dpc_this_cpu_queue()->depth` increments on insert and decrements on remove. Serial: `"dpc: per-CPU DPC queues initialized"` during Phase 1 boot. If crash, check POST -- 0xD400 = never entered `dpc_init`, 0xD401 = completed successfully.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 54 kernel + 16 user-mode PASS (TCG)
+> **Notes:**
+> - DPC object + per-CPU queue: `KDPC` struct, `KeInitializeDpc`/`KeInsertQueueDpc`/`KeRemoveQueueDpc`, per-CPU `cpu_queues[MAX_CPUS]` FIFO with irqsave locks + depth-64 warn, `dpc_init_queues` Phase-1 -- in `src/kernel/sched/dpc.c`.
+> - Review-pass SMP fix: added `queued_cpu` so cross-CPU `KeRemoveQueueDpc` and re-insert operate on the queue the DPC actually lives on; the old code re-resolved `DPC_TARGET_CURRENT` to the caller's CPU and scanned/locked the wrong queue.
+> - Review-pass: the depth-warn `klog` moved AFTER the unlock (was serial I/O under the queue spinlock + cli); `executed++` moved under the lock.
+> - Insert retries on the transient `queued_cpu==MAX_CPUS` (set while a remove/drain clears the DPC) so a concurrent re-insert is never dropped, and never double-links the observable case.
+> - Caller precondition (NT contract, documented in `dpc.h`): a single KDPC must not be inserted concurrently from more than one CPU; sequential cross-CPU operations are safe.
+> - Canonical: `src/kernel/sched/dpc.c`; tests in `src/kernel/test/test_sched.c`.
+> **Verified:** 2026-06-26 | commit `STAMPHASH4` | 5/5 items | build OK | tests 54 kernel + 16 user PASS
+> **Deferred:** [H] threaded-DPC handoff double-owns a re-inserted KDPC (`drain_queue` clears `queued` + drops the lock before the `threaded_head` prepend) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 351)
+> **Deferred:** [M] per-CPU DPC queue/lock storage false-shares the ISR-hot insert/drain path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "Cacheline-align per-CPU DPC storage" at line 207)
+> **Quality reviewed:** 2026-06-26 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 4H+1L fixed, 1H+1M deferred | scope: kernel-code-quality
 
 ---
 
@@ -204,6 +217,7 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 - [x] `KDPC_IMPORTANCE` enum added; `KDPC.importance` field (default: MediumImportance)
 - [x] `KeSetTargetProcessorDpcEx` (>64 CPU): moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5`
 - [x] Cross-CPU IPI for MediumHighImportance: moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5` (part of DpcEx)
+- [ ] Cacheline-align per-CPU DPC storage: `cpu_queues[]`/`queue_locks[]` in `dpc.c` pack several CPUs per cache line, false-sharing the ISR-hot insert/drain path; pad each per-CPU queue + lock to its own line + a layout assert (Codex §4 perf M)
 - [x] Commit: `"kernel: sched -- add DPC targeting, importance, and flush"`
 
 **Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.
@@ -347,6 +361,7 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 - [ ] Replace raw `threaded_head[cpu_id]` manipulation with `atomic_exchange`: ISR producer atomically swaps head to NULL, worker drains the snapshot
 - [ ] Alternative: protect `threaded_head[]` with per-CPU spinlock (same as `queue_locks[]`)
 - [ ] Verify: stress test with concurrent threaded DPC insertions from multiple ISRs on different CPUs
+- [ ] Threaded-DPC pending state (H, double-owner): `drain_queue` clears `queued` + drops the lock before prepending to `threaded_head`; a re-insert in that gap double-owns the KDPC. Hold a pending state until the worker completes (Codex §4 re-adv)
 - [ ] Commit: `"kernel: fix threaded DPC list race -- atomic handoff between ISR and worker"`
 
 **Test checkpoint:** Run with 2+ CPUs, fire threaded DPCs from both LAPIC and PIT ISRs simultaneously. No lost callbacks, no list corruption. Serial log shows all threaded DPC completions.
