@@ -50,7 +50,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 5 | Lookaside lists (NPaged/Paged/Ex) | §2, D03 T03 | [x] |
 | 💎 | 6 | Fast references | §1, T05 | [x] |
 | 💎 | 7 | Generic tables and bitmaps | §1 | [x] |
-| 💎 | 8 | Push locks | §1, T07 | [ ] |
+| 💎 | 8 | Push locks | §1, T07 | [/] |
 | 💎 | 9 | Fast and guarded mutexes | §1, T07 | [ ] |
 | 💎 | 10 | Executive resource wrapper | §1, T07, D03 T08 | [ ] |
 | 💎 | 11 | Run-once initialization | §1 | [ ] |
@@ -248,9 +248,9 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 
 Lighter-weight shared/exclusive lock than ERESOURCE (`EX_PUSH_LOCK`), used by Windows callback, file-object, and registry code on read-heavy paths.
 
-- [ ] Define `EX_PUSH_LOCK` (pointer-sized) and implement `ExInitializePushLock`, `ExAcquirePushLockShared`, `ExAcquirePushLockExclusive`, `ExReleasePushLockShared`, `ExReleasePushLockExclusive`.
-- [ ] Enforce the contract: caller must be in a critical region (`KeEnterCriticalRegion`, normal-APC-disabled) before acquire; not recursive; document the IRQL ceiling (-> XREF T07 for critical-region primitives).
-- [ ] Paged-or-nonpaged storage; no owner-query API (matches Windows); pointer-sized so it fits inline in objects.
+- [/] Define pointer-sized `EX_PUSH_LOCK` + `ExInitializePushLock`/Acquire/Release Shared+Exclusive. BLOCKED on an address-keyed park (see Deferred stamp); yield-poll deadlocks the priority scheduler.
+- [/] Enforce the contract: caller in a critical region (`KeEnterCriticalRegion`) before acquire; not recursive. BLOCKED: `KeEnterCriticalRegion` owned by T07 §11, not yet implemented.
+- [/] Paged-or-nonpaged storage; no owner-query API (matches Windows); pointer-sized so it fits inline in objects.
 - [ ] Commit: `"kernel: ex -- push locks"`
 
 **Test checkpoint:** N concurrent shared acquires proceed in parallel; an exclusive acquire waits until all shared holders release and blocks new shared acquires; acquiring outside a critical region asserts in verifier mode; release ordering is FIFO-fair enough to avoid writer starvation under steady read load. Verify on bare metal -- SMP contention and APC delivery differ from VMs.
@@ -346,7 +346,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Lookaside lists            | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache     | ✅ NPaged/Paged/Ex + verifier |
 | 💎 | Fast references            | ✅ EX_FAST_REF                      | ❌ none                | ✅ §6 EX_FAST_REF (3-bit) |
 | 💎 | Ordered tables + bitmaps   | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap       | ✅ §7 AVL + dyn-hash + bitmap |
-| 💎 | Push locks                 | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU           | ⬜ Planned -- §8          |
+| 💎 | Push locks                 | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU           | ⬜ §8 deferred (keyed events) |
 | 💎 | Fast/guarded mutexes       | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex               | ⬜ Planned -- §9          |
 | 💎 | Shared/exclusive resource  | ✅ ERESOURCE                        | ✅ rw_semaphore        | ⬜ Planned -- §10         |
 | 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ Planned -- §11         |

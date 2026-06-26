@@ -237,6 +237,7 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 - [ ] Implement `KeInsertQueueApc(Apc, SystemArgument1, SystemArgument2, Increment)` -- inserts APC into target thread's queue; special kernel APCs at head, normal/user APCs at tail; sets pending flags; returns `TRUE` on success, `FALSE` if thread is exiting
 - [ ] Implement `KeRemoveQueueApc(Apc)` -- removes a queued APC before delivery; returns `TRUE` if it was queued
 - [ ] Add critical/guarded region support: `KeEnterCriticalRegion()` / `KeLeaveCriticalRegion()` -- blocks normal kernel APC delivery; `KeEnterGuardedRegion()` / `KeLeaveGuardedRegion()` -- blocks all kernel APC delivery
+  - → XREF consumers: `02-kernel-core/TODO-06 §8` (EX_PUSH_LOCK acquire contract) + §9 (guarded mutex)
 - [ ] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
 
 **Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to current thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to exiting thread returns `FALSE`. `KeEnterCriticalRegion` prevents normal kernel APC delivery. Serial: `"apc: initialized per-thread APC queues"` on first thread init.

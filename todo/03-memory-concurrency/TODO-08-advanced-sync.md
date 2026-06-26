@@ -247,7 +247,7 @@ Every blocking primitive gets a `_timeout(ms)` variant with identical semantics:
 
 ## 10. Sync Syscalls Wired to SSDT (Keyed Events, Alerts)
 
-Register keyed event and alert-by-thread-id syscalls in the SSDT for user-mode synchronisation primitives. (→ XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §5)
+Register keyed event and alert-by-thread-id syscalls in the SSDT for user-mode synchronisation primitives. (→ XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §5; the kernel keyed-event block is the pointer-sized park `02-kernel-core/TODO-06 §8` EX_PUSH_LOCK waits on)
 
 - [ ] `NtCreateKeyedEvent(KeyedEventHandle, DesiredAccess, ObjectAttributes, Flags)` → SSDT 0x0084
 - [ ] `NtOpenKeyedEvent(KeyedEventHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0085
