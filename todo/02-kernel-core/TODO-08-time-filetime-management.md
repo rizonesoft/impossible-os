@@ -197,7 +197,11 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 - [x] `KeSetSystemTime(new_time)`: updates anchor + re-latches mono_ns(); seqlock write-protected
 - [x] `wall_clock_ready()`: returns 1 after init
 - [x] Protected by `seqlock_t` (SEQLOCK_INIT) for SMP-safe concurrent reads
-- [ ] CMOS-RTC absence gating: latch `rtc_available()` from `acpi_has_cmos_rtc()`; gate the RTC fallback + `klog_disk` + compositor clock + `rtc_get_*` so hardware-reduced platforms never touch CMOS 0x70/0x71 (consumer of `D01 T10 §4`)
+- [ ] CMOS-RTC absence gating: latch `rtc_available()` and refuse CMOS port I/O on no-CMOS platforms (design review captured below). Consumer of `D01 T10 §4`.
+
+> [!NOTE]
+> **Design review (adopted, pre-code).** (1) HARD GATE in `rtc.c` `cmos_read()` -- the single `outb 0x70` / `inb 0x71` site is the safety boundary; refuse before ANY port I/O when unavailable, so a missed consumer can never touch the ports (callers include `wall_clock.c:48`, `compositor.c:220`, `desktop.c:584` -- more than the original list). Consumer gates only choose fallback behavior, not hardware safety. (2) FAIL-CLOSED latch: `s_rtc_available` defaults UNAVAILABLE; set true only when `acpi_is_ready() && acpi_has_cmos_rtc()` -- `acpi_has_cmos_rtc()` returns present on `!fadt_ptr`/short-FADT (fail-open), so the latch must add the readiness gate. (3) STATUS-BEARING read: add `rtc_try_read()` returning success + full date-tuple validation; `rtc_read()` (void) zero-fills look like year-2000 (passes `wall_clock`'s 2000-2100 check) and underflow `filetime_from_rtc` on `day-1`. `wall_clock_init()` seeds from RTC only on `rtc_try_read()` success, else stays UEFI-only / unavailable.
+
 - [x] Commit: `"kernel: time -- wall clock init from UEFI GetTime with RTC fallback"`
 
 ---
