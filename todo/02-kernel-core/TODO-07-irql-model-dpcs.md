@@ -8,6 +8,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 # TODO-07 -- IRQL Model & DPCs
 
+> **Validated:** 2026-06-26 | validate-todo-file clean (structure / IO table / XREF / test wiring; integrity gate 8/8)
+
 > **Goal:** Implement a Windows-style Interrupt Request Level (IRQL) model and a real Deferred Procedure Call (DPC) subsystem so interrupt handlers can defer non-trivial work safely. DPCs run at `DISPATCH_LEVEL`, enforce preemption constraints, and provide a deterministic bridge between hard-interrupt context and thread context.
 
 > [!IMPORTANT]
