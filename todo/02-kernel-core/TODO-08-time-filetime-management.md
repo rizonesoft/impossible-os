@@ -9,6 +9,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 # TODO-08 -- Time & FILETIME Management
 
 > **Validated:** 2026-06-26 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+> **Gap-audited:** 2026-06-26 | gap-audit + codex-gap-audit (4 HIGH); filed: §2 ACPI-PM/watchdog, §3 ordered-rdtsc + AP-TSC-sync, §12 KUSD QPC fields + ABI-collision, §17 NTP-QPC-independence, §14 RTC-wake XREF; §2/§3/§12 downgraded [x]->[/]
 
 > **Goal:** Build the kernel time layer that all Win32 APIs, filesystems, logging, and the scheduler depend on. This means: a `FILETIME` type with correct epoch and 100 ns resolution; a monotonic nanosecond clock backed by invariant TSC or HPET; interrupt time and unbiased interrupt time APIs; a wall clock seeded from UEFI `GetTime()` (RTC fallback); precise sub-microsecond system time via TSC interpolation; `NtQuerySystemTime`/`NtSetSystemTime`; `QueryPerformanceCounter`; timer resolution management (`NtSetTimerResolution`); timezone/DST bias; filesystem timestamp encoders (FAT32 local-time / NTFS FILETIME); suspend/hibernate time bias tracking; and KUSER_SHARED_DATA time field updates. Without this, every `CreateFile` timestamp, every log entry, and every scheduler deadline is either zero or fabricated.
 
@@ -60,8 +61,8 @@ title: "TODO-08 -- Time & FILETIME Management"
 | ⭐  | Order | Deliverable                                                            | Depends On          | Status |
 | --- | :---: | ---------------------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [x]   |
-| 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
-| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [x]   |
+| 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [/]   |
+| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [/]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [/]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [x]   |
@@ -70,7 +71,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter`  | §6, TODO-12 §5      |  [x]   |
 | 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                       | §6, §2              |  [x]   |
 | 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [x]   |
-| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-11 §11 |  [x]   |
+| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-11 §11 |  [/]   |
 | 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [x]   |
 | 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-26 §3,§4   |  [ ]   |
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [ ]   |
@@ -106,6 +107,7 @@ Select the highest-resolution monotonic source available: invariant TSC → HPET
 - [x] Logs selected source: `"Monotonic clock: TSC (N MHz, invariant)"` or `"LAPIC (N ticks/ms)"`
 - [x] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
 - [ ] Clocksource quality watchdog (Linux parity): cross-check active source vs PIT/HPET/PM and demote on drift, replacing the `platform_is_tcg()` gate in `timer_hal_init()` (from `01-boot-platform/TODO-11` §10)
+- [ ] ACPI PM timer (PMTMR) clocksource fallback before LAPIC (gap-audit): LAPIC is per-CPU, not a standalone counter; add `acpi_pm_read()` (3.58 MHz, multi-read glitch fix) as priority-3 in `mono_clock_init()`.
 
 ---
 
@@ -118,6 +120,9 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 - [x] Per-AP TSC sync via IPI: deferred -- modern firmware synchronizes invariant TSC at reset; offset starts at 0; IPI sync will be added if real hardware shows drift
 - [x] Fallback: if invariant TSC absent, falls through to LAPIC in `mono_clock_init()` with log warning
 - [x] `rdtsc_ns()`: fast TSC read with per-CPU offset + overflow-safe scale conversion
+- [ ] Ordered TSC read (gap-audit): `mono_clock.c` uses bare `rdtsc` (out-of-order); switch the hot path to `RDTSCP` (gated on `CPU_FEATURE_RDTSCP`) or `LFENCE;RDTSC` fallback so a QPC/mono read never reorders past surrounding instructions.
+- [ ] AP TSC sync + warp detection (gap-audit, Linux `tsc_sync.c` parity): cross-check AP TSC vs BSP at SMP bring-up; on warp, set a `tsc_unstable` flag and demote QPC/mono to HPET/PMTMR instead of trusting firmware reset-sync.
+- [ ] Resume/migration monotonicity (gap-audit): re-verify TSC sync after S3 resume and guard against backward QPC on thread migration; QPC must be non-decreasing per the Win11 contract.
 - [x] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
 
 ---
@@ -188,6 +193,9 @@ Windows allows processes to request higher timer interrupt frequency (down to 0.
 ## 9. `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`
 Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 
+> [!NOTE]
+> QPC (`NtQueryPerformanceCounter`) returns RAW `mono_filetime_units()` and MUST stay independent of NTP / wall-clock discipline (Win11 contract: QPC is unaffected by Windows Time; Linux `CLOCK_MONOTONIC_RAW`). §17's NTP slew/frequency correction adjusts wall-clock conversion only -- see the §17 [H] gap-audit item.
+
 - [x] `NtQuerySystemTime` (SSDT 0x00F0): calls `KeQuerySystemTime()`, writes FILETIME to user pointer
 - [x] `NtSetSystemTime` (SSDT 0x00F1): calls `KeSetSystemTime()`; optional previous-time out-param
 - [x] `NtQueryPerformanceCounter` (SSDT 0x00F2): returns `mono_filetime_units()` with fixed 10 MHz frequency
@@ -229,6 +237,8 @@ The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, Inter
 - [x] Wired into LAPIC timer ISR (`lapic.c`) and PIT ISR (`pit.c`) -- called on every tick
 - [x] Volatile writes only, no locks -- runs at CLOCK_LEVEL IRQL
 - [x] Also wired `mono_clock_init()`, `wall_clock_init()`, `timezone_init()` into Phase 2 boot (were previously defined but never called)
+- [ ] Win11 24H2 KUSD QPC fast-path fields (gap-audit): populate `BaselineSystemTimeQpc`, `QpcSystemTimeIncrement`, `QpcBias`, `QpcBypassEnabled` so user-mode `QueryPerformanceCounter` reads the page syscall-free.
+- [ ] Reconcile custom ABI header collision (gap-audit): `kusd.h` `AbiMagic` at 0x340 overlaps the Win11 24H2 QPC block (0x340-0x3c7); relocate past the real Windows tail -> XREF: D02 T04 §18.
 - [x] Commit: `"kernel: time -- KUSER_SHARED_DATA time field updates from timer ISR"`
 
 ---
@@ -254,6 +264,7 @@ When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrup
 - [ ] On resume: read UEFI `GetTime()` or RTC; compute delta against pre-suspend wall time; pass to `ke_suspend_bias_update()`
 - [ ] Update `wall_clock_t.base_mono_ns` to account for the monotonic clock gap during suspend
 - [ ] Log the bias adjustment and total sleep duration on resume
+- [ ] RTC wake alarm (gap-audit): program the RTC/ACPI wake timer to resume at a future time (Win11 `RtlSetSystemWakeTime`, Linux `wakealarm`). Owned by power management. -> XREF: 02-kernel-core/TODO-26-power-management.md §3
 - [ ] Commit: `"kernel: time -- suspend/hibernate time bias tracking"`
 
 ---
@@ -291,8 +302,8 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
   - `int32_t  freq_ppb` -- parts-per-billion frequency correction (positive = clock running fast)
 - [ ] Implement `ke_ntp_adjtime(const ntp_adj_t *adj)`:
   - Phase step: if `|offset_ns| > 1s`, call `KeSetSystemTime()` directly (step)
-  - Slew: if `|offset_ns| <= 1s`, record the correction and spread it over the next N ticks by adjusting the tick-to-FILETIME scale factor (slew rate)
-  - Frequency: store `freq_ppb`; apply as a bias to `mono_filetime_units()` scale computation
+  - Slew: if `|offset_ns| <= 1s`, record the correction and spread it over the next N ticks by adjusting the WALL-CLOCK conversion only (the `base_time`/`base_mono_ns` anchor), never `mono_ns()` itself
+  - Frequency: store `freq_ppb`; apply it to the wall-clock FILETIME conversion ONLY. MUST NOT touch `mono_filetime_units()` / `KeQueryPerformanceCounter` (gap-audit [H]): QPC + interrupt time are RAW monotonic (Win11 contract: QPC is independent of system time / Windows Time; Linux keeps `CLOCK_MONOTONIC_RAW` un-disciplined). NTP discipline applies to wall time only.
 - [ ] Add `ke_ntp_get_status(struct ntp_status *out)` -- returns current offset, freq, last-sync FILETIME, and sync source string
 - [ ] Document the hook contract: NTP client calls `ke_ntp_adjtime()` from thread context only; kernel does not initiate network calls
 - [ ] Commit: `"kernel: time -- NTP clock phase and frequency adjustment hooks"`
@@ -307,6 +318,8 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⚠️ §2 done, §3-§4 pending |
 | 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
+| 💎 | Clocksource watchdog     | ✅ HAL silent demote     | ✅ clocksource.c watchdog | ⬜ §2 -- watchdog + PMTMR |
+| 💎 | Ordered TSC read         | ✅ QPC abstracts rdtscp  | ✅ rdtsc_ordered LFENCE   | ⬜ §3 -- bare rdtsc now   |
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
 | 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ✅ §7 -- biased+unbiased  |
