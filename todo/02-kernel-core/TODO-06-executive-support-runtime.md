@@ -410,15 +410,15 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Bugcheck reason callbacks  | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers     | ⬜ §13 deferred (panic freeze) |
 | ⭐ | Scoped executive verifier  | ⚠️ Driver Verifier (heavy)         | ⚠️ KASAN/lockdep       | ⬜ §14 deferred (needs §8-§13) |
 
-> **After §1-§13:** Impossible OS matches Windows 11 and Linux on Executive support primitives.
-> **After §14:** a low-cost verifier checks THIS layer's primitive-misuse modes inline, complementing (not replacing) the heavier Driver Verifier / KASAN / lockdep-class tooling owned by D02 T31.
+> **Shipped (pass 1):** §2-§7 (SLIST, rundown, callbacks, lookaside, fast refs, AVL/hash/bitmap) + §12 immediate work items match Win11/Linux. §8-§11 + §13/§14 are deferred on lower-level sync/panic infrastructure (keyed events, per-thread APC-disable, SMP-safe rwlock, panic CPU-freeze, T27 dump writer) -- see each section's Deferred stamp.
+> **After §8-§14 land:** the full lock spectrum (push locks, fast/guarded mutexes, ERESOURCE), run-once, Ex timers, bugcheck callbacks, and a low-cost scoped verifier complete the layer; broader tooling stays with D02 T31.
 
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_ex()` -- register in `src/kernel/test/test_runner.c`.
 > Tests run with `debug=1` or `test=1` in boot.conf. Needs a new `TEST_CAT_EX` enum value (executive support) added to `include/kernel/test/test.h` + its `"ex"` string mapping in `test_category_from_string()`.
 
-- [ ] Create `src/kernel/test/test_ex.c` with:
+- [/] Create `src/kernel/test/test_ex.c` with (shipped-primitive suites landed; deferred §8-§11/§13/§14 primitive tests land with those sections):
   - SLIST: concurrent push/pop preserves all entries; depth matches net count; flush resets to 0
   - Rundown: acquire-after-rundown returns FALSE; wait unblocks after last release
   - Callback: `ExNotifyCallback` invokes all registered; concurrent notify+unregister drains in-flight (no UAF); enumerate snapshot consistent
@@ -432,17 +432,17 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
   - Work/timer: immediate runs at PASSIVE_LEVEL; `ExSetTimer` fires; cancel-before-dispatch prevents run; in-flight cancel returns "already running" without double-free
   - Bugcheck callback: panic-safe gate rejects allocating callback; deregister removes record
   - Verifier: injected double-free / misalignment / acquire-outside-region each emit a violation
-- [ ] Add `TEST_CAT_EX` enum + `"ex"` string mapping
-- [ ] Register in `test_runner_init()`: `test_register_ex()`
-- [ ] Author `scripts/debug/kernel/run-ex-tests.bat` (SUITE=ex)
-- [ ] Commit: `"test: add executive support runtime test suite"`
+- [x] Add `TEST_CAT_EX` enum + `"ex"` string mapping
+- [x] Register in `test_runner_init()`: `test_register_ex()`
+- [x] Author `scripts/debug/kernel/run-ex-tests.bat` (SUITE=ex)
+- [x] Commit: `"test: add executive support runtime test suite"` (tests landed with each shipped section)
 
 ## Verification
 
-- [ ] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===`
-- [ ] `ex_init()` logs `"ex: initialized"` on serial during Phase 2
-- [ ] Unit tests pass: `make test-ex` (or `bash scripts/test.sh SUITE=ex`) shows all PASS
-- [ ] Verify on: QEMU WHPX (2 CPUs), QEMU TCG, VirtualBox, bare metal
-- [ ] Commit: `"kernel: ex -- executive support runtime complete"`
+- [x] `bash scripts/build.sh clean` -> `tail -1 build/build.log` -> `=== BUILD OK ===` (2026-06-26)
+- [x] `ex_init()` logs `ex: Executive support runtime initialized` on serial during Phase 2 (confirmed in smoke serial `[ OK ] ex: ...` at 1.280s, 2026-06-26)
+- [x] Unit tests pass: `bash scripts/test.sh SUITE=ex` -> 5684 kernel + 16 user-mode PASS (TCG/KVM, 2026-06-26)
+- [/] Verify on: QEMU WHPX (2 CPUs), QEMU TCG, VirtualBox, bare metal. TCG/KVM 2026-06-26 (5684/5684 + smoke PASS); WHPX + VirtualBox + bare metal still pending (user rig).
+- [x] Commit: `"kernel: ex -- executive support runtime complete"` (per-section ships 27bf7ce1..7636ae22 + closure)
 
-**Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 1 suite, 0 failures
+**Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 1 suite, 0 failures | 5684 kernel + 16 user PASS (TCG/KVM 2026-06-26)
