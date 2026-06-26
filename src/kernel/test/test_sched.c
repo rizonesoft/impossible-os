@@ -11,6 +11,7 @@
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/ktimer.h"
 #include "kernel/sched/kinterrupt.h"
+#include "kernel/sched/apc.h"
 #include "kernel/irq.h"
 #include "kernel/timer.h"
 #include "kernel/smp.h"
@@ -799,6 +800,91 @@ static void test_kinterrupt_bind_exclusive(void)
     TEST_ASSERT_EQ((uint64_t)c3, 0u, "different KINTERRUPT on a bound vector rejected");
 }
 
+/* ---- Section 11: KAPC objects + per-thread APC queues + regions ---------- */
+
+static void apc_noop_normal(void *c, void *a1, void *a2)
+{
+    (void)c; (void)a1; (void)a2;
+}
+
+/* Test: KeInitializeApc field defaults. */
+static void test_apc_init_fields(void)
+{
+    KAPC apc;
+    KeInitializeApc(&apc, (void *)0, OriginalApcEnvironment, 0, 0, 0,
+                    (uint8_t)ApcKernelMode, (void *)(uintptr_t)0x55);
+    TEST_ASSERT_EQ((uint64_t)apc.type, (uint64_t)APC_OBJECT_TYPE, "init: type tag");
+    TEST_ASSERT_EQ((uint64_t)apc.size, (uint64_t)sizeof(KAPC), "init: size = sizeof(KAPC)");
+    TEST_ASSERT_EQ((uint64_t)apc.inserted, 0u, "init: not inserted");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)apc.normal_context, 0x55u, "init: context stored");
+}
+
+/* Test: insert sets the kernel pending flag + inserted; remove clears them and
+ * returns 1; a double-remove returns 0. Targets a LOCAL fake thread (isolated;
+ * the queue ops touch only state/apc_lock/apc_state). */
+static void test_apc_insert_remove(void)
+{
+    struct thread fake;
+    KAPC apc;
+    int r_ins, r_rm, r_rm2;
+    uint32_t pend_after, ins_after;
+    fake.state = THREAD_READY;
+    fake.apc_lock.flag = 0;
+    apc_thread_init(&fake.apc_state, (void *)0);
+    KeInitializeApc(&apc, &fake, OriginalApcEnvironment, 0, 0,
+                    apc_noop_normal, (uint8_t)ApcKernelMode, (void *)0);
+    r_ins      = KeInsertQueueApc(&apc, (void *)1, (void *)2, 0);
+    pend_after = fake.apc_state.kernel_apc_pending;
+    ins_after  = apc.inserted;
+    r_rm       = KeRemoveQueueApc(&apc);
+    r_rm2      = KeRemoveQueueApc(&apc);
+    TEST_ASSERT_EQ((uint64_t)r_ins, 1u, "KeInsertQueueApc returns 1");
+    TEST_ASSERT_EQ((uint64_t)pend_after, 1u, "kernel_apc_pending set on insert");
+    TEST_ASSERT_EQ((uint64_t)ins_after, 1u, "apc.inserted set");
+    TEST_ASSERT_EQ((uint64_t)r_rm, 1u, "KeRemoveQueueApc returns 1");
+    TEST_ASSERT_EQ((uint64_t)apc.inserted, 0u, "apc.inserted cleared on remove");
+    TEST_ASSERT_EQ((uint64_t)fake.apc_state.kernel_apc_pending, 0u, "pending cleared (queue empty)");
+    TEST_ASSERT_EQ((uint64_t)r_rm2, 0u, "double-remove returns 0");
+}
+
+/* Test: insert to an exiting (THREAD_DEAD) thread is rejected. */
+static void test_apc_insert_to_dead_rejected(void)
+{
+    struct thread fake;
+    KAPC apc;
+    int r;
+    fake.state = THREAD_DEAD;
+    fake.apc_lock.flag = 0;
+    apc_thread_init(&fake.apc_state, (void *)0);
+    KeInitializeApc(&apc, &fake, OriginalApcEnvironment, 0, 0,
+                    apc_noop_normal, (uint8_t)ApcKernelMode, (void *)0);
+    r = KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    TEST_ASSERT_EQ((uint64_t)r, 0u, "insert to THREAD_DEAD rejected");
+    TEST_ASSERT_EQ((uint64_t)apc.inserted, 0u, "not inserted on DEAD reject");
+}
+
+/* Test: critical/guarded region counter semantics (on thread_current()).
+ * critical -> APCs disabled but not ALL; guarded -> ALL disabled; balanced
+ * enter/leave re-enables. */
+static void test_apc_regions(void)
+{
+    int crit, all_crit, guard, all_guard, after;
+    KeEnterCriticalRegion();
+    crit     = KeAreApcsDisabled();
+    all_crit = KeAreAllApcsDisabled();
+    KeLeaveCriticalRegion();
+    KeEnterGuardedRegion();
+    guard     = KeAreApcsDisabled();
+    all_guard = KeAreAllApcsDisabled();
+    KeLeaveGuardedRegion();
+    after = KeAreApcsDisabled();
+    TEST_ASSERT_EQ((uint64_t)crit, 1u, "critical region: APCs disabled");
+    TEST_ASSERT_EQ((uint64_t)all_crit, 0u, "critical region: NOT all disabled");
+    TEST_ASSERT_EQ((uint64_t)guard, 1u, "guarded region: APCs disabled");
+    TEST_ASSERT_EQ((uint64_t)all_guard, 1u, "guarded region: ALL disabled");
+    TEST_ASSERT_EQ((uint64_t)after, 0u, "balanced regions: APCs re-enabled");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -842,6 +928,14 @@ void test_register_sched(void)
                             test_kerequestdpc_enqueues, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KINTERRUPT bind CAS (exclusive, idempotent)",
                             test_kinterrupt_bind_exclusive, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KAPC init fields",
+                            test_apc_init_fields, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeInsertQueueApc / KeRemoveQueueApc",
+                            test_apc_insert_remove, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeInsertQueueApc to DEAD thread rejected",
+                            test_apc_insert_to_dead_rejected, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: critical/guarded region APC gating",
+                            test_apc_regions, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

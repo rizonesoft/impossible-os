@@ -382,6 +382,12 @@ boot_result_t task_init(void)
     tasks[0].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[0].threads[0].teb = (void *)0;
     tasks[0].threads[0].kernel_gs_base = 0;
+    /* APC state for the main thread (tasks[] is BSS-zero, so the apc_lock is a
+     * valid unlocked spinlock; explicit reset + the one-time init log). */
+    apc_thread_init(&tasks[0].threads[0].apc_state, &tasks[0]);
+    tasks[0].threads[0].kernel_apc_disable  = 0;
+    tasks[0].threads[0].special_apc_disable = 0;
+    klog(LOG_INFO, "apc", "initialized per-thread APC queues");
     tasks[0].num_threads = 1;
 
     /* Initialize signal state for PID 0 */
@@ -2568,7 +2574,10 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
 
     /* Initialize thread control block */
     t->threads[tid].id = tid;
-    t->threads[tid].state = THREAD_READY;
+    /* Stay NON-insertable (FREE) until the APC state is reset below, so a stale
+     * cross-thread KeInsertQueueApc cannot enqueue into a half-reset queue
+     * during slot reuse. Promoted to THREAD_READY after the APC reset. */
+    t->threads[tid].state = THREAD_FREE;
     t->threads[tid].rsp = (uint64_t)sp;
     t->threads[tid].stack_base = stack;
     t->threads[tid].stack_size = stack_size;
@@ -2584,6 +2593,19 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].user_stack_pages = 0;
     t->threads[tid].teb = (void *)0;          /* kernel thread -- no TEB */
     t->threads[tid].kernel_gs_base = 0;
+    /* APC state: reset the per-thread queues + region counters under the APC
+     * lock. On a reused slot this clears any stale binding before the thread
+     * becomes insertable; the lock is persistent (BSS-zero on first use). */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&t->threads[tid].apc_lock, &af);
+        apc_thread_init(&t->threads[tid].apc_state, t);
+        t->threads[tid].kernel_apc_disable  = 0;
+        t->threads[tid].special_apc_disable = 0;
+        spin_unlock_irqrestore(&t->threads[tid].apc_lock, af);
+    }
+    /* APC state is now valid -- make the thread schedulable + insertable. */
+    t->threads[tid].state = THREAD_READY;
     /* Register thread with Object Manager */
     ob_thread_create(&t->threads[tid], t->pid);
 
@@ -2768,7 +2790,8 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
 
     /* Initialize thread control block */
     t->threads[tid].id = tid;
-    t->threads[tid].state = THREAD_READY;
+    /* Non-insertable until the APC state is reset below (slot-reuse safety). */
+    t->threads[tid].state = THREAD_FREE;
     t->threads[tid].rsp = (uint64_t)sp;
     t->threads[tid].stack_base = (uint8_t *)0; /* not kmalloc'd */
     t->threads[tid].stack_size = 0;
@@ -2786,6 +2809,19 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     /* Per-thread user stack ownership (for task_cleanup reclamation) */
     t->threads[tid].user_stack_va = ustack_va;
     t->threads[tid].user_stack_pages = ustack_pages;
+
+    /* APC state: reset queues + region counters under the APC lock (same as
+     * kthread_create -- clears any stale binding on a reused slot). */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&t->threads[tid].apc_lock, &af);
+        apc_thread_init(&t->threads[tid].apc_state, t);
+        t->threads[tid].kernel_apc_disable  = 0;
+        t->threads[tid].special_apc_disable = 0;
+        spin_unlock_irqrestore(&t->threads[tid].apc_lock, af);
+    }
+    /* APC state valid -- make schedulable + insertable. */
+    t->threads[tid].state = THREAD_READY;
 
     t->num_threads++;
 
@@ -2818,7 +2854,17 @@ void thread_exit(int32_t status)
     struct thread *thr = &t->threads[current_thread];
     uint32_t j;
 
-    thr->state = THREAD_DEAD;
+    /* Mark DEAD under the APC lock so the transition is atomic vs an in-flight
+     * cross-thread KeInsertQueueApc (which rejects DEAD/FREE under the same
+     * lock) -- no APC can be enqueued onto an exiting thread. (Rundown of any
+     * already-queued APCs is owned by the delivery section; a reused slot is
+     * re-zeroed under this lock in kthread_create.) */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&thr->apc_lock, &af);
+        thr->state = THREAD_DEAD;
+        spin_unlock_irqrestore(&thr->apc_lock, af);
+    }
     thr->exit_status = status;
 
     /* Mark thread object as temporary so it can be freed */
@@ -2876,7 +2922,15 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
     struct thread *thr = &t->threads[thread_id];
 
     thread_free_stacks(thr);
-    thr->state = THREAD_FREE;
+    /* Publish THREAD_FREE under the APC lock so a concurrent cross-thread
+     * KeInsertQueueApc observes a consistent exiting/reaped state and rejects
+     * (no APC enqueued onto a slot being reaped for reuse). */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&thr->apc_lock, &af);
+        thr->state = THREAD_FREE;
+        spin_unlock_irqrestore(&thr->apc_lock, af);
+    }
     thr->rsp = 0;
     thr->stack_size = 0;
     thr->exit_status = 0;

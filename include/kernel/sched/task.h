@@ -18,6 +18,8 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_init.h"
+#include "kernel/sched/apc.h"     /* KAPC_STATE per-thread APC queues */
+#include "kernel/sched/spinlock.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/handle_table.h"
 
@@ -119,6 +121,13 @@ struct thread {
     /* --- Per-thread TEB (for ring-3 threads; Win32 requires one TEB per thread) --- */
     void       *teb;            /* TEB * in user address space; NULL for kernel threads */
     uint64_t    kernel_gs_base; /* MSR 0xC0000102 value for this thread's TEB; 0 for kernel threads */
+    /* --- APC state (kernel/sched/apc.h) --- */
+    KAPC_STATE  apc_state;          /* per-thread APC queues + pending flags */
+    KAPC_STATE  saved_apc_state;    /* swap target for a future KeStackAttachProcess (field only;
+                                     * the attach API itself is deferred -- needs CR3 switching) */
+    int32_t     kernel_apc_disable; /* critical-region nesting: blocks NORMAL kernel APCs */
+    int32_t     special_apc_disable;/* guarded-region nesting: blocks ALL kernel APCs */
+    spinlock_t  apc_lock;           /* guards apc_state queues + the DEAD/FREE insert race */
 };
 
 /* Task Control Block */

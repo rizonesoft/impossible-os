@@ -62,7 +62,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [/]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [/]   |
-| 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [ ]   |
+| 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [/]   |
 | 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [ ]   |
 | ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [ ]   |
 | ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [ ]   |
@@ -348,19 +348,30 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 
 Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism at `APC_LEVEL`. Kernel-mode APCs handle I/O completion, thread cleanup, and inter-thread injection. User-mode APCs deliver asynchronous callbacks to alertable threads. Without APCs, `NtQueueApcThread`, async I/O completion, and alertable waits cannot function.
 
-- [ ] Create `include/kernel/sched/apc.h` and `src/kernel/sched/apc.c`
-- [ ] Define `KAPC` structure: `Type`, `Size`, `Thread` (target `KTHREAD`/`task_t`), `ApcListEntry`, `KernelRoutine` (cleanup callback), `RundownRoutine` (thread-exit cleanup), `NormalRoutine` (the actual APC function), `NormalContext`, `SystemArgument1`, `SystemArgument2`, `ApcStateIndex`, `ApcMode` (KernelMode/UserMode), `Inserted` flag
-- [ ] Define `KAPC_STATE` in each thread (`task_t`): two list heads (`ApcListHead[KernelMode/UserMode]`), pending flags `KernelApcPending`/`UserApcPending`/`SpecialUserApcPending`, `KernelApcInProgress` flag, `Process` pointer
-- [ ] Add `KAPC_STATE ApcState` and `KAPC_STATE SavedApcState` fields to `task_t` -- `SavedApcState` used during `KeAttachProcess`/`KeStackAttachProcess` context switches
-- [ ] Implement `KeInitializeApc(Apc, Thread, Environment, KernelRoutine, RundownRoutine, NormalRoutine, ApcMode, NormalContext)` -- initializes all KAPC fields; validates parameters
-- [ ] Implement `KeInsertQueueApc(Apc, SystemArgument1, SystemArgument2, Increment)` -- inserts APC into target thread's queue; special kernel APCs at head, normal/user APCs at tail; sets pending flags; returns `TRUE` on success, `FALSE` if thread is exiting
-- [ ] Implement `KeRemoveQueueApc(Apc)` -- removes a queued APC before delivery; returns `TRUE` if it was queued
-- [ ] Add critical/guarded region support: `KeEnterCriticalRegion()` / `KeLeaveCriticalRegion()` -- blocks normal kernel APC delivery; `KeEnterGuardedRegion()` / `KeLeaveGuardedRegion()` -- blocks all kernel APC delivery
-  - → XREF consumers: `02-kernel-core/TODO-06 §8` (EX_PUSH_LOCK acquire contract) + §9 (guarded mutex)
-- [ ] Add APC-disabled query API: `KeAreApcsDisabled()` (TRUE inside critical/guarded region) and `KeAreAllApcsDisabled()` (TRUE inside guarded region only); Win11 exposes both as the canonical state query
-- [ ] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
+- [x] Created `include/kernel/sched/apc.h` + `src/kernel/sched/apc.c`.
+- [x] `KAPC` struct (apc.h): type/size/thread/next (ApcListEntry)/kernel_routine/rundown_routine/normal_routine/normal_context/system_arg1/2/apc_state_index/apc_mode/inserted. Mirrors KDPC (intrusive link + Inserted flag).
+- [x] `KAPC_STATE` (apc.h): `apc_list_head[Kernel/User]`, `kernel/user/special_user_apc_pending`, `kernel_apc_in_progress`, `process`. Embedded in `struct thread` (the schedulable unit is `struct thread`, not `struct task`).
+- [x] `struct thread` gains `apc_state` + `saved_apc_state` (KAPC_STATE) + separate `kernel_apc_disable`/`special_apc_disable` counters (OUTSIDE the swappable KAPC_STATE) + a per-thread `apc_lock`. `saved_apc_state` is field-only (attach deferred).
+- [x] `KeInitializeApc(...)` in `apc.c` -- inits all KAPC fields; a special kernel APC (NULL NormalRoutine) is forced KernelMode.
+- [x] `KeInsertQueueApc(...)` -- under the target's `apc_lock`: special-kernel->head, normal/user->tail, sets the pending flag; returns FALSE if the target is THREAD_DEAD/FREE or the APC is already inserted. ISR-safe, zero-alloc.
+- [x] `KeRemoveQueueApc(...)` -- under the lock; returns 1 if it was queued; clears the pending flag when its queue empties.
+- [x] Critical/guarded regions: `KeEnterCriticalRegion`/`Leave` (++/--`kernel_apc_disable`), `KeEnterGuardedRegion`/`Leave` (++/--`special_apc_disable`), on `thread_current()`, underflow-guarded.
+  - → XREF consumers: `02-kernel-core/TODO-06 §8` (EX_PUSH_LOCK acquire contract) + §9 (guarded mutex) -- now UNBLOCKED.
+- [x] APC-disabled query: `KeAreApcsDisabled()` (critical OR guarded) + `KeAreAllApcsDisabled()` (guarded only).
+- [ ] KeStackAttachProcess/KeUnstackDetachProcess + nested SavedApcState round-trip test (deferred): needs process CR3-attach infra; §11 ships the `saved_apc_state` field only.
+- [ ] KAPC cross-thread lifetime hardening (deferred, latent -- no cross-thread APC consumer until §12): thread-generation identity (reject a stale `apc->thread` after slot reuse) + O(1) per-mode tail pointers + a queue-depth cap.
+- [x] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
 
-**Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to current thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to exiting thread returns `FALSE`. `KeEnterCriticalRegion` prevents normal kernel APC delivery; `KeAreApcsDisabled` reads `TRUE` there. `KeStackAttachProcess` save/restore survives nested attach/detach (SavedApcState round-trips). Serial: `"apc: initialized per-thread APC queues"` on first thread init.
+**Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to a thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to an exiting (THREAD_DEAD) thread returns `FALSE`. `KeEnterCriticalRegion` -> `KeAreApcsDisabled` reads `TRUE` (not `KeAreAllApcsDisabled`); `KeEnterGuardedRegion` -> `KeAreAllApcsDisabled` reads `TRUE`. Serial: `"apc: initialized per-thread APC queues"` on first thread init.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 4 KAPC tests (17 asserts), 0 failures. init fields, insert/remove + pending flag, insert-to-DEAD rejected, critical/guarded region gating.
+
+> **Notes:**
+> - Shipped `sched/apc.{c,h}` (KAPC + KAPC_STATE + KeInitializeApc/KeInsertQueueApc/KeRemoveQueueApc + critical/guarded regions + KeAreApcsDisabled/AllDisabled), mirroring `dpc.c` (intrusive link + per-thread irqsave lock, zero-alloc insert).
+> - `struct thread` gains the APC queues + counters; APC state resets under `apc_lock` in create + task-init (NON-insertable until reset); `thread_exit` + reap mark DEAD/FREE under the same lock (no APC onto an exiting/reused thread).
+> - Downstream: UNBLOCKS `02-kernel-core/TODO-06 §8` (push-lock) + §9 (guarded-mutex); delivery (KiDeliverApc) is §12. Codex design + adversarial adoptions in commit `STAMPHASH11`.
+> - Canonical doc: `include/kernel/sched/apc.h`.
+> - Scope: §11 owns the KAPC object + queue ops + region counters; delivery/rundown -> §12; KeStackAttachProcess + cross-thread generation/tail hardening -> the deferred items above.
 
 ---
 
@@ -520,9 +531,9 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | 💎 | Timer-DPC auto-queue           | ✅ KeSetTimerEx + KDPC         | ✅ timer_setup + callback      | ✅ §9 ktimer (tick-based)     |
 | 💎 | Context legality contract      | ✅ API rules by IRQL           | ✅ might_sleep() + atomic      | ✅ §1 in irql.h               |
 | 💎 | Workqueue (thread deferred)    | ✅ Work items at PASSIVE       | ✅ alloc_workqueue             | ⚠️ §10 -- exists, needs split  |
-| 💎 | APC objects (KAPC)             | ✅ KeInitialize/InsertApc      | ⚠️ Signals only                | ⬜ §11                        |
+| 💎 | APC objects (KAPC)             | ✅ KeInitialize/InsertApc      | ⚠️ Signals only                | ✅ §11 KAPC + per-thread queue |
 | 💎 | APC delivery engine            | ✅ KiDeliverApc at APC_LEVEL   | ⚠️ do_signal on return         | ⬜ §12                        |
-| 💎 | Critical/guarded regions       | ✅ KeEnterCriticalRegion       | ⚠️ preempt_disable             | ⬜ §11                        |
+| 💎 | Critical/guarded regions       | ✅ KeEnterCriticalRegion       | ⚠️ preempt_disable             | ✅ §11 critical + guarded      |
 | 💎 | Alertable wait + user APC      | ✅ WaitForSingleObjectEx       | ❌ No equivalent               | ⬜ §12                        |
 | 💎 | Special user-mode APCs         | ✅ NtQueueApcThreadEx (RS5+)   | ❌ No equivalent               | ⬜ §12 SpecialUserApc         |
 | 💎 | ISR sync object                | ✅ KeSynchronizeExecution      | ✅ spin_lock_irqsave           | ✅ §10 KeSynchronizeExecution |

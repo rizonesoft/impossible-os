@@ -249,7 +249,7 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 Lighter-weight shared/exclusive lock than ERESOURCE (`EX_PUSH_LOCK`), used by Windows callback, file-object, and registry code on read-heavy paths.
 
 - [/] Define pointer-sized `EX_PUSH_LOCK` + `ExInitializePushLock`/Acquire/Release Shared+Exclusive. BLOCKED on an address-keyed park (see Deferred stamp); yield-poll deadlocks the priority scheduler.
-- [/] Enforce the contract: caller in a critical region (`KeEnterCriticalRegion`) before acquire; not recursive. BLOCKED: `KeEnterCriticalRegion` owned by T07 §11, not yet implemented.
+- [/] Enforce the contract: caller in a critical region (`KeEnterCriticalRegion`) before acquire; not recursive. UNBLOCKED: `KeEnterCriticalRegion` shipped in T07 §11 (`sched/apc.{c,h}`); wire the acquire-contract assert.
 - [/] Paged-or-nonpaged storage; no owner-query API (matches Windows); pointer-sized so it fits inline in objects.
 - [ ] Commit: `"kernel: ex -- push locks"`
 
@@ -270,7 +270,7 @@ Lighter-weight shared/exclusive lock than ERESOURCE (`EX_PUSH_LOCK`), used by Wi
 Exclusive-only fast mutexes (`FAST_MUTEX`, `KGUARDED_MUTEX`) for the common single-owner case; not subsumed by ERESOURCE (no shared mode, no owner tracking, cheaper).
 
 - [/] Implement `FAST_MUTEX` set (`ExInitializeFastMutex`/Acquire/Release/Try); raises IRQL to APC_LEVEL while held; not recursive. BLOCKED: per-CPU IRQL leaks APC_LEVEL across a yield (see Deferred stamp); needs per-thread APC-disable.
-- [/] Implement the guarded-mutex set (`KeInitialize/Acquire/Release/TryToAcquireGuardedMutex`); acquire enters a guarded region. BLOCKED: `KeEnterGuardedRegion` owned by T07 §11, not implemented.
+- [/] Implement the guarded-mutex set (`KeInitialize/Acquire/Release/TryToAcquireGuardedMutex`); acquire enters a guarded region. UNBLOCKED: `KeEnterGuardedRegion` shipped in T07 §11 (`sched/apc.{c,h}`); wire the acquire.
 - [/] Document wait legality: holders run at APC_LEVEL/guarded and must not perform alertable or PASSIVE-only waits.
 - [ ] Commit: `"kernel: ex -- fast and guarded mutexes"`
 
