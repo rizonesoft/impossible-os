@@ -246,7 +246,7 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 > - The `KeFlushQueuedDpcs` in-flight completion barrier (the cross-CPU "returns only after callback completes" clause) shipped in §16 -- per-CPU `s_wd[].in_flight` (normal) + global `s_in_flight_threaded` (threaded), sampled under `DPC_QLOCK`.
 > - Review fixes: importance enum reordered to the WDK ABI; the queue-depth warning moved off the DIRQL insert path to a per-CPU lock-serialized `warn_pending` flag emitted once per tick by `dpc_watchdog_tick`; the insert retry loop bounded (`DPC_INSERT_MAX_SPINS` -> bugcheck, never drops).
 > - Canonical: `src/kernel/sched/dpc.c`.
-> **Verified:** 2026-06-26 | commit `20d6d465` | 9/9 items | build OK | tests 201 kernel + 16 user PASS | lint 0 err
+> **Verified:** 2026-06-26 | commit `1deba872` | 9/9 items | build OK | tests 201 kernel + 16 user PASS | lint 0 err
 > **Accepted:** [H] remote-AP-targeted normal DPC can strand -- no DPC IPI / drain trigger for an otherwise-idle AP (ktimer pins its DPCs to the BSP to avoid this; doc contract tightened in `dpc.h`) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14 (item: "Remote-target DPC IPI" at line 452)
 > **Quality reviewed:** 2026-06-26 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 2H+5M fixed, 1H accepted | scope: kernel-code-quality
 
