@@ -96,7 +96,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Verified:** 2026-06-26 | commit `e9318e14` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
 > **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path (RESOLVED 2026-06-26 by §2) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 112)
 > **Deferred:** [H] `irql.h` KeLowerIrql promised DPC drain-on-lower the impl never did; true NT drain-on-lower still unbuilt -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC drain-on-lower" at line 285)
-> **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 126)
+> **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 136)
 > **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "per-CPU IRQL transition stack" at line 303)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 0 fixed in-scope, 2H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: header doc + compile-assert only, no functional change)
 
@@ -139,6 +139,13 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Note:** IRQL tracking in `isr_handler` is software-only -- no LAPIC TPR writes on interrupt entry/exit. The LAPIC hardware already masks lower-priority vectors via the ISR/PPR mechanism during interrupt delivery. Explicit TPR writes are reserved for `KeRaiseIrql`/`KeLowerIrql` when kernel code intentionally changes level. This avoids interference with emulated LAPIC on WHPX/VBox/TCG.
 
 **Test checkpoint:** Trigger a timer interrupt and confirm ISR entry raises to the mapped DIRQL while interrupt exit restores the prior thread IRQL. Nested interrupts preserve highest-active IRQL and unwind cleanly with no stuck elevated level after return. Serial boot and timer tick remain stable after the ISR-path change. Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Notes:**
+> - Interrupt entry/exit IRQL integration ships in `src/kernel/idt.c` `isr_handler`: hardware vectors (>= 32) raise software `current_irql` on entry and restore the saved prior level on exit; nested interrupts keep the highest-active level.
+> - Software-only IRQL tracking in the ISR path (no LAPIC TPR write, per the §3 Note); the LAPIC ISR/PPR masks lower-priority vectors during delivery.
+> - One open refinement is deferred (see Deferred): reporting the LAPIC timer at `CLOCK_LEVEL` and IPIs at `IPI_LEVEL` instead of the `vector_to_irql`-derived DISPATCH/HIGH.
+> - Canonical: `src/kernel/idt.c` (`isr_handler` IRQL entry/exit).
+> **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH, not the named `CLOCK_LEVEL`/`IPI_LEVEL` (reason: needs the timer handler to enter CLOCK then lower to DISPATCH before the §6 DPC drain to keep DPCs at DISPATCH; cross-file timer-path change needing bare-metal validation; non-functional-today) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 136)
 
 ---
 
