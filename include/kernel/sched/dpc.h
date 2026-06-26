@@ -131,8 +131,14 @@ int KeRemoveQueueDpc(KDPC *dpc);
  * Allows paging, mutex acquisition, and other blocking operations. */
 void KeInitializeThreadedDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
 
-/* Create per-CPU DPC worker threads. Call after scheduler init. */
+/* Spin up the single all-CPU threaded-DPC drain worker. Called once at boot
+ * after scheduler init (boot_desktop.c); CAS-idempotent so a duplicate call is
+ * a no-op. Boot-time (not lazy) so a threaded DPC queued from any IRQL always
+ * has a worker to consume it. */
 void dpc_start_threads(void);
+
+/* Test/diagnostic: nonzero once the threaded-DPC worker has been started. */
+int dpc_worker_started(void);
 
 /* Set target CPU for DPC execution. Must be called before KeInsertQueueDpc. */
 void KeSetTargetProcessorDpc(KDPC *dpc, uint32_t cpu_number);

@@ -47,7 +47,12 @@
 /* ---- Threaded-DPC worker (section 15) ------------------------------------ */
 
 /* Max threaded DPCs the worker pops from ONE CPU's list per pass before moving
- * on, so one busy CPU (or a self-rearming threaded DPC) cannot starve others.
- * The worker blocks on event_wait() between passes (no idle CPU burn); a lost
- * wakeup self-heals via dpc_watchdog_tick's per-tick re-signal while pending. */
+ * on, so one busy CPU (or a self-rearming threaded DPC) cannot starve others. */
 #define DPC_THREADED_BATCH_LIMIT        32u
+
+/* Worker idle yield-poll interval (ms) via event_wait_timeout. event_wait_timeout
+ * never enqueues onto the event waiter queue, so it is SMP-safe against
+ * multi-CPU-ISR event_set() (unlike permanent event_wait). The bounded interval
+ * also self-heals a missed signal. (A truly blocking worker awaits an SMP-safe
+ * event_t -- a tracked deferred item.) */
+#define DPC_THREADED_WORKER_IDLE_MS     10u

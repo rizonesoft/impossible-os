@@ -29,7 +29,6 @@
 #include "kernel/sched/event.h"
 
 /* Forward declare -- avoid circular include with irql.h */
-extern KIRQL KeGetCurrentIrql(void);
 extern void  KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql);
 extern void  KeLowerIrql(KIRQL old_irql);
 
@@ -73,11 +72,12 @@ _Static_assert(sizeof(struct dpc_threaded_slot) == DPC_CACHELINE,
                "dpc_threaded_slot must occupy exactly one cache line");
 static struct dpc_threaded_slot threaded_q[MAX_CPUS];
 
-/* Worker idle event: the ISR producer event_set()s it (ISR-safe) on hand-off,
- * and the worker truly BLOCKS on event_wait() when idle (no CPU burn). A lost
- * wakeup (event_set racing the worker's check-then-block) self-heals because
- * dpc_watchdog_tick re-event_set()s every timer tick while any list is pending.
- * AUTO_RESET (wake one waiter, auto-clear). */
+/* Worker idle event: the ISR producer event_set()s it (ISR-safe) on hand-off;
+ * the worker idles on event_wait_timeout (yield-poll -- it never enqueues onto
+ * the event waiter queue, so it is safe against event_set() from multiple-CPU
+ * ISR drain paths, unlike permanent event_wait whose waiter-array mutation is
+ * not yet SMP-synchronized). dpc_watchdog_tick re-signals every tick while any
+ * list is pending so a missed signal self-heals. AUTO_RESET. */
 static event_t s_dpc_worker_event;
 
 /* ---- DPC fairness budget + watchdog (section 14) ------------------------- *
@@ -232,14 +232,19 @@ void dpc_watchdog_tick(void)
         }
     }
 
-    /* Threaded-DPC worker lost-wakeup self-heal: if ANY CPU still has pending
-     * threaded DPCs, re-signal the (possibly blocked) worker every tick. This
-     * lets the worker block on a real event_wait without a lost wakeup
-     * (event_set racing its check-then-block) stranding work for more than one
-     * tick. A lock-free pending read is fine -- a missed 1 just heals next tick. */
+    /* Threaded-DPC worker prompt-wake self-heal: if ANY CPU still has pending
+     * threaded DPCs, re-signal the worker every tick. The worker idles on
+     * event_wait_timeout (bounded yield-poll -- it never enqueues onto the
+     * event waiter queue, so it stays SMP-safe against multi-CPU-ISR
+     * event_set); this per-tick re-signal just shortens the wake latency below
+     * the poll interval. A lock-free pending read is fine -- a missed 1 still
+     * drains on the next poll/tick. */
     {
-        uint32_t c, ncpu = smp_cpu_count();
-        for (c = 0; c < ncpu && c < MAX_CPUS; c++) {
+        /* Scan ALL slots, not [0, smp_cpu_count()): cpu_id slots can be sparse
+         * (abandoned AP), and a dense scan would miss a live high slot's pending
+         * threaded work and never re-signal the worker for it. */
+        uint32_t c;
+        for (c = 0; c < MAX_CPUS; c++) {
             if (__atomic_load_n(&threaded_q[c].pending, __ATOMIC_ACQUIRE)) {
                 event_set(&s_dpc_worker_event);
                 break;
@@ -593,16 +598,20 @@ int KeRemoveQueueDpc(KDPC *dpc)
 
 static void dpc_thread_fn(void)
 {
-    extern uint32_t smp_cpu_count(void);
-
     klog(LOG_DEBUG, "dpc", "threaded DPC worker started (drains all CPUs)");
 
     for (;;) {
         uint32_t any_work = 0;
-        uint32_t ncpus = smp_cpu_count();
         uint32_t ci;
 
-        for (ci = 0; ci < ncpus && ci < MAX_CPUS; ci++) {
+        /* Scan ALL MAX_CPUS slots, NOT [0, smp_cpu_count()). smp_cpu_count() is
+         * the COUNT of online CPUs (1 + online), but cpu_id slots can be SPARSE
+         * when an AP is abandoned during bringup (slot k offline, slot k+1
+         * online) -- a dense [0, count) scan would skip a live high slot's
+         * threaded_q and strand its DPCs forever. Offline/empty slots have
+         * pending==0 and are skipped by the load below, so scanning all slots
+         * costs only MAX_CPUS atomic reads. */
+        for (ci = 0; ci < MAX_CPUS; ci++) {
             uint32_t budget = DPC_THREADED_BATCH_LIMIT;
 
             if (!__atomic_load_n(&threaded_q[ci].pending, __ATOMIC_ACQUIRE))
@@ -631,12 +640,18 @@ static void dpc_thread_fn(void)
                 if (!threaded_q[ci].head)
                     threaded_q[ci].tail = (KDPC *)0;   /* list emptied */
                 dpc->next       = (KDPC *)0;
-                dpc->queued_cpu = MAX_CPUS;
-                dpc->queued     = 0;          /* off all lists -- safe to clear */
+                /* Snapshot the callback state BEFORE publishing queued=0: once
+                 * queued is cleared, a concurrent KeInsertQueueDpc on another
+                 * CPU (a DIFFERENT DPC_QLOCK) may legally requeue this KDPC and
+                 * overwrite routine/deferred_ctx/system_arg*, racing our read.
+                 * Capture first, clear ownership last -- all under DPC_QLOCK(ci)
+                 * (matches the normal-queue snapshot-before-clear ordering). */
                 routine = dpc->routine;
                 ctx     = dpc->deferred_ctx;
                 a1      = dpc->system_arg1;
                 a2      = dpc->system_arg2;
+                dpc->queued_cpu = MAX_CPUS;
+                dpc->queued     = 0;          /* off all lists -- snapshot taken */
                 spin_unlock_irqrestore(DPC_QLOCK(ci), irq_flags);
 
                 if (routine)
@@ -644,33 +659,66 @@ static void dpc_thread_fn(void)
             }
         }
 
-        /* Truly BLOCK on the producer-signaled event when idle (no CPU burn --
-         * event_wait_timeout intentionally yield-spins, so it is NOT used here).
-         * The ISR producer event_set()s on hand-off; a lost wakeup (event_set
-         * racing this check-then-block) self-heals because dpc_watchdog_tick
-         * re-event_set()s every timer tick whenever any threaded list is
-         * pending, so a blocked worker with work is re-woken within one tick. */
+        /* Idle wait on the producer-signaled event via event_wait_timeout, NOT
+         * the permanent event_wait. event_wait_timeout yield-polls and never
+         * enqueues onto the event waiter queue, so it does NOT touch the
+         * (currently unsynchronized) num_waiters/waiter arrays -- safe against
+         * event_set() fired concurrently from multiple-CPU ISR drain paths.
+         * The producer event_set() + dpc_watchdog_tick's per-tick re-signal
+         * make the poll break promptly. TRADEOFF: yield-polling burns a
+         * scheduler slot when idle; a truly blocking worker awaits an SMP-safe
+         * event_t (deferred item below) before switching to permanent
+         * event_wait. */
         if (!any_work)
-            event_wait(&s_dpc_worker_event);
+            event_wait_timeout(&s_dpc_worker_event, DPC_THREADED_WORKER_IDLE_MS);
     }
 }
+
+/* 0 = no worker yet, 1 = worker created (or being created). CAS-guarded so
+ * exactly one caller wins the spin-up regardless of how many threaded DPCs are
+ * initialized concurrently. */
+static volatile int s_worker_started = 0;
 
 void dpc_start_threads(void)
 {
     /* Single worker thread drains threaded DPC queues for ALL CPUs.
      * Safe because threaded DPCs run at PASSIVE_LEVEL (no CPU affinity
      * requirement). If per-CPU workers are needed later, use IPI to
-     * create tasks on each AP. */
+     * create tasks on each AP.
+     *
+     * Started unconditionally at boot (after the scheduler is up) so a
+     * threaded DPC queued from ANY IRQL always has a worker to consume it --
+     * a lazy "start on first PASSIVE init" would strand a threaded DPC that
+     * was initialized above PASSIVE and then queued. The worker idles on
+     * event_wait_timeout (yield-poll); the deferred SMP-safe-event_t item
+     * replaces that with a true blocking wait to drop the idle CPU cost.
+     * CAS-idempotent so a duplicate call (e.g. the unit test) is a no-op. */
     extern int task_create(void (*entry)(void), const char *name);
-    int tid = task_create(dpc_thread_fn, "dpc_thread");
+    int expected = 0;
+    int tid;
+
+    /* CAS 0->1: only the first caller proceeds to task_create. */
+    if (!__atomic_compare_exchange_n(&s_worker_started, &expected, 1,
+                                     0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return;  /* already started (or another caller is starting it) */
+
+    tid = task_create(dpc_thread_fn, "dpc_thread");
     if (tid < 0) {
-        /* No worker means threaded DPCs queued by drain_queue would never run.
-         * Surface the degraded mode instead of logging a false success. */
+        /* Roll back so a later explicit dpc_start_threads() call can retry the
+         * spin-up. Surface the degraded mode instead of logging a false
+         * success. */
+        __atomic_store_n(&s_worker_started, 0, __ATOMIC_RELEASE);
         klog(LOG_ERROR, "dpc",
              "threaded DPC worker creation FAILED -- threaded DPCs will NOT run");
         return;
     }
     klog(LOG_INFO, "dpc", "Threaded DPC worker started (all-CPU drain)");
+}
+
+/* Test/diagnostic: 1 once the threaded-DPC worker has been spun up. */
+int dpc_worker_started(void)
+{
+    return __atomic_load_n(&s_worker_started, __ATOMIC_ACQUIRE);
 }
 
 /* ---- Core drain logic (shared by KiDispatchDpc and dpc_drain_current_cpu) */
@@ -829,24 +877,33 @@ int dpc_current_cpu_has_pending(void)
 void KeFlushQueuedDpcs(void)
 {
     uint32_t cpu;
-    uint32_t max_cpus = smp_cpu_count();
 
     /* Drain our own queue at DISPATCH_LEVEL via KiDispatchDpc (which raises to
      * DISPATCH, drains one batch, lowers). DPC callbacks must run at
      * DISPATCH_LEVEL, not the flush caller's (PASSIVE) level. A bounded single
      * batch deliberately avoids spinning forever on a DPC that re-arms itself
      * during the flush (NT flushes DPCs queued at call time, not "drain until
-     * empty"). The full drain-all + in-flight completion barrier is tracked as
-     * the DPC-targeting section's KeFlushQueuedDpcs completion-barrier item. */
+     * empty").
+     *
+     * LIMITATION (tracked): this flush waits ONLY on the normal per-CPU queues
+     * below. It does NOT wait for threaded_q[] pending entries or an in-flight
+     * threaded callback, so a teardown that frees a threaded KDPC/context right
+     * after KeFlushQueuedDpcs can race the worker. Latent today -- no production
+     * code registers a threaded DPC yet. The threaded completion barrier (wait
+     * on threaded_q pending + an in-flight threaded counter) is owned by the
+     * KeFlushQueuedDpcs Threaded DPC Completion section that follows this one. */
     {
         struct per_cpu_data *me = smp_this_cpu();
         if (me && me->cpu_id < MAX_CPUS)
             KiDispatchDpc();
     }
 
-    /* Spin-wait for other CPUs to finish their queues
-     * (they drain on every timer tick via dpc_drain_current_cpu) */
-    for (cpu = 0; cpu < max_cpus && cpu < MAX_CPUS; cpu++) {
+    /* Spin-wait for other CPUs to finish their queues (they drain on every
+     * timer tick via dpc_drain_current_cpu). Scan ALL slots, not
+     * [0, smp_cpu_count()): cpu_id slots can be sparse (abandoned AP), so a
+     * dense scan would skip a live high slot's pending queue. Offline/empty
+     * slots have head==NULL and exit the inner loop immediately. */
+    for (cpu = 0; cpu < MAX_CPUS; cpu++) {
         volatile uint32_t spin = 0;
         while (cpu_queues[cpu].head != (KDPC *)0 && spin < 100000) {
             __asm__ volatile ("pause");

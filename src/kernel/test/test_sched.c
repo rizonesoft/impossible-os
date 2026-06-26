@@ -354,6 +354,19 @@ static void test_dpc_init_threaded(void)
                    (uint64_t)(uintptr_t)dpc_noop_routine, "routine stored");
 }
 
+/* Test: dpc_start_threads brings up the all-CPU drain worker and is
+ * CAS-idempotent (boot already started it; a second call must be a no-op). The
+ * worker thread's stack is a permanent one-time allocation, not a leak -- and
+ * is zero here when boot started it first, so TEST_LEAK_IGNORE only matters if
+ * this test is the very first starter. */
+static void test_dpc_worker_started(void)
+{
+    TEST_LEAK_IGNORE("threaded DPC worker is a permanent one-time global thread");
+    dpc_start_threads();   /* idempotent: no-op if boot already started it */
+    TEST_ASSERT_EQ((uint64_t)dpc_worker_started(), 1u,
+                   "dpc_start_threads brings up the all-CPU drain worker");
+}
+
 /* Test: insert/remove return codes, depth accounting, and queued_cpu binding.
  * Runs at HIGH_LEVEL to block this CPU's timer-tick DPC drain so the live
  * per-CPU queue state is observed deterministically (per-CPU queue: no other
@@ -1205,6 +1218,8 @@ void test_register_sched(void)
 {
     test_suite_register_cat("Sched: DPC init fields",
                             test_dpc_init_fields, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: threaded DPC worker started",
+                            test_dpc_worker_started, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeInitializeThreadedDpc sets threaded",
                             test_dpc_init_threaded, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC drain executes at DISPATCH_LEVEL",

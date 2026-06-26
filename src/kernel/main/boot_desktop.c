@@ -100,7 +100,8 @@ void boot_phase3(void)
 
     ahci_enable_events();  /* safe now: yield handler registered */
 
-    /* Start threaded DPC worker thread (needs scheduler) */
+    /* Start the threaded DPC worker (needs scheduler). Unconditional at boot so
+     * a threaded DPC queued from any IRQL always has a worker to drain it. */
     {
         extern void dpc_start_threads(void);
         dpc_start_threads();
