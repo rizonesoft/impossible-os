@@ -19,6 +19,8 @@
 #include "kernel/sched/apc.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/irql.h"
+#include "kernel/smp.h"
 
 /* ---- Per-thread APC-state init (thread create / slot reuse) -------------- */
 
@@ -192,4 +194,159 @@ int KeAreAllApcsDisabled(void)
 {
     struct thread *t = thread_current();
     return t ? (t->special_apc_disable > 0) : 0;
+}
+
+/* ---- Delivery engine (KiDeliverApc) ------------------------------------- */
+
+/* Delivery counters (SMP: any CPU may deliver; relaxed atomics -- diagnostics
+ * only, no ordering dependency). User stays 0 until user-APC delivery ships. */
+static uint64_t s_apc_kernel_delivered;
+static uint64_t s_apc_user_delivered;
+
+void apc_delivery_stats(uint64_t *kernel_delivered, uint64_t *user_delivered)
+{
+    if (kernel_delivered)
+        *kernel_delivered = __atomic_load_n(&s_apc_kernel_delivered, __ATOMIC_RELAXED);
+    if (user_delivered)
+        *user_delivered = __atomic_load_n(&s_apc_user_delivered, __ATOMIC_RELAXED);
+}
+
+void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame)
+{
+    struct thread      *t    = thread_current();
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    KIRQL                entry_irql;
+    uint64_t             flags;
+
+    /* USER-mode APC delivery (redirect ring-3 to KiUserApcDispatcher via a
+     * patched trap frame) is deferred: it needs the user-mode dispatcher and
+     * trap-frame editing that do not exist yet. This engine delivers KERNEL
+     * APCs only, so the NT user-delivery parameters are currently unused. */
+    (void)previous_mode;
+    (void)exception_frame;
+    (void)trap_frame;
+
+    if (!t || !pcpu)
+        return;
+    entry_irql = pcpu->current_irql;
+
+    /* Drain the kernel APC queue one at a time. Each APC is dequeued UNDER the
+     * lock; its routines run AFTER unlock (a KernelRoutine may free the KAPC or
+     * call back into APC APIs and must never run holding apc_lock). */
+    for (;;) {
+        KAPC             *apc;
+        PKKERNEL_ROUTINE  krout;
+        PKNORMAL_ROUTINE  nrout;
+        void             *nctx, *sa1, *sa2;
+        int               is_special;
+
+        spin_lock_irqsave(&t->apc_lock, &flags);
+        apc = t->apc_state.apc_list_head[ApcKernelMode];
+        if (!apc) {
+            t->apc_state.kernel_apc_pending = 0;
+            spin_unlock_irqrestore(&t->apc_lock, flags);
+            break;
+        }
+        is_special = (apc->normal_routine == (PKNORMAL_ROUTINE)0);
+
+        /* A guarded region (special_apc_disable) blocks ALL kernel APCs incl
+         * special; stop entirely until it is left. A critical region
+         * (kernel_apc_disable) or an in-progress normal APC blocks only normal
+         * APCs -- a special APC at the head still delivers, but a normal one
+         * cannot, so stop (the head is FIFO and the next item may be normal). */
+        if (t->special_apc_disable > 0) {
+            spin_unlock_irqrestore(&t->apc_lock, flags);
+            break;
+        }
+        if (!is_special &&
+            (t->kernel_apc_disable > 0 || t->apc_state.kernel_apc_in_progress)) {
+            spin_unlock_irqrestore(&t->apc_lock, flags);
+            break;
+        }
+
+        /* Dequeue from the head. */
+        t->apc_state.apc_list_head[ApcKernelMode] = apc->next;
+        apc->next     = (KAPC *)0;
+        apc->inserted = 0;
+        if (!t->apc_state.apc_list_head[ApcKernelMode])
+            t->apc_state.kernel_apc_pending = 0;
+
+        krout = apc->kernel_routine;
+        nrout = apc->normal_routine;
+        nctx  = apc->normal_context;
+        sa1   = apc->system_arg1;
+        sa2   = apc->system_arg2;
+        if (!is_special)
+            t->apc_state.kernel_apc_in_progress = 1;
+        spin_unlock_irqrestore(&t->apc_lock, flags);
+
+        /* Per the NT contract, KernelRoutine runs at APC_LEVEL and NormalRoutine
+         * at PASSIVE_LEVEL. APC_LEVEL and PASSIVE_LEVEL both map to LAPIC TPR
+         * 0x00, so these are software-only IRQL moves (no TPR write); set
+         * current_irql directly rather than via KeRaiseIrql/KeLowerIrql, which
+         * would re-enter the delivery path. */
+        pcpu->current_irql = APC_LEVEL;
+        /* KernelRoutine: the cleanup hook. It may free the KAPC and may rewrite
+         * the NormalRoutine / context / args. After it runs, `apc` may be
+         * dangling -- do not touch it again. */
+        if (krout)
+            krout(apc, (void **)&nrout, &nctx, &sa1, &sa2);
+
+        /* NormalRoutine is the deferred work (kernel APC at PASSIVE_LEVEL). */
+        pcpu->current_irql = PASSIVE_LEVEL;
+        if (!is_special && nrout)
+            nrout(nctx, sa1, sa2);
+
+        /* Restore the IRQL we were entered at before the next iteration. */
+        pcpu->current_irql = entry_irql;
+
+        if (!is_special) {
+            spin_lock_irqsave(&t->apc_lock, &flags);
+            t->apc_state.kernel_apc_in_progress = 0;
+            spin_unlock_irqrestore(&t->apc_lock, flags);
+        }
+        __atomic_fetch_add(&s_apc_kernel_delivered, 1, __ATOMIC_RELAXED);
+    }
+}
+
+/* ---- Thread-exit / reap rundown ----------------------------------------- */
+
+void apc_rundown_thread(struct thread *t)
+{
+    uint64_t flags;
+    KAPC    *lists[2];
+    int      m;
+
+    if (!t)
+        return;
+
+    /* The caller already published THREAD_DEAD/THREAD_FREE under apc_lock, so
+     * KeInsertQueueApc rejects new inserts. Detach both queues + clear pending
+     * UNDER the lock; run rundown routines AFTER unlock (a rundown_routine may
+     * free the KAPC and must not re-enter apc_lock). */
+    spin_lock_irqsave(&t->apc_lock, &flags);
+    lists[ApcKernelMode] = t->apc_state.apc_list_head[ApcKernelMode];
+    lists[ApcUserMode]   = t->apc_state.apc_list_head[ApcUserMode];
+    t->apc_state.apc_list_head[ApcKernelMode] = (KAPC *)0;
+    t->apc_state.apc_list_head[ApcUserMode]   = (KAPC *)0;
+    t->apc_state.kernel_apc_pending       = 0;
+    t->apc_state.user_apc_pending         = 0;
+    t->apc_state.special_user_apc_pending = 0;
+    for (m = 0; m < 2; m++) {
+        KAPC *a;
+        for (a = lists[m]; a; a = a->next)
+            a->inserted = 0;
+    }
+    spin_unlock_irqrestore(&t->apc_lock, flags);
+
+    for (m = 0; m < 2; m++) {
+        KAPC *a = lists[m];
+        while (a) {
+            KAPC *next = a->next;     /* read before rundown frees the KAPC */
+            a->next = (KAPC *)0;
+            if (a->rundown_routine)
+                a->rundown_routine(a);
+            a = next;
+        }
+    }
 }

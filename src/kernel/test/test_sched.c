@@ -885,6 +885,151 @@ static void test_apc_regions(void)
     TEST_ASSERT_EQ((uint64_t)after, 0u, "balanced regions: APCs re-enabled");
 }
 
+/* ---- Section 12: KiDeliverApc kernel-mode delivery + rundown ------------- */
+
+static volatile int   s_apc_kflag;   /* KernelRoutine ran */
+static volatile int   s_apc_nflag;   /* NormalRoutine ran */
+static volatile int   s_apc_rflag;   /* RundownRoutine ran */
+static volatile KIRQL s_apc_kirql;   /* IRQL observed inside KernelRoutine */
+static volatile KIRQL s_apc_nirql;   /* IRQL observed inside NormalRoutine */
+
+static void apc_kroutine(KAPC *a, void **nr, void **nc, void **s1, void **s2)
+{
+    (void)a; (void)nr; (void)nc; (void)s1; (void)s2;
+    s_apc_kirql = KeGetCurrentIrql();
+    s_apc_kflag++;
+}
+static void apc_nroutine(void *c, void *a1, void *a2)
+{
+    (void)c; (void)a1; (void)a2;
+    s_apc_nirql = KeGetCurrentIrql();
+    s_apc_nflag++;
+}
+static void apc_rroutine(KAPC *a) { (void)a; s_apc_rflag++; }
+
+/* Test: a normal kernel APC queued to the current thread is delivered by
+ * KiDeliverApc -- KernelRoutine then NormalRoutine run, pending + in-progress
+ * clear, the delivery counter advances. Runs on thread_current() (the engine
+ * resolves the target itself). */
+static void test_apc_deliver_kernel_normal(void)
+{
+    struct thread *me = thread_current();
+    KAPC apc;
+    uint64_t before, after;
+    s_apc_kflag = s_apc_nflag = 0;
+    apc_delivery_stats(&before, 0);
+    KeInitializeApc(&apc, me, OriginalApcEnvironment, apc_kroutine, 0,
+                    apc_nroutine, (uint8_t)ApcKernelMode, (void *)0);
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    apc_delivery_stats(&after, 0);
+    TEST_ASSERT_EQ((uint64_t)s_apc_kflag, 1u, "KernelRoutine ran once");
+    TEST_ASSERT_EQ((uint64_t)s_apc_nflag, 1u, "NormalRoutine ran once");
+    TEST_ASSERT_EQ((uint64_t)me->apc_state.kernel_apc_pending, 0u, "pending cleared after delivery");
+    TEST_ASSERT_EQ((uint64_t)me->apc_state.kernel_apc_in_progress, 0u, "in-progress cleared after delivery");
+    TEST_ASSERT_EQ(after - before, 1u, "kernel delivery counter +1");
+    TEST_ASSERT_EQ((uint64_t)s_apc_kirql, (uint64_t)APC_LEVEL, "KernelRoutine ran at APC_LEVEL");
+    TEST_ASSERT_EQ((uint64_t)s_apc_nirql, (uint64_t)PASSIVE_LEVEL, "NormalRoutine ran at PASSIVE_LEVEL");
+}
+
+/* Test: a special kernel APC IS delivered through the real KeLowerIrql path even
+ * while inside a critical region (critical blocks only normal APCs). Exercises
+ * the KeLowerIrql delivery gate, not just a direct KiDeliverApc call. */
+static void test_apc_deliver_special_via_lower_in_critical(void)
+{
+    struct thread *me = thread_current();
+    KAPC apc;
+    KIRQL old;
+    s_apc_kflag = 0;
+    KeInitializeApc(&apc, me, OriginalApcEnvironment, apc_kroutine, 0,
+                    (PKNORMAL_ROUTINE)0, (uint8_t)ApcKernelMode, (void *)0);
+    KeRaiseIrql(APC_LEVEL, &old);
+    KeEnterCriticalRegion();
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KeLowerIrql(PASSIVE_LEVEL);     /* crosses below APC -> delivers special APC */
+    KeLeaveCriticalRegion();
+    TEST_ASSERT_EQ((uint64_t)s_apc_kflag, 1u, "special APC delivered via KeLowerIrql in critical region");
+    TEST_ASSERT_EQ((uint64_t)me->apc_state.kernel_apc_pending, 0u, "pending cleared after lower-path delivery");
+}
+
+/* Test: a special kernel APC (NormalRoutine NULL) runs only its KernelRoutine. */
+static void test_apc_deliver_special_kernel(void)
+{
+    struct thread *me = thread_current();
+    KAPC apc;
+    s_apc_kflag = s_apc_nflag = 0;
+    KeInitializeApc(&apc, me, OriginalApcEnvironment, apc_kroutine, 0,
+                    (PKNORMAL_ROUTINE)0, (uint8_t)ApcKernelMode, (void *)0);
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    TEST_ASSERT_EQ((uint64_t)s_apc_kflag, 1u, "special: KernelRoutine ran");
+    TEST_ASSERT_EQ((uint64_t)s_apc_nflag, 0u, "special: no NormalRoutine");
+    TEST_ASSERT_EQ((uint64_t)me->apc_state.kernel_apc_pending, 0u, "special: pending cleared");
+}
+
+/* Test: a critical region suppresses normal kernel APC delivery; leaving the
+ * region and re-delivering runs it. */
+static void test_apc_deliver_critical_suppressed(void)
+{
+    struct thread *me = thread_current();
+    KAPC apc;
+    int delivered_in_region;
+    s_apc_nflag = 0;
+    KeInitializeApc(&apc, me, OriginalApcEnvironment, 0, 0,
+                    apc_nroutine, (uint8_t)ApcKernelMode, (void *)0);
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KeEnterCriticalRegion();
+    KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    delivered_in_region = s_apc_nflag;
+    KeLeaveCriticalRegion();
+    KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    TEST_ASSERT_EQ((uint64_t)delivered_in_region, 0u, "critical region suppresses normal APC");
+    TEST_ASSERT_EQ((uint64_t)s_apc_nflag, 1u, "delivered after leaving critical region");
+    TEST_ASSERT_EQ((uint64_t)me->apc_state.kernel_apc_pending, 0u, "pending cleared after delivery");
+}
+
+/* Test: a guarded region suppresses even SPECIAL kernel APCs (special_apc_disable
+ * blocks all classes), unlike a critical region which blocks only normal APCs. */
+static void test_apc_deliver_guarded_suppresses_special(void)
+{
+    struct thread *me = thread_current();
+    KAPC apc;
+    int delivered_in_region;
+    s_apc_kflag = 0;
+    KeInitializeApc(&apc, me, OriginalApcEnvironment, apc_kroutine, 0,
+                    (PKNORMAL_ROUTINE)0, (uint8_t)ApcKernelMode, (void *)0);
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KeEnterGuardedRegion();
+    KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    delivered_in_region = s_apc_kflag;
+    KeLeaveGuardedRegion();
+    KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    TEST_ASSERT_EQ((uint64_t)delivered_in_region, 0u, "guarded region suppresses special APC");
+    TEST_ASSERT_EQ((uint64_t)s_apc_kflag, 1u, "special APC delivered after leaving guarded region");
+}
+
+/* Test: apc_rundown_thread runs RundownRoutine for a still-queued APC on an
+ * exiting thread and empties the queue. Uses a local fake thread. */
+static void test_apc_rundown_runs(void)
+{
+    struct thread fake;
+    KAPC apc;
+    s_apc_rflag = 0;
+    fake.state = THREAD_READY;
+    fake.apc_lock.flag = 0;
+    apc_thread_init(&fake.apc_state, (void *)0);
+    KeInitializeApc(&apc, &fake, OriginalApcEnvironment, 0, apc_rroutine,
+                    apc_noop_normal, (uint8_t)ApcKernelMode, (void *)0);
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    fake.state = THREAD_DEAD;            /* caller publishes DEAD before rundown */
+    apc_rundown_thread(&fake);
+    TEST_ASSERT_EQ((uint64_t)s_apc_rflag, 1u, "RundownRoutine ran for queued APC");
+    TEST_ASSERT_EQ((uint64_t)apc.inserted, 0u, "APC inserted flag cleared by rundown");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)fake.apc_state.apc_list_head[ApcKernelMode], 0u,
+                   "kernel queue emptied by rundown");
+    TEST_ASSERT_EQ((uint64_t)fake.apc_state.kernel_apc_pending, 0u, "pending cleared by rundown");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -936,6 +1081,18 @@ void test_register_sched(void)
                             test_apc_insert_to_dead_rejected, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: critical/guarded region APC gating",
                             test_apc_regions, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KiDeliverApc normal kernel APC",
+                            test_apc_deliver_kernel_normal, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: special APC delivered via KeLowerIrql in critical region",
+                            test_apc_deliver_special_via_lower_in_critical, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KiDeliverApc special kernel APC",
+                            test_apc_deliver_special_kernel, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: critical region suppresses APC delivery",
+                            test_apc_deliver_critical_suppressed, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: guarded region suppresses special APC",
+                            test_apc_deliver_guarded_suppresses_special, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: apc_rundown_thread runs RundownRoutine",
+                            test_apc_rundown_runs, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

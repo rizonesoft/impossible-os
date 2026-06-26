@@ -499,9 +499,15 @@ void KiDispatchDpc(void)
     if (cpu_id >= MAX_CPUS) return;
     if (!cpu_queues[cpu_id].head) return;
 
+    /* Restore IRQL via irql_lower_deliver (NOT KeLowerIrql): we already drained
+     * one batch here, so the restore must NOT trigger KeLowerIrql's drain-on-
+     * lower (that would run a second batch and break the documented bounded
+     * single-batch contract KeFlushQueuedDpcs relies on). irql_lower_deliver
+     * lowers + delivers pending kernel APCs without any DPC drain and without
+     * holding a per-CPU drain guard across the yieldable APC NormalRoutine. */
     KeRaiseIrql(DISPATCH_LEVEL, &old_irql);
     n = drain_queue(cpu_id);
-    KeLowerIrql(old_irql);
+    irql_lower_deliver(old_irql);
 
     if (n > 0)
         klog(LOG_DEBUG, "dpc", "dispatched %u DPCs on CPU %u",

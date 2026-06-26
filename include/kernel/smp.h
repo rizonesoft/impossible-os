@@ -286,6 +286,17 @@ struct per_cpu_data {
         uint64_t gs_base;           /* MSR_IA32_GS_BASE at capture */
         uint64_t kernel_gs_base;    /* MSR_IA32_KERNEL_GS_BASE at capture */
     } transition_ring[64];
+
+    /* DPC drain reentrancy guard (per-CPU, non-asm region). KeLowerIrql drains
+     * pending DPCs when crossing below DISPATCH_LEVEL; a DPC that itself lowers
+     * IRQL must not re-enter the drain on this CPU. DPCs run at DISPATCH and do
+     * not yield, so a CPU-scoped guard is safe here (it never spans a context
+     * switch). APC delivery, by contrast, uses NO CPU guard -- a NormalRoutine
+     * may yield/block/exit, so its reentrancy is bounded per-thread by
+     * kernel_apc_in_progress instead. Set/cleared by the owning CPU only -- no
+     * lock. Appended after transition_ring so no pinned KPTI offset shifts. */
+    uint8_t           dpc_draining;     /* 1 while KeLowerIrql drains DPCs */
+    uint8_t           _drain_pad[3];    /* alignment */
 };
 
 #define TRANSITION_RING_SIZE         64

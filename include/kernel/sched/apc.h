@@ -18,6 +18,8 @@
 #include "kernel/types.h"
 #include "kernel/sched/spinlock.h"
 
+struct thread;   /* delivery + rundown operate on a thread; full def in task.h */
+
 /* APC processor mode: which ring the NormalRoutine runs for. */
 typedef enum {
     ApcKernelMode = 0,
@@ -123,3 +125,26 @@ int KeAreAllApcsDisabled(void);
  * zeros both queues + flags; the caller holds nothing -- this runs before the
  * thread is schedulable). Defined in apc.c, declared here for task.c. */
 void apc_thread_init(KAPC_STATE *apc_state, void *process);
+
+/* ---- Delivery engine (KiDeliverApc) ------------------------------------- */
+
+/* Deliver pending KERNEL-mode APCs (special + normal) to the current thread.
+ * Special kernel APCs run their KernelRoutine at APC_LEVEL; normal kernel APCs
+ * additionally run their NormalRoutine. Gated by the per-thread region counters
+ * (guarded region blocks all; critical region blocks normal) and the
+ * kernel_apc_in_progress flag (no nested normal delivery). Called from
+ * KeLowerIrql when crossing below APC_LEVEL. previous_mode / exception_frame /
+ * trap_frame are the NT signature for USER-mode APC delivery, which is deferred
+ * (needs the user-mode dispatcher + trap-frame editing): they are currently
+ * unused and this engine delivers kernel APCs only. */
+void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame);
+
+/* Run the RundownRoutine for every still-queued APC on an exiting/reaped thread
+ * and empty both queues. The caller MUST have already published THREAD_DEAD or
+ * THREAD_FREE under apc_lock first (so KeInsertQueueApc rejects new inserts);
+ * this helper then snapshots the lists under apc_lock and runs each
+ * rundown_routine AFTER unlocking. Called from every thread death/reap site. */
+void apc_rundown_thread(struct thread *t);
+
+/* Total kernel / user APCs delivered since boot (for tests + diagnostics). */
+void apc_delivery_stats(uint64_t *kernel_delivered, uint64_t *user_delivered);

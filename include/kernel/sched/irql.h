@@ -184,9 +184,14 @@ void KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql);
  * by the planned per-CPU IRQL transition-stack validator (IRQL-violation
  * telemetry work).
  *
- * NOTE: this function does NOT drain pending DPCs. DPC auto-drain happens at a
- * timer ISR dispatch point (both the LAPIC timer and the PIT fallback drain
- * after each tick); explicit drain is via KiDispatchDpc(). True NT drain-on-
- * lower (drain when crossing below DISPATCH_LEVEL) is planned as part of the
- * APC delivery path, which also wires KeLowerIrql for APC delivery. */
+ * KeLowerIrql drains pending DPCs when crossing below DISPATCH_LEVEL and
+ * delivers pending kernel APCs when crossing below APC_LEVEL. */
 void KeLowerIrql(KIRQL old_irql);
+
+/* Lower the current IRQL to old_irql and deliver pending kernel APCs (if
+ * crossing below APC_LEVEL), but WITHOUT the DPC drain-on-lower phase. Used by
+ * KiDispatchDpc to restore IRQL after its own explicit single-batch drain
+ * (avoids a redundant second drain) while still delivering APCs -- and, unlike
+ * holding a per-CPU drain guard across KeLowerIrql, never spans the yieldable
+ * APC NormalRoutine with a guard set. Internal to the IRQL/DPC subsystem. */
+void irql_lower_deliver(KIRQL old_irql);

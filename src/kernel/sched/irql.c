@@ -18,6 +18,9 @@
 #include "kernel/smp.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
+#include "kernel/sched/dpc.h"
+#include "kernel/sched/apc.h"
+#include "kernel/sched/task.h"
 
 /* ---- LAPIC TPR programming ----------------------------------------------- */
 
@@ -125,11 +128,53 @@ void KeLowerIrql(KIRQL old_irql)
         old_irql = cur;
     }
 
-    /* Map both levels to their TPR class once. */
-    uint32_t old_tpr = irql_to_tpr(old_irql);
-    uint32_t cur_tpr = irql_to_tpr(cur);
+    /* DPC drain-on-lower (NT software-interrupt dispatch): crossing from
+     * >= DISPATCH_LEVEL to below it, drain pending DPCs while the CPU runs at
+     * DISPATCH_LEVEL with the CORRECT hardware priority -- program the LAPIC TPR
+     * to the DISPATCH class and (if we were cli'd at HIGH) enable interrupts, so
+     * DPC callbacks run at DISPATCH with device IRQs at/below DISPATCH masked
+     * but higher ones serviced (the DPC contract). The per-CPU dpc_draining
+     * guard, held ONLY across dpc_drain_current_cpu() (never across the APC
+     * delivery that follows), stops a DPC that itself lowers IRQL from
+     * re-entering the drain. dpc_drain_current_cpu() does no IRQL management and
+     * early-outs on an empty queue. Spinlock release lowers current_irql
+     * directly (not via KeLowerIrql), so this is NOT on the spinlock hot path. */
+    if (cur >= DISPATCH_LEVEL && old_irql < DISPATCH_LEVEL && !pcpu->dpc_draining) {
+        uint32_t disp_tpr = irql_to_tpr(DISPATCH_LEVEL);
+        pcpu->dpc_draining = 1;
+        pcpu->current_irql = DISPATCH_LEVEL;
+        if (irql_to_tpr(cur) != disp_tpr)
+            irql_write_tpr_value(disp_tpr);
+        if (cur >= HIGH_LEVEL)
+            __asm__ volatile("sti" ::: "memory");
+        dpc_drain_current_cpu();
+        pcpu->dpc_draining = 0;
+        /* current_irql is now DISPATCH_LEVEL; lower the rest below. */
+    }
 
-    /* Update per-CPU state */
+    /* Lower from the current level to old_irql and deliver pending kernel APCs
+     * (no DPC drain -- the guarded block above already handled that). */
+    irql_lower_deliver(old_irql);
+}
+
+/* Lower current_irql to old_irql with TPR + interrupt-flag handling and kernel
+ * APC delivery-on-lower, but NO DPC drain. Shared by KeLowerIrql (after its
+ * guarded drain phase) and KiDispatchDpc (which must NOT trigger a second
+ * batch nor hold a drain guard across the yieldable APC NormalRoutine). */
+void irql_lower_deliver(KIRQL old_irql)
+{
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    KIRQL cur;
+    uint32_t old_tpr, cur_tpr;
+
+    if (!pcpu)
+        return;
+    cur = pcpu->current_irql;
+    if (old_irql > cur)             /* never accidentally raise */
+        old_irql = cur;
+
+    old_tpr = irql_to_tpr(old_irql);
+    cur_tpr = irql_to_tpr(cur);
     pcpu->current_irql = old_irql;
 
     /* Reprogram the LAPIC TPR only when the priority class actually changes
@@ -138,18 +183,25 @@ void KeLowerIrql(KIRQL old_irql)
     if (old_tpr != cur_tpr)
         irql_write_tpr_value(old_tpr);
 
-    /* If we were at HIGH_LEVEL (cli), re-enable interrupts now that
-     * we've lowered below it. Independent of the TPR-skip above. */
-    if (cur >= HIGH_LEVEL && old_irql < HIGH_LEVEL) {
+    /* If we were at HIGH_LEVEL (cli), re-enable interrupts now that we have
+     * lowered below it. Independent of the TPR-skip above. */
+    if (cur >= HIGH_LEVEL && old_irql < HIGH_LEVEL)
         __asm__ volatile("sti" ::: "memory");
-    }
 
-    /* NOTE: KeLowerIrql does NOT auto-drain pending DPCs here. DPC draining
-     * currently happens only at a timer ISR dispatch point (both the LAPIC
-     * timer and the PIT fallback drain after each tick); explicit draining is
-     * via KiDispatchDpc(). True NT drain-on-lower (drain when crossing below
-     * DISPATCH_LEVEL) is planned as part of the APC delivery path, which also
-     * wires KeLowerIrql for APC delivery. */
+    /* Kernel APC delivery-on-lower: crossing from >= APC_LEVEL to below it,
+     * deliver pending kernel APCs to the current thread. Gate ONLY on a guarded
+     * region (KeAreAllApcsDisabled blocks ALL kernel APC classes); a critical
+     * region blocks only NORMAL APCs, so a special kernel APC must still be
+     * delivered -- KiDeliverApc applies the precise per-APC region check itself.
+     * No per-CPU reentrancy guard: a NormalRoutine may yield/block/exit, so a
+     * CPU-scoped guard could leak across a context switch and wedge delivery;
+     * the per-thread kernel_apc_in_progress flag bounds normal-APC reentrancy
+     * and special APCs are self-limiting (each is dequeued once). */
+    if (cur >= APC_LEVEL && old_irql < APC_LEVEL) {
+        struct thread *th = thread_current();
+        if (th && th->apc_state.kernel_apc_pending && !KeAreAllApcsDisabled())
+            KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    }
 }
 
 /* ---- Debug assertion: IRQL contract check -------------------------------- */

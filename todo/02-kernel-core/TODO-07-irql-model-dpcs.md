@@ -63,7 +63,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [/]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [/]   |
 | 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [/]   |
-| 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [ ]   |
+| 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [/]   |
 | ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [ ]   |
 | ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [ ]   |
 | 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [ ]   |
@@ -95,7 +95,6 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Canonical contract: `include/kernel/sched/irql.h`.
 > **Verified:** 2026-06-26 | commit `e9318e14` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
 > **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path (RESOLVED 2026-06-26 by §2) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 112)
-> **Deferred:** [H] `irql.h` KeLowerIrql promised DPC drain-on-lower the impl never did; true NT drain-on-lower still unbuilt -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC drain-on-lower" at line 285)
 > **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 136)
 > **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "per-CPU IRQL transition stack" at line 303)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 0 fixed in-scope, 2H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: header doc + compile-assert only, no functional change)
@@ -382,31 +381,33 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 
 ## 12. APC Delivery Mechanism (KiDeliverApc)
 
-> [!WARNING]
-> **High-risk section.** This wires `KiDeliverApc` into the interrupt/exception return path and `KeLowerIrql`. A bug in the delivery engine fires on every interrupt return and every IRQL transition, causing system-wide crashes. **Rollback:** If APC delivery crashes, remove the `KiDeliverApc` call from the interrupt return path and `KeLowerIrql`; APC queues accumulate but the system runs. Re-enable incrementally: first special kernel APCs only, then normal kernel APCs, then user APCs.
+> [!NOTE]
+> **Shipped: kernel-mode delivery via `KeLowerIrql` only.** The original plan also wired `KiDeliverApc` into the C interrupt-return path; the Codex design review rejected running PASSIVE-level APC work at the C `isr_handler` restore site (before `iretq` / interrupt-state restore), so that path is deferred to a future audited return-trampoline. Kernel APCs deliver when `KeLowerIrql` crosses below `APC_LEVEL` (and DPCs when crossing below `DISPATCH_LEVEL`). **Rollback:** remove the `KiDeliverApc` / `dpc_drain_current_cpu` calls from `irql_lower_deliver` / `KeLowerIrql`; queues accumulate but the system runs.
 
-The APC delivery engine runs at defined IRQL transition points -- on return from interrupt/exception, when IRQL drops below `APC_LEVEL`, and when a thread completes an alertable wait. This is the bridge between queued APCs and their execution.
+The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL drops below `APC_LEVEL`, queued kernel APCs are delivered. User-mode delivery (alertable-wait + trap-frame redirect) is deferred (blocked on the user dispatcher + a kernel wait primitive).
 
-- [ ] Implement `KiDeliverApc(KPROCESSOR_MODE PreviousMode, void *ExceptionFrame, void *TrapFrame)`:
-  - Raise IRQL to `APC_LEVEL`
-  - **Special kernel APCs**: drain all from head of kernel APC list; execute `KernelRoutine` at `APC_LEVEL`; no thread permission needed
-  - **Normal kernel APCs**: if thread is not in critical region and `KernelApcInProgress == FALSE`: set `KernelApcInProgress = TRUE`, lower to `PASSIVE_LEVEL`, call `NormalRoutine`, raise back to `APC_LEVEL`, clear `KernelApcInProgress`
-  - **User APCs**: if `PreviousMode == UserMode` and thread is alertable and user APC list is non-empty: set up user-mode trap frame to redirect execution to `KiUserApcDispatcher` (→ XREF TODO-23 §5 for user-mode frame setup)
-  - **Special user APCs**: if `SpecialUserApcPending` is set, deliver even when the thread is NOT alertable (Win11 NtQueueApcThreadEx special APCs interrupt non-alertable user-mode return); same `KiUserApcDispatcher` frame setup
-  - Restore original IRQL
-- [ ] Wire `KiDeliverApc` into interrupt/exception return path: call when returning to `PASSIVE_LEVEL` or `APC_LEVEL` and `KernelApcPending` or `UserApcPending` is set. Add `POST16(0xDC00)` before first `KiDeliverApc` call in ISR return and `POST16(0xDC01)` after return
-- [ ] Wire into `KeWaitForSingleObject` / `KeWaitForMultipleObjects`: when `Alertable == TRUE` and wait completes or is interrupted, deliver user APCs before returning `STATUS_USER_APC`
-- [ ] Wire into `KeLowerIrql`: when lowering from >= `APC_LEVEL` to below `APC_LEVEL`, check for pending kernel APCs and deliver
-- [ ] DPC drain-on-lower (NT software-interrupt dispatch): when `KeLowerIrql` crosses from >= `DISPATCH_LEVEL` to below, drain pending DPCs via `KiDispatchDpc` with a reentrancy guard (today drain is §6 timer-ISR only)
-- [ ] Implement `KeTestAlertThread(AlertMode)` -- tests and delivers pending user APCs without entering a wait
-- [ ] Wire `NtQueueApcThreadEx`/`NtQueueApcThreadEx2`: route the `QUEUE_USER_APC_SPECIAL_USER_APC` flag to set `SpecialUserApcPending` (separate from plain `NtQueueApcThread` which queues a regular alertable user APC)
-- [ ] Thread exit path: call `RundownRoutine` for all remaining queued APCs to prevent resource leaks
-- [ ] Commit: `"kernel: sched -- add KiDeliverApc and APC delivery integration"`
+- [x] `KiDeliverApc` KERNEL-mode engine (`apc.c`): special APCs run `KernelRoutine` at `APC_LEVEL` (guarded-blocked); normal APCs also run `NormalRoutine` at `PASSIVE_LEVEL` (critical/in-progress blocked); dequeue-under-lock, run-after-unlock.
+- [x] `KeLowerIrql` delivers kernel APCs crossing below `APC_LEVEL`, gated only by a guarded region (special APCs deliver inside a critical region); no per-CPU guard across the yieldable NormalRoutine.
+- [x] DPC drain-on-lower: `KeLowerIrql` crossing below `DISPATCH_LEVEL` drains via `dpc_drain_current_cpu()` bracketed at DISPATCH under a tight `dpc_draining` guard; `KiDispatchDpc` restores via `irql_lower_deliver`. Unblocks §6 + §10.
+- [x] Thread-exit / reap `RundownRoutine` via `apc_rundown_thread()` at all four death sites (`task_exit`, `task_wrapper`, `thread_exit`, `thread_reap_kernel_slot`), after DEAD/FREE under `apc_lock`.
+- [ ] **User-mode APC delivery** (deferred, blocked): user trap-frame redirect to `KiUserApcDispatcher` for alertable + special-user APCs -> XREF: `TODO-23-exception-dispatch-seh.md §5` + TODO-10 trap-frame edit.
+- [ ] **Alertable-wait integration** (deferred, blocked): `KiDeliverApc` into `KeWaitForSingleObject`/`Multiple` + `STATUS_USER_APC` + `KeTestAlertThread`. Blocked: no kernel wait primitive / no `alertable` thread state.
+- [ ] **ISR-return delivery** (deferred, design-rejected): kernel-APC delivery from the C `isr_handler` restore site -- rejected (PASSIVE work before `iretq`); needs an audited return-trampoline. `KeLowerIrql` covers kernel APCs.
+- [ ] **`NtQueueApcThreadEx`/`Ex2` special-user routing** (deferred, blocked): set `SpecialUserApcPending` + SSDT 0x0380/0x0381; `NtQueueApcThread` stays `STATUS_NOT_IMPLEMENTED` -> XREF: `TODO-12-native-api-ssdt.md §7`.
+- [x] Commit: `"kernel: sched -- add KiDeliverApc and APC delivery integration"`
 
 > [!NOTE]
-> User-mode APC delivery requires `KiUserApcDispatcher` in the user-mode runtime (ntdll equivalent). The kernel sets up a modified trap frame that redirects ring-3 execution to the dispatcher, which calls the APC routine and then calls `NtContinue` to restore the original context. Full user-mode dispatcher implementation is in TODO-23 §5; this section handles the kernel-side frame setup only.
+> User-mode APC delivery requires `KiUserApcDispatcher` in the user-mode runtime (ntdll equivalent): the kernel sets up a modified trap frame that redirects ring-3 to the dispatcher, which calls the APC routine then `NtContinue`. That dispatcher + trap-frame edit (TODO-23 §5 + TODO-10) do not exist yet, so user-mode delivery is deferred; this section ships the kernel-mode engine only.
 
-**Test checkpoint:** Queue kernel APC to current thread; on `KeLowerIrql` to `PASSIVE_LEVEL`, APC fires (callback sets flag). Queue special kernel APC during ISR; APC fires on interrupt return. `KeEnterCriticalRegion` suppresses normal kernel APC delivery; `KeLeaveCriticalRegion` triggers deferred delivery. A `SpecialUserApcPending` APC fires on user-mode return even when the thread is NOT alertable (regular user APC does not). Thread exit calls `RundownRoutine` for un-delivered APCs. Serial: `"apc: delivered N kernel APCs, M user APCs"`. If crash, check POST -- 0xDC00 = entered `KiDeliverApc` in ISR return, 0xDC01 = completed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- ISR return path modification is platform-sensitive.
+**Test checkpoint:** Queue a normal kernel APC to the current thread and call `KiDeliverApc` -- `KernelRoutine` runs at `APC_LEVEL` then `NormalRoutine` at `PASSIVE_LEVEL`, pending clears, the delivery counter advances. A special kernel APC (NormalRoutine NULL) runs only its `KernelRoutine`. A critical region suppresses normal kernel APC delivery but NOT special; a guarded region suppresses both. A special kernel APC IS delivered through the real `KeLowerIrql` path (raise to `APC_LEVEL`, enter critical region, queue, lower to PASSIVE) despite the critical region. `apc_rundown_thread()` runs `RundownRoutine` for a still-queued APC on an exiting thread and empties the queue. All exercised by `TEST_CAT_SCHED`.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 6 §12 suites, 0 failures
+> **Notes:**
+> - Shipped: `KiDeliverApc` engine + `apc_rundown_thread()` in `apc.c`; `irql_lower_deliver()` + `KeLowerIrql` DPC-drain-on-lower + kernel-APC-delivery in `irql.c`; per-CPU `dpc_draining` guard in `smp.h`; rundown at 4 death/reap sites.
+> - How it runs: kernel APCs deliver when `KeLowerIrql` crosses below `APC_LEVEL`; DPCs drain (bracketed at DISPATCH) when crossing below `DISPATCH_LEVEL`; `KiDispatchDpc` restores via `irql_lower_deliver` to keep its bounded single-batch contract.
+> - Downstream: DPC drain-on-lower unblocks §6 timer-DPC latency + §10 RX-DPC-first; resolves §1's deferred "drain-on-lower unbuilt". Codex design + adversarial + 4 re-adversarial rounds; adoption in the commit.
+> - Canonical doc: this section + `include/kernel/sched/apc.h` / `irql.h` headers.
+> - Scope boundary: §12 owns kernel-mode delivery + DPC drain-on-lower + rundown. User-mode delivery, alertable waits, `KeTestAlertThread`, `Ex`/`Ex2`, ISR-return delivery deferred (TODO-23 §5 + TODO-10 + a wait primitive).
 
 ---
 
@@ -527,6 +528,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 |----|--------------------------------|--------------------------------|--------------------------------|-------------------------------|
 | 💎 | IRQL / preemption levels       | ✅ KIRQL (PASSIVE→HIGH)        | ✅ preempt/softirq/hardirq     | ✅ §1-§3 done                 |
 | 💎 | DPC bottom-half queue          | ✅ KDPC at DISPATCH_LEVEL      | ✅ softirq/tasklet/NAPI        | ✅ §4-§6                      |
+| 💎 | DPC drain on IRQL lower        | ✅ at DISPATCH→below           | ✅ softirq on local_bh_enable  | ✅ §12 KeLowerIrql drain      |
 | 💎 | ISR-safe deferred enqueue      | ✅ KeInsertQueueDpc            | ✅ IRQ-safe enqueue            | ✅ §4                         |
 | 💎 | Per-CPU deferred queues        | ✅ Per-CPU DPC state           | ✅ Per-CPU softirq             | ✅ §4-§6                      |
 | 💎 | DPC targeting (CPU affinity)   | ✅ KeSetTargetProcessorDpc     | ✅ Per-CPU workqueues          | ⚠️ §7 DPC; §17 threaded      |
@@ -537,7 +539,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | 💎 | Context legality contract      | ✅ API rules by IRQL           | ✅ might_sleep() + atomic      | ✅ §1 in irql.h               |
 | 💎 | Workqueue (thread deferred)    | ✅ Work items at PASSIVE       | ✅ alloc_workqueue             | ⚠️ §10 -- exists, needs split  |
 | 💎 | APC objects (KAPC)             | ✅ KeInitialize/InsertApc      | ⚠️ Signals only                | ✅ §11 KAPC + per-thread queue |
-| 💎 | APC delivery engine            | ✅ KiDeliverApc at APC_LEVEL   | ⚠️ do_signal on return         | ⬜ §12                        |
+| 💎 | APC delivery engine            | ✅ KiDeliverApc at APC_LEVEL   | ⚠️ do_signal on return         | ✅ §12 kernel-mode            |
 | 💎 | Critical/guarded regions       | ✅ KeEnterCriticalRegion       | ⚠️ preempt_disable             | ✅ §11 critical + guarded      |
 | 💎 | Alertable wait + user APC      | ✅ WaitForSingleObjectEx       | ❌ No equivalent               | ⬜ §12                        |
 | 💎 | Special user-mode APCs         | ✅ NtQueueApcThreadEx (RS5+)   | ❌ No equivalent               | ⬜ §12 SpecialUserApc         |

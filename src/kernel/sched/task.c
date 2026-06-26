@@ -87,6 +87,8 @@ static void task_wrapper(void)
         tasks[current_task].threads[0].state = THREAD_DEAD;
         spin_unlock_irqrestore(&tasks[current_task].threads[0].apc_lock, af);
     }
+    /* Run RundownRoutine for any APCs still queued on the dead main thread. */
+    apc_rundown_thread(&tasks[current_task].threads[0]);
     tasks[current_task].state = TASK_DEAD;
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
@@ -2053,6 +2055,8 @@ void task_exit(int32_t status)
         tasks[pid].threads[0].state = THREAD_DEAD;
         spin_unlock_irqrestore(&tasks[pid].threads[0].apc_lock, af);
     }
+    /* Run RundownRoutine for any APCs still queued on the dead main thread. */
+    apc_rundown_thread(&tasks[pid].threads[0]);
     tasks[pid].state = TASK_DEAD;
     tasks[pid].exit_status = status;
 
@@ -2206,6 +2210,20 @@ void task_cleanup(uint32_t pid)
     {
         uint32_t ti;
         for (ti = 1; ti < tasks[pid].num_threads; ti++) {
+            /* Publish THREAD_DEAD under apc_lock and run RundownRoutine for any
+             * still-queued APCs BEFORE freeing the stack: task_exit only marked
+             * thread 0, so a secondary thread can reach here THREAD_READY with
+             * queued APCs. The DEAD publish also makes a late cross-task
+             * KeInsertQueueApc reject this slot instead of enqueuing onto a
+             * thread whose stack is being freed. (Task is TASK_DEAD -- no other
+             * CPU runs it -- so this is race-free.) */
+            {
+                uint64_t af;
+                spin_lock_irqsave(&tasks[pid].threads[ti].apc_lock, &af);
+                tasks[pid].threads[ti].state = THREAD_DEAD;
+                spin_unlock_irqrestore(&tasks[pid].threads[ti].apc_lock, af);
+            }
+            apc_rundown_thread(&tasks[pid].threads[ti]);
             thread_free_stacks(&tasks[pid].threads[ti]);
             /* Reclaim per-thread user stack pages (deferred from thread_join
              * because vmm_unmap_page lacks SMP TLB shootdown). Safe here
@@ -2918,6 +2936,8 @@ void thread_exit(int32_t status)
         thr->state = THREAD_DEAD;
         spin_unlock_irqrestore(&thr->apc_lock, af);
     }
+    /* Run RundownRoutine for any APCs still queued on the exiting thread. */
+    apc_rundown_thread(thr);
 
     /* Mark thread object as temporary so it can be freed */
     ob_thread_mark_dead(t->pid, thr->id);
@@ -2983,6 +3003,10 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
         thr->state = THREAD_FREE;
         spin_unlock_irqrestore(&thr->apc_lock, af);
     }
+    /* Defensive rundown: an exited thread runs rundown at thread_exit, so the
+     * queues are normally empty here; a thread reaped without a prior exit
+     * (FREE published directly) still gets its APCs runned-down before reuse. */
+    apc_rundown_thread(thr);
     thr->rsp = 0;
     thr->stack_size = 0;
     thr->exit_status = 0;
