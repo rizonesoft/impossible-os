@@ -47,12 +47,14 @@ uint32_t irql_to_tpr(KIRQL irql)
     return 0xFF;
 }
 
-/* Write the TPR for the given IRQL.  Safe no-op if LAPIC is not available
- * (single-CPU legacy fallback uses cli/sti only). */
-static void irql_set_tpr(KIRQL irql)
+/* Write a precomputed TPR value.  Safe no-op if LAPIC is not available
+ * (single-CPU legacy fallback uses cli/sti only).  Transition callers pass
+ * the already-mapped TPR value so the hot path computes irql_to_tpr() once
+ * per IRQL rather than recomputing the target inside the writer. */
+static void irql_write_tpr_value(uint32_t tpr)
 {
     if (lapic_available())
-        lapic_write(LAPIC_REG_TPR, irql_to_tpr(irql));
+        lapic_write(LAPIC_REG_TPR, tpr);
 }
 
 /* ---- Per-CPU IRQL access ------------------------------------------------- */
@@ -82,25 +84,29 @@ void KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql)
     /* Store previous for caller's restore */
     *old_irql = prev;
 
+    /* Map both levels to their TPR class once (cheap branch cascade), so the
+     * write path below does not recompute the target. */
+    uint32_t new_tpr = irql_to_tpr(new_irql);
+    uint32_t prev_tpr = irql_to_tpr(prev);
+
     /* Update per-CPU state */
     pcpu->current_irql = new_irql;
 
-    /* Program LAPIC TPR to mask interrupts below the new level.
-     * For HIGH_LEVEL, also disable interrupts via CLI as the
-     * ultimate barrier (TPR alone cannot mask NMI/SMI). The CLI is
-     * independent of the TPR-skip below. */
+    /* For HIGH_LEVEL, also disable interrupts via CLI as the ultimate barrier
+     * (TPR alone cannot mask NMI/SMI). The CLI is independent of the TPR-skip
+     * below. */
     if (new_irql >= HIGH_LEVEL) {
         __asm__ volatile("cli" ::: "memory");
     }
 
-    /* Skip the redundant LAPIC TPR write when the priority class is
-     * unchanged (e.g. PASSIVE<->APC both map to TPR 0x00, and CLOCK/IPI/
-     * POWER/HIGH all map to 0xFF). The hardware TPR mirrors
-     * irql_to_tpr(current_irql): the only TPR writers are this transition
-     * path and the two PASSIVE-equivalent (TPR=0) LAPIC init writes, so a
-     * same-value store would be a pure UC-MMIO tax on the spinlock hot path. */
-    if (irql_to_tpr(new_irql) != irql_to_tpr(prev))
-        irql_set_tpr(new_irql);
+    /* Program the LAPIC TPR only when the priority class actually changes
+     * (e.g. PASSIVE<->APC both map to 0x00, CLOCK/IPI/POWER/HIGH all map to
+     * 0xFF, nested same-level raises map equal). The hardware TPR mirrors
+     * irql_to_tpr(current_irql): the only TPR writers are this transition path
+     * and the two PASSIVE-equivalent (TPR=0) LAPIC init writes, so a same-value
+     * store would be a pure UC-MMIO tax on the spinlock hot path. */
+    if (new_tpr != prev_tpr)
+        irql_write_tpr_value(new_tpr);
 }
 
 /* ---- KeLowerIrql --------------------------------------------------------- */
@@ -119,14 +125,18 @@ void KeLowerIrql(KIRQL old_irql)
         old_irql = cur;
     }
 
+    /* Map both levels to their TPR class once. */
+    uint32_t old_tpr = irql_to_tpr(old_irql);
+    uint32_t cur_tpr = irql_to_tpr(cur);
+
     /* Update per-CPU state */
     pcpu->current_irql = old_irql;
 
-    /* Reprogram LAPIC TPR for the restored level, skipping the write when
-     * the priority class is unchanged (e.g. APC->PASSIVE both TPR 0x00).
-     * See KeRaiseIrql for the invariant that makes the skip safe. */
-    if (irql_to_tpr(old_irql) != irql_to_tpr(cur))
-        irql_set_tpr(old_irql);
+    /* Reprogram the LAPIC TPR only when the priority class actually changes
+     * (e.g. APC->PASSIVE both TPR 0x00). See KeRaiseIrql for the invariant
+     * that makes the skip safe. */
+    if (old_tpr != cur_tpr)
+        irql_write_tpr_value(old_tpr);
 
     /* If we were at HIGH_LEVEL (cli), re-enable interrupts now that
      * we've lowered below it. Independent of the TPR-skip above. */
@@ -134,9 +144,12 @@ void KeLowerIrql(KIRQL old_irql)
         __asm__ volatile("sti" ::: "memory");
     }
 
-    /* DPC drain pending: If lowering below DISPATCH_LEVEL and the DPC
-     * queue is non-empty, drain pending DPCs before returning to
-     * caller. This is the standard NT DPC dispatch point. */
+    /* NOTE: KeLowerIrql does NOT auto-drain pending DPCs here. DPC draining
+     * currently happens only at a timer ISR dispatch point (both the LAPIC
+     * timer and the PIT fallback drain after each tick); explicit draining is
+     * via KiDispatchDpc(). True NT drain-on-lower (drain when crossing below
+     * DISPATCH_LEVEL) is planned as part of the APC delivery path, which also
+     * wires KeLowerIrql for APC delivery. */
 }
 
 /* ---- Debug assertion: IRQL contract check -------------------------------- */

@@ -134,9 +134,10 @@ struct dpc_queue *dpc_get_cpu_queue(uint32_t cpu_id);
  * then restores previous IRQL. Bounded: drains at most DPC_BATCH_LIMIT
  * per invocation to prevent scheduler starvation.
  * Callable explicitly by any code that wants to flush the queue. NOTE:
- * automatic draining currently happens ONLY at the LAPIC timer ISR (via the
- * lightweight dpc_drain_current_cpu below) -- KeLowerIrql does NOT yet auto-
- * drain on crossing below DISPATCH_LEVEL (planned as part of APC delivery). */
+ * automatic draining currently happens ONLY at a timer ISR (the LAPIC timer
+ * and the PIT fallback both call the lightweight dpc_drain_current_cpu below
+ * after each tick) -- KeLowerIrql does NOT yet auto-drain on crossing below
+ * DISPATCH_LEVEL (planned as part of APC delivery). */
 void KiDispatchDpc(void);
 
 /* Maximum DPCs to drain per KiDispatchDpc() call.

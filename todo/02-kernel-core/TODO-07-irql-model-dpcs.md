@@ -14,7 +14,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Goal:** Implement a Windows-style Interrupt Request Level (IRQL) model and a real Deferred Procedure Call (DPC) subsystem so interrupt handlers can defer non-trivial work safely. DPCs run at `DISPATCH_LEVEL`, enforce preemption constraints, and provide a deterministic bridge between hard-interrupt context and thread context.
 
 > [!IMPORTANT]
-> **Current state:** Core IRQL and DPC infrastructure (§1-§8) is implemented and working: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. §1 is verified+stamped and §2 shipped (redundant-TPR skip; review-stamp pending); §3 (system-vector CLOCK/IPI levels) carries one open review refinement and is `[/]`. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11-§14 APC delivery and diagnostics/fairness, and §15-§17 threaded-DPC correctness hardening from the Codex review findings.
+> **Current state:** Core IRQL and DPC infrastructure (§1-§8) is implemented and working: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. §1 and §2 are verified+stamped (§2 added the redundant-TPR skip); §3 (system-vector CLOCK/IPI levels) carries one open review refinement and is `[/]`. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11-§14 APC delivery and diagnostics/fairness, and §15-§17 threaded-DPC correctness hardening from the Codex review findings.
 
 ## Inputs
 
@@ -94,7 +94,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Review fixed header-vs-impl contract drift: `irql.h` + `dpc.h` no longer promise DPC-drain-on-lower or strict-LIFO enforcement the impl does not provide; comments point to the real owners.
 > - Canonical contract: `include/kernel/sched/irql.h`.
 > **Verified:** 2026-06-26 | commit `e9318e14` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
-> **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 112)
+> **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path (RESOLVED 2026-06-26 by §2) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 112)
 > **Deferred:** [H] `irql.h` KeLowerIrql promised DPC drain-on-lower the impl never did; true NT drain-on-lower still unbuilt -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC drain-on-lower" at line 285)
 > **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 126)
 > **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "per-CPU IRQL transition stack" at line 303)
@@ -121,6 +121,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Skip is compute-based (compares mapped TPR values), relying on the invariant that the only TPR writers are this path plus two `lapic.c` init writes (both TPR=0=PASSIVE) -- no per-CPU cache or desync risk.
 > - Tests: `test_sched.c` pins `irql_to_tpr` band mapping, the skip precondition (PASSIVE==APC, CLOCK==IPI==HIGH), and `vector_to_irql` boundaries.
 > - Canonical: `src/kernel/sched/irql.c`; contract header `include/kernel/sched/irql.h` (§1).
+> **Verified:** 2026-06-26 | commit `STAMPHASH2` | 6/6 items | build OK | tests 37 kernel + 16 user PASS
+> **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M+1L fixed | scope: kernel-code-quality
 
 ---
 
