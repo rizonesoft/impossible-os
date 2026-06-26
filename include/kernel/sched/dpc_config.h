@@ -56,3 +56,14 @@
  * also self-heals a missed signal. (A truly blocking worker awaits an SMP-safe
  * event_t -- a tracked deferred item.) */
 #define DPC_THREADED_WORKER_IDLE_MS     10u
+
+/* Bound on the KeFlushQueuedDpcs completion wait, expressed in yield()
+ * iterations (the threaded worker is a scheduled PASSIVE thread, so the flush
+ * yields to let it run rather than pause-spinning). A well-behaved caller (one
+ * that has stopped its producers before tearing down, per NT KeFlushQueuedDpcs
+ * semantics) drains in a handful of yields. Reaching the cap is a bug -- a
+ * self-rearming DPC (producer not stopped) or a wedged callback -- and is
+ * fail-CLOSED: KeFlushQueuedDpcs bugchecks (DPC_WATCHDOG_VIOLATION sub-case 0x2)
+ * rather than returning as if quiesced, because the void NT ABI gives the
+ * caller no way to observe a soft failure before it frees the DPC/context. */
+#define DPC_FLUSH_THREADED_YIELD_CAP    100000u

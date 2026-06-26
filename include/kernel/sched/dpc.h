@@ -140,6 +140,9 @@ void dpc_start_threads(void);
 /* Test/diagnostic: nonzero once the threaded-DPC worker has been started. */
 int dpc_worker_started(void);
 
+/* Test/diagnostic: threaded DPC callbacks currently in flight (0 when idle). */
+uint32_t dpc_in_flight_threaded(void);
+
 /* Set target CPU for DPC execution. Must be called before KeInsertQueueDpc. */
 void KeSetTargetProcessorDpc(KDPC *dpc, uint32_t cpu_number);
 

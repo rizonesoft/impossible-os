@@ -72,6 +72,26 @@ _Static_assert(sizeof(struct dpc_threaded_slot) == DPC_CACHELINE,
                "dpc_threaded_slot must occupy exactly one cache line");
 static struct dpc_threaded_slot threaded_q[MAX_CPUS];
 
+/* Count of threaded DPC callbacks that have been popped off threaded_q but whose
+ * routine() has not yet returned. Incremented UNDER DPC_QLOCK at the pop (while
+ * the node is off all lists), decremented after the routine runs at PASSIVE.
+ * KeFlushQueuedDpcs waits for this to reach 0 so a teardown caller cannot free a
+ * KDPC/context while its callback is still executing -- the threaded_q pending
+ * flags only cover queued-but-not-yet-running work, not the off-list in-flight
+ * window. Lock-free atomic so the flush observer reads it without DPC_QLOCK. A
+ * single global counter suffices: one worker drains all CPUs today, so it is
+ * 0 or 1; it generalizes to a sum if per-CPU workers land (section 17). */
+static volatile uint32_t s_in_flight_threaded;
+
+/* The threaded-DPC worker's own task, recorded at worker entry. KeFlushQueuedDpcs
+ * uses it to reject a self-deadlocking call from inside a threaded DPC callback
+ * (which runs in this task at PASSIVE): the worker already counts the running
+ * callback in s_in_flight_threaded, so a flush from it would wait for itself.
+ * Pointer compare only -- struct task stays opaque here. */
+struct task;
+extern struct task *task_current(void);
+static struct task *s_worker_task;
+
 /* Worker idle event: the ISR producer event_set()s it (ISR-safe) on hand-off;
  * the worker idles on event_wait_timeout (yield-poll -- it never enqueues onto
  * the event waiter queue, so it is safe against event_set() from multiple-CPU
@@ -94,11 +114,22 @@ struct dpc_watchdog {
     uint32_t budget;             /* remaining per-tick DPC tokens (carry-over)  */
     uint32_t tick_dpcs;          /* DPCs dispatched in the current tick         */
     uint32_t consec_over_depth;  /* consecutive ticks depth > WARN_DEPTH        */
+    /* COUNT of NON-threaded DPC routine()s currently executing on this CPU
+     * (popped off the queue, lock dropped, callback running). A counter, not a
+     * flag: normal DPCs run at DISPATCH_LEVEL, which does not mask the CLOCK-
+     * level timer ISR, so a timer-ISR drain can run a nested DPC on top of a
+     * running one -- a boolean cleared by the inner callback would falsely
+     * report the outer as done. fetch_add UNDER DPC_QLOCK at dequeue (so a
+     * remote KeFlushQueuedDpcs sampling the queue head + this count under the
+     * same lock gets a consistent snapshot), fetch_sub after the routine. The
+     * completion barrier waits for this to reach 0. (Threaded callbacks use the
+     * global s_in_flight_threaded.) */
+    volatile uint32_t in_flight;
     uint8_t  over_budget_warned; /* monopolization already warned this tick     */
-    /* Pad + align to one cache line: drain_queue writes budget/tick_dpcs per
-     * dispatched DPC, so adjacent CPUs' records must not false-share (matches
-     * the cpu_queues / queue_lock_slots cache-line discipline). */
-    uint8_t  _pad[DPC_CACHELINE - 13];
+    /* Pad + align to one cache line: drain_queue writes budget/tick_dpcs/
+     * in_flight per dispatched DPC, so adjacent CPUs' records must not
+     * false-share (matches the cpu_queues / queue_lock_slots discipline). */
+    uint8_t  _pad[DPC_CACHELINE - 17];
 } __attribute__((aligned(DPC_CACHELINE)));
 _Static_assert(sizeof(struct dpc_watchdog) == DPC_CACHELINE,
                "dpc_watchdog must occupy exactly one cache line (no false-share)");
@@ -598,6 +629,10 @@ int KeRemoveQueueDpc(KDPC *dpc)
 
 static void dpc_thread_fn(void)
 {
+    /* Record our own task so KeFlushQueuedDpcs can detect a self-deadlocking
+     * call from inside a threaded DPC callback (which runs in this task). */
+    __atomic_store_n(&s_worker_task, task_current(), __ATOMIC_RELEASE);
+
     klog(LOG_DEBUG, "dpc", "threaded DPC worker started (drains all CPUs)");
 
     for (;;) {
@@ -652,10 +687,18 @@ static void dpc_thread_fn(void)
                 a2      = dpc->system_arg2;
                 dpc->queued_cpu = MAX_CPUS;
                 dpc->queued     = 0;          /* off all lists -- snapshot taken */
+                /* Mark in-flight BEFORE releasing the lock so there is no window
+                 * where this node is off the list (pending may read 0) yet its
+                 * callback is uncounted -- KeFlushQueuedDpcs must see in-flight. */
+                __atomic_fetch_add(&s_in_flight_threaded, 1, __ATOMIC_ACQ_REL);
                 spin_unlock_irqrestore(DPC_QLOCK(ci), irq_flags);
 
                 if (routine)
                     routine(dpc, ctx, a1, a2);
+
+                /* Callback complete -- clear in-flight so a flush waiting on this
+                 * KDPC's quiesce can proceed (and free the context) safely. */
+                __atomic_fetch_sub(&s_in_flight_threaded, 1, __ATOMIC_ACQ_REL);
             }
         }
 
@@ -721,6 +764,13 @@ int dpc_worker_started(void)
     return __atomic_load_n(&s_worker_started, __ATOMIC_ACQUIRE);
 }
 
+/* Test/diagnostic: count of threaded DPC callbacks currently in flight (popped
+ * off the list but still running). 0 when the worker is idle. */
+uint32_t dpc_in_flight_threaded(void)
+{
+    return __atomic_load_n(&s_in_flight_threaded, __ATOMIC_ACQUIRE);
+}
+
 /* ---- Core drain logic (shared by KiDispatchDpc and dpc_drain_current_cpu) */
 
 static uint32_t drain_queue(uint32_t cpu_id)
@@ -777,10 +827,15 @@ static uint32_t drain_queue(uint32_t cpu_id)
             continue;
         }
 
-        /* Non-threaded: clear ownership, unlock, then run inline. */
+        /* Non-threaded: clear ownership, count this callback in-flight UNDER the
+         * lock (so a KeFlushQueuedDpcs sampling head + in_flight under this lock
+         * sees a consistent snapshot -- the DPC is off the queue but counted as
+         * running), unlock, then run inline. fetch_add (not a flag) so a nested
+         * timer-ISR drain on this CPU does not lose the outer callback's count. */
         dpc->next       = (KDPC *)0;
         dpc->queued_cpu = MAX_CPUS;   /* invalidate before clearing queued */
         dpc->queued     = 0;
+        __atomic_fetch_add(&s_wd[cpu_id].in_flight, 1, __ATOMIC_ACQ_REL);
         spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
         /* Single-DPC runtime watchdog: time the routine in TSC cycles when an
@@ -799,6 +854,10 @@ static uint32_t drain_queue(uint32_t cpu_id)
                     dpc_watchdog_single_overrun(cpu_id, dt, (void *)(uintptr_t)routine);
             }
         }
+        /* Callback returned: drop this CPU's in-flight count so a teardown flush
+         * waiting on this normal DPC can proceed (and free the KDPC/context)
+         * once the count reaches 0 (covers nested same-CPU drains). */
+        __atomic_fetch_sub(&s_wd[cpu_id].in_flight, 1, __ATOMIC_ACQ_REL);
 
         /* Per-tick token budget: spend one token; flag monopolization once per
          * tick when the budget is exhausted (the hard per-drain bound stays
@@ -878,36 +937,100 @@ void KeFlushQueuedDpcs(void)
 {
     uint32_t cpu;
 
+    /* CONTRACT (NT KeFlushQueuedDpcs): called at PASSIVE_LEVEL; flushes both the
+     * normal per-CPU DPC queues AND the threaded-DPC worker, waiting for work
+     * outstanding AT CALL TIME to complete. It does NOT prevent a producer from
+     * queueing a new DPC after the wait samples empty -- a teardown that frees a
+     * KDPC/context must STOP its producers (cancel timers, disable the device)
+     * BEFORE calling this, exactly as on Windows. Both waits are bounded so a
+     * self-rearming DPC cannot hang the caller forever.
+     *
+     * Entry validation (matches NT: PASSIVE_LEVEL, and never from a DPC
+     * routine). Any DPC callback that calls KeFlushQueuedDpcs would wait on its
+     * own in-flight count and hang to the cap; fail fast instead of letting it
+     * look like a quiesce timeout. Two cases:
+     *   - A NORMAL DPC callback runs at DISPATCH_LEVEL, so any caller above
+     *     PASSIVE is illegal (also covers the at-DISPATCH self-flush). 0x4.
+     *   - A THREADED DPC callback runs at PASSIVE in the worker task, so the
+     *     IRQL check passes -- catch it by identity. 0x3. */
+    {
+        KIRQL irql = KeGetCurrentIrql();
+        if (irql != PASSIVE_LEVEL)
+            KeBugCheckEx(BUGCHECK_DPC_WATCHDOG_VIOLATION, 0x4, (uint64_t)irql, 0, 0);
+    }
+    {
+        struct task *worker = __atomic_load_n(&s_worker_task, __ATOMIC_ACQUIRE);
+        if (worker && task_current() == worker)
+            KeBugCheckEx(BUGCHECK_DPC_WATCHDOG_VIOLATION, 0x3, 0, 0, 0);
+    }
+
     /* Drain our own queue at DISPATCH_LEVEL via KiDispatchDpc (which raises to
      * DISPATCH, drains one batch, lowers). DPC callbacks must run at
      * DISPATCH_LEVEL, not the flush caller's (PASSIVE) level. A bounded single
      * batch deliberately avoids spinning forever on a DPC that re-arms itself
-     * during the flush (NT flushes DPCs queued at call time, not "drain until
-     * empty").
-     *
-     * LIMITATION (tracked): this flush waits ONLY on the normal per-CPU queues
-     * below. It does NOT wait for threaded_q[] pending entries or an in-flight
-     * threaded callback, so a teardown that frees a threaded KDPC/context right
-     * after KeFlushQueuedDpcs can race the worker. Latent today -- no production
-     * code registers a threaded DPC yet. The threaded completion barrier (wait
-     * on threaded_q pending + an in-flight threaded counter) is owned by the
-     * KeFlushQueuedDpcs Threaded DPC Completion section that follows this one. */
+     * during the flush. */
     {
         struct per_cpu_data *me = smp_this_cpu();
         if (me && me->cpu_id < MAX_CPUS)
             KiDispatchDpc();
     }
 
-    /* Spin-wait for other CPUs to finish their queues (they drain on every
-     * timer tick via dpc_drain_current_cpu). Scan ALL slots, not
-     * [0, smp_cpu_count()): cpu_id slots can be sparse (abandoned AP), so a
-     * dense scan would skip a live high slot's pending queue. Offline/empty
-     * slots have head==NULL and exit the inner loop immediately. */
-    for (cpu = 0; cpu < MAX_CPUS; cpu++) {
-        volatile uint32_t spin = 0;
-        while (cpu_queues[cpu].head != (KDPC *)0 && spin < 100000) {
-            __asm__ volatile ("pause");
-            spin++;
+    /* Completion barrier: wait until, for every CPU, the normal queue AND the
+     * threaded list are empty, no NORMAL callback is mid-execution on that CPU
+     * (s_wd[cpu].in_flight), and no THREADED callback is in flight globally.
+     * Each round samples a CPU's normal head, threaded head, and normal
+     * in_flight TOGETHER under that CPU's DPC_QLOCK -- a lock-free sample would
+     * race the drain_queue hand-off / dequeue (on x86 the cpu_queues head clear
+     * becomes visible before the threaded_q pending publication or the in_flight
+     * set, all done in one critical section, so an unlocked observer can see the
+     * head empty in the gap and return while a DPC is mid-hand-off or about to
+     * run). The global threaded in-flight count is read after the per-CPU
+     * snapshots (the single worker increments it under DPC_QLOCK at pop).
+     *
+     * Yields (not pause) between rounds: the threaded worker is a SCHEDULED
+     * PASSIVE thread, so on a single CPU only a yield lets it run; legal because
+     * the contract pins the caller at PASSIVE_LEVEL. Scans ALL MAX_CPUS slots
+     * (cpu_id slots can be sparse after an abandoned AP). */
+    {
+        extern void yield(void);
+        uint32_t spin = 0;
+
+        for (;;) {
+            int      busy = 0;
+            uint32_t inflight;
+
+            for (cpu = 0; cpu < MAX_CPUS; cpu++) {
+                uint64_t f;
+                spin_lock_irqsave(DPC_QLOCK(cpu), &f);
+                if (cpu_queues[cpu].head != (KDPC *)0 ||
+                    threaded_q[cpu].head != (KDPC *)0 ||
+                    s_wd[cpu].in_flight != 0)
+                    busy = 1;
+                spin_unlock_irqrestore(DPC_QLOCK(cpu), f);
+                if (busy)
+                    break;
+            }
+
+            inflight = __atomic_load_n(&s_in_flight_threaded, __ATOMIC_ACQUIRE);
+            if (!busy && inflight == 0)
+                break;   /* all work outstanding at call time has drained */
+
+            if (++spin >= DPC_FLUSH_THREADED_YIELD_CAP) {
+                /* Fail CLOSED. KeFlushQueuedDpcs is void (NT ABI -- a status
+                 * return would break Win32/NT parity), so a caller CANNOT
+                 * observe a soft failure: returning here would let teardown free
+                 * a KDPC/context while threaded work is still queued or running
+                 * (use-after-free). Reaching this cap means the caller did not
+                 * stop its producers (a self-rearming DPC) or a callback is
+                 * wedged -- a bug, never normal operation. Bugcheck rather than
+                 * corrupt, exactly as NT bugchecks DPC_WATCHDOG_VIOLATION.
+                 * Sub-case 0x2 distinguishes the flush-quiesce timeout from the
+                 * single-DPC overrun (0x0). Does not return. */
+                KeBugCheckEx(BUGCHECK_DPC_WATCHDOG_VIOLATION, 0x2,
+                             (uint64_t)inflight,
+                             (uint64_t)DPC_FLUSH_THREADED_YIELD_CAP, 0);
+            }
+            yield();
         }
     }
 }

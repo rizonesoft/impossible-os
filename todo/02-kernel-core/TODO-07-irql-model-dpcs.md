@@ -67,7 +67,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [/]   |
 | ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [/]   |
 | 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [/]   |
-| 💎  |  16   | KeFlushQueuedDpcs threaded DPC completion          | §8, §15     |  [ ]   |
+| 💎  |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
 | 💎  |  17   | Per-CPU threaded DPC worker affinity               | §8, §15     |  [ ]   |
 | ⭐  |  18   | System worker thread pool (long-period periodic)   | §8          |  [ ]   |
 
@@ -194,7 +194,6 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Tests: `test_sched.c` asserts both the `KiDispatchDpc` drain and the `KeFlushQueuedDpcs`-from-PASSIVE callbacks run at DISPATCH_LEVEL.
 > - Canonical: `src/kernel/sched/dpc.c`.
 > **Verified:** 2026-06-26 | commit `38b5b9f6` | 6/6 items | build OK | tests 58 kernel + 16 user PASS
-> **Deferred:** [H] `KeFlushQueuedDpcs` `head==NULL` poll can return while a remote callback is still in-flight (no in-flight tracking; silent 100000-spin timeout) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 221)
 > **Deferred:** [H] threaded-DPC `drain_queue` hand-off races the worker on `threaded_head` and re-insert -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 365)
 > **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H fixed, 2H deferred | scope: kernel-code-quality
 
@@ -236,7 +235,7 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 - [x] `KeSetTargetProcessorDpcEx` (>64 CPU): moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5`
 - [x] Cross-CPU IPI for MediumHighImportance: moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5` (part of DpcEx)
 - [x] Cacheline-align per-CPU DPC storage: `struct dpc_queue` padded + `aligned(64)`, per-CPU spinlock wrapped in 64B `dpc_lock_slot` (`DPC_QLOCK` accessor); two `_Static_assert`s pin both to one cache line. `dpc.c`/`dpc.h`
-- [ ] `KeFlushQueuedDpcs` completion barrier (H): `head==NULL` polling returns while a remote callback is still in-flight (`drain_queue` dequeues before running it); track a per-CPU in-flight count + escalate the silent 100000-spin timeout (Codex §5)
+- [x] `KeFlushQueuedDpcs` completion barrier -- shipped in §16: per-CPU `s_wd[cpu].in_flight` (normal) + global `s_in_flight_threaded` (threaded) sampled with the queue heads under `DPC_QLOCK`; silent timeout now fail-closes via bugcheck.
 - [x] Commit: `"kernel: sched -- add DPC targeting, importance, and flush"`
 
 **Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.
@@ -244,9 +243,8 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 > **Notes:**
 > - DPC targeting/importance/flush: `KeSetTargetProcessorDpc` (cpu_target), `KeSetImportanceDpc` (4 levels), `KeInsertQueueDpc` HighImportance head-insert, `KeFlushQueuedDpcs`, and the `KDPC_IMPORTANCE` enum are implemented in `src/kernel/sched/dpc.c`.
 > - Review-pass: the per-CPU DPC queue + lock storage is now cacheline-aligned (`struct dpc_queue` padded/aligned, per-CPU lock in a 64B `dpc_lock_slot`) to avoid ISR-hot-path false sharing; `_Static_assert`s pin the layout.
-> - One open item is deferred (see Deferred): the `KeFlushQueuedDpcs` in-flight completion barrier (the cross-CPU "returns only after callback completes" checkpoint clause).
+> - The `KeFlushQueuedDpcs` in-flight completion barrier (the cross-CPU "returns only after callback completes" clause) shipped in §16 -- per-CPU `s_wd[].in_flight` (normal) + global `s_in_flight_threaded` (threaded), sampled under `DPC_QLOCK`.
 > - Canonical: `src/kernel/sched/dpc.c`.
-> **Deferred:** [H] `KeFlushQueuedDpcs` `head==NULL` poll can return while a remote callback is still in-flight (no per-CPU in-flight tracking; silent 100000-spin timeout); the full barrier also needs threaded-DPC completion (§16). §9 ktimer teardown (free-after-cancel) now depends on this barrier -- until it lands, free dynamically-allocated timers only after the DPC is known to have run -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 240)
 
 ---
 
@@ -273,8 +271,8 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 > - Tests: `test_dpc_init_threaded` asserts `KeInitializeThreadedDpc` sets `threaded=1`; the behavioral PASSIVE-execution + handoff stress test is deferred with the §15 sync redesign.
 > - Canonical: `src/kernel/sched/dpc.c`.
 > **Verified:** 2026-06-26 | commit `bd8f42c2` | 5/5 items | build OK | tests 62 kernel + 16 user PASS
-> **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 276)
-> **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 277)
+> **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 274)
+> **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 275)
 > **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 422)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: task_create return-check + doc + test, no locking/lifecycle change)
 
@@ -306,9 +304,8 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 > - SMP/lifetime: timers AND their DPCs pinned to the BSP service CPU (AP timers/queues do not drain); `KeCancelTimer` fully locked; DPC handoff atomic under the ktimer lock (one-way ktimer->dpc); periodic re-arm O(1); empty-list lock-free fast path.
 > - Reviewed: Codex design+adversarial+consistency+perf + 5 re-adversarial rounds fixed AP-target lost-wakeup, unbounded catch-up, cancel-vs-handoff UAF, klog-under-lock, dropped-warn; evidence in commit `2cf5af54` + review commit.
 > - Canonical doc: `include/kernel/sched/ktimer.h` (ownership + lifetime + service-CPU contract).
-> - Scope: §9 owns the minimal prereq; full KTIMER (FILETIME/QPC/coalescing) -> TODO-08; DPC in-flight completion barrier -> §7 (line 240); ordered O(1) expiry structure -> the §9 perf-scalability item above.
+> - Scope: §9 owns the minimal prereq; full KTIMER (FILETIME/QPC/coalescing) -> TODO-08; the DPC in-flight completion barrier shipped in §16 (timer free-after-cancel is now safe after `KeFlushQueuedDpcs`); ordered O(1) expiry structure -> the §9 perf-scalability item above.
 > **Verified:** 2026-06-26 | commit `b026cf74` | 6/7 items | build OK | sched 94 PASS | smoke PASS (2.56s)
-> **Accepted:** [H] `KeFlushQueuedDpcs` is not a true in-flight completion barrier, so timer free-after-cancel can race a still-running DPC (reason: infra owned elsewhere) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 240)
 > **Deferred:** [H] timer ISR does an O(active-timers) full-list scan per tick under the ktimer lock; needs an ordered expiry structure (timer wheel/min-heap) (reason: empty-list fast path covers the common case; ordered structure is full-KTIMER work) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §9 (item: "Perf-scalability (deferred): replace the O(active-timers) per-tick ISR scan" at line 297)
 > **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 2H+3L fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
@@ -499,7 +496,6 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 
 > **Verified:** 2026-06-26 | commit `23d6b38a` | 6/8 items | build OK | 175 sched + 16 user tests, smoke PASSED
 > **Deferred:** [HIGH] idle threaded-DPC worker yield-polls (`event_wait_timeout` keeps it READY when idle) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set` -> XREF: 02-kernel-core/TODO-07 §15 (item: "SMP-safe blocking worker (deferred)" -- make `event_t` SMP-safe then switch to `event_wait`)
-> **Deferred:** [HIGH] `KeFlushQueuedDpcs` waits only on normal queues, not `threaded_q` pending / in-flight threaded callbacks (teardown UAF; latent -- no production threaded-DPC consumer yet) -> XREF: 02-kernel-core/TODO-07 §16 (items: "Extend KeFlushQueuedDpcs() to also wait on threaded_q[cpu_id].pending" + "Add an in_flight_threaded counter per CPU")
 > **Deferred:** [INFO] concurrent SMP-ISR threaded-DPC stress is runtime-only (no SMP-ISR concurrency in the unit harness) -> XREF: 02-kernel-core/TODO-07 §15 (item: "Runtime stress (deferred, runtime-only)")
 > **Quality reviewed:** 2026-06-26 | Codex 14x (adversarial x4, consistency x4, perf x4, re-adversarial x2) | 4H+1M+3L fixed, 2H+1info open | scope: kernel-code-quality
 
@@ -507,15 +503,26 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 
 ## 16. KeFlushQueuedDpcs Threaded DPC Completion
 
-> [!WARNING]
-> **Codex adversarial review finding (high), re-confirmed in the §15 review.** `KeFlushQueuedDpcs()` only waits for the normal per-CPU DPC queue drain -- it does not wait for the `threaded_q[]` worker list (renamed from `threaded_head[]`/`threaded_pending[]` in §15) or for an in-flight threaded DPC callback. A driver teardown calling `KeFlushQueuedDpcs()` then freeing the KDPC/context can race the worker callback, causing use-after-free. Latent today (no production threaded-DPC consumer yet).
+> [!NOTE]
+> **Resolved.** `KeFlushQueuedDpcs()` is now a true completion barrier (normal + threaded). It waits until every CPU's normal queue and threaded list are empty, no normal callback is mid-execution (`s_wd[cpu].in_flight`), and no threaded callback is in flight (`s_in_flight_threaded`). A teardown caller that has stopped its producers (NT contract) can then free the KDPC/context with no use-after-free. Bounded; fail-closed (bugcheck) on a stuck or self-rearming DPC.
 
-- [ ] Extend `KeFlushQueuedDpcs()` to also wait on `threaded_q[cpu_id].pending == 0` for all CPUs (under `DPC_QLOCK` when sampling)
-- [ ] Add an `in_flight_threaded` counter per CPU in `dpc.c`: incremented before the `dpc_thread_fn` runs a threaded callback, decremented after; flush waits for zero so an executing (popped-off-list) callback is also drained
-- [ ] Alternatively: add `KeFlushQueuedDpcsEx(FLUSH_THREADED)` for callers that need threaded DPC quiesce
-- [ ] Commit: `"kernel: KeFlushQueuedDpcs waits for threaded DPC completion"`
+- [x] Unified bounded wait loop -- per CPU samples normal head + threaded head + `s_wd[cpu].in_flight` together under `DPC_QLOCK` (closes the lock-free sampling race), then global `s_in_flight_threaded`; `yield()`s between rounds.
+- [x] Threaded in-flight: global atomic `s_in_flight_threaded` ++ under `DPC_QLOCK` at the worker pop, -- after `routine()`; `dpc_in_flight_threaded()` accessor.
+- [x] Normal in-flight: per-CPU `s_wd[cpu].in_flight` set under `DPC_QLOCK` at dequeue, cleared after `routine()` -- closes the §7-deferred normal-DPC in-flight gap (flush no longer returns while a non-threaded callback runs).
+- [x] Fail-closed on cap exhaustion (self-rearming/wedged DPC): bugchecks `DPC_WATCHDOG_VIOLATION` sub-case 0x2 -- the void NT ABI cannot signal a soft failure. (Rejected a separate `KeFlushQueuedDpcsEx`.)
+- [x] Re-entrancy guard (a DPC callback calling flush self-deadlocks on its own in-flight count): entry bugchecks if IRQL != PASSIVE (normal DPC, sub-case 0x4) or caller is the threaded worker task (threaded DPC, 0x3). NT no-flush-from-DPC.
+- [ ] Commit: `"kernel: KeFlushQueuedDpcs completion barrier -- normal + threaded in-flight"`
 
-**Test checkpoint:** Queue a threaded DPC, call `KeFlushQueuedDpcs()` from another thread, verify flush blocks until callback completes. Free the DPC object after flush -- no crash.
+**Test checkpoint:** Unit (`TEST_CAT_SCHED`): hand a threaded DPC to the worker (`dpc_drain_current_cpu` at DISPATCH), then `KeFlushQueuedDpcs()` at PASSIVE -- after it returns the callback flag is set and `dpc_in_flight_threaded()==0`, so the KDPC could be freed with no UAF. The normal-DPC in-flight wait runs synchronously inside `drain_queue`/`KiDispatchDpc`, so its cross-CPU "blocks until complete" proof (and the fail-closed bugcheck path) is runtime-only -- WHPX / bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 1 §16 suite, 0 failures
+> **Notes:**
+> - Shipped (`dpc.c`): `KeFlushQueuedDpcs` rebuilt as a unified bounded retry loop over per-CPU normal+threaded heads + `s_wd[cpu].in_flight` + global `s_in_flight_threaded`; `drain_queue`/`dpc_thread_fn` bracket callbacks.
+> - How it runs: caller at PASSIVE; `yield()`s between rounds so the scheduled-thread worker runs (single-CPU safe). Bounded by `DPC_FLUSH_THREADED_YIELD_CAP`; cap hit bugchecks (fail-closed) rather than returning as if quiesced.
+> - Contract: PASSIVE-only, MUST NOT be called from a DPC routine (a threaded callback self-deadlocks -> bugcheck 0x3); flushes work outstanding AT CALL TIME, does NOT block new inserts -- caller stops producers first (NT semantics).
+> - Downstream: closes the §15-deferred threaded-flush barrier AND the §7-deferred normal-DPC in-flight barrier; unblocks §9 timer free-after-cancel. Codex design + adversarial (multi-round) + consistency + perf adoptions in the commit.
+> - Canonical doc: this section + `src/kernel/sched/dpc.c` `KeFlushQueuedDpcs` + `include/kernel/sched/dpc_config.h`.
+> - Scope boundary: §16 owns the full DPC completion barrier. Per-CPU threaded-worker affinity -> §17; idle-poll worker cost + SMP-safe `event_t` -> §15 deferred item.
 
 ---
 

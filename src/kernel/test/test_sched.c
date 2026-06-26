@@ -1213,6 +1213,41 @@ static void test_dpc_threaded_remove(void)
     TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u, "queued cleared after threaded cancel");
 }
 
+/* ---- Section 16: KeFlushQueuedDpcs threaded DPC completion -------------- */
+
+static volatile int s_flush_threaded_ran;
+static void dpc_flush_test_routine(KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+    s_flush_threaded_ran = 1;
+}
+
+/* Test: KeFlushQueuedDpcs waits for a threaded DPC to complete. Hand a threaded
+ * DPC to the worker (drain at DISPATCH), then flush at PASSIVE -- after flush
+ * returns the callback must have run and no threaded callback may be in flight,
+ * so a teardown caller could now free the KDPC/context with no UAF. The worker
+ * is a scheduled PASSIVE thread, so this exercises the yield-based flush wait. */
+static void test_dpc_flush_threaded(void)
+{
+    extern uint32_t dpc_drain_current_cpu(void);
+    KDPC dpc;
+    KIRQL old;
+
+    s_flush_threaded_ran = 0;
+    KeInitializeThreadedDpc(&dpc, dpc_flush_test_routine, (void *)0);
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    KeInsertQueueDpc(&dpc, (void *)0, (void *)0);   /* -> normal queue, queued=1 */
+    dpc_drain_current_cpu();                         /* -> threaded_q, worker will run it */
+    KeLowerIrql(old);                                /* back to PASSIVE */
+
+    KeFlushQueuedDpcs();                             /* must yield-wait for the worker */
+
+    TEST_ASSERT_EQ((uint64_t)s_flush_threaded_ran, 1u,
+                   "KeFlushQueuedDpcs waited for the threaded callback to run");
+    TEST_ASSERT_EQ((uint64_t)dpc_in_flight_threaded(), 0u,
+                   "no threaded callback left in flight after flush");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -1298,6 +1333,8 @@ void test_register_sched(void)
                             test_dpc_watchdog_strict_toggle, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeRemoveQueueDpc cancels a threaded DPC",
                             test_dpc_threaded_remove, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeFlushQueuedDpcs waits for threaded DPC",
+                            test_dpc_flush_threaded, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",
