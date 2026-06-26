@@ -1136,6 +1136,42 @@ static void test_irql_monotonic_violation_counted(void)
     TEST_ASSERT_EQ((uint64_t)KeGetCurrentIrql(), (uint64_t)PASSIVE_LEVEL, "stayed at PASSIVE (clamped)");
 }
 
+/* ---- Section 14: DPC/APC fairness budget + watchdog --------------------- */
+
+/* Test: kernel_apc_depth tracks insert/remove/rundown (the APC starvation
+ * watchdog's lock-free read source). Local fake thread. */
+static void test_apc_kernel_depth(void)
+{
+    struct thread fake;
+    KAPC a1, a2;
+    fake.state = THREAD_READY;
+    fake.apc_lock.flag = 0;
+    apc_thread_init(&fake.apc_state, (void *)0);
+    KeInitializeApc(&a1, &fake, OriginalApcEnvironment, 0, 0,
+                    apc_noop_normal, (uint8_t)ApcKernelMode, (void *)0);
+    KeInitializeApc(&a2, &fake, OriginalApcEnvironment, 0, 0,
+                    apc_noop_normal, (uint8_t)ApcKernelMode, (void *)0);
+    KeInsertQueueApc(&a1, (void *)0, (void *)0, 0);
+    KeInsertQueueApc(&a2, (void *)0, (void *)0, 0);
+    TEST_ASSERT_EQ((uint64_t)fake.apc_state.kernel_apc_depth, 2u, "depth 2 after 2 kernel inserts");
+    KeRemoveQueueApc(&a1);
+    TEST_ASSERT_EQ((uint64_t)fake.apc_state.kernel_apc_depth, 1u, "depth 1 after one remove");
+    fake.state = THREAD_DEAD;
+    apc_rundown_thread(&fake);
+    TEST_ASSERT_EQ((uint64_t)fake.apc_state.kernel_apc_depth, 0u, "depth 0 after rundown");
+}
+
+/* Test: DPC watchdog strict-mode toggle (default off). */
+static void test_dpc_watchdog_strict_toggle(void)
+{
+    int saved = dpc_watchdog_strict_enabled();
+    dpc_watchdog_set_strict(1);
+    TEST_ASSERT_EQ((uint64_t)dpc_watchdog_strict_enabled(), 1u, "strict mode enabled");
+    dpc_watchdog_set_strict(0);
+    TEST_ASSERT_EQ((uint64_t)dpc_watchdog_strict_enabled(), 0u, "strict mode disabled (default)");
+    dpc_watchdog_set_strict(saved);   /* restore */
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -1213,6 +1249,10 @@ void test_register_sched(void)
                             test_irql_forced_lower_rejects_raise, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeRaise/KeLowerIrql monotonic mismatch counted",
                             test_irql_monotonic_violation_counted, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: kernel_apc_depth tracks insert/remove/rundown",
+                            test_apc_kernel_depth, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: DPC watchdog strict-mode toggle",
+                            test_dpc_watchdog_strict_toggle, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

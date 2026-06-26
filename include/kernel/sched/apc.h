@@ -82,6 +82,11 @@ typedef struct _KAPC_STATE {
     uint8_t            user_apc_pending;
     uint8_t            special_user_apc_pending;
     uint8_t            kernel_apc_in_progress;
+    /* Kernel APC queue depth, maintained under the thread's apc_lock on
+     * insert/remove/rundown. The APC starvation watchdog reads it without
+     * scanning the list (sustained high depth => thread stuck in a critical/
+     * guarded region or at elevated IRQL too long). */
+    uint32_t           kernel_apc_depth;
 } KAPC_STATE;
 
 /* ---- API ---------------------------------------------------------------- */

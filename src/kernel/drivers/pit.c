@@ -99,6 +99,10 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
     kusd_update_time();
     nt_timer_tick();
     ktimer_expire_current_cpu();
+    {
+        extern void dpc_watchdog_tick(void);
+        dpc_watchdog_tick();   /* per-tick DPC budget refill + sustained-depth check */
+    }
     dpc_drain_current_cpu();
     return schedule(frame);
 }

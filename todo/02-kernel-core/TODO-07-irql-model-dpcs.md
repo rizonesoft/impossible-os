@@ -65,7 +65,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [/]   |
 | 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [/]   |
 | ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [/]   |
-| ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [ ]   |
+| ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [/]   |
 | 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [ ]   |
 | 💎  |  16   | KeFlushQueuedDpcs threaded DPC completion          | §8, §15     |  [ ]   |
 | 💎  |  17   | Per-CPU threaded DPC worker affinity               | §8, §15     |  [ ]   |
@@ -443,15 +443,25 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 
 ## 14. Budgeted DPC/APC Fairness and Starvation Watchdog
 
-- [ ] Add per-tick DPC budget (count and/or time) with carry-over to avoid monopolizing CPU time.
-- [ ] Add DPC watchdog with both Win11 Bug Check 0x133 sub-cases, escalated independently: param 0x0 = single DPC/ISR over 100us; param 0x1 = cumulative time at `>= DISPATCH_LEVEL` per period over budget (short-DPC floods trip 0x1 alone)
-- [ ] Add watchdog warning when DPC queue depth remains above threshold for N ticks.
-- [ ] Add DPC importance-based ordering in the drain loop (§7 importance levels determine execution order).
-- [ ] Add APC starvation watchdog: warn when kernel APC queue depth on any thread exceeds threshold (indicates thread stuck in critical region or elevated IRQL too long).
-- [ ] Publish tuning constants in one header for platform-specific calibration.
-- [ ] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
+- [x] Per-tick DPC count budget + carry-over: per-CPU token bucket in `dpc.c` (refill `DPC_BUDGET_PER_TICK`/tick, cap `DPC_BUDGET_CARRYOVER_MAX`); `drain_queue` spends a token/DPC, warns once/tick on exhaustion (hard bound stays `DPC_BATCH_LIMIT`).
+- [x] DPC watchdog 0x133 **param 0x0** (single DPC > 100us): `drain_queue` times each DPC via `rdtscp_read` vs a precomputed threshold (armed only when all online CPUs have RDTSCP); WARN default, `dpc_watchdog_set_strict()` -> `KeBugCheckEx`.
+- [ ] DPC watchdog 0x133 **param 0x1** (cumulative >= `DISPATCH_LEVEL` time/period) -- deferred, blocked: needs per-CPU time-at-DISPATCH accounting at every `current_irql` write site (the §13 IRQL-write-surface centralization, line 425).
+- [x] Sustained queue-depth warning: `dpc_watchdog_tick()` warns when depth > `DPC_QUEUE_WARN_DEPTH` for `DPC_DEPTH_WARN_TICKS` consecutive ticks.
+- [x] DPC importance-based drain ordering: provided by §7 head-insert (`HighImportance` -> head; `drain_queue` dequeues head-first), so high runs first. No drain-time reorder.
+- [x] APC starvation watchdog: `kernel_apc_depth` in `KAPC_STATE` maintained under `apc_lock`; `KeInsertQueueApc` warns once on the kernel-APC crossing of `APC_STARVATION_WARN_DEPTH`.
+- [x] Tuning constants in new `include/kernel/sched/dpc_config.h`.
+- [ ] **AP DPC watchdog coverage** (deferred): `dpc_watchdog_tick` services only the ticking (BSP) CPU; extend depth/budget to AP queues (BSP cross-CPU sweep w/ atomic budget, or AP ticks) -- mirrors the existing BSP-only AP-drain limit; owner §17.
+- [x] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
 
-**Test checkpoint:** A single DPC callback sleeping 200us triggers the param 0x0 `DPC_WATCHDOG_VIOLATION` (100us threshold). A burst of many sub-100us DPCs whose cumulative `>= DISPATCH_LEVEL` time exceeds the period budget trips the param 0x1 escalation with NO single 0x0 trip (separate regression case). DPC queue depth > 64 for > 5 ticks triggers depth warning. `HighImportance` DPC runs before `LowImportance` during budget-limited drain. APC starvation watchdog fires when kernel APC queue depth > threshold on test thread. Tuning constants in `include/kernel/sched/dpc_config.h`.
+**Test checkpoint:** Unit (`TEST_CAT_SCHED`): `kernel_apc_depth` tracks insert/remove/rundown (2 -> 1 -> 0); `dpc_watchdog_set_strict()` toggles. Runtime (WHPX / bare metal via serial -- not unit-testable without a live timer/TSC): a single DPC running > 100us logs `dpc: watchdog: DPC ... ran N us` and, in strict mode, bugchecks `0x133` param 0x0; queue depth > `DPC_QUEUE_WARN_DEPTH` for `DPC_DEPTH_WARN_TICKS` ticks logs the sustained-depth warning; per-tick budget exhaustion logs once; `HighImportance` DPC runs before `LowImportance` (§7 head-insert); APC starvation logs on the `APC_STARVATION_WARN_DEPTH` crossing. Tuning constants in `include/kernel/sched/dpc_config.h`. (param 0x1 cumulative-DISPATCH-time is deferred.)
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 2 §14 suites, 0 failures
+> **Notes:**
+> - Shipped: per-CPU DPC token-budget + single-DPC TSC watchdog + sustained-depth warn (`dpc.c`); `KAPC_STATE.kernel_apc_depth` + APC starvation warn (`apc.c`); `dpc_config.h`; `BUGCHECK_DPC_WATCHDOG_VIOLATION` 0x133.
+> - How it runs: `dpc_watchdog_tick()` (timer ISR, pre-drain) refills budget + checks depth; `drain_queue` times each DPC (RDTSCP, armed only if all online CPUs have it) + spends a token; WARN default, `dpc_watchdog_set_strict(1)` bugchecks overruns.
+> - Downstream: importance ordering reuses §7 head-insert. Codex design + adversarial + 3 re-adversarial adoptions in the commit.
+> - Canonical doc: this section + `include/kernel/sched/dpc_config.h`.
+> - Scope boundary: §14 owns the budget + watchdog + APC starvation. Deferred: 0x133 param 0x1 (needs the §13 IRQL-write-surface centralization) + AP-CPU watchdog coverage (owner §17). Threaded-DPC fairness -> §15-§17.
 
 ---
 
@@ -498,6 +508,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [ ] Option C: Route all threaded DPCs to a global queue (not per-CPU) with a pool of N worker threads
 - [ ] Evaluate: Windows NT threaded DPCs run on the target CPU's thread -- Option A is the correct parity choice
 - [ ] Prerequisite: `task_set_affinity()` does not exist yet (-> XREF: `TODO-21-process-model-extensions.md §10`)
+- [ ] AP DPC watchdog coverage (from §14): drive `dpc_watchdog_tick` depth/budget bookkeeping for every online CPU (BSP cross-CPU sweep with the per-CPU budget made atomic vs the AP's own drain spend) once AP per-CPU DPC dispatch lands here.
 - [ ] Commit: `"kernel: per-CPU threaded DPC workers with affinity"`
 
 **Test checkpoint:** Queue threaded DPC targeting CPU 1. Verify callback's `smp_this_cpu()->cpu_id == 1`. Verify BSP-targeted threaded DPC runs on CPU 0.
@@ -563,7 +574,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | 💎 | ISR sync object                | ✅ KeSynchronizeExecution      | ✅ spin_lock_irqsave           | ✅ §10 KeSynchronizeExecution |
 | ⭐ | IRQL nesting validation (LIFO) | ❌ No runtime check            | ✅ lockdep IRQ-state           | ⬜ §13 transition stack       |
 | ⭐ | IRQL violation telemetry       | ⚠️ Checked builds only         | ⚠️ Fragmented debug warnings   | ✅ §13 counters + strict trap  |
-| ⭐ | DPC/APC fairness watchdog      | ⚠️ Internal heuristics         | ⚠️ Subsystem-specific          | ⬜ §14 -- explicit policy      |
+| ⭐ | DPC/APC fairness watchdog      | ⚠️ Internal heuristics         | ⚠️ Subsystem-specific          | ✅ §14 budget + 0x133 + APC     |
 
 > **After §1-§8:** Impossible OS reaches parity on the core IRQL contract and DPC architecture: IRQL transitions, per-CPU DPC queues, auto-drain, targeting, importance, and baseline threaded DPC support all exist.
 > **§9-§10** close the remaining timer-DPC and driver-migration gaps so drivers stop treating workqueue as a DPC substitute.

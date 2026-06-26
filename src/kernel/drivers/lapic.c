@@ -1203,7 +1203,9 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
      * but before schedule (DPC work completes before thread dispatch).
      * Uses lightweight drain -- no IRQL raise since we're in ISR context. */
     {
+        extern void dpc_watchdog_tick(void);
         extern uint32_t dpc_drain_current_cpu(void);
+        dpc_watchdog_tick();   /* per-tick budget refill + sustained-depth check */
         dpc_drain_current_cpu();
     }
 

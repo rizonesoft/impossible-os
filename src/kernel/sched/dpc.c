@@ -15,11 +15,16 @@
  * ============================================================================ */
 
 #include "kernel/sched/dpc.h"
+#include "kernel/sched/dpc_config.h"
 #include "kernel/sched/irql.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/smp.h"
 #include "kernel/klog.h"
 #include "kernel/barrier.h"
+#include "kernel/bugcheck.h"
+#include "kernel/boot_timing.h"
+#include "kernel/cpuid.h"
+#include "kernel/cpu_security.h"
 
 /* Forward declare -- avoid circular include with irql.h */
 extern KIRQL KeGetCurrentIrql(void);
@@ -55,6 +60,127 @@ _Static_assert(sizeof(struct dpc_lock_slot) == DPC_CACHELINE,
 static KDPC *threaded_head[MAX_CPUS];
 static volatile uint32_t threaded_pending[MAX_CPUS];
 
+/* ---- DPC fairness budget + watchdog (section 14) ------------------------- *
+ *
+ * Per-CPU, written only by the owning CPU's drain/tick paths (no lock). The
+ * single-DPC runtime watchdog (Bug Check 0x133 param 0x0) measures each DPC's
+ * TSC-cycle duration against a precomputed threshold; warn by default, bugcheck
+ * when dpc_watchdog_set_strict(1). The per-tick count budget is a token bucket
+ * (refilled DPC_BUDGET_PER_TICK/tick, capped) that flags monopolization. The
+ * cumulative ">=DISPATCH-time" case (param 0x1) is deferred -- it needs per-CPU
+ * time-at-DISPATCH accounting at every current_irql write site (the IRQL-write-
+ * surface centralization tracked in section 13). */
+struct dpc_watchdog {
+    uint32_t budget;             /* remaining per-tick DPC tokens (carry-over)  */
+    uint32_t tick_dpcs;          /* DPCs dispatched in the current tick         */
+    uint32_t consec_over_depth;  /* consecutive ticks depth > WARN_DEPTH        */
+    uint8_t  over_budget_warned; /* monopolization already warned this tick     */
+    uint8_t  _pad[3];
+};
+static struct dpc_watchdog s_wd[MAX_CPUS];
+
+/* 0 = warn-only (default), 1 = escalate a single-DPC overrun to KeBugCheckEx. */
+static int s_dpc_wd_strict;
+/* Precomputed 100us threshold in TSC cycles; 0 = invariant TSC freq unavailable
+ * (the single-DPC timing watchdog then stays OFF -- depth/budget still run). */
+static uint64_t s_dpc_single_threshold_cycles;
+
+void dpc_watchdog_set_strict(int on)   { s_dpc_wd_strict = on ? 1 : 0; }
+int  dpc_watchdog_strict_enabled(void) { return s_dpc_wd_strict; }
+
+/* Compute the single-DPC cycle threshold + seed budgets. Call after TSC
+ * calibration (dpc_init, post-Phase-3). Safe to call again (idempotent). */
+void dpc_watchdog_init(void)
+{
+    uint64_t hz = boot_timing_tsc_freq();   /* 0 if not calibrated */
+    uint32_t i;
+
+    /* Arm the single-DPC timing watchdog ONLY when an invariant TSC freq exists
+     * AND EVERY online CPU has RDTSCP -- drain_queue times each DPC with
+     * rdtscp_read(), which #UDs on a CPU lacking CPU_FEATURE_RDTSCP (it is an
+     * AP-probed OPTIONAL feature, not required). cpu_feature_global_mask() is
+     * the AND across all online CPUs (finalized before dpc_init, post-SMP), so
+     * a BSP-has/AP-lacks skew leaves the timing watchdog off on ALL CPUs rather
+     * than faulting the skewed AP. Depth + budget watchdogs still run (no TSC). */
+    s_dpc_single_threshold_cycles =
+        (hz && (cpu_feature_global_mask() & (1ULL << CPU_FEATURE_RDTSCP)))
+            ? (hz / 1000000ULL) * (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US
+            : 0;
+    for (i = 0; i < MAX_CPUS; i++) {
+        s_wd[i].budget = DPC_BUDGET_PER_TICK;
+        s_wd[i].tick_dpcs = 0;
+        s_wd[i].consec_over_depth = 0;
+        s_wd[i].over_budget_warned = 0;
+    }
+    klog(LOG_INFO, "dpc", "watchdog: single-DPC threshold %u us (%s), budget %u/tick",
+         (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US,
+         s_dpc_single_threshold_cycles ? "TSC" : "no TSC -- timing off",
+         (uint64_t)DPC_BUDGET_PER_TICK);
+}
+
+/* A single DPC ran over the 100us threshold: warn (always) + bugcheck (strict).
+ * routine_pc identifies the offending DPC. */
+static void dpc_watchdog_single_overrun(uint32_t cpu_id, uint64_t cycles,
+                                        void *routine_pc)
+{
+    uint64_t hz = boot_timing_tsc_freq();
+    uint64_t us = hz ? (cycles * 1000000ULL) / hz : 0;
+
+    klog(LOG_WARN, "dpc",
+         "watchdog: DPC %p on CPU %u ran %u us (> %u us threshold)",
+         routine_pc, (uint64_t)cpu_id, us, (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US);
+    if (s_dpc_wd_strict)
+        /* Win11 DPC_WATCHDOG_VIOLATION param 0x0: p1=0 sub-case, p2=offending
+         * routine, p3=elapsed us, p4=threshold us. */
+        KeBugCheckEx(BUGCHECK_DPC_WATCHDOG_VIOLATION, 0x0,
+                     (uint64_t)(uintptr_t)routine_pc, us,
+                     (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US);
+}
+
+/* Per-timer-tick watchdog bookkeeping: refill the token budget (carry-over,
+ * capped), and fire the sustained-depth warning when the queue stays above
+ * DPC_QUEUE_WARN_DEPTH for DPC_DEPTH_WARN_TICKS consecutive ticks. Called from
+ * the timer ISR (LAPIC + PIT) every tick, BEFORE the drain.
+ *
+ * SCOPE: services only the TICKING CPU (smp_this_cpu). AP LAPIC timers are
+ * masked today (BSP-only heartbeat), and AP DPC queues likewise only drain from
+ * that BSP tick -- so the watchdog covers exactly the CPU that actually drains
+ * DPCs. Extending depth/budget bookkeeping to AP queues (a BSP cross-CPU sweep,
+ * which would need the per-CPU budget made atomic vs the AP's own drain spend)
+ * is deferred to the AP-timer / per-CPU threaded-DPC dispatch work -- a tracked
+ * section-14 item. */
+void dpc_watchdog_tick(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+    uint32_t id, depth, refilled;
+
+    if (!cpu || cpu->cpu_id >= MAX_CPUS)
+        return;
+    id = cpu->cpu_id;
+
+    /* Sustained-depth warning (consecutive ticks over the depth threshold). */
+    depth = cpu_queues[id].depth;
+    if (depth > DPC_QUEUE_WARN_DEPTH) {
+        s_wd[id].consec_over_depth++;
+        if (s_wd[id].consec_over_depth == DPC_DEPTH_WARN_TICKS)
+            klog(LOG_WARN, "dpc",
+                 "watchdog: CPU %u DPC queue depth %u sustained > %u for %u ticks",
+                 (uint64_t)id, (uint64_t)depth, (uint64_t)DPC_QUEUE_WARN_DEPTH,
+                 (uint64_t)DPC_DEPTH_WARN_TICKS);
+    } else {
+        s_wd[id].consec_over_depth = 0;
+    }
+
+    /* Token-bucket refill: add PER_TICK tokens, cap at CARRYOVER_MAX so an idle
+     * CPU cannot bank an unbounded burst allowance. */
+    refilled = s_wd[id].budget + DPC_BUDGET_PER_TICK;
+    if (refilled > DPC_BUDGET_CARRYOVER_MAX)
+        refilled = DPC_BUDGET_CARRYOVER_MAX;
+    s_wd[id].budget = refilled;
+    s_wd[id].tick_dpcs = 0;
+    s_wd[id].over_budget_warned = 0;
+}
+
 /* ---- Initialization ------------------------------------------------------ */
 
 static int s_queues_ready;
@@ -85,6 +211,7 @@ void dpc_init(void)
 {
     if (!s_queues_ready)
         dpc_init_queues();
+    dpc_watchdog_init();   /* TSC is calibrated by now -- seed threshold + budgets */
     klog(LOG_INFO, "dpc", "DPC subsystem ready (scheduler available)");
 }
 
@@ -476,8 +603,35 @@ static uint32_t drain_queue(uint32_t cpu_id)
             continue;
         }
 
-        if (routine)
+        /* Single-DPC runtime watchdog: time the routine in TSC cycles when an
+         * invariant TSC threshold is available (else the timing watchdog is
+         * off and only depth/budget run). rdtscp serializes, so the deltas do
+         * not straddle the call. */
+        if (routine) {
+            uint64_t t0 = 0;
+            uint32_t aux;
+            if (s_dpc_single_threshold_cycles)
+                t0 = rdtscp_read(&aux);
             routine(dpc, ctx, a1, a2);
+            if (s_dpc_single_threshold_cycles) {
+                uint64_t dt = rdtscp_read(&aux) - t0;
+                if (dt > s_dpc_single_threshold_cycles)
+                    dpc_watchdog_single_overrun(cpu_id, dt, (void *)(uintptr_t)routine);
+            }
+        }
+
+        /* Per-tick token budget: spend one token; flag monopolization once per
+         * tick when the budget is exhausted (the hard per-drain bound stays
+         * DPC_BATCH_LIMIT -- this is a fairness diagnostic, not an enforced cap). */
+        s_wd[cpu_id].tick_dpcs++;
+        if (s_wd[cpu_id].budget) {
+            s_wd[cpu_id].budget--;
+        } else if (!s_wd[cpu_id].over_budget_warned) {
+            s_wd[cpu_id].over_budget_warned = 1;
+            klog(LOG_WARN, "dpc",
+                 "watchdog: CPU %u exceeded per-tick DPC budget (%u this tick)",
+                 (uint64_t)cpu_id, (uint64_t)s_wd[cpu_id].tick_dpcs);
+        }
 
         dispatched++;
     }

@@ -20,7 +20,9 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/irql.h"
+#include "kernel/sched/dpc_config.h"
 #include "kernel/smp.h"
+#include "kernel/klog.h"
 
 /* ---- Per-thread APC-state init (thread create / slot reuse) -------------- */
 
@@ -35,6 +37,7 @@ void apc_thread_init(KAPC_STATE *apc_state, void *process)
     apc_state->user_apc_pending              = 0;
     apc_state->special_user_apc_pending      = 0;
     apc_state->kernel_apc_in_progress        = 0;
+    apc_state->kernel_apc_depth              = 0;
 }
 
 /* ---- KeInitializeApc ----------------------------------------------------- */
@@ -71,6 +74,7 @@ int KeInsertQueueApc(KAPC *apc, void *system_arg1, void *system_arg2,
     struct thread *t;
     uint64_t flags;
     int mode;
+    int warn_starvation = 0;
 
     /* increment = the priority boost applied when the target thread wakes to
      * run the APC; consumed by the delivery/wake path (separate section). */
@@ -104,11 +108,22 @@ int KeInsertQueueApc(KAPC *apc, void *system_arg1, void *system_arg2,
         *pp = apc;
     }
     apc->inserted = 1;
-    if (mode == ApcUserMode)
+    if (mode == ApcUserMode) {
         t->apc_state.user_apc_pending = 1;
-    else
+    } else {
         t->apc_state.kernel_apc_pending = 1;
+        /* APC starvation watchdog: warn ONCE, only when THIS kernel-APC insert
+         * crosses the threshold (depth becomes exactly the warn level). A user
+         * APC insert -- which does not touch kernel_apc_depth -- must never
+         * re-warn a thread already sitting at the threshold. */
+        if (++t->apc_state.kernel_apc_depth == APC_STARVATION_WARN_DEPTH)
+            warn_starvation = 1;
+    }
     spin_unlock_irqrestore(&t->apc_lock, flags);
+    if (warn_starvation)
+        klog(LOG_WARN, "apc",
+             "starvation watchdog: kernel APC queue depth reached %u on a thread",
+             (uint64_t)APC_STARVATION_WARN_DEPTH);
     return 1;
 }
 
@@ -134,6 +149,8 @@ int KeRemoveQueueApc(KAPC *apc)
         if (*pp == apc) {
             *pp = apc->next;
             found = 1;
+            if (mode == ApcKernelMode && t->apc_state.kernel_apc_depth > 0)
+                t->apc_state.kernel_apc_depth--;   /* APC starvation watchdog */
         }
         apc->next     = (KAPC *)0;
         apc->inserted = 0;
@@ -290,6 +307,8 @@ void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame
         t->apc_state.apc_list_head[ApcKernelMode] = apc->next;
         apc->next     = (KAPC *)0;
         apc->inserted = 0;
+        if (t->apc_state.kernel_apc_depth > 0)
+            t->apc_state.kernel_apc_depth--;       /* APC starvation watchdog */
         if (!t->apc_state.apc_list_head[ApcKernelMode])
             t->apc_state.kernel_apc_pending = 0;
 
@@ -359,6 +378,7 @@ void apc_rundown_thread(struct thread *t)
     t->apc_state.kernel_apc_pending       = 0;
     t->apc_state.user_apc_pending         = 0;
     t->apc_state.special_user_apc_pending = 0;
+    t->apc_state.kernel_apc_depth         = 0;   /* queues emptied below */
     for (m = 0; m < 2; m++) {
         KAPC *a;
         for (a = lists[m]; a; a = a->next)

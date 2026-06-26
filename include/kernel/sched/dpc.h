@@ -203,3 +203,18 @@ uint32_t dpc_drain_current_cpu(void);
  * KeLowerIrql to skip the DISPATCH-drain bracket (and its LAPIC TPR writes) on
  * the common empty path (e.g. every syscall-entry IRQL lower). */
 int dpc_current_cpu_has_pending(void);
+
+/* ---- DPC fairness budget + watchdog (section 14) ------------------------- */
+
+/* Compute the single-DPC TSC cycle threshold + seed per-CPU token budgets.
+ * Called from dpc_init() after TSC calibration; idempotent. */
+void dpc_watchdog_init(void);
+
+/* Per-timer-tick watchdog bookkeeping: refill the per-CPU token budget and fire
+ * the sustained-queue-depth warning. Call from the timer ISR every tick. */
+void dpc_watchdog_tick(void);
+
+/* Enforcement mode for the single-DPC runtime watchdog: 0 (default) = warn,
+ * 1 = escalate a >100us DPC to KeBugCheckEx(DPC_WATCHDOG_VIOLATION). */
+void dpc_watchdog_set_strict(int on);
+int  dpc_watchdog_strict_enabled(void);
