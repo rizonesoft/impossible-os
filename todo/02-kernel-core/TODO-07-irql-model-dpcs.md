@@ -308,7 +308,7 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 > - Reviewed: Codex design+adversarial+consistency+perf + 5 re-adversarial rounds fixed AP-target lost-wakeup, unbounded catch-up, cancel-vs-handoff UAF, klog-under-lock, dropped-warn; evidence in commit `2cf5af54` + review commit.
 > - Canonical doc: `include/kernel/sched/ktimer.h` (ownership + lifetime + service-CPU contract).
 > - Scope: §9 owns the minimal prereq; full KTIMER (FILETIME/QPC/coalescing) -> TODO-08; DPC in-flight completion barrier -> §7 (line 240); ordered O(1) expiry structure -> the §9 perf-scalability item above.
-> **Verified:** 2026-06-26 | commit `STAMPHASH9R` | 6/7 items | build OK | sched 94 PASS | smoke PASS (2.56s)
+> **Verified:** 2026-06-26 | commit `b026cf74` | 6/7 items | build OK | sched 94 PASS | smoke PASS (2.56s)
 > **Accepted:** [H] `KeFlushQueuedDpcs` is not a true in-flight completion barrier, so timer free-after-cancel can race a still-running DPC (reason: infra owned elsewhere) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 240)
 > **Deferred:** [H] timer ISR does an O(active-timers) full-list scan per tick under the ktimer lock; needs an ordered expiry structure (timer wheel/min-heap) (reason: empty-list fast path covers the common case; ordered structure is full-KTIMER work) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §9 (item: "Perf-scalability (deferred): replace the O(active-timers) per-tick ISR scan" at line 297)
 > **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 2H+3L fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
