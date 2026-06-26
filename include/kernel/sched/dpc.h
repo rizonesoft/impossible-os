@@ -40,6 +40,14 @@ struct _KDPC;
  * enabled; a THREADED DPC (KeInitializeThreadedDpc) uses the SAME signature but
  * runs at PASSIVE_LEVEL in the DPC worker thread (so it may block/page/take
  * mutexes). Do not assume DISPATCH_LEVEL in a threaded DPC routine.
+ * AFFINITY: a NORMAL DPC runs on its target CPU. A THREADED DPC has NO
+ * CPU-affinity guarantee -- KeSetTargetProcessorDpc on a threaded DPC controls
+ * only which CPU's threaded list it joins (queue ownership/order), NOT the CPU
+ * the callback runs on: a single all-CPU worker thread drains every CPU's
+ * threaded list and runs the callback on whatever CPU the scheduler gives the
+ * worker. Do not rely on smp_this_cpu() or per-CPU state in a threaded DPC
+ * routine. (Per-CPU affinity workers -- NT parity -- are a roadmap item that
+ * awaits a task_set_affinity primitive.)
  *   dpc:      the KDPC object (for self-referencing patterns)
  *   context:  deferred context set at KeInitializeDpc time
  *   arg1/arg2: per-invocation arguments from KeInsertQueueDpc */
@@ -73,7 +81,10 @@ typedef struct _KDPC {
  *   context:  opaque context passed to every invocation */
 void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
 
-/* Queue a DPC for execution at DISPATCH_LEVEL on the current (or targeted) CPU.
+/* Queue a DPC for execution. A NORMAL DPC runs at DISPATCH_LEVEL on the current
+ * (or KeSetTargetProcessorDpc-targeted) CPU. A THREADED DPC instead lands on its
+ * target CPU's threaded list but the callback runs on the all-CPU worker's CPU,
+ * NOT the target -- see the KDEFERRED_ROUTINE AFFINITY note.
  * ISR-safe: does not block, does not allocate memory.
  * If the DPC is already queued, updates arg1/arg2 and returns 0 (no-op).
  * Returns 1 if newly queued, 0 if already queued (args still updated).
@@ -128,7 +139,9 @@ static inline int KeRequestDpcFromIsr(KDPC *dpc, void *arg1, void *arg2)
 int KeRemoveQueueDpc(KDPC *dpc);
 
 /* Initialize a threaded DPC -- runs at PASSIVE_LEVEL in a dedicated thread.
- * Allows paging, mutex acquisition, and other blocking operations. */
+ * Allows paging, mutex acquisition, and other blocking operations. NO CPU
+ * affinity: the callback runs on the single all-CPU worker's CPU, not the
+ * KeSetTargetProcessorDpc target -- see KDEFERRED_ROUTINE AFFINITY note. */
 void KeInitializeThreadedDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
 
 /* Spin up the single all-CPU threaded-DPC drain worker. Called once at boot
@@ -143,7 +156,11 @@ int dpc_worker_started(void);
 /* Test/diagnostic: threaded DPC callbacks currently in flight (0 when idle). */
 uint32_t dpc_in_flight_threaded(void);
 
-/* Set target CPU for DPC execution. Must be called before KeInsertQueueDpc. */
+/* Set target CPU for DPC execution. Must be called before KeInsertQueueDpc.
+ * For a NORMAL DPC the target is the CPU the callback runs on. For a THREADED
+ * DPC the target selects only which CPU's threaded list the DPC joins (queue
+ * ownership/order); the callback still runs on the all-CPU worker's CPU, NOT
+ * the target -- see KDEFERRED_ROUTINE AFFINITY note. */
 void KeSetTargetProcessorDpc(KDPC *dpc, uint32_t cpu_number);
 
 /* Set DPC importance level. Affects queue position and dispatch urgency. */

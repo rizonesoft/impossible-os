@@ -68,7 +68,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [/]   |
 | 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [/]   |
 | 💎  |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
-| 💎  |  17   | Per-CPU threaded DPC worker affinity               | §8, §15     |  [ ]   |
+| 💎  |  17   | Per-CPU threaded DPC worker affinity               | §8, §15     |  [/]   |
 | ⭐  |  18   | System worker thread pool (long-period periodic)   | §8          |  [ ]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
@@ -250,7 +250,7 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 
 ## 8. Threaded DPCs (`PASSIVE_LEVEL` DPC Variant)
 
-Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allowing operations forbidden at `DISPATCH_LEVEL` (paging, mutex acquisition). Used by audio/video drivers for latency-sensitive work.
+Threaded DPCs run at `PASSIVE_LEVEL` in a kernel worker thread, allowing operations forbidden at `DISPATCH_LEVEL` (paging, mutex acquisition). Used by audio/video drivers for latency-sensitive work. Today a single all-CPU worker runs every threaded DPC on its own scheduled CPU (NO per-CPU affinity -- see the `KDEFERRED_ROUTINE` AFFINITY contract in `dpc.h`); per-CPU affinity workers (NT parity) are deferred to §17 Option A.
 
 - [x] `KeInitializeThreadedDpc(dpc, routine, context)` -- sets `dpc->threaded = 1`
 - [x] `KDPC.threaded` field added; `drain_queue()` moves threaded DPCs to per-CPU threaded list instead of executing inline
@@ -273,7 +273,7 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 > **Verified:** 2026-06-26 | commit `bd8f42c2` | 5/5 items | build OK | tests 62 kernel + 16 user PASS
 > **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 274)
 > **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 275)
-> **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 422)
+> **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 276)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: task_create return-check + doc + test, no locking/lifecycle change)
 
 ---
@@ -447,7 +447,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [x] DPC importance-based drain ordering: provided by §7 head-insert (`HighImportance` -> head; `drain_queue` dequeues head-first), so high runs first. No drain-time reorder.
 - [x] APC starvation watchdog: `kernel_apc_depth` in `KAPC_STATE` maintained under `apc_lock`; `KeInsertQueueApc` warns once on the kernel-APC crossing of `APC_STARVATION_WARN_DEPTH`.
 - [x] Tuning constants in new `include/kernel/sched/dpc_config.h`.
-- [ ] **AP DPC watchdog coverage** (deferred): `dpc_watchdog_tick` services only the ticking (BSP) CPU; extend depth/budget to AP queues (BSP cross-CPU sweep w/ atomic budget, or AP ticks) -- mirrors the existing BSP-only AP-drain limit; owner §17.
+- [ ] AP DPC watchdog coverage (deferred, NOT blocked): AP DPCs drain on APs via `KeLowerIrql` but `dpc_watchdog_tick` services only the BSP, so `s_wd[ap]` budget is never refilled. Fix: BSP cross-CPU sweep + atomic per-CPU budget.
 - [x] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
 
 **Test checkpoint:** Unit (`TEST_CAT_SCHED`): `kernel_apc_depth` tracks insert/remove/rundown (2 -> 1 -> 0); `dpc_watchdog_set_strict()` toggles. Runtime (WHPX / bare metal via serial -- not unit-testable without a live timer/TSC): a single DPC running > 100us logs `dpc: watchdog: DPC ... ran N us` and, in strict mode, bugchecks `0x133` param 0x0; queue depth > `DPC_QUEUE_WARN_DEPTH` for `DPC_DEPTH_WARN_TICKS` ticks logs the sustained-depth warning; per-tick budget exhaustion logs once; `HighImportance` DPC runs before `LowImportance` (§7 head-insert); APC starvation logs on the `APC_STARVATION_WARN_DEPTH` crossing. Tuning constants in `include/kernel/sched/dpc_config.h`. (param 0x1 cumulative-DISPATCH-time is deferred.)
@@ -534,15 +534,26 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > [!NOTE]
 > **Codex adversarial review finding (medium).** The current single worker thread drains all CPUs' threaded queues from whichever CPU the scheduler assigns it. Threaded DPCs targeted at a specific CPU may execute on the wrong core, breaking callbacks that rely on `smp_this_cpu()` or per-CPU device state.
 
-- [ ] Option A: Create one worker thread per online CPU with CPU affinity (`task_set_affinity(pid, cpu_mask)`)
-- [ ] Option B: Document that threaded DPCs have no CPU affinity guarantee (PASSIVE_LEVEL, any-CPU execution) and forbid per-CPU assumptions in threaded DPC callbacks
-- [ ] Option C: Route all threaded DPCs to a global queue (not per-CPU) with a pool of N worker threads
-- [ ] Evaluate: Windows NT threaded DPCs run on the target CPU's thread -- Option A is the correct parity choice
-- [ ] Prerequisite: `task_set_affinity()` does not exist yet (-> XREF: `TODO-21-process-model-extensions.md §10`)
-- [ ] AP DPC watchdog coverage (from §14): drive `dpc_watchdog_tick` depth/budget bookkeeping for every online CPU (BSP cross-CPU sweep with the per-CPU budget made atomic vs the AP's own drain spend) once AP per-CPU DPC dispatch lands here.
-- [ ] Commit: `"kernel: per-CPU threaded DPC workers with affinity"`
+- [x] Option B (shipped): documented the threaded-DPC no-CPU-affinity contract in `dpc.h` (`KDEFERRED_ROUTINE` + the 3 threaded entry points) -- target selects the threaded list only; the callback runs on the worker's CPU, not the target.
+- [ ] Option A (deferred, blocked): one worker per online CPU with affinity (NT parity) -- needs `task_set_affinity()` (does not exist) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §10 (item: "CPU affinity per process" at line 60).
+- [x] Option C rejected: a global N-worker pool gives no per-CPU affinity, and IPI-dispatch is unsafe (a PASSIVE threaded callback may block/page). Real affinity needs Option A.
+- [x] Evaluate: NT runs threaded DPCs on the target CPU's thread -- Option A is the parity choice (deferred above).
+- [ ] AP DPC watchdog coverage (deferred, NOT blocked): AP DPCs drain via `KeLowerIrql` but the masked AP timer never refills `s_wd[ap]` budget; needs a BSP cross-CPU sweep + atomic budget -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14.
+- [x] Commit: `"kernel: document threaded DPC no-affinity contract (Option B); per-CPU affinity deferred"`
 
-**Test checkpoint:** Queue threaded DPC targeting CPU 1. Verify callback's `smp_this_cpu()->cpu_id == 1`. Verify BSP-targeted threaded DPC runs on CPU 0.
+**Test checkpoint:** No kernel test surface for Option B (documentation contract; the shipped change is `dpc.h` header comments only). The `smp_this_cpu()->cpu_id == target` affinity test belongs to the deferred Option A and is not runnable until per-CPU affinity workers exist. Contract check: grep `dpc.h` for the AFFINITY note on the four threaded-DPC entry points.
+
+> **Test runner:** N/A (Option B is a `dpc.h` documentation contract; the real affinity test belongs to deferred Option A) | validation: header-comment review + build OK
+> **Notes:**
+> - Shipped (`dpc.h`): the threaded-DPC no-CPU-affinity contract on `KDEFERRED_ROUTINE` + the 3 threaded entry points -- a threaded DPC's target selects only the threaded list; the all-CPU worker runs the callback on its own CPU, not the target.
+> - Why Option B now: real per-CPU affinity (Option A, NT parity) needs `task_set_affinity()` which does not exist; IPI-dispatch is unsafe for a PASSIVE callback. The honest interim documents the contract so drivers do not assume per-CPU state.
+> - Downstream: closes the threaded-DPC affinity footgun at the API surface. Codex design review (2 mediums) adoptions in the commit.
+> - Canonical doc: `include/kernel/sched/dpc.h` (`KDEFERRED_ROUTINE` AFFINITY note).
+> - Scope boundary: §17 owns only the documented contract; Option A (per-CPU affinity workers) is deferred (blocked on `task_set_affinity`); the AP-watchdog gap is owned by §14.
+> **Verified:** 2026-06-26 | commit `TBD-backfill` | 3/5 items | build OK | docs-only (dpc.h header comments)
+> **Deferred:** [M] threaded DPCs have no CPU affinity -- per-CPU affinity workers (NT parity) not built -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §10 (item: "CPU affinity per process" at line 60)
+> **Deferred:** [M] AP DPC watchdog coverage -- `dpc_watchdog_tick` services only the BSP while AP-targeted DPCs drain via `KeLowerIrql` (stale `s_wd[ap]` budget) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14 (item: "AP DPC watchdog coverage" at line 450)
+> **Quality reviewed:** 2026-06-26 | Codex 2x (design, adversarial) | 3M fixed (contract scope, AP-watchdog rationale, §8 stale text), 2M deferred | scope: kernel-code-quality (docs-only)
 
 ---
 
