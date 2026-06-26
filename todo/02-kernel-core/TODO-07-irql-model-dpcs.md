@@ -14,7 +14,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Goal:** Implement a Windows-style Interrupt Request Level (IRQL) model and a real Deferred Procedure Call (DPC) subsystem so interrupt handlers can defer non-trivial work safely. DPCs run at `DISPATCH_LEVEL`, enforce preemption constraints, and provide a deterministic bridge between hard-interrupt context and thread context.
 
 > [!IMPORTANT]
-> **Current state:** Core IRQL and DPC infrastructure (§1-§8) is complete and verified: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11-§14 APC delivery and diagnostics/fairness, and §15-§17 threaded-DPC correctness hardening from the Codex review findings.
+> **Current state:** Core IRQL and DPC infrastructure (§1-§8) is implemented and working: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. §1 is verified+stamped; §2 (redundant-TPR skip) and §3 (system-vector CLOCK/IPI levels) each carry one open review refinement and are `[/]`. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11-§14 APC delivery and diagnostics/fairness, and §15-§17 threaded-DPC correctness hardening from the Codex review findings.
 
 ## Inputs
 
@@ -53,8 +53,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | ⭐  | Order | Deliverable                                        | Depends On  | Status |
 | --- | :---: | -------------------------------------------------- | ----------- | :----: |
 | 💎  |   1   | `KIRQL` type, constants, and core contract         | --          |  [x]   |
-| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1          |  [x]   |
-| 💎  |   3   | Interrupt entry/exit IRQL integration              | §2          |  [x]   |
+| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1          |  [/]   |
+| 💎  |   3   | Interrupt entry/exit IRQL integration              | §2          |  [/]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [x]   |
@@ -87,6 +87,19 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 **Test checkpoint:** Build passes with `include/kernel/sched/irql.h` included by the scheduler, spinlock, and interrupt code. `PASSIVE_LEVEL == 0`, `APC_LEVEL == 1`, `DISPATCH_LEVEL == 2`, and `HIGH_LEVEL == 31` in compile-time assertions or unit tests. Serial boot reaches Phase 1 with no IRQL header regressions. Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 19 kernel + 16 user-mode PASS (TCG)
+> **Notes:**
+> - KIRQL contract header is sound (typedef uint8_t KIRQL; PASSIVE/APC/DISPATCH/DIRQL/CLOCK/IPI/POWER/HIGH levels; `vector_to_irql`; `KeGetCurrentIrql`/`KeRaiseIrql`/`KeLowerIrql`).
+> - Review added a `_Static_assert` block pinning the level values + strict-ascending order at compile time (closes the contract's compile-time-assertion requirement).
+> - Review fixed header-vs-impl contract drift: `irql.h` + `dpc.h` no longer promise DPC-drain-on-lower or strict-LIFO enforcement the impl does not provide; comments point to the real owners.
+> - Canonical contract: `include/kernel/sched/irql.h`.
+> **Verified:** 2026-06-26 | commit `3e79d8a5` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
+> **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 99)
+> **Deferred:** [H] `irql.h` KeLowerIrql promised DPC drain-on-lower the impl never did; true NT drain-on-lower still unbuilt -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC drain-on-lower" at line 272)
+> **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 113)
+> **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "per-CPU IRQL transition stack" at line 290)
+> **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 0 fixed in-scope, 2H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: header doc + compile-assert only, no functional change)
+
 ---
 
 ## 2. Per-CPU IRQL Tracking and Transition Primitives
@@ -96,6 +109,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Implement `KeRaiseIrql()` with monotonic raise validation and debug assertions for illegal transitions.
 - [x] Implement `KeLowerIrql()` with strict restore checks (`old_irql <= current_irql`) and instrumentation.
 - [x] Ensure spinlock paths that currently `cli/sti` are aligned to IRQL semantics (`DISPATCH_LEVEL` or higher where required).
+- [ ] Skip redundant LAPIC TPR MMIO writes: cache last-written TPR per-CPU; `irql_set_tpr` writes only when the byte changes (PASSIVE<->APC both 0x00). Cuts UC MMIO on the spinlock hot path; keep `HIGH_LEVEL` cli/sti independent (Codex §1 perf H)
 - [x] Commit: `"kernel: sched -- track current IRQL per CPU and enforce transitions"`
 
 **Test checkpoint:** `KeGetCurrentIrql()` returns `PASSIVE_LEVEL` in normal thread context. `KeRaiseIrql(DISPATCH_LEVEL, &old)` reports `old == PASSIVE_LEVEL`; `KeLowerIrql(old)` restores `PASSIVE_LEVEL`. Illegal lower-on-raise and invalid restore-on-lower trigger diagnostics or assertions instead of silently proceeding. Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -109,6 +123,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Ensure nested interrupts preserve highest-active IRQL correctly and unwind in strict LIFO order.
 - [x] Keep end-of-interrupt signaling (LAPIC/PIC) ordered correctly relative to IRQL lowering.
 - [x] Add debug-only assertions that ISR code paths do not attempt blocking operations at DIRQL.
+- [ ] Report system vectors at named IRQLs: LAPIC timer at `CLOCK_LEVEL`, IPI at `IPI_LEVEL` (today `vector_to_irql` reads timer DISPATCH, IPI HIGH). NT model: enter at CLOCK then lower to DISPATCH before §6 DPC drain (Codex §1 M)
 - [x] Commit: `"kernel: irq -- wire IRQL raises/lowers into interrupt path"`
 
 > **Note:** IRQL tracking in `isr_handler` is software-only -- no LAPIC TPR writes on interrupt entry/exit. The LAPIC hardware already masks lower-priority vectors via the ISR/PPR mechanism during interrupt delivery. Explicit TPR writes are reserved for `KeRaiseIrql`/`KeLowerIrql` when kernel code intentionally changes level. This avoids interference with emulated LAPIC on WHPX/VBox/TCG.
@@ -267,6 +282,7 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 - [ ] Wire `KiDeliverApc` into interrupt/exception return path: call when returning to `PASSIVE_LEVEL` or `APC_LEVEL` and `KernelApcPending` or `UserApcPending` is set. Add `POST16(0xDC00)` before first `KiDeliverApc` call in ISR return and `POST16(0xDC01)` after return
 - [ ] Wire into `KeWaitForSingleObject` / `KeWaitForMultipleObjects`: when `Alertable == TRUE` and wait completes or is interrupted, deliver user APCs before returning `STATUS_USER_APC`
 - [ ] Wire into `KeLowerIrql`: when lowering from >= `APC_LEVEL` to below `APC_LEVEL`, check for pending kernel APCs and deliver
+- [ ] DPC drain-on-lower (NT software-interrupt dispatch): when `KeLowerIrql` crosses from >= `DISPATCH_LEVEL` to below, drain pending DPCs via `KiDispatchDpc` with a reentrancy guard (today drain is §6 timer-ISR only)
 - [ ] Implement `KeTestAlertThread(AlertMode)` -- tests and delivers pending user APCs without entering a wait
 - [ ] Wire `NtQueueApcThreadEx`/`NtQueueApcThreadEx2`: route the `QUEUE_USER_APC_SPECIAL_USER_APC` flag to set `SpecialUserApcPending` (separate from plain `NtQueueApcThread` which queues a regular alertable user APC)
 - [ ] Thread exit path: call `RundownRoutine` for all remaining queued APCs to prevent resource leaks

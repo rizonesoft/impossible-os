@@ -78,6 +78,23 @@ typedef uint8_t KIRQL;
 #define POWER_LEVEL      ((KIRQL)30)  /* Power failure notification */
 #define HIGH_LEVEL       ((KIRQL)31)  /* Highest -- masks everything */
 
+/* Compile-time contract: these values are load-bearing -- vector_to_irql(),
+ * irql_to_tpr(), the per-CPU IRQL tracking, and every diagnostic depend on the
+ * exact numbers and their strictly-ascending order. Never reorder without
+ * understanding the TPR priority-group math (TPR class = irql - 1). */
+_Static_assert(PASSIVE_LEVEL == 0,  "PASSIVE_LEVEL must be 0");
+_Static_assert(APC_LEVEL == 1,      "APC_LEVEL must be 1");
+_Static_assert(DISPATCH_LEVEL == 2, "DISPATCH_LEVEL must be 2");
+_Static_assert(DIRQL_MIN == 3 && DIRQL_MAX == 14, "DIRQL range must be 3..14");
+_Static_assert(CLOCK_LEVEL == 28 && IPI_LEVEL == 29 && POWER_LEVEL == 30,
+               "system levels must be CLOCK=28, IPI=29, POWER=30");
+_Static_assert(HIGH_LEVEL == 31, "HIGH_LEVEL must be 31 and fit KIRQL (uint8_t)");
+_Static_assert(PASSIVE_LEVEL < APC_LEVEL && APC_LEVEL < DISPATCH_LEVEL &&
+               DISPATCH_LEVEL < DIRQL_MIN && DIRQL_MAX < CLOCK_LEVEL &&
+               CLOCK_LEVEL < IPI_LEVEL && IPI_LEVEL < POWER_LEVEL &&
+               POWER_LEVEL < HIGH_LEVEL,
+               "IRQL levels must be strictly ascending");
+
 /* ---- Vector-to-IRQL mapping ---------------------------------------------- */
 
 /* Map a hardware interrupt vector to its effective device IRQL.
@@ -160,9 +177,15 @@ void KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql);
  *
  * Constraints:
  *   - old_irql must be <= current IRQL (symmetric lower)
- *   - Transitions must follow strict LIFO order
- *   - Violation triggers debug assertion and diagnostic log
+ *   - Violation triggers a diagnostic log and is clamped (no crash)
  *
- * If lowering below DISPATCH_LEVEL, pending DPCs are drained before
- * returning to the caller. */
+ * NOTE: strict LIFO raise/lower pairing is NOT yet enforced here -- only the
+ * monotonic old_irql <= current check runs. True LIFO ordering will be enforced
+ * by the planned per-CPU IRQL transition-stack validator (IRQL-violation
+ * telemetry work).
+ *
+ * NOTE: this function does NOT drain pending DPCs. DPC auto-drain happens at the
+ * LAPIC timer ISR dispatch point; explicit drain is via KiDispatchDpc(). True
+ * NT drain-on-lower (drain when crossing below DISPATCH_LEVEL) is planned as
+ * part of the APC delivery path, which also wires KeLowerIrql for APC delivery. */
 void KeLowerIrql(KIRQL old_irql);
