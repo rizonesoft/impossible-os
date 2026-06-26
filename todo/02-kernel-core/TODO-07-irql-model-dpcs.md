@@ -435,6 +435,9 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Downstream: `irql_telemetry_dump` feeds boot/runtime health. Codex design + adversarial + re-adversarial adoptions in the commit.
 > - Canonical doc: this section + `include/kernel/sched/irql.h`.
 > - Scope boundary: §13 owns the macros + counters + strict trap + forced-lower classification. The LIFO transition-stack validator + the IRQL-write-surface centralization it needs are deferred here; §14 owns DPC/APC budget + watchdog.
+> **Verified:** 2026-06-26 | commit `STAMPHASH13R` | 4/6 items | build OK | sched 166 PASS | smoke PASS
+> **Deferred:** [M] per-CPU LIFO IRQL transition-stack validator unbuilt (reason: needs a centralized IRQL write surface -- spinlock `irqsave` / `irql_lower_deliver` / forced lowers all bypass `KeRaise`/`KeLower`) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 424)
+> **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M+1L fixed | scope: kernel-code-quality
 
 ---
 

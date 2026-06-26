@@ -47,8 +47,12 @@ static void irql_record_violation(struct per_cpu_data *pcpu, uint64_t cur,
 {
     __atomic_fetch_add(&pcpu->irql_violations, 1u, __ATOMIC_RELAXED);
     if (s_irql_strict)
-        KeBugCheckEx(BUGCHECK_IRQL_NOT_LESS_OR_EQUAL, cur, limit,
-                     (uint64_t)pcpu->cpu_id, 0);
+        /* Param order matches the established BUGCHECK_IRQL_NOT_LESS_OR_EQUAL
+         * convention (ex_lookaside.c): p1 = faulting context (none for a pure
+         * IRQL contract check -> 0), p2 = current IRQL, p3 = required/limit IRQL,
+         * p4 = CPU id, so crash dumps decode consistently. */
+        KeBugCheckEx(BUGCHECK_IRQL_NOT_LESS_OR_EQUAL, 0, cur, limit,
+                     (uint64_t)pcpu->cpu_id);
 }
 
 /* ---- LAPIC TPR programming ----------------------------------------------- */
@@ -207,8 +211,13 @@ void irql_lower_deliver(KIRQL old_irql)
     if (!pcpu)
         return;
     cur = pcpu->current_irql;
-    if (old_irql > cur)             /* never accidentally raise */
+    if (old_irql > cur) {           /* never accidentally raise */
+        /* Count + (strict) trap a bad direct restore through this public helper
+         * (e.g. via KiDispatchDpc). KeLowerIrql already clamps + records before
+         * calling here, so its own violation path is not double-counted. */
+        irql_record_violation(pcpu, (uint64_t)cur, (uint64_t)old_irql);
         old_irql = cur;
+    }
 
     old_tpr = irql_to_tpr(old_irql);
     cur_tpr = irql_to_tpr(cur);
@@ -302,17 +311,25 @@ void KeLowerIrqlForced(KIRQL level, const char *reason)
 
 void irql_telemetry_dump(void)
 {
-    uint32_t i, ncpu = smp_cpu_count();
+    uint32_t i, online = 0;
     uint64_t total_viol = 0, total_forced = 0;
 
-    for (i = 0; i < ncpu && i < MAX_CPUS; i++) {
+    /* Iterate ALL slots and filter on is_online via an acquire-load -- do NOT
+     * treat smp_cpu_count() as a dense [0,n) bound: AP bringup can leave SPARSE
+     * logical slots (an abandoned AP below a live one), so a count-bounded loop
+     * could skip an online high-slot CPU and read an offline low slot, falsely
+     * reporting a clean health signal exactly on degraded SMP. is_online is the
+     * documented single source of truth (release/acquire paired in smp.c). The
+     * counters are read with relaxed atomics, pairing with the writers. */
+    for (i = 0; i < MAX_CPUS; i++) {
         struct per_cpu_data *c = smp_get_cpu(i);
-        if (!c)
+        if (!c || !__atomic_load_n(&c->is_online, __ATOMIC_ACQUIRE))
             continue;
-        total_viol   += c->irql_violations;
-        total_forced += c->irql_forced_lowers;
+        total_viol   += __atomic_load_n(&c->irql_violations, __ATOMIC_RELAXED);
+        total_forced += __atomic_load_n(&c->irql_forced_lowers, __ATOMIC_RELAXED);
+        online++;
     }
     klog(LOG_INFO, "irql",
-         "telemetry: %u IRQL contract violations, %u forced lowers across %u CPUs",
-         total_viol, total_forced, (uint64_t)ncpu);
+         "telemetry: %u IRQL contract violations, %u forced lowers across %u online CPUs",
+         total_viol, total_forced, (uint64_t)online);
 }
