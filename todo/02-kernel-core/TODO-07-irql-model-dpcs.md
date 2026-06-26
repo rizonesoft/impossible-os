@@ -236,7 +236,7 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 - [x] `KDPC_IMPORTANCE` enum added; `KDPC.importance` field (default: MediumImportance)
 - [x] `KeSetTargetProcessorDpcEx` (>64 CPU): moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5`
 - [x] Cross-CPU IPI for MediumHighImportance: moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5` (part of DpcEx)
-- [ ] Cacheline-align per-CPU DPC storage: `cpu_queues[]`/`queue_locks[]` in `dpc.c` pack several CPUs per cache line, false-sharing the ISR-hot insert/drain path; pad each per-CPU queue + lock to its own line + a layout assert (Codex §4 perf M)
+- [x] Cacheline-align per-CPU DPC storage: `struct dpc_queue` padded + `aligned(64)`, per-CPU spinlock wrapped in 64B `dpc_lock_slot` (`DPC_QLOCK` accessor); two `_Static_assert`s pin both to one cache line. `dpc.c`/`dpc.h`
 - [ ] `KeFlushQueuedDpcs` completion barrier (H): `head==NULL` polling returns while a remote callback is still in-flight (`drain_queue` dequeues before running it); track a per-CPU in-flight count + escalate the silent 100000-spin timeout (Codex §5)
 - [x] Commit: `"kernel: sched -- add DPC targeting, importance, and flush"`
 

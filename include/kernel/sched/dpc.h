@@ -121,7 +121,12 @@ struct dpc_queue {
     volatile uint32_t depth;        /* current queue depth */
     uint32_t        executed;       /* total DPCs executed (stats) */
     uint32_t        max_depth;      /* high-water mark (stats) */
-};
+    /* Pad to one cache line + align: the per-CPU cpu_queues[] array must not
+     * false-share a line between adjacent CPUs on the ISR-hot drain path. */
+    char            _pad[64 - (2 * sizeof(KDPC *) + 3 * sizeof(uint32_t))];
+} __attribute__((aligned(64)));
+_Static_assert(sizeof(struct dpc_queue) == 64,
+               "struct dpc_queue must occupy exactly one cache line");
 
 /* Phase 1: initialize per-CPU DPC queues before sti.
  * After this, ISRs can safely queue DPCs (drained later by timer ISR). */

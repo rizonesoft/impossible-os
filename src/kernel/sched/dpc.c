@@ -28,13 +28,28 @@ extern void  KeLowerIrql(KIRQL old_irql);
 
 /* ---- Per-CPU DPC queues -------------------------------------------------- */
 
-/* One queue per CPU, indexed by cpu_id.  Static allocation avoids any
- * heap dependency during early boot. */
+/* Cache-line size for per-CPU storage padding (avoid false sharing between
+ * CPUs on the ISR-hot DPC insert/drain path). */
+#define DPC_CACHELINE 64
+
+/* One queue per CPU, indexed by cpu_id.  Static allocation avoids any heap
+ * dependency during early boot.  struct dpc_queue is cache-line-sized and
+ * aligned (dpc.h) so adjacent CPUs' queues never share a line. */
 static struct dpc_queue cpu_queues[MAX_CPUS];
 
-/* Per-CPU spinlock protecting the DPC queue.  Separate from the queue
- * struct to keep the spinlock cache-line aligned. */
-static spinlock_t queue_locks[MAX_CPUS];
+/* Per-CPU spinlock protecting the DPC queue, each padded to its own cache line
+ * so two CPUs acquiring their own lock do not bounce a shared line on the hot
+ * path. The lock flag is the only field; the rest is padding. */
+struct dpc_lock_slot {
+    spinlock_t lock;
+    char       _pad[DPC_CACHELINE - sizeof(spinlock_t)];
+} __attribute__((aligned(DPC_CACHELINE)));
+static struct dpc_lock_slot queue_lock_slots[MAX_CPUS];
+_Static_assert(sizeof(struct dpc_lock_slot) == DPC_CACHELINE,
+               "DPC lock slot must occupy exactly one cache line");
+
+/* Accessor: pointer to CPU i's spinlock. */
+#define DPC_QLOCK(i) (&queue_lock_slots[(i)].lock)
 
 /* Per-CPU threaded DPC pending list (separate from DISPATCH_LEVEL queue) */
 static KDPC *threaded_head[MAX_CPUS];
@@ -56,7 +71,7 @@ void dpc_init_queues(void)
         cpu_queues[i].depth     = 0;
         cpu_queues[i].executed  = 0;
         cpu_queues[i].max_depth = 0;
-        queue_locks[i].flag     = 0;
+        queue_lock_slots[i].lock.flag = 0;
         threaded_head[i]        = (KDPC *)0;
         threaded_pending[i]     = 0;
     }
@@ -153,14 +168,14 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
                 __asm__ volatile("pause" ::: "memory");
                 continue;
             }
-            spin_lock_irqsave(&queue_locks[qc], &irq_flags);
+            spin_lock_irqsave(DPC_QLOCK(qc), &irq_flags);
             if (dpc->queued && dpc->queued_cpu == qc) {
                 dpc->system_arg1 = arg1;
                 dpc->system_arg2 = arg2;
-                spin_unlock_irqrestore(&queue_locks[qc], irq_flags);
+                spin_unlock_irqrestore(DPC_QLOCK(qc), irq_flags);
                 return 0;
             }
-            spin_unlock_irqrestore(&queue_locks[qc], irq_flags);
+            spin_unlock_irqrestore(DPC_QLOCK(qc), irq_flags);
             continue;   /* state changed under us -- re-evaluate from the top */
         }
 
@@ -175,7 +190,7 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
         q = &cpu_queues[cpu_id];
 
         /* Lock the target queue -- ISR-safe (saves RFLAGS + cli). */
-        spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
+        spin_lock_irqsave(DPC_QLOCK(cpu_id), &irq_flags);
 
         /* Recheck under the lock. If the DPC became queued concurrently:
          *  - on THIS CPU (the common ISR-vs-thread race): refresh args, return 0;
@@ -188,10 +203,10 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
             if (dpc->queued_cpu == cpu_id) {
                 dpc->system_arg1 = arg1;
                 dpc->system_arg2 = arg2;
-                spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+                spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
                 return 0;
             }
-            spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+            spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
             continue;
         }
 
@@ -225,7 +240,7 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
         if (q->depth == DPC_QUEUE_WARN_DEPTH)
             warn_depth = 1;
 
-        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+        spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
         /* Log the depth warning AFTER releasing the lock: klog does serial I/O
          * (busy-waits on UART under its own lock) which must never run while
@@ -264,11 +279,11 @@ int KeRemoveQueueDpc(KDPC *dpc)
 
     q = &cpu_queues[cpu_id];
 
-    spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
+    spin_lock_irqsave(DPC_QLOCK(cpu_id), &irq_flags);
 
     /* Recheck under lock: it may have drained or moved since the unlocked read. */
     if (!dpc->queued || dpc->queued_cpu != cpu_id) {
-        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+        spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
         return 0;
     }
 
@@ -298,7 +313,7 @@ int KeRemoveQueueDpc(KDPC *dpc)
         cur  = cur->next;
     }
 
-    spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+    spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
     return found;
 }
@@ -368,11 +383,11 @@ static uint32_t drain_queue(uint32_t cpu_id)
         uint8_t threaded;
         uint64_t irq_flags;
 
-        spin_lock_irqsave(&queue_locks[cpu_id], &irq_flags);
+        spin_lock_irqsave(DPC_QLOCK(cpu_id), &irq_flags);
 
         dpc = q->head;
         if (!dpc) {
-            spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+            spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
             break;
         }
 
@@ -392,7 +407,7 @@ static uint32_t drain_queue(uint32_t cpu_id)
         dpc->queued     = 0;
         q->executed++;                /* stats under the lock (was outside) */
 
-        spin_unlock_irqrestore(&queue_locks[cpu_id], irq_flags);
+        spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
         /* Threaded DPCs: move to the threaded list instead of executing inline.
          * NOTE: this hand-off writes dpc->next after the DPC is marked un-queued,
