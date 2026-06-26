@@ -8,6 +8,8 @@ title: "TODO-08 -- Time & FILETIME Management"
 
 # TODO-08 -- Time & FILETIME Management
 
+> **Validated:** 2026-06-26 | validate-todo-file clean (structure / IO table / XREF / test wiring)
+
 > **Goal:** Build the kernel time layer that all Win32 APIs, filesystems, logging, and the scheduler depend on. This means: a `FILETIME` type with correct epoch and 100 ns resolution; a monotonic nanosecond clock backed by invariant TSC or HPET; interrupt time and unbiased interrupt time APIs; a wall clock seeded from UEFI `GetTime()` (RTC fallback); precise sub-microsecond system time via TSC interpolation; `NtQuerySystemTime`/`NtSetSystemTime`; `QueryPerformanceCounter`; timer resolution management (`NtSetTimerResolution`); timezone/DST bias; filesystem timestamp encoders (FAT32 local-time / NTFS FILETIME); suspend/hibernate time bias tracking; and KUSER_SHARED_DATA time field updates. Without this, every `CreateFile` timestamp, every log entry, and every scheduler deadline is either zero or fabricated.
 
 > [!IMPORTANT]
@@ -93,6 +95,8 @@ title: "TODO-08 -- Time & FILETIME Management"
 
 > **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi), 7 FILETIME suites, 0 failures expected
 
+---
+
 ## 2. Monotonic Nanosecond Clock Source Selection
 Select the highest-resolution monotonic source available: invariant TSC → HPET → LAPIC counter.
 
@@ -102,6 +106,8 @@ Select the highest-resolution monotonic source available: invariant TSC → HPET
 - [x] Logs selected source: `"Monotonic clock: TSC (N MHz, invariant)"` or `"LAPIC (N ticks/ms)"`
 - [x] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
 - [ ] Clocksource quality watchdog (Linux parity): cross-check active source vs PIT/HPET/PM and demote on drift, replacing the `platform_is_tcg()` gate in `timer_hal_init()` (from `01-boot-platform/TODO-11` §10)
+
+---
 
 ## 3. Invariant TSC Detection and Per-CPU Offset Calibration
 On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a constant rate regardless of C-states or frequency scaling, and is synchronized by the firmware across all cores at reset. Verify this and apply correction offsets where needed.
@@ -114,6 +120,8 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 - [x] `rdtsc_ns()`: fast TSC read with per-CPU offset + overflow-safe scale conversion
 - [x] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
 
+---
+
 ## 4. HPET Standalone Driver
 The HPET provides a single 64-bit main counter that increments at a fixed frequency (typically 14–100 MHz). Used as the QPC fallback source when invariant TSC is absent.
 
@@ -123,6 +131,8 @@ The HPET provides a single 64-bit main counter that increments at a fixed freque
 - [x] Wired into `mono_clock_init()` as priority 2 (TSC > HPET > LAPIC) and `mono_ns()` switch
 - [x] No timer comparators -- main counter only (comparators for scheduler timer TODO)
 - [x] Commit: `"kernel: drivers -- HPET main counter driver"`
+
+---
 
 ## 5. Wall Clock Init from UEFI GetTime / RTC
 Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point paired with the monotonic counter reading at that instant.
@@ -136,6 +146,8 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 - [ ] CMOS-RTC absence gating: latch `rtc_available()` from `acpi_has_cmos_rtc()`; gate the RTC fallback + `klog_disk` + compositor clock + `rtc_get_*` so hardware-reduced platforms never touch CMOS 0x70/0x71 (consumer of `D01 T10 §4`)
 - [x] Commit: `"kernel: time -- wall clock init from UEFI GetTime with RTC fallback"`
 
+---
+
 ## 6. Kernel Time Service
 Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL: filesystems, logging, scheduler, and the native API layer.
 
@@ -146,6 +158,8 @@ Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL:
 - [x] `time_service_ready()` -- returns 1 after `wall_clock_init()`
 - [x] Commit: `"kernel: time -- kernel time service API"`
 
+---
+
 ## 7. Interrupt Time and Unbiased Interrupt Time APIs
 Windows exposes interrupt time (100 ns since boot, including sleep bias) and unbiased interrupt time (excluding sleep bias) as core kernel APIs. `GetTickCount64()`, scheduler deadlines, and driver timeouts all depend on these. Linux's `CLOCK_BOOTTIME` (includes suspend) vs `CLOCK_MONOTONIC` (excludes suspend) is the equivalent split.
 
@@ -154,6 +168,8 @@ Windows exposes interrupt time (100 ns since boot, including sleep bias) and unb
 - [x] `KeQueryUnbiasedInterruptTime()` -- returns `mono_filetime_units()` only (no bias)
 - [x] `s_interrupt_time_bias` tracked as volatile atomic; `ke_suspend_bias_update()` for §14 resume path
 - [x] Commit: `"kernel: time -- interrupt time and unbiased interrupt time APIs"`
+
+---
 
 ## 8. Timer Resolution Management
 Windows allows processes to request higher timer interrupt frequency (down to 0.5 ms) via `NtSetTimerResolution` / `timeBeginPeriod`. This affects scheduler quantum, `Sleep()` granularity, and multimedia timing. Win11 scopes this per-process; background/occluded processes don't get elevated resolution.
@@ -167,6 +183,8 @@ Windows allows processes to request higher timer interrupt frequency (down to 0.
 - [x] Timer ICR update: `lapic_timer_set_hz()` reprograms LAPIC ICR when resolution changes; called from `arbitrate()` in timer_resolution.c
 - [x] Commit: `"kernel: time -- timer resolution management (NtSetTimerResolution)"`
 
+---
+
 ## 9. `NtQuerySystemTime`, `NtSetSystemTime`, `NtQueryPerformanceCounter`
 Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 
@@ -176,12 +194,16 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 - [x] Registered via `wall_clock_register_ssdt()` in boot Phase 3
 - [x] Commit: `"kernel: nt -- NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter"`
 
+---
+
 ## 10. Precise System Time (`KeQuerySystemTimePrecise`)
 `GetSystemTimePreciseAsFileTime` (Win8+) returns sub-microsecond UTC wall time by interpolating between timer ticks using the TSC/HPET performance counter. Without this, `KeQuerySystemTime()` is only accurate to the timer tick period (1–15 ms). Databases, distributed systems, and logging all need sub-microsecond timestamps.
 
 - [x] `KeQuerySystemTimePrecise()`: implemented -- currently identical to `KeQuerySystemTime()` since both use `mono_ns()` TSC/HPET interpolation; will diverge when §12 adds coarse KUSER_SHARED_DATA path
 - [x] No separate SSDT entry -- `NtQuerySystemTime` (0x00F0) already returns precise time; Win8+ `GetSystemTimePreciseAsFileTime` uses the same syscall
 - [x] Commit: `"kernel: time -- KeQuerySystemTimePrecise sub-microsecond wall time"`
+
+---
 
 ## 11. Timezone Bias and DST Management
 `GetLocalTime()` and FAT32 timestamps require a local-time offset. Store the bias in the registry (or a kernel global until registry is ready).
@@ -191,6 +213,8 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 - [x] `timezone_set()` / `timezone_get()` / `timezone_total_bias()`
 - [x] `filetime_to_local(utc)` / `filetime_from_local(local)` -- apply total bias (bias + DST)
 - [x] Commit: `"kernel: time -- timezone bias and DST management"`
+
+---
 
 ## 12. KUSER_SHARED_DATA Time Field Updates
 The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, InterruptTime, TickCount) on every tick so user-mode code can read time without a syscall. This is the hottest path in the entire time subsystem -- `GetTickCount64()`, ntdll's `NtQuerySystemTime` fast path, and `QueryInterruptTime` all read from this shared page. Linux's vDSO serves the same purpose.
@@ -207,6 +231,8 @@ The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, Inter
 - [x] Also wired `mono_clock_init()`, `wall_clock_init()`, `timezone_init()` into Phase 2 boot (were previously defined but never called)
 - [x] Commit: `"kernel: time -- KUSER_SHARED_DATA time field updates from timer ISR"`
 
+---
+
 ## 13. Filesystem Timestamp Encoding (FAT32 + NTFS)
 Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed values.
 
@@ -219,6 +245,8 @@ Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed value
 - [x] `filetime_to_string(FILETIME ft, char *buf, uint32_t len)` -- ISO 8601 UTC format: `"2026-03-25T14:35:22.123Z"` with millisecond precision
 - [x] Commit: `"kernel: fs -- wire FILETIME timestamps into FAT32, NTFS, and klog"`
 
+---
+
 ## 14. Suspend/Hibernate Time Bias Tracking
 When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrupt stops firing and `InterruptTime` freezes. On resume, the kernel must compute how long the system was asleep (from the RTC delta or UEFI time) and add that duration to `InterruptTimeBias` so that `KeQueryInterruptTime()` (which includes bias) continues to advance smoothly. `KeQueryUnbiasedInterruptTime()` deliberately excludes the bias, so it reflects actual CPU-awake time only.
 
@@ -228,6 +256,8 @@ When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrup
 - [ ] Log the bias adjustment and total sleep duration on resume
 - [ ] Commit: `"kernel: time -- suspend/hibernate time bias tracking"`
 
+---
+
 ## 15. Leap Second Policy
 FILETIME does not count leap seconds -- this matches Windows behavior exactly. The 100 ns count since 1601-01-01 assumes every day has exactly 86400 seconds. `FileTimeToSystemTime` returns seconds 0–59 only; the 60th second during a leap event is never represented. This must be explicitly documented and enforced so that FILETIME arithmetic and round-trip conversions remain correct.
 
@@ -236,6 +266,8 @@ FILETIME does not count leap seconds -- this matches Windows behavior exactly. T
 - [ ] Ensure `filetime_to_string()` never outputs `:60` seconds
 - [ ] Add a unit test: `filetime_from_unix_seconds(1483228799)` (2016-12-31T23:59:59Z, a leap second boundary) produces the correct value and `filetime_to_string` shows `23:59:59`, not `23:59:60`
 - [ ] Commit: `"kernel: time -- document and enforce leap second policy"`
+
+---
 
 ## 16. Coarse Time Fast Path
 Hot paths like klog timestamping, scheduler accounting, and network packet timestamping call `KeQuerySystemTime()` thousands of times per second. A "coarse" variant avoids the seqlock read and TSC access by returning the last ISR-cached value. Linux provides `ktime_get_coarse()` for the same reason -- 10x faster than the precise variant, accurate to the timer tick period.
@@ -248,6 +280,8 @@ Hot paths like klog timestamping, scheduler accounting, and network packet times
 - [ ] Update `klog()` to use `KeQuerySystemTimeCoarse()` for timestamps once the time service is ready
 - [ ] Migrate raw `system_get_ticks()` timestamp/window consumers to a rebased time source (`uptime_ns()` or the coarse API): `etw.c` event timestamps, `klog.c` boot/ratelimit stamps, `registry.c` header stamps, `wer.c` crash path, `virtio/blk_init.c`+`blk_telemetry.c` adaptive windows -- raw lifetime ticks are reinterpreted when `KeSetTimerResolution` changes the tick rate (filed from `01-boot-platform/TODO-11` §6 review; `uptime()` itself already migrated)
 - [ ] Commit: `"kernel: time -- coarse time fast path for hot-path callers"`
+
+---
 
 ## 17. NTP Clock Adjustment Hooks
 The NTP protocol client (network stack TODO) needs a kernel interface to correct both the wall clock phase (offset) and frequency (skew). Provide the hooks now so the network stack can call them later.
