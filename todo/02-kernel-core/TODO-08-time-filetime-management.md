@@ -61,7 +61,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | ⭐  | Order | Deliverable                                                            | Depends On          | Status |
 | --- | :---: | ---------------------------------------------------------------------- | ------------------- | :----: |
 | 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                  | --                  |  [x]   |
-| 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [/]   |
+| 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [/]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
 | 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [/]   |
@@ -100,16 +100,27 @@ title: "TODO-08 -- Time & FILETIME Management"
 ---
 
 ## 2. Monotonic Nanosecond Clock Source Selection
-Select the highest-resolution monotonic source available: invariant TSC → HPET → LAPIC counter.
+Select the best monotonic source available: invariant TSC → HPET → ACPI PMTMR → LAPIC counter.
 
 - [x] Created `include/kernel/time/mono_clock.h` + `src/kernel/time/mono_clock.c`: `mono_ns()`, `mono_filetime_units()`, `mono_clock_source_name()`, `mono_clock_source_id()`
 - [x] Selection: invariant TSC (CPU_FEATURE_TSC_INV + boot_timing_tsc_freq) -> LAPIC fallback (system_get_ticks). HPET stub ready for §4.
 - [x] Scale factor: num/den pair for integer multiply without hot-path division; overflow-safe split for TSC
 - [x] Logs selected source: `"Monotonic clock: TSC (N MHz, invariant)"` or `"LAPIC (N ticks/ms)"`
 - [x] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
-- [ ] ACPI PM timer (PMTMR) clocksource before LAPIC (gap-audit): add `MONO_SRC_PMTMR` priority-3 (3.579545 MHz) since LAPIC is a per-CPU interrupt counter, not a standalone platform counter (clocksource watchdog split to §18).
-- [ ] Wrap-safe 64-bit PMTMR epoch (design review [H]): the 24-bit PMTMR wraps ~every 4.7 s; keep a seqlock-protected epoch (mirror the LAPIC tick-epoch in `mono_clock.c`) refreshed faster than half the wrap; `mono_ns()` stays a lock-free reader.
-- [ ] Centralize the triple-read glitch workaround (design review [M]): move the 3-read/2-agree ACPI PM quirk into `acpi_pmtimer_read_value()` and refactor the `lapic.c` local PMTMR read loop to use it.
+- [x] ACPI PM timer (PMTMR) clocksource before LAPIC (gap-audit): `MONO_SRC_PMTMR` priority-3 (3.579545 MHz) in `mono_clock_init`; LAPIC is a per-CPU interrupt counter, not a standalone counter (watchdog split to §18).
+- [x] Wrap-safe 64-bit PMTMR epoch (design review [H]): seqlock `s_pmtmr_epoch_ns`/`last_raw` advanced from the BSP timer ISR every 8 ticks (far under the ~4.7 s 24-bit wrap); `mono_ns()` is a lock-free seqlock reader via `mono_pmtmr_delta_ns()`.
+- [x] Monotonicity guards (adversarial [H]x2 + [M]): `mono_ns()` clamps through a global atomic floor (`pmtmr_mono_floor`) so a glitch/missed-wrap never steps backward; `mono_clock_init` seeds the epoch + RELEASE-publishes `s_source` last.
+- [x] Centralize glitch + cheap hot path: median-of-3 `acpi_pmtimer_read_value()` (precise `mono_ns`/csprng/advance); the `read_ns`/`uptime_ns` path uses cached `mono_ns_coarse()` (no port I/O); `lapic.c` cal-loop refactor rejected.
+
+**Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): `mono_pmtmr_delta_ns` converts 3 579 545 counts to 1 s, extends across the 24-bit wrap (1 tick ~279 ns) and half-range ~2.34 s; `mono_lapic_ticks_to_ns` scaling. Runtime (WHPX / bare metal serial): on a no-TSC/no-HPET platform the boot log shows `"Monotonic clock: PMTMR (3.579545 MHz, 24-bit)"`, `mono_ns()` advances monotonically, and `sys_yield` stays under budget. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 3 time suites + sched, 0 failures (208 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: `MONO_SRC_PMTMR` in `mono_clock.{c,h}` (TSC>HPET>PMTMR>LAPIC), a seqlock 64-bit PMTMR epoch (`mono_pmtmr_delta_ns` wrap-extend) advanced from the BSP timer ISR, plus `acpi_pmtimer_read_raw()` + median-of-3 `acpi_pmtimer_read_value()`.
+> - How it runs: `mono_clock_init` picks PMTMR when no invariant TSC + no HPET; the LAPIC/PIT timer ISR calls `mono_clock_pmtmr_advance()` (no-op unless PMTMR active); `mono_ns()` reads epoch + a single live sample lock-free.
+> - Downstream: the `read_ns`/`uptime_ns` hot path uses cached `mono_ns_coarse()` (`sys_yield` 25k cycles); precise `mono_ns()` is median + monotonic-floor. Codex design (4) + adversarial (3 monotonicity) adoptions in the commit.
+> - Canonical: `src/kernel/time/mono_clock.c`.
+> - Scope boundary: §2 owns source selection + the PMTMR clocksource; the drift watchdog is §18; ordered-`rdtsc` / AP-TSC-sync is §3.
 
 ---
 

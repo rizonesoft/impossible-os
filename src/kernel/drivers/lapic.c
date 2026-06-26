@@ -1168,7 +1168,7 @@ timer_driver_t lapic_driver = {
     .get_ticks   = lapic_get_ticks,
     .sleep_ms    = lapic_sleep_ms,
     .get_freq    = lapic_get_freq,
-    .read_ns     = mono_ns,
+    .read_ns     = mono_ns_coarse,
     .arm_oneshot = lapic_timer_arm_oneshot,
 };
 
@@ -1177,6 +1177,14 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
     lapic_tick_count++;
     timer_tick_callback_fire();
     lapic_eoi();
+
+    /* Advance the PMTMR 64-bit epoch before any time reader runs (no-op
+     * unless PMTMR is the active monotonic source). Keeps the wrap-extend
+     * fresh far faster than the 24-bit ~4.69 s wrap. */
+    {
+        extern void mono_clock_pmtmr_advance(void);
+        mono_clock_pmtmr_advance();
+    }
 
     /* Update KUSER_SHARED_DATA time fields for user-mode readers */
     {

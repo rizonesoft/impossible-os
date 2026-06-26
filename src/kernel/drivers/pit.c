@@ -90,12 +90,15 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
     extern void kusd_update_time(void);
     extern void nt_timer_tick(void);
     extern uint32_t ktimer_expire_current_cpu(void);
+    extern void mono_clock_pmtmr_advance(void);
     /* Same post-tick order as lapic_timer_handler(): tick + callback,
-     * EOI, KUSD time for user readers, NT timer scan (sees fresh KUSD),
+     * EOI, PMTMR epoch advance (no-op unless PMTMR is the active source),
+     * KUSD time for user readers, NT timer scan (sees fresh KUSD),
      * kernel_timer_t expiry (queues due DPCs), DPC drain, then schedule.
      * Keep the two paths in lockstep. */
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
+    mono_clock_pmtmr_advance();
     kusd_update_time();
     nt_timer_tick();
     ktimer_expire_current_cpu();
@@ -193,6 +196,6 @@ timer_driver_t pit_driver = {
     /* Single clocksource contract: delegate to mono_clock instead of
      * growing a second ns path; pre-init mono_ns() returns 0 and
      * uptime_ns() falls back to the tick counter. No one-shot on PIT. */
-    .read_ns   = mono_ns,
+    .read_ns   = mono_ns_coarse,
 };
 

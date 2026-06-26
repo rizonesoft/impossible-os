@@ -1173,15 +1173,42 @@ int acpi_pmtimer_is_32bit(void)
     return (fadt_ptr->flags & (1u << 8)) ? 1 : 0;
 }
 
+static inline uint32_t pmtimer_inl(uint16_t port)
+{
+    uint32_t v;
+    __asm__ volatile("inl %1, %0" : "=a"(v) : "Nd"(port));
+    return v;
+}
+
+/* Median of three (the middle value). With two close real samples and one
+ * glitched outlier, returns a real sample. */
+static inline uint32_t pmtimer_median3(uint32_t a, uint32_t b, uint32_t c)
+{
+    uint32_t lo = a < b ? a : b;
+    uint32_t hi = a < b ? b : a;
+    if (c < lo) return lo;
+    if (c > hi) return hi;
+    return c;
+}
+
+/* Centralized, glitch-filtered PM timer read (all consumers route here:
+ * mono_clock PMTMR source, LAPIC calibration, csprng entropy). Some broken
+ * chipsets latch a wrong value on a single read of the ACPI PM timer; read
+ * three times back-to-back (~us total, far under the 24-bit wrap of ~4.7 s,
+ * so the true sequence is monotonic) and take the median to reject a lone
+ * outlier. */
 uint32_t acpi_pmtimer_read_value(void)
 {
     uint16_t port = acpi_get_pmtimer_port();
-    uint32_t v;
+    uint32_t mask, a, b, c;
 
     if (port == 0)
         return 0;
-    __asm__ volatile("inl %1, %0" : "=a"(v) : "Nd"(port));
-    return acpi_pmtimer_is_32bit() ? v : (v & 0x00FFFFFFu);
+    mask = acpi_pmtimer_is_32bit() ? 0xFFFFFFFFu : 0x00FFFFFFu;
+    a = pmtimer_inl(port) & mask;
+    b = pmtimer_inl(port) & mask;
+    c = pmtimer_inl(port) & mask;
+    return pmtimer_median3(a, b, c);
 }
 
 int acpi_hw_reduced(void)

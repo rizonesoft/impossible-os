@@ -10,6 +10,7 @@
 #include "kernel/boot_timing.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/hpet.h"
+#include "kernel/acpi.h"
 #include "kernel/smp.h"
 #include "kernel/klog.h"
 #include "kernel/sched/seqlock.h"
@@ -20,6 +21,33 @@ static uint32_t s_source = MONO_SRC_NONE;
 static uint64_t s_freq_hz;            /* source frequency in Hz */
 static uint64_t s_ns_per_tick_num;    /* numerator for ticks -> ns */
 static uint64_t s_ns_per_tick_den;    /* denominator */
+
+/* PMTMR 64-bit epoch (wrap extension); see mono_clock_pmtmr_advance() below.
+ * Snapshot {epoch_ns, last_raw} is seqlock-protected (writer = timer-ISR
+ * advance; readers lock-free). mask/source are set once at init before any
+ * reader runs. */
+static seqlock_t s_pmtmr_lock = SEQLOCK_INIT;
+static uint64_t  s_pmtmr_epoch_ns;   /* banked ns up to s_pmtmr_last_raw */
+static uint32_t  s_pmtmr_last_raw;   /* last banked raw PMTMR sample (masked) */
+static uint32_t  s_pmtmr_mask;       /* 0xFFFFFFFF (32-bit) or 24-bit mask */
+/* Global monotonic floor for the precise PMTMR reader: mono_ns() never returns
+ * below any prior return. Guards both a chipset read glitch (a low outlier
+ * masks as a near-full-wrap forward jump, then the next read steps back) and a
+ * missed wrap across a long tick quiesce. Forward runaway is prevented by the
+ * glitch-filtered (median-of-3) read feeding mono_ns. */
+static uint64_t  s_pmtmr_floor;
+
+static uint64_t pmtmr_mono_floor(uint64_t cand)
+{
+    uint64_t cur = __atomic_load_n(&s_pmtmr_floor, __ATOMIC_ACQUIRE);
+    while (cand > cur) {
+        if (__atomic_compare_exchange_n(&s_pmtmr_floor, &cur, cand, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return cand;
+        /* CAS failure reloaded cur; loop re-checks cand > cur */
+    }
+    return cur;   /* cand <= floor: clamp up so time never moves backward */
+}
 
 /* ---- TSC read ------------------------------------------------------------ */
 
@@ -75,7 +103,34 @@ void mono_clock_init(void)
         }
     }
 
-    /* Try 3: LAPIC timer ticks */
+    /* Try 3: ACPI PM timer (PMTMR) -- a standalone always-running platform
+     * counter (3.579545 MHz). Preferred over the LAPIC fallback below, which
+     * is a per-CPU interrupt counter, not a real clocksource. */
+    if (acpi_get_pmtimer_port() != 0) {
+        /* Publication order: fully initialize the epoch snapshot BEFORE making
+         * MONO_SRC_PMTMR visible. Interrupts are already enabled (Phase 1) when
+         * this runs in Phase 2, so a concurrent ISR/AP reader entering the
+         * PMTMR case must not observe a BSS-zero epoch. Seed under the seqlock,
+         * then a release fence, then publish s_source last. */
+        uint32_t mask = acpi_pmtimer_is_32bit() ? 0xFFFFFFFFu : PMTMR_24BIT_MASK;
+        s_freq_hz        = PMTMR_FREQ_HZ;
+        s_ns_per_tick_num = 1000000000ULL;
+        s_ns_per_tick_den = PMTMR_FREQ_HZ;
+        seqlock_write_lock(&s_pmtmr_lock);
+        s_pmtmr_mask     = mask;
+        s_pmtmr_epoch_ns = 0;
+        s_pmtmr_last_raw = acpi_pmtimer_read_value() & mask;
+        seqlock_write_unlock(&s_pmtmr_lock);
+        __atomic_store_n(&s_pmtmr_floor, 0, __ATOMIC_RELAXED);
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        __atomic_store_n(&s_source, MONO_SRC_PMTMR, __ATOMIC_RELEASE);
+        klog(LOG_INFO, "time",
+             "Monotonic clock: PMTMR (3.579545 MHz, %s)",
+             mask == 0xFFFFFFFFu ? "32-bit" : "24-bit");
+        return;
+    }
+
+    /* Try 4: LAPIC timer ticks */
     {
         uint32_t ticks_per_ms = lapic_timer_ticks_per_ms();
         if (ticks_per_ms > 0) {
@@ -215,6 +270,47 @@ void mono_clock_tick_rebase(uint32_t new_freq_hz)
     seqlock_write_unlock(&s_tick_epoch_lock);
 }
 
+/* ---- PMTMR 64-bit epoch (wrap extension) --------------------------------
+ * The ACPI PM timer is a 24/32-bit free-running counter; the 24-bit form
+ * wraps every ~4.69 s. mono_clock_pmtmr_advance() (called from the timer ISR
+ * far faster than half the wrap) banks elapsed ns into a 64-bit epoch so a
+ * lock-free reader only ever extends a short masked delta since the last
+ * advance. Snapshot {epoch_ns, last_raw} (declared in the State section) is
+ * seqlock-protected so a reader never pairs a stale epoch with a fresh raw
+ * sample. */
+uint64_t mono_pmtmr_delta_ns(uint32_t last_raw, uint32_t now_raw, uint32_t mask)
+{
+    /* Masked subtraction extends across at most one wrap. delta < 2^32, so
+     * delta * 1e9 < 4.3e18 fits in u64 (max ~1.8e19) -- no split needed. */
+    uint32_t delta = (now_raw - last_raw) & mask;
+    return (uint64_t)delta * 1000000000ULL / PMTMR_FREQ_HZ;
+}
+
+/* Advance every Nth tick, not every tick: the epoch only has to be refreshed
+ * faster than half the 24-bit wrap (~2.34 s). Even at the 64 Hz default tick
+ * (15.625 ms) this is 125 ms per refresh -- an ~18x margin -- while doing ZERO
+ * PM timer port I/O on the other 7 ticks (port reads are slow ACPI-register
+ * I/O; keeping them off every tick avoids loading the timer ISR). Called only
+ * from the BSP timer ISR, so the plain counter is single-threaded. */
+#define PMTMR_ADVANCE_TICKS 8
+
+void mono_clock_pmtmr_advance(void)
+{
+    static uint32_t s_skip;
+    uint32_t now;
+
+    if (s_source != MONO_SRC_PMTMR)
+        return;
+    if (++s_skip < PMTMR_ADVANCE_TICKS)
+        return;
+    s_skip = 0;
+    now = acpi_pmtimer_read_value() & s_pmtmr_mask;
+    seqlock_write_lock(&s_pmtmr_lock);
+    s_pmtmr_epoch_ns += mono_pmtmr_delta_ns(s_pmtmr_last_raw, now, s_pmtmr_mask);
+    s_pmtmr_last_raw  = now;
+    seqlock_write_unlock(&s_pmtmr_lock);
+}
+
 uint64_t mono_ns(void)
 {
     uint64_t ticks;
@@ -241,6 +337,27 @@ uint64_t mono_ns(void)
 
     case MONO_SRC_HPET:
         return hpet_ns();
+
+    case MONO_SRC_PMTMR:
+        /* Precise PMTMR read: banked epoch ns + the masked delta since the last
+         * ISR advance, glitch-filtered (median-of-3) so a single bad sample
+         * cannot fabricate a forward jump, then clamped to the monotonic floor
+         * so a residual glitch or a missed wrap can never step backward. The
+         * raw counter is sampled INSIDE the read attempt so an advance between
+         * the snapshot and the sample forces a retry. Hot/coarse callers use
+         * the cheaper mono_ns_coarse() (no port I/O) instead. */
+        {
+            uint64_t seq, base_ns, cand;
+            uint32_t base_raw, now;
+            do {
+                seq      = seqlock_read_begin(&s_pmtmr_lock);
+                base_ns  = s_pmtmr_epoch_ns;
+                base_raw = s_pmtmr_last_raw;
+                now      = acpi_pmtimer_read_value() & s_pmtmr_mask;
+            } while (seqlock_read_retry(&s_pmtmr_lock, seq));
+            cand = base_ns + mono_pmtmr_delta_ns(base_raw, now, s_pmtmr_mask);
+            return pmtmr_mono_floor(cand);
+        }
 
     case MONO_SRC_LAPIC:
         /* LAPIC tick count is not directly readable as a monotonic counter.
@@ -272,6 +389,28 @@ uint64_t mono_ns(void)
     }
 }
 
+uint64_t mono_ns_coarse(void)
+{
+    /* Cheap monotonic read for the scheduler / uptime hot path. For PMTMR the
+     * precise mono_ns() costs 3 port reads (a glitch-filtered median); return
+     * the cached epoch ns instead -- accurate to the ISR advance interval,
+     * monotonic (the epoch only banks positive masked deltas), and free of port
+     * I/O. Other sources are already cheap, so fall through to mono_ns(). */
+    if (s_source == MONO_SRC_PMTMR) {
+        uint64_t seq, ns;
+        do {
+            seq = seqlock_read_begin(&s_pmtmr_lock);
+            ns  = s_pmtmr_epoch_ns;
+        } while (seqlock_read_retry(&s_pmtmr_lock, seq));
+        /* Share the SAME monotonic floor as precise mono_ns(): a precise read
+         * may have raised the floor past the cached epoch, so clamping here
+         * keeps coarse non-decreasing relative to a prior precise read when the
+         * two APIs are mixed (uptime_ns / wall_clock do mix them). */
+        return pmtmr_mono_floor(ns);
+    }
+    return mono_ns();
+}
+
 uint64_t mono_filetime_units(void)
 {
     /* FILETIME units = 100 ns intervals = mono_ns() / 100 */
@@ -285,6 +424,7 @@ const char *mono_clock_source_name(void)
     switch (s_source) {
     case MONO_SRC_TSC:   return "TSC";
     case MONO_SRC_HPET:  return "HPET";
+    case MONO_SRC_PMTMR: return "PMTMR";
     case MONO_SRC_LAPIC: return "LAPIC";
     default:             return "none";
     }

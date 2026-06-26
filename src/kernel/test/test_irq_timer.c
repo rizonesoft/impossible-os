@@ -252,12 +252,13 @@ static void test_hpet_consistency(void)
 
 static void test_uts_clocksource_contract(void)
 {
-    /* Single clocksource contract: both backends delegate read_ns to
-     * mono_ns (pointer equality is pure and platform-independent) */
-    TEST_ASSERT(pit_driver.read_ns == mono_ns,
-                "pit_driver.read_ns delegates to mono_ns");
-    TEST_ASSERT(lapic_driver.read_ns == mono_ns,
-                "lapic_driver.read_ns delegates to mono_ns");
+    /* Single clocksource contract: both backends delegate read_ns to the
+     * cheap coarse reader mono_ns_coarse (avoids the precise PMTMR port-read on
+     * the scheduler/uptime hot path; pointer equality is pure + portable) */
+    TEST_ASSERT(pit_driver.read_ns == mono_ns_coarse,
+                "pit_driver.read_ns delegates to mono_ns_coarse");
+    TEST_ASSERT(lapic_driver.read_ns == mono_ns_coarse,
+                "lapic_driver.read_ns delegates to mono_ns_coarse");
     /* When a mono source is live, uptime_ns() must be coherent with
      * mono_ns() (same clock, sampled close together) */
     if (mono_clock_source_id() != MONO_SRC_NONE) {
