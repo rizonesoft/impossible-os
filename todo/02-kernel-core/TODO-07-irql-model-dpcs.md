@@ -121,7 +121,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Skip is compute-based (compares mapped TPR values), relying on the invariant that the only TPR writers are this path plus two `lapic.c` init writes (both TPR=0=PASSIVE) -- no per-CPU cache or desync risk.
 > - Tests: `test_sched.c` pins `irql_to_tpr` band mapping, the skip precondition (PASSIVE==APC, CLOCK==IPI==HIGH), and `vector_to_irql` boundaries.
 > - Canonical: `src/kernel/sched/irql.c`; contract header `include/kernel/sched/irql.h` (§1).
-> **Verified:** 2026-06-26 | commit `STAMPHASH2` | 6/6 items | build OK | tests 37 kernel + 16 user PASS
+> **Verified:** 2026-06-26 | commit `3c3c4902` | 6/6 items | build OK | tests 37 kernel + 16 user PASS
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M+1L fixed | scope: kernel-code-quality
 
 ---
