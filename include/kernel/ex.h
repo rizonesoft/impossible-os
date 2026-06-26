@@ -376,6 +376,131 @@ void  ExDeleteLookasideListEx(LOOKASIDE_LIST_EX *l);
 void     ExpSetLookasideVerifier(bool on);
 uint64_t ExpLookasideUafCount(void);
 
+/* ============================================================================
+ * S6 -- Fast References (EX_FAST_REF)
+ *
+ * A pointer-sized atomic that caches a small batch of Object Manager references
+ * inline so a hot lookup path can hand out a reference WITHOUT touching the
+ * object's contended refcount on every access. Matches the Windows EX_FAST_REF
+ * surface (ExfAcquireFastReference / ExfReleaseFastReference) but adapted to
+ * this kernel's allocator alignment (see ALIGNMENT below).
+ *
+ * LAYOUT: the single Value word packs `(object & ~EX_FAST_REF_MASK) | count`,
+ * where `count` is the number of cached references currently available to hand
+ * out (0..EX_FAST_REF_MAX). The fast-ref structure logically owns `count`
+ * references on the object PLUS one structural reference for storing the
+ * pointer -- (count + 1) total, all held by the caller before init.
+ *
+ * ALIGNMENT (why 3 bits / max 7, not Windows' x64 4 bits / max 15): this
+ * kernel's kmalloc guarantees only 8-byte alignment (page-aligned heap base +
+ * 24-byte block header => 8-mod-16 payloads), and Object Manager bodies inherit
+ * that floor (OBJECT_HEADER is 16-aligned, so body alignment == block
+ * alignment == 8-byte worst case). Only the low 3 bits are reliably zero, so
+ * the cached count is 3 bits (0..7) -- the x86 (32-bit) Windows model, not the
+ * x64 4-bit model. Requiring 16-byte alignment would bugcheck on real objects.
+ * Init/swap runtime-assert (object & EX_FAST_REF_MASK) == 0.
+ *
+ * CONTRACT (caller owns the Ob ref/deref; this layer owns only the packing):
+ *   - ExAcquireFastReference returns {object, cached}. cached==true: a cached
+ *     reference was handed out lock-free (fast path), caller owns it and must
+ *     ObDereferenceObject when done. This fast path needs NO lock: the CAS
+ *     re-checks the object bits, so a concurrent swap just forces a retry. The
+ *     cached count handed out is a real reference the fast ref owned, and
+ *     reference accounting stays balanced against a concurrent swap (the swap
+ *     surfaces the exact count it swapped out). cached==false && object!=NULL:
+ *     the cache was empty -- SLOW PATH (see the LOCK RULE below). object==NULL:
+ *     the fast ref is empty.
+ *   - ExReleaseFastReference returns true if the reference was absorbed back
+ *     into the cache (caller must NOT deref). It returns false in two distinct
+ *     cases: (a) for a valid NON-NULL `object` the cache is saturated
+ *     (count==MAX) or holds a different object -- the caller MUST then
+ *     ObDereferenceObject the reference it holds (this is the intended
+ *     steady-state fallback, not an error); (b) `object` is NULL -- invalid
+ *     input, NO reference was consumed and the caller must NOT dereference
+ *     anything (a caller only ever releases an object it acquired, which is
+ *     non-NULL; the NULL guard exists only to reject a degraded/error path).
+ *     A correct caller therefore derefs on false only when it passed a non-NULL
+ *     object: `if (obj && !ExReleaseFastReference(ref, obj)) ObDeref(obj);`.
+ *
+ * LOCK RULE (load-bearing -- the slow path is NOT lock-free):
+ *   The cnt==0 slow path, ExCompareSwapFastReference, and object teardown MUST
+ *   all be serialized by ONE per-object lock the consuming subsystem owns (the
+ *   token lock, the handle-table lock, etc. -- the same way Windows wraps
+ *   EX_FAST_REF slow paths). The fast path above is the only lock-free op.
+ *   Rationale: the structural reference keeps the object alive ONLY while the
+ *   pointer is stored, and ExCompareSwapFastReference is exactly what un-stores
+ *   it (then the swap's caller balances the old references and may free the
+ *   object). If a lock-free swap could race the slow path, the slow-path caller
+ *   would hold a raw pointer to freed memory before its ObReferenceObjectSafe.
+ *   Therefore the slow path MUST, under the lock: (1) re-read the stored object
+ *   with ExGetObjectFastReference, (2) confirm it still equals the object it
+ *   intends to reference, (3) only then ObReferenceObjectSafe(object) and
+ *   optionally replenish the cache. Holding the lock excludes swap/teardown, so
+ *   the structural reference provably still pins the object across the safe-ref.
+ *
+ * NO global state, NO init hook, NO hidden allocation: every op is a single-word
+ * CAS over a caller-owned word. Replenish + Ob ref/deref are caller-owned
+ * (matches Windows, which splits ExfAcquireFastReference from ObfReferenceObject
+ * so only the consuming subsystem -- which owns the relevant lock -- replenishes).
+ *
+ * IRQL: all ops are DISPATCH-safe (lock-free, no block, no allocation). The
+ * caller's slow-path Ob ref/deref carry their own IRQL rules.
+ * =========================================================================== */
+
+#define EX_FAST_REF_BITS  3u                              /* 8-byte align => 3 free low bits */
+#define EX_FAST_REF_MASK  ((uintptr_t)((1u << EX_FAST_REF_BITS) - 1u))  /* 0x7 */
+#define EX_FAST_REF_MAX   ((uintptr_t)EX_FAST_REF_MASK)   /* max cached count = 7 */
+
+typedef struct _EX_FAST_REF {
+    volatile uintptr_t Value;   /* (object & ~EX_FAST_REF_MASK) | cached_count */
+} EX_FAST_REF;
+
+_Static_assert(sizeof(EX_FAST_REF) == sizeof(void *),
+               "EX_FAST_REF must be pointer-sized to fit inline in objects");
+_Static_assert(EX_FAST_REF_MASK == 0x7u,
+               "EX_FAST_REF count field is 3 bits (8-byte object alignment)");
+
+/* Result of a fast acquire: object pointer plus whether a cached reference was
+ * handed out (fast path) or the caller must take the slow Ob-reference path. */
+typedef struct _EX_FAST_REF_RESULT {
+    void *object;   /* stored object, or NULL if the fast ref was empty */
+    bool  cached;   /* true: cached ref handed out; false + object!=NULL: slow path */
+} EX_FAST_REF_RESULT;
+
+/* Pure packing helpers (exposed for the verifier/tests; treat Value as opaque).
+ * ExpFastRefPack bugchecks a misaligned object or an out-of-range count. */
+uintptr_t ExpFastRefPack(void *object, uintptr_t count);
+void     *ExpFastRefUnpackObject(uintptr_t value);
+uintptr_t ExpFastRefUnpackCount(uintptr_t value);
+
+/* Initialize a fast ref with `object` (or NULL for empty), cached count 0.
+ * PRECONDITION: when object != NULL the caller already holds 1 Ob reference on
+ * it (the structural reference). Runtime-asserts object alignment. */
+void ExInitializeFastReference(EX_FAST_REF *ref, void *object);
+
+/* Lock-free acquire. See CONTRACT above for the {object, cached} semantics. */
+EX_FAST_REF_RESULT ExAcquireFastReference(EX_FAST_REF *ref);
+
+/* Lock-free release of one reference on `object`. Returns true if absorbed into
+ * the cache (do not deref); false if saturated or object mismatch (caller must
+ * ObDereferenceObject the reference). */
+bool ExReleaseFastReference(EX_FAST_REF *ref, void *object);
+
+/* Atomically replace the stored object with `new_object` (cached count reset to
+ * 0) iff the currently stored object == `old_object`. On success returns true
+ * and writes the swapped-out object's cached count to *out_old_count (so the
+ * caller can balance (count + 1) references on the old object). On mismatch
+ * returns false and leaves the ref unchanged. new_object may be NULL (clears the
+ * ref); a non-NULL new_object is runtime-asserted aligned and the caller must
+ * already hold 1 structural reference on it. */
+bool ExCompareSwapFastReference(EX_FAST_REF *ref, void *new_object,
+                                void *old_object, uintptr_t *out_old_count);
+
+/* Snapshot the currently stored object pointer WITHOUT consuming a cached
+ * reference (single aligned load). The caller must already hold a reference or
+ * a lock pinning the object to use the result safely. */
+void *ExGetObjectFastReference(EX_FAST_REF *ref);
+
 /* ex_ready -- true once the Executive support runtime is marked ready.
  *
  * Delegates to the subsystem readiness oracle (kernel_subsystem_ready(

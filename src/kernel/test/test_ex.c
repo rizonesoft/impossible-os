@@ -671,6 +671,161 @@ static void test_ex_lookaside_verifier_uaf(void)
     ExpSetLookasideVerifier(false);
 }
 
+/* ---- S6: Fast References ------------------------------------------------- */
+
+/* Two 8-byte-aligned dummy "objects" -- the fast-ref cache mechanic operates on
+ * opaque aligned pointers (the Ob ref/deref is the caller's, exercised by the
+ * boolean contract below, not by a live refcount here). uint64_t storage is
+ * 8-byte aligned, satisfying EX_FAST_REF_MASK. The misalignment bugcheck path
+ * is intentionally NOT unit-tested: ExpFastRefPack calls KeBugCheckEx, which
+ * would halt the run (same reason ex_slist's misaligned-head bugcheck is
+ * untested); the _Static_assert in ex.h pins the 3-bit count field instead. */
+static uint64_t g_fr_obj_a;
+static uint64_t g_fr_obj_b;
+
+static void test_ex_fastref_pack_unpack_roundtrip(void)
+{
+    void *obj = &g_fr_obj_a;
+    uintptr_t c;
+
+    TEST_ASSERT((((uintptr_t)obj) & EX_FAST_REF_MASK) == 0,
+                "dummy object is 8-byte aligned");
+
+    for (c = 0; c <= EX_FAST_REF_MAX; c++) {
+        uintptr_t packed = ExpFastRefPack(obj, c);
+        TEST_ASSERT(ExpFastRefUnpackObject(packed) == obj,
+                    "unpack recovers the exact object pointer");
+        TEST_ASSERT_EQ(ExpFastRefUnpackCount(packed), c,
+                       "unpack recovers the exact cached count");
+    }
+    /* NULL object packs to an empty (zero) value. */
+    TEST_ASSERT_EQ(ExpFastRefPack((void *)0, 0), (uintptr_t)0,
+                   "NULL object + count 0 packs to empty");
+    TEST_ASSERT(ExpFastRefUnpackObject(0) == (void *)0,
+                "empty value unpacks to NULL object");
+}
+
+static void test_ex_fastref_init_acquire_empty_slowpath(void)
+{
+    EX_FAST_REF ref;
+    EX_FAST_REF_RESULT r;
+
+    /* Init with an object, cache empty: acquire must signal the SLOW path
+     * (object present, cached=false) so the caller does ObReferenceObjectSafe. */
+    ExInitializeFastReference(&ref, &g_fr_obj_a);
+    r = ExAcquireFastReference(&ref);
+    TEST_ASSERT(r.object == &g_fr_obj_a, "acquire returns the stored object");
+    TEST_ASSERT(r.cached == false, "empty cache -> slow path (cached=false)");
+
+    /* Init empty (NULL): acquire returns the empty sentinel. */
+    ExInitializeFastReference(&ref, (void *)0);
+    r = ExAcquireFastReference(&ref);
+    TEST_ASSERT(r.object == (void *)0, "empty ref acquire returns NULL object");
+    TEST_ASSERT(r.cached == false, "empty ref acquire is not a cached hit");
+    TEST_ASSERT(ExGetObjectFastReference(&ref) == (void *)0,
+                "get-object on empty ref is NULL");
+}
+
+static void test_ex_fastref_release_saturation_then_drain(void)
+{
+    EX_FAST_REF ref;
+    EX_FAST_REF_RESULT r;
+    uintptr_t i;
+
+    ExInitializeFastReference(&ref, &g_fr_obj_a);
+
+    /* Fill the cache: MAX releases are absorbed (true); the next is rejected
+     * (false) because the count saturated -- the "falls back to full Ob ref"
+     * (caller must ObDereferenceObject) path the test checkpoint requires. */
+    for (i = 0; i < EX_FAST_REF_MAX; i++)
+        TEST_ASSERT(ExReleaseFastReference(&ref, &g_fr_obj_a) == true,
+                    "release below cap is absorbed into the cache");
+    TEST_ASSERT(ExReleaseFastReference(&ref, &g_fr_obj_a) == false,
+                "release at saturation falls back to Ob deref (false)");
+
+    /* get-object does not consume a cached reference. */
+    TEST_ASSERT(ExGetObjectFastReference(&ref) == &g_fr_obj_a,
+                "get-object snapshots without draining the cache");
+
+    /* Drain: MAX cached hits (true), then the cache empties to the slow path. */
+    for (i = 0; i < EX_FAST_REF_MAX; i++) {
+        r = ExAcquireFastReference(&ref);
+        TEST_ASSERT(r.object == &g_fr_obj_a && r.cached == true,
+                    "acquire hands out a cached reference (fast path)");
+    }
+    r = ExAcquireFastReference(&ref);
+    TEST_ASSERT(r.object == &g_fr_obj_a && r.cached == false,
+                "cache drained -> back to slow path");
+}
+
+static void test_ex_fastref_release_object_mismatch(void)
+{
+    EX_FAST_REF ref;
+
+    /* Releasing the WRONG object must not be absorbed (the ref was logically
+     * swapped under the caller) -- caller must deref it itself. */
+    ExInitializeFastReference(&ref, &g_fr_obj_a);
+    TEST_ASSERT(ExReleaseFastReference(&ref, &g_fr_obj_b) == false,
+                "release of a non-matching object returns false");
+    /* The cache state for the real object is untouched. */
+    TEST_ASSERT(ExReleaseFastReference(&ref, &g_fr_obj_a) == true,
+                "release of the matching object still absorbs");
+}
+
+static void test_ex_fastref_release_null_rejected(void)
+{
+    EX_FAST_REF ref;
+
+    /* Releasing NULL must never be absorbed: it would CAS an empty ref to a
+     * phantom (NULL, count=1) state. Reject and leave the word untouched. */
+    ExInitializeFastReference(&ref, (void *)0);
+    TEST_ASSERT(ExReleaseFastReference(&ref, (void *)0) == false,
+                "release of NULL on empty ref returns false");
+    TEST_ASSERT(ExGetObjectFastReference(&ref) == (void *)0,
+                "empty ref stays empty after a NULL release");
+
+    /* Also rejected when the ref holds a real object. */
+    ExInitializeFastReference(&ref, &g_fr_obj_a);
+    TEST_ASSERT(ExReleaseFastReference(&ref, (void *)0) == false,
+                "release of NULL on a populated ref returns false");
+    TEST_ASSERT(ExGetObjectFastReference(&ref) == &g_fr_obj_a,
+                "populated ref unchanged after a NULL release");
+}
+
+static void test_ex_fastref_compare_swap(void)
+{
+    EX_FAST_REF ref;
+    uintptr_t old_count = 0xDEAD;
+
+    ExInitializeFastReference(&ref, &g_fr_obj_a);
+    /* Cache two references on A so the swap reports a non-zero old count. */
+    TEST_ASSERT(ExReleaseFastReference(&ref, &g_fr_obj_a) == true, "cache A #1");
+    TEST_ASSERT(ExReleaseFastReference(&ref, &g_fr_obj_a) == true, "cache A #2");
+
+    /* Wrong expected object: no swap. */
+    TEST_ASSERT(ExCompareSwapFastReference(&ref, &g_fr_obj_b, &g_fr_obj_b,
+                                           &old_count) == false,
+                "swap with mismatched old_object fails");
+    TEST_ASSERT(ExGetObjectFastReference(&ref) == &g_fr_obj_a,
+                "failed swap leaves the object unchanged");
+
+    /* Correct expected object: swap A -> B, old count surfaced for balancing. */
+    TEST_ASSERT(ExCompareSwapFastReference(&ref, &g_fr_obj_b, &g_fr_obj_a,
+                                           &old_count) == true,
+                "swap A -> B succeeds on matching old_object");
+    TEST_ASSERT_EQ(old_count, 2u, "swapped-out cached count surfaced (=2)");
+    TEST_ASSERT(ExGetObjectFastReference(&ref) == &g_fr_obj_b,
+                "object is now B with a fresh (0) cache");
+
+    /* Swap B -> NULL clears the ref. */
+    TEST_ASSERT(ExCompareSwapFastReference(&ref, (void *)0, &g_fr_obj_b,
+                                           &old_count) == true,
+                "swap B -> NULL clears the ref");
+    TEST_ASSERT_EQ(old_count, 0u, "fresh B cache had 0 references");
+    TEST_ASSERT(ExGetObjectFastReference(&ref) == (void *)0,
+                "ref is empty after swap to NULL");
+}
+
 void test_register_ex(void)
 {
     test_suite_register_cat("ex: SLIST init/empty edges",
@@ -725,6 +880,18 @@ void test_register_ex(void)
                             test_ex_lookaside_delete_at_dispatch_recovers, TEST_CAT_EX);
     test_suite_register_cat("ex: lookaside verifier detects UAF",
                             test_ex_lookaside_verifier_uaf, TEST_CAT_EX);
+    test_suite_register_cat("ex: fastref pack/unpack round-trip",
+                            test_ex_fastref_pack_unpack_roundtrip, TEST_CAT_EX);
+    test_suite_register_cat("ex: fastref empty cache -> slow path",
+                            test_ex_fastref_init_acquire_empty_slowpath, TEST_CAT_EX);
+    test_suite_register_cat("ex: fastref saturation falls back, then drains",
+                            test_ex_fastref_release_saturation_then_drain, TEST_CAT_EX);
+    test_suite_register_cat("ex: fastref release object mismatch rejected",
+                            test_ex_fastref_release_object_mismatch, TEST_CAT_EX);
+    test_suite_register_cat("ex: fastref release NULL rejected",
+                            test_ex_fastref_release_null_rejected, TEST_CAT_EX);
+    test_suite_register_cat("ex: fastref compare-swap object identity",
+                            test_ex_fastref_compare_swap, TEST_CAT_EX);
 }
 
 #endif /* KERNEL_TESTS */

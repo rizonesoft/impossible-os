@@ -48,7 +48,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 3 | Rundown protection | §1, atomics, events | [x] |
 | 💎 | 4 | Callback objects | §1, §3, T05, T07 | [x] |
 | 💎 | 5 | Lookaside lists (NPaged/Paged/Ex) | §2, D03 T03 | [x] |
-| 💎 | 6 | Fast references | §1, T05 | [ ] |
+| 💎 | 6 | Fast references | §1, T05 | [x] |
 | 💎 | 7 | Generic tables and bitmaps | §1 | [ ] |
 | 💎 | 8 | Push locks | §1, T07 | [ ] |
 | 💎 | 9 | Fast and guarded mutexes | §1, T07 | [ ] |
@@ -201,13 +201,21 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 
 ## 6. Fast References
 
-- [ ] Implement `EX_FAST_REF`: pointer plus low-bit refcount packing with alignment asserts.
-- [ ] Provide acquire, release, exchange, and get-object helpers.
-- [ ] Use only for object pointers with guaranteed alignment and Object Manager reference semantics.
-- [ ] Add tests for saturation fallback to full Ob reference.
-- [ ] Commit: `"kernel: ex -- fast references"`
+- [x] Implement `EX_FAST_REF`: pointer-sized atomic packing `(object & ~7) | count`, 3-bit cached count (`EX_FAST_REF_MAX=7`); `_Static_assert` + `ExpFastRefPack` bugcheck guard alignment/range. `src/kernel/ex/ex_fastref.c` + ex.h S6.
+- [x] Provide acquire (`ExAcquireFastReference` -> `{object, cached}`), release (`ExReleaseFastReference`), exchange (`ExCompareSwapFastReference`), get-object (`ExGetObjectFastReference`) helpers -- all lock-free `__atomic` CAS, arch-neutral.
+- [x] 3-bit count (max 7), not Windows' x64 4-bit/15: kmalloc only guarantees 8-byte object alignment so only 3 low bits are free (x86 Windows model). Ob ref/deref + replenish are caller-owned (see ex.h S6 CONTRACT).
+- [x] Tests: pack/unpack round-trip 0..MAX + NULL; empty cache -> slow path; saturation returns false (Ob-deref fallback); object-mismatch rejected; compare-swap identity + NULL clear. `test_ex_fastref_*`.
+- [x] Commit: `"kernel: ex -- fast references"`
 
 **Test checkpoint:** Pack/unpack round-trips an aligned object pointer with cached count intact; count saturation falls back to a full `ObReferenceObject`; alignment `_Static_assert`/runtime assert fires on a misaligned pointer.
+
+> **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 1 suite, 0 failures
+
+> **Notes:**
+> - **What shipped** -- `src/kernel/ex/ex_fastref.c` (pointer-sized `EX_FAST_REF`, lock-free inline-cached Ob reference; 3-bit count, max 7) + ex.h S6 block; 5 `test_ex_fastref_*` cases.
+> - **How it integrates** -- no global state, no init hook, no hidden allocation; every op is a single-word `__atomic` CAS. Caller owns the Ob ref/deref and replenish under its own lock; acquire/release booleans signal the fast/slow path.
+> - **Scope boundary** -- S6 owns only pointer/count packing + the lock-free cache mechanic; `ObReferenceObjectSafe`/`ObDereferenceObject` and replenish are the consuming subsystem's (no live consumer yet, like S4 callbacks).
+> - **Canonical doc** -- `include/kernel/ex.h` S6 header contract (ALIGNMENT + CONTRACT blocks).
 
 ---
 
@@ -324,7 +332,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Rundown protection         | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU      | ✅ §3 atomic + poll-drain |
 | 💎 | Callback objects           | ✅ ExCreateCallback                 | ⚠️ notifier chains     | ✅ §4 \Callback\ + rundown |
 | 💎 | Lookaside lists            | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache     | ✅ NPaged/Paged/Ex + verifier |
-| 💎 | Fast references            | ✅ EX_FAST_REF                      | ❌ none                | ⬜ Planned -- §6          |
+| 💎 | Fast references            | ✅ EX_FAST_REF                      | ❌ none                | ✅ §6 EX_FAST_REF (3-bit) |
 | 💎 | Ordered tables + bitmaps   | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap       | ⬜ Planned -- §7          |
 | 💎 | Push locks                 | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU           | ⬜ Planned -- §8          |
 | 💎 | Fast/guarded mutexes       | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex               | ⬜ Planned -- §9          |
