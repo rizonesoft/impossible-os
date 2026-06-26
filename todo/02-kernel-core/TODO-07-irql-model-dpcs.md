@@ -242,6 +242,13 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 
 **Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.
 
+> **Notes:**
+> - DPC targeting/importance/flush: `KeSetTargetProcessorDpc` (cpu_target), `KeSetImportanceDpc` (4 levels), `KeInsertQueueDpc` HighImportance head-insert, `KeFlushQueuedDpcs`, and the `KDPC_IMPORTANCE` enum are implemented in `src/kernel/sched/dpc.c`.
+> - Review-pass: the per-CPU DPC queue + lock storage is now cacheline-aligned (`struct dpc_queue` padded/aligned, per-CPU lock in a 64B `dpc_lock_slot`) to avoid ISR-hot-path false sharing; `_Static_assert`s pin the layout.
+> - One open item is deferred (see Deferred): the `KeFlushQueuedDpcs` in-flight completion barrier (the cross-CPU "returns only after callback completes" checkpoint clause).
+> - Canonical: `src/kernel/sched/dpc.c`.
+> **Deferred:** [H] `KeFlushQueuedDpcs` `head==NULL` poll can return while a remote callback is still in-flight (no per-CPU in-flight tracking; silent 100000-spin timeout); the full barrier also needs threaded-DPC completion (§16). Latent -- no callers yet -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 240)
+
 ---
 
 ## 8. Threaded DPCs (`PASSIVE_LEVEL` DPC Variant)
