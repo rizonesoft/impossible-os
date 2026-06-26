@@ -137,9 +137,13 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 - [x] Per-AP TSC sync via IPI: deferred -- modern firmware synchronizes invariant TSC at reset; offset starts at 0; IPI sync will be added if real hardware shows drift
 - [x] Fallback: if invariant TSC absent, falls through to LAPIC in `mono_clock_init()` with log warning
 - [x] `rdtsc_ns()`: fast TSC read with per-CPU offset + overflow-safe scale conversion
-- [ ] Ordered TSC read (gap-audit): `mono_clock.c` uses bare `rdtsc` (out-of-order); switch the hot path to `RDTSCP` (gated on `CPU_FEATURE_RDTSCP`) or `LFENCE;RDTSC` fallback so a QPC/mono read never reorders past surrounding instructions.
-- [ ] AP TSC sync + warp detection (gap-audit, Linux `tsc_sync.c` parity): cross-check AP TSC vs BSP at SMP bring-up; on warp, set a `tsc_unstable` flag and demote QPC/mono to HPET/PMTMR instead of trusting firmware reset-sync.
-- [ ] Resume/migration monotonicity (gap-audit): re-verify TSC sync after S3 resume and guard against backward QPC on thread migration; QPC must be non-decreasing per the Win11 contract.
+> [!NOTE]
+> **Design review (adopted, pre-code).** (1) Ordered read: a single `rdtsc_ordered()` helper -- `RDTSCP` gated on `CPU_FEATURE_RDTSCP` (capture/clobber ECX TSC_AUX), else `LFENCE;RDTSC` -- used by `rdtsc_ns()` AND the `mono_ns()` TSC branch. (2) AP sync: a BSP/AP rendezvous BEFORE the AP publishes `is_online` (shared per-AP state, bounded ping-pong samples, tolerance from round-trip latency, NO AP-side serial/logging, timeout; demotion completes before the AP services interrupts). (3) Demotion + migration: an atomic clocksource descriptor (source+scale+epoch+generation, release-published, seeded from the current mono value) PLUS generalizing §2's `pmtmr_mono_floor` into a MONO-WIDE atomic floor over TSC/HPET/PMTMR/LAPIC/coarse so demote + migration never step backward -- this machinery is SHARED with the §18 watchdog demotion. S3 resume re-verify is BLOCKED on power-management.
+
+- [ ] Ordered TSC read: one `rdtsc_ordered()` helper (`RDTSCP` gated on `CPU_FEATURE_RDTSCP`, else `LFENCE;RDTSC`) used by `rdtsc_ns()` + the `mono_ns()` TSC branch.
+- [ ] AP TSC sync + warp detection (design review [H]): BSP/AP rendezvous before `is_online` -- bounded ping-pong, latency tolerance, no AP logging, timeout (Linux `tsc_sync.c` parity).
+- [ ] Atomic demote-on-warp + mono-wide floor (design review [H], shared with §18): atomic clocksource descriptor + a mono-wide monotonic floor (generalize §2 `pmtmr_mono_floor`) so demote/migration never step backward.
+- [ ] Resume monotonicity -- BLOCKED on power-management S3; reuses this section's sync/demote machinery. -> XREF: 02-kernel-core/TODO-26-power-management.md §3
 - [x] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
 
 ---
