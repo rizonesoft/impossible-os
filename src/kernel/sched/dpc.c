@@ -526,6 +526,18 @@ uint32_t dpc_drain_current_cpu(void)
     return drain_queue(cpu->cpu_id);
 }
 
+/* Cheap "is any DPC queued on this CPU?" probe -- a single queue-head read, no
+ * lock. KeLowerIrql gates its DISPATCH-drain bracket (TPR reprogram + drain
+ * call) on this so the common empty path (e.g. every syscall-entry IRQL lower)
+ * pays only one byte/pointer read, not two LAPIC TPR MMIO writes. */
+int dpc_current_cpu_has_pending(void)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+    if (!cpu || cpu->cpu_id >= MAX_CPUS)
+        return 0;
+    return cpu_queues[cpu->cpu_id].head != (KDPC *)0;
+}
+
 /* ---- KeFlushQueuedDpcs --------------------------------------------------- */
 
 void KeFlushQueuedDpcs(void)

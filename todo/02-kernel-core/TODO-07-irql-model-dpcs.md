@@ -358,7 +358,7 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
   - → XREF consumers: `02-kernel-core/TODO-06 §8` (EX_PUSH_LOCK acquire contract) + §9 (guarded mutex) -- now UNBLOCKED.
 - [x] APC-disabled query: `KeAreApcsDisabled()` (critical OR guarded) + `KeAreAllApcsDisabled()` (guarded only).
 - [ ] KeStackAttachProcess/KeUnstackDetachProcess + nested SavedApcState round-trip test (deferred): needs process CR3-attach infra; §11 ships the `saved_apc_state` field only.
-- [ ] KAPC cross-thread lifetime hardening (deferred, latent -- no cross-thread APC consumer until §12): thread-generation identity (reject a stale `apc->thread` after slot reuse) + O(1) per-mode tail pointers + a queue-depth cap.
+- [ ] KAPC cross-thread lifetime hardening (deferred, latent): thread-generation identity, O(1) per-mode tail pointers, queue-depth cap, cross-thread leave-time delivery resignal (unlocked `kernel_apc_pending` leave-gate can miss a racing insert).
 - [ ] Thread-slot lifecycle lock (deferred, pre-existing, latent): `thread_exit`/`join`/`reap`/`kthread_create` must mutually exclude on true SMP (a joiner can free a running thread's stack); BSP-only scheduler unraced today.
 - [x] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
 
@@ -394,6 +394,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [ ] **Alertable-wait integration** (deferred, blocked): `KiDeliverApc` into `KeWaitForSingleObject`/`Multiple` + `STATUS_USER_APC` + `KeTestAlertThread`. Blocked: no kernel wait primitive / no `alertable` thread state.
 - [ ] **ISR-return delivery** (deferred, design-rejected): kernel-APC delivery from the C `isr_handler` restore site -- rejected (PASSIVE work before `iretq`); needs an audited return-trampoline. `KeLowerIrql` covers kernel APCs.
 - [ ] **`NtQueueApcThreadEx`/`Ex2` special-user routing** (deferred, blocked): set `SpecialUserApcPending` + SSDT 0x0380/0x0381; `NtQueueApcThread` stays `STATUS_NOT_IMPLEMENTED` -> XREF: `TODO-12-native-api-ssdt.md §7`.
+- [ ] **DPC software-interrupt-on-enqueue** (deferred): request a DISPATCH software interrupt at `KeInsertQueueDpc` time (NT HVL model) to close the `KeLowerIrql` drain-on-lower tail race; today drains on the next lower or timer tick.
 - [x] Commit: `"kernel: sched -- add KiDeliverApc and APC delivery integration"`
 
 > [!NOTE]
@@ -408,6 +409,10 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Downstream: DPC drain-on-lower unblocks §6 timer-DPC latency + §10 RX-DPC-first; resolves §1's deferred "drain-on-lower unbuilt". Codex design + adversarial + 4 re-adversarial rounds; adoption in the commit.
 > - Canonical doc: this section + `include/kernel/sched/apc.h` / `irql.h` headers.
 > - Scope boundary: §12 owns kernel-mode delivery + DPC drain-on-lower + rundown. User-mode delivery, alertable waits, `KeTestAlertThread`, `Ex`/`Ex2`, ISR-return delivery deferred (TODO-23 §5 + TODO-10 + a wait primitive).
+> **Verified:** 2026-06-26 | commit `STAMPHASH12R` | 4/9 items | build OK | sched 153 PASS | smoke PASS
+> **Accepted:** [M] cross-thread `KeInsertQueueApc` racing a target's `KeLeaveCriticalRegion` can miss the unlocked `kernel_apc_pending` leave-gate (reason: no cross-thread kernel-APC producer yet; same-thread unaffected) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "KAPC cross-thread lifetime hardening" at line 361)
+> **Deferred:** [M] `KeLowerIrql` drain-on-lower is best-effort -- a DPC queued in the probe->lower window survives the crossing (reason: needs a DPC software-interrupt-on-enqueue; pre-existing, race-neutral vs the unconditional bracket) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC software-interrupt-on-enqueue" at line 397)
+> **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+1M+1L fixed, 1M accepted, 1M deferred, 1L open | scope: kernel-code-quality
 
 ---
 

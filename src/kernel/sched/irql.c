@@ -138,8 +138,14 @@ void KeLowerIrql(KIRQL old_irql)
      * delivery that follows), stops a DPC that itself lowers IRQL from
      * re-entering the drain. dpc_drain_current_cpu() does no IRQL management and
      * early-outs on an empty queue. Spinlock release lowers current_irql
-     * directly (not via KeLowerIrql), so this is NOT on the spinlock hot path. */
-    if (cur >= DISPATCH_LEVEL && old_irql < DISPATCH_LEVEL && !pcpu->dpc_draining) {
+     * directly (not via KeLowerIrql), so this is NOT on the spinlock hot path.
+     * Gate the whole bracket on dpc_current_cpu_has_pending() (one queue-head
+     * read): the common empty path -- e.g. every INT 0x80 syscall-entry lower,
+     * which enters here with cur at a software IDT level but no DPC queued --
+     * then pays NO extra LAPIC TPR writes, only the single TPR store the lower
+     * itself needs. */
+    if (cur >= DISPATCH_LEVEL && old_irql < DISPATCH_LEVEL && !pcpu->dpc_draining &&
+        dpc_current_cpu_has_pending()) {
         uint32_t disp_tpr = irql_to_tpr(DISPATCH_LEVEL);
         pcpu->dpc_draining = 1;
         pcpu->current_irql = DISPATCH_LEVEL;

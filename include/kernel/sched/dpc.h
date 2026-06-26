@@ -198,3 +198,8 @@ void KiDispatchDpc(void);
  * Skips IRQL management -- caller must be at or above DISPATCH_LEVEL.
  * Returns the number of DPCs executed. */
 uint32_t dpc_drain_current_cpu(void);
+
+/* Cheap lock-free probe: 1 if any DPC is queued on the current CPU. Used by
+ * KeLowerIrql to skip the DISPATCH-drain bracket (and its LAPIC TPR writes) on
+ * the common empty path (e.g. every syscall-entry IRQL lower). */
+int dpc_current_cpu_has_pending(void);

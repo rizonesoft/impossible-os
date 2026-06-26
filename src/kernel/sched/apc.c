@@ -164,10 +164,18 @@ void KeEnterCriticalRegion(void)
 void KeLeaveCriticalRegion(void)
 {
     struct thread *t = thread_current();
-    /* Underflow-guarded. Deferred-APC delivery on leave is a delivery-engine
-     * concern (separate section); here we only manage the nesting counter. */
-    if (t && t->kernel_apc_disable > 0)
+    /* Underflow-guarded. On the transition OUT of the last critical region,
+     * deliver any kernel APCs that were blocked while inside it (NT semantics:
+     * KeLeaveCriticalRegion drains deferred APCs). KiDeliverApc re-checks each
+     * APC's region gating, so gate here only on: fully out of critical region,
+     * not in a guarded region, an APC actually pending, and below APC_LEVEL. */
+    if (t && t->kernel_apc_disable > 0) {
         t->kernel_apc_disable--;
+        if (t->kernel_apc_disable == 0 && t->special_apc_disable == 0 &&
+            t->apc_state.kernel_apc_pending &&
+            KeGetCurrentIrql() < APC_LEVEL)
+            KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    }
 }
 
 void KeEnterGuardedRegion(void)
@@ -180,8 +188,18 @@ void KeEnterGuardedRegion(void)
 void KeLeaveGuardedRegion(void)
 {
     struct thread *t = thread_current();
-    if (t && t->special_apc_disable > 0)
+    /* On the transition OUT of the last guarded region, deliver kernel APCs
+     * blocked by it (special APCs become deliverable even if still inside a
+     * critical region; KiDeliverApc applies the per-APC critical-region check
+     * to normal APCs). Gate on: fully out of guarded region, an APC pending,
+     * and below APC_LEVEL. */
+    if (t && t->special_apc_disable > 0) {
         t->special_apc_disable--;
+        if (t->special_apc_disable == 0 &&
+            t->apc_state.kernel_apc_pending &&
+            KeGetCurrentIrql() < APC_LEVEL)
+            KiDeliverApc((uint8_t)ApcKernelMode, (void *)0, (void *)0);
+    }
 }
 
 int KeAreApcsDisabled(void)
@@ -253,7 +271,11 @@ void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame
          * special; stop entirely until it is left. A critical region
          * (kernel_apc_disable) or an in-progress normal APC blocks only normal
          * APCs -- a special APC at the head still delivers, but a normal one
-         * cannot, so stop (the head is FIFO and the next item may be normal). */
+         * cannot, so stop (the head is FIFO and the next item may be normal).
+         * NOTE: the region counters are read here under apc_lock but WRITTEN
+         * lock-free by KeEnter/LeaveCriticalRegion on thread_current(); this is
+         * race-free only because delivery + the region writers are the SAME
+         * thread on the same CPU (the lock guards the queues, not these). */
         if (t->special_apc_disable > 0) {
             spin_unlock_irqrestore(&t->apc_lock, flags);
             break;
@@ -284,8 +306,13 @@ void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame
          * at PASSIVE_LEVEL. APC_LEVEL and PASSIVE_LEVEL both map to LAPIC TPR
          * 0x00, so these are software-only IRQL moves (no TPR write); set
          * current_irql directly rather than via KeRaiseIrql/KeLowerIrql, which
-         * would re-enter the delivery path. */
-        pcpu->current_irql = APC_LEVEL;
+         * would re-enter the delivery path. Re-resolve smp_this_cpu() at each
+         * write rather than reusing the entry `pcpu`: a NormalRoutine may yield
+         * and (under a future per-CPU-run-queue scheduler) the thread could
+         * resume on another CPU, so the IRQL bookkeeping must land on whatever
+         * CPU is current now. entry_irql is PASSIVE on the real lower-path entry,
+         * so restoring it on a migrated-to CPU is still correct. */
+        smp_this_cpu()->current_irql = APC_LEVEL;
         /* KernelRoutine: the cleanup hook. It may free the KAPC and may rewrite
          * the NormalRoutine / context / args. After it runs, `apc` may be
          * dangling -- do not touch it again. */
@@ -293,12 +320,12 @@ void KiDeliverApc(uint8_t previous_mode, void *exception_frame, void *trap_frame
             krout(apc, (void **)&nrout, &nctx, &sa1, &sa2);
 
         /* NormalRoutine is the deferred work (kernel APC at PASSIVE_LEVEL). */
-        pcpu->current_irql = PASSIVE_LEVEL;
+        smp_this_cpu()->current_irql = PASSIVE_LEVEL;
         if (!is_special && nrout)
             nrout(nctx, sa1, sa2);
 
         /* Restore the IRQL we were entered at before the next iteration. */
-        pcpu->current_irql = entry_irql;
+        smp_this_cpu()->current_irql = entry_irql;
 
         if (!is_special) {
             spin_lock_irqsave(&t->apc_lock, &flags);

@@ -1008,6 +1008,37 @@ static void test_apc_deliver_guarded_suppresses_special(void)
     TEST_ASSERT_EQ((uint64_t)s_apc_kflag, 1u, "special APC delivered after leaving guarded region");
 }
 
+/* Test: KeLeaveCriticalRegion delivers a deferred normal kernel APC WITHOUT a
+ * manual KiDeliverApc call (NT semantics: leaving the region drains it). */
+static void test_apc_leave_critical_delivers(void)
+{
+    struct thread *me = thread_current();
+    KAPC apc;
+    s_apc_nflag = 0;
+    KeInitializeApc(&apc, me, OriginalApcEnvironment, 0, 0,
+                    apc_nroutine, (uint8_t)ApcKernelMode, (void *)0);
+    KeEnterCriticalRegion();
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KeLeaveCriticalRegion();            /* must deliver -- no manual KiDeliverApc */
+    TEST_ASSERT_EQ((uint64_t)s_apc_nflag, 1u, "KeLeaveCriticalRegion delivers deferred normal APC");
+    TEST_ASSERT_EQ((uint64_t)me->apc_state.kernel_apc_pending, 0u, "pending cleared by leave-delivery");
+}
+
+/* Test: KeLeaveGuardedRegion delivers a deferred special kernel APC. */
+static void test_apc_leave_guarded_delivers_special(void)
+{
+    struct thread *me = thread_current();
+    KAPC apc;
+    s_apc_kflag = 0;
+    KeInitializeApc(&apc, me, OriginalApcEnvironment, apc_kroutine, 0,
+                    (PKNORMAL_ROUTINE)0, (uint8_t)ApcKernelMode, (void *)0);
+    KeEnterGuardedRegion();
+    KeInsertQueueApc(&apc, (void *)0, (void *)0, 0);
+    KeLeaveGuardedRegion();             /* must deliver -- no manual KiDeliverApc */
+    TEST_ASSERT_EQ((uint64_t)s_apc_kflag, 1u, "KeLeaveGuardedRegion delivers deferred special APC");
+    TEST_ASSERT_EQ((uint64_t)me->apc_state.kernel_apc_pending, 0u, "pending cleared by leave-delivery");
+}
+
 /* Test: apc_rundown_thread runs RundownRoutine for a still-queued APC on an
  * exiting thread and empties the queue. Uses a local fake thread. */
 static void test_apc_rundown_runs(void)
@@ -1091,6 +1122,10 @@ void test_register_sched(void)
                             test_apc_deliver_critical_suppressed, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: guarded region suppresses special APC",
                             test_apc_deliver_guarded_suppresses_special, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeLeaveCriticalRegion delivers deferred APC",
+                            test_apc_leave_critical_delivers, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeLeaveGuardedRegion delivers deferred special APC",
+                            test_apc_leave_guarded_delivers_special, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: apc_rundown_thread runs RundownRoutine",
                             test_apc_rundown_runs, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
