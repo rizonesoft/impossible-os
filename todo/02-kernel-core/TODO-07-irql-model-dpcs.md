@@ -168,7 +168,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Insert retries on the transient `queued_cpu==MAX_CPUS` (set while a remove/drain clears the DPC) so a concurrent re-insert is never dropped, and never double-links the observable case.
 > - Caller precondition (NT contract, documented in `dpc.h`): a single KDPC must not be inserted concurrently from more than one CPU; sequential cross-CPU operations are safe.
 > - Canonical: `src/kernel/sched/dpc.c`; tests in `src/kernel/test/test_sched.c`.
-> **Verified:** 2026-06-26 | commit `STAMPHASH4` | 5/5 items | build OK | tests 54 kernel + 16 user PASS
+> **Verified:** 2026-06-26 | commit `7fefe6ab` | 5/5 items | build OK | tests 54 kernel + 16 user PASS
 > **Deferred:** [H] threaded-DPC handoff double-owns a re-inserted KDPC (`drain_queue` clears `queued` + drops the lock before the `threaded_head` prepend) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 351)
 > **Deferred:** [M] per-CPU DPC queue/lock storage false-shares the ISR-hot insert/drain path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "Cacheline-align per-CPU DPC storage" at line 207)
 > **Quality reviewed:** 2026-06-26 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 4H+1L fixed, 1H+1M deferred | scope: kernel-code-quality
