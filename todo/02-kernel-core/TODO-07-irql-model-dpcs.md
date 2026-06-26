@@ -370,10 +370,10 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 > **Notes:**
 > - Shipped `sched/apc.{c,h}` (KAPC + KAPC_STATE + KeInitializeApc/KeInsertQueueApc/KeRemoveQueueApc + critical/guarded regions + KeAreApcsDisabled/AllDisabled), mirroring `dpc.c` (intrusive link + per-thread irqsave lock, zero-alloc insert).
 > - `struct thread` gains the APC queues + counters; APC state resets under `apc_lock` in create + task-init (NON-insertable until reset); `thread_exit` + reap mark DEAD/FREE under the same lock (no APC onto an exiting/reused thread).
-> - Downstream: UNBLOCKS `02-kernel-core/TODO-06 §8` (push-lock) + §9 (guarded-mutex); delivery (KiDeliverApc) is §12. Codex design + adversarial adoptions in commit `STAMPHASH11`.
+> - Downstream: UNBLOCKS `02-kernel-core/TODO-06 §8` (push-lock) + §9 (guarded-mutex); delivery (KiDeliverApc) is §12. Codex design + adversarial adoptions in commit `6c4317cb`.
 > - Canonical doc: `include/kernel/sched/apc.h`.
 > - Scope: §11 owns the KAPC object + queue ops + region counters; delivery/rundown -> §12; KeStackAttachProcess + cross-thread generation/tail hardening -> the deferred items above.
-> **Verified:** 2026-06-26 | commit `STAMPHASH11R` | 9/12 items | build OK | sched 128 PASS | smoke PASS (2.6s)
+> **Verified:** 2026-06-26 | commit `830ebf88` | 9/12 items | build OK | sched 128 PASS | smoke PASS (2.6s)
 > **Deferred:** [Critical] thread-slot lifecycle lock -- thread_exit/join/reap/create are not mutually exclusive on a true SMP scheduler (a joiner can free a still-running thread's stack) (reason: pre-existing; BSP-only scheduler unraced today) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "Thread-slot lifecycle lock" at line 363)
 > **Deferred:** [H] KAPC cross-thread lifetime hardening -- thread-generation identity + O(1) per-mode tail pointers + depth cap (reason: latent; no cross-thread APC consumer until §12) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "KAPC cross-thread lifetime hardening" at line 362)
 > **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1Crit deferred | scope: kernel-code-quality
