@@ -167,6 +167,7 @@ Verify all five NIC modules end-to-end: each NIC sends an ARP request and receiv
 - [ ] igc / RTL8125: real hardware only (no QEMU emulation); document bare-metal test procedure
 - [ ] VirtualBox test: set VM NIC to `Intel PRO/1000 MT Desktop`; boot; e1000 module loads; `ping` succeeds
 - [ ] Document `NOTICE.md` verification: every ported file listed with SPDX identifier and upstream source
+- [ ] RTL8139 RX DPC-first: after TODO-07 §12 drain-on-lower lands, move `rtl8139_irq_body` RX drain into a KDPC + adopt `KeSynchronizeExecution`. → XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §10 + §12
 - [ ] Commit: `"docs: network driver test guide -- e1000, virtio-net, rtl8169 QEMU/VBox test commands"`
 
 ## 8. WiFi 802.11 MAC Layer Stub `[Opus]`

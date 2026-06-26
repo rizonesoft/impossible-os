@@ -10,6 +10,7 @@
 #include "kernel/sched/irql.h"
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/ktimer.h"
+#include "kernel/sched/kinterrupt.h"
 #include "kernel/timer.h"
 #include "kernel/smp.h"
 #include "kernel/types.h"
@@ -699,6 +700,79 @@ static void test_ktimer_dpc_target_normalized(void)
                    "caller cpu_target preserved (not mutated by ktimer)");
 }
 
+/* ---- Section 10: KINTERRUPT / KeSynchronizeExecution + ISR DPC helper ---- */
+
+static volatile int      g_kisync_ran;
+static volatile uint32_t g_kisync_irql;
+static int kisync_routine(void *ctx)
+{
+    g_kisync_irql = (uint32_t)KeGetCurrentIrql();
+    g_kisync_ran  = 1;
+    return (int)(uintptr_t)ctx;   /* propagate a marker as the BOOLEAN result */
+}
+
+/* Test: KeInitializeInterrupt field defaults. */
+static void test_kinterrupt_init_fields(void)
+{
+    KINTERRUPT ki;
+    KeInitializeInterrupt(&ki, 0x40);
+    TEST_ASSERT_EQ((uint64_t)ki.vector, 0x40u, "init: vector stored");
+    TEST_ASSERT_EQ((uint64_t)ki.active_cpu, (uint64_t)MAX_CPUS, "init: no ISR active");
+    TEST_ASSERT_EQ((uint64_t)ki.sync_irql, (uint64_t)vector_to_irql(0x40),
+                   "init: sync_irql = vector DIRQL");
+    TEST_ASSERT_EQ((uint64_t)ki.connected, 0u, "init: not connected");
+}
+
+/* Test: KeSynchronizeExecution runs the routine at SynchronizeIrql under the
+ * lock, propagates its BOOLEAN result, and restores active_cpu. */
+static void test_kinterrupt_synchronize_runs(void)
+{
+    KINTERRUPT ki;
+    int ret;
+    KeInitializeInterrupt(&ki, 0x40);
+    g_kisync_ran = 0; g_kisync_irql = 0xFF;
+    ret = KeSynchronizeExecution(&ki, kisync_routine, (void *)(uintptr_t)7);
+    TEST_ASSERT_EQ((uint64_t)g_kisync_ran, 1u, "KeSynchronizeExecution ran the routine");
+    TEST_ASSERT_EQ((uint64_t)ret, 7u, "routine BOOLEAN result propagated");
+    TEST_ASSERT_EQ((uint64_t)g_kisync_irql, (uint64_t)vector_to_irql(0x40),
+                   "routine ran at SynchronizeIrql (DIRQL)");
+    TEST_ASSERT_EQ((uint64_t)ki.active_cpu, (uint64_t)MAX_CPUS, "active_cpu restored");
+}
+
+/* Test: a call from inside the interrupt's own ISR (active_cpu == this CPU) is
+ * rejected (returns FALSE) instead of deadlocking, and does NOT run the routine. */
+static void test_kinterrupt_self_isr_rejected(void)
+{
+    KINTERRUPT ki;
+    int ret;
+    uint32_t rejects_before, rejects_after;
+    KeInitializeInterrupt(&ki, 0x40);
+    ki.active_cpu = smp_this_cpu()->cpu_id;   /* simulate "in this vector's ISR" */
+    g_kisync_ran = 0;
+    rejects_before = KeGetSelfIsrRejectCount();
+    ret = KeSynchronizeExecution(&ki, kisync_routine, (void *)(uintptr_t)7);
+    rejects_after = KeGetSelfIsrRejectCount();
+    TEST_ASSERT_EQ((uint64_t)ret, 0u, "self-ISR call rejected (returns FALSE)");
+    TEST_ASSERT_EQ((uint64_t)g_kisync_ran, 0u, "routine NOT run on self-ISR reject");
+    TEST_ASSERT_EQ((uint64_t)rejects_after, (uint64_t)(rejects_before + 1),
+                   "self-ISR reject bumps the lock-free diagnostic counter (no klog)");
+}
+
+/* Test: KeRequestDpcFromIsr enqueues the DPC (thin KeInsertQueueDpc wrapper). */
+static void test_kerequestdpc_enqueues(void)
+{
+    KDPC dpc;
+    KIRQL old;
+    uint32_t queued;
+    KeInitializeDpc(&dpc, dpc_noop_routine, (void *)0);
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeRequestDpcFromIsr(&dpc, (void *)0, (void *)0);
+    queued = dpc.queued;
+    KeRemoveQueueDpc(&dpc);
+    KeLowerIrql(old);
+    TEST_ASSERT_EQ((uint64_t)queued, 1u, "KeRequestDpcFromIsr enqueues the DPC");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -732,6 +806,14 @@ void test_register_sched(void)
                             test_ktimer_overdue_periodic_bounded, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: ktimer DPC target normalized to service CPU",
                             test_ktimer_dpc_target_normalized, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KINTERRUPT init fields",
+                            test_kinterrupt_init_fields, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeSynchronizeExecution runs at SynchronizeIrql",
+                            test_kinterrupt_synchronize_runs, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeSynchronizeExecution self-ISR rejected",
+                            test_kinterrupt_self_isr_rejected, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeRequestDpcFromIsr enqueues",
+                            test_kerequestdpc_enqueues, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

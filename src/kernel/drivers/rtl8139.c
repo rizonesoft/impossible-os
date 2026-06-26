@@ -20,6 +20,7 @@
 #include "kernel/net/net.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/workqueue.h"  /* sys_wq for deferred Rx processing */
+#include "kernel/sched/dpc.h"        /* error-path DPC (ISR ack -> queue DPC) */
 
 /* --- Port I/O --- */
 static inline void outb_nic(uint16_t port, uint8_t val)
@@ -154,6 +155,23 @@ static void nic_rx_work_fn(void *arg)
     }
 }
 
+/* Error/stats DPC-first path: the ISR acks REG_ISR inline (fast) then queues
+ * this DPC instead of doing serial I/O (klog) at DIRQL. Error ISR bits
+ * accumulate atomically so an error burst coalesces into one DPC; the DPC logs
+ * at DISPATCH_LEVEL. RX-ring draining stays inline (latency-critical) until
+ * drain-on-lower lands -- see the workqueue/DPC three-tier split. */
+static volatile uint32_t rtl8139_err_bits;   /* accumulated error ISR bits */
+static KDPC rtl8139_err_dpc;
+
+static void rtl8139_err_dpc_fn(struct _KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    uint32_t bits;
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+    bits = __atomic_exchange_n(&rtl8139_err_bits, 0u, __ATOMIC_ACQ_REL);
+    if (bits)
+        klog(LOG_DEBUG, "net", "RTL8139 error ISR bits=0x%x", (uint64_t)bits);
+}
+
 /* --- Simple memcpy (kernel-side) --- */
 static void nic_memcpy(void *dst, const void *src, uint64_t n)
 {
@@ -216,7 +234,13 @@ static uint16_t rtl8139_irq_body(void)
     }
 
     if (status & (INT_RER | INT_TER | INT_RX_OVERFLOW)) {
-        klog(LOG_DEBUG, "net", "Error: ISR=0x%x", (uint64_t)status);
+        /* DPC-first: accumulate the error bits and defer the serial-I/O logging
+         * to a DPC at DISPATCH_LEVEL rather than klog-ing in the ISR at DIRQL.
+         * Errors are rare, so the timer-tick DPC latency is irrelevant. */
+        __atomic_fetch_or(&rtl8139_err_bits,
+                          (uint32_t)(status & (INT_RER | INT_TER | INT_RX_OVERFLOW)),
+                          __ATOMIC_ACQ_REL);
+        KeRequestDpcFromIsr(&rtl8139_err_dpc, (void *)0, (void *)0);
     }
 
     /* Acknowledge all handled interrupts */
@@ -251,6 +275,11 @@ int rtl8139_init(void)
      * init had succeeded -- rtl8139_send() must never transmit through a
      * half-reinitialized NIC. Set to 1 only on the full-success tail. */
     s_nic_ready = 0;
+
+    /* Initialize the error-path DPC before the ISR can fire (DPC queues are up
+     * from Phase 1, well before driver init). */
+    rtl8139_err_bits = 0;
+    KeInitializeDpc(&rtl8139_err_dpc, rtl8139_err_dpc_fn, (void *)0);
 
     /* Find the RTL8139 on the PCI bus */
     pci = pci_find_device(RTL8139_VENDOR_ID, RTL8139_DEVICE_ID);

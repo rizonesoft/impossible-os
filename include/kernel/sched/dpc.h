@@ -104,6 +104,24 @@ int KeInsertQueueDpcEx(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out);
 int KeInsertQueueDpcOnCpu(KDPC *dpc, uint32_t cpu_id, void *arg1, void *arg2,
                           int *warn_cpu_out);
 
+/* ISR top-half helper: queue a pre-initialized DPC from an interrupt handler.
+ * This is the ENQUEUE side of the canonical NT ISR pattern only -- the device
+ * register read / acknowledge / claim sequencing stays explicit in the driver
+ * ISR (acking before the DPC runs is device-specific and must not be hidden
+ * behind a callback). Allocation-free and bounded, so it is safe at DIRQL.
+ *   driver ISR:  read+ack device status; KeRequestDpcFromIsr(&dpc, a1, a2); return claimed
+ *   DPC (DISPATCH_LEVEL):  process the snapshotted work
+ * Uses the NO-LOG insert (KeInsertQueueDpcEx): a queue-depth warning must never
+ * trigger serial I/O at DIRQL, and a KINTERRUPT-bound ISR may hold the
+ * interrupt spinlock across this call. The depth warning is intentionally
+ * dropped in ISR context (the DPC still queues + drains normally).
+ * Returns 1 if newly queued, 0 if the DPC was already queued (args refreshed). */
+static inline int KeRequestDpcFromIsr(KDPC *dpc, void *arg1, void *arg2)
+{
+    int warn_cpu = -1;   /* depth warning suppressed in ISR context */
+    return KeInsertQueueDpcEx(dpc, arg1, arg2, &warn_cpu);
+}
+
 /* Remove a DPC from its CPU's queue before it executes.
  * Returns 1 if the DPC was found and removed, 0 if not queued.
  * Safe to call at any IRQL up to DISPATCH_LEVEL. */

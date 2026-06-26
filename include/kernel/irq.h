@@ -132,5 +132,15 @@ int irq_vector_quarantined(uint8_t vec);
  * reserve), -1 when a dynamic registration already owns the vector. */
 int irq_reserve_vector(uint8_t vector, const char *name);
 
+/* ---- KINTERRUPT binding (driver interrupt-sync feature) ----
+ * Bind/unbind a per-interrupt KINTERRUPT sync object to a vector so the
+ * dispatcher runs that vector's ISR under the object's lock. These are the
+ * irq.c-side primitives behind KeConnectInterrupt / KeDisconnectInterrupt
+ * (kernel/sched/kinterrupt.h); drivers normally call the Ke* wrappers.
+ * KINTERRUPT is forward-declared to avoid an include cycle. */
+struct _KINTERRUPT;
+int  irq_bind_kinterrupt(uint8_t vector, struct _KINTERRUPT *ki);
+void irq_unbind_kinterrupt(uint8_t vector, struct _KINTERRUPT *ki);
+
 /* Initialize the IRQ subsystem. Called once during boot. */
 void irq_init(void);

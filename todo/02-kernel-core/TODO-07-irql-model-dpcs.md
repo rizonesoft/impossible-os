@@ -61,7 +61,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [/]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [/]   |
-| 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [ ]   |
+| 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [/]   |
 | 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [ ]   |
 | 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [ ]   |
 | ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [ ]   |
@@ -317,16 +317,26 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 
 ## 10. Driver Migration and Workqueue Contract Split
 
-- [ ] Define policy: ISR top-half does minimal register/ack work, then queues DPC; thread-level heavy work goes to workqueue.
-- [ ] Migrate at least one representative IRQ-heavy driver path (RTL8139 RX/TX or AHCI completion) to DPC-first flow.
-- [ ] Update `workqueue.h` comments to clarify it is `PASSIVE_LEVEL` deferred thread work, not a DPC replacement.
-- [ ] Add helper wrappers for common ISR pattern: `ack -> queue dpc -> return`.
-- [ ] Add a per-interrupt sync object (`KINTERRUPT`-like: `SynchronizeIrql` + per-interrupt lock) + `KeSynchronizeExecution(Interrupt, Routine, Ctx)` so DPC/thread code can safely touch ISR-shared state
+- [x] Three-tier policy documented in `dpc.h` + `workqueue.h` headers: ISR claims+acks+queues a DPC (`KeRequestDpcFromIsr`); DPC at DISPATCH; blocking work to the PASSIVE workqueue.
+- [x] Migrated the RTL8139 error/stats path to DPC-first (`rtl8139.c`: ISR acks REG_ISR + queues `rtl8139_err_dpc`, logging at DISPATCH); RX drain stays inline (full RX DPC-first -> §12, filed in `04-drivers-hardware/TODO-14 §7`).
+- [x] `workqueue.h` comment de-conflated: PASSIVE thread tier (blocking work), explicitly NOT a DPC replacement; points the DPC analogue to `dpc.h`.
+- [x] `KeRequestDpcFromIsr` static inline in `dpc.h` -- no-log `KeInsertQueueDpcEx` (no serial I/O at DIRQL); device claim/ack stays explicit (no ack-callback macro).
+- [x] `KINTERRUPT` + `KeSynchronizeExecution` in `sched/kinterrupt.{c,h}`, irq.c-integrated: the dispatcher runs the bound ISR under `ki->lock`+`active_cpu`; KeSync raises to SynchronizeIrql + takes the lock; self-ISR rejected (lock-free counter).
   - This item owns the sync-object + SynchronizeIrql contract; GSI/vector routing + affinity already shipped in `01-boot-platform/TODO-11 §5`. → XREF: 01-boot-platform/TODO-11 §5 (irq_request_gsi)
-- [ ] Record driver follow-up checklist under `todo/04-drivers-hardware`.
-- [ ] Commit: `"drivers: irq -- migrate ISR deferred path to DPC model"`
+- [x] Recorded the RTL8139 RX DPC-first follow-up in `04-drivers-hardware/TODO-14 §7` (after §12 drain-on-lower).
+- [ ] KINTERRUPT full teardown barrier (deferred): `KeDisconnectInterrupt` is best-effort (unpublish + lock-flush + quiesce precondition); a full mask+drain barrier for live-interrupt hot-unplug is latent (no driver binds one yet).
+- [x] Commit: `"drivers: irq -- migrate ISR deferred path to DPC model"`
 
 **Test checkpoint:** Migrated driver ISR path: interrupt fires → DPC queued → callback processes data at `DISPATCH_LEVEL`. Workqueue callback runs at `PASSIVE_LEVEL` for heavy work. `workqueue.h` comments updated. Driver smoke test under continuous interrupt load (network RX flood or disk I/O burst) remains stable. Serial: no DPC starvation warnings after 60s load test.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 4 KINTERRUPT/ISR-DPC tests (13 asserts), 0 failures. KeSynchronizeExecution + self-ISR-reject + KeRequestDpcFromIsr are unit-tested; the RTL8139 error-DPC + the RX-flood "stable under load" checkpoint validate on WHPX/bare-metal serial.
+
+> **Notes:**
+> - Shipped `sched/kinterrupt.{c,h}` (KINTERRUPT + KeInitializeInterrupt/KeConnectInterrupt/KeDisconnectInterrupt/KeSynchronizeExecution + self-ISR-reject counter) and `KeRequestDpcFromIsr` in `dpc.h`; the RTL8139 error path is now DPC-first.
+> - KINTERRUPT is irq.c-integrated: both dispatchers run a bound vector's ISR under `ki->lock` + set `active_cpu`; `irq_bind/unbind_kinterrupt` back KeConnect/KeDisconnect. Opt-in -- unbound vectors take no extra lock.
+> - Design + adversarial + re-adversarial adoptions (RX drain stays inline, KINTERRUPT dispatcher-bound, lock coexists with `nic_rx_lock`, inline DPC helper not ack-macro, no serial-I/O under the interrupt lock) in commit `STAMPHASH10`.
+> - Canonical doc: `include/kernel/sched/kinterrupt.h` (sync contract + lifetime/quiesce precondition).
+> - Scope: §10 owns the per-interrupt SynchronizeIrql + lock contract; GSI/vector routing -> `01-boot-platform/TODO-11 §5`; full RX DPC-first -> `04-drivers-hardware/TODO-14 §7`; KINTERRUPT full teardown barrier -> the deferred item above.
 
 ---
 
@@ -511,7 +521,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | 💎 | Critical/guarded regions       | ✅ KeEnterCriticalRegion       | ⚠️ preempt_disable             | ⬜ §11                        |
 | 💎 | Alertable wait + user APC      | ✅ WaitForSingleObjectEx       | ❌ No equivalent               | ⬜ §12                        |
 | 💎 | Special user-mode APCs         | ✅ NtQueueApcThreadEx (RS5+)   | ❌ No equivalent               | ⬜ §12 SpecialUserApc         |
-| 💎 | ISR sync object                | ✅ KeSynchronizeExecution      | ✅ spin_lock_irqsave           | ⬜ §10 + TODO-11 §5           |
+| 💎 | ISR sync object                | ✅ KeSynchronizeExecution      | ✅ spin_lock_irqsave           | ✅ §10 KeSynchronizeExecution |
 | ⭐ | IRQL nesting validation (LIFO) | ❌ No runtime check            | ✅ lockdep IRQ-state           | ⬜ §13 transition stack       |
 | ⭐ | IRQL violation telemetry       | ⚠️ Checked builds only         | ⚠️ Fragmented debug warnings   | ⬜ §13 -- unified diagnostics  |
 | ⭐ | DPC/APC fairness watchdog      | ⚠️ Internal heuristics         | ⚠️ Subsystem-specific          | ⬜ §14 -- explicit policy      |

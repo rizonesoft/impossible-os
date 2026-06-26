@@ -20,6 +20,7 @@
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/irql.h"
+#include "kernel/sched/kinterrupt.h"
 #include "kernel/smp.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/vectors.h"
@@ -69,6 +70,12 @@ struct irq_entry {
                                          * may have accepted it pre-mask
                                          * and not yet read handlers[]);
                                          * revivable for the SAME GSI */
+    /* Optional per-interrupt KINTERRUPT sync object. NULL = none; when set,
+     * the dispatcher runs this vector's ISR under ki->lock and records the CPU
+     * in ki->active_cpu, so KeSynchronizeExecution can synchronize with the ISR
+     * and reject a self-ISR call. Opt-in: vectors with no KINTERRUPT take no
+     * extra lock on the dispatch hot path. */
+    KINTERRUPT             *kinterrupt;
 };
 
 static struct irq_entry irq_table[256];
@@ -84,6 +91,33 @@ static spinlock_t irq_chain_lock = SPINLOCK_INIT;
  * rather than livelock the CPU. */
 #define IRQ_STORM_ALLNONE_LIMIT  1000u
 
+/* ---- KINTERRUPT dispatch wrap (driver interrupt-sync feature) ----
+ * If a KINTERRUPT is bound to this vector, run the ISR under its lock and
+ * record the running CPU so KeSynchronizeExecution synchronizes with the ISR
+ * and detects a self-ISR call. Opt-in: returns NULL ki for unbound vectors so
+ * the common dispatch path takes no extra lock. Already in interrupt context
+ * (IRQs off); the lock is for SMP exclusion with KeSynchronizeExecution. */
+static inline KINTERRUPT *irq_ki_enter(struct irq_entry *e, uint64_t *flags)
+{
+    /* Acquire-load: pairs with the release-store in irq_bind_kinterrupt so a
+     * dispatch that observes the pointer also observes the fully-initialized
+     * KINTERRUPT fields. */
+    KINTERRUPT *ki = __atomic_load_n(&e->kinterrupt, __ATOMIC_ACQUIRE);
+    if (!ki)
+        return (KINTERRUPT *)0;
+    spin_lock_irqsave(&ki->lock, flags);
+    ki->active_cpu = smp_this_cpu()->cpu_id;
+    return ki;
+}
+
+static inline void irq_ki_leave(KINTERRUPT *ki, uint64_t flags)
+{
+    if (!ki)
+        return;
+    ki->active_cpu = MAX_CPUS;
+    spin_unlock_irqrestore(&ki->lock, flags);
+}
+
 /* ---- IDT-level wrapper ----
  * Installed as the interrupt_handler_t for each registered vector.
  * Dispatches to the irq_handler_t callback after EOI. */
@@ -91,11 +125,16 @@ static uint64_t irq_dispatch_wrapper(struct interrupt_frame *frame)
 {
     uint8_t vec = (uint8_t)frame->int_no;
     struct irq_entry *e = &irq_table[vec];
+    KINTERRUPT *ki;
+    uint64_t ki_flags = 0;
 
     e->count++;
 
-    if (e->handler)
+    if (e->handler) {
+        ki = irq_ki_enter(e, &ki_flags);
         e->handler(vec, e->ctx);
+        irq_ki_leave(ki, ki_flags);
+    }
 
     /* Send EOI for hardware IRQs (vectors 32+). The ISA irq number only
      * matters on the PIC path; ISA vectors live at PIC1_OFFSET+0..7 and
@@ -150,6 +189,33 @@ int irq_register(uint8_t vector, irq_handler_t handler, void *ctx,
         klog(LOG_DEBUG, "irq", "  registered vec %u -> \"%s\"",
              (uint64_t)vector, name ? name : "?");
     return rc;
+}
+
+/* Bind a KINTERRUPT to a vector so the dispatcher runs that vector's ISR under
+ * ki->lock (KeConnectInterrupt path). Release-store pairs with the dispatcher's
+ * acquire-load. Returns IRQ_OK, IRQ_ERR_RANGE (vector < 32), or IRQ_ERR_BUSY
+ * (a different KINTERRUPT already bound). One KINTERRUPT per vector. */
+int irq_bind_kinterrupt(uint8_t vector, KINTERRUPT *ki)
+{
+    KINTERRUPT *cur;
+    if (vector < 32 || !ki)
+        return IRQ_ERR_RANGE;
+    cur = __atomic_load_n(&irq_table[vector].kinterrupt, __ATOMIC_ACQUIRE);
+    if (cur && cur != ki)
+        return IRQ_ERR_BUSY;
+    __atomic_store_n(&irq_table[vector].kinterrupt, ki, __ATOMIC_RELEASE);
+    return IRQ_OK;
+}
+
+/* Unbind the KINTERRUPT from a vector (KeDisconnectInterrupt path). Only clears
+ * if the given object is the bound one. PASSIVE_LEVEL teardown. */
+void irq_unbind_kinterrupt(uint8_t vector, KINTERRUPT *ki)
+{
+    if (vector < 32)
+        return;
+    if (__atomic_load_n(&irq_table[vector].kinterrupt, __ATOMIC_ACQUIRE) == ki)
+        __atomic_store_n(&irq_table[vector].kinterrupt, (KINTERRUPT *)0,
+                         __ATOMIC_RELEASE);
 }
 
 /* No-log core (see irq_register_nolog rationale) */
@@ -388,9 +454,16 @@ static uint64_t irq_shared_dispatch_wrapper(struct interrupt_frame *frame)
         __atomic_fetch_sub(&e->dispatch_active, 1, __ATOMIC_RELEASE);
         return (uint64_t)frame;
     }
-    for (; n; n = n->next) {
-        if (n->handler(vec, n->ctx) == IRQ_HANDLED)
-            handled = IRQ_HANDLED;
+    {
+        /* Run the whole shared chain under the line's KINTERRUPT lock (if
+         * bound) so KeSynchronizeExecution serializes against the line's ISR. */
+        uint64_t ki_flags = 0;
+        KINTERRUPT *ki = irq_ki_enter(e, &ki_flags);
+        for (; n; n = n->next) {
+            if (n->handler(vec, n->ctx) == IRQ_HANDLED)
+                handled = IRQ_HANDLED;
+        }
+        irq_ki_leave(ki, ki_flags);
     }
 
     if (handled == IRQ_HANDLED) {

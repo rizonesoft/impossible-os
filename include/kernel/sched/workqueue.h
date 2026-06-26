@@ -6,8 +6,19 @@
  * A dedicated kernel thread picks up the work item and executes it in a
  * normal, yieldable context where it can call VFS, allocate memory, etc.
  *
+ * IRQL TIER -- this is PASSIVE_LEVEL deferred THREAD work, NOT a DPC.
+ * It is the third tier of the NT top-half/bottom-half split, distinct from
+ * (and a complement to, never a replacement for) the DPC tier:
+ *   ISR (DIRQL):           claim/ack the device, KeRequestDpcFromIsr(), return
+ *   DPC (DISPATCH_LEVEL):  short bounded processing, interrupts on, no blocking
+ *   work item (PASSIVE):   blocking/paging/allocation/VFS -- THIS queue
+ * A callback here runs in a yieldable kernel thread and MAY block; a DPC
+ * callback (kernel/sched/dpc.h) runs at DISPATCH_LEVEL and MUST NOT. Use a DPC
+ * for fast deferral and a work item only when the work must block.
+ *
  * Equivalent to: Linux  workqueue_struct / INIT_WORK / schedule_work
- *                Windows DPC (Deferred Procedure Call) + work items
+ *                Windows system work threads / ExQueueWorkItem (PASSIVE_LEVEL)
+ *                -- the Windows DPC analogue is kernel/sched/dpc.h, not this.
  *
  * Usage:
  *   // At boot (thread context):
