@@ -26,6 +26,7 @@
 #include "kernel/cpuid.h"
 #include "kernel/cpu_security.h"
 #include "kernel/sched/apc.h"
+#include "kernel/sched/event.h"
 
 /* Forward declare -- avoid circular include with irql.h */
 extern KIRQL KeGetCurrentIrql(void);
@@ -57,9 +58,27 @@ _Static_assert(sizeof(struct dpc_lock_slot) == DPC_CACHELINE,
 /* Accessor: pointer to CPU i's spinlock. */
 #define DPC_QLOCK(i) (&queue_lock_slots[(i)].lock)
 
-/* Per-CPU threaded DPC pending list (separate from DISPATCH_LEVEL queue) */
-static KDPC *threaded_head[MAX_CPUS];
-static volatile uint32_t threaded_pending[MAX_CPUS];
+/* Per-CPU threaded DPC pending list (separate from the DISPATCH_LEVEL queue).
+ * head + pending are mutated UNDER the per-CPU DPC_QLOCK (producer hand-off and
+ * worker pop) -- never lock-free -- so the ISR producer and PASSIVE worker can
+ * never corrupt the list or lose a node. Cache-line aligned + padded so a
+ * per-DPC write to one CPU's slot cannot false-share with another CPU's. */
+struct dpc_threaded_slot {
+    KDPC              *head;       /* threaded DPC list head (FIFO pop point)    */
+    KDPC              *tail;       /* threaded DPC list tail (FIFO append point) */
+    volatile uint32_t  pending;   /* 1 while the list is non-empty (acq/rel)    */
+    uint8_t            _pad[DPC_CACHELINE - 2 * sizeof(KDPC *) - sizeof(uint32_t)];
+} __attribute__((aligned(DPC_CACHELINE)));
+_Static_assert(sizeof(struct dpc_threaded_slot) == DPC_CACHELINE,
+               "dpc_threaded_slot must occupy exactly one cache line");
+static struct dpc_threaded_slot threaded_q[MAX_CPUS];
+
+/* Worker idle event: the ISR producer event_set()s it (ISR-safe) on hand-off,
+ * and the worker truly BLOCKS on event_wait() when idle (no CPU burn). A lost
+ * wakeup (event_set racing the worker's check-then-block) self-heals because
+ * dpc_watchdog_tick re-event_set()s every timer tick while any list is pending.
+ * AUTO_RESET (wake one waiter, auto-clear). */
+static event_t s_dpc_worker_event;
 
 /* ---- DPC fairness budget + watchdog (section 14) ------------------------- *
  *
@@ -212,6 +231,21 @@ void dpc_watchdog_tick(void)
             s_apc_starv_reported = ev;
         }
     }
+
+    /* Threaded-DPC worker lost-wakeup self-heal: if ANY CPU still has pending
+     * threaded DPCs, re-signal the (possibly blocked) worker every tick. This
+     * lets the worker block on a real event_wait without a lost wakeup
+     * (event_set racing its check-then-block) stranding work for more than one
+     * tick. A lock-free pending read is fine -- a missed 1 just heals next tick. */
+    {
+        uint32_t c, ncpu = smp_cpu_count();
+        for (c = 0; c < ncpu && c < MAX_CPUS; c++) {
+            if (__atomic_load_n(&threaded_q[c].pending, __ATOMIC_ACQUIRE)) {
+                event_set(&s_dpc_worker_event);
+                break;
+            }
+        }
+    }
 }
 
 /* ---- Initialization ------------------------------------------------------ */
@@ -231,9 +265,11 @@ void dpc_init_queues(void)
         cpu_queues[i].executed  = 0;
         cpu_queues[i].max_depth = 0;
         queue_lock_slots[i].lock.flag = 0;
-        threaded_head[i]        = (KDPC *)0;
-        threaded_pending[i]     = 0;
+        threaded_q[i].head        = (KDPC *)0;
+        threaded_q[i].tail        = (KDPC *)0;
+        threaded_q[i].pending     = 0;
     }
+    event_init(&s_dpc_worker_event, "dpc_worker", EVENT_AUTO_RESET, 0);
     s_queues_ready = 1;
     klog(LOG_INFO, "dpc", "DPC queues initialized (%u CPUs)", (uint64_t)MAX_CPUS);
 }
@@ -521,6 +557,33 @@ int KeRemoveQueueDpc(KDPC *dpc)
         cur  = cur->next;
     }
 
+    /* Not on the normal queue -- it may have been handed off to the threaded
+     * list (still queued=1, owned, under this same DPC_QLOCK). Unlink it there
+     * so cancellation/teardown can stop a pending threaded callback. */
+    if (!found) {
+        prev = (KDPC *)0;
+        cur  = threaded_q[cpu_id].head;
+        while (cur) {
+            if (cur == dpc) {
+                if (prev)
+                    prev->next = cur->next;
+                else
+                    threaded_q[cpu_id].head = cur->next;
+                if (threaded_q[cpu_id].tail == cur)
+                    threaded_q[cpu_id].tail = prev;   /* maintain FIFO tail */
+                cur->next       = (KDPC *)0;
+                cur->queued_cpu = MAX_CPUS;
+                cur->queued     = 0;
+                if (!threaded_q[cpu_id].head)
+                    __atomic_store_n(&threaded_q[cpu_id].pending, 0, __ATOMIC_RELEASE);
+                found = 1;
+                break;
+            }
+            prev = cur;
+            cur  = cur->next;
+        }
+    }
+
     spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
     return found;
@@ -530,39 +593,65 @@ int KeRemoveQueueDpc(KDPC *dpc)
 
 static void dpc_thread_fn(void)
 {
-    extern void yield(void);
     extern uint32_t smp_cpu_count(void);
 
     klog(LOG_DEBUG, "dpc", "threaded DPC worker started (drains all CPUs)");
 
     for (;;) {
-        /* Check all CPUs for pending threaded DPCs */
         uint32_t any_work = 0;
         uint32_t ncpus = smp_cpu_count();
         uint32_t ci;
 
         for (ci = 0; ci < ncpus && ci < MAX_CPUS; ci++) {
-            if (!__atomic_load_n(&threaded_pending[ci], __ATOMIC_ACQUIRE))
-                continue;
+            uint32_t budget = DPC_THREADED_BATCH_LIMIT;
 
+            if (!__atomic_load_n(&threaded_q[ci].pending, __ATOMIC_ACQUIRE))
+                continue;
             any_work = 1;
 
-            /* Drain threaded DPC list for this CPU at PASSIVE_LEVEL */
-            while (threaded_head[ci]) {
-                KDPC *dpc = threaded_head[ci];
-                threaded_head[ci] = dpc->next;
-                dpc->next = (KDPC *)0;
+            /* Pop ONE node per iteration UNDER DPC_QLOCK, clear queued WHILE the
+             * node is off all lists (so it is never owned-but-unreachable), then
+             * release the lock and run the routine at PASSIVE_LEVEL. Bounded by
+             * DPC_THREADED_BATCH_LIMIT per pass so one CPU's list (or a
+             * self-rearming threaded DPC) cannot starve the other CPUs. */
+            while (budget--) {
+                KDPC              *dpc;
+                KDEFERRED_ROUTINE  routine;
+                void              *ctx, *a1, *a2;
+                uint64_t           irq_flags;
 
-                if (dpc->routine)
-                    dpc->routine(dpc, dpc->deferred_ctx,
-                                 dpc->system_arg1, dpc->system_arg2);
+                spin_lock_irqsave(DPC_QLOCK(ci), &irq_flags);
+                dpc = threaded_q[ci].head;
+                if (!dpc) {
+                    __atomic_store_n(&threaded_q[ci].pending, 0, __ATOMIC_RELEASE);
+                    spin_unlock_irqrestore(DPC_QLOCK(ci), irq_flags);
+                    break;
+                }
+                threaded_q[ci].head = dpc->next;
+                if (!threaded_q[ci].head)
+                    threaded_q[ci].tail = (KDPC *)0;   /* list emptied */
+                dpc->next       = (KDPC *)0;
+                dpc->queued_cpu = MAX_CPUS;
+                dpc->queued     = 0;          /* off all lists -- safe to clear */
+                routine = dpc->routine;
+                ctx     = dpc->deferred_ctx;
+                a1      = dpc->system_arg1;
+                a2      = dpc->system_arg2;
+                spin_unlock_irqrestore(DPC_QLOCK(ci), irq_flags);
+
+                if (routine)
+                    routine(dpc, ctx, a1, a2);
             }
-
-            __atomic_store_n(&threaded_pending[ci], 0, __ATOMIC_RELEASE);
         }
 
+        /* Truly BLOCK on the producer-signaled event when idle (no CPU burn --
+         * event_wait_timeout intentionally yield-spins, so it is NOT used here).
+         * The ISR producer event_set()s on hand-off; a lost wakeup (event_set
+         * racing this check-then-block) self-heals because dpc_watchdog_tick
+         * re-event_set()s every timer tick whenever any threaded list is
+         * pending, so a blocked worker with work is re-woken within one tick. */
         if (!any_work)
-            yield();
+            event_wait(&s_dpc_worker_event);
     }
 }
 
@@ -617,24 +706,34 @@ static uint32_t drain_queue(uint32_t cpu_id)
         a2       = dpc->system_arg2;
         threaded = dpc->threaded;   /* snapshot under the lock */
 
-        dpc->next       = (KDPC *)0;
-        dpc->queued_cpu = MAX_CPUS;   /* invalidate before clearing queued */
-        dpc->queued     = 0;
-        q->executed++;                /* stats under the lock (was outside) */
+        q->executed++;                /* stats under the lock */
 
-        spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
-
-        /* Threaded DPCs: move to the threaded list instead of executing inline.
-         * NOTE: this hand-off writes dpc->next after the DPC is marked un-queued,
-         * which races a concurrent re-insert -- tracked for the threaded-DPC
-         * pending-state fix in the threaded-DPC list-synchronization section. */
+        /* Threaded DPCs: hand off to the threaded list UNDER THE SAME LOCK,
+         * keeping dpc->queued=1 + queued_cpu=cpu_id so the KDPC is never
+         * un-owned between the two lists -- this closes BOTH the producer/worker
+         * race on the threaded list AND the double-owner window where a
+         * concurrent KeInsertQueueDpc could re-insert a momentarily-unqueued
+         * KDPC. The worker clears queued when it pops the node off all lists. */
         if (threaded) {
-            dpc->next = threaded_head[cpu_id];
-            threaded_head[cpu_id] = dpc;
-            __atomic_store_n(&threaded_pending[cpu_id], 1, __ATOMIC_RELEASE);
+            /* FIFO append to the tail (DPCs execute in insertion order). */
+            dpc->next = (KDPC *)0;
+            if (threaded_q[cpu_id].tail)
+                threaded_q[cpu_id].tail->next = dpc;
+            else
+                threaded_q[cpu_id].head = dpc;
+            threaded_q[cpu_id].tail = dpc;
+            __atomic_store_n(&threaded_q[cpu_id].pending, 1, __ATOMIC_RELEASE);
+            spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
+            event_set(&s_dpc_worker_event);   /* ISR-safe wake of the worker */
             dispatched++;
             continue;
         }
+
+        /* Non-threaded: clear ownership, unlock, then run inline. */
+        dpc->next       = (KDPC *)0;
+        dpc->queued_cpu = MAX_CPUS;   /* invalidate before clearing queued */
+        dpc->queued     = 0;
+        spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
         /* Single-DPC runtime watchdog: time the routine in TSC cycles when an
          * invariant TSC threshold is available (else the timing watchdog is

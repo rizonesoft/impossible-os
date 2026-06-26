@@ -43,3 +43,11 @@
  * stuck in a critical/guarded region or at elevated IRQL too long (APCs queue
  * but never deliver). Warns; does not bugcheck. */
 #define APC_STARVATION_WARN_DEPTH       32u
+
+/* ---- Threaded-DPC worker (section 15) ------------------------------------ */
+
+/* Max threaded DPCs the worker pops from ONE CPU's list per pass before moving
+ * on, so one busy CPU (or a self-rearming threaded DPC) cannot starve others.
+ * The worker blocks on event_wait() between passes (no idle CPU burn); a lost
+ * wakeup self-heals via dpc_watchdog_tick's per-tick re-signal while pending. */
+#define DPC_THREADED_BATCH_LIMIT        32u

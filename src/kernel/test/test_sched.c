@@ -1172,6 +1172,34 @@ static void test_dpc_watchdog_strict_toggle(void)
     dpc_watchdog_set_strict(saved);   /* restore */
 }
 
+/* ---- Section 15: threaded DPC list synchronization ---------------------- */
+
+/* Test: after drain_queue hands a threaded DPC to the threaded list, it stays
+ * queued=1 (owned, never un-owned mid-transition) and KeRemoveQueueDpc can
+ * still cancel it -- it unlinks from the threaded list, not just the normal
+ * queue. Run at DISPATCH_LEVEL so the PASSIVE worker thread cannot pop the node
+ * before the assertions (deterministic in the single-CPU test harness). */
+static void test_dpc_threaded_remove(void)
+{
+    extern uint32_t dpc_drain_current_cpu(void);
+    KDPC dpc;
+    KIRQL old;
+    uint32_t qf_after_handoff;
+    int rm;
+
+    KeInitializeThreadedDpc(&dpc, dpc_noop_routine, (void *)0);
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    KeInsertQueueDpc(&dpc, (void *)0, (void *)0);   /* -> normal queue, queued=1 */
+    dpc_drain_current_cpu();                         /* -> threaded list, queued stays 1 */
+    qf_after_handoff = dpc.queued;
+    rm = KeRemoveQueueDpc(&dpc);                      /* must find + unlink on threaded list */
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)qf_after_handoff, 1u, "threaded DPC stays owned after handoff");
+    TEST_ASSERT_EQ((uint64_t)rm, 1u, "KeRemoveQueueDpc cancels a threaded-pending DPC");
+    TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u, "queued cleared after threaded cancel");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -1253,6 +1281,8 @@ void test_register_sched(void)
                             test_apc_kernel_depth, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC watchdog strict-mode toggle",
                             test_dpc_watchdog_strict_toggle, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeRemoveQueueDpc cancels a threaded DPC",
+                            test_dpc_threaded_remove, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",
