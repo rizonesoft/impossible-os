@@ -324,7 +324,7 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 - [x] `KINTERRUPT` + `KeSynchronizeExecution` in `sched/kinterrupt.{c,h}`, irq.c-integrated: the dispatcher runs the bound ISR under `ki->lock`+`active_cpu`; KeSync raises to SynchronizeIrql + takes the lock; self-ISR rejected (lock-free counter).
   - This item owns the sync-object + SynchronizeIrql contract; GSI/vector routing + affinity already shipped in `01-boot-platform/TODO-11 §5`. → XREF: 01-boot-platform/TODO-11 §5 (irq_request_gsi)
 - [x] Recorded the RTL8139 RX DPC-first follow-up in `04-drivers-hardware/TODO-14 §7` (after §12 drain-on-lower).
-- [ ] KINTERRUPT full teardown barrier (deferred): `KeDisconnectInterrupt` is best-effort (unpublish + lock-flush + quiesce precondition); a full mask+drain barrier for live-interrupt hot-unplug is latent (no driver binds one yet).
+- [ ] KINTERRUPT lifetime hardening (deferred, latent): full mask+drain teardown barrier for live-interrupt hot-unplug + unified `irq_chain_lock` serialization of exclusive register/unregister vs bind. No driver binds a KINTERRUPT yet.
 - [x] Commit: `"drivers: irq -- migrate ISR deferred path to DPC model"`
 
 **Test checkpoint:** Migrated driver ISR path: interrupt fires → DPC queued → callback processes data at `DISPATCH_LEVEL`. Workqueue callback runs at `PASSIVE_LEVEL` for heavy work. `workqueue.h` comments updated. Driver smoke test under continuous interrupt load (network RX flood or disk I/O burst) remains stable. Serial: no DPC starvation warnings after 60s load test.
@@ -337,6 +337,10 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 > - Design + adversarial + re-adversarial adoptions (RX drain stays inline, KINTERRUPT dispatcher-bound, lock coexists with `nic_rx_lock`, inline DPC helper not ack-macro, no serial-I/O under the interrupt lock) in commit `STAMPHASH10`.
 > - Canonical doc: `include/kernel/sched/kinterrupt.h` (sync contract + lifetime/quiesce precondition).
 > - Scope: §10 owns the per-interrupt SynchronizeIrql + lock contract; GSI/vector routing -> `01-boot-platform/TODO-11 §5`; full RX DPC-first -> `04-drivers-hardware/TODO-14 §7`; KINTERRUPT full teardown barrier -> the deferred item above.
+> **Verified:** 2026-06-26 | commit `STAMPHASH10R` | 7/8 items | build OK | sched 110 PASS | smoke PASS (2.8s)
+> **Accepted:** [M] RTL8139 RX still kmallocs a work item per packet in the ISR (full preallocated-ring RX DPC-first) (reason: scope -- RX migration deferred) -> XREF: 04-drivers-hardware/TODO-14-network-drivers.md §7 (item: "RTL8139 RX DPC-first" at line 170)
+> **Deferred:** [H] KINTERRUPT lifetime hardening -- full teardown barrier for live-interrupt hot-unplug + unified register/unregister/bind serialization (reason: infra; latent, no driver binds) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §10 (item: "KINTERRUPT lifetime hardening" at line 327)
+> **Quality reviewed:** 2026-06-26 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) | 3H+2M+2L fixed, 1M accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
 

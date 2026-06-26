@@ -13,15 +13,16 @@
  *
  * SCOPE: this owns the per-interrupt SynchronizeIrql + lock contract only.
  * GSI/vector routing + affinity are owned by the interrupt-arch work
- * (irq_request_gsi in 01-boot-platform/TODO-11). The KINTERRUPT lock is for
+ * (irq_request_gsi, the interrupt-routing work). The KINTERRUPT lock is for
  * SHORT ISR-shared register/state windows; it is NOT a general driver
  * serialization primitive (do not run allocation / paging / logging under it).
  *
  * SELF-ISR PRECONDITION: KeSynchronizeExecution must NOT be called from inside
  * the interrupt's own ISR -- the dispatcher already holds the lock, so a
  * re-acquire would deadlock. The dispatcher records the CPU running the ISR
- * (active_cpu); a self-call is detected and rejected (returns FALSE + logs)
- * rather than deadlocking. Like NT, this is documented caller misuse.
+ * (active_cpu); a self-call is detected and rejected (returns FALSE + bumps a
+ * lock-free counter, not a klog -- serial I/O is forbidden under the lock at
+ * DIRQL) rather than deadlocking. Like NT, this is documented caller misuse.
  * ============================================================================ */
 
 #pragma once
@@ -69,7 +70,8 @@ uint32_t KeGetSelfIsrRejectCount(void);
 
 /* Run routine(ctx) at the interrupt's SynchronizeIrql under its lock, mutually
  * exclusive with the ISR. Returns the routine's BOOLEAN. If called from inside
- * the interrupt's own ISR (active_cpu == this CPU) it returns FALSE and logs --
- * see the SELF-ISR PRECONDITION above. Callable at IRQL <= DISPATCH_LEVEL. */
+ * the interrupt's own ISR (active_cpu == this CPU) it returns FALSE and bumps a
+ * lock-free counter (KeGetSelfIsrRejectCount) -- see the SELF-ISR PRECONDITION
+ * above. Callable at IRQL <= DISPATCH_LEVEL. */
 int KeSynchronizeExecution(KINTERRUPT *interrupt,
                            PKSYNCHRONIZE_ROUTINE routine, void *context);

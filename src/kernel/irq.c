@@ -106,7 +106,9 @@ static inline KINTERRUPT *irq_ki_enter(struct irq_entry *e, uint64_t *flags)
     if (!ki)
         return (KINTERRUPT *)0;
     spin_lock_irqsave(&ki->lock, flags);
-    ki->active_cpu = smp_this_cpu()->cpu_id;
+    /* Atomic-release store pairs with the acquire-load in the KeSynchronizeExecution
+     * self-guard (keeps active_cpu accesses symmetric + portable off x86 TSO). */
+    __atomic_store_n(&ki->active_cpu, smp_this_cpu()->cpu_id, __ATOMIC_RELEASE);
     return ki;
 }
 
@@ -114,7 +116,7 @@ static inline void irq_ki_leave(KINTERRUPT *ki, uint64_t flags)
 {
     if (!ki)
         return;
-    ki->active_cpu = MAX_CPUS;
+    __atomic_store_n(&ki->active_cpu, MAX_CPUS, __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&ki->lock, flags);
 }
 
@@ -194,17 +196,46 @@ int irq_register(uint8_t vector, irq_handler_t handler, void *ctx,
 /* Bind a KINTERRUPT to a vector so the dispatcher runs that vector's ISR under
  * ki->lock (KeConnectInterrupt path). Release-store pairs with the dispatcher's
  * acquire-load. Returns IRQ_OK, IRQ_ERR_RANGE (vector < 32), or IRQ_ERR_BUSY
- * (a different KINTERRUPT already bound). One KINTERRUPT per vector. */
+ * (a different KINTERRUPT already bound, or the vector is a shared chain).
+ * EXCLUSIVE vectors only: a shared GSI line has multiple drivers, so a single
+ * vector-wide sync object would force unrelated handlers under one driver's
+ * lock -- a per-line/per-node shared KINTERRUPT model is a deferred enhancement.
+ * Publish is an atomic CAS (NULL -> ki) so two racing binds cannot both win. */
 int irq_bind_kinterrupt(uint8_t vector, KINTERRUPT *ki)
 {
+    uint64_t flags;
     KINTERRUPT *cur;
+    int rc;
     if (vector < 32 || !ki)
         return IRQ_ERR_RANGE;
-    cur = __atomic_load_n(&irq_table[vector].kinterrupt, __ATOMIC_ACQUIRE);
-    if (cur && cur != ki)
+    /* PASSIVE_LEVEL only: this takes irq_chain_lock, and a chain-drain holder
+     * can hold that lock while waiting for in-flight dispatches to drain, so an
+     * ISR/DPC caller would deadlock. Same guard as irq_request_gsi_ex. */
+    if (irq_in_isr_context())
         return IRQ_ERR_BUSY;
-    __atomic_store_n(&irq_table[vector].kinterrupt, ki, __ATOMIC_RELEASE);
-    return IRQ_OK;
+    /* Serialize against shared-route mutation (irq_chain_lock) so the ownership
+     * check and the publish are ONE transition -- no window where a shared
+     * chain or a fresh allocation appears between the check and the store. */
+    spin_lock_irqsave(&irq_chain_lock, &flags);
+    /* EXCLUSIVE owned vector only: an installed non-shared handler, no shared
+     * chain, not parked. Binding a free/unowned vector is rejected -- the
+     * allocator could later hand it to an unrelated handler that the dispatcher
+     * would then run under the wrong (or no) KINTERRUPT lock. */
+    if (!irq_table[vector].handler || irq_table[vector].chain ||
+        irq_table[vector].parked) {
+        rc = IRQ_ERR_BUSY;
+    } else {
+        cur = irq_table[vector].kinterrupt;
+        if (cur && cur != ki) {
+            rc = IRQ_ERR_BUSY;          /* a different object already bound */
+        } else {
+            /* Release-store pairs with the dispatcher's acquire-load. */
+            __atomic_store_n(&irq_table[vector].kinterrupt, ki, __ATOMIC_RELEASE);
+            rc = IRQ_OK;                 /* fresh bind, or idempotent same ki */
+        }
+    }
+    spin_unlock_irqrestore(&irq_chain_lock, flags);
+    return rc;
 }
 
 /* Unbind the KINTERRUPT from a vector (KeDisconnectInterrupt path). Only clears
@@ -234,6 +265,11 @@ static void irq_unregister_nolog(uint8_t vector)
 
     irq_table[vector].handler   = (irq_handler_t)0;
     irq_table[vector].ctx       = (void *)0;
+    /* Drop any KINTERRUPT binding when the exclusive handler goes away, so a
+     * stale sync object cannot survive into a later reallocation of this
+     * vector (the binding requires an owned handler). */
+    __atomic_store_n(&irq_table[vector].kinterrupt, (KINTERRUPT *)0,
+                     __ATOMIC_RELEASE);
     if (!irq_table[vector].reserved)
         irq_table[vector].name  = (const char *)0;
     /* Reserved vectors stay allocated: the ISA IRQ 8-15 window and the
@@ -454,16 +490,13 @@ static uint64_t irq_shared_dispatch_wrapper(struct interrupt_frame *frame)
         __atomic_fetch_sub(&e->dispatch_active, 1, __ATOMIC_RELEASE);
         return (uint64_t)frame;
     }
-    {
-        /* Run the whole shared chain under the line's KINTERRUPT lock (if
-         * bound) so KeSynchronizeExecution serializes against the line's ISR. */
-        uint64_t ki_flags = 0;
-        KINTERRUPT *ki = irq_ki_enter(e, &ki_flags);
-        for (; n; n = n->next) {
-            if (n->handler(vec, n->ctx) == IRQ_HANDLED)
-                handled = IRQ_HANDLED;
-        }
-        irq_ki_leave(ki, ki_flags);
+    /* No KINTERRUPT wrap on the shared path: KINTERRUPT binds EXCLUSIVE vectors
+     * only (irq_bind_kinterrupt rejects shared chains), since one vector-wide
+     * lock cannot correctly serialize independent drivers on a shared GSI line.
+     * A per-line/per-node shared synchronization object is a deferred follow-up. */
+    for (; n; n = n->next) {
+        if (n->handler(vec, n->ctx) == IRQ_HANDLED)
+            handled = IRQ_HANDLED;
     }
 
     if (handled == IRQ_HANDLED) {

@@ -29,7 +29,7 @@ void KeInitializeInterrupt(KINTERRUPT *interrupt, uint8_t vector)
     interrupt->vector     = vector;
     interrupt->sync_irql  = vector_to_irql(vector);
     interrupt->lock.flag  = 0;
-    interrupt->active_cpu = MAX_CPUS;     /* no ISR running */
+    __atomic_store_n(&interrupt->active_cpu, MAX_CPUS, __ATOMIC_RELEASE); /* no ISR */
     interrupt->connected  = 0;
 }
 
@@ -69,11 +69,15 @@ int KeSynchronizeExecution(KINTERRUPT *interrupt,
     uint64_t flags;
     int      result;
     uint32_t me;
+    struct per_cpu_data *cpu;
 
     if (!interrupt || !routine)
         return 0;
 
-    me = smp_this_cpu()->cpu_id;
+    cpu = smp_this_cpu();
+    if (!cpu)
+        return 0;                /* GS_BASE not yet live -- no valid CPU context */
+    me = cpu->cpu_id;
 
     /* Self-ISR guard: the dispatcher holds interrupt->lock while this vector's
      * ISR runs on this CPU, so re-acquiring it from inside the ISR would

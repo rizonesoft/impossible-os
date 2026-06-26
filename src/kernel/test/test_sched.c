@@ -11,6 +11,7 @@
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/ktimer.h"
 #include "kernel/sched/kinterrupt.h"
+#include "kernel/irq.h"
 #include "kernel/timer.h"
 #include "kernel/smp.h"
 #include "kernel/types.h"
@@ -773,6 +774,31 @@ static void test_kerequestdpc_enqueues(void)
     TEST_ASSERT_EQ((uint64_t)queued, 1u, "KeRequestDpcFromIsr enqueues the DPC");
 }
 
+static void kinterrupt_dummy_irq(uint8_t v, void *c) { (void)v; (void)c; }
+
+/* Test: KeConnectInterrupt binds only an EXCLUSIVE OWNED vector under the route
+ * lock -- an unowned (no-handler) vector is rejected; a second DIFFERENT
+ * KINTERRUPT on the same vector is rejected; re-binding the SAME object is
+ * idempotent. Registers a dummy handler on a high unused vector, then cleans up. */
+static void test_kinterrupt_bind_exclusive(void)
+{
+    KINTERRUPT ki_a, ki_b;
+    int unowned, c1, c2, c3;
+    KeInitializeInterrupt(&ki_a, 0xED);
+    KeInitializeInterrupt(&ki_b, 0xED);
+    unowned = KeConnectInterrupt(&ki_a);              /* no handler -> rejected */
+    irq_register(0xED, kinterrupt_dummy_irq, (void *)0, "ktest");
+    c1 = KeConnectInterrupt(&ki_a);                   /* owned vector -> binds */
+    c2 = KeConnectInterrupt(&ki_a);                   /* same ki -> idempotent */
+    c3 = KeConnectInterrupt(&ki_b);                   /* different ki -> rejected */
+    KeDisconnectInterrupt(&ki_a);
+    irq_unregister(0xED);
+    TEST_ASSERT_EQ((uint64_t)unowned, 0u, "bind on unowned (no-handler) vector rejected");
+    TEST_ASSERT_EQ((uint64_t)c1, 1u, "bind on owned exclusive vector succeeds");
+    TEST_ASSERT_EQ((uint64_t)c2, 1u, "same KINTERRUPT re-bind is idempotent");
+    TEST_ASSERT_EQ((uint64_t)c3, 0u, "different KINTERRUPT on a bound vector rejected");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -814,6 +840,8 @@ void test_register_sched(void)
                             test_kinterrupt_self_isr_rejected, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeRequestDpcFromIsr enqueues",
                             test_kerequestdpc_enqueues, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KINTERRUPT bind CAS (exclusive, idempotent)",
+                            test_kinterrupt_bind_exclusive, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",
