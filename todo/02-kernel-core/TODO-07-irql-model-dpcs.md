@@ -523,7 +523,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Downstream: closes the §15-deferred threaded-flush barrier AND the §7-deferred normal-DPC in-flight barrier; unblocks §9 timer free-after-cancel. Codex design + adversarial (multi-round) + consistency + perf adoptions in the commit.
 > - Canonical doc: this section + `src/kernel/sched/dpc.c` `KeFlushQueuedDpcs` + `include/kernel/sched/dpc_config.h`.
 > - Scope boundary: §16 owns the full DPC completion barrier. Per-CPU threaded-worker affinity -> §17; idle-poll worker cost + SMP-safe `event_t` -> §15 deferred item.
-> **Verified:** 2026-06-26 | commit `TBD-backfill` | 6/6 items | build OK | 177 sched + 16 user tests, smoke PASSED
+> **Verified:** 2026-06-26 | commit `ad5f1ef9` | 6/6 items | build OK | 177 sched + 16 user tests, smoke PASSED
 > **Accepted:** [M] a normal DPC that ILLEGALLY lowers IRQL to PASSIVE before flushing bypasses the 0x4 entry guard, but still fail-closes via the 0x2 cap bugcheck (no UAF) (reason: a precise in_flight entry check false-positives a legit caller racing a timer-ISR-nested drain; root cause is the unbuilt IRQL-lower LIFO validator) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 421)
 > **Quality reviewed:** 2026-06-26 | Codex 13x (design + adversarial-impl + re-adversarial + adversarial + consistency + perf) | 6H fixed, 1M accepted-XREF | scope: kernel-code-quality
 
