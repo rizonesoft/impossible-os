@@ -121,7 +121,7 @@ Select the best monotonic source available: invariant TSC → HPET → ACPI PMTM
 > - Downstream: the `read_ns`/`uptime_ns` hot path uses cached `mono_ns_coarse()` (`sys_yield` 25k cycles); precise `mono_ns()` is median + monotonic-floor. Codex design (4) + adversarial (3 monotonicity) adoptions in the commit.
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §2 owns source selection + the PMTMR clocksource; the drift watchdog is §18; ordered-`rdtsc` / AP-TSC-sync is §3.
-> **Verified:** 2026-06-27 | commit `50f787e9` | 8/8 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG 2.6s)
+> **Verified:** 2026-06-27 | commit `54345492` | 8/8 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG 2.6s)
 > **Accepted:** [H] `kusd_update_time()` does precise PMTMR reads every tick (6 port reads/tick in the ISR) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §16 (item: "Migrate `kusd_update_time()` ... to the coarse variants" at line 125)
 > **Accepted:** [H] a multi-second tick quiesce can lose 24-bit PMTMR wraps (the monotonic floor blocks backward steps meanwhile) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "PMTMR epoch refresh across tick quiesce" at line 334)
 > **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 2H accepted | scope: kernel-code-quality
