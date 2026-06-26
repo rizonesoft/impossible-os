@@ -194,7 +194,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Diagnostics: `q->executed`/`depth` updated under the lock; `KiDispatchDpc` logs "dispatched N DPCs".
 > - Tests: `test_sched.c` asserts both the `KiDispatchDpc` drain and the `KeFlushQueuedDpcs`-from-PASSIVE callbacks run at DISPATCH_LEVEL.
 > - Canonical: `src/kernel/sched/dpc.c`.
-> **Verified:** 2026-06-26 | commit `STAMPHASH5` | 6/6 items | build OK | tests 58 kernel + 16 user PASS
+> **Verified:** 2026-06-26 | commit `38b5b9f6` | 6/6 items | build OK | tests 58 kernel + 16 user PASS
 > **Deferred:** [H] `KeFlushQueuedDpcs` `head==NULL` poll can return while a remote callback is still in-flight (no in-flight tracking; silent 100000-spin timeout) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 221)
 > **Deferred:** [H] threaded-DPC `drain_queue` hand-off races the worker on `threaded_head` and re-insert -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 365)
 > **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H fixed, 2H deferred | scope: kernel-code-quality
