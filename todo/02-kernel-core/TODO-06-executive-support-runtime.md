@@ -56,7 +56,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 11 | Run-once initialization | §1 | [/] |
 | ⭐ | 12 | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue | [/] |
 | 💎 | 13 | Bugcheck reason callbacks | §3, T27 | [/] |
-| ⭐ | 14 | Executive verifier hooks | §2..§13 | [ ] |
+| ⭐ | 14 | Executive verifier hooks | §2..§13 | [/] |
 
 ## 1. Executive Headers and Namespace
 
@@ -375,13 +375,20 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 > [!NOTE]
 > Scoped Executive instrumentation, NOT a Driver Verifier / KASAN / lockdep replacement. Non-goals: full allocation poisoning, IRQL-misuse sweeps, lockdep-style global lock-order graphs, memory-lifetime/race detection. It checks the specific misuse modes of THIS layer's primitives at low cost; broader tooling is owned by D02 T31 (bulletproofing).
 
-- [ ] Add `EX_VERIFIER=1` boot/config flag.
-- [ ] Track callback leaks, rundown misuse, lookaside misuse (double-free + teardown-in-use + custom-free-unmap, §5 contracts), fast-ref alignment, push-lock/guarded-mutex acquire-outside-region, resource lock order, run-once misuse.
-- [ ] Emit violations through TODO-27 and optionally bugcheck on fatal corruption.
-- [ ] Unit tests cover every primitive (§2-§13) under normal and verifier mode.
+- [/] Add `EX_VERIFIER=1` boot/config flag. BLOCKED: a central verifier needs its instrumented primitives to exist; §8-§11 + §13 are deferred; shipped primitives already self-guard (§5/§6).
+- [/] Track callback leaks, rundown misuse, lookaside misuse, fast-ref alignment, push-lock/guarded-mutex acquire-outside-region, resource lock order, run-once misuse. BLOCKED: most misuse modes target deferred §8-§11 primitives.
+- [/] Emit violations through TODO-27 and optionally bugcheck on fatal corruption. BLOCKED: the TODO-27 dump/violation sink is deferred.
+- [/] Unit tests cover every primitive (§2-§13) under normal and verifier mode. BLOCKED: §8-§11/§13 primitives do not exist to test.
 - [ ] Commit: `"kernel: ex -- verifier hooks"`
 
 **Test checkpoint:** With `EX_VERIFIER=1`, injected rundown misuse, lookaside double-free, fast-ref misalignment, and push-lock-outside-critical-region each emit a distinct violation record; a clean run emits none; fatal corruption optionally raises bugcheck.
+
+> **Notes:**
+> - **Why deferred** -- the bulk of §14's misuse modes (push-lock/guarded-mutex/resource/run-once) target the deferred §8-§11 primitives, emission routes through the deferred TODO-27 sink, and "every primitive §2-§13" cannot be tested.
+> - **Blocked on** -- the deferred primitive sections §8/§9/§10/§11/§13 in this file + `02-kernel-core/TODO-27 §5` (violation/dump sink).
+> - **Scope boundary** -- §14 owns the central `EX_VERIFIER` framework; the shipped primitives already self-guard (§5 lookaside verifier, §6 fast-ref bugcheck, §3 rundown); broader tooling is D02 T31.
+
+> **Deferred:** [M] central verifier needs the §8-§13 primitives it instruments (mostly deferred) + a violation sink -> XREF: 02-kernel-core/TODO-27 §5 (item: "Commit: minidump writer, stream serialisation, CRC32C, memory page selection" at line 190)
 
 ---
 
@@ -401,7 +408,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ §11 deferred (keyed events) |
 | 💎 | Worker items + Ex timers   | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer   | ✅ §12 work items (timers deferred) |
 | 💎 | Bugcheck reason callbacks  | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers     | ⬜ §13 deferred (panic freeze) |
-| ⭐ | Scoped executive verifier  | ⚠️ Driver Verifier (heavy)         | ⚠️ KASAN/lockdep       | ⬜ Planned -- §14 scoped  |
+| ⭐ | Scoped executive verifier  | ⚠️ Driver Verifier (heavy)         | ⚠️ KASAN/lockdep       | ⬜ §14 deferred (needs §8-§13) |
 
 > **After §1-§13:** Impossible OS matches Windows 11 and Linux on Executive support primitives.
 > **After §14:** a low-cost verifier checks THIS layer's primitive-misuse modes inline, complementing (not replacing) the heavier Driver Verifier / KASAN / lockdep-class tooling owned by D02 T31.
