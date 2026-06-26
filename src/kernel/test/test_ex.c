@@ -1383,6 +1383,12 @@ static void test_ex_workitem_cancel_before_dispatch(void)
     }
     TEST_ASSERT(__atomic_load_n(&g_wi_block_run, __ATOMIC_ACQUIRE), "blocker occupies the worker");
 
+    /* In-flight (RUNNING) cancel boundary: the blocker's routine is executing
+     * (g_wi_block_run was set inside it, after the trampoline flipped it to
+     * RUNNING), so a cancel must LOSE -- the routine keeps running. */
+    TEST_ASSERT_EQ(ExpWorkItemState(blocker), EX_WI_RUNNING, "blocker is RUNNING while its routine executes");
+    TEST_ASSERT(!ExCancelWorkItem(blocker), "cancel of a RUNNING item returns false (already running)");
+
     /* The target queues behind the busy worker and must still be cancellable. */
     TEST_ASSERT_EQ(ExQueueWorkItem(target), 0, "queue target behind the blocker");
     TEST_ASSERT(ExCancelWorkItem(target), "cancel wins while still QUEUED");

@@ -345,7 +345,9 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 > - **Scope boundary** -- §12 ships immediate work items; delayed work + the `EX_TIMER` object set are deferred on a multi-deadline timer queue (KTIMER), owned by T07.
 > - **Canonical doc** -- `include/kernel/ex.h` S12 header block.
 
+> **Verified:** 2026-06-26 | commit `7636ae22` | 3/5 items | build OK | tests 5684/5684 PASS
 > **Deferred:** [M] delayed work (`ExQueueDelayedWorkItem`) + the `EX_TIMER` object set need a multi-deadline cancellable timer queue; the timer layer is only a singleton one-shot -> XREF: 02-kernel-core/TODO-07 §6 (item: "Timer/APIC Scheduling Path for DPC Dispatch")
+> **Quality reviewed:** 2026-06-26 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 3H+5M fixed | scope: kernel-code-quality
 
 ---
 
