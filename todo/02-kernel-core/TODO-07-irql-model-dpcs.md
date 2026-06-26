@@ -9,6 +9,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 # TODO-07 -- IRQL Model & DPCs
 
 > **Validated:** 2026-06-26 | validate-todo-file clean (structure / IO table / XREF / test wiring; integrity gate 8/8)
+> **Gap-audited:** 2026-06-26 | parity-research-analyst (Win11 24H2 + Linux 6.12) + codex-gap-audit red-team | added: §11 special-user-APC state + KeAreApcsDisabled, §12 special-user-APC delivery/NtQueueApcThreadEx, §10 KINTERRUPT/KeSynchronizeExecution sync object, §13 IRQL LIFO transition-stack validator, §14 0x133 param-0x0/0x1 split + test | fixed stale T12 APC owner XREF (TODO-17 -> T07) | covered: KINTERRUPT routing + IRQ affinity owned by T11 §5; PREEMPT_RT future (domain-16)
 
 > **Goal:** Implement a Windows-style Interrupt Request Level (IRQL) model and a real Deferred Procedure Call (DPC) subsystem so interrupt handlers can defer non-trivial work safely. DPCs run at `DISPATCH_LEVEL`, enforce preemption constraints, and provide a deterministic bridge between hard-interrupt context and thread context.
 
@@ -220,6 +221,8 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 - [ ] Migrate at least one representative IRQ-heavy driver path (RTL8139 RX/TX or AHCI completion) to DPC-first flow.
 - [ ] Update `workqueue.h` comments to clarify it is `PASSIVE_LEVEL` deferred thread work, not a DPC replacement.
 - [ ] Add helper wrappers for common ISR pattern: `ack -> queue dpc -> return`.
+- [ ] Add a per-interrupt sync object (`KINTERRUPT`-like: `SynchronizeIrql` + per-interrupt lock) + `KeSynchronizeExecution(Interrupt, Routine, Ctx)` so DPC/thread code can safely touch ISR-shared state
+  - This item owns the sync-object + SynchronizeIrql contract; GSI/vector routing + affinity already shipped in `01-boot-platform/TODO-11 §5`. → XREF: 01-boot-platform/TODO-11 §5 (irq_request_gsi)
 - [ ] Record driver follow-up checklist under `todo/04-drivers-hardware`.
 - [ ] Commit: `"drivers: irq -- migrate ISR deferred path to DPC model"`
 
@@ -233,16 +236,17 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 
 - [ ] Create `include/kernel/sched/apc.h` and `src/kernel/sched/apc.c`
 - [ ] Define `KAPC` structure: `Type`, `Size`, `Thread` (target `KTHREAD`/`task_t`), `ApcListEntry`, `KernelRoutine` (cleanup callback), `RundownRoutine` (thread-exit cleanup), `NormalRoutine` (the actual APC function), `NormalContext`, `SystemArgument1`, `SystemArgument2`, `ApcStateIndex`, `ApcMode` (KernelMode/UserMode), `Inserted` flag
-- [ ] Define `KAPC_STATE` structure embedded in each thread (`task_t`): two list heads (`ApcListHead[KernelMode]`, `ApcListHead[UserMode]`), `KernelApcPending` flag, `UserApcPending` flag, `KernelApcInProgress` flag, `Process` pointer
+- [ ] Define `KAPC_STATE` in each thread (`task_t`): two list heads (`ApcListHead[KernelMode/UserMode]`), pending flags `KernelApcPending`/`UserApcPending`/`SpecialUserApcPending`, `KernelApcInProgress` flag, `Process` pointer
 - [ ] Add `KAPC_STATE ApcState` and `KAPC_STATE SavedApcState` fields to `task_t` -- `SavedApcState` used during `KeAttachProcess`/`KeStackAttachProcess` context switches
 - [ ] Implement `KeInitializeApc(Apc, Thread, Environment, KernelRoutine, RundownRoutine, NormalRoutine, ApcMode, NormalContext)` -- initializes all KAPC fields; validates parameters
 - [ ] Implement `KeInsertQueueApc(Apc, SystemArgument1, SystemArgument2, Increment)` -- inserts APC into target thread's queue; special kernel APCs at head, normal/user APCs at tail; sets pending flags; returns `TRUE` on success, `FALSE` if thread is exiting
 - [ ] Implement `KeRemoveQueueApc(Apc)` -- removes a queued APC before delivery; returns `TRUE` if it was queued
 - [ ] Add critical/guarded region support: `KeEnterCriticalRegion()` / `KeLeaveCriticalRegion()` -- blocks normal kernel APC delivery; `KeEnterGuardedRegion()` / `KeLeaveGuardedRegion()` -- blocks all kernel APC delivery
   - → XREF consumers: `02-kernel-core/TODO-06 §8` (EX_PUSH_LOCK acquire contract) + §9 (guarded mutex)
+- [ ] Add APC-disabled query API: `KeAreApcsDisabled()` (TRUE inside critical/guarded region) and `KeAreAllApcsDisabled()` (TRUE inside guarded region only); Win11 exposes both as the canonical state query
 - [ ] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
 
-**Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to current thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to exiting thread returns `FALSE`. `KeEnterCriticalRegion` prevents normal kernel APC delivery. Serial: `"apc: initialized per-thread APC queues"` on first thread init.
+**Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to current thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to exiting thread returns `FALSE`. `KeEnterCriticalRegion` prevents normal kernel APC delivery; `KeAreApcsDisabled` reads `TRUE` there. `KeStackAttachProcess` save/restore survives nested attach/detach (SavedApcState round-trips). Serial: `"apc: initialized per-thread APC queues"` on first thread init.
 
 ---
 
@@ -258,18 +262,20 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
   - **Special kernel APCs**: drain all from head of kernel APC list; execute `KernelRoutine` at `APC_LEVEL`; no thread permission needed
   - **Normal kernel APCs**: if thread is not in critical region and `KernelApcInProgress == FALSE`: set `KernelApcInProgress = TRUE`, lower to `PASSIVE_LEVEL`, call `NormalRoutine`, raise back to `APC_LEVEL`, clear `KernelApcInProgress`
   - **User APCs**: if `PreviousMode == UserMode` and thread is alertable and user APC list is non-empty: set up user-mode trap frame to redirect execution to `KiUserApcDispatcher` (→ XREF TODO-23 §5 for user-mode frame setup)
+  - **Special user APCs**: if `SpecialUserApcPending` is set, deliver even when the thread is NOT alertable (Win11 NtQueueApcThreadEx special APCs interrupt non-alertable user-mode return); same `KiUserApcDispatcher` frame setup
   - Restore original IRQL
 - [ ] Wire `KiDeliverApc` into interrupt/exception return path: call when returning to `PASSIVE_LEVEL` or `APC_LEVEL` and `KernelApcPending` or `UserApcPending` is set. Add `POST16(0xDC00)` before first `KiDeliverApc` call in ISR return and `POST16(0xDC01)` after return
 - [ ] Wire into `KeWaitForSingleObject` / `KeWaitForMultipleObjects`: when `Alertable == TRUE` and wait completes or is interrupted, deliver user APCs before returning `STATUS_USER_APC`
 - [ ] Wire into `KeLowerIrql`: when lowering from >= `APC_LEVEL` to below `APC_LEVEL`, check for pending kernel APCs and deliver
 - [ ] Implement `KeTestAlertThread(AlertMode)` -- tests and delivers pending user APCs without entering a wait
+- [ ] Wire `NtQueueApcThreadEx`/`NtQueueApcThreadEx2`: route the `QUEUE_USER_APC_SPECIAL_USER_APC` flag to set `SpecialUserApcPending` (separate from plain `NtQueueApcThread` which queues a regular alertable user APC)
 - [ ] Thread exit path: call `RundownRoutine` for all remaining queued APCs to prevent resource leaks
 - [ ] Commit: `"kernel: sched -- add KiDeliverApc and APC delivery integration"`
 
 > [!NOTE]
 > User-mode APC delivery requires `KiUserApcDispatcher` in the user-mode runtime (ntdll equivalent). The kernel sets up a modified trap frame that redirects ring-3 execution to the dispatcher, which calls the APC routine and then calls `NtContinue` to restore the original context. Full user-mode dispatcher implementation is in TODO-23 §5; this section handles the kernel-side frame setup only.
 
-**Test checkpoint:** Queue kernel APC to current thread; on `KeLowerIrql` to `PASSIVE_LEVEL`, APC fires (callback sets flag). Queue special kernel APC during ISR; APC fires on interrupt return. `KeEnterCriticalRegion` suppresses normal kernel APC delivery; `KeLeaveCriticalRegion` triggers deferred delivery. Thread exit calls `RundownRoutine` for un-delivered APCs. Serial: `"apc: delivered N kernel APCs, M user APCs"`. If crash, check POST -- 0xDC00 = entered `KiDeliverApc` in ISR return, 0xDC01 = completed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- ISR return path modification is platform-sensitive.
+**Test checkpoint:** Queue kernel APC to current thread; on `KeLowerIrql` to `PASSIVE_LEVEL`, APC fires (callback sets flag). Queue special kernel APC during ISR; APC fires on interrupt return. `KeEnterCriticalRegion` suppresses normal kernel APC delivery; `KeLeaveCriticalRegion` triggers deferred delivery. A `SpecialUserApcPending` APC fires on user-mode return even when the thread is NOT alertable (regular user APC does not). Thread exit calls `RundownRoutine` for un-delivered APCs. Serial: `"apc: delivered N kernel APCs, M user APCs"`. If crash, check POST -- 0xDC00 = entered `KiDeliverApc` in ISR return, 0xDC01 = completed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- ISR return path modification is platform-sensitive.
 
 ---
 
@@ -278,24 +284,25 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 - [ ] Add `IRQL_REQUIRE_AT_MOST(level)` and `IRQL_REQUIRE_AT_LEAST(level)` macros for fast debug enforcement.
 - [ ] Log IRQL contract violations with subsystem, CPU, current level, required level, and callsite symbol.
 - [ ] Convert silent misuse patterns (blocking wait at `DISPATCH_LEVEL`, `KeLowerIrql` mismatch) into explicit fault paths.
+- [ ] Add a per-CPU IRQL transition stack recording `{old_irql, new_irql, callsite}` on raise/entry and LIFO-validating on lower/exit -- catches missing restores, stale saved-IRQL reuse, non-LIFO pairing (Linux lockdep parity)
 - [ ] Feed counters into existing kernel logging for boot/runtime health checks.
 - [ ] Commit: `"kernel: sched -- add IRQL contract diagnostics and telemetry"`
 
-**Test checkpoint:** `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` at `DISPATCH_LEVEL` triggers diagnostic log: `"irql: violation at <callsite> -- required <= APC_LEVEL, current = DISPATCH_LEVEL"`. Blocking wait at `DISPATCH_LEVEL` faults immediately (no deadlock). `KeLowerIrql` mismatch (lowering to wrong level) triggers assertion. Violation counters visible in kernel log.
+**Test checkpoint:** `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` at `DISPATCH_LEVEL` triggers diagnostic log: `"irql: violation at <callsite> -- required <= APC_LEVEL, current = DISPATCH_LEVEL"`. Blocking wait at `DISPATCH_LEVEL` faults immediately (no deadlock). `KeLowerIrql` mismatch (lowering to wrong level) triggers assertion. A forced non-LIFO raise/lower sequence is caught by the transition-stack validator (logs the offending callsite). Violation counters visible in kernel log.
 
 ---
 
 ## 14. Budgeted DPC/APC Fairness and Starvation Watchdog
 
 - [ ] Add per-tick DPC budget (count and/or time) with carry-over to avoid monopolizing CPU time.
-- [ ] Add DPC watchdog: single DPC exceeding 100us threshold triggers `DPC_WATCHDOG_VIOLATION` warning (matching Win11 Bug Check 0x133 semantics); cumulative time at `DISPATCH_LEVEL` exceeding period triggers escalation
+- [ ] Add DPC watchdog with both Win11 Bug Check 0x133 sub-cases, escalated independently: param 0x0 = single DPC/ISR over 100us; param 0x1 = cumulative time at `>= DISPATCH_LEVEL` per period over budget (short-DPC floods trip 0x1 alone)
 - [ ] Add watchdog warning when DPC queue depth remains above threshold for N ticks.
 - [ ] Add DPC importance-based ordering in the drain loop (§7 importance levels determine execution order).
 - [ ] Add APC starvation watchdog: warn when kernel APC queue depth on any thread exceeds threshold (indicates thread stuck in critical region or elevated IRQL too long).
 - [ ] Publish tuning constants in one header for platform-specific calibration.
 - [ ] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
 
-**Test checkpoint:** DPC callback sleeping for 200us triggers `DPC_WATCHDOG_VIOLATION` warning in serial log (threshold 100us). DPC queue depth > 64 for > 5 ticks triggers depth warning. `HighImportance` DPC runs before `LowImportance` during budget-limited drain. APC starvation watchdog fires when kernel APC queue depth > threshold on test thread. Tuning constants in `include/kernel/sched/dpc_config.h`.
+**Test checkpoint:** A single DPC callback sleeping 200us triggers the param 0x0 `DPC_WATCHDOG_VIOLATION` (100us threshold). A burst of many sub-100us DPCs whose cumulative `>= DISPATCH_LEVEL` time exceeds the period budget trips the param 0x1 escalation with NO single 0x0 trip (separate regression case). DPC queue depth > 64 for > 5 ticks triggers depth warning. `HighImportance` DPC runs before `LowImportance` during budget-limited drain. APC starvation watchdog fires when kernel APC queue depth > threshold on test thread. Tuning constants in `include/kernel/sched/dpc_config.h`.
 
 ---
 
@@ -399,6 +406,9 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | 💎 | APC delivery engine            | ✅ KiDeliverApc at APC_LEVEL   | ⚠️ do_signal on return         | ⬜ §12                        |
 | 💎 | Critical/guarded regions       | ✅ KeEnterCriticalRegion       | ⚠️ preempt_disable             | ⬜ §11                        |
 | 💎 | Alertable wait + user APC      | ✅ WaitForSingleObjectEx       | ❌ No equivalent               | ⬜ §12                        |
+| 💎 | Special user-mode APCs         | ✅ NtQueueApcThreadEx (RS5+)   | ❌ No equivalent               | ⬜ §12 SpecialUserApc         |
+| 💎 | ISR sync object                | ✅ KeSynchronizeExecution      | ✅ spin_lock_irqsave           | ⬜ §10 + TODO-11 §5           |
+| ⭐ | IRQL nesting validation (LIFO) | ❌ No runtime check            | ✅ lockdep IRQ-state           | ⬜ §13 transition stack       |
 | ⭐ | IRQL violation telemetry       | ⚠️ Checked builds only         | ⚠️ Fragmented debug warnings   | ⬜ §13 -- unified diagnostics  |
 | ⭐ | DPC/APC fairness watchdog      | ⚠️ Internal heuristics         | ⚠️ Subsystem-specific          | ⬜ §14 -- explicit policy      |
 

@@ -296,10 +296,10 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] `NtQueryInformationProcess(0x0034)`: ProcessBasicInformation (PEB, affinity, parent PID), ProcessPriorityClass
 - [x] `NtSetInformationProcess(0x0035)`: ProcessPriorityClass, ProcessDefaultHardErrorMode (accepted)
 - [ ] `NtSetInformationProcess(0x0035)` ProcessHandleQuota: call `ob_handle_table_set_limit`; gate raise-above-default on `SeSinglePrivilegeCheck(SeIncreaseQuotaPrivilege)`, reject a 0 quota -> XREF: `02-kernel-core/TODO-05-object-manager.md §14`
-- [x] `NtAlertThread(0x0040)`: returns SUCCESS (APC delivery deferred to TODO-17 §11)
+- [x] `NtAlertThread(0x0040)`: returns SUCCESS (APC delivery deferred to T07 §12 KiDeliverApc)
 - [x] `NtAlertResumeThread(0x0041)`: alert + NtResumeThread
-- [x] `NtTestAlert(0x0046)`: returns SUCCESS (APC check deferred to TODO-17 §11)
-- [ ] `NtQueueApcThread(0x0043)`: stub returning STATUS_NOT_IMPLEMENTED (needs APC from TODO-17 §11)
+- [x] `NtTestAlert(0x0046)`: returns SUCCESS (APC check deferred to T07 §12 KeTestAlertThread)
+- [ ] `NtQueueApcThread(0x0043)`/`NtQueueApcThreadEx`/`NtQueueApcThreadEx2`: stub returning STATUS_NOT_IMPLEMENTED; Ex/Ex2 carry the special-user-APC flag -> XREF: T07 §11/§12 (KeInsertQueueApc + SpecialUserApcPending)
 - [ ] `NtImpersonateThread(0x0042)`: stub returning STATUS_NOT_IMPLEMENTED (needs SRM from TODO-15)
 - [x] `NtDelayExecution(0x0047)`: yield-loop sleep with uptime tick counter; negative 100-ns interval
 - [x] Added `suspend_count` field to `struct thread` in task.h
