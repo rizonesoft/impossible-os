@@ -255,6 +255,14 @@ Lighter-weight shared/exclusive lock than ERESOURCE (`EX_PUSH_LOCK`), used by Wi
 
 **Test checkpoint:** N concurrent shared acquires proceed in parallel; an exclusive acquire waits until all shared holders release and blocks new shared acquires; acquiring outside a critical region asserts in verifier mode; release ordering is FIFO-fair enough to avoid writer starvation under steady read load. Verify on bare metal -- SMP contention and APC delivery differ from VMs.
 
+> **Notes:**
+> - **Why deferred** -- a pointer-sized contended block needs an address-keyed park/wake (keyed events); the `yield()`-poll fallback deadlocks on the strict-priority scheduler (Codex design HIGH).
+> - **Blocked on** -- `02-kernel-core/TODO-07 §11` (KeEnterCriticalRegion -- acquire contract) + `03-memory-concurrency/TODO-08 §10` (keyed events -- pointer-sized blocking primitive).
+> - **Scope boundary** -- §8 owns the `EX_PUSH_LOCK` Ex-API only; the critical-region primitive (T07) and keyed-event/park mechanism (D03 T08) are owned elsewhere; the out-of-region verifier assert is §14.
+
+> **Deferred:** [H] EX_PUSH_LOCK needs an address-keyed park (yield-poll deadlocks on the priority scheduler) -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtWaitForKeyedEvent" at line 254 -- the kernel keyed-event block a pointer-sized pushlock waits on)
+> **Deferred:** [M] acquire contract needs the critical-region primitive -> XREF: 02-kernel-core/TODO-07 §11 (item: "Add critical/guarded region support: KeEnterCriticalRegion()/KeLeaveCriticalRegion()" at line 239)
+
 ---
 
 ## 9. Fast and Guarded Mutexes
