@@ -542,6 +542,11 @@ void *ExGetObjectFastReference(EX_FAST_REF *ref);
     (((bits) / RTL_BITMAP_BITS_PER_WORD) + \
      (((bits) & (RTL_BITMAP_BITS_PER_WORD - 1u)) ? 1u : 0u))
 
+/* Pin the overflow-freedom at compile time: the naive (bits+31)/32 wraps to 0
+ * at UINT32_MAX, this form yields the correct 2^27 words. */
+_Static_assert(RTL_BITMAP_WORDS(0xFFFFFFFFu) == 0x8000000u,
+               "RTL_BITMAP_WORDS must not overflow near UINT32_MAX");
+
 typedef struct _RTL_BITMAP {
     uint32_t  SizeOfBitMap;   /* number of valid bits */
     uint32_t *Buffer;         /* caller-owned, RTL_BITMAP_WORDS(SizeOfBitMap) words */
@@ -615,6 +620,11 @@ typedef struct _RTL_BALANCED_LINKS {
     int32_t  _pad;           /* pad so the element body is 8-byte aligned */
 } RTL_BALANCED_LINKS;
 
+/* The element body sits at (node + sizeof(RTL_BALANCED_LINKS)); that offset must
+ * be 8-byte aligned or a caller element with 8-byte members faults on ARM64. */
+_Static_assert((sizeof(RTL_BALANCED_LINKS) % 8u) == 0u,
+               "AVL element body must be 8-byte aligned");
+
 typedef struct _RTL_AVL_TABLE {
     RTL_BALANCED_LINKS      *Root;        /* NULL when empty */
     uint32_t                 NumberOfElements;
@@ -652,8 +662,12 @@ bool RtlIsGenericTableEmptyAvl(const RTL_AVL_TABLE *table);
 
 /* --- RTL_DYNAMIC_HASH_TABLE: caller-owned chained entries, resizable -------
  * The caller embeds an RTL_DYNAMIC_HASH_TABLE_ENTRY in its own struct and owns
- * the entry storage; the table owns only the bucket directory, grown/shrunk via
- * a MANDATORY caller allocate/free pair at PASSIVE_LEVEL. Caller-serialized. */
+ * the entry storage; the table owns only the bucket directory, GROWN (never
+ * shrunk) via a MANDATORY caller allocate/free pair at PASSIVE_LEVEL. Grow-only
+ * is deliberate: a shrink would rehash and reorder same-signature chains and
+ * break an in-flight remove-current cursor walk (see RtlGetNextEntryHashTable);
+ * the directory is reclaimed wholesale at RtlDeleteDynamicHashTable.
+ * Caller-serialized. */
 
 typedef struct _RTL_DYNAMIC_HASH_TABLE_ENTRY {
     struct _RTL_DYNAMIC_HASH_TABLE_ENTRY *Next;   /* bucket chain link */
@@ -665,11 +679,16 @@ struct _RTL_DYNAMIC_HASH_TABLE;
 typedef void *(*RTL_HASH_ALLOCATE_ROUTINE)(struct _RTL_DYNAMIC_HASH_TABLE *t, uint32_t size);
 typedef void  (*RTL_HASH_FREE_ROUTINE)(struct _RTL_DYNAMIC_HASH_TABLE *t, void *buffer);
 
-/* Walk cursor for RtlLookupEntryHashTable / RtlGetNextEntryHashTable: holds the
- * bucket being walked so a signature-collision chain can be iterated. */
+/* Walk cursor for RtlLookupEntryHashTable / RtlGetNextEntryHashTable. It caches
+ * the NEXT entry to examine (captured eagerly when the current match is
+ * returned), so removing the JUST-RETURNED entry between calls is safe (the
+ * cached pointer is its successor, which a removal does not move) -- the common
+ * "look up all matches and remove each" pattern works. INVALIDATION: inserting
+ * into the table during a walk (it may rehash and relocate every entry) or
+ * removing/freeing an entry OTHER than the just-returned one invalidates the
+ * cursor; complete the walk first or restart it. */
 typedef struct _RTL_HASH_TABLE_CONTEXT {
-    RTL_DYNAMIC_HASH_TABLE_ENTRY *ChainHead;  /* head of the matched bucket */
-    RTL_DYNAMIC_HASH_TABLE_ENTRY *Prev;       /* entry before the last returned */
+    RTL_DYNAMIC_HASH_TABLE_ENTRY *NextEntry;  /* next chain entry to examine */
     uint64_t                      Signature;  /* signature being matched */
 } RTL_HASH_TABLE_CONTEXT;
 
@@ -691,10 +710,16 @@ int RtlInitializeDynamicHashTable(RTL_DYNAMIC_HASH_TABLE *t,
                                   uint32_t initial_buckets);
 /* Insert a caller-owned entry under `signature`. Returns 0 on success. May grow
  * the directory (PASSIVE); a grow-allocate failure still inserts (table stays at
- * the old size, just denser) so insert never fails for a valid entry. */
+ * the old size, just denser) so insert never fails for a valid entry.
+ * PRECONDITION: `entry` must NOT already be in the table -- re-inserting a live
+ * entry would form a self-cycle in the bucket chain (the caller-serialized Rtl
+ * contract; a per-insert chain scan to defend it would cost the hot path, so the
+ * caller owns this, exactly as Windows does). Remove before re-inserting. */
 int RtlInsertEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
                             RTL_DYNAMIC_HASH_TABLE_ENTRY *entry, uint64_t signature);
-/* Remove a previously-inserted entry. Returns true if found+removed. May shrink. */
+/* Remove a previously-inserted entry. Returns true if found+removed. Never
+ * resizes (grow-only table), so removing the just-returned entry during a
+ * Lookup/GetNext walk is safe. */
 bool RtlRemoveEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
                              RTL_DYNAMIC_HASH_TABLE_ENTRY *entry);
 /* First entry whose Signature == signature; NULL if none. `ctx` (non-NULL) is

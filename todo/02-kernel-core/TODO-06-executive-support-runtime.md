@@ -225,20 +225,22 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 
 - [x] Height-cached AVL `RTL_AVL_TABLE` (`ex_avltable.c`): nodes (`RTL_BALANCED_LINKS` + element copy) from caller allocate/free; rotations recompute cached height; delete uses size-independent node RELINKING.
 - [x] AVL APIs: Initialize/Insert (copies + dedups)/Lookup/Delete/in-order Enumerate/NumberElements/IsEmpty `GenericTableAvl`; pluggable compare/allocate/free + context.
-- [x] `RTL_DYNAMIC_HASH_TABLE` (`ex_hashtable.c`): power-of-two chained buckets, splitmix64 mix, load-factor grow/shrink rehash; init/insert/lookup(+`RtlGetNextEntryHashTable`)/remove/delete; caller embeds `RTL_DYNAMIC_HASH_TABLE_ENTRY`.
+- [x] `RTL_DYNAMIC_HASH_TABLE` (`ex_hashtable.c`): power-of-two chained buckets, splitmix64 mix, load-factor GROW-only rehash (no shrink -> remove-during-walk cursors stay valid); init/insert/lookup(+GetNext)/remove/delete; caller-embedded entry.
 - [x] `RTL_BITMAP` (`ex_bitmap.c`): Init, Set/ClearBit(s), Set/ClearAllBits, TestBit, AreBitsSet/Clear, FindClear/SetBits(+AndSet/AndClear), NumberOfSet/ClearBits; final-word padding never counted, returned, or mutated.
 - [x] Caller-owned storage for all three (no hidden allocation): bitmap buffer caller-owned; AVL nodes + hash directory via MANDATORY caller allocate/free (no kmalloc fallback); hash resize PASSIVE-only, fails closed. All caller-serialized.
 - [x] Commit: `"kernel: ex -- generic tables, dynamic hash, bitmaps"`
 
-**Test checkpoint:** AVL insert/lookup/delete of 1000 keys returns correct elements and enumerate yields sorted order with height within the AVL bound (<= 15 nodes for n=1000, ~1.44*log2(n)); dynamic hash table resizes and keeps lookups correct across grow/shrink; `RtlFindClearBits` returns the first run of N clear bits (crossing a word boundary) and `RtlFindClearBitsAndSet` marks them.
+**Test checkpoint:** AVL insert/lookup/delete of 1000 keys returns correct elements and enumerate yields sorted order with height within the AVL bound (<= 15 nodes for n=1000, ~1.44*log2(n)); dynamic hash table grows and keeps lookups correct across the rehash, and a long collision chain drains via the remove-current cursor; `RtlFindClearBits` returns the first run of N clear bits (crossing a word boundary) and `RtlFindClearBitsAndSet` marks them.
 
 > **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 1 suite, 0 failures
 
 > **Notes:**
-> - **What shipped** -- `ex_bitmap.c` (RTL_BITMAP), `ex_avltable.c` (height-cached AVL RTL_AVL_TABLE), `ex_hashtable.c` (RTL_DYNAMIC_HASH_TABLE) + ex.h S7 block; 4 test cases incl. a 1000-key AVL worst-case balance test.
-> - **How it integrates** -- all three caller-serialized (no internal locks), caller-owned storage (bitmap buffer, AVL nodes, hash directory via a mandatory allocate/free pair); hash resize is PASSIVE-only and fails closed.
+> - **What shipped** -- `ex_bitmap.c` (RTL_BITMAP), `ex_avltable.c` (height-cached AVL RTL_AVL_TABLE), `ex_hashtable.c` (RTL_DYNAMIC_HASH_TABLE) + ex.h S7 block; 7 test cases incl. a 1000-key AVL worst-case balance test and a grow-only chain-drain.
+> - **How it integrates** -- all three caller-serialized (no internal locks), caller-owned storage (bitmap buffer, AVL nodes, hash directory via a mandatory allocate/free pair); hash is grow-only with a PASSIVE fail-closed grow.
 > - **Scope boundary** -- S7 owns the container mechanics only; the consumers (atom tables, loaded-image registry, tunable registry, named-notification states, handle/PFN bit vectors) own their own locking and pick the structure.
 > - **Canonical doc** -- `include/kernel/ex.h` S7 header block (per-structure storage + serialization contracts).
+> **Verified:** 2026-06-26 | commit `02062e62` | 5/5 items | build OK | tests 5661/5661 PASS
+> **Quality reviewed:** 2026-06-26 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M+2L fixed | scope: kernel-code-quality
 
 ---
 

@@ -165,14 +165,12 @@ bool RtlRemoveEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
             t->Directory[b] = cur->Next;
         cur->Next = (hentry_t *)0;
         t->NumEntries--;
-
-        /* Shrink when sparse; never below the floor. Best-effort. */
-        if (t->BucketCount > HASH_MIN_BUCKETS && t->NumEntries < (t->BucketCount >> 2)) {
-            uint32_t want = t->BucketCount >> 1;
-            if (want < HASH_MIN_BUCKETS)
-                want = HASH_MIN_BUCKETS;
-            (void)hash_resize(t, want);
-        }
+        /* GROW-ONLY: remove never resizes. A shrink here would rehash and
+         * reorder same-signature chains, which would invalidate an in-flight
+         * RtlGetNextEntryHashTable cursor mid-walk (the documented remove-the-
+         * just-returned-entry drain pattern would then skip entries). Trading
+         * memory reclaim for a deterministic cursor-safe walk is the right call;
+         * the directory is freed wholesale at RtlDeleteDynamicHashTable. */
         return true;
     }
     return false;   /* not in the table */
@@ -192,8 +190,9 @@ RTL_DYNAMIC_HASH_TABLE_ENTRY *RtlLookupEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
     for (e = t->Directory[b]; e; e = e->Next) {
         if (e->Signature == signature) {
             if (ctx) {
-                ctx->ChainHead = t->Directory[b];
-                ctx->Prev = e;            /* last returned */
+                /* Cache the successor eagerly so removing THIS entry before the
+                 * next call leaves the cursor valid (the successor is stable). */
+                ctx->NextEntry = e->Next;
                 ctx->Signature = signature;
             }
             return e;
@@ -207,15 +206,16 @@ RTL_DYNAMIC_HASH_TABLE_ENTRY *RtlGetNextEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t
 {
     hentry_t *e;
 
-    if (!t || !ctx || !ctx->Prev)
+    if (!t || !ctx)
         return (hentry_t *)0;
 
-    for (e = ctx->Prev->Next; e; e = e->Next) {
+    for (e = ctx->NextEntry; e; e = e->Next) {
         if (e->Signature == ctx->Signature) {
-            ctx->Prev = e;
+            ctx->NextEntry = e->Next;   /* cache the next successor */
             return e;
         }
     }
+    ctx->NextEntry = (hentry_t *)0;
     return (hentry_t *)0;
 }
 

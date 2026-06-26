@@ -42,19 +42,21 @@ static inline uint32_t range_mask(uint32_t lo, uint32_t hi)
     return low & high;
 }
 
-/* Clamp a [start, count) request to the valid range; returns false (caller
- * does nothing) if it is empty or fully out of range, else writes [*fw..*lw]
- * word span with fb/lb the first/last bit indices within those end words. */
-static bool clamp_range(const RTL_BITMAP *bm, uint32_t start, uint32_t count,
+/* Validate a [start, count) request and return its end-word span. Returns false
+ * (caller does NOTHING) when the request is empty OR not fully in bounds -- a
+ * partially out-of-range range is rejected WHOLE, never clamped, so a stale or
+ * oversized set/clear can never silently mutate the valid tail bits (the header
+ * documents these ops as a no-op when out of range). Matches are_bits(). */
+static bool valid_range(const RTL_BITMAP *bm, uint32_t start, uint32_t count,
                         uint32_t *fw, uint32_t *fb, uint32_t *lw, uint32_t *lb)
 {
-    uint32_t end;
-    if (count == 0 || start >= bm->SizeOfBitMap)
+    uint32_t last;
+    if (count == 0 || start >= bm->SizeOfBitMap ||
+        count > bm->SizeOfBitMap - start)
         return false;
-    /* end = min(start + count, size), overflow-safe. */
-    end = (count >= bm->SizeOfBitMap - start) ? bm->SizeOfBitMap : start + count;
-    *fw = start / BPW;          *fb = start & (BPW - 1u);
-    *lw = (end - 1u) / BPW;     *lb = (end - 1u) & (BPW - 1u);
+    last = start + count - 1u;
+    *fw = start / BPW;       *fb = start & (BPW - 1u);
+    *lw = last / BPW;        *lb = last & (BPW - 1u);
     return true;
 }
 
@@ -109,7 +111,7 @@ bool RtlTestBit(const RTL_BITMAP *bm, uint32_t bit)
 void RtlSetBits(RTL_BITMAP *bm, uint32_t start, uint32_t count)
 {
     uint32_t fw, fb, lw, lb, w;
-    if (!bm || !bm->Buffer || !clamp_range(bm, start, count, &fw, &fb, &lw, &lb))
+    if (!bm || !bm->Buffer || !valid_range(bm, start, count, &fw, &fb, &lw, &lb))
         return;
     if (fw == lw) {
         bm->Buffer[fw] |= range_mask(fb, lb);
@@ -124,7 +126,7 @@ void RtlSetBits(RTL_BITMAP *bm, uint32_t start, uint32_t count)
 void RtlClearBits(RTL_BITMAP *bm, uint32_t start, uint32_t count)
 {
     uint32_t fw, fb, lw, lb, w;
-    if (!bm || !bm->Buffer || !clamp_range(bm, start, count, &fw, &fb, &lw, &lb))
+    if (!bm || !bm->Buffer || !valid_range(bm, start, count, &fw, &fb, &lw, &lb))
         return;
     if (fw == lw) {
         bm->Buffer[fw] &= ~range_mask(fb, lb);
@@ -147,7 +149,7 @@ static bool are_bits(const RTL_BITMAP *bm, uint32_t start, uint32_t count,
         return false;
     if (count == 0)
         return true;
-    /* The WHOLE range must be in bounds (unlike the write ops, which clamp). */
+    /* The whole range must be in bounds (same rule as the write ops). */
     if (start >= bm->SizeOfBitMap || count > bm->SizeOfBitMap - start)
         return false;
     fw = start / BPW;          fb = start & (BPW - 1u);
@@ -201,44 +203,77 @@ uint32_t RtlNumberOfClearBits(const RTL_BITMAP *bm)
 }
 
 /* First run of `count` contiguous bits (clear if want_set==false, set if true)
- * whose start index is >= `from` and which fits entirely within SizeOfBitMap.
- * Linear bit scan with run accumulation, O(size). */
+ * that starts at an index in [from, max_start) and fits entirely within
+ * SizeOfBitMap. Word-aware: an aligned word with no desired bit (0xFFFFFFFF for
+ * a clear search, 0 for a set search) resets the run and is skipped in O(1); an
+ * aligned all-desired word is absorbed whole; only mixed/partial words are
+ * bit-scanned. So a mostly-full handle/PFN bitmap costs O(words), not O(bits).
+ * The final partial word and any sub-word region fall through to the bit path,
+ * which is bounded by SizeOfBitMap, so padding is never inspected. */
 static uint32_t find_run(const RTL_BITMAP *bm, uint32_t count, uint32_t from,
-                         bool want_set)
+                         uint32_t max_start, bool want_set)
 {
-    uint32_t i, run = 0;
-    if (count == 0)
-        return (from <= bm->SizeOfBitMap) ? from : bm->SizeOfBitMap;
-    if (count > bm->SizeOfBitMap || from >= bm->SizeOfBitMap)
+    uint32_t i = from, run = 0, run_start = from;
+    uint32_t impossible = want_set ? 0u : 0xFFFFFFFFu;   /* word with no desired bit */
+    uint32_t all_desired = want_set ? 0xFFFFFFFFu : 0u;  /* word entirely desired */
+    uint32_t size = bm->SizeOfBitMap;
+
+    if (count > size || from >= size)
         return RTL_BITMAP_NOT_FOUND;
-    for (i = from; i < bm->SizeOfBitMap; i++) {
-        bool bit = (bm->Buffer[i / BPW] >> (i & (BPW - 1u))) & 1u;
-        if (bit == want_set) {
-            if (++run == count)
-                return i - count + 1u;
-        } else {
-            run = 0;
+
+    while (i < size) {
+        /* Once at/past max_start with no run in progress, no run starting before
+         * max_start can still be found -- stop (bounds the wrap pass). */
+        if (run == 0 && i >= max_start)
+            return RTL_BITMAP_NOT_FOUND;
+        /* Fast path on an aligned, fully-in-range word. */
+        if ((i & (BPW - 1u)) == 0u && (size - i) >= BPW) {
+            uint32_t word = bm->Buffer[i / BPW];
+            if (word == impossible) { run = 0; i += BPW; continue; }
+            if (word == all_desired) {
+                if (run == 0) run_start = i;
+                run += BPW;
+                if (run >= count)
+                    return (run_start < max_start) ? run_start : RTL_BITMAP_NOT_FOUND;
+                i += BPW;
+                continue;
+            }
         }
+        /* Bit path for mixed words and the final partial word. */
+        {
+            bool bit = (bm->Buffer[i / BPW] >> (i & (BPW - 1u))) & 1u;
+            if (bit == want_set) {
+                if (run == 0) run_start = i;
+                if (++run == count)
+                    return (run_start < max_start) ? run_start : RTL_BITMAP_NOT_FOUND;
+            } else {
+                run = 0;
+            }
+        }
+        i++;
     }
     return RTL_BITMAP_NOT_FOUND;
 }
 
-/* Search [hint, size) first, then [0, size) (which covers the wrap to [0,hint)).
- * Returns the first matching run start or NOT_FOUND. */
+/* Search [hint, size) for a run first; on a miss, search the wrap region for a
+ * run whose START is in [0, hint) -- the second pass is bounded (it cannot
+ * re-find a run starting >= hint, since the first pass already proved none
+ * exists there). Returns the first matching run start or NOT_FOUND. */
 static uint32_t find_bits(const RTL_BITMAP *bm, uint32_t count, uint32_t hint,
                           bool want_set)
 {
-    uint32_t r;
+    uint32_t r, h;
     if (!bm || !bm->Buffer)
         return RTL_BITMAP_NOT_FOUND;
     if (count == 0)
         return (hint <= bm->SizeOfBitMap) ? hint : bm->SizeOfBitMap;
-    r = find_run(bm, count, (hint < bm->SizeOfBitMap) ? hint : 0u, want_set);
-    if (r != RTL_BITMAP_NOT_FOUND)
+    h = (hint < bm->SizeOfBitMap) ? hint : 0u;
+    r = find_run(bm, count, h, bm->SizeOfBitMap, want_set);
+    if (r != RTL_BITMAP_NOT_FOUND || h == 0u)
         return r;
-    if (hint == 0)
-        return RTL_BITMAP_NOT_FOUND;   /* already searched from 0 */
-    return find_run(bm, count, 0u, want_set);
+    /* Wrap pass: only runs whose start is < h are new (the [h,size) starts were
+     * already searched). Bound the scan length to where such a run can end. */
+    return find_run(bm, count, 0u, h, want_set);
 }
 
 uint32_t RtlFindClearBits(const RTL_BITMAP *bm, uint32_t count, uint32_t hint)

@@ -995,6 +995,41 @@ static void test_ex_bitmap_runs(void)
     TEST_ASSERT(RtlAreBitsClear(&bm, 40, 16), "cleared range reads clear");
 }
 
+static void test_ex_bitmap_oob_and_large(void)
+{
+    uint32_t buf[RTL_BITMAP_WORDS(1000)];
+    uint32_t big[RTL_BITMAP_WORDS(4096)];
+    RTL_BITMAP bm;
+    uint32_t r;
+
+    /* Partial out-of-range range writes are a NO-OP (whole range rejected, never
+     * clamped) -- a stale/oversized request must not mutate the valid tail. */
+    RtlInitializeBitMap(&bm, buf, 1000);
+    RtlClearAllBits(&bm);
+    RtlSetBits(&bm, 999, 2);          /* [999, 1001) exceeds 1000 -> reject */
+    TEST_ASSERT(!RtlTestBit(&bm, 999), "partial-OOB SetBits left bit 999 clear");
+    TEST_ASSERT_EQ(RtlNumberOfSetBits(&bm), 0u, "partial-OOB SetBits set nothing");
+    RtlSetAllBits(&bm);
+    RtlClearBits(&bm, 995, 100);      /* exceeds 1000 -> reject */
+    TEST_ASSERT(RtlTestBit(&bm, 999), "partial-OOB ClearBits left bit 999 set");
+    TEST_ASSERT_EQ(RtlNumberOfSetBits(&bm), 1000u, "partial-OOB ClearBits cleared nothing");
+
+    /* Large mostly-full bitmap with a non-zero hint: the only clear run is in the
+     * wrap region [0, hint). The word-aware finder + bounded wrap must locate it. */
+    RtlInitializeBitMap(&bm, big, 4096);
+    RtlSetAllBits(&bm);
+    RtlClearBits(&bm, 100, 8);        /* the single clear run, before the hint */
+    r = RtlFindClearBits(&bm, 8, 2000);   /* hint past the run -> forces the wrap */
+    TEST_ASSERT_EQ(r, 100u, "word-aware finder locates the wrap-region clear run");
+    /* No 9-bit clear run exists anywhere. */
+    TEST_ASSERT_EQ(RtlFindClearBits(&bm, 9, 0), RTL_BITMAP_NOT_FOUND,
+                   "no run larger than the single 8-bit gap");
+    /* A run spanning a word boundary in a mostly-set map. */
+    RtlClearBits(&bm, 60, 10);        /* [60,70) crosses the 32-bit boundary */
+    r = RtlFindClearBits(&bm, 10, 0);
+    TEST_ASSERT_EQ(r, 60u, "finds the word-crossing clear run at 60");
+}
+
 /* ---- S7: RTL_AVL_TABLE --------------------------------------------------- */
 
 typedef struct { uint64_t key; uint64_t payload; } avl_elem_t;
@@ -1156,15 +1191,29 @@ static void test_ex_hashtable_resize_and_lookup(void)
         e = RtlLookupEntryHashTable(&tbl, 0xC0FFEEu, &ctx);
         while (e) { seen++; e = RtlGetNextEntryHashTable(&tbl, &ctx); }
         TEST_ASSERT_EQ(seen, 3u, "Lookup+GetNext walk the full collision chain");
-        for (i = 0; i < 3; i++)
-            RtlRemoveEntryHashTable(&tbl, &coll[i].link);
+        /* Remove-the-just-returned-entry during a walk is the supported pattern:
+         * the cursor caches the successor eagerly, so removing the current entry
+         * leaves the walk valid (drains the whole chain safely). */
+        seen = 0;
+        e = RtlLookupEntryHashTable(&tbl, 0xC0FFEEu, &ctx);
+        while (e) {
+            RTL_DYNAMIC_HASH_TABLE_ENTRY *cur = e;
+            seen++;
+            e = RtlGetNextEntryHashTable(&tbl, &ctx);
+            RtlRemoveEntryHashTable(&tbl, cur);   /* remove the one just returned */
+        }
+        TEST_ASSERT_EQ(seen, 3u, "remove-current-during-walk drains the whole chain");
+        TEST_ASSERT(RtlLookupEntryHashTable(&tbl, 0xC0FFEEu, &ctx) == (RTL_DYNAMIC_HASH_TABLE_ENTRY *)0,
+                    "collision signature gone after walk-remove");
     }
 
-    /* Remove every entry; directory must shrink back toward the floor. */
+    /* Remove every entry. The table is GROW-ONLY: the directory does NOT shrink
+     * (so a remove-current cursor walk can never be invalidated by a mid-walk
+     * rehash); memory is reclaimed at RtlDeleteDynamicHashTable. */
     for (i = 0; i < HASH_N; i++)
         TEST_ASSERT(RtlRemoveEntryHashTable(&tbl, &g_h_entries[i].link), "remove entry");
     TEST_ASSERT_EQ(RtlNumberOfEntriesHashTable(&tbl), 0u, "table empty after removes");
-    TEST_ASSERT(tbl.BucketCount < grown_buckets, "directory shrank after emptying");
+    TEST_ASSERT_EQ(tbl.BucketCount, grown_buckets, "grow-only: directory does not shrink");
     /* Lookups after removal miss. */
     TEST_ASSERT(RtlLookupEntryHashTable(&tbl, 1000u, &ctx) == (RTL_DYNAMIC_HASH_TABLE_ENTRY *)0,
                 "removed signature no longer found");
@@ -1175,6 +1224,44 @@ static void test_ex_hashtable_resize_and_lookup(void)
     RtlDeleteDynamicHashTable(&tbl);
     TEST_ASSERT(tbl.Directory == (RTL_DYNAMIC_HASH_TABLE_ENTRY **)0,
                 "delete releases the directory");
+}
+
+#define HASH_CHAIN_N 40u
+static htest_entry_t g_h_chain[HASH_CHAIN_N];
+
+/* Drain a long single-signature chain via the remove-current cursor pattern,
+ * AFTER the table has grown (NumEntries > BucketCount). Grow-only removal means
+ * no mid-walk rehash, so every entry is returned and removed exactly once. */
+static void test_ex_hashtable_drain_chain(void)
+{
+    RTL_DYNAMIC_HASH_TABLE tbl;
+    RTL_HASH_TABLE_CONTEXT ctx;
+    RTL_DYNAMIC_HASH_TABLE_ENTRY *e;
+    uint32_t i, drained = 0, grown;
+
+    TEST_ASSERT_EQ(RtlInitializeDynamicHashTable(&tbl, h_alloc, h_free, (void *)0, 8), 0,
+                   "init");
+    /* All entries share one signature -> one long chain; the count also grows
+     * the directory (HASH_CHAIN_N > 8). */
+    for (i = 0; i < HASH_CHAIN_N; i++) {
+        g_h_chain[i].val = i;
+        RtlInsertEntryHashTable(&tbl, &g_h_chain[i].link, 0xABCDEFu);
+    }
+    grown = tbl.BucketCount;
+    TEST_ASSERT(grown >= HASH_CHAIN_N, "directory grew past the entry count");
+
+    e = RtlLookupEntryHashTable(&tbl, 0xABCDEFu, &ctx);
+    while (e) {
+        RTL_DYNAMIC_HASH_TABLE_ENTRY *cur = e;
+        drained++;
+        e = RtlGetNextEntryHashTable(&tbl, &ctx);
+        TEST_ASSERT(RtlRemoveEntryHashTable(&tbl, cur), "remove the just-returned entry");
+    }
+    TEST_ASSERT_EQ(drained, HASH_CHAIN_N,
+                   "every chain entry returned exactly once across the drain");
+    TEST_ASSERT_EQ(RtlNumberOfEntriesHashTable(&tbl), 0u, "chain fully drained");
+    TEST_ASSERT_EQ(tbl.BucketCount, grown, "grow-only: no shrink during the drain");
+    RtlDeleteDynamicHashTable(&tbl);
 }
 
 /* Overflow-boundary guards -- exercised WITHOUT huge allocations: the guards
@@ -1291,10 +1378,14 @@ void test_register_ex(void)
                             test_ex_bitmap_basic_and_padding, TEST_CAT_EX);
     test_suite_register_cat("ex: bitmap run finding + find-and-set",
                             test_ex_bitmap_runs, TEST_CAT_EX);
+    test_suite_register_cat("ex: bitmap partial-OOB no-op + large word-aware find",
+                            test_ex_bitmap_oob_and_large, TEST_CAT_EX);
     test_suite_register_cat("ex: AVL 1000-key insert/lookup/delete/enumerate",
                             test_ex_avl_thousand_keys, TEST_CAT_EX);
     test_suite_register_cat("ex: dynamic hash resize + lookup + chains",
                             test_ex_hashtable_resize_and_lookup, TEST_CAT_EX);
+    test_suite_register_cat("ex: dynamic hash drain long chain (grow-only cursor)",
+                            test_ex_hashtable_drain_chain, TEST_CAT_EX);
     test_suite_register_cat("ex: S7 overflow-boundary guards",
                             test_ex_s7_overflow_guards, TEST_CAT_EX);
 }
