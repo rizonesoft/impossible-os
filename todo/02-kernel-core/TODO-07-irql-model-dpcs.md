@@ -360,6 +360,7 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 - [x] APC-disabled query: `KeAreApcsDisabled()` (critical OR guarded) + `KeAreAllApcsDisabled()` (guarded only).
 - [ ] KeStackAttachProcess/KeUnstackDetachProcess + nested SavedApcState round-trip test (deferred): needs process CR3-attach infra; §11 ships the `saved_apc_state` field only.
 - [ ] KAPC cross-thread lifetime hardening (deferred, latent -- no cross-thread APC consumer until §12): thread-generation identity (reject a stale `apc->thread` after slot reuse) + O(1) per-mode tail pointers + a queue-depth cap.
+- [ ] Thread-slot lifecycle lock (deferred, pre-existing, latent): `thread_exit`/`join`/`reap`/`kthread_create` must mutually exclude on true SMP (a joiner can free a running thread's stack); BSP-only scheduler unraced today.
 - [x] Commit: `"kernel: sched -- add KAPC object type and per-thread APC queues"`
 
 **Test checkpoint:** `KeInitializeApc` + `KeInsertQueueApc` to a thread succeeds; `KernelApcPending` flag is set. `KeRemoveQueueApc` returns `TRUE` and clears the flag. `KeInsertQueueApc` to an exiting (THREAD_DEAD) thread returns `FALSE`. `KeEnterCriticalRegion` -> `KeAreApcsDisabled` reads `TRUE` (not `KeAreAllApcsDisabled`); `KeEnterGuardedRegion` -> `KeAreAllApcsDisabled` reads `TRUE`. Serial: `"apc: initialized per-thread APC queues"` on first thread init.
@@ -372,6 +373,10 @@ Asynchronous Procedure Calls (APCs) are the per-thread deferred work mechanism a
 > - Downstream: UNBLOCKS `02-kernel-core/TODO-06 §8` (push-lock) + §9 (guarded-mutex); delivery (KiDeliverApc) is §12. Codex design + adversarial adoptions in commit `STAMPHASH11`.
 > - Canonical doc: `include/kernel/sched/apc.h`.
 > - Scope: §11 owns the KAPC object + queue ops + region counters; delivery/rundown -> §12; KeStackAttachProcess + cross-thread generation/tail hardening -> the deferred items above.
+> **Verified:** 2026-06-26 | commit `STAMPHASH11R` | 9/12 items | build OK | sched 128 PASS | smoke PASS (2.6s)
+> **Deferred:** [Critical] thread-slot lifecycle lock -- thread_exit/join/reap/create are not mutually exclusive on a true SMP scheduler (a joiner can free a still-running thread's stack) (reason: pre-existing; BSP-only scheduler unraced today) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "Thread-slot lifecycle lock" at line 363)
+> **Deferred:** [H] KAPC cross-thread lifetime hardening -- thread-generation identity + O(1) per-mode tail pointers + depth cap (reason: latent; no cross-thread APC consumer until §12) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §11 (item: "KAPC cross-thread lifetime hardening" at line 362)
+> **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1Crit deferred | scope: kernel-code-quality
 
 ---
 

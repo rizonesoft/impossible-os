@@ -152,7 +152,10 @@ int KeRemoveQueueApc(KAPC *apc)
 void KeEnterCriticalRegion(void)
 {
     struct thread *t = thread_current();
-    if (t)
+    /* Saturate rather than wrap: a wrapped (negative) counter would fail OPEN
+     * (KeAreApcsDisabled's >0 check would read FALSE inside a still-nested
+     * region). INT32_MAX nesting is physically unreachable; the cap is defense. */
+    if (t && t->kernel_apc_disable < 0x7FFFFFFF)
         t->kernel_apc_disable++;
 }
 
@@ -168,7 +171,7 @@ void KeLeaveCriticalRegion(void)
 void KeEnterGuardedRegion(void)
 {
     struct thread *t = thread_current();
-    if (t)
+    if (t && t->special_apc_disable < 0x7FFFFFFF)   /* saturate (see above) */
         t->special_apc_disable++;
 }
 

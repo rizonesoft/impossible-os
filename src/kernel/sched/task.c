@@ -78,7 +78,15 @@ static void task_wrapper(void)
 
     entry();
 
-    /* Task finished -- mark as dead */
+    /* Task finished. Main thread DEAD under its APC lock FIRST (before
+     * TASK_DEAD is visible) so no cross-thread KeInsertQueueApc can enqueue
+     * onto a dead process's thread-0 in the window between the stores. */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&tasks[current_task].threads[0].apc_lock, &af);
+        tasks[current_task].threads[0].state = THREAD_DEAD;
+        spin_unlock_irqrestore(&tasks[current_task].threads[0].apc_lock, af);
+    }
     tasks[current_task].state = TASK_DEAD;
     klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
@@ -510,6 +518,17 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
+    /* Reset the main thread's APC state (sets apc_state.process; matches the
+     * secondary-thread create paths). Fresh task slot, but keep the contract
+     * uniform: every THREAD_READY thread-0 has initialized APC state. */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&tasks[pid].threads[0].apc_lock, &af);
+        apc_thread_init(&tasks[pid].threads[0].apc_state, &tasks[pid]);
+        tasks[pid].threads[0].kernel_apc_disable  = 0;
+        tasks[pid].threads[0].special_apc_disable = 0;
+        spin_unlock_irqrestore(&tasks[pid].threads[0].apc_lock, af);
+    }
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
@@ -633,6 +652,17 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
+    /* Reset the main thread's APC state (sets apc_state.process; matches the
+     * secondary-thread create paths). Fresh task slot, but keep the contract
+     * uniform: every THREAD_READY thread-0 has initialized APC state. */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&tasks[pid].threads[0].apc_lock, &af);
+        apc_thread_init(&tasks[pid].threads[0].apc_state, &tasks[pid]);
+        tasks[pid].threads[0].kernel_apc_disable  = 0;
+        tasks[pid].threads[0].special_apc_disable = 0;
+        spin_unlock_irqrestore(&tasks[pid].threads[0].apc_lock, af);
+    }
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
@@ -1162,6 +1192,16 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].threads[0].priority = THREAD_PRIO_NORMAL;
     tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
     tasks[child_pid].threads[0].rsp = (uint64_t)sp;
+    /* Reset the child main thread's APC state (sets apc_state.process; the
+     * child does NOT inherit the parent's APC queues). */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&tasks[child_pid].threads[0].apc_lock, &af);
+        apc_thread_init(&tasks[child_pid].threads[0].apc_state, &tasks[child_pid]);
+        tasks[child_pid].threads[0].kernel_apc_disable  = 0;
+        tasks[child_pid].threads[0].special_apc_disable = 0;
+        spin_unlock_irqrestore(&tasks[child_pid].threads[0].apc_lock, af);
+    }
     tasks[child_pid].user_stack_base = ustack;
     tasks[child_pid].name = tasks[parent_pid_val].name;
     tasks[child_pid].parent_pid = parent_pid_val;
@@ -2003,6 +2043,16 @@ void task_exit(int32_t status)
     uint32_t pid = current_task;
     uint32_t i;
 
+    /* Mark the process main thread DEAD under its APC lock FIRST -- before
+     * TASK_DEAD is externally visible -- so a cross-thread KeInsertQueueApc
+     * cannot enqueue onto a dead process's thread-0 in the window between the
+     * two stores (KeInsertQueueApc rejects on the TARGET thread's state). */
+    {
+        uint64_t af;
+        spin_lock_irqsave(&tasks[pid].threads[0].apc_lock, &af);
+        tasks[pid].threads[0].state = THREAD_DEAD;
+        spin_unlock_irqrestore(&tasks[pid].threads[0].apc_lock, af);
+    }
     tasks[pid].state = TASK_DEAD;
     tasks[pid].exit_status = status;
 
@@ -2854,6 +2904,9 @@ void thread_exit(int32_t status)
     struct thread *thr = &t->threads[current_thread];
     uint32_t j;
 
+    /* Store exit_status BEFORE publishing DEAD so a reader that observes DEAD
+     * also observes the final status (a joiner reads status after seeing DEAD). */
+    thr->exit_status = status;
     /* Mark DEAD under the APC lock so the transition is atomic vs an in-flight
      * cross-thread KeInsertQueueApc (which rejects DEAD/FREE under the same
      * lock) -- no APC can be enqueued onto an exiting thread. (Rundown of any
@@ -2865,7 +2918,6 @@ void thread_exit(int32_t status)
         thr->state = THREAD_DEAD;
         spin_unlock_irqrestore(&thr->apc_lock, af);
     }
-    thr->exit_status = status;
 
     /* Mark thread object as temporary so it can be freed */
     ob_thread_mark_dead(t->pid, thr->id);
