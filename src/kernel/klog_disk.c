@@ -951,10 +951,27 @@ static void pick_log_number(void)
     char    oldest_name[16];
     oldest_name[0] = '\0';
 
-    /* Get current date from RTC */
-    today_yy = (uint8_t)(rtc_get_year() % 100);
-    today_mm = (uint8_t)rtc_get_month();
-    today_dd = (uint8_t)rtc_get_day();
+    /* Get current date from the RTC. rtc_try_read() honors the CMOS-absence
+     * gate and validates the tuple, so it returns 0 on a no-CMOS platform
+     * instead of the year-0 zero-fill the void rtc_read() leaves. The wall
+     * clock is not seeded yet at this boot point (klog_disk_enable runs before
+     * wall_clock_init), so the RTC is the only date source here. With no RTC,
+     * fall back to a parser-VALID sentinel (00/01/01): month/day 0 would be
+     * rejected by parse_log_filename(), which would defeat daily sequencing and
+     * retention and reuse Serial_00000001.log every boot -- 00/01/01 keeps
+     * sequencing and the 100-file cap working on RTC-less platforms. */
+    {
+        struct rtc_time rt;
+        if (rtc_try_read(&rt)) {
+            today_yy = (uint8_t)(rt.year % 100);
+            today_mm = (uint8_t)rt.month;
+            today_dd = (uint8_t)rt.day;
+        } else {
+            today_yy = 0;
+            today_mm = 1;
+            today_dd = 1;
+        }
+    }
 
     x_root = vfs_open(KLOG_SERIAL_DIR, VFS_O_READ);
     if (!x_root || !x_root->ops || !x_root->ops->finddir)

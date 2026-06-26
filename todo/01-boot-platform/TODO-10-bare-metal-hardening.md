@@ -243,7 +243,7 @@ Parse the FADT `IAPC_BOOT_ARCH` and `Flags` fields to know which legacy devices 
 > - Scope boundary: FADT-absent/short keeps default-present so legacy PCs still probe; the §5 driver-side `0xFF`/reset-ACK probe is the access guard. MSI is intentionally NOT hw-reduced-overridden.
 > - Test gap: short-FADT-length fixtures (112/113/115/116) need a `fadt_ptr` injection hook -> `test_bare_metal.c` (Unit Tests section).
 > **Verified:** 2026-06-07 | commit `b959ad2a` | 5/5 items | build OK | boot 1723 PASS, smoke PASS (KVM 2.5s)
-> **Accepted:** [H] runtime CMOS consumers (wall_clock RTC fallback, klog_disk, compositor clock, rtc_get_*) still touch 0x70/0x71 on hw-reduced -- §4 ships the signal, system-wide gating is clock-subsystem scope -> XREF: 02-kernel-core/TODO-08 §5 (item: "CMOS-RTC absence gating: latch `rtc_available()` ...")
+> **Resolved:** [H] runtime CMOS consumers (wall_clock RTC fallback, klog_disk, compositor clock, rtc_get_*) no longer touch 0x70/0x71 on hw-reduced -- 02-kernel-core/TODO-08 §5 added the `cmos_read()` hard gate + fail-closed `s_rtc_available` latch (2026-06-27), so the single port-I/O site refuses access when absent and every consumer is covered.
 > **Quality reviewed:** 2026-06-07 | Codex 7x (adversarial, adversarial-impl, consistency, perf, re-adversarial) | 4H+1M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---

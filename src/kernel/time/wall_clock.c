@@ -42,11 +42,14 @@ void wall_clock_init(void)
         }
     }
 
-    /* Fallback: CMOS RTC */
+    /* Fallback: CMOS RTC. rtc_try_read() both honors the no-CMOS absence gate
+     * (no port I/O on hardware-reduced platforms) and validates the full date
+     * tuple, so a zero-filled/garbage read can never masquerade as a year-2000
+     * wall time. */
     if (ft == FILETIME_NOW_PLACEHOLDER) {
         struct rtc_time rtc_t;
-        rtc_read(&rtc_t);
-        if (rtc_t.year >= 2000 && rtc_t.year <= 2100) {
+        if (rtc_try_read(&rtc_t) &&
+            rtc_t.year >= 2000 && rtc_t.year <= 2100) {
             ft = filetime_from_rtc(&rtc_t);
             source = "RTC";
         }

@@ -14,7 +14,16 @@
  * ============================================================================ */
 
 #include "kernel/drivers/rtc.h"
+#include "kernel/acpi.h"
 #include "kernel/klog.h"
+
+/* ---- Availability latch ----
+ * Fail-closed: stays 0 (no CMOS) until rtc_probe_availability() proves a CMOS
+ * RTC is present. Written once on the BSP at Phase-1 boot before any consumer
+ * reads the clock and never mutated afterward, so plain reads are SMP-safe (no
+ * concurrent writer exists once boot has moved past rtc_init()). */
+static int s_rtc_available;
+
 /* ---- I/O port helpers ---- */
 
 static inline void outb(uint16_t port, uint8_t val)
@@ -48,9 +57,18 @@ static inline uint8_t inb(uint16_t port)
 /* ---- Internal helpers ---- */
 
 /* Read a single CMOS register.
- * NMI is disabled by setting bit 7 of the index port. */
+ * NMI is disabled by setting bit 7 of the index port.
+ *
+ * HARD GATE (safety boundary): this is the ONLY site that touches ports
+ * 0x70/0x71, so the availability check lives here. On a no-CMOS platform
+ * (hardware-reduced ACPI, or FADT CMOS_RTC_NOT_PRESENT) we must not drive the
+ * index/data ports at all -- on such firmware those ports are reserved and a
+ * write can have undefined side effects. Returning the bus-float value (0xFF)
+ * keeps any missed consumer safe without an out-of-bounds port access. */
 static uint8_t cmos_read(uint8_t reg)
 {
+    if (!s_rtc_available)
+        return 0xFF;
     outb(CMOS_PORT_INDEX, (uint8_t)(0x80 | reg));  /* Disable NMI + select reg */
     return inb(CMOS_PORT_DATA);
 }
@@ -71,10 +89,76 @@ static void rtc_wait_ready(void)
 
 /* ---- Public API ---- */
 
+void rtc_probe_availability(void)
+{
+    /* acpi_has_cmos_rtc() is fail-OPEN: it reports "present" on a missing or
+     * short FADT so legacy PCs keep their RTC. That is the wrong default for a
+     * safety gate, so require acpi_is_ready() too -- if ACPI never validated,
+     * we cannot trust the FADT CMOS bit and must refuse the ports. On the UEFI
+     * platforms this OS targets ACPI is always present, so this only fails
+     * closed on genuinely RTC-less (hardware-reduced) firmware. */
+    s_rtc_available = (acpi_is_ready() && acpi_has_cmos_rtc()) ? 1 : 0;
+}
+
+int rtc_available(void)
+{
+    return s_rtc_available;
+}
+
+int rtc_time_plausible(const struct rtc_time *t)
+{
+    static const uint8_t dpm[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    uint8_t maxday;
+    int leap;
+
+    if (!t)
+        return 0;
+    /* FILETIME epoch is 1601; the RTC century register tops out well under
+     * 9999. Anything outside this band is a failed/absent read, not a date. */
+    if (t->year < 1601 || t->year > 9999)
+        return 0;
+    if (t->month < 1 || t->month > 12)
+        return 0;
+    if (t->hour > 23 || t->minute > 59 || t->second > 59)
+        return 0;
+
+    leap = (t->year % 4 == 0 && (t->year % 100 != 0 || t->year % 400 == 0));
+    maxday = dpm[t->month - 1];
+    if (t->month == 2 && leap)
+        maxday = 29;
+    if (t->day < 1 || t->day > maxday)
+        return 0;
+
+    return 1;
+}
+
+int rtc_try_read(struct rtc_time *t)
+{
+    if (!t)
+        return 0;
+    if (!s_rtc_available)
+        return 0;
+    rtc_read(t);
+    return rtc_time_plausible(t);
+}
+
 void rtc_init(void)
 {
     struct rtc_time t;
-    rtc_read(&t);
+
+    rtc_probe_availability();
+    if (!s_rtc_available) {
+        klog(LOG_INFO, "rtc", "RTC: no CMOS (ACPI gate) -- skipped");
+        return;
+    }
+
+    if (!rtc_try_read(&t)) {
+        klog(LOG_WARN, "rtc",
+             "RTC: read failed validation -- treating as unavailable");
+        s_rtc_available = 0;
+        return;
+    }
+
     klog(LOG_INFO, "rtc", "RTC: %u-%u-%u %u:%u:%u",
            (uint64_t)t.year, (uint64_t)t.month, (uint64_t)t.day,
            (uint64_t)t.hour, (uint64_t)t.minute, (uint64_t)t.second);
@@ -85,6 +169,19 @@ void rtc_read(struct rtc_time *t)
     uint8_t status_b;
     uint8_t century = 0;
     uint8_t sec, min, hr, day, mon, yr, wday;
+
+    if (!t)
+        return;
+
+    /* No CMOS RTC: zero-fill with a clearly-invalid sentinel (year 0) so a
+     * direct caller never mistakes a refused read for midnight in year 2000,
+     * and touch no ports. */
+    if (!s_rtc_available) {
+        t->second = t->minute = t->hour = 0;
+        t->day = t->month = t->weekday = 0;
+        t->year = 0;
+        return;
+    }
 
     /* Wait for any in-progress update to finish */
     rtc_wait_ready();

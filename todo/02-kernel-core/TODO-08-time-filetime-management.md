@@ -64,7 +64,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |   2   | Monotonic nanosecond clock source selection                            | §1                  |  [x]   |
 | 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                 | §2                  |  [/]   |
 | 💎  |   4   | HPET standalone driver                                                 | --                  |  [x]   |
-| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [/]   |
+| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                                | §1, §2              |  [x]   |
 | 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)           | §5                  |  [x]   |
 | 💎  |   7   | Interrupt time and unbiased interrupt time APIs                        | §2, §6              |  [x]   |
 | 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                   | §6, TODO-12 §5      |  [x]   |
@@ -197,12 +197,21 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 - [x] `KeSetSystemTime(new_time)`: updates anchor + re-latches mono_ns(); seqlock write-protected
 - [x] `wall_clock_ready()`: returns 1 after init
 - [x] Protected by `seqlock_t` (SEQLOCK_INIT) for SMP-safe concurrent reads
-- [ ] CMOS-RTC absence gating: latch `rtc_available()` and refuse CMOS port I/O on no-CMOS platforms (design review captured below). Consumer of `D01 T10 §4`.
+- [x] CMOS-RTC absence gating: hard gate in `rtc.c` `cmos_read()` + fail-closed `s_rtc_available` latch + status-bearing `rtc_try_read()`/`rtc_time_plausible()`; `wall_clock_init()` + `klog_disk` seed via `rtc_try_read()`. Consumer of `D01 T10 §4`.
 
 > [!NOTE]
 > **Design review (adopted, pre-code).** (1) HARD GATE in `rtc.c` `cmos_read()` -- the single `outb 0x70` / `inb 0x71` site is the safety boundary; refuse before ANY port I/O when unavailable, so a missed consumer can never touch the ports (callers include `wall_clock.c:48`, `compositor.c:220`, `desktop.c:584` -- more than the original list). Consumer gates only choose fallback behavior, not hardware safety. (2) FAIL-CLOSED latch: `s_rtc_available` defaults UNAVAILABLE; set true only when `acpi_is_ready() && acpi_has_cmos_rtc()` -- `acpi_has_cmos_rtc()` returns present on `!fadt_ptr`/short-FADT (fail-open), so the latch must add the readiness gate. (3) STATUS-BEARING read: add `rtc_try_read()` returning success + full date-tuple validation; `rtc_read()` (void) zero-fills look like year-2000 (passes `wall_clock`'s 2000-2100 check) and underflow `filetime_from_rtc` on `day-1`. `wall_clock_init()` seeds from RTC only on `rtc_try_read()` success, else stays UEFI-only / unavailable.
 
 - [x] Commit: `"kernel: time -- wall clock init from UEFI GetTime with RTC fallback"`
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 5 time suites (PMTMR/LAPIC + 2 rtc_time_plausible), 0 failures (221 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: CMOS-absence gating -- `cmos_read()` hard gate (the lone 0x70/0x71 site) + fail-closed `s_rtc_available` latch + status-bearing `rtc_try_read()` + pure `rtc_time_plausible()` validator in `rtc.c`/`rtc.h`.
+> - How it runs: latch set by `rtc_probe_availability()` (`acpi_is_ready() && acpi_has_cmos_rtc()`); `rtc_read()` zero-fills a year-0 sentinel when unavailable; `wall_clock_init()` seeds from RTC only on `rtc_try_read()` success.
+> - Downstream: `klog_disk` `pick_log_number()` reads via `rtc_try_read()` with a parser-valid 00/01/01 fallback (Codex H: year-0 broke daily sequencing + retention on RTC-less platforms; wall clock not yet seeded there).
+> - Canonical: `src/kernel/drivers/rtc.c`; consumer seam `src/kernel/time/wall_clock.c`.
+> - Scope boundary: the hard gate is the hardware-safety boundary for all CMOS consumers (compositor/desktop call `rtc_read()` directly, protected, no port I/O); §6+ own the higher-level time service.
+> **Verified:** 2026-06-27 | commit `PENDING` | 7/7 items | build OK | 221 kernel + 16 user PASS | smoke PASS (TCG 2.48s, RTC present -> Serial_26062601.log)
 
 ---
 
