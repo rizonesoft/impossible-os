@@ -57,7 +57,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2          |  [/]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
-| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [x]   |
+| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [/]   |
 | 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [/]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [ ]   |
@@ -215,6 +215,13 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **High-risk section.** This wires `KiDispatchDpc` into the LAPIC timer ISR return path. A bug here causes DPC drain on every timer tick -- if the drain crashes, the system triple-faults on the next tick with no recovery. **Rollback:** If DPC dispatch crashes, comment out the `KiDispatchDpc()` call in the timer ISR and fall back to workqueue-only deferred work. Test timer interrupts still work (scheduler tick, compositor frame) before wiring DPC dispatch.
 
 **Test checkpoint:** After wiring, LAPIC timer fires → DPC drains automatically. Queue a DPC, wait one tick, verify callback executed. Re-queued DPC from inside callback does not deadlock. DPC dispatch on BSP and AP cores (SMP). Serial: timer tick rate unchanged after wiring. If crash, check POST -- 0xD600 = entered but DPC dispatch crashed, 0xD601 = dispatch completed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Notes:**
+> - Timer/APIC DPC dispatch: both `lapic_timer_handler` and `pit_irq_handler` call `dpc_drain_current_cpu()` after EOI and before `schedule()`, in lockstep; the lightweight ISR-context drain is bounded by `DPC_BATCH_LIMIT`=32.
+> - The drain machinery (`drain_queue`, fast-skip-on-empty, per-CPU locking) was verified in the §5 review; this section is the wiring into the timer ISR return path.
+> - One open item is deferred (see Deferred): a per-callback runtime budget for the timer-ISR drain (count is capped, runtime is not).
+> - Canonical: `src/kernel/drivers/lapic.c` (`lapic_timer_handler`), `src/kernel/drivers/pit.c` (`pit_irq_handler`).
+> **Deferred:** [M] timer-ISR DPC drain caps the COUNT (`DPC_BATCH_LIMIT`=32) but not per-callback runtime -- a single long DPC stalls the tick; needs a mono_ns time budget per drain or moving arbitrary-callback execution out of hard-IRQ (detection relates to the §14 watchdog) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §6 (item: "DPC runtime budget in the timer ISR drain" at line 212)
 
 ---
 
