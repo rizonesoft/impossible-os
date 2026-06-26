@@ -93,7 +93,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Review added a `_Static_assert` block pinning the level values + strict-ascending order at compile time (closes the contract's compile-time-assertion requirement).
 > - Review fixed header-vs-impl contract drift: `irql.h` + `dpc.h` no longer promise DPC-drain-on-lower or strict-LIFO enforcement the impl does not provide; comments point to the real owners.
 > - Canonical contract: `include/kernel/sched/irql.h`.
-> **Verified:** 2026-06-26 | commit `3e79d8a5` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
+> **Verified:** 2026-06-26 | commit `e9318e14` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
 > **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 99)
 > **Deferred:** [H] `irql.h` KeLowerIrql promised DPC drain-on-lower the impl never did; true NT drain-on-lower still unbuilt -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC drain-on-lower" at line 272)
 > **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 113)
