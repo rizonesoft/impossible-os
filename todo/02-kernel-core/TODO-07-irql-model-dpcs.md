@@ -497,7 +497,7 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 
 **Regression risk:** Changing the handoff pattern affects every threaded DPC consumer. Rollback: revert to single-CPU threaded DPC model (BSP-only).
 
-> **Verified:** 2026-06-26 | commit `TBD-backfill` | 6/8 items | build OK | 175 sched + 16 user tests, smoke PASSED
+> **Verified:** 2026-06-26 | commit `23d6b38a` | 6/8 items | build OK | 175 sched + 16 user tests, smoke PASSED
 > **Deferred:** [HIGH] idle threaded-DPC worker yield-polls (`event_wait_timeout` keeps it READY when idle) -- `event_t`'s waiter queue is lock-free, unsafe vs multi-CPU-ISR `event_set` -> XREF: 02-kernel-core/TODO-07 §15 (item: "SMP-safe blocking worker (deferred)" -- make `event_t` SMP-safe then switch to `event_wait`)
 > **Deferred:** [HIGH] `KeFlushQueuedDpcs` waits only on normal queues, not `threaded_q` pending / in-flight threaded callbacks (teardown UAF; latent -- no production threaded-DPC consumer yet) -> XREF: 02-kernel-core/TODO-07 §16 (items: "Extend KeFlushQueuedDpcs() to also wait on threaded_q[cpu_id].pending" + "Add an in_flight_threaded counter per CPU")
 > **Deferred:** [INFO] concurrent SMP-ISR threaded-DPC stress is runtime-only (no SMP-ISR concurrency in the unit harness) -> XREF: 02-kernel-core/TODO-07 §15 (item: "Runtime stress (deferred, runtime-only)")
