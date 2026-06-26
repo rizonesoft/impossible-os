@@ -432,6 +432,17 @@ static void test_dpc_high_importance_head(void)
                    "HighImportance DPC head-inserted ahead of queued Medium");
 }
 
+/* Test: KDPC_IMPORTANCE numeric values match the WDK wdm.h ABI ordering, so a
+ * binary/WDK-facing caller passing the raw Windows value (High == 2) gets the
+ * head-insert and the rest tail-queue. Guards against the enum being reordered. */
+static void test_dpc_importance_abi_values(void)
+{
+    TEST_ASSERT_EQ((uint64_t)LowImportance,        0u, "LowImportance == 0 (WDK)");
+    TEST_ASSERT_EQ((uint64_t)MediumImportance,     1u, "MediumImportance == 1 (WDK)");
+    TEST_ASSERT_EQ((uint64_t)HighImportance,       2u, "HighImportance == 2 (WDK)");
+    TEST_ASSERT_EQ((uint64_t)MediumHighImportance, 3u, "MediumHighImportance == 3 (WDK)");
+}
+
 /* DPC drain callback: records that it ran and at what IRQL. */
 static volatile int      g_dpc_drain_ran;
 static volatile uint32_t g_dpc_drain_irql;
@@ -549,7 +560,7 @@ static void test_ktimer_single_shot_fires(void)
     TEST_ASSERT_EQ((uint64_t)queued_after, 1u, "fired timer queued its DPC");
     TEST_ASSERT_EQ((uint64_t)active_after, 0u, "single-shot inactive after fire");
     TEST_ASSERT_EQ((uint64_t)(uintptr_t)arg1_after, (uint64_t)(uintptr_t)&t,
-                   "DPC arg1 is the timer (KeInsertQueueDpc(dpc,timer,NULL))");
+                   "DPC arg1 is the timer (KeInsertQueueDpcOnCpu service-CPU handoff)");
     TEST_ASSERT_EQ((uint64_t)(uintptr_t)arg2_after, 0u, "DPC arg2 is NULL");
 }
 
@@ -1265,6 +1276,8 @@ void test_register_sched(void)
                             test_dpc_insert_remove, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC HighImportance head-insert",
                             test_dpc_high_importance_head, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: DPC importance ABI values",
+                            test_dpc_importance_abi_values, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: ktimer init fields",
                             test_ktimer_init_fields, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: ktimer set/cancel + owner CPU",

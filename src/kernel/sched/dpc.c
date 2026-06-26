@@ -125,11 +125,22 @@ struct dpc_watchdog {
      * completion barrier waits for this to reach 0. (Threaded callbacks use the
      * global s_in_flight_threaded.) */
     volatile uint32_t in_flight;
+    /* Deferred depth-warn flag: set to 1 when an insert crosses
+     * DPC_QUEUE_WARN_DEPTH; consumed by dpc_watchdog_tick and cleared by
+     * KeRemoveQueueDpc (cancel-to-empty). The two stores and the tick's clear
+     * run UNDER DPC_QLOCK(cpu_id); the tick ALSO does a lock-free __atomic
+     * acquire-load fast path first so an empty tick pays no lock, so all
+     * accesses use __atomic (RELEASE store / ACQUIRE load). dpc_watchdog_tick
+     * emits the klog AFTER dropping the lock, keeping the warning off the
+     * ISR/DIRQL insert path (klog busy-waits the UART and must never run at an
+     * arbitrary device interrupt's IRQL). */
+    uint32_t warn_pending;
     uint8_t  over_budget_warned; /* monopolization already warned this tick     */
     /* Pad + align to one cache line: drain_queue writes budget/tick_dpcs/
-     * in_flight per dispatched DPC, so adjacent CPUs' records must not
-     * false-share (matches the cpu_queues / queue_lock_slots discipline). */
-    uint8_t  _pad[DPC_CACHELINE - 17];
+     * in_flight per dispatched DPC (and warn_pending is written under the queue
+     * lock), so adjacent CPUs' records must not false-share (matches the
+     * cpu_queues / queue_lock_slots discipline). */
+    uint8_t  _pad[DPC_CACHELINE - 21];
 } __attribute__((aligned(DPC_CACHELINE)));
 _Static_assert(sizeof(struct dpc_watchdog) == DPC_CACHELINE,
                "dpc_watchdog must occupy exactly one cache line (no false-share)");
@@ -174,6 +185,10 @@ void dpc_watchdog_init(void)
         s_wd[i].tick_dpcs = 0;
         s_wd[i].consec_over_depth = 0;
         s_wd[i].over_budget_warned = 0;
+        /* warn_pending is NOT reset here: static storage zero-inits it before
+         * any producer runs, and once queues are live the flag is touched only
+         * under DPC_QLOCK -- an unlocked clear here could drop a live crossing
+         * an ISR already armed (this init is documented idempotent). */
     }
     klog(LOG_INFO, "dpc", "watchdog: single-DPC threshold %u us (%s), budget %u/tick",
          (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US,
@@ -212,13 +227,13 @@ static void dpc_watchdog_single_overrun(uint32_t cpu_id, uint64_t cycles,
  * DPC_QUEUE_WARN_DEPTH for DPC_DEPTH_WARN_TICKS consecutive ticks. Called from
  * the timer ISR (LAPIC + PIT) every tick, BEFORE the drain.
  *
- * SCOPE: services only the TICKING CPU (smp_this_cpu). AP LAPIC timers are
- * masked today (BSP-only heartbeat), and AP DPC queues likewise only drain from
- * that BSP tick -- so the watchdog covers exactly the CPU that actually drains
- * DPCs. Extending depth/budget bookkeeping to AP queues (a BSP cross-CPU sweep,
- * which would need the per-CPU budget made atomic vs the AP's own drain spend)
- * is deferred to the AP-timer / per-CPU threaded-DPC dispatch work -- a tracked
- * section-14 item. */
+ * SCOPE: services only the TICKING CPU (smp_this_cpu), which is the BSP today
+ * (AP LAPIC timers are masked, BSP-only heartbeat). The BSP tick drains and
+ * bookkeeps ONLY the BSP queue. An AP queue is NOT swept by the BSP tick: it
+ * drains only when that AP lowers IRQL on its own, and its budget/warn_pending
+ * therefore get no BSP coverage. Extending depth/budget/warn bookkeeping to AP
+ * queues (a BSP cross-CPU sweep, needing the per-CPU budget made atomic vs the
+ * AP's own drain spend) is deferred -- a tracked AP-watchdog-coverage item. */
 void dpc_watchdog_tick(void)
 {
     struct per_cpu_data *cpu = smp_this_cpu();
@@ -227,6 +242,33 @@ void dpc_watchdog_tick(void)
     if (!cpu || cpu->cpu_id >= MAX_CPUS)
         return;
     id = cpu->cpu_id;
+
+    /* Instant depth-crossing warning. An insert that pushed the queue to exactly
+     * DPC_QUEUE_WARN_DEPTH armed warn_pending under DPC_QLOCK -- it may run up to
+     * DIRQL (any device ISR) where klog must not busy-wait the UART, so it never
+     * logs there. Drain it here: read+clear under the lock (the flag's only
+     * writers -- insert and cancel-to-empty -- also hold it), klog after the
+     * unlock. This is the once-per-tick DPC diagnostic site shared with the
+     * sustained-depth + budget warnings below; like them it necessarily runs in
+     * the timer-ISR context (the DPC subsystem has no non-interrupt periodic
+     * context). The fix's win is removing the PER-INSERT klog at arbitrary
+     * device DIRQL, not eliminating the bounded once-per-tick heartbeat log. */
+    if (__atomic_load_n(&s_wd[id].warn_pending, __ATOMIC_ACQUIRE)) {
+        /* Lock-free acquire-load fast path: the common tick (no crossing armed)
+         * pays NO DPC_QLOCK, preserving the empty-tick lock-free path. Only when
+         * a crossing IS pending do we take the lock to recheck+clear (a
+         * cancel-to-empty may have cleared it since the load) and emit off-lock. */
+        uint64_t irq_flags;
+        int crossed;
+        spin_lock_irqsave(DPC_QLOCK(id), &irq_flags);
+        crossed = (int)__atomic_load_n(&s_wd[id].warn_pending, __ATOMIC_RELAXED);
+        __atomic_store_n(&s_wd[id].warn_pending, 0, __ATOMIC_RELEASE);
+        spin_unlock_irqrestore(DPC_QLOCK(id), irq_flags);
+        if (crossed)
+            klog(LOG_WARN, "dpc",
+                 "CPU %u DPC queue depth reached %u (possible starvation)",
+                 (uint64_t)id, (uint64_t)DPC_QUEUE_WARN_DEPTH);
+    }
 
     /* Sustained-depth warning (consecutive ticks over the depth threshold). */
     depth = cpu_queues[id].depth;
@@ -376,10 +418,21 @@ void KeSetImportanceDpc(KDPC *dpc, KDPC_IMPORTANCE importance)
 
 /* ---- KeInsertQueueDpc ---------------------------------------------------- */
 
-/* Core insert. Does NOT call klog: if the queue reaches the warn depth it
- * reports the CPU via *warn_cpu_out (>= 0) so the caller can log AFTER dropping
- * any lock it holds. This lets ktimer_expire_current_cpu queue a DPC while
- * holding the ktimer spinlock without dragging serial I/O under that lock. */
+/* Core insert. Does NOT call klog: if the queue reaches the warn depth it arms
+ * a per-CPU warn_pending flag (emitted later by dpc_watchdog_tick) and reports
+ * the CPU via *warn_cpu_out (>= 0) for INFORMATION only -- callers must never
+ * log from it, since this path is callable up to DIRQL. This lets the timer/ISR
+ * insert sites queue a DPC under their own spinlock with no serial I/O. */
+/* Forward-progress bound for the insert retry loop. Each retry observes a
+ * transient (an owner mid-clear, or a concurrent state change) that settles in a
+ * bounded critical section, so a correctly-used DPC resolves in a handful of
+ * spins. This cap is astronomically beyond any legitimate transient -- reaching
+ * it means a corrupted/looping KDPC state, which must fail loud (the insert is
+ * callable up to DIRQL, where an unbounded spin would hang the interrupt path)
+ * rather than spin forever or silently drop the insert. Mirrors the
+ * KeFlushQueuedDpcs completion-barrier cap -> bugcheck precedent. */
+#define DPC_INSERT_MAX_SPINS  (1u << 24)
+
 static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2,
                            uint32_t force_cpu, int *warn_cpu_out)
 {
@@ -387,11 +440,16 @@ static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2,
     struct dpc_queue *q;
     uint64_t irq_flags;
     int warn_depth = 0;
+    uint32_t spins = 0;
 
     if (warn_cpu_out)
         *warn_cpu_out = -1;
 
     for (;;) {
+        if (++spins > DPC_INSERT_MAX_SPINS)
+            KeBugCheckEx(BUGCHECK_DPC_WATCHDOG_VIOLATION, 0x5,
+                         (uint64_t)(uintptr_t)dpc,
+                         (uint64_t)dpc->queued_cpu, (uint64_t)spins);
         /* If already queued, the DPC lives on dpc->queued_cpu (resolved from
          * DPC_TARGET_CURRENT at insert time). NT keeps a queued DPC on its
          * original CPU; a re-insert only refreshes the arguments -- under the
@@ -482,37 +540,40 @@ static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2,
         q->depth++;
         if (q->depth > q->max_depth)
             q->max_depth = q->depth;
-        if (q->depth == DPC_QUEUE_WARN_DEPTH)
+        /* Depth warning: arm a per-CPU pending flag UNDER this queue's lock --
+         * the SAME lock dpc_watchdog_tick holds when it reads+clears the flag,
+         * and KeRemoveQueueDpc holds on cancel-to-empty. NEVER klog here -- this
+         * path is callable up to DIRQL where klog busy-waits the UART. */
+        if (q->depth == DPC_QUEUE_WARN_DEPTH) {
             warn_depth = 1;
+            __atomic_store_n(&s_wd[cpu_id].warn_pending, 1, __ATOMIC_RELEASE);
+        }
 
         spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
-        /* Report (do NOT log) the depth warning so the caller can klog AFTER
-         * dropping any spinlock it holds. klog does serial I/O (busy-waits on
-         * UART under its own lock) which must never run while a queue/timer
-         * spinlock is held with interrupts disabled. */
-        if (warn_depth && warn_cpu_out)
-            *warn_cpu_out = (int)cpu_id;
+        /* warn_cpu_out is reported (informational) for callers that want the CPU
+         * id; they must NOT log from it at their IRQL -- dpc_watchdog_tick emits
+         * the warning once per tick. */
+        if (warn_depth) {
+            if (warn_cpu_out)
+                *warn_cpu_out = (int)cpu_id;
+        }
         return 1;
     }
 }
 
-/* Queue a DPC, logging a depth warning inline (the common path). */
+/* Queue a DPC. Callable up to DIRQL, so the depth warning is NOT logged here --
+ * dpc_insert_core arms a per-CPU pending flag that dpc_watchdog_tick emits once
+ * per tick (klog must never busy-wait on the UART at an interrupt's IRQL). */
 int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
 {
-    int warn_cpu = -1;
-    int r = dpc_insert_core(dpc, arg1, arg2, MAX_CPUS /* honor cpu_target */, &warn_cpu);
-    if (warn_cpu >= 0)
-        klog(LOG_WARN, "dpc",
-             "CPU %u DPC queue depth reached %u (possible starvation)",
-             (uint64_t)(uint32_t)warn_cpu, (uint64_t)DPC_QUEUE_WARN_DEPTH);
-    return r;
+    return dpc_insert_core(dpc, arg1, arg2, MAX_CPUS /* honor cpu_target */, (int *)0);
 }
 
-/* Queue a DPC WITHOUT logging: if the warn depth is hit, *warn_cpu_out is set
- * to the CPU id (else -1) so a caller holding a spinlock can defer the klog
- * until after it unlocks. Honors dpc->cpu_target. Same return value as
- * KeInsertQueueDpc (1 newly queued, 0 already). */
+/* Queue a DPC, reporting the warn-depth CPU id in *warn_cpu_out (else -1) for
+ * callers that want it -- informational ONLY: the depth warning is emitted by
+ * dpc_watchdog_tick once per tick, never by the caller (it may run up to DIRQL).
+ * Honors dpc->cpu_target. Same return value as KeInsertQueueDpc. */
 int KeInsertQueueDpcEx(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out)
 {
     return dpc_insert_core(dpc, arg1, arg2, MAX_CPUS /* honor cpu_target */, warn_cpu_out);
@@ -586,6 +647,13 @@ int KeRemoveQueueDpc(KDPC *dpc)
             cur->queued_cpu = MAX_CPUS;   /* invalidate before clearing queued */
             cur->queued     = 0;
             q->depth--;
+            /* If cancellation empties the queue, drop any pending depth-warn
+             * flag under this lock: a deep queue that was cancelled (not drained)
+             * is not a starvation event, and no later drain would service this
+             * now-empty queue to consume the flag -- leaving it set would mis-
+             * attribute a stale depth-64 warning to the next unrelated DPC. */
+            if (!q->head)
+                __atomic_store_n(&s_wd[cpu_id].warn_pending, 0, __ATOMIC_RELEASE);
             found = 1;
             break;
         }

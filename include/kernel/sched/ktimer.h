@@ -6,14 +6,19 @@
  * the timer ISR auto-queues that DPC when the deadline is reached -- no manual
  * KeInsertQueueDpc in a timer callback.
  *
- *   KeSetTimerEx(t, due, period, dpc):  arm on the current CPU's timer list
- *   <timer ISR tick>:  ktimer_expire_current_cpu() fires due timers,
- *                      KeInsertQueueDpc(dpc, t, NULL) for each with a DPC
+ *   KeSetTimerEx(t, due, period, dpc):  arm on the BSP service list (today all
+ *                      timers are pinned to KTIMER_SERVICE_CPU regardless of the
+ *                      arming CPU, since only the BSP timer ISR scans)
+ *   <timer ISR tick>:  ktimer_expire_current_cpu() fires due timers and queues
+ *                      each DPC via KeInsertQueueDpcOnCpu(dpc, KTIMER_SERVICE_CPU,
+ *                      t, NULL, NULL) so it lands on a queue that drains
  *   KeCancelTimer(t):  remove from its list, stop further DPC queueing
  *
  * SCOPE: this is the MINIMAL prerequisite for the full NT KTIMER. Due times are
- * raw UTS ticks (system_get_ticks()), not FILETIME/QPC, and a timer is serviced
- * by the CPU that armed it (its owner CPU's tick). The full KTIMER upgrade
+ * raw UTS ticks (system_get_ticks()), not FILETIME/QPC, and every timer is
+ * serviced on the BSP (the per-CPU list array is retained for the future
+ * per-CPU-tick KTIMER, when timers will be serviced by their owner CPU). The
+ * full KTIMER upgrade
  * (FILETIME due times, QPC-based expiry, timer coalescing, a global timer
  * table) lands with the kernel time-service work (the full KTIMER upgrade).
  *
@@ -38,13 +43,13 @@
  * for an in-flight DPC. The expiry path queues the DPC and clears `active`
  * atomically under the ktimer lock (and KeCancelTimer has no lock-free path),
  * so a canceller that sees the timer inactive is guaranteed the DPC is already
- * QUEUED. It is NOT, however, guaranteed to have COMPLETED: KeFlushQueuedDpcs
- * today polls queue-emptiness and can return while a callback is still running
- * (a fired timer's DPC takes the timer as arg1). A true in-flight completion
- * barrier is owned by the DPC subsystem's KeFlushQueuedDpcs completion-barrier
- * work; until it lands, free a dynamically allocated timer only after you KNOW
- * its DPC has run (e.g. a flag the callback sets). The common case -- static /
- * subsystem-lifetime timers -- is unaffected.
+ * QUEUED. To also guarantee the DPC has COMPLETED before freeing a dynamically
+ * allocated timer, call KeFlushQueuedDpcs AFTER cancelling: it is now a true
+ * in-flight completion barrier (waits for already-queued/running normal AND
+ * threaded callbacks to finish), so once producers are stopped/cancelled it is
+ * safe teardown for a fired timer's DPC (which takes the timer as arg1). It does
+ * NOT stop NEW production -- cancel the timer first. The common case -- static /
+ * subsystem-lifetime timers -- needs no flush.
  * ============================================================================ */
 
 #pragma once

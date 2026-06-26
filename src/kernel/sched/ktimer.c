@@ -1,25 +1,28 @@
 /* ============================================================================
  * ktimer.c -- Lightweight tick-based kernel timer with DPC association
  *
- * Per-CPU singly-linked timer lists, mirroring the per-CPU layout of dpc.c.
- * A timer lives on the CPU that armed it; that CPU's timer ISR scans its list
- * each tick (ktimer_expire_current_cpu), fires due timers, and queues each
- * fired timer's DPC via KeInsertQueueDpc.
+ * Per-CPU singly-linked timer lists (the array is retained for a future
+ * per-CPU-tick KTIMER), but TODAY all timers are armed on KTIMER_SERVICE_CPU
+ * (the BSP) because only the BSP timer ISR is unmasked. The BSP timer ISR scans
+ * the service list each tick (ktimer_expire_current_cpu), fires due timers, and
+ * queues each fired timer's DPC via KeInsertQueueDpcOnCpu, which force-pins it
+ * to KTIMER_SERVICE_CPU so it lands on a queue that actually drains.
  *
  * LOCK ORDERING: the per-CPU ktimer lock is acquired strictly BEFORE the DPC
  * queue lock (one-way: dpc.c never takes a ktimer lock, so the nesting cannot
  * cycle into deadlock). The expiry scan queues each fired timer's DPC via
- * KeInsertQueueDpcEx WHILE STILL HOLDING the ktimer lock, so the unlink + the
+ * KeInsertQueueDpcOnCpu WHILE STILL HOLDING the ktimer lock, so the unlink + the
  * "active = 0" publish + the DPC handoff are atomic with respect to a
  * concurrent KeCancelTimer (which also takes the ktimer lock). That closes the
  * free-before-queue lifetime gap: a canceller either cancels BEFORE the fire or
  * observes the DPC already QUEUED (it cannot free the timer in a window where
  * the DPC is about to be queued with the timer as arg1). Whether that queued
  * DPC has COMPLETED is a separate barrier owned by the DPC subsystem -- see the
- * LIFETIME note in ktimer.h. KeInsertQueueDpcEx is bounded, allocation-free,
- * and does NO serial I/O under the lock (it reports a queue-depth warning via
- * an out-param that we klog only after releasing the lock), so holding the
- * ktimer lock across it does not violate the lock-hold-time gate.
+ * LIFETIME note in ktimer.h. KeInsertQueueDpcOnCpu is bounded, allocation-free,
+ * and does NO serial I/O under the lock: a queue-depth crossing only arms a
+ * per-CPU warn_pending flag (emitted later by dpc_watchdog_tick), never a klog
+ * here, so holding the ktimer lock across it does not violate the lock-hold-time
+ * gate.
  *
  * SERVICE CPU: the periodic timer heartbeat is BSP-only (AP LAPIC timers are
  * masked -- see lapic_timer_arm_oneshot), so only the BSP's timer ISR ever
@@ -106,7 +109,7 @@ int KeCancelTimer(kernel_timer_t *timer)
      * `active` entirely inside this same lock, so a canceller that observes
      * active==0 is GUARANTEED the DPC is already queued (KeFlushQueuedDpcs will
      * see it) -- there is no window where it can free the timer before the
-     * ISR's KeInsertQueueDpc. */
+     * ISR's KeInsertQueueDpcOnCpu. */
     spin_lock_irqsave(KTIMER_LOCK(KTIMER_SERVICE_CPU), &irq_flags);
     was_active = (int)timer->active;
     if (was_active) {
@@ -176,12 +179,6 @@ uint32_t ktimer_expire_current_cpu(void)
     uint64_t now = system_get_ticks();
     uint32_t fired = 0;
     uint64_t irq_flags;
-    /* Bitmask of CPUs whose DPC queue hit the warn depth this batch (timers can
-     * target different CPUs via KeSetTargetProcessorDpc). klog each AFTER
-     * releasing KTIMER_LOCK so no starvation warning is dropped. MAX_CPUS <= 32
-     * fits a uint32_t. */
-    uint32_t warn_mask = 0;
-    _Static_assert(MAX_CPUS <= 32, "ktimer warn_mask is a uint32_t bitmask");
 
     /* Common-case fast path: no armed timers -> skip the lock + the cli-section
      * entirely. The head pointer is a naturally-aligned 8-byte read (atomic on
@@ -193,7 +190,7 @@ uint32_t ktimer_expire_current_cpu(void)
         return 0;
 
     /* Single pass with the DPC handoff DONE UNDER THE LOCK (see file header):
-     * unlink/re-arm + active publish + KeInsertQueueDpc are atomic vs a
+     * unlink/re-arm + active publish + KeInsertQueueDpcOnCpu are atomic vs a
      * concurrent KeCancelTimer. Periodic timers re-arm to the next period
      * boundary past `now` in O(1), so the scan strictly advances and never
      * re-fires a timer within this call -- no batch re-scan, no unbounded
@@ -238,40 +235,29 @@ uint32_t ktimer_expire_current_cpu(void)
 
         /* Atomic handoff: queue while still holding the ktimer lock so a
          * concurrent KeCancelTimer (which also takes this lock) cannot free the
-         * timer between the unlink and the DPC publish. KeInsertQueueDpcEx does
-         * NO serial I/O under the lock -- it reports a depth warning via
-         * warn_cpu, which we klog only after releasing KTIMER_LOCK. `t` stays a
-         * valid caller-owned pointer until we release. */
+         * timer between the unlink and the DPC publish. KeInsertQueueDpcOnCpu
+         * does NO serial I/O under the lock -- any depth warning is armed as a
+         * per-CPU warn_pending flag and emitted serial-safe by dpc_watchdog_tick
+         * once per tick, so nothing is logged at the timer ISR's IRQL here. `t`
+         * stays a valid caller-owned pointer until we release. */
         if (dpc) {
-            int wc = -1;
             /* Pin the DPC to the service CPU (overriding any caller
              * KeSetTargetProcessorDpc WITHOUT mutating the caller's cpu_target).
              * The timer fires here and the service CPU drains its own DPC queue
-             * immediately after this scan (dpc_drain_current_cpu, same ISR). AP
-             * DPC queues have no guaranteed drain trigger yet (AP LAPIC timers
-             * masked, no drain-on-lower), so an AP-targeted timer DPC would
-             * STRAND -- a lost-wakeup. Per the timer-DPC ownership precondition
+             * immediately after this scan (dpc_drain_current_cpu, same ISR). An
+             * idle AP has no guaranteed DPC drain trigger (its LAPIC timer is
+             * masked and, absent a DPC IPI, nothing forces it to lower IRQL), so
+             * an AP-targeted timer DPC would STRAND. Per the timer-DPC ownership
+             * precondition
              * (ktimer.h) the caller must not independently queue the DPC, so it
              * is never already-queued on an AP here. */
-            KeInsertQueueDpcOnCpu(dpc, KTIMER_SERVICE_CPU, t, (void *)0, &wc);
-            if (wc >= 0 && wc < (int)MAX_CPUS)
-                warn_mask |= (1u << (uint32_t)wc);   /* record, do not drop */
+            KeInsertQueueDpcOnCpu(dpc, KTIMER_SERVICE_CPU, t, (void *)0, (int *)0);
         }
         if (!keep)
             t->active = 0;                    /* terminal publish (after queue) */
         fired++;
     }
     spin_unlock_irqrestore(KTIMER_LOCK(cpu), irq_flags);
-
-    /* Deferred DPC-queue-depth warnings: klog every recorded CPU only after the
-     * ktimer lock is released (serial I/O must never run under the spinlock).
-     * Per-CPU so multi-target starvation is not collapsed to a single line. */
-    for (uint32_t c = 0; warn_mask; c++, warn_mask >>= 1) {
-        if (warn_mask & 1u)
-            klog(LOG_WARN, "ktimer",
-                 "DPC queue depth warning while expiring timers (CPU %u)",
-                 (uint64_t)c);
-    }
 
     return fired;
 }

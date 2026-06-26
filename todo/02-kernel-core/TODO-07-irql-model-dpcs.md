@@ -58,7 +58,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [/]   |
-| 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [/]   |
+| 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [x]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
 | 💎  |   9   | Timer-DPC association                              | §4, §6      |  [/]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [/]   |
@@ -163,7 +163,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Notes:**
 > - DPC object + per-CPU queue: `KDPC` struct, `KeInitializeDpc`/`KeInsertQueueDpc`/`KeRemoveQueueDpc`, per-CPU `cpu_queues[MAX_CPUS]` FIFO with irqsave locks + depth-64 warn, `dpc_init_queues` Phase-1 -- in `src/kernel/sched/dpc.c`.
 > - Review-pass SMP fix: added `queued_cpu` so cross-CPU `KeRemoveQueueDpc` and re-insert operate on the queue the DPC actually lives on; the old code re-resolved `DPC_TARGET_CURRENT` to the caller's CPU and scanned/locked the wrong queue.
-> - Review-pass: the depth-warn `klog` moved AFTER the unlock (was serial I/O under the queue spinlock + cli); `executed++` moved under the lock.
+> - Review-pass: the depth-warn no longer klogs on the insert path at all (§7 review) -- it arms a per-CPU `warn_pending` flag emitted once per tick by `dpc_watchdog_tick`, since `KeInsertQueueDpc` is callable up to DIRQL; `executed++` moved under the lock.
 > - Insert retries on the transient `queued_cpu==MAX_CPUS` (set while a remove/drain clears the DPC) so a concurrent re-insert is never dropped, and never double-links the observable case.
 > - Caller precondition (NT contract, documented in `dpc.h`): a single KDPC must not be inserted concurrently from more than one CPU; sequential cross-CPU operations are safe.
 > - Canonical: `src/kernel/sched/dpc.c`; tests in `src/kernel/test/test_sched.c`.
@@ -228,7 +228,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 Control which CPU a DPC runs on, how urgently it executes, and provide a synchronization barrier for driver teardown.
 
 - [x] `KeSetTargetProcessorDpc(dpc, cpu_number)` -- sets `cpu_target` field
-- [x] `KeSetImportanceDpc(dpc, importance)` -- 4 levels: Low/Medium/MediumHigh/High
+- [x] `KeSetImportanceDpc(dpc, importance)` -- 4 levels in WDK `wdm.h` numeric order (Low=0, Medium=1, High=2, MediumHigh=3); `_Static_assert` + test pin the ABI; only `HighImportance` head-inserts
 - [x] `KeInsertQueueDpc` modified: HighImportance -> head-insert; all others -> tail (FIFO)
 - [x] `KeFlushQueuedDpcs()` -- drains local queue directly, spin-waits for other CPUs
 - [x] `KDPC_IMPORTANCE` enum added; `KDPC.importance` field (default: MediumImportance)
@@ -238,13 +238,17 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 - [x] `KeFlushQueuedDpcs` completion barrier -- shipped in §16: per-CPU `s_wd[cpu].in_flight` (normal) + global `s_in_flight_threaded` (threaded) sampled with the queue heads under `DPC_QLOCK`; silent timeout now fail-closes via bugcheck.
 - [x] Commit: `"kernel: sched -- add DPC targeting, importance, and flush"`
 
-**Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.
+**Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → the DPC links onto CPU 1's queue (`queued_cpu == 1`); actual callback execution on an idle AP awaits the deferred DPC IPI / remote drain trigger (today AP queues drain only when that AP lowers IRQL, so a non-BSP target can strand -- see the Remote-target DPC IPI item). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal.
 
 > **Notes:**
 > - DPC targeting/importance/flush: `KeSetTargetProcessorDpc` (cpu_target), `KeSetImportanceDpc` (4 levels), `KeInsertQueueDpc` HighImportance head-insert, `KeFlushQueuedDpcs`, and the `KDPC_IMPORTANCE` enum are implemented in `src/kernel/sched/dpc.c`.
 > - Review-pass: the per-CPU DPC queue + lock storage is now cacheline-aligned (`struct dpc_queue` padded/aligned, per-CPU lock in a 64B `dpc_lock_slot`) to avoid ISR-hot-path false sharing; `_Static_assert`s pin the layout.
 > - The `KeFlushQueuedDpcs` in-flight completion barrier (the cross-CPU "returns only after callback completes" clause) shipped in §16 -- per-CPU `s_wd[].in_flight` (normal) + global `s_in_flight_threaded` (threaded), sampled under `DPC_QLOCK`.
+> - Review fixes: importance enum reordered to the WDK ABI; the queue-depth warning moved off the DIRQL insert path to a per-CPU lock-serialized `warn_pending` flag emitted once per tick by `dpc_watchdog_tick`; the insert retry loop bounded (`DPC_INSERT_MAX_SPINS` -> bugcheck, never drops).
 > - Canonical: `src/kernel/sched/dpc.c`.
+> **Verified:** 2026-06-26 | commit `20d6d465` | 9/9 items | build OK | tests 201 kernel + 16 user PASS | lint 0 err
+> **Accepted:** [H] remote-AP-targeted normal DPC can strand -- no DPC IPI / drain trigger for an otherwise-idle AP (ktimer pins its DPCs to the BSP to avoid this; doc contract tightened in `dpc.h`) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14 (item: "Remote-target DPC IPI" at line 452)
+> **Quality reviewed:** 2026-06-26 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 2H+5M fixed, 1H accepted | scope: kernel-code-quality
 
 ---
 
@@ -271,9 +275,9 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a kernel worker thread, allowing operati
 > - Tests: `test_dpc_init_threaded` asserts `KeInitializeThreadedDpc` sets `threaded=1`; the behavioral PASSIVE-execution + handoff stress test is deferred with the §15 sync redesign.
 > - Canonical: `src/kernel/sched/dpc.c`.
 > **Verified:** 2026-06-26 | commit `bd8f42c2` | 5/5 items | build OK | tests 62 kernel + 16 user PASS
-> **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 274)
-> **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 275)
-> **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 276)
+> **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 278)
+> **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 279)
+> **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 280)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: task_create return-check + doc + test, no locking/lifecycle change)
 
 ---
@@ -316,7 +320,7 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 - [x] Three-tier policy documented in `dpc.h` + `workqueue.h` headers: ISR claims+acks+queues a DPC (`KeRequestDpcFromIsr`); DPC at DISPATCH; blocking work to the PASSIVE workqueue.
 - [x] Migrated the RTL8139 error/stats path to DPC-first (`rtl8139.c`: ISR acks REG_ISR + queues `rtl8139_err_dpc`, logging at DISPATCH); RX drain stays inline (full RX DPC-first -> §12, filed in `04-drivers-hardware/TODO-14 §7`).
 - [x] `workqueue.h` comment de-conflated: PASSIVE thread tier (blocking work), explicitly NOT a DPC replacement; points the DPC analogue to `dpc.h`.
-- [x] `KeRequestDpcFromIsr` static inline in `dpc.h` -- no-log `KeInsertQueueDpcEx` (no serial I/O at DIRQL); device claim/ack stays explicit (no ack-callback macro).
+- [x] `KeRequestDpcFromIsr` static inline in `dpc.h` -- calls `KeInsertQueueDpc` (no inline klog; depth crossing arms `warn_pending`, so no serial I/O at DIRQL); device claim/ack stays explicit.
 - [x] `KINTERRUPT` + `KeSynchronizeExecution` in `sched/kinterrupt.{c,h}`, irq.c-integrated: the dispatcher runs the bound ISR under `ki->lock`+`active_cpu`; KeSync raises to SynchronizeIrql + takes the lock; self-ISR rejected (lock-free counter).
   - This item owns the sync-object + SynchronizeIrql contract; GSI/vector routing + affinity already shipped in `01-boot-platform/TODO-11 §5`. → XREF: 01-boot-platform/TODO-11 §5 (irq_request_gsi)
 - [x] Recorded the RTL8139 RX DPC-first follow-up in `04-drivers-hardware/TODO-14 §7` (after §12 drain-on-lower).
@@ -447,7 +451,8 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 - [x] DPC importance-based drain ordering: provided by §7 head-insert (`HighImportance` -> head; `drain_queue` dequeues head-first), so high runs first. No drain-time reorder.
 - [x] APC starvation watchdog: `kernel_apc_depth` in `KAPC_STATE` maintained under `apc_lock`; `KeInsertQueueApc` warns once on the kernel-APC crossing of `APC_STARVATION_WARN_DEPTH`.
 - [x] Tuning constants in new `include/kernel/sched/dpc_config.h`.
-- [ ] AP DPC watchdog coverage (deferred, NOT blocked): AP DPCs drain on APs via `KeLowerIrql` but `dpc_watchdog_tick` services only the BSP, so `s_wd[ap]` budget is never refilled. Fix: BSP cross-CPU sweep + atomic per-CPU budget.
+- [ ] AP DPC watchdog coverage (deferred, NOT blocked): `dpc_watchdog_tick` is BSP-only, so an AP's `s_wd[ap]` budget never refills and its `warn_pending` crossing never emits. Fix: BSP cross-CPU sweep of budget + `warn_pending`, atomic budget.
+- [ ] Remote-target DPC IPI (deferred, NOT blocked): a `KeSetTargetProcessorDpc`-to-idle-AP DPC can strand (no DPC IPI yet); add a DPC IPI vector draining the AP on remote insert. -> XREF: 16-architecture-ports/TODO-03-smp-scaling-processor-groups.md
 - [x] Commit: `"kernel: sched -- add DPC/APC budget fairness and watchdog"`
 
 **Test checkpoint:** Unit (`TEST_CAT_SCHED`): `kernel_apc_depth` tracks insert/remove/rundown (2 -> 1 -> 0); `dpc_watchdog_set_strict()` toggles. Runtime (WHPX / bare metal via serial -- not unit-testable without a live timer/TSC): a single DPC running > 100us logs `dpc: watchdog: DPC ... ran N us` and, in strict mode, bugchecks `0x133` param 0x0; queue depth > `DPC_QUEUE_WARN_DEPTH` for `DPC_DEPTH_WARN_TICKS` ticks logs the sustained-depth warning; per-tick budget exhaustion logs once; `HighImportance` DPC runs before `LowImportance` (§7 head-insert); APC starvation logs on the `APC_STARVATION_WARN_DEPTH` crossing. Tuning constants in `include/kernel/sched/dpc_config.h`. (param 0x1 cumulative-DISPATCH-time is deferred.)
@@ -663,7 +668,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
     - Per-CPU queue isolation: DPC queued on CPU 0 does not drain on CPU 1 (SMP test)
     - IRQL violation: attempt blocking wait at `DISPATCH_LEVEL` is trapped (does not deadlock)
   - **DPC targeting/importance (§7):**
-    - `KeSetTargetProcessorDpc` to CPU 1 + queue from CPU 0 → callback fires on CPU 1
+    - `KeSetTargetProcessorDpc` to CPU 1 + queue from CPU 0 → DPC links onto CPU 1's queue (`queued_cpu == 1`); CPU-1 callback execution awaits the deferred Remote-target DPC IPI item (idle AP has no drain trigger)
     - `HighImportance` DPC runs before `LowImportance` DPC queued earlier on same CPU
     - `KeFlushQueuedDpcs` blocks until callback completes; returns only after flag is set
   - **Threaded DPCs (§8):**
@@ -711,7 +716,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 - [ ] Blocking wait attempt from DPC path is trapped and logged as IRQL violation
 - [ ] Workqueue callback still runs in thread context (`PASSIVE_LEVEL`) and may yield safely
 - [ ] SMP check: per-CPU DPC queue drains on each active core without cross-core corruption
-- [ ] DPC targeted to CPU 1 from CPU 0 fires on CPU 1 (verify `smp_this_cpu()` in callback)
+- [ ] DPC targeted to CPU 1 from CPU 0 links onto CPU 1's queue (`queued_cpu == 1`); CPU-1 execution awaits the deferred Remote-target DPC IPI item
 - [ ] `HighImportance` DPC runs before `LowImportance` DPC queued earlier
 - [ ] `KeFlushQueuedDpcs` returns only after all queued DPCs complete
 - [ ] Threaded DPC fires at `PASSIVE_LEVEL`; can acquire mutex without deadlock

@@ -24,13 +24,22 @@
 
 #include "kernel/types.h"
 
-/* DPC importance levels */
+/* DPC importance levels. Numeric values match the Windows WDK wdm.h ordering
+ * (Low, Medium, High, MediumHigh) so a binary/WDK-facing caller that passes the
+ * Windows numeric value gets the matching behavior: only HighImportance (== 2)
+ * head-inserts; the rest tail-queue FIFO. */
 typedef enum {
     LowImportance        = 0,
     MediumImportance     = 1,
-    MediumHighImportance = 2,
-    HighImportance       = 3,
+    HighImportance       = 2,
+    MediumHighImportance = 3,
 } KDPC_IMPORTANCE;
+
+/* Pin the NT/WDK numeric ABI -- a head-insert that keys on the symbol but a
+ * caller that passes the raw Windows value must agree on HighImportance == 2. */
+_Static_assert(LowImportance == 0 && MediumImportance == 1 &&
+               HighImportance == 2 && MediumHighImportance == 3,
+               "KDPC_IMPORTANCE must match WDK wdm.h numeric ordering");
 
 /* Forward declaration for the DPC routine signature */
 struct _KDPC;
@@ -40,7 +49,13 @@ struct _KDPC;
  * enabled; a THREADED DPC (KeInitializeThreadedDpc) uses the SAME signature but
  * runs at PASSIVE_LEVEL in the DPC worker thread (so it may block/page/take
  * mutexes). Do not assume DISPATCH_LEVEL in a threaded DPC routine.
- * AFFINITY: a NORMAL DPC runs on its target CPU. A THREADED DPC has NO
+ * AFFINITY: a NORMAL DPC runs on its target CPU, BUT only the BSP DPC queue has
+ * a guaranteed drain trigger today (the LAPIC timer ISR). An idle AP does not
+ * self-drain its DPC queue and there is no DPC IPI yet, so a NORMAL DPC targeted
+ * (KeSetTargetProcessorDpc) at an otherwise-idle AP can sit until that AP next
+ * lowers IRQL on its own. Until a remote drain trigger exists, pin time-critical
+ * DPCs to the BSP service CPU (KeInsertQueueDpcOnCpu), as ktimer does. A THREADED
+ * DPC has NO
  * CPU-affinity guarantee -- KeSetTargetProcessorDpc on a threaded DPC controls
  * only which CPU's threaded list it joins (queue ownership/order), NOT the CPU
  * the callback runs on: a single all-CPU worker thread drains every CPU's
@@ -99,11 +114,15 @@ void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
  * May be called at any IRQL up to DIRQL. */
 int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2);
 
-/* Like KeInsertQueueDpc but does NOT call klog: if the queue reaches the warn
- * depth, *warn_cpu_out is set to that CPU id (else -1). For callers that hold a
- * spinlock at insert time (e.g. ktimer_expire_current_cpu under the ktimer
- * lock) and must defer the serial-I/O warning until after they unlock. Pass
- * a non-NULL int; same return value as KeInsertQueueDpc. */
+/* Same insert as KeInsertQueueDpc. A depth crossing arms a per-CPU pending flag
+ * emitted serial-safe by dpc_watchdog_tick, never at the caller's IRQL. NOTE:
+ * dpc_watchdog_tick is BSP-only today, so the warning is emitted only for a
+ * crossing on the BSP/ticking queue; a crossing armed on an AP's queue stays
+ * pending until AP-queue warn_pending coverage lands (the BSP cross-CPU sweep
+ * deferred to the AP-watchdog item). *warn_cpu_out, if non-NULL, is set to the
+ * warn-depth CPU id (else -1) -- purely informational; callers must NOT klog
+ * from it (this path is DIRQL-callable). Pass NULL when not needed. Same return
+ * value as KeInsertQueueDpc. */
 int KeInsertQueueDpcEx(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out);
 
 /* Like KeInsertQueueDpcEx but pins a FRESH insert to cpu_id, overriding
@@ -122,15 +141,16 @@ int KeInsertQueueDpcOnCpu(KDPC *dpc, uint32_t cpu_id, void *arg1, void *arg2,
  * behind a callback). Allocation-free and bounded, so it is safe at DIRQL.
  *   driver ISR:  read+ack device status; KeRequestDpcFromIsr(&dpc, a1, a2); return claimed
  *   DPC (DISPATCH_LEVEL):  process the snapshotted work
- * Uses the NO-LOG insert (KeInsertQueueDpcEx): a queue-depth warning must never
- * trigger serial I/O at DIRQL, and a KINTERRUPT-bound ISR may hold the
- * interrupt spinlock across this call. The depth warning is intentionally
- * dropped in ISR context (the DPC still queues + drains normally).
+ * A queue-depth warning never triggers serial I/O at DIRQL: the insert arms a
+ * per-CPU pending flag that dpc_watchdog_tick emits once per tick (on the
+ * BSP/ticking queue; an AP-armed crossing stays pending until AP-queue coverage
+ * lands -- see KeInsertQueueDpcEx), keeping this ISR-context call allocation-
+ * free, bounded, and serial-I/O-free even when a KINTERRUPT-bound ISR holds the
+ * interrupt spinlock across it.
  * Returns 1 if newly queued, 0 if the DPC was already queued (args refreshed). */
 static inline int KeRequestDpcFromIsr(KDPC *dpc, void *arg1, void *arg2)
 {
-    int warn_cpu = -1;   /* depth warning suppressed in ISR context */
-    return KeInsertQueueDpcEx(dpc, arg1, arg2, &warn_cpu);
+    return KeInsertQueueDpc(dpc, arg1, arg2);
 }
 
 /* Remove a DPC from its CPU's queue before it executes.
@@ -210,10 +230,12 @@ struct dpc_queue *dpc_get_cpu_queue(uint32_t cpu_id);
  * then restores previous IRQL. Bounded: drains at most DPC_BATCH_LIMIT
  * per invocation to prevent scheduler starvation.
  * Callable explicitly by any code that wants to flush the queue. NOTE:
- * automatic draining currently happens ONLY at a timer ISR (the LAPIC timer
- * and the PIT fallback both call the lightweight dpc_drain_current_cpu below
- * after each tick) -- KeLowerIrql does NOT yet auto-drain on crossing below
- * DISPATCH_LEVEL (planned as part of APC delivery). */
+ * automatic draining happens at a timer ISR (the LAPIC timer and the PIT
+ * fallback both call the lightweight dpc_drain_current_cpu below after each
+ * tick) AND when KeLowerIrql crosses below DISPATCH_LEVEL (drain-on-lower). The
+ * residual gap is an IDLE AP that neither ticks (AP timer masked) nor lowers
+ * IRQL: with no DPC IPI it has no trigger, so a DPC targeted there can strand
+ * until that AP next lowers IRQL -- the deferred Remote-target DPC IPI work. */
 void KiDispatchDpc(void);
 
 /* Maximum DPCs to drain per KiDispatchDpc() call.
