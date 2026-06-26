@@ -273,7 +273,7 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 > - Review-pass: `dpc_start_threads` now checks `task_create`'s return + logs an error on failure (was a silent sink); the `KDEFERRED_ROUTINE` doc now states threaded DPCs run at PASSIVE.
 > - Tests: `test_dpc_init_threaded` asserts `KeInitializeThreadedDpc` sets `threaded=1`; the behavioral PASSIVE-execution + handoff stress test is deferred with the §15 sync redesign.
 > - Canonical: `src/kernel/sched/dpc.c`.
-> **Verified:** 2026-06-26 | commit `STAMPHASH8` | 5/5 items | build OK | tests 62 kernel + 16 user PASS
+> **Verified:** 2026-06-26 | commit `bd8f42c2` | 5/5 items | build OK | tests 62 kernel + 16 user PASS
 > **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 392)
 > **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 393)
 > **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 422)
