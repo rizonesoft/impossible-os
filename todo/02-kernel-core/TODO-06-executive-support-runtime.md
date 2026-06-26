@@ -51,7 +51,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 6 | Fast references | §1, T05 | [x] |
 | 💎 | 7 | Generic tables and bitmaps | §1 | [x] |
 | 💎 | 8 | Push locks | §1, T07 | [/] |
-| 💎 | 9 | Fast and guarded mutexes | §1, T07 | [ ] |
+| 💎 | 9 | Fast and guarded mutexes | §1, T07 | [/] |
 | 💎 | 10 | Executive resource wrapper | §1, T07, D03 T08 | [ ] |
 | 💎 | 11 | Run-once initialization | §1 | [ ] |
 | ⭐ | 12 | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue | [ ] |
@@ -269,12 +269,19 @@ Lighter-weight shared/exclusive lock than ERESOURCE (`EX_PUSH_LOCK`), used by Wi
 
 Exclusive-only fast mutexes (`FAST_MUTEX`, `KGUARDED_MUTEX`) for the common single-owner case; not subsumed by ERESOURCE (no shared mode, no owner tracking, cheaper).
 
-- [ ] Implement `ExInitializeFastMutex`, `ExAcquireFastMutex`, `ExReleaseFastMutex`, `ExTryToAcquireFastMutex`; acquire raises IRQL to APC_LEVEL while held; not recursive.
-- [ ] Implement the guarded-mutex set (`KeInitializeGuardedMutex`/`KeAcquireGuardedMutex`/`KeReleaseGuardedMutex`/`KeTryToAcquireGuardedMutex`); acquire enters a guarded region disabling all kernel APCs (-> XREF T07 `KeEnterGuardedRegion`).
-- [ ] Document wait legality: holders run at APC_LEVEL/guarded and must not perform alertable or PASSIVE-only waits.
+- [/] Implement `FAST_MUTEX` set (`ExInitializeFastMutex`/Acquire/Release/Try); raises IRQL to APC_LEVEL while held; not recursive. BLOCKED: per-CPU IRQL leaks APC_LEVEL across a yield (see Deferred stamp); needs per-thread APC-disable.
+- [/] Implement the guarded-mutex set (`KeInitialize/Acquire/Release/TryToAcquireGuardedMutex`); acquire enters a guarded region. BLOCKED: `KeEnterGuardedRegion` owned by T07 §11, not implemented.
+- [/] Document wait legality: holders run at APC_LEVEL/guarded and must not perform alertable or PASSIVE-only waits.
 - [ ] Commit: `"kernel: ex -- fast and guarded mutexes"`
 
 **Test checkpoint:** Exclusive acquire blocks a second acquirer until release; `ExTryToAcquireFastMutex` returns FALSE without blocking when held; fast-mutex acquire observes IRQL == APC_LEVEL while held; guarded-mutex hold blocks APC delivery (a queued normal APC does not fire until release). Verify on bare metal -- IRQL/APC behavior differs from VMs.
+
+> **Notes:**
+> - **Why deferred** -- the per-CPU IRQL (TPR) raise leaks APC_LEVEL across a yield (the scheduler does not context-switch IRQL); APC suppression needs a per-thread APC-disable that survives a switch.
+> - **Blocked on** -- `02-kernel-core/TODO-07 §11` (KeEnterCriticalRegion/KeEnterGuardedRegion -- per-thread APC-disable) or scheduler per-thread IRQL save/restore.
+> - **Scope boundary** -- §9 owns the FAST_MUTEX/KGUARDED_MUTEX Ex-API; the per-thread APC-suppression mechanism is owned by T07/scheduler. The underlying exclusion (mutex_t) already exists.
+
+> **Deferred:** [H] fast/guarded mutex APC suppression needs a per-thread APC-disable surviving context switches (per-CPU IRQL leaks across yields) -> XREF: 02-kernel-core/TODO-07 §11 (item: "Add critical/guarded region support: KeEnterCriticalRegion()/KeLeaveCriticalRegion()" at line 239)
 
 ---
 
@@ -355,7 +362,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Fast references            | ✅ EX_FAST_REF                      | ❌ none                | ✅ §6 EX_FAST_REF (3-bit) |
 | 💎 | Ordered tables + bitmaps   | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap       | ✅ §7 AVL + dyn-hash + bitmap |
 | 💎 | Push locks                 | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU           | ⬜ §8 deferred (keyed events) |
-| 💎 | Fast/guarded mutexes       | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex               | ⬜ Planned -- §9          |
+| 💎 | Fast/guarded mutexes       | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex               | ⬜ §9 deferred (per-thread APC) |
 | 💎 | Shared/exclusive resource  | ✅ ERESOURCE                        | ✅ rw_semaphore        | ⬜ Planned -- §10         |
 | 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ Planned -- §11         |
 | 💎 | Worker items + Ex timers   | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer   | ⬜ Planned -- §12         |
