@@ -182,7 +182,7 @@ The HPET provides a single 64-bit main counter that increments at a fixed freque
 > - Downstream: HPET is the QPC/mono fallback when no invariant TSC; the per-tick UC-MMIO cost in `kusd_update_time()` is accepted to §16 (coarse migration, now covers HPET + PMTMR).
 > - Canonical: `src/kernel/drivers/hpet.c`.
 > - Scope boundary: §4 owns the main-counter driver; HPET timer comparators (scheduler timer) are out of scope; coarse-read migration is §16.
-> **Verified:** 2026-06-27 | commit `b6dcafd5` | 6/6 items | build OK | 208 kernel + 16 user PASS | smoke PASS (HPET selected, TCG 2.5s)
+> **Verified:** 2026-06-27 | commit `5c2ec338` | 6/6 items | build OK | 208 kernel + 16 user PASS | smoke PASS (HPET selected, TCG 2.5s)
 > **Accepted:** [H] HPET source does live UC-MMIO reads in the per-tick `kusd_update_time()` ISR path -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §16 (item: "Migrate `kusd_update_time()` ... to the coarse time variants" at line 186)
 > **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial x2) | 2H+1M fixed, 1H accepted | scope: kernel-code-quality
 
