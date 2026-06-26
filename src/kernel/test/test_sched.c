@@ -1061,6 +1061,81 @@ static void test_apc_rundown_runs(void)
     TEST_ASSERT_EQ((uint64_t)fake.apc_state.kernel_apc_pending, 0u, "pending cleared by rundown");
 }
 
+/* ---- Section 13: IRQL violation traps + telemetry ----------------------- */
+
+/* Test: IRQL_REQUIRE_AT_MOST passes at/below the level, counts a violation
+ * above it (per-CPU irql_violations). */
+static void test_irql_require_at_most(void)
+{
+    struct per_cpu_data *c = smp_this_cpu();
+    uint32_t v0 = c->irql_violations;
+    KIRQL old;
+    IRQL_REQUIRE_AT_MOST(APC_LEVEL);            /* at PASSIVE -- satisfied */
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 0u, "AT_MOST satisfied: no violation");
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    IRQL_REQUIRE_AT_MOST(APC_LEVEL);            /* at DISPATCH -- violated */
+    KeLowerIrql(old);
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 1u, "AT_MOST violated at DISPATCH: +1");
+}
+
+/* Test: IRQL_REQUIRE_AT_LEAST counts a violation below the level, passes at it. */
+static void test_irql_require_at_least(void)
+{
+    struct per_cpu_data *c = smp_this_cpu();
+    uint32_t v0 = c->irql_violations;
+    KIRQL old;
+    IRQL_REQUIRE_AT_LEAST(DISPATCH_LEVEL);      /* at PASSIVE -- violated */
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 1u, "AT_LEAST violated at PASSIVE: +1");
+    KeRaiseIrql(DISPATCH_LEVEL, &old);
+    uint32_t v1 = c->irql_violations;
+    IRQL_REQUIRE_AT_LEAST(DISPATCH_LEVEL);      /* at DISPATCH -- satisfied */
+    KeLowerIrql(old);
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v1), 0u, "AT_LEAST satisfied at DISPATCH");
+}
+
+/* Test: KeLowerIrqlForced lowers to the target and bumps the forced-lower
+ * counter (not the violation counter). */
+static void test_irql_forced_lower(void)
+{
+    struct per_cpu_data *c = smp_this_cpu();
+    uint32_t f0 = c->irql_forced_lowers, v0 = c->irql_violations;
+    KIRQL old;
+    KeRaiseIrql(DISPATCH_LEVEL, &old);          /* now at DISPATCH (old = PASSIVE) */
+    KeLowerIrqlForced(PASSIVE_LEVEL, "test");   /* unbalanced forced lower */
+    TEST_ASSERT_EQ((uint64_t)KeGetCurrentIrql(), (uint64_t)PASSIVE_LEVEL, "forced lower reached PASSIVE");
+    TEST_ASSERT_EQ((uint64_t)(c->irql_forced_lowers - f0), 1u, "forced-lower counter +1");
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 0u, "forced lower is not a violation");
+}
+
+/* Test: a forced "lower" to a HIGHER level is rejected (counted as a violation,
+ * not performed, not counted as a forced lower). */
+static void test_irql_forced_lower_rejects_raise(void)
+{
+    struct per_cpu_data *c = smp_this_cpu();
+    uint32_t v0 = c->irql_violations, f0 = c->irql_forced_lowers;
+    KeLowerIrqlForced(DISPATCH_LEVEL, "test-bad");   /* at PASSIVE -- a raise */
+    TEST_ASSERT_EQ((uint64_t)KeGetCurrentIrql(), (uint64_t)PASSIVE_LEVEL, "rejected raise: still PASSIVE");
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 1u, "rejected raise counted as violation");
+    TEST_ASSERT_EQ((uint64_t)(c->irql_forced_lowers - f0), 0u, "rejected raise NOT a forced lower");
+}
+
+/* Test: KeRaiseIrql(new<cur) and KeLowerIrql(old>cur) monotonic mismatches are
+ * counted as violations (telemetry mode -- they clamp, do not trap). */
+static void test_irql_monotonic_violation_counted(void)
+{
+    struct per_cpu_data *c = smp_this_cpu();
+    KIRQL old, dummy;
+    KeRaiseIrql(DISPATCH_LEVEL, &old);              /* now DISPATCH (old = PASSIVE) */
+    uint32_t v0 = c->irql_violations;
+    KeRaiseIrql(PASSIVE_LEVEL, &dummy);             /* new < cur -> violation, clamps */
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v0), 1u, "KeRaiseIrql lower attempt counted");
+    KeLowerIrql(old);                               /* back to PASSIVE */
+    uint32_t v1 = c->irql_violations;
+    KeLowerIrql(DISPATCH_LEVEL);                    /* old > cur -> violation, clamps */
+    TEST_ASSERT_EQ((uint64_t)(c->irql_violations - v1), 1u, "KeLowerIrql raise attempt counted");
+    TEST_ASSERT_EQ((uint64_t)KeGetCurrentIrql(), (uint64_t)PASSIVE_LEVEL, "stayed at PASSIVE (clamped)");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -1128,6 +1203,16 @@ void test_register_sched(void)
                             test_apc_leave_guarded_delivers_special, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: apc_rundown_thread runs RundownRoutine",
                             test_apc_rundown_runs, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: IRQL_REQUIRE_AT_MOST violation counter",
+                            test_irql_require_at_most, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: IRQL_REQUIRE_AT_LEAST violation counter",
+                            test_irql_require_at_least, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeLowerIrqlForced forced-lower counter",
+                            test_irql_forced_lower, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeLowerIrqlForced rejects a raise",
+                            test_irql_forced_lower_rejects_raise, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeRaise/KeLowerIrql monotonic mismatch counted",
+                            test_irql_monotonic_violation_counted, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

@@ -64,7 +64,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [/]   |
 | 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [/]   |
 | 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [/]   |
-| ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [ ]   |
+| ⭐  |  13   | IRQL violation traps and structured telemetry      | §2, §3, §5  |  [/]   |
 | ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog  | §5, §6, §12 |  [ ]   |
 | 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [ ]   |
 | 💎  |  16   | KeFlushQueuedDpcs threaded DPC completion          | §8, §15     |  [ ]   |
@@ -96,7 +96,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Verified:** 2026-06-26 | commit `e9318e14` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
 > **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path (RESOLVED 2026-06-26 by §2) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 112)
 > **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 136)
-> **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "per-CPU IRQL transition stack" at line 303)
+> **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced (now counted + strict-trappable in §13; LIFO validator still deferred) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "Per-CPU IRQL transition stack" at line 424)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 0 fixed in-scope, 2H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: header doc + compile-assert only, no functional change)
 
 ---
@@ -418,14 +418,23 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 
 ## 13. IRQL Violation Traps and Structured Telemetry
 
-- [ ] Add `IRQL_REQUIRE_AT_MOST(level)` and `IRQL_REQUIRE_AT_LEAST(level)` macros for fast debug enforcement.
-- [ ] Log IRQL contract violations with subsystem, CPU, current level, required level, and callsite symbol.
-- [ ] Convert silent misuse patterns (blocking wait at `DISPATCH_LEVEL`, `KeLowerIrql` mismatch) into explicit fault paths.
-- [ ] Add a per-CPU IRQL transition stack recording `{old_irql, new_irql, callsite}` on raise/entry and LIFO-validating on lower/exit -- catches missing restores, stale saved-IRQL reuse, non-LIFO pairing (Linux lockdep parity)
-- [ ] Feed counters into existing kernel logging for boot/runtime health checks.
-- [ ] Commit: `"kernel: sched -- add IRQL contract diagnostics and telemetry"`
+- [x] `IRQL_REQUIRE_AT_MOST(level)` / `IRQL_REQUIRE_AT_LEAST(level)` macros in `irql.h` routing to `_irql_check_max` / new `_irql_check_min` (log the `__func__` callsite + count the violation).
+- [x] Log IRQL contract violations (callsite, CPU, current + required level) + per-CPU `irql_violations` counter in `per_cpu_data`; monotonic `KeRaiseIrql`/`KeLowerIrql` mismatches also counted.
+- [x] Explicit fault path: `irql_set_strict()` strict mode bugchecks before any klog (default off = telemetry); `KeLowerIrqlForced(level,reason)` classifies + counts forced lowers (`task_exit`/`task_wrapper` routed).
+- [ ] **Per-CPU IRQL transition stack** (deferred, blocked): `{old,new,callsite}` LIFO validator -- blocked because spinlock `irqsave` + `irql_lower_deliver` + forced lowers write `current_irql` outside `KeRaise`/`KeLower`, so the stack diverges.
+- [ ] **Centralize the IRQL write surface** (prerequisite for the validator): route every `current_irql` writer (spinlock irqsave/restore, `irql_lower_deliver`, forced lowers) through stack-aware primitives + a lint forbidding raw writes.
+- [x] Feed counters into kernel logging: `irql_telemetry_dump()` sums per-CPU `irql_violations` + `irql_forced_lowers` to klog for boot/runtime health checks.
+- [x] Commit: `"kernel: sched -- add IRQL contract diagnostics and telemetry"`
 
-**Test checkpoint:** `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` at `DISPATCH_LEVEL` triggers diagnostic log: `"irql: violation at <callsite> -- required <= APC_LEVEL, current = DISPATCH_LEVEL"`. Blocking wait at `DISPATCH_LEVEL` faults immediately (no deadlock). `KeLowerIrql` mismatch (lowering to wrong level) triggers assertion. A forced non-LIFO raise/lower sequence is caught by the transition-stack validator (logs the offending callsite). Violation counters visible in kernel log.
+**Test checkpoint:** `IRQL_REQUIRE_AT_MOST(APC_LEVEL)` at `DISPATCH_LEVEL` logs a diagnostic + bumps the per-CPU `irql_violations` counter; `IRQL_REQUIRE_AT_LEAST(DISPATCH_LEVEL)` at `PASSIVE_LEVEL` does the same. A `KeRaiseIrql`/`KeLowerIrql` monotonic mismatch (lower-as-raise / raise-as-lower) is counted + clamped. `KeLowerIrqlForced(PASSIVE,reason)` from `DISPATCH` lowers + bumps `irql_forced_lowers`; a forced "lower" to a HIGHER level is rejected (counted as a violation, not performed). In strict mode (`irql_set_strict(1)`, default OFF) any violation escalates to `KeBugCheckEx` -- so a blocking wait at `DISPATCH_LEVEL` traps immediately instead of deadlocking. All exercised by `TEST_CAT_SCHED` (strict-mode bugcheck not unit-tested -- it halts; telemetry-mode counting is).
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 5 §13 suites, 0 failures
+> **Notes:**
+> - Shipped: `IRQL_REQUIRE_*` macros + `_irql_check_min` + `KeLowerIrqlForced` + strict mode + `irql_telemetry_dump` in `irql.{c,h}`; per-CPU `irql_violations`/`irql_forced_lowers` in `smp.h`; `task_exit`/`task_wrapper` routed.
+> - How it runs: every violation site (REQUIRE macros, monotonic mismatch, forced-lower reject) calls `irql_record_violation` (atomic counter, then `KeBugCheckEx` in strict mode before klog); default telemetry mode logs + counts + continues.
+> - Downstream: `irql_telemetry_dump` feeds boot/runtime health. Codex design + adversarial + re-adversarial adoptions in the commit.
+> - Canonical doc: this section + `include/kernel/sched/irql.h`.
+> - Scope boundary: §13 owns the macros + counters + strict trap + forced-lower classification. The LIFO transition-stack validator + the IRQL-write-surface centralization it needs are deferred here; §14 owns DPC/APC budget + watchdog.
 
 ---
 
@@ -550,7 +559,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | 💎 | Special user-mode APCs         | ✅ NtQueueApcThreadEx (RS5+)   | ❌ No equivalent               | ⬜ §12 SpecialUserApc         |
 | 💎 | ISR sync object                | ✅ KeSynchronizeExecution      | ✅ spin_lock_irqsave           | ✅ §10 KeSynchronizeExecution |
 | ⭐ | IRQL nesting validation (LIFO) | ❌ No runtime check            | ✅ lockdep IRQ-state           | ⬜ §13 transition stack       |
-| ⭐ | IRQL violation telemetry       | ⚠️ Checked builds only         | ⚠️ Fragmented debug warnings   | ⬜ §13 -- unified diagnostics  |
+| ⭐ | IRQL violation telemetry       | ⚠️ Checked builds only         | ⚠️ Fragmented debug warnings   | ✅ §13 counters + strict trap  |
 | ⭐ | DPC/APC fairness watchdog      | ⚠️ Internal heuristics         | ⚠️ Subsystem-specific          | ⬜ §14 -- explicit policy      |
 
 > **After §1-§8:** Impossible OS reaches parity on the core IRQL contract and DPC architecture: IRQL transitions, per-CPU DPC queues, auto-drain, targeting, importance, and baseline threaded DPC support all exist.

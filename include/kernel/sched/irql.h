@@ -152,10 +152,40 @@ uint32_t irql_to_tpr(KIRQL irql);
  * elevated IRQL.  Full enforcement (hard traps) deferred. */
 void _irql_check_max(KIRQL max_irql, const char *caller);
 
+/* Check that the current IRQL is at least min_irql. Logs + counts on violation.
+ * Counterpart to _irql_check_max for code that must run AT or ABOVE a level. */
+void _irql_check_min(KIRQL min_irql, const char *caller);
+
 /* Assert: current IRQL must allow blocking (at most APC_LEVEL).
  * Use at the top of mutex_lock, sem_wait, event_wait, yield, etc. */
 #define ASSERT_IRQL_PASSIVE_OR_APC() \
     _irql_check_max(APC_LEVEL, __func__)
+
+/* Fast IRQL contract enforcement -- log + count the callsite on violation.
+ * AT_MOST: the caller must run at or below `level` (e.g. a blocking primitive
+ * requires <= APC_LEVEL). AT_LEAST: the caller must run at or above `level`
+ * (e.g. DPC-context-only code requires >= DISPATCH_LEVEL). */
+#define IRQL_REQUIRE_AT_MOST(level)   _irql_check_max((level), __func__)
+#define IRQL_REQUIRE_AT_LEAST(level)  _irql_check_min((level), __func__)
+
+/* Forced IRQL lower to a known level when no matching saved raise exists (e.g.
+ * task_exit / task_wrapper abandon their IDT context, so the normal restore is
+ * bypassed). Distinct from KeLowerIrql so the unbalanced lower is COUNTED
+ * (per-CPU irql_forced_lowers) and logged with `reason` rather than tripping
+ * the monotonic-raise telemetry. A true raise (level > current) is rejected +
+ * counted as a violation, never performed. */
+void KeLowerIrqlForced(KIRQL level, const char *reason);
+
+/* Emit a one-line per-CPU IRQL telemetry summary to klog (violations +
+ * forced-lower counts) for boot/runtime health checks. */
+void irql_telemetry_dump(void);
+
+/* IRQL contract enforcement mode. Default OFF = telemetry (log + count, caller
+ * continues). ON = strict ("checked build"): every contract violation escalates
+ * to KeBugCheckEx(IRQL_NOT_LESS_OR_EQUAL), giving an explicit fault path so a
+ * blocking wait at DISPATCH_LEVEL traps immediately rather than deadlocking. */
+void irql_set_strict(int on);
+int  irql_strict_enabled(void);
 
 /* ---- IRQL query and transition API --------------------------------------- */
 

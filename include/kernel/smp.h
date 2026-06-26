@@ -297,6 +297,13 @@ struct per_cpu_data {
      * lock. Appended after transition_ring so no pinned KPTI offset shifts. */
     uint8_t           dpc_draining;     /* 1 while KeLowerIrql drains DPCs */
     uint8_t           _drain_pad[3];    /* alignment */
+
+    /* IRQL contract telemetry (per-CPU, owning-CPU writes, summed for health).
+     * irql_violations: IRQL_REQUIRE_AT_MOST/AT_LEAST + monotonic raise/lower
+     * contract failures. irql_forced_lowers: KeLowerIrqlForced calls (forced
+     * lower-to-known-level recovery, e.g. task_exit -- counted, not a bug). */
+    uint32_t          irql_violations;
+    uint32_t          irql_forced_lowers;
 };
 
 #define TRANSITION_RING_SIZE         64

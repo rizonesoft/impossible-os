@@ -97,8 +97,9 @@ static void task_wrapper(void)
     /* Same IRQL-cleanup as task_exit: see the long comment in task_exit
      * below. Forces PASSIVE so the next task scheduled on this CPU
      * starts at the right level even though we never return from this
-     * forever-yield (so the IDT's irql_restore block is bypassed). */
-    KeLowerIrql(PASSIVE_LEVEL);
+     * forever-yield (so the IDT's irql_restore block is bypassed).
+     * Forced (unbalanced) lower -- counted + classified, see task_exit. */
+    KeLowerIrqlForced(PASSIVE_LEVEL, "task_wrapper");
 
     /* Yield forever -- yield() via INT 0x81 always works,
      * whether preemptive scheduler is enabled or not. */
@@ -2106,8 +2107,12 @@ void task_exit(int32_t status)
      * spawned test_*.exe binary calling sys_exit triggered
      * `IRQL violation in mutex_lock: CPU 0 at IRQL 8, max=1`
      * immediately after Task N exit, blocking the launcher's
-     * subsequent klog calls and breaking the rest of boot. */
-    KeLowerIrql(PASSIVE_LEVEL);
+     * subsequent klog calls and breaking the rest of boot.
+     *
+     * Forced (unbalanced) lower: the IDT restore is bypassed, so use
+     * KeLowerIrqlForced to count + classify it as a forced lower rather
+     * than tripping the monotonic-lower telemetry. */
+    KeLowerIrqlForced(PASSIVE_LEVEL, "task_exit");
 
     /* Yield away forever */
     for (;;)

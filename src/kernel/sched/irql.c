@@ -21,6 +21,35 @@
 #include "kernel/sched/dpc.h"
 #include "kernel/sched/apc.h"
 #include "kernel/sched/task.h"
+#include "kernel/bugcheck.h"
+
+/* ---- IRQL contract enforcement mode -------------------------------------- *
+ *
+ * Default = telemetry: violations are logged + counted, and the (mis)behaving
+ * caller continues. Strict mode (NT "checked build" semantics) escalates every
+ * violation to KeBugCheckEx(IRQL_NOT_LESS_OR_EQUAL) -- an explicit fault path,
+ * so e.g. a blocking wait at DISPATCH_LEVEL traps immediately instead of
+ * proceeding into a deadlock. Set-once at config time; a plain int read on the
+ * violation path is race-safe. */
+static int s_irql_strict;
+
+void irql_set_strict(int on)        { s_irql_strict = on ? 1 : 0; }
+int  irql_strict_enabled(void)      { return s_irql_strict; }
+
+/* Record a violation: atomically bump the per-CPU counter, then -- in strict
+ * mode -- trap IMMEDIATELY via KeBugCheckEx, before the caller's klog or any
+ * other side effect runs (klog can do disk/VFS/PMM work in live-log mode, which
+ * must not execute on the fatal path). MUST be called by each violation site
+ * BEFORE its diagnostic klog. The atomic increment is reentry-safe vs a
+ * same-CPU ISR/NMI that also records a violation. cur/limit -> bugcheck p1/p2. */
+static void irql_record_violation(struct per_cpu_data *pcpu, uint64_t cur,
+                                  uint64_t limit)
+{
+    __atomic_fetch_add(&pcpu->irql_violations, 1u, __ATOMIC_RELAXED);
+    if (s_irql_strict)
+        KeBugCheckEx(BUGCHECK_IRQL_NOT_LESS_OR_EQUAL, cur, limit,
+                     (uint64_t)pcpu->cpu_id, 0);
+}
 
 /* ---- LAPIC TPR programming ----------------------------------------------- */
 
@@ -74,13 +103,13 @@ void KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql)
     struct per_cpu_data *pcpu = smp_this_cpu();
     KIRQL prev = pcpu->current_irql;
 
-    /* Debug: monotonic raise validation */
+    /* Monotonic raise validation: a "raise" that lowers is a contract violation
+     * -- count it (+ trap in strict mode), then clamp rather than corrupt state. */
     if (new_irql < prev) {
+        irql_record_violation(pcpu, (uint64_t)prev, (uint64_t)new_irql);
         klog(LOG_ERROR, "irql",
              "KeRaiseIrql violation: CPU %u attempted lower %u -> %u",
              (uint64_t)pcpu->cpu_id, (uint64_t)prev, (uint64_t)new_irql);
-        /* Continue with clamped value rather than crashing --
-         * the telemetry in section 8 will add hard traps */
         new_irql = prev;
     }
 
@@ -119,12 +148,14 @@ void KeLowerIrql(KIRQL old_irql)
     struct per_cpu_data *pcpu = smp_this_cpu();
     KIRQL cur = pcpu->current_irql;
 
-    /* Debug: symmetric lower validation */
+    /* Symmetric lower validation: a "lower" that raises is a contract violation
+     * (typically a bad saved-IRQL restore) -- count it (+ trap in strict mode),
+     * then clamp so we never accidentally raise. */
     if (old_irql > cur) {
+        irql_record_violation(pcpu, (uint64_t)cur, (uint64_t)old_irql);
         klog(LOG_ERROR, "irql",
              "KeLowerIrql violation: CPU %u attempted raise %u -> %u",
              (uint64_t)pcpu->cpu_id, (uint64_t)cur, (uint64_t)old_irql);
-        /* Clamp: don't accidentally raise */
         old_irql = cur;
     }
 
@@ -218,9 +249,70 @@ void _irql_check_max(KIRQL max_irql, const char *caller)
     KIRQL cur = pcpu->current_irql;
 
     if (cur > max_irql) {
+        irql_record_violation(pcpu, (uint64_t)cur, (uint64_t)max_irql);
         klog(LOG_ERROR, "irql",
              "IRQL violation in %s: CPU %u at IRQL %u, max allowed %u",
              caller ? caller : "?",
              (uint64_t)pcpu->cpu_id, (uint64_t)cur, (uint64_t)max_irql);
     }
+}
+
+void _irql_check_min(KIRQL min_irql, const char *caller)
+{
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    KIRQL cur = pcpu->current_irql;
+
+    if (cur < min_irql) {
+        irql_record_violation(pcpu, (uint64_t)cur, (uint64_t)min_irql);
+        klog(LOG_ERROR, "irql",
+             "IRQL violation in %s: CPU %u at IRQL %u, min required %u",
+             caller ? caller : "?",
+             (uint64_t)pcpu->cpu_id, (uint64_t)cur, (uint64_t)min_irql);
+    }
+}
+
+/* ---- Forced lower (unbalanced, no matching saved raise) ------------------- */
+
+void KeLowerIrqlForced(KIRQL level, const char *reason)
+{
+    struct per_cpu_data *pcpu = smp_this_cpu();
+    KIRQL cur = pcpu->current_irql;
+
+    /* A forced lower must actually lower. If `level` is ABOVE current it is a
+     * contract violation (a raise dressed as a forced lower) -- count it and do
+     * NOT perform it (KeLowerIrql would clamp + log a monotonic violation). */
+    if (level > cur) {
+        irql_record_violation(pcpu, (uint64_t)cur, (uint64_t)level);
+        klog(LOG_ERROR, "irql",
+             "KeLowerIrqlForced(%s): CPU %u target %u > current %u -- ignored",
+             reason ? reason : "?", (uint64_t)pcpu->cpu_id,
+             (uint64_t)level, (uint64_t)cur);
+        return;
+    }
+
+    __atomic_fetch_add(&pcpu->irql_forced_lowers, 1u, __ATOMIC_RELAXED);
+    if (cur != level)
+        klog(LOG_DEBUG, "irql", "forced lower CPU %u: %u -> %u (%s)",
+             (uint64_t)pcpu->cpu_id, (uint64_t)cur, (uint64_t)level,
+             reason ? reason : "?");
+    KeLowerIrql(level);
+}
+
+/* ---- Telemetry health dump ----------------------------------------------- */
+
+void irql_telemetry_dump(void)
+{
+    uint32_t i, ncpu = smp_cpu_count();
+    uint64_t total_viol = 0, total_forced = 0;
+
+    for (i = 0; i < ncpu && i < MAX_CPUS; i++) {
+        struct per_cpu_data *c = smp_get_cpu(i);
+        if (!c)
+            continue;
+        total_viol   += c->irql_violations;
+        total_forced += c->irql_forced_lowers;
+    }
+    klog(LOG_INFO, "irql",
+         "telemetry: %u IRQL contract violations, %u forced lowers across %u CPUs",
+         total_viol, total_forced, (uint64_t)ncpu);
 }
