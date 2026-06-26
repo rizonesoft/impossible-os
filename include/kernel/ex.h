@@ -506,6 +506,210 @@ bool ExCompareSwapFastReference(EX_FAST_REF *ref, void *new_object,
  * a lock pinning the object to use the result safely. */
 void *ExGetObjectFastReference(EX_FAST_REF *ref);
 
+/* ============================================================================
+ * S7 -- Generic Tables (AVL), Dynamic Hash Table, and Bitmaps (Rtl namespace)
+ *
+ * Three reusable container primitives that replace ad-hoc sorted arrays and
+ * hand-rolled bit vectors across kernel-core (atom tables, loaded-image
+ * registry, tunable registry, named notification states, handle/PFN bit
+ * vectors). All three follow the Windows Rtl semantics: they are CALLER-
+ * SERIALIZED (NOT internally locked -- the consumer owns synchronization, same
+ * as Windows RtlAvl / RtlBitMap) and they NEVER hide an allocation:
+ *   - RTL_BITMAP: the bit buffer is caller-owned; the struct stores a pointer
+ *     to it, never allocates.
+ *   - RTL_AVL_TABLE: per-element nodes come from a caller-provided allocate/free
+ *     callback pair (the table copies the element into the node).
+ *   - RTL_DYNAMIC_HASH_TABLE: entries are caller-owned (the caller embeds an
+ *     RTL_DYNAMIC_HASH_TABLE_ENTRY link in its own struct); the bucket directory
+ *     grows/shrinks via a MANDATORY caller-provided allocate/free pair (no
+ *     kmalloc fallback -- "no hidden allocation" is literal), resize is
+ *     PASSIVE_LEVEL only and fails closed (table unchanged, entries stable).
+ * ============================================================================ */
+
+/* --- RTL_BITMAP: general bit-vector over a caller-owned uint32_t buffer ----
+ * Bit i lives in Buffer[i / 32] bit (i % 32) (little-endian within the word).
+ * Bits at indices >= SizeOfBitMap are PADDING in the final word: every whole-
+ * word read masks them off, and every range/find op is bounded by SizeOfBitMap,
+ * so padding can never be counted, returned in a run, or mutated. Caller-
+ * serialized; not thread-safe (matches Windows RtlBitMap). */
+
+#define RTL_BITMAP_BITS_PER_WORD  32u
+#define RTL_BITMAP_NOT_FOUND      0xFFFFFFFFu   /* Find* "no run" sentinel */
+
+/* Words needed to hold `bits` bits (the caller sizes its Buffer to this).
+ * Overflow-free: the naive (bits + 31) / 32 wraps for bits > UINT32_MAX - 31. */
+#define RTL_BITMAP_WORDS(bits) \
+    (((bits) / RTL_BITMAP_BITS_PER_WORD) + \
+     (((bits) & (RTL_BITMAP_BITS_PER_WORD - 1u)) ? 1u : 0u))
+
+typedef struct _RTL_BITMAP {
+    uint32_t  SizeOfBitMap;   /* number of valid bits */
+    uint32_t *Buffer;         /* caller-owned, RTL_BITMAP_WORDS(SizeOfBitMap) words */
+} RTL_BITMAP;
+
+/* Bind the bitmap to a caller-owned buffer of RTL_BITMAP_WORDS(size_bits) words.
+ * Does NOT zero the buffer (matches Windows) -- call RtlClearAllBits to start
+ * empty. size_bits 0 is legal (an empty bitmap; all Find* return NOT_FOUND). */
+void RtlInitializeBitMap(RTL_BITMAP *bm, uint32_t *buffer, uint32_t size_bits);
+
+void RtlClearAllBits(RTL_BITMAP *bm);   /* all valid bits -> 0 (padding stays 0) */
+void RtlSetAllBits(RTL_BITMAP *bm);     /* all valid bits -> 1 (padding stays 0) */
+
+/* Single-bit ops. Out-of-range index is a no-op (set/clear) / false (test). */
+void RtlSetBit(RTL_BITMAP *bm, uint32_t bit);
+void RtlClearBit(RTL_BITMAP *bm, uint32_t bit);
+bool RtlTestBit(const RTL_BITMAP *bm, uint32_t bit);
+
+/* Range ops over [start, start+count). Out-of-range range is a no-op (set/clear)
+ * / false (AreBits*). count 0 is a no-op / true. */
+void RtlSetBits(RTL_BITMAP *bm, uint32_t start, uint32_t count);
+void RtlClearBits(RTL_BITMAP *bm, uint32_t start, uint32_t count);
+bool RtlAreBitsSet(const RTL_BITMAP *bm, uint32_t start, uint32_t count);
+bool RtlAreBitsClear(const RTL_BITMAP *bm, uint32_t start, uint32_t count);
+
+uint32_t RtlNumberOfSetBits(const RTL_BITMAP *bm);    /* popcount of valid bits */
+uint32_t RtlNumberOfClearBits(const RTL_BITMAP *bm);
+
+/* Find the first run of `count` contiguous clear/set bits at index >= the search
+ * order (starting at `hint`, then wrapping to 0). Returns the run's start index,
+ * or RTL_BITMAP_NOT_FOUND if no such run fits within [0, SizeOfBitMap). A run
+ * never includes a padding bit. count 0 returns min(hint, SizeOfBitMap). */
+uint32_t RtlFindClearBits(const RTL_BITMAP *bm, uint32_t count, uint32_t hint);
+uint32_t RtlFindSetBits(const RTL_BITMAP *bm, uint32_t count, uint32_t hint);
+
+/* find-a-clear-run-then-set-it (the index-allocator use); returns the start or
+ * NOT_FOUND (and sets nothing on NOT_FOUND). Symmetric find-set-then-clear too. */
+uint32_t RtlFindClearBitsAndSet(RTL_BITMAP *bm, uint32_t count, uint32_t hint);
+uint32_t RtlFindSetBitsAndClear(RTL_BITMAP *bm, uint32_t count, uint32_t hint);
+
+/* --- RTL_AVL_TABLE: balanced (AVL) generic ordered table ------------------
+ * Stores caller elements keyed by a caller compare routine, balanced so height
+ * stays <= 1.44*log2(n+2). Per-element nodes (RTL_BALANCED_LINKS header + a copy
+ * of the element) come from the caller's allocate/free pair. Caller-serialized. */
+
+typedef enum _RTL_GENERIC_COMPARE_RESULTS {
+    RtlGenericLessThan = 0,
+    RtlGenericGreaterThan = 1,
+    RtlGenericEqual = 2,
+} RTL_GENERIC_COMPARE_RESULTS;
+
+struct _RTL_AVL_TABLE;
+
+/* Compare two elements (`first`/`second` point at element bodies). */
+typedef RTL_GENERIC_COMPARE_RESULTS (*RTL_AVL_COMPARE_ROUTINE)(
+    struct _RTL_AVL_TABLE *table, void *first, void *second);
+/* Allocate a node of `size` bytes (= header + element); return NULL on failure. */
+typedef void *(*RTL_AVL_ALLOCATE_ROUTINE)(struct _RTL_AVL_TABLE *table, uint32_t size);
+/* Free a node previously returned by the allocate routine. */
+typedef void (*RTL_AVL_FREE_ROUTINE)(struct _RTL_AVL_TABLE *table, void *buffer);
+
+/* AVL node header; the element body immediately follows (8-byte aligned). The
+ * subtree Height is cached so rotations recompute balance from children in O(1)
+ * without the error-prone running balance-factor arithmetic (leaf Height = 1,
+ * empty subtree = 0; balance = Height(right) - Height(left), kept in [-1,+1]). */
+typedef struct _RTL_BALANCED_LINKS {
+    struct _RTL_BALANCED_LINKS *Parent;
+    struct _RTL_BALANCED_LINKS *LeftChild;
+    struct _RTL_BALANCED_LINKS *RightChild;
+    int32_t  Height;         /* cached subtree height */
+    int32_t  _pad;           /* pad so the element body is 8-byte aligned */
+} RTL_BALANCED_LINKS;
+
+typedef struct _RTL_AVL_TABLE {
+    RTL_BALANCED_LINKS      *Root;        /* NULL when empty */
+    uint32_t                 NumberOfElements;
+    uint32_t                 _pad;
+    RTL_AVL_COMPARE_ROUTINE  CompareRoutine;
+    RTL_AVL_ALLOCATE_ROUTINE AllocateRoutine;
+    RTL_AVL_FREE_ROUTINE     FreeRoutine;
+    void                    *TableContext; /* opaque caller cookie */
+    /* In-order enumeration cursor (RtlEnumerateGenericTableAvl). */
+    RTL_BALANCED_LINKS      *EnumNext;
+} RTL_AVL_TABLE;
+
+void RtlInitializeGenericTableAvl(RTL_AVL_TABLE *table,
+                                  RTL_AVL_COMPARE_ROUTINE compare,
+                                  RTL_AVL_ALLOCATE_ROUTINE allocate,
+                                  RTL_AVL_FREE_ROUTINE free, void *context);
+
+/* Insert a COPY of `buffer` (size bytes). Returns a pointer to the stored
+ * element body (caller may mutate non-key fields in place). If an equal element
+ * exists, returns the existing body and does NOT insert. *new_element (if non-
+ * NULL) reports whether a new node was created. Returns NULL only on allocate
+ * failure. */
+void *RtlInsertElementGenericTableAvl(RTL_AVL_TABLE *table, void *buffer,
+                                      uint32_t size, bool *new_element);
+/* Remove the element equal to `buffer`. Returns true if found+removed. */
+bool RtlDeleteElementGenericTableAvl(RTL_AVL_TABLE *table, void *buffer);
+/* Return the stored element body equal to `buffer`, or NULL. */
+void *RtlLookupElementGenericTableAvl(RTL_AVL_TABLE *table, void *buffer);
+/* In-order enumeration: restart=true starts at the smallest element; each call
+ * returns the next element body, NULL at the end. The table must not be mutated
+ * mid-enumeration. */
+void *RtlEnumerateGenericTableAvl(RTL_AVL_TABLE *table, bool restart);
+uint32_t RtlNumberGenericTableElementsAvl(const RTL_AVL_TABLE *table);
+bool RtlIsGenericTableEmptyAvl(const RTL_AVL_TABLE *table);
+
+/* --- RTL_DYNAMIC_HASH_TABLE: caller-owned chained entries, resizable -------
+ * The caller embeds an RTL_DYNAMIC_HASH_TABLE_ENTRY in its own struct and owns
+ * the entry storage; the table owns only the bucket directory, grown/shrunk via
+ * a MANDATORY caller allocate/free pair at PASSIVE_LEVEL. Caller-serialized. */
+
+typedef struct _RTL_DYNAMIC_HASH_TABLE_ENTRY {
+    struct _RTL_DYNAMIC_HASH_TABLE_ENTRY *Next;   /* bucket chain link */
+    uint64_t Signature;                            /* caller's hash key */
+} RTL_DYNAMIC_HASH_TABLE_ENTRY;
+
+struct _RTL_DYNAMIC_HASH_TABLE;
+/* Allocate `size` bytes for the bucket directory; NULL on failure. */
+typedef void *(*RTL_HASH_ALLOCATE_ROUTINE)(struct _RTL_DYNAMIC_HASH_TABLE *t, uint32_t size);
+typedef void  (*RTL_HASH_FREE_ROUTINE)(struct _RTL_DYNAMIC_HASH_TABLE *t, void *buffer);
+
+/* Walk cursor for RtlLookupEntryHashTable / RtlGetNextEntryHashTable: holds the
+ * bucket being walked so a signature-collision chain can be iterated. */
+typedef struct _RTL_HASH_TABLE_CONTEXT {
+    RTL_DYNAMIC_HASH_TABLE_ENTRY *ChainHead;  /* head of the matched bucket */
+    RTL_DYNAMIC_HASH_TABLE_ENTRY *Prev;       /* entry before the last returned */
+    uint64_t                      Signature;  /* signature being matched */
+} RTL_HASH_TABLE_CONTEXT;
+
+typedef struct _RTL_DYNAMIC_HASH_TABLE {
+    RTL_DYNAMIC_HASH_TABLE_ENTRY **Directory; /* bucket array, BucketCount slots */
+    uint32_t                       BucketCount;   /* power of two */
+    uint32_t                       NumEntries;
+    RTL_HASH_ALLOCATE_ROUTINE      Allocate;
+    RTL_HASH_FREE_ROUTINE          Free;
+    void                          *Context;
+} RTL_DYNAMIC_HASH_TABLE;
+
+/* Initialize with a MANDATORY allocate/free pair and an initial bucket count
+ * (rounded up to a power of two, min 1). Allocates the initial directory via
+ * `allocate`. Returns 0 on success, non-zero on bad args / allocate failure. */
+int RtlInitializeDynamicHashTable(RTL_DYNAMIC_HASH_TABLE *t,
+                                  RTL_HASH_ALLOCATE_ROUTINE allocate,
+                                  RTL_HASH_FREE_ROUTINE free, void *context,
+                                  uint32_t initial_buckets);
+/* Insert a caller-owned entry under `signature`. Returns 0 on success. May grow
+ * the directory (PASSIVE); a grow-allocate failure still inserts (table stays at
+ * the old size, just denser) so insert never fails for a valid entry. */
+int RtlInsertEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
+                            RTL_DYNAMIC_HASH_TABLE_ENTRY *entry, uint64_t signature);
+/* Remove a previously-inserted entry. Returns true if found+removed. May shrink. */
+bool RtlRemoveEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
+                             RTL_DYNAMIC_HASH_TABLE_ENTRY *entry);
+/* First entry whose Signature == signature; NULL if none. `ctx` (non-NULL) is
+ * seeded for RtlGetNextEntryHashTable to walk the rest of the collision chain. */
+RTL_DYNAMIC_HASH_TABLE_ENTRY *RtlLookupEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
+                                                      uint64_t signature,
+                                                      RTL_HASH_TABLE_CONTEXT *ctx);
+/* Next entry in the same-signature chain seeded by RtlLookupEntryHashTable. */
+RTL_DYNAMIC_HASH_TABLE_ENTRY *RtlGetNextEntryHashTable(RTL_DYNAMIC_HASH_TABLE *t,
+                                                       RTL_HASH_TABLE_CONTEXT *ctx);
+uint32_t RtlNumberOfEntriesHashTable(const RTL_DYNAMIC_HASH_TABLE *t);
+/* Release the bucket directory via the free routine (entries are caller-owned
+ * and untouched). The table is empty/unusable afterward. */
+void RtlDeleteDynamicHashTable(RTL_DYNAMIC_HASH_TABLE *t);
+
 /* ex_ready -- true once the Executive support runtime is marked ready.
  *
  * Delegates to the subsystem readiness oracle (kernel_subsystem_ready(

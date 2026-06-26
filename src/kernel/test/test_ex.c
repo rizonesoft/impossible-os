@@ -927,6 +927,298 @@ static void test_ex_fastref_smp_stress(void)
                    "cache restored to exactly MAX (no leaked/duplicated refs)");
 }
 
+/* ---- S7: RTL_BITMAP ----------------------------------------------------- */
+
+static void test_ex_bitmap_basic_and_padding(void)
+{
+    /* Sizes spanning word boundaries + the padding edge (design-review axis). */
+    static const uint32_t sizes[] = { 0u, 1u, 31u, 32u, 33u, 1000u };
+    uint32_t buf[RTL_BITMAP_WORDS(1000)];
+    RTL_BITMAP bm;
+    uint32_t si;
+
+    for (si = 0; si < sizeof(sizes) / sizeof(sizes[0]); si++) {
+        uint32_t size = sizes[si];
+        RtlInitializeBitMap(&bm, buf, size);
+        RtlClearAllBits(&bm);
+        TEST_ASSERT_EQ(RtlNumberOfSetBits(&bm), 0u, "cleared bitmap has 0 set bits");
+        TEST_ASSERT_EQ(RtlNumberOfClearBits(&bm), size, "all bits clear == size");
+
+        RtlSetAllBits(&bm);
+        /* Padding must NOT be counted: NumberOfSetBits == size exactly. */
+        TEST_ASSERT_EQ(RtlNumberOfSetBits(&bm), size,
+                       "set-all counts exactly SizeOfBitMap (no padding)");
+        if (size > 0)
+            TEST_ASSERT(RtlAreBitsSet(&bm, 0, size), "all valid bits read set");
+        /* A bit at the padding index is out of range -> reads false, never set. */
+        TEST_ASSERT(!RtlTestBit(&bm, size), "out-of-range bit reads false");
+        TEST_ASSERT(!RtlAreBitsSet(&bm, size, 1), "out-of-range AreBitsSet false");
+        TEST_ASSERT_EQ(RtlFindClearBits(&bm, 1, 0), RTL_BITMAP_NOT_FOUND,
+                       "no clear bit in a fully-set bitmap");
+    }
+}
+
+static void test_ex_bitmap_runs(void)
+{
+    uint32_t buf[RTL_BITMAP_WORDS(1000)];
+    RTL_BITMAP bm;
+    uint32_t r;
+
+    RtlInitializeBitMap(&bm, buf, 1000);
+    RtlClearAllBits(&bm);
+
+    /* First run of 10 clear bits is at index 0. */
+    TEST_ASSERT_EQ(RtlFindClearBits(&bm, 10, 0), 0u, "first clear run at 0");
+
+    /* Carve out [0,40) set, [40,45) set, leave a clear gap, force the finder to
+     * return a run that crosses the 32-bit word boundary. */
+    RtlSetBits(&bm, 0, 40);
+    TEST_ASSERT(RtlAreBitsSet(&bm, 0, 40), "set range [0,40) all set");
+    TEST_ASSERT(RtlAreBitsClear(&bm, 40, 960), "rest still clear");
+    /* The first 20-bit clear run now starts at 40 (spans words 1->2). */
+    r = RtlFindClearBits(&bm, 20, 0);
+    TEST_ASSERT_EQ(r, 40u, "clear run after the set prefix starts at 40");
+
+    /* Find-and-set allocates the run and advances the next allocation. */
+    r = RtlFindClearBitsAndSet(&bm, 8, 0);
+    TEST_ASSERT_EQ(r, 40u, "find-and-set returns 40");
+    TEST_ASSERT(RtlAreBitsSet(&bm, 40, 8), "the found run is now set");
+    r = RtlFindClearBitsAndSet(&bm, 8, 0);
+    TEST_ASSERT_EQ(r, 48u, "next find-and-set returns 48 (after the allocated run)");
+
+    /* A run larger than the whole bitmap can never be found. */
+    TEST_ASSERT_EQ(RtlFindClearBits(&bm, 2000, 0), RTL_BITMAP_NOT_FOUND,
+                   "run larger than the bitmap is NOT_FOUND");
+
+    /* RtlClearBits round-trips with RtlSetBits. */
+    RtlClearBits(&bm, 40, 16);
+    TEST_ASSERT(RtlAreBitsClear(&bm, 40, 16), "cleared range reads clear");
+}
+
+/* ---- S7: RTL_AVL_TABLE --------------------------------------------------- */
+
+typedef struct { uint64_t key; uint64_t payload; } avl_elem_t;
+
+static RTL_GENERIC_COMPARE_RESULTS avl_cmp(RTL_AVL_TABLE *t, void *a, void *b)
+{
+    uint64_t ka = ((avl_elem_t *)a)->key, kb = ((avl_elem_t *)b)->key;
+    (void)t;
+    if (ka < kb) return RtlGenericLessThan;
+    if (ka > kb) return RtlGenericGreaterThan;
+    return RtlGenericEqual;
+}
+static void *avl_alloc(RTL_AVL_TABLE *t, uint32_t size) { (void)t; return kmalloc(size); }
+static void  avl_free(RTL_AVL_TABLE *t, void *b) { (void)t; kfree(b); }
+
+#define AVL_N 1000u
+
+static void test_ex_avl_thousand_keys(void)
+{
+    RTL_AVL_TABLE tbl;
+    uint32_t i, count;
+    uint64_t prev;
+    void *body;
+    bool isnew;
+
+    RtlInitializeGenericTableAvl(&tbl, avl_cmp, avl_alloc, avl_free, (void *)0);
+    TEST_ASSERT(RtlIsGenericTableEmptyAvl(&tbl), "fresh table is empty");
+
+    /* Insert 0..N-1 in ASCENDING order -- the worst case for an unbalanced BST,
+     * so it directly proves the AVL rebalancing keeps the height logarithmic. */
+    for (i = 0; i < AVL_N; i++) {
+        avl_elem_t e; e.key = i; e.payload = i * 7u + 1u;
+        body = RtlInsertElementGenericTableAvl(&tbl, &e, (uint32_t)sizeof(e), &isnew);
+        TEST_ASSERT(body != (void *)0 && isnew, "insert returns a new element body");
+    }
+    TEST_ASSERT_EQ(RtlNumberGenericTableElementsAvl(&tbl), AVL_N, "1000 elements present");
+
+    /* Height bound: AVL guarantees height <= ~1.44*log2(n+2) ~= 15 nodes for
+     * n=1000; a degenerate (unbalanced) tree would be height 1000. */
+    TEST_ASSERT(tbl.Root->Height <= 15,
+                "AVL height stays logarithmic (<= 15 for 1000 keys)");
+
+    /* Duplicate insert returns the existing element, does not grow the table. */
+    {
+        avl_elem_t dup; dup.key = 500; dup.payload = 0;
+        body = RtlInsertElementGenericTableAvl(&tbl, &dup, (uint32_t)sizeof(dup), &isnew);
+        TEST_ASSERT(body != (void *)0 && !isnew, "duplicate insert is not new");
+        TEST_ASSERT_EQ(((avl_elem_t *)body)->payload, 500u * 7u + 1u,
+                       "duplicate returns the ORIGINAL element (payload intact)");
+        TEST_ASSERT_EQ(RtlNumberGenericTableElementsAvl(&tbl), AVL_N,
+                       "duplicate insert did not grow the table");
+    }
+
+    /* Lookup every key. */
+    for (i = 0; i < AVL_N; i++) {
+        avl_elem_t k; k.key = i; k.payload = 0;
+        body = RtlLookupElementGenericTableAvl(&tbl, &k);
+        TEST_ASSERT(body != (void *)0 && ((avl_elem_t *)body)->key == i,
+                    "lookup finds each inserted key");
+    }
+
+    /* Enumerate yields strictly ascending order. */
+    count = 0; prev = 0;
+    body = RtlEnumerateGenericTableAvl(&tbl, true);
+    while (body) {
+        uint64_t k = ((avl_elem_t *)body)->key;
+        if (count > 0)
+            TEST_ASSERT(k > prev, "enumerate is strictly ascending (sorted)");
+        prev = k; count++;
+        body = RtlEnumerateGenericTableAvl(&tbl, false);
+    }
+    TEST_ASSERT_EQ(count, AVL_N, "enumerate visited every element once");
+
+    /* Delete the even keys; the odds must remain and stay balanced. */
+    for (i = 0; i < AVL_N; i += 2) {
+        avl_elem_t k; k.key = i; k.payload = 0;
+        TEST_ASSERT(RtlDeleteElementGenericTableAvl(&tbl, &k), "delete even key");
+    }
+    TEST_ASSERT_EQ(RtlNumberGenericTableElementsAvl(&tbl), AVL_N / 2,
+                   "half the elements remain after deleting evens");
+    TEST_ASSERT(tbl.Root->Height <= 14, "height still logarithmic after deletes");
+    for (i = 1; i < AVL_N; i += 2) {
+        avl_elem_t k; k.key = i; k.payload = 0;
+        body = RtlLookupElementGenericTableAvl(&tbl, &k);
+        TEST_ASSERT(body != (void *)0, "odd keys survive the even deletions");
+    }
+    {
+        avl_elem_t k; k.key = 4; k.payload = 0;
+        TEST_ASSERT(RtlLookupElementGenericTableAvl(&tbl, &k) == (void *)0,
+                    "a deleted key is gone");
+        TEST_ASSERT(!RtlDeleteElementGenericTableAvl(&tbl, &k),
+                    "deleting an absent key returns false");
+    }
+
+    /* Delete the rest; table empties cleanly (frees every node). */
+    for (i = 1; i < AVL_N; i += 2) {
+        avl_elem_t k; k.key = i; k.payload = 0;
+        TEST_ASSERT(RtlDeleteElementGenericTableAvl(&tbl, &k), "delete remaining odd key");
+    }
+    TEST_ASSERT(RtlIsGenericTableEmptyAvl(&tbl), "table empty after deleting all");
+    TEST_ASSERT(tbl.Root == (RTL_BALANCED_LINKS *)0, "root NULL when empty");
+}
+
+/* ---- S7: RTL_DYNAMIC_HASH_TABLE ----------------------------------------- */
+
+typedef struct { RTL_DYNAMIC_HASH_TABLE_ENTRY link; uint64_t val; } htest_entry_t;
+
+static void *h_alloc(RTL_DYNAMIC_HASH_TABLE *t, uint32_t size) { (void)t; return kmalloc(size); }
+static void  h_free(RTL_DYNAMIC_HASH_TABLE *t, void *b) { (void)t; kfree(b); }
+
+#define HASH_N 200u
+
+static htest_entry_t g_h_entries[HASH_N];
+
+static void test_ex_hashtable_resize_and_lookup(void)
+{
+    RTL_DYNAMIC_HASH_TABLE tbl;
+    RTL_HASH_TABLE_CONTEXT ctx;
+    uint32_t i, grown_buckets;
+    RTL_DYNAMIC_HASH_TABLE_ENTRY *e;
+
+    TEST_ASSERT_EQ(RtlInitializeDynamicHashTable(&tbl, h_alloc, h_free, (void *)0, 8), 0,
+                   "hash table init succeeds");
+    /* Mandatory allocator: NULL allocate/free must be rejected. */
+    {
+        RTL_DYNAMIC_HASH_TABLE bad;
+        TEST_ASSERT(RtlInitializeDynamicHashTable(&bad, (RTL_HASH_ALLOCATE_ROUTINE)0,
+                                                  h_free, (void *)0, 8) != 0,
+                    "NULL allocate is rejected (no hidden allocation)");
+    }
+
+    /* Insert N entries under distinct signatures; the directory must grow. */
+    for (i = 0; i < HASH_N; i++) {
+        g_h_entries[i].val = i;
+        TEST_ASSERT_EQ(RtlInsertEntryHashTable(&tbl, &g_h_entries[i].link, 1000u + i), 0,
+                       "insert entry");
+    }
+    TEST_ASSERT_EQ(RtlNumberOfEntriesHashTable(&tbl), HASH_N, "all entries counted");
+    TEST_ASSERT(tbl.BucketCount >= HASH_N,
+                "directory grew at least to the entry count (resize works)");
+    grown_buckets = tbl.BucketCount;
+
+    /* Every signature is found and resolves to the right embedded entry. */
+    for (i = 0; i < HASH_N; i++) {
+        e = RtlLookupEntryHashTable(&tbl, 1000u + i, &ctx);
+        TEST_ASSERT(e != (RTL_DYNAMIC_HASH_TABLE_ENTRY *)0, "lookup finds the signature");
+        TEST_ASSERT_EQ(((htest_entry_t *)e)->val, i, "lookup returns the right entry");
+    }
+    /* A missing signature is not found. */
+    TEST_ASSERT(RtlLookupEntryHashTable(&tbl, 999999u, &ctx) == (RTL_DYNAMIC_HASH_TABLE_ENTRY *)0,
+                "absent signature is NULL");
+
+    /* Collision chain: three entries share one signature -> Lookup + GetNext walk all. */
+    {
+        static htest_entry_t coll[3];
+        uint32_t seen = 0;
+        for (i = 0; i < 3; i++) { coll[i].val = 7000u + i;
+            RtlInsertEntryHashTable(&tbl, &coll[i].link, 0xC0FFEEu); }
+        e = RtlLookupEntryHashTable(&tbl, 0xC0FFEEu, &ctx);
+        while (e) { seen++; e = RtlGetNextEntryHashTable(&tbl, &ctx); }
+        TEST_ASSERT_EQ(seen, 3u, "Lookup+GetNext walk the full collision chain");
+        for (i = 0; i < 3; i++)
+            RtlRemoveEntryHashTable(&tbl, &coll[i].link);
+    }
+
+    /* Remove every entry; directory must shrink back toward the floor. */
+    for (i = 0; i < HASH_N; i++)
+        TEST_ASSERT(RtlRemoveEntryHashTable(&tbl, &g_h_entries[i].link), "remove entry");
+    TEST_ASSERT_EQ(RtlNumberOfEntriesHashTable(&tbl), 0u, "table empty after removes");
+    TEST_ASSERT(tbl.BucketCount < grown_buckets, "directory shrank after emptying");
+    /* Lookups after removal miss. */
+    TEST_ASSERT(RtlLookupEntryHashTable(&tbl, 1000u, &ctx) == (RTL_DYNAMIC_HASH_TABLE_ENTRY *)0,
+                "removed signature no longer found");
+    /* Removing an absent entry is false. */
+    TEST_ASSERT(!RtlRemoveEntryHashTable(&tbl, &g_h_entries[0].link),
+                "removing an already-removed entry returns false");
+
+    RtlDeleteDynamicHashTable(&tbl);
+    TEST_ASSERT(tbl.Directory == (RTL_DYNAMIC_HASH_TABLE_ENTRY **)0,
+                "delete releases the directory");
+}
+
+/* Overflow-boundary guards -- exercised WITHOUT huge allocations: the guards
+ * reject before any allocate/memcpy, so these never touch real memory. */
+static void test_ex_s7_overflow_guards(void)
+{
+    /* RTL_BITMAP_WORDS is overflow-free near UINT32_MAX (naive (bits+31)/32
+     * would wrap to 0 at UINT32_MAX). */
+    TEST_ASSERT_EQ(RTL_BITMAP_WORDS(0xFFFFFFFFu), 0x8000000u,
+                   "word count for UINT32_MAX bits does not wrap");
+    TEST_ASSERT_EQ(RTL_BITMAP_WORDS(0xFFFFFFE0u), 0x7FFFFFFu,
+                   "word count for UINT32_MAX-31 bits is exact");
+    TEST_ASSERT_EQ(RTL_BITMAP_WORDS(0u), 0u, "word count for 0 bits is 0");
+    TEST_ASSERT_EQ(RTL_BITMAP_WORDS(32u), 1u, "word count for 32 bits is 1");
+    TEST_ASSERT_EQ(RTL_BITMAP_WORDS(33u), 2u, "word count for 33 bits is 2");
+
+    /* AVL insert rejects a size that would wrap header + size, BEFORE allocating
+     * (the allocate routine is never reached, so no heap overflow). */
+    {
+        RTL_AVL_TABLE tbl;
+        bool isnew = true;
+        void *body;
+        avl_elem_t e; e.key = 1; e.payload = 1;
+        RtlInitializeGenericTableAvl(&tbl, avl_cmp, avl_alloc, avl_free, (void *)0);
+        body = RtlInsertElementGenericTableAvl(&tbl, &e, 0xFFFFFFFFu, &isnew);
+        TEST_ASSERT(body == (void *)0 && !isnew,
+                    "AVL insert rejects a size that would wrap the alloc arg");
+        TEST_ASSERT(RtlIsGenericTableEmptyAvl(&tbl), "table untouched after rejected insert");
+    }
+
+    /* Hash init clamps an absurd bucket request to the cap (no 4 GiB memset). */
+    {
+        RTL_DYNAMIC_HASH_TABLE big;
+        /* DEFAULT-sized request still succeeds; the cap only bounds the byte
+         * size, it does not reject a normal init. */
+        TEST_ASSERT_EQ(RtlInitializeDynamicHashTable(&big, h_alloc, h_free, (void *)0,
+                                                     0u), 0,
+                       "hash init with 0 initial buckets uses the default");
+        TEST_ASSERT(big.BucketCount >= 8u && big.BucketCount <= (1u << 28),
+                    "bucket count within [min, cap]");
+        RtlDeleteDynamicHashTable(&big);
+    }
+}
+
 void test_register_ex(void)
 {
     test_suite_register_cat("ex: SLIST init/empty edges",
@@ -995,6 +1287,16 @@ void test_register_ex(void)
                             test_ex_fastref_compare_swap, TEST_CAT_EX);
     test_suite_register_cat("ex: fastref concurrent acquire/release (conservation)",
                             test_ex_fastref_smp_stress, TEST_CAT_EX);
+    test_suite_register_cat("ex: bitmap basic ops + padding safety",
+                            test_ex_bitmap_basic_and_padding, TEST_CAT_EX);
+    test_suite_register_cat("ex: bitmap run finding + find-and-set",
+                            test_ex_bitmap_runs, TEST_CAT_EX);
+    test_suite_register_cat("ex: AVL 1000-key insert/lookup/delete/enumerate",
+                            test_ex_avl_thousand_keys, TEST_CAT_EX);
+    test_suite_register_cat("ex: dynamic hash resize + lookup + chains",
+                            test_ex_hashtable_resize_and_lookup, TEST_CAT_EX);
+    test_suite_register_cat("ex: S7 overflow-boundary guards",
+                            test_ex_s7_overflow_guards, TEST_CAT_EX);
 }
 
 #endif /* KERNEL_TESTS */
