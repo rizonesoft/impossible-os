@@ -55,7 +55,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 10 | Executive resource wrapper | §1, T07, D03 T08 | [/] |
 | 💎 | 11 | Run-once initialization | §1 | [/] |
 | ⭐ | 12 | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue | [/] |
-| 💎 | 13 | Bugcheck reason callbacks | §3, T27 | [ ] |
+| 💎 | 13 | Bugcheck reason callbacks | §3, T27 | [/] |
 | ⭐ | 14 | Executive verifier hooks | §2..§13 | [ ] |
 
 ## 1. Executive Headers and Namespace
@@ -353,13 +353,20 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 
 ## 13. Bugcheck Reason Callbacks
 
-- [ ] Add `KeRegisterBugCheckReasonCallback` and `KeDeregisterBugCheckReasonCallback` (deregister on driver unload -- omitting it leaves a nonpaged record pointing at unloaded code).
-- [ ] Callback classes: add-pages, secondary dump data, log snapshot, blackbox data.
-- [ ] Integrate with TODO-27 dump writer and TODO-28 panic UI.
-- [ ] Ensure callbacks cannot allocate or take locks in the panic path unless marked panic-safe (-> XREF T07 for IRQL/panic context).
+- [/] Add `KeRegisterBugCheckReasonCallback`/`KeDeregisterBugCheckReasonCallback`. BLOCKED: the panic-time callback walk needs a global CPU-freeze (panic only disables LOCAL interrupts); see Deferred stamp.
+- [/] Callback classes: add-pages, secondary dump data, log snapshot, blackbox data.
+- [/] Integrate with TODO-27 dump writer and TODO-28 panic UI. BLOCKED: T27 §5 / T28 §13 are the consumers; without them the dump-data contract cannot be validated.
+- [/] Ensure callbacks cannot allocate or take locks in the panic path unless marked panic-safe. BLOCKED: a registration flag is not enforcement; needs panic-context instrumentation.
 - [ ] Commit: `"kernel: ex -- bugcheck reason callbacks"`
 
 **Test checkpoint:** A registered reason callback is invoked during panic with the correct class; the panic-safe gate rejects a callback that attempts allocation or a non-panic-safe lock; `KeDeregisterBugCheckReasonCallback` removes the record so an unloaded-driver callback is never invoked; the dump writer receives secondary data. Verify on bare metal -- panic path differs from VMs.
+
+> **Notes:**
+> - **Why deferred** -- the panic-path callback walk needs a global CPU-freeze/ack (panic only disables local interrupts), the panic-safe flag is documentation not enforcement, and there is no real dump/UI consumer to validate the data contract.
+> - **Blocked on** -- `02-kernel-core/TODO-27 §1` (KeBugCheckEx + panic global CPU-freeze) + `02-kernel-core/TODO-27 §5` (minidump writer -- the secondary-dump-data consumer) + `02-kernel-core/TODO-28 §13` (panic UI).
+> - **Scope boundary** -- §13 owns the bugcheck-reason-callback Ex-API + panic-safe registration; the panic CPU-freeze + dump-data consumers are owned by the crash-dump/BSOD TODOs.
+
+> **Deferred:** [H] panic-time callback walk needs a global CPU-freeze + a real dump consumer -> XREF: 02-kernel-core/TODO-27 §5 (item: "Commit: minidump writer, stream serialisation, CRC32C, memory page selection" at line 190)
 
 ---
 
@@ -393,7 +400,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Shared/exclusive resource  | ✅ ERESOURCE                        | ✅ rw_semaphore        | ⬜ §10 deferred (SMP rwlock) |
 | 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ §11 deferred (keyed events) |
 | 💎 | Worker items + Ex timers   | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer   | ✅ §12 work items (timers deferred) |
-| 💎 | Bugcheck reason callbacks  | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers     | ⬜ Planned -- §13         |
+| 💎 | Bugcheck reason callbacks  | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers     | ⬜ §13 deferred (panic freeze) |
 | ⭐ | Scoped executive verifier  | ⚠️ Driver Verifier (heavy)         | ⚠️ KASAN/lockdep       | ⬜ Planned -- §14 scoped  |
 
 > **After §1-§13:** Impossible OS matches Windows 11 and Linux on Executive support primitives.
