@@ -77,6 +77,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [ ]   |
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [ ]   |
 | ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [ ]   |
+| 💎  |  18   | Clocksource quality watchdog (drift demotion)                          | §2, §4              |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both provide these capabilities.
 > ⭐ = exclusive -- coarse time gives O(1) cached reads for hot-path callers without reading hardware; NTP hook API is a first-class kernel-level adjustment interface, not a userspace-only workaround.
@@ -106,8 +107,9 @@ Select the highest-resolution monotonic source available: invariant TSC → HPET
 - [x] Scale factor: num/den pair for integer multiply without hot-path division; overflow-safe split for TSC
 - [x] Logs selected source: `"Monotonic clock: TSC (N MHz, invariant)"` or `"LAPIC (N ticks/ms)"`
 - [x] Commit: `"kernel: time -- monotonic nanosecond clock source selection"`
-- [ ] Clocksource quality watchdog (Linux parity): cross-check active source vs PIT/HPET/PM and demote on drift, replacing the `platform_is_tcg()` gate in `timer_hal_init()` (from `01-boot-platform/TODO-11` §10)
-- [ ] ACPI PM timer (PMTMR) clocksource fallback before LAPIC (gap-audit): LAPIC is per-CPU, not a standalone counter; add `acpi_pm_read()` (3.58 MHz, multi-read glitch fix) as priority-3 in `mono_clock_init()`.
+- [ ] ACPI PM timer (PMTMR) clocksource before LAPIC (gap-audit): add `MONO_SRC_PMTMR` priority-3 (3.579545 MHz) since LAPIC is a per-CPU interrupt counter, not a standalone platform counter (clocksource watchdog split to §18).
+- [ ] Wrap-safe 64-bit PMTMR epoch (design review [H]): the 24-bit PMTMR wraps ~every 4.7 s; keep a seqlock-protected epoch (mirror the LAPIC tick-epoch in `mono_clock.c`) refreshed faster than half the wrap; `mono_ns()` stays a lock-free reader.
+- [ ] Centralize the triple-read glitch workaround (design review [M]): move the 3-read/2-agree ACPI PM quirk into `acpi_pmtimer_read_value()` and refactor the `lapic.c` local PMTMR read loop to use it.
 
 ---
 
@@ -310,6 +312,20 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 
 ---
 
+## 18. Clocksource Quality Watchdog
+Continuously cross-check the active monotonic clock source against a reference and demote a drifting source (an unstable TSC) to HPET/PMTMR, matching Linux `clocksource.c` (watchdog ~every 0.5 s, "Marking TSC unstable") and the Win11 HAL silent demotion. Replaces the boot-time `platform_is_tcg()` gate in `timer_hal_init()`. Split out of §2 by the gap-audit + design review.
+
+- [ ] Boot-time source qualification (design review [H]): a conservative qualify-or-reject step in `timer_hal_init()` (Phase 1) replacing `platform_is_tcg()`; the ISR may sample only -- no drift compare/demotion/klog in interrupt context.
+- [ ] Ongoing watchdog on the kworker pool (design review [H]): a Phase-3 PASSIVE periodic job reads the active source + a reference (HPET/PMTMR), computes drift over a window, and demotes past a threshold at thread context.
+- [ ] Atomic coherent demotion (design review [H]): publish the active clocksource as ONE snapshot (seqlock or atomic descriptor swap covering source + num/den + mask + read-fn + epoch) so lock-free `mono_ns()` never sees a mixed source/scale.
+- [ ] Anchor the new source to the old `mono_ns()` value on switch so monotonic time never jumps backward across a demotion.
+- [ ] Log the demotion with old/new source + measured drift in ppm.
+- [ ] Commit: `"kernel: time -- clocksource quality watchdog with drift demotion"`
+
+**Test checkpoint:** Unit (`TEST_CAT_SCHED`): the demotion snapshot swap is monotonic (a reader sampling across a simulated swap never sees time decrease); the drift compare classifies an injected > N ppm skew as unstable. Runtime (WHPX / bare metal serial, not unit-testable without live drift): boot logs the qualified source; an unstable TSC logs `"clocksource: demoting TSC -> HPET (N ppm)"`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+---
+
 ## OS Comparison
 
 | ⭐ | Feature                  | 🪟 Win11                 | 🐧 Linux                  | 🚀 Impossible OS          |
@@ -318,7 +334,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 | 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⚠️ §2 done, §3-§4 pending |
 | 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
-| 💎 | Clocksource watchdog     | ✅ HAL silent demote     | ✅ clocksource.c watchdog | ⬜ §2 -- watchdog + PMTMR |
+| 💎 | Clocksource watchdog     | ✅ HAL silent demote     | ✅ clocksource.c watchdog | ⬜ §18 -- drift demotion  |
 | 💎 | Ordered TSC read         | ✅ QPC abstracts rdtscp  | ✅ rdtsc_ordered LFENCE   | ⬜ §3 -- bare rdtsc now   |
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
