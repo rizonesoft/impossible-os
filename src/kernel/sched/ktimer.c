@@ -134,20 +134,22 @@ void KeSetTimerEx(kernel_timer_t *timer, uint64_t due_time_ticks,
     if (!timer)
         return;
 
-    /* Re-arming an active timer: cancel first (cross-CPU safe), then insert on
-     * the service CPU. Never holds two ktimer locks -- KeCancelTimer fully
-     * releases the owner CPU's lock before we acquire the service CPU's. */
+    /* Re-arming an active timer: cancel first, then insert on the service CPU.
+     * Both KeCancelTimer and this insert take the SAME service-CPU lock
+     * sequentially (cancel fully releases before we acquire), so two ktimer
+     * locks are never held at once. */
     KeCancelTimer(timer);
 
     /* Arm on the BSP service CPU (not the caller's CPU): only the BSP's timer
      * ISR scans the list, so a timer armed from an AP would otherwise never
-     * fire. The owner-cpu field still drives cross-CPU KeCancelTimer. */
+     * fire. The owner-cpu field is informational/forward-looking (per-CPU
+     * KTIMER); KeCancelTimer locks the service list directly. */
     cpu = KTIMER_SERVICE_CPU;
     spin_lock_irqsave(KTIMER_LOCK(cpu), &irq_flags);
     timer->due_time_ticks = due_time_ticks;
     timer->period_ticks   = period_ticks;
     timer->dpc            = dpc;
-    timer->cpu            = cpu;          /* set BEFORE active (cancel reads cpu) */
+    timer->cpu            = cpu;          /* all stores under the lock; active last */
     timer->next           = ktimer_heads[cpu];
     ktimer_heads[cpu]     = timer;
     timer->active         = 1;
@@ -180,6 +182,15 @@ uint32_t ktimer_expire_current_cpu(void)
      * fits a uint32_t. */
     uint32_t warn_mask = 0;
     _Static_assert(MAX_CPUS <= 32, "ktimer warn_mask is a uint32_t bitmask");
+
+    /* Common-case fast path: no armed timers -> skip the lock + the cli-section
+     * entirely. The head pointer is a naturally-aligned 8-byte read (atomic on
+     * x86); a timer concurrently inserted by a cross-CPU KeSetTimerEx that we
+     * miss here simply fires on the next tick (<=1 tick / ~10 ms later, never
+     * lost -- due times are absolute). This keeps per-tick ISR cost near zero
+     * when nothing is scheduled, which is the dominant case. */
+    if (!ktimer_heads[cpu])
+        return 0;
 
     /* Single pass with the DPC handoff DONE UNDER THE LOCK (see file header):
      * unlink/re-arm + active publish + KeInsertQueueDpc are atomic vs a
@@ -233,7 +244,16 @@ uint32_t ktimer_expire_current_cpu(void)
          * valid caller-owned pointer until we release. */
         if (dpc) {
             int wc = -1;
-            KeInsertQueueDpcEx(dpc, t, (void *)0, &wc);
+            /* Pin the DPC to the service CPU (overriding any caller
+             * KeSetTargetProcessorDpc WITHOUT mutating the caller's cpu_target).
+             * The timer fires here and the service CPU drains its own DPC queue
+             * immediately after this scan (dpc_drain_current_cpu, same ISR). AP
+             * DPC queues have no guaranteed drain trigger yet (AP LAPIC timers
+             * masked, no drain-on-lower), so an AP-targeted timer DPC would
+             * STRAND -- a lost-wakeup. Per the timer-DPC ownership precondition
+             * (ktimer.h) the caller must not independently queue the DPC, so it
+             * is never already-queued on an AP here. */
+            KeInsertQueueDpcOnCpu(dpc, KTIMER_SERVICE_CPU, t, (void *)0, &wc);
             if (wc >= 0 && wc < (int)MAX_CPUS)
                 warn_mask |= (1u << (uint32_t)wc);   /* record, do not drop */
         }

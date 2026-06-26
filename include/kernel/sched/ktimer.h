@@ -24,6 +24,14 @@
  * generalizes to the per-CPU KTIMER but is always the service CPU today. Concurrent
  * same-timer operations from two CPUs are caller misuse.
  *
+ * DPC OWNERSHIP (NT caller precondition): the timer owns the queueing of its
+ * associated KDPC. On expiry the DPC is queued PINNED to the service CPU (so it
+ * lands on the only queue that is guaranteed to drain), overriding any caller
+ * KeSetTargetProcessorDpc without mutating the caller's cpu_target field. The
+ * caller must NOT independently KeInsertQueueDpc a timer's DPC -- doing so (e.g.
+ * onto an AP, whose DPC queue has no guaranteed drain trigger yet) is misuse,
+ * the same class as queueing one KDPC twice.
+ *
  * LIFETIME (NT caller precondition, mirrors KDPC): a caller-owned timer (and
  * its associated KDPC) must remain allocated until it is cancelled AND any
  * already-queued DPC has fully RUN -- KeCancelTimer does NOT dequeue or wait

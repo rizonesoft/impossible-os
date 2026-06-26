@@ -148,7 +148,8 @@ void KeSetImportanceDpc(KDPC *dpc, KDPC_IMPORTANCE importance)
  * reports the CPU via *warn_cpu_out (>= 0) so the caller can log AFTER dropping
  * any lock it holds. This lets ktimer_expire_current_cpu queue a DPC while
  * holding the ktimer spinlock without dragging serial I/O under that lock. */
-static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out)
+static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2,
+                           uint32_t force_cpu, int *warn_cpu_out)
 {
     uint32_t cpu_id;
     struct dpc_queue *q;
@@ -186,8 +187,13 @@ static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out)
             continue;   /* state changed under us -- re-evaluate from the top */
         }
 
-        /* Resolve the concrete target CPU for a fresh insert. */
-        if (dpc->cpu_target == DPC_TARGET_CURRENT)
+        /* Resolve the concrete target CPU for a fresh insert. A caller-supplied
+         * force_cpu (< MAX_CPUS) overrides dpc->cpu_target WITHOUT mutating it,
+         * so timer DPCs can be pinned to the service CPU while leaving the
+         * caller-owned cpu_target field untouched for any later non-timer use. */
+        if (force_cpu < MAX_CPUS)
+            cpu_id = force_cpu;
+        else if (dpc->cpu_target == DPC_TARGET_CURRENT)
             cpu_id = smp_this_cpu()->cpu_id;
         else
             cpu_id = dpc->cpu_target;
@@ -263,7 +269,7 @@ static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out)
 int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
 {
     int warn_cpu = -1;
-    int r = dpc_insert_core(dpc, arg1, arg2, &warn_cpu);
+    int r = dpc_insert_core(dpc, arg1, arg2, MAX_CPUS /* honor cpu_target */, &warn_cpu);
     if (warn_cpu >= 0)
         klog(LOG_WARN, "dpc",
              "CPU %u DPC queue depth reached %u (possible starvation)",
@@ -273,11 +279,26 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
 
 /* Queue a DPC WITHOUT logging: if the warn depth is hit, *warn_cpu_out is set
  * to the CPU id (else -1) so a caller holding a spinlock can defer the klog
- * until after it unlocks. Used by ktimer_expire_current_cpu under the ktimer
- * lock. Same return value as KeInsertQueueDpc (1 newly queued, 0 already). */
+ * until after it unlocks. Honors dpc->cpu_target. Same return value as
+ * KeInsertQueueDpc (1 newly queued, 0 already). */
 int KeInsertQueueDpcEx(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out)
 {
-    return dpc_insert_core(dpc, arg1, arg2, warn_cpu_out);
+    return dpc_insert_core(dpc, arg1, arg2, MAX_CPUS /* honor cpu_target */, warn_cpu_out);
+}
+
+/* Queue a DPC pinned to cpu_id on a FRESH insert, overriding dpc->cpu_target
+ * WITHOUT mutating it (the caller-owned field is preserved). No-log; reports the
+ * warn depth via *warn_cpu_out like KeInsertQueueDpcEx. NOTE: if the DPC is
+ * ALREADY queued, this follows the existing already-queued path (updates args on
+ * its current queue, returns 0) -- it does NOT move a queued DPC across CPUs.
+ * Used by ktimer to pin timer DPCs to the service CPU, which relies on the
+ * timer-DPC ownership precondition (the timer owns the DPC's queueing; the
+ * caller must not independently queue it elsewhere). cpu_id >= MAX_CPUS falls
+ * back to honoring cpu_target. */
+int KeInsertQueueDpcOnCpu(KDPC *dpc, uint32_t cpu_id, void *arg1, void *arg2,
+                          int *warn_cpu_out)
+{
+    return dpc_insert_core(dpc, arg1, arg2, cpu_id, warn_cpu_out);
 }
 
 /* ---- KeRemoveQueueDpc ---------------------------------------------------- */

@@ -475,7 +475,7 @@ static void test_ktimer_init_fields(void)
     TEST_ASSERT_EQ((uint64_t)t.period_ticks, 0u, "init: period 0");
 }
 
-/* Test: KeSetTimerEx arms on the current CPU; KeCancelTimer returns prior
+/* Test: KeSetTimerEx arms on the BSP service CPU; KeCancelTimer returns prior
  * armed state and clears it; a second cancel returns 0. HIGH_LEVEL-protected
  * so the live timer ISR cannot scan/fire the list mid-test. */
 static void test_ktimer_set_cancel(void)
@@ -669,6 +669,36 @@ static void test_ktimer_overdue_periodic_bounded(void)
     TEST_ASSERT(due_after > now, "overdue periodic due advanced strictly past now");
 }
 
+/* Test: a timer-associated DPC targeted (via KeSetTargetProcessorDpc) to a
+ * non-service CPU is normalized to the service CPU at expiry, so it lands on a
+ * queue that actually drains -- AP DPC queues have no guaranteed drain trigger
+ * yet, so honoring an AP target would strand the DPC (lost-wakeup). */
+static void test_ktimer_dpc_target_normalized(void)
+{
+    kernel_timer_t t;
+    KDPC dpc;
+    KIRQL old;
+    uint32_t fired, queued_cpu_after, target_after;
+
+    KeInitializeTimer(&t);
+    KeInitializeDpc(&dpc, ktimer_dpc_routine, (void *)0);
+    KeSetTargetProcessorDpc(&dpc, 1);   /* caller targets a non-service CPU */
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeSetTimerEx(&t, system_get_ticks(), 0, &dpc);   /* due now */
+    fired            = ktimer_expire_current_cpu();
+    queued_cpu_after = dpc.queued_cpu;
+    target_after     = dpc.cpu_target;               /* must be UNMUTATED */
+    KeRemoveQueueDpc(&dpc);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)fired, 1u, "targeted-DPC timer fired");
+    TEST_ASSERT_EQ((uint64_t)queued_cpu_after, 0u,
+                   "timer DPC pinned to service CPU (not the AP target)");
+    TEST_ASSERT_EQ((uint64_t)target_after, 1u,
+                   "caller cpu_target preserved (not mutated by ktimer)");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -700,6 +730,8 @@ void test_register_sched(void)
                             test_ktimer_rearm_replaces_dpc, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: ktimer overdue periodic bounded re-arm",
                             test_ktimer_overdue_periodic_bounded, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer DPC target normalized to service CPU",
+                            test_ktimer_dpc_target_normalized, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

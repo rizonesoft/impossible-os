@@ -95,6 +95,15 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2);
  * a non-NULL int; same return value as KeInsertQueueDpc. */
 int KeInsertQueueDpcEx(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out);
 
+/* Like KeInsertQueueDpcEx but pins a FRESH insert to cpu_id, overriding
+ * dpc->cpu_target WITHOUT mutating it (caller-owned field preserved). Does NOT
+ * move an already-queued DPC across CPUs (already-queued -> update args on its
+ * current queue, return 0). cpu_id >= MAX_CPUS honors cpu_target. Used by ktimer
+ * to pin timer DPCs to the service CPU under the timer-DPC ownership
+ * precondition. */
+int KeInsertQueueDpcOnCpu(KDPC *dpc, uint32_t cpu_id, void *arg1, void *arg2,
+                          int *warn_cpu_out);
+
 /* Remove a DPC from its CPU's queue before it executes.
  * Returns 1 if the DPC was found and removed, 0 if not queued.
  * Safe to call at any IRQL up to DISPATCH_LEVEL. */

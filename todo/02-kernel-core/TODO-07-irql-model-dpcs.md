@@ -60,7 +60,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [/]   |
 | 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [/]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
-| 💎  |   9   | Timer-DPC association                              | §4, §6      |  [x]   |
+| 💎  |   9   | Timer-DPC association                              | §4, §6      |  [/]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [ ]   |
 | 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [ ]   |
 | 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [ ]   |
@@ -290,10 +290,11 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 
 - [x] `kernel_timer_t` in `include/kernel/sched/ktimer.h`: `due_time_ticks`, `period_ticks` (0=single-shot), `KDPC *dpc`, `cpu` owner, `volatile active`, `next`; `KeInitializeTimer` zeros it.
 - [x] Per-CPU timer lists + cacheline-padded irqsave lock slots (mirror `dpc.c`); `ktimer_expire_current_cpu()` runs in the LAPIC + PIT ISR before `dpc_drain_current_cpu` (after `nt_timer_tick`) for same-tick DPC dispatch.
-- [x] `KeSetTimerEx(timer, DueTicks, PeriodTicks, Dpc)` in `ktimer.c` -- arms on the BSP service CPU (heartbeat is BSP-only / AP timers masked, else an AP-armed timer never fires); on expiry queues `KeInsertQueueDpcEx(dpc, timer, NULL)`.
+- [x] `KeSetTimerEx(timer, DueTicks, PeriodTicks, Dpc)` in `ktimer.c` -- arms on the BSP service CPU (AP timers masked); on expiry pins the DPC to the service CPU via `KeInsertQueueDpcOnCpu` (no `cpu_target` mutation) so it lands on a draining queue.
 - [x] `KeSetTimer(timer, DueTicks, Dpc)` single-shot wrapper (`PeriodTicks = 0`).
 - [x] Periodic timers re-arm in-list to the next boundary past `now` in O(1) (overflow-guarded, fires once per pass) and re-queue their DPC each period until cancelled.
 - [x] `KeCancelTimer` -- fully locked on the service list, unlinks if armed, returns prior armed state; does NOT await an already-queued DPC (expiry queues the DPC + clears `active` atomically under the lock).
+- [ ] Perf-scalability (deferred): replace the O(active-timers) per-tick ISR scan with an ordered expiry structure (timer wheel/min-heap); the empty-list lock-free fast path already covers the no-timer case. Part of the full KTIMER upgrade.
 - [x] Commit: `"kernel: timer -- add timer-DPC association for auto-queued deferred work"`
 
 **Test checkpoint:** `KeSetTimerEx` with 50ms period + DPC → DPC fires 3 times in 150ms window (check counter in callback). `KeCancelTimer` stops further DPC queueing. Timer without DPC still fires normally (NULL dpc field). Verify periodic re-queue doesn't leak DPC nodes.
@@ -301,12 +302,16 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 > **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 9 ktimer tests (29 asserts), 0 failures. Unit tests drive expiry deterministically (arm `due <= system_get_ticks()`, call `ktimer_expire_current_cpu()`, HIGH_LEVEL-protected); the 3-fires-in-150ms wall-clock + AP-armed SMP paths validate on WHPX/bare-metal serial.
 
 > **Notes:**
-> - Shipped `ktimer.{c,h}` (tick-based `kernel_timer_t` + `KeInitializeTimer`/`KeSetTimerEx`/`KeSetTimer`/`KeCancelTimer` + ISR-side `ktimer_expire_current_cpu`) and a no-log `KeInsertQueueDpcEx` in `dpc.c` (warn via out-param).
+> - Shipped `ktimer.{c,h}` (tick-based `kernel_timer_t` + `KeInitializeTimer`/`KeSetTimerEx`/`KeSetTimer`/`KeCancelTimer` + ISR-side `ktimer_expire_current_cpu`) and no-log `KeInsertQueueDpcEx` + service-CPU-pinning `KeInsertQueueDpcOnCpu` in `dpc.c`.
 > - Wired into `lapic_timer_handler` + `pit_irq_handler` after `nt_timer_tick`, before the DPC drain (same-tick dispatch); `ktimer_init_lists()` runs pre-`sti` in `boot_interrupts.c`.
-> - SMP/lifetime: all timers armed on the BSP service CPU (AP timers masked); `KeCancelTimer` fully locked; expiry hands off the DPC atomically under the ktimer lock (one-way ktimer->dpc, deadlock-free); periodic re-arm O(1) overflow-guarded.
-> - Codex design + adversarial + 3 re-adversarial rounds fixed 5 HIGH/MED bugs (AP-never-fires, unbounded catch-up, cancel-vs-handoff UAF, klog-under-lock, dropped warn); evidence in commit `STAMPHASH9`.
+> - SMP/lifetime: timers AND their DPCs pinned to the BSP service CPU (AP timers/queues do not drain); `KeCancelTimer` fully locked; DPC handoff atomic under the ktimer lock (one-way ktimer->dpc); periodic re-arm O(1); empty-list lock-free fast path.
+> - Reviewed: Codex design+adversarial+consistency+perf + 5 re-adversarial rounds fixed AP-target lost-wakeup, unbounded catch-up, cancel-vs-handoff UAF, klog-under-lock, dropped-warn; evidence in commit `2cf5af54` + review commit.
 > - Canonical doc: `include/kernel/sched/ktimer.h` (ownership + lifetime + service-CPU contract).
-> - Scope: §9 owns the minimal prereq; full KTIMER (FILETIME/QPC/coalescing) -> TODO-08; the DPC in-flight completion barrier -> §7 ("KeFlushQueuedDpcs completion barrier", line 240).
+> - Scope: §9 owns the minimal prereq; full KTIMER (FILETIME/QPC/coalescing) -> TODO-08; DPC in-flight completion barrier -> §7 (line 240); ordered O(1) expiry structure -> the §9 perf-scalability item above.
+> **Verified:** 2026-06-26 | commit `STAMPHASH9R` | 6/7 items | build OK | sched 94 PASS | smoke PASS (2.56s)
+> **Accepted:** [H] `KeFlushQueuedDpcs` is not a true in-flight completion barrier, so timer free-after-cancel can race a still-running DPC (reason: infra owned elsewhere) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 240)
+> **Deferred:** [H] timer ISR does an O(active-timers) full-list scan per tick under the ktimer lock; needs an ordered expiry structure (timer wheel/min-heap) (reason: empty-list fast path covers the common case; ordered structure is full-KTIMER work) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §9 (item: "Perf-scalability (deferred): replace the O(active-timers) per-tick ISR scan" at line 297)
+> **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 2H+3L fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
 
