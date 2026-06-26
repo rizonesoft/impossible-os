@@ -153,3 +153,8 @@ void apc_rundown_thread(struct thread *t);
 
 /* Total kernel / user APCs delivered since boot (for tests + diagnostics). */
 void apc_delivery_stats(uint64_t *kernel_delivered, uint64_t *user_delivered);
+
+/* APC starvation watchdog event count (kernel-APC depth crossing the warn
+ * threshold). Bumped from the ISR-safe insert path WITHOUT logging; the DPC
+ * watchdog tick reports increases from a log-safe context. */
+uint32_t apc_starvation_events(void);

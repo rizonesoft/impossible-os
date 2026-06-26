@@ -25,6 +25,7 @@
 #include "kernel/boot_timing.h"
 #include "kernel/cpuid.h"
 #include "kernel/cpu_security.h"
+#include "kernel/sched/apc.h"
 
 /* Forward declare -- avoid circular include with irql.h */
 extern KIRQL KeGetCurrentIrql(void);
@@ -75,8 +76,13 @@ struct dpc_watchdog {
     uint32_t tick_dpcs;          /* DPCs dispatched in the current tick         */
     uint32_t consec_over_depth;  /* consecutive ticks depth > WARN_DEPTH        */
     uint8_t  over_budget_warned; /* monopolization already warned this tick     */
-    uint8_t  _pad[3];
-};
+    /* Pad + align to one cache line: drain_queue writes budget/tick_dpcs per
+     * dispatched DPC, so adjacent CPUs' records must not false-share (matches
+     * the cpu_queues / queue_lock_slots cache-line discipline). */
+    uint8_t  _pad[DPC_CACHELINE - 13];
+} __attribute__((aligned(DPC_CACHELINE)));
+_Static_assert(sizeof(struct dpc_watchdog) == DPC_CACHELINE,
+               "dpc_watchdog must occupy exactly one cache line (no false-share)");
 static struct dpc_watchdog s_wd[MAX_CPUS];
 
 /* 0 = warn-only (default), 1 = escalate a single-DPC overrun to KeBugCheckEx. */
@@ -84,6 +90,9 @@ static int s_dpc_wd_strict;
 /* Precomputed 100us threshold in TSC cycles; 0 = invariant TSC freq unavailable
  * (the single-DPC timing watchdog then stays OFF -- depth/budget still run). */
 static uint64_t s_dpc_single_threshold_cycles;
+
+/* Last APC-starvation event count reported by the watchdog tick (BSP-only). */
+static uint32_t s_apc_starv_reported;
 
 void dpc_watchdog_set_strict(int on)   { s_dpc_wd_strict = on ? 1 : 0; }
 int  dpc_watchdog_strict_enabled(void) { return s_dpc_wd_strict; }
@@ -95,15 +104,19 @@ void dpc_watchdog_init(void)
     uint64_t hz = boot_timing_tsc_freq();   /* 0 if not calibrated */
     uint32_t i;
 
-    /* Arm the single-DPC timing watchdog ONLY when an invariant TSC freq exists
-     * AND EVERY online CPU has RDTSCP -- drain_queue times each DPC with
-     * rdtscp_read(), which #UDs on a CPU lacking CPU_FEATURE_RDTSCP (it is an
-     * AP-probed OPTIONAL feature, not required). cpu_feature_global_mask() is
-     * the AND across all online CPUs (finalized before dpc_init, post-SMP), so
-     * a BSP-has/AP-lacks skew leaves the timing watchdog off on ALL CPUs rather
-     * than faulting the skewed AP. Depth + budget watchdogs still run (no TSC). */
+    /* Arm the single-DPC timing watchdog ONLY when ALL of: a calibrated TSC freq,
+     * RDTSCP on EVERY online CPU, and an INVARIANT TSC. RDTSCP is gated on
+     * cpu_feature_global_mask() -- the AND across all online CPUs -- because it
+     * is the instruction that #UDs on a CPU that lacks it (an AP-probed optional
+     * feature), so a BSP-has/AP-lacks skew must disable timing everywhere rather
+     * than fault the skewed AP. CPU_FEATURE_TSC_INV (invariant/frequency-stable
+     * TSC) is a platform-uniform property and is NOT in the AP-probe set, so the
+     * BSP cpu_has() read is representative -- without it the cycle threshold
+     * would drift and produce false WARN/bugchecks. Depth + budget watchdogs
+     * still run when timing is off (no TSC needed). */
     s_dpc_single_threshold_cycles =
-        (hz && (cpu_feature_global_mask() & (1ULL << CPU_FEATURE_RDTSCP)))
+        (hz && (cpu_feature_global_mask() & (1ULL << CPU_FEATURE_RDTSCP))
+             && cpu_has(CPU_FEATURE_TSC_INV))
             ? (hz / 1000000ULL) * (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US
             : 0;
     for (i = 0; i < MAX_CPUS; i++) {
@@ -124,7 +137,14 @@ static void dpc_watchdog_single_overrun(uint32_t cpu_id, uint64_t cycles,
                                         void *routine_pc)
 {
     uint64_t hz = boot_timing_tsc_freq();
-    uint64_t us = hz ? (cycles * 1000000ULL) / hz : 0;
+    /* Split conversion: whole-second part (cycles/hz)*1e6 plus the sub-second
+     * remainder ((cycles%hz)*1e6)/hz. Overflow-safe (cycles%hz < hz, so the
+     * remainder product stays well under 2^64 for any real TSC) AND precise for
+     * the sub-second 100us-999ms overruns this watchdog targets -- a plain
+     * (cycles/hz)*1e6 would report 0 us for any overrun under one second. */
+    uint64_t us = hz ? ((cycles / hz) * 1000000ULL
+                        + ((cycles % hz) * 1000000ULL) / hz)
+                     : 0;
 
     klog(LOG_WARN, "dpc",
          "watchdog: DPC %p on CPU %u ran %u us (> %u us threshold)",
@@ -179,6 +199,19 @@ void dpc_watchdog_tick(void)
     s_wd[id].budget = refilled;
     s_wd[id].tick_dpcs = 0;
     s_wd[id].over_budget_warned = 0;
+
+    /* APC starvation reporting: the ISR-safe KeInsertQueueApc only bumps an
+     * atomic event counter; emit the warning here (log-safe timer-ISR context)
+     * when it advances. One global last-seen is fine -- only the BSP ticks. */
+    {
+        uint32_t ev = apc_starvation_events();
+        if (ev != s_apc_starv_reported) {
+            klog(LOG_WARN, "apc",
+                 "starvation watchdog: kernel APC queue reached depth %u (%u events)",
+                 (uint64_t)APC_STARVATION_WARN_DEPTH, (uint64_t)ev);
+            s_apc_starv_reported = ev;
+        }
+    }
 }
 
 /* ---- Initialization ------------------------------------------------------ */

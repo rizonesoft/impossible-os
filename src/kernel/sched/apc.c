@@ -24,6 +24,16 @@
 #include "kernel/smp.h"
 #include "kernel/klog.h"
 
+/* APC starvation watchdog event counter: bumped (atomically, no klog) by the
+ * ISR-safe KeInsertQueueApc on each kernel-APC threshold crossing; the DPC
+ * watchdog tick (timer ISR, log-safe) polls + reports it. */
+static uint32_t s_apc_starvation_events;
+
+uint32_t apc_starvation_events(void)
+{
+    return __atomic_load_n(&s_apc_starvation_events, __ATOMIC_RELAXED);
+}
+
 /* ---- Per-thread APC-state init (thread create / slot reuse) -------------- */
 
 void apc_thread_init(KAPC_STATE *apc_state, void *process)
@@ -112,18 +122,19 @@ int KeInsertQueueApc(KAPC *apc, void *system_arg1, void *system_arg2,
         t->apc_state.user_apc_pending = 1;
     } else {
         t->apc_state.kernel_apc_pending = 1;
-        /* APC starvation watchdog: warn ONCE, only when THIS kernel-APC insert
-         * crosses the threshold (depth becomes exactly the warn level). A user
-         * APC insert -- which does not touch kernel_apc_depth -- must never
-         * re-warn a thread already sitting at the threshold. */
+        /* APC starvation watchdog: flag the event ONLY when THIS kernel-APC
+         * insert crosses the threshold (depth becomes exactly the warn level);
+         * a user-APC insert does not touch kernel_apc_depth so it cannot
+         * re-trigger a thread already at the threshold. */
         if (++t->apc_state.kernel_apc_depth == APC_STARVATION_WARN_DEPTH)
             warn_starvation = 1;
     }
     spin_unlock_irqrestore(&t->apc_lock, flags);
+    /* KeInsertQueueApc is ISR-safe (no alloc, irqsave-locked) -- it must NOT
+     * klog here. Only bump an atomic event counter; the watchdog tick (timer
+     * ISR, log-safe) reports it via apc_starvation_events(). */
     if (warn_starvation)
-        klog(LOG_WARN, "apc",
-             "starvation watchdog: kernel APC queue depth reached %u on a thread",
-             (uint64_t)APC_STARVATION_WARN_DEPTH);
+        __atomic_fetch_add(&s_apc_starvation_events, 1u, __ATOMIC_RELAXED);
     return 1;
 }
 

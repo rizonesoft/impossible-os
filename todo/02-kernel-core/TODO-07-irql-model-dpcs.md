@@ -462,6 +462,10 @@ The APC delivery engine runs at the `KeLowerIrql` transition point -- when IRQL 
 > - Downstream: importance ordering reuses §7 head-insert. Codex design + adversarial + 3 re-adversarial adoptions in the commit.
 > - Canonical doc: this section + `include/kernel/sched/dpc_config.h`.
 > - Scope boundary: §14 owns the budget + watchdog + APC starvation. Deferred: 0x133 param 0x1 (needs the §13 IRQL-write-surface centralization) + AP-CPU watchdog coverage (owner §17). Threaded-DPC fairness -> §15-§17.
+> **Verified:** 2026-06-26 | commit `STAMPHASH14R` | 6/8 items | build OK | sched 171 PASS | smoke PASS
+> **Deferred:** [H] DPC watchdog 0x133 param 0x1 (cumulative >= `DISPATCH_LEVEL` time/period) unbuilt -- needs per-CPU time-at-DISPATCH accounting (reason: the §13 IRQL-write-surface centralization) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §14 (item: "DPC watchdog 0x133 **param 0x1**" at line 448)
+> **Deferred:** [M] AP-CPU DPC watchdog coverage -- `dpc_watchdog_tick` services only the ticking BSP (reason: mirrors the existing BSP-only AP-drain limit) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "AP DPC watchdog coverage" at line 511)
+> **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed | scope: kernel-code-quality
 
 ---
 

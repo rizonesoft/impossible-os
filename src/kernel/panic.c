@@ -99,6 +99,7 @@ static const struct { BUGCHECK_CODE code; const char *name; } s_bugcheck_names[]
     { 0x77,       "KERNEL_STACK_INPAGE_ERROR" },
     { 0x7A,       "KERNEL_DATA_INPAGE_ERROR" },
     { 0x139,      "KERNEL_SECURITY_CHECK_FAILURE" },
+    { 0x133,      "DPC_WATCHDOG_VIOLATION" },
     { 0x109,      "CRITICAL_STRUCTURE_CORRUPTION" },
     { 0xEF,       "CRITICAL_PROCESS_DIED" },
     { 0xC5,       "DRIVER_CORRUPTED_EXPOOL" },
