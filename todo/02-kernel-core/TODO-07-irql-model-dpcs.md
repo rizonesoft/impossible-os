@@ -60,7 +60,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |   6   | Timer/APIC scheduling path for DPC dispatch        | §5          |  [/]   |
 | 💎  |   7   | DPC targeting, importance, and flush               | §4, §5      |  [/]   |
 | 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)        | §5          |  [x]   |
-| 💎  |   9   | Timer-DPC association                              | §4, §6      |  [ ]   |
+| 💎  |   9   | Timer-DPC association                              | §4, §6      |  [x]   |
 | 💎  |  10   | Driver migration and workqueue contract split      | §5          |  [ ]   |
 | 💎  |  11   | APC object type and per-thread queues              | §1, §2      |  [ ]   |
 | 💎  |  12   | APC delivery mechanism (KiDeliverApc)              | §11         |  [ ]   |
@@ -247,7 +247,7 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 > - Review-pass: the per-CPU DPC queue + lock storage is now cacheline-aligned (`struct dpc_queue` padded/aligned, per-CPU lock in a 64B `dpc_lock_slot`) to avoid ISR-hot-path false sharing; `_Static_assert`s pin the layout.
 > - One open item is deferred (see Deferred): the `KeFlushQueuedDpcs` in-flight completion barrier (the cross-CPU "returns only after callback completes" checkpoint clause).
 > - Canonical: `src/kernel/sched/dpc.c`.
-> **Deferred:** [H] `KeFlushQueuedDpcs` `head==NULL` poll can return while a remote callback is still in-flight (no per-CPU in-flight tracking; silent 100000-spin timeout); the full barrier also needs threaded-DPC completion (§16). Latent -- no callers yet -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 240)
+> **Deferred:** [H] `KeFlushQueuedDpcs` `head==NULL` poll can return while a remote callback is still in-flight (no per-CPU in-flight tracking; silent 100000-spin timeout); the full barrier also needs threaded-DPC completion (§16). §9 ktimer teardown (free-after-cancel) now depends on this barrier -- until it lands, free dynamically-allocated timers only after the DPC is known to have run -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 240)
 
 ---
 
@@ -288,15 +288,25 @@ Bridge between kernel timer objects and the DPC subsystem. When a timer fires, i
 > [!NOTE]
 > Minimal prerequisite -- full KTIMER upgrade deferred until TODO-08 §6 (kernel time service) lands. This section defines a lightweight `kernel_timer_t` struct with a `KDPC *dpc` field, a linked-list timer wheel checked on each LAPIC timer tick, and `KeSetTimerEx`/`KeCancelTimer` API. When TODO-08 §6 provides `KeQuerySystemTime` and FILETIME arithmetic, `kernel_timer_t` is upgraded to the full KTIMER type with FILETIME due times, QPC-based expiry, and timer coalescing.
 
-- [ ] Define `kernel_timer_t` struct: `due_time_ticks` (absolute tick count), `period_ticks` (0 = single-shot), `KDPC *dpc` (optional), `active` flag, linked-list next pointer
-- [ ] Add per-CPU timer list; check expired timers in the LAPIC timer ISR after DPC dispatch (§6)
-- [ ] Implement `KeSetTimerEx(kernel_timer_t *Timer, uint64_t DueTimeTicks, uint64_t PeriodTicks, KDPC *Dpc)` -- inserts timer into per-CPU list; on expiry, calls `KeInsertQueueDpc(timer->dpc, timer, NULL)` if dpc is non-NULL
-- [ ] Implement `KeSetTimer(kernel_timer_t *Timer, uint64_t DueTimeTicks, KDPC *Dpc)` as single-shot convenience wrapper (`PeriodTicks = 0`)
-- [ ] Periodic timers re-queue their DPC on each period expiry until cancelled
-- [ ] `KeCancelTimer` removes timer from list, prevents further DPC queueing; does NOT dequeue an already-queued DPC -- caller must call `KeFlushQueuedDpcs` if synchronization is needed
-- [ ] Commit: `"kernel: timer -- add timer-DPC association for auto-queued deferred work"`
+- [x] `kernel_timer_t` in `include/kernel/sched/ktimer.h`: `due_time_ticks`, `period_ticks` (0=single-shot), `KDPC *dpc`, `cpu` owner, `volatile active`, `next`; `KeInitializeTimer` zeros it.
+- [x] Per-CPU timer lists + cacheline-padded irqsave lock slots (mirror `dpc.c`); `ktimer_expire_current_cpu()` runs in the LAPIC + PIT ISR before `dpc_drain_current_cpu` (after `nt_timer_tick`) for same-tick DPC dispatch.
+- [x] `KeSetTimerEx(timer, DueTicks, PeriodTicks, Dpc)` in `ktimer.c` -- arms on the BSP service CPU (heartbeat is BSP-only / AP timers masked, else an AP-armed timer never fires); on expiry queues `KeInsertQueueDpcEx(dpc, timer, NULL)`.
+- [x] `KeSetTimer(timer, DueTicks, Dpc)` single-shot wrapper (`PeriodTicks = 0`).
+- [x] Periodic timers re-arm in-list to the next boundary past `now` in O(1) (overflow-guarded, fires once per pass) and re-queue their DPC each period until cancelled.
+- [x] `KeCancelTimer` -- fully locked on the service list, unlinks if armed, returns prior armed state; does NOT await an already-queued DPC (expiry queues the DPC + clears `active` atomically under the lock).
+- [x] Commit: `"kernel: timer -- add timer-DPC association for auto-queued deferred work"`
 
 **Test checkpoint:** `KeSetTimerEx` with 50ms period + DPC → DPC fires 3 times in 150ms window (check counter in callback). `KeCancelTimer` stops further DPC queueing. Timer without DPC still fires normally (NULL dpc field). Verify periodic re-queue doesn't leak DPC nodes.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 9 ktimer tests (29 asserts), 0 failures. Unit tests drive expiry deterministically (arm `due <= system_get_ticks()`, call `ktimer_expire_current_cpu()`, HIGH_LEVEL-protected); the 3-fires-in-150ms wall-clock + AP-armed SMP paths validate on WHPX/bare-metal serial.
+
+> **Notes:**
+> - Shipped `ktimer.{c,h}` (tick-based `kernel_timer_t` + `KeInitializeTimer`/`KeSetTimerEx`/`KeSetTimer`/`KeCancelTimer` + ISR-side `ktimer_expire_current_cpu`) and a no-log `KeInsertQueueDpcEx` in `dpc.c` (warn via out-param).
+> - Wired into `lapic_timer_handler` + `pit_irq_handler` after `nt_timer_tick`, before the DPC drain (same-tick dispatch); `ktimer_init_lists()` runs pre-`sti` in `boot_interrupts.c`.
+> - SMP/lifetime: all timers armed on the BSP service CPU (AP timers masked); `KeCancelTimer` fully locked; expiry hands off the DPC atomically under the ktimer lock (one-way ktimer->dpc, deadlock-free); periodic re-arm O(1) overflow-guarded.
+> - Codex design + adversarial + 3 re-adversarial rounds fixed 5 HIGH/MED bugs (AP-never-fires, unbounded catch-up, cancel-vs-handoff UAF, klog-under-lock, dropped warn); evidence in commit `STAMPHASH9`.
+> - Canonical doc: `include/kernel/sched/ktimer.h` (ownership + lifetime + service-CPU contract).
+> - Scope: §9 owns the minimal prereq; full KTIMER (FILETIME/QPC/coalescing) -> TODO-08; the DPC in-flight completion barrier -> §7 ("KeFlushQueuedDpcs completion barrier", line 240).
 
 ---
 
@@ -488,7 +498,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 | 💎 | DPC importance / priority      | ✅ 4 levels (Low→High)         | ⚠️ Priority workqueues         | ✅ §7                         |
 | 💎 | DPC flush barrier              | ✅ KeFlushQueuedDpcs           | ✅ flush_workqueue             | ⚠️ §7 normal; §16 threaded   |
 | 💎 | Threaded DPCs (PASSIVE)        | ✅ KeInitializeThreadedDpc     | ✅ request_threaded_irq        | ⚠️ §8; §15-§17 hardening     |
-| 💎 | Timer-DPC auto-queue           | ✅ KeSetTimerEx + KDPC         | ✅ timer_setup + callback      | ⬜ §9                         |
+| 💎 | Timer-DPC auto-queue           | ✅ KeSetTimerEx + KDPC         | ✅ timer_setup + callback      | ✅ §9 ktimer (tick-based)     |
 | 💎 | Context legality contract      | ✅ API rules by IRQL           | ✅ might_sleep() + atomic      | ✅ §1 in irql.h               |
 | 💎 | Workqueue (thread deferred)    | ✅ Work items at PASSIVE       | ✅ alloc_workqueue             | ⚠️ §10 -- exists, needs split  |
 | 💎 | APC objects (KAPC)             | ✅ KeInitialize/InsertApc      | ⚠️ Signals only                | ⬜ §11                        |

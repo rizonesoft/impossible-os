@@ -88,6 +88,13 @@ void KeInitializeDpc(KDPC *dpc, KDEFERRED_ROUTINE routine, void *context);
  * May be called at any IRQL up to DIRQL. */
 int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2);
 
+/* Like KeInsertQueueDpc but does NOT call klog: if the queue reaches the warn
+ * depth, *warn_cpu_out is set to that CPU id (else -1). For callers that hold a
+ * spinlock at insert time (e.g. ktimer_expire_current_cpu under the ktimer
+ * lock) and must defer the serial-I/O warning until after they unlock. Pass
+ * a non-NULL int; same return value as KeInsertQueueDpc. */
+int KeInsertQueueDpcEx(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out);
+
 /* Remove a DPC from its CPU's queue before it executes.
  * Returns 1 if the DPC was found and removed, 0 if not queued.
  * Safe to call at any IRQL up to DISPATCH_LEVEL. */

@@ -1192,6 +1192,13 @@ static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
         nt_timer_tick();
     }
 
+    /* Fire expired kernel_timer_t timers (tick-based, DPC-associated) BEFORE
+     * the DPC drain so a fired timer's DPC drains in the same tick. */
+    {
+        extern uint32_t ktimer_expire_current_cpu(void);
+        ktimer_expire_current_cpu();
+    }
+
     /* Drain pending DPCs after EOI (LAPIC can accept new interrupts)
      * but before schedule (DPC work completes before thread dispatch).
      * Uses lightweight drain -- no IRQL raise since we're in ISR context. */

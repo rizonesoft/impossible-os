@@ -448,6 +448,13 @@ void boot_phase1(void)
         dpc_init_queues();
     }
 
+    /* Kernel timer lists must be ready before sti -- the timer ISR scans them
+     * each tick and queues due DPCs. (BSS-zero already, but init explicitly.) */
+    {
+        extern void ktimer_init_lists(void);
+        ktimer_init_lists();
+    }
+
     __asm__ volatile ("sti");
 
     /* Jitter entropy sample -- earliest post-sti point so the staged

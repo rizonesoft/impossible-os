@@ -9,6 +9,8 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/irql.h"
 #include "kernel/sched/dpc.h"
+#include "kernel/sched/ktimer.h"
+#include "kernel/timer.h"
 #include "kernel/smp.h"
 #include "kernel/types.h"
 
@@ -455,6 +457,218 @@ static void test_dpc_flush_runs_at_dispatch(void)
                    "flush ran the callback at DISPATCH_LEVEL");
 }
 
+/* ---- Section 9: Timer-DPC association (kernel_timer_t) -------------------- */
+
+static void ktimer_dpc_routine(struct _KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+}
+
+/* Test: KeInitializeTimer field defaults. */
+static void test_ktimer_init_fields(void)
+{
+    kernel_timer_t t;
+    KeInitializeTimer(&t);
+    TEST_ASSERT_EQ((uint64_t)t.active, 0u, "init: timer not active");
+    TEST_ASSERT_EQ((uint64_t)t.cpu, (uint64_t)MAX_CPUS, "init: cpu invalid");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)t.dpc, 0u, "init: no dpc bound");
+    TEST_ASSERT_EQ((uint64_t)t.period_ticks, 0u, "init: period 0");
+}
+
+/* Test: KeSetTimerEx arms on the current CPU; KeCancelTimer returns prior
+ * armed state and clears it; a second cancel returns 0. HIGH_LEVEL-protected
+ * so the live timer ISR cannot scan/fire the list mid-test. */
+static void test_ktimer_set_cancel(void)
+{
+    kernel_timer_t t;
+    KDPC dpc;
+    KIRQL old;
+    uint32_t my_cpu = smp_this_cpu()->cpu_id;
+    uint32_t armed, armed_cpu;
+    int cancel_armed, cancel_idle;
+
+    KeInitializeTimer(&t);
+    KeInitializeDpc(&dpc, ktimer_dpc_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeSetTimerEx(&t, system_get_ticks() + 1000000ull, 0, &dpc);  /* far future */
+    armed       = t.active;
+    armed_cpu   = t.cpu;
+    cancel_armed = KeCancelTimer(&t);
+    cancel_idle  = KeCancelTimer(&t);
+    KeLowerIrql(old);
+
+    (void)my_cpu;
+    TEST_ASSERT_EQ((uint64_t)armed, 1u, "KeSetTimerEx arms timer (active)");
+    TEST_ASSERT_EQ((uint64_t)armed_cpu, 0u, "armed on BSP service CPU (0)");
+    TEST_ASSERT_EQ((uint64_t)cancel_armed, 1u, "cancel of armed returns 1");
+    TEST_ASSERT_EQ((uint64_t)t.active, 0u, "cancel clears active");
+    TEST_ASSERT_EQ((uint64_t)cancel_idle, 0u, "cancel of idle returns 0");
+}
+
+/* Test: a due single-shot timer fires once -- queues its DPC and goes inactive.
+ * Drives expiry deterministically (due == now) instead of waiting for ticks. */
+static void test_ktimer_single_shot_fires(void)
+{
+    kernel_timer_t t;
+    KDPC dpc;
+    KIRQL old;
+    uint32_t fired, queued_after, active_after;
+    void *arg1_after, *arg2_after;
+
+    KeInitializeTimer(&t);
+    KeInitializeDpc(&dpc, ktimer_dpc_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeSetTimerEx(&t, system_get_ticks(), 0, &dpc);   /* due now */
+    fired        = ktimer_expire_current_cpu();
+    queued_after = dpc.queued;
+    active_after = t.active;
+    arg1_after   = dpc.system_arg1;                   /* must be the timer */
+    arg2_after   = dpc.system_arg2;                   /* must be NULL */
+    KeRemoveQueueDpc(&dpc);                            /* clean up queued DPC */
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)fired, 1u, "single-shot fired once");
+    TEST_ASSERT_EQ((uint64_t)queued_after, 1u, "fired timer queued its DPC");
+    TEST_ASSERT_EQ((uint64_t)active_after, 0u, "single-shot inactive after fire");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)arg1_after, (uint64_t)(uintptr_t)&t,
+                   "DPC arg1 is the timer (KeInsertQueueDpc(dpc,timer,NULL))");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)arg2_after, 0u, "DPC arg2 is NULL");
+}
+
+/* Test: a periodic timer re-arms (stays active, due advanced past now) on fire. */
+static void test_ktimer_periodic_rearm(void)
+{
+    kernel_timer_t t;
+    KDPC dpc;
+    KIRQL old;
+    uint64_t now, due_after;
+    uint32_t fired, active_after;
+
+    KeInitializeTimer(&t);
+    KeInitializeDpc(&dpc, ktimer_dpc_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    now          = system_get_ticks();
+    KeSetTimerEx(&t, now, 5, &dpc);   /* due now, 5-tick period */
+    fired        = ktimer_expire_current_cpu();
+    active_after = t.active;
+    due_after    = t.due_time_ticks;
+    KeRemoveQueueDpc(&dpc);
+    KeCancelTimer(&t);                 /* stop the periodic */
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)fired, 1u, "periodic fired once this pass");
+    TEST_ASSERT_EQ((uint64_t)active_after, 1u, "periodic stays active (re-armed)");
+    TEST_ASSERT(due_after > now, "periodic due advanced past now");
+}
+
+/* Test: a NULL-DPC timer fires (unlinks) without queueing a DPC or crashing. */
+static void test_ktimer_null_dpc_fires(void)
+{
+    kernel_timer_t t;
+    KIRQL old;
+    uint32_t fired, active_after;
+
+    KeInitializeTimer(&t);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeSetTimerEx(&t, system_get_ticks(), 0, (KDPC *)0);  /* due now, no DPC */
+    fired        = ktimer_expire_current_cpu();
+    active_after = t.active;
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)fired, 1u, "NULL-dpc single-shot still counts as fired");
+    TEST_ASSERT_EQ((uint64_t)active_after, 0u, "NULL-dpc single-shot inactive after fire");
+}
+
+/* Test: a not-yet-due timer does NOT fire -- pins the `now >= due` guard so an
+ * inverted comparison or unconditional expiry is caught. */
+static void test_ktimer_future_no_fire(void)
+{
+    kernel_timer_t t;
+    KDPC dpc;
+    KIRQL old;
+    uint32_t fired, queued_after, active_after;
+
+    KeInitializeTimer(&t);
+    KeInitializeDpc(&dpc, ktimer_dpc_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeSetTimerEx(&t, system_get_ticks() + 1000000ull, 0, &dpc);  /* far future */
+    fired        = ktimer_expire_current_cpu();
+    queued_after = dpc.queued;
+    active_after = t.active;
+    KeCancelTimer(&t);                                /* clean up */
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)fired, 0u, "future timer does not fire");
+    TEST_ASSERT_EQ((uint64_t)queued_after, 0u, "future timer queues no DPC");
+    TEST_ASSERT_EQ((uint64_t)active_after, 1u, "future timer stays active");
+}
+
+/* Test: re-arming an active timer via KeSetTimerEx replaces its DPC -- only the
+ * new DPC is queued on the next expiry, the old one is not (no stale list
+ * entry / double-link). */
+static void test_ktimer_rearm_replaces_dpc(void)
+{
+    kernel_timer_t t;
+    KDPC dpc_a, dpc_b;
+    KIRQL old;
+    uint32_t a_queued, b_queued, fired, active_after;
+
+    KeInitializeTimer(&t);
+    KeInitializeDpc(&dpc_a, ktimer_dpc_routine, (void *)0);
+    KeInitializeDpc(&dpc_b, ktimer_dpc_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    KeSetTimerEx(&t, system_get_ticks() + 1000000ull, 0, &dpc_a);  /* future, DPC A */
+    KeSetTimerEx(&t, system_get_ticks(), 0, &dpc_b);               /* re-arm due-now, DPC B */
+    fired        = ktimer_expire_current_cpu();
+    a_queued     = dpc_a.queued;
+    b_queued     = dpc_b.queued;
+    active_after = t.active;
+    KeRemoveQueueDpc(&dpc_b);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)fired, 1u, "re-armed timer fires once");
+    TEST_ASSERT_EQ((uint64_t)b_queued, 1u, "new DPC (B) queued on expiry");
+    TEST_ASSERT_EQ((uint64_t)a_queued, 0u, "old DPC (A) NOT queued (replaced)");
+    TEST_ASSERT_EQ((uint64_t)active_after, 0u, "single-shot inactive after fire");
+}
+
+/* Test: an overdue periodic timer re-arms in BOUNDED time (O(1), not one
+ * iteration per missed period) and advances strictly past now -- pins the
+ * fix for the unbounded catch-up loop. */
+static void test_ktimer_overdue_periodic_bounded(void)
+{
+    kernel_timer_t t;
+    KDPC dpc;
+    KIRQL old;
+    uint64_t now, due_after;
+    uint32_t fired, active_after;
+
+    KeInitializeTimer(&t);
+    KeInitializeDpc(&dpc, ktimer_dpc_routine, (void *)0);
+
+    KeRaiseIrql(HIGH_LEVEL, &old);
+    now = system_get_ticks();
+    /* Far overdue with period 1: the old do/while would spin `now` times under
+     * the lock; the O(1) re-arm advances once to now+1. */
+    KeSetTimerEx(&t, (now > 100000ull) ? (now - 100000ull) : 0, 1, &dpc);
+    fired        = ktimer_expire_current_cpu();
+    active_after = t.active;
+    due_after    = t.due_time_ticks;
+    KeRemoveQueueDpc(&dpc);
+    KeCancelTimer(&t);
+    KeLowerIrql(old);
+
+    TEST_ASSERT_EQ((uint64_t)fired, 1u, "overdue periodic fires exactly once");
+    TEST_ASSERT_EQ((uint64_t)active_after, 1u, "overdue periodic re-armed (active)");
+    TEST_ASSERT(due_after > now, "overdue periodic due advanced strictly past now");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
@@ -470,6 +684,22 @@ void test_register_sched(void)
                             test_dpc_insert_remove, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC HighImportance head-insert",
                             test_dpc_high_importance_head, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer init fields",
+                            test_ktimer_init_fields, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer set/cancel + owner CPU",
+                            test_ktimer_set_cancel, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer single-shot fires + queues DPC",
+                            test_ktimer_single_shot_fires, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer periodic re-arm",
+                            test_ktimer_periodic_rearm, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer NULL-dpc fires",
+                            test_ktimer_null_dpc_fires, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer future timer does not fire",
+                            test_ktimer_future_no_fire, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer re-arm replaces DPC",
+                            test_ktimer_rearm_replaces_dpc, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: ktimer overdue periodic bounded re-arm",
+                            test_ktimer_overdue_periodic_bounded, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql_to_tpr band mapping",
                             test_irql_to_tpr_mapping, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: irql TPR-skip invariant",

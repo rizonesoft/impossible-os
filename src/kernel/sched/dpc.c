@@ -144,12 +144,19 @@ void KeSetImportanceDpc(KDPC *dpc, KDPC_IMPORTANCE importance)
 
 /* ---- KeInsertQueueDpc ---------------------------------------------------- */
 
-int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
+/* Core insert. Does NOT call klog: if the queue reaches the warn depth it
+ * reports the CPU via *warn_cpu_out (>= 0) so the caller can log AFTER dropping
+ * any lock it holds. This lets ktimer_expire_current_cpu queue a DPC while
+ * holding the ktimer spinlock without dragging serial I/O under that lock. */
+static int dpc_insert_core(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out)
 {
     uint32_t cpu_id;
     struct dpc_queue *q;
     uint64_t irq_flags;
     int warn_depth = 0;
+
+    if (warn_cpu_out)
+        *warn_cpu_out = -1;
 
     for (;;) {
         /* If already queued, the DPC lives on dpc->queued_cpu (resolved from
@@ -242,15 +249,35 @@ int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
 
         spin_unlock_irqrestore(DPC_QLOCK(cpu_id), irq_flags);
 
-        /* Log the depth warning AFTER releasing the lock: klog does serial I/O
-         * (busy-waits on UART under its own lock) which must never run while
-         * holding the queue spinlock with interrupts disabled. */
-        if (warn_depth)
-            klog(LOG_WARN, "dpc",
-                 "CPU %u DPC queue depth reached %u (possible starvation)",
-                 (uint64_t)cpu_id, (uint64_t)DPC_QUEUE_WARN_DEPTH);
+        /* Report (do NOT log) the depth warning so the caller can klog AFTER
+         * dropping any spinlock it holds. klog does serial I/O (busy-waits on
+         * UART under its own lock) which must never run while a queue/timer
+         * spinlock is held with interrupts disabled. */
+        if (warn_depth && warn_cpu_out)
+            *warn_cpu_out = (int)cpu_id;
         return 1;
     }
+}
+
+/* Queue a DPC, logging a depth warning inline (the common path). */
+int KeInsertQueueDpc(KDPC *dpc, void *arg1, void *arg2)
+{
+    int warn_cpu = -1;
+    int r = dpc_insert_core(dpc, arg1, arg2, &warn_cpu);
+    if (warn_cpu >= 0)
+        klog(LOG_WARN, "dpc",
+             "CPU %u DPC queue depth reached %u (possible starvation)",
+             (uint64_t)(uint32_t)warn_cpu, (uint64_t)DPC_QUEUE_WARN_DEPTH);
+    return r;
+}
+
+/* Queue a DPC WITHOUT logging: if the warn depth is hit, *warn_cpu_out is set
+ * to the CPU id (else -1) so a caller holding a spinlock can defer the klog
+ * until after it unlocks. Used by ktimer_expire_current_cpu under the ktimer
+ * lock. Same return value as KeInsertQueueDpc (1 newly queued, 0 already). */
+int KeInsertQueueDpcEx(KDPC *dpc, void *arg1, void *arg2, int *warn_cpu_out)
+{
+    return dpc_insert_core(dpc, arg1, arg2, warn_cpu_out);
 }
 
 /* ---- KeRemoveQueueDpc ---------------------------------------------------- */

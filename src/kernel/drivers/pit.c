@@ -89,13 +89,16 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
     extern uint32_t dpc_drain_current_cpu(void);
     extern void kusd_update_time(void);
     extern void nt_timer_tick(void);
+    extern uint32_t ktimer_expire_current_cpu(void);
     /* Same post-tick order as lapic_timer_handler(): tick + callback,
      * EOI, KUSD time for user readers, NT timer scan (sees fresh KUSD),
-     * DPC drain, then schedule. Keep the two paths in lockstep. */
+     * kernel_timer_t expiry (queues due DPCs), DPC drain, then schedule.
+     * Keep the two paths in lockstep. */
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
     kusd_update_time();
     nt_timer_tick();
+    ktimer_expire_current_cpu();
     dpc_drain_current_cpu();
     return schedule(frame);
 }
