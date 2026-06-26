@@ -336,6 +336,19 @@ static void test_dpc_init_fields(void)
     TEST_ASSERT_EQ((uint64_t)dpc.threaded, 0u, "not threaded by default");
 }
 
+/* Test: KeInitializeThreadedDpc sets threaded=1 and otherwise matches the
+ * KeInitializeDpc field defaults. */
+static void test_dpc_init_threaded(void)
+{
+    KDPC dpc;
+    KeInitializeThreadedDpc(&dpc, dpc_noop_routine, (void *)0x55);
+    TEST_ASSERT_EQ((uint64_t)dpc.threaded, 1u, "KeInitializeThreadedDpc sets threaded=1");
+    TEST_ASSERT_EQ((uint64_t)dpc.queued, 0u, "threaded DPC not queued initially");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)dpc.deferred_ctx, 0x55u, "context stored");
+    TEST_ASSERT_EQ((uint64_t)(uintptr_t)dpc.routine,
+                   (uint64_t)(uintptr_t)dpc_noop_routine, "routine stored");
+}
+
 /* Test: insert/remove return codes, depth accounting, and queued_cpu binding.
  * Runs at HIGH_LEVEL to block this CPU's timer-tick DPC drain so the live
  * per-CPU queue state is observed deterministically (per-CPU queue: no other
@@ -447,6 +460,8 @@ void test_register_sched(void)
 {
     test_suite_register_cat("Sched: DPC init fields",
                             test_dpc_init_fields, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeInitializeThreadedDpc sets threaded",
+                            test_dpc_init_threaded, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC drain executes at DISPATCH_LEVEL",
                             test_dpc_drain_executes, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: KeFlushQueuedDpcs runs callback at DISPATCH",

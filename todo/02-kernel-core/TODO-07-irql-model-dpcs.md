@@ -267,6 +267,18 @@ Threaded DPCs run at `PASSIVE_LEVEL` in a dedicated per-CPU kernel thread, allow
 
 **Test checkpoint:** `KeInitializeThreadedDpc` + `KeInsertQueueDpc` → callback fires with `KeGetCurrentIrql() == PASSIVE_LEVEL`. Threaded DPC can acquire a mutex without deadlock. Regular DPC queued during threaded DPC execution preempts it. Serial: `"dpc: threaded DPC thread started on CPU N"` during init.
 
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 62 kernel + 16 user-mode PASS (TCG)
+> **Notes:**
+> - Threaded DPC baseline: `KeInitializeThreadedDpc` (`threaded=1`), `drain_queue` moves threaded DPCs to `threaded_head[]`, the single all-CPU `dpc_thread_fn` worker drains them at PASSIVE, `dpc_start_threads` wires it into Phase 3.
+> - Review-pass: `dpc_start_threads` now checks `task_create`'s return + logs an error on failure (was a silent sink); the `KDEFERRED_ROUTINE` doc now states threaded DPCs run at PASSIVE.
+> - Tests: `test_dpc_init_threaded` asserts `KeInitializeThreadedDpc` sets `threaded=1`; the behavioral PASSIVE-execution + handoff stress test is deferred with the §15 sync redesign.
+> - Canonical: `src/kernel/sched/dpc.c`.
+> **Verified:** 2026-06-26 | commit `STAMPHASH8` | 5/5 items | build OK | tests 62 kernel + 16 user PASS
+> **Deferred:** [H] `dpc_thread_fn` yield-spins when idle + drains a CPU's threaded list unbounded (self-rearming DPC monopolizes the single worker) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Worker idle wakeup + drain budget" at line 392)
+> **Deferred:** [M] threaded `threaded_head`/`threaded_pending` lost-wakeup (clear-after-drain) + cache-line false sharing -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Fold pending into the atomic handoff" at line 393)
+> **Deferred:** [M] threaded callbacks run on the BSP worker, not the queuing CPU (no per-CPU affinity) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §17 (item: "Option B: Document that threaded DPCs have no CPU affinity guarantee" at line 422)
+> **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: task_create return-check + doc + test, no locking/lifecycle change)
+
 ---
 
 ## 9. Timer-DPC Association
@@ -389,6 +401,8 @@ The APC delivery engine runs at defined IRQL transition points -- on return from
 - [ ] Alternative: protect `threaded_head[]` with per-CPU spinlock (same as `queue_locks[]`)
 - [ ] Verify: stress test with concurrent threaded DPC insertions from multiple ISRs on different CPUs
 - [ ] Threaded-DPC pending state (H, double-owner): `drain_queue` clears `queued` + drops the lock before prepending to `threaded_head`; a re-insert in that gap double-owns the KDPC. Hold a pending state until the worker completes (Codex §4 re-adv)
+- [ ] Worker idle wakeup + drain budget (H): `dpc_thread_fn` yield-spins idle (background CPU burn) and drains a CPU list unbounded (self-rearming DPC monopolizes the worker). Block on a producer-signaled event + per-CPU batch budget (Codex §8)
+- [ ] Fold pending into the atomic handoff: clear `threaded_pending` in the same atomic snapshot that empties the list (clear-after-drain races a producer set -> stranded node) + pad `threaded_head`/`threaded_pending` to per-CPU lines (Codex §8)
 - [ ] Commit: `"kernel: fix threaded DPC list race -- atomic handoff between ISR and worker"`
 
 **Test checkpoint:** Run with 2+ CPUs, fire threaded DPCs from both LAPIC and PIT ISRs simultaneously. No lost callbacks, no list corruption. Serial log shows all threaded DPC completions.

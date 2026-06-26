@@ -365,7 +365,14 @@ void dpc_start_threads(void)
      * requirement). If per-CPU workers are needed later, use IPI to
      * create tasks on each AP. */
     extern int task_create(void (*entry)(void), const char *name);
-    task_create(dpc_thread_fn, "dpc_thread");
+    int tid = task_create(dpc_thread_fn, "dpc_thread");
+    if (tid < 0) {
+        /* No worker means threaded DPCs queued by drain_queue would never run.
+         * Surface the degraded mode instead of logging a false success. */
+        klog(LOG_ERROR, "dpc",
+             "threaded DPC worker creation FAILED -- threaded DPCs will NOT run");
+        return;
+    }
     klog(LOG_INFO, "dpc", "Threaded DPC worker started (all-CPU drain)");
 }
 

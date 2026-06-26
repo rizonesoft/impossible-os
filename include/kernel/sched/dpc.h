@@ -36,7 +36,10 @@ typedef enum {
 struct _KDPC;
 
 /* DPC routine callback.
- * Called at DISPATCH_LEVEL with interrupts enabled.
+ * IRQL: a NORMAL DPC (KeInitializeDpc) runs at DISPATCH_LEVEL with interrupts
+ * enabled; a THREADED DPC (KeInitializeThreadedDpc) uses the SAME signature but
+ * runs at PASSIVE_LEVEL in the DPC worker thread (so it may block/page/take
+ * mutexes). Do not assume DISPATCH_LEVEL in a threaded DPC routine.
  *   dpc:      the KDPC object (for self-referencing patterns)
  *   context:  deferred context set at KeInitializeDpc time
  *   arg1/arg2: per-invocation arguments from KeInsertQueueDpc */
