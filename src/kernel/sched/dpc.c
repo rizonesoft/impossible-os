@@ -457,11 +457,17 @@ void KeFlushQueuedDpcs(void)
     uint32_t cpu;
     uint32_t max_cpus = smp_cpu_count();
 
-    /* Drain our own queue directly */
+    /* Drain our own queue at DISPATCH_LEVEL via KiDispatchDpc (which raises to
+     * DISPATCH, drains one batch, lowers). DPC callbacks must run at
+     * DISPATCH_LEVEL, not the flush caller's (PASSIVE) level. A bounded single
+     * batch deliberately avoids spinning forever on a DPC that re-arms itself
+     * during the flush (NT flushes DPCs queued at call time, not "drain until
+     * empty"). The full drain-all + in-flight completion barrier is tracked as
+     * the DPC-targeting section's KeFlushQueuedDpcs completion-barrier item. */
     {
         struct per_cpu_data *me = smp_this_cpu();
         if (me && me->cpu_id < MAX_CPUS)
-            drain_queue(me->cpu_id);
+            KiDispatchDpc();
     }
 
     /* Spin-wait for other CPUs to finish their queues

@@ -401,11 +401,56 @@ static void test_dpc_high_importance_head(void)
                    "HighImportance DPC head-inserted ahead of queued Medium");
 }
 
+/* DPC drain callback: records that it ran and at what IRQL. */
+static volatile int      g_dpc_drain_ran;
+static volatile uint32_t g_dpc_drain_irql;
+static void dpc_drain_routine(struct _KDPC *dpc, void *ctx, void *a1, void *a2)
+{
+    (void)dpc; (void)ctx; (void)a1; (void)a2;
+    g_dpc_drain_irql = (uint32_t)KeGetCurrentIrql();
+    g_dpc_drain_ran  = 1;
+}
+
+/* Test: KiDispatchDpc drains the queue and runs the callback at DISPATCH_LEVEL. */
+static void test_dpc_drain_executes(void)
+{
+    KDPC dpc;
+    g_dpc_drain_ran  = 0;
+    g_dpc_drain_irql = 0xFF;
+    KeInitializeDpc(&dpc, dpc_drain_routine, (void *)0);
+    KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    /* Drain synchronously. (If a timer tick drained it first the callback has
+     * already run -- either way it executes exactly once at DISPATCH_LEVEL.) */
+    KiDispatchDpc();
+    TEST_ASSERT_EQ((uint64_t)g_dpc_drain_ran, 1u, "DPC callback executed by drain");
+    TEST_ASSERT_EQ((uint64_t)g_dpc_drain_irql, (uint64_t)DISPATCH_LEVEL,
+                   "DPC callback ran at DISPATCH_LEVEL");
+}
+
+/* Test: KeFlushQueuedDpcs (PASSIVE_LEVEL caller) runs the DPC callback at
+ * DISPATCH_LEVEL, not the caller's level. */
+static void test_dpc_flush_runs_at_dispatch(void)
+{
+    KDPC dpc;
+    g_dpc_drain_ran  = 0;
+    g_dpc_drain_irql = 0xFF;
+    KeInitializeDpc(&dpc, dpc_drain_routine, (void *)0);
+    KeInsertQueueDpc(&dpc, (void *)0, (void *)0);
+    KeFlushQueuedDpcs();   /* called from PASSIVE_LEVEL */
+    TEST_ASSERT_EQ((uint64_t)g_dpc_drain_ran, 1u, "KeFlushQueuedDpcs ran the DPC callback");
+    TEST_ASSERT_EQ((uint64_t)g_dpc_drain_irql, (uint64_t)DISPATCH_LEVEL,
+                   "flush ran the callback at DISPATCH_LEVEL");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
     test_suite_register_cat("Sched: DPC init fields",
                             test_dpc_init_fields, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: DPC drain executes at DISPATCH_LEVEL",
+                            test_dpc_drain_executes, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: KeFlushQueuedDpcs runs callback at DISPATCH",
+                            test_dpc_flush_runs_at_dispatch, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC insert/remove + queued_cpu",
                             test_dpc_insert_remove, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: DPC HighImportance head-insert",

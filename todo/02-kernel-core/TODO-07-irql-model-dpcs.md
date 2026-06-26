@@ -187,6 +187,18 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 **Test checkpoint:** After `KeInsertQueueDpc` + manual `KiDispatchDpc()`, DPC callback fires. `KeGetCurrentIrql()` inside callback returns `DISPATCH_LEVEL`. Callback sets a flag; flag is set after `KiDispatchDpc()` returns. Queue depth returns to 0 after drain. Executed count increments by 1. Serial: `"dpc: dispatched N DPCs on CPU M"`.
 
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 58 kernel + 16 user-mode PASS (TCG)
+> **Notes:**
+> - DPC drain: `KiDispatchDpc` raises to DISPATCH_LEVEL, `drain_queue` dequeues one batch (`DPC_BATCH_LIMIT`=32) under the per-CPU lock and runs non-threaded callbacks at DISPATCH after unlock; `dpc_drain_current_cpu` is the timer-ISR drain.
+> - Review-pass fix: `KeFlushQueuedDpcs` local drain now routes through `KiDispatchDpc` so callbacks run at DISPATCH_LEVEL (was the flush caller's PASSIVE); a bounded single batch avoids spinning forever on a DPC that re-arms itself during the flush.
+> - Diagnostics: `q->executed`/`depth` updated under the lock; `KiDispatchDpc` logs "dispatched N DPCs".
+> - Tests: `test_sched.c` asserts both the `KiDispatchDpc` drain and the `KeFlushQueuedDpcs`-from-PASSIVE callbacks run at DISPATCH_LEVEL.
+> - Canonical: `src/kernel/sched/dpc.c`.
+> **Verified:** 2026-06-26 | commit `STAMPHASH5` | 6/6 items | build OK | tests 58 kernel + 16 user PASS
+> **Deferred:** [H] `KeFlushQueuedDpcs` `head==NULL` poll can return while a remote callback is still in-flight (no in-flight tracking; silent 100000-spin timeout) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "`KeFlushQueuedDpcs` completion barrier" at line 221)
+> **Deferred:** [H] threaded-DPC `drain_queue` hand-off races the worker on `threaded_head` and re-insert -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 365)
+> **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H fixed, 2H deferred | scope: kernel-code-quality
+
 ---
 
 ## 6. Timer/APIC Scheduling Path for DPC Dispatch
@@ -218,6 +230,7 @@ Control which CPU a DPC runs on, how urgently it executes, and provide a synchro
 - [x] `KeSetTargetProcessorDpcEx` (>64 CPU): moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5`
 - [x] Cross-CPU IPI for MediumHighImportance: moved to `16-architecture-ports/TODO-03-smp-scaling-processor-groups.md §5` (part of DpcEx)
 - [ ] Cacheline-align per-CPU DPC storage: `cpu_queues[]`/`queue_locks[]` in `dpc.c` pack several CPUs per cache line, false-sharing the ISR-hot insert/drain path; pad each per-CPU queue + lock to its own line + a layout assert (Codex §4 perf M)
+- [ ] `KeFlushQueuedDpcs` completion barrier (H): `head==NULL` polling returns while a remote callback is still in-flight (`drain_queue` dequeues before running it); track a per-CPU in-flight count + escalate the silent 100000-spin timeout (Codex §5)
 - [x] Commit: `"kernel: sched -- add DPC targeting, importance, and flush"`
 
 **Test checkpoint:** `KeSetTargetProcessorDpc` to CPU 1 + `KeInsertQueueDpc` from CPU 0 → DPC callback fires on CPU 1 (check `smp_this_cpu()` in callback). `HighImportance` DPC runs before `LowImportance` DPC queued earlier. `KeFlushQueuedDpcs` returns only after callback completes. Verify on QEMU WHPX SMP (2+ vCPUs), TCG, bare metal -- IPI delivery for cross-CPU DPC targeting differs across platforms.
