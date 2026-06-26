@@ -179,7 +179,7 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 - [x] `ExInitialize/Allocate/Free/DeleteNPagedLookasideList`: cache hit/free are SLIST-only (DISPATCH/SMP-safe); a nonpaged miss above APC_LEVEL returns NULL rather than touch the unsynchronized heap.
 - [x] Paged variant (`PAGED_LOOKASIDE_LIST` + `ExInitialize/Allocate/Free/DeletePagedLookasideList`): all ops legal only at <= APC_LEVEL; a DISPATCH_LEVEL caller is rejected (NULL/no-op; IRQL bugcheck in verifier mode).
 - [x] Unified `LOOKASIDE_LIST_EX` (`ExInitialize/Allocate/Free/Flush/DeleteLookasideListEx`): paged-or-nonpaged, optional custom alloc/free pair + `ctx`; bad args return non-zero; flush keeps the list usable.
-- [x] Backing: cold-path kmalloc/kfree only at <= APC_LEVEL under a global exec-pool spinlock; verifier poisons freed bodies. Tagged-pool retrofit -> XREF: 03-memory-concurrency/TODO-03 §6 (item: "Migrate lookaside backing to tagged pool").
+- [x] Backing: cold-path kmalloc/kfree only at <= APC_LEVEL (never DISPATCH); inherits the unsynchronized heap; verifier poisons freed bodies. Retrofit -> XREF: 03-memory-concurrency/TODO-03 §6 (item: "Migrate lookaside backing to tagged pool").
 - [/] Consumers (registry notification records, ALPC messages, OB namespace entries, klog drain buffers): API is consumer-ready; adoption owned by each consuming subsystem, not a §5 deliverable.
 - [x] Commit: `"kernel: ex -- lookaside lists (npaged/paged/ex)"`
 
@@ -188,10 +188,14 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 > **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 8 lookaside suites, 0 failures
 > **Notes:**
 > - What shipped: `src/kernel/ex/ex_lookaside.c` (NPaged/Paged/Ex lookaside over a shared `EX_LOOKASIDE` control block) + types/decls in `ex.h`; 8 lookaside suites added to `test_ex.c`.
-> - How it integrates: hot paths are the §2 interlocked SLIST (lock-free, DISPATCH/SMP-safe); the cold backing (grow/drain) calls kmalloc/kfree only at <= APC_LEVEL under one global executive-pool spinlock.
+> - How it integrates: hot paths are the §2 interlocked SLIST (lock-free, DISPATCH/SMP-safe); the cold backing (grow/drain) calls kmalloc/kfree only at <= APC_LEVEL (never DISPATCH) and inherits the unsynchronized kernel heap.
 > - Verifier seam: `ExpSetLookasideVerifier` + `ExpLookasideUafCount` poison/re-check freed bodies; broader verifier escalation owned by §14.
 > - Retrofit owed: kmalloc backing -> synchronized tagged pool when 03-memory-concurrency/TODO-03 §6 ships `ExAllocatePoolWithTag`; Codex design+adversarial+test-coverage adoptions in the commit message.
 > - Scope boundary: §5 owns the lookaside OBJECTS + backing discipline; consumers (registry/ALPC/OB/klog) adopt the API in their own sections; kernel-wide heap SMP-safety owned by 03-memory-concurrency/TODO-03.
+> **Verified:** 2026-06-26 | commit `e10b246a` | 5/6 items | build OK | tests 141 kernel + 16 user PASS
+> **Accepted:** [H] backing cold path races the globally-unsynchronized kernel heap across CPUs (reason: pre-existing kernel-wide condition) -> XREF: 03-memory-concurrency/TODO-03 §6 (item: "Migrate lookaside backing to tagged pool" at line 204)
+> **Accepted:** [H] custom-free-that-unmaps + delete/flush-while-in-use are caller concurrency contracts (reason: Windows-faithful; detection owned by verifier) -> XREF: 02-kernel-core/TODO-06 §14 (item: "Track ... lookaside misuse (... teardown-in-use + custom-free-unmap ...)" at line 197)
+> **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 2H+2M+2L fixed, 3H accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -303,7 +307,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 > Scoped Executive instrumentation, NOT a Driver Verifier / KASAN / lockdep replacement. Non-goals: full allocation poisoning, IRQL-misuse sweeps, lockdep-style global lock-order graphs, memory-lifetime/race detection. It checks the specific misuse modes of THIS layer's primitives at low cost; broader tooling is owned by D02 T31 (bulletproofing).
 
 - [ ] Add `EX_VERIFIER=1` boot/config flag.
-- [ ] Track callback leaks, rundown misuse, lookaside double-free, fast-ref alignment, push-lock/guarded-mutex acquire-outside-region, resource lock order, run-once misuse.
+- [ ] Track callback leaks, rundown misuse, lookaside misuse (double-free + teardown-in-use + custom-free-unmap, §5 contracts), fast-ref alignment, push-lock/guarded-mutex acquire-outside-region, resource lock order, run-once misuse.
 - [ ] Emit violations through TODO-27 and optionally bugcheck on fatal corruption.
 - [ ] Unit tests cover every primitive (§2-§13) under normal and verifier mode.
 - [ ] Commit: `"kernel: ex -- verifier hooks"`
@@ -366,4 +370,3 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 - [ ] Commit: `"kernel: ex -- executive support runtime complete"`
 
 **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 1 suite, 0 failures
-

@@ -89,3 +89,25 @@ static inline int spin_is_locked(const spinlock_t *s)
 {
     return __atomic_load_n(&s->flag, __ATOMIC_ACQUIRE) != 0;
 }
+
+/* ---------------------------------------------------------------------------
+ * local_irq_save / local_irq_restore -- local interrupt masking WITHOUT
+ * touching software IRQL (unlike spin_lock_irqsave, which also raises IRQL to
+ * DISPATCH_LEVEL).
+ *
+ * Use when code must exclude same-CPU interrupt reentry around a short critical
+ * region but must NOT raise IRQL -- e.g. guarding a non-reentrant heap call
+ * that is itself illegal at DISPATCH_LEVEL. Does NOT serialize across CPUs.
+ * ARCH: x86-64 -- will move to arch/ with the rest of the CPU primitives.
+ * ------------------------------------------------------------------------- */
+static inline uint64_t local_irq_save(void)
+{
+    uint64_t flags;
+    __asm__ volatile("pushfq\n\t popq %0\n\t cli" : "=r"(flags) :: "memory");
+    return flags;
+}
+
+static inline void local_irq_restore(uint64_t flags)
+{
+    __asm__ volatile("pushq %0\n\t popfq" :: "r"(flags) : "memory", "cc");
+}

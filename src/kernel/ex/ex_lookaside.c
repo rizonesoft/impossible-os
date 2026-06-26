@@ -22,16 +22,19 @@
 #include "kernel/ex.h"
 #include "kernel/mm/heap.h"          /* kmalloc / kfree */
 #include "libc/string.h"             /* memset */
-#include "kernel/sched/spinlock.h"
 #include "kernel/sched/irql.h"       /* KeGetCurrentIrql, APC_LEVEL */
+#include "kernel/sched/spinlock.h"   /* local_irq_save / local_irq_restore */
 #include "kernel/klog.h"
 #include "kernel/bugcheck.h"
 
-/* One global lock serializes the kmalloc/kfree backing churn of ALL lookaside
- * lists. It does not protect against non-lookaside kmalloc callers (the heap is
- * globally unsynchronized -- owned by the advanced-allocator); it bounds the
- * executive's own pool traffic and is only taken on the cold backing path. */
-static DEFINE_SPINLOCK(s_backing_lock);
+/* No backing-path spinlock: spin_lock_irqsave raises IRQL to DISPATCH_LEVEL,
+ * where kmalloc/kfree are illegal, and a lookaside-only lock cannot synchronize
+ * against unrelated (or ISR-context) kmalloc callers anyway. Instead the backing
+ * kmalloc/kfree run under a local interrupt mask (local_irq_save, no IRQL
+ * change) so a same-CPU ISR (e.g. a NIC RX handler that itself calls kmalloc)
+ * cannot reenter the non-reentrant heap mid-walk. CROSS-CPU heap races remain
+ * the pre-existing globally-unsynchronized-heap condition -- no worse than any
+ * other kmalloc consumer; both close with the synchronized tagged pool. */
 
 /* Verifier state (S14 owns the broader verifier; S5 exposes the seam). */
 static volatile bool s_verifier_on = false;
@@ -65,12 +68,11 @@ static void *backing_alloc(EX_LOOKASIDE *L)
 {
     if (L->alloc_fn)
         return L->alloc_fn(L->size, L->tag, L->ctx);   /* caller owns its locking */
-
-    uint64_t flags;
-    void *p;
-    spin_lock_irqsave(&s_backing_lock, &flags);
-    p = kmalloc(L->size);
-    spin_unlock_irqrestore(&s_backing_lock, flags);
+    /* Mask local interrupts (no IRQL change) so a same-CPU ISR-context kmalloc
+     * cannot reenter the non-reentrant heap during this walk. */
+    uint64_t flags = local_irq_save();
+    void *p = kmalloc(L->size);   /* entry-gated to <= APC_LEVEL by the callers */
+    local_irq_restore(flags);
     return p;
 }
 
@@ -80,10 +82,9 @@ static void backing_free(EX_LOOKASIDE *L, void *p)
         L->free_fn(p, L->ctx);
         return;
     }
-    uint64_t flags;
-    spin_lock_irqsave(&s_backing_lock, &flags);
-    kfree(p);
-    spin_unlock_irqrestore(&s_backing_lock, flags);
+    uint64_t flags = local_irq_save();
+    kfree(p);   /* entry-gated to <= APC_LEVEL by the callers */
+    local_irq_restore(flags);
 }
 
 /* ---- verifier poison helpers -------------------------------------------- */
@@ -134,11 +135,10 @@ static void *la_allocate(EX_LOOKASIDE *L)
              (uint64_t)KeGetCurrentIrql());
         if (verifier_on())
             KeBugCheckEx(BUGCHECK_IRQL_NOT_LESS_OR_EQUAL,
-                         (uint64_t)(uintptr_t)L, KeGetCurrentIrql(), APC_LEVEL, 5);
+                         (uint64_t)(uintptr_t)L, KeGetCurrentIrql(), APC_LEVEL,
+                         EX_LOOKASIDE_BUGCHECK_PAGED_IRQL);
         return (void *)0;
     }
-
-    __atomic_fetch_add(&L->total_allocs, 1ull, __ATOMIC_RELAXED);
 
     SLIST_ENTRY *e = ExInterlockedPopEntrySList(L->free_list);
     if (e) {
@@ -170,11 +170,10 @@ static void la_free(EX_LOOKASIDE *L, void *entry)
              (uint64_t)KeGetCurrentIrql());
         if (verifier_on())
             KeBugCheckEx(BUGCHECK_IRQL_NOT_LESS_OR_EQUAL,
-                         (uint64_t)(uintptr_t)L, KeGetCurrentIrql(), APC_LEVEL, 5);
+                         (uint64_t)(uintptr_t)L, KeGetCurrentIrql(), APC_LEVEL,
+                         EX_LOOKASIDE_BUGCHECK_PAGED_IRQL);
         return;   /* cannot safely touch paged storage here */
     }
-
-    __atomic_fetch_add(&L->total_frees, 1ull, __ATOMIC_RELAXED);
 
     if (verifier_on())
         poison_body(L, entry);
@@ -227,7 +226,15 @@ static int la_init(EX_LOOKASIDE *L, EX_LOOKASIDE_ALLOC alloc_fn,
         size = EX_LOOKASIDE_MIN_ALLOC;   /* entry must hold the SLIST link while cached */
     L->size      = size;
     L->tag       = tag;
-    L->max_depth = depth ? depth : (uint16_t)EX_LOOKASIDE_DEFAULT_DEPTH;
+    /* Clamp the cache cap: 0 -> default; anything at/above EX_LOOKASIDE_MAX_DEPTH
+     * (which is < SLIST_DEPTH_MAX) -> the cap, so the over-cap drain can never
+     * stall at the SLIST saturation point and turn the cache unbounded. */
+    if (depth == 0)
+        L->max_depth = (uint16_t)EX_LOOKASIDE_DEFAULT_DEPTH;
+    else if (depth > (uint16_t)EX_LOOKASIDE_MAX_DEPTH)
+        L->max_depth = (uint16_t)EX_LOOKASIDE_MAX_DEPTH;
+    else
+        L->max_depth = depth;
     L->paged     = paged;
     L->alloc_fn  = alloc_fn;
     L->free_fn   = free_fn;
@@ -249,6 +256,13 @@ static bool la_drain(EX_LOOKASIDE *L)
         klog(LOG_ERROR, "ex",
              "lookaside drain at IRQL %u (> APC_LEVEL); retry at <= APC_LEVEL",
              (uint64_t)KeGetCurrentIrql());
+        /* For a paged list this is the same illegal-paged-access contract that
+         * alloc/free bugcheck on in verifier mode; mirror it here so delete/
+         * flush misuse is caught uniformly rather than silently recovered. */
+        if (L->paged && verifier_on())
+            KeBugCheckEx(BUGCHECK_IRQL_NOT_LESS_OR_EQUAL,
+                         (uint64_t)(uintptr_t)L, KeGetCurrentIrql(), APC_LEVEL,
+                         EX_LOOKASIDE_BUGCHECK_PAGED_IRQL);
         return false;  /* cache untouched; do NOT invalidate */
     }
     SLIST_ENTRY *e;

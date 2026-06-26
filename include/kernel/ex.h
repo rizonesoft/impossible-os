@@ -261,9 +261,10 @@ uint32_t ExpEnumerateCallback(EX_CALLBACK_OBJECT *cb, void **out, uint32_t max);
  * (alloc-from-cache, free-to-cache) are the S2 interlocked SLIST and are fully
  * lock-free and DISPATCH/SMP-safe. The cold backing paths (grow on a cache
  * miss, drain an over-cap free) call the backing allocator (kmalloc by default)
- * ONLY at <= APC_LEVEL and serialize it under one global executive-pool
- * spinlock -- the kernel heap is itself unsynchronized today (-> retrofit to
- * the synchronized tagged pool ExAllocatePoolWithTag, owned by
+ * ONLY at <= APC_LEVEL -- never at DISPATCH_LEVEL, where kmalloc is illegal. The
+ * kernel heap is itself globally unsynchronized today, so the backing path is
+ * no more SMP-safe than any other kmalloc consumer (-> retrofit to the
+ * synchronized tagged pool ExAllocatePoolWithTag, owned by
  * 03-memory-concurrency/TODO-03 advanced-allocator). A nonpaged miss at
  * > APC_LEVEL returns NULL (a legal "lookaside empty" outcome) rather than
  * touch the heap unsafely; a paged op at > APC_LEVEL is rejected (paged memory
@@ -271,9 +272,21 @@ uint32_t ExpEnumerateCallback(EX_CALLBACK_OBJECT *cb, void **out, uint32_t max);
  *
  * SMP NOTE: the lock-free SLIST hot paths are fully SMP-safe. The kmalloc
  * backing is only as SMP-safe as the kernel heap, which is globally
- * unsynchronized today, so the executive-pool spinlock serializes lookaside
- * backing against itself but NOT against unrelated kmalloc callers -- that gap
- * closes when the synchronized tagged pool lands (advanced-allocator).
+ * unsynchronized today (no worse than any other kmalloc consumer) -- that gap
+ * closes when the synchronized tagged pool lands (advanced-allocator). Backing
+ * is never called above APC_LEVEL, so it never runs kmalloc at DISPATCH_LEVEL.
+ *
+ * CONCURRENCY CONTRACTS (match Windows interlocked-SLIST semantics):
+ *   - Reclaim: an over-cap drain frees a popped entry back to the backing
+ *     allocator while the list is live. A concurrent popper may still read that
+ *     entry's link word; the SLIST pop tolerates a stale read (its DCAS retries)
+ *     ONLY as long as the memory stays mapped. The default kmalloc backing
+ *     never unmaps, so this is safe. A custom LOOKASIDE_LIST_EX free_fn MUST
+ *     likewise keep freed storage mapped/stable while the list is concurrently
+ *     used (do not unmap or repurpose it), or must not be drained concurrently.
+ *   - Teardown: Delete/Flush are NOT serialized against in-flight allocate/free.
+ *     The caller must quiesce all users of a list before deleting it (and before
+ *     freeing the control block). Misuse detection is owned by the verifier.
  *
  * STORAGE: the embedded SLIST_HEADER needs 16-byte alignment for cmpxchg16b,
  * but kmalloc does not honor type alignment, so the control block carries an
@@ -283,13 +296,18 @@ uint32_t ExpEnumerateCallback(EX_CALLBACK_OBJECT *cb, void **out, uint32_t max);
  * ============================================================================ */
 
 #define EX_LOOKASIDE_DEFAULT_DEPTH  256u    /* default cache cap (entries) */
+#define EX_LOOKASIDE_MAX_DEPTH      4096u   /* cap: MUST stay < SLIST_DEPTH_MAX so trim never stalls at saturation */
 #define EX_LOOKASIDE_MIN_ALLOC      (sizeof(SLIST_ENTRY))  /* entry holds the link while cached */
 #define EX_LOOKASIDE_MAX_ALLOC      4096u   /* per-entry cap: bounds kmalloc + verifier scan, no (size+15) wrap */
 #define EX_LOOKASIDE_POISON_BYTE    0xA5u   /* verifier free-poison fill */
+#define EX_LOOKASIDE_BUGCHECK_PAGED_IRQL  5u  /* KeBugCheckEx p4: paged op above APC_LEVEL */
+
+_Static_assert(EX_LOOKASIDE_MAX_DEPTH < SLIST_DEPTH_MAX,
+               "lookaside depth cap must be below the SLIST saturation point or trim stalls");
 
 /* Custom backing allocator for LOOKASIDE_LIST_EX (NULL pair -> kmalloc/kfree).
- * The custom allocator owns its own SMP-safety; only the kmalloc fallback is
- * serialized by the executive-pool lock. */
+ * The custom allocator owns its own SMP-safety; the kmalloc fallback inherits
+ * the kernel heap's (currently unsynchronized) behavior. */
 typedef void *(*EX_LOOKASIDE_ALLOC)(size_t size, uint32_t tag, void *ctx);
 typedef void  (*EX_LOOKASIDE_FREE)(void *block, void *ctx);
 
@@ -305,13 +323,21 @@ typedef struct _EX_LOOKASIDE {
     EX_LOOKASIDE_ALLOC alloc_fn;      /* EX custom alloc (NULL -> kmalloc) */
     EX_LOOKASIDE_FREE  free_fn;       /* EX custom free  (NULL -> kfree)  */
     void              *ctx;           /* private context for the custom pair */
-    uint64_t           total_allocs;  /* atomic stat counters */
-    uint64_t           total_frees;
+    /* Atomic stat counters. Totals are derivable (allocs = alloc_hits +
+     * alloc_misses, frees = free_hits + free_drains), so they are NOT stored --
+     * one less RMW per hot-path op. */
     uint64_t           alloc_hits;    /* served from cache */
     uint64_t           alloc_misses;  /* served from backing */
     uint64_t           free_hits;     /* returned to cache */
     uint64_t           free_drains;   /* drained to backing (over cap) */
 } __attribute__((aligned(16))) EX_LOOKASIDE;
+
+/* The aligned SLIST_HEADER lives inside _slist_raw: aligning up costs <= 15
+ * bytes, then the header needs sizeof(SLIST_HEADER). Guard the over-provision
+ * so a future shrink of the buffer (or growth of SLIST_HEADER) fails the build
+ * instead of silently running free_list off the end of _slist_raw. */
+_Static_assert(sizeof(((EX_LOOKASIDE *)0)->_slist_raw) >= 15 + sizeof(SLIST_HEADER),
+               "_slist_raw too small to hold a 16-byte-aligned SLIST_HEADER");
 
 typedef struct _NPAGED_LOOKASIDE_LIST { EX_LOOKASIDE L; } NPAGED_LOOKASIDE_LIST;
 typedef struct _PAGED_LOOKASIDE_LIST  { EX_LOOKASIDE L; } PAGED_LOOKASIDE_LIST;

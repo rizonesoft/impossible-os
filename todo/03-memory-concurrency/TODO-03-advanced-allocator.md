@@ -201,7 +201,7 @@ Mirror `ExAllocatePoolWithTag` -- every allocation carries a 4-byte tag. Tag mis
 - [ ] `kfree_tag(ptr, tag)` -- verify tag matches; panic on mismatch with address + expected/actual tags
 - [ ] Define canonical tags: `PTAG_VFS 'VFS '`, `PTAG_TASK 'TASK'`, `PTAG_NET 'NET '`, `PTAG_REG 'REG '`, `PTAG_OB 'OBJ '`, `PTAG_SEC 'SEC '`
 - [ ] Pool tag tracking: per-tag count + total bytes (atomic counters)
-- [ ] Migrate lookaside backing to tagged pool: swap `backing_alloc`/`backing_free` in `ex_lookaside.c` to `kmalloc_tag`/`kfree_tag`, drop the interim global exec-pool spinlock -> XREF: 02-kernel-core/TODO-06 §5
+- [ ] Migrate lookaside backing to tagged pool: swap `backing_alloc`/`backing_free` in `ex_lookaside.c` to `kmalloc_tag`/`kfree_tag`, drop the interim local-IRQ mask once the pool is SMP+reentrancy-safe -> XREF: 02-kernel-core/TODO-06 §5
 - [ ] Commit: `"mm: tagged allocation -- kmalloc_tag/kfree_tag + pool tag mismatch panic"`
 
 **Test checkpoint:** `kfree_tag(ptr, wrong_tag)` -> kernel panics with tag-mismatch message. `/sys/pooltags` shows VFS and TASK tags after boot.

@@ -528,7 +528,6 @@ static void test_ex_lookaside_paged_free_rejects_dispatch(void)
 
     void *p = ExAllocateFromPagedLookasideList(&la);   /* PASSIVE: succeeds */
     TEST_ASSERT(p != (void *)0, "paged alloc at PASSIVE succeeds");
-    uint64_t frees_before = la.L.total_frees;
 
     KIRQL old;
     KeRaiseIrql(DISPATCH_LEVEL, &old);
@@ -536,7 +535,7 @@ static void test_ex_lookaside_paged_free_rejects_dispatch(void)
     KIRQL depth_at_dispatch = (KIRQL)ExQueryDepthSList(la.L.free_list);
     KeLowerIrql(old);
 
-    TEST_ASSERT_EQ(la.L.total_frees, frees_before,
+    TEST_ASSERT_EQ(la.L.free_hits + la.L.free_drains, 0ull,
                    "paged free at DISPATCH_LEVEL did not touch the list");
     TEST_ASSERT_EQ((uint64_t)depth_at_dispatch, 0ull,
                    "paged free at DISPATCH_LEVEL did not cache the entry");
@@ -586,6 +585,18 @@ static void test_ex_lookaside_ex_badargs_and_flush(void)
     TEST_ASSERT(p2 != (void *)0, "alloc succeeds after flush");
     ExFreeToLookasideListEx(&la, p2);
     ExDeleteLookasideListEx(&la);
+}
+
+static void test_ex_lookaside_depth_clamp(void)
+{
+    /* A depth at/above the SLIST saturation point would disable trimming
+     * (depth field saturates at SLIST_DEPTH_MAX, so `depth > max_depth` could
+     * never become true). Init must clamp it below saturation. */
+    NPAGED_LOOKASIDE_LIST la;
+    ExInitializeNPagedLookasideList(&la, 64, 0x504D4C43u /* 'CLMP' */, SLIST_DEPTH_MAX);
+    TEST_ASSERT_EQ((uint64_t)la.L.max_depth, (uint64_t)EX_LOOKASIDE_MAX_DEPTH,
+                   "oversized depth clamped below SLIST saturation");
+    ExDeleteNPagedLookasideList(&la);
 }
 
 static void test_ex_lookaside_failed_init_inert(void)
@@ -706,6 +717,8 @@ void test_register_ex(void)
                             test_ex_lookaside_paged_free_rejects_dispatch, TEST_CAT_EX);
     test_suite_register_cat("ex: lookaside EX bad-args + flush keeps usable",
                             test_ex_lookaside_ex_badargs_and_flush, TEST_CAT_EX);
+    test_suite_register_cat("ex: lookaside depth clamp below saturation",
+                            test_ex_lookaside_depth_clamp, TEST_CAT_EX);
     test_suite_register_cat("ex: lookaside failed init leaves inert",
                             test_ex_lookaside_failed_init_inert, TEST_CAT_EX);
     test_suite_register_cat("ex: lookaside delete at DISPATCH recovers",
