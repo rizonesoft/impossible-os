@@ -14,7 +14,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > **Goal:** Implement a Windows-style Interrupt Request Level (IRQL) model and a real Deferred Procedure Call (DPC) subsystem so interrupt handlers can defer non-trivial work safely. DPCs run at `DISPATCH_LEVEL`, enforce preemption constraints, and provide a deterministic bridge between hard-interrupt context and thread context.
 
 > [!IMPORTANT]
-> **Current state:** Core IRQL and DPC infrastructure (§1-§8) is implemented and working: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. §1 is verified+stamped; §2 (redundant-TPR skip) and §3 (system-vector CLOCK/IPI levels) each carry one open review refinement and are `[/]`. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11-§14 APC delivery and diagnostics/fairness, and §15-§17 threaded-DPC correctness hardening from the Codex review findings.
+> **Current state:** Core IRQL and DPC infrastructure (§1-§8) is implemented and working: `KIRQL` exists, per-CPU IRQL tracking is enforced, interrupt entry/exit raises and lowers IRQL correctly, DPCs queue and drain at `DISPATCH_LEVEL`, CPU targeting and importance are implemented, and threaded DPC baseline support exists. §1 is verified+stamped and §2 shipped (redundant-TPR skip; review-stamp pending); §3 (system-vector CLOCK/IPI levels) carries one open review refinement and is `[/]`. Remaining: §9 timer-DPC association, §10 driver migration/workqueue contract split, §11-§14 APC delivery and diagnostics/fairness, and §15-§17 threaded-DPC correctness hardening from the Codex review findings.
 
 ## Inputs
 
@@ -53,7 +53,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | ⭐  | Order | Deliverable                                        | Depends On  | Status |
 | --- | :---: | -------------------------------------------------- | ----------- | :----: |
 | 💎  |   1   | `KIRQL` type, constants, and core contract         | --          |  [x]   |
-| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1          |  [/]   |
+| 💎  |   2   | Per-CPU IRQL tracking and transition primitives    | §1          |  [x]   |
 | 💎  |   3   | Interrupt entry/exit IRQL integration              | §2          |  [/]   |
 | 💎  |   4   | DPC object type and per-CPU queue                  | §2          |  [x]   |
 | 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`                 | §3, §4      |  [x]   |
@@ -94,10 +94,10 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Review fixed header-vs-impl contract drift: `irql.h` + `dpc.h` no longer promise DPC-drain-on-lower or strict-LIFO enforcement the impl does not provide; comments point to the real owners.
 > - Canonical contract: `include/kernel/sched/irql.h`.
 > **Verified:** 2026-06-26 | commit `e9318e14` | 5/5 items | build OK | tests 19 kernel + 16 user PASS
-> **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 99)
-> **Deferred:** [H] `irql.h` KeLowerIrql promised DPC drain-on-lower the impl never did; true NT drain-on-lower still unbuilt -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC drain-on-lower" at line 272)
-> **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 113)
-> **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "per-CPU IRQL transition stack" at line 290)
+> **Deferred:** [H] `KeRaiseIrql`/`KeLowerIrql` write the LAPIC TPR even when the byte is unchanged (PASSIVE<->APC both 0x00), taxing the spinlock hot path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §2 (item: "Skip redundant LAPIC TPR MMIO writes" at line 112)
+> **Deferred:** [H] `irql.h` KeLowerIrql promised DPC drain-on-lower the impl never did; true NT drain-on-lower still unbuilt -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §12 (item: "DPC drain-on-lower" at line 285)
+> **Deferred:** [M] `isr_handler` reports the LAPIC timer at DISPATCH and IPIs at HIGH instead of the named CLOCK_LEVEL/IPI_LEVEL -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §3 (item: "Report system vectors at named IRQLs" at line 126)
+> **Deferred:** [M] strict-LIFO raise/lower pairing documented but only the monotonic check is enforced -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §13 (item: "per-CPU IRQL transition stack" at line 303)
 > **Quality reviewed:** 2026-06-26 | Codex 3x (adversarial, consistency, perf) | 0 fixed in-scope, 2H+2M deferred | scope: kernel-code-quality (re-adversarial skipped: header doc + compile-assert only, no functional change)
 
 ---
@@ -109,10 +109,18 @@ title: "TODO-07 -- IRQL Model & DPCs"
 - [x] Implement `KeRaiseIrql()` with monotonic raise validation and debug assertions for illegal transitions.
 - [x] Implement `KeLowerIrql()` with strict restore checks (`old_irql <= current_irql`) and instrumentation.
 - [x] Ensure spinlock paths that currently `cli/sti` are aligned to IRQL semantics (`DISPATCH_LEVEL` or higher where required).
-- [ ] Skip redundant LAPIC TPR MMIO writes: cache last-written TPR per-CPU; `irql_set_tpr` writes only when the byte changes (PASSIVE<->APC both 0x00). Cuts UC MMIO on the spinlock hot path; keep `HIGH_LEVEL` cli/sti independent (Codex §1 perf H)
+- [x] Skip redundant LAPIC TPR MMIO writes: `KeRaiseIrql`/`KeLowerIrql` gate `irql_set_tpr` on `irql_to_tpr(new) != irql_to_tpr(prev)` (compute-based, no per-CPU cache; PASSIVE<->APC both 0x00 skip). HIGH_LEVEL cli/sti stays independent. `irql.c`
 - [x] Commit: `"kernel: sched -- track current IRQL per CPU and enforce transitions"`
 
 **Test checkpoint:** `KeGetCurrentIrql()` returns `PASSIVE_LEVEL` in normal thread context. `KeRaiseIrql(DISPATCH_LEVEL, &old)` reports `old == PASSIVE_LEVEL`; `KeLowerIrql(old)` restores `PASSIVE_LEVEL`. Illegal lower-on-raise and invalid restore-on-lower trigger diagnostics or assertions instead of silently proceeding. Verify on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | 37 kernel + 16 user-mode PASS (TCG)
+> **Notes:**
+> - Per-CPU IRQL tracking (`current_irql`), `KeGetCurrentIrql`/`KeRaiseIrql`/`KeLowerIrql` with monotonic raise + symmetric-lower validation, and LAPIC TPR programming live in `src/kernel/sched/irql.c`.
+> - Review-pass perf fix: `KeRaiseIrql`/`KeLowerIrql` skip the UC LAPIC TPR store when `irql_to_tpr` is unchanged across the transition (PASSIVE<->APC; CLOCK/IPI/POWER/HIGH share 0xFF); `HIGH_LEVEL` cli/sti stays independent.
+> - Skip is compute-based (compares mapped TPR values), relying on the invariant that the only TPR writers are this path plus two `lapic.c` init writes (both TPR=0=PASSIVE) -- no per-CPU cache or desync risk.
+> - Tests: `test_sched.c` pins `irql_to_tpr` band mapping, the skip precondition (PASSIVE==APC, CLOCK==IPI==HIGH), and `vector_to_irql` boundaries.
+> - Canonical: `src/kernel/sched/irql.c`; contract header `include/kernel/sched/irql.h` (§1).
 
 ---
 

@@ -87,11 +87,20 @@ void KeRaiseIrql(KIRQL new_irql, KIRQL *old_irql)
 
     /* Program LAPIC TPR to mask interrupts below the new level.
      * For HIGH_LEVEL, also disable interrupts via CLI as the
-     * ultimate barrier (TPR alone cannot mask NMI/SMI). */
+     * ultimate barrier (TPR alone cannot mask NMI/SMI). The CLI is
+     * independent of the TPR-skip below. */
     if (new_irql >= HIGH_LEVEL) {
         __asm__ volatile("cli" ::: "memory");
     }
-    irql_set_tpr(new_irql);
+
+    /* Skip the redundant LAPIC TPR write when the priority class is
+     * unchanged (e.g. PASSIVE<->APC both map to TPR 0x00, and CLOCK/IPI/
+     * POWER/HIGH all map to 0xFF). The hardware TPR mirrors
+     * irql_to_tpr(current_irql): the only TPR writers are this transition
+     * path and the two PASSIVE-equivalent (TPR=0) LAPIC init writes, so a
+     * same-value store would be a pure UC-MMIO tax on the spinlock hot path. */
+    if (irql_to_tpr(new_irql) != irql_to_tpr(prev))
+        irql_set_tpr(new_irql);
 }
 
 /* ---- KeLowerIrql --------------------------------------------------------- */
@@ -113,11 +122,14 @@ void KeLowerIrql(KIRQL old_irql)
     /* Update per-CPU state */
     pcpu->current_irql = old_irql;
 
-    /* Reprogram LAPIC TPR for the restored level */
-    irql_set_tpr(old_irql);
+    /* Reprogram LAPIC TPR for the restored level, skipping the write when
+     * the priority class is unchanged (e.g. APC->PASSIVE both TPR 0x00).
+     * See KeRaiseIrql for the invariant that makes the skip safe. */
+    if (irql_to_tpr(old_irql) != irql_to_tpr(cur))
+        irql_set_tpr(old_irql);
 
     /* If we were at HIGH_LEVEL (cli), re-enable interrupts now that
-     * we've lowered below it. */
+     * we've lowered below it. Independent of the TPR-skip above. */
     if (cur >= HIGH_LEVEL && old_irql < HIGH_LEVEL) {
         __asm__ volatile("sti" ::: "memory");
     }

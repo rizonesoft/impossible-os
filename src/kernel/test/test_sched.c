@@ -7,6 +7,7 @@
 #include "kernel/test/test.h"
 #include "kernel/test/race_barrier.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/irql.h"
 #include "kernel/types.h"
 
 /* Shared flag set by test thread to prove it ran */
@@ -271,9 +272,54 @@ static void test_sched_race_barrier_init_clears_state(void)
                    "init leaves b_reached unsignalled");
 }
 
+/* Test: irql_to_tpr maps every IRQL band to the correct LAPIC TPR byte. */
+static void test_irql_to_tpr_mapping(void)
+{
+    TEST_ASSERT_EQ(irql_to_tpr(PASSIVE_LEVEL), 0x00u, "PASSIVE -> TPR 0x00");
+    TEST_ASSERT_EQ(irql_to_tpr(APC_LEVEL), 0x00u, "APC -> TPR 0x00");
+    TEST_ASSERT_EQ(irql_to_tpr(DISPATCH_LEVEL), 0x20u, "DISPATCH -> TPR 0x20");
+    TEST_ASSERT_EQ(irql_to_tpr(DIRQL_MIN), 0x20u, "DIRQL 3 -> TPR (3-1)<<4");
+    TEST_ASSERT_EQ(irql_to_tpr((KIRQL)5), 0x40u, "DIRQL 5 -> TPR 0x40");
+    TEST_ASSERT_EQ(irql_to_tpr(DIRQL_MAX), 0xD0u, "DIRQL 14 -> TPR 0xD0");
+    TEST_ASSERT_EQ(irql_to_tpr(CLOCK_LEVEL), 0xFFu, "CLOCK -> TPR 0xFF");
+    TEST_ASSERT_EQ(irql_to_tpr(HIGH_LEVEL), 0xFFu, "HIGH -> TPR 0xFF");
+}
+
+/* Test: the redundant-TPR-write skip (KeRaiseIrql/KeLowerIrql) relies on
+ * adjacent IRQLs sharing a TPR class. Pin those collapses so the skip stays
+ * correct if the TPR mapping is ever changed. */
+static void test_irql_tpr_skip_invariant(void)
+{
+    TEST_ASSERT_EQ(irql_to_tpr(PASSIVE_LEVEL), irql_to_tpr(APC_LEVEL),
+                   "PASSIVE and APC must share a TPR (skip precondition)");
+    TEST_ASSERT_EQ(irql_to_tpr(CLOCK_LEVEL), irql_to_tpr(HIGH_LEVEL),
+                   "CLOCK and HIGH must share TPR 0xFF");
+    TEST_ASSERT_EQ(irql_to_tpr(IPI_LEVEL), irql_to_tpr(HIGH_LEVEL),
+                   "IPI and HIGH must share TPR 0xFF");
+}
+
+/* Test: vector_to_irql maps hardware vectors to the right IRQL at every band
+ * boundary (exception / ISA / device DIRQL / system). */
+static void test_vector_to_irql_boundaries(void)
+{
+    TEST_ASSERT_EQ(vector_to_irql(0x1F), PASSIVE_LEVEL, "exception 0x1F -> PASSIVE");
+    TEST_ASSERT_EQ(vector_to_irql(0x20), DISPATCH_LEVEL, "ISA 0x20 -> DISPATCH");
+    TEST_ASSERT_EQ(vector_to_irql(0x2F), DISPATCH_LEVEL, "ISA 0x2F -> DISPATCH");
+    TEST_ASSERT_EQ(vector_to_irql(0x30), DIRQL_MIN, "device 0x30 -> DIRQL 3");
+    TEST_ASSERT_EQ(vector_to_irql(0xEF), DIRQL_MAX, "device 0xEF -> DIRQL 14");
+    TEST_ASSERT_EQ(vector_to_irql(0xF0), HIGH_LEVEL, "system 0xF0 -> HIGH");
+    TEST_ASSERT_EQ(vector_to_irql(0xFF), HIGH_LEVEL, "spurious 0xFF -> HIGH");
+}
+
 /* Registration */
 void test_register_sched(void)
 {
+    test_suite_register_cat("Sched: irql_to_tpr band mapping",
+                            test_irql_to_tpr_mapping, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: irql TPR-skip invariant",
+                            test_irql_tpr_skip_invariant, TEST_CAT_SCHED);
+    test_suite_register_cat("Sched: vector_to_irql boundaries",
+                            test_vector_to_irql_boundaries, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: create thread",
                             test_sched_create_thread, TEST_CAT_SCHED);
     test_suite_register_cat("Sched: exec_pending state",
