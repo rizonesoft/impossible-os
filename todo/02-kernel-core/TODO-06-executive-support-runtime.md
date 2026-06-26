@@ -53,7 +53,7 @@ title: "TODO-06 -- Executive Support Runtime"
 | 💎 | 8 | Push locks | §1, T07 | [/] |
 | 💎 | 9 | Fast and guarded mutexes | §1, T07 | [/] |
 | 💎 | 10 | Executive resource wrapper | §1, T07, D03 T08 | [/] |
-| 💎 | 11 | Run-once initialization | §1 | [ ] |
+| 💎 | 11 | Run-once initialization | §1 | [/] |
 | ⭐ | 12 | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue | [ ] |
 | 💎 | 13 | Bugcheck reason callbacks | §3, T27 | [ ] |
 | ⭐ | 14 | Executive verifier hooks | §2..§13 | [ ] |
@@ -310,12 +310,19 @@ Exclusive-only fast mutexes (`FAST_MUTEX`, `KGUARDED_MUTEX`) for the common sing
 
 One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe ad-hoc "initialized" flags; distinct from the user-space `call_once` owned by D03 T08.
 
-- [ ] Define `RTL_RUN_ONCE` and implement `RtlRunOnceInitialize`, `RtlRunOnceExecuteOnce` (synchronous), `RtlRunOnceBeginInitialize`/`RtlRunOnceComplete` (asynchronous), IRQL <= APC_LEVEL.
-- [ ] Guarantee the init routine runs exactly once even under concurrent first-callers on multiple CPUs; losers wait for the winner's completion.
-- [ ] Support the failure path: a failed init lets the next caller retry (state returns to uninitialized).
+- [/] Define `RTL_RUN_ONCE` + `RtlRunOnceInitialize`/`ExecuteOnce` (sync)/`BeginInitialize`+`Complete` (async), IRQL <= APC_LEVEL. BLOCKED: the RUNNING-state loser-wait (sync AND async) needs a per-once address-keyed wait object (see Deferred stamp).
+- [/] Guarantee the init routine runs exactly once even under concurrent first-callers on multiple CPUs; losers wait for the winner's completion.
+- [/] Support the failure path: a failed init lets the next caller retry (state returns to uninitialized).
 - [ ] Commit: `"kernel: ex -- run-once initialization"`
 
 **Test checkpoint:** Concurrent `RtlRunOnceExecuteOnce` from N CPUs invokes the init routine exactly once and all callers observe the same context; a failing init routine leaves the once-block retryable (next caller re-runs it); async begin/complete serializes a single initializer. Verify on bare metal -- SMP first-caller race differs from VMs.
+
+> **Notes:**
+> - **Why deferred** -- the RUNNING-state loser-wait needs a per-once address-keyed wait object; a shared hash-bucket mutex held across init deadlocks on nested run-once and cannot model the async begin/complete handoff.
+> - **Blocked on** -- `03-memory-concurrency/TODO-08 §10` (keyed events -- per-once address-keyed wait) + `03-memory-concurrency/TODO-08 §11` (mutex/rwlock SMP backfill -- the loser wait queue).
+> - **Scope boundary** -- §11 owns the RTL_RUN_ONCE Ex-API + the lock-free state machine; the per-once blocking wait is owned by advanced-sync.
+
+> **Deferred:** [H] RTL_RUN_ONCE sync+async loser-wait needs a per-once address-keyed wait object -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtWaitForKeyedEvent" at line 254 -- the kernel keyed-event block keyed on the once address)
 
 ---
 
@@ -372,7 +379,7 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 | 💎 | Push locks                 | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU           | ⬜ §8 deferred (keyed events) |
 | 💎 | Fast/guarded mutexes       | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex               | ⬜ §9 deferred (per-thread APC) |
 | 💎 | Shared/exclusive resource  | ✅ ERESOURCE                        | ✅ rw_semaphore        | ⬜ §10 deferred (SMP rwlock) |
-| 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ Planned -- §11         |
+| 💎 | Run-once init              | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once    | ⬜ §11 deferred (keyed events) |
 | 💎 | Worker items + Ex timers   | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer   | ⬜ Planned -- §12         |
 | 💎 | Bugcheck reason callbacks  | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers     | ⬜ Planned -- §13         |
 | ⭐ | Scoped executive verifier  | ⚠️ Driver Verifier (heavy)         | ⚠️ KASAN/lockdep       | ⬜ Planned -- §14 scoped  |
