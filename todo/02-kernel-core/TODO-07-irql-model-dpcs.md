@@ -168,8 +168,8 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Caller precondition (NT contract, documented in `dpc.h`): a single KDPC must not be inserted concurrently from more than one CPU; sequential cross-CPU operations are safe.
 > - Canonical: `src/kernel/sched/dpc.c`; tests in `src/kernel/test/test_sched.c`.
 > **Verified:** 2026-06-26 | commit `7fefe6ab` | 5/5 items | build OK | tests 54 kernel + 16 user PASS
-> **Deferred:** [H] threaded-DPC handoff double-owns a re-inserted KDPC (`drain_queue` clears `queued` + drops the lock before the `threaded_head` prepend) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 351)
-> **Deferred:** [M] per-CPU DPC queue/lock storage false-shares the ISR-hot insert/drain path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "Cacheline-align per-CPU DPC storage" at line 207)
+> **Deferred:** [H] threaded-DPC handoff double-owns a re-inserted KDPC (`drain_queue` clears `queued` + drops the lock before the `threaded_head` prepend) -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 351) (RESOLVED 2026-06-26 by §15 commit `23d6b38a`: `drain_queue` hands the DPC to the threaded list under the SAME `DPC_QLOCK` keeping `queued=1`, so the KDPC is never un-owned.)
+> **Deferred:** [M] per-CPU DPC queue/lock storage false-shares the ISR-hot insert/drain path -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §7 (item: "Cacheline-align per-CPU DPC storage" at line 207) (RESOLVED 2026-06-26 by §7 commit `57da90ed`: `struct dpc_queue` padded + `aligned(64)`, per-CPU lock in a 64B `dpc_lock_slot`; `_Static_assert`s pin both to one cache line.)
 > **Quality reviewed:** 2026-06-26 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) | 4H+1L fixed, 1H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -194,7 +194,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 > - Tests: `test_sched.c` asserts both the `KiDispatchDpc` drain and the `KeFlushQueuedDpcs`-from-PASSIVE callbacks run at DISPATCH_LEVEL.
 > - Canonical: `src/kernel/sched/dpc.c`.
 > **Verified:** 2026-06-26 | commit `38b5b9f6` | 6/6 items | build OK | tests 58 kernel + 16 user PASS
-> **Deferred:** [H] threaded-DPC `drain_queue` hand-off races the worker on `threaded_head` and re-insert -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 365)
+> **Deferred:** [H] threaded-DPC `drain_queue` hand-off races the worker on `threaded_head` and re-insert -> XREF: 02-kernel-core/TODO-07-irql-model-dpcs.md §15 (item: "Threaded-DPC pending state" at line 365) (RESOLVED 2026-06-26 by §15 commit `23d6b38a`: the hand-off + worker pop are serialized under `DPC_QLOCK` with `queued=1` held across the two lists.)
 > **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H fixed, 2H deferred | scope: kernel-code-quality
 
 ---
