@@ -155,7 +155,7 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 > - Downstream: items 2-3 (AP TSC sync rendezvous + atomic-descriptor demotion + mono-wide floor) are a section-class SMP unit shared with the §18 watchdog -- deferred coherent. Codex adversarial adoption (RDTSCP AP-skew #UD) in the commit.
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §3 ships the ordered read; AP sync + demotion machinery is the deferred items (shared with §18); resume re-verify is power-management.
-> **Verified:** 2026-06-27 | commit `1f26a0be` | 7/10 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG)
+> **Verified:** 2026-06-27 | commit `13f02ffe` | 7/10 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG)
 > **Deferred:** [H] AP TSC sync rendezvous + atomic-descriptor demotion + mono-wide floor -- section-class SMP unit (design captured), shared with the watchdog -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "Atomic coherent demotion" at line 340)
 > **Deferred:** [M] resume TSC re-verify blocked on power-management S3 -> XREF: 02-kernel-core/TODO-26-power-management.md §3
 > **Quality reviewed:** 2026-06-27 | Codex 2x (design, adversarial) | 1H fixed (RDTSCP AP-skew gate), 2H+1M deferred | scope: kernel-code-quality
