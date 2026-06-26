@@ -836,11 +836,22 @@ void boot_phase2(void)
 
     /* --- Time subsystem: wall clock, timezone, KUSER_SHARED_DATA --- */
     {
+        extern int  hpet_init(void);
+        extern int  acpi_is_ready(void);
         extern void mono_clock_init(void);
         extern void wall_clock_init(void);
         extern void timezone_init(void);
         extern void kusd_init(void);
 
+        /* Probe HPET (UC-maps the counter via the ACPI HPET base) BEFORE
+         * mono_clock_init so the TSC > HPET > PMTMR > LAPIC selection can
+         * actually pick HPET when there is no invariant TSC. Gate on
+         * acpi_is_ready(): acpi_get_hpet_base() walks raw ACPI roots off the
+         * boot_info RSDP pointer alone, so on a failed acpi_init (bad RSDP /
+         * missing FADT) skipping the probe degrades cleanly to PMTMR/LAPIC
+         * instead of walking + mapping invalid firmware tables. */
+        if (acpi_is_ready())
+            hpet_init();
         mono_clock_init();
         wall_clock_init();
         timezone_init();

@@ -131,6 +131,11 @@ uint64_t hpet_ns(void)
     if (!s_available) return 0;
 
     ticks = hpet_rd64(HPET_COUNTER);
-    /* ns = ticks * period_fs / 1000000 (fs -> ns) */
-    return (ticks * s_period_fs) / 1000000ULL;
+    /* ns = ticks * period_fs / 1000000 (fs -> ns). The naive product
+     * ticks * period_fs overflows u64 after ~5 h of uptime (period_fs is up
+     * to 1e8) even though the ns result stays in range for centuries. Split
+     * the division like mono_clock's tick scaling: the quotient term carries
+     * the bulk, the remainder term ( < 1e6 * period_fs ) cannot overflow. */
+    return (ticks / 1000000ULL) * s_period_fs
+         + ((ticks % 1000000ULL) * s_period_fs) / 1000000ULL;
 }

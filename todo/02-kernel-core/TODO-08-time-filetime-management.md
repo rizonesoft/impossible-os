@@ -168,9 +168,23 @@ The HPET provides a single 64-bit main counter that increments at a fixed freque
 - [x] Created `include/kernel/drivers/hpet.h` + `src/kernel/drivers/hpet.c`: `hpet_init()`, `hpet_available()`, `hpet_frequency_hz()`, `hpet_read_counter()`, `hpet_ns()`
 - [x] Maps HPET MMIO as UC via `vmm_map_mmio_uc()`; reads `GCAP_ID` for period (fs/tick); computes frequency
 - [x] Enables main counter via `ENABLE_CNF` bit; validates probe read and period range
-- [x] Wired into `mono_clock_init()` as priority 2 (TSC > HPET > LAPIC) and `mono_ns()` switch
+- [x] Wired into `mono_clock_init()` priority 2 (TSC > HPET > PMTMR > LAPIC); `hpet_init()` is now CALLED in `boot_storage.c` before it (gated on `acpi_is_ready()`) -- the review found it was never invoked, so HPET was unreachable.
+- [x] `hpet_ns()` overflow-safe (review): split the `ticks * period_fs / 1e6` so the intermediate cannot overflow u64 (it did after ~5 h on the lifetime counter).
 - [x] No timer comparators -- main counter only (comparators for scheduler timer TODO)
 - [x] Commit: `"kernel: drivers -- HPET main counter driver"`
+
+**Test checkpoint:** Unit: existing `test_time.c` mono suites pass. Runtime (WHPX / bare metal serial): on a no-invariant-TSC box with an HPET, the boot log shows `hpet: HPET: N MHz ... counter enabled` then `Monotonic clock: HPET (N MHz)` (confirmed in smoke: HPET 100 MHz selected); `mono_ns()` advances monotonically for hours (no overflow). Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time + sched suites, 0 failures (208 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped earlier: `hpet.{c,h}` standalone driver (`hpet_init`/`hpet_available`/`hpet_frequency_hz`/`hpet_read_counter`/`hpet_ns`), UC-mapped via `vmm_map_mmio_uc`, period from `GCAP_ID`, `ENABLE_CNF`.
+> - Review fixes: `hpet_init()` is now actually called in `boot_storage.c` (gated on `acpi_is_ready()` so degraded ACPI falls through to PMTMR/LAPIC) -- it was dead before; `hpet_ns()` is overflow-safe (split division).
+> - Downstream: HPET is the QPC/mono fallback when no invariant TSC; the per-tick UC-MMIO cost in `kusd_update_time()` is accepted to §16 (coarse migration, now covers HPET + PMTMR).
+> - Canonical: `src/kernel/drivers/hpet.c`.
+> - Scope boundary: §4 owns the main-counter driver; HPET timer comparators (scheduler timer) are out of scope; coarse-read migration is §16.
+> **Verified:** 2026-06-27 | commit `b6dcafd5` | 6/6 items | build OK | 208 kernel + 16 user PASS | smoke PASS (HPET selected, TCG 2.5s)
+> **Accepted:** [H] HPET source does live UC-MMIO reads in the per-tick `kusd_update_time()` ISR path -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §16 (item: "Migrate `kusd_update_time()` ... to the coarse time variants" at line 186)
+> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial x2) | 2H+1M fixed, 1H accepted | scope: kernel-code-quality
 
 ---
 
@@ -323,7 +337,7 @@ Hot paths like klog timestamping, scheduler accounting, and network packet times
 
 - [ ] Implement `KeQuerySystemTimeCoarse(FILETIME *out)` -- returns the last ISR-cached SystemTime value (no TSC read, no seqlock)
 - [ ] Implement `KeQueryInterruptTimeCoarse()` -- returns the cached `g_interrupt_time` directly
-- [ ] Migrate `kusd_update_time()` (every timer tick) off precise `KeQueryInterruptTime`/`KeQuerySystemTime` to the coarse variants -- on PMTMR the precise path is 6 port reads/tick in the ISR (owns the §2 PMTMR per-tick ISR cost).
+- [ ] Migrate `kusd_update_time()` (every timer tick) to the coarse time variants -- the precise path does slow per-tick hardware reads in the ISR on PMTMR (port) + HPET (UC MMIO) (owns the §2/§4 per-tick ISR cost).
 - [ ] Update `klog()` to use `KeQuerySystemTimeCoarse()` for timestamps once the time service is ready
 - [ ] Migrate raw `system_get_ticks()` timestamp/window consumers to a rebased time source (`uptime_ns()` or the coarse API): `etw.c` event timestamps, `klog.c` boot/ratelimit stamps, `registry.c` header stamps, `wer.c` crash path, `virtio/blk_init.c`+`blk_telemetry.c` adaptive windows -- raw lifetime ticks are reinterpreted when `KeSetTimerResolution` changes the tick rate (filed from `01-boot-platform/TODO-11` §6 review; `uptime()` itself already migrated)
 - [ ] Commit: `"kernel: time -- coarse time fast path for hot-path callers"`
