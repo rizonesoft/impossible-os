@@ -600,7 +600,7 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 > - Downstream: distinct from threaded DPCs (§8, sub-ms); the long-period monitor primitive NT IoQueueWorkItem / Linux delayed_work fill.
 > - Canonical doc: `include/kernel/sched/kworker.h`.
 > - Scope boundary: §18 owns the primitive + Consumer 1. Consumer 2 (UEFI vars-health) and Consumer 3 (S3 resume re-prime) are deferred (cross-TODO / blocked).
-> **Verified:** 2026-06-26 | commit `TBD-backfill` | 9/11 items | build OK | 197 sched + 16 user tests, smoke PASSED
+> **Verified:** 2026-06-26 | commit `b93b6a77` | 9/11 items | build OK | 197 sched + 16 user tests, smoke PASSED
 > **Deferred:** [M] Consumer 2 -- UEFI variable-store health monitor (`uefi_runtime_refresh_vars_registry` + `uefi_vars_health_tick`, new) -> XREF: 01-boot-platform/TODO-02-uefi-hardening-secureboot.md §14 (UEFI vars registry)
 > **Deferred:** [M] Consumer 3 -- S3 resume re-prime (SecureBoot + vars registry after `pm_notify_resume`) -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (S3 suspend/resume -- not yet created)
 > **Quality reviewed:** 2026-06-26 | Codex 8x (design, adversarial, re-adversarial x4, consistency, perf) | 7H+4M fixed, 1M accepted (gen-wrap), 2M deferred | scope: kernel-code-quality
