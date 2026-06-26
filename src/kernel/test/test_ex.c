@@ -826,6 +826,107 @@ static void test_ex_fastref_compare_swap(void)
                 "ref is empty after swap to NULL");
 }
 
+/* SMP stress: hammer one EX_FAST_REF from FR_STRESS_THREADS kthreads doing
+ * balanced acquire/release, exercising the lock-free CAS retry paths (which the
+ * single-threaded tests above never reach) and proving reference conservation:
+ * no torn count, no lost update, no duplicated/leaked cached reference. Using
+ * MORE threads than EX_FAST_REF_MAX guarantees the cache occasionally empties,
+ * so the cnt==0 slow path fires too. Conservation model: the cache starts full
+ * (MAX cached refs); each cached acquire moves one ref into a worker's hand and
+ * its release returns it, so (cache + refs-in-hands) == MAX always holds. */
+#define FR_STRESS_THREADS   8u    /* > EX_FAST_REF_MAX (7) -> empties the cache */
+#define FR_STRESS_ITERS     20000u
+#define FR_STRESS_START_BUDGET 100000u
+
+static uint64_t           g_fr_stress_obj;       /* 8-aligned shared object */
+static EX_FAST_REF        g_fr_stress_ref;
+static volatile uint32_t  g_fr_started;
+static volatile uint32_t  g_fr_bad_object;       /* a torn/corrupt pointer seen */
+static volatile uint32_t  g_fr_overflow;         /* refs-in-hands exceeded MAX */
+static volatile uint32_t  g_fr_release_fail;     /* release saw saturation (bug) */
+static volatile int32_t   g_fr_held;             /* cached refs in worker hands */
+
+static void fr_stress_worker(void *arg)
+{
+    uint32_t i, spins = 0;
+    (void)arg;
+
+    __atomic_fetch_add(&g_fr_started, 1, __ATOMIC_ACQ_REL);
+    while (__atomic_load_n(&g_fr_started, __ATOMIC_ACQUIRE) < FR_STRESS_THREADS) {
+        if (++spins > FR_STRESS_START_BUDGET) break;
+        yield();
+    }
+
+    for (i = 0; i < FR_STRESS_ITERS; i++) {
+        EX_FAST_REF_RESULT r = ExAcquireFastReference(&g_fr_stress_ref);
+
+        /* The word must never expose anything but the one shared object (or
+         * NULL when drained) -- a torn count must not bleed into the pointer. */
+        if (r.object != (void *)0 && r.object != &g_fr_stress_obj) {
+            __atomic_store_n(&g_fr_bad_object, 1, __ATOMIC_RELEASE);
+            return;
+        }
+        if (r.cached) {
+            int32_t h = __atomic_add_fetch(&g_fr_held, 1, __ATOMIC_ACQ_REL);
+            if ((uintptr_t)h > EX_FAST_REF_MAX)
+                __atomic_store_n(&g_fr_overflow, 1, __ATOMIC_RELEASE);
+            /* Return the cached reference. Under conservation the cache can be
+             * at most MAX-1 while we hold one, so release must absorb it. */
+            if (!ExReleaseFastReference(&g_fr_stress_ref, &g_fr_stress_obj))
+                __atomic_store_n(&g_fr_release_fail, 1, __ATOMIC_RELEASE);
+            __atomic_sub_fetch(&g_fr_held, 1, __ATOMIC_ACQ_REL);
+        }
+        /* r.cached == false: the cache was momentarily empty (siblings hold all
+         * MAX refs) -- the slow path; nothing to account, just keep hammering. */
+    }
+}
+
+static void test_ex_fastref_smp_stress(void)
+{
+    uint32_t i, drained;
+    int tids[FR_STRESS_THREADS];
+    EX_FAST_REF_RESULT r;
+
+    ExInitializeFastReference(&g_fr_stress_ref, &g_fr_stress_obj);
+    /* Pre-fill the cache to MAX (the conserved reference pool). */
+    for (i = 0; i < EX_FAST_REF_MAX; i++)
+        TEST_ASSERT(ExReleaseFastReference(&g_fr_stress_ref, &g_fr_stress_obj),
+                    "stress setup fills the cache to MAX");
+    g_fr_started = 0;
+    g_fr_bad_object = 0;
+    g_fr_overflow = 0;
+    g_fr_release_fail = 0;
+    g_fr_held = 0;
+
+    for (i = 0; i < FR_STRESS_THREADS; i++)
+        tids[i] = kthread_create(fr_stress_worker, (void *)(uintptr_t)i, 0);
+    for (i = 0; i < FR_STRESS_THREADS; i++) {
+        TEST_ASSERT(tids[i] >= 0, "fastref stress kthread_create succeeds");
+        if (tids[i] >= 0)
+            thread_join((uint32_t)tids[i]);
+    }
+
+    TEST_ASSERT_EQ(g_fr_bad_object, 0u,
+                   "no torn/corrupt object pointer observed under contention");
+    TEST_ASSERT_EQ(g_fr_overflow, 0u,
+                   "refs-in-hands never exceeded MAX (no double hand-out)");
+    TEST_ASSERT_EQ(g_fr_release_fail, 0u,
+                   "release always absorbed (conservation held, no lost update)");
+    TEST_ASSERT_EQ((uint32_t)g_fr_held, 0u, "all cached refs returned to the ref");
+
+    /* Drain the final cache: it must hold exactly MAX again -- proving no cached
+     * reference was lost or duplicated across the whole concurrent run. */
+    drained = 0;
+    for (;;) {
+        r = ExAcquireFastReference(&g_fr_stress_ref);
+        if (!r.cached) break;
+        TEST_ASSERT(r.object == &g_fr_stress_obj, "drained ref is the shared object");
+        if (++drained > EX_FAST_REF_MAX + 4) break;   /* guard against a runaway */
+    }
+    TEST_ASSERT_EQ(drained, (uint32_t)EX_FAST_REF_MAX,
+                   "cache restored to exactly MAX (no leaked/duplicated refs)");
+}
+
 void test_register_ex(void)
 {
     test_suite_register_cat("ex: SLIST init/empty edges",
@@ -892,6 +993,8 @@ void test_register_ex(void)
                             test_ex_fastref_release_null_rejected, TEST_CAT_EX);
     test_suite_register_cat("ex: fastref compare-swap object identity",
                             test_ex_fastref_compare_swap, TEST_CAT_EX);
+    test_suite_register_cat("ex: fastref concurrent acquire/release (conservation)",
+                            test_ex_fastref_smp_stress, TEST_CAT_EX);
 }
 
 #endif /* KERNEL_TESTS */

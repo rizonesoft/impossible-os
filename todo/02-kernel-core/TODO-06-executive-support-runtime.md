@@ -204,18 +204,20 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 - [x] Implement `EX_FAST_REF`: pointer-sized atomic packing `(object & ~7) | count`, 3-bit cached count (`EX_FAST_REF_MAX=7`); `_Static_assert` + `ExpFastRefPack` bugcheck guard alignment/range. `src/kernel/ex/ex_fastref.c` + ex.h S6.
 - [x] Provide acquire (`ExAcquireFastReference` -> `{object, cached}`), release (`ExReleaseFastReference`), exchange (`ExCompareSwapFastReference`), get-object (`ExGetObjectFastReference`) helpers -- all lock-free `__atomic` CAS, arch-neutral.
 - [x] 3-bit count (max 7), not Windows' x64 4-bit/15: kmalloc only guarantees 8-byte object alignment so only 3 low bits are free (x86 Windows model). Ob ref/deref + replenish are caller-owned (see ex.h S6 CONTRACT).
-- [x] Tests: pack/unpack round-trip 0..MAX + NULL; empty cache -> slow path; saturation returns false (Ob-deref fallback); object-mismatch rejected; compare-swap identity + NULL clear. `test_ex_fastref_*`.
+- [x] Tests: pack/unpack round-trip 0..MAX + NULL; empty-cache acquire -> slow path; release saturation/mismatch/NULL rejected; compare-swap identity + NULL clear; 8-thread acquire/release conservation stress. `test_ex_fastref_*` (7 cases).
 - [x] Commit: `"kernel: ex -- fast references"`
 
-**Test checkpoint:** Pack/unpack round-trips an aligned object pointer with cached count intact; count saturation falls back to a full `ObReferenceObject`; alignment `_Static_assert`/runtime assert fires on a misaligned pointer.
+**Test checkpoint:** Pack/unpack round-trips an aligned object pointer with cached count intact; an empty-cache acquire returns the slow-path signal (`cached=false`, caller does `ObReferenceObjectSafe`) and a release at saturation returns false (caller does `ObDereferenceObject`); alignment `_Static_assert`/runtime assert fires on a misaligned pointer; an 8-thread (> MAX) acquire/release stress conserves the reference pool with no torn count.
 
 > **Test runner:** `scripts\debug\kernel\run-ex-tests.bat` (SUITE=ex) | 1 suite, 0 failures
 
 > **Notes:**
-> - **What shipped** -- `src/kernel/ex/ex_fastref.c` (pointer-sized `EX_FAST_REF`, lock-free inline-cached Ob reference; 3-bit count, max 7) + ex.h S6 block; 5 `test_ex_fastref_*` cases.
+> - **What shipped** -- `src/kernel/ex/ex_fastref.c` (pointer-sized `EX_FAST_REF`, lock-free inline-cached Ob reference; 3-bit count, max 7) + ex.h S6 block; 7 `test_ex_fastref_*` cases incl. an 8-thread conservation stress.
 > - **How it integrates** -- no global state, no init hook, no hidden allocation; every op is a single-word `__atomic` CAS. Caller owns the Ob ref/deref and replenish under its own lock; acquire/release booleans signal the fast/slow path.
 > - **Scope boundary** -- S6 owns only pointer/count packing + the lock-free cache mechanic; `ObReferenceObjectSafe`/`ObDereferenceObject` and replenish are the consuming subsystem's (no live consumer yet, like S4 callbacks).
 > - **Canonical doc** -- `include/kernel/ex.h` S6 header contract (ALIGNMENT + CONTRACT blocks).
+> **Verified:** 2026-06-26 | commit `27bf7ce1` | 4/4 items | build OK | tests 225/225 PASS
+> **Quality reviewed:** 2026-06-26 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+3M+1L fixed, 1M rejected | scope: kernel-code-quality
 
 ---
 

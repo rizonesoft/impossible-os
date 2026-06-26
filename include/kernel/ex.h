@@ -481,9 +481,11 @@ void ExInitializeFastReference(EX_FAST_REF *ref, void *object);
 /* Lock-free acquire. See CONTRACT above for the {object, cached} semantics. */
 EX_FAST_REF_RESULT ExAcquireFastReference(EX_FAST_REF *ref);
 
-/* Lock-free release of one reference on `object`. Returns true if absorbed into
- * the cache (do not deref); false if saturated or object mismatch (caller must
- * ObDereferenceObject the reference). */
+/* Lock-free release of one reference on `object`. true: absorbed into the cache
+ * (do NOT deref). false has two cases (see the full CONTRACT above): a non-NULL
+ * `object` that is saturated or mismatched -> caller MUST ObDereferenceObject
+ * it; a NULL `object` -> invalid input, no reference consumed, deref nothing.
+ * Correct pattern: `if (obj && !ExReleaseFastReference(ref, obj)) ObDeref(obj);` */
 bool ExReleaseFastReference(EX_FAST_REF *ref, void *object);
 
 /* Atomically replace the stored object with `new_object` (cached count reset to
@@ -492,7 +494,10 @@ bool ExReleaseFastReference(EX_FAST_REF *ref, void *object);
  * caller can balance (count + 1) references on the old object). On mismatch
  * returns false and leaves the ref unchanged. new_object may be NULL (clears the
  * ref); a non-NULL new_object is runtime-asserted aligned and the caller must
- * already hold 1 structural reference on it. */
+ * already hold 1 structural reference on it. `out_old_count` is MANDATORY when
+ * `old_object` is non-NULL (bugchecks if NULL) -- dropping the swapped-out count
+ * would leak the old object's cached references; it is optional only for a NULL
+ * `old_object` swap (comparing against an empty ref, nothing to balance). */
 bool ExCompareSwapFastReference(EX_FAST_REF *ref, void *new_object,
                                 void *old_object, uintptr_t *out_old_count);
 

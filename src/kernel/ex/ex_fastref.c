@@ -68,6 +68,18 @@ uintptr_t ExpFastRefUnpackCount(uintptr_t value)
     return value & EX_FAST_REF_MASK;
 }
 
+/* Unchecked re-pack for the lock-free hot paths: replace only the count field
+ * of an ALREADY-VALID packed word. Used in the acquire/release CAS loops where
+ * the object bits come straight from a live word (already aligned + non-NULL)
+ * and the new count is in range by construction (cnt-1 for cnt>0, cnt+1 for
+ * cnt<MAX). This deliberately skips ExpFastRefPack's bugcheck branches so the
+ * fast path is a minimal single-word CAS with no out-of-line call -- the
+ * boundary helpers (init/swap/public ExpFastRefPack) keep the validation. */
+static inline uintptr_t exp_fastref_recount(uintptr_t value, uintptr_t newcount)
+{
+    return (value & ~EX_FAST_REF_MASK) | newcount;
+}
+
 /* --- Lifecycle ------------------------------------------------------------ */
 
 void ExInitializeFastReference(EX_FAST_REF *ref, void *object)
@@ -114,7 +126,7 @@ EX_FAST_REF_RESULT ExAcquireFastReference(EX_FAST_REF *ref)
          * forcing a re-read. acquire/relaxed: success acquires (we now own a
          * reference); failure just reloads `cur`. */
         if (__atomic_compare_exchange_n(&ref->Value, &cur,
-                                        ExpFastRefPack(obj, cnt - 1), false,
+                                        exp_fastref_recount(cur, cnt - 1), false,
                                         __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
             result.object = obj;
             result.cached = true;
@@ -159,7 +171,7 @@ bool ExReleaseFastReference(EX_FAST_REF *ref, void *object)
         /* release: publish the returned reference so a subsequent acquirer that
          * reads it via acquire observes our store-backed reference. */
         if (__atomic_compare_exchange_n(&ref->Value, &cur,
-                                        ExpFastRefPack(obj, cnt + 1), false,
+                                        exp_fastref_recount(cur, cnt + 1), false,
                                         __ATOMIC_RELEASE, __ATOMIC_RELAXED))
             return true;
         /* CAS failed -- `cur` reloaded; retry. */
@@ -171,11 +183,30 @@ bool ExReleaseFastReference(EX_FAST_REF *ref, void *object)
 bool ExCompareSwapFastReference(EX_FAST_REF *ref, void *new_object,
                                 void *old_object, uintptr_t *out_old_count)
 {
+    uintptr_t desired;
+    uintptr_t cur;
+
+    /* Swapping OUT a real object hands the caller responsibility for balancing
+     * its (cached_count + 1) references -- so the swapped-out count MUST be
+     * observable, or those references leak and the object never deletes.
+     * Require out_old_count whenever old_object is non-NULL; bugcheck a NULL
+     * out-param rather than silently succeed and drop the accounting. (A NULL
+     * old_object swap compares against an empty ref -- there is no count to
+     * balance, so out_old_count stays optional for that case.) */
+    if (old_object && !out_old_count) {
+        klog(LOG_ERROR, "ex",
+             "ExCompareSwapFastReference: out_old_count is NULL for a "
+             "non-NULL old object %p (cached count would leak)",
+             (uint64_t)(uintptr_t)old_object);
+        KeBugCheckEx(BUGCHECK_IOS_INVARIANT_VIOLATION,
+                     (uintptr_t)old_object, 0, 3, 0);
+    }
+
     /* Pack the replacement once (runtime-asserts new_object alignment; NULL ->
      * empty). cached count resets to 0: the caller supplies one structural
      * reference on new_object and replenishes the cache afterwards. */
-    uintptr_t desired = ExpFastRefPack(new_object, 0);
-    uintptr_t cur = __atomic_load_n(&ref->Value, __ATOMIC_RELAXED);
+    desired = ExpFastRefPack(new_object, 0);
+    cur = __atomic_load_n(&ref->Value, __ATOMIC_RELAXED);
 
     for (;;) {
         void *obj = ExpFastRefUnpackObject(cur);
