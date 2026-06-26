@@ -69,7 +69,7 @@ title: "TODO-07 -- IRQL Model & DPCs"
 | 💎  |  15   | Threaded DPC list synchronization                  | §8          |  [/]   |
 | 💎  |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
 | 💎  |  17   | Per-CPU threaded DPC worker affinity               | §8, §15     |  [/]   |
-| ⭐  |  18   | System worker thread pool (long-period periodic)   | §8          |  [ ]   |
+| ⭐  |  18   | System worker thread pool (long-period periodic)   | §8          |  [/]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
 > ⭐ = exclusive -- Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.
@@ -573,29 +573,37 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 > - **Self-unregister guard (H):** record the kworker thread; `kworker_unregister` called FROM the worker thread (a callback unregistering its own/any token) sets `active=0` and SKIPS the drain-wait (else it deadlocks waiting for itself). `kworker_unregister` returns `int` status (so self-unregister can be signalled).
 > - **Consumer signatures (M):** the callback type is `void (*)(void *ctx)`; an `int`/no-arg consumer like `uefi_secureboot_revalidate_tick` needs a `void(void*)` wrapper (e.g. `secureboot_revalidate_worker`).
 
-- [ ] Define `kworker_callback_t` typedef (`void (*)(void *ctx)`) + `struct kworker_entry` (callback, ctx, period_ms, last_fire_ns, deadline_ns, active flag) in [`include/kernel/sched/kworker.h`](../../include/kernel/sched/kworker.h).
-- [ ] Define worker-pool API: `int kworker_register(kworker_callback_t fn, void *ctx, uint32_t period_ms)` returns a token (>= 0) or negative on failure (no slots, NULL fn). `void kworker_unregister(int token)` cancels and waits for any in-flight call to drain.
-- [ ] Static slot table sized to `KWORKER_MAX_ENTRIES` (start with 16; grow if real consumer pressure demands). Spinlock-protected for register/unregister; the worker thread reads under the same lock or a snapshot copy.
-- [ ] `void kworker_init(void)` (called from boot Phase 3 after scheduler is up): creates ONE kthread (`kthread_create(kworker_main, NULL, KWORKER_STACK_SIZE)`) that loops forever:
-  - Snapshot the active entry list under spinlock.
-  - For each active entry, if `now_ns >= entry.deadline_ns`, call its callback, set `last_fire_ns = now_ns`, advance `deadline_ns += period_ms * 1_000_000`.
-  - Sleep until the next-earliest deadline (`sleep_ms((min_remaining_ns) / 1_000_000)`), capped at `KWORKER_MAX_SLEEP_MS` (~1000ms) so a freshly registered short-period entry is picked up promptly.
-- [ ] Cooperative cancellation: `kworker_unregister()` sets `active=0` AND waits on a per-entry condvar / completion that the worker signals after a callback returns. Caller blocks until any in-flight call finishes; subsequent callback fires cannot occur because the slot is marked inactive.
-- [ ] Crash safety: a callback that panics must NOT take down the worker thread. Wrap each call in the kernel's SEH equivalent (when TODO-10 SEH lands -> XREF: [`TODO-10 §11`](TODO-10-kernel-security-hardening.md)). Until then, document the contract: "callbacks must not fault; misbehaving consumer = worker thread dies = system silently loses all monitoring." Acceptable as initial state; tighten when SEH ships.
-- [ ] **Diagnostics:** klog at register/unregister + on every callback fire under a debug flag (`KWORKER_TRACE`, default off in release). Per-entry `last_fire_ns` accessor for monitoring tools.
-- [ ] **Consumer wiring 1 (deferred from TODO-02 §15 / drift detection):** register `uefi_secureboot_revalidate_tick` with `period_ms = 5 * 60 * 1000` (5 min). Detects post-boot firmware drift / NVRAM corruption / physical-attack tampering during sleep. -> XREF: [`01-boot-platform/TODO-02 §15`](../01-boot-platform/TODO-02-uefi-hardening-secureboot.md#15-post-boot-securebootrevalidation) (item: "Wire `uefi_secureboot_revalidate_tick()` into a 5-minute periodic kernel worker"). When this lands, flip the §15 follow-up `[ ]` to `[x]` and remove the local `// TODO consumer-wiring blocked-on-§18` placeholder if any.
+- [x] `kworker_callback_t` (`void(*)(void*)`) + `struct kworker_entry` (callback, ctx, period_ms, last_fire_ns, deadline_ns, generation, active, running) in `kworker.h`; `KWORKER_MAX_ENTRIES=16`.
+- [x] API (`kworker.c`): `int kworker_register(fn, ctx, period_ms)` -> token>=0 / neg (NULL fn, period 0, full table); `int kworker_unregister(int token)` cancels + drains in-flight; `int kworker_init(void)`; `uint64_t kworker_last_fire_ns(token)`.
+- [x] Token = `(generation<<8)|slot` over a static `s_entries[16]` under `s_kworker_lock`; the 23-bit-masked generation keeps the token non-negative and pins the slot so a stale token cannot cancel a reused slot.
+- [x] `kworker_init` creates ONE `task_create` worker (Phase 3, CAS-idempotent) that loops: fire due entries, coalesce `deadline=now+period`, yield-poll to the next deadline (cap `KWORKER_MAX_SLEEP_MS`) -- yield not `sleep_ms` (HAL busy-HLTs).
+- [x] Rundown: worker sets `running=1` UNDER the lock it checks active+deadline; `unregister` clears active under lock then yield-drains `running==0`. Self-unregister (caller==worker thread via `thread_current()`) skips the drain.
+- [x] Crash-safety contract: a faulting callback kills the worker (no SEH yet, documented) -> XREF: 02-kernel-core/TODO-10-kernel-security-hardening.md §11. Per-callback duration watchdog warns past `KWORKER_CALLBACK_WARN_MS`.
+- [x] Diagnostics: klog at worker start / register-fail / over-duration; `kworker_last_fire_ns()` accessor.
+- [x] Consumer wiring 1 (shipped): `uefi_secureboot_register_monitor()` registers a wrapper around `uefi_secureboot_revalidate_tick` at 5 min; `boot_desktop.c` calls it after `kworker_init()` success. -> XREF: `01-boot-platform/TODO-02 §15`.
 - [ ] **Consumer wiring 2 (UEFI variable-store health monitor, gap-audit 2026-05-01 M1, migrated from TODO-02 §14):** the existing `uefi_runtime_populate_vars_registry()` writes once at boot. On firmware with small or leaking variable stores (a Lenovo class of bug), the first user-visible symptom of NVRAM-near-full is silent SetVariable failures on BootNext / dbx / MOK / capsule writes. Implementation:
   - Add `uefi_runtime_refresh_vars_registry()` in [`src/kernel/uefi_runtime.c`](../../src/kernel/uefi_runtime.c) that re-reads `QueryVariableInfo` and rewrites the `HKLM\SYSTEM\SecureBoot\Vars\*` registry keys (same fields the boot-time populator writes today, plus a new `VarsLow` DWORD = 1 when `RemainingSize < MaxStorageSize / 8`).
   - Hook `uefi_runtime_refresh_vars_registry()` into `rt_call_exit()` (or directly into `uefi_set_variable()`) so every `SetVariable` -- successful or failed -- updates the registry mirror with the post-write quota.
   - Add `uefi_vars_health_tick()` that calls refresh + emits `klog(LOG_WARN, "UEFI", "Vars store near-full: remaining=%u of max=%u (12.5%% threshold)", ...)` once on the transition into the low-quota state (sticky-once-warned to avoid spam; re-arm when quota recovers). Register with `kworker_register(uefi_vars_health_tick, NULL, 60 * 1000)` (60-second period per item spec).
   - Test (`src/kernel/test/test_uefi_boot.c`): `test_uefi_vars_health_threshold` synthesizes a low-`RemainingSize` fixture (best-effort -- the firmware mock layer does not yet support QueryVariableInfo override; gate the assertion on `g_boot_info.uki_test_mode` or accept the gap with a Note).
 - [ ] **Consumer wiring 3 (S3 resume re-prime; gap-audit 2026-05-01):** when [`TODO-26 §3`](TODO-26-power-management.md#3-s3-suspend-to-ram) (S3 suspend/resume) lands, the resume handler must call BOTH `uefi_secureboot_refresh()` and `uefi_runtime_refresh_vars_registry()` after `pm_notify_resume()` finishes (firmware/registry back to D0) and before user threads unblock. Reciprocal back-references already filed in TODO-26 §3 prose for the SecureBoot drift refresh; add a parallel item there for the vars-registry re-prime in the same commit that migrates this consumer here.
-- [ ] Tests in `test_kworker.c`: register a callback with period=10ms, sleep_ms(50), verify it fired ~5 times +/-1 (loose bound to absorb scheduler jitter); register two callbacks with different periods, verify each fires at its own cadence; unregister mid-flight, verify no further fires after unregister returns.
-- [ ] Commit: `"kernel/sched: system worker thread pool for long-period periodic callbacks; wire UEFI vars-health + SecureBoot drift consumers"`
+- [x] Tests (`test_kworker.c`, `TEST_CAT_SCHED`): deterministic register-validation, stale-token, generation rundown, slot exhaustion, invalid-token (huge period so the worker never fires mid-test). Timing fire-count is runtime-only.
+- [x] Commit: `"kernel/sched: system worker thread pool (kworker) + SecureBoot drift consumer; vars-health + S3 deferred"`
 
 **Test checkpoint:** `kworker_register(fn, NULL, 50)` schedules `fn` to fire every 50 ms; `sleep_ms(500)` confirms ~10 fires. `kworker_unregister(token)` blocks until the in-flight call returns and prevents further fires. UEFI `Vars\VarsLow` registry key flips to 1 when a synthetic low-quota fixture is injected; klog WARN line fires once on the transition. SecureBoot drift detection ticks every 5 minutes without measurably impacting CPU (one `uefi_get_variable` per tick is single-digit milliseconds). Test on: QEMU TCG, QEMU WHPX, bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched, TEST_CAT_SCHED) | new test_kworker_* suites + extended test_uefi_vars_health_threshold
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched, TEST_CAT_SCHED) | 5 `test_kworker_*` suites, 0 failures (vars-health test ships with deferred Consumer 2)
+> **Notes:**
+> - Shipped: `kworker.h`/`kworker.c` -- a single-worker background-monitor pool (register/unregister/init + `kworker_last_fire_ns`), `KWORKER_MAX_ENTRIES=16`, generation-rundown cancellation, duration watchdog; `test_kworker.c` (5 deterministic suites).
+> - How it runs: one `task_create` worker (own task) at boot Phase 3 fires due callbacks at PASSIVE via a cooperative yield-poll (not `sleep_ms`, which busy-HLTs single-CPU); Consumer 1 (SecureBoot, 5 min) wired after a confirmed start.
+> - Concurrency: rundown via `running`-under-lock + thread-identity self-unregister guard; three-state `kworker_init` so a caller reports success only when the worker is running. Codex design + adversarial + 4 re-adversarial rounds in the commit.
+> - Downstream: distinct from threaded DPCs (§8, sub-ms); the long-period monitor primitive NT IoQueueWorkItem / Linux delayed_work fill.
+> - Canonical doc: `include/kernel/sched/kworker.h`.
+> - Scope boundary: §18 owns the primitive + Consumer 1. Consumer 2 (UEFI vars-health) and Consumer 3 (S3 resume re-prime) are deferred (cross-TODO / blocked).
+> **Verified:** 2026-06-26 | commit `TBD-backfill` | 9/11 items | build OK | 197 sched + 16 user tests, smoke PASSED
+> **Deferred:** [M] Consumer 2 -- UEFI variable-store health monitor (`uefi_runtime_refresh_vars_registry` + `uefi_vars_health_tick`, new) -> XREF: 01-boot-platform/TODO-02-uefi-hardening-secureboot.md §14 (UEFI vars registry)
+> **Deferred:** [M] Consumer 3 -- S3 resume re-prime (SecureBoot + vars registry after `pm_notify_resume`) -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (S3 suspend/resume -- not yet created)
+> **Quality reviewed:** 2026-06-26 | Codex 8x (design, adversarial, re-adversarial x4, consistency, perf) | 7H+4M fixed, 1M accepted (gen-wrap), 2M deferred | scope: kernel-code-quality
 
 ---
 

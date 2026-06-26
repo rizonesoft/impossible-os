@@ -301,6 +301,10 @@ int uefi_secureboot_revalidate_tick(void);
  * boot snapshot. Sticky once set. */
 int uefi_secureboot_drift_detected(void);
 
+/* Register the post-boot SecureBoot drift monitor on the system worker pool
+ * (5-minute cadence). Call once at boot after kworker_init(). */
+void uefi_secureboot_register_monitor(void);
+
 /* ---- Secure Boot Key Management API ---- */
 
 /* Security database GUID -- used for db, dbx, dbt variables */

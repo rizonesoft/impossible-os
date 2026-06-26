@@ -31,6 +31,7 @@
 #include "kernel/klog.h"
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/mutex.h"
+#include "kernel/sched/kworker.h"
 #include "kernel/system_state.h"
 #include "kernel/fs/gpt.h"
 #include "registry.h"
@@ -1938,6 +1939,30 @@ int uefi_secureboot_refresh(void)
 int uefi_secureboot_drift_detected(void)
 {
     return s_sb_drift_detected;
+}
+
+/* kworker callback shim: the periodic worker pool takes a void(*)(void*)
+ * callback, but the revalidate tick is int(void). */
+static void uefi_secureboot_revalidate_worker(void *ctx)
+{
+    (void)ctx;
+    (void)uefi_secureboot_revalidate_tick();
+}
+
+/* Register the post-boot SecureBoot drift monitor on the system worker pool:
+ * re-checks the live SecureBoot/PK/KEK/db/dbx state against the boot-time
+ * snapshot every 5 minutes to catch firmware drift / NVRAM corruption /
+ * physical-attack tampering that happens after boot. Bounded (one variable
+ * read set per tick), so it respects the kworker bounded-callback contract. */
+void uefi_secureboot_register_monitor(void)
+{
+    int token = kworker_register(uefi_secureboot_revalidate_worker, (void *)0,
+                                 5u * 60u * 1000u);   /* 5 minutes */
+    if (token < 0)
+        klog(LOG_WARN, "UEFI",
+             "SecureBoot drift monitor not registered (no kworker slot)");
+    else
+        klog(LOG_INFO, "UEFI", "SecureBoot drift monitor armed (5 min cadence)");
 }
 
 /* Surface QueryVariableInfo() results to HKLM\SYSTEM\SecureBoot\Vars

@@ -107,6 +107,17 @@ void boot_phase3(void)
         dpc_start_threads();
     }
 
+    /* Start the system worker thread pool (long-period periodic monitors) and,
+     * ONLY if the worker actually started, register the post-boot SecureBoot
+     * drift monitor (5-minute cadence) -- otherwise a registered monitor with no
+     * worker would falsely report "armed" while never running. */
+    {
+        extern int kworker_init(void);
+        extern void uefi_secureboot_register_monitor(void);
+        if (kworker_init() == 0)
+            uefi_secureboot_register_monitor();
+    }
+
     /* Create the system work queue (needed by NIC driver) */
     {
         extern workqueue_t *sys_wq;
