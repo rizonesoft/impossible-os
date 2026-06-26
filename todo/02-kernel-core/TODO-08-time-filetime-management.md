@@ -140,11 +140,25 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 > [!NOTE]
 > **Design review (adopted, pre-code).** (1) Ordered read: a single `rdtsc_ordered()` helper -- `RDTSCP` gated on `CPU_FEATURE_RDTSCP` (capture/clobber ECX TSC_AUX), else `LFENCE;RDTSC` -- used by `rdtsc_ns()` AND the `mono_ns()` TSC branch. (2) AP sync: a BSP/AP rendezvous BEFORE the AP publishes `is_online` (shared per-AP state, bounded ping-pong samples, tolerance from round-trip latency, NO AP-side serial/logging, timeout; demotion completes before the AP services interrupts). (3) Demotion + migration: an atomic clocksource descriptor (source+scale+epoch+generation, release-published, seeded from the current mono value) PLUS generalizing §2's `pmtmr_mono_floor` into a MONO-WIDE atomic floor over TSC/HPET/PMTMR/LAPIC/coarse so demote + migration never step backward -- this machinery is SHARED with the §18 watchdog demotion. S3 resume re-verify is BLOCKED on power-management.
 
-- [ ] Ordered TSC read: one `rdtsc_ordered()` helper (`RDTSCP` gated on `CPU_FEATURE_RDTSCP`, else `LFENCE;RDTSC`) used by `rdtsc_ns()` + the `mono_ns()` TSC branch.
+- [x] Ordered TSC read: `rdtsc_ordered()` -- `RDTSCP` gated on `cpu_feature_global_mask()` (the all-online intersection, NOT `cpu_has()`, so a feature-skewed AP cannot #UD), else `LFENCE;RDTSC` -- used by `rdtsc_ns()` + the `mono_ns()` TSC branch.
 - [ ] AP TSC sync + warp detection (design review [H]): BSP/AP rendezvous before `is_online` -- bounded ping-pong, latency tolerance, no AP logging, timeout (Linux `tsc_sync.c` parity).
 - [ ] Atomic demote-on-warp + mono-wide floor (design review [H], shared with §18): atomic clocksource descriptor + a mono-wide monotonic floor (generalize §2 `pmtmr_mono_floor`) so demote/migration never step backward.
 - [ ] Resume monotonicity -- BLOCKED on power-management S3; reuses this section's sync/demote machinery. -> XREF: 02-kernel-core/TODO-26-power-management.md §3
 - [x] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
+
+**Test checkpoint:** Unit: existing `test_time.c` mono/PMTMR suites still pass (the ordered read changes only ordering, not values; RDTSCP/LFENCE serialization is not directly unit-testable). Runtime (WHPX / bare metal serial): `mono_ns()` advances monotonically; on invariant-TSC SMP no QPC backward step across thread migration. Verify on QEMU WHPX SMP, TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time + sched suites, 0 failures (208 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: `rdtsc_ordered()` in `mono_clock.c` (RDTSCP gated on the all-online `cpu_feature_global_mask()`, else `LFENCE;RDTSC`), replacing bare `rdtsc` for `rdtsc_ns()` + the `mono_ns()` TSC branch.
+> - How it runs: every TSC read serializes against prior instructions so a monotonic/QPC read never samples earlier than its surrounding code; the global-mask gate (not `cpu_has`) avoids an #UD on a feature-skewed AP.
+> - Downstream: items 2-3 (AP TSC sync rendezvous + atomic-descriptor demotion + mono-wide floor) are a section-class SMP unit shared with the §18 watchdog -- deferred coherent. Codex adversarial adoption (RDTSCP AP-skew #UD) in the commit.
+> - Canonical: `src/kernel/time/mono_clock.c`.
+> - Scope boundary: §3 ships the ordered read; AP sync + demotion machinery is the deferred items (shared with §18); resume re-verify is power-management.
+> **Verified:** 2026-06-27 | commit `1f26a0be` | 7/10 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG)
+> **Deferred:** [H] AP TSC sync rendezvous + atomic-descriptor demotion + mono-wide floor -- section-class SMP unit (design captured), shared with the watchdog -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "Atomic coherent demotion" at line 340)
+> **Deferred:** [M] resume TSC re-verify blocked on power-management S3 -> XREF: 02-kernel-core/TODO-26-power-management.md §3
+> **Quality reviewed:** 2026-06-27 | Codex 2x (design, adversarial) | 1H fixed (RDTSCP AP-skew gate), 2H+1M deferred | scope: kernel-code-quality
 
 ---
 

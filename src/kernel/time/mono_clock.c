@@ -7,6 +7,7 @@
 
 #include "kernel/time/mono_clock.h"
 #include "kernel/cpuid.h"
+#include "kernel/cpu_security.h"
 #include "kernel/boot_timing.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/hpet.h"
@@ -53,10 +54,26 @@ static uint64_t pmtmr_mono_floor(uint64_t cand)
 
 /* ---- TSC read ------------------------------------------------------------ */
 
-static inline uint64_t rdtsc_read(void)
+/* Ordered TSC read: the value must not be sampled before prior instructions
+ * have executed, or a tight measurement / monotonic read can read "earlier"
+ * than its surrounding code (out-of-order CPUs). RDTSCP waits for all prior
+ * instructions to retire (and yields TSC_AUX in ECX, which we discard); on
+ * CPUs without it, LFENCE serializes before RDTSC. Mirrors Linux
+ * rdtsc_ordered(); Win11 QPC abstracts the same. Used by every TSC read here. */
+static inline uint64_t rdtsc_ordered(void)
 {
     uint32_t lo, hi;
-    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    /* Gate RDTSCP on the all-online feature INTERSECTION, never cpu_has() (which
+     * is BSP-global): RDTSCP #UDs on a CPU that lacks it, and APs are an
+     * optional-feature-probed set, so a BSP-has/AP-lacks skew would fault this
+     * ISR-callable hot path on the skewed AP. Same gate dpc_watchdog_init uses. */
+    if (cpu_feature_global_mask() & (1ULL << CPU_FEATURE_RDTSCP)) {
+        uint32_t aux;
+        __asm__ volatile ("rdtscp" : "=a"(lo), "=d"(hi), "=c"(aux));
+    } else {
+        __asm__ volatile ("lfence" ::: "memory");
+        __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    }
     return ((uint64_t)hi << 32) | lo;
 }
 
@@ -215,7 +232,7 @@ uint64_t rdtsc_ns(void)
     if (s_source != MONO_SRC_TSC || s_ns_per_tick_den == 0)
         return 0;
 
-    ticks = rdtsc_read();
+    ticks = rdtsc_ordered();
     {
         struct per_cpu_data *cpu = smp_this_cpu();
         if (cpu)
@@ -327,7 +344,7 @@ uint64_t mono_ns(void)
      * reader that sees MONO_SRC_PMTMR also sees the fully-seeded epoch. */
     switch (__atomic_load_n(&s_source, __ATOMIC_ACQUIRE)) {
     case MONO_SRC_TSC:
-        ticks = rdtsc_read();
+        ticks = rdtsc_ordered();
         /* Apply per-CPU TSC offset for SMP coherence */
         {
             struct per_cpu_data *cpu = smp_this_cpu();
