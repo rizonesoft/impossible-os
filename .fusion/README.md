@@ -156,3 +156,71 @@ about. It earns its place ONLY as the apex last-resort tier (after Opus + Codex 
 demonstrably failed), where the bet is that the panel surfaces a hypothesis the
 single model genuinely lacked -- and even then it needs a strong judge to pick it
 out. Spending 8-9x to re-derive what Opus already says is not a win.
+
+## Round 3: DIY ensemble, no web-search -- the first config that BEAT Opus
+
+Ran each of 10 models SOLO and in parallel (no web-search; reasoning from
+knowledge), then an Opus 4.8 judge synthesized over all of them, with a judge prompt
+that EXPLICITLY asked it to flag unique-correct insights and discard hallucinations.
+9/10 produced (Xiaomi MiMo returned null content). ~7 min wall-clock, **$1.08** total.
+
+| model | cost | sec | chars |
+| --- | --- | --- | --- |
+| openai/gpt-5.5 | $0.355 | 297 | 25053 |
+| google/gemini-3.5-flash | $0.180 | 121 | 13506 |
+| moonshotai/kimi-k2.7-code | $0.079 | 354 | 13790 |
+| x-ai/grok-build-0.1 | $0.031 | 147 | 9092 |
+| minimax/minimax-m3 | $0.019 | 194 | 17320 |
+| qwen/qwen3-max | $0.009 | 44 | 8762 |
+| deepseek/deepseek-v4-flash | $0.0005 | 98 | 9974 |
+| nvidia/nemotron-3-ultra-550b (free) | $0 | 137 | 14101 |
+| openrouter/owl-alpha (free) | $0 | 390 | 44224 |
+| xiaomi/mimo-v2.5 | ERR (null content) | - | - |
+| **Opus judge** | **$0.402** | 39 | 6260 |
+
+**This time the ensemble genuinely beat lone Opus.** The Opus judge:
+
+1. **Caught the hallucinations and discarded them** -- Nemotron's fabricated
+   TSC-drift math ("physically wrong: Zen 4 has invariant TSC; siblings share the
+   same core TSC"), Owl's confabulated microcode version `0x0A704104` and named
+   errata, and noted "several analysts invented errata numbers ... the dominant
+   failure mode."
+2. **Preserved THREE unique-correct insights lone Opus did NOT produce:**
+   - **Gemini:** `MWAIT` executed with `IF=1` -> the wake interrupt vectors straight
+     into the ISR, *bypassing the post-MWAIT fixup* (state revalidation) -- a real,
+     often-overlooked from-scratch-kernel mechanism.
+   - **Kimi:** the *same* stale GS_BASE/CR8/APIC state that breaks the ISR also
+     breaks `#DF` delivery -- which is *why* you get a triple fault, not a clean
+     panic (explains the valid-RIP/sane-state clue best).
+   - **GPT-5.5:** the decisive A/B test -- enable C6 but route deep-idle wake through
+     HPET/PMTMR broadcast with the LAPIC timer masked; 24h survival confirms the bug
+     class without disabling SMT or swapping hardware.
+   - Plus the blind spot nobody else raised: a from-scratch kernel almost certainly
+     lacks ACPI `_CST`/`_CSD` coordination, making deep C-states unsafe by construction.
+3. **Synthesized a more complete, better-grounded root cause than Opus-alone** --
+   fusing GPT-5.5's framing + Gemini's IF=1 insight + Kimi's poisoned-`#DF` mechanism,
+   with NO invented errata.
+
+**Why this config won where the plugin runs lost:** (a) **no web-search** -- the
+plugin's auto-search anchored earlier panels on confabulated errata; reasoning from
+knowledge avoided it; (b) a **strong judge explicitly tasked** to surface
+unique-correct insights and discard hallucinations, not the plugin's opaque judge;
+(c) a genuinely diverse strong panel. **But the value concentrated in the strong
+models** (GPT-5.5, Gemini, Kimi) -- the cheap/exotic members (Nemotron, owl,
+deepseek-flash, minimax) mostly produced the hallucinations the judge discarded.
+
+## Updated design conclusion
+
+Build Fusion as a **DIY ensemble, NOT the `openrouter/fusion` plugin:**
+1. Call each panel model SOLO (per-model responses + costs = the metrics; no plugin opacity).
+2. **No web-search** (it anchors models onto hallucinated errata/microcode/MSRs).
+3. A small panel of **3-4 genuinely strong, diverse** models (GPT-5.5 + Gemini + Kimi
+   were the value; a big bag of cheap models just adds noise).
+4. A **strong judge** (Opus) with an explicit prompt to extract unique-correct
+   insights and DISCARD hallucinations.
+5. The main Opus thread remains the final review layer.
+
+Done this way the ensemble surfaced complementary correct mechanisms a single Opus
+missed, at ~$1 / ~7 min -- a real (if narrow) win. The earlier "just re-derives
+Opus" result was an artifact of web-search anchoring + an opaque judge, not a
+property of ensembles per se.
