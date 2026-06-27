@@ -48,3 +48,50 @@ is gated instead by `FUSION_ENABLED` + the spend caps.
 - `secret` -- your OpenRouter key (GITIGNORED, never commit).
 - `dataset.jsonl` -- collected escalation in/out + outcome for evals/distillation
   (GITIGNORED, local only).
+
+## Observed cost / latency (real smoke tests, 2026-06-27)
+
+| Question | Judge | Web-search | Output | Cost | Wall-clock |
+| --- | --- | --- | --- | --- | --- |
+| Cross-CPU spinlock (acquire-in-ISR/release-in-DPC) | Opus | yes | 53 KB | $0.61 | < 5 min |
+| Treiber-stack ABA / TSO (pure reasoning) | GLM | no (prompted off) | 9 KB | $0.052 | ~2 min |
+| 8-factor Zen4 heisenbug (below) | GLM | yes | 89 KB | $1.16 | **16 min** |
+
+Takeaways: web-search is the dominant cost AND latency driver (prompting "do not
+web-search" on pure-reasoning questions cut a call ~12x); the GLM judge keeps cost
+down with no quality loss (the main Claude thread is the real review layer); and a
+genuinely brutal question takes **~16 min** -- which is why the runner dispatches
+Fusion ASYNC (see the spec's job-queue model) rather than blocking on it.
+
+## Worked example: a brutal multi-factor heisenbug
+
+This is the kind of problem the apex tier exists for -- where a single model flails.
+
+**The problem (8 conditions, ALL required to reproduce; remove any one and it
+vanishes):** a from-scratch x86-64 SMP kernel triple-faults only on (1) AMD Zen 4,
+(2) with SMT enabled, (3) after 4-9 h uptime, (4) with one specific Phison NVMe as
+boot device, (5) with C-state C6 allowed; (6) the faulting RIP is inside the LAPIC
+timer ISR at a valid instruction with sane state; (7) adding ANY printk to the ISR
+makes it vanish; (8) MTTF ~6 h, not reproducible on demand. Reason from
+microarchitecture up; justify each condition; give a diagnostic plan that needs
+neither on-demand repro nor ISR output; commit to one root cause + fix.
+
+**What Fusion produced (89 KB):** 5 candidate root causes each tied to named AMD
+errata, a likelihood ranking, a "why is this condition load-bearing" justification
+for all 8 conditions, a 4-phase instrumented diagnostic plan, and a committed root
+cause:
+
+> **Zen 4 microarchitectural front-end corruption during asymmetric CC6 entry with
+> SMT enabled** -- the active thread's micro-op cache delivers a wrong instruction
+> during the sibling's CC6 power-gating microcode sequence.
+
+The standout insight (the kind a single stuck model misses): the captured timer-ISR
+RIP and sane state are **red herrings** -- the first interrupt delivery succeeded;
+it is the *nested* exception delivery during the inconsistent CC6-exit window that
+fails -> #GP -> double fault -> triple fault. So the bug is not in the timer ISR at
+all; it is in nested exception delivery across a power-state transition.
+
+The panel members committed to *different* specific culprits (e.g. one to erratum
+#1485, the synthesis to front-end corruption) and the judge reconciled them --
+divergence-then-synthesis is exactly why a diverse panel beats asking one model
+again.
