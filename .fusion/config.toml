@@ -1,0 +1,12 @@
+# Fusion escalation config -- the apex tier of the Claude -> Codex -> Fusion ladder.
+# See .fusion/README.md for how to enable. Off unless FUSION_ENABLED=1 + a secret.
+
+# Panel (analysis_models): three independent labs for diverse blind spots.
+panel = ["z-ai/glm-5.2", "google/gemini-3.5-flash", "moonshotai/kimi-k2.7"]
+# Judge (Fusion's built-in synthesizer model).
+judge = "z-ai/glm-5.2"
+
+# Spend caps.
+max_calls = 3        # hard per-run Fusion call cap (FUSION_MAX_CALLS)
+min_credits = 2.0    # skip if OpenRouter remaining balance is below this (USD)
+timeout_s = 240      # per-call wall-clock bound
