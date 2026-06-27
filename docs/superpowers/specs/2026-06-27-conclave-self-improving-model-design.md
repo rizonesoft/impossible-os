@@ -136,9 +136,18 @@ Persistent recall so Conclave does not re-derive a problem it has already solved
 
 - **Lesson store:** distilled, human-and-machine-readable summaries keyed by
   symptom/signature (per project + an opt-in cross-project tier).
-- **Retrieval index:** embeddings over past briefs/syntheses so a new brief is answered
-  with relevant prior solutions injected as context (the cheap, immediately-useful
-  core of the harness, and the substitute for any future offline model).
+- **Retrieval index:** **hybrid BM25 + vector** over past briefs/syntheses + ingested
+  corpus, so a new brief is answered with relevant prior solutions injected as context
+  (the cheap, immediately-useful core of the harness, and the substitute for any future
+  offline model). Embedders run **via OpenRouter** (same key, no separate provider):
+  the set is `qwen3-embedding-8b` (default primary, 32K context, $0.01/M), `bge-m3`
+  (open, hybrid dense+sparse, $0.01/M), and `text-embedding-3-large` (OpenAI, $0.13/M) --
+  three families for a strong ensemble. Default queries the primary; **RRF-ensemble across
+  all three is opt-in** (different models = different vector spaces, so the ensemble is N
+  indexes fused by Reciprocal Rank Fusion, not one blended index). Embedding cost is
+  one-time + incremental and trivial (~$0.38 to embed a 10 MB corpus with all three;
+  ~$0.0001/query). Embedder set is swappable behind the index interface (a local
+  open-model backend stays a future option if full on-box privacy is ever wanted).
 - Memory is fed by `outcome`-labeled runs; unresolved runs are remembered as
   open/avoid-this signals, not as answers.
 
@@ -241,6 +250,11 @@ Hard lessons carried in by design:
   brief; Conclave never auto-exfiltrates repo source. Briefs and outputs in the corpus
   are project-namespaced and stay in the project's partition unless cross-project memory
   is explicitly enabled.
+- **Cloud-embedding exposure (accepted trade-off):** with OpenRouter embedders, the whole
+  corpus (ingested specs + past briefs + syntheses) is sent to the embedding providers --
+  a larger standing exposure than the per-query panel briefs. Accepted in exchange for one
+  key + zero local infra; the swappable local-embedder backend is the escape hatch if
+  full on-box privacy is ever required.
 - **Off by default + spend caps** as today; compilation has its own budget guard.
 
 ## v1 scope vs Phase 2
@@ -264,16 +278,19 @@ Hard lessons carried in by design:
 ## Open decisions (need user input; recommendations given)
 
 The two big ones (model path, base model) are **dissolved** by the reasoning-harness
-design -- no base model, no GPU in the core. What remains:
+design -- no base model, no GPU in the core.
 
-1. **Embeddings provider** for the retrieval index (hosted via OpenRouter vs local).
-   *Recommendation:* start with a hosted embedding model, keep it swappable behind the
-   index interface.
-2. **Repo visibility:** public or private GitHub repo for `~/conclave`. *Recommendation:*
+**Decided:** retrieval = hybrid BM25 + vector; embedders via OpenRouter (same key) =
+`qwen3-embedding-8b` (default) + `bge-m3` + `text-embedding-3-large`; RRF-ensemble across
+all three is opt-in; embedder set swappable (local backend a future option).
+
+What remains:
+
+1. **Repo visibility:** public or private GitHub repo for `~/conclave`. *Recommendation:*
    private (it contains project-derived knowledge).
-3. **Cadence defaults:** the `N days` / `M new examples` thresholds for `compile --check`.
+2. **Cadence defaults:** the `N days` / `M new examples` thresholds for `compile --check`.
    *Recommendation:* weekly OR 200 new labeled examples, tunable after first real data.
-4. **(Deferred, not now)** the optional offline-model path -- left open until/unless
+3. **(Deferred, not now)** the optional offline-model path -- left open until/unless
    offline answering is actually wanted (Phase 2).
 
 ## Testing strategy
