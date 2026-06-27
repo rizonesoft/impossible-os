@@ -219,7 +219,7 @@ NTSTATUS NtTraceEvent(uint64_t trace_handle, uint64_t flags,
 
     /* Write event header */
     etw_event_header_t *hdr = (etw_event_header_t *)(sess->buffer + sess->buf_head);
-    hdr->timestamp    = (uint32_t)system_get_ticks();
+    hdr->timestamp    = (uint32_t)(uptime_ns() / 1000000ULL);  /* ms, rate-change-safe */
     hdr->event_id     = (uint16_t)(flags & 0xFFFF);
     hdr->level        = (uint8_t)((flags >> 16) & 0xFF);
     hdr->cpu_id       = 0;  /* will be populated from smp_this_cpu() when per-entry context is added */
@@ -603,7 +603,7 @@ void etw_emit_kernel_event(uint16_t event_id, uint8_t level,
         }
 
         etw_event_header_t *hdr = (etw_event_header_t *)(sess->buffer + sess->buf_head);
-        hdr->timestamp    = (uint32_t)system_get_ticks();
+        hdr->timestamp    = (uint32_t)(uptime_ns() / 1000000ULL);  /* ms, rate-change-safe */
         hdr->event_id     = event_id;
         hdr->level        = level;
         hdr->cpu_id       = 0;   /* populated when smp_this_cpu is wired into ETW */

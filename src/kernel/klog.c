@@ -13,6 +13,7 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/timer.h"
+#include "kernel/time/wall_clock.h"
 #include "kernel/smp.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/spinlock.h"
@@ -409,7 +410,13 @@ void klog_crash_persist(void)
     hdr->magic          = KLOG_CRASH_MAGIC;
     hdr->entry_count    = count;
     hdr->ring_head      = klog_ring_head;
-    hdr->boot_timestamp = system_get_ticks();
+    /* 10 ms units from the coarse cached interrupt time -- lock-free (no
+     * seqlock/clocksource read), required because klog_crash_persist() runs in
+     * panic context where a seqlock left odd by the faulting path (or the PIT
+     * backend's pit_lock held by the fault) would hang a mono_ns()/uptime_ns()/
+     * system_get_ticks() read. Stamps 0 if a crash occurs before any monotonic
+     * source is up; that is preferable to deadlocking and losing the dump. */
+    hdr->boot_timestamp = KeQueryInterruptTimeCoarse() / 100000ULL;
     hdr->crc32          = 0;  /* zero before computing */
 
     /* CRC32 over all serialized entries */
@@ -722,8 +729,12 @@ static log_level_t subsys_min_level(const char *subsystem)
 static klog_rate_slot_t *rate_slot(const char *subsystem)
 {
     uint32_t i;
-    extern uint64_t uptime_ns(void);
-    uint32_t now = (uint32_t)(uptime_ns() / 1000000ULL);   /* monotonic ms */
+    /* Lock-free coarse interrupt time in ms (100 ns / 10000). Must NOT use
+     * uptime_ns()/mono_ns()/system_get_ticks() here: rate_slot() is on the
+     * klog() path, which runs in panic context, and those routes can spin on a
+     * mono seqlock or the PIT backend's pit_lock left held by the faulting
+     * path. KeQueryInterruptTimeCoarse() is a single atomic load. */
+    uint32_t now = (uint32_t)(KeQueryInterruptTimeCoarse() / 10000ULL);  /* ms */
 
     if (!subsystem || !subsystem[0])
         return (klog_rate_slot_t *)0;
@@ -1073,7 +1084,16 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         klog_entry_t *e = &klog_ring[klog_ring_head];
         e->level     = level;
         e->subsystem = subsystem;
-        e->timestamp = (uint32_t)system_get_ticks();
+        /* 10 ms units from the coarse cached interrupt time: lock-free (single
+         * __atomic load, NO seqlock/clocksource read) so klog() is panic-safe on
+         * EVERY timer backend (system_get_ticks() takes pit_lock on the PIT/TCG
+         * backend -- unusable in panic context), AND rate-change-safe (interrupt
+         * time is monotonic, not raw lifetime ticks that rewind on a
+         * KeSetTimerResolution change). The cache is published from the first
+         * tick after mono_clock_init(); entries logged before any monotonic
+         * source exists stamp 0 (unavoidable -- no lock-free early clock).
+         * klog_disk reconstructs the entry FILETIME from this same 10 ms unit. */
+        e->timestamp = (uint32_t)(KeQueryInterruptTimeCoarse() / 100000ULL);
 
         /* Per-entry context: CPU, PID, TID */
         {

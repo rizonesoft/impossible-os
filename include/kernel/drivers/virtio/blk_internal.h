@@ -152,8 +152,8 @@ struct adaptive_state {
     uint32_t high_threshold;
     uint32_t spin_us;
     uint32_t io_count;
-    uint64_t window_start;
-    uint32_t window_ticks;
+    uint64_t window_start_ns;   /* uptime_ns() at window open (rate-change-safe) */
+    uint64_t window_ns;         /* window length in ns (100 ms); 0 = disabled */
     uint32_t last_iops;
     uint32_t up_count;
     uint32_t down_count;

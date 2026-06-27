@@ -262,8 +262,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 > - Scope boundary: HV reference-TSC page init is D02 T09 §15 (consumer here stays blocked until it lands); recalibrate-on-freq-change is D02 T26 §15; AP timers are §7.
 > **Verified:** 2026-06-12 | commit `00adcb9b` | 9/10 items | build OK | tests 4309+16 PASS, smoke PASS (KVM 2.69s)
 > **Accepted:** [H] AP-side timer-resolution requests are refused + rolled back (BSP delegation needs a cross-CPU call) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "`smp_call_function(cpu, fn, arg)` cross-CPU synchronous call" at line 97)
-> **Accepted:** [M] remaining raw-tick timestamp/window consumers (etw, registry, wer, virtio windows, klog boot stamps) reinterpret lifetime ticks across a rate change -> XREF: 02-kernel-core/TODO-08 §16 (item: "Migrate raw `system_get_ticks()` timestamp/window consumers" at line 249)
-> **Quality reviewed:** 2026-06-12 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
+> **Quality reviewed:** 2026-06-12 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1M accepted-XREF (raw-tick consumers migrated in TODO-08 §16) | scope: kernel-code-quality
 
 ---
 
@@ -386,7 +385,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 > - Scope boundary: IPI HAL wrapper owned by `03-memory-concurrency/TODO-07-smp-phase2.md` §2; AP bringup timing owned by `01-boot-platform/TODO-09` §10.
 
 > **Verified:** 2026-06-12 | commit `7ea3a01f` | 4/5 items | build OK | smoke PASS (KVM 2.590s)
-> **Accepted:** [H] `platform_is_tcg()` timer-backend gate is identity-based; proper fix is a clocksource quality watchdog (reason: TCG test platform depends on PIT today) -> XREF: 02-kernel-core/TODO-08 §2 (item: "Clocksource quality watchdog" at line 104)
+> **Accepted:** [H] `platform_is_tcg()` timer-backend gate is identity-based; proper fix is a clocksource quality watchdog (reason: TCG test platform depends on PIT today) -> XREF: 02-kernel-core/TODO-08 §2 (item: "Clocksource quality watchdog" at line 80)
 > **Accepted:** [M] AP bringup serializes 10ms INIT settle + 1ms SIPI per AP (reason: INIT/SIPI restructure needs bare-metal validation) -> XREF: 01-boot-platform/TODO-09 §10 (item: "Phase-split INIT settle + 200us SIPI wait" at line 400)
 > **Accepted:** [L] direct `lapic_send_ipi()` callers pending arch-neutral wrapper (reason: scope) -> XREF: 03-memory-concurrency/TODO-07 §2 (item: "irq_send_ipi(cpu, vector) arch-neutral wrapper" at line 98)
 > **Quality reviewed:** 2026-06-12 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 1H+4M+1L fixed, 0 open, 1H+1M+1L accepted-XREF | scope: kernel-code-quality

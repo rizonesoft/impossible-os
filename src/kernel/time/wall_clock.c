@@ -192,6 +192,13 @@ void KeSetSystemTimeEx(FILETIME new_time, FILETIME *previous_out)
     __atomic_store_n(&s_ready, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&s_time_sourced, 1, __ATOMIC_RELEASE);
 
+    /* The coarse cache is deliberately NOT republished here: the next timer tick
+     * (<= one tick) refreshes KeQuerySystemTimeCoarse() against the new anchor,
+     * which is exactly the documented one-tick coarse lag. Publishing from this
+     * thread context would add a second publisher racing the ISR and could
+     * overwrite a newer ISR interrupt-time sample with an older one (coarse
+     * interrupt time must stay monotonic). Callers needing the new wall time
+     * immediately use the precise KeQuerySystemTime(). */
     klog(LOG_INFO, "time", "Wall clock set to FILETIME %u",
          (uint64_t)new_time);
 }
@@ -324,11 +331,20 @@ void ke_suspend_bias_update(uint64_t bias_100ns)
     __atomic_fetch_add(&s_interrupt_time_bias, bias_100ns, __ATOMIC_SEQ_CST);
 }
 
-void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out)
+/* Coarse cache published once per timer tick by wall_clock_tick_cache() (BSP
+ * ISR, single publisher) and read lock-free by the Ke*Coarse() APIs. RELEASE
+ * store / ACQUIRE load: a reader that sees a fresh value also sees the matching
+ * bias/anchor state used to compute it. Both default 0 (= placeholder / no
+ * interrupt time) until the first tick after the wall clock is seeded. */
+static FILETIME s_coarse_system_ft;
+static uint64_t s_coarse_interrupt_time;
+
+/* Shared snapshot math. coarse=1 samples mono_ns_coarse() (no port/MMIO I/O on
+ * PMTMR/HPET); coarse=0 samples the precise mono_ns(). ONE clocksource read
+ * drives both outputs so they describe the same instant. */
+static void wall_clock_snapshot_impl(FILETIME *system_out, uint64_t *interrupt_out,
+                                     int coarse)
 {
-    /* ONE clocksource read drives both outputs so they describe the same
-     * instant -- the KUSD ISR updater would otherwise read mono_ns() twice per
-     * tick (two HPET MMIO / PMTMR port-I/O samples). */
     FILETIME base = FILETIME_NOW_PLACEHOLDER;
     uint64_t base_mono = 0, mono, elapsed;
     int ready = __atomic_load_n(&s_ready, __ATOMIC_ACQUIRE);
@@ -345,7 +361,7 @@ void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out)
     /* Sample mono AFTER accepting a stable anchor (matches KeQuerySystemTime's
      * ordering): pairing the sample with the already-accepted base epoch keeps
      * base_mono <= mono, so both outputs derive from one coherent instant. */
-    mono = mono_ns();
+    mono = coarse ? mono_ns_coarse() : mono_ns();
 
     if (interrupt_out)
         *interrupt_out = (mono / 100) +
@@ -359,6 +375,50 @@ void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out)
             *system_out = base + (elapsed / 100);
         }
     }
+}
+
+void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out)
+{
+    /* Precise: the KUSD updater would otherwise read mono_ns() twice per tick
+     * (two HPET MMIO / PMTMR port-I/O samples). */
+    wall_clock_snapshot_impl(system_out, interrupt_out, 0);
+}
+
+void wall_clock_tick_cache(FILETIME *system_out, uint64_t *interrupt_out)
+{
+    FILETIME sys;
+    uint64_t intr;
+
+    /* PRECISE sample (one mono_ns() per tick): this same value feeds the KUSD
+     * page AND the published coarse cache, so the per-tick clocksource read is
+     * NOT removed -- it is amortized. The fast-path win is on the READER side:
+     * Ke*Coarse() callers do a single atomic load instead of their own
+     * mono_ns()+seqlock. A coarse (mono_ns_coarse) sample was rejected here: on
+     * PMTMR its epoch banks only every 8th tick, which would freeze the KUSD
+     * SystemTime/TickCount fields for ~80 ms (coarse-time-fast-path review). */
+    wall_clock_snapshot_impl(&sys, &intr, 0);
+
+    /* Publish for lock-free coarse readers. SINGLE publisher -- the BSP timer
+     * ISR -- so a plain RELEASE store needs no seqlock; interrupt time is
+     * monotonic by construction (one publisher, mono only advances). 64-bit
+     * aligned stores are atomic on x86-64. */
+    __atomic_store_n(&s_coarse_system_ft, sys, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_coarse_interrupt_time, intr, __ATOMIC_RELEASE);
+
+    if (system_out)
+        *system_out = sys;
+    if (interrupt_out)
+        *interrupt_out = intr;
+}
+
+FILETIME KeQuerySystemTimeCoarse(void)
+{
+    return __atomic_load_n(&s_coarse_system_ft, __ATOMIC_ACQUIRE);
+}
+
+uint64_t KeQueryInterruptTimeCoarse(void)
+{
+    return __atomic_load_n(&s_coarse_interrupt_time, __ATOMIC_ACQUIRE);
 }
 
 /* ---- SSDT handlers ------------------------------------------------- */

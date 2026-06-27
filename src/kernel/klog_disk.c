@@ -246,17 +246,22 @@ static int format_entry(const klog_entry_t *e, char *line, int max)
 {
     int pos = 0;
 
-    /* Timestamp: ISO 8601 of the EVENT time if wall clock ready, else tick.
-     * e->timestamp is the PIT/timer tick (100 Hz, 10 ms) captured at emit time;
-     * reconstruct its wall time by subtracting the ticks elapsed since then
-     * from now -- using KeQuerySystemTime() directly would stamp every flushed
-     * line (incl. a replayed/batched burst) with the flush instant, collapsing
-     * the timeline. (uint32 modular delta tolerates one tick-counter wrap;
-     * assumes the ~100 Hz base rate.) */
+    /* Timestamp: ISO 8601 of the EVENT time if wall clock ready, else the raw
+     * unit. e->timestamp is a 10 ms unit from the rebased monotonic source
+     * (uptime_ns), captured at emit time; reconstruct its wall time by
+     * subtracting the units elapsed since then from now -- using a flush-instant
+     * read directly would stamp every flushed line (incl. a replayed/batched
+     * burst) with the flush instant, collapsing the timeline. The "now" anchor
+     * is the precise wall clock (flush path is not panic context, so the seqlock
+     * read is fine and avoids a torn coarse system/interrupt pair); the elapsed
+     * delta uses the coarse interrupt-time 10 ms unit -- the SAME unit as the
+     * ring writer -- so a KeSetTimerResolution rate change cannot skew the
+     * reconstruction. (uint32 modular delta tolerates one wrap.) */
     line[pos++] = '[';
     if (wall_clock_ready()) {
         uint64_t now_ft = (uint64_t)KeQuerySystemTime();
-        uint32_t elapsed_ticks = (uint32_t)system_get_ticks() - e->timestamp;
+        uint32_t now_units = (uint32_t)(KeQueryInterruptTimeCoarse() / 100000ULL);
+        uint32_t elapsed_ticks = now_units - e->timestamp;
         uint64_t elapsed_ft = (uint64_t)elapsed_ticks * 100000ULL; /* 10ms in 100ns */
         FILETIME ft = (now_ft > elapsed_ft) ? (FILETIME)(now_ft - elapsed_ft)
                                             : (FILETIME)now_ft;

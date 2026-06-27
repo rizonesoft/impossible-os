@@ -728,13 +728,16 @@ static reg_key_t *reg_walk_path(reg_key_t *start, const char *path, int create)
     return cur;
 }
 
-/* ---- PIT ticks for timestamps ---- */
+/* ---- Rebased monotonic ns for key/hive timestamps ---- */
 
 #include "kernel/timer.h"
 
-static uint64_t reg_get_uptime_ticks(void)
+/* Nanoseconds since boot from the rebased monotonic source. NOT raw
+ * system_get_ticks(), which rewinds across a KeSetTimerResolution rate change
+ * (lifetime ticks reinterpreted at the new rate). */
+static uint64_t reg_get_uptime_ns(void)
 {
-    return system_get_ticks();
+    return uptime_ns();
 }
 
 /* ---- RegOpenKeyEx ---- */
@@ -812,7 +815,7 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
 
     /* Update parent's last-write time */
     if (target->parent)
-        target->parent->last_write_time = reg_get_uptime_ticks();
+        target->parent->last_write_time = reg_get_uptime_ns();
 
     if (lpdwDisposition) {
         *lpdwDisposition = pre_existing
@@ -970,7 +973,7 @@ long RegRenameKey(reg_key_t *key, const char *new_name)
             /* Same key: update name in place for case-only changes, mark
              * dirty, and return without touching hash buckets. */
             reg_strcpy(key->name, new_name, REG_MAX_KEY_NAME + 1);
-            parent->last_write_time = reg_get_uptime_ticks();
+            parent->last_write_time = reg_get_uptime_ns();
             key->last_write_time = parent->last_write_time;
             registry_mark_dirty(key);
             return ERROR_SUCCESS;
@@ -987,7 +990,7 @@ long RegRenameKey(reg_key_t *key, const char *new_name)
     reg_add_child(parent, key);
 
     /* Timestamps + dirty flag */
-    parent->last_write_time = reg_get_uptime_ticks();
+    parent->last_write_time = reg_get_uptime_ns();
     key->last_write_time = parent->last_write_time;
     registry_mark_dirty(key);
 
@@ -1182,7 +1185,7 @@ long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
         reg_memcpy(v->data, lpData, cbData);
 
     /* Timestamp */
-    key->last_write_time = reg_get_uptime_ticks();
+    key->last_write_time = reg_get_uptime_ns();
 
     /* Mark hive dirty for periodic flush */
     registry_mark_dirty(key);
@@ -1346,7 +1349,7 @@ long RegDeleteValue(HKEY hKey, const char *lpValueName)
             doomed->name[0] = '\0';
             doomed->next = (reg_value_t *)0;
             key->value_count--;
-            key->last_write_time = reg_get_uptime_ticks();
+            key->last_write_time = reg_get_uptime_ns();
             registry_mark_dirty(key);
             return ERROR_SUCCESS;
         }
@@ -2173,7 +2176,7 @@ int hive_save(reg_key_t *root, const char *filepath)
     hdr->magic        = HIVE_MAGIC;
     hdr->version      = HIVE_VERSION;
     hdr->checksum     = 0;
-    hdr->timestamp    = system_get_ticks();
+    hdr->timestamp    = reg_get_uptime_ns();
     hdr->total_keys   = total_keys;
     hdr->total_values = total_values;
     hdr->data_offset  = HIVE_HEADER_SIZE;

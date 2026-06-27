@@ -289,8 +289,9 @@ void wer_write_crash_report(struct interrupt_frame *frame, uint32_t exception)
             for (si = 0; si < ti; si++) path[pi++] = ts[si];
         }
     } else {
-        /* Fallback: use PIT ticks */
-        pi += dec32(path + pi, (uint32_t)system_get_ticks());
+        /* Fallback (wall clock not ready): rebased uptime ms, not raw ticks
+         * (which rewind across a KeSetTimerResolution rate change). */
+        pi += dec32(path + pi, (uint32_t)(uptime_ns() / 1000000ULL));
     }
 
     path[pi++] = '.'; path[pi++] = 'j'; path[pi++] = 's';

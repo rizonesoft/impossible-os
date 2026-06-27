@@ -688,14 +688,11 @@ int virtio_blk_init(void)
         }
     }
 
-    /* Compute window_ticks: ticks in 100ms */
-    {
-        uint32_t freq = system_get_freq();
-        adaptive.window_ticks = freq / 10;  /* 100ms = 1/10th of a second */
-        if (adaptive.window_ticks == 0)
-            adaptive.window_ticks = 10;  /* Fallback for pre-timer */
-        adaptive.window_start = system_get_ticks();
-    }
+    /* 100 ms adaptive window, anchored on the rebased monotonic source.
+     * Using uptime_ns() (not system_get_ticks()/freq) keeps the window length
+     * fixed in real time across a KeSetTimerResolution rate change. */
+    adaptive.window_ns       = 100000000ULL;   /* 100 ms in ns */
+    adaptive.window_start_ns = uptime_ns();
 
     /* Write default config to Registry for visibility */
     {

@@ -237,12 +237,19 @@ void kusd_update_time(void)
 
     FILETIME system_ft;
 
+    /* Publish the coarse cache every tick BEFORE the KUSD-readiness gate, so the
+     * lock-free Ke*Coarse() readers (klog/crash timestamps) go live as soon as
+     * the monotonic clock is up -- not gated on kusd_init(). Before
+     * mono_clock_init() mono_ns() returns 0, so the cache holds 0 then (no
+     * monotonic source exists yet -- the only honest early value). One precise
+     * mono_ns() sample feeds both the cache and (below) the KUSD page, so the
+     * per-tick clocksource read is amortized across KUSD + every coarse reader.
+     * Precise sub-us callers still use KeQuerySystemTime()/...Precise(). */
+    wall_clock_tick_cache(&system_ft, &interrupt_time);
+
     if (!s_kusd_ready)
         return;
 
-    /* ONE clocksource read drives both InterruptTime and SystemTime (same tick
-     * instant; halves the per-tick HPET/PMTMR cost vs separate Ke* calls). */
-    wall_clock_snapshot(&system_ft, &interrupt_time);
     system_time = (uint64_t)system_ft;
     tick_count  = interrupt_time / 100000;  /* 10 ms units */
 

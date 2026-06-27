@@ -75,7 +75,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [x]   |
 | 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-26 §3,§4   |  [/]   |
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [x]   |
-| ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [ ]   |
+| ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [x]   |
 | ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [ ]   |
 | 💎  |  18   | Clocksource quality watchdog (drift demotion)                          | §2, §4              |  [ ]   |
 
@@ -122,9 +122,8 @@ Select the best monotonic source available: invariant TSC → HPET → ACPI PMTM
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §2 owns source selection + the PMTMR clocksource; the drift watchdog is §18; ordered-`rdtsc` / AP-TSC-sync is §3.
 > **Verified:** 2026-06-27 | commit `54345492` | 8/8 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG 2.6s)
-> **Accepted:** [H] `kusd_update_time()` does precise PMTMR reads every tick (6 port reads/tick in the ISR) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §16 (item: "Migrate `kusd_update_time()` ... to the coarse variants" at line 125)
 > **Accepted:** [H] a multi-second tick quiesce can lose 24-bit PMTMR wraps (the monotonic floor blocks backward steps meanwhile) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "PMTMR epoch refresh across tick quiesce" at line 334)
-> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 2H accepted | scope: kernel-code-quality
+> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H accepted (per-tick PMTMR-read deferral resolved in §16: read retained, amortized) | scope: kernel-code-quality
 
 ---
 
@@ -179,12 +178,11 @@ The HPET provides a single 64-bit main counter that increments at a fixed freque
 > **Notes:**
 > - Shipped earlier: `hpet.{c,h}` standalone driver (`hpet_init`/`hpet_available`/`hpet_frequency_hz`/`hpet_read_counter`/`hpet_ns`), UC-mapped via `vmm_map_mmio_uc`, period from `GCAP_ID`, `ENABLE_CNF`.
 > - Review fixes: `hpet_init()` is now actually called in `boot_storage.c` (gated on `acpi_is_ready()` so degraded ACPI falls through to PMTMR/LAPIC) -- it was dead before; `hpet_ns()` is overflow-safe (split division).
-> - Downstream: HPET is the QPC/mono fallback when no invariant TSC; the per-tick UC-MMIO cost in `kusd_update_time()` is accepted to §16 (coarse migration, now covers HPET + PMTMR).
+> - Downstream: HPET is the QPC/mono fallback when no invariant TSC; the per-tick UC-MMIO read in `kusd_update_time()` is retained (resolved in §16: one read feeds KUSD + the coarse cache, amortized across all coarse readers).
 > - Canonical: `src/kernel/drivers/hpet.c`.
 > - Scope boundary: §4 owns the main-counter driver; HPET timer comparators (scheduler timer) are out of scope; coarse-read migration is §16.
 > **Verified:** 2026-06-27 | commit `5c2ec338` | 6/6 items | build OK | 208 kernel + 16 user PASS | smoke PASS (HPET selected, TCG 2.5s)
-> **Accepted:** [H] HPET source does live UC-MMIO reads in the per-tick `kusd_update_time()` ISR path -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §16 (item: "Migrate `kusd_update_time()` ... to the coarse time variants" at line 186)
-> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial x2) | 2H+1M fixed, 1H accepted | scope: kernel-code-quality
+> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial x2) | 2H+1M fixed (1H per-tick-read deferral resolved in §16: read retained for KUSD accuracy, amortized) | scope: kernel-code-quality
 
 ---
 
@@ -482,12 +480,20 @@ Hot paths like klog timestamping, scheduler accounting, and network packet times
 > [!TIP]
 > Neither Windows nor Linux exposes a single API that explicitly distinguishes "coarse kernel time" -- Windows uses KUSER_SHARED_DATA reads implicitly, and Linux has `ktime_get_coarse()` internally. Impossible OS can provide a clean `KeQuerySystemTimeCoarse()` API for kernel drivers.
 
-- [ ] Implement `KeQuerySystemTimeCoarse(FILETIME *out)` -- returns the last ISR-cached SystemTime value (no TSC read, no seqlock)
-- [ ] Implement `KeQueryInterruptTimeCoarse()` -- returns the cached `g_interrupt_time` directly
-- [ ] Migrate `kusd_update_time()` (every timer tick) to the coarse time variants -- the precise path does slow per-tick hardware reads in the ISR on PMTMR (port) + HPET (UC MMIO) (owns the §2/§4 per-tick ISR cost).
-- [ ] Update `klog()` to use `KeQuerySystemTimeCoarse()` for timestamps once the time service is ready
-- [ ] Migrate raw `system_get_ticks()` timestamp/window consumers to a rebased time source (`uptime_ns()` or the coarse API): `etw.c` event timestamps, `klog.c` boot/ratelimit stamps, `registry.c` header stamps, `wer.c` crash path, `virtio/blk_init.c`+`blk_telemetry.c` adaptive windows -- raw lifetime ticks are reinterpreted when `KeSetTimerResolution` changes the tick rate (filed from `01-boot-platform/TODO-11` §6 review; `uptime()` itself already migrated)
-- [ ] Commit: `"kernel: time -- coarse time fast path for hot-path callers"`
+- [x] `FILETIME KeQuerySystemTimeCoarse(void)` in `wall_clock.c` -- lock-free `__atomic` ACQUIRE read of the ISR-cached SystemTime (no clocksource read, no seqlock); return-by-value matching `KeQuerySystemTime`/`Precise`
+- [x] `uint64_t KeQueryInterruptTimeCoarse(void)` -- same lock-free ISR-cached read via `s_coarse_interrupt_time` (the spec's `g_interrupt_time` never existed; interrupt time is derived)
+- [x] `wall_clock_tick_cache()` takes ONE precise `mono_ns()` per tick, publishes both coarse statics, and feeds KUSD; the read is amortized across KUSD + every coarse reader (a `mono_ns_coarse` cache would freeze KUSD ~80 ms on PMTMR)
+- [x] `klog()` ring + crash-dump timestamps use `KeQueryInterruptTimeCoarse()` (10 ms units) -- lock-free single atomic read (panic-safe, no seqlock hang) + rate-safe; `klog_disk` reconstructs from the same coarse interrupt-time unit
+- [x] Migrated raw `system_get_ticks()` consumers to rebased sources: `etw.c`, `registry.c` (`reg_get_uptime_ns`), `wer.c`, `virtio` adaptive window (absolute-ns) -- removes the `KeSetTimerResolution` rewind
+- [x] Commit: `"kernel: time -- coarse time fast path for hot-path callers"`
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time suite +1 (`time: coarse time fast path`), 255 kernel tests, 0 failures
+> **Notes:**
+> - Shipped: `KeQuerySystemTimeCoarse`/`KeQueryInterruptTimeCoarse` + `wall_clock_tick_cache` in `wall_clock.c` (ISR-published lock-free coarse cache backed by `mono_ns_coarse()`).
+> - How it runs: the BSP timer ISR (`kusd_update_time`) is the single publisher of the cache (`__atomic` RELEASE, one precise `mono_ns()` sample); readers do one ACQUIRE load -- the fast path is reader-side (no per-call clocksource/seqlock read); coarse reflects a clock set within one tick.
+> - Downstream: closes the `TODO-11 §6` rate-change rewind -- klog/etw/registry/wer/virtio stamps use rebased `uptime_ns()`/coarse, not raw `system_get_ticks()`.
+> - Canonical: `include/kernel/time/wall_clock.h` Ke*Coarse APIs.
+> - Scope boundary: §16 owns the coarse read path + consumer migration; the clocksource demotion feeding `mono_ns_coarse` is §18; precise sub-us reads stay on `KeQuerySystemTime`/`...Precise`.
 
 ---
 
@@ -545,7 +551,7 @@ Continuously cross-check the active monotonic clock source against a reference a
 | 💎 | Leap second policy       | ✅ skips leap seconds    | ✅ 86400 s/day            | ✅ documented + tested    |
 | 💎 | NTP adjustment           | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ⬜ §17                    |
 | ⭐ | Fixed 10 MHz QPC         | ⚠️ varies by hardware    | ❌ no fixed-freq API      | ✅ §9 -- 10 MHz fixed     |
-| ⭐ | Coarse time API          | ⚠️ implicit KUSD         | ⚠️ ktime_get_coarse       | ⬜ §16 -- explicit API    |
+| ⭐ | Coarse time API          | ⚠️ implicit KUSD         | ⚠️ ktime_get_coarse       | ✅ explicit Ke*Coarse     |
 
 > **After §1–§15:** Impossible OS matches Windows NT exactly on FILETIME semantics, QPC, interrupt time, timer resolution, precise time, timezone handling, KUSD time updates, suspend bias, and filesystem timestamp accuracy.
 > **§9** locks `QueryPerformanceFrequency` to 10 MHz (FILETIME ticks/second), making it constant and hardware-independent -- Windows still returns variable hardware frequencies and apps must handle this; Linux has no equivalent fixed-frequency API.

@@ -248,6 +248,35 @@ static void test_filetime_leap_second_policy(void)
     TEST_ASSERT(eq, "DOS malformed :60 renders 1980-01-01T00:00:59 (no roll-forward)");
 }
 
+/* Coarse time fast path: the Ke*Coarse() APIs return the value cached by the
+ * last timer tick (no clocksource read). By the time tests run the BSP timer
+ * ISR has been publishing, so the coarse values are live. The cache is updated
+ * concurrently by the ISR, so assert only ISR-race-robust relations: coarse
+ * never leads the precise live read, and coarse interrupt time is monotonic. */
+static void test_coarse_time(void)
+{
+    /* Coarse interrupt time is non-decreasing across reads (ISR only advances
+     * it; a plain re-read can only stay equal or grow). */
+    uint64_t ci_a = KeQueryInterruptTimeCoarse();
+    uint64_t ci_b = KeQueryInterruptTimeCoarse();
+    TEST_ASSERT(ci_b >= ci_a, "coarse interrupt time monotonic non-decreasing");
+
+    /* Coarse value was published at-or-before now, so the precise live read is
+     * never behind it (coarse lags precise, never leads). */
+    uint64_t pi = KeQueryInterruptTime();
+    if (ci_b != 0)
+        TEST_ASSERT(pi >= ci_b, "precise interrupt time >= coarse (coarse lags)");
+
+    /* Same relation for system time, once the wall clock is seeded + a tick has
+     * published the coarse cache (else coarse is the 0 placeholder). */
+    if (time_service_ready()) {
+        FILETIME cs = KeQuerySystemTimeCoarse();
+        FILETIME ps = KeQuerySystemTime();
+        if (cs != FILETIME_NOW_PLACEHOLDER)
+            TEST_ASSERT(ps >= cs, "precise system time >= coarse (coarse lags)");
+    }
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -268,4 +297,6 @@ void test_register_time(void)
                             test_timezone_bias, TEST_CAT_SCHED);
     test_suite_register_cat("time: FILETIME leap second policy",
                             test_filetime_leap_second_policy, TEST_CAT_SCHED);
+    test_suite_register_cat("time: coarse time fast path",
+                            test_coarse_time, TEST_CAT_SCHED);
 }

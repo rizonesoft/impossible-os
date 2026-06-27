@@ -30,6 +30,13 @@ void KeSetSystemTimeEx(FILETIME new_time, FILETIME *previous_out);
  * Will diverge when (KUSER_SHARED_DATA) adds a coarse tick path. */
 FILETIME KeQuerySystemTimePrecise(void);
 
+/* Coarse UTC wall time: returns the value cached by the last timer tick (no
+ * clocksource read, no seqlock, single atomic load). Lags KeQuerySystemTime()
+ * by up to one tick; returns FILETIME_NOW_PLACEHOLDER before the first tick /
+ * wall-clock seed. For hot-path callers (klog, accounting) that can tolerate
+ * tick granularity -- the analogue of Linux ktime_get_coarse(). */
+FILETIME KeQuerySystemTimeCoarse(void);
+
 /* Returns 1 if wall clock has been initialized. */
 int wall_clock_ready(void);
 
@@ -62,6 +69,15 @@ int time_service_ready(void);
  * clocksource reads per tick). Either out-pointer may be NULL. */
 void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out);
 
+/* Per-tick coarse cache update -- call ONCE per timer tick from the ISR (BSP).
+ * Takes ONE precise mono_ns() sample, computes system + interrupt time, and
+ * publishes them for the lock-free KeQuerySystemTimeCoarse() /
+ * KeQueryInterruptTimeCoarse() readers. The same value feeds the KUSD page, so
+ * the per-tick clocksource read is amortized across KUSD + every coarse reader
+ * (the fast-path win is reader-side: no per-call clock read). Returns both via
+ * the out-pointers (for the KUSD updater); either may be NULL. */
+void wall_clock_tick_cache(FILETIME *system_out, uint64_t *interrupt_out);
+
 /* ---- Interrupt time APIs -------------------------------------------- */
 
 /* 100 ns since boot, including suspend bias. Monotonically increasing. */
@@ -69,6 +85,11 @@ uint64_t KeQueryInterruptTime(void);
 
 /* Same as above but sub-tick interpolated; also returns QPC value. */
 uint64_t KeQueryInterruptTimePrecise(uint64_t *qpc_value);
+
+/* Coarse interrupt time (100 ns since boot, incl. suspend bias): the value
+ * cached by the last timer tick. No clocksource read, no seqlock; lags
+ * KeQueryInterruptTime() by up to one tick. Returns 0 before the first tick. */
+uint64_t KeQueryInterruptTimeCoarse(void);
 
 /* Interrupt time minus suspend bias. Pauses during S3/S4. */
 uint64_t KeQueryUnbiasedInterruptTime(void);

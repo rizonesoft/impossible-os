@@ -134,24 +134,35 @@ void adaptive_check_window(void)
     uint64_t now;
     uint32_t elapsed_iops;
 
-    if (!adaptive.enabled || !adaptive.window_ticks)
+    if (!adaptive.enabled || !adaptive.window_ns)
         return;
 
-    now = system_get_ticks();
-    if ((now - adaptive.window_start) < adaptive.window_ticks)
+    now = uptime_ns();
+    if ((now - adaptive.window_start_ns) < adaptive.window_ns)
         return;  /* Window not yet elapsed */
 
-    /* Window complete -- compute IOPS */
-    elapsed_iops = adaptive.io_count * 10;  /* 100ms → multiply by 10 for per-second */
+    /* Window complete -- compute IOPS from the ACTUAL elapsed time, not a
+     * nominal 100 ms: uptime_ns() (coarse on PMTMR) can close the window late
+     * (e.g. ~160 ms), so a fixed *10 would overstate IOPS and mis-drive the
+     * polling/interrupt mode. elapsed_ns >= window_ns (1e8) so no divide-by-0. */
+    uint64_t elapsed_ns = now - adaptive.window_start_ns;  /* >= window_ns (1e8) */
+    {
+        uint64_t g = (uint64_t)adaptive.io_count * 1000000000ULL / elapsed_ns;
+        elapsed_iops = (g > 0xFFFFFFFFULL) ? 0xFFFFFFFFu : (uint32_t)g;
+    }
     adaptive.last_iops = elapsed_iops;
     adaptive.io_count = 0;
-    adaptive.window_start = now;
+    adaptive.window_start_ns = now;
 
-    /* Per-queue IOPS */
+    /* Per-queue IOPS -- same actual-elapsed scaling as the global rate (a fixed
+     * *10 would overstate when uptime_ns closes the window late on PMTMR). */
     {
         uint16_t q;
         for (q = 0; q < num_queues; q++) {
-            queue_stats[q].last_iops = queue_stats[q].io_count_window * 10;
+            uint64_t qi = (uint64_t)queue_stats[q].io_count_window
+                          * 1000000000ULL / elapsed_ns;
+            queue_stats[q].last_iops = (qi > 0xFFFFFFFFULL) ? 0xFFFFFFFFu
+                                                            : (uint32_t)qi;
             queue_stats[q].io_count_window = 0;
         }
     }
