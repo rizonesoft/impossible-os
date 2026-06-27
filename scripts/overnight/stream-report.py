@@ -11,6 +11,7 @@ through unchanged. Stdlib only.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 
@@ -137,16 +138,79 @@ def _result_text(content) -> str:
     return ""
 
 
-def handle(event: dict) -> None:
+class SectionMetrics:
+    """Accumulate per-section token + tool counts; flush JSONL at boundaries."""
+
+    TOKEN_FIELDS = (
+        "input_tokens", "output_tokens",
+        "cache_read_input_tokens", "cache_creation_input_tokens",
+    )
+
+    def __init__(self, path: str | None) -> None:
+        self.path = path
+        self.index = 0
+        self._reset()
+
+    def _reset(self) -> None:
+        self.turns = 0
+        self.tokens = {k: 0 for k in self.TOKEN_FIELDS}
+        self.agent_dispatches = 0
+        self.grep_calls = 0
+        self.lsp_calls = 0
+
+    def add_usage(self, usage) -> None:
+        if not isinstance(usage, dict):
+            return
+        self.turns += 1
+        for k in self.TOKEN_FIELDS:
+            v = usage.get(k)
+            if isinstance(v, int):
+                self.tokens[k] += v
+
+    def add_tool(self, name: str) -> None:
+        if name in ("Task", "Agent"):
+            self.agent_dispatches += 1
+        elif name == "Grep":
+            self.grep_calls += 1
+        elif name.startswith("mcp__lsp-bridge__"):
+            self.lsp_calls += 1
+
+    def flush(self, marker: str) -> None:
+        if not self.path:
+            return
+        rec = {
+            "section_index": self.index,
+            "marker": marker,
+            "timestamp": stamp(),
+            "turns": self.turns,
+            **self.tokens,
+            "agent_dispatches": self.agent_dispatches,
+            "grep_calls": self.grep_calls,
+            "lsp_calls": self.lsp_calls,
+        }
+        with open(self.path, "a", encoding="ascii") as fh:
+            fh.write(json.dumps(rec) + "\n")
+        self.index += 1
+        self._reset()
+
+
+def handle(event: dict, metrics: "SectionMetrics") -> None:
     kind = event.get("type")
     if kind == "assistant":
-        for block in (event.get("message") or {}).get("content") or []:
+        message = event.get("message") or {}
+        metrics.add_usage(message.get("usage"))
+        for block in message.get("content") or []:
             if block.get("type") == "text" and block.get("text"):
                 emit(block["text"])
             elif block.get("type") == "tool_use":
                 name = block.get("name", "unknown")
+                metrics.add_tool(name)
                 summary = summarize_tool(name, block.get("input"))
                 emit(f"tool: {name}  {summary}".rstrip())
+                if name == "Bash":
+                    cmd = (block.get("input") or {}).get("command") or ""
+                    if "run_phase_guard.py progress" in cmd:
+                        metrics.flush("progress")
     elif kind == "user":
         # surface failed tool results so overnight logs flag errors inline.
         for block in (event.get("message") or {}).get("content") or []:
@@ -158,6 +222,7 @@ def handle(event: dict) -> None:
                 msg = _result_text(block.get("content"))
                 emit(f"tool error: {_clip(msg)}" if msg else "tool error")
     elif kind == "result":
+        metrics.flush("final")
         emit("=== final ===")
         result = event.get("result")
         if isinstance(result, str) and result:
@@ -165,6 +230,7 @@ def handle(event: dict) -> None:
 
 
 def main() -> int:
+    metrics = SectionMetrics(os.environ.get("OVERNIGHT_METRICS_FILE") or None)
     for raw in sys.stdin:
         line = raw.rstrip("\n")
         if not line.strip():
@@ -176,7 +242,7 @@ def main() -> int:
             sys.stdout.flush()
             continue
         if isinstance(event, dict):
-            handle(event)
+            handle(event, metrics)
     return 0
 
 
