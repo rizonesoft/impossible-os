@@ -113,16 +113,42 @@ def recent_decisions(root: Path, n: int = 3) -> list[str]:
     return [_clip(e) for e in entries[-n:]]
 
 
+def fusion_jobs(root: Path) -> dict:
+    """Count uncollected async Fusion jobs: pending (worker running) + done
+    (synthesis ready, not yet collected via `outcome`). Fail-open -> zeros."""
+    out = {"pending": 0, "done": 0, "ids_done": []}
+    try:
+        metas = (root / ".fusion" / "jobs").glob("*.meta.json")
+    except Exception:
+        return out
+    for m in metas:
+        meta = _read_json(m) or {}
+        st = meta.get("status")
+        if meta.get("outcome"):  # already collected
+            continue
+        if st == "pending":
+            out["pending"] += 1
+        elif st == "done":
+            out["done"] += 1
+            out["ids_done"].append(meta.get("id", m.stem.replace(".meta", "")))
+    return out
+
+
 def anchor_line(root: Path) -> str:
     st = _state(root)
-    return (f"cursor {st.get('file', '(none)')} | phase {st.get('phase', '(none)')} "
+    fj = fusion_jobs(root)
+    line = (f"cursor {st.get('file', '(none)')} | phase {st.get('phase', '(none)')} "
             f"| obligations:{len(obligations(root))} | gotchas:{len(gotchas(root))}")
+    if fj["pending"] or fj["done"]:
+        line += f" | fusion:{fj['pending']}p/{fj['done']}d"
+    return line
 
 
 def full_brief(root: Path) -> str:
     obl = obligations(root)
     got = gotchas(root)
     dec = recent_decisions(root)
+    fj = fusion_jobs(root)
     parts = [where(root), git_state(root)]
     parts.append("OBLIGATIONS: " + ("none" if not obl else ""))
     parts += [f"  - {o}" for o in obl]
@@ -130,6 +156,10 @@ def full_brief(root: Path) -> str:
     parts += [f"  - {g}" for g in got]
     parts.append("RECENT DECISIONS: " + ("none" if not dec else ""))
     parts += [f"  {d}" for d in dec]
+    if fj["pending"] or fj["done"]:
+        parts.append(f"FUSION JOBS: {fj['pending']} pending, {fj['done']} done "
+                     f"(collect: python3 .fusion/ladder.py poll <id>)")
+        parts += [f"  - DONE {jid} -- poll + validate + outcome" for jid in fj["ids_done"]]
     return "\n".join(p for p in parts if p is not None)
 
 

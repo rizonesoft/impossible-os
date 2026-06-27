@@ -72,6 +72,8 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
 
 9. **Industry standards + Win11/Linux parity** -- spec compliance, concrete function/file references. **Optionally dispatch `Agent(subagent_type="parity-research-analyst", ...)` in implemented-code mode** (Opus frontmatter default here -- the review-mode backstop is thinner than gap-audit's Codex red-team) to research Win11/Linux behavior and surface parity + false-completeness gaps on the shipped code; fold its sourced findings into this step and step 10. Advisory only -- you decide what to fix now or file as a concrete owner item.
 
+   - **High-risk Fusion review (apex, optional):** for a section on the highest-stakes paths (SMP/lock-order, boot ABI, security) where the Codex review left real doubt, dispatch a Fusion review job: `python3 .fusion/ladder.py dispatch --mode review --target <section> --brief-file <diff> --prior codex=<codex-findings>`. Async (DIY panel + Opus judge, no web-search); collect with `python3 .fusion/ladder.py poll <id>` and validate before acting -- it is a lead, not a verdict, and never replaces the mandatory Codex dispatches. Off unless `FUSION_ENABLED=1` + a key in `.fusion/secret`.
+
 10. **Feature completeness + adjacent completeness** -- grep for `STATUS_NOT_IMPLEMENTED`, partial implementations, dead API promises, and the "one missing piece away from real" pattern:
     - Did the section technically land, but miss the next obvious adjacent capability a real user or caller would hit?
     - Are exports, registrations, tables, docs, tests, or TODO/XREF ownership still missing?

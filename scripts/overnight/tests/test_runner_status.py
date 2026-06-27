@@ -62,9 +62,33 @@ def test_missing_sources_fail_open():
         assert "WHERE" in out  # still prints a brief
 
 
+def test_fusion_jobs_pending_and_done_surface():
+    with tempfile.TemporaryDirectory() as d:
+        root = _mkroot(d, state={"active": True, "phase": "SECTIONS"})
+        jobs = root / ".fusion" / "jobs"
+        jobs.mkdir(parents=True)
+        (jobs / "a.meta.json").write_text(json.dumps({"id": "a", "status": "pending", "target": "build"}))
+        (jobs / "b.meta.json").write_text(json.dumps({"id": "b", "status": "done", "target": "test"}))
+        # collected job (has outcome) must NOT be counted
+        (jobs / "c.meta.json").write_text(json.dumps({"id": "c", "status": "done", "outcome": "resolved"}))
+        anchor = _run(root, anchor=True)
+        assert "fusion:1p/1d" in anchor, anchor
+        full = _run(root)
+        assert "FUSION JOBS: 1 pending, 1 done" in full and "DONE b" in full, full
+
+
+def test_no_fusion_jobs_no_fusion_line():
+    with tempfile.TemporaryDirectory() as d:
+        root = _mkroot(d, state={"active": True, "phase": "SECTIONS"})
+        assert "fusion:" not in _run(root, anchor=True)
+        assert "FUSION JOBS" not in _run(root)
+
+
 if __name__ == "__main__":
     test_anchor_has_phase_and_counts()
     test_unreceived_codex_is_an_obligation()
     test_expired_gotcha_dropped()
     test_missing_sources_fail_open()
+    test_fusion_jobs_pending_and_done_surface()
+    test_no_fusion_jobs_no_fusion_line()
     print("PASS: runner_status")
