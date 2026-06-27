@@ -125,3 +125,34 @@ after Opus + Codex have demonstrably failed -- and NOT an upgrade over Opus. A
 single strong model is faster, cheaper, and (on a problem it can actually reason
 about) often better. Escalate to the expensive diverse panel only when the cheaper
 tiers have struck out. Elaborateness is not correctness.
+
+## Round 2: frontier panel + strong judge -- the judge is what matters
+
+Re-ran the identical heisenbug with a FRONTIER panel (Grok-build, Opus 4.8,
+GPT-5.5, Nemotron-Ultra-550B, Qwen3-Max) and an **Opus 4.8 judge**. All five panel
+models responded (the free Nemotron included).
+
+| | cheap panel + GLM judge | frontier panel + Opus judge | Opus 4.8 alone |
+| --- | --- | --- | --- |
+| Time | 16 min | 12 min | **1.4 min** |
+| Cost | $1.16 | $1.07 | **$0.13** |
+| Committed root cause | HARDWARE errata (unverified) | **SOFTWARE: LAPIC/TSC-deadline timer not disarmed before C6 entry** (with fix code) | **SOFTWARE: TSC-deadline-in-past -> re-entrant timer storm -> stack overflow** (with fix code) |
+
+**The decisive finding: the JUDGE dominated the outcome, not the panel.** In BOTH
+Fusion runs the panel contained *both* hypotheses -- the software timer bug AND the
+hardware-errata speculation (one frontier member committed to "erratum #1485,"
+exactly like the cheap panel). The weak GLM judge anchored on the impressive-looking
+errata (the worse answer); the strong Opus judge correctly down-weighted it and
+committed to the actionable software fix -- the SAME root cause lone Opus found.
+
+**But that is the trap:** the best judge (Opus) IS the baseline. Frontier-Fusion
+with an Opus judge merely RE-DERIVED Opus-alone's answer -- at ~8x the cost and ~9x
+the time. The panel's diversity did not beat a single strong model; it was overridden
+by the judge's quality, and the strongest judge is the thing you already have.
+
+**Reinforced conclusion:** judge strength > panel strength; and the strongest judge
+is the baseline. Fusion is hard to justify over lone Opus on problems Opus can reason
+about. It earns its place ONLY as the apex last-resort tier (after Opus + Codex have
+demonstrably failed), where the bet is that the panel surfaces a hypothesis the
+single model genuinely lacked -- and even then it needs a strong judge to pick it
+out. Spending 8-9x to re-derive what Opus already says is not a win.
