@@ -56,9 +56,15 @@ integration.
    the ladder simply stops at the Codex tier; the runner is unaffected.
 2. **Secret never in git.** `.fusion/secret` is gitignored; everything else in
    `.fusion/` is tracked. No key, token, or credential is ever committed.
-3. **Hard per-run cap.** A budget counter in `.claude/state/fusion-budget.json`
-   (default `FUSION_MAX_CALLS=3` per run); over cap -> Fusion tier is skipped +
-   logged, never called.
+3. **Two-layer spend cap.** (a) Per-run counter in
+   `.claude/state/fusion-budget.json` (default `FUSION_MAX_CALLS=3`); over cap ->
+   skip + log. (b) **Live balance floor:** before each Fusion call,
+   `GET https://openrouter.ai/api/v1/credits` and skip if
+   `total_credits - total_usage < FUSION_MIN_CREDITS` (default e.g. $2). The exact
+   per-call cost comes from the completion's `usage` field (recorded in the dataset
+   log, not estimated). **Fail-open for the runner, fail-CLOSED for spend:** if the
+   balance check errors or returns unknown, the Fusion call is SKIPPED (never spend
+   blind) while the runner continues its normal path.
 4. **Bounded input.** Each Fusion/Codex call sends a focused problem brief + a
    capped slice of relevant snippets, never the whole codebase -- bounds input cost.
 5. **Fail-open on EVERYTHING.** Missing key, network error, API 4xx/5xx, timeout
@@ -70,7 +76,7 @@ integration.
    -- both Codex assist and Fusion -- appends a JSONL record to
    `.fusion/dataset.jsonl` (gitignored, local only, never committed):
    `{ts, tier, mode, models, problem_brief (input), output (synthesis),
-   cost_estimate, outcome}`. `outcome` is mode-specific: for `stuck`, whether the
+   cost (exact, from the completion `usage` field), outcome}`. `outcome` is mode-specific: for `stuck`, whether the
    next build/test/smoke on that target passed after the assist was applied
    (`resolved`/`unresolved`/`unknown`); for `review`, the triage disposition of the
    findings (counts of Fix/Reject/Accept), or `unknown`. This seeds (a) evals to
@@ -165,6 +171,9 @@ ending an Opus loop that would have cost more.
   "unavailable", exit 0, runner continues (covered by offline unit tests that mock
   the HTTP layer).
 - Budget cap enforced: the (N+1)th Fusion call in a run is skipped + logged.
+- Balance floor enforced: with a mocked `/credits` response below
+  `FUSION_MIN_CREDITS`, the Fusion call is skipped; with the balance check mocked to
+  error, the call is also skipped (fail-closed on spend) while the runner continues.
 - `.fusion/secret` AND `.fusion/dataset.jsonl` are gitignored and never appear in
   `git status` / a commit.
 - Each escalation appends one `dataset.jsonl` record carrying the problem brief,
