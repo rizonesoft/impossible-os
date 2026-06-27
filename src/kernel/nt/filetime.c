@@ -167,7 +167,7 @@ int filetime_to_string(FILETIME ft, char *buf, uint32_t len)
     total_days  = total_secs / 86400;
     h  = secs_in_day / 3600;
     mi = (secs_in_day / 60) % 60;
-    s  = secs_in_day % 60;
+    s  = secs_in_day % 60;  /* always 0..59 -- never ":60" (leap second policy) */
 
     year = 1601;
     while (total_days >= 365) {

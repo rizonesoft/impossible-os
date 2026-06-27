@@ -32,6 +32,30 @@ typedef uint64_t FILETIME;
 /* Sentinel: returned before wall clock is initialized */
 #define FILETIME_NOW_PLACEHOLDER        0ULL
 
+/* ---- Leap second policy -------------------------------------------------- *
+ * FILETIME_LEAP_SECOND_POLICY: FILETIME counts SI seconds, NOT UTC seconds.
+ *
+ * The 100 ns tick count since 1601-01-01 assumes every day has exactly 86400
+ * seconds. Leap seconds are NOT counted -- this matches Win32 (FileTimeTo
+ * SystemTime returns wSecond 0..59 only; the 60th second of a leap event is
+ * never represented) AND POSIX (time_t mandates 86400 s/day, also ignoring
+ * leap seconds). Both endpoints of every conversion in this file share that
+ * convention, so FILETIME <-> Unix arithmetic and round-trips stay exact.
+ *
+ * Consequences enforced here:
+ *   - filetime_from_unix_seconds()/filetime_to_unix_seconds() are pure linear
+ *     scale + offset: no leap-second table, no per-day correction.
+ *   - filetime_to_string() derives the seconds field as (secs_in_day % 60),
+ *     so it can never emit ":60".
+ *   - The NTP adjustment hooks discipline WALL TIME phase/frequency only; they
+ *     do not smear or insert leap seconds, and never touch the monotonic clock
+ *     (QPC / interrupt time stay raw).
+ *
+ * Reference: Microsoft FILETIME docs; POSIX.1-2017 4.16 "Seconds Since the
+ * Epoch". If true UTC-with-leap-seconds is ever required, it belongs in a
+ * separate UTC-aware layer, never retrofitted into these linear conversions.
+ * ------------------------------------------------------------------------- */
+
 /* ---- Conversion helpers (pure math, no hardware access) ------------------ */
 
 /* Forward declarations */
@@ -47,7 +71,8 @@ void     filetime_to_dos_datetime(FILETIME ft, int tz_bias_minutes,
 FILETIME filetime_from_dos_datetime(uint16_t date, uint16_t time,
                                      int tz_bias_minutes);
 
-/* Unix epoch seconds -> FILETIME */
+/* Unix epoch seconds -> FILETIME. Pure linear scale + offset: no leap-second
+ * correction (both epochs use 86400 s/day -- see FILETIME_LEAP_SECOND_POLICY). */
 static inline FILETIME filetime_from_unix_seconds(uint64_t unix_sec)
 {
     return (unix_sec + FILETIME_EPOCH_OFFSET_SECONDS) * FILETIME_TICKS_PER_SECOND;

@@ -180,6 +180,44 @@ static void test_timezone_bias(void)
     TEST_ASSERT_EQ((uint64_t)timezone_total_bias(), 0u, "restored to UTC");
 }
 
+/* Leap second policy: FILETIME counts SI seconds (86400 s/day), leap seconds
+ * are never counted. 1483228799 is 2016-12-31T23:59:59Z -- the second BEFORE
+ * the 2016 leap event. POSIX skips the inserted 23:59:60, so the next second
+ * (1483228800) is 2017-01-01T00:00:00Z. The string must show :59, never :60. */
+static void test_filetime_leap_second_policy(void)
+{
+    char buf[32];
+    FILETIME ft = filetime_from_unix_seconds(1483228799ULL);
+
+    /* Linear math, no leap correction: (unix + offset) * 1e7. */
+    TEST_ASSERT_EQ(ft, 131277023990000000ULL,
+                   "filetime_from_unix_seconds(1483228799) is linear (no leap)");
+
+    int n = filetime_to_string(ft, buf, sizeof(buf));
+    TEST_ASSERT_EQ((uint64_t)n, 24u, "ISO string is 24 chars");
+
+    /* Whole string must be the leap boundary second, ending :59 not :60. */
+    int eq = 1;
+    const char *exp = "2016-12-31T23:59:59.000Z";
+    for (int i = 0; i < 25; i++) {
+        if (buf[i] != exp[i]) { eq = 0; break; }
+    }
+    TEST_ASSERT(eq, "1483228799 renders 2016-12-31T23:59:59.000Z (never :60)");
+
+    /* Seconds field (buf[17..18]) is 0..59 by construction. */
+    TEST_ASSERT(buf[17] >= '0' && buf[17] <= '5', "seconds tens digit 0..5");
+
+    /* The next second crosses the day boundary (POSIX ignores the leap). */
+    FILETIME ft2 = filetime_from_unix_seconds(1483228800ULL);
+    (void)filetime_to_string(ft2, buf, sizeof(buf));
+    eq = 1;
+    const char *exp2 = "2017-01-01T00:00:00.000Z";
+    for (int i = 0; i < 25; i++) {
+        if (buf[i] != exp2[i]) { eq = 0; break; }
+    }
+    TEST_ASSERT(eq, "1483228800 renders 2017-01-01T00:00:00.000Z (no leap second)");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -198,4 +236,6 @@ void test_register_time(void)
                             test_ke_delay_interval_to_ms, TEST_CAT_SCHED);
     test_suite_register_cat("time: timezone bias + local conversion",
                             test_timezone_bias, TEST_CAT_SCHED);
+    test_suite_register_cat("time: FILETIME leap second policy",
+                            test_filetime_leap_second_policy, TEST_CAT_SCHED);
 }

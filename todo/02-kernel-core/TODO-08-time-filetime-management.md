@@ -74,7 +74,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-11 §11 |  [/]   |
 | 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [x]   |
 | 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-26 §3,§4   |  [/]   |
-| 💎  |  15   | Leap second policy                                                     | §1                  |  [ ]   |
+| 💎  |  15   | Leap second policy                                                     | §1                  |  [x]   |
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [ ]   |
 | ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [ ]   |
 | 💎  |  18   | Clocksource quality watchdog (drift demotion)                          | §2, §4              |  [ ]   |
@@ -457,11 +457,19 @@ When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrup
 ## 15. Leap Second Policy
 FILETIME does not count leap seconds -- this matches Windows behavior exactly. The 100 ns count since 1601-01-01 assumes every day has exactly 86400 seconds. `FileTimeToSystemTime` returns seconds 0–59 only; the 60th second during a leap event is never represented. This must be explicitly documented and enforced so that FILETIME arithmetic and round-trip conversions remain correct.
 
-- [ ] Add `FILETIME_LEAP_SECOND_POLICY` comment block to `filetime.h` documenting that leap seconds are not counted (SI seconds, not UTC seconds)
-- [ ] Ensure `filetime_from_unix_seconds()` does NOT apply leap second corrections -- Unix time also ignores leap seconds (POSIX mandates 86400 s/day)
-- [ ] Ensure `filetime_to_string()` never outputs `:60` seconds
-- [ ] Add a unit test: `filetime_from_unix_seconds(1483228799)` (2016-12-31T23:59:59Z, a leap second boundary) produces the correct value and `filetime_to_string` shows `23:59:59`, not `23:59:60`
-- [ ] Commit: `"kernel: time -- document and enforce leap second policy"`
+- [x] `FILETIME_LEAP_SECOND_POLICY` doc block added to `filetime.h` -- FILETIME counts SI seconds (86400 s/day), leap seconds never counted (Win32 + POSIX), NTP disciplines wall time only
+- [x] `filetime_from_unix_seconds()` confirmed leap-correction-free (pure linear `(unix+offset)*1e7`) + one-line policy reference comment
+- [x] `filetime_to_string()` confirmed never emits `:60` (seconds = `secs_in_day % 60`, always 0..59) + one-line policy comment in `filetime.c`
+- [x] Unit test `test_filetime_leap_second_policy` (`test_time.c`): `1483228799` -> `2016-12-31T23:59:59.000Z` (never `:60`), next second -> `2017-01-01T00:00:00.000Z`
+- [x] Commit: `"kernel: time -- document and enforce leap second policy"`
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time suite +1 (`time: FILETIME leap second policy`), 248 kernel tests, 0 failures
+> **Notes:**
+> - Shipped: `FILETIME_LEAP_SECOND_POLICY` doc block in `filetime.h` + policy-reference comments at `filetime_from_unix_seconds` and `filetime_to_string` + `test_filetime_leap_second_policy` regression test.
+> - No new runtime logic: the conversions were already leap-correct by construction (linear Unix math; modular seconds). This section documents and guards the invariant so it cannot regress.
+> - Downstream: locks the contract the §17 NTP hooks rely on -- wall-time discipline only, no leap smearing, monotonic clock stays raw.
+> - Canonical: `include/kernel/nt/filetime.h` leap-second policy block.
+> - Scope boundary: §15 owns the SI-second invariant + its test; a true UTC-with-leap-seconds layer (if ever needed) is a separate module.
 
 ---
 
@@ -531,7 +539,7 @@ Continuously cross-check the active monotonic clock source against a reference a
 | 💎 | FAT32 timestamps         | ✅ kernel32 -> FAT dir   | ✅ fat inode time         | ✅ §13 -- FILETIME-based  |
 | 💎 | NTFS FILETIME            | ✅ $STANDARD_INFO        | ✅ ntfs3 current_time     | ⬜ §13                    |
 | 💎 | Suspend time bias        | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                    |
-| 💎 | Leap second policy       | ✅ skips leap seconds    | ✅ 86400 s/day            | ⬜ §15                    |
+| 💎 | Leap second policy       | ✅ skips leap seconds    | ✅ 86400 s/day            | ✅ documented + tested    |
 | 💎 | NTP adjustment           | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ⬜ §17                    |
 | ⭐ | Fixed 10 MHz QPC         | ⚠️ varies by hardware    | ❌ no fixed-freq API      | ✅ §9 -- 10 MHz fixed     |
 | ⭐ | Coarse time API          | ⚠️ implicit KUSD         | ⚠️ ktime_get_coarse       | ⬜ §16 -- explicit API    |
