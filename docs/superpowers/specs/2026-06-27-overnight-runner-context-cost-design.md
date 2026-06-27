@@ -204,14 +204,14 @@ opt-in, architecture churn). Therefore effort is controllable only at the
 **main-loop session level** (set at the headless `claude -p` launch), and the only
 per-subagent cost knob is **`model`**.
 
-- **WS5a -- main-loop Medium-vs-High A/B (the real lever; gated on WS3, measured
-  not flipped).** The main loop is where the expensive thinking happens. Run one
-  comparable file at Medium and one at High; compare *both* main-context output
-  tokens *and* end-to-end quality proxies: Codex review-finding count, fix-loop
-  rounds, rebuilds, and deferrals. Adopt Medium only if quality holds -- a
-  lower-effort implementation that misses a hazard gets caught downstream and
-  costs *more* in fix loops than it saved. Never a blind switch. Edits no code
-  until a decision is reached; the switch is a one-line launch-flag change.
+- **WS5a -- main-loop Medium-vs-High A/B. DEFERRED by operator decision
+  2026-06-27 ("drop the medium/high decision for now").** The main loop stays at
+  its current session effort. When revisited: run one comparable file at Medium
+  and one at High; compare *both* main-context output tokens *and* end-to-end
+  quality proxies (Codex finding count, fix-loop rounds, rebuilds, deferrals);
+  adopt Medium only if quality holds. The switch is a one-line launch-flag change;
+  no code lands until that decision. This was the only data-gated workstream, so
+  parking it unblocks WS5b + WS6 to proceed now.
 - **WS5b -- subagent model tiering (model not effort).** The available subagent
   knob is `model`, decided per agent by backstop strength:
   - `parity-research-analyst` -> **Sonnet**. Misses are filed follow-up gaps, not
@@ -324,11 +324,9 @@ triviality classifier proving itself over a full file run before it can hard-blo
   table shows the main-context token trend.
 - WS4 (deferred): lsp-bridge survives a full file run without a disconnect, or the
   disconnect is root-caused and gated.
-- WS5a: A/B run produces a Medium-vs-High table on main-context tokens +
-  finding-count + fix-loop rounds + deferrals; decision recorded with evidence
-  (adopt Medium only if quality proxies do not regress). WS5b: parity + explorer
-  retiered to Sonnet show no rise in re-dispatch / bad-digest rate over a full file
-  run; kernel-quality-auditor remains Opus.
+- WS5a: DEFERRED (operator decision 2026-06-27) -- no criteria this pass.
+- WS5b: parity + explorer retiered to Sonnet show no rise in re-dispatch /
+  bad-digest rate over a full file run; kernel-quality-auditor remains Opus.
 - WS6: at least one LLM-judgment mechanical check moved to a deterministic script
   with no behavior change; `todo-hygiene-auditor` registered + Check-14 clean +
   produces a punch-list the main loop applies on one close-out.
