@@ -27,6 +27,17 @@ real key) is gitignored.
 - Fail-open for the runner (an error never blocks the pipeline), fail-CLOSED for
   spend (an unknown/low balance -> skip, never spend blind).
 
+## Data leaves the trust boundary
+
+Enabling Fusion **transmits the context you send** (failing code, diffs, logs) to
+OpenRouter, which fans it out to the three external panel providers (Zhipu/GLM,
+Google/Gemini, Moonshot/Kimi) plus the judge. Your kernel source leaves your
+machine to those services. Only enable Fusion if that is acceptable for this code.
+The caller sends BOUNDED context (`--context-file` is capped at 60 KB), never the
+whole tree. In interactive auto-mode, a source-to-external crossing is correctly
+blocked until you approve it; the headless overnight run uses bypassPermissions and
+is gated instead by `FUSION_ENABLED` + the spend caps.
+
 ## Files
 
 - `fusion_escalate.py` -- the caller (`--mode stuck|review`, brief on stdin).

@@ -84,6 +84,13 @@ integration.
    cheap subagent/escalation tiers into smaller/local models, (c) later fine-tuning
    of the cheap panel models on this codebase. It is explicitly NOT for fine-tuning
    the main loop -- Claude is not fine-tunable.
+7. **Data leaves the trust boundary (operator decision).** Enabling Fusion
+   transmits the sent context to OpenRouter and the three external panel providers
+   (Zhipu, Google, Moonshot) + the judge. The caller sends BOUNDED context only
+   (`--context-file` capped at 60 KB; never whole files / the tree); the crossing is
+   documented in `.fusion/README.md`. In interactive auto-mode a source-to-external
+   crossing is correctly hard-blocked until approved; the headless run
+   (bypassPermissions) is gated by `FUSION_ENABLED` + the spend caps instead.
 
 ## 4. Components
 
