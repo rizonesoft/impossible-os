@@ -149,13 +149,15 @@ fail-open-trivial, and matches every other host tool in the repo.
 - **Response:** the judge's synthesized answer is in `choices[0].message.content`
   (embedded text, not a separate field); `usage` reports the summed cost.
 - **Pricing:** roughly 4-5x a single completion (N panel calls + 1 judge). On this
-  cheap panel that is still ~$0.10-0.15 per call.
+  panel that is still ~$0.50-0.70 per call (measured: a real apex call with the
+  auto web-search and a ~50KB synthesis cost $0.61 on 2026-06-27).
 
 ## 6. Cost model (why this is affordable)
 
 OpenRouter prices (June 2026, $/M in/out): GLM 5.2 0.95/3.00, Kimi K2.7 ~0.66/3.41,
 DeepSeek V4 Pro 0.435/0.87, Claude Opus 4.8 judge 5/25. A Fusion call (~20K context x 3
-panel + 1 Claude judge, ~2K out each) lands around $0.10-0.20 -- the Claude judge
+panel + 1 Claude judge, with auto web-search + a large synthesis) lands around
+$0.50-0.70 (measured $0.61 on a 2026-06-27 smoke test) -- the Claude judge
 upgrade adds only cents because the call is rare. Because Fusion is the apex tier
 (reached only after Claude (3) and Codex (2) failed, capped at `FUSION_MAX_CALLS`
 per run), per-call QUALITY matters more than per-call cheapness. It is a rare spend
