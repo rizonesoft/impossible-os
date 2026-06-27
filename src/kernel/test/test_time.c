@@ -475,6 +475,29 @@ static void test_mono_drift_ppm(void)
                    "large-window drift uses 128-bit multiply (no u64 overflow)");
 }
 
+/* The wall-time floor keeps wall reads monotonic across an NTP negative
+ * re-anchor (same generation -> clamp up) while NOT clamping a legitimate
+ * backward manual set (generation mismatch -> pass through, so the pre-set value
+ * cannot raise the new floor). Pure -- no live wall-clock state. */
+static void test_wall_floor_clamp(void)
+{
+    /* Same generation: a backward candidate is clamped UP to the floor. */
+    TEST_ASSERT_EQ(wall_floor_clamp(900, 1000, 5, 5), 1000,
+                   "same gen: backward cand clamps up to floor (monotonic)");
+    /* Same generation: a forward candidate passes (and would become new floor). */
+    TEST_ASSERT_EQ(wall_floor_clamp(1100, 1000, 5, 5), 1100,
+                   "same gen: forward cand passes through");
+    TEST_ASSERT_EQ(wall_floor_clamp(1000, 1000, 5, 5), 1000,
+                   "same gen: equal cand returns floor");
+    /* Generation mismatch (a manual set bumped the gen): a stale pre-set reader
+     * returns its value UNCHANGED -- even a low value -- so it cannot raise the
+     * new (post-set) floor. This is what lets a backward manual set stand. */
+    TEST_ASSERT_EQ(wall_floor_clamp(900, 1000, 4, 5), 900,
+                   "gen mismatch: low cand passes through (backward set stands)");
+    TEST_ASSERT_EQ(wall_floor_clamp(1100, 1000, 4, 5), 1100,
+                   "gen mismatch: high cand also passes through (no poison)");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -509,6 +532,8 @@ void test_register_time(void)
                             test_set_system_time_invalidates_ntp, TEST_CAT_SCHED);
     test_suite_register_cat("time: clocksource watchdog drift ppm classify",
                             test_mono_drift_ppm, TEST_CAT_SCHED);
+    test_suite_register_cat("time: NTP wall-floor clamp + generation gate",
+                            test_wall_floor_clamp, TEST_CAT_SCHED);
     test_suite_register_cat("time: KeSetSystemTime rejects absurd anchor",
                             test_set_system_time_rejects_absurd, TEST_CAT_SCHED);
 }

@@ -78,6 +78,23 @@ void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out);
  * the out-pointers (for the KUSD updater); either may be NULL. */
 void wall_clock_tick_cache(FILETIME *system_out, uint64_t *interrupt_out);
 
+/* ---- NTP continuous wall-time discipline --------------------------- */
+
+/* Register the per-tick NTP discipline applier on the kworker pool (Phase 3,
+ * after the scheduler + kworker_init). Idempotent. Consumes the freq/slew stored
+ * by ke_ntp_adjtime into the wall clock continuously, behind a wall-time floor so
+ * a negative correction is a brief slow not a backward step, and flips the NTP
+ * status "ntp-pending" -> "ntp" once applied. */
+void ke_ntp_discipline_init(void);
+
+/* Pure (no hardware): the monotonic-clamp result for a wall read of `cand`
+ * against `floor`. Clamps UP (max) when read_gen == cur_gen; returns `cand`
+ * unchanged on a generation mismatch (a manual KeSetSystemTime happened since the
+ * read snapshotted its anchor, so this pre-set value must not raise the new
+ * floor). Unit-tested. */
+uint64_t wall_floor_clamp(uint64_t cand, uint64_t floor,
+                          uint32_t read_gen, uint32_t cur_gen);
+
 /* ---- Interrupt time APIs -------------------------------------------- */
 
 /* 100 ns since boot, including suspend bias. Monotonically increasing. */

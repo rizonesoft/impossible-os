@@ -78,7 +78,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [x]   |
 | ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [/]   |
 | 💎  |  18   | Clocksource quality watchdog (drift demotion)                          | §2, §3              |  [/]   |
-| 💎  |  19   | NTP continuous wall-time discipline                                    | §17, §18            |  [ ]   |
+| 💎  |  19   | NTP continuous wall-time discipline                                    | §17, §18            |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both provide these capabilities.
 > ⭐ = exclusive -- coarse time gives O(1) cached reads for hot-path callers without reading hardware; NTP hook API is a first-class kernel-level adjustment interface, not a userspace-only workaround.
@@ -513,7 +513,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 - [x] Contract documented in `ntp_adj.h` + the wall_clock.c block: `ke_ntp_adjtime()` is THREAD (PASSIVE) context only; the kernel never initiates network calls
 - [x] Honest discipline-state via pure tested `ntp_source_for_correction(off,freq)`: `"ntp"` only when fully applied (pure step / zero no-op); any stored slew or nonzero freq (incl. mixed step+freq) -> `"ntp-pending"`
 - [x] All anchor writers coordinate on `s_ntp_lock` (order `s_ntp_lock -> s_lock`): a non-NTP `KeSetSystemTime` clears NTP status (`source="none"`, slew/freq 0) atomically with the swap, so a manual set never leaves a stale `"ntp"`
-- [/] Continuous per-tick freq/slew APPLICATION deferred (a discrete nudge regresses wall reads; needs the wall-time floor) -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
+- [x] Continuous per-tick freq/slew APPLICATION: shipped in §19 (`ke_ntp_discipline_tick` applier behind the generation-aware wall floor).
 - [x] Commit: `"kernel: time -- NTP clock phase and frequency adjustment hooks"`
 
 > **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | NTP tests (tick adjust, step-target valid, reject preserves, source label, manual-set invalidates) + absurd-set reject, 283 kernel tests, 0 failures
@@ -525,8 +525,6 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 > - Canonical: `include/kernel/time/ntp_adj.h`.
 > - Scope boundary: §17 owns the adjustment hooks; the NTP protocol client + network I/O are a network-stack TODO; the mono-wide floor is §18; the continuous wall-time discipline + wall floor are §19.
 > **Verified:** 2026-06-27 | commit `0fb1743f` | 7/8 items | build OK | tests 283/283 PASS
-> **Deferred:** [H] continuous per-tick freq/slew APPLICATION (needs the wall-time floor) -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
-> **Deferred:** [M] per-tick `s_ntp_lock`-hold audit -- §17 samples `mono_ns()` (HPET/PMTMR I/O) under the lock on cold paths only; per-tick consumer must sample outside the lock -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
 > **Quality reviewed:** 2026-06-27 | Codex 3x (adversarial, consistency, perf) | 2M+1L fixed (doc/contract), 2 deferred | scope: kernel-code-quality
 
 ---
@@ -542,7 +540,7 @@ Continuously cross-check the active monotonic clock source against a reference a
 - [x] Log the demotion with old/new source + measured drift ppm in `mono_clock_demote()` (`LOG_WARN "clocksource: demoting %s -> %s (%u ppm)"`).
 - [ ] PMTMR-reference watchdog monitoring (review [H], deferred): bounding the 24-bit PMTMR wrap needs a TSC-independent + rate-correct + mask-continuous clock (none exists), so auto-monitoring is HPET-reference-only for now.
 - [ ] Optimization (perf review [M]): a per-CPU / batched `mono_floor` fast path for steady-state TSC reads -- the always-on global `cmpxchg` on `s_mono_floor` bounces a cacheline under cross-CPU polling; monotonicity MUST stay global.
-- [/] Continuous NTP freq/slew APPLICATION + per-tick lock-hold audit (§17-deferred wall-time discipline; needs a separate wall floor) -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
+- [x] Continuous NTP freq/slew APPLICATION + per-tick lock-hold audit: shipped in §19 (the §17-deferred wall-time discipline, behind the generation-aware wall floor).
 - [x] Commit: `"kernel: time -- clocksource quality watchdog with drift demotion"`
 
 **Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): `mono_drift_ppm` classifies a +/-600 ppm skew as over-threshold, a 100 ppm skew as under, saturates a >=100 % diff, and returns 0 for a zero window. Runtime (WHPX / bare metal serial, not unit-testable without live drift): boot logs the qualified source; an unstable TSC logs `"clocksource: demoting TSC -> HPET (N ppm)"` and `mono_ns()` stays monotonic across the demotion. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -555,7 +553,6 @@ Continuously cross-check the active monotonic clock source against a reference a
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §18 owns clocksource qualification + drift demotion; NTP wall-time discipline is §19; AP TSC sync stays §3-deferred; S3 resume is power-management.
 > **Verified:** 2026-06-27 | commit `10613f9a` | 6/9 items | build OK | tests 291/291 PASS | smoke PASS (TCG 2.53s)
-> **Deferred:** [H] continuous NTP freq/slew application + wall floor -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
 > **Deferred:** [H] PMTMR-reference watchdog monitoring (auto-monitoring is HPET-reference-only; PMTMR wrap unboundable by an independent continuous clock) -> XREF: 02-kernel-core/TODO-08 §18 (item: "PMTMR-reference watchdog monitoring" at line 543)
 > **Deferred:** [M] per-CPU/batched `mono_floor` fast path for the always-on TSC read -> XREF: 02-kernel-core/TODO-08 §18 (item: "Optimization (perf review [M])" at line 544)
 > **Quality reviewed:** 2026-06-27 | Codex 12x (design, adversarial, consistency, perf, re-adversarial) | 8H+3M+1L fixed, 3 deferred | scope: kernel-code-quality
@@ -565,13 +562,21 @@ Continuously cross-check the active monotonic clock source against a reference a
 ## 19. NTP Continuous Wall-Time Discipline
 Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to the wall clock continuously, so a disciplined clock actually tracks the reference instead of only storing the correction. The §17 hooks store freq/slew and report `source="ntp-pending"`; this section adds the per-tick applier (built on the §18 mono floor) that consumes them and flips the status to `"ntp"`. Split from §18 because it needs its own wall-time floor and design pass. -> XREF: 02-kernel-core/TODO-08 §17 (item: "Continuous per-tick freq/slew APPLICATION deferred")
 
-- [ ] Wall-time floor (design review [H]): a separate atomic `wall_floor()` on `KeQuerySystemTime`/`Coarse`/`Precise` so a negative-freq re-anchor of `s_base_time` cannot regress wall reads; `KeSetSystemTime` resets it.
-- [ ] Per-tick NTP application driver: a PASSIVE job sampling `mono_ns()` outside `s_ntp_lock`, then under `s_ntp_lock -> s_lock` re-anchoring `s_base_time` via `ntp_tick_adjust_ns()` + decrementing the slew, behind the wall floor.
-- [ ] Flip §17 status `"ntp-pending"` -> `"ntp"` once a correction is actually applied (manual `KeSetSystemTime` still resets to `"none"`).
-- [ ] Unit tests (`TEST_CAT_SCHED`): a pure wall-floor helper is monotonic across a simulated backward re-anchor; `ntp_tick_adjust_ns` already tested in §17.
-- [ ] Commit: `"kernel: time -- NTP continuous wall-time discipline"`
+- [x] Wall-time floor (design review [H]): generation-aware WRITER-ONLY `s_wall_floor`/`s_wall_floor_gen`, read-only `wall_floor_read` clamps `KeQuerySystemTime`/`Coarse`/`Precise`; `KeSetSystemTimeEx` bumps gen + resets it (no stale-reader poison).
+- [x] Per-tick NTP applier `ke_ntp_discipline_tick` (~0.25 s PASSIVE kworker) samples `mono_ns()` outside `s_ntp_lock`, then under `s_ntp_lock -> s_lock` raises the floor + re-anchors `s_base_time` via `ntp_tick_adjust_ns()` + decrements slew.
+- [x] Flip §17 status `"ntp-pending"` -> `"ntp"` once applied; a manual `KeSetSystemTimeEx` still resets to `"none"` (the §17 invalidation path).
+- [x] Unit tests (`TEST_CAT_SCHED`): pure `wall_floor_clamp` -- same-gen clamps up across a backward re-anchor, gen-mismatch passes through (no poison).
+- [x] Commit: `"kernel: time -- NTP continuous wall-time discipline"`
 
-**Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): a pure wall-floor helper never returns below a prior value across a simulated backward re-anchor. Runtime (WHPX / bare metal serial): after `ke_ntp_adjtime` with a sub-second slew, `ke_ntp_get_status` reports `"ntp"` and `KeQuerySystemTime` advances monotonically while the slew is consumed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+**Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): pure `wall_floor_clamp` clamps a backward candidate up to the floor at the same generation and passes a candidate through on a generation mismatch (so a backward manual set stands without poisoning). Runtime (WHPX / bare metal serial): after `ke_ntp_adjtime` with a sub-second slew, `ke_ntp_get_status` reports `"ntp"` and `KeQuerySystemTime` advances monotonically while the slew is consumed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time suites incl. `NTP wall-floor clamp + generation gate`, 296 kernel tests, 0 failures
+> **Notes:**
+> - Shipped: generation-aware WRITER-ONLY wall floor (`s_wall_floor`/`s_wall_floor_gen`, pure `wall_floor_clamp` + read-only `wall_floor_read`) + the `ke_ntp_discipline_tick` kworker applier (`ke_ntp_discipline_init`) in `wall_clock.c`.
+> - How it runs: a ~0.25 s Phase-3 PASSIVE kworker (mono sampled outside `s_ntp_lock`) re-anchors `s_base_time` by `ntp_tick_adjust_ns()` under `s_ntp_lock -> s_lock`; a negative correction is a brief floor-clamped slow, then status flips to `"ntp"`.
+> - Downstream: closes the §17-deferred continuous NTP application + per-tick lock-hold audit; the floor is gen-reset by `KeSetSystemTimeEx` so a backward manual set is not clamped. Codex design + adversarial adoptions in the commit.
+> - Canonical: `src/kernel/time/wall_clock.c`.
+> - Scope boundary: §19 owns the applier + wall floor; the NTP protocol client + network I/O are a network-stack TODO; the mono floor is §18.
 
 ---
 
@@ -585,7 +590,7 @@ Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to t
 | 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3 -- AP sync deferred |
 | 💎 | Clocksource watchdog     | ✅ HAL silent demote     | ✅ clocksource.c watchdog | ✅ §18 -- drift demotion  |
 | 💎 | Ordered TSC read         | ✅ QPC abstracts rdtscp  | ✅ rdtsc_ordered LFENCE   | ✅ §3 -- rdtsc_ordered    |
-| 💎 | NTP clock discipline     | ✅ W32Time service       | ✅ adjtimex / ntpd        | ⚠️ §17 hooks, §19 apply   |
+| 💎 | NTP clock discipline     | ✅ W32Time service       | ✅ adjtimex / ntpd        | ✅ §17 hooks + §19 apply  |
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
 | 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ✅ §7 -- biased+unbiased  |

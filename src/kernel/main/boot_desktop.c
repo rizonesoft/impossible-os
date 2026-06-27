@@ -115,11 +115,15 @@ void boot_phase3(void)
         extern int kworker_init(void);
         extern void uefi_secureboot_register_monitor(void);
         extern void mono_clock_watchdog_init(void);
+        extern void ke_ntp_discipline_init(void);
         if (kworker_init() == 0) {
             uefi_secureboot_register_monitor();
             /* Clocksource drift watchdog: demotes an unstable TSC to HPET/PMTMR.
              * No-op unless TSC is active with an independent reference. */
             mono_clock_watchdog_init();
+            /* NTP continuous wall-time discipline applier: consumes stored
+             * freq/slew into the wall clock. No-op unless a correction is set. */
+            ke_ntp_discipline_init();
         }
     }
 
