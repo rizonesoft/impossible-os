@@ -43,7 +43,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...);
 typedef struct {
     log_level_t level;
     const char *subsystem;
-    uint32_t    timestamp;  /* PIT ticks */
+    uint32_t    timestamp;  /* 10 ms units since boot (KeQueryInterruptTimeCoarse) */
     uint8_t     cpu_id;     /* CPU that logged this entry (0 = BSP) */
     uint8_t     _pad[3];    /* alignment padding */
     uint32_t    pid;        /* process ID (0 during boot) */
@@ -162,7 +162,7 @@ typedef struct {
     uint32_t entry_count;       /* number of ring entries saved */
     uint32_t crc32;             /* IEEE CRC32 of entries after header */
     uint32_t ring_head;         /* ring head at time of crash */
-    uint64_t boot_timestamp;    /* PIT ticks at crash time */
+    uint64_t boot_timestamp;    /* 10 ms units since boot (KeQueryInterruptTimeCoarse) */
 } klog_crash_header_t;
 
 /* Persist ring buffer to reserved physical memory (no kmalloc, no VFS).

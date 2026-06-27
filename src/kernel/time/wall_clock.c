@@ -20,6 +20,7 @@
 #include "kernel/nt/zw.h"
 #include "kernel/cpu_security.h"
 #include "kernel/klog.h"
+#include "kernel/smp.h"
 
 /* ---- State --------------------------------------------------------------- */
 
@@ -398,12 +399,19 @@ void wall_clock_tick_cache(FILETIME *system_out, uint64_t *interrupt_out)
      * SystemTime/TickCount fields for ~80 ms (coarse-time-fast-path review). */
     wall_clock_snapshot_impl(&sys, &intr, 0);
 
-    /* Publish for lock-free coarse readers. SINGLE publisher -- the BSP timer
-     * ISR -- so a plain RELEASE store needs no seqlock; interrupt time is
-     * monotonic by construction (one publisher, mono only advances). 64-bit
-     * aligned stores are atomic on x86-64. */
-    __atomic_store_n(&s_coarse_system_ft, sys, __ATOMIC_RELEASE);
-    __atomic_store_n(&s_coarse_interrupt_time, intr, __ATOMIC_RELEASE);
+    /* Publish for lock-free coarse readers from the BSP ONLY -- a single
+     * publisher keeps interrupt time monotonic and the pair untorn with just a
+     * RELEASE store (no seqlock). The tick ISR is BSP-only today; this guard
+     * keeps the invariant intact when AP per-CPU tick delivery lands (an AP
+     * tick must compute/return its values but must NOT publish, or two CPUs
+     * would race the two stores). 64-bit aligned stores are atomic on x86-64. */
+    {
+        struct per_cpu_data *cpu = smp_this_cpu();
+        if (!cpu || cpu->cpu_id == 0) {
+            __atomic_store_n(&s_coarse_system_ft, sys, __ATOMIC_RELEASE);
+            __atomic_store_n(&s_coarse_interrupt_time, intr, __ATOMIC_RELEASE);
+        }
+    }
 
     if (system_out)
         *system_out = sys;

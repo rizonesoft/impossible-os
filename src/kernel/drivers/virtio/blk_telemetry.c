@@ -131,13 +131,17 @@ const char *io_mode_names[] = {
 /* Check if 100ms window has elapsed and transition modes if needed */
 void adaptive_check_window(void)
 {
+    extern uint64_t KeQueryInterruptTimeCoarse(void);
     uint64_t now;
     uint32_t elapsed_iops;
 
     if (!adaptive.enabled || !adaptive.window_ns)
         return;
 
-    now = uptime_ns();
+    /* This runs on EVERY I/O completion: read the lock-free coarse interrupt
+     * cache (single atomic load) instead of uptime_ns(), which falls through to
+     * a per-call HPET MMIO / TSC read. Coarse is 100 ns units -> *100 for ns. */
+    now = KeQueryInterruptTimeCoarse() * 100ULL;
     if ((now - adaptive.window_start_ns) < adaptive.window_ns)
         return;  /* Window not yet elapsed */
 

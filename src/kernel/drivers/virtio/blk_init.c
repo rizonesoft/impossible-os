@@ -688,11 +688,16 @@ int virtio_blk_init(void)
         }
     }
 
-    /* 100 ms adaptive window, anchored on the rebased monotonic source.
-     * Using uptime_ns() (not system_get_ticks()/freq) keeps the window length
-     * fixed in real time across a KeSetTimerResolution rate change. */
-    adaptive.window_ns       = 100000000ULL;   /* 100 ms in ns */
-    adaptive.window_start_ns = uptime_ns();
+    /* 100 ms adaptive window, anchored on the lock-free coarse interrupt cache
+     * (100 ns units -> *100 for ns) -- the SAME source adaptive_check_window()
+     * reads per completion, so the window math is coherent and the per-I/O hot
+     * path never touches the clocksource. Fixed real-time length across a
+     * KeSetTimerResolution rate change. */
+    {
+        extern uint64_t KeQueryInterruptTimeCoarse(void);
+        adaptive.window_ns       = 100000000ULL;   /* 100 ms in ns */
+        adaptive.window_start_ns = KeQueryInterruptTimeCoarse() * 100ULL;
+    }
 
     /* Write default config to Registry for visibility */
     {

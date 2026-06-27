@@ -128,7 +128,7 @@ const BUGCHECK_INFO *bugcheck_get_last(void)
 void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
                   uint64_t p3, uint64_t p4)
 {
-    extern uint64_t system_get_ticks(void);
+    extern uint64_t KeQueryInterruptTimeCoarse(void);
 
     POST16(0xDE40);
 
@@ -138,7 +138,10 @@ void KeBugCheckEx(BUGCHECK_CODE code, uint64_t p1, uint64_t p2,
     g_last_bugcheck.param2    = p2;
     g_last_bugcheck.param3    = p3;
     g_last_bugcheck.param4    = p4;
-    g_last_bugcheck.timestamp = system_get_ticks();
+    /* 10 ms units from the lock-free coarse interrupt cache (single __atomic
+     * load). NOT system_get_ticks() -- it takes pit_lock on the PIT backend,
+     * which can hang here on the fatal/panic path. */
+    g_last_bugcheck.timestamp = KeQueryInterruptTimeCoarse() / 100000ULL;
 
     /* Write last bugcheck to registry for cross-boot persistence.
      * This is best-effort -- registry may not be available during

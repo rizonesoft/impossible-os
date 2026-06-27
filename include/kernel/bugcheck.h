@@ -47,7 +47,7 @@ typedef struct {
     uint64_t      param2;
     uint64_t      param3;
     uint64_t      param4;
-    uint64_t      timestamp;   /* PIT ticks at crash time */
+    uint64_t      timestamp;   /* 10 ms units since boot (KeQueryInterruptTimeCoarse) */
 } BUGCHECK_INFO;
 
 /* ---- API ---------------------------------------------------------------- */

@@ -237,6 +237,18 @@ void kusd_update_time(void)
 
     FILETIME system_ft;
 
+    /* BSP-only: the per-tick time update (coarse cache publish + KUSD page
+     * triple-writes) has a SINGLE publisher, so coarse interrupt time stays
+     * monotonic and the KUSD InterruptTime/SystemTime/TickCount fields never
+     * tear. The tick ISR is BSP-only today; this guard keeps the invariant when
+     * AP per-CPU tick delivery lands (an AP tick must publish neither the coarse
+     * cache nor the KUSD time). */
+    {
+        struct per_cpu_data *cpu = smp_this_cpu();
+        if (cpu && cpu->cpu_id != 0)
+            return;
+    }
+
     /* Publish the coarse cache every tick BEFORE the KUSD-readiness gate, so the
      * lock-free Ke*Coarse() readers (klog/crash timestamps) go live as soon as
      * the monotonic clock is up -- not gated on kusd_init(). Before

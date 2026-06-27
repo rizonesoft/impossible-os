@@ -489,11 +489,13 @@ Hot paths like klog timestamping, scheduler accounting, and network packet times
 
 > **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time suite +1 (`time: coarse time fast path`), 255 kernel tests, 0 failures
 > **Notes:**
-> - Shipped: `KeQuerySystemTimeCoarse`/`KeQueryInterruptTimeCoarse` + `wall_clock_tick_cache` in `wall_clock.c` (ISR-published lock-free coarse cache backed by `mono_ns_coarse()`).
+> - Shipped: `KeQuerySystemTimeCoarse`/`KeQueryInterruptTimeCoarse` + `wall_clock_tick_cache` in `wall_clock.c` (BSP-ISR-published lock-free coarse cache fed by ONE precise `mono_ns()` per tick).
 > - How it runs: the BSP timer ISR (`kusd_update_time`) is the single publisher of the cache (`__atomic` RELEASE, one precise `mono_ns()` sample); readers do one ACQUIRE load -- the fast path is reader-side (no per-call clocksource/seqlock read); coarse reflects a clock set within one tick.
 > - Downstream: closes the `TODO-11 §6` rate-change rewind -- klog/etw/registry/wer/virtio stamps use rebased `uptime_ns()`/coarse, not raw `system_get_ticks()`.
 > - Canonical: `include/kernel/time/wall_clock.h` Ke*Coarse APIs.
 > - Scope boundary: §16 owns the coarse read path + consumer migration; the clocksource demotion feeding `mono_ns_coarse` is §18; precise sub-us reads stay on `KeQuerySystemTime`/`...Precise`.
+> **Verified:** 2026-06-27 | ship `377c2aec` + review fixes | 5/5 items | build OK | tests 255 sched + 422 storage PASS | smoke PASS (TCG 2.66s)
+> **Quality reviewed:** 2026-06-27 | Codex 7x (adversarial, consistency, perf, re-adversarial) + kernel-explorer + kernel-quality-auditor | 1H+4M+2L fixed | scope: kernel-code-quality
 
 ---
 
