@@ -409,6 +409,50 @@ git commit -m "overnight: awareness C2 -- guard emits one-line situational ancho
 
 ---
 
+### Task 4: Wire the brief into the overnight-sequencer skill (make it used)
+
+**Files:**
+- Modify: `.claude/skills/overnight-sequencer/SKILL.md`
+
+**Interfaces:** instructs the loop to read the anchor (Task 3) and pull `runner_status.py` (Task 1) at the right moments. Without this, C1/C2 are built but unconsulted.
+
+- [ ] **Step 1: Add a Situational-awareness section before "## Procedure"**
+
+In `.claude/skills/overnight-sequencer/SKILL.md`, immediately before the `## Procedure` heading, insert:
+
+```markdown
+## Situational awareness (read before acting)
+
+Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
+`[sequencer] cursor <file> | phase <PHASE> | obligations:N | gotchas:M`.
+
+- When `obligations:>0` or `gotchas:>0` -- and at the start of each section, and
+  immediately after any context compaction -- run
+  `python3 .claude/hooks/runner_status.py` and read the full brief (WHERE / GIT /
+  OBLIGATIONS / GOTCHAS / RECENT DECISIONS) BEFORE acting. It is computed from live
+  state, so it is the ground truth for "where am I and what is pending."
+- **Obligations** are unmet gates that will block you (e.g. an unreceived Codex
+  review). Clear them, do not fight them.
+- **Gotchas** are transient hazards in `.claude/state/live-gotchas.md`. When you
+  discover a new one (a flaky gate, an in-flight file, a tool that mis-fires),
+  append a dated line `- YYYY-MM-DD: <hazard> -> <what to do>` (optional
+  `(expires YYYY-MM-DD)`) so the next pass is not surprised by it.
+```
+
+- [ ] **Step 2: Verify the wiring landed**
+
+Run: `grep -c "runner_status.py" .claude/skills/overnight-sequencer/SKILL.md; grep -c "live-gotchas.md" .claude/skills/overnight-sequencer/SKILL.md`
+Expected: both `>= 1`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add .claude/skills/overnight-sequencer/SKILL.md
+git commit -m "overnight: awareness -- wire runner_status brief + gotchas into the sequencer skill"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:** C1 runner-status aggregator with WHERE/GIT/OBLIGATIONS/GOTCHAS/DECISIONS (Task 1); C2 one-line anchor on guard status/phase, active-only, stderr (Task 3); C3 seeded live-gotchas registry with expiry (Task 2). C4 (PreCompact) is explicitly Plan B. Obligations v1 ships the codex-review (robust, state-file) + best-effort [x]-flip-without-Verified; the spec's two named obligations are both present (the [x]-flip one labelled best-effort since reproducing the review-gate's git logic exactly is deferred).

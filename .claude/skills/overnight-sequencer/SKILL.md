@@ -36,6 +36,23 @@ python3 .claude/hooks/run_phase_guard.py <cmd>
   status                  print the cursor state
 ```
 
+## Situational awareness (read before acting)
+
+Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
+`[sequencer] cursor <file> | phase <PHASE> | obligations:N | gotchas:M`.
+
+- When `obligations:>0` or `gotchas:>0` -- and at the start of each section, and
+  immediately after any context compaction -- run
+  `python3 .claude/hooks/runner_status.py` and read the full brief (WHERE / GIT /
+  OBLIGATIONS / GOTCHAS / RECENT DECISIONS) BEFORE acting. It is computed from live
+  state, so it is the ground truth for "where am I and what is pending."
+- **Obligations** are unmet gates that will block you (e.g. an unreceived Codex
+  review). Clear them, do not fight them.
+- **Gotchas** are transient hazards in `.claude/state/live-gotchas.md`. When you
+  discover a new one (a flaky gate, an in-flight file, a tool that mis-fires),
+  append a dated line `- YYYY-MM-DD: <hazard> -> <what to do>` (optional
+  `(expires YYYY-MM-DD)`) so the next pass is not surprised by it.
+
 ## Procedure
 
 ### 0. Start / resume
