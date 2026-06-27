@@ -157,6 +157,26 @@ fail-open-trivial, and matches every other host tool in the repo.
   panel that is still ~$0.50-0.70 per call (measured: a real apex call with the
   auto web-search and a ~50KB synthesis cost $0.61 on 2026-06-27).
 
+## 5b. Latency and the "really hard" case (async dispatch, Plan 2)
+
+A hard total-duration cap stops the runner hanging, but a genuinely hard question
+(heavy web-search + long deliberation) can legitimately need 10-30 min -- exactly
+when Fusion is most valuable, and exactly when a *synchronous* cap would fail-open
+and give nothing. The fix is NOT a bigger synchronous cap; it is **async dispatch**
+(Plan 2), mirroring `codex-bg-dispatch`:
+
+- The ladder controller DISPATCHES the Fusion job to the background and does not
+  block.
+- The runner PARKS the stuck section (`[/]` deferred) and continues other work.
+- A later pass COLLECTS the Fusion result (poll a job/result file) and applies it,
+  validated by the main thread (the review layer).
+
+This decouples *how long Fusion may THINK* from *how long the runner WAITS in
+line*. The 600 s SIGALRM cap then bounds only the SYNCHRONOUS inline path
+(interactive / quick checks); the async background job carries a longer cap (e.g.
+1800 s) because it blocks nothing. So a 20-minute deliberation on a brutal problem
+costs the runner zero stall time.
+
 ## 6. Cost model (why this is affordable)
 
 OpenRouter prices (June 2026, $/M in/out): GLM 5.2 0.95/3.00, Kimi K2.7-code
