@@ -12,6 +12,7 @@
 
 #include "kernel/test/test.h"
 #include "kernel/time/mono_clock.h"
+#include "kernel/time/wall_clock.h"
 #include "kernel/drivers/rtc.h"
 
 /* mono_pmtmr_delta_ns: masked-delta -> ns at the fixed 3.579545 MHz PMTMR. */
@@ -110,6 +111,33 @@ static void test_rtc_resolve_year(void)
     TEST_ASSERT_EQ(rtc_resolve_year(255, 20, 1), 0u, "yy 255 (bus-float) -> year 0");
 }
 
+/* ke_delay_interval_to_ms: NT delay-interval resolution. negative = relative
+ * 100ns magnitude; positive = absolute deadline vs now; zero/expired -> 0;
+ * sub-ms rounds up to 1; clamped to UINT32_MAX ms. */
+static void test_ke_delay_interval_to_ms(void)
+{
+    /* Relative -10 ms (-100000 100ns) -> 10 ms. The pre-fix bug folded this
+     * unsigned into a ~49.7-day clamp. */
+    TEST_ASSERT_EQ(ke_delay_interval_to_ms(-100000, 0), 10u,
+                   "relative -10ms -> 10ms");
+    TEST_ASSERT_EQ(ke_delay_interval_to_ms(-10000, 0), 1u,
+                   "relative -1ms -> 1ms");
+    /* Sub-ms relative rounds up to 1 ms. */
+    TEST_ASSERT_EQ(ke_delay_interval_to_ms(-1000, 0), 1u,
+                   "relative -100us -> 1ms (round up)");
+    /* Zero -> 0 (immediate). */
+    TEST_ASSERT_EQ(ke_delay_interval_to_ms(0, 0), 0u, "zero -> 0");
+    /* Absolute deadline in the future: 50 ms past `now`. */
+    TEST_ASSERT_EQ(ke_delay_interval_to_ms((int64_t)(1000000 + 500000), 1000000),
+                   50u, "absolute +50ms vs now -> 50ms");
+    /* Absolute deadline already passed -> 0. */
+    TEST_ASSERT_EQ(ke_delay_interval_to_ms(1000000, 2000000), 0u,
+                   "absolute past deadline -> 0");
+    /* Huge relative clamps to UINT32_MAX ms, never wraps. */
+    TEST_ASSERT_EQ(ke_delay_interval_to_ms((int64_t)-1, 0), 1u,
+                   "relative -1 (100ns) -> 1ms");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -124,4 +152,6 @@ void test_register_time(void)
                             test_rtc_time_plausible_rejects, TEST_CAT_SCHED);
     test_suite_register_cat("time: rtc_resolve_year century handling",
                             test_rtc_resolve_year, TEST_CAT_SCHED);
+    test_suite_register_cat("time: ke_delay_interval_to_ms NT semantics",
+                            test_ke_delay_interval_to_ms, TEST_CAT_SCHED);
 }

@@ -30,15 +30,24 @@ int wall_clock_ready(void);
 
 /* ---- Kernel time service API ---------------------------------------- */
 
-/* 100 ns tick count since boot (same as mono_filetime_units()). */
+/* Timer-tick counter since boot (one per timer interrupt). Pair with
+ * KeQueryTimeIncrement(): tick_count * increment ~= uptime in 100 ns units. */
 void KeQueryTickCount(uint64_t *tick_count);
 
-/* Periodic timer interrupt increment in 100 ns units. */
+/* Base periodic timer interrupt increment in 100 ns units (10 ms at 100 Hz). */
 void KeQueryTimeIncrement(uint32_t *increment);
 
-/* Delay current thread. Uses sleep_ms() internally.
- * interval is negative = relative (100 ns units). */
-void KeDelayExecutionThread(FILETIME interval);
+/* Delay the current thread (PASSIVE_LEVEL only -- refused at DISPATCH_LEVEL+).
+ * NT interval semantics: negative = relative (100 ns magnitude), positive =
+ * absolute FILETIME deadline; zero / already-expired returns immediately. */
+void KeDelayExecutionThread(int64_t interval);
+
+/* Pure: resolve an NT delay interval to a clamped millisecond sleep duration.
+ * negative = relative magnitude; positive = absolute deadline vs `now`;
+ * returns 0 for zero / already-expired (caller returns immediately). Sub-ms
+ * non-zero waits round up to 1 ms; the result is clamped to UINT32_MAX ms.
+ * Side-effect-free -- unit-tested directly. */
+uint32_t ke_delay_interval_to_ms(int64_t interval, FILETIME now);
 
 /* Returns 1 when KeQuerySystemTime() is usable. */
 int time_service_ready(void);

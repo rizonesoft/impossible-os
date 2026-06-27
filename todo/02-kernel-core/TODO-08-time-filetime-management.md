@@ -221,11 +221,24 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL: filesystems, logging, scheduler, and the native API layer.
 
 - [x] `KeQuerySystemTime()` -- lock-free seqlock read, callable from any IRQL (verified in §5)
-- [x] `KeQueryTickCount(tick_count)` -- returns `mono_filetime_units()` (100 ns since boot)
+- [x] `KeQueryTickCount(tick_count)` -- returns `system_get_ticks()` (timer-tick counter; review fix: was 100 ns units, breaking `tick * increment`)
 - [x] `KeQueryTimeIncrement(increment)` -- returns 100000 (10 ms at 100 Hz in 100 ns units)
-- [x] `KeDelayExecutionThread(interval)` -- converts 100 ns units to ms, calls `sleep_ms()`
+- [x] `KeDelayExecutionThread(int64_t interval)` -- NT semantics via pure `ke_delay_interval_to_ms()` (negative=relative, positive=absolute), PASSIVE_LEVEL IRQL guard (review fix: was unsigned -> 50-day hang)
 - [x] `time_service_ready()` -- returns 1 after `wall_clock_init()`
 - [x] Commit: `"kernel: time -- kernel time service API"`
+
+**Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): `ke_delay_interval_to_ms` resolves NT intervals (relative -10ms -> 10ms, sub-ms round-up, zero/expired -> 0, absolute deadline vs now, UINT32_MAX clamp). Runtime (WHPX / bare metal serial): `KeQuerySystemTime()` advances monotonically; `KeQueryTickCount() * KeQueryTimeIncrement()` tracks uptime; a relative `KeDelayExecutionThread` sleeps the requested ms (not 49 days). Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time + sched suites, 0 failures (236 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: kernel time service in `wall_clock.c` -- `KeQuerySystemTime` (lock-free seqlock), `KeQueryTickCount`, `KeQueryTimeIncrement`, `KeDelayExecutionThread`, `time_service_ready`.
+> - Review fixes: `KeQueryTickCount` -> tick counter; `KeDelayExecutionThread` signed NT interval + PASSIVE_LEVEL guard (was unsigned -> 50-day hang); seqlock seq u64; `s_ready`/`s_time_sourced` atomic; mono backward-clamp.
+> - Downstream: absolute deadlines gated on a real wall-clock source + placeholder rejection in `KeSetSystemTime`/`NtSetSystemTime` so a bogus anchor can't re-open the 49-day clamp.
+> - Canonical: `src/kernel/time/wall_clock.c`.
+> - Scope boundary: §6 owns the Ke* service; the Nt* SSDT handlers' user-pointer probing is §9; the coarse cached-read fast path is §16.
+> **Verified:** 2026-06-27 | commit `<review>` | 6/6 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.47s)
+> **Accepted:** [H] the three time SSDT handlers deref user pointers without probe/copy (a `prev_ptr` can fault the kernel or write to a kernel address) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §9 (item: "User-pointer safety" at line 267)
+> **Quality reviewed:** 2026-06-27 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) + kernel-quality-auditor | 3H+3M+2L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -264,6 +277,7 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 - [x] `NtSetSystemTime` (SSDT 0x00F1): calls `KeSetSystemTime()`; optional previous-time out-param
 - [x] `NtQueryPerformanceCounter` (SSDT 0x00F2): returns `mono_filetime_units()` with fixed 10 MHz frequency
 - [x] Registered via `wall_clock_register_ssdt()` in boot Phase 3
+- [ ] User-pointer safety: the three `wall_clock.c` handlers deref user pointers directly; gate on `ssdt_previous_mode()` + `copy_from_user`/`copy_to_user` (a user `prev_ptr` can fault the kernel or write a FILETIME to a kernel address).
 - [x] Commit: `"kernel: nt -- NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter"`
 
 ---

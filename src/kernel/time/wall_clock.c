@@ -12,6 +12,7 @@
 #include "kernel/drivers/rtc.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/sched/seqlock.h"
+#include "kernel/sched/irql.h"
 #include "kernel/timer.h"
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
@@ -24,6 +25,9 @@ static FILETIME  s_base_time;       /* UTC anchor (FILETIME) */
 static uint64_t  s_base_mono_ns;    /* mono_ns() at anchor time */
 static seqlock_t s_lock = SEQLOCK_INIT;
 static int       s_ready;
+static int       s_time_sourced;    /* 1 only when seeded from a REAL source
+                                     * (UEFI/RTC/KeSetSystemTime), not the
+                                     * placeholder -- gates absolute deadlines */
 
 /* ---- Init ---------------------------------------------------------------- */
 
@@ -55,12 +59,19 @@ void wall_clock_init(void)
         }
     }
 
-    /* Latch anchor */
+    /* Latch anchor. Sample mono_ns() BEFORE the seqlock writer (it runs
+     * IRQ-disabled and mono_ns may do HPET/PMTMR I/O). */
+    uint64_t anchor_mono = mono_ns();
     seqlock_write_lock(&s_lock);
     s_base_time = ft;
-    s_base_mono_ns = mono_ns();
-    s_ready = 1;
+    s_base_mono_ns = anchor_mono;
     seqlock_write_unlock(&s_lock);
+    /* Publish s_ready BEFORE s_time_sourced so a reader that observes
+     * sourced==1 (acquire) is guaranteed to also observe ready==1 -- the
+     * absolute-delay gate relies on that ordering. */
+    __atomic_store_n(&s_ready, 1, __ATOMIC_RELEASE);
+    if (ft != FILETIME_NOW_PLACEHOLDER)
+        __atomic_store_n(&s_time_sourced, 1, __ATOMIC_RELEASE);
 
     /* Log the seeded time */
     if (ft != FILETIME_NOW_PLACEHOLDER) {
@@ -110,9 +121,9 @@ FILETIME KeQuerySystemTime(void)
 {
     FILETIME base;
     uint64_t base_mono;
-    uint32_t seq;
+    uint64_t seq;
 
-    if (!s_ready)
+    if (!__atomic_load_n(&s_ready, __ATOMIC_ACQUIRE))
         return FILETIME_NOW_PLACEHOLDER;
 
     do {
@@ -121,8 +132,11 @@ FILETIME KeQuerySystemTime(void)
         base_mono = s_base_mono_ns;
     } while (seqlock_read_retry(&s_lock, seq));
 
-    /* Current time = base + elapsed monotonic delta in FILETIME units */
-    uint64_t elapsed_ns = mono_ns() - base_mono;
+    /* Current time = base + elapsed monotonic delta in FILETIME units. Clamp a
+     * backward mono_ns() excursion (clocksource demotion / AP TSC glitch) to 0
+     * so the wall clock never jumps centuries into the future. */
+    uint64_t now = mono_ns();
+    uint64_t elapsed_ns = (now > base_mono) ? (now - base_mono) : 0;
     return base + (elapsed_ns / 100);  /* ns -> 100 ns FILETIME ticks */
 }
 
@@ -136,10 +150,23 @@ FILETIME KeQuerySystemTimePrecise(void)
 
 void KeSetSystemTime(FILETIME new_time)
 {
+    /* The placeholder (1601 epoch, value 0) is the "no time" sentinel, never a
+     * real wall time. Accepting it would mark the clock sourced over a bogus
+     * anchor and re-open the absolute-delay 49-day clamp. Reject it. */
+    if (new_time == FILETIME_NOW_PLACEHOLDER) {
+        klog(LOG_WARN, "time", "KeSetSystemTime: rejected placeholder time");
+        return;
+    }
+
+    /* Sample mono_ns() INSIDE the seqlock writer (interrupts already disabled,
+     * so no preemption can stretch the anchor pair stale). KeSetSystemTime is
+     * a rare explicit set, so the brief clocksource read under the writer lock
+     * is the right trade vs an unbounded pre-lock sample-to-publish gap. */
     seqlock_write_lock(&s_lock);
     s_base_time = new_time;
     s_base_mono_ns = mono_ns();
     seqlock_write_unlock(&s_lock);
+    __atomic_store_n(&s_time_sourced, 1, __ATOMIC_RELEASE);
 
     klog(LOG_INFO, "time", "Wall clock set to FILETIME %u",
          (uint64_t)new_time);
@@ -147,35 +174,88 @@ void KeSetSystemTime(FILETIME new_time)
 
 int wall_clock_ready(void)
 {
-    return s_ready;
+    return __atomic_load_n(&s_ready, __ATOMIC_ACQUIRE);
 }
 
 /* ---- Kernel time service API ---------------------------------------- */
 
 void KeQueryTickCount(uint64_t *tick_count)
 {
+    /* Windows contract: this is the timer-tick counter (one per timer
+     * interrupt), and KeQueryTimeIncrement() gives the 100ns per tick, so
+     * tick_count * increment ~= uptime. Returning 100ns units here would
+     * overstate any tick_delta * increment computation by ~1e5. */
     if (tick_count)
-        *tick_count = mono_filetime_units();
+        *tick_count = system_get_ticks();
 }
 
 void KeQueryTimeIncrement(uint32_t *increment)
 {
-    /* Timer fires at 100 Hz -> 10 ms per tick -> 100000 * 100 ns units */
+    /* Timer fires at 100 Hz -> 10 ms per tick -> 100000 * 100 ns units. This
+     * is the base increment; a raised rate from timer-resolution management
+     * (NtSetTimerResolution) and its dynamic readback are owned there. */
     if (increment)
         *increment = 100000;  /* 10 ms in 100 ns units */
 }
 
-void KeDelayExecutionThread(FILETIME interval)
+uint32_t ke_delay_interval_to_ms(int64_t interval, FILETIME now)
 {
-    /* Convert 100 ns units to milliseconds */
-    uint64_t ms = interval / FILETIME_TICKS_PER_MS;
+    uint64_t rel_100ns;
+    uint64_t ms;
+
+    if (interval < 0) {
+        rel_100ns = (uint64_t)(-(interval + 1)) + 1;  /* INT64_MIN-safe magnitude */
+    } else if (interval == 0) {
+        return 0;
+    } else {
+        if ((uint64_t)interval <= now)
+            return 0;  /* absolute deadline already passed */
+        rel_100ns = (uint64_t)interval - now;
+    }
+
+    /* Round up to whole ms (sub-ms requests still wait at least one tick). */
+    ms = (rel_100ns + FILETIME_TICKS_PER_MS - 1) / FILETIME_TICKS_PER_MS;
     if (ms == 0) ms = 1;
-    sleep_ms((uint32_t)(ms > 0xFFFFFFFF ? 0xFFFFFFFF : ms));
+    if (ms > 0xFFFFFFFFULL) ms = 0xFFFFFFFFULL;
+    return (uint32_t)ms;
+}
+
+void KeDelayExecutionThread(int64_t interval)
+{
+    FILETIME now;
+    uint32_t ms;
+
+    /* sleep_ms() blocks via a busy-HLT that only advances on a timer tick, so
+     * it deadlocks if interrupts are masked. KeDelayExecutionThread is a
+     * PASSIVE_LEVEL-only API; refuse a raised-IRQL caller rather than hang.
+     * (WaitMode/Alertable NT params deferred -- no alertable-wait infra yet.) */
+    if (KeGetCurrentIrql() >= DISPATCH_LEVEL)
+        return;
+
+    /* A positive interval is an absolute FILETIME deadline, which is only
+     * meaningful against a real wall-clock source. Without one (no UEFI/RTC,
+     * or pre-init), KeQuerySystemTime() returns ~0 and the deadline would look
+     * decades away and clamp to a ~49-day sleep -- return immediately instead. */
+    if (interval > 0) {
+        if (!__atomic_load_n(&s_time_sourced, __ATOMIC_ACQUIRE))
+            return;
+        now = KeQuerySystemTime();
+        /* Defensive: even with sourced set, if the query still returns the
+         * placeholder (init race / a placeholder set), an absolute deadline
+         * would clamp to a ~49-day sleep -- return immediately instead. */
+        if (now == FILETIME_NOW_PLACEHOLDER)
+            return;
+    } else {
+        now = 0;
+    }
+    ms = ke_delay_interval_to_ms(interval, now);
+    if (ms != 0)
+        sleep_ms(ms);
 }
 
 int time_service_ready(void)
 {
-    return s_ready;
+    return __atomic_load_n(&s_ready, __ATOMIC_ACQUIRE);
 }
 
 /* ---- Interrupt time APIs -------------------------------------------- */
@@ -226,15 +306,22 @@ static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
                                     uint64_t a3, uint64_t a4,
                                     uint64_t a5, uint64_t a6)
 {
+    FILETIME nt;
     (void)a3; (void)a4; (void)a5; (void)a6;
     if (!new_ptr)
+        return STATUS_INVALID_PARAMETER;
+
+    /* The placeholder (1601 epoch) is the "no time" sentinel, not a settable
+     * wall time -- reject before touching the anchor. */
+    nt = *(FILETIME *)new_ptr;
+    if (nt == FILETIME_NOW_PLACEHOLDER)
         return STATUS_INVALID_PARAMETER;
 
     /* Optional: return previous time */
     if (prev_ptr)
         *(FILETIME *)prev_ptr = KeQuerySystemTime();
 
-    KeSetSystemTime(*(FILETIME *)new_ptr);
+    KeSetSystemTime(nt);
     return STATUS_SUCCESS;
 }
 
