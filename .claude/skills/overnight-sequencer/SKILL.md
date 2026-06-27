@@ -41,11 +41,14 @@ python3 .claude/hooks/run_phase_guard.py <cmd>
 Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
 `[sequencer] cursor <file> | phase <PHASE> | obligations:N | gotchas:M`.
 
-- When `obligations:>0` or `gotchas:>0` -- and at the start of each section, and
-  immediately after any context compaction -- run
+- When `obligations:>0` or `gotchas:>0`, and at the start of each section, run
   `python3 .claude/hooks/runner_status.py` and read the full brief (WHERE / GIT /
   OBLIGATIONS / GOTCHAS / RECENT DECISIONS) BEFORE acting. It is computed from live
   state, so it is the ground truth for "where am I and what is pending."
+- **After a compaction or resume the brief is AUTO-INJECTED** for you by the
+  `session_brief_inject` SessionStart hook -- read that injected brief to
+  re-orient; pull a fresh `runner_status.py` only if you then act and need current
+  detail.
 - **Obligations** are unmet gates that will block you (e.g. an unreceived Codex
   review). Clear them, do not fight them.
 - **Gotchas** are transient hazards in `.claude/state/live-gotchas.md`. When you
