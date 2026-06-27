@@ -94,6 +94,7 @@ src/boot/uefi/*.o
 # .fusion/ -- Fusion escalation (apex tier). Secret + collected dataset never committed.
 .fusion/secret
 .fusion/dataset.jsonl
+.fusion/jobs/
 
 # .claude/worktrees/ -- harness-created git worktrees (embedded repos).
 .claude/worktrees/

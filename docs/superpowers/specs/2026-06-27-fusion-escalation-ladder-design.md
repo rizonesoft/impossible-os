@@ -106,6 +106,7 @@ integration.
   config.toml          panel/judge model ids + budgets (3/2/1) + caps -- tracked
   secret               OPENROUTER_API_KEY -- GITIGNORED, never committed
   dataset.jsonl        escalation in/out + resolution outcome -- GITIGNORED (eval/distill seed)
+  jobs/<id>.{request,result,meta}   async Fusion job queue (Plan 2) -- GITIGNORED runtime state
   README.md            opt-in setup (how to enable, where the key goes) -- tracked
 .claude/hooks/
   fusion_stuck_detect.py   PostToolUse on Bash: counts consecutive same-target
@@ -157,25 +158,82 @@ fail-open-trivial, and matches every other host tool in the repo.
   panel that is still ~$0.50-0.70 per call (measured: a real apex call with the
   auto web-search and a ~50KB synthesis cost $0.61 on 2026-06-27).
 
-## 5b. Latency and the "really hard" case (async dispatch, Plan 2)
+## 5b. Async job-queue model (the runner's Fusion path) -- Plan 2
 
 A hard total-duration cap stops the runner hanging, but a genuinely hard question
 (heavy web-search + long deliberation) can legitimately need 10-30 min -- exactly
 when Fusion is most valuable, and exactly when a *synchronous* cap would fail-open
-and give nothing. The fix is NOT a bigger synchronous cap; it is **async dispatch**
-(Plan 2), mirroring `codex-bg-dispatch`:
+and give nothing. The fix is NOT a bigger synchronous cap; it is **async dispatch
+reusing the existing deferral machinery**. The reframe that makes this work: the
+overnight runner is a QUEUE / fixpoint loop, not a single-problem solver, so being
+stuck on one section almost never means there is nothing else to do.
 
-- The ladder controller DISPATCHES the Fusion job to the background and does not
-  block.
-- The runner PARKS the stuck section (`[/]` deferred) and continues other work.
-- A later pass COLLECTS the Fusion result (poll a job/result file) and applies it,
-  validated by the main thread (the review layer).
+### Async Fusion IS a special deferral
 
-This decouples *how long Fusion may THINK* from *how long the runner WAITS in
-line*. The 600 s SIGALRM cap then bounds only the SYNCHRONOUS inline path
-(interactive / quick checks); the async background job carries a longer cap (e.g.
-1800 s) because it blocks nothing. So a 20-minute deliberation on a brutal problem
-costs the runner zero stall time.
+The runner already has machinery for "cannot finish this now": mark the section
+`[/]` + a Deferred stamp + an XREF, advance to the next section/file, re-examine on
+the next fixpoint pass. Async Fusion reuses exactly that:
+
+1. The ladder exhausts Codex (2 rounds) -> dispatches Fusion as a DETACHED OS
+   process writing to `.fusion/jobs/<id>.result`, and defers the section: `[/]` +
+   "awaiting Fusion job `<id>`".
+2. The runner ADVANCES -- works other sections / other TODO files (the queue).
+3. On a later pass, BEFORE re-working a fusion-deferred section, the controller
+   checks the result file: ready -> un-defer and the MAIN THREAD reviews + applies
+   it (the WS8 review layer); not ready -> leave it deferred, keep going.
+
+So there is NO new wait-loop -- the fixpoint loop's normal next-pass cadence is the
+polling. This decouples *how long Fusion may THINK* from *how long the runner WAITS
+in line*.
+
+### "What if Opus AND Codex are stuck and they NEED the Fusion result to carry on?"
+
+- **Case A -- other work exists (common):** park the stuck section, do other
+  sections/files; Fusion's answer is usually ready within a pass or two. The runner
+  stays productive while Fusion deliberates for 20 min. No one waits.
+- **Case B -- everything is blocked on it (rare, e.g. a broken build no one can
+  fix):** there genuinely is no other productive work, so waiting is FREE -- the
+  defer + next-pass (or a bounded poll) holds up nothing, because nothing else could
+  have progressed anyway.
+
+The principle: async does NOT mean "never wait"; it means "never wait IN-LINE
+holding up other work." When there is no other work, the wait is costless; when
+there is, you do not pay it.
+
+### Durability (why async is *better*, not just cheaper)
+
+Because the Fusion job is a DETACHED OS process writing a result file, it SURVIVES
+the main loop's own lifecycle: if the Claude run compacts or the watchdog relaunches
+it mid-deliberation, the Fusion process keeps running and the `.result` persists. On
+relaunch the runner reads its state ("section X awaiting job `<id>`"), finds the
+result, and applies it. A SYNCHRONOUS 20-min call would be lost the instant the main
+loop hit a usage limit or compaction; the async job cannot be. This is the real
+reason async is correct for an unattended runner.
+
+### Bounds (a hung job cannot wedge the runner)
+
+- The detached job has its OWN ceiling (async cap, e.g. 1800 s); on timeout it
+  writes a `failed`/`timeout` result. The controller treats that section as
+  genuinely blocked (defer with the captured diagnostic = a human punch-list item).
+- If Fusion returns but does NOT break the impasse across N passes, the fixpoint's
+  existing "identical failure across 3 passes -> Run Log punch-list" rule takes
+  over. So "Opus + Codex + Fusion all failed" has a defined terminal: park, log for
+  the human, move on. The run never wedges.
+
+### State + situational-awareness tie-in
+
+- Job dir: `.fusion/jobs/<id>.request` (the brief), `.fusion/jobs/<id>.result`
+  (written on completion), `.fusion/jobs/<id>.meta` (status + which section it is
+  for). Gitignored (local runtime state, like `dataset.jsonl`).
+- The situational brief (`runner-status`) gains a line -- "N Fusion jobs pending" --
+  so the loop KNOWS it has outstanding async work to collect each pass. The
+  ladder controller and the awareness layer meet here.
+
+### Synchronous path is retained for interactive use
+
+The 600 s SIGALRM cap bounds the SYNCHRONOUS inline path (a human-watched
+interactive / `debug-session` / quick check, where blocking briefly is fine). The
+async job-queue path is specifically for the unattended runner.
 
 ## 6. Cost model (why this is affordable)
 
