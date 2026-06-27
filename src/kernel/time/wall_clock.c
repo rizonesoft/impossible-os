@@ -144,9 +144,13 @@ FILETIME KeQuerySystemTime(void)
 
 FILETIME KeQuerySystemTimePrecise(void)
 {
-    /* Currently identical to KeQuerySystemTime() since both use mono_ns()
-     * for TSC/HPET interpolation. Will diverge once the KUSER_SHARED_DATA
-     * coarse tick-granular path for KeQuerySystemTime() lands. */
+    /* Identical to KeQuerySystemTime() today: both interpolate via mono_ns().
+     * Precision is therefore exactly as fine as the selected clocksource --
+     * sub-microsecond on TSC/HPET/PMTMR, and only tick-granular on the
+     * LAPIC-counter LAST-RESORT source (no sub-us clocksource present, so no
+     * API can be more precise there). The two diverge once the coarse
+     * KUSER_SHARED_DATA tick path makes KeQuerySystemTime() tick-granular by
+     * design; the precise path will keep routing through full mono_ns(). */
     return KeQuerySystemTime();
 }
 

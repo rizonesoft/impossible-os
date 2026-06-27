@@ -332,6 +332,18 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 - [x] No separate SSDT entry -- `NtQuerySystemTime` (0x00F0) already returns precise time; Win8+ `GetSystemTimePreciseAsFileTime` uses the same syscall
 - [x] Commit: `"kernel: time -- KeQuerySystemTimePrecise sub-microsecond wall time"`
 
+**Test checkpoint:** Unit: precision is delivered by `mono_ns()` (covered by the §2 mono helpers); the wrapper has no own logic to unit-test. Runtime (WHPX / bare metal serial): on a TSC/HPET/PMTMR box `KeQuerySystemTimePrecise()` advances at sub-microsecond granularity; `GetSystemTimePreciseAsFileTime` (via `NtQuerySystemTime` 0x00F0) returns the same. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | FILETIME + time syscall suites, 0 failures (236 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: `KeQuerySystemTimePrecise()` in `wall_clock.c` -- sub-microsecond UTC via the same `mono_ns()` interpolation as `KeQuerySystemTime()`; no separate SSDT entry (`NtQuerySystemTime` 0x00F0 already returns precise time).
+> - How it runs: precision tracks the selected clocksource -- sub-us on TSC/HPET/PMTMR, tick-granular only on the LAPIC last-resort source (where no sub-us source exists, so nothing can do better); review clarified the contract in the code comment.
+> - Downstream: diverges from `KeQuerySystemTime()` only when the §12 coarse KUSER_SHARED_DATA tick path lands (precise keeps full `mono_ns()`); satisfies `GetSystemTimePreciseAsFileTime` (Win8+).
+> - Canonical: `src/kernel/time/wall_clock.c`.
+> - Scope boundary: §10 owns the precise read; the coarse/precise split is §12; the mono clocksource is §2.
+> **Verified:** 2026-06-27 | ship `946d3654` + review fix | 2/2 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.77s)
+> **Quality reviewed:** 2026-06-27 | Codex 3x (adversarial, consistency, perf) + kernel-quality-auditor | 1M fixed (precision-source contract clarified in comment), 0 open | scope: kernel-code-quality; re-adversarial skipped (comment-only fix)
+
 ---
 
 ## 11. Timezone Bias and DST Management
