@@ -52,9 +52,9 @@ integration.
 ## 3. Hard invariants (cost + safety -- load-bearing)
 
 1. **OFF by default.** The Fusion tier fires only when `FUSION_ENABLED=1` AND a key
-   is present at `.fusion/key` (or `OPENROUTER_API_KEY` in env). Absent either ->
+   is present at `.fusion/secret` (or `OPENROUTER_API_KEY` in env). Absent either ->
    the ladder simply stops at the Codex tier; the runner is unaffected.
-2. **Secret never in git.** `.fusion/key` is gitignored; everything else in
+2. **Secret never in git.** `.fusion/secret` is gitignored; everything else in
    `.fusion/` is tracked. No key, token, or credential is ever committed.
 3. **Hard per-run cap.** A budget counter in `.claude/state/fusion-budget.json`
    (default `FUSION_MAX_CALLS=3` per run); over cap -> Fusion tier is skipped +
@@ -76,7 +76,7 @@ integration.
   fusion-escalate.py   caller -- Python stdlib (urllib+json); env+budget gated; fail-open
   ladder.py            Claude->Codex->Fusion controller: tier state + per-tier budgets
   config.toml          panel/judge model ids + budgets (3/2/1) + caps -- tracked
-  key                  OPENROUTER_API_KEY -- GITIGNORED, never committed
+  secret               OPENROUTER_API_KEY -- GITIGNORED, never committed
   README.md            opt-in setup (how to enable, where the key goes) -- tracked
 .claude/hooks/
   fusion_stuck_detect.py   PostToolUse on Bash: counts consecutive same-target
@@ -105,8 +105,20 @@ fail-open-trivial, and matches every other host tool in the repo.
   `moonshotai/kimi-k2.7` (or `kimi-k2.7-code`).
 - `model` (Fusion's built-in judge): `z-ai/glm-5.2` -- strong coder, cheap, keeps
   the whole deliberation off Opus.
-- All via OpenRouter's `openrouter/fusion` endpoint (the exact request/plugin wire
-  shape is verified against OpenRouter docs as the first plan step, before code).
+### Verified OpenRouter Fusion wire shape (docs, 2026-06-27)
+
+- **Endpoint:** `POST https://openrouter.ai/api/v1/chat/completions`.
+- **Auth:** `Authorization: Bearer <contents of .fusion/secret>`.
+- **Body:** `{"model": "openrouter/fusion", "plugins": [{"id": "fusion",
+  "analysis_models": ["z-ai/glm-5.2", "google/gemini-3.5-flash",
+  "moonshotai/kimi-k2.7"], "model": "z-ai/glm-5.2"}], "messages": [...]}`.
+  (Docs examples prefix model ids with `~`; the exact id-syntax variant is confirmed
+  against a live id list at impl time -- a one-line config value, not a code change.)
+- **Web search/fetch** is auto-enabled for the panel; no extra config.
+- **Response:** the judge's synthesized answer is in `choices[0].message.content`
+  (embedded text, not a separate field); `usage` reports the summed cost.
+- **Pricing:** roughly 4-5x a single completion (N panel calls + 1 judge). On this
+  cheap panel that is still ~$0.10-0.15 per call.
 
 ## 6. Cost model (why this is affordable)
 
@@ -142,7 +154,7 @@ ending an Opus loop that would have cost more.
   "unavailable", exit 0, runner continues (covered by offline unit tests that mock
   the HTTP layer).
 - Budget cap enforced: the (N+1)th Fusion call in a run is skipped + logged.
-- `.fusion/key` is gitignored and never appears in `git status`/a commit.
+- `.fusion/secret` is gitignored and never appears in `git status`/a commit.
 - Stuck-detect increments on repeated same-target failure and resets on success;
   the threshold systemMessage fires exactly at 3.
 - One end-to-end dry-run (mocked Fusion response) shows Claude->Codex->Fusion tier
