@@ -82,3 +82,4 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate ANALYSIS 
 | [parity-research-analyst](../agents/parity-research-analyst.md) | opus / sonnet (gap-audit) | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 |
 | [review-evidence-mapper](../agents/review-evidence-mapper.md) | sonnet | `review-todo-section` Phase 1 |
 | [diagnostic-digester](../agents/diagnostic-digester.md) | sonnet | `implement-todo-section` fix loop + `review-todo-section` build-fail |
+| [todo-hygiene-auditor](../agents/todo-hygiene-auditor.md) | sonnet | `complete-todo-file` close-out |
