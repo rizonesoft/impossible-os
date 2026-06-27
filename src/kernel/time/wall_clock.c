@@ -150,28 +150,51 @@ FILETIME KeQuerySystemTimePrecise(void)
     return KeQuerySystemTime();
 }
 
-void KeSetSystemTime(FILETIME new_time)
+void KeSetSystemTimeEx(FILETIME new_time, FILETIME *previous_out)
 {
+    uint64_t now_mono;
+
     /* The placeholder (1601 epoch, value 0) is the "no time" sentinel, never a
      * real wall time. Accepting it would mark the clock sourced over a bogus
      * anchor and re-open the absolute-delay 49-day clamp. Reject it. */
     if (new_time == FILETIME_NOW_PLACEHOLDER) {
         klog(LOG_WARN, "time", "KeSetSystemTime: rejected placeholder time");
+        if (previous_out)
+            *previous_out = FILETIME_NOW_PLACEHOLDER;
         return;
     }
 
     /* Sample mono_ns() INSIDE the seqlock writer (interrupts already disabled,
-     * so no preemption can stretch the anchor pair stale). KeSetSystemTime is
-     * a rare explicit set, so the brief clocksource read under the writer lock
-     * is the right trade vs an unbounded pre-lock sample-to-publish gap. */
+     * so no preemption can stretch the anchor pair stale). The old effective
+     * wall time is captured under the SAME writer hold as the swap, so a
+     * racing KeSetSystemTime cannot slip a different value between the
+     * previous-time read and the publish. */
     seqlock_write_lock(&s_lock);
+    now_mono = mono_ns();
+    if (previous_out) {
+        if (__atomic_load_n(&s_ready, __ATOMIC_RELAXED)) {
+            uint64_t elapsed = (now_mono > s_base_mono_ns)
+                                   ? (now_mono - s_base_mono_ns) : 0;
+            *previous_out = s_base_time + (elapsed / 100);
+        } else {
+            *previous_out = FILETIME_NOW_PLACEHOLDER;
+        }
+    }
     s_base_time = new_time;
-    s_base_mono_ns = mono_ns();
+    s_base_mono_ns = now_mono;
     seqlock_write_unlock(&s_lock);
+    /* Publish readiness/sourced AFTER the anchor (seqlock unlock) so an
+     * acquire-load observer of s_ready also sees the new anchor. */
+    __atomic_store_n(&s_ready, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&s_time_sourced, 1, __ATOMIC_RELEASE);
 
     klog(LOG_INFO, "time", "Wall clock set to FILETIME %u",
          (uint64_t)new_time);
+}
+
+void KeSetSystemTime(FILETIME new_time)
+{
+    KeSetSystemTimeEx(new_time, (FILETIME *)0);
 }
 
 int wall_clock_ready(void)
@@ -319,7 +342,7 @@ static NTSTATUS nt_query_system_time(uint64_t out_ptr, uint64_t a2,
 {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     if (!out_ptr)
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_ACCESS_VIOLATION;   /* required pointer; NULL is unwritable */
     return write_u64_out(out_ptr, (uint64_t)KeQuerySystemTime());
 }
 
@@ -340,7 +363,7 @@ static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
     ASSERT_KERNEL_CALLER();
 
     if (!new_ptr)
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_ACCESS_VIOLATION;   /* required pointer; NULL is unreadable */
 
     /* Read the new time through the user-buffer guard -- a raw deref of a
      * user pointer could fault the kernel or read kernel memory. */
@@ -355,11 +378,17 @@ static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
     if (nt == FILETIME_NOW_PLACEHOLDER)
         return STATUS_INVALID_PARAMETER;
 
-    /* Optional: return previous time (probe before mutating). */
+    /* PreviousTime (optional): probe the buffer BEFORE mutating, capture the
+     * old effective time atomically with the swap (KeSetSystemTimeEx), then
+     * copy out best-effort (address already probed). */
     if (prev_ptr) {
-        pst = write_u64_out(prev_ptr, (uint64_t)KeQuerySystemTime());
+        FILETIME prev;
+        pst = ProbeForWriteIfUser((void *)prev_ptr, sizeof(uint64_t), 8);
         if (pst != STATUS_SUCCESS)
             return pst;
+        KeSetSystemTimeEx(nt, &prev);
+        (void)copy_to_user((void *)prev_ptr, &prev, sizeof(uint64_t));
+        return STATUS_SUCCESS;
     }
 
     KeSetSystemTime(nt);
@@ -375,7 +404,7 @@ static NTSTATUS nt_query_performance_counter(uint64_t count_ptr,
     NTSTATUS pst;
     (void)a3; (void)a4; (void)a5; (void)a6;
     if (!count_ptr)
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_ACCESS_VIOLATION;   /* required pointer; NULL is unwritable */
 
     pst = write_u64_out(count_ptr, mono_filetime_units());
     if (pst != STATUS_SUCCESS)
