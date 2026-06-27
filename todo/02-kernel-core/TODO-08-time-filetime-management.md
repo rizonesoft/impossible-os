@@ -211,7 +211,9 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 > - Downstream: `klog_disk` `pick_log_number()` reads via `rtc_try_read()` with a parser-valid 00/01/01 fallback (Codex H: year-0 broke daily sequencing + retention on RTC-less platforms; wall clock not yet seeded there).
 > - Canonical: `src/kernel/drivers/rtc.c`; consumer seam `src/kernel/time/wall_clock.c`.
 > - Scope boundary: the hard gate is the hardware-safety boundary for all CMOS consumers (compositor/desktop call `rtc_read()` directly, protected, no port I/O); §6+ own the higher-level time service.
-> **Verified:** 2026-06-27 | commit `PENDING` | 7/7 items | build OK | 221 kernel + 16 user PASS | smoke PASS (TCG 2.48s, RTC present -> Serial_26062601.log)
+> **Verified:** 2026-06-27 | commit `d2930860` | 7/7 items | build OK | 229 kernel + 16 user PASS | smoke PASS (TCG 2.56s, RTC present -> Serial_26062701.log)
+> **Accepted:** [M] no-RTC serial-log rotation deletes by seq not recency (cap bounds growth, so not a leak; needs a cross-boot counter) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 170)
+> **Quality reviewed:** 2026-06-27 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 2H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

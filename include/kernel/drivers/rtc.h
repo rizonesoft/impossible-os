@@ -13,13 +13,13 @@
 /* ---- RTC time structure ---- */
 
 struct rtc_time {
-    uint8_t  second;    /* 0–59 */
-    uint8_t  minute;    /* 0–59 */
-    uint8_t  hour;      /* 0–23 */
-    uint8_t  day;       /* 1–31 */
-    uint8_t  month;     /* 1–12 */
+    uint8_t  second;    /* 0-59 */
+    uint8_t  minute;    /* 0-59 */
+    uint8_t  hour;      /* 0-23 */
+    uint8_t  day;       /* 1-31 */
+    uint8_t  month;     /* 1-12 */
     uint16_t year;      /* 4-digit year (e.g. 2026) */
-    uint8_t  weekday;   /* 1–7 (Sunday = 1) */
+    uint8_t  weekday;   /* 1-7 (Sunday = 1) */
 };
 
 /* ---- API ---- */
@@ -49,6 +49,14 @@ int rtc_available(void);
  * returns 0 otherwise (no usable time). Preferred over rtc_read() for any
  * caller that must distinguish "no clock" from "midnight year 2000". */
 int rtc_try_read(struct rtc_time *t);
+
+/* Pure year resolver: combines the 2-digit RTC year with the century byte.
+ * The century is trusted ONLY when the FADT advertised a century register
+ * (century_present) AND the value is a plausible 20th/21st-century byte; a
+ * missing register reads back bus-float, so otherwise fall back to 2000+yr.
+ * Side-effect-free -- unit-tested directly. */
+uint16_t rtc_resolve_year(uint8_t two_digit_year, uint8_t century,
+                          int century_present);
 
 /* Pure validator: returns 1 when every field of *t is in range and the day is
  * valid for the month/year (Gregorian). Year accepted in the FILETIME-era

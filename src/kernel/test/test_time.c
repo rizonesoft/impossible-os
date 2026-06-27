@@ -90,6 +90,26 @@ static void test_rtc_time_plausible_rejects(void)
     TEST_ASSERT(!rtc_time_plausible(&t), "second 60 rejected");
 }
 
+/* rtc_resolve_year: trust the century byte only when advertised AND plausible;
+ * a century-less register reads bus-float and must fall back to 2000+yy so a
+ * working RTC is not wrongly latched unavailable. */
+static void test_rtc_resolve_year(void)
+{
+    /* Advertised + plausible century. */
+    TEST_ASSERT_EQ(rtc_resolve_year(26, 20, 1), 2026u, "century 20 + yy 26 = 2026");
+    TEST_ASSERT_EQ(rtc_resolve_year(99, 21, 1), 2199u, "century 21 + yy 99 = 2199");
+    /* Advertised but garbage century (0xFF BCD -> 165, binary -> 255): reject. */
+    TEST_ASSERT_EQ(rtc_resolve_year(26, 165, 1), 2026u, "garbage century 165 -> 2000+yy");
+    TEST_ASSERT_EQ(rtc_resolve_year(26, 255, 1), 2026u, "garbage century 255 -> 2000+yy");
+    TEST_ASSERT_EQ(rtc_resolve_year(26, 0, 1), 2026u, "zero century -> 2000+yy");
+    /* No century register advertised: ignore the byte entirely. */
+    TEST_ASSERT_EQ(rtc_resolve_year(26, 20, 0), 2026u, "century not present -> 2000+yy");
+    /* A corrupt year byte (>99) must resolve to the year-0 sentinel that
+     * rtc_time_plausible() rejects -- never a fabricated plausible year. */
+    TEST_ASSERT_EQ(rtc_resolve_year(126, 0, 0), 0u, "yy 126 (garbage) -> year 0");
+    TEST_ASSERT_EQ(rtc_resolve_year(255, 20, 1), 0u, "yy 255 (bus-float) -> year 0");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -102,4 +122,6 @@ void test_register_time(void)
                             test_rtc_time_plausible_valid, TEST_CAT_SCHED);
     test_suite_register_cat("time: rtc_time_plausible rejects invalid",
                             test_rtc_time_plausible_rejects, TEST_CAT_SCHED);
+    test_suite_register_cat("time: rtc_resolve_year century handling",
+                            test_rtc_resolve_year, TEST_CAT_SCHED);
 }

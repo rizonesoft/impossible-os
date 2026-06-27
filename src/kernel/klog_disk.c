@@ -946,9 +946,12 @@ static void pick_log_number(void)
     uint8_t max_seq_today = 0;
     uint32_t count = 0;
 
-    /* Oldest log tracking (for cap enforcement) */
+    /* Oldest log tracking (for cap enforcement). Serial filenames are
+     * "Serial_YYMMDDNN.log" = 19 chars + NUL; a short buffer would truncate
+     * off ".log" and the unlink would silently miss, defeating the 100-file
+     * cap on every platform. */
     uint8_t old_yy = 99, old_mm = 12, old_dd = 31, old_seq = 99;
-    char    oldest_name[16];
+    char    oldest_name[20];
     oldest_name[0] = '\0';
 
     /* Get current date from the RTC. rtc_try_read() honors the CMOS-absence
@@ -957,9 +960,11 @@ static void pick_log_number(void)
      * clock is not seeded yet at this boot point (klog_disk_enable runs before
      * wall_clock_init), so the RTC is the only date source here. With no RTC,
      * fall back to a parser-VALID sentinel (00/01/01): month/day 0 would be
-     * rejected by parse_log_filename(), which would defeat daily sequencing and
-     * retention and reuse Serial_00000001.log every boot -- 00/01/01 keeps
-     * sequencing and the 100-file cap working on RTC-less platforms. */
+     * rejected by parse_log_filename(), reusing Serial_00000001.log every boot.
+     * The sentinel keeps the filename valid and bounds growth to the 100-file
+     * cap; recency-correct rotation on the degenerate fixed date (the YYMMDDNN
+     * scheme cannot encode a cross-boot counter) is owned by the no-RTC serial
+     * log rotation item in the system-logging TODO. */
     {
         struct rtc_time rt;
         if (rtc_try_read(&rt)) {
@@ -998,7 +1003,7 @@ static void pick_log_number(void)
                     old_yy = yy; old_mm = mm; old_dd = dd; old_seq = seq;
                     {
                         int k;
-                        for (k = 0; de->name[k] && k < 15; k++)
+                        for (k = 0; de->name[k] && k < 19; k++)
                             oldest_name[k] = de->name[k];
                         oldest_name[k] = '\0';
                     }
@@ -1010,8 +1015,13 @@ static void pick_log_number(void)
 
     /* Cap at 100 files: delete oldest when full */
     if (count >= KLOG_MAX_LOG_FILES && x_root->ops->unlink && oldest_name[0]) {
-        x_root->ops->unlink(x_root, oldest_name);
-        klog(LOG_DEBUG, "klog", "deleted oldest log: %s%s (%u files)", klog_dir, oldest_name, count);
+        int urc = x_root->ops->unlink(x_root, oldest_name);
+        if (urc == 0)
+            klog(LOG_DEBUG, "klog", "deleted oldest log: %s%s (%u files)",
+                 klog_dir, oldest_name, count);
+        else
+            klog(LOG_WARN, "klog", "log cap: unlink %s%s failed (rc=%d, %u)",
+                 klog_dir, oldest_name, (uint64_t)urc, count);
     }
 
 fallback:

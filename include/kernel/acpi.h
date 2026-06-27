@@ -308,6 +308,10 @@ int acpi_has_8042(void);
  * Check before any port 0x70/0x71 access. */
 int acpi_has_cmos_rtc(void);
 
+/* Returns the CMOS register index that holds the RTC century byte, or 0 when
+ * the FADT advertises no century register (do NOT read a hardcoded 0x32 then). */
+uint8_t acpi_rtc_century_index(void);
+
 /* Returns 1 if MSI is supported (bit 3 NOT set).
  * Check before enabling MSI on PCI devices. */
 int acpi_msi_supported(void);

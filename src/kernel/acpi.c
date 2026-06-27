@@ -1261,6 +1261,22 @@ int acpi_has_cmos_rtc(void)
     return (fadt_ptr->boot_arch_flags & (1u << 5)) ? 0 : 1;
 }
 
+uint8_t acpi_rtc_century_index(void)
+{
+    /* The FADT "century" field names the CMOS register that holds the century
+     * byte, or 0 when the platform has no century register. Hardcoding 0x32 is
+     * wrong: on firmware without one, that register reads bus-float and yields
+     * a wild year. Return 0 (no century register) unless the FADT advertises a
+     * valid one. */
+    if (acpi_hw_reduced())
+        return 0;
+    if (!fadt_ptr)
+        return 0;
+    if (fadt_ptr->header.length < __builtin_offsetof(struct acpi_fadt, century) + 1)
+        return 0;
+    return fadt_ptr->century;
+}
+
 int acpi_msi_supported(void)
 {
     if (!fadt_ptr)

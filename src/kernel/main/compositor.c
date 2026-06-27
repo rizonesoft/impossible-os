@@ -11,8 +11,9 @@
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/virtio_input.h"
 #include "kernel/drivers/vbox_mouse.h"
-#include "kernel/drivers/rtc.h"
 #include "kernel/time/mono_clock.h"
+#include "kernel/time/wall_clock.h"
+#include "kernel/nt/filetime.h"
 #include "kernel/timer.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
@@ -149,7 +150,7 @@ void compositor_run(void)
     uint8_t prev_mb = 0;
     uint8_t first_frame = 1;
     uint64_t last_clock_sec = 0;
-    uint8_t last_clock_min = 0xFF;  /* force first draw */
+    uint64_t last_clock_min = (uint64_t)-1;  /* force first draw */
 
     for (;;) {
         int32_t mx, my;
@@ -216,10 +217,14 @@ void compositor_run(void)
         uint8_t clock_tick = 0;
         if (cur_sec != last_clock_sec) {
             last_clock_sec = cur_sec;
-            struct rtc_time rtc_now;
-            rtc_read(&rtc_now);
-            if (rtc_now.minute != last_clock_min) {
-                last_clock_min = rtc_now.minute;
+            /* Detect a wall-clock minute change. RTC is a boot-time seed only,
+             * not a runtime clock (and returns a frozen year-0 sentinel on
+             * no-CMOS hardware); the wall clock is the runtime source and is
+             * driven by UEFI GetTime when there is no RTC. */
+            uint64_t cur_min = KeQuerySystemTime() /
+                               (FILETIME_TICKS_PER_SECOND * 60);
+            if (cur_min != last_clock_min) {
+                last_clock_min = cur_min;
                 clock_tick = 1;
             }
         }

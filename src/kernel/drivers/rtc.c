@@ -105,6 +105,25 @@ int rtc_available(void)
     return s_rtc_available;
 }
 
+uint16_t rtc_resolve_year(uint8_t two_digit_year, uint8_t century,
+                          int century_present)
+{
+    /* A valid RTC year byte is 0-99 in both BCD and binary mode; >99 means a
+     * corrupt/absent register (bus-float 0xFF -> 165 BCD / 255 binary). Return
+     * year 0 so rtc_time_plausible() REJECTS it -- folding garbage into a
+     * plausible year (e.g. 2000 + 255 % 100) would silently seed a wrong clock
+     * instead of failing closed to the UEFI GetTime source. */
+    if (two_digit_year > 99)
+        return 0;
+    /* Trust the century only when advertised AND plausible (1900-2199); a
+     * century-less register reads bus-float, which would otherwise yield a
+     * wild year and -- via rtc_try_read() validation -- wrongly latch a
+     * working RTC unavailable. */
+    if (century_present && century >= 19 && century <= 21)
+        return (uint16_t)(century * 100 + two_digit_year);
+    return (uint16_t)(2000 + two_digit_year);
+}
+
 int rtc_time_plausible(const struct rtc_time *t)
 {
     static const uint8_t dpm[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
@@ -169,6 +188,7 @@ void rtc_read(struct rtc_time *t)
     uint8_t status_b;
     uint8_t century = 0;
     uint8_t sec, min, hr, day, mon, yr, wday;
+    uint8_t century_idx;
 
     if (!t)
         return;
@@ -194,7 +214,11 @@ void rtc_read(struct rtc_time *t)
     day  = cmos_read(RTC_REG_DAY);
     mon  = cmos_read(RTC_REG_MONTH);
     yr   = cmos_read(RTC_REG_YEAR);
-    century = cmos_read(RTC_REG_CENTURY);
+
+    /* Read the century byte only from the register the FADT advertises (0 =
+     * none); never the hardcoded 0x32 on a platform that lacks one. */
+    century_idx = acpi_rtc_century_index();
+    century = century_idx ? cmos_read(century_idx) : 0;
 
     /* Check Status Register B to see if values are BCD or binary */
     status_b = cmos_read(RTC_REG_STATUS_B);
@@ -207,22 +231,17 @@ void rtc_read(struct rtc_time *t)
         day  = bcd_to_bin(day);
         mon  = bcd_to_bin(mon);
         yr   = bcd_to_bin(yr);
-        century = bcd_to_bin(century);
+        if (century_idx)
+            century = bcd_to_bin(century);
     }
 
-    /* Handle 12-hour mode → convert to 24-hour */
+    /* Handle 12-hour mode: convert to 24-hour */
     if (!(status_b & 0x02) && (hr & 0x80)) {
         hr = (uint8_t)((hr & 0x7F) + 12);
         if (hr == 24) hr = 0;
     }
 
-    /* Calculate full year */
-    if (century > 0) {
-        t->year = (uint16_t)(century * 100 + yr);
-    } else {
-        /* Assume 2000s if no century register */
-        t->year = (uint16_t)(2000 + yr);
-    }
+    t->year = rtc_resolve_year(yr, century, century_idx != 0);
 
     t->second  = sec;
     t->minute  = min;
