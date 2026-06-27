@@ -88,7 +88,9 @@ FILETIME filetime_from_dos_datetime(uint16_t date, uint16_t time,
     uint32_t day   = date & 0x1F;
     uint32_t hours = (time >> 11) & 0x1F;
     uint32_t mins  = (time >> 5) & 0x3F;
-    uint32_t secs  = (time & 0x1F) * 2;
+    /* DOS 2-second field is 0..31 -> 0..62 s; clamp so 60/62 cannot roll the
+     * FILETIME into the next minute (FILETIME_LEAP_SECOND_POLICY). */
+    uint32_t secs  = filetime_clamp_second((time & 0x1F) * 2);
 
     uint64_t days = filetime_days_from_date_fn((uint16_t)year, (uint8_t)month,
                                                 (uint8_t)day);
@@ -103,21 +105,27 @@ FILETIME filetime_from_dos_datetime(uint16_t date, uint16_t time,
 
 FILETIME filetime_from_rtc(const struct rtc_time *t)
 {
+    /* FILETIME never represents the 60th second of a leap event
+     * (FILETIME_LEAP_SECOND_POLICY); a ":60" collapses onto :59. */
+    uint64_t sec = filetime_clamp_second(t->second);
     uint64_t days = filetime_days_from_date(t->year, t->month, t->day);
     uint64_t secs = days * 86400
                   + (uint64_t)t->hour * 3600
                   + (uint64_t)t->minute * 60
-                  + (uint64_t)t->second;
+                  + sec;
     return secs * FILETIME_TICKS_PER_SECOND;
 }
 
 FILETIME filetime_from_efi_time(const struct efi_time *t)
 {
+    /* A firmware GetTime() reporting ":60" must not advance wall time into the
+     * next minute (FILETIME_LEAP_SECOND_POLICY). */
+    uint64_t sec = filetime_clamp_second(t->second);
     uint64_t days = filetime_days_from_date(t->year, t->month, t->day);
     uint64_t secs = days * 86400
                   + (uint64_t)t->hour * 3600
                   + (uint64_t)t->minute * 60
-                  + (uint64_t)t->second;
+                  + sec;
     FILETIME ft = secs * FILETIME_TICKS_PER_SECOND;
 
     /* Add nanosecond precision */

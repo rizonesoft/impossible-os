@@ -16,6 +16,7 @@
 #include "kernel/time/timezone.h"
 #include "kernel/nt/filetime.h"
 #include "kernel/drivers/rtc.h"
+#include "kernel/uefi_runtime.h"
 
 /* mono_pmtmr_delta_ns: masked-delta -> ns at the fixed 3.579545 MHz PMTMR. */
 static void test_pmtmr_delta_basic(void)
@@ -216,6 +217,35 @@ static void test_filetime_leap_second_policy(void)
         if (buf[i] != exp2[i]) { eq = 0; break; }
     }
     TEST_ASSERT(eq, "1483228800 renders 2017-01-01T00:00:00.000Z (no leap second)");
+
+    /* Struct converters clamp a malformed/leap ":60" onto :59 so wall time is
+     * never seeded one second ahead (FILETIME_LEAP_SECOND_POLICY). */
+    struct efi_time e60 = { .year = 2017, .month = 1, .day = 1, .hour = 0,
+                            .minute = 0, .second = 60, .nanosecond = 0,
+                            .timezone = 0x07FF };
+    struct efi_time e59 = e60; e59.second = 59;
+    TEST_ASSERT_EQ(filetime_from_efi_time(&e60), filetime_from_efi_time(&e59),
+                   "efi_time :60 clamps to :59 (no minute roll-forward)");
+
+    struct rtc_time r60 = { .second = 60, .minute = 0, .hour = 0, .day = 1,
+                            .month = 1, .year = 2017, .weekday = 1 };
+    struct rtc_time r59 = r60; r59.second = 59;
+    TEST_ASSERT_EQ(filetime_from_rtc(&r60), filetime_from_rtc(&r59),
+                   "rtc_time :60 clamps to :59 (no minute roll-forward)");
+
+    /* DOS 2-second field 30/31 decode to 60/62 s; both clamp to :59 and must
+     * render :59, never roll into the next minute. date=1980-01-01, time=00:00. */
+    uint16_t dos_date = (uint16_t)((0u << 9) | (1u << 5) | 1u);  /* 1980-01-01 */
+    FILETIME d30 = filetime_from_dos_datetime(dos_date, (uint16_t)30, 0); /* secs 60 */
+    FILETIME d31 = filetime_from_dos_datetime(dos_date, (uint16_t)31, 0); /* secs 62 */
+    TEST_ASSERT_EQ(d30, d31, "DOS seconds field 30 and 31 both clamp to :59");
+    (void)filetime_to_string(d30, buf, sizeof(buf));
+    eq = 1;
+    const char *exp3 = "1980-01-01T00:00:59.000Z";
+    for (int i = 0; i < 25; i++) {
+        if (buf[i] != exp3[i]) { eq = 0; break; }
+    }
+    TEST_ASSERT(eq, "DOS malformed :60 renders 1980-01-01T00:00:59 (no roll-forward)");
 }
 
 void test_register_time(void)

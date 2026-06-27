@@ -47,6 +47,11 @@ typedef uint64_t FILETIME;
  *     scale + offset: no leap-second table, no per-day correction.
  *   - filetime_to_string() derives the seconds field as (secs_in_day % 60),
  *     so it can never emit ":60".
+ *   - every struct/encoded converter (filetime_from_rtc, filetime_from_efi_time,
+ *     filetime_from_dos_datetime) routes its seconds through
+ *     filetime_clamp_second(), so a firmware/RTC ":60" or a malformed DOS
+ *     2-second field collapses onto :59 rather than rolling forward into the
+ *     next minute (which would otherwise seed wall time 1 s ahead).
  *   - The NTP adjustment hooks discipline WALL TIME phase/frequency only; they
  *     do not smear or insert leap seconds, and never touch the monotonic clock
  *     (QPC / interrupt time stay raw).
@@ -70,6 +75,18 @@ void     filetime_to_dos_datetime(FILETIME ft, int tz_bias_minutes,
                                    uint16_t *date_out, uint16_t *time_out);
 FILETIME filetime_from_dos_datetime(uint16_t date, uint16_t time,
                                      int tz_bias_minutes);
+
+/* Highest second a FILETIME / SYSTEMTIME field can represent. The 60th second
+ * of a leap event is never represented (FILETIME_LEAP_SECOND_POLICY). */
+#define FILETIME_MAX_SECOND             59u
+
+/* Clamp a decoded seconds value to 0..59 so a malformed/leap ":60" (or the DOS
+ * 2-second field's 60/62) collapses onto :59 instead of rolling the FILETIME
+ * forward into the next minute. Shared by every struct/encoded converter. */
+static inline uint32_t filetime_clamp_second(uint32_t s)
+{
+    return s > FILETIME_MAX_SECOND ? FILETIME_MAX_SECOND : s;
+}
 
 /* Unix epoch seconds -> FILETIME. Pure linear scale + offset: no leap-second
  * correction (both epochs use 86400 s/day -- see FILETIME_LEAP_SECOND_POLICY). */

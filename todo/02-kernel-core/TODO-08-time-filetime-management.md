@@ -460,16 +460,19 @@ FILETIME does not count leap seconds -- this matches Windows behavior exactly. T
 - [x] `FILETIME_LEAP_SECOND_POLICY` doc block added to `filetime.h` -- FILETIME counts SI seconds (86400 s/day), leap seconds never counted (Win32 + POSIX), NTP disciplines wall time only
 - [x] `filetime_from_unix_seconds()` confirmed leap-correction-free (pure linear `(unix+offset)*1e7`) + one-line policy reference comment
 - [x] `filetime_to_string()` confirmed never emits `:60` (seconds = `secs_in_day % 60`, always 0..59) + one-line policy comment in `filetime.c`
-- [x] Unit test `test_filetime_leap_second_policy` (`test_time.c`): `1483228799` -> `2016-12-31T23:59:59.000Z` (never `:60`), next second -> `2017-01-01T00:00:00.000Z`
+- [x] Enforce at conversion (review): `filetime_clamp_second()` (+ `FILETIME_MAX_SECOND`) routes RTC/EFI/DOS converters so a `:60` (incl. DOS field 30/31 = 60/62 s) collapses onto :59, never rolling into the next minute
+- [x] Unit test `test_filetime_leap_second_policy` (`test_time.c`): `1483228799` -> `2016-12-31T23:59:59.000Z`, next second -> `2017-01-01T00:00:00.000Z`, plus efi/rtc/DOS `:60` clamp-to-:59 cases
 - [x] Commit: `"kernel: time -- document and enforce leap second policy"`
 
-> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time suite +1 (`time: FILETIME leap second policy`), 248 kernel tests, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time suite +1 (`time: FILETIME leap second policy`), 252 kernel tests, 0 failures
 > **Notes:**
-> - Shipped: `FILETIME_LEAP_SECOND_POLICY` doc block in `filetime.h` + policy-reference comments at `filetime_from_unix_seconds` and `filetime_to_string` + `test_filetime_leap_second_policy` regression test.
-> - No new runtime logic: the conversions were already leap-correct by construction (linear Unix math; modular seconds). This section documents and guards the invariant so it cannot regress.
+> - Shipped: `FILETIME_LEAP_SECOND_POLICY` doc block + `filetime_clamp_second()`/`FILETIME_MAX_SECOND` in `filetime.h`; policy comments at `filetime_from_unix_seconds`/`filetime_to_string`; `test_filetime_leap_second_policy`.
+> - Enforced at conversion: review added the clamp so every seconds-ingest converter (RTC, EFI GetTime, DOS datetime) maps a `:60` onto :59 instead of advancing wall time by a second; valid 0..59 inputs unchanged.
 > - Downstream: locks the contract the §17 NTP hooks rely on -- wall-time discipline only, no leap smearing, monotonic clock stays raw.
 > - Canonical: `include/kernel/nt/filetime.h` leap-second policy block.
-> - Scope boundary: §15 owns the SI-second invariant + its test; a true UTC-with-leap-seconds layer (if ever needed) is a separate module.
+> - Scope boundary: §15 owns the SI-second invariant; broader EFI/RTC field-range validation (minute/hour/day) lives in §5's `rtc_try_read`/seed path, not here.
+> **Verified:** 2026-06-27 | ship `f4891b42` + review clamp fixes | 5/5 items | build OK | tests 252 PASS
+> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed | scope: kernel-code-quality
 
 ---
 
