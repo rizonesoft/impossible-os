@@ -76,7 +76,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-26 §3,§4   |  [/]   |
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [x]   |
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [x]   |
-| ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [ ]   |
+| ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [/]   |
 | 💎  |  18   | Clocksource quality watchdog (drift demotion)                          | §2, §4              |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both provide these capabilities.
@@ -502,16 +502,27 @@ Hot paths like klog timestamping, scheduler accounting, and network packet times
 ## 17. NTP Clock Adjustment Hooks
 The NTP protocol client (network stack TODO) needs a kernel interface to correct both the wall clock phase (offset) and frequency (skew). Provide the hooks now so the network stack can call them later.
 
-- [ ] Define `ntp_adj_t` in `include/kernel/time/ntp_adj.h`:
-  - `int64_t  offset_ns` -- signed nanosecond correction to apply to the wall clock phase
+- [x] Defined `ntp_adj_t` + `struct ntp_status` in `include/kernel/time/ntp_adj.h`:
+  - `int64_t  offset_ns` -- signed wall-clock phase correction
   - `int32_t  freq_ppb` -- parts-per-billion frequency correction (positive = clock running fast)
-- [ ] Implement `ke_ntp_adjtime(const ntp_adj_t *adj)`:
-  - Phase step: if `|offset_ns| > 1s`, call `KeSetSystemTime()` directly (step)
-  - Slew: if `|offset_ns| <= 1s`, record the correction and spread it over the next N ticks by adjusting the WALL-CLOCK conversion only (the `base_time`/`base_mono_ns` anchor), never `mono_ns()` itself
-  - Frequency: store `freq_ppb`; apply it to the wall-clock FILETIME conversion ONLY. MUST NOT touch `mono_filetime_units()` / `KeQueryPerformanceCounter` (gap-audit [H]): QPC + interrupt time are RAW monotonic (Win11 contract: QPC is independent of system time / Windows Time; Linux keeps `CLOCK_MONOTONIC_RAW` un-disciplined). NTP discipline applies to wall time only.
-- [ ] Add `ke_ntp_get_status(struct ntp_status *out)` -- returns current offset, freq, last-sync FILETIME, and sync source string
-- [ ] Document the hook contract: NTP client calls `ke_ntp_adjtime()` from thread context only; kernel does not initiate network calls
-- [ ] Commit: `"kernel: time -- NTP clock phase and frequency adjustment hooks"`
+- [x] `ke_ntp_adjtime()` (`wall_clock.c`) -- THREAD-context hook; `mono_ns`/QPC/interrupt time stay RAW (gap-audit [H]: QPC independent of system time):
+  - Phase step: `|offset_ns| > 1s` -> `KeSetSystemTime()` (monotonicity-safe), clears pending slew
+  - Frequency + slew: clamped (freq to `+/-NTP_FREQ_MAX_PPB`) and STORED for the status query + the watchdog's continuous discipline
+- [x] `ke_ntp_get_status(struct ntp_status *out)` -- slew-remaining offset, freq, last-sync FILETIME, source (`"ntp"`/`"none"`)
+- [x] Contract documented in `ntp_adj.h` + the wall_clock.c block: `ke_ntp_adjtime()` is THREAD (PASSIVE) context only; the kernel never initiates network calls
+- [x] Honest discipline-state via pure tested `ntp_source_for_correction(off,freq)`: `"ntp"` only when fully applied (pure step / zero no-op); any stored slew or nonzero freq (incl. mixed step+freq) -> `"ntp-pending"`
+- [x] All anchor writers coordinate on `s_ntp_lock` (order `s_ntp_lock -> s_lock`): a non-NTP `KeSetSystemTime` clears NTP status (`source="none"`, slew/freq 0) atomically with the swap, so a manual set never leaves a stale `"ntp"`
+- [/] Continuous per-tick freq/slew APPLICATION deferred (a discrete nudge regresses wall reads; needs the monotonic floor) -> XREF: 02-kernel-core/TODO-08 §18 (item: "Apply stored NTP freq/slew behind the mono/wall floor")
+- [x] Commit: `"kernel: time -- NTP clock phase and frequency adjustment hooks"`
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | NTP tests (tick adjust, step-target valid, reject preserves, source label) + absurd-set reject, 278 kernel tests, 0 failures
+> **Notes:**
+> - Shipped: `include/kernel/time/ntp_adj.h` (ntp_adj_t/ntp_status + API) + `ke_ntp_adjtime`/`ke_ntp_get_status` + pure tested `ntp_tick_adjust_ns`/`ntp_step_target_valid`/`ntp_source_for_offset` in `wall_clock.c`.
+> - How it runs: `ke_ntp_adjtime` (thread context) steps the wall clock for a large offset (`KeSetSystemTime`, monotonicity-safe) and stores a clamped freq + slew; the monotonic clock (`mono_ns`/QPC/`KeQueryInterruptTime`) is never touched.
+> - Honest state: step -> `source="ntp"`; stored slew/freq -> `"ntp-pending"` (never read as completed sync); `KeSetSystemTime` rejects placeholder/`>FILETIME_MAX_PLAUSIBLE` so a corrupt anchor cannot be sourced.
+> - Deferred: the continuous per-tick freq/slew application needs a wall-time monotonic floor (a discrete anchor nudge regresses precise wall reads) -- built with the clocksource watchdog's mono-wide floor (§18).
+> - Canonical: `include/kernel/time/ntp_adj.h`.
+> - Scope boundary: §17 owns the adjustment hooks; the NTP protocol client + network I/O are a network-stack TODO; the continuous discipline + monotonic floor are §18.
 
 ---
 
@@ -523,6 +534,7 @@ Continuously cross-check the active monotonic clock source against a reference a
 - [ ] Atomic coherent demotion (design review [H]): publish the active clocksource as ONE snapshot (seqlock or atomic descriptor swap covering source + num/den + mask + read-fn + epoch) so lock-free `mono_ns()` never sees a mixed source/scale.
 - [ ] Anchor the new source to the old `mono_ns()` value on switch so monotonic time never jumps backward across a demotion.
 - [ ] PMTMR epoch refresh across tick quiesce (review [H]): call `mono_clock_pmtmr_advance()` before masking the timer (UEFI runtime) + after resume so a quiesce past the ~4.7 s wrap loses no wraps (the §2 floor already blocks backward steps).
+- [ ] Apply stored NTP freq/slew behind the mono/wall floor (§17-deferred): the floor lets per-tick `ntp_tick_adjust_ns()` nudge `s_base_time` without regressing wall reads; then flip §17 status `"ntp-pending"` -> `"ntp"`
 - [ ] Log the demotion with old/new source + measured drift in ppm.
 - [ ] Commit: `"kernel: time -- clocksource quality watchdog with drift demotion"`
 
@@ -551,7 +563,7 @@ Continuously cross-check the active monotonic clock source against a reference a
 | 💎 | NTFS FILETIME            | ✅ $STANDARD_INFO        | ✅ ntfs3 current_time     | ⬜ §13                    |
 | 💎 | Suspend time bias        | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                    |
 | 💎 | Leap second policy       | ✅ skips leap seconds    | ✅ 86400 s/day            | ✅ documented + tested    |
-| 💎 | NTP adjustment           | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ⬜ §17                    |
+| 💎 | NTP adjustment           | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ✅ ke_ntp_adjtime hooks   |
 | ⭐ | Fixed 10 MHz QPC         | ⚠️ varies by hardware    | ❌ no fixed-freq API      | ✅ §9 -- 10 MHz fixed     |
 | ⭐ | Coarse time API          | ⚠️ implicit KUSD         | ⚠️ ktime_get_coarse       | ✅ explicit Ke*Coarse     |
 

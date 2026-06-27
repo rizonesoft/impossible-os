@@ -21,6 +21,7 @@
 #include "kernel/cpu_security.h"
 #include "kernel/klog.h"
 #include "kernel/smp.h"
+#include "kernel/time/ntp_adj.h"
 
 /* ---- State --------------------------------------------------------------- */
 
@@ -31,6 +32,23 @@ static int       s_ready;
 static int       s_time_sourced;    /* 1 only when seeded from a REAL source
                                      * (UEFI/RTC/KeSetSystemTime), not the
                                      * placeholder -- gates absolute deadlines */
+
+/* ---- NTP discipline state ------------------------------------------------ *
+ * Defined up here (ahead of KeSetSystemTimeEx) because every wall-clock anchor
+ * writer -- the NTP step path AND the non-NTP KeSetSystemTimeEx setter -- must
+ * coordinate on s_ntp_lock so the anchor swap and the NTP status publish are
+ * atomic w.r.t. each other (a manual set must not leave a stale "ntp" status). */
+static int32_t     s_ntp_freq_ppb;       /* clamped freq correction stored */
+static int64_t     s_slew_remaining_ns;  /* phase slew stored (applied by watchdog) */
+static FILETIME    s_ntp_last_sync;      /* wall time of last accepted adjtime */
+static const char *s_ntp_source = "none";/* discipline source string */
+/* Serializes the whole ke_ntp_adjtime() accept path + the ke_ntp_get_status()
+ * snapshot + every non-NTP KeSetSystemTimeEx anchor write, so concurrent writers
+ * cannot lose an accepted correction and a reader sees a coherent {freq, slew,
+ * last_sync, source} set. Order: this lock is OUTER to the s_lock seqlock writer
+ * (wall_clock_step_relative / KeSetSystemTimeEx take s_lock inside this lock);
+ * no path takes s_lock then this lock. */
+static spinlock_t  s_ntp_lock = SPINLOCK_INIT;
 
 /* ---- Init ---------------------------------------------------------------- */
 
@@ -158,16 +176,31 @@ FILETIME KeQuerySystemTimePrecise(void)
 void KeSetSystemTimeEx(FILETIME new_time, FILETIME *previous_out)
 {
     uint64_t now_mono;
+    uint64_t irqf;
 
-    /* The placeholder (1601 epoch, value 0) is the "no time" sentinel, never a
-     * real wall time. Accepting it would mark the clock sourced over a bogus
-     * anchor and re-open the absolute-delay 49-day clamp. Reject it. */
-    if (new_time == FILETIME_NOW_PLACEHOLDER) {
-        klog(LOG_WARN, "time", "KeSetSystemTime: rejected placeholder time");
+    /* Reject the placeholder (1601 epoch, value 0 -- the "no time" sentinel) AND
+     * any absurd-future value beyond FILETIME_MAX_PLAUSIBLE. This keeps the
+     * sourced anchor ALWAYS in (placeholder, MAX_PLAUSIBLE], so no downstream
+     * consumer (NTP discipline, interpolation) can be fed a corrupt/wrapping
+     * wall-clock base -- the invariant is enforced once, here, at the setter. */
+    if (new_time == FILETIME_NOW_PLACEHOLDER ||
+        (uint64_t)new_time > FILETIME_MAX_PLAUSIBLE) {
+        klog(LOG_WARN, "time", "KeSetSystemTime: rejected implausible time %u",
+             (uint64_t)new_time);
         if (previous_out)
             *previous_out = FILETIME_NOW_PLACEHOLDER;
         return;
     }
+
+    /* Take s_ntp_lock (OUTER, before the s_lock seqlock writer) so this non-NTP
+     * anchor write cannot interleave with an in-flight ke_ntp_adjtime() step +
+     * status publish, and so the anchor swap and the NTP-status invalidation
+     * below are atomic w.r.t. each other. A manual / Zw time set SUPERSEDES NTP:
+     * the previously accepted slew/freq were computed against the OLD anchor and
+     * the clock is no longer NTP-tracked, so leaving "ntp" status (or applying
+     * the stale corrections) would mislead a status reader. Order s_ntp_lock ->
+     * s_lock matches ke_ntp_adjtime(). */
+    spin_lock_irqsave(&s_ntp_lock, &irqf);
 
     /* Sample mono_ns() INSIDE the seqlock writer (interrupts already disabled,
      * so no preemption can stretch the anchor pair stale). The old effective
@@ -192,6 +225,16 @@ void KeSetSystemTimeEx(FILETIME new_time, FILETIME *previous_out)
      * acquire-load observer of s_ready also sees the new anchor. */
     __atomic_store_n(&s_ready, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&s_time_sourced, 1, __ATOMIC_RELEASE);
+
+    /* Invalidate NTP discipline (still under s_ntp_lock, atomic with the swap):
+     * a manual set is not an NTP sync, and the stored slew/freq tracked the OLD
+     * anchor. Clear to a clean un-disciplined state. */
+    s_slew_remaining_ns = 0;
+    s_ntp_freq_ppb      = 0;
+    s_ntp_last_sync     = FILETIME_NOW_PLACEHOLDER;
+    s_ntp_source        = "none";
+
+    spin_unlock_irqrestore(&s_ntp_lock, irqf);
 
     /* The coarse cache is deliberately NOT republished here: the next timer tick
      * (<= one tick) refreshes KeQuerySystemTimeCoarse() against the new anchor,
@@ -429,6 +472,196 @@ uint64_t KeQueryInterruptTimeCoarse(void)
     return __atomic_load_n(&s_coarse_interrupt_time, __ATOMIC_ACQUIRE);
 }
 
+/* ---- NTP clock adjustment (wall-time discipline) ------------------- *
+ * WALL TIME ONLY: ke_ntp_adjtime() steps the wall clock for a large offset
+ * (KeSetSystemTime, monotonicity-safe) and stores a clamped freq + slew for the
+ * status query; the monotonic clock (mono_ns / mono_filetime_units / QPC /
+ * interrupt time) is never touched (Win11 QPC-independent contract).
+ *
+ * The CONTINUOUS freq/slew application (the per-tick anchor discipline) is
+ * deferred to the clocksource-quality-watchdog work: applying a sub-tick
+ * correction monotonically needs a wall-time monotonic floor -- the same
+ * mono-wide atomic floor ("never step backward") machinery the watchdog builds.
+ * A discrete per-tick anchor nudge regresses precise wall reads across the
+ * tick, so it is intentionally not wired here. ntp_tick_adjust_ns() below is
+ * the tested discipline math the watchdog will drive behind that floor. */
+
+
+int ntp_step_target_valid(uint64_t now_ft, int64_t off_ns, int64_t *target)
+{
+    /* Validate the current wall time as UNSIGNED first: FILETIME is unsigned and
+     * a prior KeSetSystemTime could hold a value above INT64_MAX, where a signed
+     * cast is implementation-defined. After this, now_ft <= NTP_FILETIME_MAX
+     * (~1e18) so the signed add below cannot overflow. */
+    if (now_ft <= (uint64_t)FILETIME_NOW_PLACEHOLDER ||
+        now_ft >  (uint64_t)NTP_FILETIME_MAX)
+        return 0;
+
+    /* Reject an implausible step magnitude (a network-derived offset of eons). */
+    if (off_ns > NTP_STEP_MAX_NS || off_ns < -NTP_STEP_MAX_NS)
+        return 0;
+
+    /* now_ft <= 1e18, |off/100| <= ~3.15e15 -> the int64 add is overflow-safe. */
+    int64_t t = (int64_t)now_ft + off_ns / 100;   /* ns -> 100 ns FILETIME units */
+    if (t <= (int64_t)FILETIME_NOW_PLACEHOLDER || t > NTP_FILETIME_MAX)
+        return 0;   /* below the 1601 placeholder or absurd-future: reject */
+
+    if (target)
+        *target = t;
+    return 1;
+}
+
+int64_t ntp_tick_adjust_ns(uint64_t elapsed_ns, int32_t freq_ppb,
+                           int64_t slew_remaining, int64_t *slew_consumed)
+{
+    /* Cap elapsed at 1 s: bounds elapsed*freq_ppb well within int64 even at the
+     * extreme |freq_ppb| ~2e9, and stops a timer quiesce / suspend gap from
+     * applying a giant one-tick correction (the next tick resumes normally). */
+    if (elapsed_ns > 1000000000ULL)
+        elapsed_ns = 1000000000ULL;
+
+    /* Frequency: positive freq_ppb means the wall clock runs FAST, so subtract
+     * (freq_ppb / 1e9) * elapsed to slow it. */
+    int64_t freq_ns = -((int64_t)elapsed_ns * (int64_t)freq_ppb) / 1000000000LL;
+
+    /* Slew: consume the phase correction at NTP_SLEW_MAX_PPM, sign-aware. */
+    int64_t cap_ns = (int64_t)NTP_SLEW_MAX_PPM * (int64_t)elapsed_ns / 1000000LL;
+    int64_t slew_ns = 0;
+    if (slew_remaining > 0)
+        slew_ns = (slew_remaining < cap_ns) ? slew_remaining : cap_ns;
+    else if (slew_remaining < 0)
+        slew_ns = -(((-slew_remaining) < cap_ns) ? (-slew_remaining) : cap_ns);
+
+    if (slew_consumed)
+        *slew_consumed = slew_ns;
+    return freq_ns + slew_ns;
+}
+
+/* Atomic checked relative wall-clock step: under ONE seqlock writer hold, read
+ * the effective current wall time from the live anchor, validate now+off, and
+ * re-anchor (base_time = target, base_mono = the sampled mono). This eliminates
+ * the read-vs-set TOCTOU of a separate KeQuerySystemTime()+KeSetSystemTime(): a
+ * concurrent setter cannot slip a newer anchor between the read and the set.
+ * Requires a sourced clock (the validator rejects the placeholder). Returns 1
+ * on a successful step. */
+static int wall_clock_step_relative(int64_t off_ns)
+{
+    int ok = 0;
+
+    seqlock_write_lock(&s_lock);
+    if (__atomic_load_n(&s_ready, __ATOMIC_RELAXED)) {
+        uint64_t base = (uint64_t)s_base_time;
+        uint64_t mono = mono_ns();
+        uint64_t elapsed_units = (mono > s_base_mono_ns)
+                                     ? ((mono - s_base_mono_ns) / 100) : 0;
+        /* Checked unsigned add: reject an already-corrupt anchor (a prior bad
+         * KeSetSystemTime can store an absurd FILETIME) or an elapsed delta that
+         * would wrap `now` back into the plausible range past the validator. */
+        if (base <= (uint64_t)NTP_FILETIME_MAX &&
+            elapsed_units <= (uint64_t)NTP_FILETIME_MAX - base) {
+            uint64_t now = base + elapsed_units;
+            int64_t target;
+            if (ntp_step_target_valid(now, off_ns, &target)) {
+                s_base_time = (FILETIME)target;
+                s_base_mono_ns = mono;   /* re-anchor so the freq nudge stays consistent */
+                ok = 1;
+            }
+        }
+    }
+    seqlock_write_unlock(&s_lock);
+
+    if (ok)
+        __atomic_store_n(&s_time_sourced, 1, __ATOMIC_RELEASE);
+    return ok;
+}
+
+const char *ntp_source_for_correction(int64_t off_ns, int32_t freq_ppb)
+{
+    int stepped = (off_ns > NTP_STEP_THRESHOLD_NS || off_ns < -NTP_STEP_THRESHOLD_NS);
+    /* Any stored-but-unapplied correction makes the reported state pending: a
+     * sub-second slew (kept for the deferred per-tick discipline) OR a nonzero
+     * freq (always deferred -- continuous application is not wired yet). A mixed
+     * step+freq request thus reports "ntp-pending", not a completed sync, even
+     * though the step itself already moved the clock. */
+    int pending = (freq_ppb != 0) || (!stepped && off_ns != 0);
+    if (pending)
+        return "ntp-pending";
+    return stepped ? "ntp"   /* pure step applied, nothing residual */
+                   : "ntp";  /* zero no-op against a sourced clock */
+}
+
+void ke_ntp_adjtime(const ntp_adj_t *adj)
+{
+    if (!adj)
+        return;
+
+    /* Clamp the (network-derived, untrusted) freq to +/-NTP_FREQ_MAX_PPB so a
+     * hostile/garbage value cannot drive the per-tick nudge past the natural
+     * monotonic advance. */
+    int32_t freq = adj->freq_ppb;
+    if (freq >  NTP_FREQ_MAX_PPB) freq =  NTP_FREQ_MAX_PPB;
+    if (freq < -NTP_FREQ_MAX_PPB) freq = -NTP_FREQ_MAX_PPB;
+
+    int64_t off = adj->offset_ns;
+    uint64_t irqf;
+
+    /* Serialize the ENTIRE accept path (gate + step + state publish) so two
+     * concurrent adjtime callers cannot interleave and lose an accepted
+     * correction, and a get_status reader sees a coherent set. */
+    spin_lock_irqsave(&s_ntp_lock, &irqf);
+
+    /* A correction -- step OR slew -- only makes sense against a REAL sourced
+     * wall time; with only the 1601 placeholder there is no base to correct.
+     * Gate BOTH paths so an unsourced request mutates no NTP state (initial
+     * absolute time is set via KeSetSystemTime, not a relative correction). */
+    if (__atomic_load_n(&s_time_sourced, __ATOMIC_ACQUIRE)) {
+        int ok = 1;
+        int64_t new_slew = 0;
+        if (off > NTP_STEP_THRESHOLD_NS || off < -NTP_STEP_THRESHOLD_NS) {
+            /* Step: atomic read-validate-set (under the s_lock seqlock writer,
+             * nested inside s_ntp_lock). On reject the NTP state is preserved. */
+            if (wall_clock_step_relative(off))
+                new_slew = 0;   /* a successful step supersedes pending slew */
+            else
+                ok = 0;
+        } else {
+            new_slew = off;     /* slew supersedes the previous un-consumed one */
+        }
+        if (ok) {
+            /* Commit all accepted NTP state together under the lock. The
+             * reported discipline state must not overclaim: a STEP (>1 s) just
+             * moved the wall clock via KeSetSystemTime, so it is genuinely
+             * disciplined now ("ntp"). A slew/frequency correction (<=1 s) is
+             * STORED here but its continuous per-tick application is deferred to
+             * the clocksource-quality watchdog -- until that consumer lands the
+             * correction is accepted-but-not-yet-applied, so report it as
+             * "ntp-pending". A status reader must never mistake a stored-only
+             * correction for a completed sync (the discipline math
+             * ntp_tick_adjust_ns() is not yet wired into KeQuerySystemTime). */
+            s_slew_remaining_ns = new_slew;
+            s_ntp_freq_ppb      = freq;
+            s_ntp_last_sync     = KeQuerySystemTime();
+            s_ntp_source        = ntp_source_for_correction(off, freq);
+        }
+    }
+
+    spin_unlock_irqrestore(&s_ntp_lock, irqf);
+}
+
+void ke_ntp_get_status(struct ntp_status *out)
+{
+    uint64_t irqf;
+    if (!out)
+        return;
+    /* Coherent snapshot under the NTP writer lock. */
+    spin_lock_irqsave(&s_ntp_lock, &irqf);
+    out->offset_ns = s_slew_remaining_ns;
+    out->freq_ppb  = s_ntp_freq_ppb;
+    out->last_sync = s_ntp_last_sync;
+    out->source    = s_ntp_source;
+    spin_unlock_irqrestore(&s_ntp_lock, irqf);
+}
+
 /* ---- SSDT handlers ------------------------------------------------- */
 
 /* Probe (when the caller is user-mode) + copy a uint64_t out to a syscall
@@ -483,8 +716,13 @@ static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
         return STATUS_ACCESS_VIOLATION;
 
     /* The placeholder (1601 epoch) is the "no time" sentinel, not a settable
-     * wall time -- reject before touching the anchor. */
-    if (nt == FILETIME_NOW_PLACEHOLDER)
+     * wall time; an absurd-future value beyond the plausibility bound is a
+     * corrupt/hostile anchor. Reject both at the ABI surface (returning the
+     * NTSTATUS the caller expects) before touching the anchor -- the same
+     * bounds KeSetSystemTimeEx enforces internally as a last-resort guard, but
+     * the void setter cannot report rejection, so a Zw/kernel caller would
+     * otherwise see STATUS_SUCCESS with the wall clock unchanged. */
+    if (nt == FILETIME_NOW_PLACEHOLDER || (uint64_t)nt > FILETIME_MAX_PLAUSIBLE)
         return STATUS_INVALID_PARAMETER;
 
     /* PreviousTime (optional): probe the buffer BEFORE mutating, capture the

@@ -14,9 +14,11 @@
 #include "kernel/time/mono_clock.h"
 #include "kernel/time/wall_clock.h"
 #include "kernel/time/timezone.h"
+#include "kernel/time/ntp_adj.h"
 #include "kernel/nt/filetime.h"
 #include "kernel/drivers/rtc.h"
 #include "kernel/uefi_runtime.h"
+#include "libc/string.h"
 
 /* mono_pmtmr_delta_ns: masked-delta -> ns at the fixed 3.579545 MHz PMTMR. */
 static void test_pmtmr_delta_basic(void)
@@ -277,6 +279,165 @@ static void test_coarse_time(void)
     }
 }
 
+/* NTP wall-time discipline math (pure): freq sign, slew cap + sign, no-op. */
+static void test_ntp_tick_adjust(void)
+{
+    int64_t consumed;
+
+    /* Frequency: positive freq_ppb = wall running fast -> negative adjust.
+     * 1 s elapsed * 1000 ppb / 1e9 = 1000 ns, negated. No slew. */
+    int64_t a = ntp_tick_adjust_ns(1000000000ULL, 1000, 0, &consumed);
+    TEST_ASSERT_EQ((uint64_t)a, (uint64_t)(int64_t)-1000,
+                   "freq +1000ppb over 1s yields -1000ns (slows a fast clock)");
+    TEST_ASSERT_EQ(consumed, 0u, "no slew consumed when remaining = 0");
+
+    /* Slew cap: 500 ppm over 10 ms = 5000 ns; huge remaining clamps to the cap. */
+    a = ntp_tick_adjust_ns(10000000ULL, 0, 1000000000LL, &consumed);
+    TEST_ASSERT_EQ(consumed, 5000u, "slew capped at 500ppm (5us per 10ms tick)");
+    TEST_ASSERT_EQ((uint64_t)a, 5000u, "adjust == slew chunk when freq = 0");
+
+    /* Negative slew under the cap is fully consumed (sign-aware). */
+    a = ntp_tick_adjust_ns(10000000ULL, 0, -100, &consumed);
+    TEST_ASSERT_EQ((uint64_t)consumed, (uint64_t)(int64_t)-100,
+                   "negative slew below cap fully consumed");
+    TEST_ASSERT_EQ((uint64_t)a, (uint64_t)(int64_t)-100, "adjust == -100 (freq 0)");
+
+    /* Zero monotonic elapsed yields zero adjustment regardless of freq/slew. */
+    a = ntp_tick_adjust_ns(0, 1000, 1000000000LL, &consumed);
+    TEST_ASSERT_EQ((uint64_t)a, 0u, "zero elapsed yields zero adjust");
+    TEST_ASSERT_EQ(consumed, 0u, "zero elapsed consumes no slew");
+
+    /* Huge elapsed (suspend/quiesce gap) is capped at 1 s so freq*elapsed cannot
+     * overflow: 1 s * 1000 ppb / 1e9 = 1000 ns, negated -- same as the 1 s case. */
+    a = ntp_tick_adjust_ns(1000000000000ULL, 1000, 0, &consumed);
+    TEST_ASSERT_EQ((uint64_t)a, (uint64_t)(int64_t)-1000,
+                   "elapsed capped at 1s (no overflow on a quiesce gap)");
+
+    /* At the freq clamp (NTP_FREQ_MAX_PPB = 500000 ppb), a 1 s tick nudges by
+     * -500000 ns = -0.5 ms -- far below the 1 s natural advance, so wall time
+     * still moves forward (never reverses). */
+    a = ntp_tick_adjust_ns(1000000000ULL, NTP_FREQ_MAX_PPB, 0, &consumed);
+    TEST_ASSERT_EQ((uint64_t)a, (uint64_t)(int64_t)-500000,
+                   "max freq over 1s nudges -0.5ms (< 1s advance: wall stays forward)");
+}
+
+/* NTP step-target validation (pure): valid, lower-reject, magnitude-reject,
+ * overflow-reject. Guards ke_ntp_adjtime's step path without a live clock set. */
+static void test_ntp_step_target_valid(void)
+{
+    int64_t t;
+    const int64_t now = 132000000000000000LL;   /* ~2019 in FILETIME 100ns units */
+
+    /* Small +0.5 s offset against a sourced clock -> valid; target = now + 5e6. */
+    TEST_ASSERT(ntp_step_target_valid(now, 500000000LL, &t),
+                "small +offset is a valid step");
+    TEST_ASSERT_EQ((uint64_t)t, (uint64_t)(now + 5000000LL),
+                   "step target = now + 0.5s (100ns units)");
+
+    /* Large negative offset that drives the target below the 1601 placeholder. */
+    TEST_ASSERT(!ntp_step_target_valid(1000000LL, -100000000000000000LL, &t),
+                "step below placeholder rejected");
+
+    /* Offset magnitude beyond NTP_STEP_MAX_NS (eons) -> rejected. */
+    TEST_ASSERT(!ntp_step_target_valid(now, 9000000000000000000LL, &t),
+                "implausible offset magnitude rejected");
+
+    /* now above the plausible FILETIME bound -> rejected before any signed math
+     * (an out-of-range stored time cannot bypass via a signed cast). */
+    TEST_ASSERT(!ntp_step_target_valid((uint64_t)NTP_FILETIME_MAX + 1ULL,
+                                       500000000LL, &t),
+                "now above NTP_FILETIME_MAX rejected");
+
+    /* now > INT64_MAX (unsigned FILETIME) -> rejected as out-of-range, no UB. */
+    TEST_ASSERT(!ntp_step_target_valid(0x8000000000000000ULL, 500000000LL, &t),
+                "now > INT64_MAX rejected (unsigned-checked)");
+}
+
+/* A rejected ke_ntp_adjtime request must mutate NO NTP state (freq included).
+ * An oversized step offset is rejected and has zero side effects, so the status
+ * is identical before and after -- safe to exercise the live API in a test. */
+static void test_ntp_adjtime_reject_preserves(void)
+{
+    struct ntp_status before, after;
+    ke_ntp_get_status(&before);
+
+    ntp_adj_t bad;
+    bad.offset_ns = 9000000000000000000LL;  /* > NTP_STEP_MAX_NS -> step rejected */
+    bad.freq_ppb  = 123456;                 /* must NOT be committed on reject */
+    ke_ntp_adjtime(&bad);
+
+    ke_ntp_get_status(&after);
+    TEST_ASSERT_EQ((uint64_t)after.freq_ppb, (uint64_t)before.freq_ppb,
+                   "rejected step leaves freq unchanged (no partial commit)");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)after.offset_ns,
+                   (uint64_t)(int64_t)before.offset_ns,
+                   "rejected step leaves slew unchanged");
+}
+
+/* KeSetSystemTime rejects an absurd-future absolute time, so a corrupt anchor
+ * can never become the sourced wall clock (the invariant the NTP discipline +
+ * interpolation rely on). A rejected set has no side effect, so calling it live
+ * here is safe: the wall clock keeps its plausible value. */
+static void test_set_system_time_rejects_absurd(void)
+{
+    KeSetSystemTime((FILETIME)(FILETIME_MAX_PLAUSIBLE + 1000000000ULL));
+    TEST_ASSERT((uint64_t)KeQuerySystemTime() <= FILETIME_MAX_PLAUSIBLE,
+                "KeSetSystemTime rejects absurd-future time (clock stays plausible)");
+}
+
+/* The honest discipline-state label must report "ntp" ONLY when the correction
+ * is fully applied (a pure step, or a zero no-op) and "ntp-pending" whenever any
+ * stored slew/freq awaits the deferred continuous discipline -- including a
+ * MIXED step+freq request, whose step moved the clock but whose freq is only
+ * stored. A reader must never mistake a stored-but-unapplied correction for a
+ * completed sync. Pure -- no live NTP state mutated. */
+static void test_ntp_source_for_correction(void)
+{
+    TEST_ASSERT(strcmp(ntp_source_for_correction(2000000000LL, 0), "ntp") == 0,
+                "pure step (>1s, no freq) reports applied discipline (ntp)");
+    TEST_ASSERT(strcmp(ntp_source_for_correction(-2000000000LL, 0), "ntp") == 0,
+                "pure negative step reports applied discipline (ntp)");
+    TEST_ASSERT(strcmp(ntp_source_for_correction(0, 0), "ntp") == 0,
+                "zero no-op against a sourced clock reports synced (ntp)");
+    TEST_ASSERT(strcmp(ntp_source_for_correction(500000000LL, 0), "ntp-pending") == 0,
+                "sub-second slew reports pending (not a completed sync)");
+    TEST_ASSERT(strcmp(ntp_source_for_correction(0, 1000), "ntp-pending") == 0,
+                "freq-only (offset 0, nonzero freq) reports pending");
+    TEST_ASSERT(strcmp(ntp_source_for_correction(2000000000LL, 1000), "ntp-pending") == 0,
+                "mixed step+freq reports pending (freq application deferred)");
+}
+
+/* A non-NTP wall-clock set (KeSetSystemTime) must invalidate NTP discipline
+ * state, so status can never report a stale "synced" against an anchor NTP no
+ * longer tracks. Re-anchoring to the CURRENT time is non-disruptive (the wall
+ * clock keeps ~its value) but must still clear source/slew/freq -- the
+ * deterministic, single-thread observable of the s_ntp_lock coordination that
+ * also closes the concurrent step-vs-setter race. */
+static void test_set_system_time_invalidates_ntp(void)
+{
+    if (!wall_clock_ready()) {
+        TEST_SKIP("wall clock not sourced -- cannot exercise NTP invalidation");
+        return;
+    }
+
+    /* Store a pending slew + freq (not applied; continuous discipline deferred). */
+    ntp_adj_t adj;
+    adj.offset_ns = 250000000LL;   /* 0.25 s -> stored slew (<1 s, not a step) */
+    adj.freq_ppb  = 1000;
+    ke_ntp_adjtime(&adj);
+
+    /* A manual set to ~the current time re-anchors and must wipe NTP state. */
+    KeSetSystemTime(KeQuerySystemTime());
+
+    struct ntp_status st;
+    ke_ntp_get_status(&st);
+    TEST_ASSERT(strcmp(st.source, "none") == 0,
+                "manual KeSetSystemTime invalidates NTP source -> none");
+    TEST_ASSERT_EQ((uint64_t)st.freq_ppb, 0, "manual set clears stored NTP freq");
+    TEST_ASSERT_EQ((uint64_t)(int64_t)st.offset_ns, 0,
+                   "manual set clears stored NTP slew");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -299,4 +460,16 @@ void test_register_time(void)
                             test_filetime_leap_second_policy, TEST_CAT_SCHED);
     test_suite_register_cat("time: coarse time fast path",
                             test_coarse_time, TEST_CAT_SCHED);
+    test_suite_register_cat("time: NTP tick adjustment math",
+                            test_ntp_tick_adjust, TEST_CAT_SCHED);
+    test_suite_register_cat("time: NTP step-target validation",
+                            test_ntp_step_target_valid, TEST_CAT_SCHED);
+    test_suite_register_cat("time: NTP adjtime reject preserves state",
+                            test_ntp_adjtime_reject_preserves, TEST_CAT_SCHED);
+    test_suite_register_cat("time: NTP source label step vs pending slew/freq",
+                            test_ntp_source_for_correction, TEST_CAT_SCHED);
+    test_suite_register_cat("time: manual set invalidates NTP discipline",
+                            test_set_system_time_invalidates_ntp, TEST_CAT_SCHED);
+    test_suite_register_cat("time: KeSetSystemTime rejects absurd anchor",
+                            test_set_system_time_rejects_absurd, TEST_CAT_SCHED);
 }

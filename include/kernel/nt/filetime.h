@@ -32,6 +32,13 @@ typedef uint64_t FILETIME;
 /* Sentinel: returned before wall clock is initialized */
 #define FILETIME_NOW_PLACEHOLDER        0ULL
 
+/* Upper plausibility bound for an absolute wall time (~year 4760). No legitimate
+ * system time exceeds this; KeSetSystemTime() rejects anything beyond it so a
+ * corrupt/absurd anchor can never become the sourced wall clock (which would
+ * otherwise force every downstream consumer -- NTP, interpolation -- to
+ * defensively re-validate). Well under INT64_MAX so signed delta math is safe. */
+#define FILETIME_MAX_PLAUSIBLE          1000000000000000000ULL
+
 /* ---- Leap second policy -------------------------------------------------- *
  * FILETIME_LEAP_SECOND_POLICY: FILETIME counts SI seconds, NOT UTC seconds.
  *
