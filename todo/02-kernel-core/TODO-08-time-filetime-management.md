@@ -305,8 +305,21 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 - [x] `NtSetSystemTime` (SSDT 0x00F1): calls `KeSetSystemTime()`; optional previous-time out-param
 - [x] `NtQueryPerformanceCounter` (SSDT 0x00F2): returns `mono_filetime_units()` with fixed 10 MHz frequency
 - [x] Registered via `wall_clock_register_ssdt()` in boot Phase 3
-- [ ] User-pointer safety: the three `wall_clock.c` handlers deref user pointers directly; gate on `ssdt_previous_mode()` + `copy_from_user`/`copy_to_user` (a user `prev_ptr` can fault the kernel or write a FILETIME to a kernel address).
+- [x] User-pointer safety: the three `wall_clock.c` handlers use `ProbeForRead/WriteIfUser` + `copy_from_user`/`copy_to_user` (`write_u64_out`); `NtSetSystemTime` also kernel-only (`ASSERT_KERNEL_CALLER`) pending `SeSystemtimePrivilege`.
 - [x] Commit: `"kernel: nt -- NtQuerySystemTime, NtSetSystemTime, NtQueryPerformanceCounter"`
+
+**Test checkpoint:** Unit: covered by the §1 FILETIME conversion + the mono helpers (the SSDT handlers wrap `KeQuerySystemTime`/`mono_filetime_units` + user-buffer guards, not unit-testable without a syscall harness). Runtime (WHPX / bare metal serial): `NtQuerySystemTime`/`NtQueryPerformanceCounter` return monotonic values to a user buffer; an invalid user pointer yields `STATUS_ACCESS_VIOLATION` (not a kernel fault); `NtSetSystemTime` from user mode returns `STATUS_PRIVILEGE_NOT_HELD`. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | FILETIME + time syscall suites, 0 failures (236 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: time SSDT handlers in `wall_clock.c` -- `NtQuerySystemTime` (0x00F0), `NtSetSystemTime` (0x00F1), `NtQueryPerformanceCounter` (0x00F2), registered in Phase 3 via `wall_clock_register_ssdt()`.
+> - Review fixes: out-pointers via `ProbeFor*IfUser` + `copy_from_user`/`copy_to_user` (`write_u64_out`) not raw deref; `NtSetSystemTime` rejects placeholder + gated kernel-only pending `SeSystemtimePrivilege`.
+> - Downstream: QPC stays raw `mono_filetime_units` (NTP/wall discipline never applies); fixed 10 MHz frequency is the cross-app stability edge.
+> - Canonical: `src/kernel/time/wall_clock.c`.
+> - Scope boundary: §9 owns the three SSDT handlers + their user-buffer safety; the `SeSystemtimePrivilege` check is TODO-15 §8; fault-safe usercopy is TODO-23 §13.
+> **Verified:** 2026-06-27 | ship `d9b7cc13` + review fixes | 6/6 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.52s)
+> **Accepted:** [H] `NtSetSystemTime` is kernel-only pending a real `SeSystemtimePrivilege` check (no SMP-safe per-token privilege check wired yet) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 425)
+> **Accepted:** [H] `copy_to_user` is not fault-safe (a probed-but-unmapped user page #PFs in the kernel) -- systemic across all SSDT handlers -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md §13 (item: "`include/kernel/probe.h` -- `try_copy_to_user`" at line 376)
 
 ---
 

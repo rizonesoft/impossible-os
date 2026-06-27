@@ -17,6 +17,8 @@
 #include "kernel/nt/ssdt.h"
 #include "kernel/nt/service_numbers.h"
 #include "kernel/nt/ntstatus.h"
+#include "kernel/nt/zw.h"
+#include "kernel/cpu_security.h"
 #include "kernel/klog.h"
 
 /* ---- State --------------------------------------------------------------- */
@@ -297,6 +299,19 @@ void ke_suspend_bias_update(uint64_t bias_100ns)
 
 /* ---- SSDT handlers ------------------------------------------------- */
 
+/* Probe (when the caller is user-mode) + copy a uint64_t out to a syscall
+ * pointer. Returns STATUS_SUCCESS or a fault status the handler propagates. */
+static NTSTATUS write_u64_out(uint64_t ptr, uint64_t value)
+{
+    NTSTATUS pst;
+    pst = ProbeForWriteIfUser((void *)ptr, sizeof(uint64_t), 8);
+    if (pst != STATUS_SUCCESS)
+        return pst;
+    if (copy_to_user((void *)ptr, &value, sizeof(uint64_t)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
 /* NtQuerySystemTime(SystemTime) -- SSDT 0x00F0 */
 static NTSTATUS nt_query_system_time(uint64_t out_ptr, uint64_t a2,
                                       uint64_t a3, uint64_t a4,
@@ -305,8 +320,7 @@ static NTSTATUS nt_query_system_time(uint64_t out_ptr, uint64_t a2,
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     if (!out_ptr)
         return STATUS_INVALID_PARAMETER;
-    *(FILETIME *)out_ptr = KeQuerySystemTime();
-    return STATUS_SUCCESS;
+    return write_u64_out(out_ptr, (uint64_t)KeQuerySystemTime());
 }
 
 /* NtSetSystemTime(NewTime, PreviousTime) -- SSDT 0x00F1 */
@@ -315,19 +329,38 @@ static NTSTATUS nt_set_system_time(uint64_t new_ptr, uint64_t prev_ptr,
                                     uint64_t a5, uint64_t a6)
 {
     FILETIME nt;
+    NTSTATUS pst;
     (void)a3; (void)a4; (void)a5; (void)a6;
+
+    /* Setting the wall clock requires SeSystemtimePrivilege. The SMP-safe
+     * per-token privilege check (SeSinglePrivilegeCheck) is not wired yet, so
+     * fail closed: reject UserMode callers entirely (a kernel/Zw caller is
+     * trusted). Replaced by a real SeSystemtimePrivilege check when the
+     * security reference monitor lands (see the Accepted XREF in the TODO). */
+    ASSERT_KERNEL_CALLER();
+
     if (!new_ptr)
         return STATUS_INVALID_PARAMETER;
 
+    /* Read the new time through the user-buffer guard -- a raw deref of a
+     * user pointer could fault the kernel or read kernel memory. */
+    pst = ProbeForReadIfUser((const void *)new_ptr, sizeof(FILETIME), 8);
+    if (pst != STATUS_SUCCESS)
+        return pst;
+    if (copy_from_user(&nt, (const void *)new_ptr, sizeof(FILETIME)) != 0)
+        return STATUS_ACCESS_VIOLATION;
+
     /* The placeholder (1601 epoch) is the "no time" sentinel, not a settable
      * wall time -- reject before touching the anchor. */
-    nt = *(FILETIME *)new_ptr;
     if (nt == FILETIME_NOW_PLACEHOLDER)
         return STATUS_INVALID_PARAMETER;
 
-    /* Optional: return previous time */
-    if (prev_ptr)
-        *(FILETIME *)prev_ptr = KeQuerySystemTime();
+    /* Optional: return previous time (probe before mutating). */
+    if (prev_ptr) {
+        pst = write_u64_out(prev_ptr, (uint64_t)KeQuerySystemTime());
+        if (pst != STATUS_SUCCESS)
+            return pst;
+    }
 
     KeSetSystemTime(nt);
     return STATUS_SUCCESS;
@@ -339,16 +372,19 @@ static NTSTATUS nt_query_performance_counter(uint64_t count_ptr,
                                               uint64_t a3, uint64_t a4,
                                               uint64_t a5, uint64_t a6)
 {
+    NTSTATUS pst;
     (void)a3; (void)a4; (void)a5; (void)a6;
     if (!count_ptr)
         return STATUS_INVALID_PARAMETER;
 
-    *(uint64_t *)count_ptr = mono_filetime_units();
+    pst = write_u64_out(count_ptr, mono_filetime_units());
+    if (pst != STATUS_SUCCESS)
+        return pst;
 
     /* Fixed 10 MHz frequency -- hardware-independent, apps don't need to
      * handle variable QPC frequency (competitive edge over Win11) */
     if (freq_ptr)
-        *(uint64_t *)freq_ptr = FILETIME_TICKS_PER_SECOND;
+        return write_u64_out(freq_ptr, FILETIME_TICKS_PER_SECOND);
 
     return STATUS_SUCCESS;
 }
