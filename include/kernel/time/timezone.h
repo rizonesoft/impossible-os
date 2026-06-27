@@ -11,7 +11,11 @@
 #include "kernel/types.h"
 #include "kernel/nt/filetime.h"
 
-/* Timezone information */
+/* Timezone information.
+ * INTERNAL convention: bias_minutes is a UTC OFFSET with WEST NEGATIVE
+ * (local = UTC + bias). This is the OPPOSITE of the Win32/registry `Bias`
+ * field (positive-west); a caller importing Win32/registry values MUST negate
+ * before timezone_set(). timezone_set() clamps to a plausible range. */
 struct tz_info {
     int32_t  bias_minutes;      /* UTC offset in minutes (negative = west) */
     int32_t  dst_bias_minutes;  /* additional DST offset (typically 60 or 0) */

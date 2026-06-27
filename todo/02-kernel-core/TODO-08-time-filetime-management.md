@@ -355,6 +355,18 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 - [x] `filetime_to_local(utc)` / `filetime_from_local(local)` -- apply total bias (bias + DST)
 - [x] Commit: `"kernel: time -- timezone bias and DST management"`
 
+**Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): `timezone_set(-300)` -> `total_bias -300`, `filetime_to_local` = UTC-5h, `from_local` inverts; DST active adds the DST bias; placeholder passes through; an out-of-range bias clamps to +/-24h. Runtime (serial): boot log shows `Timezone: UTC`; FAT32/NTFS stamps reflect the set bias. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time + sched suites incl. timezone, 0 failures (243 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: timezone bias/DST in `timezone.c` -- `timezone_init/set/get`, `timezone_total_bias`, `filetime_to_local`/`from_local`; default UTC.
+> - Review fixes: `s_tz` now ONE atomic u64 snapshot (coherent lock-free read for the CLOCK_LEVEL kusd consumer); `set` range-clamps; converters pass placeholder + clamp underflow; signed klog; documented west-negative convention.
+> - Downstream: consumed by FAT32/NTFS stamping (§13), KUSD TimeZoneBias (§12), and the desktop clock; registry import (positive-west) is deferred to registry integration.
+> - Canonical: `src/kernel/time/timezone.c`.
+> - Scope boundary: §11 owns the bias model + UTC<->local math; registry-backed tz load + Win32 positive-west import is registry-integration scope.
+> **Verified:** 2026-06-27 | ship `00f207c3` + review fixes | 4/4 items | build OK | 243 kernel + 16 user PASS | smoke PASS (TCG 2.55s)
+> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 2H+2M fixed, 0 open | scope: kernel-code-quality
+
 ---
 
 ## 12. KUSER_SHARED_DATA Time Field Updates

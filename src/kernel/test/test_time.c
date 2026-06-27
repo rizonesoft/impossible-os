@@ -13,6 +13,8 @@
 #include "kernel/test/test.h"
 #include "kernel/time/mono_clock.h"
 #include "kernel/time/wall_clock.h"
+#include "kernel/time/timezone.h"
+#include "kernel/nt/filetime.h"
 #include "kernel/drivers/rtc.h"
 
 /* mono_pmtmr_delta_ns: masked-delta -> ns at the fixed 3.579545 MHz PMTMR. */
@@ -138,6 +140,46 @@ static void test_ke_delay_interval_to_ms(void)
                    "relative -1 (100ns) -> 1ms");
 }
 
+/* timezone: bias sign + total_bias + filetime_to/from_local round-trip,
+ * placeholder pass-through, and set-range clamping. Restores UTC at the end so
+ * the global tz state does not leak into other suites. */
+static void test_timezone_bias(void)
+{
+    struct tz_info tz = { 0, 0, 0 };
+    FILETIME utc = 132000000000000000ULL;  /* ~2019, well above any bias */
+    const int64_t five_h = 5LL * 3600 * (int64_t)FILETIME_TICKS_PER_SECOND;
+
+    /* US Eastern: bias -300 min (UTC-5), no DST. */
+    tz.bias_minutes = -300; tz.dst_bias_minutes = 60; tz.dst_active = 0;
+    timezone_set(&tz);
+    TEST_ASSERT_EQ((uint64_t)timezone_total_bias(), (uint64_t)(int64_t)-300,
+                   "total_bias = -300 (DST inactive)");
+    TEST_ASSERT_EQ(filetime_to_local(utc), utc - five_h, "to_local UTC-5");
+    TEST_ASSERT_EQ(filetime_from_local(filetime_to_local(utc)), utc,
+                   "from_local inverts to_local");
+
+    /* DST active adds the DST bias. */
+    tz.dst_active = 1;
+    timezone_set(&tz);
+    TEST_ASSERT_EQ((uint64_t)timezone_total_bias(), (uint64_t)(int64_t)-240,
+                   "total_bias = -300+60 with DST active");
+
+    /* Placeholder passes through unconverted. */
+    TEST_ASSERT_EQ(filetime_to_local(FILETIME_NOW_PLACEHOLDER),
+                   (uint64_t)FILETIME_NOW_PLACEHOLDER, "to_local placeholder pass-through");
+
+    /* Out-of-range bias clamps (does not overflow the packed field). */
+    tz.bias_minutes = 99999; tz.dst_bias_minutes = 0; tz.dst_active = 0;
+    timezone_set(&tz);
+    TEST_ASSERT_EQ((uint64_t)timezone_total_bias(), (uint64_t)(int64_t)(24*60),
+                   "bias 99999 clamped to +24h");
+
+    /* Restore UTC. */
+    tz.bias_minutes = 0; tz.dst_bias_minutes = 0; tz.dst_active = 0;
+    timezone_set(&tz);
+    TEST_ASSERT_EQ((uint64_t)timezone_total_bias(), 0u, "restored to UTC");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -154,4 +196,6 @@ void test_register_time(void)
                             test_rtc_resolve_year, TEST_CAT_SCHED);
     test_suite_register_cat("time: ke_delay_interval_to_ms NT semantics",
                             test_ke_delay_interval_to_ms, TEST_CAT_SCHED);
+    test_suite_register_cat("time: timezone bias + local conversion",
+                            test_timezone_bias, TEST_CAT_SCHED);
 }
