@@ -41,11 +41,13 @@ struct ntp_status {
 
 /* Apply an NTP phase/frequency correction. THREAD (PASSIVE) context only.
  * offset > 1 s steps the wall clock (KeSetSystemTime) NOW and clears any pending
- * slew (status -> "ntp"); offset <= 1 s stores a gradual slew and freq_ppb whose
- * continuous per-tick application is deferred to the clocksource-quality watchdog
- * (status -> "ntp-pending" until then -- accepted but not yet applied to
- * KeQuerySystemTime, so a reader must not treat it as a completed sync). The
- * monotonic clock is never touched. */
+ * slew; offset <= 1 s stores a gradual slew. freq_ppb is always STORED, its
+ * continuous per-tick application deferred to the clocksource-quality watchdog.
+ * Reported status (see ntp_source_for_correction): "ntp" ONLY for a fully
+ * applied correction -- a pure step (or a zero no-op) with zero freq; ANY stored
+ * slew OR nonzero freq, INCLUDING a mixed step+freq, is "ntp-pending" (accepted
+ * but not yet applied to KeQuerySystemTime, so a reader must not treat it as a
+ * completed sync). The monotonic clock is never touched. */
 void ke_ntp_adjtime(const ntp_adj_t *adj);
 
 /* Fill *out with the current discipline state. NULL out is ignored. The read is

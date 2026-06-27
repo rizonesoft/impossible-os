@@ -47,7 +47,15 @@ static const char *s_ntp_source = "none";/* discipline source string */
  * cannot lose an accepted correction and a reader sees a coherent {freq, slew,
  * last_sync, source} set. Order: this lock is OUTER to the s_lock seqlock writer
  * (wall_clock_step_relative / KeSetSystemTimeEx take s_lock inside this lock);
- * no path takes s_lock then this lock. */
+ * no path takes s_lock then this lock.
+ * Hold cost: the WRITER paths (KeSetSystemTimeEx, ke_ntp_adjtime step) sample
+ * mono_ns() inside this hold, and mono_ns() is a single bounded hardware read
+ * that on a non-TSC clocksource routes to HPET MMIO or PMTMR port I/O (sub-us,
+ * not the ms-scale I/O the lock-hold rule forbids). Both writers are COLD paths
+ * (manual/Zw time set, NTP correction); the reader ke_ntp_get_status holds only
+ * for a 4-field copy with no I/O. The future per-tick continuous-discipline
+ * consumer must NOT call a mono_ns()-under-lock path at tick frequency -- audited
+ * by the clocksource-quality watchdog. */
 static spinlock_t  s_ntp_lock = SPINLOCK_INIT;
 
 /* ---- Init ---------------------------------------------------------------- */
