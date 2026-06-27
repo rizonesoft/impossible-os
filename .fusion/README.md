@@ -13,9 +13,12 @@ Nothing here calls the network unless BOTH:
 ## Setup (opt-in)
 
 ```bash
-printf '%s' 'sk-or-...your-openrouter-key...' > .fusion/secret   # gitignored
+cp .fusion/secret.example .fusion/secret   # then replace the placeholder with your key
 export FUSION_ENABLED=1
 ```
+
+`.fusion/secret.example` is the tracked one-line template; `.fusion/secret` (your
+real key) is gitignored.
 
 ## Spend safety
 
