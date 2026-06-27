@@ -950,6 +950,32 @@ else
     t_pass "lint Check 15 clean on clean tree"
 fi
 
+# --- WS1b agent-dispatch gate ---------------------------------------------
+# Tests the safety property: the gate is SILENT (empty stderr, rc 0) in
+# interactive sessions and on non-source targets. The positive WARN path needs
+# a live SECTIONS guard state and is covered by manual probe (not simulated here
+# to avoid clobbering the real sequencer-run.json).
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[agent_dispatch_gate]${NC}"
+_AD_GATE="$REPO_ROOT/.claude/hooks/agent_dispatch_required.py"
+_ad_silent() {  # <desc> <env-assignments...> -- payload in $PAYLOAD; PASS iff empty stderr + rc 0
+    local desc="$1"; shift
+    local err rc
+    err=$(printf '%s' "$PAYLOAD" | env "$@" python3 "$_AD_GATE" 2>&1 1>/dev/null)
+    rc=$?
+    if [ -z "$err" ] && [ "$rc" = "0" ]; then
+        t_pass "agent_dispatch_gate: $desc (silent)"
+    else
+        t_fail "agent_dispatch_gate: $desc (want silent, got rc=$rc err='$err')"
+    fi
+}
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"src/kernel/x.c"}}'
+_ad_silent "silent when OVERNIGHT_SEQUENCER_RUN unset" "PATH=$PATH"
+_ad_silent "silent with SKIP opt-out" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1" "SKIP_AGENT_DISPATCH_HOOK=1"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"docs/x.md"}}'
+_ad_silent "silent on markdown target" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
+PAYLOAD='{"tool_name":"Read","tool_input":{"file_path":"src/kernel/x.c"}}'
+_ad_silent "silent on non-edit tool" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
+
 # ============================================================================
 # receiving-code-review hard gate (TODO-08 in 00-infrastructure section 3)
 #

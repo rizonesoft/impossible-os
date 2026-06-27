@@ -23,6 +23,16 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_dispatch_required.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
             "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/wrap.sh\" \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/domain_quality_router.py\" src/ include/kernel/ user/",
             "timeout": 5
           },
@@ -234,6 +244,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/agent_dispatch_recorder.py\"",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [
