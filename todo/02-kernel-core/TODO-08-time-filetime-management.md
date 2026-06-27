@@ -415,6 +415,20 @@ Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed value
 - [x] `filetime_to_string(FILETIME ft, char *buf, uint32_t len)` -- ISO 8601 UTC format: `"2026-03-25T14:35:22.123Z"` with millisecond precision
 - [x] Commit: `"kernel: fs -- wire FILETIME timestamps into FAT32, NTFS, and klog"`
 
+**Test checkpoint:** Unit: `filetime_to_string` calendar math + bounds are exercised by the §1 FILETIME suite; the FS stamp helpers need a live volume (not unit-testable). Runtime (serial / mounted FS): a file created/modified shows a real local DOS date in FAT32 + a UTC `$STANDARD_INFORMATION` time in NTFS; `kernel.log` lines carry per-entry ISO 8601 timestamps. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | FILETIME suites, 0 failures (243 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: FILETIME timestamp wiring -- FAT32 `fat32_stamp_create/modify` (local DOS date + CrtTimeTenth), NTFS `$STANDARD_INFORMATION` UTC FILETIME, `klog_disk` ISO 8601 lines, `filetime_to_string` formatter.
+> - Review fixes: `klog_disk format_entry` reconstructs the EVENT FILETIME from `e->timestamp` (was flush-time, collapsing batched lines); FAT32 `CrtTimeTenth` now `(sec&1)*100 + centiseconds` (was `(ms/10)*2`, even-only + dropped odd second).
+> - Downstream: unblocks 05-storage/TODO-04 §5 FAT32 timestamps; FAT is local time, NTFS is UTC (correct split).
+> - Canonical: `src/kernel/nt/filetime.c` (`filetime_to_string`); FS sites in `fat32_dir.c` / `ntfs_data_write.c` / `klog_disk.c`.
+> - Scope boundary: §13 wires the timestamps; rate-stable klog capture is TODO-04 §9; NTFS compressed-write stamping is 05-storage/TODO-02 §2.
+> **Verified:** 2026-06-27 | ship `2bf8ba15` + review fixes | 5/5 items | build OK | 243 kernel + 16 user PASS | smoke PASS (TCG 2.53s)
+> **Accepted:** [H] NTFS compressed-write path skips the `$STANDARD_INFORMATION` timestamp update -> XREF: 05-storage-filesystems/TODO-02-ntfs-readwrite.md §2 (item: "Compressed-write `$STANDARD_INFORMATION` timestamps" at line 84)
+> **Accepted:** [M] klog disk-log event-time reconstruction assumes 100 Hz (drifts after NtSetTimerResolution); needs a rate-stable capture -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Rate-stable `klog_entry_t.timestamp`" at line 322)
+> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 1H+1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
+
 ---
 
 ## 14. Suspend/Hibernate Time Bias Tracking

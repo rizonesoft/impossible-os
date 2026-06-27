@@ -246,12 +246,20 @@ static int format_entry(const klog_entry_t *e, char *line, int max)
 {
     int pos = 0;
 
-    /* Timestamp: ISO 8601 if wall clock ready, else tick count */
+    /* Timestamp: ISO 8601 of the EVENT time if wall clock ready, else tick.
+     * e->timestamp is the PIT/timer tick (100 Hz, 10 ms) captured at emit time;
+     * reconstruct its wall time by subtracting the ticks elapsed since then
+     * from now -- using KeQuerySystemTime() directly would stamp every flushed
+     * line (incl. a replayed/batched burst) with the flush instant, collapsing
+     * the timeline. (uint32 modular delta tolerates one tick-counter wrap;
+     * assumes the ~100 Hz base rate.) */
     line[pos++] = '[';
     if (wall_clock_ready()) {
-        /* Reconstruct FILETIME from tick count at log time.
-         * e->timestamp is PIT ticks (100 Hz); approximate FILETIME. */
-        FILETIME ft = KeQuerySystemTime();
+        uint64_t now_ft = (uint64_t)KeQuerySystemTime();
+        uint32_t elapsed_ticks = (uint32_t)system_get_ticks() - e->timestamp;
+        uint64_t elapsed_ft = (uint64_t)elapsed_ticks * 100000ULL; /* 10ms in 100ns */
+        FILETIME ft = (now_ft > elapsed_ft) ? (FILETIME)(now_ft - elapsed_ft)
+                                            : (FILETIME)now_ft;
         int n = filetime_to_string(ft, line + pos, (uint32_t)(max - pos - 2));
         if (n > 0) pos += n;
     } else {

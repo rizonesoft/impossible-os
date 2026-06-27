@@ -81,6 +81,7 @@ Wire `ntfs_write_data()` and `ntfs_truncate()` from `ntfs_data_write.c` into `nt
 - [ ] Audit `ntfs_truncate()`: verify freed cluster range is journaled in `$LogFile` before `$Bitmap` bits are cleared; verify run-list shrink is journaled
 - [ ] Dirty-on-write: before the first write to any mounted volume, set `vol->volume_dirty = 1` and write `VOLUME_IS_DIRTY` flag to `$Volume` `FLAGS` field; cleared by clean unmount or journal replay
 - [ ] Clean unmount: `ntfs_vfs_unmount()` → call `cache_flush(dev)` (block cache) → `ntfs_journal_checkpoint(vol)` → clear `VOLUME_IS_DIRTY` in `$Volume`
+- [ ] Compressed-write `$STANDARD_INFORMATION` timestamps: `ntfs_write_compressed_data()` skips `update_std_info_times()`, leaving compressed writes with stale mod/MFT-change times; stamp before the compressed MFT commit. (TODO-08 §13 review.)
 - [ ] Commit: `"fs/ntfs: wire write/truncate into VFS, dirty-on-write flag, clean unmount"`
 
 ## 3. NTFS Volume Initialiser `[Opus]`

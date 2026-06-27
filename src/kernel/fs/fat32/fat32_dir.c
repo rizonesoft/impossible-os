@@ -664,10 +664,17 @@ void fat32_stamp_create(struct fat32_dir_entry *de)
     de->modify_time = t;
     de->modify_date = d;
     de->access_date = d;
-    /* CrtTimeTenth: 10ms resolution sub-second component (0-199) */
+    /* CrtTimeTenth (0-199): recovers the half-second that create_time drops
+     * (DOS stores seconds/2) plus 10 ms granularity --
+     * (seconds & 1) * 100 + centiseconds. The old (ms/10)*2 only produced even
+     * values and dropped the odd-second bit. tz bias is whole minutes, so the
+     * second parity + sub-second are the same for UTC and local. */
     {
-        uint64_t sub_sec = (now / FILETIME_TICKS_PER_MS) % 1000;
-        de->create_time_tenth = (uint8_t)((sub_sec / 10) * 2);
+        uint64_t total_ms = now / FILETIME_TICKS_PER_MS;
+        uint32_t odd_sec  = (uint32_t)((now / FILETIME_TICKS_PER_SECOND) & 1u);
+        uint32_t cs       = (uint32_t)((total_ms % 1000) / 10);  /* 0-99 */
+        uint32_t tenth    = odd_sec * 100u + cs;
+        de->create_time_tenth = (uint8_t)(tenth > 199u ? 199u : tenth);
     }
 }
 

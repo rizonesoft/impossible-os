@@ -319,6 +319,7 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 - [x] Add debug POST codes: `POST16_KLOG_CTX` (0xDE10), `POST16_KLOG_CTX_STRUCT` (0xDE11), `POST16_KLOG_CTX_SERIAL` (0xDE12), `POST16_KLOG_CTX_JSON` (0xDE13) -- range 0xDE1x confirmed free
 - [/] Bound-copy the `klog_entry_t` subsystem tag instead of the raw caller pointer (`klog.c` `e->subsystem`) -- superseded by TODO-32 §2 tag interning; no live bug (all v1 callers pass literals) (§2 review)
 - [/] Bound-copy the verbosity override-table tag instead of the raw `const char*` (`klog.c` `s_overrides[].tag`) -- superseded by TODO-32 §2 tag interning; v1 callers pass literals (§3 review)
+- [ ] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
 - [x] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":N` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
