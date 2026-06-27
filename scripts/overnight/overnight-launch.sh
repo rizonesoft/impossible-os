@@ -65,6 +65,12 @@ prune_reports || true
 
 REPORT="$REPORT_DIR/run-$(date +%Y%m%d-%H%M%S).log"
 
+# WS3: per-run metrics sidecar (read by stream-report.py). Shares the report
+# log's basename so a report and its metrics pair up.
+METRICS_DIR="$PROJECT_DIR/.claude/overnight/metrics"
+mkdir -p "$METRICS_DIR"
+export OVERNIGHT_METRICS_FILE="$METRICS_DIR/$(basename "${REPORT%.log}").jsonl"
+
 # systemd user units don't inherit the login shell's PATH; resolve claude
 # explicitly. CLAUDE_BIN overrides; then PATH, then common install homes.
 resolve_claude() {
