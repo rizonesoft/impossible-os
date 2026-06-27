@@ -73,7 +73,7 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |  11   | Timezone bias and DST management                                       | §6                  |  [x]   |
 | 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                    | §6, §7, TODO-11 §11 |  [/]   |
 | 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                           | §6, §11             |  [x]   |
-| 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-26 §3,§4   |  [ ]   |
+| 💎  |  14   | Suspend/hibernate time bias tracking                                   | §7, TODO-26 §3,§4   |  [/]   |
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [ ]   |
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [ ]   |
 | ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [ ]   |
@@ -434,12 +434,23 @@ Replace all zero/stub timestamps in FAT32 and NTFS with correctly computed value
 ## 14. Suspend/Hibernate Time Bias Tracking
 When the system enters S3 (suspend-to-RAM) or S4 (hibernate), the timer interrupt stops firing and `InterruptTime` freezes. On resume, the kernel must compute how long the system was asleep (from the RTC delta or UEFI time) and add that duration to `InterruptTimeBias` so that `KeQueryInterruptTime()` (which includes bias) continues to advance smoothly. `KeQueryUnbiasedInterruptTime()` deliberately excludes the bias, so it reflects actual CPU-awake time only.
 
-- [ ] `ke_suspend_bias_update(uint64_t sleep_duration_100ns)` -- called by the S3/S4 resume path (→ XREF TODO-26); atomically adds `sleep_duration_100ns` to `g_interrupt_time_bias`
-- [ ] On resume: read UEFI `GetTime()` or RTC; compute delta against pre-suspend wall time; pass to `ke_suspend_bias_update()`
-- [ ] Update `wall_clock_t.base_mono_ns` to account for the monotonic clock gap during suspend
-- [ ] Log the bias adjustment and total sleep duration on resume
-- [ ] RTC wake alarm (gap-audit): program the RTC/ACPI wake timer to resume at a future time (Win11 `RtlSetSystemWakeTime`, Linux `wakealarm`). Owned by power management. -> XREF: 02-kernel-core/TODO-26-power-management.md §3
-- [ ] Commit: `"kernel: time -- suspend/hibernate time bias tracking"`
+- [x] `ke_suspend_bias_update(uint64_t bias_100ns)` -- shipped in `wall_clock.c` (atomic `__atomic_fetch_add` to `s_interrupt_time_bias`); the S3/S4 resume path is its caller (→ XREF TODO-26)
+- [/] On resume: read UEFI `GetTime()` or RTC; compute delta against pre-suspend wall time; pass to `ke_suspend_bias_update()` -- DEFERRED: needs the S3/S4 resume path (greenfield in power management)
+- [/] Update `wall_clock` base_mono to account for the monotonic clock gap during suspend -- DEFERRED: same resume-path dependency
+- [/] Log the bias adjustment and total sleep duration on resume -- DEFERRED: same resume-path dependency
+- [/] RTC wake alarm (gap-audit): program the RTC/ACPI wake timer to resume at a future time (Win11 `RtlSetSystemWakeTime`, Linux `wakealarm`). Owned by power management. -> XREF: 02-kernel-core/TODO-26-power-management.md §3
+- [x] Commit: `"kernel: time -- suspend/hibernate time bias tracking (primitive; resume path deferred)"`
+
+> **Test runner:** N/A (resume-path blocked) | the shipped `ke_suspend_bias_update` primitive is exercised by the §7 interrupt-time suite.
+> **Notes:**
+> - Shipped: `ke_suspend_bias_update(uint64_t)` in `wall_clock.c` -- atomic add into the suspend bias `s_interrupt_time_bias` that `KeQueryInterruptTime` includes (already reviewed under §7).
+> - Blocked: the actual resume bias tracking (read RTC/UEFI delta, advance the bias + wall-clock base, log, RTC wake alarm) needs the S3/S4 resume path, which is greenfield in power management.
+> - Downstream: once the resume path lands, it calls `ke_suspend_bias_update` with the measured sleep duration so biased interrupt time advances across suspend.
+> - Canonical: `src/kernel/time/wall_clock.c` (primitive); resume owner is power management.
+> - Scope boundary: §14 owns the bias-application primitive; the S3/S4 resume hook + RTC wake alarm are TODO-26 (power management).
+> **Verified:** 2026-06-27 | primitive shipped (§7) | 1/5 items | build OK | resume path deferred
+> **Deferred:** [H] resume bias tracking (RTC/UEFI sleep-delta -> `ke_suspend_bias_update`, wall-clock base advance, logging, RTC wake alarm) -- needs the S3/S4 resume path -> XREF: 02-kernel-core/TODO-26-power-management.md §3 (item: "`pm_s3_wakeup_entry`" at line 170)
+> **Quality reviewed:** 2026-06-27 | scope: N/A (infra-blocked defer; the shipped `ke_suspend_bias_update` primitive was quality-reviewed under §7)
 
 ---
 
