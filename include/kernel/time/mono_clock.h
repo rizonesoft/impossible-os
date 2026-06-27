@@ -61,6 +61,12 @@ uint64_t mono_pmtmr_delta_ns(uint32_t last_raw, uint32_t now_raw, uint32_t mask)
  * for other sources. ISR-safe (seqlock writer, interrupts already off). */
 void mono_clock_pmtmr_advance(void);
 
+/* Unconditionally bank the PMTMR epoch (no skip counter), for the tick-quiesce
+ * boundary where the timer ISR that drives mono_clock_pmtmr_advance() is masked.
+ * Call right before masking the timer and right after unmasking so a sub-wrap
+ * quiesce loses no wraps. No-op unless PMTMR is the active source. */
+void mono_clock_pmtmr_sync(void);
+
 /* Return the selected clock source name ("TSC", "HPET", "PMTMR", "LAPIC",
  * "none"). */
 const char *mono_clock_source_name(void);
@@ -71,3 +77,37 @@ uint32_t mono_clock_source_id(void);
 /* Fast inline: read TSC and convert to nanoseconds using pre-computed scale.
  * Applies per-CPU TSC offset for SMP coherence. Only valid when source is TSC. */
 uint64_t rdtsc_ns(void);
+
+/* ---- Clocksource quality watchdog (drift demotion) ----------------------- *
+ * Continuously cross-checks the active monotonic source against an independent
+ * reference (HPET or PMTMR) and demotes a drifting source (an unstable TSC) to
+ * a trustworthy fallback, matching Linux clocksource.c (watchdog, "Marking TSC
+ * unstable") and the Win11 HAL silent demotion. Source + scale are published as
+ * an immutable per-source descriptor selected by an atomic active-source index,
+ * so the lock-free mono_ns() reader never sees a torn source/scale across a
+ * runtime demotion; a mono-wide floor (engaged only after a demotion) plus the
+ * re-anchor-to-current-value on switch guarantee mono_ns() never steps backward.
+ * ------------------------------------------------------------------------- */
+
+/* Pure (no hardware): the absolute drift in parts-per-million between a
+ * reference-clock elapsed and the active-source elapsed over the SAME window.
+ * ref_ns is the trusted reference delta, src_ns the active-source delta. Returns
+ * 0 when ref_ns == 0 (no window). Saturates at MONO_DRIFT_PPM_MAX. Unit-tested. */
+uint32_t mono_drift_ppm(uint64_t ref_ns, uint64_t src_ns);
+
+/* Drift past this ppm marks the active source unstable (Linux uses ~500 ppm /
+ * 0.05 % over its watchdog window; we use the same order). */
+#define MONO_DRIFT_UNSTABLE_PPM  500u
+#define MONO_DRIFT_PPM_MAX       1000000u   /* saturate (100 %) -- avoids overflow */
+
+/* Demote the active monotonic source to to_src at runtime (PASSIVE/thread
+ * context only -- the watchdog kworker job). Re-anchors to_src to the current
+ * mono value, engages the mono-wide floor, then atomically publishes the new
+ * active descriptor so mono_ns() never tears or steps backward. No-op if to_src
+ * is not an initialized source or is already active. drift_ppm is logged. */
+void mono_clock_demote(uint32_t to_src, uint32_t drift_ppm);
+
+/* Register the drift watchdog on the kworker pool (Phase 3, after the scheduler
+ * + kworker_init). Idempotent; no-op when no independent reference source exists
+ * (e.g. PMTMR is already the active source and no HPET is present). */
+void mono_clock_watchdog_init(void);

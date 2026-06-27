@@ -15,13 +15,29 @@
 #include "kernel/smp.h"
 #include "kernel/klog.h"
 #include "kernel/sched/seqlock.h"
+#include "kernel/sched/spinlock.h"
+#include "kernel/sched/kworker.h"
 
 /* ---- State --------------------------------------------------------------- */
 
-static uint32_t s_source = MONO_SRC_NONE;
-static uint64_t s_freq_hz;            /* source frequency in Hz */
-static uint64_t s_ns_per_tick_num;    /* numerator for ticks -> ns */
-static uint64_t s_ns_per_tick_den;    /* denominator */
+/* Immutable per-source scale descriptor. mono_clock_init() fills one entry for
+ * EACH available source (so the watchdog has a ready demotion target) and never
+ * mutates it after; the active source is selected by the atomic index
+ * s_active_src. The lock-free mono_ns() reader loads s_active_src ONCE and reads
+ * a coherent {source, freq, num, den} from the immutable entry -- a runtime
+ * demotion just republishes the index, so source and scale can never tear
+ * against each other. An immutable descriptor + atomic index is used rather than
+ * a generation seqlock, which would spin the ISR-callable hot path and risk a
+ * torn pointer read. Indexed by MONO_SRC_* (0..PMTMR). */
+struct mono_desc {
+    uint32_t source;          /* MONO_SRC_* (also the array index) */
+    uint64_t freq_hz;         /* source frequency in Hz */
+    uint64_t num;             /* numerator for ticks -> ns */
+    uint64_t den;             /* denominator */
+};
+static struct mono_desc s_desc[MONO_SRC_PMTMR + 1];
+static uint8_t  s_src_avail[MONO_SRC_PMTMR + 1];   /* 1 if entry initialized */
+static uint32_t s_active_src = MONO_SRC_NONE;      /* atomic active index */
 
 /* PMTMR 64-bit epoch (wrap extension); see mono_clock_pmtmr_advance() below.
  * Snapshot {epoch_ns, last_raw} is seqlock-protected (writer = timer-ISR
@@ -31,20 +47,45 @@ static seqlock_t s_pmtmr_lock = SEQLOCK_INIT;
 static uint64_t  s_pmtmr_epoch_ns;   /* banked ns up to s_pmtmr_last_raw */
 static uint32_t  s_pmtmr_last_raw;   /* last banked raw PMTMR sample (masked) */
 static uint32_t  s_pmtmr_mask;       /* 0xFFFFFFFF (32-bit) or 24-bit mask */
-/* Global monotonic floor for the precise PMTMR reader: mono_ns() never returns
- * below any prior return. Guards both a chipset read glitch (a low outlier
- * masks as a near-full-wrap forward jump, then the next read steps back) and a
- * missed wrap across a long tick quiesce. Forward runaway is prevented by the
- * glitch-filtered (median-of-3) read feeding mono_ns. Cacheline-isolated: it is
- * hit (atomic load) by every coarse read while the ISR writes the epoch above,
- * so they must not false-share. */
-static uint64_t  s_pmtmr_floor __attribute__((aligned(64)));
+/* External serializer for ALL PMTMR epoch writers. The original advance had a
+ * single writer (the BSP timer ISR); the watchdog added more (quiesce sync,
+ * demotion re-anchor), and a seqlock does NOT serialize writers, so two
+ * concurrent bankers would corrupt the seqlock AND let one compute a masked
+ * delta against another's freshly-updated last_raw (a near-full-wrap forward
+ * jump). This lock + reading the raw counter INSIDE it makes each bank atomic.
+ * Taken irqsave so the BSP ISR advance and a PASSIVE sync/reanchor on another
+ * CPU serialize. Order: OUTER to the s_pmtmr_lock seqlock writer. */
+static spinlock_t s_pmtmr_wlock = SPINLOCK_INIT;
 
-static uint64_t pmtmr_mono_floor(uint64_t cand)
+/* Mono-wide monotonic floor: mono_ns() never returns below any prior return,
+ * across ALL sources and across a runtime demotion. Generalizes the original
+ * PMTMR-only floor from the PMTMR clocksource work. ALWAYS applied (every
+ * mono_ns return clamps to it) -- a gated "only after a demotion" optimization
+ * was rejected because a reader that loads the gate as 0 then stalls across a
+ * demotion would return an unfloored old value, observable as a backward step
+ * relative to a newer reader on the new source. Correctness over the steady-state
+ * CAS cost; the hot scheduler/uptime path uses the cheaper mono_ns_coarse(), and
+ * mono_floor only writes when the candidate advances. Cacheline-isolated: hit by
+ * every read while the ISR writes the PMTMR epoch above, so no false-sharing. */
+static uint64_t  s_mono_floor __attribute__((aligned(64)));
+/* HPET re-anchor: added to hpet_ns() so a demotion TO HPET continues from the
+ * old source's value instead of HPET's native absolute counter. 0 until/unless
+ * HPET becomes a demotion target (PMTMR/LAPIC re-anchor via their own epochs;
+ * TSC is never a demotion target). Read coherently inside the HPET case, which a
+ * reader only enters after acquire-loading s_active_src==HPET (published last in
+ * mono_clock_demote, after this store). */
+static int64_t   s_hpet_offset_ns;
+/* Serializes concurrent demotions AND makes the anchor-sample -> re-anchor ->
+ * publish transition nonpreemptible (taken irqsave): otherwise a PASSIVE demoter
+ * preempted between re-anchor and publish would let the target advance, so the
+ * first post-publish reader leaps forward by the delay. */
+static spinlock_t s_demote_lock = SPINLOCK_INIT;
+
+static uint64_t mono_floor(uint64_t cand)
 {
-    uint64_t cur = __atomic_load_n(&s_pmtmr_floor, __ATOMIC_ACQUIRE);
+    uint64_t cur = __atomic_load_n(&s_mono_floor, __ATOMIC_ACQUIRE);
     while (cand > cur) {
-        if (__atomic_compare_exchange_n(&s_pmtmr_floor, &cur, cand, 0,
+        if (__atomic_compare_exchange_n(&s_mono_floor, &cur, cand, 0,
                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
             return cand;
         /* CAS failure reloaded cur; loop re-checks cand > cur */
@@ -79,8 +120,45 @@ static inline uint64_t rdtsc_ordered(void)
 
 /* ---- Init ---------------------------------------------------------------- */
 
+/* Record an immutable scale descriptor for one available source. */
+static void mono_desc_set(uint32_t src, uint64_t freq_hz,
+                          uint64_t num, uint64_t den)
+{
+    s_desc[src].source  = src;
+    s_desc[src].freq_hz = freq_hz;
+    s_desc[src].num     = num;
+    s_desc[src].den     = den;
+    s_src_avail[src]    = 1;
+}
+
+/* Conservative boot qualification: reject a candidate whose frequency is
+ * implausible (zero / absurdly out of range) so a mis-measured TSC or HPET can
+ * never become the active clocksource. This is the boot-time sanity gate that
+ * replaces a platform-string guess; the live drift watchdog (Phase 3) is the
+ * ongoing qualification. Returns 1 if src is available AND plausible. */
+static int mono_source_qualify(uint32_t src)
+{
+    uint64_t f;
+    if (src > MONO_SRC_PMTMR || !s_src_avail[src])
+        return 0;
+    f = s_desc[src].freq_hz;
+    switch (src) {
+    case MONO_SRC_TSC:   return f >= 100000000ULL && f <= 100000000000ULL;
+    case MONO_SRC_HPET:  return f >=   1000000ULL && f <=   1000000000ULL;
+    case MONO_SRC_PMTMR: return f == PMTMR_FREQ_HZ;
+    case MONO_SRC_LAPIC: return f > 0;
+    default:             return 0;
+    }
+}
+
 void mono_clock_init(void)
 {
+    static const uint32_t k_priority[] = {
+        MONO_SRC_TSC, MONO_SRC_HPET, MONO_SRC_PMTMR, MONO_SRC_LAPIC
+    };
+    uint32_t chosen = MONO_SRC_NONE;
+    uint32_t i;
+
     /* Seed the tick-fallback epoch with the live tick frequency: the
      * fallback reader uses ONLY snapshot state (an epoch paired with a
      * live frequency sample would race a resolution change) */
@@ -89,89 +167,91 @@ void mono_clock_init(void)
         mono_clock_tick_rebase(system_get_freq());
     }
 
-    /* Try 1: Invariant TSC with known frequency */
+    /* Probe EVERY source and record its immutable descriptor, so the watchdog
+     * has a ready-qualified demotion target -- the active source is selected by
+     * priority + qualification afterward, not by first-hit-and-return. */
+
+    /* Invariant TSC with known frequency. num/den = 1e9/freq (no hot-path div). */
     if (cpu_has(CPU_FEATURE_TSC_INV)) {
         uint64_t freq = boot_timing_tsc_freq();
-        if (freq > 0) {
-            s_source = MONO_SRC_TSC;
-            s_freq_hz = freq;
-            /* ns = ticks * 1000000000 / freq
-             * Store as num/den to avoid 64-bit division in hot path.
-             * For typical freq ~4 GHz: num=1000000000, den=freq */
-            s_ns_per_tick_num = 1000000000ULL;
-            s_ns_per_tick_den = freq;
-            klog(LOG_INFO, "time",
-                 "Monotonic clock: TSC (%u MHz, invariant)",
-                 (uint64_t)(freq / 1000000));
-            return;
-        }
+        if (freq > 0)
+            mono_desc_set(MONO_SRC_TSC, freq, 1000000000ULL, freq);
     }
 
-    /* Try 2: HPET main counter */
+    /* HPET main counter. */
     if (hpet_available()) {
         uint64_t freq = hpet_frequency_hz();
-        if (freq > 0) {
-            s_source = MONO_SRC_HPET;
-            s_freq_hz = freq;
-            s_ns_per_tick_num = 1000000000ULL;
-            s_ns_per_tick_den = freq;
-            klog(LOG_INFO, "time",
-                 "Monotonic clock: HPET (%u MHz)",
-                 (uint64_t)(freq / 1000000));
-            return;
-        }
+        if (freq > 0)
+            mono_desc_set(MONO_SRC_HPET, freq, 1000000000ULL, freq);
     }
 
-    /* Try 3: ACPI PM timer (PMTMR) -- a standalone always-running platform
-     * counter (3.579545 MHz). Preferred over the LAPIC fallback below, which
-     * is a per-CPU interrupt counter, not a real clocksource. */
+    /* ACPI PM timer (PMTMR) -- a standalone always-running 3.579545 MHz counter.
+     * Seed the wrap-extension epoch from the time already elapsed on the tick
+     * fallback so uptime_ns()/mono_ns() are CONTINUOUS across the source switch
+     * (a zero-based epoch would make uptime jump backward). Publication order:
+     * fully initialize the epoch snapshot under the seqlock + a release fence
+     * BEFORE s_active_src is published below, so a concurrent ISR/AP reader
+     * never observes a BSS-zero epoch. */
     if (acpi_get_pmtimer_port() != 0) {
-        /* Publication order: fully initialize the epoch snapshot BEFORE making
-         * MONO_SRC_PMTMR visible. Interrupts are already enabled (Phase 1) when
-         * this runs in Phase 2, so a concurrent ISR/AP reader entering the
-         * PMTMR case must not observe a BSS-zero epoch. Seed under the seqlock,
-         * then a release fence, then publish s_source last. */
-        /* Seed the epoch from the time already elapsed on the tick fallback so
-         * uptime_ns()/mono_ns() are CONTINUOUS across the source switch (a
-         * zero-based epoch would make uptime jump backward and elapsed-time
-         * subtraction underflow for callers that sampled before this runs). */
         extern uint64_t uptime_ns(void);
         uint64_t base_ns = uptime_ns();
         uint32_t mask = acpi_pmtimer_is_32bit() ? 0xFFFFFFFFu : PMTMR_24BIT_MASK;
-        s_freq_hz        = PMTMR_FREQ_HZ;
-        s_ns_per_tick_num = 1000000000ULL;
-        s_ns_per_tick_den = PMTMR_FREQ_HZ;
         seqlock_write_lock(&s_pmtmr_lock);
         s_pmtmr_mask     = mask;
         s_pmtmr_epoch_ns = base_ns;
         s_pmtmr_last_raw = acpi_pmtimer_read_value() & mask;
         seqlock_write_unlock(&s_pmtmr_lock);
-        __atomic_store_n(&s_pmtmr_floor, base_ns, __ATOMIC_RELAXED);
-        __atomic_thread_fence(__ATOMIC_RELEASE);
-        __atomic_store_n(&s_source, MONO_SRC_PMTMR, __ATOMIC_RELEASE);
-        klog(LOG_INFO, "time",
-             "Monotonic clock: PMTMR (3.579545 MHz, %s)",
-             mask == 0xFFFFFFFFu ? "32-bit" : "24-bit");
-        return;
+        __atomic_store_n(&s_mono_floor, base_ns, __ATOMIC_RELAXED);
+        mono_desc_set(MONO_SRC_PMTMR, PMTMR_FREQ_HZ, 1000000000ULL, PMTMR_FREQ_HZ);
     }
 
-    /* Try 4: LAPIC timer ticks */
+    /* LAPIC timer ticks (per-CPU interrupt counter, last resort). */
     {
         uint32_t ticks_per_ms = lapic_timer_ticks_per_ms();
-        if (ticks_per_ms > 0) {
-            s_source = MONO_SRC_LAPIC;
-            s_freq_hz = (uint64_t)ticks_per_ms * 1000;
-            s_ns_per_tick_num = 1000000ULL;  /* ns per ms */
-            s_ns_per_tick_den = (uint64_t)ticks_per_ms;
-            klog(LOG_INFO, "time",
-                 "Monotonic clock: LAPIC (%u ticks/ms)",
-                 (uint64_t)ticks_per_ms);
-            return;
+        if (ticks_per_ms > 0)
+            mono_desc_set(MONO_SRC_LAPIC, (uint64_t)ticks_per_ms * 1000,
+                          1000000ULL, (uint64_t)ticks_per_ms);
+    }
+
+    /* Select the highest-priority source that qualifies. */
+    for (i = 0; i < sizeof(k_priority) / sizeof(k_priority[0]); i++) {
+        if (mono_source_qualify(k_priority[i])) {
+            chosen = k_priority[i];
+            break;
         }
     }
 
-    /* No clock source available */
-    klog(LOG_WARN, "time", "Monotonic clock: no source available");
+    if (chosen == MONO_SRC_NONE) {
+        klog(LOG_WARN, "time", "Monotonic clock: no source available");
+        return;
+    }
+
+    /* A release fence pairs the fully-seeded descriptors + PMTMR epoch with the
+     * acquire-load of s_active_src in mono_ns(): a reader that sees the chosen
+     * source also sees its descriptor and epoch. */
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_store_n(&s_active_src, chosen, __ATOMIC_RELEASE);
+
+    switch (chosen) {
+    case MONO_SRC_TSC:
+        klog(LOG_INFO, "time", "Monotonic clock: TSC (%u MHz, invariant)",
+             (uint64_t)(s_desc[MONO_SRC_TSC].freq_hz / 1000000));
+        break;
+    case MONO_SRC_HPET:
+        klog(LOG_INFO, "time", "Monotonic clock: HPET (%u MHz)",
+             (uint64_t)(s_desc[MONO_SRC_HPET].freq_hz / 1000000));
+        break;
+    case MONO_SRC_PMTMR:
+        klog(LOG_INFO, "time", "Monotonic clock: PMTMR (3.579545 MHz, %s)",
+             s_pmtmr_mask == 0xFFFFFFFFu ? "32-bit" : "24-bit");
+        break;
+    case MONO_SRC_LAPIC:
+        klog(LOG_INFO, "time", "Monotonic clock: LAPIC (%u ticks/ms)",
+             (uint64_t)s_desc[MONO_SRC_LAPIC].den);
+        break;
+    default:
+        break;
+    }
 }
 
 
@@ -195,14 +275,14 @@ void mono_clock_crosscheck_tsc(void)
 {
     uint64_t cpuid_freq, boot_freq;
 
-    if (s_source != MONO_SRC_TSC)
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) != MONO_SRC_TSC)
         return;
 
     cpuid_freq = cpuid15_tsc_freq();
     if (cpuid_freq == 0)
         return;
 
-    boot_freq = s_freq_hz;
+    boot_freq = s_desc[MONO_SRC_TSC].freq_hz;
 
     /* Check within 1% */
     uint64_t delta = (cpuid_freq > boot_freq)
@@ -229,7 +309,11 @@ uint64_t rdtsc_ns(void)
     uint64_t ticks;
     uint64_t whole, rem;
 
-    if (s_source != MONO_SRC_TSC || s_ns_per_tick_den == 0)
+    /* Only valid while TSC is the active source. A demotion moves s_active_src
+     * away from TSC (never to it), so when active==TSC no offset/floor applies
+     * (the demotion machinery is dormant); use TSC's immutable scale directly. */
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) != MONO_SRC_TSC ||
+        s_desc[MONO_SRC_TSC].den == 0)
         return 0;
 
     ticks = rdtsc_ordered();
@@ -239,10 +323,10 @@ uint64_t rdtsc_ns(void)
             ticks = (uint64_t)((int64_t)ticks + cpu->tsc_offset);
     }
 
-    whole = ticks / s_ns_per_tick_den;
-    rem   = ticks % s_ns_per_tick_den;
-    return whole * s_ns_per_tick_num
-         + (rem * s_ns_per_tick_num) / s_ns_per_tick_den;
+    whole = ticks / s_desc[MONO_SRC_TSC].den;
+    rem   = ticks % s_desc[MONO_SRC_TSC].den;
+    return whole * s_desc[MONO_SRC_TSC].num
+         + (rem * s_desc[MONO_SRC_TSC].num) / s_desc[MONO_SRC_TSC].den;
 }
 
 /* ---- Reads --------------------------------------------------------------- */
@@ -319,62 +403,91 @@ uint64_t mono_pmtmr_delta_ns(uint32_t last_raw, uint32_t now_raw, uint32_t mask)
  * from the BSP timer ISR, so the plain counter is single-threaded. */
 #define PMTMR_ADVANCE_TICKS 8
 
-void mono_clock_pmtmr_advance(void)
+/* Bank the masked delta since the last advance into the 64-bit epoch. Caller has
+ * confirmed PMTMR is active. The raw counter is read INSIDE the writer lock so
+ * `now` and `s_pmtmr_last_raw` are sampled/updated as one serialized unit -- a
+ * read before the lock could pair a stale `now` with another banker's newer
+ * last_raw and fabricate a near-full-wrap forward jump. s_pmtmr_wlock serializes
+ * the (now multiple) writers; taken irqsave so the BSP ISR advance and a PASSIVE
+ * sync/reanchor on another CPU exclude each other. */
+static void mono_pmtmr_bank(void)
 {
-    static uint32_t s_skip;
+    uint64_t irqf;
     uint32_t now;
-
-    if (__atomic_load_n(&s_source, __ATOMIC_ACQUIRE) != MONO_SRC_PMTMR)
-        return;
-    if (++s_skip < PMTMR_ADVANCE_TICKS)
-        return;
-    s_skip = 0;
+    spin_lock_irqsave(&s_pmtmr_wlock, &irqf);
     now = acpi_pmtimer_read_value() & s_pmtmr_mask;
     seqlock_write_lock(&s_pmtmr_lock);
     s_pmtmr_epoch_ns += mono_pmtmr_delta_ns(s_pmtmr_last_raw, now, s_pmtmr_mask);
     s_pmtmr_last_raw  = now;
     seqlock_write_unlock(&s_pmtmr_lock);
+    spin_unlock_irqrestore(&s_pmtmr_wlock, irqf);
 }
 
-uint64_t mono_ns(void)
+void mono_clock_pmtmr_advance(void)
 {
-    uint64_t ticks;
+    static uint32_t s_skip;
 
-    /* Acquire-load pairs with the RELEASE publish in mono_clock_init, so a
-     * reader that sees MONO_SRC_PMTMR also sees the fully-seeded epoch. */
-    switch (__atomic_load_n(&s_source, __ATOMIC_ACQUIRE)) {
-    case MONO_SRC_TSC:
-        ticks = rdtsc_ordered();
-        /* Apply per-CPU TSC offset for SMP coherence */
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) != MONO_SRC_PMTMR)
+        return;
+    if (++s_skip < PMTMR_ADVANCE_TICKS)
+        return;
+    s_skip = 0;
+    mono_pmtmr_bank();
+}
+
+void mono_clock_pmtmr_sync(void)
+{
+    /* Unconditional bank (no skip counter) for the tick-quiesce boundary: the
+     * timer ISR (which drives mono_clock_pmtmr_advance) is masked across a
+     * quiesce, so bank right before masking and right after unmasking. A
+     * sub-wrap (<~4.7 s 24-bit) quiesce window is then captured in one masked
+     * delta and loses no wraps; the mono-wide floor blocks any backward step for
+     * a pathological longer quiesce. No-op unless PMTMR is the active source. */
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) != MONO_SRC_PMTMR)
+        return;
+    mono_pmtmr_bank();
+}
+
+/* Raw per-source monotonic ns: the source's own counter converted to ns, with
+ * NO demotion offset and NO mono-wide floor applied (mono_ns() adds those). The
+ * caller passes the source id it acquire-loaded so a concurrent demotion cannot
+ * change the source mid-read. Also used by mono_clock_demote() to read the new
+ * target's raw value before computing its continuation offset. */
+static uint64_t mono_raw_ns(uint32_t s)
+{
+    switch (s) {
+    case MONO_SRC_TSC: {
+        uint64_t ticks = rdtsc_ordered();
+        struct per_cpu_data *cpu = smp_this_cpu();
+        if (cpu)
+            ticks = (uint64_t)((int64_t)ticks + cpu->tsc_offset);
+        /* Split multiply to avoid u64 overflow: ticks*1e9 overflows at ~18 s. */
         {
-            struct per_cpu_data *cpu = smp_this_cpu();
-            if (cpu)
-                ticks = (uint64_t)((int64_t)ticks + cpu->tsc_offset);
+            uint64_t den = s_desc[MONO_SRC_TSC].den;
+            uint64_t num = s_desc[MONO_SRC_TSC].num;
+            uint64_t whole, rem;
+            if (den == 0)
+                return 0;
+            whole = ticks / den;
+            rem   = ticks % den;
+            return whole * num + (rem * num) / den;
         }
-        /* Use 128-bit multiply to avoid overflow:
-         * result = (ticks * num) / den
-         * For ~4 GHz TSC and 64-bit ticks, ticks * 1e9 overflows at ~18 seconds.
-         * Split: ns = (ticks / den) * num + ((ticks % den) * num) / den */
-        {
-            uint64_t whole = ticks / s_ns_per_tick_den;
-            uint64_t rem   = ticks % s_ns_per_tick_den;
-            return whole * s_ns_per_tick_num
-                 + (rem * s_ns_per_tick_num) / s_ns_per_tick_den;
-        }
+    }
 
     case MONO_SRC_HPET:
-        return hpet_ns();
+        /* hpet_ns() is HPET's native absolute counter; the offset (0 unless HPET
+         * is a demotion target) re-bases it onto the old source's value. */
+        return hpet_ns() +
+               (uint64_t)__atomic_load_n(&s_hpet_offset_ns, __ATOMIC_ACQUIRE);
 
     case MONO_SRC_PMTMR:
         /* Precise PMTMR read: banked epoch ns + the masked delta since the last
          * ISR advance, glitch-filtered (median-of-3) so a single bad sample
-         * cannot fabricate a forward jump, then clamped to the monotonic floor
-         * so a residual glitch or a missed wrap can never step backward. The
-         * raw counter is sampled INSIDE the read attempt so an advance between
-         * the snapshot and the sample forces a retry. Hot/coarse callers use
-         * the cheaper mono_ns_coarse() (no port I/O) instead. */
+         * cannot fabricate a forward jump. The raw counter is sampled INSIDE the
+         * read attempt so an advance between the snapshot and the sample forces a
+         * retry. (The monotonic floor is applied by the caller mono_ns().) */
         {
-            uint64_t seq, base_ns, cand;
+            uint64_t seq, base_ns;
             uint32_t base_raw, now;
             do {
                 seq      = seqlock_read_begin(&s_pmtmr_lock);
@@ -382,15 +495,14 @@ uint64_t mono_ns(void)
                 base_raw = s_pmtmr_last_raw;
                 now      = acpi_pmtimer_read_value() & s_pmtmr_mask;
             } while (seqlock_read_retry(&s_pmtmr_lock, seq));
-            cand = base_ns + mono_pmtmr_delta_ns(base_raw, now, s_pmtmr_mask);
-            return pmtmr_mono_floor(cand);
+            return base_ns + mono_pmtmr_delta_ns(base_raw, now, s_pmtmr_mask);
         }
 
     case MONO_SRC_LAPIC:
         /* LAPIC tick count is not directly readable as a monotonic counter.
-         * Use system_get_ticks() (PIT/LAPIC interrupt counter): banked
-         * epoch ns + ticks-since-epoch at the LIVE frequency, so a
-         * runtime resolution change can never rewind the clock. */
+         * Use system_get_ticks() (PIT/LAPIC interrupt counter): banked epoch ns
+         * + ticks-since-epoch at the LIVE frequency, so a runtime resolution
+         * change can never rewind the clock. */
         {
             extern uint64_t system_get_ticks(void);
             uint64_t seq, base_ns, base_ticks, t;
@@ -400,20 +512,31 @@ uint64_t mono_ns(void)
                 base_ns    = s_tick_epoch_ns;
                 base_ticks = s_tick_epoch_ticks;
                 base_freq  = s_tick_epoch_freq;
-                /* Sample INSIDE the read attempt: a rebase between the
-                 * snapshot and the tick sample must force a retry, or a
-                 * post-rebase tick pairs with the stale rate */
                 t = system_get_ticks();
             } while (seqlock_read_retry(&s_tick_epoch_lock, seq));
             if (t < base_ticks)
                 t = base_ticks;
-            return base_ns + mono_lapic_ticks_to_ns(t - base_ticks,
-                                                    base_freq);
+            return base_ns + mono_lapic_ticks_to_ns(t - base_ticks, base_freq);
         }
 
     default:
         return 0;
     }
+}
+
+uint64_t mono_ns(void)
+{
+    /* Acquire-load the active source ONCE. Pairs with the RELEASE publish in
+     * mono_clock_init / mono_clock_demote, so a reader that sees a source also
+     * sees its fully-seeded descriptor, epoch, and HPET re-anchor offset. */
+    uint32_t s = __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
+    uint64_t cand = mono_raw_ns(s);
+
+    /* ALWAYS floor: guarantees global monotonicity across every source and every
+     * runtime demotion, including for a reader sampled on the old source just
+     * before a demotion (a gated floor would let such an in-flight reader return
+     * an unfloored old value, observable as backward vs a newer reader). */
+    return mono_floor(cand);
 }
 
 uint64_t mono_ns_coarse(void)
@@ -423,17 +546,19 @@ uint64_t mono_ns_coarse(void)
      * the cached epoch ns instead -- accurate to the ISR advance interval,
      * monotonic (the epoch only banks positive masked deltas), and free of port
      * I/O. Other sources are already cheap, so fall through to mono_ns(). */
-    if (__atomic_load_n(&s_source, __ATOMIC_ACQUIRE) == MONO_SRC_PMTMR) {
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) == MONO_SRC_PMTMR) {
         uint64_t seq, ns;
         do {
             seq = seqlock_read_begin(&s_pmtmr_lock);
             ns  = s_pmtmr_epoch_ns;
         } while (seqlock_read_retry(&s_pmtmr_lock, seq));
-        /* Share the SAME monotonic floor as precise mono_ns(): a precise read
-         * may have raised the floor past the cached epoch, so clamping here
-         * keeps coarse non-decreasing relative to a prior precise read when the
-         * two APIs are mixed (uptime_ns / wall_clock do mix them). */
-        return pmtmr_mono_floor(ns);
+        /* PMTMR re-anchors via its own epoch on demotion (no separate offset),
+         * so the cached epoch already reflects any switch. Share the SAME
+         * monotonic floor as precise mono_ns(): a precise read may have raised
+         * the floor past the cached epoch, so clamping here keeps coarse
+         * non-decreasing relative to a prior precise read when the two APIs are
+         * mixed (uptime_ns / wall_clock do mix them). */
+        return mono_floor(ns);
     }
     return mono_ns();
 }
@@ -446,9 +571,9 @@ uint64_t mono_filetime_units(void)
 
 /* ---- Info ---------------------------------------------------------------- */
 
-const char *mono_clock_source_name(void)
+static const char *mono_src_name(uint32_t s)
 {
-    switch (s_source) {
+    switch (s) {
     case MONO_SRC_TSC:   return "TSC";
     case MONO_SRC_HPET:  return "HPET";
     case MONO_SRC_PMTMR: return "PMTMR";
@@ -457,7 +582,245 @@ const char *mono_clock_source_name(void)
     }
 }
 
+const char *mono_clock_source_name(void)
+{
+    return mono_src_name(__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE));
+}
+
 uint32_t mono_clock_source_id(void)
 {
-    return s_source;
+    return __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
+}
+
+/* ---- Clocksource quality watchdog (drift demotion) ----------------------- */
+
+uint32_t mono_drift_ppm(uint64_t ref_ns, uint64_t src_ns)
+{
+    uint64_t diff, ppm;
+    if (ref_ns == 0)
+        return 0;
+    diff = (src_ns > ref_ns) ? (src_ns - ref_ns) : (ref_ns - src_ns);
+    /* diff >= ref means >= 100 % drift: saturate. */
+    if (diff >= ref_ns)
+        return MONO_DRIFT_PPM_MAX;
+    /* Overflow-safe without a 128-bit divide (no compiler-rt __udivti3 in the
+     * freestanding kernel): scale diff and ref down by the SAME power of two
+     * (ratio preserved) until diff * 1e6 fits in u64, so even a large window
+     * (a delayed watchdog, or any future caller, with ref_ns above ~5.1 h)
+     * cannot overflow. diff < ref throughout, so ref never shifts to 0 first. */
+    while (diff > 0xFFFFFFFFFFFFFFFFULL / 1000000ULL) {
+        diff   >>= 1;
+        ref_ns >>= 1;
+    }
+    if (ref_ns == 0)
+        return MONO_DRIFT_PPM_MAX;
+    ppm = diff * 1000000ULL / ref_ns;
+    return (ppm > MONO_DRIFT_PPM_MAX) ? MONO_DRIFT_PPM_MAX : (uint32_t)ppm;
+}
+
+/* Re-anchor a demotion target so its next mono_raw_ns() read == anchor_ns,
+ * instead of the source's native absolute value. PASSIVE context (the watchdog).
+ * Each source uses its own native mechanism so the value is read coherently by
+ * mono_raw_ns without a separate global offset: HPET an additive offset, PMTMR
+ * its seqlock epoch, LAPIC its seqlock tick epoch. TSC is never a target. */
+static void mono_source_reanchor(uint32_t to_src, uint64_t anchor_ns)
+{
+    switch (to_src) {
+    case MONO_SRC_HPET:
+        __atomic_store_n(&s_hpet_offset_ns,
+                         (int64_t)anchor_ns - (int64_t)hpet_ns(),
+                         __ATOMIC_RELEASE);
+        break;
+    case MONO_SRC_PMTMR: {
+        /* Same writer serialization as mono_pmtmr_bank: take s_pmtmr_wlock so
+         * this re-anchor cannot race the ISR advance / a concurrent sync. */
+        uint64_t irqf;
+        uint32_t raw;
+        spin_lock_irqsave(&s_pmtmr_wlock, &irqf);
+        raw = acpi_pmtimer_read_value() & s_pmtmr_mask;
+        seqlock_write_lock(&s_pmtmr_lock);
+        s_pmtmr_last_raw = raw;
+        s_pmtmr_epoch_ns = anchor_ns;
+        seqlock_write_unlock(&s_pmtmr_lock);
+        spin_unlock_irqrestore(&s_pmtmr_wlock, irqf);
+        break;
+    }
+    case MONO_SRC_LAPIC: {
+        extern uint64_t system_get_ticks(void);
+        seqlock_write_lock(&s_tick_epoch_lock);
+        s_tick_epoch_ticks = system_get_ticks();
+        s_tick_epoch_ns    = anchor_ns;
+        /* keep s_tick_epoch_freq -- only the epoch base/ticks re-anchor */
+        seqlock_write_unlock(&s_tick_epoch_lock);
+        break;
+    }
+    default:
+        break;   /* TSC is never a demotion target */
+    }
+}
+
+void mono_clock_demote(uint32_t to_src, uint32_t drift_ppm)
+{
+    uint32_t cur = __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
+    uint64_t anchor, irqf;
+
+    /* Only demote to a QUALIFIED target (not merely present): the boot sanity
+     * gate refused an implausible-frequency source, and the watchdog must not
+     * route around that by switching the active clock to it. */
+    if (!mono_source_qualify(to_src) || to_src == cur)
+        return;
+
+    /* The anchor sample -> re-anchor -> publish must be one bounded,
+     * nonpreemptible transition: s_demote_lock taken irqsave both serializes
+     * concurrent demotions and disables interrupts/preemption on this CPU so the
+     * target cannot advance between the re-anchor and the publish (which would
+     * make the first post-publish reader leap forward by the delay). The window
+     * is two short hardware reads -- acceptable for a rare demotion. */
+    spin_lock_irqsave(&s_demote_lock, &irqf);
+
+    /* Re-check under the lock: a racing demoter may have already switched, and
+     * re-confirm qualification holds for the target. */
+    cur = __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
+    if (to_src == cur || !mono_source_qualify(to_src)) {
+        spin_unlock_irqrestore(&s_demote_lock, irqf);
+        return;
+    }
+
+    /* Sample the current value (mono_ns always floors, so anchor >= the floor),
+     * re-anchor the target to it, and raise the floor to the anchor so any
+     * reader after the publish is clamped up to it -- the new source continues
+     * from `anchor`, not its native absolute value. */
+    anchor = mono_ns();
+    mono_source_reanchor(to_src, anchor);
+    (void)mono_floor(anchor);
+
+    /* Publish the new source LAST (RELEASE): a reader that acquire-loads it also
+     * sees the re-anchor written above. */
+    __atomic_store_n(&s_active_src, to_src, __ATOMIC_RELEASE);
+
+    spin_unlock_irqrestore(&s_demote_lock, irqf);
+
+    /* klog OUTSIDE the lock (serial I/O must not run under an irqsave spinlock). */
+    klog(LOG_WARN, "time", "clocksource: demoting %s -> %s (%u ppm)",
+         mono_src_name(cur), mono_src_name(to_src), (uint64_t)drift_ppm);
+}
+
+/* ---- Watchdog kworker job ------------------------------------------------- *
+ * Runs at PASSIVE on the kworker pool (~0.5 s). Monitors ONLY an active TSC --
+ * the one source that drifts under SMM/C-state/thermal effects; HPET and PMTMR
+ * are the trustworthy fallbacks, and LAPIC is the last resort with nothing
+ * better to demote to. Compares the TSC elapsed against an independent reference
+ * (HPET native, or a directly-read PMTMR raw delta -- the PMTMR 64-bit epoch is
+ * only ISR-advanced while PMTMR is active, so the watchdog tracks its own raw
+ * delta over the sub-wrap window) and demotes past MONO_DRIFT_UNSTABLE_PPM for
+ * two consecutive windows (one outlier from a delayed sample never demotes). */
+static uint32_t s_wd_ref;          /* reference source id (HPET or PMTMR) */
+static uint64_t s_wd_last_act;     /* previous active-TSC ns sample */
+static uint64_t s_wd_last_ref;     /* previous reference sample (HPET absolute
+                                    * ns, or PMTMR cumulative ns) */
+static uint64_t s_wd_pm_accum;     /* PMTMR cumulative ns (ref == PMTMR) */
+static uint32_t s_wd_pm_lastraw;   /* last PMTMR raw counter (ref == PMTMR) */
+static int      s_wd_primed;       /* 1 once baseline samples are captured */
+static uint32_t s_wd_strikes;      /* consecutive over-threshold windows */
+
+/* Read the reference clock as ns. HPET: its native counter. PMTMR: a directly
+ * read raw counter accumulated over the sub-wrap watchdog window (the 64-bit
+ * epoch is only ISR-advanced while PMTMR is active, so the watchdog banks its
+ * own delta here). Caller serializes (single kworker thread). */
+static uint64_t mono_watchdog_ref_ns(void)
+{
+    if (s_wd_ref == MONO_SRC_HPET)
+        return hpet_ns();
+    {
+        uint32_t raw = acpi_pmtimer_read_value() & s_pmtmr_mask;
+        s_wd_pm_accum += mono_pmtmr_delta_ns(s_wd_pm_lastraw, raw, s_pmtmr_mask);
+        s_wd_pm_lastraw = raw;
+        return s_wd_pm_accum;
+    }
+}
+
+static void mono_watchdog_tick(void *ctx)
+{
+    uint32_t active, ppm;
+    uint64_t act, ref, act_d, ref_d;
+    (void)ctx;
+
+    active = __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
+    if (active != MONO_SRC_TSC || s_wd_ref == MONO_SRC_NONE) {
+        s_wd_primed = 0;   /* nothing to monitor (already demoted, etc.) */
+        return;
+    }
+
+    /* Prime: capture baselines on the first window, no comparison. For PMTMR set
+     * the raw baseline WITHOUT accumulating (a from-zero delta would be bogus). */
+    if (!s_wd_primed) {
+        s_wd_last_act = mono_raw_ns(MONO_SRC_TSC);
+        if (s_wd_ref == MONO_SRC_PMTMR) {
+            s_wd_pm_lastraw = acpi_pmtimer_read_value() & s_pmtmr_mask;
+            s_wd_pm_accum   = 0;
+            s_wd_last_ref   = 0;
+        } else {
+            s_wd_last_ref   = hpet_ns();
+        }
+        s_wd_primed  = 1;
+        s_wd_strikes = 0;
+        return;
+    }
+
+    act = mono_raw_ns(MONO_SRC_TSC);
+    ref = mono_watchdog_ref_ns();
+
+    /* Both deltas span the SAME wall window (sampled back-to-back), so a delayed
+     * watchdog thread inflates neither relative to the other -- the drift ratio
+     * stays accurate. Clamp a (monotonic) non-advance to avoid underflow. */
+    act_d = (act > s_wd_last_act) ? (act - s_wd_last_act) : 0;
+    ref_d = (ref > s_wd_last_ref) ? (ref - s_wd_last_ref) : 0;
+    s_wd_last_act = act;
+    s_wd_last_ref = ref;
+
+    if (ref_d == 0)
+        return;   /* no reference progress this window -- skip */
+
+    ppm = mono_drift_ppm(ref_d, act_d);
+    if (ppm > MONO_DRIFT_UNSTABLE_PPM) {
+        /* Two consecutive over-threshold windows before demoting: one outlier
+         * from a delayed sample or an SMM excursion never demotes on its own. */
+        if (++s_wd_strikes >= 2) {
+            mono_clock_demote(s_wd_ref, ppm);
+            s_wd_strikes = 0;
+        }
+    } else {
+        s_wd_strikes = 0;
+    }
+}
+
+void mono_clock_watchdog_init(void)
+{
+    static int s_registered;
+    uint32_t active;
+
+    if (s_registered)
+        return;
+
+    active = __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
+    /* Only an active TSC is worth monitoring, and only with an independent
+     * reference to compare against (HPET preferred; else a directly-read PMTMR).
+     * No reference -> nothing the watchdog can do, so it does not register. */
+    if (active != MONO_SRC_TSC)
+        return;
+    /* Reference must be a QUALIFIED independent source (not merely present), so a
+     * later demotion targets only a source the boot gate trusted. */
+    if (mono_source_qualify(MONO_SRC_HPET))
+        s_wd_ref = MONO_SRC_HPET;
+    else if (mono_source_qualify(MONO_SRC_PMTMR))
+        s_wd_ref = MONO_SRC_PMTMR;
+    else
+        return;
+
+    if (kworker_register(mono_watchdog_tick, (void *)0, 500) >= 0) {
+        s_registered = 1;
+        klog(LOG_INFO, "time",
+             "clocksource watchdog: monitoring TSC against %s reference",
+             mono_src_name(s_wd_ref));
+    }
 }

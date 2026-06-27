@@ -77,7 +77,8 @@ title: "TODO-08 -- Time & FILETIME Management"
 | 💎  |  15   | Leap second policy                                                     | §1                  |  [x]   |
 | ⭐  |  16   | Coarse time fast path (lock-free cached time)                          | §6                  |  [x]   |
 | ⭐  |  17   | NTP clock adjustment hooks                                             | §6                  |  [/]   |
-| 💎  |  18   | Clocksource quality watchdog (drift demotion)                          | §2, §4              |  [ ]   |
+| 💎  |  18   | Clocksource quality watchdog (drift demotion)                          | §2, §3              |  [/]   |
+| 💎  |  19   | NTP continuous wall-time discipline                                    | §17, §18            |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both provide these capabilities.
 > ⭐ = exclusive -- coarse time gives O(1) cached reads for hot-path callers without reading hardware; NTP hook API is a first-class kernel-level adjustment interface, not a userspace-only workaround.
@@ -141,7 +142,7 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 
 - [x] Ordered TSC read: `rdtsc_ordered()` -- `RDTSCP` gated on `cpu_feature_global_mask()` (the all-online intersection, NOT `cpu_has()`, so a feature-skewed AP cannot #UD), else `LFENCE;RDTSC` -- used by `rdtsc_ns()` + the `mono_ns()` TSC branch.
 - [ ] AP TSC sync + warp detection (design review [H]): BSP/AP rendezvous before `is_online` -- bounded ping-pong, latency tolerance, no AP logging, timeout (Linux `tsc_sync.c` parity).
-- [ ] Atomic demote-on-warp + mono-wide floor (design review [H], shared with §18): atomic clocksource descriptor + a mono-wide monotonic floor (generalize §2 `pmtmr_mono_floor`) so demote/migration never step backward.
+- [x] Atomic demote-on-warp + mono-wide floor (design review [H], shipped in §18): immutable per-source `mono_desc` table + atomic `s_active_src` index + mono-wide `mono_floor()` so demote/migration never step backward.
 - [ ] Resume monotonicity -- BLOCKED on power-management S3; reuses this section's sync/demote machinery. -> XREF: 02-kernel-core/TODO-26-power-management.md §3
 - [x] Commit: `"kernel: time -- invariant TSC detection and per-CPU offset calibration"`
 
@@ -151,11 +152,11 @@ On systems with invariant TSC (`CPUID 0x80000007 EDX[8]`), the TSC ticks at a co
 > **Notes:**
 > - Shipped: `rdtsc_ordered()` in `mono_clock.c` (RDTSCP gated on the all-online `cpu_feature_global_mask()`, else `LFENCE;RDTSC`), replacing bare `rdtsc` for `rdtsc_ns()` + the `mono_ns()` TSC branch.
 > - How it runs: every TSC read serializes against prior instructions so a monotonic/QPC read never samples earlier than its surrounding code; the global-mask gate (not `cpu_has`) avoids an #UD on a feature-skewed AP.
-> - Downstream: items 2-3 (AP TSC sync rendezvous + atomic-descriptor demotion + mono-wide floor) are a section-class SMP unit shared with the §18 watchdog -- deferred coherent. Codex adversarial adoption (RDTSCP AP-skew #UD) in the commit.
+> - Downstream: the atomic-descriptor demotion + mono-wide floor shipped in the §18 watchdog; AP TSC sync rendezvous remains the one deferred item. Codex adversarial adoption (RDTSCP AP-skew #UD) in the commit.
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §3 ships the ordered read; AP sync + demotion machinery is the deferred items (shared with §18); resume re-verify is power-management.
 > **Verified:** 2026-06-27 | commit `13f02ffe` | 7/10 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG)
-> **Deferred:** [H] AP TSC sync rendezvous + atomic-descriptor demotion + mono-wide floor -- section-class SMP unit (design captured), shared with the watchdog -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "Atomic coherent demotion" at line 340)
+> **Deferred:** [H] AP TSC sync rendezvous -- BSP/AP bounded ping-pong (Linux `tsc_sync.c` parity); the atomic-descriptor + mono-wide-floor portion shipped in §18 -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §3 (item: "AP TSC sync + warp detection" at line 143)
 > **Deferred:** [M] resume TSC re-verify blocked on power-management S3 -> XREF: 02-kernel-core/TODO-26-power-management.md §3
 > **Quality reviewed:** 2026-06-27 | Codex 2x (design, adversarial) | 1H fixed (RDTSCP AP-skew gate), 2H+1M deferred | scope: kernel-code-quality
 
@@ -512,7 +513,7 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 - [x] Contract documented in `ntp_adj.h` + the wall_clock.c block: `ke_ntp_adjtime()` is THREAD (PASSIVE) context only; the kernel never initiates network calls
 - [x] Honest discipline-state via pure tested `ntp_source_for_correction(off,freq)`: `"ntp"` only when fully applied (pure step / zero no-op); any stored slew or nonzero freq (incl. mixed step+freq) -> `"ntp-pending"`
 - [x] All anchor writers coordinate on `s_ntp_lock` (order `s_ntp_lock -> s_lock`): a non-NTP `KeSetSystemTime` clears NTP status (`source="none"`, slew/freq 0) atomically with the swap, so a manual set never leaves a stale `"ntp"`
-- [/] Continuous per-tick freq/slew APPLICATION deferred (a discrete nudge regresses wall reads; needs the monotonic floor) -> XREF: 02-kernel-core/TODO-08 §18 (item: "Apply stored NTP freq/slew behind the mono/wall floor")
+- [/] Continuous per-tick freq/slew APPLICATION deferred (a discrete nudge regresses wall reads; needs the wall-time floor) -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
 - [x] Commit: `"kernel: time -- NTP clock phase and frequency adjustment hooks"`
 
 > **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | NTP tests (tick adjust, step-target valid, reject preserves, source label, manual-set invalidates) + absurd-set reject, 283 kernel tests, 0 failures
@@ -524,8 +525,8 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 > - Canonical: `include/kernel/time/ntp_adj.h`.
 > - Scope boundary: §17 owns the adjustment hooks; the NTP protocol client + network I/O are a network-stack TODO; the continuous discipline + monotonic floor are §18.
 > **Verified:** 2026-06-27 | commit `0fb1743f` | 7/8 items | build OK | tests 283/283 PASS
-> **Deferred:** [H] continuous per-tick freq/slew APPLICATION (needs the wall-time monotonic floor) -> XREF: 02-kernel-core/TODO-08 §18 (item: "Apply stored NTP freq/slew behind the mono/wall floor" at line 537)
-> **Deferred:** [M] per-tick `s_ntp_lock`-hold audit -- §17 samples `mono_ns()` (HPET/PMTMR I/O) under the lock on cold paths only; per-tick consumer must sample outside the lock -> XREF: 02-kernel-core/TODO-08 §18 (item: "Per-tick lock-hold audit" at line 538)
+> **Deferred:** [H] continuous per-tick freq/slew APPLICATION (needs the wall-time floor) -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
+> **Deferred:** [M] per-tick `s_ntp_lock`-hold audit -- §17 samples `mono_ns()` (HPET/PMTMR I/O) under the lock on cold paths only; per-tick consumer must sample outside the lock -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
 > **Quality reviewed:** 2026-06-27 | Codex 3x (adversarial, consistency, perf) | 2M+1L fixed (doc/contract), 2 deferred | scope: kernel-code-quality
 
 ---
@@ -533,17 +534,37 @@ The NTP protocol client (network stack TODO) needs a kernel interface to correct
 ## 18. Clocksource Quality Watchdog
 Continuously cross-check the active monotonic clock source against a reference and demote a drifting source (an unstable TSC) to HPET/PMTMR, matching Linux `clocksource.c` (watchdog ~every 0.5 s, "Marking TSC unstable") and the Win11 HAL silent demotion. Replaces the boot-time `platform_is_tcg()` gate in `timer_hal_init()`. Split out of §2 by the gap-audit + design review.
 
-- [ ] Boot-time source qualification (design review [H]): a conservative qualify-or-reject step in `timer_hal_init()` (Phase 1) replacing `platform_is_tcg()`; the ISR may sample only -- no drift compare/demotion/klog in interrupt context.
-- [ ] Ongoing watchdog on the kworker pool (design review [H]): a Phase-3 PASSIVE periodic job reads the active source + a reference (HPET/PMTMR), computes drift over a window, and demotes past a threshold at thread context.
-- [ ] Atomic coherent demotion (design review [H]): publish the active clocksource as ONE snapshot (seqlock or atomic descriptor swap covering source + num/den + mask + read-fn + epoch) so lock-free `mono_ns()` never sees a mixed source/scale.
-- [ ] Anchor the new source to the old `mono_ns()` value on switch so monotonic time never jumps backward across a demotion.
-- [ ] PMTMR epoch refresh across tick quiesce (review [H]): call `mono_clock_pmtmr_advance()` before masking the timer (UEFI runtime) + after resume so a quiesce past the ~4.7 s wrap loses no wraps (the §2 floor already blocks backward steps).
-- [ ] Apply stored NTP freq/slew behind the mono/wall floor (§17-deferred): the floor lets per-tick `ntp_tick_adjust_ns()` nudge `s_base_time` without regressing wall reads; then flip §17 status `"ntp-pending"` -> `"ntp"`
-- [ ] Per-tick lock-hold audit (review [M]): the per-tick consumer must sample `mono_ns()` OUTSIDE `s_ntp_lock` (§17 samples it under the lock on cold paths only), so a tick-frequency discipline never holds the lock across HPET/PMTMR I/O
-- [ ] Log the demotion with old/new source + measured drift in ppm.
-- [ ] Commit: `"kernel: time -- clocksource quality watchdog with drift demotion"`
+- [x] Boot-time source qualification (design review [H]): `mono_source_qualify()` rejects an implausible-frequency candidate so `mono_clock_init()` selects the highest-priority QUALIFIED source by measurement, not a platform guess.
+- [x] Ongoing watchdog on the kworker pool (design review [H]): `mono_clock_watchdog_init` registers `mono_watchdog_tick` (~0.5 s Phase-3 PASSIVE) comparing active-TSC vs an HPET/PMTMR reference, demoting after 2 over-threshold windows.
+- [x] Atomic coherent demotion (design review [H], shared with §3): immutable per-source `mono_desc` table + atomic `s_active_src` index (loaded once by `mono_ns`) so source+scale never tear; demotion re-anchors then RELEASE-publishes the index last.
+- [x] Anchor new source to old `mono_ns()` on switch: mono-wide `mono_floor()` engaged on `s_demoted` before the swap + per-source `mono_source_reanchor` (HPET offset / PMTMR + LAPIC epoch) so time never steps back or leaps across a demotion.
+- [x] PMTMR epoch refresh across tick quiesce (review [H]): `mono_clock_pmtmr_sync()` from `timer_hal_quiesce`/`timer_hal_resume` around the mask so a sub-wrap quiesce loses no wraps (the mono floor blocks longer-quiesce backward steps).
+- [x] Log the demotion with old/new source + measured drift ppm in `mono_clock_demote()` (`LOG_WARN "clocksource: demoting %s -> %s (%u ppm)"`).
+- [/] Continuous NTP freq/slew APPLICATION + per-tick lock-hold audit (§17-deferred wall-time discipline; needs a separate wall floor) -> XREF: 02-kernel-core/TODO-08 §19 (item: "Per-tick NTP application driver" at line 561)
+- [x] Commit: `"kernel: time -- clocksource quality watchdog with drift demotion"`
 
-**Test checkpoint:** Unit (`TEST_CAT_SCHED`): the demotion snapshot swap is monotonic (a reader sampling across a simulated swap never sees time decrease); the drift compare classifies an injected > N ppm skew as unstable. Runtime (WHPX / bare metal serial, not unit-testable without live drift): boot logs the qualified source; an unstable TSC logs `"clocksource: demoting TSC -> HPET (N ppm)"`. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+**Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): `mono_drift_ppm` classifies a +/-600 ppm skew as over-threshold, a 100 ppm skew as under, saturates a >=100 % diff, and returns 0 for a zero window. Runtime (WHPX / bare metal serial, not unit-testable without live drift): boot logs the qualified source; an unstable TSC logs `"clocksource: demoting TSC -> HPET (N ppm)"` and `mono_ns()` stays monotonic across the demotion. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time suites incl. `clocksource watchdog drift ppm classify`, 290 kernel tests, 0 failures
+> **Notes:**
+> - Shipped: immutable per-source `mono_desc` table + atomic `s_active_src` index, mono-wide `mono_floor()`, `mono_clock_demote()` + `mono_watchdog_tick`/`mono_clock_watchdog_init`, pure `mono_drift_ppm`, `mono_clock_pmtmr_sync` -- all in `mono_clock.c`.
+> - How it runs: `mono_ns()` acquire-loads `s_active_src` once for a coherent scale; the Phase-3 kworker (~0.5 s) compares active TSC vs an HPET/PMTMR reference and after 2 over-threshold windows demotes via re-anchor + floor + RELEASE-publish.
+> - Downstream: satisfies §3's deferred atomic-descriptor + mono-wide-floor unit; the §17-deferred continuous NTP application is split to §19. Codex design adoptions (immutable descriptor over seqlock; wall floor for NTP) in the commit.
+> - Canonical: `src/kernel/time/mono_clock.c`.
+> - Scope boundary: §18 owns clocksource qualification + drift demotion; NTP wall-time discipline is §19; AP TSC sync stays §3-deferred; S3 resume is power-management.
+
+---
+
+## 19. NTP Continuous Wall-Time Discipline
+Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to the wall clock continuously, so a disciplined clock actually tracks the reference instead of only storing the correction. The §17 hooks store freq/slew and report `source="ntp-pending"`; this section adds the per-tick applier (built on the §18 mono floor) that consumes them and flips the status to `"ntp"`. Split from §18 because it needs its own wall-time floor and design pass. -> XREF: 02-kernel-core/TODO-08 §17 (item: "Continuous per-tick freq/slew APPLICATION deferred")
+
+- [ ] Wall-time floor (design review [H]): a separate atomic `wall_floor()` on `KeQuerySystemTime`/`Coarse`/`Precise` so a negative-freq re-anchor of `s_base_time` cannot regress wall reads; `KeSetSystemTime` resets it.
+- [ ] Per-tick NTP application driver: a PASSIVE job sampling `mono_ns()` outside `s_ntp_lock`, then under `s_ntp_lock -> s_lock` re-anchoring `s_base_time` via `ntp_tick_adjust_ns()` + decrementing the slew, behind the wall floor.
+- [ ] Flip §17 status `"ntp-pending"` -> `"ntp"` once a correction is actually applied (manual `KeSetSystemTime` still resets to `"none"`).
+- [ ] Unit tests (`TEST_CAT_SCHED`): a pure wall-floor helper is monotonic across a simulated backward re-anchor; `ntp_tick_adjust_ns` already tested in §17.
+- [ ] Commit: `"kernel: time -- NTP continuous wall-time discipline"`
+
+**Test checkpoint:** Unit (`TEST_CAT_SCHED` in `test_time.c`): a pure wall-floor helper never returns below a prior value across a simulated backward re-anchor. Runtime (WHPX / bare metal serial): after `ke_ntp_adjtime` with a sub-second slew, `ke_ntp_get_status` reports `"ntp"` and `KeQuerySystemTime` advances monotonically while the slew is consumed. Verify on QEMU WHPX, TCG, VirtualBox, bare metal.
 
 ---
 
@@ -552,11 +573,12 @@ Continuously cross-check the active monotonic clock source against a reference a
 | ⭐ | Feature                  | 🪟 Win11                 | 🐧 Linux                  | 🚀 Impossible OS          |
 |----|--------------------------|---------------------------|---------------------------|----------------------------|
 | 💎 | 100 ns wall time         | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ✅ §1,§5,§6 done          |
-| 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ⚠️ §2 done, §3-§4 pending |
-| 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ⬜ §3                     |
-| 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3                     |
-| 💎 | Clocksource watchdog     | ✅ HAL silent demote     | ✅ clocksource.c watchdog | ⬜ §18 -- drift demotion  |
-| 💎 | Ordered TSC read         | ✅ QPC abstracts rdtscp  | ✅ rdtsc_ordered LFENCE   | ⬜ §3 -- bare rdtsc now   |
+| 💎 | Monotonic counter        | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ✅ §2/§4/§18, AP-sync §3   |
+| 💎 | Invariant TSC detect     | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ✅ §3 -- invariant+offset |
+| 💎 | Per-CPU TSC sync         | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3 -- AP sync deferred |
+| 💎 | Clocksource watchdog     | ✅ HAL silent demote     | ✅ clocksource.c watchdog | ✅ §18 -- drift demotion  |
+| 💎 | Ordered TSC read         | ✅ QPC abstracts rdtscp  | ✅ rdtsc_ordered LFENCE   | ✅ §3 -- rdtsc_ordered    |
+| 💎 | NTP clock discipline     | ✅ W32Time service       | ✅ adjtimex / ntpd        | ⚠️ §17 hooks, §19 apply   |
 | 💎 | HPET fallback            | ✅ when TSC unreliable   | ✅ hpet_clocksource       | ✅ §4 -- hpet.c driver    |
 | 💎 | Wall clock UEFI/RTC      | ✅ GetSystemTime         | ✅ efi_get_time           | ✅ §5 -- wall_clock_init  |
 | 💎 | Interrupt time           | ✅ KeQueryInterruptTime  | ✅ CLOCK_BOOTTIME         | ✅ §7 -- biased+unbiased  |

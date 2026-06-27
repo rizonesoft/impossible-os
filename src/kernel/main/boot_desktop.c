@@ -114,8 +114,13 @@ void boot_phase3(void)
     {
         extern int kworker_init(void);
         extern void uefi_secureboot_register_monitor(void);
-        if (kworker_init() == 0)
+        extern void mono_clock_watchdog_init(void);
+        if (kworker_init() == 0) {
             uefi_secureboot_register_monitor();
+            /* Clocksource drift watchdog: demotes an unstable TSC to HPET/PMTMR.
+             * No-op unless TSC is active with an independent reference. */
+            mono_clock_watchdog_init();
+        }
     }
 
     /* Create the system work queue (needed by NIC driver) */

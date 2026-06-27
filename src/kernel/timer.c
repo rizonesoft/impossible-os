@@ -18,6 +18,7 @@
 #include "kernel/sched/spinlock.h"
 #include "kernel/smp.h"
 #include "kernel/klog.h"
+#include "kernel/time/mono_clock.h"
 
 /* THE single source of truth -- set once by timer_hal_init() */
 timer_driver_t *g_system_timer = (timer_driver_t *)0;
@@ -318,6 +319,12 @@ void timer_hal_quiesce(void)
         return;
     }
 
+    /* Bank the PMTMR epoch right before masking: the timer ISR that drives the
+     * periodic advance is about to be silenced, so capture elapsed up to here so
+     * the masked window is recovered as one masked delta on resume. No-op unless
+     * PMTMR is the active monotonic source. */
+    mono_clock_pmtmr_sync();
+
     if (g_system_timer == &lapic_driver) {
         uint32_t lvt = lapic_read(LAPIC_REG_LVT_TIMER);
         lapic_write(LAPIC_REG_LVT_TIMER, lvt | LVT_MASKED);
@@ -360,6 +367,12 @@ void timer_hal_resume(void)
     s_quiesce_saved_lvt = 0;
     s_quiesce_pit_masked = 0;
     s_quiesced = 0;
+
+    /* Bank the masked-window delta now that the counter is readable again and
+     * the ISR advance is about to resume: extends the epoch by the (sub-wrap)
+     * time elapsed while masked so no wraps are lost. No-op unless PMTMR active. */
+    mono_clock_pmtmr_sync();
+
     spin_unlock_irqrestore(&s_timer_mode_lock, irqf);
 }
 

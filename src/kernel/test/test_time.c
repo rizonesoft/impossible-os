@@ -438,6 +438,43 @@ static void test_set_system_time_invalidates_ntp(void)
                    "manual set clears stored NTP slew");
 }
 
+/* Clocksource watchdog drift classify: mono_drift_ppm() computes the absolute
+ * ppm deviation between a reference-clock delta and the active-source delta over
+ * the same window. The watchdog demotes when this exceeds MONO_DRIFT_UNSTABLE_PPM.
+ * Pure -- no hardware, no live clocksource state. */
+static void test_mono_drift_ppm(void)
+{
+    /* No drift: identical deltas -> 0 ppm. */
+    TEST_ASSERT_EQ((uint64_t)mono_drift_ppm(1000000000ULL, 1000000000ULL), 0,
+                   "equal deltas report 0 ppm drift");
+    /* Active fast by 600 ppm (src 600 ppm above ref) -> ~600 ppm, > threshold. */
+    TEST_ASSERT_EQ((uint64_t)mono_drift_ppm(1000000000ULL, 1000600000ULL), 600,
+                   "src 600 ppm fast classifies as 600 ppm");
+    TEST_ASSERT((uint32_t)mono_drift_ppm(1000000000ULL, 1000600000ULL)
+                    > MONO_DRIFT_UNSTABLE_PPM,
+                "600 ppm exceeds the unstable threshold");
+    /* Active slow by 600 ppm (src below ref) -> absolute value, also unstable. */
+    TEST_ASSERT_EQ((uint64_t)mono_drift_ppm(1000000000ULL, 999400000ULL), 600,
+                   "src 600 ppm slow classifies as 600 ppm (absolute)");
+    /* A 100 ppm deviation is within tolerance (a stable clock). */
+    TEST_ASSERT((uint32_t)mono_drift_ppm(1000000000ULL, 1000100000ULL)
+                    <= MONO_DRIFT_UNSTABLE_PPM,
+                "100 ppm stays under the unstable threshold");
+    /* ref == 0 (no window) -> 0, never divides. */
+    TEST_ASSERT_EQ((uint64_t)mono_drift_ppm(0, 1000000000ULL), 0,
+                   "zero reference window reports 0 (no divide)");
+    /* Diff >= ref saturates at 100 % (and is overflow-safe). */
+    TEST_ASSERT_EQ((uint64_t)mono_drift_ppm(1000ULL, 1000000000000ULL),
+                   (uint64_t)MONO_DRIFT_PPM_MAX,
+                   ">=100%% drift saturates at MONO_DRIFT_PPM_MAX");
+    /* Large window where diff < ref but diff * 1e6 overflows u64 (~6e21): the
+     * 128-bit multiply must still report the true 600000 ppm, not a wrapped
+     * value. ref=1e16 ns (~116 days), src 60 %% high. */
+    TEST_ASSERT_EQ((uint64_t)mono_drift_ppm(10000000000000000ULL,
+                                            16000000000000000ULL), 600000,
+                   "large-window drift uses 128-bit multiply (no u64 overflow)");
+}
+
 void test_register_time(void)
 {
     test_suite_register_cat("time: PMTMR delta basic",
@@ -470,6 +507,8 @@ void test_register_time(void)
                             test_ntp_source_for_correction, TEST_CAT_SCHED);
     test_suite_register_cat("time: manual set invalidates NTP discipline",
                             test_set_system_time_invalidates_ntp, TEST_CAT_SCHED);
+    test_suite_register_cat("time: clocksource watchdog drift ppm classify",
+                            test_mono_drift_ppm, TEST_CAT_SCHED);
     test_suite_register_cat("time: KeSetSystemTime rejects absurd anchor",
                             test_set_system_time_rejects_absurd, TEST_CAT_SCHED);
 }
