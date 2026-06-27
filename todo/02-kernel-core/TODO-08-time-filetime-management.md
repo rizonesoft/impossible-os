@@ -270,13 +270,28 @@ Windows exposes interrupt time (100 ns since boot, including sleep bias) and unb
 Windows allows processes to request higher timer interrupt frequency (down to 0.5 ms) via `NtSetTimerResolution` / `timeBeginPeriod`. This affects scheduler quantum, `Sleep()` granularity, and multimedia timing. Win11 scopes this per-process; background/occluded processes don't get elevated resolution.
 
 - [x] `timer_resolution.h`: constants `TIMER_RES_DEFAULT` (156250 = 15.625 ms) and `TIMER_RES_MINIMUM` (5000 = 0.5 ms)
-- [x] `KeSetTimerResolution(desired, set)`: request/release with clamping; global arbitration (shortest wins)
-- [x] `NtSetTimerResolution` (SSDT 0x00F4) + `NtQueryTimerResolution` (SSDT 0x00F3) -- registered via `timer_resolution_register_ssdt()`
-- [x] 16-slot request table with per-entry active flag; `arbitrate()` scans for shortest
+- [x] `KeSetTimerResolution(desired, set, *actual)` -> NTSTATUS: per-process request/release (records pid, releases by owner), clamp-normalized both paths, shortest-wins arbitration, full-slot rollback on refused transition
+- [x] `NtSetTimerResolution` (SSDT 0x00F4) + `NtQueryTimerResolution` (SSDT 0x00F3) registered; out-pointers via `ProbeForWriteIfUser` + `copy_to_user` (set probes before mutating)
+- [x] 16-slot request table; per-process coalescing (one slot per pid); `arbitrate()` shortest-wins; table-full -> `STATUS_INSUFFICIENT_RESOURCES`
 - [x] `KeQueryTimerResolution(max, min, current)` returns all three values
 - [x] Per-process tracking: moved to `TODO-21-process-model-extensions.md §14` (Process Exit Cleanup) -- releases timer resolution requests on process exit
 - [x] Timer ICR update: `lapic_timer_set_hz()` reprograms LAPIC ICR when resolution changes; called from `arbitrate()` in timer_resolution.c
 - [x] Commit: `"kernel: time -- timer resolution management (NtSetTimerResolution)"`
+
+**Test checkpoint:** Unit: the arbitration path uses live task context + `timer_set_tick_hz`, not unit-testable without mocking both. Runtime (WHPX / bare metal serial): `NtSetTimerResolution(5000,TRUE,&a)` raises the LAPIC rate (boot log "Timer resolution: 500 us"), the matching release reverts to 15625 us, a 17th distinct-owner request returns `STATUS_INSUFFICIENT_RESOURCES`. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time + sched suites, 0 failures (236 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: timer-resolution arbitration in `timer_resolution.c` -- `KeSetTimerResolution`/`KeQueryTimerResolution` + `NtSetTimerResolution` (0x00F4) / `NtQueryTimerResolution` (0x00F3), 16-slot table, shortest-wins `arbitrate()`.
+> - Review fixes (detail in commit): SSDT out-pointers probed+copied (were raw user writes); per-pid ownership/release/coalescing; clamp both paths; full-slot rollback; atomic resolution; transition-only log; table-full status.
+> - Downstream: `KeSetTimerResolution` is `NTSTATUS` with `*actual` (no external callers); SSDT set-handler is non-transactional (mutation authoritative, actual-copy best-effort).
+> - Canonical: `src/kernel/time/timer_resolution.c`.
+> - Scope boundary: §8 owns arbitration + its two SSDT handlers; process-exit reaping is TODO-21 §14; fault-safe usercopy is TODO-23 §13.
+> **Verified:** 2026-06-27 | ship `c5b618ec` + review fixes | 8/8 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.49s)
+> **Accepted:** [H] per-process nested begin/end refcount + process-exit reaping of leaked timer-resolution requests (interim model is one coalesced slot per pid) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md §14 (item: "Release timer resolution requests held by this PID" at line 324)
+> **Accepted:** [H] `copy_to_user` is not fault-safe (a probed-but-unmapped user page #PFs in the kernel) -- systemic across all SSDT handlers, not §8-specific -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md §13 (item: "`include/kernel/probe.h` -- `try_copy_to_user`" at line 376)
+> **Test gap:** arbitration needs live task + timer context; not unit-testable without mocking. Covered by runtime serial validation.
+> **Quality reviewed:** 2026-06-27 | Codex 6x (adversarial, consistency, perf, re-adversarial x3) + kernel-quality-auditor | 1C+5H+3M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
 
