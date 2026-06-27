@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# block-via: warning-only (WS1b agent-discipline WARN; never exits 2)
 """PreToolUse: WARN when an overnight SECTIONS-phase source edit happens with no
 recent agent dispatch. WARN-only (exit 0 + stderr); invisible in interactive
 sessions. Fail-open. The BLOCK promotion + triviality classifier is a later plan.
