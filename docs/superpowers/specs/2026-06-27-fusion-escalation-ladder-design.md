@@ -131,6 +131,17 @@ fail-open-trivial, and matches every other host tool in the repo.
 
 ## 5. Panel / judge configuration (config.toml)
 
+> **IMPLEMENTATION NOTE (2026-06-27, supersedes the plugin design below).** Four
+> rounds of live testing (see `.fusion/README.md`) proved the `openrouter/fusion`
+> plugin is the WRONG tool: its auto web-search anchors the panel onto hallucinated
+> errata, it reports only a summed cost (no per-model metrics), and its judge is
+> opaque. Fusion is therefore built as a **DIY ensemble**: each panel model called
+> SOLO + in parallel, NO web-search, then an Opus discard-judge synthesizes (credits
+> unique-correct insights, throws out fabricated errata/microcode/MSRs), fed the
+> Opus (Tier 0) + Codex (Tier 1) analyses via `escalate(prior=...)`. Shipped panel:
+> GLM 5.2 + DeepSeek V4 Pro + Kimi K2.7-code + Grok-build (+ MiniMax-M3 + Qwen3-Max
+> on probation). The plugin wire-shape below is retained only as historical record.
+
 - `analysis_models` (panel): `z-ai/glm-5.2`, `moonshotai/kimi-k2.7-code`,
   `deepseek/deepseek-v4-pro` -- three strong, architecturally-diverse coders, none
   of them a ladder model (Claude/GPT). Diversity from what already failed is the

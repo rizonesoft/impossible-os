@@ -1,9 +1,12 @@
 # .fusion -- OpenRouter Fusion escalation (apex tier)
 
-The last rung of the Claude -> Codex -> Fusion escalation ladder. A panel of cheap,
-diverse models (GLM 5.2 + Kimi K2.7-code + DeepSeek V4 Pro) deliberates and a cheap
-judge (GLM 5.2) synthesizes, via OpenRouter's `openrouter/fusion`. The main Claude
-thread is the real review layer -- it reads + validates Fusion's output before
+The last rung of the Claude -> Codex -> Fusion escalation ladder, implemented as a
+**DIY ensemble** -- each panel model called SOLO + in parallel, NO web-search, with an
+Opus 4.8 discard-judge that credits unique-correct insights and throws out fabricated
+errata/microcode/MSRs. Current panel: GLM 5.2 + DeepSeek V4 Pro + Kimi K2.7-code +
+Grok-build + (probationary) MiniMax-M3 + Qwen3-Max. This is the config that beat lone
+Opus -- see the 4-round investigation + "Production configuration" below. The main
+Claude thread is the real review layer -- it reads + validates Fusion's output before
 acting, so we do not pay OpenRouter for a duplicate Opus judge.
 
 ## Off by default
@@ -265,12 +268,16 @@ diverse models gives the judge less noise to filter and a higher signal to fuse.
 - **DIY ensemble, not the `openrouter/fusion` plugin.** Solo parallel calls -> per-model
   metrics, no opacity, no auto web-search.
 - **No web-search** (it anchors models onto confabulated errata).
-- **Lean panel of ~4 strong, diverse models that are NOT already in the ladder.**
+- **A lean panel of strong, diverse models that are NOT already in the ladder.**
   Since Opus (Tier 0) and Codex/GPT-5.5 (Tier 1) have already run by the time Fusion
-  fires, drop them from the panel and instead **feed their already-produced analyses
-  into the judge** -- the ladder's outputs flow forward into the apex. A good panel:
-  Grok + Gemini + DeepSeek + GLM (GPT-5.5's value, e.g. the x2APIC idea, arrives via
-  Codex's Tier-1 output).
+  fires, they are NOT in the panel; instead their already-produced analyses are **fed
+  into the judge** via `escalate(prior=[...])` -- the ladder's outputs flow forward
+  into the apex (GPT-5.5's value, e.g. the x2APIC idea, arrives via Codex's Tier-1
+  output). Shipped panel: **GLM 5.2 + DeepSeek V4 Pro + Kimi K2.7-code + Grok-build**
+  (the credited contributors), plus **MiniMax-M3 + Qwen3-Max on probation** for
+  unseen-problem diversity. Probationary members are kept/pruned by the per-model
+  dataset metrics (credited-insight rate) over many real escalations -- not by any
+  single test.
 - **Strong judge (Opus)** with an explicit prompt to extract unique-correct insights
   and DISCARD fabricated errata/microcode/MSRs.
 - **The main Opus thread is the final review layer** (validates before applying).

@@ -12,6 +12,9 @@ panel = [
   "deepseek/deepseek-v4-pro",  # DeepSeek -- the SMT TLB-IPI-mask bug (R4), dirt cheap
   "moonshotai/kimi-k2.7-code", # Moonshot -- the poisoned-#DF mechanism (R3)
   "x-ai/grok-build-0.1",       # xAI -- the TSC-deadline-clamp-on-C-state-exit (R4)
+  # PROBATIONARY (diversity insurance; cheap + parallel; pruned by dataset evidence):
+  "minimax/minimax-m3",        # MiniMax -- sound IOMMU/DMA reasoning (R3, not credited but not a fabrication)
+  "qwen/qwen3-max",            # Alibaba -- no credited insight yet; kept for unseen-problem coverage
 ]
 # Judge: the strongest synthesizer, with the discard-prompt (in fusion_escalate.py)
 # that credits unique-correct insights and throws out fabricated errata/microcode/MSRs.

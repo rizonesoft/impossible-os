@@ -40,7 +40,8 @@ MAX_CONTEXT_BYTES = 60000  # bound what leaves the trust boundary (see README)
 # re-run here). NO web-search -- it anchors models onto hallucinated specifics.
 DEFAULT_CFG = {
     "panel": ["z-ai/glm-5.2", "deepseek/deepseek-v4-pro",
-              "moonshotai/kimi-k2.7-code", "x-ai/grok-build-0.1"],
+              "moonshotai/kimi-k2.7-code", "x-ai/grok-build-0.1",
+              "minimax/minimax-m3", "qwen/qwen3-max"],  # probationary diversity
     "judge": "anthropic/claude-opus-4.8",
     "max_calls": 3,            # hard per-run call cap (FUSION_MAX_CALLS)
     "min_credits": 2.0,        # skip if OpenRouter balance is below this (USD)
