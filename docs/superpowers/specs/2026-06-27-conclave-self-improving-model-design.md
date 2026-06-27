@@ -22,7 +22,8 @@ support it if "offline" ever becomes a goal.
 
 Every project plugs in to both **teach** Conclave (contribute outcome-labeled records)
 and **use** it (escalate hard problems). Conclave lives at `~/conclave`
-(`/home/derickpayne/conclave`) with its own GitHub repository.
+(`/home/derickpayne/conclave`), backed by its own private GitHub repository
+`https://github.com/rizonetech/Conclave`.
 
 ## Non-goals (v1)
 
@@ -280,17 +281,19 @@ Hard lessons carried in by design:
 The two big ones (model path, base model) are **dissolved** by the reasoning-harness
 design -- no base model, no GPU in the core.
 
-**Decided:** retrieval = hybrid BM25 + vector; embedders via OpenRouter (same key) =
-`qwen3-embedding-8b` (default) + `bge-m3` + `text-embedding-3-large`; RRF-ensemble across
-all three is opt-in; embedder set swappable (local backend a future option).
+**Decided:**
+
+- Retrieval = hybrid BM25 + vector; embedders via OpenRouter (same key) =
+  `qwen3-embedding-8b` (default) + `bge-m3` + `text-embedding-3-large`; RRF-ensemble across
+  all three is opt-in; embedder set swappable (local backend a future option).
+- Repo = **private**, already created at `https://github.com/rizonetech/Conclave`, cloned
+  to `~/conclave`.
+- Compile cadence default = **weekly OR 200 new labeled examples**, whichever first
+  (tunable in config after first real data).
 
 What remains:
 
-1. **Repo visibility:** public or private GitHub repo for `~/conclave`. *Recommendation:*
-   private (it contains project-derived knowledge).
-2. **Cadence defaults:** the `N days` / `M new examples` thresholds for `compile --check`.
-   *Recommendation:* weekly OR 200 new labeled examples, tunable after first real data.
-3. **(Deferred, not now)** the optional offline-model path -- left open until/unless
+1. **(Deferred, not now)** the optional offline-model path -- left open until/unless
    offline answering is actually wanted (Phase 2).
 
 ## Testing strategy
