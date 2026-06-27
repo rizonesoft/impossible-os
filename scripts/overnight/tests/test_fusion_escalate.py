@@ -72,6 +72,19 @@ def test_ok_writes_dataset_and_increments_budget():
         assert used["fusion_calls_used"] == 1
 
 
+def test_total_deadline_fails_open():
+    import time
+    with tempfile.TemporaryDirectory() as d:
+        root = _root(d)
+        fe._remaining_credits = lambda s: 100.0
+        fe._fusion_call = lambda *a: time.sleep(5)  # blocks past the deadline
+        cfg = dict(CFG)
+        cfg["timeout_s"] = 1
+        r = fe.escalate(enabled=True, secret="x", cfg=cfg, mode="stuck",
+                        brief="b", root=root)
+        assert r["status"] == "unavailable"  # SIGALRM -> TimeoutError -> fail-open
+
+
 def test_read_context_bounds():
     with tempfile.TemporaryDirectory() as d:
         p = pathlib.Path(d) / "big.txt"
@@ -100,6 +113,7 @@ if __name__ == "__main__":
     test_low_balance()
     test_balance_check_error_fails_closed()
     test_ok_writes_dataset_and_increments_budget()
+    test_total_deadline_fails_open()
     test_read_context_bounds()
     test_post_error_is_fail_open_no_charge()
     print("PASS: fusion_escalate")

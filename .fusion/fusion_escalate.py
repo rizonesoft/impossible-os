@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import urllib.request
 from pathlib import Path
@@ -26,7 +27,7 @@ DEFAULT_CFG = {
     "judge": "z-ai/glm-5.2",
     "max_calls": 3,
     "min_credits": 2.0,
-    "timeout_s": 240,
+    "timeout_s": 600,  # HARD total-duration cap (SIGALRM); hard questions are slow
 }
 
 _SYS_PROMPTS = {
@@ -70,6 +71,26 @@ def _fusion_call(secret, cfg, mode, brief):
     return content, cost
 
 
+def _call_with_deadline(seconds, fn):
+    """Hard TOTAL-duration cap. urllib's `timeout` is per-read, not total -- a
+    slowly-streaming Fusion response can otherwise run unbounded (observed 12+ min).
+    SIGALRM bounds the whole call; on platforms without it, no extra cap. Main
+    thread only (the CLI runs there)."""
+    if not hasattr(signal, "SIGALRM"):
+        return fn()
+
+    def _raise(*_):
+        raise TimeoutError("fusion call exceeded total deadline")
+
+    prev = signal.signal(signal.SIGALRM, _raise)
+    signal.alarm(int(seconds))
+    try:
+        return fn()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, prev)
+
+
 def _budget_used(path: Path) -> int:
     try:
         return int(json.loads(path.read_text()).get("fusion_calls_used", 0))
@@ -110,9 +131,11 @@ def escalate(*, enabled, secret, cfg, mode, brief, root) -> dict:
         remaining = None
     if remaining is None or remaining < cfg["min_credits"]:
         return {"status": "low_balance", "remaining": remaining}
-    # The paid call -- fail OPEN for the runner.
+    # The paid call -- fail OPEN for the runner, under a hard total-duration cap.
     try:
-        content, cost = _fusion_call(secret, cfg, mode, brief)
+        content, cost = _call_with_deadline(
+            cfg.get("timeout_s", 600),
+            lambda: _fusion_call(secret, cfg, mode, brief))
     except Exception:
         return {"status": "unavailable"}
     _budget_increment(budget_path)

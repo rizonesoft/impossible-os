@@ -68,7 +68,9 @@ integration.
 4. **Bounded input.** Each Fusion/Codex call sends a focused problem brief + a
    capped slice of relevant snippets, never the whole codebase -- bounds input cost.
 5. **Fail-open on EVERYTHING.** Missing key, network error, API 4xx/5xx, timeout
-   (bounded ~240 s), malformed response, budget exhausted -> the caller returns a
+   (bounded by a HARD SIGALRM total-duration cap, default 600 s -- urllib's own
+   `timeout` is per-read, not total; a 12+ min stall was observed before this cap
+   was added), malformed response, budget exhausted -> the caller returns a
    clear "unavailable" result and the runner CONTINUES its normal path (keep
    debugging with Claude; the high-risk review already ran its normal passes --
    Fusion is always supplemental). It NEVER blocks the pipeline and NEVER crashes.

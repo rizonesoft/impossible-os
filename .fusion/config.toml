@@ -16,4 +16,7 @@ judge = "z-ai/glm-5.2"
 # Spend caps.
 max_calls = 3        # hard per-run Fusion call cap (FUSION_MAX_CALLS)
 min_credits = 2.0    # skip if OpenRouter remaining balance is below this (USD)
-timeout_s = 240      # per-call wall-clock bound
+timeout_s = 600      # HARD total wall-clock cap per call (SIGALRM); fail-open past it.
+                     # Hard questions are slow (web-search + long panel); a 12+ min
+                     # stall was observed before this cap. urllib's own timeout is
+                     # per-read, not total, so this is the real bound.
