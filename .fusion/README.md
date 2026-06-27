@@ -1,8 +1,8 @@
 # .fusion -- OpenRouter Fusion escalation (apex tier)
 
 The last rung of the Claude -> Codex -> Fusion escalation ladder. A panel of cheap,
-diverse models (GLM 5.2 + Gemini 3.5 Flash + Kimi K2.7) deliberates and a judge
-(GLM 5.2) synthesizes, via OpenRouter's `openrouter/fusion`.
+diverse models (GLM 5.2 + Kimi K2.7 + DeepSeek V4 Pro) deliberates and a judge
+(Claude) synthesizes, via OpenRouter's `openrouter/fusion`.
 
 ## Off by default
 
@@ -30,8 +30,8 @@ real key) is gitignored.
 ## Data leaves the trust boundary
 
 Enabling Fusion **transmits the context you send** (failing code, diffs, logs) to
-OpenRouter, which fans it out to the three external panel providers (Zhipu/GLM,
-Google/Gemini, Moonshot/Kimi) plus the judge. Your kernel source leaves your
+OpenRouter, which fans it out to the external panel providers (Zhipu/GLM,
+Moonshot/Kimi, DeepSeek) plus the Claude judge. Your kernel source leaves your
 machine to those services. Only enable Fusion if that is acceptable for this code.
 The caller sends BOUNDED context (`--context-file` is capped at 60 KB), never the
 whole tree. In interactive auto-mode, a source-to-external crossing is correctly

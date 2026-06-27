@@ -28,8 +28,8 @@ Tier 0  Claude (main loop)   works the problem
 Tier 1  Codex assist         single strong second opinion (GPT-5.5) -- up to 2 rounds
           |  2 rounds exhausted, still stuck
           v
-Tier 2  Fusion assist        ensemble apex (GLM 5.2 + Gemini 3.5 Flash + Kimi K2.7,
-                             judge GLM 5.2) -- 1 call, last resort
+Tier 2  Fusion assist        ensemble apex (GLM 5.2 + Kimi K2.7 + DeepSeek V4 Pro,
+                             judge Claude) -- 1 call, last resort
 ```
 
 The numbers are per-tier budgets, all configurable: **3** = Claude stuck threshold,
@@ -86,7 +86,8 @@ integration.
    the main loop -- Claude is not fine-tunable.
 7. **Data leaves the trust boundary (operator decision).** Enabling Fusion
    transmits the sent context to OpenRouter and the three external panel providers
-   (Zhipu, Google, Moonshot) + the judge. The caller sends BOUNDED context only
+   (Zhipu, Moonshot, DeepSeek) + the Claude judge (Anthropic already sees the code
+   via Claude Code, so the judge step adds no new provider). The caller sends BOUNDED context only
    (`--context-file` capped at 60 KB; never whole files / the tree); the crossing is
    documented in `.fusion/README.md`. In interactive auto-mode a source-to-external
    crossing is correctly hard-blocked until approved; the headless run
@@ -125,17 +126,23 @@ fail-open-trivial, and matches every other host tool in the repo.
 
 ## 5. Panel / judge configuration (config.toml)
 
-- `analysis_models` (panel): `z-ai/glm-5.2`, `google/gemini-3.5-flash`,
-  `moonshotai/kimi-k2.7` (or `kimi-k2.7-code`).
-- `model` (Fusion's built-in judge): `z-ai/glm-5.2` -- strong coder, cheap, keeps
-  the whole deliberation off Opus.
+- `analysis_models` (panel): `z-ai/glm-5.2`, `moonshotai/kimi-k2.7`,
+  `deepseek/deepseek-v4-pro` -- three strong, architecturally-diverse coders, none of
+  them a ladder model (Claude/GPT). Cheapness is NOT the goal here; diversity from
+  what already failed is. Gemini 3.5 Flash was dropped (weakest of Google's line
+  AND priciest output of the candidates).
+- `model` (Fusion's built-in judge): `anthropic/claude-opus-4.8` -- the strongest
+  synthesizer; ~cents on a rare apex call; adds no NEW data-provider exposure
+  (Anthropic already sees the code via Claude Code). Single judge for both modes;
+  the dataset outcomes reveal if a stuck-mode blind spot ever warrants a non-ladder
+  judge.
 ### Verified OpenRouter Fusion wire shape (docs, 2026-06-27)
 
 - **Endpoint:** `POST https://openrouter.ai/api/v1/chat/completions`.
 - **Auth:** `Authorization: Bearer <contents of .fusion/secret>`.
 - **Body:** `{"model": "openrouter/fusion", "plugins": [{"id": "fusion",
-  "analysis_models": ["z-ai/glm-5.2", "google/gemini-3.5-flash",
-  "moonshotai/kimi-k2.7"], "model": "z-ai/glm-5.2"}], "messages": [...]}`.
+  "analysis_models": ["z-ai/glm-5.2", "moonshotai/kimi-k2.7",
+  "deepseek/deepseek-v4-pro"], "model": "anthropic/claude-opus-4.8"}], "messages": [...]}`.
   (Docs examples prefix model ids with `~`; the exact id-syntax variant is confirmed
   against a live id list at impl time -- a one-line config value, not a code change.)
 - **Web search/fetch** is auto-enabled for the panel; no extra config.
@@ -146,11 +153,13 @@ fail-open-trivial, and matches every other host tool in the repo.
 
 ## 6. Cost model (why this is affordable)
 
-OpenRouter prices (June 2026, $/M in/out): GLM 5.2 0.95/3.00, Gemini 3.5 Flash
-1.50/9.00, Kimi K2.6 0.66/3.41 -- all ~10-25x cheaper on output than Opus-class
-(~75/M). A Fusion call (~20K context x 3 panel + judge, ~2K out each) lands around
-$0.10-0.15. Reached only after Claude (3) and Codex (2) failed, capped at
-`FUSION_MAX_CALLS` per run, it is a rare spend that frequently *saves* money by
+OpenRouter prices (June 2026, $/M in/out): GLM 5.2 0.95/3.00, Kimi K2.7 ~0.66/3.41,
+DeepSeek V4 Pro 0.435/0.87, Claude Opus 4.8 judge 5/25. A Fusion call (~20K context x 3
+panel + 1 Claude judge, ~2K out each) lands around $0.10-0.20 -- the Claude judge
+upgrade adds only cents because the call is rare. Because Fusion is the apex tier
+(reached only after Claude (3) and Codex (2) failed, capped at `FUSION_MAX_CALLS`
+per run), per-call QUALITY matters more than per-call cheapness. It is a rare spend
+that frequently *saves* money by
 ending an Opus loop that would have cost more.
 
 ## 7. Triggers (auto-detect both)

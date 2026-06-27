@@ -1,10 +1,15 @@
 # Fusion escalation config -- the apex tier of the Claude -> Codex -> Fusion ladder.
 # See .fusion/README.md for how to enable. Off unless FUSION_ENABLED=1 + a secret.
 
-# Panel (analysis_models): three independent labs for diverse blind spots.
-panel = ["z-ai/glm-5.2", "google/gemini-3.5-flash", "moonshotai/kimi-k2.7"]
-# Judge (Fusion's built-in synthesizer model).
-judge = "z-ai/glm-5.2"
+# Panel (analysis_models): three strong, architecturally-diverse coders, none of
+# them a model already in the ladder (Claude/GPT) -- the point is fresh blind spots.
+# (verify exact OpenRouter ids against the live model list before first enable)
+panel = ["z-ai/glm-5.2", "moonshotai/kimi-k2.7", "deepseek/deepseek-v4-pro"]
+# Judge (Fusion's built-in synthesizer model): the strongest synthesizer. Claude
+# adds no NEW data-provider exposure (Anthropic already sees the code via Claude
+# Code) and costs ~cents on a rare apex call. dataset.jsonl outcomes will reveal if
+# a stuck-mode blind spot ever warrants a non-ladder judge.
+judge = "anthropic/claude-opus-4.8"
 
 # Spend caps.
 max_calls = 3        # hard per-run Fusion call cap (FUSION_MAX_CALLS)
