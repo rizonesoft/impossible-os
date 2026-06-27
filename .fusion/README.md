@@ -224,3 +224,55 @@ Done this way the ensemble surfaced complementary correct mechanisms a single Op
 missed, at ~$1 / ~7 min -- a real (if narrow) win. The earlier "just re-derives
 Opus" result was an artifact of web-search anchoring + an opaque judge, not a
 property of ensembles per se.
+
+## Round 4: lean 5-model panel + discard-judge -- the best result, and the cheapest
+
+Panel = GPT-5.5 + Grok-build + Gemini-3.5-flash + DeepSeek-V4-Pro + GLM 5.2 (the
+noisy exotics from Round 3 dropped), judge = Opus 4.8 with an explicit "discard
+fabricated errata/microcode/MSRs" instruction. All 5 produced. ~6 min wall-clock,
+**$0.92** total (cheaper than every prior run).
+
+This produced the strongest synthesis of the whole investigation. The Opus judge:
+
+- Built a **root-cause family table** (A: stale per-CPU data after C6 / B: TLB-shootdown
+  race / C: MMIO cacheability / D: microarch-electrical) and reasoned *between* them.
+- Used the **"sane CR2" clue to DEMOTE the MMIO family** ("an MMIO fault would show
+  CR2 ~0xFEE00000, not a sane kernel address") and promote the stale-data family --
+  a genuinely sharp deduction.
+- **Surgically discarded fabrications while keeping real facts**: it threw out
+  Gemini's invented microcode gate, its magic `80us->150us` latency numbers, and its
+  "SMU SRAM TSS state-restore race" / VRM-droop narrative as confabulated -- while
+  explicitly *keeping* the real ones (`IA32_TSC_DEADLINE=0x6E0`, ARAT
+  `CPUID.06H:EAX[2]`). That precision is exactly the point of a strong discard-judge.
+- **Credited each model's unique correct insight**: GLM's bare-`lfence` discriminator
+  test (does a zero-I/O barrier mask it? -> proves memory-ordering), GPT-5.5's x2APIC
+  switch (excises the whole MMIO family in one config change), DeepSeek's SMT-sibling
+  TLB-shootdown IPI-mask bug, Grok's TSC-deadline-clamp-on-C-state-exit.
+- Committed to **Family A** (missing memory-ordering/context-re-establishment barrier
+  on the Zen 4 C6 exit path -> timer ISR runs against a stale per-CPU view -> #PF ->
+  #DF -> triple fault), with a **prioritized fix**: Step 0 survive-the-fault (IST
+  stacks + survives-reset crash record), Step 1 the one-line `lfence` discriminator,
+  Step 2 the real barrier + ARAT/broadcast + deadline clamp, Step 3 TLB-IPI-mask fix,
+  Step 4 x2APIC + UC-mapping audit.
+
+**This beat lone Opus, the 10-model panel, AND every Fusion-plugin run -- at the
+lowest cost.** Gemini was the weak link (its specifics were fabricated and
+discarded); the value came from GLM/GPT-5.5/DeepSeek/Grok. A tight panel of strong
+diverse models gives the judge less noise to filter and a higher signal to fuse.
+
+## Production configuration (what the ladder should actually use)
+
+- **DIY ensemble, not the `openrouter/fusion` plugin.** Solo parallel calls -> per-model
+  metrics, no opacity, no auto web-search.
+- **No web-search** (it anchors models onto confabulated errata).
+- **Lean panel of ~4 strong, diverse models that are NOT already in the ladder.**
+  Since Opus (Tier 0) and Codex/GPT-5.5 (Tier 1) have already run by the time Fusion
+  fires, drop them from the panel and instead **feed their already-produced analyses
+  into the judge** -- the ladder's outputs flow forward into the apex. A good panel:
+  Grok + Gemini + DeepSeek + GLM (GPT-5.5's value, e.g. the x2APIC idea, arrives via
+  Codex's Tier-1 output).
+- **Strong judge (Opus)** with an explicit prompt to extract unique-correct insights
+  and DISCARD fabricated errata/microcode/MSRs.
+- **The main Opus thread is the final review layer** (validates before applying).
+- Cost ~$0.6-0.9, ~6 min, async-dispatched. Beats lone Opus on genuinely hard
+  problems; reached only as the apex tier after Opus + Codex have failed.
