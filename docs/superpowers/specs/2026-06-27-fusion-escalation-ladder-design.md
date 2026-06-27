@@ -66,8 +66,18 @@ integration.
    clear "unavailable" result and the runner CONTINUES its normal path (keep
    debugging with Claude; the high-risk review already ran its normal passes --
    Fusion is always supplemental). It NEVER blocks the pipeline and NEVER crashes.
-6. **Every call logged** to `.fusion/` (or `.claude/state/`) with tier, mode,
-   models, and a cost estimate.
+6. **Dataset-grade logging (for evals + future distillation).** Every escalation
+   -- both Codex assist and Fusion -- appends a JSONL record to
+   `.fusion/dataset.jsonl` (gitignored, local only, never committed):
+   `{ts, tier, mode, models, problem_brief (input), output (synthesis),
+   cost_estimate, outcome}`. `outcome` is mode-specific: for `stuck`, whether the
+   next build/test/smoke on that target passed after the assist was applied
+   (`resolved`/`unresolved`/`unknown`); for `review`, the triage disposition of the
+   findings (counts of Fix/Reject/Accept), or `unknown`. This seeds (a) evals to
+   measure whether runner changes actually help, (b) later distillation of the
+   cheap subagent/escalation tiers into smaller/local models, (c) later fine-tuning
+   of the cheap panel models on this codebase. It is explicitly NOT for fine-tuning
+   the main loop -- Claude is not fine-tunable.
 
 ## 4. Components
 
@@ -77,6 +87,7 @@ integration.
   ladder.py            Claude->Codex->Fusion controller: tier state + per-tier budgets
   config.toml          panel/judge model ids + budgets (3/2/1) + caps -- tracked
   secret               OPENROUTER_API_KEY -- GITIGNORED, never committed
+  dataset.jsonl        escalation in/out + resolution outcome -- GITIGNORED (eval/distill seed)
   README.md            opt-in setup (how to enable, where the key goes) -- tracked
 .claude/hooks/
   fusion_stuck_detect.py   PostToolUse on Bash: counts consecutive same-target
@@ -154,7 +165,11 @@ ending an Opus loop that would have cost more.
   "unavailable", exit 0, runner continues (covered by offline unit tests that mock
   the HTTP layer).
 - Budget cap enforced: the (N+1)th Fusion call in a run is skipped + logged.
-- `.fusion/secret` is gitignored and never appears in `git status`/a commit.
+- `.fusion/secret` AND `.fusion/dataset.jsonl` are gitignored and never appear in
+  `git status` / a commit.
+- Each escalation appends one `dataset.jsonl` record carrying the problem brief,
+  the synthesis output, and a resolution outcome (resolved/unresolved/triage
+  counts/unknown) -- verifiable on a mocked dry-run.
 - Stuck-detect increments on repeated same-target failure and resets on success;
   the threshold systemMessage fires exactly at 3.
 - One end-to-end dry-run (mocked Fusion response) shows Claude->Codex->Fusion tier
