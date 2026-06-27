@@ -85,8 +85,10 @@ uint64_t rdtsc_ns(void);
  * unstable") and the Win11 HAL silent demotion. Source + scale are published as
  * an immutable per-source descriptor selected by an atomic active-source index,
  * so the lock-free mono_ns() reader never sees a torn source/scale across a
- * runtime demotion; a mono-wide floor (engaged only after a demotion) plus the
- * re-anchor-to-current-value on switch guarantee mono_ns() never steps backward.
+ * runtime demotion; a mono-wide floor (ALWAYS applied to every mono_ns() read,
+ * and raised to the current value by a demotion before it publishes the new
+ * source) plus the re-anchor-to-current-value on switch guarantee mono_ns()
+ * never steps backward.
  * ------------------------------------------------------------------------- */
 
 /* Pure (no hardware): the absolute drift in parts-per-million between a
@@ -99,6 +101,13 @@ uint32_t mono_drift_ppm(uint64_t ref_ns, uint64_t src_ns);
  * 0.05 % over its watchdog window; we use the same order). */
 #define MONO_DRIFT_UNSTABLE_PPM  500u
 #define MONO_DRIFT_PPM_MAX       1000000u   /* saturate (100 %) -- avoids overflow */
+
+/* Max tolerated span between the two reference reads bracketing the active-source
+ * read in one watchdog sample. A larger span means a delay (IRQ/SMI/preemption)
+ * crept between the reads, contaminating the comparison -- that window is
+ * discarded, not struck. Mirrors Linux cs_watchdog_read's max-skew retry. */
+#define MONO_WATCHDOG_MAX_SKEW_NS  50000u   /* 50 us */
+
 
 /* Demote the active monotonic source to to_src at runtime (PASSIVE/thread
  * context only -- the watchdog kworker job). Re-anchors to_src to the current

@@ -707,72 +707,77 @@ void mono_clock_demote(uint32_t to_src, uint32_t drift_ppm)
 
 /* ---- Watchdog kworker job ------------------------------------------------- *
  * Runs at PASSIVE on the kworker pool (~0.5 s). Monitors ONLY an active TSC --
- * the one source that drifts under SMM/C-state/thermal effects; HPET and PMTMR
- * are the trustworthy fallbacks, and LAPIC is the last resort with nothing
- * better to demote to. Compares the TSC elapsed against an independent reference
- * (HPET native, or a directly-read PMTMR raw delta -- the PMTMR 64-bit epoch is
- * only ISR-advanced while PMTMR is active, so the watchdog tracks its own raw
- * delta over the sub-wrap window) and demotes past MONO_DRIFT_UNSTABLE_PPM for
- * two consecutive windows (one outlier from a delayed sample never demotes). */
-static uint32_t s_wd_ref;          /* reference source id (HPET or PMTMR) */
+ * the one source that drifts under SMM/C-state/thermal effects -- against an
+ * HPET reference, and demotes past MONO_DRIFT_UNSTABLE_PPM for two consecutive
+ * windows (one outlier from a delayed sample never demotes).
+ *
+ * Reference is HPET ONLY (deliberate scope). HPET is a native, continuous,
+ * non-wrapping, TSC-independent counter, so the drift ratio is correct over ANY
+ * window regardless of kworker scheduling delay, timer-resolution changes, or
+ * timer-mask quiesce. A PMTMR reference was rejected: its 24-bit counter wraps
+ * (~4.69 s) and bounding that wrap needs a clock that is simultaneously
+ * TSC-independent, rate-epoch-correct, AND continuous across a timer-mask -- no
+ * such clock exists here, so every window oracle had a false-demotion gap.
+ * PMTMR-reference monitoring is a tracked follow-up; a no-HPET system simply
+ * runs no automatic drift watchdog (matching Linux: no watchdog clocksource ->
+ * no watchdog), while boot qualification + the demotion machinery stay intact. */
 static uint64_t s_wd_last_act;     /* previous active-TSC ns sample */
-static uint64_t s_wd_last_ref;     /* previous reference sample (HPET absolute
-                                    * ns, or PMTMR cumulative ns) */
-static uint64_t s_wd_pm_accum;     /* PMTMR cumulative ns (ref == PMTMR) */
-static uint32_t s_wd_pm_lastraw;   /* last PMTMR raw counter (ref == PMTMR) */
+static uint64_t s_wd_last_ref;     /* previous HPET reference ns sample */
 static int      s_wd_primed;       /* 1 once baseline samples are captured */
 static uint32_t s_wd_strikes;      /* consecutive over-threshold windows */
 
-/* Read the reference clock as ns. HPET: its native counter. PMTMR: a directly
- * read raw counter accumulated over the sub-wrap watchdog window (the 64-bit
- * epoch is only ISR-advanced while PMTMR is active, so the watchdog banks its
- * own delta here). Caller serializes (single kworker thread). */
-static uint64_t mono_watchdog_ref_ns(void)
+/* One bracketed sample: ref_before -> active read -> ref_after, so the active
+ * value is pinned to a known HPET span. Returns 0 (discard) if a delay
+ * (IRQ/SMI/preemption) crept between the reads (span > MONO_WATCHDOG_MAX_SKEW_NS),
+ * which would otherwise fabricate drift; else writes *act_out + *ref_out
+ * (ref_after, within the bounded span of the active read). */
+static int mono_watchdog_sample(uint64_t *act_out, uint64_t *ref_out)
 {
-    if (s_wd_ref == MONO_SRC_HPET)
-        return hpet_ns();
-    {
-        uint32_t raw = acpi_pmtimer_read_value() & s_pmtmr_mask;
-        s_wd_pm_accum += mono_pmtmr_delta_ns(s_wd_pm_lastraw, raw, s_pmtmr_mask);
-        s_wd_pm_lastraw = raw;
-        return s_wd_pm_accum;
-    }
+    uint64_t ref_before = hpet_ns();
+    uint64_t act        = mono_raw_ns(MONO_SRC_TSC);
+    uint64_t ref_after  = hpet_ns();
+    uint64_t span = (ref_after > ref_before) ? (ref_after - ref_before) : 0;
+    if (span > MONO_WATCHDOG_MAX_SKEW_NS)
+        return 0;
+    *act_out = act;
+    *ref_out = ref_after;
+    return 1;
 }
 
 static void mono_watchdog_tick(void *ctx)
 {
-    uint32_t active, ppm;
+    uint32_t ppm;
     uint64_t act, ref, act_d, ref_d;
     (void)ctx;
 
-    active = __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
-    if (active != MONO_SRC_TSC || s_wd_ref == MONO_SRC_NONE) {
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) != MONO_SRC_TSC) {
         s_wd_primed = 0;   /* nothing to monitor (already demoted, etc.) */
         return;
     }
 
-    /* Prime: capture baselines on the first window, no comparison. For PMTMR set
-     * the raw baseline WITHOUT accumulating (a from-zero delta would be bogus). */
-    if (!s_wd_primed) {
-        s_wd_last_act = mono_raw_ns(MONO_SRC_TSC);
-        if (s_wd_ref == MONO_SRC_PMTMR) {
-            s_wd_pm_lastraw = acpi_pmtimer_read_value() & s_pmtmr_mask;
-            s_wd_pm_accum   = 0;
-            s_wd_last_ref   = 0;
-        } else {
-            s_wd_last_ref   = hpet_ns();
-        }
-        s_wd_primed  = 1;
+    /* Every sample brackets the active read between two HPET reads and discards a
+     * window whose bracket span shows a delay slipped in -- so a contaminated
+     * sample cannot fabricate drift. On discard, re-baseline (no strike). */
+    if (!mono_watchdog_sample(&act, &ref)) {
         s_wd_strikes = 0;
+        if (s_wd_primed) { s_wd_last_act = 0; s_wd_last_ref = 0; }
+        s_wd_primed = 0;   /* force a fresh clean prime next window */
         return;
     }
 
-    act = mono_raw_ns(MONO_SRC_TSC);
-    ref = mono_watchdog_ref_ns();
+    /* Prime: capture baselines on the first clean window, no comparison. */
+    if (!s_wd_primed) {
+        s_wd_last_act = act;
+        s_wd_last_ref = ref;
+        s_wd_primed   = 1;
+        s_wd_strikes  = 0;
+        return;
+    }
 
-    /* Both deltas span the SAME wall window (sampled back-to-back), so a delayed
-     * watchdog thread inflates neither relative to the other -- the drift ratio
-     * stays accurate. Clamp a (monotonic) non-advance to avoid underflow. */
+    /* Both endpoints are bracket-bounded (each within MONO_WATCHDOG_MAX_SKEW_NS),
+     * so the per-window asymmetry stays well under the drift threshold. HPET
+     * never wraps, so an arbitrarily long window is still measured correctly.
+     * Clamp a (monotonic) non-advance to avoid underflow. */
     act_d = (act > s_wd_last_act) ? (act - s_wd_last_act) : 0;
     ref_d = (ref > s_wd_last_ref) ? (ref - s_wd_last_ref) : 0;
     s_wd_last_act = act;
@@ -786,7 +791,7 @@ static void mono_watchdog_tick(void *ctx)
         /* Two consecutive over-threshold windows before demoting: one outlier
          * from a delayed sample or an SMM excursion never demotes on its own. */
         if (++s_wd_strikes >= 2) {
-            mono_clock_demote(s_wd_ref, ppm);
+            mono_clock_demote(MONO_SRC_HPET, ppm);
             s_wd_strikes = 0;
         }
     } else {
@@ -797,30 +802,21 @@ static void mono_watchdog_tick(void *ctx)
 void mono_clock_watchdog_init(void)
 {
     static int s_registered;
-    uint32_t active;
 
     if (s_registered)
         return;
 
-    active = __atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE);
-    /* Only an active TSC is worth monitoring, and only with an independent
-     * reference to compare against (HPET preferred; else a directly-read PMTMR).
-     * No reference -> nothing the watchdog can do, so it does not register. */
-    if (active != MONO_SRC_TSC)
+    /* Only an active TSC is worth monitoring, and only against a QUALIFIED HPET
+     * reference (continuous + wrap-free + TSC-independent). No HPET -> no
+     * automatic watchdog (boot qualification + demotion machinery stay intact). */
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) != MONO_SRC_TSC)
         return;
-    /* Reference must be a QUALIFIED independent source (not merely present), so a
-     * later demotion targets only a source the boot gate trusted. */
-    if (mono_source_qualify(MONO_SRC_HPET))
-        s_wd_ref = MONO_SRC_HPET;
-    else if (mono_source_qualify(MONO_SRC_PMTMR))
-        s_wd_ref = MONO_SRC_PMTMR;
-    else
+    if (!mono_source_qualify(MONO_SRC_HPET))
         return;
 
     if (kworker_register(mono_watchdog_tick, (void *)0, 500) >= 0) {
         s_registered = 1;
         klog(LOG_INFO, "time",
-             "clocksource watchdog: monitoring TSC against %s reference",
-             mono_src_name(s_wd_ref));
+             "clocksource watchdog: monitoring TSC against HPET reference");
     }
 }
