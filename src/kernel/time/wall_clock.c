@@ -64,16 +64,23 @@ static spinlock_t  s_ntp_lock = SPINLOCK_INIT;
  * can be NEGATIVE (slow a fast clock). The floor clamps a wall read UP so a
  * negative correction is realized as a brief slow, not a backward step (the mono
  * floor guards mono_ns only; wall time = base + elapsed needs its own floor).
- * GENERATION-aware so a legitimate -- possibly backward -- manual KeSetSystemTime
- * is not clamped: the setter bumps s_wall_floor_gen (under s_ntp_lock -> s_lock)
- * and republishes the floor to the new time; a reader's CAS writes the floor ONLY
- * when its snapshot generation matches the current generation, so a stale
- * (pre-set) reader returns its value WITHOUT raising the new floor. The coarse
- * cache is floored at PUBLISH time (ISR + setter) so KeQuerySystemTimeCoarse
- * stays a single load and never feeds a stale value back into the floor.
- * Cacheline-isolated (hit by every wall read). */
-static uint64_t s_wall_floor __attribute__((aligned(64)));
-static uint32_t s_wall_floor_gen;   /* bumped on every manual KeSetSystemTime */
+ * GENERATION-aware so a legitimate -- possibly backward -- wall MOVE (a manual
+ * KeSetSystemTime or a large NTP step) is not clamped: the writer bumps s_wf.gen
+ * (under s_ntp_lock -> s_lock) and resets the floor to the new time. The floor is
+ * WRITER-ONLY -- raised by the NTP applier + reset by the setter/step, both
+ * serialized under s_ntp_lock; READERS only read-and-clamp (gen-gated), never
+ * write it, so a stale pre-set reader can never raise it. The coarse cache is
+ * floored at PUBLISH time (ISR + setter) so KeQuerySystemTimeCoarse stays a
+ * single load and never feeds a stale value back into the floor. */
+/* Floor + generation packed in one cacheline-SIZED (not just aligned-start)
+ * struct: the trailing pad reserves the rest of the 64-byte line so the
+ * tick-written coarse-cache fields below do NOT share it and false-share the
+ * floor, which the precise hot path (KeQuerySystemTime) reads every call. */
+static struct {
+    uint64_t floor;   /* the wall floor (hot: read by wall_floor_read) */
+    uint32_t gen;     /* generation; bumped on every wall MOVE (manual set or step) */
+    uint8_t  _pad[64 - sizeof(uint64_t) - sizeof(uint32_t)];
+} __attribute__((aligned(64))) s_wf;
 
 /* Pure: the monotonic-clamp result for a wall read of `cand` against `floor`.
  * Clamps UP (returns max) when the read's generation matches the current one;
@@ -90,7 +97,7 @@ uint64_t wall_floor_clamp(uint64_t cand, uint64_t floor,
 
 /* Read-and-clamp the live wall floor (READ-ONLY -- readers never write it, so a
  * stale reader can never poison the floor across a manual set). Clamps `cand` up
- * to s_wall_floor when the snapshot generation still matches; on a generation
+ * to s_wf.floor when the snapshot generation still matches; on a generation
  * mismatch (a manual set raced this read) returns `cand` unclamped so a pre-set
  * reader is neither dragged to the new floor (forward set) nor blocked by the old
  * high-water (backward set). The floor is WRITER-ONLY: raised by the NTP applier
@@ -99,9 +106,9 @@ uint64_t wall_floor_clamp(uint64_t cand, uint64_t floor,
 static FILETIME wall_floor_read(FILETIME cand, uint32_t read_gen)
 {
     uint64_t floor;
-    if (read_gen != __atomic_load_n(&s_wall_floor_gen, __ATOMIC_ACQUIRE))
+    if (read_gen != __atomic_load_n(&s_wf.gen, __ATOMIC_ACQUIRE))
         return cand;
-    floor = __atomic_load_n(&s_wall_floor, __ATOMIC_ACQUIRE);
+    floor = __atomic_load_n(&s_wf.floor, __ATOMIC_ACQUIRE);
     return ((uint64_t)cand > floor) ? cand : (FILETIME)floor;
 }
 
@@ -210,7 +217,7 @@ FILETIME KeQuerySystemTime(void)
         /* Snapshot the wall-floor generation WITH the anchor (both written under
          * the s_lock writer by a manual set) so wall_floor_read can tell whether
          * a set raced this read. */
-        gen = s_wall_floor_gen;
+        gen = s_wf.gen;
     } while (seqlock_read_retry(&s_lock, seq));
 
     /* Current time = base + elapsed monotonic delta in FILETIME units. Clamp a
@@ -287,8 +294,8 @@ void KeSetSystemTimeEx(FILETIME new_time, FILETIME *previous_out)
      * pre-set reader's floor snapshot stale, so a reader that captured the old
      * high anchor cannot raise the new floor past a (possibly backward) manual
      * set; the reset lets the new time stand. */
-    s_wall_floor_gen++;
-    __atomic_store_n(&s_wall_floor, (uint64_t)new_time, __ATOMIC_RELAXED);
+    s_wf.gen++;
+    __atomic_store_n(&s_wf.floor, (uint64_t)new_time, __ATOMIC_RELAXED);
     seqlock_write_unlock(&s_lock);
     /* Publish readiness/sourced AFTER the anchor (seqlock unlock) so an
      * acquire-load observer of s_ready also sees the new anchor. */
@@ -472,7 +479,7 @@ static void wall_clock_snapshot_impl(FILETIME *system_out, uint64_t *interrupt_o
             seq = seqlock_read_begin(&s_lock);
             base = s_base_time;
             base_mono = s_base_mono_ns;
-            gen = s_wall_floor_gen;
+            gen = s_wf.gen;
         } while (seqlock_read_retry(&s_lock, seq));
     }
 
@@ -640,6 +647,14 @@ static int wall_clock_step_relative(int64_t off_ns)
             if (ntp_step_target_valid(now, off_ns, &target)) {
                 s_base_time = (FILETIME)target;
                 s_base_mono_ns = mono;   /* re-anchor so the freq nudge stays consistent */
+                /* A step is an intentional wall MOVE (the target may be BELOW the
+                 * applier-raised floor for a negative offset). Bump the generation
+                 * + reset the floor to the target, exactly like KeSetSystemTimeEx,
+                 * so the floor cannot clamp the stepped wall back up (freezing it).
+                 * Under the s_lock writer, so a reader's gen snapshot stays
+                 * coherent with the new anchor. */
+                s_wf.gen++;
+                __atomic_store_n(&s_wf.floor, (uint64_t)target, __ATOMIC_RELAXED);
                 ok = 1;
             }
         }
@@ -792,8 +807,8 @@ static void ke_ntp_discipline_tick(void *ctx)
          * correction never lets a reader step back. WRITER-ONLY store: the applier
          * (here) and KeSetSystemTimeEx are mutually exclusive under s_ntp_lock, so
          * no CAS is needed; readers only read-and-clamp via wall_floor_read. */
-        if (cur_wall > __atomic_load_n(&s_wall_floor, __ATOMIC_RELAXED))
-            __atomic_store_n(&s_wall_floor, cur_wall, __ATOMIC_RELEASE);
+        if (cur_wall > __atomic_load_n(&s_wf.floor, __ATOMIC_RELAXED))
+            __atomic_store_n(&s_wf.floor, cur_wall, __ATOMIC_RELEASE);
         /* Apply the correction as a re-anchor. adj is tiny (< 0.05 % of elapsed);
          * guard plausibility so a corrupt value can never become the anchor. */
         base = (uint64_t)((int64_t)cur_wall + adj / 100);

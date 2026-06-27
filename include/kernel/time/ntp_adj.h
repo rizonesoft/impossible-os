@@ -31,23 +31,25 @@ struct ntp_status {
     int64_t  offset_ns;   /* slew remaining (un-consumed phase correction) */
     int32_t  freq_ppb;    /* current frequency correction in effect */
     FILETIME last_sync;   /* wall time of the most recent ke_ntp_adjtime() */
-    const char *source;   /* discipline state: "ntp" once a STEP (>1 s) has
-                           * moved the wall clock; "ntp-pending" when a slew/freq
-                           * (<=1 s) is accepted but its continuous application is
-                           * still deferred to the clocksource-quality watchdog
-                           * (so it must NOT be read as a completed sync); "none"
-                           * before any correction. */
+    const char *source;   /* discipline state: "ntp" = the clock is disciplined --
+                           * a STEP moved it, OR the continuous applier is actively
+                           * applying a stored slew/freq (so {freq_ppb != 0,
+                           * source="ntp"} is the NORMAL ongoing-discipline state);
+                           * "ntp-pending" = a slew/freq is accepted but the applier
+                           * has NOT yet applied it (must not be read as synced);
+                           * "none" = no correction / a manual set cleared it. */
 };
 
 /* Apply an NTP phase/frequency correction. THREAD (PASSIVE) context only.
  * offset > 1 s steps the wall clock (KeSetSystemTime) NOW and clears any pending
- * slew; offset <= 1 s stores a gradual slew. freq_ppb is always STORED, its
- * continuous per-tick application deferred to the clocksource-quality watchdog.
- * Reported status (see ntp_source_for_correction): "ntp" ONLY for a fully
- * applied correction -- a pure step (or a zero no-op) with zero freq; ANY stored
- * slew OR nonzero freq, INCLUDING a mixed step+freq, is "ntp-pending" (accepted
- * but not yet applied to KeQuerySystemTime, so a reader must not treat it as a
- * completed sync). The monotonic clock is never touched. */
+ * slew; offset <= 1 s stores a gradual slew. freq_ppb is always STORED, then
+ * applied continuously per-tick by the wall-time discipline applier.
+ * STORE-TIME status (this is what ntp_source_for_correction returns at accept):
+ * "ntp" for a pure step (or a zero no-op) with zero freq; ANY stored slew OR
+ * nonzero freq, INCLUDING a mixed step+freq, is "ntp-pending" (accepted but not
+ * yet applied). The per-tick applier then flips "ntp-pending" -> "ntp" once it
+ * starts applying the correction (so an in-effect freq with source="ntp" is the
+ * normal disciplined state). The monotonic clock is never touched. */
 void ke_ntp_adjtime(const ntp_adj_t *adj);
 
 /* Fill *out with the current discipline state. NULL out is ignored. The read is
@@ -89,7 +91,7 @@ int ntp_step_target_valid(uint64_t now_ft, int64_t off_ns, int64_t *target);
  * tick (sign-aware, capped at NTP_SLEW_MAX_PPM). Side-effect-free -- unit-tested
  * directly. Positive freq_ppb (wall fast) yields a negative freq contribution.
  * This is the discipline math; the continuous per-tick application (behind the
- * wall-time monotonic floor) is built by the clocksource-quality watchdog. */
+ * wall-time floor) is driven by the NTP wall-time discipline applier. */
 int64_t ntp_tick_adjust_ns(uint64_t elapsed_ns, int32_t freq_ppb,
                            int64_t slew_remaining, int64_t *slew_consumed);
 
@@ -97,14 +99,13 @@ int64_t ntp_tick_adjust_ns(uint64_t elapsed_ns, int32_t freq_ppb,
  * otherwise stored as a gradual slew. */
 #define NTP_STEP_THRESHOLD_NS  1000000000LL
 
-/* Pure: the honest discipline-state label for an accepted correction. Reports
- * "ntp" ONLY when the correction is fully in effect: a pure step (|off| >
- * NTP_STEP_THRESHOLD_NS that moved the wall clock NOW) with no residual stored
- * slew or frequency, or a zero no-op against an already-sourced clock. ANY
- * unapplied stored correction -- a sub-second slew OR a nonzero freq_ppb (whose
- * continuous per-tick application is deferred to the clocksource-quality
- * watchdog) -- reports "ntp-pending" so a status reader never mistakes a
- * stored-but-unapplied correction (incl. a mixed step+freq request) for a
- * completed sync. Side-effect-free, unit-tested. freq_ppb is the CLAMPED value
- * that will be stored (matches ntp_status). */
+/* Pure: the STORE-TIME discipline-state label for a just-accepted correction (at
+ * the moment ke_ntp_adjtime stores it, BEFORE the per-tick applier has run).
+ * Reports "ntp" only when the correction is already in effect at store time -- a
+ * pure step (|off| > NTP_STEP_THRESHOLD_NS that moved the wall clock NOW) with no
+ * residual stored slew/freq, or a zero no-op. ANY stored-but-not-yet-applied
+ * correction -- a sub-second slew OR a nonzero freq_ppb -- reports "ntp-pending"
+ * so a reader does not treat it as synced before the applier consumes it; the
+ * applier flips it to "ntp" once applying. Side-effect-free, unit-tested.
+ * freq_ppb is the CLAMPED value that will be stored (matches ntp_status). */
 const char *ntp_source_for_correction(int64_t off_ns, int32_t freq_ppb);

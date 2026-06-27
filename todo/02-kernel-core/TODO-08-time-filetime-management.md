@@ -577,6 +577,8 @@ Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to t
 > - Downstream: closes the §17-deferred continuous NTP application + per-tick lock-hold audit; the floor is gen-reset by `KeSetSystemTimeEx` so a backward manual set is not clamped. Codex design + adversarial adoptions in the commit.
 > - Canonical: `src/kernel/time/wall_clock.c`.
 > - Scope boundary: §19 owns the applier + wall floor; the NTP protocol client + network I/O are a network-stack TODO; the mono floor is §18.
+> **Verified:** 2026-06-27 | commit `1b3085bd` | 4/4 items | build OK | tests 296/296 PASS | smoke PASS (TCG 2.85s)
+> **Quality reviewed:** 2026-06-27 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 3H+2M fixed | scope: kernel-code-quality
 
 ---
 
