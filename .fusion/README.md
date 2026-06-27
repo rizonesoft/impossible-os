@@ -95,3 +95,33 @@ The panel members committed to *different* specific culprits (e.g. one to erratu
 #1485, the synthesis to front-end corruption) and the judge reconciled them --
 divergence-then-synthesis is exactly why a diverse panel beats asking one model
 again.
+
+## Head-to-head: Fusion vs Opus 4.8 alone (same brutal heisenbug)
+
+The identical 8-condition brief was put to a clean single-shot Opus 4.8 (no
+conversation context, no web search, same system prompt) as an honest baseline.
+
+| | Fusion (3-panel + GLM judge) | Opus 4.8 alone |
+| --- | --- | --- |
+| Wall-clock | 16 min | **1.4 min** |
+| Cost | $1.16 | **$0.13** |
+| Output | 89 KB | 13 KB |
+| Committed root cause | Zen 4 front-end micro-op-cache corruption during asymmetric CC6 entry (HARDWARE / errata; cited specific AMD erratum numbers -- UNVERIFIED, possibly hallucinated) | TSC-deadline reprogrammed to a time in the PAST after long C6 residency -> self-retriggering timer-interrupt storm -> the timer ISR re-enters and overflows its stack -> #PF -> #DF -> triple fault (SOFTWARE; given with buggy + fixed C code) |
+| Proposed fix | disable C6 / microcode (hardware-side) | clamp the deadline to a minimum future offset + coalesce missed ticks + IST-isolate the timer-ISR stack (kernel-side, directly testable) |
+
+**Honest verdict: Opus alone won this round.** ~11x faster, ~9x cheaper, ~7x
+leaner -- and arguably the better engineering answer. It followed correct debugging
+methodology (it *explicitly* said "exhaust the software bug before blaming silicon
+errata"), produced a concrete, testable kernel-side fix with actual code, and its
+read of the sane-RIP condition ("the ISR isn't corrupt -- it is being RE-ENTERED
+faster than it returns") is cleaner than Fusion's nested-exception speculation.
+Fusion was more elaborate and cited specific errata numbers, which *look*
+authoritative but are unverified and may be confabulated; its web-search appears to
+have ANCHORED the panel onto a hardware/errata explanation, pulling it away from the
+simpler software bug Opus found.
+
+**Design takeaway:** this is exactly why Fusion is the APEX tier -- a last resort
+after Opus + Codex have demonstrably failed -- and NOT an upgrade over Opus. A
+single strong model is faster, cheaper, and (on a problem it can actually reason
+about) often better. Escalate to the expensive diverse panel only when the cheaper
+tiers have struck out. Elaborateness is not correctness.
