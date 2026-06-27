@@ -4,7 +4,7 @@ a DETACHED job, defer the section, collect the durable result on a later pass.
 
 CLI:
   dispatch --mode {stuck,review} --target T [--brief-file F] [--prior SRC=FILE]...
-  poll <id> | list | outcome <id> <verdict> | _worker <id>
+  poll <id> | list | outcome <id> <verdict> | stats | _worker <id>
 Off-by-default; fail-open; the detached worker survives the main loop. Stdlib only.
 """
 from __future__ import annotations
@@ -58,10 +58,13 @@ def run_worker(root: Path, jid: str) -> None:
         fe = _load_caller(root)
         res = fe.escalate(enabled=True, secret=fe._read_secret(root),
                           cfg=fe._load_cfg(root), mode=req.get("mode", "stuck"),
-                          brief=req.get("brief", ""), root=root, prior=req.get("prior"))
+                          brief=req.get("brief", ""), root=root, prior=req.get("prior"),
+                          target=req.get("target"), run_id=jid)
         if res.get("status") in ("ok", "panel_only"):
             (jobs / f"{jid}.result.txt").write_text(res.get("output") or "", encoding="utf-8")
             meta.update(status="done", cost=res.get("cost"), per_model=res.get("panel"),
+                        cumulative_cost=res.get("cumulative_cost"), tokens=res.get("tokens"),
+                        wall_s=res.get("wall_s"),
                         finished_at=time.strftime("%Y-%m-%dT%H:%M:%S"))
         else:
             meta.update(status="failed", error=res.get("status"),
@@ -124,6 +127,24 @@ def outcome(root: Path, jid: str, verdict: str) -> None:
                                 "ts": time.strftime("%Y-%m-%dT%H:%M:%S")}) + "\n")
     except Exception:
         pass
+    # Back-fill the quality verdict into the per-run metrics + cumulative totals.
+    try:
+        _load_caller(root).record_outcome(root, jid, verdict)
+    except Exception:
+        pass
+
+
+def stats(root: Path) -> str:
+    try:
+        t = json.loads((root / ".fusion" / "totals.json").read_text(encoding="utf-8"))
+    except Exception:
+        return "no fusion runs recorded yet"
+    by_mode = " ".join(f"{m}:{d.get('runs', 0)}/${d.get('cost', 0):.2f}"
+                       for m, d in (t.get("by_mode") or {}).items())
+    return (f"runs={t.get('runs', 0)} total_cost=${t.get('total_cost', 0):.4f} "
+            f"(panel ${t.get('panel_cost', 0):.4f} + judge ${t.get('judge_cost', 0):.4f}) "
+            f"tokens={t.get('total_tokens', 0)} resolved={t.get('resolved', 0)} "
+            f"unresolved={t.get('unresolved', 0)} | {by_mode}".rstrip())
 
 
 def main(argv) -> int:
@@ -157,6 +178,9 @@ def main(argv) -> int:
         return 0
     if cmd == "outcome":
         outcome(root, argv[1], argv[2])
+        return 0
+    if cmd == "stats":
+        print(stats(root))
         return 0
     print(f"unknown command: {cmd}", file=sys.stderr)
     return 1

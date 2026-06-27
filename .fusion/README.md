@@ -47,10 +47,25 @@ is gated instead by `FUSION_ENABLED` + the spend caps.
 ## Files
 
 - `fusion_escalate.py` -- the caller (`--mode stuck|review`, brief on stdin).
+- `ladder.py` -- async job queue (`dispatch`/`poll`/`list`/`outcome`/`stats`).
 - `config.toml` -- panel / judge / caps.
 - `secret` -- your OpenRouter key (GITIGNORED, never commit).
 - `dataset.jsonl` -- collected escalation in/out + outcome for evals/distillation
   (GITIGNORED, local only).
+- `metrics.jsonl` -- one rich line PER RUN (GITIGNORED). Performance, cost, tokens,
+  and an intelligence signal -- lean, no brief/output body. Per line:
+  `latency_s {panel_max, panel_sum, judge, wall}`, `cost_usd {panel, judge,
+  run_total, cumulative_total}`, `tokens {prompt, completion, total}`,
+  `intelligence {panel_ok, panel_total, judged, judge_chars, outcome}`, plus
+  `per_model` (cost/sec/chars/tokens each). `intelligence.outcome` starts
+  `unknown` and is back-filled to `resolved`/`unresolved` when the validating
+  main thread runs `ladder.py outcome <id> <verdict>` -- that verdict is the
+  ground-truth quality measure (the rest is measured at run time).
+- `totals.json` -- cumulative ledger (GITIGNORED): `runs`, `total_cost`
+  (= `panel_cost` + `judge_cost`), `total_tokens`, `resolved`/`unresolved`,
+  and `by_mode`. `python3 ladder.py stats` prints it as a one-liner. This is
+  the running answer to "what has Fusion cost me in total, and how often did
+  it actually resolve the problem."
 
 ## Observed cost / latency (real smoke tests, 2026-06-27)
 

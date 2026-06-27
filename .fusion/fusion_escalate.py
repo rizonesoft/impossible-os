@@ -82,8 +82,11 @@ def _http_chat(secret, model, messages, timeout):
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     content = data["choices"][0]["message"]["content"]
-    cost = (data.get("usage") or {}).get("cost") or 0
-    return content, float(cost), time.time() - t0
+    usage = data.get("usage") or {}
+    cost = usage.get("cost") or 0
+    toks = {"prompt": int(usage.get("prompt_tokens") or 0),
+            "completion": int(usage.get("completion_tokens") or 0)}
+    return content, float(cost), time.time() - t0, toks
 
 
 def _remaining_credits(secret) -> float:
@@ -99,15 +102,17 @@ def _http_chat_get(url, secret, timeout=10):
 
 def _probe(secret, model, sys_prompt, brief, timeout):
     try:
-        content, cost, sec = _http_chat(
+        content, cost, sec, toks = _http_chat(
             secret, model,
             [{"role": "system", "content": sys_prompt}, {"role": "user", "content": brief}],
             timeout)
         return {"model": model, "status": "ok", "content": content,
-                "cost": cost, "sec": round(sec, 1), "chars": len(content)}
+                "cost": cost, "sec": round(sec, 1), "chars": len(content),
+                "prompt_tokens": toks["prompt"], "completion_tokens": toks["completion"]}
     except Exception as e:
         return {"model": model, "status": "error", "content": "", "cost": 0,
-                "sec": 0, "chars": 0, "err": str(e)[:160]}
+                "sec": 0, "chars": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                "err": str(e)[:160]}
 
 
 def _run_panel(secret, panel, sys_prompt, brief, timeout, workers):
@@ -153,7 +158,93 @@ def _dataset_append(root: Path, record: dict) -> None:
         pass
 
 
-def escalate(*, enabled, secret, cfg, mode, brief, root, prior=None) -> dict:
+def _metrics_append(root: Path, record: dict) -> None:
+    """One rich per-run metrics line (performance / cost / tokens / intelligence).
+    Lean: no full brief/output. Fail-open."""
+    try:
+        p = root / ".fusion" / "metrics.jsonl"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
+def _read_totals(root: Path) -> dict:
+    base = {"runs": 0, "total_cost": 0.0, "panel_cost": 0.0, "judge_cost": 0.0,
+            "total_tokens": 0, "resolved": 0, "unresolved": 0, "by_mode": {}}
+    try:
+        base.update(json.loads((root / ".fusion" / "totals.json").read_text()))
+    except Exception:
+        pass
+    return base
+
+
+def _write_totals(root: Path, totals: dict) -> None:
+    try:
+        p = root / ".fusion" / "totals.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(totals, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _totals_add_run(root: Path, *, mode, run_cost, panel_cost, judge_cost, tokens) -> float:
+    """Roll one run into the cumulative ledger. Returns the new cumulative total_cost.
+    Fail-open: on any error returns this run's cost as the best-effort cumulative."""
+    try:
+        t = _read_totals(root)
+        t["runs"] += 1
+        t["total_cost"] = round(t["total_cost"] + run_cost, 6)
+        t["panel_cost"] = round(t["panel_cost"] + panel_cost, 6)
+        t["judge_cost"] = round(t["judge_cost"] + judge_cost, 6)
+        t["total_tokens"] += int(tokens)
+        bm = t["by_mode"].setdefault(mode, {"runs": 0, "cost": 0.0})
+        bm["runs"] += 1
+        bm["cost"] = round(bm["cost"] + run_cost, 6)
+        t["last_run"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        t["last_cost"] = round(run_cost, 6)
+        _write_totals(root, t)
+        return t["total_cost"]
+    except Exception:
+        return round(run_cost, 6)
+
+
+def record_outcome(root: Path, run_id: str, verdict: str) -> None:
+    """Back-fill a run's quality verdict: bump totals resolved/unresolved and stamp
+    intelligence.outcome on the matching metrics line (by run_id). Fail-open."""
+    try:
+        t = _read_totals(root)
+        if verdict == "resolved":
+            t["resolved"] = int(t.get("resolved", 0)) + 1
+        else:
+            t["unresolved"] = int(t.get("unresolved", 0)) + 1
+        _write_totals(root, t)
+    except Exception:
+        pass
+    if not run_id:
+        return
+    try:
+        p = root / ".fusion" / "metrics.jsonl"
+        lines = p.read_text(encoding="utf-8").splitlines()
+        changed = False
+        for i, ln in enumerate(lines):
+            try:
+                rec = json.loads(ln)
+            except Exception:
+                continue
+            if rec.get("run_id") == run_id:
+                rec.setdefault("intelligence", {})["outcome"] = verdict
+                lines[i] = json.dumps(rec)
+                changed = True
+        if changed:
+            p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def escalate(*, enabled, secret, cfg, mode, brief, root, prior=None,
+             target=None, run_id=None) -> dict:
     if not enabled:
         return {"status": "disabled"}
     if not secret:
@@ -170,36 +261,66 @@ def escalate(*, enabled, secret, cfg, mode, brief, root, prior=None) -> dict:
         return {"status": "low_balance", "remaining": remaining}
 
     sys_prompt = _SYS_PROMPTS.get(mode, _SYS_PROMPTS["stuck"])
+    wall0 = time.time()
     try:
         panel = _run_panel(secret, cfg["panel"], sys_prompt, brief,
                            cfg.get("model_timeout_s", 480), cfg.get("workers", 0))
     except Exception:
         return {"status": "unavailable"}
     ok = [r for r in panel if r["status"] == "ok" and r["content"].strip()]
-    metrics = [{k: r.get(k) for k in ("model", "status", "cost", "sec", "chars")} for r in panel]
+    metrics = [{k: r.get(k) for k in ("model", "status", "cost", "sec", "chars",
+                                      "prompt_tokens", "completion_tokens")} for r in panel]
     if not ok:
         return {"status": "unavailable", "panel": metrics}
 
     judged = None
     jcost = 0
+    jsec = 0.0
+    jtoks = {"prompt": 0, "completion": 0}
     try:
-        judged, jcost, _ = _judge(secret, cfg["judge"], brief, panel, prior,
-                                  cfg.get("judge_timeout_s", 480))
+        judged, jcost, jsec, jtoks = _judge(secret, cfg["judge"], brief, panel, prior,
+                                            cfg.get("judge_timeout_s", 480))
     except Exception:
         judged = None
 
     _budget_increment(budget_path)  # paid panel calls happened
-    total = sum(r["cost"] for r in panel) + (jcost or 0)
+    panel_cost = sum(r["cost"] for r in panel)
+    judge_cost = jcost or 0
+    total = panel_cost + judge_cost
+    wall = time.time() - wall0
+
+    secs = [r.get("sec", 0) or 0 for r in panel]
+    p_tok = sum(int(r.get("prompt_tokens") or 0) for r in panel) + int(jtoks.get("prompt") or 0)
+    c_tok = sum(int(r.get("completion_tokens") or 0) for r in panel) + int(jtoks.get("completion") or 0)
+    cumulative = _totals_add_run(root, mode=mode, run_cost=total, panel_cost=panel_cost,
+                                 judge_cost=judge_cost, tokens=p_tok + c_tok)
+    intelligence = {"panel_ok": len(ok), "panel_total": len(panel),
+                    "judged": judged is not None,
+                    "judge_chars": len(judged) if judged else 0, "outcome": "unknown"}
+    _metrics_append(root, {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "run_id": run_id,
+        "mode": mode, "target": target or mode, "judge": cfg["judge"],
+        "panel_models": cfg["panel"],
+        "latency_s": {"panel_max": round(max(secs) if secs else 0, 1),
+                      "panel_sum": round(sum(secs), 1), "judge": round(jsec, 1),
+                      "wall": round(wall, 1)},
+        "cost_usd": {"panel": round(panel_cost, 4), "judge": round(judge_cost, 4),
+                     "run_total": round(total, 4), "cumulative_total": round(cumulative, 4)},
+        "tokens": {"prompt": p_tok, "completion": c_tok, "total": p_tok + c_tok},
+        "intelligence": intelligence, "per_model": metrics,
+    })
     _dataset_append(root, {
         "tier": "fusion", "mode": mode, "panel": cfg["panel"], "judge": cfg["judge"],
         "problem_brief": brief, "per_model": metrics, "output": judged or "",
         "cost": total, "judged": judged is not None, "outcome": "unknown",
     })
+    common = {"panel": metrics, "cost": total, "cumulative_cost": round(cumulative, 4),
+              "tokens": p_tok + c_tok, "wall_s": round(wall, 1)}
     if judged is not None:
-        return {"status": "ok", "output": judged, "panel": metrics, "cost": total}
+        return {"status": "ok", "output": judged, **common}
     # Judge failed -> hand the raw panel to the main thread (the final review layer).
     raw = "\n\n".join(f"### {r['model']}\n{r['content']}" for r in ok)
-    return {"status": "panel_only", "output": raw, "panel": metrics, "cost": total}
+    return {"status": "panel_only", "output": raw, **common}
 
 
 def _load_cfg(root: Path) -> dict:

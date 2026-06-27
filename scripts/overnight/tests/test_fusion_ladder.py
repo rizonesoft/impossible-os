@@ -61,9 +61,24 @@ def test_outcome_records():
         assert "fusion-outcome" in ds and "resolved" in ds
 
 
+def test_stats_summarizes_totals():
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d); (root / ".fusion").mkdir(parents=True)
+        (root / ".fusion" / "totals.json").write_text(json.dumps({
+            "runs": 2, "total_cost": 1.23, "panel_cost": 0.8, "judge_cost": 0.43,
+            "total_tokens": 5000, "resolved": 1, "unresolved": 1,
+            "by_mode": {"stuck": {"runs": 2, "cost": 1.23}}}))
+        out = ladder.stats(root)
+        assert "runs=2" in out and "total_cost=$1.2300" in out
+        assert "resolved=1" in out and "stuck:2/$1.23" in out
+        # no totals file -> graceful
+        assert "no fusion runs" in ladder.stats(pathlib.Path(tempfile.mkdtemp()))
+
+
 if __name__ == "__main__":
     test_worker_runs_escalate_and_writes_result()
     test_poll_reports_states()
     test_list_enumerates()
     test_outcome_records()
+    test_stats_summarizes_totals()
     print("PASS: fusion_ladder")

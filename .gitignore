@@ -91,10 +91,12 @@ src/boot/uefi/*.o
 # .claude/overnight/ -- overnight-runner CLI runtime state (never committed).
 .claude/overnight/
 
-# .fusion/ -- Fusion escalation (apex tier). Secret + collected dataset never committed.
+# .fusion/ -- Fusion escalation (apex tier). Secret + collected run data never committed.
 .fusion/secret
 .fusion/dataset.jsonl
 .fusion/jobs/
+.fusion/metrics.jsonl
+.fusion/totals.json
 
 # .claude/worktrees/ -- harness-created git worktrees (embedded repos).
 .claude/worktrees/
