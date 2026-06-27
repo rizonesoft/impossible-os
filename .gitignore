@@ -74,6 +74,7 @@ sdk/build/
 .claude/state/*
 !.claude/state/.keep
 !.claude/state/README.md
+!.claude/state/live-gotchas.md
 .claude/scheduled_tasks.lock
 
 # Bootloader build intermediate.  bootx64.so is produced by linking
