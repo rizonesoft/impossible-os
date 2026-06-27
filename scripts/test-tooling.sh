@@ -932,6 +932,24 @@ else
         'git commit -m "$(cat <<EOF\nblock -m short form for codex exec\nEOF\n)"'
 fi
 
+# --- Check 15 codex-&-bundle lint -----------------------------------------
+# The fixture string is built split (codex-%s.sh) so this file's own source
+# line never carries the bundled pattern Check 15 scans for.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lint_codex_bundle]${NC}"
+_BUNDLE_FIX="$REPO_ROOT/docs/_tooling_lint15_fixture.md"
+printf 'x: bash scripts/codex-%s.sh A && bash scripts/codex-%s.sh B\n' dispatch dispatch > "$_BUNDLE_FIX"
+if bash "$REPO_ROOT/scripts/lint.sh" 2>&1 | grep -q "run each dispatch as its own"; then
+    t_pass "lint Check 15 flags &-bundled codex dispatch"
+else
+    t_fail "lint Check 15 missed &-bundled codex dispatch"
+fi
+rm -f "$_BUNDLE_FIX"
+if bash "$REPO_ROOT/scripts/lint.sh" 2>&1 | grep -q "run each dispatch as its own"; then
+    t_fail "lint Check 15 false-positive on clean tree"
+else
+    t_pass "lint Check 15 clean on clean tree"
+fi
+
 # ============================================================================
 # receiving-code-review hard gate (TODO-08 in 00-infrastructure section 3)
 #

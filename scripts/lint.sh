@@ -1009,6 +1009,58 @@ PY
     fi
 fi
 
+# --- Check 15: no &-bundled Codex dispatch in documented examples -----------
+# Two codex-dispatch.sh in one command (joined by & / && / ;) records only the
+# first review-kind and breaks the section-commit gate. Run each dispatch as its
+# own Bash call. WARN-only: catches drift in skills/scripts/docs examples.
+if [ "${SKIP_LINT_CODEX_BUNDLE:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 15 (codex-&-bundle) skipped via SKIP_LINT_CODEX_BUNDLE=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    LINT15_OUT="$(python3 - "$REPO_ROOT" <<'PYEOF'
+import os, re, sys
+root = sys.argv[1]
+roots = ["scripts", ".claude/skills", "docs"]
+exts = (".sh", ".md", ".py", ".mjs")
+self_name = "lint.sh"
+two = re.compile(r"codex-(?:bg-)?dispatch\.sh.*(?:&&|&|;).*codex-(?:bg-)?dispatch\.sh")
+bg = re.compile(r"codex-(?:bg-)?dispatch\.sh[^\n]*\s&\s*$")
+warns = []
+for base in roots:
+    for dirpath, _dirs, files in os.walk(os.path.join(root, base)):
+        for fn in files:
+            if not fn.endswith(exts) or fn == self_name:
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, fn), root)
+            # design docs (specs/plans) legitimately discuss the anti-pattern.
+            if rel.startswith("docs/superpowers/"):
+                continue
+            try:
+                lines = open(os.path.join(dirpath, fn), encoding="utf-8",
+                             errors="replace").read().splitlines()
+            except OSError:
+                continue
+            for i, ln in enumerate(lines, 1):
+                if two.search(ln) or bg.search(ln):
+                    warns.append(f"{rel}:{i}: &-bundled codex dispatch -- run each "
+                                 f"dispatch as its own Bash call")
+for w in warns:
+    print(f"WARN {w}")
+PYEOF
+)"
+    if [ -n "$LINT15_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                WARN\ *)
+                    echo -e "${YELLOW}warn${NC}: ${line#WARN }"
+                    WARNINGS=$((WARNINGS + 1))
+                    ;;
+            esac
+        done <<< "$LINT15_OUT"
+    fi
+fi
+
 # ============================================================================
 # Summary
 # ============================================================================
