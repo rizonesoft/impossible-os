@@ -7,10 +7,18 @@
 ## Goal
 
 Turn Conclave from a shell-script-that-calls-six-APIs into a thing that **behaves like
-its own model**: one stable interface (problem in, answer out), internally running the
-6-model panel plus an Opus judge, that also **remembers, learns from what worked, heals
-when parts fail, and grows a project-only training corpus** that is distilled -- on a
-cadence -- toward a real local student model.
+its own model**: one stable interface (problem in, answer out), internally a
+**model-agnostic reasoning harness** that drives a swappable panel of cloud models plus
+an Opus judge, and that also **remembers, learns from what worked, heals when parts fail,
+and grows a project-only knowledge corpus**. Conclave's intelligence is the harness --
+memory, retrieval, decomposition, structured process, and learned policies -- not a
+trained weight file. It gets smarter over time via better context and process, not via
+gradient descent.
+
+The local piece is never used standalone (always alongside the panel), so the core needs
+**no base model and no GPU**. A distilled local model is demoted to an optional future
+"offline" add-on (see Phase 2), and the corpus is kept in a shape that would still
+support it if "offline" ever becomes a goal.
 
 Every project plugs in to both **teach** Conclave (contribute outcome-labeled records)
 and **use** it (escalate hard problems). Conclave lives at `~/conclave`
@@ -21,9 +29,13 @@ and **use** it (escalate hard problems). Conclave lives at `~/conclave`
 - Not a general chat assistant. Conclave is the **apex escalation tier** -- invoked only
   when the calling agent (Claude) and its subordinate reviewer (Codex) are both stuck,
   or for explicit high-stakes review. Low volume by design.
-- Not a from-scratch trained foundation model. The 6 cloud models are **teachers**; the
-  local student model (Phase 2) is distilled from their outcome-labeled output, not
-  trained from zero.
+- Not a trained model in the core. Conclave's intelligence is the reasoning harness +
+  memory + retrieval + learned policies, not weights. (A distilled local student is an
+  optional future "offline" add-on only -- see Phase 2 -- and is never required because
+  the local piece never answers alone.)
+- Retrieval over training: project knowledge is injected as context to the panel rather
+  than baked into weights. Retrieval-injecting a project's accumulated knowledge achieves
+  most of what a project-specialized fine-tune would, without a GPU or a base-model ceiling.
 - The panel never does web-search (empirically the dominant cost/latency driver and the
   source of hallucinated errata). Pure reasoning over the supplied brief plus memory.
 
@@ -31,24 +43,26 @@ and **use** it (escalate hard problems). Conclave lives at `~/conclave`
 
 ```
    project A ---\                          ~/conclave  (own git repo)
-   project B ----+--[connector]--> ask --> +-------------------------------+
-   project C ---/                          |  RUNTIME (one interface)      |
-                                           |    panel(6) -> Opus judge     |
-                                           |        ^            |         |
-                                           |     MEMORY       SELF-HEAL    |
-                                           |    (recall)     (recover)     |
-                                           |        ^            |         |
-                                           |   SELF-LEARN <-- outcomes     |
-                                           +----------|--------------------+
+   project B ----+--[connector]--> ask --> +-------------------------------------+
+   project C ---/                          |  REASONING HARNESS (one interface)  |
+                                           |   retrieve -> decompose -> prompt   |
+                                           |   panel(swappable) -> judge -> verify|
+                                           |        ^             |              |
+                                           |     MEMORY        SELF-HEAL         |
+                                           |    (recall)      (recover)          |
+                                           |        ^             |              |
+                                           |   SELF-LEARN  <--  outcomes         |
+                                           +----------|--------------------------+
                                                       v
                                            DATA ENGINE (tiered storage)
-                                              git: learned state (KB)
+                                              git: learned state + policies (KB)
                                               shards: transcripts (<=90 MiB, gz)
                                               archive: cold transcripts (Release/LFS/bucket)
                                                       |
-                                           DISTILL PIPELINE (tooled+tested day one)
-                                              dataset -> index -> student model
+                                           KNOWLEDGE COMPILATION (tooled+tested day one)
+                                              corpus -> retrieval index -> learned policies
                                               cadence trigger + ledger + 90 MiB shards
+                                              (optional future: -> distilled offline model)
 ```
 
 The calling project sees exactly one verb: `ask`. Everything else is internal.
@@ -57,14 +71,28 @@ The calling project sees exactly one verb: `ask`. Everything else is internal.
 
 Each component is a separately testable unit with a narrow interface.
 
-### Runtime / orchestrator
+### Reasoning harness (the core)
 
-The current DIY engine (panel of 6 via OpenRouter chat-completions, parallel, Opus
-discard-synthesis judge), promoted to the single stable entry point `conclave ask`
-(sync) and `conclave dispatch` (async job queue -- the existing `ladder.py` model). It
-returns the judged synthesis plus the per-run metrics already defined (latency, cost,
-tokens, panel health). Off by default (`CONCLAVE_ENABLED` + a key), two-layer spend cap
-(per-run counter + live balance floor), fail-open for the caller / fail-closed on spend.
+The intelligence of Conclave. A model-agnostic pipeline that wraps the swappable panel
+and makes every model in it reason better:
+
+1. **Retrieve** -- pull relevant past problems, solutions, and lessons from memory and
+   inject them as context (cold models become project-aware models).
+2. **Decompose** -- when a brief is large/multi-factor, split it into sub-questions the
+   panel answers better.
+3. **Structured prompt** -- the per-mode system prompts (no web-search) over brief +
+   retrieved context + any caller-supplied prior analyses.
+4. **Panel + judge** -- the existing DIY engine (panel via OpenRouter chat-completions,
+   parallel, Opus discard-synthesis judge). Panel membership is config, not code.
+5. **Verify** -- optional re-ask / cross-check loop on low-confidence syntheses before
+   returning.
+
+Exposed as the single stable entry point `conclave ask` (sync) and `conclave dispatch`
+(async job queue -- the existing `ladder.py` model). Returns the judged synthesis plus
+the per-run metrics already defined (latency, cost, tokens, panel health). Off by default
+(`CONCLAVE_ENABLED` + a key), two-layer spend cap (per-run counter + live balance floor),
+fail-open for the caller / fail-closed on spend. The harness always needs the cloud panel
+-- there is no standalone local answerer in the core (accepted trade-off).
 
 ### Plug-in protocol (teach + use)
 
@@ -76,9 +104,11 @@ Projects connect through a **thin connector**, not a copy of the engine:
   async job -> synthesis. (Impossible OS wires this into `debug-session`,
   `review-todo-section`, and the overnight sequencer exactly where `.fusion` is wired
   today.)
-- **teach:** every run is recorded under the project's namespace; the validating agent
-  closes the loop with `conclave outcome <id> resolved|unresolved`, which is the
-  outcome label that makes the record training-grade.
+- **teach (two sources):** (1) *experience* -- every escalation run is recorded under the
+  project's namespace and labeled by outcome (see Self-learning); (2) *corpus* --
+  proactively ingest existing project knowledge with
+  `conclave teach --project P --source <path> [--distill]` (e.g. teach it
+  `specs/`). Both feed the same retrieval index + lesson store.
 - **Isolation:** records are namespaced per project so the corpus is partitionable
   ("project-only" training data), while cross-project memory is opt-in.
 
@@ -89,7 +119,7 @@ naive single growing `.jsonl` at ~1,000 full-transcript runs -- long before any 
 limit. Tiering is therefore a v1 requirement, not an optimization:
 
 - **Git, tiny, versioned:** metrics, totals, outcomes, run index, learned policies,
-  memory summaries, the distillation ledger. Kilobytes; this is the "smart" state.
+  memory summaries, the compile ledger. Kilobytes; this is the "smart" state.
 - **Sharded transcripts:** full briefs + 6 panel analyses + judge synthesis, compressed
   (gzip/zstd) and **month-sharded** so no single file approaches 100 MiB.
 - **Cold archive:** old shards move out of the working tree to GitHub Releases, Git LFS,
@@ -108,14 +138,33 @@ Persistent recall so Conclave does not re-derive a problem it has already solved
   symptom/signature (per project + an opt-in cross-project tier).
 - **Retrieval index:** embeddings over past briefs/syntheses so a new brief is answered
   with relevant prior solutions injected as context (the cheap, immediately-useful
-  precursor to the distilled model).
+  core of the harness, and the substitute for any future offline model).
 - Memory is fed by `outcome`-labeled runs; unresolved runs are remembered as
   open/avoid-this signals, not as answers.
 
-### Self-learning
+### Teaching a corpus (proactive ingestion)
 
-What actually improves from outcomes (software that tunes itself; no weight updates in
-v1):
+`conclave teach --project P --source <path> [--distill]` ingests existing files so the
+harness knows the project before any escalation. Walk -> chunk -> optional LLM distill
+(summarize each file into key facts + signatures) -> embed -> add to the retrieval index
++ lesson store. Each chunk records source path + content hash, so re-teaching **updates**
+rather than duplicates and prunes chunks whose source was deleted/changed. Two drivers:
+**Claude-driven** ("teach Conclave the specs" -> Claude runs the command) and
+**automatic on connector sync** (a hook re-ingests changed docs/specs on plug-in / file
+change). Same artifacts as experience-teaching; just a different input.
+
+### Self-learning (automatic)
+
+Nothing learns without a reward signal. Labels come from three sources, increasingly
+hands-off: **explicit** (`conclave outcome <id> resolved|unresolved`); **implicit** --
+the connector auto-emits the outcome from the project's own success signals (in Impossible
+OS, whether `build`/`test`/`smoke` went green after applying the suggested fix), which is
+what makes learning automatic with no human in the loop; and **recurrence** (a signature
+that never returns is a delayed positive, a recurrence a negative).
+
+Two update loops consume the labels: **online** (each outcome instantly updates memory +
+policy counters) and **scheduled** (the `compile` cadence rebuilds index + policies over
+the full corpus). What actually improves (software that tunes itself; no weight updates):
 
 - **Panel selection:** promote/demote models by credited-insight rate and resolved-rate
   per problem class (the per-model metrics already capture cost/sec/chars/tokens; add a
@@ -134,38 +183,41 @@ Recovery from the failure modes a long-lived service actually hits:
   proceed on the rest; if the judge fails, hand back the raw panel (`panel_only`, already
   implemented). Auto-quarantine a model that fails repeatedly and surface it.
 - **Spend/balance:** balance-floor + per-run cap already fail-closed; add a self-check
-  that pauses distillation/runs and reports when credits are low.
+  that pauses compilation/runs and reports when credits are low.
 - **State integrity:** validate/repair the learned-state + ledger files on startup
   (atomic writes, checksums, snapshot-on-write); never let a corrupt counter wedge runs.
 - **Health command:** `conclave doctor` -- checks key, balance, model reachability, state
   integrity, storage headroom (distance to the 100 MiB/file and 1 GB/repo lines).
 
-### Distillation pipeline (tooled and tested from day one)
+### Knowledge-compilation pipeline (tooled and tested from day one)
 
-The pipeline exists, is tested, and is versioned in v1 even though the *useful* student
-model only emerges as the corpus grows. Three artifacts, built as one chain:
+"Compile" the raw outcome-labeled corpus into the artifacts the harness consumes. No GPU,
+no weights. Two artifacts built as one chain, plus an optional future third:
 
-1. **Curated dataset** (jsonl, no GPU): dedup/clean/format the outcome-labeled corpus
-   into training-ready shards. Always the input to the rest.
-2. **Retrieval/memory index** (embeddings): the immediately-useful artifact (see Memory).
-3. **Student model** (weights -- LoRA/fine-tune of an open base): the literal "Conclave
-   is a model you run." Hardware/runtime path is an open decision (below).
+1. **Curated corpus** (jsonl): dedup/clean/format the outcome-labeled records into
+   compiled shards -- the canonical knowledge base.
+2. **Retrieval index** (embeddings over the corpus): what the harness queries at `ask`
+   time to inject relevant prior solutions (see Memory). This is the immediately-useful
+   artifact and the thing that makes any model smarter.
+3. **(Optional, future)** a **distilled offline model** (weights) built from the same
+   corpus -- only if "offline/standalone" ever becomes a goal. Not in the core; the
+   corpus is kept compatible with it so the door stays open at zero cost now.
 
-- **Cadence:** `conclave distill --check` runs on a schedule and goes when
+- **Cadence:** `conclave compile --check` runs on a schedule and goes when
   `(>= N days since last) OR (>= M new labeled examples)`. The data engine tracks
-  "new examples since last distill" so stale re-distills and missed busy weeks are both
+  "new examples since last compile" so stale recompiles and missed busy weeks are both
   avoided.
-- **Tracking / provenance (ledger, git):** one record per distill run --
-  `conclave-vN { date, trigger, corpus_snapshot_sha, num_examples, base_model,
-  hyperparams, eval_scores, output_shards:[{name,bytes,sha256}] }` + a `LATEST` pointer.
-  Fully reproducible; eval-vs-previous visible.
-- **Output sharding:** the artifact (dataset or weights) splits into
+- **Tracking / provenance (ledger, git):** one record per compile run --
+  `conclave-vN { date, trigger, corpus_snapshot_sha, num_examples, index_model,
+  eval_scores, output_shards:[{name,bytes,sha256}] }` + a `LATEST` pointer. Fully
+  reproducible; eval-vs-previous visible.
+- **Output sharding:** the artifact (corpus + index) splits into
   `conclave-vN.part-001-of-0NN` parts, each <= 90 MiB, plus a manifest with checksums and
-  a merge tool -- so every file clears the 100 MiB push block **without** LFS. (LFS is the
-  alternative for binary weights but carries its own 1 GB free quota + bandwidth caps;
-  manual 90 MiB sharding sidesteps that.)
-- **Eval harness:** a held-out set of past problems with known outcomes; each distilled
-  version is scored so regressions are caught before `LATEST` advances.
+  a merge tool -- so every file clears the 100 MiB push block **without** LFS. (LFS carries
+  its own 1 GB free quota + bandwidth caps; manual 90 MiB sharding sidesteps that.)
+- **Eval harness:** a held-out set of past problems with known outcomes; each compiled
+  version is scored (does retrieval-augmented answering resolve them?) so regressions are
+  caught before `LATEST` advances.
 
 ## Data model
 
@@ -176,7 +228,7 @@ model only emerges as the corpus grows. Three artifacts, built as one chain:
 - **outcome record** (git): `{run_id, project, verdict, ts}` -- the training label.
 - **memory/lesson record** (git): `{signature, project, lesson, links[run_ids],
   last_seen}`.
-- **distill ledger record** (git): as above.
+- **compile ledger record** (git): as in the knowledge-compilation pipeline.
 
 ## Security and boundaries
 
@@ -189,43 +241,49 @@ Hard lessons carried in by design:
   brief; Conclave never auto-exfiltrates repo source. Briefs and outputs in the corpus
   are project-namespaced and stay in the project's partition unless cross-project memory
   is explicitly enabled.
-- **Off by default + spend caps** as today; distillation has its own budget guard.
+- **Off by default + spend caps** as today; compilation has its own budget guard.
 
 ## v1 scope vs Phase 2
 
-- **v1 (complete from day one):** `~/conclave` repo + connector protocol; the runtime
-  (sync + async); data engine + storage tiering; memory (lessons + retrieval index);
-  self-learning (panel/prompt/routing policies from outcomes); self-healing
-  (`doctor` + graceful degradation + state repair); the **full distillation pipeline
-  tooled, tested, versioned, and sharded** -- producing the curated dataset and retrieval
-  index, and running the student-model path end-to-end on whatever data exists (thin but
-  proven). Impossible OS migrated from `.fusion/` to the connector; Fusion -> Conclave
-  rename folded in.
-- **Phase 2 (data-gated):** the student model becomes *good*. Triggered when the corpus
-  passes a size/quality threshold and the model-path decision is made. Same tooling, more
-  data; ledger + eval harness already in place.
+- **v1 (complete from day one):** `~/conclave` repo + connector protocol; the **reasoning
+  harness** (retrieve -> decompose -> structured prompt -> panel + judge -> verify), sync
+  + async; data engine + storage tiering; memory (lessons + retrieval index);
+  **teaching** (experience + `conclave teach` corpus ingestion); self-learning
+  (panel/prompt/routing policies from outcomes, with **automatic outcome labeling** from
+  the project's build/test/smoke signals -- no human in the loop); self-healing
+  (`doctor` + graceful degradation + state repair); the **full knowledge-compilation
+  pipeline tooled, tested, versioned, and sharded** -- producing the curated corpus and
+  retrieval index, with the cadence trigger, ledger, and 90 MiB sharding all proven.
+  Impossible OS migrated from `.fusion/` to the connector; Fusion -> Conclave rename
+  folded in. No base model, no GPU.
+- **Phase 2 (optional, data-and-need-gated):** a distilled **offline** model -- ONLY if
+  standalone/no-internet answering becomes a goal. Triggered when the corpus is large
+  enough AND offline is actually wanted; the model-path decision is made then. Same
+  corpus, ledger, and eval harness already in place. May never be built, and that is fine.
 
 ## Open decisions (need user input; recommendations given)
 
-1. **Model path (the big one).** Does the student model train/run on a **local GPU**, or
-   via a **cloud fine-tune API** (Together/Fireworks/OpenAI fine-tuning)? And is the end
-   goal **fully local/offline** inference, or is "still calls the cloud but behaves as one
-   model" acceptable for a good while? *Recommendation:* build v1's distillation tooling
-   provider-agnostic (a thin "trainer" interface) so the dataset/index/ledger/sharding are
-   identical either way, and pick the concrete trainer (local vs cloud) at the Phase 2
-   gate when the corpus justifies the spend.
-2. **Base model** for the student (e.g. a small Qwen/Llama). Defer to Phase 2 gate.
-3. **Embeddings provider** for the retrieval index (OpenRouter/local). *Recommendation:*
-   start with a hosted embedding model, keep it swappable.
-4. **Repo visibility:** public or private GitHub repo for `~/conclave`. *Recommendation:*
-   private (it contains project-derived training data).
+The two big ones (model path, base model) are **dissolved** by the reasoning-harness
+design -- no base model, no GPU in the core. What remains:
+
+1. **Embeddings provider** for the retrieval index (hosted via OpenRouter vs local).
+   *Recommendation:* start with a hosted embedding model, keep it swappable behind the
+   index interface.
+2. **Repo visibility:** public or private GitHub repo for `~/conclave`. *Recommendation:*
+   private (it contains project-derived knowledge).
+3. **Cadence defaults:** the `N days` / `M new examples` thresholds for `compile --check`.
+   *Recommendation:* weekly OR 200 new labeled examples, tunable after first real data.
+4. **(Deferred, not now)** the optional offline-model path -- left open until/unless
+   offline answering is actually wanted (Phase 2).
 
 ## Testing strategy
 
-- Per-component offline unit tests (mock the panel/judge/embedder/trainer), mirroring the
-  current `.fusion` test pattern.
-- Distillation **smoke test on tiny synthetic data** in CI: dataset -> index -> trainer
-  stub -> sharded artifact -> merge -> verify checksums. Proves the pipeline without a GPU.
+- Per-component offline unit tests (mock the panel/judge/embedder), mirroring the current
+  `.fusion` test pattern.
+- Compilation **smoke test on tiny synthetic data** in CI: corpus -> index -> sharded
+  artifact -> merge -> verify checksums. Proves the pipeline end-to-end without a GPU.
+- Harness test: retrieval injects the right prior context for a known signature, and a
+  low-confidence synthesis triggers the verify loop.
 - Storage guardrail test: assert no tracked file approaches 100 MiB and the repo stays
   under the soft 1 GB line (a `doctor` check, also run in CI).
 - Eval-harness regression test on a fixed held-out problem set.
