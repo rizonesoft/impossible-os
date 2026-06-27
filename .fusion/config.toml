@@ -1,22 +1,25 @@
-# Fusion escalation config -- the apex tier of the Claude -> Codex -> Fusion ladder.
-# See .fusion/README.md for how to enable. Off unless FUSION_ENABLED=1 + a secret.
+# Fusion DIY-ensemble config -- the apex tier of the Claude -> Codex -> Fusion ladder.
+# See .fusion/README.md (4 rounds of testing) for why this exact shape. Off unless
+# FUSION_ENABLED=1 + a secret. DIY ensemble, NOT the openrouter/fusion plugin; NO
+# web-search (it anchors models onto hallucinated errata).
 
-# Panel (analysis_models): three strong, architecturally-diverse coders, none of
-# them a model already in the ladder (Claude/GPT) -- the point is fresh blind spots.
-# IDs verified against the OpenRouter model list 2026-06-27 (kimi-k2.7 does NOT
-# exist; the coding variant is kimi-k2.7-code -- an invalid id is silently dropped).
-panel = ["z-ai/glm-5.2", "moonshotai/kimi-k2.7-code", "deepseek/deepseek-v4-pro"]
-# Judge (Fusion's built-in synthesizer): a CHEAP in-Fusion synthesizer. NOT Opus --
-# we already pay for Opus in the main Claude thread, which reads Fusion's output and
-# validates it before acting (the WS8 trust contract). That main-thread review IS
-# the Opus-grade "judge", for free; paying OpenRouter for a duplicate Opus judge was
-# paying twice. GLM 5.2 just does the basic panel synthesis.
-judge = "z-ai/glm-5.2"
+# Panel: four strong, diverse, NON-ladder models (each call runs solo + in parallel).
+# Opus (Tier 0) and Codex/GPT-5.5 (Tier 1) are NOT in the panel -- they have already
+# run by the time Fusion fires, so their analyses are fed to the judge instead.
+# Verified against the OpenRouter model list 2026-06-27.
+panel = [
+  "z-ai/glm-5.2",              # Zhipu  -- the bare-lfence discriminator test (R4)
+  "deepseek/deepseek-v4-pro",  # DeepSeek -- the SMT TLB-IPI-mask bug (R4), dirt cheap
+  "moonshotai/kimi-k2.7-code", # Moonshot -- the poisoned-#DF mechanism (R3)
+  "x-ai/grok-build-0.1",       # xAI -- the TSC-deadline-clamp-on-C-state-exit (R4)
+]
+# Judge: the strongest synthesizer, with the discard-prompt (in fusion_escalate.py)
+# that credits unique-correct insights and throws out fabricated errata/microcode/MSRs.
+judge = "anthropic/claude-opus-4.8"
 
-# Spend caps.
-max_calls = 3        # hard per-run Fusion call cap (FUSION_MAX_CALLS)
-min_credits = 2.0    # skip if OpenRouter remaining balance is below this (USD)
-timeout_s = 600      # HARD total wall-clock cap per call (SIGALRM); fail-open past it.
-                     # Hard questions are slow (web-search + long panel); a 12+ min
-                     # stall was observed before this cap. urllib's own timeout is
-                     # per-read, not total, so this is the real bound.
+# Spend + time bounds.
+max_calls = 3          # hard per-run call cap (FUSION_MAX_CALLS)
+min_credits = 2.0      # skip if OpenRouter remaining balance is below this (USD)
+model_timeout_s = 480  # per-panel-model call bound (parallel, so ~= batch wall-clock)
+judge_timeout_s = 480  # judge call bound
+workers = 6            # parallel panel calls
