@@ -162,6 +162,7 @@ description: Execute one bounded TODO section, resolve XREF dependencies, run Co
     - **Completion radar again:** does the feature now look correct, complete, wired, parity-aware, and properly owned, or did implementation reveal adjacent work that still needs to ship or be tracked?
 15. **Fix loop** (1 round mandatory; up to 3 if needed):
     - Fix all valid Critical and High from BOTH Codex (step 13) and self-review (step 14).
+    - When a build/test/smoke failure produces a large log, dispatch `Agent(subagent_type="diagnostic-digester", <log path>)` first and validate its hypotheses at `file:line` before editing -- do not read the whole log into this context.
     - Fix valid Medium unless explicitly accepted.
     - Rebuild after fixes.
     - Re-dispatch Codex if fixes are STRUCTURAL. Surgical fixes: self-verify and proceed.

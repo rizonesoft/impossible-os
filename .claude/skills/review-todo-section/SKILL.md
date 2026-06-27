@@ -33,7 +33,7 @@ description: Full review of a TODO section -- adversarial Codex, consistency, pe
    **Prompt shape:** start with `[review-kind: adversarial]` and include the TODO path (`todo/<domain>/TODO-XX-<slug>.md`) + `§<N>`. The §3 PostToolUse hook (`codex_review_completed.py`) records this dispatch to `.claude/state/last-review-stamps.json` keyed by TODO path. Without the marker AND the path, the §4 commit gate cannot attribute the dispatch and the three-dispatch evidence check (step 16 stamp commit) refuses the commit. Use [`codex-prompt-template.md`](codex-prompt-template.md) (adversarial section); do NOT prepend implementor narrative -- the hook WARNs on first-person preambles per [CONSENSAGENT ACL-2025](https://aclanthology.org/2025.findings-acl.1141/).
 
    **Mandatory angles:** integer overflow, buffer overread, NULL deref, SMP races, resource leaks, ABI mismatch, bounds on untrusted data. The PostToolUse hook fires `receiving-code-review` reminder; follow it. Triage findings -> fix valid Critical/High/Medium, reject false positives with code evidence, accept out-of-scope with domain-qualified XREF.
-6. **Fix adversarial findings** -- fix all valid Critical/High/Medium. Rebuild.
+6. **Fix adversarial findings** -- fix all valid Critical/High/Medium. Rebuild. When a build failure produces a large log, dispatch `Agent(subagent_type="diagnostic-digester", <log path>)` first and validate its hypotheses at `file:line` before editing -- do not read the whole log into this context.
 
 ### Phase 3: Quality Audit
 

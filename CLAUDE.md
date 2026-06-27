@@ -258,7 +258,7 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 
 ### Specialist agents -- advisory, read-only
 
-Five subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate ANALYSIS to. They are **sensors, not actuators**: read-only (tools restricted to `Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the parity analyst), they return findings as text and never edit, build, commit, dispatch Codex, or invoke skills. The main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
+Six subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate ANALYSIS to. They are **sensors, not actuators**: read-only (tools restricted to `Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the parity analyst), they return findings as text and never edit, build, commit, dispatch Codex, or invoke skills. The main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
 
 | Agent | Model | Dispatched by |
 |---|---|---|
@@ -267,6 +267,7 @@ Five subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills 
 | `boot-quality-auditor` | sonnet | `review-todo-section` step 7 (UEFI gate walk) |
 | `parity-research-analyst` | opus; sonnet via per-call override in gap-audit | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 |
 | `review-evidence-mapper` | sonnet | `review-todo-section` Phase 1 (pre-Codex evidence map; supplements, does not replace, the main session's >=2 gate reads) |
+| `diagnostic-digester` | sonnet | `implement-todo-section` fix loop + `review-todo-section` build-fail (failure-log digest; hypotheses validated by main session before fixing) |
 
 Model follows backstop strength: sonnet only where a second net (Codex red-team, main-loop re-walk, or main-loop verification) catches a miss; opus on the thin/sole nets. The read-only tool allowlist is enforced by `scripts/lint.sh` Check 14.
 
