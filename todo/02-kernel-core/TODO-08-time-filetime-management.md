@@ -236,7 +236,7 @@ Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL:
 > - Downstream: absolute deadlines gated on a real wall-clock source + placeholder rejection in `KeSetSystemTime`/`NtSetSystemTime` so a bogus anchor can't re-open the 49-day clamp.
 > - Canonical: `src/kernel/time/wall_clock.c`.
 > - Scope boundary: §6 owns the Ke* service; the Nt* SSDT handlers' user-pointer probing is §9; the coarse cached-read fast path is §16.
-> **Verified:** 2026-06-27 | commit `<review>` | 6/6 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.47s)
+> **Verified:** 2026-06-27 | ship `8ba23931` + review fixes | 6/6 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.47s)
 > **Accepted:** [H] the three time SSDT handlers deref user pointers without probe/copy (a `prev_ptr` can fault the kernel or write to a kernel address) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §9 (item: "User-pointer safety" at line 267)
 > **Quality reviewed:** 2026-06-27 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) + kernel-quality-auditor | 3H+3M+2L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
@@ -248,8 +248,21 @@ Windows exposes interrupt time (100 ns since boot, including sleep bias) and unb
 - [x] `KeQueryInterruptTime()` -- returns `mono_filetime_units() + s_interrupt_time_bias` (includes suspend)
 - [x] `KeQueryInterruptTimePrecise(qpc_value)` -- same + returns QPC value at same instant
 - [x] `KeQueryUnbiasedInterruptTime()` -- returns `mono_filetime_units()` only (no bias)
-- [x] `s_interrupt_time_bias` tracked as volatile atomic; `ke_suspend_bias_update()` for §14 resume path
+- [x] `s_interrupt_time_bias` tracked as an atomic counter (`__atomic_fetch_add`/`__atomic_load_n` SEQ_CST); `ke_suspend_bias_update()` for §14 resume path
 - [x] Commit: `"kernel: time -- interrupt time and unbiased interrupt time APIs"`
+
+**Test checkpoint:** Unit: covered by the `test_time.c` monotonic helpers (the interrupt-time APIs themselves read the live `mono_filetime_units()` source, not unit-testable without mocking the clock). Runtime (WHPX / bare metal serial): `KeQueryInterruptTime()` >= `KeQueryUnbiasedInterruptTime()`; both advance monotonically; `GetTickCount64()` tracks. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time + sched suites, 0 failures (236 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: interrupt-time APIs in `wall_clock.c` -- `KeQueryInterruptTime` (mono + bias), `KeQueryInterruptTimePrecise` (+ QPC out), `KeQueryUnbiasedInterruptTime` (mono only), `ke_suspend_bias_update`.
+> - Review fixes: `KeQueryInterruptTimePrecise` takes ONE mono sample so interrupt-time + QPC share an instant; `s_interrupt_time_bias` read via `__atomic_load_n` (matched to the writer; dropped `volatile`).
+> - Downstream: biased vs unbiased split = Win11 InterruptTime/UnbiasedInterruptTime, Linux CLOCK_BOOTTIME/CLOCK_MONOTONIC; the bias is fed by the §14 S3/S4 resume path.
+> - Canonical: `src/kernel/time/wall_clock.c`.
+> - Scope boundary: §7 owns the interrupt-time APIs; suspend-bias production (resume delta) is §14; the QPC raw source is §2/§9.
+> **Verified:** 2026-06-27 | ship `96f4c305` + review fixes | 5/5 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.74s)
+> **Test gap:** the interrupt-time query APIs read the live monotonic source and are not unit-testable without mocking `mono_ns()`; covered by runtime serial validation.
+> **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 1H+1M fixed | scope: kernel-code-quality
 
 ---
 

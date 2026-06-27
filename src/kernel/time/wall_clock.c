@@ -260,20 +260,28 @@ int time_service_ready(void)
 
 /* ---- Interrupt time APIs -------------------------------------------- */
 
-static volatile uint64_t s_interrupt_time_bias;  /* cumulative suspend bias */
+/* Cumulative suspend bias. Atomic-accessed on BOTH sides: __atomic_fetch_add
+ * writer + __atomic_load_n readers (plain volatile reads gave no ordering, only
+ * no-elision, and broke the file's own atomic discipline). */
+static uint64_t s_interrupt_time_bias;
 
 uint64_t KeQueryInterruptTime(void)
 {
     /* Interrupt time = monotonic ticks + suspend bias */
-    return mono_filetime_units() + s_interrupt_time_bias;
+    return mono_filetime_units() +
+           __atomic_load_n(&s_interrupt_time_bias, __ATOMIC_SEQ_CST);
 }
 
 uint64_t KeQueryInterruptTimePrecise(uint64_t *qpc_value)
 {
-    uint64_t it = mono_filetime_units() + s_interrupt_time_bias;
+    /* Sample the monotonic counter ONCE so the returned interrupt time and the
+     * QPC out-value describe the same instant (the precise contract) -- two
+     * mono reads would skew them by a clocksource-read latency. */
+    uint64_t qpc = mono_filetime_units();
+    uint64_t bias = __atomic_load_n(&s_interrupt_time_bias, __ATOMIC_SEQ_CST);
     if (qpc_value)
-        *qpc_value = mono_filetime_units();  /* QPC = raw monotonic */
-    return it;
+        *qpc_value = qpc;  /* QPC = raw monotonic at this instant */
+    return qpc + bias;
 }
 
 uint64_t KeQueryUnbiasedInterruptTime(void)
