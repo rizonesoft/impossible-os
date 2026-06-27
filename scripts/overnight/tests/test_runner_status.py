@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-import json, subprocess, sys, tempfile, time, pathlib
+import json, os, subprocess, sys, tempfile, time, pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent.parent.parent  # scripts/overnight/tests -> repo root
 SCRIPT = REPO / ".claude" / "hooks" / "runner_status.py"
 
 
-def _run(root, anchor=False):
+def _run(root, anchor=False, conclave_home=None):
     args = [sys.executable, str(SCRIPT), "--root", str(root)]
     if anchor:
         args.append("--anchor")
-    r = subprocess.run(args, text=True, capture_output=True)
+    env = dict(os.environ)
+    # Isolate from any real ~/conclave jobs unless a test opts in.
+    env["CONCLAVE_HOME"] = str(conclave_home or (pathlib.Path(root) / "_no_conclave_home"))
+    r = subprocess.run(args, text=True, capture_output=True, env=env)
     assert r.returncode == 0, r.stderr
     return r.stdout
 
@@ -62,26 +65,26 @@ def test_missing_sources_fail_open():
         assert "WHERE" in out  # still prints a brief
 
 
-def test_fusion_jobs_pending_and_done_surface():
-    with tempfile.TemporaryDirectory() as d:
+def test_conclave_jobs_pending_and_done_surface():
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as home:
         root = _mkroot(d, state={"active": True, "phase": "SECTIONS"})
-        jobs = root / ".fusion" / "jobs"
+        jobs = pathlib.Path(home) / "data" / "projects" / "impossible-os" / "jobs"
         jobs.mkdir(parents=True)
         (jobs / "a.meta.json").write_text(json.dumps({"id": "a", "status": "pending", "target": "build"}))
         (jobs / "b.meta.json").write_text(json.dumps({"id": "b", "status": "done", "target": "test"}))
         # collected job (has outcome) must NOT be counted
         (jobs / "c.meta.json").write_text(json.dumps({"id": "c", "status": "done", "outcome": "resolved"}))
-        anchor = _run(root, anchor=True)
-        assert "fusion:1p/1d" in anchor, anchor
-        full = _run(root)
-        assert "FUSION JOBS: 1 pending, 1 done" in full and "DONE b" in full, full
+        anchor = _run(root, anchor=True, conclave_home=home)
+        assert "conclave:1p/1d" in anchor, anchor
+        full = _run(root, conclave_home=home)
+        assert "CONCLAVE JOBS: 1 pending, 1 done" in full and "DONE b" in full, full
 
 
-def test_no_fusion_jobs_no_fusion_line():
+def test_no_conclave_jobs_no_conclave_line():
     with tempfile.TemporaryDirectory() as d:
         root = _mkroot(d, state={"active": True, "phase": "SECTIONS"})
-        assert "fusion:" not in _run(root, anchor=True)
-        assert "FUSION JOBS" not in _run(root)
+        assert "conclave:" not in _run(root, anchor=True)
+        assert "CONCLAVE JOBS" not in _run(root)
 
 
 if __name__ == "__main__":
@@ -89,6 +92,6 @@ if __name__ == "__main__":
     test_unreceived_codex_is_an_obligation()
     test_expired_gotcha_dropped()
     test_missing_sources_fail_open()
-    test_fusion_jobs_pending_and_done_surface()
-    test_no_fusion_jobs_no_fusion_line()
+    test_conclave_jobs_pending_and_done_surface()
+    test_no_conclave_jobs_no_conclave_line()
     print("PASS: runner_status")

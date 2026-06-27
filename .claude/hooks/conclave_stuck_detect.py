@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # block-via: warning-only (stuck-detect nudge; never exits 2)
 """PostToolUse on Bash: count consecutive same-target build/test/smoke FAILURES and
-nudge the loop into the Claude->Codex->Fusion ladder at threshold. Overnight-only
-(gates on OVERNIGHT_SEQUENCER_RUN); fail-open; never blocks."""
+nudge the loop up the Claude->Codex->Conclave ladder at threshold. The ladder is
+project-side; tier 1 dispatches to the ~/conclave engine via .conclave/connector.sh.
+Overnight-only (gates on OVERNIGHT_SEQUENCER_RUN); fail-open; never blocks."""
 from __future__ import annotations
 
 import json
@@ -59,7 +60,7 @@ def main() -> int:
     target, verdict = _classify(command, text)
     if target is None or verdict == "unknown":
         return 0
-    state_p = root / ".claude" / "state" / "fusion-stuck.json"
+    state_p = root / ".claude" / "state" / "conclave-stuck.json"
     try:
         st = json.loads(state_p.read_text())
     except Exception:
@@ -76,11 +77,11 @@ def main() -> int:
         pass
     if st.get("consecutive_failures", 0) >= THRESHOLD:
         sys.stderr.write(
-            f"[fusion-ladder] STUCK: {st['consecutive_failures']} consecutive '{target}' "
-            f"failures. Escalate: Tier 1 Skill(codex:rescue) (up to 2 rounds); if still "
-            f"stuck, Tier 2 'python3 .fusion/ladder.py dispatch --mode stuck --target "
-            f"{target} --brief-file <brief> --prior codex=<rescue-output>' then DEFER the "
-            f"section and collect later (python3 .fusion/ladder.py poll <id>).\n")
+            f"[conclave-ladder] STUCK: {st['consecutive_failures']} consecutive '{target}' "
+            f"failures. Climb the ladder: Tier 2 Skill(codex:codex-rescue) (up to 2 rounds); "
+            f"if still stuck, Tier 1 'bash .conclave/connector.sh dispatch --mode stuck "
+            f"--target {target} --source <brief-file>' then DEFER the section and collect "
+            f"later (bash .conclave/connector.sh poll <id>).\n")
     return 0
 
 

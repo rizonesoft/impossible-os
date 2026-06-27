@@ -258,7 +258,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/fusion_stuck_detect.py\"",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/conclave_stuck_detect.py\"",
             "timeout": 5
           }
         ]

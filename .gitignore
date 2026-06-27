@@ -91,12 +91,8 @@ src/boot/uefi/*.o
 # .claude/overnight/ -- overnight-runner CLI runtime state (never committed).
 .claude/overnight/
 
-# .fusion/ -- Fusion escalation (apex tier). Secret + collected run data never committed.
-.fusion/secret
-.fusion/dataset.jsonl
-.fusion/jobs/
-.fusion/metrics.jsonl
-.fusion/totals.json
+# Conclave engine + data + key live in ~/conclave (github.com/rizonetech/Conclave);
+# this project only carries the .conclave/ connector (no secrets here).
 
 # .claude/worktrees/ -- harness-created git worktrees (embedded repos).
 .claude/worktrees/

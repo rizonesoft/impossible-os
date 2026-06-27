@@ -136,9 +136,9 @@ Read the feedback carefully. For each finding:
 
 If the rubber-duck identified a completely different root cause, go back to Step 3 with the new hypothesis.
 
-- **Stuck ladder (3 -> 2 -> 1):** after ~3 failed hypothesis cycles on the same
-  symptom, escalate: Tier 1 `Skill(codex:codex-rescue)` (up to 2 rounds); if still stuck,
-  Tier 2 `python3 .fusion/ladder.py dispatch --mode stuck --target <sym> --brief-file <f> --prior opus=<your-analysis> --prior codex=<rescue-output>` -- it runs the DIY Fusion ensemble ASYNC (panel + Opus judge, no web-search). Do other work; collect with `python3 .fusion/ladder.py poll <id>` and validate the synthesis before applying (it is a lead, not a verdict). Off unless `FUSION_ENABLED=1` + a key in `.fusion/secret`.
+- **Stuck ladder -- Claude (3) -> Codex (2) -> Conclave (1):** after ~3 failed hypothesis
+  cycles on the same symptom, climb: Tier 2 `Skill(codex:codex-rescue)` (up to 2 rounds);
+  if still stuck, Tier 1 `bash .conclave/connector.sh dispatch --mode stuck --target <sym> --source <brief-file>` -- it runs the Conclave reasoning harness ASYNC (panel + Opus judge, memory-injected, no web-search). Do other work; collect with `bash .conclave/connector.sh poll <id>`, validate the synthesis before applying (it is a lead, not a verdict), then `bash .conclave/connector.sh outcome <id> resolved|unresolved` so Conclave learns. Off unless `CONCLAVE_ENABLED=1` + a key in `~/conclave/secret`.
 
 ### Step 7: Implement the Fix
 

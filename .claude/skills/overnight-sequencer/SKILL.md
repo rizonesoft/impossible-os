@@ -55,12 +55,12 @@ Every `run_phase_guard.py status`/`phase` prints a one-line anchor to stderr:
   discover a new one (a flaky gate, an in-flight file, a tool that mis-fires),
   append a dated line `- YYYY-MM-DD: <hazard> -> <what to do>` (optional
   `(expires YYYY-MM-DD)`) so the next pass is not surprised by it.
-- **Collect Fusion jobs each pass.** When the anchor / brief shows `fusion:Np/Md`
-  (pending/done async escalation jobs), run `python3 .fusion/ladder.py poll <id>`
+- **Collect Conclave jobs each pass.** When the anchor / brief shows `conclave:Np/Md`
+  (pending/done async escalation jobs), run `bash .conclave/connector.sh poll <id>`
   for each; on DONE, validate + apply the synthesis (the main thread is the review
   layer -- the synthesis is a lead, not a verdict), then record the outcome:
-  `python3 .fusion/ladder.py outcome <id> <resolved|unresolved>`. A fusion-deferred
-  section stays `[/]` until its job is collected.
+  `bash .conclave/connector.sh outcome <id> <resolved|unresolved>` -- this is what makes
+  Conclave learn automatically. A conclave-deferred section stays `[/]` until collected.
 
 ## Procedure
 
