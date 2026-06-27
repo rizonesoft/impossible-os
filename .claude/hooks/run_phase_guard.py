@@ -280,6 +280,20 @@ def handle_stop():
 
 # ---- CLI (the sequencer skill drives transitions) ----
 
+def _emit_anchor(state) -> None:
+    """Best-effort one-line situational anchor on stderr; never raises.
+
+    Only fires for an active run so interactive `status` calls stay quiet.
+    """
+    try:
+        if not state.get("active"):
+            return
+        import runner_status
+        sys.stderr.write("[sequencer] " + runner_status.anchor_line(repo_root()) + "\n")
+    except Exception:
+        pass
+
+
 def cli(argv):
     cmd = argv[0] if argv else "status"
     state = load_state()
@@ -309,6 +323,7 @@ def cli(argv):
         return 0
     if cmd == "status":
         print(json.dumps(state, indent=1))
+        _emit_anchor(state)
         return 0
     if cmd == "phase":
         if len(argv) < 2 or argv[1] not in PHASES:
@@ -317,6 +332,7 @@ def cli(argv):
         state["phase"] = argv[1]
         save_state(state)
         print(f"[sequencer] phase -> {argv[1]}", file=sys.stderr)
+        _emit_anchor(state)
         return 0
     if cmd == "cursor":
         # cursor <domain> <file> [section_idx]
