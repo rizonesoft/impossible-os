@@ -145,10 +145,31 @@ def _read_secret(root: Path) -> str:
         return ""
 
 
+MAX_CONTEXT_BYTES = 60000  # bound what leaves the trust boundary (see README)
+
+
+def _read_context(path, max_bytes=MAX_CONTEXT_BYTES) -> str:
+    """Read a context file, capped -- never send the whole tree off-machine."""
+    try:
+        data = Path(path).read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    if len(data) > max_bytes:
+        data = data[:max_bytes] + "\n...[truncated by fusion context cap]..."
+    return data
+
+
 def main(argv) -> int:
     mode = argv[argv.index("--mode") + 1] if "--mode" in argv else "stuck"
     root = Path(argv[argv.index("--root") + 1]) if "--root" in argv else Path.cwd()
-    brief = argv[argv.index("--brief") + 1] if "--brief" in argv else sys.stdin.read()
+    instruction = argv[argv.index("--brief") + 1] if "--brief" in argv else ""
+    if "--context-file" in argv:
+        ctx = _read_context(argv[argv.index("--context-file") + 1])
+        brief = (instruction + "\n\n" + ctx) if instruction else ctx
+    elif instruction:
+        brief = instruction
+    else:
+        brief = sys.stdin.read()
     res = escalate(enabled=os.environ.get("FUSION_ENABLED") == "1",
                    secret=_read_secret(root), cfg=_load_cfg(root),
                    mode=mode, brief=brief, root=root)

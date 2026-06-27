@@ -72,6 +72,14 @@ def test_ok_writes_dataset_and_increments_budget():
         assert used["fusion_calls_used"] == 1
 
 
+def test_read_context_bounds():
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "big.txt"
+        p.write_text("x" * 100000)
+        out = fe._read_context(str(p), max_bytes=1000)
+        assert len(out) < 1100 and "truncated" in out
+
+
 def test_post_error_is_fail_open_no_charge():
     with tempfile.TemporaryDirectory() as d:
         root = _root(d)
@@ -92,5 +100,6 @@ if __name__ == "__main__":
     test_low_balance()
     test_balance_check_error_fails_closed()
     test_ok_writes_dataset_and_increments_budget()
+    test_read_context_bounds()
     test_post_error_is_fail_open_no_charge()
     print("PASS: fusion_escalate")
