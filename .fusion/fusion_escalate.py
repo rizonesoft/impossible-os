@@ -22,8 +22,8 @@ CREDITS_URL = "https://openrouter.ai/api/v1/credits"
 COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_CFG = {
-    "panel": ["z-ai/glm-5.2", "moonshotai/kimi-k2.7", "deepseek/deepseek-v4-pro"],
-    "judge": "anthropic/claude-opus-4.8",
+    "panel": ["z-ai/glm-5.2", "moonshotai/kimi-k2.7-code", "deepseek/deepseek-v4-pro"],
+    "judge": "z-ai/glm-5.2",
     "max_calls": 3,
     "min_credits": 2.0,
     "timeout_s": 240,

@@ -28,8 +28,8 @@ Tier 0  Claude (main loop)   works the problem
 Tier 1  Codex assist         single strong second opinion (GPT-5.5) -- up to 2 rounds
           |  2 rounds exhausted, still stuck
           v
-Tier 2  Fusion assist        ensemble apex (GLM 5.2 + Kimi K2.7 + DeepSeek V4 Pro,
-                             judge Claude) -- 1 call, last resort
+Tier 2  Fusion assist        ensemble apex (GLM 5.2 + Kimi K2.7-code + DeepSeek V4
+                             Pro, GLM judge; main thread = review layer) -- 1 call
 ```
 
 The numbers are per-tier budgets, all configurable: **3** = Claude stuck threshold,
@@ -86,8 +86,10 @@ integration.
    the main loop -- Claude is not fine-tunable.
 7. **Data leaves the trust boundary (operator decision).** Enabling Fusion
    transmits the sent context to OpenRouter and the three external panel providers
-   (Zhipu, Moonshot, DeepSeek) + the Claude judge (Anthropic already sees the code
-   via Claude Code, so the judge step adds no new provider). The caller sends BOUNDED context only
+   (Zhipu, Moonshot, DeepSeek) + OpenRouter's auto web-search (Google). The judge is
+   GLM (Zhipu, already in the panel -- no extra provider); Anthropic sees only
+   Fusion's OUTPUT, via the main-thread review, and already sees the code (Claude
+   Code). The caller sends BOUNDED context only
    (`--context-file` capped at 60 KB; never whole files / the tree); the crossing is
    documented in `.fusion/README.md`. In interactive auto-mode a source-to-external
    crossing is correctly hard-blocked until approved; the headless run
@@ -126,23 +128,24 @@ fail-open-trivial, and matches every other host tool in the repo.
 
 ## 5. Panel / judge configuration (config.toml)
 
-- `analysis_models` (panel): `z-ai/glm-5.2`, `moonshotai/kimi-k2.7`,
-  `deepseek/deepseek-v4-pro` -- three strong, architecturally-diverse coders, none of
-  them a ladder model (Claude/GPT). Cheapness is NOT the goal here; diversity from
-  what already failed is. Gemini 3.5 Flash was dropped (weakest of Google's line
-  AND priciest output of the candidates).
-- `model` (Fusion's built-in judge): `anthropic/claude-opus-4.8` -- the strongest
-  synthesizer; ~cents on a rare apex call; adds no NEW data-provider exposure
-  (Anthropic already sees the code via Claude Code). Single judge for both modes;
-  the dataset outcomes reveal if a stuck-mode blind spot ever warrants a non-ladder
-  judge.
+- `analysis_models` (panel): `z-ai/glm-5.2`, `moonshotai/kimi-k2.7-code`,
+  `deepseek/deepseek-v4-pro` -- three strong, architecturally-diverse coders, none
+  of them a ladder model (Claude/GPT). Diversity from what already failed is the
+  point. IDs verified against OpenRouter 2026-06-27: an invalid id (the earlier
+  `kimi-k2.7`) is SILENTLY dropped, shrinking the panel -- the first smoke test ran
+  a 2-model panel before this fix.
+- `model` (Fusion's built-in judge): `z-ai/glm-5.2` -- a CHEAP in-Fusion
+  synthesizer, NOT Opus. We already pay for Opus in the main Claude thread, which
+  reads Fusion's output and validates it before acting (the WS8 trust contract);
+  that main-thread review IS the Opus-grade judge, for free. Paying OpenRouter for a
+  duplicate Opus judge was paying twice (~43% of the measured call cost).
 ### Verified OpenRouter Fusion wire shape (docs, 2026-06-27)
 
 - **Endpoint:** `POST https://openrouter.ai/api/v1/chat/completions`.
 - **Auth:** `Authorization: Bearer <contents of .fusion/secret>`.
 - **Body:** `{"model": "openrouter/fusion", "plugins": [{"id": "fusion",
-  "analysis_models": ["z-ai/glm-5.2", "moonshotai/kimi-k2.7",
-  "deepseek/deepseek-v4-pro"], "model": "anthropic/claude-opus-4.8"}], "messages": [...]}`.
+  "analysis_models": ["z-ai/glm-5.2", "moonshotai/kimi-k2.7-code",
+  "deepseek/deepseek-v4-pro"], "model": "z-ai/glm-5.2"}], "messages": [...]}`.
   (Docs examples prefix model ids with `~`; the exact id-syntax variant is confirmed
   against a live id list at impl time -- a one-line config value, not a code change.)
 - **Web search/fetch** is auto-enabled for the panel; no extra config.
@@ -154,15 +157,17 @@ fail-open-trivial, and matches every other host tool in the repo.
 
 ## 6. Cost model (why this is affordable)
 
-OpenRouter prices (June 2026, $/M in/out): GLM 5.2 0.95/3.00, Kimi K2.7 ~0.66/3.41,
-DeepSeek V4 Pro 0.435/0.87, Claude Opus 4.8 judge 5/25. A Fusion call (~20K context x 3
-panel + 1 Claude judge, with auto web-search + a large synthesis) lands around
-$0.50-0.70 (measured $0.61 on a 2026-06-27 smoke test) -- the Claude judge
-upgrade adds only cents because the call is rare. Because Fusion is the apex tier
-(reached only after Claude (3) and Codex (2) failed, capped at `FUSION_MAX_CALLS`
-per run), per-call QUALITY matters more than per-call cheapness. It is a rare spend
-that frequently *saves* money by
-ending an Opus loop that would have cost more.
+OpenRouter prices (June 2026, $/M in/out): GLM 5.2 0.95/3.00, Kimi K2.7-code
+~0.95/4.00, DeepSeek V4 Pro 0.435/0.87. Measured breakdown of the 2026-06-27 smoke
+test ($0.61 total, run with an Opus judge): Opus judge $0.248 (43%), auto web-search
+$0.174 (30%, billed as Gemini Flash), GLM $0.151 (26%), DeepSeek $0.008 (1%).
+Swapping the judge to GLM removes the 43% Opus line -- and the main Claude thread,
+which we already pay for, is the real review layer (it reads + validates Fusion's
+output before acting anyway, per the WS8 trust contract), so Opus-grade judgment
+stays free. Expected new cost ~$0.30-0.40. The auto web-search (~30%) is the
+next-biggest line and is not currently disableable. Because Fusion is the rare apex
+tier (after Claude (3) + Codex (2) failed, capped at `FUSION_MAX_CALLS`), it still
+frequently *saves* money by ending an Opus loop that would have cost more.
 
 ## 7. Triggers (auto-detect both)
 

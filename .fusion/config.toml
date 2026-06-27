@@ -3,13 +3,15 @@
 
 # Panel (analysis_models): three strong, architecturally-diverse coders, none of
 # them a model already in the ladder (Claude/GPT) -- the point is fresh blind spots.
-# (verify exact OpenRouter ids against the live model list before first enable)
-panel = ["z-ai/glm-5.2", "moonshotai/kimi-k2.7", "deepseek/deepseek-v4-pro"]
-# Judge (Fusion's built-in synthesizer model): the strongest synthesizer. Claude
-# adds no NEW data-provider exposure (Anthropic already sees the code via Claude
-# Code) and costs ~cents on a rare apex call. dataset.jsonl outcomes will reveal if
-# a stuck-mode blind spot ever warrants a non-ladder judge.
-judge = "anthropic/claude-opus-4.8"
+# IDs verified against the OpenRouter model list 2026-06-27 (kimi-k2.7 does NOT
+# exist; the coding variant is kimi-k2.7-code -- an invalid id is silently dropped).
+panel = ["z-ai/glm-5.2", "moonshotai/kimi-k2.7-code", "deepseek/deepseek-v4-pro"]
+# Judge (Fusion's built-in synthesizer): a CHEAP in-Fusion synthesizer. NOT Opus --
+# we already pay for Opus in the main Claude thread, which reads Fusion's output and
+# validates it before acting (the WS8 trust contract). That main-thread review IS
+# the Opus-grade "judge", for free; paying OpenRouter for a duplicate Opus judge was
+# paying twice. GLM 5.2 just does the basic panel synthesis.
+judge = "z-ai/glm-5.2"
 
 # Spend caps.
 max_calls = 3        # hard per-run Fusion call cap (FUSION_MAX_CALLS)
