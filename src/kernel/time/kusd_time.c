@@ -102,8 +102,15 @@ void kusd_init(void)
     memset((void *)phys, 0, 4096);
 
     /* Split the 2 MiB huge page containing 0x7FFE0000 so we can map
-     * a single 4 KiB page with different flags (user read-only + NX) */
-    vmm_split_huge_page(KUSD_USER_VA);
+     * a single 4 KiB page with different flags (user read-only + NX). A failed
+     * split (PMM exhaustion) leaves the huge PD entry, which makes the
+     * vmm_map_page below fail-closed -- check it explicitly so the failure is
+     * attributed, not silently degraded. */
+    if (vmm_split_huge_page(KUSD_USER_VA) != 0) {
+        klog(LOG_ERROR, "kusd", "Failed to split huge page for KUSD at 0x%X",
+             (uint64_t)KUSD_USER_VA);
+        return;
+    }
 
     /* Map at fixed user VA: read-only for user mode, NX */
     ret = vmm_map_page(KUSD_USER_VA, phys,
@@ -120,7 +127,10 @@ void kusd_init(void)
     /* ---- Populate static fields ---- */
 
     /* Time multiplier: (tick_ms * 2^24) / 1000 for GetTickCount() */
-    g_kusd->TickCountMultiplier = 0x0FA00000;  /* 10 ms tick */
+    /* (TickCountQuad * TickCountMultiplier) >> 24 == milliseconds. TickCount is
+     * published in 10 ms units (interrupt_time / 100000), so the multiplier is
+     * 10 << 24. (Was 0x0FA00000 = 15.625 ms, which mismatched the 10 ms unit.) */
+    g_kusd->TickCountMultiplier = 0x0A000000;  /* 10 ms per tick (10 << 24) */
 
     /* Image number: x86-64 = 0x8664 (IMAGE_FILE_MACHINE_AMD64) */
     g_kusd->ImageNumberLow  = 0x8664;
@@ -225,18 +235,23 @@ void kusd_update_time(void)
     uint64_t tz_bias_100ns;
     uint64_t tick_count;
 
+    FILETIME system_ft;
+
     if (!s_kusd_ready)
         return;
 
-    /* Gather current values */
-    interrupt_time = KeQueryInterruptTime();
-    system_time    = (uint64_t)KeQuerySystemTime();
-    tick_count     = interrupt_time / 100000;  /* 10 ms units */
+    /* ONE clocksource read drives both InterruptTime and SystemTime (same tick
+     * instant; halves the per-tick HPET/PMTMR cost vs separate Ke* calls). */
+    wall_clock_snapshot(&system_ft, &interrupt_time);
+    system_time = (uint64_t)system_ft;
+    tick_count  = interrupt_time / 100000;  /* 10 ms units */
 
-    /* Timezone bias in 100 ns units */
+    /* KUSD TimeZoneBias is the Win32 positive-WEST Bias (LocalTime =
+     * SystemTime - TimeZoneBias). Our internal timezone_total_bias() is
+     * west-NEGATIVE (Local = UTC + bias), so the ABI field is its negation. */
     {
         int32_t bias_min = timezone_total_bias();
-        int64_t bias_ticks = (int64_t)bias_min * 60 * (int64_t)FILETIME_TICKS_PER_SECOND;
+        int64_t bias_ticks = -(int64_t)bias_min * 60 * (int64_t)FILETIME_TICKS_PER_SECOND;
         tz_bias_100ns = (uint64_t)bias_ticks;
     }
 

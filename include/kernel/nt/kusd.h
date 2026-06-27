@@ -15,6 +15,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/barrier.h"   /* smp_wmb() for the triple-write protocol */
 
 /* ---- KSYSTEM_TIME -- lock-free 64-bit time for 32-bit readers ----------- */
 
@@ -26,15 +27,19 @@ typedef struct {
 
 /* Write a 64-bit value using the triple-write protocol.
  * Writer order: High1Time, LowPart, High2Time.
- * Reader order: read High1Time, LowPart, High2Time; retry if High1!=High2. */
+ * Reader order: read High1Time, LowPart, High2Time; retry if High1!=High2.
+ * smp_wmb() (not a bare compiler barrier) orders the stores so a user reader on
+ * another CPU observes High1 before Low before High2 -- on x86 TSO this is
+ * effectively free, and it keeps the tear-detection valid on weakly-ordered
+ * targets (ARM64) instead of relying on x86 store-store ordering. */
 static inline void ksystem_time_write(volatile KSYSTEM_TIME *dst, uint64_t val)
 {
     int32_t hi = (int32_t)(val >> 32);
     uint32_t lo = (uint32_t)val;
     dst->High1Time = hi;
-    __asm__ volatile ("" ::: "memory");  /* compiler barrier */
+    smp_wmb();
     dst->LowPart = lo;
-    __asm__ volatile ("" ::: "memory");
+    smp_wmb();
     dst->High2Time = hi;
 }
 

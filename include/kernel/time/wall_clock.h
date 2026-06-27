@@ -57,6 +57,11 @@ uint32_t ke_delay_interval_to_ms(int64_t interval, FILETIME now);
 /* Returns 1 when KeQuerySystemTime() is usable. */
 int time_service_ready(void);
 
+/* Sample the wall clock + interrupt time from ONE monotonic read, so both
+ * describe the same instant (used by the KUSD ISR updater to avoid two
+ * clocksource reads per tick). Either out-pointer may be NULL. */
+void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out);
+
 /* ---- Interrupt time APIs -------------------------------------------- */
 
 /* 100 ns since boot, including suspend bias. Monotonically increasing. */

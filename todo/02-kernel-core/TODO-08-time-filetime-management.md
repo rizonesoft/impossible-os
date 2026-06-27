@@ -382,9 +382,24 @@ The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, Inter
 - [x] Wired into LAPIC timer ISR (`lapic.c`) and PIT ISR (`pit.c`) -- called on every tick
 - [x] Volatile writes only, no locks -- runs at CLOCK_LEVEL IRQL
 - [x] Also wired `mono_clock_init()`, `wall_clock_init()`, `timezone_init()` into Phase 2 boot (were previously defined but never called)
-- [ ] Win11 24H2 KUSD QPC fast-path fields (gap-audit): populate `BaselineSystemTimeQpc`, `QpcSystemTimeIncrement`, `QpcBias`, `QpcBypassEnabled` so user-mode `QueryPerformanceCounter` reads the page syscall-free.
-- [ ] Reconcile custom ABI header collision (gap-audit): `kusd.h` `AbiMagic` at 0x340 overlaps the Win11 24H2 QPC block (0x340-0x3c7); relocate past the real Windows tail -> XREF: D02 T04 §18.
+- [/] Win11 24H2 KUSD QPC fast-path fields -- DEFERRED (design): `QpcBypassEnabled` stays 0 (bypass not needed; NtQueryPerformanceCounter returns raw mono); gated on the user-mode `QueryPerformanceCounter` reader (10-platform-services/TODO-09 §1).
+- [/] Reconcile ABI-header / Win11-QPC-tail collision -- DEFERRED (design): move the Impossible-OS ABI header OUT of `KUSER_SHARED_DATA` to a private page (a higher offset only postpones it); needs the authoritative Win11 24H2 tail.
 - [x] Commit: `"kernel: time -- KUSER_SHARED_DATA time field updates from timer ISR"`
+
+**Test checkpoint:** Unit: the ISR updater + KUSD page writes are not unit-testable without a live timer/page; the underlying time math is covered by the §2/§6/§11 suites. Runtime (WHPX / bare metal serial): boot log shows `KUSER_SHARED_DATA: user=0x7FFE0000 ...`; user-mode `GetTickCount64()`/`NtQuerySystemTime` fast path advances; a user write to 0x7FFE0000 faults. Verify on QEMU TCG, WHPX, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-sched-tests.bat` (SUITE=sched) | time + sched suites, 0 failures (243 kernel + 16 user PASS, TCG)
+> **Notes:**
+> - Shipped: KUSD page in `kusd_time.c` -- `kusd_page_init` (frame at 0x7FFE0000 user-RO + kernel alias, static fields, AbiMagic last), `kusd_update_time` (CLOCK_LEVEL ISR triple-write of InterruptTime/SystemTime/TimeZoneBias/TickCount).
+> - Review fixes: one `wall_clock_snapshot()` mono sample/tick (was two); TimeZoneBias now Win32 positive-west; TickCountMultiplier 10<<24; `ksystem_time_write` `smp_wmb()`; split-return checked.
+> - Downstream: user-mode time fast path (no syscall); the QPC-bypass + ABI-header relocation stay deferred (below).
+> - Canonical: `src/kernel/time/kusd_time.c`; ABI `include/kernel/nt/kusd.h`.
+> - Scope boundary: §12 owns the page + ISR time update; full static-field population is TODO-11 §11; coarse cached reads are §16; the QPC fast path is gated on 10-platform-services/TODO-09 §1.
+> **Verified:** 2026-06-27 | ship `da9c78f3` + review fixes | 7/9 items | build OK | 243 kernel + 16 user PASS | smoke PASS (TCG 2.49s)
+> **Accepted:** [H] the KUSD huge-page split leaves the 511 identity siblings user-accessible (the KUSD leaf itself is user-RO) -- the global SMEP-disabled boot map (User on all identity pages), not §12-specific -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §3 (item: "set CR4 bit 20 (`CR4.SMEP`)" at line 105)
+> **Deferred:** [H] move the Impossible-OS ABI header out of `KUSER_SHARED_DATA` to a private page (Win11-QPC-tail collision) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Reconcile ABI-header / Win11-QPC-tail collision" at line 386)
+> **Deferred:** [M] Win11 24H2 QPC-bypass fields (QpcBypassEnabled stays 0 until a user-mode reader exists) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Win11 24H2 KUSD QPC fast-path fields" at line 385)
+> **Quality reviewed:** 2026-06-27 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 1H+4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
 
 ---
 

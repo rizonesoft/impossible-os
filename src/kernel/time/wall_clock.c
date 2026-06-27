@@ -324,6 +324,43 @@ void ke_suspend_bias_update(uint64_t bias_100ns)
     __atomic_fetch_add(&s_interrupt_time_bias, bias_100ns, __ATOMIC_SEQ_CST);
 }
 
+void wall_clock_snapshot(FILETIME *system_out, uint64_t *interrupt_out)
+{
+    /* ONE clocksource read drives both outputs so they describe the same
+     * instant -- the KUSD ISR updater would otherwise read mono_ns() twice per
+     * tick (two HPET MMIO / PMTMR port-I/O samples). */
+    FILETIME base = FILETIME_NOW_PLACEHOLDER;
+    uint64_t base_mono = 0, mono, elapsed;
+    int ready = __atomic_load_n(&s_ready, __ATOMIC_ACQUIRE);
+
+    if (ready) {
+        uint64_t seq;
+        do {
+            seq = seqlock_read_begin(&s_lock);
+            base = s_base_time;
+            base_mono = s_base_mono_ns;
+        } while (seqlock_read_retry(&s_lock, seq));
+    }
+
+    /* Sample mono AFTER accepting a stable anchor (matches KeQuerySystemTime's
+     * ordering): pairing the sample with the already-accepted base epoch keeps
+     * base_mono <= mono, so both outputs derive from one coherent instant. */
+    mono = mono_ns();
+
+    if (interrupt_out)
+        *interrupt_out = (mono / 100) +
+            __atomic_load_n(&s_interrupt_time_bias, __ATOMIC_SEQ_CST);
+
+    if (system_out) {
+        if (!ready) {
+            *system_out = FILETIME_NOW_PLACEHOLDER;
+        } else {
+            elapsed = (mono > base_mono) ? (mono - base_mono) : 0;
+            *system_out = base + (elapsed / 100);
+        }
+    }
+}
+
 /* ---- SSDT handlers ------------------------------------------------- */
 
 /* Probe (when the caller is user-mode) + copy a uint64_t out to a syscall
