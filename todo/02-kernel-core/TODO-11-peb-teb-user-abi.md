@@ -9,6 +9,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 # TODO-11 -- PEB / TEB & User-Mode ABI
 
 > **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); added 11 missing inter-section `---` separators
+> **Gap-audited:** 2026-06-28 | mature confirmatory pass + codex-gap-audit; 1 finding filed (§11 `FullNumberOfPhysicalPages`, Win11 24H2); PEB/TEB/auxv ABI stable, no new baseline gaps
 
 > **Goal:** Implement the Process Environment Block, Thread Environment Block, and the complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can initialise and user programs run correctly. Without this, no Win32 binary can call `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS. This is the first item every Win32 user-mode DLL depends on, and blocks everything downstream in the Win32 subsystem.
 
@@ -247,6 +248,7 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
 - [x] `kusd_update_time()`: ISR-driven, writes InterruptTime, SystemTime, TimeZoneBias, TickCount via triple-write protocol. Wired into LAPIC + PIT timer ISRs (→ XREF TODO-17 §12)
 - [x] Wired into Phase 2 boot after wall_clock_init() and timezone_init()
 - [ ] Mirror policy publication bits from TODO-02: `SafeBootMode`, `KdDebuggerEnabled`, and a packed mitigation summary in `MitigationPolicies`; update them when the effective kernel policy snapshot changes.
+- [ ] Win11 24H2 `FullNumberOfPhysicalPages` (ULONGLONG, 0x310): split a `SystemCallPad[2]` qword in `kusd.h`, populate from the 64-bit PMM frame count, add `_Static_assert` + unit assertion
 - [x] Commit: `"kernel: abi -- KUSER_SHARED_DATA shared page at 0x7FFE0000"`
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
