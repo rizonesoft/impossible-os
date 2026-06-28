@@ -14,7 +14,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). **Deferred [/] (no test platform):** §7 FRED, §8 LKGS, §12 AMD IBS. **Open [ ]:** §15 future-silicon stubs, §16 1 GiB boot PT, §17 AMX+XFD, §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID (§17-§19 added 2026-06-28 gap-audit).
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). **Deferred [/] (no test platform):** §7 FRED, §8 LKGS, §12 AMD IBS. §15 future-silicon detection stubs (UINTR/LA57/LAM/LASS + TDX/SEV cc_kind; boot_info.cc_kind mirror + Hyper-V SynIC producer deferred). **Open [ ]:** §16 1 GiB boot PT, §17 AMX+XFD, §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID (§17-§19 added 2026-06-28 gap-audit).
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-10` (gap analysis 2026-04-12: `TODO-10` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
@@ -81,7 +81,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   |  [/]    |
 | 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]    |
 | ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [/]    |
-| 💎  |  15   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]    |
+| 💎  |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV | (none)               |  [/]    |
 | 💎  |  16   | Boot page tables: 1 GiB pages from entry.asm        | §6                   |  [ ]    |
 | 💎  |  17   | AMX tile state + XFD dynamic XSAVE                  | §1, §4               |  [ ]    |
 | 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection         | §4                   |  [ ]    |
@@ -443,16 +443,22 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 > -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §3` -- this section owns the kernel-side guest enlightenment + confidential-compute guest detection that §3 of the boot-sequencing TODO mirrors as `boot_info` flags.
 
-- [ ] Stub: if `CPUID.(7,0):EDX[5]` set: log `[cpu] UINTR present; not yet enabled`; structure definitions in `include/kernel/uintr.h` (UPID, UITT); full implementation deferred until UINTR reaches mainstream silicon
-- [ ] Stub: if `CPUID.(7,0):ECX[16]` set: log `[vmm] LA57 (57-bit VA) detected; 4-level paging active`; enabling at runtime requires a full VMM rewrite; relevant for server SKUs with > 256 TiB virtual address space
-- [ ] TDX guest stub: probe CPUID leaf `0x21` for `"IntelTDX    "` signature; set `boot_info.cc_kind = CC_INTEL_TDX`; log; full attestation deferred
-- [ ] SEV/SEV-ES/SEV-SNP guest stub: probe CPUID leaf `0x8000001F` EAX bits 1/3/4; set `boot_info.cc_kind = CC_AMD_SEV/_ES/_SNP`; log; full attestation deferred
-- [ ] Hyper-V SynIC + reference TSC MSR init: when `boot_info.hv_flags & HV_FLAG_TSC_ENLIGHTENMENT`, program `HV_X64_MSR_REFERENCE_TSC=0x40000021` + SynIC SIMP/SIEFP; consumer in `01-boot-platform/TODO-11-interrupt-timer-arch.md §6`
-- [ ] Stub: if `CPUID.(7,1):EAX[26]` (LAM) set: log `[cpu] LAM detected; not yet enabled`; CR4.LAM_U57/U48 + user-pointer untag is a pointer-ABI decision, detection only here (-> XREF: `D03` `03-memory-concurrency` user-pointer ABI owns enablement)
-- [ ] Stub: if `CPUID.(7,1):EAX[27]` (LASS) set: log `[cpu] LASS detected`; LASS is a user/kernel address-space separation control (CR4.LASS), detection only here -- enablement owned by security hardening (-> XREF: `TODO-10` §2 CR4.LASS item)
-- [ ] Commit: `"kernel/cpu: future-silicon + guest enlightenment stubs (UINTR/LA57/LAM/LASS/TDX/SEV-SNP/Hyper-V ref TSC)"`
+- [x] CPUID detection in `cpuid.c`/`cpuid.h`: `CPU_FEATURE_LA57` (7.0:ECX[16]), `CPU_FEATURE_LAM` (7.1:EAX[26]), `CPU_FEATURE_LASS` (7.1:EAX[6] -- NOT EAX[27]; unit-test-pinned); UINTR already detected (7.0:EDX[5])
+- [x] Detection-stub klog (detect + log only, no enablement): UINTR/LA57/LAM/LASS each log one `[cpu]`/`[vmm]` line; UPID/UITT structs deferred until UINTR has a consumer
+- [x] Confidential-VM guest detection (kernel `cc_kind_t` + `g_cpu.cc_kind`): Intel TDX via CPUID leaf `0x21` `"IntelTDX    "`; AMD SEV via `0x8000001F` EAX[1] gate + `MSR_AMD64_SEV` active-state bits; attestation deferred
+- [ ] DEFERRED -- `boot_info.cc_kind` bootloader mirror: needs a BOOT_INFO_VERSION bump; the bootloader pre-detection mirror is owned elsewhere (-> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §3`)
+- [ ] DEFERRED -- Hyper-V SynIC + reference-TSC MSR producer: `HV_FLAG_TSC_ENLIGHTENMENT` is detected but the ref-TSC/SynIC producer has no consumer yet (dead infra without one) (-> XREF: `01-boot-platform/TODO-11-interrupt-timer-arch.md §6`)
+- [x] Commit: `"kernel/cpu: future-silicon detection stubs (UINTR/LA57/LAM/LASS) + TDX/SEV guest detection"`
 
-**Test checkpoint:** When CPU advertises UINTR or LA57, serial shows one-line stub log and kernel continues without enabling new modes. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** On a CPU advertising LA57/LAM/LASS/UINTR, serial shows the matching one-line `[cpu]`/`[vmm]` stub log and the kernel continues without enabling the mode; on a TDX/SEV guest the `confidential VM` line fires and `g_cpu.cc_kind` is set; on a normal VM / bare metal no stub lines fire and `cc_kind == CC_NONE`. Smoke-validated on KVM (host lacks all four -> no stub lines, cc_kind=CC_NONE). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 2 future-silicon suites (cc_kind valid + bit-position pin), 0 failures
+
+> **Notes:**
+> - What shipped: `cpuid.c`/`cpuid.h` future-silicon detection stubs (LA57/LAM/LASS feature bits + UINTR log) and kernel-internal confidential-VM detection (`cc_kind_t` + `g_cpu.cc_kind`, TDX leaf 0x21 + SEV leaf 0x8000001F).
+> - How it runs: in `cpuid_init()` (Phase 0); detect-and-log only, no CR4/MSR enablement; `cc_kind` is read-only after boot via `cpuid_get()`.
+> - Downstream effects: `g_cpu.cc_kind` available to downstream cache-type / attestation consumers; bit positions pinned by a unit test so a wrong LASS/LAM/LA57 bit cannot regress.
+> - Scope boundary: detection only -- LAM enablement -> memory/user-ABI (`D03`), LASS -> security hardening (`TODO-10` §2); `boot_info.cc_kind` mirror + Hyper-V SynIC/ref-TSC producer deferred.
 
 ---
 
@@ -565,7 +571,8 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 | 💎  | Split/bus-lock det   | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=       | ⬜ §18            |
 | 💎  | WAITPKG UMWAIT bound | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL      | ⬜ §19            |
 | 💎  | x2APIC MSR mode      | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC        | ⬜ D04 T02 §1     |
-| 💎  | LAM / LASS           | ⚠️ unclear public surface   | ⚠️ LAM gated on LASS        | ⬜ §15 stub; T10  |
+| 💎  | LAM / LASS           | ⚠️ unclear public surface   | ⚠️ LAM gated on LASS        | ⚠️ §15 detected   |
+| 💎  | Confidential VM guest| ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x        | ⚠️ §15 cc_kind det |
 | ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⚠️ §14 bench+SIMD |
 | ⭐  | PKU Win32 wrapper    | ❌ no user API surface      | ⚠️ raw syscall pkey_*       | ⚠️ §5 kernel only |
 | ⭐  | Per-core freq UI     | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §10 + shell    |

@@ -101,8 +101,25 @@ enum cpu_feature {
     /* CPUID Leaf 0x01 ECX */
     CPU_FEATURE_CX16      = 55,   /* CMPXCHG16B (ECX bit 13) -- 16-byte DCAS */
 
-    CPU_FEATURE_COUNT     = 56    /* total features tracked */
+    /* Future-silicon detection stubs (CPUID leaf 0x07): detect + log only */
+    CPU_FEATURE_LA57      = 56,   /* 57-bit linear addressing (7.0:ECX[16]) */
+    CPU_FEATURE_LAM       = 57,   /* Linear Address Masking (7.1:EAX[26]) */
+    CPU_FEATURE_LASS      = 58,   /* Linear Address Space Separation (7.1:EAX[6]) */
+
+    CPU_FEATURE_COUNT     = 59    /* total features tracked */
 };
+
+/* Confidential-compute guest kind (detected via CPUID; full attestation is
+ * deferred). Stored kernel-internally in struct cpu_features (NOT boot_info --
+ * the bootloader-side boot_info.cc_kind mirror is owned by the cpu-boot
+ * confidential-compute detection TODO). */
+typedef enum {
+    CC_NONE        = 0,   /* not a confidential-VM guest                 */
+    CC_INTEL_TDX   = 1,   /* Intel Trust Domain Extensions               */
+    CC_AMD_SEV     = 2,   /* AMD Secure Encrypted Virtualization         */
+    CC_AMD_SEV_ES  = 3,   /* SEV Encrypted State                         */
+    CC_AMD_SEV_SNP = 4    /* SEV Secure Nested Paging                    */
+} cc_kind_t;
 
 /* --- AP feature consistency masks (TODO-09-boot S6) --------------------- */
 
@@ -164,6 +181,9 @@ struct cpu_features {
 
     /* Feature flags -- one bit per CPU_FEATURE_* */
     uint64_t flags;
+
+    /* Confidential-compute guest kind (cc_kind_t); CC_NONE on bare/normal VM */
+    uint8_t  cc_kind;
 
     /* Address sizes (from leaf 0x80000008) */
     uint8_t  phys_addr_bits;      /* physical address width (typically 48) */

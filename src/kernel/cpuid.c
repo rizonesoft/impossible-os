@@ -148,6 +148,7 @@ void cpuid_init(void)
         /* ECX */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_UMIP,     ecx,  2);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_PKU,      ecx,  3);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_LA57,     ecx, 16);
 
         /* EDX */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_UINTR,     edx,  5);
@@ -163,8 +164,10 @@ void cpuid_init(void)
             cpuid_raw(0x07, 1, &eax, &ebx, &ecx, &edx);
 
             /* EAX */
+            set_flag_if(&g_cpu.flags, CPU_FEATURE_LASS,  eax,  6);
             set_flag_if(&g_cpu.flags, CPU_FEATURE_FRED,  eax, 17);
             set_flag_if(&g_cpu.flags, CPU_FEATURE_LKGS,  eax, 18);
+            set_flag_if(&g_cpu.flags, CPU_FEATURE_LAM,   eax, 26);
 
             /* EDX */
             set_flag_if(&g_cpu.flags, CPU_FEATURE_AVX10, edx, 19);
@@ -365,6 +368,53 @@ void cpuid_init(void)
     if (cpu_has(CPU_FEATURE_APX)) {
         klog(LOG_INFO, "cpu",
              "[SIMD] APX detected (R16-R31); not yet enabled");
+    }
+
+    /* ---- Future-silicon detection stubs (detect + log only; enablement is
+     * deferred to each feature's owning subsystem) ---- */
+    if (cpu_has(CPU_FEATURE_UINTR))
+        klog(LOG_INFO, "cpu", "[cpu] UINTR present; not yet enabled");
+    if (cpu_has(CPU_FEATURE_LA57))
+        klog(LOG_INFO, "cpu", "[vmm] LA57 (57-bit VA) detected; 4-level paging active");
+    if (cpu_has(CPU_FEATURE_LAM))
+        klog(LOG_INFO, "cpu", "[cpu] LAM (pointer masking) detected; not yet enabled");
+    if (cpu_has(CPU_FEATURE_LASS))
+        klog(LOG_INFO, "cpu", "[cpu] LASS detected; enablement owned by security hardening");
+
+    /* ---- Confidential-compute guest detection (kernel-internal cc_kind;
+     * full attestation deferred) ---- */
+    g_cpu.cc_kind = CC_NONE;
+    if (g_cpu.max_leaf >= 0x21) {
+        /* Intel TDX: leaf 0x21 sub-0 returns "IntelTDX    " in EBX/EDX/ECX */
+        cpuid_raw(0x21, 0, &eax, &ebx, &ecx, &edx);
+        if (ebx == 0x65746E49u && edx == 0x5844546Cu && ecx == 0x20202020u) {
+            g_cpu.cc_kind = CC_INTEL_TDX;
+            klog(LOG_INFO, "cpu",
+                 "[cpu] confidential VM: Intel TDX guest; attestation deferred");
+        }
+    }
+    if (g_cpu.cc_kind == CC_NONE && g_cpu.max_ext_leaf >= 0x8000001Fu) {
+        /* AMD SEV: leaf 0x8000001F EAX[1] = SEV *supported* (capability) -- this
+         * is true on SEV-capable bare metal too. The SEV_STATUS MSR is what says
+         * we are actually a guest: bit0=SEV active, bit1=ES active, bit2=SNP
+         * active. The MSR exists once SEV is supported, so reading it is safe. */
+        cpuid_raw(0x8000001F, 0, &eax, &ebx, &ecx, &edx);
+        if (eax & (1u << 1)) {
+            /* SEV supported -> SEV_STATUS MSR is architecturally present (AMD
+             * APM), so a plain rdmsr is safe and faults only on a spec-violating
+             * CPU. msr_try_read is NOT usable here: cpuid_init() runs in Phase 0
+             * before the IDT loads, where the #GP-trapping probe always
+             * returns -1 (idt_is_loaded() == 0). */
+            uint64_t sev_status = msr_read(MSR_AMD64_SEV);
+            if (sev_status & 1u) {
+                if (sev_status & (1u << 2))      g_cpu.cc_kind = CC_AMD_SEV_SNP;
+                else if (sev_status & (1u << 1)) g_cpu.cc_kind = CC_AMD_SEV_ES;
+                else                             g_cpu.cc_kind = CC_AMD_SEV;
+                klog(LOG_INFO, "cpu",
+                     "[cpu] confidential VM: AMD SEV guest (kind=%u); attestation deferred",
+                     (uint64_t)g_cpu.cc_kind);
+            }
+        }
     }
 
     /* Suppress unused warning */

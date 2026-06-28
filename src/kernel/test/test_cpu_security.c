@@ -1652,6 +1652,60 @@ static void test_hwprofile_simd_decision(void)
     TEST_ASSERT_EQ((uint64_t)keep_avx512, 1ULL, "zero data -> AVX-512 kept");
 }
 
+/* ---- S15: future-silicon detection stubs ---- */
+
+static void test_cc_kind_valid(void)
+{
+    const struct cpu_features *c = cpuid_get();
+    TEST_ASSERT((uint64_t)c->cc_kind <= (uint64_t)CC_AMD_SEV_SNP,
+                "cc_kind is a valid enum value");
+    /* the test platforms (KVM/TCG/WHPX/bare metal) are not CC guests */
+    TEST_ASSERT_EQ((uint64_t)c->cc_kind, (uint64_t)CC_NONE,
+                   "cc_kind == CC_NONE on non-confidential test platform");
+}
+
+static void test_future_silicon_bits(void)
+{
+    /* Pin the detection bit positions so a wrong bit cannot regress in: LASS at
+     * CPUID.(7,1):EAX[6] (NOT 27), LAM at EAX[26], LA57 at CPUID.(7,0):ECX[16].
+     * On a CPU lacking a feature both sides read 0; on a capable CPU both read
+     * 1; a wrong bit would diverge from the spec bit read here. */
+    uint32_t a, b, c, d;
+    /* Gate the leaf-7 query on max basic leaf, exactly like cpuid_init -- on a
+     * CPU with max_leaf < 7 the CPUID(7) result is not leaf-7 data. */
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(0u), "c"(0u));
+    uint32_t max_leaf = a;
+    if (max_leaf < 7) {
+        TEST_ASSERT_EQ((uint64_t)cpu_has(CPU_FEATURE_LA57), 0ULL,
+                       "LA57 clear when leaf 7 unsupported");
+        TEST_ASSERT_EQ((uint64_t)cpu_has(CPU_FEATURE_LASS), 0ULL,
+                       "LASS clear when leaf 7 unsupported");
+        TEST_ASSERT_EQ((uint64_t)cpu_has(CPU_FEATURE_LAM), 0ULL,
+                       "LAM clear when leaf 7 unsupported");
+        return;
+    }
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(7u), "c"(0u));
+    uint32_t ecx_70 = c, max_sub = a;
+    TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_LA57) ? 1 : 0),
+                   (uint64_t)((ecx_70 >> 16) & 1u), "LA57 == CPUID.7.0:ECX[16]");
+    if (max_sub < 1) {
+        /* no subleaf 1 -> LASS/LAM must not be set */
+        TEST_ASSERT_EQ((uint64_t)cpu_has(CPU_FEATURE_LASS), 0ULL,
+                       "LASS clear when subleaf 1 unsupported");
+        TEST_ASSERT_EQ((uint64_t)cpu_has(CPU_FEATURE_LAM), 0ULL,
+                       "LAM clear when subleaf 1 unsupported");
+        return;
+    }
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(7u), "c"(1u));
+    TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_LASS) ? 1 : 0),
+                   (uint64_t)((a >> 6) & 1u), "LASS == CPUID.7.1:EAX[6]");
+    TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_LAM) ? 1 : 0),
+                   (uint64_t)((a >> 26) & 1u), "LAM == CPUID.7.1:EAX[26]");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -1890,6 +1944,12 @@ void test_register_x86(void)
         test_hwprofile_stale_brand, TEST_CAT_X86);
     test_suite_register_cat("hw_profile: SIMD auto-tune decision",
         test_hwprofile_simd_decision, TEST_CAT_X86);
+
+    /* S15: future-silicon detection stubs */
+    test_suite_register_cat("future-silicon: cc_kind valid + CC_NONE on test HW",
+        test_cc_kind_valid, TEST_CAT_X86);
+    test_suite_register_cat("future-silicon: LA57/LAM/LASS bit positions pinned",
+        test_future_silicon_bits, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

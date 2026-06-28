@@ -118,6 +118,7 @@ int msr_try_write(uint32_t index, uint64_t value);
 /* AMD-specific */
 #define MSR_AMD_OSVW_ID_LEN         0xC0010140
 #define MSR_AMD_OSVW_STATUS         0xC0010141
+#define MSR_AMD64_SEV              0xC0010131  /* SEV_STATUS: bit0=SEV bit1=ES bit2=SNP active */
 #define MSR_AMD_PERF_CTL0           0xC0010200
 #define MSR_AMD_PERF_CTR0           0xC0010201
 
