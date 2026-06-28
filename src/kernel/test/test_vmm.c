@@ -293,11 +293,13 @@ static void test_vmm_user_pml4_create_destroy(void)
                 "PDPT[0] is Present + User");
     uint64_t *pd = (uint64_t *)(pdpt[0] & TEST_PTE_ADDR_MASK);
 
-    /* Cloned kernel PD entry (VA 0x0) is a kernel-only 2 MiB huge page:
-     * Present + Huge but User CLEARED -- the "cloned per-process kernel
-     * pages don't have the User bit" guarantee. */
+    /* Cloned kernel PD entry (VA 0x0) is a kernel-only mapping with the User
+     * bit CLEARED -- the "cloned per-process kernel pages don't have the User
+     * bit" guarantee. It may be a 2 MiB huge page OR a 4 KiB PT: kernel-image
+     * W^X (TODO-10 S17) splits the huge page over .text (linked at 1 MiB, in
+     * this PD's 0-2 MiB range) to clear WRITABLE per-page, so PD[0] can be a
+     * split PT after boot. The supervisor-only invariant holds either way. */
     TEST_ASSERT((pd[0] & VMM_FLAG_PRESENT) != 0, "cloned kernel PD[0] Present");
-    TEST_ASSERT((pd[0] & VMM_FLAG_HUGE) != 0, "cloned kernel PD[0] is huge");
     TEST_ASSERT((pd[0] & VMM_FLAG_USER) == 0,
                 "cloned kernel PD[0] has NO User bit (supervisor-only)");
 
@@ -375,8 +377,61 @@ static void test_vmm_set_nx(void)
     TEST_ASSERT(vmm_get_physical(base) == base, "vmm_set_nx preserves the mapping");
 }
 
+/* Kernel-image W^X (TODO-10 S17): kernel_wx_protect/kernel_rodata_protect ran
+ * at boot (Phase 1). These read the LIVE PTE state (read-only -- they do NOT
+ * call the protect functions). */
+extern char __text_start[];
+extern char __rodata_start[];
+
+static void test_wx_text_ro(void)
+{
+    uint64_t f = vmm_query_flags((uintptr_t)__text_start);
+    TEST_ASSERT((f & VMM_FLAG_PRESENT) != 0, ".text page is present");
+    TEST_ASSERT((f & VMM_FLAG_WRITABLE) == 0, ".text is read-only (WRITABLE clear) after W^X");
+    TEST_ASSERT((f & VMM_FLAG_NX) == 0, ".text stays executable (NX clear)");
+}
+
+static void test_wx_rodata_ro(void)
+{
+    uint64_t f = vmm_query_flags((uintptr_t)__rodata_start);
+    TEST_ASSERT((f & VMM_FLAG_PRESENT) != 0, ".rodata page is present");
+    TEST_ASSERT((f & VMM_FLAG_WRITABLE) == 0, ".rodata is read-only after W^X");
+    if (cpu_has(CPU_FEATURE_NX))
+        TEST_ASSERT((f & VMM_FLAG_NX) != 0, ".rodata is NX (already set by nx_policy)");
+}
+
+static void test_wx_rodata_str_covered(void)
+{
+    /* A string literal lands in an ORPHAN .rodata.str1.* section. The linker
+     * collects *(.rodata .rodata.*) into [__rodata_start,__rodata_end), so it
+     * must also be read-only -- this proves the orphan sections are covered
+     * (the design-review gap where only *(.rodata) was protected). */
+    volatile const char *lit = "wx-rodata-orphan-coverage-marker";
+    uint64_t f = vmm_query_flags((uintptr_t)lit);
+    TEST_ASSERT((f & VMM_FLAG_PRESENT) != 0, "string-literal page is present");
+    TEST_ASSERT((f & VMM_FLAG_WRITABLE) == 0, "rodata string literal is read-only (orphan .rodata.* section covered)");
+}
+
+/* Const refusal sentinel in .firmware_capsule_refused -- an allocated,
+ * non-writable section the linker places between .rodata and .data.
+ * __rodata_end is pinned to the .data start so the W^X read-only span
+ * brackets these immutable sections too; this proves that coverage. */
+extern const uint8_t firmware_capsule_refusal_sentinel;
+
+static void test_wx_immutable_alloc_covered(void)
+{
+    uint64_t f = vmm_query_flags((uintptr_t)&firmware_capsule_refusal_sentinel);
+    TEST_ASSERT((f & VMM_FLAG_PRESENT) != 0, "immutable alloc section page is present");
+    TEST_ASSERT((f & VMM_FLAG_WRITABLE) == 0,
+                ".firmware_capsule_refused is read-only (immutable section between .rodata and .data covered)");
+}
+
 void test_register_vmm(void)
 {
+    test_suite_register_cat("VMM: W^X .text RO", test_wx_text_ro, TEST_CAT_MM);
+    test_suite_register_cat("VMM: W^X .rodata RO", test_wx_rodata_ro, TEST_CAT_MM);
+    test_suite_register_cat("VMM: W^X rodata orphan-section covered", test_wx_rodata_str_covered, TEST_CAT_MM);
+    test_suite_register_cat("VMM: W^X immutable alloc section covered", test_wx_immutable_alloc_covered, TEST_CAT_MM);
     test_suite_register_cat("VMM: map/read/unmap", test_vmm_map_roundtrip, TEST_CAT_MM);
     test_suite_register_cat("VMM: mmio_wc map/write", test_vmm_map_mmio_wc, TEST_CAT_MM);
     test_suite_register_cat("VMM: mmio map arg reject", test_vmm_map_mmio_reject, TEST_CAT_MM);

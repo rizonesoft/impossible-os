@@ -33,10 +33,14 @@ SECTIONS
         __text_end = .;
     }
 
-    /* Read-only data */
+    /* Read-only data. `*(.rodata .rodata.*)` collects the orphan sections
+     * Clang emits for string literals + constants (.rodata.str1.*,
+     * .rodata.cst*) so the full rodata span -- not just *(.rodata) -- is
+     * covered by the W^X read-only pass (kernel_rodata_protect). */
     .rodata ALIGN(4K) :
     {
-        *(.rodata)
+        __rodata_start = .;
+        *(.rodata .rodata.*)
     }
 
     /* Boot-protocol descriptor (boot_proto.c). Placed in its own
@@ -44,15 +48,25 @@ SECTIONS
      * ELF section header table. KEEP(*) prevents LTO / --gc-sections
      * from dropping it. Lives inside the kernel's PT_LOAD segment
      * (no separate program header needed -- bootloader walks the
-     * section table, not program headers, to locate it). */
+     * section table, not program headers, to locate it). `kernel_boot_proto`
+     * is `const` and only read (by the bootloader, before EBS), so it joins
+     * the W^X read-only span below. */
     .bootproto ALIGN(8) :
     {
         KEEP(*(.bootproto))
     }
 
-    /* Initialized data */
+    /* Initialized data -- first WRITABLE section, on a fresh page.
+     * __rodata_end is pinned to the .data start so the W^X read-only span
+     * [__rodata_start, __rodata_end) brackets EVERY allocated non-writable
+     * section the linker places between .rodata and .data: .bootproto, the
+     * orphan .reloc, .firmware_capsule_refused (const refusal sentinels), and
+     * any future read-only orphan (lld ranks RO orphans before .data). All
+     * are const / never written at runtime, so bracketing by data-start --
+     * not by enumerating section names -- is drift-proof. */
     .data ALIGN(4K) :
     {
+        __rodata_end = .;
         *(.data)
     }
 

@@ -63,6 +63,7 @@
 #include "kernel/tpm_baseline.h"
 #include "kernel/cpuid_platform.h"
 #include "kernel/boot_halt.h"
+#include "kernel/security/wx.h"
 #include "kernel/uefi_config.h"
 #include "kernel/uefi_runtime.h"
 #include "kernel/smbios.h"
@@ -190,6 +191,20 @@ void boot_phase1(void)
     cpu_pin_control_regs();
     POST16(0xD401);
     boot_progress(1, "CR_PINNED", POSTCODE_CR_PINNED);
+
+    /* --- Kernel-image W^X: clear WRITABLE on .text + .rodata.
+     * Runs here -- single-CPU (APs launch in Phase 2 smp_init) and CR0.WP was
+     * just pinned, so the read-only PTE bits are enforced immediately and the
+     * kernel can no longer patch its own code/constants. Fail CLOSED: a
+     * security gate that boots with .text/.rodata still writable (vmm_set_ro
+     * can fail open or partially on a split/PMM error) is worse than not
+     * booting -- halt before any AP launches. */
+    POST16(0xD402);
+    if (kernel_wx_protect() != 0)
+        boot_halt("W^X: kernel .text could not be made read-only");
+    if (kernel_rodata_protect() != 0)
+        boot_halt("W^X: kernel .rodata could not be made read-only");
+    POST16(0xD403);
 
     /* --- Bugcheck: wire NMI crash handler after IDT (TODO-16 S1) --- */
     {

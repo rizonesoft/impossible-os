@@ -79,7 +79,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [/]   |
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4, T19              |  [/]   |
 | 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [/]   |
-| 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [ ]   |
+| 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [x]   |
 | 💎  |  18   | Spectre predictor extras (SSBD/STIBP/RSB/BHI/ITS)   | §8                            |  [ ]   |
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [ ]   |
 | 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [ ]   |
@@ -552,16 +552,28 @@ Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns th
 
 ## 17. Kernel-Image W^X: .text Read-Only + .rodata RO-After-Init
 
-Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodata_ro()`, Win11 HVCI). §1 marks non-code pages NX; this clears the WRITABLE bit on kernel `.text` and `.rodata` so a kernel write primitive cannot patch executable code or constant data. Distinct from `03-memory-concurrency/TODO-01 §2` (dynamic mprotect W^X policy). READY -- `vmm_make_range_readonly()` already exists (`vmm.c:456`); NOT blocked on the clean-PML4 split.
+Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodata_ro()`, Win11 HVCI). §1 marks non-code pages NX; this clears the WRITABLE bit on kernel `.text` and `.rodata` so a kernel write primitive cannot patch executable code or constant data. Distinct from `03-memory-concurrency/TODO-01 §2` (dynamic mprotect W^X policy). Shipped via `vmm_set_ro()` (the split-aware helper; the draft's `vmm_make_range_readonly`/`vmm.c:456` never existed).
 
-- [ ] Linker script (`kernel.ld`): 4 KiB-align the `.text` / `.rodata` / `.data` boundaries so each carries distinct PTE perms; export `__text_start/__text_end/__rodata_start/__rodata_end/__init_end`
-- [ ] `kernel_wx_protect()` (Phase 2/3, post-relocation): `vmm_make_range_readonly(__text_start, ...)` clears WRITABLE on `.text` (stays executable, NX clear)
-- [ ] `kernel_rodata_protect()` after init: clear WRITABLE + set NX on `.rodata` (covers the `__ro_after_init` class -- written once during init, RO thereafter)
-- [ ] Audit runtime `.text` patch sites (the `idt.c:261` CR0.WP-toggle pattern): bracket each write with WP-clear/WP-set; never leave `.text` permanently writable. CR0.WP stays pinned (`cpu_pin_control_regs`)
-- [ ] Serial log: `[wx] kernel image: .text RO (%lu KiB), .rodata RO (%lu KiB)`
-- [ ] Commit: `"kernel/mm: STRICT_KERNEL_RWX -- .text RO, .rodata RO-after-init, W^X on the kernel image"`
+- [x] Linker (`src/boot/linker.ld`): `__rodata_start`/`__rodata_end` (pinned to `.data` start) bracket `*(.rodata .rodata.*)` + the const `.bootproto`/`.reloc`/`.firmware_capsule_refused` into one drift-proof RO span
+- [x] `kernel_wx_protect()` (`src/kernel/security/wx.c`): `vmm_set_ro(__text_start, size)` clears WRITABLE on `.text` (stays executable). The draft's `vmm_make_range_readonly` does not exist; `vmm_set_ro` is the real split-aware helper
+- [x] `kernel_rodata_protect()`: `vmm_set_ro` over `[__rodata_start, __rodata_end)` (already NX via `vmm_apply_nx_policy`, so only the WRITABLE clear is new); span covers the const immutable sections through the `.data` boundary
+- [x] Called in `boot_phase1` (`boot_interrupts.c:194`) after `cpu_pin_control_regs` (CR0.WP pinned), single-CPU before Phase 2 `smp_init` (`vmm_set_ro` is local-invlpg-only); fail CLOSED via `boot_halt` if either returns nonzero
+- [x] `.text` patch-site audit: none exist (`idt.c:261` is a comment; KPTI/AP trampolines are in separately-allocated pages outside `__text_start..__text_end`); the CR0.WP-toggle bracket for a future live-patch path is documented in `wx.c`
+- [x] Serial log: `[wx] kernel image: .text RO (%lu KiB)` + `.rodata RO (%lu KiB)`
+- [/] `.rodata` RO-after-init `__ro_after_init` class: plain const `.rodata` is RO now; the init-mutable-then-RO class is deferred (next item)
+- [ ] **(deferred)** `__ro_after_init` section convention: a `.init.data` output section + `__attribute__((section))` macro + `__init_end` so init-mutable globals go RO after boot. No such convention exists today -> XREF: this section
+- [x] Commit: `"kernel/mm: STRICT_KERNEL_RWX -- .text RO, .rodata RO-after-init, W^X on the kernel image"`
 
-**Test checkpoint:** A write to a `.text` address faults (`#PF` WP) via a `vmm_query_flags` unit check; a write to `.rodata` after init faults; `.text` stays executable (kernel runs). `[wx]` line shows non-zero RO counts. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+**Test checkpoint:** `vmm_query_flags(__text_start)` shows WRITABLE clear + NX clear (executable); `vmm_query_flags(__rodata_start)`, a string-literal address, and `&firmware_capsule_refusal_sentinel` all show WRITABLE clear (orphan + immutable alloc sections covered); `[wx]` serial lines show non-zero RO counts; `.text`/`.rodata` write faults are bare-metal-validated (they #PF). Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | 4 W^X suites (.text RO, .rodata RO, orphan-section, immutable-alloc-section) pass; 148 kernel + 16 user-mode pass; smoke boots clean with W^X active.
+>
+> **Notes:**
+> - Shipped `src/kernel/security/wx.c` + `wx.h`: `kernel_wx_protect`/`kernel_rodata_protect` clear WRITABLE on `.text` (1995 KiB) + `.rodata` (940 KiB) via `vmm_set_ro`, single-CPU in Phase 1 after the CR0.WP pin, fail-closed via `boot_halt`.
+> - Adversarial fixes: fail-open W^X calls now `boot_halt` on failure; `__rodata_end` pinned to `.data` start so `.bootproto`/`.reloc`/`.firmware_capsule_refused` (const, never-written) are in the RO span (drift-proof bracket, not name enumeration).
+> - Scope boundary: dynamic `mprotect` W^X policy is `03-memory-concurrency/TODO-01 §2`; the `__ro_after_init` init-mutable class is the deferred item above (needs a section convention).
+
+> **Deferred:** [M] `__ro_after_init` init-mutable-then-RO class -> XREF: this section (item: "`__ro_after_init` section convention" above -- needs a `.init.data` section + attribute macro that does not exist in the tree).
 
 ---
 
@@ -693,7 +705,7 @@ Expose which CPU/kernel mitigations are active as structured queryable data. Lin
 | ⭐   | RDRAND stack canary  | ✅ /GS       | ✅ -fstack-protector | ✅ §12 RDRAND + TSC fallback |
 | ⭐   | KASLR slide in dump  | ❌ Opaque    | ❌ Opaque      | ⬜ §11 + T27     |
 | 💎   | Secure Boot lockdown | ✅ HVCI lockdown | ✅ lockdown LSM | ⬜ §16          |
-| 💎   | Kernel image W^X     | ✅ HVCI      | ✅ STRICT_RWX  | ⬜ §17           |
+| 💎   | Kernel image W^X     | ✅ HVCI      | ✅ STRICT_RWX  | ✅ .text+.rodata RO |
 | 💎   | SSBD STIBP RSB BHI   | ✅ Yes       | ✅ spectre     | ⬜ §18           |
 | 💎   | MDS VERW buf clear   | ✅ ucode     | ✅ VERW        | ⬜ §19           |
 | 💎   | kCFI type-safe icall | ✅ xFG/CFG   | ✅ CFI_CLANG   | ⬜ §20           |
