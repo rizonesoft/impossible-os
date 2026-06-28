@@ -35,9 +35,9 @@ title: "TODO-10 -- Kernel Security Hardening"
 - -> XREF: `TODO-11-peb-teb-user-abi.md §13`: AT_RANDOM in the ELF auxv provides user-mode stack canary seed bytes, complementing §3's kernel-side `__stack_chk_guard` via shared RDRAND path
 - -> XREF: `TODO-12-native-api-ssdt.md §5`: SSDT indices 0x01F0--0x01F4 and 0x02A2--0x02A4 reserved for Enclave and signing-level syscalls
 - -> XREF: `TODO-12-native-api-ssdt.md §26`: SSDT hardware write-protection complements KASLR and SMEP/SMAP; #PF on SSDT write -> CRITICAL_STRUCTURE_CORRUPTION BugCheck
-- -> XREF: `TODO-17-binary-system.md §3,§12`: ELF `PT_GNU_PROPERTY` (T17 §3) and PE `IMAGE_LOAD_CONFIG_DIRECTORY64` (T17 §12) carry per-binary CET IBT/SHSTK and CFG flags; this TODO's §7 (CET shadow stack) and §8 (CET IBT) consume those flags to decide enforcement
+- -> XREF: `TODO-17-binary-system.md §3,§12`: ELF `PT_GNU_PROPERTY` (T17 §3) and PE `IMAGE_LOAD_CONFIG_DIRECTORY64` (T17 §12) carry per-binary CET IBT/SHSTK and CFG flags; this TODO's §9 (CET shadow stack) and §10 (CET IBT) consume those flags to decide enforcement
 - -> XREF: `TODO-21-process-model-extensions.md §11`: per-process mitigation flags (`MIT_DEP_ENABLE`, `MIT_ASLR_FORCE`, etc.) consume §1 NX/DEP enforcement; mitigation API surface is authoritative in TODO-21
-- -> XREF: `TODO-23-exception-dispatch-seh.md §3`: `#CP` (vector 21, CET shadow-stack violation) exception handler; §6 of this TODO enables CET SS, §3 of T23 routes the resulting `#CP` faults through `ki_dispatch_exception()`
+- -> XREF: `TODO-23-exception-dispatch-seh.md §3`: `#CP` (vector 21, CET shadow-stack violation) exception handler; §9 of this TODO enables CET SS, §3 of T23 routes the resulting `#CP` faults through `ki_dispatch_exception()` (T23 §3 is a hard prerequisite for §9 enable -- without structured #CP routing a shadow-stack violation panics instead of being caught)
 - -> XREF: `01-boot-platform/TODO-02-uefi-hardening-secureboot.md §3`: `boot_info.secure_boot_enabled` / `HKLM\SYSTEM\SecureBoot\State` from UEFI `SecureBoot` variable; future `boot.conf` lockdown knob must be defined in this TODO when implemented (no §13 in TODO-01)
 - -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, §5`: Phase 0 activation order (§2) calls `cpu_efer_harden()`/`cpu_cr4_harden()` from this TODO; AP hardening (§5) replicates the same features on each AP via `ap_cpu_harden()`
 - -> XREF: `TODO-31-kernel-bulletproofing.md §10`: guard pages, split huge pages, and VM layout invariants; NX/SMEP/SMAP policy here must stay consistent with those checks
@@ -71,7 +71,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |   6   | KPTI user_cr3 allocation + context switch           | §3, §4, §5, T33               |  [/]   |
 | 💎  |   7   | PCID: TLB tagging for KPTI (no-flush CR3 switch)    | §6                            |  [/]   |
 | 💎  |   8   | Spectre: eIBRS/IBPB MSR + retpoline build flag      | T12 §2                        |  [x]   |
-| 💎  |   9   | CET shadow stack (kernel ring 0)                    | §1, §2                        |  [ ]   |
+| 💎  |   9   | CET shadow stack (kernel ring 0)                    | §1, §2, T23 §3, D01T09 §10    |  [/]   |
 | 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9                            |  [ ]   |
 | 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [ ]   |
 | 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [ ]   |
@@ -290,6 +290,18 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 9. CET Shadow Stack (Kernel Ring 0)
 
+> [!WARNING]
+> **Deferred -- blocked on two prerequisites owned elsewhere (Codex design review 2026-06-28).** Enabling supervisor CET (`CR4.CET` + `S_CET.SH_STK_EN`) is unsafe until both land, so CET stays detected-but-disabled (the current, safe state -- `CPU_FEATURE_CET_SS` is already probed in `cpuid.c`):
+> 1. **#CP fault routing** -- `vector 21` only reaches the generic panic path today (`isr_stubs.asm:179` `ISR_ERRCODE 21`; no structured handler). Without it a forged-return/shadow-stack violation triple-faults instead of being caught, so the Test-checkpoint promise cannot be delivered. -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#UD/#GP/#SS/#CP)" at line 60).
+> 2. **AP IST shadow stacks** -- `MSR_IA32_INTERRUPT_SSP_TABLE` needs a per-CPU TSS so each AP's #DF/NMI/#PF IST entry gets its own shadow stack; the TSS/IST is BSP-only today (`gdt.c:123` "configures the BSP TSS only"). Enabling CET on APs without this turns any IST-backed exception into a recursive #CP. -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399).
+>
+> Design review also corrected the draft below: the supervisor shadow-stack PTE marker is **Dirty (bit 6, `VMM_FLAG_DIRTY`) with Write=0**, NOT "bit 5" (bit 5 is `VMM_FLAG_ACCESSED`); and CET state must be saved as **per-thread `PL0_SSP` on every context switch, NOT via `IA32_XSS`/`XSAVES`** -- `xsave_area`/`fpu_used` are per-*task* and lazy, so XSS-backed CET state would corrupt SSP across same-process thread switches. XSS deferred until XSAVE ownership moves to `struct thread`.
+
+- [ ] **(prereq, blocks enable)** Structured `#CP` (vector 21) routing through `ki_dispatch_exception()` -> XREF: `TODO-23 §3`. Until then `cpu_enable_cet_ss()` must NOT write `CR4.CET`.
+- [ ] **(prereq, blocks SMP enable)** Per-CPU AP TSS so `cet_init_interrupt_ssp_table()` can give each AP IST entry its own shadow stack -> XREF: `D01 T09 §10`.
+- [ ] **(enable safety)** CET enable must be a controlled no-return transition (CET-aware trampoline)
+  - Seed the active call chain's SSP via the architectural save/restore-token sequence before any normal `RET`, else the first return after `CR4.CET` faults #CP on an empty shadow stack during bring-up
+- [ ] Add `CPU_FEATURE_CET_SS` to `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` so per-AP enable gates on each AP's own `cpu_feature_local()` (CET may be P/E-core skewed), mirroring the §8 `SPEC_CTRL` AP-probe pattern
 - [ ] MSR definitions:
   ```c
   #define MSR_IA32_S_CET           0x6A2   /* supervisor shadow stack control */
@@ -297,16 +309,18 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
   #define MSR_IA32_INTERRUPT_SSP_TABLE 0x6A8 /* IST shadow stack table */
   #define S_CET_SH_STK_EN          (1ULL << 0)
   #define S_CET_WR_SHSTK_EN        (1ULL << 1)  /* WRSS instruction enable */
-  #define S_CET_ENDBR_EN           (1ULL << 2)  /* IBT control (§7) */
+  #define S_CET_ENDBR_EN           (1ULL << 2)  /* IBT control (§10) */
   ```
 - [ ] `cpu_enable_cet_ss()`:
   1. `cpu_set_cr4_bit(CR4_CET)`: enable CET in CR4
   2. `wrmsr(MSR_IA32_S_CET, S_CET_SH_STK_EN | S_CET_WR_SHSTK_EN)`
   3. Ensure `MSR_IA32_PL0_SSP` is set to the initial kernel shadow stack page's last 8 bytes (top of the shadow stack)
 
-- [ ] CET xstate reservation: set `IA32_XSS` bits 11/12 (CET_U/CET_S) for `XSAVES`/`XRSTORS` -- SUPERVISOR state via `IA32_XSS`, NOT `XCR0`. Owns the CET xstate window deferred from `01-boot-platform/TODO-09 §5`
+- [ ] **(deferred -- do NOT ship in MVP)** CET xstate reservation: set `IA32_XSS` bits 11/12 (CET_U/CET_S) for `XSAVES`/`XRSTORS` -- SUPERVISOR state via `IA32_XSS`, NOT `XCR0`. Owns the CET xstate window deferred from `01-boot-platform/TODO-09 §5`
+  - Blocked: `xsave_area`/`fpu_used` are per-*task* and lazy (`struct task`); XSS-backed CET state corrupts SSP across same-process thread switches. Move XSAVE ownership to `struct thread` first, then convert the scheduler to `XSAVES`/`XRSTORS` with XSS-aware masks/sizing. MVP saves `PL0_SSP` per-thread directly instead (see Context switch item)
 - [ ] Each kernel thread needs a shadow stack: one 4 KiB page per thread, marked `PTE_USER=0`, `PTE_NX=1`, and the special **supervisor shadow stack token** format (bit 1 of the 8-byte token set indicates this is the bottom of the shadow stack)
-- [ ] `cet_alloc_shadow_stack(thread)`: `pmm_alloc_contiguous(1)`; write token at the end of the page; `vmm_map_page(shadow_stack_va, pa, PTE_SUPERVISOR_SHADOW_STACK)`; PTE bit 5 = 1 marks shadow-stack pages; processor enforces SHSTK semantics (only `RSTORSSP`/`SAVEPREVSSP` can write)
+- [ ] `cet_alloc_shadow_stack(thread)`: `pmm_alloc_contiguous(1)`; write token at page end; map via a new `VMM_FLAG_SHADOW_STACK` encoding; add a VMM encoding unit test before any `CR4.CET` enable
+  - Encoding = **`VMM_FLAG_DIRTY` (bit 6) set + Write (bit 1) clear + `VMM_FLAG_NX`** (Intel SDM supervisor-SHSTK marker). The draft's "bit 5" was wrong -- bit 5 is `VMM_FLAG_ACCESSED`. Processor then enforces SHSTK semantics (only `RSTORSSP`/`SAVEPREVSSP`/`WRSS` write)
 - [ ] On kernel thread creation in `src/kernel/sched/task.c` (`task_create()`): allocate shadow stack; set `task->shadow_stack_top`
 - [ ] Context switch: save/restore `MSR_IA32_PL0_SSP` per thread
 
@@ -316,6 +330,15 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [ ] Commit: `"kernel/security: CET shadow stack: CR4.CET, S_CET MSR, per-thread SSP allocation"`
 
 **Test checkpoint:** `CR4.CET` set; `MSR_IA32_PL0_SSP` tracks per-thread shadow stack; forged return triggers `#CP` not hijacked RIP. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal (CET-capable CPU).
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | deferred -- VMM-SHSTK-encoding + `cpu_enable_cet_ss` gating-off tests land with the enable; CET is detected-but-disabled today so no enable surface to assert yet.
+>
+> **Notes:**
+> - Deferred 2026-06-28: Codex design review proved a safe kernel-ring-0 CET enable is blocked on `#CP` routing (`TODO-23 §3`) + per-CPU AP TSS for IST shadow stacks (`D01 T09 §10`); CET stays detected-but-disabled (the safe state).
+> - Design corrected the draft: supervisor-SHSTK PTE marker is Dirty/bit-6 + Write-clear (not "bit 5" = Accessed); CET state saves per-thread `PL0_SSP` on context switch, not `IA32_XSS`/`XSAVES` (XSAVE is per-task + lazy).
+> - When unblocked: add `CET_SS` to the AP probe mask, `cpu_enable_cet_ss()` gated per-AP via `cpu_feature_local()` (mirrors §8 `SPEC_CTRL`), CET-aware no-return enable trampoline, then per-thread + IST shadow stacks.
+>
+> **Deferred:** [Critical] Kernel-ring-0 CET shadow-stack enable unsafe without structured `#CP` (vector 21) handling -> XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#UD/#GP/#SS/#CP)" at line 60). [High] AP IST shadow stacks need per-CPU TSS -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §10` (item: "Per-CPU TSS + IST" at line 399).
 
 ---
 
@@ -633,8 +656,8 @@ Expose which CPU/kernel mitigations are active as structured queryable data. Lin
 | 💎   | KPTI user PT         | ✅ Win10 PTI | ✅ 4.15 PTI    | ⬜ §3            |
 | 💎   | PCID no flush CR3    | ✅ Yes       | ✅ Yes         | ⬜ §4            |
 | 💎   | IBRS IBPB retpoline  | ✅ Yes       | ✅ spectre     | ✅ eIBRS+IBPB §8 |
-| 💎   | CET shadow stack     | ✅ 20H1+     | ✅ 6.6+        | ⬜ §6            |
-| 💎   | CET IBT ENDBR64      | ✅ HVCI      | ✅ 6.6+        | ⬜ §7            |
+| 💎   | CET shadow stack     | ✅ 20H1+     | ✅ 6.6+        | ⏸ §9 (deferred) |
+| 💎   | CET IBT ENDBR64      | ✅ HVCI      | ✅ 6.6+        | ⏸ §10 (deferred)|
 | 💎   | Heap cookies redzone | ✅ Pool tags | ✅ SLUB        | ⬜ §8            |
 | 💎   | Stack canaries /GS   | ✅ MSVC      | ✅ fssp strong | ⬜ §9            |
 | 💎   | Stack guard pages    | ✅ Yes       | ✅ THREAD      | ⬜ §10           |
