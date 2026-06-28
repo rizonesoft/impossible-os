@@ -84,7 +84,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [x]   |
 | 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [/]   |
 | 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [/]   |
-| 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [ ]   |
+| 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [/]   |
 | 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [ ]   |
 | ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §19, §25                 |  [ ]   |
 | 💎  |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8           |  [ ]   |
@@ -682,13 +682,15 @@ Zero the used portion of the kernel stack on every syscall/interrupt return to u
 > [!NOTE]
 > Toolchain check (2026-06-28): clang-19 has NO stackleak instrumentation (only `-fstack-protector*` / `-fstack-clash-protection`; Linux stackleak is a GCC plugin). So the "Clang stackleak instrumentation if available" alternative is OFF the table -- use the manual poison-scan-watermark path below. Still implementable; not blocked.
 
-- [ ] Track the deepest stack use per kernel entry: poison the kernel stack at alloc with a sentinel; on return-to-user scan up from a safe lower bound to the first non-poison byte (= deepest use). Manual path -- clang has no stackleak plugin
-- [ ] On return-to-user (syscall exit + IRET-to-ring3): zero from current `RSP` down to the watermark, bounded by the stack base (never into the guard page)
-- [ ] Zero only the actually-used span, not the whole stack; cap the per-return work
-- [ ] Build knob to disable for perf measurement; on by default for security builds
+- [ ] Coherent erase model (design): on return-to-user POISON-fill (sentinel, NOT zero) the used span -- clears secrets AND keeps the scan invariant for the next return; deepest-use = scan up to the first non-poison byte (Linux KSTACK_ERASE)
+- [ ] Hook placement (design): the erase runs while RSP still points at the KERNEL frame (BEFORE the exit restores user RSP) -- NOT the §19 VERW spot, which is post-pop-rsp; an asm wrapper passes explicit kernel stack top/bounds
+- [ ] Stack inventory (design): poison + carry `stack_low`/`stack_high` for EVERY ring-3-return-capable kernel stack incl. the kmalloc'd `task_create_user()` stack (`task.c:563`); stackleak refuses unknown/unpoisoned stacks
+- [ ] Cap + resume: bound scan+poison work per return (Linux STACKLEAK_SEARCH_DEPTH) with a defined partial-erase resume policy; build knob to disable for perf
 - [ ] Commit: `"kernel/security: stackleak -- erase used kernel stack span on return to user"`
 
-**Test checkpoint:** After a syscall that writes a sentinel deep on the kernel stack, a following syscall reads zero at that offset (span erased); erase bounded by the watermark (no over-zero into the guard page). Test on: QEMU WHPX, TCG, bare metal.
+**Test checkpoint:** After a syscall that writes a sentinel deep on the kernel stack, a following syscall reads POISON (not the sentinel) at that offset (span re-poisoned); the erase is bounded by the watermark/cap (no over-write into the guard page); boot reaches `C:\>` with stackleak live. Test on: QEMU WHPX, TCG, bare metal.
+
+> **Deferred:** [M] stackleak needs a re-planned + careful hot-path implementation per design review: poison-fill (not zero) for a coherent scan invariant; the erase hook must run BEFORE the exit restores user RSP (the §19 VERW spot is post-pop-rsp, unsafe for a C erase on the user stack with kernel GS); and the stack inventory must cover the kmalloc'd `task_create_user()` kernel stack (`task.c:563`), not just PMM+guard stacks. Bounded but multi-part (poison engine + asm wrapper + stack normalization + cap). -> XREF: this section (the corrected items above).
 
 ---
 
