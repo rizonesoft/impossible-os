@@ -87,7 +87,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [/]   |
 | 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [/]   |
 | ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §19, §25                 |  [/]   |
-| 💎  |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8           |  [ ]   |
+| 💎  |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8           |  [/]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -749,6 +749,8 @@ The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and L
 - [ ] Commit: `"kernel/security: SSBD (Intel+AMD), STIBP, RSB stuffing, BHI_DIS_S, ITS, Retbleed predictor policy"`
 
 **Test checkpoint:** Each mitigation verified via its REAL path: SPEC_CTRL bits for STIBP / Intel SSBD / BHI_DIS_S read back set; AMD SSBD reflected in `LS_CFG`; the RSB-fill counter increments on cross-domain switch; ITS/Retbleed posture matches the affected-model gate. APs match BSP. A CPU lacking a feature takes no MSR write (no #GP). Test on: QEMU WHPX (`-cpu` with spec flags), TCG, bare metal.
+
+> **Deferred:** [M] 7-mitigation control-path unit (STIBP, Intel SSBD, AMD SSBD/LS_CFG, BHI_DIS_S + BHB-loop fallback, RSB stuffing asm, ITS, Retbleed), each on a distinct mechanism that needs its own gate + AP-replay + test. Specified + surface-mapped, not blocked: §18 feature surface is done; §8 already built the `s_bsp_msr_profile[]` SPEC_CTRL replay (STIBP/Intel-SSBD/BHI_DIS_S join it), the `s_ibpb_active` writability-latch pattern (RSB stuffing mirrors it), and `sched_cross_domain_ibpb` (the RSB-fill invocation site). Deferred from this pass as a focused fresh-context implementation: the §17-§19 work consumed this window, and a 7-mechanism unit + its design/adversarial/consistency/perf/re-adversarial convergence loop is too large to land correctly at the tail of a long session. Each `[ ]` item above is already control-path-correct (named real mechanism, tested against THAT path) from the §18/§25 restructure, so the next window implements directly. -> XREF: §18 (feature bits, done), §8 (IBRS/IBPB/retpoline + profile-replay scaffolding), `D02 T09 §11` (MSR-profile AP replay).
 
 ---
 
