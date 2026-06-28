@@ -16,6 +16,7 @@ fi
 
 PY="$HOME_DIR/.venv/bin/python"
 [ -x "$PY" ] || PY="python3"
+export RUST_LOG="${RUST_LOG:-error}"   # quiet LanceDB's Rust info/warn chatter
 
 cd "$HOME_DIR"
 exec "$PY" -c 'import sys; from conclave import cli; sys.exit(cli.main(sys.argv[1:]))' "$@" --project impossible-os
