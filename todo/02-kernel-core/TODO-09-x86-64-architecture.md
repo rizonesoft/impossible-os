@@ -14,7 +14,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). §15 future-silicon detection stubs (UINTR/LA57/LAM/LASS + TDX/SEV cc_kind; boot_info.cc_kind mirror + Hyper-V SynIC producer deferred). **Deferred [/]:** §7 FRED, §8 LKGS, §12 AMD IBS (no test platform); §16 1 GiB boot PT (UEFI-bootloader paging optimization needing bare-metal sign-off; `entry.asm` premise was stale). **Open [ ]:** §17 AMX+XFD, §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID (added 2026-06-28 gap-audit).
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). §15 future-silicon detection stubs (UINTR/LA57/LAM/LASS + TDX/SEV cc_kind; boot_info.cc_kind mirror + Hyper-V SynIC producer deferred). **Deferred [/]:** §7 FRED, §8 LKGS, §12 AMD IBS (no test platform); §16 1 GiB boot PT (UEFI-bootloader paging optimization needing bare-metal sign-off; `entry.asm` premise was stale); §17 AMX+XFD (blocked on a per-thread XSAVE redesign -- the per-task FPU model leaks tile state across threads; no bare-metal AMX). **Open [ ]:** §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID (added 2026-06-28 gap-audit).
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-10` (gap analysis 2026-04-12: `TODO-10` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
@@ -83,7 +83,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [/]    |
 | 💎  |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV | (none)               |  [/]    |
 | 💎  |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6                 |  [/]    |
-| 💎  |  17   | AMX tile state + XFD dynamic XSAVE                  | §1, §4               |  [ ]    |
+| 💎  |  17   | AMX tile state + XFD dynamic XSAVE                  | §1, §4               |  [/]    |
 | 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection         | §4                   |  [ ]    |
 | 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption                | §4, §11              |  [ ]    |
 
@@ -490,24 +490,28 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## 17. AMX Tile State + XFD Dynamic XSAVE
 
-Intel AMX adds 8 KiB of TMM tile state (XSAVE components 17/18). Pre-allocating that for every thread is wasteful, so XFD (Extended Feature Disable) traps first use and the buffer grows lazily, mirroring the §1 lazy-FPU model. Parity: Linux dynamic-AMX/XFD.
+Intel AMX adds 8 KiB of TMM tile state (XSAVE components 17/18). XFD (Extended Feature Disable) keeps tile state out of the per-task XSAVE save/restore until first use. Parity: Linux dynamic-AMX/XFD.
 
 > [!WARNING]
-> AMX state is 8 KiB; never pre-allocate it per task. XFD is the only correct mechanism. Gate XCR0[17]/[18] on the XFD-supported bit AND the AMX feature bits as **separate** checks -- a CPU exposing AMX state but not XFD must not advertise dynamic AMX.
+> Gate XCR0[17]/[18] on the XFD-supported bit AND the AMX feature bits as **separate** checks. **Design (Codex-vetted 2026-06-28): EAGER area, not lazy-grow** -- `task_alloc_xsave()` already sizes from `xsave_size_max` (the CPUID.0D.0:ECX aggregate that counts AMX 17/18), so every task area is AMX-big from boot and the #NM handler MUST NOT grow memory in exception context (it only disarms XFD for the faulting task). **BLOCKED** on the per-thread-XSAVE prerequisite below: shipping AMX on the per-`struct task` FPU model leaks tile state across sibling threads.
 
-- [ ] AMX CPUID detection in `cpuid.h`: `CPU_FEATURE_AMX_TILE` (CPUID.(7,0):EDX[24]), `CPU_FEATURE_AMX_BF16` (EDX[22]), `CPU_FEATURE_AMX_INT8` (EDX[25]); set in the feature mask in `cpuid_init()`
-- [ ] XFD enumeration: `CPU_FEATURE_XFD` from `CPUID.(0x0D,1):EAX[4]`; per-component XFD-faultable bit `CPUID.(0x0D,n):ECX[2]`; AMX state size/offset from `CPUID.(0x0D,17)` (XTILECFG) and `CPUID.(0x0D,18)` (XTILEDATA)
+- [ ] AMX CPUID detection in `cpuid.h`: `CPU_FEATURE_AMX_TILE` (CPUID.(7,0):EDX[24]), `CPU_FEATURE_AMX_BF16` (EDX[22]), `CPU_FEATURE_AMX_INT8` (EDX[25]) in `cpuid_init()`
+- [ ] XFD enumeration: `CPU_FEATURE_XFD` from `CPUID.(0x0D,1):EAX[4]`; per-component faultable `CPUID.(0x0D,n):ECX[2]`; AMX size/offset from `CPUID.(0x0D,17)`/`(0x0D,18)`
 - [ ] MSR constants in `msr.h`: `MSR_IA32_XFD = 0x000001C4`, `MSR_IA32_XFD_ERR = 0x000001C5`
-- [ ] `cpu_configure_xcr0()` (§1): when `CPU_FEATURE_AMX_TILE` AND `CPU_FEATURE_XFD`, add XCR0 bits 17 (XTILECFG) + 18 (XTILEDATA) to the filtered mask; never set them without the XFD bit
-- [ ] Boot default: set `IA32_XFD = (1<<17)|(1<<18)` on BSP and each AP (AMX disarmed/faulting until first use); clear `IA32_XFD_ERR`
-- [ ] Per-task `xfd_mask` (uint64) in `struct task`; `schedule()` writes `IA32_XFD` from the next task's mask only when `CPU_FEATURE_XFD`, mirroring the lazy-FPU save/restore block
-- [ ] `#NM` handler (vector 7): read `IA32_XFD_ERR`; non-zero = XFD fault (distinct from CR0.TS) -> grow this task's XSAVE area to include the faulting component, clear that task's `IA32_XFD` bit, clear `IA32_XFD_ERR`, return; CR0.TS path unchanged
-- [ ] `task_alloc_xsave()`: when AMX is armed for a task, size the area from `xsave_size_max` including components 17/18 (verify the AMX components are counted in the §1 leaf-0x0D aggregate)
-- [ ] Commit: `"kernel/cpu: AMX tile state + XFD dynamic XSAVE (lazy AMX, IA32_XFD ctx-switch)"`
+- [ ] `cpu_configure_xcr0()` (§1): add XCR0 bits 17/18 only when `CPU_FEATURE_AMX_TILE` AND `CPU_FEATURE_XFD` (separate gates; never one without the other)
+- [ ] AP feature consistency: add AMX_TILE + XFD to the §6 AP-probe / global mask; clear global AMX if any online AP lacks the XCR0[17:18] components (no BSP-publishes-while-AP-lacks-it skew)
+- [ ] Default-arm `IA32_XFD = (1<<17)|(1<<18)`: BSP `wrmsr` AFTER XCR0[17:18] + BEFORE `cpu_record_bsp_profile()` (the profile snapshots the live BSP MSR; arming later replays 0); APs replay gated on live XCR0[17:18]
+- [ ] Eager XSAVE area (NOT lazy-grow): `task_alloc_xsave()` already sizes from `xsave_size_max` (counts AMX 17/18), so every task area is AMX-big; the #NM handler never reallocs in exception context
+- [ ] Per-task `xfd_mask` (uint64) in `struct task`; gated `wrmsr(IA32_XFD, next->xfd_mask)` at the XSAVE-restore point in BOTH `schedule()` AND `schedule_now()`
+- [ ] `#NM` handler (vector 7): read `IA32_XFD_ERR` FIRST (before `clts`); non-zero = XFD fault -> clear faulting task's `xfd_mask` bit + `wrmsr(IA32_XFD)` + clear `IA32_XFD_ERR` + return (NO grow); zero = existing CR0.TS path
+- [ ] PREREQUISITE (blocker) -- per-thread XSAVE: `xsave_area`/`fpu_used` are per `struct task` (shared across sibling threads), so AMX tile state leaks between threads; parity needs per-`struct thread` XSAVE + FPU re-save on thread switches (§1)
+- [ ] Commit: `"kernel/cpu: AMX tile state + XFD dynamic XSAVE (eager area, IA32_XFD ctx-switch)"`
 
-**Test checkpoint:** On an AMX+XFD CPU (Sapphire Rapids / Meteor Lake / Arrow Lake), a task that never touches AMX keeps `IA32_XFD` armed and its XSAVE area excludes tile state; first `TILELOADD` raises #NM with `IA32_XFD_ERR != 0`, the handler grows the area and disarms XFD for that task; tile state survives a `schedule()` round-trip. On non-AMX or non-XFD CPUs, XCR0 bits 17/18 stay clear and no XFD MSR is touched. Serial: `[cpu] AMX+XFD armed` or `[cpu] AMX not supported`. Test on: QEMU TCG (`-cpu max`), bare metal (Sapphire Rapids+).
+**Test checkpoint:** On an AMX+XFD CPU (QEMU TCG `-cpu max` / Sapphire Rapids+), a task that never touches AMX keeps `IA32_XFD` armed; first `TILELOADD` raises #NM with `IA32_XFD_ERR != 0` and the handler disarms XFD for that task (no area grow -- the area is already AMX-sized); tile state survives a `schedule()` round-trip. On non-AMX/non-XFD CPUs (the `-cpu Haswell` harness) XCR0[17:18] stay clear and no XFD MSR is touched. Test on: QEMU TCG `-cpu max`, bare metal (Sapphire Rapids+).
 
 > **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
+
+> **Deferred:** 2026-06-28 -- AMX state management is blocked on a per-thread XSAVE redesign: FPU/XSAVE state is stored per `struct task` (shared across sibling threads), so AMX tile data would leak between threads (a security/correctness violation -- sub-standard to ship). That redesign is foundational scheduler work beyond AMX scope, and AMX has no bare-metal platform in the matrix (only TCG `-cpu max` emulation). Codex design review hardened the deferred plan (eager-area not lazy-grow; BSP-arm-before-`cpu_record_bsp_profile`; AP-XCR0-skew gating). Revisit once per-`struct thread` XSAVE + AMX validation land. -> XREF: this section's per-thread-XSAVE prerequisite item + §1 (XSAVE/FPU model owner).
 
 ---
 
@@ -575,7 +579,7 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 | 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ✅ §11 Done       |
 | 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §12 stretch    |
 | 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §13            |
-| 💎  | AMX tile + XFD       | ✅ HAL XFD lazy alloc       | ✅ XFD dynamic XSAVE        | ⬜ §17            |
+| 💎  | AMX tile + XFD       | ✅ HAL XFD lazy alloc       | ✅ XFD dynamic XSAVE        | ⬜ §17 deferred   |
 | 💎  | Split/bus-lock det   | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=       | ⬜ §18            |
 | 💎  | WAITPKG UMWAIT bound | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL      | ⬜ §19            |
 | 💎  | x2APIC MSR mode      | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC        | ⬜ D04 T02 §1     |
