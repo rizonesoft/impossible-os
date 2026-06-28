@@ -73,12 +73,12 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |   4   | MSR management infrastructure (`msr.c`)             | (none)               |  [x]    |
 | 💎  |   5   | UMIP + PKU protection keys                          | §4                   |  [x]    |
 | 💎  |   6   | 1 GiB huge pages + Write-Combining PAT              | §4                   |  [x]    |
-| 💎  |   7   | FRED unified event delivery                         | §4, T07 §3           | blocked |
-| 💎  |   8   | LKGS fast GS-base swap                              | §4                   | blocked |
+| 💎  |   7   | FRED unified event delivery                         | §4, T07 §3           |  [/]    |
+| 💎  |   8   | LKGS fast GS-base swap                              | §4                   |  [/]    |
 | 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core  | (none)               |  [x]    |
 | 💎  |  10   | Performance monitoring counters (Intel + AMD)       | §4                   |  [x]    |
 | 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T08 §3           |  [x]    |
-| 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   | blocked |
+| 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   |  [/]    |
 | 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]    |
 | ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [ ]    |
 | 💎  |  15   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]    |
@@ -276,6 +276,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 **Test checkpoint:** On a FRED-modeling CPU (a QEMU `-cpu` exposing the `fred` flag once a FRED-emulating QEMU is in the matrix, or Granite Rapids+ bare metal -- NOT Cooper Lake, which predates FRED), a timer IRQ reaches `isr_handler` via the FRED unified entry, NMI/#DF land on their assigned stack levels, and `ERETU`/`ERETS` return correctly; every non-FRED CPU boots unchanged on the IDT path. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
+> **Deferred:** 2026-06-28 -- FRED requires Intel Granite Rapids+ (or a FRED-emulating QEMU); no platform in the test matrix (WHPX i5-11600K / TCG / VBox / Haswell) supports it, and shipping untested interrupt-entry code risks total failure on first FRED silicon (see the section `[!WARNING]`). Plan Codex-hardened this pass (full FRED MSR set + stack levels + KPTI/SMAP/GS interaction audit). Revisit when FRED hardware or QEMU `fred` emulation enters the matrix. -> XREF: this section's `[!WARNING]` (no-test-platform).
+
 ---
 
 ## 8. LKGS Fast GS-Base Swap
@@ -293,6 +295,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [ ] Commit: `"kernel/cpu: LKGS replaces SWAPGS in syscall and ISR entry"`
 
 **Test checkpoint:** Syscall path uses LKGS when `CPU_FEATURE_LKGS`; per-CPU data still accessible via GS after LKGS; fallback CPU boots with SWAPGS unchanged. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Deferred:** 2026-06-28 -- LKGS requires Intel Granite Rapids+ (same silicon class as FRED §7); no platform in the matrix supports it, and replacing SWAPGS in the syscall/ISR entry with untested LKGS risks per-CPU GS-base corruption on first LKGS silicon (see the section `[!WARNING]`). Revisit with LKGS hardware. -> XREF: this section's `[!WARNING]` (no-test-platform).
 
 ---
 
@@ -377,6 +381,8 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [ ] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"`
 
 **Test checkpoint:** With `CPU_FEATURE_IBS`, NMI handler fills ring without nested NMI deadlock; `ibs_read_samples` returns monotonic sequence numbers. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (AMD).
+
+> **Deferred:** 2026-06-28 -- AMD IBS requires AMD Zen+ bare metal; no platform in the matrix (Intel WHPX / TCG / VBox / Haswell) supports it, and the NMI handler + per-CPU ring buffer need real IBS hardware to validate (see the section `[!WARNING]`). Stretch goal; revisit on AMD Zen+ bare metal. -> XREF: this section's `[!WARNING]` (no-test-platform).
 
 ---
 
