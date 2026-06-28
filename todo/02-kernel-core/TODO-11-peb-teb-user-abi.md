@@ -348,6 +348,8 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Deferred:** [M] KUSD time/version core is shipped + boot-wired; the 3 remaining items are (1) policy bits (SafeBootMode/KdDebuggerEnabled/MitigationPolicies) BLOCKED -- no runtime policy-snapshot source exists yet (the KUSD struct fields exist but nothing populates them); (2) Win11 24H2 `FullNumberOfPhysicalPages` (kusd.h ABI surgery at 0x310 + populate from the 64-bit PMM count + `_Static_assert`/test) and (3) a shared NT build constant unifying PEB.OSBuildNumber/KUSD.NtBuildNumber -- both specified + ready for a focused fresh-context pass (precise KUSD ABI work, not rushed at session tail). -> XREF: 02-kernel-core/TODO-02 §5 (item: "Safe Mode and Recovery Policy Object" -- the policy snapshot the KUSD mirror must read) + §10 (boot-status policy).
+
 ---
 
 ## 12. TLS Expansion Slots (1024 Dynamic Slots)
