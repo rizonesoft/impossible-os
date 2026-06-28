@@ -59,7 +59,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6             |  [x]   |
 | 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [/]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [/]   |
-| ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [x]   |
+| ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [/]   |
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [x]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [x]   |
@@ -73,6 +73,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  21   | Format-specific user startup frame + env unify  | §7, §5             |  [ ]   |
 | 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [ ]   |
 | 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [ ]   |
+| ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -309,6 +310,14 @@ Make the PEB and TEB for any process queryable by name through the Object Manage
 - [x] Commit: `"kernel: peb -- PEB and TEB registered in Ob namespace"`
 
 **Test checkpoint:** `\KernelObjects\Process<PID>\Peb` and `\KernelObjects\Process<PID>\Teb` resolve through Ob namespace queries from user mode and kernel mode; object typing/size matches expected PEB/TEB body layout. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | Ob PEB/TEB insertion validated via cmd.exe exec, 0 failures
+> **Notes:**
+> - Shipped: at task_exec, \KernelObjects\Process<PID> dir + Peb/Teb inserted via ObInsertObject; ObpPebType/ObpTebType registered (body_size=4096); intended user-mode enumeration via NtOpenDirectoryObject.
+> - Review (Codex 3x) found the design unsafe: raw user-VA PEB/TEB inserted as Ob bodies corrupt the page before them, Process<PID> collides with ob_process_create, no exit cleanup -- redesign owned by §24.
+> - Scope boundary: safe wrapper objects + collision + lifecycle + pdir name -> §24.
+> **Deferred:** [Critical] §10 inserts raw user-VA PEB/TEB as Ob bodies (ObInsertObject writes a header into the adjacent page), collides with ob_process_create's Process<PID>, and never cleans up at exit. -> XREF: §24 (item: "[CRITICAL] Stop inserting raw PEB/TEB user VAs as Ob bodies..." at line 558)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1C+2H+1L deferred-to-§24, 0 fixed | scope: kernel-code-quality
 
 ---
 
@@ -548,6 +557,19 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: peb -- per-thread TLS value storage (static + expansion pointer)"`
 
 **Test checkpoint:** two threads in one process alloc one slot index, set distinct values, and each reads back its own (no cross-thread bleed); a secondary thread created after expansion alloc sees a non-NULL `TlsExpansionSlots`; cleanup clears every thread's pointer. Gated on the §16 TEB-mapping fix for the static-slot storage to be page-correct. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 24. PEB/TEB Ob-Namespace Exposure: Safe Wrapper Objects + Lifecycle
+§10 inserts raw user-VA PEB/TEB pages directly as Ob object bodies, which is unsafe: `ObInsertObject` writes `OB_HEADER_FROM_BODY` (body - sizeof(OBJECT_HEADER)) into the page BEFORE the PEB/TEB (corrupting the RTLPP page / pre-TEB memory), the `Process<PID>` directory collides with `ob_process_create`'s existing object (so `\KernelObjects\Process<PID>\Peb` is never actually published and proc_dir leaks), and nothing removes the entries at task_exit (dangling after address-space teardown). The exclusive feature is non-functional + unsafe as built. -> XREF: §10 (Ob insertion), ob_process.c (existing Process<PID>), src/kernel/ob (ObInsertObject / ObpPebType).
+
+- [ ] [CRITICAL] Stop inserting raw PEB/TEB user VAs as Ob bodies (2055-2058); use real ObpPebType/ObpTebType wrapper objects (ob_alloc_object) holding the VA, or a non-owning namespace record that never refs/derefs/frees the target
+- [ ] [HIGH] Resolve the Process<PID> collision with ob_process_create (task.c:2049 vs ob_process.c:73): one owner of the dir; expose Peb/Teb under it; check every ObInsertObject return + unwind on failure
+- [ ] [HIGH] Remove the per-process directory + Peb/Teb wrappers in task_exit/task_cleanup BEFORE destroying the user address space; add exec/exit/repeat-PID lifecycle tests
+- [ ] [LOW] pdir_name digit build (2044-2045) only handles 2 digits; correct for PID >= 100 (latent under TASK_MAX=32) or use snprintf
+- [ ] Commit: `"kernel: ob -- safe PEB/TEB namespace wrappers + lifecycle cleanup"`
+
+**Test checkpoint:** inserting a PEB/TEB does not write a header into the adjacent RTLPP/pre-TEB page (no user-ABI corruption); `\KernelObjects\Process<PID>\Peb` resolves via NtOpenDirectoryObject; after the process exits the directory + entries are gone (no stale-VA lookup); a re-used PID does not collide. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
