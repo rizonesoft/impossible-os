@@ -314,7 +314,7 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 - [x] Add `NtShutdownSystem(ShutdownReboot / ShutdownPowerOff)` → SSDT 0x00D7
 - [x] Add `NtCreateNamedPipeFile` / `NtReadFile` / `NtWriteFile` wrapping pipe → SSDT 0x001B
 - [x] Add `NtCreateSection` / `NtMapViewOfSection` wrapping shmem → SSDT 0x005C/0x005E (→ XREF TODO-05 §7)
-- [x] Keep `SYS_*` macros as compile-time aliases pointing to the same SSDT indices for transition
+- [x] `SYS_NT_*` macros (in `syscall.h`/`abi_numbers.h`) are the compile-time aliases equal to the `SSDT_NtXxx` indices; legacy `SYS_*` keep their INT 0x80 numbers (separate number space -- not SSDT aliases) for backward compat
 - [x] Change all `sys_*` implementations to return `NTSTATUS`; convert error paths to `STATUS_*` codes
 - [x] Add `Nt_Close` SSDT wrapper at 0x0000 bridging to OB NtClose
 - [x] 12 NtXxx handlers registered in SSDT via `nt_syscall_register_ssdt()` in `src/kernel/nt/nt_syscall.c`
@@ -322,6 +322,20 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 - [x] Commit: `"kernel: nt -- migrate existing syscalls to NtXxx naming and NTSTATUS"`
 
 **Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- this is the most dangerous migration; a return-type mismatch silently corrupts all user-mode callers.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 346 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - Migrated the legacy SYS_* syscalls to NtXxx handlers returning NTSTATUS, registered in the SSDT via `nt_syscall_register_ssdt()` (`nt_syscall.c`); the INT 0x2E + SYSCALL paths dispatch them by service number.
+> - `SYS_NT_*` macros equal the `SSDT_NtXxx` indices (compile-time aliases); legacy `SYS_*` keep their INT 0x80 number space for backward compat -- corrected the §5 contract wording (they are NOT SSDT aliases).
+> - Review found the migrated handlers do not yet enforce the ring-3 trust boundary (privilege/handle-rights/user-pointer probes) -- a systemic dev-stage gap (no tokens, SMAP off, shared frames); filed 3 [Critical] §29 items + the §6 file-I/O probe item.
+> - re-adversarial skipped: §5 review made no §5-scope code change (migration is correct; trust-boundary criticals Accepted to §29; the alias [M] is a TODO-contract fix).
+
+> **Verified:** 2026-06-28 | 18/18 items | build OK | tests 346+16 PASS (tree unchanged; findings Accepted to §29)
+> **Accepted:** [Critical] NtShutdownSystem (+ legacy SYS_SHUTDOWN) lets any ring-3 caller power off the machine with no SeShutdownPrivilege gate -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege" at line 961)
+> **Accepted:** [Critical] NtTerminateProcess kills any process by raw PID with no handle/PROCESS_TERMINATE check -> XREF: 02-kernel-core/TODO-12 §29 (item: "NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE" at line 962)
+> **Accepted:** [Critical] SystemProcessInformation writes through unprobed user pointers (kernel-write primitive) -> XREF: 02-kernel-core/TODO-12 §29 (item: "SystemProcessInformation: ProbeForWriteIfUser + copy_to_user" at line 963)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 3Crit accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -958,6 +972,9 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] `NtPrivilegeCheck(ClientToken, RequiredPrivileges, Result)` → SSDT 0x00BF
 - [ ] `NtSetSecurityObject(Handle, SecurityInformation, SecurityDescriptor)` → SSDT 0x00C1
 - [ ] `NtQuerySecurityObject(Handle, SecurityInformation, SecurityDescriptor, Length, LengthNeeded)` → SSDT 0x00C2
+- [ ] [Critical] NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege before acpi_reboot/shutdown -- any ring-3 caller can power off the machine today (`nt_syscall.c:1195`). (§5 review)
+- [ ] [Critical] NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE, not a raw PID -- `nt_process.c:227` lets any ring-3 caller kill any process by PID. (§5 review)
+- [ ] [Critical] SystemProcessInformation: ProbeForWriteIfUser + copy_to_user + length-mismatch status -- unprobed user-pointer write at `nt_syscall.c:923`. (§5 review)
 - [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
 
 **Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.
