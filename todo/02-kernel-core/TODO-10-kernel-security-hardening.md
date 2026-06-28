@@ -261,8 +261,8 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > **Design (Codex design review 2026-06-28):** eIBRS-FIRST (set-once, no hot-path toggle); the legacy per-entry IBRS toggle is DROPPED (no alternatives/stub-patch infra; retpoline covers legacy CPUs). SPEC_CTRL writes preserve the per-CPU baseline. IBPB fails closed. eIBRS detection is `IA32_ARCH_CAPABILITIES[1]`, NOT CPUID.7:EDX[29].
 
 - [ ] Feature flags + bit constants:
-  - `CPU_FEATURE_ENHANCED_IBRS` from `IA32_ARCH_CAPABILITIES[1]` (IBRS_ALL), gated on `CPU_FEATURE_ARCH_CAP`
-  - `CPU_FEATURE_IBPB`: Intel `CPUID.7.0:EDX[26]`, AMD `CPUID.80000008:EBX[12]`; bump `CPU_FEATURE_COUNT`
+  - `CPU_FEATURE_ENHANCED_IBRS` = 62 from `IA32_ARCH_CAPABILITIES[1]` (IBRS_ALL), gated on `CPU_FEATURE_ARCH_CAP`
+  - `CPU_FEATURE_IBPB` = 63: Intel `CPUID.7.0:EDX[26]`, AMD `CPUID.80000008:EBX[12]`; `CPU_FEATURE_COUNT` -> 64 (these are the LAST 2 bits of the `uint64_t` flags word; §18 must expand the flags word to 128-bit before adding more)
   - `SPEC_CTRL_IBRS=1` / `PRED_CMD_IBPB=1` in `msr.h`
 - [ ] eIBRS-first (no hot-path toggle): on `CPU_FEATURE_ENHANCED_IBRS`, set `IA32_SPEC_CTRL = spec_ctrl_at_boot | SPEC_CTRL_IBRS` once per CPU post-IDT in `cpu_record_bsp_profile()`; add a `SPEC_CTRL` `s_bsp_msr_profile[]` entry for AP replay
 - [ ] Baseline preservation: SPEC_CTRL writes are `baseline | owned-bits`, never literal 0 (keeps firmware bits + §18's future SSBD/STIBP)
@@ -523,7 +523,8 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 
 The SPEC_CTRL predictor mitigations beyond §8's IBRS/IBPB/retpoline core that both Win11 and Linux apply. Each is CPUID/vendor-gated and feeds the same per-CPU mitigation selection. -> XREF: §8 (core), `D02 T09 §11` (MSR-profile AP replay).
 
-- [ ] SSBD (Spectre v4): `IA32_SPEC_CTRL` bit 2 (Intel) / `MSR_AMD64_LS_CFG` (AMD), gated on `CPU_FEATURE_SSBD`; exposed as a tunable
+- [ ] PREREQUISITE: expand `g_cpu.flags` to 128-bit (`uint64_t flags[2]`) -- the word is FULL after §8 takes bits 62/63; new SSBD/etc. bits need it. Update `cpu_has`/`set_flag_if`/`CPU_FEATURES_*_MASK`/`cpu_feature_local`/feature serialization
+- [ ] SSBD (Spectre v4): `IA32_SPEC_CTRL` bit 2 (Intel) / `MSR_AMD64_LS_CFG` (AMD), gated on a new `CPU_FEATURE_SSBD` (needs the flags expansion above); exposed as a tunable
 - [ ] STIBP (cross-HT): `IA32_SPEC_CTRL` bit 1; set alongside IBRS when SMT is active and `CPU_FEATURE_STIBP`
 - [ ] RSB stuffing on context switch: 32-iteration `call`/`pause`/`lfence` RSB-fill in `sched_switch_task()` on CPUs where eIBRS does not cover RSB underflow
 - [ ] BHI_DIS_S (CVE-2024-2201): gate on `CPUID.(7,2):EDX[18]`; set `IA32_SPEC_CTRL.BHI_DIS_S` or emit the BHB-clearing loop on kernel entry where required
