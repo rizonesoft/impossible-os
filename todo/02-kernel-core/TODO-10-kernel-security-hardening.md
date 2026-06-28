@@ -712,6 +712,10 @@ A low-overhead page-granularity sampling allocator (Linux `CONFIG_KFENCE`) placi
 
 > **Deferred:** [M] KFENCE prototyped end to end (self-contained `kfence.c` ~280 lines: FIFO-ring quarantine, left/right placement, OOB/UAF classify; 5 heap-variant hooks + the `page_fault_handler` hook + boot init + tunables; builds), then reverted to keep `main` booting. Enabling (1/100) broke boot: `pmm_alloc_contiguous` placed the pool at 0x6ff000 (low memory next to the 0x70000 page tables), and `vmm_unmap_page` on the identity-map guard pages there corrupted kernel state -- a later #PF hit `handlers[14]==NULL` (idt.c default panic, never reaching the handler). FIX before re-enabling: place the pool in a dedicated VA away from the identity-map's critical low pages (or verify the PMM region is safe + that unmapping those frames cannot disturb the page tables), then re-verify the `kfence_handle_fault` wiring. -> XREF: this section (the items above).
 
+---
+
+## 24. Mitigation Visibility: Queryable Security Posture
+
 Expose which CPU/kernel mitigations are active as structured queryable data. Linux scatters this across `/sys/devices/system/cpu/vulnerabilities/*`; Win11 hides it behind WMI/registry. Neither does it cleanly -- a single coherent posture report for operators, certification, and post-incident triage is an exclusive edge.
 
 - [ ] `kernel_security_posture_t`: enumerate every mitigation in this TODO with state {active, unsupported, disabled, n/a}
