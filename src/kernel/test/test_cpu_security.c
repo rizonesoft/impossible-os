@@ -1864,6 +1864,36 @@ static void test_ap_probe_covers_spec_ctrl(void)
                 "AP probe mask covers SPEC_CTRL (eIBRS replay gate)");
 }
 
+/* ---- S19: MDS/VERW microarchitectural buffer clear ---- */
+
+extern volatile uint8_t g_mds_verw_active;
+
+static void test_md_clear_feature_bit(void)
+{
+    /* MD_CLEAR is CPUID.(7,0):EDX[10]; it is CPU_FEATURE_MD_CLEAR = bit 64, the
+     * first feature in word 1 of the 128-bit cpu_feature_mask_t, so this also
+     * exercises a real high-word cpu_has() read end to end. */
+    uint32_t a, b, c, d;
+    cpuid_raw(0x07, 0, &a, &b, &c, &d);
+    TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_MD_CLEAR) ? 1 : 0),
+                   (uint64_t)((d >> 10) & 1),
+                   "MD_CLEAR == CPUID.(7,0):EDX[10] (word-1 feature read)");
+}
+
+static void test_mds_verw_gate_implies_capability(void)
+{
+    /* The once-per-boot decision never latches the VERW gate without the MD_CLEAR
+     * clear capability (an unconditional VERW on a CPU that cannot clear is wasted
+     * cycles). On MDS_NO / no-MD_CLEAR silicon the gate stays off and the exit
+     * path is a no-op. */
+    if (!g_mds_verw_active) {
+        TEST_SKIP("VERW gate off on this CPU (MDS_NO or no MD_CLEAR)");
+        return;
+    }
+    TEST_ASSERT(cpu_has(CPU_FEATURE_MD_CLEAR),
+                "VERW gate on implies MD_CLEAR present");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -1930,6 +1960,10 @@ void test_register_x86(void)
         test_required_subset_of_probe, TEST_CAT_X86);
     test_suite_register_cat("AP features: global intersection retains required",
         test_global_feature_mask_has_required, TEST_CAT_X86);
+    test_suite_register_cat("MDS: MD_CLEAR feature bit (word-1 read)",
+        test_md_clear_feature_bit, TEST_CAT_X86);
+    test_suite_register_cat("MDS: VERW gate implies MD_CLEAR capability",
+        test_mds_verw_gate_implies_capability, TEST_CAT_X86);
     test_suite_register_cat("feature-mask: 128-bit word/bit split round-trips",
         test_feature_mask_wordsplit, TEST_CAT_X86);
     test_suite_register_cat("feature-mask: high-word AP intersection clears",

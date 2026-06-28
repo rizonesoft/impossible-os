@@ -117,7 +117,10 @@ enum cpu_feature {
     CPU_FEATURE_ENHANCED_IBRS = 62, /* IA32_ARCH_CAPABILITIES[1] IBRS_ALL (set-once IBRS) */
     CPU_FEATURE_IBPB      = 63,   /* IBPB: Intel 7.0:EDX[26] / AMD 0x80000008:EBX[12] */
 
-    CPU_FEATURE_COUNT     = 64    /* total features tracked (next bit goes to word 1) */
+    /* Word 1 (bit >= 64) -- the 128-bit cpu_feature_mask_t surface. */
+    CPU_FEATURE_MD_CLEAR  = 64,   /* MD_CLEAR: VERW clears CPU buffers (7.0:EDX[10]) */
+
+    CPU_FEATURE_COUNT     = 65    /* total features tracked */
 };
 
 /* --- 128-bit feature bitset ------------------------------------------------

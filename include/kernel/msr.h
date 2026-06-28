@@ -107,7 +107,17 @@ int msr_try_write(uint32_t index, uint64_t value);
 #define MSR_IA32_PRED_CMD           0x00000049
 #define PRED_CMD_IBPB               (1ULL << 0)   /* Indirect Branch Prediction Barrier */
 #define MSR_IA32_ARCH_CAPS          0x0000010A
+#define ARCH_CAP_RDCL_NO           (1ULL << 0)   /* not susceptible to Meltdown (RDCL) */
 #define ARCH_CAP_IBRS_ALL          (1ULL << 1)   /* eIBRS: IBRS provides always-on protection */
+#define ARCH_CAP_MDS_NO            (1ULL << 5)   /* not susceptible to MDS (no VERW clear needed) */
+#define ARCH_CAP_TSX_CTRL          (1ULL << 7)   /* IA32_TSX_CTRL MSR is present */
+#define ARCH_CAP_TAA_NO            (1ULL << 8)   /* not susceptible to TSX Async Abort */
+#define ARCH_CAP_RFDS_NO           (1ULL << 27)  /* not susceptible to Register File Data Sampling */
+#define ARCH_CAP_RFDS_CLEAR        (1ULL << 28)  /* VERW also clears the register file (RFDS) */
+/* TSX control (TAA mitigation): disable RTM + force CPUID HLE/RTM clear. */
+#define MSR_IA32_TSX_CTRL           0x00000122
+#define TSX_CTRL_RTM_DISABLE       (1ULL << 0)   /* XBEGIN always aborts */
+#define TSX_CTRL_CPUID_CLEAR       (1ULL << 1)   /* CPUID stops enumerating HLE/RTM */
 
 /* CPU register audit (TODO-09-boot S9) */
 #define MSR_IA32_MISC_ENABLE        0x000001A0  /* feature-enable bits */

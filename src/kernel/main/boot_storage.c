@@ -271,6 +271,10 @@ void boot_phase2(void)
      * its ap_cpu_harden tail). */
     cpu_probe_ibpb();
 
+    /* MDS VERW gate + TAA TSX-disable (TODO-10 S19): decide on the BSP post-IDT
+     * (reads IA32_ARCH_CAPABILITIES); each AP re-decides at its ap_cpu_harden tail. */
+    cpu_decide_mds();
+
     /* CPU topology: Zen CCD/NUMA + Intel hybrid P/E-core detection */
     {
         extern void topology_init(void);

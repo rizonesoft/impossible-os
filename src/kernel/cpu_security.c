@@ -690,6 +690,80 @@ void cpu_issue_ibpb(void)
         msr_write(MSR_IA32_PRED_CMD, PRED_CMD_IBPB);
 }
 
+/* MDS/MMIO/RFDS VERW gate (TODO-10 S19). The SYSRET/IRET return-to-user asm paths
+ * read this global byte RIP-relative (cmp byte [rel g_mds_verw_active]); 0 = skip
+ * the VERW (no leak boundary or no MD_CLEAR), 1 = clear CPU buffers before the
+ * ring transition. NON-static: referenced by syscall_entry.asm + isr_stubs.asm.
+ * Monotonic: cpu_decide_mds only ever stores 1, so on a skewed SMP set the flag
+ * latches on if ANY online CPU needs it (conservative-correct). */
+volatile uint8_t g_mds_verw_active = 0;
+
+/* VERW memory operand: a 16-bit selector the exit-path `verw word [rel ...]`
+ * reads. VERW's architectural side effect (clearing the CPU buffers) is what
+ * matters, not the verify result; GDT_KERNEL_DATA (0x10) is a present, readable
+ * descriptor so the verify never faults. Const -> lives in RO `.rodata`. */
+const uint16_t g_mds_verw_sel = 0x10;   /* GDT_KERNEL_DATA */
+
+/* Once-per-CPU MDS/TAA decision, post-IDT (BSP from boot_phase2, each AP at the
+ * ap_cpu_harden tail). VERW clears CPU buffers only when MD_CLEAR microcode is
+ * present AND the CPU is still exposed (not MDS_NO, or RFDS applies). TAA: when
+ * the CPU exposes IA32_TSX_CTRL and is not TAA_NO, disable TSX outright (stronger
+ * than relying on VERW, and removes the abort side channel) -- a per-CPU MSR write
+ * via the #GP-safe try-write, so it re-applies correctly on every AP. */
+void cpu_decide_mds(void)
+{
+    uint32_t a, b, c, d;
+    uint64_t caps = 0;
+    int has_md_clear, has_arch_cap;
+
+    /* AP-local CPUID, NOT cpu_has() (which reflects the BSP-global mask): a
+     * feature-skewed AP must decide on its OWN MD_CLEAR / ARCH_CAP so the global
+     * VERW gate latches when ANY online CPU needs the clear. Leaf 7,0:EDX[10] =
+     * MD_CLEAR, EDX[29] = ARCH_CAPABILITIES present. */
+    cpuid_raw(0x07, 0, &a, &b, &c, &d);
+    has_md_clear = (int)((d >> 10) & 1);
+    has_arch_cap = (int)((d >> 29) & 1);
+
+    if (has_arch_cap)
+        (void)msr_try_read(MSR_IA32_ARCH_CAPS, &caps);
+
+    if (has_md_clear) {
+        int need = !(caps & ARCH_CAP_MDS_NO) ||
+                   ((caps & ARCH_CAP_RFDS_CLEAR) && !(caps & ARCH_CAP_RFDS_NO));
+        if (need)
+            __atomic_store_n(&g_mds_verw_active, 1, __ATOMIC_RELEASE);
+    }
+
+    /* TAA applies ONLY on a TSX (RTM, leaf 7,0:EBX[11]) CPU not marked TAA_NO.
+     * Prefer disabling TSX outright via TSX_CTRL; but TSX_CTRL may be absent OR
+     * trap the write, in which case TSX stays enabled and the VERW clear is the
+     * fallback (it clears TAA-leaked buffers on return-to-user). Gating on
+     * TSX_CTRL availability alone would miss the absent-MSR case entirely. */
+    if (((b >> 11) & 1) && !(caps & ARCH_CAP_TAA_NO)) {
+        int tsx_disabled = 0;
+        if (caps & ARCH_CAP_TSX_CTRL) {
+            uint64_t tsx = 0;
+            (void)msr_try_read(MSR_IA32_TSX_CTRL, &tsx);
+            tsx_disabled = (msr_try_write(MSR_IA32_TSX_CTRL,
+                            tsx | TSX_CTRL_RTM_DISABLE | TSX_CTRL_CPUID_CLEAR) == 0);
+        }
+        if (!tsx_disabled) {
+            /* Security fallback runs on EVERY CPU: latch VERW so the still-enabled
+             * TSX is covered. The diagnostic klog is BSP-only -- AP hardening must
+             * emit no serial (klog/serial_write can busy-wait with IRQs masked and
+             * perturb the online handshake); the posture report is the AP channel. */
+            struct per_cpu_data *pc = smp_this_cpu();
+            if (has_md_clear)
+                __atomic_store_n(&g_mds_verw_active, 1, __ATOMIC_RELEASE);
+            if (!pc || pc->cpu_id == 0)
+                klog(LOG_WARN, "cpu", "TAA: TSX not disabled (TSX_CTRL %s); %s",
+                     (caps & ARCH_CAP_TSX_CTRL) ? "write rejected" : "absent",
+                     has_md_clear ? "VERW fallback active"
+                                  : "UNMITIGATED (no MD_CLEAR)");
+        }
+    }
+}
+
 void cpu_record_bsp_profile(void)
 {
     uint32_t i;
@@ -1424,6 +1498,11 @@ void ap_cpu_harden(uint32_t cpu_id)
      *     so the scheduler IBPB hot path stays fault-free; clears the latch globally
      *     if this AP lacks IBPB or traps PRED_CMD. */
     cpu_probe_ibpb();
+
+    /* 3c. MDS VERW gate + TAA TSX-disable (S19): re-decide per-AP (reads this AP's
+     *     IA32_ARCH_CAPABILITIES, applies its own TSX_CTRL; latches g_mds_verw_active
+     *     on if this AP needs the clear). */
+    cpu_decide_mds();
 
     /* 4. Capture this AP's snapshot for the register audit trail. The XCR0
      *    read gates on THIS AP's live CR4.OSXSAVE (xcr0_read_safe), never the

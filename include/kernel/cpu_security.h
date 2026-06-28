@@ -105,6 +105,11 @@ void cpu_probe_ibpb(void);
  * scheduler on a security-domain switch. Gated on the latched probe -- never #GPs. */
 void cpu_issue_ibpb(void);
 
+/* Decide the MDS VERW gate + apply TAA TSX-disable for the calling CPU (TODO-10
+ * S19). Post-IDT: BSP from boot_phase2, each AP at the ap_cpu_harden tail. Sets
+ * the global g_mds_verw_active byte the SYSRET/IRET exit asm gates the VERW on. */
+void cpu_decide_mds(void);
+
 /* Replicate the BSP's hardened CPU state onto the calling AP and BUFFER a
  * snapshot -- AP-only state replication, no verification, no serial output:
  * match the BSP XCR0 mask (intersected with this AP's own supported bits),

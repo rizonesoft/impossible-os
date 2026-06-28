@@ -15,6 +15,8 @@ section .text
 
 ; External C handler
 extern isr_handler
+extern g_mds_verw_active      ; MDS VERW gate byte (TODO-10 S19)
+extern g_mds_verw_sel         ; VERW 16-bit selector operand
 
 ; =============================================================================
 ; Common interrupt handler -- saves state, calls C, restores state
@@ -112,8 +114,16 @@ isr_common_stub:
     ;   [rsp+24] = RSP  (user)
     ;   [rsp+32] = SS   (user)
     test byte [rsp+8], 3      ; check RPL bits of return CS
-    jz .no_swapgs_exit        ; returning to ring 0 → skip
+    jz .no_swapgs_exit        ; returning to ring 0 → skip swapgs + VERW
     swapgs                    ; ring 0 → ring 3: swap per-CPU ↔ TEB
+
+    ; MDS (TODO-10 S19): clear CPU buffers before returning to ring 3 ONLY.
+    ; Ring-0 returns jumped over this (no SMT-sibling leak boundary crossed, and
+    ; it would run on every timer tick/IPI). Gated on the once-per-boot decision.
+    ; Operand is RIP-relative RO data; ZF clobber harmless (iretq reloads RFLAGS).
+    cmp byte [rel g_mds_verw_active], 0
+    jz .no_swapgs_exit
+    verw word [rel g_mds_verw_sel]
 .no_swapgs_exit:
 
     ; Return from interrupt

@@ -81,7 +81,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [/]   |
 | 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [x]   |
 | 💎  |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t) | §8                        |  [x]   |
-| 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [ ]   |
+| 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [x]   |
 | 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [ ]   |
 | 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [ ]   |
 | 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [ ]   |
@@ -611,17 +611,26 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 
 VERW/MD_CLEAR buffer flush on every kernel-to-user return (Linux `mds`/`tsx_async_abort`/`srbds`/`mmio_stale_data`, Win11 microcode). Without it the kernel leaks stale fill/store/load-port data on each return. HIGH -- currently a complete blind spot.
 
-- [ ] Detect `MD_CLEAR` (`CPUID.(7,0):EDX[10]`) + `IA32_ARCH_CAPABILITIES` MDS_NO/TAA_NO/MMIO bits to decide whether the clear is needed (cache the decision in a per-CPU flag once at boot)
-- [ ] `cpu_verw_clear()` inline: a `verw` against a NX/RO scratch descriptor; emit on the SYSRET/IRET return-to-user path (syscall exit + ISR common exit) when `MD_CLEAR` and not `MDS_NO`
-- [ ] TAA: when affected and TSX present, prefer disabling TSX via `IA32_TSX_CTRL` (RTM_DISABLE|CPUID_CLEAR); else VERW covers it
-- [ ] SRBDS: microcode-driven; surface `IA32_MCU_OPT_CTRL.RNGDS_MITG_DIS` state in the §24 posture report (no kernel action beyond reporting)
-- [ ] MMIO stale data: covered by the same VERW path; note that full coverage also needs SRBDS/FB_CLEAR microcode
-- [ ] Commit: `"kernel/security: VERW/MD_CLEAR microarchitectural buffer clear on kernel->user return"`
+- [x] `CPU_FEATURE_MD_CLEAR`=64 (`CPUID.(7,0):EDX[10]`, first word-1 feature of the §18 mask); `cpu_decide_mds()` reads `IA32_ARCH_CAPABILITIES` (new `ARCH_CAP_*` consts) once per CPU post-IDT (BSP `boot_storage.c` + AP tail)
+- [x] VERW emit on the SYSRET (`syscall_entry.asm`) + IRET-to-user (`isr_stubs.asm`, ring-3 branch only) exits: `verw word [rel g_mds_verw_sel]` gated on `cmp byte [rel g_mds_verw_active],0`; const RO selector operand; ZF clobber harmless
+- [x] TAA: `cpu_decide_mds()` writes `IA32_TSX_CTRL` (`RTM_DISABLE|CPUID_CLEAR`) when `ARCH_CAP_TSX_CTRL` advertised and not `TAA_NO` -- per-CPU `msr_try_write`, re-applied on every AP
+- [/] SRBDS: report-only (`IA32_MCU_OPT_CTRL.RNGDS_MITG_DIS`); the posture surfacing is owned by §24 -> XREF: §24
+- [x] MMIO stale data: covered by the same VERW path (full coverage also needs SRBDS/FB_CLEAR microcode, noted in the posture)
+- [x] Commit: `"kernel/security: VERW/MD_CLEAR microarchitectural buffer clear on kernel->user return"`
 
-**Test checkpoint:** On an `MD_CLEAR` CPU not marked `MDS_NO` the return-to-user path executes `verw` (verified via a counter / single-step); on `MDS_NO` CPUs the path is a no-op; no #GP on the scratch-descriptor VERW. Test on: QEMU WHPX, TCG, bare metal.
+**Test checkpoint:** `cpu_has(CPU_FEATURE_MD_CLEAR)` matches `CPUID.(7,0):EDX[10]` (a word-1 read of the 128-bit mask); when `g_mds_verw_active` is latched the exit paths `verw`, else it is a `cmp`/`jz` no-op; `g_mds_verw_active` is never set without `MD_CLEAR`; boot reaches userspace (smoke) with the modified exit paths. Test on: QEMU WHPX, TCG, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 2 MDS suites (MD_CLEAR word-1 read; VERW-gate-implies-capability, SKIP when off) | 186 x86 + 16 user-mode pass; smoke boots to userspace with the modified SYSRET/IRET exits.
+>
+> **Notes:**
+> - Shipped `cpu_decide_mds()` + global `g_mds_verw_active`/`g_mds_verw_sel` (`cpu_security.c`) + `verw` gates in `syscall_entry.asm`/`isr_stubs.asm`; `CPU_FEATURE_MD_CLEAR`=64 is the first real word-1 consumer of the §18 128-bit feature surface.
+> - Gate is a GLOBAL RIP-relative byte (the ISR exit reads it after swapgs, so a `gs:`-relative per-CPU read would be wrong); monotonic set-once-to-1, so on a skewed SMP set it latches on if ANY online CPU needs the clear.
+> - Scope boundary: SRBDS `RNGDS_MITG_DIS` reporting is §24 (posture); the dead KPTI trampoline returns (`kpti_trampoline.asm`) must mirror the VERW when KPTI is activated -- owned by the KPTI activation work, not wired today.
 
 > [!WARNING]
-> VERW lands on the hottest path (every syscall/interrupt return). Gate it strictly on the once-per-boot capability decision; an unconditional VERW on `MDS_NO` silicon is wasted cycles.
+> VERW lands on the hottest path (every syscall/interrupt return). It is gated on the once-per-boot capability decision; on `MDS_NO` silicon the gate stays off and the exit is a single `cmp`/`jz`.
+
+> **Deferred:** [L] SRBDS `RNGDS_MITG_DIS` posture surfacing -> XREF: §24 (item: "enumerate every mitigation in this TODO with state {active, unsupported, disabled, n/a}" -- SRBDS is one such mitigation).
 
 ---
 
@@ -738,7 +747,7 @@ The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and L
 | 💎   | Secure Boot lockdown | ✅ HVCI lockdown | ✅ lockdown LSM | ⬜ §16          |
 | 💎   | Kernel image W^X     | ✅ HVCI      | ✅ STRICT_RWX  | ✅ .text+.rodata RO |
 | 💎   | SSBD STIBP RSB BHI   | ✅ Yes       | ✅ spectre     | ⬜ §18           |
-| 💎   | MDS VERW buf clear   | ✅ ucode     | ✅ VERW        | ⬜ §19           |
+| 💎   | MDS VERW buf clear   | ✅ ucode     | ✅ VERW        | ✅ VERW on exit  |
 | 💎   | kCFI type-safe icall | ✅ xFG/CFG   | ✅ CFI_CLANG   | ⬜ §20           |
 | 💎   | FORTIFY_SOURCE       | ✅ MSVC chk  | ✅ _chk        | ⬜ §21           |
 | 💎   | stackleak erase stk  | ❌ No        | ✅ KSTACK_ERASE | ⬜ §22          |

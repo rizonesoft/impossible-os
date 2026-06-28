@@ -159,6 +159,7 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_IBRS,      edx, 26);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_STIBP,     edx, 27);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SERIALIZE, edx, 14);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_MD_CLEAR,  edx, 10);  /* VERW buffer clear (MDS) */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SPEC_CTRL, edx, 26);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_IBPB,      edx, 26);  /* Intel: IBPB from 7.0:EDX[26]; AMD below (S8) */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_ARCH_CAP,  edx, 29);
