@@ -410,9 +410,20 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] 2 unit tests: SSDT registration (7 handler checks), info class constants (7 value checks)
 - [ ] NtGetNextProcess (0x0202) + NtGetNextThread (0x0203): modern enumeration -- restart from a previous handle with rights checks, no leaked references (slots reserved in `TODO-A-SSDT-Master-Table` / `service_numbers.h`; XREF `T21 §4`)
 - [ ] NtSet/QueryInformationProcess mitigation classes: ProcessMitigationPolicy / ChildProcessPolicy / Signature+ImageLoad policy carriers (monotonic, no relaxation), handing SystemCallDisablePolicy to §25 -- the syscall-class marshalling for the `T21 §11` mitigation_flags field; return STATUS_INVALID_INFO_CLASS no longer silently breaks SetProcessMitigationPolicy callers
+- [ ] [Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects (`nt_process.c`) -- corrupts OB metadata, no type/access check. Use real OB objects + rights -> XREF `D02 T05 §2`. (§7)
+- [ ] [Critical] NtCreateProcess leaves a runnable NULL-entry task (`nt_process.c:70` task_create entry=0) + no teardown on post-create alloc fail; create non-runnable until exec + add teardown. (§7)
 - [x] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
 
 **Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread`/`NtSetContextThread` currently return `STATUS_NOT_IMPLEMENTED` until TODO-23 provides `CONTEXT`. `NtDelayExecution` sleeps for the correct interval.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 346 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - 23 process/thread lifecycle handlers shipped in `nt_process.c` (create/open/terminate/suspend/resume, query/set info, delay), registered in the SSDT.
+> - Adversarial review: handle model is a PID/TID-as-handle shortcut (not OB objects), NtCreateProcess leaves a runnable NULL-entry task, info syscalls unprobed -- 3 [Critical] filed (2 §7 -> D02 T05 §2, 1 -> §29).
+> - Most other open items are blocked on external prerequisites (env-copy D02 T22, NtCreateUserProcess D02 T21, Context D02 T23, ApcThread D02 T07, Impersonate D02 T15) and defer with their existing XREFs.
+
+> **Deferred:** [Critical] §7 process/thread handle model (real OB PROCESS/THREAD objects + handle-rights + user-pointer probes + non-runnable NtCreateProcess + teardown) is gated on the OB object model + the NT trust-boundary campaign with §29 -> XREF: 02-kernel-core/TODO-12 §7 (item: "NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct" at line 413, + sibling at 414) and D02 T05 §2
 
 ---
 
@@ -987,6 +998,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] [Critical] NtShutdownSystem + legacy SYS_SHUTDOWN: require SeShutdownPrivilege before acpi_reboot/shutdown -- any ring-3 caller can power off the machine today (`nt_syscall.c:1195`). (§5 review)
 - [ ] [Critical] NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE, not a raw PID -- `nt_process.c:227` lets any ring-3 caller kill any process by PID. (§5 review)
 - [ ] [Critical] SystemProcessInformation: ProbeForWriteIfUser + copy_to_user + length-mismatch status -- unprobed user-pointer write at `nt_syscall.c:923`. (§5 review)
+- [ ] [Critical] NtQuery/SetInformationProcess + NtQuery/SetInformationThread + NtDelayExecution interval: input/output user pointers deref'd raw (`nt_process.c:460+`) -- probe + copy_from_user/copy_to_user via kernel bounce buffers. (§7 review)
 - [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
 
 **Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.
