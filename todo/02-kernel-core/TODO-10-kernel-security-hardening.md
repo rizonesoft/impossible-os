@@ -698,8 +698,11 @@ Zero the used portion of the kernel stack on every syscall/interrupt return to u
 
 A low-overhead page-granularity sampling allocator (Linux `CONFIG_KFENCE`) placing a fraction of allocations on guard-page-bracketed pages so OOB/UAF accesses fault deterministically in production. Complements §11's always-on cookie/redzone with page-fault-level detection.
 
-- [ ] A fixed KFENCE pool of N guard-page-bracketed slots; `kfence_alloc()` services a sampled fraction (1/sample_rate) of `kmalloc` calls from the pool
-- [ ] Each object sits adjacent to an unmapped guard page; an OOB read/write faults into the page-fault handler, which reads the KFENCE metadata (alloc/free stack, offset)
+> [!NOTE]
+> Explored + design-reviewed (2026-06-28): self-contained `src/kernel/mm/kfence.c` + `kfence.h`; 3 hook sites (`kmalloc`/`kfree` heap.c, `page_fault_handler` vmm.c:565 BEFORE the 32-slot guard table); pool from `pmm_alloc_contiguous` + `vmm_unmap_page(virt,0)` guards (split the 2 MiB huge page first); init after `heap_init()` (boot_hw.c:529) gated on `kfence_ready`; own freelist spinlock, boot-init read-only range check (lock-free in #PF); tunables via `kernel_tunable_register`; terminal = report + `KeBugCheckEx` (new STOP code -- no SEH/RIP-advance exists, fatal is the only safe terminal). Two design findings folded into items 1-2 below.
+
+- [ ] Sample 1/sample_rate via a SHARED helper covering `kmalloc`/`kmalloc_zeroed`/`kmalloc_tagged` (design: all 3 variants, not just kmalloc); `kfree` AND `kfree_tagged` dispatch `kfence_owns(ptr)` -> `kfence_free`
+- [ ] Each object at a per-slot-randomized page side (design: left OR right, so under- AND over-flow cross a guard page) by an unmapped guard page; `kfence_handle_fault` classifies OOB-side vs UAF from `cr2` + slot state + side
 - [ ] On free, unmap (or quarantine) the slot so a UAF access faults; recycle after a quarantine delay
 - [ ] `kfence_report()` on a guarded fault: classify OOB vs UAF, log the object's alloc/free context; wire to the page-fault handler's guard-table path
 - [ ] Sample rate + pool size are `boot.conf` tunables; disabled adds near-zero overhead
