@@ -160,7 +160,7 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 - [x] UTS timer probe gates the Hyper-V MSR read on `HV_FLAG_APIC_FREQ_MSR` and uses `msr_try_read()` (`cal_try_hyperv_msr` in `lapic.c`)
 - [ ] Registry mirror deferred -- persist `hv_vendor` + `hv_flags` under `HKLM\HARDWARE\VM\` when `TODO-14-registry-completion.md` exposes pre-desktop hardware-hive writes
 - [ ] Hyper-V SynIC + reference TSC page MSR setup NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13` (init `HV_X64_MSR_REFERENCE_TSC = 0x40000021`) and `01-boot-platform/TODO-11-interrupt-timer-arch.md §6` (UTS consumer)
-- [ ] Confidential-compute guest detection (TDX CPUID `0x21`, SEV/SEV-SNP CPUID `0x8000001F`) NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13`; mirror `boot_info.cc_kind` flag for downstream cache-type sequencing
+- [ ] `boot_info.cc_kind` bootloader mirror (needs a BOOT_INFO_VERSION bump) for downstream cache-type sequencing; kernel-side TDX/SEV detection owned by `02-kernel-core/TODO-09-x86-64-architecture.md §15` (`g_cpu.cc_kind`)
 - [x] Commit: `"boot: hypervisor detection with hv_flags in boot_info"`
 
 **Test checkpoint:** `g_boot_info.hv_vendor` / `hv_flags` populated before timer backend selection; klog or serial shows hypervisor detection before first `[UTS]` / `[Timer]` line on Hyper-V and KVM guests; bare metal shows empty vendor or known non-HV path. QEMU WHPX, TCG, VirtualBox, bare metal.

@@ -459,6 +459,10 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > - How it runs: in `cpuid_init()` (Phase 0); detect-and-log only, no CR4/MSR enablement; `cc_kind` is read-only after boot via `cpuid_get()`.
 > - Downstream effects: `g_cpu.cc_kind` available to downstream cache-type / attestation consumers; bit positions pinned by a unit test so a wrong LASS/LAM/LA57 bit cannot regress.
 > - Scope boundary: detection only -- LAM enablement -> memory/user-ABI (`D03`), LASS -> security hardening (`TODO-10` §2); `boot_info.cc_kind` mirror + Hyper-V SynIC/ref-TSC producer deferred.
+> **Verified:** 2026-06-28 | commit `746709de` (+ review fix) | 3/5 items, 2 deferred | build OK | smoke PASS (KVM 2.78s)
+> **Deferred:** [M] `boot_info.cc_kind` bootloader mirror needs a BOOT_INFO_VERSION bump -> XREF: 01-boot-platform/TODO-09-cpu-boot-sequencing.md §3 (item: "Confidential-compute guest detection ... mirror boot_info.cc_kind flag" at line 163)
+> **Deferred:** [M] Hyper-V SynIC + ref-TSC producer has no consumer yet -> XREF: 01-boot-platform/TODO-11-interrupt-timer-arch.md §6 (item: "Unified Timer Subsystem (UTS)" at line 237)
+> **Quality reviewed:** 2026-06-28 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 2H+4M fixed | scope: kernel-code-quality
 
 ---
 

@@ -1659,9 +1659,35 @@ static void test_cc_kind_valid(void)
     const struct cpu_features *c = cpuid_get();
     TEST_ASSERT((uint64_t)c->cc_kind <= (uint64_t)CC_AMD_SEV_SNP,
                 "cc_kind is a valid enum value");
-    /* the test platforms (KVM/TCG/WHPX/bare metal) are not CC guests */
-    TEST_ASSERT_EQ((uint64_t)c->cc_kind, (uint64_t)CC_NONE,
-                   "cc_kind == CC_NONE on non-confidential test platform");
+    /* Re-derive the expected cc_kind from CPUID/MSR rather than hard-coding the
+     * test platform as non-confidential -- this is correct on bare metal
+     * (CC_NONE), a TDX guest, and an SEV guest alike. */
+    uint32_t a, b, cc, d, maxleaf, maxext;
+    __asm__ volatile("cpuid" : "=a"(maxleaf), "=b"(b), "=c"(cc), "=d"(d)
+                             : "a"(0u), "c"(0u));
+    __asm__ volatile("cpuid" : "=a"(maxext), "=b"(b), "=c"(cc), "=d"(d)
+                             : "a"(0x80000000u), "c"(0u));
+    uint8_t expect = CC_NONE;
+    if (maxleaf >= 0x21u) {
+        __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(cc), "=d"(d)
+                                 : "a"(0x21u), "c"(0u));
+        if (b == 0x65746E49u && d == 0x5844546Cu && cc == 0x20202020u)
+            expect = CC_INTEL_TDX;
+    }
+    if (expect == CC_NONE && maxext >= 0x8000001Fu) {
+        __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(cc), "=d"(d)
+                                 : "a"(0x8000001Fu), "c"(0u));
+        if (a & (1u << 1)) {
+            uint64_t st = msr_read(MSR_AMD64_SEV);
+            if (st & 1u) {
+                if (st & (1u << 2))      expect = CC_AMD_SEV_SNP;
+                else if (st & (1u << 1)) expect = CC_AMD_SEV_ES;
+                else                     expect = CC_AMD_SEV;
+            }
+        }
+    }
+    TEST_ASSERT_EQ((uint64_t)c->cc_kind, (uint64_t)expect,
+                   "cc_kind matches CPUID/MSR-derived expectation");
 }
 
 static void test_future_silicon_bits(void)
