@@ -64,7 +64,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [/]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [/]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [/]   |
-| 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
+| 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [/]   |
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
 | 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
 | 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [ ]   |
@@ -483,6 +483,15 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 
 **Test checkpoint:** Spawning two threads in the same process produces two distinct TEB VAs (`thread_a->teb != thread_b->teb`). `NtCurrentTeb()` from each thread returns its own TEB. Setting `LastErrorValue` in thread A does not affect thread B. Allocating a TLS slot in thread A and writing to it does not affect the same slot index in thread B (per-thread isolation). Context switch correctly swaps `IA32_KERNEL_GS_BASE` MSR. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | per-thread TEB suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: per-thread teb + kernel_gs_base on struct thread (mirror of threads[0]); per-tid teb_alloc_for_task; schedule()/schedule_now() swap KERNEL_GS_BASE on prev_thread!=next_thread; NtCreateThread/NtQuery use thr->teb.
+> - Review (Codex 3x) confirmed the per-thread GS-swap + NtQuery wiring correct, but the TEB mapping aliases cross-process + fork breaks the mirror -- owned by §16/§19.
+> - Scope boundary: TEB cross-process aliasing + per-process mapping API -> §16; fork mirror/parent-TEB -> §19; uthread_create robustness -> §27.
+> **Accepted:** [H] teb_alloc_for_task maps via the kernel-PML4 vmm_map_page so all processes alias the per-tid TEB VA (cleanup uses the per-process cr3 path). -> XREF: §16 (item: "[HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL)..." at line 497)
+> **Accepted:** [H] task_fork breaks the task/thread-0 TEB mirror + reuses the parent TEB for a runnable child. -> XREF: §19 (item: "[HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS..." at line 536)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 2H accepted-XREF (§16, §19), 0 fixed | scope: kernel-code-quality
+
 ---
 
 ## 16. TEB Multi-Page Mapping and User-VA Non-Overlap
@@ -494,6 +503,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 - [ ] Relocate `TEB_USER_BASE` / move ENV+RTLPP+PEB so TID 0's 2-page span avoids env (0x7FFDC000), RTLPP (0x7FFDD000), PEB (0x7FFDE000), the TLS-expansion region (0x7FFD0000), and user stacks (0x7FFCA000)
 - [ ] `task_cleanup()`: unmap `TEB_PAGES` per secondary-thread TEB
 - [ ] Non-overlap unit test: `sizeof(TEB)` vs stride; TID 0 + highest-TID TEB ranges vs env/RTLPP/PEB/TLS-expansion/user-stack ranges
+- [ ] [HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL) so all processes share the per-tid TEB VA (cross-process aliasing); cleanup uses vmm_unmap_user_page(cr3). Fix: map via vmm_map_user_page(cr3) + check return/free
 - [ ] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
 
 **Test checkpoint:** `tls_set_value(pid, 0, 0xCAFE)` writes inside the mapped TEB (not the env page) and a read of `gs:[0x1480]` returns it; two threads' TEB ranges and the env/RTLPP/PEB pages are provably disjoint (unit test); boot still reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
