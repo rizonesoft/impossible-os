@@ -436,7 +436,7 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 > - Scope: counters are SMP-atomic; exactly-once handle-stat accounting needs the §3 per-handle-table lock; Win11 NT-ABI struct shape owned by TODO-12 §30.
 > **Verified:** 2026-06-22 | ship `44db565a` + review fixes | 8/8 items | build OK | tests 363 ob PASS
 > **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 856)
+> **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 996)
 > **Quality reviewed:** 2026-06-22 | Codex 6x (adversarial, consistency, perf, re-adversarial) | 1H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -521,7 +521,7 @@ Enforce a configurable per-process handle limit to prevent resource exhaustion f
 > **Verified:** 2026-06-22 | ship `e0361301` + review fixes | 7/8 items | build OK | tests 6892 kernel + 16 user PASS
 > **Accepted:** [H] the quota check + `count++`/`count--` are unsynchronized, so same-process concurrent allocs can overshoot the limit (bounded, self-correcting) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
 > **Accepted:** [L] `total_handles_created` is charged to `task_current()`, so cross-process `NtDuplicateObject` mis-attributes the diagnostic counter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Give `HANDLE_TABLE` an owning-task back-pointer" at line 152)
-> **Deferred:** [M] `NtSetInformationProcess(ProcessHandleQuota)` user-mode setter not wired (needs `SeSinglePrivilegeCheck` for the privileged raise-above-default) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "`NtSetInformationProcess(0x0035)` ProcessHandleQuota" at line 298)
+> **Deferred:** [M] `NtSetInformationProcess(ProcessHandleQuota)` user-mode setter not wired (needs `SeSinglePrivilegeCheck` for the privileged raise-above-default) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "`NtSetInformationProcess(0x0035)` ProcessHandleQuota" at line 391)
 > **Quality reviewed:** 2026-06-22 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 2H+4M+1L fixed, 1H+1L accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---
