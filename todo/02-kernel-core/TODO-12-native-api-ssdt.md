@@ -65,10 +65,10 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | --- | :---: | -------------------------------------------------------------- | ----------------- | :----: |
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --                |  [x]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-11 §5–§8     |  [x]   |
-| 💎  |   3   | INT 0x2E compatibility path                                    | §2                |  [x]   |
+| 💎  |   3   | INT 0x2E compatibility path                                    | §2                |  [/]   |
 | 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [/]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
-| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2    |  [x]   |
+| 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2    |  [/]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2    |  [/]   |
 | 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-05 §6    |  [/]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [/]   |
@@ -244,7 +244,24 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 - [x] Commit: `"kernel: nt -- INT 0x2E syscall compatibility path"`
 - [ ] **Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+**: Windows x64 ABI passes the first 4 args in `R10`/`RDX`/`R8`/`R9` and args 5+ on the user stack at `[RSP+0x28]`, `[RSP+0x30]`, ... Today `syscall_handler_2e()` in `src/kernel/sched/syscall.c` and `syscall_entry` in `src/kernel/sched/syscall_entry.asm` only populate the first 4 register slots plus whatever the dispatcher already has in `a5`/`a6`, so any `NtXxx` with more than 4 parameters has to kludge the rest through an extended-args struct at `a5` (e.g. `NT_MAPVIEW_ARGS` in `include/kernel/nt/nt_section.h`). Retrofit both entry paths to probe `[RSP+0x28..]` for the user stack frame with `ProbeForReadIfUser` and populate `a5`/`a6` directly (and any future `a7..a10` via an on-stack `SSDT_ARGS` struct passed to `ssdt_dispatch()`). Then delete `NT_MAPVIEW_ARGS` and the `NtCreateSection` packed-flags kludge at `nt_section.c:93-94`. This auto-closes TODO-12 §18 Accepted #1 (10-parameter `NtMapViewOfSection` stack ABI).
 
+- [ ] [M] syscall IRQL wrap pays a redundant LAPIC TPR write per INT 0x2E/0x80: `syscall_lower_entry_irql`->`KeLowerIrql` reprograms TPR the IDT raise never set. Use a software-IRQL helper setting `pcpu->current_irql` without TPR. (§3)
+
 **Test checkpoint:** Ring-3 `int 0x2E` with RAX=0x0015 reaches `NtClose` handler. Same register mapping as SYSCALL path. `POST16(0xD300)` entry, `POST16(0xD301)` exit. Verify on all 4 platforms.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 346 kernel + 16 user tests, 0 failures; smoke boots to C:\>
+
+> **Notes:**
+> - IDT `idt[0x2E].type_attr=0xEE` (DPL=3 gate, `idt.c:572`); `syscall_handler_2e` (`syscall.c:660`) reads RAX=service + R10/RDX/R8/R9 args (Windows x64 ABI) and dispatches via `ssdt_dispatch`, mirroring the SYSCALL fast path.
+> - Reuses the standard ISR stub (register save/restore + swapgs + iretq); IRQL-wrapped to PASSIVE so NT paths don't run at DISPATCH; INT 0x80 + INT 0x2E coexist.
+> - NTSTATUS zero-extension fix at `syscall.c:704` matches the SYSCALL path's `mov eax` behavior (fuzz-found int2e/SYSCALL divergence).
+> - Open: >4-register-arg syscalls still kludge via extended-args struct (stack-arg retrofit deferred); legacy/compat path, cold relative to §2.
+> - re-adversarial skipped: §3 review made no §3-scope code change (the [Critical] handler-probe gap is owned by §6; the perf TPR-write fix is deferred).
+
+> **Verified:** 2026-06-28 | 4/6 items | build OK | tests 346+16 PASS (tree unchanged; §3 findings out-of-scope/deferred)
+> **Accepted:** [Critical] file-I/O handlers deref raw user iosb/buf pointers with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W; §3 entry path exposes it but §6 owns the handlers -> XREF: 02-kernel-core/TODO-12 §6 (item: "Probe user pointers in file-I/O handlers (NtReadFile/NtWriteFile/NtCreateFile/NtQueryDirectoryFile)" at line 316)
+> **Deferred:** [M] syscall IRQL entry wrap pays a redundant LAPIC TPR write per INT 0x2E/0x80 -> XREF: 02-kernel-core/TODO-12 §3 (item: "syscall IRQL wrap pays a redundant LAPIC TPR write" at line 247)
+> **Deferred:** [L] INT 0x2E + SYSCALL entry read only 4 register args; >4-arg syscalls kludge via extended-args struct -> XREF: 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 245)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit accepted-XREF + 1M+1L deferred | scope: kernel-code-quality
 
 ---
 
@@ -311,6 +328,7 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 - [x] `NtCreateNamedPipeFile(...)`: already done in §5
 - [x] `include/kernel/nt/nt_file.h` created: CreateDisposition (FILE_OPEN..FILE_OVERWRITE_IF), CreateOptions (FILE_DELETE_ON_CLOSE etc.), FileAttributes, IOSB Information values
 - [x] 4 unit tests: NtCreateFile/NtOpenFile SSDT registration (2 checks), file I/O constant values (16 checks)
+- [ ] [Critical] Probe user pointers in file-I/O handlers (NtReadFile/NtWriteFile/NtCreateFile/NtQueryDirectoryFile): raw user iosb/buf deref'd with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W. Reuse `nt_syscall.c:779` pattern. (§3 review)
 - [x] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
 **Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
