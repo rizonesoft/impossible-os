@@ -236,6 +236,13 @@ void boot_phase2(void)
         }
     }
 
+    /* Spectre v2 eIBRS (TODO-10 S8): set the BSP's IA32_SPEC_CTRL.IBRS once,
+     * post-IDT, BEFORE smp_init() so the BSP's SPEC_CTRL audit (captured in
+     * cpu_record_bsp_profile) reflects the eIBRS bit -- consistent with the APs,
+     * which set + audit their own during smp bringup. No-op without Enhanced IBRS
+     * (legacy CPUs use retpoline). Unconditional so a no-ACPI boot is covered. */
+    cpu_program_bsp_eibrs();
+
     /* --- SMP: moved before storage so async init can use APs --- */
     if (g_boot_info.acpi_available) {
         boot_splash_status("Initializing SMP...");
@@ -258,11 +265,6 @@ void boot_phase2(void)
      * no-ACPI/degraded boot that skipped smp_init() (idempotent on the ACPI
      * path). APs program their own copy during smp bringup. */
     cpu_program_bsp_umwait();
-
-    /* Spectre v2 eIBRS (TODO-10 S8): set the BSP's IA32_SPEC_CTRL.IBRS once,
-     * post-IDT, on every boot path (no-op without Enhanced IBRS; legacy CPUs use
-     * retpoline). APs program their own via the SPEC_CTRL profile replay. */
-    cpu_program_bsp_eibrs();
 
     /* IBPB writability latch (TODO-10 S8): probe PRED_CMD on the BSP post-IDT so
      * the scheduler IBPB hot path is a fault-free atomic check (each AP probes at

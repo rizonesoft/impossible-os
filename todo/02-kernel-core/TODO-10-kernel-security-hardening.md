@@ -283,6 +283,8 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > - Runs: SPEC_CTRL writes are `msr_try_write` per-CPU (BSP post-IDT, APs via profile replay preserving each AP's own baseline); IBPB is a single hot-path `wrmsr` gated on a structural cross-process user-capable check.
 > - Effect: Spectre v2 mitigated -- eIBRS on modern CPUs, retpoline (0 compiler indirect branches, 600 thunks) on legacy; IBPB at domain crossings; swapgs v1 barrier on interrupt entry.
 > - Scope boundary: SSBD/STIBP/RSB/BHI/ITS/Retbleed -> §18 (needs the 128-bit flags-word expansion); MDS/VERW -> §19; `kpti_trampoline` indirect jumps -> §4.
+> **Verified:** 2026-06-28 | commit `3cb35221` | 10/11 items | build OK | smoke PASS (KVM 2.59s)
+> **Quality reviewed:** 2026-06-28 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 1H+4M fixed | scope: kernel-code-quality
 
 ---
 
