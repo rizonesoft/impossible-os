@@ -218,6 +218,20 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 
 **Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 3 (init runs in `boot_desktop.c`; see TODO-01 §5). `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 346 kernel + 16 user tests, 0 failures; smoke boots to C:\>
+
+> **Notes:**
+> - SYSCALL/SYSRET via IA32_STAR/LSTAR/FMASK + EFER.SCE (`syscall_fast.c`); asm entry (`syscall_entry.asm`) does swapgs + per-CPU stack switch + 9-push callee-save + `cld`, calls `syscall_dispatch_fast` -> `ssdt_dispatch`.
+> - GDT reordered UDATA=0x18/UCODE=0x20 (SYSRET-compatible, `_Static_assert`-pinned); STAR[63:48]=0x10 is correct (SYSRET forces RPL=3 -> CS=0x23/SS=0x1B).
+> - MSR-readback canary disables EFER.SCE and falls back to INT 0x80 on any mismatch; INT 0x80 + INT 0x2E stay registered.
+> - Review hardened FMASK 0x200 -> `SYSCALL_FMASK` 0x47700 (TF|IF|DF|IOPL|NT|AC) + defensive `cld`: blocks user TF single-stepping kernel entry + DF breaking the C ABI. FMASK masks only the in-kernel RFLAGS; SYSRET restores user RFLAGS from r11.
+> - Per-CPU `syscall_rsp0`/`user_rsp_scratch` (gs:24/gs:32, `_Static_assert`-pinned), updated at both scheduler switch sites.
+
+> **Verified:** 2026-06-28 | 7/7 items | build OK | smoke PASS (TCG 2.51s), tests 346+16 PASS
+> **Deferred:** [H] syscall-path `transition_ring_record` forensic overhead (2x TSC+CR3+2 RDMSR per syscall) should be gated behind a runtime knob -> XREF: 02-kernel-core/TODO-12 §24 (item: "Gate syscall-path `transition_ring_record()` behind a runtime static-key/debug knob" at line 798)
+> **Deferred:** [M] `ssdt_dispatch` bound uses hardcoded `SSDT_MAIN_MAX` for both tables; OOB if `SSDT_SHADOW_MAX` ever shrinks -> XREF: 02-kernel-core/TODO-12 §4 (item: "Bound `ssdt_dispatch` per-table, not by hardcoded `SSDT_MAIN_MAX`" at line 250)
+> **Quality reviewed:** 2026-06-28 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit fixed (FMASK), 2 deferred (1H+1M), 1Crit rejected (STAR false-positive) | scope: kernel-code-quality
+
 ---
 
 ## 3. INT 0x2E Compatibility Path
@@ -247,6 +261,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
 - [x] 4 unit tests: unimplemented stub, invalid table, main count=470, register+dispatch
 - [ ] GUI-thread conversion: when ssdt_dispatch selects Table 1 (shadow SSDT, RAX bits[13:12]=01) and the thread lacks GUI state, run a KiConvertGuiThread-equivalent init (expand kernel stack + wire GUI state) before the handler, after the audit/filter checks -> XREF: `D08 T15`, `D08 T16`
+- [ ] Bound `ssdt_dispatch` per-table, not by hardcoded `SSDT_MAIN_MAX`: safe only while SHADOW_MAX==MAIN_MAX==1024; if shadow shrinks, an index in [SHADOW_MAX,1024) is an OOB indirect call. Use the per-table capacity; drop the dead count term. (§2)
 - [x] Commit: `"kernel: nt -- SSDT and service number table"`
 
 ---
@@ -794,6 +809,7 @@ Catch-all for global atom table, locale management, environment variables, and d
 - [ ] SSDT dispatcher integration: before/after each `syscall_dispatch` call, check hook list and invoke if registered
   - Fast path: single atomic read of hook pointer; NULL = no hooks, no overhead
   - Hook list is RCU-protected for lock-free read in the hot path
+- [ ] Gate syscall-path `transition_ring_record()` behind a runtime static-key/debug knob: it fires twice per syscall (TSC+CR3+2x RDMSR+task_current) from `syscall_entry.asm`; default cheap/off so trivial syscalls skip it. (§2 perf)
 - [ ] Requires `SeAuditPrivilege` to register hooks
 - [ ] Commit: `"kernel: nt -- syscall audit and tracing hook (SSDT pre/post)"`
 

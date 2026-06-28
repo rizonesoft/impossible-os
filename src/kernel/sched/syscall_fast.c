@@ -19,6 +19,14 @@
 /* Assembly entry point defined in syscall_entry.asm */
 extern void syscall_entry(void);
 
+/* RFLAGS bits cleared on SYSCALL entry (written to IA32_FMASK).
+ * Clearing only IF (0x200) leaves user-controlled TF/DF/IOPL/NT/AC live in
+ * ring 0 until SYSRET: TF single-steps the kernel entry, DF violates the SysV
+ * C ABI (DF=0 on entry) so compiler/string ops can run backwards, IOPL/AC/NT
+ * carry hostile state. Mask the Linux/Windows-parity set:
+ *   TF 0x100 | IF 0x200 | DF 0x400 | IOPL 0x3000 | NT 0x4000 | AC 0x40000 */
+#define SYSCALL_FMASK  0x47700ULL
+
 void syscall_init_fast(void)
 {
     uint64_t star, efer;
@@ -50,8 +58,8 @@ void syscall_init_fast(void)
     /* Set LSTAR to assembly entry point */
     msr_write(MSR_IA32_LSTAR, (uint64_t)(uintptr_t)syscall_entry);
 
-    /* FMASK: clear IF on entry (bit 9) */
-    msr_write(MSR_IA32_FMASK, 0x200);
+    /* FMASK: clear hostile user RFLAGS on entry (TF|IF|DF|IOPL|NT|AC) */
+    msr_write(MSR_IA32_FMASK, SYSCALL_FMASK);
 
     /* Enable SYSCALL/SYSRET in EFER */
     efer = msr_read(MSR_IA32_EFER);
@@ -80,10 +88,10 @@ void syscall_init_fast(void)
                  (uint64_t)(uintptr_t)syscall_entry, rb_lstar);
             ok = 0;
         }
-        if (rb_fmask != 0x200) {
+        if (rb_fmask != SYSCALL_FMASK) {
             klog(LOG_ERROR, "syscall",
-                 "FMASK readback mismatch: wrote 0x200, read 0x%x",
-                 rb_fmask);
+                 "FMASK readback mismatch: wrote 0x%x, read 0x%x",
+                 (uint64_t)SYSCALL_FMASK, rb_fmask);
             ok = 0;
         }
         if (!(rb_efer & EFER_SCE)) {

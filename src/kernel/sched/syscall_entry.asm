@@ -56,6 +56,11 @@ syscall_entry:
     ; Safe to enable interrupts now (on kernel stack with saved state)
     sti
 
+    ; SysV C ABI requires DF=0 on entry. FMASK (SYSCALL_FMASK) already clears DF
+    ; on the SYSCALL transition; this cld is defense-in-depth so kernel C / string
+    ; ops stay forward-direction even if the mask is ever narrowed.
+    cld
+
     ; ---- transition ring: record SYSCALL entry ----
     ; transition_ring_record(direction=TO_KERNEL, user_rip, user_rsp)
     ;   SysV args:  rdi, rsi, rdx. Preserve rax/r10/rdx across the call
