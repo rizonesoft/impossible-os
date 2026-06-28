@@ -139,7 +139,8 @@ done
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[doctor + setup invariants]${NC}"
 assert_exit_zero "tooling-doctor --quiet exit 0" bash "$SCRIPT_DIR/tooling-doctor.sh" --quiet
 assert_exit_zero "setup --verify exit 0" bash "$SCRIPT_DIR/setup.sh" --verify
-if bash "$SCRIPT_DIR/lint.sh" --help 2>/dev/null | grep -qE 'Checks \(5\)'; then
+_lhelp="$(bash "$SCRIPT_DIR/lint.sh" --help 2>/dev/null)"   # capture first; no pipe into lint (see pipefail note below)
+if grep -qE 'Checks \(5\)' <<<"$_lhelp"; then
     t_pass "lint --help names 5 checks (post section-ref gate)"
 else
     t_fail "lint --help names 5 checks (post section-ref gate)" \
@@ -938,13 +939,21 @@ fi
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lint_codex_bundle]${NC}"
 _BUNDLE_FIX="$REPO_ROOT/docs/_tooling_lint15_fixture.md"
 printf 'x: bash scripts/codex-%s.sh A && bash scripts/codex-%s.sh B\n' dispatch dispatch > "$_BUNDLE_FIX"
-if bash "$REPO_ROOT/scripts/lint.sh" 2>&1 | grep -q "run each dispatch as its own"; then
+# Capture lint output to a variable FIRST, then match with a here-string. Do NOT pipe
+# lint directly into `grep -q`: under the `set -o pipefail` at the top of this script,
+# grep -q closes the pipe on its first match and lint then dies of SIGPIPE while writing
+# its summary, so the pipeline returns 141 and the test "fails" even though the pattern
+# matched. That race is timing-dependent (consistently red in CI, mostly green locally).
+# A here-string has no pipe into lint, so this is deterministic.
+_l15flag="$(bash "$REPO_ROOT/scripts/lint.sh" 2>&1)"
+if grep -q "run each dispatch as its own" <<<"$_l15flag"; then
     t_pass "lint Check 15 flags &-bundled codex dispatch"
 else
     t_fail "lint Check 15 missed &-bundled codex dispatch"
 fi
 rm -f "$_BUNDLE_FIX"
-if bash "$REPO_ROOT/scripts/lint.sh" 2>&1 | grep -q "run each dispatch as its own"; then
+_l15clean="$(bash "$REPO_ROOT/scripts/lint.sh" 2>&1)"
+if grep -q "run each dispatch as its own" <<<"$_l15clean"; then
     t_fail "lint Check 15 false-positive on clean tree"
 else
     t_pass "lint Check 15 clean on clean tree"
