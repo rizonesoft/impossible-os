@@ -54,7 +54,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --                 |  [/]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1                 |  [x]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3             |  [/]   |
-| 💎  |   5   | PEB allocation and population at task_exec      | §2, §4             |  [x]   |
+| 💎  |   5   | PEB allocation and population at task_exec      | §2, §4             |  [/]   |
 | 💎  |   6   | TEB allocation and population at thread create  | §1, §4             |  [/]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6             |  [x]   |
 | 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [x]   |
@@ -69,6 +69,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
 | 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [ ]   |
 | 💎  |  19   | exec/fork/switch GS-base staging + cost         | §4, §5, §6         |  [ ]   |
+| 💎  |  20   | PEB alloc robustness + Win32 ABI handoff        | §5, §7             |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -191,6 +192,15 @@ Allocate the PEB in the user address space and fill it before the first instruct
 - [x] Commit: `"kernel: peb -- PEB allocation and population at exec"`
 
 **Test checkpoint:** On `task_exec`, PEB and process-parameter pages map at expected user VAs, fields are non-NULL and consistent (`ImageBaseAddress`, `ProcessParameters`, OS version/build, processor count), and UTF-16 command-line/environment blocks decode correctly. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | PEB population suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: `peb_alloc_for_task` -- 3 PMM frames (PEB 0x7FFDE000 / RTLPP 0x7FFDD000 / env 0x7FFDC000) with partial-failure free, field population, RTLPP UNICODE_STRINGs, env block (PATH/SystemRoot).
+> - Review (Codex 3x) found 4 HIGH robustness/ABI-handoff defects + a std-handle sentinel issue -- fixes owned by §20.
+> - Scope boundary: checked mapping + bounded ustr + RCX ordering + RTLPP extent + std-handles -> §20; PEB/KUSD build mismatch -> §11.
+> **Deferred:** [H] PEB/RTLPP/env setup proceeds through unchecked vmm_map_page, an unbounded peb_build_ustr (page overflow), a stale RCX=PEB handoff, and an RTLPP MaximumLength excluding its strings. -> XREF: §20 (item: "[HIGH] peb_alloc_for_task (1369) ignores the 3 vmm_map_page returns..." at line 470)
+> **Accepted:** [M] `PEB.OSBuildNumber`=22621 disagrees with `KUSD.NtBuildNumber`=`BUILD_NUMBER`=8937. -> XREF: §11 (item: "NT-ABI build consistency: ... one shared NT build constant ..." at line 294)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 4H+1M deferred-to-§20, 1M accepted-XREF (§11) | scope: kernel-code-quality
 
 ---
 
@@ -460,6 +470,20 @@ The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is 
 - [ ] Commit: `"kernel: sched -- exec/fork/switch GS-base staging correctness + cost"`
 
 **Test checkpoint:** a forced preemption between exec_pending publish and TEB prime does not clobber the primed GS; a fork child reads its OWN PID/TID/TLS before exec; the task/thread-0 mirror stays equal across switches + fork; steady-state switches skip the redundant readback (instrumentation counter). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 20. PEB Allocation Robustness and Win32 ABI Handoff
+The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through unchecked mappings, an unbounded string builder, and several Win32-ABI-handoff metadata defects. Latent today (short names, single exec, no real ntdll/console) but each breaks a real consumer once PE/ntdll/console arrive. -> XREF: §5 (peb_alloc_for_task), §7 (initial frame RCX=PEB), §11 (PEB/KUSD build constant).
+
+- [ ] [HIGH] peb_alloc_for_task (1369) ignores the 3 vmm_map_page returns then writes the fixed VAs; a failed map corrupts what is mapped there + still returns non-NULL. Fix: checked per-process mapping, roll back frames, return NULL before writing
+- [ ] [HIGH] peb_build_ustr (1332) has no page bound + casts byte-length to uint16_t; an unbounded task name (written 4x) can overrun the RTLPP/PEB pages + wrap Length. Fix: pass a capacity, bounded-copy/truncate, validate before the uint16_t assign
+- [ ] [HIGH] The initial iret frame sets RCX from tasks[pid].peb (~1969) BEFORE peb_alloc_for_task runs -- NULL on first exec, stale on re-exec; ntdll's RCX=PEB contract gets the wrong PEB. Fix: alloc PEB before the frame, or patch RCX after alloc
+- [ ] [HIGH] pp->MaximumLength = sizeof(RTLPP) (1400) but UNICODE_STRING buffers are written after the struct; Windows makes MaximumLength the full process-params extent. Fix: set it to the full used block + bound every Buffer to it
+- [ ] [MEDIUM] StandardInput/Output/Error = UHANDLE_INVALID (1420-1423) -- the Win32 failure sentinel; once console I/O reads them GetStdHandle/WriteConsole fail. Fix: publish NULL until real handles, or wire handle-table slots
+- [ ] Commit: `"kernel: peb -- PEB alloc robustness (checked map, bounded ustr, RCX ordering, RTLPP extent)"`
+
+**Test checkpoint:** fault-injected vmm_map_page failure returns NULL + frees frames (no fixed-VA write); an overlong task name truncates/rejects without overrunning the RTLPP page; the iret RCX equals the new PEB; every RTLPP UNICODE_STRING.Buffer lies within MaximumLength; std handles are not the failure sentinel. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
