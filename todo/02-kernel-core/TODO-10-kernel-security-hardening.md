@@ -72,7 +72,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |   7   | PCID: TLB tagging for KPTI (no-flush CR3 switch)    | §6                            |  [/]   |
 | 💎  |   8   | Spectre: eIBRS/IBPB MSR + retpoline build flag      | T12 §2                        |  [x]   |
 | 💎  |   9   | CET shadow stack (kernel ring 0)                    | §1, §2, T23 §3, D01T09 §10    |  [/]   |
-| 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9                            |  [ ]   |
+| 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9, T23 §3                    |  [/]   |
 | 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [ ]   |
 | 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [ ]   |
 | 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
@@ -344,6 +344,9 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 10. CET Indirect Branch Tracking (IBT / ENDBR64)
 
+> [!WARNING]
+> **Deferred -- inherits §9's CET-enable blockers (Codex design review 2026-06-28).** IBT enforcement (`S_CET.ENDBR_EN`) rides the same `CR4.CET` enable that §9 defers, and an indirect branch to a target lacking `ENDBR64` raises `#CP` -- so IBT cannot be enabled until: (1) `#CP` routing exists -> XREF: `02-kernel-core/TODO-23 §3` (item: "Fault-to-exception mapping ...#CP" at line 60); (2) §9's CET enable path lands (this section's `cpu_enable_cet_ibt()` ORs `ENDBR_EN` into the §9 `S_CET` write). The `-fcf-protection=branch` ENDBR64 emission + asm-stub `ENDBR64` audit (`ap_trampoline.asm`, ISR/IDT stubs) is harmless-when-off instrumentation but is held with the enable to avoid shipping dead, unenforced landing pads.
+
 - [ ] Add `-fcf-protection=branch` to kernel `CFLAGS` (Clang 19 supports this); the compiler emits `ENDBR64` at the start of every function and every valid indirect call/jump target
 - [ ] Verify: `objdump -d build/kernel.elf | grep endbr64 | wc -l`; must be > 0 (non-zero); count should match approximate function count
 - [ ] Assembly files (`src/kernel/smp/ap_trampoline.asm`, ISR stubs, IDT stubs): manually add `endbr64` at each entry point that is reached via an indirect branch; NASM opcode: `db 0xF3, 0x0F, 0x1E, 0xFA`
@@ -355,6 +358,14 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [ ] Commit: `"kernel/security: CET IBT: ENDBR64 in kernel build, S_CET.ENDBR_EN activation"`
 
 **Test checkpoint:** `objdump` shows `endbr64` prologues; indirect jump to target without `ENDBR64` faults when IBT on; `S_CET_ENDBR_EN` set only after stub audit. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | deferred -- ENDBR64-count + IBT-enable tests land with §9's CET enable path.
+>
+> **Notes:**
+> - Deferred 2026-06-28: IBT enforcement rides §9's deferred `CR4.CET`/`S_CET` enable and raises `#CP` on missing `ENDBR64`, so it inherits §9's two blockers (`#CP` routing + the CET enable path).
+> - Held to avoid shipping dead, unenforced ENDBR64 landing pads; the `-fcf-protection=branch` flag + asm-stub audit land together with the enable.
+>
+> **Deferred:** [High] CET IBT enable inherits §9's blockers -> XREF: this TODO §9 (CET enable path) + `02-kernel-core/TODO-23-exception-dispatch-seh.md §3` (item: "Fault-to-exception mapping (#DE/#DB/#BP/#UD/#GP/#SS/#CP)" at line 60).
 
 ---
 
