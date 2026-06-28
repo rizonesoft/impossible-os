@@ -86,7 +86,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [/]   |
 | 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [/]   |
 | 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [ ]   |
-| ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §19, §25                 |  [ ]   |
+| ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §19, §25                 |  [/]   |
 | 💎  |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8           |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
@@ -726,6 +726,8 @@ Expose which CPU/kernel mitigations are active as structured queryable data. Lin
 
 > [!TIP]
 > Linux exposes per-vuln files but no unified posture; Win11 hides it behind WMI/registry. A single coherent, queryable posture report is a genuine operator-experience edge over both.
+
+> **Deferred:** [M] capstone section -- the posture's "each mitigation section registers its final state (single source of truth, no re-probing)" model needs the mitigations it reports to EXIST first; §25 (predictor policy) + §20-23 (kCFI/FORTIFY/stackleak/KFENCE) are deferred, so the posture would report mostly not-implemented today. Best built last, after the mitigations register live state. -> XREF: §25 (predictor mitigations -- the key input it reports) + §20/§21/§22/§23.
 
 ---
 
