@@ -257,22 +257,17 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 8. Spectre Mitigations: IBRS/IBPB + Retpoline
 
-- [ ] `MSR_IA32_SPEC_CTRL = 0x48`; `SPEC_CTRL_IBRS = 1`:
-  ```c
-  void cpu_spec_ctrl_enter_kernel(void) {
-      if (cpu_has(CPU_FEATURE_IBRS))
-          wrmsr(MSR_IA32_SPEC_CTRL, SPEC_CTRL_IBRS);
-  }
-  void cpu_spec_ctrl_exit_kernel(void) {
-      if (cpu_has(CPU_FEATURE_IBRS))
-          wrmsr(MSR_IA32_SPEC_CTRL, 0);
-  }
-  ```
-- [ ] Insert `cpu_spec_ctrl_enter_kernel()` at kernel entry (syscall entry stub and every ISR common stub) and `cpu_spec_ctrl_exit_kernel()` at kernel exit (SYSRETQ / IRETQ); the MSR writes have ~20 cycle overhead; acceptable for syscall paths
-- [ ] If `cpu_has(CPU_FEATURE_ENHANCED_IBRS)` (CPUID leaf 7 EDX bit 29): set IBRS once at boot and never clear it (Enhanced IBRS is always-on and has no exit overhead)
+> [!NOTE]
+> **Design (Codex design review 2026-06-28):** eIBRS-FIRST (set-once, no hot-path toggle); the legacy per-entry IBRS toggle is DROPPED (no alternatives/stub-patch infra; retpoline covers legacy CPUs). SPEC_CTRL writes preserve the per-CPU baseline. IBPB fails closed. eIBRS detection is `IA32_ARCH_CAPABILITIES[1]`, NOT CPUID.7:EDX[29].
 
-- [ ] `MSR_IA32_PRED_CMD = 0x49`; `PRED_CMD_IBPB = 1`
-- [ ] `cpu_issue_ibpb()`: write 1 to `MSR_IA32_PRED_CMD` to flush the branch predictor on context switch; call in `sched_switch_task()` when switching between processes with different security domains (UIDs / token user SIDs differ); skip if same UID to reduce overhead
+- [ ] Feature flags + bit constants:
+  - `CPU_FEATURE_ENHANCED_IBRS` from `IA32_ARCH_CAPABILITIES[1]` (IBRS_ALL), gated on `CPU_FEATURE_ARCH_CAP`
+  - `CPU_FEATURE_IBPB`: Intel `CPUID.7.0:EDX[26]`, AMD `CPUID.80000008:EBX[12]`; bump `CPU_FEATURE_COUNT`
+  - `SPEC_CTRL_IBRS=1` / `PRED_CMD_IBPB=1` in `msr.h`
+- [ ] eIBRS-first (no hot-path toggle): on `CPU_FEATURE_ENHANCED_IBRS`, set `IA32_SPEC_CTRL = spec_ctrl_at_boot | SPEC_CTRL_IBRS` once per CPU post-IDT in `cpu_record_bsp_profile()`; add a `SPEC_CTRL` `s_bsp_msr_profile[]` entry for AP replay
+- [ ] Baseline preservation: SPEC_CTRL writes are `baseline | owned-bits`, never literal 0 (keeps firmware bits + §18's future SSBD/STIBP)
+- [ ] Legacy IBRS (no eIBRS): NO per-entry `wrmsr` toggle (no alternatives infra; hot-stub gating is the risk per `isr_stubs.asm:23`); retpoline below is the legacy-CPU Spectre-v2 mitigation
+- [ ] `cpu_issue_ibpb()` gated on `CPU_FEATURE_IBPB`: write `PRED_CMD_IBPB` from `schedule()`/`schedule_now()` on a cross-process switch; FAIL CLOSED (IBPB when next is a different process and either side is user, incl. NULL/unknown tokens)
 
 - [ ] Add `-mindirect-branch=thunk-extern` (GCC) or `-mretpoline` (Clang 19) to `CFLAGS` in `Makefile`; Clang 19 (`clang-19`) is already the compiler, so use `-mretpoline -mretpoline-external-thunk`
 - [ ] Provide the retpoline thunk in `src/kernel/retpoline.asm` (one thunk per scratch register `rax`..`r15`; Clang emits `call __x86_indirect_thunk_rax` instead of `jmp rax`):
@@ -287,13 +282,14 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
       mov [rsp], rax
       ret
   ```
-- [ ] Verify no `jmp *reg` or `call *reg` remains in kernel assembly after the build: `objdump -d build/kernel.elf | grep -E "jmp.*%r|call.*%r"`; must be empty
+- [ ] Verify no indirect branch escapes the thunk in compiler-generated code: `objdump -d build/kernel.elf` shows no `jmp/call *%reg` AND no `jmp/call *mem` (catch memory operands, not just registers)
+- [ ] NASM inventory (retpoline does not rewrite hand-written asm): `ap_trampoline.asm` `call rax` = boot-only exempt; `kpti_trampoline.asm` `jmp [gs:...]` = runtime, convert to safe targets -> XREF: §4
 - [ ] Spectre v1 **swapgs**: audited swapgs speculation barriers on ring-3 interrupt entry (`FENCE_SWAPGS_*` / `LFENCE` per kernel Spectre guide; XREF T11 §3 INT/syscall paths)
 - [ ] Scope boundary: §8 is the IBRS/IBPB/retpoline core. Additional SPEC_CTRL predictor bits (SSBD, STIBP, RSB stuffing, concrete BHI_DIS_S, ITS, Retbleed) are owned by §18; VERW microarchitectural-buffer clears are owned by §19
 
 - [ ] Commit: `"kernel/security: IBRS on kernel entry/exit, IBPB at context switch, retpoline build flag"`
 
-**Test checkpoint:** `rdmsr(0x48)` shows IBRS during syscall body when enabled; `objdump` shows no bare `jmp *%r`; IBPB issued on cross-domain switch; BHI/swapgs items in the last §5 bullet satisfied on representative CPUs (klog or unit asserts). Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+**Test checkpoint:** On an eIBRS CPU, `IA32_SPEC_CTRL` reads back `baseline | IBRS` permanently on the BSP AND every AP (set-once, no toggle); on non-eIBRS CPUs no SPEC_CTRL write (retpoline covers them). `objdump` shows no `jmp/call *%reg` or `*mem` in compiler-generated code. `cpu_issue_ibpb()` writes PRED_CMD on a cross-process switch and is a no-op when `!CPU_FEATURE_IBPB`. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
 ---
 
