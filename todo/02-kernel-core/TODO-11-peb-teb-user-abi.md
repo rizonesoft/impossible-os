@@ -63,7 +63,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [/]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [/]   |
-| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [x]   |
+| 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [/]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
 | 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
@@ -76,6 +76,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [ ]   |
 | 💎  |  25   | TLS expansion mapping safety + alloc race       | §12, §16           |  [ ]   |
 | 💎  |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR   | §13                |  [ ]   |
+| 💎  |  27   | uthread_create robustness (guard/tid/stack)     | §14, §16           |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -444,6 +445,14 @@ The current `thread_create()` in `src/kernel/sched/task.c:1924` builds a ring-0 
 
 **Test checkpoint:** Boot completes normally. `cmd.exe` (single-threaded user task) starts unchanged because `task_exec()` builds its own ring-3 frame. A user binary calling `NtCreateThread` (none in tree today) would receive a real ring-3 thread on a user stack -- verifiable when a multi-threaded test binary lands. `kthread_create` calls from kernel boot code work unchanged (DPC worker, work queue, etc.). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 3 uthread suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: kthread_create/uthread_create split (thread_create dispatches by PEB); uthread_create builds a ring-3 frame + PMM kernel stack (guard) + PMM user stack in the parent PML4 + per-thread TEB; NtCreateThread routes through it.
+> - Review (Codex 3x) found the split + reject-kernel-task logic correct but failure-mode/SMP holes -- fixes owned by §27.
+> - Scope boundary: guard-page cleanup + tid reservation + stack-size validation + TEB-map rollback -> §27; TEB under-mapping -> §16.
+> **Deferred:** [H] uthread_create frees a guarded kernel stack without uninstalling the guard, reserves tid without a lock (SMP slot corruption), and does not validate the caller stack size (VA wrap/collision). -> XREF: §27 (item: "[HIGH] uthread_create frees a GUARDED kernel stack..." at line 622)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 3H+1M deferred-to-§27, 0 fixed | scope: kernel-code-quality
+
 ---
 
 ## 15. Per-thread TEB Allocation at uthread_create()
@@ -612,6 +621,19 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: exec -- classified AT_RANDOM entropy gate + validated AT_PHDR"`
 
 **Test checkpoint:** AT_RANDOM bytes come from a crypto-grade CSPRNG (or exec is delayed/failed below the minimum entropy class); AT_PHDR points within the loaded image's program-header range (a malformed PT_PHDR.p_vaddr is rejected/corrected). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 27. uthread_create Robustness: Guard-page Cleanup + tid Reservation + Stack-size Validation
+§14's uthread_create has failure-mode + concurrency holes. -> XREF: §14 (uthread_create), §16 (teb_alloc mapping rollback), §15 (per-thread TEB).
+
+- [ ] [HIGH] uthread_create frees a GUARDED kernel stack via pmm_free_pages (2777) without vmm_uninstall_guard_page; the freed frame keeps a stale guard PTE/slot + faults the next allocator. Fix: uninstall the guard before any free
+- [ ] [HIGH] tid = t->num_threads (2789) + slot publish has NO task lock; two CPUs in one task get the same tid -> VA/slot corruption + double-increment. Fix: reserve tid + mark slot INITIALIZING under a per-task lock
+- [ ] [HIGH] caller user_stack_size is unvalidated; USER_THREAD_STACK_BASE - tid*user_stack_size can wrap/collide with ELF/TEB/TLS/kernel regions. Fix: cap the size + validate [ustack_va,+size) for overflow + non-overlap
+- [ ] [MEDIUM] teb_alloc_for_task ignores vmm_map_page's return (1526) so it can publish a non-NULL but unmapped TEB; uthread_create only rolls back on NULL. Fix: check the map, free + return NULL (pairs with §16 multi-page TEB)
+- [ ] Commit: `"kernel: sched -- uthread_create robustness (guard cleanup, tid lock, stack validation)"`
+
+**Test checkpoint:** a rollback path uninstalls the kernel-stack guard before freeing (the frame is reusable); two concurrent uthread_create on one task get distinct tids/VAs (no slot corruption); an oversize/overlapping user_stack_size is rejected; a TEB map failure rolls back fully (no READY thread with a broken TEB). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
