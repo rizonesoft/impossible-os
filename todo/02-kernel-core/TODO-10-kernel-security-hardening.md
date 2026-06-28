@@ -117,6 +117,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 - [ ] Harden the user-copy path to reject supervisor destinations (per-process User-PTE check), not just range-check below `MM_USER_PROBE_ADDRESS`; needs §2 User-bit drop + §3-§6 KPTI. -> XREF: `TODO-03-kernel-libraries.md` §5
 - [ ] `ProbeForRead` / `ProbeForWrite`; deferred to T23 (SEH)
 - [ ] Re-introduce `clac` at the top of `isr_common_stub` when SMAP is enabled for real (today removed: comment at `src/kernel/isr_stubs.asm` ~line 23; must be CPUID-gated or alternative-slots like Linux `FENCE_SWAPGS_*`, not an unconditional opcode)
+- [ ] CR4.LASS (Linear Address Space Separation): when `CPUID.(7,1):EAX[27]` set, enable CR4.LASS to fault user/kernel address crossings in hardware (complements KPTI/SMAP); same clean-kernel-PML4 prereq as SMEP/SMAP (-> XREF: `D02 T09 §15`)
 - [ ] Commit: `kernel/security: CR4 SMEP/SMAP live, IDT clac/SMAP entry path` (partial: helpers landed; CR4 + IDT still open)
 
 **Test checkpoint:** When `hv_supports_cr4_smep_smap()` returns non-zero after kernel PTE U/S is fixed: `CR4.SMEP` and `CR4.SMAP` read back set on KVM/VBox/bare metal; WHPX may still skip per hypervisor policy. Until then, expect klog "SMEP: skipped" / "SMAP: skipped". `copy_from_user`/`copy_to_user` succeed on valid user buffers. After `clac` returns to `isr_common_stub`, entry path leaves AC cleared for SMAP-on configs. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.

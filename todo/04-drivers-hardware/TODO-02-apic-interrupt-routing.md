@@ -66,6 +66,7 @@ Detect `CPUID.01H:ECX[21]` and switch from xAPIC MMIO to x2APIC MSR register acc
 - [ ] `lapic_id()`: in x2APIC mode, `rdmsr(0x802)` returns full 32-bit ID; update `cpu_info_t.apic_id` from `uint8_t` to `uint32_t`
 - [ ] `lapic_send_ipi(dest, cmd)` in x2APIC: single `wrmsr(0x830, (uint64_t)dest << 32 | cmd)` -- no delivery-status poll needed
 - [ ] Wire MADT type-9 (x2APIC Local APIC) entries (already parsed in `acpi.c`) into per-CPU APIC ID array
+- [ ] Locked-mode detect: read `IA32_XAPIC_DISABLE_STATUS` (0xBD) bit 0 (LEGACY_XAPIC_DISABLED); on 2022+ Intel SGX/TDX the firmware locks x2APIC -- use the MSR path from boot, never attempt an xAPIC fallback (-> XREF: `D02 T09 §11`)
 - [ ] Boot log: `[LAPIC] x2APIC mode active` or `[LAPIC] xAPIC mode (x2APIC not supported)`
 - [ ] Commit: `"lapic: x2APIC MSR register access -- mode detection, 32-bit APIC IDs, atomic IPI"`
 

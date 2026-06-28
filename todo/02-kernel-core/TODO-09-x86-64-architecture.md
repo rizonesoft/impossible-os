@@ -9,11 +9,12 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 # TODO-09 -- x86-64 Architecture Enhancements
 
 > **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); fixed stale `TODO-23`->`TODO-10` security-hardening owner refs + PKU §6/§4->§5 section drift (both sides)
+> **Gap-audited:** 2026-06-28 | gap-audit + codex-gap-audit; filed §17 AMX+XFD, §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID, LAM/LASS stubs into §15, x2APIC->D04 T02 §1 + LASS->T10 §2 (XREF); Codex 4 findings folded (XFD vs AMX gating, split/bus-lock capability gates, §7 FRED stack-levels, LASS owner)
 
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §13 AMD SVM + Intel VT-x detection. **Open [ ]:** §7 through §12, §14 through §16 per Implementation Order.
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §13 AMD SVM + Intel VT-x detection. **Open [ ]:** §7 through §12, §14 through §19 per Implementation Order (§17 AMX+XFD, §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID added 2026-06-28 gap-audit).
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-10` (gap analysis 2026-04-12: `TODO-10` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
@@ -38,6 +39,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - -> XREF: `TODO-26-power-management.md §9`: Driver Power Callbacks & Resume Ordering; CPU topology (§9) feeds the scheduler policy deferred to `03-memory-concurrency`
 - -> XREF: `TODO-10-kernel-security-hardening.md` (§1 through §8): NX, SMEP/SMAP, KPTI, PCID, IBRS, CET are already scoped there; this TODO does not touch those
 - -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §1, §4, §6`: CPUID detection call site (§1), hypervisor pre-detection (§4), XSAVE/PCID Phase 1 activation window (§6) consume features defined here
+- -> XREF: `04-drivers-hardware/TODO-02-apic-interrupt-routing.md §1`: x2APIC MSR-mode LAPIC access, 32-bit APIC IDs, and `IA32_XAPIC_DISABLE_STATUS` locked-mode detection are owned there (NOT this TODO); §9/§11 here only consume the APIC IDs it produces
 
 ---
 
@@ -55,6 +57,9 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - Intel PMU and AMD PMC expose per-core IPC and cache-miss counters.
 - `IA32_TSC_AUX` is programmed per-CPU for accurate `RDTSCP`-based timing.
 - A 2-second boot self-benchmark stores hardware capabilities in the Registry and auto-configures SIMD dispatch thresholds and scheduler quantum.
+- AMX tile state is context-switched lazily via XFD: a task that never uses AMX never allocates its 8 KiB tile buffer, and first use faults in through the `#NM` handler (§17).
+- Split-lock (#AC) and bus-lock (#DB) detection terminate or warn on a misbehaving thread instead of letting one core stall the whole coherency fabric (§18).
+- WAITPKG dwell is bounded via `IA32_UMWAIT_CONTROL` (anti-DoS), and SERIALIZE/RDPID replace heavier CPUID/RDTSCP sequences where supported (§19).
 
 ---
 
@@ -78,6 +83,9 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [ ]    |
 | 💎  |  15   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]    |
 | 💎  |  16   | Boot page tables: 1 GiB pages from entry.asm        | §6                   |  [ ]    |
+| 💎  |  17   | AMX tile state + XFD dynamic XSAVE                  | §1, §4               |  [ ]    |
+| 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection         | §4                   |  [ ]    |
+| 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption                | §4, §11              |  [ ]    |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -249,12 +257,16 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 - [ ] Check `cpu_has(CPU_FEATURE_FRED)` (CPUID leaf 7, ECX=1, EAX bit 17)
 - [ ] FRED delivers all events (interrupts, exceptions, `SYSCALL`) to a single kernel entry point with the event type and vector in registers; eliminates IDT corruption edge-cases and provides native NMI nesting
-- [ ] Enable: `cpu_set_cr4_bit(CR4_FRED)` where `CR4_FRED = (1ULL << 32)`; configure `IA32_FRED_CONFIG` MSR with:
-  - Kernel stack pointer (for Level 0, ring 0 events)
-  - Unified entry RIP (`fred_entry_asm` in `src/kernel/fred.asm`)
+- [ ] Enable: `cpu_set_cr4_bit(CR4_FRED)` where `CR4_FRED = (1ULL << 32)`; program the full FRED MSR set (Intel SDM Vol. 3 FRED chapter), not just a single config word:
+  - `IA32_FRED_CONFIG`: unified entry RIP (`fred_entry_asm` in `src/kernel/fred.asm`) + current-stack-level field
+  - `IA32_FRED_RSP0..3`: one ring-0 stack per level (RSP0 = normal kernel stack; higher levels are the NMI/#DF/#MC equivalents of today's IST stacks)
+  - `IA32_FRED_STKLVLS`: per-vector stack-level assignment so NMI/#DF/#MC land on dedicated stacks (replaces the IDT IST mechanism)
+  - `IA32_FRED_SSP0..3`: shadow-stack pointers per level when CET SS is active (-> XREF: `TODO-10` §9 CET shadow stack)
 - [ ] `fred_entry_asm` unified handler:
   - Reads event type and vector from the FRED stack frame
   - Dispatches to the existing `isr_handler(frame)` or `kd_debug_exception_handler` (-> XREF: `TODO-29-kernel-debugger-kd-protocol.md` §4) via the same `handlers[]` table in `idt.c`
+- [ ] FRED event-frame + nesting: decode the pushed FRED frame (RIP/CS/RFLAGS/RSP/SS + error + event-data) per SDM; FRED un-blocks NMI natively on `ERETS`; #DF/#MC still escalate to assigned stack levels
+- [ ] Interaction audit before real-silicon enable: FRED entry keeps KPTI CR3 swap, SMAP AC, and auto kernel-GS correct -- reconcile with `TODO-10` §4-§6/§2 and §8 LKGS / §11 GS-base
 - [ ] Replace `IRET` with FRED return instructions where FRED is active:
   - `ERETS`: return to ring 0
   - `ERETU`: return to ring 3
@@ -262,7 +274,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [ ] Fallback: if `CPU_FEATURE_FRED` not present, IDT path unchanged
 - [ ] Commit: `"kernel/cpu: FRED unified event delivery"`
 
-**Test checkpoint:** On FRED-capable QEMU (`-cpu Cooperlake,fred=on`), timer IRQ still reaches `isr_handler` via FRED entry; fallback CPU boots unchanged with IDT path. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+**Test checkpoint:** On a FRED-modeling CPU (a QEMU `-cpu` exposing the `fred` flag once a FRED-emulating QEMU is in the matrix, or Granite Rapids+ bare metal -- NOT Cooper Lake, which predates FRED), a timer IRQ reaches `isr_handler` via the FRED unified entry, NMI/#DF land on their assigned stack levels, and `ERETU`/`ERETS` return correctly; every non-FRED CPU boots unchanged on the IDT path. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 ---
 
@@ -431,7 +443,9 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [ ] TDX guest stub: probe CPUID leaf `0x21` for `"IntelTDX    "` signature; set `boot_info.cc_kind = CC_INTEL_TDX`; log; full attestation deferred
 - [ ] SEV/SEV-ES/SEV-SNP guest stub: probe CPUID leaf `0x8000001F` EAX bits 1/3/4; set `boot_info.cc_kind = CC_AMD_SEV/_ES/_SNP`; log; full attestation deferred
 - [ ] Hyper-V SynIC + reference TSC MSR init: when `boot_info.hv_flags & HV_FLAG_TSC_ENLIGHTENMENT`, program `HV_X64_MSR_REFERENCE_TSC=0x40000021` + SynIC SIMP/SIEFP; consumer in `01-boot-platform/TODO-11-interrupt-timer-arch.md §6`
-- [ ] Commit: `"kernel/cpu: future-silicon + guest enlightenment stubs (UINTR/LA57/TDX/SEV-SNP/Hyper-V ref TSC)"`
+- [ ] Stub: if `CPUID.(7,1):EAX[26]` (LAM) set: log `[cpu] LAM detected; not yet enabled`; CR4.LAM_U57/U48 + user-pointer untag is a pointer-ABI decision, detection only here (-> XREF: `D03` `03-memory-concurrency` user-pointer ABI owns enablement)
+- [ ] Stub: if `CPUID.(7,1):EAX[27]` (LASS) set: log `[cpu] LASS detected`; LASS is a user/kernel address-space separation control (CR4.LASS), detection only here -- enablement owned by security hardening (-> XREF: `TODO-10` §2 CR4.LASS item)
+- [ ] Commit: `"kernel/cpu: future-silicon + guest enlightenment stubs (UINTR/LA57/LAM/LASS/TDX/SEV-SNP/Hyper-V ref TSC)"`
 
 **Test checkpoint:** When CPU advertises UINTR or LA57, serial shows one-line stub log and kernel continues without enabling new modes. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -452,6 +466,68 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 **Test checkpoint:** Serial log shows NO `promoted N PDPT entries` line (promotion removed). `vmm_get_physical(0x80000000)` returns 0x80000000 (identity map via 1 GiB page). KUSD at 0x7FFE0000 triggers 1 GiB split on demand and maps correctly. Guard pages in GiB 1-3 split correctly. Test on: QEMU WHPX, QEMU TCG (may lack PAGE1GB), VirtualBox, bare metal.
 
 -> XREF: `01-boot-platform/TODO-09-cpu-boot-sequencing.md §9` (PAT AP sync uses same page table infrastructure)
+
+---
+
+## 17. AMX Tile State + XFD Dynamic XSAVE
+
+Intel AMX adds 8 KiB of TMM tile state (XSAVE components 17/18). Pre-allocating that for every thread is wasteful, so XFD (Extended Feature Disable) traps first use and the buffer grows lazily, mirroring the §1 lazy-FPU model. Parity: Linux dynamic-AMX/XFD.
+
+> [!WARNING]
+> AMX state is 8 KiB; never pre-allocate it per task. XFD is the only correct mechanism. Gate XCR0[17]/[18] on the XFD-supported bit AND the AMX feature bits as **separate** checks -- a CPU exposing AMX state but not XFD must not advertise dynamic AMX.
+
+- [ ] AMX CPUID detection in `cpuid.h`: `CPU_FEATURE_AMX_TILE` (CPUID.(7,0):EDX[24]), `CPU_FEATURE_AMX_BF16` (EDX[22]), `CPU_FEATURE_AMX_INT8` (EDX[25]); set in the feature mask in `cpuid_init()`
+- [ ] XFD enumeration: `CPU_FEATURE_XFD` from `CPUID.(0x0D,1):EAX[4]`; per-component XFD-faultable bit `CPUID.(0x0D,n):ECX[2]`; AMX state size/offset from `CPUID.(0x0D,17)` (XTILECFG) and `CPUID.(0x0D,18)` (XTILEDATA)
+- [ ] MSR constants in `msr.h`: `MSR_IA32_XFD = 0x000001C4`, `MSR_IA32_XFD_ERR = 0x000001C5`
+- [ ] `cpu_configure_xcr0()` (§1): when `CPU_FEATURE_AMX_TILE` AND `CPU_FEATURE_XFD`, add XCR0 bits 17 (XTILECFG) + 18 (XTILEDATA) to the filtered mask; never set them without the XFD bit
+- [ ] Boot default: set `IA32_XFD = (1<<17)|(1<<18)` on BSP and each AP (AMX disarmed/faulting until first use); clear `IA32_XFD_ERR`
+- [ ] Per-task `xfd_mask` (uint64) in `struct task`; `schedule()` writes `IA32_XFD` from the next task's mask only when `CPU_FEATURE_XFD`, mirroring the lazy-FPU save/restore block
+- [ ] `#NM` handler (vector 7): read `IA32_XFD_ERR`; non-zero = XFD fault (distinct from CR0.TS) -> grow this task's XSAVE area to include the faulting component, clear that task's `IA32_XFD` bit, clear `IA32_XFD_ERR`, return; CR0.TS path unchanged
+- [ ] `task_alloc_xsave()`: when AMX is armed for a task, size the area from `xsave_size_max` including components 17/18 (verify the AMX components are counted in the §1 leaf-0x0D aggregate)
+- [ ] Commit: `"kernel/cpu: AMX tile state + XFD dynamic XSAVE (lazy AMX, IA32_XFD ctx-switch)"`
+
+**Test checkpoint:** On an AMX+XFD CPU (Sapphire Rapids / Meteor Lake / Arrow Lake), a task that never touches AMX keeps `IA32_XFD` armed and its XSAVE area excludes tile state; first `TILELOADD` raises #NM with `IA32_XFD_ERR != 0`, the handler grows the area and disarms XFD for that task; tile state survives a `schedule()` round-trip. On non-AMX or non-XFD CPUs, XCR0 bits 17/18 stay clear and no XFD MSR is touched. Serial: `[cpu] AMX+XFD armed` or `[cpu] AMX not supported`. Test on: QEMU TCG (`-cpu max`), bare metal (Sapphire Rapids+).
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
+
+---
+
+## 18. Split-Lock + Bus-Lock Detection
+
+A misaligned LOCK-prefixed access that splits a cache line (split lock), or a bus lock on non-WB memory, stalls the whole coherency fabric. Intel detection raises #AC (split lock) and #DB (bus lock) so the offending thread is warned or terminated instead of degrading every core. Parity: Linux split-lock + bus-lock detection.
+
+> [!WARNING]
+> Both MSR writes must be capability-gated: a blind `IA32_TEST_CTL` (0x33) or `IA32_DEBUGCTL` write #GPs on CPUs without the feature. `msr_try_read` is a no-crash net, NOT an existence check -- gate on CPUID/CORE_CAPABILITIES first per `CLAUDE.md`.
+
+- [ ] CPUID detection in `cpuid.h`: `CPU_FEATURE_CORE_CAPS` (`CPUID.(7,0):EDX[30]`, IA32_CORE_CAPABILITIES present), `CPU_FEATURE_BUS_LOCK_DETECT` (`CPUID.(7,0):ECX[24]`)
+- [ ] MSR constants in `msr.h`: `MSR_IA32_CORE_CAPABILITIES = 0x000000CF`, `MSR_IA32_TEST_CTL = 0x00000033`, `MSR_IA32_DEBUGCTL = 0x000001D9`
+- [ ] Split-lock gate: only when `CPU_FEATURE_CORE_CAPS` AND `IA32_CORE_CAPABILITIES` bit 5 (split-lock detect supported) -> set `IA32_TEST_CTL` bit 29 on BSP and each AP; never a blind write to 0x33
+- [ ] Bus-lock gate: only when `CPU_FEATURE_BUS_LOCK_DETECT` -> set `IA32_DEBUGCTL` bit 2 (BLD) on BSP and each AP
+- [ ] `#AC` handler (vector 17): a ring-3 split-lock #AC -> rate-limited klog warning with faulting RIP + terminate the offending thread (an unhandled split-lock #AC loops); a ring-0 split lock -> panic (kernel bug)
+- [ ] `#DB` handler: check DR6 bit 11 (BLD) to distinguish a bus-lock #DB from an ordinary debug exception; on BLD, rate-limited klog warning + clear DR6.BLD before return; never treat it as a single-step
+- [ ] Boot log: `[cpu] split-lock #AC armed`, `[cpu] bus-lock #DB armed`, or `[cpu] split/bus-lock detect unsupported`
+- [ ] Commit: `"kernel/cpu: split-lock (#AC) + bus-lock (#DB) detection, capability-gated"`
+
+**Test checkpoint:** On a CPU advertising split-lock (IA32_CORE_CAPABILITIES[5]) the boot log shows `split-lock #AC armed`; a deliberate misaligned LOCK in a test thread raises #AC and that thread is terminated while other cores keep running. On bus-lock-capable CPUs DR6.BLD distinguishes the #DB. On CPUs without the capability bits, neither MSR is written (no #GP). Test on: QEMU TCG (`-cpu max`), bare metal (Tremont/Alder Lake+).
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
+
+---
+
+## 19. Additional CPU Feature Adoption: WAITPKG, SERIALIZE, RDPID
+
+Three shipping x86 features the kernel detects but does not yet use: WAITPKG (user UMONITOR/UMWAIT/TPAUSE idle, needs IA32_UMWAIT_CONTROL bounded so user-space cannot block unboundedly), SERIALIZE (a dedicated serializing instruction cheaper than CPUID), and RDPID (one-instruction CPU-id read, faster than RDTSCP when only the id is needed).
+
+- [ ] CPUID detection in `cpuid.h`: `CPU_FEATURE_WAITPKG` (`CPUID.(7,0):ECX[5]`), `CPU_FEATURE_SERIALIZE` (`CPUID.(7,0):EDX[14]`), `CPU_FEATURE_RDPID` (`CPUID.(7,0):ECX[22]`)
+- [ ] WAITPKG: `MSR_IA32_UMWAIT_CONTROL = 0x000000E1` constant; on `CPU_FEATURE_WAITPKG`, write a bounded max-dwell on BSP and each AP so user UMWAIT/TPAUSE cannot block unboundedly (anti-DoS)
+- [ ] SERIALIZE: `cpu_serialize()` inline emits `serialize` when `CPU_FEATURE_SERIALIZE`, else the existing CPUID serialization; adopt at the MSR-write-then-fence sites that currently rely on CPUID
+- [ ] RDPID: `cpu_current_id()` inline emits `rdpid` when `CPU_FEATURE_RDPID` (reads IA32_TSC_AUX set per-CPU in §11), else falls back to `rdtscp_read(&id)`; use in CPU-id-only hot paths
+- [ ] Boot log: one `[cpu]` line summarizing which of WAITPKG/SERIALIZE/RDPID were adopted
+- [ ] Commit: `"kernel/cpu: adopt WAITPKG (UMWAIT_CONTROL anti-DoS), SERIALIZE, RDPID"`
+
+**Test checkpoint:** On a WAITPKG CPU, `IA32_UMWAIT_CONTROL` is non-zero after boot (bounded dwell) and a user TPAUSE returns within the bound. `cpu_serialize()` emits SERIALIZE when supported (verified by disassembly / feature log) and the CPUID fallback otherwise. `cpu_current_id()` returns the correct logical id via RDPID. Test on: QEMU TCG (`-cpu max`), bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 
 ---
 
@@ -480,6 +556,11 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  | RDTSCP TSC_AUX       | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP     | ✅ §11 Done       |
 | 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §12 stretch    |
 | 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §13            |
+| 💎  | AMX tile + XFD       | ✅ HAL XFD lazy alloc       | ✅ XFD dynamic XSAVE        | ⬜ §17            |
+| 💎  | Split/bus-lock det   | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=       | ⬜ §18            |
+| 💎  | WAITPKG UMWAIT bound | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL      | ⬜ §19            |
+| 💎  | x2APIC MSR mode      | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC        | ⬜ D04 T02 §1     |
+| 💎  | LAM / LASS           | ⚠️ unclear public surface   | ⚠️ LAM gated on LASS        | ⬜ §15 stub; T10  |
 | ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⬜ §14            |
 | ⭐  | PKU Win32 wrapper    | ❌ no user API surface      | ⚠️ raw syscall pkey_*       | ⚠️ §5 kernel only |
 | ⭐  | Per-core freq UI     | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §10 + shell    |
@@ -505,6 +586,9 @@ After §1 through §13 done and §7 through §12 plus §14 through §16 planned,
   - 1 GiB page support: `cpu_has(CPU_FEATURE_PAGE1GB)` matches CPUID leaf
   - Per-CPU data: `smp_this_cpu()` returns valid CPU struct (non-NULL, valid ID)
   - UMIP: if enabled, `sidt` from ring 3 causes #GP (can't test from ring 0 directly)
+  - AMX/XFD (§17): if `CPU_FEATURE_AMX_TILE` && `CPU_FEATURE_XFD`, XCR0 bits 17/18 set and `IA32_XFD` armed by default; if not both, XCR0[17:18] clear and XFD untouched
+  - Split/bus-lock (§18): `CPU_FEATURE_CORE_CAPS` matches CPUID.(7,0):EDX[30]; when split-lock supported (IA32_CORE_CAPABILITIES[5]) `IA32_TEST_CTL` bit 29 reads back set; no MSR write when unsupported
+  - WAITPKG (§19): if `CPU_FEATURE_WAITPKG`, `IA32_UMWAIT_CONTROL` non-zero (bounded dwell); `CPU_FEATURE_RDPID`/`SERIALIZE` flags match CPUID leaf 7 bits
 - [ ] Add `extern void test_register_x86(void);` in `test_runner.c`, call `test_register_x86()` from `test_runner_init()`
 - [ ] Commit: `"test: add x86-64 architecture test suite"`
 
