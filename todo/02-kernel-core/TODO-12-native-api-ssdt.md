@@ -107,8 +107,8 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 Define the NT status type and the full set of codes needed across all 200+ syscall endpoints.
 
 - [x] Create `include/kernel/nt/ntstatus.h`:
-  - `typedef uint32_t NTSTATUS`
-  - Severity macros: `NT_SUCCESS(s)` = `((s) >> 30) == 0`, `NT_INFORMATION(s)` = `((s) >> 30) == 1`, `NT_WARNING(s)` = `((s) >> 30) == 2`, `NT_ERROR(s)` = `((s) >> 30) == 3`
+  - `typedef int32_t NTSTATUS` (Windows `LONG`; sign bit distinguishes success from error)
+  - Severity macros: `NT_SUCCESS(s)` = `((NTSTATUS)(s)) >= 0` (canonical Win form), `NT_INFORMATION(s)` = `((uint32_t)(s) >> 30) == 1`, `NT_WARNING(s)` = `((uint32_t)(s) >> 30) == 2`, `NT_ERROR(s)` = `((uint32_t)(s) >> 30) == 3`
   - **Success / informational:**
     - `STATUS_SUCCESS                    0x00000000`
     - `STATUS_PENDING                    0x00000103`
@@ -134,7 +134,7 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
     - `STATUS_OBJECT_PATH_NOT_FOUND      0xC000003A`
     - `STATUS_PORT_CONNECTION_REFUSED    0xC0000041`
   - **Error codes -- sync:**
-    - `STATUS_SEMAPHORE_LIMIT_EXCEEDED   0xC0000044`
+    - `STATUS_SEMAPHORE_LIMIT_EXCEEDED   0xC0000047`
     - `STATUS_MUTANT_NOT_OWNED           0xC0000046`
   - **Error codes -- file I/O:**
     - `STATUS_END_OF_FILE                0xC0000011`
@@ -185,6 +185,18 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
 - [x] Commit: `"kernel: nt -- NTSTATUS type and canonical status codes"`
 
 **Test checkpoint:** `bash scripts/build.sh` → `=== BUILD OK ===`. `NT_SUCCESS(0)` == true, `NT_ERROR(0xC0000001)` == true, `NT_WARNING(0x80000005)` == true, `NT_INFORMATION(0x00000101)` == true verified by unit test.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 346 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - `NTSTATUS = int32_t` (Windows `LONG`); 66 canonical `STATUS_*` codes in `include/kernel/nt/ntstatus.h` with byte-for-byte Win32-ABI values.
+> - Severity classified by `NT_SUCCESS` (sign-bit `>= 0`) + `NT_INFORMATION/WARNING/ERROR` (bits 31:30 via uint32 cast); the macros are header-inlined and hit on every syscall return.
+> - Review fixed 2 ABI-value drifts (`STATUS_REPLY_MESSAGE_MISMATCH` 0xC000025E->0xC000021F, `STATUS_SEMAPHORE_LIMIT_EXCEEDED` 0xC0000044->0xC0000047) and moved `STATUS_DATATYPE_MISALIGNMENT` (0x80000002) into the warning band.
+> - Consumed by every `NtXxx` handler + `RtlNtStatusToDosError` (§11); `test_nt_types.c` (`TEST_CAT_ABI`) asserts the four severity macros.
+> - re-adversarial skipped: fixes were constant-value/placement corrections in a pure header (no locking/ISR/lifecycle, ~5 lines).
+
+> **Verified:** 2026-06-28 | 1/1 items | build OK | tests 346+16 PASS
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 2H+1M fixed | scope: kernel-code-quality (constants/macro header)
 
 ---
 
@@ -959,7 +971,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | ⭐ | Feature                    | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS            |
 |----|----------------------------|------------------------------|----------------------------|------------------------------|
 | 💎 | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64        | ✅ §2 LSTAR + SYSRET enabled |
-| 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 50 codes   |
+| 💎 | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed           | ✅ §1 NTSTATUS + 66 codes   |
 | 💎 | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]        | ✅ §4 SSDT 470 + shadow stub |
 | 💎 | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)       | ✅ §3 INT 0x2E + 0x80       |
 | 💎 | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only           | ⬜ §11                      |

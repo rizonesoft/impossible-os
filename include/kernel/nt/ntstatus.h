@@ -49,6 +49,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_BUFFER_OVERFLOW              ((NTSTATUS)0x80000005)  /* data truncated; partial result */
 #define STATUS_NO_MORE_FILES                ((NTSTATUS)0x80000006)  /* directory enum exhausted */
 #define STATUS_NO_MORE_ENTRIES              ((NTSTATUS)0x8000001A)  /* registry/object enum exhausted */
+#define STATUS_DATATYPE_MISALIGNMENT        ((NTSTATUS)0x80000002)  /* buffer not aligned (warning severity) */
 
 /* ---- Error codes -- object / handle -------------------------------------- */
 
@@ -56,7 +57,6 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_NOT_IMPLEMENTED              ((NTSTATUS)0xC0000002)  /* syscall not yet implemented */
 #define STATUS_INVALID_INFO_CLASS           ((NTSTATUS)0xC0000003)  /* unknown information class */
 #define STATUS_ACCESS_VIOLATION             ((NTSTATUS)0xC0000005)  /* user-buffer probe failed */
-#define STATUS_DATATYPE_MISALIGNMENT       ((NTSTATUS)0x80000002)  /* buffer not aligned */
 #define STATUS_INVALID_HANDLE               ((NTSTATUS)0xC0000008)  /* handle not in table or wrong type */
 #define STATUS_INVALID_PARAMETER            ((NTSTATUS)0xC000000D)  /* bad argument value */
 #define STATUS_INFO_LENGTH_MISMATCH         ((NTSTATUS)0xC0000004)  /* length field vs buffer */
@@ -72,12 +72,12 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 #define STATUS_PORT_CONNECTION_REFUSED       ((NTSTATUS)0xC0000041)  /* ALPC connection rejected by server */
 /* handle is not an ALPC port / wrong port subtype */
 #define STATUS_INVALID_PORT_HANDLE           ((NTSTATUS)0xC0000042)
-#define STATUS_REPLY_MESSAGE_MISMATCH       ((NTSTATUS)0xC000025E)  /* ALPC reply MessageId not in PendingQueue */
+#define STATUS_REPLY_MESSAGE_MISMATCH       ((NTSTATUS)0xC000021F)  /* ALPC reply MessageId not in PendingQueue */
 #define STATUS_NOT_FOUND                    ((NTSTATUS)0xC0000225)  /* generic not-found (UEFI vars etc.) */
 
 /* ---- Error codes -- sync ------------------------------------------------- */
 
-#define STATUS_SEMAPHORE_LIMIT_EXCEEDED     ((NTSTATUS)0xC0000044)  /* semaphore count exceeded max */
+#define STATUS_SEMAPHORE_LIMIT_EXCEEDED     ((NTSTATUS)0xC0000047)  /* semaphore count exceeded max */
 #define STATUS_MUTANT_NOT_OWNED             ((NTSTATUS)0xC0000046)  /* release mutex not owned by caller */
 
 /* ---- Error codes -- sharing / lock ---------------------------------------- */
