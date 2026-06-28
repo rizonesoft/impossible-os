@@ -78,7 +78,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  13   | Kernel stack guard pages                            | §1                            |  [/]   |
 | ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [/]   |
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4, T19              |  [/]   |
-| 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [ ]   |
+| 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [/]   |
 | 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [ ]   |
 | 💎  |  18   | Spectre predictor extras (SSBD/STIBP/RSB/BHI/ITS)   | §8                            |  [ ]   |
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [ ]   |
@@ -522,16 +522,31 @@ Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns th
 
 **Files:** `src/kernel/uefi_runtime.c`, `src/kernel/uefi_vars.c`, `include/kernel/uefi_runtime.h`, `include/kernel/boot_info.h` (boot_config), `src/boot/uefi/bootx64.c` (boot.conf parse)
 
-- [ ] `SecureBootEnforce` `boot.conf` key (add to `struct boot_config` + bootloader parse + mirror): 0 = off (default), 1 = the kernel may enter lockdown when Secure Boot is active.
-- [ ] `kernel_lockdown_engage(reason)`: disable unsigned `.kmod` loading + raw MSR/IO port writes from user space, gated on `uefi_secureboot_enabled()`; idempotent; sets a sticky `g_system_state` lockdown flag.
-- [ ] `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` accessors over the existing `s_sb_deployed_mode` / `s_sb_audit_mode` statics in `uefi_runtime.c`.
-- [ ] DeployedMode write-protection: guard `uefi_var_set()` to refuse clearing/modifying PK/KEK/db/dbx when `deployed_mode==1` (returns `STATUS_ACCESS_DENIED`).
-- [ ] Audit-mode trap-and-log: when `audit_mode==1`, log every SB policy violation (signature verify fail, MOK miss) to `HKLM\SYSTEM\SecureBoot\AuditLog\` without halting; wire to the PE-loader verification call sites.
-- [ ] Drift-triggered lockdown: poll `uefi_secureboot_drift_detected()` from the revalidation worker; engage lockdown on the sticky 0->1 transition.
-- [ ] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u`.
+> [!WARNING]
+> **Deferred 2026-06-28.** Half of this section's enforcement targets do not exist yet, and the implementable half needs careful security-critical changes to the existing lockdown-policy + firmware-variable paths (3 design-review requirements below). Split out for a focused effort rather than a rushed bolt-on.
+> - **Blocked (no infrastructure to gate):** "disable unsigned `.kmod` load + raw user MSR/IO-port writes" has no module loader (-> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md`) and no user MSR/IO write syscall to gate; "wire audit-log to PE-loader verification call sites" has no PE signature-verification call site (`pe.c` does only structural validation -> XREF: `10-platform-services/TODO-07-win32-pe-loader.md`).
+> - **Design-review requirements for the implementable half:** (1) lockdown source-of-truth -- the `policy.lockdown` ratchet ALREADY seeds INTEGRITY on `secure_boot_enabled` (`policy_lock.c:440`); the `secure_boot_enforce` knob must gate THAT seed (or future gates read the level while the knob is off), and future gates consume `kernel_lockdown_level_get()`, NOT a parallel `g_system_state` bit. (2) drift fail-open -- the drift case is SB 1->0, so `kernel_lockdown_engage` from the drift edge must gate on the BOOT-SNAPSHOT SB + `secure_boot_enforce`, NOT live `uefi_secureboot_enabled()` (which is now 0). (3) var-guard scope -- refuse only DESTRUCTIVE PK/KEK/db/dbx clears (empty/delete) in `deployed_mode==1`, not all writes, so authenticated db/dbx revocations + key rotation still flow to firmware.
+
+- [ ] `secure_boot_enforce` `boot.conf` key (snake_case) gating the lockdown seed (single source of truth)
+  - Add to `struct boot_config` + mirror (`_reserved` byte, no `BOOT_INFO_VERSION` bump) + `bootx64.c` parse (clone the `firmware_rng` block); gate the `policy.lockdown=INTEGRITY` seed in `policy_lock.c:440` on it
+- [ ] `kernel_lockdown_engage(reason)` DRIVES the existing `policy.lockdown` ratchet (not a parallel scalar)
+  - `kernel_policy_set(KERNEL_LOCKDOWN_INTEGRITY, POLICY_CALLER_KERNEL)` (RATCHET, sticky-upward, idempotent); gated on (boot-snapshot SB authoritative) + `config.secure_boot_enforce`
+- [ ] `uefi_secureboot_deployed_mode()` / `uefi_secureboot_audit_mode()` one-line accessors over `s_sb_deployed_mode` / `s_sb_audit_mode` (`uefi_runtime.c:1076`)
+- [ ] DeployedMode write-protection in `uefi_var_set()` (`uefi_vars.c:33`), scoped to destructive clears
+  - Refuse a DESTRUCTIVE clear (size==0 / delete) of PK/KEK/db/dbx when `deployed_mode==1` -> `STATUS_ACCESS_DENIED`, matching `s_sb_vars[]` name/GUID (`tpm_sb_reconcile.c:121`; `efi_guid_t` == `struct boot_uefi_guid`). Authenticated updates still pass to firmware
+- [ ] Drift-triggered lockdown: from the revalidation worker drift 0->1 edge (`uefi_runtime.c:1882`), call `kernel_lockdown_engage("drift")` -- gated on the BOOT-SNAPSHOT SB, not live SB
+- [ ] AuditLog infra: a `uefi_secureboot_audit_log(event)` API + `HKLM\SYSTEM\SecureBoot\AuditLog` registry writer (clone the `Vars` writer `uefi_runtime.c:1983`); ready for the PE-verification call sites when they exist
+- [ ] Serial log: `[SecureBoot] policy: enforce=%u audit=%u deployed=%u`
 - [ ] Commit: `"kernel/security: Secure Boot lockdown enforcement consuming canonical state"`
 
-**Test checkpoint:** QEMU Setup Mode: `deployed_mode==0`, no write-protection. Enrolled PK + DeployedMode: `uefi_var_set(PK, empty)` returns `STATUS_ACCESS_DENIED`. `SecureBootEnforce=1` + SB active: `kernel_lockdown_engage` sets the lockdown flag; serial shows the policy line. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+**Test checkpoint:** Setup Mode (`deployed_mode==0`): no write-protection. Enrolled PK + DeployedMode: `uefi_var_set(PK, empty)` -> `STATUS_ACCESS_DENIED`; an authenticated db update still passes. `secure_boot_enforce=1` + SB active: `kernel_lockdown_engage` raises `kernel_lockdown_level_get()` to INTEGRITY; serial shows the policy line. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+> **Notes:**
+> - Deferred 2026-06-28: the SB lockdown ENFORCEMENT gates (.kmod/MSR-IO disable, PE-verification audit wiring) are blocked on non-existent infrastructure; the implementable half needs careful security-critical policy_lock.c + firmware-var changes.
+> - Design review found 3 requirements baked into the items: single lockdown source-of-truth (gate the seed on the knob), drift fail-open fix (boot-snapshot gating), and a var-guard scoped to destructive clears only.
+> - Scope boundary: the existing lockdown ratchet lives in `policy_lock.c`; SB state in `uefi_runtime.c`; the blocked gates are owned by `D04 T05` (modules) + `D10 T07` (PE loader).
+
+> **Deferred:** [H] SB lockdown enforcement gates (.kmod/MSR-IO disable) -> XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md` (module loader is the gate owner). [H] audit-log wiring to PE signature verification -> XREF: `10-platform-services/TODO-07-win32-pe-loader.md` (no PE verify call site exists). [M] implementable subset (knob/engage/var-guard/drift/AuditLog) with the 3 design requirements -> XREF: this section (the `[ ]` items above).
 
 ---
 
