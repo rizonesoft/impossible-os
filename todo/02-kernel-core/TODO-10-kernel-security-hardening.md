@@ -83,7 +83,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t) | §8                        |  [x]   |
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [x]   |
 | 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [/]   |
-| 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [ ]   |
+| 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [/]   |
 | 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [ ]   |
 | 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [ ]   |
 | ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §19, §25                 |  [ ]   |
@@ -660,13 +660,18 @@ Clang kCFI (`-fsanitize=kcfi`, Linux `CONFIG_CFI_CLANG`) enforces that every ind
 
 Compile + runtime bounds checking on the `memcpy`/`strcpy`/`strcat`/`snprintf` family (Linux `CONFIG_FORTIFY_SOURCE`, MSVC `__builtin___*_chk`). Catches the buffer-overflow class at the call site where the destination object size is known.
 
-- [ ] Provide `__memcpy_chk` / `__strcpy_chk` / `__strcat_chk` / `__snprintf_chk` in the kernel libc comparing the compiler-supplied object size to the op length, bugcheck on overflow
-- [ ] Add `-D_FORTIFY_SOURCE=2` (or the Clang equivalent) once the `_chk` variants exist
-- [ ] `__chk_fail()` -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, ...)`
-- [ ] Audit fixed-buffer string ops for the cases the compiler can prove (object size known) vs cannot (opaque pointers)
+> [!NOTE]
+> Scope corrected by a compile probe (2026-06-28): `clang-19 --target=x86_64-elf -ffreestanding -nostdinc -D_FORTIFY_SOURCE=2 -O2` does NOT auto-emit `_chk` calls -- it emits plain `memcpy`/`strcpy`. FORTIFY_SOURCE is a libc-HEADER feature (glibc/Bionic/musl implement it as `pass_object_size` inline wrappers in `string.h`), NOT a pure compiler flag. So this needs header machinery, not a flag flip (see Deferred).
+
+- [ ] Fortify header machinery in `include/libc/string.h`: `__pass_object_size__` + `__overloadable__` inline wrappers for the mem/str/snprintf family that `__builtin_object_size`-dispatch to the real fn or `__chk_fail`
+- [ ] `_chk` slow paths in `src/libc/string.c` (glibc-ABI arg order): `__memcpy_chk`/`__memset_chk`/`__strcpy_chk`/`__strcat_chk`/`__snprintf_chk`/`__vsnprintf_chk` etc. -- compare op length to `dstlen`, tail-call real fn or `__chk_fail`
+- [ ] `__chk_fail()` (noreturn) -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, STATUS_*_BUFFER_OVERRUN, ...)` mirroring `stack_canary.c:154`
+- [ ] Latent-overflow handling (the risk): FS-mount name code (`fs/fat32`/`fs/ixfs`/`fs/ntfs` raw strcpy/strcat of disk names into fixed buffers) is the firing surface; stage `__chk_fail`->klog+continue to surface sites, audit/fix, then hard bugcheck
 - [ ] Commit: `"kernel/libc: FORTIFY_SOURCE -- _chk string/memory builtins, bugcheck on overflow"`
 
-**Test checkpoint:** A `memcpy` into an undersized fixed buffer with a compile-time-known size triggers `__memcpy_chk` -> bugcheck (test-only, reverted); legitimate ops unaffected. Test on: QEMU WHPX, TCG, bare metal.
+**Test checkpoint:** the `_chk` slow paths pass correctly-sized ops through unchanged (positive path, unit-testable in `TEST_CAT_SECURITY`); a `memcpy` into an undersized fixed buffer triggers `__memcpy_chk` -> bugcheck (manual/bare-metal -- it halts, not unit-testable); boot reaches `C:\>` with FORTIFY live (no latent FS-mount overflow firing). Test on: QEMU WHPX, TCG, bare metal.
+
+> **Deferred:** [M] FORTIFY_SOURCE needs the freestanding fortify-HEADER machinery (proven by compile probe: clang `-nostdinc -D_FORTIFY_SOURCE=2` emits plain `memcpy`, not `_chk` -- the rewrite lives in `string.h` `pass_object_size` wrappers, not the flag), plus handling the latent FS-mount-overflow exposure (disk names into fixed `fs/*` buffers) which can hard-fault boot until audited. Bounded but multi-part; the `_chk` set + signatures + the `__chk_fail` precedent are pinned. -> XREF: this section (the "Fortify header machinery" + "Latent-overflow handling" items above).
 
 ---
 
