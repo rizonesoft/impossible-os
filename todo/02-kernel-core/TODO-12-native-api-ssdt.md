@@ -258,7 +258,7 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 > - re-adversarial skipped: §3 review made no §3-scope code change (the [Critical] handler-probe gap is owned by §6; the perf TPR-write fix is deferred).
 
 > **Verified:** 2026-06-28 | 4/6 items | build OK | tests 346+16 PASS (tree unchanged; §3 findings out-of-scope/deferred)
-> **Accepted:** [Critical] file-I/O handlers deref raw user iosb/buf pointers with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W; §3 entry path exposes it but §6 owns the handlers -> XREF: 02-kernel-core/TODO-12 §6 (item: "Probe user pointers in file-I/O handlers (NtReadFile/NtWriteFile/NtCreateFile/NtQueryDirectoryFile)" at line 316)
+> **Accepted:** [Critical] file-I/O handlers deref raw user iosb/buf pointers with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W; §3 entry path exposes it but §6 owns the handlers (design-reviewed into 4 items) -> XREF: 02-kernel-core/TODO-12 §6 (item: "Add `nt_write_iosb(iosb,status,info)` helper" at line 360)
 > **Deferred:** [M] syscall IRQL entry wrap pays a redundant LAPIC TPR write per INT 0x2E/0x80 -> XREF: 02-kernel-core/TODO-12 §3 (item: "syscall IRQL wrap pays a redundant LAPIC TPR write" at line 247)
 > **Deferred:** [L] INT 0x2E + SYSCALL entry read only 4 register args; >4-arg syscalls kludge via extended-args struct -> XREF: 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 245)
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1Crit accepted-XREF + 1M+1L deferred | scope: kernel-code-quality
@@ -357,7 +357,10 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 - [x] `NtCreateNamedPipeFile(...)`: already done in §5
 - [x] `include/kernel/nt/nt_file.h` created: CreateDisposition (FILE_OPEN..FILE_OVERWRITE_IF), CreateOptions (FILE_DELETE_ON_CLOSE etc.), FileAttributes, IOSB Information values
 - [x] 4 unit tests: NtCreateFile/NtOpenFile SSDT registration (2 checks), file I/O constant values (16 checks)
-- [ ] [Critical] Probe user pointers in file-I/O handlers (NtReadFile/NtWriteFile/NtCreateFile/NtQueryDirectoryFile): raw user iosb/buf deref'd with no ProbeFor*IfUser = ring-3 arbitrary kernel R/W. Reuse `nt_syscall.c:779` pattern. (§3 review)
+- [ ] [Critical] Add `nt_write_iosb(iosb,status,info)` helper (ProbeForWriteIfUser+copy_to_user every write-back, STATUS_ACCESS_VIOLATION on fail); replace all raw `iosb->` stores in the file-I/O handlers. (§6 design)
+- [ ] [Critical] NtReadFile/NtQueryDirectoryFile output via a kmalloc'd kernel bounce buffer, then copy_to_user only the bytes produced -- ProbeForWriteIfUser alone is a range check, not a TOCTOU-safe guarded copy-out. (§6 design)
+- [ ] [Critical] NtCreateFile: snapshot OBJECT_ATTRIBUTES + embedded UNICODE_STRING + bounded ObjectName->Buffer via copy_from_user into a kernel NUL-terminated path before `oa_extract_path`; write FileHandle/IOSB via copy_to_user. (§6 design)
+- [ ] [H] NtReadFile/NtWriteFile ByteOffset (a5): ProbeForReadIfUser + copy_from_user into a local uint64_t and use the local -- never deref a5 directly. (§6 design)
 - [x] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
 **Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
