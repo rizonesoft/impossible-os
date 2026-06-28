@@ -398,6 +398,10 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > - Design review (2 passes) adoptions: combined header, irqsave lock (heap was lockless), 16-align pinned by `_Static_assert`, `s_heap_poisoned` set-under-lock closing the unlock->BugCheck race; evidence in the commit message.
 > - zero-on-free behind `HEAP_ZERO_ON_FREE` (default off): enabling it surfaced a pre-existing IXFS/vfs use-after-free (tracked as the open item above); the scrub is correct, the FS UAF must be fixed first.
 > - Scope boundary: SLUB-style per-CPU freelist hardening owned by `03-memory-concurrency/TODO-03-advanced-allocator.md`.
+>
+> **Verified:** 2026-06-28 | commit `1a501a61` (+ review fixes) | 8/10 items | build OK | tests 139/139 + smoke PASS
+> **Accepted:** [M] `coalesce_free_blocks` is O(n) per free (pre-existing flat-list cost; the O(n) membership walk this review introduced was replaced with an O(1) block-start bitmap) -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md §4` (item: "`slab_free(cache, ptr)` -- push to per-CPU freelist" at line 171 -- O(1) free supersedes the flat-list coalesce)
+> **Quality reviewed:** 2026-06-28 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 9H+4M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
 
