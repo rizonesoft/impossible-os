@@ -307,7 +307,11 @@ static void hwp_measure_simd(hw_profile_t *p, void *scratch)
     if (cpu_has(CPU_FEATURE_SSE2))
         p->simd_sse2_gpix_s = hwp_simd_blend_gpix(simd_blend_pixels_sse2,
                                                   dst, src, count);
-    if (cpu_has(CPU_FEATURE_AVX2))
+    /* Gate AVX2 on the runtime dispatch flag, NOT raw CPUID: simd_avx2_ok is
+     * set only after cpu_configure_xcr0() enabled XCR0.YMM, and the VEX-encoded
+     * simd_blend_pixels_avx2 would #UD if YMM is not enabled. This also means
+     * we only ever benchmark (and tune) a tier the dispatch path actually uses. */
+    if (__atomic_load_n(&simd_avx2_ok, __ATOMIC_ACQUIRE))
         p->simd_avx_gpix_s = hwp_simd_blend_gpix(simd_blend_pixels_avx2,
                                                  dst, src, count);
     /* No AVX-512 alpha-blend primitive exists yet, so simd_avx512_gpix_s stays
@@ -376,25 +380,26 @@ static int hwp_load_stored(hw_profile_t *out, char *brand_out, uint32_t brand_ca
     if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, HWP_REG_PATH, 0, KEY_READ, &hk)
         != ERROR_SUCCESS)
         return 0;
-    /* Load the full profile, not just Flags -- a partial load would leave the
-     * metric DWORDs zero while the validity bits say "valid", which then makes
-     * the SIMD auto-tune see zero throughput and keep tiers it had disabled. */
+    /* Require EVERY field to read back, not just Flags -- a partial persist or
+     * an older hive schema must re-benchmark rather than reuse a profile whose
+     * validity bits are set while a backing value is missing (a missing SIMD
+     * value reads as 0 -> "keep tier" -> silently re-enables a tier the prior
+     * boot disabled). Any failed read invalidates the whole stored profile. */
     uint32_t flags = 0;
     int ok = (RegGetDword(hk, "Flags", &flags) == ERROR_SUCCESS) &&
-             (RegGetString(hk, "CpuBrand", brand_out, brand_cap) == ERROR_SUCCESS);
-    if (ok) {
+             (RegGetString(hk, "CpuBrand", brand_out, brand_cap) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "MemBandwidthMbS", &out->mem_bandwidth_mb_s) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "MemLatencyNs", &out->mem_latency_ns) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "L1SizeKb", &out->l1_size_kb) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "L2SizeKb", &out->l2_size_kb) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "L3SizeKb", &out->l3_size_kb) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "SimdSse2MpixS", &out->simd_sse2_gpix_s) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "SimdAvxMpixS", &out->simd_avx_gpix_s) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "SimdAvx512MpixS", &out->simd_avx512_gpix_s) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "CtxSwitchNs", &out->ctx_switch_ns) == ERROR_SUCCESS) &&
+             (RegGetDword(hk, "TscMhz", &out->tsc_mhz) == ERROR_SUCCESS);
+    if (ok)
         out->flags = flags;
-        RegGetDword(hk, "MemBandwidthMbS", &out->mem_bandwidth_mb_s);
-        RegGetDword(hk, "MemLatencyNs", &out->mem_latency_ns);
-        RegGetDword(hk, "L1SizeKb", &out->l1_size_kb);
-        RegGetDword(hk, "L2SizeKb", &out->l2_size_kb);
-        RegGetDword(hk, "L3SizeKb", &out->l3_size_kb);
-        RegGetDword(hk, "SimdSse2MpixS", &out->simd_sse2_gpix_s);
-        RegGetDword(hk, "SimdAvxMpixS", &out->simd_avx_gpix_s);
-        RegGetDword(hk, "SimdAvx512MpixS", &out->simd_avx512_gpix_s);
-        RegGetDword(hk, "CtxSwitchNs", &out->ctx_switch_ns);
-        RegGetDword(hk, "TscMhz", &out->tsc_mhz);
-    }
     RegCloseKey(hk);
     return ok;
 }

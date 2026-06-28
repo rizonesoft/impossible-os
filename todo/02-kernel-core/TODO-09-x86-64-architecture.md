@@ -419,7 +419,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - [ ] DEFERRED -- scheduler-quantum auto-tune: `SCHED_QUANTUM` is compile-time and `timer_set_tick_hz()` is LAPIC-only; needs a runtime quantum var. `ctx_switch_ns` is measured/persisted now (-> XREF: `03-memory-concurrency/TODO-07` SMP scheduler)
 - [ ] DEFERRED -- compositor triple-buffer auto-tune: no runtime triple-buffer toggle exists yet (-> XREF: `06-desktop-foundation` compositor)
 - [ ] DEFERRED -- memops small-copy threshold auto-tune: dispatch has no byte-size cutoff knob (`src/kernel/mm/memops_sse.c`); needs a runtime threshold global first
-- [ ] Commit: `"kernel/bench: boot self-benchmark, hw_profile Registry, SIMD auto-tune"`
+- [x] Commit: `"kernel/bench: boot self-benchmark, hw_profile Registry, SIMD auto-tune"`
 
 > [!NOTE]
 > The benchmark + persistence + SIMD auto-tune shipped. Three of the four originally-planned auto-tunes (scheduler quantum, triple-buffering, memops threshold) plus the AVX-512 throttle decision are deferred above because the runtime knob each needs does not exist yet -- the profile already measures + persists the inputs so the tuners can land when the knobs do.
@@ -433,6 +433,9 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > - How it runs: BSP-only, once in `boot_phase3()` after `task_init()` and before `wm_init()`; reused next boot when the CPU brand is unchanged; never fails the boot (each metric degrades to a validity bit).
 > - Downstream effects: clears `simd_avx2_ok`/`simd_avx512_ok` (atomic-release) to retune memops dispatch when a wider SIMD tier shows no gain; persists ctx/bw/cache inputs for the deferred tuners.
 > - Scope boundary: §14 owns the benchmark + SIMD auto-tune; quantum / triple-buffer / memops-threshold auto-tunes are deferred to their owners; AVX-512 throttle waits on an AVX-512 blend primitive (§3).
+> **Verified:** 2026-06-28 | commit `1251da1e` (+ review fixes) | 5/9 items, 4 deferred | build OK | smoke PASS (KVM 2.72s, `[hwprofile]` bw~6000 MB/s)
+> **Deferred:** [M] four auto-tune actions need runtime knobs that do not exist yet -> XREF: §14 DEFERRED bullets (AVX-512 throttle -> §3; scheduler-quantum -> `03-memory-concurrency/TODO-07`; triple-buffer -> `06-desktop-foundation`; memops-threshold -> in-section memops global)
+> **Quality reviewed:** 2026-06-28 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 5H+5M fixed | scope: kernel-code-quality
 
 ---
 
