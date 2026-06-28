@@ -143,6 +143,10 @@ title: "TODO-10 -- Kernel Security Hardening"
 > - Partial ([/]): CR4.SMEP/SMAP are NOT live -- the helper returns 0 until the shared boot PML4 drops User from kernel huge pages (owned by `01-boot-platform/TODO-10 §8-§9`); KPTI §3-§6 here build the clean kernel PML4 that unblocks it.
 > - Open in-section: migrate syscall derefs to `copy_from_user` (T12), supervisor-dest rejection, `ProbeForRead/Write` (T23), `clac` back in `isr_common_stub`, CR4.LASS (D02 T09 §15).
 
+> **Deferred:** [H] CR4.SMEP/SMAP activation not live -- the shared boot PML4 has User on all kernel 2 MiB pages so CR4.SMEP would #PF; needs the clean kernel PML4 (the KPTI §6 user_cr3 / per-process PT path), itself rooted in higher-half relocation. The helpers/CLAC-STAC/copy_*_user surface IS shipped ([x] items above). -> XREF: 01-boot-platform/TODO-10-bare-metal-hardening §9 (item: "All platforms ... SMEP/SMAP skipped -- boot PML4 ... has User on all kernel 2MiB pages" at line 411) + 02-kernel-core/TODO-33-higher-half-kernel-relocation
+
+---
+
 ## 3. KPTI Trampoline Page + Per-CPU CR3 Fields
 
 Design and allocate the shared trampoline infrastructure that all KPTI ring transitions depend on. On x86-64, SYSCALL and interrupt entry fetch instructions from the current CR3 before any software runs -- so the entry code page, the CPU-selected stacks (RSP0/IST), the GDT/TSS, and the per-CPU data segment must all be mapped in user_cr3 with supervisor-only permissions.
