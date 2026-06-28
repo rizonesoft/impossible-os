@@ -127,6 +127,16 @@ void boot_phase3(void)
         }
     }
 
+    /* Boot-time self-benchmark + auto-tune (TODO-09 S14): measures memory/SIMD/
+     * scheduling characteristics, persists them in HKLM\SYSTEM\HwProfile, and
+     * tunes SIMD dispatch to the host. Scheduler is armed (task_init) and the
+     * registry is up (Phase 2); the compositor has not started. BSP-only,
+     * never fails the boot. */
+    {
+        extern void hw_profile_init(void);
+        hw_profile_init();
+    }
+
     /* Create the system work queue (needed by NIC driver) */
     {
         extern workqueue_t *sys_wq;

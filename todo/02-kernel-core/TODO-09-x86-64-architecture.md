@@ -14,7 +14,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §13 AMD SVM + Intel VT-x detection. **Open [ ]:** §7 through §12, §14 through §19 per Implementation Order (§17 AMX+XFD, §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID added 2026-06-28 gap-audit).
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). **Deferred [/] (no test platform):** §7 FRED, §8 LKGS, §12 AMD IBS. **Open [ ]:** §15 future-silicon stubs, §16 1 GiB boot PT, §17 AMX+XFD, §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID (§17-§19 added 2026-06-28 gap-audit).
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-10` (gap analysis 2026-04-12: `TODO-10` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
@@ -80,7 +80,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |  11   | OSVW errata + RDTSCP processor ID setup             | §4, T08 §3           |  [x]    |
 | 💎  |  12   | AMD IBS profiling (stretch)                         | §4                   |  [/]    |
 | 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x)       | §4                   |  [x]    |
-| ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [ ]    |
+| ⭐  |  14   | Boot self-benchmark + auto-tune                     | §1, §2, §9           |  [/]    |
 | 💎  |  15   | Future silicon stubs: APX, UINTR, AVX10, LA57       | (none)               |  [ ]    |
 | 💎  |  16   | Boot page tables: 1 GiB pages from entry.asm        | §6                   |  [ ]    |
 | 💎  |  17   | AMX tile state + XFD dynamic XSAVE                  | §1, §4               |  [ ]    |
@@ -405,38 +405,34 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## 14. Boot Self-Benchmark + Auto-Tune
 
-- [ ] Define in `include/kernel/hw_profile.h`:
-  ```c
-  typedef struct {
-      uint32_t mem_bandwidth_mb_s;   /* sequential memcpy throughput */
-      uint32_t mem_latency_ns;       /* pointer-chasing latency */
-      uint32_t l1_size_kb;
-      uint32_t l2_size_kb;
-      uint32_t l3_size_kb;
-      uint32_t simd_sse2_gpix_s;    /* pixel throughput in gigapix/s */
-      uint32_t simd_avx_gpix_s;
-      uint32_t simd_avx512_gpix_s;
-      uint32_t ctx_switch_ns;       /* measured scheduler context switch */
-      uint64_t tsc_mhz;             /* TSC frequency in MHz */
-      uint32_t flags;               /* HW_PROFILE_VALID = 1 */
-  } hw_profile_t;
-  ```
-- [ ] Stored in `HKLM\SYSTEM\HwProfile\*` via Registry (-> XREF `TODO-14-registry-completion.md §5`)
-- [ ] Stale if CPU brand string has changed since last boot (different hardware)
-- [ ] Run during Phase 2 init (after SMP, before GUI) if `HwProfile` is stale or absent; total runtime <= 2 seconds:
-  - **Memory bandwidth**: `VMOVDQA` 256 MiB sequential write; measure MB/s from TSC delta
-  - **Memory latency**: 4 MiB pointer-chase array (stride = cache-line); measure ns/access
-  - **Cache sizes**: stride binary search; L1 to L2 to L3 inflection at typical ~32 KiB / ~512 KiB / ~8 MiB; log `l1/l2/l3_size_kb`
-  - **SIMD throughput**: timed SSE2 / AVX / AVX-512 alpha-blend loop over 4 MiB framebuffer; record Gpix/s per ISA level
-  - **Context switch**: 1000 yield-pairs between two kernel tasks; `rdtsc` around each switch; average ns per switch
-- [ ] Write `hw_profile_t` to Registry
-- [ ] SIMD dispatch: if `avx_gpix / sse2_gpix < 1.10` (< 10% gain; throttling detected): set `simd_avx2_ok = 0`; use SSE2 path to avoid frequency reduction
-- [ ] Scheduler quantum: if `ctx_switch_ns < 500` -> set `SCHED_TICK_US = 100`; if `ctx_switch_ns > 2000` -> set `SCHED_TICK_US = 500`
-- [ ] Compositor triple-buffering: if `mem_bandwidth_mb_s > 20 000` -> enable
-- [ ] `memcpy` threshold: if `l1_size_kb == 32` -> `REP MOVSB` for < 128 B, SIMD for larger
-- [ ] Commit: `"kernel/bench: boot self-benchmark, hw_profile Registry, auto-tune SIMD/scheduler"`
+- [x] Define `hw_profile_t` + `HW_PROFILE_*` validity bits in `include/kernel/hw_profile.h` (bw, lat, L1/L2/L3, sse2/avx/avx512 Gpix, ctx_switch_ns, tsc_mhz, flags)
+- [x] Persist field-by-field in `HKLM\SYSTEM\HwProfile` via the kernel hive writer (`RegCreateKeyEx`/`RegSetDword`/`RegSetString`, `src/kernel/registry.c`); brand as `CpuBrand` REG_SZ
+- [x] Staleness: `hw_profile_is_stale()` reuses the stored profile only when VALID and `CpuBrand` == `cpuid_get()->brand`
+- [x] `hw_profile_init()` runs once in `boot_phase3()` after `task_init()` (yield handler armed) and before `wm_init()`; BSP-only, registry up, never fails the boot. Five micro-benchmarks (`src/kernel/hw_profile.c`), each degrading to a validity bit:
+  - **Bandwidth**: bounded 2 MiB scratch x 8 `memset_*` passes (not 256 MiB contiguous); raw-TSC delta (rdtsc_ns returns 0 unless mono-clock source is TSC -> raw rdtsc + `boot_timing_tsc_freq()`)
+  - **Latency**: coprime-stride pointer-chase ring; ns/access
+  - **Cache sizes**: CPUID leaf 4 (Intel) / `0x8000001D` (AMD) deterministic-cache, not a noisy stride search
+  - **SIMD throughput**: `simd_blend_pixels_sse2`/`_avx2` alpha-blend (compute-bound, separates ISA tiers; memcpy is memory-bound and would not)
+  - **Context switch**: `kthread_create` worker + 1000 cooperative `yield` rounds + `thread_join`; ns/round
+- [x] SIMD auto-tune: pure unit-tested `hw_profile_simd_decision()` clears `simd_avx512_ok`/`simd_avx2_ok` (`__ATOMIC_RELEASE`) when a tier lacks a >=10% gain over the next-lower tier; only ever disables, never re-enables a probed tier
+- [ ] DEFERRED -- AVX-512 throttle auto-tune: no AVX-512 alpha-blend primitive, so `simd_avx512_gpix_s` stays 0 and AVX-512 is left as probed (-> XREF: §3 AVX-512 opt-in)
+- [ ] DEFERRED -- scheduler-quantum auto-tune: `SCHED_QUANTUM` is compile-time and `timer_set_tick_hz()` is LAPIC-only; needs a runtime quantum var. `ctx_switch_ns` is measured/persisted now (-> XREF: `03-memory-concurrency/TODO-07` SMP scheduler)
+- [ ] DEFERRED -- compositor triple-buffer auto-tune: no runtime triple-buffer toggle exists yet (-> XREF: `06-desktop-foundation` compositor)
+- [ ] DEFERRED -- memops small-copy threshold auto-tune: dispatch has no byte-size cutoff knob (`src/kernel/mm/memops_sse.c`); needs a runtime threshold global first
+- [ ] Commit: `"kernel/bench: boot self-benchmark, hw_profile Registry, SIMD auto-tune"`
 
-**Test checkpoint:** Registry `HKLM\SYSTEM\HwProfile\MemBandwidthMbS` non-zero after bench; second boot skips bench when profile valid; `simd_avx2_ok` toggles per auto-tune rule when AVX gain <10%. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+> [!NOTE]
+> The benchmark + persistence + SIMD auto-tune shipped. Three of the four originally-planned auto-tunes (scheduler quantum, triple-buffering, memops threshold) plus the AVX-512 throttle decision are deferred above because the runtime knob each needs does not exist yet -- the profile already measures + persists the inputs so the tuners can land when the knobs do.
+
+**Test checkpoint:** Serial `[hwprofile]` line shows non-zero `bw`/`lat`/`L1`/`L2`/`L3`/`simd(sse2/avx)`/`ctx`/`tsc` after a fresh boot; where AVX2 alpha-blend is <10% over SSE2 (or AVX-512 is slower than AVX2) the matching `throttle`/`low gain` line fires and the tier drops out of memops dispatch; a second boot with the same CPU brand logs `reusing stored profile`. Smoke-validated on KVM (bw~4900 MB/s, sse2/avx2 1474/2204 Mpix/s, AVX2 kept). Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 3 hw_profile pure-helper suites (staleness x2 + SIMD decision), 0 failures
+
+> **Notes:**
+> - What shipped: `src/kernel/hw_profile.c` + `include/kernel/hw_profile.h` -- `hw_profile_init()` (5 bounded micro-benchmarks), pure unit-tested staleness + SIMD-decision helpers, profile persisted field-by-field in `HKLM\SYSTEM\HwProfile`.
+> - How it runs: BSP-only, once in `boot_phase3()` after `task_init()` and before `wm_init()`; reused next boot when the CPU brand is unchanged; never fails the boot (each metric degrades to a validity bit).
+> - Downstream effects: clears `simd_avx2_ok`/`simd_avx512_ok` (atomic-release) to retune memops dispatch when a wider SIMD tier shows no gain; persists ctx/bw/cache inputs for the deferred tuners.
+> - Scope boundary: §14 owns the benchmark + SIMD auto-tune; quantum / triple-buffer / memops-threshold auto-tunes are deferred to their owners; AVX-512 throttle waits on an AVX-512 blend primitive (§3).
 
 ---
 
@@ -567,7 +563,7 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 | 💎  | WAITPKG UMWAIT bound | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL      | ⬜ §19            |
 | 💎  | x2APIC MSR mode      | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC        | ⬜ D04 T02 §1     |
 | 💎  | LAM / LASS           | ⚠️ unclear public surface   | ⚠️ LAM gated on LASS        | ⬜ §15 stub; T10  |
-| ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⬜ §14            |
+| ⭐  | Boot hw self tune    | ❌ static config only       | ❌ static defaults          | ⚠️ §14 bench+SIMD |
 | ⭐  | PKU Win32 wrapper    | ❌ no user API surface      | ⚠️ raw syscall pkey_*       | ⚠️ §5 kernel only |
 | ⭐  | Per-core freq UI     | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §10 + shell    |
 
@@ -595,8 +591,11 @@ After §1 through §13 done and §7 through §12 plus §14 through §16 planned,
   - AMX/XFD (§17): if `CPU_FEATURE_AMX_TILE` && `CPU_FEATURE_XFD`, XCR0 bits 17/18 set and `IA32_XFD` armed by default; if not both, XCR0[17:18] clear and XFD untouched
   - Split/bus-lock (§18): `CPU_FEATURE_CORE_CAPS` matches CPUID.(7,0):EDX[30]; when split-lock supported (IA32_CORE_CAPABILITIES[5]) `IA32_TEST_CTL` bit 29 reads back set; no MSR write when unsupported
   - WAITPKG (§19): if `CPU_FEATURE_WAITPKG`, `IA32_UMWAIT_CONTROL` non-zero (bounded dwell); `CPU_FEATURE_RDPID`/`SERIALIZE` flags match CPUID leaf 7 bits
+- [x] §14 hw_profile: 3 pure-helper suites wired under `test_register_x86()` (TEST_CAT_X86) -- `hw_profile_is_stale` NULL/flag/brand guards + brand compare, `hw_profile_simd_decision` tier-gain/throttle/no-data
 - [ ] Add `extern void test_register_x86(void);` in `test_runner.c`, call `test_register_x86()` from `test_runner_init()`
 - [ ] Commit: `"test: add x86-64 architecture test suite"`
+
+> **Note:** the §14 benchmark body (rdtsc loops, scratch alloc, kthread ctx-switch, registry round-trip) is NOT unit-testable -- it requires live boot infrastructure (registry `_init`, scheduler, PMM) that the WSL test harness forbids/lacks; it is validated via the boot serial `[hwprofile]` line + the second-boot `reusing stored profile` path on WHPX/bare metal. Only the two pure helpers carry unit tests.
 
 **Test checkpoint:** With `SUITE=boot` and `test=1` (or `debug=1`) in `boot.conf`, serial shows new `test_x86` cases as PASS; `msr_read(MSR_IA32_EFER)` test reports NXE set; `g_cpu.xsave_size` (or `xsave_size_max`) > 0 when XSAVE is enabled; `cpu_has(CPU_FEATURE_PAGE1GB)` matches CPUID-derived expectation on the host.
 

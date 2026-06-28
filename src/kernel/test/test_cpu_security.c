@@ -30,6 +30,7 @@ extern int snprintf(char *buf, size_t size, const char *fmt, ...);
 #include "kernel/mm/memops.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/security/pku.h"
+#include "kernel/hw_profile.h"
 #include "gfx_simd.h"
 
 /* ---- S1: NX Bit ---- */
@@ -1598,6 +1599,59 @@ static void test_ap_bsp_snapshot_recorded(void)
                    "BSP msr_profile_applied == 0 (AP-only counter)");
 }
 
+/* ---- S14: hw_profile pure helpers (benchmark itself runs at Phase 3) ---- */
+
+static void test_hwprofile_stale_null(void)
+{
+    /* NULL stored, or absent VALID flag, or NULL brand -> stale */
+    TEST_ASSERT_EQ((uint64_t)hw_profile_is_stale(NULL, "x", "x"), 1ULL,
+                   "NULL stored profile is stale");
+    hw_profile_t pf;
+    pf.flags = 0;  /* not HW_PROFILE_VALID */
+    TEST_ASSERT_EQ((uint64_t)hw_profile_is_stale(&pf, "x", "x"), 1ULL,
+                   "profile without VALID flag is stale");
+    pf.flags = HW_PROFILE_VALID;
+    TEST_ASSERT_EQ((uint64_t)hw_profile_is_stale(&pf, NULL, "x"), 1ULL,
+                   "NULL stored brand is stale");
+}
+
+static void test_hwprofile_stale_brand(void)
+{
+    hw_profile_t pf;
+    pf.flags = HW_PROFILE_VALID;
+    TEST_ASSERT_EQ((uint64_t)hw_profile_is_stale(&pf, "Intel(R) Core(TM)",
+                                                 "Intel(R) Core(TM)"), 0ULL,
+                   "matching brand + VALID is not stale");
+    TEST_ASSERT_EQ((uint64_t)hw_profile_is_stale(&pf, "Intel(R) Core(TM)",
+                                                 "AMD Ryzen 9"), 1ULL,
+                   "different brand is stale");
+}
+
+static void test_hwprofile_simd_decision(void)
+{
+    int keep_avx2, keep_avx512;
+    /* AVX-512 30% faster than AVX2 -> keep AVX-512 */
+    hw_profile_simd_decision(1000, 2000, 2600, &keep_avx2, &keep_avx512);
+    TEST_ASSERT_EQ((uint64_t)keep_avx512, 1ULL,
+                   "AVX-512 30% faster than AVX2 -> kept");
+    /* AVX-512 only 5% faster -> throttle, disable */
+    hw_profile_simd_decision(1000, 2000, 2100, &keep_avx2, &keep_avx512);
+    TEST_ASSERT_EQ((uint64_t)keep_avx512, 0ULL,
+                   "AVX-512 <10% over AVX2 -> disabled");
+    /* AVX2 == SSE2 -> disable AVX2 */
+    hw_profile_simd_decision(2000, 2000, 0, &keep_avx2, &keep_avx512);
+    TEST_ASSERT_EQ((uint64_t)keep_avx2, 0ULL,
+                   "AVX2 no gain over SSE2 -> disabled");
+    /* AVX2 50% faster than SSE2 -> keep */
+    hw_profile_simd_decision(2000, 3000, 0, &keep_avx2, &keep_avx512);
+    TEST_ASSERT_EQ((uint64_t)keep_avx2, 1ULL,
+                   "AVX2 50% faster than SSE2 -> kept");
+    /* zero measurement (ISA absent/unmeasured) -> keep (no disable on no data) */
+    hw_profile_simd_decision(0, 0, 0, &keep_avx2, &keep_avx512);
+    TEST_ASSERT_EQ((uint64_t)keep_avx2, 1ULL, "zero data -> AVX2 kept");
+    TEST_ASSERT_EQ((uint64_t)keep_avx512, 1ULL, "zero data -> AVX-512 kept");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -1828,6 +1882,14 @@ void test_register_x86(void)
         test_copy_user_fault_inject_task_filter, TEST_CAT_X86);
     test_suite_register_cat("CPU security: copy_user fault-inject max-cap",
         test_copy_user_fault_inject_max_cap, TEST_CAT_X86);
+
+    /* S14: boot self-benchmark pure helpers */
+    test_suite_register_cat("hw_profile: staleness NULL/flag/brand guards",
+        test_hwprofile_stale_null, TEST_CAT_X86);
+    test_suite_register_cat("hw_profile: staleness brand compare",
+        test_hwprofile_stale_brand, TEST_CAT_X86);
+    test_suite_register_cat("hw_profile: SIMD auto-tune decision",
+        test_hwprofile_simd_decision, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
