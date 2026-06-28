@@ -85,7 +85,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [/]   |
 | 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [/]   |
 | 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [/]   |
-| 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [ ]   |
+| 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [/]   |
 | ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §19, §25                 |  [/]   |
 | 💎  |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8           |  [ ]   |
 
@@ -710,9 +710,7 @@ A low-overhead page-granularity sampling allocator (Linux `CONFIG_KFENCE`) placi
 
 **Test checkpoint:** A test allocation forced onto the pool: an OOB write faults and `kfence_report` logs OOB; a UAF read after free faults and logs UAF; sampling off = normal kmalloc, no pool faults. Test on: QEMU WHPX, TCG, bare metal.
 
----
-
-## 24. Mitigation Visibility: Queryable Security Posture
+> **Deferred:** [M] KFENCE prototyped end to end (self-contained `kfence.c` ~280 lines: FIFO-ring quarantine, left/right placement, OOB/UAF classify; 5 heap-variant hooks + the `page_fault_handler` hook + boot init + tunables; builds), then reverted to keep `main` booting. Enabling (1/100) broke boot: `pmm_alloc_contiguous` placed the pool at 0x6ff000 (low memory next to the 0x70000 page tables), and `vmm_unmap_page` on the identity-map guard pages there corrupted kernel state -- a later #PF hit `handlers[14]==NULL` (idt.c default panic, never reaching the handler). FIX before re-enabling: place the pool in a dedicated VA away from the identity-map's critical low pages (or verify the PMM region is safe + that unmapping those frames cannot disturb the page tables), then re-verify the `kfence_handle_fault` wiring. -> XREF: this section (the items above).
 
 Expose which CPU/kernel mitigations are active as structured queryable data. Linux scatters this across `/sys/devices/system/cpu/vulnerabilities/*`; Win11 hides it behind WMI/registry. Neither does it cleanly -- a single coherent posture report for operators, certification, and post-incident triage is an exclusive edge.
 
