@@ -14,11 +14,27 @@
 #include "kernel/boot_init.h"
 boot_result_t heap_init(void);
 
-/* Allocate 'size' bytes of kernel memory. Returns NULL on failure */
+/* Allocate 'size' bytes of kernel memory. Returns NULL on failure.
+ * Every allocation carries a header cookie + front/back redzones; kfree
+ * validates them and raises BUGCHECK_IOS_HEAP_CORRUPTION on a wild free,
+ * header smash, or buffer over/underflow. The returned pointer is 16-byte
+ * aligned. By default the user region is zeroed on allocation. */
 void *kmalloc(size_t size);
+
+/* Like kmalloc but always zeroes the user region regardless of the
+ * HEAP_INIT_ON_ALLOC build knob (security-sensitive allocations). */
+void *kmalloc_zeroed(size_t size);
+
+/* Like kmalloc but stamps a 4-byte pool tag into the header; pair with
+ * kfree_tagged to catch mixed-pool / wrong-type frees. */
+void *kmalloc_tagged(size_t size, uint32_t tag);
 
 /* Free a previously allocated block */
 void kfree(void *ptr);
+
+/* Free a block allocated with kmalloc_tagged, verifying the pool tag
+ * matches (mismatch raises BUGCHECK_IOS_HEAP_CORRUPTION). */
+void kfree_tagged(void *ptr, uint32_t tag);
 
 /* Resize a previously allocated block. Returns NULL on failure */
 void *krealloc(void *ptr, size_t new_size);

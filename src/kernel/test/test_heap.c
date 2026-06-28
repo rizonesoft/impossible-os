@@ -236,9 +236,84 @@ static void test_heap_realloc(void)
     kfree(p2);
 }
 
+/* Test: kmalloc returns 16-byte-aligned user pointers (hardened header is
+ * sized to a multiple of 16 so DMA / cast-to-struct callers can rely on it). */
+static void test_heap_alignment(void)
+{
+    static const size_t sizes[] = { 1, 8, 15, 16, 17, 64, 100, 256, 4096 };
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        void *p = kmalloc(sizes[i]);
+        TEST_ASSERT(p != NULL, "kmalloc returns non-NULL for alignment test");
+        TEST_ASSERT_EQ((uint64_t)((uintptr_t)p & 15u), 0u,
+                       "kmalloc pointer is 16-byte aligned");
+        kfree(p);
+    }
+}
+
+/* Test: init-on-alloc zeroes the user region (Linux INIT_ON_ALLOC parity). */
+static void test_heap_init_on_alloc(void)
+{
+    uint8_t *p = (uint8_t *)kmalloc(96);
+    TEST_ASSERT(p != NULL, "kmalloc(96) non-NULL");
+    int all_zero = 1;
+    for (int i = 0; i < 96; i++)
+        if (p[i] != 0) { all_zero = 0; break; }
+    TEST_ASSERT(all_zero, "kmalloc user region is zeroed on allocation");
+    kfree(p);
+}
+
+/* Test: kmalloc_zeroed always returns a zeroed region. */
+static void test_heap_zeroed_alloc(void)
+{
+    uint8_t *p = (uint8_t *)kmalloc_zeroed(200);
+    TEST_ASSERT(p != NULL, "kmalloc_zeroed(200) non-NULL");
+    TEST_ASSERT_EQ((uint64_t)((uintptr_t)p & 15u), 0u, "kmalloc_zeroed 16-aligned");
+    int all_zero = 1;
+    for (int i = 0; i < 200; i++)
+        if (p[i] != 0) { all_zero = 0; break; }
+    TEST_ASSERT(all_zero, "kmalloc_zeroed region is fully zeroed");
+    kfree(p);
+}
+
+/* Test: tagged alloc + matched-tag free completes without a corruption
+ * BugCheck (the mismatch path halts and so cannot be exercised here). */
+static void test_heap_tagged_roundtrip(void)
+{
+    uint32_t tag = 0x54534554u; /* 'TEST' */
+    uint8_t *p = (uint8_t *)kmalloc_tagged(48, tag);
+    TEST_ASSERT(p != NULL, "kmalloc_tagged(48) non-NULL");
+    for (int i = 0; i < 48; i++) p[i] = (uint8_t)i;
+    kfree_tagged(p, tag);   /* matching tag -> clean free, no panic */
+    /* Heap remains usable after the tagged free (proves it did not poison
+     * or corrupt the free list). */
+    void *p2 = kmalloc(32);
+    TEST_ASSERT(p2 != NULL, "heap usable after matched kfree_tagged");
+    kfree(p2);
+}
+
+/* Test: writing exactly req_size bytes then freeing does NOT trip the back
+ * redzone (it sits immediately after the requested region, not within it). */
+static void test_heap_redzone_exact_fit(void)
+{
+    uint8_t *p = (uint8_t *)kmalloc(100);
+    TEST_ASSERT(p != NULL, "kmalloc(100) non-NULL");
+    for (int i = 0; i < 100; i++) p[i] = 0xAB;   /* fill the whole request */
+    kfree(p);   /* redzones intact -> no corruption BugCheck */
+    /* Heap remains usable after the exact-fit free (no false-positive
+     * redzone trip would have poisoned it). */
+    void *p2 = kmalloc(100);
+    TEST_ASSERT(p2 != NULL, "heap usable after exact-fit free");
+    kfree(p2);
+}
+
 /* Registration */
 void test_register_heap(void)
 {
+    test_suite_register_cat("Heap: 16-byte alignment", test_heap_alignment, TEST_CAT_MM);
+    test_suite_register_cat("Heap: init-on-alloc zeroing", test_heap_init_on_alloc, TEST_CAT_MM);
+    test_suite_register_cat("Heap: kmalloc_zeroed", test_heap_zeroed_alloc, TEST_CAT_MM);
+    test_suite_register_cat("Heap: tagged alloc/free round-trip", test_heap_tagged_roundtrip, TEST_CAT_MM);
+    test_suite_register_cat("Heap: redzone exact-fit no false positive", test_heap_redzone_exact_fit, TEST_CAT_MM);
     test_suite_register_cat("Heap: alloc+free", test_heap_alloc_free, TEST_CAT_MM);
     test_suite_register_cat("Heap: zero alloc", test_heap_zero_alloc, TEST_CAT_MM);
     test_suite_register_cat("Heap: no overlap", test_heap_no_overlap, TEST_CAT_MM);

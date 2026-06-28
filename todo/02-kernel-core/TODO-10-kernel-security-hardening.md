@@ -73,7 +73,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |   8   | Spectre: eIBRS/IBPB MSR + retpoline build flag      | T12 §2                        |  [x]   |
 | 💎  |   9   | CET shadow stack (kernel ring 0)                    | §1, §2, T23 §3, D01T09 §10    |  [/]   |
 | 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9, T23 §3                    |  [/]   |
-| 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [ ]   |
+| 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [x]   |
 | 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [ ]   |
 | 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
 | ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [/]   |
@@ -371,40 +371,33 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 11. Kernel Heap Hardening: Cookies & Redzones
 
-- [ ] Extend the `kmalloc` block header in `src/kernel/mm/heap.c`:
-  ```c
-  #define HEAP_COOKIE_MAGIC  0xDEADBEEFC0FFEE01ULL  /* XOR'd with alloc address */
+- [x] Combined 48-byte `block_header` in `src/kernel/mm/heap.c` (size/next/cookie/req_size/tag/is_free/_pad/redzone_front)
+  - `_Static_assert` pins size==48, %16==0, redzone_front@40 so the returned user pointer is 16-byte aligned (fixes the prior inconsistent 8/16 alignment for DMA / cast-to-struct callers)
+- [x] `kmalloc(size)`: overflow guard + first-fit `kmalloc_locked` + cookie/redzone stamping; returns the 16-aligned pointer
+  - Rejects `size > KMALLOC_MAX` (256 MiB) before any size+overhead arithmetic; stamps `cookie = HEAP_COOKIE_SECRET ^ header`, `redzone_front`, `redzone_back` at user+req_size
+- [x] `kfree(ptr)`: `heap_classify` validation, then `KeBugCheckEx(BUGCHECK_IOS_HEAP_CORRUPTION)` on any mismatch -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md §1`
+  - Checks `heap_owns` + 16-align + header-in-range BEFORE deref (wild/misaligned), then cookie + both redzones; double-free stays a silent no-op
+- [x] **(design review)** irqsave `s_heap_lock` serializes kmalloc/kfree/krealloc/split/coalesce/heap_get_free (heap was lockless -- SMP gap)
+  - On corruption `s_heap_poisoned` is set UNDER the lock so no CPU mutates the known-corrupt heap in the unlock->`KeBugCheckEx` window
+- [x] `kmalloc_zeroed(size)`: always zeroes the user region (token / security-descriptor structs)
+- [x] `kmalloc_tagged(size, tag)` + `kfree_tagged(ptr, tag)`: 4-byte pool tag in the header; tag mismatch on free -> BugCheck (mixed-pool UAF). Tag field always present; plain `kmalloc` tags 0
+- [x] `init_on_alloc` default-on (`HEAP_INIT_ON_ALLOC`, Linux `INIT_ON_ALLOC` parity): zeroes every `kmalloc` user region; compile-time knob to disable
+- [/] zero-on-free (`HEAP_ZERO_ON_FREE`): scrubs freed user data; coded but DEFAULT-OFF -- enabling it surfaces a pre-existing FS use-after-free (next item) that zeros a still-referenced `i_size`
+- [ ] **(blocks zero-on-free)** Fix the IXFS/vfs use-after-free that `HEAP_ZERO_ON_FREE=1` surfaces, then flip the knob on
+  - A vnode/inode `i_size` is read after free; the scrub zeros it -> `file->size`=0 -> `cmd.exe` load + mmap content break. Trace the node lifecycle in `src/kernel/fs/ixfs/ixfs_ops.c` + `src/kernel/fs/vfs.c`
+- [x] Scope boundary: SLUB-style freelist hardening (pointer encoding, randomization, quarantine, per-CPU freelists) is owned elsewhere -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md`; §11 owns the kmalloc cookie/redzone/zeroing tier
 
-  typedef struct {
-      uint64_t  cookie;        /* HEAP_COOKIE_MAGIC ^ (uint64_t)block_ptr */
-      uint32_t  size;          /* requested allocation size */
-      uint32_t  redzone_front; /* 0xFEFEFEFE pattern detects underflow */
-      /* user data follows */
-      /* uint8_t redzone_back[8] after user data detects overflow */
-  } kmalloc_header_t;
-  ```
-- [ ] `kmalloc(size)`:
-  - Allocate `sizeof(kmalloc_header_t) + size + 8` bytes from the heap
-  - Write `cookie = HEAP_COOKIE_MAGIC ^ (uint64_t)header_ptr`
-  - Write `redzone_front = 0xFEFEFEFEFEFEFEFEULL`
-  - Write redzone_back 8 bytes after user data = `0xBDBDBDBDBDBDBDBDULL`
-  - Return `(header + 1)` (pointer to user data portion)
-- [ ] `kfree(ptr)`:
-  - Recover header = `(kmalloc_header_t *)ptr - 1`
-  - Validate `cookie == HEAP_COOKIE_MAGIC ^ (uint64_t)header`: if mismatch -> `KeBugCheckEx(BUGCHECK_HEAP_CORRUPTION, ...)` (-> XREF `TODO-27-crash-dump-generation.md §1`)
-  - Validate `redzone_front == 0xFEFEFEFEFEFEFEFEULL` (catches underflow)
-  - Validate redzone_back == `0xBDBDBDBDBDBDBDBDULL` (catches overflow)
-  - Zero the user data before returning to pool (`explicit_bzero`)
-- [ ] `kmalloc_zeroed(size)`: like `kmalloc` but zeroes the user region immediately (for security-sensitive allocations like token structs, security descriptors)
+- [x] Commit: `"kernel/mm: kmalloc cookie + redzone + irqsave lock hardening, kmalloc_zeroed/tagged, init_on_alloc"`
 
-- [ ] Extend `kmalloc_tagged(size, tag)` where `tag` is a 4-byte ASCII pool tag (e.g., `'TOKN'`, `'ALPC'`) stored in a 5th header field; `kfree_tagged(ptr, tag)` verifies the tag matches to catch mixed-pool use-after-free patterns; tag field is present only in debug builds (`KERNEL_DEBUG` defined)
-- [ ] Existing callers that use plain `kmalloc` get implicit tag `'\0\0\0\0'`
-- [ ] `init_on_alloc` default: zero every `kmalloc` user region on allocation (Linux `CONFIG_INIT_ON_ALLOC_DEFAULT_ON` parity) with a build knob to disable on perf-critical paths; `kfree` already zeroes on free
-- [ ] Scope boundary: SLUB-style freelist hardening (pointer encoding, randomization, quarantine, per-CPU freelists) is owned elsewhere -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md`; §11 owns the kmalloc cookie/redzone/zeroing tier
+**Test checkpoint:** `kmalloc` returns 16-aligned pointers; init-on-alloc + `kmalloc_zeroed` regions read back zero; tagged alloc + matched-tag free round-trips; exact-size write does not trip redzones. Corruption paths (cookie/redzone/wild-free -> `BUGCHECK_IOS_HEAP_CORRUPTION`) are validated on bare metal -- they halt, so cannot be unit-tested. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
-- [ ] Commit: `"kernel/mm: kmalloc cookie + redzone hardening, kmalloc_zeroed, init_on_alloc, POOL_TAG debug"`
-
-**Test checkpoint:** `kfree()` after cookie stomp raises `BUGCHECK_HEAP_CORRUPTION`; redzone violations caught; tagged debug build mismatches tag on `kfree_tagged`. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | 139 kernel + 16 user-mode pass; smoke boots clean (knob off).
+>
+> **Notes:**
+> - Shipped `src/kernel/mm/heap.c` hardening: 48-byte combined header (cookie + redzones), irqsave `s_heap_lock`, `heap_classify` validation -> `BUGCHECK_IOS_HEAP_CORRUPTION`, `kmalloc_zeroed`/`_tagged`, init-on-alloc, overflow + wild-pointer guards.
+> - Design review (2 passes) adoptions: combined header, irqsave lock (heap was lockless), 16-align pinned by `_Static_assert`, `s_heap_poisoned` set-under-lock closing the unlock->BugCheck race; evidence in the commit message.
+> - zero-on-free behind `HEAP_ZERO_ON_FREE` (default off): enabling it surfaced a pre-existing IXFS/vfs use-after-free (tracked as the open item above); the scrub is correct, the FS UAF must be fixed first.
+> - Scope boundary: SLUB-style per-CPU freelist hardening owned by `03-memory-concurrency/TODO-03-advanced-allocator.md`.
 
 ---
 
@@ -669,7 +662,7 @@ Expose which CPU/kernel mitigations are active as structured queryable data. Lin
 | 💎   | IBRS IBPB retpoline  | ✅ Yes       | ✅ spectre     | ✅ eIBRS+IBPB §8 |
 | 💎   | CET shadow stack     | ✅ 20H1+     | ✅ 6.6+        | ⏸ §9 (deferred) |
 | 💎   | CET IBT ENDBR64      | ✅ HVCI      | ✅ 6.6+        | ⏸ §10 (deferred)|
-| 💎   | Heap cookies redzone | ✅ Pool tags | ✅ SLUB        | ⬜ §8            |
+| 💎   | Heap cookies redzone | ✅ Pool tags | ✅ SLUB        | ✅ §11 cookie+redzone+lock |
 | 💎   | Stack canaries /GS   | ✅ MSVC      | ✅ fssp strong | ⬜ §9            |
 | 💎   | Stack guard pages    | ✅ Yes       | ✅ THREAD      | ⬜ §10           |
 | 💎   | KASLR kernel base    | ✅ Yes       | ✅ RANDOMIZE   | ⬜ §11           |

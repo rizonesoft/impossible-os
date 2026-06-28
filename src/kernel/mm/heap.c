@@ -18,6 +18,8 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/klog.h"
+#include "kernel/bugcheck.h"        /* KeBugCheckEx on heap-corruption detection */
+#include "kernel/sched/spinlock.h"  /* irqsave heap lock for SMP-safe alloc/free */
 #ifdef KERNEL_TESTS
 #include "kernel/smp.h"                 /* smp_this_cpu() for per-CPU countdown */
 #include "kernel/sched/irql.h"          /* KeGetCurrentIrql for thread-context gate */
@@ -27,14 +29,68 @@
 #define HEAP_INITIAL_PAGES  512      /* 512 pages = 2 MiB */
 #define HEAP_PAGE_SIZE      4096
 
-/* Block header -- sits before every allocation */
+/* Block header -- sits before every allocation.
+ *
+ * One combined header carries BOTH the allocator control fields
+ * (size/next/is_free, used by split/coalesce/kfree/krealloc) AND the
+ * hardening fields (cookie/req_size/redzone_front). The hardening fields
+ * are only meaningful while a block is allocated; free blocks need only
+ * the allocator metadata, so split/coalesce do not touch them.
+ *
+ * The layout is exactly 48 bytes (a multiple of 16) so that the returned
+ * user pointer (block + HEADER_SIZE) inherits the page-aligned heap base's
+ * 16-byte alignment for every block (split preserves it: HEADER_SIZE and
+ * all request sizes are 16-aligned). `redzone_front` is the LAST field so
+ * it sits immediately before the user data and catches header underflow. */
 struct block_header {
-    uint64_t size;             /* size of the data area (not including header) */
+    uint64_t size;             /* data area size (NOT incl header); allocator-critical */
+    struct block_header *next; /* next block in memory order; allocator-critical */
+    uint64_t cookie;           /* HEAP_COOKIE_SECRET ^ (uintptr_t)header; 0 while free */
+    uint64_t req_size;         /* caller-requested size; locates back redzone + wipe len */
+    uint32_t tag;              /* pool tag (kmalloc_tagged); 0 = untagged */
     uint8_t  is_free;          /* 1 = free, 0 = allocated */
-    struct block_header *next; /* next block in memory order */
+    uint8_t  _pad[3];          /* explicit pad to keep redzone_front 8-aligned */
+    uint64_t redzone_front;    /* HEAP_REDZONE_FRONT; last field -> precedes user data */
 };
 
 #define HEADER_SIZE  sizeof(struct block_header)
+
+_Static_assert(sizeof(struct block_header) == 48,
+    "heap block_header must be 48 bytes (combined allocator + hardening header)");
+_Static_assert(sizeof(struct block_header) % 16 == 0,
+    "heap header size must be a multiple of 16 so kmalloc returns 16-aligned pointers");
+_Static_assert(__builtin_offsetof(struct block_header, redzone_front) == 40,
+    "redzone_front must be the trailing header field, immediately before user data");
+
+/* Hardening sentinels. The cookie XORs a fixed secret with the block
+ * address so a corrupted/forged/wild header is caught on kfree; the two
+ * redzones bracket the user region to catch underflow (front) and overflow
+ * (back). Fixed-magic secret is used because the heap is live in boot
+ * Phase 0, before the CSPRNG (Phase 1) can supply per-boot entropy. */
+#define HEAP_COOKIE_SECRET     0xDEADBEEFC0FFEE01ULL
+#define HEAP_REDZONE_FRONT     0xFEFEFEFEFEFEFEFEULL  /* underflow sentinel */
+#define HEAP_REDZONE_BACK      0xBDBDBDBDBDBDBDBDULL  /* overflow sentinel */
+#define HEAP_REDZONE_BACK_SIZE 8u                     /* bytes after user data */
+/* Sanity cap rejected before any size + overhead arithmetic, so the
+ * (req + HEADER_SIZE + redzone) computation can never wrap a size_t. Far
+ * above any real kernel allocation, far below SIZE_MAX. */
+#define KMALLOC_MAX            (256u * 1024u * 1024u)
+
+/* Zero every user region on allocation (Linux CONFIG_INIT_ON_ALLOC parity).
+ * Compile-time knob: define to 0 to disable on perf-critical builds. */
+#ifndef HEAP_INIT_ON_ALLOC
+#define HEAP_INIT_ON_ALLOC 1
+#endif
+
+/* Scrub freed user data before returning a block to the pool (so freed
+ * secrets do not linger). DEFAULT OFF: enabling it surfaces a pre-existing
+ * use-after-free in the filesystem layer (a vnode/inode carrying i_size is
+ * read after free; the scrub zeros it, so file size reads 0 and cmd.exe
+ * load + mmap content break). The scrub is correct; the FS UAF must be
+ * fixed first, then this flips on. */
+#ifndef HEAP_ZERO_ON_FREE
+#define HEAP_ZERO_ON_FREE 0
+#endif
 
 /* Minimum usable block size (avoid tiny fragments) */
 #define MIN_BLOCK_SIZE  16
@@ -43,6 +99,161 @@ struct block_header {
 static struct block_header *heap_start_block;
 static uint64_t total_heap_size;
 static uint64_t used_bytes;
+
+/* SMP serialization: kmalloc/kfree/krealloc walk and mutate the shared
+ * free list + used_bytes. The lock is irqsave because kmalloc is reachable
+ * from interrupt context (e.g. the RTL8139 RX ISR). */
+static spinlock_t s_heap_lock = SPINLOCK_INIT;
+
+/* Set (under s_heap_lock) the instant a corrupt/forged/wild block is
+ * detected, BEFORE the lock is released for the noreturn BugCheck. Once
+ * set, kmalloc/kfree/krealloc refuse to walk or mutate the known-corrupt
+ * list, so no other CPU (or a same-CPU interrupt after irqrestore) can
+ * touch the heap in the window before the panic owner quiesces the system.
+ * volatile + lock-published so the next lock acquirer observes it. */
+static volatile int s_heap_poisoned;
+
+/* Corruption classes, reported out of the lock so the BugCheck fires after
+ * the lock is released (KeBugCheckEx is noreturn and must not deadlock on
+ * the heap lock if the crashdump path ever allocates). */
+enum heap_fault_class {
+    HEAP_FAULT_NONE = 0,
+    HEAP_FAULT_WILD,          /* ptr not owned by the heap */
+    HEAP_FAULT_MISALIGNED,    /* ptr not 16-aligned (not a kmalloc result) */
+    HEAP_FAULT_COOKIE,        /* header cookie mismatch (forged/smashed header) */
+    HEAP_FAULT_REDZONE_FRONT, /* underflow into header */
+    HEAP_FAULT_REDZONE_BACK,  /* overflow past user data */
+    HEAP_FAULT_TAG,           /* kfree_tagged pool-tag mismatch */
+};
+
+struct heap_fault {
+    enum heap_fault_class cls;
+    uint64_t ptr;   /* offending user pointer */
+    uint64_t got;   /* observed sentinel/cookie */
+    uint64_t want;  /* expected sentinel/cookie */
+};
+
+/* Optimization-barrier zeroizer: clears `n` bytes that the compiler may NOT
+ * elide as a dead store (used to scrub freed user data + init-on-alloc). */
+static void heap_secure_zero(void *p, uint64_t n)
+{
+    volatile uint8_t *b = (volatile uint8_t *)p;
+    uint64_t i;
+    for (i = 0; i < n; i++)
+        b[i] = 0;
+}
+
+/* Cookie for a given header address. */
+static inline uint64_t heap_cookie_for(const struct block_header *h)
+{
+    return HEAP_COOKIE_SECRET ^ (uint64_t)(uintptr_t)h;
+}
+
+/* Address of the 8-byte back redzone for an allocated block: immediately
+ * after the caller-requested region. */
+static inline uint64_t *heap_redzone_back(struct block_header *block)
+{
+    uint8_t *user = (uint8_t *)block + HEADER_SIZE;
+    return (uint64_t *)(user + block->req_size);
+}
+
+/* Classify a user pointer handed back to kfree/krealloc (lock held).
+ * Returns 0 = clean (allocated, all sentinels intact; *out is the header),
+ *         1 = block is already free (double-free / use-after-free),
+ *        -1 = corruption (f filled, *out unset).
+ * Ordered so that range + alignment + header-bounds are checked with NO
+ * dereference of the candidate header, so a wild/non-heap pointer never
+ * faults before classification. */
+static int heap_classify(void *ptr, struct block_header **out,
+                         struct heap_fault *f)
+{
+    struct block_header *block;
+
+    /* Not part of the heap arena (e.g. a PMM pointer or a wild value). */
+    if (!heap_owns(ptr)) {
+        f->cls = HEAP_FAULT_WILD;
+        f->ptr = (uint64_t)(uintptr_t)ptr;
+        return -1;
+    }
+    /* Every kmalloc result is 16-aligned; anything else is not ours. */
+    if (((uintptr_t)ptr & 15u) != 0) {
+        f->cls = HEAP_FAULT_MISALIGNED;
+        f->ptr = (uint64_t)(uintptr_t)ptr;
+        return -1;
+    }
+    /* The header sits HEADER_SIZE below the user pointer; reject pointers
+     * so close to the arena base that the header would precede it. */
+    if ((uint8_t *)ptr < (uint8_t *)heap_start_block + HEADER_SIZE) {
+        f->cls = HEAP_FAULT_WILD;
+        f->ptr = (uint64_t)(uintptr_t)ptr;
+        return -1;
+    }
+
+    block = (struct block_header *)((uint8_t *)ptr - HEADER_SIZE);
+
+    /* Exact-membership proof: confirm `block` is a real node in the
+     * memory-order chain (every split links new blocks via ->next, so the
+     * chain visits all current blocks). Without this, an aligned pointer
+     * into the INTERIOR of a live allocation would derive a fake header
+     * from user payload -- a crafted payload could satisfy the fixed
+     * cookie/redzone checks and free the middle of a live block. A heap-
+     * owned, aligned pointer that is not an exact block start is corruption. */
+    {
+        struct block_header *w = heap_start_block;
+        int found = 0;
+        while (w) {
+            if (w == block) { found = 1; break; }
+            w = w->next;
+        }
+        if (!found) {
+            f->cls = HEAP_FAULT_WILD;
+            f->ptr = (uint64_t)(uintptr_t)ptr;
+            return -1;
+        }
+    }
+
+    if (block->is_free)
+        return 1;   /* double-free / use-after-free */
+
+    if (block->cookie != heap_cookie_for(block)) {
+        f->cls = HEAP_FAULT_COOKIE;
+        f->ptr = (uint64_t)(uintptr_t)ptr;
+        f->got = block->cookie;
+        f->want = heap_cookie_for(block);
+        return -1;
+    }
+    /* Bound the back-redzone offset to the block's data area before
+     * dereferencing it. req_size is itself a (possibly corrupt) header
+     * field, so the check must NOT use overflow-prone addition: a forged
+     * req_size near UINT64_MAX would wrap req_size + 8 to a small value,
+     * pass, and let heap_redzone_back() read out of bounds. Use a
+     * subtraction that cannot wrap (guarded by the req_size > size case). */
+    if (block->req_size > block->size ||
+        block->size - block->req_size < HEAP_REDZONE_BACK_SIZE) {
+        f->cls = HEAP_FAULT_REDZONE_BACK;
+        f->ptr = (uint64_t)(uintptr_t)ptr;
+        f->got = block->req_size;
+        f->want = block->size;
+        return -1;
+    }
+    if (block->redzone_front != HEAP_REDZONE_FRONT) {
+        f->cls = HEAP_FAULT_REDZONE_FRONT;
+        f->ptr = (uint64_t)(uintptr_t)ptr;
+        f->got = block->redzone_front;
+        f->want = HEAP_REDZONE_FRONT;
+        return -1;
+    }
+    if (*heap_redzone_back(block) != HEAP_REDZONE_BACK) {
+        f->cls = HEAP_FAULT_REDZONE_BACK;
+        f->ptr = (uint64_t)(uintptr_t)ptr;
+        f->got = *heap_redzone_back(block);
+        f->want = HEAP_REDZONE_BACK;
+        return -1;
+    }
+
+    *out = block;
+    return 0;
+}
 
 /* --- Internal: split a block if it's large enough --- */
 static void block_split(struct block_header *block, size_t size)
@@ -253,9 +464,55 @@ uint32_t kmalloc_fail_fired_counter(void)
 }
 #endif /* KERNEL_TESTS */
 
-void *kmalloc(size_t size)
+/* Core allocator -- assumes s_heap_lock is held. `req` is the caller's
+ * exact requested size (already validated <= KMALLOC_MAX); `tag` is the
+ * pool tag (0 = untagged). Reserves req user bytes + an 8-byte back
+ * redzone, stamps cookie + both redzones, and (when init-on-alloc is on)
+ * zeroes the user region. Returns the 16-aligned user pointer, or NULL on
+ * OOM / poisoned heap. */
+static void *kmalloc_locked(size_t req, uint32_t tag)
 {
     struct block_header *curr;
+    size_t need;
+
+    if (s_heap_poisoned)
+        return (void *)0;
+
+    /* Data area must hold req user bytes + the back redzone. Rounded to 16
+     * so the next split block stays 16-aligned. req <= KMALLOC_MAX so this
+     * cannot wrap. */
+    need = (req + HEAP_REDZONE_BACK_SIZE + 15) & ~((size_t)15);
+
+    curr = heap_start_block;
+    while (curr) {
+        if (curr->is_free && curr->size >= need) {
+            uint8_t *user;
+
+            block_split(curr, need);
+            curr->is_free       = 0;
+            curr->req_size      = req;
+            curr->tag           = tag;
+            curr->cookie        = heap_cookie_for(curr);
+            curr->redzone_front = HEAP_REDZONE_FRONT;
+            user = (uint8_t *)curr + HEADER_SIZE;
+            *heap_redzone_back(curr) = HEAP_REDZONE_BACK;
+            used_bytes += curr->size;
+            /* Zeroing the user region is done by the caller AFTER releasing
+             * s_heap_lock (the block is now privately owned) so the
+             * IRQ-disabled lock is not held across an O(req) loop. */
+            return (void *)user;
+        }
+        curr = curr->next;
+    }
+
+    /* Out of heap memory */
+    return (void *)0;
+}
+
+void *kmalloc(size_t size)
+{
+    void *result;
+    uint64_t irq_flags;
 
     if (size == 0)
         return (void *)0;
@@ -318,48 +575,157 @@ void *kmalloc(size_t size)
     }
 #endif
 
-    /* Align size to 16 bytes */
-    size = (size + 15) & ~((size_t)15);
+    /* Overflow guard: reject absurd sizes before any size + overhead
+     * arithmetic so the kmalloc_locked rounding cannot wrap a size_t. */
+    if (size > KMALLOC_MAX)
+        return (void *)0;
 
-    /* First-fit: walk the block list */
-    curr = heap_start_block;
-    while (curr) {
-        if (curr->is_free && curr->size >= size) {
-            block_split(curr, size);
-            curr->is_free = 0;
-            used_bytes += curr->size;
-            return (void *)((uint8_t *)curr + HEADER_SIZE);
-        }
-        curr = curr->next;
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    result = kmalloc_locked(size, 0);
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+#if HEAP_INIT_ON_ALLOC
+    /* Zero the now-privately-owned region OUTSIDE the lock so the
+     * IRQ-disabled critical section is not held across an O(size) loop. */
+    if (result)
+        heap_secure_zero(result, size);
+#endif
+    return result;
+}
+
+/* Like kmalloc but always zeroes the user region, independent of the
+ * HEAP_INIT_ON_ALLOC build knob (for security-sensitive allocations such
+ * as token / security-descriptor structs). */
+void *kmalloc_zeroed(size_t size)
+{
+    void *result;
+    uint64_t irq_flags;
+
+    if (size == 0 || size > KMALLOC_MAX)
+        return (void *)0;
+
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    result = kmalloc_locked(size, 0);
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+    if (result)   /* zero outside the lock (block is privately owned) */
+        heap_secure_zero(result, size);
+    return result;
+}
+
+/* Tagged allocation: stamps a 4-byte ASCII pool tag into the header so
+ * kfree_tagged can verify matched alloc/free pools (catches mixed-pool
+ * use-after-free). Plain kfree ignores the tag. */
+void *kmalloc_tagged(size_t size, uint32_t tag)
+{
+    void *result;
+    uint64_t irq_flags;
+
+    if (size == 0 || size > KMALLOC_MAX)
+        return (void *)0;
+
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    result = kmalloc_locked(size, tag);
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+#if HEAP_INIT_ON_ALLOC
+    if (result)   /* zero outside the lock (block is privately owned) */
+        heap_secure_zero(result, size);
+#endif
+    return result;
+}
+
+/* Validate + free a block (lock held). Sets fault->cls on corruption (the
+ * caller raises the BugCheck after releasing the lock); a double-free is a
+ * silent no-op (unchanged behavior). `check_tag` verifies the pool tag. */
+static void kfree_locked(void *ptr, uint32_t want_tag, int check_tag,
+                         struct heap_fault *fault)
+{
+    struct block_header *block = (void *)0;
+    int r;
+
+    if (s_heap_poisoned)
+        return;   /* heap already known-corrupt; refuse to mutate */
+
+    r = heap_classify(ptr, &block, fault);
+    if (r == 1)
+        return;   /* double-free protection (silent, as before) */
+    if (r < 0) {
+        s_heap_poisoned = 1;   /* published under the lock */
+        return;
     }
 
-    /* Out of heap memory */
-    return (void *)0;
+    if (check_tag && block->tag != want_tag) {
+        fault->cls = HEAP_FAULT_TAG;
+        fault->ptr = (uint64_t)(uintptr_t)ptr;
+        fault->got = block->tag;
+        fault->want = want_tag;
+        s_heap_poisoned = 1;
+        return;
+    }
+
+#if HEAP_ZERO_ON_FREE
+    /* Scrub the user payload so freed secrets do not linger in the pool.
+     * Gated OFF by default pending the FS use-after-free fix (see the
+     * HEAP_ZERO_ON_FREE knob comment). */
+    heap_secure_zero((uint8_t *)block + HEADER_SIZE, block->req_size);
+#endif
+    block->cookie  = 0;
+    block->is_free = 1;
+    used_bytes -= block->size;
+    coalesce_free_blocks();
+}
+
+/* Raise the heap-corruption BugCheck for a detected fault. Called only
+ * AFTER s_heap_lock is released (KeBugCheckEx is noreturn; s_heap_poisoned
+ * already blocks any concurrent mutation of the corrupt heap). */
+static void heap_corruption_panic(const struct heap_fault *f)
+{
+    KeBugCheckEx(BUGCHECK_IOS_HEAP_CORRUPTION,
+                 f->ptr, f->got, f->want, (uint64_t)f->cls);
 }
 
 void kfree(void *ptr)
 {
-    struct block_header *block;
+    struct heap_fault fault = { HEAP_FAULT_NONE, 0, 0, 0 };
+    uint64_t irq_flags;
 
     if (!ptr)
         return;
 
-    block = (struct block_header *)((uint8_t *)ptr - HEADER_SIZE);
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    kfree_locked(ptr, 0, 0, &fault);
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
 
-    if (block->is_free)
-        return;   /* double-free protection */
+    if (fault.cls != HEAP_FAULT_NONE)
+        heap_corruption_panic(&fault);
+}
 
-    block->is_free = 1;
-    used_bytes -= block->size;
+/* Tag-checked free: verifies the block was allocated with the matching
+ * pool tag (catches mixed-pool / wrong-type free). */
+void kfree_tagged(void *ptr, uint32_t tag)
+{
+    struct heap_fault fault = { HEAP_FAULT_NONE, 0, 0, 0 };
+    uint64_t irq_flags;
 
-    coalesce_free_blocks();
+    if (!ptr)
+        return;
+
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    kfree_locked(ptr, tag, 1, &fault);
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+
+    if (fault.cls != HEAP_FAULT_NONE)
+        heap_corruption_panic(&fault);
 }
 
 void *krealloc(void *ptr, size_t new_size)
 {
-    struct block_header *block;
+    struct block_header *block = (void *)0;
+    struct heap_fault fault = { HEAP_FAULT_NONE, 0, 0, 0 };
     void *new_ptr;
+    void *ret;
     size_t copy_size;
+    size_t need;
+    uint64_t irq_flags;
+    int r;
 
     if (!ptr)
         return kmalloc(new_size);
@@ -369,33 +735,74 @@ void *krealloc(void *ptr, size_t new_size)
         return (void *)0;
     }
 
-    new_size = (new_size + 15) & ~((size_t)15);
+    if (new_size > KMALLOC_MAX)
+        return (void *)0;
 
-    block = (struct block_header *)((uint8_t *)ptr - HEADER_SIZE);
+    /* Data-area requirement for the new size, including the back redzone. */
+    need = (new_size + HEAP_REDZONE_BACK_SIZE + 15) & ~((size_t)15);
 
-    /* Already large enough */
-    if (block->size >= new_size)
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+
+    if (s_heap_poisoned) {
+        spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+        return (void *)0;
+    }
+
+    /* A realloc of a corrupt or already-freed block is a use-after-free
+     * bug -- classify and BugCheck rather than trust block->size/next. */
+    r = heap_classify(ptr, &block, &fault);
+    if (r != 0) {
+        if (r == 1) {                       /* freed block -> UAF */
+            fault.cls = HEAP_FAULT_COOKIE;
+            fault.ptr = (uint64_t)(uintptr_t)ptr;
+        }
+        s_heap_poisoned = 1;
+        spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+        heap_corruption_panic(&fault);
+        return (void *)0;                   /* unreachable */
+    }
+
+    /* Already large enough: keep the block, move the back redzone to the
+     * new user-data end and record the new request size. */
+    if (block->size >= need) {
+        block->req_size = new_size;
+        *heap_redzone_back(block) = HEAP_REDZONE_BACK;
+        spin_unlock_irqrestore(&s_heap_lock, irq_flags);
         return ptr;
+    }
 
-    /* Try to merge with next free block */
+    /* Try to grow in place by merging with the next free block. */
     if (block->next && block->next->is_free) {
         uint64_t combined = block->size + HEADER_SIZE + block->next->size;
-        if (combined >= new_size) {
+        if (combined >= need) {
             used_bytes -= block->size;
             block->size = combined;
             block->next = block->next->next;
-            block_split(block, new_size);
+            block_split(block, need);
             used_bytes += block->size;
+            block->req_size = new_size;
+            *heap_redzone_back(block) = HEAP_REDZONE_BACK;
+            spin_unlock_irqrestore(&s_heap_lock, irq_flags);
             return ptr;
         }
     }
 
-    /* Allocate new, copy, free old */
-    new_ptr = kmalloc(new_size);
-    if (!new_ptr)
-        return (void *)0;
+    /* Allocate the new block (preserving the pool tag) under the lock, but
+     * do the O(copy_size) copy + the old-block free OUTSIDE the lock so the
+     * IRQ-disabled critical section never spans a large memcpy. The old
+     * block stays allocated (caller-owned, single-owner) during the copy,
+     * so it is stable; the new block is privately owned. */
+    new_ptr = kmalloc_locked(new_size, block->tag);
+    if (!new_ptr) {
+        spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+        return (void *)0;   /* old block left intact */
+    }
+    copy_size = block->req_size < new_size ? block->req_size : new_size;
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
 
-    copy_size = block->size < new_size ? block->size : new_size;
+#if HEAP_INIT_ON_ALLOC
+    heap_secure_zero(new_ptr, new_size);   /* zero, then copy over the head */
+#endif
     {
         uint8_t *src = (uint8_t *)ptr;
         uint8_t *dst = (uint8_t *)new_ptr;
@@ -404,8 +811,17 @@ void *krealloc(void *ptr, size_t new_size)
             dst[i] = src[i];
     }
 
-    kfree(ptr);
-    return new_ptr;
+    /* Re-acquire the lock to free the old (still-valid, caller-owned)
+     * block. If another CPU poisoned the heap meanwhile, kfree_locked
+     * no-ops and the old block leaks -- harmless, the system is panicking. */
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    kfree_locked(ptr, 0, 0, &fault);
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+    if (fault.cls != HEAP_FAULT_NONE)
+        heap_corruption_panic(&fault);
+
+    ret = new_ptr;
+    return ret;
 }
 
 uint64_t heap_get_total(void)
@@ -439,14 +855,26 @@ uint64_t heap_get_used(void)
 
 uint64_t heap_get_free(void)
 {
-    struct block_header *curr = heap_start_block;
+    struct block_header *curr;
     uint64_t free_bytes = 0;
+    uint64_t irq_flags;
 
+    /* Walks the free list, so it must hold the lock against a concurrent
+     * split/coalesce mutating the `next` chain. */
+    spin_lock_irqsave(&s_heap_lock, &irq_flags);
+    /* Refuse to walk a known-corrupt free list (a `next` pointer may be
+     * garbage in the unlock->BugCheck window); report 0 conservatively. */
+    if (s_heap_poisoned) {
+        spin_unlock_irqrestore(&s_heap_lock, irq_flags);
+        return 0;
+    }
+    curr = heap_start_block;
     while (curr) {
         if (curr->is_free)
             free_bytes += curr->size;
         curr = curr->next;
     }
+    spin_unlock_irqrestore(&s_heap_lock, irq_flags);
 
     return free_bytes;
 }
