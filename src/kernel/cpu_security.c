@@ -712,9 +712,16 @@ const uint16_t g_mds_verw_sel = 0x10;   /* GDT_KERNEL_DATA */
  * via the #GP-safe try-write, so it re-applies correctly on every AP. */
 void cpu_decide_mds(void)
 {
-    uint32_t a, b, c, d;
+    uint32_t a, b, c, d, max_leaf;
     uint64_t caps = 0;
     int has_md_clear, has_arch_cap;
+
+    /* Leaf 7 must exist before reading it -- on a max-leaf < 7 CPU, CPUID 7
+     * returns the highest-leaf garbage, which would misread MD_CLEAR/RTM. No
+     * leaf 7 -> none of these mitigations are enumerated; gate stays off. */
+    cpuid_raw(0x00, 0, &max_leaf, &b, &c, &d);
+    if (max_leaf < 0x07)
+        return;
 
     /* AP-local CPUID, NOT cpu_has() (which reflects the BSP-global mask): a
      * feature-skewed AP must decide on its OWN MD_CLEAR / ARCH_CAP so the global

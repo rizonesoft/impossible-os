@@ -630,7 +630,9 @@ VERW/MD_CLEAR buffer flush on every kernel-to-user return (Linux `mds`/`tsx_asyn
 > [!WARNING]
 > VERW lands on the hottest path (every syscall/interrupt return). It is gated on the once-per-boot capability decision; on `MDS_NO` silicon the gate stays off and the exit is a single `cmp`/`jz`.
 
+> **Verified:** 2026-06-28 | commit `e6733bb8` (+ review fixes) | 4/5 items | build OK | smoke PASS (KVM 2.71s, boots to userspace with the moved VERW exits), x86 186/16
 > **Deferred:** [L] SRBDS `RNGDS_MITG_DIS` posture surfacing -> XREF: §24 (item: "enumerate every mitigation in this TODO with state {active, unsupported, disabled, n/a}" -- SRBDS is one such mitigation).
+> **Quality reviewed:** 2026-06-28 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 4H+2M fixed | scope: kernel-code-quality
 
 ---
 

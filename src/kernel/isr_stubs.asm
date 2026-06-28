@@ -114,16 +114,19 @@ isr_common_stub:
     ;   [rsp+24] = RSP  (user)
     ;   [rsp+32] = SS   (user)
     test byte [rsp+8], 3      ; check RPL bits of return CS
-    jz .no_swapgs_exit        ; returning to ring 0 → skip swapgs + VERW
-    swapgs                    ; ring 0 → ring 3: swap per-CPU ↔ TEB
+    jz .no_swapgs_exit        ; returning to ring 0 → skip VERW + swapgs
 
     ; MDS (TODO-10 S19): clear CPU buffers before returning to ring 3 ONLY.
     ; Ring-0 returns jumped over this (no SMT-sibling leak boundary crossed, and
-    ; it would run on every timer tick/IPI). Gated on the once-per-boot decision.
-    ; Operand is RIP-relative RO data; ZF clobber harmless (iretq reloads RFLAGS).
+    ; it would run on every timer tick/IPI). Placed BEFORE swapgs so the
+    ; post-swapgs user-GS CPL0 window stays minimal (NMI/MCE in that window runs
+    ; with user GS). Operand is RIP-relative RO data; ZF clobber harmless (iretq
+    ; reloads RFLAGS).
     cmp byte [rel g_mds_verw_active], 0
-    jz .no_swapgs_exit
+    jz .skip_mds_verw
     verw word [rel g_mds_verw_sel]
+.skip_mds_verw:
+    swapgs                    ; ring 0 → ring 3: swap per-CPU ↔ TEB
 .no_swapgs_exit:
 
     ; Return from interrupt

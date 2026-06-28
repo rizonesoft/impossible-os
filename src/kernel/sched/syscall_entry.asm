@@ -117,15 +117,16 @@ syscall_entry:
     pop rcx                             ; user RIP -> RCX for SYSRET
     pop rsp                             ; user RSP restored directly
 
-    swapgs                              ; GS = user TEB; KERNEL_GS = per-CPU
-
     ; MDS (TODO-10 S19): clear CPU fill/store/load buffers before returning to
-    ; ring 3 when the once-per-boot decision latched the gate on. Placed after
-    ; the final swapgs and just before sysret so no kernel secret is loaded after
-    ; the clear. VERW's ZF clobber is harmless -- sysret reloads RFLAGS from R11.
-    ; The operand is RIP-relative RO data (not GS-relative, not a secret).
+    ; ring 3 when the once-per-boot decision latched the gate on. Placed BEFORE
+    ; swapgs so the post-swapgs user-GS CPL0 window (before sysret) stays minimal
+    ; -- an NMI/MCE in that window runs with user GS. The last kernel-secret
+    ; access precedes this; swapgs + sysret load no secret. Operand is RIP-relative
+    ; RO data (not GS-relative). ZF clobber harmless -- sysret reloads RFLAGS from R11.
     cmp byte [rel g_mds_verw_active], 0
     jz .no_mds_verw
     verw word [rel g_mds_verw_sel]
 .no_mds_verw:
+
+    swapgs                              ; GS = user TEB; KERNEL_GS = per-CPU
     o64 sysret                          ; RIP=RCX, RFLAGS=R11|2, ring 3
