@@ -543,16 +543,21 @@ A misaligned LOCK-prefixed access that splits a cache line (split lock), or a bu
 
 Three shipping x86 features the kernel detects but does not yet use: WAITPKG (user UMONITOR/UMWAIT/TPAUSE idle, needs IA32_UMWAIT_CONTROL bounded so user-space cannot block unboundedly), SERIALIZE (a dedicated serializing instruction cheaper than CPUID), and RDPID (one-instruction CPU-id read, faster than RDTSCP when only the id is needed).
 
-- [ ] CPUID detection in `cpuid.h`: `CPU_FEATURE_WAITPKG` (`CPUID.(7,0):ECX[5]`), `CPU_FEATURE_SERIALIZE` (`CPUID.(7,0):EDX[14]`), `CPU_FEATURE_RDPID` (`CPUID.(7,0):ECX[22]`)
-- [ ] WAITPKG: `MSR_IA32_UMWAIT_CONTROL = 0x000000E1` constant; on `CPU_FEATURE_WAITPKG`, write a bounded max-dwell on BSP and each AP so user UMWAIT/TPAUSE cannot block unboundedly (anti-DoS)
-- [ ] SERIALIZE: `cpu_serialize()` inline emits `serialize` when `CPU_FEATURE_SERIALIZE`, else the existing CPUID serialization; adopt at the MSR-write-then-fence sites that currently rely on CPUID
-- [ ] RDPID: `cpu_current_id()` inline emits `rdpid` when `CPU_FEATURE_RDPID` (reads IA32_TSC_AUX set per-CPU in §11), else falls back to `rdtscp_read(&id)`; use in CPU-id-only hot paths
-- [ ] Boot log: one `[cpu]` line summarizing which of WAITPKG/SERIALIZE/RDPID were adopted
-- [ ] Commit: `"kernel/cpu: adopt WAITPKG (UMWAIT_CONTROL anti-DoS), SERIALIZE, RDPID"`
+- [x] CPUID detection (`cpuid.c`/`cpuid.h`): `CPU_FEATURE_WAITPKG` (7.0:ECX[5]), `CPU_FEATURE_SERIALIZE` (7.0:EDX[14]), `CPU_FEATURE_RDPID` (7.0:ECX[22])
+- [x] WAITPKG anti-DoS: `MSR_IA32_UMWAIT_CONTROL=0xE1` bounds user UMWAIT/TPAUSE dwell (~100000 TSC). BSP programs it POST-IDT in `cpu_record_bsp_profile()`; APs replay via the WAITPKG-gated `s_bsp_msr_profile[]` entry (no Phase-0 wrmsr)
+- [/] DEFERRED -- SERIALIZE adoption: `cpu_serialize()` helper + CPUID-fence-site replacement needs the AP-intersection gate (a skewed AP would #UD) for marginal gain; detection-only -> XREF §6
+- [/] DEFERRED -- RDPID adoption: `cpu_current_id()` helper needs TSC_AUX reliability (set only w/ RDTSCP per §11) + `gs:cpu_id` fallback; marginal; detection-only -> XREF §11
+- [x] Boot log: `[cpu] feature adoption: WAITPKG=.. SERIALIZE=.. RDPID=..` in `cpuid_init()`
+- [x] Commit: `"kernel/cpu: adopt WAITPKG (UMWAIT_CONTROL anti-DoS), SERIALIZE, RDPID"`
 
-**Test checkpoint:** On a WAITPKG CPU, `IA32_UMWAIT_CONTROL` is non-zero after boot (bounded dwell) and a user TPAUSE returns within the bound. `cpu_serialize()` emits SERIALIZE when supported (verified by disassembly / feature log) and the CPUID fallback otherwise. `cpu_current_id()` returns the correct logical id via RDPID. Test on: QEMU TCG (`-cpu max`), bare metal.
+**Test checkpoint:** On a WAITPKG CPU, `IA32_UMWAIT_CONTROL` max-time (bits[31:2]) is non-zero after boot (bounded, unit-tested); a user TPAUSE returns within the bound. On non-WAITPKG CPUs nothing is written (no #GP). SERIALIZE/RDPID are detected + logged (instruction adoption deferred). Smoke-validated on KVM (RDPID detected, WAITPKG absent -> not armed, boot clean 2.85s). Test on: QEMU WHPX, TCG `-cpu max`, bare metal (Alder Lake+ for WAITPKG).
 
-> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 2 feature-adopt suites (bit-pin + UMWAIT bound), 0 failures
+
+> **Notes:**
+> - Shipped: WAITPKG/SERIALIZE/RDPID CPUID detection + `cpu_configure_umwait()` bounding user UMWAIT/TPAUSE dwell via `IA32_UMWAIT_CONTROL` + a `[cpu] feature adoption` boot log.
+> - UMWAIT lives on the MSR-profile-replay path: BSP programs it post-IDT in `cpu_record_bsp_profile()`; APs replay the WAITPKG-gated `s_bsp_msr_profile[]` entry (AP-local CPUID gate, no Phase-0 wrmsr that could not degrade through a #GP handler).
+> - Effect: a user thread can no longer block a logical CPU unboundedly with UMWAIT/TPAUSE; SERIALIZE/RDPID instruction adoption deferred (AP-gate + TSC_AUX reliability for marginal gain).
 
 ---
 

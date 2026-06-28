@@ -106,7 +106,12 @@ enum cpu_feature {
     CPU_FEATURE_LAM       = 57,   /* Linear Address Masking (7.1:EAX[26]) */
     CPU_FEATURE_LASS      = 58,   /* Linear Address Space Separation (7.1:EAX[6]) */
 
-    CPU_FEATURE_COUNT     = 59    /* total features tracked */
+    /* Additional CPU feature adoption (CPUID leaf 0x07) */
+    CPU_FEATURE_WAITPKG   = 59,   /* UMONITOR/UMWAIT/TPAUSE (7.0:ECX[5]) */
+    CPU_FEATURE_SERIALIZE = 60,   /* SERIALIZE instruction (7.0:EDX[14]) */
+    CPU_FEATURE_RDPID     = 61,   /* RDPID instruction (7.0:ECX[22]) */
+
+    CPU_FEATURE_COUNT     = 62    /* total features tracked */
 };
 
 /* Confidential-compute guest kind (detected via CPUID; full attestation is
@@ -151,15 +156,17 @@ typedef enum {
  * AP. Per this section's scope ("validates security-critical feature
  * mismatches"), it is NOT the full feature set: it covers the required baseline
  * plus the optional features that drive CR4/XCR0 enables and hybrid divergence
- * (SMEP/SMAP/UMIP/PKU/AVX/AVX512F/PCID/XSAVE). The global intersection and the
- * optional-mismatch check operate only within this mask. */
+ * (SMEP/SMAP/UMIP/PKU/AVX/AVX512F/PCID/XSAVE/RDTSCP/WAITPKG). WAITPKG drives the
+ * UMWAIT_CONTROL MSR replay the way RDTSCP drives TSC_AUX. The global
+ * intersection and the optional-mismatch check operate only within this mask. */
 #define CPU_FEATURES_AP_PROBE_MASK \
     (CPU_FEATURES_REQUIRED_MASK | \
      (1ULL << CPU_FEATURE_SMEP) | (1ULL << CPU_FEATURE_SMAP) | \
      (1ULL << CPU_FEATURE_UMIP) | (1ULL << CPU_FEATURE_PKU)  | \
      (1ULL << CPU_FEATURE_AVX)  | (1ULL << CPU_FEATURE_AVX512F) | \
      (1ULL << CPU_FEATURE_PCID) | (1ULL << CPU_FEATURE_XSAVE) | \
-     (1ULL << CPU_FEATURE_RDTSCP) | (1ULL << CPU_FEATURE_SSE4_2))
+     (1ULL << CPU_FEATURE_RDTSCP) | (1ULL << CPU_FEATURE_SSE4_2) | \
+     (1ULL << CPU_FEATURE_WAITPKG))
 
 /* --- Global CPU feature structure --- */
 

@@ -148,7 +148,9 @@ void cpuid_init(void)
         /* ECX */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_UMIP,     ecx,  2);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_PKU,      ecx,  3);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_WAITPKG,  ecx,  5);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_LA57,     ecx, 16);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_RDPID,    ecx, 22);
 
         /* EDX */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_UINTR,     edx,  5);
@@ -156,6 +158,7 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_CET_IBT,   edx, 20);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_IBRS,      edx, 26);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_STIBP,     edx, 27);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_SERIALIZE, edx, 14);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SPEC_CTRL, edx, 26);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_ARCH_CAP,  edx, 29);
 
@@ -370,6 +373,16 @@ void cpuid_init(void)
              "[SIMD] APX detected (R16-R31); not yet enabled");
     }
 
+    /* ---- Additional CPU feature adoption (WAITPKG/SERIALIZE/RDPID) ---- */
+    if (cpu_has(CPU_FEATURE_WAITPKG) || cpu_has(CPU_FEATURE_SERIALIZE) ||
+        cpu_has(CPU_FEATURE_RDPID)) {
+        klog(LOG_INFO, "cpu",
+             "[cpu] feature adoption: WAITPKG=%u SERIALIZE=%u RDPID=%u",
+             (uint64_t)(cpu_has(CPU_FEATURE_WAITPKG) ? 1 : 0),
+             (uint64_t)(cpu_has(CPU_FEATURE_SERIALIZE) ? 1 : 0),
+             (uint64_t)(cpu_has(CPU_FEATURE_RDPID) ? 1 : 0));
+    }
+
     /* ---- Future-silicon detection stubs (detect + log only; enablement is
      * deferred to each feature's owning subsystem) ---- */
     if (cpu_has(CPU_FEATURE_UINTR))
@@ -451,6 +464,7 @@ uint64_t cpuid_probe_ap_features(void)
         set_flag_if(&m, CPU_FEATURE_SMAP,    ebx, 20);
         set_flag_if(&m, CPU_FEATURE_UMIP,    ecx,  2);
         set_flag_if(&m, CPU_FEATURE_PKU,     ecx,  3);
+        set_flag_if(&m, CPU_FEATURE_WAITPKG, ecx,  5);  /* drives UMWAIT_CONTROL replay */
     }
     cpuid_raw(0x80000000, 0, &max_ext, &ebx, &ecx, &edx);
     if (max_ext >= 0x80000001) {

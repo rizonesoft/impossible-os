@@ -416,7 +416,14 @@ void cpu_harden(void)
     cpu_enable_nx();
     cpu_enable_umip();
     cpu_enable_pku();
-    /* PAT is NOT programmed here: it is owned by a single authoritative write
+    /* WAITPKG (UMWAIT_CONTROL) is NOT programmed here. cpu_harden() runs in
+     * boot_phase0 on the BSP -- before idt_init() -- so a CPUID-gated optional
+     * MSR write here could not degrade through a #GP handler (TODO-09 S19). It
+     * is instead owned by the MSR-profile replay path: the BSP programs it once
+     * post-IDT in cpu_record_bsp_profile() and each AP replays the snapshot via
+     * ap_apply_msr_profile() (feature-gated), exactly like PAT.
+     *
+     * PAT is NOT programmed here either: it is owned by a single authoritative write
      * per CPU (TODO-09-boot S8). The BSP programs PAT in boot_phase0 after the
      * page-table takeover (boot_hw.c, post-CR3-reload); each AP programs it
      * exactly once via the MSR-profile replay in ap_cpu_harden(). Writing it
@@ -552,6 +559,12 @@ void cpu_security_log_state(const char *phase_label)
  * Spectre and CET setters ship (they own the values). */
 #define MSR_PROFILE_ALWAYS  0xFFFFFFFFu   /* feature gate: always apply */
 
+/* WAITPKG anti-DoS dwell bound (TODO-09 S19): bits[31:2] = max TSC-quanta a
+ * user UMWAIT/TPAUSE may park a logical CPU; bit0 = 0 leaves C0.2 allowed; bit1
+ * reserved. 100000 is already 4-aligned, so masking the low 2 bits is a no-op
+ * that documents the reserved-bit contract and avoids a #GP. */
+#define UMWAIT_MAX_DWELL_TSC  (100000u & ~3u)
+
 struct msr_profile_entry {
     uint32_t    msr;        /* MSR index */
     uint64_t    value;      /* BSP value, filled at record time; ignored if per_cpu */
@@ -561,8 +574,9 @@ struct msr_profile_entry {
 };
 
 static struct msr_profile_entry s_bsp_msr_profile[] = {
-    { MSR_IA32_PAT,     0, "PAT",     MSR_PROFILE_ALWAYS, 0 },
-    { MSR_IA32_TSC_AUX, 0, "TSC_AUX", CPU_FEATURE_RDTSCP, 1 },
+    { MSR_IA32_PAT,            0, "PAT",     MSR_PROFILE_ALWAYS, 0 },
+    { MSR_IA32_TSC_AUX,        0, "TSC_AUX", CPU_FEATURE_RDTSCP,  1 },
+    { MSR_IA32_UMWAIT_CONTROL, 0, "UMWAIT",  CPU_FEATURE_WAITPKG, 1 },
 };
 #define MSR_PROFILE_COUNT (sizeof(s_bsp_msr_profile) / sizeof(s_bsp_msr_profile[0]))
 
@@ -622,10 +636,26 @@ void cpu_record_bsp_profile(void)
     s_bsp_xcr0 = cpu_has(CPU_FEATURE_XSAVE) ? xcr0_read() : 0;
     s_bsp_required_cr4 = s_bsp_cr4 & CR4_UNIFORM_MASK;
 
-    /* Freeze the replicated MSR values from the BSP's live MSRs. Per-CPU
-     * entries (TSC_AUX) keep value 0 -- their value is computed on the AP. */
+    /* WAITPKG anti-DoS (TODO-09 S19): program the BSP's IA32_UMWAIT_CONTROL HERE
+     * -- post-IDT (this runs from smp_init(), Phase 2), so a CPUID-gated optional
+     * MSR write can degrade through the #GP handler instead of triple-faulting
+     * the way a boot_phase0 write would. UMWAIT is a computed per-CPU profile
+     * entry (the bound is a fixed constant, NOT a BSP-snapshotted value), so each
+     * AP writes the same constant independently in ap_apply_msr_profile() gated
+     * on its OWN WAITPKG -- an AP-only WAITPKG core is still bounded even when the
+     * BSP lacks WAITPKG and skips this write. */
+    if (cpu_has(CPU_FEATURE_WAITPKG))
+        msr_write(MSR_IA32_UMWAIT_CONTROL, UMWAIT_MAX_DWELL_TSC);
+
+    /* Freeze the replicated MSR values from the BSP's live MSRs. Per-CPU entries
+     * (TSC_AUX, UMWAIT) keep value 0 -- their value is computed on the AP. The
+     * feature gate honors the struct's `feature` field for any future non-per_cpu
+     * gated entry: reading an MSR the CPU lacks would #GP. */
     for (i = 0; i < MSR_PROFILE_COUNT; i++) {
         if (s_bsp_msr_profile[i].per_cpu)
+            continue;
+        if (s_bsp_msr_profile[i].feature != MSR_PROFILE_ALWAYS &&
+            !cpu_has((enum cpu_feature)s_bsp_msr_profile[i].feature))
             continue;
         s_bsp_msr_profile[i].value = msr_read(s_bsp_msr_profile[i].msr);
     }
@@ -772,6 +802,12 @@ static uint32_t ap_apply_msr_profile(uint32_t cpu_id)
                 if (!g_tsc_aux_available)
                     continue;
                 msr_write(MSR_IA32_TSC_AUX, (uint64_t)cpu_id);
+            } else if (e->msr == MSR_IA32_UMWAIT_CONTROL) {
+                /* UMWAIT = a fixed anti-DoS bound, NOT a BSP-snapshotted value
+                 * (S19). Writing the constant gated on this AP's own WAITPKG
+                 * (the loop's cpu_feature_local check above) keeps an AP-only
+                 * WAITPKG core bounded even when the BSP lacked WAITPKG. */
+                msr_write(MSR_IA32_UMWAIT_CONTROL, UMWAIT_MAX_DWELL_TSC);
             } else {
                 continue;   /* unknown per-CPU entry: skip rather than guess */
             }

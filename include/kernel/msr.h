@@ -108,6 +108,9 @@ int msr_try_write(uint32_t index, uint64_t value);
 #define MSR_IA32_MISC_ENABLE        0x000001A0  /* feature-enable bits */
 #define MSR_IA32_BIOS_SIGN_ID       0x0000008B  /* microcode signature/revision */
 
+/* WAITPKG: bound user UMWAIT/TPAUSE dwell (bits[31:2]=max TSC time, bit0=C0.2-disable) */
+#define MSR_IA32_UMWAIT_CONTROL     0x000000E1
+
 /* Performance monitoring */
 #define MSR_IA32_MPERF              0x000000E7
 #define MSR_IA32_APERF              0x000000E8

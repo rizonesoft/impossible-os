@@ -1139,6 +1139,7 @@ static void test_ap_probe_mask_covers_gated_features(void)
     TEST_ASSERT((m & (1ULL << CPU_FEATURE_SMEP))   != 0, "AP probe mask covers SMEP");
     TEST_ASSERT((m & (1ULL << CPU_FEATURE_SMAP))   != 0, "AP probe mask covers SMAP");
     TEST_ASSERT((m & (1ULL << CPU_FEATURE_RDTSCP)) != 0, "AP probe mask covers RDTSCP (TSC_AUX gate)");
+    TEST_ASSERT((m & (1ULL << CPU_FEATURE_WAITPKG)) != 0, "AP probe mask covers WAITPKG (UMWAIT_CONTROL gate)");
 }
 
 /* ---- S9: CPU Topology ---- */
@@ -1464,14 +1465,16 @@ static void test_platform_baremetal_clean(void)
 
 static void test_ap_msr_profile_populated(void)
 {
-    /* Pin the exact registry shape: exactly PAT (verbatim) + TSC_AUX
-     * (per-CPU), no unknown entries. An accidental added/duplicate/wrong
-     * entry would change AP MSR replay, so reject anything else here. */
+    /* Pin the exact registry shape: PAT (verbatim) + TSC_AUX (per-CPU) + UMWAIT
+     * (per-CPU computed constant, WAITPKG-gated; S19 anti-DoS). UMWAIT MUST be
+     * per_cpu==1 (computed): a verbatim BSP-value replay would write a stale 0
+     * (unbounded) onto an AP-only WAITPKG core when the BSP lacks WAITPKG. An
+     * accidental added/duplicate/wrong entry would change AP MSR replay. */
     uint32_t i, count = cpu_msr_profile_count();
-    uint32_t pat_count = 0, tsc_aux_count = 0, unknown = 0;
+    uint32_t pat_count = 0, tsc_aux_count = 0, umwait_count = 0, unknown = 0;
 
-    TEST_ASSERT_EQ((uint64_t)count, 2ULL,
-                   "MSR profile registry has exactly 2 entries");
+    TEST_ASSERT_EQ((uint64_t)count, 3ULL,
+                   "MSR profile registry has exactly 3 entries");
     for (i = 0; i < count; i++) {
         uint32_t msr = 0;
         uint64_t value = 0;
@@ -1482,6 +1485,8 @@ static void test_ap_msr_profile_populated(void)
             pat_count++;
         else if (msr == MSR_IA32_TSC_AUX && per_cpu == 1)
             tsc_aux_count++;
+        else if (msr == MSR_IA32_UMWAIT_CONTROL && per_cpu == 1)
+            umwait_count++;
         else
             unknown++;
     }
@@ -1489,6 +1494,8 @@ static void test_ap_msr_profile_populated(void)
                    "exactly one verbatim PAT profile entry");
     TEST_ASSERT_EQ((uint64_t)tsc_aux_count, 1ULL,
                    "exactly one per-CPU TSC_AUX profile entry");
+    TEST_ASSERT_EQ((uint64_t)umwait_count, 1ULL,
+                   "exactly one per-CPU computed UMWAIT_CONTROL profile entry");
     TEST_ASSERT_EQ((uint64_t)unknown, 0ULL,
                    "no unknown MSR profile entries");
 }
@@ -1730,6 +1737,41 @@ static void test_future_silicon_bits(void)
                    (uint64_t)((a >> 6) & 1u), "LASS == CPUID.7.1:EAX[6]");
     TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_LAM) ? 1 : 0),
                    (uint64_t)((a >> 26) & 1u), "LAM == CPUID.7.1:EAX[26]");
+}
+
+/* ---- S19: WAITPKG / SERIALIZE / RDPID adoption ---- */
+
+static void test_feature_adoption_bits(void)
+{
+    uint32_t a, b, c, d, maxleaf;
+    __asm__ volatile("cpuid" : "=a"(maxleaf), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(0u), "c"(0u));
+    if (maxleaf < 7) {
+        TEST_ASSERT_EQ((uint64_t)cpu_has(CPU_FEATURE_WAITPKG), 0ULL,
+                       "WAITPKG clear without leaf 7");
+        return;
+    }
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
+                             : "a"(7u), "c"(0u));
+    TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_WAITPKG) ? 1 : 0),
+                   (uint64_t)((c >> 5) & 1u), "WAITPKG == CPUID.7.0:ECX[5]");
+    TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_RDPID) ? 1 : 0),
+                   (uint64_t)((c >> 22) & 1u), "RDPID == CPUID.7.0:ECX[22]");
+    TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_SERIALIZE) ? 1 : 0),
+                   (uint64_t)((d >> 14) & 1u), "SERIALIZE == CPUID.7.0:EDX[14]");
+}
+
+static void test_umwait_bounded(void)
+{
+    /* On a WAITPKG CPU, cpu_harden() must have written a bounded max-dwell into
+     * IA32_UMWAIT_CONTROL (the max-time field, bits[31:2], must be non-zero --
+     * 0 means unbounded). Skipped on CPUs lacking WAITPKG. */
+    if (!cpu_has(CPU_FEATURE_WAITPKG)) {
+        TEST_SKIP("no WAITPKG on this CPU");
+        return;
+    }
+    uint64_t v = msr_read(MSR_IA32_UMWAIT_CONTROL);
+    TEST_ASSERT((v & ~3ull) != 0, "UMWAIT_CONTROL bounded (max-time != 0)");
 }
 
 /* ---- Registration ---- */
@@ -1976,6 +2018,12 @@ void test_register_x86(void)
         test_cc_kind_valid, TEST_CAT_X86);
     test_suite_register_cat("future-silicon: LA57/LAM/LASS bit positions pinned",
         test_future_silicon_bits, TEST_CAT_X86);
+
+    /* S19: WAITPKG / SERIALIZE / RDPID adoption */
+    test_suite_register_cat("feature-adopt: WAITPKG/SERIALIZE/RDPID bit positions",
+        test_feature_adoption_bits, TEST_CAT_X86);
+    test_suite_register_cat("feature-adopt: UMWAIT_CONTROL bounded when WAITPKG",
+        test_umwait_bounded, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */
