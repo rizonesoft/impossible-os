@@ -67,6 +67,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
 | 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
+| 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -141,6 +142,15 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 - [x] Commit: `"kernel: abi -- swapgs on INT 0x80 ring-3 entry and exit"`
 
 **Test checkpoint:** Ring-3 user program executes syscalls repeatedly without GS corruption; ISR entry/exit preserves kernel per-CPU GS in ring 0 and TEB GS in ring 3. No interrupt-path regressions or triple faults. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | swapgs/GS correctness via cmd.exe ring-3 + ABI suite, 0 failures
+> **Notes:**
+> - Shipped: `isr_common_stub` -- conditional entry swapgs on saved CS RPL + Spectre-v1 LFENCE (FENCE_SWAPGS both paths, §8); exit VERW (§19) + swapgs on return CS RPL; ring-0->ring-0 skips both.
+> - Symmetric by construction (entry/exit gate on the same interrupted CS RPL); verified by cmd.exe running ring-3 syscalls without GS corruption.
+> - Scope boundary: NMI/#DF/#MCE paranoid swapgs entry (async criticals sharing the CS-RPL stub) -> §18.
+> **Verified:** 2026-06-28 | commit `20948e67` | 5/5 items | build OK | swapgs symmetry; cmd.exe ring-3
+> **Deferred:** [H] NMI/#DF/#MCE route through the CS-RPL-only `isr_common_stub`; a critical async exception in the user-GS CPL0 window enters `isr_handler` with user GS in ring 0. -> XREF: §18 (item: "Add a paranoid entry for the IST vectors (NMI 2, #DF 8, #MCE 18)..." at line 423)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1H deferred-to-§18; 2H rejected as false-positive (evidence in commit) | scope: kernel-code-quality
 
 ---
 
@@ -413,6 +423,20 @@ The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber
 - [ ] Commit: `"kernel: peb -- correct PEB version-field offsets to x64 ABI (0x118/0x120)"`
 
 **Test checkpoint:** `__builtin_offsetof(PEB, OSMajorVersion) == 0x118` and `OSBuildNumber == 0x120`; `test_peb_offsets` asserts the x64 offsets; the PEB populated by `peb_alloc_for_task` reads 10.0.22621 at the corrected offsets; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 18. Paranoid swapgs Entry for NMI / #DF / #MCE
+`isr_common_stub` decides swapgs purely on the saved CS RPL (`test [rsp+24],3`). NMI, #DF, and #MCE route through the same stub on IST stacks and are not masked by IF. If one fires after kernel entry but before the entry swapgs, or in the acknowledged post-swapgs-exit CPL0 window (isr_stubs.asm:122), the nested vector sees a ring-0 saved CS, skips swapgs, and `isr_handler` runs gs:-relative with USER GS in ring 0 -- a fatal halt / wrong per-CPU access on bare metal (latent on QEMU where NMI/MCE are rare). Linux solves this with paranoid entry: read the actual GS base via MSR to decide swapgs, not the CS RPL. -> XREF: §3 (INT 0x80 swapgs), `D02 T01` (IDT/IST setup).
+
+- [ ] Add a paranoid entry for the IST vectors (NMI 2, #DF 8, #MCE 18): read `IA32_GS_BASE` to determine whether GS is currently user or kernel, swapgs only if user, and record the decision
+- [ ] Paranoid exit: undo exactly the swapgs the paranoid entry performed (do not use the CS-RPL exit test for these vectors)
+- [ ] Route NMI/#DF/#MCE to dedicated paranoid stubs instead of the plain `isr_common_stub` CS-RPL path; keep the IST stack assignment
+- [ ] Guard the rdmsr-based detection against NMI nesting and the no-SWAPGS-CPU case
+- [ ] Test: a synthetic nested-entry scenario (or documented bare-metal validation) proving the paranoid path swaps GS correctly when entered from the user-GS CPL0 window
+- [ ] Commit: `"kernel: isr -- paranoid swapgs entry for NMI/#DF/#MCE (MSR GS-base detection)"`
+
+**Test checkpoint:** NMI/#DF/#MCE entered from ring 3, from ring-0 kernel, and from the post-swapgs user-GS window all reach `isr_handler` with KERNEL GS (validated via a gs:-relative per-CPU read); no GS corruption; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
