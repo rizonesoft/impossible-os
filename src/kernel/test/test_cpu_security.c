@@ -1763,15 +1763,19 @@ static void test_feature_adoption_bits(void)
 
 static void test_umwait_bounded(void)
 {
-    /* On a WAITPKG CPU, cpu_harden() must have written a bounded max-dwell into
-     * IA32_UMWAIT_CONTROL (the max-time field, bits[31:2], must be non-zero --
-     * 0 means unbounded). Skipped on CPUs lacking WAITPKG. */
+    /* On a WAITPKG CPU, the BSP UMWAIT bound is programmed by
+     * cpu_program_bsp_umwait() (boot_phase2, post-IDT); APs replay it via
+     * ap_apply_msr_profile(). The live MSR must equal the exact programmed
+     * constant -- non-zero alone would let a garbage firmware value pass.
+     * 100000 mirrors UMWAIT_MAX_DWELL_TSC in cpu_security.c (keep in sync).
+     * Skipped on CPUs lacking WAITPKG. */
     if (!cpu_has(CPU_FEATURE_WAITPKG)) {
         TEST_SKIP("no WAITPKG on this CPU");
         return;
     }
     uint64_t v = msr_read(MSR_IA32_UMWAIT_CONTROL);
-    TEST_ASSERT((v & ~3ull) != 0, "UMWAIT_CONTROL bounded (max-time != 0)");
+    TEST_ASSERT_EQ(v, (100000ull & ~3ull),
+                   "UMWAIT_CONTROL == programmed bound (UMWAIT_MAX_DWELL_TSC)");
 }
 
 /* ---- Registration ---- */

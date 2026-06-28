@@ -14,7 +14,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). §15 future-silicon detection stubs (UINTR/LA57/LAM/LASS + TDX/SEV cc_kind; boot_info.cc_kind mirror + Hyper-V SynIC producer deferred). **Deferred [/]:** §7 FRED, §8 LKGS, §12 AMD IBS (no test platform); §16 1 GiB boot PT (UEFI-bootloader paging optimization needing bare-metal sign-off; `entry.asm` premise was stale); §17 AMX+XFD (blocked on a per-thread XSAVE redesign -- the per-task FPU model leaks tile state across threads; no bare-metal AMX). §18 split/bus-lock detection (design+adversarial-vetted; deferred -- correct version needs a re-arm-on-context-switch hook in the universal scheduler path + post-idt_init registration; first attempt rolled back). **Open [ ]:** §19 WAITPKG/SERIALIZE/RDPID (added 2026-06-28 gap-audit).
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). §15 future-silicon detection stubs (UINTR/LA57/LAM/LASS + TDX/SEV cc_kind; boot_info.cc_kind mirror + Hyper-V SynIC producer deferred). **Deferred [/]:** §7 FRED, §8 LKGS, §12 AMD IBS (no test platform); §16 1 GiB boot PT (UEFI-bootloader paging optimization needing bare-metal sign-off; `entry.asm` premise was stale); §17 AMX+XFD (blocked on a per-thread XSAVE redesign -- the per-task FPU model leaks tile state across threads; no bare-metal AMX). §18 split/bus-lock detection (design+adversarial-vetted; deferred -- correct version needs a re-arm-on-context-switch hook in the universal scheduler path + post-idt_init registration; first attempt rolled back). §19 WAITPKG/SERIALIZE/RDPID (WAITPKG UMWAIT anti-DoS bound shipped on every boot path + all-three detection; SERIALIZE/RDPID instruction adoption deferred to owners).
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-10` (gap analysis 2026-04-12: `TODO-10` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
@@ -59,7 +59,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 - A 2-second boot self-benchmark stores hardware capabilities in the Registry and auto-configures SIMD dispatch thresholds and scheduler quantum.
 - AMX tile state is context-switched lazily via XFD: a task that never uses AMX never allocates its 8 KiB tile buffer, and first use faults in through the `#NM` handler (§17).
 - Split-lock (#AC) and bus-lock (#DB) detection terminate or warn on a misbehaving thread instead of letting one core stall the whole coherency fabric (§18).
-- WAITPKG dwell is bounded via `IA32_UMWAIT_CONTROL` (anti-DoS), and SERIALIZE/RDPID replace heavier CPUID/RDTSCP sequences where supported (§19).
+- WAITPKG dwell is bounded via `IA32_UMWAIT_CONTROL` (anti-DoS); SERIALIZE/RDPID are detected for future adoption (the instruction-helper swap is deferred) (§19).
 
 ---
 
@@ -85,7 +85,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6                 |  [/]    |
 | 💎  |  17   | AMX tile state + XFD dynamic XSAVE                  | §1, §4               |  [/]    |
 | 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection         | §4                   |  [/]    |
-| 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption                | §4, §11              |  [ ]    |
+| 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption                | §4, §11              |  [/]    |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -544,7 +544,7 @@ A misaligned LOCK-prefixed access that splits a cache line (split lock), or a bu
 Three shipping x86 features the kernel detects but does not yet use: WAITPKG (user UMONITOR/UMWAIT/TPAUSE idle, needs IA32_UMWAIT_CONTROL bounded so user-space cannot block unboundedly), SERIALIZE (a dedicated serializing instruction cheaper than CPUID), and RDPID (one-instruction CPU-id read, faster than RDTSCP when only the id is needed).
 
 - [x] CPUID detection (`cpuid.c`/`cpuid.h`): `CPU_FEATURE_WAITPKG` (7.0:ECX[5]), `CPU_FEATURE_SERIALIZE` (7.0:EDX[14]), `CPU_FEATURE_RDPID` (7.0:ECX[22])
-- [x] WAITPKG anti-DoS: `MSR_IA32_UMWAIT_CONTROL=0xE1` bounds user UMWAIT/TPAUSE dwell (~100000 TSC). BSP programs it POST-IDT in `cpu_record_bsp_profile()`; APs replay via the WAITPKG-gated `s_bsp_msr_profile[]` entry (no Phase-0 wrmsr)
+- [x] WAITPKG anti-DoS: `MSR_IA32_UMWAIT_CONTROL=0xE1` bounds user UMWAIT/TPAUSE dwell. `cpu_program_bsp_umwait()` programs the BSP post-IDT on every boot path; APs replay the WAITPKG-gated `s_bsp_msr_profile[]` entry; `msr_try_write` degrade
 - [/] DEFERRED -- SERIALIZE adoption: `cpu_serialize()` helper + CPUID-fence-site replacement needs the AP-intersection gate (a skewed AP would #UD) for marginal gain; detection-only -> XREF §6
 - [/] DEFERRED -- RDPID adoption: `cpu_current_id()` helper needs TSC_AUX reliability (set only w/ RDTSCP per §11) + `gs:cpu_id` fallback; marginal; detection-only -> XREF §11
 - [x] Boot log: `[cpu] feature adoption: WAITPKG=.. SERIALIZE=.. RDPID=..` in `cpuid_init()`
@@ -555,9 +555,14 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 > **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 2 feature-adopt suites (bit-pin + UMWAIT bound), 0 failures
 
 > **Notes:**
-> - Shipped: WAITPKG/SERIALIZE/RDPID CPUID detection + `cpu_configure_umwait()` bounding user UMWAIT/TPAUSE dwell via `IA32_UMWAIT_CONTROL` + a `[cpu] feature adoption` boot log.
-> - UMWAIT lives on the MSR-profile-replay path: BSP programs it post-IDT in `cpu_record_bsp_profile()`; APs replay the WAITPKG-gated `s_bsp_msr_profile[]` entry (AP-local CPUID gate, no Phase-0 wrmsr that could not degrade through a #GP handler).
+> - Shipped: WAITPKG/SERIALIZE/RDPID CPUID detection + `cpu_program_bsp_umwait()` bounding user UMWAIT/TPAUSE dwell via `IA32_UMWAIT_CONTROL` + a `[cpu] feature adoption` boot log.
+> - UMWAIT: `cpu_program_bsp_umwait()` programs the BSP post-IDT on every boot path (no-ACPI included); APs replay the WAITPKG-gated `s_bsp_msr_profile[]` entry (AP-local CPUID gate). Both use `msr_try_write` so a rejected MSR degrades (warn, unbounded) instead of #GP-panicking.
 > - Effect: a user thread can no longer block a logical CPU unboundedly with UMWAIT/TPAUSE; SERIALIZE/RDPID instruction adoption deferred (AP-gate + TSC_AUX reliability for marginal gain).
+
+> **Verified:** 2026-06-28 | commit `5f2081e0` | 3/5 items | build OK | smoke PASS (KVM 2.69s)
+> **Deferred:** [L] SERIALIZE instruction adoption (`cpu_serialize()` helper + CPUID-fence-site swap) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- SERIALIZE adoption" at line 548)
+> **Deferred:** [L] RDPID instruction adoption (`cpu_current_id()` helper) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- RDPID adoption" at line 549)
+> **Quality reviewed:** 2026-06-28 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 1H+3M+3L fixed | scope: kernel-code-quality
 
 ---
 
@@ -588,7 +593,7 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 | 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §13            |
 | 💎  | AMX tile + XFD       | ✅ HAL XFD lazy alloc       | ✅ XFD dynamic XSAVE        | ⬜ §17 deferred   |
 | 💎  | Split/bus-lock det   | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=       | ⬜ §18 deferred   |
-| 💎  | WAITPKG UMWAIT bound | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL      | ⬜ §19            |
+| 💎  | WAITPKG UMWAIT bound | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL      | ✅ UMWAIT bounded |
 | 💎  | x2APIC MSR mode      | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC        | ⬜ D04 T02 §1     |
 | 💎  | LAM / LASS           | ⚠️ unclear public surface   | ⚠️ LAM gated on LASS        | ⚠️ §15 detected   |
 | 💎  | Confidential VM guest| ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x        | ⚠️ §15 cc_kind det |

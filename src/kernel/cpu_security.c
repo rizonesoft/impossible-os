@@ -418,10 +418,11 @@ void cpu_harden(void)
     cpu_enable_pku();
     /* WAITPKG (UMWAIT_CONTROL) is NOT programmed here. cpu_harden() runs in
      * boot_phase0 on the BSP -- before idt_init() -- so a CPUID-gated optional
-     * MSR write here could not degrade through a #GP handler (TODO-09 S19). It
-     * is instead owned by the MSR-profile replay path: the BSP programs it once
-     * post-IDT in cpu_record_bsp_profile() and each AP replays the snapshot via
-     * ap_apply_msr_profile() (feature-gated), exactly like PAT.
+     * MSR write here could not degrade through a #GP handler (TODO-09 S19). The
+     * BSP is programmed post-IDT by cpu_program_bsp_umwait() (called from
+     * boot_phase2 on every boot path); each AP writes the bound itself as a
+     * computed per-CPU profile entry (the WAITPKG-gated UMWAIT_MAX_DWELL_TSC
+     * write in ap_apply_msr_profile(), NOT a BSP snapshot like PAT).
      *
      * PAT is NOT programmed here either: it is owned by a single authoritative write
      * per CPU (TODO-09-boot S8). The BSP programs PAT in boot_phase0 after the
@@ -625,6 +626,22 @@ static void cpu_record_ap_fault(uint32_t cpu_id, uint64_t detail, uint32_t reaso
     __atomic_store_n(&s_ap_fault_cpu, cpu_id + 1, __ATOMIC_RELEASE);
 }
 
+/* Program the BSP's IA32_UMWAIT_CONTROL anti-DoS bound (TODO-09 S19). Called
+ * UNCONDITIONALLY from boot_phase2 (post-IDT) so the bound applies on every boot
+ * path -- including a no-ACPI/degraded boot that skips smp_init(). Idempotent
+ * (rewrites the same constant). msr_try_write degrades (logs, leaves user dwell
+ * unbounded) instead of #GP-panicking if a platform exposes WAITPKG in CPUID but
+ * rejects the MSR; the CPUID gate is still the primary existence check. */
+void cpu_program_bsp_umwait(void)
+{
+    if (!cpu_has(CPU_FEATURE_WAITPKG))
+        return;
+    if (msr_try_write(MSR_IA32_UMWAIT_CONTROL, UMWAIT_MAX_DWELL_TSC) != 0)
+        klog(LOG_WARN, "cpu",
+             "WAITPKG present but IA32_UMWAIT_CONTROL write rejected; "
+             "user UMWAIT/TPAUSE dwell unbounded");
+}
+
 void cpu_record_bsp_profile(void)
 {
     uint32_t i;
@@ -636,16 +653,13 @@ void cpu_record_bsp_profile(void)
     s_bsp_xcr0 = cpu_has(CPU_FEATURE_XSAVE) ? xcr0_read() : 0;
     s_bsp_required_cr4 = s_bsp_cr4 & CR4_UNIFORM_MASK;
 
-    /* WAITPKG anti-DoS (TODO-09 S19): program the BSP's IA32_UMWAIT_CONTROL HERE
-     * -- post-IDT (this runs from smp_init(), Phase 2), so a CPUID-gated optional
-     * MSR write can degrade through the #GP handler instead of triple-faulting
-     * the way a boot_phase0 write would. UMWAIT is a computed per-CPU profile
-     * entry (the bound is a fixed constant, NOT a BSP-snapshotted value), so each
-     * AP writes the same constant independently in ap_apply_msr_profile() gated
-     * on its OWN WAITPKG -- an AP-only WAITPKG core is still bounded even when the
-     * BSP lacks WAITPKG and skips this write. */
-    if (cpu_has(CPU_FEATURE_WAITPKG))
-        msr_write(MSR_IA32_UMWAIT_CONTROL, UMWAIT_MAX_DWELL_TSC);
+    /* WAITPKG anti-DoS (TODO-09 S19): the BSP's IA32_UMWAIT_CONTROL is NOT
+     * programmed here -- it is owned by cpu_program_bsp_umwait(), called
+     * UNCONDITIONALLY from boot_phase2 (post-IDT) so the bound applies even on a
+     * no-ACPI/degraded boot that never reaches smp_init()/this function. UMWAIT
+     * is a computed per-CPU profile entry (a fixed constant, NOT a BSP snapshot),
+     * so each AP writes it independently in ap_apply_msr_profile() gated on its
+     * OWN WAITPKG -- an AP-only WAITPKG core is bounded regardless of the BSP. */
 
     /* Freeze the replicated MSR values from the BSP's live MSRs. Per-CPU entries
      * (TSC_AUX, UMWAIT) keep value 0 -- their value is computed on the AP. The
@@ -804,10 +818,19 @@ static uint32_t ap_apply_msr_profile(uint32_t cpu_id)
                 msr_write(MSR_IA32_TSC_AUX, (uint64_t)cpu_id);
             } else if (e->msr == MSR_IA32_UMWAIT_CONTROL) {
                 /* UMWAIT = a fixed anti-DoS bound, NOT a BSP-snapshotted value
-                 * (S19). Writing the constant gated on this AP's own WAITPKG
-                 * (the loop's cpu_feature_local check above) keeps an AP-only
-                 * WAITPKG core bounded even when the BSP lacked WAITPKG. */
-                msr_write(MSR_IA32_UMWAIT_CONTROL, UMWAIT_MAX_DWELL_TSC);
+                 * (S19). Write the constant gated on this AP's own WAITPKG (the
+                 * loop's cpu_feature_local check above) so an AP-only WAITPKG core
+                 * is bounded even when the BSP lacked WAITPKG. msr_try_write
+                 * degrades instead of #GP-panicking AP bringup if the MSR is
+                 * rejected; record the failure (the BSP surfaces it in
+                 * ap_cpu_harden_log) so it is not silent, and skip applied++. */
+                if (msr_try_write(MSR_IA32_UMWAIT_CONTROL,
+                                  UMWAIT_MAX_DWELL_TSC) != 0) {
+                    struct per_cpu_data *upc = smp_get_cpu(cpu_id);
+                    if (upc)
+                        upc->umwait_unbounded = 1;
+                    continue;
+                }
             } else {
                 continue;   /* unknown per-CPU entry: skip rather than guess */
             }
@@ -1365,6 +1388,15 @@ void ap_cpu_harden_log(uint32_t cpu_id)
     pat     = pc->pat_at_boot;
     xcr0    = pc->xcr0_at_boot;
     applied = pc->msr_profile_applied;
+
+    /* S19: WAITPKG present on this AP but its UMWAIT_CONTROL write was rejected
+     * -- the anti-DoS dwell bound is not applied on this core. Surfaced here
+     * (BSP-side) so the degrade is not silent (mirrors the BSP's own warn in
+     * cpu_program_bsp_umwait). Warn-only: an optional feature, not a halt. */
+    if (pc->umwait_unbounded)
+        klog(LOG_WARN, "smp",
+             "[AP%u] WAITPKG present but UMWAIT_CONTROL write rejected; "
+             "user UMWAIT/TPAUSE dwell unbounded", (uint64_t)cpu_id);
 
     if (__atomic_load_n(&s_bsp_profile_ready, __ATOMIC_ACQUIRE)) {
         if ((efer & EFER_NXE) != (s_bsp_efer & EFER_NXE))

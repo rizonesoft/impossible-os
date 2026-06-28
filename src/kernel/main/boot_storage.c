@@ -253,6 +253,12 @@ void boot_phase2(void)
     cpu_audit_ensure_bsp();
     boot_progress(2, "CPU_AUDIT", POSTCODE_CPU_AUDIT);
 
+    /* WAITPKG anti-DoS bound (TODO-09 S19): program the BSP's IA32_UMWAIT_CONTROL
+     * here, unconditionally and post-IDT, so the bound applies even on a
+     * no-ACPI/degraded boot that skipped smp_init() (idempotent on the ACPI
+     * path). APs program their own copy during smp bringup. */
+    cpu_program_bsp_umwait();
+
     /* CPU topology: Zen CCD/NUMA + Intel hybrid P/E-core detection */
     {
         extern void topology_init(void);

@@ -85,6 +85,12 @@ void cpu_verify_hardening(void);
  * CPUID approximation. */
 void cpu_record_bsp_profile(void);
 
+/* Program the BSP's IA32_UMWAIT_CONTROL anti-DoS dwell bound (TODO-09 S19).
+ * Call once on the BSP, post-IDT, on EVERY boot path (incl. no-ACPI/degraded
+ * boots that skip smp_init()). Idempotent; CPUID-gated; degrades (warns, leaves
+ * dwell unbounded) on a rejected MSR rather than #GP-panicking. */
+void cpu_program_bsp_umwait(void);
+
 /* Replicate the BSP's hardened CPU state onto the calling AP and BUFFER a
  * snapshot -- AP-only state replication, no verification, no serial output:
  * match the BSP XCR0 mask (intersected with this AP's own supported bits),
