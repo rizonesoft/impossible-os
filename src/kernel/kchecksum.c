@@ -139,10 +139,10 @@ uint32_t kcrc32c_cont(uint32_t crc, const void *data, size_t len)
     uint32_t c = crc ^ 0xFFFFFFFFu;
     /* The crc32 instruction is a general-register op (no xmm state), but an AP
      * could lack SSE4.2 and #UD on it. Gate on the all-online-CPU intersection
-     * (cpu_feature_global_mask), NOT cpu_has() which reflects only the BSP. The
-     * global mask is 0 until cpu_features_finalize_global() runs after SMP
-     * bringup, so early-boot callers correctly take the (identical) sw path. */
-    int sse42 = (cpu_feature_global_mask() >> CPU_FEATURE_SSE4_2) & 1ULL;
+     * (cpu_feature_global_has), NOT cpu_has() which reflects only the BSP. The
+     * intersection is unpublished (returns 0) until cpu_features_finalize_global()
+     * runs after SMP bringup, so early-boot callers correctly take the sw path. */
+    int sse42 = cpu_feature_global_has(CPU_FEATURE_SSE4_2);
     c = sse42 ? k_crc32c_hw(c, p, len)
               : k_crc32c_sw(c, p, len);
     return c ^ 0xFFFFFFFFu;

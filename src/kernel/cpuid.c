@@ -31,11 +31,11 @@ void cpuid_raw(uint32_t leaf, uint32_t subleaf,
 
 /* --- Helpers --- */
 
-static void set_flag_if(uint64_t *flags, enum cpu_feature feat,
+static void set_flag_if(cpu_feature_mask_t *flags, enum cpu_feature feat,
                         uint32_t reg, uint32_t bit)
 {
     if (reg & (1U << bit))
-        *flags |= (1ULL << feat);
+        cpu_feature_set(flags, feat);
 }
 
 /* Copy n bytes (no memcpy in freestanding) */
@@ -169,7 +169,7 @@ void cpuid_init(void)
          * Phase 0, so no msr_try (no IDT yet), same pattern as the S15 SEV read. */
         if (cpu_has(CPU_FEATURE_ARCH_CAP) &&
             (msr_read(MSR_IA32_ARCH_CAPS) & ARCH_CAP_IBRS_ALL))
-            g_cpu.flags |= (1ULL << CPU_FEATURE_ENHANCED_IBRS);
+            cpu_feature_set(&g_cpu.flags, CPU_FEATURE_ENHANCED_IBRS);
 
         /* ---- Leaf 0x07 ECX=1: FRED, LKGS, AVX10, APX ---- */
         if (eax >= 1) {  /* eax from leaf 0x07 ECX=0 = max subleaf */
@@ -452,10 +452,10 @@ void cpuid_init(void)
  * lockstep with the set_flag_if() calls in cpuid_init() above. Only the
  * CPU_FEATURES_AP_PROBE_MASK subset is probed (this section validates
  * security-critical mismatches, not the full feature set). */
-uint64_t cpuid_probe_ap_features(void)
+cpu_feature_mask_t cpuid_probe_ap_features(void)
 {
     uint32_t eax, ebx, ecx, edx, max_leaf, max_ext;
-    uint64_t m = 0;
+    cpu_feature_mask_t m = { { 0, 0 } };
 
     cpuid_raw(0x00000000, 0, &max_leaf, &ebx, &ecx, &edx);
     if (max_leaf >= 0x01) {
@@ -485,7 +485,7 @@ uint64_t cpuid_probe_ap_features(void)
         set_flag_if(&m, CPU_FEATURE_RDTSCP,  edx, 27);
         set_flag_if(&m, CPU_FEATURE_LM,      edx, 29);
     }
-    return m & CPU_FEATURES_AP_PROBE_MASK;
+    return cpu_feature_and(m, CPU_FEATURES_AP_PROBE_MASK);
 }
 
 /* ---- XCR0 configuration ------------------------------------------------ */

@@ -140,8 +140,9 @@ void cpu_features_finalize_global(void);
  * A set bit means the feature is present on EVERY online CPU AND, for
  * xstate-dependent features (AVX/AVX512F/PKU/XSAVE), the OS has enabled the
  * backing XCR0 component -- so it is safe to USE everywhere. Gate cross-CPU
- * feature reliance on this rather than the BSP-only cpu_has(). */
-uint64_t cpu_feature_global_mask(void);
+ * feature reliance on this rather than the BSP-only cpu_has(). Returns 0 until
+ * cpu_features_finalize_global() publishes the intersection. */
+int cpu_feature_global_has(enum cpu_feature feature);
 
 /* BSP-side: raise BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED if any AP
  * recorded a feature-validation fault and halted. Call once after SMP bringup;

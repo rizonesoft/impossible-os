@@ -194,32 +194,65 @@ static void test_cr3_pcid_zero(void)
 static void test_required_mask_subset_of_bsp(void)
 {
     extern struct cpu_features g_cpu;
-    TEST_ASSERT_EQ(g_cpu.flags & CPU_FEATURES_REQUIRED_MASK,
-                   (uint64_t)CPU_FEATURES_REQUIRED_MASK,
-                   "BSP flags include every CPU_FEATURES_REQUIRED_MASK bit");
+    TEST_ASSERT(cpu_feature_subset(CPU_FEATURES_REQUIRED_MASK, g_cpu.flags),
+                "BSP flags include every CPU_FEATURES_REQUIRED_MASK bit");
 }
 
 /* The probe mask must be a superset of the required mask, or a passing
  * AP probe could omit a required bit the validator then never checks. */
 static void test_required_subset_of_probe(void)
 {
-    TEST_ASSERT_EQ(CPU_FEATURES_REQUIRED_MASK & CPU_FEATURES_AP_PROBE_MASK,
-                   (uint64_t)CPU_FEATURES_REQUIRED_MASK,
-                   "CPU_FEATURES_REQUIRED_MASK is a subset of CPU_FEATURES_AP_PROBE_MASK");
+    TEST_ASSERT(cpu_feature_subset(CPU_FEATURES_REQUIRED_MASK, CPU_FEATURES_AP_PROBE_MASK),
+                "CPU_FEATURES_REQUIRED_MASK is a subset of CPU_FEATURES_AP_PROBE_MASK");
 }
 
 /* After cpu_features_finalize_global() runs in smp_init, the published global
  * intersection must still carry every required bit (all online CPUs have them
- * or boot bug-checked) and must be a subset of the BSP's probed features. */
+ * or boot bug-checked), and a globally-present feature implies the BSP has it. */
 static void test_global_feature_mask_has_required(void)
 {
-    extern struct cpu_features g_cpu;
-    uint64_t g = cpu_feature_global_mask();
-    TEST_ASSERT_EQ(g & CPU_FEATURES_REQUIRED_MASK,
-                   (uint64_t)CPU_FEATURES_REQUIRED_MASK,
-                   "global intersection retains every required feature");
-    TEST_ASSERT_EQ(g & ~(g_cpu.flags & (uint64_t)CPU_FEATURES_AP_PROBE_MASK), 0,
-                   "global intersection is a subset of the BSP probed features");
+    TEST_ASSERT(cpu_feature_global_has(CPU_FEATURE_SSE2),    "global intersection has SSE2");
+    TEST_ASSERT(cpu_feature_global_has(CPU_FEATURE_NX),      "global intersection has NX");
+    TEST_ASSERT(cpu_feature_global_has(CPU_FEATURE_LM),      "global intersection has LM");
+    TEST_ASSERT(cpu_feature_global_has(CPU_FEATURE_SYSCALL), "global intersection has SYSCALL");
+    TEST_ASSERT(cpu_feature_global_has(CPU_FEATURE_CX16),    "global intersection has CX16");
+    TEST_ASSERT(!cpu_feature_global_has(CPU_FEATURE_SSE2) || cpu_has(CPU_FEATURE_SSE2),
+                "global SSE2 implies BSP SSE2 (global is a subset of BSP)");
+}
+
+/* 128-bit cpu_feature_mask_t machinery: word/bit split round-trips across the
+ * 64-bit boundary. Uses synthetic bit indices (63, 64) so the test does not
+ * depend on any real CPU_FEATURE_* living in the high word yet. */
+static void test_feature_mask_wordsplit(void)
+{
+    cpu_feature_mask_t m = { { 0, 0 } };
+    cpu_feature_set(&m, (enum cpu_feature)63);
+    cpu_feature_set(&m, (enum cpu_feature)64);
+    TEST_ASSERT(cpu_feature_test(&m, (enum cpu_feature)63), "bit 63 lands in word 0");
+    TEST_ASSERT(cpu_feature_test(&m, (enum cpu_feature)64), "bit 64 lands in word 1");
+    TEST_ASSERT_EQ(m.w[0], 1ULL << 63, "word 0 holds exactly bit 63");
+    TEST_ASSERT_EQ(m.w[1], 1ULL,       "word 1 holds exactly bit 64");
+    cpu_feature_clear(&m, (enum cpu_feature)64);
+    TEST_ASSERT(!cpu_feature_test(&m, (enum cpu_feature)64), "bit 64 clears in word 1");
+    TEST_ASSERT(cpu_feature_test(&m, (enum cpu_feature)63),  "clearing word 1 leaves word 0");
+}
+
+/* Design-review invariant: a high-word feature present on the BSP but absent on
+ * an AP must clear in the intersection (cpu_feature_and), or finalize_global
+ * would publish an over-broad mask. Mirrors the AND finalize uses, no live infra. */
+static void test_feature_mask_intersection_highword(void)
+{
+    cpu_feature_mask_t bsp = { { 0, 0 } }, ap = { { 0, 0 } };
+    cpu_feature_set(&bsp, (enum cpu_feature)100);   /* BSP-only synthetic high-word feature */
+    cpu_feature_set(&bsp, CPU_FEATURE_SSE2);
+    cpu_feature_set(&ap,  CPU_FEATURE_SSE2);
+    cpu_feature_mask_t inter = cpu_feature_and(bsp, ap);
+    TEST_ASSERT(!cpu_feature_test(&inter, (enum cpu_feature)100),
+                "high-word feature absent on AP clears in the intersection");
+    TEST_ASSERT(cpu_feature_test(&inter, CPU_FEATURE_SSE2),
+                "shared low-word feature survives the intersection");
+    TEST_ASSERT(!cpu_feature_subset(bsp, ap),
+                "bsp is not a subset of ap (high-word feature 100 missing)");
 }
 
 /* ---- S7 (TODO-09-boot): CR0/CR4 safety-bit pinning ---- */
@@ -1131,15 +1164,13 @@ static void test_ap_probe_mask_covers_gated_features(void)
     /* The AP-local enable gates + TSC_AUX read this AP probe mask; if a gated
      * feature is dropped from it, the AP-local gate silently falls back to
      * never-enable. Guard every feature the S10 gating depends on. */
-    uint64_t m = CPU_FEATURES_AP_PROBE_MASK;
-    /* != 0 forces a 32-bit-safe boolean: RDTSCP (bit 53) lives in the high
-     * dword and would truncate to 0 if TEST_ASSERT narrowed the u64 to int. */
-    TEST_ASSERT((m & (1ULL << CPU_FEATURE_UMIP))   != 0, "AP probe mask covers UMIP");
-    TEST_ASSERT((m & (1ULL << CPU_FEATURE_PKU))    != 0, "AP probe mask covers PKU");
-    TEST_ASSERT((m & (1ULL << CPU_FEATURE_SMEP))   != 0, "AP probe mask covers SMEP");
-    TEST_ASSERT((m & (1ULL << CPU_FEATURE_SMAP))   != 0, "AP probe mask covers SMAP");
-    TEST_ASSERT((m & (1ULL << CPU_FEATURE_RDTSCP)) != 0, "AP probe mask covers RDTSCP (TSC_AUX gate)");
-    TEST_ASSERT((m & (1ULL << CPU_FEATURE_WAITPKG)) != 0, "AP probe mask covers WAITPKG (UMWAIT_CONTROL gate)");
+    cpu_feature_mask_t m = CPU_FEATURES_AP_PROBE_MASK;
+    TEST_ASSERT(cpu_feature_test(&m, CPU_FEATURE_UMIP),   "AP probe mask covers UMIP");
+    TEST_ASSERT(cpu_feature_test(&m, CPU_FEATURE_PKU),    "AP probe mask covers PKU");
+    TEST_ASSERT(cpu_feature_test(&m, CPU_FEATURE_SMEP),   "AP probe mask covers SMEP");
+    TEST_ASSERT(cpu_feature_test(&m, CPU_FEATURE_SMAP),   "AP probe mask covers SMAP");
+    TEST_ASSERT(cpu_feature_test(&m, CPU_FEATURE_RDTSCP), "AP probe mask covers RDTSCP (TSC_AUX gate)");
+    TEST_ASSERT(cpu_feature_test(&m, CPU_FEATURE_WAITPKG), "AP probe mask covers WAITPKG (UMWAIT_CONTROL gate)");
 }
 
 /* ---- S9: CPU Topology ---- */
@@ -1822,8 +1853,8 @@ static void test_ap_probe_covers_spec_ctrl(void)
 {
     /* SPEC_CTRL must be in the AP probe mask so cpu_feature_local() gates the
      * SPEC_CTRL eIBRS replay correctly on each AP (else APs silently skip it). */
-    uint64_t m = CPU_FEATURES_AP_PROBE_MASK;
-    TEST_ASSERT((m & (1ULL << CPU_FEATURE_SPEC_CTRL)) != 0,
+    cpu_feature_mask_t m = CPU_FEATURES_AP_PROBE_MASK;
+    TEST_ASSERT(cpu_feature_test(&m, CPU_FEATURE_SPEC_CTRL),
                 "AP probe mask covers SPEC_CTRL (eIBRS replay gate)");
 }
 
@@ -1893,6 +1924,10 @@ void test_register_x86(void)
         test_required_subset_of_probe, TEST_CAT_X86);
     test_suite_register_cat("AP features: global intersection retains required",
         test_global_feature_mask_has_required, TEST_CAT_X86);
+    test_suite_register_cat("feature-mask: 128-bit word/bit split round-trips",
+        test_feature_mask_wordsplit, TEST_CAT_X86);
+    test_suite_register_cat("feature-mask: high-word AP intersection clears",
+        test_feature_mask_intersection_highword, TEST_CAT_X86);
 
     /* S7 (TODO-09-boot): CR0/CR4 safety-bit pinning */
     test_suite_register_cat("CR pin: CR0.WP pinned + set",

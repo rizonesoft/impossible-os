@@ -123,7 +123,7 @@ static int cpu_feature_local(enum cpu_feature feature)
 {
     struct per_cpu_data *pc = smp_this_cpu();
     if (pc && pc->cpu_id != 0)
-        return (pc->features & (1ULL << (uint32_t)feature)) != 0;
+        return cpu_feature_test(&pc->features, feature);
     return cpu_has(feature) ? 1 : 0;
 }
 
@@ -595,9 +595,13 @@ static int      s_bsp_profile_ready;
 static struct mtrr_snapshot s_bsp_mtrr;
 
 /* AP feature consistency (TODO-09-boot S6). Global intersection = BSP & every
- * online AP within CPU_FEATURES_AP_PROBE_MASK; 0 until cpu_features_finalize_
- * global() publishes it BSP-side after the online acquire pass. */
-static uint64_t s_global_feature_mask;
+ * online AP within CPU_FEATURES_AP_PROBE_MASK. The mask itself is a 128-bit
+ * struct (no 16-byte atomic on x86), so visibility rides a separate publish
+ * flag: cpu_features_finalize_global() writes the words then release-stores
+ * s_global_mask_published=1; readers acquire-load the flag before the mask.
+ * Empty (all-zero) and unpublished until finalize runs BSP-side. */
+static cpu_feature_mask_t s_global_feature_mask;
+static volatile int       s_global_mask_published;
 
 /* AP feature-validation fault hand-off (TODO-09-boot S6). An AP that fails the
  * required/vendor/Long-Mode gate cannot bug-check itself (the panic path uses
@@ -920,9 +924,13 @@ static uint32_t ap_apply_msr_profile(uint32_t cpu_id)
 
 /* ---- AP feature consistency validation (TODO-09-boot S6) --------------- */
 
-uint64_t cpu_feature_global_mask(void)
+int cpu_feature_global_has(enum cpu_feature feature)
 {
-    return __atomic_load_n(&s_global_feature_mask, __ATOMIC_ACQUIRE);
+    /* Acquire the publish flag; the release in cpu_features_finalize_global
+     * orders the mask words before it. Unpublished -> not yet known -> absent. */
+    if (!__atomic_load_n(&s_global_mask_published, __ATOMIC_ACQUIRE))
+        return 0;
+    return cpu_feature_test(&s_global_feature_mask, feature);
 }
 
 void cpu_validate_ap_features(uint32_t cpu_id)
@@ -930,7 +938,7 @@ void cpu_validate_ap_features(uint32_t cpu_id)
     extern struct cpu_features g_cpu;
     struct per_cpu_data *pc = smp_get_cpu(cpu_id);
     uint32_t eax, ebx, ecx, edx, max_leaf;
-    uint64_t ap_feat;
+    cpu_feature_mask_t ap_feat;
     uint8_t  core_type = CORE_TYPE_GENERIC;
     char     vendor[13];
     int      vendor_ok;
@@ -978,11 +986,12 @@ void cpu_validate_ap_features(uint32_t cpu_id)
         if (vendor[k] != g_cpu.vendor[k]) { vendor_ok = 0; break; }
     }
     if (!vendor_ok ||
-        !(ap_feat & (1ULL << CPU_FEATURE_LM)) ||
-        (ap_feat & CPU_FEATURES_REQUIRED_MASK) != CPU_FEATURES_REQUIRED_MASK) {
-        cpu_record_ap_fault(cpu_id, ap_feat,
+        !cpu_feature_test(&ap_feat, CPU_FEATURE_LM) ||
+        !cpu_feature_subset(CPU_FEATURES_REQUIRED_MASK, ap_feat)) {
+        /* detail = low word: every required-baseline feature is bit < 64. */
+        cpu_record_ap_fault(cpu_id, ap_feat.w[0],
                             !vendor_ok ? 1u
-                          : !(ap_feat & (1ULL << CPU_FEATURE_LM)) ? 2u : 3u);
+                          : !cpu_feature_test(&ap_feat, CPU_FEATURE_LM) ? 2u : 3u);
         for (;;)
             __asm__ volatile ("cli; hlt");
     }
@@ -992,9 +1001,11 @@ void cpu_validate_ap_features(uint32_t cpu_id)
      * ap_cpu_harden_log() and the global intersection (finalize) prevents
      * kernel-wide reliance on it. */
     {
-        uint64_t bsp_opt = g_cpu.flags & CPU_FEATURES_AP_PROBE_MASK &
-                           ~(uint64_t)CPU_FEATURES_REQUIRED_MASK;
-        if (pc && (bsp_opt & ~ap_feat) != 0)
+        cpu_feature_mask_t bsp_opt = cpu_feature_andnot(
+            cpu_feature_and(g_cpu.flags, CPU_FEATURES_AP_PROBE_MASK),
+            CPU_FEATURES_REQUIRED_MASK);
+        /* mismatch when some BSP optional feature is absent on this AP */
+        if (pc && !cpu_feature_subset(bsp_opt, ap_feat))
             pc->feature_mismatch = 1;
     }
 }
@@ -1002,7 +1013,7 @@ void cpu_validate_ap_features(uint32_t cpu_id)
 void cpu_features_finalize_global(void)
 {
     extern struct cpu_features g_cpu;
-    uint64_t m = g_cpu.flags & CPU_FEATURES_AP_PROBE_MASK;   /* BSP is the base */
+    cpu_feature_mask_t m = cpu_feature_and(g_cpu.flags, CPU_FEATURES_AP_PROBE_MASK); /* BSP base */
     uint32_t i;
 
     /* AND in every ONLINE AP's published features. Scan ALL slots, not
@@ -1013,7 +1024,7 @@ void cpu_features_finalize_global(void)
     for (i = 1; i < MAX_CPUS; i++) {
         struct per_cpu_data *pc = smp_get_cpu(i);
         if (pc && __atomic_load_n(&pc->is_online, __ATOMIC_ACQUIRE))
-            m &= pc->features;
+            m = cpu_feature_and(m, pc->features);
     }
 
     /* xstate-dependent features are usable only if the OS enabled the backing
@@ -1024,16 +1035,23 @@ void cpu_features_finalize_global(void)
      * replicates the BSP mask), so the BSP's g_cpu.xcr0_active is authoritative. */
     {
         uint64_t xcr0 = g_cpu.xcr0_active;
-        if (xcr0 == 0)                                m &= ~(1ULL << CPU_FEATURE_XSAVE);
-        if (!(xcr0 & (1ULL << 2)))                    m &= ~(1ULL << CPU_FEATURE_AVX);
-        if ((xcr0 & (7ULL << 5)) != (7ULL << 5))      m &= ~(1ULL << CPU_FEATURE_AVX512F);
-        if (!(xcr0 & (1ULL << 9)))                    m &= ~(1ULL << CPU_FEATURE_PKU);
+        if (xcr0 == 0)                                cpu_feature_clear(&m, CPU_FEATURE_XSAVE);
+        if (!(xcr0 & (1ULL << 2)))                    cpu_feature_clear(&m, CPU_FEATURE_AVX);
+        if ((xcr0 & (7ULL << 5)) != (7ULL << 5))      cpu_feature_clear(&m, CPU_FEATURE_AVX512F);
+        if (!(xcr0 & (1ULL << 9)))                    cpu_feature_clear(&m, CPU_FEATURE_PKU);
     }
 
-    __atomic_store_n(&s_global_feature_mask, m, __ATOMIC_RELEASE);
-    klog(LOG_INFO, "smp",
-         "Global CPU feature intersection 0x%lx (probe mask 0x%lx)",
-         m, (uint64_t)CPU_FEATURES_AP_PROBE_MASK);
+    /* Publish the words, then release the flag so readers (acquire) see a fully
+     * written mask. No 16-byte atomic on x86, hence the flag instead of an
+     * atomic store of the struct. */
+    s_global_feature_mask = m;
+    __atomic_store_n(&s_global_mask_published, 1, __ATOMIC_RELEASE);
+    {
+        cpu_feature_mask_t pm = CPU_FEATURES_AP_PROBE_MASK;
+        klog(LOG_INFO, "smp",
+             "Global CPU feature intersection 0x%lx:%lx (probe mask 0x%lx:%lx)",
+             m.w[1], m.w[0], pm.w[1], pm.w[0]);
+    }
 }
 
 /* BSP-side: if any AP recorded a feature-validation fault and halted, raise the
@@ -1052,7 +1070,7 @@ void cpu_features_check_ap_faults(void)
          (uint64_t)(c - 1), (uint64_t)s_ap_fault_reason, s_ap_fault_feat);
     KeBugCheckEx(BUGCHECK_MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED,
                  (uint64_t)(c - 1), s_ap_fault_feat,
-                 (uint64_t)CPU_FEATURES_REQUIRED_MASK, (uint64_t)s_ap_fault_reason);
+                 CPU_FEATURES_REQUIRED_MASK.w[0], (uint64_t)s_ap_fault_reason);
 }
 
 /* ---- CR0/CR4 safety-bit pinning (TODO-09-boot S7) ---------------------- */
@@ -1324,7 +1342,7 @@ static void cpu_force_ap_required_cr4(void)
         return;
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
     forced = s_bsp_required_cr4 &
-             cpu_ap_forceable_cr4_live(pc->features, xcr0_read_safe(), cr3);
+             cpu_ap_forceable_cr4_live(pc->features.w[0], xcr0_read_safe(), cr3);
     if (forced)
         cr4_write_safe(read_cr4() | forced);
 }
@@ -1555,12 +1573,15 @@ void ap_cpu_harden_log(uint32_t cpu_id)
     {
         extern struct cpu_features g_cpu;
         if (pc->feature_mismatch) {
-            uint64_t bsp_opt = g_cpu.flags & CPU_FEATURES_AP_PROBE_MASK &
-                               ~(uint64_t)CPU_FEATURES_REQUIRED_MASK;
+            cpu_feature_mask_t bsp_opt = cpu_feature_andnot(
+                cpu_feature_and(g_cpu.flags, CPU_FEATURES_AP_PROBE_MASK),
+                CPU_FEATURES_REQUIRED_MASK);
+            cpu_feature_mask_t missing = cpu_feature_andnot(bsp_opt, pc->features);
             klog(LOG_WARN, "smp",
-                 "[AP%u] FEATURE MISMATCH: BSP optional 0x%lx, AP 0x%lx, missing 0x%lx (core_type 0x%x)",
-                 (uint64_t)cpu_id, bsp_opt, pc->features,
-                 bsp_opt & ~pc->features, (uint64_t)pc->core_type);
+                 "[AP%u] FEATURE MISMATCH: BSP optional 0x%lx:%lx, AP 0x%lx:%lx, missing 0x%lx:%lx (core_type 0x%x)",
+                 (uint64_t)cpu_id, bsp_opt.w[1], bsp_opt.w[0],
+                 pc->features.w[1], pc->features.w[0],
+                 missing.w[1], missing.w[0], (uint64_t)pc->core_type);
         } else {
             klog(LOG_INFO, "smp", "[AP%u] Feature validation OK (core_type 0x%x)",
                  (uint64_t)cpu_id, (uint64_t)pc->core_type);

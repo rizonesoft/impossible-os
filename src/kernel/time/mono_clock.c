@@ -108,7 +108,7 @@ static inline uint64_t rdtsc_ordered(void)
      * is BSP-global): RDTSCP #UDs on a CPU that lacks it, and APs are an
      * optional-feature-probed set, so a BSP-has/AP-lacks skew would fault this
      * ISR-callable hot path on the skewed AP. Same gate dpc_watchdog_init uses. */
-    if (cpu_feature_global_mask() & (1ULL << CPU_FEATURE_RDTSCP)) {
+    if (cpu_feature_global_has(CPU_FEATURE_RDTSCP)) {
         uint32_t aux;
         __asm__ volatile ("rdtscp" : "=a"(lo), "=d"(hi), "=c"(aux));
     } else {

@@ -167,7 +167,7 @@ void dpc_watchdog_init(void)
 
     /* Arm the single-DPC timing watchdog ONLY when ALL of: a calibrated TSC freq,
      * RDTSCP on EVERY online CPU, and an INVARIANT TSC. RDTSCP is gated on
-     * cpu_feature_global_mask() -- the AND across all online CPUs -- because it
+     * cpu_feature_global_has() -- the AND across all online CPUs -- because it
      * is the instruction that #UDs on a CPU that lacks it (an AP-probed optional
      * feature), so a BSP-has/AP-lacks skew must disable timing everywhere rather
      * than fault the skewed AP. CPU_FEATURE_TSC_INV (invariant/frequency-stable
@@ -176,7 +176,7 @@ void dpc_watchdog_init(void)
      * would drift and produce false WARN/bugchecks. Depth + budget watchdogs
      * still run when timing is off (no TSC needed). */
     s_dpc_single_threshold_cycles =
-        (hz && (cpu_feature_global_mask() & (1ULL << CPU_FEATURE_RDTSCP))
+        (hz && cpu_feature_global_has(CPU_FEATURE_RDTSCP)
              && cpu_has(CPU_FEATURE_TSC_INV))
             ? (hz / 1000000ULL) * (uint64_t)DPC_WATCHDOG_SINGLE_DPC_US
             : 0;

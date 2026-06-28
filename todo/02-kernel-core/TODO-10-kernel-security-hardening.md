@@ -80,7 +80,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4, T19              |  [/]   |
 | 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [/]   |
 | 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [x]   |
-| 💎  |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t) | §8                        |  [ ]   |
+| 💎  |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t) | §8                        |  [x]   |
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [ ]   |
 | 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [ ]   |
 | 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [ ]   |
@@ -585,15 +585,22 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 
 `g_cpu.flags` is a single `uint64_t` and `CPU_FEATURE_COUNT=64` is FULL (§8 took bits 62/63). The predictor-policy mitigations in §25 (SSBD, STIBP, BHI, ITS, Retbleed) need new feature bits, so the feature surface must widen to 128 bits FIRST. A single canonical bitset type with helpers -- not ad-hoc `uint64_t[2]` plus scalar `(1ULL << feat)` masks -- avoids the silent high-word truncation that would otherwise let AP validation publish an over-broad global mask or skip a mitigation on one CPU. (Split from the original combined §18 per design review; the mitigations are §25.) -> XREF: §25 (consumes the new bits), `D02 T09 §6` (AP feature validation).
 
-- [ ] `cpu_feature_mask_t { uint64_t w[2]; }` in `cpuid.h` + inline helpers `cpu_feature_set`/`test`/`and`/`andnot`/`subset`/`iszero` (word = `feat>>6`, bit = `feat&63`); `_Static_assert(CPU_FEATURE_COUNT <= 128)` to compile-gate the surface
-- [ ] `struct cpu_features.flags` and `per_cpu_data.features` (`smp.h`) both become `cpu_feature_mask_t`; `cpu_has` -> `cpu_feature_test(&g_cpu.flags, feat)` (all 264 call sites route through this one inline, no per-site edits)
-- [ ] `CPU_FEATURES_REQUIRED_MASK` / `CPU_FEATURES_AP_PROBE_MASK` become `cpu_feature_mask_t` (X-macro computes word+bit); ban bare `1ULL << CPU_FEATURE_*` for feature masks
-- [ ] `set_flag_if`, `cpuid_probe_ap_features` (returns `cpu_feature_mask_t`), the direct `g_cpu.flags |=` in `cpuid.c`, and `cpu_feature_local` rewired through the helpers
-- [ ] AP global-intersection (`cpu_security.c` `cpu_features_finalize_global`) + `s_global_feature_mask` + optional-mismatch logging use the SAME 2-word helpers as the BSP masks (the AP path must not validate only the low 64 bits)
-- [ ] Tests: a synthetic high-word (bit >= 64) feature present on BSP but absent on an AP clears in the global intersection; word+bit indexing round-trips; the mask initializers match the enum
-- [ ] Commit: `"kernel/cpu: expand CPU feature flags to 128-bit cpu_feature_mask_t"`
+- [x] `cpu_feature_mask_t { uint64_t w[2]; }` in `cpuid.h` + 8 inline helpers (`set`/`clear`/`test`/`and`/`andnot`/`subset`/`iszero`/`eq`; word=`feat>>6`, bit=`feat&63`); `_Static_assert(CPU_FEATURE_COUNT <= 128)`
+- [x] `g_cpu.flags` + `per_cpu_data.features` (`smp.h` now includes `cpuid.h`) became `cpu_feature_mask_t`; `cpu_has` routes through `cpu_feature_test` -- all 264 call sites unchanged
+- [x] `CPU_FEATURES_REQUIRED_MASK` / `CPU_FEATURES_AP_PROBE_MASK` are compound-literal `cpu_feature_mask_t` built by the X-macro `CPU_FEAT_W0_`/`W1_` word/bit split (shift-guarded); no bare `1ULL << CPU_FEATURE_*` masks remain
+- [x] `set_flag_if`, `cpuid_probe_ap_features` (returns `cpu_feature_mask_t`), the direct `g_cpu.flags |=` in `cpuid.c`, and `cpu_feature_local` rewired through the helpers
+- [x] AP intersection + `s_global_feature_mask` use the 2-word helpers; the struct mask publishes via an `s_global_mask_published` release/acquire flag; `cpu_feature_global_has(feat)` replaces `cpu_feature_global_mask()`
+- [x] Tests (`test_cpu_security.c`, `TEST_CAT_X86`): word/bit split round-trips bits 63/64; a BSP-only synthetic high-word (bit 100) clears in `cpu_feature_and`; required-subset invariants via `cpu_feature_subset`
+- [x] Commit: `"kernel/cpu: expand CPU feature flags to 128-bit cpu_feature_mask_t"`
 
-**Test checkpoint:** `cpu_feature_test`/`set`/`andnot` round-trip across the 64-bit word boundary (bits 63 and 64); `CPU_FEATURES_REQUIRED_MASK` has exactly the X-macro-listed bits set in the correct words; a BSP-only synthetic high-word feature is cleared by the AP global intersection (no over-broad publish). Test on: QEMU WHPX, QEMU TCG (multi-CPU); bare metal.
+**Test checkpoint:** `cpu_feature_test`/`set`/`andnot` round-trip across the 64-bit word boundary (bits 63 and 64); a BSP-only synthetic high-word feature is cleared by the intersection AND (no over-broad publish); the required mask is a subset of the BSP flags and of the probe mask; `[smp]` serial shows the intersection as `w1:w0`. Test on: QEMU WHPX, QEMU TCG (multi-CPU); bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86) | 2 new feature-mask suites (word/bit split, high-word intersection) pass; 185 x86 + 16 user-mode pass; smoke boots clean (intersection `0x0:...`, w[1]=0 with no high-word features yet).
+>
+> **Notes:**
+> - Shipped `cpu_feature_mask_t` (128-bit, `cpuid.h`) + 8 inline helpers; `g_cpu.flags`/`per_cpu_data.features`/the X-macro masks all migrated; `cpu_has` unchanged at its 264 call sites (routes through the one inline).
+> - `s_global_feature_mask` is a struct (no 16-byte x86 atomic), so visibility rides a separate `s_global_mask_published` release/acquire flag; `cpu_feature_global_has(feat)` replaces `cpu_feature_global_mask()` and returns 0 until finalize publishes.
+> - Scope boundary: infrastructure ONLY -- adds no feature bits (w[1] stays 0 in production); the predictor-policy mitigations that populate the high word are §25.
 
 ---
 

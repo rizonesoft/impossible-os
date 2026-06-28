@@ -111,13 +111,59 @@ enum cpu_feature {
     CPU_FEATURE_SERIALIZE = 60,   /* SERIALIZE instruction (7.0:EDX[14]) */
     CPU_FEATURE_RDPID     = 61,   /* RDPID instruction (7.0:ECX[22]) */
 
-    /* Spectre v2 mitigation (TODO-10 S8). These are the LAST 2 bits of the
-     * uint64_t flags word -- adding more (S18 SSBD/etc.) needs a 128-bit word. */
+    /* Spectre v2 mitigation. Bits 62/63 fill the first 64-bit word; the feature
+     * surface is a 128-bit cpu_feature_mask_t (below), so predictor-policy
+     * features live in the second word. */
     CPU_FEATURE_ENHANCED_IBRS = 62, /* IA32_ARCH_CAPABILITIES[1] IBRS_ALL (set-once IBRS) */
     CPU_FEATURE_IBPB      = 63,   /* IBPB: Intel 7.0:EDX[26] / AMD 0x80000008:EBX[12] */
 
-    CPU_FEATURE_COUNT     = 64    /* total features tracked (flags word now FULL) */
+    CPU_FEATURE_COUNT     = 64    /* total features tracked (next bit goes to word 1) */
 };
+
+/* --- 128-bit feature bitset ------------------------------------------------
+ * One bit per CPU_FEATURE_*. Two 64-bit words so the surface can grow past 64
+ * without the silent (1ULL << feat) truncation that would let AP validation
+ * publish an over-broad global mask or skip a mitigation on one CPU. ALWAYS
+ * route bit access through these helpers; never `1ULL << CPU_FEATURE_*` on a
+ * mask. word = feat >> 6, bit = feat & 63. */
+typedef struct { uint64_t w[2]; } cpu_feature_mask_t;
+
+_Static_assert(CPU_FEATURE_COUNT <= 128,
+    "CPU feature surface exceeds the 128-bit cpu_feature_mask_t; widen w[].");
+
+static inline void cpu_feature_set(cpu_feature_mask_t *m, enum cpu_feature f)
+{
+    m->w[(unsigned)f >> 6] |= 1ULL << ((unsigned)f & 63);
+}
+static inline void cpu_feature_clear(cpu_feature_mask_t *m, enum cpu_feature f)
+{
+    m->w[(unsigned)f >> 6] &= ~(1ULL << ((unsigned)f & 63));
+}
+static inline int cpu_feature_test(const cpu_feature_mask_t *m, enum cpu_feature f)
+{
+    return (int)((m->w[(unsigned)f >> 6] >> ((unsigned)f & 63)) & 1);
+}
+static inline cpu_feature_mask_t cpu_feature_and(cpu_feature_mask_t a, cpu_feature_mask_t b)
+{
+    a.w[0] &= b.w[0]; a.w[1] &= b.w[1]; return a;
+}
+static inline cpu_feature_mask_t cpu_feature_andnot(cpu_feature_mask_t a, cpu_feature_mask_t b)
+{
+    a.w[0] &= ~b.w[0]; a.w[1] &= ~b.w[1]; return a;
+}
+/* True when every bit set in `sub` is also set in `sup` (sub is a subset). */
+static inline int cpu_feature_subset(cpu_feature_mask_t sub, cpu_feature_mask_t sup)
+{
+    return ((sub.w[0] & ~sup.w[0]) | (sub.w[1] & ~sup.w[1])) == 0;
+}
+static inline int cpu_feature_iszero(cpu_feature_mask_t m)
+{
+    return (m.w[0] | m.w[1]) == 0;
+}
+static inline int cpu_feature_eq(cpu_feature_mask_t a, cpu_feature_mask_t b)
+{
+    return a.w[0] == b.w[0] && a.w[1] == b.w[1];
+}
 
 /* Confidential-compute guest kind (detected via CPUID; full attestation is
  * deferred). Stored kernel-internally in struct cpu_features (NOT boot_info --
@@ -154,8 +200,15 @@ typedef enum {
     X(CPU_FEATURE_SYSCALL, "SYSCALL/SYSRET not available -- required for the syscall fast path") \
     X(CPU_FEATURE_CX16,    "CMPXCHG16B not available -- required for Executive SLIST/DCAS")
 
-#define CPU_FEATURE_REQ_BIT_(feat, diag) | (1ULL << (feat))
-#define CPU_FEATURES_REQUIRED_MASK (0ULL CPU_FEATURES_REQUIRED_LIST(CPU_FEATURE_REQ_BIT_))
+/* Compile-time word/bit split: a feature contributes to word 0 when its bit is
+ * < 64, else to word 1. The `& 63` keeps every shift in range (no UB) even on
+ * the branch that evaluates to 0. Variadic so it absorbs the required-list diag
+ * string AND the empty second arg the optional AP-probe rows pass. */
+#define CPU_FEAT_W0_(feat, ...) | ((feat) <  64 ? (1ULL << ((feat) & 63)) : 0ULL)
+#define CPU_FEAT_W1_(feat, ...) | ((feat) >= 64 ? (1ULL << ((feat) & 63)) : 0ULL)
+#define CPU_FEATURES_REQUIRED_MASK \
+    ((cpu_feature_mask_t){ { 0ULL CPU_FEATURES_REQUIRED_LIST(CPU_FEAT_W0_), \
+                             0ULL CPU_FEATURES_REQUIRED_LIST(CPU_FEAT_W1_) } })
 
 /* The security-critical feature subset cpuid_probe_ap_features() probes on each
  * AP. Per this section's scope ("validates security-critical feature
@@ -164,14 +217,19 @@ typedef enum {
  * (SMEP/SMAP/UMIP/PKU/AVX/AVX512F/PCID/XSAVE/RDTSCP/WAITPKG). WAITPKG drives the
  * UMWAIT_CONTROL MSR replay the way RDTSCP drives TSC_AUX. The global
  * intersection and the optional-mismatch check operate only within this mask. */
+/* AP-probe set = required baseline + the optional features that drive CR4/XCR0
+ * enables and hybrid divergence. Reuses the required X-macro list (diag rows)
+ * plus the optional rows (empty second arg); both feed only the word-split
+ * macros, so the arity difference is absorbed by the variadic `...`. */
+#define CPU_FEATURES_AP_PROBE_LIST(X) \
+    CPU_FEATURES_REQUIRED_LIST(X) \
+    X(CPU_FEATURE_SMEP,)   X(CPU_FEATURE_SMAP,)    X(CPU_FEATURE_UMIP,) \
+    X(CPU_FEATURE_PKU,)    X(CPU_FEATURE_AVX,)     X(CPU_FEATURE_AVX512F,) \
+    X(CPU_FEATURE_PCID,)   X(CPU_FEATURE_XSAVE,)   X(CPU_FEATURE_RDTSCP,) \
+    X(CPU_FEATURE_SSE4_2,) X(CPU_FEATURE_WAITPKG,) X(CPU_FEATURE_SPEC_CTRL,)
 #define CPU_FEATURES_AP_PROBE_MASK \
-    (CPU_FEATURES_REQUIRED_MASK | \
-     (1ULL << CPU_FEATURE_SMEP) | (1ULL << CPU_FEATURE_SMAP) | \
-     (1ULL << CPU_FEATURE_UMIP) | (1ULL << CPU_FEATURE_PKU)  | \
-     (1ULL << CPU_FEATURE_AVX)  | (1ULL << CPU_FEATURE_AVX512F) | \
-     (1ULL << CPU_FEATURE_PCID) | (1ULL << CPU_FEATURE_XSAVE) | \
-     (1ULL << CPU_FEATURE_RDTSCP) | (1ULL << CPU_FEATURE_SSE4_2) | \
-     (1ULL << CPU_FEATURE_WAITPKG) | (1ULL << CPU_FEATURE_SPEC_CTRL))
+    ((cpu_feature_mask_t){ { 0ULL CPU_FEATURES_AP_PROBE_LIST(CPU_FEAT_W0_), \
+                             0ULL CPU_FEATURES_AP_PROBE_LIST(CPU_FEAT_W1_) } })
 
 /* --- Global CPU feature structure --- */
 
@@ -191,8 +249,8 @@ struct cpu_features {
     uint64_t xcr0_supported;      /* supported XCR0 bits (from CPUID leaf 0x0D) */
     uint64_t xcr0_active;         /* actually enabled XCR0 bits (after cpu_configure_xcr0) */
 
-    /* Feature flags -- one bit per CPU_FEATURE_* */
-    uint64_t flags;
+    /* Feature flags -- one bit per CPU_FEATURE_* (128-bit, two words) */
+    cpu_feature_mask_t flags;
 
     /* Confidential-compute guest kind (cc_kind_t); CC_NONE on bare/normal VM */
     uint8_t  cc_kind;
@@ -227,7 +285,7 @@ void cpuid_init(void);
  * on the CALLING CPU and return it in the g_cpu.flags bit layout. AP-safe: does
  * NOT touch g_cpu, so an AP can publish its own mask without racing the BSP
  * global. Used by cpu_validate_ap_features() (TODO-09-boot S6). */
-uint64_t cpuid_probe_ap_features(void);
+cpu_feature_mask_t cpuid_probe_ap_features(void);
 
 /* Configure XCR0 based on detected CPU features.
  * Enables x87+SSE+AVX always, AVX-512 if supported, PKRU if supported.
@@ -239,7 +297,7 @@ void cpu_configure_xcr0(void);
 static inline int cpu_has(enum cpu_feature feat)
 {
     extern struct cpu_features g_cpu;
-    return (g_cpu.flags >> feat) & 1;
+    return cpu_feature_test(&g_cpu.flags, feat);
 }
 
 /* Get pointer to global CPU features struct (for reading vendor/brand/etc). */

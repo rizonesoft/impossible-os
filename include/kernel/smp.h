@@ -20,6 +20,7 @@
 #include "kernel/types.h"
 #include "kernel/sched/irql.h"
 #include "kernel/acpi.h"    /* MAX_CPUS */
+#include "kernel/cpuid.h"   /* cpu_feature_mask_t */
 
 /* ---- AP trampoline data area layout ----
  * Shared data lives INSIDE the trampoline page at offset 0xE00 (phys 0x8E00).
@@ -174,7 +175,7 @@ struct per_cpu_data {
      * the is_online acquire pass. Per-CPU (only the owning CPU writes), so no
      * lock; visibility rides the same is_online release/acquire edge as the
      * boot snapshot above. */
-    uint64_t          features;            /* security-critical CPUID subset (CPU_FEATURES_AP_PROBE_MASK layout) */
+    cpu_feature_mask_t features;           /* security-critical CPUID subset (CPU_FEATURES_AP_PROBE_MASK layout) */
     uint8_t           core_type;           /* CORE_TYPE_P / _E / _GENERIC from CPUID 0x1A */
     uint8_t           feature_mismatch;    /* 1 = BSP has an optional probed feature this AP lacks */
     uint8_t           _feat_pad[2];        /* alignment */
