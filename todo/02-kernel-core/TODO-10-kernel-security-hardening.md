@@ -75,7 +75,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9, T23 §3                    |  [/]   |
 | 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [x]   |
 | 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [x]   |
-| 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
+| 💎  |  13   | Kernel stack guard pages                            | §1                            |  [/]   |
 | ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [/]   |
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4, T19              |  [/]   |
 | 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [ ]   |
@@ -437,26 +437,33 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 13. Kernel Stack Guard Pages
 
-- [ ] Every kernel thread stack is allocated as `STACK_SIZE + PAGE_SIZE` pages; the first page (bottom of the stack, lowest address) is mapped with `PTE_PRESENT=0`; an unmapped guard page:
-  ```c
-  void stack_alloc_with_guard(task_t *t) {
-      uintptr_t pa = pmm_alloc_contiguous(KERNEL_STACK_PAGES + 1);
-      /* Map guard page as not-present */
-      vmm_map_page(t->stack_guard_va, pa, 0 /* not present */);
-      /* Map stack pages above guard */
-      for (int i = 1; i <= KERNEL_STACK_PAGES; i++)
-          vmm_map_page(t->stack_base_va + i * PAGE_SIZE,
-                       pa + i * PAGE_SIZE, PTE_KERNEL_RW | PTE_NX);
-      t->rsp0 = t->stack_base_va + (KERNEL_STACK_PAGES + 1) * PAGE_SIZE;
-  }
-  ```
-- [ ] On `#PF` with fault address in the guard page VA range: trigger `KeBugCheckEx(BUGCHECK_KERNEL_STACK_INPAGE_ERROR, ...)` rather than a generic page fault BSOD; this distinguishes stack overflow from null pointer dereferences
+> [!NOTE]
+> Guard pages are ALREADY installed on every kernel stack (the core of this section). The remaining work -- routing a guard `#PF` to the specific NT stop code, plus two latent guard-table bugs the design review surfaced -- needs frame-aware bugcheck infrastructure + an SMP-safe guard table and is tracked as the `[ ]` items below.
 
-- [ ] Each IST stack (`ist1`..`ist7` in the TSS) must also have a guard page below it; allocate with the same `stack_alloc_with_guard` helper; prevents nested-exception stack overflow from silently corrupting memory
+- [x] Every kernel thread / AP / uthread stack is allocated as N+1 pages and the bottom page is guarded via `vmm_install_guard_page(virt, label)` (`vmm.c:1233`: splits the 2 MiB huge page, clears the PTE, registers `(addr,label)` in `guard_pages[]`)
+  - Call sites: kernel task stacks (`task.c:447,1684`), AP stacks (`smp.c:391`), uthread (`task.c:2778`), heap end (`heap.c:457`)
+- [/] On `#PF` in a guard VA, `page_fault_handler` (`vmm.c`) checks `guard_page_lookup(cr2)` FIRST and renders a descriptive labeled BSOD via `panic_screen` (distinguishes stack overflow from a generic fault)
+  - The SPECIFIC NT stop code `BUGCHECK_KERNEL_STACK_INPAGE_ERROR` (0x77) is NOT yet recorded -- `panic_screen` stores `bugcheck_code=0` for framed faults and keys the stop code off `frame->int_no`; needs the frame-aware bugcheck path below
+- [x] Each IST stack (`#DF`/`NMI`/`MCE`) has a guard page below it via the same helper (`gdt.c:97`); prevents a nested-exception stack overflow from silently corrupting memory
+- [ ] **(design review)** Frame-aware guard bugcheck: a guard `#PF` records the explicit NT stop code, not the PF err-code -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md §5`
+  - Add `vmm_install_guard_page_ex(virt, label, BUGCHECK_CODE)` + a `bugcheck` field on the guard entry; route the fault to a frame-aware bugcheck entry that stores `g_last_bugcheck` + renders it (stacks/IST/AP -> `KERNEL_STACK_INPAGE_ERROR` 0x77, heap -> `IOS_HEAP_CORRUPTION`), keeping CR2 + PF err-code as evidence. No label-substring classification
+- [ ] **(design review, latent bug)** Guard-table capacity + fail-fast registration
+  - `MAX_GUARD_PAGES=32` (`vmm.c:530`) is undersized vs `TASK_MAX(32)` + APs + IST + heap, and `guard_page_register` is void + silently drops when full -> an untracked unmapped guard reports a generic fault + uninstall no-ops. Size to worst-case; register returns status; `vmm_install_guard_page` rolls back the unmap on failure; critical stack-guard install failure is fatal
+- [ ] **(design review, latent bug)** SMP-safe guard table
+  - The table is mutated at RUNTIME (task create/exec/uthread install + cleanup uninstall, `task.c`/`smp.c`) and read lock-free by the `#PF` handler on any CPU; compact-on-delete can race the lookup. Use a preallocated/append-only table + atomic active flags + release/acquire so a fault lookup never sees a partially-moved entry
 
 - [ ] Commit: `"kernel/security: guard pages below kernel stacks and IST stacks"`
 
-**Test checkpoint:** Guard VA `#PF` raises `BUGCHECK_KERNEL_STACK_INPAGE_ERROR`; IST stacks use same helper; no silent corruption below stack. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+**Test checkpoint:** kernel/AP/IST stack guards installed (guard VA `#PF` -> labeled BSOD via `guard_page_lookup`, validated on bare metal -- it halts). The NT 0x77 stop-code + the capacity/SMP-safe table land with the `[ ]` items above. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-mm-tests.bat` (SUITE=mm) | `test_vmm.c` guard-page install/lookup test passes; guard-fault BSOD is bare-metal-validated (halts).
+>
+> **Notes:**
+> - Guard pages on all kernel/AP/IST stacks + heap are SHIPPED via `vmm_install_guard_page` (`vmm.c:1233`); `page_fault_handler` catches a guard hit first and renders a labeled BSOD.
+> - Deferred 2026-06-28: the NT 0x77 stop-code routing needs a frame-aware bugcheck path; the design review also found two pre-existing latent guard-table bugs (32-entry capacity + runtime-mutation SMP race).
+> - Scope boundary: crash-dump emission of the stop code is owned by `TODO-27 §5`; the bugcheck taxonomy lives in `bugcheck.h`.
+
+> **Deferred:** [H] NT guard stop-code + frame-aware bugcheck path -> XREF: this section (item: "Frame-aware guard bugcheck" above). [H] guard-table capacity + fail-fast register (latent) -> XREF: this section (item: "Guard-table capacity + fail-fast registration" above). [M] SMP-safe guard-table publication (latent) -> XREF: this section (item: "SMP-safe guard table" above).
 
 ---
 
