@@ -74,7 +74,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |   9   | CET shadow stack (kernel ring 0)                    | §1, §2, T23 §3, D01T09 §10    |  [/]   |
 | 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9, T23 §3                    |  [/]   |
 | 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [x]   |
-| 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [ ]   |
+| 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [x]   |
 | 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
 | ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [/]   |
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4, T19              |  [/]   |
@@ -407,33 +407,28 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 12. Stack Canaries (`-fstack-protector-strong`)
 
-- [ ] Remove `-fno-stack-protector` from `CFLAGS` in `Makefile`
-- [ ] Add `-fstack-protector-strong`; protects functions that have:
-  - local arrays or structs
-  - address-taken local variables
-  - calls to `alloca`; Clang 19 supports this exactly
-- [ ] Verify no `__stack_chk_guard` linker error before the `__stack_chk_guard` init block in §9 runs
-- [ ] Seed `__stack_chk_guard` from `csprng_u64()` (`02-kernel-core/TODO-03` §5, SHIPPED 2026-06-12) when `canary_init()` runs after `csprng_init()`; keep the inline RDRAND/TSC path only for pre-CSPRNG boot phases
+- [x] `Makefile:23`: `-fno-stack-protector` -> `-fstack-protector-strong -mstack-protector-guard=global` (kernel CFLAGS only; boot/userland flag sets untouched)
+  - `-mstack-protector-guard=global` makes the compiler read our global `__stack_chk_guard` SYMBOL, not a `%fs`/`%gs` TLS slot we have no per-CPU storage for. 1737 functions check the cookie post-build (objdump)
+- [x] Define `uintptr_t __stack_chk_guard` + `__stack_chk_fail` in `src/kernel/security/stack_canary.c` (kernel is `-nostdlib`, no libssp, so both must be defined exactly once or the link fails)
+- [x] Seed `__stack_chk_guard` from `rdrand_bytes()` (crypto-grade, usable right after Phase-0 CPUID); `RDTSC ^ __kernel_start ^ const` fallback when RDRAND absent (TCG)
+  - csprng is NOT used (it seeds late in Phase 1 and a mid-boot re-seed would self-fault any live canary frame); single early RDRAND/TSC seed instead (design review)
+- [x] `canary_init()` is `__attribute__((no_stack_protector))` + a pure `canary_massage()` (low byte 0 = terminator canary; bit 63 set = cookie never 0 / high byte non-zero)
+- [x] Call `canary_init()` in `kernel_main` (`main.c`) after `boot_phase0` (CPUID up), before `boot_phase1` (design-review critical fix)
+  - NOT inside a stack-protected phase fn (its epilogue would compare the new cookie against a prologue-saved zero and self-fault); `kernel_main` never returns, so no live frame spans the cookie write
+- [x] `__stack_chk_fail()` (noreturn) -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, STATUS_STACK_BUFFER_OVERRUN(0xC0000409), ...)`
+- [x] `KeBugCheckEx` triggers `panic_screen()` + crash dump via the existing bugcheck path -> XREF: `02-kernel-core/TODO-27-crash-dump-generation.md §5`
 
-- [ ] `src/kernel/security/stack_canary.c`: define `uintptr_t __stack_chk_guard` + `canary_init()` seeding the guard:
-  - RDRAND with 3 retries per Intel spec, gated on `CPU_FEATURE_RDRAND`
-  - fallback when RDRAND absent: RDTSC XOR'd with the kernel base address + a constant
-  - force the high byte non-zero and the low byte zero so the canary never matches 0 or a NUL-terminator-stoppable value
-- [ ] Call `canary_init()` very early in Phase 1 kernel init, before any stack-protected function is called (-> XREF `TODO-01-kernel-init-sequencing.md §3`)
+- [x] Commit: `"kernel/security: -fstack-protector-strong, RDRAND canary init, __stack_chk_fail"`
 
-- [ ] Add `__stack_chk_fail` handler to `src/kernel/security/stack_canary.c`:
-  ```c
-  __attribute__((noreturn)) void __stack_chk_fail(void) {
-      KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE,
-                   0xC0000409 /* STATUS_STACK_BUFFER_OVERRUN */, 0, 0, 0);
-      __builtin_unreachable();
-  }
-  ```
-- [ ] The `KeBugCheckEx` call triggers `panic_screen()` with the security stop code, generates a crash dump (-> XREF `TODO-27-crash-dump-generation.md §5`), and halts
+**Test checkpoint:** build uses `-fstack-protector-strong` (1737 cookie-checking functions); `__stack_chk_guard` seeded non-zero with low byte 0 + bit 63 set after boot; `canary_massage` invariants hold. Intentional overflow -> `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE` is a bare-metal/boot check (it halts, not unit-testable). Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
-- [ ] Commit: `"kernel/security: -fstack-protector-strong, RDRAND canary init, __stack_chk_fail"`
-
-**Test checkpoint:** `__stack_chk_guard` non-zero after `canary_init()`; intentional overflow hits `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE`; build uses `-fstack-protector-strong`. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | canary massage + guard-seeded suites pass; 12953 kernel + 16 user-mode pass; smoke boots clean with build-wide canaries.
+>
+> **Notes:**
+> - Shipped `src/kernel/security/stack_canary.c` + header: global `__stack_chk_guard`, `no_stack_protector` `canary_init()` (RDRAND seed, TSC fallback), pure `canary_massage`, `__stack_chk_fail` -> BugCheck. Makefile flag swap is build-wide.
+> - Bootstrap order (design-review critical fix): `canary_init()` runs in non-returning `kernel_main` after Phase-0 CPUID, before `boot_phase1`; objdump confirms no self-check; smoke boots clean.
+> - Design adoptions: `-mstack-protector-guard=global`, RDRAND-primary (csprng deferred), `no_stack_protector` on `canary_init`; per-finding evidence in the commit message.
+> - Scope boundary: single global NT-style cookie; per-task/%gs canary + the deliberate-overflow BSOD test are not owned here.
 
 ---
 
@@ -670,7 +665,7 @@ Expose which CPU/kernel mitigations are active as structured queryable data. Lin
 | 💎   | Stack canaries /GS   | ✅ MSVC      | ✅ fssp strong | ⬜ §9            |
 | 💎   | Stack guard pages    | ✅ Yes       | ✅ THREAD      | ⬜ §10           |
 | 💎   | KASLR kernel base    | ✅ Yes       | ✅ RANDOMIZE   | ⬜ §11           |
-| ⭐   | RDRAND canary KASLR  | ✅ Opaque    | ✅ pool        | ⬜ §9 §11        |
+| ⭐   | RDRAND stack canary  | ✅ /GS       | ✅ -fstack-protector | ✅ §12 RDRAND + TSC fallback |
 | ⭐   | KASLR slide in dump  | ❌ Opaque    | ❌ Opaque      | ⬜ §11 + T27     |
 | 💎   | Secure Boot lockdown | ✅ HVCI lockdown | ✅ lockdown LSM | ⬜ §16          |
 | 💎   | Kernel image W^X     | ✅ HVCI      | ✅ STRICT_RWX  | ⬜ §17           |

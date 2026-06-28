@@ -8,6 +8,7 @@
 #include "kernel/types.h"
 #include "kernel/boot_info.h"
 #include "kernel/panic.h"          /* panic_evidence_restore_early (section 5) */
+#include "kernel/security/stack_canary.h"  /* canary_init -- seed the GS cookie */
 #include "main/main_internal.h"
 
 /* Kernel entry point
@@ -26,6 +27,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
      * the record lands in kernel-side static storage, X:\Crash emission is
      * deferred to desktop-ready. */
     panic_evidence_restore_early();
+    /* Seed the stack-protector cookie now: Phase 0 has run CPUID (RDRAND
+     * usable) and the only frames live across this write are kernel_main
+     * (never returns) and canary_init (no_stack_protector), so no epilogue
+     * compares a stale cookie. Everything from boot_phase1 on is protected
+     * with the real cookie. */
+    canary_init();
     boot_phase1();              /* Platform services: GDT, IDT, APIC, timer, display */
     boot_phase2();              /* System services: PCI, storage, VFS, registry, SMP */
     boot_phase3();              /* User platform: scheduler, desktop, compositor (never returns) */

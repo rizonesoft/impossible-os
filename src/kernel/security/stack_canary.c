@@ -1,0 +1,135 @@
+/* ============================================================================
+ * stack_canary.c -- -fstack-protector-strong kernel cookie
+ *
+ * The kernel build sets -fstack-protector-strong -mstack-protector-guard=global,
+ * so the compiler emits, for every function with stack buffers / address-taken
+ * locals, a prologue that loads __stack_chk_guard and an epilogue that compares
+ * it; a mismatch (stack-buffer overflow) calls __stack_chk_fail. Because the
+ * kernel is -nostdlib there is no libssp, so this file defines the cookie and
+ * both routines exactly once.
+ *
+ * Bootstrap ordering invariant: the cookie write must NOT happen inside a live
+ * stack-protected frame -- such a frame saves the old (zero) cookie in its
+ * prologue and would compare the new cookie in its epilogue, self-faulting on
+ * return. canary_init() is therefore __attribute__((no_stack_protector)) and is
+ * called from kernel_main (which never returns) AFTER boot_phase0 (CPUID up ->
+ * RDRAND usable) and BEFORE boot_phase1. Functions that complete before the
+ * write see zero/zero; those entered after see the real cookie; only kernel_main
+ * spans the write and never checks. NT-style single global cookie.
+ * ============================================================================ */
+
+#include "kernel/security/stack_canary.h"
+#include "kernel/random.h"          /* rdrand_bytes() */
+#include "kernel/cpuid.h"           /* cpu_has, CPU_FEATURE_RDRAND/RDSEED */
+#include "kernel/bugcheck.h"        /* KeBugCheckEx, BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE */
+#include "kernel/boot_info.h"       /* boot_payload_find -- peek the firmware RNG seed */
+#include "kernel/klog.h"
+
+/* STATUS_STACK_BUFFER_OVERRUN -- the NT status a GS cookie violation reports.
+ * Not yet present in a shared status header; named here to avoid a bare literal. */
+#define STATUS_STACK_BUFFER_OVERRUN  0xC0000409u
+
+/* The global cookie the compiler reads/compares. Defined exactly once. */
+uintptr_t __stack_chk_guard;
+
+/* Kernel load base for the TSC fallback (linker.ld). */
+extern char __kernel_start[];
+
+static inline uint64_t canary_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* RDSEED into *out; returns 1 on success (CF=1). Gate on CPU_FEATURE_RDSEED. */
+static inline int canary_rdseed(uint64_t *out)
+{
+    uint64_t v;
+    uint8_t ok;
+    for (int try = 0; try < 8; try++) {
+        __asm__ volatile ("rdseed %0; setc %1" : "=r"(v), "=qm"(ok) :: "cc");
+        if (ok) { *out = v; return 1; }
+    }
+    return 0;
+}
+
+/* Mix 8 entropy bytes from the bootloader's firmware-RNG seed payload WITHOUT
+ * consuming/retiring it (the CSPRNG still consumes it later in Phase 1). The
+ * payload phys is identity-mapped (phys == virt in low memory) and was range-
+ * validated by the boot_info validator. Returns 1 if entropy was mixed. */
+static int canary_mix_boot_seed(uint64_t *acc)
+{
+    const struct boot_payload_desc *d =
+        boot_payload_find(&g_boot_info, (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 0);
+    if (!d || d->length < 16 || d->phys_start == 0)
+        return 0;
+    /* Read the 8 tail bytes (past any seed header) -- raw firmware RNG bytes. */
+    const volatile uint8_t *p = (const volatile uint8_t *)(uintptr_t)d->phys_start;
+    uint64_t fw = 0;
+    for (unsigned i = 0; i < 8; i++)
+        fw |= (uint64_t)p[d->length - 8 + i] << (i * 8);
+    *acc ^= fw;
+    return 1;
+}
+
+uintptr_t canary_massage(uint64_t raw)
+{
+    raw &= ~(uint64_t)0xFF;       /* low byte 0: a string overflow that stops at
+                                   * a NUL terminator cannot forge the low byte */
+    raw |= (uint64_t)1 << 63;     /* bit 63 set: cookie is never 0, high byte != 0 */
+    return (uintptr_t)raw;
+}
+
+__attribute__((no_stack_protector))
+void canary_init(void)
+{
+    uint64_t raw = 0;
+    const char *src;
+    int credited = 0;   /* 1 once a hardware/firmware entropy source contributed */
+
+    /* RDRAND is hardware crypto entropy and is usable as soon as CPUID has run
+     * (Phase 0), well before the CSPRNG is seeded; re-seeding the cookie later
+     * is unsafe because a live function frame would hold the old cookie, so a
+     * single early seed is used. The source is reported by what ACTUALLY
+     * succeeded, not by the CPUID bit (RDRAND can transiently fail). */
+    if (cpu_has(CPU_FEATURE_RDRAND) && rdrand_bytes((uint8_t *)&raw, sizeof raw)) {
+        src = "RDRAND";
+        credited = 1;
+    } else {
+        /* No usable RDRAND. Combine every credited early source we can: RDSEED
+         * (true hardware entropy) and the bootloader's firmware-RNG seed
+         * payload, with a TSC + kernel-base value as the non-credited base so
+         * the cookie is at least never constant. */
+        uint64_t mix = canary_rdtsc() ^ (uint64_t)(uintptr_t)__kernel_start
+                     ^ 0x9E3779B97F4A7C15ULL;
+        src = "TSC (degraded)";
+
+        uint64_t seed;
+        if (cpu_has(CPU_FEATURE_RDSEED) && canary_rdseed(&seed)) {
+            mix ^= seed;
+            src = "RDSEED";
+            credited = 1;
+        }
+        if (canary_mix_boot_seed(&mix)) {
+            src = credited ? "RDSEED+boot-seed" : "boot-seed";
+            credited = 1;
+        }
+        raw = mix;
+    }
+
+    __stack_chk_guard = canary_massage(raw);
+    klog(LOG_INFO, "sec", "Stack canary seeded (%s)", src);
+    if (!credited)
+        klog(LOG_WARN, "sec",
+             "Stack canary: no hardware/firmware RNG credited -- cookie is "
+             "predictable on this platform (degraded)");
+}
+
+__attribute__((noreturn))
+void __stack_chk_fail(void)
+{
+    KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE,
+                 STATUS_STACK_BUFFER_OVERRUN, 0, 0, 0);
+    __builtin_unreachable();
+}

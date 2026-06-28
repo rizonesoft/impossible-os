@@ -14,6 +14,7 @@
 #include "kernel/security/acl.h"
 #include "kernel/security/token.h"
 #include "kernel/security/privileges.h"
+#include "kernel/security/stack_canary.h"
 #include "kernel/ob/ob.h"
 #include "libc/string.h"
 
@@ -517,10 +518,45 @@ static void test_nt_token_ssdt_registered(void)
     }
 }
 
+/* ---- Stack canary (-fstack-protector-strong) ---- */
+
+/* canary_massage is a pure function: low byte must be zeroed (terminator
+ * canary) and bit 63 set (cookie is never 0, high byte non-zero). */
+static void test_canary_massage_invariants(void)
+{
+    static const uint64_t inputs[] = {
+        0, 1, 0xFFu, 0x123456789ABCDEFFull, 0xFFFFFFFFFFFFFFFFull, 0x00FF00FF00FF00FFull
+    };
+    for (unsigned i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+        uintptr_t c = canary_massage(inputs[i]);
+        TEST_ASSERT_EQ((uint64_t)(c & 0xFFu), 0u, "canary low byte is zero");
+        TEST_ASSERT_EQ((uint64_t)(c >> 63), 1u, "canary bit 63 is set (never 0)");
+        TEST_ASSERT(c != 0, "canary is non-zero");
+    }
+    /* The non-massaged middle bits are preserved (entropy not destroyed). */
+    uintptr_t c = canary_massage(0x0011223344556677ull);
+    TEST_ASSERT_EQ((uint64_t)((c >> 8) & 0xFFFFFFFFFFFFFFull),
+                   0x80112233445566ull, "middle bits preserved + bit 63 set");
+}
+
+/* The live __stack_chk_guard must have been seeded at boot (canary_init in
+ * kernel_main) and satisfy the same invariants. Read-only: do NOT call
+ * canary_init from a test -- re-seeding would break this frame's own canary. */
+static void test_canary_guard_seeded(void)
+{
+    TEST_ASSERT(__stack_chk_guard != 0, "__stack_chk_guard seeded non-zero at boot");
+    TEST_ASSERT_EQ((uint64_t)(__stack_chk_guard & 0xFFu), 0u, "guard low byte zero");
+    TEST_ASSERT_EQ((uint64_t)((uint64_t)__stack_chk_guard >> 63), 1u, "guard bit 63 set");
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
 {
+    test_suite_register_cat("Security: stack canary massage invariants",
+                            test_canary_massage_invariants, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: stack canary guard seeded",
+                            test_canary_guard_seeded, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID equal", test_sid_equal, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID to string", test_sid_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: ACL roundtrip", test_acl_roundtrip, TEST_CAT_SECURITY);

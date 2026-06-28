@@ -20,7 +20,7 @@ AR      := llvm-ar-19
 CFLAGS  := --target=x86_64-elf \
            -Wall -Wextra -Werror \
            -ffreestanding -nostdlib -nostdinc \
-           -fno-stack-protector -fno-pie \
+           -fstack-protector-strong -mstack-protector-guard=global -fno-pie \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
            -mcmodel=kernel -std=gnu11 -O2 -g \
            -mretpoline -mretpoline-external-thunk \
