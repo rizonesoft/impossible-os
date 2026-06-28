@@ -9,6 +9,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 # TODO-12 -- Native API Layer (Nt/Zw)
 
 > **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); added 29 missing inter-section `---` separators
+> **Gap-audited:** 2026-06-28 | parity-research-analyst (sonnet, todo-plan) 35-feature inventory + 13 gaps; codex-gap-audit red-team (needs-attention, 4 valid). Filed: G4 GUI-thread conversion (§4, XREF D08 T15/T16), G9 RtlNtStatusToDosError broad coverage (§11 false-completeness, 12->classes), G12 NtGetNextProcess/Thread 0x0202/0x0203 (§7, XREF T21 §4), G13 ProcessMitigationPolicy classes (§7, hands SystemCallDisablePolicy to §25). Already-owned (Branch C, not filed): G5 Win32k-lockdown->§25 filter, G6 KUSD-time->D02 T08 §12 / T11 §9, G8 KPTI->D02 T10 KPTI/TODO-33, G12/G13 cross-owned T21. Rejected: G2 Win11-internal SSDT byte-format minutiae.
 
 > **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a complete NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT) with 470 service entries, and the `NtCurrentTeb()` / `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. This TODO is the **master registry** for all NT syscall endpoints -- some are implemented here, others are implemented by domain-specific TODOs but get their SSDT slots reserved and documented here.
 
@@ -65,7 +66,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |   1   | NTSTATUS type and canonical status codes                       | --                |  [x]   |
 | 💎  |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-11 §5–§8     |  [x]   |
 | 💎  |   3   | INT 0x2E compatibility path                                    | §2                |  [x]   |
-| 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [x]   |
+| 💎  |   4   | System Service Descriptor Table (SSDT) -- 470 entries          | §1                |  [/]   |
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2    |  [x]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2    |  [/]   |
@@ -233,6 +234,7 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [x] Unimplemented slots return `STATUS_NOT_IMPLEMENTED` via `ssdt_stub_not_implemented()`
 - [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
 - [x] 4 unit tests: unimplemented stub, invalid table, main count=470, register+dispatch
+- [ ] GUI-thread conversion: when ssdt_dispatch selects Table 1 (shadow SSDT, RAX bits[13:12]=01) and the thread lacks GUI state, run a KiConvertGuiThread-equivalent init (expand kernel stack + wire GUI state) before the handler, after the audit/filter checks -> XREF: `D08 T15`, `D08 T16`
 - [x] Commit: `"kernel: nt -- SSDT and service number table"`
 
 ---
@@ -320,6 +322,8 @@ Process and thread creation, suspension, termination, and thread context access 
 - [x] New file: `include/kernel/nt/nt_process.h` with THREAD_BASIC_INFORMATION, PROCESS_BASIC_INFORMATION, info class constants
 - [x] New file: `src/kernel/nt/nt_process.c` with 23 SSDT handlers
 - [x] 2 unit tests: SSDT registration (7 handler checks), info class constants (7 value checks)
+- [ ] NtGetNextProcess (0x0202) + NtGetNextThread (0x0203): modern enumeration -- restart from a previous handle with rights checks, no leaked references (slots reserved in `TODO-A-SSDT-Master-Table` / `service_numbers.h`; XREF `T21 §4`)
+- [ ] NtSet/QueryInformationProcess mitigation classes: ProcessMitigationPolicy / ChildProcessPolicy / Signature+ImageLoad policy carriers (monotonic, no relaxation), handing SystemCallDisablePolicy to §25 -- the syscall-class marshalling for the `T21 §11` mitigation_flags field; return STATUS_INVALID_INFO_CLASS no longer silently breaks SetProcessMitigationPolicy callers
 - [x] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
 
 **Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread`/`NtSetContextThread` currently return `STATUS_NOT_IMPLEMENTED` until TODO-23 provides `CONTEXT`. `NtDelayExecution` sleeps for the correct interval.
@@ -438,6 +442,7 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [x] On every `NTSTATUS` return from a syscall: if `NT_ERROR(status)`, write the Win32 error translation into `TEB->LastErrorValue` (at `gs:[0x68]`) via `RtlNtStatusToDosError`. Wired in both SYSCALL (`syscall_fast.c`) and INT 0x2E (`syscall.c`) return paths.
 - [x] `RtlNtStatusToDosError` 12-entry table in `ssdt.c`: SUCCESS->0, ACCESS_DENIED->5, NO_MEMORY->8, INVALID_HANDLE->6, NAME_NOT_FOUND->2, NOT_IMPLEMENTED->50, INVALID_PARAMETER->87, BUFFER_TOO_SMALL->122, ACCESS_VIOLATION->998, PRIVILEGE_NOT_HELD->1314, UNSUCCESSFUL->1, NAME_COLLISION->183. Unknown->317.
 - [x] Kernel writes `TEB->LastErrorValue` only in the syscall return path; user-mode `SetLastError` writes `gs:[0x68]` directly without a syscall.
+- [ ] RtlNtStatusToDosError broad coverage: the 12-entry table is too sparse (every other status -> 317) -- add table-driven mappings for the common NTSTATUS classes (file/path, sharing, registry, sync/timeout, process, buffer, privilege) so real Win32 GetLastError consumers get correct codes; expand tests beyond ACCESS_DENIED/NO_MEMORY
 - [x] Commit: `"kernel: nt -- IOSB and TEB LastErrorValue propagation"` (607eb38b)
 
 **Test checkpoint:** After a failing `NtOpenFile` (non-existent path), `gs:[0x68]` == Win32 error code (2 = FILE_NOT_FOUND). After `NtReadFile`, IOSB `Status == STATUS_SUCCESS`, `Information == bytes_read`.
