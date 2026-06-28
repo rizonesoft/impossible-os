@@ -76,8 +76,8 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [ ]   |
 | 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [ ]   |
 | 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
-| ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [ ]   |
-| 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4                   |  [ ]   |
+| ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [/]   |
+| 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4, T19              |  [/]   |
 | 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [ ]   |
 | 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [ ]   |
 | 💎  |  18   | Spectre predictor extras (SSBD/STIBP/RSB/BHI/ITS)   | §8                            |  [ ]   |
@@ -464,6 +464,8 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 **Test checkpoint:** Two boots produce different `boot_info.kaslr_slide`; `kernel.sym` / module bases match slide; dump shows slide in vendor stream. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
+> **Deferred:** [H] blocked on higher-half relocation (see section WARNING) -- sliding the current low-linked layout mixes relocation + address-space migration + KASLR in the wrong owner and risks a non-bootable image. The base-slide mechanics belong to TODO-33; KASLR policy lands on that foundation. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
+
 ---
 
 ## 15. Enclave and Code Signing Syscalls Wired to SSDT
@@ -482,6 +484,8 @@ Register VBS/SGX enclave management and code signing verification syscalls in th
 - [ ] Commit: `"kernel/security: wire Enclave and code signing syscalls to SSDT"`
 
 **Test checkpoint:** `NtCreateEnclave` allocates enclave region. `NtSetCachedSigningLevel` stores signing level on file. `NtGetCachedSigningLevel` retrieves it. `NtCompareSigningLevels` returns correct ordering. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+> **Deferred:** [M] blocked on prerequisite infrastructure -- the cached-signing-level syscalls need the code-integrity trust-policy engine, and `NtCreateEnclave` needs an SGX enclave subsystem (neither exists yet). Not a kernel-hardening primitive; this is syscall surface over those subsystems. -> XREF: 02-kernel-core/TODO-19-code-integrity-trust-policy.md (signing-level policy) + the SGX enclave subsystem owner (no TODO yet -- file when SGX support is scoped)
 
 ---
 
