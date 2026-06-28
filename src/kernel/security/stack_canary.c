@@ -54,16 +54,37 @@ static inline int canary_rdseed(uint64_t *out)
     return 0;
 }
 
-/* Mix 8 entropy bytes from the bootloader's firmware-RNG seed payload WITHOUT
+/* Mix entropy bytes from the bootloader's firmware-RNG seed payload WITHOUT
  * consuming/retiring it (the CSPRNG still consumes it later in Phase 1). The
- * payload phys is identity-mapped (phys == virt in low memory) and was range-
- * validated by the boot_info validator. Returns 1 if entropy was mixed. */
+ * descriptor is gated with the SAME safety contract the canonical consumer
+ * (boot_seed_desc_classify) applies before dereferencing: FLAG_RESERVED (an
+ * unreserved range may be allocator-owned) and the [phys_start, phys_start+
+ * length) range fully inside the 4 GiB boot identity map -- canary_init runs
+ * pre-IDT, so an out-of-map read would #PF into the UEFI IDT and hang. The
+ * payload contents are NOT credited as high-quality entropy here (this peek
+ * does not parse/verify the seed records); the bytes are mixed only as
+ * personalization, so the caller still warns + treats the cookie as degraded
+ * unless a verified hardware source (RDRAND/RDSEED) contributed. Returns 1 if
+ * bytes were mixed. */
+int canary_seed_desc_ok(uint32_t flags, uint64_t phys_start, uint64_t length)
+{
+    if (length < 16 || phys_start == 0)
+        return 0;                       /* absent / too short */
+    if ((flags & BOOT_PAYLOAD_FLAG_RESERVED) == 0)
+        return 0;                       /* may be allocator-owned -- untouchable */
+    if (phys_start >= BOOT_INFO_EARLY_MAP_END ||
+        length > BOOT_INFO_EARLY_MAP_END - phys_start)
+        return 0;                       /* outside the 4 GiB identity map */
+    return 1;
+}
+
 static int canary_mix_boot_seed(uint64_t *acc)
 {
     const struct boot_payload_desc *d =
         boot_payload_find(&g_boot_info, (uint32_t)BOOT_PAYLOAD_RANDOM_SEED, 0);
-    if (!d || d->length < 16 || d->phys_start == 0)
+    if (!d || !canary_seed_desc_ok(d->flags, d->phys_start, d->length))
         return 0;
+
     /* Read the 8 tail bytes (past any seed header) -- raw firmware RNG bytes. */
     const volatile uint8_t *p = (const volatile uint8_t *)(uintptr_t)d->phys_start;
     uint64_t fw = 0;
@@ -109,12 +130,15 @@ void canary_init(void)
         if (cpu_has(CPU_FEATURE_RDSEED) && canary_rdseed(&seed)) {
             mix ^= seed;
             src = "RDSEED";
-            credited = 1;
+            credited = 1;     /* RDSEED is a verified hardware entropy source */
         }
-        if (canary_mix_boot_seed(&mix)) {
-            src = credited ? "RDSEED+boot-seed" : "boot-seed";
-            credited = 1;
-        }
+        /* Mix the bootloader firmware-RNG seed as additional personalization.
+         * It is NOT credited as a high-quality source: this peek does not parse
+         * or verify the seed records, so the payload could be timing-only or
+         * unverified carryover. It improves the cookie but does not suppress the
+         * degraded warning unless RDSEED above already credited. */
+        if (canary_mix_boot_seed(&mix) && !credited)
+            src = "boot-seed (unverified)";
         raw = mix;
     }
 

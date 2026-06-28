@@ -23,3 +23,9 @@ void canary_init(void);
 /* Pure cookie massaging (unit-testable): low byte forced to 0 (terminator
  * canary), bit 63 set so the cookie is never 0 and the high byte is non-zero. */
 uintptr_t canary_massage(uint64_t raw);
+
+/* Pure predicate (unit-testable): is a RANDOM_SEED boot-payload descriptor safe
+ * to peek for canary entropy? Requires FLAG_RESERVED, length >= 16, and
+ * [phys_start, phys_start+length) wholly inside the 4 GiB boot identity map
+ * (canary_init runs pre-IDT, so an out-of-map read would #PF-hang). */
+int canary_seed_desc_ok(uint32_t flags, uint64_t phys_start, uint64_t length);

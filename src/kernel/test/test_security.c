@@ -549,6 +549,29 @@ static void test_canary_guard_seeded(void)
     TEST_ASSERT_EQ((uint64_t)((uint64_t)__stack_chk_guard >> 63), 1u, "guard bit 63 set");
 }
 
+/* The boot-seed descriptor predicate must reject anything the canary cannot
+ * safely dereference pre-IDT: unreserved (allocator-owned), out of the 4 GiB
+ * identity map, or too short. Bit 3 = BOOT_PAYLOAD_FLAG_RESERVED;
+ * 0x100000000 = BOOT_INFO_EARLY_MAP_END. */
+static void test_canary_seed_desc_bounds(void)
+{
+    const uint32_t RES = (1u << 3);   /* BOOT_PAYLOAD_FLAG_RESERVED */
+    const uint64_t END = 0x100000000ull;
+
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, 0x200000, 4096), 1u,
+                   "reserved + low + length>=16 accepted");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(0, 0x200000, 4096), 0u,
+                   "unreserved descriptor rejected");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, END, 4096), 0u,
+                   "phys_start at/above 4 GiB rejected");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, END - 8, 4096), 0u,
+                   "range crossing the 4 GiB map end rejected");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, 0x200000, 8), 0u,
+                   "length < 16 rejected");
+    TEST_ASSERT_EQ((uint64_t)canary_seed_desc_ok(RES, 0, 4096), 0u,
+                   "phys_start 0 rejected");
+}
+
 /* ---- Registration ---- */
 
 void test_register_security(void)
@@ -557,6 +580,8 @@ void test_register_security(void)
                             test_canary_massage_invariants, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: stack canary guard seeded",
                             test_canary_guard_seeded, TEST_CAT_SECURITY);
+    test_suite_register_cat("Security: stack canary seed-desc bounds",
+                            test_canary_seed_desc_bounds, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID equal", test_sid_equal, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: SID to string", test_sid_to_string, TEST_CAT_SECURITY);
     test_suite_register_cat("Security: ACL roundtrip", test_acl_roundtrip, TEST_CAT_SECURITY);

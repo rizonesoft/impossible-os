@@ -122,7 +122,12 @@ static inline void irq_ki_leave(KINTERRUPT *ki, uint64_t flags)
 
 /* ---- IDT-level wrapper ----
  * Installed as the interrupt_handler_t for each registered vector.
- * Dispatches to the irq_handler_t callback after EOI. */
+ * Dispatches to the irq_handler_t callback after EOI.
+ * no_stack_protector: this runs on every hardware interrupt and only takes
+ * the address of IRQ-save locals (no stack buffer), so the cookie load/compare
+ * is pure ISR-latency cost with no protection value -- the real handlers keep
+ * their canaries. */
+__attribute__((no_stack_protector))
 static uint64_t irq_dispatch_wrapper(struct interrupt_frame *frame)
 {
     uint8_t vec = (uint8_t)frame->int_no;
@@ -452,7 +457,9 @@ static void irq_quarantine_vector(uint8_t vec)
 }
 
 /* Dispatcher for shared chains: every registrant runs and reports a claim
- * status; an all-IRQ_NONE streak marks a storm. Single EOI per interrupt. */
+ * status; an all-IRQ_NONE streak marks a storm. Single EOI per interrupt.
+ * no_stack_protector for the same ISR-hot-path reason as irq_dispatch_wrapper. */
+__attribute__((no_stack_protector))
 static uint64_t irq_shared_dispatch_wrapper(struct interrupt_frame *frame)
 {
     uint8_t vec = (uint8_t)frame->int_no;

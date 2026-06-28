@@ -422,13 +422,16 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 **Test checkpoint:** build uses `-fstack-protector-strong` (1737 cookie-checking functions); `__stack_chk_guard` seeded non-zero with low byte 0 + bit 63 set after boot; `canary_massage` invariants hold. Intentional overflow -> `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE` is a bare-metal/boot check (it halts, not unit-testable). Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | canary massage + guard-seeded suites pass; 12953 kernel + 16 user-mode pass; smoke boots clean with build-wide canaries.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | canary massage + guard-seeded + seed-desc-bounds suites pass; 12959 kernel + 16 user-mode pass; smoke boots clean with build-wide canaries.
 >
 > **Notes:**
 > - Shipped `src/kernel/security/stack_canary.c` + header: global `__stack_chk_guard`, `no_stack_protector` `canary_init()` (RDRAND seed, TSC fallback), pure `canary_massage`, `__stack_chk_fail` -> BugCheck. Makefile flag swap is build-wide.
 > - Bootstrap order (design-review critical fix): `canary_init()` runs in non-returning `kernel_main` after Phase-0 CPUID, before `boot_phase1`; objdump confirms no self-check; smoke boots clean.
 > - Design adoptions: `-mstack-protector-guard=global`, RDRAND-primary (csprng deferred), `no_stack_protector` on `canary_init`; per-finding evidence in the commit message.
 > - Scope boundary: single global NT-style cookie; per-task/%gs canary + the deliberate-overflow BSOD test are not owned here.
+>
+> **Verified:** 2026-06-28 | commit `615abb2e` (+ review fixes) | 7/7 items | build OK | tests 12959/12959 + smoke PASS
+> **Quality reviewed:** 2026-06-28 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 5H+1M fixed | scope: kernel-code-quality
 
 ---
 

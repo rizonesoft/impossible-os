@@ -30,7 +30,11 @@ int rdrand_bytes(uint8_t *buf, uint32_t n)
 
     for (i = 0; i < n; i += 8) {
         uint64_t val;
-        int ok, retries = 10;
+        int retries = 10;
+        /* setc writes ONE byte: ok MUST be a 1-byte type, else a byte store
+         * followed by a full-int read can see uninitialized high bytes and
+         * treat a failed RDRAND (CF=0) as success. */
+        uint8_t ok;
 
         do {
             __asm__ volatile (
