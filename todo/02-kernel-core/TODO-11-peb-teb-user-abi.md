@@ -51,7 +51,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | ⭐  | Order | Deliverable                                     | Depends On         | Status |
 | --- | :---: | ----------------------------------------------- | ------------------ | :----: |
 | 💎  |   1   | TEB struct and GS self-pointer                  | --                 |  [x]   |
-| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --                 |  [x]   |
+| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --                 |  [/]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1                 |  [x]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3             |  [x]   |
 | 💎  |   5   | PEB allocation and population at task_exec      | §2, §4             |  [x]   |
@@ -66,6 +66,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [x]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
+| 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -117,6 +118,15 @@ Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk 
 - [x] Commit: `"kernel: peb -- PEB and RTL_USER_PROCESS_PARAMETERS structs"`
 
 **Test checkpoint:** Build-time `_Static_assert` checks for key PEB and RTL_USER_PROCESS_PARAMETERS offsets pass; unit tests confirm `ImageBaseAddress`, `Ldr`, `ProcessParameters`, and version fields are at expected offsets. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | PEB offset suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: `peb.h` -- `PEB` (early pointers x64-correct: ImageBase 0x10, Ldr 0x18, ProcessParameters 0x20), RTLPP, `UNICODE_STRING`, `PEB_LDR_DATA`; `sizeof(PEB)` 0x1000 fits §5's 1-page alloc.
+> - Review (Codex 3x) found the post-0x28 version fields use x86-32 offsets (OSMajorVersion 0xA4 vs x64 0x118); the early pointer block is correct -- fix owned by §17.
+> - Scope boundary: PEB version-offset correction -> §17; PEB-vs-KUSD build-number disagreement -> §11.
+> **Deferred:** [H] PEB version fields at x86-32 offsets (OSMajorVersion 0xA4 / OSBuildNumber 0xAC) not x64 (0x118 / 0x120); a real Win64 ntdll reads the reserved pad; latent until the PE loader. -> XREF: §17 (item: "Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`..." at line 399)
+> **Accepted:** [M] `PEB.OSBuildNumber`=22621 disagrees with `KUSD.NtBuildNumber`=`BUILD_NUMBER`=8937; both are user-visible NT-version sources. -> XREF: §11 (item: "NT-ABI build consistency: ... one shared NT build constant ..." at line 265)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1H deferred-to-§17, 1M accepted-XREF (§11) | scope: kernel-code-quality
 
 ---
 
@@ -261,6 +271,7 @@ Windows maps a single physical page at fixed virtual address `0x7FFE0000` (user 
 - [x] Wired into Phase 2 boot after wall_clock_init() and timezone_init()
 - [ ] Mirror policy publication bits from TODO-02: `SafeBootMode`, `KdDebuggerEnabled`, and a packed mitigation summary in `MitigationPolicies`; update them when the effective kernel policy snapshot changes.
 - [ ] Win11 24H2 `FullNumberOfPhysicalPages` (ULONGLONG, 0x310): split a `SystemCallPad[2]` qword in `kusd.h`, populate from the 64-bit PMM frame count, add `_Static_assert` + unit assertion
+- [ ] NT-ABI build consistency: `PEB.OSBuildNumber`=22621 vs `KUSD.NtBuildNumber`=`BUILD_NUMBER`(8937) disagree; use one shared NT build constant (22621) for both, separate from internal `BUILD_NUMBER`; test both agree
 - [x] Commit: `"kernel: abi -- KUSER_SHARED_DATA shared page at 0x7FFE0000"`
 
 **Test checkpoint:** Serial log shows `KUSD: mapped at user=0x7FFE0000 kernel=0x<rand>`. User-mode test reads `*(uint32_t *)0x7FFE026C` (NtMajorVersion) and gets `10`. `TickCountQuad` at `0x7FFE0320` increments over time. `POST16(0xDF00)` on entry, `POST16(0xDF01)` static init, `POST16(0xDF02)` time update wired, `POST16(0xDF03)` test read verified. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
@@ -388,6 +399,20 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 - [ ] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
 
 **Test checkpoint:** `tls_set_value(pid, 0, 0xCAFE)` writes inside the mapped TEB (not the env page) and a read of `gs:[0x1480]` returns it; two threads' TEB ranges and the env/RTLPP/PEB pages are provably disjoint (unit test); boot still reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 17. PEB x64 Version-Field Offsets
+The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber at 0xAC, CriticalSectionTimeout at 0xC8, TlsBitmap at 0x230 -- these are the **x86-32** PEB offsets. The real x64 `_PEB` (Geoff Chappell pebteb / ntdoc / bytepointer tebpeb64) puts OSMajorVersion at 0x118, OSMinorVersion at 0x11C, OSBuildNumber at 0x120, CriticalSectionTimeout at 0xC0. The early pointer block (ImageBaseAddress 0x10, Ldr 0x18, ProcessParameters 0x20) is x64-correct; only the post-0x28 region is wrong. A real Win64 ntdll reading `PEB+0x118` gets the reserved-zero pad, not 10.0.22621. Latent today (in-tree tests assert the same wrong offsets; no real ntdll yet) but breaks Win64 compat when the PE loader lands. -> XREF: §2 (PEB struct), §5 (population), `D02 T17` (PE loader / ntdll).
+
+- [ ] Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`: OSMajorVersion 0x118, OSMinorVersion 0x11C, OSBuildNumber 0x120, OSCSDVersion 0x122, OSPlatformId 0x124, ImageSubsystem 0x128
+- [ ] Move CriticalSectionTimeout to 0xC0, and NtGlobalFlag / heap thresholds / NumberOfProcessors / TlsBitmap to their real x64 offsets; resize the reserved-pad spans
+- [ ] Update the `_Static_assert` offset checks to the corrected x64 offsets
+- [ ] Update `test_peb_offsets` in `test_peb_teb.c` to assert the x64 offsets (it currently asserts the 32-bit ones)
+- [ ] Confirm `peb_alloc_for_task` resolves by field name (no literal offsets) and cmd.exe still boots
+- [ ] Commit: `"kernel: peb -- correct PEB version-field offsets to x64 ABI (0x118/0x120)"`
+
+**Test checkpoint:** `__builtin_offsetof(PEB, OSMajorVersion) == 0x118` and `OSBuildNumber == 0x120`; `test_peb_offsets` asserts the x64 offsets; the PEB populated by `peb_alloc_for_task` reads 10.0.22621 at the corrected offsets; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
