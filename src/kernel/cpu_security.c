@@ -1304,19 +1304,19 @@ void cpu_cr_pin_tick(void)
  * because the AP probe does not cover them, so forcing them on a skewed AP
  * could #GP. Extracted (and exported under KERNEL_TESTS) so the exclusion is
  * unit-testable. */
-uint64_t cpu_ap_forceable_cr4(uint64_t features)
+uint64_t cpu_ap_forceable_cr4(cpu_feature_mask_t features)
 {
     uint64_t forceable = 0;
-    if (features & (1ULL << CPU_FEATURE_XSAVE)) forceable |= CR4_OSXSAVE;
-    if (features & (1ULL << CPU_FEATURE_UMIP))  forceable |= CR4_UMIP;
-    if (features & (1ULL << CPU_FEATURE_SMEP))  forceable |= CR4_SMEP;
-    if (features & (1ULL << CPU_FEATURE_SMAP))  forceable |= CR4_SMAP;
-    if (features & (1ULL << CPU_FEATURE_PCID))  forceable |= CR4_PCIDE;
-    if (features & (1ULL << CPU_FEATURE_PKU))   forceable |= CR4_PKE;
+    if (cpu_feature_test(&features, CPU_FEATURE_XSAVE)) forceable |= CR4_OSXSAVE;
+    if (cpu_feature_test(&features, CPU_FEATURE_UMIP))  forceable |= CR4_UMIP;
+    if (cpu_feature_test(&features, CPU_FEATURE_SMEP))  forceable |= CR4_SMEP;
+    if (cpu_feature_test(&features, CPU_FEATURE_SMAP))  forceable |= CR4_SMAP;
+    if (cpu_feature_test(&features, CPU_FEATURE_PCID))  forceable |= CR4_PCIDE;
+    if (cpu_feature_test(&features, CPU_FEATURE_PKU))   forceable |= CR4_PKE;
     return forceable;
 }
 
-uint64_t cpu_ap_forceable_cr4_live(uint64_t features, uint64_t xcr0, uint64_t cr3)
+uint64_t cpu_ap_forceable_cr4_live(cpu_feature_mask_t features, uint64_t xcr0, uint64_t cr3)
 {
     uint64_t forceable = cpu_ap_forceable_cr4(features);
     /* CR4.PKE needs the PKRU xstate live in XCR0 (bit 9), not just the PKU
@@ -1342,7 +1342,7 @@ static void cpu_force_ap_required_cr4(void)
         return;
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
     forced = s_bsp_required_cr4 &
-             cpu_ap_forceable_cr4_live(pc->features.w[0], xcr0_read_safe(), cr3);
+             cpu_ap_forceable_cr4_live(pc->features, xcr0_read_safe(), cr3);
     if (forced)
         cr4_write_safe(read_cr4() | forced);
 }

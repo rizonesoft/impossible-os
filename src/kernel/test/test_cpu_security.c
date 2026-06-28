@@ -1107,7 +1107,7 @@ static void test_ap_forceable_cr4_excludes_fsgsbase_cet(void)
     /* The force-after-validation mask must NEVER include FSGSBASE/CET -- those
      * CR4 bits are not in the S6 AP probe, so forcing them on a skewed AP could
      * #GP. With ALL features set, the forceable mask still excludes them. */
-    uint64_t all = ~0ULL;
+    cpu_feature_mask_t all = { { ~0ULL, ~0ULL } };
     uint64_t f = cpu_ap_forceable_cr4(all);
     TEST_ASSERT_EQ((uint32_t)(f & (CR4_FSGSBASE | CR4_CET)), 0u,
                    "forceable CR4 excludes FSGSBASE + CET (not AP-probed)");
@@ -1122,10 +1122,13 @@ static void test_ap_forceable_cr4_gated_by_features(void)
 {
     /* No features -> nothing forceable (a CPU that proves nothing forces
      * nothing). */
-    TEST_ASSERT_EQ((uint32_t)cpu_ap_forceable_cr4(0), 0u,
+    cpu_feature_mask_t none = { { 0, 0 } };
+    TEST_ASSERT_EQ((uint32_t)cpu_ap_forceable_cr4(none), 0u,
                    "forceable CR4 is empty when no features are present");
     /* Only SMEP probed -> only CR4_SMEP forceable. */
-    uint64_t f = cpu_ap_forceable_cr4(1ULL << CPU_FEATURE_SMEP);
+    cpu_feature_mask_t smep_only = { { 0, 0 } };
+    cpu_feature_set(&smep_only, CPU_FEATURE_SMEP);
+    uint64_t f = cpu_ap_forceable_cr4(smep_only);
     TEST_ASSERT_EQ((uint32_t)f, (uint32_t)CR4_SMEP,
                    "SMEP-only features yield exactly CR4_SMEP");
 }
@@ -1135,8 +1138,10 @@ static void test_ap_forceable_cr4_live_preconditions(void)
     /* Two CR4 bits have live preconditions beyond CPUID presence; the force path
      * must drop them when the precondition fails, mirroring the safe-enable
      * paths, else it #GPs on a skewed AP. cr3=0 is the clean boot-PML4 value. */
-    uint64_t pku = 1ULL << CPU_FEATURE_PKU;
-    uint64_t pcid = 1ULL << CPU_FEATURE_PCID;
+    cpu_feature_mask_t pku = { { 0, 0 } };
+    cpu_feature_mask_t pcid = { { 0, 0 } };
+    cpu_feature_set(&pku, CPU_FEATURE_PKU);
+    cpu_feature_set(&pcid, CPU_FEATURE_PCID);
 
     /* PKE: XCR0.PKRU (bit 9) clear -> dropped even though PKU is present. */
     TEST_ASSERT_EQ((uint32_t)(cpu_ap_forceable_cr4_live(pku, 0x7, 0) & CR4_PKE), 0u,
@@ -1154,7 +1159,8 @@ static void test_ap_forceable_cr4_live_preconditions(void)
                               == CR4_PCIDE), 1u,
                    "PCIDE retained when CR3[11:0] zero");
     /* Gates touch only PKE/PCIDE: SMEP forceable regardless of XCR0/CR3 state. */
-    uint64_t smep = 1ULL << CPU_FEATURE_SMEP;
+    cpu_feature_mask_t smep = { { 0, 0 } };
+    cpu_feature_set(&smep, CPU_FEATURE_SMEP);
     TEST_ASSERT_EQ((uint32_t)cpu_ap_forceable_cr4_live(smep, 0, 0xFFF), (uint32_t)CR4_SMEP,
                    "live gates touch only PKE/PCIDE, not SMEP");
 }

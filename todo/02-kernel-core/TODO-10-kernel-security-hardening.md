@@ -602,6 +602,9 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 > - `s_global_feature_mask` is a struct (no 16-byte x86 atomic), so visibility rides a separate `s_global_mask_published` release/acquire flag; `cpu_feature_global_has(feat)` replaces `cpu_feature_global_mask()` and returns 0 until finalize publishes.
 > - Scope boundary: infrastructure ONLY -- adds no feature bits (w[1] stays 0 in production); the predictor-policy mitigations that populate the high word are §25.
 
+> **Verified:** 2026-06-28 | commit `031c83f0` (+ review fixes) | 6/6 items | build OK | smoke PASS (KVM 2.67s), x86 185/16 + 2 new feature-mask suites
+> **Quality reviewed:** 2026-06-28 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 1M fixed | scope: kernel-code-quality
+
 ---
 
 ## 19. Microarchitectural Data-Sampling Clears (MDS / TAA / SRBDS / MMIO)

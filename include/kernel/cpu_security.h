@@ -193,7 +193,7 @@ void cpu_cr_verify_ipi_init(void);
 /* Pure helper (TODO-09-boot S10): the CR4 bits an AP with `features` (S6
  * AP-probe-mask layout) may have forced. Excludes FSGSBASE/CET (not AP-probed).
  * Exposed for unit testing the exclusion. */
-uint64_t cpu_ap_forceable_cr4(uint64_t features);
+uint64_t cpu_ap_forceable_cr4(cpu_feature_mask_t features);
 
 /* Pure helper (TODO-09-boot S10): cpu_ap_forceable_cr4() gated by this AP's live
  * register state. Two CR4 bits have hardware preconditions beyond CPUID presence
@@ -203,7 +203,7 @@ uint64_t cpu_ap_forceable_cr4(uint64_t features);
  *   - CR4.PCIDE needs CR3[11:0] == 0         (mirrors cpu_pcid_enable; SDM 4.10.1)
  * PKE is dropped when xcr0 bit 9 is clear; PCIDE is dropped when cr3 low 12 bits
  * are nonzero. Exposed for unit testing. */
-uint64_t cpu_ap_forceable_cr4_live(uint64_t features, uint64_t xcr0, uint64_t cr3);
+uint64_t cpu_ap_forceable_cr4_live(cpu_feature_mask_t features, uint64_t xcr0, uint64_t cr3);
 
 /* Verify one AP's buffered snapshot against the BSP baseline (warn-only on
  * EFER.NXE / required-CR4 / PAT drift) and emit its "[AP%u] CPU hardening
