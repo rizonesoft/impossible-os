@@ -118,9 +118,19 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status)
 static SSDT_HANDLER s_main_handlers[SSDT_MAIN_MAX];
 static SSDT_HANDLER s_shadow_handlers[SSDT_SHADOW_MAX];
 
+/* Bind the service-number metadata invariants to the REAL capacity constant
+ * (SSDT_MAIN_MAX) here, where both ssdt.h and service_numbers.h are visible.
+ * service_numbers.h asserts against a literal 1024; if SSDT_MAIN_MAX is ever
+ * lowered, these catch declared metadata that would exceed the array. */
+_Static_assert(SSDT_MAIN_COUNT <= SSDT_MAIN_MAX,
+    "SSDT_MAIN_COUNT must fit the main handler array (SSDT_MAIN_MAX)");
+_Static_assert(SSDT_LAST_MAIN_INDEX < SSDT_MAIN_MAX,
+    "SSDT_LAST_MAIN_INDEX must be a valid index into the main handler array");
+
 static SSDT_TABLE s_main_table = {
     .handlers    = s_main_handlers,
     .count       = SSDT_MAIN_COUNT,
+    .max         = SSDT_MAIN_MAX,
     .implemented = 0,
     .name        = "main",
 };
@@ -128,6 +138,7 @@ static SSDT_TABLE s_main_table = {
 static SSDT_TABLE s_shadow_table = {
     .handlers    = s_shadow_handlers,
     .count       = 0,          /* empty until Win32k fills it */
+    .max         = SSDT_SHADOW_MAX,
     .implemented = 0,
     .name        = "shadow",
 };
@@ -184,7 +195,13 @@ NTSTATUS ssdt_dispatch(uint32_t service_number,
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (index >= table->count && index >= SSDT_MAIN_MAX)
+    /* Bound by the per-table handler-array capacity, NOT the hardcoded
+     * main-table size: the shadow array may be sized independently, and an
+     * index in [table->max, SSDT_MAIN_MAX) would otherwise be an OOB call.
+     * Unregistered in-range slots hold ssdt_stub_not_implemented.
+     * SCOPE-GAP-ALLOWED: out-of-range service number returns NOT_IMPLEMENTED is
+     * the Windows-correct terminal behavior, not a stub for deferred work. */
+    if (index >= table->max)
         return STATUS_NOT_IMPLEMENTED;
 
     return table->handlers[index](a1, a2, a3, a4, a5, a6);
@@ -205,7 +222,7 @@ int ssdt_register(uint32_t service_number, SSDT_HANDLER handler)
     default: return -1;
     }
 
-    if (index >= SSDT_MAIN_MAX)
+    if (index >= table->max)
         return -1;
 
     /* Track implemented count */

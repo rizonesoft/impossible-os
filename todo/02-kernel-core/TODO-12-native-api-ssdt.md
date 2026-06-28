@@ -229,7 +229,7 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 
 > **Verified:** 2026-06-28 | 7/7 items | build OK | smoke PASS (TCG 2.51s), tests 346+16 PASS
 > **Deferred:** [H] syscall-path `transition_ring_record` forensic overhead (2x TSC+CR3+2 RDMSR per syscall) should be gated behind a runtime knob -> XREF: 02-kernel-core/TODO-12 §24 (item: "Gate syscall-path `transition_ring_record()` behind a runtime static-key/debug knob" at line 798)
-> **Deferred:** [M] `ssdt_dispatch` bound uses hardcoded `SSDT_MAIN_MAX` for both tables; OOB if `SSDT_SHADOW_MAX` ever shrinks -> XREF: 02-kernel-core/TODO-12 §4 (item: "Bound `ssdt_dispatch` per-table, not by hardcoded `SSDT_MAIN_MAX`" at line 250)
+> **Deferred:** [M] `ssdt_dispatch` bound uses hardcoded `SSDT_MAIN_MAX` for both tables; OOB if `SSDT_SHADOW_MAX` ever shrinks -> XREF: 02-kernel-core/TODO-12 §4 (item: "Bound `ssdt_dispatch` per-table, not by hardcoded `SSDT_MAIN_MAX`" at line 232)
 > **Quality reviewed:** 2026-06-28 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit fixed (FMASK), 2 deferred (1H+1M), 1Crit rejected (STAR false-positive) | scope: kernel-code-quality
 
 ---
@@ -278,8 +278,23 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
 - [x] 4 unit tests: unimplemented stub, invalid table, main count=470, register+dispatch
 - [ ] GUI-thread conversion: when ssdt_dispatch selects Table 1 (shadow SSDT, RAX bits[13:12]=01) and the thread lacks GUI state, run a KiConvertGuiThread-equivalent init (expand kernel stack + wire GUI state) before the handler, after the audit/filter checks -> XREF: `D08 T15`, `D08 T16`
-- [ ] Bound `ssdt_dispatch` per-table, not by hardcoded `SSDT_MAIN_MAX`: safe only while SHADOW_MAX==MAIN_MAX==1024; if shadow shrinks, an index in [SHADOW_MAX,1024) is an OOB indirect call. Use the per-table capacity; drop the dead count term. (§2)
+- [x] Bound `ssdt_dispatch`/`ssdt_register` per-table via new `SSDT_TABLE.max` (capacity) field instead of hardcoded `SSDT_MAIN_MAX`; drops the dead `count` term. Closes the §2-review OOB-if-shadow-shrinks finding. (§4 review)
 - [x] Commit: `"kernel: nt -- SSDT and service number table"`
+
+**Test checkpoint:** `ssdt_init` logs "SSDT initialized: N main slots"; ring-3 syscall with a valid service number reaches its handler; an out-of-range service number returns `STATUS_NOT_IMPLEMENTED`. 4 unit tests (stub, invalid table, main count, register+dispatch) pass.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 346 kernel + 16 user tests, 0 failures; smoke boots to C:\>
+
+> **Notes:**
+> - SSDT is a flat function-pointer array; `ssdt_dispatch` (`ssdt.c`) splits table-id (bits 13:12) + index (bits 11:0), bounds-checks, indirect-calls; `ssdt_init` stub-fills all slots before Phase-3 syscall enable.
+> - Review hardened the dispatch + register bound to a per-table `SSDT_TABLE.max` capacity field instead of the hardcoded `SSDT_MAIN_MAX`, closing the §2-review OOB-if-shadow-shrinks finding (both tables 1024 today).
+> - Consistency fixes: bound the `SSDT_MAIN_COUNT`/`SSDT_LAST_MAIN_INDEX` static-asserts to the real `SSDT_MAIN_MAX` in `ssdt.c`; documented count(extent)/max(capacity)/implemented(live) as distinct fields.
+> - 471 main service numbers allocated in `service_numbers.h`; shadow (Win32k) table stays empty until filled by D08 T15.
+> - re-adversarial skipped: the only behavioral change (the `table->max` bound) was adversarial+perf-approved in round 1; the consistency fixes are compile-time asserts + a doc comment.
+
+> **Verified:** 2026-06-28 | 9/10 items | build OK | smoke PASS (TCG 2.50s), tests 346+16 PASS
+> **Deferred:** [M] GUI-thread conversion (KiConvertGuiThread-equivalent) on the first Table-1 shadow-SSDT call -- blocked on Win32k shadow-SSDT fill + per-thread GUI state -> XREF: 02-kernel-core/TODO-12 §4 (item: "GUI-thread conversion: when ssdt_dispatch selects Table 1" at line 280; depends on D08 T15/T16)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 2M fixed | scope: kernel-code-quality
 
 ---
 

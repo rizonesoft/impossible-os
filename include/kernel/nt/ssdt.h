@@ -43,8 +43,12 @@ typedef NTSTATUS (*SSDT_HANDLER)(uint64_t a1, uint64_t a2, uint64_t a3,
 
 typedef struct {
     SSDT_HANDLER *handlers;     /* array of function pointers */
-    uint32_t      count;        /* number of entries in the table */
-    uint32_t      implemented;  /* number of non-stub entries */
+    /* count: registered extent (highest registered index+1; starts at the
+     * declared service count). NOT a bound, NOT the live total -- use max for
+     * bounds and implemented for the live count. */
+    uint32_t      count;
+    uint32_t      max;          /* handler-array capacity -- the ONLY dispatch/register bound */
+    uint32_t      implemented;  /* number of non-stub (live) entries */
     const char   *name;         /* "main" or "shadow" */
 } SSDT_TABLE;
 
