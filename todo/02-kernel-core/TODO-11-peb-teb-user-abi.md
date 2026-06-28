@@ -65,7 +65,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [/]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [/]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [/]   |
-| 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
+| 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15, §19   |  [/]   |
 | 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
 | 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [ ]   |
 | 💎  |  19   | exec/fork/switch GS-base staging + cost         | §4, §5, §6         |  [ ]   |
@@ -502,13 +502,16 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 - [ ] Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000` in `task.c`; `_Static_assert(sizeof(TEB) <= TEB_PAGES * 0x1000)`
 - [ ] `teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages, zero the full `TEB_PAGES * 0x1000` (today: one frame/page/4096 bytes)
 - [ ] Stride per-thread TEB VAs by `TEB_STRIDE` (`TEB_USER_BASE - tid * TEB_STRIDE`), not 0x1000
-- [ ] Relocate `TEB_USER_BASE` / move ENV+RTLPP+PEB so TID 0's 2-page span avoids env (0x7FFDC000), RTLPP (0x7FFDD000), PEB (0x7FFDE000), the TLS-expansion region (0x7FFD0000), and user stacks (0x7FFCA000)
+- [ ] Relocate the TEB region to a design-pinned dedicated band: `TEB_USER_BASE=0x7FF88000`, band [0x7FF6A000,0x7FF8A000) below USER_THREAD_STACK_LOWEST; PEB/RTLPP/ENV/TLS-expansion/user-stacks unchanged
+- [ ] Sequence (dep §19): create cr3 first, map both TEB pages via vmm_map_user_page(cr3), init via identity-mapped frames, set threads[0].teb/kernel_gs_base, THEN publish exec_pending
 - [ ] `task_cleanup()`: unmap `TEB_PAGES` per secondary-thread TEB
 - [ ] Non-overlap unit test: `sizeof(TEB)` vs stride; TID 0 + highest-TID TEB ranges vs env/RTLPP/PEB/TLS-expansion/user-stack ranges
 - [ ] [HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL) so all processes share the per-tid TEB VA (cross-process aliasing); cleanup uses vmm_unmap_user_page(cr3). Fix: map via vmm_map_user_page(cr3) + check return/free
 - [ ] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
 
 **Test checkpoint:** `tls_set_value(pid, 0, 0xCAFE)` writes inside the mapped TEB (not the env page) and a read of `gs:[0x1480]` returns it; two threads' TEB ranges and the env/RTLPP/PEB pages are provably disjoint (unit test); boot still reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Deferred:** [Critical] §16 is design-reviewed (Codex design `bnqdm310m`: VA band pinned -- `TEB_USER_BASE=0x7FF88000`, dedicated band [0x7FF6A000,0x7FF8A000), 2-page per-process `vmm_map_user_page(cr3)` mapping with a stage-then-publish sequence) but BLOCKED on §19's exec_pending ordering for correctness (the design verdict: do not complete §16 while exec_pending can be visible before TEB/GS is staged). §16 + §19 are a coordinated CRITICAL VA-layout + exec/fork change for a fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 547)
 
 ---
 
