@@ -8,6 +8,8 @@ title: "TODO-10 -- Kernel Security Hardening"
 
 # TODO-10 -- Kernel Security Hardening
 
+> **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); compacted §12 canary_init code block, added Notes blocks to §1/§2/§3
+
 > **Goal:** Activate every CPU security feature that `cpuid.c` detects where we still lack runtime enforcement: complete SMEP/SMAP (CR4 bits on real hardware), KPTI (separate user/kernel page tables + PCID), Spectre mitigations (IBRS/retpoline/IBPB + swapgs barriers), CET shadow stack, CET indirect branch tracking, and KASLR. Couple this with kernel-side hardening that does not require CPU support: heap magic cookies, redzone detection, stack canaries (`-fstack-protector-strong` + RDRAND-seeded `__stack_chk_guard`), and guard pages below kernel stacks. Without these, Impossible OS is exploitable via any 2018-era hardware vulnerability and trivially attackable by user-mode code; that is unacceptable for a production OS in 2026.
 
 > [!IMPORTANT]
@@ -97,7 +99,10 @@ title: "TODO-10 -- Kernel Security Hardening"
 
 **Test checkpoint:** `cpu_has(CPU_FEATURE_NX)` implies `EFER_NXE` set (MSR `0xC0000080`); `vmm_apply_nx_policy()` runs without panic; serial shows NX policy applied count; `POST16(0xD900)` series during `cpu_harden()`. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
-> **Verified:** 2026-04-12 -- all 10 items confirmed. `EFER_NXE` at `msr.h:41`. `cpu_enable_nx()` at `cpu_security.c:32-42`. `cpu_harden()` at `boot_hw.c:361`. AP sets NXE+SCE before long mode. `VMM_FLAG_NX` at `vmm.h:22`. `vmm_apply_nx_policy()` at `vmm.c:857-956` now splits 2 MiB huge pages overlapping .text into 4 KiB PTEs for per-page NX (fixed -- no more executable rodata/data gap). NX gated in `vmm_map_page()`. TLB flush after. Accepted: none.
+> **Notes:**
+> - Shipped: `EFER.NXE` (per-core MSR) + per-PTE NX gate (`VMM_FLAG_NX`) + `vmm_apply_nx_policy()` marking all non-code mappings no-execute.
+> - Runs in `cpu_harden()` (BSP + AP, before long mode) for the MSR; `vmm_apply_nx_policy()` splits 2 MiB huge pages overlapping `.text` into 4 KiB PTEs for per-page NX, then `vmm_flush_tlb_all()`.
+> - Effect: no executable rodata/data; closes the W^X gap on every non-code kernel mapping. `EFER_NXE` at `msr.h:41`. `cpu_enable_nx()` at `cpu_security.c:32-42`. `cpu_harden()` at `boot_hw.c:361`. AP sets NXE+SCE before long mode. `VMM_FLAG_NX` at `vmm.h:22`. `vmm_apply_nx_policy()` at `vmm.c:857-956` now splits 2 MiB huge pages overlapping .text into 4 KiB PTEs for per-page NX (fixed -- no more executable rodata/data gap). NX gated in `vmm_map_page()`. TLB flush after. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. EFER per-core MSR (no SMP race). Intel SDM Vol. 3A 4.1.4 compliant. Constants correct. O(n) one-time boot walk. Parity: matches Windows/Linux NXE per-page granularity. Accepted: none.
 
 ---
@@ -122,7 +127,10 @@ title: "TODO-10 -- Kernel Security Hardening"
 
 **Test checkpoint:** When `hv_supports_cr4_smep_smap()` returns non-zero after kernel PTE U/S is fixed: `CR4.SMEP` and `CR4.SMAP` read back set on KVM/VBox/bare metal; WHPX may still skip per hypervisor policy. Until then, expect klog "SMEP: skipped" / "SMAP: skipped". `copy_from_user`/`copy_to_user` succeed on valid user buffers. After `clac` returns to `isr_common_stub`, entry path leaves AC cleared for SMAP-on configs. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
----
+> **Notes:**
+> - Shipped so far: `read_cr4`/`write_cr4` + `CR4_SMEP`/`CR4_SMAP`, the `cpu_enable_smep`/`cpu_enable_smap` helpers (gated on `hv_supports_cr4_smep_smap()`), `stac`/`clac` inlines + `KERNEL_ACCESS_USER_*` brackets, and `copy_from_user`/`copy_to_user`.
+> - Partial ([/]): CR4.SMEP/SMAP are NOT live -- the helper returns 0 until the shared boot PML4 drops User from kernel huge pages (owned by `01-boot-platform/TODO-10 §8-§9`); KPTI §3-§6 here build the clean kernel PML4 that unblocks it.
+> - Open in-section: migrate syscall derefs to `copy_from_user` (T12), supervisor-dest rejection, `ProbeForRead/Write` (T23), `clac` back in `isr_common_stub`, CR4.LASS (D02 T09 §15).
 
 ## 3. KPTI Trampoline Page + Per-CPU CR3 Fields
 
@@ -139,7 +147,10 @@ Design and allocate the shared trampoline infrastructure that all KPTI ring tran
 
 **Test checkpoint:** Trampoline page allocated and mapped at fixed VA. Per-CPU `kernel_cr3`/`user_cr3` fields exist with correct offsets. Trampoline assembly compiles. Boot does NOT use user_cr3 yet -- this is infrastructure only.
 
-> **Verified:** 2026-04-12 -- all 4 items confirmed. Trampoline at `kpti.c` allocated + mapped at `KPTI_TRAMPOLINE_VA` via `vmm_map_page`. 4 stubs in `kpti_trampoline.asm` preserve RAX via `gs:kpti_scratch` (Codex adversarial finding -- fixed). Per-CPU fields at gs:104-136 with 5 `_Static_assert` checks (Codex quality finding -- added). BSP+AP init from CR3. Required user_cr3 pages documented in `kpti.h`. Accepted: none.
+> **Notes:**
+> - Shipped: KPTI trampoline page at `KPTI_TRAMPOLINE_VA` + per-CPU `kernel_cr3`/`user_cr3` fields (gs:104/112) with `_Static_assert` offset pins; 4 CR3-swap stubs in `kpti_trampoline.asm` (RAX preserved via `gs:kpti_scratch`).
+> - Runs as infrastructure only: BSP/AP init both fields from current CR3 (`user_cr3 = kernel_cr3` until §6); no live CR3 swap yet.
+> - Scope boundary: §4-§6 consume these fields for the actual SYSCALL/IDT/context-switch CR3 swaps; this section is the page + field substrate. Trampoline at `kpti.c` allocated + mapped at `KPTI_TRAMPOLINE_VA` via `vmm_map_page`. 4 stubs in `kpti_trampoline.asm` preserve RAX via `gs:kpti_scratch` (Codex adversarial finding -- fixed). Per-CPU fields at gs:104-136 with 5 `_Static_assert` checks (Codex quality finding -- added). BSP+AP init from CR3. Required user_cr3 pages documented in `kpti.h`. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. Per-CPU fields SMP-safe (per-core). Intel SDM SYSCALL ABI: RAX preserved via scratch slot. JMP targets via per-CPU fields (not clobbered registers). All new GS offsets compile-time asserted. O(1) per-entry overhead. Accepted: none.
 
 ---
@@ -354,34 +365,10 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [ ] Verify no `__stack_chk_guard` linker error before the `__stack_chk_guard` init block in §9 runs
 - [ ] Seed `__stack_chk_guard` from `csprng_u64()` (`02-kernel-core/TODO-03` §5, SHIPPED 2026-06-12) when `canary_init()` runs after `csprng_init()`; keep the inline RDRAND/TSC path only for pre-CSPRNG boot phases
 
-- [ ] `src/kernel/security/stack_canary.c`:
-  ```c
-  uintptr_t __stack_chk_guard = 0;  /* set by canary_init() */
-
-  void canary_init(void) {
-      uint64_t rand = 0;
-      if (cpu_has(CPU_FEATURE_RDRAND)) {
-          /* Three RDRAND retries per Intel spec */
-          for (int i = 0; i < 3; i++) {
-              uint8_t ok;
-              __asm__ volatile(
-                  "rdrand %0\n setc %1"
-                  : "=r"(rand), "=r"(ok) : : "cc"
-              );
-              if (ok) break;
-          }
-      }
-      if (!rand) {
-          /* RDRAND unavailable: use RDTSC + ACPI timer XOR'd with kernel base */
-          uint64_t tsc; __asm__ volatile("rdtsc" : "=A"(tsc));
-          rand = tsc ^ (uint64_t)(uintptr_t)canary_init ^ 0xDEADC0DE00000000ULL;
-      }
-      /* Ensure canary never matches 0 or 0x00XXXXXXXX00 (null-terminator guard) */
-      rand |= 0xFF00000000000000ULL;
-      rand &= ~0x00000000000000FFULL;
-      __stack_chk_guard = (uintptr_t)rand;
-  }
-  ```
+- [ ] `src/kernel/security/stack_canary.c`: define `uintptr_t __stack_chk_guard` + `canary_init()` seeding the guard:
+  - RDRAND with 3 retries per Intel spec, gated on `CPU_FEATURE_RDRAND`
+  - fallback when RDRAND absent: RDTSC XOR'd with the kernel base address + a constant
+  - force the high byte non-zero and the low byte zero so the canary never matches 0 or a NUL-terminator-stoppable value
 - [ ] Call `canary_init()` very early in Phase 1 kernel init, before any stack-protected function is called (-> XREF `TODO-01-kernel-init-sequencing.md §3`)
 
 - [ ] Add `__stack_chk_fail` handler to `src/kernel/security/stack_canary.c`:
