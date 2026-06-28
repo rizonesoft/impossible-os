@@ -8,18 +8,20 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 # TODO-09 -- x86-64 Architecture Enhancements
 
+> **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); fixed stale `TODO-23`->`TODO-10` security-hardening owner refs + PKU §6/§4->§5 section drift (both sides)
+
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
 > **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §13 AMD SVM + Intel VT-x detection. **Open [ ]:** §7 through §12, §14 through §16 per Implementation Order.
 > **Scope boundary with other TODOs (do not implement here):**
-> - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-23` (gap analysis 2026-04-12: `TODO-23` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
+> - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-10` (gap analysis 2026-04-12: `TODO-10` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
 > - HWP/CPPC frequency scaling + thermal monitoring -> `TODO-26`
 > - NUMA-aware page allocator -> `D03` `03-memory-concurrency`
 > - Hybrid P/E-core scheduler policy -> `D03` `03-memory-concurrency`
 > - CPU feature explorer GUI + chiplet visualizer -> `D08` `08-desktop-shell`
-> - PKS (Protection Keys for Supervisor, `PKRS` MSR): Linux mm uses it for selective kernel writeability; overlaps PTE key bits with PKU. Defer design and enablement to `TODO-23` until kernel direct-map and SMEP/SMAP page attributes match `CLAUDE.md` policy (user PKU stays §4 here)
+> - PKS (Protection Keys for Supervisor, `PKRS` MSR): Linux mm uses it for selective kernel writeability; overlaps PTE key bits with PKU. Defer design and enablement to `TODO-10` until kernel direct-map and SMEP/SMAP page attributes match `CLAUDE.md` policy (user PKU stays §5 here)
 
 ---
 
@@ -482,7 +484,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | ⭐  | PKU Win32 wrapper    | ❌ no user API surface      | ⚠️ raw syscall pkey_*       | ⚠️ §5 kernel only |
 | ⭐  | Per-core freq UI     | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §10 + shell    |
 
-After §1 through §13 done and §7 through §12 plus §14 through §16 planned, parity with Win11/Linux 6.x on this stack; §14 boot benchmark is the differentiator. `SetThreadMemoryZone` (§5) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-23` until kernel mappings allow it without breaking SMEP/SMAP rollout.
+After §1 through §13 done and §7 through §12 plus §14 through §16 planned, parity with Win11/Linux 6.x on this stack; §14 boot benchmark is the differentiator. `SetThreadMemoryZone` (§5) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-10` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 
 ---
 
