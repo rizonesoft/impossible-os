@@ -66,17 +66,17 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [/]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [/]   |
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15, §19   |  [/]   |
-| 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
-| 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [ ]   |
-| 💎  |  19   | exec/fork/switch GS-base staging + cost         | §4, §5, §6         |  [ ]   |
-| 💎  |  20   | PEB alloc robustness + Win32 ABI handoff        | §5, §7             |  [ ]   |
-| 💎  |  21   | Format-specific user startup frame + env unify  | §7, §5             |  [ ]   |
-| 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [ ]   |
-| 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [ ]   |
-| ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [ ]   |
-| 💎  |  25   | TLS expansion mapping safety + alloc race       | §12, §16           |  [ ]   |
-| 💎  |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR   | §13                |  [ ]   |
-| 💎  |  27   | uthread_create robustness (guard/tid/stack)     | §14, §16           |  [ ]   |
+| 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [/]   |
+| 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [/]   |
+| 💎  |  19   | exec/fork/switch GS-base staging + cost         | §4, §5, §6         |  [/]   |
+| 💎  |  20   | PEB alloc robustness + Win32 ABI handoff        | §5, §7             |  [/]   |
+| 💎  |  21   | Format-specific user startup frame + env unify  | §7, §5             |  [/]   |
+| 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [/]   |
+| 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [/]   |
+| ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [/]   |
+| 💎  |  25   | TLS expansion mapping safety + alloc race       | §12, §16           |  [/]   |
+| 💎  |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR   | §13                |  [/]   |
+| 💎  |  27   | uthread_create robustness (guard/tid/stack)     | §14, §16           |  [/]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -527,6 +527,8 @@ The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber
 
 **Test checkpoint:** `__builtin_offsetof(PEB, OSMajorVersion) == 0x118` and `OSBuildNumber == 0x120`; `test_peb_offsets` asserts the x64 offsets; the PEB populated by `peb_alloc_for_task` reads 10.0.22621 at the corrected offsets; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Deferred:** [H] PEB x64 Version-Field Offsets -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §17 (item: "Rebuild the post-0x28 PEB region in `peb.h` to the authoritative x64 `_PEB`: OSM" at line 521).
+
 ---
 
 ## 18. Paranoid swapgs Entry for NMI / #DF / #MCE
@@ -540,6 +542,8 @@ The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber
 - [ ] Commit: `"kernel: isr -- paranoid swapgs entry for NMI/#DF/#MCE (MSR GS-base detection)"`
 
 **Test checkpoint:** NMI/#DF/#MCE entered from ring 3, from ring-0 kernel, and from the post-swapgs user-GS window all reach `isr_handler` with KERNEL GS (validated via a gs:-relative per-CPU read); no GS corruption; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] Paranoid swapgs Entry for NMI / #DF / #MCE -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §18 (item: "Add a paranoid entry for the IST vectors (NMI 2, #DF 8, #MCE 18): read `IA32_GS_" at line 535).
 
 ---
 
@@ -555,6 +559,8 @@ The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is 
 
 **Test checkpoint:** a forced preemption between exec_pending publish and TEB prime does not clobber the primed GS; a fork child reads its OWN PID/TID/TLS before exec; the task/thread-0 mirror stays equal across switches + fork; steady-state switches skip the redundant readback (instrumentation counter). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Deferred:** [Critical] exec/fork/switch GS-base Staging Correctness and Cost -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014);" at line 549).
+
 ---
 
 ## 20. PEB Allocation Robustness and Win32 ABI Handoff
@@ -569,6 +575,8 @@ The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through uncheck
 
 **Test checkpoint:** fault-injected vmm_map_page failure returns NULL + frees frames (no fixed-VA write); an overlong task name truncates/rejects without overrunning the RTLPP page; the iret RCX equals the new PEB; every RTLPP UNICODE_STRING.Buffer lies within MaximumLength; std handles are not the failure sentinel. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Deferred:** [H] PEB Allocation Robustness and Win32 ABI Handoff -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §20 (item: "[HIGH] peb_alloc_for_task (1369) ignores the 3 vmm_map_page returns then writes" at line 563).
+
 ---
 
 ## 21. Format-Specific User Startup Frame (ELF / PE / EIF) + Env Unification
@@ -579,6 +587,8 @@ The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through uncheck
 - [ ] Commit: `"kernel: exec -- format-specific user startup frame (ELF/PE/EIF) + unified env"`
 
 **Test checkpoint:** an ELF binary still starts with the SysV stack; a PE32+ fixture enters its Win64 startup contract (RCX=PEB + home space, no argc-at-rsp dependency); `getenv("PATH")` and the Win32 environment block agree. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] Format-Specific User Startup Frame (ELF / PE / EIF) + Env Unification -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §21 (item: "[HIGH] Branch the initial user-frame builder by loaded format: keep argc/argv/en" at line 577).
 
 ---
 
@@ -591,6 +601,8 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 
 **Test checkpoint:** PEB->Ldr main-module DllBase == the loaded image base (not the entry point), SizeOfImage == the actual loaded size, FullDllName == the full path, BaseDllName == the basename; a cmd.exe child that execs hello.exe shows hello.exe. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Deferred:** [H] PEB Ldr Module Identity (DllBase / SizeOfImage / Name) -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §22 (item: "[HIGH] Resolve the loaded_module_t (exec_load_fmt) and pass base + entry + size" at line 588).
+
 ---
 
 ## 23. Per-thread TLS Value Storage (Static + Expansion)
@@ -601,6 +613,8 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: peb -- per-thread TLS value storage (static + expansion pointer)"`
 
 **Test checkpoint:** two threads in one process alloc one slot index, set distinct values, and each reads back its own (no cross-thread bleed); a secondary thread created after expansion alloc sees a non-NULL `TlsExpansionSlots`; cleanup clears every thread's pointer. Gated on the §16 TEB-mapping fix for the static-slot storage to be page-correct. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] Per-thread TLS Value Storage (Static + Expansion) -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §23 (item: "[HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free` through the" at line 599).
 
 ---
 
@@ -615,6 +629,8 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 
 **Test checkpoint:** inserting a PEB/TEB does not write a header into the adjacent RTLPP/pre-TEB page (no user-ABI corruption); `\KernelObjects\Process<PID>\Peb` resolves via NtOpenDirectoryObject; after the process exits the directory + entries are gone (no stale-VA lookup); a re-used PID does not collide. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Deferred:** [Critical] PEB/TEB Ob-Namespace Exposure: Safe Wrapper Objects + Lifecycle -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §24 (item: "[CRITICAL] Stop inserting raw PEB/TEB user VAs as Ob bodies (2055-2058); use rea" at line 610).
+
 ---
 
 ## 25. TLS Expansion Mapping Safety and Alloc Race
@@ -626,6 +642,8 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 
 **Test checkpoint:** a fault-injected vmm_map_page failure leaves `tls_expansion_allocated` clear, frees both frames, returns -1 (no broken pointer published); a concurrent 2-CPU TLS expansion stress proves a race loser cannot free the winner's frames. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Deferred:** [Critical] TLS Expansion Mapping Safety and Alloc Race -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §25 (item: "[CRITICAL] tls_expansion_demand_alloc (2443) does not check vmm_map_page; 0x7FFD" at line 623).
+
 ---
 
 ## 26. auxv Hardening: Classified AT_RANDOM + Validated AT_PHDR
@@ -636,6 +654,8 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: exec -- classified AT_RANDOM entropy gate + validated AT_PHDR"`
 
 **Test checkpoint:** AT_RANDOM bytes come from a crypto-grade CSPRNG (or exec is delayed/failed below the minimum entropy class); AT_PHDR points within the loaded image's program-header range (a malformed PT_PHDR.p_vaddr is rejected/corrected). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] auxv Hardening: Classified AT_RANDOM + Validated AT_PHDR -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §26 (item: "[HIGH] AT_RANDOM uses the unclassified csprng_fill (1851); it can emergency-seed" at line 634).
 
 ---
 
@@ -649,6 +669,8 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: sched -- uthread_create robustness (guard cleanup, tid lock, stack validation)"`
 
 **Test checkpoint:** a rollback path uninstalls the kernel-stack guard before freeing (the frame is reusable); two concurrent uthread_create on one task get distinct tids/VAs (no slot corruption); an oversize/overlapping user_stack_size is rejected; a TEB map failure rolls back fully (no READY thread with a broken TEB). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] uthread_create Robustness: Guard-page Cleanup + tid Reservation + Stack-size Validation -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §27 (item: "[HIGH] uthread_create frees a GUARDED kernel stack via pmm_free_pages (2777) wit" at line 645).
 
 ---
 
