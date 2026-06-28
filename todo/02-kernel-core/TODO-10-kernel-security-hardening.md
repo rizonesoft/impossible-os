@@ -80,13 +80,14 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4, T19              |  [/]   |
 | 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [/]   |
 | 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [x]   |
-| 💎  |  18   | Spectre predictor extras (SSBD/STIBP/RSB/BHI/ITS)   | §8                            |  [ ]   |
+| 💎  |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t) | §8                        |  [ ]   |
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [ ]   |
 | 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [ ]   |
 | 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [ ]   |
 | 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [ ]   |
 | 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [ ]   |
-| ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §18, §19                 |  [ ]   |
+| ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §19, §25                 |  [ ]   |
+| 💎  |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8           |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -580,21 +581,19 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 
 ---
 
-## 18. Spectre Predictor-Policy Completeness: SSBD, STIBP, RSB, BHI, ITS, Retbleed
+## 18. CPU Feature-Flag 128-bit Expansion (`cpu_feature_mask_t`)
 
-The SPEC_CTRL predictor mitigations beyond §8's IBRS/IBPB/retpoline core that both Win11 and Linux apply. Each is CPUID/vendor-gated and feeds the same per-CPU mitigation selection. -> XREF: §8 (core), `D02 T09 §11` (MSR-profile AP replay).
+`g_cpu.flags` is a single `uint64_t` and `CPU_FEATURE_COUNT=64` is FULL (§8 took bits 62/63). The predictor-policy mitigations in §25 (SSBD, STIBP, BHI, ITS, Retbleed) need new feature bits, so the feature surface must widen to 128 bits FIRST. A single canonical bitset type with helpers -- not ad-hoc `uint64_t[2]` plus scalar `(1ULL << feat)` masks -- avoids the silent high-word truncation that would otherwise let AP validation publish an over-broad global mask or skip a mitigation on one CPU. (Split from the original combined §18 per design review; the mitigations are §25.) -> XREF: §25 (consumes the new bits), `D02 T09 §6` (AP feature validation).
 
-- [ ] PREREQUISITE: expand `g_cpu.flags` to 128-bit (`uint64_t flags[2]`) -- the word is FULL after §8 takes bits 62/63; new SSBD/etc. bits need it. Update `cpu_has`/`set_flag_if`/`CPU_FEATURES_*_MASK`/`cpu_feature_local`/feature serialization
-- [ ] SSBD (Spectre v4): `IA32_SPEC_CTRL` bit 2 (Intel) / `MSR_AMD64_LS_CFG` (AMD), gated on a new `CPU_FEATURE_SSBD` (needs the flags expansion above); exposed as a tunable
-- [ ] STIBP (cross-HT): `IA32_SPEC_CTRL` bit 1; set alongside IBRS when SMT is active and `CPU_FEATURE_STIBP`
-- [ ] RSB stuffing on context switch: 32-iteration `call`/`pause`/`lfence` RSB-fill in `sched_switch_task()` on CPUs where eIBRS does not cover RSB underflow
-- [ ] BHI_DIS_S (CVE-2024-2201): gate on `CPUID.(7,2):EDX[18]`; set `IA32_SPEC_CTRL.BHI_DIS_S` or emit the BHB-clearing loop on kernel entry where required
-- [ ] ITS (CVE-2024-28956): detect via `IA32_ARCH_CAPABILITIES`; apply the eIBRS-bypass mitigation on affected Intel CPUs (microcode + alignment)
-- [ ] Retbleed (AMD Zen1/2, Intel): `unret` / IBPB-on-kernel-entry path gated on vendor + CPUID
-- [ ] Per-CPU replay: these SPEC_CTRL bits join the `s_bsp_msr_profile[]` SPEC_CTRL entry so APs match the BSP
-- [ ] Commit: `"kernel/security: SSBD, STIBP, RSB stuffing, BHI_DIS_S, ITS, Retbleed predictor policy"`
+- [ ] `cpu_feature_mask_t { uint64_t w[2]; }` in `cpuid.h` + inline helpers `cpu_feature_set`/`test`/`and`/`andnot`/`subset`/`iszero` (word = `feat>>6`, bit = `feat&63`); `_Static_assert(CPU_FEATURE_COUNT <= 128)` to compile-gate the surface
+- [ ] `struct cpu_features.flags` and `per_cpu_data.features` (`smp.h`) both become `cpu_feature_mask_t`; `cpu_has` -> `cpu_feature_test(&g_cpu.flags, feat)` (all 264 call sites route through this one inline, no per-site edits)
+- [ ] `CPU_FEATURES_REQUIRED_MASK` / `CPU_FEATURES_AP_PROBE_MASK` become `cpu_feature_mask_t` (X-macro computes word+bit); ban bare `1ULL << CPU_FEATURE_*` for feature masks
+- [ ] `set_flag_if`, `cpuid_probe_ap_features` (returns `cpu_feature_mask_t`), the direct `g_cpu.flags |=` in `cpuid.c`, and `cpu_feature_local` rewired through the helpers
+- [ ] AP global-intersection (`cpu_security.c` `cpu_features_finalize_global`) + `s_global_feature_mask` + optional-mismatch logging use the SAME 2-word helpers as the BSP masks (the AP path must not validate only the low 64 bits)
+- [ ] Tests: a synthetic high-word (bit >= 64) feature present on BSP but absent on an AP clears in the global intersection; word+bit indexing round-trips; the mask initializers match the enum
+- [ ] Commit: `"kernel/cpu: expand CPU feature flags to 128-bit cpu_feature_mask_t"`
 
-**Test checkpoint:** On a CPU advertising each feature the corresponding `IA32_SPEC_CTRL` bits read back set; RSB-fill executes on ctx-switch (counter); APs match BSP SPEC_CTRL; CPUs lacking a feature take no MSR write (no #GP). Test on: QEMU WHPX (`-cpu` with spec flags), TCG, bare metal.
+**Test checkpoint:** `cpu_feature_test`/`set`/`andnot` round-trip across the 64-bit word boundary (bits 63 and 64); `CPU_FEATURES_REQUIRED_MASK` has exactly the X-macro-listed bits set in the correct words; a BSP-only synthetic high-word feature is cleared by the AP global intersection (no over-broad publish). Test on: QEMU WHPX, QEMU TCG (multi-CPU); bare metal.
 
 ---
 
@@ -687,6 +686,25 @@ Expose which CPU/kernel mitigations are active as structured queryable data. Lin
 
 > [!TIP]
 > Linux exposes per-vuln files but no unified posture; Win11 hides it behind WMI/registry. A single coherent, queryable posture report is a genuine operator-experience edge over both.
+
+---
+
+## 25. Spectre Predictor-Policy Mitigations: SSBD, STIBP, RSB, BHI, ITS, Retbleed
+
+The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and Linux apply. NOT one SPEC_CTRL-replay problem (design review): each has a distinct control path, so each item names its real mechanism and is tested against THAT path, not only an `IA32_SPEC_CTRL` readback. Needs the 128-bit feature surface from §18. (Split from the original combined §18.) -> XREF: §18 (feature bits), §8 (IBRS/IBPB/retpoline core), `D02 T09 §11` (MSR-profile AP replay).
+
+- [ ] New feature bits (need §18): `CPU_FEATURE_SSBD` (Intel SPEC_CTRL), `CPU_FEATURE_SSBD_AMD` (LS_CFG), `CPU_FEATURE_BHI_CTRL`; plus `ARCH_CAP_*` decode for RRSBA / BHI_NO / RFDS / ITS_NO in `msr.h`
+- [ ] STIBP (cross-HT, `IA32_SPEC_CTRL` bit 1): set alongside IBRS when SMT is active + `CPU_FEATURE_STIBP`; joins the `s_bsp_msr_profile[]` SPEC_CTRL entry (AP replay)
+- [ ] Intel SSBD (Spectre v4, `IA32_SPEC_CTRL` bit 2): gated on `CPU_FEATURE_SSBD`; joins the SPEC_CTRL profile; exposed as a tunable
+- [ ] AMD SSBD (NON-SPEC_CTRL): `MSR_AMD64_LS_CFG` vendor path gated on `CPU_FEATURE_SSBD_AMD` -- its own profile entry + AP replay arm, separate from the SPEC_CTRL bit
+- [ ] BHI_DIS_S (CVE-2024-2201) when advertised (`CPUID.(7,2):EDX[18]`): SPEC_CTRL.BHI_DIS_S, joins the profile; FALLBACK when absent: a short BHB-clearing loop on kernel entry (affected-model gated)
+- [ ] RSB stuffing on cross-domain switch: standalone audited asm behind a probed per-CPU `s_rsb_fill_active` latch (mirrors `s_ibpb_active`), invoked from `sched_cross_domain_ibpb`; counter test proves it fires only on affected CPUs
+- [ ] ITS (CVE-2024-28956): microcode + affected-model + alignment policy (NOT a SPEC_CTRL bit); detect via `IA32_ARCH_CAPABILITIES` + model table; log posture
+- [ ] Retbleed (AMD Zen1/2, Intel): vendor/model-gated `unret` or IBPB-on-kernel-entry (NOT a SPEC_CTRL bit)
+- [ ] Tests assert each mitigation's REAL control path (LS_CFG for AMD SSBD, RSB-fill counter, model-gate for ITS/Retbleed), not only an `IA32_SPEC_CTRL` readback; APs match BSP; a CPU lacking a feature takes no MSR write (no #GP)
+- [ ] Commit: `"kernel/security: SSBD (Intel+AMD), STIBP, RSB stuffing, BHI_DIS_S, ITS, Retbleed predictor policy"`
+
+**Test checkpoint:** Each mitigation verified via its REAL path: SPEC_CTRL bits for STIBP / Intel SSBD / BHI_DIS_S read back set; AMD SSBD reflected in `LS_CFG`; the RSB-fill counter increments on cross-domain switch; ITS/Retbleed posture matches the affected-model gate. APs match BSP. A CPU lacking a feature takes no MSR write (no #GP). Test on: QEMU WHPX (`-cpu` with spec flags), TCG, bare metal.
 
 ---
 
