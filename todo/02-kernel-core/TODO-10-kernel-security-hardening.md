@@ -82,7 +82,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [x]   |
 | 💎  |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t) | §8                        |  [x]   |
 | 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [x]   |
-| 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [ ]   |
+| 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [/]   |
 | 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [ ]   |
 | 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [ ]   |
 | 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [ ]   |
@@ -640,13 +640,19 @@ VERW/MD_CLEAR buffer flush on every kernel-to-user return (Linux `mds`/`tsx_asyn
 
 Clang kCFI (`-fsanitize=kcfi`, Linux `CONFIG_CFI_CLANG`) enforces that every indirect call targets a function of the matching type signature. Complements §10 hardware IBT for CPUs without CET-IBT and adds forward-edge type checking IBT alone does not.
 
-- [ ] Add `-fsanitize=kcfi` to kernel `CFLAGS` (Clang 19 supports it); verify type-id prologues are emitted
-- [ ] kCFI failure handler: route a type mismatch to `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, ...)` (-> XREF `TODO-27-crash-dump-generation.md §1`)
-- [ ] Annotate the legitimate type-erased indirect-call sites (SSDT dispatch, driver vtables, IRQ tables) so kCFI does not false-fault; use `__nocfi` only where a cross-type call is provably safe
-- [ ] Confirm kCFI (compile-time) coexists with retpoline (§8 thunk) and IBT (§10 landing pads) in the same build
+> [!NOTE]
+> Design validated + prototyped (2026-06-28), then reverted to keep `main` buildable -- the flag flip false-faults at the kernel->firmware ABI boundary and the exemption sweep is multi-iteration (see Deferred). The proven approach is baked into the items below.
+
+- [ ] `__nocfi` macro: `#define __nocfi __attribute__((no_sanitize("kcfi")))` in a new `include/kernel/compiler.h` (function-scoped; keeps the type-id prologue, exempts only that function's indirect calls)
+- [ ] kCFI trap detection via the `.kcfi_traps` section: linker.ld bounds + `kcfi_is_trap(rip)` in `idt.c`; the #UD path routes a trap-RIP to a `KERNEL_SECURITY_CHECK_FAILURE` bugcheck -> XREF `TODO-27-crash-dump-generation.md §1`
+- [ ] `__nocfi` on `ssdt_dispatch` (the one genuine type-erased call: ~187 `NtXxx` cast to a uniform `SSDT_HANDLER`); IRQ/DPC/blkdev/test dispatch are already correctly typed
+- [ ] FIRMWARE-ABI BOUNDARY SWEEP (blocker): exempt each TU calling a non-kCFI firmware pointer (`uefi_runtime.c`, `uefi_vars.c`, +ACPI/GOP/TPM) via a per-TU `filter-out -fsanitize=kcfi` Makefile rule; enumerate via smoke + addr2line
+- [ ] Add `-fsanitize=kcfi` to kernel `CFLAGS` (Clang 19; NOT the UEFI bootloader sub-make); coexists with retpoline (§8) + stack-protector; `objdump` shows the prologues + a non-empty `.kcfi_traps`
 - [ ] Commit: `"kernel/security: kCFI -- Clang type-id indirect-call enforcement + bugcheck on mismatch"`
 
-**Test checkpoint:** A deliberately mistyped indirect call (test-only, reverted) raises `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE`; normal SSDT/driver dispatch runs without false faults; `objdump` shows kCFI prologues. Test on: QEMU WHPX, TCG, bare metal.
+**Test checkpoint:** `kcfi_is_trap()` identifies a real `.kcfi_traps` entry RIP and rejects a non-trap address (unit-testable without a bugcheck); boot reaches `C:\>` (smoke) with kCFI live, proving the firmware-boundary sweep is complete; `objdump` shows kCFI prologues. Test on: QEMU WHPX, TCG, bare metal.
+
+> **Deferred:** [M] kCFI kernel-wide flip blocked on the firmware-ABI-boundary exemption sweep -- enabling `-fsanitize=kcfi` false-faults at EVERY kernel->firmware indirect call (UEFI runtime + UEFI vars confirmed; ACPI/GOP/TPM likely), each needing a per-TU kCFI exemption discovered iteratively via smoke. Detection design + `__nocfi` macro + `ssdt_dispatch` annotation are validated; remaining work is the bounded multi-iteration sweep. -> XREF: this section (the "FIRMWARE-ABI BOUNDARY SWEEP" item above).
 
 ---
 
