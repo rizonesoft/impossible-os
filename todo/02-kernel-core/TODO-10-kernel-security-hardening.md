@@ -9,6 +9,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 # TODO-10 -- Kernel Security Hardening
 
 > **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); compacted §12 canary_init code block, added Notes blocks to §1/§2/§3
+> **Gap-audited:** 2026-06-28 | gap-audit + codex-gap-audit (Win11 24H2 / Linux 6.x parity); 8 new sections filed (§17 image-W^X, §18 SSBD/STIBP/RSB/BHI/ITS/Retbleed, §19 MDS/VERW clears, §20 kCFI, §21 FORTIFY_SOURCE, §22 stackleak, §23 KFENCE, §24 mitigation-posture); §14 marked blocked on T33; §1 W^X-overclaim softened; §11 freelist + §14 module-ASLR retargeted to owners (D03 T03, T05/T07); HVCI/VBS noted as VTL1-only design exclusion
 
 > **Goal:** Activate every CPU security feature that `cpuid.c` detects where we still lack runtime enforcement: complete SMEP/SMAP (CR4 bits on real hardware), KPTI (separate user/kernel page tables + PCID), Spectre mitigations (IBRS/retpoline/IBPB + swapgs barriers), CET shadow stack, CET indirect branch tracking, and KASLR. Couple this with kernel-side hardening that does not require CPU support: heap magic cookies, redzone detection, stack canaries (`-fstack-protector-strong` + RDRAND-seeded `__stack_chk_guard`), and guard pages below kernel stacks. Without these, Impossible OS is exploitable via any 2018-era hardware vulnerability and trivially attackable by user-mode code; that is unacceptable for a production OS in 2026.
 
@@ -75,9 +76,17 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |  11   | Kernel heap hardening (cookies, redzone)            | T27 §1                        |  [ ]   |
 | 💎  |  12   | Stack canaries (`-fstack-protector-strong`)         | T27 §1                        |  [ ]   |
 | 💎  |  13   | Kernel stack guard pages                            | §1                            |  [ ]   |
-| ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6                        |  [ ]   |
+| ⭐  |  14   | KASLR (RDRAND kernel load address)                  | §1, §6, T33                   |  [ ]   |
 | 💎  |  15   | Enclave and signing syscalls wired to SSDT          | §14, T12 §4                   |  [ ]   |
 | 💎  |  16   | Secure Boot lockdown enforcement                    | D01 T02 §5,§15                |  [ ]   |
+| 💎  |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)  | §1                            |  [ ]   |
+| 💎  |  18   | Spectre predictor extras (SSBD/STIBP/RSB/BHI/ITS)   | §8                            |  [ ]   |
+| 💎  |  19   | Microarchitectural data-sampling clears (VERW/MDS)  | §8                            |  [ ]   |
+| 💎  |  20   | kCFI software control-flow integrity                | §10                           |  [ ]   |
+| 💎  |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins      | (none)                        |  [ ]   |
+| 💎  |  22   | stackleak: erase kernel stack on return to user     | §13                           |  [ ]   |
+| 💎  |  23   | KFENCE sampling UAF/OOB detector                    | §11, §13                      |  [ ]   |
+| ⭐  |  24   | Mitigation visibility: queryable security posture   | §17, §18, §19                 |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -102,7 +111,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 > **Notes:**
 > - Shipped: `EFER.NXE` (per-core MSR) + per-PTE NX gate (`VMM_FLAG_NX`) + `vmm_apply_nx_policy()` marking all non-code mappings no-execute.
 > - Runs in `cpu_harden()` (BSP + AP, before long mode) for the MSR; `vmm_apply_nx_policy()` splits 2 MiB huge pages overlapping `.text` into 4 KiB PTEs for per-page NX, then `vmm_flush_tlb_all()`.
-> - Effect: no executable rodata/data; closes the W^X gap on every non-code kernel mapping. `EFER_NXE` at `msr.h:41`. `cpu_enable_nx()` at `cpu_security.c:32-42`. `cpu_harden()` at `boot_hw.c:361`. AP sets NXE+SCE before long mode. `VMM_FLAG_NX` at `vmm.h:22`. `vmm_apply_nx_policy()` at `vmm.c:857-956` now splits 2 MiB huge pages overlapping .text into 4 KiB PTEs for per-page NX (fixed -- no more executable rodata/data gap). NX gated in `vmm_map_page()`. TLB flush after. Accepted: none.
+> - Effect: no executable rodata/data (per-PTE NX). NOTE: this is NX only -- making kernel `.text` read-only and `.rodata` RO-after-init (STRICT_KERNEL_RWX / full W^X on the kernel image) is a separate gap owned by §17. `EFER_NXE` at `msr.h:41`. `cpu_enable_nx()` at `cpu_security.c:32-42`. `cpu_harden()` at `boot_hw.c:361`. AP sets NXE+SCE before long mode. `VMM_FLAG_NX` at `vmm.h:22`. `vmm_apply_nx_policy()` at `vmm.c:857-956` now splits 2 MiB huge pages overlapping .text into 4 KiB PTEs for per-page NX (fixed -- no more executable rodata/data gap). NX gated in `vmm_map_page()`. TLB flush after. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. EFER per-core MSR (no SMP race). Intel SDM Vol. 3A 4.1.4 compliant. Constants correct. O(n) one-time boot walk. Parity: matches Windows/Linux NXE per-page granularity. Accepted: none.
 
 ---
@@ -263,7 +272,8 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
       ret
   ```
 - [ ] Verify no `jmp *reg` or `call *reg` remains in kernel assembly after the build: `objdump -d build/kernel.elf | grep -E "jmp.*%r|call.*%r"`; must be empty
-- [ ] Branch History Injection (BHI) and Spectre v1 **swapgs**: track Linux `spectre_bhi` / `spectre_v1` sysfs semantics; enable `BHI_DIS_S` or vendor clearing sequences where CPUID requires; add audited swapgs speculation barriers on ring-3 interrupt entry (`FENCE_SWAPGS_*` / `LFENCE` patterns per kernel Spectre guide; XREF T11 §3 INT/syscall paths)
+- [ ] Spectre v1 **swapgs**: audited swapgs speculation barriers on ring-3 interrupt entry (`FENCE_SWAPGS_*` / `LFENCE` per kernel Spectre guide; XREF T11 §3 INT/syscall paths)
+- [ ] Scope boundary: §8 is the IBRS/IBPB/retpoline core. Additional SPEC_CTRL predictor bits (SSBD, STIBP, RSB stuffing, concrete BHI_DIS_S, ITS, Retbleed) are owned by §18; VERW microarchitectural-buffer clears are owned by §19
 
 - [ ] Commit: `"kernel/security: IBRS on kernel entry/exit, IBPB at context switch, retpoline build flag"`
 
@@ -348,8 +358,10 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 - [ ] Extend `kmalloc_tagged(size, tag)` where `tag` is a 4-byte ASCII pool tag (e.g., `'TOKN'`, `'ALPC'`) stored in a 5th header field; `kfree_tagged(ptr, tag)` verifies the tag matches to catch mixed-pool use-after-free patterns; tag field is present only in debug builds (`KERNEL_DEBUG` defined)
 - [ ] Existing callers that use plain `kmalloc` get implicit tag `'\0\0\0\0'`
+- [ ] `init_on_alloc` default: zero every `kmalloc` user region on allocation (Linux `CONFIG_INIT_ON_ALLOC_DEFAULT_ON` parity) with a build knob to disable on perf-critical paths; `kfree` already zeroes on free
+- [ ] Scope boundary: SLUB-style freelist hardening (pointer encoding, randomization, quarantine, per-CPU freelists) is owned elsewhere -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md`; §11 owns the kmalloc cookie/redzone/zeroing tier
 
-- [ ] Commit: `"kernel/mm: kmalloc cookie + redzone hardening, kmalloc_zeroed, POOL_TAG debug"`
+- [ ] Commit: `"kernel/mm: kmalloc cookie + redzone hardening, kmalloc_zeroed, init_on_alloc, POOL_TAG debug"`
 
 **Test checkpoint:** `kfree()` after cookie stomp raises `BUGCHECK_HEAP_CORRUPTION`; redzone violations caught; tagged debug build mismatches tag on `kfree_tagged`. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
@@ -414,7 +426,11 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 ## 14. KASLR: RDRAND Kernel Load Address
 
-- [ ] The bootloader (`src/boot/uefi/bootx64.c`) currently loads the kernel ELF at its linked virtual base. For KASLR:
+> [!WARNING]
+> BLOCKED on `02-kernel-core/TODO-33-higher-half-kernel-relocation` -- per its Goal, higher-half relocation "is the foundation that unblocks KASLR". The kernel currently links/loads in low memory; sliding that layout would mix relocation, address-space migration, and KASLR in the wrong owner and risks a non-bootable image. The base-slide *mechanics* (ELF relocation, `-fPIE`, bootloader `R_X86_64_64` apply) belong to TODO-33; this section owns KASLR *policy* (entropy, `kaslr_slide` in boot_info, slide-in-dump, tests) on that foundation.
+
+- [ ] Module/driver load-address ASLR is a separate entropy domain owned by the module loaders -> XREF: `02-kernel-core/TODO-05-kernel-module-system.md` (kernel `.kmod`) + `10-platform-services/TODO-07-win32-pe-loader.md` (PE drivers)
+- [ ] The bootloader (`src/boot/uefi/bootx64.c`) currently loads the kernel ELF at its linked virtual base. For KASLR (mechanics gated on TODO-33 higher-half relocation):
   1. Use UEFI `GetRNG` protocol (or `RDRAND` instruction) to generate a random 9-bit slide value `s` in `[0, 511]`
   2. Add `s * 2 MiB` to the kernel's linked virtual base: `kernel_slide = s * 0x200000`
   3. Load kernel ELF sections at `linked_va + kernel_slide` instead of `linked_va`
@@ -472,6 +488,130 @@ Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns th
 
 ---
 
+## 17. Kernel-Image W^X: .text Read-Only + .rodata RO-After-Init
+
+Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodata_ro()`, Win11 HVCI). §1 marks non-code pages NX; this clears the WRITABLE bit on kernel `.text` and `.rodata` so a kernel write primitive cannot patch executable code or constant data. Distinct from `03-memory-concurrency/TODO-01 §2` (dynamic mprotect W^X policy). READY -- `vmm_make_range_readonly()` already exists (`vmm.c:456`); NOT blocked on the clean-PML4 split.
+
+- [ ] Linker script (`kernel.ld`): 4 KiB-align the `.text` / `.rodata` / `.data` boundaries so each carries distinct PTE perms; export `__text_start/__text_end/__rodata_start/__rodata_end/__init_end`
+- [ ] `kernel_wx_protect()` (Phase 2/3, post-relocation): `vmm_make_range_readonly(__text_start, ...)` clears WRITABLE on `.text` (stays executable, NX clear)
+- [ ] `kernel_rodata_protect()` after init: clear WRITABLE + set NX on `.rodata` (covers the `__ro_after_init` class -- written once during init, RO thereafter)
+- [ ] Audit runtime `.text` patch sites (the `idt.c:261` CR0.WP-toggle pattern): bracket each write with WP-clear/WP-set; never leave `.text` permanently writable. CR0.WP stays pinned (`cpu_pin_control_regs`)
+- [ ] Serial log: `[wx] kernel image: .text RO (%lu KiB), .rodata RO (%lu KiB)`
+- [ ] Commit: `"kernel/mm: STRICT_KERNEL_RWX -- .text RO, .rodata RO-after-init, W^X on the kernel image"`
+
+**Test checkpoint:** A write to a `.text` address faults (`#PF` WP) via a `vmm_query_flags` unit check; a write to `.rodata` after init faults; `.text` stays executable (kernel runs). `[wx]` line shows non-zero RO counts. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+---
+
+## 18. Spectre Predictor-Policy Completeness: SSBD, STIBP, RSB, BHI, ITS, Retbleed
+
+The SPEC_CTRL predictor mitigations beyond §8's IBRS/IBPB/retpoline core that both Win11 and Linux apply. Each is CPUID/vendor-gated and feeds the same per-CPU mitigation selection. -> XREF: §8 (core), `D02 T09 §11` (MSR-profile AP replay).
+
+- [ ] SSBD (Spectre v4): `IA32_SPEC_CTRL` bit 2 (Intel) / `MSR_AMD64_LS_CFG` (AMD), gated on `CPU_FEATURE_SSBD`; exposed as a tunable
+- [ ] STIBP (cross-HT): `IA32_SPEC_CTRL` bit 1; set alongside IBRS when SMT is active and `CPU_FEATURE_STIBP`
+- [ ] RSB stuffing on context switch: 32-iteration `call`/`pause`/`lfence` RSB-fill in `sched_switch_task()` on CPUs where eIBRS does not cover RSB underflow
+- [ ] BHI_DIS_S (CVE-2024-2201): gate on `CPUID.(7,2):EDX[18]`; set `IA32_SPEC_CTRL.BHI_DIS_S` or emit the BHB-clearing loop on kernel entry where required
+- [ ] ITS (CVE-2024-28956): detect via `IA32_ARCH_CAPABILITIES`; apply the eIBRS-bypass mitigation on affected Intel CPUs (microcode + alignment)
+- [ ] Retbleed (AMD Zen1/2, Intel): `unret` / IBPB-on-kernel-entry path gated on vendor + CPUID
+- [ ] Per-CPU replay: these SPEC_CTRL bits join the `s_bsp_msr_profile[]` SPEC_CTRL entry so APs match the BSP
+- [ ] Commit: `"kernel/security: SSBD, STIBP, RSB stuffing, BHI_DIS_S, ITS, Retbleed predictor policy"`
+
+**Test checkpoint:** On a CPU advertising each feature the corresponding `IA32_SPEC_CTRL` bits read back set; RSB-fill executes on ctx-switch (counter); APs match BSP SPEC_CTRL; CPUs lacking a feature take no MSR write (no #GP). Test on: QEMU WHPX (`-cpu` with spec flags), TCG, bare metal.
+
+---
+
+## 19. Microarchitectural Data-Sampling Clears (MDS / TAA / SRBDS / MMIO)
+
+VERW/MD_CLEAR buffer flush on every kernel-to-user return (Linux `mds`/`tsx_async_abort`/`srbds`/`mmio_stale_data`, Win11 microcode). Without it the kernel leaks stale fill/store/load-port data on each return. HIGH -- currently a complete blind spot.
+
+- [ ] Detect `MD_CLEAR` (`CPUID.(7,0):EDX[10]`) + `IA32_ARCH_CAPABILITIES` MDS_NO/TAA_NO/MMIO bits to decide whether the clear is needed (cache the decision in a per-CPU flag once at boot)
+- [ ] `cpu_verw_clear()` inline: a `verw` against a NX/RO scratch descriptor; emit on the SYSRET/IRET return-to-user path (syscall exit + ISR common exit) when `MD_CLEAR` and not `MDS_NO`
+- [ ] TAA: when affected and TSX present, prefer disabling TSX via `IA32_TSX_CTRL` (RTM_DISABLE|CPUID_CLEAR); else VERW covers it
+- [ ] SRBDS: microcode-driven; surface `IA32_MCU_OPT_CTRL.RNGDS_MITG_DIS` state in the §24 posture report (no kernel action beyond reporting)
+- [ ] MMIO stale data: covered by the same VERW path; note that full coverage also needs SRBDS/FB_CLEAR microcode
+- [ ] Commit: `"kernel/security: VERW/MD_CLEAR microarchitectural buffer clear on kernel->user return"`
+
+**Test checkpoint:** On an `MD_CLEAR` CPU not marked `MDS_NO` the return-to-user path executes `verw` (verified via a counter / single-step); on `MDS_NO` CPUs the path is a no-op; no #GP on the scratch-descriptor VERW. Test on: QEMU WHPX, TCG, bare metal.
+
+> [!WARNING]
+> VERW lands on the hottest path (every syscall/interrupt return). Gate it strictly on the once-per-boot capability decision; an unconditional VERW on `MDS_NO` silicon is wasted cycles.
+
+---
+
+## 20. kCFI: Software Control-Flow Integrity for Indirect Calls
+
+Clang kCFI (`-fsanitize=kcfi`, Linux `CONFIG_CFI_CLANG`) enforces that every indirect call targets a function of the matching type signature. Complements §10 hardware IBT for CPUs without CET-IBT and adds forward-edge type checking IBT alone does not.
+
+- [ ] Add `-fsanitize=kcfi` to kernel `CFLAGS` (Clang 19 supports it); verify type-id prologues are emitted
+- [ ] kCFI failure handler: route a type mismatch to `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, ...)` (-> XREF `TODO-27-crash-dump-generation.md §1`)
+- [ ] Annotate the legitimate type-erased indirect-call sites (SSDT dispatch, driver vtables, IRQ tables) so kCFI does not false-fault; use `__nocfi` only where a cross-type call is provably safe
+- [ ] Confirm kCFI (compile-time) coexists with retpoline (§8 thunk) and IBT (§10 landing pads) in the same build
+- [ ] Commit: `"kernel/security: kCFI -- Clang type-id indirect-call enforcement + bugcheck on mismatch"`
+
+**Test checkpoint:** A deliberately mistyped indirect call (test-only, reverted) raises `BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE`; normal SSDT/driver dispatch runs without false faults; `objdump` shows kCFI prologues. Test on: QEMU WHPX, TCG, bare metal.
+
+---
+
+## 21. FORTIFY_SOURCE: Bounds-Checked str/mem Builtins
+
+Compile + runtime bounds checking on the `memcpy`/`strcpy`/`strcat`/`snprintf` family (Linux `CONFIG_FORTIFY_SOURCE`, MSVC `__builtin___*_chk`). Catches the buffer-overflow class at the call site where the destination object size is known.
+
+- [ ] Provide `__memcpy_chk` / `__strcpy_chk` / `__strcat_chk` / `__snprintf_chk` in the kernel libc comparing the compiler-supplied object size to the op length, bugcheck on overflow
+- [ ] Add `-D_FORTIFY_SOURCE=2` (or the Clang equivalent) once the `_chk` variants exist
+- [ ] `__chk_fail()` -> `KeBugCheckEx(BUGCHECK_KERNEL_SECURITY_CHECK_FAILURE, ...)`
+- [ ] Audit fixed-buffer string ops for the cases the compiler can prove (object size known) vs cannot (opaque pointers)
+- [ ] Commit: `"kernel/libc: FORTIFY_SOURCE -- _chk string/memory builtins, bugcheck on overflow"`
+
+**Test checkpoint:** A `memcpy` into an undersized fixed buffer with a compile-time-known size triggers `__memcpy_chk` -> bugcheck (test-only, reverted); legitimate ops unaffected. Test on: QEMU WHPX, TCG, bare metal.
+
+---
+
+## 22. stackleak: Erase Kernel Stack on Return to User
+
+Zero the used portion of the kernel stack on every syscall/interrupt return to user mode (Linux `CONFIG_KSTACK_ERASE` / former `STACKLEAK`). Prevents stale kernel data (pointers, secrets, canaries) left on the stack from leaking to a later syscall or via an info-leak primitive.
+
+- [ ] Track the deepest stack use per kernel entry: a per-thread `lowest_stack` watermark updated at entry (or the Clang stackleak instrumentation if available)
+- [ ] On return-to-user (syscall exit + IRET-to-ring3): zero from current `RSP` down to the watermark, bounded by the stack base (never into the guard page)
+- [ ] Zero only the actually-used span, not the whole stack; cap the per-return work
+- [ ] Build knob to disable for perf measurement; on by default for security builds
+- [ ] Commit: `"kernel/security: stackleak -- erase used kernel stack span on return to user"`
+
+**Test checkpoint:** After a syscall that writes a sentinel deep on the kernel stack, a following syscall reads zero at that offset (span erased); erase bounded by the watermark (no over-zero into the guard page). Test on: QEMU WHPX, TCG, bare metal.
+
+---
+
+## 23. KFENCE: Sampling Use-After-Free / Out-of-Bounds Detector
+
+A low-overhead page-granularity sampling allocator (Linux `CONFIG_KFENCE`) placing a fraction of allocations on guard-page-bracketed pages so OOB/UAF accesses fault deterministically in production. Complements §11's always-on cookie/redzone with page-fault-level detection.
+
+- [ ] A fixed KFENCE pool of N guard-page-bracketed slots; `kfence_alloc()` services a sampled fraction (1/sample_rate) of `kmalloc` calls from the pool
+- [ ] Each object sits adjacent to an unmapped guard page; an OOB read/write faults into the page-fault handler, which reads the KFENCE metadata (alloc/free stack, offset)
+- [ ] On free, unmap (or quarantine) the slot so a UAF access faults; recycle after a quarantine delay
+- [ ] `kfence_report()` on a guarded fault: classify OOB vs UAF, log the object's alloc/free context; wire to the page-fault handler's guard-table path
+- [ ] Sample rate + pool size are `boot.conf` tunables; disabled adds near-zero overhead
+- [ ] Commit: `"kernel/mm: KFENCE -- sampling guard-page UAF/OOB detector"`
+
+**Test checkpoint:** A test allocation forced onto the pool: an OOB write faults and `kfence_report` logs OOB; a UAF read after free faults and logs UAF; sampling off = normal kmalloc, no pool faults. Test on: QEMU WHPX, TCG, bare metal.
+
+---
+
+## 24. Mitigation Visibility: Queryable Security Posture
+
+Expose which CPU/kernel mitigations are active as structured queryable data. Linux scatters this across `/sys/devices/system/cpu/vulnerabilities/*`; Win11 hides it behind WMI/registry. Neither does it cleanly -- a single coherent posture report for operators, certification, and post-incident triage is an exclusive edge.
+
+- [ ] `kernel_security_posture_t`: enumerate every mitigation in this TODO with state {active, unsupported, disabled, n/a}
+- [ ] Each mitigation section registers its final state into the posture struct at init (single source of truth; no re-probing)
+- [ ] `[secpost]` boot serial dump of the full posture after Phase 3 security init
+- [ ] Query surface: an `NtQuerySystemInformation` class (or a `\Device`-style virtual file) returning the posture struct to user mode
+- [ ] Commit: `"kernel/security: queryable mitigation posture -- [secpost] dump + NtQuerySystemInformation class"`
+
+**Test checkpoint:** The `[secpost]` line lists every mitigation with a concrete state matching the host CPUID; the query class returns the same struct to a user-mode test. Test on: QEMU WHPX, TCG, bare metal.
+
+> [!TIP]
+> Linux exposes per-vuln files but no unified posture; Win11 hides it behind WMI/registry. A single coherent, queryable posture report is a genuine operator-experience edge over both.
+
+---
+
 ## OS Comparison
 
 | ⭐   | Feature              | 🪟 Win11     | 🐧 Linux       | 🚀 Impossible OS |
@@ -490,8 +630,16 @@ Kernel-side enforcement policy gated on the canonical Secure Boot state. Owns th
 | ⭐   | RDRAND canary KASLR  | ✅ Opaque    | ✅ pool        | ⬜ §9 §11        |
 | ⭐   | KASLR slide in dump  | ❌ Opaque    | ❌ Opaque      | ⬜ §11 + T27     |
 | 💎   | Secure Boot lockdown | ✅ HVCI lockdown | ✅ lockdown LSM | ⬜ §16          |
+| 💎   | Kernel image W^X     | ✅ HVCI      | ✅ STRICT_RWX  | ⬜ §17           |
+| 💎   | SSBD STIBP RSB BHI   | ✅ Yes       | ✅ spectre     | ⬜ §18           |
+| 💎   | MDS VERW buf clear   | ✅ ucode     | ✅ VERW        | ⬜ §19           |
+| 💎   | kCFI type-safe icall | ✅ xFG/CFG   | ✅ CFI_CLANG   | ⬜ §20           |
+| 💎   | FORTIFY_SOURCE       | ✅ MSVC chk  | ✅ _chk        | ⬜ §21           |
+| 💎   | stackleak erase stk  | ❌ No        | ✅ KSTACK_ERASE | ⬜ §22          |
+| 💎   | KFENCE UAF/OOB sample | ❌ No       | ✅ KFENCE      | ⬜ §23           |
+| ⭐   | Mitigation posture API | ⚠️ WMI     | ⚠️ sysfs       | ⬜ §24           |
 
-After §1 through §10, parity with Win11/Linux mitigations for NX through stack guards; §11 and §12 add KASLR and syscall surface. Linux skips mitigations without config; Windows ties IBT to HVCI. Impossible OS targets ring-0 enforcement without VBS; RDRAND-first canary and crash-dump-visible slide are quality extras.
+After §1 through §10, parity with Win11/Linux mitigations for NX through stack guards; §11 through §16 add KASLR, syscalls, lockdown. §17 through §24 close the transient-execution (SSBD/STIBP/RSB/BHI/ITS/Retbleed, MDS/VERW), image-W^X, software-CFI (kCFI), FORTIFY_SOURCE, stackleak, and KFENCE gaps, plus a queryable mitigation posture (§24, exclusive). HVCI/VBS/HVPT/HyperGuard/KDP are Win11-only (require a VTL1 hypervisor tier Impossible OS does not have); §16 lockdown is the closest analogue. KASLR (§14) and the SMEP/SMAP+KPTI split sequence behind TODO-33 higher-half relocation.
 
 ---
 
