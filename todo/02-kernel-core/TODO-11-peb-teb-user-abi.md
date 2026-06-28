@@ -58,7 +58,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   6   | TEB allocation and population at thread create  | §1, §4             |  [/]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6             |  [x]   |
 | 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [/]   |
-| 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [x]   |
+| 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [/]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [x]   |
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [x]   |
@@ -72,6 +72,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  20   | PEB alloc robustness + Win32 ABI handoff        | §5, §7             |  [ ]   |
 | 💎  |  21   | Format-specific user startup frame + env unify  | §7, §5             |  [ ]   |
 | 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [ ]   |
+| 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -285,6 +286,15 @@ TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(th
 - [x] Commit: `"kernel: peb -- TLS slot allocation (64 static slots)"`
 
 **Test checkpoint:** `tls_alloc` returns unique indices 0-63 then fails/defers expansion path; `tls_set_value`/`tls_get_value` round-trip values; `tls_free` clears slot and allows reuse. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | TLS alloc/free/get/set suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: per-task tls_bitmap (static 0-63) + tls_expansion_bitmap[16] (64-1087); tls_alloc/free/get/set under tls_lock irqsave; two-phase expansion alloc (alloc outside lock + retry).
+> - Review (Codex 3x) confirmed the bitmap math + lock are sound but the value-access helpers target the thread-0 mirror TEB, not the current thread -- fix owned by §23; TEB.TlsSlots aliasing owned by §16.
+> - Scope boundary: per-thread TLS value access -> §23; TEB under-mapping + TLS-expansion VA collision -> §16.
+> **Deferred:** [H] tls_get/set/free static ops index tasks[pid].teb (thread-0 mirror) + the expansion pointer is installed only in thread-0's TEB; secondary threads get wrong/NULL TLS storage. -> XREF: §23 (item: "[HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free`..." at line 537)
+> **Accepted:** [H] TEB.TlsSlots (0x1480) lands in the unmapped/aliased TEB second page; TLS-expansion VA (0x7FFD0000) collides with low-TID TEBs. -> XREF: §16 (item: "Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000`..." at line 444)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 2H deferred-to-§23, 2H accepted-XREF (§16) | scope: kernel-code-quality
 
 ---
 
@@ -527,6 +537,17 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: peb -- correct PEB Ldr module identity (real base/size + resolved path/basename)"`
 
 **Test checkpoint:** PEB->Ldr main-module DllBase == the loaded image base (not the entry point), SizeOfImage == the actual loaded size, FullDllName == the full path, BaseDllName == the basename; a cmd.exe child that execs hello.exe shows hello.exe. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 23. Per-thread TLS Value Storage (Static + Expansion)
+§9's TLS allocation bitmaps are per-process (correct), but the value-access helpers index `tasks[pid].teb` (the thread-0 mirror) after §15 made `TEB.TlsSlots` per-thread. A secondary thread's `tls_get/set/free` hit thread-0's slots, and the expansion-array pointer is installed only in thread-0's TEB (secondary threads see `TlsExpansionSlots == NULL`). Breaks the Windows current-thread `TlsGetValue/TlsSetValue` contract; sharpens the vague §12 deferred "per-thread TLS expansion" item. -> XREF: §9 (TLS helpers), §12 (deferred per-thread expansion), §16 (TEB under-mapping + VA non-overlap).
+
+- [ ] [HIGH] Route static-slot `tls_get_value`/`tls_set_value`/`tls_free` through the current thread's TEB (`tasks[pid].threads[current_thread].teb` when pid==current_task) or add a TID param; add a 2-user-thread test
+- [ ] [HIGH] Publish the shared task expansion-array pointer into EVERY live user-thread TEB (`tls_expansion_demand_alloc` + `uthread_create` from `tasks[pid].tls_expansion_virt`); clear all live thread TEB pointers on cleanup
+- [ ] Commit: `"kernel: peb -- per-thread TLS value storage (static + expansion pointer)"`
+
+**Test checkpoint:** two threads in one process alloc one slot index, set distinct values, and each reads back its own (no cross-thread bleed); a secondary thread created after expansion alloc sees a non-NULL `TlsExpansionSlots`; cleanup clears every thread's pointer. Gated on the §16 TEB-mapping fix for the static-slot storage to be page-correct. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
