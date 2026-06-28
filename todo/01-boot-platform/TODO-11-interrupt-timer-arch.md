@@ -229,7 +229,7 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 > - Scope boundary: MSI/MSI-X is D04 T02 §3; IRQ balancing policy is future D03 work (affinity primitive ships here); chain/parking/quarantine internals are platform-validated (live IOAPIC programming is test-banned).
 > **Verified:** 2026-06-11 | commit `c05f1883` | 11/12 items | build OK | tests 4287+16 PASS, smoke PASS (KVM 2.44s)
 > **Accepted:** [H] PCI INTx consumers pass PCI_INTERRUPT_LINE as the GSI (real routing needs ACPI `_PRT`/AML) -> XREF: 04-drivers-hardware/TODO-01 §5 (item: "Route legacy INTx through `_PRT`/IOAPIC when MSI is unavailable" at line 77)
-> **Accepted:** [H] global `irq_chain_lock` entry gate can stall unrelated shared ISR entry during a registration drain (reason: drains are registration-lifecycle only today) -> XREF: 04-drivers-hardware/TODO-02 §3 (item: "Per-vector dispatch gating for shared GSI chains" at line 106)
+> **Accepted:** [H] global `irq_chain_lock` entry gate can stall unrelated shared ISR entry during a registration drain (reason: drains are registration-lifecycle only today) -> XREF: 04-drivers-hardware/TODO-02 §3 (item: "Per-vector dispatch gating for shared GSI chains" at line 107)
 > **Quality reviewed:** 2026-06-11 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1L fixed, 2H accepted-XREF, 1M rejected | scope: kernel-code-quality
 
 ---

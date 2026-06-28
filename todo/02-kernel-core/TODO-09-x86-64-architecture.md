@@ -14,7 +14,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > **Goal:** Activate and exploit the x86-64 architecture features that `cpuid.c` already detects, pushing beyond today's partial enablement: full XSAVE/XRSTOR state management with per-thread XSAVE areas and lazy FPU, AVX/AVX2 optimised kernel paths and AVX-512 support, a centralised MSR access layer, UMIP and PKU protection keys, 1 GiB huge pages and Write-Combining PAT for the framebuffer, FRED event delivery with LKGS, CPU topology parsing (Zen chiplets + Intel P/E-cores), performance monitoring counters (Intel PMU + AMD PMC), OSVW errata + RDTSCP setup, AMD IBS profiling, virtualization detection, and a boot-time self-benchmark that auto-tunes the kernel to the detected hardware.
 
 > [!IMPORTANT]
-> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). §15 future-silicon detection stubs (UINTR/LA57/LAM/LASS + TDX/SEV cc_kind; boot_info.cc_kind mirror + Hyper-V SynIC producer deferred). **Deferred [/]:** §7 FRED, §8 LKGS, §12 AMD IBS (no test platform); §16 1 GiB boot PT (UEFI-bootloader paging optimization needing bare-metal sign-off; `entry.asm` premise was stale); §17 AMX+XFD (blocked on a per-thread XSAVE redesign -- the per-task FPU model leaks tile state across threads; no bare-metal AMX). **Open [ ]:** §18 split/bus-lock, §19 WAITPKG/SERIALIZE/RDPID (added 2026-06-28 gap-audit).
+> **Current state:** `cpuid_init()` / `cpu_has()` gate the feature set. **Done [x]:** §1 XSAVE/XRSTOR with per-thread lazy FPU. §2 AVX2 memops + framebuffer blit with SSE2 fallbacks. §3 AVX-512 opt-in with MPERF/APERF throttle guard. §4 `msr_read`/`msr_write`/`msr_try_read` plus MSR constants. §5 UMIP + PKU protection keys. §6 1 GiB huge pages (PDPT promotion) + Write-Combining PAT (framebuffer WC-mapped). §9 CPU topology, §10 PMU/PMC, §11 OSVW+RDTSCP, §13 AMD SVM + Intel VT-x detection. **Partial [/]:** §14 boot self-benchmark (benchmark + persistence + SIMD auto-tune shipped; scheduler-quantum / triple-buffer / memops-threshold / AVX-512 auto-tunes deferred to owners). §15 future-silicon detection stubs (UINTR/LA57/LAM/LASS + TDX/SEV cc_kind; boot_info.cc_kind mirror + Hyper-V SynIC producer deferred). **Deferred [/]:** §7 FRED, §8 LKGS, §12 AMD IBS (no test platform); §16 1 GiB boot PT (UEFI-bootloader paging optimization needing bare-metal sign-off; `entry.asm` premise was stale); §17 AMX+XFD (blocked on a per-thread XSAVE redesign -- the per-task FPU model leaks tile state across threads; no bare-metal AMX). §18 split/bus-lock detection (design+adversarial-vetted; deferred -- correct version needs a re-arm-on-context-switch hook in the universal scheduler path + post-idt_init registration; first attempt rolled back). **Open [ ]:** §19 WAITPKG/SERIALIZE/RDPID (added 2026-06-28 gap-audit).
 > **Scope boundary with other TODOs (do not implement here):**
 > - NX/EFER, SMEP/SMAP, KPTI, PCID, IBRS/retpoline, CET -> `TODO-10` (gap analysis 2026-04-12: `TODO-10` §1 NX + `vmm_apply_nx_policy()` are live; §2 SMEP/SMAP helpers exist but `hv_supports_cr4_smep_smap()` forces skip so CR4 bits stay off until kernel PTE User policy is fixed; `isr_stubs.asm` omits `clac` until SMAP is real)
 > - TSC invariant check -> `TODO-08-time-filetime-management.md` §1; TSC-Deadline APIC one-shot mode -> `01-boot-platform/TODO-11-interrupt-timer-arch.md` §6 (stale `TODO-17` pointer fixed 2026-06-11; that file is the binary system)
@@ -84,7 +84,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎  |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV | (none)               |  [/]    |
 | 💎  |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6                 |  [/]    |
 | 💎  |  17   | AMX tile state + XFD dynamic XSAVE                  | §1, §4               |  [/]    |
-| 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection         | §4                   |  [ ]    |
+| 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection         | §4                   |  [/]    |
 | 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption                | §4, §11              |  [ ]    |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
@@ -517,23 +517,25 @@ Intel AMX adds 8 KiB of TMM tile state (XSAVE components 17/18). XFD (Extended F
 
 ## 18. Split-Lock + Bus-Lock Detection
 
-A misaligned LOCK-prefixed access that splits a cache line (split lock), or a bus lock on non-WB memory, stalls the whole coherency fabric. Intel detection raises #AC (split lock) and #DB (bus lock) so the offending thread is warned or terminated instead of degrading every core. Parity: Linux split-lock + bus-lock detection.
+A misaligned LOCK-prefixed access that splits a cache line (split lock), or a bus lock on non-WB memory, stalls the whole coherency fabric. Intel detection raises #AC (split lock) and #DB (bus lock) so the offending thread is warned/terminated instead of degrading every core. Parity: Linux split-lock + bus-lock detection. **Design + adversarial Codex-vetted 2026-06-28; deferred** (see stamp + the [!WARNING]).
 
 > [!WARNING]
-> Both MSR writes must be capability-gated: a blind `IA32_TEST_CTL` (0x33) or `IA32_DEBUGCTL` write #GPs on CPUs without the feature. `msr_try_read` is a no-crash net, NOT an existence check -- gate on CPUID/CORE_CAPABILITIES first per `CLAUDE.md`.
+> Capability-gate every MSR write (a blind `IA32_TEST_CTL` 0x33 / `IA32_DEBUGCTL` write #GPs without the feature). Two ordering/correctness traps the adversarial pass caught, baked into the plan below: (1) **register handlers + arm AFTER `idt_init`** -- `cpu_harden()` runs in Phase 0 BEFORE the kernel IDT, and `idt_init()` then zeroes `handlers[]`, so arming there leaves the MSRs hot with the default-panic handler. (2) the #AC loop-breaker must NOT permanently disable detection (one ring-3 split lock would blind the CPU forever) -- re-arm on the next context switch (warn mode) or terminate the thread (fatal mode). `DR6.BLD` (bit 11) is ACTIVE-LOW for a bus-lock #DB.
 
-- [ ] CPUID detection in `cpuid.h`: `CPU_FEATURE_CORE_CAPS` (`CPUID.(7,0):EDX[30]`, IA32_CORE_CAPABILITIES present), `CPU_FEATURE_BUS_LOCK_DETECT` (`CPUID.(7,0):ECX[24]`)
+- [ ] CPUID detection: `CPU_FEATURE_CORE_CAPS` (7.0:EDX[30]) + `CPU_FEATURE_BUS_LOCK_DETECT` (7.0:ECX[24]) in `cpuid.h` + `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` (AP-local gating)
 - [ ] MSR constants in `msr.h`: `MSR_IA32_CORE_CAPABILITIES = 0x000000CF`, `MSR_IA32_TEST_CTL = 0x00000033`, `MSR_IA32_DEBUGCTL = 0x000001D9`
-- [ ] Split-lock gate: only when `CPU_FEATURE_CORE_CAPS` AND `IA32_CORE_CAPABILITIES` bit 5 (split-lock detect supported) -> set `IA32_TEST_CTL` bit 29 on BSP and each AP; never a blind write to 0x33
-- [ ] Bus-lock gate: only when `CPU_FEATURE_BUS_LOCK_DETECT` -> set `IA32_DEBUGCTL` bit 2 (BLD) on BSP and each AP
-- [ ] `#AC` handler (vector 17): a ring-3 split-lock #AC -> rate-limited klog warning with faulting RIP + terminate the offending thread (an unhandled split-lock #AC loops); a ring-0 split lock -> panic (kernel bug)
-- [ ] `#DB` handler: check DR6 bit 11 (BLD) to distinguish a bus-lock #DB from an ordinary debug exception; on BLD, rate-limited klog warning + clear DR6.BLD before return; never treat it as a single-step
-- [ ] Boot log: `[cpu] split-lock #AC armed`, `[cpu] bus-lock #DB armed`, or `[cpu] split/bus-lock detect unsupported`
+- [ ] Per-CPU LOCAL-CPUID-gated RMW arming: split-lock `IA32_TEST_CTL[29]` only when `IA32_CORE_CAPABILITIES[5]`; bus-lock `IA32_DEBUGCTL.BLD` when 7.0:ECX[24]
+- [ ] ORDERING (critical): register handlers + arm AFTER `idt_init` -- NOT in `cpu_harden()` (Phase 0, pre-IDT; `idt_init` zeroes `handlers[]`). BSP via a post-`idt_init` hook; APs after the AP `lidt` in `ap_cpu_harden`
+- [ ] Register BOTH `#AC`(17)/`#DB`(1) handlers unconditionally (an AP feature-skewed from the BSP must not arm an MSR whose handler was never registered)
+- [ ] `#AC` handler (vector 17): ring-0 -> panic; ring-3 -> warn (rate-limited) + break the re-fault loop WITHOUT permanently disabling detect -- re-arm `IA32_TEST_CTL[29]` on the next context switch, or terminate the thread (fatal mode)
+- [ ] `#DB` handler (vector 1): `DR6.BLD` (bit 11) is ACTIVE-LOW -> `(dr6 & BLD) == 0` classifies a bus-lock trap, warn + restore BLD to 1 + continue; non-bus-lock #DB -> panic (until the KD debugger lands, `TODO-29`)
 - [ ] Commit: `"kernel/cpu: split-lock (#AC) + bus-lock (#DB) detection, capability-gated"`
 
-**Test checkpoint:** On a CPU advertising split-lock (IA32_CORE_CAPABILITIES[5]) the boot log shows `split-lock #AC armed`; a deliberate misaligned LOCK in a test thread raises #AC and that thread is terminated while other cores keep running. On bus-lock-capable CPUs DR6.BLD distinguishes the #DB. On CPUs without the capability bits, neither MSR is written (no #GP). Test on: QEMU TCG (`-cpu max`), bare metal (Tremont/Alder Lake+).
+**Test checkpoint:** On a split-lock CPU (`IA32_CORE_CAPABILITIES[5]`) `IA32_TEST_CTL[29]` reads back armed after boot; a ring-3 split lock warns + (warn mode) the offending thread keeps progressing while detection stays armed for others; `DR6.BLD` active-low classifies a bus-lock #DB. On non-supporting CPUs (the `-cpu Haswell` harness) nothing is armed (no #GP). Test on: QEMU WHPX (Rocket Lake+), TCG `-cpu max`, bare metal (Alder Lake+ for bus-lock).
 
 > **Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
+
+> **Deferred:** 2026-06-28 -- a first implementation (detection + per-CPU arming + #AC/#DB handlers) was written and rolled back: the Codex adversarial pass found it CRITICALLY broken (handlers registered in `cpu_harden` at Phase 0 are wiped by the later `idt_init`) and the #AC loop-breaker permanently blinded the CPU. The correct version needs post-`idt_init` registration + a re-arm-on-context-switch hook in the universal `schedule()`/`schedule_now()` path + a per-CPU flag in the offset-asserted `per_cpu_data` struct -- delicate changes to the kernel's most critical paths that warrant a focused pass + `-cpu max`/bare-metal (Rocket/Alder Lake) validation, not a tail-of-session rush. Detection is a parity enhancement, not a correctness gap. The full design+adversarial-vetted plan is captured in the items + `[!WARNING]` above. -> XREF: this section's `[!WARNING]` + §1 (scheduler FPU/ctx-switch path for the re-arm hook).
 
 ---
 
@@ -580,7 +582,7 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 | 💎  | AMD IBS sample       | ⚠️ uProf vendor tool only   | ✅ perf IBS + oprofile      | ⬜ §12 stretch    |
 | 💎  | SVM VT-x detect      | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init     | ✅ §13            |
 | 💎  | AMX tile + XFD       | ✅ HAL XFD lazy alloc       | ✅ XFD dynamic XSAVE        | ⬜ §17 deferred   |
-| 💎  | Split/bus-lock det   | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=       | ⬜ §18            |
+| 💎  | Split/bus-lock det   | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=       | ⬜ §18 deferred   |
 | 💎  | WAITPKG UMWAIT bound | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL      | ⬜ §19            |
 | 💎  | x2APIC MSR mode      | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC        | ⬜ D04 T02 §1     |
 | 💎  | LAM / LASS           | ⚠️ unclear public surface   | ⚠️ LAM gated on LASS        | ⚠️ §15 detected   |
