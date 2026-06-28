@@ -545,7 +545,7 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 
 - [x] CPUID detection (`cpuid.c`/`cpuid.h`): `CPU_FEATURE_WAITPKG` (7.0:ECX[5]), `CPU_FEATURE_SERIALIZE` (7.0:EDX[14]), `CPU_FEATURE_RDPID` (7.0:ECX[22])
 - [x] WAITPKG anti-DoS: `MSR_IA32_UMWAIT_CONTROL=0xE1` bounds user UMWAIT/TPAUSE dwell. `cpu_program_bsp_umwait()` programs the BSP post-IDT on every boot path; APs replay the WAITPKG-gated `s_bsp_msr_profile[]` entry; `msr_try_write` degrade
-- [/] DEFERRED -- SERIALIZE adoption: `cpu_serialize()` helper + CPUID-fence-site replacement needs the AP-intersection gate (a skewed AP would #UD) for marginal gain; detection-only -> XREF §6
+- [/] DEFERRED -- SERIALIZE adoption: `cpu_serialize()` helper + CPUID-fence-site swap needs the AP-intersection gate (a skewed AP would #UD) for marginal gain; detection-only -> XREF 01-boot-platform/TODO-09 §6 (AP feature validation)
 - [/] DEFERRED -- RDPID adoption: `cpu_current_id()` helper needs TSC_AUX reliability (set only w/ RDTSCP per §11) + `gs:cpu_id` fallback; marginal; detection-only -> XREF §11
 - [x] Boot log: `[cpu] feature adoption: WAITPKG=.. SERIALIZE=.. RDPID=..` in `cpuid_init()`
 - [x] Commit: `"kernel/cpu: adopt WAITPKG (UMWAIT_CONTROL anti-DoS), SERIALIZE, RDPID"`
@@ -607,10 +607,12 @@ After §1 through §13 done and §7 through §12 plus §14 through §16 planned,
 
 ## Unit Tests
 
-> Wire into `test_runner_init()` via `test_register_x86()` (see `src/kernel/test/test_runner.c` and `include/kernel/test/test.h`). Use `test_suite_register_cat(..., TEST_CAT_BOOT)` for each case.
-> Boot tests run with `debug=1` or `test=1` in `boot.conf`.
+> Wire into `test_runner_init()` via `test_register_x86()` (see `src/kernel/test/test_runner.c` and `include/kernel/test/test.h`). Use `test_suite_register_cat(..., TEST_CAT_X86)` for each case.
+> x86 tests run with `SUITE=x86` (`run-x86-tests.bat`).
+>
+> **Reconciliation (2026-06-28 close-out):** the monolithic `test_x86.c` plan below was superseded by per-section test files under `TEST_CAT_X86` -- `src/kernel/test/test_cpu_security.c` carries `test_register_x86()` (MSR/CPUID/feature/future-silicon/§19 feature-adopt + UMWAIT suites) and the §14 hw_profile helper suites; `test_register_x86()` is wired in `test_runner.c` (extern at :425, called at :530). The candidate sub-bullets below are the coverage map; the ones that shipped live in `test_cpu_security.c`.
 
-- [ ] Create `src/kernel/test/test_x86.c` with:
+- [/] Candidate `test_x86.c` coverage (shipped per-section in `test_cpu_security.c` under `TEST_CAT_X86`, NOT a monolithic file):
   - MSR read: `msr_read(MSR_IA32_EFER)` returns value with NXE bit set
   - MSR write/read round-trip: write scratch MSR, read back matches (platform-dependent)
   - XSAVE area: `g_cpu.xsave_size` (or `g_cpu.xsave_size_max`) is > 0 when XSAVE enabled after `cpuid_init()`
@@ -626,12 +628,12 @@ After §1 through §13 done and §7 through §12 plus §14 through §16 planned,
   - Split/bus-lock (§18): `CPU_FEATURE_CORE_CAPS` matches CPUID.(7,0):EDX[30]; when split-lock supported (IA32_CORE_CAPABILITIES[5]) `IA32_TEST_CTL` bit 29 reads back set; no MSR write when unsupported
   - WAITPKG (§19): if `CPU_FEATURE_WAITPKG`, `IA32_UMWAIT_CONTROL` non-zero (bounded dwell); `CPU_FEATURE_RDPID`/`SERIALIZE` flags match CPUID leaf 7 bits
 - [x] §14 hw_profile: 3 pure-helper suites wired under `test_register_x86()` (TEST_CAT_X86) -- `hw_profile_is_stale` NULL/flag/brand guards + brand compare, `hw_profile_simd_decision` tier-gain/throttle/no-data
-- [ ] Add `extern void test_register_x86(void);` in `test_runner.c`, call `test_register_x86()` from `test_runner_init()`
-- [ ] Commit: `"test: add x86-64 architecture test suite"`
+- [x] Add `extern void test_register_x86(void);` in `test_runner.c`, call `test_register_x86()` from `test_runner_init()` -- done (`test_runner.c:425` extern, `:530` call)
+- [x] Commit: x86 test suites shipped per-section under `TEST_CAT_X86` across the §14/§15/§18/§19 ship commits (no single monolithic commit)
 
 > **Note:** the §14 benchmark body (rdtsc loops, scratch alloc, kthread ctx-switch, registry round-trip) is NOT unit-testable -- it requires live boot infrastructure (registry `_init`, scheduler, PMM) that the WSL test harness forbids/lacks; it is validated via the boot serial `[hwprofile]` line + the second-boot `reusing stored profile` path on WHPX/bare metal. Only the two pure helpers carry unit tests.
 
-**Test checkpoint:** With `SUITE=boot` and `test=1` (or `debug=1`) in `boot.conf`, serial shows new `test_x86` cases as PASS; `msr_read(MSR_IA32_EFER)` test reports NXE set; `g_cpu.xsave_size` (or `xsave_size_max`) > 0 when XSAVE is enabled; `cpu_has(CPU_FEATURE_PAGE1GB)` matches CPUID-derived expectation on the host.
+**Test checkpoint:** With `SUITE=x86` (`run-x86-tests.bat`), serial shows the `TEST_CAT_X86` cases as PASS; `msr_read(MSR_IA32_EFER)` test reports NXE set; `g_cpu.xsave_size` (or `xsave_size_max`) > 0 when XSAVE is enabled; `cpu_has(CPU_FEATURE_PAGE1GB)` matches CPUID-derived expectation on the host.
 
 ---
 
@@ -652,7 +654,7 @@ After §1 through §13 done and §7 through §12 plus §14 through §16 planned,
 
 **Test checkpoint:** Manual or staged boot on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal: each Verification bullet above observed (serial log, registry key, or measured ratio) with no regression on the non-FRED fallback path; FRED checks skipped or gated when `CPU_FEATURE_FRED` is absent.
 
-**Test runner:** `scripts\debug\kernel\run-boot-tests.bat` (SUITE=boot)
+**Test runner:** `scripts\debug\kernel\run-x86-tests.bat` (SUITE=x86)
 
 ---
 
