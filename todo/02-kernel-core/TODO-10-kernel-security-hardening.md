@@ -111,7 +111,9 @@ title: "TODO-10 -- Kernel Security Hardening"
 > **Notes:**
 > - Shipped: `EFER.NXE` (per-core MSR) + per-PTE NX gate (`VMM_FLAG_NX`) + `vmm_apply_nx_policy()` marking all non-code mappings no-execute.
 > - Runs in `cpu_harden()` (BSP + AP, before long mode) for the MSR; `vmm_apply_nx_policy()` splits 2 MiB huge pages overlapping `.text` into 4 KiB PTEs for per-page NX, then `vmm_flush_tlb_all()`.
-> - Effect: no executable rodata/data (per-PTE NX). NOTE: this is NX only -- making kernel `.text` read-only and `.rodata` RO-after-init (STRICT_KERNEL_RWX / full W^X on the kernel image) is a separate gap owned by §17. `EFER_NXE` at `msr.h:41`. `cpu_enable_nx()` at `cpu_security.c:32-42`. `cpu_harden()` at `boot_hw.c:361`. AP sets NXE+SCE before long mode. `VMM_FLAG_NX` at `vmm.h:22`. `vmm_apply_nx_policy()` at `vmm.c:857-956` now splits 2 MiB huge pages overlapping .text into 4 KiB PTEs for per-page NX (fixed -- no more executable rodata/data gap). NX gated in `vmm_map_page()`. TLB flush after. Accepted: none.
+> - Effect: no executable rodata/data (per-PTE NX). NOTE: this is NX only -- making kernel `.text` read-only and `.rodata` RO-after-init (STRICT_KERNEL_RWX / full W^X on the kernel image) is a separate gap owned by §17.
+
+> **Verified:** 2026-04-12 -- all 10 items confirmed. `EFER_NXE` at `msr.h:41`. `cpu_enable_nx()` at `cpu_security.c:32-42`. `cpu_harden()` at `boot_hw.c:361`. AP sets NXE+SCE before long mode. `VMM_FLAG_NX` at `vmm.h:22`. `vmm_apply_nx_policy()` at `vmm.c:857-956` splits 2 MiB huge pages overlapping .text into 4 KiB PTEs for per-page NX. NX gated in `vmm_map_page()`. TLB flush after. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. EFER per-core MSR (no SMP race). Intel SDM Vol. 3A 4.1.4 compliant. Constants correct. O(n) one-time boot walk. Parity: matches Windows/Linux NXE per-page granularity. Accepted: none.
 
 ---
@@ -159,7 +161,9 @@ Design and allocate the shared trampoline infrastructure that all KPTI ring tran
 > **Notes:**
 > - Shipped: KPTI trampoline page at `KPTI_TRAMPOLINE_VA` + per-CPU `kernel_cr3`/`user_cr3` fields (gs:104/112) with `_Static_assert` offset pins; 4 CR3-swap stubs in `kpti_trampoline.asm` (RAX preserved via `gs:kpti_scratch`).
 > - Runs as infrastructure only: BSP/AP init both fields from current CR3 (`user_cr3 = kernel_cr3` until §6); no live CR3 swap yet.
-> - Scope boundary: §4-§6 consume these fields for the actual SYSCALL/IDT/context-switch CR3 swaps; this section is the page + field substrate. Trampoline at `kpti.c` allocated + mapped at `KPTI_TRAMPOLINE_VA` via `vmm_map_page`. 4 stubs in `kpti_trampoline.asm` preserve RAX via `gs:kpti_scratch` (Codex adversarial finding -- fixed). Per-CPU fields at gs:104-136 with 5 `_Static_assert` checks (Codex quality finding -- added). BSP+AP init from CR3. Required user_cr3 pages documented in `kpti.h`. Accepted: none.
+> - Scope boundary: §4-§6 consume these fields for the actual SYSCALL/IDT/context-switch CR3 swaps; this section is the page + field substrate.
+
+> **Verified:** 2026-04-12 -- all 4 items confirmed. Trampoline at `kpti.c` allocated + mapped at `KPTI_TRAMPOLINE_VA` via `vmm_map_page`. 4 stubs in `kpti_trampoline.asm` preserve RAX via `gs:kpti_scratch` (Codex adversarial finding -- fixed). Per-CPU fields at gs:104-136 with 5 `_Static_assert` checks (Codex quality finding -- added). BSP+AP init from CR3. Required user_cr3 pages documented in `kpti.h`. Accepted: none.
 > **Quality reviewed:** 2026-04-12 -- kernel-code-quality 11 gates walked. Per-CPU fields SMP-safe (per-core). Intel SDM SYSCALL ABI: RAX preserved via scratch slot. JMP targets via per-CPU fields (not clobbered registers). All new GS offsets compile-time asserted. O(1) per-entry overhead. Accepted: none.
 
 ---
