@@ -53,7 +53,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   1   | TEB struct and GS self-pointer                  | --                 |  [x]   |
 | 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS      | --                 |  [/]   |
 | 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1                 |  [x]   |
-| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3             |  [x]   |
+| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3             |  [/]   |
 | 💎  |   5   | PEB allocation and population at task_exec      | §2, §4             |  [x]   |
 | 💎  |   6   | TEB allocation and population at thread create  | §1, §4             |  [/]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6             |  [x]   |
@@ -68,6 +68,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
 | 💎  |  17   | PEB x64 version-field offsets (0x118/0x120)     | §2, §5             |  [ ]   |
 | 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE          | §3, T01            |  [ ]   |
+| 💎  |  19   | exec/fork/switch GS-base staging + cost         | §4, §5, §6         |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -166,6 +167,14 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 - [x] Commit: `"kernel: abi -- write KERNEL_GS_BASE at task_exec and fork"`
 
 **Test checkpoint:** `task_exec`/`task_fork` initialize/copy `kernel_gs_base` correctly; context switches preserve per-task `IA32_KERNEL_GS_BASE`; post-syscall return still resolves TEB via GS. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | KERNEL_GS_BASE switch validated via cmd.exe ring-3, 0 failures
+> **Notes:**
+> - Shipped: per-thread `kernel_gs_base` (struct thread + task mirror) set at task_exec/fork; switch save/restore with exec_pending save-gate, NULL guard, MSR readback-verify, fail-closed boot-halt for ring-3-with-TEB-but-zero-GS.
+> - Review (Codex 3x) confirmed the switch save/restore is sound but found exec/fork staging defects -- fixes owned by §19.
+> - Scope boundary: exec_pending TOCTOU + fork parent-TEB + mirror staleness + per-switch readback cost -> §19; §4 checklist still describes the pre-§15 per-task model.
+> **Deferred:** [Critical] task_exec/task_fork GS-base staging races (exec_pending published before TEB prime; fork publishes a runnable child with the parent TEB) + switch mirror/readback issues. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 447)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1C+1H+2M deferred-to-§19, 0 fixed | scope: kernel-code-quality
 
 ---
 
@@ -437,6 +446,20 @@ The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber
 - [ ] Commit: `"kernel: isr -- paranoid swapgs entry for NMI/#DF/#MCE (MSR GS-base detection)"`
 
 **Test checkpoint:** NMI/#DF/#MCE entered from ring 3, from ring-0 kernel, and from the post-swapgs user-GS window all reach `isr_handler` with KERNEL GS (validated via a gs:-relative per-CPU read); no GS corruption; boot reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 19. exec/fork/switch GS-base Staging Correctness and Cost
+The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is structurally sound, but the Codex 3x review of §4 surfaced staging + cost defects across `task_exec`, `task_fork`, and the switch save path. -> XREF: §4 (switch save/restore), §5 (task_exec), §6 (TEB alloc).
+
+- [ ] [CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014); a preemption there can clobber the primed GS via the save-gate. Fix: stage fully before publishing exec_pending, or disable preemption across it
+- [ ] [HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS, no child TEB alloc (fork: syscall.c:401); a child run before exec gets the parent PID/TID/TLS. Fix: alloc a child TEB before publishing
+- [ ] [MEDIUM] Switch save (852/1071) updates only `threads[prev].kernel_gs_base`; for prev_thread==0 the task-level mirror goes stale and fork copies it stale. Fix: update the mirror + fork copies one canonical value
+- [ ] [MEDIUM] Switch readback (859/1073) does 3 MSR ops per user-thread switch (rdmsr+wrmsr+rdmsr). Fix: cache the programmed GS per CPU + skip when unchanged, or gate the readback to one-time/post-exec
+- [ ] Update §4's checklist text to the post-§15 per-thread reality (per-thread field + task-level thread-0 mirror)
+- [ ] Commit: `"kernel: sched -- exec/fork/switch GS-base staging correctness + cost"`
+
+**Test checkpoint:** a forced preemption between exec_pending publish and TEB prime does not clobber the primed GS; a fork child reads its OWN PID/TID/TLS before exec; the task/thread-0 mirror stays equal across switches + fork; steady-state switches skip the redundant readback (instrumentation counter). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
