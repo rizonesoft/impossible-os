@@ -8,6 +8,8 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 
 # TODO-12 -- Native API Layer (Nt/Zw)
 
+> **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); added 29 missing inter-section `---` separators
+
 > **Goal:** Replace the ad-hoc INT 0x80 / POSIX-numbered `SYS_*` dispatch table with a complete NT native API layer: `NTSTATUS` return values, `NtXxx`/`ZwXxx` naming, a `SYSCALL`/`SYSRET` fast path, a numbered System Service Descriptor Table (SSDT) with 470 service entries, and the `NtCurrentTeb()` / `NtCurrentPeb()` inline contract. This is the exact interface that `ntdll.dll`, CSRSS, Win32k, and every driver framework use to talk to the kernel. This TODO is the **master registry** for all NT syscall endpoints -- some are implemented here, others are implemented by domain-specific TODOs but get their SSDT slots reserved and documented here.
 
 > [!IMPORTANT]
@@ -183,6 +185,8 @@ Define the NT status type and the full set of codes needed across all 200+ sysca
 
 **Test checkpoint:** `bash scripts/build.sh` → `=== BUILD OK ===`. `NT_SUCCESS(0)` == true, `NT_ERROR(0xC0000001)` == true, `NT_WARNING(0x80000005)` == true, `NT_INFORMATION(0x00000101)` == true verified by unit test.
 
+---
+
 ## 2. SYSCALL/SYSRET Fast Path
 
 > [!WARNING]
@@ -201,6 +205,8 @@ Replace `INT 0x80` with the x86-64 `SYSCALL`/`SYSRET` instruction pair. On `SYSC
 
 **Test checkpoint:** Serial log: `"syscall: fast path (SYSCALL/SYSRET) enabled"` during Phase 3 (init runs in `boot_desktop.c`; see TODO-01 §5). `POST16(0xDA00)` entry, `POST16(0xDA01)` exit. Ring-3 `syscall` instruction reaches `syscall_dispatch` without GPF. Verify on QEMU WHPX, TCG, VirtualBox, bare metal. (Note: 0xD200/0xD201 are taken by `gdt.c`.)
 
+---
+
 ## 3. INT 0x2E Compatibility Path
 Windows NT's original software-interrupt syscall vector. Required for early ntdll and any code that does not use `SYSCALL`.
 
@@ -212,6 +218,8 @@ Windows NT's original software-interrupt syscall vector. Required for early ntdl
 - [ ] **Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+**: Windows x64 ABI passes the first 4 args in `R10`/`RDX`/`R8`/`R9` and args 5+ on the user stack at `[RSP+0x28]`, `[RSP+0x30]`, ... Today `syscall_handler_2e()` in `src/kernel/sched/syscall.c` and `syscall_entry` in `src/kernel/sched/syscall_entry.asm` only populate the first 4 register slots plus whatever the dispatcher already has in `a5`/`a6`, so any `NtXxx` with more than 4 parameters has to kludge the rest through an extended-args struct at `a5` (e.g. `NT_MAPVIEW_ARGS` in `include/kernel/nt/nt_section.h`). Retrofit both entry paths to probe `[RSP+0x28..]` for the user stack frame with `ProbeForReadIfUser` and populate `a5`/`a6` directly (and any future `a7..a10` via an on-stack `SSDT_ARGS` struct passed to `ssdt_dispatch()`). Then delete `NT_MAPVIEW_ARGS` and the `NtCreateSection` packed-flags kludge at `nt_section.c:93-94`. This auto-closes TODO-12 §18 Accepted #1 (10-parameter `NtMapViewOfSection` stack ABI).
 
 **Test checkpoint:** Ring-3 `int 0x2E` with RAX=0x0015 reaches `NtClose` handler. Same register mapping as SYSCALL path. `POST16(0xD300)` entry, `POST16(0xD301)` exit. Verify on all 4 platforms.
+
+---
 
 ## 4. System Service Descriptor Table (SSDT)
 
@@ -226,6 +234,8 @@ The SSDT is a flat array of function pointers indexed by the 12-bit service numb
 - [x] `ssdt_init()` called in Phase 3 before `syscall_init()`
 - [x] 4 unit tests: unimplemented stub, invalid table, main count=470, register+dispatch
 - [x] Commit: `"kernel: nt -- SSDT and service number table"`
+
+---
 
 ## 5. Nt/Zw Naming and Existing Syscall Migration
 Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalents, change return types to `NTSTATUS`, and register them in the SSDT at the indices defined in §4.
@@ -252,6 +262,8 @@ Rename / wrap the existing 22 `SYS_*` implementations to their `NtXxx` equivalen
 
 **Test checkpoint:** All 22 existing syscalls still work via old `SYS_*` macros (backward compat). `NtWriteFile` returns `STATUS_SUCCESS` on valid write. Serial: existing boot/desktop tests pass without regression. Verify on QEMU WHPX, TCG, VirtualBox, bare metal -- this is the most dangerous migration; a return-type mismatch silently corrupts all user-mode callers.
 
+---
+
 ## 6. NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile
 Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 
@@ -273,6 +285,8 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 - [x] Commit: `"kernel: nt -- NtCreateFile, NtOpenFile, NtClose, NtReadFile, NtWriteFile"`
 
 **Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
+
+---
 
 ## 7. NtCreateProcess / NtCreateThread / Process-Thread Lifecycle
 Process and thread creation, suspension, termination, and thread context access through the Ob-managed process model (→ XREF TODO-05 §2).
@@ -310,6 +324,8 @@ Process and thread creation, suspension, termination, and thread context access 
 
 **Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread`/`NtSetContextThread` currently return `STATUS_NOT_IMPLEMENTED` until TODO-23 provides `CONTEXT`. `NtDelayExecution` sleeps for the correct interval.
 
+---
+
 ## 8. Synchronisation Objects + NtWaitForMultipleObjects
 Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). Includes multi-wait and keyed event support.
 
@@ -342,6 +358,8 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). I
 
 **Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event APIs (0x0084-0x0087) currently return `STATUS_NOT_IMPLEMENTED` pending TODO-17.
 
+---
+
 ## 9. Virtual Memory (Alloc, Free, Protect, Lock, Cross-Process)
 Virtual memory management entry points -- covers the full NT virtual memory API surface.
 
@@ -363,6 +381,8 @@ Virtual memory management entry points -- covers the full NT virtual memory API 
 - [x] Commit: `"kernel: nt -- NtAllocate/Free/Protect/Lock/Read/WriteVirtualMemory"`
 
 **Test checkpoint:** `NtAllocateVirtualMemory` with `MEM_COMMIT | PAGE_READWRITE` returns usable address; write+read round-trip. `NtProtectVirtualMemory` changes RW→RO; write attempt faults. `NtFreeVirtualMemory` with `MEM_RELEASE` returns `STATUS_SUCCESS`. `NtReadVirtualMemory` from kernel to user address space succeeds. AWE APIs (0x0059-0x005B) currently return `STATUS_NOT_IMPLEMENTED`.
+
+---
 
 ## 10. NtQuerySystemInformation / NtQueryInformationProcess
 Provides OS version, process list, performance counters, and detailed process info to ntdll and user-mode tools.
@@ -409,6 +429,8 @@ Provides OS version, process list, performance counters, and detailed process in
 - [ ] `SystemBootPerformanceInformation (custom)`: boot perf NVRAM read/write is already present in `src/kernel/boot_timing.c` (line 333), but you still need a kernel accessor/API and a class serializer in `NtQuerySystemInformation` for user-mode consumption.
 - [ ] For all deferred classes: add ABI structs + buffer-size handling + unit tests in `src/kernel/test/test_nt_types.c`, then update TODO-12 §10 checklist states.
 
+---
+
 ## 11. Extended Error Information (IOSB + LastError)
 NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async I/O) and `TEB->LastErrorValue` (Win32 `GetLastError`). Both must be populated correctly.
 
@@ -419,6 +441,8 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [x] Commit: `"kernel: nt -- IOSB and TEB LastErrorValue propagation"` (607eb38b)
 
 **Test checkpoint:** After a failing `NtOpenFile` (non-existent path), `gs:[0x68]` == Win32 error code (2 = FILE_NOT_FOUND). After `NtReadFile`, IOSB `Status == STATUS_SUCCESS`, `Information == bytes_read`.
+
+---
 
 ## 12. ZwXxx Kernel-Mode Alias Layer
 
@@ -433,6 +457,8 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [x] Commit: `"kernel: nt -- ZwXxx kernel-mode alias layer with CPL probe bypass"` (638568e8)
 
 **Test checkpoint:** `ZwClose` from CPL=0 succeeds without user-buffer probe. CPL=3 call with kernel-space pointer returns `STATUS_ACCESS_VIOLATION`. `ASSERT_KERNEL_CALLER()` fires `STATUS_PRIVILEGE_NOT_HELD` from ring 3.
+
+---
 
 ## 13. File Metadata and Device Control
 Extended file operations: metadata queries, attribute modification, device I/O control, file locking, I/O completion ports. These are the Win32 `GetFileAttributes`, `SetFileTime`, `DeviceIoControl`, `LockFile` foundation.
@@ -456,6 +482,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] Commit: `"kernel: nt -- file metadata, device control, I/O completion ports"` (928051e4)
 
 **Test checkpoint:** `NtQueryInformationFile(FileBasicInformation)` returns valid timestamps. `NtSetInformationFile(FileDispositionInformation)` marks file for delete; file removed after close. `NtDeviceIoControlFile` reaches driver dispatch. I/O completion port post + dequeue round-trip succeeds.
+
+---
 
 ## 14. Registry Syscalls (Core CRUD)
 
@@ -484,6 +512,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Quality reviewed** (2026-04-13): dead code clean (all structs/helpers used). SSDT numbers match service_numbers.h. Error mapping consistent (ERROR_ACCESS_DENIED -> STATUS_ACCESS_DENIED; child-count check returns STATUS_KEY_HAS_CHILDREN specifically). Stack usage bounded by REG_MAX_* constants (512B data arrays). NtEnumerateKey KeyFullInformation opens/queries/closes child key inline.
 
 
+---
+
 ## 15. Registry Syscalls (Advanced)
 
 > [!NOTE]
@@ -507,6 +537,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Accepted:** Change notifications (NtNotifyChangeKey watcher lists) -> XREF: 02-kernel-core/TODO-31 §3 (reg_watcher_t + reg_notify_register), §4 line 271 (NtNotifyChangeKey SSDT wiring calls §3 infra). SMP dirty-flag races on registry_flush/hive_table -> XREF: 02-kernel-core/TODO-31 §14 (explicit wrap of registry_flush/hive_save/hive_load). UTF-16 UNICODE_STRING decode -> XREF: 02-kernel-core/TODO-14 §5 (kernel-wide `nt_decode_unicode_string` helper in src/kernel/nt/nt_string.c; retrofit list explicitly covers §14, §15, §17). Per-key flush optimization -> XREF: 02-kernel-core/TODO-14 §5 (new `registry_flush_key` walks parent chain to owning hive).
 > **Quality reviewed** (2026-04-14): dead code clean. Consistency: reg_resolve_key in registry.c now tombstone-aware (rejects keys with name[0]=='\0'); §14 handlers (NtDeleteKey, NtRenameKey, NtQueryKey) routed through shared resolve_hkey in nt_registry.c for uniform liveness semantics. NtLoadKey rollback on hive_load failure uses captured disposition. File handle type-checked via OB_HEADER_FROM_BODY + ObpFileType. New helpers: vfs_get_path_from_node (bounded VFS_MAX_NAME strlen, depth-64 cycle guard, subtraction-form bounds), vfs_name_len_bounded, vfs_find_drive_letter. 5 new tests.
 
+
+---
 
 ## 16. Token Open, Query, and Adjust Syscalls
 
@@ -534,6 +566,8 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 > **Quality reviewed** (2026-04-14): dead code clean (local TOKEN_GROUPS struct needed -- not in token.h; resolve_thread_handle's out_task is used in NtOpenThreadToken). Consistency: TokenTypeInfo=8 matches Windows TokenType enum value (the name difference is because ntstatus.h already uses "TokenType" for an enum; our enum member is TokenTypeInfo). Performance: resolve_thread_handle linear scan bounded by task->num_threads; adjust privileges O(n*m) bounded by 36*36=1296 ops. Codex findings (PID-as-handle, granted_access, HandleAttributes) are pre-existing systemic gaps not introduced by §16; all three accepted with concrete XREFs.
 
 
+---
+
 ## 17. Directory and Symbolic Link Object Syscalls
 Namespace manipulation -- create, open, and query Ob directory objects and symbolic links from user mode.
 
@@ -554,6 +588,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Accepted:** UNICODE_STRING.Buffer cast to const char* + NUL-terminated bounded_strlen scan (kernel-wide ASCII pattern shared with §14, §15 NT handlers; §16 has no UNICODE_STRING args) -> XREF: 02-kernel-core/TODO-14 §5 (kernel-wide `nt_decode_unicode_string` helper in `src/kernel/nt/nt_string.c`; retrofit list explicitly names §17's `oa_name`, `path_within_bounds`, and `NtCreateSymbolicLinkObject_handler` target read as consumers).
 > **Quality reviewed** (2026-04-14): dead code clean (bounded_strlen is local-scope; ns_memcpy is local-scope; split_path is single-use). Consistency: SSDT constants 0x0120-0x0125 match service_numbers.h:269-274; OBJECT_DIRECTORY_INFORMATION layout matches library NtQueryDirectoryObject signature in ob.c:421. Performance: split_path linear (one pass for last_sep + one memcpy); ObInsertObject linear over directory entries (bounded by OB_DIR_MAX_ENTRIES=128). bounded_strlen called twice per create (once for plen guard, once for leaf len) -- acceptable given OB_PATH_MAX=256. Codex finding "ReturnSingleEntry not honored" fixed: caps buf_count to 1 when flag set.
 
+
+---
 
 ## 18. Section and Memory-Mapped File Syscalls
 
@@ -583,6 +619,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Quality reviewed** (2026-04-14): Codex round 2 (adversarial + quality) drove five local fixes: (1) `ProbeForWriteIfUser` on `out_handle`/`base_ptr` in `NtCreateSection`/`NtOpenSection`/`NtMapViewOfSection` (no more arbitrary kernel write via attacker-controlled output pointers); (2) symmetric `target != task_current()` guard in `NtUnmapViewOfSection` (cross-process unmap now matches map semantics); (3) `ObExtendSectionObject` rejects with `STATUS_SECTION_NOT_EXTENDED` when `map_count > 0` and rechecks under the relock after the alloc/copy window to abort if a view was installed racily (no stranded callers on freed pages); (4) `ObMapViewOfSectionFull` now calls `ObReferenceObject(so)` INSIDE the spinlock before releasing it, and both unmap paths call `ObDereferenceObject(so)` after removing the view (views pin the backing until unmapped, closing the close-during-map UAF window); (5) named-section create: `ObInsertObject` return is checked -- on name collision redirect to the winner, on no-winner failure return `INVALID_HANDLE_VALUE` instead of silently leaking an unnamed orphan section. `SECTION_BASIC_INFORMATION` reordered to match Windows SDK `ntddk.h` layout (BaseAddress @0, AllocationAttributes @8, MaximumSize @16) with four `_Static_assert` offset/size gates.
 > **Accepted:** (1) `NtMapViewOfSection` full 10-parameter Windows stack ABI not wired on INT 0x2E / fast syscall (only 4-5 GPR slots today); extended fields use optional `NT_MAPVIEW_ARGS*` at `a5` when non-NULL -> XREF: 02-kernel-core/TODO-12 §4 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+", names `syscall_handler_2e`/`syscall_entry.asm` to retrofit, deletes `NT_MAPVIEW_ARGS` + `NtCreateSection` packed-flags kludge at `nt_section.c:93-94`). (2) Cross-process map / other-process `NtUnmapViewOfSection` -> XREF: 03-memory-concurrency/TODO-04 §5 (item: "Retrofit `src/kernel/nt/nt_section.c` once per-process page tables exist", names both guards at `nt_section.c:182`/`235` to remove). (3) `SEC_RESERVE`-only sparse pagefile sections without physical pages -> XREF: 03-memory-concurrency/TODO-04 §5 (item: "Implement `SEC_RESERVE` sparse pagefile-backed sections", names `ObCreateSectionEx` pre-alloc behavior to convert to zero-page PTEs + demand fault). (4) `SectionImageInformation` full Windows layout + PE parse (entry point, stack) -> XREF: 02-kernel-core/TODO-08 §8 (item: `NtQuerySection(..., SectionImageInformation)` PE persist at line 210 -- names backing `SECTION_OBJECT`/`ob_section.c`/`nt_section.c` retrofit list). (5) Initial `ObpLookupHandle` UAF race in `nt_section.c` (body could be freed by concurrent `NtClose` on another thread of the same task between lookup and use) -> XREF: 02-kernel-core/TODO-05 §2 (item: "Add `ObpReferenceObjectByHandle(...)` primitive", explicitly names retrofit list including all of `nt_section.c` and `ObUnmapViewOfSectionByBase` at `ob_section.c:414`). (6) Section handle `granted_access` not enforced per Windows rights model (`SECTION_MAP_READ/WRITE/EXECUTE`, `SECTION_EXTEND_SIZE`, `SECTION_QUERY`) -> XREF: 02-kernel-core/TODO-15 §8 (item: "Enforce per-handle `granted_access` on section syscalls", names required masks per handler and the `test_ob.c` negative test to add). (7) `ObUnmapViewOfSectionByBase` and `ObAreMappedFilesTheSame` O(handle_capacity × SECTION_MAX_VIEWS) scans on every call -> XREF: 02-kernel-core/TODO-05 §2 (item: "Add per-task view-base index", names both functions and `(task_pid, base_addr)` key to add to `struct task`).
 
+
+---
 
 ## 19. Timer Control Syscalls
 
@@ -614,6 +652,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Verified** (2026-04-14): `nt_timer_register_ssdt()` registers 6 handlers at 0x007E-0x0083 (`nt_timer.c:575`). Armed-timer list head (`s_armed_head`) + irqsave spinlock (`s_armed_lock`); `nt_timer_tick()` called from `lapic_timer_handler` after `kusd_update_time()` and from `pit_tick_increment` after `pit_lock` release. `resolve_timer_handle` rejects wrong object types with `STATUS_OBJECT_TYPE_MISMATCH`. `nt_timer_detach()` wired into `timer_on_close` and `timer_on_delete` so a closing/freeing timer is unlinked from the armed list before event state is cleared. `wait_on_handle` in `nt_sync.c` dispatches `ObpTimerType` so `NtWaitForSingleObject(timer, ...)` works. PE exports added in `pe.c` (sorted).
 > **Quality reviewed** (2026-04-14): Codex quality review drove two local fixes: (1) `nt_timer_tick` now uses a two-phase pattern -- Phase A detaches one-shot due timers into a local `signal_chain` under `s_armed_lock` (periodic timers are signalled inline since they stay on the queue); Phase B releases the lock, then calls `event_set()` for the one-shot chain so waiter-list walks in `event_set` no longer contribute to lock hold time and cannot serialize other CPUs' Set/Cancel calls. (2) Removed the dead legacy `NtCreateTimer(ht, name)` wrapper from `ob_timer.c` / `ob_timer.h` (zero callers).
 > **Accepted:** (1) `UNICODE_STRING.Buffer` in `oa_probe_ascii_name` is returned as a raw pointer and consumed via `snprintf("%s", name)` in `ObCreateTimerEx`/`ObOpenTimer`, risking an overread if the buffer has no NUL within probed bytes (same codebase-wide pattern as `nt_section.c`/`nt_namespace.c`) -> XREF: 02-kernel-core/TODO-31 §14 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 246 -- retrofit list explicitly names `nt_timer.c::oa_probe_ascii_name` and the ASCII path construction in `ObCreateTimerEx`/`ObOpenTimer`). (2) Initial `ObpLookupHandle` UAF race in `nt_timer.c::resolve_timer_handle` (body could be freed by concurrent `NtClose` on another thread of the same task between lookup and use) -> XREF: 02-kernel-core/TODO-05 §2 (item: "Add `ObpReferenceObjectByHandle(...)` primitive" at line 112 -- retrofit list now explicitly names `nt_timer.c` and enumerates the four consumer handlers). (3) Flat armed-list linear scan per tick (tens of timers OK today, O(N * ticks) at scale) -> XREF: 02-kernel-core/TODO-05 §6 (item: "Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)" -- names `nt_timer.c::s_armed_head`, suggests min-heap or timing wheel, requires 1024-timer stress test).
+
+---
 
 ## 20. Legacy LPC Port Syscalls
 
@@ -647,6 +687,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 > **Quality reviewed** (2026-04-14): Codex quality review drove one fix: `LPC_STUB_BODY` steady-state was `__atomic_exchange_n` (read-modify-write on every syscall); replaced with `__atomic_load_n(RELAXED)` fast path + `__atomic_compare_exchange_n` only on the 0->1 transition. User-mode callers repeatedly invoking an unimplemented LPC syscall no longer force cross-CPU cacheline ping-pong.
 > **Accepted:** (1) LPC engine itself (port objects, connection state machine, request/reply rendezvous, SeAccessCheck for SecureConnectPort, SeImpersonate for ImpersonateClientOfPort, out-of-line ReadRequestData/WriteRequestData) intentionally deferred -- this section's explicit scope is SSDT reservation + syscall signatures only -> XREF: 03-memory-concurrency/TODO-08 §7 (item: "Retrofit the 15 LPC SSDT stubs in src/kernel/nt/nt_lpc.c (SSDT 0x0100-0x010E) to real handlers that call into lpc.c instead of returning STATUS_NOT_IMPLEMENTED" -- enumerates every slot with per-syscall retrofit semantics and auto-closes §20).
 
+---
+
 ## 21. Exception and Debug Syscalls
 
 > [!NOTE]
@@ -669,6 +711,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [ ] Commit: `"kernel: nt -- exception and debug syscalls"`
 
 **Test checkpoint:** `NtRaiseException` with `STATUS_BREAKPOINT` reaches SEH handler. `NtCreateDebugObject` + `NtDebugActiveProcess` on a child process captures breakpoint events via `NtWaitForDebugEvent`. `NtDebugContinue(DBG_CONTINUE)` resumes the debuggee.
+
+---
 
 ## 22. Power and System Control
 
@@ -694,6 +738,8 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 **Test checkpoint:** `NtShutdownSystem(ShutdownReboot)` triggers ACPI reset. `NtPowerInformation(SystemPowerCapabilities)` returns valid S-state support mask. `NtSetThreadExecutionState` prevents idle sleep during long operation.
 
+---
+
 ## 23. Atom, Locale, and Miscellaneous Syscalls
 Catch-all for global atom table, locale management, environment variables, and display/error APIs.
 
@@ -714,6 +760,8 @@ Catch-all for global atom table, locale management, environment variables, and d
 
 **Test checkpoint:** `NtAddAtom("TestAtom")` returns atom ID > 0. `NtFindAtom("TestAtom")` returns same ID. `NtDeleteAtom` removes it; subsequent `NtFindAtom` returns `STATUS_OBJECT_NAME_NOT_FOUND`. `NtQueryDefaultLocale` returns valid LCID.
 
+---
+
 ## 24. Syscall Audit and Tracing Hook
 
 > [!IMPORTANT]
@@ -733,6 +781,8 @@ Catch-all for global atom table, locale management, environment variables, and d
 - [ ] Commit: `"kernel: nt -- syscall audit and tracing hook (SSDT pre/post)"`
 
 **Test checkpoint:** Register pre-call audit hook; every syscall logs service number to ring buffer. Register post-call hook; verify NTSTATUS is captured. Pre-call hook returning `STATUS_ACCESS_DENIED` blocks the syscall. Unregister hook; verify zero overhead (no measurable latency increase).
+
+---
 
 ## 25. Per-Process Syscall Filtering
 
@@ -760,6 +810,8 @@ Per-process syscall restrictions allow a process to lock down which system servi
 
 **Test checkpoint:** Set filter blocking `NtWriteFile` on child process; child's `NtWriteFile` returns `STATUS_ACCESS_DENIED`. Parent's `NtWriteFile` still works. `DisallowWin32kSystemCalls` blocks shadow SSDT calls. Filter inheritance: grandchild also blocked. Locked filter cannot be relaxed. Audit mode logs but doesn't block.
 
+---
+
 ## 26. Kernel-to-User Mode Callback Dispatch
 Windows NT allows the kernel to call user-mode functions (window procedures, clipboard callbacks, hooks) via `KeUserModeCallback`. The kernel pushes a callback frame, returns to user mode at `KiUserCallbackDispatcher` in ntdll, which indexes the `PEB.KernelCallbackTable` array and calls the registered function. The user-mode function then calls `NtCallbackReturn` (SSDT 0x0300) to return the result to the kernel. This mechanism is critical for Win32k -- every `DispatchMessage` / `SendMessage` uses it.
 
@@ -783,6 +835,8 @@ Windows NT allows the kernel to call user-mode functions (window procedures, cli
 > This mechanism is consumed by Win32k (→ XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §7) for `NtUserDispatchMessage` and `NtUserSendMessage`. Until this section is implemented, Win32k cannot call user-mode window procedures.
 
 **Test checkpoint:** Kernel calls `KeUserModeCallback(0, ...)` → user-mode callback fires → `NtCallbackReturn` returns result to kernel. Nested callback (callback calls syscall which calls another callback) succeeds up to depth 64. Depth 65 returns `STATUS_STACK_OVERFLOW`. Callback on terminated thread returns `STATUS_THREAD_IS_TERMINATING`.
+
+---
 
 ## 27. SSDT Integrity Protection
 
@@ -857,6 +911,8 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] Commit: `"kernel: nt -- generic object management syscalls (make-temp/perm, set-info, compare)"`
 
 **Test checkpoint:** `NtMakePermanentObject` on an event handle prevents deletion when last reference released. `NtMakeTemporaryObject` re-enables deletion. `NtSetInformationObject(ObjectHandleFlagInformation)` toggles `OBJ_INHERIT` on a handle. `NtCompareObjects` with two duplicate handles returns `STATUS_SUCCESS`; with handles to different objects returns `STATUS_NOT_SAME_OBJECT`.
+
+---
 
 ## 31. Modern ALPC Port Syscalls
 
@@ -937,6 +993,8 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > **§26** enables kernel→user callbacks required by Win32k for window procedure dispatch -- without it, `SendMessage` and `DispatchMessage` cannot work.
 > **§27** provides hardware-enforced SSDT immutability -- simpler and more secure than PatchGuard's periodic checksums.
 
+---
+
 ## Unit Tests
 
 > Wire into `test_runner_init()` via `test_register_nt_api()` (XREF: `00-infrastructure/TODO-03-kernel-test-harness.md`).
@@ -995,6 +1053,8 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
     - `ssdt_register_late` without privilege returns `STATUS_PRIVILEGE_NOT_HELD`
 - [ ] Register in `test_runner_init()`: `test_register_nt_api()`
 - [ ] Commit: `"test: add native API layer test suite"`
+
+---
 
 ## Verification
 
