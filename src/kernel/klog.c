@@ -915,7 +915,7 @@ void klog_load_levels_from_registry(void)
 {
     /* Known subsystem tags to check in registry */
     static const char *tags[] = {
-        "net", "boot", "fs", "mm", "drv", "sec", "ahci", "pci",
+        "net", "boot", "fs", "mm", "drv", "sec", "wx", "ahci", "pci",
         "lapic", "ioapic", "acpi", "smp", "UEFI", "TPM", "vfs", "ixfs",
         "fat32", "blk"
     };

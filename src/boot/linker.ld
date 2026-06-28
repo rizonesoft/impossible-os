@@ -67,7 +67,11 @@ SECTIONS
     .data ALIGN(4K) :
     {
         __rodata_end = .;
-        *(.data)
+        /* `*(.data .data.*)` -- the `.data.*` glob mirrors the `.bss .bss.*`
+         * rule below: without it, a named/retained `.data.*` subsection would
+         * orphan past __kernel_end and overlap PMM bitmap territory (the exact
+         * drift Codex caught for .bss). None exist today under -fno-pie. */
+        *(.data .data.*)
     }
 
     /* Uninitialized data (BSS) -- zeroed by the UEFI bootloader when

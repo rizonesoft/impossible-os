@@ -172,6 +172,11 @@ void cr4_write_safe(uint64_t val);
 void cr0_verify_pinned(void);
 void cr4_verify_pinned(void);
 
+/* True when CR0.WP is set on the calling CPU, i.e. supervisor-mode writes honor
+ * read-only PTEs. Kernel-image W^X relies on this; the call site fails closed if
+ * it returns 0. cpu_pin_control_regs() forces WP on, so this is true after it. */
+int cpu_wp_enforced(void);
+
 /* BSP-side: raise the bug-check if any AP recorded a CR-pin violation. */
 void cpu_cr_pin_check(void);
 

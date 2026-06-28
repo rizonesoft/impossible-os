@@ -571,9 +571,12 @@ Complete W^X on the static kernel image (Linux `STRICT_KERNEL_RWX` / `mark_rodat
 > **Notes:**
 > - Shipped `src/kernel/security/wx.c` + `wx.h`: `kernel_wx_protect`/`kernel_rodata_protect` clear WRITABLE on `.text` (1995 KiB) + `.rodata` (940 KiB) via `vmm_set_ro`, single-CPU in Phase 1 after the CR0.WP pin, fail-closed via `boot_halt`.
 > - Adversarial fixes: fail-open W^X calls now `boot_halt` on failure; `__rodata_end` pinned to `.data` start so `.bootproto`/`.reloc`/`.firmware_capsule_refused` (const, never-written) are in the RO span (drift-proof bracket, not name enumeration).
+> - Review fix: `cpu_pin_control_regs` now forces CR0.WP on (BSP + every AP) before pinning so the read-only PTE bits actually bind; `cpu_wp_enforced()` is a fail-closed guard at the W^X call site.
 > - Scope boundary: dynamic `mprotect` W^X policy is `03-memory-concurrency/TODO-01 §2`; the `__ro_after_init` init-mutable class is the deferred item above (needs a section convention).
 
+> **Verified:** 2026-06-28 | commit `4e5d48a1` (+ review fixes) | 6/8 items | build OK | smoke PASS (KVM 2.75s), security 1010/16 + mm W^X 4 suites pass
 > **Deferred:** [M] `__ro_after_init` init-mutable-then-RO class -> XREF: this section (item: "`__ro_after_init` section convention" above -- needs a `.init.data` section + attribute macro that does not exist in the tree).
+> **Quality reviewed:** 2026-06-28 | Codex 6x (design, adversarial, consistency, perf, re-adversarial) | 3H+1M+1L fixed, 1 deferred | scope: kernel-code-quality + boot-code-quality
 
 ---
 

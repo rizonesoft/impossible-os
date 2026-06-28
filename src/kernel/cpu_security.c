@@ -1085,6 +1085,17 @@ static volatile uint64_t s_cr_fault_actual;    /* bits actually still set */
 void cpu_pin_control_regs(void)
 {
     struct per_cpu_data *pc = smp_this_cpu();
+
+    /* Force CR0.WP on before capturing the pin mask. Kernel-image W^X
+     * (STRICT_KERNEL_RWX) needs supervisor-mode writes to honor read-only kernel
+     * PTEs; with WP clear, ring-0 ignores the PTE WRITABLE bit and .text/.rodata
+     * stay writable even after vmm_set_ro. UEFI may hand off with WP clear, so
+     * set it here (on the BSP and on every AP, which also runs this) so WP is
+     * both active and pinned -- never left to firmware state. */
+    uint64_t cr0 = read_cr0();
+    if (!(cr0 & CR0_WP))
+        write_cr0(cr0 | CR0_WP);
+
     uint64_t cr0_mask = read_cr0() & CR0_WP;
     uint64_t cr4_mask = read_cr4() & CR4_PINNABLE_MASK;
 
@@ -1099,6 +1110,11 @@ void cpu_pin_control_regs(void)
         klog(LOG_INFO, "cpu",
              "[Phase1] CR0/CR4 pinned: cr0_mask=0x%lx cr4_mask=0x%lx",
              cr0_mask, cr4_mask);
+}
+
+int cpu_wp_enforced(void)
+{
+    return (read_cr0() & CR0_WP) != 0;
 }
 
 void cr0_write_safe(uint64_t val)

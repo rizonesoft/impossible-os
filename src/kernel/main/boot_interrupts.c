@@ -200,6 +200,11 @@ void boot_phase1(void)
      * can fail open or partially on a split/PMM error) is worse than not
      * booting -- halt before any AP launches. */
     POST16(0xD402);
+    /* The read-only PTE bits only bind when CR0.WP is set; cpu_pin_control_regs
+     * just forced it on. Verify before protecting -- a WP-clear path would make
+     * the RO bits silent no-ops (false STRICT_KERNEL_RWX). */
+    if (!cpu_wp_enforced())
+        boot_halt("W^X: CR0.WP not set -- read-only kernel PTEs would not be enforced");
     if (kernel_wx_protect() != 0)
         boot_halt("W^X: kernel .text could not be made read-only");
     if (kernel_rodata_protect() != 0)
