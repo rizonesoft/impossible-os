@@ -365,6 +365,15 @@ Core file I/O entry points routed through the Object Manager (→ XREF TODO-05).
 
 **Test checkpoint:** `NtCreateFile` on `X:\Logs\kernel.log` returns `STATUS_SUCCESS` + valid HANDLE. `NtClose(handle)` returns `STATUS_SUCCESS`; second `NtClose` returns `STATUS_INVALID_HANDLE`. `NtReadFile` populates IOSB correctly.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 346 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - Core file I/O is shipped + working: NtCreateFile/NtOpenFile (OB-backed FILE_OBJECT + handle), NtReadFile/NtWriteFile (ByteOffset, EOF), NtClose, NtCreateNamedPipeFile, routed through the Object Manager + VFS.
+> - Trust boundary on these handlers NOT yet hardened: the 4 design-reviewed [Critical]/[H] items (nt_write_iosb, bounce buffers, OBJECT_ATTRIBUTES snapshot, ByteOffset capture) deferred to the NT trust-boundary campaign with §29.
+> - Not live-exploitable in the current dev stage (no per-process isolation, SMAP off, identity-mapped shared frames) -- see the `project_nt_syscall_trust_boundary` analysis.
+
+> **Deferred:** [Critical] §6 file-I/O user-pointer hardening (nt_write_iosb + kernel bounce buffers + OBJECT_ATTRIBUTES copy_from_user snapshot + ByteOffset capture) is a design-reviewed ~300-line security refactor; core file I/O ships, trust-boundary enforcement deferred -> XREF: 02-kernel-core/TODO-12 §6 (item: "Add `nt_write_iosb(iosb,status,info)` helper" at line 360, + 3 sibling items at lines 361-363)
+
 ---
 
 ## 7. NtCreateProcess / NtCreateThread / Process-Thread Lifecycle
