@@ -8,6 +8,8 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 
 # TODO-11 -- PEB / TEB & User-Mode ABI
 
+> **Validated:** 2026-06-28 | validate-todo-file clean (structure / IO table / XREF / test wiring); added 11 missing inter-section `---` separators
+
 > **Goal:** Implement the Process Environment Block, Thread Environment Block, and the complete x86-64 user-mode ABI handoff so that `ntdll.dll` and all Win32 DLLs can initialise and user programs run correctly. Without this, no Win32 binary can call `GetLastError`, locate loaded modules, parse command-line arguments, or access TLS. This is the first item every Win32 user-mode DLL depends on, and blocks everything downstream in the Win32 subsystem.
 
 > [!IMPORTANT]
@@ -90,6 +92,8 @@ Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macro
 
 **Test checkpoint:** Build-time `_Static_assert` checks for all listed TEB offsets pass; `test_peb_teb` offset assertions for TEB layout pass at boot. No ABI offset drift in serial/unit-test output. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+---
+
 ## 2. PEB Struct and RTL_USER_PROCESS_PARAMETERS
 Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk it without any patching.
 
@@ -103,6 +107,8 @@ Define PEB layout at exact Windows x64 offsets so ntdll's startup code can walk 
 
 **Test checkpoint:** Build-time `_Static_assert` checks for key PEB and RTL_USER_PROCESS_PARAMETERS offsets pass; unit tests confirm `ImageBaseAddress`, `Ldr`, `ProcessParameters`, and version fields are at expected offsets. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+---
+
 ## 3. swapgs on INT 0x80 Entry and Exit
 Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) holds the TEB address. `swapgs` exchanges the two MSRs -- must fire on every ring-3→ring-0 transition and be reversed on every ring-0→ring-3 return.
 
@@ -114,6 +120,8 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 - [x] Commit: `"kernel: abi -- swapgs on INT 0x80 ring-3 entry and exit"`
 
 **Test checkpoint:** Ring-3 user program executes syscalls repeatedly without GS corruption; ISR entry/exit preserves kernel per-CPU GS in ring 0 and TEB GS in ring 3. No interrupt-path regressions or triple faults. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
 
 ## 4. KERNEL_GS_BASE Written at task_exec and Fork
 `IA32_KERNEL_GS_BASE` (MSR 0xC0000102) must hold the TEB address before the first ring-3 instruction runs. `swapgs` (§3) exchanges GS_BASE ↔ KERNEL_GS_BASE, so after `swapgs` in the ISR entry the kernel sees per-CPU GS and user-mode sees TEB via GS.
@@ -128,6 +136,8 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 
 **Test checkpoint:** `task_exec`/`task_fork` initialize/copy `kernel_gs_base` correctly; context switches preserve per-task `IA32_KERNEL_GS_BASE`; post-syscall return still resolves TEB via GS. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+---
+
 ## 5. PEB Allocation and Population at task_exec
 Allocate the PEB in the user address space and fill it before the first instruction runs.
 
@@ -141,6 +151,8 @@ Allocate the PEB in the user address space and fill it before the first instruct
 - [x] Commit: `"kernel: peb -- PEB allocation and population at exec"`
 
 **Test checkpoint:** On `task_exec`, PEB and process-parameter pages map at expected user VAs, fields are non-NULL and consistent (`ImageBaseAddress`, `ProcessParameters`, OS version/build, processor count), and UTF-16 command-line/environment blocks decode correctly. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
 
 ## 6. TEB Allocation and Population at Thread Create
 
@@ -158,6 +170,8 @@ One TEB per thread. Allocated in the user address space near the thread stack.
 
 **Test checkpoint:** TEB is mapped per thread at expected VA, `NtTib.Self` is valid, stack bounds and ClientId are correct, `ProcessEnvironmentBlock` points at the process PEB, and `LastErrorValue` initializes to 0. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+---
+
 ## 7. Initial User Stack Frame
 The user stack must have a valid calling frame waiting for the first instruction. Win32 convention: `ntdll!_LdrpInitialize` reads `PEB->ProcessParameters`; it does not expect argc/argv on the stack itself. However, the ELF ABI (for ELF-based binaries in the compatibility path) needs the Linux-style stack layout.
 
@@ -169,6 +183,8 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] Commit: `"kernel: abi -- initial user stack frame with argv, envp, auxv"`
 
 **Test checkpoint:** User entry starts with valid argc/argv/envp/auxv layout and 16-byte stack alignment; hello/cmd user binaries run without stack faults; PE handoff keeps RCX=PEB contract. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
 
 ## 8. PEB Ldr (Module List) Basic Population
 `ntdll!LdrInitializeThunk` walks `PEB->Ldr->InLoadOrderModuleList` to find already-loaded modules. Even a stub Ldr with just the main module prevents ntdll from faulting on an empty list.
@@ -183,6 +199,8 @@ The user stack must have a valid calling frame waiting for the first instruction
 
 **Test checkpoint:** `PEB->Ldr` is non-NULL at process start and the main image appears in all three loader lists with stable links; ntdll loader walk does not fault on initial module enumeration. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+---
+
 ## 9. TLS Slot Allocation (64 Static Slots)
 TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(thread)` and `TlsAlloc`. A minimal allocator is needed for Win32 DLLs that use TLS before the full heap is available.
 
@@ -194,6 +212,8 @@ TEB offsets `0x1480…0x1678` are the 64 static TLS slots used by `__declspec(th
 - [x] Commit: `"kernel: peb -- TLS slot allocation (64 static slots)"`
 
 **Test checkpoint:** `tls_alloc` returns unique indices 0-63 then fails/defers expansion path; `tls_set_value`/`tls_get_value` round-trip values; `tls_free` clears slot and allows reuse. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
 
 ## 10. PEB / TEB Exposed in Ob Namespace
 Make the PEB and TEB for any process queryable by name through the Object Manager namespace. Uses `ObInsertObject` and `NtOpenDirectoryObject`/`NtQueryDirectoryObject` from the completed OB layer (see [TODO-05-object-manager.md](./TODO-05-object-manager.md)). Enables debuggers and introspection tools without kernel patching -- not possible on Windows or Linux without a private API.
@@ -281,6 +301,8 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 
 **Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n> AT_HWCAP=0x<edx> (16 pairs, ELF)` from `task_exec` (single observable klog line; no POST16 codes -- this is post-boot code where klog is fully working). Unit test `PEB/TEB: user auxv populated (PID 2)` walks `tasks[2].user_auxv`, asserts AT_NULL terminator present, AT_RANDOM/PAGESZ/ENTRY/HWCAP present, AT_PAGESZ == 4096, AT_HWCAP non-zero and equal to raw CPUID 1 EDX, and reads 16 bytes at AT_RANDOM with at least one non-zero. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+---
+
 ## 14. User-Mode Thread Bootstrap (uthread_create)
 The current `thread_create()` in `src/kernel/sched/task.c:1924` builds a ring-0 interrupt frame: `CS = GDT_KERNEL_CODE`, `SS = GDT_KERNEL_DATA`, `RIP = thread_wrapper`, `RSP = kmalloc'd kernel stack`. Every secondary thread runs in ring 0 on a kernel stack. `NtCreateThread` (TODO-12 §2) calls this function directly, so today's "user-mode multithreading" is actually kernel threads pretending to be user threads. Per-thread TEB (§15) cannot be implemented coherently on this foundation: a kernel thread that owns a user-space TEB pointer can never `swapgs` into it because it never returns to ring 3.
 
@@ -307,6 +329,8 @@ The current `thread_create()` in `src/kernel/sched/task.c:1924` builds a ring-0 
 - [x] Commit: `"kernel: peb -- user-mode thread bootstrap (kthread_create + uthread_create split)"` (638a0899)
 
 **Test checkpoint:** Boot completes normally. `cmd.exe` (single-threaded user task) starts unchanged because `task_exec()` builds its own ring-3 frame. A user binary calling `NtCreateThread` (none in tree today) would receive a real ring-3 thread on a user stack -- verifiable when a multi-threaded test binary lands. `kthread_create` calls from kernel boot code work unchanged (DPC worker, work queue, etc.). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
 
 ## 15. Per-thread TEB Allocation at uthread_create()
 Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), which violates the Win32 contract that each thread has its own TEB at `gs:[0]`. This blocks per-thread TLS expansion arrays (§12 deferred item), per-thread `LastErrorValue`, per-thread stack bounds in `NtTib.StackBase/StackLimit`, and correct `NtCurrentTeb()` semantics on multithreaded processes. `NtCreateThread` (TODO-12 §2) creates a `struct thread` with its own kernel stack but no TEB.
