@@ -111,7 +111,12 @@ enum cpu_feature {
     CPU_FEATURE_SERIALIZE = 60,   /* SERIALIZE instruction (7.0:EDX[14]) */
     CPU_FEATURE_RDPID     = 61,   /* RDPID instruction (7.0:ECX[22]) */
 
-    CPU_FEATURE_COUNT     = 62    /* total features tracked */
+    /* Spectre v2 mitigation (TODO-10 S8). These are the LAST 2 bits of the
+     * uint64_t flags word -- adding more (S18 SSBD/etc.) needs a 128-bit word. */
+    CPU_FEATURE_ENHANCED_IBRS = 62, /* IA32_ARCH_CAPABILITIES[1] IBRS_ALL (set-once IBRS) */
+    CPU_FEATURE_IBPB      = 63,   /* IBPB: Intel 7.0:EDX[26] / AMD 0x80000008:EBX[12] */
+
+    CPU_FEATURE_COUNT     = 64    /* total features tracked (flags word now FULL) */
 };
 
 /* Confidential-compute guest kind (detected via CPUID; full attestation is
@@ -166,7 +171,7 @@ typedef enum {
      (1ULL << CPU_FEATURE_AVX)  | (1ULL << CPU_FEATURE_AVX512F) | \
      (1ULL << CPU_FEATURE_PCID) | (1ULL << CPU_FEATURE_XSAVE) | \
      (1ULL << CPU_FEATURE_RDTSCP) | (1ULL << CPU_FEATURE_SSE4_2) | \
-     (1ULL << CPU_FEATURE_WAITPKG))
+     (1ULL << CPU_FEATURE_WAITPKG) | (1ULL << CPU_FEATURE_SPEC_CTRL))
 
 /* --- Global CPU feature structure --- */
 

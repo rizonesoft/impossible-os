@@ -156,7 +156,8 @@ struct per_cpu_data {
     uint64_t          tsc_aux;             /* IA32_TSC_AUX = logical CPU id */
     uint32_t          msr_profile_applied; /* count of BSP profile MSRs replayed */
     uint8_t           umwait_unbounded;    /* 1 = WAITPKG present but UMWAIT_CONTROL write rejected (S19) */
-    uint8_t           _harden_pad[3];      /* alignment */
+    uint8_t           eibrs_unset;         /* 1 = eIBRS present but SPEC_CTRL write rejected on this AP (S8) */
+    uint8_t           _harden_pad[2];      /* alignment */
 
     /* CPU register audit trail (TODO-09-boot S9). Captured by cpu_audit_registers()
      * on the owning CPU (BSP in Phase 2, each AP at the ap_cpu_harden() tail);

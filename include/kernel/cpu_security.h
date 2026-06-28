@@ -91,6 +91,20 @@ void cpu_record_bsp_profile(void);
  * dwell unbounded) on a rejected MSR rather than #GP-panicking. */
 void cpu_program_bsp_umwait(void);
 
+/* Program the BSP's eIBRS set-once IA32_SPEC_CTRL.IBRS (TODO-10 S8). Call once
+ * on the BSP, post-IDT, on every boot path. No-op without Enhanced IBRS (legacy
+ * CPUs use retpoline). APs program their own via the SPEC_CTRL profile replay. */
+void cpu_program_bsp_eibrs(void);
+
+/* Probe PRED_CMD/IBPB writability once per CPU, post-IDT, to latch a #GP-safe
+ * IBPB-active flag (TODO-10 S8). Call on the BSP + every AP before the scheduler
+ * issues IBPB. Any CPU lacking IBPB or trapping PRED_CMD disables it globally. */
+void cpu_probe_ibpb(void);
+
+/* Flush the indirect branch predictor (IBPB, TODO-10 S8). Called from the
+ * scheduler on a security-domain switch. Gated on the latched probe -- never #GPs. */
+void cpu_issue_ibpb(void);
+
 /* Replicate the BSP's hardened CPU state onto the calling AP and BUFFER a
  * snapshot -- AP-only state replication, no verification, no serial output:
  * match the BSP XCR0 mask (intersected with this AP's own supported bits),

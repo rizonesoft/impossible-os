@@ -99,10 +99,15 @@ int msr_try_write(uint32_t index, uint64_t value);
 #define MTRR_DEF_TYPE_E             (1ULL << 11) /* MTRRs enabled */
 #define MTRR_VARIABLE_MAX           255u         /* MTRRCAP.VCNT is an 8-bit field */
 
-/* Speculation control */
+/* Speculation control (TODO-10 S8 Spectre v2) */
 #define MSR_IA32_SPEC_CTRL          0x00000048
+#define SPEC_CTRL_IBRS              (1ULL << 0)   /* Indirect Branch Restricted Speculation */
+#define SPEC_CTRL_STIBP             (1ULL << 1)   /* Single Thread IBP (S18) */
+#define SPEC_CTRL_SSBD              (1ULL << 2)   /* Speculative Store Bypass Disable (S18) */
 #define MSR_IA32_PRED_CMD           0x00000049
+#define PRED_CMD_IBPB               (1ULL << 0)   /* Indirect Branch Prediction Barrier */
 #define MSR_IA32_ARCH_CAPS          0x0000010A
+#define ARCH_CAP_IBRS_ALL          (1ULL << 1)   /* eIBRS: IBRS provides always-on protection */
 
 /* CPU register audit (TODO-09-boot S9) */
 #define MSR_IA32_MISC_ENABLE        0x000001A0  /* feature-enable bits */

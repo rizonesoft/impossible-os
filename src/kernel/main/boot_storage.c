@@ -259,6 +259,16 @@ void boot_phase2(void)
      * path). APs program their own copy during smp bringup. */
     cpu_program_bsp_umwait();
 
+    /* Spectre v2 eIBRS (TODO-10 S8): set the BSP's IA32_SPEC_CTRL.IBRS once,
+     * post-IDT, on every boot path (no-op without Enhanced IBRS; legacy CPUs use
+     * retpoline). APs program their own via the SPEC_CTRL profile replay. */
+    cpu_program_bsp_eibrs();
+
+    /* IBPB writability latch (TODO-10 S8): probe PRED_CMD on the BSP post-IDT so
+     * the scheduler IBPB hot path is a fault-free atomic check (each AP probes at
+     * its ap_cpu_harden tail). */
+    cpu_probe_ibpb();
+
     /* CPU topology: Zen CCD/NUMA + Intel hybrid P/E-core detection */
     {
         extern void topology_init(void);

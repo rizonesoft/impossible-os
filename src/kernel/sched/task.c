@@ -695,6 +695,24 @@ static uint64_t yield_irq_handler(struct interrupt_frame *frame)
     return schedule_now(frame);
 }
 
+/* IBPB on a cross-process switch involving a user-capable task (TODO-10 S8).
+ * Flushes the indirect branch predictor so one process cannot leave branches the
+ * next mis-speculates. STRUCTURAL user-capable test (own cr3 != kernel PML4 /
+ * user stack), NOT "NULL token == user" -- kernel tasks (cr3=0, NULL token) must
+ * not IBPB on every kthread switch. Same-task (same process) thread switches and
+ * pure kernel-task->kernel-task switches take no IBPB. No-op without CPU_FEATURE_IBPB. */
+static void sched_cross_domain_ibpb(uint32_t prev_task, uint32_t next_task)
+{
+    if (prev_task == next_task)
+        return;
+    int prev_user = tasks[prev_task].cr3 != 0 ||
+                    tasks[prev_task].user_stack_base != NULL;
+    int next_user = tasks[next_task].cr3 != 0 ||
+                    tasks[next_task].user_stack_base != NULL;
+    if (prev_user || next_user)
+        cpu_issue_ibpb();
+}
+
 /* Force an immediate context switch (called from yield INT or schedule). */
 uint64_t schedule_now(struct interrupt_frame *frame)
 {
@@ -779,6 +797,10 @@ uint64_t schedule_now(struct interrupt_frame *frame)
             smp_this_cpu()->syscall_rsp0 = next_krsp;
         }
     }
+
+    /* Spectre v2 IBPB (TODO-10 S8): flush the branch predictor before entering a
+     * different process domain (gated on user-capable structural check). */
+    sched_cross_domain_ibpb(prev_task, next_task);
 
     /* CR3 switch: load per-process page tables if different from current */
     {
@@ -1015,6 +1037,10 @@ uint64_t schedule(struct interrupt_frame *frame)
             smp_this_cpu()->syscall_rsp0 = next_krsp;
         }
     }
+
+    /* Spectre v2 IBPB (TODO-10 S8): flush the branch predictor before entering a
+     * different process domain (gated on user-capable structural check). */
+    sched_cross_domain_ibpb(prev_task, next_task);
 
     /* CR3 switch: load per-process page tables if different from current */
     {

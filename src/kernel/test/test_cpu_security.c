@@ -1471,10 +1471,11 @@ static void test_ap_msr_profile_populated(void)
      * (unbounded) onto an AP-only WAITPKG core when the BSP lacks WAITPKG. An
      * accidental added/duplicate/wrong entry would change AP MSR replay. */
     uint32_t i, count = cpu_msr_profile_count();
-    uint32_t pat_count = 0, tsc_aux_count = 0, umwait_count = 0, unknown = 0;
+    uint32_t pat_count = 0, tsc_aux_count = 0, umwait_count = 0;
+    uint32_t spec_ctrl_count = 0, unknown = 0;
 
-    TEST_ASSERT_EQ((uint64_t)count, 3ULL,
-                   "MSR profile registry has exactly 3 entries");
+    TEST_ASSERT_EQ((uint64_t)count, 4ULL,
+                   "MSR profile registry has exactly 4 entries");
     for (i = 0; i < count; i++) {
         uint32_t msr = 0;
         uint64_t value = 0;
@@ -1487,6 +1488,8 @@ static void test_ap_msr_profile_populated(void)
             tsc_aux_count++;
         else if (msr == MSR_IA32_UMWAIT_CONTROL && per_cpu == 1)
             umwait_count++;
+        else if (msr == MSR_IA32_SPEC_CTRL && per_cpu == 1)
+            spec_ctrl_count++;
         else
             unknown++;
     }
@@ -1496,6 +1499,8 @@ static void test_ap_msr_profile_populated(void)
                    "exactly one per-CPU TSC_AUX profile entry");
     TEST_ASSERT_EQ((uint64_t)umwait_count, 1ULL,
                    "exactly one per-CPU computed UMWAIT_CONTROL profile entry");
+    TEST_ASSERT_EQ((uint64_t)spec_ctrl_count, 1ULL,
+                   "exactly one per-CPU computed SPEC_CTRL profile entry (S8 eIBRS)");
     TEST_ASSERT_EQ((uint64_t)unknown, 0ULL,
                    "no unknown MSR profile entries");
 }
@@ -1778,6 +1783,50 @@ static void test_umwait_bounded(void)
                    "UMWAIT_CONTROL == programmed bound (UMWAIT_MAX_DWELL_TSC)");
 }
 
+/* ---- S8: Spectre v2 (eIBRS / IBPB / retpoline) ---- */
+
+static void test_spectre_feature_bits(void)
+{
+    /* ENHANCED_IBRS is MSR-derived (IA32_ARCH_CAPABILITIES[1] IBRS_ALL), gated on
+     * ARCH_CAP; pin cpu_has(ENHANCED_IBRS) against that derivation. IBPB on Intel
+     * is implied by SPEC_CTRL (7.0:EDX[26]); if SPEC_CTRL is present, IBPB must be. */
+    if (cpu_has(CPU_FEATURE_ARCH_CAP)) {
+        uint64_t ac = msr_read(MSR_IA32_ARCH_CAPS);
+        TEST_ASSERT_EQ((uint64_t)(cpu_has(CPU_FEATURE_ENHANCED_IBRS) ? 1 : 0),
+                       (uint64_t)((ac & ARCH_CAP_IBRS_ALL) ? 1 : 0),
+                       "ENHANCED_IBRS == ARCH_CAPABILITIES[1] IBRS_ALL");
+    } else {
+        TEST_ASSERT_EQ((uint64_t)cpu_has(CPU_FEATURE_ENHANCED_IBRS), 0ULL,
+                       "no eIBRS without ARCH_CAP");
+    }
+    if (cpu_has(CPU_FEATURE_SPEC_CTRL))
+        TEST_ASSERT(cpu_has(CPU_FEATURE_IBPB),
+                    "Intel SPEC_CTRL implies IBPB (7.0:EDX[26])");
+}
+
+static void test_eibrs_active(void)
+{
+    /* On an eIBRS CPU, cpu_program_bsp_eibrs() set IA32_SPEC_CTRL.IBRS once at
+     * boot; the bit must read back set (set-once, never toggled). Skipped on
+     * non-eIBRS CPUs (retpoline covers them; no SPEC_CTRL write). */
+    if (!cpu_has(CPU_FEATURE_ENHANCED_IBRS)) {
+        TEST_SKIP("no Enhanced IBRS on this CPU");
+        return;
+    }
+    uint64_t v = msr_read(MSR_IA32_SPEC_CTRL);
+    TEST_ASSERT((v & SPEC_CTRL_IBRS) != 0,
+                "eIBRS: IA32_SPEC_CTRL.IBRS set permanently");
+}
+
+static void test_ap_probe_covers_spec_ctrl(void)
+{
+    /* SPEC_CTRL must be in the AP probe mask so cpu_feature_local() gates the
+     * SPEC_CTRL eIBRS replay correctly on each AP (else APs silently skip it). */
+    uint64_t m = CPU_FEATURES_AP_PROBE_MASK;
+    TEST_ASSERT((m & (1ULL << CPU_FEATURE_SPEC_CTRL)) != 0,
+                "AP probe mask covers SPEC_CTRL (eIBRS replay gate)");
+}
+
 /* ---- Registration ---- */
 
 void test_register_x86(void)
@@ -2028,6 +2077,14 @@ void test_register_x86(void)
         test_feature_adoption_bits, TEST_CAT_X86);
     test_suite_register_cat("feature-adopt: UMWAIT_CONTROL bounded when WAITPKG",
         test_umwait_bounded, TEST_CAT_X86);
+
+    /* S8: Spectre v2 (eIBRS / IBPB / retpoline) */
+    test_suite_register_cat("spectre: ENHANCED_IBRS/IBPB feature bits",
+        test_spectre_feature_bits, TEST_CAT_X86);
+    test_suite_register_cat("spectre: eIBRS IA32_SPEC_CTRL.IBRS set-once",
+        test_eibrs_active, TEST_CAT_X86);
+    test_suite_register_cat("spectre: AP probe mask covers SPEC_CTRL",
+        test_ap_probe_covers_spec_ctrl, TEST_CAT_X86);
 }
 
 #endif /* KERNEL_TESTS */

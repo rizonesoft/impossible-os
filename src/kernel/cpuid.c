@@ -160,7 +160,16 @@ void cpuid_init(void)
         set_flag_if(&g_cpu.flags, CPU_FEATURE_STIBP,     edx, 27);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SERIALIZE, edx, 14);
         set_flag_if(&g_cpu.flags, CPU_FEATURE_SPEC_CTRL, edx, 26);
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_IBPB,      edx, 26);  /* Intel: IBPB from 7.0:EDX[26]; AMD below (S8) */
         set_flag_if(&g_cpu.flags, CPU_FEATURE_ARCH_CAP,  edx, 29);
+
+        /* eIBRS (TODO-10 S8): IBRS_ALL is in IA32_ARCH_CAPABILITIES[1], not a
+         * CPUID bit. Plain msr_read is safe here -- ARCH_CAP (just set above)
+         * is the CPUID gate guaranteeing the MSR exists; cpuid_init runs in
+         * Phase 0, so no msr_try (no IDT yet), same pattern as the S15 SEV read. */
+        if (cpu_has(CPU_FEATURE_ARCH_CAP) &&
+            (msr_read(MSR_IA32_ARCH_CAPS) & ARCH_CAP_IBRS_ALL))
+            g_cpu.flags |= (1ULL << CPU_FEATURE_ENHANCED_IBRS);
 
         /* ---- Leaf 0x07 ECX=1: FRED, LKGS, AVX10, APX ---- */
         if (eax >= 1) {  /* eax from leaf 0x07 ECX=0 = max subleaf */
@@ -244,6 +253,7 @@ void cpuid_init(void)
         g_cpu.phys_addr_bits   = (uint8_t)(eax & 0xFF);            /* EAX[7:0] */
         g_cpu.linear_addr_bits = (uint8_t)((eax >> 8) & 0xFF);     /* EAX[15:8] */
         g_cpu.num_cores        = (uint16_t)((ecx & 0xFF) + 1);     /* ECX[7:0] + 1; uint16 holds 256 */
+        set_flag_if(&g_cpu.flags, CPU_FEATURE_IBPB, ebx, 12);      /* AMD: IBPB = 0x80000008:EBX[12] (S8) */
     }
 
     /* ---- Leaf 0x8000001E: Zen chiplet topology (AMD only) ---- */
@@ -465,6 +475,7 @@ uint64_t cpuid_probe_ap_features(void)
         set_flag_if(&m, CPU_FEATURE_UMIP,    ecx,  2);
         set_flag_if(&m, CPU_FEATURE_PKU,     ecx,  3);
         set_flag_if(&m, CPU_FEATURE_WAITPKG, ecx,  5);  /* drives UMWAIT_CONTROL replay */
+        set_flag_if(&m, CPU_FEATURE_SPEC_CTRL, edx, 26); /* drives SPEC_CTRL eIBRS replay (S8) */
     }
     cpuid_raw(0x80000000, 0, &max_ext, &ebx, &ecx, &edx);
     if (max_ext >= 0x80000001) {

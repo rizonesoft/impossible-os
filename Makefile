@@ -23,6 +23,7 @@ CFLAGS  := --target=x86_64-elf \
            -fno-stack-protector -fno-pie \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
            -mcmodel=kernel -std=gnu11 -O2 -g \
+           -mretpoline -mretpoline-external-thunk \
            -MMD -MP \
            -DCONFIG_SMP \
            -DKERNEL_TESTS

@@ -575,9 +575,10 @@ struct msr_profile_entry {
 };
 
 static struct msr_profile_entry s_bsp_msr_profile[] = {
-    { MSR_IA32_PAT,            0, "PAT",     MSR_PROFILE_ALWAYS, 0 },
-    { MSR_IA32_TSC_AUX,        0, "TSC_AUX", CPU_FEATURE_RDTSCP,  1 },
-    { MSR_IA32_UMWAIT_CONTROL, 0, "UMWAIT",  CPU_FEATURE_WAITPKG, 1 },
+    { MSR_IA32_PAT,            0, "PAT",      MSR_PROFILE_ALWAYS, 0 },
+    { MSR_IA32_TSC_AUX,        0, "TSC_AUX",  CPU_FEATURE_RDTSCP,  1 },
+    { MSR_IA32_UMWAIT_CONTROL, 0, "UMWAIT",   CPU_FEATURE_WAITPKG, 1 },
+    { MSR_IA32_SPEC_CTRL,      0, "SPEC_CTRL", CPU_FEATURE_SPEC_CTRL, 1 }, /* S8 eIBRS, computed per-CPU */
 };
 #define MSR_PROFILE_COUNT (sizeof(s_bsp_msr_profile) / sizeof(s_bsp_msr_profile[0]))
 
@@ -640,6 +641,49 @@ void cpu_program_bsp_umwait(void)
         klog(LOG_WARN, "cpu",
              "WAITPKG present but IA32_UMWAIT_CONTROL write rejected; "
              "user UMWAIT/TPAUSE dwell unbounded");
+}
+
+/* eIBRS set-once (TODO-10 S8): on a CPU with Enhanced IBRS, set
+ * IA32_SPEC_CTRL.IBRS PERMANENTLY (no per-entry toggle). Writes
+ * baseline | IBRS so firmware/microcode SPEC_CTRL bits (and S18's future
+ * SSBD/STIBP) are preserved. Called UNCONDITIONALLY from boot_phase2 (post-IDT)
+ * on the BSP; each AP programs its own via the SPEC_CTRL profile replay. Legacy
+ * IBRS (no eIBRS) gets retpoline instead -- no SPEC_CTRL write here. */
+void cpu_program_bsp_eibrs(void)
+{
+    uint64_t base = 0;
+    if (!cpu_has(CPU_FEATURE_ENHANCED_IBRS))
+        return;
+    if (cpu_has(CPU_FEATURE_SPEC_CTRL))
+        (void)msr_try_read(MSR_IA32_SPEC_CTRL, &base);   /* baseline, #GP-safe */
+    if (msr_try_write(MSR_IA32_SPEC_CTRL, base | SPEC_CTRL_IBRS) != 0)
+        klog(LOG_WARN, "cpu",
+             "eIBRS present but IA32_SPEC_CTRL write rejected; IBRS not active");
+}
+
+/* IBPB writability latch (TODO-10 S8). Starts active; any CPU that lacks IBPB or
+ * traps PRED_CMD clears it, so the scheduler hot path is a single atomic load and
+ * never #GPs. PRED_CMD is write-only and per-CPU-trap-detectable only by trying. */
+static volatile int s_ibpb_active = 1;
+
+/* Probe PRED_CMD writability once per CPU, post-IDT (BSP from boot_phase2, each AP
+ * at the ap_cpu_harden tail). cpu_has(IBPB) is the BSP-global CPUID bit; the
+ * #GP-safe try-write is the definitive per-CPU usability check (catches both
+ * no-MSR and CPUID-says-yes-but-trapped). Issues one harmless IBPB on success. */
+void cpu_probe_ibpb(void)
+{
+    if (!cpu_has(CPU_FEATURE_IBPB) ||
+        msr_try_write(MSR_IA32_PRED_CMD, PRED_CMD_IBPB) != 0)
+        __atomic_store_n(&s_ibpb_active, 0, __ATOMIC_RELEASE);
+}
+
+/* IBPB (TODO-10 S8): flush the indirect branch predictor on a security-domain
+ * switch. Gated on the latched s_ibpb_active (probed #GP-safe on every CPU), so
+ * this scheduler-hot-path call is a plain wrmsr that cannot fault. */
+void cpu_issue_ibpb(void)
+{
+    if (__atomic_load_n(&s_ibpb_active, __ATOMIC_ACQUIRE))
+        msr_write(MSR_IA32_PRED_CMD, PRED_CMD_IBPB);
 }
 
 void cpu_record_bsp_profile(void)
@@ -829,6 +873,38 @@ static uint32_t ap_apply_msr_profile(uint32_t cpu_id)
                     struct per_cpu_data *upc = smp_get_cpu(cpu_id);
                     if (upc)
                         upc->umwait_unbounded = 1;
+                    continue;
+                }
+            } else if (e->msr == MSR_IA32_SPEC_CTRL) {
+                /* eIBRS set-once (S8): the loop gated on this AP's own SPEC_CTRL
+                 * (CPUID), but Enhanced IBRS is MSR-derived (ARCH_CAPABILITIES[1]),
+                 * so check it HERE on the AP. Write `own baseline | IBRS` (NOT a
+                 * BSP snapshot -- that would clobber AP-local SPEC_CTRL bits). All
+                 * MSR access is #GP-safe (msr_try_*): a CPUID-says-eIBRS but
+                 * MSR-rejects platform records a per-CPU failure (surfaced by the
+                 * BSP in ap_cpu_harden_log) rather than #GP-ing AP bringup. A
+                 * non-eIBRS AP takes no write (retpoline covers it). */
+                uint64_t ac, sc;
+                uint32_t a, b, c, d;
+                cpuid_raw(7, 0, &a, &b, &c, &d);     /* 7.0:EDX[29] = ARCH_CAP */
+                if (!((d >> 29) & 1u))
+                    continue;
+                if (msr_try_read(MSR_IA32_ARCH_CAPS, &ac) != 0) {
+                    /* CPUID advertised ARCH_CAP but the MSR trapped: degraded
+                     * platform -- mark it (BSP warns), do not silently skip. */
+                    struct per_cpu_data *spc = smp_get_cpu(cpu_id);
+                    if (spc)
+                        spc->eibrs_unset = 1;
+                    continue;
+                }
+                if (!(ac & ARCH_CAP_IBRS_ALL))
+                    continue;       /* legitimately non-eIBRS: silent, retpoline */
+                if (msr_try_read(MSR_IA32_SPEC_CTRL, &sc) != 0 ||
+                    msr_try_write(MSR_IA32_SPEC_CTRL,
+                                  sc | SPEC_CTRL_IBRS) != 0) {
+                    struct per_cpu_data *spc = smp_get_cpu(cpu_id);
+                    if (spc)
+                        spc->eibrs_unset = 1;
                     continue;
                 }
             } else {
@@ -1307,8 +1383,13 @@ void ap_cpu_harden(uint32_t cpu_id)
     cpu_force_ap_required_cr4();
     __atomic_fetch_sub(&s_harden_quiet_depth, 1, __ATOMIC_RELAXED);
 
-    /* 3. Replay the BSP MSR profile (PAT verbatim, TSC_AUX per-CPU). */
+    /* 3. Replay the BSP MSR profile (PAT verbatim, TSC_AUX/UMWAIT/SPEC_CTRL per-CPU). */
     applied = ap_apply_msr_profile(cpu_id);
+
+    /* 3b. IBPB writability latch (S8): probe PRED_CMD on this AP (post-IDT, #GP-safe)
+     *     so the scheduler IBPB hot path stays fault-free; clears the latch globally
+     *     if this AP lacks IBPB or traps PRED_CMD. */
+    cpu_probe_ibpb();
 
     /* 4. Capture this AP's snapshot for the register audit trail. The XCR0
      *    read gates on THIS AP's live CR4.OSXSAVE (xcr0_read_safe), never the
@@ -1397,6 +1478,10 @@ void ap_cpu_harden_log(uint32_t cpu_id)
         klog(LOG_WARN, "smp",
              "[AP%u] WAITPKG present but UMWAIT_CONTROL write rejected; "
              "user UMWAIT/TPAUSE dwell unbounded", (uint64_t)cpu_id);
+    if (pc->eibrs_unset)
+        klog(LOG_WARN, "smp",
+             "[AP%u] eIBRS present but IA32_SPEC_CTRL write rejected; "
+             "IBRS not active on this AP (retpoline still applies)", (uint64_t)cpu_id);
 
     if (__atomic_load_n(&s_bsp_profile_ready, __ATOMIC_ACQUIRE)) {
         if ((efer & EFER_NXE) != (s_bsp_efer & EFER_NXE))

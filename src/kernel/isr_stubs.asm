@@ -45,6 +45,11 @@ isr_common_stub:
     jz .no_swapgs_entry       ; came from ring 0 → skip
     swapgs                    ; ring 3 → ring 0: swap TEB ↔ per-CPU
 .no_swapgs_entry:
+    ; Spectre v1 swapgs (CVE-2019-1125, TODO-10 S8): the conditional swapgs above
+    ; can be mis-speculated, leaving GS pointing at the wrong base while the CPU
+    ; speculatively dereferences gs:-relative addresses. LFENCE here serializes
+    ; both paths before any GS-relative access (Linux FENCE_SWAPGS_KERNEL_ENTRY).
+    lfence
 
     ; Save all general-purpose registers
     push rax
