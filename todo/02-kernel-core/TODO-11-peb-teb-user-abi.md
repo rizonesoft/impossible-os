@@ -55,7 +55,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   3   | swapgs on INT 0x80 entry and exit               | §1                 |  [x]   |
 | 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork      | §1, §3             |  [x]   |
 | 💎  |   5   | PEB allocation and population at task_exec      | §2, §4             |  [x]   |
-| 💎  |   6   | TEB allocation and population at thread create  | §1, §4             |  [x]   |
+| 💎  |   6   | TEB allocation and population at thread create  | §1, §4             |  [/]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6             |  [x]   |
 | 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [x]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [x]   |
@@ -65,6 +65,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [x]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [x]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
+| 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -92,6 +93,15 @@ Define the TEB layout exactly matching Windows x64 offsets so ntdll inline macro
 - [x] Commit: `"kernel: peb -- TEB struct with correct Windows x64 offsets"`
 
 **Test checkpoint:** Build-time `_Static_assert` checks for all listed TEB offsets pass; `test_peb_teb` offset assertions for TEB layout pass at boot. No ABI offset drift in serial/unit-test output. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | PEB/TEB offset suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: `include/kernel/ob/teb.h` -- `TEB` at exact Windows x64 offsets (Self 0x30, ClientId 0x40, PEB 0x60, LastError 0x68, TlsSlots 0x1480, TlsExpansionSlots 0x1780), `NT_TIB`, `CLIENT_ID`; 11 `_Static_assert` offset checks pin the ABI.
+> - Verified: `test_peb_teb.c` asserts the offsets under `TEST_CAT_ABI`; `NtCurrentTeb()` = `gs:[0x30]` and `GetLastError` = `gs:[0x68]` resolve without ntdll patching.
+> - Scope boundary: the struct is correct at `sizeof` 0x2000; the allocator mapping it (§6) under-maps to one page -- multi-page TEB fix owned by §16.
+> **Verified:** 2026-06-28 | commit `68d26557` | 4/4 items | build OK | 11 offset `_Static_assert` + TEST_CAT_ABI suite
+> **Deferred:** [H] §1's `sizeof(TEB)` = 0x2000 (2 pages) is under-mapped by §6's one-page `teb_alloc_for_task`, aliasing the 0x1480/0x1780 TLS fields; the struct is correct, the mapping fix is owned elsewhere. -> XREF: §16 (item: "`teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages..." at line 372)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1H deferred-to-§16, 0 open | scope: kernel-code-quality
 
 ---
 
@@ -170,6 +180,8 @@ One TEB per thread. Allocated in the user address space near the thread stack.
 - [x] Commit: `"kernel: peb -- TEB allocation and population at thread create"`
 
 **Test checkpoint:** TEB is mapped per thread at expected VA, `NtTib.Self` is valid, stack bounds and ClientId are correct, `ProcessEnvironmentBlock` points at the process PEB, and `LastErrorValue` initializes to 0. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Deferred:** [H] `teb_alloc_for_task()` maps one 4 KiB page but `sizeof(TEB)` is 0x2000, so the second-page TLS fields alias the env block (TID 0) / adjacent TEBs (TID N); latent today (single-thread, short env). -> XREF: §16 (item: "`teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages..." at line 372)
 
 ---
 
@@ -361,6 +373,21 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 - [x] Commit: `"kernel: peb -- per-thread TEB allocation at uthread_create()"` (65cf3586)
 
 **Test checkpoint:** Spawning two threads in the same process produces two distinct TEB VAs (`thread_a->teb != thread_b->teb`). `NtCurrentTeb()` from each thread returns its own TEB. Setting `LastErrorValue` in thread A does not affect thread B. Allocating a TLS slot in thread A and writing to it does not affect the same slot index in thread B (per-thread isolation). Context switch correctly swaps `IA32_KERNEL_GS_BASE` MSR. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 16. TEB Multi-Page Mapping and User-VA Non-Overlap
+`sizeof(TEB)` is 0x2000 -- `TlsSlots` at 0x1480 and `TlsExpansionSlots` at 0x1780 push the struct into a second page -- but `teb_alloc_for_task()` allocates one frame, maps one 4 KiB page, zeroes 4096 bytes, and strides per-thread TEBs by 0x1000. Triple-confirmed by the §1 review (Codex adversarial + consistency + perf): `gs:[0x1480]`/`gs:[0x1780]` and `tls_get_value`/`tls_set_value` touch the unmapped second page, which for TID 0 aliases the env block (0x7FFDC000) and for TID N aliases TID N-1's TEB. Latent today (single-thread binaries; short env lands in the zeroed page-tail) but a real isolation/corruption defect. -> XREF: §1 (TEB struct/size), §6 (teb_alloc_for_task), §15 (per-thread TEB stride).
+
+- [ ] Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000` in `task.c`; `_Static_assert(sizeof(TEB) <= TEB_PAGES * 0x1000)`
+- [ ] `teb_alloc_for_task()`: `pmm_alloc_contiguous(TEB_PAGES)`, map both pages, zero the full `TEB_PAGES * 0x1000` (today: one frame/page/4096 bytes)
+- [ ] Stride per-thread TEB VAs by `TEB_STRIDE` (`TEB_USER_BASE - tid * TEB_STRIDE`), not 0x1000
+- [ ] Relocate `TEB_USER_BASE` / move ENV+RTLPP+PEB so TID 0's 2-page span avoids env (0x7FFDC000), RTLPP (0x7FFDD000), PEB (0x7FFDE000), the TLS-expansion region (0x7FFD0000), and user stacks (0x7FFCA000)
+- [ ] `task_cleanup()`: unmap `TEB_PAGES` per secondary-thread TEB
+- [ ] Non-overlap unit test: `sizeof(TEB)` vs stride; TID 0 + highest-TID TEB ranges vs env/RTLPP/PEB/TLS-expansion/user-stack ranges
+- [ ] Commit: `"kernel: peb -- map full 2-page TEB + non-overlapping per-thread VA stride"`
+
+**Test checkpoint:** `tls_set_value(pid, 0, 0xCAFE)` writes inside the mapped TEB (not the env page) and a read of `gs:[0x1480]` returns it; two threads' TEB ranges and the env/RTLPP/PEB pages are provably disjoint (unit test); boot still reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
