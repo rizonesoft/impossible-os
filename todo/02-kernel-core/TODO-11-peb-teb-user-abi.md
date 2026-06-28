@@ -488,9 +488,9 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 > - Shipped: per-thread teb + kernel_gs_base on struct thread (mirror of threads[0]); per-tid teb_alloc_for_task; schedule()/schedule_now() swap KERNEL_GS_BASE on prev_thread!=next_thread; NtCreateThread/NtQuery use thr->teb.
 > - Review (Codex 3x) confirmed the per-thread GS-swap + NtQuery wiring correct, but the TEB mapping aliases cross-process + fork breaks the mirror -- owned by §16/§19.
 > - Scope boundary: TEB cross-process aliasing + per-process mapping API -> §16; fork mirror/parent-TEB -> §19; uthread_create robustness -> §27.
-> **Accepted:** [H] teb_alloc_for_task maps via the kernel-PML4 vmm_map_page so all processes alias the per-tid TEB VA (cleanup uses the per-process cr3 path). -> XREF: §16 (item: "[HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL)..." at line 497)
-> **Accepted:** [H] task_fork breaks the task/thread-0 TEB mirror + reuses the parent TEB for a runnable child. -> XREF: §19 (item: "[HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS..." at line 536)
-> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 2H accepted-XREF (§16, §19), 0 fixed | scope: kernel-code-quality
+> **Deferred:** [H] teb_alloc_for_task maps via the kernel-PML4 vmm_map_page so all processes alias the per-tid TEB VA (cleanup uses the per-process cr3 path). -> XREF: §16 (item: "[HIGH] teb_alloc_for_task maps via vmm_map_page (kernel PML4, GLOBAL)..." at line 497)
+> **Deferred:** [H] task_fork breaks the task/thread-0 TEB mirror + reuses the parent TEB for a runnable child. -> XREF: §19 (item: "[HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS..." at line 536)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 2H deferred-to-§16/§19, 0 fixed | scope: kernel-code-quality
 
 ---
 
