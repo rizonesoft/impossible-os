@@ -66,10 +66,10 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎  |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings  | (none)                        |  [x]   |
 | 💎  |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers    | §1                            |  [/]   |
 | 💎  |   3   | KPTI trampoline page + per-CPU CR3 fields           | §1, T11 §3                    |  [x]   |
-| 💎  |   4   | KPTI SYSCALL CR3 swap                               | §3                            |  [ ]   |
-| 💎  |   5   | KPTI IDT CR3 swap (all 256 vectors)                 | §3, §4                        |  [ ]   |
-| 💎  |   6   | KPTI user_cr3 allocation + context switch           | §3, §4, §5                    |  [ ]   |
-| 💎  |   7   | PCID: TLB tagging for KPTI (no-flush CR3 switch)    | §6                            |  [ ]   |
+| 💎  |   4   | KPTI SYSCALL CR3 swap                               | §3, T33                       |  [/]   |
+| 💎  |   5   | KPTI IDT CR3 swap (all 256 vectors)                 | §3, §4, T33                   |  [/]   |
+| 💎  |   6   | KPTI user_cr3 allocation + context switch           | §3, §4, §5, T33               |  [/]   |
+| 💎  |   7   | PCID: TLB tagging for KPTI (no-flush CR3 switch)    | §6                            |  [/]   |
 | 💎  |   8   | Spectre: IBRS/IBPB MSR + retpoline build flag       | T12 §2                        |  [ ]   |
 | 💎  |   9   | CET shadow stack (kernel ring 0)                    | §1, §2                        |  [ ]   |
 | 💎  |  10   | CET indirect branch tracking (IBT / ENDBR64)        | §9                            |  [ ]   |
@@ -185,6 +185,8 @@ Wire the SYSCALL entry/exit path to swap CR3 via the trampoline page. LSTAR is r
 
 **Test checkpoint:** Syscall from ring 3 works with CR3 swap active. Serial shows `[KPTI] SYSCALL path active`. A syscall with user_cr3 = kernel_cr3 (no isolation yet) doesn't regress. Test on: QEMU WHPX, QEMU TCG; bare metal.
 
+> **Deferred:** [H] blocked on the per-process clean kernel PML4 + higher-half relocation -- a user_cr3 that excludes kernel space (but keeps the trampoline + entry text) requires the higher-half memory model; §3 trampoline infra is the only ready piece. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
+
 ---
 
 ## 5. KPTI IDT CR3 Swap (All 256 Vectors)
@@ -201,6 +203,8 @@ Wire all interrupt/exception entry stubs to swap CR3 via the trampoline. Unlike 
 
 **Test checkpoint:** Timer IRQ from ring 3 works with CR3 swap. Page fault from ring 3 works. NMI during syscall doesn't double-swap. #DF handler survives. Test on: QEMU WHPX, QEMU TCG; bare metal is critical (IST behavior differs under EPT vs native paging).
 
+> **Deferred:** [H] blocked with §4 -- IDT delivery on all 256 vectors pushes the exception frame onto CR3-resident stacks before software runs; the dual-CR3 model it tags requires the higher-half clean PML4 (§4/§6 path). -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
+
 ---
 
 ## 6. KPTI User CR3 Allocation + Context Switch
@@ -215,6 +219,8 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [ ] Commit: `"kernel/security: KPTI dual page tables, user_cr3 allocation, Meltdown isolation active"`
 
 **Test checkpoint:** `vmm_create_user_cr3()` returns valid PML4; user CR3 has no kernel text VA (`PML4[256..511]` entries absent except trampoline/stacks); Meltdown probe read of kernel VA from ring 3 faults. Context switch updates per-CPU CR3 pair. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+> **Deferred:** [H] blocked on higher-half relocation -- a user_cr3 with `PML4[256..511]` kernel entries absent is only meaningful once the kernel lives in the upper half (today it links low, so kernel + user share the lower half). This is THE Meltdown-isolation section; it also unblocks §2 SMEP/SMAP + §7 PCID. -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation §1 (item: "Choose KERNEL_VIRT_BASE ... Default: Linux-style 0xffffffff80000000" at line 60)
 
 ---
 
@@ -244,6 +250,8 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [ ] Commit: `"kernel/security: PCID TLB tagging, NOFLUSH CR3 writes, INVPCID for targeted flush"`
 
 **Test checkpoint:** `CR4.PCIDE` set when supported; `cr3` writes use bit 63 NOFLUSH on hot path; `invpcid` path exercised on unmap; no stray global flush on syscall ping-pong. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
+
+> **Deferred:** [M] depends on §6 (KPTI dual-CR3) -- PCID TLB tagging + NOFLUSH CR3 only matters once the KPTI CR3 ping-pong exists; `CR4.PCIDE` enable already shipped via the boot-domain (D02 T09 boot S5), so only the KPTI-coupled NOFLUSH/INVPCID work remains, gated on §6. -> XREF: 02-kernel-core/TODO-10 §6 (KPTI user_cr3 + context switch)
 
 ---
 
