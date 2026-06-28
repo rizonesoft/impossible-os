@@ -62,7 +62,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [/]   |
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
 | 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [/]   |
-| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [x]   |
+| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [/]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [x]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
 | 💎  |  16   | TEB multi-page mapping + user-VA non-overlap    | §1, §6, §15        |  [ ]   |
@@ -75,6 +75,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [ ]   |
 | ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [ ]   |
 | 💎  |  25   | TLS expansion mapping safety + alloc race       | §12, §16           |  [ ]   |
+| 💎  |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR   | §13                |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -406,6 +407,14 @@ The current ELF initial stack (§7) pushes `AT_ENTRY`, `AT_PAGESZ`, and `AT_NULL
 
 **Test checkpoint:** Serial log shows `ELF auxv: AT_RANDOM=0x<stack_addr> AT_PHDR=0x<phdr> AT_PHNUM=<n> AT_HWCAP=0x<edx> (16 pairs, ELF)` from `task_exec` (single observable klog line; no POST16 codes -- this is post-boot code where klog is fully working). Unit test `PEB/TEB: user auxv populated (PID 2)` walks `tasks[2].user_auxv`, asserts AT_NULL terminator present, AT_RANDOM/PAGESZ/ENTRY/HWCAP present, AT_PAGESZ == 4096, AT_HWCAP non-zero and equal to raw CPUID 1 EDX, and reads 16 bytes at AT_RANDOM with at least one non-zero. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 9 auxv suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: task_exec auxv -- AT_RANDOM (16 bytes via csprng_fill), AT_PHDR/PHENT/PHNUM via shared elf_extract_phdr_info (0 for non-ELF), AT_HWCAP raw cpuid(1).edx, AT_ENTRY/PAGESZ/UID/SECURE; auxv[64] with a computed naux.
+> - Review: §7 verified the stack layout is clean; this pass found the AT_RANDOM entropy grade is unenforced + AT_PHDR unvalidated -- fixes owned by §26.
+> - Scope boundary: classified AT_RANDOM + validated AT_PHDR -> §26 (subsumes the stale TSC-fallback item).
+> **Deferred:** [H] AT_RANDOM uses the unclassified csprng_fill (weak canary on a degraded-entropy boot) + AT_PHDR is emitted unvalidated. -> XREF: §26 (item: "[HIGH] AT_RANDOM uses the unclassified csprng_fill..." at line 602)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1H+1M deferred-to-§26, 0 fixed | scope: kernel-code-quality
+
 ---
 
 ## 14. User-Mode Thread Bootstrap (uthread_create)
@@ -592,6 +601,17 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: peb -- TLS expansion mapping check + alloc-race serialization"`
 
 **Test checkpoint:** a fault-injected vmm_map_page failure leaves `tls_expansion_allocated` clear, frees both frames, returns -1 (no broken pointer published); a concurrent 2-CPU TLS expansion stress proves a race loser cannot free the winner's frames. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 26. auxv Hardening: Classified AT_RANDOM + Validated AT_PHDR
+§13's auxv is structurally clean (§7 verified the stack layout), but the AT_RANDOM entropy grade is unenforced and AT_PHDR is unvalidated. -> XREF: §13 (auxv emission + the open TSC-fallback item), `D02 T03 §5` (csprng classified API), `D02 T17` (ELF load-result phdr).
+
+- [ ] [HIGH] AT_RANDOM uses the unclassified csprng_fill (1851); it can emergency-seed pre-init or return DEGRADED-class bytes -> weak canary on low-entropy boot. Fix: csprng_fill_classified()/csprng_crypto_ok() gate (subsumes the stale §13 TSC item)
+- [ ] [MEDIUM] AT_PHDR is emitted from elf_extract_phdr_info without proving phdr_vaddr is the loaded user VA (trusts PT_PHDR.p_vaddr); validate phdr_vaddr..+phnum*phent lies in the loaded PT_LOAD range or carry phdr from the load result
+- [ ] Commit: `"kernel: exec -- classified AT_RANDOM entropy gate + validated AT_PHDR"`
+
+**Test checkpoint:** AT_RANDOM bytes come from a crypto-grade CSPRNG (or exec is delayed/failed below the minimum entropy class); AT_PHDR points within the loaded image's program-header range (a malformed PT_PHDR.p_vaddr is rejected/corrected). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
