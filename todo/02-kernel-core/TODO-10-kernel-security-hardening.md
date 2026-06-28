@@ -51,7 +51,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 - SMEP and SMAP are enabled on all CPUs once kernel PTEs drop **User** from kernel pages; user-space execution and data access from kernel mode fault unless explicitly bracketed by `CLAC`/`STAC` (helpers exist; CR4 path still gated per IMPORTANT).
 - KPTI gives every process a shadow user-page-table with no kernel text mapped; Meltdown becomes unexploitable.
 - PCID allows KPTI CR3 switches without full global TLB flushes.
-- IBRS is written on kernel entry; retpoline replaces all indirect branches; IBPB fires at context switches; Spectre v1/v2 mitigated.
+- eIBRS is set once per CPU (no hot-path toggle); retpoline replaces compiler-generated indirect branches and is the legacy-CPU mitigation; IBPB fires at cross-process context switches; Spectre v1/v2 mitigated.
 - CET shadow stack enforces return-address integrity for the kernel; CET IBT enforces `ENDBR64` at every indirect call target.
 - `kmalloc` allocations carry magic-cookie headers and redzones; corruption is caught immediately at `kfree`.
 - Kernel stacks have an unmapped guard page; stack overflow raises a clean `#PF` instead of silently overwriting memory.
@@ -264,10 +264,13 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
   - `CPU_FEATURE_ENHANCED_IBRS` = 62 from `IA32_ARCH_CAPABILITIES[1]` (IBRS_ALL), gated on `CPU_FEATURE_ARCH_CAP`
   - `CPU_FEATURE_IBPB` = 63: Intel `CPUID.7.0:EDX[26]`, AMD `CPUID.80000008:EBX[12]`; `CPU_FEATURE_COUNT` -> 64 (these are the LAST 2 bits of the `uint64_t` flags word; §18 must expand the flags word to 128-bit before adding more)
   - `SPEC_CTRL_IBRS=1` / `PRED_CMD_IBPB=1` in `msr.h`
-- [ ] eIBRS-first (no hot-path toggle): on `CPU_FEATURE_ENHANCED_IBRS`, set `IA32_SPEC_CTRL = spec_ctrl_at_boot | SPEC_CTRL_IBRS` once per CPU post-IDT in `cpu_record_bsp_profile()`; add a `SPEC_CTRL` `s_bsp_msr_profile[]` entry for AP replay
+- [ ] eIBRS-first (no hot-path toggle): on `CPU_FEATURE_ENHANCED_IBRS`, set `IA32_SPEC_CTRL = baseline | SPEC_CTRL_IBRS` once per CPU post-IDT in `cpu_record_bsp_profile()` (BSP)
+- [ ] AP SPEC_CTRL replay (explicit): a per_cpu handler that reads THIS AP's own `IA32_SPEC_CTRL` baseline and writes `baseline | IBRS` (NOT a BSP-snapshot replay -- that clobbers AP-local bits; the default path would skip an unknown per_cpu entry)
+  - add `CPU_FEATURE_ENHANCED_IBRS` to `CPU_FEATURES_AP_PROBE_MASK` + `cpuid_probe_ap_features()` so `cpu_feature_local()` sees it on APs
 - [ ] Baseline preservation: SPEC_CTRL writes are `baseline | owned-bits`, never literal 0 (keeps firmware bits + §18's future SSBD/STIBP)
 - [ ] Legacy IBRS (no eIBRS): NO per-entry `wrmsr` toggle (no alternatives infra; hot-stub gating is the risk per `isr_stubs.asm:23`); retpoline below is the legacy-CPU Spectre-v2 mitigation
-- [ ] `cpu_issue_ibpb()` gated on `CPU_FEATURE_IBPB`: write `PRED_CMD_IBPB` from `schedule()`/`schedule_now()` on a cross-process switch; FAIL CLOSED (IBPB when next is a different process and either side is user, incl. NULL/unknown tokens)
+- [ ] `cpu_issue_ibpb()` gated on `CPU_FEATURE_IBPB`: write `PRED_CMD_IBPB` from `schedule()`/`schedule_now()` on a cross-process switch where either task is STRUCTURALLY user-capable, NOT "NULL token == user"
+  - user-capable = own `user_cr3 != kernel_cr3` / saved RPL3 / user stack; kernel tasks have NULL token + cr3=0, so NULL-token-as-user would IBPB every kthread switch; same-process kthread switches do NOT IBPB; NULL token only escalates when structural classification is unavailable
 
 - [ ] Add `-mindirect-branch=thunk-extern` (GCC) or `-mretpoline` (Clang 19) to `CFLAGS` in `Makefile`; Clang 19 (`clang-19`) is already the compiler, so use `-mretpoline -mretpoline-external-thunk`
 - [ ] Provide the retpoline thunk in `src/kernel/retpoline.asm` (one thunk per scratch register `rax`..`r15`; Clang emits `call __x86_indirect_thunk_rax` instead of `jmp rax`):
@@ -287,7 +290,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [ ] Spectre v1 **swapgs**: audited swapgs speculation barriers on ring-3 interrupt entry (`FENCE_SWAPGS_*` / `LFENCE` per kernel Spectre guide; XREF T11 §3 INT/syscall paths)
 - [ ] Scope boundary: §8 is the IBRS/IBPB/retpoline core. Additional SPEC_CTRL predictor bits (SSBD, STIBP, RSB stuffing, concrete BHI_DIS_S, ITS, Retbleed) are owned by §18; VERW microarchitectural-buffer clears are owned by §19
 
-- [ ] Commit: `"kernel/security: IBRS on kernel entry/exit, IBPB at context switch, retpoline build flag"`
+- [ ] Commit: `"kernel/security: eIBRS set-once (SPEC_CTRL), IBPB at context switch, retpoline build flag"`
 
 **Test checkpoint:** On an eIBRS CPU, `IA32_SPEC_CTRL` reads back `baseline | IBRS` permanently on the BSP AND every AP (set-once, no toggle); on non-eIBRS CPUs no SPEC_CTRL write (retpoline covers them). `objdump` shows no `jmp/call *%reg` or `*mem` in compiler-generated code. `cpu_issue_ibpb()` writes PRED_CMD on a cross-process switch and is a no-op when `!CPU_FEATURE_IBPB`. Test on: QEMU WHPX, QEMU TCG, VirtualBox; bare metal.
 
