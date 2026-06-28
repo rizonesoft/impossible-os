@@ -61,7 +61,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [/]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [/]   |
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
-| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [x]   |
+| 💎  |  12   | TLS expansion slots (1024 dynamic slots)        | §9                 |  [/]   |
 | 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [x]   |
 | 💎  |  14   | User-mode thread bootstrap (uthread_create)     | §6, T01§12, T12§11 |  [x]   |
 | 💎  |  15   | Per-thread TEB allocation at uthread_create()   | §6, §12, §14       |  [x]   |
@@ -74,6 +74,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [ ]   |
 | 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [ ]   |
 | ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle  | §10                |  [ ]   |
+| 💎  |  25   | TLS expansion mapping safety + alloc race       | §12, §16           |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -363,6 +364,16 @@ Windows supports 1088 TLS slots per thread: 64 static slots in `TEB.TlsSlots[64]
 
 **Test checkpoint:** Allocate 65 TLS slots -- first 64 from static, 65th triggers expansion array allocation. Read/write slot 64 and the highest expansion slot -- values round-trip correctly. Free slot 65 -- re-alloc returns index 65 (reuse). All 1088 slots can be allocated; 1089th `tls_alloc` returns -1. `POST16(0xDF10)` on entry, `POST16(0xDF11)` expansion alloc, `POST16(0xDF12)` boundary test, `POST16(0xDF13)` cleanup. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 TLS expansion suites under TEST_CAT_ABI, 0 failures
+> **Notes:**
+> - Shipped: tls_expansion_demand_alloc -- 2-page array at 0x7FFD0000 via pmm_alloc_contiguous(2) outside tls_lock + lock-held race-check + map/zero/commit; tls_alloc/free/get/set span 1088 slots; task_cleanup unmaps.
+> - Review (Codex 3x) found the demand-alloc commits a broken pointer on map failure (1 GiB huge-page region) + a race-loser frees the winner's frames -- fixes owned by §25.
+> - Scope boundary: mapping check + alloc race -> §25; VA collision -> §16; per-thread expansion pointer -> §23.
+> **Deferred:** [Critical] tls_expansion_demand_alloc commits teb->TlsExpansionSlots + allocated even when unchecked vmm_map_page fails (1 GiB region) + a race-loser frees the winner's frames. -> XREF: §25 (item: "[CRITICAL] tls_expansion_demand_alloc (2443) does not check vmm_map_page..." at line 580)
+> **Accepted:** [H] TLS-expansion VA 0x7FFD0000 collides with low-TID TEBs. -> XREF: §16 (item: "Define `TEB_PAGES = 2` / `TEB_STRIDE = 0x2000`..." at line 444)
+> **Accepted:** [H] teb->TlsExpansionSlots installed only in thread-0's TEB. -> XREF: §23 (item: "[HIGH] Publish the shared task expansion-array pointer..." at line 557)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1C+1H deferred-to-§25, 2H accepted-XREF (§16, §23) | scope: kernel-code-quality
+
 ---
 
 ## 13. Extended Auxiliary Vector (AT_RANDOM, AT_PHDR, AT_PHNUM)
@@ -570,6 +581,17 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 - [ ] Commit: `"kernel: ob -- safe PEB/TEB namespace wrappers + lifecycle cleanup"`
 
 **Test checkpoint:** inserting a PEB/TEB does not write a header into the adjacent RTLPP/pre-TEB page (no user-ABI corruption); `\KernelObjects\Process<PID>\Peb` resolves via NtOpenDirectoryObject; after the process exits the directory + entries are gone (no stale-VA lookup); a re-used PID does not collide. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 25. TLS Expansion Mapping Safety and Alloc Race
+§12's `tls_expansion_demand_alloc` commits a broken TLS pointer when mapping fails and can free another allocator's frames. -> XREF: §12 (demand-alloc), §16 (VA collision + huge-page split), §20 (unchecked vmm_map_page pattern), `D03 T03 §1` (PMM bitmap SMP lock).
+
+- [ ] [CRITICAL] tls_expansion_demand_alloc (2443) does not check vmm_map_page; 0x7FFD0000 may be 1-GiB-mapped so the map fails, then it zero-fills the huge mapping + publishes a broken pointer + leaks. Fix: check maps, roll back/free/return -1
+- [ ] [HIGH] PMM alloc is outside tls_lock + pmm_alloc_contiguous is unsynchronized; two CPUs can grab the same frames, then the lock-loser frees the WINNER's. Fix: serialize alloc-in-progress under tls_lock; gated on the PMM bitmap lock (D03 T03 §1)
+- [ ] Commit: `"kernel: peb -- TLS expansion mapping check + alloc-race serialization"`
+
+**Test checkpoint:** a fault-injected vmm_map_page failure leaves `tls_expansion_allocated` clear, frees both frames, returns -1 (no broken pointer published); a concurrent 2-CPU TLS expansion stress proves a race loser cannot free the winner's frames. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
