@@ -232,7 +232,6 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 
 - [x] `CR4.PCIDE (bit 17)` activation -- DONE in `01-boot-platform/TODO-09 §5` via `cpu_pcid_enable()` (BSP + AP). This section consumes the already-set bit and adds tagging; do NOT re-enable it here
 - [ ] Assign a 12-bit PCID to each process; stored in `task->pcid`:
-- [ ] Assign a 12-bit PCID to each process; stored in `task->pcid`:
   - PCID 0 = reserved for initial boot / no-PCID fallback
   - PCID 1..4094 = per-process; allocated from a monotone counter with wrap; on wrap, issue a global `INVPCID` (type 2 = global) to flush all stale TLB entries
   - `user_cr3` physical address gets `PCID` in bits [11:0]: `cr3_val = task->user_cr3_phys | task->pcid`
@@ -271,7 +270,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [x] Verified: `objdump` shows 0 `jmp/call *%reg` and 0 `*mem` in compiler-generated code; 600 `__x86_indirect_thunk_*` references present
 - [x] NASM inventory (retpoline does not rewrite hand-written asm): `ap_trampoline.asm` `call rax` = boot-only exempt; `kpti_trampoline.asm` `jmp [gs:...]` = runtime, convert to safe targets -> XREF: §4
 - [x] Spectre v1 **swapgs**: `lfence` after the conditional ring-3 entry swapgs in `isr_stubs.asm` (Linux `FENCE_SWAPGS_KERNEL_ENTRY`)
-- [ ] Scope boundary: §8 is the IBRS/IBPB/retpoline core. Additional SPEC_CTRL predictor bits (SSBD, STIBP, RSB stuffing, concrete BHI_DIS_S, ITS, Retbleed) are owned by §18; VERW microarchitectural-buffer clears are owned by §19
+- [ ] Scope boundary: §8 is the IBRS/IBPB/retpoline core. Additional predictor mitigations (SSBD, STIBP, RSB stuffing, concrete BHI_DIS_S, ITS, Retbleed) are owned by §25 (feature bits from §18); VERW microarchitectural-buffer clears are owned by §19
 
 - [x] Commit: `"kernel/security: eIBRS set-once (SPEC_CTRL), IBPB at context switch, retpoline build flag"`
 
@@ -283,7 +282,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 > - Shipped: eIBRS set-once (`cpu_program_bsp_eibrs` + a SPEC_CTRL per_cpu AP-replay handler) + `cpu_issue_ibpb()` at cross-process scheduler switches + retpoline (`-mretpoline` + `retpoline.asm`) + a swapgs LFENCE in `isr_stubs.asm`.
 > - Runs: SPEC_CTRL writes are `msr_try_write` per-CPU (BSP post-IDT, APs via profile replay preserving each AP's own baseline); IBPB is a single hot-path `wrmsr` gated on a structural cross-process user-capable check.
 > - Effect: Spectre v2 mitigated -- eIBRS on modern CPUs, retpoline (0 compiler indirect branches, 600 thunks) on legacy; IBPB at domain crossings; swapgs v1 barrier on interrupt entry.
-> - Scope boundary: SSBD/STIBP/RSB/BHI/ITS/Retbleed -> §18 (needs the 128-bit flags-word expansion); MDS/VERW -> §19; `kpti_trampoline` indirect jumps -> §4.
+> - Scope boundary: SSBD/STIBP/RSB/BHI/ITS/Retbleed -> §25 (predictor policy; feature bits from §18); MDS/VERW -> §19; `kpti_trampoline` indirect jumps -> §4.
 > **Verified:** 2026-06-28 | commit `3cb35221` | 10/11 items | build OK | smoke PASS (KVM 2.59s)
 > **Quality reviewed:** 2026-06-28 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 1H+4M fixed | scope: kernel-code-quality
 
@@ -761,19 +760,19 @@ The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and L
 | 💎   | NX on data PTEs      | ✅ Long time | ✅ Long time   | ✅ Done §1       |
 | 💎   | SMEP SMAP CR4        | ✅ Win8 / 10 | ✅ 3.x / 3.20  | ⏳ §2 partial    |
 | 💎   | KPTI user PT         | ✅ Win10 PTI | ✅ 4.15 PTI    | ⬜ §3            |
-| 💎   | PCID no flush CR3    | ✅ Yes       | ✅ Yes         | ⬜ §4            |
+| 💎   | PCID no flush CR3    | ✅ Yes       | ✅ Yes         | ⬜ §7            |
 | 💎   | IBRS IBPB retpoline  | ✅ Yes       | ✅ spectre     | ✅ eIBRS+IBPB §8 |
 | 💎   | CET shadow stack     | ✅ 20H1+     | ✅ 6.6+        | ⏸ §9 (deferred) |
 | 💎   | CET IBT ENDBR64      | ✅ HVCI      | ✅ 6.6+        | ⏸ §10 (deferred)|
 | 💎   | Heap cookies redzone | ✅ Pool tags | ✅ SLUB        | ✅ §11 cookie+redzone+lock |
-| 💎   | Stack canaries /GS   | ✅ MSVC      | ✅ fssp strong | ⬜ §9            |
-| 💎   | Stack guard pages    | ✅ Yes       | ✅ THREAD      | ⬜ §10           |
-| 💎   | KASLR kernel base    | ✅ Yes       | ✅ RANDOMIZE   | ⬜ §11           |
+| 💎   | Stack canaries /GS   | ✅ MSVC      | ✅ fssp strong | ✅ §12           |
+| 💎   | Stack guard pages    | ✅ Yes       | ✅ THREAD      | ⏸ §13 (partial) |
+| 💎   | KASLR kernel base    | ✅ Yes       | ✅ RANDOMIZE   | ⏸ §14 (partial) |
 | ⭐   | RDRAND stack canary  | ✅ /GS       | ✅ -fstack-protector | ✅ §12 RDRAND + TSC fallback |
-| ⭐   | KASLR slide in dump  | ❌ Opaque    | ❌ Opaque      | ⬜ §11 + T27     |
+| ⭐   | KASLR slide in dump  | ❌ Opaque    | ❌ Opaque      | ⬜ §14 + T27     |
 | 💎   | Secure Boot lockdown | ✅ HVCI lockdown | ✅ lockdown LSM | ⬜ §16          |
 | 💎   | Kernel image W^X     | ✅ HVCI      | ✅ STRICT_RWX  | ✅ .text+.rodata RO |
-| 💎   | SSBD STIBP RSB BHI   | ✅ Yes       | ✅ spectre     | ⬜ §18           |
+| 💎   | SSBD STIBP RSB BHI   | ✅ Yes       | ✅ spectre     | ⏸ §25 (deferred) |
 | 💎   | MDS VERW buf clear   | ✅ ucode     | ✅ VERW        | ✅ VERW on exit  |
 | 💎   | kCFI type-safe icall | ✅ xFG/CFG   | ✅ CFI_CLANG   | ⬜ §20           |
 | 💎   | FORTIFY_SOURCE       | ✅ MSVC chk  | ✅ _chk        | ⬜ §21           |
@@ -781,7 +780,7 @@ The predictor mitigations beyond §8's IBRS/IBPB/retpoline core that Win11 and L
 | 💎   | KFENCE UAF/OOB sample | ❌ No       | ✅ KFENCE      | ⬜ §23           |
 | ⭐   | Mitigation posture API | ⚠️ WMI     | ⚠️ sysfs       | ⬜ §24           |
 
-After §1 through §10, parity with Win11/Linux mitigations for NX through stack guards; §11 through §16 add KASLR, syscalls, lockdown. §17 through §24 close the transient-execution (SSBD/STIBP/RSB/BHI/ITS/Retbleed, MDS/VERW), image-W^X, software-CFI (kCFI), FORTIFY_SOURCE, stackleak, and KFENCE gaps, plus a queryable mitigation posture (§24, exclusive). HVCI/VBS/HVPT/HyperGuard/KDP are Win11-only (require a VTL1 hypervisor tier Impossible OS does not have); §16 lockdown is the closest analogue. KASLR (§14) and the SMEP/SMAP+KPTI split sequence behind TODO-33 higher-half relocation.
+After §1 through §13, parity with Win11/Linux mitigations for NX through stack canaries and guard pages; §14 through §16 add KASLR, enclave/signing syscalls, and lockdown. §17 through §25 close the image-W^X (§17), 128-bit feature surface (§18), MDS/VERW data-sampling (§19), software-CFI/kCFI (§20), FORTIFY_SOURCE (§21), stackleak (§22), and KFENCE (§23) gaps, plus a queryable mitigation posture (§24, exclusive) and the transient-execution predictor policy (SSBD/STIBP/RSB/BHI/ITS/Retbleed, §25). HVCI/VBS/HVPT/HyperGuard/KDP are Win11-only (require a VTL1 hypervisor tier Impossible OS does not have); §16 lockdown is the closest analogue. KASLR (§14) and the SMEP/SMAP+KPTI split sequence behind TODO-33 higher-half relocation.
 
 ---
 
