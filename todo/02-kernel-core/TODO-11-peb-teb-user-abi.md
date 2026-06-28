@@ -57,7 +57,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |   5   | PEB allocation and population at task_exec      | §2, §4             |  [/]   |
 | 💎  |   6   | TEB allocation and population at thread create  | §1, §4             |  [/]   |
 | 💎  |   7   | Initial user stack frame (argv / envp / PEB)    | §5, §6             |  [x]   |
-| 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [x]   |
+| 💎  |   8   | PEB Ldr (module list) basic population          | §5                 |  [/]   |
 | 💎  |   9   | TLS slot allocation (64 static slots)           | §6                 |  [x]   |
 | ⭐  |  10   | PEB / TEB exposed in Ob namespace               | §5, §6             |  [x]   |
 | 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page    | §5                 |  [/]   |
@@ -71,6 +71,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎  |  19   | exec/fork/switch GS-base staging + cost         | §4, §5, §6         |  [ ]   |
 | 💎  |  20   | PEB alloc robustness + Win32 ABI handoff        | §5, §7             |  [ ]   |
 | 💎  |  21   | Format-specific user startup frame + env unify  | §7, §5             |  [ ]   |
+| 💎  |  22   | PEB Ldr module identity (DllBase/size/name)     | §8, §5             |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -261,6 +262,15 @@ The user stack must have a valid calling frame waiting for the first instruction
 - [x] Commit: `"kernel: peb -- minimal PEB Ldr with main module entry"`
 
 **Test checkpoint:** `PEB->Ldr` is non-NULL at process start and the main image appears in all three loader lists with stable links; ntdll loader walk does not fault on initial module enumeration. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | PEB Ldr list-walk validated; cmd.exe boots, 0 failures
+> **Notes:**
+> - Shipped: PEB_LDR_DATA at PEB+0x800 (Initialized=1) + main-exe entry in all 3 circular lists (InLoadOrder/InMemoryOrder/InInitializationOrder); list/link offsets match peb.h (consistency confirmed).
+> - Review (Codex 3x) confirmed the list wiring is correct but found the entry publishes wrong module identity (DllBase=entry, fake size, stale name) -- fixes owned by §22.
+> - Scope boundary: DllBase/SizeOfImage/FullDllName-BaseDllName -> §22; peb_build_ustr page overflow -> §20; full dynamic module list -> D12 T04 §3.
+> **Deferred:** [H] the Ldr entry sets DllBase=EntryPoint=entry (not the load base), SizeOfImage=0x20000 (fake), and FullDllName/BaseDllName from the stale task name. -> XREF: §22 (item: "[HIGH] Resolve the loaded_module_t (exec_load_fmt)..." at line 516)
+> **Accepted:** [H] FullDllName/BaseDllName via the unbounded peb_build_ustr in the PEB page (overflow path). -> XREF: §20 (item: "[HIGH] peb_build_ustr (1332) has no page bound..." at line 492)
+> **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1H+2M deferred-to-§22, 1H accepted-XREF (§20) | scope: kernel-code-quality
 
 ---
 
@@ -506,6 +516,17 @@ The §5 review (Codex 3x) found the PEB/RTLPP/env setup proceeds through uncheck
 - [ ] Commit: `"kernel: exec -- format-specific user startup frame (ELF/PE/EIF) + unified env"`
 
 **Test checkpoint:** an ELF binary still starts with the SysV stack; a PE32+ fixture enters its Win64 startup contract (RCX=PEB + home space, no argc-at-rsp dependency); `getenv("PATH")` and the Win32 environment block agree. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 22. PEB Ldr Module Identity (DllBase / SizeOfImage / Name)
+The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_for_task` is called with `entry` (the entry point) as `image_base`, so DllBase=EntryPoint=entry (not the load base; e.g. 0x800100 vs 0x800000), SizeOfImage is a hardcoded 0x20000, and FullDllName/BaseDllName come from the stale `tasks[pid].name`. ntdll/loader walks of PEB->Ldr get an address inside the image, a fake range, and the pre-exec name (a cmd.exe child that execs hello.exe shows cmd.exe). -> XREF: §8 (Ldr population), §5 (PEB alloc signature), `D02 T17` (PE module metadata), §20 (peb_build_ustr bound).
+
+- [ ] [HIGH] Resolve the loaded_module_t (exec_load_fmt) and pass base + entry + size into the PEB builder; set DllBase=base (not the entry point), SizeOfImage=actual (not the hardcoded 0x20000)
+- [ ] [MEDIUM] Populate FullDllName from the full resolved exec path + BaseDllName from the final component (not the stale tasks[pid].name); update SYS_EXEC to set the name from the requested filename
+- [ ] Commit: `"kernel: peb -- correct PEB Ldr module identity (real base/size + resolved path/basename)"`
+
+**Test checkpoint:** PEB->Ldr main-module DllBase == the loaded image base (not the entry point), SizeOfImage == the actual loaded size, FullDllName == the full path, BaseDllName == the basename; a cmd.exe child that execs hello.exe shows hello.exe. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 ---
 
