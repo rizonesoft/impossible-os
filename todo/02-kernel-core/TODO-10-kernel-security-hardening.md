@@ -679,7 +679,10 @@ Compile + runtime bounds checking on the `memcpy`/`strcpy`/`strcat`/`snprintf` f
 
 Zero the used portion of the kernel stack on every syscall/interrupt return to user mode (Linux `CONFIG_KSTACK_ERASE` / former `STACKLEAK`). Prevents stale kernel data (pointers, secrets, canaries) left on the stack from leaking to a later syscall or via an info-leak primitive.
 
-- [ ] Track the deepest stack use per kernel entry: a per-thread `lowest_stack` watermark updated at entry (or the Clang stackleak instrumentation if available)
+> [!NOTE]
+> Toolchain check (2026-06-28): clang-19 has NO stackleak instrumentation (only `-fstack-protector*` / `-fstack-clash-protection`; Linux stackleak is a GCC plugin). So the "Clang stackleak instrumentation if available" alternative is OFF the table -- use the manual poison-scan-watermark path below. Still implementable; not blocked.
+
+- [ ] Track the deepest stack use per kernel entry: poison the kernel stack at alloc with a sentinel; on return-to-user scan up from a safe lower bound to the first non-poison byte (= deepest use). Manual path -- clang has no stackleak plugin
 - [ ] On return-to-user (syscall exit + IRET-to-ring3): zero from current `RSP` down to the watermark, bounded by the stack base (never into the guard page)
 - [ ] Zero only the actually-used span, not the whole stack; cap the per-return work
 - [ ] Build knob to disable for perf measurement; on by default for security builds
