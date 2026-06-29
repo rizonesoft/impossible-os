@@ -353,6 +353,10 @@ static void test_ob_type_stats(void)
     };
     const OBJECT_TYPE *stype = ob_create_type(&stats_tmpl);
     TEST_ASSERT(stype != (void *)0, "ob_create_type for stats test");
+    TEST_ASSERT(ob_type_stats_slot(&test_type) == (void *)0,
+                "unregistered test type has no stats slot");
+    TEST_ASSERT(ob_type_stats_slot(stype) == (OBJECT_TYPE *)stype,
+                "registered type has mutable stats slot");
 
     /* Baseline: 0 objects, 0 handles */
     TEST_ASSERT_EQ(atomic_read(&stype->total_objects), 0,

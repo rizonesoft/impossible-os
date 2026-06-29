@@ -99,6 +99,26 @@ const OBJECT_TYPE *ob_get_types(uint32_t *out_count)
     return g_ob_types;
 }
 
+OBJECT_TYPE *ob_type_stats_slot(const OBJECT_TYPE *type)
+{
+    uintptr_t p, base, end;
+    uint32_t count;
+
+    if (!type)
+        return NULL;
+
+    count = __atomic_load_n(&g_ob_type_count, __ATOMIC_ACQUIRE);
+    base = (uintptr_t)&g_ob_types[0];
+    end = base + (uintptr_t)count * sizeof(g_ob_types[0]);
+    p = (uintptr_t)type;
+
+    if (p < base || p >= end)
+        return NULL;
+    if ((p - base) % sizeof(g_ob_types[0]) != 0)
+        return NULL;
+    return (OBJECT_TYPE *)type;
+}
+
 /* --- ob_alloc_object ----------------------------------------------------- */
 
 /* Tail-packed per-object creator security descriptor. When the allocating task
@@ -190,9 +210,11 @@ void *ob_alloc_object(const OBJECT_TYPE *type)
      * mark via the shared guarded CAS-max (ob_stat_lift_peak). Relaxed ordering:
      * these counters are pure diagnostics, they never publish or protect state. */
     {
-        OBJECT_TYPE *mtype = (OBJECT_TYPE *)type;
-        int32_t cur = atomic_add_fetch_relaxed(&mtype->total_objects, 1);
-        ob_stat_lift_peak(&mtype->peak_objects, cur);
+        OBJECT_TYPE *mtype = ob_type_stats_slot(type);
+        if (mtype) {
+            int32_t cur = atomic_add_fetch_relaxed(&mtype->total_objects, 1);
+            ob_stat_lift_peak(&mtype->peak_objects, cur);
+        }
     }
 
     return OB_BODY_FROM_HEADER(hdr);
@@ -228,9 +250,10 @@ int ObReferenceObjectSafe(void *body)
 static void ob_free_object(OBJECT_HEADER *hdr)
 {
     /* Per-type statistics: decrement live object count (relaxed -- diagnostic) */
-    if (hdr->type) {
-        OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-        atomic_sub_fetch_relaxed(&mtype->total_objects, 1);
+    {
+        OBJECT_TYPE *mtype = ob_type_stats_slot(hdr->type);
+        if (mtype)
+            atomic_sub_fetch_relaxed(&mtype->total_objects, 1);
     }
 
     /* Free trace log if allocated (S15). Dump first: refcount is 0 and this is

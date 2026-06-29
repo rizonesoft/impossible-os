@@ -82,6 +82,10 @@ const OBJECT_TYPE *ob_create_type(const OBJECT_TYPE *tmpl);
 /* Get registered type table (read-only) and count. */
 const OBJECT_TYPE *ob_get_types(uint32_t *out_count);
 
+/* Return the mutable stats slot for a registered type, or NULL for synthetic
+ * unregistered descriptors used by tests/internal fixtures. */
+OBJECT_TYPE *ob_type_stats_slot(const OBJECT_TYPE *type);
+
 /*
  * ob_alloc_object -- allocate header + body as a single block
  *

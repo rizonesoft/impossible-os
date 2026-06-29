@@ -222,10 +222,12 @@ found:
     /* Per-type handle statistics (relaxed -- pure diagnostics; the cur<=0 guard
      * in ob_stat_lift_peak protects the peak from a transient negative produced
      * by the not-yet-serialized slot claim/free, owned by S3). */
-    if (hdr->type) {
-        OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-        int32_t cur = atomic_add_fetch_relaxed(&mtype->total_handles, 1);
-        ob_stat_lift_peak(&mtype->peak_handles, cur);
+    {
+        OBJECT_TYPE *mtype = ob_type_stats_slot(hdr->type);
+        if (mtype) {
+            int32_t cur = atomic_add_fetch_relaxed(&mtype->total_handles, 1);
+            ob_stat_lift_peak(&mtype->peak_handles, cur);
+        }
     }
 
     /* Object callbacks (S13): post-callbacks with granted access. Suppressed on
@@ -325,9 +327,10 @@ int ObpFreeHandle(HANDLE_TABLE *table, HANDLE handle)
         hdr->type->on_close(body, 0);
 
     /* Per-type handle statistics (relaxed -- diagnostic) */
-    if (hdr->type) {
-        OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-        atomic_sub_fetch_relaxed(&mtype->total_handles, 1);
+    {
+        OBJECT_TYPE *mtype = ob_type_stats_slot(hdr->type);
+        if (mtype)
+            atomic_sub_fetch_relaxed(&mtype->total_handles, 1);
     }
 
     /* Drop the reference taken by ObpAllocateHandle */
@@ -429,10 +432,12 @@ int ob_handle_table_inherit(HANDLE_TABLE *parent, HANDLE_TABLE *child)
          * ones included, so without this bump the signed counter is driven
          * negative on close and NtQueryObject(ObjectTypesInformation) reports a
          * bogus huge open-handle count. */
-        if (hdr->type) {
-            OBJECT_TYPE *mtype = (OBJECT_TYPE *)hdr->type;
-            int32_t cur = atomic_add_fetch_relaxed(&mtype->total_handles, 1);
-            ob_stat_lift_peak(&mtype->peak_handles, cur);
+        {
+            OBJECT_TYPE *mtype = ob_type_stats_slot(hdr->type);
+            if (mtype) {
+                int32_t cur = atomic_add_fetch_relaxed(&mtype->total_handles, 1);
+                ob_stat_lift_peak(&mtype->peak_handles, cur);
+            }
         }
 
         /* Handle event tracing (S15): inheritance is a third handle-creation
