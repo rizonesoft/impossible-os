@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import io
+import json
 import os
 import sys
 import threading
@@ -331,6 +332,174 @@ def _build_mcp(FastMCP, repo_root: Path, auto_rebuild: bool = True):
 
 
 # ---------------------------------------------------------------------
+# Stdio JSON-RPC compatibility server
+# ---------------------------------------------------------------------
+
+def _tool_schema(name: str) -> dict[str, Any]:
+    props: dict[str, Any] = {}
+    required: list[str] = []
+    if name == "by-domain":
+        props["domain"] = {"type": "string"}
+    elif name == "stale":
+        props["days"] = {"type": "integer", "default": 90}
+    elif name in {"backlinks", "deferred", "deferred-by", "code"}:
+        props["target"] = {"type": "string"}
+        required = ["target"]
+    elif name == "code-by":
+        props["path"] = {"type": "string"}
+        required = ["path"]
+    return {
+        "type": "object",
+        "properties": props,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _tool_list() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": name,
+            "description": DESCRIPTIONS[name],
+            "inputSchema": _tool_schema(name),
+        }
+        for name in MCP_TOOLS
+    ]
+
+
+def _dispatch_tool(name: str, arguments: dict[str, Any],
+                   repo_root: Path, auto_rebuild: bool) -> str:
+    if name not in MCP_TOOLS:
+        raise ValueError(f"unknown tool: {name}")
+    if name in {"ready", "blocked", "blocking", "orphans", "stats"}:
+        return _call_query(name, argparse.Namespace(), repo_root, auto_rebuild)
+    if name == "by-domain":
+        return _call_query(
+            "by-domain",
+            argparse.Namespace(domain=arguments.get("domain") or None),
+            repo_root,
+            auto_rebuild,
+        )
+    if name == "stale":
+        return _call_query(
+            "stale",
+            argparse.Namespace(days=int(arguments.get("days", 90))),
+            repo_root,
+            auto_rebuild,
+        )
+    if name in {"backlinks", "deferred", "deferred-by", "code"}:
+        target = arguments.get("target")
+        if not isinstance(target, str) or not target:
+            raise ValueError(f"{name} requires string argument 'target'")
+        return _call_query(
+            name,
+            argparse.Namespace(target=target),
+            repo_root,
+            auto_rebuild,
+        )
+    if name == "code-by":
+        path = arguments.get("path")
+        if not isinstance(path, str) or not path:
+            raise ValueError("code-by requires string argument 'path'")
+        return _call_query(
+            "code-by",
+            argparse.Namespace(target=path),
+            repo_root,
+            auto_rebuild,
+        )
+    raise ValueError(f"unhandled tool: {name}")
+
+
+def _write_jsonrpc_response(response: dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
+
+
+def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "error": {"code": code, "message": message},
+    }
+
+
+def _handle_jsonrpc_request(req: dict[str, Any], repo_root: Path,
+                            auto_rebuild: bool) -> dict[str, Any] | None:
+    req_id = req.get("id")
+    method = req.get("method")
+    params = req.get("params") or {}
+    if not isinstance(params, dict):
+        return _jsonrpc_error(req_id, -32602, "params must be an object")
+
+    if method == "initialize":
+        requested = str(params.get("protocolVersion") or "2024-11-05")
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": requested,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "todo-graph", "version": "1.0"},
+            },
+        }
+    if method == "notifications/initialized":
+        return None
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {}}
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": _tool_list()}}
+    if method == "tools/call":
+        name = params.get("name")
+        arguments = params.get("arguments") or {}
+        if not isinstance(name, str):
+            return _jsonrpc_error(req_id, -32602, "tools/call requires tool name")
+        if not isinstance(arguments, dict):
+            return _jsonrpc_error(req_id, -32602, "tool arguments must be an object")
+        try:
+            text = _dispatch_tool(name, arguments, repo_root, auto_rebuild)
+        except Exception as exc:
+            return _jsonrpc_error(req_id, -32602, str(exc))
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "content": [{"type": "text", "text": text}],
+                "isError": False,
+            },
+        }
+    if req_id is None:
+        return None
+    return _jsonrpc_error(req_id, -32601, f"method not found: {method}")
+
+
+def _serve_stdio_jsonrpc(repo_root: Path, auto_rebuild: bool = True) -> int:
+    """Serve the todo-graph MCP surface over newline-delimited JSON-RPC.
+
+    FastMCP still owns schema registration and self-test coverage, but this
+    repo-owned loop owns serving so stdio behavior stays deterministic across
+    SDK releases. The MCP SDK's stdio transport is newline-delimited JSON, so
+    this implements the small read-only method subset this server exposes while
+    reusing the same query/build functions as the FastMCP registration path.
+    """
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError as exc:
+            _write_jsonrpc_response(_jsonrpc_error(None, -32700, str(exc)))
+            continue
+        if not isinstance(req, dict):
+            _write_jsonrpc_response(_jsonrpc_error(None, -32600, "request must be an object"))
+            continue
+        response = _handle_jsonrpc_request(req, repo_root, auto_rebuild)
+        if response is not None:
+            _write_jsonrpc_response(response)
+    return 0
+
+
+# ---------------------------------------------------------------------
 # Self-test (CI-friendly; works with or without the SDK)
 # ---------------------------------------------------------------------
 
@@ -415,11 +584,8 @@ def main(argv=None) -> int:
         )
         return 2
 
-    srv = _build_mcp(FastMCP, repo_root, auto_rebuild=not args.no_auto_rebuild)
-    # Serve on stdio. FastMCP.run() picks the correct transport based
-    # on context; default is stdio which is what Claude Code launches.
-    srv.run()
-    return 0
+    _build_mcp(FastMCP, repo_root, auto_rebuild=not args.no_auto_rebuild)
+    return _serve_stdio_jsonrpc(repo_root, auto_rebuild=not args.no_auto_rebuild)
 
 
 if __name__ == "__main__":

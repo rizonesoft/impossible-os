@@ -455,6 +455,8 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). I
 - [x] New file: `src/kernel/nt/nt_sync.c` with 21 SSDT handlers
 - [x] Added STATUS_WAIT_0, STATUS_ABANDONED to ntstatus.h
 - [x] 2 unit tests: SSDT registration (6 handler checks), sync constant verification (7 checks)
+- [ ] [H] NtWaitForMultipleObjects WaitAll is non-atomic (`nt_sync.c:608`): consumes earlier auto-reset/sem/mutant objects then returns on a later failure. Make it two-phase: ref+check all, consume all-or-none, release on error/timeout. (§8)
+- [ ] [H] NtReleaseSemaphore max-count check overflows near INT32_MAX (`nt_sync.c:408`): `value+release_count>max` wraps, bypassing the cap; `prev` written before the check. Use `release_count > max-current`, reject before output write. (§8)
 - [x] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
 
 **Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event APIs (0x0084-0x0087) currently return `STATUS_NOT_IMPLEMENTED` pending TODO-17.
@@ -999,6 +1001,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] [Critical] NtTerminateProcess: resolve through the handle table + require PROCESS_TERMINATE, not a raw PID -- `nt_process.c:227` lets any ring-3 caller kill any process by PID. (§5 review)
 - [ ] [Critical] SystemProcessInformation: ProbeForWriteIfUser + copy_to_user + length-mismatch status -- unprobed user-pointer write at `nt_syscall.c:923`. (§5 review)
 - [ ] [Critical] NtQuery/SetInformationProcess + NtQuery/SetInformationThread + NtDelayExecution interval: input/output user pointers deref'd raw (`nt_process.c:460+`) -- probe + copy_from_user/copy_to_user via kernel bounce buffers. (§7 review)
+- [ ] [Critical] Sync syscalls deref raw user pointers (`nt_sync.c`): NtWaitForMultipleObjects handle array + timeout, Create* name/OA/out-HANDLE, prev-state/count outputs -- probe + copy-in/out via kernel buffers. (§8)
 - [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
 
 **Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.

@@ -595,6 +595,13 @@ def cmd_stale(ctx: Ctx, args) -> tuple:
     for n in ctx.nodes:
         t = _parse_iso(n.get("last_active_at"))
         if not t:
+            if days <= 0:
+                rows.append({
+                    "domain": n.get("domain") or "",
+                    "id": display_id(n),
+                    "last_active_at": n.get("last_active_at") or "",
+                    "age_days": 0,
+                })
             continue
         age_days = (now - t).total_seconds() / 86400.0
         if age_days < days:
