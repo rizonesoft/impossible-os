@@ -9,7 +9,7 @@ description: Pre-implementation design review via Codex. Before writing code for
 
 ## Prompt Shape
 
-Every dispatch from this skill MUST open its prompt with the marker `[review-kind: design] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: design] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 8 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
 
 ## Use This Skill When
 
@@ -52,7 +52,11 @@ bash scripts/codex-dispatch.sh '[review-kind: design] <todo-path> <design review
 
 **Background fallback (after foreground timeout):**
 ```bash
-bash scripts/codex-bg-dispatch.sh "<design review prompt>"
+PROMPT=$(cat <<'EOF'
+[review-kind: design] <todo-path> <design review prompt>
+EOF
+)
+bash scripts/codex-bg-dispatch.sh "$PROMPT"
 ```
 
 The wrapper invokes `codex-companion.mjs task --background --json` (the only background-capable subcommand) and returns immediately with `{jobId, logFile, status}`. The detached worker continues reasoning past the 10-min wall.
@@ -64,9 +68,9 @@ node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/code
 
 When `status: "completed"`, the same JSON contains `finalMessage` (the review text). If you prefer a single non-blocking check, drop `--wait`.
 
-**Receive integrity is preserved.** The background dispatch is detected as a real review trigger by `codex_review_completed.py` (PostToolUse) -- it writes `last-codex-review.json` with `received: false` exactly like a foreground call. The `receiving_review_required.py` PreToolUse hook then BLOCKs every Edit/Write/MultiEdit on code targets until you read the result and run `Skill(superpowers:receiving-code-review)`. You cannot accidentally skip a background review's findings -- the gate is the same as foreground.
+**Receive integrity caveat.** Background dispatch is a fallback reviewer path, not shipping proof by itself. `codex_review_completed.py` can record the trigger state, but TODO-10 §7 owns normalizing background completion and trusted receipt binding before shared gates may accept it as reviewer evidence. Read the result and apply `superpowers:receiving-code-review` before acting on any finding.
 
-**Stale recovery:** if a background dispatch is abandoned (session crash, agent confusion), the trigger state has a 3600s TTL after which the gate auto-releases. Manual recovery: delete `.claude/state/last-codex-review.json` AND cancel the job via `node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" cancel <jobId>`.
+**Stale recovery:** if a background dispatch is abandoned (session crash, agent confusion), cancel the job via `node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" cancel <jobId>`. Wrapper-launched background reviews are manual poll-and-receive only until TODO-10 §7 normalizes completed-output binding.
 
 ## Workflow
 

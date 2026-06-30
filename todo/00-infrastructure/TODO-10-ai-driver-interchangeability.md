@@ -5,9 +5,12 @@ domain: 00-infrastructure
 status: draft
 title: "TODO-10 -- AI Driver Interchangeability"
 file_patterns:
+  - ".claude/skills/*.md"
+  - ".claude/skills/**/*.md"
   - "CLAUDE.md"
   - "AGENTS.md"
   - "docs/infrastructure/ai-system.md"
+  - "docs/infrastructure/ai-driver-interchangeability.md"
   - "docs/infrastructure/mcp-usage.md"
   - ".claude/settings.json"
   - ".claude/hooks/**"
@@ -16,6 +19,7 @@ file_patterns:
   - ".gitignore"
   - "scripts/ai-workflow/**"
   - "scripts/codex-*.sh"
+  - "scripts/lint.sh"
   - "scripts/overnight/**"
   - "scripts/test-tooling.sh"
 ---
@@ -26,42 +30,51 @@ file_patterns:
 
 > **Gap-audited:** 2026-06-30 | ai-workflow evidence manual | gap-audit + codex-gap-audit; 6 findings filed (lease race, forged/stale evidence, stale completed leases, lifecycle stamps, live lease lifecycle, dry-run context)
 
-> **Goal:** Make the Impossible OS development workflow run with either Claude Code or Codex as the active development driver while Codex remains the required reviewer. The implementation must preserve the existing flow, section stamps, review gates, and no-double-work behavior by moving mutable workflow evidence into repo-owned scripts and deterministic state instead of model-specific chat memory.
+> **Re-scoped:** 2026-06-30 | direction changed from co-equal interchangeable drivers to Claude-master + Codex-delegate/failover (1:4 Claude:Codex effort target); design spec at [docs/superpowers/specs/2026-06-30-claude-master-codex-failover.md](../../docs/superpowers/specs/2026-06-30-claude-master-codex-failover.md). The prior separate-driver overnight artifacts are retired in §14.
+
+> **Goal:** Keep Claude Code as the permanent master driver while offloading the bulk of the work (target 1:4 Claude:Codex effort, Claude ~20%) to Codex, and let Codex resume from shared deterministic state when Claude becomes unavailable (usage limit, crash, hang). Codex remains the required reviewer. The implementation preserves the existing flow, section stamps, review gates, and no-double-work behavior by moving mutable workflow evidence into repo-owned scripts and a deterministic ledger instead of model-specific chat memory, so a handoff carries on from the last completed checkpoint rather than a chat summary.
 
 > [!IMPORTANT]
-> **Current state:** Current doctrine remains in force until this TODO ships. Today [`CLAUDE.md`](../../CLAUDE.md) and [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) define Claude Code as the master/orchestrator and Codex as the sole external reviewer. Codex-only development is therefore not enabled by current policy. This TODO is the roadmap for changing the implementation safely first, then updating doctrine only after the shared workflow protocol, gates, and regression tests prove that a non-Claude driver cannot skip review, stamp incorrectly, or duplicate completed work.
+> **Current state:** Current doctrine remains in force until this TODO ships. Today [`CLAUDE.md`](../../CLAUDE.md) and [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) define Claude Code as the master/orchestrator and Codex as the sole external reviewer. This TODO keeps that authority hierarchy: Claude stays the master driver and Codex stays subordinate. What changes is that Codex gains two new subordinate capabilities -- executing delegated phases while Claude is alive, and resuming leased work when Claude is unavailable -- both behind the shared workflow protocol, gates, and regression tests that prove a subordinate driver cannot skip review, stamp incorrectly, duplicate completed work, or self-certify its own implementation. Doctrine updates land only after those proofs pass.
 
 ## Model-Roles Target
 
-Codex is always the reviewer. The driver is the interchangeable part.
+Claude Code is the permanent master driver. Codex is always the reviewer, and now also a subordinate executor -- never a co-equal or self-certifying driver.
 
-| Mode                        | Active driver                       | Required reviewer slots                    | Shipping rule                                                          |
-| ---                         | ---                                 | ---                                        | ---                                                                    |
-| Claude development          | Claude Code                         | Codex design/adversarial/consistency/perf | Current flow, backed by shared evidence.                               |
-| Codex-exclusive development | Codex driver session                | Separate fresh-context Codex reviewers     | Allowed only when reviewer evidence is independent from the driver run. |
-| Mixed development           | Claude Code or Codex, one at a time | Codex reviewer sessions                    | Handoffs use the driver lease and evidence ledger, not chat summaries.  |
+| Mode                        | Master                       | Subordinate executor                                              | Required reviewer                       | Shipping rule                                                                                          |
+| ---                         | ---                          | ---                                                               | ---                                     | ---                                                                                                   |
+| Claude solo                 | Claude Code                  | --                                                                | Codex fresh review runs                 | Current flow, backed by the shared ledger.                                                             |
+| Delegated (Claude alive)    | Claude Code (design + judgment) | Codex (exploration, typing, build/test, fix-apply, stamp, commit) | Codex fresh review runs (distinct IDs)  | Claude ratifies; Codex executes through the shared gates.                                              |
+| Failover (Claude unavailable) | Claude lease, held         | Codex resumes from the ledger at the last completed checkpoint    | Codex fresh review runs (distinct IDs)  | docs/host-tooling: Codex ships through gates. kernel/boot: Codex holds the commit for Claude to bless. |
 
-Codex-exclusive means two roles, not one self-certifying session:
+Target effort split is **1:4 Claude:Codex** (Claude ~20%, Codex ~80%). Claude's reserved share is judgment only: design ratification, Fix/Reject/Accept classification, and kernel/boot commit blessing. Codex carries exploration, implementation, build/test, fix-apply, stamping, gated commits, and the fresh-context reviews. The load-bearing pattern is **Codex proposes, Claude ratifies** -- Codex always returns a recommended approach or per-finding classification with evidence so Claude's step stays a low-cost ratify/override rather than a full re-derivation.
+
+Codex is both the subordinate executor and the required reviewer, so the two roles must use distinct runs:
 
 ```text
-codex-driver               -> explores, edits, builds, tests, prepares commit
+codex-executor             -> reads/edits/builds/tests/applies fixes/stamps/commits under the lease
 codex-reviewer-design      -> fresh-context design review
 codex-reviewer-adversary   -> fresh-context adversarial review
 codex-reviewer-consistency -> fresh-context consistency audit
 codex-reviewer-perf        -> fresh-context performance review
 ```
 
+A Codex executor run can never satisfy a Codex reviewer obligation with the same run ID.
+
 ## Inputs
 
 - [`CLAUDE.md`](../../CLAUDE.md) -- current doctrine, model roles, mandatory skill triggers, Codex invocation policy, commit policy
 - [`AGENTS.md`](../../AGENTS.md) -- cross-tool pointer and current reviewer-only boundary for non-Claude tools
 - [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) -- authority hierarchy, external-reviewer contract, hook routing matrix
+- [`docs/infrastructure/ai-driver-interchangeability.md`](../../docs/infrastructure/ai-driver-interchangeability.md) -- canonical section-1 inventory and Codex-driver operations guide
 - [`todo/00-infrastructure/TODO-02-ai-development-system.md`](TODO-02-ai-development-system.md) -- canonical AI-system ownership roadmap
 - [`todo/00-infrastructure/TODO-08-automation-hardening.md`](TODO-08-automation-hardening.md) -- existing hook/evidence/stamp hardening work
 - [`.claude/state/README.md`](../../.claude/state/README.md) -- current runtime state schemas: skill progress, Codex review history, review stamps
+- [`.claude/skills/**/*.md`](../../.claude/skills/) -- canonical workflow step, prompt-template, and review-kind marker obligations
 - [`.claude/hooks/`](../../.claude/hooks/) -- current Claude-harness enforcement hooks
 - [`.githooks/`](../../.githooks/) -- git-time enforcement layer that must protect non-Claude drivers
 - [`scripts/codex-dispatch.sh`](../../scripts/codex-dispatch.sh) -- current safe Codex review dispatch wrapper
+- [`scripts/lint.sh`](../../scripts/lint.sh) -- Check 12 prompt-escaping telemetry and Check 15 dispatch-bundling telemetry for documented Codex dispatch examples
 - [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) -- tooling regression suite for hook and AI-system behavior
 - [`scripts/todo-graph/`](../../scripts/todo-graph/) -- TODO cache, validation, backlink, and ready/blocked graph oracle
 - -> XREF: [`00-infrastructure/TODO-06 TODO Metadata Layer`](TODO-06-todo-metadata-layer.md) -- stable TODO IDs and graph cache used by the obligation resolver
@@ -69,15 +82,18 @@ codex-reviewer-perf        -> fresh-context performance review
 
 ## Outcome
 
-- A repo-owned AI workflow protocol exists under `scripts/ai-workflow/`; it is callable from Claude hooks, Codex driver scripts, git hooks, and overnight automation.
-- Exactly one active mutating driver holds a lease for a TODO section or review target at a time.
+- A repo-owned AI workflow protocol exists under `scripts/ai-workflow/`; it is callable from Claude hooks, the Codex executor script, git hooks, and overnight automation.
+- Exactly one active mutating driver holds a lease for a TODO section or review target at a time; the master Claude lease can be handed to the Codex executor on delegation or failover via an audited transfer.
 - Review/build/test/stamp evidence is stored in a tool-neutral ledger keyed by TODO target, review kind, git HEAD, source blob SHAs, run ID, and role.
-- A deterministic obligation resolver reports what is already satisfied and what is still missing before any model does work.
+- A deterministic obligation resolver reports what is already satisfied and what is still missing before any model does work, so a resumed run continues from the last completed checkpoint.
 - A deterministic stamp writer adds `Verified:` / `Quality reviewed:` / `Deferred:` / `Accepted:` stamps only from ledger-backed evidence.
 - Commit gates read the shared evidence ledger instead of Claude-only chat or hook state.
-- Codex remains the mandatory reviewer in every mode; Codex-exclusive development uses fresh reviewer runs distinct from the Codex driver run.
-- No parallel skill tree is introduced. Shared mechanics live in scripts, docs, hooks, and derived runtime state, not `.codex/` or another model-specific instruction directory.
-- Codex overnight runs write reports/metrics under `.codex/overnight/`, while governance state remains shared through the existing sequencer cursor, driver lease, evidence ledger, stamp writer, and commit gates.
+- Claude offloads exploration and the mechanical tail to Codex so the master Claude stays near the ~20% effort target; a per-run effort meter reports the realized Claude:Codex ratio.
+- When Claude becomes unavailable (usage limit, crash, hang), Codex resumes the active lease from the ledger at the last completed checkpoint, reverting any half-finished in-flight edit first, and reads the Claude-authored intent plan so it continues with design intent rather than a chat summary.
+- Failover honors a risk tier: Codex ships docs/host-tooling sections through the gates; kernel/boot commits wait for Claude to bless on return.
+- Codex remains the mandatory reviewer in every mode; delegated and failover execution use fresh reviewer runs with run IDs distinct from the Codex executor run.
+- No parallel skill tree is introduced. Shared mechanics live in scripts, docs, hooks, and derived runtime state, not a model-specific instruction directory.
+- All drivers write reports/metrics/logs into the shared overnight namespace tagged by backend; the separate `.codex/overnight/` tree is retired. Governance state remains shared through the sequencer cursor, driver lease, evidence ledger, stamp writer, and commit gates.
 - Shared gates prove that concurrent driver races, forged evidence, stale completed leases, and stale provenance cannot satisfy shipping obligations.
 - `stamp.py` can generate both section-local shipping stamps and file-level lifecycle stamps consumed by the overnight sequencer.
 - Doctrine updates land only after the implementation proves the shared protocol can enforce the same safety properties as the current Claude-first flow.
@@ -93,10 +109,13 @@ codex-reviewer-perf        -> fresh-context performance review
 | 💎  |   5   | Deterministic stamp writer                                             | §3-4          |  [ ]   |
 | 💎  |   6   | Shared gate library used by Claude hooks, git hooks, and Codex driver  | §3-5          |  [ ]   |
 | ⭐  |   7   | Codex reviewer-role normalization and fresh-context independence checks | §3-6          |  [ ]   |
-| ⭐  |   8   | Codex driver dry-run adapter                                           | §2, §4, §6-7 |  [/]   |
-| ⭐  |   9   | Codex driver live adapter                                              | §8            |  [ ]   |
-| 💎  |   10  | Migration, docs, doctrine, and rollout toggles                         | §1-9          |  [ ]   |
-| 💎  |   11  | Regression suite and pilot section                                     | §1-10         |  [ ]   |
+| ⭐  |   8   | Codex executor dry-run adapter and intent handoff plan                 | §2, §4, §6-7 |  [/]   |
+| ⭐  |   9   | Codex executor live adapter and failover resume                        | §7-8          |  [/]   |
+| 💎  |   10  | Namespace consolidation, migration, docs, doctrine, rollout toggles    | §1-9          |  [/]   |
+| 💎  |   11  | Regression suite and pilots (delegation / failover / tiered-hold)      | §1-10         |  [ ]   |
+| ⭐  |   12  | Codex exploration-brief producer                                      | §3-4          |  [ ]   |
+| 💎  |   13  | Effort-ratio meter (1:4 Claude:Codex)                                 | §3            |  [ ]   |
+| 💎  |   14  | Retire separate-driver direction artifacts                            | §9-10         |  [ ]   |
 
 ---
 
@@ -120,7 +139,7 @@ Identify every place the current system assumes Claude Code is the mutator, disp
 > **Notes:**
 > - Inventory source lives in [`docs/infrastructure/ai-driver-interchangeability.md`](../../docs/infrastructure/ai-driver-interchangeability.md).
 > - §1 records current-state evidence only; doctrine remains unchanged until rollout sections ship.
-> - Adversarial findings were classified Fix; inventory now covers Claude state files, live gates, stateless blockers, dispatch surfaces, sequencer/FIXPOINT control, telemetry, stamps, and review kinds.
+> - Adversarial findings were classified Fix; inventory now covers AGENTS.md reviewer-only boundary, Claude state files, live gates, stateless blockers, dispatch surfaces, Codex prompt escaping / lint Check 12 and dispatch-bundling Check 15 as WARN-only telemetry (not proof and not complete fallback-wrapper coverage), prompt-source trust caveats (`codex e`, background receive integrity) tagged non-trusted, sequencer/FIXPOINT control, telemetry, stamps, and review kinds derived from canonical `.claude/skills/**/*.md` workflow and prompt-shape sources.
 > - Owner-section findings are filed, not hidden here: §7 owns reviewer trust, parser, dispatch completion, and `codex e`; §6/§11 own legacy import and stale-evidence rejection.
 > - Build and graph validation are ledger-backed; use `evidence.py explain --todo <path> --section 1` for current event IDs.
 > - Scope boundary: no doctrine or rollout implementation ships in §1; dependent gate and classifier fixes ship in later sections.
@@ -138,6 +157,7 @@ Prevent Claude and Codex from both mutating the same section or producing confli
 - [x] Add `scripts/ai-workflow/lease.py` with `acquire`, `renew`, `release`, `status`, and `force-release --reason` subcommands.
 - [x] Store lease state in a gitignored derived-state location that is not a model-specific instruction tree. Preferred shape: `.ai-workflow/active-lease.json`.
 - [x] Lease key includes `todo_path`, `section`, `driver_backend`, `driver_run_id`, `head_sha`, `started_at`, `expires_at`, and `allowed_mutations`.
+- [ ] Add a monotonic lease generation/fence token to the lease key so delegate, failover, and hand-back transfers use compare-and-swap and a stale holder is rejected before any edit, stamp, or commit.
 - [x] A driver cannot acquire a lease if another live lease exists for the same TODO section unless the existing lease is expired or explicitly force-released with a reason.
 - [x] Serialize `lease.py` active-lease and lease-history mutations with a repo-local lock (`fcntl.flock` or an `O_EXCL` lockfile) so two concurrent drivers cannot both observe an empty lease and race through `acquire` (`scripts/ai-workflow/lease.py:53` reads, checks, then writes at `:94` today).
 - [x] Claude hooks consult the lease before first implementation edit when a TODO-section flow is active.
@@ -251,7 +271,7 @@ Make the enforcement layer reusable outside Claude Code.
 
 ## 7. Codex Reviewer-Role Normalization and Fresh-Context Independence Checks
 
-Codex is always the reviewer, including Codex-exclusive development.
+Codex is always the reviewer, including when Codex is also the subordinate executor. This independence is load-bearing under the 1:4 split, because Codex is now both executor and reviewer on most sections.
 
 - [x] Define canonical reviewer roles: `codex-reviewer-design`, `codex-reviewer-adversarial-impl`, `codex-reviewer-adversarial`, `codex-reviewer-consistency`, `codex-reviewer-perf`, `codex-reviewer-test-coverage`, `codex-reviewer-gap-audit`, and `codex-reviewer-re-adversarial`.
 - [/] Update Codex dispatch prompts so each role records `role`, `review_kind`, `driver_run_id`, and `review_run_id`. The receipt hook now records these fields when present and generates `review_run_id` for legacy dispatches; prompt-template rollout remains.
@@ -265,25 +285,26 @@ Codex is always the reviewer, including Codex-exclusive development.
 - [x] Preserve the no-model-flag policy: Codex model and effort remain controlled centrally by Codex config, not per dispatch.
 - [ ] Commit: "ai-workflow: normalize Codex reviewer roles"
 
-**Test checkpoint:** Codex-exclusive mode can satisfy review obligations only with distinct reviewer runs. A Codex driver cannot self-certify its own implementation.
+**Test checkpoint:** A Codex executor run can satisfy review obligations only with distinct reviewer runs. A Codex executor cannot self-certify its own implementation.
 
 ---
 
-## 8. Codex Driver Dry-Run Adapter
+## 8. Codex Executor Dry-Run Adapter and Intent Handoff Plan
 
-Introduce Codex as a driver without allowing it to mutate code at first.
+Introduce Codex as an executor without allowing it to mutate code at first, and make the plan artifact double as the intent-handoff record a delegated or failover Codex run resumes from.
 
 - [x] Add `scripts/codex-driver.sh --dry-run`.
-- [/] Dry-run adapter reads `AGENTS.md`, `CLAUDE.md`, the target TODO, the obligation resolver output, and relevant code context. Current dry-run output lists the doctrine/TODO paths and prints obligations, but bounded content capture remains open (`scripts/codex-driver.sh:74` writes the plan and `:84` starts the file-name list).
-- [ ] Capture bounded dry-run context with source hashes or snippets for `AGENTS.md`, `CLAUDE.md`, the target TODO, the obligation JSON, and relevant code files so the advisory plan proves what it actually inspected.
+- [/] Dry-run adapter reads `AGENTS.md`, `CLAUDE.md`, the target TODO, obligations, and code context; bounded content capture remains open (`scripts/codex-driver.sh:74` / `:84`).
+- [ ] Capture bounded dry-run context with source hashes or snippets for the doctrine files, the target TODO, the obligation JSON, and relevant code files so the advisory plan proves what it inspected.
 - [x] Dry-run adapter may propose an implementation plan and list deterministic commands, but must not edit, build, test, stamp, or commit.
 - [x] Dry-run output is written to `.ai-workflow/runs/<run-id>/plan.md`.
+- [ ] Promote `plan.md` to the canonical intent-handoff artifact the master Claude writes at section start, so a delegated or failover Codex run resumes with design intent (consumed by §9).
 - [x] Claude-mode workflow can consume the dry-run plan as advisory input without treating it as evidence.
 - [x] Add a regression that verifies dry-run cannot produce ledger events that satisfy shipping obligations.
 - [/] Run one pilot dry-run on a small docs-only infrastructure section and one kernel section, then record gaps.
 - [x] Commit: "codex: add dry-run driver adapter"
 
-**Test checkpoint:** Codex can understand the workflow and produce a useful plan, but no gate accepts that plan as proof of completed work.
+**Test checkpoint:** Codex can understand the workflow and produce a useful plan, but no gate accepts that plan as proof of completed work. A failover Codex run can reconstruct design intent from `plan.md` alone.
 
 > **Test runner:** 2026-06-29 | `bash scripts/test-tooling.sh` | 423/423 PASS
 >
@@ -297,54 +318,63 @@ Introduce Codex as a driver without allowing it to mutate code at first.
 
 ---
 
-## 9. Codex Driver Live Adapter
+## 9. Codex Executor Live Adapter and Failover Resume
 
-Enable Codex to be the active mutating driver under the shared gates.
+Codex executes under the master Claude's lease, both for delegated phases (Claude alive) and failover resume (Claude unavailable). It never self-certifies and never commits kernel/boot work without Claude blessing.
+
+Executor core:
 
 - [x] Add `scripts/codex-driver.sh --live` behind an explicit environment gate such as `AI_WORKFLOW_CODEX_DRIVER=1`.
 - [x] Live adapter acquires a driver lease before any mutation.
 - [x] Live adapter runs the obligation resolver before each phase and after each fix.
 - [/] Live adapter may edit files only while the lease is active and the next obligation allows mutation.
-- [x] Overnight launcher accepts `--driver codex` and runs Codex through a bounded supervisor that invokes `codex --ask-for-approval never exec --json --sandbox danger-full-access` per phase/section step.
-- [x] Codex overnight reports and metrics are isolated under `.codex/overnight/`, with `latest.log` for monitoring.
-- [x] Codex arming uses the same `arm-sequencer.sh` / `overnight-arm.sh` path, same `sequencer-armed` marker, same `OVERNIGHT_SEQUENCER_RUN=1` discriminator, and same shared gate env.
-- [x] Codex overnight launch is supervised by a repo-owned bounded phase loop instead of one unlimited `codex exec`; the supervisor owns phase transitions, section-progress checks, per-step timeouts, and no-progress blocking under `.codex/overnight/`.
-- [/] Live adapter dispatches Codex reviewer roles through the same `scripts/codex-dispatch.sh` wrapper and records reviewer evidence separately from driver evidence. The overnight supervisor now allows repo-owned reviewer wrappers to pass through the nested-Codex guard with `CODEX_REVIEWER_DISPATCH=1` while raw nested Codex automation remains blocked; live evidence recording still needs pilot validation.
+- [/] Live adapter dispatches Codex reviewer roles through `scripts/codex-dispatch.sh` and records reviewer evidence separately from executor evidence with distinct run IDs; live evidence recording still needs pilot validation.
+- [ ] Block live and failover shipping on §7 trusted run-ID derivation: the `review_run_id != driver_run_id` check is necessary but not sufficient while IDs come from prompt text; forged, fabricated, and legacy IDs must be rejected first.
 - [ ] Live adapter runs build/test/smoke commands through the same deterministic scripts as Claude mode.
-- [ ] Live adapter records build/test/smoke/todo-graph evidence through `scripts/ai-workflow/evidence.py` with command, exit code, log path, final marker, HEAD, and source blobs before stamp or commit gates consume it.
+- [ ] Live adapter records build/test/smoke/todo-graph evidence through `scripts/ai-workflow/evidence.py` with command, exit code, log path, final marker, HEAD, and source blobs before gates consume it.
 - [/] Live adapter uses `stamp.py`, never freehand stamp text.
 - [x] Live adapter attempts commits only through the same shared gate path as Claude mode.
 - [/] Live adapter manages lease lifecycle explicitly: release and complete checkpoints exist; renew-during-long-phase and complete-only-after-successful-commit enforcement remain open.
-- [/] Add bounded fix-loop behavior matching existing section workflows: `codex-sequencer-supervisor.sh` now limits one Codex invocation to one phase/section, blocks repeated no-progress loops, and Codex re-arm clears stale supervisor block/progress runtime state; section-local defer/fix-loop parity still needs live-pilot validation.
-- [ ] Pilot on one docs-only TODO section, then one host-tooling section, before any kernel/boot implementation.
-- [ ] Commit: "codex: add live driver adapter"
 
-**Test checkpoint:** Codex live mode can ship a low-risk section through the same gates without Claude Code acting as mutator.
+Failover resume (Claude unavailable):
+
+- [ ] The repo-owned launcher/supervisor (not Claude, which is unavailable) detects triggers and initiates handoff: usage-limit (launcher snooze detection) and crash/hang (supervisor watchdog). Manual handoff is out of scope.
+- [ ] Define the lease-transfer state machine: fence token, compare-and-swap transfer, audited `handoff_reason` (`delegate`/`limit`/`crash`/`hang`/`return`), and Codex stop/ack at obligation boundaries so a return cannot race a live edit.
+- [ ] Resume granularity is the last completed obligation from `obligations.py`; revert any half-finished in-flight edit to the last clean checkpoint before resuming.
+- [ ] Define the clean checkpoint as a manifest (HEAD, worktree status, owned paths, source blobs, plan hash, obligation ID); revert touches only owned paths and aborts on a stale/missing plan or dirty unrelated files.
+- [ ] Read the Claude-authored intent plan (`.ai-workflow/runs/<run-id>/plan.md`) so resume carries design intent, not just the remaining checklist.
+- [ ] Honor the risk tier on resume: docs/host-tooling ships through the gates; kernel/boot stops before commit and writes a `ready-for-bless` marker for Claude.
+- [ ] Clean hand-back: when Claude returns it reacquires the lease atomically (never both editing) and advances the cursor past sections Codex already shipped.
+- [ ] Pilot delegation on one docs-only section, then failover-resume on one docs-only section, then one host-tooling section, before any kernel/boot work.
+- [ ] Commit: "codex: add executor live adapter and failover resume"
+
+**Test checkpoint:** Codex can ship a low-risk section through the same gates without Claude acting as mutator, and can resume a leased section from the ledger after Claude becomes unavailable, holding kernel/boot commits for Claude.
 
 ---
 
-## 10. Migration, Docs, Doctrine, and Rollout Toggles
+## 10. Namespace Consolidation, Migration, Docs, Doctrine, and Rollout Toggles
 
 Only update doctrine after the shared protocol works.
 
 - [x] Add `docs/infrastructure/ai-driver-interchangeability.md` as the human-readable design and operations guide.
-- [ ] Update [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) to distinguish workflow authority from driver backend only after §1-9 pass.
-- [ ] Update [`CLAUDE.md`](../../CLAUDE.md) Model Roles and Skills sections only after Codex live pilot succeeds.
-- [ ] Update [`AGENTS.md`](../../AGENTS.md) so non-Claude tools understand when they are reviewer-only versus explicitly leased as active driver.
+- [ ] Consolidate the Codex overnight namespace into the shared overnight tree, tagging reports/metrics/logs by backend; the separate `.codex/overnight/` tree is removed in §14.
+- [ ] Update [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) to distinguish the master driver from the subordinate executor (Claude master; Codex executor and reviewer) only after §1-9 pass.
+- [ ] Update [`CLAUDE.md`](../../CLAUDE.md) Model Roles and Skills sections only after the Codex delegation and failover pilots succeed.
+- [ ] Update [`AGENTS.md`](../../AGENTS.md) so non-Claude tools understand when they are reviewer-only versus leased as the subordinate executor under Claude.
 - [x] Preserve the autonomous-agent boundary: no cloud-agent PRs, no autonomous GitHub PR authoring, no unattended non-repo-guarded driver.
 - [x] Preserve the zero AI-attribution trailer policy.
-- [x] Document supported modes and required environment toggles.
-- [x] Document Codex overnight reports, monitor command, approval policy, and sandbox override.
-- [x] Add rollback instructions to return to Claude-driver-only mode by disabling Codex live driver while keeping shared evidence scripts available.
+- [/] Document supported modes and required environment toggles (re-scoped to master/delegate/failover; guide refresh owned by §14).
+- [/] Document the overnight reports, monitor command, approval policy, and sandbox override, updated for the consolidated shared namespace.
+- [x] Add rollback instructions to return to Claude-master-only mode by disabling the Codex executor while keeping shared evidence scripts available.
 - [ ] Commit: "docs: document AI driver rollout"
 
-**Test checkpoint:** A maintainer can enable or disable Codex driver mode without deleting evidence, breaking stamps, or changing commit policy.
+**Test checkpoint:** A maintainer can enable or disable Codex executor mode without deleting evidence, breaking stamps, or changing commit policy.
 
 ---
 
 ## 11. Regression Suite and Pilot Section
 
-Prove the interchangeable-driver workflow before declaring it available.
+Prove the master/delegate/failover workflow before declaring it available.
 
 - [x] Add `ai_workflow_lease` tests to `scripts/test-tooling.sh`.
 - [/] Add `ai_workflow_evidence` tests for blob binding, stale HEAD, legacy import, and review-role independence.
@@ -352,21 +382,70 @@ Prove the interchangeable-driver workflow before declaring it available.
 - [/] Add `ai_workflow_stamp` tests for generated stamps, missing evidence failures, and stamp-only commits.
 - [/] Add `ai_workflow_gates` tests proving Claude hook mode, git-hook mode, and direct CLI mode return identical verdicts.
 - [x] Add `codex_driver_dry_run` tests proving dry-run cannot mutate or satisfy evidence.
-- [x] Add `overnight_launch_driver` tests proving Claude/Codex driver selection, Codex no-prompt full-access execution through the bounded supervisor smoke path, separate `.codex/overnight` reports, and report formatting.
+- [/] Add `overnight_launch_driver` tests proving Claude/Codex driver selection, bounded-supervisor smoke execution, and backend-tagged reports in the shared overnight namespace (was separate `.codex/overnight`).
 - [/] Add `codex_driver_live_fixture` tests using a temporary fixture repo or test TODO section.
+- [ ] Add a failover-resume fixture: Claude records obligations 1-3 then goes unavailable, and Codex resumes 4-N from the ledger without repeating completed reviews.
+- [ ] Add dirty-worktree and stale/missing-plan fixtures proving failover aborts safely instead of discarding unrelated or untracked changes.
+- [ ] Add a tiered-hold fixture proving Codex ships a docs/host-tooling section but stops before a kernel/boot commit, leaving a `ready-for-bless` marker.
 - [ ] Add a lease-race fixture that starts two concurrent same-section `lease.py acquire` calls and proves exactly one winner.
 - [ ] Add forged/stale evidence fixtures: self-recorded Codex review events, legacy-only shipping evidence, stale source blobs, stale HEAD, missing build final marker, and stale todo-graph validation must not satisfy obligations.
 - [ ] Add a legacy-import fixture proving `last-review-stamps.json` imports do not satisfy adversarial, consistency, or perf review obligations.
 - [ ] Add a stale completed-lease fixture proving a historical `complete` action cannot authorize a later staged TODO row flip or stamp.
 - [ ] Add a lifecycle-stamp fixture proving `stamp.py validated` / `gap-audited` writes only the file preamble location consumed by `sequencer_triage.py`.
 - [ ] Add dry-run context-capture and live-adapter lease-failure fixtures covering the §8 and §9 regressions filed by this gap audit.
-- [ ] Run one real pilot in Claude-driver mode using the new shared ledger, with Codex as reviewer.
-- [ ] Run one real pilot in Codex-driver dry-run mode.
-- [ ] Run one real pilot in Codex-driver live mode on a low-risk infrastructure section.
-- [ ] After all pilots pass, flip this TODO's doctrine/doc-sync items to done and mark Codex-exclusive development as supported.
+- [ ] Run one real pilot in Claude-master delegated mode using the shared ledger, with Codex as executor and a separate Codex reviewer.
+- [ ] Run one real pilot in Codex-executor dry-run mode.
+- [ ] Run one real failover-resume pilot: interrupt Claude mid-section and let Codex finish a low-risk infrastructure section from the ledger.
+- [ ] After all pilots pass and the effort report shows the realized ratio at or near 1:4, flip this TODO's doctrine/doc-sync items to done and mark Codex delegation + failover as supported.
 - [ ] Commit: "test: cover AI driver interchangeability"
 
 **Test checkpoint:** The same TODO section can be resumed by Claude or Codex from the ledger without repeating completed reviews, losing stamp state, or bypassing gates.
+
+---
+
+## 12. Codex Exploration-Brief Producer
+
+Move bulk code reading off the master Claude so the 1:4 effort split is achievable. Claude subagents count against the same Claude limit, so exploration must run as Codex, not a Claude `Explore`/`kernel-explorer` agent.
+
+- [ ] Add a Codex exploration mode (extend `scripts/codex-driver.sh` or a sibling) that reads the target subsystem and emits a bounded brief: file list, integration surface, lock/init-order notes, and a recommended approach.
+- [ ] Brief output is advisory context written under `.ai-workflow/runs/<run-id>/`, never shipping evidence.
+- [ ] Claude consumes the brief to ratify or redirect the design instead of reading every file itself.
+- [ ] `implement-todo-section` step 3 routes large/unfamiliar surfaces to the Codex brief instead of the Claude explorer subagent when the Codex executor is enabled.
+- [ ] Record brief provenance (source blobs inspected) so a stale brief is detectable after edits.
+- [ ] Commit: "codex: add exploration-brief producer"
+
+**Test checkpoint:** A section design can start from a Codex-produced brief with no master-Claude file reads, and the brief cannot satisfy any shipping obligation.
+
+---
+
+## 13. Effort-Ratio Meter (1:4 Claude:Codex)
+
+Make the cost target measurable instead of aspirational.
+
+- [ ] Record per-run Claude vs Codex step counts (and tokens where the backend exposes them) as ledger or run-log telemetry tagged by backend.
+- [ ] Add a `report` view that prints the realized Claude:Codex ratio for a run or a date range.
+- [ ] Surface the ratio in the overnight report so drift back to Claude-heavy is visible.
+- [ ] Telemetry only -- the meter never gates per-section shipping.
+- [ ] Define the ratification protocol: what evidence lets Claude accept a Codex finding/design without file-line re-derivation versus what must still be verified; make the realized ratio a §11 pilot-graduation criterion.
+- [ ] Commit: "ai-workflow: add effort-ratio meter"
+
+**Test checkpoint:** A completed run reports a Claude:Codex effort ratio, and the value moves toward 1:4 as delegation increases.
+
+---
+
+## 14. Retire Separate-Driver Direction Artifacts
+
+Unwind the co-equal / separate-namespace work built before the 2026-06-30 re-scope, keeping only what the master/delegate/failover model uses.
+
+- [ ] Audit the prior separate-driver artifacts: `codex-sequencer-supervisor.sh`, the `.codex/overnight/` tree, the `--driver codex` co-equal launch path, and docs framing Codex as a co-equal/Codex-exclusive driver.
+- [ ] Keep what the executor/failover model reuses (the bounded per-step supervisor, arming path, nested-Codex guard); remove or rewire what only served the separate-namespace co-equal model.
+- [ ] Redirect Codex overnight reports/metrics into the shared overnight namespace tagged by backend (pairs with §10 consolidation).
+- [ ] Update `docs/infrastructure/ai-driver-interchangeability.md` so the operations guide describes master/delegate/failover, not co-equal Codex-exclusive development.
+- [ ] Remove now-obsolete `overnight_launch_driver` assertions tied to the separate `.codex/overnight` path and repoint them at the shared namespace.
+- [ ] Add a lint/test that fails on remaining co-equal / Codex-exclusive / `.codex/overnight` instructions in docs outside explicit historical notes.
+- [ ] Commit: "codex: retire separate-driver artifacts"
+
+**Test checkpoint:** No code path or doc still presents Codex as a co-equal/Codex-exclusive driver, and `bash scripts/test-tooling.sh` passes against the consolidated namespace.
 
 ---
 
@@ -380,8 +459,9 @@ Prove the interchangeable-driver workflow before declaring it available.
 | 💎 | Durable evidence ledger    | ⚠️ CI/log fragments         | ⚠️ Build artifacts + CI     | ⬜ Planned -- §3        |
 | 💎 | Provenance-bound evidence  | ✅ Artifact attestations    | ⚠️ Patch tags + CI          | ⬜ Planned -- §3/§6     |
 | 💎 | Deterministic stamps       | ❌ Not a native OS concern  | ❌ Not a native OS concern  | ⬜ Planned -- §5        |
-| ⭐ | Codex as active driver     | ❌ Not a Windows dev model  | ⚠️ Scriptable agents vary   | ⬜ Planned -- §8-9      |
-| ⭐ | Reviewer/driver separation | ⚠️ Process convention       | ⚠️ Review policy convention | ⬜ Planned -- §7        |
+| ⭐ | Codex delegate/failover    | ❌ Not a Windows dev model  | ⚠️ Scriptable agents vary   | ⬜ Planned -- §8-9      |
+| ⭐ | Failover continuation      | ⚠️ Manual operator restart  | ⚠️ CI retry/resume varies   | ⬜ Planned -- §9        |
+| ⭐ | Reviewer/executor separation | ⚠️ Process convention     | ⚠️ Review policy convention | ⬜ Planned -- §7        |
 
 Impossible OS treats AI workflow state as build-time infrastructure, not product behavior. The comparison exists to keep the host workflow explicit: the OS target gains a reproducible contributor pipeline with branch-policy, concurrency, and provenance-grade safeguards, not runtime AI features.
 
@@ -397,8 +477,11 @@ Host-side AI workflow tests live in `scripts/test-tooling.sh` because this TODO 
 - [ ] Add or keep `ai_workflow_stamp` coverage for generated stamps, file-level lifecycle preamble stamps, missing evidence failures, and stamp-only commits.
 - [ ] Add or keep `ai_workflow_gates` coverage for shared verdicts across Claude hook, git hook, direct CLI paths, stale completed-lease rejection, and current provenance checks.
 - [ ] Add or keep `codex_driver_dry_run` coverage proving dry-run cannot mutate files or satisfy shipping evidence and does capture bounded doctrine/TODO/code context.
-- [x] Add or keep `overnight_launch_driver` coverage proving Codex overnight launch has no prompts, full-access sandbox, separate logs, and bounded-supervisor governance invariants.
+- [/] Add or keep `overnight_launch_driver` coverage proving Codex overnight launch has no prompts, full-access sandbox, backend-tagged shared-namespace reports, and bounded-supervisor governance invariants.
 - [ ] Add or keep `codex_driver_live_fixture` coverage using a temporary fixture repo or low-risk test TODO section, including release on failure and complete only after a gated commit.
+- [ ] Add `codex_failover_resume` coverage proving Codex resumes a leased section from the ledger at the last completed checkpoint and reverts in-flight partial edits.
+- [ ] Add `codex_tiered_hold` coverage proving Codex holds kernel/boot commits for Claude while shipping docs/host-tooling sections.
+- [ ] Add `ai_workflow_effort_meter` coverage proving per-run Claude:Codex ratio reporting.
 - [ ] Commit: "test: cover AI driver interchangeability"
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` reports the AI workflow group and fails on lease, evidence, obligation, stamp, gate, or Codex-driver regressions.

@@ -9,7 +9,7 @@ description: Run a Codex adversarial review against all implemented sections of 
 
 ## Prompt Shape
 
-Every dispatch from this skill MUST open its prompt with the marker `[review-kind: adversarial] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 7 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
+Every dispatch from this skill MUST open its prompt with the marker `[review-kind: adversarial] <todo-path>` on the first non-blank line. The marker is what `.claude/hooks/skill_step_observer.py` and the section-commit four-dispatch gate use to attribute the dispatch. Un-marked dispatches waste a Codex round and block the next section-commit. Canonical reference for all 8 markers: [.claude/skills/codex-prompt-shape.md](../codex-prompt-shape.md).
 
 ## Use This Skill When
 

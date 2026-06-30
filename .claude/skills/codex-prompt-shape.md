@@ -10,7 +10,7 @@ The wrapper enforces `argc == 1` (multi-argv misuse fails loud) and `exec`s into
 
 > **Why single quotes are mandatory.** Bash double-quotes evaluate `$(...)`, `${...}`, and backslash escapes BEFORE the wrapper sees argv. By the time the wrapper validates, any unintended substitution has already happened. The escaping discipline is enforced at the source-text layer by `scripts/lint.sh` Check 12 -- single-quote your prompts so the lint never has reason to fire.
 
-The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review "<prompt>"`) is still recognized by the hooks for backward compat with existing logs and ad-hoc invocations, but new dispatches use the wrapper. The bare CLI form `codex review "<prompt>"` (or alias `codex e "<prompt>"`) is also recognized; the underlying classifier (`.claude/hooks/_codex_dispatch.py`) accepts all three shapes via shlex-aware tokenization + segment-by-control-operator + heredoc-body strip.
+The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review "<prompt>"`) is still recognized by the hooks for backward compat with existing logs and ad-hoc invocations, but new dispatches use the wrapper. The bare CLI form `codex review "<prompt>"` is also recognized; the current classifier also accepts `codex e "<prompt>"`, but TODO-10 classifies that as stale because `codex e` is the `codex exec` driver alias, not trusted reviewer proof.
 
 **Multi-line dispatches are supported.** A `node ".../codex-companion.mjs" \<NL>    adversarial-review '<prompt>'` shape (typed verbatim or pulled from a docs example with backslash line-continuation) classifies identically to its single-line equivalent; the helper preprocesses `\<newline>[ \t]*` to whitespace before tokenizing.
 
@@ -27,7 +27,7 @@ The legacy direct-node form (`node ".../codex-companion.mjs" adversarial-review 
 | `re-adversarial`         | `codex-fix-review` retrigger          | implement step 20 (inline) / review step 13                        |
 | `gap-audit`              | `codex-gap-audit`                     | gap-audit-todo step 14.5 (mandatory)                               |
 
-Step numbers are recorded by `.claude/hooks/skill_step_observer.py` via the map in `.claude/hooks/skill_step_map.py`. Coverage of all 7 kinds is locked in by 8 sub-tests in the `[skill_step_observer]` block of `scripts/test-tooling.sh`.
+Step numbers are recorded by `.claude/hooks/skill_step_observer.py` via the map in `.claude/hooks/skill_step_map.py`. Coverage of all 8 kinds is locked in by 8 sub-tests in the `[skill_step_observer]` block of `scripts/test-tooling.sh`.
 
 ## Required prompt opening
 

@@ -959,6 +959,21 @@ else
     t_pass "lint Check 15 clean on clean tree"
 fi
 
+# --- codex-bg-dispatch argument contract -----------------------------------
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_bg_dispatch_contract]${NC}"
+_bg_multi="$(bash "$REPO_ROOT/scripts/codex-bg-dispatch.sh" '[review-kind: design] todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md ok' extra 2>&1 >/dev/null || true)"
+if grep -q "expected exactly one prompt argv" <<<"$_bg_multi"; then
+    t_pass "codex-bg-dispatch rejects multi-argv prompt"
+else
+    t_fail "codex-bg-dispatch accepted multi-argv prompt"
+fi
+_bg_unmarked="$(bash "$REPO_ROOT/scripts/codex-bg-dispatch.sh" 'Design review for the boot init path' 2>&1 >/dev/null || true)"
+if grep -q "first nonblank prompt line must start" <<<"$_bg_unmarked"; then
+    t_pass "codex-bg-dispatch rejects unmarked prompt"
+else
+    t_fail "codex-bg-dispatch accepted unmarked prompt"
+fi
+
 # --- WS1b agent-dispatch gate ---------------------------------------------
 # Tests the safety property: the gate is SILENT (empty stderr, rc 0) in
 # interactive sessions and on non-source targets. The positive WARN path needs

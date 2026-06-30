@@ -41,6 +41,7 @@ The current Claude-first workflow has three classes of state:
 
 | Surface | Current owner | Migration handling |
 | --- | --- | --- |
+| `AGENTS.md` | Cross-tool pointer and current non-Claude boundary | Current text tells non-Claude tools they are subordinate reviewer/reader roles and must not edit, commit, or make scope decisions. Codex-driver rollout must update this only after leased live-driver mode is proven; until then the reviewer-only boundary remains canonical. |
 | `.claude/state/skill-progress.json` | Claude step gate state | Stays Claude adapter state until shared gates replace the blocking decision. Not accepted as cross-driver proof. |
 | `.claude/state/skill-progress-skip.log` | Claude step-gate audit trail | Audit telemetry only. Not accepted as proof. |
 | `.claude/state/last-review-stamps.json` | Claude Codex dispatch observer | Dispatch telemetry only. Import as warning/compatibility data, not as received-review proof for shipping gates. |
@@ -76,6 +77,10 @@ The current Claude-first workflow has three classes of state:
 | `.claude/hooks/_codex_dispatch.py` / `codex_review_completed.py` | Claude Codex dispatch classifier and receiver | Recognizes direct `codex-companion.mjs`, wrapper `scripts/codex-dispatch.sh`, and bare `codex review` review dispatch shapes. It also currently misclassifies bare `codex e` as review even though the CLI aliases it to `exec`; §7 owns trusted receipt, kind parsing, and role-separation normalization. |
 | `scripts/codex-bg-dispatch.sh` | Claude background Codex dispatch fallback | Current fallback wrapper for long-running review work. The wrapper command itself is not one of the wrapper shapes directly recognized by `_codex_dispatch.py` today, even though it invokes the companion background-task path; §7 owns wrapper/receipt alignment. |
 | `scripts/codex-dispatch-with-files.sh` | Claude file-scoped Codex dispatch fallback | Current dispatch surface referenced by implementation-side review guidance. It is not directly classified as the canonical `scripts/codex-dispatch.sh` wrapper today, so §7 owns receipt/evidence normalization before gates can trust it. |
+| Codex prompt escaping (`scripts/codex-dispatch.sh` examples + `scripts/lint.sh` Check 12) | Claude/Codex dispatch safety policy | Load-bearing single-quoted prompt discipline prevents shell expansion, command substitution, and redirection before the reviewer sees the prompt. Current Check 12 coverage is WARN-only and skip-able with `SKIP_LINT_PROMPT_ESCAPING=1`; it covers the canonical foreground wrapper examples but does not cover fallback wrapper examples today. Treat it as inventory/telemetry until §6 shared gates and §11 regression coverage make any blocking decision explicit; argv-time wrapper validation is not enough by itself. |
+| Codex dispatch bundling (`scripts/lint.sh` Check 15) | Claude/Codex dispatch-shape telemetry | WARN-only check for documented examples under `scripts`, `.claude/skills`, and `docs` where multiple `codex-dispatch.sh` / `codex-bg-dispatch.sh` calls are joined by `&`, `&&`, or `;`. Skip-able with `SKIP_LINT_CODEX_BUNDLE=1`; it does not cover every fallback wrapper shape and is not shipping proof. |
+| `.claude/skills/codex-prompt-shape.md` and prompt templates | Review-kind marker source | Defines the canonical review-kind markers, prompt-shape expectations, and matcher/test source-of-truth consumed by Codex skill prompts. Shared ledger and receipt gates must track this source, not only `SKILL.md` files. |
+| Prompt-source trust caveats (`codex e`, background receive integrity) | Prompt-source drift | Prompt docs now identify `codex e` as stale driver-alias behavior rather than trusted reviewer proof, and background dispatch as fallback telemetry whose completion and receipt binding still belong to §7 normalization. |
 | Direct `codex-companion.mjs task --background` | Claude direct background Codex review trigger | The current dispatch classifier treats the companion `task` subcommand as a review trigger. That can set review dispatch/receipt state before the background job output is source-bound; §7 owns completion binding and parser correction. |
 | Bare `codex task` | Codex background job/control CLI | Covered by the invocation policy and model-flag hook as a Codex command surface, but not accepted today by `_codex_dispatch.py` as a reviewer receipt shape. Treat as non-shipping command telemetry unless §7 normalizes it. |
 | `codex exec` / `codex e` | Codex driver / automation launcher | Current automation surface for Codex driver runs and overnight launch; `codex e` is the CLI alias for `exec`. Neither should be trusted reviewer-receipt proof, even though the current dispatch classifier wrongly accepts `codex e` as review. |
@@ -138,6 +143,23 @@ plugin command/hook receipt, and the `codex e` alias need §7 receipt/evidence
 normalization. Bare `codex task` and plugin stop-gate output are not trusted
 receipt proof, and `codex exec` / `codex e` are driver automation. TODO-10 does
 not add a new prompt tree.
+
+Prompt escaping is part of that dispatch surface, not prose style. Dispatch
+examples must keep the single-quoted `scripts/codex-dispatch.sh` prompt shape.
+`scripts/lint.sh` Check 12 documents and warns on unsafe examples, but it is
+WARN-only today and can be skipped with `SKIP_LINT_PROMPT_ESCAPING=1`; shared
+gates must not treat that advisory coverage as dispatch-safety proof. It also
+does not cover fallback wrapper examples (`scripts/codex-bg-dispatch.sh` /
+`scripts/codex-dispatch-with-files.sh`) today, so §6/§7/§11 own any future
+normalization before those paths can satisfy trusted reviewer evidence. The
+wrapper can reject multi-argv calls, but it cannot reconstruct a prompt after
+the shell has already expanded it.
+
+Dispatch bundling is a separate telemetry surface: `scripts/lint.sh` Check 15
+warns when documented examples join multiple `codex-dispatch.sh` /
+`codex-bg-dispatch.sh` calls in one shell command, because only the first review
+kind may be recorded. It is also WARN-only and skip-able today, so shared gates
+must not treat it as proof.
 
 ## Codex Adapter
 
