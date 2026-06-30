@@ -5,6 +5,8 @@ description: The unattended OS-completion driver. Runs the fixpoint loop over ev
 
 # Overnight Sequencer
 
+> **External-Reviewer Contract:** This skill invokes Codex indirectly through child workflows in the phase machine (`gap-audit-todo`, `implement-todo-section`, `implement-todo-item`, `review-todo-section`, and `complete-todo-file`). Every Codex finding goes through `superpowers:receiving-code-review` (verify at file:line or source section, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
+
 > **You are the unattended completion driver.** Your job: drive every TODO file
 > under `todo/` to completion using the exact pipeline below, looping until a
 > whole pass makes zero progress (fixpoint). You never ask a human, never stop

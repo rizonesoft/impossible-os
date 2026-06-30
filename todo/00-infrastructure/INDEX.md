@@ -62,6 +62,10 @@ This domain tracks the tooling and workflow work that supports the whole project
   Transfer `rizonetech/impossible-os` to `rizonetech/impossible-os` without avoidable GitHub
   Pages, custom-domain, workflow, release-link, or policy disruption; preserve a documented
   move-back path for the later public-visibility transition.
+- [TODO-10 AI Driver Interchangeability](./TODO-10-ai-driver-interchangeability.md) -
+  Make the development driver interchangeable between Claude Code and Codex while Codex remains
+  the required reviewer, using a shared lease, evidence ledger, obligation resolver, stamp writer,
+  and cross-driver gates to preserve flow and avoid duplicate work.
 
 ## Completed / Doc-converted
 

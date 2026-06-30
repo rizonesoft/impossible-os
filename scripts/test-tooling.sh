@@ -969,7 +969,7 @@ _AD_GATE="$REPO_ROOT/.claude/hooks/agent_dispatch_required.py"
 _ad_silent() {  # <desc> <env-assignments...> -- payload in $PAYLOAD; PASS iff empty stderr + rc 0
     local desc="$1"; shift
     local err rc
-    err=$(printf '%s' "$PAYLOAD" | env "$@" python3 "$_AD_GATE" 2>&1 1>/dev/null)
+    err=$(printf '%s' "$PAYLOAD" | env -u OVERNIGHT_SEQUENCER_RUN -u SKIP_AGENT_DISPATCH_HOOK "$@" python3 "$_AD_GATE" 2>&1 1>/dev/null)
     rc=$?
     if [ -z "$err" ] && [ "$rc" = "0" ]; then
         t_pass "agent_dispatch_gate: $desc (silent)"
@@ -991,7 +991,7 @@ _FSD="$REPO_ROOT/.claude/hooks/conclave_stuck_detect.py"
 _fsd_runs() {  # <desc> <env...> ; PAYLOAD on stdin ; PASS iff exit 0
     local desc="$1"; shift
     local rc
-    printf '%s' "$PAYLOAD" | env "$@" python3 "$_FSD" >/dev/null 2>&1
+    printf '%s' "$PAYLOAD" | env -u OVERNIGHT_SEQUENCER_RUN "$@" python3 "$_FSD" >/dev/null 2>&1
     rc=$?
     if [ "$rc" = "0" ]; then t_pass "conclave_stuck_detect: $desc"
     else t_fail "conclave_stuck_detect: $desc (rc=$rc)"; fi
@@ -1732,8 +1732,14 @@ CMOD2
     fi
 
     # 21: source edited AFTER build -> block (C2: mtime + content binding).
-    touch "$GATE_REPO/build/build.log"
-    sleep 1.1
+    python3 - "$GATE_REPO/build/build.log" <<'PY'
+import os
+import sys
+import time
+
+old = time.time() - 5
+os.utime(sys.argv[1], (old, old))
+PY
     (cd "$GATE_REPO" && touch src/kernel/foo.c)
     _gate_run 2 "source edited after build blocks (C2: mtime + content binding)" \
         '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
@@ -3515,9 +3521,9 @@ TSCRIPT
 {"ts_ns":$PCE_T2_TS,"message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"src/kernel/foo.c"}}]}}
 {"ts_ns":$PCE_T2_TS,"message":{"content":[{"type":"tool_use","name":"Grep","input":{"path":"src/kernel","pattern":"spinlock_t"}}]}}
 TSCRIPT
-    PCE_MISSLOG_LINES_BEFORE2=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
+    PCE_MISSLOG_LINES_BEFORE2=$(grep -c '"signal":"phase1-evidence-missing"' "$PCE_MISSLOG" 2>/dev/null || echo 0)
     cd "$PCE_REPO" && echo "$PCE_PAYLOAD" | python3 .claude/hooks/phase1_evidence_gate.py >/dev/null 2>&1; PCE_RC_PASS=$?; cd - >/dev/null
-    PCE_MISSLOG_LINES_AFTER2=$(wc -l < "$PCE_MISSLOG" 2>/dev/null || echo 0)
+    PCE_MISSLOG_LINES_AFTER2=$(grep -c '"signal":"phase1-evidence-missing"' "$PCE_MISSLOG" 2>/dev/null || echo 0)
     if [ "$PCE_RC_PASS" = "0" ] && [ "$PCE_MISSLOG_LINES_AFTER2" = "$PCE_MISSLOG_LINES_BEFORE2" ]; then
         t_pass "phase1_evidence_misslog: 2 Reads -> PASS, no new miss-log entry"
     else
@@ -4537,42 +4543,236 @@ with tempfile.TemporaryDirectory() as tmp:
         "implement-todo-section": {"started_ts": time.time_ns(),
                                    "args": "test", "todo_path": ""}
     }))
+    (repo / "todo").mkdir()
+    todo_path = "todo/TODO-99-bar.md"
+    todo_file = repo / todo_path
+    todo_file.write_text(
+        "| Star | Order | Deliverable | Depends | Status |\n"
+        "| --- | :---: | --- | --- | :---: |\n"
+        "| * | 1 | First | -- | [ ] |\n"
+        "| * | 2 | Second | -- | [ ] |\n"
+    )
+    legacy_todo_path = "todo/TODO-100-legacy.md"
+    legacy_todo_file = repo / legacy_todo_path
+    legacy_todo_file.write_text(
+        "| Order | Deliverable | Depends On | Status |\n"
+        "| :---: | --- | --- | :---: |\n"
+        "| 1 | Legacy shape | -- | [ ] |\n"
+    )
+    depends_todo_path = "todo/TODO-101-depends.md"
+    depends_todo_file = repo / depends_todo_path
+    depends_todo_file.write_text(
+        "| Star | Order | Deliverable | Depends On | Status |\n"
+        "| --- | :---: | --- | --- | :---: |\n"
+        "| * | 3 | Third | alpha, beta | [ ] |\n"
+    )
+    mixed_todo_path = "todo/TODO-102-mixed.md"
+    mixed_todo_file = repo / mixed_todo_path
+    mixed_todo_file.write_text(
+        "| Star | Order | Deliverable | Depends On | Status |\n"
+        "| --- | :---: | --- | --- | :---: |\n"
+        "| * | 1 | Already done | -- | [x] |\n"
+        "| * | 2 | Promote me | -- | [ ] |\n"
+    )
+    multi_todo_path = "todo/TODO-103-multi.md"
+    multi_todo_file = repo / multi_todo_path
+    multi_todo_file.write_text(
+        "| Star | Order | Deliverable | Depends On | Status |\n"
+        "| --- | :---: | --- | --- | :---: |\n"
+        "| * | 1 | First promote | -- | [ ] |\n"
+        "| * | 2 | Unchanged middle | -- | [ ] |\n"
+        "| * | 3 | Third promote | -- | [ ] |\n"
+    )
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
+    subprocess.run(["git", "config", "user.email", "t@x"], cwd=tmp, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp, check=True)
+    subprocess.run(["git", "add", todo_path, legacy_todo_path, depends_todo_path,
+                    mixed_todo_path, multi_todo_path],
+                   cwd=tmp, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q",
+                    "--no-verify", "-m", "seed"], cwd=tmp, check=True)
+    todo_file.write_text(todo_file.read_text().replace("| * | 2 | Second | -- | [ ] |",
+                                                       "| * | 2 | Second | -- | [x] |"))
+    subprocess.run(["git", "add", todo_path], cwd=tmp, check=True)
+    flips, ok_diff, sections = scg._impl_order_flips_with_status(repo, [todo_path])
+    assert ok_diff and flips == [todo_path], f"expected one IO flip, got flips={flips} ok={ok_diff}"
+    assert sections.get(todo_path) == ["2"], f"expected flipped section 2, got {sections}"
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=tmp, check=True)
+    legacy_todo_file.write_text(legacy_todo_file.read_text().replace("| 1 | Legacy shape | -- | [ ] |",
+                                                                     "| 1 | Legacy shape | -- | [x] |"))
+    subprocess.run(["git", "add", legacy_todo_path], cwd=tmp, check=True)
+    legacy_flips, legacy_ok, legacy_sections = scg._impl_order_flips_with_status(repo, [legacy_todo_path])
+    assert legacy_ok and legacy_flips == [legacy_todo_path], (
+        f"expected one legacy IO flip, got flips={legacy_flips} ok={legacy_ok}"
+    )
+    assert legacy_sections.get(legacy_todo_path) == ["1"], (
+        f"expected legacy Order/Deliverable row to bind section 1, got {legacy_sections}"
+    )
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=tmp, check=True)
+    depends_todo_file.write_text(depends_todo_file.read_text().replace(
+        "| * | 3 | Third | alpha, beta | [ ] |",
+        "| * | 3 | Third | alpha, beta | [x] |",
+    ))
+    subprocess.run(["git", "add", depends_todo_path], cwd=tmp, check=True)
+    dep_flips, dep_ok, dep_sections = scg._impl_order_flips_with_status(repo, [depends_todo_path])
+    assert dep_ok and dep_flips == [depends_todo_path], (
+        f"expected one dependency IO flip, got flips={dep_flips} ok={dep_ok}"
+    )
+    assert dep_sections.get(depends_todo_path) == ["3"], (
+        f"expected Depends On dependency row to bind Order section 3, got {dep_sections}"
+    )
+    depends_todo_file.write_text(depends_todo_file.read_text().replace(
+        "| Star | Order | Deliverable | Depends On | Status |",
+        "| Star | Depends On | Deliverable | Section | Status |",
+    ))
+    desync_flips, desync_ok, desync_sections = scg._impl_order_flips_with_status(repo, [depends_todo_path])
+    assert desync_ok and desync_flips == [depends_todo_path], (
+        f"expected staged blob to drive desynced TODO flip, got flips={desync_flips} ok={desync_ok}"
+    )
+    assert desync_sections.get(depends_todo_path) == ["3"], (
+        f"expected staged header to bind section 3 despite unstaged header edit, got {desync_sections}"
+    )
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=tmp, check=True)
+    mixed_todo_file.write_text(
+        mixed_todo_file.read_text()
+        .replace("| * | 1 | Already done | -- | [x] |",
+                 "| * | 1 | Already done, edited | -- | [x] |")
+        .replace("| * | 2 | Promote me | -- | [ ] |",
+                 "| * | 2 | Promote me | -- | [x] |")
+    )
+    subprocess.run(["git", "add", mixed_todo_path], cwd=tmp, check=True)
+    mixed_flips, mixed_ok, mixed_sections = scg._impl_order_flips_with_status(repo, [mixed_todo_path])
+    assert mixed_ok and mixed_flips == [mixed_todo_path], (
+        f"expected one mixed-hunk IO flip, got flips={mixed_flips} ok={mixed_ok}"
+    )
+    assert mixed_sections.get(mixed_todo_path) == ["2"], (
+        f"expected mixed hunk to bind only promoted section 2, got {mixed_sections}"
+    )
+    stamps = repo / ".claude" / "state" / "last-review-stamps.json"
+    stamps.write_text(json.dumps({
+        mixed_todo_path: {
+            "section": "1",
+            "adversarial_section": "1",
+            "adversarial": time.time_ns(),
+            "consistency": None, "perf": None,
+        }
+    }))
+    ok_mixed_wrong, err_mixed_wrong = scg._step13_impl_adversarial_check(
+        repo, ["src/kernel/foo.c"], [mixed_todo_path], {mixed_todo_path: ["2"]}
+    )
+    assert not ok_mixed_wrong, (
+        "mixed-hunk section-bound impl-adv must reject review for edited done row"
+    )
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=tmp, check=True)
+    mixed_todo_file.write_text(
+        mixed_todo_file.read_text()
+        .replace("| * | 1 | Already done | -- | [x] |",
+                 "| * | 1 | Already done | -- | [ ] |")
+        .replace("| * | 2 | Promote me | -- | [ ] |",
+                 "| * | 2 | Promote me | -- | [x] |")
+    )
+    subprocess.run(["git", "add", mixed_todo_path], cwd=tmp, check=True)
+    balanced_flips, balanced_ok, balanced_sections = scg._impl_order_flips_with_status(
+        repo, [mixed_todo_path]
+    )
+    assert balanced_ok and balanced_flips == [mixed_todo_path], (
+        "expected balanced demotion+promotion hunk to still report promotion, "
+        f"got flips={balanced_flips} ok={balanced_ok}"
+    )
+    assert balanced_sections.get(mixed_todo_path) == ["2"], (
+        f"expected balanced hunk to bind only promoted section 2, got {balanced_sections}"
+    )
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=tmp, check=True)
+    multi_todo_file.write_text(
+        multi_todo_file.read_text()
+        .replace("| * | 1 | First promote | -- | [ ] |",
+                 "| * | 1 | First promote | -- | [x] |")
+        .replace("| * | 3 | Third promote | -- | [ ] |",
+                 "| * | 3 | Third promote | -- | [x] |")
+    )
+    subprocess.run(["git", "add", multi_todo_path], cwd=tmp, check=True)
+    multi_flips, multi_ok, multi_sections = scg._impl_order_flips_with_status(repo, [multi_todo_path])
+    assert multi_ok and multi_flips == [multi_todo_path], (
+        f"expected one multi-section IO flip, got flips={multi_flips} ok={multi_ok}"
+    )
+    assert multi_sections.get(multi_todo_path) == ["1", "3"], (
+        f"expected separate-hunk promotions for sections 1 and 3, got {multi_sections}"
+    )
+    stamps.write_text(json.dumps({
+        multi_todo_path: {
+            "section": "1",
+            "adversarial_section": "1",
+            "adversarial": time.time_ns(),
+            "consistency": None, "perf": None,
+        }
+    }))
+    ok_multi, err_multi = scg._step13_impl_adversarial_check(
+        repo, ["src/kernel/foo.c"], [multi_todo_path], {multi_todo_path: ["1", "3"]}
+    )
+    assert not ok_multi and "promotes multiple sections" in err_multi, (
+        f"multi-section promotion must be rejected, got ok={ok_multi} err={err_multi}"
+    )
+    subprocess.run(["git", "reset", "-q", "--hard", "HEAD"], cwd=tmp, check=True)
     stamps = repo / ".claude" / "state" / "last-review-stamps.json"
     # Plain `adversarial` only. With interchangeability, this satisfies.
     stamps.write_text(json.dumps({
-        "todo/foo/TODO-99-bar.md": {
+        todo_path: {
             "section": "1",
+            "adversarial_section": "1",
             "adversarial": time.time_ns(),
             "consistency": None, "perf": None,
         }
     }))
     ok, err = scg._step13_impl_adversarial_check(
-        repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
+        repo, ["src/kernel/foo.c"], [todo_path]
     )
     assert ok, f"impl-adv should accept plain `adversarial` (interchangeable), got: {err}"
+    ok_wrong_section, err_wrong_section = scg._step13_impl_adversarial_check(
+        repo, ["src/kernel/foo.c"], [todo_path], {todo_path: ["2"]}
+    )
+    assert not ok_wrong_section, "section-bound impl-adv must reject a section-1 review for a section-2 flip"
+    stamps.write_text(json.dumps({
+        todo_path: {
+            "section": "2",
+            "adversarial_section": "2",
+            "adversarial": time.time_ns(),
+            "consistency": None, "perf": None,
+        }
+    }))
+    ok_bound, err_bound = scg._step13_impl_adversarial_check(
+        repo, ["src/kernel/foo.c"], [todo_path], {todo_path: ["2"]}
+    )
+    assert ok_bound, f"section-bound impl-adv should accept matching section evidence, got: {err_bound}"
     # adversarial-impl alone also satisfies.
     stamps.write_text(json.dumps({
-        "todo/foo/TODO-99-bar.md": {
+        todo_path: {
             "section": "1",
+            "adversarial-impl_section": "1",
             "adversarial-impl": time.time_ns(),
             "consistency": None, "perf": None,
         }
     }))
     ok2, err2 = scg._step13_impl_adversarial_check(
-        repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
+        repo, ["src/kernel/foo.c"], [todo_path]
     )
     assert ok2, f"impl-adv gate should accept fresh adversarial-impl, got: {err2}"
     # No relevant tag at all -> still blocks.
     stamps.write_text(json.dumps({
-        "todo/foo/TODO-99-bar.md": {
+        todo_path: {
             "section": "1",
             "consistency": None, "perf": None,
         }
     }))
     ok3, err3 = scg._step13_impl_adversarial_check(
-        repo, ["src/kernel/foo.c"], ["todo/foo/TODO-99-bar.md"]
+        repo, ["src/kernel/foo.c"], [todo_path]
     )
     assert not ok3, "impl-adv must still block when neither tag is present"
+    expected_cmd = (
+        "bash scripts/codex-dispatch.sh '[review-kind: adversarial] "
+        "<todo-path> <section-N> <prompt>'"
+    )
+    assert expected_cmd in err3, f"impl-adv BLOCK help must use canonical single-quoted dispatch, got: {err3}"
+    assert "codex-dispatch-with-files.sh" not in err3, f"impl-adv BLOCK help must not point at untrusted fallback wrapper, got: {err3}"
 print("OK impl_adversarial_tag_interchangeable")
 
 # Test 4: smoke_gate -- requires Boot complete + C:\> markers per Codex H2 fix.
@@ -4957,10 +5157,12 @@ fi
 CRSW_TMP=$(mktemp -d)
 trap 'rm -rf "$CRSW_TMP"' EXIT
 CRSW_REPO="$CRSW_TMP/repo"
-mkdir -p "$CRSW_REPO/.claude/hooks" "$CRSW_REPO/.claude/state"
+mkdir -p "$CRSW_REPO/.claude/hooks" "$CRSW_REPO/.claude/state" "$CRSW_REPO/scripts"
 cp .claude/hooks/codex_review_completed.py "$CRSW_REPO/.claude/hooks/" 2>/dev/null
     cp "$REPO_ROOT/.claude/hooks/_codex_dispatch.py" \
        "$CRSW_REPO/.claude/hooks/_codex_dispatch.py"
+cp -R "$REPO_ROOT/scripts/ai-workflow" "$CRSW_REPO/scripts/ai-workflow"
+cp "$REPO_ROOT/scripts/ai_workflow_import.py" "$CRSW_REPO/scripts/ai_workflow_import.py"
 ( cd "$CRSW_REPO" && git init -q && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init )
 
 # Sub-test 1: synthetic adversarial dispatch -> state file populated within 1 s.
@@ -4989,6 +5191,178 @@ if [ "$CRSW_RC" = "0" ] && [ -s "$CRSW_REPO/.claude/state/last-codex-review.json
 else
     t_fail "codex_review_state_write: crsw_synthetic_dispatch" \
            "rc=$CRSW_RC, delta_ms=$CRSW_DELTA_MS, file=$(ls -la "$CRSW_REPO/.claude/state/last-codex-review.json" 2>&1)"
+fi
+
+CRSW_RECEIVE_PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"receiving-code-review"}}'
+echo "$CRSW_RECEIVE_PAYLOAD" | ( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py >/dev/null 2>&1 )
+if [ -s "$CRSW_REPO/.ai-workflow/evidence.jsonl" ] \
+   && grep -q '"kind": "adversarial"' "$CRSW_REPO/.ai-workflow/evidence.jsonl" \
+   && grep -q '"role": "codex-reviewer-adversarial"' "$CRSW_REPO/.ai-workflow/evidence.jsonl"; then
+    t_pass "codex_review_state_write: crsw_shared_ledger_mirror"
+else
+    t_fail "codex_review_state_write: crsw_shared_ledger_mirror" \
+           "$(cat "$CRSW_REPO/.ai-workflow/evidence.jsonl" 2>&1 | tail -3)"
+fi
+
+CRSW_BATCH_OUT=$(python3 - <<'PYEOF'
+import io
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, ".claude/hooks")
+import codex_review_completed as crc
+import section_commit_gate as scg
+
+with tempfile.TemporaryDirectory() as tmp:
+    repo = pathlib.Path(tmp)
+    (repo / ".claude" / "state").mkdir(parents=True)
+    (repo / "scripts").mkdir()
+    (repo / ".claude" / "hooks").mkdir(parents=True)
+    (repo / ".claude" / "skills" / "demo").mkdir(parents=True)
+    (repo / ".githooks").mkdir()
+    (repo / "docs").mkdir()
+    (repo / "todo").mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    for i in range(180):
+        (repo / "scripts" / f"source_{i}.py").write_text(f"# source {i}\n", encoding="utf-8")
+    governance_paths = [
+        ".claude/hooks/review_hook.py",
+        ".claude/skills/demo/SKILL.md",
+        ".githooks/pre-commit",
+        "docs/review.md",
+        "todo/TODO-99-review.md",
+    ]
+    for rel in governance_paths:
+        (repo / rel).write_text(f"{rel}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "scripts", ".claude", ".githooks", "docs", "todo"], cwd=repo, check=True)
+
+    real_check_output = crc.subprocess.check_output
+    blob_batches = []
+
+    def checked_check_output(args, *pargs, **kwargs):
+        if isinstance(args, list) and args[:5] == ["git", "ls-files", "-s", "-z", "--"]:
+            batch = args[5:]
+            if len(batch) > crc._GIT_BLOB_BATCH_SIZE:
+                raise AssertionError(f"unbounded ls-files batch: {len(batch)}")
+            blob_batches.append(len(batch))
+        return real_check_output(args, *pargs, **kwargs)
+
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "bash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md section 1'",
+        },
+    }
+
+    old_cwd = os.getcwd()
+    old_stdin = sys.stdin
+    crc.subprocess.check_output = checked_check_output
+    try:
+        os.chdir(repo)
+        sys.stdin = io.StringIO(json.dumps(payload))
+        rc = crc.main()
+    finally:
+        sys.stdin = old_stdin
+        os.chdir(old_cwd)
+    if rc != 0:
+        raise SystemExit(f"crc.main rc={rc}")
+
+    state_path = repo / ".claude" / "state" / "last-codex-review.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    trigger_files = state.get("trigger_files") or []
+    trigger_blobs = state.get("trigger_blobs") or {}
+    expected_files = 180 + len(governance_paths)
+    if len(trigger_files) != expected_files:
+        raise SystemExit(f"trigger_files={len(trigger_files)}")
+    if len(trigger_blobs) != expected_files:
+        raise SystemExit(f"trigger_blobs={len(trigger_blobs)}")
+    missing_governance = [path for path in governance_paths if path not in trigger_blobs]
+    if missing_governance:
+        raise SystemExit(f"governance files missing from trigger_blobs: {missing_governance}")
+    if len(blob_batches) < 2:
+        raise SystemExit(f"trigger path did not batch: {blob_batches}")
+
+    state["received"] = True
+    state["received_timestamp_ns"] = time.time_ns()
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    blob_batches.clear()
+    scg.crc = crc
+    ok, err = scg._review_evidence(repo, trigger_files)
+    crc.subprocess.check_output = real_check_output
+    if not ok:
+        raise SystemExit(f"review_evidence failed: {err}")
+    if len(blob_batches) < 2:
+        raise SystemExit(f"review_evidence path did not batch: {blob_batches}")
+
+    real_run = crc.subprocess.run
+
+    def fail_evidence_subprocess_run(args, *pargs, **kwargs):
+        if (
+            isinstance(args, list)
+            and len(args) >= 3
+            and str(args[1]).endswith("scripts/ai-workflow/evidence.py")
+            and args[2] == "record"
+        ):
+            raise AssertionError("shared review mirror used evidence.py subprocess")
+        return real_run(args, *pargs, **kwargs)
+
+    crc.subprocess.run = fail_evidence_subprocess_run
+    try:
+        os.chdir(repo)
+        sys.stdin = io.StringIO(json.dumps({"tool_name": "Skill", "tool_input": {"skill": "receiving-code-review"}}))
+        rc = crc.main()
+    finally:
+        sys.stdin = old_stdin
+        os.chdir(old_cwd)
+        crc.subprocess.run = real_run
+    if rc != 0:
+        raise SystemExit(f"receive rc={rc}")
+    ledger = repo / ".ai-workflow" / "evidence.jsonl"
+    event = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    blobs = event.get("source_blobs") or {}
+    if event.get("kind") != "adversarial" or event.get("result") != "received":
+        raise SystemExit(f"unexpected shared evidence event: {event}")
+    if len(blobs) != expected_files:
+        raise SystemExit(f"shared mirror source_blobs={len(blobs)}")
+    missing_mirror = [path for path in governance_paths if path not in blobs]
+    if missing_mirror:
+        raise SystemExit(f"governance files missing from shared mirror: {missing_mirror}")
+    old_mode_binding = blobs[".githooks/pre-commit"]
+    (repo / ".githooks/pre-commit").chmod(0o755)
+    subprocess.run(["git", "add", ".githooks/pre-commit"], cwd=repo, check=True)
+    new_mode_binding = subprocess.check_output(
+        ["git", "ls-files", "-s", "--", ".githooks/pre-commit"],
+        cwd=repo,
+        text=True,
+    ).split()
+    new_mode_binding = f"{new_mode_binding[0]}:{new_mode_binding[1]}"
+    if old_mode_binding == new_mode_binding:
+        raise SystemExit("mode-only hook change did not affect source binding")
+    if old_mode_binding.split(":", 1)[1] != new_mode_binding.split(":", 1)[1]:
+        raise SystemExit("mode-only fixture unexpectedly changed blob content")
+    old_hook_blob = blobs[".claude/hooks/review_hook.py"]
+    (repo / ".claude/hooks/review_hook.py").write_text("# changed after review\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".claude/hooks/review_hook.py"], cwd=repo, check=True)
+    new_hook_parts = subprocess.check_output(
+        ["git", "ls-files", "-s", "--", ".claude/hooks/review_hook.py"],
+        cwd=repo,
+        text=True,
+    ).split()
+    new_hook_blob = f"{new_hook_parts[0]}:{new_hook_parts[1]}"
+    if old_hook_blob == new_hook_blob:
+        raise SystemExit("post-review staged hook edit did not change blob binding")
+print("OK")
+PYEOF
+)
+if [ "$CRSW_BATCH_OUT" = "OK" ]; then
+    t_pass "codex_review_state_write: crsw_source_blobs_batched_trigger_and_gate"
+else
+    t_fail "codex_review_state_write: crsw_source_blobs_batched_trigger_and_gate" "$CRSW_BATCH_OUT"
 fi
 
 # Sub-test 2: unmarked dispatch (no review-kind marker) -> state file still
@@ -5682,6 +6056,1463 @@ assert_exit_zero "boot-reliability self-check (registry + schemas load)" \
     python3 "$BOOTCERT_DIR/boot_reliability.py" --self-check --platform qemu-tcg --tier stable
 assert_exit_zero "boot-reliability self-test (classify/aggregate/schema)" \
     python3 "$BOOTCERT_DIR/test_boot_reliability.py"
+
+# ============================================================================
+# AI workflow driver interchangeability (TODO-10)
+# ============================================================================
+# The shared scripts under scripts/ai-workflow are the tool-neutral core that
+# lets Claude hooks, git hooks, and the Codex driver adapter consult the same
+# lease/evidence/obligation/stamp/gate state. These tests use a temporary
+# AI_WORKFLOW_STATE_DIR so they do not touch the real .ai-workflow state.
+
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[ai workflow driver interchangeability]${NC}"
+AIWF_TMP="$(mktemp -d "${TMPDIR:-/tmp}/impossible-aiwf-XXXXXX")"
+AIWF_STATE="$AIWF_TMP/state"
+TODO10="todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md"
+AIWF_ENV=(env AI_WORKFLOW_STATE_DIR="$AIWF_STATE")
+
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$TODO10" --section 1 --driver codex --run-id driver-a >/dev/null; then
+    t_pass "ai_workflow_lease: acquire first driver lease"
+else
+    t_fail "ai_workflow_lease: acquire first driver lease"
+fi
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$TODO10" --section 1 --driver claude --run-id driver-b >/dev/null 2>&1; then
+    t_fail "ai_workflow_lease: conflicting driver lease rejected" \
+           "second driver unexpectedly acquired same section"
+else
+    t_pass "ai_workflow_lease: conflicting driver lease rejected"
+fi
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py release --run-id driver-a >/dev/null; then
+    t_pass "ai_workflow_lease: release by owning run"
+else
+    t_fail "ai_workflow_lease: release by owning run"
+fi
+
+# Reviewer independence: reviewer evidence with the SAME run id as the driver
+# must not satisfy obligations. Fresh reviewer run ids then satisfy the review
+# obligations without rerunning duplicate work.
+rm -rf "$AIWF_STATE"
+mkdir -p "$AIWF_STATE"
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$TODO10" --section 2 --driver codex --run-id driver-c >/dev/null
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$TODO10" --section 2 --role validator --backend local \
+    --run-id build-c --kind build --result ok >/dev/null
+OB_UNSOURCED_BUILD=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$TODO10" --section 2 --driver-run-id driver-c --format json)
+if echo "$OB_UNSOURCED_BUILD" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="build" and i["status"]=="missing" for i in d["required"]))' | grep -q True; then
+    t_pass "ai_workflow_obligations: unsourced build evidence does not satisfy shipping gate"
+else
+    t_fail "ai_workflow_obligations: unsourced build evidence does not satisfy shipping gate"
+fi
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$TODO10" --section 2 --role validator --backend local \
+    --run-id build-c-sourced --kind build --result ok --source "$TODO10" >/dev/null
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$TODO10" --section 2 --role validator --backend local \
+    --run-id graph-c --kind todo-graph-validate --result ok >/dev/null
+for kind in adversarial consistency perf; do
+    "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+        --todo "$TODO10" --section 2 --role "codex-reviewer-$kind" \
+        --backend codex --run-id driver-c --kind "$kind" --result received \
+        --source "$TODO10" >/dev/null
+done
+OB_SAME=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$TODO10" --section 2 --driver-run-id driver-c --format json)
+if echo "$OB_SAME" | grep -q '"name": "codex-review-adversarial".*"status": "missing"' \
+   || echo "$OB_SAME" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="codex-review-adversarial" and i["status"]=="missing" for i in d["required"]))' | grep -q True; then
+    t_pass "ai_workflow_obligations: same-run Codex review does not self-certify"
+else
+    t_fail "ai_workflow_obligations: same-run Codex review does not self-certify"
+fi
+AIWF_LEGACY_ROOT="$AIWF_TMP/legacy-root"
+AIWF_LEGACY_STATE="$AIWF_TMP/legacy-state"
+mkdir -p "$AIWF_LEGACY_ROOT/.claude/state" "$AIWF_LEGACY_STATE"
+python3 - "$AIWF_LEGACY_ROOT/.claude/state/last-review-stamps.json" "$TODO10" <<'PY'
+import json, pathlib, sys, time
+path = pathlib.Path(sys.argv[1])
+todo = sys.argv[2]
+now = time.time_ns()
+path.write_text(json.dumps({
+    todo: {
+        "section": "2",
+        "adversarial": now,
+        "consistency": now,
+        "perf": now,
+    }
+}, indent=2) + "\n")
+PY
+AIWF_LEGACY_ENV=(env AI_WORKFLOW_REPO_ROOT="$AIWF_LEGACY_ROOT" AI_WORKFLOW_STATE_DIR="$AIWF_LEGACY_STATE")
+if "${AIWF_LEGACY_ENV[@]}" python3 scripts/ai-workflow/evidence.py import-legacy >/dev/null \
+   && grep -q '"result": "telemetry"' "$AIWF_LEGACY_STATE/evidence.jsonl" \
+   && ! grep -q '"result": "received"' "$AIWF_LEGACY_STATE/evidence.jsonl"; then
+    t_pass "ai_workflow_import_legacy: last-review-stamps import as telemetry"
+else
+    t_fail "ai_workflow_import_legacy: last-review-stamps import as telemetry" \
+           "$(cat "$AIWF_LEGACY_STATE/evidence.jsonl" 2>&1 | tail -5)"
+fi
+OB_LEGACY=$("${AIWF_LEGACY_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$TODO10" --section 2 --format json)
+if echo "$OB_LEGACY" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="codex-review-adversarial" and i["status"]=="missing" for i in d["required"]))' | grep -q True; then
+    t_pass "ai_workflow_obligations: legacy review stamps do not satisfy shipping review"
+else
+    t_fail "ai_workflow_obligations: legacy review stamps do not satisfy shipping review"
+fi
+rm -rf "$AIWF_LEGACY_ROOT" "$AIWF_LEGACY_STATE"
+mkdir -p "$AIWF_LEGACY_ROOT/.claude/state" "$AIWF_LEGACY_STATE"
+python3 - "$AIWF_LEGACY_ROOT/.claude/state/codex-review-history.jsonl" "$TODO10" <<'PY'
+import json, pathlib, sys, time
+path = pathlib.Path(sys.argv[1])
+todo = sys.argv[2]
+item = {
+    "received": True,
+    "review_kind": "adversarial",
+    "todo_path": todo,
+    "section": "2",
+    "review_run_id": "legacy-unsourced-adversarial",
+    "trigger": f"[review-kind: adversarial] {todo} section 2",
+    "received_timestamp_ns": time.time_ns(),
+}
+path.write_text(json.dumps(item) + "\n")
+PY
+if "${AIWF_LEGACY_ENV[@]}" python3 scripts/ai-workflow/evidence.py import-legacy >/dev/null \
+   && grep -q '"role": "legacy-review-history-importer"' "$AIWF_LEGACY_STATE/evidence.jsonl" \
+   && grep -q '"result": "telemetry"' "$AIWF_LEGACY_STATE/evidence.jsonl" \
+   && ! grep -q '"result": "received"' "$AIWF_LEGACY_STATE/evidence.jsonl"; then
+    t_pass "ai_workflow_import_legacy: unsourced review history imports as telemetry"
+else
+    t_fail "ai_workflow_import_legacy: unsourced review history imports as telemetry" \
+           "$(cat "$AIWF_LEGACY_STATE/evidence.jsonl" 2>&1 | tail -5)"
+fi
+OB_HISTORY=$("${AIWF_LEGACY_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$TODO10" --section 2 --format json)
+if echo "$OB_HISTORY" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="codex-review-adversarial" and i["status"]=="missing" for i in d["required"]))' | grep -q True; then
+    t_pass "ai_workflow_obligations: unsourced legacy review history does not satisfy shipping review"
+else
+    t_fail "ai_workflow_obligations: unsourced legacy review history does not satisfy shipping review"
+fi
+for kind in adversarial consistency perf; do
+    "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+        --todo "$TODO10" --section 2 --role "codex-reviewer-$kind" \
+        --backend codex --run-id "review-$kind" --kind "$kind" --result received \
+        --source "$TODO10" >/dev/null
+done
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/stamp.py verified \
+    "$TODO10" --section 2 --driver-run-id driver-c --dry-run >/dev/null; then
+    t_pass "ai_workflow_stamp: verified dry-run succeeds with fresh reviewer evidence"
+else
+    t_fail "ai_workflow_stamp: verified dry-run succeeds with fresh reviewer evidence"
+fi
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+    --todo "$TODO10" --section 2 --driver-run-id driver-c >/dev/null 2>&1; then
+    t_fail "ai_workflow_gates: commit blocks before verified stamp evidence"
+else
+    t_pass "ai_workflow_gates: commit blocks before verified stamp evidence"
+fi
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$TODO10" --section 2 --role stamp-writer --backend ai-workflow \
+    --run-id stamp-c --kind stamp.verified --result ok --source "$TODO10" >/dev/null
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+    --todo "$TODO10" --section 2 --driver-run-id driver-c >/dev/null; then
+    t_pass "ai_workflow_gates: commit allows after lease/build/review/stamp evidence"
+else
+    t_fail "ai_workflow_gates: commit allows after lease/build/review/stamp evidence"
+fi
+DIRECT_GATE=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+    --todo "$TODO10" --section 2 --driver-run-id driver-c --mode direct --format json)
+GIT_GATE=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+    --todo "$TODO10" --section 2 --driver-run-id driver-c --mode git-hook --format json)
+HOOK_GATE=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+    --todo "$TODO10" --section 2 --driver-run-id driver-c --mode claude-hook --format json)
+DIRECT_VERDICT=$(echo "$DIRECT_GATE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')
+GIT_VERDICT=$(echo "$GIT_GATE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')
+HOOK_VERDICT=$(echo "$HOOK_GATE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["verdict"])')
+if [ "$DIRECT_VERDICT" = "ALLOW" ] && [ "$GIT_VERDICT" = "ALLOW" ] && [ "$HOOK_VERDICT" = "ALLOW" ]; then
+    t_pass "ai_workflow_gates: direct/git-hook/claude-hook modes share verdict"
+else
+    t_fail "ai_workflow_gates: direct/git-hook/claude-hook modes share verdict" \
+           "direct=$DIRECT_VERDICT git=$GIT_VERDICT hook=$HOOK_VERDICT"
+fi
+
+AIWF_LEASE_SCALE_STATE="$AIWF_TMP/lease-scale-state"
+rm -rf "$AIWF_LEASE_SCALE_STATE"
+mkdir -p "$AIWF_LEASE_SCALE_STATE"
+if env AI_WORKFLOW_STATE_DIR="$AIWF_LEASE_SCALE_STATE" python3 - "$AIWF_LEASE_SCALE_STATE" "$TODO10" <<'PY'
+import importlib.util
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+state = pathlib.Path(sys.argv[1])
+todo = sys.argv[2]
+root = pathlib.Path.cwd()
+sys.path.insert(0, str(root / "scripts"))
+os.environ["AI_WORKFLOW_STATE_DIR"] = str(state)
+
+from ai_workflow_import import common  # noqa: E402
+
+spec = importlib.util.spec_from_file_location(
+    "ai_workflow_gates", root / "scripts/ai-workflow/gates.py"
+)
+gates = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(gates)
+
+ledger = state / "lease-history.jsonl"
+for i in range(1800):
+    common.append_jsonl(
+        ledger,
+        {
+            "action": "complete",
+            "lease": {
+                "todo_path": "todo/other.md",
+                "section": "9",
+                "driver_run_id": f"old-{i}",
+            },
+        },
+    )
+common.append_jsonl(
+    ledger,
+    {
+        "action": "complete",
+        "lease": {
+            "todo_path": todo,
+            "section": "8",
+            "driver_run_id": "lease-scale-current",
+        },
+    },
+)
+
+real_iter_jsonl = common.iter_jsonl
+real_iter_jsonl_reverse = common.iter_jsonl_reverse
+seen = {"n": 0}
+
+
+def fail_full_jsonl(path):
+    raise AssertionError(f"full lease history scan used for {path}")
+
+
+def counted_reverse(path, block_size=65536):
+    for item in real_iter_jsonl_reverse(path, block_size):
+        seen["n"] += 1
+        yield item
+
+
+common.iter_jsonl = fail_full_jsonl
+common.iter_jsonl_reverse = counted_reverse
+try:
+    ok, ids = gates._active_or_completed_lease(todo, "8", root)
+finally:
+    common.iter_jsonl = real_iter_jsonl
+    common.iter_jsonl_reverse = real_iter_jsonl_reverse
+
+if not ok or ids != ["complete:lease-scale-current"]:
+    raise SystemExit(f"completed lease not found: ok={ok} ids={ids}")
+if seen["n"] > 3:
+    raise SystemExit(f"lease history reverse scan consumed stale records: {seen['n']}")
+
+ledger.unlink()
+for i in range(1800):
+    common.append_jsonl(
+        ledger,
+        {
+            "action": "complete",
+            "lease": {
+                "todo_path": "todo/other.md",
+                "section": "9",
+                "driver_run_id": f"miss-{i}",
+            },
+        },
+    )
+
+seen["n"] = 0
+common.iter_jsonl = fail_full_jsonl
+common.iter_jsonl_reverse = counted_reverse
+try:
+    ok, ids = gates._active_or_completed_lease(todo, "404", root)
+finally:
+    common.iter_jsonl = real_iter_jsonl
+    common.iter_jsonl_reverse = real_iter_jsonl_reverse
+
+if ok or ids:
+    raise SystemExit(f"missing lease unexpectedly found: ok={ok} ids={ids}")
+if seen["n"] > gates.LEASE_HISTORY_SCAN_LIMIT + 1:
+    raise SystemExit(f"missing lease scan was unbounded: {seen['n']}")
+PY
+then
+    t_pass "ai_workflow_gates: completed/missing lease lookup uses bounded reverse history scan"
+else
+    t_fail "ai_workflow_gates: completed/missing lease lookup uses bounded reverse history scan"
+fi
+
+AIWF_REVIEW_STATE="$AIWF_TMP/review-state"
+rm -rf "$AIWF_REVIEW_STATE"
+mkdir -p "$AIWF_REVIEW_STATE"
+AIWF_REVIEW_ENV=(env AI_WORKFLOW_STATE_DIR="$AIWF_REVIEW_STATE")
+"${AIWF_REVIEW_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$TODO10" --section 4 --driver codex --run-id review-profile-driver >/dev/null
+"${AIWF_REVIEW_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$TODO10" --section 4 --role validator --backend local \
+    --run-id review-profile-graph --kind todo-graph-validate --result ok >/dev/null
+for kind in adversarial consistency perf; do
+    "${AIWF_REVIEW_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+        --todo "$TODO10" --section 4 --role "codex-reviewer-$kind" \
+        --backend codex --run-id "review-profile-$kind" --kind "$kind" \
+        --result received --source "$TODO10" >/dev/null
+done
+OB_REVIEW_PROFILE=$("${AIWF_REVIEW_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$TODO10" --section 4 --workflow review --driver-run-id review-profile-driver --format json)
+if echo "$OB_REVIEW_PROFILE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"]=="ready" and all(i["name"]!="build" for i in d["required"]))' | grep -q True; then
+    t_pass "ai_workflow_obligations: review workflow does not require build evidence"
+else
+    t_fail "ai_workflow_obligations: review workflow does not require build evidence" "$OB_REVIEW_PROFILE"
+fi
+
+AIWF_SCALE_STATE="$AIWF_TMP/scale-state"
+rm -rf "$AIWF_SCALE_STATE"
+mkdir -p "$AIWF_SCALE_STATE"
+if env AI_WORKFLOW_STATE_DIR="$AIWF_SCALE_STATE" python3 - "$AIWF_SCALE_STATE" "$TODO10" <<'PY'
+import importlib.util
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+from types import SimpleNamespace
+
+state = pathlib.Path(sys.argv[1])
+todo = sys.argv[2]
+section = "4"
+driver_run = "scale-driver"
+root = pathlib.Path.cwd()
+sys.path.insert(0, str(root / "scripts"))
+os.environ["AI_WORKFLOW_STATE_DIR"] = str(state)
+
+from ai_workflow_import import common  # noqa: E402
+real_git_blob_or_digest = common.git_blob_or_digest
+real_git_blobs_or_digests = common.git_blobs_or_digests
+real_check_output = common.subprocess.check_output
+
+spec = importlib.util.spec_from_file_location(
+    "ai_workflow_obligations", root / "scripts/ai-workflow/obligations.py"
+)
+ob = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(ob)
+
+current_blob = common.git_blob_or_digest(todo, root)
+if not current_blob:
+    raise SystemExit("missing current TODO blob")
+
+common.write_json_atomic(
+    state / "active-lease.json",
+    {
+        "todo_path": todo,
+        "section": section,
+        "driver": "codex",
+        "driver_run_id": driver_run,
+        "expires_at_ns": common.now_ns() + 3600 * 1_000_000_000,
+    },
+)
+ledger = state / "evidence.jsonl"
+
+
+def append(kind, run_id, role, result="ok", source_blob=None):
+    payload = {
+        "task_id": f"{todo}#{section}",
+        "todo_path": todo,
+        "section": section,
+        "role": role,
+        "backend": "local",
+        "run_id": run_id,
+        "kind": kind,
+        "head_sha": "HEAD",
+        "source_blobs": {todo: source_blob} if source_blob is not None else {},
+        "result": result,
+        "summary_path": "",
+        "created_at_ns": common.now_ns(),
+        "created_at": common.now_iso(),
+        "expires_at_ns": 0,
+        "legacy_import": False,
+        "metadata": {},
+    }
+    ob.evidence.append_event(payload, root)
+
+
+for i in range(250):
+    append("build", f"stale-build-{i}", "validator", source_blob=f"stale-{i}")
+
+append("build", "scale-build", "validator", source_blob=current_blob)
+for kind in ("adversarial", "consistency", "perf"):
+    append(kind, f"scale-review-{kind}", f"codex-reviewer-{kind}", result="received", source_blob=current_blob)
+append("stamp.verified", "scale-stamp", "stamp-writer", source_blob=current_blob)
+append("todo-graph-validate", "scale-graph", "validator")
+
+calls = {"n": 0}
+
+
+def counted_blob(path, repo_root=None):
+    calls["n"] += 1
+    if common.rel_path(path, repo_root or root) == todo:
+        return current_blob
+    return ""
+
+
+def counted_blobs(paths, repo_root=None):
+    calls["n"] += 1
+    return {
+        common.rel_path(path, repo_root or root): current_blob
+        for path in paths
+    }
+
+
+ob.common.git_blob_or_digest = counted_blob
+ob.common.git_blobs_or_digests = counted_blobs
+out = ob.resolve(
+    SimpleNamespace(
+        todo=todo,
+        section=section,
+        workflow="implement",
+        driver_run_id=driver_run,
+    )
+)
+if out["status"] != "ready":
+    raise SystemExit(out)
+if calls["n"] > 5:
+    raise SystemExit(f"source blob lookups were not bounded: {calls['n']}")
+
+section = "5"
+driver_run = "scale-driver-multifile"
+common.write_json_atomic(
+    state / "active-lease.json",
+    {
+        "todo_path": todo,
+        "section": section,
+        "driver": "codex",
+        "driver_run_id": driver_run,
+        "expires_at_ns": common.now_ns() + 3600 * 1_000_000_000,
+    },
+)
+ledger.unlink()
+multi_blobs = {
+    f"scripts/generated-scale-{i}.py": f"blob-{i}"
+    for i in range(90)
+}
+
+
+def append_multi(kind, run_id, role, result="ok"):
+    payload = {
+        "task_id": f"{todo}#{section}",
+        "todo_path": todo,
+        "section": section,
+        "role": role,
+        "backend": "local",
+        "run_id": run_id,
+        "kind": kind,
+        "head_sha": "HEAD",
+        "source_blobs": multi_blobs,
+        "result": result,
+        "summary_path": "",
+        "created_at_ns": common.now_ns(),
+        "created_at": common.now_iso(),
+        "expires_at_ns": 0,
+        "legacy_import": False,
+        "metadata": {},
+    }
+    ob.evidence.append_event(payload, root)
+
+
+append_multi("build", "scale-multi-build", "validator")
+for kind in ("adversarial", "consistency", "perf"):
+    append_multi(kind, f"scale-multi-review-{kind}", f"codex-reviewer-{kind}", result="received")
+append_multi("stamp.verified", "scale-multi-stamp", "stamp-writer")
+append("todo-graph-validate", "scale-multi-graph", "validator")
+
+multi_calls = {"n": 0}
+
+
+def fail_single_blob(path, repo_root=None):
+    raise AssertionError(f"unexpected per-path blob lookup for {path}")
+
+
+def counted_multi_blobs(paths, repo_root=None):
+    multi_calls["n"] += 1
+    return {
+        common.rel_path(path, repo_root or root): multi_blobs[common.rel_path(path, repo_root or root)]
+        for path in paths
+    }
+
+
+ob.common.git_blob_or_digest = fail_single_blob
+ob.common.git_blobs_or_digests = counted_multi_blobs
+out = ob.resolve(
+    SimpleNamespace(
+        todo=todo,
+        section=section,
+        workflow="implement",
+        driver_run_id=driver_run,
+    )
+)
+if out["status"] != "ready":
+    raise SystemExit(out)
+if multi_calls["n"] > 1:
+    raise SystemExit(f"multi-file source current check was not batched: {multi_calls['n']}")
+
+section = "6"
+driver_run = "scale-driver-cross-event"
+common.write_json_atomic(
+    state / "active-lease.json",
+    {
+        "todo_path": todo,
+        "section": section,
+        "driver": "codex",
+        "driver_run_id": driver_run,
+        "expires_at_ns": common.now_ns() + 3600 * 1_000_000_000,
+    },
+)
+ledger.unlink()
+append("build", "scale-cross-build", "validator", source_blob=current_blob)
+for kind in ("adversarial", "consistency", "perf"):
+    append(kind, f"scale-cross-review-{kind}", f"codex-reviewer-{kind}", result="received", source_blob=current_blob)
+append("stamp.verified", "scale-cross-stamp", "stamp-writer", source_blob=current_blob)
+append("todo-graph-validate", "scale-cross-graph", "validator")
+
+
+def append_stale_build(i):
+    stale_path = f"scripts/stale-event-{i}.py"
+    payload = {
+        "task_id": f"{todo}#{section}",
+        "todo_path": todo,
+        "section": section,
+        "role": "validator",
+        "backend": "local",
+        "run_id": f"scale-cross-stale-{i}",
+        "kind": "build",
+        "head_sha": "HEAD",
+        "source_blobs": {stale_path: f"old-{i}"},
+        "result": "ok",
+        "summary_path": "",
+        "created_at_ns": common.now_ns(),
+        "created_at": common.now_iso(),
+        "expires_at_ns": 0,
+        "legacy_import": False,
+        "metadata": {},
+    }
+    ob.evidence.append_event(payload, root)
+
+
+for i in range(120):
+    append_stale_build(i)
+
+cross_calls = {"n": 0}
+
+
+def counted_cross_blobs(paths, repo_root=None):
+    cross_calls["n"] += 1
+    out = {}
+    for path in paths:
+        rel = common.rel_path(path, repo_root or root)
+        if rel == todo:
+            out[rel] = current_blob
+        elif rel.startswith("scripts/stale-event-"):
+            out[rel] = "new-" + rel.rsplit("-", 1)[-1].removesuffix(".py")
+        else:
+            out[rel] = ""
+    return out
+
+
+ob.common.git_blob_or_digest = fail_single_blob
+ob.common.git_blobs_or_digests = counted_cross_blobs
+out = ob.resolve(
+    SimpleNamespace(
+        todo=todo,
+        section=section,
+        workflow="implement",
+        driver_run_id=driver_run,
+    )
+)
+if out["status"] != "ready":
+    raise SystemExit(out)
+if cross_calls["n"] > 2:
+    raise SystemExit(f"cross-event source current check was not batched: {cross_calls['n']}")
+
+section = "6b"
+ledger.unlink()
+append("build", "scale-single-current", "validator", source_blob=current_blob)
+for i in range(300):
+    append("build", f"scale-single-stale-{i}", "validator", source_blob=f"old-single-{i}")
+
+single_calls = {"n": 0}
+
+
+def counted_single_blobs(paths, repo_root=None):
+    single_calls["n"] += 1
+    return {
+        common.rel_path(path, repo_root or root): current_blob
+        for path in paths
+    }
+
+
+ob.common.git_blob_or_digest = fail_single_blob
+ob.common.git_blobs_or_digests = counted_single_blobs
+found = ob._resolve_events(
+    todo,
+    section,
+    [
+        {
+            "name": "build",
+            "match": {
+                "kind": "build",
+                "result": "ok",
+                "allow_legacy": False,
+                "require_source_blobs": True,
+            },
+        }
+    ],
+    root,
+)
+if "build" not in found:
+    raise SystemExit("single-spec stale run did not resolve current build")
+if single_calls["n"] > 1:
+    raise SystemExit(f"single-spec stale run used per-event blob checks: {single_calls['n']}")
+
+common.git_blob_or_digest = real_git_blob_or_digest
+common.git_blobs_or_digests = real_git_blobs_or_digests
+
+batch_calls = []
+
+
+def fake_check_output(args, cwd=None, text=None, stderr=None, timeout=None):
+    if args[:4] == ["git", "ls-files", "-s", "--"]:
+        rels = args[4:]
+        if len(rels) > common.GIT_BLOB_BATCH_SIZE:
+            raise SystemExit(f"git blob batch exceeded limit: {len(rels)}")
+        batch_calls.append(tuple(rels))
+        return "".join(
+            f"100644 blob-{rel.replace('/', '-')} 0\t{rel}\n"
+            for rel in rels
+        )
+    return real_check_output(args, cwd=cwd, text=text, stderr=stderr, timeout=timeout)
+
+
+common.subprocess.check_output = fake_check_output
+try:
+    many_paths = [
+        f"scripts/chunked-source-{i}.py"
+        for i in range(common.GIT_BLOB_BATCH_SIZE * 2 + 17)
+    ]
+    chunked = common.git_blobs_or_digests(many_paths, root)
+finally:
+    common.subprocess.check_output = real_check_output
+
+if len(chunked) != len(many_paths):
+    raise SystemExit(f"chunked blob lookup missed paths: {len(chunked)} != {len(many_paths)}")
+if len(batch_calls) < 3:
+    raise SystemExit(f"chunked blob lookup did not split large input: {len(batch_calls)}")
+
+source_calls = {"n": 0}
+
+
+def fail_record_single(path, repo_root=None):
+    raise AssertionError(f"record source path used per-file lookup for {path}")
+
+
+def counted_record_batch(paths, repo_root=None):
+    source_calls["n"] += 1
+    return {
+        common.rel_path(path, repo_root or root): f"blob-{i}"
+        for i, path in enumerate(paths)
+    }
+
+
+common.git_blob_or_digest = fail_record_single
+common.git_blobs_or_digests = counted_record_batch
+record_sources = [f"scripts/record-source-{i}.py" for i in range(180)]
+recorded = common.source_blobs(record_sources, root)
+common.git_blob_or_digest = real_git_blob_or_digest
+common.git_blobs_or_digests = real_git_blobs_or_digests
+if source_calls["n"] != 1:
+    raise SystemExit(f"source_blobs did not use one batched helper call: {source_calls['n']}")
+if len(recorded) != len(record_sources):
+    raise SystemExit(f"source_blobs dropped batched records: {len(recorded)}")
+
+section = "7"
+driver_run = "scale-driver-bounded-ledger"
+common.write_json_atomic(
+    state / "active-lease.json",
+    {
+        "todo_path": todo,
+        "section": section,
+        "driver": "codex",
+        "driver_run_id": driver_run,
+        "expires_at_ns": common.now_ns() + 3600 * 1_000_000_000,
+    },
+)
+ledger.unlink()
+
+
+def append_for_section(
+    target_todo,
+    target_section,
+    kind,
+    run_id,
+    role,
+    result="ok",
+    source_blob=None,
+    expires_at_ns=0,
+):
+    payload = {
+        "task_id": f"{target_todo}#{target_section}",
+        "todo_path": target_todo,
+        "section": target_section,
+        "role": role,
+        "backend": "local",
+        "run_id": run_id,
+        "kind": kind,
+        "head_sha": "HEAD",
+        "source_blobs": {todo: source_blob} if source_blob is not None else {},
+        "result": result,
+        "summary_path": "",
+        "created_at_ns": common.now_ns(),
+        "created_at": common.now_iso(),
+        "expires_at_ns": expires_at_ns,
+        "legacy_import": False,
+        "metadata": {},
+    }
+    ob.evidence.append_event(payload, root)
+
+
+for i in range(1600):
+    if i % 2:
+        append_for_section(todo, section, "build", f"old-same-target-{i}", "validator", source_blob=f"old-{i}")
+    else:
+        append_for_section("todo/other.md", section, "build", f"old-other-target-{i}", "validator")
+
+append_for_section(todo, section, "build", "bounded-build", "validator", source_blob=current_blob)
+for kind in ("adversarial", "consistency", "perf"):
+    append_for_section(todo, section, kind, f"bounded-review-{kind}", f"codex-reviewer-{kind}", result="received", source_blob=current_blob)
+append_for_section(todo, section, "stamp.verified", "bounded-stamp", "stamp-writer", source_blob=current_blob)
+append_for_section(todo, section, "todo-graph-validate", "bounded-graph", "validator")
+
+real_iter_jsonl_reverse = common.iter_jsonl_reverse
+records_seen = {"n": 0}
+
+
+def counted_iter_jsonl_reverse(path, block_size=65536):
+    for event in real_iter_jsonl_reverse(path, block_size):
+        records_seen["n"] += 1
+        yield event
+
+
+def counted_bounded_blobs(paths, repo_root=None):
+    return {
+        common.rel_path(path, repo_root or root): current_blob
+        for path in paths
+    }
+
+
+common.iter_jsonl_reverse = counted_iter_jsonl_reverse
+common.git_blob_or_digest = fail_record_single
+common.git_blobs_or_digests = counted_bounded_blobs
+try:
+    out = ob.resolve(
+        SimpleNamespace(
+            todo=todo,
+            section=section,
+            workflow="implement",
+            driver_run_id=driver_run,
+        )
+    )
+finally:
+    common.iter_jsonl_reverse = real_iter_jsonl_reverse
+    common.git_blob_or_digest = real_git_blob_or_digest
+    common.git_blobs_or_digests = real_git_blobs_or_digests
+
+if out["status"] != "ready":
+    raise SystemExit(out)
+if records_seen["n"] > 20:
+    raise SystemExit(f"obligation resolve consumed stale ledger records: {records_seen['n']}")
+
+section = "8"
+driver_run = "scale-driver-missing-evidence"
+common.write_json_atomic(
+    state / "active-lease.json",
+    {
+        "todo_path": todo,
+        "section": section,
+        "driver": "codex",
+        "driver_run_id": driver_run,
+        "expires_at_ns": common.now_ns() + 3600 * 1_000_000_000,
+    },
+)
+ledger.unlink()
+for i in range(1500):
+    append_for_section(
+        "todo/other.md",
+        "99",
+        "build",
+        f"missing-unrelated-{i}",
+        "validator",
+    )
+
+records_seen["n"] = 0
+common.iter_jsonl_reverse = counted_iter_jsonl_reverse
+try:
+    missing_out = ob.resolve(
+        SimpleNamespace(
+            todo=todo,
+            section=section,
+            workflow="implement",
+            driver_run_id=driver_run,
+        )
+    )
+finally:
+    common.iter_jsonl_reverse = real_iter_jsonl_reverse
+
+if missing_out["status"] != "missing":
+    raise SystemExit(f"missing evidence unexpectedly ready: {missing_out}")
+if records_seen["n"] != 0:
+    raise SystemExit(f"missing evidence lookup read unrelated index records: {records_seen['n']}")
+
+section = "8b"
+driver_run = "scale-driver-hot-missing"
+common.write_json_atomic(
+    state / "active-lease.json",
+    {
+        "todo_path": todo,
+        "section": section,
+        "driver": "codex",
+        "driver_run_id": driver_run,
+        "expires_at_ns": common.now_ns() + 3600 * 1_000_000_000,
+    },
+)
+if ledger.exists():
+    ledger.unlink()
+for i in range(ob.RESOLVE_TARGET_SCAN_RECORD_LIMIT + 300):
+    append_for_section(todo, section, "build", f"hot-stale-{i}", "validator", source_blob=f"stale-hot-{i}")
+
+records_seen["n"] = 0
+common.iter_jsonl_reverse = counted_iter_jsonl_reverse
+common.git_blob_or_digest = fail_record_single
+common.git_blobs_or_digests = counted_bounded_blobs
+try:
+    hot_missing_out = ob.resolve(
+        SimpleNamespace(
+            todo=todo,
+            section=section,
+            workflow="implement",
+            driver_run_id=driver_run,
+        )
+    )
+finally:
+    common.iter_jsonl_reverse = real_iter_jsonl_reverse
+    common.git_blob_or_digest = real_git_blob_or_digest
+    common.git_blobs_or_digests = real_git_blobs_or_digests
+
+if hot_missing_out["status"] != "missing":
+    raise SystemExit(f"hot missing evidence unexpectedly ready: {hot_missing_out}")
+if records_seen["n"] > ob.RESOLVE_TARGET_SCAN_RECORD_LIMIT:
+    raise SystemExit(f"hot target scan exceeded cap: {records_seen['n']}")
+if not any("target-index scan capped" in item for item in hot_missing_out.get("diagnostics", [])):
+    raise SystemExit(f"hot target cap did not report diagnostic: {hot_missing_out}")
+
+section = "9"
+if ledger.exists():
+    ledger.unlink()
+expired_at = common.now_ns() - 1_000_000_000
+append_for_section(
+    todo,
+    section,
+    "build",
+    "expired-current-build",
+    "validator",
+    source_blob=current_blob,
+    expires_at_ns=expired_at,
+)
+expired_found = ob._resolve_events(
+    todo,
+    section,
+    [
+        {
+            "name": "build",
+            "match": {
+                "kind": "build",
+                "result": "ok",
+                "allow_legacy": False,
+                "require_source_blobs": True,
+            },
+        }
+    ],
+    root,
+)
+if expired_found:
+    raise SystemExit(f"expired indexed event resolved as valid evidence: {expired_found}")
+expired_index = ob.evidence.target_index_path(root, todo, section)
+if not expired_index.exists():
+    raise SystemExit("expired event did not create target index fixture")
+import contextlib
+import io
+
+with contextlib.redirect_stdout(io.StringIO()):
+    ob.evidence.gc(SimpleNamespace())
+if expired_index.exists() and expired_index.read_text(encoding="utf-8").strip():
+    raise SystemExit("gc left expired target-index records behind")
+
+concurrent_state = state / "gc-concurrent"
+shutil.rmtree(concurrent_state, ignore_errors=True)
+concurrent_state.mkdir(parents=True)
+old_state_env = os.environ.get("AI_WORKFLOW_STATE_DIR")
+os.environ["AI_WORKFLOW_STATE_DIR"] = str(concurrent_state)
+try:
+    section = "10"
+    ob.evidence.append_event(
+        {
+            "task_id": f"{todo}#{section}",
+            "todo_path": todo,
+            "section": section,
+            "role": "validator",
+            "backend": "local",
+            "run_id": "expired-before-gc",
+            "kind": "build",
+            "head_sha": "HEAD",
+            "source_blobs": {},
+            "result": "ok",
+            "summary_path": "",
+            "created_at_ns": common.now_ns(),
+            "created_at": common.now_iso(),
+            "expires_at_ns": common.now_ns() - 1_000_000_000,
+            "legacy_import": False,
+            "metadata": {},
+        },
+        root,
+    )
+finally:
+    if old_state_env is None:
+        os.environ.pop("AI_WORKFLOW_STATE_DIR", None)
+    else:
+        os.environ["AI_WORKFLOW_STATE_DIR"] = old_state_env
+
+child_code = f"""
+import importlib.util
+import pathlib
+import sys
+import time
+from types import SimpleNamespace
+
+root = pathlib.Path({str(root)!r})
+sys.path.insert(0, str(root / "scripts"))
+spec = importlib.util.spec_from_file_location(
+    "ai_workflow_evidence", root / "scripts/ai-workflow/evidence.py"
+)
+ev = importlib.util.module_from_spec(spec)
+assert spec and spec.loader
+spec.loader.exec_module(ev)
+real_load = ev.load_events
+
+def slow_load(repo_root=None):
+    events = real_load(repo_root)
+    print("snapshot-ready", flush=True)
+    time.sleep(0.5)
+    return events
+
+ev.load_events = slow_load
+raise SystemExit(ev.gc(SimpleNamespace()))
+"""
+env = dict(os.environ)
+env["AI_WORKFLOW_REPO_ROOT"] = str(root)
+env["AI_WORKFLOW_STATE_DIR"] = str(concurrent_state)
+proc = subprocess.Popen(
+    [sys.executable, "-c", child_code],
+    cwd=root,
+    env=env,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+ready = proc.stdout.readline().strip() if proc.stdout else ""
+if ready != "snapshot-ready":
+    out, err = proc.communicate(timeout=5)
+    raise SystemExit(f"gc concurrency fixture did not reach snapshot: {ready} out={out} err={err}")
+record = subprocess.run(
+    [
+        sys.executable,
+        "scripts/ai-workflow/evidence.py",
+        "record",
+        "--todo",
+        todo,
+        "--section",
+        section,
+        "--role",
+        "validator",
+        "--backend",
+        "local",
+        "--run-id",
+        "append-during-gc",
+        "--kind",
+        "build",
+        "--result",
+        "ok",
+    ],
+    cwd=root,
+    env=env,
+    text=True,
+    capture_output=True,
+    timeout=5,
+)
+gc_out, gc_err = proc.communicate(timeout=5)
+if proc.returncode != 0:
+    raise SystemExit(f"gc child failed: out={gc_out} err={gc_err}")
+if record.returncode != 0:
+    raise SystemExit(f"concurrent evidence record failed: {record.stderr or record.stdout}")
+ledger_events = common.iter_jsonl(concurrent_state / "evidence.jsonl")
+if not any(ev.get("run_id") == "append-during-gc" for ev in ledger_events):
+    raise SystemExit(f"gc lost concurrent append from ledger: {ledger_events}")
+old_state_env = os.environ.get("AI_WORKFLOW_STATE_DIR")
+os.environ["AI_WORKFLOW_STATE_DIR"] = str(concurrent_state)
+try:
+    concurrent_index = ob.evidence.target_index_path(root, todo, section)
+finally:
+    if old_state_env is None:
+        os.environ.pop("AI_WORKFLOW_STATE_DIR", None)
+    else:
+        os.environ["AI_WORKFLOW_STATE_DIR"] = old_state_env
+index_events = common.iter_jsonl(concurrent_index)
+if not any(ev.get("run_id") == "append-during-gc" for ev in index_events):
+    raise SystemExit(f"gc lost concurrent append from target index: {index_events}")
+
+section = "11"
+indexed_event = ob.evidence.append_event(
+    {
+        "task_id": f"{todo}#{section}",
+        "todo_path": todo,
+        "section": section,
+        "role": "validator",
+        "backend": "local",
+        "run_id": "targeted-query-event",
+        "kind": "build",
+        "head_sha": "HEAD",
+        "source_blobs": {},
+        "result": "ok",
+        "summary_path": "",
+        "created_at_ns": common.now_ns(),
+        "created_at": common.now_iso(),
+        "expires_at_ns": 0,
+        "legacy_import": False,
+        "metadata": {},
+    },
+    root,
+)
+real_load_events = ob.evidence.load_events
+
+
+def fail_full_ledger_load(repo_root=None):
+    raise AssertionError("targeted evidence query/explain used full ledger")
+
+
+target_args = SimpleNamespace(
+    todo=todo,
+    section=section,
+    role=None,
+    backend=None,
+    run_id=None,
+    not_run_id=None,
+    kind="build",
+    result="ok",
+    source_current=False,
+    latest=True,
+    format="ids",
+    require=True,
+)
+ob.evidence.load_events = fail_full_ledger_load
+try:
+    with contextlib.redirect_stdout(io.StringIO()) as query_out:
+        query_rc = ob.evidence.query(target_args)
+    with contextlib.redirect_stdout(io.StringIO()) as explain_out:
+        explain_rc = ob.evidence.explain(target_args)
+finally:
+    ob.evidence.load_events = real_load_events
+if query_rc != 0 or indexed_event["event_id"] not in query_out.getvalue():
+    raise SystemExit(f"targeted query missed index event: rc={query_rc} out={query_out.getvalue()}")
+if explain_rc != 0 or "targeted-query-event" not in explain_out.getvalue():
+    raise SystemExit(f"targeted explain missed index event: rc={explain_rc} out={explain_out.getvalue()}")
+PY
+then
+    t_pass "ai_workflow_obligations: large ledger resolves newest evidence with bounded source checks"
+else
+    t_fail "ai_workflow_obligations: large ledger resolves newest evidence with bounded source checks"
+fi
+
+AIWF_RECORD_ROOT="$AIWF_TMP/record-source-root"
+AIWF_RECORD_STATE="$AIWF_TMP/record-source-state"
+rm -rf "$AIWF_RECORD_ROOT" "$AIWF_RECORD_STATE"
+mkdir -p "$AIWF_RECORD_ROOT/sources" "$AIWF_RECORD_STATE"
+git -C "$AIWF_RECORD_ROOT" init -q
+record_args=()
+for i in $(seq 1 180); do
+    src="$AIWF_RECORD_ROOT/sources/source-$i.txt"
+    printf 'source %s\n' "$i" > "$src"
+    record_args+=(--source "$src")
+done
+git -C "$AIWF_RECORD_ROOT" add sources
+if env AI_WORKFLOW_REPO_ROOT="$AIWF_RECORD_ROOT" AI_WORKFLOW_STATE_DIR="$AIWF_RECORD_STATE" \
+    python3 scripts/ai-workflow/evidence.py record \
+        --todo "$TODO10" --section 4 --role validator --backend local \
+        --run-id record-many-sources --kind build --result ok \
+        "${record_args[@]}" >/dev/null \
+   && python3 - "$AIWF_RECORD_STATE/evidence.jsonl" <<'PY'
+import json
+import pathlib
+import sys
+
+line = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()[-1]
+event = json.loads(line)
+blobs = event.get("source_blobs") or {}
+if len(blobs) != 180:
+    raise SystemExit(f"expected 180 source blobs, got {len(blobs)}")
+if any(not key.startswith("sources/source-") for key in blobs):
+    raise SystemExit("source blob paths were not normalized relative to AI_WORKFLOW_REPO_ROOT")
+PY
+then
+    t_pass "ai_workflow_evidence: record handles many --source paths through batched source blobs"
+else
+    t_fail "ai_workflow_evidence: record handles many --source paths through batched source blobs"
+fi
+
+META_OUT=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$TODO10" --section 3 --role validator --backend local \
+    --run-id build-meta --kind build --result ok --source "$TODO10" \
+    --command "bash scripts/build.sh" --exit-code 0 \
+    --log-path build/build.log --final-marker "=== BUILD OK ===")
+if echo "$META_OUT" | grep -q '"command": "bash scripts/build.sh"' \
+   && echo "$META_OUT" | grep -q '"exit_code": "0"' \
+   && echo "$META_OUT" | grep -q '"final_marker": "=== BUILD OK ==="'; then
+    t_pass "ai_workflow_evidence: build metadata recorded"
+else
+    t_fail "ai_workflow_evidence: build metadata recorded" "$META_OUT"
+fi
+
+STAMP_TODO="$AIWF_TMP/stamp-fixture.md"
+cat > "$STAMP_TODO" <<'EOF_STAMP_FIXTURE'
+# Stamp Fixture
+
+## 1. Fixture Section
+
+- [ ] work item
+EOF_STAMP_FIXTURE
+rm -rf "$AIWF_STATE"
+mkdir -p "$AIWF_STATE"
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$STAMP_TODO" --section 1 --driver claude --run-id stamp-driver >/dev/null
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$STAMP_TODO" --section 1 --role validator --backend local \
+    --run-id stamp-build --kind build --result ok --source "$STAMP_TODO" >/dev/null
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$STAMP_TODO" --section 1 --role validator --backend local \
+    --run-id stamp-graph --kind todo-graph-validate --result ok >/dev/null
+for kind in adversarial consistency perf; do
+    "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+        --todo "$STAMP_TODO" --section 1 --role "codex-reviewer-$kind" \
+        --backend codex --run-id "stamp-review-$kind" --kind "$kind" \
+        --result received --source "$STAMP_TODO" >/dev/null
+done
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/stamp.py verified \
+    "$STAMP_TODO" --section 1 --driver-run-id stamp-driver --write >/dev/null \
+   && grep -q '"kind": "stamp.generated"' "$AIWF_STATE/evidence.jsonl" \
+   && grep -q '"stamp_text_sha256"' "$AIWF_STATE/evidence.jsonl"; then
+    t_pass "ai_workflow_stamp: write records generated stamp hash"
+else
+    t_fail "ai_workflow_stamp: write records generated stamp hash" \
+           "$(cat "$AIWF_STATE/evidence.jsonl" 2>&1 | tail -5)"
+fi
+
+STAMP_REPO="$AIWF_TMP/stamp-repo"
+STAMP_REPO_TODO="todo/00-infrastructure/TODO-99-stamp.md"
+STAMP_REPO_SRC="src/stamp-source.c"
+mkdir -p "$STAMP_REPO/todo/00-infrastructure" "$STAMP_REPO/src"
+cat > "$STAMP_REPO/$STAMP_REPO_TODO" <<'EOF_TRACKED_STAMP'
+# TODO-99 Stamp Fixture
+
+## 1. Fixture Section
+
+- [ ] work item
+EOF_TRACKED_STAMP
+printf 'int stamp_source(void) { return 1; }\n' > "$STAMP_REPO/$STAMP_REPO_SRC"
+(
+    cd "$STAMP_REPO" \
+      && git init -q \
+      && git config user.email t@t \
+      && git config user.name t \
+      && git add "$STAMP_REPO_TODO" "$STAMP_REPO_SRC" \
+      && git -c commit.gpgsign=false commit -q -m init
+)
+STAMP_REPO_ENV=(env AI_WORKFLOW_REPO_ROOT="$STAMP_REPO" AI_WORKFLOW_STATE_DIR="$STAMP_REPO/build/ai-workflow")
+"${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$STAMP_REPO_TODO" --section 1 --driver claude --run-id tracked-stamp-driver >/dev/null
+"${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$STAMP_REPO_TODO" --section 1 --role validator --backend local \
+    --run-id tracked-stamp-build --kind build --result ok --source "$STAMP_REPO_SRC" >/dev/null
+"${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$STAMP_REPO_TODO" --section 1 --role validator --backend local \
+    --run-id tracked-stamp-graph --kind todo-graph-validate --result ok >/dev/null
+for kind in adversarial consistency perf; do
+    "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+        --todo "$STAMP_REPO_TODO" --section 1 --role "codex-reviewer-$kind" \
+        --backend codex --run-id "tracked-stamp-review-$kind" --kind "$kind" \
+        --result received --source "$STAMP_REPO_SRC" >/dev/null
+done
+"${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/stamp.py verified \
+    "$STAMP_REPO_TODO" --section 1 --driver-run-id tracked-stamp-driver --write >/dev/null
+if "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+    --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --format json >/dev/null 2>&1; then
+    t_fail "ai_workflow_stamp: unstaged tracked stamp evidence blocks commit"
+else
+    t_pass "ai_workflow_stamp: unstaged tracked stamp evidence blocks commit"
+fi
+( cd "$STAMP_REPO" && git add "$STAMP_REPO_TODO" )
+if "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+    --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --format json >/dev/null; then
+    t_pass "ai_workflow_stamp: staged tracked stamp evidence satisfies commit gate"
+else
+    t_fail "ai_workflow_stamp: staged tracked stamp evidence satisfies commit gate" \
+           "$("${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --format json 2>&1)"
+fi
+
+STAGED_REPO="$AIWF_TMP/staged-repo"
+mkdir -p "$STAGED_REPO/todo/00-infrastructure"
+cat > "$STAGED_REPO/todo/00-infrastructure/TODO-99-fixture.md" <<'EOF_STAGED_TODO'
+# TODO-99 Fixture
+
+| Order | Section | Deliverable | Depends On | Status |
+| :---: | :---: | --- | --- | :---: |
+| 1 | 1 | Fixture | -- | [ ] |
+
+## 1. Fixture
+
+body
+EOF_STAGED_TODO
+( cd "$STAGED_REPO" && git init -q && git add . && git -c user.email=t@t -c user.name=t commit -q -m init )
+perl -0pi -e 's/\[ \]/[x]/' "$STAGED_REPO/todo/00-infrastructure/TODO-99-fixture.md"
+( cd "$STAGED_REPO" && git add todo/00-infrastructure/TODO-99-fixture.md )
+perl -0pi -e 's/\| Order \| Section \| Deliverable \| Depends On \| Status \|/| Depends On | Deliverable | Section | Order | Status |/' \
+    "$STAGED_REPO/todo/00-infrastructure/TODO-99-fixture.md"
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json >/dev/null 2>&1; then
+    t_fail "ai_workflow_gates: staged commit blocks without lease despite unstaged TODO edit"
+else
+    t_pass "ai_workflow_gates: staged commit blocks without lease despite unstaged TODO edit"
+fi
+env AI_WORKFLOW_REPO_ROOT="$STAGED_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/lease.py acquire \
+    --todo todo/00-infrastructure/TODO-99-fixture.md --section 1 \
+    --driver claude --run-id staged-driver >/dev/null
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json >/dev/null; then
+    t_pass "ai_workflow_gates: staged commit allows with active lease"
+else
+    t_fail "ai_workflow_gates: staged commit allows with active lease"
+fi
+
+HOOK_REPO="$AIWF_TMP/shared-hook-repo"
+mkdir -p "$HOOK_REPO/.githooks" "$HOOK_REPO/.claude/hooks" \
+         "$HOOK_REPO/scripts/ai-workflow" "$HOOK_REPO/scripts"
+cp "$REPO_ROOT/.githooks/pre-commit" "$HOOK_REPO/.githooks/pre-commit"
+cat > "$HOOK_REPO/scripts/lint.sh" <<'EOF_HOOK_LINT'
+#!/usr/bin/env bash
+exit 0
+EOF_HOOK_LINT
+chmod +x "$HOOK_REPO/scripts/lint.sh"
+cat > "$HOOK_REPO/.claude/hooks/section_commit_gate.py" <<'EOF_HOOK_SECTION'
+#!/usr/bin/env python3
+raise SystemExit(0)
+EOF_HOOK_SECTION
+cat > "$HOOK_REPO/scripts/ai-workflow/gates.py" <<'EOF_HOOK_SHARED'
+#!/usr/bin/env python3
+import pathlib
+import sys
+
+if len(sys.argv) > 1 and sys.argv[1] == "staged-commit":
+    pathlib.Path("shared-gate-called").write_text("yes\n", encoding="ascii")
+    raise SystemExit(2)
+raise SystemExit(0)
+EOF_HOOK_SHARED
+chmod +x "$HOOK_REPO/.githooks/pre-commit" \
+         "$HOOK_REPO/.claude/hooks/section_commit_gate.py" \
+         "$HOOK_REPO/scripts/ai-workflow/gates.py"
+(
+    cd "$HOOK_REPO" \
+      && git init -q \
+      && git config user.email t@t \
+      && git config user.name t \
+      && git config core.hooksPath .githooks \
+      && printf 'seed\n' > file.txt \
+      && git add file.txt \
+      && git -c commit.gpgsign=false commit -q --no-verify -m init \
+      && printf 'change\n' >> file.txt \
+      && git add file.txt
+)
+HOOK_COMMIT_OUT=$(
+    cd "$HOOK_REPO" \
+      && AI_WORKFLOW_ENFORCE_SHARED_GATES=1 git -c commit.gpgsign=false commit -m blocked 2>&1
+)
+HOOK_COMMIT_RC=$?
+if [ "$HOOK_COMMIT_RC" != "0" ] \
+   && [ -f "$HOOK_REPO/shared-gate-called" ] \
+   && echo "$HOOK_COMMIT_OUT" | grep -q "Shared AI workflow gate refused"; then
+    t_pass "ai_workflow_gates: pre-commit enforces shared staged gate"
+else
+    t_fail "ai_workflow_gates: pre-commit enforces shared staged gate" \
+           "rc=$HOOK_COMMIT_RC out=$HOOK_COMMIT_OUT called=$([ -f "$HOOK_REPO/shared-gate-called" ] && cat "$HOOK_REPO/shared-gate-called" || echo no)"
+fi
+
+GIT_FAIL_BIN="$AIWF_TMP/git-fail-bin"
+mkdir -p "$GIT_FAIL_BIN"
+REAL_GIT_BIN="$(command -v git)"
+cat > "$GIT_FAIL_BIN/git" <<EOF_GIT_FAIL
+#!/usr/bin/env bash
+if [ "\$1" = "diff" ] && [ "\$2" = "--cached" ] && [ "\$3" = "--name-only" ]; then
+    exit 1
+fi
+exec "$REAL_GIT_BIN" "\$@"
+EOF_GIT_FAIL
+chmod +x "$GIT_FAIL_BIN/git"
+INSPECT_FAIL_OUT=$(env PATH="$GIT_FAIL_BIN:$PATH" AI_WORKFLOW_REPO_ROOT="$STAGED_REPO" \
+    AI_WORKFLOW_STATE_DIR="$STAGED_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json 2>&1)
+if [ "$?" != "0" ] && echo "$INSPECT_FAIL_OUT" | grep -q '"errors"'; then
+    t_pass "ai_workflow_gates: staged commit blocks on git inspection failure"
+else
+    t_fail "ai_workflow_gates: staged commit blocks on git inspection failure" "$INSPECT_FAIL_OUT"
+fi
+
+STAGED_CANON_REPO="$AIWF_TMP/staged-canonical-repo"
+mkdir -p "$STAGED_CANON_REPO/todo/00-infrastructure"
+cat > "$STAGED_CANON_REPO/todo/00-infrastructure/TODO-98-canonical-fixture.md" <<'EOF_STAGED_CANON_TODO'
+# TODO-98 Canonical Fixture
+
+| ⭐  | Order | Deliverable | Depends On | Status |
+| --- | :---: | ----------- | ---------- | :----: |
+| 💎  |   1   | Fixture     | --         |  [ ]   |
+
+## 1. Fixture
+
+body
+EOF_STAGED_CANON_TODO
+( cd "$STAGED_CANON_REPO" && git init -q && git add . && git -c user.email=t@t -c user.name=t commit -q -m init )
+perl -0pi -e 's/\[ \]/[x]/' "$STAGED_CANON_REPO/todo/00-infrastructure/TODO-98-canonical-fixture.md"
+( cd "$STAGED_CANON_REPO" && git add todo/00-infrastructure/TODO-98-canonical-fixture.md )
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_CANON_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_CANON_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json >/dev/null 2>&1; then
+    t_fail "ai_workflow_gates: canonical IO row blocks without lease" \
+           "canonical star-first row was not detected"
+else
+    t_pass "ai_workflow_gates: canonical IO row blocks without lease"
+fi
+env AI_WORKFLOW_REPO_ROOT="$STAGED_CANON_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_CANON_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/lease.py acquire \
+    --todo todo/00-infrastructure/TODO-98-canonical-fixture.md --section 1 \
+    --driver claude --run-id staged-canon-driver >/dev/null
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_CANON_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_CANON_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json >/dev/null; then
+    t_pass "ai_workflow_gates: canonical IO row allows with active lease"
+else
+    t_fail "ai_workflow_gates: canonical IO row allows with active lease"
+fi
+
+STAGED_DEP_REPO="$AIWF_TMP/staged-depends-repo"
+mkdir -p "$STAGED_DEP_REPO/todo/00-infrastructure"
+cat > "$STAGED_DEP_REPO/todo/00-infrastructure/TODO-97-depends-fixture.md" <<'EOF_STAGED_DEP_TODO'
+# TODO-97 Depends Fixture
+
+| ⭐  | Order | Deliverable | Depends On | Status |
+| --- | :---: | ----------- | ---------- | :----: |
+| 💎  |   3   | Fixture     | Alpha, Beta |  [ ]   |
+
+## 3. Fixture
+
+body
+EOF_STAGED_DEP_TODO
+( cd "$STAGED_DEP_REPO" && git init -q && git add . && git -c user.email=t@t -c user.name=t commit -q -m init )
+perl -0pi -e 's/\[ \]/[x]/' "$STAGED_DEP_REPO/todo/00-infrastructure/TODO-97-depends-fixture.md"
+( cd "$STAGED_DEP_REPO" && git add todo/00-infrastructure/TODO-97-depends-fixture.md )
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json >/dev/null 2>&1; then
+    t_fail "ai_workflow_gates: Depends On cells do not satisfy lease target" \
+           "Order 3 row with named Depends On cells was not detected"
+else
+    t_pass "ai_workflow_gates: Depends On cells do not satisfy lease target"
+fi
+env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/lease.py acquire \
+    --todo todo/00-infrastructure/TODO-97-depends-fixture.md --section 3 \
+    --driver claude --run-id staged-dep-driver >/dev/null
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json >/dev/null; then
+    t_pass "ai_workflow_gates: Depends On row allows with Order lease"
+else
+    t_fail "ai_workflow_gates: Depends On row allows with Order lease"
+fi
+
+rm -rf "$AIWF_STATE"
+mkdir -p "$AIWF_STATE"
+CDRY_OUT=$("${AIWF_ENV[@]}" bash scripts/codex-driver.sh --dry-run \
+    --todo "$TODO10" --section 8 --run-id dry-run-test 2>&1)
+if [ "$?" = "0" ] && [ -f "$AIWF_STATE/runs/dry-run-test/plan.md" ]; then
+    t_pass "codex_driver_dry_run: writes plan and exits 0"
+else
+    t_fail "codex_driver_dry_run: writes plan and exits 0" "$CDRY_OUT"
+fi
+REL_DRIVER_STATE="build/ai-workflow-relative-test"
+OUTSIDE_CWD="$AIWF_TMP/outside-cwd"
+mkdir -p "$OUTSIDE_CWD"
+rm -rf "$REPO_ROOT/$REL_DRIVER_STATE" "$OUTSIDE_CWD/$REL_DRIVER_STATE"
+CDRY_OUTSIDE=$(
+    cd "$OUTSIDE_CWD" && \
+    env AI_WORKFLOW_STATE_DIR="$REL_DRIVER_STATE" \
+        bash "$REPO_ROOT/scripts/codex-driver.sh" --dry-run \
+        --todo "$TODO10" --section 8 --run-id dry-run-outside 2>&1
+)
+if [ "$?" = "0" ] \
+   && [ -f "$REPO_ROOT/$REL_DRIVER_STATE/runs/dry-run-outside/plan.md" ] \
+   && [ ! -e "$OUTSIDE_CWD/$REL_DRIVER_STATE" ]; then
+    t_pass "codex_driver_dry_run: absolute invocation normalizes repo state"
+else
+    t_fail "codex_driver_dry_run: absolute invocation normalizes repo state" "$CDRY_OUTSIDE"
+fi
+rm -rf "$REPO_ROOT/$REL_DRIVER_STATE"
+if [ ! -f "$AIWF_STATE/evidence.jsonl" ]; then
+    t_pass "codex_driver_dry_run: records no shipping evidence"
+else
+    t_fail "codex_driver_dry_run: records no shipping evidence"
+fi
+if "${AIWF_ENV[@]}" bash scripts/codex-driver.sh --live \
+    --todo "$TODO10" --section 9 --run-id live-disabled >/dev/null 2>&1; then
+    t_fail "codex_driver_live: disabled without AI_WORKFLOW_CODEX_DRIVER=1"
+else
+    t_pass "codex_driver_live: disabled without AI_WORKFLOW_CODEX_DRIVER=1"
+fi
+rm -rf "$AIWF_STATE"
+mkdir -p "$AIWF_STATE"
+CLIVE_OUT=$(env AI_WORKFLOW_STATE_DIR="$AIWF_STATE" AI_WORKFLOW_CODEX_DRIVER=1 \
+    bash scripts/codex-driver.sh --live \
+    --todo "$TODO10" --section 9 --run-id live-pre-edit-test 2>&1)
+if [ "$?" = "0" ] \
+   && echo "$CLIVE_OUT" | grep -q "ALLOW pre-edit" \
+   && echo "$CLIVE_OUT" | grep -q "MISS build"; then
+    t_pass "codex_driver_live: pre-edit checkpoint acquires lease and reports obligations"
+else
+    t_fail "codex_driver_live: pre-edit checkpoint acquires lease and reports obligations" "$CLIVE_OUT"
+fi
+OVERNIGHT_LAUNCH_OUT=$(python3 scripts/overnight/tests/test_launch_driver_mode.py 2>&1)
+if [ "$?" = "0" ]; then
+    t_pass "overnight_launch_driver: driver selection, supervisor smoke, and reports"
+else
+    t_fail "overnight_launch_driver: driver selection, supervisor smoke, and reports" "$OVERNIGHT_LAUNCH_OUT"
+fi
+rm -rf "$AIWF_TMP"
 
 
 # ============================================================================

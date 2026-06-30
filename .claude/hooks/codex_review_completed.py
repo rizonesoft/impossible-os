@@ -56,6 +56,7 @@ Owner: TODO-08-automation-hardening section 3.
 """
 
 import hashlib
+import datetime as _dt
 import json
 import os
 import re
@@ -63,6 +64,7 @@ import shlex
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 # TODO-08 section-30: shared shell-aware Codex dispatch helper. The
@@ -97,6 +99,7 @@ RECEIVE_SKILL_NAMES = frozenset({
     "superpowers:receiving-code-review",
     "receiving-code-review",
 })
+_GIT_BLOB_BATCH_SIZE = 128
 
 
 def _repo_root() -> Path | None:
@@ -181,6 +184,14 @@ _SOURCE_KERNEL_EXTS = (".c", ".h", ".asm", ".S")
 _SOURCE_KERNEL_PREFIXES = ("src/", "include/")
 _SOURCE_TOOLING_EXTS = (".py", ".mjs", ".sh")
 _SOURCE_TOOLING_PREFIXES = ("scripts/",)
+_REVIEW_GOVERNANCE_PREFIXES = (
+    ".claude/hooks/",
+    ".claude/skills/",
+    ".githooks/",
+    "docs/",
+    "todo/",
+)
+_REVIEW_GOVERNANCE_FILES = ("AGENTS.md", "CLAUDE.md", ".gitignore")
 
 
 def _is_source_path(path: str) -> bool:
@@ -193,6 +204,15 @@ def _is_source_path(path: str) -> bool:
             p.endswith(_SOURCE_TOOLING_EXTS):
         return True
     return False
+
+
+def _is_review_scope_path(path: str) -> bool:
+    p = path.replace("\\", "/")
+    if _is_source_path(p):
+        return True
+    if p in _REVIEW_GOVERNANCE_FILES:
+        return True
+    return any(p.startswith(pre) for pre in _REVIEW_GOVERNANCE_PREFIXES)
 
 
 def _staged_source_files(root: Path) -> list[str]:
@@ -212,8 +232,20 @@ def _staged_source_files(root: Path) -> list[str]:
     return [p for p in paths if _is_source_path(p)]
 
 
+def _staged_review_files(root: Path) -> list[str]:
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--cached", "--name-only", "-z"],
+            cwd=str(root), text=True, timeout=3, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return []
+    paths = [p for p in out.split("\x00") if p]
+    return [p for p in paths if _is_review_scope_path(p)]
+
+
 def _staged_source_blobs(root: Path, paths: list[str]) -> dict:
-    """Return a {path: blob_sha} map for the given staged source
+    """Return a {path: mode:blob_sha} map for the given staged source
     paths, captured from `git ls-files -s` (mode/sha/stage/path
     output). Used at trigger time for content-binding evidence
     (Codex C1: path-only binding lets post-review same-path edits
@@ -222,28 +254,31 @@ def _staged_source_blobs(root: Path, paths: list[str]) -> dict:
     """
     if not paths:
         return {}
+    staged_paths = list(dict.fromkeys(paths))
     blobs: dict = {}
-    try:
-        # `git ls-files -s -z -- <paths>` yields:
-        #   <mode> SP <sha> SP <stage> TAB <path> NUL
-        out = subprocess.check_output(
-            ["git", "ls-files", "-s", "-z", "--", *paths],
-            cwd=str(root), text=True, timeout=5, stderr=subprocess.DEVNULL,
-        )
-    except Exception:
-        return {}
-    for entry in out.split("\x00"):
-        if not entry:
-            continue
-        # Split header (mode sha stage) and path on TAB.
-        if "\t" not in entry:
-            continue
-        header, path = entry.split("\t", 1)
-        parts = header.split()
-        if len(parts) != 3:
-            continue
-        _mode, sha, _stage = parts
-        blobs[path] = sha
+    for start in range(0, len(staged_paths), _GIT_BLOB_BATCH_SIZE):
+        batch = staged_paths[start:start + _GIT_BLOB_BATCH_SIZE]
+        try:
+            # `git ls-files -s -z -- <paths>` yields:
+            #   <mode> SP <sha> SP <stage> TAB <path> NUL
+            out = subprocess.check_output(
+                ["git", "ls-files", "-s", "-z", "--", *batch],
+                cwd=str(root), text=True, timeout=5, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            return {}
+        for entry in out.split("\x00"):
+            if not entry:
+                continue
+            # Split header (mode sha stage) and path on TAB.
+            if "\t" not in entry:
+                continue
+            header, path = entry.split("\t", 1)
+            parts = header.split()
+            if len(parts) != 3:
+                continue
+            mode, sha, _stage = parts
+            blobs[path] = f"{mode}:{sha}"
     return blobs
 
 
@@ -598,6 +633,148 @@ def _scan_self_summary(prompt: str) -> str:
     return ""
 
 
+def _detect_run_metadata(prompt: str, now_ns: int, review_kind: str) -> tuple[str, str]:
+    """Extract optional driver/reviewer correlation IDs from prompt text.
+
+    The shared ai-workflow ledger treats Codex driver and Codex reviewer as
+    separate roles. Prompt metadata is optional for legacy dispatches, so this
+    helper generates a review_run_id when the prompt does not provide one.
+    """
+    driver_run_id = ""
+    review_run_id = ""
+    if prompt:
+        dm = re.search(r"\bdriver[-_ ]run[-_ ]id\s*[:=]\s*([A-Za-z0-9_.:-]+)", prompt)
+        rm = re.search(r"\breview[-_ ]run[-_ ]id\s*[:=]\s*([A-Za-z0-9_.:-]+)", prompt)
+        if dm:
+            driver_run_id = dm.group(1)
+        if rm:
+            review_run_id = rm.group(1)
+    if not review_run_id:
+        suffix = review_kind or "unknown"
+        review_run_id = f"codex-review-{suffix}-{now_ns}"
+    return driver_run_id, review_run_id
+
+
+@contextmanager
+def _workflow_lock(root: Path, timeout_sec: float = 5.0):
+    lock_dir = root / ".ai-workflow"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / "workflow.lock"
+    try:
+        import fcntl
+    except Exception:
+        yield
+        return
+
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    locked = False
+    deadline = time.monotonic() + timeout_sec
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"timed out acquiring workflow lock: {lock_path}")
+                time.sleep(0.05)
+        yield
+    finally:
+        if locked:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except Exception:
+                pass
+        os.close(fd)
+
+
+def _record_shared_review_evidence(root: Path, state: dict) -> None:
+    """Best-effort mirror from Claude hook state into .ai-workflow.
+
+    The existing .claude/state files remain the compatibility source for the
+    current hard gates. This mirror gives non-Claude drivers the same received
+    review as ledger evidence without trusting chat history.
+    """
+    try:
+        kind = str(state.get("review_kind") or "")
+        todo_path = str(state.get("todo_path") or "")
+        if kind not in {
+            "design", "adversarial-impl", "adversarial", "consistency",
+            "perf", "test-coverage", "gap-audit", "re-adversarial",
+        } or not todo_path:
+            return
+        section = str(state.get("section") or "").lstrip("§")
+        review_run_id = str(state.get("review_run_id") or "")
+        if not review_run_id:
+            review_run_id = f"codex-review-{kind}-{state.get('received_timestamp_ns') or time.time_ns()}"
+        metadata = {
+            "review_kind": kind,
+            "review_run_id": review_run_id,
+        }
+        driver_run_id = str(state.get("driver_run_id") or "")
+        if driver_run_id:
+            metadata["driver_run_id"] = driver_run_id
+        trigger_blobs = state.get("trigger_blobs") or {}
+        source_blobs = {}
+        if isinstance(trigger_blobs, dict):
+            for path, blob in sorted(trigger_blobs.items()):
+                if path and blob:
+                    source_blobs[str(path)] = str(blob)
+        now_ns = time.time_ns()
+        payload = {
+            "task_id": f"{todo_path}#{section}" if section else todo_path,
+            "todo_path": todo_path,
+            "section": section,
+            "role": f"codex-reviewer-{kind}",
+            "backend": "codex",
+            "run_id": review_run_id,
+            "kind": kind,
+            "head_sha": str(state.get("head_sha") or _head_sha(root)),
+            "source_blobs": source_blobs,
+            "result": "received",
+            "summary_path": "",
+            "created_at_ns": now_ns,
+            "created_at": _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat(),
+            "expires_at_ns": 0,
+            "legacy_import": False,
+            "metadata": metadata,
+        }
+        stable = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        payload["event_id"] = hashlib.sha256(stable.encode("utf-8")).hexdigest()[:16]
+        with _workflow_lock(root):
+            ledger = root / ".ai-workflow" / "evidence.jsonl"
+            ledger.parent.mkdir(parents=True, exist_ok=True)
+            with ledger.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, sort_keys=True) + "\n")
+            if todo_path and section:
+                index_dir = ledger.parent / "evidence-index"
+                index_dir.mkdir(parents=True, exist_ok=True)
+                marker = index_dir / "VERSION"
+                if not marker.exists():
+                    marker.write_text("1\n", encoding="utf-8")
+                index_key = f"{todo_path}#{section}"
+                index_name = hashlib.sha256(index_key.encode("utf-8")).hexdigest()[:24] + ".jsonl"
+                with (index_dir / index_name).open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(payload, sort_keys=True) + "\n")
+        _debug_log(
+            root, "shared_review_evidence_mirror",
+            review_kind=kind,
+            todo_path=todo_path,
+            section=section,
+            mirror_write_ok=True,
+            source_blob_count=len(source_blobs),
+        )
+    except Exception as exc:
+        _debug_log(
+            root, "shared_review_evidence_mirror",
+            review_kind=str(state.get("review_kind") or "unknown"),
+            todo_path=str(state.get("todo_path") or ""),
+            mirror_write_ok=False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
 def _stamps_path(root: Path) -> Path:
     return root / ".claude" / "state" / "last-review-stamps.json"
 
@@ -614,8 +791,8 @@ def _record_stamp(
     now_ns: int,
     dispatch_head_sha: str = "",
 ) -> tuple[bool, str]:
-    """Update last-review-stamps.json[todo_path] with `kind` timestamp
-    and per-kind `dispatch_head_sha`.
+    """Update last-review-stamps.json[todo_path] with `kind` timestamp,
+    per-kind `dispatch_head_sha`, and per-kind section metadata.
 
     Returns `(ok, error_str)` for honest observability (see TODO-08
     section 24 H1 fix). `ok=False` covers: invalid kind, lock-acquire
@@ -743,6 +920,8 @@ def _record_stamp(
         if section:
             entry["section"] = section
         entry[kind] = now_ns
+        if section:
+            entry[f"{kind}_section"] = section.lstrip("§").strip()
         if dispatch_head_sha:
             entry[f"{kind}_head"] = dispatch_head_sha
         # Preserve any unexpected keys but ensure the three canonical
@@ -960,7 +1139,7 @@ def main() -> int:
         # then agent edits foo.c, then commit -- gate would pass
         # without this binding). The blob SHA captures the exact
         # content the reviewer saw.
-        trigger_files = _staged_source_files(root)
+        trigger_files = _staged_review_files(root)
         trigger_blobs = _staged_source_blobs(root, trigger_files)
         head_at_dispatch = _head_sha(root)
         state = {
@@ -1009,6 +1188,13 @@ def main() -> int:
             )
         review_kind = _detect_review_kind(skill_for_kind, prompt)
         todo_path, section = _detect_todo_path(prompt, root)
+        driver_run_id, review_run_id = _detect_run_metadata(prompt, now_ns, review_kind)
+        state["review_kind"] = review_kind or ""
+        state["todo_path"] = todo_path
+        state["section"] = section.lstrip("§")
+        state["driver_run_id"] = driver_run_id
+        state["review_run_id"] = review_run_id
+        _write_atomic(state_path, state)
         stamp_attempted = bool(review_kind and todo_path)
         if stamp_attempted:
             stamp_ok, stamp_err = _record_stamp(
@@ -1041,6 +1227,7 @@ def main() -> int:
     # to "any recent received review whose blobs match" when blob SHAs
     # drift between staged-tree restages.
     _append_history(root, state)
+    _record_shared_review_evidence(root, state)
     return 0
 
 

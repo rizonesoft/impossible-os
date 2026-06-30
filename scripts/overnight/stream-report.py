@@ -138,6 +138,62 @@ def _result_text(content) -> str:
     return ""
 
 
+def _content_text(content) -> str:
+    """Extract assistant text from Claude or Codex-ish content shapes."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            text = (
+                block.get("text")
+                or block.get("output_text")
+                or block.get("content")
+            )
+            if isinstance(text, str) and text:
+                parts.append(text)
+        return "\n".join(parts)
+    return ""
+
+
+def _codex_command(event: dict) -> str:
+    for key in ("cmd", "command", "shell_command"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    item = event.get("item")
+    if isinstance(item, dict):
+        for key in ("cmd", "command", "shell_command"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    return ""
+
+
+def _codex_message(event: dict) -> str:
+    text = _content_text(event.get("content"))
+    if text:
+        return text
+    message = event.get("message")
+    if isinstance(message, str):
+        return message
+    if isinstance(message, dict):
+        text = _content_text(message.get("content"))
+        if text:
+            return text
+    item = event.get("item")
+    if isinstance(item, dict):
+        if item.get("type") in ("message", "assistant_message"):
+            text = _content_text(item.get("content"))
+            if text:
+                return text
+        if isinstance(item.get("message"), str):
+            return item["message"]
+    return ""
+
+
 class SectionMetrics:
     """Accumulate per-section token + tool counts; flush JSONL at boundaries."""
 
@@ -227,6 +283,31 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
         result = event.get("result")
         if isinstance(result, str) and result:
             emit(result)
+    elif isinstance(kind, str) and kind in (
+        "message", "agent_message", "assistant_message", "item.completed",
+    ):
+        text = _codex_message(event)
+        if text:
+            emit(text)
+    elif isinstance(kind, str) and (
+        kind.endswith(".started")
+        or kind.endswith(".completed")
+        or "exec" in kind
+        or "command" in kind
+    ):
+        cmd = _codex_command(event)
+        if cmd:
+            label = "Bash"
+            if "completed" in kind:
+                code = event.get("exit_code")
+                suffix = f"  exit={code}" if code is not None else ""
+                emit(f"tool: {label}  {_clip(cmd)}{suffix}")
+            else:
+                emit(f"tool: {label}  {_clip(cmd)}")
+    elif isinstance(kind, str) and "error" in kind:
+        emit(f"tool error: {_clip(_codex_message(event) or event)}")
+    elif os.environ.get("OVERNIGHT_STREAM_KEEP_UNKNOWN") == "1":
+        emit("event: " + _clip(json.dumps(event, sort_keys=True), 500))
 
 
 def main() -> int:

@@ -5,6 +5,8 @@ description: Run the 3-stage TODO preparation pipeline -- validate structure, ru
 
 # TODO Pipeline
 
+> **External-Reviewer Contract:** This skill invokes Codex indirectly through Stage 2's mandatory `gap-audit-todo` pass. Every Codex finding goes through `superpowers:receiving-code-review` (verify at file:line or source section, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
+
 ## Use This Skill When
 
 - The user says "prepare TODO-XX for implementation" or "pipeline TODO-XX".

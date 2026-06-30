@@ -46,9 +46,9 @@ StepRule = Tuple[int, str, str]
 #   step 4  -- Codex design dispatch (OPTIONAL, conditional skip-rules apply)
 #   step 7  -- first build (Bash: bash scripts/build.sh)
 #   step 9  -- Codex test-coverage dispatch (OPTIONAL on trivial sections)
-#   step 13 -- MANDATORY Codex adversarial dispatch (also matches
-#              adversarial-impl, the implementation-time variant the
-#              codex-design-review SKILL.md prompt-shape doc names)
+#   step 13 -- MANDATORY Codex adversarial dispatch (canonical marker:
+#              adversarial; adversarial-impl is an accepted alias/variant
+#              retained for older prompt-shape references)
 #   step 16 -- second build (Bash: bash scripts/build.sh, fires after step 13)
 #   step 19 -- commit + push (Bash: git commit / git push)
 #   step 20 -- Skill(review-todo-section) invocation OR the inline review
@@ -68,6 +68,8 @@ _IMPLEMENT_TODO_SECTION: List[StepRule] = [
     (4,  "Bash",  "__REVIEW_KIND__:design"),
     (7,  "Bash",  r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
     (9,  "Bash",  "__REVIEW_KIND__:test-coverage"),
+    # Step 13 uses adversarial as the canonical implementation-time marker;
+    # adversarial-impl remains an accepted alias/variant for older prompts.
     (13, "Bash",  "__REVIEW_KIND__:adversarial"),
     (13, "Bash",  "__REVIEW_KIND__:adversarial-impl"),
     (13, "Skill", r"^codex-adversarial-review-section$"),
@@ -92,10 +94,10 @@ _IMPLEMENT_TODO_SECTION: List[StepRule] = [
 _REVIEW_TODO_SECTION: List[StepRule] = [
     (4,    "Bash", r"\bbash\s+(?:[^\"\']*?/)?scripts/build\.sh\b"),
     (5,    "Bash", "__REVIEW_KIND__:adversarial"),
-    # adversarial-impl is the implementation-time variant; if it fires
-    # during the review pipeline (rare but legitimate when the reviewer
-    # asks Codex to re-evaluate the diff under implementation eyes) it
-    # also satisfies step 5 evidence. TODO-08 §25 coverage extension.
+    # adversarial-impl is accepted as an implementation-time alias/variant;
+    # if it fires during the review pipeline (rare but legitimate when the
+    # reviewer asks Codex to re-evaluate the diff under implementation eyes)
+    # it also satisfies step 5 evidence. TODO-08 §25 coverage extension.
     (5,    "Bash", "__REVIEW_KIND__:adversarial-impl"),
     (8,    "Bash", "__REVIEW_KIND__:consistency"),
     (8,    "Bash", "__REVIEW_KIND__:perf"),

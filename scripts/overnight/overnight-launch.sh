@@ -8,13 +8,19 @@
 # lane logic is gated off for kernel runs at the source.
 #
 # Launched by the systemd user timer that scripts/overnight/overnight-arm.sh
-# arms.  Args: <project-dir> <todo-file> <permission-mode>.
+# arms.  Args: <project-dir> <todo-file> <permission-mode> [claude|codex].
 set -euo pipefail
 
 PROJECT_DIR="${1:?project dir required}"
 TODO_FILE="${2:?todo file required}"
 PERMISSION_MODE="${3:-bypassPermissions}"
+DRIVER="${4:-${OVERNIGHT_DRIVER:-claude}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+case "$DRIVER" in
+  claude|codex) ;;
+  *) echo "FATAL: unsupported overnight driver: $DRIVER (expected claude|codex)" >&2; exit 2 ;;
+esac
 
 # systemd user units get a minimal PATH; an unattended run needs the user-level
 # CLIs (claude, codex) and the nvm node bin on it. Latest nvm node wins;
@@ -23,14 +29,30 @@ NVM_NODE_BIN="$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | t
 export PATH="$HOME/.local/bin${NVM_NODE_BIN:+:$NVM_NODE_BIN}:$PATH"
 
 cd "$PROJECT_DIR"
-export OVERNIGHT_RUNNER_BASE=.claude/overnight
-REPORT_DIR="$PROJECT_DIR/.claude/overnight/reports"
+if [ "$DRIVER" = "codex" ]; then
+  RUNTIME_BASE_REL=".codex/overnight"
+else
+  RUNTIME_BASE_REL=".claude/overnight"
+fi
+CODEX_SANDBOX="${OVERNIGHT_CODEX_SANDBOX:-danger-full-access}"
+case "$CODEX_SANDBOX" in
+  read-only|workspace-write|danger-full-access) ;;
+  *) echo "FATAL: unsupported Codex sandbox: $CODEX_SANDBOX" >&2; exit 2 ;;
+esac
+export OVERNIGHT_RUNNER_BASE="$RUNTIME_BASE_REL"
+RUNTIME_BASE="$PROJECT_DIR/$RUNTIME_BASE_REL"
+if [ -e "$PROJECT_DIR/${RUNTIME_BASE_REL%%/*}" ] && [ ! -w "$PROJECT_DIR/${RUNTIME_BASE_REL%%/*}" ]; then
+  echo "FATAL: $PROJECT_DIR/${RUNTIME_BASE_REL%%/*} is not writable; cannot create $RUNTIME_BASE_REL" >&2
+  echo "Fix: chmod u+w $PROJECT_DIR/${RUNTIME_BASE_REL%%/*}" >&2
+  exit 1
+fi
+REPORT_DIR="$RUNTIME_BASE/reports"
 mkdir -p "$REPORT_DIR"
 
 # Limit-aware snooze: when a previous run died on a usage limit, the tail of
 # this script recorded the reset time. Until then every (watchdog) launch is a
 # cheap no-op, so the watchdog cadence never hammers a session OR a weekly limit.
-SNOOZE_FILE="$PROJECT_DIR/.claude/overnight/snooze-until"
+SNOOZE_FILE="$RUNTIME_BASE/snooze-until"
 if [ -f "$SNOOZE_FILE" ]; then
   SNOOZE_UNTIL="$(cat "$SNOOZE_FILE" 2>/dev/null || echo 0)"
   NOW_EPOCH="$(date +%s)"
@@ -45,7 +67,7 @@ fi
 # call this freely -- it exits 0 immediately while a run is alive. The kernel
 # releases the flock when the holding process dies (any exit, crash, or kill),
 # so no stale-lock handling is needed.
-LOCKFILE="$PROJECT_DIR/.claude/overnight/launch.lock"
+LOCKFILE="$RUNTIME_BASE/launch.lock"
 exec 9>"$LOCKFILE"
 flock -n 9 || { echo "run already active, launch skipped $(date -Is)"; exit 0; }
 
@@ -64,10 +86,11 @@ prune_reports() {
 prune_reports || true
 
 REPORT="$REPORT_DIR/run-$(date +%Y%m%d-%H%M%S).log"
+ln -sfn "$(basename "$REPORT")" "$REPORT_DIR/latest.log"
 
 # WS3: per-run metrics sidecar (read by stream-report.py). Shares the report
 # log's basename so a report and its metrics pair up.
-METRICS_DIR="$PROJECT_DIR/.claude/overnight/metrics"
+METRICS_DIR="$RUNTIME_BASE/metrics"
 mkdir -p "$METRICS_DIR"
 export OVERNIGHT_METRICS_FILE="$METRICS_DIR/$(basename "${REPORT%.log}").jsonl"
 
@@ -83,8 +106,25 @@ resolve_claude() {
   return 1
 }
 
-echo "overnight-sequencer unattended run starting $(date -Is)" | tee "$REPORT"
-CLAUDE="$(resolve_claude)" || { echo "FATAL: claude CLI not found (set CLAUDE_BIN)" >> "$REPORT"; exit 127; }
+resolve_codex() {
+  if [ -n "${CODEX_BIN:-}" ] && [ -x "$CODEX_BIN" ]; then echo "$CODEX_BIN"; return; fi
+  if command -v codex >/dev/null 2>&1; then command -v codex; return; fi
+  for c in "$HOME/.local/bin/codex" "$HOME/.codex/local/codex" \
+           "$HOME"/.nvm/versions/node/*/bin/codex; do
+    [ -x "$c" ] && { echo "$c"; return; }
+  done
+  return 1
+}
+
+{
+  echo "overnight-sequencer unattended run starting $(date -Is)"
+  echo "driver: $DRIVER"
+  echo "todo: $TODO_FILE"
+  echo "runtime: $RUNTIME_BASE_REL"
+  if [ "$DRIVER" = "codex" ]; then
+    echo "codex_sandbox: $CODEX_SANDBOX"
+  fi
+} | tee "$REPORT"
 
 # ChromeMCP lane isolation is OFF for kernel runs (OVERNIGHT_NO_CHROMEMCP=1, set
 # by arm-sequencer.sh's per-unit env drop-in). impossible-os kernel work never
@@ -92,7 +132,7 @@ CLAUDE="$(resolve_claude)" || { echo "FATAL: claude CLI not found (set CLAUDE_BI
 # errors in the report. A --with-browser (gh-pages) arm leaves OVERNIGHT_NO_-
 # CHROMEMCP unset, so the lane logic below runs as before.
 MCP_CONFIG_ARGS=()
-if [ -z "${OVERNIGHT_NO_CHROMEMCP:-}" ]; then
+if [ "$DRIVER" = "claude" ] && [ -z "${OVERNIGHT_NO_CHROMEMCP:-}" ]; then
   CHROMEMCP_BIN="$(command -v chromemcp || true)"
   [ -z "$CHROMEMCP_BIN" ] && [ -x "$HOME/ChromeMCP/chromemcp" ] && CHROMEMCP_BIN="$HOME/ChromeMCP/chromemcp"
   LANE=""
@@ -133,14 +173,15 @@ if [ -z "${OVERNIGHT_NO_CHROMEMCP:-}" ]; then
   fi
 fi
 
-# The bootstrap prompt. We do NOT use the old plugin slash command
+# The Claude bootstrap prompt. We do NOT use the old plugin slash command
 # (/overnight-runner:start) -- that path is gone with the plugin. The
 # sequencer-armed marker + run_phase_guard.py redirect the very first tool call
 # onto Skill(overnight-sequencer) regardless, but a clear instruction avoids a
 # wasted turn. Every launch is a fresh headless agent (there is no real
 # conversation resume); the guard cursor in .claude/state/sequencer-run.json is
-# what carries state across relaunches.
-read -r -d '' PROMPT <<PROMPT_EOF || true
+# what carries state across relaunches. Codex uses codex-sequencer-supervisor.sh
+# instead of one unbounded prompt.
+read -r -d '' CLAUDE_PROMPT <<PROMPT_EOF || true
 You are this repository's unattended overnight sequencer, running headless under bypassPermissions. Invoke the overnight-sequencer skill now and drive ${TODO_FILE} to completion as the single source of truth.
 
 Hard rules from that doctrine: the work unit is the ENTIRE TODO queue, not one section. NEVER stop or disarm the run. A blocker, hard failure, or operator-reserved decision is DEFERRED ([/] + a Deferred stamp + an XREF) and you ADVANCE to the next section/file -- it is never a reason to stop. The run ends ONLY on an oracle-verified \`run_phase_guard.py fixpoint\` (all work DONE or deferred-with-XREF) or the human operator's --disarm. If the guard cursor looks inactive after a relaunch, re-invoke Skill(overnight-sequencer) and resume from the recorded phase.
@@ -153,20 +194,34 @@ PROMPT_EOF
 # (cheap, prompt-cached input); this suppresses the expensive OUTPUT side.
 NO_INSIGHTS_PROMPT='Operational headless run: ignore any "explanatory" output-style instruction from session context. Do NOT produce educational "Insight" callout blocks or teaching asides. Keep every response terse and operational.'
 
-# stream-json through the formatter so the report streams progress live (plain
-# `--output-format text` stays silent until the run ends).
+# Stream machine-readable output through the formatter so the report streams
+# progress live (plain text stays silent until the run ends).
 set +o pipefail  # the pipeline must complete so PIPESTATUS captures claude's exit code
-"$CLAUDE" -p "$PROMPT" \
-  --output-format stream-json --verbose \
-  --permission-mode "$PERMISSION_MODE" \
-  --append-system-prompt "$NO_INSIGHTS_PROMPT" \
-  ${MCP_CONFIG_ARGS[@]+"${MCP_CONFIG_ARGS[@]}"} 2>&1 \
-  | python3 "$SCRIPT_DIR/stream-report.py" \
-  | tee -a "$REPORT"
-CLAUDE_EXIT="${PIPESTATUS[0]}"
+if [ "$DRIVER" = "claude" ]; then
+  CLAUDE="$(resolve_claude)" || { echo "FATAL: claude CLI not found (set CLAUDE_BIN)" >> "$REPORT"; exit 127; }
+  "$CLAUDE" -p "$CLAUDE_PROMPT" \
+    --output-format stream-json --verbose \
+    --permission-mode "$PERMISSION_MODE" \
+    --append-system-prompt "$NO_INSIGHTS_PROMPT" \
+    ${MCP_CONFIG_ARGS[@]+"${MCP_CONFIG_ARGS[@]}"} 2>&1 \
+    | python3 "$SCRIPT_DIR/stream-report.py" \
+    | tee -a "$REPORT"
+  AGENT_EXIT="${PIPESTATUS[0]}"
+else
+  CODEX="$(resolve_codex)" || { echo "FATAL: codex CLI not found (set CODEX_BIN)" >> "$REPORT"; exit 127; }
+  export OVERNIGHT_DRIVER=codex
+  export OVERNIGHT_SEQUENCER_RUN=1
+  export AI_WORKFLOW_CODEX_DRIVER=1
+  export AI_WORKFLOW_ENFORCE_SHARED_GATES=1
+  export OVERNIGHT_STREAM_KEEP_UNKNOWN=1
+  "$SCRIPT_DIR/codex-sequencer-supervisor.sh" \
+    "$PROJECT_DIR" "$TODO_FILE" "$CODEX" "$CODEX_SANDBOX" 2>&1 \
+    | tee -a "$REPORT"
+  AGENT_EXIT="${PIPESTATUS[0]}"
+fi
 set -o pipefail
-if [ "$CLAUDE_EXIT" -ne 0 ]; then
-  echo "claude exited non-zero: $CLAUDE_EXIT" >> "$REPORT"
+if [ "$AGENT_EXIT" -ne 0 ]; then
+  echo "$DRIVER exited non-zero: $AGENT_EXIT" >> "$REPORT"
 fi
 
 # Usage-limit detection: parse the reset hint from the report tail and write the

@@ -220,6 +220,7 @@ _IO_OLD_DONE_RE = re.compile(
 _IO_NEW_OPEN_RE = re.compile(
     r"^\+\s*\|.+?\|\s*\[(?: |/)\]\s*\|\s*$",
 )
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
 
 # ----------------------------------------------------------------------
@@ -683,8 +684,9 @@ def _staged_todo_files(root: Path) -> list[str]:
     return [p for p in paths if p.startswith("todo/") and p.endswith(".md")]
 
 
-def _detect_signature(root: Path) -> tuple[str, list[str], list[str]]:
-    """Returns (state, staged_source_files, flipped_or_stamped_todo_files) where
+def _detect_signature(root: Path) -> tuple[str, list[str], list[str], dict[str, list[str]]]:
+    """Returns (state, staged_source_files, flipped_or_stamped_todo_files,
+    flipped_sections_by_todo) where
     state is one of:
       "section"     -- source + Implementation Order row flip; full evidence
                        (build + Codex/receiving + four-dispatch-if-stamped)
@@ -713,17 +715,17 @@ def _detect_signature(root: Path) -> tuple[str, list[str], list[str]]:
         # Empty index AND no error -- this is a commit attempt
         # against staging that has no source / no TODO. Cannot be a
         # section commit by definition.
-        return ("not_section", src, [])
+        return ("not_section", src, [], {})
     if src and todos:
-        flipped, todo_diff_ok = _impl_order_flips_with_status(root, todos)
+        flipped, todo_diff_ok, flipped_sections = _impl_order_flips_with_status(root, todos)
         if flipped:
             # Section signature: caller pulls all_staged_todos via
             # _staged_todo_files() to scan stamps in non-flipped TODOs
             # too (Codex M5 post-impl: cross-TODO stamp piggyback).
-            return ("section", src, flipped)
+            return ("section", src, flipped, flipped_sections)
         if not todo_diff_ok:
             # Some per-TODO diff failed to read. Cannot rule out a flip.
-            return ("unknown", src, [])
+            return ("unknown", src, [], {})
         # Codex M5 (post-impl): source + TODO without row flip but
         # WITH added stamps was a real bypass under the original
         # signature (`not_section` allowed it). Detect stamp adds and
@@ -733,12 +735,12 @@ def _detect_signature(root: Path) -> tuple[str, list[str], list[str]]:
         try:
             stamped = _stamped_todos(root, todos)
         except Exception:
-            return ("unknown", src, [])
+            return ("unknown", src, [], {})
         if stamped:
-            return ("stamp_only", src, stamped)
+            return ("stamp_only", src, stamped, {})
         # Source + TODO without flip and without stamps: not a
         # section/stamp commit. Allow (prior behavior).
-        return ("not_section", src, [])
+        return ("not_section", src, [], {})
     if todos and not src:
         # Stamp-only path (Codex M1 post-impl). Detect ADDED stamp
         # lines via the same _stamped_todos used by the four-dispatch
@@ -747,18 +749,129 @@ def _detect_signature(root: Path) -> tuple[str, list[str], list[str]]:
         try:
             stamped = _stamped_todos(root, todos)
         except Exception:
-            return ("unknown", src, [])
+            return ("unknown", src, [], {})
         if stamped:
-            return ("stamp_only", src, stamped)
-        return ("not_section", src, [])
+            return ("stamp_only", src, stamped, {})
+        return ("not_section", src, [], {})
     # src and not todos: pure source change without TODO update; not a
     # section commit per the §4 contract.
-    return ("not_section", src, [])
+    return ("not_section", src, [], {})
 
 
-def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[list[str], bool]:
+def _normalize_section_id(raw: object) -> str:
+    text = str(raw or "").strip()
+    text = text.lstrip("§").strip()
+    m = re.fullmatch(r"(?:[sS]|section\s+)?(\d+)", text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return text
+
+
+def _table_cells(line: str) -> list[str]:
+    text = line.strip()
+    if not text.startswith("|") or not text.endswith("|"):
+        return []
+    return [cell.strip() for cell in text.strip("|").split("|")]
+
+
+def _table_labels(cells: list[str]) -> list[str]:
+    return [re.sub(r"\s+", " ", cell.strip().lower()) for cell in cells]
+
+
+def _section_value(raw: object) -> str:
+    text = str(raw or "").strip()
+    m = re.fullmatch(r"§\s*(\d+)", text)
+    if m:
+        return m.group(1)
+    m = re.fullmatch(r"(?:[sS]|section\s+)?(\d+)", text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _staged_file_lines(root: Path, path: str) -> list[str]:
+    try:
+        out = subprocess.check_output(
+            ["git", "show", f":{path}"],
+            cwd=str(root),
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except Exception:
+        return []
+    return out.splitlines()
+
+
+def _io_header_for_added_line(root: Path, todo: str, added_lineno: int) -> list[str]:
+    lines = _staged_file_lines(root, todo)
+    if not lines:
+        return []
+    start = min(max(added_lineno - 1, 0), len(lines) - 1)
+    for idx in range(start, -1, -1):
+        if re.match(r"^##+\s+", lines[idx]):
+            break
+        cells = _table_cells(lines[idx])
+        labels = _table_labels(cells)
+        if "status" in labels and ("order" in labels or "section" in labels):
+            return cells
+    return []
+
+
+def _io_row_section(root: Path, todo: str, added_lineno: int, diff_line: str) -> str:
+    if not _IO_NEW_DONE_RE.match(diff_line):
+        return ""
+    cells = _table_cells(diff_line[1:])
+    if not cells or cells[-1] != "[x]":
+        return ""
+    header = _io_header_for_added_line(root, todo, added_lineno)
+    labels = _table_labels(header)
+    for wanted in ("section", "order"):
+        if wanted in labels:
+            idx = labels.index(wanted)
+            if idx < len(cells):
+                return _section_value(cells[idx])
+            return ""
+    numeric_cells = [cell for cell in cells if re.fullmatch(r"\d+", cell)]
+    if numeric_cells:
+        return numeric_cells[0]
+    return ""
+
+
+def _promoted_sections_for_hunk(
+    root: Path,
+    todo: str,
+    added_done: list[tuple[int, str]],
+    removed_done: list[tuple[int, str]],
+) -> list[str]:
+    added_sections = [
+        sec
+        for sec in (
+            _io_row_section(root, todo, lineno, row)
+            for lineno, row in added_done
+        )
+        if sec
+    ]
+    removed_sections = [
+        sec
+        for sec in (
+            _io_row_section(root, todo, lineno, row)
+            for lineno, row in removed_done
+        )
+        if sec
+    ]
+    for sec in removed_sections:
+        try:
+            added_sections.remove(sec)
+        except ValueError:
+            pass
+    return added_sections
+
+
+def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[list[str], bool, dict[str, list[str]]]:
     """Wrap _impl_order_flips with a success flag. Returns
-    (flipped, all_diffs_succeeded). Used by _detect_signature to
+    (flipped, all_diffs_succeeded, flipped_sections_by_todo). Used by
+    _detect_signature to
     distinguish "no flip detected because no diff had one" from
     "no flip detected because git couldn't return the diff".
 
@@ -769,13 +882,14 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
     must not require fresh adversarial+consistency+perf dispatches;
     the four-dispatch gate is a promotion gate.
 
-    Detection logic: a hunk that has BOTH an `_IO_OLD_DONE_RE`
-    (removed `[x]` row) and `_IO_NEW_OPEN_RE` (added `[ ]`/`[/]` row)
-    is a demotion -- skip it. A hunk with `_IO_NEW_DONE_RE` (added
-    `[x]`) without a matching `_IO_OLD_DONE_RE` is a promotion --
-    flag it.
+    Detection logic is section-set based. A hunk can contain unrelated
+    demotions, edits to already-complete rows, and promotions at the same
+    time, so row-count deltas are not enough. Flag any section that appears
+    as newly `[x]` after subtracting sections that were already `[x]` in
+    the same hunk.
     """
     flips: list[str] = []
+    sections_by_todo: dict[str, list[str]] = {}
     all_ok = True
     for path in todo_files:
         try:
@@ -787,38 +901,53 @@ def _impl_order_flips_with_status(root: Path, todo_files: list[str]) -> tuple[li
         except Exception:
             all_ok = False
             continue
-        added_done: list[str] = []
+        added_done: list[tuple[int, str]] = []
         removed_open: list[str] = []
         added_open: list[str] = []
-        removed_done: list[str] = []
+        removed_done: list[tuple[int, str]] = []
+        promoted_sections: list[str] = []
         flipped_here = False
+        new_lineno = 0
         for line in diff.splitlines():
-            if line.startswith("@@"):
+            hm = _HUNK_RE.match(line)
+            if hm:
                 # Settle the previous hunk before starting the next.
-                if added_done and len(added_done) > len(removed_done):
-                    # promotion: more `[x]` adds than `[x]` removals
+                hunk_promotions = _promoted_sections_for_hunk(root, path, added_done, removed_done)
+                if hunk_promotions:
                     flipped_here = True
-                    break
+                    promoted_sections.extend(hunk_promotions)
                 added_done.clear()
                 removed_open.clear()
                 added_open.clear()
                 removed_done.clear()
+                new_lineno = int(hm.group(1)) - 1
                 continue
             if line.startswith("---") or line.startswith("+++"):
                 continue
-            if _IO_OLD_OPEN_RE.match(line):
-                removed_open.append(line)
-            elif _IO_NEW_DONE_RE.match(line):
-                added_done.append(line)
-            elif _IO_OLD_DONE_RE.match(line):
-                removed_done.append(line)
-            elif _IO_NEW_OPEN_RE.match(line):
-                added_open.append(line)
-        # Settle the final hunk: a promotion is when added [x] count
-        # exceeds removed [x] count (a demotion balances them).
-        if flipped_here or len(added_done) > len(removed_done):
+            if line.startswith("+"):
+                new_lineno += 1
+                if _IO_NEW_DONE_RE.match(line):
+                    added_done.append((new_lineno, line))
+                elif _IO_NEW_OPEN_RE.match(line):
+                    added_open.append(line)
+                continue
+            if line.startswith("-"):
+                if _IO_OLD_OPEN_RE.match(line):
+                    removed_open.append(line)
+                elif _IO_OLD_DONE_RE.match(line):
+                    removed_done.append((max(new_lineno + 1, 1), "+" + line[1:]))
+                continue
+            if new_lineno:
+                new_lineno += 1
+        # Settle the final hunk.
+        hunk_promotions = _promoted_sections_for_hunk(root, path, added_done, removed_done)
+        if hunk_promotions:
+            flipped_here = True
+            promoted_sections.extend(hunk_promotions)
+        if flipped_here:
             flips.append(path)
-    return (flips, all_ok)
+            sections_by_todo[path] = sorted(set(promoted_sections))
+    return (flips, all_ok, sections_by_todo)
 
 
 # ----------------------------------------------------------------------
@@ -945,7 +1074,7 @@ def _review_evidence(root: Path, staged_src: list[str]) -> tuple[bool, str]:
                        + (f" (+{len(uncovered)-5} more)" if len(uncovered) > 5 else ""))
     mismatched = [
         p for p in staged_src
-        if current_blobs.get(p) != trigger_blobs.get(p)
+        if not _source_binding_matches(trigger_blobs.get(p), current_blobs.get(p))
     ]
     if mismatched:
         # Fallback: check the ring-buffer history for any previously
@@ -993,8 +1122,22 @@ def _history_covers(root: Path, staged_src: list[str], current_blobs: dict) -> b
         eblobs = entry.get("trigger_blobs") or {}
         if not isinstance(eblobs, dict):
             continue
-        if all(eblobs.get(p) == current_blobs.get(p) for p in staged_src):
+        if all(_source_binding_matches(eblobs.get(p), current_blobs.get(p)) for p in staged_src):
             return True
+    return False
+
+
+def _source_binding_matches(recorded: object, current: object) -> bool:
+    old = str(recorded or "")
+    new = str(current or "")
+    if old == new:
+        return True
+    old_parts = old.split(":", 1)
+    new_parts = new.split(":", 1)
+    old_blob = old_parts[1] if len(old_parts) == 2 and old_parts[0].isdigit() else old
+    new_blob = new_parts[1] if len(new_parts) == 2 and new_parts[0].isdigit() else new
+    if ":" not in old:
+        return bool(old_blob and old_blob == new_blob)
     return False
 
 
@@ -1350,7 +1493,7 @@ def _re_adversarial_trigger_check(
     # in this very file.
     try:
         from _bootstrap_mode import is_bootstrap_commit
-        if is_bootstrap_commit(__file__):
+        if is_bootstrap_commit(__file__, root):
             sys.stderr.write(
                 "[section-commit-gate] WARN (bootstrap-mode) -- staged "
                 "diff includes this hook's own file; re-adversarial "
@@ -1520,6 +1663,10 @@ def _skip_log_path(root: Path) -> Path:
     return root / ".claude" / "state" / "skip-log.jsonl"
 
 
+def _shared_skip_log_path(root: Path) -> Path:
+    return root / ".ai-workflow" / "skip-log.jsonl"
+
+
 def _skip_record_append(record: dict, path: Path) -> bool:
     """Append a single-line JSON record to skip-log.jsonl atomically.
     Uses O_APPEND + a single os.write() under PIPE_BUF (4096) so
@@ -1548,6 +1695,13 @@ def _skip_record_append(record: dict, path: Path) -> bool:
         return True
     except Exception:
         return False
+
+
+def _shared_skip_record_append(record: dict, root: Path) -> bool:
+    shared = dict(record)
+    shared.setdefault("schema", "ai-workflow.skip.v1")
+    shared.setdefault("source", "section_commit_gate")
+    return _skip_record_append(shared, _shared_skip_log_path(root))
 
 
 def _reset_review_state(root: Path) -> None:
@@ -1770,7 +1924,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         return 2
 
     try:
-        sig_state, staged_src, flipped = _detect_signature(root)
+        sig_state, staged_src, flipped, flipped_sections = _detect_signature(root)
     except Exception:
         # Pre-signature unhandled exception: harness mode fails open;
         # git-hook-mode fails closed on non-empty index (Codex H2).
@@ -1862,6 +2016,13 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                     "requires a durable paper trail; refusing the commit.\n"
                 )
                 return 2
+            if not _shared_skip_record_append(record, root):
+                sys.stderr.write(
+                    "[section-commit-gate] BLOCK -- SKIP audit write to "
+                    ".ai-workflow/skip-log.jsonl FAILED. The shared "
+                    "workflow ledger needs the same opt-out paper trail.\n"
+                )
+                return 2
             # Codex post-commit review_B: SKIP is a state transition,
             # not just an audit append. Reset last-codex-review.json
             # `received` to false so a stamp-only SKIP cannot leave a
@@ -1872,6 +2033,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                 f"[section-commit-gate] SKIP allowed (stamp_only) -- "
                 f"reason: {skip_reason}\n"
                 f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl; "
+                f"mirrored to .ai-workflow/skip-log.jsonl; "
                 f"last-codex-review.json reset (received: false).\n"
             )
             return 0
@@ -1922,10 +2084,18 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
                 "requires a durable paper trail; refusing the commit.\n"
             )
             return 2
+        if not _shared_skip_record_append(record, root):
+            sys.stderr.write(
+                "[section-commit-gate] BLOCK -- SKIP audit write to "
+                ".ai-workflow/skip-log.jsonl FAILED. The shared "
+                "workflow ledger needs the same opt-out paper trail.\n"
+            )
+            return 2
         _reset_review_state(root)
         sys.stderr.write(
             f"[section-commit-gate] SKIP allowed -- reason: {skip_reason}\n"
             f"[section-commit-gate]   logged to .claude/state/skip-log.jsonl; "
+            f"mirrored to .ai-workflow/skip-log.jsonl; "
             f"last-codex-review.json reset (received: false).\n"
         )
         return 0
@@ -1945,6 +2115,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
             "flipped_todos": flipped,
         }
         _skip_record_append(warn_record, _skip_log_path(root))
+        _shared_skip_record_append(warn_record, root)
 
     # TODO-08 §21: WARN-first heuristic gates fire on every section
     # commit attempt that has an active implement-todo-section skill
@@ -1972,7 +2143,7 @@ def _evaluate(root: Path, mode: str, cmd: str = "") -> int:
         root, staged_src, all_staged_todos
     )
     impl_adv_ok, impl_adv_err = _step13_impl_adversarial_check(
-        root, staged_src, flipped
+        root, staged_src, flipped, flipped_sections
     )
     smoke_ok, smoke_err = _step16_smoke_check(root, staged_src, cmd)
     if (build_ok and review_ok and fourd_ok and re_adv_ok
@@ -2077,7 +2248,7 @@ def _step8_test_wiring_check(
     # Bootstrap-mode bypass for this gate (covers shipping the gate itself).
     try:
         from _bootstrap_mode import is_bootstrap_commit
-        if is_bootstrap_commit(__file__):
+        if is_bootstrap_commit(__file__, root):
             return (True, "")
     except Exception:
         pass
@@ -2155,16 +2326,13 @@ def _step8_test_wiring_check(
 
 def _step13_impl_adversarial_check(
     root: Path, staged_src: list[str], flipped_todos: list[str],
-    flipped_sections: list[str] | None = None,
+    flipped_sections: dict[str, list[str]] | list[str] | None = None,
 ) -> tuple[bool, str]:
     """TODO-08 §20 step-13: when staged diff touches src/ AND IO row
     flips to [x] (i.e. flipped_todos non-empty), require an
-    `adversarial-impl` entry in last-review-stamps.json[<todo>] within
-    30 minutes for at least one of the flipped TODOs.
-
-    Distinct from review-todo-section step-5's `adversarial` key per
-    Codex design H1 -- impl-side step-13 dispatches use the marker
-    `[review-kind: adversarial-impl]`.
+    `adversarial` entry in last-review-stamps.json[<todo>] within
+    30 minutes for at least one of the flipped TODOs. The legacy
+    `adversarial-impl` alias/variant is accepted for older prompts.
 
     SKIP_REVIEW_HOOK=1 honored (caller). Bootstrap-mode honored.
     """
@@ -2197,7 +2365,7 @@ def _step13_impl_adversarial_check(
         return (True, "")
     try:
         from _bootstrap_mode import is_bootstrap_commit
-        if is_bootstrap_commit(__file__):
+        if is_bootstrap_commit(__file__, root):
             return (True, "")
     except Exception:
         pass
@@ -2206,8 +2374,9 @@ def _step13_impl_adversarial_check(
     if not stamps_path.exists():
         return (False, (
             f"IO row [x] flip on {flipped_todos[0]} requires step-13 "
-            f"`[review-kind: adversarial-impl]` Codex dispatch within "
-            f"the last 30 minutes; .claude/state/last-review-stamps.json "
+            f"`[review-kind: adversarial]` Codex dispatch within the "
+            f"last 30 minutes (`adversarial-impl` is accepted as a "
+            f"legacy alias/variant); .claude/state/last-review-stamps.json "
             f"does not exist."
         ))
     try:
@@ -2233,12 +2402,76 @@ def _step13_impl_adversarial_check(
     except Exception:
         pass
 
-    # Tag interchangeability (TODO-08 follow-up): the implement-todo-section
-    # gate was demanding `[review-kind: adversarial-impl]` while
-    # review-todo-section accepted plain `[review-kind: adversarial]` for
-    # the same Codex run. Both tags now satisfy the impl-adversarial gate
-    # so the agent does not need to redispatch only to swap the tag. The
-    # head/section bindings still apply per-tag.
+    required_sections: list[tuple[str, str]] = []
+    for todo in flipped_todos:
+        if isinstance(flipped_sections, dict):
+            sections_for_todo = [
+                _normalize_section_id(sec)
+                for sec in flipped_sections.get(todo, [])
+                if _normalize_section_id(sec)
+            ]
+        else:
+            sections_for_todo = [
+                _normalize_section_id(sec)
+                for sec in (flipped_sections or [])
+                if _normalize_section_id(sec)
+            ]
+        sections_for_todo = sorted(set(sections_for_todo))
+        if len(sections_for_todo) > 1:
+            return (False, (
+                f"IO row [x] flip on {todo} promotes multiple sections "
+                f"({', '.join(sections_for_todo)}). Split the change into "
+                f"one section commit per Codex review."
+            ))
+        if sections_for_todo:
+            required_sections.append((todo, sections_for_todo[0]))
+
+    def _entry_has_matching_impl_adv(todo: str, required_section: str) -> bool:
+        entry = state.get(todo)
+        if not isinstance(entry, dict):
+            return False
+        # Tag interchangeability (TODO-08 follow-up): `adversarial` is the
+        # canonical implementation-time marker; `adversarial-impl` remains an
+        # accepted alias/variant for older prompts. The head/section bindings
+        # still apply per-tag.
+        for tag in ("adversarial-impl", "adversarial"):
+            ts = entry.get(tag)
+            if not (isinstance(ts, int) and ts >= cutoff_ns):
+                continue
+            # Section binding: the recorded per-kind section must match
+            # the section being flipped. Legacy entries may only have a
+            # shared `section`; when the live path knows the flipped
+            # section, missing or mismatched section evidence fails closed.
+            recorded_section = _normalize_section_id(
+                entry.get(f"{tag}_section") or entry.get("section", "")
+            )
+            if not recorded_section or recorded_section != required_section:
+                continue
+            # HEAD binding: the dispatch's `<tag>_head` must be an
+            # ancestor of the current HEAD.
+            rh = entry.get(f"{tag}_head", "")
+            if isinstance(rh, str) and rh and current_head:
+                if not _git_is_ancestor(root, rh, current_head):
+                    continue
+            return True
+        return False
+
+    if required_sections:
+        missing = [
+            f"{todo} §{section}"
+            for todo, section in required_sections
+            if not _entry_has_matching_impl_adv(todo, section)
+        ]
+        if not missing:
+            return (True, "")
+        return (False, (
+            f"IO row [x] flip requires section-bound step-13 "
+            f"`[review-kind: adversarial]` Codex evidence for each promoted "
+            f"section; missing {', '.join(missing)}. Run: "
+            f"`bash scripts/codex-dispatch.sh '[review-kind: adversarial] "
+            f"<todo-path> <section-N> <prompt>'`."
+        ))
+
     for todo in flipped_todos:
         entry = state.get(todo)
         if not isinstance(entry, dict):
@@ -2247,14 +2480,6 @@ def _step13_impl_adversarial_check(
             ts = entry.get(tag)
             if not (isinstance(ts, int) and ts >= cutoff_ns):
                 continue
-            # Section binding: the recorded `section` field must match
-            # the section being flipped. flipped_sections is best-effort.
-            if flipped_sections:
-                recorded_section = str(entry.get("section", "")).lstrip("§").strip()
-                if recorded_section and recorded_section not in flipped_sections:
-                    continue
-            # HEAD binding: the dispatch's `<tag>_head` must be an
-            # ancestor of the current HEAD.
             rh = entry.get(f"{tag}_head", "")
             if isinstance(rh, str) and rh and current_head:
                 if not _git_is_ancestor(root, rh, current_head):
@@ -2262,11 +2487,12 @@ def _step13_impl_adversarial_check(
             return (True, "")
     return (False, (
         f"IO row [x] flip on {flipped_todos[0]} requires step-13 "
-        f"`[review-kind: adversarial-impl]` Codex dispatch (distinct "
-        f"from review-todo-section step-5 adversarial). Evidence is "
-        f"bound to the section number and dispatch HEAD ancestry. Run: "
-        f"`scripts/codex-dispatch-with-files.sh \"[review-kind: "
-        f"adversarial-impl] <todo-path> <section-N> <prompt>\"`."
+        f"`[review-kind: adversarial]` Codex dispatch "
+        f"(`adversarial-impl` is accepted as a legacy alias/variant). "
+        f"Evidence is bound to the section number and dispatch HEAD "
+        f"ancestry. Run: "
+        f"`bash scripts/codex-dispatch.sh '[review-kind: adversarial] "
+        f"<todo-path> <section-N> <prompt>'`."
     ))
 
 
@@ -2314,7 +2540,7 @@ def _step16_smoke_check(
         return (True, "")
     try:
         from _bootstrap_mode import is_bootstrap_commit
-        if is_bootstrap_commit(__file__):
+        if is_bootstrap_commit(__file__, root):
             return (True, "")
     except Exception:
         pass

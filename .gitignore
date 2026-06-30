@@ -77,6 +77,9 @@ sdk/build/
 !.claude/state/live-gotchas.md
 .claude/scheduled_tasks.lock
 
+# AI workflow shared state (driver leases, evidence ledger, indexes).
+.ai-workflow/
+
 # Bootloader build intermediate.  bootx64.so is produced by linking
 # .o files from src/boot/uefi/Makefile, then objcopy'd into
 # build/tools/BOOTX64.EFI which is what ships in the GPT image.
@@ -90,6 +93,9 @@ src/boot/uefi/*.o
 
 # .claude/overnight/ -- overnight-runner CLI runtime state (never committed).
 .claude/overnight/
+
+# .codex/overnight/ -- Codex-driver overnight reports/metrics (never committed).
+.codex/overnight/
 
 # Conclave engine + data + key live in ~/conclave (github.com/rizonetech/Conclave);
 # this project only carries the .conclave/ connector (no secrets here).

@@ -5,6 +5,8 @@ description: Run an Impossible OS TODO file to completion overnight. One slice =
 
 # Overnight TODO Runner
 
+> **External-Reviewer Contract:** This skill invokes Codex indirectly through child section/file workflows (`implement-todo-section`, `review-todo-section`, and `complete-todo-file`). Every Codex finding goes through `superpowers:receiving-code-review` (verify at file:line or source section, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
+
 > Slice = section ship. Stop is a checkpoint, not the end. The Stop-hook returns exit 2 while state is active; respect it -- start the next [ ] section instead of final-answering.
 
 ## Use This Skill When

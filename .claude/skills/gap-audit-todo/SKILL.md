@@ -5,6 +5,8 @@ description: Deep gap audit of a TODO file against all overlapping TODOs -- find
 
 # Gap Audit TODO
 
+> **External-Reviewer Contract:** This skill dispatches Codex through its mandatory Phase 3.5 `codex-gap-audit` pass. Every finding goes through `superpowers:receiving-code-review` (verify at file:line or source section, Fix / Reject / Accept, never blind-implement). Canonical contract: [docs/infrastructure/ai-system.md#external-reviewer-contract-codex](../../../docs/infrastructure/ai-system.md#external-reviewer-contract-codex).
+
 ## Execution Discipline
 
 > Gap analysis is not a formatting pass and not a parity-only pass. The job is to make the TODO competitively complete, execution-ready, and resistant to paper completion.

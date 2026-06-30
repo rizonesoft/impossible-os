@@ -50,7 +50,7 @@ def _staged_paths(root: str) -> list[str]:
     return [p.strip() for p in out.splitlines() if p.strip()]
 
 
-def is_bootstrap_commit(hook_self_path: str) -> bool:
+def is_bootstrap_commit(hook_self_path: str, repo_root: str | os.PathLike[str] | None = None) -> bool:
     """Return True when the hook's own implementation file is in the
     staged diff. Both sides normalized to repo-relative form.
 
@@ -58,7 +58,7 @@ def is_bootstrap_commit(hook_self_path: str) -> bool:
     Returns False on any error -- bootstrap-mode is a downgrade
     convenience, not a load-bearing gate, so fail-closed is wrong here.
     """
-    root = _repo_root()
+    root = str(repo_root) if repo_root is not None else _repo_root()
     if not root:
         return False
     try:

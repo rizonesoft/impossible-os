@@ -55,6 +55,16 @@ if [ -f "$GATE" ]; then
     fi
 fi
 
+SHARED_GATE="$REPO_ROOT/scripts/ai-workflow/gates.py"
+if [ "${AI_WORKFLOW_ENFORCE_SHARED_GATES:-0}" = "1" ] && [ -f "$SHARED_GATE" ]; then
+    if ! python3 "$SHARED_GATE" staged-commit --mode git-hook --format text; then
+        echo ""
+        echo -e "\033[31mShared AI workflow gate refused this commit\033[0m"
+        echo "  Acquire or complete the matching driver lease before section ship."
+        exit 1
+    fi
+fi
+
 echo ""
 echo -e "\033[32mPre-commit lint passed\033[0m"
 exit 0
