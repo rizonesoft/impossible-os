@@ -803,6 +803,10 @@ def _call_lsp(fn: Callable[[], Any],
                     "lsp-reader-crashed",
                     "lsp-shutdown")
     method_str = method or "<unknown>"
+    # Idle self-reap liveness: every tool call routes through here, so this is the
+    # one place that marks the bridge "active" for the idle watchdog.
+    global _LAST_ACTIVITY
+    _LAST_ACTIVITY = _time.monotonic()
     corr_id = _lsplog.new_corr_id()
     token = _lsplog.set_corr_id(corr_id)
     t_start = _lsplog.log_phase_start(method_str, lang_hint)
@@ -4864,6 +4868,79 @@ def _hover_content_bytes(hover: Any) -> int:
 # Main
 # ---------------------------------------------------------------------
 
+# In-process idle self-reaping. An MCP app-server (e.g. Codex) can leak stdio
+# connections: it opens a NEW bridge periodically and never closes the old one,
+# leaving an abandoned bridge holding its clangd/pyright children forever (this
+# leaked ~125 bridges / >4 GB in one overnight run). The bridge has a live parent
+# and gets no further requests, so neither stdin-EOF nor parent-death rescues it.
+# We fix it at the source: a watchdog thread exits the process -- reaping the LSP
+# children via _graceful_shutdown -- once the bridge has been idle (no tool call)
+# past _IDLE_TIMEOUT_S, or has been orphaned. A bridge in active use bumps
+# _LAST_ACTIVITY on every tool call, so it is never reaped while serving.
+import time as _time  # module-level alias (functions re-import locally; harmless)
+
+_SHUTDOWN_LOCK = threading.Lock()
+_SHUTDOWN_DONE = False
+_LAST_ACTIVITY = _time.monotonic()
+_IDLE_TIMEOUT_S = float(os.environ.get("LSP_BRIDGE_IDLE_TIMEOUT", "900"))  # 15 min
+# Check often enough to honor short timeouts promptly, but no more than every 30s.
+_WATCHDOG_TICK_S = max(1.0, min(30.0, _IDLE_TIMEOUT_S / 4))
+
+
+def _graceful_shutdown() -> None:
+    """Idempotent bridge teardown: cancel warm-start, join its worker, reap all
+    LSP subprocesses. Called by main()'s finally on normal exit AND by the idle
+    watchdog (which os._exit()s afterward, bypassing the finally), so it must be
+    safe to run more than once.
+
+    Cancel + drain warm-start workers BEFORE reaping LSPs: otherwise the per-worker
+    progress poll could call snapshot_progress() on an already-shut-down
+    LspSubprocess. _shutdown_all_lsps sets _BRIDGE_SHUTTING_DOWN under
+    _LIVE_LSPS_LOCK so any LSP a wedged warm worker has not yet published gets
+    reaped at the publish gate in _get_or_spawn instead of leaking; lsp_client's
+    _LIVE_SUBPROCS WeakSet + _atexit_kill_all backstop any subprocess still in
+    flight past process exit.
+    """
+    global _SHUTDOWN_DONE
+    with _SHUTDOWN_LOCK:
+        if _SHUTDOWN_DONE:
+            return
+        _SHUTDOWN_DONE = True
+    _WARM_CANCEL.set()
+    bg_thread = _WARM_THREAD
+    if bg_thread is not None and bg_thread.is_alive():
+        bg_thread.join(timeout=2.0)
+    _shutdown_all_lsps()
+
+
+def _idle_watchdog() -> None:
+    """Daemon thread: exit the bridge once it has been abandoned. A bridge is
+    abandoned when no tool call has touched _LAST_ACTIVITY for _IDLE_TIMEOUT_S, or
+    when its parent app-server died (reparented to init -> getppid() == 1). Uses
+    os._exit after _graceful_shutdown so a wedged serve loop cannot keep the
+    process and its LSP children alive."""
+    while True:
+        _time.sleep(_WATCHDOG_TICK_S)
+        idle = _time.monotonic() - _LAST_ACTIVITY
+        orphaned = (os.getppid() == 1)
+        if idle > _IDLE_TIMEOUT_S or orphaned:
+            reason = "orphaned" if orphaned else f"idle {idle:.0f}s > {_IDLE_TIMEOUT_S:.0f}s"
+            sys.stderr.write(f"[lsp-mcp] idle-watchdog: self-exit ({reason})\n")
+            _graceful_shutdown()
+            os._exit(0)
+
+
+def _start_idle_watchdog() -> None:
+    """Arm the idle self-reaper. Best effort: never let it break serving."""
+    try:
+        threading.Thread(target=_idle_watchdog, name="idle-watchdog", daemon=True).start()
+    except Exception as exc:
+        sys.stderr.write(
+            f"[lsp-mcp] WARN: idle watchdog not started: "
+            f"{type(exc).__name__}: {exc}\n"
+        )
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="bridge.py",
@@ -5004,51 +5081,19 @@ def main(argv=None) -> int:
 
         srv = _build_mcp(FastMCP, workspace_root)
         _maybe_warm_start()
+        # Arm the idle self-reaper so an abandoned/orphaned bridge exits on its
+        # own (reaping its clangd/pyright) instead of leaking forever.
+        _start_idle_watchdog()
         # Serve on stdio. FastMCP.run() picks the correct transport
         # based on context; default is stdio which is what Claude
         # Code launches.
         srv.run()
         return 0
     finally:
-        # Cancel + drain warm-start workers BEFORE reaping LSPs --
-        # otherwise the per-worker progress poll could call
-        # snapshot_progress() on an already-shut-down LspSubprocess
-        # and emit a confusing stack on shutdown (the LspSubprocess
-        # itself is robust to it; the poll loop just keeps the
-        # reaper waiting on a join).
-        _WARM_CANCEL.set()
-        # Background mode: join the daemon thread with a 2 s upper
-        # bound. _WARM_CANCEL.set() above already short-circuits the
-        # per-LSP poll loop on the next 0.5 s tick, so a healthy bg
-        # warm-start exits in well under 1 s. _shutdown_all_lsps then
-        # sets _BRIDGE_SHUTTING_DOWN under _LIVE_LSPS_LOCK so any LSP
-        # the daemon thread has not yet published gets reaped at the
-        # publish gate in _get_or_spawn instead of leaking.
-        #
-        # If a warm worker is wedged inside a spawner's
-        # `lsp.initialize()` (clangd uses a 15 s timeout) when this
-        # finally runs, the 2 s join here returns early -- the worker
-        # is still inside the ThreadPoolExecutor underneath
-        # _warm_start_run. Three layers ensure the wedged worker
-        # cannot leak its child subprocess past process exit:
-        #   1. lsp_client._LIVE_SUBPROCS WeakSet tracks every
-        #      LspSubprocess from __init__ (lsp_client.py:387), so
-        #      the in-flight subprocess is registered before
-        #      initialize ever runs.
-        #   2. lsp_client._atexit_kill_all (lsp_client.py:170-184)
-        #      reaps every entry on interpreter shutdown via SIGTERM
-        #      -> SIGKILL with bounded grace.
-        #   3. atexit handlers run in LIFO order, so
-        #      _atexit_kill_all (registered later, at first
-        #      LspSubprocess import) fires BEFORE
-        #      ThreadPoolExecutor's _python_exit. Once the LSP dies
-        #      its reader EOFs, the pending Future raises
-        #      lsp-subprocess-exited, the warm worker unblocks, and
-        #      the executor join completes.
-        bg_thread = _WARM_THREAD
-        if bg_thread is not None and bg_thread.is_alive():
-            bg_thread.join(timeout=2.0)
-        _shutdown_all_lsps()
+        # All teardown lives in _graceful_shutdown so the normal-exit path here
+        # and the mcp-janitor SIGTERM handler run the exact same cleanup. The
+        # full warm-start-drain / wedged-worker rationale is documented there.
+        _graceful_shutdown()
 
 
 if __name__ == "__main__":
