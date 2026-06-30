@@ -178,13 +178,34 @@ record_no_progress() {
 
 install_nested_codex_guard() {
     local dir="$1"
+    local real_codex="$2"
     mkdir -p "$dir"
-    cat > "$dir/codex" <<'EOF'
-#!/usr/bin/env bash
+    {
+        printf '%s\n' '#!/usr/bin/env bash'
+        printf 'REAL_CODEX=%q\n' "$real_codex"
+        cat <<'EOF'
+if [ "${CODEX_REVIEWER_DISPATCH:-0}" = "1" ]; then
+    exec "$REAL_CODEX" "$@"
+fi
+if [ "$#" -gt 0 ] && { [ "$1" = "--version" ] || [ "$1" = "app-server" ]; }; then
+    echo "[codex-supervisor] nested codex CLI availability check blocked outside reviewer dispatch." >&2
+    exit 125
+fi
+if [ "$#" -gt 0 ] && { [ "$1" = "exec" ] || [ "$1" = "e" ] || [ "$1" = "task" ]; }; then
+    echo "[codex-supervisor] nested codex $1 calls are disabled inside the overnight Codex driver." >&2
+    echo "[codex-supervisor] Use repo review wrappers such as scripts/codex-dispatch.sh for fresh reviewer runs." >&2
+    exit 125
+fi
+if [ "$#" -ge 2 ] && { [ "$2" = "exec" ] || [ "$2" = "e" ] || [ "$2" = "task" ]; }; then
+    echo "[codex-supervisor] nested codex $2 calls are disabled inside the overnight Codex driver." >&2
+    echo "[codex-supervisor] Use repo review wrappers such as scripts/codex-dispatch.sh for fresh reviewer runs." >&2
+    exit 125
+fi
 echo "[codex-supervisor] nested codex CLI calls are disabled inside the overnight Codex driver." >&2
 echo "[codex-supervisor] Use repo review wrappers such as scripts/codex-dispatch.sh; do not spawn codex exec/task from the driver." >&2
 exit 125
 EOF
+    } > "$dir/codex"
     chmod +x "$dir/codex"
 }
 
@@ -193,7 +214,7 @@ run_codex_step() {
     local prompt="$2"
     local guard_dir
     guard_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-overnight-guard.XXXXXX")"
-    install_nested_codex_guard "$guard_dir"
+    install_nested_codex_guard "$guard_dir" "$CODEX_BIN"
     log "codex step: $label (timeout=${STEP_TIMEOUT}s)"
     set +o pipefail
     env \

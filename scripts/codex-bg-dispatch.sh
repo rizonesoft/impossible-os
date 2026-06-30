@@ -40,6 +40,7 @@ if [[ ! -f "$COMPANION" ]]; then
     echo "Set CODEX_COMPANION_PATH if the codex plugin lives elsewhere." >&2
     exit 1
 fi
+export CODEX_REVIEWER_DISPATCH=1
 
 # task --background --json returns immediately with {jobId, status, logFile}.
 # The detached worker continues reasoning in the background (no Bash wall).

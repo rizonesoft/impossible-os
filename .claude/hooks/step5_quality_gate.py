@@ -116,6 +116,106 @@ def _active_implement_skill_started_ts(root: str) -> int:
     return ts if isinstance(ts, int) and ts > 0 else 0
 
 
+def _active_implement_skill_entry(root: str) -> dict:
+    state_path = os.path.join(root, _STATE_REL)
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(state, dict):
+        return {}
+    entry = state.get("implement-todo-section")
+    if not isinstance(entry, dict) or entry.get("compaction_orphaned") is True:
+        return {}
+    ts = entry.get("started_ts", 0)
+    if not isinstance(ts, int) or ts <= 0:
+        return {}
+    return entry
+
+
+def _normalize_todo_path(path: str) -> str:
+    norm = path.replace("\\", "/")
+    if "todo/" in norm and not norm.startswith("todo/"):
+        norm = "todo/" + norm.split("todo/", 1)[1]
+    return norm
+
+
+def _section_from_entry(entry: dict) -> str:
+    raw = entry.get("section")
+    if isinstance(raw, int):
+        return str(raw)
+    if isinstance(raw, str) and re.fullmatch(r"\d+", raw.strip()):
+        return raw.strip()
+    args = entry.get("args") or ""
+    if not isinstance(args, str):
+        return ""
+    patterns = (
+        r"--section\s+['\"]?(\d+)['\"]?",
+        r"(?:section|§)\s*['\"]?(\d+)['\"]?",
+        r"##\s*(\d+)\.",
+    )
+    for pattern in patterns:
+        m = re.search(pattern, args, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _todo_from_entry(entry: dict) -> str:
+    raw = entry.get("todo_path")
+    if isinstance(raw, str) and raw:
+        return _normalize_todo_path(raw)
+    args = entry.get("args") or ""
+    if isinstance(args, str):
+        m = re.search(r"todo/[\w./-]+\.md", args)
+        if m:
+            return _normalize_todo_path(m.group(0))
+    return ""
+
+
+def _ai_workflow_state_dir(root: str) -> Path:
+    env = os.environ.get("AI_WORKFLOW_STATE_DIR", "")
+    if env:
+        p = Path(env)
+        if not p.is_absolute():
+            p = Path(root) / p
+        return p
+    return Path(root) / ".ai-workflow"
+
+
+def _active_lease_allows_implement_edit(root: str, entry: dict) -> tuple[bool, str]:
+    todo = _todo_from_entry(entry)
+    section = _section_from_entry(entry)
+    if not todo or not section:
+        return (
+            False,
+            "active implement-todo-section state lacks structured todo_path/section "
+            "needed for driver-lease lookup",
+        )
+    lease_path = _ai_workflow_state_dir(root) / "active-lease.json"
+    try:
+        lease = json.loads(lease_path.read_text(encoding="utf-8"))
+    except Exception:
+        lease = {}
+    if not isinstance(lease, dict) or not lease:
+        return False, f"no active driver lease for {todo} section {section}"
+    if lease.get("todo_path") != todo or str(lease.get("section")) != section:
+        return (
+            False,
+            "active driver lease targets "
+            f"{lease.get('todo_path', '<none>')} section {lease.get('section', '<none>')}, "
+            f"not {todo} section {section}",
+        )
+    if int(lease.get("expires_at_ns") or 0) < _ts_ns():
+        return False, f"active driver lease for {todo} section {section} is expired"
+    return True, ""
+
+
+def _shared_gate_enforcement_enabled() -> bool:
+    return os.environ.get("AI_WORKFLOW_ENFORCE_SHARED_GATES", "") == "1"
+
+
 def _quality_skill_walked(root: str, started_ts: int, required_skill: str) -> bool:
     """Walk tool-history.jsonl forward from `started_ts` looking for any
     Skill(<required_skill>) event. Returns True on first match."""
@@ -253,10 +353,30 @@ def main() -> int:
         )
         return 2
 
-    started_ts = _active_implement_skill_started_ts(root)
+    entry = _active_implement_skill_entry(root)
+    started_ts = entry.get("started_ts", 0) if entry else 0
     if started_ts == 0:
         # No active implement-todo-section flow; gate not applicable.
         return 0
+
+    lease_ok, lease_err = _active_lease_allows_implement_edit(root, entry)
+    if not lease_ok:
+        if _shared_gate_enforcement_enabled():
+            sys.stderr.write(
+                "[step5-quality-gate] BLOCK -- active implement-todo-section "
+                f"has no matching driver lease: {lease_err}.\n"
+                "[step5-quality-gate]   Acquire the shared lease first, e.g. "
+                "`python3 scripts/ai-workflow/lease.py acquire --todo <todo> "
+                "--section <n> --driver claude --run-id <run>`.\n"
+                "[step5-quality-gate]   Set only by repo-owned drivers; do not "
+                "freehand stamps or bypass the lease.\n"
+            )
+            return 2
+        sys.stderr.write(
+            "[step5-quality-gate] WARN -- active implement-todo-section "
+            f"has no matching driver lease: {lease_err}. Shared lease "
+            "blocking is not default-on until Claude lease acquisition ships.\n"
+        )
 
     transcript_path = d.get("transcript_path", "")
     if _quality_skill_walked_in_transcript(transcript_path, started_ts, required_skill):

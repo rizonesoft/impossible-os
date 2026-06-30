@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -33,12 +36,24 @@ def _load_active(root: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+@contextmanager
+def _lease_lock(root: Path) -> Iterator[None]:
+    with common.workflow_lock(root, name="lease.lock"):
+        yield
+
+
 def _is_expired(lease: dict[str, Any], now: int) -> bool:
     expires = int(lease.get("expires_at_ns") or 0)
     return expires > 0 and expires < now
 
 
-def _record(root: Path, action: str, lease: dict[str, Any], reason: str = "") -> None:
+def _record(
+    root: Path,
+    action: str,
+    lease: dict[str, Any],
+    reason: str = "",
+    requested: dict[str, Any] | None = None,
+) -> None:
     _active, history = _paths(root)
     event = {
         "action": action,
@@ -47,107 +62,142 @@ def _record(root: Path, action: str, lease: dict[str, Any], reason: str = "") ->
     }
     if reason:
         event["reason"] = reason
+    if requested is not None:
+        event["requested"] = requested
     common.append_jsonl(history, event)
+
+
+def _requested_lease(
+    root: Path, args: argparse.Namespace, todo: str, section: str
+) -> dict[str, Any]:
+    return {
+        "task_id": _task_id(todo, section),
+        "todo_path": todo,
+        "section": section,
+        "driver_backend": args.driver,
+        "driver_run_id": args.run_id,
+        "head_sha": common.head_sha(root),
+        "allowed_mutations": args.mutation or [],
+    }
+
+
+def _test_race_delay() -> None:
+    raw = os.environ.get("AI_WORKFLOW_LEASE_TEST_DELAY_SEC", "")
+    if not raw:
+        return
+    try:
+        delay = float(raw)
+    except ValueError:
+        return
+    if delay > 0:
+        time.sleep(min(delay, 2.0))
 
 
 def acquire(args: argparse.Namespace) -> int:
     root = common.repo_root()
-    active_path, _history = _paths(root)
-    now = common.now_ns()
-    existing = _load_active(root)
-    todo = common.rel_path(args.todo, root)
-    section = str(args.section)
-    task_id = _task_id(todo, section)
-    run_id = args.run_id
-    if existing and not _is_expired(existing, now):
-        same_task = existing.get("task_id") == task_id
-        same_run = existing.get("driver_run_id") == run_id
-        if same_task and same_run:
-            existing["expires_at_ns"] = now + int(args.ttl_sec * 1_000_000_000)
-            existing["renewed_at_ns"] = now
-            common.write_json_atomic(active_path, existing)
-            _record(root, "renew", existing)
-            print(json.dumps(existing, indent=2, sort_keys=True))
-            return 0
-        print(
-            "lease conflict: active driver "
-            f"{existing.get('driver_backend')}:{existing.get('driver_run_id')} "
-            f"owns {existing.get('task_id')}",
-            file=sys.stderr,
-        )
-        return 2
+    with _lease_lock(root):
+        active_path, _history = _paths(root)
+        now = common.now_ns()
+        existing = _load_active(root)
+        todo = common.rel_path(args.todo, root)
+        section = str(args.section)
+        task_id = _task_id(todo, section)
+        run_id = args.run_id
+        requested = _requested_lease(root, args, todo, section)
+        if existing and not _is_expired(existing, now):
+            same_task = existing.get("task_id") == task_id
+            same_run = existing.get("driver_run_id") == run_id
+            if same_task and same_run:
+                existing["expires_at_ns"] = now + int(args.ttl_sec * 1_000_000_000)
+                existing["renewed_at_ns"] = now
+                common.write_json_atomic(active_path, existing)
+                _record(root, "renew", existing)
+                print(json.dumps(existing, indent=2, sort_keys=True))
+                return 0
+            _record(root, "conflict", existing, requested=requested)
+            print(
+                "lease conflict: active driver "
+                f"{existing.get('driver_backend')}:{existing.get('driver_run_id')} "
+                f"owns {existing.get('task_id')}",
+                file=sys.stderr,
+            )
+            return 2
 
-    if existing and _is_expired(existing, now):
-        _record(root, "expire", existing)
+        if existing and _is_expired(existing, now):
+            _record(root, "expire", existing)
 
-    lease = {
-        "task_id": task_id,
-        "todo_path": todo,
-        "section": section,
-        "driver_backend": args.driver,
-        "driver_run_id": run_id,
-        "head_sha": common.head_sha(root),
-        "started_at_ns": now,
-        "expires_at_ns": now + int(args.ttl_sec * 1_000_000_000),
-        "allowed_mutations": args.mutation or [],
-    }
-    common.write_json_atomic(active_path, lease)
-    _record(root, "acquire", lease)
-    print(json.dumps(lease, indent=2, sort_keys=True))
-    return 0
+        _test_race_delay()
+        lease = {
+            "task_id": task_id,
+            "todo_path": todo,
+            "section": section,
+            "driver_backend": args.driver,
+            "driver_run_id": run_id,
+            "head_sha": common.head_sha(root),
+            "started_at_ns": now,
+            "expires_at_ns": now + int(args.ttl_sec * 1_000_000_000),
+            "allowed_mutations": args.mutation or [],
+        }
+        common.write_json_atomic(active_path, lease)
+        _record(root, "acquire", lease)
+        print(json.dumps(lease, indent=2, sort_keys=True))
+        return 0
 
 
 def renew(args: argparse.Namespace) -> int:
     root = common.repo_root()
-    active_path, _history = _paths(root)
-    lease = _load_active(root)
-    if not lease:
-        print("no active lease", file=sys.stderr)
-        return 1
-    if args.run_id and lease.get("driver_run_id") != args.run_id:
-        print("run-id does not own active lease", file=sys.stderr)
-        return 2
-    now = common.now_ns()
-    lease["renewed_at_ns"] = now
-    lease["expires_at_ns"] = now + int(args.ttl_sec * 1_000_000_000)
-    common.write_json_atomic(active_path, lease)
-    _record(root, "renew", lease)
-    print(json.dumps(lease, indent=2, sort_keys=True))
-    return 0
+    with _lease_lock(root):
+        active_path, _history = _paths(root)
+        lease = _load_active(root)
+        if not lease:
+            print("no active lease", file=sys.stderr)
+            return 1
+        if args.run_id and lease.get("driver_run_id") != args.run_id:
+            print("run-id does not own active lease", file=sys.stderr)
+            return 2
+        now = common.now_ns()
+        lease["renewed_at_ns"] = now
+        lease["expires_at_ns"] = now + int(args.ttl_sec * 1_000_000_000)
+        common.write_json_atomic(active_path, lease)
+        _record(root, "renew", lease)
+        print(json.dumps(lease, indent=2, sort_keys=True))
+        return 0
 
 
 def release(args: argparse.Namespace) -> int:
     root = common.repo_root()
-    active_path, _history = _paths(root)
-    lease = _load_active(root)
-    if not lease:
-        print("no active lease")
+    with _lease_lock(root):
+        active_path, _history = _paths(root)
+        lease = _load_active(root)
+        if not lease:
+            print("no active lease")
+            return 0
+        if args.run_id and lease.get("driver_run_id") != args.run_id:
+            print("run-id does not own active lease", file=sys.stderr)
+            return 2
+        _record(root, "release", lease)
+        active_path.unlink(missing_ok=True)
+        print("released")
         return 0
-    if args.run_id and lease.get("driver_run_id") != args.run_id:
-        print("run-id does not own active lease", file=sys.stderr)
-        return 2
-    _record(root, "release", lease)
-    active_path.unlink(missing_ok=True)
-    print("released")
-    return 0
 
 
 def complete(args: argparse.Namespace) -> int:
     root = common.repo_root()
-    active_path, _history = _paths(root)
-    lease = _load_active(root)
-    if not lease:
-        print("no active lease", file=sys.stderr)
-        return 1
-    if args.run_id and lease.get("driver_run_id") != args.run_id:
-        print("run-id does not own active lease", file=sys.stderr)
-        return 2
-    completed = dict(lease)
-    completed["completed_at_ns"] = common.now_ns()
-    _record(root, "complete", completed)
-    active_path.unlink(missing_ok=True)
-    print(json.dumps(completed, indent=2, sort_keys=True))
-    return 0
+    with _lease_lock(root):
+        active_path, _history = _paths(root)
+        lease = _load_active(root)
+        if not lease:
+            print("no active lease", file=sys.stderr)
+            return 1
+        if args.run_id and lease.get("driver_run_id") != args.run_id:
+            print("run-id does not own active lease", file=sys.stderr)
+            return 2
+        completed = dict(lease)
+        completed["completed_at_ns"] = common.now_ns()
+        _record(root, "complete", completed)
+        active_path.unlink(missing_ok=True)
+        print(json.dumps(completed, indent=2, sort_keys=True))
+        return 0
 
 
 def force_release(args: argparse.Namespace) -> int:
@@ -155,15 +205,16 @@ def force_release(args: argparse.Namespace) -> int:
         print("force-release requires --reason with at least 12 chars", file=sys.stderr)
         return 2
     root = common.repo_root()
-    active_path, _history = _paths(root)
-    lease = _load_active(root)
-    if not lease:
-        print("no active lease")
+    with _lease_lock(root):
+        active_path, _history = _paths(root)
+        lease = _load_active(root)
+        if not lease:
+            print("no active lease")
+            return 0
+        _record(root, "force-release", lease, args.reason)
+        active_path.unlink(missing_ok=True)
+        print("force-released")
         return 0
-    _record(root, "force-release", lease, args.reason)
-    active_path.unlink(missing_ok=True)
-    print("force-released")
-    return 0
 
 
 def status(_args: argparse.Namespace) -> int:

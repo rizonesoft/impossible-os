@@ -204,6 +204,17 @@ cursor, acquire section leases through `scripts/codex-driver.sh --live`, satisfy
 fresh reviewer evidence through separate Codex review runs, and pass the shared
 stamp/commit gates.
 
+Because Codex can be both the active driver and the required reviewer backend,
+the supervisor installs a temporary `codex` PATH guard inside each driver step.
+Raw nested Codex automation (`codex exec`, `codex e`, `codex task`, and
+unmarked availability probes) is blocked so the driver cannot recursively spawn
+itself or self-certify its own work. Repo-owned reviewer wrappers
+(`scripts/codex-dispatch.sh`, `scripts/codex-dispatch-with-files.sh`, and
+`scripts/codex-bg-dispatch.sh`) set `CODEX_REVIEWER_DISPATCH=1`; only then does
+the guard chain to the real Codex binary so the installed plugin can run
+`codex --version`, `codex app-server --help`, and the reviewer app-server path.
+The marker is wrapper-owned dispatch metadata, not shipping evidence.
+
 The supervisor adds a hard progress budget around Codex-driver mode:
 
 | Setting | Default | Purpose |

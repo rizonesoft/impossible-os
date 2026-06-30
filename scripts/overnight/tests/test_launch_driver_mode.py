@@ -59,13 +59,22 @@ def test_codex_driver_uses_codex_runtime_and_guard_env() -> None:
         (project / "todo" / "TODO-Claude-Overnight-Runner.md").write_text("# runner\n", encoding="ascii")
         fake = bin_dir / "codex"
         _write_exe(fake, """#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  echo "fake-codex 1.0"
+  exit 0
+fi
 printf '%s\n' "$@" > "$OUT_DIR/codex.args"
 {
   echo "OVERNIGHT_DRIVER=$OVERNIGHT_DRIVER"
   echo "OVERNIGHT_SEQUENCER_RUN=$OVERNIGHT_SEQUENCER_RUN"
   echo "AI_WORKFLOW_CODEX_DRIVER=$AI_WORKFLOW_CODEX_DRIVER"
   echo "AI_WORKFLOW_ENFORCE_SHARED_GATES=$AI_WORKFLOW_ENFORCE_SHARED_GATES"
+  echo "CODEX_REVIEWER_DISPATCH=${CODEX_REVIEWER_DISPATCH:-}"
 } > "$OUT_DIR/codex.env"
+codex --version > "$OUT_DIR/raw-nested.out" 2>&1
+printf '%s\n' "$?" > "$OUT_DIR/raw-nested.rc"
+CODEX_REVIEWER_DISPATCH=1 codex --version > "$OUT_DIR/reviewer-nested.out" 2>&1
+printf '%s\n' "$?" > "$OUT_DIR/reviewer-nested.rc"
 printf '%s\n' '{"type":"session.started","session_id":"test"}'
 printf '%s\n' '{"type":"exec_command.started","cmd":"python3 .claude/hooks/run_phase_guard.py status"}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Codex report line"}]}}'
@@ -89,6 +98,13 @@ printf '%s\n' '{"type":"result","result":"codex done"}'
         assert "OVERNIGHT_SEQUENCER_RUN=1" in env
         assert "AI_WORKFLOW_CODEX_DRIVER=1" in env
         assert "AI_WORKFLOW_ENFORCE_SHARED_GATES=1" in env
+        assert "CODEX_REVIEWER_DISPATCH=\n" in env
+        assert (out_dir / "raw-nested.rc").read_text(encoding="ascii").strip() == "125"
+        assert "nested codex CLI availability check blocked" in (
+            out_dir / "raw-nested.out"
+        ).read_text(encoding="ascii")
+        assert (out_dir / "reviewer-nested.rc").read_text(encoding="ascii").strip() == "0"
+        assert (out_dir / "reviewer-nested.out").read_text(encoding="ascii").strip() == "fake-codex 1.0"
         latest = project / ".codex" / "overnight" / "reports" / "latest.log"
         assert latest.exists()
         report = latest.read_text(encoding="utf-8")

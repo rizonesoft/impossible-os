@@ -87,7 +87,7 @@ codex-reviewer-perf        -> fresh-context performance review
 | ⭐  | Order | Deliverable                                                           | Depends On    | Status |
 | --- | :---: | --------------------------------------------------------------------- | ------------- | :----: |
 | 💎  |   1   | Current-state inventory of Claude-only assumptions and gate inputs     | --            |  [x]   |
-| 💎  |   2   | Driver lease schema and active-mutator lock                            | §1            |  [ ]   |
+| 💎  |   2   | Driver lease schema and active-mutator lock                            | §1            |  [/]   |
 | 💎  |   3   | Tool-neutral evidence ledger and importer for existing state           | §1            |  [x]   |
 | 💎  |   4   | Obligation resolver to avoid duplicate work                            | §3            |  [x]   |
 | 💎  |   5   | Deterministic stamp writer                                             | §3-4          |  [ ]   |
@@ -139,11 +139,11 @@ Prevent Claude and Codex from both mutating the same section or producing confli
 - [x] Store lease state in a gitignored derived-state location that is not a model-specific instruction tree. Preferred shape: `.ai-workflow/active-lease.json`.
 - [x] Lease key includes `todo_path`, `section`, `driver_backend`, `driver_run_id`, `head_sha`, `started_at`, `expires_at`, and `allowed_mutations`.
 - [x] A driver cannot acquire a lease if another live lease exists for the same TODO section unless the existing lease is expired or explicitly force-released with a reason.
-- [ ] Serialize `lease.py` active-lease and lease-history mutations with a repo-local lock (`fcntl.flock` or an `O_EXCL` lockfile) so two concurrent drivers cannot both observe an empty lease and race through `acquire` (`scripts/ai-workflow/lease.py:53` reads, checks, then writes at `:94` today).
-- [ ] Claude hooks consult the lease before first implementation edit when a TODO-section flow is active.
+- [x] Serialize `lease.py` active-lease and lease-history mutations with a repo-local lock (`fcntl.flock` or an `O_EXCL` lockfile) so two concurrent drivers cannot both observe an empty lease and race through `acquire` (`scripts/ai-workflow/lease.py:53` reads, checks, then writes at `:94` today).
+- [x] Claude hooks consult the lease before first implementation edit when a TODO-section flow is active.
 - [x] Codex driver adapter acquires the same lease before any edit, build, test, or commit attempt.
 - [/] Git commit gate refuses a section-ship commit when no matching active lease or completed lease record exists for the staged TODO target. The shared staged gate enforces this under `AI_WORKFLOW_ENFORCE_SHARED_GATES=1`; default enforcement waits for Claude lease acquisition.
-- [ ] Add a concurrent-acquire fixture that launches two same-section drivers and asserts exactly one winner plus one durable conflict event.
+- [x] Add a concurrent-acquire fixture that launches two same-section drivers and asserts exactly one winner plus one durable conflict event.
 - [x] Add `scripts/test-tooling.sh` coverage for acquire/release and same-section conflict.
 - [ ] Commit: "ai-workflow: add driver lease"
 
@@ -309,7 +309,7 @@ Enable Codex to be the active mutating driver under the shared gates.
 - [x] Codex overnight reports and metrics are isolated under `.codex/overnight/`, with `latest.log` for monitoring.
 - [x] Codex arming uses the same `arm-sequencer.sh` / `overnight-arm.sh` path, same `sequencer-armed` marker, same `OVERNIGHT_SEQUENCER_RUN=1` discriminator, and same shared gate env.
 - [x] Codex overnight launch is supervised by a repo-owned bounded phase loop instead of one unlimited `codex exec`; the supervisor owns phase transitions, section-progress checks, per-step timeouts, and no-progress blocking under `.codex/overnight/`.
-- [ ] Live adapter dispatches Codex reviewer roles through the same `scripts/codex-dispatch.sh` wrapper and records reviewer evidence separately from driver evidence.
+- [/] Live adapter dispatches Codex reviewer roles through the same `scripts/codex-dispatch.sh` wrapper and records reviewer evidence separately from driver evidence. The overnight supervisor now allows repo-owned reviewer wrappers to pass through the nested-Codex guard with `CODEX_REVIEWER_DISPATCH=1` while raw nested Codex automation remains blocked; live evidence recording still needs pilot validation.
 - [ ] Live adapter runs build/test/smoke commands through the same deterministic scripts as Claude mode.
 - [ ] Live adapter records build/test/smoke/todo-graph evidence through `scripts/ai-workflow/evidence.py` with command, exit code, log path, final marker, HEAD, and source blobs before stamp or commit gates consume it.
 - [/] Live adapter uses `stamp.py`, never freehand stamp text.

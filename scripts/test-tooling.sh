@@ -4490,7 +4490,45 @@ assert s5._required_skill_for_path("user/libc/stdio.c") == "userland-code-qualit
 assert s5._required_skill_for_path("docs/foo.md") == ""
 print("OK quality_gate_path_map")
 
-# Test 2: unit_test_wiring -- existing test at HEAD counts as evidence.
+# Test 2: quality_gate_lease_check -- when shared gates are enforced, the
+# first implementation edit must have a matching active driver lease.
+with tempfile.TemporaryDirectory() as tmp:
+    repo = pathlib.Path(tmp)
+    (repo / ".ai-workflow").mkdir()
+    entry = {
+        "started_ts": time.time_ns(),
+        "todo_path": "todo/00-infra/TODO-99.md",
+        "args": "todo/00-infra/TODO-99.md section 2",
+    }
+    ok_missing, err_missing = s5._active_lease_allows_implement_edit(str(repo), entry)
+    assert not ok_missing and "no active driver lease" in err_missing
+    (repo / ".ai-workflow" / "active-lease.json").write_text(json.dumps({
+        "todo_path": "todo/00-infra/TODO-99.md",
+        "section": "2",
+        "driver_run_id": "lease-ok",
+        "expires_at_ns": time.time_ns() + 60_000_000_000,
+    }))
+    ok_match, err_match = s5._active_lease_allows_implement_edit(str(repo), entry)
+    assert ok_match, f"matching lease should pass, got: {err_match}"
+    (repo / ".ai-workflow" / "active-lease.json").write_text(json.dumps({
+        "todo_path": "todo/00-infra/TODO-99.md",
+        "section": "3",
+        "driver_run_id": "lease-wrong",
+        "expires_at_ns": time.time_ns() + 60_000_000_000,
+    }))
+    ok_wrong, err_wrong = s5._active_lease_allows_implement_edit(str(repo), entry)
+    assert not ok_wrong and "not todo/00-infra/TODO-99.md section 2" in err_wrong
+    (repo / ".ai-workflow" / "active-lease.json").write_text(json.dumps({
+        "todo_path": "todo/00-infra/TODO-99.md",
+        "section": "2",
+        "driver_run_id": "lease-expired",
+        "expires_at_ns": time.time_ns() - 1,
+    }))
+    ok_expired, err_expired = s5._active_lease_allows_implement_edit(str(repo), entry)
+    assert not ok_expired and "expired" in err_expired
+print("OK quality_gate_lease_check")
+
+# Test 3: unit_test_wiring -- existing test at HEAD counts as evidence.
 with tempfile.TemporaryDirectory() as tmp:
     repo = pathlib.Path(tmp)
     (repo / ".claude" / "state").mkdir(parents=True)
@@ -4530,7 +4568,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not ok2, "step-8 must reject test_newcode.c as evidence for different.c"
 print("OK unit_test_wiring_basename_binding")
 
-# Test 3: impl_adversarial -- accepts EITHER adversarial-impl OR plain
+# Test 4: impl_adversarial -- accepts EITHER adversarial-impl OR plain
 # adversarial. The previous design demanded a distinct `adversarial-impl`
 # tag for implement-time dispatches, but in practice the same Codex run
 # (same prompt, same files) was being re-dispatched only to swap the
@@ -4775,7 +4813,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "codex-dispatch-with-files.sh" not in err3, f"impl-adv BLOCK help must not point at untrusted fallback wrapper, got: {err3}"
 print("OK impl_adversarial_tag_interchangeable")
 
-# Test 4: smoke_gate -- requires Boot complete + C:\> markers per Codex H2 fix.
+# Test 5: smoke_gate -- requires Boot complete + C:\> markers per Codex H2 fix.
 with tempfile.TemporaryDirectory() as tmp:
     repo = pathlib.Path(tmp)
     (repo / "build").mkdir()
@@ -4810,11 +4848,11 @@ PY
 )" 2>&1
     IPG_RC=$?
     IPG_OK_COUNT=$(echo "$IPG_OUT" | grep -c "^OK ")
-    if [ "$IPG_OK_COUNT" = "4" ]; then
+    if [ "$IPG_OK_COUNT" = "5" ]; then
         echo "$IPG_OUT" | grep "^OK " | while IFS= read -r line; do
             t_pass "impl_pipeline_gates: $line"
         done
-        PASS=$((PASS + 4))
+        PASS=$((PASS + 5))
     else
         t_fail "impl_pipeline_gates: integrated test suite incomplete" \
                "ok-count=$IPG_OK_COUNT rc=$IPG_RC out=$IPG_OUT"
@@ -6088,6 +6126,64 @@ if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py release --run-id driver
     t_pass "ai_workflow_lease: release by owning run"
 else
     t_fail "ai_workflow_lease: release by owning run"
+fi
+AIWF_RACE_STATE="$AIWF_TMP/race-state"
+rm -rf "$AIWF_RACE_STATE"
+if env AI_WORKFLOW_STATE_DIR="$AIWF_RACE_STATE" \
+       AI_WORKFLOW_LEASE_TEST_DELAY_SEC=0.2 \
+       python3 - "$TODO10" <<'PY'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+todo = sys.argv[1]
+state = pathlib.Path(os.environ["AI_WORKFLOW_STATE_DIR"])
+cmd_base = [
+    sys.executable, "scripts/ai-workflow/lease.py", "acquire",
+    "--todo", todo,
+    "--section", "2",
+    "--driver", "codex",
+]
+env = os.environ.copy()
+procs = [
+    subprocess.Popen(
+        cmd_base + ["--run-id", run_id],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    for run_id in ("race-a", "race-b")
+]
+results = []
+for proc in procs:
+    out, err = proc.communicate(timeout=10)
+    results.append((proc.returncode, out, err))
+success = [item for item in results if item[0] == 0]
+conflict = [item for item in results if item[0] == 2]
+if len(success) != 1 or len(conflict) != 1:
+    raise SystemExit(f"expected 1 success and 1 conflict, got {results}")
+history_path = state / "lease-history.jsonl"
+events = [
+    json.loads(line)
+    for line in history_path.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+if sum(1 for event in events if event.get("action") == "acquire") != 1:
+    raise SystemExit(f"expected one durable acquire event, got {events}")
+conflicts = [event for event in events if event.get("action") == "conflict"]
+if len(conflicts) != 1 or "requested" not in conflicts[0]:
+    raise SystemExit(f"expected one durable conflict event with request, got {events}")
+active = json.loads((state / "active-lease.json").read_text(encoding="utf-8"))
+if active.get("driver_run_id") not in ("race-a", "race-b"):
+    raise SystemExit(f"unexpected active lease owner: {active}")
+PY
+then
+    t_pass "ai_workflow_lease: concurrent acquire has one winner and one conflict event"
+else
+    t_fail "ai_workflow_lease: concurrent acquire has one winner and one conflict event"
 fi
 
 # Reviewer independence: reviewer evidence with the SAME run id as the driver
@@ -7488,7 +7584,8 @@ if [ ! -f "$AIWF_STATE/evidence.jsonl" ]; then
 else
     t_fail "codex_driver_dry_run: records no shipping evidence"
 fi
-if "${AIWF_ENV[@]}" bash scripts/codex-driver.sh --live \
+if env -u AI_WORKFLOW_CODEX_DRIVER AI_WORKFLOW_STATE_DIR="$AIWF_STATE" \
+    bash scripts/codex-driver.sh --live \
     --todo "$TODO10" --section 9 --run-id live-disabled >/dev/null 2>&1; then
     t_fail "codex_driver_live: disabled without AI_WORKFLOW_CODEX_DRIVER=1"
 else

@@ -41,6 +41,7 @@ if [ ! -f "$CODEX_COMPANION" ]; then
     echo "[codex-dispatch] error: codex-companion.mjs not found at $CODEX_COMPANION" >&2
     exit 2
 fi
+export CODEX_REVIEWER_DISPATCH=1
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -z "$REPO_ROOT" ]; then

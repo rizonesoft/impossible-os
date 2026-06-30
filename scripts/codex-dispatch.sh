@@ -99,4 +99,5 @@ esac
 # `codex-companion.mjs adversarial-review` (legacy direct shape) OR
 # `codex-dispatch.sh` (this wrapper). exec replaces this process with
 # node so the dispatched output streams directly to the parent shell.
+export CODEX_REVIEWER_DISPATCH=1
 exec node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" adversarial-review "$PROMPT"
