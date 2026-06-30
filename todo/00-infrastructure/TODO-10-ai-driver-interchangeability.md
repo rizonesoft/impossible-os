@@ -263,7 +263,7 @@ Remove the abandoned Codex-as-driver implementation built before the 2026-07-01 
 - [ ] Remove `scripts/codex-driver.sh` (the abandoned dry-run/live driver adapter).
 - [ ] Remove `scripts/overnight/codex-sequencer-supervisor.sh` and the `--driver codex` branch in the overnight launcher / arming path.
 - [ ] Remove the `.codex/overnight/` report/metric tree and any `.codex/` runtime-output references.
-- [ ] Rewrite `docs/infrastructure/ai-driver-interchangeability.md` so it documents the tool-neutral workflow protocol only (no Codex mutating driver, no delegation/failover, no `.codex/overnight`).
+- [x] Rewrite `docs/infrastructure/ai-driver-interchangeability.md` so it documents the tool-neutral workflow protocol only (no Codex mutating driver, no delegation/failover, no `.codex/overnight`).
 - [ ] Remove `overnight_launch_driver` tests and any `scripts/test-tooling.sh` assertions tied to the Codex-driver / `.codex/overnight` paths; keep the shared `ai_workflow_*` tests.
 - [ ] Grep the repo for `codex driver`, `--driver codex`, `.codex/overnight`, `Codex-exclusive`, and `co-equal` and remove stale references outside explicit historical notes.
 - [ ] Commit: "ai-workflow: retire obsolete codex-driver artifacts"

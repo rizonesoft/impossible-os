@@ -1,22 +1,21 @@
-# AI Driver Interchangeability
+# AI Workflow Evidence Ledger and Deterministic Gates
 
-This document describes the TODO-10 implementation shape for making the
-Impossible OS development driver interchangeable while keeping Codex as the
-required reviewer.
+This document describes the TODO-10 implementation shape for moving the
+Impossible OS development workflow's truth into repo-owned deterministic state.
+Claude Code is the sole mutator and orchestrator; Codex is the required external
+reviewer. There is no AI "driver" abstraction.
 
 ## Roles
 
-Codex remains the reviewer in every supported mode. The interchangeable part is
-the mutating driver:
+Claude Code is the mutator and orchestrator. Codex is the required reviewer in
+every mode. The workflow protocol is tool-neutral: workflow truth lives in the
+ledger and shared gates, not in chat memory, so any session can resume from the
+last completed checkpoint and gates enforce the same rules from Claude hooks and
+git hooks.
 
-| Mode | Driver | Reviewer |
-| --- | --- | --- |
-| Claude development | Claude Code | Codex fresh review runs |
-| Codex-exclusive development | Codex driver run | Separate Codex fresh review runs |
-| Mixed development | One active driver at a time | Codex fresh review runs |
-
-The important invariant is not model branding. It is role separation. A Codex
-driver run cannot satisfy a Codex reviewer obligation with the same run ID.
+The important invariant is role separation: review evidence must come from a
+fresh reviewer run distinct from the mutating session, bound to the reviewed
+source blobs.
 
 ## Shared Protocol
 
@@ -28,12 +27,10 @@ The shared workflow lives under [`scripts/ai-workflow/`](../../scripts/ai-workfl
 | `evidence.py` | Append-only evidence ledger for reviews, builds, stamps, and validations. |
 | `obligations.py` | Reports which workflow obligations are satisfied or missing. |
 | `stamp.py` | Generates TODO stamps from ledger evidence instead of model prose. |
-| `gates.py` | Shared gate checks for adapters and future hook refactors. |
+| `gates.py` | Shared gate checks for Claude hooks and git hooks. |
 
 Generated state lives under `.ai-workflow/`, which is ignored as derived
-workflow state. Codex-driver overnight reports live under `.codex/overnight/`
-so they do not mix with `.claude/overnight/` reports. There is no repo-owned
-`.codex` skill tree; `.codex/overnight/` is runtime output only.
+workflow state. There is no repo-owned `.codex` tree.
 
 ## Inventory
 
@@ -41,8 +38,8 @@ The current Claude-first workflow has three classes of state:
 
 | Surface | Current owner | Migration handling |
 | --- | --- | --- |
-| `AGENTS.md` | Cross-tool pointer and current non-Claude boundary | Current text tells non-Claude tools they are subordinate reviewer/reader roles and must not edit, commit, or make scope decisions. Codex-driver rollout must update this only after leased live-driver mode is proven; until then the reviewer-only boundary remains canonical. |
-| `.claude/state/skill-progress.json` | Claude step gate state | Stays Claude adapter state until shared gates replace the blocking decision. Not accepted as cross-driver proof. |
+| `AGENTS.md` | Cross-tool pointer and current non-Claude boundary | Current text tells non-Claude tools they are subordinate reviewer/reader roles and must not edit, commit, or make scope decisions. Tool-neutral rollout updates this only after the shared protocol is proven; the reviewer-only boundary remains canonical. |
+| `.claude/state/skill-progress.json` | Claude step gate state | Stays Claude adapter state until shared gates replace the blocking decision. Not accepted as cross-session proof. |
 | `.claude/state/skill-progress-skip.log` | Claude step-gate audit trail | Audit telemetry only. Not accepted as proof. |
 | `.claude/state/last-review-stamps.json` | Claude Codex dispatch observer | Dispatch telemetry only. Import as warning/compatibility data, not as received-review proof for shipping gates. |
 | `.claude/state/codex-review-history.jsonl` | Claude Codex review observer | Imported as received-review compatibility data only when it records a received review with review kind, TODO target, review run ID, and non-empty source binding. Unsourced or run-id-less entries import as telemetry and cannot satisfy shipping review obligations. |
@@ -53,19 +50,19 @@ The current Claude-first workflow has three classes of state:
 | `.claude/state/acknowledged-but-skipped.log` | Stop/subagent audit trail | Audit telemetry only. Not accepted as proof. |
 | `.claude/state/subagent-log.jsonl` | Subagent audit trail | Audit telemetry only. Not accepted as proof. |
 | `.claude/state/transcript-scan-cache.json` | Design-review cache | Adapter cache. Must be invalidated by Claude hooks, not imported as proof. |
-| `.claude/state/.compaction-snapshots/` | Claude pre-compaction safety snapshots | Recovery telemetry for post-compaction hook state. Retained for diagnosis and stale-entry avoidance; not accepted as cross-driver proof. |
+| `.claude/state/.compaction-snapshots/` | Claude pre-compaction safety snapshots | Recovery telemetry for post-compaction hook state. Retained for diagnosis and stale-entry avoidance; not accepted as cross-session proof. |
 | `.claude/state/overnight-run.json` | Interactive overnight fallback guard | Legacy adapter state retained until the phase guard fully supersedes it. |
-| `.claude/state/conclave-stuck.json` | Claude overnight escalation telemetry | Counts repeated same-target build/test/smoke failures for the warning-only Conclave stuck detector. Codex-driver runs should ignore it for shipping proof and rely on the shared phase guard/defer flow instead of inheriting stale escalation state. |
+| `.claude/state/conclave-stuck.json` | Claude overnight escalation telemetry | Counts repeated same-target build/test/smoke failures for the warning-only Conclave stuck detector. Other sessions should ignore it for shipping proof and rely on the shared phase guard/defer flow instead of inheriting stale escalation state. |
 | `.claude/state/live-gotchas.md` | Curated overnight awareness notes | Read by `runner_status.py` / session brief injection for human/model orientation. Advisory telemetry only; not shared gate evidence. |
 | `.claude/state/sequencer-armed` / `.claude/state/sequencer-run.json` / `.claude/state/sequencer-fixpoint` | Overnight phase guard | Shared sequencer control state. It drives phases and FIXPOINT detection but is not build/review/stamp evidence. |
-| `.claude/hooks/run_phase_guard.py` | Shared overnight phase gate | Live BLOCK gate for the repo-owned sequencer phase machine. Claude and Codex drivers must use this path for cursor and phase transitions; it is control state, not shipping proof. |
+| `.claude/hooks/run_phase_guard.py` | Shared overnight phase gate | Live BLOCK gate for the repo-owned sequencer phase machine. All sessions must use this path for cursor and phase transitions; it is control state, not shipping proof. |
 | `.claude/hooks/sequencer_triage.py` + `build/todo-cache.json` + TODO Verified-stamp scan | Overnight traversal and FIXPOINT oracle | Derived traversal control used by `run_phase_guard.py --next` / `fixpoint` to prevent premature completion. It guides cursor/FIXPOINT decisions but is not build/review/stamp evidence for a section. |
-| `.claude/hooks/overnight_plugin_skill_block.py` | Claude Skill BLOCK gate for overnight arming | Blocks unguarded plugin overnight skills so runs arm through the repo-owned sequencer. Preserve this protection for non-Claude drivers by keeping overnight launch behind `run_phase_guard.py` and shared scripts. |
-| `.claude/hooks/overnight_guard.py` | Claude legacy interactive overnight guard | Interactive fallback that tracks `.claude/state/overnight-run.json`; retained as legacy adapter behavior until the sequencer path fully supersedes it. Not cross-driver proof. |
-| `.claude/state/tool-history.jsonl` / `.claude/state/tool-history.jsonl.1` | Claude tool telemetry and hook input | Adapter telemetry used by several Claude hooks, with one rotated file read by the commit gate. Not accepted as cross-driver proof. |
+| `.claude/hooks/overnight_plugin_skill_block.py` | Claude Skill BLOCK gate for overnight arming | Blocks unguarded plugin overnight skills so runs arm through the repo-owned sequencer. Preserve this protection for non-Claude tools by keeping overnight launch behind `run_phase_guard.py` and shared scripts. |
+| `.claude/hooks/overnight_guard.py` | Claude legacy interactive overnight guard | Interactive fallback that tracks `.claude/state/overnight-run.json`; retained as legacy adapter behavior until the sequencer path fully supersedes it. Not cross-session proof. |
+| `.claude/state/tool-history.jsonl` / `.claude/state/tool-history.jsonl.1` | Claude tool telemetry and hook input | Adapter telemetry used by several Claude hooks, with one rotated file read by the commit gate. Not accepted as cross-session proof. |
 | `.claude/state/codex-review-debug.jsonl` | Claude Codex receipt debug log | Optional missing-write diagnostic emitted by `codex_review_completed.py`. Debug telemetry only; never accepted as received-review proof. |
 | `.claude/state/skip-log.jsonl` | Claude section-commit opt-out state transition | Audit and reset telemetry for `SKIP_REVIEW_HOOK`; rewrites `last-codex-review.json` to prevent stale received-review reuse. Import only as warning/transition context, not shipping proof. |
-| Stateless policy BLOCK hooks (`unicode_dash_block.py`, `numeric_todo_shorthand.py`, `scope_gap_marker.py`, `test_side_effect_ban.py`, `bare_section_refs.py`, `citation_block.py`, `notes_bloat_check.py`, `todo_item_line_length.py`, `accepted_xref_block.py`, `codex_model_flag_block.py`) | Claude deterministic policy gates | Direct command/file-content gates with no durable proof value. Keep as Claude adapter protection and mirror through lint/git/shared scripts where non-Claude drivers need the same block. |
+| Stateless policy BLOCK hooks (`unicode_dash_block.py`, `numeric_todo_shorthand.py`, `scope_gap_marker.py`, `test_side_effect_ban.py`, `bare_section_refs.py`, `citation_block.py`, `notes_bloat_check.py`, `todo_item_line_length.py`, `accepted_xref_block.py`, `codex_model_flag_block.py`) | Claude deterministic policy gates | Direct command/file-content gates with no durable proof value. Keep as Claude adapter protection and mirror through lint/git/shared scripts where non-Claude tools need the same block. |
 | `.claude/hooks/design_review_required.py` | Claude design-review gate | Live STATE+BLOCK gate that uses transcript/session state to require design-review dispatch before implementation edits. Claude-adapter gate until a shared pre-implementation review obligation exists. |
 | `.claude/hooks/receiving_review_required.py` | Claude review-receipt gate | Live STATE+BLOCK gate that requires explicit receiving-code-review handling after Codex output. Claude-adapter gate until shared receipt/classification evidence replaces it. |
 | `.claude/hooks/section_review_required.py` | Claude section-review gate | Live STATE+BLOCK gate that requires section review workflow state before section commits. Claude-adapter gate until shared obligations and ledger evidence fully replace it. |
@@ -73,7 +70,7 @@ The current Claude-first workflow has three classes of state:
 | `.claude/hooks/section_commit_gate.py` | Claude Bash/git section gate | Live gate input aggregator for build evidence, Codex receipt, receiving-review state, re-adversarial and impl-side adversarial reviews, smoke markers, test-wiring checks, and heuristic WARN logs. Shared gates must replace the blocking decision before non-Claude commits can ship. |
 | `.claude/hooks/phase1_evidence_gate.py` | Claude pre-dispatch review gate | Enforces transcript-scoped read/grep preparation before adversarial review dispatch. This remains Claude adapter gating until equivalent shared pre-review evidence exists. |
 | `.claude/hooks/step5_quality_gate.py` | Claude pre-edit quality gate | Enforces quality-skill invocation before `src/` / `include/` edits in Claude implementation flows. Codex parity requires a shared or adapter-level equivalent; the hook state is not ledger proof. |
-| `.claude/hooks/todo_graph_auto_rewrite.py` | Claude TODO line-number side-effect mutator | PostToolUse hook that runs `validate.py --fix-line-numbers --write` after TODO edits. Claude adapter freshness helper, not proof; non-Claude drivers must run todo-graph validation/fix explicitly before stamp or commit gates consume TODO XREFs. |
+| `.claude/hooks/todo_graph_auto_rewrite.py` | Claude TODO line-number side-effect mutator | PostToolUse hook that runs `validate.py --fix-line-numbers --write` after TODO edits. Claude adapter freshness helper, not proof; non-Claude tools must run todo-graph validation/fix explicitly before stamp or commit gates consume TODO XREFs. |
 | `.claude/hooks/_codex_dispatch.py` / `codex_review_completed.py` | Claude Codex dispatch classifier and receiver | Recognizes direct `codex-companion.mjs`, wrapper `scripts/codex-dispatch.sh`, and bare `codex review` review dispatch shapes. It also currently misclassifies bare `codex e` as review even though the CLI aliases it to `exec`; §7 owns trusted receipt, kind parsing, and role-separation normalization. |
 | `scripts/codex-bg-dispatch.sh` | Claude background Codex dispatch fallback | Current fallback wrapper for long-running review work. The wrapper command itself is not one of the wrapper shapes directly recognized by `_codex_dispatch.py` today, even though it invokes the companion background-task path; §7 owns wrapper/receipt alignment. |
 | `scripts/codex-dispatch-with-files.sh` | Claude file-scoped Codex dispatch fallback | Current dispatch surface referenced by implementation-side review guidance. It is not directly classified as the canonical `scripts/codex-dispatch.sh` wrapper today, so §7 owns receipt/evidence normalization before gates can trust it. |
@@ -87,6 +84,8 @@ The current Claude-first workflow has three classes of state:
 | Codex plugin slash commands (`/codex:*`) | Installed Codex plugin command surface | Invocation-policy surface that can call Codex companion flows outside the repo wrappers. Not accepted as shipping review proof today; §7 must bind plugin command dispatch/receipt to trusted wrapper or session metadata before gates can trust it. |
 | Codex plugin hooks (`session-lifecycle-hook.mjs`, `stop-review-gate-hook.mjs`) | Installed Codex plugin hook surface | Auto-loaded plugin state and optional stop-time review gate. Adapter telemetry/control only today; not shared ledger evidence and not a substitute for `scripts/codex-dispatch.sh` reviewer evidence unless §7 normalizes it. |
 | `.githooks/pre-commit` | Git-time enforcement | Calls existing lint and section-commit gate today; future work can delegate section checks to `gates.py`. |
+| `.remember/` plugin buffers (now.md / recent.md / archive.md / today-*.md) | Remember-plugin session memory | SessionStart loads these buffers and PostToolUse appends to them, so workflow context can come from Claude-only memory the ledger does not import. Claude-adapter telemetry/non-proof; scrub stale direction notes during rollout. |
+| Claude projects memory store (`~/.claude/projects/.../memory/`) | Claude auto-memory | Per-project memory loaded each session; advisory context, never shipping proof. |
 | TODO stamps | Roadmap source | New stamps should be generated by `stamp.py` from ledger evidence. |
 
 Stamp shapes currently authored by model sessions are `Verified:`, `Quality
@@ -120,8 +119,8 @@ Current workflow review obligations are:
 | `complete-todo-file` | `test-coverage` indirectly through `implement-unit-tests` in full close-out mode | Sweep-only mode consumes prior evidence; full close-out delegates Unit Tests work before verification |
 | `validate-todo-file` | None | Structural validation consumes existing evidence and does not add a Codex review kind today |
 
-Driver and reviewer run IDs in prompts are correlation hints only. Shipping
-gates must eventually derive trusted role separation from the driver lease,
+Reviewer run IDs in prompts are correlation hints only. Shipping
+gates must eventually derive trusted role separation from the mutator lease,
 dispatch wrapper/session state, or receipt process metadata rather than trusting
 prompt-authored `driver_run_id` / `review_run_id` strings.
 
@@ -141,7 +140,7 @@ direct companion review/task forms, the foreground wrapper, bare `codex review`,
 and incorrectly bare `codex e`; fallback wrappers, background task completion,
 plugin command/hook receipt, and the `codex e` alias need §7 receipt/evidence
 normalization. Bare `codex task` and plugin stop-gate output are not trusted
-receipt proof, and `codex exec` / `codex e` are driver automation. TODO-10 does
+receipt proof, and `codex exec` / `codex e` are non-review automation. TODO-10 does
 not add a new prompt tree.
 
 Prompt escaping is part of that dispatch surface, not prose style. Dispatch
@@ -161,113 +160,6 @@ warns when documented examples join multiple `codex-dispatch.sh` /
 kind may be recorded. It is also WARN-only and skip-able today, so shared gates
 must not treat it as proof.
 
-## Codex Adapter
-
-[`scripts/codex-driver.sh`](../../scripts/codex-driver.sh) is the Codex-facing
-adapter.
-
-Dry run:
-
-```bash
-bash scripts/codex-driver.sh --dry-run --todo todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md --section 8
-```
-
-Dry-run mode writes a plan and obligation snapshot under
-`.ai-workflow/runs/<run-id>/` and records no shipping evidence.
-
-Live mode:
-
-```bash
-AI_WORKFLOW_CODEX_DRIVER=1 bash scripts/codex-driver.sh --live --todo <todo> --section <n>
-AI_WORKFLOW_CODEX_DRIVER=1 bash scripts/codex-driver.sh --live --checkpoint pre-commit --todo <todo> --section <n>
-```
-
-Live mode is explicit. It acquires the shared driver lease and then uses the
-same gate checks as other drivers. The default checkpoint is `pre-edit`, which
-verifies the lease and prints missing obligations without pretending the section
-is commit-ready. `pre-stamp` and `pre-commit` run the stronger shared gates
-after evidence has been recorded. It does not bypass missing review, build, or
-stamp obligations.
-
-## Overnight Codex Driver
-
-The unattended sequencer can be armed with Codex as the active driver:
-
-```bash
-bash .claude/skills/overnight-sequencer/arm-sequencer.sh --driver codex
-```
-
-The arming path is intentionally the same repo-owned scheduler used for Claude:
-`arm-sequencer.sh` writes the same `sequencer-armed` marker, uses
-`scripts/overnight/overnight-arm.sh`, and launches
-`scripts/overnight/overnight-launch.sh`. The Codex branch changes only the
-driver process and runtime log root. Codex does not run as one unbounded agent
-process; [`scripts/overnight/codex-sequencer-supervisor.sh`](../../scripts/overnight/codex-sequencer-supervisor.sh)
-owns the outer phase loop, invokes Codex for one validation, gap-audit, section,
-or file-close step at a time, and verifies section-level progress before
-continuing:
-
-| Surface | Claude driver | Codex driver |
-| --- | --- | --- |
-| Launcher | `claude -p ...` | supervisor -> bounded `codex --ask-for-approval never exec --json ...` |
-| Approval mode | Claude `bypassPermissions` | Codex `--ask-for-approval never` |
-| Sandbox | Claude permission mode | Codex `--sandbox danger-full-access` by default |
-| Reports | `.claude/overnight/reports/latest.log` | `.codex/overnight/reports/latest.log` |
-| Metrics | `.claude/overnight/metrics/` | `.codex/overnight/metrics/` |
-| Governance state | `.claude/state/sequencer-run.json` | same |
-| Shipping gates | Claude hooks + shared scripts | shared scripts + git hooks |
-
-`OVERNIGHT_CODEX_SANDBOX` can override the Codex sandbox to `read-only`,
-`workspace-write`, or `danger-full-access`; the default is
-`danger-full-access` so unattended runs do not stall on approval prompts. The
-governance boundary remains the same: Codex must follow
-`todo/TODO-Claude-Overnight-Runner.md`, use `run_phase_guard.py` for the phase
-cursor, acquire section leases through `scripts/codex-driver.sh --live`, satisfy
-fresh reviewer evidence through separate Codex review runs, and pass the shared
-stamp/commit gates.
-
-Because Codex can be both the active driver and the required reviewer backend,
-the supervisor installs a temporary `codex` PATH guard inside each driver step.
-Raw nested Codex automation (`codex exec`, `codex e`, `codex task`, and
-unmarked availability probes) is blocked so the driver cannot recursively spawn
-itself or self-certify its own work. Repo-owned reviewer wrappers
-(`scripts/codex-dispatch.sh`, `scripts/codex-dispatch-with-files.sh`, and
-`scripts/codex-bg-dispatch.sh`) set `CODEX_REVIEWER_DISPATCH=1`; only then does
-the guard chain to the real Codex binary so the installed plugin can run
-`codex --version`, `codex app-server --help`, and the reviewer app-server path.
-The marker is wrapper-owned dispatch metadata, not shipping evidence.
-
-The supervisor adds a hard progress budget around Codex-driver mode:
-
-| Setting | Default | Purpose |
-| --- | ---: | --- |
-| `OVERNIGHT_CODEX_STEP_TIMEOUT_SECONDS` | `5400` | Max wall time for one bounded Codex step. |
-| `OVERNIGHT_CODEX_SUPERVISOR_STEPS` | `8` | Max bounded steps per systemd launch before the watchdog relaunches. |
-| `OVERNIGHT_CODEX_NO_PROGRESS_LIMIT` | `3` | Same phase/file/section attempts without section-level progress before writing `.codex/overnight/codex-supervisor.block`. |
-
-When the block file exists, watchdog relaunches no-op instead of burning an
-overnight session on the same stuck target. Remove both
-`.codex/overnight/codex-supervisor.block` and `.codex/overnight/codex-no-progress`
-after inspecting the report and fixing the underlying blocker. Re-arming with
-`arm-sequencer.sh --driver codex` clears those two supervisor block/progress
-files as runtime state, but leaves `.codex/overnight/reports/` and metrics in
-place for post-run review.
-
-Monitor a Codex overnight run with:
-
-```bash
-bash scripts/overnight/overnight-monitor.sh codex
-```
-
-The git hook can opt into the shared staged-commit lease check with:
-
-```bash
-AI_WORKFLOW_ENFORCE_SHARED_GATES=1 git commit
-```
-
-The flag is deliberately explicit until Claude hooks automatically acquire
-leases for section flows.
-
 ## Evidence Kinds
 
 The first implementation recognizes these shipping evidence kinds:
@@ -281,7 +173,7 @@ The first implementation recognizes these shipping evidence kinds:
 - `stamp.verified`
 
 Reviewer evidence must use role names like `codex-reviewer-adversarial` and must
-be recorded with a run ID distinct from the driver run ID.
+be recorded with a run ID distinct from the mutating session run.
 
 Build/test/smoke evidence can carry deterministic metadata such as command,
 exit code, log path, final marker, and source blob bindings. Generated stamps
