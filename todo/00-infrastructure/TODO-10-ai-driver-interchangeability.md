@@ -82,7 +82,7 @@ The workflow protocol under [`scripts/ai-workflow/`](../../scripts/ai-workflow/)
 | 💎  |   2   | Active-mutator lease schema and lock                                  | §1         |  [/]   |
 | 💎  |   3   | Tool-neutral evidence ledger and importer for existing state           | §1         |  [x]   |
 | 💎  |   4   | Obligation resolver to avoid duplicate work                            | §3         |  [x]   |
-| 💎  |   5   | Deterministic stamp writer                                             | §3-4       |  [x]   |
+| 💎  |   5   | Deterministic stamp writer                                             | §3-4       |  [/]   |
 | 💎  |   6   | Shared gate library used by Claude hooks and git hooks                 | §3-5       |  [/]   |
 | ⭐  |   7   | Review-evidence integrity and fresh-context independence checks        | §3-6       |  [/]   |
 | 💎  |   8   | Retire obsolete Codex-driver artifacts                                 | §1         |  [x]   |
@@ -200,6 +200,8 @@ Every session starts by asking what is missing, not by replaying the whole workf
 
 ## 5. Deterministic Stamp Writer
 
+> **Folded 2026-07-01:** the stamp writer shipped in commit 92b80346; its post-ship review and the open XREF-grammar findings are folded into the XREF-grammar unification plan (docs/superpowers/plans/2026-07-01-todo10-xref-grammar-unification-plan.md). Status is [/] until that change lands.
+
 Stop relying on model-authored stamp prose for workflow truth.
 
 - [x] Add `scripts/ai-workflow/stamp.py`.
@@ -209,7 +211,7 @@ Stop relying on model-authored stamp prose for workflow truth.
 - [x] Stamp writer refuses to add a stamp when required evidence is missing, stale, legacy-only where fresh evidence is required, or produced by a disallowed role combination.
 - [x] Section-local stamps land in the canonical bottom block: `_insert_stamp` joins an existing Verified/Accepted/Deferred/Quality group, else places after Notes/Test-runner with the `>` separator, never abutting the heading.
 - [x] File-level mode: `validated`/`gap-audited` auto-route to `_insert_preamble_stamp` (replace-in-place; hard-fail no H1); `--section` optional; gated on `todo-graph-validate`/`gap-audit` evidence with an `--allow-missing` escape.
-- [x] `accepted`/`deferred` stamps reject a bare XREF summary (no concrete `(item: ...)` parenthetical) before writing; `common.bare_xrefs` mirrors the git-hook rule.
+- [/] `accepted`/`deferred` stamps reject a bare XREF summary (no concrete `(item: ...)` parenthetical) before writing; `common.bare_xrefs` mirrors the git-hook rule.
 - [x] Stamp writer records a `stamp.generated` ledger event with the exact text hash.
 - [x] Add `--dry-run` and `--explain-missing` modes.
 - [x] Regression fixtures in `test-tooling.sh`: file-level preamble placement + sequencer recognition, file-scoped evidence, replace-in-place re-stamp, no-H1 fail, bare/concrete XREF, and section-local bottom placement with multiline Notes.
