@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, sys, subprocess, re
+import json, sys, subprocess, re, os
 d = json.load(sys.stdin)
 cmd = d.get("tool_input", {}).get("command", "")
 if not cmd.startswith("git commit"):
@@ -10,6 +10,16 @@ except Exception:
     sys.exit(0)
 if not diff:
     sys.exit(0)
+# Tier classification lives in the ONE shared grammar module (scripts/ai-workflow/xref.py)
+# so the git hook, the stamp writer, and todo-graph cannot drift. Fail-open with a loud
+# note if it is unavailable -- this is a convenience gate, not a security boundary, and
+# review-todo-section step 15 is the real backstop; wedging every commit is worse.
+sys.path.insert(0, os.path.join(os.environ.get("CLAUDE_PROJECT_DIR", "."), "scripts", "ai-workflow"))
+try:
+    import xref as xref_mod
+except Exception as e:
+    sys.stderr.write(f"[accepted-xref] shared xref.py unavailable ({e}); skipping concreteness check\n")
+    sys.exit(0)
 bare = []
 soft = []
 for line in diff.splitlines():
@@ -18,14 +28,8 @@ for line in diff.splitlines():
     body = line[1:]
     if ("Accepted" not in body and "Deferred" not in body) or "XREF" not in body:
         continue
-    for xref in re.findall(r"XREF:\s*[^,;\]]*?TODO-\d+[^,;\]]*", body):
-        xl = xref.lower()
-        has_concrete = ("item:" in xl) or ("at line" in xl) or ("retrofit" in xl) or ("helper;" in xl)
-        has_paren = "(" in xref
-        if not has_paren:
-            bare.append(xref.strip()[:100])
-        elif not has_concrete:
-            soft.append(xref.strip()[:100])
+    bare.extend(xref_mod.bare_clauses(body))
+    soft.extend(xref_mod.soft_clauses(body))
 if not bare and not soft:
     sys.exit(0)
 if bare:

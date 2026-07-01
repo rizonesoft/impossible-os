@@ -5900,6 +5900,56 @@ fi
 
 
 # ============================================================================
+# xref_grammar -- the ONE shared Accepted/Deferred XREF grammar module
+#   (scripts/ai-workflow/xref.py) that the git hook (accepted_xref_block),
+#   the stamp writer (stamp.py), and todo-graph all route through. Guards the
+#   tier classification (bare/soft/concrete) + parse + writer predicates so the
+#   three-way XREF-grammar drift that stalled the unification cannot reappear.
+# ============================================================================
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[xref_grammar]${NC}"
+
+XREF_OUT=$(python3 - <<'PYEOF'
+import sys
+sys.path.insert(0, "scripts/ai-workflow")
+import xref
+
+S = "§"  # section sign built at runtime -- keeps a literal bare-section-ref out of this test file
+BARE = '> **Accepted:** [M] foo -> XREF: 01-boot-platform/TODO-13'
+SOFT = f'> **Deferred:** [H] bar -> XREF: 01-boot-platform/TODO-13 {S}7 (TPM NV Index Support)'
+CONC = f'> **Accepted:** [M] baz -> XREF: 01-boot-platform/TODO-13 {S}4 (item: "Migrate HKEY" at line 248)'
+MIXED = f'> **Accepted:** [M] x -> XREF: 01-boot-platform/TODO-13 {S}4 (item: "A" at line 9), XREF: 02-x/TODO-99'
+OWNERLESS = '> **Accepted:** [M] x -> XREF: no-owner'
+
+def check(label, cond):
+    print(("OK " if cond else "FAIL ") + label)
+
+check("bare_is_bare",         bool(xref.bare_clauses(BARE)) and not xref.soft_clauses(BARE))
+check("soft_is_soft",         bool(xref.soft_clauses(SOFT)) and not xref.bare_clauses(SOFT))
+check("concrete_is_ok",       not xref.bare_clauses(CONC) and not xref.soft_clauses(CONC))
+check("is_concrete_rej_bare", xref.is_concrete(BARE) is False)
+check("is_concrete_acc_conc", xref.is_concrete(CONC) is True)
+check("is_concrete_rej_own",  xref.is_concrete(OWNERLESS) is False)
+check("mixed_bare_rejected",  bool(xref.bare_clauses(MIXED)) and xref.is_concrete(MIXED) is False)
+c = xref.parse(CONC)[0]
+check("parse_target",         c.target_path == "01-boot-platform/TODO-13")
+check("parse_section",        c.section == "4")
+check("parse_item",           c.item_name == "Migrate HKEY")
+check("canonical_true",       xref.canonical(CONC) is True)
+check("canonical_false",      xref.canonical(SOFT) is False)
+PYEOF
+)
+XREF_OK=$(echo "$XREF_OUT" | grep -c "^OK ")
+if [ "$XREF_OK" = "12" ]; then
+    echo "$XREF_OUT" | grep "^OK " | while IFS= read -r line; do
+        t_pass "xref_grammar: $line"
+    done
+    PASS=$((PASS + 12))
+else
+    t_fail "xref_grammar: tier/parse/writer coverage incomplete" "ok-count=$XREF_OK out=$XREF_OUT"
+fi
+
+
+# ============================================================================
 # review_pipeline_passthrough -- policy-scoped Bash prefix passthrough
 # ============================================================================
 # Owner: 00-infrastructure/TODO-08-automation-hardening (PreToolUse

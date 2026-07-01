@@ -105,13 +105,22 @@ obligation state this protocol produces.
 
 ### Phase 1 -- Unify the XREF grammar (enabling root fix)
 
-1. Commit the working-tree stamp-writer hardening as the base (so it is not lost).
-2. Add `scripts/ai-workflow/xref.py` (or extend `common.py`) with ONE canonical validator:
-   - grammar: `XREF: NN-domain/TODO-XX <section-marker> (item: "..." at line N)`;
+> **Refinement (2026-07-01, execution critical-review):** a single STRICT grammar wired to
+> the git hook would retroactively reject ~177 of 528 existing Accepted/Deferred stamps
+> (only 66% carry the `(item: "..." at line N)` form; the rest use `(Section Title)`). So the
+> shared validator encodes the git hook's existing TIERS -- `bare` (no paren) -> BLOCK,
+> `soft` (paren, no concrete marker) -> WARN, `concrete` (`item:`/`at line`/`retrofit`/
+> `helper;`) -> OK -- as ONE definition all consumers share. The stamp WRITER stays strict
+> (emits canonical only); the git hook keeps block/warn (existing stamps survive); todo-graph
+> parses `§N` + optional item. Unification = one grammar module, NOT a repo-wide tightening.
+
+1. Commit the working-tree stamp-writer hardening as the base (so it is not lost). DONE (4907c3c8).
+2. Add `scripts/ai-workflow/xref.py` with ONE shared grammar module:
+   - `parse_clauses(summary)` -> list of `XrefClause(target_path, section, item_name, tier)`;
+   - tiers `bare`/`soft`/`concrete` matching `accepted_xref_block.py` (case-sensitive `XREF:`);
    - quote-aware parenthetical parsing (tolerates `()` inside the quoted item name);
-   - requires a domain-qualified path + a section marker;
-   - validates EVERY `XREF:` clause independently (rejects mixed valid + ownerless);
-   - concrete marker must sit INSIDE the parenthetical.
+   - `concrete` requires a marker INSIDE a parenthetical; validates EVERY clause independently;
+   - a `canonical` predicate (domain path + `§N` + `(item: "..." at line N)`) for the WRITER.
 3. Point `stamp.py` (`bare_xrefs`/`has_concrete_todo_xref`), `accepted_xref_block.py`, and
    `todo-graph/build.py`/`validate.py` at the one grammar (shared module or shared regex).
 4. Migrate the 9 stamp fixtures + add negative fixtures for: `()` in item name, mixed
