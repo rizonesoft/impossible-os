@@ -8,6 +8,18 @@
 Section names below refer to the Owner TODO's Implementation Order rows by capability, not by
 number, because this file lives outside `todo/` where numeric section shorthand is forbidden.
 
+## Decision (2026-07-01): keep TODO-10, this plan is the execution source
+
+Deleting the Owner TODO was considered and rejected: `TODO-10-ai-driver-interchangeability.md`
+is the **test subject** of the `ai_workflow_lease` / `evidence` / `obligations` / `gates`
+suites in `scripts/test-tooling.sh` (~50+ references from line 6124, including `--source`
+blob-binding and direct file reads), so deleting it would break the tooling suite and require
+repointing every reference to a synthetic fixture. It is also the audit trail for the shipped
+workflow-protocol scripts. Instead: TODO-10 stays as the tracker/test-subject, and THIS plan is
+the single self-contained execution source. The plan references capability names + real file
+paths only (no TODO-10 section-number shorthand), so it needs no reference juggling. (Repointing
+those tests to synthetic fixtures is a legitimate future cleanup, not required here.)
+
 ## Why this plan exists (root problem)
 
 TODO-10 builds the very workflow machinery the review pipeline runs on -- the active-mutator
@@ -76,7 +88,9 @@ stamps were asserted.
 Finish the open TODO-10 items (Active-Mutator Lease, Deterministic Stamp Writer, Shared Gate
 Library, Review-Evidence Integrity, Migration/Docs/Rollout, Regression Suite + pilot) as a small
 number of coherent, well-tested commits, built on **one** XREF grammar, reviewed proportionately
-(one consolidated Codex triad per phase on the risky pieces -- not per micro-item).
+(one consolidated Codex triad per phase on the risky pieces -- not per micro-item). Also fold in
+and close out the overnight-runner situational-awareness layer, which consumes the same gate /
+obligation state this protocol produces.
 
 ## Phases
 
@@ -139,6 +153,38 @@ number of coherent, well-tested commits, built on **one** XREF grammar, reviewed
   legacy-import, stale completed-lease, lifecycle-stamp fixtures.
 - Run one real pilot: implement a low-risk infra section via the shared ledger + gates with Codex
   as reviewer, interrupt, and resume from the ledger. Then flip doctrine items done.
+
+### Phase 6 -- Overnight-runner situational awareness (folded spec; verify + close)
+
+Folds [`docs/superpowers/specs/2026-06-27-overnight-runner-situational-awareness-design.md`](../specs/2026-06-27-overnight-runner-situational-awareness-design.md).
+The spec's job: keep the headless main loop on-rails (no drift, gate-surprise, or forgotten
+decisions) by aggregating existing scattered run-state into a compact brief. It consumes the
+same gate / obligation state the workflow protocol above produces, so it belongs in this plan.
+
+**Verified position (codebase audit 2026-07-01): the four components are already SHIPPED.**
+
+- C1 aggregator -- `.claude/hooks/runner_status.py` prints WHERE / GIT / OBLIGATIONS / GOTCHAS /
+  RECENT DECISIONS (`where`/`git_state`/`obligations`/`gotchas`/`recent_decisions`/`full_brief`)
+  plus an `anchor_line`. (Spec named `scripts/overnight/runner-status.py`; it shipped as a hook,
+  usable as a CLI -- a naming deviation, not a gap.)
+- C2 one-line anchor -- `run_phase_guard.py` `_emit_anchor` calls `runner_status.anchor_line`
+  from `status` and `phase`.
+- C3 `live-gotchas.md` -- `.claude/state/live-gotchas.md` exists and is read by `runner_status`.
+- C4 post-compaction re-orient -- `.claude/hooks/pre_compact_flush.py` wired in the `PreCompact`
+  hook; `overnight-sequencer` skill instructs reading the brief post-compaction.
+- Tests -- `scripts/overnight/tests/test_runner_status.py` exists.
+
+**Remaining work (close-out, not new build):**
+
+- Confirm the shipped layer against the spec's success criteria (brief <= ~30 lines / < 1 s /
+  fail-open; anchor emits only when a run is active; obligations flag at least an unreceived
+  Codex review + a pushed `[x]` flip lacking a `**Verified:**` stamp; expired gotchas dropped;
+  PreCompact snapshot written and read).
+- Reconcile the naming deviation: either rename to the spec's path or amend the spec to record
+  the hook location as canonical.
+- Optional (WS3): measure turns-per-section / re-read counts with vs without the layer to
+  validate the focus->cost claim.
+- Fusion break-glass reviewer stays deferred/out-of-scope per the spec.
 
 ## Review strategy
 
