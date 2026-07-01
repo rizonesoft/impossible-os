@@ -85,7 +85,7 @@ The workflow protocol under [`scripts/ai-workflow/`](../../scripts/ai-workflow/)
 | 💎  |   5   | Deterministic stamp writer                                             | §3-4       |  [/]   |
 | 💎  |   6   | Shared gate library used by Claude hooks and git hooks                 | §3-5       |  [/]   |
 | ⭐  |   7   | Review-evidence integrity and fresh-context independence checks        | §3-6       |  [/]   |
-| 💎  |   8   | Retire obsolete Codex-driver artifacts                                 | §1         |  [/]   |
+| 💎  |   8   | Retire obsolete Codex-driver artifacts                                 | §1         |  [x]   |
 | 💎  |   9   | Migration, docs, and rollout toggles                                   | §1-8       |  [/]   |
 | 💎  |   10  | Regression suite and pilot section                                     | §1-9       |  [ ]   |
 
@@ -113,6 +113,7 @@ Identify every place the current system keeps workflow truth in Claude-only stat
 > - §1 records current-state evidence only; doctrine remains unchanged until rollout sections ship.
 > - Inventory covers the AGENTS.md reviewer boundary, Claude state files, live gates, stateless blockers, review dispatch surfaces, prompt-escaping/bundling lint telemetry, sequencer control, stamps, and review kinds.
 > - Durable-evidence findings graduate to the shared ledger; Claude-adapter state stays telemetry.
+> - Re-verified 2026-07-01 after the tool-neutral re-scope: adversarial Codex flagged the deliverable doc's stale driver recipes (removed in §8) and a missing `.remember/` surface (added); inventory intact.
 >
 > **Verified:** 2026-06-29 | working tree validation
 > - `bash scripts/test-tooling.sh` -> 423/423 PASS.
@@ -266,9 +267,20 @@ Remove the abandoned Codex-as-driver implementation built before the 2026-07-01 
 - [x] Rewrite `docs/infrastructure/ai-driver-interchangeability.md` so it documents the tool-neutral workflow protocol only (no Codex mutating driver, no delegation/failover, no `.codex/overnight`).
 - [x] Remove `overnight_launch_driver` tests and any `scripts/test-tooling.sh` assertions tied to the Codex-driver / `.codex/overnight` paths; keep the shared `ai_workflow_*` tests.
 - [x] Grep the repo for `codex driver`, `--driver codex`, `.codex/overnight`, `Codex-exclusive`, and `co-equal` and remove stale references outside explicit historical notes.
-- [ ] Commit: "ai-workflow: retire obsolete codex-driver artifacts"
+- [x] Commit: "ai-workflow: retire obsolete codex-driver artifacts"
 
 **Test checkpoint:** No code path, doc, or test references a Codex mutating driver or `.codex/overnight`, and `bash scripts/test-tooling.sh` passes.
+
+> **Test runner:** 2026-07-01 | `bash scripts/test-tooling.sh` | 442/442 PASS
+>
+> **Notes:**
+> - Deleted `codex-driver.sh`, `codex-sequencer-supervisor.sh`, `test_launch_driver_mode.py`, and the obsolete master/failover design spec.
+> - Made the overnight launcher/arm/sequencer/monitor Claude-only; removed the `--driver codex` plumbing, codex systemd dropins, and `.codex/overnight` report base.
+> - Removed the `codex_driver_*` / `overnight_launch_driver` test blocks and swapped lease-test holder labels to claude; repo sweep clean of driver refs outside `todo/`.
+> - Removal-only section: verified by the tooling suite, no Codex quality dispatch.
+>
+> **Verified:** 2026-07-01 | commit `c63c1471` | 7/7 items | tests 442/442 PASS
+> **Quality reviewed:** 2026-07-01 | light-close, no Codex quality dispatch (removal-only) | 0H+0M+0L | scope: N/A (deletion verified by test-tooling 442/442)
 
 ---
 
