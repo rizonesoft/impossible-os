@@ -7556,6 +7556,149 @@ else
     t_fail "ai_workflow_stamp: section-local stamp lands after H3 subsections, not before them"
 fi
 
+# canonical stamp order: writing quality-reviewed BEFORE verified still lands
+# Verified above Quality reviewed (group-join ranked insert, Codex F4)
+LIFE_ORD_TODO="todo/00-infrastructure/TODO-93-order.md"
+cat > "$LIFE_REPO/$LIFE_ORD_TODO" <<'EOF_ORD'
+# TODO-93 -- Stamp Order
+
+## 5. Ordered
+
+- [ ] item
+
+**Test checkpoint:** ok.
+EOF_ORD
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py quality-reviewed "$LIFE_ORD_TODO" --section 5 --allow-missing --write >/dev/null
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py verified "$LIFE_ORD_TODO" --section 5 --allow-missing --write >/dev/null
+if python3 - "$LIFE_REPO/$LIFE_ORD_TODO" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+vi = next(i for i, l in enumerate(lines) if l.startswith("> **Verified:**"))
+qi = next(i for i, l in enumerate(lines) if l.startswith("> **Quality reviewed:**"))
+sys.exit(0 if vi < qi else 1)
+PY
+then
+    t_pass "ai_workflow_stamp: group-join places Verified above Quality reviewed regardless of write order"
+else
+    t_fail "ai_workflow_stamp: group-join places Verified above Quality reviewed regardless of write order"
+fi
+
+# accepted/deferred with NO XREF at all is rejected before write (Codex F2)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: deferred with no XREF summary is rejected"
+else
+    t_pass "ai_workflow_stamp: deferred with no XREF summary is rejected"
+fi
+
+# a soft XREF (parenthetical present but no concrete item:/at line marker) is rejected (Codex F2)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[H] gap -> XREF: TODO-11 (later)' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: deferred with a soft (non-concrete) XREF is rejected"
+else
+    t_pass "ai_workflow_stamp: deferred with a soft (non-concrete) XREF is rejected"
+fi
+
+# a non-canonical (lowercase/spaced) XREF marker is invisible to the sibling
+# parsers, so the writer treats it as "no owner" and rejects the stamp (Codex F2/C1)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[H] gap -> xref : TODO-11' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: deferred with a non-canonical lowercase XREF is rejected"
+else
+    t_pass "ai_workflow_stamp: deferred with a non-canonical lowercase XREF is rejected"
+fi
+
+# an XREF marker with no TODO target names no owner and is rejected (Codex C1)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[H] gap -> XREF: no-owner (item: "x" at line 1)' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: deferred with an ownerless (no-TODO) XREF is rejected"
+else
+    t_pass "ai_workflow_stamp: deferred with an ownerless (no-TODO) XREF is rejected"
+fi
+
+# a marker sitting OUTSIDE the parenthetical is not concrete (todo-graph would
+# extract no item owner) and is rejected (Codex re-adversarial RA-H1)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[H] gap -> XREF: TODO-11 (later) and item: outside the parens' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: deferred with a marker outside the parenthetical is rejected"
+else
+    t_pass "ai_workflow_stamp: deferred with a marker outside the parenthetical is rejected"
+fi
+
+# joining a section whose existing stamps are ALREADY out of order re-sorts the
+# whole group into canonical rank order (Codex re-adversarial RA-M1)
+LIFE_DIS_TODO="todo/00-infrastructure/TODO-91-disorder.md"
+cat > "$LIFE_REPO/$LIFE_DIS_TODO" <<'EOF_DIS'
+# TODO-91 -- Disordered Stamps
+
+## 5. Ordered
+
+- [ ] item
+
+**Test checkpoint:** ok.
+
+> **Quality reviewed:** old-qr
+> **Verified:** old-v
+EOF_DIS
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_DIS_TODO" --section 5 \
+    --summary '[H] gap -> XREF: TODO-11 (item: "x" at line 1)' --allow-missing --write >/dev/null
+if python3 - "$LIFE_REPO/$LIFE_DIS_TODO" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+vi = next(i for i, l in enumerate(lines) if l.startswith("> **Verified:**"))
+di = next(i for i, l in enumerate(lines) if l.startswith("> **Deferred:**"))
+qi = next(i for i, l in enumerate(lines) if l.startswith("> **Quality reviewed:**"))
+sys.exit(0 if vi < di < qi else 1)
+PY
+then
+    t_pass "ai_workflow_stamp: joining a pre-existing out-of-order group re-sorts to canonical order"
+else
+    t_fail "ai_workflow_stamp: joining a pre-existing out-of-order group re-sorts to canonical order"
+fi
+
+# `at line` in PROSE (not an item: parenthetical) does not make an XREF concrete;
+# todo-graph would extract no item owner, so it is rejected (Codex re-adv RA2-M1)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[M] gap -> XREF: TODO-11 (see owner at line 99 later)' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: deferred with prose 'at line' but no item owner is rejected"
+else
+    t_pass "ai_workflow_stamp: deferred with prose 'at line' but no item owner is rejected"
+fi
+
+# an INTERLEAVED independent blockquote label (> **Notes:**) between stamps must not
+# be absorbed as a stamp continuation and moved by the re-sort (Codex re-adv RA2-M2)
+LIFE_NOTE_TODO="todo/00-infrastructure/TODO-90-interleaved.md"
+cat > "$LIFE_REPO/$LIFE_NOTE_TODO" <<'EOF_NOTE'
+# TODO-90 -- Interleaved Notes
+
+## 5. Ordered
+
+- [ ] item
+
+**Test checkpoint:** ok.
+
+> **Quality reviewed:** old-qr
+> **Notes:** interleaved note
+> **Verified:** old-v
+EOF_NOTE
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_NOTE_TODO" --section 5 \
+    --summary '[H] gap -> XREF: TODO-11 (item: "x" at line 1)' --allow-missing --write >/dev/null
+if python3 - "$LIFE_REPO/$LIFE_NOTE_TODO" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+notes = [i for i, l in enumerate(lines) if l.startswith("> **Notes:**")]
+vi = next(i for i, l in enumerate(lines) if l.startswith("> **Verified:**"))
+di = [i for i, l in enumerate(lines) if l.startswith("> **Deferred:**")]
+# the Notes line must survive exactly once, stay directly above Verified (not moved
+# to the tail), and the Deferred stamp must have been added
+ok = len(notes) == 1 and notes[0] + 1 == vi and len(di) == 1
+sys.exit(0 if ok else 1)
+PY
+then
+    t_pass "ai_workflow_stamp: interleaved > **Notes:** label is not reordered as a stamp continuation"
+else
+    t_fail "ai_workflow_stamp: interleaved > **Notes:** label is not reordered as a stamp continuation"
+fi
+
 STAGED_REPO="$AIWF_TMP/staged-repo"
 mkdir -p "$STAGED_REPO/todo/00-infrastructure"
 cat > "$STAGED_REPO/todo/00-infrastructure/TODO-99-fixture.md" <<'EOF_STAGED_TODO'

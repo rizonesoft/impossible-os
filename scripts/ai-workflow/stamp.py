@@ -52,6 +52,23 @@ _STAMP_LABEL_RE = re.compile(
     r"^>\s*\*\*(Verified|Accepted|Deferred|Quality reviewed|Validated|Gap-audited):\*\*"
 )
 
+# Any bold blockquote label, e.g. `> **Notes:**`, `> **Re-reviewed:**`. Used to keep
+# the stamp-group sorter from absorbing an INDEPENDENT blockquote as a stamp's
+# continuation text (which would move it during the re-sort).
+_BQ_LABEL_RE = re.compile(r"^>\s*\*\*[^*]+:\*\*")
+
+# Canonical section-stamp order (review-todo-section step 16). A new stamp joins
+# the group at its ranked position so `Quality reviewed` can never precede
+# `Verified`, regardless of the order callers write them.
+_STAMP_ORDER = {"Verified": 0, "Accepted": 1, "Deferred": 2, "Quality reviewed": 3}
+
+
+def _stamp_rank(line: str) -> int:
+    m = _STAMP_LABEL_RE.match(line)
+    if not m:
+        return 99
+    return _STAMP_ORDER.get(m.group(1), 50)
+
 
 def _section_bounds(lines: list[str], section: str) -> tuple[int, int]:
     pat = _section_heading(section)
@@ -81,15 +98,33 @@ def _insert_stamp(text: str, section: str, stamp_line: str) -> str:
     lines = text.splitlines()
     start, end = _section_bounds(lines, section)
 
-    last_stamp = None
-    for i in range(start + 1, end):
-        if _STAMP_LABEL_RE.match(lines[i]):
-            last_stamp = i
-    if last_stamp is not None:
-        j = last_stamp + 1
-        while j < end and lines[j].startswith(">") and not _STAMP_LABEL_RE.match(lines[j]):
-            j += 1
-        lines.insert(j, stamp_line)
+    stamp_idx = [i for i in range(start + 1, end) if _STAMP_LABEL_RE.match(lines[i])]
+    if stamp_idx:
+        # Split the group into per-stamp units (label line + its continuation `>`
+        # lines) and stable-sort the whole group plus the new stamp by canonical
+        # rank. Sorting (not insert-before-first-greater) guarantees the output is
+        # ordered even when the existing group was already out of order.
+        units: list[list[str]] = []
+        last_end = stamp_idx[0]
+        for pos, i in enumerate(stamp_idx):
+            nxt = stamp_idx[pos + 1] if pos + 1 < len(stamp_idx) else end
+            j = i + 1
+            while j < nxt and lines[j].startswith(">") and not _BQ_LABEL_RE.match(lines[j]):
+                j += 1
+            units.append(lines[i:j])
+            last_end = j
+        block_lo = stamp_idx[0]
+        if sum(len(u) for u in units) == last_end - block_lo:
+            # Contiguous stamp block (no gaps): stable-sort keeps equal-rank stamps
+            # in place while forcing canonical rank order over the whole group.
+            ordered = sorted(units + [[stamp_line]], key=lambda blk: _stamp_rank(blk[0]))
+            lines[block_lo:last_end] = [ln for blk in ordered for ln in blk]
+            return "\n".join(lines) + "\n"
+        # Interleaved/non-contiguous stamps: fall back to a ranked single insert.
+        after = next(
+            (i for i in stamp_idx if _stamp_rank(lines[i]) > _stamp_rank(stamp_line)), None
+        )
+        lines.insert(after if after is not None else last_end, stamp_line)
         return "\n".join(lines) + "\n"
 
     k = end
@@ -117,6 +152,12 @@ def _file_evidence_ids(root: Path, todo: str, kind: str) -> list[str]:
     section Outcome), so it needs a real `todo-graph-validate` / `gap-audit`
     event. Blob-currency is intentionally NOT required here: the stamp write
     mutates the TODO it validates, so a blob-match rule would self-invalidate.
+    Evidence is NOT filtered on section: the real file-level producers record
+    with an empty section (the gap-audit receipt via codex_review_completed.py)
+    or an explicit `file` (the validate workflow), so a section filter would
+    drop valid receipts. File-scoping the producers plus index-backed lookup
+    (instead of this full ledger scan) is tracked by the shared-gate-library
+    evidence-integrity follow-up in TODO-10 (shared gates across hooks).
     """
     ledger = common.state_dir(root) / "evidence.jsonl"
     ids: list[str] = []
@@ -215,12 +256,18 @@ def main(argv: list[str] | None = None) -> int:
     if not is_file_level and not args.section:
         return common.die(f"--section is required for {args.stamp_kind} stamps", 2)
 
-    if args.stamp_kind in ("accepted", "deferred") and args.summary:
+    if args.stamp_kind in ("accepted", "deferred"):
         bare = common.bare_xrefs(args.summary)
         if bare:
             return common.die(
                 "bare XREF (needs a concrete `(item: ... at line N)` parenthetical): "
                 + " | ".join(bare),
+                2,
+            )
+        if not common.has_concrete_todo_xref(args.summary):
+            return common.die(
+                f"{args.stamp_kind} stamp requires a concrete XREF naming a TODO owner "
+                '(`... -> XREF: NN-domain/TODO-XX §N (item: "..." at line N)`)',
                 2,
             )
 

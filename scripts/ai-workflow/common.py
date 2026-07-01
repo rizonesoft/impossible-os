@@ -331,22 +331,75 @@ def load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def bare_xrefs(summary: str) -> list[str]:
-    """Return bare XREFs in a stamp summary (a TODO-<n> cite with no parenthetical).
+# Concrete-marker set: the canonical forms review-todo-section step 15 documents --
+# `(item: "NAME" at line N)` and the helper/retrofit variant `(... helper; retrofit
+# ...)`. Intentionally STRICTER than accepted_xref_block.py has_concrete, which also
+# accepts a bare standalone `at line`: the git hook is the loose backstop for hand
+# edits, but the stamp WRITER must emit canonical XREFs, and a lone `at line` matches
+# prose like `(see owner at line 99 later)` that names no checklist item.
+_XREF_CONCRETE_MARKERS = ("item:", "retrofit", "helper;")
+_XREF_PAREN_RE = re.compile(r"\(([^()]*)\)")
 
-    Mirrors the block rule in .claude/hooks/accepted_xref_block.py: an
-    Accepted/Deferred XREF that cites TODO-<n> is a dead-end paper trail when it
-    carries no concrete ``(item: ... at line N)`` parenthetical. Each ``XREF:``
-    clause is validated INDEPENDENTLY (splitting on the marker) so a bare clause
-    is not masked by a later concrete one on the same line. Returns the offending
-    clauses; empty means none. The git-commit hook remains the authoritative
-    backstop; this lets stamp.py refuse to write a poisoned line in the first
-    place (and record stamp evidence for it).
+
+def _clause_concrete(clause: str) -> bool:
+    """True when a concrete marker sits INSIDE a parenthetical, not merely somewhere
+    in the clause. `TODO-11 (later) item: elsewhere` is NOT concrete -- todo-graph
+    build.py only extracts an item owner from `(... item: "..." ...)`, so a marker
+    outside the parens parks work with no greppable checklist owner.
     """
-    if "XREF" not in summary:
+    for inner in _XREF_PAREN_RE.findall(clause):
+        lowered = inner.lower()
+        if any(m in lowered for m in _XREF_CONCRETE_MARKERS):
+            return True
+    return False
+
+
+def _xref_clauses(summary: str) -> list[str]:
+    """Split a summary into per-``XREF:`` clauses (case-sensitive uppercase).
+
+    Matches the exact marker .claude/hooks/accepted_xref_block.py and
+    scripts/todo-graph/build.py recognize -- a lowercase/spaced ``xref :`` is
+    invisible to every sibling parser, so we treat it as "no XREF" rather than a
+    valid one, keeping the stamp writer consistent with the authoritative backstop.
+    """
+    if "XREF:" not in (summary or ""):
         return []
-    bare: list[str] = []
-    for clause in re.split(r"XREF:", summary)[1:]:
-        if re.search(r"TODO-\d+", clause) and "(" not in clause:
-            bare.append(("XREF:" + clause).strip()[:100])
-    return bare
+    return summary.split("XREF:")[1:]
+
+
+def bare_xrefs(summary: str) -> list[str]:
+    """Return non-concrete XREF clauses in a stamp summary.
+
+    Mirrors the rule in .claude/hooks/accepted_xref_block.py: an Accepted/Deferred
+    XREF that cites TODO-<n> is a dead-end paper trail unless it carries a concrete
+    ``(item: "..." at line N)`` parenthetical. A bare paren is NOT enough -- the
+    clause must contain one of the hook's concrete markers (item:/at line/retrofit/
+    helper;) inside a parenthetical, matching the git hook's ``has_concrete`` test.
+    Each ``XREF:`` clause is validated INDEPENDENTLY so a bare clause is not masked
+    by a later concrete one on the same line. Returns the offending clauses; empty
+    means none. The git-commit hook remains the authoritative backstop; this lets
+    stamp.py refuse to write a poisoned line in the first place (and record stamp
+    evidence for it).
+    """
+    bad: list[str] = []
+    for clause in _xref_clauses(summary):
+        if not re.search(r"TODO-\d+", clause):
+            continue
+        if not _clause_concrete(clause):
+            bad.append(("XREF:" + clause).strip()[:100])
+    return bad
+
+
+def has_concrete_todo_xref(summary: str) -> bool:
+    """True when the summary carries at least one concrete TODO XREF clause.
+
+    Mirrors the git hook's accept condition: an uppercase ``XREF:`` naming a
+    TODO-<n> target with an item:/at line/retrofit/helper; marker. Used to require
+    accepted/deferred stamps to name a real, greppable owner rather than an empty,
+    ownerless, or non-canonical XREF that no sibling parser (git hook, todo-graph)
+    can see.
+    """
+    for clause in _xref_clauses(summary):
+        if re.search(r"TODO-\d+", clause) and _clause_concrete(clause):
+            return True
+    return False
