@@ -376,6 +376,47 @@ def _segment_extract_prompt(seg_tokens):
     return ""
 
 
+def _unquoted_newlines_to_sep(cmd):
+    """Convert UNQUOTED newlines to ` ; ` so shlex/`_segment_by_separators`
+    treat them as command separators (bash terminates a command on a bare
+    newline). Newlines inside single/double quotes are preserved (a multi-line
+    prompt arg stays one token). Heredoc bodies are already stripped by
+    `_harvest_heredoc_vars` before `_tokenize` runs. Without this a
+    `cd <dir>\\nbash scripts/codex-dispatch.sh '...'` compound collapsed into
+    one `cd`-led segment and the real dispatch went undetected/unrecorded.
+    """
+    out = []
+    quote = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        c = cmd[i]
+        if quote:
+            out.append(c)
+            if quote == '"' and c == "\\" and i + 1 < n:
+                out.append(cmd[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in ("'", '"'):
+            quote = c
+            out.append(c)
+        elif cmd.startswith(("<<", "$(", "<(", ">("), i) or c == "`":
+            # A multi-line body opener (heredoc / command-substitution /
+            # process-substitution): its inner newlines are NOT command
+            # separators and `_trim_heredoc_body` owns them at the segment
+            # level. Stop converting and pass the remainder through untouched.
+            out.append(cmd[i:])
+            break
+        elif c == "\n":
+            out.append(" ; ")
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _tokenize(cmd):
     """Pre-process line-continuations + shlex tokenize the command.
     Returns empty list on shlex error.
@@ -383,6 +424,7 @@ def _tokenize(cmd):
     if not isinstance(cmd, str) or not cmd.strip():
         return []
     cmd = _LINE_CONT_RE.sub(" ", cmd)
+    cmd = _unquoted_newlines_to_sep(cmd)
     try:
         return shlex.split(cmd, posix=True, comments=False)
     except ValueError:

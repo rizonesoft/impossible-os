@@ -5861,6 +5861,10 @@ from _codex_dispatch import is_codex_dispatch, extract_dispatch_prompt
 CASES = [
     ('node /x/codex-companion.mjs adversarial-review "[review-kind: adversarial] body"', True, "cdh_direct_node"),
     ("bash scripts/codex-dispatch.sh '[review-kind: perf] todo/foo body'", True, "cdh_wrapper"),
+    # cd-prefixed compound: an unquoted newline is a command separator, so the
+    # dispatch on the second line must still be detected (else the section gate
+    # silently misses the review). Regression for the cd-prefix recorder footgun.
+    ("cd /home/x/repo\nbash scripts/codex-dispatch.sh '[review-kind: adversarial] todo/foo body'", True, "cdh_cd_newline_prefix"),
     ('codex review "[review-kind: adversarial] body"', True, "cdh_bare_cli"),
     # heredoc-body MUST NOT classify (closes section-25 round-7 H)
     ('cat > /tmp/foo.md <<EOF\ncodex-companion.mjs adversarial-review "[review-kind: adversarial]"\nEOF', False, "cdh_heredoc_rejected"),
@@ -5884,11 +5888,11 @@ for cmd, want, label in CASES:
 PYEOF
 )
 CDH_OK=$(echo "$CDH_OUT" | grep -c "^OK ")
-if [ "$CDH_OK" = "6" ]; then
+if [ "$CDH_OK" = "7" ]; then
     echo "$CDH_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "codex_dispatch_helper: $line"
     done
-    PASS=$((PASS + 6))
+    PASS=$((PASS + 7))
 else
     t_fail "codex_dispatch_helper: shell-aware coverage incomplete" \
            "ok-count=$CDH_OK out=$CDH_OUT"
