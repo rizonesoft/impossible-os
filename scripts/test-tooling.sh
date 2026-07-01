@@ -5976,14 +5976,32 @@ import time as _time
 storm = " ".join("XREF: no-owner filler text here" for _ in range(5000))
 _t0 = _time.monotonic(); xref.parse(storm); _dt = _time.monotonic() - _t0
 check("clause_spans_linear_on_storm", _dt < 0.5)
+# a QUOTED terminator before the owner parenthetical truncates the quote-unaware
+# hook clause to bare; the writer must stop at the same raw boundary and reject
+# (re-adversarial finding: quote-blanking before the bound hid the comma)
+QTERM = '[M] gap -> XREF: 00-infrastructure/TODO-11 "see, note" (item: "Real" at line 7)'
+check("writer_rejects_quoted_terminator_before_paren",
+      bool(xref.writer_bare_xrefs(QTERM)) and not xref.writer_has_concrete(QTERM)
+      and bool(xref.bare_clauses(QTERM)))
+# subset property fuzz: any summary the WRITER accepts must have no hook-BLOCK
+# clause (writer-accepts implies hook-accepts, for every generated shape)
+import random as _random
+_random.seed(11)
+_frag = ["XREF:", " 00-x/TODO-11", " no-owner", ",", ";", "]", ' "q, uote"',
+         ' (item: "Real" at line 7)', " (later)", " item: loose", " text"]
+_viol = [s for s in ("".join(_random.choice(_frag) for _ in range(_random.randint(1, 10)))
+                     for _ in range(4000))
+         if xref.writer_has_concrete(s) and not xref.writer_bare_xrefs(s)
+         and xref.bare_clauses(s)]
+check("writer_subset_property_fuzz", not _viol)
 PYEOF
 )
 XREF_OK=$(echo "$XREF_OUT" | grep -c "^OK ")
-if [ "$XREF_OK" = "20" ]; then
+if [ "$XREF_OK" = "22" ]; then
     echo "$XREF_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "xref_grammar: $line"
     done
-    PASS=$((PASS + 20))
+    PASS=$((PASS + 22))
 else
     t_fail "xref_grammar: tier/parse/writer coverage incomplete" "ok-count=$XREF_OK out=$XREF_OUT"
 fi
@@ -7821,6 +7839,15 @@ if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" -
     t_fail "ai_workflow_stamp: concrete paren past the clause terminator is rejected (hook-subset)"
 else
     t_pass "ai_workflow_stamp: concrete paren past the clause terminator is rejected (hook-subset)"
+fi
+
+# a QUOTED terminator before the paren truncates the quote-unaware hook clause to
+# bare, so the writer must reject at the same raw boundary (re-adversarial finding)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[M] gap -> XREF: 00-infrastructure/TODO-11 "see, note" (item: "Real" at line 7)' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: quoted terminator before the parenthetical is rejected (hook-subset)"
+else
+    t_pass "ai_workflow_stamp: quoted terminator before the parenthetical is rejected (hook-subset)"
 fi
 
 STAGED_REPO="$AIWF_TMP/staged-repo"

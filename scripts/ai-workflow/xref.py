@@ -191,23 +191,29 @@ _PAREN_RE = re.compile(r"\(([^()]*)\)")
 
 
 def _writer_clause_head(clause: str) -> str:
-    """The clause text the writer validates: quoted spans blanked FIRST (a quoted
-    item name may contain parens or clause terminators -- `item: "Enforce lease
-    OWNERSHIP (not presence) ..."`), then bounded at the first `,`/`;`/`]`. The
-    bound mirrors the git hook's clause regex, so a parenthetical sitting past a
-    terminator (which the hook would drop, classifying the clause bare and
-    BLOCKING the commit) can never satisfy the writer."""
-    return re.split(r"[,;\]]", re.sub(r'"[^"]*"', '""', clause), 1)[0]
+    """The clause text the writer validates: bounded at the first RAW `,`/`;`/`]`
+    -- exactly the git hook's clause boundary, which has NO quote awareness. A
+    quoted terminator before the owner parenthetical truncates the hook's clause
+    to a bare one, so the writer must stop at the same spot or it would accept a
+    stamp the commit hook then BLOCKS (re-adversarial finding)."""
+    return re.split(r"[,;\]]", clause, 1)[0]
 
 
 def _writer_clause_ok(clause: str) -> bool:
     """True when the clause head names a TODO owner AND carries a concrete
     parenthetical marker inside that same head (writer-strict subset of the
-    git hook: everything the writer accepts, the hook also accepts)."""
+    git hook: everything the writer accepts, the hook also accepts).
+
+    Quoted spans are blanked WITHIN the bounded head only -- a quoted item name
+    may contain parens (`item: "Enforce lease OWNERSHIP (not presence) ..."`)
+    that would break the innermost-paren scan. Quotes never hide a terminator
+    because the bound above is raw; the trade is fail-closed: a terminator
+    inside a quoted item name truncates the head and the writer rejects, which
+    the hook may have accepted -- rejecting more than the hook is always safe."""
     head = _writer_clause_head(clause)
     if not re.search(r"TODO-\d+", head):
         return False
-    for inner in _PAREN_RE.findall(head):
+    for inner in _PAREN_RE.findall(re.sub(r'"[^"]*"', '""', head)):
         low = inner.lower()
         if any(m in low for m in _WRITER_MARKERS):
             return True
