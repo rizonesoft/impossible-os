@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import sys
 from pathlib import Path
@@ -315,87 +316,79 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         return common.die(str(exc), 2)
 
-    # Atomicity preflight: the stamp.generated evidence below is recorded under
-    # workflow_lock inside evidence.main. If that lock is unavailable -- fail-closed
-    # no-fcntl, or held past the timeout -- evidence.main fails AFTER path.write_text,
-    # leaving a TODO stamp with no backing evidence. Acquire+release the SAME lock here
-    # first so an unavailable lock aborts before the TODO file is ever touched. (Held
-    # briefly then released, not across evidence.main: workflow_lock takes a fresh fd
-    # each call, so holding it across the nested evidence.main flock would self-deadlock.)
+    stamp_hash = hashlib.sha256(stamp_line.encode("utf-8")).hexdigest()
+    run_id = args.driver_run_id or f"stamp-{common.now_ns()}"
+
+    def _record_args(kind: str, extra_meta: list[str]) -> list[str]:
+        rec = [
+            "record",
+            "--todo", todo,
+            "--section", section_evidence,
+            "--role", "stamp-writer",
+            "--backend", "ai-workflow",
+            "--run-id", run_id,
+            "--kind", kind,
+            "--result", "ok",
+            "--stamp-text", stamp_line,
+        ]
+        for meta in extra_meta + [f"stamp_label={label}", f"stamp_text_sha256={stamp_hash}"]:
+            rec.extend(["--metadata", meta])
+        post_write_blob = common.worktree_blob_or_digest(todo, root)
+        if post_write_blob:
+            rec.extend(["--source-blob", f"{todo}={post_write_blob}"])
+        for eid in evidence_ids:
+            rec.extend(["--source-evidence-id", eid])
+        return rec
+
+    def _atomic_write(content: str) -> None:
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.stamp.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
+
+    def _rolled_back(reason: str) -> int:
+        # rollback is atomic too (tmp + os.replace): the TODO is either restored
+        # or untouched-with-stamp, never truncated mid-restore
+        try:
+            _atomic_write(text)
+        except OSError as exc:
+            return common.die(
+                f"{reason}; ROLLBACK FAILED ({exc}) -- {todo} may retain a stamp "
+                f"with no backing stamp.generated evidence",
+                2,
+            )
+        return common.die(f"{reason}; stamp write rolled back", 2)
+
+    # Atomicity: the TODO write and both ledger appends run in ONE workflow_lock
+    # critical section (the nested evidence.append_event lock re-enters via the
+    # process-local depth counter). If either append fails -- broken ledger, lock
+    # contention resolved against us, any exception -- the TODO text is rolled back,
+    # so a stamp can never exist without its backing stamp.generated evidence.
     try:
         with common.workflow_lock(root):
-            pass
-    except Exception as exc:
+            try:
+                _atomic_write(new_text)
+            except OSError as exc:
+                return common.die(f"failed to write stamp to {todo} ({exc})", 2)
+            try:
+                first_rc = evidence.main(
+                    _record_args("stamp.generated", [f"stamp_kind={args.stamp_kind}"])
+                )
+                second_rc = (
+                    evidence.main(_record_args(f"stamp.{args.stamp_kind}", []))
+                    if first_rc == 0
+                    else first_rc
+                )
+            except BaseException as exc:
+                return _rolled_back(f"stamp evidence recording failed ({exc})")
+            if first_rc or second_rc:
+                return _rolled_back("stamp evidence recording failed")
+    except (RuntimeError, OSError) as exc:
         return common.die(
             f"workflow lock unavailable ({exc}); refusing to write a stamp that would "
             f"lack backing stamp.generated evidence",
             2,
         )
-    path.write_text(new_text, encoding="utf-8")
-
-    stamp_hash = hashlib.sha256(stamp_line.encode("utf-8")).hexdigest()
-    post_write_blob = common.worktree_blob_or_digest(todo, root)
-    source_blob = f"{todo}={post_write_blob}" if post_write_blob else ""
-    generated_args = [
-        "record",
-        "--todo",
-        todo,
-        "--section",
-        section_evidence,
-        "--role",
-        "stamp-writer",
-        "--backend",
-        "ai-workflow",
-        "--run-id",
-        args.driver_run_id or f"stamp-{common.now_ns()}",
-        "--kind",
-        "stamp.generated",
-        "--result",
-        "ok",
-        "--stamp-text",
-        stamp_line,
-        "--metadata",
-        f"stamp_kind={args.stamp_kind}",
-        "--metadata",
-        f"stamp_label={label}",
-        "--metadata",
-        f"stamp_text_sha256={stamp_hash}",
-    ]
-    if source_blob:
-        generated_args.extend(["--source-blob", source_blob])
-    for eid in evidence_ids:
-        generated_args.extend(["--source-evidence-id", eid])
-    first_rc = evidence.main(generated_args)
-
-    payload_args = [
-        "record",
-        "--todo",
-        todo,
-        "--section",
-        section_evidence,
-        "--role",
-        "stamp-writer",
-        "--backend",
-        "ai-workflow",
-        "--run-id",
-        args.driver_run_id or f"stamp-{common.now_ns()}",
-        "--kind",
-        f"stamp.{args.stamp_kind}",
-        "--result",
-        "ok",
-        "--stamp-text",
-        stamp_line,
-        "--metadata",
-        f"stamp_label={label}",
-        "--metadata",
-        f"stamp_text_sha256={stamp_hash}",
-    ]
-    if source_blob:
-        payload_args.extend(["--source-blob", source_blob])
-    for eid in evidence_ids:
-        payload_args.extend(["--source-evidence-id", eid])
-    second_rc = evidence.main(payload_args)
-    return first_rc or second_rc
+    return 0
 
 
 if __name__ == "__main__":

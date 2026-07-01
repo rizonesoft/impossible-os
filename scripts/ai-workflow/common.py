@@ -97,6 +97,14 @@ def append_jsonl(path: Path, data: dict[str, Any]) -> None:
         f.write(json.dumps(data, sort_keys=True) + "\n")
 
 
+# Process-local reentrancy depth per lock path. flock is per open-file-description,
+# so a nested acquire on a fresh fd would self-deadlock; the depth counter lets a
+# holder (e.g. stamp.py's atomic write+record critical section) call helpers that
+# themselves take the lock (evidence.append_event). Single-threaded-CLI assumption:
+# these tools never share a process across threads.
+_LOCK_DEPTH: dict[str, int] = {}
+
+
 @contextmanager
 def workflow_lock(
     root: Path | None = None,
@@ -106,6 +114,14 @@ def workflow_lock(
 ) -> Iterator[None]:
     root = root or repo_root()
     lock_path = ensure_state_dir(root) / name
+    key = str(lock_path)
+    if _LOCK_DEPTH.get(key, 0) > 0:
+        _LOCK_DEPTH[key] += 1
+        try:
+            yield
+        finally:
+            _LOCK_DEPTH[key] -= 1
+        return
     try:
         import fcntl
     except Exception as exc:
@@ -130,7 +146,11 @@ def workflow_lock(
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"timed out acquiring workflow lock: {lock_path}")
                 time.sleep(0.05)
-        yield
+        _LOCK_DEPTH[key] = 1
+        try:
+            yield
+        finally:
+            _LOCK_DEPTH[key] = 0
     finally:
         if locked:
             try:

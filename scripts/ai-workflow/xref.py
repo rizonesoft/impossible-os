@@ -28,12 +28,50 @@ retained for callers that want structured access to a tier clause.
 """
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass
 
-# Clause matcher: byte-for-byte the historical git-hook regex. A clause runs from
-# `XREF:` up to (but not including) the next `,`, `;`, or `]`, and must cite a TODO.
+# Clause SPEC: the historical git-hook regex. A clause runs from `XREF:` up to
+# (but not including) the next `,`, `;`, or `]`, must cite a TODO before that
+# terminator, and may span a later `XREF:` marker when no terminator intervenes
+# (the lazy span coalesces them). NOT used for matching -- its lazy span rescans
+# the tail per failed `XREF:` start, going quadratic on ownerless-storm lines in
+# the per-commit hook. _clause_spans() below is the linear equivalent; the
+# regression suite diffs the two on the tricky shapes.
 _CLAUSE_RE = re.compile(r"XREF:\s*[^,;\]]*?TODO-\d+[^,;\]]*")
+
+_XREF_MARK_RE = re.compile(r"XREF:")
+_TODO_TOKEN_RE = re.compile(r"TODO-\d+")
+_TERMINATOR_RE = re.compile(r"[,;\]]")
+
+
+def _clause_spans(text: str) -> list[tuple[int, int]]:
+    """Linear-time clause extraction, output-identical to _CLAUSE_RE.findall.
+
+    Precomputes every `XREF:` marker, terminator, and TODO-token position once,
+    then resolves each marker with two bisects: the clause segment ends at the
+    first terminator after the marker; the marker matches iff a TODO token
+    starts inside that segment; scanning resumes after a matched clause (marks
+    inside it are consumed, reproducing the regex's non-overlap + coalescing).
+    """
+    spans: list[tuple[int, int]] = []
+    marks = [m.start() for m in _XREF_MARK_RE.finditer(text)]
+    if not marks:
+        return spans
+    terms = [m.start() for m in _TERMINATOR_RE.finditer(text)]
+    todos = [m.start() for m in _TODO_TOKEN_RE.finditer(text)]
+    pos = 0
+    for s in marks:
+        if s < pos:
+            continue
+        ti = bisect.bisect_right(terms, s)
+        seg_end = terms[ti] if ti < len(terms) else len(text)
+        di = bisect.bisect_right(todos, s)
+        if di < len(todos) and todos[di] < seg_end:
+            spans.append((s, seg_end))
+            pos = seg_end
+    return spans
 
 # Concrete markers: identical to the git hook's has_concrete (marker ANYWHERE in the
 # clause). Kept as-is so no committed stamp flips OK->BLOCK on rollout.
@@ -82,7 +120,8 @@ def parse(summary: str) -> list[XrefClause]:
     out: list[XrefClause] = []
     if not summary or "XREF:" not in summary:
         return out
-    for clause in _CLAUSE_RE.findall(summary):
+    for lo, hi in _clause_spans(summary):
+        clause = summary[lo:hi]
         tm = _TARGET_RE.search(clause)
         path = tm.group("path") if tm else ""
         sm = _SECTION_RE.search(clause)
@@ -151,8 +190,24 @@ _WRITER_MARKERS = ("item:", "retrofit", "helper;")
 _PAREN_RE = re.compile(r"\(([^()]*)\)")
 
 
-def _writer_clause_concrete(clause: str) -> bool:
-    for inner in _PAREN_RE.findall(clause):
+def _writer_clause_head(clause: str) -> str:
+    """The clause text the writer validates: quoted spans blanked FIRST (a quoted
+    item name may contain parens or clause terminators -- `item: "Enforce lease
+    OWNERSHIP (not presence) ..."`), then bounded at the first `,`/`;`/`]`. The
+    bound mirrors the git hook's clause regex, so a parenthetical sitting past a
+    terminator (which the hook would drop, classifying the clause bare and
+    BLOCKING the commit) can never satisfy the writer."""
+    return re.split(r"[,;\]]", re.sub(r'"[^"]*"', '""', clause), 1)[0]
+
+
+def _writer_clause_ok(clause: str) -> bool:
+    """True when the clause head names a TODO owner AND carries a concrete
+    parenthetical marker inside that same head (writer-strict subset of the
+    git hook: everything the writer accepts, the hook also accepts)."""
+    head = _writer_clause_head(clause)
+    if not re.search(r"TODO-\d+", head):
+        return False
+    for inner in _PAREN_RE.findall(head):
         low = inner.lower()
         if any(m in low for m in _WRITER_MARKERS):
             return True
@@ -167,22 +222,21 @@ def _writer_clauses(summary: str) -> list[str]:
 
 def writer_bare_xrefs(summary: str) -> list[str]:
     """Non-owning XREF clauses the WRITER must refuse (each clause validated
-    independently so a bare clause is not masked by a later concrete one)."""
+    independently so a bare clause is not masked by a later concrete one).
+
+    A chunk whose clause head names NO TODO target is ownerless and equally
+    refused -- skipping it would let an ownerless clause ride on a concrete
+    sibling's writer_has_concrete pass."""
     bad: list[str] = []
     for clause in _writer_clauses(summary):
-        if not re.search(r"TODO-\d+", clause):
-            continue
-        if not _writer_clause_concrete(clause):
+        if not _writer_clause_ok(clause):
             bad.append(("XREF:" + clause).strip()[:100])
     return bad
 
 
 def writer_has_concrete(summary: str) -> bool:
     """True when the summary carries >=1 concrete TODO XREF clause (writer bar)."""
-    for clause in _writer_clauses(summary):
-        if re.search(r"TODO-\d+", clause) and _writer_clause_concrete(clause):
-            return True
-    return False
+    return any(_writer_clause_ok(c) for c in _writer_clauses(summary))
 
 
 def canonical(clause: str) -> bool:

@@ -5936,14 +5936,54 @@ check("parse_section",        c.section == "4")
 check("parse_item",           c.item_name == "Migrate HKEY")
 check("canonical_true",       xref.canonical(CONC) is True)
 check("canonical_false",      xref.canonical(SOFT) is False)
+# writer predicates: an ownerless clause must be flagged even when a concrete
+# sibling follows (adversarial finding: skip-on-no-TODO masked the ownerless one)
+SIBL = f'[H] ghost -> XREF: no-owner (item: "ghost" at line 1), -> XREF: 00-infrastructure/TODO-10 {S}1 (item: "Real" at line 7)'
+check("writer_flags_ownerless_sibling", bool(xref.writer_bare_xrefs(SIBL)))
+# a quoted item name containing parens must not break the paren scan
+NEST = f'[M] gap -> XREF: 00-infrastructure/TODO-10 {S}2 (item: "Enforce OWNERSHIP (not presence) in consumers" at line 134)'
+check("writer_nested_paren_item_concrete", not xref.writer_bare_xrefs(NEST) and xref.writer_has_concrete(NEST))
+# a TODO target only past the clause terminator does not own the clause
+TAIL = '[M] gap -> XREF: no-owner stuff, later fixed near TODO-99 (item: "x" at line 3)'
+check("writer_head_bounded_target", bool(xref.writer_bare_xrefs(TAIL)))
+# writer-strict subset property: a concrete paren PAST the clause terminator is
+# bare to the git hook (its clause regex stops at ,/;/]), so the writer must
+# reject it too -- for every terminator shape
+for i, t in enumerate((
+    '[M] gap -> XREF: 00-infrastructure/TODO-11, later (item: "Real" at line 7)',
+    '[M] gap -> XREF: 00-infrastructure/TODO-11; later (item: "Real" at line 7)',
+    '[gap -> XREF: 00-infrastructure/TODO-11] later (item: "Real" at line 7)',
+)):
+    check(f"writer_subset_terminator_{i}",
+          bool(xref.writer_bare_xrefs(t)) and not xref.writer_has_concrete(t)
+          and bool(xref.bare_clauses(t)))
+# _clause_spans must stay output-identical to the historical lazy regex SPEC
+# (_CLAUSE_RE), including the coalescing shape where a clause spans a later
+# XREF: marker because no terminator intervenes
+import re as _re
+def _new(t): return [t[a:b] for a, b in xref._clause_spans(t)]
+TRICKY = (
+    'XREF: no-owner XREF: 01-x/TODO-5 stuff (item: "a" at line 1), tail',
+    'XREF: no-owner, XREF: 01-x/TODO-5 stuff',
+    f'a -> XREF: 01-x/TODO-1 {S}2 (x); XREF: 02-y/TODO-2] XREF: TODO-3',
+    'XREF: TODO-9XREF: TODO-8, XREF:',
+)
+check("clause_spans_matches_spec_regex",
+      all(xref._CLAUSE_RE.findall(t) == _new(t) for t in TRICKY))
+# and it must stay LINEAR: an ownerless-storm line (the commit-hook DoS shape)
+# classifies in milliseconds, not quadratic seconds
+import time as _time
+storm = " ".join("XREF: no-owner filler text here" for _ in range(5000))
+_t0 = _time.monotonic(); xref.parse(storm); _dt = _time.monotonic() - _t0
+check("clause_spans_linear_on_storm", _dt < 0.5)
 PYEOF
 )
 XREF_OK=$(echo "$XREF_OUT" | grep -c "^OK ")
-if [ "$XREF_OK" = "12" ]; then
+if [ "$XREF_OK" = "20" ]; then
     echo "$XREF_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "xref_grammar: $line"
     done
-    PASS=$((PASS + 12))
+    PASS=$((PASS + 20))
 else
     t_fail "xref_grammar: tier/parse/writer coverage incomplete" "ok-count=$XREF_OK out=$XREF_OUT"
 fi
@@ -7755,6 +7795,34 @@ else
     t_fail "ai_workflow_stamp: interleaved > **Notes:** label is not reordered as a stamp continuation"
 fi
 
+# an ownerless XREF clause must not ride on a concrete sibling clause (adversarial:
+# the writer predicate skipped no-TODO chunks while has-concrete passed on the sibling)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[H] ghost -> XREF: no-owner (item: "ghost" at line 1), -> XREF: 00-infrastructure/TODO-11 (item: "Real" at line 7)' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: ownerless XREF clause is rejected even with a concrete sibling"
+else
+    t_pass "ai_workflow_stamp: ownerless XREF clause is rejected even with a concrete sibling"
+fi
+
+# a quoted item name containing parens is still concrete (nested parens inside the
+# quotes must not break the writer's innermost-paren scan)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[M] gap -> XREF: 00-infrastructure/TODO-11 (item: "Enforce OWNERSHIP (not presence) in consumers" at line 134)' --write 2>/dev/null; then
+    t_pass "ai_workflow_stamp: quoted item name containing parens is accepted as concrete"
+else
+    t_fail "ai_workflow_stamp: quoted item name containing parens is accepted as concrete"
+fi
+
+# writer-strict subset property: a concrete paren past the clause terminator is bare
+# to the git hook (clause regex stops at the comma), so the writer must reject it or
+# it would mint a stamp the commit hook then blocks (consistency finding)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[M] gap -> XREF: 00-infrastructure/TODO-11, later (item: "Real" at line 7)' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: concrete paren past the clause terminator is rejected (hook-subset)"
+else
+    t_pass "ai_workflow_stamp: concrete paren past the clause terminator is rejected (hook-subset)"
+fi
+
 STAGED_REPO="$AIWF_TMP/staged-repo"
 mkdir -p "$STAGED_REPO/todo/00-infrastructure"
 cat > "$STAGED_REPO/todo/00-infrastructure/TODO-99-fixture.md" <<'EOF_STAGED_TODO'
@@ -7931,11 +7999,10 @@ else
 fi
 
 # ai_workflow_stamp atomicity: a stamp write must NOT touch the TODO if the backing
-# stamp.generated evidence cannot be recorded. The write path preflights workflow_lock
-# BEFORE path.write_text; here workflow.lock is a directory so os.open(O_RDWR) fails only
-# at the lock (state dir otherwise valid). Without the preflight, write_text lands the
-# stamp and evidence.main then fails on the broken lock -> a stamp with no evidence, so
-# asserting the fixture is UNCHANGED is the red-green discriminator.
+# stamp.generated evidence cannot be recorded. The write path acquires workflow_lock
+# around the TODO write + ledger appends; here workflow.lock is a directory so os.open
+# (O_RDWR) fails at the lock acquire (state dir otherwise valid) and the write path
+# must abort before the TODO file is touched.
 AIWF_ATOM_FIX="$AIWF_TMP/atomicity-fixture.md"
 printf '# Atomicity Fixture\n\n## 1. Section\n\n- [x] item\n' > "$AIWF_ATOM_FIX"
 AIWF_ATOM_STATE="$AIWF_TMP/atom-state"; mkdir -p "$AIWF_ATOM_STATE/workflow.lock"
@@ -7948,6 +8015,25 @@ if [ "$AIWF_ATOM_RC" != "0" ] && [ "$AIWF_ATOM_BEFORE" = "$(cat "$AIWF_ATOM_FIX"
 else
     t_fail "ai_workflow_stamp: unavailable workflow lock aborts before writing (no stamp without evidence)" \
            "rc=$AIWF_ATOM_RC changed=$([ "$AIWF_ATOM_BEFORE" != "$(cat "$AIWF_ATOM_FIX")" ] && echo yes || echo no)"
+fi
+
+# ai_workflow_stamp rollback: a ledger-append failure AFTER the TODO write must roll
+# the stamp back (single critical section + reentrant lock). The lock itself is
+# healthy; evidence.jsonl is a directory so the stamp.generated append raises after
+# the stamp has landed. Old preflight-only code left the stamp in place (changed=yes);
+# the rollback restores the original text, so UNCHANGED is the red-green discriminator.
+AIWF_ROLL_FIX="$AIWF_TMP/rollback-fixture.md"
+printf '# Rollback Fixture\n\n## 1. Section\n\n- [x] item\n' > "$AIWF_ROLL_FIX"
+AIWF_ROLL_STATE="$AIWF_TMP/rollback-state"; mkdir -p "$AIWF_ROLL_STATE/evidence.jsonl"
+AIWF_ROLL_BEFORE="$(cat "$AIWF_ROLL_FIX")"
+env AI_WORKFLOW_STATE_DIR="$AIWF_ROLL_STATE" python3 scripts/ai-workflow/stamp.py validated \
+    "$AIWF_ROLL_FIX" --write --allow-missing --summary "rollback probe" >/dev/null 2>&1
+AIWF_ROLL_RC=$?
+if [ "$AIWF_ROLL_RC" != "0" ] && [ "$AIWF_ROLL_BEFORE" = "$(cat "$AIWF_ROLL_FIX")" ]; then
+    t_pass "ai_workflow_stamp: ledger-append failure after the TODO write rolls the stamp back"
+else
+    t_fail "ai_workflow_stamp: ledger-append failure after the TODO write rolls the stamp back" \
+           "rc=$AIWF_ROLL_RC changed=$([ "$AIWF_ROLL_BEFORE" != "$(cat "$AIWF_ROLL_FIX")" ] && echo yes || echo no)"
 fi
 
 rm -rf "$AIWF_TMP"
