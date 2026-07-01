@@ -7392,6 +7392,170 @@ else
            "$("${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --format json 2>&1)"
 fi
 
+# --- ai_workflow_stamp: file-level lifecycle stamps + no-bare-XREF (TODO-10 stamp writer) ---
+LIFE_REPO="$AIWF_TMP/lifecycle-repo"
+LIFE_TODO="todo/00-infrastructure/TODO-98-lifecycle.md"
+LIFE_EV="$LIFE_REPO/build/ai-workflow/evidence.jsonl"
+mkdir -p "$LIFE_REPO/todo/00-infrastructure"
+cat > "$LIFE_REPO/$LIFE_TODO" <<'EOF_LIFE'
+# TODO-98 -- Lifecycle Fixture
+
+> **Goal:** fixture goal line.
+
+## 1. First Section
+
+- [ ] work item
+EOF_LIFE
+(
+    cd "$LIFE_REPO" \
+      && git init -q \
+      && git config user.email t@t \
+      && git config user.name t \
+      && git add -A \
+      && git -c commit.gpgsign=false commit -q -m init
+)
+LIFE_ENV=(env AI_WORKFLOW_REPO_ROOT="$LIFE_REPO" AI_WORKFLOW_STATE_DIR="$LIFE_REPO/build/ai-workflow")
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record --todo "$LIFE_TODO" --section file \
+    --role validator --backend local --run-id life-graph --kind todo-graph-validate --result ok >/dev/null
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record --todo "$LIFE_TODO" --section file \
+    --role codex-reviewer-gap-audit --backend codex --run-id life-gap --kind gap-audit --result received >/dev/null
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py validated "$LIFE_TODO" --write >/dev/null
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py gap-audited "$LIFE_TODO" --write >/dev/null
+LIFE_STATE=$(python3 -c "import sys; sys.path.insert(0,'.claude/hooks'); import sequencer_triage as t; print(t.file_lifecycle('$LIFE_REPO/$LIFE_TODO'))")
+if echo "$LIFE_STATE" | grep -q "'validated': True" \
+   && echo "$LIFE_STATE" | grep -q "'gap_audited': True" \
+   && python3 -c "import sys; pre=open('$LIFE_REPO/$LIFE_TODO').read().split('## 1.')[0]; sys.exit(0 if '> **Validated:**' in pre and '> **Gap-audited:**' in pre else 1)"; then
+    t_pass "ai_workflow_stamp: file-level validated/gap-audited land in preamble and sequencer recognizes them"
+else
+    t_fail "ai_workflow_stamp: file-level validated/gap-audited land in preamble and sequencer recognizes them" "$LIFE_STATE"
+fi
+if ! grep -q '"section": null' "$LIFE_EV" && grep -q '"section": "file"' "$LIFE_EV"; then
+    t_pass "ai_workflow_stamp: file-level stamp records file-scoped evidence, never section null"
+else
+    t_fail "ai_workflow_stamp: file-level stamp records file-scoped evidence, never section null" \
+           "$(grep -o '"section": [^,]*' "$LIFE_EV" | sort -u)"
+fi
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py validated "$LIFE_TODO" --summary re-stamp --write >/dev/null
+if [ "$(grep -c '^> \*\*Validated:\*\*' "$LIFE_REPO/$LIFE_TODO")" = "1" ]; then
+    t_pass "ai_workflow_stamp: file-level re-stamp replaces in place (no duplicate lifecycle stamp)"
+else
+    t_fail "ai_workflow_stamp: file-level re-stamp replaces in place (no duplicate lifecycle stamp)"
+fi
+printf '## 1. NoPreamble\n- [ ] x\n' > "$LIFE_REPO/todo/00-infrastructure/TODO-97-noh1.md"
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py validated todo/00-infrastructure/TODO-97-noh1.md --allow-missing --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: file-level stamp hard-fails cleanly on a file with no H1"
+else
+    t_pass "ai_workflow_stamp: file-level stamp hard-fails cleanly on a file with no H1"
+fi
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 --summary '[H] gap -> XREF: TODO-11' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: deferred with a bare XREF is rejected before write"
+else
+    t_pass "ai_workflow_stamp: deferred with a bare XREF is rejected before write"
+fi
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 --summary '[H] gap -> XREF: TODO-11 (item: "X" at line 20)' --dry-run >/dev/null; then
+    t_pass "ai_workflow_stamp: deferred with a concrete-item XREF is allowed"
+else
+    t_fail "ai_workflow_stamp: deferred with a concrete-item XREF is allowed"
+fi
+LIFE_SEC_TODO="todo/00-infrastructure/TODO-96-seclocal.md"
+cat > "$LIFE_REPO/$LIFE_SEC_TODO" <<'EOF_SEC'
+# TODO-96 -- Section-local Fixture
+
+## 2. Second
+
+- [x] item
+
+**Test checkpoint:** does a thing.
+
+> **Test runner:** 2026 | tests
+>
+> **Notes:**
+> - bullet a
+> - bullet b
+EOF_SEC
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py verified "$LIFE_SEC_TODO" --section 2 --allow-missing --write >/dev/null
+if python3 - "$LIFE_REPO/$LIFE_SEC_TODO" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+h = next(i for i, l in enumerate(lines) if l.startswith("## 2."))
+abut = lines[h + 1].startswith(">")  # heading must not abut a blockquote/stamp
+vi = next(i for i, l in enumerate(lines) if l.startswith("> **Verified:**"))
+na = next(i for i, l in enumerate(lines) if l.startswith("> - bullet a"))
+nb = next(i for i, l in enumerate(lines) if l.startswith("> - bullet b"))
+sys.exit(0 if (not abut and vi > nb and nb == na + 1) else 1)
+PY
+then
+    t_pass "ai_workflow_stamp: section-local stamp lands in the bottom block and preserves multiline Notes"
+else
+    t_fail "ai_workflow_stamp: section-local stamp lands in the bottom block and preserves multiline Notes"
+fi
+# file-level lifecycle stamps must be ledger-backed (or explicitly --allow-missing)
+LIFE_NOEV_TODO="todo/00-infrastructure/TODO-95-noev.md"
+cat > "$LIFE_REPO/$LIFE_NOEV_TODO" <<'EOF_NOEV'
+# TODO-95 -- No Evidence
+
+> **Goal:** g.
+
+## 1. S
+
+- [ ] x
+EOF_NOEV
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py validated "$LIFE_NOEV_TODO" --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: file-level stamp refuses without todo-graph-validate evidence"
+else
+    t_pass "ai_workflow_stamp: file-level stamp refuses without todo-graph-validate evidence"
+fi
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py validated "$LIFE_NOEV_TODO" --allow-missing --write >/dev/null 2>&1; then
+    t_pass "ai_workflow_stamp: file-level stamp writes a manual stamp under --allow-missing"
+else
+    t_fail "ai_workflow_stamp: file-level stamp writes a manual stamp under --allow-missing"
+fi
+# a bare first XREF clause is rejected even when a later clause on the same line is concrete
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_NOEV_TODO" --section 1 \
+    --summary '[H] a -> XREF: TODO-01 -> XREF: TODO-02 (item: "b" at line 2)' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: multi-XREF summary with a bare first clause is rejected"
+else
+    t_pass "ai_workflow_stamp: multi-XREF summary with a bare first clause is rejected"
+fi
+# section boundary ends at the next H2, so a stamp lands after H3 subsections, not before them
+LIFE_H3_TODO="todo/00-infrastructure/TODO-94-h3.md"
+cat > "$LIFE_REPO/$LIFE_H3_TODO" <<'EOF_H3'
+# TODO-94 -- H3 Subsections
+
+## 3. Third
+
+Intro.
+
+### Subsection A
+
+- [ ] a
+
+### Subsection B
+
+- [ ] b
+
+**Test checkpoint:** ok.
+
+## 4. Fourth
+
+- [ ] later
+EOF_H3
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py verified "$LIFE_H3_TODO" --section 3 --allow-missing --write >/dev/null
+if python3 - "$LIFE_REPO/$LIFE_H3_TODO" <<'PY'
+import sys
+lines = open(sys.argv[1]).read().splitlines()
+vi = next(i for i, l in enumerate(lines) if l.startswith("> **Verified:**"))
+tc = next(i for i, l in enumerate(lines) if l.startswith("**Test checkpoint:**"))
+s4 = next(i for i, l in enumerate(lines) if l.startswith("## 4."))
+sb = next(i for i, l in enumerate(lines) if l.startswith("### Subsection B"))
+sys.exit(0 if (vi > tc and vi > sb and vi < s4) else 1)
+PY
+then
+    t_pass "ai_workflow_stamp: section-local stamp lands after H3 subsections, not before them"
+else
+    t_fail "ai_workflow_stamp: section-local stamp lands after H3 subsections, not before them"
+fi
+
 STAGED_REPO="$AIWF_TMP/staged-repo"
 mkdir -p "$STAGED_REPO/todo/00-infrastructure"
 cat > "$STAGED_REPO/todo/00-infrastructure/TODO-99-fixture.md" <<'EOF_STAGED_TODO'

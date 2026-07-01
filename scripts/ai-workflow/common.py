@@ -6,6 +6,7 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -328,3 +329,24 @@ def die(msg: str, code: int = 1) -> int:
 
 def load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+def bare_xrefs(summary: str) -> list[str]:
+    """Return bare XREFs in a stamp summary (a TODO-<n> cite with no parenthetical).
+
+    Mirrors the block rule in .claude/hooks/accepted_xref_block.py: an
+    Accepted/Deferred XREF that cites TODO-<n> is a dead-end paper trail when it
+    carries no concrete ``(item: ... at line N)`` parenthetical. Each ``XREF:``
+    clause is validated INDEPENDENTLY (splitting on the marker) so a bare clause
+    is not masked by a later concrete one on the same line. Returns the offending
+    clauses; empty means none. The git-commit hook remains the authoritative
+    backstop; this lets stamp.py refuse to write a poisoned line in the first
+    place (and record stamp evidence for it).
+    """
+    if "XREF" not in summary:
+        return []
+    bare: list[str] = []
+    for clause in re.split(r"XREF:", summary)[1:]:
+        if re.search(r"TODO-\d+", clause) and "(" not in clause:
+            bare.append(("XREF:" + clause).strip()[:100])
+    return bare

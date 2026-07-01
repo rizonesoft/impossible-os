@@ -82,7 +82,7 @@ The workflow protocol under [`scripts/ai-workflow/`](../../scripts/ai-workflow/)
 | 💎  |   2   | Active-mutator lease schema and lock                                  | §1         |  [/]   |
 | 💎  |   3   | Tool-neutral evidence ledger and importer for existing state           | §1         |  [x]   |
 | 💎  |   4   | Obligation resolver to avoid duplicate work                            | §3         |  [x]   |
-| 💎  |   5   | Deterministic stamp writer                                             | §3-4       |  [/]   |
+| 💎  |   5   | Deterministic stamp writer                                             | §3-4       |  [x]   |
 | 💎  |   6   | Shared gate library used by Claude hooks and git hooks                 | §3-5       |  [/]   |
 | ⭐  |   7   | Review-evidence integrity and fresh-context independence checks        | §3-6       |  [/]   |
 | 💎  |   8   | Retire obsolete Codex-driver artifacts                                 | §1         |  [x]   |
@@ -207,14 +207,24 @@ Stop relying on model-authored stamp prose for workflow truth.
 - [x] `verified` and `quality-reviewed` stamps require ledger evidence for the relevant build/test/review obligations.
 - [x] Stamp text is generated from evidence IDs and short human summaries; callers may provide a summary field, but not the proof fields.
 - [x] Stamp writer refuses to add a stamp when required evidence is missing, stale, legacy-only where fresh evidence is required, or produced by a disallowed role combination.
-- [x] Stamp writer preserves existing TODO formatting and inserts in the section-local location used by the current roadmap style.
-- [ ] Add a file-level lifecycle insertion mode for `validated` and `gap-audited` writing the preamble location (under H1, above `> **Goal:**`) that `sequencer_triage.py` recognizes; `stamp.py` only matches numbered headings today.
+- [x] Section-local stamps land in the canonical bottom block: `_insert_stamp` joins an existing Verified/Accepted/Deferred/Quality group, else places after Notes/Test-runner with the `>` separator, never abutting the heading.
+- [x] File-level mode: `validated`/`gap-audited` auto-route to `_insert_preamble_stamp` (replace-in-place; hard-fail no H1); `--section` optional; gated on `todo-graph-validate`/`gap-audit` evidence with an `--allow-missing` escape.
+- [x] `accepted`/`deferred` stamps reject a bare XREF summary (no concrete `(item: ...)` parenthetical) before writing; `common.bare_xrefs` mirrors the git-hook rule.
 - [x] Stamp writer records a `stamp.generated` ledger event with the exact text hash.
 - [x] Add `--dry-run` and `--explain-missing` modes.
-- [/] Add regression fixtures for multiline notes, existing stamp updates, stamp-only commits, file-level lifecycle preamble placement, and no-bare-XREF enforcement.
-- [ ] Commit: "ai-workflow: add deterministic stamp writer"
+- [x] Regression fixtures in `test-tooling.sh`: file-level preamble placement + sequencer recognition, file-scoped evidence, replace-in-place re-stamp, no-H1 fail, bare/concrete XREF, and section-local bottom placement with multiline Notes.
+- [x] Commit: "ai-workflow: add deterministic stamp writer"
 
 **Test checkpoint:** A caller cannot create a successful section stamp unless the ledger proves the required workflow happened.
+
+> **Test runner:** 2026-07-01 | `bash scripts/test-tooling.sh` | 449/449 PASS
+>
+> **Notes:**
+> - `stamp.py` gains a file-level lifecycle mode (`_insert_preamble_stamp` for `validated`/`gap-audited`) and a rewritten section-local `_insert_stamp` placing stamps in the canonical bottom block; `common.bare_xrefs` gates `accepted`/`deferred`.
+> - Routed by stamp kind; file-level evidence is file-scoped (`section=file`); the `accepted_xref_block.py` git hook stays the authoritative backstop. Codex design + adversarial adoptions (H2 section boundary, evidence-gated lifecycle stamps, per-clause XREF check) in the commit message.
+> - Downstream: `sequencer_triage.file_lifecycle` now recognizes generated `Validated:`/`Gap-audited:` stamps so the overnight sequencer can skip re-auditing mature files.
+> - Canonical doc: [docs/infrastructure/ai-driver-interchangeability.md](../../docs/infrastructure/ai-driver-interchangeability.md).
+> - Scope boundary: §6 owns shared-gate consumption of stamp evidence; §7 owns reviewer-evidence integrity.
 
 ---
 
@@ -251,6 +261,7 @@ Codex is the required reviewer; its evidence must be trustworthy and independent
 - [x] The obligation resolver treats fresh-context Codex review as required for shipping review kinds.
 - [/] Add a reviewer-output receipt step classifying findings as Fix/Reject/Accept-XREF with file-line evidence. The receipt hook mirrors received reviews into the ledger; classification stays with the receiving-code-review workflow.
 - [x] Preserve the no-model-flag policy: Codex model and effort remain controlled centrally by Codex config, not per dispatch.
+- [ ] Harden `sequencer_triage.file_lifecycle` to require ledger `todo-graph-validate`/`gap-audit` evidence, not just a preamble `Validated:`/`Gap-audited:` line, so a manual `--allow-missing` stamp is not a trusted skip signal (§5 F2 residual).
 - [ ] Commit: "ai-workflow: harden review-evidence integrity"
 
 **Test checkpoint:** A review of stale source or a prompt-forged review id cannot satisfy a shipping review obligation; a fresh reviewer dispatch can.
@@ -334,7 +345,7 @@ Prove the tool-neutral workflow protocol before relying on it.
 | 💎 | Durable evidence ledger    | ⚠️ CI/log fragments         | ⚠️ Build artifacts + CI     | ⬜ Planned -- §3        |
 | 💎 | Provenance-bound evidence  | ✅ Artifact attestations    | ⚠️ Patch tags + CI          | ⬜ Planned -- §3/§6     |
 | 💎 | Cross-session resume       | ⚠️ Manual / IDE state       | ⚠️ Branch + CI re-run       | ⬜ Planned -- §4        |
-| 💎 | Deterministic stamps       | ❌ Not a native OS concern  | ❌ Not a native OS concern  | ⬜ Planned -- §5        |
+| 💎 | Deterministic stamps       | ❌ Not a native OS concern  | ❌ Not a native OS concern  | ✅ Done -- §5           |
 | ⭐ | Reviewer-evidence integrity | ⚠️ Process convention       | ⚠️ Review policy convention | ⬜ Planned -- §7        |
 
 Impossible OS treats AI workflow state as build-time infrastructure, not product behavior. The comparison exists to keep the host workflow explicit: the OS target gains a reproducible contributor pipeline with branch-policy, concurrency, provenance-grade evidence, and cross-session resume, not runtime AI features.
@@ -348,7 +359,7 @@ Host-side AI workflow tests live in `scripts/test-tooling.sh` because this TODO 
 - [ ] Add or keep `ai_workflow_lease` coverage for acquire/release, stale leases, same-section conflicts, and concurrent acquire races.
 - [ ] Add or keep `ai_workflow_evidence` coverage for blob binding, stale HEAD, legacy import, forged review rejection, and build/test final-marker provenance.
 - [ ] Add or keep `ai_workflow_obligations` coverage for no-double-work behavior and cross-session resume.
-- [ ] Add or keep `ai_workflow_stamp` coverage for generated stamps, file-level lifecycle preamble stamps, missing evidence failures, and stamp-only commits.
+- [x] Add or keep `ai_workflow_stamp` coverage for generated stamps, file-level lifecycle preamble stamps, missing evidence failures, and stamp-only commits.
 - [ ] Add or keep `ai_workflow_gates` coverage for shared verdicts across Claude hook, git hook, and direct CLI paths, stale completed-lease rejection, and current provenance checks.
 - [ ] Commit: "test: cover AI workflow protocol"
 

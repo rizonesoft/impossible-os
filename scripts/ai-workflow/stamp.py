@@ -48,19 +48,133 @@ def _section_heading(section: str) -> re.Pattern[str]:
     return re.compile(rf"^(##+)\s+{re.escape(str(section))}\.\s+")
 
 
-def _insert_stamp(text: str, section: str, stamp_line: str) -> str:
-    lines = text.splitlines()
+_STAMP_LABEL_RE = re.compile(
+    r"^>\s*\*\*(Verified|Accepted|Deferred|Quality reviewed|Validated|Gap-audited):\*\*"
+)
+
+
+def _section_bounds(lines: list[str], section: str) -> tuple[int, int]:
     pat = _section_heading(section)
+    start = next((i for i, line in enumerate(lines) if pat.match(line)), None)
+    if start is None:
+        raise ValueError(f"section heading not found: {section}")
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        # A numbered section ends at the next H2 heading (numbered or named, e.g.
+        # `## OS Comparison`) or a thematic break -- NOT at an H3/H4 subsection.
+        if re.match(r"^##\s", lines[j]) or lines[j].strip() == "---":
+            end = j
+            break
+    return start, end
+
+
+def _insert_stamp(text: str, section: str, stamp_line: str) -> str:
+    """Insert a section-local stamp in the canonical bottom stamp block.
+
+    The roadmap style keeps stamps at the section's tail: after the Test
+    checkpoint / Test runner / Notes, with Verified / Accepted / Deferred /
+    Quality reviewed grouped contiguously. Join an existing stamp group when
+    present; otherwise place the stamp after the trailing Notes/Test-runner
+    blockquote (with the `>` quoted-blank separator the style uses); otherwise
+    append after the section body. Never abut the heading.
+    """
+    lines = text.splitlines()
+    start, end = _section_bounds(lines, section)
+
+    last_stamp = None
+    for i in range(start + 1, end):
+        if _STAMP_LABEL_RE.match(lines[i]):
+            last_stamp = i
+    if last_stamp is not None:
+        j = last_stamp + 1
+        while j < end and lines[j].startswith(">") and not _STAMP_LABEL_RE.match(lines[j]):
+            j += 1
+        lines.insert(j, stamp_line)
+        return "\n".join(lines) + "\n"
+
+    k = end
+    while k > start + 1 and not lines[k - 1].strip():
+        k -= 1
+    if k > start + 1 and lines[k - 1].startswith(">"):
+        lines.insert(k, ">")
+        lines.insert(k + 1, stamp_line)
+    else:
+        if k > start + 1 and lines[k - 1].strip():
+            lines.insert(k, "")
+            k += 1
+        lines.insert(k, stamp_line)
+    return "\n".join(lines) + "\n"
+
+
+FILE_LEVEL_KINDS = {"validated", "gap-audited"}
+FILE_LEVEL_REQUIRED = {"validated": "todo-graph-validate", "gap-audited": "gap-audit"}
+
+
+def _file_evidence_ids(root: Path, todo: str, kind: str) -> list[str]:
+    """Event IDs of non-legacy ledger events of `kind` recorded for `todo`.
+
+    A `validated`/`gap-audited` file-level stamp must be ledger-backed (the
+    section Outcome), so it needs a real `todo-graph-validate` / `gap-audit`
+    event. Blob-currency is intentionally NOT required here: the stamp write
+    mutates the TODO it validates, so a blob-match rule would self-invalidate.
+    """
+    ledger = common.state_dir(root) / "evidence.jsonl"
+    ids: list[str] = []
+    for ev in common.iter_jsonl(ledger):
+        if ev.get("todo_path") != todo or ev.get("kind") != kind or ev.get("legacy_import"):
+            continue
+        if ev.get("result") not in ("ok", "received", "", None):
+            continue
+        if ev.get("event_id"):
+            ids.append(ev["event_id"])
+    return ids
+
+
+def _first_section_index(lines: list[str]) -> int:
+    sec = re.compile(r"^##+\s+\d+\.\s+")
     for idx, line in enumerate(lines):
-        if pat.match(line):
-            insert_at = idx + 1
-            while insert_at < len(lines) and lines[insert_at].startswith("> **"):
-                insert_at += 1
-            if insert_at < len(lines) and lines[insert_at].strip():
-                lines.insert(insert_at, "")
-            lines.insert(insert_at, stamp_line)
+        if sec.match(line):
+            return idx
+    return len(lines)
+
+
+def _insert_preamble_stamp(text: str, stamp_line: str, label: str) -> str:
+    """Insert a file-level lifecycle stamp into the preamble.
+
+    validated / gap-audited stamps are file-level: `sequencer_triage.file_lifecycle`
+    only recognizes them BEFORE the first `## N.` heading. Replace-in-place when a
+    same-label preamble stamp exists (idempotent re-stamp); otherwise insert after
+    the last existing lifecycle stamp, else just above `> **Goal:**`, else right
+    after the H1. Hard-fail when no H1 exists.
+    """
+    lines = text.splitlines()
+    h1 = next((i for i, ln in enumerate(lines) if re.match(r"^#\s+\S", ln)), None)
+    if h1 is None:
+        raise ValueError("no H1 heading found for file-level lifecycle stamp")
+    end = _first_section_index(lines)
+    label_re = re.compile(rf"^>\s*\*\*{re.escape(label)}:\*\*")
+    for i in range(h1 + 1, end):
+        if label_re.match(lines[i]):
+            lines[i] = stamp_line
             return "\n".join(lines) + "\n"
-    raise ValueError(f"section heading not found: {section}")
+    lifecycle_re = re.compile(r"^>\s*\*\*(Validated|Gap-audited|Re-scoped):\*\*")
+    goal_re = re.compile(r"^>\s*\*\*Goal:\*\*")
+    last_life = None
+    goal_idx = None
+    for i in range(h1 + 1, end):
+        if lifecycle_re.match(lines[i]):
+            last_life = i
+        elif goal_idx is None and goal_re.match(lines[i]):
+            goal_idx = i
+    if last_life is not None:
+        block, anchor = ["", stamp_line], last_life + 1
+    elif goal_idx is not None:
+        block, anchor = [stamp_line, ""], goal_idx
+    else:
+        block, anchor = ["", stamp_line], h1 + 1
+    for off, content in enumerate(block):
+        lines.insert(anchor + off, content)
+    return "\n".join(lines) + "\n"
 
 
 def _required_evidence(todo: str, section: str, driver_run_id: str | None) -> tuple[bool, list[str], list[str]]:
@@ -85,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("stamp_kind", choices=sorted(STAMP_KIND))
     ap.add_argument("todo")
-    ap.add_argument("--section", required=True)
+    ap.add_argument("--section")
     ap.add_argument("--driver-run-id")
     ap.add_argument("--summary", default="")
     ap.add_argument("--write", action="store_true")
@@ -96,17 +210,41 @@ def main(argv: list[str] | None = None) -> int:
 
     root = common.repo_root()
     todo = common.rel_path(args.todo, root)
-    ok, evidence_ids, missing = _required_evidence(todo, args.section, args.driver_run_id)
+    is_file_level = args.stamp_kind in FILE_LEVEL_KINDS
+
+    if not is_file_level and not args.section:
+        return common.die(f"--section is required for {args.stamp_kind} stamps", 2)
+
+    if args.stamp_kind in ("accepted", "deferred") and args.summary:
+        bare = common.bare_xrefs(args.summary)
+        if bare:
+            return common.die(
+                "bare XREF (needs a concrete `(item: ... at line N)` parenthetical): "
+                + " | ".join(bare),
+                2,
+            )
+
+    if is_file_level:
+        req_kind = FILE_LEVEL_REQUIRED[args.stamp_kind]
+        evidence_ids = _file_evidence_ids(root, todo, req_kind)
+        missing: list[str] = []
+        section_evidence = "file"
+        if not evidence_ids and not args.allow_missing:
+            return common.die(
+                f"missing {req_kind} evidence for the {args.stamp_kind} stamp; run the "
+                "workflow that records it, or pass --allow-missing for a manual stamp",
+                2,
+            )
+    else:
+        _ok, evidence_ids, missing = _required_evidence(todo, args.section, args.driver_run_id)
+        section_evidence = str(args.section)
+
     if args.explain_missing:
-        if missing:
-            print("missing evidence: " + ", ".join(missing))
-        else:
-            print("missing evidence: none")
+        print("missing evidence: " + (", ".join(missing) if missing else "none"))
         if not args.write and not args.dry_run:
             return 0
     if args.stamp_kind in ("verified", "quality-reviewed") and missing and not args.allow_missing:
-        print("missing evidence: " + ", ".join(missing), file=sys.stderr)
-        return 2
+        return common.die("missing evidence: " + ", ".join(missing), 2)
 
     label = STAMP_KIND[args.stamp_kind]
     evidence_head = ",".join(evidence_ids[:4]) if evidence_ids else "manual"
@@ -122,7 +260,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     text = common.load_text(path)
-    new_text = _insert_stamp(text, args.section, stamp_line)
+    try:
+        if is_file_level:
+            new_text = _insert_preamble_stamp(text, stamp_line, label)
+        else:
+            new_text = _insert_stamp(text, args.section, stamp_line)
+    except ValueError as exc:
+        return common.die(str(exc), 2)
     path.write_text(new_text, encoding="utf-8")
 
     stamp_hash = hashlib.sha256(stamp_line.encode("utf-8")).hexdigest()
@@ -133,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         "--todo",
         todo,
         "--section",
-        str(args.section),
+        section_evidence,
         "--role",
         "stamp-writer",
         "--backend",
@@ -164,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
         "--todo",
         todo,
         "--section",
-        str(args.section),
+        section_evidence,
         "--role",
         "stamp-writer",
         "--backend",
