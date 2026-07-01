@@ -115,21 +115,31 @@ obligation state this protocol produces.
 > parses `§N` + optional item. Unification = one grammar module, NOT a repo-wide tightening.
 
 1. Commit the working-tree stamp-writer hardening as the base (so it is not lost). DONE (4907c3c8).
-2. Add `scripts/ai-workflow/xref.py` with ONE shared grammar module:
-   - `parse_clauses(summary)` -> list of `XrefClause(target_path, section, item_name, tier)`;
-   - tiers `bare`/`soft`/`concrete` matching `accepted_xref_block.py` (case-sensitive `XREF:`);
-   - quote-aware parenthetical parsing (tolerates `()` inside the quoted item name);
-   - `concrete` requires a marker INSIDE a parenthetical; validates EVERY clause independently;
-   - a `canonical` predicate (domain path + `§N` + `(item: "..." at line N)`) for the WRITER.
-3. Point `stamp.py` (`bare_xrefs`/`has_concrete_todo_xref`), `accepted_xref_block.py`, and
-   `todo-graph/build.py`/`validate.py` at the one grammar (shared module or shared regex).
-4. Migrate the 9 stamp fixtures + add negative fixtures for: `()` in item name, mixed
-   valid+ownerless clauses, bare TODO ref with no section marker, prose `at line`,
-   marker-outside-paren.
+2. Add `scripts/ai-workflow/xref.py` with ONE shared grammar module. DONE (2c23f910):
+   - `parse()` -> list of `XrefClause(target_path, domain_qualified, section, item_name, tier)`;
+   - tiers `bare`/`soft`/`concrete` reproduced byte-for-byte from `accepted_xref_block.py`
+     (verified 0 mismatches over 489 corpus clauses -> no stamp flips OK->BLOCK);
+   - writer-strict predicates (`writer_bare_xrefs`/`writer_has_concrete`): marker INSIDE a
+     parenthetical, markers `item:`/`retrofit`/`helper;`, every clause validated independently;
+   - `canonical()` predicate (domain path + `§N` + `(item: "..." at line N)`) for the WRITER.
+   - +12 `xref_grammar` unit tests.
+3. Point the two ENFORCEMENT consumers at the one grammar:
+   - `accepted_xref_block.py` (git hook) -> `bare_clauses`/`soft_clauses`. DONE (2c23f910).
+   - `common.py` (`bare_xrefs`/`has_concrete_todo_xref`, used by `stamp.py`) -> `writer_*`.
+     DONE (2c905fa3); verified byte-identical over 541 summaries.
+   - `todo-graph/build.py` `XREF_CLAUSE_RE` is DELIBERATELY NOT merged: it extracts graph
+     EDGES (needs `-> XREF: <path> §N`, drops §-less clauses, captures broader item names);
+     routing it through `parse()` would change the graph (488 vs 489 edges). The writer emits
+     the canonical XREFs todo-graph consumes -> complementary, not drifted. Documented in
+     `xref.py`. DONE (assessed 2026-07-02).
+4. Fixtures: the `xref_grammar` unit tests cover `()` in item name (via quoted `[^"]+`), mixed
+   valid+bare clauses, bare TODO ref (no paren), and marker-outside-paren. Prose-`at line` is
+   covered by the writer's inside-paren rule. (No separate `ai_workflow_stamp` fixture migration
+   needed -- the writer path is exercised by the parity verification + these tests.)
 5. Re-close the Deterministic Stamp Writer section: flip `[/] -> [x]` with Verified/Quality-
-   reviewed stamps, landed together with this phase's review evidence.
-6. **Review:** one Codex triad (adversarial + consistency + perf) on the unified validator +
-   stamp writer. The consistency dispatch explicitly checks all four consumers agree.
+   reviewed stamps, landed together with this phase's review evidence. REMAINING.
+6. **Review:** one Codex triad (adversarial + consistency + perf) on the unified grammar +
+   stamp writer. The consistency dispatch explicitly checks the enforcement consumers agree. REMAINING.
 
 ### Phase 2 -- Shared Gate Library (remaining items)
 

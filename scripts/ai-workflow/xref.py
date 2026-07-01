@@ -13,9 +13,18 @@ so existing stamps are NOT retroactively re-classified into a BLOCK):
 `NN-domain/TODO-XX §N (item: "..." at line N)`.
 
 Consumers:
-  - `.claude/hooks/accepted_xref_block.py` (git hook)  -> classify() tiers
-  - `scripts/ai-workflow/stamp.py` (writer)            -> is_concrete()/canonical()
-  - `scripts/todo-graph/build.py` (graph edges)        -> parse() target/section/item
+  - `.claude/hooks/accepted_xref_block.py` (git hook)  -> bare_clauses()/soft_clauses() tiers
+  - `scripts/ai-workflow/common.py` (stamp writer)     -> writer_bare_xrefs()/writer_has_concrete()
+
+Deliberately NOT a consumer: `scripts/todo-graph/build.py`. Its `XREF_CLAUSE_RE`
+serves a DIFFERENT purpose -- extracting dependency-graph EDGES, which requires the
+canonical `-> XREF: <path> §N` shape and drops §-less clauses. `parse()` here is the
+looser tier-classification match (section optional). The two are complementary, not
+drifted: the WRITER (via writer_* above) emits the canonical XREFs that todo-graph's
+edge parser consumes, so a stamp that passes the writer is one todo-graph can turn
+into an edge. Routing todo-graph through parse() would change the graph (add §-less
+edges, alter item capture) and is intentionally avoided. `parse()`/`canonical()` are
+retained for callers that want structured access to a tier clause.
 """
 from __future__ import annotations
 
