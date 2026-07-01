@@ -26,6 +26,16 @@ if git diff --cached --quiet --exit-code 2>/dev/null; then
     exit 0
 fi
 
+# Secret guard (folded from conclave/.githooks): never commit a live key. Runs
+# first so a staged key is caught before anything else.
+if [ -f "$REPO_ROOT/scripts/check-no-secret.sh" ]; then
+    if ! bash "$REPO_ROOT/scripts/check-no-secret.sh"; then
+        echo ""
+        echo -e "\033[31mSecret guard refused this commit\033[0m"
+        exit 1
+    fi
+fi
+
 echo ""
 echo "Pre-commit: running scripts/lint.sh (full-repo, matches CI)..."
 echo ""

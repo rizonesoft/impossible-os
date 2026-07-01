@@ -1,0 +1,13 @@
+[project]
+name = "conclave"
+version = "0.1.0"
+description = "A self-improving cross-project reasoning harness."
+requires-python = ">=3.12"
+dependencies = ["lancedb>=0.6", "rank-bm25>=0.2", "numpy>=1.26"]
+
+[project.scripts]
+conclave = "conclave.cli:main"
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

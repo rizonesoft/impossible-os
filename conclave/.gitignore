@@ -1,0 +1,20 @@
+# Conclave -- never commit the key (plain file or structured secrets.json)
+secret
+secrets.json
+
+# Learning data stays LOCAL. A public repo ships code + docs (incl. the Conclave
+# self-knowledge in docs/about-conclave), never anyone's project/personal data.
+# Each clone grows its own data/ and learned policies.
+data/
+policies/*.json
+ledger.jsonl
+LATEST
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# tooling state (not Conclave's)
+.remember/

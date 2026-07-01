@@ -1,0 +1,48 @@
+# Conclave config -- the apex model-agnostic reasoning harness.
+# Full design: docs/specs/2026-06-27-conclave-self-improving-model-design.md
+# NOTE: exact OpenRouter slugs below are provisional and verified during implementation.
+
+[runtime]
+enabled_env    = "CONCLAVE_ENABLED"   # off unless this env var == "1"
+max_calls      = 3                     # per-run panel-call budget cap
+min_credits    = 2.0                   # USD balance floor; fail-closed below it
+model_timeout_s = 480
+judge_timeout_s = 480
+workers        = 6
+
+[panel]                                # the teachers; swappable, never code-baked
+models = [
+  "z-ai/glm-5.2",
+  "deepseek/deepseek-v4-pro",
+  "moonshotai/kimi-k2.7-code",
+  "x-ai/grok-build-0.1",
+  "minimax/minimax-m3",
+  "qwen/qwen3-max",
+]
+web_search = false                     # NEVER -- panels hallucinate on web-search
+
+[judge]
+model = "anthropic/claude-opus-4.8"    # discard-synthesis judge
+
+[embedders]                            # via OpenRouter (same key); hybrid BM25 + vector
+models       = ["qwen/qwen3-embedding-8b", "baai/bge-m3", "openai/text-embedding-3-large"]
+default      = "qwen/qwen3-embedding-8b"
+ensemble_rrf = false                   # opt-in: fuse all three via Reciprocal Rank Fusion
+hybrid_bm25  = true
+
+[compile]                              # knowledge-compilation cadence
+every_days       = 7                   # distill weekly OR ...
+or_new_examples  = 200                 # ... after this many new labeled examples
+shard_max_mib    = 90                  # output shard ceiling (under GitHub's 100 MiB block)
+
+[index]                                # embedded ANN engine; query path -- flat latency 5 MB -> 200 GB
+backend          = "lancedb"           # lancedb | faiss  (pluggable IndexBackend)
+ann              = "hnsw"
+quantization     = "pq"                # product quantization: keeps the index RAM/mmap-resident at scale
+hybrid_bm25      = true
+recall_p99_ms    = 50                  # performance contract target at any data size
+
+[store]                                # bulk artifact tier (raw shards, corpus, vectors)
+backend          = "git-releases"      # git-releases (small) | s3 | r2  (pluggable ArtifactStore)
+# bucket         = ""                   # set when backend = s3 | r2
+manifest         = "ledger.jsonl"      # name + size + sha256 of every STORE artifact
