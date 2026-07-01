@@ -7930,6 +7930,26 @@ else
     t_fail "ai_workflow_gates: Depends On row allows with Order lease"
 fi
 
+# ai_workflow_stamp atomicity: a stamp write must NOT touch the TODO if the backing
+# stamp.generated evidence cannot be recorded. The write path preflights workflow_lock
+# BEFORE path.write_text; here workflow.lock is a directory so os.open(O_RDWR) fails only
+# at the lock (state dir otherwise valid). Without the preflight, write_text lands the
+# stamp and evidence.main then fails on the broken lock -> a stamp with no evidence, so
+# asserting the fixture is UNCHANGED is the red-green discriminator.
+AIWF_ATOM_FIX="$AIWF_TMP/atomicity-fixture.md"
+printf '# Atomicity Fixture\n\n## 1. Section\n\n- [x] item\n' > "$AIWF_ATOM_FIX"
+AIWF_ATOM_STATE="$AIWF_TMP/atom-state"; mkdir -p "$AIWF_ATOM_STATE/workflow.lock"
+AIWF_ATOM_BEFORE="$(cat "$AIWF_ATOM_FIX")"
+env AI_WORKFLOW_STATE_DIR="$AIWF_ATOM_STATE" python3 scripts/ai-workflow/stamp.py validated \
+    "$AIWF_ATOM_FIX" --write --allow-missing --summary "atomicity probe" >/dev/null 2>&1
+AIWF_ATOM_RC=$?
+if [ "$AIWF_ATOM_RC" != "0" ] && [ "$AIWF_ATOM_BEFORE" = "$(cat "$AIWF_ATOM_FIX")" ]; then
+    t_pass "ai_workflow_stamp: unavailable workflow lock aborts before writing (no stamp without evidence)"
+else
+    t_fail "ai_workflow_stamp: unavailable workflow lock aborts before writing (no stamp without evidence)" \
+           "rc=$AIWF_ATOM_RC changed=$([ "$AIWF_ATOM_BEFORE" != "$(cat "$AIWF_ATOM_FIX")" ] && echo yes || echo no)"
+fi
+
 rm -rf "$AIWF_TMP"
 
 

@@ -314,6 +314,23 @@ def main(argv: list[str] | None = None) -> int:
             new_text = _insert_stamp(text, args.section, stamp_line)
     except ValueError as exc:
         return common.die(str(exc), 2)
+
+    # Atomicity preflight: the stamp.generated evidence below is recorded under
+    # workflow_lock inside evidence.main. If that lock is unavailable -- fail-closed
+    # no-fcntl, or held past the timeout -- evidence.main fails AFTER path.write_text,
+    # leaving a TODO stamp with no backing evidence. Acquire+release the SAME lock here
+    # first so an unavailable lock aborts before the TODO file is ever touched. (Held
+    # briefly then released, not across evidence.main: workflow_lock takes a fresh fd
+    # each call, so holding it across the nested evidence.main flock would self-deadlock.)
+    try:
+        with common.workflow_lock(root):
+            pass
+    except Exception as exc:
+        return common.die(
+            f"workflow lock unavailable ({exc}); refusing to write a stamp that would "
+            f"lack backing stamp.generated evidence",
+            2,
+        )
     path.write_text(new_text, encoding="utf-8")
 
     stamp_hash = hashlib.sha256(stamp_line.encode("utf-8")).hexdigest()

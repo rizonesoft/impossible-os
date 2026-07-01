@@ -225,9 +225,9 @@ Stop relying on model-authored stamp prose for workflow truth.
 - [x] Stamp writer refuses to add a stamp when required evidence is missing, stale, legacy-only where fresh evidence is required, or produced by a disallowed role combination.
 - [x] Section-local stamps land in the canonical bottom block: `_insert_stamp` joins an existing Verified/Accepted/Deferred/Quality group, else places after Notes/Test-runner with the `>` separator, never abutting the heading.
 - [x] File-level mode: `validated`/`gap-audited` auto-route to `_insert_preamble_stamp` (replace-in-place; hard-fail no H1); `--section` optional; gated on `todo-graph-validate`/`gap-audit` evidence with an `--allow-missing` escape.
-- [/] `accepted`/`deferred` stamps reject a bare XREF summary (no concrete `(item: ...)` parenthetical) before writing; `common.bare_xrefs` mirrors the git-hook rule.
+- [x] `accepted`/`deferred` stamps reject a bare XREF summary before writing; `common.bare_xrefs` delegates to the shared grammar module `scripts/ai-workflow/xref.py` the git hook also uses.
 - [x] Stamp writer records a `stamp.generated` ledger event with the exact text hash.
-- [ ] Make stamp writing atomic vs ledger failure: preflight the workflow lock before `path.write_text` so a lock failure / fail-closed no-fcntl cannot leave a TODO stamp with no backing `stamp.generated` evidence.
+- [x] Make stamp writing atomic vs ledger failure: preflight the workflow lock before `path.write_text` so a lock failure / fail-closed no-fcntl cannot leave a TODO stamp with no backing `stamp.generated` evidence.
 - [x] Add `--dry-run` and `--explain-missing` modes.
 - [x] Regression fixtures in `test-tooling.sh`: file-level preamble placement + sequencer recognition, file-scoped evidence, replace-in-place re-stamp, no-H1 fail, bare/concrete XREF, and section-local bottom placement with multiline Notes.
 - [x] Commit: "ai-workflow: add deterministic stamp writer"
