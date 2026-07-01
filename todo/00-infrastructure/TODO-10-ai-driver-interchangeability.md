@@ -106,18 +106,17 @@ Identify every place the current system keeps workflow truth in Claude-only stat
 
 **Test checkpoint:** A maintainer can point at each gate/stamp and say whether it is already tool-neutral, needs a shared-script wrapper, or stays Claude-specific telemetry.
 
-> **Test runner:** 2026-06-29 | `bash scripts/test-tooling.sh` | 423/423 PASS
+> **Test runner:** 2026-07-01 | `bash scripts/test-tooling.sh` | 459/459 PASS
 >
 > **Notes:**
 > - Inventory source lives in [`docs/infrastructure/ai-driver-interchangeability.md`](../../docs/infrastructure/ai-driver-interchangeability.md).
 > - §1 records current-state evidence only; doctrine remains unchanged until rollout sections ship.
 > - Inventory covers the AGENTS.md reviewer boundary, Claude state files, live gates, stateless blockers, review dispatch surfaces, prompt-escaping/bundling lint telemetry, sequencer control, stamps, and review kinds.
 > - Durable-evidence findings graduate to the shared ledger; Claude-adapter state stays telemetry.
-> - Re-verified 2026-07-01 after the tool-neutral re-scope: adversarial Codex flagged the deliverable doc's stale driver recipes (removed in §8) and a missing `.remember/` surface (added); inventory intact.
+> - Reviewed 2026-07-01 (review-todo-section, Codex 3x): fixed inventory-completeness gaps -- missing hook state-writers + `.claude/state` locks, the `Skill(codex-*)` trigger surface, the `gap-audit` receiver mismatch, the evidence-kind subset caveat, and the `common.py` row; re-adversarial skipped (docs-only fixes).
 >
-> **Verified:** 2026-06-29 | working tree validation
-> - `bash scripts/test-tooling.sh` -> 423/423 PASS.
-> - `bash scripts/todo-graph/build-and-validate.sh --keep-cache` -> 8/8 PASS.
+> **Verified:** 2026-07-01 | review re-verify | 7/7 items | build N/A (docs-only) | tooling 459/459 PASS, todo-graph 8/8
+> **Quality reviewed:** 2026-07-01 | Codex 3x (adversarial, consistency, perf) | 3H+2M fixed | scope: N/A (docs-only inventory)
 
 ---
 
@@ -257,7 +256,7 @@ Codex is the required reviewer; its evidence must be trustworthy and independent
 - [x] Define canonical reviewer roles: `codex-reviewer-{design, adversarial-impl, adversarial, consistency, perf, test-coverage, gap-audit, re-adversarial}`.
 - [/] Update Codex dispatch prompts so each review records `role`, `review_kind`, and `review_run_id`. The receipt hook records these when present and generates `review_run_id` for legacy dispatches; prompt-template rollout remains.
 - [ ] Derive trusted `review_run_id` from the dispatch wrapper/session or receipt process metadata, not prompt text; prompt-authored IDs are correlation hints only (the receipt hook reads them from the prompt and fabricates IDs today).
-- [ ] Add `gap-audit` to the receipt hook prompt parser and tests so `[review-kind: gap-audit]` dispatches mirror to the shared ledger; the parser omits it today even though the ledger and skill map recognize it.
+- [ ] Recognize `gap-audit` in `codex_review_completed.py` (`_REVIEW_KIND_RE`, `_record_stamp`, `CODEX_TRIGGER_SKILLS`) + tests, so wrapper and Skill `gap-audit` dispatches mirror to the ledger; all three omit it today.
 - [ ] Bind review evidence to the reviewed source blobs and current HEAD so a review of stale source cannot satisfy a shipping obligation.
 - [x] Review evidence is warned or rejected when the reviewer prompt contains implementor self-summary language instead of evidence-first scope.
 - [x] The obligation resolver treats fresh-context Codex review as required for shipping review kinds.
