@@ -1000,24 +1000,6 @@ _ad_silent "silent on markdown target" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
 PAYLOAD='{"tool_name":"Read","tool_input":{"file_path":"src/kernel/x.c"}}'
 _ad_silent "silent on non-edit tool" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
 
-# --- Conclave stuck-detect hook ------------------------------------------
-[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[conclave_stuck_detect]${NC}"
-_FSD="$REPO_ROOT/.claude/hooks/conclave_stuck_detect.py"
-_fsd_runs() {  # <desc> <env...> ; PAYLOAD on stdin ; PASS iff exit 0
-    local desc="$1"; shift
-    local rc
-    printf '%s' "$PAYLOAD" | env -u OVERNIGHT_SEQUENCER_RUN "$@" python3 "$_FSD" >/dev/null 2>&1
-    rc=$?
-    if [ "$rc" = "0" ]; then t_pass "conclave_stuck_detect: $desc"
-    else t_fail "conclave_stuck_detect: $desc (rc=$rc)"; fi
-}
-PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"bash scripts/build.sh"},"tool_response":"BUILD FAILED"}'
-_fsd_runs "silent + rc0 when OVERNIGHT_SEQUENCER_RUN unset" "PATH=$PATH"
-_fsd_runs "rc0 on build-fail under overnight" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
-PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":"x"}'
-_fsd_runs "rc0 ignoring non-target commands" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
-rm -f "$REPO_ROOT/.claude/state/conclave-stuck.json"
-
 # ============================================================================
 # receiving-code-review hard gate (TODO-08 in 00-infrastructure section 3)
 #

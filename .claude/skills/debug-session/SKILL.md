@@ -136,9 +136,11 @@ Read the feedback carefully. For each finding:
 
 If the rubber-duck identified a completely different root cause, go back to Step 3 with the new hypothesis.
 
-- **Stuck ladder -- Claude (3) -> Codex (2) -> Conclave (1):** after ~3 failed hypothesis
-  cycles on the same symptom, climb: Tier 2 `Skill(codex:codex-rescue)` (up to 2 rounds);
-  if still stuck, Tier 1 `bash .conclave/connector.sh dispatch --mode stuck --target <sym> --source <brief-file>` -- it runs the Conclave reasoning harness ASYNC (panel + Opus judge, memory-injected, no web-search). Do other work; collect with `bash .conclave/connector.sh poll <id>`, validate the synthesis before applying (it is a lead, not a verdict), then `bash .conclave/connector.sh outcome <id> resolved|unresolved` so Conclave learns. Off unless `CONCLAVE_ENABLED=1` + a key in `~/conclave/secret`.
+- **Stuck ladder -- Claude (2) -> Codex (1):** after ~3 failed hypothesis cycles on the
+  same symptom, escalate to `Skill(codex:codex-rescue)` (up to 2 rounds) for an
+  independent diagnosis; validate its synthesis before applying (it is a lead, not a
+  verdict). If still stuck after that, file the symptom as a blocked-with-XREF item
+  rather than thrashing further.
 
 ### Step 7: Implement the Fix
 

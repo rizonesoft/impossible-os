@@ -94,19 +94,5 @@ src/boot/uefi/*.o
 # .claude/overnight/ -- overnight-runner CLI runtime state (never committed).
 .claude/overnight/
 
-
-# Conclave (in-repo engine under conclave/): source is tracked. The live key,
-# learning data, and venv stay LOCAL -- conclave/.gitignore governs the subtree;
-# repeated here as a safety net so the key can never be committed.
-conclave/secret
-conclave/secrets.json
-conclave/.venv/
-conclave/data/
-conclave/policies/*.json
-conclave/ledger.jsonl
-conclave/LATEST
-conclave/.remember/
-conclave/.pytest_cache/
-
 # .claude/worktrees/ -- harness-created git worktrees (embedded repos).
 .claude/worktrees/
