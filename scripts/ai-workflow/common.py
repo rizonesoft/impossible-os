@@ -336,75 +336,39 @@ def load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-# Concrete-marker set: the canonical forms review-todo-section step 15 documents --
-# `(item: "NAME" at line N)` and the helper/retrofit variant `(... helper; retrofit
-# ...)`. Intentionally STRICTER than accepted_xref_block.py has_concrete, which also
-# accepts a bare standalone `at line`: the git hook is the loose backstop for hand
-# edits, but the stamp WRITER must emit canonical XREFs, and a lone `at line` matches
-# prose like `(see owner at line 99 later)` that names no checklist item.
-_XREF_CONCRETE_MARKERS = ("item:", "retrofit", "helper;")
-_XREF_PAREN_RE = re.compile(r"\(([^()]*)\)")
+# XREF grammar lives in the ONE shared module scripts/ai-workflow/xref.py so the git
+# hook (accepted_xref_block), todo-graph, and this stamp writer cannot drift. The
+# writer predicates below are intentionally STRICTER than the git hook: the marker
+# must sit INSIDE a parenthetical and the markers are item:/retrofit/helper; (a lone
+# `at line` matches prose like `(see owner at line 99)` naming no checklist item).
+# The git hook stays lenient so existing hand-edited stamps survive; the writer
+# refuses to emit a non-owning line. Both strictness levels are defined in xref.py.
+def _load_xref():
+    import importlib.util as _ilu
+    _p = Path(__file__).resolve().parent / "xref.py"
+    _spec = _ilu.spec_from_file_location("ai_workflow_xref", str(_p))
+    if _spec is None or _spec.loader is None:
+        raise ImportError(f"cannot load required sibling {_p}")
+    _mod = _ilu.module_from_spec(_spec)
+    # Register before exec: xref.py's @dataclass resolves cls.__module__ via
+    # sys.modules, which a bare spec_from_file_location load does not populate.
+    sys.modules[_spec.name] = _mod
+    _spec.loader.exec_module(_mod)
+    return _mod
 
 
-def _clause_concrete(clause: str) -> bool:
-    """True when a concrete marker sits INSIDE a parenthetical, not merely somewhere
-    in the clause. `TODO-11 (later) item: elsewhere` is NOT concrete -- todo-graph
-    build.py only extracts an item owner from `(... item: "..." ...)`, so a marker
-    outside the parens parks work with no greppable checklist owner.
-    """
-    for inner in _XREF_PAREN_RE.findall(clause):
-        lowered = inner.lower()
-        if any(m in lowered for m in _XREF_CONCRETE_MARKERS):
-            return True
-    return False
-
-
-def _xref_clauses(summary: str) -> list[str]:
-    """Split a summary into per-``XREF:`` clauses (case-sensitive uppercase).
-
-    Matches the exact marker .claude/hooks/accepted_xref_block.py and
-    scripts/todo-graph/build.py recognize -- a lowercase/spaced ``xref :`` is
-    invisible to every sibling parser, so we treat it as "no XREF" rather than a
-    valid one, keeping the stamp writer consistent with the authoritative backstop.
-    """
-    if "XREF:" not in (summary or ""):
-        return []
-    return summary.split("XREF:")[1:]
+_xref = _load_xref()
 
 
 def bare_xrefs(summary: str) -> list[str]:
-    """Return non-concrete XREF clauses in a stamp summary.
-
-    Mirrors the rule in .claude/hooks/accepted_xref_block.py: an Accepted/Deferred
-    XREF that cites TODO-<n> is a dead-end paper trail unless it carries a concrete
-    ``(item: "..." at line N)`` parenthetical. A bare paren is NOT enough -- the
-    clause must contain one of the hook's concrete markers (item:/at line/retrofit/
-    helper;) inside a parenthetical, matching the git hook's ``has_concrete`` test.
-    Each ``XREF:`` clause is validated INDEPENDENTLY so a bare clause is not masked
-    by a later concrete one on the same line. Returns the offending clauses; empty
-    means none. The git-commit hook remains the authoritative backstop; this lets
-    stamp.py refuse to write a poisoned line in the first place (and record stamp
-    evidence for it).
-    """
-    bad: list[str] = []
-    for clause in _xref_clauses(summary):
-        if not re.search(r"TODO-\d+", clause):
-            continue
-        if not _clause_concrete(clause):
-            bad.append(("XREF:" + clause).strip()[:100])
-    return bad
+    """Non-owning XREF clauses the stamp writer must refuse (delegates to the shared
+    grammar; each ``XREF:`` clause validated independently so a bare clause is not
+    masked by a later concrete one). The git-commit hook remains the authoritative
+    backstop; this lets stamp.py refuse to write a poisoned line in the first place."""
+    return _xref.writer_bare_xrefs(summary)
 
 
 def has_concrete_todo_xref(summary: str) -> bool:
-    """True when the summary carries at least one concrete TODO XREF clause.
-
-    Mirrors the git hook's accept condition: an uppercase ``XREF:`` naming a
-    TODO-<n> target with an item:/at line/retrofit/helper; marker. Used to require
-    accepted/deferred stamps to name a real, greppable owner rather than an empty,
-    ownerless, or non-canonical XREF that no sibling parser (git hook, todo-graph)
-    can see.
-    """
-    for clause in _xref_clauses(summary):
-        if re.search(r"TODO-\d+", clause) and _clause_concrete(clause):
-            return True
-    return False
+    """True when the summary carries >=1 concrete TODO XREF clause naming a real,
+    greppable owner (delegates to the shared grammar)."""
+    return _xref.writer_has_concrete(summary)

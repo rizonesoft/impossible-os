@@ -128,6 +128,54 @@ def is_concrete(summary: str) -> bool:
     return any(c.tier == CONCRETE for c in clauses)
 
 
+# ---------------------------------------------------------------------------
+# Writer-side predicates (stricter than the gate tiers on purpose). The gate must
+# stay lenient so existing stamps survive; the WRITER refuses to emit a non-owning
+# stamp in the first place. Both live here so the two strictness levels cannot drift
+# across files. These reproduce common.py's historical bare_xrefs/has_concrete rules:
+#   - marker must sit INSIDE a parenthetical (RA-H1: a marker in loose prose parks
+#     work with no greppable owner -- todo-graph only reads owners from the paren);
+#   - markers are item:/retrofit/helper; (RA2-M1: standalone "at line" dropped; the
+#     canonical (item: "..." at line N) form still qualifies via item:);
+#   - clauses split on the case-sensitive `XREF:` marker every sibling parser uses.
+_WRITER_MARKERS = ("item:", "retrofit", "helper;")
+_PAREN_RE = re.compile(r"\(([^()]*)\)")
+
+
+def _writer_clause_concrete(clause: str) -> bool:
+    for inner in _PAREN_RE.findall(clause):
+        low = inner.lower()
+        if any(m in low for m in _WRITER_MARKERS):
+            return True
+    return False
+
+
+def _writer_clauses(summary: str) -> list[str]:
+    if "XREF:" not in (summary or ""):
+        return []
+    return summary.split("XREF:")[1:]
+
+
+def writer_bare_xrefs(summary: str) -> list[str]:
+    """Non-owning XREF clauses the WRITER must refuse (each clause validated
+    independently so a bare clause is not masked by a later concrete one)."""
+    bad: list[str] = []
+    for clause in _writer_clauses(summary):
+        if not re.search(r"TODO-\d+", clause):
+            continue
+        if not _writer_clause_concrete(clause):
+            bad.append(("XREF:" + clause).strip()[:100])
+    return bad
+
+
+def writer_has_concrete(summary: str) -> bool:
+    """True when the summary carries >=1 concrete TODO XREF clause (writer bar)."""
+    for clause in _writer_clauses(summary):
+        if re.search(r"TODO-\d+", clause) and _writer_clause_concrete(clause):
+            return True
+    return False
+
+
 def canonical(clause: str) -> bool:
     """Strict canonical form for a single clause the WRITER should emit:
     a domain-qualified TODO path + `§N` + a concrete `(item: "..." at line N)`.
