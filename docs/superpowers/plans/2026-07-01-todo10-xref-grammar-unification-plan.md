@@ -82,6 +82,15 @@ stamps were asserted.
   `[x]`, the `section_review_required` gate re-arms until that section carries stamps. Land each
   section's `[x]` flip together with its review evidence, or keep it `[/]` until the phase's
   consolidated review.
+- **DO NOT arm the overnight sequencer while TODO-10 is plan-driven (operator discipline).**
+  `sequencer_triage.traversal_order` includes every implementation TODO and ignores frontmatter
+  `status`; the only skip signals are a section `Deferred` stamp or full DONE (Verified +
+  Quality-reviewed). TODO-10 has open sections (§2/§5/§6/§7/§9/§10), so an armed sequencer would
+  classify it NEEDS_WORK and drive it through the exact recursive pipeline this plan replaces,
+  colliding with plan-driven work and the uncommitted hardening. A file-level "hold" mechanism
+  was considered and declined in favor of operator discipline: **arm the sequencer only after
+  TODO-10 is complete** (or keep it disarmed while working this plan). Arming is a deliberate
+  `arm-sequencer.sh` action, so this is enforced by not running that command.
 
 ## Goal
 
