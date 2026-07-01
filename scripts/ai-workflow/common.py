@@ -108,9 +108,14 @@ def workflow_lock(
     lock_path = ensure_state_dir(root) / name
     try:
         import fcntl
-    except Exception:
-        yield
-        return
+    except Exception as exc:
+        # Fail closed: no silent lock-free fallback. The lock contract (one active
+        # mutator) cannot hold without a real OS lock, and no O_EXCL fallback is
+        # implemented, so refuse rather than let two sessions both "win".
+        raise RuntimeError(
+            f"workflow_lock requires fcntl (POSIX flock); refusing to run lock-free "
+            f"for {lock_path}"
+        ) from exc
 
     fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
     locked = False

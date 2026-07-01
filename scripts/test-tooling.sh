@@ -6119,11 +6119,31 @@ if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
 else
     t_pass "ai_workflow_lease: conflicting driver lease rejected"
 fi
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py release >/dev/null 2>&1; then
+    t_fail "ai_workflow_lease: release requires --run-id" "anonymous release succeeded"
+else
+    t_pass "ai_workflow_lease: release requires --run-id"
+fi
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py release --run-id driver-b >/dev/null 2>&1; then
+    t_fail "ai_workflow_lease: non-owner release rejected" "driver-b released driver-a's lease"
+else
+    t_pass "ai_workflow_lease: non-owner release rejected"
+fi
 if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py release --run-id driver-a >/dev/null; then
     t_pass "ai_workflow_lease: release by owning run"
 else
     t_fail "ai_workflow_lease: release by owning run"
 fi
+# expired lease is not an authority: an owner whose TTL lapsed cannot complete it
+# (ttl-sec 0 -> expires at acquire time; the inter-process gap makes it expired)
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$TODO10" --section 9 --driver claude --run-id exp-a --ttl-sec 0 >/dev/null 2>&1
+if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py complete --run-id exp-a >/dev/null 2>&1; then
+    t_fail "ai_workflow_lease: expired lease cannot be completed" "completed an expired lease"
+else
+    t_pass "ai_workflow_lease: expired lease cannot be completed"
+fi
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py force-release --reason "cleanup expired test lease" >/dev/null 2>&1
 AIWF_RACE_STATE="$AIWF_TMP/race-state"
 rm -rf "$AIWF_RACE_STATE"
 if env AI_WORKFLOW_STATE_DIR="$AIWF_RACE_STATE" \

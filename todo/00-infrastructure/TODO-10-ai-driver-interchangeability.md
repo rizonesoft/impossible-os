@@ -126,16 +126,31 @@ Prevent two sessions (for example an interactive session and the headless overni
 
 - [x] Add `scripts/ai-workflow/lease.py` with `acquire`, `renew`, `release`, `status`, and `force-release --reason` subcommands.
 - [x] Store lease state in a gitignored derived-state location that is not a model-specific instruction tree. Preferred shape: `.ai-workflow/active-lease.json`.
-- [x] Lease key includes `todo_path`, `section`, the holder backend, the holder run id, `head_sha`, `started_at`, `expires_at`, and `allowed_mutations`.
+- [x] Lease key includes `todo_path`, `section`, `driver_backend`, `driver_run_id`, `head_sha`, `started_at_ns`, `expires_at_ns`, and `allowed_mutations`.
 - [x] A holder cannot acquire a lease if another live lease exists for the same TODO section unless the existing lease is expired or explicitly force-released with a reason.
 - [x] Serialize `lease.py` active-lease and lease-history mutations with a repo-local lock (`fcntl.flock` or `O_EXCL`) so two concurrent sessions cannot both observe an empty lease and race through `acquire`.
-- [x] Claude hooks consult the lease before the first implementation edit when a TODO-section flow is active.
+- [/] Claude hooks consult the lease before the first implementation edit when a TODO-section flow is active. Consult is presence-only today (todo/section/expiry, not owner); ownership binding is tracked below.
 - [/] Git commit gate refuses a section-ship commit when no matching active or completed lease exists for the staged TODO target. Enforced under `AI_WORKFLOW_ENFORCE_SHARED_GATES=1`; default-on waits for Claude lease acquisition.
+- [ ] Enforce lease OWNERSHIP (not presence) in the consumers before default-on: `step5_quality_gate` + `gates.staged_commit` match the session `driver_run_id`; Claude auto-acquires a lease with that run-id.
 - [x] Add a concurrent-acquire fixture that launches two same-section holders and asserts exactly one winner plus one durable conflict event.
 - [x] Add `scripts/test-tooling.sh` coverage for acquire/release and same-section conflict.
-- [ ] Commit: "ai-workflow: add active-mutator lease"
+- [x] Commit: "ai-workflow: add active-mutator lease"
 
 **Test checkpoint:** Two simulated sessions cannot both edit or commit the same section. A stale lease can be recovered with an auditable reason.
+
+> **Test runner:** 2026-07-01 | `bash scripts/test-tooling.sh` | 462/462 PASS
+>
+> **Notes:**
+> - `lease.py` (acquire/renew/release/complete/force-release/status) serializes every active-lease + history mutation under `common.workflow_lock` (fcntl flock, now fail-closed); state lives in gitignored `.ai-workflow/`.
+> - Review hardening: renew/release/complete now require `--run-id` and enforce ownership + reject expired leases; `force-release --reason` is the only non-owner recovery path.
+> - Consumers (`step5_quality_gate` pre-edit, `gates.staged_commit`) consult the lease but enforcement is presence-only and default-off; ownership binding + default-on are deferred (tracked below).
+> - Canonical doc: [docs/infrastructure/ai-driver-interchangeability.md](../../docs/infrastructure/ai-driver-interchangeability.md).
+> - Scope boundary: stale-completed-lease reuse owned by §6; stamp-write atomicity owned by §5.
+>
+> **Verified:** 2026-07-01 | 7/10 items | build N/A (Python tooling) | tests 462/462 PASS (concurrent one-winner + ownership + expired-complete)
+> **Deferred:** [Critical] lease consumers check lease PRESENCE not OWNERSHIP, so a second session can edit/commit under another holder's lease -> XREF: 00-infrastructure/TODO-10 §2 (item: "Enforce lease OWNERSHIP (not presence) in the consumers" at line 134)
+> **Accepted:** [M] `stamp.py` writes the TODO before the ledger append, so a `workflow_lock` failure can leave a stamp with no evidence -> XREF: 00-infrastructure/TODO-10 §5 (item: "Make stamp writing atomic vs ledger failure" at line 230)
+> **Quality reviewed:** 2026-07-01 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+1M+1L fixed, 2Critical deferred, 1M accepted-XREF | scope: N/A (Python workflow tooling)
 
 ---
 
@@ -212,6 +227,7 @@ Stop relying on model-authored stamp prose for workflow truth.
 - [x] File-level mode: `validated`/`gap-audited` auto-route to `_insert_preamble_stamp` (replace-in-place; hard-fail no H1); `--section` optional; gated on `todo-graph-validate`/`gap-audit` evidence with an `--allow-missing` escape.
 - [/] `accepted`/`deferred` stamps reject a bare XREF summary (no concrete `(item: ...)` parenthetical) before writing; `common.bare_xrefs` mirrors the git-hook rule.
 - [x] Stamp writer records a `stamp.generated` ledger event with the exact text hash.
+- [ ] Make stamp writing atomic vs ledger failure: preflight the workflow lock before `path.write_text` so a lock failure / fail-closed no-fcntl cannot leave a TODO stamp with no backing `stamp.generated` evidence.
 - [x] Add `--dry-run` and `--explain-missing` modes.
 - [x] Regression fixtures in `test-tooling.sh`: file-level preamble placement + sequencer recognition, file-scoped evidence, replace-in-place re-stamp, no-H1 fail, bare/concrete XREF, and section-local bottom placement with multiline Notes.
 - [x] Commit: "ai-workflow: add deterministic stamp writer"
@@ -341,7 +357,7 @@ Prove the tool-neutral workflow protocol before relying on it.
 
 | ⭐ | Feature                    | 🪟 Win11                    | 🐧 Linux                    | 🚀 Impossible OS       |
 |----|----------------------------|-----------------------------|-----------------------------|-------------------------|
-| 💎 | Mutator lease              | ⚠️ Human/process locks      | ⚠️ Git hooks/scripts        | ⬜ Planned -- §2        |
+| 💎 | Mutator lease              | ⚠️ Human/process locks      | ⚠️ Git hooks/scripts        | ⚠️ flock lease; enforce deferred |
 | 💎 | Branch/status policy gates | ✅ Azure/GitHub policies    | ✅ CI/status checks         | ⬜ Planned -- §6        |
 | 💎 | Durable evidence ledger    | ⚠️ CI/log fragments         | ⚠️ Build artifacts + CI     | ⬜ Planned -- §3        |
 | 💎 | Provenance-bound evidence  | ✅ Artifact attestations    | ⚠️ Patch tags + CI          | ⬜ Planned -- §3/§6     |

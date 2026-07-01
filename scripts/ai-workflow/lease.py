@@ -152,10 +152,13 @@ def renew(args: argparse.Namespace) -> int:
         if not lease:
             print("no active lease", file=sys.stderr)
             return 1
-        if args.run_id and lease.get("driver_run_id") != args.run_id:
+        if lease.get("driver_run_id") != args.run_id:
             print("run-id does not own active lease", file=sys.stderr)
             return 2
         now = common.now_ns()
+        if _is_expired(lease, now):
+            print("lease expired; re-acquire before renew", file=sys.stderr)
+            return 2
         lease["renewed_at_ns"] = now
         lease["expires_at_ns"] = now + int(args.ttl_sec * 1_000_000_000)
         common.write_json_atomic(active_path, lease)
@@ -172,7 +175,7 @@ def release(args: argparse.Namespace) -> int:
         if not lease:
             print("no active lease")
             return 0
-        if args.run_id and lease.get("driver_run_id") != args.run_id:
+        if lease.get("driver_run_id") != args.run_id:
             print("run-id does not own active lease", file=sys.stderr)
             return 2
         _record(root, "release", lease)
@@ -189,8 +192,11 @@ def complete(args: argparse.Namespace) -> int:
         if not lease:
             print("no active lease", file=sys.stderr)
             return 1
-        if args.run_id and lease.get("driver_run_id") != args.run_id:
+        if lease.get("driver_run_id") != args.run_id:
             print("run-id does not own active lease", file=sys.stderr)
+            return 2
+        if _is_expired(lease, common.now_ns()):
+            print("lease expired; re-acquire before complete", file=sys.stderr)
             return 2
         completed = dict(lease)
         completed["completed_at_ns"] = common.now_ns()
@@ -245,16 +251,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=acquire)
 
     p = sub.add_parser("renew")
-    p.add_argument("--run-id")
+    p.add_argument("--run-id", required=True)
     p.add_argument("--ttl-sec", type=int, default=DEFAULT_TTL_SEC)
     p.set_defaults(func=renew)
 
     p = sub.add_parser("release")
-    p.add_argument("--run-id")
+    p.add_argument("--run-id", required=True)
     p.set_defaults(func=release)
 
     p = sub.add_parser("complete")
-    p.add_argument("--run-id")
+    p.add_argument("--run-id", required=True)
     p.set_defaults(func=complete)
 
     p = sub.add_parser("force-release")
