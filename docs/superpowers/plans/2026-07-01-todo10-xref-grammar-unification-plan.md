@@ -1,0 +1,156 @@
+# TODO-10 Completion Plan: XREF-Grammar Unification + Tool-Neutral Workflow Protocol
+
+- **Created:** 2026-07-01
+- **Owner TODO:** [`todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md`](../../../todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md)
+- **Status:** active
+- **Mode:** plan-driven (deliberately NOT the per-section `/implement-todo-section` + `/review-todo-section` pipeline)
+
+Section names below refer to the Owner TODO's Implementation Order rows by capability, not by
+number, because this file lives outside `todo/` where numeric section shorthand is forbidden.
+
+## Why this plan exists (root problem)
+
+TODO-10 builds the very workflow machinery the review pipeline runs on -- the active-mutator
+lease, the append-only evidence ledger, the obligation resolver, the deterministic stamp
+writer, and the shared gate library. Driving it through the per-section pipeline is
+**recursive**: reviewing a change to the stamp writer runs the stamp / XREF / gate hooks
+against the change itself.
+
+The concrete failure this surfaced during the Deterministic Stamp Writer review is that
+**"a valid Accepted/Deferred XREF" is defined three inconsistent ways**:
+
+1. `.claude/hooks/accepted_xref_block.py` (git hook) -- loose: uppercase `XREF:` marker + any
+   concrete keyword anywhere (`item:` / `at line` / `retrofit` / `helper;`); bare-paren check only.
+2. `scripts/todo-graph/build.py` `XREF_CLAUSE_RE` -- strict: needs `XREF: <target_path>` with a
+   section marker and an optional quoted `item:` inside the parenthetical.
+3. `.claude/skills/review-todo-section/SKILL.md` step 15/16 -- strictest documented form:
+   `XREF: NN-domain/TODO-XX <section-marker> (item: "..." at line N)`.
+
+Each Codex review round on `stamp.py` found another seam between these three (marker outside the
+parenthetical; prose `at line`; `()` inside quoted item names; mixed valid + ownerless clauses;
+a bare TODO ref with no section marker). That is not convergence -- it is whack-a-mole against a
+moving target. The durable fix is to define the grammar **once** and have all consumers call it.
+
+## Working-tree state at plan creation
+
+Uncommitted (folded into this plan, NOT yet committed):
+
+- `scripts/ai-workflow/stamp.py` -- stamp-writer hardening: canonical stamp ordering in
+  `_insert_stamp` (`_STAMP_ORDER` stable-sort of the group + `_BQ_LABEL_RE` continuation guard);
+  accepted/deferred gate requires a concrete TODO XREF; `_file_evidence_ids` reverted to
+  section-agnostic (real producers record an empty section).
+- `scripts/ai-workflow/common.py` -- `bare_xrefs` / `has_concrete_todo_xref` / `_clause_concrete`
+  (marker-inside-parenthetical, case-sensitive to mirror the git hook).
+- `scripts/test-tooling.sh` -- 9 new `ai_workflow_stamp` fixtures (462/462 tooling tests green).
+
+**Committed (Phase 0, done):** `41553830` downgraded the Deterministic Stamp Writer section
+`[x] -> [/]` with a fold note, to quiet the recursive `section_review_required` gate. No review
+stamps were asserted.
+
+> **Fragility note:** the working-tree hardening is uncommitted. Phase 1 step 1 commits it as
+> the base so it is not lost across sessions.
+
+## Open review findings to carry (from the stamp-writer review, verified at file:line)
+
+| Ref | Severity | Finding | Disposition in this plan |
+|-----|----------|---------|--------------------------|
+| F1  | High | `--allow-missing` lets `verified`/`quality-reviewed` mint a transparent `manual`-evidence stamp | Phase 2 -- Shared Gate Library empty-source shipping-evidence rejection (`gates.py`/`obligations.py`) |
+| F3/C2 | Med | file-level `_file_evidence_ids` producers record an empty section (gap-audit receipt), so a section filter rejects valid evidence; lookup full-scans the ledger | Phase 3 -- Review-Evidence Integrity gap-audit receipt parser + file-scoping; index-backed lookup |
+| RA-H1/RA2 | Med | non-canonical XREFs (marker outside paren, prose `at line`, `()` in item names, mixed ownerless clauses, bare TODO ref with no section marker) | Phase 1 -- unified grammar validator |
+| P1 | Low | file-level evidence full ledger scan | Phase 3 -- migrate to `evidence.target_index_path` |
+
+## Environmental constraints (not caused by this work)
+
+- **`build.sh` is globally red:** the Microsoft 2011 UEFI CA expired 2026-06-30, so
+  `scripts/sign-efi.sh` aborts EFI signing for every build (owned by the UEFI-hardening TODO in
+  `01-boot-platform`). Kernel + bootloader compile clean. For this Python-only work,
+  `bash scripts/test-tooling.sh` is the authoritative gate; do not claim "build OK" until the
+  shim is repinned.
+- **Recursive review gate:** now quiet (Phase 0). If a later phase flips a TODO section to
+  `[x]`, the `section_review_required` gate re-arms until that section carries stamps. Land each
+  section's `[x]` flip together with its review evidence, or keep it `[/]` until the phase's
+  consolidated review.
+
+## Goal
+
+Finish the open TODO-10 items (Active-Mutator Lease, Deterministic Stamp Writer, Shared Gate
+Library, Review-Evidence Integrity, Migration/Docs/Rollout, Regression Suite + pilot) as a small
+number of coherent, well-tested commits, built on **one** XREF grammar, reviewed proportionately
+(one consolidated Codex triad per phase on the risky pieces -- not per micro-item).
+
+## Phases
+
+### Phase 1 -- Unify the XREF grammar (enabling root fix)
+
+1. Commit the working-tree stamp-writer hardening as the base (so it is not lost).
+2. Add `scripts/ai-workflow/xref.py` (or extend `common.py`) with ONE canonical validator:
+   - grammar: `XREF: NN-domain/TODO-XX <section-marker> (item: "..." at line N)`;
+   - quote-aware parenthetical parsing (tolerates `()` inside the quoted item name);
+   - requires a domain-qualified path + a section marker;
+   - validates EVERY `XREF:` clause independently (rejects mixed valid + ownerless);
+   - concrete marker must sit INSIDE the parenthetical.
+3. Point `stamp.py` (`bare_xrefs`/`has_concrete_todo_xref`), `accepted_xref_block.py`, and
+   `todo-graph/build.py`/`validate.py` at the one grammar (shared module or shared regex).
+4. Migrate the 9 stamp fixtures + add negative fixtures for: `()` in item name, mixed
+   valid+ownerless clauses, bare TODO ref with no section marker, prose `at line`,
+   marker-outside-paren.
+5. Re-close the Deterministic Stamp Writer section: flip `[/] -> [x]` with Verified/Quality-
+   reviewed stamps, landed together with this phase's review evidence.
+6. **Review:** one Codex triad (adversarial + consistency + perf) on the unified validator +
+   stamp writer. The consistency dispatch explicitly checks all four consumers agree.
+
+### Phase 2 -- Shared Gate Library (remaining items)
+
+- Refactor Claude hooks to call `gates.py` where feasible.
+- `.githooks/pre-commit` calls the same checks for section-ship and stamp-only commits.
+- Reject forged/stale shipping evidence in `gates.py`/`obligations.py`: distinct reviewer run id
+  + current blobs + HEAD; build/test/smoke need exit code + log + final marker; stamps need
+  current source; graph validation current. **Owns F1** (empty-source / `manual` stamp rejection
+  for shipping).
+- `evidence.py import-legacy` treats `last-review-stamps.json` as dispatch telemetry; obligations
+  reject legacy-import / empty-source reviewer evidence for shipping.
+- Remove stale completed-lease reuse from `staged-commit`.
+- Keep Claude reminders as UX sugar; the blocking decision is made by shared scripts/git hooks.
+- Three-mode verdict-parity tests (Claude hook / git hook / direct CLI).
+- **Review:** one Codex triad on the gate library + git-hook parity.
+
+### Phase 3 -- Review-Evidence Integrity (owns the file-level evidence findings)
+
+- Add `gap-audit` to the receipt-hook prompt parser + tests -- **this is the C2/F3 root cause**:
+  the gap-audit receipt records an empty section, so file-level lifecycle evidence must be
+  normalized here.
+- Derive trusted `review_run_id` from wrapper/receipt metadata, not prompt text.
+- Bind review evidence to reviewed source blobs + current HEAD.
+- Harden `sequencer_triage.file_lifecycle` to require ledger evidence, not just a preamble line
+  (the stamp-writer F2 residual).
+- File-scope the file-level evidence producers + migrate `_file_evidence_ids` to
+  `evidence.target_index_path` (F3/C2 + P1).
+- **Review:** one Codex triad on evidence provenance + fresh-context independence.
+
+### Phase 4 -- Migration, docs, rollout toggles
+
+- Update `docs/infrastructure/ai-system.md`, `CLAUDE.md`, `AGENTS.md` to the tool-neutral
+  protocol only after the earlier sections pass. Document the protocol, monitor commands, and the
+  `AI_WORKFLOW_ENFORCE_SHARED_GATES` shared-gate toggle.
+
+### Phase 5 -- Regression suite + pilot
+
+- Remaining `ai_workflow_evidence`/`stamp`/`gates` fixtures; lease-race, forged/stale evidence,
+  legacy-import, stale completed-lease, lifecycle-stamp fixtures.
+- Run one real pilot: implement a low-risk infra section via the shared ledger + gates with Codex
+  as reviewer, interrupt, and resume from the ledger. Then flip doctrine items done.
+
+## Review strategy
+
+- One consolidated Codex triad (adversarial + consistency + perf) **per phase**, on the risky
+  pieces, when the phase is coherent -- not recursively mid-edit, not per micro-item.
+- `superpowers:receiving-code-review` on every finding (verify at file:line, Fix/Reject/Accept).
+- The XREF-grammar unification (Phase 1) is what makes later phases stop generating XREF churn.
+
+## Resumability
+
+- Phase 0 is committed (`41553830`). Phase 1 step 1 commits the working-tree hardening.
+- Each phase ends at a coherent, tested, committed checkpoint. A new session resumes by reading
+  this plan + `git log` + the Owner TODO's Implementation Order table statuses.
+- Authoritative gate for Python-only phases: `bash scripts/test-tooling.sh` (build is red
+  repo-wide until the shim CA is repinned; that is out of scope here).
