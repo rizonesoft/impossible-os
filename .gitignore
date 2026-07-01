@@ -94,8 +94,6 @@ src/boot/uefi/*.o
 # .claude/overnight/ -- overnight-runner CLI runtime state (never committed).
 .claude/overnight/
 
-# .codex/overnight/ -- Codex-driver overnight reports/metrics (never committed).
-.codex/overnight/
 
 # Conclave engine + data + key live in ~/conclave (github.com/rizonetech/Conclave);
 # this project only carries the .conclave/ connector (no secrets here).

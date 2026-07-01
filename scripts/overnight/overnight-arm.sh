@@ -12,7 +12,6 @@
 #
 # Usage (run from the project root):
 #   overnight-arm.sh <todo.md> [--mode bypassPermissions|acceptEdits]
-#                    [--driver claude|codex]
 #                    [--at "<systemd calendar>"] [--watchdog "<cadence>"]
 #                    [--no-watchdog] [--disarm]
 #
@@ -21,11 +20,10 @@
 # ticks free no-ops while a run is alive or a limit is active.
 set -euo pipefail
 
-TODO_FILE="${1:?usage: overnight-arm.sh <todo.md> [--mode M] [--driver claude|codex] [--at T] [--watchdog C] [--no-watchdog] [--disarm]}"
+TODO_FILE="${1:?usage: overnight-arm.sh <todo.md> [--mode M] [--at T] [--watchdog C] [--no-watchdog] [--disarm]}"
 shift
 
 MODE="bypassPermissions"
-DRIVER="${OVERNIGHT_DRIVER:-claude}"
 AT=""
 WATCHDOG_CAL="*:0/30"
 ARM_WATCHDOG=1
@@ -33,7 +31,6 @@ DISARM=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --mode)        MODE="${2:?--mode needs a value}"; shift 2 ;;
-    --driver)      DRIVER="${2:?--driver needs claude or codex}"; shift 2 ;;
     --at)          AT="${2:?--at needs a systemd calendar value}"; shift 2 ;;
     --watchdog)    WATCHDOG_CAL="${2:?--watchdog needs a cadence}"; shift 2 ;;
     --no-watchdog) ARM_WATCHDOG=0; shift ;;
@@ -41,11 +38,6 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
-
-case "$DRIVER" in
-  claude|codex) ;;
-  *) echo "FATAL: unsupported driver: $DRIVER (expected claude|codex)" >&2; exit 2 ;;
-esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAUNCHER="$SCRIPT_DIR/overnight-launch.sh"
@@ -90,19 +82,15 @@ systemctl --user reset-failed 2>/dev/null || true
 # ExecStart points straight at the repo launcher (absolute path). Re-arm
 # regenerates the transient unit, so a moved repo just needs a re-arm.
 systemd-run --user --on-calendar="$AT" --unit="$UNIT" \
-  "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE" "$DRIVER"
-echo "armed ${UNIT}: starts at ${AT} (mode: ${MODE}, driver: ${DRIVER})"
+  "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE"
+echo "armed ${UNIT}: starts at ${AT} (mode: ${MODE})"
 
 if [ "$ARM_WATCHDOG" = "1" ]; then
   systemd-run --user --on-calendar="$WATCHDOG_CAL" --unit="${UNIT}-watchdog" \
-    "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE" "$DRIVER"
-  echo "armed ${UNIT}-watchdog: cadence ${WATCHDOG_CAL} (same mode/driver -- a watchdog in a weaker mode stalls on relaunch)"
+    "$LAUNCHER" "$PROJECT_DIR" "$TODO_FILE" "$MODE"
+  echo "armed ${UNIT}-watchdog: cadence ${WATCHDOG_CAL} (same mode -- a watchdog in a weaker mode stalls on relaunch)"
 fi
 
-if [ "$DRIVER" = "codex" ]; then
-  REPORT_BASE="$PROJECT_DIR/.codex/overnight/reports"
-else
-  REPORT_BASE="$PROJECT_DIR/.claude/overnight/reports"
-fi
+REPORT_BASE="$PROJECT_DIR/.claude/overnight/reports"
 echo "report logs: $REPORT_BASE/  |  disarm: overnight-arm.sh $TODO_FILE --disarm"
 systemctl --user list-timers 2>/dev/null | grep -F "$UNIT" || true

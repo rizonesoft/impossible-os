@@ -13,7 +13,6 @@
 #
 # Usage:
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh [--at "<calendar>"]
-#   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --driver codex
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --with-browser   # gh-pages
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm
 set -euo pipefail
@@ -78,39 +77,6 @@ remove_sequencer_env_dropin() {
   done
 }
 
-write_codex_driver_dropin() {
-  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
-    d="$DROPIN_BASE/$svc.d"
-    mkdir -p "$d"
-    cat > "$d/codex-driver.conf" <<'EOF'
-[Service]
-# Explicit Codex active-driver mode. This is runtime state only; doctrine and
-# skills remain repo-owned, and reviewer evidence must still be a separate run.
-Environment=OVERNIGHT_DRIVER=codex
-Environment=AI_WORKFLOW_CODEX_DRIVER=1
-Environment=AI_WORKFLOW_ENFORCE_SHARED_GATES=1
-Environment=OVERNIGHT_STREAM_KEEP_UNKNOWN=1
-Environment=OVERNIGHT_CODEX_SANDBOX=danger-full-access
-EOF
-  done
-}
-
-remove_codex_driver_dropin() {
-  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
-    rm -f "$DROPIN_BASE/$svc.d/codex-driver.conf"
-    rmdir "$DROPIN_BASE/$svc.d" 2>/dev/null || true
-  done
-}
-
-clear_codex_supervisor_state() {
-  for p in .codex/overnight/codex-supervisor.block .codex/overnight/codex-no-progress; do
-    if [ -e "$p" ]; then
-      rm -f "$p"
-      echo "  removed stale $p"
-    fi
-  done
-}
-
 remove_runtime_file() {
   local p="$1"
   local label="$2"
@@ -146,8 +112,6 @@ except (ValueError, OSError) as e:
     print(f"  WARN: could not reset overnight-runner.json: {e}")
 PY
   remove_runtime_file .claude/overnight/launch.lock "launch.lock"
-  remove_runtime_file .codex/overnight/launch.lock "codex launch.lock"
-  clear_codex_supervisor_state
   remove_runtime_file .claude/state/sequencer-fixpoint "stale fixpoint sentinel"
 }
 
@@ -157,7 +121,6 @@ if [ "${1:-}" = "--disarm" ]; then
   bash "$LOCAL_ARM" "$DOCTRINE" --disarm || true
   remove_chromemcp_dropin
   remove_sequencer_env_dropin
-  remove_codex_driver_dropin
   reap_overnight_state
   systemctl --user daemon-reload 2>/dev/null || true
   echo "disarmed overnight sequencer (timers + watchdog + chromemcp drop-in + run state)"
@@ -171,21 +134,12 @@ fi
 # impossible-os work that needs ChromeMCP is the gh-pages landing site; arm those
 # runs with --with-browser to leave the env unset and let the lane logic run.
 WITH_BROWSER=0
-DRIVER="claude"
 FORWARD_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-browser|--gh-pages)
       WITH_BROWSER=1
       shift
-      ;;
-    --codex-driver)
-      DRIVER="codex"
-      shift
-      ;;
-    --driver)
-      DRIVER="${2:?--driver needs claude or codex}"
-      shift 2
       ;;
     *)
       FORWARD_ARGS+=("$1")
@@ -194,25 +148,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-case "$DRIVER" in
-  claude|codex) ;;
-  *) echo "FATAL: unsupported driver: $DRIVER (expected claude|codex)" >&2; exit 2 ;;
-esac
-
 # Arm. Marker first, so the very first tool call of the headless run is already
 # redirected onto overnight-sequencer. Drop-ins are written AFTER the transient
 # unit exists (systemd-run created it) and before it fires (--at is +2min), then
 # daemon-reload makes them effective for the scheduled start.
 mkdir -p .claude/state
 : > "$MARKER"
-bash "$LOCAL_ARM" "$DOCTRINE" --mode bypassPermissions --driver "$DRIVER" --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
+bash "$LOCAL_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
 write_sequencer_env_dropin
-if [ "$DRIVER" = "codex" ]; then
-  clear_codex_supervisor_state
-  write_codex_driver_dropin
-else
-  remove_codex_driver_dropin
-fi
 if [ "$WITH_BROWSER" = "1" ]; then
   remove_chromemcp_dropin
   systemctl --user daemon-reload 2>/dev/null || true
@@ -222,12 +165,7 @@ else
   systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP OFF (kernel run)"
 fi
-if [ "$DRIVER" = "codex" ]; then
-  echo "  launch uses Codex supervisor with bounded exec steps; doctrine: $DOCTRINE"
-  echo "  Codex reports: .codex/overnight/reports/latest.log"
-else
-  echo "  launch redirects to Skill(overnight-sequencer); doctrine: $DOCTRINE"
-  echo "  Claude reports: .claude/overnight/reports/latest.log"
-fi
+echo "  launch redirects to Skill(overnight-sequencer); doctrine: $DOCTRINE"
+echo "  Claude reports: .claude/overnight/reports/latest.log"
 echo "  scheduler: repo-vendored (scripts/overnight/), no external plugin dependency"
 echo "  disarm: bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm"

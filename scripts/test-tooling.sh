@@ -6125,7 +6125,7 @@ TODO10="todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md"
 AIWF_ENV=(env AI_WORKFLOW_STATE_DIR="$AIWF_STATE")
 
 if "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
-    --todo "$TODO10" --section 1 --driver codex --run-id driver-a >/dev/null; then
+    --todo "$TODO10" --section 1 --driver claude --run-id driver-a >/dev/null; then
     t_pass "ai_workflow_lease: acquire first driver lease"
 else
     t_fail "ai_workflow_lease: acquire first driver lease"
@@ -6207,7 +6207,7 @@ fi
 rm -rf "$AIWF_STATE"
 mkdir -p "$AIWF_STATE"
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
-    --todo "$TODO10" --section 2 --driver codex --run-id driver-c >/dev/null
+    --todo "$TODO10" --section 2 --driver claude --run-id driver-c >/dev/null
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$TODO10" --section 2 --role validator --backend local \
     --run-id build-c --kind build --result ok >/dev/null
@@ -6465,7 +6465,7 @@ rm -rf "$AIWF_REVIEW_STATE"
 mkdir -p "$AIWF_REVIEW_STATE"
 AIWF_REVIEW_ENV=(env AI_WORKFLOW_STATE_DIR="$AIWF_REVIEW_STATE")
 "${AIWF_REVIEW_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
-    --todo "$TODO10" --section 4 --driver codex --run-id review-profile-driver >/dev/null
+    --todo "$TODO10" --section 4 --driver claude --run-id review-profile-driver >/dev/null
 "${AIWF_REVIEW_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$TODO10" --section 4 --role validator --backend local \
     --run-id review-profile-graph --kind todo-graph-validate --result ok >/dev/null
@@ -7567,63 +7567,6 @@ else
     t_fail "ai_workflow_gates: Depends On row allows with Order lease"
 fi
 
-rm -rf "$AIWF_STATE"
-mkdir -p "$AIWF_STATE"
-CDRY_OUT=$("${AIWF_ENV[@]}" bash scripts/codex-driver.sh --dry-run \
-    --todo "$TODO10" --section 8 --run-id dry-run-test 2>&1)
-if [ "$?" = "0" ] && [ -f "$AIWF_STATE/runs/dry-run-test/plan.md" ]; then
-    t_pass "codex_driver_dry_run: writes plan and exits 0"
-else
-    t_fail "codex_driver_dry_run: writes plan and exits 0" "$CDRY_OUT"
-fi
-REL_DRIVER_STATE="build/ai-workflow-relative-test"
-OUTSIDE_CWD="$AIWF_TMP/outside-cwd"
-mkdir -p "$OUTSIDE_CWD"
-rm -rf "$REPO_ROOT/$REL_DRIVER_STATE" "$OUTSIDE_CWD/$REL_DRIVER_STATE"
-CDRY_OUTSIDE=$(
-    cd "$OUTSIDE_CWD" && \
-    env AI_WORKFLOW_STATE_DIR="$REL_DRIVER_STATE" \
-        bash "$REPO_ROOT/scripts/codex-driver.sh" --dry-run \
-        --todo "$TODO10" --section 8 --run-id dry-run-outside 2>&1
-)
-if [ "$?" = "0" ] \
-   && [ -f "$REPO_ROOT/$REL_DRIVER_STATE/runs/dry-run-outside/plan.md" ] \
-   && [ ! -e "$OUTSIDE_CWD/$REL_DRIVER_STATE" ]; then
-    t_pass "codex_driver_dry_run: absolute invocation normalizes repo state"
-else
-    t_fail "codex_driver_dry_run: absolute invocation normalizes repo state" "$CDRY_OUTSIDE"
-fi
-rm -rf "$REPO_ROOT/$REL_DRIVER_STATE"
-if [ ! -f "$AIWF_STATE/evidence.jsonl" ]; then
-    t_pass "codex_driver_dry_run: records no shipping evidence"
-else
-    t_fail "codex_driver_dry_run: records no shipping evidence"
-fi
-if env -u AI_WORKFLOW_CODEX_DRIVER AI_WORKFLOW_STATE_DIR="$AIWF_STATE" \
-    bash scripts/codex-driver.sh --live \
-    --todo "$TODO10" --section 9 --run-id live-disabled >/dev/null 2>&1; then
-    t_fail "codex_driver_live: disabled without AI_WORKFLOW_CODEX_DRIVER=1"
-else
-    t_pass "codex_driver_live: disabled without AI_WORKFLOW_CODEX_DRIVER=1"
-fi
-rm -rf "$AIWF_STATE"
-mkdir -p "$AIWF_STATE"
-CLIVE_OUT=$(env AI_WORKFLOW_STATE_DIR="$AIWF_STATE" AI_WORKFLOW_CODEX_DRIVER=1 \
-    bash scripts/codex-driver.sh --live \
-    --todo "$TODO10" --section 9 --run-id live-pre-edit-test 2>&1)
-if [ "$?" = "0" ] \
-   && echo "$CLIVE_OUT" | grep -q "ALLOW pre-edit" \
-   && echo "$CLIVE_OUT" | grep -q "MISS build"; then
-    t_pass "codex_driver_live: pre-edit checkpoint acquires lease and reports obligations"
-else
-    t_fail "codex_driver_live: pre-edit checkpoint acquires lease and reports obligations" "$CLIVE_OUT"
-fi
-OVERNIGHT_LAUNCH_OUT=$(python3 scripts/overnight/tests/test_launch_driver_mode.py 2>&1)
-if [ "$?" = "0" ]; then
-    t_pass "overnight_launch_driver: driver selection, supervisor smoke, and reports"
-else
-    t_fail "overnight_launch_driver: driver selection, supervisor smoke, and reports" "$OVERNIGHT_LAUNCH_OUT"
-fi
 rm -rf "$AIWF_TMP"
 
 
