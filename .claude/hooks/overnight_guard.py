@@ -380,7 +380,14 @@ def handle_prompt() -> int:
         return 0
     if activates_overnight(text):
         files = extract_todo_files(text)
-        first = files[0] if files else None
+        if not files:
+            # Bare activation phrase with NO concrete TODO file named -- this is
+            # interactive discussion of overnight runs ("if I start the overnight
+            # run..."), not a real start. Do not arm: arming with an empty todo_file
+            # is what false-traps the session at Stop. A real start names a TODO file
+            # (or uses the CLI `start` mode / the sequencer's arm-sequencer.sh).
+            return 0
+        first = files[0]
         rest = files[1:] if len(files) > 1 else []
         state = save_state(first, "UserPromptSubmit", queue=rest)
         print(reminder_for(state), file=sys.stderr)
@@ -422,6 +429,13 @@ def handle_stop() -> int:
             "  python3 .claude/hooks/overnight_guard.py resume",
             file=sys.stderr,
         )
+        return 0
+    # False-arm guard: a real overnight run always targets a concrete TODO file.
+    # An empty todo_file means the state was armed by a bare activation phrase in an
+    # interactive prompt (e.g. discussing overnight runs), not an actual run -- clear
+    # it and do NOT trap the session. This is the documented interactive false-trap.
+    if not (state.get("todo_file") or "").strip():
+        clear_state("false-arm: no concrete todo_file (armed by a prompt keyword, not a real run)")
         return 0
     todo = state.get("todo_file") or "the active TODO file"
     msg = reminder_for(state) + (
