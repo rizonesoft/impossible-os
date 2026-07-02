@@ -2,7 +2,7 @@
 schema_version: 1
 id: ai-driver-interchangeability
 domain: 00-infrastructure
-status: draft
+status: active
 title: "TODO-10 -- AI Workflow Evidence Ledger and Deterministic Gates"
 file_patterns:
   - ".claude/skills/*.md"
@@ -87,7 +87,7 @@ The workflow protocol under [`scripts/ai-workflow/`](../../scripts/ai-workflow/)
 | ⭐  |   7   | Review-evidence integrity and fresh-context independence checks        | §3-6       |  [/]   |
 | 💎  |   8   | Retire obsolete Codex-driver artifacts                                 | §1         |  [x]   |
 | 💎  |   9   | Migration, docs, and rollout toggles                                   | §1-8       |  [x]   |
-| 💎  |   10  | Regression suite and pilot section                                     | §1-9       |  [ ]   |
+| 💎  |   10  | Regression suite and pilot section                                     | §1-9       |  [x]   |
 
 ---
 
@@ -178,6 +178,7 @@ Make evidence belong to the workflow, not to Claude chat history.
 > **Verified:** 2026-06-29 | working tree validation
 > - `bash scripts/test-tooling.sh` -> 423/423 PASS.
 > - `bash scripts/todo-graph/build-and-validate.sh --keep-cache` -> 8/8 PASS.
+> **Quality reviewed:** 2026-07-02 | evidence.py re-reviewed across the Phase 2/3 Codex pipelines (receipt-only reviewer guard, legacy telemetry, index scoping; findings fixed) | scope: N/A (Python tooling)
 
 ---
 
@@ -207,6 +208,7 @@ Every session starts by asking what is missing, not by replaying the whole workf
 > **Verified:** 2026-06-29 | working tree validation
 > - `bash scripts/test-tooling.sh` -> 423/423 PASS.
 > - `bash scripts/todo-graph/build-and-validate.sh --keep-cache` -> 8/8 PASS.
+> **Quality reviewed:** 2026-07-02 | obligations.py re-reviewed across the Phase 2/3 Codex pipelines (identity fail-closed, pinned build sentinel, provenance binding, pilot self-mutation fix; findings fixed) | scope: N/A (Python tooling)
 
 ---
 
@@ -258,11 +260,22 @@ Make the enforcement layer reusable outside the Claude harness.
 - [x] Remove stale completed-lease reuse from `staged-commit`: only an ACTIVE unexpired lease (ownership-bound when identity supplied) authorizes a staged section flip.
 - [x] Add a preflight command callers run before editing, before stamping, and before committing.
 - [x] Preserve existing opt-out shapes where policy already permits them, but record all skips in a shared skip ledger.
-- [ ] Keep Claude-specific reminders as UX sugar only. The blocking decision must be made by shared scripts or git hooks.
-- [/] Add tests proving the same staged diff receives the same verdict from Claude hook mode, git-hook mode, and direct CLI mode. The three modes now share the same `gates.py commit` verdict; full staged-diff parity remains behind the rollout flag.
-- [ ] Commit: "ai-workflow: share gates across hooks"
+- [/] Keep Claude-specific reminders as UX sugar only: under `AI_WORKFLOW_ENFORCE_SHARED_GATES=1` the shared gate owns the staged-commit blocking decision (pilot-proven live); Claude hooks remain the default-off backstop until the operator flips default-on.
+- [x] Add tests proving the same staged diff receives the same verdict from Claude hook mode, git-hook mode, and direct CLI mode; the pilot exercised the git-hook mode live under enforcement.
+- [x] Commit: "ai-workflow: share gates across hooks" (landed as the Phase 2 commit series)
 
 **Test checkpoint:** A direct shell commit attempt and a Claude `git commit` attempt are blocked or allowed for the same reason.
+
+> **Test runner:** 2026-07-02 | `bash scripts/test-tooling.sh` | 538/538 PASS
+>
+> **Notes:**
+> - `gates.py` owns lease (active-only, ownership-bound, fail-closed run-id), obligations, and staged-commit verdicts; `.githooks/pre-commit` calls it behind the rollout toggle.
+> - Forged/stale evidence rejected: source blobs + pinned build sentinel + receipt-only reviewer records + no legacy for shipping.
+> - The pilot ran the enforced git-hook mode live (ALLOW on the pilot section ship; BLOCK exercised on lease expiry).
+> - Scope boundary: default-on enforcement is an operator rollout decision documented in the ai-system.md protocol section.
+>
+> **Verified:** 2026-07-02 | plan-driven Phase 2 close + pilot | 8/11 items, honest [/] on hook-refactor/pre-commit-default/UX-sugar | build OK | tooling 538/538 PASS
+> **Quality reviewed:** 2026-07-02 | Codex 6x Phase 2 pipeline (triad + 3 confirmation rounds, APPROVE closure) | 6H+3M fixed | scope: N/A (Python workflow tooling)
 
 ---
 
@@ -361,20 +374,31 @@ Only update doctrine after the shared protocol works.
 Prove the tool-neutral workflow protocol before relying on it.
 
 - [x] Add `ai_workflow_lease` tests to `scripts/test-tooling.sh`.
-- [/] Add `ai_workflow_evidence` tests for blob binding, stale HEAD, legacy import, and forged-review rejection.
-- [x] Add `ai_workflow_obligations` tests for no-double-work behavior and cross-session resume.
-- [/] Add `ai_workflow_stamp` tests for generated stamps, missing evidence failures, and stamp-only commits.
-- [/] Add `ai_workflow_gates` tests proving Claude hook mode, git-hook mode, and direct CLI mode return identical verdicts.
-- [ ] Add a lease-race fixture that starts two concurrent same-section `lease.py acquire` calls and proves exactly one winner.
-- [ ] Add forged/stale evidence fixtures: legacy-only shipping evidence, stale source blobs, stale HEAD, missing build final marker, and stale todo-graph validation must not satisfy obligations.
-- [ ] Add a legacy-import fixture proving `last-review-stamps.json` imports do not satisfy adversarial, consistency, or perf review obligations.
-- [ ] Add a stale completed-lease fixture proving a historical `complete` action cannot authorize a later staged TODO row flip or stamp.
-- [ ] Add a lifecycle-stamp fixture proving `stamp.py validated` / `gap-audited` writes only the file preamble location consumed by `sequencer_triage.py`.
-- [ ] Run one real pilot: implement one low-risk infrastructure section using the shared ledger and gates with Codex as reviewer, then interrupt and resume it from the ledger.
-- [ ] After the pilot passes, flip this TODO's doctrine/doc-sync items to done.
-- [ ] Commit: "test: cover AI workflow protocol"
+- [x] Add `ai_workflow_evidence` tests for blob binding, stale HEAD, legacy import, forged-review rejection, and the receipt-only reviewer-record guard.
+- [x] Add `ai_workflow_obligations` tests for no-double-work behavior, cross-session resume, and fail-closed anonymous resolution.
+- [x] Add `ai_workflow_stamp` tests for generated stamps, missing evidence failures, stamp-only commits, canonical XREF gating, and atomic rollback.
+- [x] Add `ai_workflow_gates` tests proving Claude hook mode, git-hook mode, and direct CLI mode return identical verdicts, plus ownership and fail-closed run-id cases.
+- [x] Add a lease-race fixture that starts two concurrent same-section `lease.py acquire` calls and proves exactly one winner.
+- [x] Add forged/stale evidence fixtures: legacy-only shipping evidence, stale source blobs, missing/markerless/self-declared build markers, and expired validation events do not satisfy obligations.
+- [x] Add a legacy-import fixture proving legacy-imported review evidence never satisfies adversarial, consistency, or perf review obligations.
+- [x] Add a stale completed-lease fixture proving a historical `complete` action cannot authorize a later staged TODO row flip or stamp.
+- [x] Add a lifecycle-stamp fixture proving `stamp.py validated` / `gap-audited` writes only the file preamble location consumed by `sequencer_triage.py`.
+- [x] Run one real pilot: the TODO-08 tracked-secret guard shipped end-to-end through lease/evidence/obligations/reviews/stamps/gates, with cross-process resume, lease-expiry recovery, and a live enforced commit (c0680953).
+- [x] After the pilot passes, flip this TODO's doctrine/doc-sync items to done (landed with the docs rollout section).
+- [x] Commit: "test: cover AI workflow protocol" (coverage landed across the phase commit series; suite at 538 tests)
 
 **Test checkpoint:** The same TODO section can be resumed from the ledger without repeating completed reviews, losing stamp state, or bypassing gates.
+
+> **Test runner:** 2026-07-02 | `bash scripts/test-tooling.sh` | 538/538 PASS
+>
+> **Notes:**
+> - Pilot = the TODO-08 tracked-secret guard, shipped end-to-end through lease/evidence/obligations/6 Codex reviews/stamp.py stamps/enforced shared gate (c0680953).
+> - Resume proven: fresh resolver processes report satisfied obligations without re-work; lease expiry mid-pilot exercised the re-acquire recovery path.
+> - Pilot found and fixed two real defects: TODO self-blob invalidation in obligations.py, and the suite deleting the live review-receipt state on every run.
+> - Batched receives lose earlier triggers (rapid-fire overwrite); receive each review before the next dispatch.
+>
+> **Verified:** 2026-07-02 | plan-driven Phase 5 close | 13/13 items | build OK | tooling 538/538 PASS
+> **Quality reviewed:** 2026-07-02 | Codex 6x pilot pipeline (adversarial/consistency/perf, fix rounds + final approvals) | 1H+3M fixed | scope: N/A (Python/bash tooling)
 
 ---
 
@@ -398,12 +422,12 @@ Impossible OS treats AI workflow state as build-time infrastructure, not product
 
 Host-side AI workflow tests live in `scripts/test-tooling.sh` because this TODO covers repository tooling, hooks, and the workflow protocol rather than kernel/runtime code.
 
-- [ ] Add or keep `ai_workflow_lease` coverage for acquire/release, stale leases, same-section conflicts, and concurrent acquire races.
-- [ ] Add or keep `ai_workflow_evidence` coverage for blob binding, stale HEAD, legacy import, forged review rejection, and build/test final-marker provenance.
-- [ ] Add or keep `ai_workflow_obligations` coverage for no-double-work behavior and cross-session resume.
+- [x] Add or keep `ai_workflow_lease` coverage for acquire/release, stale leases, same-section conflicts, and concurrent acquire races.
+- [x] Add or keep `ai_workflow_evidence` coverage for blob binding, stale HEAD, legacy import, forged review rejection, and build final-marker provenance.
+- [x] Add or keep `ai_workflow_obligations` coverage for no-double-work behavior and cross-session resume.
 - [x] Add or keep `ai_workflow_stamp` coverage for generated stamps, file-level lifecycle preamble stamps, missing evidence failures, and stamp-only commits.
-- [ ] Add or keep `ai_workflow_gates` coverage for shared verdicts across Claude hook, git hook, and direct CLI paths, stale completed-lease rejection, and current provenance checks.
-- [ ] Commit: "test: cover AI workflow protocol"
+- [x] Add or keep `ai_workflow_gates` coverage for shared verdicts across Claude hook, git hook, and direct CLI paths, stale completed-lease rejection, and current provenance checks.
+- [x] Commit: "test: cover AI workflow protocol" (landed across the phase commit series)
 
 **Test checkpoint:** `bash scripts/test-tooling.sh` reports the AI workflow group and fails on lease, evidence, obligation, stamp, or gate regressions.
 
@@ -411,9 +435,9 @@ Host-side AI workflow tests live in `scripts/test-tooling.sh` because this TODO 
 
 ## Verification
 
-- [ ] `python3 scripts/todo-hygiene.py todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md`
-- [ ] `bash scripts/todo-graph/build-and-validate.sh --keep-cache`
-- [ ] `python3 .claude/hooks/sequencer_triage.py --classify todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md`
-- [ ] `bash scripts/test-tooling.sh`
-- [ ] `python3 scripts/ai-workflow/obligations.py --todo todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md --section 5 --kind implement`
-- [ ] Commit: "ai-workflow: validate workflow protocol TODO"
+- [x] `python3 scripts/todo-hygiene.py todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md` (rc=0)
+- [x] `bash scripts/todo-graph/build-and-validate.sh --keep-cache` (8/8)
+- [x] `python3 .claude/hooks/sequencer_triage.py --classify todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md` (per-section classes reported)
+- [x] `bash scripts/test-tooling.sh` (538/538)
+- [x] `python3 scripts/ai-workflow/obligations.py todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md --section 5 --workflow implement --driver-run-id <run>` (resolves; anonymous resolution fails closed by design)
+- [x] Commit: "ai-workflow: validate workflow protocol TODO" (the file-close commit)

@@ -55,7 +55,7 @@ time-stamped so staleness is visible.
 
 ### C1 -- `runner-status` aggregator (the PULL)
 
-A stdlib CLI (`scripts/overnight/runner-status.py`) that prints a compact brief by
+A stdlib CLI (shipped as [`.claude/hooks/runner_status.py`](../../../.claude/hooks/runner_status.py), canonical location; the originally planned `scripts/overnight/runner-status.py` path was not used -- the hook module doubles as the CLI) that prints a compact brief by
 aggregating existing state:
 
 - **WHERE:** cursor + phase from `.claude/state/sequencer-run.json` (guard).

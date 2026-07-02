@@ -181,20 +181,20 @@ lifecycle-evidence scope bound to `todo#file` in both stamp and sequencer lookup
 The section-7 stamps record the close; the per-finding classification schema
 remains an honest `[/]` (classification stays in receiving-code-review prose).
 
-### Phase 4 -- Migration, docs, rollout toggles
+### Phase 4 -- Migration, docs, rollout toggles -- DONE 2026-07-02 (bcbdbe7f: ai-system.md protocol section + hierarchy row, CLAUDE.md Model Roles pointer, AGENTS.md receipt-only boundary, stale guide rows rewritten; 1x consistency dispatch, 2M fixed)
 
 - Update `docs/infrastructure/ai-system.md`, `CLAUDE.md`, `AGENTS.md` to the tool-neutral
   protocol only after the earlier sections pass. Document the protocol, monitor commands, and the
   `AI_WORKFLOW_ENFORCE_SHARED_GATES` shared-gate toggle.
 
-### Phase 5 -- Regression suite + pilot
+### Phase 5 -- Regression suite + pilot -- DONE 2026-07-02 (c0680953 + 6a74e872: pilot = TODO-08 tracked-secret guard end-to-end through the protocol, 6 Codex dispatches, cross-process resume, lease-expiry recovery, live enforced shared gate; pilot-found fixes: TODO self-blob exemption + staged stamp-line check + suite review-state isolation; suite at 538)
 
 - Remaining `ai_workflow_evidence`/`stamp`/`gates` fixtures; lease-race, forged/stale evidence,
   legacy-import, stale completed-lease, lifecycle-stamp fixtures.
 - Run one real pilot: implement a low-risk infra section via the shared ledger + gates with Codex
   as reviewer, interrupt, and resume from the ledger. Then flip doctrine items done.
 
-### Phase 6 -- Overnight-runner situational awareness (folded spec; verify + close)
+### Phase 6 -- Overnight-runner situational awareness (folded spec; verify + close) -- DONE 2026-07-02 (criteria verified: brief 13 lines / 0.047s / fail-open; --anchor one line, guard-emitted only during runs; obligation + expired-gotcha logic covered by test_runner_status PASS; spec amended to record .claude/hooks/runner_status.py as canonical; optional WS3 measurement skipped)
 
 Folds [`docs/superpowers/specs/2026-06-27-overnight-runner-situational-awareness-design.md`](../specs/2026-06-27-overnight-runner-situational-awareness-design.md).
 The spec's job: keep the headless main loop on-rails (no drift, gate-surprise, or forgotten
