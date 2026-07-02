@@ -163,8 +163,9 @@ def has_ownerless_xref(summary: str) -> bool:
 
 
 def is_concrete(summary: str) -> bool:
-    """True iff the summary has >=1 concrete TODO clause and NO bare/ownerless one.
-    This is the stamp WRITER's minimum bar for a new accepted/deferred stamp.
+    """True iff the summary has >=1 concrete TODO clause and NO bare/ownerless one
+    (gate-tier concreteness). The stamp WRITER's bar is stricter -- see
+    writer_bare_xrefs/writer_has_concrete (canonical graph-consumable clause).
     """
     clauses = parse(summary)
     if not clauses:
@@ -180,50 +181,89 @@ def is_concrete(summary: str) -> bool:
 # Writer-side predicates (stricter than the gate tiers on purpose). The gate must
 # stay lenient so existing stamps survive; the WRITER refuses to emit a non-owning
 # stamp in the first place. Both live here so the two strictness levels cannot drift
-# across files. These reproduce common.py's historical bare_xrefs/has_concrete rules:
-#   - marker must sit INSIDE a parenthetical (RA-H1: a marker in loose prose parks
-#     work with no greppable owner -- todo-graph only reads owners from the paren);
-#   - markers are item:/retrofit/helper; (RA2-M1: standalone "at line" dropped; the
-#     canonical (item: "..." at line N) form still qualifies via item:);
+# across files. The writer bar is the CANONICAL graph-consumable clause:
+#   - `->` arrow before `XREF:`, then a domain-qualified `NN-domain/TODO-XX`
+#     target IMMEDIATELY followed by `§N` (todo-graph's edge parser requires
+#     the arrow and the target-section adjacency; anything else makes no edge);
+#   - a structural closed parenthetical with `item:` + `at line N` (or a
+#     retrofit marker) after the target and before the git hook's raw clause
+#     boundary. `helper;` stays a HOOK-tier marker only: its semicolon IS a
+#     raw terminator, so a writer clause can never carry it -- new stamps must
+#     name the helper via the item form instead;
 #   - clauses split on the case-sensitive `XREF:` marker every sibling parser uses.
-_WRITER_MARKERS = ("item:", "retrofit", "helper;")
-_PAREN_RE = re.compile(r"\(([^()]*)\)")
+_WRITER_MARKERS = ("item:", "retrofit")
 
 
-def _writer_clause_head(clause: str) -> str:
-    """The clause text the writer validates: bounded at the first RAW `,`/`;`/`]`
-    -- exactly the git hook's clause boundary, which has NO quote awareness. A
-    quoted terminator before the owner parenthetical truncates the hook's clause
-    to a bare one, so the writer must stop at the same spot or it would accept a
-    stamp the commit hook then BLOCKS (re-adversarial finding)."""
-    return re.split(r"[,;\]]", clause, 1)[0]
+def _gblank(text: str) -> str:
+    """Blank the CONTENT of complete quoted spans, preserving every offset, so
+    structural parens and markers are only found OUTSIDE quotes while raw
+    terminator indices computed on the original text stay valid. Quotes pair
+    left-to-right (a lone trailing quote stays), matching how a reader and the
+    canonical writer output treat quoted item names."""
+    return re.sub(r'"[^"]*"', lambda m: '"' + " " * (len(m.group(0)) - 2) + '"', text)
 
 
-def _writer_clause_ok(clause: str) -> bool:
-    """True when the clause head names a TODO owner AND carries a concrete
-    parenthetical marker inside that same head (writer-strict subset of the
-    git hook: everything the writer accepts, the hook also accepts).
+# Anchored graph-target: the chunk right after `XREF:` must open with the
+# domain-qualified path IMMEDIATELY followed by the section token, mirroring
+# todo-graph's `->\s+XREF:\s+(?P<target_path>\S+)\s+(?P<target_section>§\S+)`
+# edge regex -- a section marker elsewhere in the clause produces no edge.
+_WRITER_TARGET_RE = re.compile(r"^\s*\d{2}-[a-z0-9-]+/TODO-\d+\s+§\d+\b")
 
-    Quoted spans are blanked WITHIN the bounded head only -- a quoted item name
-    may contain parens (`item: "Enforce lease OWNERSHIP (not presence) ..."`)
-    that would break the innermost-paren scan. Quotes never hide a terminator
-    because the bound above is raw; the trade is fail-closed: a terminator
-    inside a quoted item name truncates the head and the writer rejects, which
-    the hook may have accepted -- rejecting more than the hook is always safe."""
-    head = _writer_clause_head(clause)
-    if not re.search(r"TODO-\d+", head):
+
+def _writer_clause_ok(arrow: bool, clause: str) -> bool:
+    """Canonical writer bar for one clause -- the graph-consumable shape
+    `-> XREF: NN-domain/TODO-XX §N (item: "..." at line N)`:
+
+    - the `XREF:` marker is preceded by the `->` arrow (todo-graph's edge
+      regex requires it);
+    - the chunk opens with a domain-qualified path immediately followed by
+      `§N` (adjacency: a section marker elsewhere makes no edge);
+    - a structural (outside-quotes) CLOSED parenthetical -- `item:` with
+      `at line N`, or a `retrofit` marker -- opens after the target and
+      BEFORE the first raw `,`/`;`/`]`.
+
+    The raw bound is the git hook's quote-blind clause boundary: the hook's
+    clause is clause[:bound], so requiring `(` and the marker before the bound
+    guarantees the hook classifies the same clause concrete -- writer-accept
+    implies hook-accept. Scanning the offset-preserving _gblank text keeps the
+    writer strict where the hook is not: a paren or marker inside quoted prose
+    (`"prefix (item: fake" ...`), an unclosed `(item: junk` tail, or a marker
+    hidden in a quoted item name are all refused."""
+    if not arrow:
         return False
-    for inner in _PAREN_RE.findall(re.sub(r'"[^"]*"', '""', head)):
-        low = inner.lower()
-        if any(m in low for m in _WRITER_MARKERS):
+    g = _gblank(clause)
+    tm = _WRITER_TARGET_RE.match(g)
+    if not tm:
+        return False
+    term = _TERMINATOR_RE.search(clause)
+    bound = term.start() if term else len(clause)
+    low = g.lower()
+    for m in re.finditer(r"\(([^()]*)\)", low):
+        if m.start() >= bound:
+            break
+        if m.start() < tm.end():
+            continue
+        inner = m.group(1)
+        concrete = ("item:" in inner and _AT_LINE_RE.search(inner)) or \
+            "retrofit" in inner
+        if concrete and any(k in low[m.start():bound] for k in _WRITER_MARKERS):
             return True
     return False
 
 
-def _writer_clauses(summary: str) -> list[str]:
+def _writer_clauses(summary: str) -> list[tuple[bool, str]]:
+    """(arrow_present, chunk) for every `XREF:` marker in the summary."""
+    out: list[tuple[bool, str]] = []
     if "XREF:" not in (summary or ""):
-        return []
-    return summary.split("XREF:")[1:]
+        return out
+    marks = list(re.finditer(r"XREF:", summary))
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(summary)
+        # bounded tail probe (not a full-prefix regex): stays linear on
+        # many-marker summaries
+        arrow = summary[max(0, m.start() - 8): m.start()].rstrip().endswith("->")
+        out.append((arrow, summary[m.end():end]))
+    return out
 
 
 def writer_bare_xrefs(summary: str) -> list[str]:
@@ -234,20 +274,24 @@ def writer_bare_xrefs(summary: str) -> list[str]:
     refused -- skipping it would let an ownerless clause ride on a concrete
     sibling's writer_has_concrete pass."""
     bad: list[str] = []
-    for clause in _writer_clauses(summary):
-        if not _writer_clause_ok(clause):
+    for arrow, clause in _writer_clauses(summary):
+        if not _writer_clause_ok(arrow, clause):
             bad.append(("XREF:" + clause).strip()[:100])
     return bad
 
 
 def writer_has_concrete(summary: str) -> bool:
-    """True when the summary carries >=1 concrete TODO XREF clause (writer bar)."""
-    return any(_writer_clause_ok(c) for c in _writer_clauses(summary))
+    """True when the summary carries >=1 canonical TODO XREF clause (writer bar)."""
+    return any(_writer_clause_ok(a, c) for a, c in _writer_clauses(summary))
 
 
 def canonical(clause: str) -> bool:
-    """Strict canonical form for a single clause the WRITER should emit:
-    a domain-qualified TODO path + `§N` + a concrete `(item: "..." at line N)`.
+    """Per-clause shape check (domain-qualified TODO path + `§N` + a concrete
+    `(item: "..." at line N)`), retained for structured callers. NOT the
+    writer's gate: the authoritative writer bar is writer_bare_xrefs /
+    writer_has_concrete, which additionally require the `->` arrow prefix,
+    target-section adjacency at the chunk start, and quote-aware structural
+    paren scanning.
     """
     tm = _TARGET_RE.search(clause)
     if not tm or "/" not in tm.group("path"):

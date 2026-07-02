@@ -82,7 +82,7 @@ The workflow protocol under [`scripts/ai-workflow/`](../../scripts/ai-workflow/)
 | 💎  |   2   | Active-mutator lease schema and lock                                  | §1         |  [/]   |
 | 💎  |   3   | Tool-neutral evidence ledger and importer for existing state           | §1         |  [x]   |
 | 💎  |   4   | Obligation resolver to avoid duplicate work                            | §3         |  [x]   |
-| 💎  |   5   | Deterministic stamp writer                                             | §3-4       |  [/]   |
+| 💎  |   5   | Deterministic stamp writer                                             | §3-4       |  [x]   |
 | 💎  |   6   | Shared gate library used by Claude hooks and git hooks                 | §3-5       |  [/]   |
 | ⭐  |   7   | Review-evidence integrity and fresh-context independence checks        | §3-6       |  [/]   |
 | 💎  |   8   | Retire obsolete Codex-driver artifacts                                 | §1         |  [x]   |
@@ -214,7 +214,7 @@ Every session starts by asking what is missing, not by replaying the whole workf
 
 ## 5. Deterministic Stamp Writer
 
-> **Folded 2026-07-01:** the stamp writer shipped in commit 92b80346; its post-ship review and the open XREF-grammar findings are folded into the XREF-grammar unification plan (docs/superpowers/plans/2026-07-01-todo10-xref-grammar-unification-plan.md). Status is [/] until that change lands.
+> **Folded 2026-07-01, landed 2026-07-02:** the stamp writer shipped in commit 92b80346; its post-ship review and the open XREF-grammar findings were folded into the XREF-grammar unification plan (docs/superpowers/plans/2026-07-01-todo10-xref-grammar-unification-plan.md) and landed as Phase 1 (shared `xref.py` grammar, writer/hook subset property, atomic stamp+ledger critical section, linear clause scan; commits 2c23f910 through the Phase 1 triad close).
 
 Stop relying on model-authored stamp prose for workflow truth.
 
@@ -225,7 +225,7 @@ Stop relying on model-authored stamp prose for workflow truth.
 - [x] Stamp writer refuses to add a stamp when required evidence is missing, stale, legacy-only where fresh evidence is required, or produced by a disallowed role combination.
 - [x] Section-local stamps land in the canonical bottom block: `_insert_stamp` joins an existing Verified/Accepted/Deferred/Quality group, else places after Notes/Test-runner with the `>` separator, never abutting the heading.
 - [x] File-level mode: `validated`/`gap-audited` auto-route to `_insert_preamble_stamp` (replace-in-place; hard-fail no H1); `--section` optional; gated on `todo-graph-validate`/`gap-audit` evidence with an `--allow-missing` escape.
-- [x] `accepted`/`deferred` stamps reject a bare XREF summary before writing; `common.bare_xrefs` delegates to the shared grammar module `scripts/ai-workflow/xref.py` the git hook also uses.
+- [x] `accepted`/`deferred` stamps accept only the graph-consumable XREF clause (arrow + adjacent section + item paren) via the shared grammar module `scripts/ai-workflow/xref.py` the git hook also uses.
 - [x] Stamp writer records a `stamp.generated` ledger event with the exact text hash.
 - [x] Make stamp writing atomic vs ledger failure: preflight the workflow lock before `path.write_text` so a lock failure / fail-closed no-fcntl cannot leave a TODO stamp with no backing `stamp.generated` evidence.
 - [x] Add `--dry-run` and `--explain-missing` modes.
@@ -234,14 +234,17 @@ Stop relying on model-authored stamp prose for workflow truth.
 
 **Test checkpoint:** A caller cannot create a successful section stamp unless the ledger proves the required workflow happened.
 
-> **Test runner:** 2026-07-01 | `bash scripts/test-tooling.sh` | 449/449 PASS
+> **Test runner:** 2026-07-02 | `bash scripts/test-tooling.sh` | 504/504 PASS
 >
 > **Notes:**
-> - `stamp.py` gains a file-level lifecycle mode (`_insert_preamble_stamp` for `validated`/`gap-audited`) and a rewritten section-local `_insert_stamp` placing stamps in the canonical bottom block; `common.bare_xrefs` gates `accepted`/`deferred`.
-> - Routed by stamp kind; file-level evidence is file-scoped (`section=file`); the `accepted_xref_block.py` git hook stays the authoritative backstop. Codex design + adversarial adoptions (H2 section boundary, evidence-gated lifecycle stamps, per-clause XREF check) in the commit message.
-> - Downstream: `sequencer_triage.file_lifecycle` now recognizes generated `Validated:`/`Gap-audited:` stamps so the overnight sequencer can skip re-auditing mature files.
-> - Canonical doc: [docs/infrastructure/ai-driver-interchangeability.md](../../docs/infrastructure/ai-driver-interchangeability.md).
+> - `stamp.py` writes file-level lifecycle stamps (`_insert_preamble_stamp`) and canonical bottom-block section stamps (`_insert_stamp`); `accepted`/`deferred` accept ONLY the graph-consumable XREF clause (arrow + adjacent section + item paren) via `scripts/ai-workflow/xref.py`.
+> - The `accepted_xref_block.py` git hook shares the same grammar module and stays the authoritative backstop; file-level evidence is file-scoped (`section=file`).
+> - Phase 1 hardening: writer/hook subset property (fuzz-proven), one workflow_lock critical section with atomic rollback, linear clause scan (hook DoS fixed).
+> - Downstream: `sequencer_triage.file_lifecycle` recognizes generated `Validated:`/`Gap-audited:` stamps so the sequencer skips mature files.
 > - Scope boundary: §6 owns shared-gate consumption of stamp evidence; §7 owns reviewer-evidence integrity.
+>
+> **Verified:** 2026-07-02 | plan-driven Phase 1 close | 13/13 items | build OK | tooling 504/504 PASS, xref corpus 1976 lines + 20k fuzz 0 mismatches
+> **Quality reviewed:** 2026-07-02 | Codex 10x (adversarial+consistency+perf triad + 7 confirmation rounds to convergence) | 6H+5M+2L fixed | scope: N/A (Python workflow tooling)
 
 ---
 

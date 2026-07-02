@@ -261,14 +261,17 @@ def main(argv: list[str] | None = None) -> int:
         bare = common.bare_xrefs(args.summary)
         if bare:
             return common.die(
-                "bare XREF (needs a concrete `(item: ... at line N)` parenthetical): "
-                + " | ".join(bare),
+                "non-canonical XREF (writer requires the graph-consumable clause "
+                '`-> XREF: NN-domain/TODO-XX §N (item: "..." at line N)` -- arrow '
+                "prefix, section immediately after the target, item parenthetical "
+                "before any , ; ]): " + " | ".join(bare),
                 2,
             )
         if not common.has_concrete_todo_xref(args.summary):
             return common.die(
-                f"{args.stamp_kind} stamp requires a concrete XREF naming a TODO owner "
-                '(`... -> XREF: NN-domain/TODO-XX §N (item: "..." at line N)`)',
+                f"{args.stamp_kind} stamp requires a canonical XREF naming a TODO owner "
+                '(`... -> XREF: NN-domain/TODO-XX §N (item: "..." at line N)`, section '
+                "immediately after the target)",
                 2,
             )
 

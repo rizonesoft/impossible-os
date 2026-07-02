@@ -78,7 +78,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5          |  [x]   |
 | 💎  |  10   | RT sleepable lock migration              | §1              |  [x]   |
 | 💎  |  11   | Unified signed boot artifact (UKI-style) | §6              |  [x]   |
-| 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [x]   |
+| 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6          |  [/]   |
 | 💎  |  13   | EFI System Partition integrity check     | --              |  [x]   |
 | 💎  |  14   | Win32 firmware variable + table surface  | §2              |  [x]   |
 | 💎  |  15   | Post-boot SecureBoot revalidation        | §5              |  [/]   |
@@ -420,6 +420,7 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 - [x] Build-time check: `scripts/test-tooling.sh` `shim_ca_detection` block runs sign-efi.sh against synthetic 2011/2023 CA + pre-warn/warn/post-expiry date matrix via `SHIM_CA_TEST_TODAY` override env. Original wording continued: Add a build-time check (`scripts/build.sh` or `scripts/test-tooling.sh` sub-test): if the shim binary is signed only by the deprecated CA AND the build host's date is past 2026-04-01, emit a WARN. The 60-day pre-expiry window is the safety margin per the MS guidance.
 - [x] `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD) populated by `uefi_secureboot_populate_registry()` at boot from `SHIM_CA_YEAR` (build-time-extracted from `sbverify --list shim/shimx64.efi` via new `scripts/extract-shim-ca.sh` -> `build/generated/shim_ca.h`). Sentinels: 0 (not pinned), 0xFFFFFFFF (parse fail), 2011|2023. SHA-bound at gen time (Codex H1 fix). Original wording: Surface the shim CA generation in `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD: 2011 or 2023) at boot via [`uefi_secureboot_populate_registry()`](../../src/kernel/uefi_runtime.c). Consumers (msinfo32-equivalent, audit tools) can read it.
 - [x] Commit: `"boot: track MS UEFI CA 2023 transition; sign-efi.sh emits CA generation; registry surface"`
+- [ ] Make shim absence fail-loud after the 2026-07-01 expiry unpin: Makefile ESP packaging + secureboot smoke must FAIL (not silently direct-boot/skip) without a trusted shim; update §6 claims + docs; re-pin a 2023-CA shim per the vendor watch.
 
 **Test checkpoint:** `sbverify --list shim/shimx64.efi` output names a Microsoft Corporation UEFI CA generation; `HKLM\SYSTEM\SecureBoot\ShimCA` matches; `bash scripts/sign-efi.sh build/BOOTX64.EFI` logs `[shim] signed-by: ...`; the build-time warning fires when the deprecated CA date threshold is crossed. Test on: QEMU WHPX (signature path), QEMU TCG, VirtualBox, bare metal (real DB rotation).
 

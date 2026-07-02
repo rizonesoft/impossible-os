@@ -5983,12 +5983,65 @@ QTERM = '[M] gap -> XREF: 00-infrastructure/TODO-11 "see, note" (item: "Real" at
 check("writer_rejects_quoted_terminator_before_paren",
       bool(xref.writer_bare_xrefs(QTERM)) and not xref.writer_has_concrete(QTERM)
       and bool(xref.bare_clauses(QTERM)))
+# a canonical item name containing a raw terminator stays writable: the
+# structural paren + marker sit before the hook boundary (round-3 finding) --
+# and the hook agrees (its clause ends at the same spot with ( and item: before it)
+for i, t in enumerate((
+    f'[M] gap -> XREF: 00-infrastructure/TODO-11 {S}2 (item: "Real, extra" at line 7)',
+    f'[M] gap -> XREF: 00-infrastructure/TODO-11 {S}2 (item: "a; b] c" at line 9)',
+)):
+    check(f"writer_accepts_punctuated_item_name_{i}",
+          not xref.writer_bare_xrefs(t) and xref.writer_has_concrete(t)
+          and not xref.bare_clauses(t))
+# a genuinely UNCLOSED parenthetical is refused by the writer even though the
+# lenient hook lets it through -- writer strictness, round-4 finding
+UNCLOSED = '[M] gap -> XREF: 00-infrastructure/TODO-11 (item: junk with no closing paren'
+check("writer_rejects_unclosed_parenthetical",
+      bool(xref.writer_bare_xrefs(UNCLOSED)) and not xref.writer_has_concrete(UNCLOSED))
+# a marker hidden INSIDE the quoted item name is not structural
+QMARK = '[M] gap -> XREF: 00-infrastructure/TODO-11 ("item: fake inside quotes" at line 3)'
+check("writer_rejects_quoted_only_marker",
+      bool(xref.writer_bare_xrefs(QMARK)) and not xref.writer_has_concrete(QMARK))
+# a paren+marker inside quoted PROSE (quote opened before the paren) is not a
+# structural owner parenthetical (round-5 finding: global quote state)
+QPROSE = 'XREF: 00-infrastructure/TODO-11 "prefix (item: fake" blah ") still quoted"'
+check("writer_rejects_paren_inside_quoted_prose",
+      bool(xref.writer_bare_xrefs(QPROSE)) and not xref.writer_has_concrete(QPROSE))
+# writer-accept implies a graph-consumable edge shape: arrow + domain path
+# immediately followed by section + concrete item parenthetical (consistency +
+# final-adversarial findings); cross-checked against todo-graph's actual regex
+sys.path.insert(0, "scripts/todo-graph")
+import build as tg
+GOOD = f'[M] g -> XREF: 00-infrastructure/TODO-11 {S}2 (item: "Real" at line 7)'
+check("writer_accept_implies_graph_edge_shape",
+      xref.writer_has_concrete(GOOD) and not xref.writer_bare_xrefs(GOOD)
+      and tg.XREF_CLAUSE_RE.search(GOOD) is not None)
+NONCANON = '[M] g -> XREF: TODO-11 (item: "X" at line 20)'
+check("writer_rejects_sectionless_or_bare_domain",
+      bool(xref.writer_bare_xrefs(NONCANON)) and not xref.writer_has_concrete(NONCANON))
+# a section marker NOT adjacent to the target makes no graph edge -> writer rejects
+ADJ = f'[M] g -> XREF: 00-infrastructure/TODO-11 (item: "X" at line 20) see {S}1'
+check("writer_rejects_non_adjacent_section",
+      bool(xref.writer_bare_xrefs(ADJ)) and not xref.writer_has_concrete(ADJ)
+      and tg.XREF_CLAUSE_RE.search(ADJ) is None)
+# the arrow prefix is part of the edge grammar -> writer rejects arrowless clauses
+NOARROW = f'[M] g XREF: 00-infrastructure/TODO-11 {S}2 (item: "Real" at line 7)'
+check("writer_rejects_arrowless_clause",
+      bool(xref.writer_bare_xrefs(NOARROW)) and not xref.writer_has_concrete(NOARROW)
+      and tg.XREF_CLAUSE_RE.search(NOARROW) is None)
+# helper; is HOOK-tier only: its semicolon is a raw terminator, so the writer can
+# never accept it -- pinned as a documented decision (new stamps use the item form)
+HLP = f'[M] g -> XREF: 00-infrastructure/TODO-11 {S}2 (helper; add kmem helper)'
+check("writer_rejects_helper_marker",
+      bool(xref.writer_bare_xrefs(HLP)) and not xref.writer_has_concrete(HLP))
 # subset property fuzz: any summary the WRITER accepts must have no hook-BLOCK
 # clause (writer-accepts implies hook-accepts, for every generated shape)
 import random as _random
 _random.seed(11)
-_frag = ["XREF:", " 00-x/TODO-11", " no-owner", ",", ";", "]", ' "q, uote"',
-         ' (item: "Real" at line 7)', " (later)", " item: loose", " text"]
+_frag = ["XREF:", "-> XREF:", " 00-x/TODO-11", f" 00-x/TODO-11 {S}2", " no-owner",
+         ",", ";", "]", ' "q, uote"', ' (item: "Real" at line 7)',
+         ' (item: "a, b" at line 3)', " (later)", ' (item: junk unclosed',
+         ' "prose (item: fake"', " item: loose", " text"]
 _viol = [s for s in ("".join(_random.choice(_frag) for _ in range(_random.randint(1, 10)))
                      for _ in range(4000))
          if xref.writer_has_concrete(s) and not xref.writer_bare_xrefs(s)
@@ -5997,11 +6050,11 @@ check("writer_subset_property_fuzz", not _viol)
 PYEOF
 )
 XREF_OK=$(echo "$XREF_OUT" | grep -c "^OK ")
-if [ "$XREF_OK" = "22" ]; then
+if [ "$XREF_OK" = "32" ]; then
     echo "$XREF_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "xref_grammar: $line"
     done
-    PASS=$((PASS + 22))
+    PASS=$((PASS + 32))
 else
     t_fail "xref_grammar: tier/parse/writer coverage incomplete" "ok-count=$XREF_OK out=$XREF_OUT"
 fi
@@ -7529,6 +7582,7 @@ EOF_LIFE
       && git -c commit.gpgsign=false commit -q -m init
 )
 LIFE_ENV=(env AI_WORKFLOW_REPO_ROOT="$LIFE_REPO" AI_WORKFLOW_STATE_DIR="$LIFE_REPO/build/ai-workflow")
+SS=$(printf '\302\247')  # section sign built at runtime -- keeps literal bare-section-refs out of this file
 "${LIFE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record --todo "$LIFE_TODO" --section file \
     --role validator --backend local --run-id life-graph --kind todo-graph-validate --result ok >/dev/null
 "${LIFE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record --todo "$LIFE_TODO" --section file \
@@ -7566,10 +7620,17 @@ if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" -
 else
     t_pass "ai_workflow_stamp: deferred with a bare XREF is rejected before write"
 fi
-if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 --summary '[H] gap -> XREF: TODO-11 (item: "X" at line 20)' --dry-run >/dev/null; then
-    t_pass "ai_workflow_stamp: deferred with a concrete-item XREF is allowed"
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 --summary "[H] gap -> XREF: 00-infrastructure/TODO-11 ${SS}1 (item: \"X\" at line 20)" --dry-run >/dev/null; then
+    t_pass "ai_workflow_stamp: deferred with a canonical concrete-item XREF is allowed"
 else
-    t_fail "ai_workflow_stamp: deferred with a concrete-item XREF is allowed"
+    t_fail "ai_workflow_stamp: deferred with a canonical concrete-item XREF is allowed"
+fi
+# a concrete-but-non-canonical XREF (no domain path / no section marker) produces
+# no todo-graph edge, so the writer refuses it (consistency finding)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 --summary '[H] gap -> XREF: TODO-11 (item: "X" at line 20)' --dry-run >/dev/null 2>&1; then
+    t_fail "ai_workflow_stamp: sectionless/non-domain XREF is rejected (graph-consumable bar)"
+else
+    t_pass "ai_workflow_stamp: sectionless/non-domain XREF is rejected (graph-consumable bar)"
 fi
 LIFE_SEC_TODO="todo/00-infrastructure/TODO-96-seclocal.md"
 cat > "$LIFE_REPO/$LIFE_SEC_TODO" <<'EOF_SEC'
@@ -7754,7 +7815,7 @@ cat > "$LIFE_REPO/$LIFE_DIS_TODO" <<'EOF_DIS'
 > **Verified:** old-v
 EOF_DIS
 "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_DIS_TODO" --section 5 \
-    --summary '[H] gap -> XREF: TODO-11 (item: "x" at line 1)' --allow-missing --write >/dev/null
+    --summary "[H] gap -> XREF: 00-infrastructure/TODO-11 ${SS}1 (item: \"x\" at line 1)" --allow-missing --write >/dev/null
 if python3 - "$LIFE_REPO/$LIFE_DIS_TODO" <<'PY'
 import sys
 lines = open(sys.argv[1]).read().splitlines()
@@ -7795,7 +7856,7 @@ cat > "$LIFE_REPO/$LIFE_NOTE_TODO" <<'EOF_NOTE'
 > **Verified:** old-v
 EOF_NOTE
 "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_NOTE_TODO" --section 5 \
-    --summary '[H] gap -> XREF: TODO-11 (item: "x" at line 1)' --allow-missing --write >/dev/null
+    --summary "[H] gap -> XREF: 00-infrastructure/TODO-11 ${SS}1 (item: \"x\" at line 1)" --allow-missing --write >/dev/null
 if python3 - "$LIFE_REPO/$LIFE_NOTE_TODO" <<'PY'
 import sys
 lines = open(sys.argv[1]).read().splitlines()
@@ -7825,7 +7886,7 @@ fi
 # a quoted item name containing parens is still concrete (nested parens inside the
 # quotes must not break the writer's innermost-paren scan)
 if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
-    --summary '[M] gap -> XREF: 00-infrastructure/TODO-11 (item: "Enforce OWNERSHIP (not presence) in consumers" at line 134)' --write 2>/dev/null; then
+    --summary "[M] gap -> XREF: 00-infrastructure/TODO-11 ${SS}2 (item: \"Enforce OWNERSHIP (not presence) in consumers\" at line 134)" --write 2>/dev/null; then
     t_pass "ai_workflow_stamp: quoted item name containing parens is accepted as concrete"
 else
     t_fail "ai_workflow_stamp: quoted item name containing parens is accepted as concrete"
@@ -7848,6 +7909,24 @@ if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" -
     t_fail "ai_workflow_stamp: quoted terminator before the parenthetical is rejected (hook-subset)"
 else
     t_pass "ai_workflow_stamp: quoted terminator before the parenthetical is rejected (hook-subset)"
+fi
+
+# a canonical item name CONTAINING a terminator stays writable: the quote-aware
+# closed parenthetical carries the marker before the hook boundary (round 3)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary "[M] gap -> XREF: 00-infrastructure/TODO-11 ${SS}1 (item: \"Real, extra\" at line 7)" --write 2>/dev/null; then
+    t_pass "ai_workflow_stamp: canonical item name containing a comma is accepted"
+else
+    t_fail "ai_workflow_stamp: canonical item name containing a comma is accepted"
+fi
+
+# a genuinely unclosed parenthetical is refused by the writer (round-4 finding:
+# writer strictness must not regress to accepting malformed owner text)
+if "${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py deferred "$LIFE_TODO" --section 1 \
+    --summary '[M] gap -> XREF: 00-infrastructure/TODO-11 (item: junk with no closing paren' --write 2>/dev/null; then
+    t_fail "ai_workflow_stamp: unclosed parenthetical is rejected before write"
+else
+    t_pass "ai_workflow_stamp: unclosed parenthetical is rejected before write"
 fi
 
 STAGED_REPO="$AIWF_TMP/staged-repo"

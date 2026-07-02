@@ -74,7 +74,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | 💎  |   6   |  §6     | MCP usage discipline doc; CLAUDE.md pointer; skill audits update prose                       | §1                         |  [x]   |
 | ⭐  |   7   |  §10    | Skill step-state telemetry + non-contiguous-step block                                       | §3, §11                    |  [x]   |
 | ⭐  |   8   |  §11    | Hook event surface expansion                                                                 | §3, §4                     |  [x]   |
-| ⭐  |   9   |  §12    | AI-slop content lints (tautological / stub-behind-stamp; phantom-include attempted then dropped) | --                       |  [x]   |
+| ⭐  |   9   |  §12    | AI-slop content lints (tautological / stub-behind-stamp; phantom-include attempted then dropped) | --                       |  [/]   |
 | 💎  |   10  |  §7     | Hook system audit + dedupe; `MANIFEST.md`; `scripts/audit-hooks.sh`; exit-code gate          | §3, §4, §5, §10, §11, §12  |  [x]   |
 | 💎  |   11  |  §8     | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows                  | §3                         |  [x]   |
 | ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (7 checks)                          | §1, §2, §7, §11            |  [x]   |
@@ -467,6 +467,7 @@ Build green and tests green do not catch the most common AI-slop patterns. Indus
 - [x] Five sub-tests in [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) (`lint_check6_tautology`, `lint_check6_marker`, `lint_check7_deferred`, `lint_check8_deferred`, `lint_check6_skip`) synthesize a non-legacy test path with the anti-pattern and confirm lint output. The original plan said 3 sub-tests; landing 5 because the marker-allowlist negative case + the skip-env visible-WARN case each deserve their own assertion.
 - [x] [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) gained a new "AI-Slop Content Gates" subsection (under External-Reviewer Contract) with a 3-row table of pattern + marker + skip env vars and the deferred-status note for Checks 7/8.
 - [x] Commit: `"scripts/lint: AI-slop content lints (tautological-test, stub-behind-stamp, phantom-include)"`.
+- [ ] Restore a repo-local staged-secret guard (lint.sh check or pre-commit block for `secret`/`secrets.json` basenames + live key patterns); the only guard left with the Conclave removal, after a real 2026-06 key-leak incident.
 
 **Test checkpoint:** Synthetic `src/kernel/test/test_synthetic_tautology_check_6.c` with `TEST_ASSERT(true, ...)` in a non-legacy path → lint exits non-zero with `tautological-test:` error. Adding `/* TEST-TAUTOLOGY-OK: ... */` on the same line → no error. `bash scripts/lint.sh` exits 0 with only the legacy-allowlist WARN lines. `bash scripts/test-tooling.sh` shows the lint sub-tests PASS. Test on: Linux WSL2 dev host.
 
