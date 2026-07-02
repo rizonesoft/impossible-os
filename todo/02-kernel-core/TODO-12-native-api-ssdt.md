@@ -1023,13 +1023,19 @@ Catch-all for global atom table, locale management, environment variables, and d
 
 **Test checkpoint:** `NtAddAtom("TestAtom")` returns atom ID > 0. `NtFindAtom("TestAtom")` returns same ID. `NtDeleteAtom` removes it; subsequent `NtFindAtom` returns `STATUS_OBJECT_NAME_NOT_FOUND`. `NtQueryDefaultLocale` returns valid LCID.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 suites, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 9 suites, 0 failures
 
 > **Notes:**
 > - Shipped `src/kernel/nt/nt_misc.c` + `include/kernel/nt/nt_misc.h`: global atom table (refcounted, 512-slot, IDs 0xC000+) plus locale/UI-language storage, `NtDisplayString`, and `NtRaiseHardError`; 11 SSDT handlers at 0x00D8-0x00E2.
 > - Registered via `nt_misc_register_ssdt()` in `boot_desktop.c`; all user pointers go through `ProbeFor{Read,Write}IfUser` + `copy_{from,to}_user`; integer atoms (name ptr < 0xC000) never dereferenced.
-> - Atom/locale logic is exposed as pure `nt_atom_*`/`nt_locale_*` helpers so `test_nt_misc.c` (TEST_CAT_ABI, 6 suites) exercises it without the syscall path. Codex design adoptions in the ship commit.
-> - Scope boundary: full Unicode case-folding, per-user-profile locale hives, and the `NtRaiseHardError` shutdown/bugcheck privilege path are NOT owned here (locale/NLS + token work own them; see Deferred stamp).
+> - Atom/locale logic is exposed as pure `nt_atom_*`/`nt_locale_*` helpers so `test_nt_misc.c` (TEST_CAT_ABI, 9 suites) exercises it without the syscall path.
+> - Setters/privileged ops fail closed: locale setters + NtDisplayString + NtRaiseHardError shutdown return `STATUS_PRIVILEGE_NOT_HELD` for unprivileged callers.
+> - Scope boundary: full Unicode case-folding, per-user locale hives, the production hash-indexed atom table, copy_*_user fault-recovery, and >4-arg (a5/a6) stack marshalling are owned elsewhere (see Accepted stamps).
+> **Verified:** 2026-07-03 | commit `ce9d7387` | 14/14 items | build OK | tests 974 kernel + 16 user PASS
+> **Accepted:** [M] copy_*_user is not fault-recoverable (ProbeFor* validates range not page-presence; an in-range-unmapped user page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §4 (item: "Audit all syscall handlers: replace raw user-pointer dereference with `copy_from_user()` / `copy_to_user()`" at line 126 -- nt_misc.c added to retrofit list)
+> **Accepted:** [M] NtRaiseHardError Response/OptionShutdownSystem + NtQueryInformationAtom ReturnLength need >4-arg stack marshalling (entry path drops a5/a6) -> XREF: 02-kernel-core/TODO-12 §3 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 245)
+> **Accepted:** [M] atom lookup holds the irqsave `s_atom_lock` across an O(512x255) name scan (unprivileged full-table miss -> ~130us IRQ-disabled) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §3 (item: "Bound the locked atom lookup ... add a per-slot case-folded hash / bucket index or a thread-context mutex")
+> **Quality reviewed:** 2026-07-03 | Codex 16x (design, adversarial, re-adversarial, consistency, perf, test-coverage) | 3H+10M fixed, 3M accepted-XREF | scope: kernel-code-quality
 
 ---
 

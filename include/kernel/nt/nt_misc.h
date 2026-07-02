@@ -42,7 +42,7 @@
 /* ATOM_BASIC_INFORMATION -- layout matches Windows SDK ntifs.h.
  *   offset 0:  USHORT UsageCount;   (refcount)
  *   offset 2:  USHORT Flags;        (0 = string atom; 1 = integer/pinned)
- *   offset 4:  USHORT NameLength;   (chars, excluding NUL)
+ *   offset 4:  USHORT NameLength;   (byte count, excluding NUL; UNICODE_STRING convention)
  *   offset 6:  WCHAR  Name[1];      (NUL-terminated wide name; flexible)
  */
 typedef struct _ATOM_BASIC_INFORMATION {

@@ -429,6 +429,11 @@ static NTSTATUS NtQueryInformationAtom_handler(uint64_t atom, uint64_t info_clas
     if (st != STATUS_SUCCESS)
         return st;
 
+    /* Length is a 32-bit ULONG in the NT ABI; narrow the raw 64-bit syscall
+     * arg so a high-bit-set value cannot pass the size check with a low-32
+     * capacity that is actually too small for the record. */
+    uint32_t length = (uint32_t)buf_len;
+
     /* Required bytes: header + (name chars + NUL) wide chars. */
     uint32_t required = (uint32_t)__builtin_offsetof(ATOM_BASIC_INFORMATION, Name)
                         + (nlen + 1) * sizeof(uint16_t);
@@ -441,7 +446,7 @@ static NTSTATUS NtQueryInformationAtom_handler(uint64_t atom, uint64_t info_clas
     }
     /* A grow-and-retry caller passes Buffer=NULL/Length=0 to learn the size;
      * answer with the required length + BUFFER_TOO_SMALL, not a hard error. */
-    if (!buffer || buf_len < required)
+    if (!buffer || length < required)
         return STATUS_BUFFER_TOO_SMALL;
 
     /* Build the record in a bounded kernel buffer, then copy out. */

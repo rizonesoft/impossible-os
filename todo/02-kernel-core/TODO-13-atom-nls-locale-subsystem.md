@@ -65,6 +65,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 - [ ] Implement per-process or per-session local atom tables for Win32 compatibility.
 - [ ] Retrofit the global atom table onto the NLS case-folding authority (§2), replacing the ASCII fold.
+- [ ] Bound the locked atom lookup (`nt_misc.c` `atom_find_slot_locked` scans O(512x255) under the irqsave `s_atom_lock`): add a per-slot case-folded hash / bucket index or a thread-context mutex.
 
 > **Note:** The GLOBAL atom table (16-bit IDs 0xC000+, string interning, refcount, add/find/delete/query APIs, integer/string range split) shipped in TODO-12 §23 (`src/kernel/nt/nt_misc.c`) with an ASCII-only case fold. This section still owns per-process/per-session LOCAL atom tables and the NLS-authority retrofit above.
 

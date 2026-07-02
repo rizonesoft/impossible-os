@@ -215,17 +215,17 @@ title: "SSDT Master Table"
 | 0x00D5 | NtSetSystemEnvironmentValueEx        | §23 | T12 §23 (uefi_runtime.c) | [x]  |
 | 0x00D6 | NtEnumerateSystemEnvironmentValuesEx | §23 | T12 §23                  | [ ]  |
 | 0x00D7 | NtShutdownSystem                     | §5  | T12 (§5 migration)       | [x]  |
-| 0x00D8 | NtDisplayString                      | §23 | T12                      | [ ]  |
-| 0x00D9 | NtRaiseHardError                     | §23 | T12                      | [ ]  |
-| 0x00DA | NtQueryDefaultLocale                 | §23 | T12                      | [ ]  |
-| 0x00DB | NtSetDefaultLocale                   | §23 | T12                      | [ ]  |
-| 0x00DC | NtQueryDefaultUILanguage             | §23 | T12                      | [ ]  |
-| 0x00DD | NtSetDefaultUILanguage               | §23 | T12                      | [ ]  |
-| 0x00DE | NtQueryInstallUILanguage             | §23 | T12                      | [ ]  |
-| 0x00DF | NtAddAtom                            | §23 | T12                      | [ ]  |
-| 0x00E0 | NtFindAtom                           | §23 | T12                      | [ ]  |
-| 0x00E1 | NtDeleteAtom                         | §23 | T12                      | [ ]  |
-| 0x00E2 | NtQueryInformationAtom               | §23 | T12                      | [ ]  |
+| 0x00D8 | NtDisplayString                      | §23 | T12                      | [x]  |
+| 0x00D9 | NtRaiseHardError                     | §23 | T12                      | [x]  |
+| 0x00DA | NtQueryDefaultLocale                 | §23 | T12                      | [x]  |
+| 0x00DB | NtSetDefaultLocale                   | §23 | T12                      | [x]  |
+| 0x00DC | NtQueryDefaultUILanguage             | §23 | T12                      | [x]  |
+| 0x00DD | NtSetDefaultUILanguage               | §23 | T12                      | [x]  |
+| 0x00DE | NtQueryInstallUILanguage             | §23 | T12                      | [x]  |
+| 0x00DF | NtAddAtom                            | §23 | T12                      | [x]  |
+| 0x00E0 | NtFindAtom                           | §23 | T12                      | [x]  |
+| 0x00E1 | NtDeleteAtom                         | §23 | T12                      | [x]  |
+| 0x00E2 | NtQueryInformationAtom               | §23 | T12                      | [x]  |
 
 **0x00F0–0x00FF: Time and Timer (→ XREF TODO-17 §6,§9)** -- **5/5 DONE** (wall_clock.c, timer_resolution.c)
 
