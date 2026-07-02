@@ -121,10 +121,14 @@ Current workflow review obligations are:
 | `complete-todo-file` | `test-coverage` indirectly through `implement-unit-tests` in full close-out mode | Sweep-only mode consumes prior evidence; full close-out delegates Unit Tests work before verification |
 | `validate-todo-file` | None | Structural validation consumes existing evidence and does not add a Codex review kind today |
 
-Reviewer run IDs in prompts are correlation hints only. Shipping
-gates must eventually derive trusted role separation from the mutator lease,
-dispatch wrapper/session state, or receipt process metadata rather than trusting
-prompt-authored `driver_run_id` / `review_run_id` strings.
+Reviewer run IDs in prompts are correlation hints only, and the receipt hook
+enforces that: `codex_review_completed.py` ALWAYS generates the trusted
+`review_run_id` at receipt-process time and demotes a prompt-authored id to
+`prompt_review_run_id_hint`. The prompt-derived `driver_run_id` is kept as-is
+because it only ever EXCLUDES same-run evidence from satisfying review
+obligations. Reviewer-role ledger records are receipt-only: `evidence.py
+record` refuses `codex-reviewer-*` roles unless
+`AI_WORKFLOW_ALLOW_REVIEWER_RECORD=1` (fixture/repair escape).
 
 `codex_review_completed.py` now mirrors received Codex review state into the
 shared evidence ledger when the receive step runs. Legacy `.claude/state` files
@@ -147,15 +151,14 @@ not add a new prompt tree.
 
 A further dispatch surface is the direct `Skill(codex-*)` trigger set recognized by
 `codex_review_completed.py` (`CODEX_TRIGGER_SKILLS`): `codex-adversarial-review-section`,
-`codex-review-todo`, `codex-design-review`, `codex-impact-analysis`, `codex-test-coverage`,
-`codex-consistency-audit`, `codex-perf-review`, and `codex-fix-review`. Mismatch to
-normalize: `gap-audit` is in the canonical `common.REVIEW_KINDS` set and is a documented
-workflow obligation, but the `codex_review_completed.py` receiver omits it on BOTH paths --
-the `Skill(codex-*)` trigger set (`CODEX_TRIGGER_SKILLS` has no `codex-gap-audit`) AND the
-Bash/wrapper receipt path (`_REVIEW_KIND_RE` and `_record_stamp` do not list `gap-audit`) --
-so even a canonical `bash scripts/codex-dispatch.sh '[review-kind: gap-audit] ...'` is not
-attributed or mirrored to the ledger today. §7 owns aligning the receiver (trigger set +
-kind regex + stamp recorder) with `common.REVIEW_KINDS`.
+`codex-review-todo`, `codex-design-review`, `codex-gap-audit`, `codex-impact-analysis`,
+`codex-test-coverage`, `codex-consistency-audit`, `codex-perf-review`, and
+`codex-fix-review`. The receiver is aligned with `common.REVIEW_KINDS`: `gap-audit`
+is recognized on both paths (skill map and `[review-kind: gap-audit]` prompt marker),
+recorded by `_record_stamp`, and mirrored to the ledger with its section
+UNCONDITIONALLY normalized to the `file` scope (gap audits are file-level lifecycle
+evidence; a prompt-quoted section ref survives only as `prompt_section_hint`
+metadata).
 
 Prompt escaping is part of that dispatch surface, not prose style. Dispatch
 examples must keep the single-quoted `scripts/codex-dispatch.sh` prompt shape.

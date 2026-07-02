@@ -711,10 +711,15 @@ def _record_shared_review_evidence(root: Path, state: dict) -> None:
         } or not todo_path:
             return
         section = str(state.get("section") or "").lstrip("§")
-        if not section and kind == "gap-audit":
-            # gap-audit receipts are file-level lifecycle evidence: normalize
-            # to the `file` scope the validate workflow and stamp writer use,
-            # so file-level lookups and the target index can find them
+        prompt_section_hint = ""
+        if kind == "gap-audit":
+            # gap-audit receipts are ALWAYS file-level lifecycle evidence:
+            # normalize to the `file` scope the validate workflow and stamp
+            # writer use, UNCONDITIONALLY -- gap-audit prompts routinely quote
+            # section refs as context, and a prompt-parsed section would make
+            # valid evidence invisible to the file-scoped consumers. The
+            # parsed section survives as a metadata hint only.
+            prompt_section_hint = section
             section = "file"
         review_run_id = str(state.get("review_run_id") or "")
         if not review_run_id:
@@ -723,6 +728,8 @@ def _record_shared_review_evidence(root: Path, state: dict) -> None:
             "review_kind": kind,
             "review_run_id": review_run_id,
         }
+        if prompt_section_hint:
+            metadata["prompt_section_hint"] = prompt_section_hint
         driver_run_id = str(state.get("driver_run_id") or "")
         if driver_run_id:
             metadata["driver_run_id"] = driver_run_id

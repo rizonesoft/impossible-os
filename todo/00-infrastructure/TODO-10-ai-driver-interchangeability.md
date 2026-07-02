@@ -277,7 +277,7 @@ Codex is the required reviewer; its evidence must be trustworthy and independent
 - [x] Bind review evidence to the reviewed source blobs and current HEAD so a review of stale source cannot satisfy a shipping obligation (receipt mirrors trigger blobs + HEAD; obligations reject non-current blobs).
 - [x] Review evidence is warned or rejected when the reviewer prompt contains implementor self-summary language instead of evidence-first scope.
 - [x] The obligation resolver treats fresh-context Codex review as required for shipping review kinds.
-- [x] Add a reviewer-output receipt step classifying findings as Fix/Reject/Accept-XREF with file-line evidence. The receipt hook mirrors received reviews into the ledger; classification runs through the receiving-code-review workflow.
+- [/] Reviewer-output receipt step classifying findings Fix/Reject/Accept-XREF: the receipt hook mirrors received reviews to the ledger; per-finding classification stays in receiving-code-review prose (no durable schema yet).
 - [x] Preserve the no-model-flag policy: Codex model and effort remain controlled centrally by Codex config, not per dispatch.
 - [x] Harden `sequencer_triage.file_lifecycle`: a manual `--allow-missing` lifecycle stamp is trusted only with matching non-legacy ledger evidence; hand-written historical stamps stay trusted.
 - [ ] Commit: "ai-workflow: harden review-evidence integrity"

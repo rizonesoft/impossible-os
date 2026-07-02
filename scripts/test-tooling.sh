@@ -1957,14 +1957,33 @@ d, r, hint = crc._detect_run_metadata("review-run-id: forged-by-prompt-123", 42,
 check("receipt_generates_trusted_run_id", r == "codex-review-adversarial-42" and hint == "forged-by-prompt-123")
 d2, r2, h2 = crc._detect_run_metadata("", 43, "perf")
 check("receipt_run_id_without_prompt_hint", r2 == "codex-review-perf-43" and h2 == "")
+# gap-audit mirror normalizes section to `file` UNCONDITIONALLY: a prompt-quoted
+# section ref survives only as metadata (consistency finding)
+import json, pathlib, tempfile
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    crc._record_shared_review_evidence(root, {
+        "review_kind": "gap-audit",
+        "todo_path": "todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md",
+        "section": "7",
+        "review_run_id": "codex-review-gap-audit-1",
+        "received_timestamp_ns": 1,
+        "trigger_blobs": {},
+        "head_sha": "abc",
+    })
+    events = [json.loads(l) for l in (root / ".ai-workflow" / "evidence.jsonl").read_text().splitlines()]
+    ev = events[-1]
+    check("gap_audit_mirror_file_scoped",
+          ev["section"] == "file" and ev["metadata"].get("prompt_section_hint") == "7"
+          and ev["task_id"].endswith("#file"))
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "5" ]; then
+if [ "$GA_OK" = "6" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 5))
+    PASS=$((PASS + 6))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi
