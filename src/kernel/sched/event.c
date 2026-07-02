@@ -101,15 +101,20 @@ void event_wait(event_t *ev)
 {
     ASSERT_IRQL_PASSIVE_OR_APC();
 
+    if (ev->type == EVENT_AUTO_RESET) {
+        /* CAS-claim the signal so exactly one waiter consumes it.  A
+         * read-then-clear consume lets two CPUs both observe state==1
+         * and both return for a single signal. */
+        while (atomic_cmpxchg(&ev->state, 1, 0) != 1)
+            enqueue_and_block(ev);
+        return;
+    }
+
     while (!atomic_read(&ev->state)) {
         enqueue_and_block(ev);
         /* Re-check on wake -- could have been a spurious wakeup due to
          * wait-queue overflow or scheduler reschedule. */
     }
-
-    /* AUTO_RESET: consume the signal -- clear before returning. */
-    if (ev->type == EVENT_AUTO_RESET)
-        atomic_set(&ev->state, 0);
 }
 
 /* ---------------------------------------------------------------------------
@@ -161,7 +166,15 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
      * 5 s wait at 100 Hz becomes ~250 ms if the rate moves to 2000 Hz) */
     uint64_t deadline = uptime_ns() + (uint64_t)timeout_ms * 1000000ULL;
 
-    while (!atomic_read(&ev->state)) {
+    for (;;) {
+        if (ev->type == EVENT_AUTO_RESET) {
+            /* CAS-claim so exactly one waiter consumes each signal */
+            if (atomic_cmpxchg(&ev->state, 1, 0) == 1)
+                return 1;
+        } else if (atomic_read(&ev->state)) {
+            return 1;
+        }
+
         /* Check deadline BEFORE yielding */
         if (uptime_ns() >= deadline)
             return 0;  /* timed out */
@@ -180,12 +193,6 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
          * the timeout actually fires. */
         yield();
     }
-
-    /* Consume signal for AUTO_RESET */
-    if (ev->type == EVENT_AUTO_RESET)
-        atomic_set(&ev->state, 0);
-
-    return 1;
 }
 
 /* ---------------------------------------------------------------------------
@@ -193,5 +200,19 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
  * ------------------------------------------------------------------------- */
 int event_is_set(const event_t *ev)
 {
+    return atomic_read(&ev->state) ? 1 : 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * event_try_consume -- non-blocking consuming acquire
+ *
+ * AUTO_RESET:   atomically claims the signal (CAS 1 -> 0). Exactly one
+ *               concurrent caller wins a single signal.
+ * MANUAL_RESET: non-consuming peek -- the event stays set for all waiters.
+ * ------------------------------------------------------------------------- */
+int event_try_consume(event_t *ev)
+{
+    if (ev->type == EVENT_AUTO_RESET)
+        return atomic_cmpxchg(&ev->state, 1, 0) == 1;
     return atomic_read(&ev->state) ? 1 : 0;
 }

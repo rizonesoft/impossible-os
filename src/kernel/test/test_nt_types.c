@@ -29,6 +29,9 @@
 #include "kernel/nt/nt_process.h"
 #include "kernel/nt/nt_sync.h"
 #include "kernel/nt/nt_memory.h"
+#include "kernel/ob/ob.h"
+#include "kernel/ob/ob_ns.h"
+#include "kernel/ob/ob_event.h"
 #include "kernel/nt/zw.h"
 
 /* ---- NTSTATUS severity macros ---- */
@@ -575,53 +578,6 @@ static void test_nt_thread_info_classes(void)
     }
 }
 
-/* ---- NT sync objects tests ---- */
-
-static void test_nt_sync_ssdt_registered(void)
-{
-    NTSTATUS s;
-
-    /* NtCreateEvent (0x0070) with NULL out -- INVALID_PARAMETER */
-    s = ssdt_dispatch(SSDT_NtCreateEvent, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
-                   "NtCreateEvent SSDT registered (NULL out)");
-
-    /* NtCreateMutant (0x0076) with NULL out -- INVALID_PARAMETER */
-    s = ssdt_dispatch(SSDT_NtCreateMutant, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
-                   "NtCreateMutant SSDT registered (NULL out)");
-
-    /* NtCreateSemaphore (0x007A) with NULL out -- INVALID_PARAMETER */
-    s = ssdt_dispatch(SSDT_NtCreateSemaphore, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
-                   "NtCreateSemaphore SSDT registered (NULL out)");
-
-    /* NtWaitForMultipleObjects (0x0007) with NULL handles -- INVALID_PARAMETER */
-    s = ssdt_dispatch(SSDT_NtWaitForMultipleObjects, 1, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_INVALID_PARAMETER,
-                   "NtWaitForMultipleObjects SSDT registered (NULL handles)");
-
-    /* NtSetEvent (0x0072) with invalid handle -- INVALID_HANDLE */
-    s = ssdt_dispatch(SSDT_NtSetEvent, 999, 0, 0, 0, 0, 0);
-    TEST_ASSERT_EQ(s, STATUS_INVALID_HANDLE,
-                   "NtSetEvent SSDT registered (bad handle)");
-
-    /* Keyed event (0x0084) -- pending keyed-event subsystem */
-    s = ssdt_dispatch(SSDT_NtCreateKeyedEvent, 0, 0, 0, 0, 0, 0);
-    TEST_PENDING(s == STATUS_NOT_IMPLEMENTED,
-                 "NtCreateKeyedEvent (0x84): no keyed-event subsystem yet");
-}
-
-static void test_nt_sync_constants(void)
-{
-    TEST_ASSERT_EQ(NotificationEvent,     0, "NotificationEvent == 0");
-    TEST_ASSERT_EQ(SynchronizationEvent,  1, "SynchronizationEvent == 1");
-    TEST_ASSERT_EQ(WaitAll,               0, "WaitAll == 0");
-    TEST_ASSERT_EQ(WaitAny,               1, "WaitAny == 1");
-    TEST_ASSERT_EQ(STATUS_WAIT_0,         0, "STATUS_WAIT_0 == 0");
-    TEST_ASSERT_EQ(STATUS_ABANDONED,   0x80, "STATUS_ABANDONED == 0x80");
-}
-
 /* ---- NT virtual memory tests ---- */
 
 static void test_nt_vm_ssdt_registered(void)
@@ -1048,10 +1004,6 @@ void test_register_nt_types(void)
     /* NT process/thread lifecycle tests */
     test_suite_register_cat("NT: process/thread SSDT registered", test_nt_process_ssdt_registered, TEST_CAT_ABI);
     test_suite_register_cat("NT: thread info classes", test_nt_thread_info_classes, TEST_CAT_ABI);
-
-    /* NT sync objects tests */
-    test_suite_register_cat("NT: sync SSDT registered", test_nt_sync_ssdt_registered, TEST_CAT_ABI);
-    test_suite_register_cat("NT: sync constants", test_nt_sync_constants, TEST_CAT_ABI);
 
     /* NT virtual memory tests */
     test_suite_register_cat("NT: VM SSDT registered", test_nt_vm_ssdt_registered, TEST_CAT_ABI);

@@ -40,6 +40,11 @@ FILETIME KeQuerySystemTimeCoarse(void);
 /* Returns 1 if wall clock has been initialized. */
 int wall_clock_ready(void);
 
+/* Returns 1 only when the wall clock was seeded from a REAL time source
+ * (UEFI/RTC or an explicit set) -- initialized-but-unsourced clocks report
+ * 0.  Gate absolute-deadline conversions on this, not wall_clock_ready(). */
+int wall_clock_time_sourced(void);
+
 /* ---- Kernel time service API ---------------------------------------- */
 
 /* Timer-tick counter since boot (one per timer interrupt). Pair with

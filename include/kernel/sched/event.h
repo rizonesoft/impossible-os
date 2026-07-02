@@ -104,3 +104,9 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms);
 
 /* Query state without blocking. Returns 1 if the event is set. */
 int event_is_set(const event_t *ev);
+
+/* Non-blocking consuming acquire.
+ * AUTO_RESET: atomically claims the signal (CAS 1 -> 0); exactly one
+ * concurrent caller wins a single signal. Returns 1 if claimed.
+ * MANUAL_RESET: non-consuming peek, identical to event_is_set(). */
+int event_try_consume(event_t *ev);

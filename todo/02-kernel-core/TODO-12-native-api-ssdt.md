@@ -70,7 +70,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4            |  [x]   |
 | 💎  |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2    |  [/]   |
 | 💎  |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2    |  [/]   |
-| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-05 §6    |  [/]   |
+| 💎  |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-05 §6    |  [x]   |
 | 💎  |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                |  [/]   |
 | 💎  |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                |  [/]   |
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-11 §1    |  [x]   |
@@ -412,6 +412,7 @@ Process and thread creation, suspension, termination, and thread context access 
 - [ ] NtSet/QueryInformationProcess mitigation classes: ProcessMitigationPolicy / ChildProcessPolicy / Signature+ImageLoad policy carriers (monotonic, no relaxation), handing SystemCallDisablePolicy to §25 -- the syscall-class marshalling for the `T21 §11` mitigation_flags field; return STATUS_INVALID_INFO_CLASS no longer silently breaks SetProcessMitigationPolicy callers
 - [ ] [Critical] NtCreateProcess/NtOpenProcess/NtOpenThread return raw PID/TID/task-struct, not OB PROCESS/THREAD objects (`nt_process.c`) -- corrupts OB metadata, no type/access check. Use real OB objects + rights -> XREF `D02 T05 §2`. (§7)
 - [ ] [Critical] NtCreateProcess leaves a runnable NULL-entry task (`nt_process.c:70` task_create entry=0) + no teardown on post-create alloc fail; create non-runnable until exec + add teardown. (§7)
+- [ ] [H] Process-handle waits reap and require parentage: `wait_on_body` (nt_sync.c) uses parent-only reaping `task_waitpid`; NT waits are neither -- add a non-reaping process exit event for any handle holder. (§7)
 - [x] Commit: `"kernel: nt -- NtCreateProcess, NtCreateThread, full process-thread lifecycle"`
 
 **Test checkpoint:** `NtCreateProcess` returns valid HANDLE; PID visible in `\KernelObjects\`. `NtCreateThread` with `CreateSuspended=TRUE` doesn't run until `NtResumeThread`. `NtGetContextThread`/`NtSetContextThread` currently return `STATUS_NOT_IMPLEMENTED` until TODO-23 provides `CONTEXT`. `NtDelayExecution` sleeps for the correct interval.
@@ -436,30 +437,40 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). I
 - [x] `NtResetEvent(0x0073)`: event_reset, returns PreviousState
 - [x] `NtPulseEvent(0x0074)`: set + immediate reset (wakes waiting threads)
 - [x] `NtQueryEvent(0x0075)`: returns EVENT_BASIC_INFORMATION (EventType + EventState)
-- [x] `NtWaitForSingleObject(0x0006)`: upgraded from §5 -- dispatches to event/mutex/semaphore/process wait based on object type, supports NT timeout (100-ns relative)
-- [x] `NtWaitForMultipleObjects(0x0007)`: WaitAll (sequential), WaitAny (polling yield loop), 64 handle max, returns STATUS_WAIT_0+index
-- [x] `NtSignalAndWaitForSingleObject(0x0008)`: atomic signal-then-wait; signal dispatches to event/mutex/semaphore
+- [x] `NtWaitForSingleObject(0x0006)`: body pinned (`ObReferenceObjectSafe`) for the wait; timeout=0 is a consuming poll; finite timeouts honored on all types via `wait_on_body()`
+- [x] `NtWaitForMultipleObjects(0x0007)`: two-phase -- resolve+pin all handles once, then poll-acquire; WaitAll is all-or-none with rollback and rejects duplicate bodies
+- [x] `NtSignalAndWaitForSingleObject(0x0008)`: signal-then-wait; mutant signal enforces ownership and unwinds one recursion level
 - [x] `NtCreateMutant(0x0076)`: wraps NtCreateMutex in ob_mutex.c; InitialOwner support
 - [x] `NtOpenMutant(0x0077)`: ObLookupObjectByName for ObpMutexType
-- [x] `NtReleaseMutant(0x0078)`: ownership check (STATUS_MUTANT_NOT_OWNED), mutex_unlock
-- [x] `NtQueryMutant(0x0079)`: returns MUTANT_BASIC_INFORMATION (CurrentCount, OwnedByCaller, AbandonedState)
+- [x] `NtReleaseMutant(0x0078)`: ownership check (STATUS_MUTANT_NOT_OWNED); recursive holds unwind before mutex_unlock; PreviousCount = 1 - depth
+- [x] `NtQueryMutant(0x0079)`: MUTANT_BASIC_INFORMATION; CurrentCount reflects recursion depth (1 free, 0 held, negative recursive)
 - [x] `NtCreateSemaphore(0x007A)`: wraps NtCreateSemaphore in ob_semaphore.c; validates initial <= max
 - [x] `NtOpenSemaphore(0x007B)`: ObLookupObjectByName for ObpSemaphoreType
 - [x] `NtReleaseSemaphore(0x007C)`: checks max count, sem_signal N times
 - [x] `NtQuerySemaphore(0x007D)`: returns SEMAPHORE_BASIC_INFORMATION
-- [ ] `NtCreateKeyedEvent(0x0084)`: stub STATUS_NOT_IMPLEMENTED (deferred to TODO-17)
-- [ ] `NtOpenKeyedEvent(0x0085)`: stub
-- [ ] `NtWaitForKeyedEvent(0x0086)`: stub
-- [ ] `NtReleaseKeyedEvent(0x0087)`: stub
+- [/] `NtCreateKeyedEvent(0x0084)`: stub STATUS_NOT_IMPLEMENTED -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtCreateKeyedEvent" at line 252)
+- [/] `NtOpenKeyedEvent(0x0085)`: stub -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtOpenKeyedEvent" at line 253)
+- [/] `NtWaitForKeyedEvent(0x0086)`: stub -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtWaitForKeyedEvent" at line 254)
+- [/] `NtReleaseKeyedEvent(0x0087)`: stub -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtReleaseKeyedEvent" at line 255)
 - [x] New file: `include/kernel/nt/nt_sync.h` with wait constants, info structs
 - [x] New file: `src/kernel/nt/nt_sync.c` with 21 SSDT handlers
 - [x] Added STATUS_WAIT_0, STATUS_ABANDONED to ntstatus.h
-- [x] 2 unit tests: SSDT registration (6 handler checks), sync constant verification (7 checks)
-- [ ] [H] NtWaitForMultipleObjects WaitAll is non-atomic (`nt_sync.c:608`): consumes earlier auto-reset/sem/mutant objects then returns on a later failure. Make it two-phase: ref+check all, consume all-or-none, release on error/timeout. (§8)
-- [ ] [H] NtReleaseSemaphore max-count check overflows near INT32_MAX (`nt_sync.c:408`): `value+release_count>max` wraps, bypassing the cap; `prev` written before the check. Use `release_count > max-current`, reject before output write. (§8)
+- [x] Unit tests: SSDT registration, sync constants, semaphore overflow guard, WaitAll rollback (event+sem+mutant), duplicate/alias rejection, mutant recursion, SignalAndWait (test_nt_types.c, TEST_CAT_ABI)
+- [x] [H] NtWaitForMultipleObjects WaitAll made all-or-none: two-phase resolve+pin then poll-acquire with reverse rollback; failed/timed-out WaitAll consumes nothing
+- [x] [H] NtReleaseSemaphore max-count guard now 64-bit (`(int64_t)cur + release_count > max`); PreviousCount written only after validation
+- [x] `event_try_consume()` primitive (sched/event.c): CAS-consuming poll for auto-reset events; all timeout=0 wait paths now consume per NT semantics
+- [x] Mutant recursion: `MUTEX_OBJECT.recursion` field; owner re-acquire, release unwind, query depth, SignalAndWait one-level release
 - [x] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
 
-**Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller. Named objects visible in `\BaseNamedObjects\`. Keyed event APIs (0x0084-0x0087) currently return `STATUS_NOT_IMPLEMENTED` pending TODO-17.
+**Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index and consumes the satisfying auto-reset signal; a partial `WaitAll` rolls back and consumes nothing. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller and recursively re-acquirable. Named objects visible in `\BaseNamedObjects\`. Keyed event APIs (0x0084-0x0087) return `STATUS_NOT_IMPLEMENTED` pending 03-memory-concurrency/TODO-08 §10.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 391 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - **What shipped:** `nt_sync.c` wait-path rewrite: two-phase all-or-none WaitAll with rollback, consuming polls via new `event_try_consume()`, per-wait object pinning, 64-bit semaphore max guard, NT mutant recursion.
+> - **How it runs:** all 21 handlers dispatch through the SSDT unchanged; waits resolve the handle once, pin the body, and operate on the pinned body until return.
+> - **Downstream effects:** WaitAny/WaitAll now match Win32 `WaitForMultipleObjects` contracts; Codex adoption evidence lives in the section-fix commit message.
+> - **Scope boundary:** keyed events owned by 03-memory-concurrency/TODO-08 §10; wait-queue SMP atomicity by 03-memory-concurrency/TODO-08 §11; process-wait parent/timeout hardening by §7.
 
 ---
 
@@ -1074,8 +1085,8 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Process/thread create API  | ✅ NtCreate{Process,Thread} | ✅ clone/execve            | ✅ §7 23 handlers wired     |
 | 💎 | Thread context get/set     | ✅ NtGet/SetContextThread   | ✅ ptrace GETREGS          | 🔄 §7 stubs (needs TODO-23) |
 | 💎 | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex       | ✅ §8 Event+Mutant+Semaphore |
-| 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent    | ✅ §8 WaitAll+WaitAny 64 max |
-| 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | 🔄 §8 stubs (TODO-17)       |
+| 💎 | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent    | ✅ §8 all-or-none WaitAll, 64 max |
+| 💎 | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                 | 🔄 §8 stubs (T08-mem §10)   |
 | 💎 | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap    | ✅ §9 Alloc+Free+Protect+Query |
 | 💎 | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv        | ✅ §9 Read+Write (identity) |
 | 💎 | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc         | 🔄 §10 5 classes + defaults |

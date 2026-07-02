@@ -134,10 +134,10 @@ title: "SSDT Master Table"
 | 0x0081 | NtCancelTimer                    | §19 | T12 §19 (nt_timer.c)     | [x]  |
 | 0x0082 | NtQueryTimer                     | §19 | T12 §19 (nt_timer.c)     | [x]  |
 | 0x0083 | NtSetTimerEx                     | §19 | T12 §19 (nt_timer.c)     | [x]  |
-| 0x0084 | NtCreateKeyedEvent               | §8  | T08-mem §4 (stub)        | [/]  |
-| 0x0085 | NtOpenKeyedEvent                 | §8  | T08-mem §4 (stub)        | [/]  |
-| 0x0086 | NtWaitForKeyedEvent              | §8  | T08-mem §4 (stub)        | [/]  |
-| 0x0087 | NtReleaseKeyedEvent              | §8  | T08-mem §4 (stub)        | [/]  |
+| 0x0084 | NtCreateKeyedEvent               | §8  | T08-mem §10 (stub)        | [/]  |
+| 0x0085 | NtOpenKeyedEvent                 | §8  | T08-mem §10 (stub)        | [/]  |
+| 0x0086 | NtWaitForKeyedEvent              | §8  | T08-mem §10 (stub)        | [/]  |
+| 0x0087 | NtReleaseKeyedEvent              | §8  | T08-mem §10 (stub)        | [/]  |
 | 0x0088 | NtCreateIoCompletion             | §13 | T12 §13 (nt_file.c IOCP) | [x]  |
 | 0x0089 | NtSetIoCompletion                | §13 | T12 §13 (nt_file.c IOCP) | [x]  |
 | 0x008A | NtRemoveIoCompletion             | §13 | T12 §13 (nt_file.c IOCP) | [x]  |
@@ -602,7 +602,7 @@ title: "SSDT Master Table"
 | 0x0388 | NtCreateSemaphoreEx                  | §8  | T12                  | [ ]  |
 | 0x0389 | NtCreateMutantEx                     | §8  | T12                  | [ ]  |
 | 0x038A | NtCreateEventEx                      | §8  | T12                  | [ ]  |
-| 0x038B | NtOpenKeyedEvent2                    | §8  | T08-mem §4           | [ ]  |
+| 0x038B | NtOpenKeyedEvent2                    | §8  | T08-mem §10          | [ ]  |
 | 0x038C | NtCreateTimerEx                      | §19 | T12 §19              | [ ]  |
 | 0x038D | NtQueryTimerEx                       | §19 | T12 §19              | [ ]  |
 | 0x038E | NtSetTimer2                          | §19 | T12 §19              | [ ]  |

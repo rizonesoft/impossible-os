@@ -23,6 +23,7 @@ static void mutex_on_delete(void *body)
      * mark it abandoned and force-unlock so waiters don't hang */
     if (atomic_read(&mo->mutex.locked)) {
         mo->abandoned = 1;
+        mo->recursion = 0;
         klog(LOG_WARN, "ob", "Mutex '%s' abandoned (owner died)",
              mo->mutex.name ? mo->mutex.name : "?");
         atomic_set(&mo->mutex.locked, 0);
@@ -98,6 +99,7 @@ HANDLE NtCreateMutex(HANDLE_TABLE *ht, const char *name, int initial_owner)
 
     mutex_init(&mo->mutex, name ? name : "ob_mutex");
     mo->abandoned = 0;
+    mo->recursion = 0;
 
     /* If caller wants initial ownership, lock it now */
     if (initial_owner)

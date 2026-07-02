@@ -19,6 +19,9 @@
 typedef struct mutex_object {
     mutex_t  mutex;       /* embedded kernel mutex */
     uint32_t abandoned;   /* 1 if owner died without releasing */
+    uint32_t recursion;   /* extra acquisitions by the owner beyond the
+                           * first (NT mutants are recursively acquirable);
+                           * mutated only by the owning thread */
 } MUTEX_OBJECT;
 
 /* --- API ----------------------------------------------------------------- */

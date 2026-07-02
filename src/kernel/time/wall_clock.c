@@ -336,6 +336,11 @@ int wall_clock_ready(void)
     return __atomic_load_n(&s_ready, __ATOMIC_ACQUIRE);
 }
 
+int wall_clock_time_sourced(void)
+{
+    return __atomic_load_n(&s_time_sourced, __ATOMIC_ACQUIRE);
+}
+
 /* ---- Kernel time service API ---------------------------------------- */
 
 void KeQueryTickCount(uint64_t *tick_count)
