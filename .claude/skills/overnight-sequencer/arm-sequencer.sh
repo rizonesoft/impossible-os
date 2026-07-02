@@ -14,6 +14,7 @@
 # Usage:
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh [--at "<calendar>"]
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --with-browser   # gh-pages
+#   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --model <m> --fallback-model <m>
 #   bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm
 set -euo pipefail
 
@@ -77,6 +78,35 @@ remove_sequencer_env_dropin() {
   done
 }
 
+# Model policy for the headless launch, captured at ARM time so every relaunch
+# over the night uses the SAME primary the operator armed with -- not whatever
+# `/model` happens to be saved when a watchdog fires hours later. The launcher
+# turns these into `claude -p --model <primary> --fallback-model <fallback>`;
+# the CLI re-tries the primary at the start of every turn and only drops to the
+# fallback on turns where the primary is overloaded/unavailable (so a transient
+# API error self-heals, a persistent outage effectively stays on the fallback,
+# and recovery auto-returns -- no forcing, no fixed timer). ARM_PRIMARY empty
+# means "inherit the saved default model".
+write_sequencer_model_dropin() {
+  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
+    d="$DROPIN_BASE/$svc.d"
+    mkdir -p "$d"
+    {
+      echo "[Service]"
+      echo "# Overnight model policy captured at arm time (arm-sequencer.sh)."
+      [ -n "$ARM_PRIMARY" ] && echo "Environment=OVERNIGHT_MODEL=$ARM_PRIMARY"
+      echo "Environment=OVERNIGHT_FALLBACK_MODEL=$ARM_FALLBACK"
+    } > "$d/sequencer-model.conf"
+  done
+}
+
+remove_sequencer_model_dropin() {
+  for svc in "$UNIT.service" "$UNIT-watchdog.service"; do
+    rm -f "$DROPIN_BASE/$svc.d/sequencer-model.conf"
+    rmdir "$DROPIN_BASE/$svc.d" 2>/dev/null || true
+  done
+}
+
 remove_runtime_file() {
   local p="$1"
   local label="$2"
@@ -121,6 +151,7 @@ if [ "${1:-}" = "--disarm" ]; then
   bash "$LOCAL_ARM" "$DOCTRINE" --disarm || true
   remove_chromemcp_dropin
   remove_sequencer_env_dropin
+  remove_sequencer_model_dropin
   reap_overnight_state
   systemctl --user daemon-reload 2>/dev/null || true
   echo "disarmed overnight sequencer (timers + watchdog + chromemcp drop-in + run state)"
@@ -134,12 +165,22 @@ fi
 # impossible-os work that needs ChromeMCP is the gh-pages landing site; arm those
 # runs with --with-browser to leave the env unset and let the lane logic run.
 WITH_BROWSER=0
+ARM_PRIMARY=""              # empty -> launch inherits the saved default model
+ARM_FALLBACK="opus"        # API-error / overload fallback; retried-from each turn
 FORWARD_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-browser|--gh-pages)
       WITH_BROWSER=1
       shift
+      ;;
+    --model)
+      ARM_PRIMARY="${2:?--model needs a value}"
+      shift 2
+      ;;
+    --fallback-model)
+      ARM_FALLBACK="${2:?--fallback-model needs a value}"
+      shift 2
       ;;
     *)
       FORWARD_ARGS+=("$1")
@@ -156,6 +197,7 @@ mkdir -p .claude/state
 : > "$MARKER"
 bash "$LOCAL_ARM" "$DOCTRINE" --mode bypassPermissions --watchdog "*:0/10" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
 write_sequencer_env_dropin
+write_sequencer_model_dropin
 if [ "$WITH_BROWSER" = "1" ]; then
   remove_chromemcp_dropin
   systemctl --user daemon-reload 2>/dev/null || true
@@ -165,6 +207,7 @@ else
   systemctl --user daemon-reload 2>/dev/null || true
   echo "armed overnight sequencer: bypassPermissions, watchdog *:0/10, ChromeMCP OFF (kernel run)"
 fi
+echo "  model: ${ARM_PRIMARY:-<saved default>} primary, ${ARM_FALLBACK} fallback (claude --fallback-model; overload/unavailable only, re-tries primary each turn)"
 echo "  launch redirects to Skill(overnight-sequencer); doctrine: $DOCTRINE"
 echo "  Claude reports: .claude/overnight/reports/latest.log"
 echo "  scheduler: repo-vendored (scripts/overnight/), no external plugin dependency"

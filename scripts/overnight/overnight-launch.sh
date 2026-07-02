@@ -171,10 +171,23 @@ NO_INSIGHTS_PROMPT='Operational headless run: ignore any "explanatory" output-st
 # progress live (plain text stays silent until the run ends).
 set +o pipefail  # the pipeline must complete so PIPESTATUS captures claude's exit code
 CLAUDE="$(resolve_claude)" || { echo "FATAL: claude CLI not found (set CLAUDE_BIN)" >> "$REPORT"; exit 127; }
+# Model policy (arm-sequencer captures these into a systemd env drop-in at arm
+# time so every relaunch uses the same primary the operator armed with).
+# OVERNIGHT_MODEL unset -> inherit the saved default. --fallback-model applies
+# only under --print (this launcher uses -p): the CLI re-tries the primary at
+# the start of each turn and drops to the fallback only when the primary is
+# overloaded/unavailable -- transient API errors self-heal, a persistent outage
+# effectively rides the fallback, recovery auto-returns. No content-refusal
+# rerouting (a 200 flag is not an availability error); those sections DEFER.
+MODEL_ARGS=()
+[ -n "${OVERNIGHT_MODEL:-}" ] && MODEL_ARGS+=(--model "$OVERNIGHT_MODEL")
+MODEL_ARGS+=(--fallback-model "${OVERNIGHT_FALLBACK_MODEL:-opus}")
+echo "model: ${OVERNIGHT_MODEL:-<saved default>} primary, ${OVERNIGHT_FALLBACK_MODEL:-opus} fallback" >> "$REPORT"
 "$CLAUDE" -p "$CLAUDE_PROMPT" \
   --output-format stream-json --verbose \
   --permission-mode "$PERMISSION_MODE" \
   --append-system-prompt "$NO_INSIGHTS_PROMPT" \
+  "${MODEL_ARGS[@]}" \
   ${MCP_CONFIG_ARGS[@]+"${MCP_CONFIG_ARGS[@]}"} 2>&1 \
   | python3 "$SCRIPT_DIR/stream-report.py" \
   | tee -a "$REPORT"
