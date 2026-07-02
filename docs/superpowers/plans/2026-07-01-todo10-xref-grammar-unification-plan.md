@@ -147,20 +147,25 @@ obligation state this protocol produces.
    against todo-graph's XREF_CLAUSE_RE. Two out-of-diff regressions found by the rounds were
    filed with owners (TODO-02 shim fail-loud; TODO-08 staged-secret guard).
 
-### Phase 2 -- Shared Gate Library (remaining items)
+### Phase 2 -- Shared Gate Library (remaining items) -- DONE 2026-07-02
 
-- Refactor Claude hooks to call `gates.py` where feasible.
-- `.githooks/pre-commit` calls the same checks for section-ship and stamp-only commits.
-- Reject forged/stale shipping evidence in `gates.py`/`obligations.py`: distinct reviewer run id
-  + current blobs + HEAD; build/test/smoke need exit code + log + final marker; stamps need
-  current source; graph validation current. **Owns F1** (empty-source / `manual` stamp rejection
-  for shipping).
-- `evidence.py import-legacy` treats `last-review-stamps.json` as dispatch telemetry; obligations
-  reject legacy-import / empty-source reviewer evidence for shipping.
-- Remove stale completed-lease reuse from `staged-commit`.
-- Keep Claude reminders as UX sugar; the blocking decision is made by shared scripts/git hooks.
-- Three-mode verdict-parity tests (Claude hook / git hook / direct CLI).
-- **Review:** one Codex triad on the gate library + git-hook parity.
+Shipped across commits 548f59a1, 63b8761f, 03c8fa79, 36b63464, 7e0fb239; triad
+(adversarial + consistency + perf) plus two re-adversarial rounds ran to an explicit
+APPROVE closure (9 findings fixed: 3H+1M adversarial, 1H+2M+1L consistency, 1M perf,
+1H re-adversarial). What landed:
+
+- Lease OWNERSHIP everywhere: `gates.staged_commit --driver-run-id` +
+  `--require-run-id` fail-closed; step5 consult binds `claude-<session_id>` and
+  auto-acquires ONLY for the session owning the skill entry; stale completed-lease
+  reuse REMOVED (active-only); malformed/zero lease expiry = expired in every layer.
+- Forged/stale evidence rejection: build needs source blobs + exit_code=0 +
+  log_path + the PINNED `=== BUILD OK ===` sentinel as the log's final line;
+  verified-stamps need current source blobs; legacy imports never ship; anonymous
+  implement/verify resolution fails closed on lease + reviews.
+- Perf: staged blob reads memoized (200 flips = one `git show`).
+- Deferred to the rollout phase: routing the remaining Claude-hook checks through
+  `gates.py` and flipping `AI_WORKFLOW_ENFORCE_SHARED_GATES` default-on
+  (reminders-as-UX-sugar) -- both need the docs/rollout phase toggle.
 
 ### Phase 3 -- Review-Evidence Integrity (owns the file-level evidence findings)
 
