@@ -3031,18 +3031,28 @@ PY
     # Hold the lock from a background subshell for 4 seconds.
     (
         cd "$FD_REPO"
+        rm -f "$FD_REPO/.claude/state/.fdgate_d_ready"
         python3 - <<'PY' &
 import fcntl, os, time, pathlib
 p = pathlib.Path(".claude/state/last-review-stamps.lock")
 p.parent.mkdir(parents=True, exist_ok=True)
 fd = os.open(str(p), os.O_RDWR | os.O_CREAT, 0o644)
 fcntl.flock(fd, fcntl.LOCK_EX)
+# signal readiness ONLY after the lock is actually held -- a fixed sleep
+# races under suite load (holder python startup can exceed it), letting the
+# foreground call grab the lock uncontended and fail both assertions.
+pathlib.Path(".claude/state/.fdgate_d_ready").write_text("held")
 time.sleep(4)
 fcntl.flock(fd, fcntl.LOCK_UN)
 os.close(fd)
 PY
         HOLDER_PID=$!
-        sleep 0.3  # let the holder grab the lock
+        # wait (bounded) for the holder to actually hold the lock
+        _fd_waited=0
+        while [ ! -f "$FD_REPO/.claude/state/.fdgate_d_ready" ] && [ "$_fd_waited" -lt 100 ]; do
+            sleep 0.05
+            _fd_waited=$((_fd_waited + 1))
+        done
         START=$(date +%s.%N)
         PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-perf-review","prompt":"[review-kind: perf] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\nReview angles."}}'
         WARN_OUT=$(printf '%s' "$PAYLOAD" | \
@@ -3062,7 +3072,7 @@ PY
     else
         t_fail "four_dispatch_gate: D lock timeout test ($(cat /tmp/fdgate_d_result.$$ 2>/dev/null))"
     fi
-    rm -f "/tmp/fdgate_d_result.$$"
+    rm -f "/tmp/fdgate_d_result.$$" "$FD_REPO/.claude/state/.fdgate_d_ready"
 
     rm -rf "$FD_TMP"
 fi
