@@ -76,7 +76,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | ⭐  |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-11 §1    |  [x]   |
 | ⭐  |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5            |  [x]   |
 | 💎  |  13   | File metadata and device control                               | §6                |  [x]   |
-| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5    |  [x]   |
+| 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5    |  [/]   |
 | 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §5   |  [/]   |
 | 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7    |  [x]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3    |  [x]   |
@@ -684,16 +684,24 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtEnumerateKey(KeyHandle, Index, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x0099
 - [x] `NtEnumerateValueKey(KeyHandle, Index, KeyValueInformationClass, KeyValueInformation, Length, ResultLength)` → SSDT 0x009A
 - [x] `NtQueryKey(KeyHandle, KeyInformationClass, KeyInformation, Length, ResultLength)` → SSDT 0x009B
+- [ ] Registry syscalls with 5+ args (NtSetValueKey, NtQueryValueKey, NtEnumerate*, NtQueryKey, NtCreateKey Disposition) drop a5/a6 on real ring-3 calls until the entry paths load user-stack args. XREF: TODO-12 §3 line 245.
+- [ ] `NtEnumerateKey(KeyFullInformation)` opens a transient child HKEY per entry (128-slot pool, fails under handle pressure). Add a `RegQueryInfoKeyDirect(reg_key_t*)` metadata helper to fill KEY_FULL_INFORMATION without a handle.
 - [x] Commit: `"kernel: nt -- core registry syscalls wired to SSDT (create/open/query/set/delete/enumerate)"` (6d6535d5)
 
 **Test checkpoint:** `NtCreateKey` under `\Registry\Machine\Software\Test` returns `STATUS_SUCCESS`. `NtSetValueKey` + `NtQueryValueKey` round-trip succeeds. `NtDeleteKey` removes the key. `NtEnumerateKey` iterates subkeys correctly.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi)
-> **Expected:** 9 suites (2 Win32 + 7 NT SSDT), 0 failures
-
-> **Verified** (2026-04-13): all 10 NtXxx handlers registered (SSDT 0x0090-0x009B), evidence mapped to nt_registry.c:730-739. NT path resolution (\Registry\Machine\...) functional. Predefined handle safety (RegIsPredefinedKey). NtDeleteKey returns STATUS_KEY_HAS_CHILDREN for non-empty keys. KeyFullInformation supported in NtEnumerateKey. ntdll exports sorted. Build clean.
-> **Accepted:** HKEY-to-HANDLE ABI gap (registry handles not in OB table, NtClose cannot close them) -> XREF: 02-kernel-core/TODO-14 §5 (new item: "Migrate HKEY to OB handle table" -- registers ObpKeyType and routes §14/§15 handlers through ObpAllocateHandle). SMP locking for registry pools -> XREF: 02-kernel-core/TODO-31 §14 (concrete spinlock wrapping for registry_flush/hive_save/hive_load). UTF-16 UNICODE_STRING decode -> XREF: 02-kernel-core/TODO-14 §5 (nt_decode_unicode_string helper). KeyNodeInformation -> XREF: 02-kernel-core/TODO-14 §5 (new item: "KeyNodeInformation output struct in NtQueryKey/NtEnumerateKey").
-> **Quality reviewed** (2026-04-13): dead code clean (all structs/helpers used). SSDT numbers match service_numbers.h. Error mapping consistent (ERROR_ACCESS_DENIED -> STATUS_ACCESS_DENIED; child-count check returns STATUS_KEY_HAS_CHILDREN specifically). Stack usage bounded by REG_MAX_* constants (512B data arrays). NtEnumerateKey KeyFullInformation opens/queries/closes child key inline.
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 426 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: 10 NtXxx core-CRUD registry handlers in nt_registry.c wired to SSDT 0x0090-0x009B via registry.c Win32 helpers.
+> - Integrates: paths resolve via nt_reg_resolve_path (\Registry\Machine|User|CurrentConfig); handles are HKEY pseudo-handles, not OB table.
+> - Hardened this review: root-name exact-match boundary (no MachineXYZ->HKLM aliasing), sizeof-1->__builtin_offsetof header math across 12 sites (details in commit).
+> - Scope boundary: 5+arg syscalls need §3 stack-arg support for real ring-3; HKEY-not-OB (TODO-14 §5), registry SMP locking (TODO-31 §14), UTF-16 decode (TODO-14 §5) stay deferred.
+> - Test gap: STATUS_KEY_HAS_CHILDREN + ring-3 5+arg paths untested (direct-dispatch tests cover handler logic).
+> **Verified:** 2026-07-02 | commit `1d898565` | 10/13 items | build OK | abi 426/426 PASS
+> **Deferred:** [H] registry syscalls needing args 5/6 (Data/DataSize, Length/ResultLength) drop them on real ring-3 calls until the entry paths load user-stack args -> XREF: 02-kernel-core/TODO-12 §14 (item: "Registry syscalls with 5+ args" at line 687)
+> **Deferred:** [M] NtEnumerateKey(KeyFullInformation) opens a transient child HKEY per entry (128-slot pool, fails under handle pressure) -> XREF: 02-kernel-core/TODO-12 §14 (item: "`NtEnumerateKey`(KeyFullInformation) opens a transient child HKEY" at line 702)
+> **Accepted:** [M] exact-root match + resolver treat UNICODE_STRING as NUL-terminated ASCII (counted contract) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 256)
+> **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 1H+2M deferred/accepted-XREF | scope: kernel-code-quality
 
 
 ---

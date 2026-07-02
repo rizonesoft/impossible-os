@@ -91,8 +91,10 @@ static HKEY nt_reg_resolve_path(const char *nt_path, const char **subpath)
         *subpath = p + 8;
         return HKEY_LOCAL_MACHINE;
     }
-    if (nt_reg_prefix(p, "Machine")) {
-        /* Exact match with no trailing path */
+    if (nt_reg_prefix(p, "Machine") && p[7] == '\0') {
+        /* Exact match with no trailing path. The trailing-NUL guard stops
+         * `MachineXYZ` from prefix-aliasing to the HKLM root (a wrong-object
+         * open/write/delete): the with-subpath form is handled above. */
         *subpath = "";
         return HKEY_LOCAL_MACHINE;
     }
@@ -100,7 +102,7 @@ static HKEY nt_reg_resolve_path(const char *nt_path, const char **subpath)
         *subpath = p + 5;
         return HKEY_USERS;
     }
-    if (nt_reg_prefix(p, "User")) {
+    if (nt_reg_prefix(p, "User") && p[4] == '\0') {
         *subpath = "";
         return HKEY_USERS;
     }
@@ -108,7 +110,7 @@ static HKEY nt_reg_resolve_path(const char *nt_path, const char **subpath)
         *subpath = p + 14;
         return HKEY_CURRENT_CONFIG;
     }
-    if (nt_reg_prefix(p, "CurrentConfig")) {
+    if (nt_reg_prefix(p, "CurrentConfig") && p[13] == '\0') {
         *subpath = "";
         return HKEY_CURRENT_CONFIG;
     }
@@ -374,7 +376,7 @@ static NTSTATUS NtQueryValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 
     switch (info_class) {
     case KeyValueBasicInformation: {
-        uint32_t needed = sizeof(KEY_VALUE_BASIC_INFORMATION) - 1 + name_len;
+        uint32_t needed = __builtin_offsetof(KEY_VALUE_BASIC_INFORMATION, Name) + name_len;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -390,7 +392,7 @@ static NTSTATUS NtQueryValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_SUCCESS;
     }
     case KeyValueFullInformation: {
-        uint32_t needed = sizeof(KEY_VALUE_FULL_INFORMATION) - 1 + name_len + data_size;
+        uint32_t needed = __builtin_offsetof(KEY_VALUE_FULL_INFORMATION, Name) + name_len + data_size;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -400,7 +402,7 @@ static NTSTATUS NtQueryValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
             info->TitleIndex = 0;
             info->Type = type;
             info->NameLength = name_len;
-            info->DataOffset = (uint32_t)(sizeof(KEY_VALUE_FULL_INFORMATION) - 1 + name_len);
+            info->DataOffset = (uint32_t)(__builtin_offsetof(KEY_VALUE_FULL_INFORMATION, Name) + name_len);
             info->DataLength = data_size;
             if (name_len > 0)
                 nt_reg_memcpy(info->Name, name_str, name_len);
@@ -410,7 +412,7 @@ static NTSTATUS NtQueryValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_SUCCESS;
     }
     case KeyValuePartialInformation: {
-        uint32_t needed = sizeof(KEY_VALUE_PARTIAL_INFORMATION) - 1 + data_size;
+        uint32_t needed = __builtin_offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data) + data_size;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -496,7 +498,7 @@ static NTSTATUS NtEnumerateKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
 
     switch (info_class) {
     case KeyBasicInformation: {
-        uint32_t needed = sizeof(KEY_BASIC_INFORMATION) - 1 + name_len;
+        uint32_t needed = __builtin_offsetof(KEY_BASIC_INFORMATION, Name) + name_len;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -512,7 +514,7 @@ static NTSTATUS NtEnumerateKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_SUCCESS;
     }
     case KeyNameInformation: {
-        uint32_t needed = sizeof(KEY_NAME_INFORMATION) - 1 + name_len;
+        uint32_t needed = __builtin_offsetof(KEY_NAME_INFORMATION, Name) + name_len;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -609,7 +611,7 @@ static NTSTATUS NtEnumerateValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a
 
     switch (info_class) {
     case KeyValueBasicInformation: {
-        uint32_t needed = sizeof(KEY_VALUE_BASIC_INFORMATION) - 1 + name_len;
+        uint32_t needed = __builtin_offsetof(KEY_VALUE_BASIC_INFORMATION, Name) + name_len;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -625,7 +627,7 @@ static NTSTATUS NtEnumerateValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a
         return STATUS_SUCCESS;
     }
     case KeyValueFullInformation: {
-        uint32_t needed = sizeof(KEY_VALUE_FULL_INFORMATION) - 1 + name_len + data_size;
+        uint32_t needed = __builtin_offsetof(KEY_VALUE_FULL_INFORMATION, Name) + name_len + data_size;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -635,7 +637,7 @@ static NTSTATUS NtEnumerateValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a
             info->TitleIndex = 0;
             info->Type = type;
             info->NameLength = name_len;
-            info->DataOffset = (uint32_t)(sizeof(KEY_VALUE_FULL_INFORMATION) - 1 + name_len);
+            info->DataOffset = (uint32_t)(__builtin_offsetof(KEY_VALUE_FULL_INFORMATION, Name) + name_len);
             info->DataLength = data_size;
             if (name_len > 0)
                 nt_reg_memcpy(info->Name, vname, name_len);
@@ -645,7 +647,7 @@ static NTSTATUS NtEnumerateValueKey_handler(uint64_t a1, uint64_t a2, uint64_t a
         return STATUS_SUCCESS;
     }
     case KeyValuePartialInformation: {
-        uint32_t needed = sizeof(KEY_VALUE_PARTIAL_INFORMATION) - 1 + data_size;
+        uint32_t needed = __builtin_offsetof(KEY_VALUE_PARTIAL_INFORMATION, Data) + data_size;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -708,7 +710,7 @@ static NTSTATUS NtQueryKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     switch (info_class) {
     case KeyBasicInformation: {
         uint32_t name_len = resolved_key ? nt_reg_strlen(resolved_key->name) : 0;
-        uint32_t needed = sizeof(KEY_BASIC_INFORMATION) - 1 + name_len;
+        uint32_t needed = __builtin_offsetof(KEY_BASIC_INFORMATION, Name) + name_len;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
@@ -746,7 +748,7 @@ static NTSTATUS NtQueryKey_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     }
     case KeyNameInformation: {
         uint32_t name_len = resolved_key ? nt_reg_strlen(resolved_key->name) : 0;
-        uint32_t needed = sizeof(KEY_NAME_INFORMATION) - 1 + name_len;
+        uint32_t needed = __builtin_offsetof(KEY_NAME_INFORMATION, Name) + name_len;
         if (result_len) *result_len = needed;
         if (buf_len < needed)
             return STATUS_BUFFER_TOO_SMALL;
