@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Shared gates for Claude hooks, git hooks, and Codex driver adapters."""
+"""Shared gates for Claude hooks, git hooks, and direct CLI callers
+(tool-neutral workflow protocol -- same verdict from every entry point)."""
 from __future__ import annotations
 
 import argparse
@@ -30,9 +31,6 @@ except Exception as exc:  # pragma: no cover
     raise SystemExit(f"failed to load obligations helper: {exc}")
 
 
-LEASE_HISTORY_SCAN_LIMIT = 512
-
-
 def _resolve(todo: str, section: str, workflow: str, driver_run_id: str | None) -> dict:
     class _Args:
         pass
@@ -45,25 +43,30 @@ def _resolve(todo: str, section: str, workflow: str, driver_run_id: str | None) 
     return obligations.resolve(a)  # type: ignore[arg-type]
 
 
-def _active_or_completed_lease(todo: str, section: str, root: Path) -> tuple[bool, list[str]]:
+def _active_lease_for(
+    todo: str, section: str, root: Path, driver_run_id: str = ""
+) -> tuple[bool, list[str]]:
+    """ACTIVE unexpired lease for the target, optionally OWNED by driver_run_id.
+
+    Historical `complete` actions no longer satisfy the gate: a stale completed
+    lease authorized any later staged flip for the same section (any session,
+    any HEAD). Ship and stamp commits happen while the holder's lease is live;
+    `lease.py complete` is the post-ship release, not commit authorization."""
     todo = common.rel_path(todo, root)
     section = str(section)
     active = common.read_json(common.state_dir(root) / "active-lease.json", {})
-    if isinstance(active, dict) and active:
-        if active.get("todo_path") == todo and str(active.get("section")) == section:
-            if int(active.get("expires_at_ns") or 0) >= common.now_ns():
-                return True, [f"active:{active.get('driver_run_id') or ''}"]
-    for idx, item in enumerate(common.iter_jsonl_reverse(common.state_dir(root) / "lease-history.jsonl")):
-        if idx >= LEASE_HISTORY_SCAN_LIMIT:
-            break
-        if item.get("action") != "complete":
-            continue
-        lease = item.get("lease") or {}
-        if not isinstance(lease, dict):
-            continue
-        if lease.get("todo_path") == todo and str(lease.get("section")) == section:
-            return True, [f"complete:{lease.get('driver_run_id') or ''}"]
-    return False, []
+    if not isinstance(active, dict) or not active:
+        return False, ["no active lease"]
+    if active.get("todo_path") != todo or str(active.get("section")) != section:
+        return False, [
+            f"active lease targets {active.get('todo_path')}#{active.get('section')}"
+        ]
+    if int(active.get("expires_at_ns") or 0) < common.now_ns():
+        return False, ["active lease expired"]
+    holder = str(active.get("driver_run_id") or "")
+    if driver_run_id and holder != driver_run_id:
+        return False, [f"active lease owned by {holder}, not {driver_run_id}"]
+    return True, [f"active:{holder}"]
 
 
 def _staged_todo_files(root: Path) -> tuple[list[str], str]:
@@ -228,16 +231,19 @@ def _staged_targets(root: Path) -> tuple[list[dict[str, str]], list[str]]:
 def staged_commit(args: argparse.Namespace) -> int:
     root = common.repo_root()
     targets, errors = _staged_targets(root)
+    run_id = str(getattr(args, "driver_run_id", "") or "")
     missing: list[dict[str, str]] = []
     satisfied: list[dict[str, object]] = []
     for target in targets:
-        ok, ids = _active_or_completed_lease(target["todo"], target["section"], root)
+        ok, ids = _active_lease_for(target["todo"], target["section"], root, run_id)
         if ok:
             done = dict(target)
             done["lease_ids"] = ids
             satisfied.append(done)
         else:
-            missing.append(target)
+            item = dict(target)
+            item["detail"] = "; ".join(ids)
+            missing.append(item)
     verdict = "ALLOW" if not missing and not errors else "BLOCK"
     result = {
         "gate": "staged-commit",
@@ -257,6 +263,7 @@ def staged_commit(args: argparse.Namespace) -> int:
             print(
                 "  missing lease: "
                 f"{item['todo']} section {item['section']} ({item['reason']})"
+                + (f" -- {item['detail']}" if item.get("detail") else "")
             )
     return 0 if not missing and not errors else 2
 

@@ -4497,7 +4497,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "todo_path": "todo/00-infra/TODO-99.md",
         "args": "todo/00-infra/TODO-99.md section 2",
     }
-    ok_missing, err_missing = s5._active_lease_allows_implement_edit(str(repo), entry)
+    ok_missing, err_missing = s5._active_lease_allows_implement_edit(str(repo), entry, "")
     assert not ok_missing and "no active driver lease" in err_missing
     (repo / ".ai-workflow" / "active-lease.json").write_text(json.dumps({
         "todo_path": "todo/00-infra/TODO-99.md",
@@ -4505,15 +4505,23 @@ with tempfile.TemporaryDirectory() as tmp:
         "driver_run_id": "lease-ok",
         "expires_at_ns": time.time_ns() + 60_000_000_000,
     }))
-    ok_match, err_match = s5._active_lease_allows_implement_edit(str(repo), entry)
+    ok_match, err_match = s5._active_lease_allows_implement_edit(str(repo), entry, "")
     assert ok_match, f"matching lease should pass, got: {err_match}"
+    # OWNERSHIP: a live lease held by another session must not allow this
+    # session's edit (TODO-10 lease-ownership item)
+    ok_owned, err_owned = s5._active_lease_allows_implement_edit(
+        str(repo), entry, "claude-session-b")
+    assert not ok_owned and "OWNED by" in err_owned, err_owned
+    ok_self, err_self = s5._active_lease_allows_implement_edit(
+        str(repo), entry, "lease-ok")
+    assert ok_self, f"holder session should pass, got: {err_self}"
     (repo / ".ai-workflow" / "active-lease.json").write_text(json.dumps({
         "todo_path": "todo/00-infra/TODO-99.md",
         "section": "3",
         "driver_run_id": "lease-wrong",
         "expires_at_ns": time.time_ns() + 60_000_000_000,
     }))
-    ok_wrong, err_wrong = s5._active_lease_allows_implement_edit(str(repo), entry)
+    ok_wrong, err_wrong = s5._active_lease_allows_implement_edit(str(repo), entry, "")
     assert not ok_wrong and "not todo/00-infra/TODO-99.md section 2" in err_wrong
     (repo / ".ai-workflow" / "active-lease.json").write_text(json.dumps({
         "todo_path": "todo/00-infra/TODO-99.md",
@@ -4521,8 +4529,20 @@ with tempfile.TemporaryDirectory() as tmp:
         "driver_run_id": "lease-expired",
         "expires_at_ns": time.time_ns() - 1,
     }))
-    ok_expired, err_expired = s5._active_lease_allows_implement_edit(str(repo), entry)
+    ok_expired, err_expired = s5._active_lease_allows_implement_edit(str(repo), entry, "")
     assert not ok_expired and "expired" in err_expired
+    # AUTO-ACQUIRE: with a session identity and no live lease, the consult
+    # acquires the lease itself (wiring proven via monkeypatch)
+    calls = []
+    real_acquire = s5._auto_acquire_lease
+    s5._auto_acquire_lease = lambda r, t, sec, rid: (calls.append((t, sec, rid)), True)[1]
+    try:
+        ok_auto, err_auto = s5._active_lease_allows_implement_edit(
+            str(repo), entry, "claude-session-a")
+    finally:
+        s5._auto_acquire_lease = real_acquire
+    assert ok_auto and calls == [("todo/00-infra/TODO-99.md", "2", "claude-session-a")], \
+        f"auto-acquire not wired: ok={ok_auto} calls={calls} err={err_auto}"
 print("OK quality_gate_lease_check")
 
 # Test 3: unit_test_wiring -- existing test at HEAD counts as evidence.
@@ -6388,6 +6408,20 @@ fi
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$TODO10" --section 2 --role validator --backend local \
     --run-id build-c-sourced --kind build --result ok --source "$TODO10" >/dev/null
+# sourced but provenance-less (no exit code / log / final marker) is still not
+# shipping evidence (TODO-10 shared-gate forged/stale-evidence rejection)
+OB_NOPROV_BUILD=$("${AIWF_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$TODO10" --section 2 --driver-run-id driver-c --format json)
+if echo "$OB_NOPROV_BUILD" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="build" and i["status"]=="missing" for i in d["required"]))' | grep -q True; then
+    t_pass "ai_workflow_obligations: provenance-less build evidence does not satisfy shipping gate"
+else
+    t_fail "ai_workflow_obligations: provenance-less build evidence does not satisfy shipping gate"
+fi
+"${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$TODO10" --section 2 --role validator --backend local \
+    --run-id build-c-prov --kind build --result ok --source "$TODO10" \
+    --command "bash scripts/build.sh" --exit-code 0 \
+    --log-path build/build.log --final-marker "=== BUILD OK ===" >/dev/null
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$TODO10" --section 2 --role validator --backend local \
     --run-id graph-c --kind todo-graph-validate --result ok >/dev/null
@@ -6519,11 +6553,11 @@ rm -rf "$AIWF_LEASE_SCALE_STATE"
 mkdir -p "$AIWF_LEASE_SCALE_STATE"
 if env AI_WORKFLOW_STATE_DIR="$AIWF_LEASE_SCALE_STATE" python3 - "$AIWF_LEASE_SCALE_STATE" "$TODO10" <<'PY'
 import importlib.util
+import json
 import os
 import pathlib
-import shutil
-import subprocess
 import sys
+import time
 
 state = pathlib.Path(sys.argv[1])
 todo = sys.argv[2]
@@ -6540,6 +6574,9 @@ gates = importlib.util.module_from_spec(spec)
 assert spec and spec.loader
 spec.loader.exec_module(gates)
 
+# Stale completed-lease reuse is REMOVED: a lease history full of `complete`
+# actions for the target must not satisfy the gate (previously any historical
+# complete authorized a later staged flip for the section).
 ledger = state / "lease-history.jsonl"
 for i in range(1800):
     common.append_jsonl(
@@ -6547,84 +6584,51 @@ for i in range(1800):
         {
             "action": "complete",
             "lease": {
-                "todo_path": "todo/other.md",
-                "section": "9",
+                "todo_path": todo,
+                "section": "8",
                 "driver_run_id": f"old-{i}",
             },
         },
     )
-common.append_jsonl(
-    ledger,
-    {
-        "action": "complete",
-        "lease": {
-            "todo_path": todo,
-            "section": "8",
-            "driver_run_id": "lease-scale-current",
-        },
-    },
-)
+ok, detail = gates._active_lease_for(todo, "8", root)
+if ok:
+    raise SystemExit(f"stale completed lease satisfied the gate: {detail}")
 
-real_iter_jsonl = common.iter_jsonl
-real_iter_jsonl_reverse = common.iter_jsonl_reverse
-seen = {"n": 0}
+# An ACTIVE unexpired lease satisfies it...
+active = state / "active-lease.json"
+active.write_text(json.dumps({
+    "todo_path": todo,
+    "section": "8",
+    "driver_run_id": "lease-owner-a",
+    "expires_at_ns": time.time_ns() + 60_000_000_000,
+}), encoding="utf-8")
+ok, detail = gates._active_lease_for(todo, "8", root)
+if not ok or detail != ["active:lease-owner-a"]:
+    raise SystemExit(f"active lease not honored: ok={ok} detail={detail}")
 
+# ...presence-only when no identity is supplied, OWNERSHIP when one is.
+ok, detail = gates._active_lease_for(todo, "8", root, "lease-owner-a")
+if not ok:
+    raise SystemExit(f"holder identity rejected: {detail}")
+ok, detail = gates._active_lease_for(todo, "8", root, "lease-owner-b")
+if ok or "owned by lease-owner-a" not in "; ".join(detail):
+    raise SystemExit(f"foreign identity not rejected: ok={ok} detail={detail}")
 
-def fail_full_jsonl(path):
-    raise AssertionError(f"full lease history scan used for {path}")
-
-
-def counted_reverse(path, block_size=65536):
-    for item in real_iter_jsonl_reverse(path, block_size):
-        seen["n"] += 1
-        yield item
-
-
-common.iter_jsonl = fail_full_jsonl
-common.iter_jsonl_reverse = counted_reverse
-try:
-    ok, ids = gates._active_or_completed_lease(todo, "8", root)
-finally:
-    common.iter_jsonl = real_iter_jsonl
-    common.iter_jsonl_reverse = real_iter_jsonl_reverse
-
-if not ok or ids != ["complete:lease-scale-current"]:
-    raise SystemExit(f"completed lease not found: ok={ok} ids={ids}")
-if seen["n"] > 3:
-    raise SystemExit(f"lease history reverse scan consumed stale records: {seen['n']}")
-
-ledger.unlink()
-for i in range(1800):
-    common.append_jsonl(
-        ledger,
-        {
-            "action": "complete",
-            "lease": {
-                "todo_path": "todo/other.md",
-                "section": "9",
-                "driver_run_id": f"miss-{i}",
-            },
-        },
-    )
-
-seen["n"] = 0
-common.iter_jsonl = fail_full_jsonl
-common.iter_jsonl_reverse = counted_reverse
-try:
-    ok, ids = gates._active_or_completed_lease(todo, "404", root)
-finally:
-    common.iter_jsonl = real_iter_jsonl
-    common.iter_jsonl_reverse = real_iter_jsonl_reverse
-
-if ok or ids:
-    raise SystemExit(f"missing lease unexpectedly found: ok={ok} ids={ids}")
-if seen["n"] > gates.LEASE_HISTORY_SCAN_LIMIT + 1:
-    raise SystemExit(f"missing lease scan was unbounded: {seen['n']}")
+# Expired active lease never satisfies.
+active.write_text(json.dumps({
+    "todo_path": todo,
+    "section": "8",
+    "driver_run_id": "lease-owner-a",
+    "expires_at_ns": time.time_ns() - 1,
+}), encoding="utf-8")
+ok, detail = gates._active_lease_for(todo, "8", root)
+if ok:
+    raise SystemExit(f"expired lease satisfied the gate: {detail}")
 PY
 then
-    t_pass "ai_workflow_gates: completed/missing lease lookup uses bounded reverse history scan"
+    t_pass "ai_workflow_gates: staged-commit lease is active-only with ownership (stale completes rejected)"
 else
-    t_fail "ai_workflow_gates: completed/missing lease lookup uses bounded reverse history scan"
+    t_fail "ai_workflow_gates: staged-commit lease is active-only with ownership (stale completes rejected)"
 fi
 
 AIWF_REVIEW_STATE="$AIWF_TMP/review-state"
@@ -6716,7 +6720,7 @@ def append(kind, run_id, role, result="ok", source_blob=None):
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {},
+        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
     }
     ob.evidence.append_event(payload, root)
 
@@ -6799,7 +6803,7 @@ def append_multi(kind, run_id, role, result="ok"):
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {},
+        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
     }
     ob.evidence.append_event(payload, root)
 
@@ -6878,7 +6882,7 @@ def append_stale_build(i):
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {},
+        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
     }
     ob.evidence.append_event(payload, root)
 
@@ -7033,6 +7037,11 @@ common.write_json_atomic(
 ledger.unlink()
 
 
+# build events synthesize FULL provenance by default: the resolver now rejects
+# build evidence without exit code + log path + final marker
+BUILD_PROV = {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="}
+
+
 def append_for_section(
     target_todo,
     target_section,
@@ -7042,6 +7051,7 @@ def append_for_section(
     result="ok",
     source_blob=None,
     expires_at_ns=0,
+    metadata=None,
 ):
     payload = {
         "task_id": f"{target_todo}#{target_section}",
@@ -7059,7 +7069,7 @@ def append_for_section(
         "created_at": common.now_iso(),
         "expires_at_ns": expires_at_ns,
         "legacy_import": False,
-        "metadata": {},
+        "metadata": dict(BUILD_PROV) if (metadata is None and kind == "build") else (metadata or {}),
     }
     ob.evidence.append_event(payload, root)
 
@@ -7264,7 +7274,7 @@ try:
             "created_at": common.now_iso(),
             "expires_at_ns": common.now_ns() - 1_000_000_000,
             "legacy_import": False,
-            "metadata": {},
+            "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
         },
         root,
     )
@@ -7380,7 +7390,7 @@ indexed_event = ob.evidence.append_event(
         "created_at": common.now_iso(),
         "expires_at_ns": 0,
         "legacy_import": False,
-        "metadata": {},
+        "metadata": {"exit_code": "0", "log_path": "build/build.log", "final_marker": "=== BUILD OK ==="},
     },
     root,
 )
@@ -7487,7 +7497,7 @@ mkdir -p "$AIWF_STATE"
     --todo "$STAMP_TODO" --section 1 --driver claude --run-id stamp-driver >/dev/null
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$STAMP_TODO" --section 1 --role validator --backend local \
-    --run-id stamp-build --kind build --result ok --source "$STAMP_TODO" >/dev/null
+    --run-id stamp-build --kind build --result ok --source "$STAMP_TODO" --command "bash scripts/build.sh" --exit-code 0 --log-path build/build.log --final-marker "=== BUILD OK ===" >/dev/null
 "${AIWF_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$STAMP_TODO" --section 1 --role validator --backend local \
     --run-id stamp-graph --kind todo-graph-validate --result ok >/dev/null
@@ -7532,7 +7542,7 @@ STAMP_REPO_ENV=(env AI_WORKFLOW_REPO_ROOT="$STAMP_REPO" AI_WORKFLOW_STATE_DIR="$
     --todo "$STAMP_REPO_TODO" --section 1 --driver claude --run-id tracked-stamp-driver >/dev/null
 "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$STAMP_REPO_TODO" --section 1 --role validator --backend local \
-    --run-id tracked-stamp-build --kind build --result ok --source "$STAMP_REPO_SRC" >/dev/null
+    --run-id tracked-stamp-build --kind build --result ok --source "$STAMP_REPO_SRC" --command "bash scripts/build.sh" --exit-code 0 --log-path build/build.log --final-marker "=== BUILD OK ===" >/dev/null
 "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
     --todo "$STAMP_REPO_TODO" --section 1 --role validator --backend local \
     --run-id tracked-stamp-graph --kind todo-graph-validate --result ok >/dev/null
@@ -8102,6 +8112,55 @@ if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_D
     t_pass "ai_workflow_gates: Depends On row allows with Order lease"
 else
     t_fail "ai_workflow_gates: Depends On row allows with Order lease"
+fi
+
+# staged-commit OWNERSHIP: with a session identity supplied, the active lease
+# must belong to that identity; the holder's identity still allows
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json \
+    --driver-run-id other-session >/dev/null 2>&1; then
+    t_fail "ai_workflow_gates: staged-commit blocks under another session's lease (ownership)"
+else
+    t_pass "ai_workflow_gates: staged-commit blocks under another session's lease (ownership)"
+fi
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json \
+    --driver-run-id staged-dep-driver >/dev/null; then
+    t_pass "ai_workflow_gates: staged-commit allows for the lease holder identity"
+else
+    t_fail "ai_workflow_gates: staged-commit allows for the lease holder identity"
+fi
+
+# staged-commit after lease COMPLETE: the historical complete no longer
+# authorizes the flip (stale completed-lease reuse removed)
+env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/lease.py complete --run-id staged-dep-driver >/dev/null
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json >/dev/null 2>&1; then
+    t_fail "ai_workflow_gates: completed lease no longer authorizes a staged flip"
+else
+    t_pass "ai_workflow_gates: completed lease no longer authorizes a staged flip"
+fi
+
+# legacy-imported reviewer evidence (last-review-stamps.json compatibility
+# records) is dispatch telemetry, never received-review proof for shipping
+LEGACY_STATE="$AIWF_TMP/legacy-reject-state"
+rm -rf "$LEGACY_STATE"; mkdir -p "$LEGACY_STATE"
+LEGACY_ENV=(env AI_WORKFLOW_STATE_DIR="$LEGACY_STATE")
+LEGACY_TODO="todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md"
+"${LEGACY_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$LEGACY_TODO" --section 7 --driver claude --run-id legacy-driver >/dev/null
+"${LEGACY_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$LEGACY_TODO" --section 7 --role codex-reviewer-adversarial \
+    --backend codex --run-id legacy-import-adv --kind adversarial --result received \
+    --source "$LEGACY_TODO" --legacy-import >/dev/null
+if "${LEGACY_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$LEGACY_TODO" --section 7 --driver-run-id legacy-driver --format json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="codex-review-adversarial" and i["status"]=="missing" for i in d["required"]))' \
+    | grep -q True; then
+    t_pass "ai_workflow_obligations: legacy-imported review evidence never satisfies shipping review"
+else
+    t_fail "ai_workflow_obligations: legacy-imported review evidence never satisfies shipping review"
 fi
 
 # ai_workflow_stamp atomicity: a stamp write must NOT touch the TODO if the backing

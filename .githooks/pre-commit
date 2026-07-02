@@ -57,10 +57,13 @@ fi
 
 SHARED_GATE="$REPO_ROOT/scripts/ai-workflow/gates.py"
 if [ "${AI_WORKFLOW_ENFORCE_SHARED_GATES:-0}" = "1" ] && [ -f "$SHARED_GATE" ]; then
-    if ! python3 "$SHARED_GATE" staged-commit --mode git-hook --format text; then
+    # AI_WORKFLOW_RUN_ID (when the committing session exports it) binds the gate
+    # to lease OWNERSHIP, not just presence; unset means presence-only.
+    if ! python3 "$SHARED_GATE" staged-commit --mode git-hook --format text \
+        --driver-run-id "${AI_WORKFLOW_RUN_ID:-}"; then
         echo ""
         echo -e "\033[31mShared AI workflow gate refused this commit\033[0m"
-        echo "  Acquire or complete the matching driver lease before section ship."
+        echo "  Hold the ACTIVE driver lease for the staged section before section ship."
         exit 1
     fi
 fi

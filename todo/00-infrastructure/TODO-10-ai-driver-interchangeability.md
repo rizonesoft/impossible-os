@@ -129,9 +129,9 @@ Prevent two sessions (for example an interactive session and the headless overni
 - [x] Lease key includes `todo_path`, `section`, `driver_backend`, `driver_run_id`, `head_sha`, `started_at_ns`, `expires_at_ns`, and `allowed_mutations`.
 - [x] A holder cannot acquire a lease if another live lease exists for the same TODO section unless the existing lease is expired or explicitly force-released with a reason.
 - [x] Serialize `lease.py` active-lease and lease-history mutations with a repo-local lock (`fcntl.flock` or `O_EXCL`) so two concurrent sessions cannot both observe an empty lease and race through `acquire`.
-- [/] Claude hooks consult the lease before the first implementation edit when a TODO-section flow is active. Consult is presence-only today (todo/section/expiry, not owner); ownership binding is tracked below.
-- [/] Git commit gate refuses a section-ship commit when no matching active or completed lease exists for the staged TODO target. Enforced under `AI_WORKFLOW_ENFORCE_SHARED_GATES=1`; default-on waits for Claude lease acquisition.
-- [ ] Enforce lease OWNERSHIP (not presence) in the consumers before default-on: `step5_quality_gate` + `gates.staged_commit` match the session `driver_run_id`; Claude auto-acquires a lease with that run-id.
+- [x] Claude hooks consult the lease before the first implementation edit when a TODO-section flow is active; the consult binds OWNERSHIP (session run-id) and auto-acquires when no live lease exists.
+- [/] Git commit gate refuses a section-ship commit when no ACTIVE lease exists for the staged TODO target (ownership-bound via `AI_WORKFLOW_RUN_ID`). Enforced under `AI_WORKFLOW_ENFORCE_SHARED_GATES=1`; default-on is the §9 rollout toggle.
+- [x] Enforce lease OWNERSHIP (not presence) in the consumers before default-on: `step5_quality_gate` + `gates.staged_commit` match the session `driver_run_id`; Claude auto-acquires a lease with that run-id.
 - [x] Add a concurrent-acquire fixture that launches two same-section holders and asserts exactly one winner plus one durable conflict event.
 - [x] Add `scripts/test-tooling.sh` coverage for acquire/release and same-section conflict.
 - [x] Commit: "ai-workflow: add active-mutator lease"
@@ -253,11 +253,11 @@ Stop relying on model-authored stamp prose for workflow truth.
 Make the enforcement layer reusable outside the Claude harness.
 
 - [x] Add `scripts/ai-workflow/gates.py` with callable checks for lease, obligations, review evidence, build freshness, smoke freshness, stamp validity, and commit eligibility.
-- [ ] Refactor Claude hooks to call `gates.py` where feasible instead of duplicating logic.
-- [/] Refactor `.githooks/pre-commit` to call the same checks for section-ship and stamp-only commits. It now calls `gates.py staged-commit` behind `AI_WORKFLOW_ENFORCE_SHARED_GATES=1`; default-on enforcement waits for Claude lease acquisition.
-- [ ] Reject forged/stale shipping evidence in `gates.py`/`obligations.py`: reviews need a distinct reviewer run id + current blobs + HEAD; build/test/smoke need exit code, log, final marker; stamps need current source; graph validation current.
-- [ ] Make `evidence.py import-legacy` treat `last-review-stamps.json` as dispatch telemetry, not received-review proof; obligations reject `legacy_import` or empty-source reviewer evidence for shipping unless a transition flag allows it.
-- [ ] Remove stale completed-lease reuse from `staged-commit`, or bind completed leases to the exact final diff/evidence and consume them once (today any historical `complete` for the section is accepted).
+- [/] Refactor Claude hooks to call `gates.py` where feasible; the step5 lease consult now shares gates' ownership semantics, remaining hook routing lands with the §9 default-on rollout.
+- [/] Refactor `.githooks/pre-commit` to call `gates.py staged-commit` (ownership-bound via `AI_WORKFLOW_RUN_ID`) behind `AI_WORKFLOW_ENFORCE_SHARED_GATES=1`; default-on is the §9 rollout toggle.
+- [/] Reject forged/stale shipping evidence: reviews need distinct run id + current blobs; build needs exit code + log + final marker; stamps need current source; legacy never ships. Residual: graph-validate blob currency (§7).
+- [x] Make `evidence.py import-legacy` treat `last-review-stamps.json` as dispatch telemetry; obligations reject `legacy_import` or empty-source reviewer evidence for shipping.
+- [x] Remove stale completed-lease reuse from `staged-commit`: only an ACTIVE unexpired lease (ownership-bound when identity supplied) authorizes a staged section flip.
 - [x] Add a preflight command callers run before editing, before stamping, and before committing.
 - [x] Preserve existing opt-out shapes where policy already permits them, but record all skips in a shared skip ledger.
 - [ ] Keep Claude-specific reminders as UX sugar only. The blocking decision must be made by shared scripts or git hooks.

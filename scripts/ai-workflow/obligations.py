@@ -66,6 +66,8 @@ def _event_ok(
     current_only: bool = True,
     allow_legacy: bool = True,
     require_source_blobs: bool = False,
+    require_meta: dict[str, str] | None = None,
+    require_meta_keys: tuple[str, ...] = (),
     root: Path,
     blob_cache: dict[str, str],
     check_current: bool = True,
@@ -86,6 +88,18 @@ def _event_ok(
     blobs = ev.get("source_blobs")
     if require_source_blobs and (not isinstance(blobs, dict) or not blobs):
         return False
+    if require_meta or require_meta_keys:
+        # provenance fields (exit code, log path, final marker) must be present
+        # in the event metadata -- a forged/partial record cannot satisfy
+        md = ev.get("metadata") or {}
+        if not isinstance(md, dict):
+            return False
+        for key, wanted in (require_meta or {}).items():
+            if str(md.get(key)) != wanted:
+                return False
+        for key in require_meta_keys:
+            if not md.get(key):
+                return False
     if current_only and check_current and not _current(ev, root, blob_cache):
         return False
     return True
@@ -249,8 +263,15 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                     "result": "ok",
                     "allow_legacy": False,
                     "require_source_blobs": True,
+                    # full provenance: a build record without its exit code,
+                    # log path, and final marker is not shipping evidence
+                    "require_meta": {"exit_code": "0"},
+                    "require_meta_keys": ("log_path", "final_marker"),
                 },
-                "next_action": "bash scripts/build.sh && record build evidence",
+                "next_action": (
+                    "bash scripts/build.sh && record build evidence with "
+                    "--exit-code/--log-path/--final-marker"
+                ),
             }
         )
 
@@ -277,6 +298,8 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                 "match": {
                     "kind": "stamp.verified",
                     "result": "ok",
+                    "allow_legacy": False,
+                    "require_source_blobs": True,
                 },
                 "next_action": "python3 scripts/ai-workflow/stamp.py verified <todo> --section <n> --write",
             }
@@ -289,6 +312,7 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                 "kind": "todo-graph-validate",
                 "result": "ok",
                 "current_only": False,
+                "allow_legacy": False,
             },
             "next_action": "bash scripts/todo-graph/build-and-validate.sh --keep-cache && record validation evidence",
         }

@@ -184,7 +184,29 @@ def _ai_workflow_state_dir(root: str) -> Path:
     return Path(root) / ".ai-workflow"
 
 
-def _active_lease_allows_implement_edit(root: str, entry: dict) -> tuple[bool, str]:
+def _auto_acquire_lease(root: str, todo: str, section: str, run_id: str) -> bool:
+    """Acquire (or same-run renew) the shared lease for this session. lease.py
+    refuses when another live holder owns the section, so this cannot steal."""
+    try:
+        rc = subprocess.run(
+            [
+                sys.executable, os.path.join(root, "scripts/ai-workflow/lease.py"),
+                "acquire", "--todo", todo, "--section", section,
+                "--driver", "claude", "--run-id", run_id,
+            ],
+            cwd=root, capture_output=True, timeout=15,
+        ).returncode
+    except Exception:
+        return False
+    return rc == 0
+
+
+def _active_lease_allows_implement_edit(
+    root: str, entry: dict, run_id: str
+) -> tuple[bool, str]:
+    """OWNERSHIP consult: the active lease must target this todo/section AND
+    belong to this session's run-id. When no live lease exists and the session
+    has an identity, auto-acquire it (TODO-10 lease-ownership item)."""
     todo = _todo_from_entry(entry)
     section = _section_from_entry(entry)
     if not todo or not section:
@@ -198,7 +220,16 @@ def _active_lease_allows_implement_edit(root: str, entry: dict) -> tuple[bool, s
         lease = json.loads(lease_path.read_text(encoding="utf-8"))
     except Exception:
         lease = {}
-    if not isinstance(lease, dict) or not lease:
+    live = (
+        isinstance(lease, dict)
+        and lease
+        and int(lease.get("expires_at_ns") or 0) >= _ts_ns()
+    )
+    if not live:
+        if run_id and _auto_acquire_lease(root, todo, section, run_id):
+            return True, ""
+        if isinstance(lease, dict) and lease:
+            return False, f"active driver lease for {todo} section {section} is expired"
         return False, f"no active driver lease for {todo} section {section}"
     if lease.get("todo_path") != todo or str(lease.get("section")) != section:
         return (
@@ -207,8 +238,14 @@ def _active_lease_allows_implement_edit(root: str, entry: dict) -> tuple[bool, s
             f"{lease.get('todo_path', '<none>')} section {lease.get('section', '<none>')}, "
             f"not {todo} section {section}",
         )
-    if int(lease.get("expires_at_ns") or 0) < _ts_ns():
-        return False, f"active driver lease for {todo} section {section} is expired"
+    holder = str(lease.get("driver_run_id") or "")
+    if run_id and holder != run_id:
+        return (
+            False,
+            f"active driver lease for {todo} section {section} is OWNED by "
+            f"{holder}, not this session ({run_id}); a second session must not "
+            "edit under another holder's lease",
+        )
     return True, ""
 
 
@@ -359,7 +396,9 @@ def main() -> int:
         # No active implement-todo-section flow; gate not applicable.
         return 0
 
-    lease_ok, lease_err = _active_lease_allows_implement_edit(root, entry)
+    session_id = str(d.get("session_id") or "")
+    session_run_id = f"claude-{session_id}" if session_id else ""
+    lease_ok, lease_err = _active_lease_allows_implement_edit(root, entry, session_run_id)
     if not lease_ok:
         if _shared_gate_enforcement_enabled():
             sys.stderr.write(
