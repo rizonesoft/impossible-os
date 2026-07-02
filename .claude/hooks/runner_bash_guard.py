@@ -73,6 +73,15 @@ _GH_MUTATING_VERBS = {
 }
 _GH_BLOCKED_NOUNS = {"secret", "variable", "codespace", "ssh-key", "gpg-key"}
 _HAZARD_WORDS = ("codex", "git ", "gh ", "SKIP_")
+# git env vars that inject config or run an arbitrary command -- a runner that
+# sets any of these is smuggling behavior past the argv walk (config aliases,
+# ssh/diff/pager/editor command hooks). Read-only runners never need them.
+_GIT_DANGEROUS_ENV_PREFIXES = ("GIT_CONFIG",)
+_GIT_DANGEROUS_ENV_EXACT = {
+    "GIT_SSH_COMMAND", "GIT_SSH", "GIT_EXTERNAL_DIFF", "GIT_DIFF_OPTS",
+    "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PROXY_COMMAND",
+    "GIT_ASKPASS", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+}
 
 
 def _is_subagent_transcript(path: str) -> bool:
@@ -171,10 +180,14 @@ def _scan_command(cmd: str, depth: int = 0) -> str:
             return "unparseable command mentioning a guarded surface"
         return ""
     for seg in _cd._segment_by_separators(tokens):
-        # SKIP_ overrides in the env prefix
+        # SKIP_ overrides + dangerous git env-vars in the env prefix
         for tok in seg:
             if re.match(r"^SKIP_[A-Z_]+=", tok):
                 return "gate-skip override"
+            if "=" in tok and not tok.startswith("="):
+                key = tok.split("=", 1)[0]
+                if key.startswith(_GIT_DANGEROUS_ENV_PREFIXES) or key in _GIT_DANGEROUS_ENV_EXACT:
+                    return f"git behavior-injection env var ({key})"
             if _base(tok.split("=", 1)[-1] if "=" in tok else tok) in _CODEX_BASENAMES:
                 return "codex surface"
         seg = _cd._strip_env_and_wrappers(list(seg))

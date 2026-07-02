@@ -1050,6 +1050,10 @@ _rbg_case "subagent git -c shell-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git
 _rbg_case "subagent git -c plain-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git -c alias.k=commit-body k" 2
 _rbg_case "subagent git -c non-alias read allowed" "/x/agent-a1.jsonl" "git -c core.pager=cat log --oneline -3" 0
 _rbg_case "subagent separate --config-env alias BLOCKED" "/x/agent-a1.jsonl" "git --config-env alias.x=ALIAS_BODY x" 2
+_rbg_case "subagent GIT_CONFIG_* alias injection BLOCKED" "/x/agent-a1.jsonl" "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=body git x" 2
+_rbg_case "subagent GIT_SSH_COMMAND injection BLOCKED" "/x/agent-a1.jsonl" "GIT_SSH_COMMAND=codexbody git fetch" 2
+_rbg_case "subagent GIT_EXTERNAL_DIFF injection BLOCKED" "/x/agent-a1.jsonl" "GIT_EXTERNAL_DIFF=body git diff HEAD" 2
+_rbg_case "subagent benign env + git status allowed" "/x/agent-a1.jsonl" "FOO=1 git status --short" 0
 _rbg_case "subagent gh api GET allowed" "/x/agent-a1.jsonl" "gh api repos/x/y/actions/runs" 0
 _rbg_case "subagent git branch --list allowed" "/x/agent-a1.jsonl" "git branch --list" 0
 _rbg_case "subagent build.sh allowed" "/x/agent-a1.jsonl" "bash scripts/build.sh" 0
