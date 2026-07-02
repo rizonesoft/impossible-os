@@ -528,16 +528,16 @@ Provides OS version, process list, performance counters, and detailed process in
   - [x] `SystemPerformanceInformation (2)`: PMM free/used/total pages
   - [x] `SystemTimeOfDayInformation (3)`: uptime seconds (from §5)
   - [x] `SystemProcessInformation (5)`: PID, state, name list (from §5)
-  - [ ] `SystemProcessorPerformanceInformation (8)`: deferred (per-CPU time accounting not yet implemented)
-  - [ ] `SystemModuleInformation (11)`: deferred (module loader not yet implemented)
-  - [ ] `SystemHandleInformation (16)`: deferred (system-wide handle dump not yet implemented)
-  - [ ] `SystemObjectInformation (17)`: deferred (OB type statistics aggregation)
-  - [ ] `SystemInterruptInformation (23)`: deferred (per-CPU interrupt counters)
-  - [ ] `SystemExceptionInformation (33)`: deferred (exception stats not tracked)
-  - [ ] `SystemRegistryQuotaInformation (37)`: deferred (registry not quota-limited yet)
-  - [ ] `SystemBootPerformanceInformation (custom)`: deferred (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
+  - [/] `SystemProcessorPerformanceInformation (8)`: deferred -- needs per-CPU time accounting (see Deferred Class Completion Checklist below)
+  - [/] `SystemModuleInformation (11)`: deferred -- needs module loader (see Deferred Class Completion Checklist below)
+  - [/] `SystemHandleInformation (16)`: deferred -- needs system-wide handle snapshot (see Deferred Class Completion Checklist below)
+  - [/] `SystemObjectInformation (17)`: deferred -- OB type-stats marshalling (see Deferred Class Completion Checklist below)
+  - [/] `SystemInterruptInformation (23)`: deferred -- needs per-CPU interrupt counters (see Deferred Class Completion Checklist below)
+  - [/] `SystemExceptionInformation (33)`: deferred -- needs exception counters (see Deferred Class Completion Checklist below)
+  - [/] `SystemRegistryQuotaInformation (37)`: deferred -- needs registry quota model (see Deferred Class Completion Checklist below)
+  - [/] `SystemBootPerformanceInformation (custom)`: deferred (→ XREF: `TODO-01-kernel-init-sequencing.md §12`)
   - [x] Unimplemented classes return `STATUS_NOT_IMPLEMENTED` via default case
-- [ ] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED (requires SeSystemtimePrivilege from TODO-15)
+- [/] `NtSetSystemInformation(0x00D1)`: stub returning STATUS_NOT_IMPLEMENTED -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md (SeSystemtimePrivilege / SeSystemEnvironmentPrivilege enforcement)
 - [x] `NtQueryInformationProcess` extended with 7 new info classes:
   - `ProcessBasicInformation (0)`: PEB, PID, parent PID, affinity (done in §7)
   - `ProcessTimes (4)`: creation, exit, kernel, user times (zeroed -- not tracked yet)
@@ -554,15 +554,25 @@ Provides OS version, process list, performance counters, and detailed process in
 
 ### Deferred Class Completion Checklist
 
-- [ ] `SystemProcessorPerformanceInformation (8)`: add real CPU time accounting first (scheduler tick attribution), then expose per-CPU idle/kernel/user times via `NtQuerySystemInformation`. The accounting groundwork is still pending in `todo/02-kernel-core/TODO-21-process-model-extensions.md` (line 188).
-- [ ] `SystemModuleInformation (11)`: implement module registry/loader list (`exec_register_module`, lookup/enumeration), then serialize that list in `NtQuerySystemInformation`. Module list work is still planned in `todo/02-kernel-core/TODO-17-binary-system.md` (line 165).
-- [ ] `SystemHandleInformation (16)`: add a safe system-wide handle table snapshot across all processes (PID + handle + access + object/type), then expose it through class 16. Current implementation has per-process tables only.
-- [ ] `SystemObjectInformation (17)`: wire `NtQuerySystemInformation` to OB type stats aggregation. Most raw stats already exist in `src/kernel/ob/ob.c` (line 363), but class 17 marshalling is not implemented.
-- [ ] `SystemInterruptInformation (23)`: add per-CPU interrupt counters and return them. You currently have per-vector global IRQ counts in `src/kernel/irq.c` (line 23), but no per-CPU increment path is wired.
-- [ ] `SystemExceptionInformation (33)`: add exception counters in the IDT exception path, then expose those totals. Exception handling exists, but exception stats tracking does not.
-- [ ] `SystemRegistryQuotaInformation (37)`: implement registry quota accounting/enforcement (limit, used, peak) in registry write paths, then query output. Current registry code has no quota model.
-- [ ] `SystemBootPerformanceInformation (custom)`: boot perf NVRAM read/write is already present in `src/kernel/boot_timing.c` (line 333), but you still need a kernel accessor/API and a class serializer in `NtQuerySystemInformation` for user-mode consumption.
-- [ ] For all deferred classes: add ABI structs + buffer-size handling + unit tests in `src/kernel/test/test_nt_types.c`, then update TODO-12 §10 checklist states.
+- [/] `SystemProcessorPerformanceInformation (8)`: add real CPU time accounting first (scheduler tick attribution), then expose per-CPU idle/kernel/user times via `NtQuerySystemInformation`. The accounting groundwork is still pending in `todo/02-kernel-core/TODO-21-process-model-extensions.md` (line 188).
+- [/] `SystemModuleInformation (11)`: implement module registry/loader list (`exec_register_module`, lookup/enumeration), then serialize that list in `NtQuerySystemInformation`. Module list work is still planned in `todo/02-kernel-core/TODO-17-binary-system.md` (line 165).
+- [/] `SystemHandleInformation (16)`: add a safe system-wide handle table snapshot across all processes (PID + handle + access + object/type), then expose it through class 16. Current implementation has per-process tables only.
+- [/] `SystemObjectInformation (17)`: wire `NtQuerySystemInformation` to OB type stats aggregation. Most raw stats already exist in `src/kernel/ob/ob.c` (line 363), but class 17 marshalling is not implemented.
+- [/] `SystemInterruptInformation (23)`: add per-CPU interrupt counters and return them. You currently have per-vector global IRQ counts in `src/kernel/irq.c` (line 23), but no per-CPU increment path is wired.
+- [/] `SystemExceptionInformation (33)`: add exception counters in the IDT exception path, then expose those totals. Exception handling exists, but exception stats tracking does not.
+- [/] `SystemRegistryQuotaInformation (37)`: implement registry quota accounting/enforcement (limit, used, peak) in registry write paths, then query output. Current registry code has no quota model.
+- [/] `SystemBootPerformanceInformation (custom)`: boot perf NVRAM read/write is already present in `src/kernel/boot_timing.c` (line 333), but you still need a kernel accessor/API and a class serializer in `NtQuerySystemInformation` for user-mode consumption.
+- [/] For all deferred classes: add ABI structs + buffer-size handling + unit tests in `src/kernel/test/test_nt_types.c`, then update TODO-12 §10 checklist states.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 405 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - **What shipped:** `NtQuerySystemInformation` (5 SystemInfo classes) + `NtQueryInformationProcess` (8 process info classes) through the SSDT; unimplemented classes return STATUS_NOT_IMPLEMENTED via the default case.
+> - **How it runs:** each info class marshals kernel state (PMM counts, CPU count, PID/name list, PEB/handle-count) into the caller buffer with length/ReturnLength handling.
+> - **Downstream effects:** backs user-mode GetSystemInfo / NtQuerySystemInformation for the implemented classes; the 8 deferred SystemInfo classes are each owner-tracked in the Deferred Class Completion Checklist above.
+> - **Scope boundary:** deferred classes need CPU-time accounting (TODO-21), module loader (TODO-17), per-CPU/exception counters, registry quota, boot-perf serialization; NtSetSystemInformation needs SRM privilege enforcement (TODO-15).
+> **Deferred:** [M] 8 SystemInformation classes (8/11/16/17/23/33/37/custom) return STATUS_NOT_IMPLEMENTED pending their data-source infrastructure (reason: infra) -> XREF: 02-kernel-core/TODO-21-process-model-extensions.md (CPU-time accounting at line 188) + 02-kernel-core/TODO-17-binary-system.md (module list at line 165)
+> **Deferred:** [M] `NtSetSystemInformation(0x00D1)` stub pending privilege enforcement (reason: infra) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md (SeSystemtimePrivilege / SeSystemEnvironmentPrivilege access check)
 
 ---
 
