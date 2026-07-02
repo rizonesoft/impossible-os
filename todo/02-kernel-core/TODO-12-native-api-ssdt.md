@@ -81,7 +81,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7    |  [/]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3    |  [/]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7    |  [/]   |
-| 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9 |  [x]   |
+| 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9 |  [/]   |
 | 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-24 §8-§9 |  [x]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5    |  [ ]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-26 §12   |  [ ]   |
@@ -867,16 +867,31 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [x] `NtQueryPerformanceCounter(PerformanceCounter, PerformanceFrequency)` → SSDT 0x00F2 (→ XREF TODO-08 §9)
 - [x] `NtQueryTimerResolution(MaximumTime, MinimumTime, CurrentTime)` → SSDT 0x00F3 (→ XREF TODO-08 §8)
 - [x] `NtSetTimerResolution(DesiredTime, SetResolution, ActualTime)` → SSDT 0x00F4 (→ XREF TODO-08 §8)
+- [ ] `nt_timer_tick` drops `s_armed_lock` before `event_set`, so a concurrent `NtSetTimer` re-arm in the gap lets the stale one-shot signal fire the new arm early. Add a per-arm generation captured before the signal-chain move.
+- [ ] `compute_due_ns` treats positive absolute-FILETIME `DueTime` as fire-now; convert against `wall_clock_time_sourced`/KeQuerySystemTime with overflow-safe interval math so future deadlines delay.
+- [ ] `NtSetTimerEx(TimerSetCoalescableTimer)` returns SUCCESS without reading DueTime/Period or calling `nt_timer_arm`, so the timer never fires. Parse the info struct + arm (ignore only the coalescing tolerance).
+- [ ] Timer PreviousState/CurrentState/TimerState derive from `active` (armed) not the event signal state, so a fired one-shot / consumed sync timer reports wrong state. Base state on the event signal state.
+- [ ] `NtQueryTimer` ReturnLength is `uint64_t*` (probes 8 bytes) but the Win ABI is `PULONG` (uint32_t); a 4-byte-ULONG caller can fault or overwrite the adjacent stack slot. Change to `uint32_t*` + 4-byte probe/write.
+- [ ] `nt_timer_tick` walks EVERY armed timer per tick under `s_armed_lock` irqsave (O(total armed), not O(expired)) and signals periodic timers under the lock. Add a timing wheel/heap + move periodic signalling to the unlocked phase.
+- [ ] `nt_timer_tick` Phase B calls `ObDereferenceObject` from the tick ISR; the final one-shot deref can run `timer_on_delete` -> `kfree` from ISR context (IRQL violation). Queue the final deref to DPC/thread context.
 - [x] Commit: `"kernel: nt -- timer control and time query syscalls"`
 
 **Test checkpoint:** `NtCreateTimer` + `NtSetTimer` with relative 100ms due time fires. `NtCancelTimer` cancels before fire returns `STATUS_SUCCESS`. `NtQueryPerformanceCounter` returns monotonically increasing value. `NtQueryTimerResolution` reports correct LAPIC timer resolution.
 
-> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
-> **Expected:** 5 new §19 tests (create+query, set/cancel, open existing, wrong-type mismatch, SSDT slots registered), 0 failures. The actual fire-via-event test is exercised via `nt_timer_tick()` under WHPX; on TCG the PIT path is equivalent.
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 426 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: 6 timer handlers (create/open/set/cancel/query/setEx) in nt_timer.c wired to SSDT 0x007E-0x0083; two-phase tick, 11 ProbeFor sites; 5 time-query syscalls are TODO-08-owned.
+> - Reviewed this pass: probing solid; the timer state machine is under-hardened -- 6 new blockers (rearm race, absolute-FILETIME, SetTimerEx no-op, state-from-signal, ReturnLength ABI, ISR-free IRQL) filed as §18-style items.
+> - Scope boundary: 6 new blockers -> §19 items 870-876; flat-list timing-wheel -> TODO-05 §6; ObpLookupHandle UAF -> TODO-05 §2; oa NUL-term -> TODO-31 §14; args 5+ ring-3 -> §3.
+> - Test gap: no deterministic fire-via-tick test; NtSetTimerEx + absolute-time + rearm-race + state-of-fired-timer untested.
 
 > **Codex adversarial (2026-04-14):** Fixed `compute_due_ns` integer overflow with saturating 100-ns->ns conversion + saturated `now + rel_ns` add (cap `0x7FFFFFFFFFFFFFFF`); fixed `nt_timer_arm` missed-fire race by moving `event_reset()` BEFORE the armed-list insert (inside `s_armed_lock`) so any post-arm `event_set()` survives until consumed.
-> **Verified** (2026-04-14): `nt_timer_register_ssdt()` registers 6 handlers at 0x007E-0x0083 (`nt_timer.c:575`). Armed-timer list head (`s_armed_head`) + irqsave spinlock (`s_armed_lock`); `nt_timer_tick()` called from `lapic_timer_handler` after `kusd_update_time()` and from `pit_tick_increment` after `pit_lock` release. `resolve_timer_handle` rejects wrong object types with `STATUS_OBJECT_TYPE_MISMATCH`. `nt_timer_detach()` wired into `timer_on_close` and `timer_on_delete` so a closing/freeing timer is unlinked from the armed list before event state is cleared. `wait_on_handle` in `nt_sync.c` dispatches `ObpTimerType` so `NtWaitForSingleObject(timer, ...)` works. PE exports added in `pe.c` (sorted).
-> **Quality reviewed** (2026-04-14): Codex quality review drove two local fixes: (1) `nt_timer_tick` now uses a two-phase pattern -- Phase A detaches one-shot due timers into a local `signal_chain` under `s_armed_lock` (periodic timers are signalled inline since they stay on the queue); Phase B releases the lock, then calls `event_set()` for the one-shot chain so waiter-list walks in `event_set` no longer contribute to lock hold time and cannot serialize other CPUs' Set/Cancel calls. (2) Removed the dead legacy `NtCreateTimer(ht, name)` wrapper from `ob_timer.c` / `ob_timer.h` (zero callers).
+> **Verified:** 2026-07-02 | commit `91ce552c` | 11/18 items | build OK | ob 426/426 PASS
+> **Deferred:** [H] nt_timer_tick drops s_armed_lock before event_set, so a concurrent NtSetTimer re-arm lets the stale one-shot signal fire the new arm early -> XREF: 02-kernel-core/TODO-12 §19 (item: "`nt_timer_tick` drops `s_armed_lock` before `event_set`" at line 870)
+> **Deferred:** [H] compute_due_ns treats positive absolute-FILETIME DueTime as fire-now (immediate signal for future deadlines) -> XREF: 02-kernel-core/TODO-12 §19 (item: "`compute_due_ns` treats positive absolute-FILETIME" at line 871)
+> **Deferred:** [H] NtSetTimerEx(TimerSetCoalescableTimer) returns SUCCESS without arming the timer, so it never fires -> XREF: 02-kernel-core/TODO-12 §19 (item: "`NtSetTimerEx(TimerSetCoalescableTimer)` returns SUCCESS" at line 872)
+> **Deferred:** [H] nt_timer_tick Phase B calls ObDereferenceObject from the tick ISR; the final one-shot deref can run kfree from ISR context (IRQL violation) -> XREF: 02-kernel-core/TODO-12 §19 (item: "`nt_timer_tick` Phase B calls `ObDereferenceObject`" at line 876)
+> **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed (OS Comparison row reconciled), 6H+1M deferred, 3 accepted-XREF | scope: kernel-code-quality
 > **Accepted:** (1) `UNICODE_STRING.Buffer` in `oa_probe_ascii_name` is returned as a raw pointer and consumed via `snprintf("%s", name)` in `ObCreateTimerEx`/`ObOpenTimer`, risking an overread if the buffer has no NUL within probed bytes (same codebase-wide pattern as `nt_section.c`/`nt_namespace.c`) -> XREF: 02-kernel-core/TODO-31 §14 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 246 -- retrofit list explicitly names `nt_timer.c::oa_probe_ascii_name` and the ASCII path construction in `ObCreateTimerEx`/`ObOpenTimer`). (2) Initial `ObpLookupHandle` UAF race in `nt_timer.c::resolve_timer_handle` (body could be freed by concurrent `NtClose` on another thread of the same task between lookup and use) -> XREF: 02-kernel-core/TODO-05 §2 (item: "Add `ObpReferenceObjectByHandle(...)` primitive" at line 112 -- retrofit list now explicitly names `nt_timer.c` and enumerates the four consumer handlers). (3) Flat armed-list linear scan per tick (tens of timers OK today, O(N * ticks) at scale) -> XREF: 02-kernel-core/TODO-05 §6 (item: "Replace the flat NT timer armed list with an ordered structure (min-heap or timing wheel)" -- names `nt_timer.c::s_armed_head`, suggests min-heap or timing wheel, requires 1024-timer stress test).
 
 ---
@@ -1208,7 +1223,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC  | ⬜ §16 + TODO-15            |
 | 💎 | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace     | ⬜ §17                      |
 | 💎 | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED    | 🟡 §18 SSDT 0x005C-0x0062; unmap-after-close + protection deferred |
-| 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | ✅ §19 full 6 SSDT 0x007E-0x0083 |
+| 💎 | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create          | 🟡 §19 6 SSDT 0x007E-0x0083; absolute-time + SetTimerEx arm + tick-ISR hardening deferred |
 | 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | 🟡 §20 (LPC stub) + §31 (ALPC stub), engine in TODO-24 |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §21 + TODO-29            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |
