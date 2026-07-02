@@ -607,6 +607,7 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 `ZwXxx` names are identical to `NtXxx` in user mode. In kernel mode (`CPL=0`), `ZwXxx` calls bypass the user-mode probe and use kernel-mode access rights directly. This is the convention all of Windows' own drivers and executive components use.
 
 - [x] Add a `ZwXxx` header `include/kernel/nt/zw.h` that declares each `ZwXxx` as a static inline calling `ssdt_dispatch()` directly (15 aliases: ZwClose, ZwCreateFile, ZwOpenFile, ZwReadFile, ZwWriteFile, ZwQueryInformationFile, ZwQueryDirectoryFile, ZwCreateEvent, ZwCreateMutant, ZwCreateSemaphore, ZwQuerySystemInformation, ZwYieldExecution, ZwDuplicateObject, ZwQueryObject, ZwWaitForSingleObject)
+- [x] NOTE: 13 of 15 aliases resolve to registered handlers; `ZwDuplicateObject`/`ZwQueryObject` target SSDT 0x0001/0x0002, unregistered (fail closed) until the NT-ABI wrappers land in §30.
 - [x] Previous-mode tracking via `ssdt_set_previous_mode()`/`ssdt_previous_mode()`: syscall entry paths (SYSCALL + INT 0x2E) set UserMode before dispatch, restore KernelMode after. ZwXxx callers leave mode at KernelMode. Handlers use `ProbeForReadIfUser()`/`ProbeForWriteIfUser()` convenience wrappers.
 - [x] Add `ProbeForRead(Address, Length, Alignment)` and `ProbeForWrite(Address, Length, Alignment)` in `ssdt.c`: validate NULL, overflow, range below `MM_USER_PROBE_ADDRESS` (0x7FFF0000), alignment (power of 2). Returns `STATUS_ACCESS_VIOLATION` or `STATUS_DATATYPE_MISALIGNMENT`.
 - [x] Add `ASSERT_KERNEL_CALLER()` macro in `zw.h`: returns `STATUS_PRIVILEGE_NOT_HELD` if previous mode is UserMode.
@@ -615,6 +616,19 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [x] Commit: `"kernel: nt -- ZwXxx kernel-mode alias layer with CPL probe bypass"` (638568e8)
 
 **Test checkpoint:** `ZwClose` from CPL=0 succeeds without user-buffer probe. CPL=3 call with kernel-space pointer returns `STATUS_ACCESS_VIOLATION`. `ASSERT_KERNEL_CALLER()` fires `STATUS_PRIVILEGE_NOT_HELD` from ring 3.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 423 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: ZwXxx CPL-bypass alias layer (15 static-inline aliases), ProbeForRead/Write user-buffer validation, ASSERT_KERNEL_CALLER, per-thread NT previous-mode.
+> - Integrates: syscall entry (SYSCALL + INT 0x2E) sets UserMode before dispatch; handlers gate probes via ProbeFor*IfUser() on ssdt_previous_mode().
+> - Downstream: previous_mode moved from a global to struct thread; reset to KernelMode on every slot-reuse and reap path (before the THREAD_FREE publish).
+> - Scope boundary: 13/15 aliases live; ZwDuplicateObject/ZwQueryObject slots + full cross-CPU cursor deferred.
+> - Canonical: zw.h header comment + ssdt.c SMP-closure note.
+> **Verified:** 2026-07-02 | commit `777ca1de` | 6/7 items | build OK | abi 423/423 + sched 296 PASS
+> **Accepted:** [H] `thread_reap_kernel_slot` publishes THREAD_FREE before APC rundown + field cleanup finish (pre-existing SMP reap race; a lockless kthread_create scan can claim the slot mid-reap) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "`thread_reap_kernel_slot` publishes `THREAD_FREE`" at line 120)
+> **Accepted:** [M] cross-CPU probe-gating: `ssdt_previous_mode()` resolves via `thread_current()`, which reads the global current-thread cursor, not per-CPU state -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 116)
+> **Deferred:** [M] `ZwDuplicateObject`/`ZwQueryObject` dispatch to unregistered SSDT 0x0001/0x0002 (fail closed) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Register `NtDuplicateObject` → SSDT 0x0001" at line 1084; item: "Expose `NtQueryObject` at SSDT 0x0002" at line 1089)
+> **Quality reviewed:** 2026-07-02 | Codex 8x (adversarial x2, consistency x2, perf x2, re-adversarial x2) | 2H+4M+1L fixed, 1H+2M deferred/accepted-XREF | scope: kernel-code-quality
 
 ---
 
@@ -1067,11 +1081,12 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > [!NOTE]
 > Split from §17 to keep both sections under the 10-item limit. §17 covers namespace objects (directory + symlink); this section covers object lifetime and identity operations that apply to **any** OB type (events, mutexes, files, sections, etc.). Object Manager infrastructure in `src/kernel/ob/ob.c` (→ XREF TODO-05 §1, §4, §9).
 
+- [ ] Register `NtDuplicateObject` → SSDT 0x0001 (process-handle NT ABI); wrap `ob.c` `NtDuplicateObject` after resolving process handles to handle tables. Unblocks the `ZwDuplicateObject` alias in `zw.h`. XREF: TODO-05 §9.
 - [ ] `NtMakeTemporaryObject(Handle)` → SSDT 0x0003: clears `OB_FLAG_PERMANENT`, allowing the object to be deleted when its reference count drops to zero
 - [ ] `NtMakePermanentObject(Handle)` → SSDT 0x0004: sets `OB_FLAG_PERMANENT` (kernel-mode caller only; requires `SeCreatePermanentPrivilege`)
 - [ ] `NtSetInformationObject(Handle, ObjectInformationClass, Buffer, Length)` → SSDT 0x0005: writable counterpart to `NtQueryObject`; supports `ObjectHandleFlagInformation` (set `OBJ_INHERIT` / `OBJ_PROTECT_CLOSE` on the HANDLE_TABLE_ENTRY)
 - [ ] `NtCompareObjects(FirstObjectHandle, SecondObjectHandle)` → SSDT 0x0009: returns `STATUS_SUCCESS` if both handles refer to the same underlying object body, else `STATUS_NOT_SAME_OBJECT`
-- [ ] **Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI** (`UNICODE_STRING TypeName` + canonical field order + offset asserts), replacing the internal `char[32]`+counters struct in `ob.c`/`ob.h`. XREF: TODO-05 §12.
+- [ ] **Expose `NtQueryObject` at SSDT 0x0002 with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI** (`UNICODE_STRING TypeName`), replacing the internal `char[32]`+counters struct in `ob.c`; unblocks the `ZwQueryObject` alias. XREF: TODO-05 §12.
 - [ ] Commit: `"kernel: nt -- generic object management syscalls (make-temp/perm, set-info, compare)"`
 
 **Test checkpoint:** `NtMakePermanentObject` on an event handle prevents deletion when last reference released. `NtMakeTemporaryObject` re-enables deletion. `NtSetInformationObject(ObjectHandleFlagInformation)` toggles `OBJ_INHERIT` on a handle. `NtCompareObjects` with two duplicate handles returns `STATUS_SUCCESS`; with handles to different objects returns `STATUS_NOT_SAME_OBJECT`.

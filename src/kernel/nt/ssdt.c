@@ -23,12 +23,22 @@
  * Set by the syscall entry path before calling ssdt_dispatch; ZwXxx
  * wrappers save/restore it around their dispatch call.
  *
- * Stored PER-THREAD (struct thread.previous_mode), not in a global: a
- * thread runs on one CPU at a time, so its previous mode cannot be
- * clobbered by a Zw kernel call executing concurrently on another CPU --
- * which previously let a user syscall handler skip ProbeFor*IfUser().
+ * Stored PER-THREAD (struct thread.previous_mode), not in a global. This
+ * removes the inter-thread clobber the old single global had: a
+ * time-shared thread's previous mode is no longer overwritten when a
+ * sibling thread makes a Zw kernel call between its yields (which
+ * previously let a user syscall handler skip ProbeFor*IfUser()).
+ *
+ * NOT yet fully SMP-closed: ssdt_previous_mode() resolves the flag via
+ * thread_current(), which still reads the GLOBAL current-thread cursor,
+ * not per-CPU state. On real multi-CPU, CPU A could observe CPU B's
+ * current thread. Closing that needs the per-CPU current-thread cursor
+ * work (SMP phase-2 per-CPU run queues); tracked as the deferred item in
+ * the ZwXxx alias-layer TODO.
+ *
  * A NULL current thread (very early boot, before any thread exists)
- * defaults to KernelMode: there are no user syscalls in that window. */
+ * defaults to KernelMode: there are no user syscalls in that window, and
+ * early-boot Zw callers must NOT probe their kernel pointers. */
 void ssdt_set_previous_mode(uint32_t mode)
 {
     struct thread *t = thread_current();
@@ -55,7 +65,15 @@ NTSTATUS ProbeForRead(const void *Address, uint64_t Length, uint32_t Alignment)
     if (Length == 0)
         return STATUS_SUCCESS;
 
-    /* Alignment check (Alignment must be power of 2) */
+    /* Alignment is a caller contract: it MUST be a power of two (1, 2, 4,
+     * 8, ...). A zero or non-power-of-two value would make (Alignment - 1)
+     * a bogus mask -- 0 silently disables the check, 3 tests the wrong
+     * bits and can accept a misaligned address. Reject those up front so a
+     * bad caller cannot bypass the misalignment guard. */
+    if (Alignment == 0 || (Alignment & (Alignment - 1)) != 0)
+        return STATUS_DATATYPE_MISALIGNMENT;
+
+    /* Alignment check (Alignment is a validated power of 2) */
     if (Alignment > 1 && (addr & (Alignment - 1)))
         return STATUS_DATATYPE_MISALIGNMENT;
 

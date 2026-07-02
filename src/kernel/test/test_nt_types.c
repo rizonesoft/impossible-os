@@ -946,10 +946,16 @@ static void test_probe_for_read_kernel_ptr(void)
     s = ProbeForRead((const void *)0, 0x10, 1);
     TEST_ASSERT_EQ(s, STATUS_ACCESS_VIOLATION,
                    "ProbeForRead rejects NULL");
-    /* Overflow: address near max + large length */
+    /* Range past user boundary: address below MM_USER_PROBE_ADDRESS but
+     * end (addr+Length) crosses it */
     s = ProbeForRead((const void *)0x7FFE0000ULL, 0x100000, 1);
     TEST_ASSERT_EQ(s, STATUS_ACCESS_VIOLATION,
-                   "ProbeForRead rejects overflow");
+                   "ProbeForRead rejects range past user boundary");
+    /* True pointer wraparound: addr near UINTPTR_MAX so addr+Length wraps
+     * below addr (exercises the end < addr branch, not the range check) */
+    s = ProbeForRead((const void *)0xFFFFFFFFFFFFFF00ULL, 0x200, 1);
+    TEST_ASSERT_EQ(s, STATUS_ACCESS_VIOLATION,
+                   "ProbeForRead rejects addr+Length wraparound");
 }
 
 /* ProbeForRead: alignment check */
@@ -963,6 +969,24 @@ static void test_probe_for_read_alignment(void)
     s = ProbeForRead((const void *)0x800004, 4, 4);
     TEST_ASSERT_EQ(s, STATUS_SUCCESS,
                    "ProbeForRead accepts aligned pointer");
+}
+
+/* ProbeForRead: invalid Alignment (0 / non-power-of-two) is a caller
+ * contract violation and must be rejected, not silently accepted. */
+static void test_probe_for_read_invalid_alignment(void)
+{
+    /* Alignment 0 would disable the mask check entirely */
+    NTSTATUS s = ProbeForRead((const void *)0x800000, 4, 0);
+    TEST_ASSERT_EQ(s, STATUS_DATATYPE_MISALIGNMENT,
+                   "ProbeForRead rejects Alignment 0");
+    /* Alignment 3 is not a power of two -- (3-1)=2 is a bogus mask */
+    s = ProbeForRead((const void *)0x800000, 4, 3);
+    TEST_ASSERT_EQ(s, STATUS_DATATYPE_MISALIGNMENT,
+                   "ProbeForRead rejects non-power-of-two Alignment");
+    /* Alignment 1 (byte-aligned) remains valid */
+    s = ProbeForRead((const void *)0x800001, 4, 1);
+    TEST_ASSERT_EQ(s, STATUS_SUCCESS,
+                   "ProbeForRead accepts Alignment 1");
 }
 
 /* ASSERT_KERNEL_CALLER: in kernel mode (test context) should not fire */
@@ -1089,6 +1113,8 @@ void test_register_nt_types(void)
                             test_probe_for_read_kernel_ptr, TEST_CAT_ABI);
     test_suite_register_cat("NT: ProbeForRead alignment",
                             test_probe_for_read_alignment, TEST_CAT_ABI);
+    test_suite_register_cat("NT: ProbeForRead invalid alignment rejected",
+                            test_probe_for_read_invalid_alignment, TEST_CAT_ABI);
     test_suite_register_cat("NT: ASSERT_KERNEL_CALLER macro",
                             test_assert_kernel_caller, TEST_CAT_ABI);
     test_suite_register_cat("NT: previous mode default kernel",

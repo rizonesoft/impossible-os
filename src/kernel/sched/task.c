@@ -519,6 +519,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].join_tid = -1;
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
+    tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
     /* Reset the main thread's APC state (sets apc_state.process; matches the
@@ -653,6 +654,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].join_tid = -1;
     tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
     tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
+    tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     tasks[pid].threads[0].teb = (void *)0;
     tasks[pid].threads[0].kernel_gs_base = 0;
     /* Reset the main thread's APC state (sets apc_state.process; matches the
@@ -1219,6 +1221,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].threads[0].parent_task = child_pid;
     tasks[child_pid].threads[0].join_tid = -1;
     tasks[child_pid].threads[0].priority = THREAD_PRIO_NORMAL;
+    tasks[child_pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
     tasks[child_pid].threads[0].rsp = (uint64_t)sp;
     /* Reset the child main thread's APC state (sets apc_state.process; the
@@ -2685,6 +2688,7 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].join_tid = -1;
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
+    t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].kernel_rsp = 0;  /* kernel thread -- no rsp0 switching */
     t->threads[tid].kernel_stack_base = (uint8_t *)0;
     t->threads[tid].kernel_stack_pages = 0;
@@ -2899,6 +2903,7 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].join_tid = -1;
     t->threads[tid].priority      = THREAD_PRIO_NORMAL;
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
+    t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
 
     /* Per-thread kernel stack ownership (for thread_free_stacks) */
     t->threads[tid].kernel_rsp = (uint64_t)(kstack + kstack_pages * 4096);
@@ -3025,6 +3030,11 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
     struct thread *thr = &t->threads[thread_id];
 
     thread_free_stacks(thr);
+    /* Clear the NT probe-gating flag BEFORE publishing THREAD_FREE: a creator
+     * (kthread_create) scans locklessly for THREAD_FREE, so any reusable-
+     * lifetime field that gates security -- previous_mode gates ProbeFor*IfUser
+     * -- must be reset before the slot is advertised, not after. */
+    thr->previous_mode = 0;  /* KernelMode */
     /* Publish THREAD_FREE under the APC lock so a concurrent cross-thread
      * KeInsertQueueApc observes a consistent exiting/reaped state and rejects
      * (no APC enqueued onto a slot being reaped for reuse). */

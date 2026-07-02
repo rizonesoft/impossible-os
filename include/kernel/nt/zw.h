@@ -36,7 +36,8 @@
 #define SSDT_KERNEL_MODE   0
 #define SSDT_USER_MODE     1
 
-/* Set/get previous mode (per-task; currently single-threaded dispatch) */
+/* Set/get previous mode. Stored per-thread (struct thread.previous_mode),
+ * resolved through thread_current(); see ssdt.c for the SMP-closure note. */
 void ssdt_set_previous_mode(uint32_t mode);
 uint32_t ssdt_previous_mode(void);
 
@@ -90,10 +91,11 @@ static inline NTSTATUS ProbeForWriteIfUser(void *Address,
  * saved mode. This ensures nested Zw calls from within a UserMode syscall
  * handler correctly bypass probes.
  *
- * SMP note: s_previous_mode is a global static. APs are currently parked
- * in hlt, so no concurrent syscall dispatch occurs. When SMP scheduling
- * is enabled, previous mode must move to per-CPU or per-thread state
- * (-> XREF: 03-memory-concurrency/TODO-06-smp-phase2.md). */
+ * SMP note: previous mode is stored per-thread (struct thread.previous_mode),
+ * resolved through thread_current() -- see the SMP-closure note in ssdt.c.
+ * It is NOT yet fully CPU-local (thread_current() reads the global
+ * current-thread cursor); that closure is the per-CPU current-thread work
+ * in the SMP phase-2 run-queue TODO. */
 
 /* Helper: dispatch with scoped KernelMode */
 static inline NTSTATUS zw_dispatch(uint32_t svc,
@@ -182,6 +184,13 @@ static inline NTSTATUS ZwYieldExecution(void)
     return zw_dispatch(SSDT_NtYieldExecution, 0, 0, 0, 0, 0, 0);
 }
 
+/* NOTE: the SSDT_NtDuplicateObject (0x0001) and SSDT_NtQueryObject (0x0002)
+ * slots are NOT registered yet -- the NT-ABI wrapper handlers are owned by
+ * the Generic Object Management Syscalls work. Until then these two aliases
+ * dispatch to unregistered slots, so the dispatcher's not-implemented status
+ * is returned (fail closed). The Object Manager bodies (ob.c
+ * NtDuplicateObject/NtQueryObject) use the internal handle-table ABI, not
+ * the process-handle NT ABI. */
 static inline NTSTATUS ZwDuplicateObject(uint64_t a1, uint64_t a2,
                                           uint64_t a3, uint64_t a4,
                                           uint64_t a5, uint64_t a6)

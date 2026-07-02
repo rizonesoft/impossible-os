@@ -436,7 +436,7 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 > - Scope: counters are SMP-atomic; exactly-once handle-stat accounting needs the §3 per-handle-table lock; Win11 NT-ABI struct shape owned by TODO-12 §30.
 > **Verified:** 2026-06-22 | ship `44db565a` + review fixes | 8/8 items | build OK | tests 363 ob PASS
 > **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 1031)
+> **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 1089)
 > **Quality reviewed:** 2026-06-22 | Codex 6x (adversarial, consistency, perf, re-adversarial) | 1H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
