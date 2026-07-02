@@ -959,6 +959,69 @@ else
     t_pass "lint Check 15 clean on clean tree"
 fi
 
+# --- Check 16 tracked-secret guard ------------------------------------------
+# Fake keys are GENERATED at runtime inside a throwaway git repo so this
+# file's own source never carries a live-looking key pattern.
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lint_secret_guard]${NC}"
+SEC_TMP="$(mktemp -d)"
+SEC_REPO="$SEC_TMP/repo"
+mkdir -p "$SEC_REPO/scripts/lint" "$SEC_REPO/docs" "$SEC_REPO/src"
+cp "$REPO_ROOT/scripts/lint.sh" "$SEC_REPO/scripts/lint.sh"
+cp -r "$REPO_ROOT/scripts/lint/." "$SEC_REPO/scripts/lint/" 2>/dev/null || true
+( cd "$SEC_REPO" && git init -q && git config user.email t@t && git config user.name t )
+echo "clean doc" > "$SEC_REPO/docs/ok.md"
+printf 'int sec_ok(void) { return 0; }\n' > "$SEC_REPO/src/ok.c"
+( cd "$SEC_REPO" && git add -A && git -c commit.gpgsign=false commit -q -m seed )
+SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"
+if echo "$SEC_OUT" | grep -q "tracked-secret"; then
+    t_fail "lint Check 16 false-positive on clean synthetic repo" "$(echo "$SEC_OUT" | grep tracked-secret | head -2)"
+else
+    t_pass "lint Check 16 clean on clean synthetic repo"
+fi
+# tracked secrets.json basename is refused
+echo '{}' > "$SEC_REPO/secrets.json"
+( cd "$SEC_REPO" && git add secrets.json && git -c commit.gpgsign=false commit -q -m s1 )
+SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"; SEC_RC=$?
+if [ "$SEC_RC" != "0" ] && echo "$SEC_OUT" | grep -q "tracked-secret: basename"; then
+    t_pass "lint Check 16 refuses tracked secrets.json basename (rc=$SEC_RC)"
+else
+    t_fail "lint Check 16 missed tracked secrets.json" "rc=$SEC_RC"
+fi
+( cd "$SEC_REPO" && git rm -q secrets.json && git -c commit.gpgsign=false commit -q -m s2 )
+# a live-looking key in tracked content is refused (key built at runtime)
+python3 -c "print('key = ' + 'sk-or-v1-' + '0123456789abcdef' * 4)" > "$SEC_REPO/docs/leak.md"
+( cd "$SEC_REPO" && git add docs/leak.md && git -c commit.gpgsign=false commit -q -m s3 )
+SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"; SEC_RC=$?
+if [ "$SEC_RC" != "0" ] && echo "$SEC_OUT" | grep -q "live API-key pattern"; then
+    t_pass "lint Check 16 refuses live-looking key in tracked content (rc=$SEC_RC)"
+else
+    t_fail "lint Check 16 missed tracked live key" "rc=$SEC_RC"
+fi
+# staged-then-cleaned-worktree bypass is CLOSED: a live key in the INDEX is
+# refused even when the worktree copy was rewritten without restaging. The
+# prior tracked leak is removed FIRST and the assertion names the staged file
+# specifically, so this case proves the --cached scan on its own.
+( cd "$SEC_REPO" && git rm -q docs/leak.md && git -c commit.gpgsign=false commit -q -m s4 )
+python3 -c "print('key = ' + 'sk-or-v1-' + 'fedcba9876543210' * 4)" > "$SEC_REPO/docs/staged-leak.md"
+( cd "$SEC_REPO" && git add docs/staged-leak.md )
+echo "placeholder only" > "$SEC_REPO/docs/staged-leak.md"
+SEC_OUT="$(cd "$SEC_REPO" && bash scripts/lint.sh src/ 2>&1)"; SEC_RC=$?
+if [ "$SEC_RC" != "0" ] && echo "$SEC_OUT" | grep -q "docs/staged-leak.md: tracked-secret"; then
+    t_pass "lint Check 16 catches a staged key with a cleaned worktree copy (rc=$SEC_RC)"
+else
+    t_fail "lint Check 16 missed the staged-only key" "rc=$SEC_RC"
+fi
+( cd "$SEC_REPO" && git rm -q --cached docs/staged-leak.md && rm -f docs/staged-leak.md )
+
+# skip env produces a visible WARN and passes
+SEC_OUT="$(cd "$SEC_REPO" && SKIP_LINT_SECRETS=1 bash scripts/lint.sh src/ 2>&1)"
+if echo "$SEC_OUT" | grep -q "Check 16 (tracked-secret guard) skipped"; then
+    t_pass "lint Check 16 skip env emits visible WARN"
+else
+    t_fail "lint Check 16 skip env silent"
+fi
+rm -rf "$SEC_TMP"
+
 # --- codex-bg-dispatch argument contract -----------------------------------
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_bg_dispatch_contract]${NC}"
 _bg_multi="$(bash "$REPO_ROOT/scripts/codex-bg-dispatch.sh" '[review-kind: design] todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md ok' extra 2>&1 >/dev/null || true)"
@@ -1018,6 +1081,16 @@ _ad_silent "silent on non-edit tool" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
 POST_HOOK="$REPO_ROOT/.claude/hooks/codex_review_completed.py"
 PRE_HOOK="$REPO_ROOT/.claude/hooks/receiving_review_required.py"
 STATE_FILE="$REPO_ROOT/.claude/state/last-codex-review.json"
+# these probes mutate the LIVE session state file (the hooks resolve their
+# state path from their own location) -- back it up and restore after, or
+# every suite run silently destroys the session review-receipt state (this
+# was the root cause of the recurring 'last-codex-review.json missing' gate
+# blocks and likely the 2026-06-14 'hook dead' incident)
+RRG_STATE_BACKUP=""
+if [ -f "$STATE_FILE" ]; then
+    RRG_STATE_BACKUP="$STATE_FILE.suite-backup.$$"
+    cp "$STATE_FILE" "$RRG_STATE_BACKUP"
+fi
 
 if [ ! -f "$POST_HOOK" ]; then
     t_fail "receiving_review_gate post hook missing: $POST_HOOK"
@@ -1446,8 +1519,11 @@ m._write_atomic(Path('$STATE_FILE'), {'test': 2, 'received': False, 'timestamp_n
         t_fail "receiving_review_gate: tmp residue ($TMP_COUNT files) or state missing (H3)"
     fi
 
-    # Cleanup
+    # Cleanup: restore the pre-suite session state instead of deleting it
     rm -f "$STATE_FILE" "$STATE_DIR"/*.tmp 2>/dev/null
+    if [ -n "$RRG_STATE_BACKUP" ] && [ -f "$RRG_STATE_BACKUP" ]; then
+        mv "$RRG_STATE_BACKUP" "$STATE_FILE"
+    fi
 fi
 
 
@@ -7699,6 +7775,20 @@ if "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
     --todo "$STAMP_REPO_TODO" --section 1 --workflow implement \
     --driver-run-id tracked-stamp-driver --format json >/dev/null; then
     t_pass "ai_workflow_stamp: staged tracked stamp evidence satisfies commit gate"
+    # sequential stamps must not self-invalidate: a quality stamp AFTER the
+    # verified stamp mutates the TODO, but the exempted self-blob + staged
+    # stamp-line check keep the commit gate ALLOW (pilot-discovered defect)
+    "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/stamp.py quality-reviewed \
+        "$STAMP_REPO_TODO" --section 1 --driver-run-id tracked-stamp-driver \
+        --allow-missing --write >/dev/null
+    ( cd "$STAMP_REPO" && git add "$STAMP_REPO_TODO" )
+    if "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
+        --todo "$STAMP_REPO_TODO" --section 1 --workflow implement \
+        --driver-run-id tracked-stamp-driver --format json >/dev/null; then
+        t_pass "ai_workflow_stamp: sequential stamps do not self-invalidate the commit gate"
+    else
+        t_fail "ai_workflow_stamp: sequential stamps self-invalidated the commit gate"
+    fi
 else
     t_fail "ai_workflow_stamp: staged tracked stamp evidence satisfies commit gate" \
            "$("${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --driver-run-id tracked-stamp-driver --format json 2>&1)"

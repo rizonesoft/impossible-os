@@ -1062,6 +1062,44 @@ PYEOF
 fi
 
 # ============================================================================
+# Check 16: Tracked-secret guard (TODO-08 automation hardening)
+# ============================================================================
+# A live OpenRouter key was once committed inside a tracked *.example
+# template (2026-06 incident; scrubbed from history). Two rules over
+# TRACKED content, replacing the guard lost with the Conclave removal:
+#   - basename `secret` or `secrets.json` must never be tracked
+#     (templates ship as *.example with placeholder values);
+#   - live API-key material (OpenRouter sk-or-v1-<hex>, OpenAI sk-proj-,
+#     Anthropic sk-ant-) must never appear in tracked text. The regexes
+#     require real key length, so pattern DOCUMENTATION does not trip them.
+# Skip via SKIP_LINT_SECRETS=1 (visible WARN so bypasses stay auditable).
+if [ "${SKIP_LINT_SECRETS:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 16 (tracked-secret guard) skipped via SKIP_LINT_SECRETS=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    # parameter expansion, not a basename subprocess: the per-file spawn cost
+    # ~2.5s over ~2000 tracked files on every pre-commit run (perf finding)
+    while IFS= read -r sfile; do
+        sbase=${sfile##*/}
+        if [ "$sbase" = "secret" ] || [ "$sbase" = "secrets.json" ]; then
+            echo -e "${RED}error${NC}: $sfile: tracked-secret: basename '$sbase' must not be tracked (gitignore it; ship a *.example template with placeholders)"
+            ERRORS=$((ERRORS + 1))
+        fi
+    done < <(git ls-files)
+    # scan BOTH the index (--cached: what a commit would ship, closing the
+    # stage-then-clean-worktree bypass) and the worktree (hygiene), dedup by path
+    SECRET_RE='sk-or-v1-[a-f0-9]{48,}|sk-proj-[A-Za-z0-9_-]{40,}|sk-ant-[A-Za-z0-9_-]{40,}'
+    SECRET_HITS=$( { git grep --cached -l -I -E "$SECRET_RE" -- . 2>/dev/null; \
+                     git grep -l -I -E "$SECRET_RE" -- . 2>/dev/null; } | sort -u || true)
+    if [ -n "$SECRET_HITS" ]; then
+        while IFS= read -r shit; do
+            echo -e "${RED}error${NC}: ${shit}: tracked-secret: live API-key pattern in staged/tracked content (rotate the key, scrub the file, gitignore the real secret)"
+            ERRORS=$((ERRORS + 1))
+        done <<< "$SECRET_HITS"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
