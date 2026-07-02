@@ -106,15 +106,19 @@ def _git_verdict(seg: list[str]) -> str:
     while i < len(seg):
         tok = seg[i]
         if tok in _GIT_VALUE_OPTS:
-            val = seg[i + 1] if i + 1 < len(seg) else ""
-            if tok in ("-c", "--config-env") and val.lower().startswith("alias."):
-                return "git temporary alias definition"
+            # deny-by-default: a read-only runner has no legitimate need for
+            # temporary config, and many keys execute a command hook
+            # (alias.*, core.fsmonitor, core.sshCommand, core.pager,
+            # diff.external, credential.helper, filter.*.process, ...). Rather
+            # than chase the key list, block every -c / --config-env form.
+            if tok in ("-c", "--config-env"):
+                return "git temporary config injection (-c/--config-env)"
             i += 2
             continue
         if tok.startswith("--") and "=" in tok:
-            optname, optval = tok.split("=", 1)
-            if optname in ("--config", "--config-env") or optval.lower().startswith("alias."):
-                return "git temporary alias/config definition"
+            optname = tok.split("=", 1)[0]
+            if optname in ("--config", "--config-env"):
+                return "git temporary config injection (--config-env)"
             i += 1
             continue
         if tok.startswith("-"):

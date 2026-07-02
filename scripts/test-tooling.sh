@@ -1048,7 +1048,8 @@ _rbg_case "subagent gh api --method=POST BLOCKED" "/x/agent-a1.jsonl" "gh api re
 _rbg_case "subagent eval BLOCKED (indirection)" "/x/agent-a1.jsonl" "eval git-push-hidden" 2
 _rbg_case "subagent git -c shell-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git -c alias.x=codex-body x" 2
 _rbg_case "subagent git -c plain-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git -c alias.k=commit-body k" 2
-_rbg_case "subagent git -c non-alias read allowed" "/x/agent-a1.jsonl" "git -c core.pager=cat log --oneline -3" 0
+_rbg_case "subagent git -c core.pager hook BLOCKED (deny-by-default)" "/x/agent-a1.jsonl" "git -c core.pager=cat log --oneline -3" 2
+_rbg_case "subagent git -c core.fsmonitor hook BLOCKED" "/x/agent-a1.jsonl" "git -c core.fsmonitor=body status --short" 2
 _rbg_case "subagent separate --config-env alias BLOCKED" "/x/agent-a1.jsonl" "git --config-env alias.x=ALIAS_BODY x" 2
 _rbg_case "subagent GIT_CONFIG_* alias injection BLOCKED" "/x/agent-a1.jsonl" "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=body git x" 2
 _rbg_case "subagent GIT_SSH_COMMAND injection BLOCKED" "/x/agent-a1.jsonl" "GIT_SSH_COMMAND=codexbody git fetch" 2
