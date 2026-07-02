@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -41,16 +43,33 @@ def _expired(ev: dict[str, Any], now_ns: int) -> bool:
     return bool(expires and expires < now_ns)
 
 
-def _current(ev: dict[str, Any], root: Path, blob_cache: dict[str, str]) -> bool:
+def _current(
+    ev: dict[str, Any],
+    root: Path,
+    blob_cache: dict[str, str],
+    exempt_path: str = "",
+) -> bool:
+    """Blob currency for an event's source bindings.
+
+    `exempt_path` is the resolution's OWN TODO file: the workflow mutates it
+    progressively (item flips, sequential stamps), so binding evidence to its
+    blob would make each stamp invalidate the previous one and the reviews --
+    the pilot hit exactly that self-invalidation. Source-file bindings (code,
+    scripts) stay strict."""
     blobs = ev.get("source_blobs") or {}
     if not isinstance(blobs, dict):
         return True
-    rel_paths = [common.rel_path(path, root) for path in blobs]
+    rel_paths = [
+        rel for rel in (common.rel_path(path, root) for path in blobs)
+        if rel != exempt_path
+    ]
     missing = [rel for rel in rel_paths if rel not in blob_cache]
     if missing:
         blob_cache.update(common.git_blobs_or_digests(missing, root))
     for path, old_blob in blobs.items():
         rel = common.rel_path(path, root)
+        if rel == exempt_path:
+            continue
         if not common.source_binding_matches(old_blob, blob_cache[rel]):
             return False
     return True
@@ -71,6 +90,7 @@ def _event_ok(
     root: Path,
     blob_cache: dict[str, str],
     check_current: bool = True,
+    exempt_path: str = "",
 ) -> bool:
     if ev.get("kind") != kind:
         return False
@@ -119,9 +139,35 @@ def _event_ok(
             # output must not satisfy)
             if not last_lines or last_lines[-1].strip() != str(md.get("final_marker")).strip():
                 return False
-    if current_only and check_current and not _current(ev, root, blob_cache):
+    if exempt_path and str(ev.get("kind", "")).startswith("stamp."):
+        # stamp evidence is exempt from TODO blob currency (later stamps and
+        # item flips legitimately mutate the file), but the stamp LINE itself
+        # must be present in the STAGED content -- a stamp written to the
+        # worktree and never staged is not commit-ready proof
+        md2 = ev.get("metadata") or {}
+        want = md2.get("stamp_text_sha256") if isinstance(md2, dict) else ""
+        if want and not _staged_line_sha_present(root, exempt_path, str(want)):
+            return False
+    if current_only and check_current and not _current(ev, root, blob_cache, exempt_path):
         return False
     return True
+
+
+def _staged_line_sha_present(root: Path, todo: str, want_sha: str) -> bool:
+    try:
+        text = subprocess.check_output(
+            ["git", "show", f":{todo}"],
+            cwd=str(root), text=True, stderr=subprocess.DEVNULL, timeout=5,
+        )
+    except Exception:
+        try:
+            text = (root / todo).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+    return any(
+        hashlib.sha256(line.encode("utf-8")).hexdigest() == want_sha
+        for line in text.splitlines()
+    )
 
 
 def _resolve_events(
@@ -155,7 +201,10 @@ def _resolve_events(
                 if spec["match"].get("current_only", True):
                     blobs = ev.get("source_blobs") or {}
                     if isinstance(blobs, dict):
-                        source_paths.update(common.rel_path(path, root) for path in blobs)
+                        source_paths.update(
+                            rel for rel in (common.rel_path(path, root) for path in blobs)
+                            if rel != todo
+                        )
         missing_source_paths = sorted(path for path in source_paths if path not in blob_cache)
         if missing_source_paths:
             blob_cache.update(common.git_blobs_or_digests(missing_source_paths, root))
@@ -167,7 +216,8 @@ def _resolve_events(
                 name = str(spec["name"])
                 if name not in remaining or name not in names:
                     continue
-                if _event_ok(ev, root=root, blob_cache=blob_cache, **spec["match"]):
+                if _event_ok(ev, root=root, blob_cache=blob_cache,
+                             exempt_path=todo, **spec["match"]):
                     found[name] = [eid]
                     remaining.remove(name)
         candidates = []
