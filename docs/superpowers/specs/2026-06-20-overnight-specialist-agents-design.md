@@ -1,5 +1,7 @@
 # Design: Overnight Specialist Agents (Approach A -- Advisory)
 
+> **Superseded roster note (2026-07-02):** the agent roster, model tiering, and dispatch table below are the ORIGINAL five-agent design and are now historical. The live catalog (12 agents, Sonnet default, Opus only on `kernel-quality-auditor`) is CLAUDE.md "Specialist agents" + `.claude/skills/README.md`; the design rationale here still applies but the per-agent model rows do not.
+
 > Status: approved design, pre-implementation. Date: 2026-06-20.
 > Scope: introduce read-only specialist subagents that the existing pipeline
 > skills delegate analysis to during interactive and overnight (sequencer) runs.

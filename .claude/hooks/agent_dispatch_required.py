@@ -59,6 +59,8 @@ def main() -> int:
         d = json.load(sys.stdin)
     except Exception:
         return 0
+    if not isinstance(d, dict):
+        return 0
     # Invisible outside a headless overnight run.
     if not os.environ.get("OVERNIGHT_SEQUENCER_RUN"):
         return 0
@@ -66,7 +68,9 @@ def main() -> int:
         return 0
     if d.get("tool_name") not in ("Edit", "Write", "MultiEdit"):
         return 0
-    ti = d.get("tool_input") or {}
+    ti = d.get("tool_input")
+    if not isinstance(ti, dict):
+        return 0
     if not _is_source_target(ti.get("file_path") or ti.get("path") or ""):
         return 0
     root = _repo_root()
@@ -101,4 +105,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:
+        sys.exit(0)  # fail-open: a broken gate must never block real work

@@ -1080,6 +1080,18 @@ _ad_pos() {  # <desc> <want_rc> <want_grep>
         t_fail "agent_dispatch_gate: $desc (want rc=$want_rc + '$want_grep', got rc=$rc err='$err')"
     fi
 }
+# fail-open on malformed shapes even in SECTIONS phase (non-object JSON,
+# non-dict tool_input) and no BLOCK outside kernel-ish paths (docs .c copy)
+for BAD in '[]' '{"tool_name":"Edit","tool_input":[]}'; do
+    PAYLOAD="$BAD"
+    err=$(printf '%s' "$PAYLOAD" | env -u SKIP_AGENT_DISPATCH_HOOK OVERNIGHT_SEQUENCER_RUN=1 \
+        python3 "$AD_TMP/.claude/hooks/agent_dispatch_required.py" 2>&1 1>/dev/null); rc=$?
+    if [ -z "$err" ] && [ "$rc" = "0" ]; then
+        t_pass "agent_dispatch_gate: fail-open on malformed payload $BAD"
+    else
+        t_fail "agent_dispatch_gate: malformed payload $BAD not fail-open (rc=$rc err='$err')"
+    fi
+done
 PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"src/kernel/sched.c"}}'
 _ad_pos "BLOCKs kernel source edit with no fresh dispatch" 2 "agent-dispatch BLOCK"
 PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"scripts/tool.py"}}'
