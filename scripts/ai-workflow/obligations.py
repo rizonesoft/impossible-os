@@ -294,14 +294,19 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
                     "result": "ok",
                     "allow_legacy": False,
                     "require_source_blobs": True,
-                    # full provenance: a build record without its exit code,
-                    # log path, and final marker is not shipping evidence
-                    "require_meta": {"exit_code": "0"},
+                    # full provenance with the sentinel PINNED: comparing the
+                    # log against a caller-supplied marker would let a failed
+                    # log satisfy the gate by recording its own failure line
+                    "require_meta": {
+                        "exit_code": "0",
+                        "final_marker": "=== BUILD OK ===",
+                    },
                     "require_meta_keys": ("log_path", "final_marker"),
                 },
                 "next_action": (
                     "bash scripts/build.sh && record build evidence with "
-                    "--exit-code/--log-path/--final-marker"
+                    "--exit-code 0 --log-path build/build.log "
+                    "--final-marker '=== BUILD OK ==='"
                 ),
             }
         )

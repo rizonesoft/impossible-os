@@ -8214,6 +8214,23 @@ else
     t_fail "ai_workflow_obligations: stale sentinel followed by failure output is rejected"
 fi
 
+# a caller-chosen failure marker cannot define success: the sentinel is PINNED
+# to the canonical build marker (re-adversarial finding)
+printf 'link error: undefined symbol foo\n=== BUILD FAILED ===\n' > "$STALE_LOG_REPO/build/build.log"
+"${STALE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo todo/00-infrastructure/TODO-95-stalelog.md --section 1 --role validator --backend local \
+    --run-id fail-marker-build --kind build --result ok --source todo/00-infrastructure/TODO-95-stalelog.md \
+    --command "bash scripts/build.sh" --exit-code 0 \
+    --log-path build/build.log --final-marker "=== BUILD FAILED ===" >/dev/null
+if "${STALE_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    todo/00-infrastructure/TODO-95-stalelog.md --section 1 --driver-run-id stale-log-driver --format json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="build" and i["status"]=="missing" for i in d["required"]))' \
+    | grep -q True; then
+    t_pass "ai_workflow_obligations: a self-declared failure marker never satisfies the build gate"
+else
+    t_fail "ai_workflow_obligations: a self-declared failure marker never satisfies the build gate"
+fi
+
 # implement/verify resolution without a session identity FAILS CLOSED: the
 # lease check and reviewer independence both need the run-id (consistency)
 if "${FAKE_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
