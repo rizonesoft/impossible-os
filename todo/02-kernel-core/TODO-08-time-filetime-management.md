@@ -317,7 +317,7 @@ Register Win32-named syscalls in the SSDT (→ XREF TODO-12 §5).
 > - Canonical: `src/kernel/time/wall_clock.c`.
 > - Scope boundary: §9 owns the three SSDT handlers + their user-buffer safety; the `SeSystemtimePrivilege` check is TODO-15 §8; fault-safe usercopy is TODO-23 §13.
 > **Verified:** 2026-06-27 | ship `d9b7cc13` + review fixes | 6/6 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.52s)
-> **Accepted:** [H] `NtSetSystemTime` is kernel-only pending a real `SeSystemtimePrivilege` check (no SMP-safe per-token privilege check wired yet) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 425)
+> **Accepted:** [H] `NtSetSystemTime` is kernel-only pending a real `SeSystemtimePrivilege` check (no SMP-safe per-token privilege check wired yet) -> XREF: 02-kernel-core/TODO-15-security-reference-monitor.md §8 (item: "`SeSinglePrivilegeCheck(Privilege, AccessMode)`" at line 426)
 > **Accepted:** [H] `copy_to_user` is not fault-safe (a probed-but-unmapped user page #PFs in the kernel) -- systemic across all SSDT handlers -> XREF: 02-kernel-core/TODO-23-exception-dispatch-seh.md §13 (item: "`include/kernel/probe.h` -- `try_copy_to_user`" at line 376)
 > **Test gap:** the SSDT handlers wrap live time sources + the syscall user-buffer path; not unit-testable without a syscall harness. Covered by runtime serial validation.
 > **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 2M fixed, 2H accepted-XREF | scope: kernel-code-quality

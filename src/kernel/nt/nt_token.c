@@ -344,10 +344,17 @@ static NTSTATUS NtAdjustPrivilegesToken_handler(uint64_t a1, uint64_t a2,
     /* Compute prev_state capacity using 64-bit math to avoid wrap on large
      * buf_len values, then narrow.  Caller-controlled buf_len must not be
      * trusted to fit in uint32_t arithmetic without bounds. */
-    if (prev_state && buf_len >= sizeof(TOKEN_PRIVILEGES)) {
-        uint64_t capacity64 = ((uint64_t)buf_len - sizeof(TOKEN_PRIVILEGES) +
-                               sizeof(LUID_AND_ATTRIBUTES)) /
-                              sizeof(LUID_AND_ATTRIBUTES);
+    if (prev_state &&
+        buf_len >= __builtin_offsetof(TOKEN_PRIVILEGES, Privileges)) {
+        /* Capacity = (buf_len - header) / element. The header is
+         * offsetof(Privileges), NOT sizeof(TOKEN_PRIVILEGES) + one element:
+         * a header-only buffer holds ZERO entries, so the old `- sizeof + sizeof`
+         * form over-counted by one and let the library write 1 entry past the
+         * caller buffer (kernel overwrite). */
+        uint64_t capacity64 =
+            ((uint64_t)buf_len -
+             __builtin_offsetof(TOKEN_PRIVILEGES, Privileges)) /
+            sizeof(LUID_AND_ATTRIBUTES);
         if (capacity64 > TOKEN_MAX_PRIVS)
             capacity64 = TOKEN_MAX_PRIVS;
         prev_capacity = (uint32_t)capacity64;
@@ -362,15 +369,17 @@ static NTSTATUS NtAdjustPrivilegesToken_handler(uint64_t a1, uint64_t a2,
                                  prev_state ? prev_state->Privileges : (LUID_AND_ATTRIBUTES *)0,
                                  &prev_count);
 
-    if (prev_state && rc == (int32_t)STATUS_SUCCESS) {
+    if (prev_state && rc == (int32_t)STATUS_SUCCESS &&
+        buf_len >= __builtin_offsetof(TOKEN_PRIVILEGES, Privileges)) {
+        /* Only write the count field when the buffer actually covers the
+         * header -- a 0-3 byte PreviousState must not take a 4-byte write. */
         prev_state->PrivilegeCount = prev_count;
     }
     if (ret_len) {
         /* Compute required size in 64-bit then narrow */
-        uint64_t need64 = (uint64_t)sizeof(TOKEN_PRIVILEGES) +
-                         (uint64_t)prev_count * sizeof(LUID_AND_ATTRIBUTES);
-        /* TOKEN_PRIVILEGES has Privileges[] with size 0; header already
-         * accounts for the flexible-array offset. */
+        uint64_t need64 =
+            (uint64_t)__builtin_offsetof(TOKEN_PRIVILEGES, Privileges) +
+            (uint64_t)prev_count * sizeof(LUID_AND_ATTRIBUTES);
         *ret_len = need64 > 0xFFFFFFFFULL ? 0xFFFFFFFFU : (uint32_t)need64;
     }
 
@@ -423,10 +432,13 @@ static NTSTATUS NtAdjustGroupsToken_handler(uint64_t a1, uint64_t a2,
             return STATUS_INVALID_PARAMETER;
     }
 
-    if (prev_state && buf_len >= sizeof(TOKEN_GROUPS)) {
-        uint64_t capacity64 = ((uint64_t)buf_len - sizeof(TOKEN_GROUPS) +
-                               sizeof(SID_AND_ATTRIBUTES)) /
-                              sizeof(SID_AND_ATTRIBUTES);
+    if (prev_state && buf_len >= __builtin_offsetof(TOKEN_GROUPS, Groups)) {
+        /* Header = offsetof(Groups); the old `- sizeof + sizeof` form
+         * over-counted by one entry and let the library write past a
+         * header-only caller buffer (kernel overwrite). */
+        uint64_t capacity64 =
+            ((uint64_t)buf_len - __builtin_offsetof(TOKEN_GROUPS, Groups)) /
+            sizeof(SID_AND_ATTRIBUTES);
         if (capacity64 > TOKEN_MAX_GROUPS)
             capacity64 = TOKEN_MAX_GROUPS;
         prev_capacity = (uint32_t)capacity64;
@@ -441,12 +453,15 @@ static NTSTATUS NtAdjustGroupsToken_handler(uint64_t a1, uint64_t a2,
                              prev_state ? prev_state->Groups : (SID_AND_ATTRIBUTES *)0,
                              &prev_count);
 
-    if (prev_state && rc == (int32_t)STATUS_SUCCESS) {
+    if (prev_state && rc == (int32_t)STATUS_SUCCESS &&
+        buf_len >= __builtin_offsetof(TOKEN_GROUPS, Groups)) {
+        /* Only write the count field when the buffer covers the header. */
         prev_state->GroupCount = prev_count;
     }
     if (ret_len) {
-        uint64_t need64 = (uint64_t)sizeof(TOKEN_GROUPS) +
-                         (uint64_t)prev_count * sizeof(SID_AND_ATTRIBUTES);
+        uint64_t need64 =
+            (uint64_t)__builtin_offsetof(TOKEN_GROUPS, Groups) +
+            (uint64_t)prev_count * sizeof(SID_AND_ATTRIBUTES);
         *ret_len = need64 > 0xFFFFFFFFULL ? 0xFFFFFFFFU : (uint32_t)need64;
     }
 

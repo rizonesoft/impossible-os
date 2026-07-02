@@ -78,7 +78,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  13   | File metadata and device control                               | §6                |  [x]   |
 | 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5    |  [/]   |
 | 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §5   |  [/]   |
-| 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7    |  [x]   |
+| 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7    |  [/]   |
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3    |  [x]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7    |  [x]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9 |  [x]   |
@@ -750,21 +750,26 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtOpenProcessTokenEx(ProcessHandle, DesiredAccess, HandleAttributes, TokenHandle)` → SSDT 0x00B1 (HandleAttributes currently ignored; inherit/audit flags tracked in TODO-05 §2)
 - [x] `NtOpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle)` → SSDT 0x00B2 (falls back to owning task's primary token; thread impersonation slot pending → XREF: 02-kernel-core/TODO-15 §2)
 - [x] `NtOpenThreadTokenEx(ThreadHandle, DesiredAccess, OpenAsSelf, HandleAttributes, TokenHandle)` → SSDT 0x00B3
-- [x] `NtQueryInformationToken(TokenHandle, TokenInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x00B4 (14 info classes via library: TokenUser, TokenGroups, TokenPrivileges, TokenOwner, TokenPrimaryGroup, TokenDefaultDacl, TokenSource, TokenTypeInfo, TokenImpersonationLevelInfo, TokenStatistics, TokenElevationTypeInfo, TokenLinkedToken, TokenIsElevatedInfo, TokenIntegrityLevel)
-- [x] `NtSetInformationToken(TokenHandle, TokenInformationClass, Buffer, Length)` → SSDT 0x00B5 (supports TokenIntegrityLevel; read-only classes return STATUS_INVALID_INFO_CLASS; ownership-transfer classes → XREF: 02-kernel-core/TODO-15 §7)
+- [x] `NtQueryInformationToken(TokenHandle, Class, Buffer, Length, ReturnLength)` → SSDT 0x00B4 (13 info classes via library; TokenSource is enum-defined but not yet wired -- falls to STATUS_INVALID_INFO_CLASS)
+- [x] `NtSetInformationToken(TokenHandle, Class, Buffer, Length)` → SSDT 0x00B5 (all classes currently return STATUS_INVALID_INFO_CLASS; TokenIntegrityLevel + ownership-transfer setters deferred → XREF: 02-kernel-core/TODO-15 §7)
 - [x] `NtAdjustPrivilegesToken(TokenHandle, DisableAllPrivileges, NewState, BufferLength, PreviousState, ReturnLength)` → SSDT 0x00B6 (unpacks TOKEN_PRIVILEGES, delegates to library)
 - [x] `NtAdjustGroupsToken(TokenHandle, ResetToDefault, NewState, BufferLength, PreviousState, ReturnLength)` → SSDT 0x00B7 (unpacks TOKEN_GROUPS, delegates to library)
 - [x] `NtAllocateLocallyUniqueId(Luid)` → SSDT 0x00C3 (SSDT wrapper around `NtAllocateLocallyUniqueId` in luid.c)
+- [ ] NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState holds the required old-state entries, so an undersized buffer loses rollback state. Pre-scan the required count and return STATUS_BUFFER_TOO_SMALL without mutating.
 - [x] Commit: `"kernel: nt -- token open/query/adjust syscalls"` (d692c058)
 
 **Test checkpoint:** `NtOpenProcessToken` returns valid token handle. `NtQueryInformationToken(TokenUser)` returns correct SID. `NtAdjustPrivilegesToken` enables/disables a privilege. `NtAllocateLocallyUniqueId` returns monotonically increasing LUIDs.
 
-> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security)
-> **Expected:** 6 new §16 tests (NtAllocateLocallyUniqueId via SSDT, NtOpenProcessToken, NtQueryInformationToken invalid handle, NtSetInformationToken read-only, NtAdjustPrivilegesToken invalid, token SSDT registration), 0 failures.
-
-> **Verified** (2026-04-14): 9 handlers registered at SSDT 0x00B0-0x00B7 + 0x00C3 via nt_token.c:480-497. NtOpenProcessToken/Ex route through resolve_process_handle → task->token → library NtOpenProcessToken. NtOpenThreadToken/Ex resolve via resolve_thread_handle, fall back to owning task's primary token (thread impersonation pending). NtQueryInformationToken routes 14 info classes through library. NtSetInformationToken rejects all classes with STATUS_INVALID_INFO_CLASS pending deep-copy setters. NtAdjust{Privileges,Groups}Token unpack TOKEN_PRIVILEGES/TOKEN_GROUPS with bounded counts (TOKEN_MAX_PRIVS=36, TOKEN_MAX_GROUPS=32) and 64-bit capacity math. NtAllocateLocallyUniqueId is a 1-line SSDT wrapper around luid.c. 10 ntdll PE exports added (sorted). 6 new tests in TEST_CAT_SECURITY. token.h cleaned: removed duplicate NTSTATUS defines, uses canonical kernel/nt/ntstatus.h. Build clean.
-> **Accepted:** (1) Process/thread handles are PID/TID-encoded rather than OB-allocated (matches existing nt_process.c pattern; no per-handle access rights enforcement) -> XREF: 02-kernel-core/TODO-05 §9 (new item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles"). (2) Token handle granted_access not checked on mutate ops -> XREF: 02-kernel-core/TODO-15 §8 (new item: "Enforce per-handle granted_access on token mutation syscalls"). (3) NtOpenProcessTokenEx HandleAttributes discarded -> XREF: 02-kernel-core/TODO-05 §2 (new item: "Wire HandleAttributes through ObpAllocateHandle for NtXxxEx syscalls"). (4) NtSetInformationToken set classes (deep-copy) -> XREF: 02-kernel-core/TODO-15 §7 (item: "Deep-copy token field setters for NtSetInformationToken"). (5) Per-token SMP lock -> XREF: 02-kernel-core/TODO-15 §7 (item: "Per-token lock for SMP safety"). (6) Thread impersonation slot -> XREF: 02-kernel-core/TODO-15 §2 (items: ImpersonationToken field + NtImpersonateThread + NtSetInformationThread).
-> **Quality reviewed** (2026-04-14): dead code clean (local TOKEN_GROUPS struct needed -- not in token.h; resolve_thread_handle's out_task is used in NtOpenThreadToken). Consistency: TokenTypeInfo=8 matches Windows TokenType enum value (the name difference is because ntstatus.h already uses "TokenType" for an enum; our enum member is TokenTypeInfo). Performance: resolve_thread_handle linear scan bounded by task->num_threads; adjust privileges O(n*m) bounded by 36*36=1296 ops. Codex findings (PID-as-handle, granted_access, HandleAttributes) are pre-existing systemic gaps not introduced by §16; all three accepted with concrete XREFs.
+> **Test runner:** `scripts\debug\kernel\run-security-tests.bat` (SUITE=security) | 1010 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: 9 token syscall handlers in nt_token.c wired to SSDT 0x00B0-0x00B7 + 0x00C3; thin wrappers over the token.c library + luid.c.
+> - Hardened this review: fixed a Critical PreviousState capacity over-count + the count-field overwrite (offsetof sizing), added a NULL-output guard in NtQueryInformationToken, corrected stale claims (13 classes; NtSetInformationToken rejects all).
+> - Scope boundary: query marshalling -> TODO-15 §4; deep-copy setters/per-token lock -> TODO-15; PID/TID handles -> TODO-05 §9; granted_access -> TODO-15 §8; HandleAttributes -> TODO-05 §2; probes -> §6/§29.
+> - Test gap: token-adjust success paths + PreviousState size edge cases (0/header-only/one-entry) + valid-class query positive paths are untested.
+> **Verified:** 2026-07-02 | commit `7183b1bd` | 9/10 items | build OK | security 1010/1010 PASS
+> **Deferred:** [H] NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState can hold the old-state entries, so an undersized buffer loses rollback state -> XREF: 02-kernel-core/TODO-12 §16 (item: "NtAdjustPrivileges/GroupsToken mutate the token before proving PreviousState" at line 758)
+> **Accepted:** [H] token queries return kernel-owned SID pointers + TokenGroups uses the wrong header offset (unusable ABI / kernel-layout leak) -> XREF: 02-kernel-core/TODO-15 §4 (item: "TokenXxx query marshalling" at line 296)
+> **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Crit+2H fixed, 1H accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 
 ---

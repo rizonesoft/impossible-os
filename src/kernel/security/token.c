@@ -469,6 +469,13 @@ int32_t NtQueryInformationToken(const ACCESS_TOKEN *token,
     if (!token)
         return STATUS_INVALID_HANDLE;
 
+    /* A NULL output buffer is a length query: force buf_len to 0 so every
+     * class returns STATUS_BUFFER_TOO_SMALL (with ret_len set) instead of
+     * dereferencing NULL on the write path (buf_len >= needed + buf == NULL
+     * would otherwise fault in the kernel). */
+    if (!buf)
+        buf_len = 0;
+
     switch (info_class) {
 
     case TokenUser: {
