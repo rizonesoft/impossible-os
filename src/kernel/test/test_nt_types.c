@@ -856,6 +856,51 @@ static void test_rtl_status_to_dos_known(void)
                    "PRIVILEGE_NOT_HELD -> 1314");
 }
 
+/* RtlNtStatusToDosError: broad-coverage class mappings (file/path, sharing,
+ * buffer, process/handle, sync, and the success-severity timeout/pending
+ * special cases). Guards against the "every other status -> 317" sparseness. */
+static void test_rtl_status_to_dos_broad(void)
+{
+    /* file / path class */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_OBJECT_PATH_NOT_FOUND), 3,
+                   "OBJECT_PATH_NOT_FOUND -> 3 (PATH_NOT_FOUND)");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_NO_MORE_FILES), 18,
+                   "NO_MORE_FILES -> 18");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_END_OF_FILE), 38,
+                   "END_OF_FILE -> 38 (HANDLE_EOF)");
+    /* sharing / lock class */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_SHARING_VIOLATION), 32,
+                   "SHARING_VIOLATION -> 32");
+    /* buffer / length class */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_INFO_LENGTH_MISMATCH), 24,
+                   "INFO_LENGTH_MISMATCH -> 24 (BAD_LENGTH)");
+    /* process / handle / device class */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_OBJECT_TYPE_MISMATCH), 6,
+                   "OBJECT_TYPE_MISMATCH -> 6 (INVALID_HANDLE)");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_NOT_SUPPORTED), 50,
+                   "NOT_SUPPORTED -> 50");
+    /* sync class */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_MUTANT_NOT_OWNED), 288,
+                   "MUTANT_NOT_OWNED -> 288 (NOT_OWNER)");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_SEMAPHORE_LIMIT_EXCEEDED), 298,
+                   "SEMAPHORE_LIMIT_EXCEEDED -> 298 (TOO_MANY_POSTS)");
+    /* buffer overflow (warning severity) -> ERROR_MORE_DATA, not
+     * ERROR_BUFFER_OVERFLOW -- matches host ntdll RtlNtStatusToDosError */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError((NTSTATUS)0x80000005), 234,
+                   "BUFFER_OVERFLOW -> 234 (MORE_DATA)");
+    /* success-severity codes with a specific Win32 error (must not
+     * return 0 despite NT_SUCCESS being true) */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_TIMEOUT), 1460,
+                   "STATUS_TIMEOUT -> 1460 (ERROR_TIMEOUT), not 0");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_PENDING), 997,
+                   "STATUS_PENDING -> 997 (ERROR_IO_PENDING), not 0");
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_ABANDONED), 735,
+                   "STATUS_ABANDONED -> 735 (ERROR_ABANDONED_WAIT_0), not 0");
+    /* exact STATUS_SUCCESS still returns ERROR_SUCCESS */
+    TEST_ASSERT_EQ(RtlNtStatusToDosError(STATUS_SUCCESS), 0,
+                   "exact SUCCESS still -> 0 after reorder");
+}
+
 /* RtlNtStatusToDosError: unknown -> ERROR_MR_MID_NOT_FOUND (317) */
 static void test_rtl_status_to_dos_unknown(void)
 {
@@ -1030,6 +1075,8 @@ void test_register_nt_types(void)
                             test_rtl_status_to_dos_success, TEST_CAT_ABI);
     test_suite_register_cat("NT: RtlNtStatusToDosError known",
                             test_rtl_status_to_dos_known, TEST_CAT_ABI);
+    test_suite_register_cat("NT: RtlNtStatusToDosError broad coverage",
+                            test_rtl_status_to_dos_broad, TEST_CAT_ABI);
     test_suite_register_cat("NT: RtlNtStatusToDosError unknown",
                             test_rtl_status_to_dos_unknown, TEST_CAT_ABI);
 

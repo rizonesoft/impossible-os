@@ -583,10 +583,18 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 - [x] On every `NTSTATUS` return from a syscall: if `NT_ERROR(status)`, write the Win32 error translation into `TEB->LastErrorValue` (at `gs:[0x68]`) via `RtlNtStatusToDosError`. Wired in both SYSCALL (`syscall_fast.c`) and INT 0x2E (`syscall.c`) return paths.
 - [x] `RtlNtStatusToDosError` 12-entry table in `ssdt.c`: SUCCESS->0, ACCESS_DENIED->5, NO_MEMORY->8, INVALID_HANDLE->6, NAME_NOT_FOUND->2, NOT_IMPLEMENTED->50, INVALID_PARAMETER->87, BUFFER_TOO_SMALL->122, ACCESS_VIOLATION->998, PRIVILEGE_NOT_HELD->1314, UNSUCCESSFUL->1, NAME_COLLISION->183. Unknown->317.
 - [x] Kernel writes `TEB->LastErrorValue` only in the syscall return path; user-mode `SetLastError` writes `gs:[0x68]` directly without a syscall.
-- [ ] RtlNtStatusToDosError broad coverage: the 12-entry table is too sparse (every other status -> 317) -- add table-driven mappings for the common NTSTATUS classes (file/path, sharing, registry, sync/timeout, process, buffer, privilege) so real Win32 GetLastError consumers get correct codes; expand tests beyond ACCESS_DENIED/NO_MEMORY
+- [x] RtlNtStatusToDosError broad coverage: `s_nt_to_dos` expanded to ~40 rows across the common NTSTATUS classes + success-severity codes, with lookup before the NT_SUCCESS fallback; broad-coverage tests added
 - [x] Commit: `"kernel: nt -- IOSB and TEB LastErrorValue propagation"` (607eb38b)
 
 **Test checkpoint:** After a failing `NtOpenFile` (non-existent path), `gs:[0x68]` == Win32 error code (2 = FILE_NOT_FOUND). After `NtReadFile`, IOSB `Status == STATUS_SUCCESS`, `Information == bytes_read`.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 419 kernel + 16 user tests, 0 failures
+
+> **Notes:**
+> - **What shipped:** IOSB propagation on all file NtXxx, TEB->LastErrorValue written on NT_ERROR syscall returns, and a ~40-row NTSTATUS->Win32 error table (`s_nt_to_dos` in ssdt.c) over the common status classes + success-severity codes.
+> - **How it runs:** SYSCALL + INT 0x2E return paths call RtlNtStatusToDosError; the table lookup runs before the NT_SUCCESS fallback so mapped success codes (TIMEOUT/PENDING/ABANDONED) are not masked to ERROR_SUCCESS.
+> - **Downstream effects:** user-mode GetLastError returns Windows-correct codes for the common classes; mappings verified against Microsoft's system-error-code tables.
+> - **Scope boundary:** the table covers common classes, not the full ntdll table; per-CPU previous-mode SMP hardening is §12; async IOSB pending completion is owned by the IRP/async I/O work.
 
 ---
 

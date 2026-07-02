@@ -96,6 +96,41 @@ static const struct {
     { (NTSTATUS)0xC0000061,   1314 },  /* PRIVILEGE_NOT_HELD */
     { (NTSTATUS)0xC0000001,   1    },  /* UNSUCCESSFUL -> INVALID_FUNCTION */
     { (NTSTATUS)0xC0000035,   183  },  /* OBJECT_NAME_COLLISION -> ALREADY_EXISTS */
+    /* --- file / path class --- */
+    { (NTSTATUS)0xC000000F,   2    },  /* NO_SUCH_FILE -> FILE_NOT_FOUND */
+    { (NTSTATUS)0xC000003A,   3    },  /* OBJECT_PATH_NOT_FOUND -> PATH_NOT_FOUND */
+    { (NTSTATUS)0xC0000039,   161  },  /* OBJECT_PATH_INVALID -> BAD_PATHNAME */
+    { (NTSTATUS)0xC0000033,   123  },  /* OBJECT_NAME_INVALID -> INVALID_NAME */
+    { (NTSTATUS)0x80000006,   18   },  /* NO_MORE_FILES -> NO_MORE_FILES */
+    { (NTSTATUS)0xC0000011,   38   },  /* END_OF_FILE -> HANDLE_EOF */
+    { (NTSTATUS)0xC00000BA,   5    },  /* FILE_IS_A_DIRECTORY -> ACCESS_DENIED */
+    { (NTSTATUS)0xC0000103,   267  },  /* NOT_A_DIRECTORY -> DIRECTORY */
+    { (NTSTATUS)0xC0000101,   145  },  /* DIRECTORY_NOT_EMPTY -> DIR_NOT_EMPTY */
+    { (NTSTATUS)0xC000007F,   112  },  /* DISK_FULL -> DISK_FULL */
+    { (NTSTATUS)0xC0000121,   5    },  /* CANNOT_DELETE -> ACCESS_DENIED */
+    /* --- sharing / lock class --- */
+    { (NTSTATUS)0xC0000043,   32   },  /* SHARING_VIOLATION -> SHARING_VIOLATION */
+    { (NTSTATUS)0xC0000054,   33   },  /* FILE_LOCK_CONFLICT -> LOCK_VIOLATION */
+    { (NTSTATUS)0xC0000055,   33   },  /* LOCK_NOT_GRANTED -> LOCK_VIOLATION */
+    /* --- buffer / length class --- */
+    { (NTSTATUS)0xC0000004,   24   },  /* INFO_LENGTH_MISMATCH -> BAD_LENGTH */
+    { (NTSTATUS)0x80000005,   234  },  /* BUFFER_OVERFLOW -> MORE_DATA */
+    { (NTSTATUS)0xC0000106,   206  },  /* NAME_TOO_LONG -> FILENAME_EXCED_RANGE */
+    { (NTSTATUS)0xC000009A,   1450 },  /* INSUFFICIENT_RESOURCES -> NO_SYSTEM_RESOURCES */
+    /* --- process / handle / device class --- */
+    { (NTSTATUS)0xC0000024,   6    },  /* OBJECT_TYPE_MISMATCH -> INVALID_HANDLE */
+    { (NTSTATUS)0xC000010A,   5    },  /* PROCESS_IS_TERMINATING -> ACCESS_DENIED */
+    { (NTSTATUS)0xC0000010,   1    },  /* INVALID_DEVICE_REQUEST -> INVALID_FUNCTION */
+    { (NTSTATUS)0xC00000BB,   50   },  /* NOT_SUPPORTED -> NOT_SUPPORTED */
+    /* --- sync class (error-severity) --- */
+    { (NTSTATUS)0xC0000046,   288  },  /* MUTANT_NOT_OWNED -> NOT_OWNER */
+    { (NTSTATUS)0xC0000047,   298  },  /* SEMAPHORE_LIMIT_EXCEEDED -> TOO_MANY_POSTS */
+    /* --- registry class --- */
+    { (NTSTATUS)0xC000017C,   1018 },  /* KEY_DELETED -> KEY_DELETED */
+    /* --- success-severity codes that map to a specific Win32 error --- */
+    { (NTSTATUS)0x00000102,   1460 },  /* TIMEOUT -> ERROR_TIMEOUT */
+    { (NTSTATUS)0x00000103,   997  },  /* PENDING -> ERROR_IO_PENDING */
+    { (NTSTATUS)0x00000080,   735  },  /* ABANDONED_WAIT_0 -> ERROR_ABANDONED_WAIT_0 */
 };
 
 #define NT_TO_DOS_COUNT \
@@ -104,12 +139,22 @@ static const struct {
 uint32_t RtlNtStatusToDosError(NTSTATUS status)
 {
     uint32_t i;
-    if (NT_SUCCESS(status))
-        return 0;  /* ERROR_SUCCESS */
+
+    if (status == 0)
+        return 0;  /* exact STATUS_SUCCESS -> ERROR_SUCCESS */
+
+    /* Table lookup runs BEFORE the NT_SUCCESS fallback so success-severity
+     * codes that Windows maps to a specific error (TIMEOUT, PENDING,
+     * ABANDONED) get their real Win32 code instead of ERROR_SUCCESS. */
     for (i = 0; i < NT_TO_DOS_COUNT; i++) {
         if (s_nt_to_dos[i].nt == status)
             return s_nt_to_dos[i].dos;
     }
+
+    /* Not in the table: any other success-severity status is a benign
+     * success (ERROR_SUCCESS); everything else is an unmapped error. */
+    if (NT_SUCCESS(status))
+        return 0;
     return 317;  /* ERROR_MR_MID_NOT_FOUND */
 }
 
