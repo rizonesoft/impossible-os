@@ -18,7 +18,7 @@ description: Deep quality review of an implemented TODO section -- industry stan
 
 ## Workflow
 
-1. **Read the section + source files** -- full section text, all source files that implement it. Understand not just WHAT it does but HOW it does it.
+1. **Read the section + source files** -- full section text, all source files that implement it. **Dispatch `Agent(subagent_type="review-evidence-mapper", ...)` BY DEFAULT first** for the file:line evidence map of the implementation surface (skip only for tiny stamp-only/docs sections), then read the load-bearing files it points at yourself. Understand not just WHAT it does but HOW it does it.
 
 2. **Industry standards research** -- for each major feature in the section, research how it SHOULD work per the relevant specification:
    - **UEFI code:** UEFI Specification 2.10+ (table formats, calling conventions, memory ownership rules, error handling requirements)

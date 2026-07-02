@@ -30,6 +30,8 @@ The goal: every truly implemented and wired service has `[x]`, and no `[x]` exis
 
 ### 1. Scan the codebase for all registered handlers
 
+> **Dispatch `Agent(subagent_type="ssdt-auditor", ...)` BY DEFAULT for this scan** -- it absorbs the bulk read (every registration call site + both master tables + handler stubs) in a throwaway context and returns the mismatch report. VERIFY each reported mismatch at its file:line before acting (trust contract). Do the scan in-context only when auditing a handful of entries.
+
 ```
 Grep for: ssdt_register(
 Files:    src/kernel/**/*.c (exclude src/kernel/test/)

@@ -1,5 +1,7 @@
 # Overnight Runner Plan 2 -- Context Offload + Enforcement + Digester + Discipline
 
+> **Update 2026-07-02:** WS1b's deferred BLOCK promotion shipped (operator instruction): `agent_dispatch_required.py` now BLOCKs (exit 2) kernel/boot source edits in the overnight SECTIONS phase with no fresh agent dispatch, WARNs for other source; `SKIP_AGENT_DISPATCH_HOOK=1` is the triviality escape. Plan 3's WS5b model flips (explorer + parity -> Sonnet) also shipped, plus five new read-only agents (ssdt-auditor, serial-log-auditor, test-coverage-mapper, doc-sync-auditor, spec-research-analyst) -- fleet is 12, Sonnet-default with Opus only on kernel-quality-auditor.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the runner's existing read-only agents fire by default (WS1), add a failure-log digester agent (WS2), make the dispatch un-bypassable in overnight runs via a WARN-first hook (WS1b), and lint-guard against &-bundled Codex dispatch (WS7).

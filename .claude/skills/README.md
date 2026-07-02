@@ -76,10 +76,15 @@ Subagents in [`../agents/`](../agents/) that the skills above delegate ANALYSIS 
 
 | Agent | Model | Dispatched by |
 | ----- | ----- | ------------- |
-| [kernel-explorer](../agents/kernel-explorer.md) | opus | `implement-todo-section` step 3 |
+| [kernel-explorer](../agents/kernel-explorer.md) | sonnet | `implement-todo-section` step 3 + `debug-session` step 4 |
 | [kernel-quality-auditor](../agents/kernel-quality-auditor.md) | opus | `review-todo-section` step 7 |
 | [boot-quality-auditor](../agents/boot-quality-auditor.md) | sonnet | `review-todo-section` step 7 |
-| [parity-research-analyst](../agents/parity-research-analyst.md) | opus / sonnet (gap-audit) | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 |
-| [review-evidence-mapper](../agents/review-evidence-mapper.md) | sonnet | `review-todo-section` Phase 1 |
+| [parity-research-analyst](../agents/parity-research-analyst.md) | sonnet | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 + `create-todo` research |
+| [review-evidence-mapper](../agents/review-evidence-mapper.md) | sonnet | `review-todo-section` Phase 1 + `quality-review-section` step 1 |
 | [diagnostic-digester](../agents/diagnostic-digester.md) | sonnet | `implement-todo-section` fix loop + `review-todo-section` build-fail |
 | [todo-hygiene-auditor](../agents/todo-hygiene-auditor.md) | sonnet | `complete-todo-file` close-out |
+| [ssdt-auditor](../agents/ssdt-auditor.md) | sonnet | `audit-ssdt` scan + `implement-ssdt-range` pre-read |
+| [serial-log-auditor](../agents/serial-log-auditor.md) | sonnet | `diagnose-serial-log` step 2 + `debug-session` multi-log evidence |
+| [test-coverage-mapper](../agents/test-coverage-mapper.md) | sonnet | `implement-unit-tests` step 1 |
+| [doc-sync-auditor](../agents/doc-sync-auditor.md) | sonnet | `complete-todo-file` close-out |
+| [spec-research-analyst](../agents/spec-research-analyst.md) | sonnet | `implement-todo-section` step 3 + `debug-session` spec lookups |

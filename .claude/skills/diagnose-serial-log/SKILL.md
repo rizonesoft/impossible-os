@@ -103,8 +103,9 @@ Do not present raw lines first. Present findings derived from the model.
    - Record them into the working context so later passes can honor them.
 
 2. **Read all relevant logs first**
-   - If a file path is given, read it.
-   - If multiple candidate logs exist nearby (`*-serial.log`, `*-tcg*.log`, `*-1cpu*.log`, `*-baremetal*.log`), read all of them. Multi-log comparison is first-class, not optional.
+   - **Dispatch `Agent(subagent_type="serial-log-auditor", <log paths>)` BY DEFAULT** -- it sweeps the full log set in a throwaway context and returns the anomaly timeline + minimal slices + platform divergence, so this session does not swallow multi-hundred-KB logs. You still run the mechanical detection regexes yourself (step below -- the MECHANICAL RULE stays here) and validate every hypothesis at file:line. Read logs in-context only for a single small fragment.
+   - If a file path is given, read it (or hand it to the auditor per the rule above).
+   - If multiple candidate logs exist nearby (`*-serial.log`, `*-tcg*.log`, `*-1cpu*.log`, `*-baremetal*.log`), the auditor reads all of them. Multi-log comparison is first-class, not optional.
    - If the user pasted only a fragment, say so and mark the analysis partial.
 
 3. **Extract platform context**

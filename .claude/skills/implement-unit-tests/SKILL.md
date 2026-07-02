@@ -133,6 +133,8 @@ Always use `test_suite_register_cat()` with the appropriate category.
 
 ### 1. Read the Unit Tests section
 
+> **Dispatch `Agent(subagent_type="test-coverage-mapper", ...)` BY DEFAULT first** -- it returns the test-writing brief (spec list with exists/partial/missing status, exact signatures/enums quoted from headers, behavior notes, `test_runner.c` wiring points) in a throwaway context. Verify quoted signatures against the header before writing (trust contract). Skip only when adding 1-2 assertions to an existing test file.
+
 Read the exact `## Unit Tests` section in the target TODO file. It specifies:
 - The test file to create (e.g., `src/kernel/test/test_boot_init.c`)
 - The registration function name (e.g., `test_register_boot_init()`)

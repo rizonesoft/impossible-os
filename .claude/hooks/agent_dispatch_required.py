@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-# block-via: warning-only (WS1b agent-discipline WARN; never exits 2)
-"""PreToolUse: WARN when an overnight SECTIONS-phase source edit happens with no
-recent agent dispatch. WARN-only (exit 0 + stderr); invisible in interactive
-sessions. Fail-open. The BLOCK promotion + triviality classifier is a later plan.
+# block-via: exit 2 (kernel/boot source in overnight SECTIONS phase only; WARN elsewhere)
+"""PreToolUse: enforce agent-dispatch discipline for overnight SECTIONS-phase
+source edits. With no recent read-only agent dispatch: BLOCK (exit 2) for
+kernel/boot source (.c/.h/.asm/.S under src/ or include/), WARN for other
+source. Invisible in interactive sessions; fail-open on any error. BLOCK
+promotion authorized 2026-07-02 (operator instruction; was WARN-first WS1b).
+Escape: SKIP_AGENT_DISPATCH_HOOK=1 for genuinely tiny mechanical edits.
 """
 from __future__ import annotations
 
@@ -71,13 +74,30 @@ def main() -> int:
         return 0
     if _recent_dispatch(root):
         return 0
+    path = ti.get("file_path") or ti.get("path") or ""
+    rel = path.split("/impossible-os/", 1)[-1] if "/impossible-os/" in path else path
+    kernelish = (
+        (rel.startswith(("src/", "include/")) or "/src/" in path or "/include/" in path)
+        and rel.endswith((".c", ".h", ".asm", ".S"))
+    )
+    if kernelish:
+        sys.stderr.write(
+            "[agent-dispatch BLOCK] kernel/boot source edit in the SECTIONS phase "
+            "with no read-only agent dispatch in the last 30 min. Dispatch the "
+            "explorer/auditor the skill names (kernel-explorer, ssdt-auditor, "
+            "test-coverage-mapper, ...) FIRST -- they keep the main context lean "
+            "at no quality cost (you verify their findings at file:line). For a "
+            "genuinely tiny mechanical edit set SKIP_AGENT_DISPATCH_HOOK=1 and "
+            "state the reason in your message.\n"
+        )
+        return 2
     sys.stderr.write(
-        "[agent-dispatch reminder] WS1b: a source edit in the SECTIONS phase with "
+        "[agent-dispatch reminder] a source edit in the SECTIONS phase with "
         "no read-only explorer/auditor dispatch in the last 30 min. Default-on "
         "agents keep the main context lean. Dispatch one, or set "
         "SKIP_AGENT_DISPATCH_HOOK=1 with a logged reason if this section is tiny.\n"
     )
-    return 0  # WARN-only this plan
+    return 0  # WARN for non-kernel source
 
 
 if __name__ == "__main__":

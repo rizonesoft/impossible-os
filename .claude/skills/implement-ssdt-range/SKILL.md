@@ -23,6 +23,7 @@ The user provides an SSDT range block -- either pasted from TODO-05 (main SSDT, 
 ## Workflow
 
 ### 1. Parse the range
+- **Dispatch `Agent(subagent_type="ssdt-auditor", ...)` in range mode BY DEFAULT** with the range span -- it returns the worklist (table rows, registration wiring point, nearest pattern-donor handlers) without pulling both master tables into this context. Verify the worklist rows against the table before implementing. Skip only for ranges of 1-2 entries.
 - Extract every function name and SSDT index from the table.
 - Identify the owning TODO file (main SSDT = `todo/02-kernel-core/TODO-05-native-api-ssdt.md`, shadow SSDT = `todo/08-graphics-ui/TODO-15-win32k-shadow-ssdt.md`).
 - Read the referenced section (§N) in the owning TODO for implementation details, signatures, and checklist items.

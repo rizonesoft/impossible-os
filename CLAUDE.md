@@ -260,19 +260,24 @@ Claude Code skills live in `.claude/skills/`. They auto-load when Claude judges 
 
 ### Specialist agents -- advisory, read-only
 
-Seven subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate ANALYSIS to. They are **sensors, not actuators**: read-only (tools restricted to `Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the parity analyst), they return findings as text and never edit, build, commit, dispatch Codex, or invoke skills. The main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
+Twelve subagents in [`.claude/agents/`](.claude/agents/) that the pipeline skills delegate ANALYSIS to. They are **sensors, not actuators**: read-only (tools restricted to `Read`/`Grep`/`Glob`, plus `WebSearch`/`WebFetch` for the parity analyst), they return findings as text and never edit, build, commit, dispatch Codex, or invoke skills. The main session remains the sole mutator/committer/Codex-dispatcher, so the section-commit gate, phase guard, and evidence binding are untouched. Design + rationale: [docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md](docs/superpowers/specs/2026-06-20-overnight-specialist-agents-design.md).
 
 | Agent | Model | Dispatched by |
 |---|---|---|
-| `kernel-explorer` | opus | `implement-todo-section` step 3 (kernel/boot exploration) |
+| `kernel-explorer` | sonnet | `implement-todo-section` step 3 (kernel/boot exploration) + `debug-session` step 4 (call-path walk) |
 | `kernel-quality-auditor` | opus | `review-todo-section` step 7 (SMP/bare-metal gate walk) |
 | `boot-quality-auditor` | sonnet | `review-todo-section` step 7 (UEFI gate walk) |
-| `parity-research-analyst` | opus; sonnet via per-call override in gap-audit | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 |
-| `review-evidence-mapper` | sonnet | `review-todo-section` Phase 1 (pre-Codex evidence map; supplements, does not replace, the main session's >=2 gate reads) |
+| `parity-research-analyst` | sonnet | `gap-audit-todo` Phase 2-3 + `review-todo-section` steps 9-12 + `create-todo` research |
+| `review-evidence-mapper` | sonnet | `review-todo-section` Phase 1 + `quality-review-section` step 1 (pre-Codex evidence map; supplements, does not replace, the main session's >=2 gate reads) |
 | `diagnostic-digester` | sonnet | `implement-todo-section` fix loop + `review-todo-section` build-fail (failure-log digest; hypotheses validated by main session before fixing) |
 | `todo-hygiene-auditor` | sonnet | `complete-todo-file` close-out (fuzzy-residue hygiene punch-list; script-verified before applied) |
+| `ssdt-auditor` | sonnet | `audit-ssdt` scan + `implement-ssdt-range` pre-read (registration-vs-master-table mismatch report / range worklist) |
+| `serial-log-auditor` | sonnet | `diagnose-serial-log` step 2 + `debug-session` multi-log evidence (full-set anomaly timeline; mechanical detectors stay main-session) |
+| `test-coverage-mapper` | sonnet | `implement-unit-tests` step 1 (spec status, quoted signatures, runner wiring points) |
+| `doc-sync-auditor` | sonnet | `complete-todo-file` close-out (CLAUDE.md/skills/docs drift vs shipped work) |
+| `spec-research-analyst` | sonnet | `implement-todo-section` step 3 + `debug-session` (external-spec normative facts with citations) |
 
-Model follows backstop strength: sonnet only where a second net (Codex red-team, main-loop re-walk, or main-loop verification) catches a miss; opus on the thin/sole nets. The read-only tool allowlist is enforced by `scripts/lint.sh` Check 14.
+Model doctrine (updated with the Claude 5 family): **sonnet is the default for every read-only analyst** -- the trust contract (main session verifies findings at file:line before acting) plus the downstream nets (Codex red-team, build/test gates, bare-metal validation) are the backstop. Opus is reserved for the thin/sole nets; today that is only `kernel-quality-auditor` (sole SMP/lock-order/bare-metal specialist net for the repo's most expensive bug class). The read-only tool allowlist is enforced by `scripts/lint.sh` Check 14.
 
 ### Plugin skills -- usage notes
 

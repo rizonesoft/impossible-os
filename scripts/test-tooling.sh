@@ -1063,6 +1063,38 @@ _ad_silent "silent on markdown target" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
 PAYLOAD='{"tool_name":"Read","tool_input":{"file_path":"src/kernel/x.c"}}'
 _ad_silent "silent on non-edit tool" "PATH=$PATH" "OVERNIGHT_SEQUENCER_RUN=1"
 
+# Positive paths (BLOCK/WARN) via a synthetic tree: the hook resolves its repo
+# root from its own location, so a copied hook + synthetic sequencer-run.json
+# exercises the SECTIONS-phase logic without touching the real state.
+AD_TMP="$(mktemp -d)"
+mkdir -p "$AD_TMP/.claude/hooks" "$AD_TMP/.claude/state"
+cp "$_AD_GATE" "$AD_TMP/.claude/hooks/agent_dispatch_required.py"
+printf '{"active": true, "phase": "SECTIONS"}' > "$AD_TMP/.claude/state/sequencer-run.json"
+_ad_pos() {  # <desc> <want_rc> <want_grep>
+    local desc="$1" want_rc="$2" want_grep="$3" err rc
+    err=$(printf '%s' "$PAYLOAD" | env -u SKIP_AGENT_DISPATCH_HOOK OVERNIGHT_SEQUENCER_RUN=1         python3 "$AD_TMP/.claude/hooks/agent_dispatch_required.py" 2>&1 1>/dev/null)
+    rc=$?
+    if [ "$rc" = "$want_rc" ] && echo "$err" | grep -q "$want_grep"; then
+        t_pass "agent_dispatch_gate: $desc (rc=$rc)"
+    else
+        t_fail "agent_dispatch_gate: $desc (want rc=$want_rc + '$want_grep', got rc=$rc err='$err')"
+    fi
+}
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"src/kernel/sched.c"}}'
+_ad_pos "BLOCKs kernel source edit with no fresh dispatch" 2 "agent-dispatch BLOCK"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"scripts/tool.py"}}'
+_ad_pos "WARNs (not blocks) non-kernel source edit" 0 "agent-dispatch reminder"
+# a fresh dispatch record clears both paths
+python3 -c "import json,time,sys; json.dump({'timestamp_ns': time.time_ns(), 'subagent_type': 'kernel-explorer'}, open(sys.argv[1],'w'))" "$AD_TMP/.claude/state/last-agent-dispatch.json"
+PAYLOAD='{"tool_name":"Edit","tool_input":{"file_path":"src/kernel/sched.c"}}'
+err=$(printf '%s' "$PAYLOAD" | env -u SKIP_AGENT_DISPATCH_HOOK OVERNIGHT_SEQUENCER_RUN=1     python3 "$AD_TMP/.claude/hooks/agent_dispatch_required.py" 2>&1 1>/dev/null); rc=$?
+if [ -z "$err" ] && [ "$rc" = "0" ]; then
+    t_pass "agent_dispatch_gate: fresh dispatch record clears the BLOCK"
+else
+    t_fail "agent_dispatch_gate: fresh dispatch did not clear (rc=$rc err='$err')"
+fi
+rm -rf "$AD_TMP"
+
 # ============================================================================
 # receiving-code-review hard gate (TODO-08 in 00-infrastructure section 3)
 #
