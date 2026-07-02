@@ -1989,6 +1989,11 @@ check("background_dispatch_detected",
       cd.is_background_dispatch("node /x/codex-companion.mjs task --background --json 'p'")
       and cd.is_background_dispatch("bash scripts/codex-bg-dispatch.sh 'p'")
       and not cd.is_background_dispatch("bash scripts/codex-dispatch.sh 'p'"))
+# the bg wrapper is a RECOGNIZED trigger (proper attribution, telemetry
+# semantics) -- not an invisible dispatch
+check("bg_wrapper_classified_with_prompt",
+      cd.extract_dispatch_prompt("bash scripts/codex-bg-dispatch.sh '[review-kind: perf] todo/x b'")
+      == "[review-kind: perf] todo/x b")
 with tempfile.TemporaryDirectory() as tmp:
     root = pathlib.Path(tmp)
     crc._record_shared_review_evidence(root, {
@@ -2006,11 +2011,11 @@ with tempfile.TemporaryDirectory() as tmp:
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "9" ]; then
+if [ "$GA_OK" = "10" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 9))
+    PASS=$((PASS + 10))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi
