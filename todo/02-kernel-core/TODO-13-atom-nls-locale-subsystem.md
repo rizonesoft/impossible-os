@@ -63,10 +63,10 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 3. Global and Local Atom Tables
 
-- [ ] Implement global atom table with 16-bit atom IDs and string interning.
 - [ ] Implement per-process or per-session local atom tables for Win32 compatibility.
-- [ ] APIs: add, find, delete, query, refcount.
-- [ ] Enforce reserved integer atom range and string atom range.
+- [ ] Retrofit the global atom table onto the NLS case-folding authority (§2), replacing the ASCII fold.
+
+> **Note:** The GLOBAL atom table (16-bit IDs 0xC000+, string interning, refcount, add/find/delete/query APIs, integer/string range split) shipped in TODO-12 §23 (`src/kernel/nt/nt_misc.c`) with an ASCII-only case fold. This section still owns per-process/per-session LOCAL atom tables and the NLS-authority retrofit above.
 
 ## 4. NLS Table File Format and Loader
 
@@ -86,7 +86,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 - [ ] Define locale records: LCID, BCP-47 name, language, region, decimal separator, date/time formats, currency metadata, first day of week.
 - [ ] Kernel stores invariant and installed-locale metadata; user-mode libraries format UI strings.
-- [ ] Registry policy chooses system locale and user locale.
+- [ ] Registry policy chooses system locale and user locale; owns the privileged/per-user `NtSetDefaultLocale`/`NtSetDefaultUILanguage` (fail closed in TODO-12 §23 `nt_misc.c` pending this).
 - [ ] Publish locale change notification through TODO-27.
 
 ## 7. Sort Keys and Normalization Policy
@@ -98,10 +98,10 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## 8. Native Atom/NLS/Locale Syscalls
 
-- [ ] Wire `NtAddAtom`, `NtFindAtom`, `NtDeleteAtom`, `NtQueryInformationAtom`.
 - [ ] Wire `NtGetNlsSectionPtr` equivalent as a safe table-query API.
-- [ ] Wire `NtQueryDefaultLocale`, `NtSetDefaultLocale`, `NtQueryDefaultUILanguage`, `NtSetDefaultUILanguage`.
 - [ ] Add `SystemNlsInformation` to `NtQuerySystemInformation`.
+
+> **Note:** `NtAddAtom`/`NtFindAtom`/`NtDeleteAtom`/`NtQueryInformationAtom` and `NtQueryDefaultLocale`/`NtSetDefaultLocale`/`NtQueryDefaultUILanguage`/`NtSetDefaultUILanguage` are already wired in TODO-12 §23 (`src/kernel/nt/nt_misc.c`, SSDT 0x00D8-0x00E2) over a global atom table + global LCID/LANGID storage. This section retrofits those handlers onto the NLS case-folding authority (§2), local atom tables (§3), and full LCID metadata (§6); `NtGetNlsSectionPtr` + `SystemNlsInformation` remain unshipped.
 
 ## 9. Retrofit Kernel Consumers
 

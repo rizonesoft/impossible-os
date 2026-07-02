@@ -85,7 +85,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  20   | Legacy LPC port syscalls (stubs; engine TODO-09 §7)            | §5, TODO-09 §7    |  [/]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5    |  [/]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-26 §20   |  [/]   |
-| 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
+| 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [x]   |
 | ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [ ]   |
 | 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [ ]   |
 | 💎  |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9    |  [ ]   |
@@ -1006,22 +1006,30 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 ## 23. Atom, Locale, and Miscellaneous Syscalls
 Catch-all for global atom table, locale management, environment variables, and display/error APIs.
 
-- [ ] `NtAddAtom(AtomName, Length, Atom)` → SSDT 0x00DF: add string to global atom table; return 16-bit atom ID
-- [ ] `NtFindAtom(AtomName, Length, Atom)` → SSDT 0x00E0: look up atom by string
-- [ ] `NtDeleteAtom(Atom)` → SSDT 0x00E1: remove atom from table
-- [ ] `NtQueryInformationAtom(Atom, AtomInformationClass, Buffer, Length, ReturnLength)` → SSDT 0x00E2
-- [ ] `NtQueryDefaultLocale(UserProfile, DefaultLocaleId)` → SSDT 0x00DA
-- [ ] `NtSetDefaultLocale(UserProfile, DefaultLocaleId)` → SSDT 0x00DB
-- [ ] `NtQueryDefaultUILanguage(DefaultUILanguageId)` → SSDT 0x00DC
-- [ ] `NtSetDefaultUILanguage(DefaultUILanguageId)` → SSDT 0x00DD
-- [ ] `NtQueryInstallUILanguage(InstallUILanguageId)` → SSDT 0x00DE
+- [x] `NtAddAtom` → SSDT 0x00DF: `nt_atom_add` in `nt_misc.c`; refcounted global string atom, ID from 0xC000; integer atoms (name ptr < 0xC000) pass through
+- [x] `NtFindAtom` → SSDT 0x00E0: `nt_atom_find`; case-insensitive lookup, no refcount change; `STATUS_OBJECT_NAME_NOT_FOUND` when absent
+- [x] `NtDeleteAtom` → SSDT 0x00E1: `nt_atom_delete`; decrements refcount, frees slot at zero; no-op success for integer atoms
+- [x] `NtQueryInformationAtom` → SSDT 0x00E2: `AtomBasicInformation` fills `ATOM_BASIC_INFORMATION` (usage/flags/name) with `ReturnLength` + `STATUS_BUFFER_TOO_SMALL`
+- [x] `NtQueryDefaultLocale(UserProfile, DefaultLocaleId)` → SSDT 0x00DA: returns global LCID (`UserProfile` ignored -- no per-user hive yet)
+- [x] `NtSetDefaultLocale(UserProfile, DefaultLocaleId)` → SSDT 0x00DB: fails closed with `STATUS_PRIVILEGE_NOT_HELD` (machine-wide locale write is privileged; per-user hive owned by TODO-13 §6)
+- [x] `NtQueryDefaultUILanguage(DefaultUILanguageId)` → SSDT 0x00DC: returns global UI LANGID
+- [x] `NtSetDefaultUILanguage(DefaultUILanguageId)` → SSDT 0x00DD: fails closed with `STATUS_PRIVILEGE_NOT_HELD` (same privilege gate)
+- [x] `NtQueryInstallUILanguage(InstallUILanguageId)` → SSDT 0x00DE: returns immutable install LANGID (0x0409)
 - [x] `NtQuerySystemEnvironmentValue(VariableName, VariableValue, ValueLength, ReturnLength)` → SSDT 0x00D2: UEFI runtime variable access
 - [x] `NtSetSystemEnvironmentValue(VariableName, VariableValue)` → SSDT 0x00D3
-- [ ] `NtDisplayString(String)` → SSDT 0x00D8: blue-screen-style text output during boot
-- [ ] `NtRaiseHardError(ErrorStatus, NumberOfParameters, UnicodeStringParameterMask, Parameters, ValidResponseOptions, Response)` → SSDT 0x00D9: system-modal error dialog
-- [ ] Commit: `"kernel: nt -- atom table, locale, environment, misc syscalls"`
+- [x] `NtDisplayString(String)` → SSDT 0x00D8: TCB-gated (`ASSERT_KERNEL_CALLER`); kernel callers marshal PUNICODE_STRING, UTF-16→ASCII to `klog`; user-mode → `STATUS_PRIVILEGE_NOT_HELD`
+- [x] `NtRaiseHardError(...)` → SSDT 0x00D9: `OptionShutdownSystem` → `STATUS_PRIVILEGE_NOT_HELD`; kernel-mode callers log, user-mode returns `ResponseNotHandled` without touching the shared log
+- [x] Commit: `"kernel: nt -- atom table, locale, environment, misc syscalls"`
 
 **Test checkpoint:** `NtAddAtom("TestAtom")` returns atom ID > 0. `NtFindAtom("TestAtom")` returns same ID. `NtDeleteAtom` removes it; subsequent `NtFindAtom` returns `STATUS_OBJECT_NAME_NOT_FOUND`. `NtQueryDefaultLocale` returns valid LCID.
+
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 6 suites, 0 failures
+
+> **Notes:**
+> - Shipped `src/kernel/nt/nt_misc.c` + `include/kernel/nt/nt_misc.h`: global atom table (refcounted, 512-slot, IDs 0xC000+) plus locale/UI-language storage, `NtDisplayString`, and `NtRaiseHardError`; 11 SSDT handlers at 0x00D8-0x00E2.
+> - Registered via `nt_misc_register_ssdt()` in `boot_desktop.c`; all user pointers go through `ProbeFor{Read,Write}IfUser` + `copy_{from,to}_user`; integer atoms (name ptr < 0xC000) never dereferenced.
+> - Atom/locale logic is exposed as pure `nt_atom_*`/`nt_locale_*` helpers so `test_nt_misc.c` (TEST_CAT_ABI, 6 suites) exercises it without the syscall path. Codex design adoptions in the ship commit.
+> - Scope boundary: full Unicode case-folding, per-user-profile locale hives, and the `NtRaiseHardError` shutdown/bugcheck privilege path are NOT owned here (locale/NLS + token work own them; see Deferred stamp).
 
 ---
 
@@ -1249,7 +1257,8 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 | 💎 | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent           | 🟡 §20 (LPC stub) + §31 (ALPC stub), engine in TODO-24 |
 | 💎 | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                  | ⬜ §21 + TODO-29            |
 | 💎 | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI       | 🔄 §5 NtShutdownSystem wired |
-| 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ⬜ §23                      |
+| 💎 | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent           | ✅ §23 refcounted global atoms |
+| 💎 | Default locale / UI lang   | ✅ NtQuery/SetDefaultLocale | ✅ setlocale + LANG        | 🟡 §23 query returns en-US; set fails-closed (priv, TODO-13 §6) |
 | ⭐ | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent           | ✅ §12 zw.h + ProbeFor*      |
 | ⭐ | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API    | ⬜ §4+§12 -- numbered+public |
 | ⭐ | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex    | ⬜ §24 -- first-class API    |
