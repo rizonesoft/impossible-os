@@ -100,6 +100,21 @@ def _event_ok(
         for key in require_meta_keys:
             if not md.get(key):
                 return False
+        # bind the claim to the artifact: the named log must exist NOW and its
+        # tail must carry the recorded final marker. Cooperative trust boundary:
+        # a caller could still fabricate the log; the full run-wrapper binding
+        # is owned by the review-evidence-integrity work in the AI-workflow TODO.
+        if "log_path" in require_meta_keys and "final_marker" in require_meta_keys:
+            log_path = root / str(md.get("log_path"))
+            try:
+                with log_path.open("rb") as f:
+                    f.seek(0, 2)
+                    f.seek(max(0, f.tell() - 65536))
+                    tail = f.read().decode("utf-8", errors="replace")
+            except OSError:
+                return False
+            if str(md.get("final_marker")) not in tail:
+                return False
     if current_only and check_current and not _current(ev, root, blob_cache):
         return False
     return True

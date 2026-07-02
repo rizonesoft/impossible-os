@@ -4531,18 +4531,25 @@ with tempfile.TemporaryDirectory() as tmp:
     }))
     ok_expired, err_expired = s5._active_lease_allows_implement_edit(str(repo), entry, "")
     assert not ok_expired and "expired" in err_expired
-    # AUTO-ACQUIRE: with a session identity and no live lease, the consult
-    # acquires the lease itself (wiring proven via monkeypatch)
+    # AUTO-ACQUIRE: only the session that OWNS the skill entry may mint the
+    # lease (wiring proven via monkeypatch); a stale/foreign-session entry
+    # must never auto-acquire (adversarial finding)
     calls = []
     real_acquire = s5._auto_acquire_lease
     s5._auto_acquire_lease = lambda r, t, sec, rid: (calls.append((t, sec, rid)), True)[1]
     try:
+        entry_owned = dict(entry, session_id="session-a")
         ok_auto, err_auto = s5._active_lease_allows_implement_edit(
-            str(repo), entry, "claude-session-a")
+            str(repo), entry_owned, "claude-session-a")
+        entry_foreign = dict(entry, session_id="session-dead")
+        ok_foreign, err_foreign = s5._active_lease_allows_implement_edit(
+            str(repo), entry_foreign, "claude-session-a")
     finally:
         s5._auto_acquire_lease = real_acquire
     assert ok_auto and calls == [("todo/00-infra/TODO-99.md", "2", "claude-session-a")], \
         f"auto-acquire not wired: ok={ok_auto} calls={calls} err={err_auto}"
+    assert not ok_foreign and len(calls) == 1, \
+        f"foreign-session entry auto-acquired: ok={ok_foreign} calls={calls} err={err_foreign}"
 print("OK quality_gate_lease_check")
 
 # Test 3: unit_test_wiring -- existing test at HEAD counts as evidence.
@@ -7538,6 +7545,8 @@ printf 'int stamp_source(void) { return 1; }\n' > "$STAMP_REPO/$STAMP_REPO_SRC"
       && git -c commit.gpgsign=false commit -q -m init
 )
 STAMP_REPO_ENV=(env AI_WORKFLOW_REPO_ROOT="$STAMP_REPO" AI_WORKFLOW_STATE_DIR="$STAMP_REPO/build/ai-workflow")
+mkdir -p "$STAMP_REPO/build"
+printf 'compile...\n=== BUILD OK ===\n' > "$STAMP_REPO/build/build.log"
 "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
     --todo "$STAMP_REPO_TODO" --section 1 --driver claude --run-id tracked-stamp-driver >/dev/null
 "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
@@ -8140,6 +8149,43 @@ if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_D
     t_fail "ai_workflow_gates: completed lease no longer authorizes a staged flip"
 else
     t_pass "ai_workflow_gates: completed lease no longer authorizes a staged flip"
+fi
+
+# staged-commit under enforcement FAILS CLOSED when no session run-id is
+# supplied for staged targets (adversarial finding: unset AI_WORKFLOW_RUN_ID
+# must not silently downgrade ownership to presence-only)
+env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/lease.py acquire \
+    --todo todo/00-infrastructure/TODO-97-depends-fixture.md --section 3 \
+    --driver claude --run-id staged-dep-driver >/dev/null
+if env AI_WORKFLOW_REPO_ROOT="$STAGED_DEP_REPO" AI_WORKFLOW_STATE_DIR="$STAGED_DEP_REPO/build/ai-workflow" \
+    python3 scripts/ai-workflow/gates.py staged-commit --format json \
+    --require-run-id --driver-run-id "" >/dev/null 2>&1; then
+    t_fail "ai_workflow_gates: --require-run-id fails closed on staged targets with no identity"
+else
+    t_pass "ai_workflow_gates: --require-run-id fails closed on staged targets with no identity"
+fi
+
+# build provenance is bound to the artifact: a build event whose named log does
+# not currently end with the recorded final marker is rejected
+FAKE_LOG_STATE="$AIWF_TMP/fake-log-state"
+rm -rf "$FAKE_LOG_STATE"; mkdir -p "$FAKE_LOG_STATE"
+FAKE_ENV=(env AI_WORKFLOW_STATE_DIR="$FAKE_LOG_STATE")
+FAKE_TODO="todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md"
+"${FAKE_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo "$FAKE_TODO" --section 6 --driver claude --run-id fake-log-driver >/dev/null
+"${FAKE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo "$FAKE_TODO" --section 6 --role validator --backend local \
+    --run-id fake-log-build --kind build --result ok --source "$FAKE_TODO" \
+    --command "bash scripts/build.sh" --exit-code 0 \
+    --log-path build/no-such-build.log --final-marker "=== BUILD OK ===" >/dev/null
+if "${FAKE_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$FAKE_TODO" --section 6 --driver-run-id fake-log-driver --format json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="build" and i["status"]=="missing" for i in d["required"]))' \
+    | grep -q True; then
+    t_pass "ai_workflow_obligations: build evidence naming a missing/markerless log is rejected"
+else
+    t_fail "ai_workflow_obligations: build evidence naming a missing/markerless log is rejected"
 fi
 
 # legacy-imported reviewer evidence (last-review-stamps.json compatibility

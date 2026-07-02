@@ -226,7 +226,16 @@ def _active_lease_allows_implement_edit(
         and int(lease.get("expires_at_ns") or 0) >= _ts_ns()
     )
     if not live:
-        if run_id and _auto_acquire_lease(root, todo, section, run_id):
+        # auto-acquire ONLY for the session that owns the skill entry: a stale
+        # or foreign-session entry must not mint a lease for its target
+        # (adversarial finding: stale skill state contaminating the lease)
+        entry_session = str(entry.get("session_id") or "")
+        if (
+            run_id
+            and entry_session
+            and run_id == f"claude-{entry_session}"
+            and _auto_acquire_lease(root, todo, section, run_id)
+        ):
             return True, ""
         if isinstance(lease, dict) and lease:
             return False, f"active driver lease for {todo} section {section} is expired"

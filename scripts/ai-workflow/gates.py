@@ -232,6 +232,13 @@ def staged_commit(args: argparse.Namespace) -> int:
     root = common.repo_root()
     targets, errors = _staged_targets(root)
     run_id = str(getattr(args, "driver_run_id", "") or "")
+    if targets and not run_id and getattr(args, "require_run_id", False):
+        # fail closed under enforcement: an unset session identity must not
+        # silently downgrade ownership to presence-only (adversarial finding)
+        errors.append(
+            "no session run-id supplied for staged section targets; export "
+            "AI_WORKFLOW_RUN_ID (the lease holder's run-id) or acquire the lease"
+        )
     missing: list[dict[str, str]] = []
     satisfied: list[dict[str, object]] = []
     for target in targets:
@@ -305,6 +312,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--section")
     ap.add_argument("--workflow", choices=("implement", "review", "verify", "complete-file"), default="implement")
     ap.add_argument("--driver-run-id")
+    ap.add_argument("--require-run-id", action="store_true",
+                    help="fail closed when staged section targets exist but no run-id was supplied")
     ap.add_argument("--mode", default="direct")
     ap.add_argument("--format", choices=("text", "json"), default="text")
     return check(ap.parse_args(argv))
