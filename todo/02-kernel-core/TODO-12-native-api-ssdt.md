@@ -79,7 +79,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5    |  [/]   |
 | 💎  |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §5   |  [/]   |
 | 💎  |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7    |  [/]   |
-| 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3    |  [x]   |
+| 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3    |  [/]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7    |  [x]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9 |  [x]   |
 | 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-24 §8-§9 |  [x]   |
@@ -779,20 +779,30 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 - [x] `NtCreateDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0120 (nt_namespace.c -- ob_ns_create_directory + ObInsertObject + ObpAllocateHandle; rejects duplicate via ObLookupObjectByName)
 - [x] `NtOpenDirectoryObject(DirectoryHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0121 (nt_namespace.c -- thin wrapper around library NtOpenDirectoryObject in ob.c)
-- [x] `NtQueryDirectoryObject(DirectoryHandle, Buffer, Length, ReturnSingleEntry, RestartScan, Context, ReturnLength)` → SSDT 0x0122 (nt_namespace.c -- 7 NT params packed into 6 SSDT slots: a6 = (high32 ReturnLength*) | (low32 Context*); kernel pointers in low-4-GiB)
+- [x] `NtQueryDirectoryObject(DirHandle, Buffer, Length, SingleEntry, Restart, Context, ReturnLength)` → SSDT 0x0122 (nt_namespace.c -- a4 packs Restart<<8|SingleEntry; a5=Context*, a6=ReturnLength*)
 - [x] `NtCreateSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes, LinkTarget)` → SSDT 0x0123 (nt_namespace.c -- ob_ns_create_symlink + ObInsertObject; bounded target length)
 - [x] `NtOpenSymbolicLinkObject(LinkHandle, DesiredAccess, ObjectAttributes)` → SSDT 0x0124 (nt_namespace.c -- ObLookupObjectByName with ObpSymlinkType to stop at the link itself)
 - [x] `NtQuerySymbolicLinkObject(LinkHandle, LinkTarget, ReturnedLength)` → SSDT 0x0125 (nt_namespace.c -- ObpLookupHandle + type-check against ObpSymlinkType + bounded copy of target string)
+- [ ] `NtQueryDirectoryObject` returns the legacy 96-byte ASCII OBJECT_DIRECTORY_INFORMATION row, not the native UNICODE_STRING ABI; ntdll callers get bogus data. Define the native struct + byte ReturnLength. XREF: TODO-14 §5.
+- [ ] `oa_name` (nt_namespace.c) ignores OBJECT_ATTRIBUTES.RootDirectory, so relative object names resolve as absolute/wrong namespace. Honor RootDirectory: reference the dir handle + resolve ObjectName relative to it.
 - [x] Commit: `"kernel: nt -- directory and symbolic link object syscalls"` (6052c7aa)
 
 **Test checkpoint:** `NtCreateDirectoryObject` creates `\Test`; `NtOpenDirectoryObject` opens it. `NtCreateSymbolicLinkObject` creates `\TestLink → \Test`; `NtQuerySymbolicLinkObject` returns `\Test`.
 
-> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
-> **Expected:** 5 new §17 tests (NT create+open directory roundtrip, open not found, symlink roundtrip, query wrong type, namespace SSDT registered), 0 failures.
-
-> **Verified** (2026-04-14): 6 handlers registered at SSDT 0x0120-0x0125 via nt_namespace.c:512-523. Create handlers (Directory, SymbolicLink) are atomic: allocate handle BEFORE inserting into namespace, clear OB_FLAG_PERMANENT on rollback so deref actually frees. Query handlers use ObpLookupHandle + type-check (ObpDirectoryType / ObpSymlinkType). NtQueryDirectoryObject ABI repacked: a4 carries (RestartScan << 8) | ReturnSingleEntry so Context (a5) and ReturnLength (a6) stay full 64-bit pointers. ReturnSingleEntry caps effective buf_count to 1. 10 ntdll PE exports added (sorted). 5 new tests in TEST_CAT_OB. Build clean.
-> **Accepted:** UNICODE_STRING.Buffer cast to const char* + NUL-terminated bounded_strlen scan (kernel-wide ASCII pattern shared with §14, §15 NT handlers; §16 has no UNICODE_STRING args) -> XREF: 02-kernel-core/TODO-14 §5 (kernel-wide `nt_decode_unicode_string` helper in `src/kernel/nt/nt_string.c`; retrofit list explicitly names §17's `oa_name`, `path_within_bounds`, and `NtCreateSymbolicLinkObject_handler` target read as consumers).
-> **Quality reviewed** (2026-04-14): dead code clean (bounded_strlen is local-scope; ns_memcpy is local-scope; split_path is single-use). Consistency: SSDT constants 0x0120-0x0125 match service_numbers.h:269-274; OBJECT_DIRECTORY_INFORMATION layout matches library NtQueryDirectoryObject signature in ob.c:421. Performance: split_path linear (one pass for last_sep + one memcpy); ObInsertObject linear over directory entries (bounded by OB_DIR_MAX_ENTRIES=128). bounded_strlen called twice per create (once for plen guard, once for leaf len) -- acceptable given OB_PATH_MAX=256. Codex finding "ReturnSingleEntry not honored" fixed: caps buf_count to 1 when flag set.
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 426 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: 6 namespace handlers (create/open/query directory + symbolic link) in nt_namespace.c wired to SSDT 0x0120-0x0125 via the OB namespace library.
+> - Integrates: atomic create-rollback (handle-alloc-before-insert, OB_FLAG_PERMANENT clear); query handlers ObpLookupHandle + type-check; symlink depth guard OB_SYMLINK_DEPTH=8.
+> - Reviewed this pass: handler wiring correct; the trust-boundary + UAF + native-ABI gaps are systemic/infrastructure, filed to their owners; corrected the stale a6-packing doc.
+> - Scope boundary: missing probes -> §29 probe list; lookup-then-ref UAF -> TODO-05 §3; native directory ABI + RootDirectory -> §17; UTF-16 decode -> TODO-14 §5.
+> - Test gap: ReturnSingleEntry/RestartScan packed-flag paths + relative-name (RootDirectory) create/open are untested.
+> **Verified:** 2026-07-02 | commit `517cb921` | 6/8 items | build OK | ob 426/426 PASS
+> **Accepted:** [Critical] handlers deref raw user pointers with no ProbeFor*IfUser (systemic NT trust boundary) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1109)
+> **Accepted:** [Critical] NtQuerySymbolicLinkObject reads an unpinned ObpLookupHandle object (concurrent NtClose UAF) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Accepted:** [H] UNICODE_STRING.Buffer cast to const char* (ASCII assumption) -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 256)
+> **Deferred:** [H] NtQueryDirectoryObject returns the legacy 96-byte ASCII row, not the native UNICODE_STRING ABI -> XREF: 02-kernel-core/TODO-12 §17 (item: "`NtQueryDirectoryObject` returns the legacy 96-byte ASCII" at line 786)
+> **Deferred:** [H] oa_name ignores OBJECT_ATTRIBUTES.RootDirectory (relative names resolve as absolute) -> XREF: 02-kernel-core/TODO-12 §17 (item: "`oa_name` (nt_namespace.c) ignores OBJECT_ATTRIBUTES.RootDirectory" at line 787)
+> **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 2Crit+1H accepted-XREF, 2H deferred | scope: kernel-code-quality
 
 
 ---
@@ -1104,6 +1114,7 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 - [ ] [Critical] SystemProcessInformation: ProbeForWriteIfUser + copy_to_user + length-mismatch status -- unprobed user-pointer write at `nt_syscall.c:923`. (§5 review)
 - [ ] [Critical] NtQuery/SetInformationProcess + NtQuery/SetInformationThread + NtDelayExecution interval: input/output user pointers deref'd raw (`nt_process.c:460+`) -- probe + copy_from_user/copy_to_user via kernel bounce buffers. (§7 review)
 - [ ] [Critical] Sync syscalls deref raw user pointers (`nt_sync.c`): NtWaitForMultipleObjects handle array + timeout, Create* name/OA/out-HANDLE, prev-state/count outputs -- probe + copy-in/out via kernel buffers. (§8)
+- [ ] [Critical] Namespace + token syscalls deref raw user pointers (`nt_namespace.c`, `nt_token.c`): out-HANDLE, Context/ReturnLength, OBJECT_ATTRIBUTES, symlink target, token buffers -- probe + copy-in/out via kernel buffers. (§16/§17)
 - [ ] Commit: `"kernel: nt -- token lifecycle and SRM access check syscalls"`
 
 **Test checkpoint:** `NtDuplicateToken` returns a distinct token with copied privileges/groups. `NtAccessCheck` against an object with DACL returns correct granted access. `NtPrivilegeCheck` with a held privilege returns TRUE; with a missing privilege returns FALSE. `NtQuerySecurityObject` round-trips through `NtSetSecurityObject`.
