@@ -1939,6 +1939,36 @@ fi
 #     than three dispatches (adversarial / consistency / perf) are
 #     recorded for that TODO within the last 30 minutes.
 #   - Self-summary preamble in a Codex prompt emits stderr WARN.
+# gap-audit recognition + trusted receipt-side review_run_id (TODO-10
+# review-evidence integrity): the receipt hook must attribute gap-audit
+# dispatches and must never trust a prompt-authored review run id.
+GA_OUT=$(python3 - <<'PYGA'
+import sys
+sys.path.insert(0, ".claude/hooks")
+import codex_review_completed as crc
+
+def check(label, cond):
+    print(("OK " if cond else "FAIL ") + label)
+
+check("skill_maps_gap_audit", crc._detect_review_kind("codex-gap-audit", "") == "gap-audit")
+check("marker_matches_gap_audit", crc._detect_review_kind("", "[review-kind: gap-audit] todo/x") == "gap-audit")
+check("trigger_skills_include_gap_audit", "codex-gap-audit" in crc.CODEX_TRIGGER_SKILLS)
+d, r, hint = crc._detect_run_metadata("review-run-id: forged-by-prompt-123", 42, "adversarial")
+check("receipt_generates_trusted_run_id", r == "codex-review-adversarial-42" and hint == "forged-by-prompt-123")
+d2, r2, h2 = crc._detect_run_metadata("", 43, "perf")
+check("receipt_run_id_without_prompt_hint", r2 == "codex-review-perf-43" and h2 == "")
+PYGA
+)
+GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
+if [ "$GA_OK" = "5" ]; then
+    echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
+        t_pass "review_receipt: $line"
+    done
+    PASS=$((PASS + 5))
+else
+    t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
+fi
+
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[four_dispatch_gate]${NC}"
 
 if [ ! -f "$REPO_ROOT/.claude/hooks/section_commit_gate.py" ] || \
@@ -7617,6 +7647,26 @@ if echo "$LIFE_STATE" | grep -q "'validated': True" \
     t_pass "ai_workflow_stamp: file-level validated/gap-audited land in preamble and sequencer recognizes them"
 else
     t_fail "ai_workflow_stamp: file-level validated/gap-audited land in preamble and sequencer recognizes them" "$LIFE_STATE"
+fi
+
+# a manual (--allow-missing) lifecycle stamp is NOT a trusted skip signal: the
+# sequencer requires matching ledger evidence for it (stamp-writer F2 residual)
+LIFE_MAN_TODO="todo/00-infrastructure/TODO-89-manual.md"
+printf '# TODO-89 Manual\n\n> **Goal:** g.\n\n## 1. S\n\n- [ ] i\n' > "$LIFE_REPO/$LIFE_MAN_TODO"
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/stamp.py validated "$LIFE_MAN_TODO" --allow-missing --write >/dev/null
+LIFE_MAN_STATE=$(env AI_WORKFLOW_STATE_DIR="$LIFE_REPO/build/ai-workflow" python3 -c "import sys; sys.path.insert(0,'.claude/hooks'); import sequencer_triage as t; print(t.file_lifecycle('$LIFE_REPO/$LIFE_MAN_TODO', '$LIFE_REPO', '$LIFE_MAN_TODO'))")
+if echo "$LIFE_MAN_STATE" | grep -q "'validated': False"; then
+    t_pass "ai_workflow_stamp: manual --allow-missing lifecycle stamp is not a trusted skip signal"
+else
+    t_fail "ai_workflow_stamp: manual --allow-missing lifecycle stamp is not a trusted skip signal" "$LIFE_MAN_STATE"
+fi
+"${LIFE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record --todo "$LIFE_MAN_TODO" --section file \
+    --role validator --backend local --run-id man-graph --kind todo-graph-validate --result ok >/dev/null
+LIFE_MAN_STATE2=$(env AI_WORKFLOW_STATE_DIR="$LIFE_REPO/build/ai-workflow" python3 -c "import sys; sys.path.insert(0,'.claude/hooks'); import sequencer_triage as t; print(t.file_lifecycle('$LIFE_REPO/$LIFE_MAN_TODO', '$LIFE_REPO', '$LIFE_MAN_TODO'))")
+if echo "$LIFE_MAN_STATE2" | grep -q "'validated': True"; then
+    t_pass "ai_workflow_stamp: manual lifecycle stamp becomes trusted once ledger evidence exists"
+else
+    t_fail "ai_workflow_stamp: manual lifecycle stamp becomes trusted once ledger evidence exists" "$LIFE_MAN_STATE2"
 fi
 if ! grep -q '"section": null' "$LIFE_EV" && grep -q '"section": "file"' "$LIFE_EV"; then
     t_pass "ai_workflow_stamp: file-level stamp records file-scoped evidence, never section null"

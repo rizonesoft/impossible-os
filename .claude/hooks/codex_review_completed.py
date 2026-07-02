@@ -84,6 +84,7 @@ CODEX_TRIGGER_SKILLS = frozenset({
     "codex-adversarial-review-section",
     "codex-review-todo",
     "codex-design-review",
+    "codex-gap-audit",
     "codex-impact-analysis",
     "codex-test-coverage",
     "codex-consistency-audit",
@@ -491,15 +492,18 @@ def _is_codex_bash_trigger(cmd: str) -> bool:
 # review-todo-section/SKILL.md on 2026-04-25; this state file tracks
 # the three kinds that survived.
 
-# Skill -> dispatch kind. Only the three step-8 dispatches map here;
-# codex-design-review / codex-fix-review / codex-impact-analysis /
-# codex-test-coverage / codex-review-todo are valid Codex triggers
-# (still recorded in last-codex-review.json) but do not satisfy the
-# four-dispatch gate.
+# Skill -> dispatch kind. The three step-8 dispatches satisfy the
+# four-dispatch gate; codex-gap-audit maps so its receipts mirror to
+# the shared ledger with the right kind (file-level lifecycle
+# evidence) without counting toward step 8. codex-design-review /
+# codex-fix-review / codex-impact-analysis / codex-test-coverage /
+# codex-review-todo remain valid triggers (recorded in
+# last-codex-review.json) with prompt-marker attribution.
 DISPATCH_KIND_BY_SKILL = {
     "codex-adversarial-review-section": "adversarial",
     "codex-consistency-audit": "consistency",
     "codex-perf-review": "perf",
+    "codex-gap-audit": "gap-audit",
 }
 
 # Bash-side: the codex-companion.mjs invocation is identical across
@@ -508,7 +512,7 @@ DISPATCH_KIND_BY_SKILL = {
 # `[review-kind: <kind>]` marker at the start of the prompt. The
 # regex tolerates whitespace and different bracket spellings.
 _REVIEW_KIND_RE = re.compile(
-    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf|re-adversarial|adversarial-impl|test-coverage|design)\s*\]",
+    r"\[\s*review[-_ ]kind\s*:\s*(adversarial|consistency|perf|re-adversarial|adversarial-impl|test-coverage|design|gap-audit)\s*\]",
     re.IGNORECASE,
 )
 
@@ -633,26 +637,28 @@ def _scan_self_summary(prompt: str) -> str:
     return ""
 
 
-def _detect_run_metadata(prompt: str, now_ns: int, review_kind: str) -> tuple[str, str]:
-    """Extract optional driver/reviewer correlation IDs from prompt text.
+def _detect_run_metadata(prompt: str, now_ns: int, review_kind: str) -> tuple[str, str, str]:
+    """Return (driver_run_id, review_run_id, prompt_review_run_id_hint).
 
-    The shared ai-workflow ledger treats Codex driver and Codex reviewer as
-    separate roles. Prompt metadata is optional for legacy dispatches, so this
-    helper generates a review_run_id when the prompt does not provide one.
+    The trusted `review_run_id` is ALWAYS generated here at receipt-process
+    time -- a prompt-authored id is a correlation HINT only, never the
+    identity the obligations resolver trusts (a mutating session could
+    otherwise forge a distinct reviewer run by writing one into its own
+    dispatch prompt). The driver id stays prompt-derived: it exists to
+    EXCLUDE same-run evidence, so a forged value only ever excludes more.
     """
     driver_run_id = ""
-    review_run_id = ""
+    prompt_hint = ""
     if prompt:
         dm = re.search(r"\bdriver[-_ ]run[-_ ]id\s*[:=]\s*([A-Za-z0-9_.:-]+)", prompt)
         rm = re.search(r"\breview[-_ ]run[-_ ]id\s*[:=]\s*([A-Za-z0-9_.:-]+)", prompt)
         if dm:
             driver_run_id = dm.group(1)
         if rm:
-            review_run_id = rm.group(1)
-    if not review_run_id:
-        suffix = review_kind or "unknown"
-        review_run_id = f"codex-review-{suffix}-{now_ns}"
-    return driver_run_id, review_run_id
+            prompt_hint = rm.group(1)
+    suffix = review_kind or "unknown"
+    review_run_id = f"codex-review-{suffix}-{now_ns}"
+    return driver_run_id, review_run_id, prompt_hint
 
 
 @contextmanager
@@ -705,6 +711,11 @@ def _record_shared_review_evidence(root: Path, state: dict) -> None:
         } or not todo_path:
             return
         section = str(state.get("section") or "").lstrip("§")
+        if not section and kind == "gap-audit":
+            # gap-audit receipts are file-level lifecycle evidence: normalize
+            # to the `file` scope the validate workflow and stamp writer use,
+            # so file-level lookups and the target index can find them
+            section = "file"
         review_run_id = str(state.get("review_run_id") or "")
         if not review_run_id:
             review_run_id = f"codex-review-{kind}-{state.get('received_timestamp_ns') or time.time_ns()}"
@@ -819,7 +830,7 @@ def _record_stamp(
     of the current HEAD before accepting the stamp; this prevents
     cross-branch reuse of dispatch evidence.
     """
-    if not todo_path or kind not in ("adversarial", "consistency", "perf", "re-adversarial", "adversarial-impl", "test-coverage", "design"):
+    if not todo_path or kind not in ("adversarial", "consistency", "perf", "re-adversarial", "adversarial-impl", "test-coverage", "design", "gap-audit"):
         return (False, f"invalid kind={kind!r} or empty todo_path")
     path = _stamps_path(root)
     lock_path = _stamps_lock_path(root)
@@ -1188,12 +1199,14 @@ def main() -> int:
             )
         review_kind = _detect_review_kind(skill_for_kind, prompt)
         todo_path, section = _detect_todo_path(prompt, root)
-        driver_run_id, review_run_id = _detect_run_metadata(prompt, now_ns, review_kind)
+        driver_run_id, review_run_id, prompt_hint = _detect_run_metadata(prompt, now_ns, review_kind)
         state["review_kind"] = review_kind or ""
         state["todo_path"] = todo_path
         state["section"] = section.lstrip("§")
         state["driver_run_id"] = driver_run_id
         state["review_run_id"] = review_run_id
+        if prompt_hint:
+            state["prompt_review_run_id_hint"] = prompt_hint
         _write_atomic(state_path, state)
         stamp_attempted = bool(review_kind and todo_path)
         if stamp_attempted:

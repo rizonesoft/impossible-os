@@ -124,7 +124,52 @@ def section_stamps(md_path):
     return out
 
 
-def file_lifecycle(md_path):
+# A stamp the writer emitted under --allow-missing carries this marker instead
+# of evidence IDs. Such a stamp is NOT a trusted skip signal on its own.
+MANUAL_EVIDENCE_RE = re.compile(r"ai-workflow evidence\s+manual\b")
+_LIFECYCLE_LEDGER_KIND = {"validated": "todo-graph-validate", "gap_audited": "gap-audit"}
+
+
+def _aiwf_state_dir(root):
+    env = os.environ.get("AI_WORKFLOW_STATE_DIR", "")
+    if env:
+        return env if os.path.isabs(env) else os.path.join(root, env)
+    return os.path.join(root, ".ai-workflow")
+
+
+def _ledger_has_file_evidence(root, rel_path, kind):
+    """True when the shared ledger holds a non-legacy `kind` event for the
+    TODO. Index-first (todo#file scope), full-ledger fallback for events
+    recorded before the producers were file-scoped."""
+    import hashlib
+    state = _aiwf_state_dir(root)
+    name = hashlib.sha256(f"{rel_path}#file".encode("utf-8")).hexdigest()[:24] + ".jsonl"
+    for path in (
+        os.path.join(state, "evidence-index", name),
+        os.path.join(state, "evidence.jsonl"),
+    ):
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        ev = json.loads(line)
+                    except Exception:
+                        continue
+                    if (
+                        ev.get("todo_path") == rel_path
+                        and ev.get("kind") == kind
+                        and not ev.get("legacy_import")
+                        and ev.get("result") in ("ok", "received", "", None)
+                    ):
+                        return True
+        except OSError:
+            continue
+    return False
+
+
+def file_lifecycle(md_path, root=None, rel_path=None):
     """File-level lifecycle: did the per-file pipeline Stages 1-2 run?
 
     Scans only the preamble (everything before the first `## N.` section
@@ -134,6 +179,12 @@ def file_lifecycle(md_path):
     carries both stamps -- the root-cause guard against the fixpoint loop
     re-auditing a mature file every sweep. Orthogonal to section DONE-ness:
     a file can be validated+gap-audited while sections are still in progress.
+
+    A stamp the writer emitted under --allow-missing ('ai-workflow evidence
+    manual') is trusted ONLY when the shared ledger holds the matching
+    non-legacy todo-graph-validate / gap-audit event -- a manual stamp alone
+    must not skip the audits (stamp-writer F2 residual). Hand-written
+    historical stamps (no manual marker) stay trusted.
     """
     out = {"validated": False, "gap_audited": False}
     if not os.path.exists(md_path):
@@ -142,10 +193,22 @@ def file_lifecycle(md_path):
         for line in fh:
             if SECTION_HEADING_RE.match(line):
                 break  # lifecycle stamps live in the preamble only
+            key = None
             if VALIDATED_RE.match(line):
-                out["validated"] = True
+                key = "validated"
             elif GAP_AUDITED_RE.match(line):
-                out["gap_audited"] = True
+                key = "gap_audited"
+            if key is None:
+                continue
+            if MANUAL_EVIDENCE_RE.search(line):
+                if root and rel_path and _ledger_has_file_evidence(
+                    root, rel_path, _LIFECYCLE_LEDGER_KIND[key]
+                ):
+                    out[key] = True
+                # manual stamp without ledger backing (or without caller
+                # context to check): not a trusted skip signal
+                continue
+            out[key] = True
     return out
 
 
@@ -209,7 +272,7 @@ def cmd_next(cache, root):
     if entry is None:
         print(json.dumps({"status": "DONE", "file": None}))
         return 0
-    lc = file_lifecycle(os.path.join(root, entry["file_path"]))
+    lc = file_lifecycle(os.path.join(root, entry["file_path"]), root, entry["file_path"])
     print(json.dumps({
         "status": cls,
         "file": entry["file_path"],
@@ -228,7 +291,7 @@ def cmd_classify(cache, root, target):
         return 1
     entry = match[0]
     cls, per = classify_file(entry, root)
-    lc = file_lifecycle(os.path.join(root, entry["file_path"]))
+    lc = file_lifecycle(os.path.join(root, entry["file_path"]), root, entry["file_path"])
     print(json.dumps({
         "file": entry["file_path"],
         "file_class": cls,

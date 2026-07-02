@@ -146,6 +146,9 @@ FILE_LEVEL_KINDS = {"validated", "gap-audited"}
 FILE_LEVEL_REQUIRED = {"validated": "todo-graph-validate", "gap-audited": "gap-audit"}
 
 
+FILE_EVIDENCE_SCAN_LIMIT = 2048
+
+
 def _file_evidence_ids(root: Path, todo: str, kind: str) -> list[str]:
     """Event IDs of non-legacy ledger events of `kind` recorded for `todo`.
 
@@ -153,23 +156,34 @@ def _file_evidence_ids(root: Path, todo: str, kind: str) -> list[str]:
     section Outcome), so it needs a real `todo-graph-validate` / `gap-audit`
     event. Blob-currency is intentionally NOT required here: the stamp write
     mutates the TODO it validates, so a blob-match rule would self-invalidate.
-    Evidence is NOT filtered on section: the real file-level producers record
-    with an empty section (the gap-audit receipt via codex_review_completed.py)
-    or an explicit `file` (the validate workflow), so a section filter would
-    drop valid receipts. File-scoping the producers plus index-backed lookup
-    (instead of this full ledger scan) is tracked by the shared-gate-library
-    evidence-integrity follow-up in TODO-10 (shared gates across hooks).
+
+    Lookup is index-first: the file-level producers (validate workflow,
+    gap-audit receipt) record with section `file`, so the target index for
+    `todo#file` holds them. Events recorded before the producers were
+    file-scoped live only in the main ledger, so an empty index result falls
+    back to the bounded full-ledger scan.
     """
-    ledger = common.state_dir(root) / "evidence.jsonl"
+    def _match(ev: dict) -> bool:
+        return (
+            ev.get("todo_path") == todo
+            and ev.get("kind") == kind
+            and not ev.get("legacy_import")
+            and ev.get("result") in ("ok", "received", "", None)
+            and bool(ev.get("event_id"))
+        )
+
     ids: list[str] = []
-    for ev in common.iter_jsonl(ledger):
-        if ev.get("todo_path") != todo or ev.get("kind") != kind or ev.get("legacy_import"):
-            continue
-        if ev.get("result") not in ("ok", "received", "", None):
-            continue
-        if ev.get("event_id"):
+    index = evidence.target_index_path(root, todo, "file")
+    for n, ev in enumerate(common.iter_jsonl_reverse(index)):
+        if n >= FILE_EVIDENCE_SCAN_LIMIT:
+            break
+        if _match(ev):
             ids.append(ev["event_id"])
-    return ids
+    if ids:
+        ids.reverse()
+        return ids
+    ledger = common.state_dir(root) / "evidence.jsonl"
+    return [ev["event_id"] for ev in common.iter_jsonl(ledger) if _match(ev)]
 
 
 def _first_section_index(lines: list[str]) -> int:

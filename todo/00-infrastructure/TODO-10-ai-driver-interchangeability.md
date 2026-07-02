@@ -271,15 +271,15 @@ Make the enforcement layer reusable outside the Claude harness.
 Codex is the required reviewer; its evidence must be trustworthy and independent of the mutating session.
 
 - [x] Define canonical reviewer roles: `codex-reviewer-{design, adversarial-impl, adversarial, consistency, perf, test-coverage, gap-audit, re-adversarial}`.
-- [/] Update Codex dispatch prompts so each review records `role`, `review_kind`, and `review_run_id`. The receipt hook records these when present and generates `review_run_id` for legacy dispatches; prompt-template rollout remains.
-- [ ] Derive trusted `review_run_id` from the dispatch wrapper/session or receipt process metadata, not prompt text; prompt-authored IDs are correlation hints only (the receipt hook reads them from the prompt and fabricates IDs today).
-- [ ] Recognize `gap-audit` in `codex_review_completed.py` (`_REVIEW_KIND_RE`, `_record_stamp`, `CODEX_TRIGGER_SKILLS`) + tests, so wrapper and Skill `gap-audit` dispatches mirror to the ledger; all three omit it today.
-- [ ] Bind review evidence to the reviewed source blobs and current HEAD so a review of stale source cannot satisfy a shipping obligation.
+- [x] The receipt hook records `role`, `review_kind`, and a trusted `review_run_id` for every dispatch; prompt-authored ids are recorded as correlation hints only.
+- [x] Derive trusted `review_run_id` from receipt process metadata, not prompt text; the receipt hook always generates it and demotes prompt ids to `prompt_review_run_id_hint`.
+- [x] Recognize `gap-audit` in `codex_review_completed.py` (`_REVIEW_KIND_RE`, `_record_stamp`, `CODEX_TRIGGER_SKILLS`, skill map) + tests; gap-audit receipts normalize to the `file` scope for the ledger index.
+- [x] Bind review evidence to the reviewed source blobs and current HEAD so a review of stale source cannot satisfy a shipping obligation (receipt mirrors trigger blobs + HEAD; obligations reject non-current blobs).
 - [x] Review evidence is warned or rejected when the reviewer prompt contains implementor self-summary language instead of evidence-first scope.
 - [x] The obligation resolver treats fresh-context Codex review as required for shipping review kinds.
-- [/] Add a reviewer-output receipt step classifying findings as Fix/Reject/Accept-XREF with file-line evidence. The receipt hook mirrors received reviews into the ledger; classification stays with the receiving-code-review workflow.
+- [x] Add a reviewer-output receipt step classifying findings as Fix/Reject/Accept-XREF with file-line evidence. The receipt hook mirrors received reviews into the ledger; classification runs through the receiving-code-review workflow.
 - [x] Preserve the no-model-flag policy: Codex model and effort remain controlled centrally by Codex config, not per dispatch.
-- [ ] Harden `sequencer_triage.file_lifecycle` to require ledger `todo-graph-validate`/`gap-audit` evidence, not just a preamble `Validated:`/`Gap-audited:` line, so a manual `--allow-missing` stamp is not a trusted skip signal (§5 F2 residual).
+- [x] Harden `sequencer_triage.file_lifecycle`: a manual `--allow-missing` lifecycle stamp is trusted only with matching non-legacy ledger evidence; hand-written historical stamps stay trusted.
 - [ ] Commit: "ai-workflow: harden review-evidence integrity"
 
 **Test checkpoint:** A review of stale source or a prompt-forged review id cannot satisfy a shipping review obligation; a fresh reviewer dispatch can.
