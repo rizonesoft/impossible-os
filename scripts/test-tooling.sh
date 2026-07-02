@@ -1022,6 +1022,35 @@ else
 fi
 rm -rf "$SEC_TMP"
 
+# --- runner_bash_guard: subagent Bash hazard backstop -------------------------
+[ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[runner_bash_guard]${NC}"
+_RBG="$REPO_ROOT/.claude/hooks/runner_bash_guard.py"
+_rbg_case() {  # <desc> <transcript> <command> <want_rc>
+    local desc="$1" tp="$2" cmd="$3" want="$4" rc
+    printf '{"tool_name":"Bash","transcript_path":"%s","tool_input":{"command":"%s"}}' "$tp" "$cmd" \
+        | python3 "$_RBG" >/dev/null 2>&1; rc=$?
+    if [ "$rc" = "$want" ]; then
+        t_pass "runner_bash_guard: $desc (rc=$rc)"
+    else
+        t_fail "runner_bash_guard: $desc (want $want, got $rc)"
+    fi
+}
+_rbg_case "subagent codex dispatch BLOCKED" "/x/agent-a1.jsonl" "bash scripts/codex-dispatch.sh review" 2
+_rbg_case "subagent git push BLOCKED" "/x/agent-a1.jsonl" "git push origin main" 2
+_rbg_case "subagent gh pr comment BLOCKED" "/x/agent-a1.jsonl" "gh pr comment 5 --body hi" 2
+_rbg_case "subagent SKIP override BLOCKED" "/x/agent-a1.jsonl" "SKIP_REVIEW_HOOK=1 git status" 2
+_rbg_case "subagent build.sh allowed" "/x/agent-a1.jsonl" "bash scripts/build.sh" 0
+_rbg_case "subagent git log allowed" "/x/agent-a1.jsonl" "git log --oneline -5" 0
+_rbg_case "subagent gh run view allowed" "/x/agent-a1.jsonl" "gh run view 12 --log-failed" 0
+_rbg_case "main-session git commit untouched" "/x/c3c5bd55-mainsession.jsonl" "git commit -m x" 0
+_rbg_case "main-session codex dispatch untouched" "/x/c3c5bd55-mainsession.jsonl" "bash scripts/codex-dispatch.sh review" 0
+_rbg_out=$(printf 'not json' | python3 "$_RBG" 2>&1); _rbg_rc=$?
+if [ "$_rbg_rc" = "0" ] && [ -z "$_rbg_out" ]; then
+    t_pass "runner_bash_guard: fail-open on malformed payload"
+else
+    t_fail "runner_bash_guard: malformed payload not fail-open (rc=$_rbg_rc)"
+fi
+
 # --- Check 14 agent tool-allowlist: runner class ------------------------------
 # Synthetic agents in a throwaway repo prove the two-class contract: analyst
 # with Bash fails; runner marker + {Bash,Read,Grep,Glob} passes; runner with
@@ -1035,40 +1064,56 @@ cp -r "$REPO_ROOT/scripts/lint/." "$ARC_REPO/scripts/lint/" 2>/dev/null || true
 printf 'int arc_ok(void) { return 0; }\n' > "$ARC_REPO/src/ok.c"
 ( cd "$ARC_REPO" && git init -q && git config user.email t@t && git config user.name t \
     && git add -A && git -c commit.gpgsign=false commit -q -m seed )
-_arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content>
+_arc_case() {  # <desc> <want_flag:yes|no> <agent-body-file-content> [filename]
     # Check 14 runs only in no-arg (full-repo) lint mode; other checks may
-    # error on the bare synthetic repo, so assert on the synthetic.md error
-    # line presence/absence rather than the overall exit code.
-    local desc="$1" want_flag="$2" body="$3" out
-    printf '%s' "$body" > "$ARC_REPO/.claude/agents/synthetic.md"
+    # error on the bare synthetic repo, so assert on the agent-file error
+    # line presence/absence rather than the overall exit code. The optional
+    # 4th arg lets the runner pass-case use a ROSTER name (the roster gate
+    # means a non-roster filename can never be a valid runner).
+    local desc="$1" want_flag="$2" body="$3" fname="${4:-synthetic.md}" out
+    printf '%s' "$body" > "$ARC_REPO/.claude/agents/$fname"
     out=$(cd "$ARC_REPO" && bash scripts/lint.sh 2>&1) || true
     if [ "$want_flag" = "yes" ]; then
-        if echo "$out" | grep -q "synthetic.md.*allowlist"; then
+        if echo "$out" | grep -q "$fname.*\(allowlist\|RUNNER_ROSTER\|hard rules\)"; then
             t_pass "lint_agent_runner_class: $desc (flagged)"; else
-            t_fail "lint_agent_runner_class: $desc" "expected allowlist flag, got: $(echo "$out" | grep synthetic | head -1)"; fi
+            t_fail "lint_agent_runner_class: $desc" "expected flag, got: $(echo "$out" | grep "$fname" | head -1)"; fi
     else
-        if echo "$out" | grep -q "synthetic.md"; then
-            t_fail "lint_agent_runner_class: $desc" "unexpected flag: $(echo "$out" | grep synthetic | head -1)"; else
+        if echo "$out" | grep -q "$fname"; then
+            t_fail "lint_agent_runner_class: $desc" "unexpected flag: $(echo "$out" | grep "$fname" | head -1)"; else
             t_pass "lint_agent_runner_class: $desc (clean)"; fi
     fi
-    rm -f "$ARC_REPO/.claude/agents/synthetic.md"
+    rm -f "$ARC_REPO/.claude/agents/$fname"
 }
 _arc_case "analyst with Bash is flagged" yes '---
 name: synthetic
 tools: Bash, Read
 ---
 body'
-_arc_case "runner marker + Bash/Read/Grep/Glob passes" no '---
-name: synthetic
+_arc_case "rostered runner + marker + hard rules + Bash/Read/Grep/Glob passes" no '---
+name: checks-runner
 tools: Bash, Read, Grep, Glob
 ---
 <!-- agent-class: runner -->
-body'
+## Forbidden -- hard rules
+body' checks-runner.md
+_arc_case "rostered runner missing hard-rules section is flagged" yes '---
+name: checks-runner
+tools: Bash, Read, Grep, Glob
+---
+<!-- agent-class: runner -->
+body' checks-runner.md
 _arc_case "runner with Edit is flagged" yes '---
 name: synthetic
 tools: Bash, Read, Edit
 ---
 <!-- agent-class: runner -->
+body'
+_arc_case "runner marker NOT in roster is flagged (spoof guard)" yes '---
+name: synthetic
+tools: Bash, Read, Grep, Glob
+---
+<!-- agent-class: runner -->
+## Forbidden -- hard rules
 body'
 _arc_case "runner with WebSearch is flagged" yes '---
 name: synthetic

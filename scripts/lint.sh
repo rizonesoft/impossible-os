@@ -974,14 +974,23 @@ import sys, glob, os, re
 root = sys.argv[1]
 ANALYST_ALLOWED = {"Read", "Grep", "Glob", "WebSearch", "WebFetch"}
 RUNNER_ALLOWED = {"Bash", "Read", "Grep", "Glob"}
+# Runner class is roster-gated: the marker ALONE cannot mint a runner. Adding a
+# runner is a deliberate act that edits this roster (and gets reviewed).
+RUNNER_ROSTER = {"checks-runner.md", "git-historian.md", "gh-query-runner.md"}
 viol = []
 for path in sorted(glob.glob(os.path.join(root, ".claude/agents/*.md"))):
     rel = os.path.relpath(path, root)
+    base = os.path.basename(path)
     with open(path, encoding="utf-8") as f:
         text = f.read()
     if re.search(r'^<!--\s*agent-tools-exempt:\s*\S', text, re.M):
         continue
-    is_runner = bool(re.search(r'^<!--\s*agent-class:\s*runner\s*-->', text, re.M))
+    has_marker = bool(re.search(r'^<!--\s*agent-class:\s*runner\s*-->', text, re.M))
+    is_runner = has_marker and base in RUNNER_ROSTER
+    if has_marker and base not in RUNNER_ROSTER:
+        viol.append((rel, 1, "agent-class runner marker but not in Check 14 RUNNER_ROSTER (adding a runner requires editing the roster in scripts/lint.sh)"))
+    if is_runner and not re.search(r'^##\s*Forbidden\s*--\s*hard rules', text, re.M):
+        viol.append((rel, 1, "runner agent missing the required '## Forbidden -- hard rules' section"))
     allowed = RUNNER_ALLOWED if is_runner else ANALYST_ALLOWED
     klass = "runner" if is_runner else "read-only"
     m = re.search(r'^tools:\s*(.*)$', text, re.M)
