@@ -21,6 +21,7 @@
 #include "kernel/ob/ob.h"
 #include "kernel/ob/ob_ns.h"
 #include "kernel/ob/ob_event.h"
+#include "kernel/ob/ob_mutex.h"
 #include "kernel/ob/handle_table.h"
 #include "kernel/nt/filetime.h"
 #include "kernel/time/wall_clock.h"
@@ -134,6 +135,28 @@ static void test_nt_sem_release_overflow(void)
                                 (uint64_t)(uintptr_t)&prev, 0, 0, 0);
     TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS, "valid release");
     TEST_ASSERT_EQ(prev, 1, "PreviousCount == 1 after valid release");
+
+    /* Large release count must be O(waiters), not O(count): a semaphore
+     * with a huge maximum released by a huge count completes promptly and
+     * lands the exact count -- the batched sem_signal_n path, not a
+     * 2.1-billion-iteration sem_signal loop. */
+    {
+        HANDLE big = INVALID_HANDLE_VALUE;
+        SEMAPHORE_BASIC_INFORMATION si;
+        ssdt_dispatch(SSDT_NtCreateSemaphore, (uint64_t)(uintptr_t)&big, 0, 0,
+                      0, 0x7FFFFFFF, 0);  /* initial 0, max INT32_MAX */
+        s = (NTSTATUS)ssdt_dispatch(SSDT_NtReleaseSemaphore,
+                                    (uint64_t)(uint32_t)big, 0x40000000,
+                                    (uint64_t)(uintptr_t)&prev, 0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS,
+                       "large release count succeeds (batched, not O(n))");
+        TEST_ASSERT_EQ(prev, 0, "PreviousCount == 0 before large release");
+        ssdt_dispatch(SSDT_NtQuerySemaphore, (uint64_t)(uint32_t)big, 0,
+                      (uint64_t)(uintptr_t)&si, sizeof(si), 0, 0);
+        TEST_ASSERT_EQ(si.CurrentCount, 0x40000000,
+                       "count landed exactly after large batched release");
+        ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)big, 0, 0, 0, 0, 0);
+    }
 
     ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)h, 0, 0, 0, 0, 0);
 }
@@ -554,6 +577,112 @@ static void test_nt_wait_absolute_deadline_expired(void)
     ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)ev, 0, 0, 0, 0, 0);
 }
 
+/* Mutant recursion ceiling: an owner re-acquire at the cap must fail with
+ * STATUS_MUTANT_LIMIT_EXCEEDED instead of wrapping the counter (a wrap
+ * would unlock the mutex while the owner still holds recursive acquires).
+ * The counter is seeded directly on the named object's body -- looping
+ * 2^31 acquisitions is not viable in a test. */
+static void test_nt_mutant_recursion_ceiling(void)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING us;
+    HANDLE m = INVALID_HANDLE_VALUE;
+    MUTEX_OBJECT *mo = (MUTEX_OBJECT *)0;
+    void *body = (void *)0;
+    int64_t zero_timeout = 0;
+    NTSTATUS s;
+
+    nt_test_build_oa(&oa, &us, "T12S8RecCap");
+    s = (NTSTATUS)ssdt_dispatch(SSDT_NtCreateMutant,
+                                (uint64_t)(uintptr_t)&m, 0,
+                                (uint64_t)(uintptr_t)&oa, 1, 0, 0);
+    TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS,
+                   "create owned named mutant");
+
+    if (ObLookupObjectByName("\\BaseNamedObjects\\T12S8RecCap",
+                             ObpMutexType, 0, &body) == 0 && body) {
+        mo = (MUTEX_OBJECT *)body;
+        mo->recursion = 0x7FFFFFFD;  /* one below the cap */
+
+        /* one more re-acquire reaches the cap ... */
+        s = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForSingleObject,
+                                    (uint64_t)(uint32_t)m, 0,
+                                    (uint64_t)(uintptr_t)&zero_timeout,
+                                    0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_SUCCESS,
+                       "re-acquire below the ceiling succeeds");
+
+        /* ... and the next one must be refused with the defined limit
+         * status (poll path), not wrapped and not a bare timeout */
+        s = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForSingleObject,
+                                    (uint64_t)(uint32_t)m, 0,
+                                    (uint64_t)(uintptr_t)&zero_timeout,
+                                    0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_MUTANT_LIMIT_EXCEEDED,
+                       "poll at the ceiling returns limit status (no wrap)");
+
+        /* a blocking wait at the ceiling fails fast with the same status
+         * (owner short-circuit runs before any block) */
+        s = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForSingleObject,
+                                    (uint64_t)(uint32_t)m, 0, 0, 0, 0, 0);
+        TEST_ASSERT_EQ((uint32_t)s, (uint32_t)STATUS_MUTANT_LIMIT_EXCEEDED,
+                       "blocking wait at the ceiling returns limit status");
+
+        /* WaitAll containing the capped mutant also surfaces the limit,
+         * not a spin-to-timeout */
+        {
+            HANDLE arr2[1];
+            int64_t zt = 0;
+            arr2[0] = m;
+            s = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForMultipleObjects,
+                                        1, (uint64_t)(uintptr_t)arr2, WaitAll,
+                                        0, (uint64_t)(uintptr_t)&zt, 0);
+            TEST_ASSERT_EQ((uint32_t)s,
+                           (uint32_t)STATUS_MUTANT_LIMIT_EXCEEDED,
+                           "WaitAll at the ceiling surfaces limit status");
+
+            /* WaitAny with an INFINITE timeout (NULL pointer) must surface
+             * the limit immediately, not hang -- the capped mutant is the
+             * only object and can never be acquired. */
+            s = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForMultipleObjects,
+                                        1, (uint64_t)(uintptr_t)arr2, WaitAny,
+                                        0, 0, 0);
+            TEST_ASSERT_EQ((uint32_t)s,
+                           (uint32_t)STATUS_MUTANT_LIMIT_EXCEEDED,
+                           "WaitAny(infinite) at ceiling surfaces limit, no hang");
+        }
+
+        /* WaitAll where the capped mutant is ordered AFTER an unsignalled
+         * object (infinite timeout): the prepass must still detect the
+         * limit (scan-all, not break-on-first-miss) and not hang. */
+        {
+            HANDLE ev2 = INVALID_HANDLE_VALUE;
+            HANDLE arr3[2];
+            ssdt_dispatch(SSDT_NtCreateEvent, (uint64_t)(uintptr_t)&ev2, 0, 0,
+                          SynchronizationEvent, 0, 0);  /* unsignalled */
+            arr3[0] = ev2;  /* not-ready, ordered first */
+            arr3[1] = m;    /* capped mutant, ordered second */
+            s = (NTSTATUS)ssdt_dispatch(SSDT_NtWaitForMultipleObjects,
+                                        2, (uint64_t)(uintptr_t)arr3, WaitAll,
+                                        0, 0, 0);
+            TEST_ASSERT_EQ((uint32_t)s,
+                           (uint32_t)STATUS_MUTANT_LIMIT_EXCEEDED,
+                           "WaitAll(infinite) detects ceiling behind not-ready object");
+            ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)ev2, 0, 0, 0, 0, 0);
+        }
+
+        /* restore sane state for cleanup: depth 1, no recursion */
+        mo->recursion = 0;
+        ObDereferenceObject(body);
+    } else {
+        TEST_ASSERT(0, "named mutant body lookup failed");
+    }
+
+    ssdt_dispatch(SSDT_NtReleaseMutant, (uint64_t)(uint32_t)m, 0, 0, 0, 0, 0);
+    ssdt_dispatch(SSDT_NtClose, (uint64_t)(uint32_t)m, 0, 0, 0, 0, 0);
+    nt_test_cleanup_named("T12S8RecCap", ObpMutexType);
+}
+
 void test_register_nt_sync(void)
 {
     test_suite_register_cat("NT: sync SSDT registered", test_nt_sync_ssdt_registered, TEST_CAT_ABI);
@@ -567,6 +696,7 @@ void test_register_nt_sync(void)
     test_suite_register_cat("NT: SignalAndWait mutant release", test_nt_signal_and_wait_mutant, TEST_CAT_ABI);
     test_suite_register_cat("NT: SignalAndWait semaphore limit", test_nt_signal_and_wait_sem_limit, TEST_CAT_ABI);
     test_suite_register_cat("NT: expired absolute wait deadline", test_nt_wait_absolute_deadline_expired, TEST_CAT_ABI);
+    test_suite_register_cat("NT: mutant recursion ceiling", test_nt_mutant_recursion_ceiling, TEST_CAT_ABI);
 }
 
 #endif /* KERNEL_TESTS */

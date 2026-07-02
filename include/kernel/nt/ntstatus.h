@@ -79,6 +79,7 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 
 #define STATUS_SEMAPHORE_LIMIT_EXCEEDED     ((NTSTATUS)0xC0000047)  /* semaphore count exceeded max */
 #define STATUS_MUTANT_NOT_OWNED             ((NTSTATUS)0xC0000046)  /* release mutex not owned by caller */
+#define STATUS_MUTANT_LIMIT_EXCEEDED        ((NTSTATUS)0xC0000191)  /* mutant acquired past the recursion limit */
 
 /* ---- Error codes -- sharing / lock ---------------------------------------- */
 

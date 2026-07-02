@@ -102,12 +102,17 @@ void event_wait(event_t *ev)
     ASSERT_IRQL_PASSIVE_OR_APC();
 
     if (ev->type == EVENT_AUTO_RESET) {
-        /* CAS-claim the signal so exactly one waiter consumes it.  A
-         * read-then-clear consume lets two CPUs both observe state==1
-         * and both return for a single signal. */
-        while (atomic_cmpxchg(&ev->state, 1, 0) != 1)
+        /* CAS-claim the signal so exactly one waiter consumes it (a
+         * read-then-clear consume lets two CPUs both observe state==1 and
+         * both return for one signal).  Read-before-CAS matches
+         * event_try_consume / event_wait_timeout: block while unsignalled,
+         * only CAS once state is observed set. */
+        for (;;) {
+            if (atomic_read(&ev->state) &&
+                atomic_cmpxchg(&ev->state, 1, 0) == 1)
+                return;
             enqueue_and_block(ev);
-        return;
+        }
     }
 
     while (!atomic_read(&ev->state)) {
@@ -168,8 +173,11 @@ int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
 
     for (;;) {
         if (ev->type == EVENT_AUTO_RESET) {
-            /* CAS-claim so exactly one waiter consumes each signal */
-            if (atomic_cmpxchg(&ev->state, 1, 0) == 1)
+            /* CAS-claim so exactly one waiter consumes each signal; the
+             * read-before-CAS avoids exclusive cache-line traffic while
+             * the event is unsignalled. */
+            if (atomic_read(&ev->state) &&
+                atomic_cmpxchg(&ev->state, 1, 0) == 1)
                 return 1;
         } else if (atomic_read(&ev->state)) {
             return 1;
@@ -212,7 +220,13 @@ int event_is_set(const event_t *ev)
  * ------------------------------------------------------------------------- */
 int event_try_consume(event_t *ev)
 {
-    if (ev->type == EVENT_AUTO_RESET)
+    if (ev->type == EVENT_AUTO_RESET) {
+        /* Read-before-CAS: skip the locked compare-exchange (and its
+         * cache-line exclusive-ownership traffic) when the event is not
+         * signalled -- the common case for a multi-CPU poll loop. */
+        if (!atomic_read(&ev->state))
+            return 0;
         return atomic_cmpxchg(&ev->state, 1, 0) == 1;
+    }
     return atomic_read(&ev->state) ? 1 : 0;
 }

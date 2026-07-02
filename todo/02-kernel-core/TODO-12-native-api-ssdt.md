@@ -446,7 +446,7 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). I
 - [x] `NtQueryMutant(0x0079)`: MUTANT_BASIC_INFORMATION; CurrentCount reflects recursion depth (1 free, 0 held, negative recursive)
 - [x] `NtCreateSemaphore(0x007A)`: wraps NtCreateSemaphore in ob_semaphore.c; validates initial <= max
 - [x] `NtOpenSemaphore(0x007B)`: ObLookupObjectByName for ObpSemaphoreType
-- [x] `NtReleaseSemaphore(0x007C)`: checks max count, sem_signal N times
+- [x] `NtReleaseSemaphore(0x007C)`: via `sem_release_checked()` -- 64-bit max-count guard, PreviousCount after validation, batched `sem_signal_n()` (O(waiters), not O(count))
 - [x] `NtQuerySemaphore(0x007D)`: returns SEMAPHORE_BASIC_INFORMATION
 - [/] `NtCreateKeyedEvent(0x0084)`: stub STATUS_NOT_IMPLEMENTED -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtCreateKeyedEvent" at line 252)
 - [/] `NtOpenKeyedEvent(0x0085)`: stub -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtOpenKeyedEvent" at line 253)
@@ -454,23 +454,31 @@ Synchronisation objects through Ob-managed named types (→ XREF TODO-05 §6). I
 - [/] `NtReleaseKeyedEvent(0x0087)`: stub -> XREF: 03-memory-concurrency/TODO-08 §10 (item: "NtReleaseKeyedEvent" at line 255)
 - [x] New file: `include/kernel/nt/nt_sync.h` with wait constants, info structs
 - [x] New file: `src/kernel/nt/nt_sync.c` with 21 SSDT handlers
-- [x] Added STATUS_WAIT_0, STATUS_ABANDONED to ntstatus.h
-- [x] Unit tests: SSDT registration, sync constants, semaphore overflow guard, WaitAll rollback (event+sem+mutant), duplicate/alias rejection, mutant recursion, SignalAndWait (test_nt_types.c, TEST_CAT_ABI)
-- [x] [H] NtWaitForMultipleObjects WaitAll made all-or-none: two-phase resolve+pin then poll-acquire with reverse rollback; failed/timed-out WaitAll consumes nothing
-- [x] [H] NtReleaseSemaphore max-count guard now 64-bit (`(int64_t)cur + release_count > max`); PreviousCount written only after validation
-- [x] `event_try_consume()` primitive (sched/event.c): CAS-consuming poll for auto-reset events; all timeout=0 wait paths now consume per NT semantics
-- [x] Mutant recursion: `MUTEX_OBJECT.recursion` field; owner re-acquire, release unwind, query depth, SignalAndWait one-level release
+- [x] STATUS_WAIT_0, STATUS_ABANDONED, STATUS_MUTANT_LIMIT_EXCEEDED canonical in ntstatus.h (nt_sync.h includes it, no duplication)
+- [x] Unit tests in `test_nt_sync.c` (TEST_CAT_ABI): registration, constants, semaphore overflow guard, WaitAll rollback, duplicate/alias rejection, WaitAny consume, mutant recursion + ceiling, SignalAndWait, absolute-deadline handling
+- [x] [H] NtWaitForMultipleObjects WaitAll made all-or-none: two-phase resolve+pin, readiness prepass, poll-acquire with reverse rollback; failed/timed-out WaitAll consumes nothing
+- [x] [H] NtReleaseSemaphore + NtSignalAndWait share `sem_release_checked()`: 64-bit MaximumCount guard, PreviousCount written only after validation
+- [x] `event_try_consume()` (sched/event.c): read-before-CAS consuming poll; event_wait/event_wait_timeout also CAS-consume; timeout=0 paths consume per NT semantics
+- [x] Mutant recursion: `MUTEX_OBJECT.recursion` + `MUTANT_MAX_RECURSION` cap (STATUS_MUTANT_LIMIT_EXCEEDED, no wrap); MUTANT_BASIC_INFORMATION matches Windows 8-byte ABI
+- [x] `nt_timeout_to_ms` on `ke_delay_interval_to_ms`: absolute deadlines gated on `wall_clock_time_sourced()`, expired/unsourced resolve to poll (no infinite hang)
 - [x] Commit: `"kernel: nt -- sync objects, NtWaitForMultipleObjects, keyed events"`
 
 **Test checkpoint:** `NtCreateEvent` + `NtSetEvent` + `NtWaitForSingleObject` round-trip succeeds. `NtWaitForMultipleObjects(WaitAny)` returns correct index and consumes the satisfying auto-reset signal; a partial `WaitAll` rolls back and consumes nothing. `NtCreateMutant` with `InitialOwner=TRUE` is owned by caller and recursively re-acquirable. Named objects visible in `\BaseNamedObjects\`. Keyed event APIs (0x0084-0x0087) return `STATUS_NOT_IMPLEMENTED` pending 03-memory-concurrency/TODO-08 §10.
 
-> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 391 kernel + 16 user tests, 0 failures
+> **Test runner:** `scripts\debug\kernel\run-abi-tests.bat` (SUITE=abi) | 405 kernel + 16 user tests, 0 failures
 
 > **Notes:**
-> - **What shipped:** `nt_sync.c` wait-path rewrite: two-phase all-or-none WaitAll with rollback, consuming polls via new `event_try_consume()`, per-wait object pinning, 64-bit semaphore max guard, NT mutant recursion.
+> - **What shipped:** `nt_sync.c` wait-path rewrite: all-or-none WaitAll (prepass + rollback), consuming polls via `event_try_consume()`, per-wait pinning, shared `sem_release_checked()`, wrap-safe mutant recursion, source-gated timeouts.
 > - **How it runs:** all 21 handlers dispatch through the SSDT unchanged; waits resolve the handle once, pin the body, and operate on the pinned body until return.
-> - **Downstream effects:** WaitAny/WaitAll now match Win32 `WaitForMultipleObjects` contracts; Codex adoption evidence lives in the section-fix commit message.
-> - **Scope boundary:** keyed events owned by 03-memory-concurrency/TODO-08 §10; wait-queue SMP atomicity by 03-memory-concurrency/TODO-08 §11; process-wait parent/timeout hardening by §7.
+> - **Downstream effects:** WaitAny/WaitAll match Win32 `WaitForMultipleObjects`; MUTANT_BASIC_INFORMATION matches the Windows 8-byte ABI; Codex adoption evidence lives in the commit messages.
+> - **Scope boundary:** keyed events owned by 03-memory-concurrency/TODO-08 §10; primitive wait-queue/auto-reset-handoff SMP atomicity by 03-memory-concurrency/TODO-08 §11; process-wait parent/timeout hardening by §7.
+> **Verified:** 2026-07-02 | commit `31899c0d` | 27/31 items | build OK | abi 405/405 PASS
+> **Accepted:** [Critical] handle lookup-then-ObReferenceObjectSafe pin has a freed-header window a concurrent NtClose can hit -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(...)` primitive" at line 148 -- retrofit list names nt_sync.c)
+> **Accepted:** [H] auto-reset event_set publishes state before waking a queued waiter, so a timeout=0 poll on another CPU can steal the wake -> XREF: 03-memory-concurrency/TODO-08 §11 (item: "Semaphore + event atomicity" at line 281 -- names the direct-handoff-to-queued-waiter requirement)
+> **Accepted:** [M] sem_release_checked check-then-signal + WaitAll rollback are not serialized against a concurrent NtReleaseSemaphore -> XREF: 03-memory-concurrency/TODO-08 §11 (item: "Semaphore + event atomicity" at line 281 -- serialize max-guard + rollback)
+> **Accepted:** [M] multi-wait polls stay READY with no backoff (interim poll design; blocking waitable not built) -> XREF: 03-memory-concurrency/TODO-08 §8 (item: "`wait_any(waitable_t *handles[], count, timeout_ms)`" at line 220 -- the blocking waitable_t multi-wait that replaces the poll)
+> **Accepted:** [M] sync SSDT handlers deref ring-3 handle-array/timeout/out pointers without probe/copy (systemic NT trust-boundary gap) -> XREF: 02-kernel-core/TODO-12 §29 (item: "Sync syscalls deref raw user pointers (`nt_sync.c`)" at line 1023)
+> **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 5H+2M fixed, 5 accepted-XREF | scope: kernel-code-quality
 
 ---
 

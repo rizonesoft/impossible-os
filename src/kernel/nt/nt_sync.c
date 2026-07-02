@@ -61,6 +61,11 @@ static void *sync_lookup(HANDLE handle, const OBJECT_TYPE *expected)
  * Hold depth = 0 when free, 1 + recursion when owned.  The NT mutant count
  * is 1 - depth (1 = signalled/free, 0 = owned once, negative = recursive).
  * ----------------------------------------------------------------------- */
+/* Recursion ceiling: hold depth 1 + recursion must stay representable as
+ * the NT mutant count (1 - depth) in int32, and an unbounded counter
+ * would wrap to an early unlock after 2^32 owner re-acquisitions. */
+#define MUTANT_MAX_RECURSION  ((uint32_t)0x7FFFFFFE)
+
 static int mutant_owned_by_current(MUTEX_OBJECT *mo)
 {
     struct task *cur = task_current();
@@ -331,7 +336,6 @@ static NTSTATUS NtQueryMutant_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     MUTANT_BASIC_INFORMATION *info = (MUTANT_BASIC_INFORMATION *)a3;
     uint32_t length = (uint32_t)a4;
     MUTEX_OBJECT *mo;
-    struct task *cur;
 
     (void)a2; (void)a5; (void)a6;
 
@@ -342,11 +346,13 @@ static NTSTATUS NtQueryMutant_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (!mo)
         return STATUS_INVALID_HANDLE;
 
-    cur = task_current();
     info->CurrentCount = mutant_count(mo);
-    info->OwnedByCaller = (mutex_is_locked(&mo->mutex) &&
-                           mo->mutex.owner_task == cur->pid) ? 1 : 0;
-    info->AbandonedState = mo->abandoned;
+    /* Thread-aware ownership, matching mutant_owned_by_current so query
+     * agrees with the release/re-acquire ownership predicate. */
+    info->OwnedByCaller = mutant_owned_by_current(mo) ? 1 : 0;
+    info->AbandonedState = (uint8_t)(mo->abandoned ? 1 : 0);
+    info->_pad[0] = 0;
+    info->_pad[1] = 0;
     return STATUS_SUCCESS;
 }
 
@@ -422,15 +428,15 @@ static NTSTATUS sem_release_checked(SEMAPHORE_OBJECT *so,
                                     int32_t release_count, int32_t *prev)
 {
     int32_t cur = sem_value(&so->semaphore);
-    int32_t i;
 
     if ((int64_t)cur + (int64_t)release_count > (int64_t)so->max_count)
         return STATUS_SEMAPHORE_LIMIT_EXCEEDED;
     if (prev)
         *prev = cur;
 
-    for (i = 0; i < release_count; i++)
-        sem_signal(&so->semaphore);
+    /* Batched release: O(waiters), not O(release_count) -- a ring-3
+     * caller can pass a ReleaseCount up to MaximumCount (INT32_MAX). */
+    sem_signal_n(&so->semaphore, release_count);
 
     return STATUS_SUCCESS;
 }
@@ -519,8 +525,11 @@ static int wait_body_waitable(void *body, const OBJECT_TYPE *type)
 /* Non-blocking consuming acquire.  Returns 1 on success; *abandoned is set
  * (not cleared) when a mutant was abandoned by a dead owner.  Abandonment
  * is only CLEARED by wait_commit_abandoned() after the overall wait
- * succeeds, so a rolled-back WaitAll preserves the abandoned flag. */
-static int wait_try_acquire(void *body, const OBJECT_TYPE *type, int *abandoned)
+ * succeeds, so a rolled-back WaitAll preserves the abandoned flag.
+ * *limit (nullable) is set when an owned mutant is at MUTANT_MAX_RECURSION
+ * so callers surface STATUS_MUTANT_LIMIT_EXCEEDED instead of TIMEOUT. */
+static int wait_try_acquire(void *body, const OBJECT_TYPE *type,
+                            int *abandoned, int *limit)
 {
     if (type == ObpEventType || type == ObpTimerType ||
         type == ObpAlpcPortType)
@@ -529,6 +538,11 @@ static int wait_try_acquire(void *body, const OBJECT_TYPE *type, int *abandoned)
     if (type == ObpMutexType) {
         MUTEX_OBJECT *mo = (MUTEX_OBJECT *)body;
         if (mutant_owned_by_current(mo)) {
+            if (mo->recursion >= MUTANT_MAX_RECURSION) {
+                if (limit)
+                    *limit = 1;  /* ceiling -- never wrap to unlock */
+                return 0;
+            }
             mo->recursion++;
             return 1;
         }
@@ -545,6 +559,39 @@ static int wait_try_acquire(void *body, const OBJECT_TYPE *type, int *abandoned)
     if (type == ObpProcessType) {
         struct task *t = ((PROCESS_OBJECT *)body)->task;
         return t && t->state == TASK_DEAD;  /* non-consuming */
+    }
+
+    return 0;
+}
+
+/* Non-consuming readiness peek used by the WaitAll prepass so a single
+ * late-missing object does not churn acquire+rollback on every poll pass.
+ * *limit (nullable) is set for an owned mutant at the recursion ceiling. */
+static int wait_is_ready(void *body, const OBJECT_TYPE *type, int *limit)
+{
+    if (type == ObpEventType || type == ObpTimerType ||
+        type == ObpAlpcPortType)
+        return event_is_set(wait_body_event(body, type));
+
+    if (type == ObpMutexType) {
+        MUTEX_OBJECT *mo = (MUTEX_OBJECT *)body;
+        if (mutant_owned_by_current(mo)) {
+            if (mo->recursion >= MUTANT_MAX_RECURSION) {
+                if (limit)
+                    *limit = 1;
+                return 0;
+            }
+            return 1;
+        }
+        return !mutex_is_locked(&mo->mutex);
+    }
+
+    if (type == ObpSemaphoreType)
+        return sem_value(&((SEMAPHORE_OBJECT *)body)->semaphore) > 0;
+
+    if (type == ObpProcessType) {
+        struct task *t = ((PROCESS_OBJECT *)body)->task;
+        return t && t->state == TASK_DEAD;
     }
 
     return 0;
@@ -600,11 +647,12 @@ static NTSTATUS wait_on_body(void *body, const OBJECT_TYPE *type,
                              uint32_t timeout_ms)
 {
     int abandoned = 0;
+    int limit = 0;
 
     /* Poll: exactly one consuming try-acquire, never blocks */
     if (timeout_ms == 0) {
-        if (!wait_try_acquire(body, type, &abandoned))
-            return STATUS_TIMEOUT;
+        if (!wait_try_acquire(body, type, &abandoned, &limit))
+            return limit ? STATUS_MUTANT_LIMIT_EXCEEDED : STATUS_TIMEOUT;
         wait_commit_abandoned(body, type);
         return abandoned ? STATUS_ABANDONED : STATUS_SUCCESS;
     }
@@ -624,6 +672,8 @@ static NTSTATUS wait_on_body(void *body, const OBJECT_TYPE *type,
     if (type == ObpMutexType) {
         MUTEX_OBJECT *mo = (MUTEX_OBJECT *)body;
         if (mutant_owned_by_current(mo)) {
+            if (mo->recursion >= MUTANT_MAX_RECURSION)
+                return STATUS_MUTANT_LIMIT_EXCEEDED;
             mo->recursion++;
             return STATUS_SUCCESS;
         }
@@ -836,10 +886,13 @@ static NTSTATUS NtWaitForMultipleObjects_handler(uint64_t a1, uint64_t a2,
 
     /* Phase B: poll-acquire loop on the pinned bodies */
     for (;;) {
+        int limit_hit = 0;  /* an owned mutant is at the recursion ceiling */
+
         if (wait_type == WaitAny) {
             for (i = 0; i < count; i++) {
                 int abandoned = 0;
-                if (wait_try_acquire(bodies[i], types[i], &abandoned)) {
+                if (wait_try_acquire(bodies[i], types[i], &abandoned,
+                                     &limit_hit)) {
                     wait_commit_abandoned(bodies[i], types[i]);
                     wait_unpin(bodies, count);
                     return abandoned
@@ -847,40 +900,71 @@ static NTSTATUS NtWaitForMultipleObjects_handler(uint64_t a1, uint64_t a2,
                            : (NTSTATUS)(STATUS_WAIT_0 + i);
                 }
             }
-        } else {
-            /* WaitAll: acquire everything or roll back everything */
-            int abandoned = 0;
-            int32_t first_abandoned = -1;
-            uint32_t got = 0;
-
-            for (i = 0; i < count; i++) {
-                int this_abandoned = 0;
-                if (!wait_try_acquire(bodies[i], types[i], &this_abandoned))
-                    break;
-                if (this_abandoned && first_abandoned < 0) {
-                    abandoned = 1;
-                    first_abandoned = (int32_t)i;
-                }
-                got++;
-            }
-            if (got == count) {
-                for (i = 0; i < count; i++)
-                    wait_commit_abandoned(bodies[i], types[i]);
+            /* A capped-owned mutant can never be acquired -- surface the
+             * defined limit status immediately rather than spinning to the
+             * deadline (or forever on an infinite timeout). */
+            if (limit_hit) {
                 wait_unpin(bodies, count);
-                return abandoned
-                       ? (NTSTATUS)(STATUS_ABANDONED + (uint32_t)first_abandoned)
-                       : STATUS_SUCCESS;
+                return STATUS_MUTANT_LIMIT_EXCEEDED;
             }
-            while (got > 0) {
-                got--;
-                wait_rollback(bodies[got], types[got]);
+        } else {
+            /* WaitAll: non-consuming readiness prepass first so a single
+             * late-missing object does not churn acquire+rollback (and
+             * spurious event_set rollback wakes) on every pass.  Scan ALL
+             * objects (do not break early) so a capped-owned mutant is
+             * detected regardless of its position -- such a mutant makes
+             * the WaitAll permanently impossible, so it must surface the
+             * limit status rather than hang behind an earlier not-ready
+             * object. */
+            int all_ready = 1;
+            for (i = 0; i < count; i++) {
+                if (!wait_is_ready(bodies[i], types[i], &limit_hit))
+                    all_ready = 0;
+            }
+            if (limit_hit) {
+                wait_unpin(bodies, count);
+                return STATUS_MUTANT_LIMIT_EXCEEDED;
+            }
+            if (all_ready) {
+                /* Acquire everything or roll back everything (a race can
+                 * still steal an object between prepass and acquire). */
+                int abandoned = 0;
+                int32_t first_abandoned = -1;
+                uint32_t got = 0;
+
+                for (i = 0; i < count; i++) {
+                    int this_abandoned = 0;
+                    if (!wait_try_acquire(bodies[i], types[i],
+                                          &this_abandoned, &limit_hit))
+                        break;
+                    if (this_abandoned && first_abandoned < 0) {
+                        abandoned = 1;
+                        first_abandoned = (int32_t)i;
+                    }
+                    got++;
+                }
+                if (got == count) {
+                    for (i = 0; i < count; i++)
+                        wait_commit_abandoned(bodies[i], types[i]);
+                    wait_unpin(bodies, count);
+                    return abandoned
+                           ? (NTSTATUS)(STATUS_ABANDONED +
+                                        (uint32_t)first_abandoned)
+                           : STATUS_SUCCESS;
+                }
+                while (got > 0) {
+                    got--;
+                    wait_rollback(bodies[got], types[got]);
+                }
             }
         }
 
         if (timeout_ms == 0 ||
             (timeout_ms != 0xFFFFFFFF && uptime_ns() >= deadline)) {
             wait_unpin(bodies, count);
-            return STATUS_TIMEOUT;
+            /* A capped-owned mutant that blocked satisfaction surfaces the
+             * defined limit status rather than a bare timeout. */
+            return limit_hit ? STATUS_MUTANT_LIMIT_EXCEEDED : STATUS_TIMEOUT;
         }
         yield();
     }

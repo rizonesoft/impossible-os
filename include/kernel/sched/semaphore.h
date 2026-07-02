@@ -41,6 +41,11 @@ void sem_wait(semaphore_t *s);
 /* Increment the semaphore. Wakes one blocked waiter if any. */
 void sem_signal(semaphore_t *s);
 
+/* Increment the semaphore by n in one step and wake up to min(n, waiters)
+ * blocked waiters. O(waiters), NOT O(n) -- use for a batched release with
+ * a large (possibly caller-supplied) count instead of looping sem_signal(). */
+void sem_signal_n(semaphore_t *s, int32_t n);
+
 /* Try to decrement without blocking. Returns 1 on success, 0 if would block. */
 int sem_trywait(semaphore_t *s);
 
