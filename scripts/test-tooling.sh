@@ -1976,14 +1976,21 @@ with tempfile.TemporaryDirectory() as tmp:
     check("gap_audit_mirror_file_scoped",
           ev["section"] == "file" and ev["metadata"].get("prompt_section_hint") == "7"
           and ev["task_id"].endswith("#file"))
+# the non-review codex e / codex exec automation aliases are NOT review
+# dispatches: they must never mint reviewer evidence via the receipt path
+import _codex_dispatch as cd
+check("codex_e_alias_not_review_dispatch",
+      cd.extract_dispatch_prompt("codex e '[review-kind: adversarial] todo/x'") == ""
+      and cd.extract_dispatch_prompt("codex exec '[review-kind: adversarial] todo/x'") == ""
+      and cd.extract_dispatch_prompt("codex review '[review-kind: adversarial] todo/x'") != "")
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "6" ]; then
+if [ "$GA_OK" = "7" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 6))
+    PASS=$((PASS + 7))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi

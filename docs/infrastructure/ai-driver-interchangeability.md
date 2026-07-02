@@ -141,13 +141,13 @@ and installed-plugin paths: direct `codex-companion.mjs`, foreground
 `scripts/codex-dispatch-with-files.sh`, direct background
 `codex-companion.mjs task --background`, bare `codex task`, bare
 `codex review`, driver-side `codex exec` / `codex e`, Codex plugin slash
-commands, and Codex plugin hooks. The live classifier currently recognizes
-direct companion review/task forms, the foreground wrapper, bare `codex review`,
-and incorrectly bare `codex e`; fallback wrappers, background task completion,
-plugin command/hook receipt, and the `codex e` alias need §7 receipt/evidence
-normalization. Bare `codex task` and plugin stop-gate output are not trusted
-receipt proof, and `codex exec` / `codex e` are non-review automation. TODO-10 does
-not add a new prompt tree.
+commands, and Codex plugin hooks. The live classifier recognizes direct
+companion review/task forms, the foreground wrapper, and bare `codex review`
+ONLY -- the non-review `codex e` / `codex exec` automation aliases are
+excluded so they can never mint reviewer evidence through the receipt path.
+Fallback wrappers, background task completion, and plugin command/hook
+receipt remain unrecognized surfaces. Bare `codex task` and plugin stop-gate
+output are not trusted receipt proof. TODO-10 does not add a new prompt tree.
 
 A further dispatch surface is the direct `Skill(codex-*)` trigger set recognized by
 `codex_review_completed.py` (`CODEX_TRIGGER_SKILLS`): `codex-adversarial-review-section`,
