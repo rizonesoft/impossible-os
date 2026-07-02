@@ -167,18 +167,19 @@ APPROVE closure (9 findings fixed: 3H+1M adversarial, 1H+2M+1L consistency, 1M p
   `gates.py` and flipping `AI_WORKFLOW_ENFORCE_SHARED_GATES` default-on
   (reminders-as-UX-sugar) -- both need the docs/rollout phase toggle.
 
-### Phase 3 -- Review-Evidence Integrity (owns the file-level evidence findings)
+### Phase 3 -- Review-Evidence Integrity (owns the file-level evidence findings) -- DONE 2026-07-02
 
-- Add `gap-audit` to the receipt-hook prompt parser + tests -- **this is the C2/F3 root cause**:
-  the gap-audit receipt records an empty section, so file-level lifecycle evidence must be
-  normalized here.
-- Derive trusted `review_run_id` from wrapper/receipt metadata, not prompt text.
-- Bind review evidence to reviewed source blobs + current HEAD.
-- Harden `sequencer_triage.file_lifecycle` to require ledger evidence, not just a preamble line
-  (the stamp-writer F2 residual).
-- File-scope the file-level evidence producers + migrate `_file_evidence_ids` to
-  `evidence.target_index_path` (F3/C2 + P1).
-- **Review:** one Codex triad on evidence provenance + fresh-context independence.
+Shipped across commits 5b299690, 395b55c5, 583ee3f6, 39f0e0e6, 07499831, 681cc139,
+4fdc8f83, c3413c6e; triad + 6 confirmation rounds to an explicit APPROVE closure
+(5H+4M fixed). What landed beyond the planned list: receipt-only reviewer records
+(`evidence.py record` refuses `codex-reviewer-*` roles without the fixture escape),
+`codex e`/`exec` excluded from review classification, background dispatches
+(companion `task` / bg wrapper, argv-detected) recognized-but-telemetry-only (never
+`result=received`, never four-dispatch stamp proof), unconditional gap-audit
+file-scoping with prompt-section demoted to a metadata hint, and the TODO-level
+lifecycle-evidence scope bound to `todo#file` in both stamp and sequencer lookups.
+The section-7 stamps record the close; the per-finding classification schema
+remains an honest `[/]` (classification stays in receiving-code-review prose).
 
 ### Phase 4 -- Migration, docs, rollout toggles
 

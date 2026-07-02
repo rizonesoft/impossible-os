@@ -280,9 +280,21 @@ Codex is the required reviewer; its evidence must be trustworthy and independent
 - [/] Reviewer-output receipt step classifying findings Fix/Reject/Accept-XREF: the receipt hook mirrors received reviews to the ledger; per-finding classification stays in receiving-code-review prose (no durable schema yet).
 - [x] Preserve the no-model-flag policy: Codex model and effort remain controlled centrally by Codex config, not per dispatch.
 - [x] Harden `sequencer_triage.file_lifecycle`: a manual `--allow-missing` lifecycle stamp is trusted only with matching non-legacy ledger evidence; hand-written historical stamps stay trusted.
-- [ ] Commit: "ai-workflow: harden review-evidence integrity"
+- [x] Commit: "ai-workflow: harden review-evidence integrity" (landed as the Phase 3 commit series)
 
 **Test checkpoint:** A review of stale source or a prompt-forged review id cannot satisfy a shipping review obligation; a fresh reviewer dispatch can.
+
+> **Test runner:** 2026-07-02 | `bash scripts/test-tooling.sh` | 532/532 PASS
+>
+> **Notes:**
+> - Receipt hook: gap-audit recognized + file-scope normalized; run-ids receipt-generated (prompt ids are hints); background dispatches (argv-detected) mirror as telemetry, never stamp proof.
+> - Reviewer ledger records are receipt-only (`evidence.py record` refuses reviewer roles without the fixture escape); `codex e`/`exec` excluded from review classification.
+> - File-level lifecycle evidence is scope-bound (`todo#file`); manual `--allow-missing` stamps are distrusted without matching ledger evidence.
+> - Canonical doc: [docs/infrastructure/ai-driver-interchangeability.md](../../docs/infrastructure/ai-driver-interchangeability.md).
+> - Scope boundary: durable per-finding classification schema stays with the receiving-code-review workflow ([/] item above).
+>
+> **Verified:** 2026-07-02 | plan-driven Phase 3 close | 10/11 items, 1 honest [/] | build N/A (Python hooks/tooling) | tooling 532/532 PASS
+> **Quality reviewed:** 2026-07-02 | Codex 9x (adversarial+consistency+perf triad + 6 confirmation rounds to convergence) | 5H+4M fixed | scope: N/A (Python workflow tooling)
 
 ---
 
