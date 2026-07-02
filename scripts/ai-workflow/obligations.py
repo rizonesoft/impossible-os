@@ -113,7 +113,11 @@ def _event_ok(
                     tail = f.read().decode("utf-8", errors="replace")
             except OSError:
                 return False
-            if str(md.get("final_marker")) not in tail:
+            last_lines = [ln for ln in tail.splitlines() if ln.strip()]
+            # the sentinel must be the FINAL state of the log, not merely
+            # present somewhere in the tail (a stale OK followed by failure
+            # output must not satisfy)
+            if not last_lines or last_lines[-1].strip() != str(md.get("final_marker")).strip():
                 return False
     if current_only and check_current and not _current(ev, root, blob_cache):
         return False
@@ -261,12 +265,24 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
 
+    # implement/verify resolution REQUIRES a session identity: without one the
+    # lease check degrades to presence-only and same-run reviewer evidence
+    # cannot be excluded, so both fail closed instead (consistency finding)
+    identity_missing = args.workflow in ("implement", "verify") and not driver_run
+    if identity_missing:
+        diagnostics.append(
+            "no --driver-run-id supplied: driver-lease and codex-review "
+            "obligations fail closed for implement/verify workflows"
+        )
+
     ok, ids = _active_lease(todo, section, driver_run, root)
+    if identity_missing:
+        ok, ids = False, []
     add(
         "driver-lease",
         ok,
         ids,
-        "python3 scripts/ai-workflow/lease.py acquire --todo <todo> --section <n> --driver <backend> --run-id <run>",
+        "python3 scripts/ai-workflow/lease.py acquire --todo <todo> --section <n> --driver <backend> --run-id <run> (and pass --driver-run-id here)",
     )
 
     if args.workflow in ("implement", "verify"):
@@ -334,6 +350,12 @@ def resolve(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     found = _resolve_events(todo, section, event_specs, root, diagnostics)
+    if identity_missing:
+        # reviewer independence cannot be established without the session
+        # identity -- review evidence never satisfies an anonymous resolution
+        for name in list(found):
+            if name.startswith("codex-review-"):
+                found.pop(name)
     for spec in event_specs:
         name = str(spec["name"])
         ids = found.get(name, [])

@@ -141,16 +141,14 @@ Prevent two sessions (for example an interactive session and the headless overni
 > **Test runner:** 2026-07-01 | `bash scripts/test-tooling.sh` | 462/462 PASS
 >
 > **Notes:**
-> - `lease.py` (acquire/renew/release/complete/force-release/status) serializes every active-lease + history mutation under `common.workflow_lock` (fcntl flock, now fail-closed); state lives in gitignored `.ai-workflow/`.
-> - Review hardening: renew/release/complete now require `--run-id` and enforce ownership + reject expired leases; `force-release --reason` is the only non-owner recovery path.
-> - Consumers (`step5_quality_gate` pre-edit, `gates.staged_commit`) consult the lease but enforcement is presence-only and default-off; ownership binding + default-on are deferred (tracked below).
+> - `lease.py` (acquire/renew/release/complete/force-release/status) serializes all state mutations under `common.workflow_lock`; state lives in gitignored `.ai-workflow/`; malformed/zero expiry counts as expired everywhere.
+> - Review hardening: renew/release/complete require `--run-id` and enforce ownership + reject expired leases; `force-release --reason` is the only non-owner recovery path.
+> - Consumers enforce OWNERSHIP: `step5_quality_gate` binds the session run-id + auto-acquires (session-bound); `gates.staged_commit` requires the holder identity and fails closed under enforcement.
+> - Review deferrals resolved: lease ownership shipped in Phase 2; stamp-write atomicity shipped in §5. Default-on enforcement is the §9 rollout toggle.
 > - Canonical doc: [docs/infrastructure/ai-driver-interchangeability.md](../../docs/infrastructure/ai-driver-interchangeability.md).
-> - Scope boundary: stale-completed-lease reuse owned by §6; stamp-write atomicity owned by §5.
 >
 > **Verified:** 2026-07-01 | 7/10 items | build N/A (Python tooling) | tests 462/462 PASS (concurrent one-winner + ownership + expired-complete)
-> **Deferred:** [Critical] lease consumers check lease PRESENCE not OWNERSHIP, so a second session can edit/commit under another holder's lease -> XREF: 00-infrastructure/TODO-10 §2 (item: "Enforce lease OWNERSHIP (not presence) in the consumers" at line 134)
-> **Accepted:** [M] `stamp.py` writes the TODO before the ledger append, so a `workflow_lock` failure can leave a stamp with no evidence -> XREF: 00-infrastructure/TODO-10 §5 (item: "Make stamp writing atomic vs ledger failure" at line 230)
-> **Quality reviewed:** 2026-07-01 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+1M+1L fixed, 2Critical deferred, 1M accepted-XREF | scope: N/A (Python workflow tooling)
+> **Quality reviewed:** 2026-07-01 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+1M+1L fixed, 2Critical deferred (both since resolved), 1M accepted-XREF (resolved in §5) | scope: N/A (Python workflow tooling)
 
 ---
 

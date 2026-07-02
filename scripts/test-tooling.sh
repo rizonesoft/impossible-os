@@ -7564,18 +7564,20 @@ done
 "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/stamp.py verified \
     "$STAMP_REPO_TODO" --section 1 --driver-run-id tracked-stamp-driver --write >/dev/null
 if "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
-    --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --format json >/dev/null 2>&1; then
+    --todo "$STAMP_REPO_TODO" --section 1 --workflow implement \
+    --driver-run-id tracked-stamp-driver --format json >/dev/null 2>&1; then
     t_fail "ai_workflow_stamp: unstaged tracked stamp evidence blocks commit"
 else
     t_pass "ai_workflow_stamp: unstaged tracked stamp evidence blocks commit"
 fi
 ( cd "$STAMP_REPO" && git add "$STAMP_REPO_TODO" )
 if "${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit \
-    --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --format json >/dev/null; then
+    --todo "$STAMP_REPO_TODO" --section 1 --workflow implement \
+    --driver-run-id tracked-stamp-driver --format json >/dev/null; then
     t_pass "ai_workflow_stamp: staged tracked stamp evidence satisfies commit gate"
 else
     t_fail "ai_workflow_stamp: staged tracked stamp evidence satisfies commit gate" \
-           "$("${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --format json 2>&1)"
+           "$("${STAMP_REPO_ENV[@]}" python3 scripts/ai-workflow/gates.py commit --todo "$STAMP_REPO_TODO" --section 1 --workflow implement --driver-run-id tracked-stamp-driver --format json 2>&1)"
 fi
 
 # --- ai_workflow_stamp: file-level lifecycle stamps + no-bare-XREF (TODO-10 stamp writer) ---
@@ -8186,6 +8188,41 @@ if "${FAKE_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
     t_pass "ai_workflow_obligations: build evidence naming a missing/markerless log is rejected"
 else
     t_fail "ai_workflow_obligations: build evidence naming a missing/markerless log is rejected"
+fi
+
+# a stale sentinel followed by failure output must not satisfy: the recorded
+# marker has to be the log's LAST non-empty line (consistency finding)
+STALE_LOG_REPO="$AIWF_TMP/stale-log-repo"
+rm -rf "$STALE_LOG_REPO"; mkdir -p "$STALE_LOG_REPO/todo/00-infrastructure" "$STALE_LOG_REPO/build"
+printf '# TODO-95 Stale Log\n\n## 1. Section\n\n- [ ] item\n' > "$STALE_LOG_REPO/todo/00-infrastructure/TODO-95-stalelog.md"
+( cd "$STALE_LOG_REPO" && git init -q && git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m init )
+printf '=== BUILD OK ===\nlink error: undefined symbol foo\n' > "$STALE_LOG_REPO/build/build.log"
+STALE_ENV=(env AI_WORKFLOW_REPO_ROOT="$STALE_LOG_REPO" AI_WORKFLOW_STATE_DIR="$STALE_LOG_REPO/build/ai-workflow")
+"${STALE_ENV[@]}" python3 scripts/ai-workflow/lease.py acquire \
+    --todo todo/00-infrastructure/TODO-95-stalelog.md --section 1 --driver claude --run-id stale-log-driver >/dev/null
+"${STALE_ENV[@]}" python3 scripts/ai-workflow/evidence.py record \
+    --todo todo/00-infrastructure/TODO-95-stalelog.md --section 1 --role validator --backend local \
+    --run-id stale-log-build --kind build --result ok --source todo/00-infrastructure/TODO-95-stalelog.md \
+    --command "bash scripts/build.sh" --exit-code 0 \
+    --log-path build/build.log --final-marker "=== BUILD OK ===" >/dev/null
+if "${STALE_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    todo/00-infrastructure/TODO-95-stalelog.md --section 1 --driver-run-id stale-log-driver --format json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="build" and i["status"]=="missing" for i in d["required"]))' \
+    | grep -q True; then
+    t_pass "ai_workflow_obligations: stale sentinel followed by failure output is rejected"
+else
+    t_fail "ai_workflow_obligations: stale sentinel followed by failure output is rejected"
+fi
+
+# implement/verify resolution without a session identity FAILS CLOSED: the
+# lease check and reviewer independence both need the run-id (consistency)
+if "${FAKE_ENV[@]}" python3 scripts/ai-workflow/obligations.py \
+    "$FAKE_TODO" --section 6 --format json \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(any(i["name"]=="driver-lease" and i["status"]=="missing" for i in d["required"]) and any("fail closed" in x for x in d["diagnostics"]))' \
+    | grep -q True; then
+    t_pass "ai_workflow_obligations: anonymous implement resolution fails closed on lease + reviews"
+else
+    t_fail "ai_workflow_obligations: anonymous implement resolution fails closed on lease + reviews"
 fi
 
 # legacy-imported reviewer evidence (last-review-stamps.json compatibility

@@ -43,8 +43,14 @@ def _lease_lock(root: Path) -> Iterator[None]:
 
 
 def _is_expired(lease: dict[str, Any], now: int) -> bool:
-    expires = int(lease.get("expires_at_ns") or 0)
-    return expires > 0 and expires < now
+    """Missing, zero, or malformed expiry is EXPIRED -- every gate consumer
+    (gates.py, obligations.py, step5 consult) already rejects such a lease, so
+    treating it as live here would block acquire on a lease no gate accepts."""
+    try:
+        expires = int(lease.get("expires_at_ns") or 0)
+    except (TypeError, ValueError):
+        return True
+    return expires <= 0 or expires < now
 
 
 def _record(
