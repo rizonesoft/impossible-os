@@ -1049,6 +1049,7 @@ _rbg_case "subagent eval BLOCKED (indirection)" "/x/agent-a1.jsonl" "eval git-pu
 _rbg_case "subagent git -c shell-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git -c alias.x=codex-body x" 2
 _rbg_case "subagent git -c plain-alias smuggle BLOCKED" "/x/agent-a1.jsonl" "git -c alias.k=commit-body k" 2
 _rbg_case "subagent git -c non-alias read allowed" "/x/agent-a1.jsonl" "git -c core.pager=cat log --oneline -3" 0
+_rbg_case "subagent separate --config-env alias BLOCKED" "/x/agent-a1.jsonl" "git --config-env alias.x=ALIAS_BODY x" 2
 _rbg_case "subagent gh api GET allowed" "/x/agent-a1.jsonl" "gh api repos/x/y/actions/runs" 0
 _rbg_case "subagent git branch --list allowed" "/x/agent-a1.jsonl" "git branch --list" 0
 _rbg_case "subagent build.sh allowed" "/x/agent-a1.jsonl" "bash scripts/build.sh" 0

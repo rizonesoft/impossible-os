@@ -60,7 +60,7 @@ _GIT_MUTATING = {
     "prune", "reflog", "update-ref", "symbolic-ref", "init", "clone",
 }
 # git global options that take a separate value token
-_GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
+_GIT_VALUE_OPTS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 _GIT_BRANCH_LIST_OK = {"--list", "-a", "-r", "-v", "-vv", "--all", "--merged",
                        "--no-merged", "--contains", "--points-at", "--sort",
                        "--format", "--show-current"}
@@ -98,7 +98,7 @@ def _git_verdict(seg: list[str]) -> str:
         tok = seg[i]
         if tok in _GIT_VALUE_OPTS:
             val = seg[i + 1] if i + 1 < len(seg) else ""
-            if tok == "-c" and val.lower().startswith("alias."):
+            if tok in ("-c", "--config-env") and val.lower().startswith("alias."):
                 return "git temporary alias definition"
             i += 2
             continue
