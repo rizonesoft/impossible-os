@@ -84,7 +84,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9 |  [/]   |
 | 💎  |  20   | Legacy LPC port syscalls (stubs; engine TODO-09 §7)            | §5, TODO-09 §7    |  [/]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5    |  [/]   |
-| 💎  |  22   | Power and system control                                       | §5, TODO-26 §12   |  [ ]   |
+| 💎  |  22   | Power and system control                                       | §5, TODO-26 §20   |  [/]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
 | ⭐  |  24   | Syscall audit and tracing hook                                 | §4                |  [ ]   |
 | 💎  |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7            |  [ ]   |
@@ -991,6 +991,15 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 - [ ] Commit: `"kernel: nt -- power and system control syscalls"`
 
 **Test checkpoint:** `NtShutdownSystem(ShutdownReboot)` triggers ACPI reset. `NtPowerInformation(SystemPowerCapabilities)` returns valid S-state support mask. `NtSetThreadExecutionState` prevents idle sleep during long operation.
+
+> **Test runner:** N/A (SSDT-wiring section gated on TODO-26) | validation: `NtShutdownSystem` reboot path verified via serial log; remaining surface tested by TODO-26 §20
+
+> **Notes:**
+> - SSDT-wiring section: the ACPI power subsystem (S-state transitions, battery/thermal state, device D-states, idle governor) is owned by TODO-26; this section only wires the NtXxx entry points once that infrastructure lands.
+> - Self-contained piece already shipped: `NtShutdownSystem` (SSDT 0x00D7) is implemented + registered in `src/kernel/nt/nt_syscall.c:1188` (reboot/power-off via SYS_REBOOT/SYS_SHUTDOWN).
+> - Remaining 6 syscalls (NtSetSystemPowerState/NtInitiatePowerAction/NtPowerInformation/NtGetDevicePowerState/NtSetThreadExecutionState/NtRequestWakeupLatency) all route through `pm_*` helpers + ACPI S-state code that does not exist yet.
+> - Scope boundary: the power handlers, their `pm_*` backends, and unit tests belong to TODO-26 §20, not here.
+> **Deferred:** [M] Six power-management syscalls unimplemented; the ACPI S-state/battery/device-power backend they call is owned elsewhere (only `NtShutdownSystem` is self-contained and already wired) -> XREF: 02-kernel-core/TODO-26-power-management.md §20 (item: "`NtSetSystemPowerState` ... route through ACPI S-state transition" at line 773 through "`NtRequestWakeupLatency`" at line 778)
 
 ---
 
