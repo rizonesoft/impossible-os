@@ -595,6 +595,10 @@ NT propagates detailed error info through two channels: `IO_STATUS_BLOCK` (async
 > - **How it runs:** SYSCALL + INT 0x2E return paths call RtlNtStatusToDosError; the table lookup runs before the NT_SUCCESS fallback so mapped success codes (TIMEOUT/PENDING/ABANDONED) are not masked to ERROR_SUCCESS.
 > - **Downstream effects:** user-mode GetLastError returns Windows-correct codes for the common classes; mappings verified against Microsoft's system-error-code tables.
 > - **Scope boundary:** the table covers common classes, not the full ntdll table; per-CPU previous-mode SMP hardening is §12; async IOSB pending completion is owned by the IRP/async I/O work.
+> **Verified:** 2026-07-02 | commit `a25b7dbb` | 6/6 items | build OK | abi 419/419 PASS
+> **Accepted:** [H] user-mode GetLastError/SetLastError not implemented, so the kernel's TEB->LastErrorValue write is not yet observable through the Win32 API -> XREF: 10-platform-services/TODO-08-win32-api-surface.md §8 (item: "`GetLastError()` -> read `TEB.LastErrorValue`" at line 225)
+> **Accepted:** [M] NT_WARNING statuses (e.g. STATUS_BUFFER_OVERFLOW) do not update TEB->LastErrorValue (the syscall return path is NT_ERROR-only); the Win32 error API defines the warning-code policy -> XREF: 10-platform-services/TODO-08-win32-api-surface.md §8 (item: "`SetLastError(code)` -> write `TEB.LastErrorValue`" at line 226)
+> **Quality reviewed:** 2026-07-02 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1H+1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
 

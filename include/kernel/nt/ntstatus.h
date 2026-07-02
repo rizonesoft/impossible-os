@@ -89,6 +89,10 @@ uint32_t RtlNtStatusToDosError(NTSTATUS status);
 
 #define STATUS_INVALID_DEVICE_REQUEST       ((NTSTATUS)0xC0000010)  /* IRP to wrong device type */
 #define STATUS_END_OF_FILE                  ((NTSTATUS)0xC0000011)  /* read past end of file */
+#define STATUS_NO_SUCH_FILE                 ((NTSTATUS)0xC000000F)  /* file does not exist */
+#define STATUS_OBJECT_PATH_INVALID          ((NTSTATUS)0xC0000039)  /* path syntax invalid */
+#define STATUS_NAME_TOO_LONG                ((NTSTATUS)0xC0000106)  /* path/name exceeds limit */
+#define STATUS_DISK_FULL                    ((NTSTATUS)0xC000007F)  /* no space left on volume */
 #define STATUS_LOCK_NOT_GRANTED             ((NTSTATUS)0xC0000055)  /* byte-range lock denied */
 #define STATUS_FILE_LOCK_CONFLICT           ((NTSTATUS)0xC0000054)  /* overlapping byte-range lock */
 #define STATUS_INSUFFICIENT_RESOURCES       ((NTSTATUS)0xC000009A)  /* pool/resource exhausted */

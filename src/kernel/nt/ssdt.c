@@ -97,17 +97,17 @@ static const struct {
     { (NTSTATUS)0xC0000001,   1    },  /* UNSUCCESSFUL -> INVALID_FUNCTION */
     { (NTSTATUS)0xC0000035,   183  },  /* OBJECT_NAME_COLLISION -> ALREADY_EXISTS */
     /* --- file / path class --- */
-    { (NTSTATUS)0xC000000F,   2    },  /* NO_SUCH_FILE -> FILE_NOT_FOUND */
-    { (NTSTATUS)0xC000003A,   3    },  /* OBJECT_PATH_NOT_FOUND -> PATH_NOT_FOUND */
-    { (NTSTATUS)0xC0000039,   161  },  /* OBJECT_PATH_INVALID -> BAD_PATHNAME */
-    { (NTSTATUS)0xC0000033,   123  },  /* OBJECT_NAME_INVALID -> INVALID_NAME */
-    { (NTSTATUS)0x80000006,   18   },  /* NO_MORE_FILES -> NO_MORE_FILES */
-    { (NTSTATUS)0xC0000011,   38   },  /* END_OF_FILE -> HANDLE_EOF */
-    { (NTSTATUS)0xC00000BA,   5    },  /* FILE_IS_A_DIRECTORY -> ACCESS_DENIED */
-    { (NTSTATUS)0xC0000103,   267  },  /* NOT_A_DIRECTORY -> DIRECTORY */
-    { (NTSTATUS)0xC0000101,   145  },  /* DIRECTORY_NOT_EMPTY -> DIR_NOT_EMPTY */
-    { (NTSTATUS)0xC000007F,   112  },  /* DISK_FULL -> DISK_FULL */
-    { (NTSTATUS)0xC0000121,   5    },  /* CANNOT_DELETE -> ACCESS_DENIED */
+    { STATUS_NO_SUCH_FILE,          2    },  /* -> FILE_NOT_FOUND */
+    { STATUS_OBJECT_PATH_NOT_FOUND, 3    },  /* -> PATH_NOT_FOUND */
+    { STATUS_OBJECT_PATH_INVALID,   161  },  /* -> BAD_PATHNAME */
+    { STATUS_OBJECT_NAME_INVALID,   123  },  /* -> INVALID_NAME */
+    { (NTSTATUS)0x80000006,         18   },  /* NO_MORE_FILES -> NO_MORE_FILES */
+    { STATUS_END_OF_FILE,           38   },  /* -> HANDLE_EOF */
+    { (NTSTATUS)0xC00000BA,         5    },  /* FILE_IS_A_DIRECTORY -> ACCESS_DENIED */
+    { (NTSTATUS)0xC0000103,         267  },  /* NOT_A_DIRECTORY -> DIRECTORY */
+    { (NTSTATUS)0xC0000101,         145  },  /* DIRECTORY_NOT_EMPTY -> DIR_NOT_EMPTY */
+    { STATUS_DISK_FULL,             112  },  /* -> DISK_FULL */
+    { (NTSTATUS)0xC0000121,         5    },  /* CANNOT_DELETE -> ACCESS_DENIED */
     /* --- sharing / lock class --- */
     { (NTSTATUS)0xC0000043,   32   },  /* SHARING_VIOLATION -> SHARING_VIOLATION */
     { (NTSTATUS)0xC0000054,   33   },  /* FILE_LOCK_CONFLICT -> LOCK_VIOLATION */
@@ -115,7 +115,7 @@ static const struct {
     /* --- buffer / length class --- */
     { (NTSTATUS)0xC0000004,   24   },  /* INFO_LENGTH_MISMATCH -> BAD_LENGTH */
     { (NTSTATUS)0x80000005,   234  },  /* BUFFER_OVERFLOW -> MORE_DATA */
-    { (NTSTATUS)0xC0000106,   206  },  /* NAME_TOO_LONG -> FILENAME_EXCED_RANGE */
+    { STATUS_NAME_TOO_LONG,   206  },  /* -> FILENAME_EXCED_RANGE */
     { (NTSTATUS)0xC000009A,   1450 },  /* INSUFFICIENT_RESOURCES -> NO_SYSTEM_RESOURCES */
     /* --- process / handle / device class --- */
     { (NTSTATUS)0xC0000024,   6    },  /* OBJECT_TYPE_MISMATCH -> INVALID_HANDLE */

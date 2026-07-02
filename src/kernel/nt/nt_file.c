@@ -522,34 +522,58 @@ static NTSTATUS NtQueryVolumeInformationFile_handler(
         return STATUS_SUCCESS;
     }
     case FileFsVolumeInformation: {
+        /* Fixed header ends at VolumeLabel; the label is a variable field.
+         * The caller buffer must hold the header AND the full label or we
+         * would write past its declared Length -- report BUFFER_OVERFLOW
+         * with the required size instead of overrunning. */
         FILE_FS_VOLUME_INFORMATION *vi;
-        if (length < 24)  /* minimum fixed fields */
+        const uint32_t hdr =
+            (uint32_t)__builtin_offsetof(FILE_FS_VOLUME_INFORMATION, VolumeLabel);
+        const uint32_t label_bytes = 10 * 2;  /* "Impossible" in UTF-16 */
+        if (length < hdr)
             return STATUS_BUFFER_TOO_SMALL;
         vi = (FILE_FS_VOLUME_INFORMATION *)buf;
         vi->VolumeCreationTime = vfs_seconds_to_filetime(0);
         vi->VolumeSerialNumber = 0x494D5053;  /* "IMPS" */
         vi->SupportsObjects = 1;
         vi->_pad[0] = vi->_pad[1] = vi->_pad[2] = 0;
-        vi->VolumeLabelLength = ascii_to_utf16(
-            "Impossible", vi->VolumeLabel, 32);
+        vi->VolumeLabelLength = label_bytes;
+        if (length < hdr + label_bytes) {
+            if (iosb) {
+                iosb->Status = STATUS_BUFFER_OVERFLOW;
+                iosb->Information = hdr + label_bytes;
+            }
+            return STATUS_BUFFER_OVERFLOW;
+        }
+        (void)ascii_to_utf16("Impossible", vi->VolumeLabel, 32);
         if (iosb) {
             iosb->Status = STATUS_SUCCESS;
-            iosb->Information = 24 + vi->VolumeLabelLength;
+            iosb->Information = hdr + label_bytes;
         }
         return STATUS_SUCCESS;
     }
     case FileFsAttributeInformation: {
         FILE_FS_ATTRIBUTE_INFORMATION *ai;
-        if (length < 12)
+        const uint32_t hdr =
+            (uint32_t)__builtin_offsetof(FILE_FS_ATTRIBUTE_INFORMATION, FileSystemName);
+        const uint32_t name_bytes = 4 * 2;  /* "IXFS" in UTF-16 */
+        if (length < hdr)
             return STATUS_BUFFER_TOO_SMALL;
         ai = (FILE_FS_ATTRIBUTE_INFORMATION *)buf;
         ai->FileSystemAttributes = 0x00000003;  /* case sensitive + case preserved */
         ai->MaximumComponentNameLength = 255;
-        ai->FileSystemNameLength = ascii_to_utf16(
-            "IXFS", ai->FileSystemName, 16);
+        ai->FileSystemNameLength = name_bytes;
+        if (length < hdr + name_bytes) {
+            if (iosb) {
+                iosb->Status = STATUS_BUFFER_OVERFLOW;
+                iosb->Information = hdr + name_bytes;
+            }
+            return STATUS_BUFFER_OVERFLOW;
+        }
+        (void)ascii_to_utf16("IXFS", ai->FileSystemName, 16);
         if (iosb) {
             iosb->Status = STATUS_SUCCESS;
-            iosb->Information = 12 + ai->FileSystemNameLength;
+            iosb->Information = hdr + name_bytes;
         }
         return STATUS_SUCCESS;
     }
