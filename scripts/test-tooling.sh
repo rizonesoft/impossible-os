@@ -1994,6 +1994,23 @@ check("background_dispatch_detected",
 check("bg_wrapper_classified_with_prompt",
       cd.extract_dispatch_prompt("bash scripts/codex-bg-dispatch.sh '[review-kind: perf] todo/x b'")
       == "[review-kind: perf] todo/x b")
+# e2e: a background dispatch records trigger state marked background and
+# NEVER populates last-review-stamps.json (the four-dispatch proof surface)
+import os, subprocess as sp
+with tempfile.TemporaryDirectory() as tmp:
+    root = pathlib.Path(tmp)
+    sp.run(["git", "init", "-q"], cwd=tmp, check=True, capture_output=True)
+    hook = pathlib.Path.cwd() / ".claude/hooks/codex_review_completed.py"
+    payload = json.dumps({
+        "tool_name": "Bash",
+        "tool_input": {"command": "bash scripts/codex-bg-dispatch.sh '[review-kind: adversarial] todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md body'"},
+    })
+    sp.run([sys.executable, str(hook)], input=payload, text=True, cwd=tmp, capture_output=True)
+    stamps = root / ".claude" / "state" / "last-review-stamps.json"
+    state_f = root / ".claude" / "state" / "last-codex-review.json"
+    st = json.loads(state_f.read_text()) if state_f.exists() else {}
+    check("bg_dispatch_no_stamp_proof",
+          not stamps.exists() and st.get("background_dispatch") is True)
 with tempfile.TemporaryDirectory() as tmp:
     root = pathlib.Path(tmp)
     crc._record_shared_review_evidence(root, {
@@ -2011,11 +2028,11 @@ with tempfile.TemporaryDirectory() as tmp:
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "10" ]; then
+if [ "$GA_OK" = "11" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 10))
+    PASS=$((PASS + 11))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi
@@ -2578,22 +2595,26 @@ sys.exit(0 if isinstance(e.get('adversarial'), int) else 1)
         t_fail "four_dispatch_gate: R1 redirect-tail prompt extraction broken"
     fi
 
-    # Test R2 (post-c65568fc routing fix): _bash_prompt_arg must
-    # walk past per-subcommand flags. `task --background --json
-    # <prompt>` is the codex-bg-dispatch.sh shape.
+    # Test R2 (INVERTED post-background-telemetry): `task --background
+    # --json <prompt>` still classifies (state records the kind, marked
+    # background) but must NEVER populate the four-dispatch stamp proof --
+    # a background launch proves only that a job started.
     rm -f "$FD_STAMPS"
     PAYLOAD='{"tool_name":"Bash","tool_input":{"command":"node /abs/codex-companion.mjs task --background --json \"[review-kind: perf] todo/00-infrastructure/TODO-99-fdgate-fixture.md S1 perf review prompt\""}}'
     (cd "$FD_REPO" && printf '%s' "$PAYLOAD" | \
         python3 ".claude/hooks/codex_review_completed.py" >/dev/null 2>&1)
     if python3 -c "
-import json, sys
-s = json.load(open('$FD_STAMPS'))
-e = s.get('$FD_TODO_PATH', {})
-sys.exit(0 if isinstance(e.get('perf'), int) else 1)
+import json, os, sys
+if os.path.exists('$FD_STAMPS'):
+    s = json.load(open('$FD_STAMPS'))
+    if isinstance(s.get('$FD_TODO_PATH', {}).get('perf'), int):
+        sys.exit(1)
+r = json.load(open('$FD_REVIEW'))
+sys.exit(0 if r.get('background_dispatch') is True and r.get('review_kind') == 'perf' else 1)
 " 2>/dev/null; then
-        t_pass "four_dispatch_gate: R2 prompt extracted past 'task --background --json' flags"
+        t_pass "four_dispatch_gate: R2 background task classifies but records NO stamp proof"
     else
-        t_fail "four_dispatch_gate: R2 task-flag-walk prompt extraction broken"
+        t_fail "four_dispatch_gate: R2 background task leaked into stamp proof or lost attribution"
     fi
 
     # Test R3 (post-c65568fc routing fix): inline SKIP env-var prefix

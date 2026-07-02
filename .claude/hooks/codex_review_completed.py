@@ -1227,12 +1227,21 @@ def main() -> int:
             raw_cmd = str(ti_for_bg.get("command") or "")
         state["background_dispatch"] = bool(raw_cmd and _cd.is_background_dispatch(raw_cmd))
         _write_atomic(state_path, state)
-        stamp_attempted = bool(review_kind and todo_path)
+        # background dispatches never populate last-review-stamps.json: the
+        # stamp file is the four-dispatch PROOF surface, and a background
+        # launch proves only that a job started (doctrine: bg-dispatch is not
+        # gate evidence)
+        stamp_attempted = bool(
+            review_kind and todo_path and not state.get("background_dispatch")
+        )
         if stamp_attempted:
             stamp_ok, stamp_err = _record_stamp(
                 root, todo_path, section, review_kind, now_ns,
                 dispatch_head_sha=head_at_dispatch,
             )
+        elif state.get("background_dispatch"):
+            stamp_ok = False
+            stamp_err = "skipped (background dispatch is not review proof)"
         else:
             stamp_ok = False
             stamp_err = "skipped (missing review_kind or todo_path)"
