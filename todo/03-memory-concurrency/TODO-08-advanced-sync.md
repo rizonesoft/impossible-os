@@ -278,6 +278,7 @@ The "already complete" §1-§14 baseline (line 14) lists `mutex_t` as shipped, b
 - [ ] **Regression test**: `src/kernel/test/test_mutex_smp.c` -- spawn N kernel threads (N = NR_CPUS), all contending on one mutex; assert no waiter is lost across M iterations of lock/unlock round-trips. Hardware-dependent (SMP); use `TEST_SKIP` on UP builds.
 - [ ] **Audit other `mutex_t` consumers**: `s_rt_mutex` is the canonical caller from the UEFI Runtime Services Sleepable Lock Migration; grep for `MUTEX_INIT` and confirm none have additional waiter-queue invariants the fix must preserve.
 - [ ] **`rwlock_t` acquire linearizability** (`rwlock.c`): read_lock check-then-inc + write_lock atomic_set-not-CAS let a reader+writer or two writers both enter; gate with a spinlock/CAS + test. Consumer: ERESOURCE (TODO-06 §10).
+- [ ] **Semaphore + event atomicity** (`semaphore.c`, `event.c`): count check-then-decrement + waiter arrays race under SMP; serialize NtReleaseSemaphore max-guard + WaitAll rollback in the same protocol. Consumer: 02-kernel-core/TODO-12 §8 waits.
 - [ ] Commit: `"sched: SMP-safe mutex wait queue + duplicate-enqueue guard + regression test"`
 
 **Test checkpoint:** `bash scripts/test.sh SUITE=sched` runs the new `test_mutex_smp` suite and shows 0 lost waiters across the contention loop on multi-CPU hosts (WHPX 2 CPUs, bare metal). UEFI runtime services calls under load (`SetVariable` storms) no longer strand callers.
