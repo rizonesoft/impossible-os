@@ -82,7 +82,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎  |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3    |  [/]   |
 | 💎  |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7    |  [/]   |
 | 💎  |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9 |  [/]   |
-| 💎  |  20   | Legacy LPC port syscalls                                       | §5, TODO-24 §8-§9 |  [x]   |
+| 💎  |  20   | Legacy LPC port syscalls (stubs; engine TODO-09 §7)            | §5, TODO-09 §7    |  [/]   |
 | 💎  |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5    |  [ ]   |
 | 💎  |  22   | Power and system control                                       | §5, TODO-26 §12   |  [ ]   |
 | 💎  |  23   | Atom, locale, and miscellaneous                                | §5                |  [ ]   |
@@ -899,7 +899,7 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 ## 20. Legacy LPC Port Syscalls
 
 > [!NOTE]
-> Legacy LPC (NT 3.x-5.x) syscall surface. Reserves SSDT indices 0x0100-0x010C and wires NT-compatible signatures so user-mode callers get `STATUS_NOT_IMPLEMENTED` (rather than an empty SSDT slot) until the ALPC subsystem lands. Full port infrastructure -- `ALPC_PORT` object, message queue, connection state machine, send/receive engine -- is implemented in `02-kernel-core/TODO-24-alpc-message-ports.md`. Modern ALPC (Vista+) syscalls split to §31. LPC and ALPC share the same underlying kernel object type (`ObpAlpcPortType`); LPC is a thin compatibility adapter over ALPC in Windows and will be the same here.
+> Legacy LPC (NT 3.x-5.x) syscall surface. Reserves SSDT indices 0x0100-0x010E (15 slots) and wires NT-compatible signatures so user-mode callers get `STATUS_NOT_IMPLEMENTED` (rather than an empty SSDT slot) until the LPC engine lands. All 15 handlers are deliberate stubs (`LPC_STUB_BODY`); the functional retrofit is TODO-09 §7 (item "Retrofit the 15 LPC SSDT stubs"). Full port infrastructure -- `ALPC_PORT` object, message queue, connection state machine, send/receive engine -- is implemented in `02-kernel-core/TODO-24-alpc-message-ports.md`. Modern ALPC (Vista+) syscalls split to §31. LPC and ALPC share the same underlying kernel object type (`ObpAlpcPortType`); LPC is a thin compatibility adapter over ALPC in Windows and will be the same here.
 
 - [x] `NtCreatePort(PortHandle, ObjectAttributes, MaxConnectionInfoLength, MaxMessageLength, MaxPoolUsage)` → SSDT 0x0100
 - [x] `NtCreateWaitablePort(...)` → SSDT 0x0101
@@ -920,13 +920,16 @@ Namespace manipulation -- create, open, and query Ob directory objects and symbo
 
 **Test checkpoint:** All 15 LPC SSDT slots resolve to the registered handler (not the default `ssdt_stub_not_implemented`). Each handler returns `STATUS_NOT_IMPLEMENTED` until TODO-24 §8 LPC engine lands; functional round-trip (`NtCreatePort` + `NtConnectPort` + `NtRequestWaitReplyPort`) is exercised by TODO-24 §8 tests and TODO-24 §8-§9 tests.
 
-> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob)
-> **Expected:** 2 new §20 tests (LPC slots registered, LPC returns deferred-status), 0 failures.
+> **Test runner:** `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob) | 426 kernel + 16 user tests, 0 failures
+> **Notes:**
+> - Shipped: 15 legacy LPC SSDT stubs (0x0100-0x010E) in nt_lpc.c via LPC_STUB_BODY (returns STATUS_NOT_IMPLEMENTED); registration is bounds-checked + boot-fatal.
+> - Reviewed this pass: all 15 are honest deferred stubs (adversarial found no exploitable surface, perf approved); the engine retrofit is a concrete owner item enumerating every slot.
+> - Scope boundary: the whole LPC engine (port objects, connection state machine, request/reply, SeAccessCheck, impersonation, Read/WriteRequestData) -> TODO-09 §7; IO + Master Table rows are [/] (stub-wired, not functional).
+> - Test gap: none for stubs -- test_nt_lpc_pending_features (TEST_PENDING) asserts all 15 return NOT_IMPLEMENTED. Metadata follow-up: TODO-A owner cells + service_numbers next-avail still name stale T17.
 
-> **Codex adversarial (2026-04-14):** Three Medium findings, all fixed: (1) `nt_lpc_register_ssdt()` silently accepted `ssdt_register()` failures; replaced with per-slot `lpc_register_one()` helper that checks ssdt_get_table, detects collision with `ssdt_stub_not_implemented`, checks ssdt_register return, logs per-slot failures, and suppresses the success line when any of the 15 fail. (2) `test_nt_lpc_returns_deferred_status` only dispatched 5 of 15 slots; expanded to iterate all 15 so mis-registration to another non-stub handler in any unsampled slot is caught. (3) `LPC_STUB_BODY`'s `s_warned` was a non-atomic one-time flag -- replaced with atomic acquire/release so concurrent first-calls on multiple CPUs cannot double-log.
-> **Verified** (2026-04-14): `nt_lpc_register_ssdt()` registers 15 stub handlers at SSDT 0x0100-0x010E (`nt_lpc.c`). Each handler is guarded by `SCOPE-GAP-ALLOWED` sentinel and returns `STATUS_NOT_IMPLEMENTED` with a first-call `klog(LOG_WARN, ...)` trace. NT wait path does not need an `ObpAlpcPortType` case yet -- no ALPC_PORT objects exist until TODO-17 §8 lands. PE exports added in `pe.c` (sorted, 15 entries). Master table TODO-A rows 0x0100-0x010E flipped from `[ ]` to `[/]` (stub-wired, deterministic status, not functional) and Owner updated to `T12 §20 (nt_lpc.c stub, T17 §7 retrofit)`.
-> **Quality reviewed** (2026-04-14): Codex quality review drove one fix: `LPC_STUB_BODY` steady-state was `__atomic_exchange_n` (read-modify-write on every syscall); replaced with `__atomic_load_n(RELAXED)` fast path + `__atomic_compare_exchange_n` only on the 0->1 transition. User-mode callers repeatedly invoking an unimplemented LPC syscall no longer force cross-CPU cacheline ping-pong.
-> **Accepted:** (1) LPC engine itself (port objects, connection state machine, request/reply rendezvous, SeAccessCheck for SecureConnectPort, SeImpersonate for ImpersonateClientOfPort, out-of-line ReadRequestData/WriteRequestData) intentionally deferred -- this section's explicit scope is SSDT reservation + syscall signatures only -> XREF: 03-memory-concurrency/TODO-08 §7 (item: "Retrofit the 15 LPC SSDT stubs in src/kernel/nt/nt_lpc.c (SSDT 0x0100-0x010E) to real handlers that call into lpc.c instead of returning STATUS_NOT_IMPLEMENTED" -- enumerates every slot with per-syscall retrofit semantics and auto-closes §20).
+> **Verified:** 2026-07-02 | commit `645afa47` | 15/15 items | build OK | ob 426/426 PASS (stub-wired)
+> **Deferred:** [M] all 15 LPC syscalls are deliberate stubs (STATUS_NOT_IMPLEMENTED); the whole port/message engine + SeAccessCheck/impersonation is deferred -> XREF: 03-memory-concurrency/TODO-09 §7 (item: "Retrofit the 15 LPC SSDT stubs in `src/kernel/nt/nt_lpc.c`" at line 185)
+> **Quality reviewed:** 2026-07-02 | Codex 3x (adversarial, consistency, perf) | 0 fixed (note range + IO/status + owner XREF reconciled), 1M deferred | scope: kernel-code-quality
 
 ---
 
