@@ -137,9 +137,15 @@ obligation state this protocol produces.
    covered by the writer's inside-paren rule. (No separate `ai_workflow_stamp` fixture migration
    needed -- the writer path is exercised by the parity verification + these tests.)
 5. Re-close the Deterministic Stamp Writer section: flip `[/] -> [x]` with Verified/Quality-
-   reviewed stamps, landed together with this phase's review evidence. REMAINING.
+   reviewed stamps, landed together with this phase's review evidence. DONE (dbbd574e).
 6. **Review:** one Codex triad (adversarial + consistency + perf) on the unified grammar +
-   stamp writer. The consistency dispatch explicitly checks the enforcement consumers agree. REMAINING.
+   stamp writer. DONE -- the triad plus 7 confirmation rounds to convergence (10 dispatches,
+   6H+5M+2L fixed; commits c2b7d834, e671c2e1, dbbd574e). The writer bar ended STRICTER than
+   planned: only the graph-consumable canonical clause (`->` arrow, domain path with adjacent
+   section token, structural quote-aware item parenthetical) is writer-acceptable, with a
+   fuzz-proven writer-accept-implies-hook-accept subset property and a fixture cross-check
+   against todo-graph's XREF_CLAUSE_RE. Two out-of-diff regressions found by the rounds were
+   filed with owners (TODO-02 shim fail-loud; TODO-08 staged-secret guard).
 
 ### Phase 2 -- Shared Gate Library (remaining items)
 
