@@ -86,7 +86,7 @@ The workflow protocol under [`scripts/ai-workflow/`](../../scripts/ai-workflow/)
 | 💎  |   6   | Shared gate library used by Claude hooks and git hooks                 | §3-5       |  [/]   |
 | ⭐  |   7   | Review-evidence integrity and fresh-context independence checks        | §3-6       |  [/]   |
 | 💎  |   8   | Retire obsolete Codex-driver artifacts                                 | §1         |  [x]   |
-| 💎  |   9   | Migration, docs, and rollout toggles                                   | §1-8       |  [/]   |
+| 💎  |   9   | Migration, docs, and rollout toggles                                   | §1-8       |  [x]   |
 | 💎  |   10  | Regression suite and pilot section                                     | §1-9       |  [ ]   |
 
 ---
@@ -330,17 +330,29 @@ Remove the abandoned Codex-as-driver implementation built before the 2026-07-01 
 Only update doctrine after the shared protocol works.
 
 - [x] Add `docs/infrastructure/ai-driver-interchangeability.md` as the human-readable design and operations guide (rewritten to the tool-neutral protocol in §8).
-- [ ] Update [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md) to describe the tool-neutral workflow protocol (workflow truth in the ledger; Claude mutator, Codex reviewer) only after §1-8 pass.
-- [ ] Update [`CLAUDE.md`](../../CLAUDE.md) Model Roles and Skills sections to reference the shared workflow protocol; no driver-backend language.
-- [ ] Update [`AGENTS.md`](../../AGENTS.md) reviewer-only boundary so non-Claude tools remain reviewer/reader roles, not mutating drivers.
+- [x] Update [`docs/infrastructure/ai-system.md`](../../docs/infrastructure/ai-system.md): "Tool-Neutral Workflow Protocol" section + Authority Hierarchy row for `scripts/ai-workflow/`.
+- [x] Update [`CLAUDE.md`](../../CLAUDE.md) Model Roles to reference the shared workflow protocol; no driver-backend language.
+- [x] Update [`AGENTS.md`](../../AGENTS.md) reviewer-only boundary: non-Claude tools remain reviewer/reader roles and reviewer ledger evidence is receipt-only.
 - [x] Preserve the autonomous-agent boundary: no cloud-agent PRs, no autonomous GitHub PR authoring, no unattended non-repo-guarded mutator.
 - [x] Preserve the zero AI-attribution trailer policy.
 - [x] Document the protocol scripts and the `AI_WORKFLOW_ENFORCE_SHARED_GATES` toggle.
-- [/] Document the protocol, monitor commands, and shared-gate toggle, updated for the tool-neutral model.
+- [x] Document the protocol, monitor commands, and shared-gate toggle, updated for the tool-neutral model (ai-system.md protocol section + the canonical operations guide).
 - [x] Add rollback instructions: leave the shared scripts in place and disable enforcement to return to Claude-hook-only gating without deleting evidence.
-- [ ] Commit: "docs: document AI workflow protocol rollout"
+- [x] Commit: "docs: document AI workflow protocol rollout"
 
 **Test checkpoint:** A maintainer can enable or disable shared-gate enforcement without deleting evidence, breaking stamps, or changing commit policy.
+
+> **Test runner:** 2026-07-02 | `bash scripts/audit-ai-system.sh` 7/7 PASS + `bash scripts/test-tooling.sh` 532/532 PASS
+>
+> **Notes:**
+> - ai-system.md gains the "Tool-Neutral Workflow Protocol" section + an Authority Hierarchy row for `scripts/ai-workflow/`; CLAUDE.md Model Roles and AGENTS.md point at it.
+> - The rollout toggle (`AI_WORKFLOW_ENFORCE_SHARED_GATES=1`, `--require-run-id`) and the rollback path (unset toggle, evidence retained) are documented in the protocol section.
+> - The canonical operations guide's stale driver-era rows (codex e misclassification, unrecognized bg wrapper, task-as-review) were rewritten to the shipped receipt contract.
+> - Canonical doc: [docs/infrastructure/ai-driver-interchangeability.md](../../docs/infrastructure/ai-driver-interchangeability.md).
+> - Scope boundary: default-on enforcement flips only after the §10 pilot passes.
+>
+> **Verified:** 2026-07-02 | plan-driven Phase 4 close | 10/10 items | build N/A (docs-only) | audit-ai-system 7/7, tooling 532/532 PASS
+> **Quality reviewed:** 2026-07-02 | Codex 1x consistency (docs-only, proportionate per plan review strategy) | 2M fixed | scope: N/A (doctrine docs)
 
 ---
 

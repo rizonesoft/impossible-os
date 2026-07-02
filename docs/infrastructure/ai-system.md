@@ -13,7 +13,8 @@
 | `.claude/skills/`                 | Workflow source-of-truth (directory)             | How Claude executes a specific task (implement, review, verify, diagnose)                                                          |
 | `.claude/settings.json`           | Harness policy source-of-truth (file)            | Permissions, hook reminders, pre/post-tool-use gates                                                                               |
 | Codex (OpenAI plugin)             | Subordinate reviewer (sole external)             | Adversarial findings only; invoked from inside Claude skills (23 contract-carrying entries: 9 angle-owner `codex-*` + 9 direct workflow-consumer + 1 inheritor + 4 indirect workflow consumers); findings go through `receiving-code-review` before action |
-| `.githooks/`                      | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push                                                                                |
+| `scripts/ai-workflow/`            | Workflow-evidence source-of-truth (scripts + gitignored `.ai-workflow/` state) | Active-mutator lease, append-only evidence ledger, obligation resolution, deterministic stamps, shared gate verdicts             |
+| `.githooks/`                      | Git-time guards (distinct layer; see [Git Hooks and Local Automation Lifecycle](../../todo/00-infrastructure/TODO-01-developer-tooling-stack.md#5-git-hooks-and-local-automation-lifecycle)) | Pre-commit lint, post-commit COUNT, opt-in pre-push, opt-in shared AI-workflow gate                                              |
 
 ### Hierarchy invariants
 
@@ -32,6 +33,40 @@ As of 2026-04-18, Impossible OS is **Claude Code-only** for AI-assisted developm
 - **No `.cursor/`, no parallel skill sets.** Doctrine lives in `CLAUDE.md`; skills live in `.claude/skills/`. The previous `.cursor/` tree was removed because maintaining a parallel skill set under it created clutter without a corresponding productivity win.
 - **External reviewers are invoked from inside Claude skills, not from separate instruction layers.** Codex runs through the OpenAI Codex plugin when one of the 23 contract-carrying skill entries ([External-Reviewer Contract](#external-reviewer-contract-codex) names them: 9 angle-owner `codex-*` + 9 direct workflow-consumer + 1 inheritor + 4 indirect workflow consumers) invokes or inherits it. Codex is the sole external reviewer; the previous Copilot CLI subordinate-reviewer wrapper was retired wholesale 2026-04-28 (per the Copilot-removal automation-hardening sweep). It does not read its own instruction tree in this repo.
 - **If a new AI tool is added in the future, it goes through the [External-Reviewer Contract](../../todo/00-infrastructure/TODO-02-ai-development-system.md#4-external-reviewer-contract-codex)** and applies `receiving-code-review` discipline to its findings. New tools do not get their own instruction tree.
+
+---
+
+## Tool-Neutral Workflow Protocol (evidence ledger + shared gates)
+
+Workflow TRUTH (what was reviewed, built, stamped, and by whom) lives in
+repo-owned deterministic state under [`scripts/ai-workflow/`](../../scripts/ai-workflow/)
+plus the gitignored `.ai-workflow/` runtime directory -- not in Claude chat memory.
+Claude Code remains the sole mutator/orchestrator and Codex the sole external
+reviewer; there is NO AI "driver" abstraction. The pieces:
+
+- **`lease.py`** -- exactly one active mutator per TODO section; ownership-bound
+  (`driver_run_id`), fcntl-serialized, expired/malformed leases are invalid everywhere.
+- **`evidence.py`** -- append-only JSONL ledger keyed by TODO/section/kind/HEAD/source
+  blobs/run id. Reviewer-role records are RECEIPT-ONLY (the `codex_review_completed`
+  receipt hook writes them; the public `record` CLI refuses `codex-reviewer-*` roles).
+- **`obligations.py`** -- resolves satisfied vs missing shipping obligations; fails
+  closed on anonymous implement/verify resolution; build evidence requires source
+  blobs + exit code + log whose final line is the pinned `=== BUILD OK ===` sentinel;
+  legacy imports never satisfy shipping obligations.
+- **`stamp.py`** -- deterministic `Verified:`/`Quality reviewed:`/`Deferred:`/
+  `Accepted:`/`Validated:`/`Gap-audited:` stamps generated from ledger evidence;
+  accepted/deferred summaries must carry the canonical graph-consumable XREF clause
+  (shared grammar: `scripts/ai-workflow/xref.py`); TODO write + ledger record run in
+  one atomic critical section.
+- **`gates.py`** -- one verdict for Claude hooks, git hooks, and direct CLI callers
+  (`pre-edit` / `stamp` / `commit` / `staged-commit`).
+
+Enforcement rollout: `.githooks/pre-commit` calls `gates.py staged-commit
+--require-run-id` behind **`AI_WORKFLOW_ENFORCE_SHARED_GATES=1`** (default-off until
+the pilot section passes). Rollback: unset the toggle -- the scripts and the evidence
+ledger stay in place, Claude-hook-only gating resumes, no stamps break. Canonical
+design + operations guide: [`docs/infrastructure/ai-driver-interchangeability.md`](ai-driver-interchangeability.md);
+roadmap: [`todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md`](../../todo/00-infrastructure/TODO-10-ai-driver-interchangeability.md).
 
 ---
 

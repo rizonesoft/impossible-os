@@ -24,6 +24,8 @@ Full table and the other two invariants: [Authority Hierarchy in ai-system.md](d
 
 If you are being run as a **reviewer** (read-only analysis, PR comments, advisory findings) under a human operator's explicit dispatch, proceed. Apply `receiving-code-review` discipline; your output will be verified at file:line by Claude before any edit.
 
+Workflow truth (leases, review evidence, stamps, gate verdicts) lives in the tool-neutral protocol under [`scripts/ai-workflow/`](scripts/ai-workflow/): non-Claude tools stay reviewer/reader roles, and reviewer ledger evidence is receipt-only -- your review is recorded by the repo's receipt hook when Claude receives it, never by writing the ledger yourself. See [ai-system.md "Tool-Neutral Workflow Protocol"](docs/infrastructure/ai-system.md#tool-neutral-workflow-protocol-evidence-ledger--shared-gates).
+
 ## Where the roadmap lives
 
 - [AI Development System roadmap](todo/00-infrastructure/TODO-02-ai-development-system.md): canonical roadmap for this surface. Ownership map, skill lifecycle, hook routing, reviewer contract, permissions boundary, this file, commit-disclosure policy, autonomous-agent boundary, and the regression suite each have their own section.
